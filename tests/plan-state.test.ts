@@ -61,3 +61,16 @@ describe("parsePlanState", () => {
 		).toBe(false);
 	});
 });
+
+describe("tier validation (repo-review 2026-08)", () => {
+	test("an unknown tier string degrades to 'free' instead of laundering through the union", () => {
+		const ps = parsePlanState({ tier: "team" }, 1000);
+		expect(ps?.tier).toBe("free");
+	});
+
+	test("known tiers pass through", () => {
+		expect(parsePlanState({ tier: "starter" }, 1)?.tier).toBe("starter");
+		expect(parsePlanState({ tier: "pro" }, 1)?.tier).toBe("pro");
+		expect(parsePlanState({ tier: "free" }, 1)?.tier).toBe("free");
+	});
+});

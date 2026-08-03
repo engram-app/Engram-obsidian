@@ -179,3 +179,14 @@ describe("noop logger", () => {
 		expect(() => devLog().clear()).not.toThrow();
 	});
 });
+
+describe("filter category case (repo-review 2026-08)", () => {
+	test("matches a mixed-case category case-insensitively, like it already does for msg", () => {
+		initDevLog();
+		devLog().log("SyncEngine", "something happened");
+		const buf = devLog();
+		if (!("filter" in buf)) throw new Error("expected live buffer");
+		expect(buf.filter("syncengine")).toHaveLength(1);
+		destroyDevLog();
+	});
+});

@@ -1,3 +1,4 @@
+import { sha256Hex } from "./content-hash";
 import type { EngramSyncSettings } from "./types";
 
 /** Identity of the live WebSocket/channel connection: which backend, which
@@ -27,10 +28,5 @@ export async function computeSyncFingerprint(settings: EngramSyncSettings): Prom
 	const vaultPart = settings.vaultId || "";
 	const input = `${authPart}|${vaultPart}`;
 	if (input === "|") return ""; // Both empty = no fingerprint yet
-	const encoder = new TextEncoder();
-	const data = encoder.encode(input);
-	const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-	return Array.from(new Uint8Array(hashBuffer))
-		.map((b) => b.toString(16).padStart(2, "0"))
-		.join("");
+	return sha256Hex(input);
 }

@@ -1,7 +1,7 @@
 /**
  * Tests for api.ts — utility functions and EngramApi method behavior.
  */
-import { beforeEach, describe, expect, type Mock, mock, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, type Mock, mock, test } from "bun:test";
 import { requestUrl } from "obsidian";
 import {
 	arrayBufferToBase64,
@@ -1180,5 +1180,112 @@ describe("deadline classification", () => {
 		a.requestTimeoutMs = 20;
 		a.attachmentTimeoutMs = 100_000;
 		await expect(a.getManifest()).rejects.toThrow(RequestTimeoutError);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Repo-review safety batch (2026-08): stale beacon token, 401→402 mapping,
+// upgrade_url scheme validation.
+// ---------------------------------------------------------------------------
+
+describe("stale cached beacon token", () => {
+	// window.fetch is monkey-patched to capture beacon posts; restore it so the
+	// patch can't leak into downstream test files (bun shares one process).
+	const originalFetch = (global as any).fetch;
+	afterAll(() => {
+		(global as any).fetch = originalFetch;
+	});
+
+	function tracedApi(): EngramApi {
+		const a = new EngramApi(TEST_SERVER, TEST_KEY);
+		a.setTracingEnabled(true);
+		return a;
+	}
+
+	async function primeTokenWithSpan(a: EngramApi): Promise<void> {
+		// A traced mutation caches the token AND enqueues a span on the beacon.
+		mockRequestUrl.mockResolvedValueOnce({ status: 200, json: {} } as any);
+		await a.pushNote("a.md", "x", 1);
+	}
+
+	test("updateConfig clears the cached token so a pending beacon batch never posts to the new origin", async () => {
+		const calls: any[] = [];
+		(global as any).fetch = (url: string, opts: unknown) => {
+			calls.push({ url, opts });
+			return Promise.resolve();
+		};
+		const a = tracedApi();
+		await primeTokenWithSpan(a);
+		a.updateConfig("http://other-backend.example", TEST_KEY);
+		a.beacon.flush();
+		expect(calls).toHaveLength(0);
+	});
+
+	test("setAuthProvider clears the cached token", async () => {
+		const calls: any[] = [];
+		(global as any).fetch = (url: string, opts: unknown) => {
+			calls.push({ url, opts });
+			return Promise.resolve();
+		};
+		const a = tracedApi();
+		await primeTokenWithSpan(a);
+		a.setAuthProvider(null);
+		a.beacon.flush();
+		expect(calls).toHaveLength(0);
+	});
+});
+
+describe("402 on the post-401 retry", () => {
+	test("still surfaces LimitExceededError (not the raw rejection)", async () => {
+		const api = new EngramApi(TEST_SERVER, TEST_KEY);
+		const provider: AuthProvider = {
+			getToken: mock(() => Promise.resolve("t")),
+			getVaultId: mock(() => null),
+			isAuthenticated: mock(() => true),
+			signOut: mock(() => {}),
+			invalidateAccessToken: mock(() => {}),
+		};
+		api.setAuthProvider(provider);
+		mockRequestUrl
+			.mockRejectedValueOnce({ status: 401 })
+			.mockRejectedValueOnce({ status: 402, json: { reason: "notes_cap_exceeded" } });
+		try {
+			await api.pushNote("test.md", "x", 100);
+			expect.unreachable("should have thrown");
+		} catch (err) {
+			expect(err).toBeInstanceOf(LimitExceededError);
+			expect((err as LimitExceededError).reason).toBe("notes_cap_exceeded");
+		}
+	});
+});
+
+describe("upgrade_url scheme validation", () => {
+	async function upgradeUrlFrom402(upgrade_url: string): Promise<string | null> {
+		const api = new EngramApi(TEST_SERVER, TEST_KEY);
+		mockRequestUrl.mockRejectedValueOnce({
+			status: 402,
+			json: { reason: "notes_cap_exceeded", upgrade_url },
+		});
+		try {
+			await api.pushNote("test.md", "x", 100);
+			expect.unreachable("should have thrown");
+		} catch (err) {
+			expect(err).toBeInstanceOf(LimitExceededError);
+			return (err as LimitExceededError).upgradeUrl;
+		}
+	}
+
+	test("non-http(s) upgrade_url from the 402 body is discarded", async () => {
+		// The URL is handed to window.open (Electron external-open); a malicious
+		// self-host backend must not be able to launch arbitrary protocol handlers.
+		expect(await upgradeUrlFrom402("javascript:alert(1)")).toBeNull();
+		expect(await upgradeUrlFrom402("file:///etc/passwd")).toBeNull();
+		expect(await upgradeUrlFrom402("not a url")).toBeNull();
+	});
+
+	test("http(s) upgrade_url is preserved", async () => {
+		expect(await upgradeUrlFrom402("https://app.engram.page/settings/billing")).toBe(
+			"https://app.engram.page/settings/billing",
+		);
 	});
 });

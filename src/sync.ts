@@ -10,8 +10,13 @@ import type { DocKind, ProviderRegistry } from "./crdt/provider-registry";
 import { uuid7 } from "./crdt/uuid7";
 import { encodeUpdateFrame } from "./crdt/wire";
 import { devLog } from "./dev-log";
-import { errMsg } from "./error-util";
+import { errMsg, isHttpStatus } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
+import {
+	isCanvasPath as canvasPath,
+	isCrdtEligiblePath as crdtEligiblePath,
+	docKindFor,
+} from "./file-kind";
 import { IgnoredFiles } from "./ignored-files";
 import {
 	categorizeError,
@@ -211,12 +216,6 @@ export async function reconcileColdStart(
 	crdt.enroll?.(file.noteId);
 }
 
-/** Check if an error is an HTTP response with the given status code.
- *  Obsidian's requestUrl() throws objects with a `status` property on non-2xx. */
-function isHttpStatus(e: unknown, status: number): boolean {
-	return typeof e === "object" && e !== null && (e as { status?: number }).status === status;
-}
-
 /** Count distinct parent folders across the given file paths. Files at the
  *  root contribute nothing; "a/b/c.md" contributes "a/b". Used by the sync
  *  preview to surface "how many folders contain files" per side. */
@@ -300,6 +299,10 @@ const MIME_TYPES: Record<string, string> = {
 	zip: "application/zip",
 	canvas: "application/json",
 };
+
+/** Per-batch concurrency for the per-file push loop (both the incremental and
+ *  the force pipeline). Was a magic 10 in two places. */
+const PUSH_BATCH_SIZE = 10;
 
 export class SyncEngine {
 	private debounceTimers: Map<string, number> = new Map();
@@ -1451,7 +1454,7 @@ export class SyncEngine {
 		const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 		// Preserve the note's own extension (.md or .canvas) so a canvas drift copy
 		// stays a canvas file, not a stray .md.
-		const ext = normalized.endsWith(".canvas") ? "canvas" : "md";
+		const ext = canvasPath(normalized) ? "canvas" : "md";
 		const base = normalized.replace(/\.(md|canvas)$/, "");
 		const conflictPath = `${base} (conflict ${stamp}).${ext}`;
 		await this.createFileWithFolders(conflictPath, localDisk);
@@ -1781,7 +1784,7 @@ export class SyncEngine {
 			return;
 		}
 		if (this.seqHealTimer !== null) return;
-		this.seqHealTimer = window.setTimeout(() => {
+		this.seqHealTimer = this.time.setTimeout(() => {
 			this.seqHealTimer = null;
 			this.seqHealLastAt = Date.now();
 			rlog().info("crdt", "gap-heal replay (trailing, throttled)");
@@ -2012,17 +2015,73 @@ export class SyncEngine {
 		return file instanceof TFile && file.extension === "md";
 	}
 
+	/** Stage the convergence episode a socket re-handshake must commit, then
+	 *  fire the re-handshake. The {stage, converge} pair was written out
+	 *  five times; a field added to one copy and not another silently forked
+	 *  the commit contract. */
+	private stageAndConverge(
+		noteId: string,
+		path: string,
+		serverHash: string,
+		content: string | null,
+		version?: number,
+		seq?: number,
+	): void {
+		this.pendingConvergence.set(noteId, { path, serverHash, content, version, seq });
+		this.socketConverge(path, noteId);
+	}
+
+	/** The full local cleanup for a remotely-deleted file: trash it (marked so
+	 *  this device's own vault-delete event is echo-suppressed), prune any
+	 *  now-empty parent folders, and drop its sync/merge-base state. This
+	 *  four-line block existed verbatim at three sites plus partial variants.
+	 *  `dropBase` is false only for attachments, which have no merge base. */
+	private async applyRemoteRemoval(
+		file: TAbstractFile,
+		opts?: { dropBase?: boolean },
+	): Promise<void> {
+		const normalized = normalizePath(file.path);
+		await this.trashRemotelyDeleted(file);
+		await this.removeEmptyFolders(normalized);
+		this.syncState.delete(normalized);
+		if (opts?.dropBase !== false) this.baseStore?.delete(normalized);
+	}
+
+	/** Injected-clock sleep: tests advance time instead of spending it. The
+	 *  inline window.setTimeout promise this replaces bypassed the injected
+	 *  TimeProvider at three sites. */
+	private sleep(ms: number): Promise<void> {
+		return new Promise((resolve) => this.time.setTimeout(resolve, ms));
+	}
+
+	/** The vault a queue entry belongs to: its own stamp, else the current
+	 *  vault (pre-stamp entries), else undefined. Was inlined 5x in the flush
+	 *  path. */
+	private entryVaultId(entry: { vaultId?: string }): string | undefined {
+		return entry.vaultId ?? this.settings.vaultId ?? undefined;
+	}
+
+	/** Close a note's CRDT room: destroy the doc (the registry clears its
+	 *  enrollment at the destroy choke point) and reset the enrollment port,
+	 *  which is a separate object only in test harnesses. This pair was
+	 *  hand-written at 6 call sites; a missed pair left a tombstoned id
+	 *  enrolled forever. */
+	private async teardownCrdtDoc(noteId: string): Promise<void> {
+		await this.crdt?.removeDoc(noteId);
+		this.crdtEnrollment?.reset(noteId);
+	}
+
 	/** CRDT-eligible = markdown OR canvas: both sync over the Yjs transport
 	 *  (the manager's docKind picks the per-type schema). Binary/attachment
 	 *  types are NOT eligible and stay on the REST/attachment path. */
 	isCrdtEligible(file: TAbstractFile): boolean {
-		return file instanceof TFile && (file.extension === "md" || file.extension === "canvas");
+		return file instanceof TFile && crdtEligiblePath(file.path);
 	}
 
 	/** Path-string variant of isCrdtEligible for the pull/apply path, which works
 	 *  with normalized paths (from a NoteChange), not TFile handles. */
 	isCrdtEligiblePath(path: string): boolean {
-		return path.endsWith(".md") || path.endsWith(".canvas");
+		return crdtEligiblePath(path);
 	}
 
 	/** True for a canvas note path. Canvas is CRDT but STRUCTURAL: its authoritative
@@ -2030,7 +2089,7 @@ export class SyncEngine {
 	 *  vestigial for canvas), so the pull path must converge it over the Yjs
 	 *  handshake, never by writing the seq-feed `content`. */
 	private isCanvasPath(path: string): boolean {
-		return path.endsWith(".canvas");
+		return canvasPath(path);
 	}
 
 	/** Check if a file should be synced (markdown, canvas, or binary attachment). */
@@ -2193,8 +2252,7 @@ export class SyncEngine {
 			this.files.clearMarker(file.path, "remotelyDeleted");
 			rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`);
 			if (this.isCrdtEligible(file) && crdtNoteId) {
-				await this.crdt?.removeDoc(crdtNoteId);
-				this.crdtEnrollment?.reset(crdtNoteId);
+				await this.teardownCrdtDoc(crdtNoteId);
 			}
 			return;
 		}
@@ -2229,21 +2287,20 @@ export class SyncEngine {
 			// attachments never hit removeDoc. Also gate on a known id — nothing to
 			// tear down if this note never had a CRDT room.
 			if (this.isCrdtEligible(file) && crdtNoteId) {
-				await this.crdt?.removeDoc(crdtNoteId);
-				this.crdtEnrollment?.reset(crdtNoteId);
+				await this.teardownCrdtDoc(crdtNoteId);
 			}
 		} catch (e) {
 			// 404 means already deleted — treat as success; still tear down CRDT.
 			if (isHttpStatus(e, 404)) {
 				this.goOnline();
 				if (this.isCrdtEligible(file) && crdtNoteId) {
-					await this.crdt?.removeDoc(crdtNoteId);
-					this.crdtEnrollment?.reset(crdtNoteId);
+					await this.teardownCrdtDoc(crdtNoteId);
 				}
 				return;
 			}
 			// biome-ignore lint/suspicious/noConsole: error boundary
 			console.error("Engram Sync: failed to delete %s", file.path, e);
+			rlog().error("push", `Delete failed (queued): ${file.path} | ${errMsg(e)}`);
 			await this.enqueueChange({
 				path: file.path,
 				action: "delete",
@@ -2325,6 +2382,10 @@ export class SyncEngine {
 				} else {
 					// biome-ignore lint/suspicious/noConsole: error boundary
 					console.error("Engram Sync: failed to delete old path %s", oldPath, e);
+					rlog().error(
+						"push",
+						`Rename old-leg delete failed (queued): ${oldPath} | ${errMsg(e)}`,
+					);
 					await this.enqueueChange({
 						path: oldPath,
 						action: "delete",
@@ -2845,8 +2906,7 @@ export class SyncEngine {
 								// between the projectedText read above and this removeDoc are
 								// dropped. Microtask-scale; accepted.
 								this.crdtEditorRebind?.(pushedPath);
-								await this.crdt.removeDoc(noteId);
-								this.crdtEnrollment?.reset(noteId);
+								await this.teardownCrdtDoc(noteId);
 							} else {
 								if (serverId && serverId !== noteId) {
 									this.noteIdMap?.set(normalizePath(pushedPath), serverId);
@@ -2888,6 +2948,13 @@ export class SyncEngine {
 									hash: fnv1a(consumed),
 									crdtHead: CRDT_HEAD_CREATED,
 								});
+								// The seed transmitted content, so the create's own broadcast
+								// comes back at us: open the echo-cooldown window exactly like
+								// the CRDT-op branch. (The seed-declined exit transmitted
+								// nothing; the post-create-throw exit may have transmitted but
+								// conservatively leaves the window closed — an unsuppressed
+								// self-echo there is absorbed by the hash-skip dedupe.)
+								success = true;
 							} else {
 								// ponytail: near-unreachable — a fresh in-cap note seedOnce's
 								// its body (non-null). If a live remote storm made the seed
@@ -3152,7 +3219,8 @@ export class SyncEngine {
 
 	/** Drain the batch failure tally for an aggregated, deduped Notice. Returns
 	 *  the count of generic failures since the last drain plus the first server
-	 *  message seen, and resets the tally. Callers (main.ts) fire one Notice. */
+	 *  message seen, and resets the tally. Consumed by the in-class batch
+	 *  toast (flushFailureSummaryToast); public for tests. */
 	drainFailureSummary(): { count: number; firstMessage?: string } {
 		const count = this.failuresThisBatch;
 		const firstMessage = this.firstFailureMessageThisBatch;
@@ -3257,8 +3325,9 @@ export class SyncEngine {
 		new Notice(`Engram: plan upgraded — syncing ${skipped.length} attachment(s)…`, 6_000);
 	}
 
-	/** Mark `path` in a TTL map, resetting any pending expiry. Shared body of
-	 *  the three echo-suppression marks below; destroy() sweeps the same maps. */
+	/** Mark `path` in a TTL map, resetting any pending expiry. Sole remaining
+	 *  caller is markRecentlyDeleted (the other echo-suppression marks moved to
+	 *  SyncedFileTable, #358); destroy() sweeps the same map. */
 	private markWithTtl(map: Map<string, number>, path: string, ms: number): void {
 		const existing = map.get(path);
 		if (existing) this.time.clearTimeout(existing);
@@ -3463,7 +3532,7 @@ export class SyncEngine {
 			(!this.crdtCatchupSince || !this.crdt || !(this.crdtLive?.() ?? false)) &&
 			Date.now() < deadline
 		) {
-			await new Promise((resolve) => window.setTimeout(resolve, 100));
+			await this.sleep(100);
 		}
 		if (!this.crdtCatchupSince || !this.crdt || !(this.crdtLive?.() ?? false)) {
 			throw new Error("Sync preview needs the live socket (op-log enumeration)");
@@ -3566,7 +3635,7 @@ export class SyncEngine {
 		for (let attempt = 0; attempt < 10; attempt++) {
 			const res = await this.catchupViaSeqReplay(opts);
 			if (res.ran) return res;
-			await new Promise((resolve) => window.setTimeout(resolve, 50));
+			await this.sleep(50);
 		}
 		return null;
 	}
@@ -3997,7 +4066,7 @@ export class SyncEngine {
 		}
 		devLog().log("crdt", `socket converge: cooldown skip for ${path} — arming trailing fire`);
 		const remaining = this.healCooldownMs - (now - last);
-		const timer = window.setTimeout(() => {
+		const timer = this.time.setTimeout(() => {
 			this.crdtHealTrailingTimers.delete(noteId);
 			this.fireCrdtReHandshake(path, noteId);
 		}, remaining);
@@ -4209,7 +4278,7 @@ export class SyncEngine {
 	 *  gate. The normal end-of-pull drain clears this timer. */
 	private schedulePostPullDrain(): void {
 		if (this.postPullDrainTimer !== null) return;
-		this.postPullDrainTimer = window.setTimeout(() => {
+		this.postPullDrainTimer = this.time.setTimeout(() => {
 			this.postPullDrainTimer = null;
 			void this.flushPostPullPushes();
 		}, this.postPullMaxDeferMs);
@@ -4219,7 +4288,7 @@ export class SyncEngine {
 	 *  naturally skip sync-engine writes; only real user edits get pushed. */
 	private async flushPostPullPushes(): Promise<void> {
 		if (this.postPullDrainTimer !== null) {
-			window.clearTimeout(this.postPullDrainTimer);
+			this.time.clearTimeout(this.postPullDrainTimer);
 			this.postPullDrainTimer = null;
 		}
 		if (this.pendingPostPullPushes.size === 0) return;
@@ -4342,7 +4411,7 @@ export class SyncEngine {
 					});
 					// Yield to UI thread periodically so progress modal can repaint
 					if ((i + 1) % 20 === 0) {
-						await new Promise((resolve) => window.setTimeout(resolve, 0));
+						await this.sleep(0);
 					}
 				}
 				devLog().log(
@@ -4398,8 +4467,11 @@ export class SyncEngine {
 			folder: event.folder ?? "",
 			title: event.title ?? "",
 			tags: event.tags ?? [],
-			mtime: event.mtime ?? Date.now(),
-			updated_at: event.updated_at ?? new Date().toISOString(),
+			// Absence stays absence — see the SyncOp field doc and the guard
+			// comment in handleStreamEvent (client-receipt time must become
+			// undefined, not a value).
+			mtime: event.mtime,
+			updated_at: event.updated_at,
 			version: event.version,
 		};
 	}
@@ -4546,10 +4618,7 @@ export class SyncEngine {
 				// so the bytes are preserved at the new path — no drift keep-both copy.
 				const existing = this.app.vault.getFileByPath(normalized);
 				if (existing) {
-					await this.trashRemotelyDeleted(existing);
-					await this.removeEmptyFolders(normalized);
-					this.syncState.delete(normalized);
-					this.baseStore?.delete(normalized);
+					await this.applyRemoteRemoval(existing);
 				}
 				// Only clear a stale old-path→id mapping if one still points at the
 				// relocated room; leave the id's room mapping (new path) intact.
@@ -4596,10 +4665,7 @@ export class SyncEngine {
 				// trashRemotelyDeleted marks remotelyDeleted, so this device's own
 				// vault-delete event is echo-suppressed and never re-pushed (the
 				// 2026-07-08 wipe-echo invariant, test_86).
-				await this.trashRemotelyDeleted(existing);
-				await this.removeEmptyFolders(normalized);
-				this.syncState.delete(normalized);
-				this.baseStore?.delete(normalized);
+				await this.applyRemoteRemoval(existing);
 			}
 			// Tear down the CRDT doc for md paths regardless of whether the file
 			// existed locally. The ghost lineage in IDB/memory must be cleared so a
@@ -4612,8 +4678,7 @@ export class SyncEngine {
 				this.noteIdMap?.delete(normalized);
 				const roomId = targetId ?? currentId;
 				if (roomId) {
-					await this.crdt?.removeDoc(roomId);
-					this.crdtEnrollment?.reset(roomId);
+					await this.teardownCrdtDoc(roomId);
 				}
 			}
 			return;
@@ -4766,7 +4831,11 @@ export class SyncEngine {
 						) {
 							await this.applyOp(this.eventToOp(event, event.content, noteId));
 						} else {
-							void this.materializeRelocated(event.path, noteId);
+							// Awaited: the exists-check below otherwise races the
+							// materialize it's checking for and fires a whole seq-replay
+							// for a file about to appear (idempotent, but a wasted
+							// round-trip on every relocation).
+							await this.materializeRelocated(event.path, noteId);
 							if (!this.app.vault.getAbstractFileByPath(np)) {
 								void this.catchupViaSeqReplay();
 							}
@@ -4782,8 +4851,9 @@ export class SyncEngine {
 						content_hash: event.content_hash,
 						folder: event.folder ?? "",
 						tags: event.tags ?? [],
-						mtime: event.mtime ?? Date.now(),
-						updated_at: event.updated_at ?? new Date().toISOString(),
+						// applyChange reads neither field; sentinels, not clock lies.
+						mtime: event.mtime ?? 0,
+						updated_at: event.updated_at ?? "",
 						deleted: false,
 						version: event.version,
 					});
@@ -4797,6 +4867,12 @@ export class SyncEngine {
 			} catch (e) {
 				// biome-ignore lint/suspicious/noConsole: error boundary
 				console.error("Engram Sync: failed to apply WebSocket event %s", event.path, e);
+				// Sync-critical failure — must reach Loki, not just the local console.
+				rlog().error(
+					"ws",
+					`Apply failed: ${event.event_type} ${event.path} | ${errMsg(e)}`,
+					e instanceof Error ? e.stack : undefined,
+				);
 			}
 		}
 	}
@@ -4861,7 +4937,7 @@ export class SyncEngine {
 			if (lastTs !== undefined && eventTs < lastTs) {
 				rlog().info(
 					"pull",
-					`Id-keyed move IGNORED (stale event ts=${eventTs} <= last-applied ts=${lastTs}): ` +
+					`Id-keyed move IGNORED (stale event ts=${eventTs} < last-applied ts=${lastTs}): ` +
 						`${id} -> ${newPath}`,
 				);
 				return;
@@ -5050,7 +5126,7 @@ export class SyncEngine {
 			// than NaN, which would poison every future comparison for this id
 			// (NaN is never < anything, so the guard would silently stop
 			// protecting it for the rest of the session).
-			const relocationTs = Date.parse(op.updated_at);
+			const relocationTs = Date.parse(op.updated_at ?? "");
 			await this.moveIfIdRelocated(
 				op.id,
 				op.path,
@@ -5080,8 +5156,9 @@ export class SyncEngine {
 			content_hash: op.content_hash,
 			folder: op.folder,
 			tags: op.tags,
-			mtime: op.mtime,
-			updated_at: op.updated_at,
+			// applyChange reads neither field; sentinels only satisfy the shape.
+			mtime: op.mtime ?? 0,
+			updated_at: op.updated_at ?? "",
 			deleted: op.kind === "delete",
 			version: op.version,
 			seq: op.seq,
@@ -5280,13 +5357,12 @@ export class SyncEngine {
 					// uncomputable client-side), so this stage cannot be
 					// content-verified; commitCrdtConvergence keeps the pre-wave-5
 					// best-effort behavior for it (commit on the next non-empty frame).
-					this.pendingConvergence.set(noteId, {
-						path,
-						serverHash: entry.content_hash,
-						content: null,
-					});
+					this.stageAndConverge(noteId, path, entry.content_hash, null);
+				} else {
+					// No hash to stage: still fire the re-handshake (pre-extraction
+					// behavior — the stage was conditional, the converge was not).
+					this.socketConverge(path, noteId);
 				}
-				this.socketConverge(path, noteId);
 				poked++;
 			} catch (e) {
 				rlog().warn("crdt", `live-bound heal failed for ${path}: ${errMsg(e)}`);
@@ -5413,10 +5489,7 @@ export class SyncEngine {
 					}
 					// fall through to trash below
 				}
-				await this.trashRemotelyDeleted(existing);
-				await this.removeEmptyFolders(normalized);
-				this.syncState.delete(normalized);
-				this.baseStore?.delete(normalized);
+				await this.applyRemoteRemoval(existing);
 				rlog().info("pull", `Deleted: ${change.path}`);
 				// Tear the CRDT room down so a note recreated at this path starts
 				// fresh (no ghost lineage). Gated on note_id + .md — a legacy note
@@ -5425,8 +5498,7 @@ export class SyncEngine {
 				// applySyncChange's deferred clear).
 				if (crdtNoteId && this.isCrdtEligiblePath(normalized)) {
 					this.noteIdMap?.delete(normalized);
-					await this.crdt?.removeDoc(crdtNoteId);
-					this.crdtEnrollment?.reset(crdtNoteId);
+					await this.teardownCrdtDoc(crdtNoteId);
 				}
 				return true;
 			}
@@ -5658,14 +5730,14 @@ export class SyncEngine {
 							// content: the row's own plaintext (fix wave 5) — lets
 							// commitCrdtConvergence content-verify the commit instead of
 							// trusting that the next onSynced fire is FOR this row.
-							this.pendingConvergence.set(noteId, {
-								path: normalized,
-								serverHash: change.content_hash,
+							this.stageAndConverge(
+								noteId,
+								normalized,
+								change.content_hash,
 								content,
-								version: change.version,
-								seq: change.seq,
-							});
-							this.socketConverge(normalized, noteId);
+								change.version,
+								change.seq,
+							);
 						}
 					} else {
 						// Backfill is ONLY a catch-up for a CLEAN local file. If the
@@ -5710,14 +5782,14 @@ export class SyncEngine {
 								"pull",
 								`CRDT catch-up: baseline-content row (echo/lagged), socket re-handshake ${change.path}`,
 							);
-							this.pendingConvergence.set(noteId, {
-								path: normalized,
-								serverHash: change.content_hash,
-								content: null,
-								version: change.version,
-								seq: change.seq,
-							});
-							this.socketConverge(normalized, noteId);
+							this.stageAndConverge(
+								noteId,
+								normalized,
+								change.content_hash,
+								null,
+								change.version,
+								change.seq,
+							);
 							return false;
 						}
 						const localDiverged =
@@ -5762,14 +5834,14 @@ export class SyncEngine {
 								`Engram: sync conflict on ${normalized} — your local edit was saved as ${copy}`,
 							);
 							if (noteId) {
-								this.pendingConvergence.set(noteId, {
-									path: normalized,
-									serverHash: change.content_hash,
+								this.stageAndConverge(
+									noteId,
+									normalized,
+									change.content_hash,
 									content,
-									version: change.version,
-									seq: change.seq,
-								});
-								this.socketConverge(normalized, noteId);
+									change.version,
+									change.seq,
+								);
 							}
 							return false;
 						}
@@ -5821,14 +5893,14 @@ export class SyncEngine {
 								"pull",
 								`CRDT catch-up: diverged cold note, socket re-handshake ${change.path}`,
 							);
-							this.pendingConvergence.set(noteId, {
-								path: normalized,
-								serverHash: change.content_hash,
+							this.stageAndConverge(
+								noteId,
+								normalized,
+								change.content_hash,
 								content,
-								version: change.version,
-								seq: change.seq,
-							});
-							this.socketConverge(normalized, noteId);
+								change.version,
+								change.seq,
+							);
 						} else {
 							// No note_id (legacy GET /notes/changes path — no id to pull
 							// a CRDT delta for): fall back to the content-snapshot
@@ -5948,9 +6020,7 @@ export class SyncEngine {
 		if (change.deleted) {
 			const existing = this.app.vault.getFileByPath(normalized);
 			if (existing) {
-				await this.trashRemotelyDeleted(existing);
-				await this.removeEmptyFolders(normalized);
-				this.syncState.delete(normalized);
+				await this.applyRemoteRemoval(existing, { dropBase: false });
 				rlog().info("pull", `Attachment deleted: ${change.path}`);
 				return true;
 			}
@@ -6464,10 +6534,7 @@ export class SyncEngine {
 				else failed++;
 				continue;
 			}
-			const b64 = this.encodeGenesisFrame(
-				content,
-				file.extension === "canvas" ? "canvas" : "note",
-			);
+			const b64 = this.encodeGenesisFrame(content, docKindFor(file.path));
 			const size = b64.length;
 			// #245: snapshot the path now — TFile.path is live and a mid-request
 			// rename would otherwise desync result matching + the pushing set.
@@ -6529,8 +6596,8 @@ export class SyncEngine {
 		});
 		if (!wasDegraded && mapped.category === "frontmatter") {
 			this.pendingDegraded.add(path);
-			if (this.degradedNoticeTimer) window.clearTimeout(this.degradedNoticeTimer);
-			this.degradedNoticeTimer = window.setTimeout(
+			if (this.degradedNoticeTimer) this.time.clearTimeout(this.degradedNoticeTimer);
+			this.degradedNoticeTimer = this.time.setTimeout(
 				() => this.flushDegradedNotice(),
 				DEGRADED_NOTICE_DEBOUNCE_MS,
 			);
@@ -6575,6 +6642,59 @@ export class SyncEngine {
 		this.onSyncProgress?.({ phase: "pushing", current, total, failed, currentPath });
 	}
 
+	/** Shared push pipeline: split notes/attachments, bulk-create genesis
+	 *  notes over crdt_create_batch, then per-file push in batches of
+	 *  PUSH_BATCH_SIZE with progress. The two callers had drifted: the
+	 *  incremental copy reported failed=0 to the progress UI even when the
+	 *  genesis batch failed files.
+	 *
+	 *  mode "force" (pushAll): pushFile(force), per-file failures caught,
+	 *  counted and written to the sync log — a full push must survive bad
+	 *  files. mode "incremental" (pushModifiedFiles): unforced, no sync-log
+	 *  entries, and a per-file throw propagates to the caller's error
+	 *  boundary, exactly as before the extraction. */
+	private async pushPartitioned(
+		toSync: TFile[],
+		mode: "incremental" | "force",
+	): Promise<{ pushed: number; failed: number }> {
+		const total = toSync.length;
+		const noteFiles = toSync.filter((f: TFile) => !this.isBinaryFile(f));
+		const attachFiles = toSync.filter((f: TFile) => this.isBinaryFile(f));
+		const { genesis, known } = this.partitionGenesis(noteFiles);
+
+		const genesisOutcome = await this.pushGenesisBatch(genesis, (pushedSoFar, failedSoFar) => {
+			this.emitPushing(pushedSoFar, total, failedSoFar);
+		});
+		let pushed = genesisOutcome.pushed;
+		let failed = genesisOutcome.failed;
+
+		const perFile = [...known, ...attachFiles];
+		for (let i = 0; i < perFile.length; i += PUSH_BATCH_SIZE) {
+			const batch = perFile.slice(i, i + PUSH_BATCH_SIZE);
+			const results = await Promise.all(
+				batch.map(async (f: TFile) => {
+					if (mode === "incremental") return this.pushFile(f);
+					try {
+						const ok = await this.pushFile(f, true);
+						if (ok) {
+							this.logEntry("push", f.path, "ok");
+						} else {
+							this.logEntry("skip", f.path, "skipped", undefined, "unchanged");
+						}
+						return ok;
+					} catch (e) {
+						failed++;
+						this.logEntry("push", f.path, "error", errMsg(e));
+						return false;
+					}
+				}),
+			);
+			pushed += results.filter(Boolean).length;
+			this.emitPushing(pushed, total, failed, batch[batch.length - 1]?.path);
+		}
+		return { pushed, failed };
+	}
+
 	/** Push files modified since `sinceTimestamp` (default: `lastSync`) — both
 	 *  genuinely-modified tracked files and never-before-synced local-only
 	 *  notes (always included regardless of mtime). A brand-new note's first
@@ -6592,7 +6712,6 @@ export class SyncEngine {
 		const files = this.app.vault.getFiles();
 		let pushed = 0;
 
-		// Batch in groups of 10
 		const toSync = files.filter((f: TFile) => {
 			if (!this.isSyncable(f) || this.shouldIgnore(f.path)) return false;
 			if (!this.syncState.has(f.path)) return true;
@@ -6608,26 +6727,8 @@ export class SyncEngine {
 			this.emitPushing(0, total, 0);
 		}
 
-		// Single write path: genesis (never-server-known) notes bulk-create with
-		// content via crdt_create_batch; server-known notes + attachments keep the
-		// per-file pushFile path (its CRDT-op / REST convergence). When the batch
-		// op is unwired, partitionGenesis puts every note on the per-file side.
-		const noteFiles = toSync.filter((f: TFile) => !this.isBinaryFile(f));
-		const attachFiles = toSync.filter((f: TFile) => this.isBinaryFile(f));
-		const { genesis, known } = this.partitionGenesis(noteFiles);
-
-		const genesisOutcome = await this.pushGenesisBatch(genesis, (pushedSoFar, failedSoFar) => {
-			this.emitPushing(pushedSoFar, total, failedSoFar);
-		});
-		pushed += genesisOutcome.pushed;
-
-		const perFile = [...known, ...attachFiles];
-		for (let i = 0; i < perFile.length; i += 10) {
-			const batch = perFile.slice(i, i + 10);
-			const results = await Promise.all(batch.map((f: TFile) => this.pushFile(f)));
-			pushed += results.filter(Boolean).length;
-			this.emitPushing(pushed, total, 0);
-		}
+		const outcome = await this.pushPartitioned(toSync, "incremental");
+		pushed += outcome.pushed;
 
 		this.flushAttachmentLimitedToast();
 		this.flushFailureSummaryToast();
@@ -6888,44 +6989,9 @@ export class SyncEngine {
 
 		this.emitPushing(0, total, 0);
 
-		// Single write path: genesis (never-server-known) notes bulk-create with
-		// content via crdt_create_batch (≤100 per request); server-known notes +
-		// attachments keep the per-file force-push path. When the batch op is
-		// unwired, partitionGenesis puts every note on the per-file side.
-		const noteFiles = toSync.filter((f: TFile) => !this.isBinaryFile(f));
-		const attachFiles = toSync.filter((f: TFile) => this.isBinaryFile(f));
-		const { genesis, known } = this.partitionGenesis(noteFiles);
-
-		const genesisOutcome = await this.pushGenesisBatch(genesis, (pushedSoFar, failedSoFar) => {
-			this.emitPushing(pushedSoFar, total, failedSoFar);
-		});
-		pushed += genesisOutcome.pushed;
-		failed += genesisOutcome.failed;
-
-		const perFile = [...known, ...attachFiles];
-		for (let i = 0; i < perFile.length; i += 10) {
-			const batch = perFile.slice(i, i + 10);
-			const results = await Promise.all(
-				batch.map(async (f: TFile) => {
-					try {
-						const ok = await this.pushFile(f, true);
-						if (ok) {
-							this.logEntry("push", f.path, "ok");
-						} else {
-							this.logEntry("skip", f.path, "skipped", undefined, "unchanged");
-						}
-						return ok;
-					} catch (e) {
-						failed++;
-						const msg = errMsg(e);
-						this.logEntry("push", f.path, "error", msg);
-						return false;
-					}
-				}),
-			);
-			pushed += results.filter(Boolean).length;
-			this.emitPushing(pushed, total, failed, batch[batch.length - 1]!.path);
-		}
+		const outcome = await this.pushPartitioned(toSync, "force");
+		pushed += outcome.pushed;
+		failed += outcome.failed;
 
 		// Replace mode: every local file is now (re)pushed, so delete the
 		// server-ONLY extras enumerated above. Note-ids go over the durable CRDT
@@ -7172,7 +7238,7 @@ export class SyncEngine {
 			this.failuresThisBatch += 1;
 			this.firstFailureMessageThisBatch ??= classified.message;
 		}
-		await this.queue.dequeue(entry.path, entry.vaultId ?? this.settings.vaultId ?? undefined);
+		await this.queue.dequeue(entry.path, this.entryVaultId(entry));
 	}
 
 	/** Decide the fate of a queue entry whose flush just failed, and act on it.
@@ -7238,6 +7304,7 @@ export class SyncEngine {
 		this.flushQueue().catch((e) => {
 			// biome-ignore lint/suspicious/noConsole: error boundary
 			console.error("Engram Sync: queue flush failed", e);
+			rlog().error("queue", `Flush failed after reconnect: ${errMsg(e)}`);
 		});
 	}
 
@@ -7247,7 +7314,7 @@ export class SyncEngine {
 	private startHealthCheck(): void {
 		if (this.healthCheckTimer) return;
 		const tick = () => {
-			this.healthCheckTimer = window.setTimeout(() => {
+			this.healthCheckTimer = this.time.setTimeout(() => {
 				void (async () => {
 					try {
 						if (await this.api.health()) {
@@ -7268,7 +7335,7 @@ export class SyncEngine {
 	/** Stop health checks and reset the backoff. */
 	private stopHealthCheck(): void {
 		if (this.healthCheckTimer) {
-			window.clearTimeout(this.healthCheckTimer);
+			this.time.clearTimeout(this.healthCheckTimer);
 			this.healthCheckTimer = null;
 		}
 		this.healthCheckFailures = 0;
@@ -7373,10 +7440,7 @@ export class SyncEngine {
 					if (!base64) {
 						const file = this.app.vault.getFileByPath(entry.path);
 						if (!file) {
-							await this.queue.dequeue(
-								entry.path,
-								entry.vaultId ?? this.settings.vaultId ?? undefined,
-							);
+							await this.queue.dequeue(entry.path, this.entryVaultId(entry));
 							this.issues.clear(entry.path);
 							flushed++;
 							continue;
@@ -7412,7 +7476,7 @@ export class SyncEngine {
 						if (this.crdt && (this.crdtLive?.() ?? false)) {
 							this.pendingQueueDeliveries.set(entry.noteId, {
 								path: entry.path,
-								vaultId: entry.vaultId ?? this.settings.vaultId ?? undefined,
+								vaultId: this.entryVaultId(entry),
 							});
 							this.socketConverge(normalizePath(entry.path), entry.noteId);
 						}
@@ -7432,10 +7496,7 @@ export class SyncEngine {
 							// non-crdt entry has nothing left to send.
 							if (entry.crdt && entry.noteId)
 								this.crdtEnrollment?.enroll(entry.noteId);
-							await this.queue.dequeue(
-								entry.path,
-								entry.vaultId ?? this.settings.vaultId ?? undefined,
-							);
+							await this.queue.dequeue(entry.path, this.entryVaultId(entry));
 							this.issues.clear(entry.path);
 							flushed++;
 							continue;
@@ -7521,10 +7582,7 @@ export class SyncEngine {
 						}
 					}
 				}
-				await this.queue.dequeue(
-					entry.path,
-					entry.vaultId ?? this.settings.vaultId ?? undefined,
-				);
+				await this.queue.dequeue(entry.path, this.entryVaultId(entry));
 				this.issues.clear(entry.path);
 				flushed++;
 			} catch (e) {
@@ -7571,15 +7629,15 @@ export class SyncEngine {
 		this.recentlyDeleted.clear();
 		this.pendingPostPullPushes.clear();
 		if (this.seqHealTimer !== null) {
-			window.clearTimeout(this.seqHealTimer);
+			this.time.clearTimeout(this.seqHealTimer);
 			this.seqHealTimer = null;
 		}
 		if (this.postPullDrainTimer !== null) {
-			window.clearTimeout(this.postPullDrainTimer);
+			this.time.clearTimeout(this.postPullDrainTimer);
 			this.postPullDrainTimer = null;
 		}
 		for (const timer of this.crdtHealTrailingTimers.values()) {
-			window.clearTimeout(timer);
+			this.time.clearTimeout(timer);
 		}
 		this.crdtHealTrailingTimers.clear();
 		// Per-note CRDT bookkeeping that holds no timers, so nothing leaks if it
@@ -7593,7 +7651,7 @@ export class SyncEngine {
 		this.crdtRehandshakeAttempts.clear();
 		this.crdtHealCooldown.clear();
 		this.pendingQueueDeliveries.clear();
-		if (this.degradedNoticeTimer) window.clearTimeout(this.degradedNoticeTimer);
+		if (this.degradedNoticeTimer) this.time.clearTimeout(this.degradedNoticeTimer);
 		this.degradedNoticeTimer = null;
 		this.pendingDegraded.clear();
 		this.stopHealthCheck();

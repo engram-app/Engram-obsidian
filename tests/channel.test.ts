@@ -829,3 +829,63 @@ describe("makeCrdtCatchupSender (wiring #312/#314)", () => {
 		expect(ch.calls).toHaveLength(0);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Repo-review safety batch (2026-08): disconnect() must be able to cancel an
+// in-flight openSocketInner. The open suspends on the async token fetch; a
+// backend/vault switch calls disconnect() in that window, and the resumed open
+// must NOT create a live socket the plugin believes is dead.
+// ---------------------------------------------------------------------------
+
+describe("disconnect during in-flight open", () => {
+	test("disconnect() while the open awaits the token aborts the open (no zombie socket)", async () => {
+		let release: (v: string) => void = () => {};
+		const provider: AuthProvider = {
+			getToken: mock(
+				() =>
+					new Promise<string>((res) => {
+						release = res;
+					}),
+			),
+			getVaultId: mock(() => "7"),
+			isAuthenticated: mock(() => true),
+			signOut: mock(() => {}),
+		};
+		const channel = new NoteChannel("http://localhost:4000", "", "42", "7");
+		channel.setAuthProvider(provider);
+		const opening = channel.connect(); // suspends on getToken
+		channel.disconnect(); // intentional teardown mid-open
+		release("late-token");
+		await opening;
+		expect(lastWsInstance).toBeNull(); // no socket may exist after teardown
+		expect(channel.isConnected()).toBe(false);
+	});
+
+	test("a connect() after the aborted open still works", async () => {
+		let release: (v: string) => void = () => {};
+		let calls = 0;
+		const provider: AuthProvider = {
+			getToken: mock(() => {
+				calls++;
+				if (calls === 1) {
+					return new Promise<string>((res) => {
+						release = res;
+					});
+				}
+				return Promise.resolve("fresh-token");
+			}),
+			getVaultId: mock(() => "7"),
+			isAuthenticated: mock(() => true),
+			signOut: mock(() => {}),
+		};
+		const channel = new NoteChannel("http://localhost:4000", "", "42", "7");
+		channel.setAuthProvider(provider);
+		const opening = channel.connect();
+		channel.disconnect();
+		release("late-token");
+		await opening;
+		await channel.connect(); // a fresh, wanted connect must not be blocked
+		expect(lastWsUrl).toContain("fresh-token");
+		channel.disconnect();
+	});
+});

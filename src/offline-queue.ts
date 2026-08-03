@@ -13,6 +13,8 @@
  * battle-tested persisted component to reach parity with a design we do not
  * need would have been the expensive way to get those.
  */
+import { errMsg } from "./error-util";
+import { rlog } from "./remote-log";
 import type { QueueEntry } from "./types";
 
 /**
@@ -160,7 +162,12 @@ export class OfflineQueue {
 		if (this.persistTimer) return;
 		this.persistTimer = window.setTimeout(() => {
 			this.persistTimer = null;
-			void this.persistFn?.(this.all());
+			// A failed data.json write means queued work silently vanishes on the
+			// next reload; persistNow propagates the same failure to its caller,
+			// so the debounced path must at least leave a trace.
+			void this.persistFn?.(this.all()).catch((e) => {
+				rlog().warn("queue", `debounced persist failed: ${errMsg(e)}`);
+			});
 		}, this.persistDelayMs);
 	}
 

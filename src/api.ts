@@ -6,10 +6,11 @@
 import { type RequestUrlResponse, requestUrl } from "obsidian";
 import type { AuthProvider } from "./auth";
 import { interpretHealthProbe, type PreflightResult } from "./auth-state";
+import { isHttpStatus, statusOf } from "./error-util";
 import { LimitExceededError } from "./limit-error";
 import { BeaconBuffer } from "./observability/beacon";
 import { newTraceContext } from "./observability/traceGen";
-import { rlog } from "./remote-log";
+import { type RemoteLogEntry, rlog } from "./remote-log";
 import type {
 	AttachmentDetail,
 	AttachmentResponse,
@@ -123,6 +124,9 @@ export class EngramApi {
 
 	setAuthProvider(provider: AuthProvider | null): void {
 		this.authProvider = provider;
+		// The cached beacon token belongs to the old credential source; keeping
+		// it would let a pending beacon batch post it under the new identity.
+		this.lastToken = "";
 	}
 
 	getActiveVaultId(): string | null {
@@ -151,8 +155,12 @@ export class EngramApi {
 		return token;
 	}
 
-	/** Strip trailing slashes and append /api if not already present. */
-	private static normalizeBaseUrl(url: string): string {
+	/** Strip trailing slashes and append /api if not already present. Public:
+	 *  the single normalizer for every surface that builds an API base
+	 *  (device flow, OAuth token refresh) — copies of this logic once lived
+	 *  inline at those sites. The channel's WS origin is the inverse shape
+	 *  (strips /api); see wsOrigin in channel.ts. */
+	static normalizeBaseUrl(url: string): string {
 		const base = url.replace(/\/+$/, "");
 		return base.endsWith("/api") ? base : `${base}/api`;
 	}
@@ -183,6 +191,10 @@ export class EngramApi {
 	updateConfig(baseUrl: string, apiKey: string): void {
 		this.baseUrl = EngramApi.normalizeBaseUrl(baseUrl);
 		this.apiKey = apiKey;
+		// A backend switch wipes every persisted token (withClearedAuth) for
+		// exactly this reason: a pending beacon batch must never ship the old
+		// backend's JWT to the new origin.
+		this.lastToken = "";
 	}
 
 	private async request(
@@ -194,7 +206,7 @@ export class EngramApi {
 		try {
 			return await this.sendRequest(method, path, body, extraHeaders);
 		} catch (e) {
-			const status = (e as { status?: number }).status;
+			const status = statusOf(e);
 			// 402 = tier limit exceeded. Convert to a typed error carrying the
 			// structured body (reason / limit_key / limit / current / upgrade_url)
 			// so callers can route on reason (toast handler, Sync Center) without
@@ -209,7 +221,23 @@ export class EngramApi {
 			// recovery path, so retry only when invalidateAccessToken is supported.
 			if (status === 401 && this.authProvider?.invalidateAccessToken) {
 				this.authProvider.invalidateAccessToken();
-				return this.sendRequest(method, path, body, extraHeaders);
+				// Single-shot retry (recursing into request() could 401-loop), but it
+				// must keep the 402 mapping and failure logging of the primary path —
+				// a 401-then-402 (token refresh revealing a lapsed plan) otherwise
+				// escapes as a raw rejection and is retried forever instead of parked.
+				try {
+					return await this.sendRequest(method, path, body, extraHeaders);
+				} catch (e2) {
+					const retryStatus = statusOf(e2);
+					if (retryStatus === 402) {
+						throw parseLimitExceededError(e2);
+					}
+					rlog().warn(
+						"api",
+						`${method} ${path} failed after 401 retry — status=${retryStatus ?? "none"} vault=${this.vaultId ?? "none"}`,
+					);
+					throw e2;
+				}
 			}
 			// Log every non-2xx with method/status/vault so failures are legible
 			// (a 404 here meaning "token's user doesn't own this vault" is easy
@@ -381,7 +409,11 @@ export class EngramApi {
 	/** Get the current authenticated user (id + email). Used to determine channel topic. */
 	async getMe(): Promise<{ id: string; email: string }> {
 		const resp = await this.request("GET", "/me");
-		return (resp.json as { user: { id: string; email: string } }).user;
+		const user = (resp.json as { user?: { id: string; email: string } }).user;
+		// A shape mismatch (proxy error page, wrong server) must be a legible
+		// error, not an opaque TypeError on a nested dereference.
+		if (!user) throw new Error("Malformed /me response: missing user");
+		return user;
 	}
 
 	/** Register this vault with the backend. Returns existing vault if client_id matches.
@@ -400,7 +432,9 @@ export class EngramApi {
 	 *  on validation errors. */
 	async createVault(name: string): Promise<VaultInfo> {
 		const resp = await this.request("POST", "/vaults", { name });
-		return (resp.json as { vault: VaultInfo }).vault;
+		const vault = (resp.json as { vault?: VaultInfo }).vault;
+		if (!vault) throw new Error("Malformed /vaults response: missing vault");
+		return vault;
 	}
 
 	/** Fetch all vaults accessible by the current user. Throws the underlying
@@ -408,7 +442,11 @@ export class EngramApi {
 	 *  401/timeout/5xx distinctly from "successful empty list". */
 	async listVaults(): Promise<VaultInfo[]> {
 		const resp = await this.request("GET", "/vaults");
-		return (resp.json as { vaults: VaultInfo[] }).vaults;
+		const vaults = (resp.json as { vaults?: VaultInfo[] }).vaults;
+		// NOT `?? []`: a malformed 200 must stay distinct from a genuine empty
+		// list (see the doc comment above).
+		if (!Array.isArray(vaults)) throw new Error("Malformed /vaults response: missing vaults");
+		return vaults;
 	}
 
 	/** Authenticated ping — verifies both connectivity and API key. */
@@ -417,7 +455,7 @@ export class EngramApi {
 			await this.request("GET", "/folders");
 			return { ok: true };
 		} catch (e: unknown) {
-			const status = (e as { status?: number }).status;
+			const status = statusOf(e);
 			if (status === 401 || status === 403) {
 				return { ok: false, error: "Invalid API key" };
 			}
@@ -458,10 +496,19 @@ export class EngramApi {
 			const resp = await this.request("POST", "/notes", body);
 			return resp.json as NoteResponse;
 		} catch (e) {
-			if (typeof e === "object" && e !== null && (e as { status?: number }).status === 409) {
+			if (isHttpStatus(e, 409)) {
 				const err = e as { json?: VersionConflictResponse; text?: string };
 				if (err.json) return err.json;
-				if (err.text) return JSON.parse(err.text) as VersionConflictResponse;
+				if (err.text) {
+					// A mangled 409 body (proxy error page, truncation) must stay a
+					// classifiable conflict, not become a bare SyntaxError with no
+					// .status that callers misread as connection loss.
+					try {
+						return JSON.parse(err.text) as VersionConflictResponse;
+					} catch {
+						throw e;
+					}
+				}
 			}
 			throw e;
 		}
@@ -536,25 +583,17 @@ export class EngramApi {
 			const resp = await this.request("GET", `/sync/manifest${qs}`);
 			return resp.json as ManifestResponse;
 		} catch (e) {
-			if (typeof e === "object" && e !== null && (e as { status?: number }).status === 404) {
+			if (isHttpStatus(e, 404)) {
 				return null;
 			}
 			throw e;
 		}
 	}
 
-	/** Push batched log entries to the server for remote debugging. */
-	async pushLogs(
-		entries: {
-			ts: string;
-			level: string;
-			category: string;
-			message: string;
-			stack?: string;
-			plugin_version: string;
-			platform: string;
-		}[],
-	): Promise<void> {
+	/** Push batched log entries to the server for remote debugging. Typed as
+	 *  the real wire shape — an inline copy of it here had already drifted
+	 *  (missing conn_id/device_id/vault_id/seq that ARE sent). */
+	async pushLogs(entries: RemoteLogEntry[]): Promise<void> {
 		await this.request("POST", "/logs", { logs: entries });
 	}
 
@@ -622,11 +661,24 @@ function parseLimitExceededError(e: unknown): LimitExceededError {
 	const pick = <T>(key: string): T | null => (body[key] !== undefined ? (body[key] as T) : null);
 	return new LimitExceededError(
 		typeof body.reason === "string" ? body.reason : "unknown",
-		pick<string>("upgrade_url"),
+		sanitizeUpgradeUrl(body.upgrade_url),
 		pick<string>("limit_key"),
 		pick<number | boolean>("limit"),
 		pick<number>("current"),
 	);
+}
+
+/** The 402 body's upgrade_url is handed to window.open (Electron external-open
+ *  on desktop), so a malicious self-host backend must not be able to launch
+ *  arbitrary protocol handlers. Only absolute http(s) URLs survive. */
+function sanitizeUpgradeUrl(v: unknown): string | null {
+	if (typeof v !== "string") return null;
+	try {
+		const u = new URL(v);
+		return u.protocol === "http:" || u.protocol === "https:" ? v : null;
+	} catch {
+		return null;
+	}
 }
 
 /** Encode a vault path for use in a URL path segment list. Encodes each
@@ -637,14 +689,17 @@ function encodePath(path: string): string {
 	return path.split("/").map(encodeURIComponent).join("/");
 }
 
-/** Convert an ArrayBuffer to a base64 string. */
+/** Convert an ArrayBuffer to a base64 string. Chunked fromCharCode instead of
+ *  per-byte string concatenation: attachments run to multi-MB on the main
+ *  thread (mobile included), where the O(n) rope-churn loop was measurable.
+ *  32k chunks stay safely under engine argument-count limits. */
 export function arrayBufferToBase64(buffer: ArrayBuffer): string {
 	const bytes = new Uint8Array(buffer);
-	let binary = "";
-	for (let i = 0; i < bytes.byteLength; i++) {
-		binary += String.fromCharCode(bytes[i]!);
+	const parts: string[] = [];
+	for (let i = 0; i < bytes.length; i += 0x8000) {
+		parts.push(String.fromCharCode(...bytes.subarray(i, i + 0x8000)));
 	}
-	return btoa(binary);
+	return btoa(parts.join(""));
 }
 
 /** Convert a base64 string to an ArrayBuffer. */

@@ -306,3 +306,46 @@ describe("CrdtReadingView — preview-edit capture (#6)", () => {
 		expect(view.previewMode.edit).toBe(original);
 	});
 });
+
+describe("detach racing an in-flight attach (repo-review 2026-08)", () => {
+	it("a detach during the getYText await aborts the attach — no observer or patch outlives it", async () => {
+		const doc = new Y.Doc();
+		const ytext = doc.getText("content");
+		let observeCount = 0;
+		let unobserveCount = 0;
+		const realObserve = ytext.observe.bind(ytext);
+		const realUnobserve = ytext.unobserve.bind(ytext);
+		ytext.observe = (fn: Parameters<typeof ytext.observe>[0]) => {
+			observeCount++;
+			realObserve(fn);
+		};
+		ytext.unobserve = (fn: Parameters<typeof ytext.unobserve>[0]) => {
+			unobserveCount++;
+			realUnobserve(fn);
+		};
+
+		const view = fakeView();
+		let release!: (t: Y.Text) => void;
+		const rv = new CrdtReadingView({
+			getYText: () =>
+				new Promise<Y.Text>((res) => {
+					release = res;
+				}),
+			isReadingMode: () => true,
+			...noBinding,
+		});
+
+		const attaching = rv.attach(view, "n.md"); // suspends on getYText
+		rv.detach(view); // teardown wins the race
+		release(ytext);
+		await attaching;
+
+		// The resumed attach must NOT have installed anything the coordinator
+		// can no longer find (it re-inserted into observers but not attached,
+		// so detachAll skipped it and the observer + preview patch leaked).
+		expect(observeCount).toBe(0);
+		rv.detachAll();
+		expect(observeCount).toBe(0);
+		expect(unobserveCount).toBe(0);
+	});
+});

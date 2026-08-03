@@ -1147,3 +1147,22 @@ describe("NoteChannel CRDT frame senders", () => {
 		channel.disconnect();
 	});
 });
+
+describe("in-flight sendRequest on unclean close (repo-review 2026-08)", () => {
+	test("an unintentional socket close rejects pending replies promptly instead of hanging to the timeout", async () => {
+		const { channel, ws } = await joinedCrdtChannel();
+		const outcomeOf = (p: Promise<unknown>) =>
+			p.then(
+				() => "resolved",
+				() => "rejected",
+			);
+		const p = outcomeOf(channel.crdtCatchupSince(0));
+		ws.onclose?.({ code: 1006, reason: "", wasClean: false }); // network drop, NOT disconnect()
+		const outcome = await Promise.race([
+			p,
+			new Promise((r) => setTimeout(() => r("still-pending"), 100)),
+		]);
+		expect(outcome).toBe("rejected");
+		channel.disconnect();
+	});
+});

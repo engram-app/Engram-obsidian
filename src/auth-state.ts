@@ -136,6 +136,24 @@ export function cloudTabAction(
 	return "prompt-switch";
 }
 
+/** The ApiUrlSwitchTarget for the live plugin instance. One construction site
+ *  — this literal was copy-pasted at three settings-tab call sites. */
+export function pluginSwitchTarget(plugin: {
+	settings: ApiUrlSwitchTarget["settings"];
+	api: ApiUrlSwitchTarget["api"];
+	noteStream: ApiUrlSwitchTarget["noteStream"];
+	authProvider: unknown;
+}): ApiUrlSwitchTarget {
+	return {
+		settings: plugin.settings,
+		api: plugin.api,
+		noteStream: plugin.noteStream,
+		resetAuthProvider: () => {
+			plugin.authProvider = null;
+		},
+	};
+}
+
 /** Update `target.settings.apiUrl` and, if the new URL points at a different
  *  backend origin, wipe backend-scoped auth state, null out the API auth
  *  provider, reset the live in-memory auth provider (so a stale old-backend

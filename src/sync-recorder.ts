@@ -142,7 +142,12 @@ export function deserializeTimeline(json: string): SyncEvent[] {
 		// value is still an arbitrary string, so an unknown kind would sail through
 		// validation and reach a replayer that promises to switch exhaustively.
 		const e = raw as Record<string, unknown>;
-		if (typeof e.seq !== "number" || typeof e.kind !== "string" || !("data" in e)) {
+		if (
+			typeof e.seq !== "number" ||
+			typeof e.kind !== "string" ||
+			typeof e.data !== "object" ||
+			e.data === null
+		) {
 			throw new Error(`timeline entry ${index} is missing seq, kind or data`);
 		}
 		if (!isSyncEventKind(e.kind)) {

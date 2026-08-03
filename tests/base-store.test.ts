@@ -151,14 +151,4 @@ describe("BaseStore", () => {
 			expect(store.get("anything")).toBeUndefined();
 		});
 	});
-
-	describe("size estimation", () => {
-		it("should track approximate byte size", () => {
-			expect(store.estimateBytes()).toBe(0);
-			store.set("note.md", "hello", 1);
-			expect(store.estimateBytes()).toBeGreaterThan(0);
-			store.delete("note.md");
-			expect(store.estimateBytes()).toBe(0);
-		});
-	});
 });

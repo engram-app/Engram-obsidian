@@ -1,4 +1,5 @@
 import type { AuthProvider } from "./auth";
+import { expBackoff } from "./backoff";
 import { errMsg } from "./error-util";
 import { rlog } from "./remote-log";
 
@@ -50,7 +51,7 @@ export const RATE_LIMITED_JOIN_FLOOR_MS = 10_000;
  *  (getMe() preflight exhausted → no reconnect until plugin reload), while
  *  REST recovered on its own. */
 export function connectRetryDelayMs(attempt: number, baseMs = 2000): number {
-	return Math.min(baseMs * 2 ** attempt, RECONNECT_JITTER_MAX_MS);
+	return expBackoff(baseMs, attempt, RECONNECT_JITTER_MAX_MS);
 }
 
 export function clampReconnectJitter(raw: unknown): number | null {
@@ -122,12 +123,49 @@ export function makeCrdtCatchupSender(
 	};
 }
 
+/** Map a raw payload's note fields into a NoteStreamEvent. Shared by the
+ *  note_changed handler and the notes.batch digest loop — the two had
+ *  hand-copied field-cast lists, so a field added to one was silently absent
+ *  from the other (a partial event, not an error). `content`/`device_id` are
+ *  only carried by note_changed; batch digests are metadata-only and simply
+ *  don't have them in the payload. */
+function toStreamEvent(
+	p: Record<string, unknown>,
+	overrides: Partial<NoteStreamEvent> = {},
+): NoteStreamEvent {
+	return {
+		event_type: p.event_type as "upsert" | "delete",
+		path: p.path as string,
+		timestamp: Date.now(),
+		kind: (p.kind as "note" | "attachment") ?? "note",
+		id: p.id as string | undefined,
+		device_id: p.device_id as string | undefined,
+		content: p.content as string | undefined,
+		content_hash: p.content_hash as string | undefined,
+		title: p.title as string | undefined,
+		folder: p.folder as string | undefined,
+		tags: p.tags as string[] | undefined,
+		mtime: p.mtime as number | undefined,
+		updated_at: p.updated_at as string | undefined,
+		version: p.version as number | undefined,
+		...overrides,
+	};
+}
+
+/** The WS origin for an API base: trailing slashes and the `/api` suffix
+ *  stripped (the socket lives at `<origin>/socket/websocket`, not under /api).
+ *  Distinct from EngramApi.normalizeBaseUrl, which APPENDS /api. */
+function wsOrigin(baseUrl: string): string {
+	return baseUrl.replace(/\/+$/, "").replace(/\/api$/, "");
+}
+
 export class NoteChannel {
 	private ws: WebSocket | null = null;
 	private ref = 0;
 	/** In-flight requests sent via `sendRequest`, keyed by the outbound frame's
-	 *  ref. Resolved/rejected by the matching `phx_reply`, timeout, or
-	 *  `disconnect()` — the one await-reply path the channel has. */
+	 *  ref. Resolved/rejected by the matching `phx_reply`, timeout,
+	 *  `disconnect()`, or an unclean socket close — the one await-reply path
+	 *  the channel has. */
 	private readonly pendingReplies = new Map<
 		string,
 		{
@@ -269,7 +307,7 @@ export class NoteChannel {
 		vaultId: string | null = null,
 		deviceId: string | null = null,
 	) {
-		this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, "");
+		this.baseUrl = wsOrigin(baseUrl);
 		this.apiKey = apiKey;
 		this.userId = userId;
 		this.vaultId = vaultId;
@@ -313,7 +351,7 @@ export class NoteChannel {
 		vaultId: string | null = null,
 		deviceId: string | null = this.deviceId,
 	): void {
-		this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, "");
+		this.baseUrl = wsOrigin(baseUrl);
 		this.apiKey = apiKey;
 		this.userId = userId;
 		this.vaultId = vaultId;
@@ -468,6 +506,10 @@ export class NoteChannel {
 	}
 
 	disconnect(): void {
+		// Invalidate any openSocketInner suspended on its token fetch / auth
+		// probe: without this it resumes AFTER the teardown and opens a live
+		// socket (heartbeat, joins, reconnect loop) the plugin believes is dead.
+		this.connectEpoch++;
 		this.clearTimers();
 		if (this.ws) {
 			this.ws.onclose = null; // prevent reconnect on intentional close
@@ -476,11 +518,9 @@ export class NoteChannel {
 		}
 		// Reject any in-flight sendRequest calls so callers don't hang forever
 		// waiting for a reply that a dead socket will never deliver.
-		for (const [, p] of this.pendingReplies) {
-			window.clearTimeout(p.timer);
-			p.reject(new Error("channel disconnected"));
-		}
-		this.pendingReplies.clear();
+		this.rejectPendingReplies("channel disconnected");
+		// Per-doc warn throttle state belongs to the session that just ended.
+		this.lastRefusedWarnAt.clear();
 		// Always reset crdtJoined on intentional disconnect regardless of whether
 		// the sync topic was also joined (setConnected only resets it on transition).
 		this.crdtJoined = false;
@@ -548,8 +588,35 @@ export class NoteChannel {
 	// Private
 	// ---------------------------------------------------------------------------
 
-	/** Guards openSocket against re-entry across its async token fetch. */
+	/** Guards openSocket against re-entry across its async token fetch. NOTE:
+	 *  while a doomed (epoch-aborted) openSocketInner is still suspended, this
+	 *  also swallows a racing openSocket — fine today because connect() is only
+	 *  ever called on a freshly constructed channel; a future same-instance
+	 *  disconnect();connect() pattern would need the abort path to re-fire a
+	 *  refused open. */
 	private opening = false;
+
+	/** Bumped by disconnect(). An openSocketInner that suspended on an await
+	 *  before the bump must abandon the open when it resumes (see disconnect). */
+	private connectEpoch = 0;
+
+	/** Reject + clear every in-flight sendRequest reply slot. Shared by
+	 *  disconnect() and the socket onclose handler. */
+	private rejectPendingReplies(reason: string): void {
+		for (const [, p] of this.pendingReplies) {
+			window.clearTimeout(p.timer);
+			p.reject(new Error(reason));
+		}
+		this.pendingReplies.clear();
+	}
+
+	/** Replace-never-stack: arm the reconnect timer, clearing any pending one
+	 *  first. The raw assignments this replaces were safe only because their
+	 *  callers had just run clearTimers(); this makes the invariant local. */
+	private setReconnectTimer(delayMs: number): void {
+		if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer);
+		this.reconnectTimer = window.setTimeout(() => void this.openSocket(), delayMs);
+	}
 
 	private async openSocket(): Promise<void> {
 		// Single-flight: if a socket already exists (an external connect() won
@@ -571,6 +638,7 @@ export class NoteChannel {
 	}
 
 	private async openSocketInner(): Promise<void> {
+		const epoch = this.connectEpoch;
 		let token: string;
 		let source: string;
 		try {
@@ -578,11 +646,20 @@ export class NoteChannel {
 			token = result.token;
 			source = result.source;
 		} catch (e) {
+			if (epoch !== this.connectEpoch) {
+				rlog().warn("channel", "open aborted — disconnected during token fetch");
+				return;
+			}
 			rlog().warn(
 				"channel",
 				`getToken threw — deferring reconnect ${NO_AUTH_RECONNECT_MS}ms — providerType=${this.authProvider?.constructor.name ?? "none"} err=${errMsg(e)}`,
 			);
 			this.scheduleReconnect(NO_AUTH_RECONNECT_MS);
+			return;
+		}
+
+		if (epoch !== this.connectEpoch) {
+			rlog().warn("channel", "open aborted — disconnected during token fetch");
 			return;
 		}
 
@@ -626,6 +703,13 @@ export class NoteChannel {
 					`reconnect identity probe failed, keeping userId: ${errMsg(e)}`,
 				);
 			}
+		}
+
+		// Second abort point: the identity-refresh probe above is another await a
+		// disconnect() can land inside.
+		if (epoch !== this.connectEpoch) {
+			rlog().warn("channel", "open aborted — disconnected during identity probe");
+			return;
 		}
 
 		rlog().info(
@@ -678,12 +762,20 @@ export class NoteChannel {
 		};
 
 		this.ws.onerror = (e) => {
-			rlog().error("channel", `WebSocket error: ${JSON.stringify(e)}`);
+			// A DOM ErrorEvent stringifies to {}; log the fields that carry signal.
+			rlog().error(
+				"channel",
+				`WebSocket error: type=${e?.type ?? "unknown"} readyState=${this.ws?.readyState ?? "none"}`,
+			);
 		};
 
 		this.ws.onclose = (evt?: CloseEvent) => {
 			this.clearTimers();
 			this.ws = null;
+			// The socket these replies were riding is gone; without this, callers
+			// hang for the full per-request timeout on a provably dead connection
+			// (disconnect() already rejects — an unclean close must too).
+			this.rejectPendingReplies("socket closed");
 			// crdtJoined must not survive the socket: if the crdt: ack landed but
 			// the sync-topic ack never did, `connected` is still false and
 			// setConnected(false) is a transition-gated no-op — leaving a stale
@@ -746,7 +838,7 @@ export class NoteChannel {
 					"channel",
 					`crdt: join rejected (${this.crdtJoinFailedReason}) — backing off reconnect ${Math.round(delay)}ms - ${closeInfo}`,
 				);
-				this.reconnectTimer = window.setTimeout(() => void this.openSocket(), delay);
+				this.setReconnectTimer(delay);
 			} else if (opened) {
 				// A live connection dropped (graceful drain or a mid-session network
 				// drop). Full-jitter the FIRST reconnect across random(0, window) so a
@@ -761,7 +853,7 @@ export class NoteChannel {
 					"channel",
 					`Channel dropped after live connection — jittered reconnect in ${Math.round(delay)}ms (window ${jitterWindow}ms) - ${closeInfo}`,
 				);
-				this.reconnectTimer = window.setTimeout(() => void this.openSocket(), delay);
+				this.setReconnectTimer(delay);
 			} else {
 				rlog().info(
 					"channel",
@@ -1033,25 +1125,11 @@ export class NoteChannel {
 		}
 
 		if (event === "note_changed" && payload) {
-			const p = payload;
-			const streamEvent: NoteStreamEvent = {
-				event_type: p.event_type as "upsert" | "delete",
-				path: p.path as string,
-				timestamp: Date.now(),
-				kind: (p.kind as "note" | "attachment") ?? "note",
-				id: p.id as string | undefined,
-				device_id: p.device_id as string | undefined,
-				content: p.content as string | undefined,
-				content_hash: p.content_hash as string | undefined,
-				title: p.title as string | undefined,
-				folder: p.folder as string | undefined,
-				tags: p.tags as string[] | undefined,
-				mtime: p.mtime as number | undefined,
-				updated_at: p.updated_at as string | undefined,
-				version: p.version as number | undefined,
-			};
+			const streamEvent = toStreamEvent(payload);
 			rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`);
 			this.onEvent?.(streamEvent);
+			// Mirror every other branch: nothing below applies to this event.
+			return;
 		}
 
 		// Protocol rev: bulk pushes broadcast ONE notes.batch digest
@@ -1062,21 +1140,16 @@ export class NoteChannel {
 			const notes = (payload.notes as Array<Record<string, unknown>> | undefined) ?? [];
 			rlog().info("channel", `Batch digest: ${notes.length} notes`);
 			for (const n of notes) {
-				const streamEvent: NoteStreamEvent = {
-					event_type: "upsert",
-					path: n.path as string,
-					timestamp: Date.now(),
-					kind: "note",
-					id: n.id as string | undefined,
-					content_hash: n.content_hash as string | undefined,
-					title: n.title as string | undefined,
-					folder: n.folder as string | undefined,
-					tags: n.tags as string[] | undefined,
-					mtime: n.mtime as number | undefined,
-					updated_at: n.updated_at as string | undefined,
-					version: n.version as number | undefined,
-				};
-				this.onEvent?.(streamEvent);
+				this.onEvent?.(
+					// Batch digests are metadata-only by protocol: content/device_id
+					// stay structurally excluded even if the server ever adds them.
+					toStreamEvent(n, {
+						event_type: "upsert",
+						kind: "note",
+						content: undefined,
+						device_id: undefined,
+					}),
+				);
 			}
 		}
 	}

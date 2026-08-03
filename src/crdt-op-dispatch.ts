@@ -104,8 +104,10 @@ export function makeCrdtOpSend(hooks: CrdtSendHooks): (op: CrdtOp) => Promise<Se
 			} else {
 				// crdt_msg is a separate task; this queue never enqueues it. Drop
 				// defensively rather than retry an op kind we don't dispatch.
+				limitSurfaced.delete(op.id);
 				return "ok";
 			}
+			limitSurfaced.delete(op.id); // op resolved — drop its once-only marker
 			return "ok";
 		} catch (err) {
 			const reason = crdtOpFailureReason(err);
@@ -118,6 +120,7 @@ export function makeCrdtOpSend(hooks: CrdtSendHooks): (op: CrdtOp) => Promise<Se
 			}
 			if (reason && TERMINAL_REASONS.has(reason)) {
 				hooks.onTerminal(op, reason); // must not vanish; must not retry forever
+				limitSurfaced.delete(op.id); // dropped — no more retries to throttle
 				return "ok"; // remove from the queue
 			}
 			const msg = err instanceof Error ? err.message : String(err);

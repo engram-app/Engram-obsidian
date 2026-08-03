@@ -133,3 +133,29 @@ describe("canvas-codec", () => {
 		expect(nodesOf(doc)).toEqual([]);
 	});
 });
+
+describe("element equality is key-order-insensitive (repo-review 2026-08)", () => {
+	test("re-ingesting the same node with different key order ships no Yjs op", async () => {
+		// Two devices serializing the same node with different key order must not
+		// re-set the whole element — that LWW-clobbers a concurrent edit to the
+		// node "for no reason" (the exact case the changed-element guard exists
+		// for). canonicalJson (order-insensitive) is one file over.
+		const doc = new Y.Doc();
+		const a = JSON.stringify({
+			nodes: [{ id: "n1", type: "text", text: "hi", x: 0, y: 0, width: 100, height: 50 }],
+			edges: [],
+		});
+		// Same node, keys in a different order.
+		const b = JSON.stringify({
+			nodes: [{ width: 100, height: 50, x: 0, y: 0, text: "hi", type: "text", id: "n1" }],
+			edges: [],
+		});
+		seedCanvasInto(doc, a);
+		let updates = 0;
+		doc.on("update", () => {
+			updates++;
+		});
+		seedCanvasInto(doc, b);
+		expect(updates).toBe(0);
+	});
+});

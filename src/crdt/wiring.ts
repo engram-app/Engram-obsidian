@@ -1,4 +1,5 @@
 import { errMsg } from "../error-util";
+import { docKindFor } from "../file-kind";
 import { rlog } from "../remote-log";
 import type { SyncEngine } from "../sync";
 import type { SyncRecorder } from "../sync-recorder";
@@ -277,6 +278,20 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	// converges (the #299 switch-away recovery, widened past still-open notes).
 	const unsentDocIds = new Set<string>();
 
+	/** Track a refused doc under the documented 500-doc bound (evict oldest).
+	 *  Both refusal branches below must route through this — the create-gate
+	 *  branch once skipped the cap and grew the set unbounded over a long
+	 *  offline burst of gated new notes. */
+	const addUnsent = (docId: string): void => {
+		if (!unsentDocIds.has(docId) && unsentDocIds.size >= MAX_UNSENT_DOCS) {
+			for (const oldest of unsentDocIds) {
+				unsentDocIds.delete(oldest);
+				break;
+			}
+		}
+		unsentDocIds.add(docId);
+	};
+
 	// The Relay-model engine plays all three old roles (manager + channel +
 	// enrollment) — see provider-registry.ts. Its `send` wraps deps.sendCrdt with
 	// the unsent-tracking + the create-ack gate; a refused frame buffers in the
@@ -296,20 +311,14 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 			// e2e test_48): hasServerNote stayed false forever, so the heal frame was
 			// dropped and the note never caught up.
 			if (kind === "op" && deps.canSendLive && !deps.canSendLive(docId)) {
-				unsentDocIds.add(docId);
+				addUnsent(docId);
 				return false;
 			}
 			// sendCrdt's return is P1's delivered/dropped signal (unknown-typed on the
 			// dep); false === the socket refused the frame.
 			const ok = deps.sendCrdt(docId, frame) !== false;
 			if (!ok) {
-				if (!unsentDocIds.has(docId) && unsentDocIds.size >= MAX_UNSENT_DOCS) {
-					for (const oldest of unsentDocIds) {
-						unsentDocIds.delete(oldest);
-						break;
-					}
-				}
-				unsentDocIds.add(docId);
+				addUnsent(docId);
 			} else {
 				// A delivered HANDSHAKE clears the flag for a doc whose ops may still
 				// be gate-held. Safe only because of call ordering: startSync sets
@@ -366,7 +375,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 			}
 			void syncEngine.materializeEmptyDiscovered(path, noteId);
 		},
-		docKind: (noteId) => (noteIdMap.pathForId(noteId)?.endsWith(".canvas") ? "canvas" : "note"),
+		docKind: (noteId) => docKindFor(noteIdMap.pathForId(noteId) ?? ""),
 	});
 
 	// The one engine plays all three old roles.

@@ -37,6 +37,7 @@ import { type CrdtOp, CrdtOpQueue } from "./crdt-op-queue";
 import { createDebugApi, installDebugApi, uninstallDebugApi } from "./debug-api";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
 import { type FeatureFlags, resolveFlags } from "./feature-flags";
+import { isMarkdownPath } from "./file-kind";
 import { setLogSink } from "./has-logging";
 import { SyncRecorder } from "./sync-recorder";
 import { PromiseTracker, setActiveTracker } from "./track-promise";
@@ -44,6 +45,7 @@ import { PromiseTracker, setActiveTracker } from "./track-promise";
 /** Replaced by esbuild at build time (see esbuild.config.mjs `define`). */
 declare const DEV_MODE: boolean;
 
+import { sha256Hex } from "./content-hash";
 import { registerDiagnostics } from "./diagnostics";
 import { EmailCaptureModal } from "./email-capture-modal";
 import { errMsg } from "./error-util";
@@ -88,13 +90,7 @@ async function generateClientId(app: import("obsidian").App): Promise<string> {
 	const adapter = app.vault.adapter;
 	const basePath = adapter instanceof FileSystemAdapter ? adapter.getBasePath() : undefined;
 	const input = basePath || app.vault.getName();
-	const encoder = new TextEncoder();
-	const data = encoder.encode(input);
-	const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-	const hashArray = new Uint8Array(hashBuffer);
-	return Array.from(hashArray)
-		.map((b) => b.toString(16).padStart(2, "0"))
-		.join("");
+	return sha256Hex(input);
 }
 
 interface PluginData {
@@ -462,7 +458,6 @@ export default class EngramSyncPlugin extends Plugin {
 			await this.savePluginData(this.syncEngine.getLastSync());
 		});
 
-		this.syncLog = new SyncLog();
 		this.syncEngine.syncLog = this.syncLog;
 
 		// Level-triggered CRDT-liveness check for the push path. setCrdtManager is
@@ -660,7 +655,7 @@ export default class EngramSyncPlugin extends Plugin {
 			this.app.workspace.on("active-leaf-change", () => {
 				if (this.syncEngine.isSyncBlocked()) return;
 				const file = this.app.workspace.getActiveFile();
-				if (file instanceof TFile && file.extension === "md") {
+				if (file instanceof TFile && isMarkdownPath(file.path)) {
 					// Resolve-or-mint: opening a brand-new never-synced note has no
 					// note_id yet, and enroll (Task 6) is keyed by id, not path.
 					// Minting here (same NoteIdMap instance pushFile mints into)
@@ -708,7 +703,11 @@ export default class EngramSyncPlugin extends Plugin {
 			if (activeDocument.visibilityState === "hidden") {
 				void rlog().flush();
 				void this.savePluginData(this.syncEngine.getLastSync());
-				void this.baseStore?.save();
+				// A silent sync-bases.json write failure degrades 3-way merge to
+				// 2-way after the next reload — leave a trace.
+				void this.baseStore?.save().catch((e) => {
+					devLog().log("base-store", `save failed: ${errMsg(e)}`);
+				});
 			} else if (activeDocument.visibilityState === "visible") {
 				this.noteStream?.onResume();
 			}
@@ -719,9 +718,13 @@ export default class EngramSyncPlugin extends Plugin {
 			id: "sync-now",
 			name: "Sync now",
 			callback: async () => {
-				new Notice("Engram sync: syncing...");
-				const { pulled, pushed } = await this.syncEngine.fullSync();
-				new Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+				try {
+					new Notice("Engram sync: syncing...");
+					const { pulled, pushed } = await this.syncEngine.fullSync();
+					new Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+				} catch (e) {
+					this.handleSyncError("Manual sync", e, { notice: true });
+				}
 			},
 		});
 
@@ -738,8 +741,12 @@ export default class EngramSyncPlugin extends Plugin {
 			id: "push-all",
 			name: "Push entire vault",
 			callback: async () => {
-				const count = await this.syncEngine.pushAll();
-				new Notice(`Engram Sync: pushed ${count} files`);
+				try {
+					const count = await this.syncEngine.pushAll();
+					new Notice(`Engram Sync: pushed ${count} files`);
+				} catch (e) {
+					this.handleSyncError("Push all", e, { notice: true });
+				}
 			},
 		});
 
@@ -747,24 +754,32 @@ export default class EngramSyncPlugin extends Plugin {
 			id: "check-sync",
 			name: "Check sync status",
 			callback: async () => {
-				new Notice("Engram sync: checking...");
-				const result = await this.syncEngine.reconcile();
-				if (!result) {
-					new Notice(
-						"Engram sync: server does not support reconciliation (update backend)",
-					);
-					return;
-				}
-				const { missing, diverged, extraOnServer } = result;
-				if (missing.length === 0 && diverged.length === 0 && extraOnServer.length === 0) {
-					new Notice("Engram sync: everything in sync");
-				} else {
-					const parts: string[] = [];
-					if (missing.length > 0) parts.push(`${missing.length} missing on server`);
-					if (diverged.length > 0) parts.push(`${diverged.length} diverged`);
-					if (extraOnServer.length > 0)
-						parts.push(`${extraOnServer.length} only on server`);
-					new Notice(`Engram Sync: ${parts.join(", ")}`);
+				try {
+					new Notice("Engram sync: checking...");
+					const result = await this.syncEngine.reconcile();
+					if (!result) {
+						new Notice(
+							"Engram sync: server does not support reconciliation (update backend)",
+						);
+						return;
+					}
+					const { missing, diverged, extraOnServer } = result;
+					if (
+						missing.length === 0 &&
+						diverged.length === 0 &&
+						extraOnServer.length === 0
+					) {
+						new Notice("Engram sync: everything in sync");
+					} else {
+						const parts: string[] = [];
+						if (missing.length > 0) parts.push(`${missing.length} missing on server`);
+						if (diverged.length > 0) parts.push(`${diverged.length} diverged`);
+						if (extraOnServer.length > 0)
+							parts.push(`${extraOnServer.length} only on server`);
+						new Notice(`Engram Sync: ${parts.join(", ")}`);
+					}
+				} catch (e) {
+					this.handleSyncError("Sync check", e, { notice: true });
 				}
 			},
 		});
@@ -773,9 +788,13 @@ export default class EngramSyncPlugin extends Plugin {
 			id: "pull-all",
 			name: "Pull all from server (force overwrite)",
 			callback: async () => {
-				new Notice("Engram sync: pulling all from server...");
-				const count = await this.syncEngine.pullAll();
-				new Notice(`Engram Sync: pulled ${count} files from server`);
+				try {
+					new Notice("Engram sync: pulling all from server...");
+					const count = await this.syncEngine.pullAll();
+					new Notice(`Engram Sync: pulled ${count} files from server`);
+				} catch (e) {
+					this.handleSyncError("Pull all", e, { notice: true });
+				}
 			},
 		});
 
@@ -816,30 +835,12 @@ export default class EngramSyncPlugin extends Plugin {
 			id: "open-search-sidebar",
 			name: "Open search sidebar",
 			callback: async () => {
-				const existing = this.app.workspace.getLeavesOfType(SEARCH_VIEW_TYPE);
-				if (existing[0]) {
-					void this.app.workspace.revealLeaf(existing[0]);
-					return;
-				}
-				const leaf = this.app.workspace.getRightLeaf(false);
-				if (leaf) {
-					await leaf.setViewState({ type: SEARCH_VIEW_TYPE, active: true });
-					void this.app.workspace.revealLeaf(leaf);
-				}
+				await this.revealSearchSidebar();
 			},
 		});
 
 		this.addRibbonIcon("brain-circuit", "Engram search", async () => {
-			const existing = this.app.workspace.getLeavesOfType(SEARCH_VIEW_TYPE);
-			if (existing[0]) {
-				void this.app.workspace.revealLeaf(existing[0]);
-				return;
-			}
-			const leaf = this.app.workspace.getRightLeaf(false);
-			if (leaf) {
-				await leaf.setViewState({ type: SEARCH_VIEW_TYPE, active: true });
-				void this.app.workspace.revealLeaf(leaf);
-			}
+			await this.revealSearchSidebar();
 		});
 
 		this.addCommand({
@@ -875,24 +876,7 @@ export default class EngramSyncPlugin extends Plugin {
 				.then(({ pulled, pushed }) => {
 					new Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
 				})
-				.catch((e) => {
-					if (e instanceof LimitExceededError) {
-						notifyLimitExceeded(e);
-						rlog().info(
-							"lifecycle",
-							`Manual sync blocked — limit reached (${e.reason})`,
-						);
-						return;
-					}
-					// biome-ignore lint/suspicious/noConsole: error boundary
-					console.error("Engram Sync: manual sync failed", e);
-					rlog().error(
-						"lifecycle",
-						`Manual sync failed: ${errMsg(e)}`,
-						e instanceof Error ? e.stack : undefined,
-					);
-					new Notice("Engram sync: sync failed");
-				});
+				.catch((e) => this.handleSyncError("Manual sync", e, { notice: true }));
 		});
 
 		// The live editor<->Y.Text binding, registered ONCE for the plugin's
@@ -1074,23 +1058,37 @@ export default class EngramSyncPlugin extends Plugin {
 						new Notice(`Engram Sync: pushed ${pushed}`);
 					}
 				} catch (e) {
-					if (e instanceof LimitExceededError) {
-						notifyLimitExceeded(e);
-						rlog().info(
-							"lifecycle",
-							`Startup sync blocked — limit reached (${e.reason})`,
-						);
-						return;
-					}
-					// biome-ignore lint/suspicious/noConsole: error boundary
-					console.error("Engram Sync: startup sync failed", e);
-					rlog().error("lifecycle", `Startup sync failed: ${errMsg(e)}`);
+					this.handleSyncError("Startup sync", e);
 				}
 			} else {
 				// Gate closed — show the preview modal so user picks a direction.
 				await this.doSyncWithFirstSyncCheck();
 			}
 		});
+	}
+
+	/** Shared error boundary for user-initiated sync entry points (palette
+	 *  commands, status-bar click, startup sync, sync after settings change).
+	 *  A limit hit always gets the upgrade toast; anything else lands in
+	 *  console + rlog, plus a failure Notice only when the user explicitly
+	 *  asked for the sync (`notice: true`) — background syncs must not toast
+	 *  every offline launch. */
+	private handleSyncError(context: string, e: unknown, opts?: { notice?: boolean }): void {
+		if (e instanceof LimitExceededError) {
+			notifyLimitExceeded(e);
+			rlog().info("lifecycle", `${context} blocked — limit reached (${e.reason})`);
+			return;
+		}
+		// biome-ignore lint/suspicious/noConsole: error boundary
+		console.error(`Engram Sync: ${context} failed`, e);
+		rlog().error(
+			"lifecycle",
+			`${context} failed: ${errMsg(e)}`,
+			e instanceof Error ? e.stack : undefined,
+		);
+		if (opts?.notice) {
+			new Notice("Engram sync: sync failed");
+		}
 	}
 
 	onunload(): void {
@@ -1101,10 +1099,16 @@ export default class EngramSyncPlugin extends Plugin {
 		// Flush any buffered obsidian.push spans before teardown. The buffer's
 		// own 2s timer would otherwise never fire post-unload.
 		this.api.beacon.flush();
-		// Best-effort save before teardown — hashes must be exported before destroy
-		void this.savePluginData(this.syncEngine.getLastSync());
+		// Best-effort save before teardown — hashes must be exported before
+		// destroy. Guarded: if onload threw before syncEngine was assigned, the
+		// `= null!` initializer is still a lie and this would throw mid-unload.
+		if (this.syncEngine) {
+			void this.savePluginData(this.syncEngine.getLastSync());
+		}
 		this.baseStore?.prune();
-		void this.baseStore?.save();
+		void this.baseStore?.save().catch((e) => {
+			devLog().log("base-store", `save failed: ${errMsg(e)}`);
+		});
 		this.crdtOpQueue?.dispose();
 		this.syncEngine?.destroy();
 		this.noteStream?.disconnect();
@@ -1283,27 +1287,10 @@ export default class EngramSyncPlugin extends Plugin {
 							new Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
 						}
 					} catch (e) {
-						if (e instanceof LimitExceededError) {
-							notifyLimitExceeded(e);
-							rlog().info(
-								"lifecycle",
-								`Sync after settings change blocked — limit reached (${e.reason})`,
-							);
-							return;
-						}
-						// biome-ignore lint/suspicious/noConsole: error boundary
-						console.error("Engram Sync: sync after settings change failed", e);
-						rlog().error(
-							"lifecycle",
-							`Sync after settings change failed: ${errMsg(e)}`,
-						);
+						this.handleSyncError("Sync after settings change", e);
 					}
 				})
-				.catch((e) => {
-					// biome-ignore lint/suspicious/noConsole: error boundary
-					console.error("Engram Sync: sync after settings change failed", e);
-					rlog().error("lifecycle", `Sync after settings change failed: ${errMsg(e)}`);
-				});
+				.catch((e) => this.handleSyncError("Sync after settings change", e));
 		} else {
 			// No auth (signed out / API key cleared): quiesce outbound sync.
 			// setupNoteStream above already dropped the WS/CRDT stack; block the
@@ -1494,7 +1481,7 @@ export default class EngramSyncPlugin extends Plugin {
 	 */
 	private handleFileOpen(file: TFile | null): void {
 		this.crdtLiveViews?.refresh();
-		if (file?.path.endsWith(".md")) {
+		if (file && isMarkdownPath(file.path)) {
 			void this.syncEngine.healNoteOnOpen(file.path);
 		}
 	}
@@ -1502,8 +1489,7 @@ export default class EngramSyncPlugin extends Plugin {
 	private createAuthProvider(): AuthProvider | null {
 		if (this.settings.refreshToken) {
 			const refreshFn: RefreshFn = async (token) => {
-				const base = this.settings.apiUrl.replace(/\/+$/, "");
-				const apiUrl = base.endsWith("/api") ? base : `${base}/api`;
+				const apiUrl = EngramApi.normalizeBaseUrl(this.settings.apiUrl);
 				// Bounded: getToken() serializes EVERY api call behind this refresh,
 				// so a wedged half-open refresh silences the whole plugin (no HTTP
 				// at all — the test_57 300s fullSync stall signature). A timeout
@@ -1615,16 +1601,7 @@ export default class EngramSyncPlugin extends Plugin {
 		// this path has no second setupNoteStream, so shouldReuseLiveStream can't
 		// recover the doomed channel — see tests/main-stream-reuse.test.ts.)
 		this.authProvider = this.createAuthProvider();
-		if (this.authProvider) {
-			this.api.setAuthProvider(this.authProvider);
-		}
-
-		await this.saveSettings();
-
-		if (this.authProvider && this.noteStream) {
-			this.noteStream.setAuthProvider(this.authProvider);
-			this.noteStream.setAuthProbe(() => this.api.getMe());
-		}
+		await this.commitAuthProviderSwap();
 	}
 
 	async clearOAuthTokens(): Promise<void> {
@@ -1647,6 +1624,32 @@ export default class EngramSyncPlugin extends Plugin {
 		this.authProvider = this.settings.apiKey
 			? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId)
 			: null;
+		await this.commitAuthProviderSwap();
+	}
+
+	/** Reveal the search sidebar, creating its leaf on first use. Shared by the
+	 *  palette command and the ribbon icon (previously byte-identical copies). */
+	private async revealSearchSidebar(): Promise<void> {
+		const existing = this.app.workspace.getLeavesOfType(SEARCH_VIEW_TYPE);
+		if (existing[0]) {
+			void this.app.workspace.revealLeaf(existing[0]);
+			return;
+		}
+		const leaf = this.app.workspace.getRightLeaf(false);
+		if (leaf) {
+			await leaf.setViewState({ type: SEARCH_VIEW_TYPE, active: true });
+			void this.app.workspace.revealLeaf(leaf);
+		}
+	}
+
+	/** Shared tail of saveOAuthTokens/clearOAuthTokens: wire the (already
+	 *  swapped) provider onto the api BEFORE saveSettings() rebuilds the note
+	 *  channel — the rebuild freezes the channel topic's userId from
+	 *  api.getMe() at construction, so a stale provider mints a doomed
+	 *  crdt:<oldUser>:<vault> topic the backend rejects "unauthorized" and
+	 *  live sync stays dead until reload. Then persist and hand the provider
+	 *  to the live stream. */
+	private async commitAuthProviderSwap(): Promise<void> {
 		if (this.authProvider) {
 			this.api.setAuthProvider(this.authProvider);
 		}

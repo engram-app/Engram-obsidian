@@ -222,3 +222,40 @@ describe("ProviderRegistry (Relay-model engine)", () => {
 		await B.destroyAll();
 	});
 });
+
+// ---------------------------------------------------------------------------
+// enrolledIds must not outlive the doc (repo-review 2026-08). destroy paths
+// previously left the id enrolled forever: the removed-implies-not-enrolled
+// invariant WARNed every sweep and the e2e `enrolled` probe lied. The guard
+// lives at the choke point so no caller has to remember the removeDoc+reset
+// pair.
+// ---------------------------------------------------------------------------
+
+describe("enrollment cleared on teardown", () => {
+	function oneDevice() {
+		return new ProviderRegistry({
+			dbPrefix: "devEnroll",
+			send: () => true,
+			onFlushToDisk: () => {},
+		});
+	}
+
+	test("removeDoc clears the note's enrollment", async () => {
+		const reg = oneDevice();
+		await reg.applyLocalEdit("note.md", "body");
+		reg.enroll("note.md");
+		expect(reg.enrolled.has("note.md")).toBe(true);
+		await reg.removeDoc("note.md");
+		expect(reg.enrolled.has("note.md")).toBe(false);
+	});
+
+	test("destroyAll leaves no enrollments behind", async () => {
+		const reg = oneDevice();
+		await reg.applyLocalEdit("a.md", "a");
+		await reg.applyLocalEdit("b.md", "b");
+		reg.enroll("a.md");
+		reg.enroll("b.md");
+		await reg.destroyAll();
+		expect(reg.enrolled.size).toBe(0);
+	});
+});

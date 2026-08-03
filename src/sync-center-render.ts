@@ -8,13 +8,11 @@ import { Notice, normalizePath, Setting } from "obsidian";
 import { type IssueDisposition, issueDisposition, remediation } from "./issue-store";
 import type EngramSyncPlugin from "./main";
 import type { QueuedReason } from "./offline-queue";
+import { ACTION_ICONS } from "./sync-log-modal";
+import { plural } from "./sync-plan-format";
 import { SyncPreviewModal } from "./sync-preview-modal";
+import { DEFAULT_UPGRADE_URL } from "./tabs/urls";
 import type { SyncIssue, SyncIssueCategory, SyncLogEntry } from "./types";
-
-/** Fallback billing URL when a needs_pro issue didn't carry one. Exported so
- *  other plan-gated surfaces (e.g. the sync progress modal's "skipped" note)
- *  link to the same place. */
-export const DEFAULT_UPGRADE_URL = "https://app.engram.page/settings/billing";
 
 /** Build an Obsidian Setting heading inside `parent` so the section title
  *  matches the visual style of the Cloud / Self-hosted / Advanced tabs. */
@@ -209,41 +207,36 @@ function renderPlanSkips(parent: HTMLElement, plugin: EngramSyncPlugin, refresh:
 	}
 }
 
-/** A calm (info-styled) plan-skip card: remediation copy, file list, and a
- *  single Upgrade button. No Dismiss/Retry — the fact stands until the plan
- *  changes. */
-function renderPlanCard(
+/** Shared card chrome for the plan-skip and needs-attention sections: head
+ *  (icon + title-with-count), hint line, an actions strip filled by the
+ *  caller, and the collapsed "Show files (N)" list. The two card renderers
+ *  were line-for-line copies differing only in buttons and CSS modifier. */
+function renderIssueCard(
 	parent: HTMLElement,
 	plugin: EngramSyncPlugin,
 	refresh: () => void,
-	category: SyncIssueCategory,
 	issues: SyncIssue[],
+	opts: {
+		cardCls: string;
+		icon: string;
+		title: string;
+		hint: string;
+		buttons: (actions: HTMLElement) => void;
+	},
 ): void {
-	const { title, hint } = remediation(category);
-	const card = parent.createDiv({
-		cls: "engram-sync-center-card engram-sync-center-card-info",
-	});
+	const card = parent.createDiv({ cls: opts.cardCls });
 
 	const head = card.createDiv({ cls: "engram-sync-center-card-head" });
-	head.createSpan({ cls: "engram-sync-center-card-icon", text: CATEGORY_ICON[category] ?? "🔒" });
+	head.createSpan({ cls: "engram-sync-center-card-icon", text: opts.icon });
 	head.createSpan({
 		cls: "engram-sync-center-card-title",
-		text: `${title} (${issues.length})`,
+		text: `${opts.title} (${issues.length})`,
 	});
 
-	card.createEl("p", { cls: "engram-sync-center-card-hint", text: hint });
+	card.createEl("p", { cls: "engram-sync-center-card-hint", text: opts.hint });
 
 	const actions = card.createDiv({ cls: "engram-sync-center-card-actions" });
-	const url = issues.find((i) => i.upgradeUrl)?.upgradeUrl ?? DEFAULT_UPGRADE_URL;
-	const upgrade = actions.createEl("button", { text: "Upgrade", cls: "mod-cta" });
-	upgrade.addEventListener("click", () => window.open(url, "_blank"));
-
-	// Manual re-attempt for users who upgraded out-of-band (e.g. the plan event
-	// hasn't landed yet, or they want to retry without waiting for it).
-	const resync = actions.createEl("button", { text: "Sync these now" });
-	resync.addEventListener("click", () => {
-		void plugin.syncEngine.resyncSkippedAttachments().then(refresh);
-	});
+	opts.buttons(actions);
 
 	const toggle = actions.createEl("button", {
 		text: `Show files (${issues.length}) ▾`,
@@ -255,6 +248,37 @@ function renderPlanCard(
 	for (const issue of issues) {
 		renderFileRow(fileList, plugin, refresh, issue);
 	}
+}
+
+/** A calm (info-styled) plan-skip card: remediation copy, file list, and a
+ *  single Upgrade button. No Dismiss/Retry — the fact stands until the plan
+ *  changes. */
+function renderPlanCard(
+	parent: HTMLElement,
+	plugin: EngramSyncPlugin,
+	refresh: () => void,
+	category: SyncIssueCategory,
+	issues: SyncIssue[],
+): void {
+	const { title, hint } = remediation(category);
+	renderIssueCard(parent, plugin, refresh, issues, {
+		cardCls: "engram-sync-center-card engram-sync-center-card-info",
+		icon: CATEGORY_ICON[category] ?? "🔒",
+		title,
+		hint,
+		buttons: (actions) => {
+			const url = issues.find((i) => i.upgradeUrl)?.upgradeUrl ?? DEFAULT_UPGRADE_URL;
+			const upgrade = actions.createEl("button", { text: "Upgrade", cls: "mod-cta" });
+			upgrade.addEventListener("click", () => window.open(url, "_blank"));
+
+			// Manual re-attempt for users who upgraded out-of-band (e.g. the plan
+			// event hasn't landed yet, or they want to retry without waiting for it).
+			const resync = actions.createEl("button", { text: "Sync these now" });
+			resync.addEventListener("click", () => {
+				void plugin.syncEngine.resyncSkippedAttachments().then(refresh);
+			});
+		},
+	});
 }
 
 /** "Needs attention" — permanent failures the user must act on, one card per
@@ -311,37 +335,21 @@ function renderAttentionCard(
 	// the card gets the accurate non-retrying copy instead of the generic
 	// "Sync failed... retrying automatically" default.
 	const { title, hint } = remediation(category, issues[0]?.parseReason);
-	const card = parent.createDiv({ cls: "engram-sync-center-card" });
-
-	const head = card.createDiv({ cls: "engram-sync-center-card-head" });
-	head.createSpan({ cls: "engram-sync-center-card-icon", text: CATEGORY_ICON[category] ?? "⚠" });
-	head.createSpan({
-		cls: "engram-sync-center-card-title",
-		text: `${title} (${issues.length})`,
+	renderIssueCard(parent, plugin, refresh, issues, {
+		cardCls: "engram-sync-center-card",
+		icon: CATEGORY_ICON[category] ?? "⚠",
+		title,
+		hint,
+		buttons: (actions) => {
+			// Per-card dismiss — clears these errors without permanently ignoring
+			// the files (unlike "Ignore"). They reappear if they fail again.
+			const dismiss = actions.createEl("button", { text: "Dismiss" });
+			dismiss.addEventListener("click", () => {
+				for (const issue of issues) plugin.syncEngine.issues.clear(issue.path);
+				void plugin.persistEngineState().then(refresh);
+			});
+		},
 	});
-
-	card.createEl("p", { cls: "engram-sync-center-card-hint", text: hint });
-
-	const actions = card.createDiv({ cls: "engram-sync-center-card-actions" });
-
-	// Per-card dismiss — clears these errors without permanently ignoring the
-	// files (unlike "Ignore"). They reappear if they fail again.
-	const dismiss = actions.createEl("button", { text: "Dismiss" });
-	dismiss.addEventListener("click", () => {
-		for (const issue of issues) plugin.syncEngine.issues.clear(issue.path);
-		void plugin.persistEngineState().then(refresh);
-	});
-
-	const toggle = actions.createEl("button", {
-		text: `Show files (${issues.length}) ▾`,
-		cls: "engram-sync-center-card-toggle",
-	});
-	const fileList = card.createDiv({ cls: "engram-sync-center-issue-list is-collapsed" });
-	toggle.addEventListener("click", () => fileList.classList.toggle("is-collapsed"));
-
-	for (const issue of issues) {
-		renderFileRow(fileList, plugin, refresh, issue);
-	}
 }
 
 /** "Retrying automatically" — transient failures retried with backoff; clears
@@ -389,7 +397,7 @@ function renderFileRow(
 	const parts: string[] = [];
 	if (issue.sizeBytes !== undefined) parts.push(formatBytes(issue.sizeBytes));
 	if (issue.status !== undefined) parts.push(`HTTP ${issue.status}`);
-	parts.push(`${issue.attempts} attempt${issue.attempts === 1 ? "" : "s"}`);
+	parts.push(plural(issue.attempts, "attempt"));
 	parts.push(formatRelative(issue.lastFailedAt));
 	meta.setText(parts.join(" · "));
 
@@ -490,15 +498,6 @@ async function restoreFile(
 
 const ACTIVITY_LIMIT = 50;
 
-const ACTION_ICON: Record<SyncLogEntry["action"], string> = {
-	push: "↑",
-	pull: "↓",
-	delete: "✕",
-	conflict: "⚡",
-	skip: "·",
-	error: "!",
-};
-
 const RESULT_CLASS: Record<SyncLogEntry["result"], string> = {
 	ok: "is-ok",
 	error: "is-error",
@@ -540,7 +539,7 @@ function renderActivityRow(parent: HTMLElement, entry: SyncLogEntry): void {
 	});
 	row.createSpan({
 		cls: "engram-sync-center-activity-icon",
-		text: ACTION_ICON[entry.action] ?? "?",
+		text: ACTION_ICONS[entry.action] ?? "?",
 	});
 	row.createSpan({ cls: "engram-sync-center-activity-action", text: entry.action });
 	row.createSpan({ cls: "engram-sync-center-activity-path", text: entry.path });

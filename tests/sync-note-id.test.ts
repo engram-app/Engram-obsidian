@@ -1241,3 +1241,51 @@ describe("resetForVaultChange clears the relocation-guard's per-vault state (fin
 		expect(noteIdMap.pathForId("id-vault-switch")).toBe("Old.md");
 	});
 });
+
+describe("eventToOp timestamp honesty (repo-review 2026-08)", () => {
+	test("absent mtime/updated_at pass through as undefined, never a client-clock fabrication", () => {
+		// eventToOp stamped `Date.now()` / `new Date().toISOString()` when the WS
+		// event lacked the fields. handleStreamEvent's own guard (4453-4466)
+		// documents why a client-receipt time must become undefined instead: a
+		// fabricated now-timestamp is almost always newer than any genuine server
+		// updated_at, so any consumer comparing clocks (the relocation staleness
+		// guard, or a future one) is poisoned in the stale direction for the rest
+		// of the session. Absence must stay absence.
+		const engine = createEngine() as unknown as {
+			eventToOp(
+				event: Record<string, unknown>,
+				content: string | undefined,
+				id: string,
+			): { mtime?: number; updated_at?: string };
+		};
+		const op = engine.eventToOp(
+			{ event_type: "upsert", path: "A.md", timestamp: 123 },
+			"body",
+			"id-1",
+		);
+		expect(op.updated_at).toBeUndefined();
+		expect(op.mtime).toBeUndefined();
+	});
+
+	test("present mtime/updated_at pass through unchanged", () => {
+		const engine = createEngine() as unknown as {
+			eventToOp(
+				event: Record<string, unknown>,
+				content: string | undefined,
+				id: string,
+			): { mtime?: number; updated_at?: string };
+		};
+		const op = engine.eventToOp(
+			{
+				event_type: "upsert",
+				path: "A.md",
+				mtime: 42,
+				updated_at: "2026-01-01T00:00:10Z",
+			},
+			"body",
+			"id-1",
+		);
+		expect(op.mtime).toBe(42);
+		expect(op.updated_at).toBe("2026-01-01T00:00:10Z");
+	});
+});

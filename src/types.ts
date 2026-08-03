@@ -7,7 +7,9 @@ export interface EngramSyncSettings {
 	apiUrl: string;
 	/** Bearer token for Engram (e.g. "engram_abc123...") */
 	apiKey: string;
-	/** Glob patterns to ignore (one per line). Defaults: .obsidian/, .trash/, .git/ */
+	/** Ignore rules, one per line — literal path prefixes ("folder/") or
+	 *  suffixes (".pdf"); neither glob nor regex (see SyncEngine.shouldIgnore).
+	 *  Defaults: .obsidian/, .trash/, .git/ */
 	ignorePatterns: string;
 	/** Debounce delay in ms for modify events */
 	debounceMs: number;
@@ -190,8 +192,11 @@ export interface SyncOp {
 	content_hash?: string;
 	folder: string;
 	tags: string[];
-	mtime: number;
-	updated_at: string;
+	/** Absent when the source event carried none. NEVER fabricate a client
+	 *  clock here: any consumer comparing against server time (the relocation
+	 *  staleness guard) is poisoned in the stale direction by a now-stamp. */
+	mtime?: number;
+	updated_at?: string;
 	version?: number;
 	parse_status?: "ok" | "degraded";
 	parse_reason?: ParseReason | null;
@@ -284,14 +289,6 @@ export interface QueueEntry {
 	 *  existed reads as — so an upgrade never demotes pending work below a bulk
 	 *  import. */
 	priority?: number;
-}
-
-/** Request body for POST /search */
-export interface SearchRequest {
-	query: string;
-	limit?: number;
-	tags?: string[];
-	folder?: string;
 }
 
 /** A single search result from Engram's `POST /api/search`.

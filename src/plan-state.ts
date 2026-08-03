@@ -14,7 +14,9 @@ export function parsePlanState(raw: unknown, now: number): PlanState | null {
 	const r = raw as Record<string, unknown>;
 	if (typeof r.tier !== "string") return null;
 	return {
-		tier: (r.tier as PlanState["tier"]) ?? "free",
+		// Validate, don't cast: an unknown backend tier ("team", a typo) must
+		// degrade to the most restrictive plan, not launder through the union.
+		tier: r.tier === "starter" || r.tier === "pro" ? r.tier : "free",
 		attachmentsTextOnly: r.attachments_text_only === true,
 		maxFileBytes: typeof r.max_file_bytes === "number" ? r.max_file_bytes : 0,
 		attachmentBytesCap:

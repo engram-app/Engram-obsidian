@@ -1,6 +1,6 @@
 import { type App, Modal } from "obsidian";
-import { DEFAULT_UPGRADE_URL } from "./sync-center-render";
-import { optionBreakdown } from "./sync-plan-format";
+import { optionBreakdown, pluralWord } from "./sync-plan-format";
+import { DEFAULT_UPGRADE_URL } from "./tabs/urls";
 import type { SyncChoice, SyncPlan, SyncProgress } from "./types";
 
 /** Plain-language intro shown the instant the progress modal opens, before the
@@ -18,7 +18,7 @@ export function describePlannedWork(
 	if (b.pullCount > 0) parts.push(`downloading ${b.pullCount}`);
 	if (b.deleteLocalCount > 0) {
 		parts.push(
-			`deleting ${b.deleteLocalCount} local ${b.deleteLocalCount === 1 ? "file" : "files"}`,
+			`deleting ${b.deleteLocalCount} local ${pluralWord(b.deleteLocalCount, "file")}`,
 		);
 	}
 	if (b.deleteRemoteCount > 0) {
@@ -52,7 +52,11 @@ export interface CompletionSummary {
  *  Pure + DOM-agnostic (only uses the Obsidian element-creation helpers) so it
  *  is unit-testable without a real Modal. The caller owns clearing `parent`
  *  before re-rendering. */
-export function renderCompletionSummary(parent: HTMLElement, summary: CompletionSummary): void {
+export function renderCompletionSummary(
+	parent: HTMLElement,
+	summary: CompletionSummary,
+	webUrl?: string,
+): void {
 	const line = parent.createDiv({ cls: "engram-progress-summary-tally" });
 
 	// Match the modal's existing zero-handling: only show a segment when > 0.
@@ -77,7 +81,7 @@ export function renderCompletionSummary(parent: HTMLElement, summary: Completion
 
 	if (summary.skipped > 0) {
 		const note = parent.createDiv({ cls: "engram-progress-plan-note" });
-		const noun = summary.skipped === 1 ? "attachment" : "attachments";
+		const noun = pluralWord(summary.skipped, "attachment");
 		note.createSpan({
 			text: `${summary.skipped} ${noun} need a paid plan to sync. See Sync Center. `,
 		});
@@ -85,7 +89,10 @@ export function renderCompletionSummary(parent: HTMLElement, summary: Completion
 			text: "Upgrade",
 			cls: "engram-progress-upgrade mod-cta",
 		});
-		upgrade.addEventListener("click", () => window.open(DEFAULT_UPGRADE_URL, "_blank"));
+		// Prefer the backend's own web app (threaded in as webUrl) so a
+		// self-hosted user is not sent to cloud billing.
+		const upgradeUrl = webUrl ? `${webUrl}/settings/billing` : DEFAULT_UPGRADE_URL;
+		upgrade.addEventListener("click", () => window.open(upgradeUrl, "_blank"));
 	}
 }
 
@@ -433,7 +440,7 @@ export class SyncProgressModal extends Modal {
 		this.recapEl.hidden = false;
 
 		this.summaryEl.empty();
-		renderCompletionSummary(this.summaryEl, summary);
+		renderCompletionSummary(this.summaryEl, summary, this.opts.webUrl);
 		this.summaryEl.hidden = false;
 
 		if (summary.failed > 0) {
@@ -477,9 +484,11 @@ export class SyncProgressModal extends Modal {
 	}
 }
 
-/** Labels for a phase the engine reports that the plan did not predict (rare;
- *  keeps an unexpected phase from rendering its raw key). */
-const PHASE_FALLBACK_LABEL: Record<SyncProgress["phase"], string> = {
+/** The per-phase display copy. Primary label source for the settings-pane
+ *  progress bar (every phase), and the modal's fallback for a phase the plan
+ *  did not predict — the two surfaces deliberately share one map so they can
+ *  never disagree on wording again. */
+export const PHASE_FALLBACK_LABEL: Record<SyncProgress["phase"], string> = {
 	deleting: "Deleting",
 	pushing: "Uploading",
 	pulling: "Downloading",

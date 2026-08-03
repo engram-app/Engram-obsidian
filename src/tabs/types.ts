@@ -1,6 +1,5 @@
 import type { App } from "obsidian";
 import type EngramSyncPlugin from "../main";
-import type { SyncProgressModal } from "../sync-progress-modal";
 
 export interface TabContext {
 	containerEl: HTMLElement;
@@ -8,7 +7,6 @@ export interface TabContext {
 	plugin: EngramSyncPlugin;
 	redisplay: () => void;
 	startDeviceFlow: () => Promise<void>;
-	openProgressModal: () => Promise<SyncProgressModal>;
 	switchToTab: (tabId: string) => void;
 }
 

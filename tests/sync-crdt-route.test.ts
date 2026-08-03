@@ -1468,3 +1468,26 @@ describe("cold-start enroll gate: idle drifted note does NOT enroll, live-bound 
 		expect(enroll).toHaveBeenCalledWith("id-n");
 	});
 });
+
+describe("genesis echo-cooldown window (repo-review 2026-08)", () => {
+	test("a crdt_create whose body seed shipped opens the recently-pushed window", async () => {
+		// The CRDT-op branch sets `success = true` when content is consumed, so
+		// the finally opens the echo window (markRecentlyPushed). The genesis
+		// branch returned early without it, leaving the create's own broadcast
+		// unsuppressed — the exact self-echo class the window exists for.
+		const noteIdMap = new NoteIdMap();
+		const engine = createEngine(noteIdMap);
+		engine.setCrdtManager({
+			applyLocalEdit: mock(async (_id: string, c: string) => c),
+		} as any);
+		engine.setCrdtCreate(async (id: string) => id);
+
+		const file = new TFile("Notes/brand-new.md");
+		engine.handleModify(file);
+		await flush();
+
+		const files = (engine as unknown as { files: { has(p: string, k: string): boolean } })
+			.files;
+		expect(files.has("Notes/brand-new.md", "pushed")).toBe(true);
+	});
+});

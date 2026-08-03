@@ -13,3 +13,15 @@ export function fnv1a(s: string): number {
 	}
 	return h >>> 0;
 }
+
+/** Lowercase hex of a byte array. The one byte-to-hex mapper — this loop was
+ *  re-implemented in four modules before landing here. */
+export function bytesToHex(bytes: Uint8Array): string {
+	return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+/** SHA-256 of a UTF-8 string as lowercase hex (Web Crypto). */
+export async function sha256Hex(input: string): Promise<string> {
+	const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+	return bytesToHex(new Uint8Array(digest));
+}

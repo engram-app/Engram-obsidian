@@ -46,15 +46,25 @@ export class CrdtReadingView {
 		// getYText resolves sees the placeholder and returns early. If getYText
 		// rejects, remove the placeholder so a later refresh can retry.
 		if (this.observers.has(view)) return;
-		this.observers.set(view, () => {}); // placeholder, replaced below
+		const placeholder = () => {}; // identity token, replaced below
+		this.observers.set(view, placeholder);
 		this.attached.add(view);
 		const ytext = await this.deps.getYText(path).catch((err: unknown) => {
 			rlog().error("crdt-reading-view", `getYText failed for ${path}: ${String(err)}`);
-			this.observers.delete(view); // allow retry on next refresh
-			this.attached.delete(view);
+			// Same identity rule as the success path: a detach + re-attach during
+			// the await means these slots belong to the NEWER attach — a late
+			// rejection must not cancel its reservation.
+			if (this.observers.get(view) === placeholder) {
+				this.observers.delete(view); // allow retry on next refresh
+				this.attached.delete(view);
+			}
 			return null;
 		});
 		if (!ytext) return;
+		// A detach()/detachAll() that ran during the await removed the
+		// placeholder; installing anyway would leak an observer + preview patch
+		// on a view the coordinator considers detached (detachAll can't find it).
+		if (this.observers.get(view) !== placeholder) return;
 		this.rendered.set(view, ytext.toJSON());
 		const handler = () => {
 			if (!this.deps.isReadingMode(view)) return;

@@ -1,4 +1,5 @@
 import { type App, Modal, setIcon } from "obsidian";
+import { statusOf } from "./error-util";
 import { toastFor } from "./limit-copy";
 import { LimitExceededError } from "./limit-error";
 import { isTextAttachment } from "./mime";
@@ -9,6 +10,7 @@ import {
 	isPlanEmpty,
 	type OptionBreakdown,
 	optionBreakdown,
+	pluralWord,
 } from "./sync-plan-format";
 import type { SyncChoice, SyncPlan, SyncPreviewContext, VaultInfo } from "./types";
 
@@ -148,7 +150,7 @@ export class SyncPreviewState {
  *  for testing. */
 export function describeCreateVaultError(e: unknown): string {
 	if (e instanceof LimitExceededError) return toastFor(e.reason);
-	const status = (e as { status?: number })?.status;
+	const status = statusOf(e);
 	if (status === 422) return "Couldn't create vault — the name may be invalid or already in use.";
 	return "Could not create the vault — check your connection and try again.";
 }
@@ -173,7 +175,7 @@ export function countSkippedAttachments(plan: SyncPlan, attachmentsTextOnly: boo
  *  there is nothing to say (n === 0). Pure for testing. */
 export function skippedAttachmentsLine(n: number): string | null {
 	if (n <= 0) return null;
-	const noun = n === 1 ? "attachment" : "attachments";
+	const noun = pluralWord(n, "attachment");
 	return `Free syncs notes only — ${n} ${noun} will be skipped.`;
 }
 
@@ -205,7 +207,7 @@ export function mergeHelperText(b: OptionBreakdown, context: SyncPreviewContext)
  *  net extras — otherwise a destructive button could show no deletion at all
  *  when the two sides already overlap. Pure for testing. */
 export function confirmActions(choice: SyncChoice, plan: SyncPlan): string[] {
-	const files = (n: number) => (n === 1 ? "file" : "files");
+	const files = (n: number) => pluralWord(n, "file");
 	const lines: string[] = [];
 	if (choice === "push-all-delete-remote") {
 		const del = plan.serverNoteCount + plan.serverAttachmentCount;
@@ -421,18 +423,7 @@ export class SyncPreviewModal extends Modal {
 
 		this.renderAdvancedOptions(options);
 
-		const footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
-		const dismissBtn = footer.createEl("button", {
-			text: empty ? "Close" : "Cancel",
-			cls: empty ? "mod-cta" : undefined,
-		});
-		dismissBtn.addEventListener("click", () => this.state.cancel());
-		if (this.opts.showChangeVault) {
-			const changeBtn = footer.createEl("button", { text: "Change vault" });
-			changeBtn.addEventListener("click", () => {
-				void this.openVaultPicker();
-			});
-		}
+		this.renderFooter(contentEl, empty ? "Close" : "Cancel", empty);
 	}
 
 	/** Instant-open loading state: the modal is on screen while computeSyncPlan
@@ -451,9 +442,18 @@ export class SyncPreviewModal extends Modal {
 			body.createSpan({ text: "Comparing your vault with the cloud…" });
 		}
 
+		this.renderFooter(parent, "Cancel", false);
+	}
+
+	/** Dismiss + optional "Change vault" footer, shared by the loaded preview
+	 *  and the loading state (previously identical blocks). */
+	private renderFooter(parent: HTMLElement, dismissLabel: string, dismissCta: boolean): void {
 		const footer = parent.createDiv({ cls: "engram-sync-preview-footer" });
-		const cancelBtn = footer.createEl("button", { text: "Cancel" });
-		cancelBtn.addEventListener("click", () => this.state.cancel());
+		const dismissBtn = footer.createEl("button", {
+			text: dismissLabel,
+			cls: dismissCta ? "mod-cta" : undefined,
+		});
+		dismissBtn.addEventListener("click", () => this.state.cancel());
 		if (this.opts.showChangeVault) {
 			const changeBtn = footer.createEl("button", { text: "Change vault" });
 			changeBtn.addEventListener("click", () => {
@@ -573,7 +573,7 @@ export class SyncPreviewModal extends Modal {
 			});
 			conflictRow.createSpan({
 				cls: "engram-sync-preview-conflicts-label",
-				text: ` conflict${conflicts === 1 ? "" : "s"} need resolution`,
+				text: ` ${pluralWord(conflicts, "conflict")} need resolution`,
 			});
 		}
 	}

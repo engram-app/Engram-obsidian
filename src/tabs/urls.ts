@@ -49,3 +49,9 @@ export const ENGRAM_ISSUES_URL = "https://github.com/engram-app/Engram-obsidian/
 
 /** Community Discord — support, questions, and issue reports from users + devs. */
 export const ENGRAM_DISCORD_URL = "https://discord.gg/NKWcU2mm7N";
+
+/** Billing page on the web app. Derived from ENGRAM_APP_URL so the cloud host
+ *  is defined exactly once; surfaces with a known backend should prefer
+ *  `${engramWebUrl(apiUrl)}/settings/billing` so self-hosted users aren't sent
+ *  to cloud billing. */
+export const DEFAULT_UPGRADE_URL = `${ENGRAM_APP_URL}/settings/billing`;

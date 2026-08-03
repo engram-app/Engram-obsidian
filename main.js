@@ -38,63 +38,63 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key != "sym
 // node_modules/diff-match-patch/index.js
 var require_diff_match_patch = __commonJS({
   "node_modules/diff-match-patch/index.js"(exports, module2) {
-    var diff_match_patch4 = function() {
+    var diff_match_patch5 = function() {
       this.Diff_Timeout = 1, this.Diff_EditCost = 4, this.Match_Threshold = 0.5, this.Match_Distance = 1e3, this.Patch_DeleteThreshold = 0.5, this.Patch_Margin = 4, this.Match_MaxBits = 32;
     }, DIFF_DELETE = -1, DIFF_INSERT = 1, DIFF_EQUAL = 0;
-    diff_match_patch4.Diff = function(op, text2) {
+    diff_match_patch5.Diff = function(op, text2) {
       return [op, text2];
     };
-    diff_match_patch4.prototype.diff_main = function(text1, text2, opt_checklines, opt_deadline) {
+    diff_match_patch5.prototype.diff_main = function(text1, text2, opt_checklines, opt_deadline) {
       typeof opt_deadline == "undefined" && (this.Diff_Timeout <= 0 ? opt_deadline = Number.MAX_VALUE : opt_deadline = (/* @__PURE__ */ new Date()).getTime() + this.Diff_Timeout * 1e3);
       var deadline = opt_deadline;
       if (text1 == null || text2 == null)
         throw new Error("Null input. (diff_main)");
       if (text1 == text2)
-        return text1 ? [new diff_match_patch4.Diff(DIFF_EQUAL, text1)] : [];
+        return text1 ? [new diff_match_patch5.Diff(DIFF_EQUAL, text1)] : [];
       typeof opt_checklines == "undefined" && (opt_checklines = !0);
       var checklines = opt_checklines, commonlength = this.diff_commonPrefix(text1, text2), commonprefix = text1.substring(0, commonlength);
       text1 = text1.substring(commonlength), text2 = text2.substring(commonlength), commonlength = this.diff_commonSuffix(text1, text2);
       var commonsuffix = text1.substring(text1.length - commonlength);
       text1 = text1.substring(0, text1.length - commonlength), text2 = text2.substring(0, text2.length - commonlength);
       var diffs = this.diff_compute_(text1, text2, checklines, deadline);
-      return commonprefix && diffs.unshift(new diff_match_patch4.Diff(DIFF_EQUAL, commonprefix)), commonsuffix && diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, commonsuffix)), this.diff_cleanupMerge(diffs), diffs;
+      return commonprefix && diffs.unshift(new diff_match_patch5.Diff(DIFF_EQUAL, commonprefix)), commonsuffix && diffs.push(new diff_match_patch5.Diff(DIFF_EQUAL, commonsuffix)), this.diff_cleanupMerge(diffs), diffs;
     };
-    diff_match_patch4.prototype.diff_compute_ = function(text1, text2, checklines, deadline) {
+    diff_match_patch5.prototype.diff_compute_ = function(text1, text2, checklines, deadline) {
       var diffs;
       if (!text1)
-        return [new diff_match_patch4.Diff(DIFF_INSERT, text2)];
+        return [new diff_match_patch5.Diff(DIFF_INSERT, text2)];
       if (!text2)
-        return [new diff_match_patch4.Diff(DIFF_DELETE, text1)];
+        return [new diff_match_patch5.Diff(DIFF_DELETE, text1)];
       var longtext = text1.length > text2.length ? text1 : text2, shorttext = text1.length > text2.length ? text2 : text1, i = longtext.indexOf(shorttext);
       if (i != -1)
         return diffs = [
-          new diff_match_patch4.Diff(DIFF_INSERT, longtext.substring(0, i)),
-          new diff_match_patch4.Diff(DIFF_EQUAL, shorttext),
-          new diff_match_patch4.Diff(
+          new diff_match_patch5.Diff(DIFF_INSERT, longtext.substring(0, i)),
+          new diff_match_patch5.Diff(DIFF_EQUAL, shorttext),
+          new diff_match_patch5.Diff(
             DIFF_INSERT,
             longtext.substring(i + shorttext.length)
           )
         ], text1.length > text2.length && (diffs[0][0] = diffs[2][0] = DIFF_DELETE), diffs;
       if (shorttext.length == 1)
         return [
-          new diff_match_patch4.Diff(DIFF_DELETE, text1),
-          new diff_match_patch4.Diff(DIFF_INSERT, text2)
+          new diff_match_patch5.Diff(DIFF_DELETE, text1),
+          new diff_match_patch5.Diff(DIFF_INSERT, text2)
         ];
       var hm = this.diff_halfMatch_(text1, text2);
       if (hm) {
         var text1_a = hm[0], text1_b = hm[1], text2_a = hm[2], text2_b = hm[3], mid_common = hm[4], diffs_a = this.diff_main(text1_a, text2_a, checklines, deadline), diffs_b = this.diff_main(text1_b, text2_b, checklines, deadline);
         return diffs_a.concat(
-          [new diff_match_patch4.Diff(DIFF_EQUAL, mid_common)],
+          [new diff_match_patch5.Diff(DIFF_EQUAL, mid_common)],
           diffs_b
         );
       }
       return checklines && text1.length > 100 && text2.length > 100 ? this.diff_lineMode_(text1, text2, deadline) : this.diff_bisect_(text1, text2, deadline);
     };
-    diff_match_patch4.prototype.diff_lineMode_ = function(text1, text2, deadline) {
+    diff_match_patch5.prototype.diff_lineMode_ = function(text1, text2, deadline) {
       var a = this.diff_linesToChars_(text1, text2);
       text1 = a.chars1, text2 = a.chars2;
       var linearray = a.lineArray, diffs = this.diff_main(text1, text2, !1, deadline);
-      this.diff_charsToLines_(diffs, linearray), this.diff_cleanupSemantic(diffs), diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, ""));
+      this.diff_charsToLines_(diffs, linearray), this.diff_cleanupSemantic(diffs), diffs.push(new diff_match_patch5.Diff(DIFF_EQUAL, ""));
       for (var pointer = 0, count_delete = 0, count_insert = 0, text_delete = "", text_insert = ""; pointer < diffs.length; ) {
         switch (diffs[pointer][0]) {
           case DIFF_INSERT:
@@ -120,7 +120,7 @@ var require_diff_match_patch = __commonJS({
       }
       return diffs.pop(), diffs;
     };
-    diff_match_patch4.prototype.diff_bisect_ = function(text1, text2, deadline) {
+    diff_match_patch5.prototype.diff_bisect_ = function(text1, text2, deadline) {
       for (var text1_length = text1.length, text2_length = text2.length, max_d = Math.ceil((text1_length + text2_length) / 2), v_offset = max_d, v_length = 2 * max_d, v1 = new Array(v_length), v2 = new Array(v_length), x = 0; x < v_length; x++)
         v1[x] = -1, v2[x] = -1;
       v1[v_offset + 1] = 0, v2[v_offset + 1] = 0;
@@ -163,15 +163,15 @@ var require_diff_match_patch = __commonJS({
         }
       }
       return [
-        new diff_match_patch4.Diff(DIFF_DELETE, text1),
-        new diff_match_patch4.Diff(DIFF_INSERT, text2)
+        new diff_match_patch5.Diff(DIFF_DELETE, text1),
+        new diff_match_patch5.Diff(DIFF_INSERT, text2)
       ];
     };
-    diff_match_patch4.prototype.diff_bisectSplit_ = function(text1, text2, x, y, deadline) {
+    diff_match_patch5.prototype.diff_bisectSplit_ = function(text1, text2, x, y, deadline) {
       var text1a = text1.substring(0, x), text2a = text2.substring(0, y), text1b = text1.substring(x), text2b = text2.substring(y), diffs = this.diff_main(text1a, text2a, !1, deadline), diffsb = this.diff_main(text1b, text2b, !1, deadline);
       return diffs.concat(diffsb);
     };
-    diff_match_patch4.prototype.diff_linesToChars_ = function(text1, text2) {
+    diff_match_patch5.prototype.diff_linesToChars_ = function(text1, text2) {
       var lineArray = [], lineHash = {};
       lineArray[0] = "";
       function diff_linesToCharsMunge_(text3) {
@@ -188,28 +188,28 @@ var require_diff_match_patch = __commonJS({
       var chars2 = diff_linesToCharsMunge_(text2);
       return { chars1, chars2, lineArray };
     };
-    diff_match_patch4.prototype.diff_charsToLines_ = function(diffs, lineArray) {
+    diff_match_patch5.prototype.diff_charsToLines_ = function(diffs, lineArray) {
       for (var i = 0; i < diffs.length; i++) {
         for (var chars = diffs[i][1], text2 = [], j = 0; j < chars.length; j++)
           text2[j] = lineArray[chars.charCodeAt(j)];
         diffs[i][1] = text2.join("");
       }
     };
-    diff_match_patch4.prototype.diff_commonPrefix = function(text1, text2) {
+    diff_match_patch5.prototype.diff_commonPrefix = function(text1, text2) {
       if (!text1 || !text2 || text1.charAt(0) != text2.charAt(0))
         return 0;
       for (var pointermin = 0, pointermax = Math.min(text1.length, text2.length), pointermid = pointermax, pointerstart = 0; pointermin < pointermid; )
         text1.substring(pointerstart, pointermid) == text2.substring(pointerstart, pointermid) ? (pointermin = pointermid, pointerstart = pointermin) : pointermax = pointermid, pointermid = Math.floor((pointermax - pointermin) / 2 + pointermin);
       return pointermid;
     };
-    diff_match_patch4.prototype.diff_commonSuffix = function(text1, text2) {
+    diff_match_patch5.prototype.diff_commonSuffix = function(text1, text2) {
       if (!text1 || !text2 || text1.charAt(text1.length - 1) != text2.charAt(text2.length - 1))
         return 0;
       for (var pointermin = 0, pointermax = Math.min(text1.length, text2.length), pointermid = pointermax, pointerend = 0; pointermin < pointermid; )
         text1.substring(text1.length - pointermid, text1.length - pointerend) == text2.substring(text2.length - pointermid, text2.length - pointerend) ? (pointermin = pointermid, pointerend = pointermin) : pointermax = pointermid, pointermid = Math.floor((pointermax - pointermin) / 2 + pointermin);
       return pointermid;
     };
-    diff_match_patch4.prototype.diff_commonOverlap_ = function(text1, text2) {
+    diff_match_patch5.prototype.diff_commonOverlap_ = function(text1, text2) {
       var text1_length = text1.length, text2_length = text2.length;
       if (text1_length == 0 || text2_length == 0)
         return 0;
@@ -224,7 +224,7 @@ var require_diff_match_patch = __commonJS({
         length2 += found, (found == 0 || text1.substring(text_length - length2) == text2.substring(0, length2)) && (best = length2, length2++);
       }
     };
-    diff_match_patch4.prototype.diff_halfMatch_ = function(text1, text2) {
+    diff_match_patch5.prototype.diff_halfMatch_ = function(text1, text2) {
       if (this.Diff_Timeout <= 0)
         return null;
       var longtext = text1.length > text2.length ? text1 : text2, shorttext = text1.length > text2.length ? text2 : text1;
@@ -267,7 +267,7 @@ var require_diff_match_patch = __commonJS({
       var mid_common = hm[4];
       return [text1_a, text1_b, text2_a, text2_b, mid_common];
     };
-    diff_match_patch4.prototype.diff_cleanupSemantic = function(diffs) {
+    diff_match_patch5.prototype.diff_cleanupSemantic = function(diffs) {
       for (var changes = !1, equalities = [], equalitiesLength = 0, lastEquality = null, pointer = 0, length_insertions1 = 0, length_deletions1 = 0, length_insertions2 = 0, length_deletions2 = 0; pointer < diffs.length; )
         diffs[pointer][0] == DIFF_EQUAL ? (equalities[equalitiesLength++] = pointer, length_insertions1 = length_insertions2, length_deletions1 = length_deletions2, length_insertions2 = 0, length_deletions2 = 0, lastEquality = diffs[pointer][1]) : (diffs[pointer][0] == DIFF_INSERT ? length_insertions2 += diffs[pointer][1].length : length_deletions2 += diffs[pointer][1].length, lastEquality && lastEquality.length <= Math.max(length_insertions1, length_deletions1) && lastEquality.length <= Math.max(
           length_insertions2,
@@ -275,15 +275,15 @@ var require_diff_match_patch = __commonJS({
         ) && (diffs.splice(
           equalities[equalitiesLength - 1],
           0,
-          new diff_match_patch4.Diff(DIFF_DELETE, lastEquality)
+          new diff_match_patch5.Diff(DIFF_DELETE, lastEquality)
         ), diffs[equalities[equalitiesLength - 1] + 1][0] = DIFF_INSERT, equalitiesLength--, equalitiesLength--, pointer = equalitiesLength > 0 ? equalities[equalitiesLength - 1] : -1, length_insertions1 = 0, length_deletions1 = 0, length_insertions2 = 0, length_deletions2 = 0, lastEquality = null, changes = !0)), pointer++;
       for (changes && this.diff_cleanupMerge(diffs), this.diff_cleanupSemanticLossless(diffs), pointer = 1; pointer < diffs.length; ) {
         if (diffs[pointer - 1][0] == DIFF_DELETE && diffs[pointer][0] == DIFF_INSERT) {
           var deletion = diffs[pointer - 1][1], insertion = diffs[pointer][1], overlap_length1 = this.diff_commonOverlap_(deletion, insertion), overlap_length2 = this.diff_commonOverlap_(insertion, deletion);
-          overlap_length1 >= overlap_length2 ? (overlap_length1 >= deletion.length / 2 || overlap_length1 >= insertion.length / 2) && (diffs.splice(pointer, 0, new diff_match_patch4.Diff(
+          overlap_length1 >= overlap_length2 ? (overlap_length1 >= deletion.length / 2 || overlap_length1 >= insertion.length / 2) && (diffs.splice(pointer, 0, new diff_match_patch5.Diff(
             DIFF_EQUAL,
             insertion.substring(0, overlap_length1)
-          )), diffs[pointer - 1][1] = deletion.substring(0, deletion.length - overlap_length1), diffs[pointer + 1][1] = insertion.substring(overlap_length1), pointer++) : (overlap_length2 >= deletion.length / 2 || overlap_length2 >= insertion.length / 2) && (diffs.splice(pointer, 0, new diff_match_patch4.Diff(
+          )), diffs[pointer - 1][1] = deletion.substring(0, deletion.length - overlap_length1), diffs[pointer + 1][1] = insertion.substring(overlap_length1), pointer++) : (overlap_length2 >= deletion.length / 2 || overlap_length2 >= insertion.length / 2) && (diffs.splice(pointer, 0, new diff_match_patch5.Diff(
             DIFF_EQUAL,
             deletion.substring(0, overlap_length2)
           )), diffs[pointer - 1][0] = DIFF_INSERT, diffs[pointer - 1][1] = insertion.substring(0, insertion.length - overlap_length2), diffs[pointer + 1][0] = DIFF_DELETE, diffs[pointer + 1][1] = deletion.substring(overlap_length2), pointer++), pointer++;
@@ -291,11 +291,11 @@ var require_diff_match_patch = __commonJS({
         pointer++;
       }
     };
-    diff_match_patch4.prototype.diff_cleanupSemanticLossless = function(diffs) {
+    diff_match_patch5.prototype.diff_cleanupSemanticLossless = function(diffs) {
       function diff_cleanupSemanticScore_(one, two) {
         if (!one || !two)
           return 6;
-        var char1 = one.charAt(one.length - 1), char2 = two.charAt(0), nonAlphaNumeric1 = char1.match(diff_match_patch4.nonAlphaNumericRegex_), nonAlphaNumeric2 = char2.match(diff_match_patch4.nonAlphaNumericRegex_), whitespace1 = nonAlphaNumeric1 && char1.match(diff_match_patch4.whitespaceRegex_), whitespace2 = nonAlphaNumeric2 && char2.match(diff_match_patch4.whitespaceRegex_), lineBreak1 = whitespace1 && char1.match(diff_match_patch4.linebreakRegex_), lineBreak2 = whitespace2 && char2.match(diff_match_patch4.linebreakRegex_), blankLine1 = lineBreak1 && one.match(diff_match_patch4.blanklineEndRegex_), blankLine2 = lineBreak2 && two.match(diff_match_patch4.blanklineStartRegex_);
+        var char1 = one.charAt(one.length - 1), char2 = two.charAt(0), nonAlphaNumeric1 = char1.match(diff_match_patch5.nonAlphaNumericRegex_), nonAlphaNumeric2 = char2.match(diff_match_patch5.nonAlphaNumericRegex_), whitespace1 = nonAlphaNumeric1 && char1.match(diff_match_patch5.whitespaceRegex_), whitespace2 = nonAlphaNumeric2 && char2.match(diff_match_patch5.whitespaceRegex_), lineBreak1 = whitespace1 && char1.match(diff_match_patch5.linebreakRegex_), lineBreak2 = whitespace2 && char2.match(diff_match_patch5.linebreakRegex_), blankLine1 = lineBreak1 && one.match(diff_match_patch5.blanklineEndRegex_), blankLine2 = lineBreak2 && two.match(diff_match_patch5.blanklineStartRegex_);
         return blankLine1 || blankLine2 ? 5 : lineBreak1 || lineBreak2 ? 4 : nonAlphaNumeric1 && !whitespace1 && whitespace2 ? 3 : whitespace1 || whitespace2 ? 2 : nonAlphaNumeric1 || nonAlphaNumeric2 ? 1 : 0;
       }
       for (var pointer = 1; pointer < diffs.length - 1; ) {
@@ -315,22 +315,22 @@ var require_diff_match_patch = __commonJS({
         pointer++;
       }
     };
-    diff_match_patch4.nonAlphaNumericRegex_ = /[^a-zA-Z0-9]/;
-    diff_match_patch4.whitespaceRegex_ = /\s/;
-    diff_match_patch4.linebreakRegex_ = /[\r\n]/;
-    diff_match_patch4.blanklineEndRegex_ = /\n\r?\n$/;
-    diff_match_patch4.blanklineStartRegex_ = /^\r?\n\r?\n/;
-    diff_match_patch4.prototype.diff_cleanupEfficiency = function(diffs) {
+    diff_match_patch5.nonAlphaNumericRegex_ = /[^a-zA-Z0-9]/;
+    diff_match_patch5.whitespaceRegex_ = /\s/;
+    diff_match_patch5.linebreakRegex_ = /[\r\n]/;
+    diff_match_patch5.blanklineEndRegex_ = /\n\r?\n$/;
+    diff_match_patch5.blanklineStartRegex_ = /^\r?\n\r?\n/;
+    diff_match_patch5.prototype.diff_cleanupEfficiency = function(diffs) {
       for (var changes = !1, equalities = [], equalitiesLength = 0, lastEquality = null, pointer = 0, pre_ins = !1, pre_del = !1, post_ins = !1, post_del = !1; pointer < diffs.length; )
         diffs[pointer][0] == DIFF_EQUAL ? (diffs[pointer][1].length < this.Diff_EditCost && (post_ins || post_del) ? (equalities[equalitiesLength++] = pointer, pre_ins = post_ins, pre_del = post_del, lastEquality = diffs[pointer][1]) : (equalitiesLength = 0, lastEquality = null), post_ins = post_del = !1) : (diffs[pointer][0] == DIFF_DELETE ? post_del = !0 : post_ins = !0, lastEquality && (pre_ins && pre_del && post_ins && post_del || lastEquality.length < this.Diff_EditCost / 2 && pre_ins + pre_del + post_ins + post_del == 3) && (diffs.splice(
           equalities[equalitiesLength - 1],
           0,
-          new diff_match_patch4.Diff(DIFF_DELETE, lastEquality)
+          new diff_match_patch5.Diff(DIFF_DELETE, lastEquality)
         ), diffs[equalities[equalitiesLength - 1] + 1][0] = DIFF_INSERT, equalitiesLength--, lastEquality = null, pre_ins && pre_del ? (post_ins = post_del = !0, equalitiesLength = 0) : (equalitiesLength--, pointer = equalitiesLength > 0 ? equalities[equalitiesLength - 1] : -1, post_ins = post_del = !1), changes = !0)), pointer++;
       changes && this.diff_cleanupMerge(diffs);
     };
-    diff_match_patch4.prototype.diff_cleanupMerge = function(diffs) {
-      diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, ""));
+    diff_match_patch5.prototype.diff_cleanupMerge = function(diffs) {
+      diffs.push(new diff_match_patch5.Diff(DIFF_EQUAL, ""));
       for (var pointer = 0, count_delete = 0, count_insert = 0, text_delete = "", text_insert = "", commonlength; pointer < diffs.length; )
         switch (diffs[pointer][0]) {
           case DIFF_INSERT:
@@ -340,17 +340,17 @@ var require_diff_match_patch = __commonJS({
             count_delete++, text_delete += diffs[pointer][1], pointer++;
             break;
           case DIFF_EQUAL:
-            count_delete + count_insert > 1 ? (count_delete !== 0 && count_insert !== 0 && (commonlength = this.diff_commonPrefix(text_insert, text_delete), commonlength !== 0 && (pointer - count_delete - count_insert > 0 && diffs[pointer - count_delete - count_insert - 1][0] == DIFF_EQUAL ? diffs[pointer - count_delete - count_insert - 1][1] += text_insert.substring(0, commonlength) : (diffs.splice(0, 0, new diff_match_patch4.Diff(
+            count_delete + count_insert > 1 ? (count_delete !== 0 && count_insert !== 0 && (commonlength = this.diff_commonPrefix(text_insert, text_delete), commonlength !== 0 && (pointer - count_delete - count_insert > 0 && diffs[pointer - count_delete - count_insert - 1][0] == DIFF_EQUAL ? diffs[pointer - count_delete - count_insert - 1][1] += text_insert.substring(0, commonlength) : (diffs.splice(0, 0, new diff_match_patch5.Diff(
               DIFF_EQUAL,
               text_insert.substring(0, commonlength)
             )), pointer++), text_insert = text_insert.substring(commonlength), text_delete = text_delete.substring(commonlength)), commonlength = this.diff_commonSuffix(text_insert, text_delete), commonlength !== 0 && (diffs[pointer][1] = text_insert.substring(text_insert.length - commonlength) + diffs[pointer][1], text_insert = text_insert.substring(0, text_insert.length - commonlength), text_delete = text_delete.substring(0, text_delete.length - commonlength))), pointer -= count_delete + count_insert, diffs.splice(pointer, count_delete + count_insert), text_delete.length && (diffs.splice(
               pointer,
               0,
-              new diff_match_patch4.Diff(DIFF_DELETE, text_delete)
+              new diff_match_patch5.Diff(DIFF_DELETE, text_delete)
             ), pointer++), text_insert.length && (diffs.splice(
               pointer,
               0,
-              new diff_match_patch4.Diff(DIFF_INSERT, text_insert)
+              new diff_match_patch5.Diff(DIFF_INSERT, text_insert)
             ), pointer++), pointer++) : pointer !== 0 && diffs[pointer - 1][0] == DIFF_EQUAL ? (diffs[pointer - 1][1] += diffs[pointer][1], diffs.splice(pointer, 1)) : pointer++, count_insert = 0, count_delete = 0, text_delete = "", text_insert = "";
             break;
         }
@@ -360,13 +360,13 @@ var require_diff_match_patch = __commonJS({
         diffs[pointer - 1][0] == DIFF_EQUAL && diffs[pointer + 1][0] == DIFF_EQUAL && (diffs[pointer][1].substring(diffs[pointer][1].length - diffs[pointer - 1][1].length) == diffs[pointer - 1][1] ? (diffs[pointer][1] = diffs[pointer - 1][1] + diffs[pointer][1].substring(0, diffs[pointer][1].length - diffs[pointer - 1][1].length), diffs[pointer + 1][1] = diffs[pointer - 1][1] + diffs[pointer + 1][1], diffs.splice(pointer - 1, 1), changes = !0) : diffs[pointer][1].substring(0, diffs[pointer + 1][1].length) == diffs[pointer + 1][1] && (diffs[pointer - 1][1] += diffs[pointer + 1][1], diffs[pointer][1] = diffs[pointer][1].substring(diffs[pointer + 1][1].length) + diffs[pointer + 1][1], diffs.splice(pointer + 1, 1), changes = !0)), pointer++;
       changes && this.diff_cleanupMerge(diffs);
     };
-    diff_match_patch4.prototype.diff_xIndex = function(diffs, loc) {
+    diff_match_patch5.prototype.diff_xIndex = function(diffs, loc) {
       var chars1 = 0, chars2 = 0, last_chars1 = 0, last_chars2 = 0, x;
       for (x = 0; x < diffs.length && (diffs[x][0] !== DIFF_INSERT && (chars1 += diffs[x][1].length), diffs[x][0] !== DIFF_DELETE && (chars2 += diffs[x][1].length), !(chars1 > loc)); x++)
         last_chars1 = chars1, last_chars2 = chars2;
       return diffs.length != x && diffs[x][0] === DIFF_DELETE ? last_chars2 : last_chars2 + (loc - last_chars1);
     };
-    diff_match_patch4.prototype.diff_prettyHtml = function(diffs) {
+    diff_match_patch5.prototype.diff_prettyHtml = function(diffs) {
       for (var html = [], pattern_amp = /&/g, pattern_lt = /</g, pattern_gt = />/g, pattern_para = /\n/g, x = 0; x < diffs.length; x++) {
         var op = diffs[x][0], data = diffs[x][1], text2 = data.replace(pattern_amp, "&amp;").replace(pattern_lt, "&lt;").replace(pattern_gt, "&gt;").replace(pattern_para, "&para;<br>");
         switch (op) {
@@ -383,17 +383,17 @@ var require_diff_match_patch = __commonJS({
       }
       return html.join("");
     };
-    diff_match_patch4.prototype.diff_text1 = function(diffs) {
+    diff_match_patch5.prototype.diff_text1 = function(diffs) {
       for (var text2 = [], x = 0; x < diffs.length; x++)
         diffs[x][0] !== DIFF_INSERT && (text2[x] = diffs[x][1]);
       return text2.join("");
     };
-    diff_match_patch4.prototype.diff_text2 = function(diffs) {
+    diff_match_patch5.prototype.diff_text2 = function(diffs) {
       for (var text2 = [], x = 0; x < diffs.length; x++)
         diffs[x][0] !== DIFF_DELETE && (text2[x] = diffs[x][1]);
       return text2.join("");
     };
-    diff_match_patch4.prototype.diff_levenshtein = function(diffs) {
+    diff_match_patch5.prototype.diff_levenshtein = function(diffs) {
       for (var levenshtein = 0, insertions = 0, deletions = 0, x = 0; x < diffs.length; x++) {
         var op = diffs[x][0], data = diffs[x][1];
         switch (op) {
@@ -410,7 +410,7 @@ var require_diff_match_patch = __commonJS({
       }
       return levenshtein += Math.max(insertions, deletions), levenshtein;
     };
-    diff_match_patch4.prototype.diff_toDelta = function(diffs) {
+    diff_match_patch5.prototype.diff_toDelta = function(diffs) {
       for (var text2 = [], x = 0; x < diffs.length; x++)
         switch (diffs[x][0]) {
           case DIFF_INSERT:
@@ -425,13 +425,13 @@ var require_diff_match_patch = __commonJS({
         }
       return text2.join("	").replace(/%20/g, " ");
     };
-    diff_match_patch4.prototype.diff_fromDelta = function(text1, delta) {
+    diff_match_patch5.prototype.diff_fromDelta = function(text1, delta) {
       for (var diffs = [], diffsLength = 0, pointer = 0, tokens = delta.split(/\t/g), x = 0; x < tokens.length; x++) {
         var param = tokens[x].substring(1);
         switch (tokens[x].charAt(0)) {
           case "+":
             try {
-              diffs[diffsLength++] = new diff_match_patch4.Diff(DIFF_INSERT, decodeURI(param));
+              diffs[diffsLength++] = new diff_match_patch5.Diff(DIFF_INSERT, decodeURI(param));
             } catch (ex) {
               throw new Error("Illegal escape in diff_fromDelta: " + param);
             }
@@ -443,7 +443,7 @@ var require_diff_match_patch = __commonJS({
             if (isNaN(n) || n < 0)
               throw new Error("Invalid number in diff_fromDelta: " + param);
             var text2 = text1.substring(pointer, pointer += n);
-            tokens[x].charAt(0) == "=" ? diffs[diffsLength++] = new diff_match_patch4.Diff(DIFF_EQUAL, text2) : diffs[diffsLength++] = new diff_match_patch4.Diff(DIFF_DELETE, text2);
+            tokens[x].charAt(0) == "=" ? diffs[diffsLength++] = new diff_match_patch5.Diff(DIFF_EQUAL, text2) : diffs[diffsLength++] = new diff_match_patch5.Diff(DIFF_DELETE, text2);
             break;
           default:
             if (tokens[x])
@@ -454,12 +454,12 @@ var require_diff_match_patch = __commonJS({
         throw new Error("Delta length (" + pointer + ") does not equal source text length (" + text1.length + ").");
       return diffs;
     };
-    diff_match_patch4.prototype.match_main = function(text2, pattern, loc) {
+    diff_match_patch5.prototype.match_main = function(text2, pattern, loc) {
       if (text2 == null || pattern == null || loc == null)
         throw new Error("Null input. (match_main)");
       return loc = Math.max(0, Math.min(loc, text2.length)), text2 == pattern ? 0 : text2.length ? text2.substring(loc, loc + pattern.length) == pattern ? loc : this.match_bitap_(text2, pattern, loc) : -1;
     };
-    diff_match_patch4.prototype.match_bitap_ = function(text2, pattern, loc) {
+    diff_match_patch5.prototype.match_bitap_ = function(text2, pattern, loc) {
       if (pattern.length > this.Match_MaxBits)
         throw new Error("Pattern too long for this browser.");
       var s = this.match_alphabet_(pattern), dmp3 = this;
@@ -494,14 +494,14 @@ var require_diff_match_patch = __commonJS({
       }
       return best_loc;
     };
-    diff_match_patch4.prototype.match_alphabet_ = function(pattern) {
+    diff_match_patch5.prototype.match_alphabet_ = function(pattern) {
       for (var s = {}, i = 0; i < pattern.length; i++)
         s[pattern.charAt(i)] = 0;
       for (var i = 0; i < pattern.length; i++)
         s[pattern.charAt(i)] |= 1 << pattern.length - i - 1;
       return s;
     };
-    diff_match_patch4.prototype.patch_addContext_ = function(patch, text2) {
+    diff_match_patch5.prototype.patch_addContext_ = function(patch, text2) {
       if (text2.length != 0) {
         if (patch.start2 === null)
           throw Error("patch not initialized");
@@ -512,15 +512,15 @@ var require_diff_match_patch = __commonJS({
           );
         padding += this.Patch_Margin;
         var prefix = text2.substring(patch.start2 - padding, patch.start2);
-        prefix && patch.diffs.unshift(new diff_match_patch4.Diff(DIFF_EQUAL, prefix));
+        prefix && patch.diffs.unshift(new diff_match_patch5.Diff(DIFF_EQUAL, prefix));
         var suffix = text2.substring(
           patch.start2 + patch.length1,
           patch.start2 + patch.length1 + padding
         );
-        suffix && patch.diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, suffix)), patch.start1 -= prefix.length, patch.start2 -= prefix.length, patch.length1 += prefix.length + suffix.length, patch.length2 += prefix.length + suffix.length;
+        suffix && patch.diffs.push(new diff_match_patch5.Diff(DIFF_EQUAL, suffix)), patch.start1 -= prefix.length, patch.start2 -= prefix.length, patch.length1 += prefix.length + suffix.length, patch.length2 += prefix.length + suffix.length;
       }
     };
-    diff_match_patch4.prototype.patch_make = function(a, opt_b, opt_c) {
+    diff_match_patch5.prototype.patch_make = function(a, opt_b, opt_c) {
       var text1, diffs;
       if (typeof a == "string" && typeof opt_b == "string" && typeof opt_c == "undefined")
         text1 = /** @type {string} */
@@ -545,7 +545,7 @@ var require_diff_match_patch = __commonJS({
         throw new Error("Unknown call format to patch_make.");
       if (diffs.length === 0)
         return [];
-      for (var patches = [], patch = new diff_match_patch4.patch_obj(), patchDiffLength = 0, char_count1 = 0, char_count2 = 0, prepatch_text = text1, postpatch_text = text1, x = 0; x < diffs.length; x++) {
+      for (var patches = [], patch = new diff_match_patch5.patch_obj(), patchDiffLength = 0, char_count1 = 0, char_count2 = 0, prepatch_text = text1, postpatch_text = text1, x = 0; x < diffs.length; x++) {
         var diff_type = diffs[x][0], diff_text = diffs[x][1];
         switch (!patchDiffLength && diff_type !== DIFF_EQUAL && (patch.start1 = char_count1, patch.start2 = char_count2), diff_type) {
           case DIFF_INSERT:
@@ -555,24 +555,24 @@ var require_diff_match_patch = __commonJS({
             patch.length1 += diff_text.length, patch.diffs[patchDiffLength++] = diffs[x], postpatch_text = postpatch_text.substring(0, char_count2) + postpatch_text.substring(char_count2 + diff_text.length);
             break;
           case DIFF_EQUAL:
-            diff_text.length <= 2 * this.Patch_Margin && patchDiffLength && diffs.length != x + 1 ? (patch.diffs[patchDiffLength++] = diffs[x], patch.length1 += diff_text.length, patch.length2 += diff_text.length) : diff_text.length >= 2 * this.Patch_Margin && patchDiffLength && (this.patch_addContext_(patch, prepatch_text), patches.push(patch), patch = new diff_match_patch4.patch_obj(), patchDiffLength = 0, prepatch_text = postpatch_text, char_count1 = char_count2);
+            diff_text.length <= 2 * this.Patch_Margin && patchDiffLength && diffs.length != x + 1 ? (patch.diffs[patchDiffLength++] = diffs[x], patch.length1 += diff_text.length, patch.length2 += diff_text.length) : diff_text.length >= 2 * this.Patch_Margin && patchDiffLength && (this.patch_addContext_(patch, prepatch_text), patches.push(patch), patch = new diff_match_patch5.patch_obj(), patchDiffLength = 0, prepatch_text = postpatch_text, char_count1 = char_count2);
             break;
         }
         diff_type !== DIFF_INSERT && (char_count1 += diff_text.length), diff_type !== DIFF_DELETE && (char_count2 += diff_text.length);
       }
       return patchDiffLength && (this.patch_addContext_(patch, prepatch_text), patches.push(patch)), patches;
     };
-    diff_match_patch4.prototype.patch_deepCopy = function(patches) {
+    diff_match_patch5.prototype.patch_deepCopy = function(patches) {
       for (var patchesCopy = [], x = 0; x < patches.length; x++) {
-        var patch = patches[x], patchCopy = new diff_match_patch4.patch_obj();
+        var patch = patches[x], patchCopy = new diff_match_patch5.patch_obj();
         patchCopy.diffs = [];
         for (var y = 0; y < patch.diffs.length; y++)
-          patchCopy.diffs[y] = new diff_match_patch4.Diff(patch.diffs[y][0], patch.diffs[y][1]);
+          patchCopy.diffs[y] = new diff_match_patch5.Diff(patch.diffs[y][0], patch.diffs[y][1]);
         patchCopy.start1 = patch.start1, patchCopy.start2 = patch.start2, patchCopy.length1 = patch.length1, patchCopy.length2 = patch.length2, patchesCopy[x] = patchCopy;
       }
       return patchesCopy;
     };
-    diff_match_patch4.prototype.patch_apply = function(patches, text2) {
+    diff_match_patch5.prototype.patch_apply = function(patches, text2) {
       if (patches.length == 0)
         return [text2, []];
       patches = this.patch_deepCopy(patches);
@@ -614,52 +614,52 @@ var require_diff_match_patch = __commonJS({
       }
       return text2 = text2.substring(nullPadding.length, text2.length - nullPadding.length), [text2, results];
     };
-    diff_match_patch4.prototype.patch_addPadding = function(patches) {
+    diff_match_patch5.prototype.patch_addPadding = function(patches) {
       for (var paddingLength = this.Patch_Margin, nullPadding = "", x = 1; x <= paddingLength; x++)
         nullPadding += String.fromCharCode(x);
       for (var x = 0; x < patches.length; x++)
         patches[x].start1 += paddingLength, patches[x].start2 += paddingLength;
       var patch = patches[0], diffs = patch.diffs;
       if (diffs.length == 0 || diffs[0][0] != DIFF_EQUAL)
-        diffs.unshift(new diff_match_patch4.Diff(DIFF_EQUAL, nullPadding)), patch.start1 -= paddingLength, patch.start2 -= paddingLength, patch.length1 += paddingLength, patch.length2 += paddingLength;
+        diffs.unshift(new diff_match_patch5.Diff(DIFF_EQUAL, nullPadding)), patch.start1 -= paddingLength, patch.start2 -= paddingLength, patch.length1 += paddingLength, patch.length2 += paddingLength;
       else if (paddingLength > diffs[0][1].length) {
         var extraLength = paddingLength - diffs[0][1].length;
         diffs[0][1] = nullPadding.substring(diffs[0][1].length) + diffs[0][1], patch.start1 -= extraLength, patch.start2 -= extraLength, patch.length1 += extraLength, patch.length2 += extraLength;
       }
       if (patch = patches[patches.length - 1], diffs = patch.diffs, diffs.length == 0 || diffs[diffs.length - 1][0] != DIFF_EQUAL)
-        diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, nullPadding)), patch.length1 += paddingLength, patch.length2 += paddingLength;
+        diffs.push(new diff_match_patch5.Diff(DIFF_EQUAL, nullPadding)), patch.length1 += paddingLength, patch.length2 += paddingLength;
       else if (paddingLength > diffs[diffs.length - 1][1].length) {
         var extraLength = paddingLength - diffs[diffs.length - 1][1].length;
         diffs[diffs.length - 1][1] += nullPadding.substring(0, extraLength), patch.length1 += extraLength, patch.length2 += extraLength;
       }
       return nullPadding;
     };
-    diff_match_patch4.prototype.patch_splitMax = function(patches) {
+    diff_match_patch5.prototype.patch_splitMax = function(patches) {
       for (var patch_size = this.Match_MaxBits, x = 0; x < patches.length; x++)
         if (!(patches[x].length1 <= patch_size)) {
           var bigpatch = patches[x];
           patches.splice(x--, 1);
           for (var start1 = bigpatch.start1, start2 = bigpatch.start2, precontext = ""; bigpatch.diffs.length !== 0; ) {
-            var patch = new diff_match_patch4.patch_obj(), empty = !0;
-            for (patch.start1 = start1 - precontext.length, patch.start2 = start2 - precontext.length, precontext !== "" && (patch.length1 = patch.length2 = precontext.length, patch.diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, precontext))); bigpatch.diffs.length !== 0 && patch.length1 < patch_size - this.Patch_Margin; ) {
+            var patch = new diff_match_patch5.patch_obj(), empty = !0;
+            for (patch.start1 = start1 - precontext.length, patch.start2 = start2 - precontext.length, precontext !== "" && (patch.length1 = patch.length2 = precontext.length, patch.diffs.push(new diff_match_patch5.Diff(DIFF_EQUAL, precontext))); bigpatch.diffs.length !== 0 && patch.length1 < patch_size - this.Patch_Margin; ) {
               var diff_type = bigpatch.diffs[0][0], diff_text = bigpatch.diffs[0][1];
-              diff_type === DIFF_INSERT ? (patch.length2 += diff_text.length, start2 += diff_text.length, patch.diffs.push(bigpatch.diffs.shift()), empty = !1) : diff_type === DIFF_DELETE && patch.diffs.length == 1 && patch.diffs[0][0] == DIFF_EQUAL && diff_text.length > 2 * patch_size ? (patch.length1 += diff_text.length, start1 += diff_text.length, empty = !1, patch.diffs.push(new diff_match_patch4.Diff(diff_type, diff_text)), bigpatch.diffs.shift()) : (diff_text = diff_text.substring(
+              diff_type === DIFF_INSERT ? (patch.length2 += diff_text.length, start2 += diff_text.length, patch.diffs.push(bigpatch.diffs.shift()), empty = !1) : diff_type === DIFF_DELETE && patch.diffs.length == 1 && patch.diffs[0][0] == DIFF_EQUAL && diff_text.length > 2 * patch_size ? (patch.length1 += diff_text.length, start1 += diff_text.length, empty = !1, patch.diffs.push(new diff_match_patch5.Diff(diff_type, diff_text)), bigpatch.diffs.shift()) : (diff_text = diff_text.substring(
                 0,
                 patch_size - patch.length1 - this.Patch_Margin
-              ), patch.length1 += diff_text.length, start1 += diff_text.length, diff_type === DIFF_EQUAL ? (patch.length2 += diff_text.length, start2 += diff_text.length) : empty = !1, patch.diffs.push(new diff_match_patch4.Diff(diff_type, diff_text)), diff_text == bigpatch.diffs[0][1] ? bigpatch.diffs.shift() : bigpatch.diffs[0][1] = bigpatch.diffs[0][1].substring(diff_text.length));
+              ), patch.length1 += diff_text.length, start1 += diff_text.length, diff_type === DIFF_EQUAL ? (patch.length2 += diff_text.length, start2 += diff_text.length) : empty = !1, patch.diffs.push(new diff_match_patch5.Diff(diff_type, diff_text)), diff_text == bigpatch.diffs[0][1] ? bigpatch.diffs.shift() : bigpatch.diffs[0][1] = bigpatch.diffs[0][1].substring(diff_text.length));
             }
             precontext = this.diff_text2(patch.diffs), precontext = precontext.substring(precontext.length - this.Patch_Margin);
             var postcontext = this.diff_text1(bigpatch.diffs).substring(0, this.Patch_Margin);
-            postcontext !== "" && (patch.length1 += postcontext.length, patch.length2 += postcontext.length, patch.diffs.length !== 0 && patch.diffs[patch.diffs.length - 1][0] === DIFF_EQUAL ? patch.diffs[patch.diffs.length - 1][1] += postcontext : patch.diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, postcontext))), empty || patches.splice(++x, 0, patch);
+            postcontext !== "" && (patch.length1 += postcontext.length, patch.length2 += postcontext.length, patch.diffs.length !== 0 && patch.diffs[patch.diffs.length - 1][0] === DIFF_EQUAL ? patch.diffs[patch.diffs.length - 1][1] += postcontext : patch.diffs.push(new diff_match_patch5.Diff(DIFF_EQUAL, postcontext))), empty || patches.splice(++x, 0, patch);
           }
         }
     };
-    diff_match_patch4.prototype.patch_toText = function(patches) {
+    diff_match_patch5.prototype.patch_toText = function(patches) {
       for (var text2 = [], x = 0; x < patches.length; x++)
         text2[x] = patches[x];
       return text2.join("");
     };
-    diff_match_patch4.prototype.patch_fromText = function(textline) {
+    diff_match_patch5.prototype.patch_fromText = function(textline) {
       var patches = [];
       if (!textline)
         return patches;
@@ -668,7 +668,7 @@ var require_diff_match_patch = __commonJS({
         var m = text2[textPointer].match(patchHeader);
         if (!m)
           throw new Error("Invalid patch string: " + text2[textPointer]);
-        var patch = new diff_match_patch4.patch_obj();
+        var patch = new diff_match_patch5.patch_obj();
         for (patches.push(patch), patch.start1 = parseInt(m[1], 10), m[2] === "" ? (patch.start1--, patch.length1 = 1) : m[2] == "0" ? patch.length1 = 0 : (patch.start1--, patch.length1 = parseInt(m[2], 10)), patch.start2 = parseInt(m[3], 10), m[4] === "" ? (patch.start2--, patch.length2 = 1) : m[4] == "0" ? patch.length2 = 0 : (patch.start2--, patch.length2 = parseInt(m[4], 10)), textPointer++; textPointer < text2.length; ) {
           var sign = text2[textPointer].charAt(0);
           try {
@@ -677,11 +677,11 @@ var require_diff_match_patch = __commonJS({
             throw new Error("Illegal escape in patch_fromText: " + line);
           }
           if (sign == "-")
-            patch.diffs.push(new diff_match_patch4.Diff(DIFF_DELETE, line));
+            patch.diffs.push(new diff_match_patch5.Diff(DIFF_DELETE, line));
           else if (sign == "+")
-            patch.diffs.push(new diff_match_patch4.Diff(DIFF_INSERT, line));
+            patch.diffs.push(new diff_match_patch5.Diff(DIFF_INSERT, line));
           else if (sign == " ")
-            patch.diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, line));
+            patch.diffs.push(new diff_match_patch5.Diff(DIFF_EQUAL, line));
           else {
             if (sign == "@")
               break;
@@ -693,10 +693,10 @@ var require_diff_match_patch = __commonJS({
       }
       return patches;
     };
-    diff_match_patch4.patch_obj = function() {
+    diff_match_patch5.patch_obj = function() {
       this.diffs = [], this.start1 = null, this.start2 = null, this.length1 = 0, this.length2 = 0;
     };
-    diff_match_patch4.patch_obj.prototype.toString = function() {
+    diff_match_patch5.patch_obj.prototype.toString = function() {
       var coords1, coords2;
       this.length1 === 0 ? coords1 = this.start1 + ",0" : this.length1 == 1 ? coords1 = this.start1 + 1 : coords1 = this.start1 + 1 + "," + this.length1, this.length2 === 0 ? coords2 = this.start2 + ",0" : this.length2 == 1 ? coords2 = this.start2 + 1 : coords2 = this.start2 + 1 + "," + this.length2;
       for (var text2 = ["@@ -" + coords1 + " +" + coords2 + ` @@
@@ -717,8 +717,8 @@ var require_diff_match_patch = __commonJS({
       }
       return text2.join("").replace(/%20/g, " ");
     };
-    module2.exports = diff_match_patch4;
-    module2.exports.diff_match_patch = diff_match_patch4;
+    module2.exports = diff_match_patch5;
+    module2.exports.diff_match_patch = diff_match_patch5;
     module2.exports.DIFF_DELETE = DIFF_DELETE;
     module2.exports.DIFF_INSERT = DIFF_INSERT;
     module2.exports.DIFF_EQUAL = DIFF_EQUAL;
@@ -743,7 +743,7 @@ var ENGRAM_CLOUD_URL = "https://api.engram.page", ENGRAM_APP_URL = "https://app.
 function engramWebUrl(apiUrl) {
   return apiUrl === ENGRAM_CLOUD_URL ? ENGRAM_APP_URL : apiUrl;
 }
-var LEGACY_CLOUD_HOSTS = ["app.engram.page"], ENGRAM_MARKETING_URL = "https://engram.page", ENGRAM_DOCS_URL = "https://engram.page/docs", ENGRAM_PRICING_URL = "https://engram.page/pricing", ENGRAM_MCP_URL = "https://engram.page/docs/integrations", ENGRAM_SELFHOST_URL = "https://github.com/engram-app/engram", ENGRAM_GITHUB_URL = "https://github.com/engram-app/engram", ENGRAM_ISSUES_URL = "https://github.com/engram-app/Engram-obsidian/issues", ENGRAM_DISCORD_URL = "https://discord.gg/NKWcU2mm7N";
+var LEGACY_CLOUD_HOSTS = ["app.engram.page"], ENGRAM_MARKETING_URL = "https://engram.page", ENGRAM_DOCS_URL = "https://engram.page/docs", ENGRAM_PRICING_URL = "https://engram.page/pricing", ENGRAM_MCP_URL = "https://engram.page/docs/integrations", ENGRAM_SELFHOST_URL = "https://github.com/engram-app/engram", ENGRAM_GITHUB_URL = "https://github.com/engram-app/engram", ENGRAM_ISSUES_URL = "https://github.com/engram-app/Engram-obsidian/issues", ENGRAM_DISCORD_URL = "https://discord.gg/NKWcU2mm7N", DEFAULT_UPGRADE_URL = `${ENGRAM_APP_URL}/settings/billing`;
 
 // src/auth-state.ts
 function migrateCloudApiUrl(apiUrl, cloudUrl) {
@@ -795,11 +795,41 @@ function withClearedAuth(settings) {
 function cloudTabAction(settings, cloudUrl) {
   return settings.apiUrl ? isBackendChange(settings.apiUrl, cloudUrl) ? "prompt-switch" : "render" : "auto-switch";
 }
+function pluginSwitchTarget(plugin) {
+  return {
+    settings: plugin.settings,
+    api: plugin.api,
+    noteStream: plugin.noteStream,
+    resetAuthProvider: () => {
+      plugin.authProvider = null;
+    }
+  };
+}
 async function applyApiUrlChange(target, newUrl, save) {
   var _a;
   if (target.settings.apiUrl === newUrl) return !1;
   let cleared = isBackendChange(target.settings.apiUrl, newUrl);
   return cleared && (Object.assign(target.settings, withClearedAuth(target.settings)), target.api.setAuthProvider(null), target.resetAuthProvider(), (_a = target.noteStream) == null || _a.disconnect()), target.settings.apiUrl = newUrl, await save(), cleared;
+}
+
+// src/error-util.ts
+function errMsg(e) {
+  var _a;
+  if (e instanceof Error) return e.message;
+  if (typeof e == "string") return e;
+  try {
+    return (_a = JSON.stringify(e)) != null ? _a : String(e);
+  } catch (e2) {
+    return String(e);
+  }
+}
+function statusOf(e) {
+  if (typeof e != "object" || e === null) return;
+  let s = e.status;
+  return typeof s == "number" ? s : void 0;
+}
+function isHttpStatus(e, status) {
+  return statusOf(e) === status;
 }
 
 // src/limit-error.ts
@@ -852,10 +882,25 @@ var BeaconBuffer = class {
   }
 };
 
+// src/content-hash.ts
+function fnv1a(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++)
+    h ^= s.charCodeAt(i), h = Math.imul(h, 16777619);
+  return h >>> 0;
+}
+function bytesToHex(bytes) {
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+async function sha256Hex(input) {
+  let digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+  return bytesToHex(new Uint8Array(digest));
+}
+
 // src/observability/traceGen.ts
 function hex(bytes) {
   let buf = new Uint8Array(bytes);
-  return crypto.getRandomValues(buf), Array.from(buf, (b) => b.toString(16).padStart(2, "0")).join("");
+  return crypto.getRandomValues(buf), bytesToHex(buf);
 }
 function newTraceContext() {
   let traceId = hex(16), spanId = hex(8);
@@ -1050,7 +1095,7 @@ var EngramApi = class _EngramApi {
     this.deviceId = id2 && id2.length > 0 ? id2 : null;
   }
   setAuthProvider(provider) {
-    this.authProvider = provider;
+    this.authProvider = provider, this.lastToken = "";
   }
   getActiveVaultId() {
     return this.authProvider ? this.authProvider.getVaultId() : this.vaultId;
@@ -1072,7 +1117,11 @@ var EngramApi = class _EngramApi {
       throw new Error("Not authenticated: no API key or access token");
     return token;
   }
-  /** Strip trailing slashes and append /api if not already present. */
+  /** Strip trailing slashes and append /api if not already present. Public:
+   *  the single normalizer for every surface that builds an API base
+   *  (device flow, OAuth token refresh) — copies of this logic once lived
+   *  inline at those sites. The channel's WS origin is the inverse shape
+   *  (strips /api); see wsOrigin in channel.ts. */
   static normalizeBaseUrl(url) {
     let base = url.replace(/\/+$/, "");
     return base.endsWith("/api") ? base : `${base}/api`;
@@ -1099,21 +1148,31 @@ var EngramApi = class _EngramApi {
     }
   }
   updateConfig(baseUrl, apiKey) {
-    this.baseUrl = _EngramApi.normalizeBaseUrl(baseUrl), this.apiKey = apiKey;
+    this.baseUrl = _EngramApi.normalizeBaseUrl(baseUrl), this.apiKey = apiKey, this.lastToken = "";
   }
   async request(method, path, body, extraHeaders) {
-    var _a, _b;
+    var _a, _b, _c;
     try {
       return await this.sendRequest(method, path, body, extraHeaders);
     } catch (e) {
-      let status = e.status;
+      let status = statusOf(e);
       if (status === 402)
         throw parseLimitExceededError(e);
-      if (status === 401 && ((_a = this.authProvider) != null && _a.invalidateAccessToken))
-        return this.authProvider.invalidateAccessToken(), this.sendRequest(method, path, body, extraHeaders);
+      if (status === 401 && ((_a = this.authProvider) != null && _a.invalidateAccessToken)) {
+        this.authProvider.invalidateAccessToken();
+        try {
+          return await this.sendRequest(method, path, body, extraHeaders);
+        } catch (e2) {
+          let retryStatus = statusOf(e2);
+          throw retryStatus === 402 ? parseLimitExceededError(e2) : (rlog().warn(
+            "api",
+            `${method} ${path} failed after 401 retry \u2014 status=${retryStatus != null ? retryStatus : "none"} vault=${(_b = this.vaultId) != null ? _b : "none"}`
+          ), e2);
+        }
+      }
       throw rlog().warn(
         "api",
-        `${method} ${path} failed \u2014 status=${status != null ? status : "none"} vault=${(_b = this.vaultId) != null ? _b : "none"}`
+        `${method} ${path} failed \u2014 status=${status != null ? status : "none"} vault=${(_c = this.vaultId) != null ? _c : "none"}`
       ), e;
     }
   }
@@ -1208,7 +1267,9 @@ var EngramApi = class _EngramApi {
   }
   /** Get the current authenticated user (id + email). Used to determine channel topic. */
   async getMe() {
-    return (await this.request("GET", "/me")).json.user;
+    let user = (await this.request("GET", "/me")).json.user;
+    if (!user) throw new Error("Malformed /me response: missing user");
+    return user;
   }
   /** Register this vault with the backend. Returns existing vault if client_id matches.
    *  Throws with status 402 if user has reached their vault limit (free tier). */
@@ -1223,20 +1284,24 @@ var EngramApi = class _EngramApi {
    *  Throws with status 402 if the user has reached their vault limit, or 422
    *  on validation errors. */
   async createVault(name) {
-    return (await this.request("POST", "/vaults", { name })).json.vault;
+    let vault = (await this.request("POST", "/vaults", { name })).json.vault;
+    if (!vault) throw new Error("Malformed /vaults response: missing vault");
+    return vault;
   }
   /** Fetch all vaults accessible by the current user. Throws the underlying
    *  request error (with `.status` for HTTP responses) so callers can render
    *  401/timeout/5xx distinctly from "successful empty list". */
   async listVaults() {
-    return (await this.request("GET", "/vaults")).json.vaults;
+    let vaults = (await this.request("GET", "/vaults")).json.vaults;
+    if (!Array.isArray(vaults)) throw new Error("Malformed /vaults response: missing vaults");
+    return vaults;
   }
   /** Authenticated ping — verifies both connectivity and API key. */
   async ping() {
     try {
       return await this.request("GET", "/folders"), { ok: !0 };
     } catch (e) {
-      let status = e.status;
+      let status = statusOf(e);
       return status === 401 || status === 403 ? { ok: !1, error: "Invalid API key" } : typeof status == "number" ? { ok: !1, error: `HTTP ${status} from /folders` } : { ok: !1, error: "Connection failed" };
     }
   }
@@ -1254,10 +1319,15 @@ var EngramApi = class _EngramApi {
     try {
       return (await this.request("POST", "/notes", body)).json;
     } catch (e) {
-      if (typeof e == "object" && e !== null && e.status === 409) {
+      if (isHttpStatus(e, 409)) {
         let err = e;
         if (err.json) return err.json;
-        if (err.text) return JSON.parse(err.text);
+        if (err.text)
+          try {
+            return JSON.parse(err.text);
+          } catch (e2) {
+            throw e;
+          }
       }
       throw e;
     }
@@ -1302,12 +1372,14 @@ var EngramApi = class _EngramApi {
     try {
       return (await this.request("GET", `/sync/manifest${qs}`)).json;
     } catch (e) {
-      if (typeof e == "object" && e !== null && e.status === 404)
+      if (isHttpStatus(e, 404))
         return null;
       throw e;
     }
   }
-  /** Push batched log entries to the server for remote debugging. */
+  /** Push batched log entries to the server for remote debugging. Typed as
+   *  the real wire shape — an inline copy of it here had already drifted
+   *  (missing conn_id/device_id/vault_id/seq that ARE sent). */
   async pushLogs(entries) {
     await this.request("POST", "/logs", { logs: entries });
   }
@@ -1352,20 +1424,29 @@ function parseLimitExceededError(e) {
   let pick = (key) => body[key] !== void 0 ? body[key] : null;
   return new LimitExceededError(
     typeof body.reason == "string" ? body.reason : "unknown",
-    pick("upgrade_url"),
+    sanitizeUpgradeUrl(body.upgrade_url),
     pick("limit_key"),
     pick("limit"),
     pick("current")
   );
 }
+function sanitizeUpgradeUrl(v) {
+  if (typeof v != "string") return null;
+  try {
+    let u = new URL(v);
+    return u.protocol === "http:" || u.protocol === "https:" ? v : null;
+  } catch (e) {
+    return null;
+  }
+}
 function encodePath(path) {
   return path.split("/").map(encodeURIComponent).join("/");
 }
 function arrayBufferToBase64(buffer) {
-  let bytes = new Uint8Array(buffer), binary2 = "";
-  for (let i = 0; i < bytes.byteLength; i++)
-    binary2 += String.fromCharCode(bytes[i]);
-  return btoa(binary2);
+  let bytes = new Uint8Array(buffer), parts = [];
+  for (let i = 0; i < bytes.length; i += 32768)
+    parts.push(String.fromCharCode(...bytes.subarray(i, i + 32768)));
+  return btoa(parts.join(""));
 }
 function base64ToArrayBuffer(base64) {
   let binary2 = atob(base64), bytes = new Uint8Array(binary2.length);
@@ -1438,10 +1519,10 @@ var ApiKeyAuth = class {
       ), this.accessToken;
     } catch (err) {
       this.authenticated = !1, this.accessToken = null, this.expiresAt = 0;
-      let status = err == null ? void 0 : err.status, definitive = status === 400 || status === 401 || status === 403 || status === 404;
+      let status = statusOf(err), definitive = status === 400 || status === 401 || status === 403 || status === 404;
       if (rlog().error(
         "auth",
-        `OAuth refresh failed (status=${status != null ? status : "n/a"} definitive=${definitive}): ${err instanceof Error ? err.message : String(err)}`,
+        `OAuth refresh failed (status=${status != null ? status : "n/a"} definitive=${definitive}): ${errMsg(err)}`,
         err instanceof Error ? err.stack : void 0
       ), definitive && !this.authInvalidatedFired) {
         this.authInvalidatedFired = !0, this.refreshToken = "";
@@ -1515,10 +1596,6 @@ var BaseStore = class {
       this.bytes -= this.entryBytes(path, entry), this.entries.delete(path);
     }
   }
-  /** Approximate total byte size of all entries. */
-  estimateBytes() {
-    return this.bytes;
-  }
   async save() {
     let obj = Object.fromEntries(this.entries);
     await this.adapter.write(this.storagePath, JSON.stringify(obj));
@@ -1539,22 +1616,15 @@ var BaseStore = class {
   }
 };
 
-// src/error-util.ts
-function errMsg(e) {
-  var _a;
-  if (e instanceof Error) return e.message;
-  if (typeof e == "string") return e;
-  try {
-    return (_a = JSON.stringify(e)) != null ? _a : String(e);
-  } catch (e2) {
-    return String(e);
-  }
+// src/backoff.ts
+function expBackoff(baseMs, attempt, capMs) {
+  return Math.min(baseMs * 2 ** attempt, capMs);
 }
 
 // src/channel.ts
 var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, RESUME_PROBE_MS = 5e3, RECONNECT_JITTER_DEFAULT_MS = 5e3, RECONNECT_JITTER_MAX_MS = 6e4, RATE_LIMITED_JOIN_FLOOR_MS = 1e4;
 function connectRetryDelayMs(attempt, baseMs = 2e3) {
-  return Math.min(baseMs * 2 ** attempt, RECONNECT_JITTER_MAX_MS);
+  return expBackoff(baseMs, attempt, RECONNECT_JITTER_MAX_MS);
 }
 function clampReconnectJitter(raw) {
   return typeof raw != "number" || !Number.isFinite(raw) || raw <= 0 ? null : Math.min(raw, RECONNECT_JITTER_MAX_MS);
@@ -1573,13 +1643,37 @@ function makeCrdtCatchupSender(channel, currentVaultId) {
     return channel.crdtCatchupSince(cursorSeq, limit, cursorId);
   };
 }
+function toStreamEvent(p, overrides = {}) {
+  var _a;
+  return {
+    event_type: p.event_type,
+    path: p.path,
+    timestamp: Date.now(),
+    kind: (_a = p.kind) != null ? _a : "note",
+    id: p.id,
+    device_id: p.device_id,
+    content: p.content,
+    content_hash: p.content_hash,
+    title: p.title,
+    folder: p.folder,
+    tags: p.tags,
+    mtime: p.mtime,
+    updated_at: p.updated_at,
+    version: p.version,
+    ...overrides
+  };
+}
+function wsOrigin(baseUrl) {
+  return baseUrl.replace(/\/+$/, "").replace(/\/api$/, "");
+}
 var _NoteChannel = class _NoteChannel {
   constructor(baseUrl, apiKey, userId, vaultId = null, deviceId = null) {
     this.ws = null;
     this.ref = 0;
     /** In-flight requests sent via `sendRequest`, keyed by the outbound frame's
-     *  ref. Resolved/rejected by the matching `phx_reply`, timeout, or
-     *  `disconnect()` — the one await-reply path the channel has. */
+     *  ref. Resolved/rejected by the matching `phx_reply`, timeout,
+     *  `disconnect()`, or an unclean socket close — the one await-reply path
+     *  the channel has. */
     this.pendingReplies = /* @__PURE__ */ new Map();
     this.joinRef = "1";
     this.userJoinRef = "2";
@@ -1700,9 +1794,17 @@ var _NoteChannel = class _NoteChannel {
     // ---------------------------------------------------------------------------
     // Private
     // ---------------------------------------------------------------------------
-    /** Guards openSocket against re-entry across its async token fetch. */
+    /** Guards openSocket against re-entry across its async token fetch. NOTE:
+     *  while a doomed (epoch-aborted) openSocketInner is still suspended, this
+     *  also swallows a racing openSocket — fine today because connect() is only
+     *  ever called on a freshly constructed channel; a future same-instance
+     *  disconnect();connect() pattern would need the abort path to re-fire a
+     *  refused open. */
     this.opening = !1;
-    this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, this.deviceId = deviceId, rlog().info(
+    /** Bumped by disconnect(). An openSocketInner that suspended on an await
+     *  before the bump must abandon the open when it resumes (see disconnect). */
+    this.connectEpoch = 0;
+    this.baseUrl = wsOrigin(baseUrl), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, this.deviceId = deviceId, rlog().info(
       "channel",
       `NoteChannel ctor \u2014 userId=${userId} vaultId=${vaultId != null ? vaultId : "null"} apiKeyLen=${apiKey.length} baseUrl=${this.baseUrl}`
     );
@@ -1721,7 +1823,7 @@ var _NoteChannel = class _NoteChannel {
     return this.authProvider ? { token: await this.authProvider.getToken(), source: this.authProvider.constructor.name } : { token: this.apiKey, source: "apiKey-fallback" };
   }
   updateConfig(baseUrl, apiKey, userId, vaultId = null, deviceId = this.deviceId) {
-    this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, this.deviceId = deviceId, this.reconnectJitterMaxMs = null;
+    this.baseUrl = wsOrigin(baseUrl), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, this.deviceId = deviceId, this.reconnectJitterMaxMs = null;
   }
   get topic() {
     return this.vaultId ? `sync:${this.userId}:${this.vaultId}` : `sync:${this.userId}`;
@@ -1808,10 +1910,7 @@ var _NoteChannel = class _NoteChannel {
     this.ws || (this.reconnectMs = 1e3, this.joinFailureBackoffMs = 1e3, await this.openSocket());
   }
   disconnect() {
-    this.clearTimers(), this.ws && (this.ws.onclose = null, this.ws.close(), this.ws = null);
-    for (let [, p] of this.pendingReplies)
-      window.clearTimeout(p.timer), p.reject(new Error("channel disconnected"));
-    this.pendingReplies.clear(), this.crdtJoined = !1, this.setConnected(!1), this.connId = null, rlog().setConnId(null), this.reconnectJitterMaxMs = null, this.crdtJoinFailedReason = null, this.joinFailureBackoffMs = 1e3, rlog().info("channel", "Channel disconnected");
+    this.connectEpoch++, this.clearTimers(), this.ws && (this.ws.onclose = null, this.ws.close(), this.ws = null), this.rejectPendingReplies("channel disconnected"), this.lastRefusedWarnAt.clear(), this.crdtJoined = !1, this.setConnected(!1), this.connId = null, rlog().setConnId(null), this.reconnectJitterMaxMs = null, this.crdtJoinFailedReason = null, this.joinFailureBackoffMs = 1e3, rlog().info("channel", "Channel disconnected");
   }
   /** Call when the app returns to the foreground (mobile resume). Mobile OSes
    *  suspend the socket while backgrounded; readyState can still report OPEN on a
@@ -1849,6 +1948,21 @@ var _NoteChannel = class _NoteChannel {
   getConnId() {
     return this.connId;
   }
+  /** Reject + clear every in-flight sendRequest reply slot. Shared by
+   *  disconnect() and the socket onclose handler. */
+  rejectPendingReplies(reason) {
+    for (let [, p] of this.pendingReplies)
+      window.clearTimeout(p.timer), p.reject(new Error(reason));
+    this.pendingReplies.clear();
+  }
+  /** Replace-never-stack: arm the reconnect timer, clearing any pending one
+   *  first. The raw assignments this replaces were safe only because their
+   *  callers had just run clearTimers(); this makes the invariant local. */
+  setReconnectTimer(delayMs) {
+    this.reconnectTimer !== null && window.clearTimeout(this.reconnectTimer), this.reconnectTimer = window.setTimeout(() => {
+      this.openSocket();
+    }, delayMs);
+  }
   async openSocket() {
     if (this.ws || this.opening) {
       rlog().info("channel", "openSocket skipped \u2014 socket already present or opening");
@@ -1863,15 +1977,23 @@ var _NoteChannel = class _NoteChannel {
   }
   async openSocketInner() {
     var _a, _b, _c, _d, _e;
-    let token, source;
+    let epoch = this.connectEpoch, token, source;
     try {
       let result = await this.getAuthToken();
       token = result.token, source = result.source;
     } catch (e) {
+      if (epoch !== this.connectEpoch) {
+        rlog().warn("channel", "open aborted \u2014 disconnected during token fetch");
+        return;
+      }
       rlog().warn(
         "channel",
         `getToken threw \u2014 deferring reconnect ${NO_AUTH_RECONNECT_MS}ms \u2014 providerType=${(_b = (_a = this.authProvider) == null ? void 0 : _a.constructor.name) != null ? _b : "none"} err=${errMsg(e)}`
       ), this.scheduleReconnect(NO_AUTH_RECONNECT_MS);
+      return;
+    }
+    if (epoch !== this.connectEpoch) {
+      rlog().warn("channel", "open aborted \u2014 disconnected during token fetch");
       return;
     }
     if (!token) {
@@ -1896,6 +2018,10 @@ var _NoteChannel = class _NoteChannel {
         );
       }
     }
+    if (epoch !== this.connectEpoch) {
+      rlog().warn("channel", "open aborted \u2014 disconnected during identity probe");
+      return;
+    }
     rlog().info(
       "channel",
       `openSocket \u2014 token.length=${token.length} source=${source} userId=${this.userId} vaultId=${(_e = this.vaultId) != null ? _e : "null"}`
@@ -1918,10 +2044,14 @@ var _NoteChannel = class _NoteChannel {
     }, this.ws.onmessage = (evt) => {
       this.handleMessage(evt.data);
     }, this.ws.onerror = (e) => {
-      rlog().error("channel", `WebSocket error: ${JSON.stringify(e)}`);
+      var _a2, _b2, _c2;
+      rlog().error(
+        "channel",
+        `WebSocket error: type=${(_a2 = e == null ? void 0 : e.type) != null ? _a2 : "unknown"} readyState=${(_c2 = (_b2 = this.ws) == null ? void 0 : _b2.readyState) != null ? _c2 : "none"}`
+      );
     }, this.ws.onclose = (evt) => {
       var _a2, _b2, _c2, _d2;
-      this.clearTimers(), this.ws = null, this.crdtJoined = !1, this.setConnected(!1);
+      this.clearTimers(), this.ws = null, this.rejectPendingReplies("socket closed"), this.crdtJoined = !1, this.setConnected(!1);
       let closeInfo = `code=${(_a2 = evt == null ? void 0 : evt.code) != null ? _a2 : "unknown"} reason="${(_b2 = evt == null ? void 0 : evt.reason) != null ? _b2 : ""}" wasClean=${(_c2 = evt == null ? void 0 : evt.wasClean) != null ? _c2 : "unknown"}`, sinceOpen = Date.now() - openedAt, online = typeof navigator != "undefined" ? navigator.onLine : !0;
       if (rlog().info(
         "channel",
@@ -1937,17 +2067,13 @@ var _NoteChannel = class _NoteChannel {
         rlog().info(
           "channel",
           `crdt: join rejected (${this.crdtJoinFailedReason}) \u2014 backing off reconnect ${Math.round(delay)}ms - ${closeInfo}`
-        ), this.reconnectTimer = window.setTimeout(() => {
-          this.openSocket();
-        }, delay);
+        ), this.setReconnectTimer(delay);
       } else if (opened) {
         let jitterWindow = (_d2 = this.reconnectJitterMaxMs) != null ? _d2 : RECONNECT_JITTER_DEFAULT_MS, delay = fullJitterDelay(jitterWindow);
         rlog().info(
           "channel",
           `Channel dropped after live connection \u2014 jittered reconnect in ${Math.round(delay)}ms (window ${jitterWindow}ms) - ${closeInfo}`
-        ), this.reconnectTimer = window.setTimeout(() => {
-          this.openSocket();
-        }, delay);
+        ), this.setReconnectTimer(delay);
       } else
         rlog().info(
           "channel",
@@ -1984,7 +2110,7 @@ var _NoteChannel = class _NoteChannel {
     }
   }
   handleMessage(raw) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
     let msg;
     try {
       msg = JSON.parse(raw);
@@ -2069,44 +2195,25 @@ var _NoteChannel = class _NoteChannel {
       return;
     }
     if (event === "note_changed" && payload) {
-      let p = payload, streamEvent = {
-        event_type: p.event_type,
-        path: p.path,
-        timestamp: Date.now(),
-        kind: (_l = p.kind) != null ? _l : "note",
-        id: p.id,
-        device_id: p.device_id,
-        content: p.content,
-        content_hash: p.content_hash,
-        title: p.title,
-        folder: p.folder,
-        tags: p.tags,
-        mtime: p.mtime,
-        updated_at: p.updated_at,
-        version: p.version
-      };
-      rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`), (_m = this.onEvent) == null || _m.call(this, streamEvent);
+      let streamEvent = toStreamEvent(payload);
+      rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`), (_l = this.onEvent) == null || _l.call(this, streamEvent);
+      return;
     }
     if (event === "notes.batch" && payload && payload.op === "upsert") {
-      let notes = (_n = payload.notes) != null ? _n : [];
+      let notes = (_m = payload.notes) != null ? _m : [];
       rlog().info("channel", `Batch digest: ${notes.length} notes`);
-      for (let n of notes) {
-        let streamEvent = {
-          event_type: "upsert",
-          path: n.path,
-          timestamp: Date.now(),
-          kind: "note",
-          id: n.id,
-          content_hash: n.content_hash,
-          title: n.title,
-          folder: n.folder,
-          tags: n.tags,
-          mtime: n.mtime,
-          updated_at: n.updated_at,
-          version: n.version
-        };
-        (_o = this.onEvent) == null || _o.call(this, streamEvent);
-      }
+      for (let n of notes)
+        (_n = this.onEvent) == null || _n.call(
+          this,
+          // Batch digests are metadata-only by protocol: content/device_id
+          // stay structurally excluded even if the server ever adds them.
+          toStreamEvent(n, {
+            event_type: "upsert",
+            kind: "note",
+            content: void 0,
+            device_id: void 0
+          })
+        );
     }
   }
   send(msg) {
@@ -2144,6 +2251,20 @@ var NoteChannel = _NoteChannel;
 // src/crdt/live/live-binding.ts
 var import_state = require("@codemirror/state"), import_view = require("@codemirror/view"), import_obsidian2 = require("obsidian");
 
+// src/file-kind.ts
+function isMarkdownPath(path) {
+  return path.endsWith(".md");
+}
+function isCanvasPath(path) {
+  return path.endsWith(".canvas");
+}
+function isCrdtEligiblePath(path) {
+  return isMarkdownPath(path) || isCanvasPath(path);
+}
+function docKindFor(path) {
+  return isCanvasPath(path) ? "canvas" : "note";
+}
+
 // src/crdt/live/cm-yjs-bridge.ts
 var import_diff_match_patch = __toESM(require_diff_match_patch(), 1), dmp = new import_diff_match_patch.diff_match_patch();
 function yDeltaToChangeSpec(delta) {
@@ -2175,13 +2296,4801 @@ function textDiffToChangeSpec(before, after) {
 
 // src/crdt/live/live-binding-decisions.ts
 var import_diff_match_patch2 = __toESM(require_diff_match_patch(), 1);
+
+// node_modules/yaml/browser/dist/nodes/identity.js
+var ALIAS = /* @__PURE__ */ Symbol.for("yaml.alias"), DOC = /* @__PURE__ */ Symbol.for("yaml.document"), MAP = /* @__PURE__ */ Symbol.for("yaml.map"), PAIR = /* @__PURE__ */ Symbol.for("yaml.pair"), SCALAR = /* @__PURE__ */ Symbol.for("yaml.scalar"), SEQ = /* @__PURE__ */ Symbol.for("yaml.seq"), NODE_TYPE = /* @__PURE__ */ Symbol.for("yaml.node.type"), isAlias = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === ALIAS, isDocument = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === DOC, isMap = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === MAP, isPair = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === PAIR, isScalar = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === SCALAR, isSeq = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === SEQ;
+function isCollection(node) {
+  if (node && typeof node == "object")
+    switch (node[NODE_TYPE]) {
+      case MAP:
+      case SEQ:
+        return !0;
+    }
+  return !1;
+}
+function isNode(node) {
+  if (node && typeof node == "object")
+    switch (node[NODE_TYPE]) {
+      case ALIAS:
+      case MAP:
+      case SCALAR:
+      case SEQ:
+        return !0;
+    }
+  return !1;
+}
+var hasAnchor = (node) => (isScalar(node) || isCollection(node)) && !!node.anchor;
+
+// node_modules/yaml/browser/dist/visit.js
+var BREAK = /* @__PURE__ */ Symbol("break visit"), SKIP = /* @__PURE__ */ Symbol("skip children"), REMOVE = /* @__PURE__ */ Symbol("remove node");
+function visit(node, visitor) {
+  let visitor_ = initVisitor(visitor);
+  isDocument(node) ? visit_(null, node.contents, visitor_, Object.freeze([node])) === REMOVE && (node.contents = null) : visit_(null, node, visitor_, Object.freeze([]));
+}
+visit.BREAK = BREAK;
+visit.SKIP = SKIP;
+visit.REMOVE = REMOVE;
+function visit_(key, node, visitor, path) {
+  let ctrl = callVisitor(key, node, visitor, path);
+  if (isNode(ctrl) || isPair(ctrl))
+    return replaceNode(key, path, ctrl), visit_(key, ctrl, visitor, path);
+  if (typeof ctrl != "symbol") {
+    if (isCollection(node)) {
+      path = Object.freeze(path.concat(node));
+      for (let i = 0; i < node.items.length; ++i) {
+        let ci = visit_(i, node.items[i], visitor, path);
+        if (typeof ci == "number")
+          i = ci - 1;
+        else {
+          if (ci === BREAK)
+            return BREAK;
+          ci === REMOVE && (node.items.splice(i, 1), i -= 1);
+        }
+      }
+    } else if (isPair(node)) {
+      path = Object.freeze(path.concat(node));
+      let ck = visit_("key", node.key, visitor, path);
+      if (ck === BREAK)
+        return BREAK;
+      ck === REMOVE && (node.key = null);
+      let cv = visit_("value", node.value, visitor, path);
+      if (cv === BREAK)
+        return BREAK;
+      cv === REMOVE && (node.value = null);
+    }
+  }
+  return ctrl;
+}
+async function visitAsync(node, visitor) {
+  let visitor_ = initVisitor(visitor);
+  isDocument(node) ? await visitAsync_(null, node.contents, visitor_, Object.freeze([node])) === REMOVE && (node.contents = null) : await visitAsync_(null, node, visitor_, Object.freeze([]));
+}
+visitAsync.BREAK = BREAK;
+visitAsync.SKIP = SKIP;
+visitAsync.REMOVE = REMOVE;
+async function visitAsync_(key, node, visitor, path) {
+  let ctrl = await callVisitor(key, node, visitor, path);
+  if (isNode(ctrl) || isPair(ctrl))
+    return replaceNode(key, path, ctrl), visitAsync_(key, ctrl, visitor, path);
+  if (typeof ctrl != "symbol") {
+    if (isCollection(node)) {
+      path = Object.freeze(path.concat(node));
+      for (let i = 0; i < node.items.length; ++i) {
+        let ci = await visitAsync_(i, node.items[i], visitor, path);
+        if (typeof ci == "number")
+          i = ci - 1;
+        else {
+          if (ci === BREAK)
+            return BREAK;
+          ci === REMOVE && (node.items.splice(i, 1), i -= 1);
+        }
+      }
+    } else if (isPair(node)) {
+      path = Object.freeze(path.concat(node));
+      let ck = await visitAsync_("key", node.key, visitor, path);
+      if (ck === BREAK)
+        return BREAK;
+      ck === REMOVE && (node.key = null);
+      let cv = await visitAsync_("value", node.value, visitor, path);
+      if (cv === BREAK)
+        return BREAK;
+      cv === REMOVE && (node.value = null);
+    }
+  }
+  return ctrl;
+}
+function initVisitor(visitor) {
+  return typeof visitor == "object" && (visitor.Collection || visitor.Node || visitor.Value) ? Object.assign({
+    Alias: visitor.Node,
+    Map: visitor.Node,
+    Scalar: visitor.Node,
+    Seq: visitor.Node
+  }, visitor.Value && {
+    Map: visitor.Value,
+    Scalar: visitor.Value,
+    Seq: visitor.Value
+  }, visitor.Collection && {
+    Map: visitor.Collection,
+    Seq: visitor.Collection
+  }, visitor) : visitor;
+}
+function callVisitor(key, node, visitor, path) {
+  var _a, _b, _c, _d, _e;
+  if (typeof visitor == "function")
+    return visitor(key, node, path);
+  if (isMap(node))
+    return (_a = visitor.Map) == null ? void 0 : _a.call(visitor, key, node, path);
+  if (isSeq(node))
+    return (_b = visitor.Seq) == null ? void 0 : _b.call(visitor, key, node, path);
+  if (isPair(node))
+    return (_c = visitor.Pair) == null ? void 0 : _c.call(visitor, key, node, path);
+  if (isScalar(node))
+    return (_d = visitor.Scalar) == null ? void 0 : _d.call(visitor, key, node, path);
+  if (isAlias(node))
+    return (_e = visitor.Alias) == null ? void 0 : _e.call(visitor, key, node, path);
+}
+function replaceNode(key, path, node) {
+  let parent = path[path.length - 1];
+  if (isCollection(parent))
+    parent.items[key] = node;
+  else if (isPair(parent))
+    key === "key" ? parent.key = node : parent.value = node;
+  else if (isDocument(parent))
+    parent.contents = node;
+  else {
+    let pt = isAlias(parent) ? "alias" : "scalar";
+    throw new Error(`Cannot replace node with ${pt} parent`);
+  }
+}
+
+// node_modules/yaml/browser/dist/doc/directives.js
+var escapeChars = {
+  "!": "%21",
+  ",": "%2C",
+  "[": "%5B",
+  "]": "%5D",
+  "{": "%7B",
+  "}": "%7D"
+}, escapeTagName = (tn) => tn.replace(/[!,[\]{}]/g, (ch) => escapeChars[ch]), Directives = class _Directives {
+  constructor(yaml, tags) {
+    this.docStart = null, this.docEnd = !1, this.yaml = Object.assign({}, _Directives.defaultYaml, yaml), this.tags = Object.assign({}, _Directives.defaultTags, tags);
+  }
+  clone() {
+    let copy2 = new _Directives(this.yaml, this.tags);
+    return copy2.docStart = this.docStart, copy2;
+  }
+  /**
+   * During parsing, get a Directives instance for the current document and
+   * update the stream state according to the current version's spec.
+   */
+  atDocument() {
+    let res = new _Directives(this.yaml, this.tags);
+    switch (this.yaml.version) {
+      case "1.1":
+        this.atNextDocument = !0;
+        break;
+      case "1.2":
+        this.atNextDocument = !1, this.yaml = {
+          explicit: _Directives.defaultYaml.explicit,
+          version: "1.2"
+        }, this.tags = Object.assign({}, _Directives.defaultTags);
+        break;
+    }
+    return res;
+  }
+  /**
+   * @param onError - May be called even if the action was successful
+   * @returns `true` on success
+   */
+  add(line, onError) {
+    this.atNextDocument && (this.yaml = { explicit: _Directives.defaultYaml.explicit, version: "1.1" }, this.tags = Object.assign({}, _Directives.defaultTags), this.atNextDocument = !1);
+    let parts = line.trim().split(/[ \t]+/), name = parts.shift();
+    switch (name) {
+      case "%TAG": {
+        if (parts.length !== 2 && (onError(0, "%TAG directive should contain exactly two parts"), parts.length < 2))
+          return !1;
+        let [handle, prefix] = parts;
+        return this.tags[handle] = prefix, !0;
+      }
+      case "%YAML": {
+        if (this.yaml.explicit = !0, parts.length !== 1)
+          return onError(0, "%YAML directive should contain exactly one part"), !1;
+        let [version] = parts;
+        if (version === "1.1" || version === "1.2")
+          return this.yaml.version = version, !0;
+        {
+          let isValid = /^\d+\.\d+$/.test(version);
+          return onError(6, `Unsupported YAML version ${version}`, isValid), !1;
+        }
+      }
+      default:
+        return onError(0, `Unknown directive ${name}`, !0), !1;
+    }
+  }
+  /**
+   * Resolves a tag, matching handles to those defined in %TAG directives.
+   *
+   * @returns Resolved tag, which may also be the non-specific tag `'!'` or a
+   *   `'!local'` tag, or `null` if unresolvable.
+   */
+  tagName(source, onError) {
+    if (source === "!")
+      return "!";
+    if (source[0] !== "!")
+      return onError(`Not a valid tag: ${source}`), null;
+    if (source[1] === "<") {
+      let verbatim = source.slice(2, -1);
+      return verbatim === "!" || verbatim === "!!" ? (onError(`Verbatim tags aren't resolved, so ${source} is invalid.`), null) : (source[source.length - 1] !== ">" && onError("Verbatim tags must end with a >"), verbatim);
+    }
+    let [, handle, suffix] = source.match(/^(.*!)([^!]*)$/s);
+    suffix || onError(`The ${source} tag has no suffix`);
+    let prefix = this.tags[handle];
+    if (prefix)
+      try {
+        return prefix + decodeURIComponent(suffix);
+      } catch (error) {
+        return onError(String(error)), null;
+      }
+    return handle === "!" ? source : (onError(`Could not resolve tag: ${source}`), null);
+  }
+  /**
+   * Given a fully resolved tag, returns its printable string form,
+   * taking into account current tag prefixes and defaults.
+   */
+  tagString(tag) {
+    for (let [handle, prefix] of Object.entries(this.tags))
+      if (tag.startsWith(prefix))
+        return handle + escapeTagName(tag.substring(prefix.length));
+    return tag[0] === "!" ? tag : `!<${tag}>`;
+  }
+  toString(doc2) {
+    let lines = this.yaml.explicit ? [`%YAML ${this.yaml.version || "1.2"}`] : [], tagEntries = Object.entries(this.tags), tagNames;
+    if (doc2 && tagEntries.length > 0 && isNode(doc2.contents)) {
+      let tags = {};
+      visit(doc2.contents, (_key, node) => {
+        isNode(node) && node.tag && (tags[node.tag] = !0);
+      }), tagNames = Object.keys(tags);
+    } else
+      tagNames = [];
+    for (let [handle, prefix] of tagEntries)
+      handle === "!!" && prefix === "tag:yaml.org,2002:" || (!doc2 || tagNames.some((tn) => tn.startsWith(prefix))) && lines.push(`%TAG ${handle} ${prefix}`);
+    return lines.join(`
+`);
+  }
+};
+Directives.defaultYaml = { explicit: !1, version: "1.2" };
+Directives.defaultTags = { "!!": "tag:yaml.org,2002:" };
+
+// node_modules/yaml/browser/dist/doc/anchors.js
+function anchorIsValid(anchor) {
+  if (/[\x00-\x19\s,[\]{}]/.test(anchor)) {
+    let msg = `Anchor must not contain whitespace or control characters: ${JSON.stringify(anchor)}`;
+    throw new Error(msg);
+  }
+  return !0;
+}
+function anchorNames(root) {
+  let anchors = /* @__PURE__ */ new Set();
+  return visit(root, {
+    Value(_key, node) {
+      node.anchor && anchors.add(node.anchor);
+    }
+  }), anchors;
+}
+function findNewAnchor(prefix, exclude) {
+  for (let i = 1; ; ++i) {
+    let name = `${prefix}${i}`;
+    if (!exclude.has(name))
+      return name;
+  }
+}
+function createNodeAnchors(doc2, prefix) {
+  let aliasObjects = [], sourceObjects = /* @__PURE__ */ new Map(), prevAnchors = null;
+  return {
+    onAnchor: (source) => {
+      aliasObjects.push(source), prevAnchors != null || (prevAnchors = anchorNames(doc2));
+      let anchor = findNewAnchor(prefix, prevAnchors);
+      return prevAnchors.add(anchor), anchor;
+    },
+    /**
+     * With circular references, the source node is only resolved after all
+     * of its child nodes are. This is why anchors are set only after all of
+     * the nodes have been created.
+     */
+    setAnchors: () => {
+      for (let source of aliasObjects) {
+        let ref = sourceObjects.get(source);
+        if (typeof ref == "object" && ref.anchor && (isScalar(ref.node) || isCollection(ref.node)))
+          ref.node.anchor = ref.anchor;
+        else {
+          let error = new Error("Failed to resolve repeated object (this should not happen)");
+          throw error.source = source, error;
+        }
+      }
+    },
+    sourceObjects
+  };
+}
+
+// node_modules/yaml/browser/dist/doc/applyReviver.js
+function applyReviver(reviver, obj, key, val) {
+  if (val && typeof val == "object")
+    if (Array.isArray(val))
+      for (let i = 0, len = val.length; i < len; ++i) {
+        let v0 = val[i], v1 = applyReviver(reviver, val, String(i), v0);
+        v1 === void 0 ? delete val[i] : v1 !== v0 && (val[i] = v1);
+      }
+    else if (val instanceof Map)
+      for (let k of Array.from(val.keys())) {
+        let v0 = val.get(k), v1 = applyReviver(reviver, val, k, v0);
+        v1 === void 0 ? val.delete(k) : v1 !== v0 && val.set(k, v1);
+      }
+    else if (val instanceof Set)
+      for (let v0 of Array.from(val)) {
+        let v1 = applyReviver(reviver, val, v0, v0);
+        v1 === void 0 ? val.delete(v0) : v1 !== v0 && (val.delete(v0), val.add(v1));
+      }
+    else
+      for (let [k, v0] of Object.entries(val)) {
+        let v1 = applyReviver(reviver, val, k, v0);
+        v1 === void 0 ? delete val[k] : v1 !== v0 && (val[k] = v1);
+      }
+  return reviver.call(obj, key, val);
+}
+
+// node_modules/yaml/browser/dist/nodes/toJS.js
+function toJS(value, arg, ctx) {
+  if (Array.isArray(value))
+    return value.map((v, i) => toJS(v, String(i), ctx));
+  if (value && typeof value.toJSON == "function") {
+    if (!ctx || !hasAnchor(value))
+      return value.toJSON(arg, ctx);
+    let data = { aliasCount: 0, count: 1, res: void 0 };
+    ctx.anchors.set(value, data), ctx.onCreate = (res2) => {
+      data.res = res2, delete ctx.onCreate;
+    };
+    let res = value.toJSON(arg, ctx);
+    return ctx.onCreate && ctx.onCreate(res), res;
+  }
+  return typeof value == "bigint" && !(ctx != null && ctx.keep) ? Number(value) : value;
+}
+
+// node_modules/yaml/browser/dist/nodes/Node.js
+var NodeBase = class {
+  constructor(type) {
+    Object.defineProperty(this, NODE_TYPE, { value: type });
+  }
+  /** Create a copy of this node.  */
+  clone() {
+    let copy2 = Object.create(Object.getPrototypeOf(this), Object.getOwnPropertyDescriptors(this));
+    return this.range && (copy2.range = this.range.slice()), copy2;
+  }
+  /** A plain JavaScript representation of this node. */
+  toJS(doc2, { mapAsMap, maxAliasCount, onAnchor, reviver } = {}) {
+    if (!isDocument(doc2))
+      throw new TypeError("A document argument is required");
+    let ctx = {
+      anchors: /* @__PURE__ */ new Map(),
+      doc: doc2,
+      keep: !0,
+      mapAsMap: mapAsMap === !0,
+      mapKeyWarned: !1,
+      maxAliasCount: typeof maxAliasCount == "number" ? maxAliasCount : 100
+    }, res = toJS(this, "", ctx);
+    if (typeof onAnchor == "function")
+      for (let { count: count2, res: res2 } of ctx.anchors.values())
+        onAnchor(res2, count2);
+    return typeof reviver == "function" ? applyReviver(reviver, { "": res }, "", res) : res;
+  }
+};
+
+// node_modules/yaml/browser/dist/nodes/Alias.js
+var Alias = class extends NodeBase {
+  constructor(source) {
+    super(ALIAS), this.source = source, Object.defineProperty(this, "tag", {
+      set() {
+        throw new Error("Alias nodes cannot have tags");
+      }
+    });
+  }
+  /**
+   * Resolve the value of this alias within `doc`, finding the last
+   * instance of the `source` anchor before this node.
+   */
+  resolve(doc2, ctx) {
+    if ((ctx == null ? void 0 : ctx.maxAliasCount) === 0)
+      throw new ReferenceError("Alias resolution is disabled");
+    let nodes;
+    ctx != null && ctx.aliasResolveCache ? nodes = ctx.aliasResolveCache : (nodes = [], visit(doc2, {
+      Node: (_key, node) => {
+        (isAlias(node) || hasAnchor(node)) && nodes.push(node);
+      }
+    }), ctx && (ctx.aliasResolveCache = nodes));
+    let found;
+    for (let node of nodes) {
+      if (node === this)
+        break;
+      node.anchor === this.source && (found = node);
+    }
+    return found;
+  }
+  toJSON(_arg, ctx) {
+    if (!ctx)
+      return { source: this.source };
+    let { anchors, doc: doc2, maxAliasCount } = ctx, source = this.resolve(doc2, ctx);
+    if (!source) {
+      let msg = `Unresolved alias (the anchor must be set before the alias): ${this.source}`;
+      throw new ReferenceError(msg);
+    }
+    let data = anchors.get(source);
+    if (data || (toJS(source, null, ctx), data = anchors.get(source)), (data == null ? void 0 : data.res) === void 0) {
+      let msg = "This should not happen: Alias anchor was not resolved?";
+      throw new ReferenceError(msg);
+    }
+    if (maxAliasCount >= 0 && (data.count += 1, data.aliasCount === 0 && (data.aliasCount = getAliasCount(doc2, source, anchors)), data.count * data.aliasCount > maxAliasCount)) {
+      let msg = "Excessive alias count indicates a resource exhaustion attack";
+      throw new ReferenceError(msg);
+    }
+    return data.res;
+  }
+  toString(ctx, _onComment, _onChompKeep) {
+    let src = `*${this.source}`;
+    if (ctx) {
+      if (anchorIsValid(this.source), ctx.options.verifyAliasOrder && !ctx.anchors.has(this.source)) {
+        let msg = `Unresolved alias (the anchor must be set before the alias): ${this.source}`;
+        throw new Error(msg);
+      }
+      if (ctx.implicitKey)
+        return `${src} `;
+    }
+    return src;
+  }
+};
+function getAliasCount(doc2, node, anchors) {
+  if (isAlias(node)) {
+    let source = node.resolve(doc2), anchor = anchors && source && anchors.get(source);
+    return anchor ? anchor.count * anchor.aliasCount : 0;
+  } else if (isCollection(node)) {
+    let count2 = 0;
+    for (let item of node.items) {
+      let c = getAliasCount(doc2, item, anchors);
+      c > count2 && (count2 = c);
+    }
+    return count2;
+  } else if (isPair(node)) {
+    let kc = getAliasCount(doc2, node.key, anchors), vc = getAliasCount(doc2, node.value, anchors);
+    return Math.max(kc, vc);
+  }
+  return 1;
+}
+
+// node_modules/yaml/browser/dist/nodes/Scalar.js
+var isScalarValue = (value) => !value || typeof value != "function" && typeof value != "object", Scalar = class extends NodeBase {
+  constructor(value) {
+    super(SCALAR), this.value = value;
+  }
+  toJSON(arg, ctx) {
+    return ctx != null && ctx.keep ? this.value : toJS(this.value, arg, ctx);
+  }
+  toString() {
+    return String(this.value);
+  }
+};
+Scalar.BLOCK_FOLDED = "BLOCK_FOLDED";
+Scalar.BLOCK_LITERAL = "BLOCK_LITERAL";
+Scalar.PLAIN = "PLAIN";
+Scalar.QUOTE_DOUBLE = "QUOTE_DOUBLE";
+Scalar.QUOTE_SINGLE = "QUOTE_SINGLE";
+
+// node_modules/yaml/browser/dist/doc/createNode.js
+var defaultTagPrefix = "tag:yaml.org,2002:";
+function findTagObject(value, tagName, tags) {
+  var _a;
+  if (tagName) {
+    let match2 = tags.filter((t) => t.tag === tagName), tagObj = (_a = match2.find((t) => !t.format)) != null ? _a : match2[0];
+    if (!tagObj)
+      throw new Error(`Tag ${tagName} not found`);
+    return tagObj;
+  }
+  return tags.find((t) => {
+    var _a2;
+    return ((_a2 = t.identify) == null ? void 0 : _a2.call(t, value)) && !t.format;
+  });
+}
+function createNode(value, tagName, ctx) {
+  var _a, _b, _c, _d;
+  if (isDocument(value) && (value = value.contents), isNode(value))
+    return value;
+  if (isPair(value)) {
+    let map3 = (_b = (_a = ctx.schema[MAP]).createNode) == null ? void 0 : _b.call(_a, ctx.schema, null, ctx);
+    return map3.items.push(value), map3;
+  }
+  (value instanceof String || value instanceof Number || value instanceof Boolean || typeof BigInt != "undefined" && value instanceof BigInt) && (value = value.valueOf());
+  let { aliasDuplicateObjects, onAnchor, onTagObj, schema: schema4, sourceObjects } = ctx, ref;
+  if (aliasDuplicateObjects && value && typeof value == "object") {
+    if (ref = sourceObjects.get(value), ref)
+      return (_c = ref.anchor) != null || (ref.anchor = onAnchor(value)), new Alias(ref.anchor);
+    ref = { anchor: null, node: null }, sourceObjects.set(value, ref);
+  }
+  tagName != null && tagName.startsWith("!!") && (tagName = defaultTagPrefix + tagName.slice(2));
+  let tagObj = findTagObject(value, tagName, schema4.tags);
+  if (!tagObj) {
+    if (value && typeof value.toJSON == "function" && (value = value.toJSON()), !value || typeof value != "object") {
+      let node2 = new Scalar(value);
+      return ref && (ref.node = node2), node2;
+    }
+    tagObj = value instanceof Map ? schema4[MAP] : Symbol.iterator in Object(value) ? schema4[SEQ] : schema4[MAP];
+  }
+  onTagObj && (onTagObj(tagObj), delete ctx.onTagObj);
+  let node = tagObj != null && tagObj.createNode ? tagObj.createNode(ctx.schema, value, ctx) : typeof ((_d = tagObj == null ? void 0 : tagObj.nodeClass) == null ? void 0 : _d.from) == "function" ? tagObj.nodeClass.from(ctx.schema, value, ctx) : new Scalar(value);
+  return tagName ? node.tag = tagName : tagObj.default || (node.tag = tagObj.tag), ref && (ref.node = node), node;
+}
+
+// node_modules/yaml/browser/dist/nodes/Collection.js
+function collectionFromPath(schema4, path, value) {
+  let v = value;
+  for (let i = path.length - 1; i >= 0; --i) {
+    let k = path[i];
+    if (typeof k == "number" && Number.isInteger(k) && k >= 0) {
+      let a = [];
+      a[k] = v, v = a;
+    } else
+      v = /* @__PURE__ */ new Map([[k, v]]);
+  }
+  return createNode(v, void 0, {
+    aliasDuplicateObjects: !1,
+    keepUndefined: !1,
+    onAnchor: () => {
+      throw new Error("This should not happen, please report a bug.");
+    },
+    schema: schema4,
+    sourceObjects: /* @__PURE__ */ new Map()
+  });
+}
+var isEmptyPath = (path) => path == null || typeof path == "object" && !!path[Symbol.iterator]().next().done, Collection = class extends NodeBase {
+  constructor(type, schema4) {
+    super(type), Object.defineProperty(this, "schema", {
+      value: schema4,
+      configurable: !0,
+      enumerable: !1,
+      writable: !0
+    });
+  }
+  /**
+   * Create a copy of this collection.
+   *
+   * @param schema - If defined, overwrites the original's schema
+   */
+  clone(schema4) {
+    let copy2 = Object.create(Object.getPrototypeOf(this), Object.getOwnPropertyDescriptors(this));
+    return schema4 && (copy2.schema = schema4), copy2.items = copy2.items.map((it) => isNode(it) || isPair(it) ? it.clone(schema4) : it), this.range && (copy2.range = this.range.slice()), copy2;
+  }
+  /**
+   * Adds a value to the collection. For `!!map` and `!!omap` the value must
+   * be a Pair instance or a `{ key, value }` object, which may not have a key
+   * that already exists in the map.
+   */
+  addIn(path, value) {
+    if (isEmptyPath(path))
+      this.add(value);
+    else {
+      let [key, ...rest] = path, node = this.get(key, !0);
+      if (isCollection(node))
+        node.addIn(rest, value);
+      else if (node === void 0 && this.schema)
+        this.set(key, collectionFromPath(this.schema, rest, value));
+      else
+        throw new Error(`Expected YAML collection at ${key}. Remaining path: ${rest}`);
+    }
+  }
+  /**
+   * Removes a value from the collection.
+   * @returns `true` if the item was found and removed.
+   */
+  deleteIn(path) {
+    let [key, ...rest] = path;
+    if (rest.length === 0)
+      return this.delete(key);
+    let node = this.get(key, !0);
+    if (isCollection(node))
+      return node.deleteIn(rest);
+    throw new Error(`Expected YAML collection at ${key}. Remaining path: ${rest}`);
+  }
+  /**
+   * Returns item at `key`, or `undefined` if not found. By default unwraps
+   * scalar values from their surrounding node; to disable set `keepScalar` to
+   * `true` (collections are always returned intact).
+   */
+  getIn(path, keepScalar) {
+    let [key, ...rest] = path, node = this.get(key, !0);
+    return rest.length === 0 ? !keepScalar && isScalar(node) ? node.value : node : isCollection(node) ? node.getIn(rest, keepScalar) : void 0;
+  }
+  hasAllNullValues(allowScalar) {
+    return this.items.every((node) => {
+      if (!isPair(node))
+        return !1;
+      let n = node.value;
+      return n == null || allowScalar && isScalar(n) && n.value == null && !n.commentBefore && !n.comment && !n.tag;
+    });
+  }
+  /**
+   * Checks if the collection includes a value with the key `key`.
+   */
+  hasIn(path) {
+    let [key, ...rest] = path;
+    if (rest.length === 0)
+      return this.has(key);
+    let node = this.get(key, !0);
+    return isCollection(node) ? node.hasIn(rest) : !1;
+  }
+  /**
+   * Sets a value in this collection. For `!!set`, `value` needs to be a
+   * boolean to add/remove the item from the set.
+   */
+  setIn(path, value) {
+    let [key, ...rest] = path;
+    if (rest.length === 0)
+      this.set(key, value);
+    else {
+      let node = this.get(key, !0);
+      if (isCollection(node))
+        node.setIn(rest, value);
+      else if (node === void 0 && this.schema)
+        this.set(key, collectionFromPath(this.schema, rest, value));
+      else
+        throw new Error(`Expected YAML collection at ${key}. Remaining path: ${rest}`);
+    }
+  }
+};
+
+// node_modules/yaml/browser/dist/stringify/stringifyComment.js
+var stringifyComment = (str) => str.replace(/^(?!$)(?: $)?/gm, "#");
+function indentComment(comment, indent) {
+  return /^\n+$/.test(comment) ? comment.substring(1) : indent ? comment.replace(/^(?! *$)/gm, indent) : comment;
+}
+var lineComment = (str, indent, comment) => str.endsWith(`
+`) ? indentComment(comment, indent) : comment.includes(`
+`) ? `
+` + indentComment(comment, indent) : (str.endsWith(" ") ? "" : " ") + comment;
+
+// node_modules/yaml/browser/dist/stringify/foldFlowLines.js
+var FOLD_FLOW = "flow", FOLD_BLOCK = "block", FOLD_QUOTED = "quoted";
+function foldFlowLines(text2, indent, mode = "flow", { indentAtStart, lineWidth = 80, minContentWidth = 20, onFold, onOverflow } = {}) {
+  if (!lineWidth || lineWidth < 0)
+    return text2;
+  lineWidth < minContentWidth && (minContentWidth = 0);
+  let endStep = Math.max(1 + minContentWidth, 1 + lineWidth - indent.length);
+  if (text2.length <= endStep)
+    return text2;
+  let folds = [], escapedFolds = {}, end = lineWidth - indent.length;
+  typeof indentAtStart == "number" && (indentAtStart > lineWidth - Math.max(2, minContentWidth) ? folds.push(0) : end = lineWidth - indentAtStart);
+  let split, prev, overflow = !1, i = -1, escStart = -1, escEnd = -1;
+  mode === FOLD_BLOCK && (i = consumeMoreIndentedLines(text2, i, indent.length), i !== -1 && (end = i + endStep));
+  for (let ch; ch = text2[i += 1]; ) {
+    if (mode === FOLD_QUOTED && ch === "\\") {
+      switch (escStart = i, text2[i + 1]) {
+        case "x":
+          i += 3;
+          break;
+        case "u":
+          i += 5;
+          break;
+        case "U":
+          i += 9;
+          break;
+        default:
+          i += 1;
+      }
+      escEnd = i;
+    }
+    if (ch === `
+`)
+      mode === FOLD_BLOCK && (i = consumeMoreIndentedLines(text2, i, indent.length)), end = i + indent.length + endStep, split = void 0;
+    else {
+      if (ch === " " && prev && prev !== " " && prev !== `
+` && prev !== "	") {
+        let next = text2[i + 1];
+        next && next !== " " && next !== `
+` && next !== "	" && (split = i);
+      }
+      if (i >= end)
+        if (split)
+          folds.push(split), end = split + endStep, split = void 0;
+        else if (mode === FOLD_QUOTED) {
+          for (; prev === " " || prev === "	"; )
+            prev = ch, ch = text2[i += 1], overflow = !0;
+          let j = i > escEnd + 1 ? i - 2 : escStart - 1;
+          if (escapedFolds[j])
+            return text2;
+          folds.push(j), escapedFolds[j] = !0, end = j + endStep, split = void 0;
+        } else
+          overflow = !0;
+    }
+    prev = ch;
+  }
+  if (overflow && onOverflow && onOverflow(), folds.length === 0)
+    return text2;
+  onFold && onFold();
+  let res = text2.slice(0, folds[0]);
+  for (let i2 = 0; i2 < folds.length; ++i2) {
+    let fold = folds[i2], end2 = folds[i2 + 1] || text2.length;
+    fold === 0 ? res = `
+${indent}${text2.slice(0, end2)}` : (mode === FOLD_QUOTED && escapedFolds[fold] && (res += `${text2[fold]}\\`), res += `
+${indent}${text2.slice(fold + 1, end2)}`);
+  }
+  return res;
+}
+function consumeMoreIndentedLines(text2, i, indent) {
+  let end = i, start = i + 1, ch = text2[start];
+  for (; ch === " " || ch === "	"; )
+    if (i < start + indent)
+      ch = text2[++i];
+    else {
+      do
+        ch = text2[++i];
+      while (ch && ch !== `
+`);
+      end = i, start = i + 1, ch = text2[start];
+    }
+  return end;
+}
+
+// node_modules/yaml/browser/dist/stringify/stringifyString.js
+var getFoldOptions = (ctx, isBlock2) => ({
+  indentAtStart: isBlock2 ? ctx.indent.length : ctx.indentAtStart,
+  lineWidth: ctx.options.lineWidth,
+  minContentWidth: ctx.options.minContentWidth
+}), containsDocumentMarker = (str) => /^(%|---|\.\.\.)/m.test(str);
+function lineLengthOverLimit(str, lineWidth, indentLength) {
+  if (!lineWidth || lineWidth < 0)
+    return !1;
+  let limit = lineWidth - indentLength, strLen = str.length;
+  if (strLen <= limit)
+    return !1;
+  for (let i = 0, start = 0; i < strLen; ++i)
+    if (str[i] === `
+`) {
+      if (i - start > limit)
+        return !0;
+      if (start = i + 1, strLen - start <= limit)
+        return !1;
+    }
+  return !0;
+}
+function doubleQuotedString(value, ctx) {
+  let json = JSON.stringify(value);
+  if (ctx.options.doubleQuotedAsJSON)
+    return json;
+  let { implicitKey } = ctx, minMultiLineLength = ctx.options.doubleQuotedMinMultiLineLength, indent = ctx.indent || (containsDocumentMarker(value) ? "  " : ""), str = "", start = 0;
+  for (let i = 0, ch = json[i]; ch; ch = json[++i])
+    if (ch === " " && json[i + 1] === "\\" && json[i + 2] === "n" && (str += json.slice(start, i) + "\\ ", i += 1, start = i, ch = "\\"), ch === "\\")
+      switch (json[i + 1]) {
+        case "u":
+          {
+            str += json.slice(start, i);
+            let code = json.substr(i + 2, 4);
+            switch (code) {
+              case "0000":
+                str += "\\0";
+                break;
+              case "0007":
+                str += "\\a";
+                break;
+              case "000b":
+                str += "\\v";
+                break;
+              case "001b":
+                str += "\\e";
+                break;
+              case "0085":
+                str += "\\N";
+                break;
+              case "00a0":
+                str += "\\_";
+                break;
+              case "2028":
+                str += "\\L";
+                break;
+              case "2029":
+                str += "\\P";
+                break;
+              default:
+                code.substr(0, 2) === "00" ? str += "\\x" + code.substr(2) : str += json.substr(i, 6);
+            }
+            i += 5, start = i + 1;
+          }
+          break;
+        case "n":
+          if (implicitKey || json[i + 2] === '"' || json.length < minMultiLineLength)
+            i += 1;
+          else {
+            for (str += json.slice(start, i) + `
+
+`; json[i + 2] === "\\" && json[i + 3] === "n" && json[i + 4] !== '"'; )
+              str += `
+`, i += 2;
+            str += indent, json[i + 2] === " " && (str += "\\"), i += 1, start = i + 1;
+          }
+          break;
+        default:
+          i += 1;
+      }
+  return str = start ? str + json.slice(start) : json, implicitKey ? str : foldFlowLines(str, indent, FOLD_QUOTED, getFoldOptions(ctx, !1));
+}
+function singleQuotedString(value, ctx) {
+  if (ctx.options.singleQuote === !1 || ctx.implicitKey && value.includes(`
+`) || /[ \t]\n|\n[ \t]/.test(value))
+    return doubleQuotedString(value, ctx);
+  let indent = ctx.indent || (containsDocumentMarker(value) ? "  " : ""), res = "'" + value.replace(/'/g, "''").replace(/\n+/g, `$&
+${indent}`) + "'";
+  return ctx.implicitKey ? res : foldFlowLines(res, indent, FOLD_FLOW, getFoldOptions(ctx, !1));
+}
+function quotedString(value, ctx) {
+  let { singleQuote } = ctx.options, qs;
+  if (singleQuote === !1)
+    qs = doubleQuotedString;
+  else {
+    let hasDouble = value.includes('"'), hasSingle = value.includes("'");
+    hasDouble && !hasSingle ? qs = singleQuotedString : hasSingle && !hasDouble ? qs = doubleQuotedString : qs = singleQuote ? singleQuotedString : doubleQuotedString;
+  }
+  return qs(value, ctx);
+}
+var blockEndNewlines;
+try {
+  blockEndNewlines = new RegExp(`(^|(?<!
+))
++(?!
+|$)`, "g");
+} catch (e) {
+  blockEndNewlines = /\n+(?!\n|$)/g;
+}
+function blockString({ comment, type, value }, ctx, onComment, onChompKeep) {
+  let { blockQuote, commentString, lineWidth } = ctx.options;
+  if (!blockQuote || /\n[\t ]+$/.test(value))
+    return quotedString(value, ctx);
+  let indent = ctx.indent || (ctx.forceBlockIndent || containsDocumentMarker(value) ? "  " : ""), literal = blockQuote === "literal" ? !0 : blockQuote === "folded" || type === Scalar.BLOCK_FOLDED ? !1 : type === Scalar.BLOCK_LITERAL ? !0 : !lineLengthOverLimit(value, lineWidth, indent.length);
+  if (!value)
+    return literal ? `|
+` : `>
+`;
+  let chomp, endStart;
+  for (endStart = value.length; endStart > 0; --endStart) {
+    let ch = value[endStart - 1];
+    if (ch !== `
+` && ch !== "	" && ch !== " ")
+      break;
+  }
+  let end = value.substring(endStart), endNlPos = end.indexOf(`
+`);
+  endNlPos === -1 ? chomp = "-" : value === end || endNlPos !== end.length - 1 ? (chomp = "+", onChompKeep && onChompKeep()) : chomp = "", end && (value = value.slice(0, -end.length), end[end.length - 1] === `
+` && (end = end.slice(0, -1)), end = end.replace(blockEndNewlines, `$&${indent}`));
+  let startWithSpace = !1, startEnd, startNlPos = -1;
+  for (startEnd = 0; startEnd < value.length; ++startEnd) {
+    let ch = value[startEnd];
+    if (ch === " ")
+      startWithSpace = !0;
+    else if (ch === `
+`)
+      startNlPos = startEnd;
+    else
+      break;
+  }
+  let start = value.substring(0, startNlPos < startEnd ? startNlPos + 1 : startEnd);
+  start && (value = value.substring(start.length), start = start.replace(/\n+/g, `$&${indent}`));
+  let header = (startWithSpace ? indent ? "2" : "1" : "") + chomp;
+  if (comment && (header += " " + commentString(comment.replace(/ ?[\r\n]+/g, " ")), onComment && onComment()), !literal) {
+    let foldedValue = value.replace(/\n+/g, `
+$&`).replace(/(?:^|\n)([\t ].*)(?:([\n\t ]*)\n(?![\n\t ]))?/g, "$1$2").replace(/\n+/g, `$&${indent}`), literalFallback = !1, foldOptions = getFoldOptions(ctx, !0);
+    blockQuote !== "folded" && type !== Scalar.BLOCK_FOLDED && (foldOptions.onOverflow = () => {
+      literalFallback = !0;
+    });
+    let body = foldFlowLines(`${start}${foldedValue}${end}`, indent, FOLD_BLOCK, foldOptions);
+    if (!literalFallback)
+      return `>${header}
+${indent}${body}`;
+  }
+  return value = value.replace(/\n+/g, `$&${indent}`), `|${header}
+${indent}${start}${value}${end}`;
+}
+function plainString(item, ctx, onComment, onChompKeep) {
+  let { type, value } = item, { actualString, implicitKey, indent, indentStep, inFlow } = ctx;
+  if (implicitKey && value.includes(`
+`) || inFlow && /[[\]{},]/.test(value))
+    return quotedString(value, ctx);
+  if (/^[\n\t ,[\]{}#&*!|>'"%@`]|^[?-]$|^[?-][ \t]|[\n:][ \t]|[ \t]\n|[\n\t ]#|[\n\t :]$/.test(value))
+    return implicitKey || inFlow || !value.includes(`
+`) ? quotedString(value, ctx) : blockString(item, ctx, onComment, onChompKeep);
+  if (!implicitKey && !inFlow && type !== Scalar.PLAIN && value.includes(`
+`))
+    return blockString(item, ctx, onComment, onChompKeep);
+  if (containsDocumentMarker(value)) {
+    if (indent === "")
+      return ctx.forceBlockIndent = !0, blockString(item, ctx, onComment, onChompKeep);
+    if (implicitKey && indent === indentStep)
+      return quotedString(value, ctx);
+  }
+  let str = value.replace(/\n+/g, `$&
+${indent}`);
+  if (actualString) {
+    let test = (tag) => {
+      var _a;
+      return tag.default && tag.tag !== "tag:yaml.org,2002:str" && ((_a = tag.test) == null ? void 0 : _a.test(str));
+    }, { compat, tags } = ctx.doc.schema;
+    if (tags.some(test) || compat != null && compat.some(test))
+      return quotedString(value, ctx);
+  }
+  return implicitKey ? str : foldFlowLines(str, indent, FOLD_FLOW, getFoldOptions(ctx, !1));
+}
+function stringifyString(item, ctx, onComment, onChompKeep) {
+  let { implicitKey, inFlow } = ctx, ss = typeof item.value == "string" ? item : Object.assign({}, item, { value: String(item.value) }), { type } = item;
+  type !== Scalar.QUOTE_DOUBLE && /[\x00-\x08\x0b-\x1f\x7f-\x9f\u{D800}-\u{DFFF}]/u.test(ss.value) && (type = Scalar.QUOTE_DOUBLE);
+  let _stringify = (_type) => {
+    switch (_type) {
+      case Scalar.BLOCK_FOLDED:
+      case Scalar.BLOCK_LITERAL:
+        return implicitKey || inFlow ? quotedString(ss.value, ctx) : blockString(ss, ctx, onComment, onChompKeep);
+      case Scalar.QUOTE_DOUBLE:
+        return doubleQuotedString(ss.value, ctx);
+      case Scalar.QUOTE_SINGLE:
+        return singleQuotedString(ss.value, ctx);
+      case Scalar.PLAIN:
+        return plainString(ss, ctx, onComment, onChompKeep);
+      default:
+        return null;
+    }
+  }, res = _stringify(type);
+  if (res === null) {
+    let { defaultKeyType, defaultStringType } = ctx.options, t = implicitKey && defaultKeyType || defaultStringType;
+    if (res = _stringify(t), res === null)
+      throw new Error(`Unsupported default string type ${t}`);
+  }
+  return res;
+}
+
+// node_modules/yaml/browser/dist/stringify/stringify.js
+function createStringifyContext(doc2, options) {
+  let opt = Object.assign({
+    blockQuote: !0,
+    commentString: stringifyComment,
+    defaultKeyType: null,
+    defaultStringType: "PLAIN",
+    directives: null,
+    doubleQuotedAsJSON: !1,
+    doubleQuotedMinMultiLineLength: 40,
+    falseStr: "false",
+    flowCollectionPadding: !0,
+    indentSeq: !0,
+    lineWidth: 80,
+    minContentWidth: 20,
+    nullStr: "null",
+    simpleKeys: !1,
+    singleQuote: null,
+    trailingComma: !1,
+    trueStr: "true",
+    verifyAliasOrder: !0
+  }, doc2.schema.toStringOptions, options), inFlow;
+  switch (opt.collectionStyle) {
+    case "block":
+      inFlow = !1;
+      break;
+    case "flow":
+      inFlow = !0;
+      break;
+    default:
+      inFlow = null;
+  }
+  return {
+    anchors: /* @__PURE__ */ new Set(),
+    doc: doc2,
+    flowCollectionPadding: opt.flowCollectionPadding ? " " : "",
+    indent: "",
+    indentStep: typeof opt.indent == "number" ? " ".repeat(opt.indent) : "  ",
+    inFlow,
+    options: opt
+  };
+}
+function getTagObject(tags, item) {
+  var _a, _b, _c, _d;
+  if (item.tag) {
+    let match2 = tags.filter((t) => t.tag === item.tag);
+    if (match2.length > 0)
+      return (_a = match2.find((t) => t.format === item.format)) != null ? _a : match2[0];
+  }
+  let tagObj, obj;
+  if (isScalar(item)) {
+    obj = item.value;
+    let match2 = tags.filter((t) => {
+      var _a2;
+      return (_a2 = t.identify) == null ? void 0 : _a2.call(t, obj);
+    });
+    if (match2.length > 1) {
+      let testMatch = match2.filter((t) => t.test);
+      testMatch.length > 0 && (match2 = testMatch);
+    }
+    tagObj = (_b = match2.find((t) => t.format === item.format)) != null ? _b : match2.find((t) => !t.format);
+  } else
+    obj = item, tagObj = tags.find((t) => t.nodeClass && obj instanceof t.nodeClass);
+  if (!tagObj) {
+    let name = (_d = (_c = obj == null ? void 0 : obj.constructor) == null ? void 0 : _c.name) != null ? _d : obj === null ? "null" : typeof obj;
+    throw new Error(`Tag not resolved for ${name} value`);
+  }
+  return tagObj;
+}
+function stringifyProps(node, tagObj, { anchors, doc: doc2 }) {
+  var _a;
+  if (!doc2.directives)
+    return "";
+  let props = [], anchor = (isScalar(node) || isCollection(node)) && node.anchor;
+  anchor && anchorIsValid(anchor) && (anchors.add(anchor), props.push(`&${anchor}`));
+  let tag = (_a = node.tag) != null ? _a : tagObj.default ? null : tagObj.tag;
+  return tag && props.push(doc2.directives.tagString(tag)), props.join(" ");
+}
+function stringify(item, ctx, onComment, onChompKeep) {
+  var _a, _b;
+  if (isPair(item))
+    return item.toString(ctx, onComment, onChompKeep);
+  if (isAlias(item)) {
+    if (ctx.doc.directives)
+      return item.toString(ctx);
+    if ((_a = ctx.resolvedAliases) != null && _a.has(item))
+      throw new TypeError("Cannot stringify circular structure without alias nodes");
+    ctx.resolvedAliases ? ctx.resolvedAliases.add(item) : ctx.resolvedAliases = /* @__PURE__ */ new Set([item]), item = item.resolve(ctx.doc);
+  }
+  let tagObj, node = isNode(item) ? item : ctx.doc.createNode(item, { onTagObj: (o) => tagObj = o });
+  tagObj != null || (tagObj = getTagObject(ctx.doc.schema.tags, node));
+  let props = stringifyProps(node, tagObj, ctx);
+  props.length > 0 && (ctx.indentAtStart = ((_b = ctx.indentAtStart) != null ? _b : 0) + props.length + 1);
+  let str = typeof tagObj.stringify == "function" ? tagObj.stringify(node, ctx, onComment, onChompKeep) : isScalar(node) ? stringifyString(node, ctx, onComment, onChompKeep) : node.toString(ctx, onComment, onChompKeep);
+  return props ? isScalar(node) || str[0] === "{" || str[0] === "[" ? `${props} ${str}` : `${props}
+${ctx.indent}${str}` : str;
+}
+
+// node_modules/yaml/browser/dist/stringify/stringifyPair.js
+function stringifyPair({ key, value }, ctx, onComment, onChompKeep) {
+  var _a, _b;
+  let { allNullValues, doc: doc2, indent, indentStep, options: { commentString, indentSeq, simpleKeys } } = ctx, keyComment = isNode(key) && key.comment || null;
+  if (simpleKeys) {
+    if (keyComment)
+      throw new Error("With simple keys, key nodes cannot have comments");
+    if (isCollection(key) || !isNode(key) && typeof key == "object") {
+      let msg = "With simple keys, collection cannot be used as a key value";
+      throw new Error(msg);
+    }
+  }
+  let explicitKey = !simpleKeys && (!key || keyComment && value == null && !ctx.inFlow || isCollection(key) || (isScalar(key) ? key.type === Scalar.BLOCK_FOLDED || key.type === Scalar.BLOCK_LITERAL : typeof key == "object"));
+  ctx = Object.assign({}, ctx, {
+    allNullValues: !1,
+    implicitKey: !explicitKey && (simpleKeys || !allNullValues),
+    indent: indent + indentStep
+  });
+  let keyCommentDone = !1, chompKeep = !1, str = stringify(key, ctx, () => keyCommentDone = !0, () => chompKeep = !0);
+  if (!explicitKey && !ctx.inFlow && str.length > 1024) {
+    if (simpleKeys)
+      throw new Error("With simple keys, single line scalar must not span more than 1024 characters");
+    explicitKey = !0;
+  }
+  if (ctx.inFlow) {
+    if (allNullValues || value == null)
+      return keyCommentDone && onComment && onComment(), str === "" ? "?" : explicitKey ? `? ${str}` : str;
+  } else if (allNullValues && !simpleKeys || value == null && explicitKey)
+    return str = `? ${str}`, keyComment && !keyCommentDone ? str += lineComment(str, ctx.indent, commentString(keyComment)) : chompKeep && onChompKeep && onChompKeep(), str;
+  keyCommentDone && (keyComment = null), explicitKey ? (keyComment && (str += lineComment(str, ctx.indent, commentString(keyComment))), str = `? ${str}
+${indent}:`) : (str = `${str}:`, keyComment && (str += lineComment(str, ctx.indent, commentString(keyComment))));
+  let vsb, vcb, valueComment;
+  isNode(value) ? (vsb = !!value.spaceBefore, vcb = value.commentBefore, valueComment = value.comment) : (vsb = !1, vcb = null, valueComment = null, value && typeof value == "object" && (value = doc2.createNode(value))), ctx.implicitKey = !1, !explicitKey && !keyComment && isScalar(value) && (ctx.indentAtStart = str.length + 1), chompKeep = !1, !indentSeq && indentStep.length >= 2 && !ctx.inFlow && !explicitKey && isSeq(value) && !value.flow && !value.tag && !value.anchor && (ctx.indent = ctx.indent.substring(2));
+  let valueCommentDone = !1, valueStr = stringify(value, ctx, () => valueCommentDone = !0, () => chompKeep = !0), ws = " ";
+  if (keyComment || vsb || vcb) {
+    if (ws = vsb ? `
+` : "", vcb) {
+      let cs = commentString(vcb);
+      ws += `
+${indentComment(cs, ctx.indent)}`;
+    }
+    valueStr === "" && !ctx.inFlow ? ws === `
+` && valueComment && (ws = `
+
+`) : ws += `
+${ctx.indent}`;
+  } else if (!explicitKey && isCollection(value)) {
+    let vs0 = valueStr[0], nl0 = valueStr.indexOf(`
+`), hasNewline = nl0 !== -1, flow = (_b = (_a = ctx.inFlow) != null ? _a : value.flow) != null ? _b : value.items.length === 0;
+    if (hasNewline || !flow) {
+      let hasPropsLine = !1;
+      if (hasNewline && (vs0 === "&" || vs0 === "!")) {
+        let sp0 = valueStr.indexOf(" ");
+        vs0 === "&" && sp0 !== -1 && sp0 < nl0 && valueStr[sp0 + 1] === "!" && (sp0 = valueStr.indexOf(" ", sp0 + 1)), (sp0 === -1 || nl0 < sp0) && (hasPropsLine = !0);
+      }
+      hasPropsLine || (ws = `
+${ctx.indent}`);
+    }
+  } else (valueStr === "" || valueStr[0] === `
+`) && (ws = "");
+  return str += ws + valueStr, ctx.inFlow ? valueCommentDone && onComment && onComment() : valueComment && !valueCommentDone ? str += lineComment(str, ctx.indent, commentString(valueComment)) : chompKeep && onChompKeep && onChompKeep(), str;
+}
+
+// node_modules/yaml/browser/dist/log.js
+function warn(logLevel, warning) {
+  (logLevel === "debug" || logLevel === "warn") && console.warn(warning);
+}
+
+// node_modules/yaml/browser/dist/schema/yaml-1.1/merge.js
+var MERGE_KEY = "<<", merge = {
+  identify: (value) => value === MERGE_KEY || typeof value == "symbol" && value.description === MERGE_KEY,
+  default: "key",
+  tag: "tag:yaml.org,2002:merge",
+  test: /^<<$/,
+  resolve: () => Object.assign(new Scalar(Symbol(MERGE_KEY)), {
+    addToJSMap: addMergeToJSMap
+  }),
+  stringify: () => MERGE_KEY
+}, isMergeKey = (ctx, key) => (merge.identify(key) || isScalar(key) && (!key.type || key.type === Scalar.PLAIN) && merge.identify(key.value)) && (ctx == null ? void 0 : ctx.doc.schema.tags.some((tag) => tag.tag === merge.tag && tag.default));
+function addMergeToJSMap(ctx, map3, value) {
+  let source = resolveAliasValue(ctx, value);
+  if (isSeq(source))
+    for (let it of source.items)
+      mergeValue(ctx, map3, it);
+  else if (Array.isArray(source))
+    for (let it of source)
+      mergeValue(ctx, map3, it);
+  else
+    mergeValue(ctx, map3, source);
+}
+function mergeValue(ctx, map3, value) {
+  let source = resolveAliasValue(ctx, value);
+  if (!isMap(source))
+    throw new Error("Merge sources must be maps or map aliases");
+  let srcMap = source.toJSON(null, ctx, Map);
+  for (let [key, value2] of srcMap)
+    map3 instanceof Map ? map3.has(key) || map3.set(key, value2) : map3 instanceof Set ? map3.add(key) : Object.prototype.hasOwnProperty.call(map3, key) || Object.defineProperty(map3, key, {
+      value: value2,
+      writable: !0,
+      enumerable: !0,
+      configurable: !0
+    });
+  return map3;
+}
+function resolveAliasValue(ctx, value) {
+  return ctx && isAlias(value) ? value.resolve(ctx.doc, ctx) : value;
+}
+
+// node_modules/yaml/browser/dist/nodes/addPairToJSMap.js
+function addPairToJSMap(ctx, map3, { key, value }) {
+  if (isNode(key) && key.addToJSMap)
+    key.addToJSMap(ctx, map3, value);
+  else if (isMergeKey(ctx, key))
+    addMergeToJSMap(ctx, map3, value);
+  else {
+    let jsKey = toJS(key, "", ctx);
+    if (map3 instanceof Map)
+      map3.set(jsKey, toJS(value, jsKey, ctx));
+    else if (map3 instanceof Set)
+      map3.add(jsKey);
+    else {
+      let stringKey = stringifyKey(key, jsKey, ctx), jsValue = toJS(value, stringKey, ctx);
+      stringKey in map3 ? Object.defineProperty(map3, stringKey, {
+        value: jsValue,
+        writable: !0,
+        enumerable: !0,
+        configurable: !0
+      }) : map3[stringKey] = jsValue;
+    }
+  }
+  return map3;
+}
+function stringifyKey(key, jsKey, ctx) {
+  if (jsKey === null)
+    return "";
+  if (typeof jsKey != "object")
+    return String(jsKey);
+  if (isNode(key) && (ctx != null && ctx.doc)) {
+    let strCtx = createStringifyContext(ctx.doc, {});
+    strCtx.anchors = /* @__PURE__ */ new Set();
+    for (let node of ctx.anchors.keys())
+      strCtx.anchors.add(node.anchor);
+    strCtx.inFlow = !0, strCtx.inStringifyKey = !0;
+    let strKey = key.toString(strCtx);
+    if (!ctx.mapKeyWarned) {
+      let jsonStr = JSON.stringify(strKey);
+      jsonStr.length > 40 && (jsonStr = jsonStr.substring(0, 36) + '..."'), warn(ctx.doc.options.logLevel, `Keys with collection values will be stringified due to JS Object restrictions: ${jsonStr}. Set mapAsMap: true to use object keys.`), ctx.mapKeyWarned = !0;
+    }
+    return strKey;
+  }
+  return JSON.stringify(jsKey);
+}
+
+// node_modules/yaml/browser/dist/nodes/Pair.js
+function createPair(key, value, ctx) {
+  let k = createNode(key, void 0, ctx), v = createNode(value, void 0, ctx);
+  return new Pair(k, v);
+}
+var Pair = class _Pair {
+  constructor(key, value = null) {
+    Object.defineProperty(this, NODE_TYPE, { value: PAIR }), this.key = key, this.value = value;
+  }
+  clone(schema4) {
+    let { key, value } = this;
+    return isNode(key) && (key = key.clone(schema4)), isNode(value) && (value = value.clone(schema4)), new _Pair(key, value);
+  }
+  toJSON(_, ctx) {
+    let pair = ctx != null && ctx.mapAsMap ? /* @__PURE__ */ new Map() : {};
+    return addPairToJSMap(ctx, pair, this);
+  }
+  toString(ctx, onComment, onChompKeep) {
+    return ctx != null && ctx.doc ? stringifyPair(this, ctx, onComment, onChompKeep) : JSON.stringify(this);
+  }
+};
+
+// node_modules/yaml/browser/dist/stringify/stringifyCollection.js
+function stringifyCollection(collection, ctx, options) {
+  var _a;
+  return (((_a = ctx.inFlow) != null ? _a : collection.flow) ? stringifyFlowCollection : stringifyBlockCollection)(collection, ctx, options);
+}
+function stringifyBlockCollection({ comment, items }, ctx, { blockItemPrefix, flowChars, itemIndent, onChompKeep, onComment }) {
+  let { indent, options: { commentString } } = ctx, itemCtx = Object.assign({}, ctx, { indent: itemIndent, type: null }), chompKeep = !1, lines = [];
+  for (let i = 0; i < items.length; ++i) {
+    let item = items[i], comment2 = null;
+    if (isNode(item))
+      !chompKeep && item.spaceBefore && lines.push(""), addCommentBefore(ctx, lines, item.commentBefore, chompKeep), item.comment && (comment2 = item.comment);
+    else if (isPair(item)) {
+      let ik = isNode(item.key) ? item.key : null;
+      ik && (!chompKeep && ik.spaceBefore && lines.push(""), addCommentBefore(ctx, lines, ik.commentBefore, chompKeep));
+    }
+    chompKeep = !1;
+    let str2 = stringify(item, itemCtx, () => comment2 = null, () => chompKeep = !0);
+    comment2 && (str2 += lineComment(str2, itemIndent, commentString(comment2))), chompKeep && comment2 && (chompKeep = !1), lines.push(blockItemPrefix + str2);
+  }
+  let str;
+  if (lines.length === 0)
+    str = flowChars.start + flowChars.end;
+  else {
+    str = lines[0];
+    for (let i = 1; i < lines.length; ++i) {
+      let line = lines[i];
+      str += line ? `
+${indent}${line}` : `
+`;
+    }
+  }
+  return comment ? (str += `
+` + indentComment(commentString(comment), indent), onComment && onComment()) : chompKeep && onChompKeep && onChompKeep(), str;
+}
+function stringifyFlowCollection({ items }, ctx, { flowChars, itemIndent }) {
+  let { indent, indentStep, flowCollectionPadding: fcPadding, options: { commentString } } = ctx;
+  itemIndent += indentStep;
+  let itemCtx = Object.assign({}, ctx, {
+    indent: itemIndent,
+    inFlow: !0,
+    type: null
+  }), reqNewline = !1, linesAtValue = 0, lines = [];
+  for (let i = 0; i < items.length; ++i) {
+    let item = items[i], comment = null;
+    if (isNode(item))
+      item.spaceBefore && lines.push(""), addCommentBefore(ctx, lines, item.commentBefore, !1), item.comment && (comment = item.comment);
+    else if (isPair(item)) {
+      let ik = isNode(item.key) ? item.key : null;
+      ik && (ik.spaceBefore && lines.push(""), addCommentBefore(ctx, lines, ik.commentBefore, !1), ik.comment && (reqNewline = !0));
+      let iv = isNode(item.value) ? item.value : null;
+      iv ? (iv.comment && (comment = iv.comment), iv.commentBefore && (reqNewline = !0)) : item.value == null && (ik != null && ik.comment) && (comment = ik.comment);
+    }
+    comment && (reqNewline = !0);
+    let str = stringify(item, itemCtx, () => comment = null);
+    reqNewline || (reqNewline = lines.length > linesAtValue || str.includes(`
+`)), i < items.length - 1 ? str += "," : ctx.options.trailingComma && (ctx.options.lineWidth > 0 && (reqNewline || (reqNewline = lines.reduce((sum, line) => sum + line.length + 2, 2) + (str.length + 2) > ctx.options.lineWidth)), reqNewline && (str += ",")), comment && (str += lineComment(str, itemIndent, commentString(comment))), lines.push(str), linesAtValue = lines.length;
+  }
+  let { start, end } = flowChars;
+  if (lines.length === 0)
+    return start + end;
+  if (!reqNewline) {
+    let len = lines.reduce((sum, line) => sum + line.length + 2, 2);
+    reqNewline = ctx.options.lineWidth > 0 && len > ctx.options.lineWidth;
+  }
+  if (reqNewline) {
+    let str = start;
+    for (let line of lines)
+      str += line ? `
+${indentStep}${indent}${line}` : `
+`;
+    return `${str}
+${indent}${end}`;
+  } else
+    return `${start}${fcPadding}${lines.join(" ")}${fcPadding}${end}`;
+}
+function addCommentBefore({ indent, options: { commentString } }, lines, comment, chompKeep) {
+  if (comment && chompKeep && (comment = comment.replace(/^\n+/, "")), comment) {
+    let ic = indentComment(commentString(comment), indent);
+    lines.push(ic.trimStart());
+  }
+}
+
+// node_modules/yaml/browser/dist/nodes/YAMLMap.js
+function findPair(items, key) {
+  let k = isScalar(key) ? key.value : key;
+  for (let it of items)
+    if (isPair(it) && (it.key === key || it.key === k || isScalar(it.key) && it.key.value === k))
+      return it;
+}
+var YAMLMap = class extends Collection {
+  static get tagName() {
+    return "tag:yaml.org,2002:map";
+  }
+  constructor(schema4) {
+    super(MAP, schema4), this.items = [];
+  }
+  /**
+   * A generic collection parsing method that can be extended
+   * to other node classes that inherit from YAMLMap
+   */
+  static from(schema4, obj, ctx) {
+    let { keepUndefined, replacer } = ctx, map3 = new this(schema4), add = (key, value) => {
+      if (typeof replacer == "function")
+        value = replacer.call(obj, key, value);
+      else if (Array.isArray(replacer) && !replacer.includes(key))
+        return;
+      (value !== void 0 || keepUndefined) && map3.items.push(createPair(key, value, ctx));
+    };
+    if (obj instanceof Map)
+      for (let [key, value] of obj)
+        add(key, value);
+    else if (obj && typeof obj == "object")
+      for (let key of Object.keys(obj))
+        add(key, obj[key]);
+    return typeof schema4.sortMapEntries == "function" && map3.items.sort(schema4.sortMapEntries), map3;
+  }
+  /**
+   * Adds a value to the collection.
+   *
+   * @param overwrite - If not set `true`, using a key that is already in the
+   *   collection will throw. Otherwise, overwrites the previous value.
+   */
+  add(pair, overwrite) {
+    var _a;
+    let _pair;
+    isPair(pair) ? _pair = pair : !pair || typeof pair != "object" || !("key" in pair) ? _pair = new Pair(pair, pair == null ? void 0 : pair.value) : _pair = new Pair(pair.key, pair.value);
+    let prev = findPair(this.items, _pair.key), sortEntries = (_a = this.schema) == null ? void 0 : _a.sortMapEntries;
+    if (prev) {
+      if (!overwrite)
+        throw new Error(`Key ${_pair.key} already set`);
+      isScalar(prev.value) && isScalarValue(_pair.value) ? prev.value.value = _pair.value : prev.value = _pair.value;
+    } else if (sortEntries) {
+      let i = this.items.findIndex((item) => sortEntries(_pair, item) < 0);
+      i === -1 ? this.items.push(_pair) : this.items.splice(i, 0, _pair);
+    } else
+      this.items.push(_pair);
+  }
+  delete(key) {
+    let it = findPair(this.items, key);
+    return it ? this.items.splice(this.items.indexOf(it), 1).length > 0 : !1;
+  }
+  get(key, keepScalar) {
+    var _a;
+    let it = findPair(this.items, key), node = it == null ? void 0 : it.value;
+    return (_a = !keepScalar && isScalar(node) ? node.value : node) != null ? _a : void 0;
+  }
+  has(key) {
+    return !!findPair(this.items, key);
+  }
+  set(key, value) {
+    this.add(new Pair(key, value), !0);
+  }
+  /**
+   * @param ctx - Conversion context, originally set in Document#toJS()
+   * @param {Class} Type - If set, forces the returned collection type
+   * @returns Instance of Type, Map, or Object
+   */
+  toJSON(_, ctx, Type) {
+    let map3 = Type ? new Type() : ctx != null && ctx.mapAsMap ? /* @__PURE__ */ new Map() : {};
+    ctx != null && ctx.onCreate && ctx.onCreate(map3);
+    for (let item of this.items)
+      addPairToJSMap(ctx, map3, item);
+    return map3;
+  }
+  toString(ctx, onComment, onChompKeep) {
+    if (!ctx)
+      return JSON.stringify(this);
+    for (let item of this.items)
+      if (!isPair(item))
+        throw new Error(`Map items must all be pairs; found ${JSON.stringify(item)} instead`);
+    return !ctx.allNullValues && this.hasAllNullValues(!1) && (ctx = Object.assign({}, ctx, { allNullValues: !0 })), stringifyCollection(this, ctx, {
+      blockItemPrefix: "",
+      flowChars: { start: "{", end: "}" },
+      itemIndent: ctx.indent || "",
+      onChompKeep,
+      onComment
+    });
+  }
+};
+
+// node_modules/yaml/browser/dist/schema/common/map.js
+var map = {
+  collection: "map",
+  default: !0,
+  nodeClass: YAMLMap,
+  tag: "tag:yaml.org,2002:map",
+  resolve(map3, onError) {
+    return isMap(map3) || onError("Expected a mapping for this tag"), map3;
+  },
+  createNode: (schema4, obj, ctx) => YAMLMap.from(schema4, obj, ctx)
+};
+
+// node_modules/yaml/browser/dist/nodes/YAMLSeq.js
+var YAMLSeq = class extends Collection {
+  static get tagName() {
+    return "tag:yaml.org,2002:seq";
+  }
+  constructor(schema4) {
+    super(SEQ, schema4), this.items = [];
+  }
+  add(value) {
+    this.items.push(value);
+  }
+  /**
+   * Removes a value from the collection.
+   *
+   * `key` must contain a representation of an integer for this to succeed.
+   * It may be wrapped in a `Scalar`.
+   *
+   * @returns `true` if the item was found and removed.
+   */
+  delete(key) {
+    let idx = asItemIndex(key);
+    return typeof idx != "number" ? !1 : this.items.splice(idx, 1).length > 0;
+  }
+  get(key, keepScalar) {
+    let idx = asItemIndex(key);
+    if (typeof idx != "number")
+      return;
+    let it = this.items[idx];
+    return !keepScalar && isScalar(it) ? it.value : it;
+  }
+  /**
+   * Checks if the collection includes a value with the key `key`.
+   *
+   * `key` must contain a representation of an integer for this to succeed.
+   * It may be wrapped in a `Scalar`.
+   */
+  has(key) {
+    let idx = asItemIndex(key);
+    return typeof idx == "number" && idx < this.items.length;
+  }
+  /**
+   * Sets a value in this collection. For `!!set`, `value` needs to be a
+   * boolean to add/remove the item from the set.
+   *
+   * If `key` does not contain a representation of an integer, this will throw.
+   * It may be wrapped in a `Scalar`.
+   */
+  set(key, value) {
+    let idx = asItemIndex(key);
+    if (typeof idx != "number")
+      throw new Error(`Expected a valid index, not ${key}.`);
+    let prev = this.items[idx];
+    isScalar(prev) && isScalarValue(value) ? prev.value = value : this.items[idx] = value;
+  }
+  toJSON(_, ctx) {
+    let seq2 = [];
+    ctx != null && ctx.onCreate && ctx.onCreate(seq2);
+    let i = 0;
+    for (let item of this.items)
+      seq2.push(toJS(item, String(i++), ctx));
+    return seq2;
+  }
+  toString(ctx, onComment, onChompKeep) {
+    return ctx ? stringifyCollection(this, ctx, {
+      blockItemPrefix: "- ",
+      flowChars: { start: "[", end: "]" },
+      itemIndent: (ctx.indent || "") + "  ",
+      onChompKeep,
+      onComment
+    }) : JSON.stringify(this);
+  }
+  static from(schema4, obj, ctx) {
+    let { replacer } = ctx, seq2 = new this(schema4);
+    if (obj && Symbol.iterator in Object(obj)) {
+      let i = 0;
+      for (let it of obj) {
+        if (typeof replacer == "function") {
+          let key = obj instanceof Set ? it : String(i++);
+          it = replacer.call(obj, key, it);
+        }
+        seq2.items.push(createNode(it, void 0, ctx));
+      }
+    }
+    return seq2;
+  }
+};
+function asItemIndex(key) {
+  let idx = isScalar(key) ? key.value : key;
+  return idx && typeof idx == "string" && (idx = Number(idx)), typeof idx == "number" && Number.isInteger(idx) && idx >= 0 ? idx : null;
+}
+
+// node_modules/yaml/browser/dist/schema/common/seq.js
+var seq = {
+  collection: "seq",
+  default: !0,
+  nodeClass: YAMLSeq,
+  tag: "tag:yaml.org,2002:seq",
+  resolve(seq2, onError) {
+    return isSeq(seq2) || onError("Expected a sequence for this tag"), seq2;
+  },
+  createNode: (schema4, obj, ctx) => YAMLSeq.from(schema4, obj, ctx)
+};
+
+// node_modules/yaml/browser/dist/schema/common/string.js
+var string = {
+  identify: (value) => typeof value == "string",
+  default: !0,
+  tag: "tag:yaml.org,2002:str",
+  resolve: (str) => str,
+  stringify(item, ctx, onComment, onChompKeep) {
+    return ctx = Object.assign({ actualString: !0 }, ctx), stringifyString(item, ctx, onComment, onChompKeep);
+  }
+};
+
+// node_modules/yaml/browser/dist/schema/common/null.js
+var nullTag = {
+  identify: (value) => value == null,
+  createNode: () => new Scalar(null),
+  default: !0,
+  tag: "tag:yaml.org,2002:null",
+  test: /^(?:~|[Nn]ull|NULL)?$/,
+  resolve: () => new Scalar(null),
+  stringify: ({ source }, ctx) => typeof source == "string" && nullTag.test.test(source) ? source : ctx.options.nullStr
+};
+
+// node_modules/yaml/browser/dist/schema/core/bool.js
+var boolTag = {
+  identify: (value) => typeof value == "boolean",
+  default: !0,
+  tag: "tag:yaml.org,2002:bool",
+  test: /^(?:[Tt]rue|TRUE|[Ff]alse|FALSE)$/,
+  resolve: (str) => new Scalar(str[0] === "t" || str[0] === "T"),
+  stringify({ source, value }, ctx) {
+    if (source && boolTag.test.test(source)) {
+      let sv = source[0] === "t" || source[0] === "T";
+      if (value === sv)
+        return source;
+    }
+    return value ? ctx.options.trueStr : ctx.options.falseStr;
+  }
+};
+
+// node_modules/yaml/browser/dist/stringify/stringifyNumber.js
+function stringifyNumber({ format, minFractionDigits, tag, value }) {
+  if (typeof value == "bigint")
+    return String(value);
+  let num = typeof value == "number" ? value : Number(value);
+  if (!isFinite(num))
+    return isNaN(num) ? ".nan" : num < 0 ? "-.inf" : ".inf";
+  let n = Object.is(value, -0) ? "-0" : JSON.stringify(value);
+  if (!format && minFractionDigits && (!tag || tag === "tag:yaml.org,2002:float") && /^-?\d/.test(n) && !n.includes("e")) {
+    let i = n.indexOf(".");
+    i < 0 && (i = n.length, n += ".");
+    let d = minFractionDigits - (n.length - i - 1);
+    for (; d-- > 0; )
+      n += "0";
+  }
+  return n;
+}
+
+// node_modules/yaml/browser/dist/schema/core/float.js
+var floatNaN = {
+  identify: (value) => typeof value == "number",
+  default: !0,
+  tag: "tag:yaml.org,2002:float",
+  test: /^(?:[-+]?\.(?:inf|Inf|INF)|\.nan|\.NaN|\.NAN)$/,
+  resolve: (str) => str.slice(-3).toLowerCase() === "nan" ? NaN : str[0] === "-" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY,
+  stringify: stringifyNumber
+}, floatExp = {
+  identify: (value) => typeof value == "number",
+  default: !0,
+  tag: "tag:yaml.org,2002:float",
+  format: "EXP",
+  test: /^[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)[eE][-+]?[0-9]+$/,
+  resolve: (str) => parseFloat(str),
+  stringify(node) {
+    let num = Number(node.value);
+    return isFinite(num) ? num.toExponential() : stringifyNumber(node);
+  }
+}, float = {
+  identify: (value) => typeof value == "number",
+  default: !0,
+  tag: "tag:yaml.org,2002:float",
+  test: /^[-+]?(?:\.[0-9]+|[0-9]+\.[0-9]*)$/,
+  resolve(str) {
+    let node = new Scalar(parseFloat(str)), dot = str.indexOf(".");
+    return dot !== -1 && str[str.length - 1] === "0" && (node.minFractionDigits = str.length - dot - 1), node;
+  },
+  stringify: stringifyNumber
+};
+
+// node_modules/yaml/browser/dist/schema/core/int.js
+var intIdentify = (value) => typeof value == "bigint" || Number.isInteger(value), intResolve = (str, offset, radix, { intAsBigInt }) => intAsBigInt ? BigInt(str) : parseInt(str.substring(offset), radix);
+function intStringify(node, radix, prefix) {
+  let { value } = node;
+  return intIdentify(value) && value >= 0 ? prefix + value.toString(radix) : stringifyNumber(node);
+}
+var intOct = {
+  identify: (value) => intIdentify(value) && value >= 0,
+  default: !0,
+  tag: "tag:yaml.org,2002:int",
+  format: "OCT",
+  test: /^0o[0-7]+$/,
+  resolve: (str, _onError, opt) => intResolve(str, 2, 8, opt),
+  stringify: (node) => intStringify(node, 8, "0o")
+}, int = {
+  identify: intIdentify,
+  default: !0,
+  tag: "tag:yaml.org,2002:int",
+  test: /^[-+]?[0-9]+$/,
+  resolve: (str, _onError, opt) => intResolve(str, 0, 10, opt),
+  stringify: stringifyNumber
+}, intHex = {
+  identify: (value) => intIdentify(value) && value >= 0,
+  default: !0,
+  tag: "tag:yaml.org,2002:int",
+  format: "HEX",
+  test: /^0x[0-9a-fA-F]+$/,
+  resolve: (str, _onError, opt) => intResolve(str, 2, 16, opt),
+  stringify: (node) => intStringify(node, 16, "0x")
+};
+
+// node_modules/yaml/browser/dist/schema/core/schema.js
+var schema = [
+  map,
+  seq,
+  string,
+  nullTag,
+  boolTag,
+  intOct,
+  int,
+  intHex,
+  floatNaN,
+  floatExp,
+  float
+];
+
+// node_modules/yaml/browser/dist/schema/json/schema.js
+function intIdentify2(value) {
+  return typeof value == "bigint" || Number.isInteger(value);
+}
+var stringifyJSON = ({ value }) => JSON.stringify(value), jsonScalars = [
+  {
+    identify: (value) => typeof value == "string",
+    default: !0,
+    tag: "tag:yaml.org,2002:str",
+    resolve: (str) => str,
+    stringify: stringifyJSON
+  },
+  {
+    identify: (value) => value == null,
+    createNode: () => new Scalar(null),
+    default: !0,
+    tag: "tag:yaml.org,2002:null",
+    test: /^null$/,
+    resolve: () => null,
+    stringify: stringifyJSON
+  },
+  {
+    identify: (value) => typeof value == "boolean",
+    default: !0,
+    tag: "tag:yaml.org,2002:bool",
+    test: /^true$|^false$/,
+    resolve: (str) => str === "true",
+    stringify: stringifyJSON
+  },
+  {
+    identify: intIdentify2,
+    default: !0,
+    tag: "tag:yaml.org,2002:int",
+    test: /^-?(?:0|[1-9][0-9]*)$/,
+    resolve: (str, _onError, { intAsBigInt }) => intAsBigInt ? BigInt(str) : parseInt(str, 10),
+    stringify: ({ value }) => intIdentify2(value) ? value.toString() : JSON.stringify(value)
+  },
+  {
+    identify: (value) => typeof value == "number",
+    default: !0,
+    tag: "tag:yaml.org,2002:float",
+    test: /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]*)?(?:[eE][-+]?[0-9]+)?$/,
+    resolve: (str) => parseFloat(str),
+    stringify: stringifyJSON
+  }
+], jsonError = {
+  default: !0,
+  tag: "",
+  test: /^/,
+  resolve(str, onError) {
+    return onError(`Unresolved plain scalar ${JSON.stringify(str)}`), str;
+  }
+}, schema2 = [map, seq].concat(jsonScalars, jsonError);
+
+// node_modules/yaml/browser/dist/schema/yaml-1.1/binary.js
+var binary = {
+  identify: (value) => value instanceof Uint8Array,
+  // Buffer inherits from Uint8Array
+  default: !1,
+  tag: "tag:yaml.org,2002:binary",
+  /**
+   * Returns a Buffer in node and an Uint8Array in browsers
+   *
+   * To use the resulting buffer as an image, you'll want to do something like:
+   *
+   *   const blob = new Blob([buffer], { type: 'image/jpeg' })
+   *   document.querySelector('#photo').src = URL.createObjectURL(blob)
+   */
+  resolve(src, onError) {
+    if (typeof atob == "function") {
+      let str = atob(src.replace(/[\n\r]/g, "")), buffer = new Uint8Array(str.length);
+      for (let i = 0; i < str.length; ++i)
+        buffer[i] = str.charCodeAt(i);
+      return buffer;
+    } else
+      return onError("This environment does not support reading binary tags; either Buffer or atob is required"), src;
+  },
+  stringify({ comment, type, value }, ctx, onComment, onChompKeep) {
+    if (!value)
+      return "";
+    let buf = value, str;
+    if (typeof btoa == "function") {
+      let s = "";
+      for (let i = 0; i < buf.length; ++i)
+        s += String.fromCharCode(buf[i]);
+      str = btoa(s);
+    } else
+      throw new Error("This environment does not support writing binary tags; either Buffer or btoa is required");
+    if (type != null || (type = Scalar.BLOCK_LITERAL), type !== Scalar.QUOTE_DOUBLE) {
+      let lineWidth = Math.max(ctx.options.lineWidth - ctx.indent.length, ctx.options.minContentWidth), n = Math.ceil(str.length / lineWidth), lines = new Array(n);
+      for (let i = 0, o = 0; i < n; ++i, o += lineWidth)
+        lines[i] = str.substr(o, lineWidth);
+      str = lines.join(type === Scalar.BLOCK_LITERAL ? `
+` : " ");
+    }
+    return stringifyString({ comment, type, value: str }, ctx, onComment, onChompKeep);
+  }
+};
+
+// node_modules/yaml/browser/dist/schema/yaml-1.1/pairs.js
+function resolvePairs(seq2, onError) {
+  var _a;
+  if (isSeq(seq2))
+    for (let i = 0; i < seq2.items.length; ++i) {
+      let item = seq2.items[i];
+      if (!isPair(item)) {
+        if (isMap(item)) {
+          item.items.length > 1 && onError("Each pair must have its own sequence indicator");
+          let pair = item.items[0] || new Pair(new Scalar(null));
+          if (item.commentBefore && (pair.key.commentBefore = pair.key.commentBefore ? `${item.commentBefore}
+${pair.key.commentBefore}` : item.commentBefore), item.comment) {
+            let cn = (_a = pair.value) != null ? _a : pair.key;
+            cn.comment = cn.comment ? `${item.comment}
+${cn.comment}` : item.comment;
+          }
+          item = pair;
+        }
+        seq2.items[i] = isPair(item) ? item : new Pair(item);
+      }
+    }
+  else
+    onError("Expected a sequence for this tag");
+  return seq2;
+}
+function createPairs(schema4, iterable, ctx) {
+  let { replacer } = ctx, pairs2 = new YAMLSeq(schema4);
+  pairs2.tag = "tag:yaml.org,2002:pairs";
+  let i = 0;
+  if (iterable && Symbol.iterator in Object(iterable))
+    for (let it of iterable) {
+      typeof replacer == "function" && (it = replacer.call(iterable, String(i++), it));
+      let key, value;
+      if (Array.isArray(it))
+        if (it.length === 2)
+          key = it[0], value = it[1];
+        else
+          throw new TypeError(`Expected [key, value] tuple: ${it}`);
+      else if (it && it instanceof Object) {
+        let keys2 = Object.keys(it);
+        if (keys2.length === 1)
+          key = keys2[0], value = it[key];
+        else
+          throw new TypeError(`Expected tuple with one key, not ${keys2.length} keys`);
+      } else
+        key = it;
+      pairs2.items.push(createPair(key, value, ctx));
+    }
+  return pairs2;
+}
+var pairs = {
+  collection: "seq",
+  default: !1,
+  tag: "tag:yaml.org,2002:pairs",
+  resolve: resolvePairs,
+  createNode: createPairs
+};
+
+// node_modules/yaml/browser/dist/schema/yaml-1.1/omap.js
+var YAMLOMap = class _YAMLOMap extends YAMLSeq {
+  constructor() {
+    super(), this.add = YAMLMap.prototype.add.bind(this), this.delete = YAMLMap.prototype.delete.bind(this), this.get = YAMLMap.prototype.get.bind(this), this.has = YAMLMap.prototype.has.bind(this), this.set = YAMLMap.prototype.set.bind(this), this.tag = _YAMLOMap.tag;
+  }
+  /**
+   * If `ctx` is given, the return type is actually `Map<unknown, unknown>`,
+   * but TypeScript won't allow widening the signature of a child method.
+   */
+  toJSON(_, ctx) {
+    if (!ctx)
+      return super.toJSON(_);
+    let map3 = /* @__PURE__ */ new Map();
+    ctx != null && ctx.onCreate && ctx.onCreate(map3);
+    for (let pair of this.items) {
+      let key, value;
+      if (isPair(pair) ? (key = toJS(pair.key, "", ctx), value = toJS(pair.value, key, ctx)) : key = toJS(pair, "", ctx), map3.has(key))
+        throw new Error("Ordered maps must not include duplicate keys");
+      map3.set(key, value);
+    }
+    return map3;
+  }
+  static from(schema4, iterable, ctx) {
+    let pairs2 = createPairs(schema4, iterable, ctx), omap2 = new this();
+    return omap2.items = pairs2.items, omap2;
+  }
+};
+YAMLOMap.tag = "tag:yaml.org,2002:omap";
+var omap = {
+  collection: "seq",
+  identify: (value) => value instanceof Map,
+  nodeClass: YAMLOMap,
+  default: !1,
+  tag: "tag:yaml.org,2002:omap",
+  resolve(seq2, onError) {
+    let pairs2 = resolvePairs(seq2, onError), seenKeys = [];
+    for (let { key } of pairs2.items)
+      isScalar(key) && (seenKeys.includes(key.value) ? onError(`Ordered maps must not include duplicate keys: ${key.value}`) : seenKeys.push(key.value));
+    return Object.assign(new YAMLOMap(), pairs2);
+  },
+  createNode: (schema4, iterable, ctx) => YAMLOMap.from(schema4, iterable, ctx)
+};
+
+// node_modules/yaml/browser/dist/schema/yaml-1.1/bool.js
+function boolStringify({ value, source }, ctx) {
+  return source && (value ? trueTag : falseTag).test.test(source) ? source : value ? ctx.options.trueStr : ctx.options.falseStr;
+}
+var trueTag = {
+  identify: (value) => value === !0,
+  default: !0,
+  tag: "tag:yaml.org,2002:bool",
+  test: /^(?:Y|y|[Yy]es|YES|[Tt]rue|TRUE|[Oo]n|ON)$/,
+  resolve: () => new Scalar(!0),
+  stringify: boolStringify
+}, falseTag = {
+  identify: (value) => value === !1,
+  default: !0,
+  tag: "tag:yaml.org,2002:bool",
+  test: /^(?:N|n|[Nn]o|NO|[Ff]alse|FALSE|[Oo]ff|OFF)$/,
+  resolve: () => new Scalar(!1),
+  stringify: boolStringify
+};
+
+// node_modules/yaml/browser/dist/schema/yaml-1.1/float.js
+var floatNaN2 = {
+  identify: (value) => typeof value == "number",
+  default: !0,
+  tag: "tag:yaml.org,2002:float",
+  test: /^(?:[-+]?\.(?:inf|Inf|INF)|\.nan|\.NaN|\.NAN)$/,
+  resolve: (str) => str.slice(-3).toLowerCase() === "nan" ? NaN : str[0] === "-" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY,
+  stringify: stringifyNumber
+}, floatExp2 = {
+  identify: (value) => typeof value == "number",
+  default: !0,
+  tag: "tag:yaml.org,2002:float",
+  format: "EXP",
+  test: /^[-+]?(?:[0-9][0-9_]*)?(?:\.[0-9_]*)?[eE][-+]?[0-9]+$/,
+  resolve: (str) => parseFloat(str.replace(/_/g, "")),
+  stringify(node) {
+    let num = Number(node.value);
+    return isFinite(num) ? num.toExponential() : stringifyNumber(node);
+  }
+}, float2 = {
+  identify: (value) => typeof value == "number",
+  default: !0,
+  tag: "tag:yaml.org,2002:float",
+  test: /^[-+]?(?:[0-9][0-9_]*)?\.[0-9_]*$/,
+  resolve(str) {
+    let node = new Scalar(parseFloat(str.replace(/_/g, ""))), dot = str.indexOf(".");
+    if (dot !== -1) {
+      let f = str.substring(dot + 1).replace(/_/g, "");
+      f[f.length - 1] === "0" && (node.minFractionDigits = f.length);
+    }
+    return node;
+  },
+  stringify: stringifyNumber
+};
+
+// node_modules/yaml/browser/dist/schema/yaml-1.1/int.js
+var intIdentify3 = (value) => typeof value == "bigint" || Number.isInteger(value);
+function intResolve2(str, offset, radix, { intAsBigInt }) {
+  let sign = str[0];
+  if ((sign === "-" || sign === "+") && (offset += 1), str = str.substring(offset).replace(/_/g, ""), intAsBigInt) {
+    switch (radix) {
+      case 2:
+        str = `0b${str}`;
+        break;
+      case 8:
+        str = `0o${str}`;
+        break;
+      case 16:
+        str = `0x${str}`;
+        break;
+    }
+    let n2 = BigInt(str);
+    return sign === "-" ? BigInt(-1) * n2 : n2;
+  }
+  let n = parseInt(str, radix);
+  return sign === "-" ? -1 * n : n;
+}
+function intStringify2(node, radix, prefix) {
+  let { value } = node;
+  if (intIdentify3(value)) {
+    let str = value.toString(radix);
+    return value < 0 ? "-" + prefix + str.substr(1) : prefix + str;
+  }
+  return stringifyNumber(node);
+}
+var intBin = {
+  identify: intIdentify3,
+  default: !0,
+  tag: "tag:yaml.org,2002:int",
+  format: "BIN",
+  test: /^[-+]?0b[0-1_]+$/,
+  resolve: (str, _onError, opt) => intResolve2(str, 2, 2, opt),
+  stringify: (node) => intStringify2(node, 2, "0b")
+}, intOct2 = {
+  identify: intIdentify3,
+  default: !0,
+  tag: "tag:yaml.org,2002:int",
+  format: "OCT",
+  test: /^[-+]?0[0-7_]+$/,
+  resolve: (str, _onError, opt) => intResolve2(str, 1, 8, opt),
+  stringify: (node) => intStringify2(node, 8, "0")
+}, int2 = {
+  identify: intIdentify3,
+  default: !0,
+  tag: "tag:yaml.org,2002:int",
+  test: /^[-+]?[0-9][0-9_]*$/,
+  resolve: (str, _onError, opt) => intResolve2(str, 0, 10, opt),
+  stringify: stringifyNumber
+}, intHex2 = {
+  identify: intIdentify3,
+  default: !0,
+  tag: "tag:yaml.org,2002:int",
+  format: "HEX",
+  test: /^[-+]?0x[0-9a-fA-F_]+$/,
+  resolve: (str, _onError, opt) => intResolve2(str, 2, 16, opt),
+  stringify: (node) => intStringify2(node, 16, "0x")
+};
+
+// node_modules/yaml/browser/dist/schema/yaml-1.1/set.js
+var YAMLSet = class _YAMLSet extends YAMLMap {
+  constructor(schema4) {
+    super(schema4), this.tag = _YAMLSet.tag;
+  }
+  add(key) {
+    let pair;
+    isPair(key) ? pair = key : key && typeof key == "object" && "key" in key && "value" in key && key.value === null ? pair = new Pair(key.key, null) : pair = new Pair(key, null), findPair(this.items, pair.key) || this.items.push(pair);
+  }
+  /**
+   * If `keepPair` is `true`, returns the Pair matching `key`.
+   * Otherwise, returns the value of that Pair's key.
+   */
+  get(key, keepPair) {
+    let pair = findPair(this.items, key);
+    return !keepPair && isPair(pair) ? isScalar(pair.key) ? pair.key.value : pair.key : pair;
+  }
+  set(key, value) {
+    if (typeof value != "boolean")
+      throw new Error(`Expected boolean value for set(key, value) in a YAML set, not ${typeof value}`);
+    let prev = findPair(this.items, key);
+    prev && !value ? this.items.splice(this.items.indexOf(prev), 1) : !prev && value && this.items.push(new Pair(key));
+  }
+  toJSON(_, ctx) {
+    return super.toJSON(_, ctx, Set);
+  }
+  toString(ctx, onComment, onChompKeep) {
+    if (!ctx)
+      return JSON.stringify(this);
+    if (this.hasAllNullValues(!0))
+      return super.toString(Object.assign({}, ctx, { allNullValues: !0 }), onComment, onChompKeep);
+    throw new Error("Set items must all have null values");
+  }
+  static from(schema4, iterable, ctx) {
+    let { replacer } = ctx, set2 = new this(schema4);
+    if (iterable && Symbol.iterator in Object(iterable))
+      for (let value of iterable)
+        typeof replacer == "function" && (value = replacer.call(iterable, value, value)), set2.items.push(createPair(value, null, ctx));
+    return set2;
+  }
+};
+YAMLSet.tag = "tag:yaml.org,2002:set";
+var set = {
+  collection: "map",
+  identify: (value) => value instanceof Set,
+  nodeClass: YAMLSet,
+  default: !1,
+  tag: "tag:yaml.org,2002:set",
+  createNode: (schema4, iterable, ctx) => YAMLSet.from(schema4, iterable, ctx),
+  resolve(map3, onError) {
+    if (isMap(map3)) {
+      if (map3.hasAllNullValues(!0))
+        return Object.assign(new YAMLSet(), map3);
+      onError("Set items must all have null values");
+    } else
+      onError("Expected a mapping for this tag");
+    return map3;
+  }
+};
+
+// node_modules/yaml/browser/dist/schema/yaml-1.1/timestamp.js
+function parseSexagesimal(str, asBigInt) {
+  let sign = str[0], parts = sign === "-" || sign === "+" ? str.substring(1) : str, num = (n) => asBigInt ? BigInt(n) : Number(n), res = parts.replace(/_/g, "").split(":").reduce((res2, p) => res2 * num(60) + num(p), num(0));
+  return sign === "-" ? num(-1) * res : res;
+}
+function stringifySexagesimal(node) {
+  let { value } = node, num = (n) => n;
+  if (typeof value == "bigint")
+    num = (n) => BigInt(n);
+  else if (isNaN(value) || !isFinite(value))
+    return stringifyNumber(node);
+  let sign = "";
+  value < 0 && (sign = "-", value *= num(-1));
+  let _60 = num(60), parts = [value % _60];
+  return value < 60 ? parts.unshift(0) : (value = (value - parts[0]) / _60, parts.unshift(value % _60), value >= 60 && (value = (value - parts[0]) / _60, parts.unshift(value))), sign + parts.map((n) => String(n).padStart(2, "0")).join(":").replace(/000000\d*$/, "");
+}
+var intTime = {
+  identify: (value) => typeof value == "bigint" || Number.isInteger(value),
+  default: !0,
+  tag: "tag:yaml.org,2002:int",
+  format: "TIME",
+  test: /^[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+$/,
+  resolve: (str, _onError, { intAsBigInt }) => parseSexagesimal(str, intAsBigInt),
+  stringify: stringifySexagesimal
+}, floatTime = {
+  identify: (value) => typeof value == "number",
+  default: !0,
+  tag: "tag:yaml.org,2002:float",
+  format: "TIME",
+  test: /^[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\.[0-9_]*$/,
+  resolve: (str) => parseSexagesimal(str, !1),
+  stringify: stringifySexagesimal
+}, timestamp = {
+  identify: (value) => value instanceof Date,
+  default: !0,
+  tag: "tag:yaml.org,2002:timestamp",
+  // If the time zone is omitted, the timestamp is assumed to be specified in UTC. The time part
+  // may be omitted altogether, resulting in a date format. In such a case, the time part is
+  // assumed to be 00:00:00Z (start of day, UTC).
+  test: RegExp("^([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})(?:(?:t|T|[ \\t]+)([0-9]{1,2}):([0-9]{1,2}):([0-9]{1,2}(\\.[0-9]+)?)(?:[ \\t]*(Z|[-+][012]?[0-9](?::[0-9]{2})?))?)?$"),
+  resolve(str) {
+    let match2 = str.match(timestamp.test);
+    if (!match2)
+      throw new Error("!!timestamp expects a date, starting with yyyy-mm-dd");
+    let [, year, month, day, hour, minute, second] = match2.map(Number), millisec = match2[7] ? Number((match2[7] + "00").substr(1, 3)) : 0, date = Date.UTC(year, month - 1, day, hour || 0, minute || 0, second || 0, millisec), tz = match2[8];
+    if (tz && tz !== "Z") {
+      let d = parseSexagesimal(tz, !1);
+      Math.abs(d) < 30 && (d *= 60), date -= 6e4 * d;
+    }
+    return new Date(date);
+  },
+  stringify: ({ value }) => {
+    var _a;
+    return (_a = value == null ? void 0 : value.toISOString().replace(/(T00:00:00)?\.000Z$/, "")) != null ? _a : "";
+  }
+};
+
+// node_modules/yaml/browser/dist/schema/yaml-1.1/schema.js
+var schema3 = [
+  map,
+  seq,
+  string,
+  nullTag,
+  trueTag,
+  falseTag,
+  intBin,
+  intOct2,
+  int2,
+  intHex2,
+  floatNaN2,
+  floatExp2,
+  float2,
+  binary,
+  merge,
+  omap,
+  pairs,
+  set,
+  intTime,
+  floatTime,
+  timestamp
+];
+
+// node_modules/yaml/browser/dist/schema/tags.js
+var schemas = /* @__PURE__ */ new Map([
+  ["core", schema],
+  ["failsafe", [map, seq, string]],
+  ["json", schema2],
+  ["yaml11", schema3],
+  ["yaml-1.1", schema3]
+]), tagsByName = {
+  binary,
+  bool: boolTag,
+  float,
+  floatExp,
+  floatNaN,
+  floatTime,
+  int,
+  intHex,
+  intOct,
+  intTime,
+  map,
+  merge,
+  null: nullTag,
+  omap,
+  pairs,
+  seq,
+  set,
+  timestamp
+}, coreKnownTags = {
+  "tag:yaml.org,2002:binary": binary,
+  "tag:yaml.org,2002:merge": merge,
+  "tag:yaml.org,2002:omap": omap,
+  "tag:yaml.org,2002:pairs": pairs,
+  "tag:yaml.org,2002:set": set,
+  "tag:yaml.org,2002:timestamp": timestamp
+};
+function getTags(customTags, schemaName, addMergeTag) {
+  let schemaTags = schemas.get(schemaName);
+  if (schemaTags && !customTags)
+    return addMergeTag && !schemaTags.includes(merge) ? schemaTags.concat(merge) : schemaTags.slice();
+  let tags = schemaTags;
+  if (!tags)
+    if (Array.isArray(customTags))
+      tags = [];
+    else {
+      let keys2 = Array.from(schemas.keys()).filter((key) => key !== "yaml11").map((key) => JSON.stringify(key)).join(", ");
+      throw new Error(`Unknown schema "${schemaName}"; use one of ${keys2} or define customTags array`);
+    }
+  if (Array.isArray(customTags))
+    for (let tag of customTags)
+      tags = tags.concat(tag);
+  else typeof customTags == "function" && (tags = customTags(tags.slice()));
+  return addMergeTag && (tags = tags.concat(merge)), tags.reduce((tags2, tag) => {
+    let tagObj = typeof tag == "string" ? tagsByName[tag] : tag;
+    if (!tagObj) {
+      let tagName = JSON.stringify(tag), keys2 = Object.keys(tagsByName).map((key) => JSON.stringify(key)).join(", ");
+      throw new Error(`Unknown custom tag ${tagName}; use one of ${keys2}`);
+    }
+    return tags2.includes(tagObj) || tags2.push(tagObj), tags2;
+  }, []);
+}
+
+// node_modules/yaml/browser/dist/schema/Schema.js
+var sortMapEntriesByKey = (a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0, Schema = class _Schema {
+  constructor({ compat, customTags, merge: merge2, resolveKnownTags, schema: schema4, sortMapEntries, toStringDefaults }) {
+    this.compat = Array.isArray(compat) ? getTags(compat, "compat") : compat ? getTags(null, compat) : null, this.name = typeof schema4 == "string" && schema4 || "core", this.knownTags = resolveKnownTags ? coreKnownTags : {}, this.tags = getTags(customTags, this.name, merge2), this.toStringOptions = toStringDefaults != null ? toStringDefaults : null, Object.defineProperty(this, MAP, { value: map }), Object.defineProperty(this, SCALAR, { value: string }), Object.defineProperty(this, SEQ, { value: seq }), this.sortMapEntries = typeof sortMapEntries == "function" ? sortMapEntries : sortMapEntries === !0 ? sortMapEntriesByKey : null;
+  }
+  clone() {
+    let copy2 = Object.create(_Schema.prototype, Object.getOwnPropertyDescriptors(this));
+    return copy2.tags = this.tags.slice(), copy2;
+  }
+};
+
+// node_modules/yaml/browser/dist/stringify/stringifyDocument.js
+function stringifyDocument(doc2, options) {
+  var _a;
+  let lines = [], hasDirectives = options.directives === !0;
+  if (options.directives !== !1 && doc2.directives) {
+    let dir = doc2.directives.toString(doc2);
+    dir ? (lines.push(dir), hasDirectives = !0) : doc2.directives.docStart && (hasDirectives = !0);
+  }
+  hasDirectives && lines.push("---");
+  let ctx = createStringifyContext(doc2, options), { commentString } = ctx.options;
+  if (doc2.commentBefore) {
+    lines.length !== 1 && lines.unshift("");
+    let cs = commentString(doc2.commentBefore);
+    lines.unshift(indentComment(cs, ""));
+  }
+  let chompKeep = !1, contentComment = null;
+  if (doc2.contents) {
+    if (isNode(doc2.contents)) {
+      if (doc2.contents.spaceBefore && hasDirectives && lines.push(""), doc2.contents.commentBefore) {
+        let cs = commentString(doc2.contents.commentBefore);
+        lines.push(indentComment(cs, ""));
+      }
+      ctx.forceBlockIndent = !!doc2.comment, contentComment = doc2.contents.comment;
+    }
+    let onChompKeep = contentComment ? void 0 : () => chompKeep = !0, body = stringify(doc2.contents, ctx, () => contentComment = null, onChompKeep);
+    contentComment && (body += lineComment(body, "", commentString(contentComment))), (body[0] === "|" || body[0] === ">") && lines[lines.length - 1] === "---" ? lines[lines.length - 1] = `--- ${body}` : lines.push(body);
+  } else
+    lines.push(stringify(doc2.contents, ctx));
+  if ((_a = doc2.directives) != null && _a.docEnd)
+    if (doc2.comment) {
+      let cs = commentString(doc2.comment);
+      cs.includes(`
+`) ? (lines.push("..."), lines.push(indentComment(cs, ""))) : lines.push(`... ${cs}`);
+    } else
+      lines.push("...");
+  else {
+    let dc = doc2.comment;
+    dc && chompKeep && (dc = dc.replace(/^\n+/, "")), dc && ((!chompKeep || contentComment) && lines[lines.length - 1] !== "" && lines.push(""), lines.push(indentComment(commentString(dc), "")));
+  }
+  return lines.join(`
+`) + `
+`;
+}
+
+// node_modules/yaml/browser/dist/doc/Document.js
+var Document = class _Document {
+  constructor(value, replacer, options) {
+    this.commentBefore = null, this.comment = null, this.errors = [], this.warnings = [], Object.defineProperty(this, NODE_TYPE, { value: DOC });
+    let _replacer = null;
+    typeof replacer == "function" || Array.isArray(replacer) ? _replacer = replacer : options === void 0 && replacer && (options = replacer, replacer = void 0);
+    let opt = Object.assign({
+      intAsBigInt: !1,
+      keepSourceTokens: !1,
+      logLevel: "warn",
+      prettyErrors: !0,
+      strict: !0,
+      stringKeys: !1,
+      uniqueKeys: !0,
+      version: "1.2"
+    }, options);
+    this.options = opt;
+    let { version } = opt;
+    options != null && options._directives ? (this.directives = options._directives.atDocument(), this.directives.yaml.explicit && (version = this.directives.yaml.version)) : this.directives = new Directives({ version }), this.setSchema(version, options), this.contents = value === void 0 ? null : this.createNode(value, _replacer, options);
+  }
+  /**
+   * Create a deep copy of this Document and its contents.
+   *
+   * Custom Node values that inherit from `Object` still refer to their original instances.
+   */
+  clone() {
+    let copy2 = Object.create(_Document.prototype, {
+      [NODE_TYPE]: { value: DOC }
+    });
+    return copy2.commentBefore = this.commentBefore, copy2.comment = this.comment, copy2.errors = this.errors.slice(), copy2.warnings = this.warnings.slice(), copy2.options = Object.assign({}, this.options), this.directives && (copy2.directives = this.directives.clone()), copy2.schema = this.schema.clone(), copy2.contents = isNode(this.contents) ? this.contents.clone(copy2.schema) : this.contents, this.range && (copy2.range = this.range.slice()), copy2;
+  }
+  /** Adds a value to the document. */
+  add(value) {
+    assertCollection(this.contents) && this.contents.add(value);
+  }
+  /** Adds a value to the document. */
+  addIn(path, value) {
+    assertCollection(this.contents) && this.contents.addIn(path, value);
+  }
+  /**
+   * Create a new `Alias` node, ensuring that the target `node` has the required anchor.
+   *
+   * If `node` already has an anchor, `name` is ignored.
+   * Otherwise, the `node.anchor` value will be set to `name`,
+   * or if an anchor with that name is already present in the document,
+   * `name` will be used as a prefix for a new unique anchor.
+   * If `name` is undefined, the generated anchor will use 'a' as a prefix.
+   */
+  createAlias(node, name) {
+    if (!node.anchor) {
+      let prev = anchorNames(this);
+      node.anchor = // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+      !name || prev.has(name) ? findNewAnchor(name || "a", prev) : name;
+    }
+    return new Alias(node.anchor);
+  }
+  createNode(value, replacer, options) {
+    let _replacer;
+    if (typeof replacer == "function")
+      value = replacer.call({ "": value }, "", value), _replacer = replacer;
+    else if (Array.isArray(replacer)) {
+      let keyToStr = (v) => typeof v == "number" || v instanceof String || v instanceof Number, asStr = replacer.filter(keyToStr).map(String);
+      asStr.length > 0 && (replacer = replacer.concat(asStr)), _replacer = replacer;
+    } else options === void 0 && replacer && (options = replacer, replacer = void 0);
+    let { aliasDuplicateObjects, anchorPrefix, flow, keepUndefined, onTagObj, tag } = options != null ? options : {}, { onAnchor, setAnchors, sourceObjects } = createNodeAnchors(
+      this,
+      // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+      anchorPrefix || "a"
+    ), ctx = {
+      aliasDuplicateObjects: aliasDuplicateObjects != null ? aliasDuplicateObjects : !0,
+      keepUndefined: keepUndefined != null ? keepUndefined : !1,
+      onAnchor,
+      onTagObj,
+      replacer: _replacer,
+      schema: this.schema,
+      sourceObjects
+    }, node = createNode(value, tag, ctx);
+    return flow && isCollection(node) && (node.flow = !0), setAnchors(), node;
+  }
+  /**
+   * Convert a key and a value into a `Pair` using the current schema,
+   * recursively wrapping all values as `Scalar` or `Collection` nodes.
+   */
+  createPair(key, value, options = {}) {
+    let k = this.createNode(key, null, options), v = this.createNode(value, null, options);
+    return new Pair(k, v);
+  }
+  /**
+   * Removes a value from the document.
+   * @returns `true` if the item was found and removed.
+   */
+  delete(key) {
+    return assertCollection(this.contents) ? this.contents.delete(key) : !1;
+  }
+  /**
+   * Removes a value from the document.
+   * @returns `true` if the item was found and removed.
+   */
+  deleteIn(path) {
+    return isEmptyPath(path) ? this.contents == null ? !1 : (this.contents = null, !0) : assertCollection(this.contents) ? this.contents.deleteIn(path) : !1;
+  }
+  /**
+   * Returns item at `key`, or `undefined` if not found. By default unwraps
+   * scalar values from their surrounding node; to disable set `keepScalar` to
+   * `true` (collections are always returned intact).
+   */
+  get(key, keepScalar) {
+    return isCollection(this.contents) ? this.contents.get(key, keepScalar) : void 0;
+  }
+  /**
+   * Returns item at `path`, or `undefined` if not found. By default unwraps
+   * scalar values from their surrounding node; to disable set `keepScalar` to
+   * `true` (collections are always returned intact).
+   */
+  getIn(path, keepScalar) {
+    return isEmptyPath(path) ? !keepScalar && isScalar(this.contents) ? this.contents.value : this.contents : isCollection(this.contents) ? this.contents.getIn(path, keepScalar) : void 0;
+  }
+  /**
+   * Checks if the document includes a value with the key `key`.
+   */
+  has(key) {
+    return isCollection(this.contents) ? this.contents.has(key) : !1;
+  }
+  /**
+   * Checks if the document includes a value at `path`.
+   */
+  hasIn(path) {
+    return isEmptyPath(path) ? this.contents !== void 0 : isCollection(this.contents) ? this.contents.hasIn(path) : !1;
+  }
+  /**
+   * Sets a value in this document. For `!!set`, `value` needs to be a
+   * boolean to add/remove the item from the set.
+   */
+  set(key, value) {
+    this.contents == null ? this.contents = collectionFromPath(this.schema, [key], value) : assertCollection(this.contents) && this.contents.set(key, value);
+  }
+  /**
+   * Sets a value in this document. For `!!set`, `value` needs to be a
+   * boolean to add/remove the item from the set.
+   */
+  setIn(path, value) {
+    isEmptyPath(path) ? this.contents = value : this.contents == null ? this.contents = collectionFromPath(this.schema, Array.from(path), value) : assertCollection(this.contents) && this.contents.setIn(path, value);
+  }
+  /**
+   * Change the YAML version and schema used by the document.
+   * A `null` version disables support for directives, explicit tags, anchors, and aliases.
+   * It also requires the `schema` option to be given as a `Schema` instance value.
+   *
+   * Overrides all previously set schema options.
+   */
+  setSchema(version, options = {}) {
+    typeof version == "number" && (version = String(version));
+    let opt;
+    switch (version) {
+      case "1.1":
+        this.directives ? this.directives.yaml.version = "1.1" : this.directives = new Directives({ version: "1.1" }), opt = { resolveKnownTags: !1, schema: "yaml-1.1" };
+        break;
+      case "1.2":
+      case "next":
+        this.directives ? this.directives.yaml.version = version : this.directives = new Directives({ version }), opt = { resolveKnownTags: !0, schema: "core" };
+        break;
+      case null:
+        this.directives && delete this.directives, opt = null;
+        break;
+      default: {
+        let sv = JSON.stringify(version);
+        throw new Error(`Expected '1.1', '1.2' or null as first argument, but found: ${sv}`);
+      }
+    }
+    if (options.schema instanceof Object)
+      this.schema = options.schema;
+    else if (opt)
+      this.schema = new Schema(Object.assign(opt, options));
+    else
+      throw new Error("With a null YAML version, the { schema: Schema } option is required");
+  }
+  // json & jsonArg are only used from toJSON()
+  toJS({ json, jsonArg, mapAsMap, maxAliasCount, onAnchor, reviver } = {}) {
+    let ctx = {
+      anchors: /* @__PURE__ */ new Map(),
+      doc: this,
+      keep: !json,
+      mapAsMap: mapAsMap === !0,
+      mapKeyWarned: !1,
+      maxAliasCount: typeof maxAliasCount == "number" ? maxAliasCount : 100
+    }, res = toJS(this.contents, jsonArg != null ? jsonArg : "", ctx);
+    if (typeof onAnchor == "function")
+      for (let { count: count2, res: res2 } of ctx.anchors.values())
+        onAnchor(res2, count2);
+    return typeof reviver == "function" ? applyReviver(reviver, { "": res }, "", res) : res;
+  }
+  /**
+   * A JSON representation of the document `contents`.
+   *
+   * @param jsonArg Used by `JSON.stringify` to indicate the array index or
+   *   property name.
+   */
+  toJSON(jsonArg, onAnchor) {
+    return this.toJS({ json: !0, jsonArg, mapAsMap: !1, onAnchor });
+  }
+  /** A YAML representation of the document. */
+  toString(options = {}) {
+    if (this.errors.length > 0)
+      throw new Error("Document with errors cannot be stringified");
+    if ("indent" in options && (!Number.isInteger(options.indent) || Number(options.indent) <= 0)) {
+      let s = JSON.stringify(options.indent);
+      throw new Error(`"indent" option must be a positive integer, not ${s}`);
+    }
+    return stringifyDocument(this, options);
+  }
+};
+function assertCollection(contents) {
+  if (isCollection(contents))
+    return !0;
+  throw new Error("Expected a YAML collection as document contents");
+}
+
+// node_modules/yaml/browser/dist/errors.js
+var YAMLError = class extends Error {
+  constructor(name, pos, code, message) {
+    super(), this.name = name, this.code = code, this.message = message, this.pos = pos;
+  }
+}, YAMLParseError = class extends YAMLError {
+  constructor(pos, code, message) {
+    super("YAMLParseError", pos, code, message);
+  }
+}, YAMLWarning = class extends YAMLError {
+  constructor(pos, code, message) {
+    super("YAMLWarning", pos, code, message);
+  }
+}, prettifyError = (src, lc) => (error) => {
+  if (error.pos[0] === -1)
+    return;
+  error.linePos = error.pos.map((pos) => lc.linePos(pos));
+  let { line, col } = error.linePos[0];
+  error.message += ` at line ${line}, column ${col}`;
+  let ci = col - 1, lineStr = src.substring(lc.lineStarts[line - 1], lc.lineStarts[line]).replace(/[\n\r]+$/, "");
+  if (ci >= 60 && lineStr.length > 80) {
+    let trimStart = Math.min(ci - 39, lineStr.length - 79);
+    lineStr = "\u2026" + lineStr.substring(trimStart), ci -= trimStart - 1;
+  }
+  if (lineStr.length > 80 && (lineStr = lineStr.substring(0, 79) + "\u2026"), line > 1 && /^ *$/.test(lineStr.substring(0, ci))) {
+    let prev = src.substring(lc.lineStarts[line - 2], lc.lineStarts[line - 1]);
+    prev.length > 80 && (prev = prev.substring(0, 79) + `\u2026
+`), lineStr = prev + lineStr;
+  }
+  if (/[^ ]/.test(lineStr)) {
+    let count2 = 1, end = error.linePos[1];
+    (end == null ? void 0 : end.line) === line && end.col > col && (count2 = Math.max(1, Math.min(end.col - col, 80 - ci)));
+    let pointer = " ".repeat(ci) + "^".repeat(count2);
+    error.message += `:
+
+${lineStr}
+${pointer}
+`;
+  }
+};
+
+// node_modules/yaml/browser/dist/compose/resolve-props.js
+function resolveProps(tokens, { flow, indicator, next, offset, onError, parentIndent, startOnNewline }) {
+  let spaceBefore = !1, atNewline = startOnNewline, hasSpace = startOnNewline, comment = "", commentSep = "", hasNewline = !1, reqSpace = !1, tab = null, anchor = null, tag = null, newlineAfterProp = null, comma = null, found = null, start = null;
+  for (let token of tokens)
+    switch (reqSpace && (token.type !== "space" && token.type !== "newline" && token.type !== "comma" && onError(token.offset, "MISSING_CHAR", "Tags and anchors must be separated from the next token by white space"), reqSpace = !1), tab && (atNewline && token.type !== "comment" && token.type !== "newline" && onError(tab, "TAB_AS_INDENT", "Tabs are not allowed as indentation"), tab = null), token.type) {
+      case "space":
+        !flow && (indicator !== "doc-start" || (next == null ? void 0 : next.type) !== "flow-collection") && token.source.includes("	") && (tab = token), hasSpace = !0;
+        break;
+      case "comment": {
+        hasSpace || onError(token, "MISSING_CHAR", "Comments must be separated from other tokens by white space characters");
+        let cb = token.source.substring(1) || " ";
+        comment ? comment += commentSep + cb : comment = cb, commentSep = "", atNewline = !1;
+        break;
+      }
+      case "newline":
+        atNewline ? comment ? comment += token.source : (!found || indicator !== "seq-item-ind") && (spaceBefore = !0) : commentSep += token.source, atNewline = !0, hasNewline = !0, (anchor || tag) && (newlineAfterProp = token), hasSpace = !0;
+        break;
+      case "anchor":
+        anchor && onError(token, "MULTIPLE_ANCHORS", "A node can have at most one anchor"), token.source.endsWith(":") && onError(token.offset + token.source.length - 1, "BAD_ALIAS", "Anchor ending in : is ambiguous", !0), anchor = token, start != null || (start = token.offset), atNewline = !1, hasSpace = !1, reqSpace = !0;
+        break;
+      case "tag": {
+        tag && onError(token, "MULTIPLE_TAGS", "A node can have at most one tag"), tag = token, start != null || (start = token.offset), atNewline = !1, hasSpace = !1, reqSpace = !0;
+        break;
+      }
+      case indicator:
+        (anchor || tag) && onError(token, "BAD_PROP_ORDER", `Anchors and tags must be after the ${token.source} indicator`), found && onError(token, "UNEXPECTED_TOKEN", `Unexpected ${token.source} in ${flow != null ? flow : "collection"}`), found = token, atNewline = indicator === "seq-item-ind" || indicator === "explicit-key-ind", hasSpace = !1;
+        break;
+      case "comma":
+        if (flow) {
+          comma && onError(token, "UNEXPECTED_TOKEN", `Unexpected , in ${flow}`), comma = token, atNewline = !1, hasSpace = !1;
+          break;
+        }
+      // else fallthrough
+      default:
+        onError(token, "UNEXPECTED_TOKEN", `Unexpected ${token.type} token`), atNewline = !1, hasSpace = !1;
+    }
+  let last2 = tokens[tokens.length - 1], end = last2 ? last2.offset + last2.source.length : offset;
+  return reqSpace && next && next.type !== "space" && next.type !== "newline" && next.type !== "comma" && (next.type !== "scalar" || next.source !== "") && onError(next.offset, "MISSING_CHAR", "Tags and anchors must be separated from the next token by white space"), tab && (atNewline && tab.indent <= parentIndent || (next == null ? void 0 : next.type) === "block-map" || (next == null ? void 0 : next.type) === "block-seq") && onError(tab, "TAB_AS_INDENT", "Tabs are not allowed as indentation"), {
+    comma,
+    found,
+    spaceBefore,
+    comment,
+    hasNewline,
+    anchor,
+    tag,
+    newlineAfterProp,
+    end,
+    start: start != null ? start : end
+  };
+}
+
+// node_modules/yaml/browser/dist/compose/util-contains-newline.js
+function containsNewline(key) {
+  if (!key)
+    return null;
+  switch (key.type) {
+    case "alias":
+    case "scalar":
+    case "double-quoted-scalar":
+    case "single-quoted-scalar":
+      if (key.source.includes(`
+`))
+        return !0;
+      if (key.end) {
+        for (let st of key.end)
+          if (st.type === "newline")
+            return !0;
+      }
+      return !1;
+    case "flow-collection":
+      for (let it of key.items) {
+        for (let st of it.start)
+          if (st.type === "newline")
+            return !0;
+        if (it.sep) {
+          for (let st of it.sep)
+            if (st.type === "newline")
+              return !0;
+        }
+        if (containsNewline(it.key) || containsNewline(it.value))
+          return !0;
+      }
+      return !1;
+    default:
+      return !0;
+  }
+}
+
+// node_modules/yaml/browser/dist/compose/util-flow-indent-check.js
+function flowIndentCheck(indent, fc, onError) {
+  if ((fc == null ? void 0 : fc.type) === "flow-collection") {
+    let end = fc.end[0];
+    end.indent === indent && (end.source === "]" || end.source === "}") && containsNewline(fc) && onError(end, "BAD_INDENT", "Flow end indicator should be more indented than parent", !0);
+  }
+}
+
+// node_modules/yaml/browser/dist/compose/util-map-includes.js
+function mapIncludes(ctx, items, search) {
+  let { uniqueKeys } = ctx.options;
+  if (uniqueKeys === !1)
+    return !1;
+  let isEqual = typeof uniqueKeys == "function" ? uniqueKeys : (a, b) => a === b || isScalar(a) && isScalar(b) && a.value === b.value;
+  return items.some((pair) => isEqual(pair.key, search));
+}
+
+// node_modules/yaml/browser/dist/compose/resolve-block-map.js
+var startColMsg = "All mapping items must start at the same column";
+function resolveBlockMap({ composeNode: composeNode2, composeEmptyNode: composeEmptyNode2 }, ctx, bm, onError, tag) {
+  var _a, _b;
+  let NodeClass = (_a = tag == null ? void 0 : tag.nodeClass) != null ? _a : YAMLMap, map3 = new NodeClass(ctx.schema);
+  ctx.atRoot && (ctx.atRoot = !1);
+  let offset = bm.offset, commentEnd = null;
+  for (let collItem of bm.items) {
+    let { start, key, sep, value } = collItem, keyProps = resolveProps(start, {
+      indicator: "explicit-key-ind",
+      next: key != null ? key : sep == null ? void 0 : sep[0],
+      offset,
+      onError,
+      parentIndent: bm.indent,
+      startOnNewline: !0
+    }), implicitKey = !keyProps.found;
+    if (implicitKey) {
+      if (key && (key.type === "block-seq" ? onError(offset, "BLOCK_AS_IMPLICIT_KEY", "A block sequence may not be used as an implicit map key") : "indent" in key && key.indent !== bm.indent && onError(offset, "BAD_INDENT", startColMsg)), !keyProps.anchor && !keyProps.tag && !sep) {
+        commentEnd = keyProps.end, keyProps.comment && (map3.comment ? map3.comment += `
+` + keyProps.comment : map3.comment = keyProps.comment);
+        continue;
+      }
+      (keyProps.newlineAfterProp || containsNewline(key)) && onError(key != null ? key : start[start.length - 1], "MULTILINE_IMPLICIT_KEY", "Implicit keys need to be on a single line");
+    } else ((_b = keyProps.found) == null ? void 0 : _b.indent) !== bm.indent && onError(offset, "BAD_INDENT", startColMsg);
+    ctx.atKey = !0;
+    let keyStart = keyProps.end, keyNode = key ? composeNode2(ctx, key, keyProps, onError) : composeEmptyNode2(ctx, keyStart, start, null, keyProps, onError);
+    ctx.schema.compat && flowIndentCheck(bm.indent, key, onError), ctx.atKey = !1, mapIncludes(ctx, map3.items, keyNode) && onError(keyStart, "DUPLICATE_KEY", "Map keys must be unique");
+    let valueProps = resolveProps(sep != null ? sep : [], {
+      indicator: "map-value-ind",
+      next: value,
+      offset: keyNode.range[2],
+      onError,
+      parentIndent: bm.indent,
+      startOnNewline: !key || key.type === "block-scalar"
+    });
+    if (offset = valueProps.end, valueProps.found) {
+      implicitKey && ((value == null ? void 0 : value.type) === "block-map" && !valueProps.hasNewline && onError(offset, "BLOCK_AS_IMPLICIT_KEY", "Nested mappings are not allowed in compact mappings"), ctx.options.strict && keyProps.start < valueProps.found.offset - 1024 && onError(keyNode.range, "KEY_OVER_1024_CHARS", "The : indicator must be at most 1024 chars after the start of an implicit block mapping key"));
+      let valueNode = value ? composeNode2(ctx, value, valueProps, onError) : composeEmptyNode2(ctx, offset, sep, null, valueProps, onError);
+      ctx.schema.compat && flowIndentCheck(bm.indent, value, onError), offset = valueNode.range[2];
+      let pair = new Pair(keyNode, valueNode);
+      ctx.options.keepSourceTokens && (pair.srcToken = collItem), map3.items.push(pair);
+    } else {
+      implicitKey && onError(keyNode.range, "MISSING_CHAR", "Implicit map keys need to be followed by map values"), valueProps.comment && (keyNode.comment ? keyNode.comment += `
+` + valueProps.comment : keyNode.comment = valueProps.comment);
+      let pair = new Pair(keyNode);
+      ctx.options.keepSourceTokens && (pair.srcToken = collItem), map3.items.push(pair);
+    }
+  }
+  return commentEnd && commentEnd < offset && onError(commentEnd, "IMPOSSIBLE", "Map comment with trailing content"), map3.range = [bm.offset, offset, commentEnd != null ? commentEnd : offset], map3;
+}
+
+// node_modules/yaml/browser/dist/compose/resolve-block-seq.js
+function resolveBlockSeq({ composeNode: composeNode2, composeEmptyNode: composeEmptyNode2 }, ctx, bs, onError, tag) {
+  var _a;
+  let NodeClass = (_a = tag == null ? void 0 : tag.nodeClass) != null ? _a : YAMLSeq, seq2 = new NodeClass(ctx.schema);
+  ctx.atRoot && (ctx.atRoot = !1), ctx.atKey && (ctx.atKey = !1);
+  let offset = bs.offset, commentEnd = null;
+  for (let { start, value } of bs.items) {
+    let props = resolveProps(start, {
+      indicator: "seq-item-ind",
+      next: value,
+      offset,
+      onError,
+      parentIndent: bs.indent,
+      startOnNewline: !0
+    });
+    if (!props.found)
+      if (props.anchor || props.tag || value)
+        (value == null ? void 0 : value.type) === "block-seq" ? onError(props.end, "BAD_INDENT", "All sequence items must start at the same column") : onError(offset, "MISSING_CHAR", "Sequence item without - indicator");
+      else {
+        commentEnd = props.end, props.comment && (seq2.comment = props.comment);
+        continue;
+      }
+    let node = value ? composeNode2(ctx, value, props, onError) : composeEmptyNode2(ctx, props.end, start, null, props, onError);
+    ctx.schema.compat && flowIndentCheck(bs.indent, value, onError), offset = node.range[2], seq2.items.push(node);
+  }
+  return seq2.range = [bs.offset, offset, commentEnd != null ? commentEnd : offset], seq2;
+}
+
+// node_modules/yaml/browser/dist/compose/resolve-end.js
+function resolveEnd(end, offset, reqSpace, onError) {
+  let comment = "";
+  if (end) {
+    let hasSpace = !1, sep = "";
+    for (let token of end) {
+      let { source, type } = token;
+      switch (type) {
+        case "space":
+          hasSpace = !0;
+          break;
+        case "comment": {
+          reqSpace && !hasSpace && onError(token, "MISSING_CHAR", "Comments must be separated from other tokens by white space characters");
+          let cb = source.substring(1) || " ";
+          comment ? comment += sep + cb : comment = cb, sep = "";
+          break;
+        }
+        case "newline":
+          comment && (sep += source), hasSpace = !0;
+          break;
+        default:
+          onError(token, "UNEXPECTED_TOKEN", `Unexpected ${type} at node end`);
+      }
+      offset += source.length;
+    }
+  }
+  return { comment, offset };
+}
+
+// node_modules/yaml/browser/dist/compose/resolve-flow-collection.js
+var blockMsg = "Block collections are not allowed within flow collections", isBlock = (token) => token && (token.type === "block-map" || token.type === "block-seq");
+function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: composeEmptyNode2 }, ctx, fc, onError, tag) {
+  var _a, _b, _c;
+  let isMap2 = fc.start.source === "{", fcName = isMap2 ? "flow map" : "flow sequence", NodeClass = (_a = tag == null ? void 0 : tag.nodeClass) != null ? _a : isMap2 ? YAMLMap : YAMLSeq, coll = new NodeClass(ctx.schema);
+  coll.flow = !0;
+  let atRoot = ctx.atRoot;
+  atRoot && (ctx.atRoot = !1), ctx.atKey && (ctx.atKey = !1);
+  let offset = fc.offset + fc.start.source.length;
+  for (let i = 0; i < fc.items.length; ++i) {
+    let collItem = fc.items[i], { start, key, sep, value } = collItem, props = resolveProps(start, {
+      flow: fcName,
+      indicator: "explicit-key-ind",
+      next: key != null ? key : sep == null ? void 0 : sep[0],
+      offset,
+      onError,
+      parentIndent: fc.indent,
+      startOnNewline: !1
+    });
+    if (!props.found) {
+      if (!props.anchor && !props.tag && !sep && !value) {
+        i === 0 && props.comma ? onError(props.comma, "UNEXPECTED_TOKEN", `Unexpected , in ${fcName}`) : i < fc.items.length - 1 && onError(props.start, "UNEXPECTED_TOKEN", `Unexpected empty item in ${fcName}`), props.comment && (coll.comment ? coll.comment += `
+` + props.comment : coll.comment = props.comment), offset = props.end;
+        continue;
+      }
+      !isMap2 && ctx.options.strict && containsNewline(key) && onError(
+        key,
+        // checked by containsNewline()
+        "MULTILINE_IMPLICIT_KEY",
+        "Implicit keys of flow sequence pairs need to be on a single line"
+      );
+    }
+    if (i === 0)
+      props.comma && onError(props.comma, "UNEXPECTED_TOKEN", `Unexpected , in ${fcName}`);
+    else if (props.comma || onError(props.start, "MISSING_CHAR", `Missing , between ${fcName} items`), props.comment) {
+      let prevItemComment = "";
+      loop: for (let st of start)
+        switch (st.type) {
+          case "comma":
+          case "space":
+            break;
+          case "comment":
+            prevItemComment = st.source.substring(1);
+            break loop;
+          default:
+            break loop;
+        }
+      if (prevItemComment) {
+        let prev = coll.items[coll.items.length - 1];
+        isPair(prev) && (prev = (_b = prev.value) != null ? _b : prev.key), prev.comment ? prev.comment += `
+` + prevItemComment : prev.comment = prevItemComment, props.comment = props.comment.substring(prevItemComment.length + 1);
+      }
+    }
+    if (!isMap2 && !sep && !props.found) {
+      let valueNode = value ? composeNode2(ctx, value, props, onError) : composeEmptyNode2(ctx, props.end, sep, null, props, onError);
+      coll.items.push(valueNode), offset = valueNode.range[2], isBlock(value) && onError(valueNode.range, "BLOCK_IN_FLOW", blockMsg);
+    } else {
+      ctx.atKey = !0;
+      let keyStart = props.end, keyNode = key ? composeNode2(ctx, key, props, onError) : composeEmptyNode2(ctx, keyStart, start, null, props, onError);
+      isBlock(key) && onError(keyNode.range, "BLOCK_IN_FLOW", blockMsg), ctx.atKey = !1;
+      let valueProps = resolveProps(sep != null ? sep : [], {
+        flow: fcName,
+        indicator: "map-value-ind",
+        next: value,
+        offset: keyNode.range[2],
+        onError,
+        parentIndent: fc.indent,
+        startOnNewline: !1
+      });
+      if (valueProps.found) {
+        if (!isMap2 && !props.found && ctx.options.strict) {
+          if (sep)
+            for (let st of sep) {
+              if (st === valueProps.found)
+                break;
+              if (st.type === "newline") {
+                onError(st, "MULTILINE_IMPLICIT_KEY", "Implicit keys of flow sequence pairs need to be on a single line");
+                break;
+              }
+            }
+          props.start < valueProps.found.offset - 1024 && onError(valueProps.found, "KEY_OVER_1024_CHARS", "The : indicator must be at most 1024 chars after the start of an implicit flow sequence key");
+        }
+      } else value && ("source" in value && ((_c = value.source) == null ? void 0 : _c[0]) === ":" ? onError(value, "MISSING_CHAR", `Missing space after : in ${fcName}`) : onError(valueProps.start, "MISSING_CHAR", `Missing , or : between ${fcName} items`));
+      let valueNode = value ? composeNode2(ctx, value, valueProps, onError) : valueProps.found ? composeEmptyNode2(ctx, valueProps.end, sep, null, valueProps, onError) : null;
+      valueNode ? isBlock(value) && onError(valueNode.range, "BLOCK_IN_FLOW", blockMsg) : valueProps.comment && (keyNode.comment ? keyNode.comment += `
+` + valueProps.comment : keyNode.comment = valueProps.comment);
+      let pair = new Pair(keyNode, valueNode);
+      if (ctx.options.keepSourceTokens && (pair.srcToken = collItem), isMap2) {
+        let map3 = coll;
+        mapIncludes(ctx, map3.items, keyNode) && onError(keyStart, "DUPLICATE_KEY", "Map keys must be unique"), map3.items.push(pair);
+      } else {
+        let map3 = new YAMLMap(ctx.schema);
+        map3.flow = !0, map3.items.push(pair);
+        let endRange = (valueNode != null ? valueNode : keyNode).range;
+        map3.range = [keyNode.range[0], endRange[1], endRange[2]], coll.items.push(map3);
+      }
+      offset = valueNode ? valueNode.range[2] : valueProps.end;
+    }
+  }
+  let expectedEnd = isMap2 ? "}" : "]", [ce, ...ee] = fc.end, cePos = offset;
+  if ((ce == null ? void 0 : ce.source) === expectedEnd)
+    cePos = ce.offset + ce.source.length;
+  else {
+    let name = fcName[0].toUpperCase() + fcName.substring(1), msg = atRoot ? `${name} must end with a ${expectedEnd}` : `${name} in block collection must be sufficiently indented and end with a ${expectedEnd}`;
+    onError(offset, atRoot ? "MISSING_CHAR" : "BAD_INDENT", msg), ce && ce.source.length !== 1 && ee.unshift(ce);
+  }
+  if (ee.length > 0) {
+    let end = resolveEnd(ee, cePos, ctx.options.strict, onError);
+    end.comment && (coll.comment ? coll.comment += `
+` + end.comment : coll.comment = end.comment), coll.range = [fc.offset, cePos, end.offset];
+  } else
+    coll.range = [fc.offset, cePos, cePos];
+  return coll;
+}
+
+// node_modules/yaml/browser/dist/compose/compose-collection.js
+function resolveCollection(CN2, ctx, token, onError, tagName, tag) {
+  let coll = token.type === "block-map" ? resolveBlockMap(CN2, ctx, token, onError, tag) : token.type === "block-seq" ? resolveBlockSeq(CN2, ctx, token, onError, tag) : resolveFlowCollection(CN2, ctx, token, onError, tag), Coll = coll.constructor;
+  return tagName === "!" || tagName === Coll.tagName ? (coll.tag = Coll.tagName, coll) : (tagName && (coll.tag = tagName), coll);
+}
+function composeCollection(CN2, ctx, token, props, onError) {
+  var _a, _b, _c;
+  let tagToken = props.tag, tagName = tagToken ? ctx.directives.tagName(tagToken.source, (msg) => onError(tagToken, "TAG_RESOLVE_FAILED", msg)) : null;
+  if (token.type === "block-seq") {
+    let { anchor, newlineAfterProp: nl } = props, lastProp = anchor && tagToken ? anchor.offset > tagToken.offset ? anchor : tagToken : anchor != null ? anchor : tagToken;
+    lastProp && (!nl || nl.offset < lastProp.offset) && onError(lastProp, "MISSING_CHAR", "Missing newline after block sequence props");
+  }
+  let expType = token.type === "block-map" ? "map" : token.type === "block-seq" ? "seq" : token.start.source === "{" ? "map" : "seq";
+  if (!tagToken || !tagName || tagName === "!" || tagName === YAMLMap.tagName && expType === "map" || tagName === YAMLSeq.tagName && expType === "seq")
+    return resolveCollection(CN2, ctx, token, onError, tagName);
+  let tag = ctx.schema.tags.find((t) => t.tag === tagName && t.collection === expType);
+  if (!tag) {
+    let kt = ctx.schema.knownTags[tagName];
+    if ((kt == null ? void 0 : kt.collection) === expType)
+      ctx.schema.tags.push(Object.assign({}, kt, { default: !1 })), tag = kt;
+    else
+      return kt ? onError(tagToken, "BAD_COLLECTION_TYPE", `${kt.tag} used for ${expType} collection, but expects ${(_a = kt.collection) != null ? _a : "scalar"}`, !0) : onError(tagToken, "TAG_RESOLVE_FAILED", `Unresolved tag: ${tagName}`, !0), resolveCollection(CN2, ctx, token, onError, tagName);
+  }
+  let coll = resolveCollection(CN2, ctx, token, onError, tagName, tag), res = (_c = (_b = tag.resolve) == null ? void 0 : _b.call(tag, coll, (msg) => onError(tagToken, "TAG_RESOLVE_FAILED", msg), ctx.options)) != null ? _c : coll, node = isNode(res) ? res : new Scalar(res);
+  return node.range = coll.range, node.tag = tagName, tag != null && tag.format && (node.format = tag.format), node;
+}
+
+// node_modules/yaml/browser/dist/compose/resolve-block-scalar.js
+function resolveBlockScalar(ctx, scalar, onError) {
+  let start = scalar.offset, header = parseBlockScalarHeader(scalar, ctx.options.strict, onError);
+  if (!header)
+    return { value: "", type: null, comment: "", range: [start, start, start] };
+  let type = header.mode === ">" ? Scalar.BLOCK_FOLDED : Scalar.BLOCK_LITERAL, lines = scalar.source ? splitLines(scalar.source) : [], chompStart = lines.length;
+  for (let i = lines.length - 1; i >= 0; --i) {
+    let content = lines[i][1];
+    if (content === "" || content === "\r")
+      chompStart = i;
+    else
+      break;
+  }
+  if (chompStart === 0) {
+    let value2 = header.chomp === "+" && lines.length > 0 ? `
+`.repeat(Math.max(1, lines.length - 1)) : "", end2 = start + header.length;
+    return scalar.source && (end2 += scalar.source.length), { value: value2, type, comment: header.comment, range: [start, end2, end2] };
+  }
+  let trimIndent = scalar.indent + header.indent, offset = scalar.offset + header.length, contentStart = 0;
+  for (let i = 0; i < chompStart; ++i) {
+    let [indent, content] = lines[i];
+    if (content === "" || content === "\r")
+      header.indent === 0 && indent.length > trimIndent && (trimIndent = indent.length);
+    else {
+      indent.length < trimIndent && onError(offset + indent.length, "MISSING_CHAR", "Block scalars with more-indented leading empty lines must use an explicit indentation indicator"), header.indent === 0 && (trimIndent = indent.length), contentStart = i, trimIndent === 0 && !ctx.atRoot && onError(offset, "BAD_INDENT", "Block scalar values in collections must be indented");
+      break;
+    }
+    offset += indent.length + content.length + 1;
+  }
+  for (let i = lines.length - 1; i >= chompStart; --i)
+    lines[i][0].length > trimIndent && (chompStart = i + 1);
+  let value = "", sep = "", prevMoreIndented = !1;
+  for (let i = 0; i < contentStart; ++i)
+    value += lines[i][0].slice(trimIndent) + `
+`;
+  for (let i = contentStart; i < chompStart; ++i) {
+    let [indent, content] = lines[i];
+    offset += indent.length + content.length + 1;
+    let crlf = content[content.length - 1] === "\r";
+    if (crlf && (content = content.slice(0, -1)), content && indent.length < trimIndent) {
+      let message = `Block scalar lines must not be less indented than their ${header.indent ? "explicit indentation indicator" : "first line"}`;
+      onError(offset - content.length - (crlf ? 2 : 1), "BAD_INDENT", message), indent = "";
+    }
+    type === Scalar.BLOCK_LITERAL ? (value += sep + indent.slice(trimIndent) + content, sep = `
+`) : indent.length > trimIndent || content[0] === "	" ? (sep === " " ? sep = `
+` : !prevMoreIndented && sep === `
+` && (sep = `
+
+`), value += sep + indent.slice(trimIndent) + content, sep = `
+`, prevMoreIndented = !0) : content === "" ? sep === `
+` ? value += `
+` : sep = `
+` : (value += sep + content, sep = " ", prevMoreIndented = !1);
+  }
+  switch (header.chomp) {
+    case "-":
+      break;
+    case "+":
+      for (let i = chompStart; i < lines.length; ++i)
+        value += `
+` + lines[i][0].slice(trimIndent);
+      value[value.length - 1] !== `
+` && (value += `
+`);
+      break;
+    default:
+      value += `
+`;
+  }
+  let end = start + header.length + scalar.source.length;
+  return { value, type, comment: header.comment, range: [start, end, end] };
+}
+function parseBlockScalarHeader({ offset, props }, strict, onError) {
+  if (props[0].type !== "block-scalar-header")
+    return onError(props[0], "IMPOSSIBLE", "Block scalar header not found"), null;
+  let { source } = props[0], mode = source[0], indent = 0, chomp = "", error = -1;
+  for (let i = 1; i < source.length; ++i) {
+    let ch = source[i];
+    if (!chomp && (ch === "-" || ch === "+"))
+      chomp = ch;
+    else {
+      let n = Number(ch);
+      !indent && n ? indent = n : error === -1 && (error = offset + i);
+    }
+  }
+  error !== -1 && onError(error, "UNEXPECTED_TOKEN", `Block scalar header includes extra characters: ${source}`);
+  let hasSpace = !1, comment = "", length2 = source.length;
+  for (let i = 1; i < props.length; ++i) {
+    let token = props[i];
+    switch (token.type) {
+      case "space":
+        hasSpace = !0;
+      // fallthrough
+      case "newline":
+        length2 += token.source.length;
+        break;
+      case "comment":
+        strict && !hasSpace && onError(token, "MISSING_CHAR", "Comments must be separated from other tokens by white space characters"), length2 += token.source.length, comment = token.source.substring(1);
+        break;
+      case "error":
+        onError(token, "UNEXPECTED_TOKEN", token.message), length2 += token.source.length;
+        break;
+      /* istanbul ignore next should not happen */
+      default: {
+        let message = `Unexpected token in block scalar header: ${token.type}`;
+        onError(token, "UNEXPECTED_TOKEN", message);
+        let ts = token.source;
+        ts && typeof ts == "string" && (length2 += ts.length);
+      }
+    }
+  }
+  return { mode, indent, chomp, comment, length: length2 };
+}
+function splitLines(source) {
+  let split = source.split(/\n( *)/), first = split[0], m = first.match(/^( *)/), lines = [m != null && m[1] ? [m[1], first.slice(m[1].length)] : ["", first]];
+  for (let i = 1; i < split.length; i += 2)
+    lines.push([split[i], split[i + 1]]);
+  return lines;
+}
+
+// node_modules/yaml/browser/dist/compose/resolve-flow-scalar.js
+function resolveFlowScalar(scalar, strict, onError) {
+  let { offset, type, source, end } = scalar, _type, value, _onError = (rel, code, msg) => onError(offset + rel, code, msg);
+  switch (type) {
+    case "scalar":
+      _type = Scalar.PLAIN, value = plainValue(source, _onError);
+      break;
+    case "single-quoted-scalar":
+      _type = Scalar.QUOTE_SINGLE, value = singleQuotedValue(source, _onError);
+      break;
+    case "double-quoted-scalar":
+      _type = Scalar.QUOTE_DOUBLE, value = doubleQuotedValue(source, _onError);
+      break;
+    /* istanbul ignore next should not happen */
+    default:
+      return onError(scalar, "UNEXPECTED_TOKEN", `Expected a flow scalar value, but found: ${type}`), {
+        value: "",
+        type: null,
+        comment: "",
+        range: [offset, offset + source.length, offset + source.length]
+      };
+  }
+  let valueEnd = offset + source.length, re = resolveEnd(end, valueEnd, strict, onError);
+  return {
+    value,
+    type: _type,
+    comment: re.comment,
+    range: [offset, valueEnd, re.offset]
+  };
+}
+function plainValue(source, onError) {
+  let badChar = "";
+  switch (source[0]) {
+    /* istanbul ignore next should not happen */
+    case "	":
+      badChar = "a tab character";
+      break;
+    case ",":
+      badChar = "flow indicator character ,";
+      break;
+    case "%":
+      badChar = "directive indicator character %";
+      break;
+    case "|":
+    case ">": {
+      badChar = `block scalar indicator ${source[0]}`;
+      break;
+    }
+    case "@":
+    case "`": {
+      badChar = `reserved character ${source[0]}`;
+      break;
+    }
+  }
+  return badChar && onError(0, "BAD_SCALAR_START", `Plain value cannot start with ${badChar}`), foldLines(source);
+}
+function singleQuotedValue(source, onError) {
+  return (source[source.length - 1] !== "'" || source.length === 1) && onError(source.length, "MISSING_CHAR", "Missing closing 'quote"), foldLines(source.slice(1, -1)).replace(/''/g, "'");
+}
+function foldLines(source) {
+  var _a;
+  let first, line;
+  try {
+    first = new RegExp(`(.*?)(?<![ 	])[ 	]*\r?
+`, "sy"), line = new RegExp(`[ 	]*(.*?)(?:(?<![ 	])[ 	]*)?\r?
+`, "sy");
+  } catch (e) {
+    first = /(.*?)[ \t]*\r?\n/sy, line = /[ \t]*(.*?)[ \t]*\r?\n/sy;
+  }
+  let match2 = first.exec(source);
+  if (!match2)
+    return source;
+  let res = match2[1], sep = " ", pos = first.lastIndex;
+  for (line.lastIndex = pos; match2 = line.exec(source); )
+    match2[1] === "" ? sep === `
+` ? res += sep : sep = `
+` : (res += sep + match2[1], sep = " "), pos = line.lastIndex;
+  let last2 = /[ \t]*(.*)/sy;
+  return last2.lastIndex = pos, match2 = last2.exec(source), res + sep + ((_a = match2 == null ? void 0 : match2[1]) != null ? _a : "");
+}
+function doubleQuotedValue(source, onError) {
+  let res = "";
+  for (let i = 1; i < source.length - 1; ++i) {
+    let ch = source[i];
+    if (!(ch === "\r" && source[i + 1] === `
+`))
+      if (ch === `
+`) {
+        let { fold, offset } = foldNewline(source, i);
+        res += fold, i = offset;
+      } else if (ch === "\\") {
+        let next = source[++i], cc = escapeCodes[next];
+        if (cc)
+          res += cc;
+        else if (next === `
+`)
+          for (next = source[i + 1]; next === " " || next === "	"; )
+            next = source[++i + 1];
+        else if (next === "\r" && source[i + 1] === `
+`)
+          for (next = source[++i + 1]; next === " " || next === "	"; )
+            next = source[++i + 1];
+        else if (next === "x" || next === "u" || next === "U") {
+          let length2 = next === "x" ? 2 : next === "u" ? 4 : 8;
+          res += parseCharCode(source, i + 1, length2, onError), i += length2;
+        } else {
+          let raw = source.substr(i - 1, 2);
+          onError(i - 1, "BAD_DQ_ESCAPE", `Invalid escape sequence ${raw}`), res += raw;
+        }
+      } else if (ch === " " || ch === "	") {
+        let wsStart = i, next = source[i + 1];
+        for (; next === " " || next === "	"; )
+          next = source[++i + 1];
+        next !== `
+` && !(next === "\r" && source[i + 2] === `
+`) && (res += i > wsStart ? source.slice(wsStart, i + 1) : ch);
+      } else
+        res += ch;
+  }
+  return (source[source.length - 1] !== '"' || source.length === 1) && onError(source.length, "MISSING_CHAR", 'Missing closing "quote'), res;
+}
+function foldNewline(source, offset) {
+  let fold = "", ch = source[offset + 1];
+  for (; (ch === " " || ch === "	" || ch === `
+` || ch === "\r") && !(ch === "\r" && source[offset + 2] !== `
+`); )
+    ch === `
+` && (fold += `
+`), offset += 1, ch = source[offset + 1];
+  return fold || (fold = " "), { fold, offset };
+}
+var escapeCodes = {
+  0: "\0",
+  // null character
+  a: "\x07",
+  // bell character
+  b: "\b",
+  // backspace
+  e: "\x1B",
+  // escape character
+  f: "\f",
+  // form feed
+  n: `
+`,
+  // line feed
+  r: "\r",
+  // carriage return
+  t: "	",
+  // horizontal tab
+  v: "\v",
+  // vertical tab
+  N: "\x85",
+  // Unicode next line
+  _: "\xA0",
+  // Unicode non-breaking space
+  L: "\u2028",
+  // Unicode line separator
+  P: "\u2029",
+  // Unicode paragraph separator
+  " ": " ",
+  '"': '"',
+  "/": "/",
+  "\\": "\\",
+  "	": "	"
+};
+function parseCharCode(source, offset, length2, onError) {
+  let cc = source.substr(offset, length2), code = cc.length === length2 && /^[0-9a-fA-F]+$/.test(cc) ? parseInt(cc, 16) : NaN;
+  try {
+    return String.fromCodePoint(code);
+  } catch (e) {
+    let raw = source.substr(offset - 2, length2 + 2);
+    return onError(offset - 2, "BAD_DQ_ESCAPE", `Invalid escape sequence ${raw}`), raw;
+  }
+}
+
+// node_modules/yaml/browser/dist/compose/compose-scalar.js
+function composeScalar(ctx, token, tagToken, onError) {
+  let { value, type, comment, range } = token.type === "block-scalar" ? resolveBlockScalar(ctx, token, onError) : resolveFlowScalar(token, ctx.options.strict, onError), tagName = tagToken ? ctx.directives.tagName(tagToken.source, (msg) => onError(tagToken, "TAG_RESOLVE_FAILED", msg)) : null, tag;
+  ctx.options.stringKeys && ctx.atKey ? tag = ctx.schema[SCALAR] : tagName ? tag = findScalarTagByName(ctx.schema, value, tagName, tagToken, onError) : token.type === "scalar" ? tag = findScalarTagByTest(ctx, value, token, onError) : tag = ctx.schema[SCALAR];
+  let scalar;
+  try {
+    let res = tag.resolve(value, (msg) => onError(tagToken != null ? tagToken : token, "TAG_RESOLVE_FAILED", msg), ctx.options);
+    scalar = isScalar(res) ? res : new Scalar(res);
+  } catch (error) {
+    let msg = error instanceof Error ? error.message : String(error);
+    onError(tagToken != null ? tagToken : token, "TAG_RESOLVE_FAILED", msg), scalar = new Scalar(value);
+  }
+  return scalar.range = range, scalar.source = value, type && (scalar.type = type), tagName && (scalar.tag = tagName), tag.format && (scalar.format = tag.format), comment && (scalar.comment = comment), scalar;
+}
+function findScalarTagByName(schema4, value, tagName, tagToken, onError) {
+  var _a;
+  if (tagName === "!")
+    return schema4[SCALAR];
+  let matchWithTest = [];
+  for (let tag of schema4.tags)
+    if (!tag.collection && tag.tag === tagName)
+      if (tag.default && tag.test)
+        matchWithTest.push(tag);
+      else
+        return tag;
+  for (let tag of matchWithTest)
+    if ((_a = tag.test) != null && _a.test(value))
+      return tag;
+  let kt = schema4.knownTags[tagName];
+  return kt && !kt.collection ? (schema4.tags.push(Object.assign({}, kt, { default: !1, test: void 0 })), kt) : (onError(tagToken, "TAG_RESOLVE_FAILED", `Unresolved tag: ${tagName}`, tagName !== "tag:yaml.org,2002:str"), schema4[SCALAR]);
+}
+function findScalarTagByTest({ atKey, directives, schema: schema4 }, value, token, onError) {
+  var _a;
+  let tag = schema4.tags.find((tag2) => {
+    var _a2;
+    return (tag2.default === !0 || atKey && tag2.default === "key") && ((_a2 = tag2.test) == null ? void 0 : _a2.test(value));
+  }) || schema4[SCALAR];
+  if (schema4.compat) {
+    let compat = (_a = schema4.compat.find((tag2) => {
+      var _a2;
+      return tag2.default && ((_a2 = tag2.test) == null ? void 0 : _a2.test(value));
+    })) != null ? _a : schema4[SCALAR];
+    if (tag.tag !== compat.tag) {
+      let ts = directives.tagString(tag.tag), cs = directives.tagString(compat.tag), msg = `Value may be parsed as either ${ts} or ${cs}`;
+      onError(token, "TAG_RESOLVE_FAILED", msg, !0);
+    }
+  }
+  return tag;
+}
+
+// node_modules/yaml/browser/dist/compose/util-empty-scalar-position.js
+function emptyScalarPosition(offset, before, pos) {
+  if (before) {
+    pos != null || (pos = before.length);
+    for (let i = pos - 1; i >= 0; --i) {
+      let st = before[i];
+      switch (st.type) {
+        case "space":
+        case "comment":
+        case "newline":
+          offset -= st.source.length;
+          continue;
+      }
+      for (st = before[++i]; (st == null ? void 0 : st.type) === "space"; )
+        offset += st.source.length, st = before[++i];
+      break;
+    }
+  }
+  return offset;
+}
+
+// node_modules/yaml/browser/dist/compose/compose-node.js
+var CN = { composeNode, composeEmptyNode };
+function composeNode(ctx, token, props, onError) {
+  let atKey = ctx.atKey, { spaceBefore, comment, anchor, tag } = props, node, isSrcToken = !0;
+  switch (token.type) {
+    case "alias":
+      node = composeAlias(ctx, token, onError), (anchor || tag) && onError(token, "ALIAS_PROPS", "An alias node must not specify any properties");
+      break;
+    case "scalar":
+    case "single-quoted-scalar":
+    case "double-quoted-scalar":
+    case "block-scalar":
+      node = composeScalar(ctx, token, tag, onError), anchor && (node.anchor = anchor.source.substring(1));
+      break;
+    case "block-map":
+    case "block-seq":
+    case "flow-collection":
+      try {
+        node = composeCollection(CN, ctx, token, props, onError), anchor && (node.anchor = anchor.source.substring(1));
+      } catch (error) {
+        let message = error instanceof Error ? error.message : String(error);
+        onError(token, "RESOURCE_EXHAUSTION", message);
+      }
+      break;
+    default: {
+      let message = token.type === "error" ? token.message : `Unsupported token (type: ${token.type})`;
+      onError(token, "UNEXPECTED_TOKEN", message), isSrcToken = !1;
+    }
+  }
+  return node != null || (node = composeEmptyNode(ctx, token.offset, void 0, null, props, onError)), anchor && node.anchor === "" && onError(anchor, "BAD_ALIAS", "Anchor cannot be an empty string"), atKey && ctx.options.stringKeys && (!isScalar(node) || typeof node.value != "string" || node.tag && node.tag !== "tag:yaml.org,2002:str") && onError(tag != null ? tag : token, "NON_STRING_KEY", "With stringKeys, all keys must be strings"), spaceBefore && (node.spaceBefore = !0), comment && (token.type === "scalar" && token.source === "" ? node.comment = comment : node.commentBefore = comment), ctx.options.keepSourceTokens && isSrcToken && (node.srcToken = token), node;
+}
+function composeEmptyNode(ctx, offset, before, pos, { spaceBefore, comment, anchor, tag, end }, onError) {
+  let token = {
+    type: "scalar",
+    offset: emptyScalarPosition(offset, before, pos),
+    indent: -1,
+    source: ""
+  }, node = composeScalar(ctx, token, tag, onError);
+  return anchor && (node.anchor = anchor.source.substring(1), node.anchor === "" && onError(anchor, "BAD_ALIAS", "Anchor cannot be an empty string")), spaceBefore && (node.spaceBefore = !0), comment && (node.comment = comment, node.range[2] = end), node;
+}
+function composeAlias({ options }, { offset, source, end }, onError) {
+  let alias = new Alias(source.substring(1));
+  alias.source === "" && onError(offset, "BAD_ALIAS", "Alias cannot be an empty string"), alias.source.endsWith(":") && onError(offset + source.length - 1, "BAD_ALIAS", "Alias ending in : is ambiguous", !0);
+  let valueEnd = offset + source.length, re = resolveEnd(end, valueEnd, options.strict, onError);
+  return alias.range = [offset, valueEnd, re.offset], re.comment && (alias.comment = re.comment), alias;
+}
+
+// node_modules/yaml/browser/dist/compose/compose-doc.js
+function composeDoc(options, directives, { offset, start, value, end }, onError) {
+  let opts = Object.assign({ _directives: directives }, options), doc2 = new Document(void 0, opts), ctx = {
+    atKey: !1,
+    atRoot: !0,
+    directives: doc2.directives,
+    options: doc2.options,
+    schema: doc2.schema
+  }, props = resolveProps(start, {
+    indicator: "doc-start",
+    next: value != null ? value : end == null ? void 0 : end[0],
+    offset,
+    onError,
+    parentIndent: 0,
+    startOnNewline: !0
+  });
+  props.found && (doc2.directives.docStart = !0, value && (value.type === "block-map" || value.type === "block-seq") && !props.hasNewline && onError(props.end, "MISSING_CHAR", "Block collection cannot start on same line with directives-end marker")), doc2.contents = value ? composeNode(ctx, value, props, onError) : composeEmptyNode(ctx, props.end, start, null, props, onError);
+  let contentEnd = doc2.contents.range[2], re = resolveEnd(end, contentEnd, !1, onError);
+  return re.comment && (doc2.comment = re.comment), doc2.range = [offset, contentEnd, re.offset], doc2;
+}
+
+// node_modules/yaml/browser/dist/compose/composer.js
+function getErrorPos(src) {
+  if (typeof src == "number")
+    return [src, src + 1];
+  if (Array.isArray(src))
+    return src.length === 2 ? src : [src[0], src[1]];
+  let { offset, source } = src;
+  return [offset, offset + (typeof source == "string" ? source.length : 1)];
+}
+function parsePrelude(prelude) {
+  var _a;
+  let comment = "", atComment = !1, afterEmptyLine = !1;
+  for (let i = 0; i < prelude.length; ++i) {
+    let source = prelude[i];
+    switch (source[0]) {
+      case "#":
+        comment += (comment === "" ? "" : afterEmptyLine ? `
+
+` : `
+`) + (source.substring(1) || " "), atComment = !0, afterEmptyLine = !1;
+        break;
+      case "%":
+        ((_a = prelude[i + 1]) == null ? void 0 : _a[0]) !== "#" && (i += 1), atComment = !1;
+        break;
+      default:
+        atComment || (afterEmptyLine = !0), atComment = !1;
+    }
+  }
+  return { comment, afterEmptyLine };
+}
+var Composer = class {
+  constructor(options = {}) {
+    this.doc = null, this.atDirectives = !1, this.prelude = [], this.errors = [], this.warnings = [], this.onError = (source, code, message, warning) => {
+      let pos = getErrorPos(source);
+      warning ? this.warnings.push(new YAMLWarning(pos, code, message)) : this.errors.push(new YAMLParseError(pos, code, message));
+    }, this.directives = new Directives({ version: options.version || "1.2" }), this.options = options;
+  }
+  decorate(doc2, afterDoc) {
+    let { comment, afterEmptyLine } = parsePrelude(this.prelude);
+    if (comment) {
+      let dc = doc2.contents;
+      if (afterDoc)
+        doc2.comment = doc2.comment ? `${doc2.comment}
+${comment}` : comment;
+      else if (afterEmptyLine || doc2.directives.docStart || !dc)
+        doc2.commentBefore = comment;
+      else if (isCollection(dc) && !dc.flow && dc.items.length > 0) {
+        let it = dc.items[0];
+        isPair(it) && (it = it.key);
+        let cb = it.commentBefore;
+        it.commentBefore = cb ? `${comment}
+${cb}` : comment;
+      } else {
+        let cb = dc.commentBefore;
+        dc.commentBefore = cb ? `${comment}
+${cb}` : comment;
+      }
+    }
+    if (afterDoc) {
+      for (let i = 0; i < this.errors.length; ++i)
+        doc2.errors.push(this.errors[i]);
+      for (let i = 0; i < this.warnings.length; ++i)
+        doc2.warnings.push(this.warnings[i]);
+    } else
+      doc2.errors = this.errors, doc2.warnings = this.warnings;
+    this.prelude = [], this.errors = [], this.warnings = [];
+  }
+  /**
+   * Current stream status information.
+   *
+   * Mostly useful at the end of input for an empty stream.
+   */
+  streamInfo() {
+    return {
+      comment: parsePrelude(this.prelude).comment,
+      directives: this.directives,
+      errors: this.errors,
+      warnings: this.warnings
+    };
+  }
+  /**
+   * Compose tokens into documents.
+   *
+   * @param forceDoc - If the stream contains no document, still emit a final document including any comments and directives that would be applied to a subsequent document.
+   * @param endOffset - Should be set if `forceDoc` is also set, to set the document range end and to indicate errors correctly.
+   */
+  *compose(tokens, forceDoc = !1, endOffset = -1) {
+    for (let token of tokens)
+      yield* this.next(token);
+    yield* this.end(forceDoc, endOffset);
+  }
+  /** Advance the composer by one CST token. */
+  *next(token) {
+    switch (token.type) {
+      case "directive":
+        this.directives.add(token.source, (offset, message, warning) => {
+          let pos = getErrorPos(token);
+          pos[0] += offset, this.onError(pos, "BAD_DIRECTIVE", message, warning);
+        }), this.prelude.push(token.source), this.atDirectives = !0;
+        break;
+      case "document": {
+        let doc2 = composeDoc(this.options, this.directives, token, this.onError);
+        this.atDirectives && !doc2.directives.docStart && this.onError(token, "MISSING_CHAR", "Missing directives-end/doc-start indicator line"), this.decorate(doc2, !1), this.doc && (yield this.doc), this.doc = doc2, this.atDirectives = !1;
+        break;
+      }
+      case "byte-order-mark":
+      case "space":
+        break;
+      case "comment":
+      case "newline":
+        this.prelude.push(token.source);
+        break;
+      case "error": {
+        let msg = token.source ? `${token.message}: ${JSON.stringify(token.source)}` : token.message, error = new YAMLParseError(getErrorPos(token), "UNEXPECTED_TOKEN", msg);
+        this.atDirectives || !this.doc ? this.errors.push(error) : this.doc.errors.push(error);
+        break;
+      }
+      case "doc-end": {
+        if (!this.doc) {
+          let msg = "Unexpected doc-end without preceding document";
+          this.errors.push(new YAMLParseError(getErrorPos(token), "UNEXPECTED_TOKEN", msg));
+          break;
+        }
+        this.doc.directives.docEnd = !0;
+        let end = resolveEnd(token.end, token.offset + token.source.length, this.doc.options.strict, this.onError);
+        if (this.decorate(this.doc, !0), end.comment) {
+          let dc = this.doc.comment;
+          this.doc.comment = dc ? `${dc}
+${end.comment}` : end.comment;
+        }
+        this.doc.range[2] = end.offset;
+        break;
+      }
+      default:
+        this.errors.push(new YAMLParseError(getErrorPos(token), "UNEXPECTED_TOKEN", `Unsupported token ${token.type}`));
+    }
+  }
+  /**
+   * Call at end of input to yield any remaining document.
+   *
+   * @param forceDoc - If the stream contains no document, still emit a final document including any comments and directives that would be applied to a subsequent document.
+   * @param endOffset - Should be set if `forceDoc` is also set, to set the document range end and to indicate errors correctly.
+   */
+  *end(forceDoc = !1, endOffset = -1) {
+    if (this.doc)
+      this.decorate(this.doc, !0), yield this.doc, this.doc = null;
+    else if (forceDoc) {
+      let opts = Object.assign({ _directives: this.directives }, this.options), doc2 = new Document(void 0, opts);
+      this.atDirectives && this.onError(endOffset, "MISSING_CHAR", "Missing directives-end indicator line"), doc2.range = [0, endOffset, endOffset], this.decorate(doc2, !1), yield doc2;
+    }
+  }
+};
+
+// node_modules/yaml/browser/dist/parse/cst-visit.js
+var BREAK2 = /* @__PURE__ */ Symbol("break visit"), SKIP2 = /* @__PURE__ */ Symbol("skip children"), REMOVE2 = /* @__PURE__ */ Symbol("remove item");
+function visit2(cst, visitor) {
+  "type" in cst && cst.type === "document" && (cst = { start: cst.start, value: cst.value }), _visit(Object.freeze([]), cst, visitor);
+}
+visit2.BREAK = BREAK2;
+visit2.SKIP = SKIP2;
+visit2.REMOVE = REMOVE2;
+visit2.itemAtPath = (cst, path) => {
+  let item = cst;
+  for (let [field, index] of path) {
+    let tok = item == null ? void 0 : item[field];
+    if (tok && "items" in tok)
+      item = tok.items[index];
+    else
+      return;
+  }
+  return item;
+};
+visit2.parentCollection = (cst, path) => {
+  let parent = visit2.itemAtPath(cst, path.slice(0, -1)), field = path[path.length - 1][0], coll = parent == null ? void 0 : parent[field];
+  if (coll && "items" in coll)
+    return coll;
+  throw new Error("Parent collection not found");
+};
+function _visit(path, item, visitor) {
+  let ctrl = visitor(item, path);
+  if (typeof ctrl == "symbol")
+    return ctrl;
+  for (let field of ["key", "value"]) {
+    let token = item[field];
+    if (token && "items" in token) {
+      for (let i = 0; i < token.items.length; ++i) {
+        let ci = _visit(Object.freeze(path.concat([[field, i]])), token.items[i], visitor);
+        if (typeof ci == "number")
+          i = ci - 1;
+        else {
+          if (ci === BREAK2)
+            return BREAK2;
+          ci === REMOVE2 && (token.items.splice(i, 1), i -= 1);
+        }
+      }
+      typeof ctrl == "function" && field === "key" && (ctrl = ctrl(item, path));
+    }
+  }
+  return typeof ctrl == "function" ? ctrl(item, path) : ctrl;
+}
+
+// node_modules/yaml/browser/dist/parse/cst.js
+var BOM = "\uFEFF", DOCUMENT = "", FLOW_END = "", SCALAR2 = "";
+function tokenType(source) {
+  switch (source) {
+    case BOM:
+      return "byte-order-mark";
+    case DOCUMENT:
+      return "doc-mode";
+    case FLOW_END:
+      return "flow-error-end";
+    case SCALAR2:
+      return "scalar";
+    case "---":
+      return "doc-start";
+    case "...":
+      return "doc-end";
+    case "":
+    case `
+`:
+    case `\r
+`:
+      return "newline";
+    case "-":
+      return "seq-item-ind";
+    case "?":
+      return "explicit-key-ind";
+    case ":":
+      return "map-value-ind";
+    case "{":
+      return "flow-map-start";
+    case "}":
+      return "flow-map-end";
+    case "[":
+      return "flow-seq-start";
+    case "]":
+      return "flow-seq-end";
+    case ",":
+      return "comma";
+  }
+  switch (source[0]) {
+    case " ":
+    case "	":
+      return "space";
+    case "#":
+      return "comment";
+    case "%":
+      return "directive-line";
+    case "*":
+      return "alias";
+    case "&":
+      return "anchor";
+    case "!":
+      return "tag";
+    case "'":
+      return "single-quoted-scalar";
+    case '"':
+      return "double-quoted-scalar";
+    case "|":
+    case ">":
+      return "block-scalar-header";
+  }
+  return null;
+}
+
+// node_modules/yaml/browser/dist/parse/lexer.js
+function isEmpty(ch) {
+  switch (ch) {
+    case void 0:
+    case " ":
+    case `
+`:
+    case "\r":
+    case "	":
+      return !0;
+    default:
+      return !1;
+  }
+}
+var hexDigits = new Set("0123456789ABCDEFabcdef"), tagChars = new Set("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-#;/?:@&=+$_.!~*'()"), flowIndicatorChars = new Set(",[]{}"), invalidAnchorChars = new Set(` ,[]{}
+\r	`), isNotAnchorChar = (ch) => !ch || invalidAnchorChars.has(ch), Lexer = class {
+  constructor() {
+    this.atEnd = !1, this.blockScalarIndent = -1, this.blockScalarKeep = !1, this.buffer = "", this.flowKey = !1, this.flowLevel = 0, this.indentNext = 0, this.indentValue = 0, this.lineEndPos = null, this.next = null, this.pos = 0;
+  }
+  /**
+   * Generate YAML tokens from the `source` string. If `incomplete`,
+   * a part of the last line may be left as a buffer for the next call.
+   *
+   * @returns A generator of lexical tokens
+   */
+  *lex(source, incomplete = !1) {
+    var _a;
+    if (source) {
+      if (typeof source != "string")
+        throw TypeError("source is not a string");
+      this.buffer = this.buffer ? this.buffer + source : source, this.lineEndPos = null;
+    }
+    this.atEnd = !incomplete;
+    let next = (_a = this.next) != null ? _a : "stream";
+    for (; next && (incomplete || this.hasChars(1)); )
+      next = yield* this.parseNext(next);
+  }
+  atLineEnd() {
+    let i = this.pos, ch = this.buffer[i];
+    for (; ch === " " || ch === "	"; )
+      ch = this.buffer[++i];
+    return !ch || ch === "#" || ch === `
+` ? !0 : ch === "\r" ? this.buffer[i + 1] === `
+` : !1;
+  }
+  charAt(n) {
+    return this.buffer[this.pos + n];
+  }
+  continueScalar(offset) {
+    let ch = this.buffer[offset];
+    if (this.indentNext > 0) {
+      let indent = 0;
+      for (; ch === " "; )
+        ch = this.buffer[++indent + offset];
+      if (ch === "\r") {
+        let next = this.buffer[indent + offset + 1];
+        if (next === `
+` || !next && !this.atEnd)
+          return offset + indent + 1;
+      }
+      return ch === `
+` || indent >= this.indentNext || !ch && !this.atEnd ? offset + indent : -1;
+    }
+    if (ch === "-" || ch === ".") {
+      let dt = this.buffer.substr(offset, 3);
+      if ((dt === "---" || dt === "...") && isEmpty(this.buffer[offset + 3]))
+        return -1;
+    }
+    return offset;
+  }
+  getLine() {
+    let end = this.lineEndPos;
+    return (typeof end != "number" || end !== -1 && end < this.pos) && (end = this.buffer.indexOf(`
+`, this.pos), this.lineEndPos = end), end === -1 ? this.atEnd ? this.buffer.substring(this.pos) : null : (this.buffer[end - 1] === "\r" && (end -= 1), this.buffer.substring(this.pos, end));
+  }
+  hasChars(n) {
+    return this.pos + n <= this.buffer.length;
+  }
+  setNext(state) {
+    return this.buffer = this.buffer.substring(this.pos), this.pos = 0, this.lineEndPos = null, this.next = state, null;
+  }
+  peek(n) {
+    return this.buffer.substr(this.pos, n);
+  }
+  *parseNext(next) {
+    switch (next) {
+      case "stream":
+        return yield* this.parseStream();
+      case "line-start":
+        return yield* this.parseLineStart();
+      case "block-start":
+        return yield* this.parseBlockStart();
+      case "doc":
+        return yield* this.parseDocument();
+      case "flow":
+        return yield* this.parseFlowCollection();
+      case "quoted-scalar":
+        return yield* this.parseQuotedScalar();
+      case "block-scalar":
+        return yield* this.parseBlockScalar();
+      case "plain-scalar":
+        return yield* this.parsePlainScalar();
+    }
+  }
+  *parseStream() {
+    let line = this.getLine();
+    if (line === null)
+      return this.setNext("stream");
+    if (line[0] === BOM && (yield* this.pushCount(1), line = line.substring(1)), line[0] === "%") {
+      let dirEnd = line.length, cs = line.indexOf("#");
+      for (; cs !== -1; ) {
+        let ch = line[cs - 1];
+        if (ch === " " || ch === "	") {
+          dirEnd = cs - 1;
+          break;
+        } else
+          cs = line.indexOf("#", cs + 1);
+      }
+      for (; ; ) {
+        let ch = line[dirEnd - 1];
+        if (ch === " " || ch === "	")
+          dirEnd -= 1;
+        else
+          break;
+      }
+      let n = (yield* this.pushCount(dirEnd)) + (yield* this.pushSpaces(!0));
+      return yield* this.pushCount(line.length - n), this.pushNewline(), "stream";
+    }
+    if (this.atLineEnd()) {
+      let sp = yield* this.pushSpaces(!0);
+      return yield* this.pushCount(line.length - sp), yield* this.pushNewline(), "stream";
+    }
+    return yield DOCUMENT, yield* this.parseLineStart();
+  }
+  *parseLineStart() {
+    let ch = this.charAt(0);
+    if (!ch && !this.atEnd)
+      return this.setNext("line-start");
+    if (ch === "-" || ch === ".") {
+      if (!this.atEnd && !this.hasChars(4))
+        return this.setNext("line-start");
+      let s = this.peek(3);
+      if ((s === "---" || s === "...") && isEmpty(this.charAt(3)))
+        return yield* this.pushCount(3), this.indentValue = 0, this.indentNext = 0, s === "---" ? "doc" : "stream";
+    }
+    return this.indentValue = yield* this.pushSpaces(!1), this.indentNext > this.indentValue && !isEmpty(this.charAt(1)) && (this.indentNext = this.indentValue), yield* this.parseBlockStart();
+  }
+  *parseBlockStart() {
+    let [ch0, ch1] = this.peek(2);
+    if (!ch1 && !this.atEnd)
+      return this.setNext("block-start");
+    if ((ch0 === "-" || ch0 === "?" || ch0 === ":") && isEmpty(ch1)) {
+      let n = (yield* this.pushCount(1)) + (yield* this.pushSpaces(!0));
+      return this.indentNext = this.indentValue + 1, this.indentValue += n, "block-start";
+    }
+    return "doc";
+  }
+  *parseDocument() {
+    yield* this.pushSpaces(!0);
+    let line = this.getLine();
+    if (line === null)
+      return this.setNext("doc");
+    let n = yield* this.pushIndicators();
+    switch (line[n]) {
+      case "#":
+        yield* this.pushCount(line.length - n);
+      // fallthrough
+      case void 0:
+        return yield* this.pushNewline(), yield* this.parseLineStart();
+      case "{":
+      case "[":
+        return yield* this.pushCount(1), this.flowKey = !1, this.flowLevel = 1, "flow";
+      case "}":
+      case "]":
+        return yield* this.pushCount(1), "doc";
+      case "*":
+        return yield* this.pushUntil(isNotAnchorChar), "doc";
+      case '"':
+      case "'":
+        return yield* this.parseQuotedScalar();
+      case "|":
+      case ">":
+        return n += yield* this.parseBlockScalarHeader(), n += yield* this.pushSpaces(!0), yield* this.pushCount(line.length - n), yield* this.pushNewline(), yield* this.parseBlockScalar();
+      default:
+        return yield* this.parsePlainScalar();
+    }
+  }
+  *parseFlowCollection() {
+    let nl, sp, indent = -1;
+    do
+      nl = yield* this.pushNewline(), nl > 0 ? (sp = yield* this.pushSpaces(!1), this.indentValue = indent = sp) : sp = 0, sp += yield* this.pushSpaces(!0);
+    while (nl + sp > 0);
+    let line = this.getLine();
+    if (line === null)
+      return this.setNext("flow");
+    if ((indent !== -1 && indent < this.indentNext && line[0] !== "#" || indent === 0 && (line.startsWith("---") || line.startsWith("...")) && isEmpty(line[3])) && !(indent === this.indentNext - 1 && this.flowLevel === 1 && (line[0] === "]" || line[0] === "}")))
+      return this.flowLevel = 0, yield FLOW_END, yield* this.parseLineStart();
+    let n = 0;
+    for (; line[n] === ","; )
+      n += yield* this.pushCount(1), n += yield* this.pushSpaces(!0), this.flowKey = !1;
+    switch (n += yield* this.pushIndicators(), line[n]) {
+      case void 0:
+        return "flow";
+      case "#":
+        return yield* this.pushCount(line.length - n), "flow";
+      case "{":
+      case "[":
+        return yield* this.pushCount(1), this.flowKey = !1, this.flowLevel += 1, "flow";
+      case "}":
+      case "]":
+        return yield* this.pushCount(1), this.flowKey = !0, this.flowLevel -= 1, this.flowLevel ? "flow" : "doc";
+      case "*":
+        return yield* this.pushUntil(isNotAnchorChar), "flow";
+      case '"':
+      case "'":
+        return this.flowKey = !0, yield* this.parseQuotedScalar();
+      case ":": {
+        let next = this.charAt(1);
+        if (this.flowKey || isEmpty(next) || next === ",")
+          return this.flowKey = !1, yield* this.pushCount(1), yield* this.pushSpaces(!0), "flow";
+      }
+      // fallthrough
+      default:
+        return this.flowKey = !1, yield* this.parsePlainScalar();
+    }
+  }
+  *parseQuotedScalar() {
+    let quote = this.charAt(0), end = this.buffer.indexOf(quote, this.pos + 1);
+    if (quote === "'")
+      for (; end !== -1 && this.buffer[end + 1] === "'"; )
+        end = this.buffer.indexOf("'", end + 2);
+    else
+      for (; end !== -1; ) {
+        let n = 0;
+        for (; this.buffer[end - 1 - n] === "\\"; )
+          n += 1;
+        if (n % 2 === 0)
+          break;
+        end = this.buffer.indexOf('"', end + 1);
+      }
+    let qb = this.buffer.substring(0, end), nl = qb.indexOf(`
+`, this.pos);
+    if (nl !== -1) {
+      for (; nl !== -1; ) {
+        let cs = this.continueScalar(nl + 1);
+        if (cs === -1)
+          break;
+        nl = qb.indexOf(`
+`, cs);
+      }
+      nl !== -1 && (end = nl - (qb[nl - 1] === "\r" ? 2 : 1));
+    }
+    if (end === -1) {
+      if (!this.atEnd)
+        return this.setNext("quoted-scalar");
+      end = this.buffer.length;
+    }
+    return yield* this.pushToIndex(end + 1, !1), this.flowLevel ? "flow" : "doc";
+  }
+  *parseBlockScalarHeader() {
+    this.blockScalarIndent = -1, this.blockScalarKeep = !1;
+    let i = this.pos;
+    for (; ; ) {
+      let ch = this.buffer[++i];
+      if (ch === "+")
+        this.blockScalarKeep = !0;
+      else if (ch > "0" && ch <= "9")
+        this.blockScalarIndent = Number(ch) - 1;
+      else if (ch !== "-")
+        break;
+    }
+    return yield* this.pushUntil((ch) => isEmpty(ch) || ch === "#");
+  }
+  *parseBlockScalar() {
+    let nl = this.pos - 1, indent = 0, ch;
+    loop: for (let i2 = this.pos; ch = this.buffer[i2]; ++i2)
+      switch (ch) {
+        case " ":
+          indent += 1;
+          break;
+        case `
+`:
+          nl = i2, indent = 0;
+          break;
+        case "\r": {
+          let next = this.buffer[i2 + 1];
+          if (!next && !this.atEnd)
+            return this.setNext("block-scalar");
+          if (next === `
+`)
+            break;
+        }
+        // fallthrough
+        default:
+          break loop;
+      }
+    if (!ch && !this.atEnd)
+      return this.setNext("block-scalar");
+    if (indent >= this.indentNext) {
+      this.blockScalarIndent === -1 ? this.indentNext = indent : this.indentNext = this.blockScalarIndent + (this.indentNext === 0 ? 1 : this.indentNext);
+      do {
+        let cs = this.continueScalar(nl + 1);
+        if (cs === -1)
+          break;
+        nl = this.buffer.indexOf(`
+`, cs);
+      } while (nl !== -1);
+      if (nl === -1) {
+        if (!this.atEnd)
+          return this.setNext("block-scalar");
+        nl = this.buffer.length;
+      }
+    }
+    let i = nl + 1;
+    for (ch = this.buffer[i]; ch === " "; )
+      ch = this.buffer[++i];
+    if (ch === "	") {
+      for (; ch === "	" || ch === " " || ch === "\r" || ch === `
+`; )
+        ch = this.buffer[++i];
+      nl = i - 1;
+    } else if (!this.blockScalarKeep)
+      do {
+        let i2 = nl - 1, ch2 = this.buffer[i2];
+        ch2 === "\r" && (ch2 = this.buffer[--i2]);
+        let lastChar = i2;
+        for (; ch2 === " "; )
+          ch2 = this.buffer[--i2];
+        if (ch2 === `
+` && i2 >= this.pos && i2 + 1 + indent > lastChar)
+          nl = i2;
+        else
+          break;
+      } while (!0);
+    return yield SCALAR2, yield* this.pushToIndex(nl + 1, !0), yield* this.parseLineStart();
+  }
+  *parsePlainScalar() {
+    let inFlow = this.flowLevel > 0, end = this.pos - 1, i = this.pos - 1, ch;
+    for (; ch = this.buffer[++i]; )
+      if (ch === ":") {
+        let next = this.buffer[i + 1];
+        if (isEmpty(next) || inFlow && flowIndicatorChars.has(next))
+          break;
+        end = i;
+      } else if (isEmpty(ch)) {
+        let next = this.buffer[i + 1];
+        if (ch === "\r" && (next === `
+` ? (i += 1, ch = `
+`, next = this.buffer[i + 1]) : end = i), next === "#" || inFlow && flowIndicatorChars.has(next))
+          break;
+        if (ch === `
+`) {
+          let cs = this.continueScalar(i + 1);
+          if (cs === -1)
+            break;
+          i = Math.max(i, cs - 2);
+        }
+      } else {
+        if (inFlow && flowIndicatorChars.has(ch))
+          break;
+        end = i;
+      }
+    return !ch && !this.atEnd ? this.setNext("plain-scalar") : (yield SCALAR2, yield* this.pushToIndex(end + 1, !0), inFlow ? "flow" : "doc");
+  }
+  *pushCount(n) {
+    return n > 0 ? (yield this.buffer.substr(this.pos, n), this.pos += n, n) : 0;
+  }
+  *pushToIndex(i, allowEmpty) {
+    let s = this.buffer.slice(this.pos, i);
+    return s ? (yield s, this.pos += s.length, s.length) : (allowEmpty && (yield ""), 0);
+  }
+  *pushIndicators() {
+    let n = 0;
+    loop: for (; ; ) {
+      switch (this.charAt(0)) {
+        case "!":
+          n += yield* this.pushTag(), n += yield* this.pushSpaces(!0);
+          continue loop;
+        case "&":
+          n += yield* this.pushUntil(isNotAnchorChar), n += yield* this.pushSpaces(!0);
+          continue loop;
+        case "-":
+        // this is an error
+        case "?":
+        // this is an error outside flow collections
+        case ":": {
+          let inFlow = this.flowLevel > 0, ch1 = this.charAt(1);
+          if (isEmpty(ch1) || inFlow && flowIndicatorChars.has(ch1)) {
+            inFlow ? this.flowKey && (this.flowKey = !1) : this.indentNext = this.indentValue + 1, n += yield* this.pushCount(1), n += yield* this.pushSpaces(!0);
+            continue loop;
+          }
+        }
+      }
+      break loop;
+    }
+    return n;
+  }
+  *pushTag() {
+    if (this.charAt(1) === "<") {
+      let i = this.pos + 2, ch = this.buffer[i];
+      for (; !isEmpty(ch) && ch !== ">"; )
+        ch = this.buffer[++i];
+      return yield* this.pushToIndex(ch === ">" ? i + 1 : i, !1);
+    } else {
+      let i = this.pos + 1, ch = this.buffer[i];
+      for (; ch; )
+        if (tagChars.has(ch))
+          ch = this.buffer[++i];
+        else if (ch === "%" && hexDigits.has(this.buffer[i + 1]) && hexDigits.has(this.buffer[i + 2]))
+          ch = this.buffer[i += 3];
+        else
+          break;
+      return yield* this.pushToIndex(i, !1);
+    }
+  }
+  *pushNewline() {
+    let ch = this.buffer[this.pos];
+    return ch === `
+` ? yield* this.pushCount(1) : ch === "\r" && this.charAt(1) === `
+` ? yield* this.pushCount(2) : 0;
+  }
+  *pushSpaces(allowTabs) {
+    let i = this.pos - 1, ch;
+    do
+      ch = this.buffer[++i];
+    while (ch === " " || allowTabs && ch === "	");
+    let n = i - this.pos;
+    return n > 0 && (yield this.buffer.substr(this.pos, n), this.pos = i), n;
+  }
+  *pushUntil(test) {
+    let i = this.pos, ch = this.buffer[i];
+    for (; !test(ch); )
+      ch = this.buffer[++i];
+    return yield* this.pushToIndex(i, !1);
+  }
+};
+
+// node_modules/yaml/browser/dist/parse/line-counter.js
+var LineCounter = class {
+  constructor() {
+    this.lineStarts = [], this.addNewLine = (offset) => this.lineStarts.push(offset), this.linePos = (offset) => {
+      let low = 0, high = this.lineStarts.length;
+      for (; low < high; ) {
+        let mid = low + high >> 1;
+        this.lineStarts[mid] < offset ? low = mid + 1 : high = mid;
+      }
+      if (this.lineStarts[low] === offset)
+        return { line: low + 1, col: 1 };
+      if (low === 0)
+        return { line: 0, col: offset };
+      let start = this.lineStarts[low - 1];
+      return { line: low, col: offset - start + 1 };
+    };
+  }
+};
+
+// node_modules/yaml/browser/dist/parse/parser.js
+function includesToken(list2, type) {
+  for (let i = 0; i < list2.length; ++i)
+    if (list2[i].type === type)
+      return !0;
+  return !1;
+}
+function findNonEmptyIndex(list2) {
+  for (let i = 0; i < list2.length; ++i)
+    switch (list2[i].type) {
+      case "space":
+      case "comment":
+      case "newline":
+        break;
+      default:
+        return i;
+    }
+  return -1;
+}
+function isFlowToken(token) {
+  switch (token == null ? void 0 : token.type) {
+    case "alias":
+    case "scalar":
+    case "single-quoted-scalar":
+    case "double-quoted-scalar":
+    case "flow-collection":
+      return !0;
+    default:
+      return !1;
+  }
+}
+function getPrevProps(parent) {
+  var _a;
+  switch (parent.type) {
+    case "document":
+      return parent.start;
+    case "block-map": {
+      let it = parent.items[parent.items.length - 1];
+      return (_a = it.sep) != null ? _a : it.start;
+    }
+    case "block-seq":
+      return parent.items[parent.items.length - 1].start;
+    /* istanbul ignore next should not happen */
+    default:
+      return [];
+  }
+}
+function getFirstKeyStartProps(prev) {
+  var _a;
+  if (prev.length === 0)
+    return [];
+  let i = prev.length;
+  loop: for (; --i >= 0; )
+    switch (prev[i].type) {
+      case "doc-start":
+      case "explicit-key-ind":
+      case "map-value-ind":
+      case "seq-item-ind":
+      case "newline":
+        break loop;
+    }
+  for (; ((_a = prev[++i]) == null ? void 0 : _a.type) === "space"; )
+    ;
+  return prev.splice(i, prev.length);
+}
+function arrayPushArray(target, source) {
+  if (source.length < 1e5)
+    Array.prototype.push.apply(target, source);
+  else
+    for (let i = 0; i < source.length; ++i)
+      target.push(source[i]);
+}
+function fixFlowSeqItems(fc) {
+  if (fc.start.type === "flow-seq-start")
+    for (let it of fc.items)
+      it.sep && !it.value && !includesToken(it.start, "explicit-key-ind") && !includesToken(it.sep, "map-value-ind") && (it.key && (it.value = it.key), delete it.key, isFlowToken(it.value) ? it.value.end ? arrayPushArray(it.value.end, it.sep) : it.value.end = it.sep : arrayPushArray(it.start, it.sep), delete it.sep);
+}
+var Parser = class {
+  /**
+   * @param onNewLine - If defined, called separately with the start position of
+   *   each new line (in `parse()`, including the start of input).
+   */
+  constructor(onNewLine) {
+    this.atNewLine = !0, this.atScalar = !1, this.indent = 0, this.offset = 0, this.onKeyLine = !1, this.stack = [], this.source = "", this.type = "", this.lexer = new Lexer(), this.onNewLine = onNewLine;
+  }
+  /**
+   * Parse `source` as a YAML stream.
+   * If `incomplete`, a part of the last line may be left as a buffer for the next call.
+   *
+   * Errors are not thrown, but yielded as `{ type: 'error', message }` tokens.
+   *
+   * @returns A generator of tokens representing each directive, document, and other structure.
+   */
+  *parse(source, incomplete = !1) {
+    this.onNewLine && this.offset === 0 && this.onNewLine(0);
+    for (let lexeme of this.lexer.lex(source, incomplete))
+      yield* this.next(lexeme);
+    incomplete || (yield* this.end());
+  }
+  /**
+   * Advance the parser by the `source` of one lexical token.
+   */
+  *next(source) {
+    if (this.source = source, this.atScalar) {
+      this.atScalar = !1, yield* this.step(), this.offset += source.length;
+      return;
+    }
+    let type = tokenType(source);
+    if (type)
+      if (type === "scalar")
+        this.atNewLine = !1, this.atScalar = !0, this.type = "scalar";
+      else {
+        switch (this.type = type, yield* this.step(), type) {
+          case "newline":
+            this.atNewLine = !0, this.indent = 0, this.onNewLine && this.onNewLine(this.offset + source.length);
+            break;
+          case "space":
+            this.atNewLine && source[0] === " " && (this.indent += source.length);
+            break;
+          case "explicit-key-ind":
+          case "map-value-ind":
+          case "seq-item-ind":
+            this.atNewLine && (this.indent += source.length);
+            break;
+          case "doc-mode":
+          case "flow-error-end":
+            return;
+          default:
+            this.atNewLine = !1;
+        }
+        this.offset += source.length;
+      }
+    else {
+      let message = `Not a YAML token: ${source}`;
+      yield* this.pop({ type: "error", offset: this.offset, message, source }), this.offset += source.length;
+    }
+  }
+  /** Call at end of input to push out any remaining constructions */
+  *end() {
+    for (; this.stack.length > 0; )
+      yield* this.pop();
+  }
+  get sourceToken() {
+    return {
+      type: this.type,
+      offset: this.offset,
+      indent: this.indent,
+      source: this.source
+    };
+  }
+  *step() {
+    let top = this.peek(1);
+    if (this.type === "doc-end" && (top == null ? void 0 : top.type) !== "doc-end") {
+      for (; this.stack.length > 0; )
+        yield* this.pop();
+      this.stack.push({
+        type: "doc-end",
+        offset: this.offset,
+        source: this.source
+      });
+      return;
+    }
+    if (!top)
+      return yield* this.stream();
+    switch (top.type) {
+      case "document":
+        return yield* this.document(top);
+      case "alias":
+      case "scalar":
+      case "single-quoted-scalar":
+      case "double-quoted-scalar":
+        return yield* this.scalar(top);
+      case "block-scalar":
+        return yield* this.blockScalar(top);
+      case "block-map":
+        return yield* this.blockMap(top);
+      case "block-seq":
+        return yield* this.blockSequence(top);
+      case "flow-collection":
+        return yield* this.flowCollection(top);
+      case "doc-end":
+        return yield* this.documentEnd(top);
+    }
+    yield* this.pop();
+  }
+  peek(n) {
+    return this.stack[this.stack.length - n];
+  }
+  *pop(error) {
+    let token = error != null ? error : this.stack.pop();
+    if (!token)
+      yield { type: "error", offset: this.offset, source: "", message: "Tried to pop an empty stack" };
+    else if (this.stack.length === 0)
+      yield token;
+    else {
+      let top = this.peek(1);
+      switch (token.type === "block-scalar" ? token.indent = "indent" in top ? top.indent : 0 : token.type === "flow-collection" && top.type === "document" && (token.indent = 0), token.type === "flow-collection" && fixFlowSeqItems(token), top.type) {
+        case "document":
+          top.value = token;
+          break;
+        case "block-scalar":
+          top.props.push(token);
+          break;
+        case "block-map": {
+          let it = top.items[top.items.length - 1];
+          if (it.value) {
+            top.items.push({ start: [], key: token, sep: [] }), this.onKeyLine = !0;
+            return;
+          } else if (it.sep)
+            it.value = token;
+          else {
+            Object.assign(it, { key: token, sep: [] }), this.onKeyLine = !it.explicitKey;
+            return;
+          }
+          break;
+        }
+        case "block-seq": {
+          let it = top.items[top.items.length - 1];
+          it.value ? top.items.push({ start: [], value: token }) : it.value = token;
+          break;
+        }
+        case "flow-collection": {
+          let it = top.items[top.items.length - 1];
+          !it || it.value ? top.items.push({ start: [], key: token, sep: [] }) : it.sep ? it.value = token : Object.assign(it, { key: token, sep: [] });
+          return;
+        }
+        /* istanbul ignore next should not happen */
+        default:
+          yield* this.pop(), yield* this.pop(token);
+      }
+      if ((top.type === "document" || top.type === "block-map" || top.type === "block-seq") && (token.type === "block-map" || token.type === "block-seq")) {
+        let last2 = token.items[token.items.length - 1];
+        last2 && !last2.sep && !last2.value && last2.start.length > 0 && findNonEmptyIndex(last2.start) === -1 && (token.indent === 0 || last2.start.every((st) => st.type !== "comment" || st.indent < token.indent)) && (top.type === "document" ? top.end = last2.start : top.items.push({ start: last2.start }), token.items.splice(-1, 1));
+      }
+    }
+  }
+  *stream() {
+    switch (this.type) {
+      case "directive-line":
+        yield { type: "directive", offset: this.offset, source: this.source };
+        return;
+      case "byte-order-mark":
+      case "space":
+      case "comment":
+      case "newline":
+        yield this.sourceToken;
+        return;
+      case "doc-mode":
+      case "doc-start": {
+        let doc2 = {
+          type: "document",
+          offset: this.offset,
+          start: []
+        };
+        this.type === "doc-start" && doc2.start.push(this.sourceToken), this.stack.push(doc2);
+        return;
+      }
+    }
+    yield {
+      type: "error",
+      offset: this.offset,
+      message: `Unexpected ${this.type} token in YAML stream`,
+      source: this.source
+    };
+  }
+  *document(doc2) {
+    if (doc2.value)
+      return yield* this.lineEnd(doc2);
+    switch (this.type) {
+      case "doc-start": {
+        findNonEmptyIndex(doc2.start) !== -1 ? (yield* this.pop(), yield* this.step()) : doc2.start.push(this.sourceToken);
+        return;
+      }
+      case "anchor":
+      case "tag":
+      case "space":
+      case "comment":
+      case "newline":
+        doc2.start.push(this.sourceToken);
+        return;
+    }
+    let bv = this.startBlockValue(doc2);
+    bv ? this.stack.push(bv) : yield {
+      type: "error",
+      offset: this.offset,
+      message: `Unexpected ${this.type} token in YAML document`,
+      source: this.source
+    };
+  }
+  *scalar(scalar) {
+    if (this.type === "map-value-ind") {
+      let prev = getPrevProps(this.peek(2)), start = getFirstKeyStartProps(prev), sep;
+      scalar.end ? (sep = scalar.end, sep.push(this.sourceToken), delete scalar.end) : sep = [this.sourceToken];
+      let map3 = {
+        type: "block-map",
+        offset: scalar.offset,
+        indent: scalar.indent,
+        items: [{ start, key: scalar, sep }]
+      };
+      this.onKeyLine = !0, this.stack[this.stack.length - 1] = map3;
+    } else
+      yield* this.lineEnd(scalar);
+  }
+  *blockScalar(scalar) {
+    switch (this.type) {
+      case "space":
+      case "comment":
+      case "newline":
+        scalar.props.push(this.sourceToken);
+        return;
+      case "scalar":
+        if (scalar.source = this.source, this.atNewLine = !0, this.indent = 0, this.onNewLine) {
+          let nl = this.source.indexOf(`
+`) + 1;
+          for (; nl !== 0; )
+            this.onNewLine(this.offset + nl), nl = this.source.indexOf(`
+`, nl) + 1;
+        }
+        yield* this.pop();
+        break;
+      /* istanbul ignore next should not happen */
+      default:
+        yield* this.pop(), yield* this.step();
+    }
+  }
+  *blockMap(map3) {
+    var _a;
+    let it = map3.items[map3.items.length - 1];
+    switch (this.type) {
+      case "newline":
+        if (this.onKeyLine = !1, it.value) {
+          let end = "end" in it.value ? it.value.end : void 0, last2 = Array.isArray(end) ? end[end.length - 1] : void 0;
+          (last2 == null ? void 0 : last2.type) === "comment" ? end == null || end.push(this.sourceToken) : map3.items.push({ start: [this.sourceToken] });
+        } else it.sep ? it.sep.push(this.sourceToken) : it.start.push(this.sourceToken);
+        return;
+      case "space":
+      case "comment":
+        if (it.value)
+          map3.items.push({ start: [this.sourceToken] });
+        else if (it.sep)
+          it.sep.push(this.sourceToken);
+        else {
+          if (this.atIndentedComment(it.start, map3.indent)) {
+            let prev = map3.items[map3.items.length - 2], end = (_a = prev == null ? void 0 : prev.value) == null ? void 0 : _a.end;
+            if (Array.isArray(end)) {
+              arrayPushArray(end, it.start), end.push(this.sourceToken), map3.items.pop();
+              return;
+            }
+          }
+          it.start.push(this.sourceToken);
+        }
+        return;
+    }
+    if (this.indent >= map3.indent) {
+      let atMapIndent = !this.onKeyLine && this.indent === map3.indent, atNextItem = atMapIndent && (it.sep || it.explicitKey) && this.type !== "seq-item-ind", start = [];
+      if (atNextItem && it.sep && !it.value) {
+        let nl = [];
+        for (let i = 0; i < it.sep.length; ++i) {
+          let st = it.sep[i];
+          switch (st.type) {
+            case "newline":
+              nl.push(i);
+              break;
+            case "space":
+              break;
+            case "comment":
+              st.indent > map3.indent && (nl.length = 0);
+              break;
+            default:
+              nl.length = 0;
+          }
+        }
+        nl.length >= 2 && (start = it.sep.splice(nl[1]));
+      }
+      switch (this.type) {
+        case "anchor":
+        case "tag":
+          atNextItem || it.value ? (start.push(this.sourceToken), map3.items.push({ start }), this.onKeyLine = !0) : it.sep ? it.sep.push(this.sourceToken) : it.start.push(this.sourceToken);
+          return;
+        case "explicit-key-ind":
+          !it.sep && !it.explicitKey ? (it.start.push(this.sourceToken), it.explicitKey = !0) : atNextItem || it.value ? (start.push(this.sourceToken), map3.items.push({ start, explicitKey: !0 })) : this.stack.push({
+            type: "block-map",
+            offset: this.offset,
+            indent: this.indent,
+            items: [{ start: [this.sourceToken], explicitKey: !0 }]
+          }), this.onKeyLine = !0;
+          return;
+        case "map-value-ind":
+          if (it.explicitKey)
+            if (it.sep)
+              if (it.value)
+                map3.items.push({ start: [], key: null, sep: [this.sourceToken] });
+              else if (includesToken(it.sep, "map-value-ind"))
+                this.stack.push({
+                  type: "block-map",
+                  offset: this.offset,
+                  indent: this.indent,
+                  items: [{ start, key: null, sep: [this.sourceToken] }]
+                });
+              else if (isFlowToken(it.key) && !includesToken(it.sep, "newline")) {
+                let start2 = getFirstKeyStartProps(it.start), key = it.key, sep = it.sep;
+                sep.push(this.sourceToken), delete it.key, delete it.sep, this.stack.push({
+                  type: "block-map",
+                  offset: this.offset,
+                  indent: this.indent,
+                  items: [{ start: start2, key, sep }]
+                });
+              } else start.length > 0 ? it.sep = it.sep.concat(start, this.sourceToken) : it.sep.push(this.sourceToken);
+            else if (includesToken(it.start, "newline"))
+              Object.assign(it, { key: null, sep: [this.sourceToken] });
+            else {
+              let start2 = getFirstKeyStartProps(it.start);
+              this.stack.push({
+                type: "block-map",
+                offset: this.offset,
+                indent: this.indent,
+                items: [{ start: start2, key: null, sep: [this.sourceToken] }]
+              });
+            }
+          else
+            it.sep ? it.value || atNextItem ? map3.items.push({ start, key: null, sep: [this.sourceToken] }) : includesToken(it.sep, "map-value-ind") ? this.stack.push({
+              type: "block-map",
+              offset: this.offset,
+              indent: this.indent,
+              items: [{ start: [], key: null, sep: [this.sourceToken] }]
+            }) : it.sep.push(this.sourceToken) : Object.assign(it, { key: null, sep: [this.sourceToken] });
+          this.onKeyLine = !0;
+          return;
+        case "alias":
+        case "scalar":
+        case "single-quoted-scalar":
+        case "double-quoted-scalar": {
+          let fs = this.flowScalar(this.type);
+          atNextItem || it.value ? (map3.items.push({ start, key: fs, sep: [] }), this.onKeyLine = !0) : it.sep ? this.stack.push(fs) : (Object.assign(it, { key: fs, sep: [] }), this.onKeyLine = !0);
+          return;
+        }
+        default: {
+          let bv = this.startBlockValue(map3);
+          if (bv) {
+            if (bv.type === "block-seq") {
+              if (!it.explicitKey && it.sep && !includesToken(it.sep, "newline")) {
+                yield* this.pop({
+                  type: "error",
+                  offset: this.offset,
+                  message: "Unexpected block-seq-ind on same line with key",
+                  source: this.source
+                });
+                return;
+              }
+            } else atMapIndent && map3.items.push({ start });
+            this.stack.push(bv);
+            return;
+          }
+        }
+      }
+    }
+    yield* this.pop(), yield* this.step();
+  }
+  *blockSequence(seq2) {
+    var _a;
+    let it = seq2.items[seq2.items.length - 1];
+    switch (this.type) {
+      case "newline":
+        if (it.value) {
+          let end = "end" in it.value ? it.value.end : void 0, last2 = Array.isArray(end) ? end[end.length - 1] : void 0;
+          (last2 == null ? void 0 : last2.type) === "comment" ? end == null || end.push(this.sourceToken) : seq2.items.push({ start: [this.sourceToken] });
+        } else
+          it.start.push(this.sourceToken);
+        return;
+      case "space":
+      case "comment":
+        if (it.value)
+          seq2.items.push({ start: [this.sourceToken] });
+        else {
+          if (this.atIndentedComment(it.start, seq2.indent)) {
+            let prev = seq2.items[seq2.items.length - 2], end = (_a = prev == null ? void 0 : prev.value) == null ? void 0 : _a.end;
+            if (Array.isArray(end)) {
+              arrayPushArray(end, it.start), end.push(this.sourceToken), seq2.items.pop();
+              return;
+            }
+          }
+          it.start.push(this.sourceToken);
+        }
+        return;
+      case "anchor":
+      case "tag":
+        if (it.value || this.indent <= seq2.indent)
+          break;
+        it.start.push(this.sourceToken);
+        return;
+      case "seq-item-ind":
+        if (this.indent !== seq2.indent)
+          break;
+        it.value || includesToken(it.start, "seq-item-ind") ? seq2.items.push({ start: [this.sourceToken] }) : it.start.push(this.sourceToken);
+        return;
+    }
+    if (this.indent > seq2.indent) {
+      let bv = this.startBlockValue(seq2);
+      if (bv) {
+        this.stack.push(bv);
+        return;
+      }
+    }
+    yield* this.pop(), yield* this.step();
+  }
+  *flowCollection(fc) {
+    let it = fc.items[fc.items.length - 1];
+    if (this.type === "flow-error-end") {
+      let top;
+      do
+        yield* this.pop(), top = this.peek(1);
+      while ((top == null ? void 0 : top.type) === "flow-collection");
+    } else if (fc.end.length === 0) {
+      switch (this.type) {
+        case "comma":
+        case "explicit-key-ind":
+          !it || it.sep ? fc.items.push({ start: [this.sourceToken] }) : it.start.push(this.sourceToken);
+          return;
+        case "map-value-ind":
+          !it || it.value ? fc.items.push({ start: [], key: null, sep: [this.sourceToken] }) : it.sep ? it.sep.push(this.sourceToken) : Object.assign(it, { key: null, sep: [this.sourceToken] });
+          return;
+        case "space":
+        case "comment":
+        case "newline":
+        case "anchor":
+        case "tag":
+          !it || it.value ? fc.items.push({ start: [this.sourceToken] }) : it.sep ? it.sep.push(this.sourceToken) : it.start.push(this.sourceToken);
+          return;
+        case "alias":
+        case "scalar":
+        case "single-quoted-scalar":
+        case "double-quoted-scalar": {
+          let fs = this.flowScalar(this.type);
+          !it || it.value ? fc.items.push({ start: [], key: fs, sep: [] }) : it.sep ? this.stack.push(fs) : Object.assign(it, { key: fs, sep: [] });
+          return;
+        }
+        case "flow-map-end":
+        case "flow-seq-end":
+          fc.end.push(this.sourceToken);
+          return;
+      }
+      let bv = this.startBlockValue(fc);
+      bv ? this.stack.push(bv) : (yield* this.pop(), yield* this.step());
+    } else {
+      let parent = this.peek(2);
+      if (parent.type === "block-map" && (this.type === "map-value-ind" && parent.indent === fc.indent || this.type === "newline" && !parent.items[parent.items.length - 1].sep))
+        yield* this.pop(), yield* this.step();
+      else if (this.type === "map-value-ind" && parent.type !== "flow-collection") {
+        let prev = getPrevProps(parent), start = getFirstKeyStartProps(prev);
+        fixFlowSeqItems(fc);
+        let sep = fc.end.splice(1, fc.end.length);
+        sep.push(this.sourceToken);
+        let map3 = {
+          type: "block-map",
+          offset: fc.offset,
+          indent: fc.indent,
+          items: [{ start, key: fc, sep }]
+        };
+        this.onKeyLine = !0, this.stack[this.stack.length - 1] = map3;
+      } else
+        yield* this.lineEnd(fc);
+    }
+  }
+  flowScalar(type) {
+    if (this.onNewLine) {
+      let nl = this.source.indexOf(`
+`) + 1;
+      for (; nl !== 0; )
+        this.onNewLine(this.offset + nl), nl = this.source.indexOf(`
+`, nl) + 1;
+    }
+    return {
+      type,
+      offset: this.offset,
+      indent: this.indent,
+      source: this.source
+    };
+  }
+  startBlockValue(parent) {
+    switch (this.type) {
+      case "alias":
+      case "scalar":
+      case "single-quoted-scalar":
+      case "double-quoted-scalar":
+        return this.flowScalar(this.type);
+      case "block-scalar-header":
+        return {
+          type: "block-scalar",
+          offset: this.offset,
+          indent: this.indent,
+          props: [this.sourceToken],
+          source: ""
+        };
+      case "flow-map-start":
+      case "flow-seq-start":
+        return {
+          type: "flow-collection",
+          offset: this.offset,
+          indent: this.indent,
+          start: this.sourceToken,
+          items: [],
+          end: []
+        };
+      case "seq-item-ind":
+        return {
+          type: "block-seq",
+          offset: this.offset,
+          indent: this.indent,
+          items: [{ start: [this.sourceToken] }]
+        };
+      case "explicit-key-ind": {
+        this.onKeyLine = !0;
+        let prev = getPrevProps(parent), start = getFirstKeyStartProps(prev);
+        return start.push(this.sourceToken), {
+          type: "block-map",
+          offset: this.offset,
+          indent: this.indent,
+          items: [{ start, explicitKey: !0 }]
+        };
+      }
+      case "map-value-ind": {
+        this.onKeyLine = !0;
+        let prev = getPrevProps(parent), start = getFirstKeyStartProps(prev);
+        return {
+          type: "block-map",
+          offset: this.offset,
+          indent: this.indent,
+          items: [{ start, key: null, sep: [this.sourceToken] }]
+        };
+      }
+    }
+    return null;
+  }
+  atIndentedComment(start, indent) {
+    return this.type !== "comment" || this.indent <= indent ? !1 : start.every((st) => st.type === "newline" || st.type === "space");
+  }
+  *documentEnd(docEnd) {
+    this.type !== "doc-mode" && (docEnd.end ? docEnd.end.push(this.sourceToken) : docEnd.end = [this.sourceToken], this.type === "newline" && (yield* this.pop()));
+  }
+  *lineEnd(token) {
+    switch (this.type) {
+      case "comma":
+      case "doc-start":
+      case "doc-end":
+      case "flow-seq-end":
+      case "flow-map-end":
+      case "map-value-ind":
+        yield* this.pop(), yield* this.step();
+        break;
+      case "newline":
+        this.onKeyLine = !1;
+      default:
+        token.end ? token.end.push(this.sourceToken) : token.end = [this.sourceToken], this.type === "newline" && (yield* this.pop());
+    }
+  }
+};
+
+// node_modules/yaml/browser/dist/public-api.js
+function parseOptions(options) {
+  let prettyErrors = options.prettyErrors !== !1;
+  return { lineCounter: options.lineCounter || prettyErrors && new LineCounter() || null, prettyErrors };
+}
+function parseDocument(source, options = {}) {
+  let { lineCounter, prettyErrors } = parseOptions(options), parser = new Parser(lineCounter == null ? void 0 : lineCounter.addNewLine), composer = new Composer(options), doc2 = null;
+  for (let _doc of composer.compose(parser.parse(source), !0, source.length))
+    if (!doc2)
+      doc2 = _doc;
+    else if (doc2.options.logLevel !== "silent") {
+      doc2.errors.push(new YAMLParseError(_doc.range.slice(0, 2), "MULTIPLE_DOCS", "Source contains multiple documents; please use YAML.parseAllDocuments()"));
+      break;
+    }
+  return prettyErrors && lineCounter && (doc2.errors.forEach(prettifyError(source, lineCounter)), doc2.warnings.forEach(prettifyError(source, lineCounter))), doc2;
+}
+function parse(src, reviver, options) {
+  let _reviver;
+  typeof reviver == "function" ? _reviver = reviver : options === void 0 && reviver && typeof reviver == "object" && (options = reviver);
+  let doc2 = parseDocument(src, options);
+  if (!doc2)
+    return null;
+  if (doc2.warnings.forEach((warning) => warn(doc2.options.logLevel, warning)), doc2.errors.length > 0) {
+    if (doc2.options.logLevel !== "silent")
+      throw doc2.errors[0];
+    doc2.errors = [];
+  }
+  return doc2.toJS(Object.assign({ reviver: _reviver }, options));
+}
+function stringify3(value, replacer, options) {
+  var _a;
+  let _replacer = null;
+  if (typeof replacer == "function" || Array.isArray(replacer) ? _replacer = replacer : options === void 0 && replacer && (options = replacer), typeof options == "string" && (options = options.length), typeof options == "number") {
+    let indent = Math.round(options);
+    options = indent < 1 ? void 0 : indent > 8 ? { indent: 8 } : { indent };
+  }
+  if (value === void 0) {
+    let { keepUndefined } = (_a = options != null ? options : replacer) != null ? _a : {};
+    if (!keepUndefined)
+      return;
+  }
+  return isDocument(value) && !_replacer ? value.toString(options) : new Document(value, _replacer, options).toString(options);
+}
+
+// src/crdt/frontmatter-codec.ts
+var FRONTMATTER_KEY = "frontmatter", RAW_FRONTMATTER_KEY = "frontmatter_raw", ORDER_KEY = "frontmatter_order", CONTENT_KEY = "content";
+function frontmatterOf(doc2) {
+  let order = doc2.getArray(ORDER_KEY).toArray(), values = doc2.getMap(FRONTMATTER_KEY).toJSON();
+  return { order, values };
+}
+function rawFrontmatterOf(doc2) {
+  return doc2.getMap(RAW_FRONTMATTER_KEY).toJSON();
+}
+var FENCE = "---", CLOSE_MID = /\n---[ \t]*\r?\n/, CLOSE_EOF = /\n---[ \t]*\r?$/;
+function splitFrontmatter(raw) {
+  if (!raw.startsWith(`${FENCE}
+`)) return { fmBlock: null, body: raw };
+  let rest = raw.slice(FENCE.length + 1);
+  if (rest.startsWith(`${FENCE}
+`)) return { fmBlock: "", body: rest.slice(FENCE.length + 1) };
+  let mid = rest.match(CLOSE_MID);
+  if (mid && mid.index !== void 0) {
+    let block = `${rest.slice(0, mid.index)}
+`, body = rest.slice(mid.index + mid[0].length);
+    return { fmBlock: block, body };
+  }
+  let eof = rest.match(CLOSE_EOF);
+  return eof && eof.index !== void 0 ? { fmBlock: `${rest.slice(0, eof.index)}
+`, body: "" } : { fmBlock: null, body: raw };
+}
+function canonicalJson(value) {
+  return JSON.stringify(sortDeep(value));
+}
+function sortDeep(v) {
+  if (Array.isArray(v)) return v.map(sortDeep);
+  if (v !== null && typeof v == "object") {
+    let rec = v, out = {};
+    for (let k of Object.keys(rec).sort())
+      out[k] = sortDeep(rec[k]);
+    return out;
+  }
+  return v;
+}
+function parseFrontmatter(fmBlock) {
+  if (fmBlock === "") return { order: [], values: {} };
+  let doc2;
+  try {
+    doc2 = parse(fmBlock);
+  } catch (e) {
+    return null;
+  }
+  if (!doc2 || typeof doc2 != "object" || Array.isArray(doc2)) return null;
+  let map3 = doc2, order = topLevelKeyOrder(fmBlock, map3), values = {};
+  for (let k of Object.keys(map3)) values[k] = canonicalJson(map3[k]);
+  return { order, values };
+}
+function topLevelKeyOrder(block, map3) {
+  let order = [];
+  for (let line of block.split(`
+`)) {
+    let m = line.match(/^([^\s:][^:]*):/);
+    if (!m) continue;
+    let key = m[1];
+    key !== void 0 && // biome-ignore lint/suspicious/noPrototypeBuiltins: Object.hasOwn needs lib ES2022, we target ES2021
+    Object.prototype.hasOwnProperty.call(map3, key) && !order.includes(key) && order.push(key);
+  }
+  return order;
+}
+function ensureTrailingNewline(s) {
+  return s === "" ? "" : s.endsWith(`
+`) ? s : `${s}
+`;
+}
+function emitKey(key, valueJson) {
+  let value = JSON.parse(valueJson);
+  return ensureTrailingNewline(stringify3({ [key]: value }));
+}
+function emitFrontmatter(order, values, raws = {}) {
+  let has = (m, k) => (
+    // biome-ignore lint/suspicious/noPrototypeBuiltins: Object.hasOwn needs lib ES2022, we target ES2021
+    Object.prototype.hasOwnProperty.call(m, k)
+  ), present = order.filter((k) => has(raws, k) || has(values, k));
+  if (present.length === 0) return "";
+  let out = "";
+  for (let key of present)
+    out += has(raws, key) ? ensureTrailingNewline(raws[key]) : emitKey(key, values[key]);
+  return ensureTrailingNewline(out);
+}
+function projectNote(order, values, body, raws = {}) {
+  let block = emitFrontmatter(order, values, raws);
+  return block === "" ? body : `${FENCE}
+${block}${FENCE}
+${body}`;
+}
+
+// src/crdt/live/live-binding-decisions.ts
 var merger = new import_diff_match_patch2.diff_match_patch();
 merger.Match_Threshold = 0.2;
 merger.Patch_DeleteThreshold = 0.2;
-var FRONTMATTER_RE = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/;
 function frontmatterPrefixLen(editorText) {
-  let m = FRONTMATTER_RE.exec(editorText);
-  return m ? m[0].length : 0;
+  let { fmBlock, body } = splitFrontmatter(editorText);
+  return fmBlock === null ? 0 : editorText.length - body.length;
 }
 function needsReattach(bound, path, noteId, coordinator2) {
   return path !== bound.path || noteId !== bound.noteId || coordinator2 !== bound.coordinator;
@@ -2223,7 +7132,7 @@ var viewSeq = 0;
 function editorPath(editor) {
   var _a, _b;
   let info = editor.state.field(import_obsidian2.editorInfoField, !1), path = (_b = (_a = info == null ? void 0 : info.file) == null ? void 0 : _a.path) != null ? _b : null;
-  return path != null && path.endsWith(".md") ? path : null;
+  return path && isMarkdownPath(path) ? path : null;
 }
 var LiveBindingValue = class {
   constructor(editor) {
@@ -2607,10 +7516,11 @@ var READING_EDIT_ORIGIN = { source: "crdt-reading-view" }, CrdtReadingView = cla
   }
   async attach(view, path) {
     if (typeof view != "object" || view === null || this.observers.has(view)) return;
-    this.observers.set(view, () => {
-    }), this.attached.add(view);
-    let ytext = await this.deps.getYText(path).catch((err) => (rlog().error("crdt-reading-view", `getYText failed for ${path}: ${String(err)}`), this.observers.delete(view), this.attached.delete(view), null));
-    if (!ytext) return;
+    let placeholder = () => {
+    };
+    this.observers.set(view, placeholder), this.attached.add(view);
+    let ytext = await this.deps.getYText(path).catch((err) => (rlog().error("crdt-reading-view", `getYText failed for ${path}: ${String(err)}`), this.observers.get(view) === placeholder && (this.observers.delete(view), this.attached.delete(view)), null));
+    if (!ytext || this.observers.get(view) !== placeholder) return;
     this.rendered.set(view, ytext.toJSON());
     let handler = () => {
       if (!this.deps.isReadingMode(view)) return;
@@ -2801,7 +7711,7 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
    *  (minting if needed) the note_id that actually keys the doc (Task 6). */
   async getYText(path) {
     let noteId = this.deps.resolveId(path);
-    return (await this.deps.manager.getDoc(noteId)).getText("content");
+    return (await this.deps.manager.getDoc(noteId)).getText(CONTENT_KEY);
   }
   /** Re-evaluate open markdown leaves: enroll each, and (re)attach the
    *  frontmatter + reading-mode hooks. The editor TEXT binding is handled
@@ -2816,7 +7726,7 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
         let view = leaf.view;
         if (!(view instanceof import_obsidian3.MarkdownView)) continue;
         let path = getMarkdownFilePath(view);
-        if (!(path != null && path.endsWith(".md"))) continue;
+        if (!path || !isMarkdownPath(path)) continue;
         let prev = this.hookPaths.get(view);
         prev !== void 0 && prev !== path && (this.frontmatter.detach(view), this.reading.detach(view)), this.hookPaths.set(view, path), this.deps.enrollment.enroll(this.deps.resolveId(path)), this.frontmatter.attach(view), this.reading.attach(view, path);
       }
@@ -2834,8 +7744,8 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
     this.saveNudgeTimers.clear(), this.frontmatter.detachAll(), this.reading.detachAll();
     let flushes = [];
     for (let path of this.refcount.boundPaths()) {
-      let noteId = this.deps.resolveId(path);
-      if (!this.deps.manager.hasDoc(noteId)) continue;
+      let noteId = this.deps.resolveExistingId(path);
+      if (noteId === null || !this.deps.manager.hasDoc(noteId)) continue;
       let content = this.deps.manager.residentText(noteId).text.toJSON();
       flushes.push(
         Promise.resolve(this.deps.flushToDisk(path, content)).catch(
@@ -2856,7 +7766,7 @@ function uuid7() {
   var _a, _b;
   let tsHex = Date.now().toString(16).padStart(12, "0").slice(-12), rand = new Uint8Array(10);
   crypto.getRandomValues(rand), rand[0] = ((_a = rand[0]) != null ? _a : 0) & 15 | 112, rand[2] = ((_b = rand[2]) != null ? _b : 0) & 63 | 128;
-  let hex2 = (arr) => Array.from(arr, (b) => b.toString(16).padStart(2, "0")).join("");
+  let hex2 = bytesToHex;
   return [
     tsHex.slice(0, 8),
     tsHex.slice(8, 12),
@@ -3048,7 +7958,7 @@ var create = () => /* @__PURE__ */ new Map(), copy = (m) => {
 }, setIfUndefined = (map3, key, createT) => {
   let set2 = map3.get(key);
   return set2 === void 0 && map3.set(key, set2 = createT()), set2;
-}, map = (m, f) => {
+}, map2 = (m, f) => {
   let res = [];
   for (let [key, value] of m)
     res.push(f(value, key));
@@ -3634,7 +8544,7 @@ var forEach = (obj, f) => {
     f(obj[key], key);
 };
 var size = (obj) => keys(obj).length;
-var isEmpty = (obj) => {
+var isEmpty2 = (obj) => {
   for (let _k in obj)
     return !1;
   return !0;
@@ -3718,10 +8628,10 @@ var equalityDeep = (a, b) => {
 }, isOneOf = (value, options) => options.includes(value);
 
 // node_modules/lib0/environment.js
-var isNode = typeof process != "undefined" && process.release && /node|io\.js/.test(process.release.name) && Object.prototype.toString.call(typeof process != "undefined" ? process : 0) === "[object process]";
+var isNode2 = typeof process != "undefined" && process.release && /node|io\.js/.test(process.release.name) && Object.prototype.toString.call(typeof process != "undefined" ? process : 0) === "[object process]";
 var isMac = typeof navigator != "undefined" ? /Mac/.test(navigator.platform) : !1, params, args = [], computeParams = () => {
   if (params === void 0)
-    if (isNode) {
+    if (isNode2) {
       params = create();
       let pargs = process.argv, currParamName = null;
       for (let i = 0; i < pargs.length; i++) {
@@ -3737,9 +8647,9 @@ var isMac = typeof navigator != "undefined" ? /Mac/.test(navigator.platform) : !
     })) : params = create();
   return params;
 }, hasParam = (name) => computeParams().has(name);
-var getVariable = (name) => isNode ? undefinedToNull(process.env[name.toUpperCase().replaceAll("-", "_")]) : undefinedToNull(varStorage.getItem(name));
-var hasConf = (name) => hasParam("--" + name) || getVariable(name) !== null, production = hasConf("production"), forceColor = isNode && isOneOf(process.env.FORCE_COLOR, ["true", "1", "2"]), supportsColor = forceColor || !hasParam("--no-colors") && // @todo deprecate --no-colors
-!hasConf("no-color") && (!isNode || process.stdout.isTTY) && (!isNode || hasParam("--color") || getVariable("COLORTERM") !== null || (getVariable("TERM") || "").includes("color"));
+var getVariable = (name) => isNode2 ? undefinedToNull(process.env[name.toUpperCase().replaceAll("-", "_")]) : undefinedToNull(varStorage.getItem(name));
+var hasConf = (name) => hasParam("--" + name) || getVariable(name) !== null, production = hasConf("production"), forceColor = isNode2 && isOneOf(process.env.FORCE_COLOR, ["true", "1", "2"]), supportsColor = forceColor || !hasParam("--no-colors") && // @todo deprecate --no-colors
+!hasConf("no-color") && (!isNode2 || process.stdout.isTTY) && (!isNode2 || hasParam("--color") || getVariable("COLORTERM") !== null || (getVariable("TERM") || "").includes("color"));
 
 // node_modules/lib0/buffer.js
 var createUint8ArrayFromLen = (len) => new Uint8Array(len);
@@ -3749,7 +8659,7 @@ var copyUint8Array = (uint8Array) => {
 };
 
 // node_modules/lib0/pair.js
-var Pair = class {
+var Pair2 = class {
   /**
    * @param {L} left
    * @param {R} right
@@ -3757,7 +8667,7 @@ var Pair = class {
   constructor(left, right) {
     this.left = left, this.right = right;
   }
-}, create5 = (left, right) => new Pair(left, right);
+}, create5 = (left, right) => new Pair2(left, right);
 
 // node_modules/lib0/prng.js
 var bool = (gen) => gen.next() >= 0.5, int53 = (gen, min2, max2) => floor(gen.next() * (max2 + 1 - min2) + min2);
@@ -3800,7 +8710,7 @@ var schemaSymbol = /* @__PURE__ */ Symbol("0schema"), ValidationError = class {
 ) : isObject(a) ? every2(
   a,
   (aitem, akey) => shapeExtends(aitem, b[akey])
-) : !1, Schema = class {
+) : !1, Schema2 = class {
   /**
    * @param {Schema<any>} other
    */
@@ -3919,8 +8829,8 @@ var schemaSymbol = /* @__PURE__ */ Symbol("0schema"), ValidationError = class {
  * union). By default, the more objects are added, the the fewer objects this schema will accept.
  * @protected
  */
-__publicField(Schema, "_dilutes", !1);
-var $ConstructedBy = class extends Schema {
+__publicField(Schema2, "_dilutes", !1);
+var $ConstructedBy = class extends Schema2 {
   /**
    * @param {C} c
    * @param {((o:Instance<C>)=>boolean)|null} check
@@ -3937,7 +8847,7 @@ var $ConstructedBy = class extends Schema {
     let c = (o == null ? void 0 : o.constructor) === this.shape && (this._c == null || this._c(o));
     return !c && (err == null || err.extend(null, this.shape.name, o == null ? void 0 : o.constructor.name, (o == null ? void 0 : o.constructor) !== this.shape ? "Constructor match failed" : "Check failed")), c;
   }
-}, $constructedBy = (c, check = null) => new $ConstructedBy(c, check), $$constructedBy = $constructedBy($ConstructedBy), $Custom = class extends Schema {
+}, $constructedBy = (c, check = null) => new $ConstructedBy(c, check), $$constructedBy = $constructedBy($ConstructedBy), $Custom = class extends Schema2 {
   /**
    * @param {(o:any) => boolean} check
    */
@@ -3953,7 +8863,7 @@ var $ConstructedBy = class extends Schema {
     let c = this.shape(o);
     return !c && (err == null || err.extend(null, "custom prop", o == null ? void 0 : o.constructor.name, "failed to check custom prop")), c;
   }
-}, $custom = (check) => new $Custom(check), $$custom = $constructedBy($Custom), $Literal = class extends Schema {
+}, $custom = (check) => new $Custom(check), $$custom = $constructedBy($Custom), $Literal = class extends Schema2 {
   /**
    * @param {Array<T>} literals
    */
@@ -3989,7 +8899,7 @@ var $ConstructedBy = class extends Schema {
   if ($$union.check(s))
     return s.shape.map(_schemaStringTemplateToRegex).flat(1);
   unexpectedCase();
-}, $StringTemplate = class extends Schema {
+}, $StringTemplate = class extends Schema2 {
   /**
    * @param {T} shape
    */
@@ -4006,7 +8916,7 @@ var $ConstructedBy = class extends Schema {
     return !c && (err == null || err.extend(null, this._r.toString(), o.toString(), "String doesn't match string template.")), c;
   }
 };
-var $$stringTemplate = $constructedBy($StringTemplate), isOptionalSymbol = /* @__PURE__ */ Symbol("optional"), $Optional = class extends Schema {
+var $$stringTemplate = $constructedBy($StringTemplate), isOptionalSymbol = /* @__PURE__ */ Symbol("optional"), $Optional = class extends Schema2 {
   /**
    * @param {S} shape
    */
@@ -4025,7 +8935,7 @@ var $$stringTemplate = $constructedBy($StringTemplate), isOptionalSymbol = /* @_
   get [isOptionalSymbol]() {
     return !0;
   }
-}, $$optional = $constructedBy($Optional), $Never = class extends Schema {
+}, $$optional = $constructedBy($Optional), $Never = class extends Schema2 {
   /**
    * @param {any} _o
    * @param {ValidationError} [err]
@@ -4034,7 +8944,7 @@ var $$stringTemplate = $constructedBy($StringTemplate), isOptionalSymbol = /* @_
   check(_o, err) {
     return err == null || err.extend(null, "never", typeof _o), !1;
   }
-}, $never = new $Never(), $$never = $constructedBy($Never), _$Object = class _$Object extends Schema {
+}, $never = new $Never(), $$never = $constructedBy($Never), _$Object = class _$Object extends Schema2 {
   /**
    * @param {S} shape
    * @param {boolean} partial
@@ -4064,7 +8974,7 @@ __publicField(_$Object, "_dilutes", !0);
 var $Object = _$Object, $object = (def) => (
   /** @type {any} */
   new $Object(def)
-), $$object = $constructedBy($Object), $objectAny = $custom((o) => o != null && (o.constructor === Object || o.constructor == null)), $Record = class extends Schema {
+), $$object = $constructedBy($Object), $objectAny = $custom((o) => o != null && (o.constructor === Object || o.constructor == null)), $Record = class extends Schema2 {
   /**
    * @param {Keys} keys
    * @param {Values} values
@@ -4086,7 +8996,7 @@ var $Object = _$Object, $object = (def) => (
       return !ck && (err == null || err.extend(vk + "", "Record", typeof o, ck ? "Key doesn't match schema" : "Value doesn't match value")), ck && this.shape.values.check(vv, err);
     });
   }
-}, $record = (keys2, values) => new $Record(keys2, values), $$record = $constructedBy($Record), $Tuple = class extends Schema {
+}, $record = (keys2, values) => new $Record(keys2, values), $$record = $constructedBy($Record), $Tuple = class extends Schema2 {
   /**
    * @param {S} shape
    */
@@ -4107,7 +9017,7 @@ var $Object = _$Object, $object = (def) => (
       return !c && (err == null || err.extend(vk.toString(), "Tuple", typeof vv)), c;
     });
   }
-}, $tuple = (...def) => new $Tuple(def), $$tuple = $constructedBy($Tuple), $Array = class extends Schema {
+}, $tuple = (...def) => new $Tuple(def), $$tuple = $constructedBy($Tuple), $Array = class extends Schema2 {
   /**
    * @param {Array<S>} v
    */
@@ -4123,7 +9033,7 @@ var $Object = _$Object, $object = (def) => (
     let c = isArray(o) && every(o, (oi) => this.shape.check(oi));
     return !c && (err == null || err.extend(null, "Array", "")), c;
   }
-}, $array = (...def) => new $Array(def), $$array = $constructedBy($Array), $arrayAny = $custom((o) => isArray(o)), $InstanceOf = class extends Schema {
+}, $array = (...def) => new $Array(def), $$array = $constructedBy($Array), $arrayAny = $custom((o) => isArray(o)), $InstanceOf = class extends Schema2 {
   /**
    * @param {new (...args:any) => T} constructor
    * @param {((o:T) => boolean)|null} check
@@ -4140,7 +9050,7 @@ var $Object = _$Object, $object = (def) => (
     let c = o instanceof this.shape && (this._c == null || this._c(o));
     return !c && (err == null || err.extend(null, this.shape.name, o == null ? void 0 : o.constructor.name)), c;
   }
-}, $instanceOf = (c, check = null) => new $InstanceOf(c, check), $$instanceOf = $constructedBy($InstanceOf), $$schema = $instanceOf(Schema), $Lambda = class extends Schema {
+}, $instanceOf = (c, check = null) => new $InstanceOf(c, check), $$instanceOf = $constructedBy($InstanceOf), $$schema = $instanceOf(Schema2), $Lambda = class extends Schema2 {
   /**
    * @param {Args} args
    */
@@ -4157,7 +9067,7 @@ var $Object = _$Object, $object = (def) => (
     return !c && (err == null || err.extend(null, "function", typeof f)), c;
   }
 };
-var $$lambda = $constructedBy($Lambda), $function = $custom((o) => typeof o == "function"), $Intersection = class extends Schema {
+var $$lambda = $constructedBy($Lambda), $function = $custom((o) => typeof o == "function"), $Intersection = class extends Schema2 {
   /**
    * @param {T} v
    */
@@ -4174,7 +9084,7 @@ var $$lambda = $constructedBy($Lambda), $function = $custom((o) => typeof o == "
     return !c && (err == null || err.extend(null, "Intersectinon", typeof o)), c;
   }
 };
-var $$intersect = $constructedBy($Intersection, (o) => o.shape.length > 0), $Union = class extends Schema {
+var $$intersect = $constructedBy($Intersection, (o) => o.shape.length > 0), $Union = class extends Schema2 {
   /**
    * @param {Array<Schema<S>>} v
    */
@@ -4377,7 +9287,7 @@ var domParser = (
 );
 var $element = $custom((el) => el.nodeType === ELEMENT_NODE);
 var $text = $custom((el) => el.nodeType === TEXT_NODE);
-var mapToStyleString = (m) => map(m, (value, key) => `${key}:${value};`).join("");
+var mapToStyleString = (m) => map2(m, (value, key) => `${key}:${value};`).join("");
 var ELEMENT_NODE = doc.ELEMENT_NODE, TEXT_NODE = doc.TEXT_NODE, CDATA_SECTION_NODE = doc.CDATA_SECTION_NODE, COMMENT_NODE = doc.COMMENT_NODE, DOCUMENT_NODE = doc.DOCUMENT_NODE, DOCUMENT_TYPE_NODE = doc.DOCUMENT_TYPE_NODE, DOCUMENT_FRAGMENT_NODE = doc.DOCUMENT_FRAGMENT_NODE, $node = $custom((el) => el.nodeType === DOCUMENT_NODE);
 
 // node_modules/lib0/symbol.js
@@ -4446,7 +9356,7 @@ var _browserStyleMap = {
   return logArgs;
 }, computeLoggingArgs = supportsColor ? computeBrowserLoggingArgs : computeNoColorLoggingArgs, print = (...args2) => {
   console.log(...computeLoggingArgs(args2)), vconsoles.forEach((vc) => vc.print(args2));
-}, warn = (...args2) => {
+}, warn2 = (...args2) => {
   console.warn(...computeLoggingArgs(args2)), args2.unshift(ORANGE), vconsoles.forEach((vc) => vc.print(args2));
 };
 var vconsoles = create2();
@@ -6014,7 +10924,7 @@ var convertUpdateFormatV2ToV1 = (update) => convertUpdateFormat(update, id, Upda
   }
   return path;
 }, warnPrematureAccess = () => {
-  warn("Invalid access: Add Yjs type to a document before reading data.");
+  warn2("Invalid access: Add Yjs type to a document before reading data.");
 }, maxSearchMarker = 80, globalSearchMarkerTimestamp = 0, ArraySearchMarker = class {
   /**
    * @param {Item} p
@@ -7131,7 +12041,7 @@ var typeMapGetAllSnapshot = (parent, snapshot) => {
                 }))), insert = "";
                 break;
               case "retain":
-                retain > 0 && (op = { retain }, isEmpty(attributes) || (op.attributes = assign({}, attributes))), retain = 0;
+                retain > 0 && (op = { retain }, isEmpty2(attributes) || (op.attributes = assign({}, attributes))), retain = 0;
                 break;
             }
             op && delta.push(op), action = null;
@@ -9517,10 +14427,8 @@ function upsertElements(map3, order, elements) {
   }
   for (let id2 of [...map3.keys()])
     ids.has(id2) || map3.delete(id2);
-  order.length > 0 && order.delete(0, order.length), elements.length > 0 && order.insert(
-    0,
-    elements.map((e) => e.id)
-  );
+  let nextOrder = elements.map((e) => e.id);
+  jsonEqual(order.toArray(), nextOrder) || (order.length > 0 && order.delete(0, order.length), nextOrder.length > 0 && order.insert(0, nextOrder));
 }
 function upsertMeta(map3, meta) {
   for (let [k, v] of Object.entries(meta))
@@ -9546,4794 +14454,16 @@ function canvasIsEmpty(doc2) {
   return doc2.getMap(NODES_KEY).size === 0 && doc2.getMap(EDGES_KEY).size === 0;
 }
 function jsonEqual(a, b) {
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-
-// node_modules/yaml/browser/dist/nodes/identity.js
-var ALIAS = /* @__PURE__ */ Symbol.for("yaml.alias"), DOC = /* @__PURE__ */ Symbol.for("yaml.document"), MAP = /* @__PURE__ */ Symbol.for("yaml.map"), PAIR = /* @__PURE__ */ Symbol.for("yaml.pair"), SCALAR = /* @__PURE__ */ Symbol.for("yaml.scalar"), SEQ = /* @__PURE__ */ Symbol.for("yaml.seq"), NODE_TYPE = /* @__PURE__ */ Symbol.for("yaml.node.type"), isAlias = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === ALIAS, isDocument = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === DOC, isMap = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === MAP, isPair = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === PAIR, isScalar = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === SCALAR, isSeq = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === SEQ;
-function isCollection(node) {
-  if (node && typeof node == "object")
-    switch (node[NODE_TYPE]) {
-      case MAP:
-      case SEQ:
-        return !0;
-    }
-  return !1;
-}
-function isNode2(node) {
-  if (node && typeof node == "object")
-    switch (node[NODE_TYPE]) {
-      case ALIAS:
-      case MAP:
-      case SCALAR:
-      case SEQ:
-        return !0;
-    }
-  return !1;
-}
-var hasAnchor = (node) => (isScalar(node) || isCollection(node)) && !!node.anchor;
-
-// node_modules/yaml/browser/dist/visit.js
-var BREAK = /* @__PURE__ */ Symbol("break visit"), SKIP = /* @__PURE__ */ Symbol("skip children"), REMOVE = /* @__PURE__ */ Symbol("remove node");
-function visit(node, visitor) {
-  let visitor_ = initVisitor(visitor);
-  isDocument(node) ? visit_(null, node.contents, visitor_, Object.freeze([node])) === REMOVE && (node.contents = null) : visit_(null, node, visitor_, Object.freeze([]));
-}
-visit.BREAK = BREAK;
-visit.SKIP = SKIP;
-visit.REMOVE = REMOVE;
-function visit_(key, node, visitor, path) {
-  let ctrl = callVisitor(key, node, visitor, path);
-  if (isNode2(ctrl) || isPair(ctrl))
-    return replaceNode(key, path, ctrl), visit_(key, ctrl, visitor, path);
-  if (typeof ctrl != "symbol") {
-    if (isCollection(node)) {
-      path = Object.freeze(path.concat(node));
-      for (let i = 0; i < node.items.length; ++i) {
-        let ci = visit_(i, node.items[i], visitor, path);
-        if (typeof ci == "number")
-          i = ci - 1;
-        else {
-          if (ci === BREAK)
-            return BREAK;
-          ci === REMOVE && (node.items.splice(i, 1), i -= 1);
-        }
-      }
-    } else if (isPair(node)) {
-      path = Object.freeze(path.concat(node));
-      let ck = visit_("key", node.key, visitor, path);
-      if (ck === BREAK)
-        return BREAK;
-      ck === REMOVE && (node.key = null);
-      let cv = visit_("value", node.value, visitor, path);
-      if (cv === BREAK)
-        return BREAK;
-      cv === REMOVE && (node.value = null);
-    }
-  }
-  return ctrl;
-}
-async function visitAsync(node, visitor) {
-  let visitor_ = initVisitor(visitor);
-  isDocument(node) ? await visitAsync_(null, node.contents, visitor_, Object.freeze([node])) === REMOVE && (node.contents = null) : await visitAsync_(null, node, visitor_, Object.freeze([]));
-}
-visitAsync.BREAK = BREAK;
-visitAsync.SKIP = SKIP;
-visitAsync.REMOVE = REMOVE;
-async function visitAsync_(key, node, visitor, path) {
-  let ctrl = await callVisitor(key, node, visitor, path);
-  if (isNode2(ctrl) || isPair(ctrl))
-    return replaceNode(key, path, ctrl), visitAsync_(key, ctrl, visitor, path);
-  if (typeof ctrl != "symbol") {
-    if (isCollection(node)) {
-      path = Object.freeze(path.concat(node));
-      for (let i = 0; i < node.items.length; ++i) {
-        let ci = await visitAsync_(i, node.items[i], visitor, path);
-        if (typeof ci == "number")
-          i = ci - 1;
-        else {
-          if (ci === BREAK)
-            return BREAK;
-          ci === REMOVE && (node.items.splice(i, 1), i -= 1);
-        }
-      }
-    } else if (isPair(node)) {
-      path = Object.freeze(path.concat(node));
-      let ck = await visitAsync_("key", node.key, visitor, path);
-      if (ck === BREAK)
-        return BREAK;
-      ck === REMOVE && (node.key = null);
-      let cv = await visitAsync_("value", node.value, visitor, path);
-      if (cv === BREAK)
-        return BREAK;
-      cv === REMOVE && (node.value = null);
-    }
-  }
-  return ctrl;
-}
-function initVisitor(visitor) {
-  return typeof visitor == "object" && (visitor.Collection || visitor.Node || visitor.Value) ? Object.assign({
-    Alias: visitor.Node,
-    Map: visitor.Node,
-    Scalar: visitor.Node,
-    Seq: visitor.Node
-  }, visitor.Value && {
-    Map: visitor.Value,
-    Scalar: visitor.Value,
-    Seq: visitor.Value
-  }, visitor.Collection && {
-    Map: visitor.Collection,
-    Seq: visitor.Collection
-  }, visitor) : visitor;
-}
-function callVisitor(key, node, visitor, path) {
-  var _a, _b, _c, _d, _e;
-  if (typeof visitor == "function")
-    return visitor(key, node, path);
-  if (isMap(node))
-    return (_a = visitor.Map) == null ? void 0 : _a.call(visitor, key, node, path);
-  if (isSeq(node))
-    return (_b = visitor.Seq) == null ? void 0 : _b.call(visitor, key, node, path);
-  if (isPair(node))
-    return (_c = visitor.Pair) == null ? void 0 : _c.call(visitor, key, node, path);
-  if (isScalar(node))
-    return (_d = visitor.Scalar) == null ? void 0 : _d.call(visitor, key, node, path);
-  if (isAlias(node))
-    return (_e = visitor.Alias) == null ? void 0 : _e.call(visitor, key, node, path);
-}
-function replaceNode(key, path, node) {
-  let parent = path[path.length - 1];
-  if (isCollection(parent))
-    parent.items[key] = node;
-  else if (isPair(parent))
-    key === "key" ? parent.key = node : parent.value = node;
-  else if (isDocument(parent))
-    parent.contents = node;
-  else {
-    let pt = isAlias(parent) ? "alias" : "scalar";
-    throw new Error(`Cannot replace node with ${pt} parent`);
-  }
-}
-
-// node_modules/yaml/browser/dist/doc/directives.js
-var escapeChars = {
-  "!": "%21",
-  ",": "%2C",
-  "[": "%5B",
-  "]": "%5D",
-  "{": "%7B",
-  "}": "%7D"
-}, escapeTagName = (tn) => tn.replace(/[!,[\]{}]/g, (ch) => escapeChars[ch]), Directives = class _Directives {
-  constructor(yaml, tags) {
-    this.docStart = null, this.docEnd = !1, this.yaml = Object.assign({}, _Directives.defaultYaml, yaml), this.tags = Object.assign({}, _Directives.defaultTags, tags);
-  }
-  clone() {
-    let copy2 = new _Directives(this.yaml, this.tags);
-    return copy2.docStart = this.docStart, copy2;
-  }
-  /**
-   * During parsing, get a Directives instance for the current document and
-   * update the stream state according to the current version's spec.
-   */
-  atDocument() {
-    let res = new _Directives(this.yaml, this.tags);
-    switch (this.yaml.version) {
-      case "1.1":
-        this.atNextDocument = !0;
-        break;
-      case "1.2":
-        this.atNextDocument = !1, this.yaml = {
-          explicit: _Directives.defaultYaml.explicit,
-          version: "1.2"
-        }, this.tags = Object.assign({}, _Directives.defaultTags);
-        break;
-    }
-    return res;
-  }
-  /**
-   * @param onError - May be called even if the action was successful
-   * @returns `true` on success
-   */
-  add(line, onError) {
-    this.atNextDocument && (this.yaml = { explicit: _Directives.defaultYaml.explicit, version: "1.1" }, this.tags = Object.assign({}, _Directives.defaultTags), this.atNextDocument = !1);
-    let parts = line.trim().split(/[ \t]+/), name = parts.shift();
-    switch (name) {
-      case "%TAG": {
-        if (parts.length !== 2 && (onError(0, "%TAG directive should contain exactly two parts"), parts.length < 2))
-          return !1;
-        let [handle, prefix] = parts;
-        return this.tags[handle] = prefix, !0;
-      }
-      case "%YAML": {
-        if (this.yaml.explicit = !0, parts.length !== 1)
-          return onError(0, "%YAML directive should contain exactly one part"), !1;
-        let [version] = parts;
-        if (version === "1.1" || version === "1.2")
-          return this.yaml.version = version, !0;
-        {
-          let isValid = /^\d+\.\d+$/.test(version);
-          return onError(6, `Unsupported YAML version ${version}`, isValid), !1;
-        }
-      }
-      default:
-        return onError(0, `Unknown directive ${name}`, !0), !1;
-    }
-  }
-  /**
-   * Resolves a tag, matching handles to those defined in %TAG directives.
-   *
-   * @returns Resolved tag, which may also be the non-specific tag `'!'` or a
-   *   `'!local'` tag, or `null` if unresolvable.
-   */
-  tagName(source, onError) {
-    if (source === "!")
-      return "!";
-    if (source[0] !== "!")
-      return onError(`Not a valid tag: ${source}`), null;
-    if (source[1] === "<") {
-      let verbatim = source.slice(2, -1);
-      return verbatim === "!" || verbatim === "!!" ? (onError(`Verbatim tags aren't resolved, so ${source} is invalid.`), null) : (source[source.length - 1] !== ">" && onError("Verbatim tags must end with a >"), verbatim);
-    }
-    let [, handle, suffix] = source.match(/^(.*!)([^!]*)$/s);
-    suffix || onError(`The ${source} tag has no suffix`);
-    let prefix = this.tags[handle];
-    if (prefix)
-      try {
-        return prefix + decodeURIComponent(suffix);
-      } catch (error) {
-        return onError(String(error)), null;
-      }
-    return handle === "!" ? source : (onError(`Could not resolve tag: ${source}`), null);
-  }
-  /**
-   * Given a fully resolved tag, returns its printable string form,
-   * taking into account current tag prefixes and defaults.
-   */
-  tagString(tag) {
-    for (let [handle, prefix] of Object.entries(this.tags))
-      if (tag.startsWith(prefix))
-        return handle + escapeTagName(tag.substring(prefix.length));
-    return tag[0] === "!" ? tag : `!<${tag}>`;
-  }
-  toString(doc2) {
-    let lines = this.yaml.explicit ? [`%YAML ${this.yaml.version || "1.2"}`] : [], tagEntries = Object.entries(this.tags), tagNames;
-    if (doc2 && tagEntries.length > 0 && isNode2(doc2.contents)) {
-      let tags = {};
-      visit(doc2.contents, (_key, node) => {
-        isNode2(node) && node.tag && (tags[node.tag] = !0);
-      }), tagNames = Object.keys(tags);
-    } else
-      tagNames = [];
-    for (let [handle, prefix] of tagEntries)
-      handle === "!!" && prefix === "tag:yaml.org,2002:" || (!doc2 || tagNames.some((tn) => tn.startsWith(prefix))) && lines.push(`%TAG ${handle} ${prefix}`);
-    return lines.join(`
-`);
-  }
-};
-Directives.defaultYaml = { explicit: !1, version: "1.2" };
-Directives.defaultTags = { "!!": "tag:yaml.org,2002:" };
-
-// node_modules/yaml/browser/dist/doc/anchors.js
-function anchorIsValid(anchor) {
-  if (/[\x00-\x19\s,[\]{}]/.test(anchor)) {
-    let msg = `Anchor must not contain whitespace or control characters: ${JSON.stringify(anchor)}`;
-    throw new Error(msg);
-  }
-  return !0;
-}
-function anchorNames(root) {
-  let anchors = /* @__PURE__ */ new Set();
-  return visit(root, {
-    Value(_key, node) {
-      node.anchor && anchors.add(node.anchor);
-    }
-  }), anchors;
-}
-function findNewAnchor(prefix, exclude) {
-  for (let i = 1; ; ++i) {
-    let name = `${prefix}${i}`;
-    if (!exclude.has(name))
-      return name;
-  }
-}
-function createNodeAnchors(doc2, prefix) {
-  let aliasObjects = [], sourceObjects = /* @__PURE__ */ new Map(), prevAnchors = null;
-  return {
-    onAnchor: (source) => {
-      aliasObjects.push(source), prevAnchors != null || (prevAnchors = anchorNames(doc2));
-      let anchor = findNewAnchor(prefix, prevAnchors);
-      return prevAnchors.add(anchor), anchor;
-    },
-    /**
-     * With circular references, the source node is only resolved after all
-     * of its child nodes are. This is why anchors are set only after all of
-     * the nodes have been created.
-     */
-    setAnchors: () => {
-      for (let source of aliasObjects) {
-        let ref = sourceObjects.get(source);
-        if (typeof ref == "object" && ref.anchor && (isScalar(ref.node) || isCollection(ref.node)))
-          ref.node.anchor = ref.anchor;
-        else {
-          let error = new Error("Failed to resolve repeated object (this should not happen)");
-          throw error.source = source, error;
-        }
-      }
-    },
-    sourceObjects
-  };
-}
-
-// node_modules/yaml/browser/dist/doc/applyReviver.js
-function applyReviver(reviver, obj, key, val) {
-  if (val && typeof val == "object")
-    if (Array.isArray(val))
-      for (let i = 0, len = val.length; i < len; ++i) {
-        let v0 = val[i], v1 = applyReviver(reviver, val, String(i), v0);
-        v1 === void 0 ? delete val[i] : v1 !== v0 && (val[i] = v1);
-      }
-    else if (val instanceof Map)
-      for (let k of Array.from(val.keys())) {
-        let v0 = val.get(k), v1 = applyReviver(reviver, val, k, v0);
-        v1 === void 0 ? val.delete(k) : v1 !== v0 && val.set(k, v1);
-      }
-    else if (val instanceof Set)
-      for (let v0 of Array.from(val)) {
-        let v1 = applyReviver(reviver, val, v0, v0);
-        v1 === void 0 ? val.delete(v0) : v1 !== v0 && (val.delete(v0), val.add(v1));
-      }
-    else
-      for (let [k, v0] of Object.entries(val)) {
-        let v1 = applyReviver(reviver, val, k, v0);
-        v1 === void 0 ? delete val[k] : v1 !== v0 && (val[k] = v1);
-      }
-  return reviver.call(obj, key, val);
-}
-
-// node_modules/yaml/browser/dist/nodes/toJS.js
-function toJS(value, arg, ctx) {
-  if (Array.isArray(value))
-    return value.map((v, i) => toJS(v, String(i), ctx));
-  if (value && typeof value.toJSON == "function") {
-    if (!ctx || !hasAnchor(value))
-      return value.toJSON(arg, ctx);
-    let data = { aliasCount: 0, count: 1, res: void 0 };
-    ctx.anchors.set(value, data), ctx.onCreate = (res2) => {
-      data.res = res2, delete ctx.onCreate;
-    };
-    let res = value.toJSON(arg, ctx);
-    return ctx.onCreate && ctx.onCreate(res), res;
-  }
-  return typeof value == "bigint" && !(ctx != null && ctx.keep) ? Number(value) : value;
-}
-
-// node_modules/yaml/browser/dist/nodes/Node.js
-var NodeBase = class {
-  constructor(type) {
-    Object.defineProperty(this, NODE_TYPE, { value: type });
-  }
-  /** Create a copy of this node.  */
-  clone() {
-    let copy2 = Object.create(Object.getPrototypeOf(this), Object.getOwnPropertyDescriptors(this));
-    return this.range && (copy2.range = this.range.slice()), copy2;
-  }
-  /** A plain JavaScript representation of this node. */
-  toJS(doc2, { mapAsMap, maxAliasCount, onAnchor, reviver } = {}) {
-    if (!isDocument(doc2))
-      throw new TypeError("A document argument is required");
-    let ctx = {
-      anchors: /* @__PURE__ */ new Map(),
-      doc: doc2,
-      keep: !0,
-      mapAsMap: mapAsMap === !0,
-      mapKeyWarned: !1,
-      maxAliasCount: typeof maxAliasCount == "number" ? maxAliasCount : 100
-    }, res = toJS(this, "", ctx);
-    if (typeof onAnchor == "function")
-      for (let { count: count2, res: res2 } of ctx.anchors.values())
-        onAnchor(res2, count2);
-    return typeof reviver == "function" ? applyReviver(reviver, { "": res }, "", res) : res;
-  }
-};
-
-// node_modules/yaml/browser/dist/nodes/Alias.js
-var Alias = class extends NodeBase {
-  constructor(source) {
-    super(ALIAS), this.source = source, Object.defineProperty(this, "tag", {
-      set() {
-        throw new Error("Alias nodes cannot have tags");
-      }
-    });
-  }
-  /**
-   * Resolve the value of this alias within `doc`, finding the last
-   * instance of the `source` anchor before this node.
-   */
-  resolve(doc2, ctx) {
-    if ((ctx == null ? void 0 : ctx.maxAliasCount) === 0)
-      throw new ReferenceError("Alias resolution is disabled");
-    let nodes;
-    ctx != null && ctx.aliasResolveCache ? nodes = ctx.aliasResolveCache : (nodes = [], visit(doc2, {
-      Node: (_key, node) => {
-        (isAlias(node) || hasAnchor(node)) && nodes.push(node);
-      }
-    }), ctx && (ctx.aliasResolveCache = nodes));
-    let found;
-    for (let node of nodes) {
-      if (node === this)
-        break;
-      node.anchor === this.source && (found = node);
-    }
-    return found;
-  }
-  toJSON(_arg, ctx) {
-    if (!ctx)
-      return { source: this.source };
-    let { anchors, doc: doc2, maxAliasCount } = ctx, source = this.resolve(doc2, ctx);
-    if (!source) {
-      let msg = `Unresolved alias (the anchor must be set before the alias): ${this.source}`;
-      throw new ReferenceError(msg);
-    }
-    let data = anchors.get(source);
-    if (data || (toJS(source, null, ctx), data = anchors.get(source)), (data == null ? void 0 : data.res) === void 0) {
-      let msg = "This should not happen: Alias anchor was not resolved?";
-      throw new ReferenceError(msg);
-    }
-    if (maxAliasCount >= 0 && (data.count += 1, data.aliasCount === 0 && (data.aliasCount = getAliasCount(doc2, source, anchors)), data.count * data.aliasCount > maxAliasCount)) {
-      let msg = "Excessive alias count indicates a resource exhaustion attack";
-      throw new ReferenceError(msg);
-    }
-    return data.res;
-  }
-  toString(ctx, _onComment, _onChompKeep) {
-    let src = `*${this.source}`;
-    if (ctx) {
-      if (anchorIsValid(this.source), ctx.options.verifyAliasOrder && !ctx.anchors.has(this.source)) {
-        let msg = `Unresolved alias (the anchor must be set before the alias): ${this.source}`;
-        throw new Error(msg);
-      }
-      if (ctx.implicitKey)
-        return `${src} `;
-    }
-    return src;
-  }
-};
-function getAliasCount(doc2, node, anchors) {
-  if (isAlias(node)) {
-    let source = node.resolve(doc2), anchor = anchors && source && anchors.get(source);
-    return anchor ? anchor.count * anchor.aliasCount : 0;
-  } else if (isCollection(node)) {
-    let count2 = 0;
-    for (let item of node.items) {
-      let c = getAliasCount(doc2, item, anchors);
-      c > count2 && (count2 = c);
-    }
-    return count2;
-  } else if (isPair(node)) {
-    let kc = getAliasCount(doc2, node.key, anchors), vc = getAliasCount(doc2, node.value, anchors);
-    return Math.max(kc, vc);
-  }
-  return 1;
-}
-
-// node_modules/yaml/browser/dist/nodes/Scalar.js
-var isScalarValue = (value) => !value || typeof value != "function" && typeof value != "object", Scalar = class extends NodeBase {
-  constructor(value) {
-    super(SCALAR), this.value = value;
-  }
-  toJSON(arg, ctx) {
-    return ctx != null && ctx.keep ? this.value : toJS(this.value, arg, ctx);
-  }
-  toString() {
-    return String(this.value);
-  }
-};
-Scalar.BLOCK_FOLDED = "BLOCK_FOLDED";
-Scalar.BLOCK_LITERAL = "BLOCK_LITERAL";
-Scalar.PLAIN = "PLAIN";
-Scalar.QUOTE_DOUBLE = "QUOTE_DOUBLE";
-Scalar.QUOTE_SINGLE = "QUOTE_SINGLE";
-
-// node_modules/yaml/browser/dist/doc/createNode.js
-var defaultTagPrefix = "tag:yaml.org,2002:";
-function findTagObject(value, tagName, tags) {
-  var _a;
-  if (tagName) {
-    let match2 = tags.filter((t) => t.tag === tagName), tagObj = (_a = match2.find((t) => !t.format)) != null ? _a : match2[0];
-    if (!tagObj)
-      throw new Error(`Tag ${tagName} not found`);
-    return tagObj;
-  }
-  return tags.find((t) => {
-    var _a2;
-    return ((_a2 = t.identify) == null ? void 0 : _a2.call(t, value)) && !t.format;
-  });
-}
-function createNode(value, tagName, ctx) {
-  var _a, _b, _c, _d;
-  if (isDocument(value) && (value = value.contents), isNode2(value))
-    return value;
-  if (isPair(value)) {
-    let map3 = (_b = (_a = ctx.schema[MAP]).createNode) == null ? void 0 : _b.call(_a, ctx.schema, null, ctx);
-    return map3.items.push(value), map3;
-  }
-  (value instanceof String || value instanceof Number || value instanceof Boolean || typeof BigInt != "undefined" && value instanceof BigInt) && (value = value.valueOf());
-  let { aliasDuplicateObjects, onAnchor, onTagObj, schema: schema4, sourceObjects } = ctx, ref;
-  if (aliasDuplicateObjects && value && typeof value == "object") {
-    if (ref = sourceObjects.get(value), ref)
-      return (_c = ref.anchor) != null || (ref.anchor = onAnchor(value)), new Alias(ref.anchor);
-    ref = { anchor: null, node: null }, sourceObjects.set(value, ref);
-  }
-  tagName != null && tagName.startsWith("!!") && (tagName = defaultTagPrefix + tagName.slice(2));
-  let tagObj = findTagObject(value, tagName, schema4.tags);
-  if (!tagObj) {
-    if (value && typeof value.toJSON == "function" && (value = value.toJSON()), !value || typeof value != "object") {
-      let node2 = new Scalar(value);
-      return ref && (ref.node = node2), node2;
-    }
-    tagObj = value instanceof Map ? schema4[MAP] : Symbol.iterator in Object(value) ? schema4[SEQ] : schema4[MAP];
-  }
-  onTagObj && (onTagObj(tagObj), delete ctx.onTagObj);
-  let node = tagObj != null && tagObj.createNode ? tagObj.createNode(ctx.schema, value, ctx) : typeof ((_d = tagObj == null ? void 0 : tagObj.nodeClass) == null ? void 0 : _d.from) == "function" ? tagObj.nodeClass.from(ctx.schema, value, ctx) : new Scalar(value);
-  return tagName ? node.tag = tagName : tagObj.default || (node.tag = tagObj.tag), ref && (ref.node = node), node;
-}
-
-// node_modules/yaml/browser/dist/nodes/Collection.js
-function collectionFromPath(schema4, path, value) {
-  let v = value;
-  for (let i = path.length - 1; i >= 0; --i) {
-    let k = path[i];
-    if (typeof k == "number" && Number.isInteger(k) && k >= 0) {
-      let a = [];
-      a[k] = v, v = a;
-    } else
-      v = /* @__PURE__ */ new Map([[k, v]]);
-  }
-  return createNode(v, void 0, {
-    aliasDuplicateObjects: !1,
-    keepUndefined: !1,
-    onAnchor: () => {
-      throw new Error("This should not happen, please report a bug.");
-    },
-    schema: schema4,
-    sourceObjects: /* @__PURE__ */ new Map()
-  });
-}
-var isEmptyPath = (path) => path == null || typeof path == "object" && !!path[Symbol.iterator]().next().done, Collection = class extends NodeBase {
-  constructor(type, schema4) {
-    super(type), Object.defineProperty(this, "schema", {
-      value: schema4,
-      configurable: !0,
-      enumerable: !1,
-      writable: !0
-    });
-  }
-  /**
-   * Create a copy of this collection.
-   *
-   * @param schema - If defined, overwrites the original's schema
-   */
-  clone(schema4) {
-    let copy2 = Object.create(Object.getPrototypeOf(this), Object.getOwnPropertyDescriptors(this));
-    return schema4 && (copy2.schema = schema4), copy2.items = copy2.items.map((it) => isNode2(it) || isPair(it) ? it.clone(schema4) : it), this.range && (copy2.range = this.range.slice()), copy2;
-  }
-  /**
-   * Adds a value to the collection. For `!!map` and `!!omap` the value must
-   * be a Pair instance or a `{ key, value }` object, which may not have a key
-   * that already exists in the map.
-   */
-  addIn(path, value) {
-    if (isEmptyPath(path))
-      this.add(value);
-    else {
-      let [key, ...rest] = path, node = this.get(key, !0);
-      if (isCollection(node))
-        node.addIn(rest, value);
-      else if (node === void 0 && this.schema)
-        this.set(key, collectionFromPath(this.schema, rest, value));
-      else
-        throw new Error(`Expected YAML collection at ${key}. Remaining path: ${rest}`);
-    }
-  }
-  /**
-   * Removes a value from the collection.
-   * @returns `true` if the item was found and removed.
-   */
-  deleteIn(path) {
-    let [key, ...rest] = path;
-    if (rest.length === 0)
-      return this.delete(key);
-    let node = this.get(key, !0);
-    if (isCollection(node))
-      return node.deleteIn(rest);
-    throw new Error(`Expected YAML collection at ${key}. Remaining path: ${rest}`);
-  }
-  /**
-   * Returns item at `key`, or `undefined` if not found. By default unwraps
-   * scalar values from their surrounding node; to disable set `keepScalar` to
-   * `true` (collections are always returned intact).
-   */
-  getIn(path, keepScalar) {
-    let [key, ...rest] = path, node = this.get(key, !0);
-    return rest.length === 0 ? !keepScalar && isScalar(node) ? node.value : node : isCollection(node) ? node.getIn(rest, keepScalar) : void 0;
-  }
-  hasAllNullValues(allowScalar) {
-    return this.items.every((node) => {
-      if (!isPair(node))
-        return !1;
-      let n = node.value;
-      return n == null || allowScalar && isScalar(n) && n.value == null && !n.commentBefore && !n.comment && !n.tag;
-    });
-  }
-  /**
-   * Checks if the collection includes a value with the key `key`.
-   */
-  hasIn(path) {
-    let [key, ...rest] = path;
-    if (rest.length === 0)
-      return this.has(key);
-    let node = this.get(key, !0);
-    return isCollection(node) ? node.hasIn(rest) : !1;
-  }
-  /**
-   * Sets a value in this collection. For `!!set`, `value` needs to be a
-   * boolean to add/remove the item from the set.
-   */
-  setIn(path, value) {
-    let [key, ...rest] = path;
-    if (rest.length === 0)
-      this.set(key, value);
-    else {
-      let node = this.get(key, !0);
-      if (isCollection(node))
-        node.setIn(rest, value);
-      else if (node === void 0 && this.schema)
-        this.set(key, collectionFromPath(this.schema, rest, value));
-      else
-        throw new Error(`Expected YAML collection at ${key}. Remaining path: ${rest}`);
-    }
-  }
-};
-
-// node_modules/yaml/browser/dist/stringify/stringifyComment.js
-var stringifyComment = (str) => str.replace(/^(?!$)(?: $)?/gm, "#");
-function indentComment(comment, indent) {
-  return /^\n+$/.test(comment) ? comment.substring(1) : indent ? comment.replace(/^(?! *$)/gm, indent) : comment;
-}
-var lineComment = (str, indent, comment) => str.endsWith(`
-`) ? indentComment(comment, indent) : comment.includes(`
-`) ? `
-` + indentComment(comment, indent) : (str.endsWith(" ") ? "" : " ") + comment;
-
-// node_modules/yaml/browser/dist/stringify/foldFlowLines.js
-var FOLD_FLOW = "flow", FOLD_BLOCK = "block", FOLD_QUOTED = "quoted";
-function foldFlowLines(text2, indent, mode = "flow", { indentAtStart, lineWidth = 80, minContentWidth = 20, onFold, onOverflow } = {}) {
-  if (!lineWidth || lineWidth < 0)
-    return text2;
-  lineWidth < minContentWidth && (minContentWidth = 0);
-  let endStep = Math.max(1 + minContentWidth, 1 + lineWidth - indent.length);
-  if (text2.length <= endStep)
-    return text2;
-  let folds = [], escapedFolds = {}, end = lineWidth - indent.length;
-  typeof indentAtStart == "number" && (indentAtStart > lineWidth - Math.max(2, minContentWidth) ? folds.push(0) : end = lineWidth - indentAtStart);
-  let split, prev, overflow = !1, i = -1, escStart = -1, escEnd = -1;
-  mode === FOLD_BLOCK && (i = consumeMoreIndentedLines(text2, i, indent.length), i !== -1 && (end = i + endStep));
-  for (let ch; ch = text2[i += 1]; ) {
-    if (mode === FOLD_QUOTED && ch === "\\") {
-      switch (escStart = i, text2[i + 1]) {
-        case "x":
-          i += 3;
-          break;
-        case "u":
-          i += 5;
-          break;
-        case "U":
-          i += 9;
-          break;
-        default:
-          i += 1;
-      }
-      escEnd = i;
-    }
-    if (ch === `
-`)
-      mode === FOLD_BLOCK && (i = consumeMoreIndentedLines(text2, i, indent.length)), end = i + indent.length + endStep, split = void 0;
-    else {
-      if (ch === " " && prev && prev !== " " && prev !== `
-` && prev !== "	") {
-        let next = text2[i + 1];
-        next && next !== " " && next !== `
-` && next !== "	" && (split = i);
-      }
-      if (i >= end)
-        if (split)
-          folds.push(split), end = split + endStep, split = void 0;
-        else if (mode === FOLD_QUOTED) {
-          for (; prev === " " || prev === "	"; )
-            prev = ch, ch = text2[i += 1], overflow = !0;
-          let j = i > escEnd + 1 ? i - 2 : escStart - 1;
-          if (escapedFolds[j])
-            return text2;
-          folds.push(j), escapedFolds[j] = !0, end = j + endStep, split = void 0;
-        } else
-          overflow = !0;
-    }
-    prev = ch;
-  }
-  if (overflow && onOverflow && onOverflow(), folds.length === 0)
-    return text2;
-  onFold && onFold();
-  let res = text2.slice(0, folds[0]);
-  for (let i2 = 0; i2 < folds.length; ++i2) {
-    let fold = folds[i2], end2 = folds[i2 + 1] || text2.length;
-    fold === 0 ? res = `
-${indent}${text2.slice(0, end2)}` : (mode === FOLD_QUOTED && escapedFolds[fold] && (res += `${text2[fold]}\\`), res += `
-${indent}${text2.slice(fold + 1, end2)}`);
-  }
-  return res;
-}
-function consumeMoreIndentedLines(text2, i, indent) {
-  let end = i, start = i + 1, ch = text2[start];
-  for (; ch === " " || ch === "	"; )
-    if (i < start + indent)
-      ch = text2[++i];
-    else {
-      do
-        ch = text2[++i];
-      while (ch && ch !== `
-`);
-      end = i, start = i + 1, ch = text2[start];
-    }
-  return end;
-}
-
-// node_modules/yaml/browser/dist/stringify/stringifyString.js
-var getFoldOptions = (ctx, isBlock2) => ({
-  indentAtStart: isBlock2 ? ctx.indent.length : ctx.indentAtStart,
-  lineWidth: ctx.options.lineWidth,
-  minContentWidth: ctx.options.minContentWidth
-}), containsDocumentMarker = (str) => /^(%|---|\.\.\.)/m.test(str);
-function lineLengthOverLimit(str, lineWidth, indentLength) {
-  if (!lineWidth || lineWidth < 0)
-    return !1;
-  let limit = lineWidth - indentLength, strLen = str.length;
-  if (strLen <= limit)
-    return !1;
-  for (let i = 0, start = 0; i < strLen; ++i)
-    if (str[i] === `
-`) {
-      if (i - start > limit)
-        return !0;
-      if (start = i + 1, strLen - start <= limit)
-        return !1;
-    }
-  return !0;
-}
-function doubleQuotedString(value, ctx) {
-  let json = JSON.stringify(value);
-  if (ctx.options.doubleQuotedAsJSON)
-    return json;
-  let { implicitKey } = ctx, minMultiLineLength = ctx.options.doubleQuotedMinMultiLineLength, indent = ctx.indent || (containsDocumentMarker(value) ? "  " : ""), str = "", start = 0;
-  for (let i = 0, ch = json[i]; ch; ch = json[++i])
-    if (ch === " " && json[i + 1] === "\\" && json[i + 2] === "n" && (str += json.slice(start, i) + "\\ ", i += 1, start = i, ch = "\\"), ch === "\\")
-      switch (json[i + 1]) {
-        case "u":
-          {
-            str += json.slice(start, i);
-            let code = json.substr(i + 2, 4);
-            switch (code) {
-              case "0000":
-                str += "\\0";
-                break;
-              case "0007":
-                str += "\\a";
-                break;
-              case "000b":
-                str += "\\v";
-                break;
-              case "001b":
-                str += "\\e";
-                break;
-              case "0085":
-                str += "\\N";
-                break;
-              case "00a0":
-                str += "\\_";
-                break;
-              case "2028":
-                str += "\\L";
-                break;
-              case "2029":
-                str += "\\P";
-                break;
-              default:
-                code.substr(0, 2) === "00" ? str += "\\x" + code.substr(2) : str += json.substr(i, 6);
-            }
-            i += 5, start = i + 1;
-          }
-          break;
-        case "n":
-          if (implicitKey || json[i + 2] === '"' || json.length < minMultiLineLength)
-            i += 1;
-          else {
-            for (str += json.slice(start, i) + `
-
-`; json[i + 2] === "\\" && json[i + 3] === "n" && json[i + 4] !== '"'; )
-              str += `
-`, i += 2;
-            str += indent, json[i + 2] === " " && (str += "\\"), i += 1, start = i + 1;
-          }
-          break;
-        default:
-          i += 1;
-      }
-  return str = start ? str + json.slice(start) : json, implicitKey ? str : foldFlowLines(str, indent, FOLD_QUOTED, getFoldOptions(ctx, !1));
-}
-function singleQuotedString(value, ctx) {
-  if (ctx.options.singleQuote === !1 || ctx.implicitKey && value.includes(`
-`) || /[ \t]\n|\n[ \t]/.test(value))
-    return doubleQuotedString(value, ctx);
-  let indent = ctx.indent || (containsDocumentMarker(value) ? "  " : ""), res = "'" + value.replace(/'/g, "''").replace(/\n+/g, `$&
-${indent}`) + "'";
-  return ctx.implicitKey ? res : foldFlowLines(res, indent, FOLD_FLOW, getFoldOptions(ctx, !1));
-}
-function quotedString(value, ctx) {
-  let { singleQuote } = ctx.options, qs;
-  if (singleQuote === !1)
-    qs = doubleQuotedString;
-  else {
-    let hasDouble = value.includes('"'), hasSingle = value.includes("'");
-    hasDouble && !hasSingle ? qs = singleQuotedString : hasSingle && !hasDouble ? qs = doubleQuotedString : qs = singleQuote ? singleQuotedString : doubleQuotedString;
-  }
-  return qs(value, ctx);
-}
-var blockEndNewlines;
-try {
-  blockEndNewlines = new RegExp(`(^|(?<!
-))
-+(?!
-|$)`, "g");
-} catch (e) {
-  blockEndNewlines = /\n+(?!\n|$)/g;
-}
-function blockString({ comment, type, value }, ctx, onComment, onChompKeep) {
-  let { blockQuote, commentString, lineWidth } = ctx.options;
-  if (!blockQuote || /\n[\t ]+$/.test(value))
-    return quotedString(value, ctx);
-  let indent = ctx.indent || (ctx.forceBlockIndent || containsDocumentMarker(value) ? "  " : ""), literal = blockQuote === "literal" ? !0 : blockQuote === "folded" || type === Scalar.BLOCK_FOLDED ? !1 : type === Scalar.BLOCK_LITERAL ? !0 : !lineLengthOverLimit(value, lineWidth, indent.length);
-  if (!value)
-    return literal ? `|
-` : `>
-`;
-  let chomp, endStart;
-  for (endStart = value.length; endStart > 0; --endStart) {
-    let ch = value[endStart - 1];
-    if (ch !== `
-` && ch !== "	" && ch !== " ")
-      break;
-  }
-  let end = value.substring(endStart), endNlPos = end.indexOf(`
-`);
-  endNlPos === -1 ? chomp = "-" : value === end || endNlPos !== end.length - 1 ? (chomp = "+", onChompKeep && onChompKeep()) : chomp = "", end && (value = value.slice(0, -end.length), end[end.length - 1] === `
-` && (end = end.slice(0, -1)), end = end.replace(blockEndNewlines, `$&${indent}`));
-  let startWithSpace = !1, startEnd, startNlPos = -1;
-  for (startEnd = 0; startEnd < value.length; ++startEnd) {
-    let ch = value[startEnd];
-    if (ch === " ")
-      startWithSpace = !0;
-    else if (ch === `
-`)
-      startNlPos = startEnd;
-    else
-      break;
-  }
-  let start = value.substring(0, startNlPos < startEnd ? startNlPos + 1 : startEnd);
-  start && (value = value.substring(start.length), start = start.replace(/\n+/g, `$&${indent}`));
-  let header = (startWithSpace ? indent ? "2" : "1" : "") + chomp;
-  if (comment && (header += " " + commentString(comment.replace(/ ?[\r\n]+/g, " ")), onComment && onComment()), !literal) {
-    let foldedValue = value.replace(/\n+/g, `
-$&`).replace(/(?:^|\n)([\t ].*)(?:([\n\t ]*)\n(?![\n\t ]))?/g, "$1$2").replace(/\n+/g, `$&${indent}`), literalFallback = !1, foldOptions = getFoldOptions(ctx, !0);
-    blockQuote !== "folded" && type !== Scalar.BLOCK_FOLDED && (foldOptions.onOverflow = () => {
-      literalFallback = !0;
-    });
-    let body = foldFlowLines(`${start}${foldedValue}${end}`, indent, FOLD_BLOCK, foldOptions);
-    if (!literalFallback)
-      return `>${header}
-${indent}${body}`;
-  }
-  return value = value.replace(/\n+/g, `$&${indent}`), `|${header}
-${indent}${start}${value}${end}`;
-}
-function plainString(item, ctx, onComment, onChompKeep) {
-  let { type, value } = item, { actualString, implicitKey, indent, indentStep, inFlow } = ctx;
-  if (implicitKey && value.includes(`
-`) || inFlow && /[[\]{},]/.test(value))
-    return quotedString(value, ctx);
-  if (/^[\n\t ,[\]{}#&*!|>'"%@`]|^[?-]$|^[?-][ \t]|[\n:][ \t]|[ \t]\n|[\n\t ]#|[\n\t :]$/.test(value))
-    return implicitKey || inFlow || !value.includes(`
-`) ? quotedString(value, ctx) : blockString(item, ctx, onComment, onChompKeep);
-  if (!implicitKey && !inFlow && type !== Scalar.PLAIN && value.includes(`
-`))
-    return blockString(item, ctx, onComment, onChompKeep);
-  if (containsDocumentMarker(value)) {
-    if (indent === "")
-      return ctx.forceBlockIndent = !0, blockString(item, ctx, onComment, onChompKeep);
-    if (implicitKey && indent === indentStep)
-      return quotedString(value, ctx);
-  }
-  let str = value.replace(/\n+/g, `$&
-${indent}`);
-  if (actualString) {
-    let test = (tag) => {
-      var _a;
-      return tag.default && tag.tag !== "tag:yaml.org,2002:str" && ((_a = tag.test) == null ? void 0 : _a.test(str));
-    }, { compat, tags } = ctx.doc.schema;
-    if (tags.some(test) || compat != null && compat.some(test))
-      return quotedString(value, ctx);
-  }
-  return implicitKey ? str : foldFlowLines(str, indent, FOLD_FLOW, getFoldOptions(ctx, !1));
-}
-function stringifyString(item, ctx, onComment, onChompKeep) {
-  let { implicitKey, inFlow } = ctx, ss = typeof item.value == "string" ? item : Object.assign({}, item, { value: String(item.value) }), { type } = item;
-  type !== Scalar.QUOTE_DOUBLE && /[\x00-\x08\x0b-\x1f\x7f-\x9f\u{D800}-\u{DFFF}]/u.test(ss.value) && (type = Scalar.QUOTE_DOUBLE);
-  let _stringify = (_type) => {
-    switch (_type) {
-      case Scalar.BLOCK_FOLDED:
-      case Scalar.BLOCK_LITERAL:
-        return implicitKey || inFlow ? quotedString(ss.value, ctx) : blockString(ss, ctx, onComment, onChompKeep);
-      case Scalar.QUOTE_DOUBLE:
-        return doubleQuotedString(ss.value, ctx);
-      case Scalar.QUOTE_SINGLE:
-        return singleQuotedString(ss.value, ctx);
-      case Scalar.PLAIN:
-        return plainString(ss, ctx, onComment, onChompKeep);
-      default:
-        return null;
-    }
-  }, res = _stringify(type);
-  if (res === null) {
-    let { defaultKeyType, defaultStringType } = ctx.options, t = implicitKey && defaultKeyType || defaultStringType;
-    if (res = _stringify(t), res === null)
-      throw new Error(`Unsupported default string type ${t}`);
-  }
-  return res;
-}
-
-// node_modules/yaml/browser/dist/stringify/stringify.js
-function createStringifyContext(doc2, options) {
-  let opt = Object.assign({
-    blockQuote: !0,
-    commentString: stringifyComment,
-    defaultKeyType: null,
-    defaultStringType: "PLAIN",
-    directives: null,
-    doubleQuotedAsJSON: !1,
-    doubleQuotedMinMultiLineLength: 40,
-    falseStr: "false",
-    flowCollectionPadding: !0,
-    indentSeq: !0,
-    lineWidth: 80,
-    minContentWidth: 20,
-    nullStr: "null",
-    simpleKeys: !1,
-    singleQuote: null,
-    trailingComma: !1,
-    trueStr: "true",
-    verifyAliasOrder: !0
-  }, doc2.schema.toStringOptions, options), inFlow;
-  switch (opt.collectionStyle) {
-    case "block":
-      inFlow = !1;
-      break;
-    case "flow":
-      inFlow = !0;
-      break;
-    default:
-      inFlow = null;
-  }
-  return {
-    anchors: /* @__PURE__ */ new Set(),
-    doc: doc2,
-    flowCollectionPadding: opt.flowCollectionPadding ? " " : "",
-    indent: "",
-    indentStep: typeof opt.indent == "number" ? " ".repeat(opt.indent) : "  ",
-    inFlow,
-    options: opt
-  };
-}
-function getTagObject(tags, item) {
-  var _a, _b, _c, _d;
-  if (item.tag) {
-    let match2 = tags.filter((t) => t.tag === item.tag);
-    if (match2.length > 0)
-      return (_a = match2.find((t) => t.format === item.format)) != null ? _a : match2[0];
-  }
-  let tagObj, obj;
-  if (isScalar(item)) {
-    obj = item.value;
-    let match2 = tags.filter((t) => {
-      var _a2;
-      return (_a2 = t.identify) == null ? void 0 : _a2.call(t, obj);
-    });
-    if (match2.length > 1) {
-      let testMatch = match2.filter((t) => t.test);
-      testMatch.length > 0 && (match2 = testMatch);
-    }
-    tagObj = (_b = match2.find((t) => t.format === item.format)) != null ? _b : match2.find((t) => !t.format);
-  } else
-    obj = item, tagObj = tags.find((t) => t.nodeClass && obj instanceof t.nodeClass);
-  if (!tagObj) {
-    let name = (_d = (_c = obj == null ? void 0 : obj.constructor) == null ? void 0 : _c.name) != null ? _d : obj === null ? "null" : typeof obj;
-    throw new Error(`Tag not resolved for ${name} value`);
-  }
-  return tagObj;
-}
-function stringifyProps(node, tagObj, { anchors, doc: doc2 }) {
-  var _a;
-  if (!doc2.directives)
-    return "";
-  let props = [], anchor = (isScalar(node) || isCollection(node)) && node.anchor;
-  anchor && anchorIsValid(anchor) && (anchors.add(anchor), props.push(`&${anchor}`));
-  let tag = (_a = node.tag) != null ? _a : tagObj.default ? null : tagObj.tag;
-  return tag && props.push(doc2.directives.tagString(tag)), props.join(" ");
-}
-function stringify(item, ctx, onComment, onChompKeep) {
-  var _a, _b;
-  if (isPair(item))
-    return item.toString(ctx, onComment, onChompKeep);
-  if (isAlias(item)) {
-    if (ctx.doc.directives)
-      return item.toString(ctx);
-    if ((_a = ctx.resolvedAliases) != null && _a.has(item))
-      throw new TypeError("Cannot stringify circular structure without alias nodes");
-    ctx.resolvedAliases ? ctx.resolvedAliases.add(item) : ctx.resolvedAliases = /* @__PURE__ */ new Set([item]), item = item.resolve(ctx.doc);
-  }
-  let tagObj, node = isNode2(item) ? item : ctx.doc.createNode(item, { onTagObj: (o) => tagObj = o });
-  tagObj != null || (tagObj = getTagObject(ctx.doc.schema.tags, node));
-  let props = stringifyProps(node, tagObj, ctx);
-  props.length > 0 && (ctx.indentAtStart = ((_b = ctx.indentAtStart) != null ? _b : 0) + props.length + 1);
-  let str = typeof tagObj.stringify == "function" ? tagObj.stringify(node, ctx, onComment, onChompKeep) : isScalar(node) ? stringifyString(node, ctx, onComment, onChompKeep) : node.toString(ctx, onComment, onChompKeep);
-  return props ? isScalar(node) || str[0] === "{" || str[0] === "[" ? `${props} ${str}` : `${props}
-${ctx.indent}${str}` : str;
-}
-
-// node_modules/yaml/browser/dist/stringify/stringifyPair.js
-function stringifyPair({ key, value }, ctx, onComment, onChompKeep) {
-  var _a, _b;
-  let { allNullValues, doc: doc2, indent, indentStep, options: { commentString, indentSeq, simpleKeys } } = ctx, keyComment = isNode2(key) && key.comment || null;
-  if (simpleKeys) {
-    if (keyComment)
-      throw new Error("With simple keys, key nodes cannot have comments");
-    if (isCollection(key) || !isNode2(key) && typeof key == "object") {
-      let msg = "With simple keys, collection cannot be used as a key value";
-      throw new Error(msg);
-    }
-  }
-  let explicitKey = !simpleKeys && (!key || keyComment && value == null && !ctx.inFlow || isCollection(key) || (isScalar(key) ? key.type === Scalar.BLOCK_FOLDED || key.type === Scalar.BLOCK_LITERAL : typeof key == "object"));
-  ctx = Object.assign({}, ctx, {
-    allNullValues: !1,
-    implicitKey: !explicitKey && (simpleKeys || !allNullValues),
-    indent: indent + indentStep
-  });
-  let keyCommentDone = !1, chompKeep = !1, str = stringify(key, ctx, () => keyCommentDone = !0, () => chompKeep = !0);
-  if (!explicitKey && !ctx.inFlow && str.length > 1024) {
-    if (simpleKeys)
-      throw new Error("With simple keys, single line scalar must not span more than 1024 characters");
-    explicitKey = !0;
-  }
-  if (ctx.inFlow) {
-    if (allNullValues || value == null)
-      return keyCommentDone && onComment && onComment(), str === "" ? "?" : explicitKey ? `? ${str}` : str;
-  } else if (allNullValues && !simpleKeys || value == null && explicitKey)
-    return str = `? ${str}`, keyComment && !keyCommentDone ? str += lineComment(str, ctx.indent, commentString(keyComment)) : chompKeep && onChompKeep && onChompKeep(), str;
-  keyCommentDone && (keyComment = null), explicitKey ? (keyComment && (str += lineComment(str, ctx.indent, commentString(keyComment))), str = `? ${str}
-${indent}:`) : (str = `${str}:`, keyComment && (str += lineComment(str, ctx.indent, commentString(keyComment))));
-  let vsb, vcb, valueComment;
-  isNode2(value) ? (vsb = !!value.spaceBefore, vcb = value.commentBefore, valueComment = value.comment) : (vsb = !1, vcb = null, valueComment = null, value && typeof value == "object" && (value = doc2.createNode(value))), ctx.implicitKey = !1, !explicitKey && !keyComment && isScalar(value) && (ctx.indentAtStart = str.length + 1), chompKeep = !1, !indentSeq && indentStep.length >= 2 && !ctx.inFlow && !explicitKey && isSeq(value) && !value.flow && !value.tag && !value.anchor && (ctx.indent = ctx.indent.substring(2));
-  let valueCommentDone = !1, valueStr = stringify(value, ctx, () => valueCommentDone = !0, () => chompKeep = !0), ws = " ";
-  if (keyComment || vsb || vcb) {
-    if (ws = vsb ? `
-` : "", vcb) {
-      let cs = commentString(vcb);
-      ws += `
-${indentComment(cs, ctx.indent)}`;
-    }
-    valueStr === "" && !ctx.inFlow ? ws === `
-` && valueComment && (ws = `
-
-`) : ws += `
-${ctx.indent}`;
-  } else if (!explicitKey && isCollection(value)) {
-    let vs0 = valueStr[0], nl0 = valueStr.indexOf(`
-`), hasNewline = nl0 !== -1, flow = (_b = (_a = ctx.inFlow) != null ? _a : value.flow) != null ? _b : value.items.length === 0;
-    if (hasNewline || !flow) {
-      let hasPropsLine = !1;
-      if (hasNewline && (vs0 === "&" || vs0 === "!")) {
-        let sp0 = valueStr.indexOf(" ");
-        vs0 === "&" && sp0 !== -1 && sp0 < nl0 && valueStr[sp0 + 1] === "!" && (sp0 = valueStr.indexOf(" ", sp0 + 1)), (sp0 === -1 || nl0 < sp0) && (hasPropsLine = !0);
-      }
-      hasPropsLine || (ws = `
-${ctx.indent}`);
-    }
-  } else (valueStr === "" || valueStr[0] === `
-`) && (ws = "");
-  return str += ws + valueStr, ctx.inFlow ? valueCommentDone && onComment && onComment() : valueComment && !valueCommentDone ? str += lineComment(str, ctx.indent, commentString(valueComment)) : chompKeep && onChompKeep && onChompKeep(), str;
-}
-
-// node_modules/yaml/browser/dist/log.js
-function warn2(logLevel, warning) {
-  (logLevel === "debug" || logLevel === "warn") && console.warn(warning);
-}
-
-// node_modules/yaml/browser/dist/schema/yaml-1.1/merge.js
-var MERGE_KEY = "<<", merge = {
-  identify: (value) => value === MERGE_KEY || typeof value == "symbol" && value.description === MERGE_KEY,
-  default: "key",
-  tag: "tag:yaml.org,2002:merge",
-  test: /^<<$/,
-  resolve: () => Object.assign(new Scalar(Symbol(MERGE_KEY)), {
-    addToJSMap: addMergeToJSMap
-  }),
-  stringify: () => MERGE_KEY
-}, isMergeKey = (ctx, key) => (merge.identify(key) || isScalar(key) && (!key.type || key.type === Scalar.PLAIN) && merge.identify(key.value)) && (ctx == null ? void 0 : ctx.doc.schema.tags.some((tag) => tag.tag === merge.tag && tag.default));
-function addMergeToJSMap(ctx, map3, value) {
-  let source = resolveAliasValue(ctx, value);
-  if (isSeq(source))
-    for (let it of source.items)
-      mergeValue(ctx, map3, it);
-  else if (Array.isArray(source))
-    for (let it of source)
-      mergeValue(ctx, map3, it);
-  else
-    mergeValue(ctx, map3, source);
-}
-function mergeValue(ctx, map3, value) {
-  let source = resolveAliasValue(ctx, value);
-  if (!isMap(source))
-    throw new Error("Merge sources must be maps or map aliases");
-  let srcMap = source.toJSON(null, ctx, Map);
-  for (let [key, value2] of srcMap)
-    map3 instanceof Map ? map3.has(key) || map3.set(key, value2) : map3 instanceof Set ? map3.add(key) : Object.prototype.hasOwnProperty.call(map3, key) || Object.defineProperty(map3, key, {
-      value: value2,
-      writable: !0,
-      enumerable: !0,
-      configurable: !0
-    });
-  return map3;
-}
-function resolveAliasValue(ctx, value) {
-  return ctx && isAlias(value) ? value.resolve(ctx.doc, ctx) : value;
-}
-
-// node_modules/yaml/browser/dist/nodes/addPairToJSMap.js
-function addPairToJSMap(ctx, map3, { key, value }) {
-  if (isNode2(key) && key.addToJSMap)
-    key.addToJSMap(ctx, map3, value);
-  else if (isMergeKey(ctx, key))
-    addMergeToJSMap(ctx, map3, value);
-  else {
-    let jsKey = toJS(key, "", ctx);
-    if (map3 instanceof Map)
-      map3.set(jsKey, toJS(value, jsKey, ctx));
-    else if (map3 instanceof Set)
-      map3.add(jsKey);
-    else {
-      let stringKey = stringifyKey(key, jsKey, ctx), jsValue = toJS(value, stringKey, ctx);
-      stringKey in map3 ? Object.defineProperty(map3, stringKey, {
-        value: jsValue,
-        writable: !0,
-        enumerable: !0,
-        configurable: !0
-      }) : map3[stringKey] = jsValue;
-    }
-  }
-  return map3;
-}
-function stringifyKey(key, jsKey, ctx) {
-  if (jsKey === null)
-    return "";
-  if (typeof jsKey != "object")
-    return String(jsKey);
-  if (isNode2(key) && (ctx != null && ctx.doc)) {
-    let strCtx = createStringifyContext(ctx.doc, {});
-    strCtx.anchors = /* @__PURE__ */ new Set();
-    for (let node of ctx.anchors.keys())
-      strCtx.anchors.add(node.anchor);
-    strCtx.inFlow = !0, strCtx.inStringifyKey = !0;
-    let strKey = key.toString(strCtx);
-    if (!ctx.mapKeyWarned) {
-      let jsonStr = JSON.stringify(strKey);
-      jsonStr.length > 40 && (jsonStr = jsonStr.substring(0, 36) + '..."'), warn2(ctx.doc.options.logLevel, `Keys with collection values will be stringified due to JS Object restrictions: ${jsonStr}. Set mapAsMap: true to use object keys.`), ctx.mapKeyWarned = !0;
-    }
-    return strKey;
-  }
-  return JSON.stringify(jsKey);
-}
-
-// node_modules/yaml/browser/dist/nodes/Pair.js
-function createPair(key, value, ctx) {
-  let k = createNode(key, void 0, ctx), v = createNode(value, void 0, ctx);
-  return new Pair2(k, v);
-}
-var Pair2 = class _Pair {
-  constructor(key, value = null) {
-    Object.defineProperty(this, NODE_TYPE, { value: PAIR }), this.key = key, this.value = value;
-  }
-  clone(schema4) {
-    let { key, value } = this;
-    return isNode2(key) && (key = key.clone(schema4)), isNode2(value) && (value = value.clone(schema4)), new _Pair(key, value);
-  }
-  toJSON(_, ctx) {
-    let pair = ctx != null && ctx.mapAsMap ? /* @__PURE__ */ new Map() : {};
-    return addPairToJSMap(ctx, pair, this);
-  }
-  toString(ctx, onComment, onChompKeep) {
-    return ctx != null && ctx.doc ? stringifyPair(this, ctx, onComment, onChompKeep) : JSON.stringify(this);
-  }
-};
-
-// node_modules/yaml/browser/dist/stringify/stringifyCollection.js
-function stringifyCollection(collection, ctx, options) {
-  var _a;
-  return (((_a = ctx.inFlow) != null ? _a : collection.flow) ? stringifyFlowCollection : stringifyBlockCollection)(collection, ctx, options);
-}
-function stringifyBlockCollection({ comment, items }, ctx, { blockItemPrefix, flowChars, itemIndent, onChompKeep, onComment }) {
-  let { indent, options: { commentString } } = ctx, itemCtx = Object.assign({}, ctx, { indent: itemIndent, type: null }), chompKeep = !1, lines = [];
-  for (let i = 0; i < items.length; ++i) {
-    let item = items[i], comment2 = null;
-    if (isNode2(item))
-      !chompKeep && item.spaceBefore && lines.push(""), addCommentBefore(ctx, lines, item.commentBefore, chompKeep), item.comment && (comment2 = item.comment);
-    else if (isPair(item)) {
-      let ik = isNode2(item.key) ? item.key : null;
-      ik && (!chompKeep && ik.spaceBefore && lines.push(""), addCommentBefore(ctx, lines, ik.commentBefore, chompKeep));
-    }
-    chompKeep = !1;
-    let str2 = stringify(item, itemCtx, () => comment2 = null, () => chompKeep = !0);
-    comment2 && (str2 += lineComment(str2, itemIndent, commentString(comment2))), chompKeep && comment2 && (chompKeep = !1), lines.push(blockItemPrefix + str2);
-  }
-  let str;
-  if (lines.length === 0)
-    str = flowChars.start + flowChars.end;
-  else {
-    str = lines[0];
-    for (let i = 1; i < lines.length; ++i) {
-      let line = lines[i];
-      str += line ? `
-${indent}${line}` : `
-`;
-    }
-  }
-  return comment ? (str += `
-` + indentComment(commentString(comment), indent), onComment && onComment()) : chompKeep && onChompKeep && onChompKeep(), str;
-}
-function stringifyFlowCollection({ items }, ctx, { flowChars, itemIndent }) {
-  let { indent, indentStep, flowCollectionPadding: fcPadding, options: { commentString } } = ctx;
-  itemIndent += indentStep;
-  let itemCtx = Object.assign({}, ctx, {
-    indent: itemIndent,
-    inFlow: !0,
-    type: null
-  }), reqNewline = !1, linesAtValue = 0, lines = [];
-  for (let i = 0; i < items.length; ++i) {
-    let item = items[i], comment = null;
-    if (isNode2(item))
-      item.spaceBefore && lines.push(""), addCommentBefore(ctx, lines, item.commentBefore, !1), item.comment && (comment = item.comment);
-    else if (isPair(item)) {
-      let ik = isNode2(item.key) ? item.key : null;
-      ik && (ik.spaceBefore && lines.push(""), addCommentBefore(ctx, lines, ik.commentBefore, !1), ik.comment && (reqNewline = !0));
-      let iv = isNode2(item.value) ? item.value : null;
-      iv ? (iv.comment && (comment = iv.comment), iv.commentBefore && (reqNewline = !0)) : item.value == null && (ik != null && ik.comment) && (comment = ik.comment);
-    }
-    comment && (reqNewline = !0);
-    let str = stringify(item, itemCtx, () => comment = null);
-    reqNewline || (reqNewline = lines.length > linesAtValue || str.includes(`
-`)), i < items.length - 1 ? str += "," : ctx.options.trailingComma && (ctx.options.lineWidth > 0 && (reqNewline || (reqNewline = lines.reduce((sum, line) => sum + line.length + 2, 2) + (str.length + 2) > ctx.options.lineWidth)), reqNewline && (str += ",")), comment && (str += lineComment(str, itemIndent, commentString(comment))), lines.push(str), linesAtValue = lines.length;
-  }
-  let { start, end } = flowChars;
-  if (lines.length === 0)
-    return start + end;
-  if (!reqNewline) {
-    let len = lines.reduce((sum, line) => sum + line.length + 2, 2);
-    reqNewline = ctx.options.lineWidth > 0 && len > ctx.options.lineWidth;
-  }
-  if (reqNewline) {
-    let str = start;
-    for (let line of lines)
-      str += line ? `
-${indentStep}${indent}${line}` : `
-`;
-    return `${str}
-${indent}${end}`;
-  } else
-    return `${start}${fcPadding}${lines.join(" ")}${fcPadding}${end}`;
-}
-function addCommentBefore({ indent, options: { commentString } }, lines, comment, chompKeep) {
-  if (comment && chompKeep && (comment = comment.replace(/^\n+/, "")), comment) {
-    let ic = indentComment(commentString(comment), indent);
-    lines.push(ic.trimStart());
-  }
-}
-
-// node_modules/yaml/browser/dist/nodes/YAMLMap.js
-function findPair(items, key) {
-  let k = isScalar(key) ? key.value : key;
-  for (let it of items)
-    if (isPair(it) && (it.key === key || it.key === k || isScalar(it.key) && it.key.value === k))
-      return it;
-}
-var YAMLMap = class extends Collection {
-  static get tagName() {
-    return "tag:yaml.org,2002:map";
-  }
-  constructor(schema4) {
-    super(MAP, schema4), this.items = [];
-  }
-  /**
-   * A generic collection parsing method that can be extended
-   * to other node classes that inherit from YAMLMap
-   */
-  static from(schema4, obj, ctx) {
-    let { keepUndefined, replacer } = ctx, map3 = new this(schema4), add = (key, value) => {
-      if (typeof replacer == "function")
-        value = replacer.call(obj, key, value);
-      else if (Array.isArray(replacer) && !replacer.includes(key))
-        return;
-      (value !== void 0 || keepUndefined) && map3.items.push(createPair(key, value, ctx));
-    };
-    if (obj instanceof Map)
-      for (let [key, value] of obj)
-        add(key, value);
-    else if (obj && typeof obj == "object")
-      for (let key of Object.keys(obj))
-        add(key, obj[key]);
-    return typeof schema4.sortMapEntries == "function" && map3.items.sort(schema4.sortMapEntries), map3;
-  }
-  /**
-   * Adds a value to the collection.
-   *
-   * @param overwrite - If not set `true`, using a key that is already in the
-   *   collection will throw. Otherwise, overwrites the previous value.
-   */
-  add(pair, overwrite) {
-    var _a;
-    let _pair;
-    isPair(pair) ? _pair = pair : !pair || typeof pair != "object" || !("key" in pair) ? _pair = new Pair2(pair, pair == null ? void 0 : pair.value) : _pair = new Pair2(pair.key, pair.value);
-    let prev = findPair(this.items, _pair.key), sortEntries = (_a = this.schema) == null ? void 0 : _a.sortMapEntries;
-    if (prev) {
-      if (!overwrite)
-        throw new Error(`Key ${_pair.key} already set`);
-      isScalar(prev.value) && isScalarValue(_pair.value) ? prev.value.value = _pair.value : prev.value = _pair.value;
-    } else if (sortEntries) {
-      let i = this.items.findIndex((item) => sortEntries(_pair, item) < 0);
-      i === -1 ? this.items.push(_pair) : this.items.splice(i, 0, _pair);
-    } else
-      this.items.push(_pair);
-  }
-  delete(key) {
-    let it = findPair(this.items, key);
-    return it ? this.items.splice(this.items.indexOf(it), 1).length > 0 : !1;
-  }
-  get(key, keepScalar) {
-    var _a;
-    let it = findPair(this.items, key), node = it == null ? void 0 : it.value;
-    return (_a = !keepScalar && isScalar(node) ? node.value : node) != null ? _a : void 0;
-  }
-  has(key) {
-    return !!findPair(this.items, key);
-  }
-  set(key, value) {
-    this.add(new Pair2(key, value), !0);
-  }
-  /**
-   * @param ctx - Conversion context, originally set in Document#toJS()
-   * @param {Class} Type - If set, forces the returned collection type
-   * @returns Instance of Type, Map, or Object
-   */
-  toJSON(_, ctx, Type) {
-    let map3 = Type ? new Type() : ctx != null && ctx.mapAsMap ? /* @__PURE__ */ new Map() : {};
-    ctx != null && ctx.onCreate && ctx.onCreate(map3);
-    for (let item of this.items)
-      addPairToJSMap(ctx, map3, item);
-    return map3;
-  }
-  toString(ctx, onComment, onChompKeep) {
-    if (!ctx)
-      return JSON.stringify(this);
-    for (let item of this.items)
-      if (!isPair(item))
-        throw new Error(`Map items must all be pairs; found ${JSON.stringify(item)} instead`);
-    return !ctx.allNullValues && this.hasAllNullValues(!1) && (ctx = Object.assign({}, ctx, { allNullValues: !0 })), stringifyCollection(this, ctx, {
-      blockItemPrefix: "",
-      flowChars: { start: "{", end: "}" },
-      itemIndent: ctx.indent || "",
-      onChompKeep,
-      onComment
-    });
-  }
-};
-
-// node_modules/yaml/browser/dist/schema/common/map.js
-var map2 = {
-  collection: "map",
-  default: !0,
-  nodeClass: YAMLMap,
-  tag: "tag:yaml.org,2002:map",
-  resolve(map3, onError) {
-    return isMap(map3) || onError("Expected a mapping for this tag"), map3;
-  },
-  createNode: (schema4, obj, ctx) => YAMLMap.from(schema4, obj, ctx)
-};
-
-// node_modules/yaml/browser/dist/nodes/YAMLSeq.js
-var YAMLSeq = class extends Collection {
-  static get tagName() {
-    return "tag:yaml.org,2002:seq";
-  }
-  constructor(schema4) {
-    super(SEQ, schema4), this.items = [];
-  }
-  add(value) {
-    this.items.push(value);
-  }
-  /**
-   * Removes a value from the collection.
-   *
-   * `key` must contain a representation of an integer for this to succeed.
-   * It may be wrapped in a `Scalar`.
-   *
-   * @returns `true` if the item was found and removed.
-   */
-  delete(key) {
-    let idx = asItemIndex(key);
-    return typeof idx != "number" ? !1 : this.items.splice(idx, 1).length > 0;
-  }
-  get(key, keepScalar) {
-    let idx = asItemIndex(key);
-    if (typeof idx != "number")
-      return;
-    let it = this.items[idx];
-    return !keepScalar && isScalar(it) ? it.value : it;
-  }
-  /**
-   * Checks if the collection includes a value with the key `key`.
-   *
-   * `key` must contain a representation of an integer for this to succeed.
-   * It may be wrapped in a `Scalar`.
-   */
-  has(key) {
-    let idx = asItemIndex(key);
-    return typeof idx == "number" && idx < this.items.length;
-  }
-  /**
-   * Sets a value in this collection. For `!!set`, `value` needs to be a
-   * boolean to add/remove the item from the set.
-   *
-   * If `key` does not contain a representation of an integer, this will throw.
-   * It may be wrapped in a `Scalar`.
-   */
-  set(key, value) {
-    let idx = asItemIndex(key);
-    if (typeof idx != "number")
-      throw new Error(`Expected a valid index, not ${key}.`);
-    let prev = this.items[idx];
-    isScalar(prev) && isScalarValue(value) ? prev.value = value : this.items[idx] = value;
-  }
-  toJSON(_, ctx) {
-    let seq2 = [];
-    ctx != null && ctx.onCreate && ctx.onCreate(seq2);
-    let i = 0;
-    for (let item of this.items)
-      seq2.push(toJS(item, String(i++), ctx));
-    return seq2;
-  }
-  toString(ctx, onComment, onChompKeep) {
-    return ctx ? stringifyCollection(this, ctx, {
-      blockItemPrefix: "- ",
-      flowChars: { start: "[", end: "]" },
-      itemIndent: (ctx.indent || "") + "  ",
-      onChompKeep,
-      onComment
-    }) : JSON.stringify(this);
-  }
-  static from(schema4, obj, ctx) {
-    let { replacer } = ctx, seq2 = new this(schema4);
-    if (obj && Symbol.iterator in Object(obj)) {
-      let i = 0;
-      for (let it of obj) {
-        if (typeof replacer == "function") {
-          let key = obj instanceof Set ? it : String(i++);
-          it = replacer.call(obj, key, it);
-        }
-        seq2.items.push(createNode(it, void 0, ctx));
-      }
-    }
-    return seq2;
-  }
-};
-function asItemIndex(key) {
-  let idx = isScalar(key) ? key.value : key;
-  return idx && typeof idx == "string" && (idx = Number(idx)), typeof idx == "number" && Number.isInteger(idx) && idx >= 0 ? idx : null;
-}
-
-// node_modules/yaml/browser/dist/schema/common/seq.js
-var seq = {
-  collection: "seq",
-  default: !0,
-  nodeClass: YAMLSeq,
-  tag: "tag:yaml.org,2002:seq",
-  resolve(seq2, onError) {
-    return isSeq(seq2) || onError("Expected a sequence for this tag"), seq2;
-  },
-  createNode: (schema4, obj, ctx) => YAMLSeq.from(schema4, obj, ctx)
-};
-
-// node_modules/yaml/browser/dist/schema/common/string.js
-var string = {
-  identify: (value) => typeof value == "string",
-  default: !0,
-  tag: "tag:yaml.org,2002:str",
-  resolve: (str) => str,
-  stringify(item, ctx, onComment, onChompKeep) {
-    return ctx = Object.assign({ actualString: !0 }, ctx), stringifyString(item, ctx, onComment, onChompKeep);
-  }
-};
-
-// node_modules/yaml/browser/dist/schema/common/null.js
-var nullTag = {
-  identify: (value) => value == null,
-  createNode: () => new Scalar(null),
-  default: !0,
-  tag: "tag:yaml.org,2002:null",
-  test: /^(?:~|[Nn]ull|NULL)?$/,
-  resolve: () => new Scalar(null),
-  stringify: ({ source }, ctx) => typeof source == "string" && nullTag.test.test(source) ? source : ctx.options.nullStr
-};
-
-// node_modules/yaml/browser/dist/schema/core/bool.js
-var boolTag = {
-  identify: (value) => typeof value == "boolean",
-  default: !0,
-  tag: "tag:yaml.org,2002:bool",
-  test: /^(?:[Tt]rue|TRUE|[Ff]alse|FALSE)$/,
-  resolve: (str) => new Scalar(str[0] === "t" || str[0] === "T"),
-  stringify({ source, value }, ctx) {
-    if (source && boolTag.test.test(source)) {
-      let sv = source[0] === "t" || source[0] === "T";
-      if (value === sv)
-        return source;
-    }
-    return value ? ctx.options.trueStr : ctx.options.falseStr;
-  }
-};
-
-// node_modules/yaml/browser/dist/stringify/stringifyNumber.js
-function stringifyNumber({ format, minFractionDigits, tag, value }) {
-  if (typeof value == "bigint")
-    return String(value);
-  let num = typeof value == "number" ? value : Number(value);
-  if (!isFinite(num))
-    return isNaN(num) ? ".nan" : num < 0 ? "-.inf" : ".inf";
-  let n = Object.is(value, -0) ? "-0" : JSON.stringify(value);
-  if (!format && minFractionDigits && (!tag || tag === "tag:yaml.org,2002:float") && /^-?\d/.test(n) && !n.includes("e")) {
-    let i = n.indexOf(".");
-    i < 0 && (i = n.length, n += ".");
-    let d = minFractionDigits - (n.length - i - 1);
-    for (; d-- > 0; )
-      n += "0";
-  }
-  return n;
-}
-
-// node_modules/yaml/browser/dist/schema/core/float.js
-var floatNaN = {
-  identify: (value) => typeof value == "number",
-  default: !0,
-  tag: "tag:yaml.org,2002:float",
-  test: /^(?:[-+]?\.(?:inf|Inf|INF)|\.nan|\.NaN|\.NAN)$/,
-  resolve: (str) => str.slice(-3).toLowerCase() === "nan" ? NaN : str[0] === "-" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY,
-  stringify: stringifyNumber
-}, floatExp = {
-  identify: (value) => typeof value == "number",
-  default: !0,
-  tag: "tag:yaml.org,2002:float",
-  format: "EXP",
-  test: /^[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)[eE][-+]?[0-9]+$/,
-  resolve: (str) => parseFloat(str),
-  stringify(node) {
-    let num = Number(node.value);
-    return isFinite(num) ? num.toExponential() : stringifyNumber(node);
-  }
-}, float = {
-  identify: (value) => typeof value == "number",
-  default: !0,
-  tag: "tag:yaml.org,2002:float",
-  test: /^[-+]?(?:\.[0-9]+|[0-9]+\.[0-9]*)$/,
-  resolve(str) {
-    let node = new Scalar(parseFloat(str)), dot = str.indexOf(".");
-    return dot !== -1 && str[str.length - 1] === "0" && (node.minFractionDigits = str.length - dot - 1), node;
-  },
-  stringify: stringifyNumber
-};
-
-// node_modules/yaml/browser/dist/schema/core/int.js
-var intIdentify = (value) => typeof value == "bigint" || Number.isInteger(value), intResolve = (str, offset, radix, { intAsBigInt }) => intAsBigInt ? BigInt(str) : parseInt(str.substring(offset), radix);
-function intStringify(node, radix, prefix) {
-  let { value } = node;
-  return intIdentify(value) && value >= 0 ? prefix + value.toString(radix) : stringifyNumber(node);
-}
-var intOct = {
-  identify: (value) => intIdentify(value) && value >= 0,
-  default: !0,
-  tag: "tag:yaml.org,2002:int",
-  format: "OCT",
-  test: /^0o[0-7]+$/,
-  resolve: (str, _onError, opt) => intResolve(str, 2, 8, opt),
-  stringify: (node) => intStringify(node, 8, "0o")
-}, int = {
-  identify: intIdentify,
-  default: !0,
-  tag: "tag:yaml.org,2002:int",
-  test: /^[-+]?[0-9]+$/,
-  resolve: (str, _onError, opt) => intResolve(str, 0, 10, opt),
-  stringify: stringifyNumber
-}, intHex = {
-  identify: (value) => intIdentify(value) && value >= 0,
-  default: !0,
-  tag: "tag:yaml.org,2002:int",
-  format: "HEX",
-  test: /^0x[0-9a-fA-F]+$/,
-  resolve: (str, _onError, opt) => intResolve(str, 2, 16, opt),
-  stringify: (node) => intStringify(node, 16, "0x")
-};
-
-// node_modules/yaml/browser/dist/schema/core/schema.js
-var schema = [
-  map2,
-  seq,
-  string,
-  nullTag,
-  boolTag,
-  intOct,
-  int,
-  intHex,
-  floatNaN,
-  floatExp,
-  float
-];
-
-// node_modules/yaml/browser/dist/schema/json/schema.js
-function intIdentify2(value) {
-  return typeof value == "bigint" || Number.isInteger(value);
-}
-var stringifyJSON = ({ value }) => JSON.stringify(value), jsonScalars = [
-  {
-    identify: (value) => typeof value == "string",
-    default: !0,
-    tag: "tag:yaml.org,2002:str",
-    resolve: (str) => str,
-    stringify: stringifyJSON
-  },
-  {
-    identify: (value) => value == null,
-    createNode: () => new Scalar(null),
-    default: !0,
-    tag: "tag:yaml.org,2002:null",
-    test: /^null$/,
-    resolve: () => null,
-    stringify: stringifyJSON
-  },
-  {
-    identify: (value) => typeof value == "boolean",
-    default: !0,
-    tag: "tag:yaml.org,2002:bool",
-    test: /^true$|^false$/,
-    resolve: (str) => str === "true",
-    stringify: stringifyJSON
-  },
-  {
-    identify: intIdentify2,
-    default: !0,
-    tag: "tag:yaml.org,2002:int",
-    test: /^-?(?:0|[1-9][0-9]*)$/,
-    resolve: (str, _onError, { intAsBigInt }) => intAsBigInt ? BigInt(str) : parseInt(str, 10),
-    stringify: ({ value }) => intIdentify2(value) ? value.toString() : JSON.stringify(value)
-  },
-  {
-    identify: (value) => typeof value == "number",
-    default: !0,
-    tag: "tag:yaml.org,2002:float",
-    test: /^-?(?:0|[1-9][0-9]*)(?:\.[0-9]*)?(?:[eE][-+]?[0-9]+)?$/,
-    resolve: (str) => parseFloat(str),
-    stringify: stringifyJSON
-  }
-], jsonError = {
-  default: !0,
-  tag: "",
-  test: /^/,
-  resolve(str, onError) {
-    return onError(`Unresolved plain scalar ${JSON.stringify(str)}`), str;
-  }
-}, schema2 = [map2, seq].concat(jsonScalars, jsonError);
-
-// node_modules/yaml/browser/dist/schema/yaml-1.1/binary.js
-var binary = {
-  identify: (value) => value instanceof Uint8Array,
-  // Buffer inherits from Uint8Array
-  default: !1,
-  tag: "tag:yaml.org,2002:binary",
-  /**
-   * Returns a Buffer in node and an Uint8Array in browsers
-   *
-   * To use the resulting buffer as an image, you'll want to do something like:
-   *
-   *   const blob = new Blob([buffer], { type: 'image/jpeg' })
-   *   document.querySelector('#photo').src = URL.createObjectURL(blob)
-   */
-  resolve(src, onError) {
-    if (typeof atob == "function") {
-      let str = atob(src.replace(/[\n\r]/g, "")), buffer = new Uint8Array(str.length);
-      for (let i = 0; i < str.length; ++i)
-        buffer[i] = str.charCodeAt(i);
-      return buffer;
-    } else
-      return onError("This environment does not support reading binary tags; either Buffer or atob is required"), src;
-  },
-  stringify({ comment, type, value }, ctx, onComment, onChompKeep) {
-    if (!value)
-      return "";
-    let buf = value, str;
-    if (typeof btoa == "function") {
-      let s = "";
-      for (let i = 0; i < buf.length; ++i)
-        s += String.fromCharCode(buf[i]);
-      str = btoa(s);
-    } else
-      throw new Error("This environment does not support writing binary tags; either Buffer or btoa is required");
-    if (type != null || (type = Scalar.BLOCK_LITERAL), type !== Scalar.QUOTE_DOUBLE) {
-      let lineWidth = Math.max(ctx.options.lineWidth - ctx.indent.length, ctx.options.minContentWidth), n = Math.ceil(str.length / lineWidth), lines = new Array(n);
-      for (let i = 0, o = 0; i < n; ++i, o += lineWidth)
-        lines[i] = str.substr(o, lineWidth);
-      str = lines.join(type === Scalar.BLOCK_LITERAL ? `
-` : " ");
-    }
-    return stringifyString({ comment, type, value: str }, ctx, onComment, onChompKeep);
-  }
-};
-
-// node_modules/yaml/browser/dist/schema/yaml-1.1/pairs.js
-function resolvePairs(seq2, onError) {
-  var _a;
-  if (isSeq(seq2))
-    for (let i = 0; i < seq2.items.length; ++i) {
-      let item = seq2.items[i];
-      if (!isPair(item)) {
-        if (isMap(item)) {
-          item.items.length > 1 && onError("Each pair must have its own sequence indicator");
-          let pair = item.items[0] || new Pair2(new Scalar(null));
-          if (item.commentBefore && (pair.key.commentBefore = pair.key.commentBefore ? `${item.commentBefore}
-${pair.key.commentBefore}` : item.commentBefore), item.comment) {
-            let cn = (_a = pair.value) != null ? _a : pair.key;
-            cn.comment = cn.comment ? `${item.comment}
-${cn.comment}` : item.comment;
-          }
-          item = pair;
-        }
-        seq2.items[i] = isPair(item) ? item : new Pair2(item);
-      }
-    }
-  else
-    onError("Expected a sequence for this tag");
-  return seq2;
-}
-function createPairs(schema4, iterable, ctx) {
-  let { replacer } = ctx, pairs2 = new YAMLSeq(schema4);
-  pairs2.tag = "tag:yaml.org,2002:pairs";
-  let i = 0;
-  if (iterable && Symbol.iterator in Object(iterable))
-    for (let it of iterable) {
-      typeof replacer == "function" && (it = replacer.call(iterable, String(i++), it));
-      let key, value;
-      if (Array.isArray(it))
-        if (it.length === 2)
-          key = it[0], value = it[1];
-        else
-          throw new TypeError(`Expected [key, value] tuple: ${it}`);
-      else if (it && it instanceof Object) {
-        let keys2 = Object.keys(it);
-        if (keys2.length === 1)
-          key = keys2[0], value = it[key];
-        else
-          throw new TypeError(`Expected tuple with one key, not ${keys2.length} keys`);
-      } else
-        key = it;
-      pairs2.items.push(createPair(key, value, ctx));
-    }
-  return pairs2;
-}
-var pairs = {
-  collection: "seq",
-  default: !1,
-  tag: "tag:yaml.org,2002:pairs",
-  resolve: resolvePairs,
-  createNode: createPairs
-};
-
-// node_modules/yaml/browser/dist/schema/yaml-1.1/omap.js
-var YAMLOMap = class _YAMLOMap extends YAMLSeq {
-  constructor() {
-    super(), this.add = YAMLMap.prototype.add.bind(this), this.delete = YAMLMap.prototype.delete.bind(this), this.get = YAMLMap.prototype.get.bind(this), this.has = YAMLMap.prototype.has.bind(this), this.set = YAMLMap.prototype.set.bind(this), this.tag = _YAMLOMap.tag;
-  }
-  /**
-   * If `ctx` is given, the return type is actually `Map<unknown, unknown>`,
-   * but TypeScript won't allow widening the signature of a child method.
-   */
-  toJSON(_, ctx) {
-    if (!ctx)
-      return super.toJSON(_);
-    let map3 = /* @__PURE__ */ new Map();
-    ctx != null && ctx.onCreate && ctx.onCreate(map3);
-    for (let pair of this.items) {
-      let key, value;
-      if (isPair(pair) ? (key = toJS(pair.key, "", ctx), value = toJS(pair.value, key, ctx)) : key = toJS(pair, "", ctx), map3.has(key))
-        throw new Error("Ordered maps must not include duplicate keys");
-      map3.set(key, value);
-    }
-    return map3;
-  }
-  static from(schema4, iterable, ctx) {
-    let pairs2 = createPairs(schema4, iterable, ctx), omap2 = new this();
-    return omap2.items = pairs2.items, omap2;
-  }
-};
-YAMLOMap.tag = "tag:yaml.org,2002:omap";
-var omap = {
-  collection: "seq",
-  identify: (value) => value instanceof Map,
-  nodeClass: YAMLOMap,
-  default: !1,
-  tag: "tag:yaml.org,2002:omap",
-  resolve(seq2, onError) {
-    let pairs2 = resolvePairs(seq2, onError), seenKeys = [];
-    for (let { key } of pairs2.items)
-      isScalar(key) && (seenKeys.includes(key.value) ? onError(`Ordered maps must not include duplicate keys: ${key.value}`) : seenKeys.push(key.value));
-    return Object.assign(new YAMLOMap(), pairs2);
-  },
-  createNode: (schema4, iterable, ctx) => YAMLOMap.from(schema4, iterable, ctx)
-};
-
-// node_modules/yaml/browser/dist/schema/yaml-1.1/bool.js
-function boolStringify({ value, source }, ctx) {
-  return source && (value ? trueTag : falseTag).test.test(source) ? source : value ? ctx.options.trueStr : ctx.options.falseStr;
-}
-var trueTag = {
-  identify: (value) => value === !0,
-  default: !0,
-  tag: "tag:yaml.org,2002:bool",
-  test: /^(?:Y|y|[Yy]es|YES|[Tt]rue|TRUE|[Oo]n|ON)$/,
-  resolve: () => new Scalar(!0),
-  stringify: boolStringify
-}, falseTag = {
-  identify: (value) => value === !1,
-  default: !0,
-  tag: "tag:yaml.org,2002:bool",
-  test: /^(?:N|n|[Nn]o|NO|[Ff]alse|FALSE|[Oo]ff|OFF)$/,
-  resolve: () => new Scalar(!1),
-  stringify: boolStringify
-};
-
-// node_modules/yaml/browser/dist/schema/yaml-1.1/float.js
-var floatNaN2 = {
-  identify: (value) => typeof value == "number",
-  default: !0,
-  tag: "tag:yaml.org,2002:float",
-  test: /^(?:[-+]?\.(?:inf|Inf|INF)|\.nan|\.NaN|\.NAN)$/,
-  resolve: (str) => str.slice(-3).toLowerCase() === "nan" ? NaN : str[0] === "-" ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY,
-  stringify: stringifyNumber
-}, floatExp2 = {
-  identify: (value) => typeof value == "number",
-  default: !0,
-  tag: "tag:yaml.org,2002:float",
-  format: "EXP",
-  test: /^[-+]?(?:[0-9][0-9_]*)?(?:\.[0-9_]*)?[eE][-+]?[0-9]+$/,
-  resolve: (str) => parseFloat(str.replace(/_/g, "")),
-  stringify(node) {
-    let num = Number(node.value);
-    return isFinite(num) ? num.toExponential() : stringifyNumber(node);
-  }
-}, float2 = {
-  identify: (value) => typeof value == "number",
-  default: !0,
-  tag: "tag:yaml.org,2002:float",
-  test: /^[-+]?(?:[0-9][0-9_]*)?\.[0-9_]*$/,
-  resolve(str) {
-    let node = new Scalar(parseFloat(str.replace(/_/g, ""))), dot = str.indexOf(".");
-    if (dot !== -1) {
-      let f = str.substring(dot + 1).replace(/_/g, "");
-      f[f.length - 1] === "0" && (node.minFractionDigits = f.length);
-    }
-    return node;
-  },
-  stringify: stringifyNumber
-};
-
-// node_modules/yaml/browser/dist/schema/yaml-1.1/int.js
-var intIdentify3 = (value) => typeof value == "bigint" || Number.isInteger(value);
-function intResolve2(str, offset, radix, { intAsBigInt }) {
-  let sign = str[0];
-  if ((sign === "-" || sign === "+") && (offset += 1), str = str.substring(offset).replace(/_/g, ""), intAsBigInt) {
-    switch (radix) {
-      case 2:
-        str = `0b${str}`;
-        break;
-      case 8:
-        str = `0o${str}`;
-        break;
-      case 16:
-        str = `0x${str}`;
-        break;
-    }
-    let n2 = BigInt(str);
-    return sign === "-" ? BigInt(-1) * n2 : n2;
-  }
-  let n = parseInt(str, radix);
-  return sign === "-" ? -1 * n : n;
-}
-function intStringify2(node, radix, prefix) {
-  let { value } = node;
-  if (intIdentify3(value)) {
-    let str = value.toString(radix);
-    return value < 0 ? "-" + prefix + str.substr(1) : prefix + str;
-  }
-  return stringifyNumber(node);
-}
-var intBin = {
-  identify: intIdentify3,
-  default: !0,
-  tag: "tag:yaml.org,2002:int",
-  format: "BIN",
-  test: /^[-+]?0b[0-1_]+$/,
-  resolve: (str, _onError, opt) => intResolve2(str, 2, 2, opt),
-  stringify: (node) => intStringify2(node, 2, "0b")
-}, intOct2 = {
-  identify: intIdentify3,
-  default: !0,
-  tag: "tag:yaml.org,2002:int",
-  format: "OCT",
-  test: /^[-+]?0[0-7_]+$/,
-  resolve: (str, _onError, opt) => intResolve2(str, 1, 8, opt),
-  stringify: (node) => intStringify2(node, 8, "0")
-}, int2 = {
-  identify: intIdentify3,
-  default: !0,
-  tag: "tag:yaml.org,2002:int",
-  test: /^[-+]?[0-9][0-9_]*$/,
-  resolve: (str, _onError, opt) => intResolve2(str, 0, 10, opt),
-  stringify: stringifyNumber
-}, intHex2 = {
-  identify: intIdentify3,
-  default: !0,
-  tag: "tag:yaml.org,2002:int",
-  format: "HEX",
-  test: /^[-+]?0x[0-9a-fA-F_]+$/,
-  resolve: (str, _onError, opt) => intResolve2(str, 2, 16, opt),
-  stringify: (node) => intStringify2(node, 16, "0x")
-};
-
-// node_modules/yaml/browser/dist/schema/yaml-1.1/set.js
-var YAMLSet = class _YAMLSet extends YAMLMap {
-  constructor(schema4) {
-    super(schema4), this.tag = _YAMLSet.tag;
-  }
-  add(key) {
-    let pair;
-    isPair(key) ? pair = key : key && typeof key == "object" && "key" in key && "value" in key && key.value === null ? pair = new Pair2(key.key, null) : pair = new Pair2(key, null), findPair(this.items, pair.key) || this.items.push(pair);
-  }
-  /**
-   * If `keepPair` is `true`, returns the Pair matching `key`.
-   * Otherwise, returns the value of that Pair's key.
-   */
-  get(key, keepPair) {
-    let pair = findPair(this.items, key);
-    return !keepPair && isPair(pair) ? isScalar(pair.key) ? pair.key.value : pair.key : pair;
-  }
-  set(key, value) {
-    if (typeof value != "boolean")
-      throw new Error(`Expected boolean value for set(key, value) in a YAML set, not ${typeof value}`);
-    let prev = findPair(this.items, key);
-    prev && !value ? this.items.splice(this.items.indexOf(prev), 1) : !prev && value && this.items.push(new Pair2(key));
-  }
-  toJSON(_, ctx) {
-    return super.toJSON(_, ctx, Set);
-  }
-  toString(ctx, onComment, onChompKeep) {
-    if (!ctx)
-      return JSON.stringify(this);
-    if (this.hasAllNullValues(!0))
-      return super.toString(Object.assign({}, ctx, { allNullValues: !0 }), onComment, onChompKeep);
-    throw new Error("Set items must all have null values");
-  }
-  static from(schema4, iterable, ctx) {
-    let { replacer } = ctx, set2 = new this(schema4);
-    if (iterable && Symbol.iterator in Object(iterable))
-      for (let value of iterable)
-        typeof replacer == "function" && (value = replacer.call(iterable, value, value)), set2.items.push(createPair(value, null, ctx));
-    return set2;
-  }
-};
-YAMLSet.tag = "tag:yaml.org,2002:set";
-var set = {
-  collection: "map",
-  identify: (value) => value instanceof Set,
-  nodeClass: YAMLSet,
-  default: !1,
-  tag: "tag:yaml.org,2002:set",
-  createNode: (schema4, iterable, ctx) => YAMLSet.from(schema4, iterable, ctx),
-  resolve(map3, onError) {
-    if (isMap(map3)) {
-      if (map3.hasAllNullValues(!0))
-        return Object.assign(new YAMLSet(), map3);
-      onError("Set items must all have null values");
-    } else
-      onError("Expected a mapping for this tag");
-    return map3;
-  }
-};
-
-// node_modules/yaml/browser/dist/schema/yaml-1.1/timestamp.js
-function parseSexagesimal(str, asBigInt) {
-  let sign = str[0], parts = sign === "-" || sign === "+" ? str.substring(1) : str, num = (n) => asBigInt ? BigInt(n) : Number(n), res = parts.replace(/_/g, "").split(":").reduce((res2, p) => res2 * num(60) + num(p), num(0));
-  return sign === "-" ? num(-1) * res : res;
-}
-function stringifySexagesimal(node) {
-  let { value } = node, num = (n) => n;
-  if (typeof value == "bigint")
-    num = (n) => BigInt(n);
-  else if (isNaN(value) || !isFinite(value))
-    return stringifyNumber(node);
-  let sign = "";
-  value < 0 && (sign = "-", value *= num(-1));
-  let _60 = num(60), parts = [value % _60];
-  return value < 60 ? parts.unshift(0) : (value = (value - parts[0]) / _60, parts.unshift(value % _60), value >= 60 && (value = (value - parts[0]) / _60, parts.unshift(value))), sign + parts.map((n) => String(n).padStart(2, "0")).join(":").replace(/000000\d*$/, "");
-}
-var intTime = {
-  identify: (value) => typeof value == "bigint" || Number.isInteger(value),
-  default: !0,
-  tag: "tag:yaml.org,2002:int",
-  format: "TIME",
-  test: /^[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+$/,
-  resolve: (str, _onError, { intAsBigInt }) => parseSexagesimal(str, intAsBigInt),
-  stringify: stringifySexagesimal
-}, floatTime = {
-  identify: (value) => typeof value == "number",
-  default: !0,
-  tag: "tag:yaml.org,2002:float",
-  format: "TIME",
-  test: /^[-+]?[0-9][0-9_]*(?::[0-5]?[0-9])+\.[0-9_]*$/,
-  resolve: (str) => parseSexagesimal(str, !1),
-  stringify: stringifySexagesimal
-}, timestamp = {
-  identify: (value) => value instanceof Date,
-  default: !0,
-  tag: "tag:yaml.org,2002:timestamp",
-  // If the time zone is omitted, the timestamp is assumed to be specified in UTC. The time part
-  // may be omitted altogether, resulting in a date format. In such a case, the time part is
-  // assumed to be 00:00:00Z (start of day, UTC).
-  test: RegExp("^([0-9]{4})-([0-9]{1,2})-([0-9]{1,2})(?:(?:t|T|[ \\t]+)([0-9]{1,2}):([0-9]{1,2}):([0-9]{1,2}(\\.[0-9]+)?)(?:[ \\t]*(Z|[-+][012]?[0-9](?::[0-9]{2})?))?)?$"),
-  resolve(str) {
-    let match2 = str.match(timestamp.test);
-    if (!match2)
-      throw new Error("!!timestamp expects a date, starting with yyyy-mm-dd");
-    let [, year, month, day, hour, minute, second] = match2.map(Number), millisec = match2[7] ? Number((match2[7] + "00").substr(1, 3)) : 0, date = Date.UTC(year, month - 1, day, hour || 0, minute || 0, second || 0, millisec), tz = match2[8];
-    if (tz && tz !== "Z") {
-      let d = parseSexagesimal(tz, !1);
-      Math.abs(d) < 30 && (d *= 60), date -= 6e4 * d;
-    }
-    return new Date(date);
-  },
-  stringify: ({ value }) => {
-    var _a;
-    return (_a = value == null ? void 0 : value.toISOString().replace(/(T00:00:00)?\.000Z$/, "")) != null ? _a : "";
-  }
-};
-
-// node_modules/yaml/browser/dist/schema/yaml-1.1/schema.js
-var schema3 = [
-  map2,
-  seq,
-  string,
-  nullTag,
-  trueTag,
-  falseTag,
-  intBin,
-  intOct2,
-  int2,
-  intHex2,
-  floatNaN2,
-  floatExp2,
-  float2,
-  binary,
-  merge,
-  omap,
-  pairs,
-  set,
-  intTime,
-  floatTime,
-  timestamp
-];
-
-// node_modules/yaml/browser/dist/schema/tags.js
-var schemas = /* @__PURE__ */ new Map([
-  ["core", schema],
-  ["failsafe", [map2, seq, string]],
-  ["json", schema2],
-  ["yaml11", schema3],
-  ["yaml-1.1", schema3]
-]), tagsByName = {
-  binary,
-  bool: boolTag,
-  float,
-  floatExp,
-  floatNaN,
-  floatTime,
-  int,
-  intHex,
-  intOct,
-  intTime,
-  map: map2,
-  merge,
-  null: nullTag,
-  omap,
-  pairs,
-  seq,
-  set,
-  timestamp
-}, coreKnownTags = {
-  "tag:yaml.org,2002:binary": binary,
-  "tag:yaml.org,2002:merge": merge,
-  "tag:yaml.org,2002:omap": omap,
-  "tag:yaml.org,2002:pairs": pairs,
-  "tag:yaml.org,2002:set": set,
-  "tag:yaml.org,2002:timestamp": timestamp
-};
-function getTags(customTags, schemaName, addMergeTag) {
-  let schemaTags = schemas.get(schemaName);
-  if (schemaTags && !customTags)
-    return addMergeTag && !schemaTags.includes(merge) ? schemaTags.concat(merge) : schemaTags.slice();
-  let tags = schemaTags;
-  if (!tags)
-    if (Array.isArray(customTags))
-      tags = [];
-    else {
-      let keys2 = Array.from(schemas.keys()).filter((key) => key !== "yaml11").map((key) => JSON.stringify(key)).join(", ");
-      throw new Error(`Unknown schema "${schemaName}"; use one of ${keys2} or define customTags array`);
-    }
-  if (Array.isArray(customTags))
-    for (let tag of customTags)
-      tags = tags.concat(tag);
-  else typeof customTags == "function" && (tags = customTags(tags.slice()));
-  return addMergeTag && (tags = tags.concat(merge)), tags.reduce((tags2, tag) => {
-    let tagObj = typeof tag == "string" ? tagsByName[tag] : tag;
-    if (!tagObj) {
-      let tagName = JSON.stringify(tag), keys2 = Object.keys(tagsByName).map((key) => JSON.stringify(key)).join(", ");
-      throw new Error(`Unknown custom tag ${tagName}; use one of ${keys2}`);
-    }
-    return tags2.includes(tagObj) || tags2.push(tagObj), tags2;
-  }, []);
-}
-
-// node_modules/yaml/browser/dist/schema/Schema.js
-var sortMapEntriesByKey = (a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0, Schema2 = class _Schema {
-  constructor({ compat, customTags, merge: merge2, resolveKnownTags, schema: schema4, sortMapEntries, toStringDefaults }) {
-    this.compat = Array.isArray(compat) ? getTags(compat, "compat") : compat ? getTags(null, compat) : null, this.name = typeof schema4 == "string" && schema4 || "core", this.knownTags = resolveKnownTags ? coreKnownTags : {}, this.tags = getTags(customTags, this.name, merge2), this.toStringOptions = toStringDefaults != null ? toStringDefaults : null, Object.defineProperty(this, MAP, { value: map2 }), Object.defineProperty(this, SCALAR, { value: string }), Object.defineProperty(this, SEQ, { value: seq }), this.sortMapEntries = typeof sortMapEntries == "function" ? sortMapEntries : sortMapEntries === !0 ? sortMapEntriesByKey : null;
-  }
-  clone() {
-    let copy2 = Object.create(_Schema.prototype, Object.getOwnPropertyDescriptors(this));
-    return copy2.tags = this.tags.slice(), copy2;
-  }
-};
-
-// node_modules/yaml/browser/dist/stringify/stringifyDocument.js
-function stringifyDocument(doc2, options) {
-  var _a;
-  let lines = [], hasDirectives = options.directives === !0;
-  if (options.directives !== !1 && doc2.directives) {
-    let dir = doc2.directives.toString(doc2);
-    dir ? (lines.push(dir), hasDirectives = !0) : doc2.directives.docStart && (hasDirectives = !0);
-  }
-  hasDirectives && lines.push("---");
-  let ctx = createStringifyContext(doc2, options), { commentString } = ctx.options;
-  if (doc2.commentBefore) {
-    lines.length !== 1 && lines.unshift("");
-    let cs = commentString(doc2.commentBefore);
-    lines.unshift(indentComment(cs, ""));
-  }
-  let chompKeep = !1, contentComment = null;
-  if (doc2.contents) {
-    if (isNode2(doc2.contents)) {
-      if (doc2.contents.spaceBefore && hasDirectives && lines.push(""), doc2.contents.commentBefore) {
-        let cs = commentString(doc2.contents.commentBefore);
-        lines.push(indentComment(cs, ""));
-      }
-      ctx.forceBlockIndent = !!doc2.comment, contentComment = doc2.contents.comment;
-    }
-    let onChompKeep = contentComment ? void 0 : () => chompKeep = !0, body = stringify(doc2.contents, ctx, () => contentComment = null, onChompKeep);
-    contentComment && (body += lineComment(body, "", commentString(contentComment))), (body[0] === "|" || body[0] === ">") && lines[lines.length - 1] === "---" ? lines[lines.length - 1] = `--- ${body}` : lines.push(body);
-  } else
-    lines.push(stringify(doc2.contents, ctx));
-  if ((_a = doc2.directives) != null && _a.docEnd)
-    if (doc2.comment) {
-      let cs = commentString(doc2.comment);
-      cs.includes(`
-`) ? (lines.push("..."), lines.push(indentComment(cs, ""))) : lines.push(`... ${cs}`);
-    } else
-      lines.push("...");
-  else {
-    let dc = doc2.comment;
-    dc && chompKeep && (dc = dc.replace(/^\n+/, "")), dc && ((!chompKeep || contentComment) && lines[lines.length - 1] !== "" && lines.push(""), lines.push(indentComment(commentString(dc), "")));
-  }
-  return lines.join(`
-`) + `
-`;
-}
-
-// node_modules/yaml/browser/dist/doc/Document.js
-var Document = class _Document {
-  constructor(value, replacer, options) {
-    this.commentBefore = null, this.comment = null, this.errors = [], this.warnings = [], Object.defineProperty(this, NODE_TYPE, { value: DOC });
-    let _replacer = null;
-    typeof replacer == "function" || Array.isArray(replacer) ? _replacer = replacer : options === void 0 && replacer && (options = replacer, replacer = void 0);
-    let opt = Object.assign({
-      intAsBigInt: !1,
-      keepSourceTokens: !1,
-      logLevel: "warn",
-      prettyErrors: !0,
-      strict: !0,
-      stringKeys: !1,
-      uniqueKeys: !0,
-      version: "1.2"
-    }, options);
-    this.options = opt;
-    let { version } = opt;
-    options != null && options._directives ? (this.directives = options._directives.atDocument(), this.directives.yaml.explicit && (version = this.directives.yaml.version)) : this.directives = new Directives({ version }), this.setSchema(version, options), this.contents = value === void 0 ? null : this.createNode(value, _replacer, options);
-  }
-  /**
-   * Create a deep copy of this Document and its contents.
-   *
-   * Custom Node values that inherit from `Object` still refer to their original instances.
-   */
-  clone() {
-    let copy2 = Object.create(_Document.prototype, {
-      [NODE_TYPE]: { value: DOC }
-    });
-    return copy2.commentBefore = this.commentBefore, copy2.comment = this.comment, copy2.errors = this.errors.slice(), copy2.warnings = this.warnings.slice(), copy2.options = Object.assign({}, this.options), this.directives && (copy2.directives = this.directives.clone()), copy2.schema = this.schema.clone(), copy2.contents = isNode2(this.contents) ? this.contents.clone(copy2.schema) : this.contents, this.range && (copy2.range = this.range.slice()), copy2;
-  }
-  /** Adds a value to the document. */
-  add(value) {
-    assertCollection(this.contents) && this.contents.add(value);
-  }
-  /** Adds a value to the document. */
-  addIn(path, value) {
-    assertCollection(this.contents) && this.contents.addIn(path, value);
-  }
-  /**
-   * Create a new `Alias` node, ensuring that the target `node` has the required anchor.
-   *
-   * If `node` already has an anchor, `name` is ignored.
-   * Otherwise, the `node.anchor` value will be set to `name`,
-   * or if an anchor with that name is already present in the document,
-   * `name` will be used as a prefix for a new unique anchor.
-   * If `name` is undefined, the generated anchor will use 'a' as a prefix.
-   */
-  createAlias(node, name) {
-    if (!node.anchor) {
-      let prev = anchorNames(this);
-      node.anchor = // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
-      !name || prev.has(name) ? findNewAnchor(name || "a", prev) : name;
-    }
-    return new Alias(node.anchor);
-  }
-  createNode(value, replacer, options) {
-    let _replacer;
-    if (typeof replacer == "function")
-      value = replacer.call({ "": value }, "", value), _replacer = replacer;
-    else if (Array.isArray(replacer)) {
-      let keyToStr = (v) => typeof v == "number" || v instanceof String || v instanceof Number, asStr = replacer.filter(keyToStr).map(String);
-      asStr.length > 0 && (replacer = replacer.concat(asStr)), _replacer = replacer;
-    } else options === void 0 && replacer && (options = replacer, replacer = void 0);
-    let { aliasDuplicateObjects, anchorPrefix, flow, keepUndefined, onTagObj, tag } = options != null ? options : {}, { onAnchor, setAnchors, sourceObjects } = createNodeAnchors(
-      this,
-      // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
-      anchorPrefix || "a"
-    ), ctx = {
-      aliasDuplicateObjects: aliasDuplicateObjects != null ? aliasDuplicateObjects : !0,
-      keepUndefined: keepUndefined != null ? keepUndefined : !1,
-      onAnchor,
-      onTagObj,
-      replacer: _replacer,
-      schema: this.schema,
-      sourceObjects
-    }, node = createNode(value, tag, ctx);
-    return flow && isCollection(node) && (node.flow = !0), setAnchors(), node;
-  }
-  /**
-   * Convert a key and a value into a `Pair` using the current schema,
-   * recursively wrapping all values as `Scalar` or `Collection` nodes.
-   */
-  createPair(key, value, options = {}) {
-    let k = this.createNode(key, null, options), v = this.createNode(value, null, options);
-    return new Pair2(k, v);
-  }
-  /**
-   * Removes a value from the document.
-   * @returns `true` if the item was found and removed.
-   */
-  delete(key) {
-    return assertCollection(this.contents) ? this.contents.delete(key) : !1;
-  }
-  /**
-   * Removes a value from the document.
-   * @returns `true` if the item was found and removed.
-   */
-  deleteIn(path) {
-    return isEmptyPath(path) ? this.contents == null ? !1 : (this.contents = null, !0) : assertCollection(this.contents) ? this.contents.deleteIn(path) : !1;
-  }
-  /**
-   * Returns item at `key`, or `undefined` if not found. By default unwraps
-   * scalar values from their surrounding node; to disable set `keepScalar` to
-   * `true` (collections are always returned intact).
-   */
-  get(key, keepScalar) {
-    return isCollection(this.contents) ? this.contents.get(key, keepScalar) : void 0;
-  }
-  /**
-   * Returns item at `path`, or `undefined` if not found. By default unwraps
-   * scalar values from their surrounding node; to disable set `keepScalar` to
-   * `true` (collections are always returned intact).
-   */
-  getIn(path, keepScalar) {
-    return isEmptyPath(path) ? !keepScalar && isScalar(this.contents) ? this.contents.value : this.contents : isCollection(this.contents) ? this.contents.getIn(path, keepScalar) : void 0;
-  }
-  /**
-   * Checks if the document includes a value with the key `key`.
-   */
-  has(key) {
-    return isCollection(this.contents) ? this.contents.has(key) : !1;
-  }
-  /**
-   * Checks if the document includes a value at `path`.
-   */
-  hasIn(path) {
-    return isEmptyPath(path) ? this.contents !== void 0 : isCollection(this.contents) ? this.contents.hasIn(path) : !1;
-  }
-  /**
-   * Sets a value in this document. For `!!set`, `value` needs to be a
-   * boolean to add/remove the item from the set.
-   */
-  set(key, value) {
-    this.contents == null ? this.contents = collectionFromPath(this.schema, [key], value) : assertCollection(this.contents) && this.contents.set(key, value);
-  }
-  /**
-   * Sets a value in this document. For `!!set`, `value` needs to be a
-   * boolean to add/remove the item from the set.
-   */
-  setIn(path, value) {
-    isEmptyPath(path) ? this.contents = value : this.contents == null ? this.contents = collectionFromPath(this.schema, Array.from(path), value) : assertCollection(this.contents) && this.contents.setIn(path, value);
-  }
-  /**
-   * Change the YAML version and schema used by the document.
-   * A `null` version disables support for directives, explicit tags, anchors, and aliases.
-   * It also requires the `schema` option to be given as a `Schema` instance value.
-   *
-   * Overrides all previously set schema options.
-   */
-  setSchema(version, options = {}) {
-    typeof version == "number" && (version = String(version));
-    let opt;
-    switch (version) {
-      case "1.1":
-        this.directives ? this.directives.yaml.version = "1.1" : this.directives = new Directives({ version: "1.1" }), opt = { resolveKnownTags: !1, schema: "yaml-1.1" };
-        break;
-      case "1.2":
-      case "next":
-        this.directives ? this.directives.yaml.version = version : this.directives = new Directives({ version }), opt = { resolveKnownTags: !0, schema: "core" };
-        break;
-      case null:
-        this.directives && delete this.directives, opt = null;
-        break;
-      default: {
-        let sv = JSON.stringify(version);
-        throw new Error(`Expected '1.1', '1.2' or null as first argument, but found: ${sv}`);
-      }
-    }
-    if (options.schema instanceof Object)
-      this.schema = options.schema;
-    else if (opt)
-      this.schema = new Schema2(Object.assign(opt, options));
-    else
-      throw new Error("With a null YAML version, the { schema: Schema } option is required");
-  }
-  // json & jsonArg are only used from toJSON()
-  toJS({ json, jsonArg, mapAsMap, maxAliasCount, onAnchor, reviver } = {}) {
-    let ctx = {
-      anchors: /* @__PURE__ */ new Map(),
-      doc: this,
-      keep: !json,
-      mapAsMap: mapAsMap === !0,
-      mapKeyWarned: !1,
-      maxAliasCount: typeof maxAliasCount == "number" ? maxAliasCount : 100
-    }, res = toJS(this.contents, jsonArg != null ? jsonArg : "", ctx);
-    if (typeof onAnchor == "function")
-      for (let { count: count2, res: res2 } of ctx.anchors.values())
-        onAnchor(res2, count2);
-    return typeof reviver == "function" ? applyReviver(reviver, { "": res }, "", res) : res;
-  }
-  /**
-   * A JSON representation of the document `contents`.
-   *
-   * @param jsonArg Used by `JSON.stringify` to indicate the array index or
-   *   property name.
-   */
-  toJSON(jsonArg, onAnchor) {
-    return this.toJS({ json: !0, jsonArg, mapAsMap: !1, onAnchor });
-  }
-  /** A YAML representation of the document. */
-  toString(options = {}) {
-    if (this.errors.length > 0)
-      throw new Error("Document with errors cannot be stringified");
-    if ("indent" in options && (!Number.isInteger(options.indent) || Number(options.indent) <= 0)) {
-      let s = JSON.stringify(options.indent);
-      throw new Error(`"indent" option must be a positive integer, not ${s}`);
-    }
-    return stringifyDocument(this, options);
-  }
-};
-function assertCollection(contents) {
-  if (isCollection(contents))
-    return !0;
-  throw new Error("Expected a YAML collection as document contents");
-}
-
-// node_modules/yaml/browser/dist/errors.js
-var YAMLError = class extends Error {
-  constructor(name, pos, code, message) {
-    super(), this.name = name, this.code = code, this.message = message, this.pos = pos;
-  }
-}, YAMLParseError = class extends YAMLError {
-  constructor(pos, code, message) {
-    super("YAMLParseError", pos, code, message);
-  }
-}, YAMLWarning = class extends YAMLError {
-  constructor(pos, code, message) {
-    super("YAMLWarning", pos, code, message);
-  }
-}, prettifyError = (src, lc) => (error) => {
-  if (error.pos[0] === -1)
-    return;
-  error.linePos = error.pos.map((pos) => lc.linePos(pos));
-  let { line, col } = error.linePos[0];
-  error.message += ` at line ${line}, column ${col}`;
-  let ci = col - 1, lineStr = src.substring(lc.lineStarts[line - 1], lc.lineStarts[line]).replace(/[\n\r]+$/, "");
-  if (ci >= 60 && lineStr.length > 80) {
-    let trimStart = Math.min(ci - 39, lineStr.length - 79);
-    lineStr = "\u2026" + lineStr.substring(trimStart), ci -= trimStart - 1;
-  }
-  if (lineStr.length > 80 && (lineStr = lineStr.substring(0, 79) + "\u2026"), line > 1 && /^ *$/.test(lineStr.substring(0, ci))) {
-    let prev = src.substring(lc.lineStarts[line - 2], lc.lineStarts[line - 1]);
-    prev.length > 80 && (prev = prev.substring(0, 79) + `\u2026
-`), lineStr = prev + lineStr;
-  }
-  if (/[^ ]/.test(lineStr)) {
-    let count2 = 1, end = error.linePos[1];
-    (end == null ? void 0 : end.line) === line && end.col > col && (count2 = Math.max(1, Math.min(end.col - col, 80 - ci)));
-    let pointer = " ".repeat(ci) + "^".repeat(count2);
-    error.message += `:
-
-${lineStr}
-${pointer}
-`;
-  }
-};
-
-// node_modules/yaml/browser/dist/compose/resolve-props.js
-function resolveProps(tokens, { flow, indicator, next, offset, onError, parentIndent, startOnNewline }) {
-  let spaceBefore = !1, atNewline = startOnNewline, hasSpace = startOnNewline, comment = "", commentSep = "", hasNewline = !1, reqSpace = !1, tab = null, anchor = null, tag = null, newlineAfterProp = null, comma = null, found = null, start = null;
-  for (let token of tokens)
-    switch (reqSpace && (token.type !== "space" && token.type !== "newline" && token.type !== "comma" && onError(token.offset, "MISSING_CHAR", "Tags and anchors must be separated from the next token by white space"), reqSpace = !1), tab && (atNewline && token.type !== "comment" && token.type !== "newline" && onError(tab, "TAB_AS_INDENT", "Tabs are not allowed as indentation"), tab = null), token.type) {
-      case "space":
-        !flow && (indicator !== "doc-start" || (next == null ? void 0 : next.type) !== "flow-collection") && token.source.includes("	") && (tab = token), hasSpace = !0;
-        break;
-      case "comment": {
-        hasSpace || onError(token, "MISSING_CHAR", "Comments must be separated from other tokens by white space characters");
-        let cb = token.source.substring(1) || " ";
-        comment ? comment += commentSep + cb : comment = cb, commentSep = "", atNewline = !1;
-        break;
-      }
-      case "newline":
-        atNewline ? comment ? comment += token.source : (!found || indicator !== "seq-item-ind") && (spaceBefore = !0) : commentSep += token.source, atNewline = !0, hasNewline = !0, (anchor || tag) && (newlineAfterProp = token), hasSpace = !0;
-        break;
-      case "anchor":
-        anchor && onError(token, "MULTIPLE_ANCHORS", "A node can have at most one anchor"), token.source.endsWith(":") && onError(token.offset + token.source.length - 1, "BAD_ALIAS", "Anchor ending in : is ambiguous", !0), anchor = token, start != null || (start = token.offset), atNewline = !1, hasSpace = !1, reqSpace = !0;
-        break;
-      case "tag": {
-        tag && onError(token, "MULTIPLE_TAGS", "A node can have at most one tag"), tag = token, start != null || (start = token.offset), atNewline = !1, hasSpace = !1, reqSpace = !0;
-        break;
-      }
-      case indicator:
-        (anchor || tag) && onError(token, "BAD_PROP_ORDER", `Anchors and tags must be after the ${token.source} indicator`), found && onError(token, "UNEXPECTED_TOKEN", `Unexpected ${token.source} in ${flow != null ? flow : "collection"}`), found = token, atNewline = indicator === "seq-item-ind" || indicator === "explicit-key-ind", hasSpace = !1;
-        break;
-      case "comma":
-        if (flow) {
-          comma && onError(token, "UNEXPECTED_TOKEN", `Unexpected , in ${flow}`), comma = token, atNewline = !1, hasSpace = !1;
-          break;
-        }
-      // else fallthrough
-      default:
-        onError(token, "UNEXPECTED_TOKEN", `Unexpected ${token.type} token`), atNewline = !1, hasSpace = !1;
-    }
-  let last2 = tokens[tokens.length - 1], end = last2 ? last2.offset + last2.source.length : offset;
-  return reqSpace && next && next.type !== "space" && next.type !== "newline" && next.type !== "comma" && (next.type !== "scalar" || next.source !== "") && onError(next.offset, "MISSING_CHAR", "Tags and anchors must be separated from the next token by white space"), tab && (atNewline && tab.indent <= parentIndent || (next == null ? void 0 : next.type) === "block-map" || (next == null ? void 0 : next.type) === "block-seq") && onError(tab, "TAB_AS_INDENT", "Tabs are not allowed as indentation"), {
-    comma,
-    found,
-    spaceBefore,
-    comment,
-    hasNewline,
-    anchor,
-    tag,
-    newlineAfterProp,
-    end,
-    start: start != null ? start : end
-  };
-}
-
-// node_modules/yaml/browser/dist/compose/util-contains-newline.js
-function containsNewline(key) {
-  if (!key)
-    return null;
-  switch (key.type) {
-    case "alias":
-    case "scalar":
-    case "double-quoted-scalar":
-    case "single-quoted-scalar":
-      if (key.source.includes(`
-`))
-        return !0;
-      if (key.end) {
-        for (let st of key.end)
-          if (st.type === "newline")
-            return !0;
-      }
-      return !1;
-    case "flow-collection":
-      for (let it of key.items) {
-        for (let st of it.start)
-          if (st.type === "newline")
-            return !0;
-        if (it.sep) {
-          for (let st of it.sep)
-            if (st.type === "newline")
-              return !0;
-        }
-        if (containsNewline(it.key) || containsNewline(it.value))
-          return !0;
-      }
-      return !1;
-    default:
-      return !0;
-  }
-}
-
-// node_modules/yaml/browser/dist/compose/util-flow-indent-check.js
-function flowIndentCheck(indent, fc, onError) {
-  if ((fc == null ? void 0 : fc.type) === "flow-collection") {
-    let end = fc.end[0];
-    end.indent === indent && (end.source === "]" || end.source === "}") && containsNewline(fc) && onError(end, "BAD_INDENT", "Flow end indicator should be more indented than parent", !0);
-  }
-}
-
-// node_modules/yaml/browser/dist/compose/util-map-includes.js
-function mapIncludes(ctx, items, search) {
-  let { uniqueKeys } = ctx.options;
-  if (uniqueKeys === !1)
-    return !1;
-  let isEqual = typeof uniqueKeys == "function" ? uniqueKeys : (a, b) => a === b || isScalar(a) && isScalar(b) && a.value === b.value;
-  return items.some((pair) => isEqual(pair.key, search));
-}
-
-// node_modules/yaml/browser/dist/compose/resolve-block-map.js
-var startColMsg = "All mapping items must start at the same column";
-function resolveBlockMap({ composeNode: composeNode2, composeEmptyNode: composeEmptyNode2 }, ctx, bm, onError, tag) {
-  var _a, _b;
-  let NodeClass = (_a = tag == null ? void 0 : tag.nodeClass) != null ? _a : YAMLMap, map3 = new NodeClass(ctx.schema);
-  ctx.atRoot && (ctx.atRoot = !1);
-  let offset = bm.offset, commentEnd = null;
-  for (let collItem of bm.items) {
-    let { start, key, sep, value } = collItem, keyProps = resolveProps(start, {
-      indicator: "explicit-key-ind",
-      next: key != null ? key : sep == null ? void 0 : sep[0],
-      offset,
-      onError,
-      parentIndent: bm.indent,
-      startOnNewline: !0
-    }), implicitKey = !keyProps.found;
-    if (implicitKey) {
-      if (key && (key.type === "block-seq" ? onError(offset, "BLOCK_AS_IMPLICIT_KEY", "A block sequence may not be used as an implicit map key") : "indent" in key && key.indent !== bm.indent && onError(offset, "BAD_INDENT", startColMsg)), !keyProps.anchor && !keyProps.tag && !sep) {
-        commentEnd = keyProps.end, keyProps.comment && (map3.comment ? map3.comment += `
-` + keyProps.comment : map3.comment = keyProps.comment);
-        continue;
-      }
-      (keyProps.newlineAfterProp || containsNewline(key)) && onError(key != null ? key : start[start.length - 1], "MULTILINE_IMPLICIT_KEY", "Implicit keys need to be on a single line");
-    } else ((_b = keyProps.found) == null ? void 0 : _b.indent) !== bm.indent && onError(offset, "BAD_INDENT", startColMsg);
-    ctx.atKey = !0;
-    let keyStart = keyProps.end, keyNode = key ? composeNode2(ctx, key, keyProps, onError) : composeEmptyNode2(ctx, keyStart, start, null, keyProps, onError);
-    ctx.schema.compat && flowIndentCheck(bm.indent, key, onError), ctx.atKey = !1, mapIncludes(ctx, map3.items, keyNode) && onError(keyStart, "DUPLICATE_KEY", "Map keys must be unique");
-    let valueProps = resolveProps(sep != null ? sep : [], {
-      indicator: "map-value-ind",
-      next: value,
-      offset: keyNode.range[2],
-      onError,
-      parentIndent: bm.indent,
-      startOnNewline: !key || key.type === "block-scalar"
-    });
-    if (offset = valueProps.end, valueProps.found) {
-      implicitKey && ((value == null ? void 0 : value.type) === "block-map" && !valueProps.hasNewline && onError(offset, "BLOCK_AS_IMPLICIT_KEY", "Nested mappings are not allowed in compact mappings"), ctx.options.strict && keyProps.start < valueProps.found.offset - 1024 && onError(keyNode.range, "KEY_OVER_1024_CHARS", "The : indicator must be at most 1024 chars after the start of an implicit block mapping key"));
-      let valueNode = value ? composeNode2(ctx, value, valueProps, onError) : composeEmptyNode2(ctx, offset, sep, null, valueProps, onError);
-      ctx.schema.compat && flowIndentCheck(bm.indent, value, onError), offset = valueNode.range[2];
-      let pair = new Pair2(keyNode, valueNode);
-      ctx.options.keepSourceTokens && (pair.srcToken = collItem), map3.items.push(pair);
-    } else {
-      implicitKey && onError(keyNode.range, "MISSING_CHAR", "Implicit map keys need to be followed by map values"), valueProps.comment && (keyNode.comment ? keyNode.comment += `
-` + valueProps.comment : keyNode.comment = valueProps.comment);
-      let pair = new Pair2(keyNode);
-      ctx.options.keepSourceTokens && (pair.srcToken = collItem), map3.items.push(pair);
-    }
-  }
-  return commentEnd && commentEnd < offset && onError(commentEnd, "IMPOSSIBLE", "Map comment with trailing content"), map3.range = [bm.offset, offset, commentEnd != null ? commentEnd : offset], map3;
-}
-
-// node_modules/yaml/browser/dist/compose/resolve-block-seq.js
-function resolveBlockSeq({ composeNode: composeNode2, composeEmptyNode: composeEmptyNode2 }, ctx, bs, onError, tag) {
-  var _a;
-  let NodeClass = (_a = tag == null ? void 0 : tag.nodeClass) != null ? _a : YAMLSeq, seq2 = new NodeClass(ctx.schema);
-  ctx.atRoot && (ctx.atRoot = !1), ctx.atKey && (ctx.atKey = !1);
-  let offset = bs.offset, commentEnd = null;
-  for (let { start, value } of bs.items) {
-    let props = resolveProps(start, {
-      indicator: "seq-item-ind",
-      next: value,
-      offset,
-      onError,
-      parentIndent: bs.indent,
-      startOnNewline: !0
-    });
-    if (!props.found)
-      if (props.anchor || props.tag || value)
-        (value == null ? void 0 : value.type) === "block-seq" ? onError(props.end, "BAD_INDENT", "All sequence items must start at the same column") : onError(offset, "MISSING_CHAR", "Sequence item without - indicator");
-      else {
-        commentEnd = props.end, props.comment && (seq2.comment = props.comment);
-        continue;
-      }
-    let node = value ? composeNode2(ctx, value, props, onError) : composeEmptyNode2(ctx, props.end, start, null, props, onError);
-    ctx.schema.compat && flowIndentCheck(bs.indent, value, onError), offset = node.range[2], seq2.items.push(node);
-  }
-  return seq2.range = [bs.offset, offset, commentEnd != null ? commentEnd : offset], seq2;
-}
-
-// node_modules/yaml/browser/dist/compose/resolve-end.js
-function resolveEnd(end, offset, reqSpace, onError) {
-  let comment = "";
-  if (end) {
-    let hasSpace = !1, sep = "";
-    for (let token of end) {
-      let { source, type } = token;
-      switch (type) {
-        case "space":
-          hasSpace = !0;
-          break;
-        case "comment": {
-          reqSpace && !hasSpace && onError(token, "MISSING_CHAR", "Comments must be separated from other tokens by white space characters");
-          let cb = source.substring(1) || " ";
-          comment ? comment += sep + cb : comment = cb, sep = "";
-          break;
-        }
-        case "newline":
-          comment && (sep += source), hasSpace = !0;
-          break;
-        default:
-          onError(token, "UNEXPECTED_TOKEN", `Unexpected ${type} at node end`);
-      }
-      offset += source.length;
-    }
-  }
-  return { comment, offset };
-}
-
-// node_modules/yaml/browser/dist/compose/resolve-flow-collection.js
-var blockMsg = "Block collections are not allowed within flow collections", isBlock = (token) => token && (token.type === "block-map" || token.type === "block-seq");
-function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: composeEmptyNode2 }, ctx, fc, onError, tag) {
-  var _a, _b, _c;
-  let isMap2 = fc.start.source === "{", fcName = isMap2 ? "flow map" : "flow sequence", NodeClass = (_a = tag == null ? void 0 : tag.nodeClass) != null ? _a : isMap2 ? YAMLMap : YAMLSeq, coll = new NodeClass(ctx.schema);
-  coll.flow = !0;
-  let atRoot = ctx.atRoot;
-  atRoot && (ctx.atRoot = !1), ctx.atKey && (ctx.atKey = !1);
-  let offset = fc.offset + fc.start.source.length;
-  for (let i = 0; i < fc.items.length; ++i) {
-    let collItem = fc.items[i], { start, key, sep, value } = collItem, props = resolveProps(start, {
-      flow: fcName,
-      indicator: "explicit-key-ind",
-      next: key != null ? key : sep == null ? void 0 : sep[0],
-      offset,
-      onError,
-      parentIndent: fc.indent,
-      startOnNewline: !1
-    });
-    if (!props.found) {
-      if (!props.anchor && !props.tag && !sep && !value) {
-        i === 0 && props.comma ? onError(props.comma, "UNEXPECTED_TOKEN", `Unexpected , in ${fcName}`) : i < fc.items.length - 1 && onError(props.start, "UNEXPECTED_TOKEN", `Unexpected empty item in ${fcName}`), props.comment && (coll.comment ? coll.comment += `
-` + props.comment : coll.comment = props.comment), offset = props.end;
-        continue;
-      }
-      !isMap2 && ctx.options.strict && containsNewline(key) && onError(
-        key,
-        // checked by containsNewline()
-        "MULTILINE_IMPLICIT_KEY",
-        "Implicit keys of flow sequence pairs need to be on a single line"
-      );
-    }
-    if (i === 0)
-      props.comma && onError(props.comma, "UNEXPECTED_TOKEN", `Unexpected , in ${fcName}`);
-    else if (props.comma || onError(props.start, "MISSING_CHAR", `Missing , between ${fcName} items`), props.comment) {
-      let prevItemComment = "";
-      loop: for (let st of start)
-        switch (st.type) {
-          case "comma":
-          case "space":
-            break;
-          case "comment":
-            prevItemComment = st.source.substring(1);
-            break loop;
-          default:
-            break loop;
-        }
-      if (prevItemComment) {
-        let prev = coll.items[coll.items.length - 1];
-        isPair(prev) && (prev = (_b = prev.value) != null ? _b : prev.key), prev.comment ? prev.comment += `
-` + prevItemComment : prev.comment = prevItemComment, props.comment = props.comment.substring(prevItemComment.length + 1);
-      }
-    }
-    if (!isMap2 && !sep && !props.found) {
-      let valueNode = value ? composeNode2(ctx, value, props, onError) : composeEmptyNode2(ctx, props.end, sep, null, props, onError);
-      coll.items.push(valueNode), offset = valueNode.range[2], isBlock(value) && onError(valueNode.range, "BLOCK_IN_FLOW", blockMsg);
-    } else {
-      ctx.atKey = !0;
-      let keyStart = props.end, keyNode = key ? composeNode2(ctx, key, props, onError) : composeEmptyNode2(ctx, keyStart, start, null, props, onError);
-      isBlock(key) && onError(keyNode.range, "BLOCK_IN_FLOW", blockMsg), ctx.atKey = !1;
-      let valueProps = resolveProps(sep != null ? sep : [], {
-        flow: fcName,
-        indicator: "map-value-ind",
-        next: value,
-        offset: keyNode.range[2],
-        onError,
-        parentIndent: fc.indent,
-        startOnNewline: !1
-      });
-      if (valueProps.found) {
-        if (!isMap2 && !props.found && ctx.options.strict) {
-          if (sep)
-            for (let st of sep) {
-              if (st === valueProps.found)
-                break;
-              if (st.type === "newline") {
-                onError(st, "MULTILINE_IMPLICIT_KEY", "Implicit keys of flow sequence pairs need to be on a single line");
-                break;
-              }
-            }
-          props.start < valueProps.found.offset - 1024 && onError(valueProps.found, "KEY_OVER_1024_CHARS", "The : indicator must be at most 1024 chars after the start of an implicit flow sequence key");
-        }
-      } else value && ("source" in value && ((_c = value.source) == null ? void 0 : _c[0]) === ":" ? onError(value, "MISSING_CHAR", `Missing space after : in ${fcName}`) : onError(valueProps.start, "MISSING_CHAR", `Missing , or : between ${fcName} items`));
-      let valueNode = value ? composeNode2(ctx, value, valueProps, onError) : valueProps.found ? composeEmptyNode2(ctx, valueProps.end, sep, null, valueProps, onError) : null;
-      valueNode ? isBlock(value) && onError(valueNode.range, "BLOCK_IN_FLOW", blockMsg) : valueProps.comment && (keyNode.comment ? keyNode.comment += `
-` + valueProps.comment : keyNode.comment = valueProps.comment);
-      let pair = new Pair2(keyNode, valueNode);
-      if (ctx.options.keepSourceTokens && (pair.srcToken = collItem), isMap2) {
-        let map3 = coll;
-        mapIncludes(ctx, map3.items, keyNode) && onError(keyStart, "DUPLICATE_KEY", "Map keys must be unique"), map3.items.push(pair);
-      } else {
-        let map3 = new YAMLMap(ctx.schema);
-        map3.flow = !0, map3.items.push(pair);
-        let endRange = (valueNode != null ? valueNode : keyNode).range;
-        map3.range = [keyNode.range[0], endRange[1], endRange[2]], coll.items.push(map3);
-      }
-      offset = valueNode ? valueNode.range[2] : valueProps.end;
-    }
-  }
-  let expectedEnd = isMap2 ? "}" : "]", [ce, ...ee] = fc.end, cePos = offset;
-  if ((ce == null ? void 0 : ce.source) === expectedEnd)
-    cePos = ce.offset + ce.source.length;
-  else {
-    let name = fcName[0].toUpperCase() + fcName.substring(1), msg = atRoot ? `${name} must end with a ${expectedEnd}` : `${name} in block collection must be sufficiently indented and end with a ${expectedEnd}`;
-    onError(offset, atRoot ? "MISSING_CHAR" : "BAD_INDENT", msg), ce && ce.source.length !== 1 && ee.unshift(ce);
-  }
-  if (ee.length > 0) {
-    let end = resolveEnd(ee, cePos, ctx.options.strict, onError);
-    end.comment && (coll.comment ? coll.comment += `
-` + end.comment : coll.comment = end.comment), coll.range = [fc.offset, cePos, end.offset];
-  } else
-    coll.range = [fc.offset, cePos, cePos];
-  return coll;
-}
-
-// node_modules/yaml/browser/dist/compose/compose-collection.js
-function resolveCollection(CN2, ctx, token, onError, tagName, tag) {
-  let coll = token.type === "block-map" ? resolveBlockMap(CN2, ctx, token, onError, tag) : token.type === "block-seq" ? resolveBlockSeq(CN2, ctx, token, onError, tag) : resolveFlowCollection(CN2, ctx, token, onError, tag), Coll = coll.constructor;
-  return tagName === "!" || tagName === Coll.tagName ? (coll.tag = Coll.tagName, coll) : (tagName && (coll.tag = tagName), coll);
-}
-function composeCollection(CN2, ctx, token, props, onError) {
-  var _a, _b, _c;
-  let tagToken = props.tag, tagName = tagToken ? ctx.directives.tagName(tagToken.source, (msg) => onError(tagToken, "TAG_RESOLVE_FAILED", msg)) : null;
-  if (token.type === "block-seq") {
-    let { anchor, newlineAfterProp: nl } = props, lastProp = anchor && tagToken ? anchor.offset > tagToken.offset ? anchor : tagToken : anchor != null ? anchor : tagToken;
-    lastProp && (!nl || nl.offset < lastProp.offset) && onError(lastProp, "MISSING_CHAR", "Missing newline after block sequence props");
-  }
-  let expType = token.type === "block-map" ? "map" : token.type === "block-seq" ? "seq" : token.start.source === "{" ? "map" : "seq";
-  if (!tagToken || !tagName || tagName === "!" || tagName === YAMLMap.tagName && expType === "map" || tagName === YAMLSeq.tagName && expType === "seq")
-    return resolveCollection(CN2, ctx, token, onError, tagName);
-  let tag = ctx.schema.tags.find((t) => t.tag === tagName && t.collection === expType);
-  if (!tag) {
-    let kt = ctx.schema.knownTags[tagName];
-    if ((kt == null ? void 0 : kt.collection) === expType)
-      ctx.schema.tags.push(Object.assign({}, kt, { default: !1 })), tag = kt;
-    else
-      return kt ? onError(tagToken, "BAD_COLLECTION_TYPE", `${kt.tag} used for ${expType} collection, but expects ${(_a = kt.collection) != null ? _a : "scalar"}`, !0) : onError(tagToken, "TAG_RESOLVE_FAILED", `Unresolved tag: ${tagName}`, !0), resolveCollection(CN2, ctx, token, onError, tagName);
-  }
-  let coll = resolveCollection(CN2, ctx, token, onError, tagName, tag), res = (_c = (_b = tag.resolve) == null ? void 0 : _b.call(tag, coll, (msg) => onError(tagToken, "TAG_RESOLVE_FAILED", msg), ctx.options)) != null ? _c : coll, node = isNode2(res) ? res : new Scalar(res);
-  return node.range = coll.range, node.tag = tagName, tag != null && tag.format && (node.format = tag.format), node;
-}
-
-// node_modules/yaml/browser/dist/compose/resolve-block-scalar.js
-function resolveBlockScalar(ctx, scalar, onError) {
-  let start = scalar.offset, header = parseBlockScalarHeader(scalar, ctx.options.strict, onError);
-  if (!header)
-    return { value: "", type: null, comment: "", range: [start, start, start] };
-  let type = header.mode === ">" ? Scalar.BLOCK_FOLDED : Scalar.BLOCK_LITERAL, lines = scalar.source ? splitLines(scalar.source) : [], chompStart = lines.length;
-  for (let i = lines.length - 1; i >= 0; --i) {
-    let content = lines[i][1];
-    if (content === "" || content === "\r")
-      chompStart = i;
-    else
-      break;
-  }
-  if (chompStart === 0) {
-    let value2 = header.chomp === "+" && lines.length > 0 ? `
-`.repeat(Math.max(1, lines.length - 1)) : "", end2 = start + header.length;
-    return scalar.source && (end2 += scalar.source.length), { value: value2, type, comment: header.comment, range: [start, end2, end2] };
-  }
-  let trimIndent = scalar.indent + header.indent, offset = scalar.offset + header.length, contentStart = 0;
-  for (let i = 0; i < chompStart; ++i) {
-    let [indent, content] = lines[i];
-    if (content === "" || content === "\r")
-      header.indent === 0 && indent.length > trimIndent && (trimIndent = indent.length);
-    else {
-      indent.length < trimIndent && onError(offset + indent.length, "MISSING_CHAR", "Block scalars with more-indented leading empty lines must use an explicit indentation indicator"), header.indent === 0 && (trimIndent = indent.length), contentStart = i, trimIndent === 0 && !ctx.atRoot && onError(offset, "BAD_INDENT", "Block scalar values in collections must be indented");
-      break;
-    }
-    offset += indent.length + content.length + 1;
-  }
-  for (let i = lines.length - 1; i >= chompStart; --i)
-    lines[i][0].length > trimIndent && (chompStart = i + 1);
-  let value = "", sep = "", prevMoreIndented = !1;
-  for (let i = 0; i < contentStart; ++i)
-    value += lines[i][0].slice(trimIndent) + `
-`;
-  for (let i = contentStart; i < chompStart; ++i) {
-    let [indent, content] = lines[i];
-    offset += indent.length + content.length + 1;
-    let crlf = content[content.length - 1] === "\r";
-    if (crlf && (content = content.slice(0, -1)), content && indent.length < trimIndent) {
-      let message = `Block scalar lines must not be less indented than their ${header.indent ? "explicit indentation indicator" : "first line"}`;
-      onError(offset - content.length - (crlf ? 2 : 1), "BAD_INDENT", message), indent = "";
-    }
-    type === Scalar.BLOCK_LITERAL ? (value += sep + indent.slice(trimIndent) + content, sep = `
-`) : indent.length > trimIndent || content[0] === "	" ? (sep === " " ? sep = `
-` : !prevMoreIndented && sep === `
-` && (sep = `
-
-`), value += sep + indent.slice(trimIndent) + content, sep = `
-`, prevMoreIndented = !0) : content === "" ? sep === `
-` ? value += `
-` : sep = `
-` : (value += sep + content, sep = " ", prevMoreIndented = !1);
-  }
-  switch (header.chomp) {
-    case "-":
-      break;
-    case "+":
-      for (let i = chompStart; i < lines.length; ++i)
-        value += `
-` + lines[i][0].slice(trimIndent);
-      value[value.length - 1] !== `
-` && (value += `
-`);
-      break;
-    default:
-      value += `
-`;
-  }
-  let end = start + header.length + scalar.source.length;
-  return { value, type, comment: header.comment, range: [start, end, end] };
-}
-function parseBlockScalarHeader({ offset, props }, strict, onError) {
-  if (props[0].type !== "block-scalar-header")
-    return onError(props[0], "IMPOSSIBLE", "Block scalar header not found"), null;
-  let { source } = props[0], mode = source[0], indent = 0, chomp = "", error = -1;
-  for (let i = 1; i < source.length; ++i) {
-    let ch = source[i];
-    if (!chomp && (ch === "-" || ch === "+"))
-      chomp = ch;
-    else {
-      let n = Number(ch);
-      !indent && n ? indent = n : error === -1 && (error = offset + i);
-    }
-  }
-  error !== -1 && onError(error, "UNEXPECTED_TOKEN", `Block scalar header includes extra characters: ${source}`);
-  let hasSpace = !1, comment = "", length2 = source.length;
-  for (let i = 1; i < props.length; ++i) {
-    let token = props[i];
-    switch (token.type) {
-      case "space":
-        hasSpace = !0;
-      // fallthrough
-      case "newline":
-        length2 += token.source.length;
-        break;
-      case "comment":
-        strict && !hasSpace && onError(token, "MISSING_CHAR", "Comments must be separated from other tokens by white space characters"), length2 += token.source.length, comment = token.source.substring(1);
-        break;
-      case "error":
-        onError(token, "UNEXPECTED_TOKEN", token.message), length2 += token.source.length;
-        break;
-      /* istanbul ignore next should not happen */
-      default: {
-        let message = `Unexpected token in block scalar header: ${token.type}`;
-        onError(token, "UNEXPECTED_TOKEN", message);
-        let ts = token.source;
-        ts && typeof ts == "string" && (length2 += ts.length);
-      }
-    }
-  }
-  return { mode, indent, chomp, comment, length: length2 };
-}
-function splitLines(source) {
-  let split = source.split(/\n( *)/), first = split[0], m = first.match(/^( *)/), lines = [m != null && m[1] ? [m[1], first.slice(m[1].length)] : ["", first]];
-  for (let i = 1; i < split.length; i += 2)
-    lines.push([split[i], split[i + 1]]);
-  return lines;
-}
-
-// node_modules/yaml/browser/dist/compose/resolve-flow-scalar.js
-function resolveFlowScalar(scalar, strict, onError) {
-  let { offset, type, source, end } = scalar, _type, value, _onError = (rel, code, msg) => onError(offset + rel, code, msg);
-  switch (type) {
-    case "scalar":
-      _type = Scalar.PLAIN, value = plainValue(source, _onError);
-      break;
-    case "single-quoted-scalar":
-      _type = Scalar.QUOTE_SINGLE, value = singleQuotedValue(source, _onError);
-      break;
-    case "double-quoted-scalar":
-      _type = Scalar.QUOTE_DOUBLE, value = doubleQuotedValue(source, _onError);
-      break;
-    /* istanbul ignore next should not happen */
-    default:
-      return onError(scalar, "UNEXPECTED_TOKEN", `Expected a flow scalar value, but found: ${type}`), {
-        value: "",
-        type: null,
-        comment: "",
-        range: [offset, offset + source.length, offset + source.length]
-      };
-  }
-  let valueEnd = offset + source.length, re = resolveEnd(end, valueEnd, strict, onError);
-  return {
-    value,
-    type: _type,
-    comment: re.comment,
-    range: [offset, valueEnd, re.offset]
-  };
-}
-function plainValue(source, onError) {
-  let badChar = "";
-  switch (source[0]) {
-    /* istanbul ignore next should not happen */
-    case "	":
-      badChar = "a tab character";
-      break;
-    case ",":
-      badChar = "flow indicator character ,";
-      break;
-    case "%":
-      badChar = "directive indicator character %";
-      break;
-    case "|":
-    case ">": {
-      badChar = `block scalar indicator ${source[0]}`;
-      break;
-    }
-    case "@":
-    case "`": {
-      badChar = `reserved character ${source[0]}`;
-      break;
-    }
-  }
-  return badChar && onError(0, "BAD_SCALAR_START", `Plain value cannot start with ${badChar}`), foldLines(source);
-}
-function singleQuotedValue(source, onError) {
-  return (source[source.length - 1] !== "'" || source.length === 1) && onError(source.length, "MISSING_CHAR", "Missing closing 'quote"), foldLines(source.slice(1, -1)).replace(/''/g, "'");
-}
-function foldLines(source) {
-  var _a;
-  let first, line;
-  try {
-    first = new RegExp(`(.*?)(?<![ 	])[ 	]*\r?
-`, "sy"), line = new RegExp(`[ 	]*(.*?)(?:(?<![ 	])[ 	]*)?\r?
-`, "sy");
-  } catch (e) {
-    first = /(.*?)[ \t]*\r?\n/sy, line = /[ \t]*(.*?)[ \t]*\r?\n/sy;
-  }
-  let match2 = first.exec(source);
-  if (!match2)
-    return source;
-  let res = match2[1], sep = " ", pos = first.lastIndex;
-  for (line.lastIndex = pos; match2 = line.exec(source); )
-    match2[1] === "" ? sep === `
-` ? res += sep : sep = `
-` : (res += sep + match2[1], sep = " "), pos = line.lastIndex;
-  let last2 = /[ \t]*(.*)/sy;
-  return last2.lastIndex = pos, match2 = last2.exec(source), res + sep + ((_a = match2 == null ? void 0 : match2[1]) != null ? _a : "");
-}
-function doubleQuotedValue(source, onError) {
-  let res = "";
-  for (let i = 1; i < source.length - 1; ++i) {
-    let ch = source[i];
-    if (!(ch === "\r" && source[i + 1] === `
-`))
-      if (ch === `
-`) {
-        let { fold, offset } = foldNewline(source, i);
-        res += fold, i = offset;
-      } else if (ch === "\\") {
-        let next = source[++i], cc = escapeCodes[next];
-        if (cc)
-          res += cc;
-        else if (next === `
-`)
-          for (next = source[i + 1]; next === " " || next === "	"; )
-            next = source[++i + 1];
-        else if (next === "\r" && source[i + 1] === `
-`)
-          for (next = source[++i + 1]; next === " " || next === "	"; )
-            next = source[++i + 1];
-        else if (next === "x" || next === "u" || next === "U") {
-          let length2 = next === "x" ? 2 : next === "u" ? 4 : 8;
-          res += parseCharCode(source, i + 1, length2, onError), i += length2;
-        } else {
-          let raw = source.substr(i - 1, 2);
-          onError(i - 1, "BAD_DQ_ESCAPE", `Invalid escape sequence ${raw}`), res += raw;
-        }
-      } else if (ch === " " || ch === "	") {
-        let wsStart = i, next = source[i + 1];
-        for (; next === " " || next === "	"; )
-          next = source[++i + 1];
-        next !== `
-` && !(next === "\r" && source[i + 2] === `
-`) && (res += i > wsStart ? source.slice(wsStart, i + 1) : ch);
-      } else
-        res += ch;
-  }
-  return (source[source.length - 1] !== '"' || source.length === 1) && onError(source.length, "MISSING_CHAR", 'Missing closing "quote'), res;
-}
-function foldNewline(source, offset) {
-  let fold = "", ch = source[offset + 1];
-  for (; (ch === " " || ch === "	" || ch === `
-` || ch === "\r") && !(ch === "\r" && source[offset + 2] !== `
-`); )
-    ch === `
-` && (fold += `
-`), offset += 1, ch = source[offset + 1];
-  return fold || (fold = " "), { fold, offset };
-}
-var escapeCodes = {
-  0: "\0",
-  // null character
-  a: "\x07",
-  // bell character
-  b: "\b",
-  // backspace
-  e: "\x1B",
-  // escape character
-  f: "\f",
-  // form feed
-  n: `
-`,
-  // line feed
-  r: "\r",
-  // carriage return
-  t: "	",
-  // horizontal tab
-  v: "\v",
-  // vertical tab
-  N: "\x85",
-  // Unicode next line
-  _: "\xA0",
-  // Unicode non-breaking space
-  L: "\u2028",
-  // Unicode line separator
-  P: "\u2029",
-  // Unicode paragraph separator
-  " ": " ",
-  '"': '"',
-  "/": "/",
-  "\\": "\\",
-  "	": "	"
-};
-function parseCharCode(source, offset, length2, onError) {
-  let cc = source.substr(offset, length2), code = cc.length === length2 && /^[0-9a-fA-F]+$/.test(cc) ? parseInt(cc, 16) : NaN;
-  try {
-    return String.fromCodePoint(code);
-  } catch (e) {
-    let raw = source.substr(offset - 2, length2 + 2);
-    return onError(offset - 2, "BAD_DQ_ESCAPE", `Invalid escape sequence ${raw}`), raw;
-  }
-}
-
-// node_modules/yaml/browser/dist/compose/compose-scalar.js
-function composeScalar(ctx, token, tagToken, onError) {
-  let { value, type, comment, range } = token.type === "block-scalar" ? resolveBlockScalar(ctx, token, onError) : resolveFlowScalar(token, ctx.options.strict, onError), tagName = tagToken ? ctx.directives.tagName(tagToken.source, (msg) => onError(tagToken, "TAG_RESOLVE_FAILED", msg)) : null, tag;
-  ctx.options.stringKeys && ctx.atKey ? tag = ctx.schema[SCALAR] : tagName ? tag = findScalarTagByName(ctx.schema, value, tagName, tagToken, onError) : token.type === "scalar" ? tag = findScalarTagByTest(ctx, value, token, onError) : tag = ctx.schema[SCALAR];
-  let scalar;
-  try {
-    let res = tag.resolve(value, (msg) => onError(tagToken != null ? tagToken : token, "TAG_RESOLVE_FAILED", msg), ctx.options);
-    scalar = isScalar(res) ? res : new Scalar(res);
-  } catch (error) {
-    let msg = error instanceof Error ? error.message : String(error);
-    onError(tagToken != null ? tagToken : token, "TAG_RESOLVE_FAILED", msg), scalar = new Scalar(value);
-  }
-  return scalar.range = range, scalar.source = value, type && (scalar.type = type), tagName && (scalar.tag = tagName), tag.format && (scalar.format = tag.format), comment && (scalar.comment = comment), scalar;
-}
-function findScalarTagByName(schema4, value, tagName, tagToken, onError) {
-  var _a;
-  if (tagName === "!")
-    return schema4[SCALAR];
-  let matchWithTest = [];
-  for (let tag of schema4.tags)
-    if (!tag.collection && tag.tag === tagName)
-      if (tag.default && tag.test)
-        matchWithTest.push(tag);
-      else
-        return tag;
-  for (let tag of matchWithTest)
-    if ((_a = tag.test) != null && _a.test(value))
-      return tag;
-  let kt = schema4.knownTags[tagName];
-  return kt && !kt.collection ? (schema4.tags.push(Object.assign({}, kt, { default: !1, test: void 0 })), kt) : (onError(tagToken, "TAG_RESOLVE_FAILED", `Unresolved tag: ${tagName}`, tagName !== "tag:yaml.org,2002:str"), schema4[SCALAR]);
-}
-function findScalarTagByTest({ atKey, directives, schema: schema4 }, value, token, onError) {
-  var _a;
-  let tag = schema4.tags.find((tag2) => {
-    var _a2;
-    return (tag2.default === !0 || atKey && tag2.default === "key") && ((_a2 = tag2.test) == null ? void 0 : _a2.test(value));
-  }) || schema4[SCALAR];
-  if (schema4.compat) {
-    let compat = (_a = schema4.compat.find((tag2) => {
-      var _a2;
-      return tag2.default && ((_a2 = tag2.test) == null ? void 0 : _a2.test(value));
-    })) != null ? _a : schema4[SCALAR];
-    if (tag.tag !== compat.tag) {
-      let ts = directives.tagString(tag.tag), cs = directives.tagString(compat.tag), msg = `Value may be parsed as either ${ts} or ${cs}`;
-      onError(token, "TAG_RESOLVE_FAILED", msg, !0);
-    }
-  }
-  return tag;
-}
-
-// node_modules/yaml/browser/dist/compose/util-empty-scalar-position.js
-function emptyScalarPosition(offset, before, pos) {
-  if (before) {
-    pos != null || (pos = before.length);
-    for (let i = pos - 1; i >= 0; --i) {
-      let st = before[i];
-      switch (st.type) {
-        case "space":
-        case "comment":
-        case "newline":
-          offset -= st.source.length;
-          continue;
-      }
-      for (st = before[++i]; (st == null ? void 0 : st.type) === "space"; )
-        offset += st.source.length, st = before[++i];
-      break;
-    }
-  }
-  return offset;
-}
-
-// node_modules/yaml/browser/dist/compose/compose-node.js
-var CN = { composeNode, composeEmptyNode };
-function composeNode(ctx, token, props, onError) {
-  let atKey = ctx.atKey, { spaceBefore, comment, anchor, tag } = props, node, isSrcToken = !0;
-  switch (token.type) {
-    case "alias":
-      node = composeAlias(ctx, token, onError), (anchor || tag) && onError(token, "ALIAS_PROPS", "An alias node must not specify any properties");
-      break;
-    case "scalar":
-    case "single-quoted-scalar":
-    case "double-quoted-scalar":
-    case "block-scalar":
-      node = composeScalar(ctx, token, tag, onError), anchor && (node.anchor = anchor.source.substring(1));
-      break;
-    case "block-map":
-    case "block-seq":
-    case "flow-collection":
-      try {
-        node = composeCollection(CN, ctx, token, props, onError), anchor && (node.anchor = anchor.source.substring(1));
-      } catch (error) {
-        let message = error instanceof Error ? error.message : String(error);
-        onError(token, "RESOURCE_EXHAUSTION", message);
-      }
-      break;
-    default: {
-      let message = token.type === "error" ? token.message : `Unsupported token (type: ${token.type})`;
-      onError(token, "UNEXPECTED_TOKEN", message), isSrcToken = !1;
-    }
-  }
-  return node != null || (node = composeEmptyNode(ctx, token.offset, void 0, null, props, onError)), anchor && node.anchor === "" && onError(anchor, "BAD_ALIAS", "Anchor cannot be an empty string"), atKey && ctx.options.stringKeys && (!isScalar(node) || typeof node.value != "string" || node.tag && node.tag !== "tag:yaml.org,2002:str") && onError(tag != null ? tag : token, "NON_STRING_KEY", "With stringKeys, all keys must be strings"), spaceBefore && (node.spaceBefore = !0), comment && (token.type === "scalar" && token.source === "" ? node.comment = comment : node.commentBefore = comment), ctx.options.keepSourceTokens && isSrcToken && (node.srcToken = token), node;
-}
-function composeEmptyNode(ctx, offset, before, pos, { spaceBefore, comment, anchor, tag, end }, onError) {
-  let token = {
-    type: "scalar",
-    offset: emptyScalarPosition(offset, before, pos),
-    indent: -1,
-    source: ""
-  }, node = composeScalar(ctx, token, tag, onError);
-  return anchor && (node.anchor = anchor.source.substring(1), node.anchor === "" && onError(anchor, "BAD_ALIAS", "Anchor cannot be an empty string")), spaceBefore && (node.spaceBefore = !0), comment && (node.comment = comment, node.range[2] = end), node;
-}
-function composeAlias({ options }, { offset, source, end }, onError) {
-  let alias = new Alias(source.substring(1));
-  alias.source === "" && onError(offset, "BAD_ALIAS", "Alias cannot be an empty string"), alias.source.endsWith(":") && onError(offset + source.length - 1, "BAD_ALIAS", "Alias ending in : is ambiguous", !0);
-  let valueEnd = offset + source.length, re = resolveEnd(end, valueEnd, options.strict, onError);
-  return alias.range = [offset, valueEnd, re.offset], re.comment && (alias.comment = re.comment), alias;
-}
-
-// node_modules/yaml/browser/dist/compose/compose-doc.js
-function composeDoc(options, directives, { offset, start, value, end }, onError) {
-  let opts = Object.assign({ _directives: directives }, options), doc2 = new Document(void 0, opts), ctx = {
-    atKey: !1,
-    atRoot: !0,
-    directives: doc2.directives,
-    options: doc2.options,
-    schema: doc2.schema
-  }, props = resolveProps(start, {
-    indicator: "doc-start",
-    next: value != null ? value : end == null ? void 0 : end[0],
-    offset,
-    onError,
-    parentIndent: 0,
-    startOnNewline: !0
-  });
-  props.found && (doc2.directives.docStart = !0, value && (value.type === "block-map" || value.type === "block-seq") && !props.hasNewline && onError(props.end, "MISSING_CHAR", "Block collection cannot start on same line with directives-end marker")), doc2.contents = value ? composeNode(ctx, value, props, onError) : composeEmptyNode(ctx, props.end, start, null, props, onError);
-  let contentEnd = doc2.contents.range[2], re = resolveEnd(end, contentEnd, !1, onError);
-  return re.comment && (doc2.comment = re.comment), doc2.range = [offset, contentEnd, re.offset], doc2;
-}
-
-// node_modules/yaml/browser/dist/compose/composer.js
-function getErrorPos(src) {
-  if (typeof src == "number")
-    return [src, src + 1];
-  if (Array.isArray(src))
-    return src.length === 2 ? src : [src[0], src[1]];
-  let { offset, source } = src;
-  return [offset, offset + (typeof source == "string" ? source.length : 1)];
-}
-function parsePrelude(prelude) {
-  var _a;
-  let comment = "", atComment = !1, afterEmptyLine = !1;
-  for (let i = 0; i < prelude.length; ++i) {
-    let source = prelude[i];
-    switch (source[0]) {
-      case "#":
-        comment += (comment === "" ? "" : afterEmptyLine ? `
-
-` : `
-`) + (source.substring(1) || " "), atComment = !0, afterEmptyLine = !1;
-        break;
-      case "%":
-        ((_a = prelude[i + 1]) == null ? void 0 : _a[0]) !== "#" && (i += 1), atComment = !1;
-        break;
-      default:
-        atComment || (afterEmptyLine = !0), atComment = !1;
-    }
-  }
-  return { comment, afterEmptyLine };
-}
-var Composer = class {
-  constructor(options = {}) {
-    this.doc = null, this.atDirectives = !1, this.prelude = [], this.errors = [], this.warnings = [], this.onError = (source, code, message, warning) => {
-      let pos = getErrorPos(source);
-      warning ? this.warnings.push(new YAMLWarning(pos, code, message)) : this.errors.push(new YAMLParseError(pos, code, message));
-    }, this.directives = new Directives({ version: options.version || "1.2" }), this.options = options;
-  }
-  decorate(doc2, afterDoc) {
-    let { comment, afterEmptyLine } = parsePrelude(this.prelude);
-    if (comment) {
-      let dc = doc2.contents;
-      if (afterDoc)
-        doc2.comment = doc2.comment ? `${doc2.comment}
-${comment}` : comment;
-      else if (afterEmptyLine || doc2.directives.docStart || !dc)
-        doc2.commentBefore = comment;
-      else if (isCollection(dc) && !dc.flow && dc.items.length > 0) {
-        let it = dc.items[0];
-        isPair(it) && (it = it.key);
-        let cb = it.commentBefore;
-        it.commentBefore = cb ? `${comment}
-${cb}` : comment;
-      } else {
-        let cb = dc.commentBefore;
-        dc.commentBefore = cb ? `${comment}
-${cb}` : comment;
-      }
-    }
-    if (afterDoc) {
-      for (let i = 0; i < this.errors.length; ++i)
-        doc2.errors.push(this.errors[i]);
-      for (let i = 0; i < this.warnings.length; ++i)
-        doc2.warnings.push(this.warnings[i]);
-    } else
-      doc2.errors = this.errors, doc2.warnings = this.warnings;
-    this.prelude = [], this.errors = [], this.warnings = [];
-  }
-  /**
-   * Current stream status information.
-   *
-   * Mostly useful at the end of input for an empty stream.
-   */
-  streamInfo() {
-    return {
-      comment: parsePrelude(this.prelude).comment,
-      directives: this.directives,
-      errors: this.errors,
-      warnings: this.warnings
-    };
-  }
-  /**
-   * Compose tokens into documents.
-   *
-   * @param forceDoc - If the stream contains no document, still emit a final document including any comments and directives that would be applied to a subsequent document.
-   * @param endOffset - Should be set if `forceDoc` is also set, to set the document range end and to indicate errors correctly.
-   */
-  *compose(tokens, forceDoc = !1, endOffset = -1) {
-    for (let token of tokens)
-      yield* this.next(token);
-    yield* this.end(forceDoc, endOffset);
-  }
-  /** Advance the composer by one CST token. */
-  *next(token) {
-    switch (token.type) {
-      case "directive":
-        this.directives.add(token.source, (offset, message, warning) => {
-          let pos = getErrorPos(token);
-          pos[0] += offset, this.onError(pos, "BAD_DIRECTIVE", message, warning);
-        }), this.prelude.push(token.source), this.atDirectives = !0;
-        break;
-      case "document": {
-        let doc2 = composeDoc(this.options, this.directives, token, this.onError);
-        this.atDirectives && !doc2.directives.docStart && this.onError(token, "MISSING_CHAR", "Missing directives-end/doc-start indicator line"), this.decorate(doc2, !1), this.doc && (yield this.doc), this.doc = doc2, this.atDirectives = !1;
-        break;
-      }
-      case "byte-order-mark":
-      case "space":
-        break;
-      case "comment":
-      case "newline":
-        this.prelude.push(token.source);
-        break;
-      case "error": {
-        let msg = token.source ? `${token.message}: ${JSON.stringify(token.source)}` : token.message, error = new YAMLParseError(getErrorPos(token), "UNEXPECTED_TOKEN", msg);
-        this.atDirectives || !this.doc ? this.errors.push(error) : this.doc.errors.push(error);
-        break;
-      }
-      case "doc-end": {
-        if (!this.doc) {
-          let msg = "Unexpected doc-end without preceding document";
-          this.errors.push(new YAMLParseError(getErrorPos(token), "UNEXPECTED_TOKEN", msg));
-          break;
-        }
-        this.doc.directives.docEnd = !0;
-        let end = resolveEnd(token.end, token.offset + token.source.length, this.doc.options.strict, this.onError);
-        if (this.decorate(this.doc, !0), end.comment) {
-          let dc = this.doc.comment;
-          this.doc.comment = dc ? `${dc}
-${end.comment}` : end.comment;
-        }
-        this.doc.range[2] = end.offset;
-        break;
-      }
-      default:
-        this.errors.push(new YAMLParseError(getErrorPos(token), "UNEXPECTED_TOKEN", `Unsupported token ${token.type}`));
-    }
-  }
-  /**
-   * Call at end of input to yield any remaining document.
-   *
-   * @param forceDoc - If the stream contains no document, still emit a final document including any comments and directives that would be applied to a subsequent document.
-   * @param endOffset - Should be set if `forceDoc` is also set, to set the document range end and to indicate errors correctly.
-   */
-  *end(forceDoc = !1, endOffset = -1) {
-    if (this.doc)
-      this.decorate(this.doc, !0), yield this.doc, this.doc = null;
-    else if (forceDoc) {
-      let opts = Object.assign({ _directives: this.directives }, this.options), doc2 = new Document(void 0, opts);
-      this.atDirectives && this.onError(endOffset, "MISSING_CHAR", "Missing directives-end indicator line"), doc2.range = [0, endOffset, endOffset], this.decorate(doc2, !1), yield doc2;
-    }
-  }
-};
-
-// node_modules/yaml/browser/dist/parse/cst-visit.js
-var BREAK2 = /* @__PURE__ */ Symbol("break visit"), SKIP2 = /* @__PURE__ */ Symbol("skip children"), REMOVE2 = /* @__PURE__ */ Symbol("remove item");
-function visit2(cst, visitor) {
-  "type" in cst && cst.type === "document" && (cst = { start: cst.start, value: cst.value }), _visit(Object.freeze([]), cst, visitor);
-}
-visit2.BREAK = BREAK2;
-visit2.SKIP = SKIP2;
-visit2.REMOVE = REMOVE2;
-visit2.itemAtPath = (cst, path) => {
-  let item = cst;
-  for (let [field, index] of path) {
-    let tok = item == null ? void 0 : item[field];
-    if (tok && "items" in tok)
-      item = tok.items[index];
-    else
-      return;
-  }
-  return item;
-};
-visit2.parentCollection = (cst, path) => {
-  let parent = visit2.itemAtPath(cst, path.slice(0, -1)), field = path[path.length - 1][0], coll = parent == null ? void 0 : parent[field];
-  if (coll && "items" in coll)
-    return coll;
-  throw new Error("Parent collection not found");
-};
-function _visit(path, item, visitor) {
-  let ctrl = visitor(item, path);
-  if (typeof ctrl == "symbol")
-    return ctrl;
-  for (let field of ["key", "value"]) {
-    let token = item[field];
-    if (token && "items" in token) {
-      for (let i = 0; i < token.items.length; ++i) {
-        let ci = _visit(Object.freeze(path.concat([[field, i]])), token.items[i], visitor);
-        if (typeof ci == "number")
-          i = ci - 1;
-        else {
-          if (ci === BREAK2)
-            return BREAK2;
-          ci === REMOVE2 && (token.items.splice(i, 1), i -= 1);
-        }
-      }
-      typeof ctrl == "function" && field === "key" && (ctrl = ctrl(item, path));
-    }
-  }
-  return typeof ctrl == "function" ? ctrl(item, path) : ctrl;
-}
-
-// node_modules/yaml/browser/dist/parse/cst.js
-var BOM = "\uFEFF", DOCUMENT = "", FLOW_END = "", SCALAR2 = "";
-function tokenType(source) {
-  switch (source) {
-    case BOM:
-      return "byte-order-mark";
-    case DOCUMENT:
-      return "doc-mode";
-    case FLOW_END:
-      return "flow-error-end";
-    case SCALAR2:
-      return "scalar";
-    case "---":
-      return "doc-start";
-    case "...":
-      return "doc-end";
-    case "":
-    case `
-`:
-    case `\r
-`:
-      return "newline";
-    case "-":
-      return "seq-item-ind";
-    case "?":
-      return "explicit-key-ind";
-    case ":":
-      return "map-value-ind";
-    case "{":
-      return "flow-map-start";
-    case "}":
-      return "flow-map-end";
-    case "[":
-      return "flow-seq-start";
-    case "]":
-      return "flow-seq-end";
-    case ",":
-      return "comma";
-  }
-  switch (source[0]) {
-    case " ":
-    case "	":
-      return "space";
-    case "#":
-      return "comment";
-    case "%":
-      return "directive-line";
-    case "*":
-      return "alias";
-    case "&":
-      return "anchor";
-    case "!":
-      return "tag";
-    case "'":
-      return "single-quoted-scalar";
-    case '"':
-      return "double-quoted-scalar";
-    case "|":
-    case ">":
-      return "block-scalar-header";
-  }
-  return null;
-}
-
-// node_modules/yaml/browser/dist/parse/lexer.js
-function isEmpty2(ch) {
-  switch (ch) {
-    case void 0:
-    case " ":
-    case `
-`:
-    case "\r":
-    case "	":
-      return !0;
-    default:
-      return !1;
-  }
-}
-var hexDigits = new Set("0123456789ABCDEFabcdef"), tagChars = new Set("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-#;/?:@&=+$_.!~*'()"), flowIndicatorChars = new Set(",[]{}"), invalidAnchorChars = new Set(` ,[]{}
-\r	`), isNotAnchorChar = (ch) => !ch || invalidAnchorChars.has(ch), Lexer = class {
-  constructor() {
-    this.atEnd = !1, this.blockScalarIndent = -1, this.blockScalarKeep = !1, this.buffer = "", this.flowKey = !1, this.flowLevel = 0, this.indentNext = 0, this.indentValue = 0, this.lineEndPos = null, this.next = null, this.pos = 0;
-  }
-  /**
-   * Generate YAML tokens from the `source` string. If `incomplete`,
-   * a part of the last line may be left as a buffer for the next call.
-   *
-   * @returns A generator of lexical tokens
-   */
-  *lex(source, incomplete = !1) {
-    var _a;
-    if (source) {
-      if (typeof source != "string")
-        throw TypeError("source is not a string");
-      this.buffer = this.buffer ? this.buffer + source : source, this.lineEndPos = null;
-    }
-    this.atEnd = !incomplete;
-    let next = (_a = this.next) != null ? _a : "stream";
-    for (; next && (incomplete || this.hasChars(1)); )
-      next = yield* this.parseNext(next);
-  }
-  atLineEnd() {
-    let i = this.pos, ch = this.buffer[i];
-    for (; ch === " " || ch === "	"; )
-      ch = this.buffer[++i];
-    return !ch || ch === "#" || ch === `
-` ? !0 : ch === "\r" ? this.buffer[i + 1] === `
-` : !1;
-  }
-  charAt(n) {
-    return this.buffer[this.pos + n];
-  }
-  continueScalar(offset) {
-    let ch = this.buffer[offset];
-    if (this.indentNext > 0) {
-      let indent = 0;
-      for (; ch === " "; )
-        ch = this.buffer[++indent + offset];
-      if (ch === "\r") {
-        let next = this.buffer[indent + offset + 1];
-        if (next === `
-` || !next && !this.atEnd)
-          return offset + indent + 1;
-      }
-      return ch === `
-` || indent >= this.indentNext || !ch && !this.atEnd ? offset + indent : -1;
-    }
-    if (ch === "-" || ch === ".") {
-      let dt = this.buffer.substr(offset, 3);
-      if ((dt === "---" || dt === "...") && isEmpty2(this.buffer[offset + 3]))
-        return -1;
-    }
-    return offset;
-  }
-  getLine() {
-    let end = this.lineEndPos;
-    return (typeof end != "number" || end !== -1 && end < this.pos) && (end = this.buffer.indexOf(`
-`, this.pos), this.lineEndPos = end), end === -1 ? this.atEnd ? this.buffer.substring(this.pos) : null : (this.buffer[end - 1] === "\r" && (end -= 1), this.buffer.substring(this.pos, end));
-  }
-  hasChars(n) {
-    return this.pos + n <= this.buffer.length;
-  }
-  setNext(state) {
-    return this.buffer = this.buffer.substring(this.pos), this.pos = 0, this.lineEndPos = null, this.next = state, null;
-  }
-  peek(n) {
-    return this.buffer.substr(this.pos, n);
-  }
-  *parseNext(next) {
-    switch (next) {
-      case "stream":
-        return yield* this.parseStream();
-      case "line-start":
-        return yield* this.parseLineStart();
-      case "block-start":
-        return yield* this.parseBlockStart();
-      case "doc":
-        return yield* this.parseDocument();
-      case "flow":
-        return yield* this.parseFlowCollection();
-      case "quoted-scalar":
-        return yield* this.parseQuotedScalar();
-      case "block-scalar":
-        return yield* this.parseBlockScalar();
-      case "plain-scalar":
-        return yield* this.parsePlainScalar();
-    }
-  }
-  *parseStream() {
-    let line = this.getLine();
-    if (line === null)
-      return this.setNext("stream");
-    if (line[0] === BOM && (yield* this.pushCount(1), line = line.substring(1)), line[0] === "%") {
-      let dirEnd = line.length, cs = line.indexOf("#");
-      for (; cs !== -1; ) {
-        let ch = line[cs - 1];
-        if (ch === " " || ch === "	") {
-          dirEnd = cs - 1;
-          break;
-        } else
-          cs = line.indexOf("#", cs + 1);
-      }
-      for (; ; ) {
-        let ch = line[dirEnd - 1];
-        if (ch === " " || ch === "	")
-          dirEnd -= 1;
-        else
-          break;
-      }
-      let n = (yield* this.pushCount(dirEnd)) + (yield* this.pushSpaces(!0));
-      return yield* this.pushCount(line.length - n), this.pushNewline(), "stream";
-    }
-    if (this.atLineEnd()) {
-      let sp = yield* this.pushSpaces(!0);
-      return yield* this.pushCount(line.length - sp), yield* this.pushNewline(), "stream";
-    }
-    return yield DOCUMENT, yield* this.parseLineStart();
-  }
-  *parseLineStart() {
-    let ch = this.charAt(0);
-    if (!ch && !this.atEnd)
-      return this.setNext("line-start");
-    if (ch === "-" || ch === ".") {
-      if (!this.atEnd && !this.hasChars(4))
-        return this.setNext("line-start");
-      let s = this.peek(3);
-      if ((s === "---" || s === "...") && isEmpty2(this.charAt(3)))
-        return yield* this.pushCount(3), this.indentValue = 0, this.indentNext = 0, s === "---" ? "doc" : "stream";
-    }
-    return this.indentValue = yield* this.pushSpaces(!1), this.indentNext > this.indentValue && !isEmpty2(this.charAt(1)) && (this.indentNext = this.indentValue), yield* this.parseBlockStart();
-  }
-  *parseBlockStart() {
-    let [ch0, ch1] = this.peek(2);
-    if (!ch1 && !this.atEnd)
-      return this.setNext("block-start");
-    if ((ch0 === "-" || ch0 === "?" || ch0 === ":") && isEmpty2(ch1)) {
-      let n = (yield* this.pushCount(1)) + (yield* this.pushSpaces(!0));
-      return this.indentNext = this.indentValue + 1, this.indentValue += n, "block-start";
-    }
-    return "doc";
-  }
-  *parseDocument() {
-    yield* this.pushSpaces(!0);
-    let line = this.getLine();
-    if (line === null)
-      return this.setNext("doc");
-    let n = yield* this.pushIndicators();
-    switch (line[n]) {
-      case "#":
-        yield* this.pushCount(line.length - n);
-      // fallthrough
-      case void 0:
-        return yield* this.pushNewline(), yield* this.parseLineStart();
-      case "{":
-      case "[":
-        return yield* this.pushCount(1), this.flowKey = !1, this.flowLevel = 1, "flow";
-      case "}":
-      case "]":
-        return yield* this.pushCount(1), "doc";
-      case "*":
-        return yield* this.pushUntil(isNotAnchorChar), "doc";
-      case '"':
-      case "'":
-        return yield* this.parseQuotedScalar();
-      case "|":
-      case ">":
-        return n += yield* this.parseBlockScalarHeader(), n += yield* this.pushSpaces(!0), yield* this.pushCount(line.length - n), yield* this.pushNewline(), yield* this.parseBlockScalar();
-      default:
-        return yield* this.parsePlainScalar();
-    }
-  }
-  *parseFlowCollection() {
-    let nl, sp, indent = -1;
-    do
-      nl = yield* this.pushNewline(), nl > 0 ? (sp = yield* this.pushSpaces(!1), this.indentValue = indent = sp) : sp = 0, sp += yield* this.pushSpaces(!0);
-    while (nl + sp > 0);
-    let line = this.getLine();
-    if (line === null)
-      return this.setNext("flow");
-    if ((indent !== -1 && indent < this.indentNext && line[0] !== "#" || indent === 0 && (line.startsWith("---") || line.startsWith("...")) && isEmpty2(line[3])) && !(indent === this.indentNext - 1 && this.flowLevel === 1 && (line[0] === "]" || line[0] === "}")))
-      return this.flowLevel = 0, yield FLOW_END, yield* this.parseLineStart();
-    let n = 0;
-    for (; line[n] === ","; )
-      n += yield* this.pushCount(1), n += yield* this.pushSpaces(!0), this.flowKey = !1;
-    switch (n += yield* this.pushIndicators(), line[n]) {
-      case void 0:
-        return "flow";
-      case "#":
-        return yield* this.pushCount(line.length - n), "flow";
-      case "{":
-      case "[":
-        return yield* this.pushCount(1), this.flowKey = !1, this.flowLevel += 1, "flow";
-      case "}":
-      case "]":
-        return yield* this.pushCount(1), this.flowKey = !0, this.flowLevel -= 1, this.flowLevel ? "flow" : "doc";
-      case "*":
-        return yield* this.pushUntil(isNotAnchorChar), "flow";
-      case '"':
-      case "'":
-        return this.flowKey = !0, yield* this.parseQuotedScalar();
-      case ":": {
-        let next = this.charAt(1);
-        if (this.flowKey || isEmpty2(next) || next === ",")
-          return this.flowKey = !1, yield* this.pushCount(1), yield* this.pushSpaces(!0), "flow";
-      }
-      // fallthrough
-      default:
-        return this.flowKey = !1, yield* this.parsePlainScalar();
-    }
-  }
-  *parseQuotedScalar() {
-    let quote = this.charAt(0), end = this.buffer.indexOf(quote, this.pos + 1);
-    if (quote === "'")
-      for (; end !== -1 && this.buffer[end + 1] === "'"; )
-        end = this.buffer.indexOf("'", end + 2);
-    else
-      for (; end !== -1; ) {
-        let n = 0;
-        for (; this.buffer[end - 1 - n] === "\\"; )
-          n += 1;
-        if (n % 2 === 0)
-          break;
-        end = this.buffer.indexOf('"', end + 1);
-      }
-    let qb = this.buffer.substring(0, end), nl = qb.indexOf(`
-`, this.pos);
-    if (nl !== -1) {
-      for (; nl !== -1; ) {
-        let cs = this.continueScalar(nl + 1);
-        if (cs === -1)
-          break;
-        nl = qb.indexOf(`
-`, cs);
-      }
-      nl !== -1 && (end = nl - (qb[nl - 1] === "\r" ? 2 : 1));
-    }
-    if (end === -1) {
-      if (!this.atEnd)
-        return this.setNext("quoted-scalar");
-      end = this.buffer.length;
-    }
-    return yield* this.pushToIndex(end + 1, !1), this.flowLevel ? "flow" : "doc";
-  }
-  *parseBlockScalarHeader() {
-    this.blockScalarIndent = -1, this.blockScalarKeep = !1;
-    let i = this.pos;
-    for (; ; ) {
-      let ch = this.buffer[++i];
-      if (ch === "+")
-        this.blockScalarKeep = !0;
-      else if (ch > "0" && ch <= "9")
-        this.blockScalarIndent = Number(ch) - 1;
-      else if (ch !== "-")
-        break;
-    }
-    return yield* this.pushUntil((ch) => isEmpty2(ch) || ch === "#");
-  }
-  *parseBlockScalar() {
-    let nl = this.pos - 1, indent = 0, ch;
-    loop: for (let i2 = this.pos; ch = this.buffer[i2]; ++i2)
-      switch (ch) {
-        case " ":
-          indent += 1;
-          break;
-        case `
-`:
-          nl = i2, indent = 0;
-          break;
-        case "\r": {
-          let next = this.buffer[i2 + 1];
-          if (!next && !this.atEnd)
-            return this.setNext("block-scalar");
-          if (next === `
-`)
-            break;
-        }
-        // fallthrough
-        default:
-          break loop;
-      }
-    if (!ch && !this.atEnd)
-      return this.setNext("block-scalar");
-    if (indent >= this.indentNext) {
-      this.blockScalarIndent === -1 ? this.indentNext = indent : this.indentNext = this.blockScalarIndent + (this.indentNext === 0 ? 1 : this.indentNext);
-      do {
-        let cs = this.continueScalar(nl + 1);
-        if (cs === -1)
-          break;
-        nl = this.buffer.indexOf(`
-`, cs);
-      } while (nl !== -1);
-      if (nl === -1) {
-        if (!this.atEnd)
-          return this.setNext("block-scalar");
-        nl = this.buffer.length;
-      }
-    }
-    let i = nl + 1;
-    for (ch = this.buffer[i]; ch === " "; )
-      ch = this.buffer[++i];
-    if (ch === "	") {
-      for (; ch === "	" || ch === " " || ch === "\r" || ch === `
-`; )
-        ch = this.buffer[++i];
-      nl = i - 1;
-    } else if (!this.blockScalarKeep)
-      do {
-        let i2 = nl - 1, ch2 = this.buffer[i2];
-        ch2 === "\r" && (ch2 = this.buffer[--i2]);
-        let lastChar = i2;
-        for (; ch2 === " "; )
-          ch2 = this.buffer[--i2];
-        if (ch2 === `
-` && i2 >= this.pos && i2 + 1 + indent > lastChar)
-          nl = i2;
-        else
-          break;
-      } while (!0);
-    return yield SCALAR2, yield* this.pushToIndex(nl + 1, !0), yield* this.parseLineStart();
-  }
-  *parsePlainScalar() {
-    let inFlow = this.flowLevel > 0, end = this.pos - 1, i = this.pos - 1, ch;
-    for (; ch = this.buffer[++i]; )
-      if (ch === ":") {
-        let next = this.buffer[i + 1];
-        if (isEmpty2(next) || inFlow && flowIndicatorChars.has(next))
-          break;
-        end = i;
-      } else if (isEmpty2(ch)) {
-        let next = this.buffer[i + 1];
-        if (ch === "\r" && (next === `
-` ? (i += 1, ch = `
-`, next = this.buffer[i + 1]) : end = i), next === "#" || inFlow && flowIndicatorChars.has(next))
-          break;
-        if (ch === `
-`) {
-          let cs = this.continueScalar(i + 1);
-          if (cs === -1)
-            break;
-          i = Math.max(i, cs - 2);
-        }
-      } else {
-        if (inFlow && flowIndicatorChars.has(ch))
-          break;
-        end = i;
-      }
-    return !ch && !this.atEnd ? this.setNext("plain-scalar") : (yield SCALAR2, yield* this.pushToIndex(end + 1, !0), inFlow ? "flow" : "doc");
-  }
-  *pushCount(n) {
-    return n > 0 ? (yield this.buffer.substr(this.pos, n), this.pos += n, n) : 0;
-  }
-  *pushToIndex(i, allowEmpty) {
-    let s = this.buffer.slice(this.pos, i);
-    return s ? (yield s, this.pos += s.length, s.length) : (allowEmpty && (yield ""), 0);
-  }
-  *pushIndicators() {
-    let n = 0;
-    loop: for (; ; ) {
-      switch (this.charAt(0)) {
-        case "!":
-          n += yield* this.pushTag(), n += yield* this.pushSpaces(!0);
-          continue loop;
-        case "&":
-          n += yield* this.pushUntil(isNotAnchorChar), n += yield* this.pushSpaces(!0);
-          continue loop;
-        case "-":
-        // this is an error
-        case "?":
-        // this is an error outside flow collections
-        case ":": {
-          let inFlow = this.flowLevel > 0, ch1 = this.charAt(1);
-          if (isEmpty2(ch1) || inFlow && flowIndicatorChars.has(ch1)) {
-            inFlow ? this.flowKey && (this.flowKey = !1) : this.indentNext = this.indentValue + 1, n += yield* this.pushCount(1), n += yield* this.pushSpaces(!0);
-            continue loop;
-          }
-        }
-      }
-      break loop;
-    }
-    return n;
-  }
-  *pushTag() {
-    if (this.charAt(1) === "<") {
-      let i = this.pos + 2, ch = this.buffer[i];
-      for (; !isEmpty2(ch) && ch !== ">"; )
-        ch = this.buffer[++i];
-      return yield* this.pushToIndex(ch === ">" ? i + 1 : i, !1);
-    } else {
-      let i = this.pos + 1, ch = this.buffer[i];
-      for (; ch; )
-        if (tagChars.has(ch))
-          ch = this.buffer[++i];
-        else if (ch === "%" && hexDigits.has(this.buffer[i + 1]) && hexDigits.has(this.buffer[i + 2]))
-          ch = this.buffer[i += 3];
-        else
-          break;
-      return yield* this.pushToIndex(i, !1);
-    }
-  }
-  *pushNewline() {
-    let ch = this.buffer[this.pos];
-    return ch === `
-` ? yield* this.pushCount(1) : ch === "\r" && this.charAt(1) === `
-` ? yield* this.pushCount(2) : 0;
-  }
-  *pushSpaces(allowTabs) {
-    let i = this.pos - 1, ch;
-    do
-      ch = this.buffer[++i];
-    while (ch === " " || allowTabs && ch === "	");
-    let n = i - this.pos;
-    return n > 0 && (yield this.buffer.substr(this.pos, n), this.pos = i), n;
-  }
-  *pushUntil(test) {
-    let i = this.pos, ch = this.buffer[i];
-    for (; !test(ch); )
-      ch = this.buffer[++i];
-    return yield* this.pushToIndex(i, !1);
-  }
-};
-
-// node_modules/yaml/browser/dist/parse/line-counter.js
-var LineCounter = class {
-  constructor() {
-    this.lineStarts = [], this.addNewLine = (offset) => this.lineStarts.push(offset), this.linePos = (offset) => {
-      let low = 0, high = this.lineStarts.length;
-      for (; low < high; ) {
-        let mid = low + high >> 1;
-        this.lineStarts[mid] < offset ? low = mid + 1 : high = mid;
-      }
-      if (this.lineStarts[low] === offset)
-        return { line: low + 1, col: 1 };
-      if (low === 0)
-        return { line: 0, col: offset };
-      let start = this.lineStarts[low - 1];
-      return { line: low, col: offset - start + 1 };
-    };
-  }
-};
-
-// node_modules/yaml/browser/dist/parse/parser.js
-function includesToken(list2, type) {
-  for (let i = 0; i < list2.length; ++i)
-    if (list2[i].type === type)
-      return !0;
-  return !1;
-}
-function findNonEmptyIndex(list2) {
-  for (let i = 0; i < list2.length; ++i)
-    switch (list2[i].type) {
-      case "space":
-      case "comment":
-      case "newline":
-        break;
-      default:
-        return i;
-    }
-  return -1;
-}
-function isFlowToken(token) {
-  switch (token == null ? void 0 : token.type) {
-    case "alias":
-    case "scalar":
-    case "single-quoted-scalar":
-    case "double-quoted-scalar":
-    case "flow-collection":
-      return !0;
-    default:
-      return !1;
-  }
-}
-function getPrevProps(parent) {
-  var _a;
-  switch (parent.type) {
-    case "document":
-      return parent.start;
-    case "block-map": {
-      let it = parent.items[parent.items.length - 1];
-      return (_a = it.sep) != null ? _a : it.start;
-    }
-    case "block-seq":
-      return parent.items[parent.items.length - 1].start;
-    /* istanbul ignore next should not happen */
-    default:
-      return [];
-  }
-}
-function getFirstKeyStartProps(prev) {
-  var _a;
-  if (prev.length === 0)
-    return [];
-  let i = prev.length;
-  loop: for (; --i >= 0; )
-    switch (prev[i].type) {
-      case "doc-start":
-      case "explicit-key-ind":
-      case "map-value-ind":
-      case "seq-item-ind":
-      case "newline":
-        break loop;
-    }
-  for (; ((_a = prev[++i]) == null ? void 0 : _a.type) === "space"; )
-    ;
-  return prev.splice(i, prev.length);
-}
-function arrayPushArray(target, source) {
-  if (source.length < 1e5)
-    Array.prototype.push.apply(target, source);
-  else
-    for (let i = 0; i < source.length; ++i)
-      target.push(source[i]);
-}
-function fixFlowSeqItems(fc) {
-  if (fc.start.type === "flow-seq-start")
-    for (let it of fc.items)
-      it.sep && !it.value && !includesToken(it.start, "explicit-key-ind") && !includesToken(it.sep, "map-value-ind") && (it.key && (it.value = it.key), delete it.key, isFlowToken(it.value) ? it.value.end ? arrayPushArray(it.value.end, it.sep) : it.value.end = it.sep : arrayPushArray(it.start, it.sep), delete it.sep);
-}
-var Parser = class {
-  /**
-   * @param onNewLine - If defined, called separately with the start position of
-   *   each new line (in `parse()`, including the start of input).
-   */
-  constructor(onNewLine) {
-    this.atNewLine = !0, this.atScalar = !1, this.indent = 0, this.offset = 0, this.onKeyLine = !1, this.stack = [], this.source = "", this.type = "", this.lexer = new Lexer(), this.onNewLine = onNewLine;
-  }
-  /**
-   * Parse `source` as a YAML stream.
-   * If `incomplete`, a part of the last line may be left as a buffer for the next call.
-   *
-   * Errors are not thrown, but yielded as `{ type: 'error', message }` tokens.
-   *
-   * @returns A generator of tokens representing each directive, document, and other structure.
-   */
-  *parse(source, incomplete = !1) {
-    this.onNewLine && this.offset === 0 && this.onNewLine(0);
-    for (let lexeme of this.lexer.lex(source, incomplete))
-      yield* this.next(lexeme);
-    incomplete || (yield* this.end());
-  }
-  /**
-   * Advance the parser by the `source` of one lexical token.
-   */
-  *next(source) {
-    if (this.source = source, this.atScalar) {
-      this.atScalar = !1, yield* this.step(), this.offset += source.length;
-      return;
-    }
-    let type = tokenType(source);
-    if (type)
-      if (type === "scalar")
-        this.atNewLine = !1, this.atScalar = !0, this.type = "scalar";
-      else {
-        switch (this.type = type, yield* this.step(), type) {
-          case "newline":
-            this.atNewLine = !0, this.indent = 0, this.onNewLine && this.onNewLine(this.offset + source.length);
-            break;
-          case "space":
-            this.atNewLine && source[0] === " " && (this.indent += source.length);
-            break;
-          case "explicit-key-ind":
-          case "map-value-ind":
-          case "seq-item-ind":
-            this.atNewLine && (this.indent += source.length);
-            break;
-          case "doc-mode":
-          case "flow-error-end":
-            return;
-          default:
-            this.atNewLine = !1;
-        }
-        this.offset += source.length;
-      }
-    else {
-      let message = `Not a YAML token: ${source}`;
-      yield* this.pop({ type: "error", offset: this.offset, message, source }), this.offset += source.length;
-    }
-  }
-  /** Call at end of input to push out any remaining constructions */
-  *end() {
-    for (; this.stack.length > 0; )
-      yield* this.pop();
-  }
-  get sourceToken() {
-    return {
-      type: this.type,
-      offset: this.offset,
-      indent: this.indent,
-      source: this.source
-    };
-  }
-  *step() {
-    let top = this.peek(1);
-    if (this.type === "doc-end" && (top == null ? void 0 : top.type) !== "doc-end") {
-      for (; this.stack.length > 0; )
-        yield* this.pop();
-      this.stack.push({
-        type: "doc-end",
-        offset: this.offset,
-        source: this.source
-      });
-      return;
-    }
-    if (!top)
-      return yield* this.stream();
-    switch (top.type) {
-      case "document":
-        return yield* this.document(top);
-      case "alias":
-      case "scalar":
-      case "single-quoted-scalar":
-      case "double-quoted-scalar":
-        return yield* this.scalar(top);
-      case "block-scalar":
-        return yield* this.blockScalar(top);
-      case "block-map":
-        return yield* this.blockMap(top);
-      case "block-seq":
-        return yield* this.blockSequence(top);
-      case "flow-collection":
-        return yield* this.flowCollection(top);
-      case "doc-end":
-        return yield* this.documentEnd(top);
-    }
-    yield* this.pop();
-  }
-  peek(n) {
-    return this.stack[this.stack.length - n];
-  }
-  *pop(error) {
-    let token = error != null ? error : this.stack.pop();
-    if (!token)
-      yield { type: "error", offset: this.offset, source: "", message: "Tried to pop an empty stack" };
-    else if (this.stack.length === 0)
-      yield token;
-    else {
-      let top = this.peek(1);
-      switch (token.type === "block-scalar" ? token.indent = "indent" in top ? top.indent : 0 : token.type === "flow-collection" && top.type === "document" && (token.indent = 0), token.type === "flow-collection" && fixFlowSeqItems(token), top.type) {
-        case "document":
-          top.value = token;
-          break;
-        case "block-scalar":
-          top.props.push(token);
-          break;
-        case "block-map": {
-          let it = top.items[top.items.length - 1];
-          if (it.value) {
-            top.items.push({ start: [], key: token, sep: [] }), this.onKeyLine = !0;
-            return;
-          } else if (it.sep)
-            it.value = token;
-          else {
-            Object.assign(it, { key: token, sep: [] }), this.onKeyLine = !it.explicitKey;
-            return;
-          }
-          break;
-        }
-        case "block-seq": {
-          let it = top.items[top.items.length - 1];
-          it.value ? top.items.push({ start: [], value: token }) : it.value = token;
-          break;
-        }
-        case "flow-collection": {
-          let it = top.items[top.items.length - 1];
-          !it || it.value ? top.items.push({ start: [], key: token, sep: [] }) : it.sep ? it.value = token : Object.assign(it, { key: token, sep: [] });
-          return;
-        }
-        /* istanbul ignore next should not happen */
-        default:
-          yield* this.pop(), yield* this.pop(token);
-      }
-      if ((top.type === "document" || top.type === "block-map" || top.type === "block-seq") && (token.type === "block-map" || token.type === "block-seq")) {
-        let last2 = token.items[token.items.length - 1];
-        last2 && !last2.sep && !last2.value && last2.start.length > 0 && findNonEmptyIndex(last2.start) === -1 && (token.indent === 0 || last2.start.every((st) => st.type !== "comment" || st.indent < token.indent)) && (top.type === "document" ? top.end = last2.start : top.items.push({ start: last2.start }), token.items.splice(-1, 1));
-      }
-    }
-  }
-  *stream() {
-    switch (this.type) {
-      case "directive-line":
-        yield { type: "directive", offset: this.offset, source: this.source };
-        return;
-      case "byte-order-mark":
-      case "space":
-      case "comment":
-      case "newline":
-        yield this.sourceToken;
-        return;
-      case "doc-mode":
-      case "doc-start": {
-        let doc2 = {
-          type: "document",
-          offset: this.offset,
-          start: []
-        };
-        this.type === "doc-start" && doc2.start.push(this.sourceToken), this.stack.push(doc2);
-        return;
-      }
-    }
-    yield {
-      type: "error",
-      offset: this.offset,
-      message: `Unexpected ${this.type} token in YAML stream`,
-      source: this.source
-    };
-  }
-  *document(doc2) {
-    if (doc2.value)
-      return yield* this.lineEnd(doc2);
-    switch (this.type) {
-      case "doc-start": {
-        findNonEmptyIndex(doc2.start) !== -1 ? (yield* this.pop(), yield* this.step()) : doc2.start.push(this.sourceToken);
-        return;
-      }
-      case "anchor":
-      case "tag":
-      case "space":
-      case "comment":
-      case "newline":
-        doc2.start.push(this.sourceToken);
-        return;
-    }
-    let bv = this.startBlockValue(doc2);
-    bv ? this.stack.push(bv) : yield {
-      type: "error",
-      offset: this.offset,
-      message: `Unexpected ${this.type} token in YAML document`,
-      source: this.source
-    };
-  }
-  *scalar(scalar) {
-    if (this.type === "map-value-ind") {
-      let prev = getPrevProps(this.peek(2)), start = getFirstKeyStartProps(prev), sep;
-      scalar.end ? (sep = scalar.end, sep.push(this.sourceToken), delete scalar.end) : sep = [this.sourceToken];
-      let map3 = {
-        type: "block-map",
-        offset: scalar.offset,
-        indent: scalar.indent,
-        items: [{ start, key: scalar, sep }]
-      };
-      this.onKeyLine = !0, this.stack[this.stack.length - 1] = map3;
-    } else
-      yield* this.lineEnd(scalar);
-  }
-  *blockScalar(scalar) {
-    switch (this.type) {
-      case "space":
-      case "comment":
-      case "newline":
-        scalar.props.push(this.sourceToken);
-        return;
-      case "scalar":
-        if (scalar.source = this.source, this.atNewLine = !0, this.indent = 0, this.onNewLine) {
-          let nl = this.source.indexOf(`
-`) + 1;
-          for (; nl !== 0; )
-            this.onNewLine(this.offset + nl), nl = this.source.indexOf(`
-`, nl) + 1;
-        }
-        yield* this.pop();
-        break;
-      /* istanbul ignore next should not happen */
-      default:
-        yield* this.pop(), yield* this.step();
-    }
-  }
-  *blockMap(map3) {
-    var _a;
-    let it = map3.items[map3.items.length - 1];
-    switch (this.type) {
-      case "newline":
-        if (this.onKeyLine = !1, it.value) {
-          let end = "end" in it.value ? it.value.end : void 0, last2 = Array.isArray(end) ? end[end.length - 1] : void 0;
-          (last2 == null ? void 0 : last2.type) === "comment" ? end == null || end.push(this.sourceToken) : map3.items.push({ start: [this.sourceToken] });
-        } else it.sep ? it.sep.push(this.sourceToken) : it.start.push(this.sourceToken);
-        return;
-      case "space":
-      case "comment":
-        if (it.value)
-          map3.items.push({ start: [this.sourceToken] });
-        else if (it.sep)
-          it.sep.push(this.sourceToken);
-        else {
-          if (this.atIndentedComment(it.start, map3.indent)) {
-            let prev = map3.items[map3.items.length - 2], end = (_a = prev == null ? void 0 : prev.value) == null ? void 0 : _a.end;
-            if (Array.isArray(end)) {
-              arrayPushArray(end, it.start), end.push(this.sourceToken), map3.items.pop();
-              return;
-            }
-          }
-          it.start.push(this.sourceToken);
-        }
-        return;
-    }
-    if (this.indent >= map3.indent) {
-      let atMapIndent = !this.onKeyLine && this.indent === map3.indent, atNextItem = atMapIndent && (it.sep || it.explicitKey) && this.type !== "seq-item-ind", start = [];
-      if (atNextItem && it.sep && !it.value) {
-        let nl = [];
-        for (let i = 0; i < it.sep.length; ++i) {
-          let st = it.sep[i];
-          switch (st.type) {
-            case "newline":
-              nl.push(i);
-              break;
-            case "space":
-              break;
-            case "comment":
-              st.indent > map3.indent && (nl.length = 0);
-              break;
-            default:
-              nl.length = 0;
-          }
-        }
-        nl.length >= 2 && (start = it.sep.splice(nl[1]));
-      }
-      switch (this.type) {
-        case "anchor":
-        case "tag":
-          atNextItem || it.value ? (start.push(this.sourceToken), map3.items.push({ start }), this.onKeyLine = !0) : it.sep ? it.sep.push(this.sourceToken) : it.start.push(this.sourceToken);
-          return;
-        case "explicit-key-ind":
-          !it.sep && !it.explicitKey ? (it.start.push(this.sourceToken), it.explicitKey = !0) : atNextItem || it.value ? (start.push(this.sourceToken), map3.items.push({ start, explicitKey: !0 })) : this.stack.push({
-            type: "block-map",
-            offset: this.offset,
-            indent: this.indent,
-            items: [{ start: [this.sourceToken], explicitKey: !0 }]
-          }), this.onKeyLine = !0;
-          return;
-        case "map-value-ind":
-          if (it.explicitKey)
-            if (it.sep)
-              if (it.value)
-                map3.items.push({ start: [], key: null, sep: [this.sourceToken] });
-              else if (includesToken(it.sep, "map-value-ind"))
-                this.stack.push({
-                  type: "block-map",
-                  offset: this.offset,
-                  indent: this.indent,
-                  items: [{ start, key: null, sep: [this.sourceToken] }]
-                });
-              else if (isFlowToken(it.key) && !includesToken(it.sep, "newline")) {
-                let start2 = getFirstKeyStartProps(it.start), key = it.key, sep = it.sep;
-                sep.push(this.sourceToken), delete it.key, delete it.sep, this.stack.push({
-                  type: "block-map",
-                  offset: this.offset,
-                  indent: this.indent,
-                  items: [{ start: start2, key, sep }]
-                });
-              } else start.length > 0 ? it.sep = it.sep.concat(start, this.sourceToken) : it.sep.push(this.sourceToken);
-            else if (includesToken(it.start, "newline"))
-              Object.assign(it, { key: null, sep: [this.sourceToken] });
-            else {
-              let start2 = getFirstKeyStartProps(it.start);
-              this.stack.push({
-                type: "block-map",
-                offset: this.offset,
-                indent: this.indent,
-                items: [{ start: start2, key: null, sep: [this.sourceToken] }]
-              });
-            }
-          else
-            it.sep ? it.value || atNextItem ? map3.items.push({ start, key: null, sep: [this.sourceToken] }) : includesToken(it.sep, "map-value-ind") ? this.stack.push({
-              type: "block-map",
-              offset: this.offset,
-              indent: this.indent,
-              items: [{ start: [], key: null, sep: [this.sourceToken] }]
-            }) : it.sep.push(this.sourceToken) : Object.assign(it, { key: null, sep: [this.sourceToken] });
-          this.onKeyLine = !0;
-          return;
-        case "alias":
-        case "scalar":
-        case "single-quoted-scalar":
-        case "double-quoted-scalar": {
-          let fs = this.flowScalar(this.type);
-          atNextItem || it.value ? (map3.items.push({ start, key: fs, sep: [] }), this.onKeyLine = !0) : it.sep ? this.stack.push(fs) : (Object.assign(it, { key: fs, sep: [] }), this.onKeyLine = !0);
-          return;
-        }
-        default: {
-          let bv = this.startBlockValue(map3);
-          if (bv) {
-            if (bv.type === "block-seq") {
-              if (!it.explicitKey && it.sep && !includesToken(it.sep, "newline")) {
-                yield* this.pop({
-                  type: "error",
-                  offset: this.offset,
-                  message: "Unexpected block-seq-ind on same line with key",
-                  source: this.source
-                });
-                return;
-              }
-            } else atMapIndent && map3.items.push({ start });
-            this.stack.push(bv);
-            return;
-          }
-        }
-      }
-    }
-    yield* this.pop(), yield* this.step();
-  }
-  *blockSequence(seq2) {
-    var _a;
-    let it = seq2.items[seq2.items.length - 1];
-    switch (this.type) {
-      case "newline":
-        if (it.value) {
-          let end = "end" in it.value ? it.value.end : void 0, last2 = Array.isArray(end) ? end[end.length - 1] : void 0;
-          (last2 == null ? void 0 : last2.type) === "comment" ? end == null || end.push(this.sourceToken) : seq2.items.push({ start: [this.sourceToken] });
-        } else
-          it.start.push(this.sourceToken);
-        return;
-      case "space":
-      case "comment":
-        if (it.value)
-          seq2.items.push({ start: [this.sourceToken] });
-        else {
-          if (this.atIndentedComment(it.start, seq2.indent)) {
-            let prev = seq2.items[seq2.items.length - 2], end = (_a = prev == null ? void 0 : prev.value) == null ? void 0 : _a.end;
-            if (Array.isArray(end)) {
-              arrayPushArray(end, it.start), end.push(this.sourceToken), seq2.items.pop();
-              return;
-            }
-          }
-          it.start.push(this.sourceToken);
-        }
-        return;
-      case "anchor":
-      case "tag":
-        if (it.value || this.indent <= seq2.indent)
-          break;
-        it.start.push(this.sourceToken);
-        return;
-      case "seq-item-ind":
-        if (this.indent !== seq2.indent)
-          break;
-        it.value || includesToken(it.start, "seq-item-ind") ? seq2.items.push({ start: [this.sourceToken] }) : it.start.push(this.sourceToken);
-        return;
-    }
-    if (this.indent > seq2.indent) {
-      let bv = this.startBlockValue(seq2);
-      if (bv) {
-        this.stack.push(bv);
-        return;
-      }
-    }
-    yield* this.pop(), yield* this.step();
-  }
-  *flowCollection(fc) {
-    let it = fc.items[fc.items.length - 1];
-    if (this.type === "flow-error-end") {
-      let top;
-      do
-        yield* this.pop(), top = this.peek(1);
-      while ((top == null ? void 0 : top.type) === "flow-collection");
-    } else if (fc.end.length === 0) {
-      switch (this.type) {
-        case "comma":
-        case "explicit-key-ind":
-          !it || it.sep ? fc.items.push({ start: [this.sourceToken] }) : it.start.push(this.sourceToken);
-          return;
-        case "map-value-ind":
-          !it || it.value ? fc.items.push({ start: [], key: null, sep: [this.sourceToken] }) : it.sep ? it.sep.push(this.sourceToken) : Object.assign(it, { key: null, sep: [this.sourceToken] });
-          return;
-        case "space":
-        case "comment":
-        case "newline":
-        case "anchor":
-        case "tag":
-          !it || it.value ? fc.items.push({ start: [this.sourceToken] }) : it.sep ? it.sep.push(this.sourceToken) : it.start.push(this.sourceToken);
-          return;
-        case "alias":
-        case "scalar":
-        case "single-quoted-scalar":
-        case "double-quoted-scalar": {
-          let fs = this.flowScalar(this.type);
-          !it || it.value ? fc.items.push({ start: [], key: fs, sep: [] }) : it.sep ? this.stack.push(fs) : Object.assign(it, { key: fs, sep: [] });
-          return;
-        }
-        case "flow-map-end":
-        case "flow-seq-end":
-          fc.end.push(this.sourceToken);
-          return;
-      }
-      let bv = this.startBlockValue(fc);
-      bv ? this.stack.push(bv) : (yield* this.pop(), yield* this.step());
-    } else {
-      let parent = this.peek(2);
-      if (parent.type === "block-map" && (this.type === "map-value-ind" && parent.indent === fc.indent || this.type === "newline" && !parent.items[parent.items.length - 1].sep))
-        yield* this.pop(), yield* this.step();
-      else if (this.type === "map-value-ind" && parent.type !== "flow-collection") {
-        let prev = getPrevProps(parent), start = getFirstKeyStartProps(prev);
-        fixFlowSeqItems(fc);
-        let sep = fc.end.splice(1, fc.end.length);
-        sep.push(this.sourceToken);
-        let map3 = {
-          type: "block-map",
-          offset: fc.offset,
-          indent: fc.indent,
-          items: [{ start, key: fc, sep }]
-        };
-        this.onKeyLine = !0, this.stack[this.stack.length - 1] = map3;
-      } else
-        yield* this.lineEnd(fc);
-    }
-  }
-  flowScalar(type) {
-    if (this.onNewLine) {
-      let nl = this.source.indexOf(`
-`) + 1;
-      for (; nl !== 0; )
-        this.onNewLine(this.offset + nl), nl = this.source.indexOf(`
-`, nl) + 1;
-    }
-    return {
-      type,
-      offset: this.offset,
-      indent: this.indent,
-      source: this.source
-    };
-  }
-  startBlockValue(parent) {
-    switch (this.type) {
-      case "alias":
-      case "scalar":
-      case "single-quoted-scalar":
-      case "double-quoted-scalar":
-        return this.flowScalar(this.type);
-      case "block-scalar-header":
-        return {
-          type: "block-scalar",
-          offset: this.offset,
-          indent: this.indent,
-          props: [this.sourceToken],
-          source: ""
-        };
-      case "flow-map-start":
-      case "flow-seq-start":
-        return {
-          type: "flow-collection",
-          offset: this.offset,
-          indent: this.indent,
-          start: this.sourceToken,
-          items: [],
-          end: []
-        };
-      case "seq-item-ind":
-        return {
-          type: "block-seq",
-          offset: this.offset,
-          indent: this.indent,
-          items: [{ start: [this.sourceToken] }]
-        };
-      case "explicit-key-ind": {
-        this.onKeyLine = !0;
-        let prev = getPrevProps(parent), start = getFirstKeyStartProps(prev);
-        return start.push(this.sourceToken), {
-          type: "block-map",
-          offset: this.offset,
-          indent: this.indent,
-          items: [{ start, explicitKey: !0 }]
-        };
-      }
-      case "map-value-ind": {
-        this.onKeyLine = !0;
-        let prev = getPrevProps(parent), start = getFirstKeyStartProps(prev);
-        return {
-          type: "block-map",
-          offset: this.offset,
-          indent: this.indent,
-          items: [{ start, key: null, sep: [this.sourceToken] }]
-        };
-      }
-    }
-    return null;
-  }
-  atIndentedComment(start, indent) {
-    return this.type !== "comment" || this.indent <= indent ? !1 : start.every((st) => st.type === "newline" || st.type === "space");
-  }
-  *documentEnd(docEnd) {
-    this.type !== "doc-mode" && (docEnd.end ? docEnd.end.push(this.sourceToken) : docEnd.end = [this.sourceToken], this.type === "newline" && (yield* this.pop()));
-  }
-  *lineEnd(token) {
-    switch (this.type) {
-      case "comma":
-      case "doc-start":
-      case "doc-end":
-      case "flow-seq-end":
-      case "flow-map-end":
-      case "map-value-ind":
-        yield* this.pop(), yield* this.step();
-        break;
-      case "newline":
-        this.onKeyLine = !1;
-      default:
-        token.end ? token.end.push(this.sourceToken) : token.end = [this.sourceToken], this.type === "newline" && (yield* this.pop());
-    }
-  }
-};
-
-// node_modules/yaml/browser/dist/public-api.js
-function parseOptions(options) {
-  let prettyErrors = options.prettyErrors !== !1;
-  return { lineCounter: options.lineCounter || prettyErrors && new LineCounter() || null, prettyErrors };
-}
-function parseDocument(source, options = {}) {
-  let { lineCounter, prettyErrors } = parseOptions(options), parser = new Parser(lineCounter == null ? void 0 : lineCounter.addNewLine), composer = new Composer(options), doc2 = null;
-  for (let _doc of composer.compose(parser.parse(source), !0, source.length))
-    if (!doc2)
-      doc2 = _doc;
-    else if (doc2.options.logLevel !== "silent") {
-      doc2.errors.push(new YAMLParseError(_doc.range.slice(0, 2), "MULTIPLE_DOCS", "Source contains multiple documents; please use YAML.parseAllDocuments()"));
-      break;
-    }
-  return prettyErrors && lineCounter && (doc2.errors.forEach(prettifyError(source, lineCounter)), doc2.warnings.forEach(prettifyError(source, lineCounter))), doc2;
-}
-function parse(src, reviver, options) {
-  let _reviver;
-  typeof reviver == "function" ? _reviver = reviver : options === void 0 && reviver && typeof reviver == "object" && (options = reviver);
-  let doc2 = parseDocument(src, options);
-  if (!doc2)
-    return null;
-  if (doc2.warnings.forEach((warning) => warn2(doc2.options.logLevel, warning)), doc2.errors.length > 0) {
-    if (doc2.options.logLevel !== "silent")
-      throw doc2.errors[0];
-    doc2.errors = [];
-  }
-  return doc2.toJS(Object.assign({ reviver: _reviver }, options));
-}
-function stringify3(value, replacer, options) {
-  var _a;
-  let _replacer = null;
-  if (typeof replacer == "function" || Array.isArray(replacer) ? _replacer = replacer : options === void 0 && replacer && (options = replacer), typeof options == "string" && (options = options.length), typeof options == "number") {
-    let indent = Math.round(options);
-    options = indent < 1 ? void 0 : indent > 8 ? { indent: 8 } : { indent };
-  }
-  if (value === void 0) {
-    let { keepUndefined } = (_a = options != null ? options : replacer) != null ? _a : {};
-    if (!keepUndefined)
-      return;
-  }
-  return isDocument(value) && !_replacer ? value.toString(options) : new Document(value, _replacer, options).toString(options);
-}
-
-// src/crdt/frontmatter-codec.ts
-var FRONTMATTER_KEY = "frontmatter", RAW_FRONTMATTER_KEY = "frontmatter_raw", ORDER_KEY = "frontmatter_order", CONTENT_KEY = "content";
-function frontmatterOf(doc2) {
-  let order = doc2.getArray(ORDER_KEY).toArray(), values = doc2.getMap(FRONTMATTER_KEY).toJSON();
-  return { order, values };
-}
-function rawFrontmatterOf(doc2) {
-  return doc2.getMap(RAW_FRONTMATTER_KEY).toJSON();
-}
-var FENCE = "---", CLOSE_MID = /\n---[ \t]*\r?\n/, CLOSE_EOF = /\n---[ \t]*\r?$/;
-function splitFrontmatter(raw) {
-  if (!raw.startsWith(`${FENCE}
-`)) return { fmBlock: null, body: raw };
-  let rest = raw.slice(FENCE.length + 1);
-  if (rest.startsWith(`${FENCE}
-`)) return { fmBlock: "", body: rest.slice(FENCE.length + 1) };
-  let mid = rest.match(CLOSE_MID);
-  if (mid && mid.index !== void 0) {
-    let block = `${rest.slice(0, mid.index)}
-`, body = rest.slice(mid.index + mid[0].length);
-    return { fmBlock: block, body };
-  }
-  let eof = rest.match(CLOSE_EOF);
-  return eof && eof.index !== void 0 ? { fmBlock: `${rest.slice(0, eof.index)}
-`, body: "" } : { fmBlock: null, body: raw };
-}
-function canonicalJson(value) {
-  return JSON.stringify(sortDeep(value));
-}
-function sortDeep(v) {
-  if (Array.isArray(v)) return v.map(sortDeep);
-  if (v !== null && typeof v == "object") {
-    let rec = v, out = {};
-    for (let k of Object.keys(rec).sort())
-      out[k] = sortDeep(rec[k]);
-    return out;
-  }
-  return v;
-}
-function parseFrontmatter(fmBlock) {
-  if (fmBlock === "") return { order: [], values: {} };
-  let doc2;
-  try {
-    doc2 = parse(fmBlock);
-  } catch (e) {
-    return null;
-  }
-  if (!doc2 || typeof doc2 != "object" || Array.isArray(doc2)) return null;
-  let map3 = doc2, order = topLevelKeyOrder(fmBlock, map3), values = {};
-  for (let k of Object.keys(map3)) values[k] = canonicalJson(map3[k]);
-  return { order, values };
-}
-function topLevelKeyOrder(block, map3) {
-  let order = [];
-  for (let line of block.split(`
-`)) {
-    let m = line.match(/^([^\s:][^:]*):/);
-    if (!m) continue;
-    let key = m[1];
-    key !== void 0 && // biome-ignore lint/suspicious/noPrototypeBuiltins: Object.hasOwn needs lib ES2022, we target ES2021
-    Object.prototype.hasOwnProperty.call(map3, key) && !order.includes(key) && order.push(key);
-  }
-  return order;
-}
-function ensureTrailingNewline(s) {
-  return s === "" ? "" : s.endsWith(`
-`) ? s : `${s}
-`;
-}
-function emitKey(key, valueJson) {
-  let value = JSON.parse(valueJson);
-  return ensureTrailingNewline(stringify3({ [key]: value }));
-}
-function emitFrontmatter(order, values, raws = {}) {
-  let has = (m, k) => (
-    // biome-ignore lint/suspicious/noPrototypeBuiltins: Object.hasOwn needs lib ES2022, we target ES2021
-    Object.prototype.hasOwnProperty.call(m, k)
-  ), present = order.filter((k) => has(raws, k) || has(values, k));
-  if (present.length === 0) return "";
-  let out = "";
-  for (let key of present)
-    out += has(raws, key) ? ensureTrailingNewline(raws[key]) : emitKey(key, values[key]);
-  return ensureTrailingNewline(out);
-}
-function projectNote(order, values, body, raws = {}) {
-  let block = emitFrontmatter(order, values, raws);
-  return block === "" ? body : `${FENCE}
-${block}${FENCE}
-${body}`;
+  return canonicalJson(a) === canonicalJson(b);
+}
+
+// src/crdt/lca-merge.ts
+var import_diff_match_patch4 = __toESM(require_diff_match_patch(), 1);
+function mergeDiskOntoDoc(base, disk, current) {
+  if (base === disk) return { text: current, clean: !0 };
+  if (base === current) return { text: disk, clean: !0 };
+  let dmp3 = new import_diff_match_patch4.diff_match_patch(), patches = dmp3.patch_make(base, disk), [merged, applied] = dmp3.patch_apply(patches, current);
+  return { text: merged, clean: applied.every(Boolean) };
 }
 
 // node_modules/y-protocols/sync.js
@@ -14603,7 +14733,11 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
       // production runs and what tests/crdt/wiring.test.ts pins. A duplicate
       // here could silently drift from the shipped one (it did: the suite
       // exercised only the duplicate, so #1130 could regress green).
-      send: (frame, kind2) => this.opts.send(noteId, frame, kind2),
+      send: (frame, kind2) => {
+        var _a2;
+        let accepted = this.opts.send(noteId, frame, kind2);
+        return (_a2 = this.opts.recorder) == null || _a2.record("send", noteId, { kind: kind2, accepted }), accepted;
+      },
       onSynced: () => {
         var _a2, _b2, _c2, _d;
         (_b2 = (_a2 = this.opts).onSynced) == null || _b2.call(_a2, noteId), text2.length === 0 && ((_d = (_c2 = this.opts).onEmptyStep2) == null || _d.call(_c2, noteId));
@@ -14625,11 +14759,16 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
       lifetime: new Lifetime()
     };
     return doc2.on("update", (_u, origin) => {
+      var _a2;
       if (!entry.lifetime.active || origin !== provider && origin !== REMOTE) return;
       entry.remoteSeq += 1;
-      let flush = Promise.resolve(
-        this.opts.onFlushToDisk(noteId, this.project(entry))
-      ).then((ok) => {
+      let projected = this.project(entry);
+      (_a2 = this.opts.recorder) == null || _a2.record("flush", noteId, {
+        hash: fnv1a(projected).toString(16),
+        length: projected.length,
+        remoteSeq: entry.remoteSeq
+      });
+      let flush = Promise.resolve(this.opts.onFlushToDisk(noteId, projected)).then((ok) => {
         if (ok === !1) throw new Error(`flushFromCrdt write failure for ${noteId}`);
       });
       entry.pendingFlush = flush, flush.catch(() => {
@@ -14673,11 +14812,23 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
    *  Ports CrdtManager.applyLocalEdit: stale-snapshot guard + adopt-first gate +
    *  the shared seedContentInto codec. */
   async applyLocalEdit(noteId, diskContent, hasLca, reread) {
-    var _a, _b;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     if (this.removed.has(noteId)) return null;
     let e = await this.entry(noteId);
     if (!e.lifetime.active) return null;
-    let content = diskContent;
+    let content = diskContent, base = (hasLca != null ? hasLca : docHasHistory(e.doc, e.kind)) ? (_b = (_a = this.opts).lcaFor) == null ? void 0 : _b.call(_a, noteId) : null;
+    if (base != null && e.kind === "note") {
+      let merged = mergeDiskOntoDoc(base, diskContent, this.project(e));
+      if (merged.clean)
+        return (_c = this.opts.recorder) == null || _c.record("localEdit", noteId, {
+          hash: fnv1a(merged.text).toString(16),
+          length: merged.text.length,
+          lca: !0,
+          merged: !0,
+          kind: e.kind
+        }), seedContentInto(e.doc, e.text, merged.text, docHasHistory(e.doc, e.kind)), merged.text;
+      (_e = (_d = this.opts).onDirtyMerge) == null || _e.call(_d, noteId);
+    }
     if (reread) {
       let stable = !1;
       for (let attempt = 0; attempt < 3 && !stable; attempt++) {
@@ -14698,15 +14849,21 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
       if (!stable) return null;
     }
     let lca = hasLca != null ? hasLca : docHasHistory(e.doc, e.kind);
-    return !lca && ((_b = (_a = this.opts).isUnchangedSynced) != null && _b.call(_a, noteId, content)) ? content : e.kind === "canvas" ? seedCanvasInto(e.doc, content) ? content : null : (seedContentInto(e.doc, e.text, content, lca), content);
+    return !lca && ((_g = (_f = this.opts).isUnchangedSynced) != null && _g.call(_f, noteId, content)) ? content : ((_h = this.opts.recorder) == null || _h.record("localEdit", noteId, {
+      hash: fnv1a(content).toString(16),
+      length: content.length,
+      lca,
+      kind: e.kind
+    }), e.kind === "canvas" ? seedCanvasInto(e.doc, content) ? content : null : (seedContentInto(e.doc, e.text, content, lca), content));
   }
   /** Apply a raw Yjs update (vault-channel fan-out) as a remote merge, awaiting
    *  its disk flush so a write failure can be surfaced (#235). */
   async applyRemoteUpdate(noteId, update) {
+    var _a;
     if (this.removed.has(noteId)) return;
     let e = await this.entry(noteId);
     if (!e.lifetime.active) return;
-    applyUpdate(e.doc, update, e.provider);
+    (_a = this.opts.recorder) == null || _a.record("remoteUpdate", noteId, { bytes: update.byteLength }), applyUpdate(e.doc, update, e.provider);
     let flush = e.pendingFlush;
     flush && (e.pendingFlush = null, await flush);
   }
@@ -14741,14 +14898,16 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
   /** Route an inbound wire frame to its provider (creating it if a fan-out
    *  announced a note this device hasn't opened). */
   async receive(noteId, frameB64) {
-    (await this.entry(noteId)).provider.receive(frameB64);
+    var _a;
+    (_a = this.opts.recorder) == null || _a.record("receive", noteId, { frame: frameB64 }), (await this.entry(noteId)).provider.receive(frameB64);
   }
   /** Enroll: OPEN a room for this note — advertise syncStep1 (the down-sync
    *  pull) now and on every reconnect. Only open/live-bound notes call this; a
    *  cold SEND or fan-out RECEIVE stays room-free. (CrdtChannel.startSync +
    *  CrdtEnrollment.enroll collapse to this.) */
   async startSync(noteId) {
-    this.assertAlive(noteId), this.enrolledIds.add(noteId);
+    var _a;
+    this.assertAlive(noteId), this.enrolledIds.add(noteId), (_a = this.opts.recorder) == null || _a.record("enroll", noteId, {});
     let e = await this.entry(noteId);
     e.provider.setAdvertised(!0), this.connected && e.provider.setConnected(!0);
   }
@@ -14761,7 +14920,8 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
    *  ops still work (the note converges over the fan-out); the server room idles
    *  out. reset+enroll = a fresh re-handshake. */
   reset(noteId) {
-    this.enrolledIds.delete(noteId);
+    var _a;
+    this.enrolledIds.delete(noteId), (_a = this.opts.recorder) == null || _a.record("reset", noteId, {});
     let e = this.entries.get(noteId);
     e && (e.provider.setAdvertised(!1), e.provider.synced = !1);
   }
@@ -14775,7 +14935,11 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
    *  connect each re-advertises via syncStep1 — the reason the doc layer
    *  outlives the socket. */
   setConnected(connected) {
-    this.connected = connected;
+    var _a;
+    this.connected = connected, (_a = this.opts.recorder) == null || _a.record("connection", null, {
+      connected,
+      resident: this.entries.size
+    });
     for (let e of this.entries.values()) e.provider.setConnected(connected);
   }
   // --- Synced bookkeeping -----------------------------------------------------
@@ -14853,6 +15017,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
     this.removed.add(noteId), await this.destroy(noteId, !0);
   }
   async destroy(noteId, clearData) {
+    this.enrolledIds.delete(noteId);
     let e = this.entries.get(noteId);
     if (e && e.lifetime.end(new NoteDestroyedError(noteId)), !e) {
       clearData && await new Promise((resolve) => {
@@ -14865,7 +15030,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
   }
   async destroyAll() {
     for (let noteId of [...this.entries.keys()]) await this.destroy(noteId, !1);
-    this.removed.clear();
+    this.removed.clear(), this.enrolledIds.clear();
   }
 };
 
@@ -14930,23 +15095,23 @@ function createCrdtWiring(deps) {
       strandHealTimer = null, drainStrandedFlushes();
     }, debounceMs));
   }
-  let unsentDocIds = /* @__PURE__ */ new Set(), registry = new ProviderRegistry({
+  let unsentDocIds = /* @__PURE__ */ new Set(), addUnsent = (docId) => {
+    if (!unsentDocIds.has(docId) && unsentDocIds.size >= MAX_UNSENT_DOCS)
+      for (let oldest of unsentDocIds) {
+        unsentDocIds.delete(oldest);
+        break;
+      }
+    unsentDocIds.add(docId);
+  }, registry = new ProviderRegistry({
     dbPrefix: deps.dbPrefix,
+    recorder: deps.recorder,
+    lcaFor: deps.lcaFor,
+    onDirtyMerge: deps.onDirtyMerge,
     send: (docId, frame, kind) => {
       if (kind === "op" && deps.canSendLive && !deps.canSendLive(docId))
-        return unsentDocIds.add(docId), !1;
+        return addUnsent(docId), !1;
       let ok = deps.sendCrdt(docId, frame) !== !1;
-      if (ok)
-        unsentDocIds.delete(docId);
-      else {
-        if (!unsentDocIds.has(docId) && unsentDocIds.size >= MAX_UNSENT_DOCS)
-          for (let oldest of unsentDocIds) {
-            unsentDocIds.delete(oldest);
-            break;
-          }
-        unsentDocIds.add(docId);
-      }
-      return ok;
+      return ok ? unsentDocIds.delete(docId) : addUnsent(docId), ok;
     },
     onFlushToDisk: async (noteId, content) => {
       var _a2;
@@ -14993,7 +15158,7 @@ function createCrdtWiring(deps) {
     },
     docKind: (noteId) => {
       var _a2;
-      return (_a2 = noteIdMap.pathForId(noteId)) != null && _a2.endsWith(".canvas") ? "canvas" : "note";
+      return docKindFor((_a2 = noteIdMap.pathForId(noteId)) != null ? _a2 : "");
     }
   }), manager = registry, channel = registry, enrollment = registry, onCrdtMessage = (docId, b64) => {
     channel.receive(docId, b64).catch((e) => {
@@ -15095,14 +15260,14 @@ function makeCrdtOpSend(hooks) {
       } else if (op.kind === "delete")
         await ch.crdtDeleteAcked(op.docId);
       else
-        return "ok";
-      return "ok";
+        return limitSurfaced.delete(op.id), "ok";
+      return limitSurfaced.delete(op.id), "ok";
     } catch (err) {
       let reason = crdtOpFailureReason(err);
       if (reason && LIMIT_REASONS.has(reason))
         return limitSurfaced.has(op.id) || (limitSurfaced.add(op.id), (_c = hooks.onLimit) == null || _c.call(hooks, op, reason)), "error";
       if (reason && TERMINAL_REASONS.has(reason))
-        return hooks.onTerminal(op, reason), "ok";
+        return hooks.onTerminal(op, reason), limitSurfaced.delete(op.id), "ok";
       let msg = err instanceof Error ? err.message : String(err);
       return /timeout/i.test(msg) ? "timeout" : "error";
     }
@@ -15110,12 +15275,12 @@ function makeCrdtOpSend(hooks) {
 }
 
 // src/crdt-op-queue.ts
-var DEFAULT_OPTIONS = {
-  maxQueue: 500,
-  opTtlMs: 3e5,
-  maxAttempts: 8,
-  baseBackoffMs: 500,
-  maxBackoffMs: 3e4
+var MAX_QUEUE = 500, OP_TTL_MS = 300 * 1e3, MAX_ATTEMPTS = 8, BASE_BACKOFF_MS = 500, MAX_BACKOFF_MS = 3e4, PERSIST_DELAY_MS = 1e3, DEFAULT_OPTIONS = {
+  maxQueue: MAX_QUEUE,
+  opTtlMs: OP_TTL_MS,
+  maxAttempts: MAX_ATTEMPTS,
+  baseBackoffMs: BASE_BACKOFF_MS,
+  maxBackoffMs: MAX_BACKOFF_MS
 }, CrdtOpQueue = class {
   constructor(deps) {
     /** Keyed by docId → at most one pending op per doc (newest supersedes). */
@@ -15126,7 +15291,7 @@ var DEFAULT_OPTIONS = {
     this.persistFn = null;
     this.persistTimer = null;
     var _a;
-    this.send = deps.send, this.now = deps.now, this.onDrop = deps.onDrop, this.opts = { ...DEFAULT_OPTIONS, ...deps.options }, this.persistDelayMs = (_a = deps.persistDelayMs) != null ? _a : 1e3;
+    this.send = deps.send, this.now = deps.now, this.onDrop = deps.onDrop, this.opts = { ...DEFAULT_OPTIONS, ...deps.options }, this.persistDelayMs = (_a = deps.persistDelayMs) != null ? _a : PERSIST_DELAY_MS;
   }
   /** Number of distinct pending ops (docIds). */
   size() {
@@ -15213,8 +15378,7 @@ var DEFAULT_OPTIONS = {
     }, this.persistDelayMs));
   }
   backoffFor(attempts) {
-    let delay = this.opts.baseBackoffMs * 2 ** (attempts - 1);
-    return Math.min(delay, this.opts.maxBackoffMs);
+    return expBackoff(this.opts.baseBackoffMs, attempts - 1, this.opts.maxBackoffMs);
   }
   async flush() {
     if (!(!this.joined || this.flushing)) {
@@ -15245,6 +15409,197 @@ var DEFAULT_OPTIONS = {
     }
   }
 };
+
+// src/debug-snapshot.ts
+var hashOf = (content) => fnv1a(content).toString(16);
+function describe(err) {
+  return err instanceof Error ? err.message : String(err);
+}
+function resolveKey(key, deps) {
+  let idFromPath = deps.idForPath(key);
+  if (idFromPath) return { path: key, noteId: idFromPath };
+  let pathFromId = deps.pathForId(key);
+  return pathFromId ? { path: pathFromId, noteId: key } : { path: key, noteId: null };
+}
+async function buildNoteSnapshot(key, deps, opts = {}) {
+  let errors = [], { path, noteId } = resolveKey(key, deps), idForPath = path ? deps.idForPath(path) : null, pathForId = noteId ? deps.pathForId(noteId) : null, removed = noteId ? deps.registry.removedIds.has(noteId) : !1, resident = noteId ? deps.registry.hasDoc(noteId) : !1, doc2 = null, docContent = null;
+  if (noteId && resident)
+    try {
+      let content = await deps.registry.projectedText(noteId);
+      docContent = content, doc2 = {
+        length: content.length,
+        hash: hashOf(content),
+        hasHistory: await deps.registry.hasHistory(noteId),
+        stateVectorBytes: (await deps.registry.encodeStateVector(noteId)).byteLength,
+        ...opts.includeContent ? { content } : {}
+      };
+    } catch (e) {
+      errors.push(`doc: ${describe(e)}`);
+    }
+  let disk = null, diskContent = null;
+  if (path)
+    try {
+      let read = await deps.readDisk(path);
+      read && (diskContent = read.content, disk = {
+        length: read.length,
+        hash: hashOf(read.content),
+        mtime: read.mtime,
+        ...opts.includeContent ? { content: read.content } : {}
+      });
+    } catch (e) {
+      errors.push(`disk: ${describe(e)}`);
+    }
+  let pendingGap = !1;
+  if (noteId && resident)
+    try {
+      pendingGap = await deps.registry.hasPendingGap(noteId);
+    } catch (e) {
+      errors.push(`room: ${describe(e)}`);
+    }
+  let state = path ? deps.syncStateFor(path) : void 0;
+  return {
+    path,
+    noteId,
+    idmap: {
+      idForPath,
+      pathForId,
+      // Both directions present and agreeing = healthy. Neither present =
+      // nothing to disagree about (an unmapped path is reported elsewhere).
+      // Exactly ONE present = the two directions have drifted apart, which is
+      // the half-mapped state that strands flushes — it must not read as
+      // healthy just because nothing contradicts it.
+      bijective: idForPath && pathForId ? pathForId === path : !idForPath && !pathForId
+    },
+    doc: doc2,
+    disk,
+    server: state ? {
+      crdtHead: state.crdtHead,
+      serverHash: state.serverHash,
+      version: state.version,
+      seq: state.seq,
+      syncedHash: state.hash
+    } : null,
+    room: {
+      resident,
+      enrolled: noteId ? deps.registry.enrolled.has(noteId) : !1,
+      synced: noteId ? deps.registry.isSynced(noteId) : !1,
+      pendingGap,
+      undelivered: noteId ? deps.registry.hasUndeliveredOps(noteId) : !1,
+      removed,
+      liveBound: path ? deps.isLiveBound(path) : !1
+    },
+    docMatchesDisk: docContent !== null && diskContent !== null ? docContent === diskContent : null,
+    hasServerNote: (state == null ? void 0 : state.crdtHead) != null,
+    errors
+  };
+}
+function buildVaultSnapshot(deps) {
+  return {
+    rooms: {
+      resident: deps.registry.residentIds().length,
+      enrolled: deps.registry.enrolled.size,
+      removed: deps.registry.removedIds.size
+    },
+    // Oldest first: a wedged operation is the one worth seeing, and it is the
+    // one that has been outstanding longest.
+    pending: [...deps.pendingPromises()].sort((a, b) => b.ageMs - a.ageMs)
+  };
+}
+
+// src/sync-recorder.ts
+var DEFAULT_CAPACITY = 5e3, SyncRecorder = class {
+  constructor(opts) {
+    this.events = [];
+    this.nextSeq = 0;
+    var _a;
+    this.enabled = opts.enabled, this.capacity = (_a = opts.capacity) != null ? _a : DEFAULT_CAPACITY;
+  }
+  /**
+   * Append one event.
+   *
+   * When recording is off this is a bare predicate call and a return — cheap
+   * enough to sit on the hot receive path. `nextSeq` deliberately does NOT
+   * advance for a suppressed event: a timeline captured across a mid-session
+   * toggle would otherwise show numbering gaps that read as dropped frames.
+   */
+  record(kind, noteId, data) {
+    this.enabled() && (this.events.push({ seq: this.nextSeq++, kind, noteId, data }), this.events.length > this.capacity && this.events.splice(0, this.events.length - this.capacity));
+  }
+  /** Recorded events in causal order, optionally narrowed to one note. The
+   *  retained window keeps its original seq numbers, so a truncated timeline
+   *  still reports how much preceded it. */
+  timeline(noteId) {
+    let all2 = [...this.events];
+    return noteId ? all2.filter((e) => e.noteId === noteId) : all2;
+  }
+  /** Drop buffered events. The seq counter keeps going: restarting numbering
+   *  would make two timelines from one session look like the same events. */
+  clear() {
+    this.events.length = 0;
+  }
+};
+function serializeTimeline(events) {
+  return JSON.stringify(events);
+}
+
+// src/debug-api.ts
+var GLOBAL_KEY = "__engramDebug";
+function createDebugApi(host) {
+  let deps = host;
+  return {
+    note: (key, includeContent = !1) => buildNoteSnapshot(key, deps, { includeContent }),
+    vault: () => buildVaultSnapshot(deps),
+    // Accepts a path as well as an id, matching `note()` — an investigation
+    // starts from whichever the evidence contained.
+    timeline: (noteId) => serializeTimeline(host.recorder.timeline(noteId ? resolveId(host, noteId) : void 0)),
+    clearTimeline: () => host.recorder.clear()
+  };
+}
+function resolveId(host, key) {
+  var _a;
+  return (_a = host.idForPath(key)) != null ? _a : key;
+}
+function installDebugApi(api) {
+  window[GLOBAL_KEY] = api;
+}
+function uninstallDebugApi() {
+  delete window[GLOBAL_KEY];
+}
+
+// src/feature-flags.ts
+var FLAG_SCHEMA = {
+  crdtRecording: {
+    default: !1,
+    category: "debugging",
+    title: "Record CRDT sync timeline",
+    description: "Capture an ordered event timeline for each synced note so a sync failure can be replayed offline. Metadata and note content stay local."
+  }
+}, FLAG_KEYS = Object.keys(FLAG_SCHEMA);
+function resolveFlags(stored) {
+  let out = {};
+  for (let key of FLAG_KEYS) {
+    let value = stored == null ? void 0 : stored[key];
+    out[key] = typeof value == "boolean" ? value : FLAG_SCHEMA[key].default;
+  }
+  return out;
+}
+function visibleFlags(diagnosticsEnabled) {
+  return FLAG_KEYS.filter(
+    (key) => diagnosticsEnabled || FLAG_SCHEMA[key].category === "labs"
+  ).map((key) => [key, FLAG_SCHEMA[key]]);
+}
+
+// src/has-logging.ts
+var sink = null;
+function setLogSink(next) {
+  sink = next;
+}
+
+// src/track-promise.ts
+var active = null;
+function setActiveTracker(tracker) {
+  active = tracker;
+}
 
 // src/diagnostics.ts
 var import_obsidian4 = require("obsidian");
@@ -15510,11 +15865,12 @@ function notifyLimitExceeded(err) {
 
 // src/plan-state.ts
 function parsePlanState(raw, now) {
-  var _a;
   if (typeof raw != "object" || raw === null) return null;
   let r = raw;
   return typeof r.tier != "string" ? null : {
-    tier: (_a = r.tier) != null ? _a : "free",
+    // Validate, don't cast: an unknown backend tier ("team", a typo) must
+    // degrade to the most restrictive plan, not launder through the union.
+    tier: r.tier === "starter" || r.tier === "pro" ? r.tier : "free",
     attachmentsTextOnly: r.attachments_text_only === !0,
     maxFileBytes: typeof r.max_file_bytes == "number" ? r.max_file_bytes : 0,
     attachmentBytesCap: typeof r.attachment_bytes_cap == "number" ? r.attachment_bytes_cap : null,
@@ -16174,7 +16530,7 @@ var SEARCH_VIEW_TYPE = "engram-search-view", SearchView = class extends import_o
 };
 
 // src/settings.ts
-var import_obsidian22 = require("obsidian");
+var import_obsidian23 = require("obsidian");
 
 // src/device-flow-modal.ts
 var import_obsidian14 = require("obsidian");
@@ -16210,7 +16566,7 @@ var DeviceFlowModal = class extends import_obsidian14.Modal {
     });
   }
   async startDeviceFlow() {
-    let baseUrl = this.plugin.settings.apiUrl.replace(/\/+$/, ""), apiUrl = baseUrl.endsWith("/api") ? baseUrl : `${baseUrl}/api`, vaultName = this.app.vault.getName().trim(), body = {
+    let apiUrl = EngramApi.normalizeBaseUrl(this.plugin.settings.apiUrl), vaultName = this.app.vault.getName().trim(), body = {
       client_id: this.plugin.settings.clientId
     };
     vaultName && (body.vault_name = vaultName);
@@ -16244,42 +16600,51 @@ var DeviceFlowModal = class extends import_obsidian14.Modal {
     }), contentEl.createDiv({ cls: "engram-device-buttons" }).createEl("button", { text: "Cancel" }).addEventListener("click", () => this.close()), window.open(resp.verification_url);
   }
   startPolling(deviceCode) {
-    let base = this.plugin.settings.apiUrl.replace(/\/+$/, ""), apiUrl = base.endsWith("/api") ? base : `${base}/api`, elapsed = 0, maxSeconds = 300, poll = async () => {
-      if (!this.aborted) {
-        if (elapsed += 5, elapsed >= maxSeconds) {
-          this.pollInterval && window.clearInterval(this.pollInterval), this.renderExpired();
-          return;
-        }
+    let apiUrl = EngramApi.normalizeBaseUrl(this.plugin.settings.apiUrl), startedAt = Date.now(), maxSeconds = 300, inFlight = !1, poll = async () => {
+      if (!(this.aborted || inFlight)) {
+        inFlight = !0;
         try {
-          let resp = await withTimeout(
-            (0, import_obsidian14.requestUrl)({
-              url: `${apiUrl}/auth/device/token`,
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ device_code: deviceCode }),
-              throw: !1
-            }),
-            15e3
-          );
-          if (resp.status === 428) return;
-          if (resp.status >= 200 && resp.status < 300) {
-            this.pollInterval && window.clearInterval(this.pollInterval);
-            let result = resp.json;
-            this.resolve(result), this.resolve = () => {
-            }, this.close();
-            return;
-          }
-          if (resp.status === 410) {
-            this.pollInterval && window.clearInterval(this.pollInterval), this.renderExpired();
-            return;
-          }
-        } catch (e) {
+          await this.pollOnce(apiUrl, deviceCode, startedAt, maxSeconds);
+        } finally {
+          inFlight = !1;
         }
       }
     };
     this.pollInterval = window.setInterval(() => {
       poll();
     }, 5e3);
+  }
+  async pollOnce(apiUrl, deviceCode, startedAt, maxSeconds) {
+    if ((Date.now() - startedAt) / 1e3 >= maxSeconds) {
+      this.pollInterval && window.clearInterval(this.pollInterval), this.renderExpired();
+      return;
+    }
+    try {
+      let resp = await withTimeout(
+        (0, import_obsidian14.requestUrl)({
+          url: `${apiUrl}/auth/device/token`,
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ device_code: deviceCode }),
+          throw: !1
+        }),
+        15e3
+      );
+      if (resp.status === 428) return;
+      if (resp.status >= 200 && resp.status < 300) {
+        this.pollInterval && window.clearInterval(this.pollInterval);
+        let result = resp.json;
+        this.resolve(result), this.resolve = () => {
+        }, this.close();
+        return;
+      }
+      if (resp.status === 410) {
+        this.pollInterval && window.clearInterval(this.pollInterval), this.renderExpired();
+        return;
+      }
+    } catch (e) {
+      devLog().log("device-flow", `poll failed: ${errMsg(e)}`);
+    }
   }
   renderExpired() {
     let contentEl = this.contentEl;
@@ -16292,10 +16657,717 @@ var DeviceFlowModal = class extends import_obsidian14.Modal {
 };
 
 // src/sync-progress-modal.ts
+var import_obsidian15 = require("obsidian");
+
+// src/types.ts
+var DEFAULT_SETTINGS = {
+  apiUrl: "",
+  apiKey: "",
+  ignorePatterns: "",
+  debounceMs: 2e3,
+  diagnosticsEnabled: !1,
+  remoteLogLevel: "info",
+  vaultId: null,
+  clientId: "",
+  planState: null,
+  searchDefaultMode: "hybrid",
+  waitlistPromptSeen: !1
+}, DESTRUCTIVE_CHOICES = /* @__PURE__ */ new Set([
+  "pull-all-delete-local",
+  "push-all-delete-remote"
+]);
+
+// src/sync-plan-format.ts
+function plural(count2, singular) {
+  return `${count2} ${pluralWord(count2, singular)}`;
+}
+function pluralWord(count2, singular) {
+  return count2 === 1 ? singular : `${singular}s`;
+}
+function isPlanEmpty(plan) {
+  return plan.toPush.notes.length === 0 && plan.toPush.attachments.length === 0 && plan.toPull.notes.length === 0 && plan.toPull.attachments.length === 0 && plan.conflicts.length === 0 && plan.toDeleteLocal.length === 0 && plan.toDeleteRemote.length === 0;
+}
+function computeMatchPercent(plan) {
+  let local = plan.localNoteCount, remote = plan.serverNoteCount;
+  if (local === 0 && remote === 0) return 100;
+  let localOnly = plan.toPush.notes.length, intersection = Math.max(0, local - localOnly), union = local + Math.max(0, remote - intersection);
+  return union === 0 ? 100 : Math.round(intersection / union * 100);
+}
+function folderPrefixesOf(paths) {
+  var _a;
+  let set2 = /* @__PURE__ */ new Set();
+  for (let p of paths) {
+    let parts = p.split("/"), prefix = "";
+    for (let i = 0; i < parts.length - 1; i++)
+      prefix = prefix ? `${prefix}/${parts[i]}` : (_a = parts[i]) != null ? _a : "", set2.add(prefix);
+  }
+  return set2;
+}
+function buildDeletionTree(paths, keptPaths) {
+  var _a, _b;
+  let sorted = [...paths].sort(), rows = [], emittedFolders = /* @__PURE__ */ new Set(), survivingFolders = keptPaths ? folderPrefixesOf(keptPaths) : null;
+  for (let path of sorted) {
+    let parts = path.split("/"), folders = parts.slice(0, -1), file = (_a = parts[parts.length - 1]) != null ? _a : "", prefix = "";
+    for (let i = 0; i < folders.length; i++) {
+      let folder = (_b = folders[i]) != null ? _b : "";
+      if (prefix = prefix ? `${prefix}/${folder}` : folder, !emittedFolders.has(prefix)) {
+        emittedFolders.add(prefix);
+        let deleted = survivingFolders ? !survivingFolders.has(prefix) : !1;
+        rows.push({ kind: "folder", depth: i, label: `${folder}/`, deleted });
+      }
+    }
+    rows.push({ kind: "file", depth: folders.length, label: file });
+  }
+  return rows;
+}
+function isDestructiveChoice(choice) {
+  return DESTRUCTIVE_CHOICES.has(choice);
+}
+function optionBreakdown(plan, choice) {
+  switch (choice) {
+    case "smart-merge":
+      return {
+        pullCount: plan.toPull.notes.length + plan.toPull.attachments.length,
+        pushCount: plan.toPush.notes.length + plan.toPush.attachments.length,
+        conflictCount: plan.conflicts.length,
+        deleteLocalCount: 0,
+        deleteRemoteCount: 0
+      };
+    case "pull-all-delete-local": {
+      let localOnly = [...plan.toPush.notes, ...plan.toPush.attachments];
+      return {
+        pullCount: plan.serverNoteCount + plan.serverAttachmentCount,
+        pushCount: 0,
+        conflictCount: 0,
+        deleteLocalCount: localOnly.length,
+        deleteRemoteCount: 0
+      };
+    }
+    case "pull-all-keep-local":
+      return {
+        pullCount: plan.serverNoteCount + plan.serverAttachmentCount,
+        pushCount: 0,
+        conflictCount: 0,
+        deleteLocalCount: 0,
+        deleteRemoteCount: 0
+      };
+    case "push-all-delete-remote": {
+      let remoteOnly = [...plan.toPull.notes, ...plan.toPull.attachments];
+      return {
+        pullCount: 0,
+        pushCount: plan.localNoteCount + plan.localAttachmentCount,
+        conflictCount: 0,
+        deleteLocalCount: 0,
+        deleteRemoteCount: remoteOnly.length
+      };
+    }
+    case "push-all-keep-remote":
+      return {
+        pullCount: 0,
+        pushCount: plan.localNoteCount + plan.localAttachmentCount,
+        conflictCount: 0,
+        deleteLocalCount: 0,
+        deleteRemoteCount: 0
+      };
+    case "cancel":
+    case "change-vault":
+      return {
+        pullCount: 0,
+        pushCount: 0,
+        conflictCount: 0,
+        deleteLocalCount: 0,
+        deleteRemoteCount: 0
+      };
+  }
+}
+
+// src/sync-progress-modal.ts
+function describePlannedWork(choice, plan, firstSync) {
+  let b = optionBreakdown(plan, choice), parts = [];
+  b.pushCount > 0 && parts.push(`uploading ${b.pushCount}`), b.pullCount > 0 && parts.push(`downloading ${b.pullCount}`), b.deleteLocalCount > 0 && parts.push(
+    `deleting ${b.deleteLocalCount} local ${pluralWord(b.deleteLocalCount, "file")}`
+  ), b.deleteRemoteCount > 0 && parts.push(`deleting ${b.deleteRemoteCount} on the cloud`);
+  let prefix = firstSync ? "First sync, this may take a moment. " : "";
+  if (parts.length === 0) return `${prefix}Checking for changes.`;
+  let sentence = parts.join(", "), capitalized = sentence.charAt(0).toUpperCase() + sentence.slice(1), noDeletes = b.deleteLocalCount === 0 && b.deleteRemoteCount === 0;
+  return `${prefix}${capitalized}.${noDeletes ? " Nothing will be deleted." : ""}`;
+}
+function renderCompletionSummary(parent, summary, webUrl) {
+  let line = parent.createDiv({ cls: "engram-progress-summary-tally" });
+  if (summary.synced > 0 && line.createSpan({
+    cls: "engram-progress-tally-synced",
+    text: `\u2713 ${summary.synced} synced`
+  }), summary.skipped > 0 && line.createSpan({
+    cls: "engram-progress-tally-skipped",
+    text: `\u2933 ${summary.skipped} skipped (Free plan)`
+  }), summary.failed > 0 && line.createSpan({
+    cls: "engram-progress-tally-failed",
+    text: `\u2715 ${summary.failed} failed`
+  }), summary.skipped > 0) {
+    let note = parent.createDiv({ cls: "engram-progress-plan-note" }), noun = pluralWord(summary.skipped, "attachment");
+    note.createSpan({
+      text: `${summary.skipped} ${noun} need a paid plan to sync. See Sync Center. `
+    });
+    let upgrade = note.createEl("button", {
+      text: "Upgrade",
+      cls: "engram-progress-upgrade mod-cta"
+    }), upgradeUrl = webUrl ? `${webUrl}/settings/billing` : DEFAULT_UPGRADE_URL;
+    upgrade.addEventListener("click", () => window.open(upgradeUrl, "_blank"));
+  }
+}
+function describeCompletion(summary) {
+  return summary.failed > 0 ? "Finished with some errors. Open the sync log to see what failed." : summary.skipped > 0 ? "Synced. Some attachments need a paid plan to sync (see below)." : summary.synced > 0 ? "All synced. Your vault and the cloud now match." : "Already up to date. Nothing needed syncing.";
+}
+function plannedPhases(choice, plan) {
+  let b = optionBreakdown(plan, choice), deleting = b.deleteLocalCount + b.deleteRemoteCount, out = [];
+  return deleting > 0 && out.push({ phase: "deleting", label: "Deleting", total: deleting }), b.pullCount > 0 && out.push({ phase: "pulling", label: "Downloading", total: b.pullCount }), b.pushCount > 0 && out.push({ phase: "pushing", label: "Uploading", total: b.pushCount }), out;
+}
+var TICK_INTERVAL_MS = 50;
+function rowCounts(planned, plannedTotal, engineCurrent, engineTotal, prevTotal) {
+  let total = planned ? Math.max(plannedTotal, engineCurrent) : engineTotal || prevTotal;
+  return { current: total > 0 ? Math.min(engineCurrent, total) : engineCurrent, total };
+}
+function settingsBarCounts(progress, planned, prevTotal) {
+  var _a;
+  let { current, total } = rowCounts(
+    !!planned,
+    (_a = planned == null ? void 0 : planned.total) != null ? _a : 0,
+    progress.current,
+    progress.total,
+    prevTotal
+  );
+  return {
+    current,
+    total,
+    pct: total > 0 ? Math.min(100, Math.round(current / total * 100)) : 0
+  };
+}
+var SyncProgressModal = class extends import_obsidian15.Modal {
+  /** `intro`: plan-derived summary (see describePlannedWork). `phases`: the
+   *  rows to seed (see plannedPhases). `webUrl`: the Engram web app to link to
+   *  on completion so the user can verify their vault. All optional so callers
+   *  without a plan still get a usable modal. */
+  constructor(app, opts = {}) {
+    super(app);
+    this.opts = opts;
+    this.rows = [];
+    this.rowEls = /* @__PURE__ */ new Map();
+    /** Latest progress update from the engine, applied on the next tick. */
+    this.latest = null;
+    this.tickTimer = null;
+  }
+  onOpen() {
+    var _a;
+    let { contentEl } = this;
+    contentEl.empty(), contentEl.addClass("engram-sync-progress-modal"), contentEl.createEl("h2", { text: "Syncing your vault" }), this.opts.intro && contentEl.createEl("p", { text: this.opts.intro, cls: "engram-progress-intro" }), this.statusEl = contentEl.createEl("p", {
+      text: "Getting started\u2026",
+      cls: "engram-progress-status"
+    }), this.rowsWrap = contentEl.createDiv({ cls: "engram-progress-rows" }), this.rows = ((_a = this.opts.phases) != null ? _a : []).map((p) => ({
+      phase: p.phase,
+      label: p.label,
+      plannedTotal: p.total,
+      planned: !0,
+      current: 0,
+      total: p.total,
+      failed: 0,
+      seen: !1,
+      done: !1
+    }));
+    for (let row of this.rows) this.createRow(row);
+    if (this.pathEl = contentEl.createEl("p", { text: "", cls: "engram-progress-path" }), this.recapEl = contentEl.createEl("p", { text: "", cls: "engram-progress-subtext" }), this.recapEl.hidden = !0, this.failedEl = contentEl.createEl("p", { text: "", cls: "engram-progress-failed" }), this.failedEl.hidden = !0, this.summaryEl = contentEl.createDiv({ cls: "engram-progress-summary" }), this.summaryEl.hidden = !0, this.verifyEl = contentEl.createEl("p", { cls: "engram-progress-verify" }), this.verifyEl.hidden = !0, this.opts.webUrl) {
+      let url = this.opts.webUrl;
+      this.verifyEl.createSpan({
+        text: "Open Engram to check your vault and confirm everything synced. "
+      });
+      let link = this.verifyEl.createEl("a", {
+        text: "Open Engram",
+        cls: "engram-progress-verify-link",
+        href: url
+      });
+      link.setAttr("target", "_blank"), link.setAttr("rel", "noopener"), link.addEventListener("click", (e) => {
+        e.preventDefault(), window.open(url, "_blank");
+      });
+    }
+    this.hintEl = contentEl.createEl("p", {
+      text: "You can close this and the sync keeps running in the background.",
+      cls: "engram-progress-hint"
+    });
+    let buttons = contentEl.createDiv({ cls: "engram-progress-buttons" });
+    this.bgBtn = buttons.createEl("button", { text: "Run in background" }), this.bgBtn.addEventListener("click", () => this.close()), this.closeBtn = buttons.createEl("button", { text: "Done", cls: "mod-cta" }), this.closeBtn.hidden = !0, this.closeBtn.addEventListener("click", () => this.close()), this.renderRows(), this.tickTimer = window.setInterval(() => this.tick(), TICK_INTERVAL_MS);
+  }
+  /** Called by the sync engine's progress callback. Buffers the update. */
+  update(progress) {
+    this.latest = progress;
+  }
+  tick() {
+    if (!this.latest) return;
+    let progress = this.latest;
+    this.latest = null, this.applyProgress(progress);
+  }
+  createRow(row) {
+    let rowEl = this.rowsWrap.createDiv({ cls: "engram-progress-row" }), statusEl = rowEl.createSpan({ cls: "engram-progress-row-status", text: "\xB7" });
+    rowEl.createSpan({ cls: "engram-progress-row-label", text: row.label });
+    let barInner = rowEl.createDiv({ cls: "engram-progress-bar-outer" }).createDiv({ cls: "engram-progress-bar-inner" }), countEl = rowEl.createSpan({
+      cls: "engram-progress-row-count",
+      text: `0 / ${row.plannedTotal}`
+    });
+    this.rowEls.set(row.phase, { statusEl, barInner, countEl });
+  }
+  applyProgress(progress) {
+    var _a, _b;
+    if (progress.phase === "complete") {
+      this.applyComplete(progress);
+      return;
+    }
+    let row = this.rows.find((r) => r.phase === progress.phase);
+    row || (row = {
+      phase: progress.phase,
+      label: (_a = PHASE_FALLBACK_LABEL[progress.phase]) != null ? _a : progress.phase,
+      plannedTotal: progress.total,
+      planned: !1,
+      current: 0,
+      total: progress.total,
+      failed: 0,
+      seen: !1,
+      done: !1
+    }, this.rows.push(row), this.createRow(row)), row.seen = !0;
+    let counts = rowCounts(
+      row.planned,
+      row.plannedTotal,
+      progress.current,
+      progress.total,
+      row.total
+    );
+    row.current = counts.current, row.total = counts.total, row.failed = progress.failed;
+    for (let other of this.rows)
+      other !== row && other.seen && (other.done = !0);
+    this.statusEl.setText("Syncing\u2026"), this.pathEl.setText((_b = progress.currentPath) != null ? _b : ""), this.renderRows();
+  }
+  applyComplete(progress) {
+    var _a;
+    this.tickTimer && (window.clearInterval(this.tickTimer), this.tickTimer = null);
+    for (let row of this.rows)
+      row.done = !0, row.current = row.total;
+    this.renderRows();
+    let summary = {
+      synced: progress.current,
+      skipped: (_a = progress.skipped) != null ? _a : 0,
+      failed: progress.failed
+    };
+    this.statusEl.setText("Sync complete"), this.pathEl.setText(""), this.recapEl.setText(describeCompletion(summary)), this.recapEl.hidden = !1, this.summaryEl.empty(), renderCompletionSummary(this.summaryEl, summary, this.opts.webUrl), this.summaryEl.hidden = !1, summary.failed > 0 ? (this.failedEl.setText(
+      `${summary.failed} failed. Run "Engram: Show sync log" for details.`
+    ), this.failedEl.hidden = !1) : this.failedEl.hidden = !0, this.verifyEl.hidden = !this.opts.webUrl, this.hintEl.hidden = !0, this.bgBtn.hidden = !0, this.closeBtn.hidden = !1;
+  }
+  renderRows() {
+    for (let row of this.rows) {
+      let els = this.rowEls.get(row.phase);
+      if (!els) continue;
+      let pct = row.total > 0 ? Math.round(row.current / row.total * 100) : row.done ? 100 : 0;
+      els.barInner.style.width = `${pct}%`, els.barInner.toggleClass("is-complete", row.done), els.countEl.setText(row.total > 0 ? `${row.current} / ${row.total}` : `${row.current}`), els.statusEl.setText(row.done ? "\u2713" : row.seen ? "\u27F3" : "\xB7");
+    }
+  }
+  onClose() {
+    this.tickTimer && (window.clearInterval(this.tickTimer), this.tickTimer = null), this.contentEl.empty();
+  }
+}, PHASE_FALLBACK_LABEL = {
+  deleting: "Deleting",
+  pushing: "Uploading",
+  pulling: "Downloading",
+  attachments: "Syncing attachments",
+  complete: "Complete"
+};
+
+// src/tabs/about-tab.ts
+var import_obsidian16 = require("obsidian");
+function renderWaitlistSection(containerEl) {
+  let state = new EmailCaptureState(), section = containerEl.createDiv({ cls: "engram-about-waitlist" }), render = () => {
+    if (section.empty(), state.view === "success") {
+      section.createEl("p", {
+        cls: "engram-about-waitlist-success",
+        text: "You're on the list. Thanks for your patience!"
+      });
+      return;
+    }
+    section.createEl("p", {
+      text: "Engram is still in active development. Leave your email for beta access, an early-supporter discount, and a say in what comes next."
+    }), renderEmailCaptureForm({ parent: section, state, rerender: render });
+  };
+  render();
+}
+function externalLink(parent, text2, href) {
+  parent.createEl("a", { text: text2, href, attr: { target: "_blank", rel: "noopener" } });
+}
+function heading(containerEl, name) {
+  new import_obsidian16.Setting(containerEl).setName(name).setHeading().settingEl.addClass("engram-about-heading");
+}
+function renderAboutTab(ctx) {
+  let { containerEl, switchToTab } = ctx;
+  containerEl.createEl("p", { cls: "engram-about-intro" }).setText(
+    "Engram vault sync keeps your Obsidian vault in sync with Engram and lets your AI assistants read and write the same notes. You edit on any device; your AI works from notes you actually wrote."
+  ), heading(containerEl, "Stay in the loop"), renderWaitlistSection(containerEl), heading(containerEl, "Getting set up");
+  let account = new import_obsidian16.Setting(containerEl).setName("1. Make an account");
+  account.descEl.appendText("Create a hosted account at "), externalLink(account.descEl, "engram.page", ENGRAM_MARKETING_URL), account.descEl.appendText(", or self-host the backend ("), externalLink(account.descEl, "setup guide", ENGRAM_SELFHOST_URL), account.descEl.appendText(")."), new import_obsidian16.Setting(containerEl).setName("2. Connect your vault to Engram").setDesc(
+    "Sign in (or enter your server URL and key) on the cloud tab, then run your first sync."
+  ).addButton(
+    (btn) => btn.setButtonText("Open cloud tab").setCta().onClick(() => switchToTab("account"))
+  );
+  let ai = new import_obsidian16.Setting(containerEl).setName("3. Connect your AI");
+  ai.descEl.appendText(
+    "Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. "
+  ), externalLink(ai.descEl, "See the AI setup guide", ENGRAM_MCP_URL), heading(containerEl, "Plans");
+  let plans = containerEl.createEl("ul", { cls: "engram-plans" }), plan = (name, features) => {
+    let card = plans.createEl("li", { cls: "engram-plan" });
+    card.createEl("h4", { text: name });
+    let list2 = card.createEl("ul", { cls: "engram-plan-features" });
+    for (let feature of features) list2.createEl("li", { text: feature });
+  };
+  plan("Free", [
+    "1 vault, 1 device",
+    "Auto sync",
+    "Read-only AI access",
+    "Semantic search + MCP"
+  ]), plan("Starter", [
+    "Multiple vaults, all devices",
+    "Real-time sync",
+    "Full API + MCP",
+    "Higher daily AI limit"
+  ]), plan("Pro", ["Unlimited notes", "Unlimited AI (fair use)", "Priority support"]);
+  let pricing = containerEl.createEl("p", { cls: "engram-about-link" });
+  externalLink(pricing, "See full pricing", ENGRAM_PRICING_URL), heading(containerEl, "Learn more");
+  let links = containerEl.createEl("ul", { cls: "engram-about-links" });
+  externalLink(links.createEl("li"), "Documentation", ENGRAM_DOCS_URL), externalLink(links.createEl("li"), "AI / MCP setup guide", ENGRAM_MCP_URL), externalLink(links.createEl("li"), "Report an issue", ENGRAM_ISSUES_URL), externalLink(links.createEl("li"), "Join our Discord", ENGRAM_DISCORD_URL);
+}
+
+// src/tabs/account-tab.ts
+var import_obsidian18 = require("obsidian");
+
+// src/tabs/self-hosted-tab.ts
 var import_obsidian17 = require("obsidian");
+var PREFLIGHT_DEBOUNCE_MS = 600;
+function renderSelfHostedTab(ctx) {
+  let { containerEl, plugin } = ctx, isOnCloud = plugin.settings.apiUrl === ENGRAM_CLOUD_URL, hasAuth = !!plugin.settings.apiKey || !!plugin.settings.refreshToken;
+  if (isOnCloud && hasAuth) {
+    renderCloudLockBanner(containerEl);
+    return;
+  }
+  let repoSetting = new import_obsidian17.Setting(containerEl).setName("Run your own Engram server").setDesc("Engram is the backend that powers sync and semantic search.");
+  repoSetting.settingEl.addClass("engram-setup-cta"), repoSetting.descEl.addClass("engram-server-cta-desc"), repoSetting.descEl.createEl("a", {
+    text: "github.com/engram-app/engram",
+    href: "https://github.com/engram-app/engram"
+  }), renderEngramUrlSetting(ctx), renderAuthSection(ctx), renderVaultSection(ctx), renderSupportSection(ctx);
+}
+function renderEngramUrlSetting(ctx) {
+  let { containerEl, plugin, redisplay } = ctx, setting = new import_obsidian17.Setting(containerEl).setName("Engram URL");
+  setting.settingEl.addClass("engram-url-setting");
+  let status = setting.descEl.createDiv({ cls: "engram-url-preflight" }), STATUS_CLASSES = ["is-checking", "is-engram", "is-reachable", "is-unreachable"], pendingUrl = plugin.settings.apiUrl, debounce = null, probeSeq = 0, renderStatus = (result) => {
+    switch (status.removeClasses(STATUS_CLASSES), result.kind) {
+      case "engram":
+        status.addClass("is-engram"), status.setText(`\u2713 Engram server reachable (v${result.version})`);
+        break;
+      case "reachable":
+        status.addClass("is-reachable"), status.setText("\u2717 server responded but isn't an Engram backend");
+        break;
+      case "unreachable":
+        status.addClass("is-unreachable"), status.setText("\u2717 couldn't reach a server at this URL");
+        break;
+    }
+  }, runPreflight = (value) => {
+    if (!completeOrigin(value)) {
+      status.removeClasses(STATUS_CLASSES), status.setText("");
+      return;
+    }
+    let seq2 = ++probeSeq;
+    status.removeClasses(STATUS_CLASSES), status.addClass("is-checking"), status.setText("Checking server\u2026"), EngramApi.probeHealth(value).then((result) => {
+      seq2 === probeSeq && (status.removeClass("is-checking"), renderStatus(result));
+    });
+  };
+  setting.addText((text2) => {
+    text2.setPlaceholder("https://engram.example.com"), text2.setValue(plugin.settings.apiUrl), text2.onChange((value) => {
+      pendingUrl = value, debounce !== null && window.clearTimeout(debounce), debounce = window.setTimeout(() => runPreflight(value), PREFLIGHT_DEBOUNCE_MS);
+    });
+  }).addButton(
+    (btn) => btn.setButtonText("Save").setCta().onClick(async () => {
+      await applyApiUrlChange(
+        pluginSwitchTarget(plugin),
+        pendingUrl.trim(),
+        () => plugin.saveSettings()
+      ) && new import_obsidian17.Notice("Engram backend changed \u2014 sign in again to continue."), redisplay();
+    })
+  ), completeOrigin(plugin.settings.apiUrl) && runPreflight(plugin.settings.apiUrl);
+}
+function renderCloudLockBanner(containerEl) {
+  let banner = containerEl.createDiv({ cls: "engram-mode-lock-banner" });
+  banner.createEl("p", { text: "You're connected to Engram cloud." }), banner.createEl("p", {
+    text: "To set up a self-hosted Engram server, sign out from the cloud tab first. That will release the connection so you can point the plugin at your own server."
+  });
+}
+function renderAuthSection(ctx) {
+  var _a;
+  let { containerEl, plugin, redisplay, startDeviceFlow } = ctx, isOAuth = !!plugin.settings.refreshToken, hasApiKey = !!plugin.settings.apiKey;
+  if (new import_obsidian17.Setting(containerEl).setName("Authentication").setHeading(), isOAuth) {
+    new import_obsidian17.Setting(containerEl).setName(`Signed in as ${(_a = plugin.settings.userEmail) != null ? _a : "unknown"}`).setDesc("Authenticated via Engram account (OAuth).").addButton(
+      (btn) => btn.setButtonText("Sign out").onClick(async () => {
+        await plugin.clearOAuthTokens(), redisplay();
+      })
+    );
+    return;
+  }
+  if (hasApiKey) {
+    new import_obsidian17.Setting(containerEl).setName("Using API key").setDesc("Authenticated via manual API key.").addButton(
+      (btn) => btn.setButtonText("Clear key").setWarning().onClick(async () => {
+        plugin.settings.apiKey = "", await plugin.saveSettings(), redisplay();
+      })
+    ).addButton(
+      (btn) => btn.setButtonText("Switch to sign in").setCta().onClick(async () => {
+        plugin.settings.apiKey = "", await plugin.saveSettings(), startDeviceFlow().catch((e) => {
+          new import_obsidian17.Notice(`Engram: sign-in failed (${errMsg(e)})`);
+        });
+      })
+    );
+    return;
+  }
+  new import_obsidian17.Setting(containerEl).setName("Sign in with Engram").setDesc("Links your Obsidian vault to your Engram account. Opens a browser window.").addButton(
+    (btn) => btn.setButtonText("Sign in").setCta().onClick(
+      () => startDeviceFlow().catch((e) => {
+        new import_obsidian17.Notice(`Engram: sign-in failed (${errMsg(e)})`);
+      })
+    )
+  ), containerEl.createDiv({ cls: "engram-auth-divider", text: "or" });
+  let pendingKey = "";
+  new import_obsidian17.Setting(containerEl).setName("API key").setDesc("Bearer token from Engram (starts with Engram_).").addText((text2) => {
+    text2.setPlaceholder("engram_abc123...").onChange((value) => {
+      pendingKey = value;
+    }), text2.inputEl.type = "password", text2.inputEl.addClass("engram-api-key-input");
+  }).addButton(
+    (btn) => btn.setButtonText("Save").setCta().onClick(async () => {
+      let trimmed = pendingKey.trim();
+      if (!trimmed) {
+        new import_obsidian17.Notice("Enter an API key first");
+        return;
+      }
+      plugin.settings.apiKey = trimmed, await plugin.saveSettings(), redisplay();
+    })
+  ).settingEl.addClass("engram-setting-api-key");
+}
+function renderVaultSection(ctx) {
+  let { containerEl, plugin, redisplay } = ctx;
+  if (!plugin.settings.apiKey && !plugin.settings.refreshToken) return;
+  new import_obsidian17.Setting(containerEl).setName("Vault").setHeading();
+  let setting = new import_obsidian17.Setting(containerEl).setName("Vault selection").setDesc("Select which vault this plugin syncs with."), currentId = plugin.settings.vaultId, storedName = plugin.settings.remoteVaultName;
+  if (currentId && storedName) {
+    renderLockedVaultRow(setting, plugin, currentId, storedName);
+    return;
+  }
+  let placeholderEl = setting.controlEl.createSpan({ text: "Loading vaults..." });
+  plugin.api.listVaults().then((vaults) => {
+    if (placeholderEl.remove(), vaults.length === 0) {
+      setting.controlEl.createSpan({
+        text: "No vaults found \u2014 first sync will create one"
+      });
+      return;
+    }
+    let current = currentId ? vaults.find((v) => v.id === currentId) : void 0;
+    if (!current) {
+      setting.addDropdown((dropdown) => {
+        currentId ? dropdown.addOption(
+          "",
+          storedName ? `Pick a vault (previous: '${storedName}' not found)` : `Pick a vault (previous: id ${currentId} not found)`
+        ) : dropdown.addOption("", "Pick a vault");
+        for (let v of vaults) {
+          let label = v.is_default ? `${v.name} (default)` : v.name;
+          dropdown.addOption(v.id, label);
+        }
+        dropdown.onChange(async (value) => {
+          let picked = vaults.find((v) => v.id === value);
+          await applyVaultSwitch(plugin, value, picked == null ? void 0 : picked.name) && redisplay();
+        });
+      });
+      return;
+    }
+    plugin.settings.remoteVaultName !== current.name && (plugin.settings.remoteVaultName = current.name, plugin.saveSettings()), renderLockedVaultRow(
+      setting,
+      plugin,
+      current.id,
+      current.is_default ? `${current.name} (default)` : current.name
+    );
+  }).catch((e) => {
+    placeholderEl.remove(), setting.controlEl.createSpan({ text: describeListVaultsError(e) });
+  });
+}
+function renderLockedVaultRow(setting, plugin, vaultId, displayName) {
+  setting.settingEl.addClass("engram-setting-vault-name"), setting.controlEl.createSpan({
+    cls: "engram-vault-current-name",
+    text: displayName
+  }).setAttribute("title", `Vault id: ${vaultId}`), setting.addButton(
+    (btn) => btn.setButtonText("Change").onClick(() => {
+      plugin.doSyncWithFirstSyncCheck({ startInVaultPicker: !0 });
+    })
+  );
+}
+function renderSupportSection(ctx) {
+  let { containerEl } = ctx;
+  new import_obsidian17.Setting(containerEl).setName("Support development").setHeading();
+  let supportSetting = new import_obsidian17.Setting(containerEl).setDesc(
+    "If this plugin saves you time, consider supporting development."
+  );
+  supportSetting.settingEl.addClass("engram-setting-support");
+  let buttonRow = supportSetting.controlEl.createDiv({ cls: "engram-support-buttons" }), sponsorLink = buttonRow.createEl("a", {
+    cls: "engram-sponsor-button",
+    href: "https://github.com/sponsors/engram-app",
+    attr: { target: "_blank", rel: "noopener" }
+  }), sponsorIcon = sponsorLink.createSpan({ cls: "engram-sponsor-icon" });
+  (0, import_obsidian17.setIcon)(sponsorIcon, "heart"), sponsorLink.createSpan({ text: "GitHub Sponsors" });
+  let kofiLink = buttonRow.createEl("a", {
+    cls: "engram-kofi-button",
+    href: "https://ko-fi.com/engrams_sync",
+    attr: { target: "_blank", rel: "noopener" }
+  }), kofiIcon = kofiLink.createSpan({ cls: "engram-kofi-icon" });
+  (0, import_obsidian17.setIcon)(kofiIcon, "coffee"), kofiLink.createSpan({ text: "Ko-fi" });
+}
+function describeListVaultsError(e) {
+  let err = e, status = err == null ? void 0 : err.status;
+  return status === 401 || status === 403 ? "Sign-in required to load vaults" : status && status >= 500 ? `Server error (${status}) \u2014 check Engram logs` : status && status >= 400 ? `Request failed (${status})` : "Could not reach Engram \u2014 check connection";
+}
+async function applyVaultSwitch(plugin, value, name) {
+  return !value || value === plugin.settings.vaultId ? !1 : (plugin.settings.vaultId = value, name !== void 0 && (plugin.settings.remoteVaultName = name), plugin.api.setVaultId(value), await plugin.saveSettings(), !0);
+}
+
+// src/tabs/account-tab.ts
+async function renderAccountTab(ctx) {
+  let { containerEl, plugin, redisplay } = ctx, action = cloudTabAction(plugin.settings, ENGRAM_CLOUD_URL);
+  if (action === "prompt-switch") {
+    new import_obsidian18.Setting(containerEl).setName("Currently set to a self-hosted instance").setDesc(
+      `Self-hosted URL: ${plugin.settings.apiUrl}. Switching to Engram cloud replaces it and clears any stored credentials for that instance.`
+    ).addButton(
+      (btn) => btn.setButtonText("Switch to Engram cloud").setWarning().onClick(async () => {
+        await applyApiUrlChange(
+          pluginSwitchTarget(plugin),
+          ENGRAM_CLOUD_URL,
+          () => plugin.saveSettings()
+        ), new import_obsidian18.Notice("Switched to Engram cloud \u2014 sign in to continue."), redisplay();
+      })
+    );
+    return;
+  }
+  action === "auto-switch" && await applyApiUrlChange(
+    pluginSwitchTarget(plugin),
+    ENGRAM_CLOUD_URL,
+    () => plugin.saveSettings()
+  );
+  let aboutSetting = new import_obsidian18.Setting(containerEl).setName("New to Engram?").setDesc("Create an account, read the docs, and learn more at ");
+  aboutSetting.settingEl.addClass("engram-setup-cta"), aboutSetting.descEl.createEl("a", {
+    text: "engram.page",
+    href: ENGRAM_MARKETING_URL,
+    attr: { target: "_blank", rel: "noopener" }
+  }), aboutSetting.descEl.appendText("."), renderAuthSection(ctx), renderVaultSection(ctx);
+}
+
+// src/tabs/advanced-tab.ts
+var import_obsidian19 = require("obsidian");
+var PROBLEMATIC_DIRS = [
+  { pattern: "node_modules/", label: "node_modules", desc: "Node.js dependencies" },
+  { pattern: ".venv/", label: ".venv", desc: "Python virtual environment" },
+  { pattern: "venv/", label: "venv", desc: "Python virtual environment" },
+  { pattern: "__pycache__/", label: "__pycache__", desc: "Python bytecode cache" },
+  { pattern: "vendor/", label: "vendor", desc: "Vendored dependencies" },
+  { pattern: ".gradle/", label: ".gradle", desc: "Gradle build cache" },
+  { pattern: "target/", label: "target", desc: "Rust/Java build output" },
+  { pattern: "build/", label: "build", desc: "Build output" },
+  { pattern: ".next/", label: ".next", desc: "Next.js build output" },
+  { pattern: "dist/", label: "dist", desc: "Distribution build output" },
+  { pattern: ".cargo/", label: ".cargo", desc: "Cargo cache" },
+  { pattern: "Pods/", label: "Pods", desc: "CocoaPods dependencies" },
+  { pattern: ".dart_tool/", label: ".dart_tool", desc: "Dart tool cache" },
+  { pattern: ".cache/", label: ".cache", desc: "Generic cache directory" }
+];
+function renderAdvancedTab(ctx) {
+  let { containerEl, app, plugin, redisplay } = ctx;
+  new import_obsidian19.Setting(containerEl).setName("Sync behavior").setHeading(), new import_obsidian19.Setting(containerEl).setName("Debounce (ms)").setDesc("Delay after editing before pushing. Prevents flooding during typing.").addText(
+    (text2) => text2.setPlaceholder("2000").setValue(String(plugin.settings.debounceMs)).onChange(async (value) => {
+      let num = Number.parseInt(value, 10);
+      !Number.isNaN(num) && num >= 100 && (plugin.settings.debounceMs = num, await plugin.saveSettings());
+    })
+  ), new import_obsidian19.Setting(containerEl).setName("Ignore patterns").setHeading(), renderIgnoreWarnings(containerEl, app, plugin, redisplay), new import_obsidian19.Setting(containerEl).setName("Custom patterns").setDesc(
+    `Paths to skip (one per line). Folder patterns end with /. Built-in: ${app.vault.configDir}/, .trash/, .git/`
+  ).addTextArea((text2) => {
+    text2.setPlaceholder(`drafts/
+secret.md`).setValue(plugin.settings.ignorePatterns).onChange(async (value) => {
+      plugin.settings.ignorePatterns = value, await plugin.saveSettings();
+    }), text2.inputEl.rows = 6, text2.inputEl.addClass("engram-ignore-textarea");
+  }).settingEl.addClass("engram-ignore-setting"), new import_obsidian19.Setting(containerEl).setName("Diagnostics").setHeading(), new import_obsidian19.Setting(containerEl).setName("Diagnostics").setDesc(
+    "Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use."
+  ).addToggle(
+    (toggle) => toggle.setValue(plugin.settings.diagnosticsEnabled).onChange(async (value) => {
+      plugin.settings.diagnosticsEnabled = value, await plugin.saveSettings();
+    })
+  ), new import_obsidian19.Setting(containerEl).setName("Diagnostics detail").setDesc(
+    "Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info."
+  ).addDropdown(
+    (dropdown) => dropdown.addOptions({
+      error: "Errors only",
+      warn: "Warnings and errors",
+      info: "Info (default)",
+      debug: "Debug (verbose)"
+    }).setValue(plugin.settings.remoteLogLevel).onChange(async (value) => {
+      plugin.settings.remoteLogLevel = value, await plugin.saveSettings();
+    })
+  ), renderFeatureFlags(ctx), new import_obsidian19.Setting(containerEl).setName("About").setHeading();
+  let aboutList = containerEl.createEl("ul", { cls: "engram-about-list" }), versionItem = aboutList.createEl("li");
+  versionItem.createSpan({ text: "Version: " }), versionItem.createSpan({ text: plugin.manifest.version });
+  let repoItem = aboutList.createEl("li");
+  repoItem.createSpan({ text: "Source: " }), repoItem.createEl("a", {
+    text: "github.com/engram-app/Engram-obsidian",
+    href: "https://github.com/engram-app/Engram-obsidian"
+  }), aboutList.createEl("li").createSpan({ text: "License: MIT" });
+}
+function renderFeatureFlags(ctx) {
+  let { containerEl, plugin } = ctx, visible = visibleFlags(plugin.settings.diagnosticsEnabled);
+  if (visible.length !== 0) {
+    new import_obsidian19.Setting(containerEl).setName("Feature flags").setHeading();
+    for (let [key, schema4] of visible) {
+      let setting = new import_obsidian19.Setting(containerEl).setName(schema4.title).setDesc(schema4.description).addToggle(
+        (toggle) => toggle.setValue(plugin.flags[key]).onChange(async (value) => {
+          plugin.settings.featureFlags = {
+            ...plugin.settings.featureFlags,
+            [key]: value
+          }, await plugin.saveSettings();
+        })
+      );
+      schema4.category === "danger" && setting.settingEl.addClass("engram-status-warning");
+    }
+  }
+}
+function renderIgnoreWarnings(containerEl, app, plugin, redisplay) {
+  let currentIgnores = plugin.settings.ignorePatterns, detected = [];
+  for (let dir of PROBLEMATIC_DIRS) {
+    if (currentIgnores.includes(dir.pattern)) continue;
+    let folder = app.vault.getFolderByPath(dir.label);
+    if (folder) {
+      let count2 = 0, walk = (f) => {
+        for (let child of f.children)
+          child instanceof import_obsidian19.TFolder ? walk(child) : count2++;
+      };
+      walk(folder), detected.push({ ...dir, count: count2 });
+    }
+  }
+  if (detected.length !== 0)
+    for (let item of detected)
+      new import_obsidian19.Setting(containerEl).setName(`\u26A0 Detected: ${item.label}/ (${item.count.toLocaleString()} files)`).setDesc(`${item.desc} \u2014 should not be synced`).addButton(
+        (btn) => btn.setButtonText("Add to ignores").setCta().onClick(async () => {
+          let current = plugin.settings.ignorePatterns.trim();
+          plugin.settings.ignorePatterns = current ? `${current}
+${item.pattern}` : item.pattern, await plugin.saveSettings(), new import_obsidian19.Notice(`Added ${item.pattern} to ignore patterns`), redisplay();
+        })
+      ).settingEl.addClass("engram-status-warning");
+}
+
+// src/tabs/start-tab.ts
+function pickInitialTab(settings) {
+  return !!settings.apiUrl && (!!settings.apiKey || !!settings.refreshToken) ? "account" : "about";
+}
 
 // src/sync-center-render.ts
-var import_obsidian16 = require("obsidian");
+var import_obsidian22 = require("obsidian");
 
 // src/issue-store.ts
 var IssueStore = class {
@@ -16377,7 +17449,7 @@ function limitReasonToCategory(reason) {
   }
 }
 function categorizeError(err) {
-  var _a, _b, _c;
+  var _a, _b;
   if (err instanceof LimitExceededError)
     return {
       category: limitReasonToCategory(err.reason),
@@ -16386,7 +17458,7 @@ function categorizeError(err) {
       terminal: !0,
       upgradeUrl: (_a = err.upgradeUrl) != null ? _a : void 0
     };
-  let status = typeof err == "object" && err !== null && (_b = err.status) != null ? _b : void 0, message = (_c = extractServerMessage(err)) != null ? _c : err instanceof Error ? err.message : String(err);
+  let status = typeof err == "object" && err !== null ? statusOf(err) : void 0, message = (_b = extractServerMessage(err)) != null ? _b : err instanceof Error ? err.message : String(err);
   return status === 413 ? { category: "too_large", status, message, terminal: !0 } : status === 401 || status === 403 ? { category: "auth", status, message, terminal: !0 } : status !== void 0 && status >= 500 ? { category: "server", status, message, terminal: !1 } : status === void 0 ? { category: "network", message, terminal: !1 } : { category: "other", status, message, terminal: !1 };
 }
 function extractServerMessage(err) {
@@ -16487,7 +17559,7 @@ function parseStatusToIssue(parseStatus, parseReason) {
 }
 var HEALTH_CHECK_BASE_MS = 5e3, HEALTH_CHECK_MAX_MS = 6e4;
 function healthCheckDelay(failures) {
-  return Math.min(HEALTH_CHECK_BASE_MS * 2 ** failures, HEALTH_CHECK_MAX_MS);
+  return expBackoff(HEALTH_CHECK_BASE_MS, failures, HEALTH_CHECK_MAX_MS);
 }
 function isPersistedIssue(value) {
   if (typeof value != "object" || value === null) return !1;
@@ -16495,138 +17567,56 @@ function isPersistedIssue(value) {
   return typeof v.path == "string" && (v.kind === "note" || v.kind === "attachment") && typeof v.category == "string" && typeof v.message == "string" && typeof v.firstFailedAt == "number" && typeof v.lastFailedAt == "number" && typeof v.attempts == "number";
 }
 
+// src/sync-log-modal.ts
+var import_obsidian20 = require("obsidian"), ACTION_ICONS = {
+  push: "\u2191",
+  pull: "\u2193",
+  delete: "\u2715",
+  conflict: "\u26A1",
+  skip: "\u23ED",
+  error: "\u2717"
+}, SyncLogModal = class extends import_obsidian20.Modal {
+  constructor(app, syncLog) {
+    super(app), this.syncLog = syncLog;
+  }
+  onOpen() {
+    var _a;
+    let { contentEl } = this;
+    contentEl.empty(), contentEl.addClass("engram-sync-log-modal"), contentEl.createEl("h2", { text: "Sync log" });
+    let entries = this.syncLog.entries(), errorCount = this.syncLog.errorCount();
+    if (contentEl.createEl("p", {
+      cls: "engram-sync-log-header"
+    }).setText(
+      entries.length === 0 ? "No sync activity this session." : `Showing ${entries.length} entries${errorCount > 0 ? ` (${errorCount} errors)` : ""}`
+    ), entries.length === 0) return;
+    let list2 = contentEl.createDiv({ cls: "engram-sync-log-list" });
+    for (let entry of entries) {
+      let row = list2.createDiv({ cls: "engram-sync-log-entry" }), time = entry.timestamp.toLocaleTimeString([], {
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit"
+      }), icon = (_a = ACTION_ICONS[entry.action]) != null ? _a : "?", status = entry.result === "ok" ? "\u2713" : entry.result === "error" ? "\u2717" : "\u23ED", line = `${time}  ${icon} ${entry.action.padEnd(8)} ${entry.path}  ${status}`, span = row.createSpan({ text: line });
+      entry.result === "error" && (span.addClass("engram-sync-log-entry-error"), entry.error && row.createDiv({
+        text: `         \u2514 ${entry.error}`,
+        cls: "engram-sync-log-error"
+      })), entry.details && row.createDiv({
+        text: `         \u2514 ${entry.details}`,
+        cls: "engram-sync-log-detail"
+      });
+    }
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
+
 // src/sync-preview-modal.ts
-var import_obsidian15 = require("obsidian");
+var import_obsidian21 = require("obsidian");
 
 // src/mime.ts
 var TEXT_ATTACHMENT_EXTS = /* @__PURE__ */ new Set(["txt", "md", "css", "html"]);
 function isTextAttachment(ext) {
   return TEXT_ATTACHMENT_EXTS.has(ext.toLowerCase());
-}
-
-// src/types.ts
-var DEFAULT_SETTINGS = {
-  apiUrl: "",
-  apiKey: "",
-  ignorePatterns: "",
-  debounceMs: 2e3,
-  diagnosticsEnabled: !1,
-  remoteLogLevel: "info",
-  vaultId: null,
-  clientId: "",
-  planState: null,
-  searchDefaultMode: "hybrid",
-  waitlistPromptSeen: !1
-}, DESTRUCTIVE_CHOICES = /* @__PURE__ */ new Set([
-  "pull-all-delete-local",
-  "push-all-delete-remote"
-]);
-
-// src/sync-plan-format.ts
-function isPlanEmpty(plan) {
-  return plan.toPush.notes.length === 0 && plan.toPush.attachments.length === 0 && plan.toPull.notes.length === 0 && plan.toPull.attachments.length === 0 && plan.conflicts.length === 0 && plan.toDeleteLocal.length === 0 && plan.toDeleteRemote.length === 0;
-}
-function computeMatchPercent(plan) {
-  let local = plan.localNoteCount, remote = plan.serverNoteCount;
-  if (local === 0 && remote === 0) return 100;
-  let localOnly = plan.toPush.notes.length, intersection = Math.max(0, local - localOnly), union = local + Math.max(0, remote - intersection);
-  return union === 0 ? 100 : Math.round(intersection / union * 100);
-}
-function samplePaths(paths, limit) {
-  return paths.slice(0, limit);
-}
-function folderPrefixesOf(paths) {
-  var _a;
-  let set2 = /* @__PURE__ */ new Set();
-  for (let p of paths) {
-    let parts = p.split("/"), prefix = "";
-    for (let i = 0; i < parts.length - 1; i++)
-      prefix = prefix ? `${prefix}/${parts[i]}` : (_a = parts[i]) != null ? _a : "", set2.add(prefix);
-  }
-  return set2;
-}
-function buildDeletionTree(paths, keptPaths) {
-  var _a, _b;
-  let sorted = [...paths].sort(), rows = [], emittedFolders = /* @__PURE__ */ new Set(), survivingFolders = keptPaths ? folderPrefixesOf(keptPaths) : null;
-  for (let path of sorted) {
-    let parts = path.split("/"), folders = parts.slice(0, -1), file = (_a = parts[parts.length - 1]) != null ? _a : "", prefix = "";
-    for (let i = 0; i < folders.length; i++) {
-      let folder = (_b = folders[i]) != null ? _b : "";
-      if (prefix = prefix ? `${prefix}/${folder}` : folder, !emittedFolders.has(prefix)) {
-        emittedFolders.add(prefix);
-        let deleted = survivingFolders ? !survivingFolders.has(prefix) : !1;
-        rows.push({ kind: "folder", depth: i, label: `${folder}/`, deleted });
-      }
-    }
-    rows.push({ kind: "file", depth: folders.length, label: file });
-  }
-  return rows;
-}
-function isDestructiveChoice(choice) {
-  return DESTRUCTIVE_CHOICES.has(choice);
-}
-function optionBreakdown(plan, choice) {
-  switch (choice) {
-    case "smart-merge":
-      return {
-        pullCount: plan.toPull.notes.length + plan.toPull.attachments.length,
-        pushCount: plan.toPush.notes.length + plan.toPush.attachments.length,
-        conflictCount: plan.conflicts.length,
-        deleteLocalCount: 0,
-        deleteRemoteCount: 0,
-        samplePaths: samplePaths(plan.conflicts, 5)
-      };
-    case "pull-all-delete-local": {
-      let localOnly = [...plan.toPush.notes, ...plan.toPush.attachments];
-      return {
-        pullCount: plan.serverNoteCount + plan.serverAttachmentCount,
-        pushCount: 0,
-        conflictCount: 0,
-        deleteLocalCount: localOnly.length,
-        deleteRemoteCount: 0,
-        samplePaths: samplePaths(localOnly, 5)
-      };
-    }
-    case "pull-all-keep-local":
-      return {
-        pullCount: plan.serverNoteCount + plan.serverAttachmentCount,
-        pushCount: 0,
-        conflictCount: 0,
-        deleteLocalCount: 0,
-        deleteRemoteCount: 0,
-        samplePaths: samplePaths([...plan.toPull.notes, ...plan.toPull.attachments], 5)
-      };
-    case "push-all-delete-remote": {
-      let remoteOnly = [...plan.toPull.notes, ...plan.toPull.attachments];
-      return {
-        pullCount: 0,
-        pushCount: plan.localNoteCount + plan.localAttachmentCount,
-        conflictCount: 0,
-        deleteLocalCount: 0,
-        deleteRemoteCount: remoteOnly.length,
-        samplePaths: samplePaths(remoteOnly, 5)
-      };
-    }
-    case "push-all-keep-remote":
-      return {
-        pullCount: 0,
-        pushCount: plan.localNoteCount + plan.localAttachmentCount,
-        conflictCount: 0,
-        deleteLocalCount: 0,
-        deleteRemoteCount: 0,
-        samplePaths: samplePaths([...plan.toPush.notes, ...plan.toPush.attachments], 5)
-      };
-    case "cancel":
-    case "change-vault":
-      return {
-        pullCount: 0,
-        pushCount: 0,
-        conflictCount: 0,
-        deleteLocalCount: 0,
-        deleteRemoteCount: 0,
-        samplePaths: []
-      };
-  }
 }
 
 // src/sync-preview-modal.ts
@@ -16707,7 +17697,7 @@ var SyncPreviewState = class {
   }
 };
 function describeCreateVaultError(e) {
-  return e instanceof LimitExceededError ? toastFor(e.reason) : (e == null ? void 0 : e.status) === 422 ? "Couldn't create vault \u2014 the name may be invalid or already in use." : "Could not create the vault \u2014 check your connection and try again.";
+  return e instanceof LimitExceededError ? toastFor(e.reason) : statusOf(e) === 422 ? "Couldn't create vault \u2014 the name may be invalid or already in use." : "Could not create the vault \u2014 check your connection and try again.";
 }
 function extOf(path) {
   let base = path.slice(path.lastIndexOf("/") + 1), dot = base.lastIndexOf(".");
@@ -16717,7 +17707,9 @@ function countSkippedAttachments(plan, attachmentsTextOnly) {
   return attachmentsTextOnly ? plan.toPush.attachments.filter((p) => !isTextAttachment(extOf(p))).length : 0;
 }
 function skippedAttachmentsLine(n) {
-  return n <= 0 ? null : `Free syncs notes only \u2014 ${n} ${n === 1 ? "attachment" : "attachments"} will be skipped.`;
+  if (n <= 0) return null;
+  let noun = pluralWord(n, "attachment");
+  return `Free syncs notes only \u2014 ${n} ${noun} will be skipped.`;
 }
 function mergeHelperText(b, context) {
   let counts = [];
@@ -16732,7 +17724,7 @@ function mergeHelperText(b, context) {
   return countLine ? `${countLine}${conflict} Nothing is deleted.` : "Already in sync. Nothing is deleted.";
 }
 function confirmActions(choice, plan) {
-  let files = (n) => n === 1 ? "file" : "files", lines = [];
+  let files = (n) => pluralWord(n, "file"), lines = [];
   if (choice === "push-all-delete-remote") {
     let del2 = plan.serverNoteCount + plan.serverAttachmentCount, up = plan.localNoteCount + plan.localAttachmentCount;
     del2 > 0 && lines.push(`Delete all ${del2} ${files(del2)} currently on the server`), up > 0 && lines.push(`Upload ${up} ${files(up)} from this vault`);
@@ -16777,7 +17769,7 @@ var MERGE_CARD = {
   "first-time": "Set up sync for this vault",
   "vault-switch": "You are now pointing at a different cloud vault",
   review: "Sync preview"
-}, SyncPreviewModal = class extends import_obsidian15.Modal {
+}, SyncPreviewModal = class extends import_obsidian21.Modal {
   constructor(app, plan, opts) {
     super(app);
     this.opts = opts;
@@ -16839,14 +17831,7 @@ var MERGE_CARD = {
       text: mergeHelperText(optionBreakdown(this.requirePlan(), "smart-merge"), context)
     });
     let mergeRow = options.createDiv({ cls: "engram-sync-preview-options-merge" });
-    this.renderOptionCard(mergeRow, MERGE_CARD), this.renderAdvancedOptions(options);
-    let footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
-    footer.createEl("button", {
-      text: empty ? "Close" : "Cancel",
-      cls: empty ? "mod-cta" : void 0
-    }).addEventListener("click", () => this.state.cancel()), this.opts.showChangeVault && footer.createEl("button", { text: "Change vault" }).addEventListener("click", () => {
-      this.openVaultPicker();
-    });
+    this.renderOptionCard(mergeRow, MERGE_CARD), this.renderAdvancedOptions(options), this.renderFooter(contentEl, empty ? "Close" : "Cancel", empty);
   }
   /** Instant-open loading state: the modal is on screen while computeSyncPlan
    *  runs. Shows the context header plus a calm progress line (or the load
@@ -16858,9 +17843,16 @@ var MERGE_CARD = {
     this.state.planError ? body.createSpan({
       cls: "engram-sync-preview-picker-error",
       text: this.state.planError
-    }) : body.createSpan({ text: "Comparing your vault with the cloud\u2026" });
+    }) : body.createSpan({ text: "Comparing your vault with the cloud\u2026" }), this.renderFooter(parent, "Cancel", !1);
+  }
+  /** Dismiss + optional "Change vault" footer, shared by the loaded preview
+   *  and the loading state (previously identical blocks). */
+  renderFooter(parent, dismissLabel, dismissCta) {
     let footer = parent.createDiv({ cls: "engram-sync-preview-footer" });
-    footer.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.state.cancel()), this.opts.showChangeVault && footer.createEl("button", { text: "Change vault" }).addEventListener("click", () => {
+    footer.createEl("button", {
+      text: dismissLabel,
+      cls: dismissCta ? "mod-cta" : void 0
+    }).addEventListener("click", () => this.state.cancel()), this.opts.showChangeVault && footer.createEl("button", { text: "Change vault" }).addEventListener("click", () => {
       this.openVaultPicker();
     });
   }
@@ -16883,8 +17875,8 @@ var MERGE_CARD = {
     });
     summary.createSpan({ text: "Advanced sync options" });
     let chevron = summary.createSpan({ cls: "engram-sync-preview-advanced-chevron" });
-    (0, import_obsidian15.setIcon)(chevron, this.state.advancedOpen ? "chevron-down" : "chevron-right"), details.addEventListener("toggle", () => {
-      this.state.advancedOpen = details.open, (0, import_obsidian15.setIcon)(chevron, details.open ? "chevron-down" : "chevron-right");
+    (0, import_obsidian21.setIcon)(chevron, this.state.advancedOpen ? "chevron-down" : "chevron-right"), details.addEventListener("toggle", () => {
+      this.state.advancedOpen = details.open, (0, import_obsidian21.setIcon)(chevron, details.open ? "chevron-down" : "chevron-right");
     });
     let grid = details.createDiv({ cls: "engram-sync-preview-options-grid" });
     for (let card of [...PUSH_CARDS, ...PULL_CARDS])
@@ -16951,7 +17943,7 @@ var MERGE_CARD = {
         text: `\u26A1 ${conflicts}`
       }), conflictRow.createSpan({
         cls: "engram-sync-preview-conflicts-label",
-        text: ` conflict${conflicts === 1 ? "" : "s"} need resolution`
+        text: ` ${pluralWord(conflicts, "conflict")} need resolution`
       });
     }
   }
@@ -17168,9 +18160,8 @@ var MERGE_CARD = {
 };
 
 // src/sync-center-render.ts
-var DEFAULT_UPGRADE_URL = "https://app.engram.page/settings/billing";
 function sectionHeading(parent, title) {
-  return new import_obsidian16.Setting(parent).setName(title).setHeading();
+  return new import_obsidian22.Setting(parent).setName(title).setHeading();
 }
 var CATEGORY_ORDER = [
   "needs_pro",
@@ -17203,6 +18194,12 @@ function groupedByCategory(issues, dispositions) {
   }
   return CATEGORY_ORDER.filter((c) => groups.has(c)).map((c) => [c, groups.get(c)]);
 }
+var QUEUED_REASON_TEXT = {
+  offline: "waiting for a connection",
+  "sync-blocked": "sync is paused",
+  "in-progress": "syncing now",
+  waiting: "waiting to retry"
+};
 function renderHeader(parent, plugin) {
   let header = parent.createDiv({ cls: "engram-sync-center-header" }), status = plugin.syncEngine.getStatus(), all2 = plugin.syncEngine.issues.all(), planSkipCount = all2.filter(
     (i) => issueDisposition(i.category, i.parseReason) === "informational"
@@ -17212,6 +18209,8 @@ function renderHeader(parent, plugin) {
     (i) => issueDisposition(i.category, i.parseReason) === "transient"
   ).length, ignoredCount = plugin.syncEngine.ignoredFiles.size();
   header.createSpan({ cls: `engram-sync-center-dot is-${status.state}` }).setText("\u25CF"), header.createSpan({ cls: "engram-sync-center-title" }).setText(`Engram Sync \u2014 ${status.state}`), planSkipCount > 0 && header.createSpan({ cls: "engram-sync-center-plan-badge" }).setText(`${planSkipCount} not on your plan`), attentionCount > 0 && header.createSpan({ cls: "engram-sync-center-issue-badge" }).setText(`${attentionCount} need${attentionCount === 1 ? "s" : ""} attention`), retryingCount > 0 && header.createSpan({ cls: "engram-sync-center-retrying-badge" }).setText(`${retryingCount} retrying`), ignoredCount > 0 && header.createSpan({ cls: "engram-sync-center-ignored-badge" }).setText(`${ignoredCount} ignored`);
+  let reason = plugin.syncEngine.queuedReason();
+  reason && header.createSpan({ cls: "engram-sync-center-queued-badge" }).setText(`${status.queued} queued \u2014 ${QUEUED_REASON_TEXT[reason]}`);
 }
 function renderActions(parent, plugin, refresh) {
   let strip = parent.createDiv({ cls: "engram-sync-center-actions" });
@@ -17230,7 +18229,7 @@ function renderActions(parent, plugin, refresh) {
         throw new Error("Sync Center received change-vault choice, caller missing");
       await plugin.runSyncWithProgress(choice, { plan: modal.getPlan() });
     } catch (e) {
-      new import_obsidian16.Notice(`Engram Sync: ${e instanceof Error ? e.message : "sync failed"}`);
+      new import_obsidian22.Notice(`Engram Sync: ${e instanceof Error ? e.message : "sync failed"}`);
     }
     refresh();
   }), makeActionButton(strip, "Refresh", () => refresh());
@@ -17255,19 +18254,14 @@ function renderPlanSkips(parent, plugin, refresh) {
   for (let [category, list2] of groups)
     renderPlanCard(body, plugin, refresh, category, list2);
 }
-function renderPlanCard(parent, plugin, refresh, category, issues) {
-  var _a, _b, _c;
-  let { title, hint } = remediation(category), card = parent.createDiv({
-    cls: "engram-sync-center-card engram-sync-center-card-info"
-  }), head = card.createDiv({ cls: "engram-sync-center-card-head" });
-  head.createSpan({ cls: "engram-sync-center-card-icon", text: (_a = CATEGORY_ICON[category]) != null ? _a : "\u{1F512}" }), head.createSpan({
+function renderIssueCard(parent, plugin, refresh, issues, opts) {
+  let card = parent.createDiv({ cls: opts.cardCls }), head = card.createDiv({ cls: "engram-sync-center-card-head" });
+  head.createSpan({ cls: "engram-sync-center-card-icon", text: opts.icon }), head.createSpan({
     cls: "engram-sync-center-card-title",
-    text: `${title} (${issues.length})`
-  }), card.createEl("p", { cls: "engram-sync-center-card-hint", text: hint });
-  let actions = card.createDiv({ cls: "engram-sync-center-card-actions" }), url = (_c = (_b = issues.find((i) => i.upgradeUrl)) == null ? void 0 : _b.upgradeUrl) != null ? _c : DEFAULT_UPGRADE_URL;
-  actions.createEl("button", { text: "Upgrade", cls: "mod-cta" }).addEventListener("click", () => window.open(url, "_blank")), actions.createEl("button", { text: "Sync these now" }).addEventListener("click", () => {
-    plugin.syncEngine.resyncSkippedAttachments().then(refresh);
-  });
+    text: `${opts.title} (${issues.length})`
+  }), card.createEl("p", { cls: "engram-sync-center-card-hint", text: opts.hint });
+  let actions = card.createDiv({ cls: "engram-sync-center-card-actions" });
+  opts.buttons(actions);
   let toggle = actions.createEl("button", {
     text: `Show files (${issues.length}) \u25BE`,
     cls: "engram-sync-center-card-toggle"
@@ -17275,6 +18269,23 @@ function renderPlanCard(parent, plugin, refresh, category, issues) {
   toggle.addEventListener("click", () => fileList.classList.toggle("is-collapsed"));
   for (let issue of issues)
     renderFileRow(fileList, plugin, refresh, issue);
+}
+function renderPlanCard(parent, plugin, refresh, category, issues) {
+  var _a;
+  let { title, hint } = remediation(category);
+  renderIssueCard(parent, plugin, refresh, issues, {
+    cardCls: "engram-sync-center-card engram-sync-center-card-info",
+    icon: (_a = CATEGORY_ICON[category]) != null ? _a : "\u{1F512}",
+    title,
+    hint,
+    buttons: (actions) => {
+      var _a2, _b;
+      let url = (_b = (_a2 = issues.find((i) => i.upgradeUrl)) == null ? void 0 : _a2.upgradeUrl) != null ? _b : DEFAULT_UPGRADE_URL;
+      actions.createEl("button", { text: "Upgrade", cls: "mod-cta" }).addEventListener("click", () => window.open(url, "_blank")), actions.createEl("button", { text: "Sync these now" }).addEventListener("click", () => {
+        plugin.syncEngine.resyncSkippedAttachments().then(refresh);
+      });
+    }
+  });
 }
 function renderNeedsAttention(parent, plugin, refresh) {
   let groups = groupedByCategory(plugin.syncEngine.issues.all(), ["actionable"]), total = groups.reduce((n, [, list2]) => n + list2.length, 0), section = parent.createDiv({
@@ -17300,23 +18311,19 @@ function renderNeedsAttention(parent, plugin, refresh) {
 }
 function renderAttentionCard(parent, plugin, refresh, category, issues) {
   var _a, _b;
-  let { title, hint } = remediation(category, (_a = issues[0]) == null ? void 0 : _a.parseReason), card = parent.createDiv({ cls: "engram-sync-center-card" }), head = card.createDiv({ cls: "engram-sync-center-card-head" });
-  head.createSpan({ cls: "engram-sync-center-card-icon", text: (_b = CATEGORY_ICON[category]) != null ? _b : "\u26A0" }), head.createSpan({
-    cls: "engram-sync-center-card-title",
-    text: `${title} (${issues.length})`
-  }), card.createEl("p", { cls: "engram-sync-center-card-hint", text: hint });
-  let actions = card.createDiv({ cls: "engram-sync-center-card-actions" });
-  actions.createEl("button", { text: "Dismiss" }).addEventListener("click", () => {
-    for (let issue of issues) plugin.syncEngine.issues.clear(issue.path);
-    plugin.persistEngineState().then(refresh);
+  let { title, hint } = remediation(category, (_a = issues[0]) == null ? void 0 : _a.parseReason);
+  renderIssueCard(parent, plugin, refresh, issues, {
+    cardCls: "engram-sync-center-card",
+    icon: (_b = CATEGORY_ICON[category]) != null ? _b : "\u26A0",
+    title,
+    hint,
+    buttons: (actions) => {
+      actions.createEl("button", { text: "Dismiss" }).addEventListener("click", () => {
+        for (let issue of issues) plugin.syncEngine.issues.clear(issue.path);
+        plugin.persistEngineState().then(refresh);
+      });
+    }
   });
-  let toggle = actions.createEl("button", {
-    text: `Show files (${issues.length}) \u25BE`,
-    cls: "engram-sync-center-card-toggle"
-  }), fileList = card.createDiv({ cls: "engram-sync-center-issue-list is-collapsed" });
-  toggle.addEventListener("click", () => fileList.classList.toggle("is-collapsed"));
-  for (let issue of issues)
-    renderFileRow(fileList, plugin, refresh, issue);
 }
 function renderRetrying(parent, plugin, refresh) {
   let groups = groupedByCategory(plugin.syncEngine.issues.all(), ["transient"]), total = groups.reduce((n, [, list3]) => n + list3.length, 0);
@@ -17341,7 +18348,7 @@ function renderFileRow(parent, plugin, refresh, issue) {
   let row = parent.createDiv({ cls: "engram-sync-center-issue-row" }), main = row.createDiv({ cls: "engram-sync-center-issue-main" });
   main.createDiv({ cls: "engram-sync-center-issue-path", text: issue.path });
   let meta = main.createDiv({ cls: "engram-sync-center-issue-meta" }), parts = [];
-  if (issue.sizeBytes !== void 0 && parts.push(formatBytes(issue.sizeBytes)), issue.status !== void 0 && parts.push(`HTTP ${issue.status}`), parts.push(`${issue.attempts} attempt${issue.attempts === 1 ? "" : "s"}`), parts.push(formatRelative(issue.lastFailedAt)), meta.setText(parts.join(" \xB7 ")), issue.parseReason) {
+  if (issue.sizeBytes !== void 0 && parts.push(formatBytes(issue.sizeBytes)), issue.status !== void 0 && parts.push(`HTTP ${issue.status}`), parts.push(plural(issue.attempts, "attempt")), parts.push(formatRelative(issue.lastFailedAt)), meta.setText(parts.join(" \xB7 ")), issue.parseReason) {
     let reason = main.createDiv({ cls: "engram-sync-center-issue-reason" });
     reason.createSpan({ text: issue.parseReason.message });
     let snippet = (_a = issue.parseReason.detail) == null ? void 0 : _a.snippet;
@@ -17376,26 +18383,19 @@ function renderIgnoredRow(parent, plugin, refresh, path) {
   });
 }
 function openFile(plugin, path) {
-  if (!plugin.app.vault.getFileByPath((0, import_obsidian16.normalizePath)(path))) {
-    new import_obsidian16.Notice(`File not found locally: ${path}`);
+  if (!plugin.app.vault.getFileByPath((0, import_obsidian22.normalizePath)(path))) {
+    new import_obsidian22.Notice(`File not found locally: ${path}`);
     return;
   }
   plugin.app.workspace.openLinkText(path, "");
 }
 async function ignoreFilePermanently(plugin, path, refresh) {
-  plugin.syncEngine.ignoredFiles.add(path), plugin.syncEngine.issues.clear(path), await plugin.persistEngineState(), new import_obsidian16.Notice(`Ignored ${path} \u2014 won't sync until restored from Sync Center.`), refresh();
+  plugin.syncEngine.ignoredFiles.add(path), plugin.syncEngine.issues.clear(path), await plugin.persistEngineState(), new import_obsidian22.Notice(`Ignored ${path} \u2014 won't sync until restored from Sync Center.`), refresh();
 }
 async function restoreFile(plugin, path, refresh) {
-  plugin.syncEngine.ignoredFiles.remove(path), await plugin.persistEngineState(), new import_obsidian16.Notice(`Restored ${path} \u2014 will sync on next push.`), refresh();
+  plugin.syncEngine.ignoredFiles.remove(path), await plugin.persistEngineState(), new import_obsidian22.Notice(`Restored ${path} \u2014 will sync on next push.`), refresh();
 }
-var ACTIVITY_LIMIT = 50, ACTION_ICON = {
-  push: "\u2191",
-  pull: "\u2193",
-  delete: "\u2715",
-  conflict: "\u26A1",
-  skip: "\xB7",
-  error: "!"
-}, RESULT_CLASS = {
+var ACTIVITY_LIMIT = 50, RESULT_CLASS = {
   ok: "is-ok",
   error: "is-error",
   skipped: "is-skipped"
@@ -17426,7 +18426,7 @@ function renderActivityRow(parent, entry) {
   });
   row.createSpan({
     cls: "engram-sync-center-activity-icon",
-    text: (_a = ACTION_ICON[entry.action]) != null ? _a : "?"
+    text: (_a = ACTION_ICONS[entry.action]) != null ? _a : "?"
   }), row.createSpan({ cls: "engram-sync-center-activity-action", text: entry.action }), row.createSpan({ cls: "engram-sync-center-activity-path", text: entry.path }), row.createSpan({
     cls: "engram-sync-center-activity-time",
     text: formatRelative(entry.timestamp.getTime())
@@ -17453,585 +18453,6 @@ function formatRelative(timestamp2) {
   return seconds < 60 ? `${seconds}s ago` : seconds < 3600 ? `${Math.floor(seconds / 60)}m ago` : seconds < 86400 ? `${Math.floor(seconds / 3600)}h ago` : `${Math.floor(seconds / 86400)}d ago`;
 }
 
-// src/sync-progress-modal.ts
-function describePlannedWork(choice, plan, firstSync) {
-  let b = optionBreakdown(plan, choice), parts = [];
-  b.pushCount > 0 && parts.push(`uploading ${b.pushCount}`), b.pullCount > 0 && parts.push(`downloading ${b.pullCount}`), b.deleteLocalCount > 0 && parts.push(
-    `deleting ${b.deleteLocalCount} local ${b.deleteLocalCount === 1 ? "file" : "files"}`
-  ), b.deleteRemoteCount > 0 && parts.push(`deleting ${b.deleteRemoteCount} on the cloud`);
-  let prefix = firstSync ? "First sync, this may take a moment. " : "";
-  if (parts.length === 0) return `${prefix}Checking for changes.`;
-  let sentence = parts.join(", "), capitalized = sentence.charAt(0).toUpperCase() + sentence.slice(1), noDeletes = b.deleteLocalCount === 0 && b.deleteRemoteCount === 0;
-  return `${prefix}${capitalized}.${noDeletes ? " Nothing will be deleted." : ""}`;
-}
-function renderCompletionSummary(parent, summary) {
-  let line = parent.createDiv({ cls: "engram-progress-summary-tally" });
-  if (summary.synced > 0 && line.createSpan({
-    cls: "engram-progress-tally-synced",
-    text: `\u2713 ${summary.synced} synced`
-  }), summary.skipped > 0 && line.createSpan({
-    cls: "engram-progress-tally-skipped",
-    text: `\u2933 ${summary.skipped} skipped (Free plan)`
-  }), summary.failed > 0 && line.createSpan({
-    cls: "engram-progress-tally-failed",
-    text: `\u2715 ${summary.failed} failed`
-  }), summary.skipped > 0) {
-    let note = parent.createDiv({ cls: "engram-progress-plan-note" }), noun = summary.skipped === 1 ? "attachment" : "attachments";
-    note.createSpan({
-      text: `${summary.skipped} ${noun} need a paid plan to sync. See Sync Center. `
-    }), note.createEl("button", {
-      text: "Upgrade",
-      cls: "engram-progress-upgrade mod-cta"
-    }).addEventListener("click", () => window.open(DEFAULT_UPGRADE_URL, "_blank"));
-  }
-}
-function describeCompletion(summary) {
-  return summary.failed > 0 ? "Finished with some errors. Open the sync log to see what failed." : summary.skipped > 0 ? "Synced. Some attachments need a paid plan to sync (see below)." : summary.synced > 0 ? "All synced. Your vault and the cloud now match." : "Already up to date. Nothing needed syncing.";
-}
-function plannedPhases(choice, plan) {
-  let b = optionBreakdown(plan, choice), deleting = b.deleteLocalCount + b.deleteRemoteCount, out = [];
-  return deleting > 0 && out.push({ phase: "deleting", label: "Deleting", total: deleting }), b.pullCount > 0 && out.push({ phase: "pulling", label: "Downloading", total: b.pullCount }), b.pushCount > 0 && out.push({ phase: "pushing", label: "Uploading", total: b.pushCount }), out;
-}
-var TICK_INTERVAL_MS = 50;
-function rowCounts(planned, plannedTotal, engineCurrent, engineTotal, prevTotal) {
-  let total = planned ? Math.max(plannedTotal, engineCurrent) : engineTotal || prevTotal;
-  return { current: total > 0 ? Math.min(engineCurrent, total) : engineCurrent, total };
-}
-function settingsBarCounts(progress, planned, prevTotal) {
-  var _a;
-  let { current, total } = rowCounts(
-    !!planned,
-    (_a = planned == null ? void 0 : planned.total) != null ? _a : 0,
-    progress.current,
-    progress.total,
-    prevTotal
-  );
-  return {
-    current,
-    total,
-    pct: total > 0 ? Math.min(100, Math.round(current / total * 100)) : 0
-  };
-}
-var SyncProgressModal = class extends import_obsidian17.Modal {
-  /** `intro`: plan-derived summary (see describePlannedWork). `phases`: the
-   *  rows to seed (see plannedPhases). `webUrl`: the Engram web app to link to
-   *  on completion so the user can verify their vault. All optional so callers
-   *  without a plan still get a usable modal. */
-  constructor(app, opts = {}) {
-    super(app);
-    this.opts = opts;
-    this.rows = [];
-    this.rowEls = /* @__PURE__ */ new Map();
-    /** Latest progress update from the engine, applied on the next tick. */
-    this.latest = null;
-    this.tickTimer = null;
-  }
-  onOpen() {
-    var _a;
-    let { contentEl } = this;
-    contentEl.empty(), contentEl.addClass("engram-sync-progress-modal"), contentEl.createEl("h2", { text: "Syncing your vault" }), this.opts.intro && contentEl.createEl("p", { text: this.opts.intro, cls: "engram-progress-intro" }), this.statusEl = contentEl.createEl("p", {
-      text: "Getting started\u2026",
-      cls: "engram-progress-status"
-    }), this.rowsWrap = contentEl.createDiv({ cls: "engram-progress-rows" }), this.rows = ((_a = this.opts.phases) != null ? _a : []).map((p) => ({
-      phase: p.phase,
-      label: p.label,
-      plannedTotal: p.total,
-      planned: !0,
-      current: 0,
-      total: p.total,
-      failed: 0,
-      seen: !1,
-      done: !1
-    }));
-    for (let row of this.rows) this.createRow(row);
-    if (this.pathEl = contentEl.createEl("p", { text: "", cls: "engram-progress-path" }), this.recapEl = contentEl.createEl("p", { text: "", cls: "engram-progress-subtext" }), this.recapEl.hidden = !0, this.failedEl = contentEl.createEl("p", { text: "", cls: "engram-progress-failed" }), this.failedEl.hidden = !0, this.summaryEl = contentEl.createDiv({ cls: "engram-progress-summary" }), this.summaryEl.hidden = !0, this.verifyEl = contentEl.createEl("p", { cls: "engram-progress-verify" }), this.verifyEl.hidden = !0, this.opts.webUrl) {
-      let url = this.opts.webUrl;
-      this.verifyEl.createSpan({
-        text: "Open Engram to check your vault and confirm everything synced. "
-      });
-      let link = this.verifyEl.createEl("a", {
-        text: "Open Engram",
-        cls: "engram-progress-verify-link",
-        href: url
-      });
-      link.setAttr("target", "_blank"), link.setAttr("rel", "noopener"), link.addEventListener("click", (e) => {
-        e.preventDefault(), window.open(url, "_blank");
-      });
-    }
-    this.hintEl = contentEl.createEl("p", {
-      text: "You can close this and the sync keeps running in the background.",
-      cls: "engram-progress-hint"
-    });
-    let buttons = contentEl.createDiv({ cls: "engram-progress-buttons" });
-    this.bgBtn = buttons.createEl("button", { text: "Run in background" }), this.bgBtn.addEventListener("click", () => this.close()), this.closeBtn = buttons.createEl("button", { text: "Done", cls: "mod-cta" }), this.closeBtn.hidden = !0, this.closeBtn.addEventListener("click", () => this.close()), this.renderRows(), this.tickTimer = window.setInterval(() => this.tick(), TICK_INTERVAL_MS);
-  }
-  /** Called by the sync engine's progress callback. Buffers the update. */
-  update(progress) {
-    this.latest = progress;
-  }
-  tick() {
-    if (!this.latest) return;
-    let progress = this.latest;
-    this.latest = null, this.applyProgress(progress);
-  }
-  createRow(row) {
-    let rowEl = this.rowsWrap.createDiv({ cls: "engram-progress-row" }), statusEl = rowEl.createSpan({ cls: "engram-progress-row-status", text: "\xB7" });
-    rowEl.createSpan({ cls: "engram-progress-row-label", text: row.label });
-    let barInner = rowEl.createDiv({ cls: "engram-progress-bar-outer" }).createDiv({ cls: "engram-progress-bar-inner" }), countEl = rowEl.createSpan({
-      cls: "engram-progress-row-count",
-      text: `0 / ${row.plannedTotal}`
-    });
-    this.rowEls.set(row.phase, { statusEl, barInner, countEl });
-  }
-  applyProgress(progress) {
-    var _a, _b;
-    if (progress.phase === "complete") {
-      this.applyComplete(progress);
-      return;
-    }
-    let row = this.rows.find((r) => r.phase === progress.phase);
-    row || (row = {
-      phase: progress.phase,
-      label: (_a = PHASE_FALLBACK_LABEL[progress.phase]) != null ? _a : progress.phase,
-      plannedTotal: progress.total,
-      planned: !1,
-      current: 0,
-      total: progress.total,
-      failed: 0,
-      seen: !1,
-      done: !1
-    }, this.rows.push(row), this.createRow(row)), row.seen = !0;
-    let counts = rowCounts(
-      row.planned,
-      row.plannedTotal,
-      progress.current,
-      progress.total,
-      row.total
-    );
-    row.current = counts.current, row.total = counts.total, row.failed = progress.failed;
-    for (let other of this.rows)
-      other !== row && other.seen && (other.done = !0);
-    this.statusEl.setText("Syncing\u2026"), this.pathEl.setText((_b = progress.currentPath) != null ? _b : ""), this.renderRows();
-  }
-  applyComplete(progress) {
-    var _a;
-    this.tickTimer && (window.clearInterval(this.tickTimer), this.tickTimer = null);
-    for (let row of this.rows)
-      row.done = !0, row.current = row.total;
-    this.renderRows();
-    let summary = {
-      synced: progress.current,
-      skipped: (_a = progress.skipped) != null ? _a : 0,
-      failed: progress.failed
-    };
-    this.statusEl.setText("Sync complete"), this.pathEl.setText(""), this.recapEl.setText(describeCompletion(summary)), this.recapEl.hidden = !1, this.summaryEl.empty(), renderCompletionSummary(this.summaryEl, summary), this.summaryEl.hidden = !1, summary.failed > 0 ? (this.failedEl.setText(
-      `${summary.failed} failed. Run "Engram: Show sync log" for details.`
-    ), this.failedEl.hidden = !1) : this.failedEl.hidden = !0, this.verifyEl.hidden = !this.opts.webUrl, this.hintEl.hidden = !0, this.bgBtn.hidden = !0, this.closeBtn.hidden = !1;
-  }
-  renderRows() {
-    for (let row of this.rows) {
-      let els = this.rowEls.get(row.phase);
-      if (!els) continue;
-      let pct = row.total > 0 ? Math.round(row.current / row.total * 100) : row.done ? 100 : 0;
-      els.barInner.style.width = `${pct}%`, els.barInner.toggleClass("is-complete", row.done), els.countEl.setText(row.total > 0 ? `${row.current} / ${row.total}` : `${row.current}`), els.statusEl.setText(row.done ? "\u2713" : row.seen ? "\u27F3" : "\xB7");
-    }
-  }
-  onClose() {
-    this.tickTimer && (window.clearInterval(this.tickTimer), this.tickTimer = null), this.contentEl.empty();
-  }
-}, PHASE_FALLBACK_LABEL = {
-  deleting: "Deleting",
-  pushing: "Uploading",
-  pulling: "Downloading",
-  attachments: "Syncing attachments",
-  complete: "Complete"
-};
-
-// src/tabs/about-tab.ts
-var import_obsidian18 = require("obsidian");
-function renderWaitlistSection(containerEl) {
-  let state = new EmailCaptureState(), section = containerEl.createDiv({ cls: "engram-about-waitlist" }), render = () => {
-    if (section.empty(), state.view === "success") {
-      section.createEl("p", {
-        cls: "engram-about-waitlist-success",
-        text: "You're on the list. Thanks for your patience!"
-      });
-      return;
-    }
-    section.createEl("p", {
-      text: "Engram is still in active development. Leave your email for beta access, an early-supporter discount, and a say in what comes next."
-    }), renderEmailCaptureForm({ parent: section, state, rerender: render });
-  };
-  render();
-}
-function externalLink(parent, text2, href) {
-  parent.createEl("a", { text: text2, href, attr: { target: "_blank", rel: "noopener" } });
-}
-function heading(containerEl, name) {
-  new import_obsidian18.Setting(containerEl).setName(name).setHeading().settingEl.addClass("engram-about-heading");
-}
-function renderAboutTab(ctx) {
-  let { containerEl, switchToTab } = ctx;
-  containerEl.createEl("p", { cls: "engram-about-intro" }).setText(
-    "Engram vault sync keeps your Obsidian vault in sync with Engram and lets your AI assistants read and write the same notes. You edit on any device; your AI works from notes you actually wrote."
-  ), heading(containerEl, "Stay in the loop"), renderWaitlistSection(containerEl), heading(containerEl, "Getting set up");
-  let account = new import_obsidian18.Setting(containerEl).setName("1. Make an account");
-  account.descEl.appendText("Create a hosted account at "), externalLink(account.descEl, "engram.page", ENGRAM_MARKETING_URL), account.descEl.appendText(", or self-host the backend ("), externalLink(account.descEl, "setup guide", ENGRAM_SELFHOST_URL), account.descEl.appendText(")."), new import_obsidian18.Setting(containerEl).setName("2. Connect your vault to Engram").setDesc(
-    "Sign in (or enter your server URL and key) on the cloud tab, then run your first sync."
-  ).addButton(
-    (btn) => btn.setButtonText("Open cloud tab").setCta().onClick(() => switchToTab("account"))
-  );
-  let ai = new import_obsidian18.Setting(containerEl).setName("3. Connect your AI");
-  ai.descEl.appendText(
-    "Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. "
-  ), externalLink(ai.descEl, "See the AI setup guide", ENGRAM_MCP_URL), heading(containerEl, "Plans");
-  let plans = containerEl.createEl("ul", { cls: "engram-plans" }), plan = (name, features) => {
-    let card = plans.createEl("li", { cls: "engram-plan" });
-    card.createEl("h4", { text: name });
-    let list2 = card.createEl("ul", { cls: "engram-plan-features" });
-    for (let feature of features) list2.createEl("li", { text: feature });
-  };
-  plan("Free", [
-    "1 vault, 1 device",
-    "Auto sync",
-    "Read-only AI access",
-    "Semantic search + MCP"
-  ]), plan("Starter", [
-    "Multiple vaults, all devices",
-    "Real-time sync",
-    "Full API + MCP",
-    "Higher daily AI limit"
-  ]), plan("Pro", ["Unlimited notes", "Unlimited AI (fair use)", "Priority support"]);
-  let pricing = containerEl.createEl("p", { cls: "engram-about-link" });
-  externalLink(pricing, "See full pricing", ENGRAM_PRICING_URL), heading(containerEl, "Learn more");
-  let links = containerEl.createEl("ul", { cls: "engram-about-links" });
-  externalLink(links.createEl("li"), "Documentation", ENGRAM_DOCS_URL), externalLink(links.createEl("li"), "AI / MCP setup guide", ENGRAM_MCP_URL), externalLink(links.createEl("li"), "Report an issue", ENGRAM_ISSUES_URL), externalLink(links.createEl("li"), "Join our Discord", ENGRAM_DISCORD_URL);
-}
-
-// src/tabs/account-tab.ts
-var import_obsidian20 = require("obsidian");
-
-// src/tabs/self-hosted-tab.ts
-var import_obsidian19 = require("obsidian");
-var PREFLIGHT_DEBOUNCE_MS = 600;
-function renderSelfHostedTab(ctx) {
-  let { containerEl, plugin } = ctx, isOnCloud = plugin.settings.apiUrl === ENGRAM_CLOUD_URL, hasAuth = !!plugin.settings.apiKey || !!plugin.settings.refreshToken;
-  if (isOnCloud && hasAuth) {
-    renderCloudLockBanner(containerEl);
-    return;
-  }
-  let repoSetting = new import_obsidian19.Setting(containerEl).setName("Run your own Engram server").setDesc("Engram is the backend that powers sync and semantic search.");
-  repoSetting.settingEl.addClass("engram-setup-cta"), repoSetting.descEl.addClass("engram-server-cta-desc"), repoSetting.descEl.createEl("a", {
-    text: "github.com/engram-app/engram",
-    href: "https://github.com/engram-app/engram"
-  }), renderEngramUrlSetting(ctx), renderAuthSection(ctx), renderVaultSection(ctx), renderSupportSection(ctx);
-}
-function renderEngramUrlSetting(ctx) {
-  let { containerEl, plugin, redisplay } = ctx, setting = new import_obsidian19.Setting(containerEl).setName("Engram URL");
-  setting.settingEl.addClass("engram-url-setting");
-  let status = setting.descEl.createDiv({ cls: "engram-url-preflight" }), STATUS_CLASSES = ["is-checking", "is-engram", "is-reachable", "is-unreachable"], pendingUrl = plugin.settings.apiUrl, debounce = null, probeSeq = 0, renderStatus = (result) => {
-    switch (status.removeClasses(STATUS_CLASSES), result.kind) {
-      case "engram":
-        status.addClass("is-engram"), status.setText(`\u2713 Engram server reachable (v${result.version})`);
-        break;
-      case "reachable":
-        status.addClass("is-reachable"), status.setText("\u2717 server responded but isn't an Engram backend");
-        break;
-      case "unreachable":
-        status.addClass("is-unreachable"), status.setText("\u2717 couldn't reach a server at this URL");
-        break;
-    }
-  }, runPreflight = (value) => {
-    if (!completeOrigin(value)) {
-      status.removeClasses(STATUS_CLASSES), status.setText("");
-      return;
-    }
-    let seq2 = ++probeSeq;
-    status.removeClasses(STATUS_CLASSES), status.addClass("is-checking"), status.setText("Checking server\u2026"), EngramApi.probeHealth(value).then((result) => {
-      seq2 === probeSeq && (status.removeClass("is-checking"), renderStatus(result));
-    });
-  };
-  setting.addText((text2) => {
-    text2.setPlaceholder("https://engram.example.com"), text2.setValue(plugin.settings.apiUrl), text2.onChange((value) => {
-      pendingUrl = value, debounce !== null && window.clearTimeout(debounce), debounce = window.setTimeout(() => runPreflight(value), PREFLIGHT_DEBOUNCE_MS);
-    });
-  }).addButton(
-    (btn) => btn.setButtonText("Save").setCta().onClick(async () => {
-      await applyApiUrlChange(
-        {
-          settings: plugin.settings,
-          api: plugin.api,
-          noteStream: plugin.noteStream,
-          resetAuthProvider: () => {
-            plugin.authProvider = null;
-          }
-        },
-        pendingUrl.trim(),
-        () => plugin.saveSettings()
-      ) && new import_obsidian19.Notice("Engram backend changed \u2014 sign in again to continue."), redisplay();
-    })
-  ), completeOrigin(plugin.settings.apiUrl) && runPreflight(plugin.settings.apiUrl);
-}
-function renderCloudLockBanner(containerEl) {
-  let banner = containerEl.createDiv({ cls: "engram-mode-lock-banner" });
-  banner.createEl("p", { text: "You're connected to Engram cloud." }), banner.createEl("p", {
-    text: "To set up a self-hosted Engram server, sign out from the cloud tab first. That will release the connection so you can point the plugin at your own server."
-  });
-}
-function renderAuthSection(ctx) {
-  var _a;
-  let { containerEl, plugin, redisplay, startDeviceFlow } = ctx, isOAuth = !!plugin.settings.refreshToken, hasApiKey = !!plugin.settings.apiKey;
-  if (new import_obsidian19.Setting(containerEl).setName("Authentication").setHeading(), isOAuth) {
-    new import_obsidian19.Setting(containerEl).setName(`Signed in as ${(_a = plugin.settings.userEmail) != null ? _a : "unknown"}`).setDesc("Authenticated via Engram account (OAuth).").addButton(
-      (btn) => btn.setButtonText("Sign out").onClick(async () => {
-        await plugin.clearOAuthTokens(), redisplay();
-      })
-    );
-    return;
-  }
-  if (hasApiKey) {
-    new import_obsidian19.Setting(containerEl).setName("Using API key").setDesc("Authenticated via manual API key.").addButton(
-      (btn) => btn.setButtonText("Clear key").setWarning().onClick(async () => {
-        plugin.settings.apiKey = "", await plugin.saveSettings(), redisplay();
-      })
-    ).addButton(
-      (btn) => btn.setButtonText("Switch to sign in").setCta().onClick(async () => {
-        plugin.settings.apiKey = "", await plugin.saveSettings(), startDeviceFlow();
-      })
-    );
-    return;
-  }
-  new import_obsidian19.Setting(containerEl).setName("Sign in with Engram").setDesc("Links your Obsidian vault to your Engram account. Opens a browser window.").addButton(
-    (btn) => btn.setButtonText("Sign in").setCta().onClick(() => startDeviceFlow())
-  ), containerEl.createDiv({ cls: "engram-auth-divider", text: "or" });
-  let pendingKey = "";
-  new import_obsidian19.Setting(containerEl).setName("API key").setDesc("Bearer token from Engram (starts with Engram_).").addText((text2) => {
-    text2.setPlaceholder("engram_abc123...").onChange((value) => {
-      pendingKey = value;
-    }), text2.inputEl.type = "password", text2.inputEl.addClass("engram-api-key-input");
-  }).addButton(
-    (btn) => btn.setButtonText("Save").setCta().onClick(async () => {
-      let trimmed = pendingKey.trim();
-      if (!trimmed) {
-        new import_obsidian19.Notice("Enter an API key first");
-        return;
-      }
-      plugin.settings.apiKey = trimmed, await plugin.saveSettings(), redisplay();
-    })
-  ).settingEl.addClass("engram-setting-api-key");
-}
-function renderVaultSection(ctx) {
-  let { containerEl, plugin, redisplay } = ctx;
-  if (!plugin.settings.apiKey && !plugin.settings.refreshToken) return;
-  new import_obsidian19.Setting(containerEl).setName("Vault").setHeading();
-  let setting = new import_obsidian19.Setting(containerEl).setName("Vault selection").setDesc("Select which vault this plugin syncs with."), currentId = plugin.settings.vaultId, storedName = plugin.settings.remoteVaultName;
-  if (currentId && storedName) {
-    setting.settingEl.addClass("engram-setting-vault-name"), setting.controlEl.createSpan({
-      cls: "engram-vault-current-name",
-      text: storedName
-    }).setAttribute("title", `Vault id: ${currentId}`), setting.addButton(
-      (btn) => btn.setButtonText("Change").onClick(() => {
-        plugin.doSyncWithFirstSyncCheck({ startInVaultPicker: !0 });
-      })
-    );
-    return;
-  }
-  let placeholderEl = setting.controlEl.createSpan({ text: "Loading vaults..." });
-  plugin.api.listVaults().then((vaults) => {
-    if (placeholderEl.remove(), vaults.length === 0) {
-      setting.controlEl.createSpan({
-        text: "No vaults found \u2014 first sync will create one"
-      });
-      return;
-    }
-    let current = currentId ? vaults.find((v) => v.id === currentId) : void 0;
-    if (!current) {
-      setting.addDropdown((dropdown) => {
-        currentId ? dropdown.addOption(
-          "",
-          storedName ? `Pick a vault (previous: '${storedName}' not found)` : `Pick a vault (previous: id ${currentId} not found)`
-        ) : dropdown.addOption("", "Pick a vault");
-        for (let v of vaults) {
-          let label = v.is_default ? `${v.name} (default)` : v.name;
-          dropdown.addOption(v.id, label);
-        }
-        dropdown.onChange(async (value) => {
-          let picked = vaults.find((v) => v.id === value);
-          await applyVaultSwitch(plugin, value, picked == null ? void 0 : picked.name) && redisplay();
-        });
-      });
-      return;
-    }
-    plugin.settings.remoteVaultName = current.name, plugin.saveSettings(), setting.settingEl.addClass("engram-setting-vault-name"), setting.controlEl.createSpan({
-      cls: "engram-vault-current-name",
-      text: current.is_default ? `${current.name} (default)` : current.name
-    }).setAttribute("title", `Vault id: ${current.id}`), setting.addButton(
-      (btn) => btn.setButtonText("Change").onClick(() => {
-        plugin.doSyncWithFirstSyncCheck({ startInVaultPicker: !0 });
-      })
-    );
-  }).catch((e) => {
-    placeholderEl.remove(), setting.controlEl.createSpan({ text: describeListVaultsError(e) });
-  });
-}
-function renderSupportSection(ctx) {
-  let { containerEl } = ctx;
-  new import_obsidian19.Setting(containerEl).setName("Support development").setHeading();
-  let supportSetting = new import_obsidian19.Setting(containerEl).setDesc(
-    "If this plugin saves you time, consider supporting development."
-  );
-  supportSetting.settingEl.addClass("engram-setting-support");
-  let buttonRow = supportSetting.controlEl.createDiv({ cls: "engram-support-buttons" }), sponsorLink = buttonRow.createEl("a", {
-    cls: "engram-sponsor-button",
-    href: "https://github.com/sponsors/engram-app",
-    attr: { target: "_blank", rel: "noopener" }
-  }), sponsorIcon = sponsorLink.createSpan({ cls: "engram-sponsor-icon" });
-  (0, import_obsidian19.setIcon)(sponsorIcon, "heart"), sponsorLink.createSpan({ text: "GitHub Sponsors" });
-  let kofiLink = buttonRow.createEl("a", {
-    cls: "engram-kofi-button",
-    href: "https://ko-fi.com/engrams_sync",
-    attr: { target: "_blank", rel: "noopener" }
-  }), kofiIcon = kofiLink.createSpan({ cls: "engram-kofi-icon" });
-  (0, import_obsidian19.setIcon)(kofiIcon, "coffee"), kofiLink.createSpan({ text: "Ko-fi" });
-}
-function describeListVaultsError(e) {
-  let err = e, status = err == null ? void 0 : err.status;
-  return status === 401 || status === 403 ? "Sign-in required to load vaults" : status && status >= 500 ? `Server error (${status}) \u2014 check Engram logs` : status && status >= 400 ? `Request failed (${status})` : "Could not reach Engram \u2014 check connection";
-}
-async function applyVaultSwitch(plugin, value, name) {
-  return !value || value === plugin.settings.vaultId ? !1 : (plugin.settings.vaultId = value, name !== void 0 && (plugin.settings.remoteVaultName = name), plugin.api.setVaultId(value), await plugin.saveSettings(), !0);
-}
-
-// src/tabs/account-tab.ts
-async function renderAccountTab(ctx) {
-  let { containerEl, plugin, redisplay } = ctx, action = cloudTabAction(plugin.settings, ENGRAM_CLOUD_URL);
-  if (action === "prompt-switch") {
-    new import_obsidian20.Setting(containerEl).setName("Currently set to a self-hosted instance").setDesc(
-      `Self-hosted URL: ${plugin.settings.apiUrl}. Switching to Engram cloud replaces it and clears any stored credentials for that instance.`
-    ).addButton(
-      (btn) => btn.setButtonText("Switch to Engram cloud").setWarning().onClick(async () => {
-        await applyApiUrlChange(
-          {
-            settings: plugin.settings,
-            api: plugin.api,
-            noteStream: plugin.noteStream,
-            resetAuthProvider: () => {
-              plugin.authProvider = null;
-            }
-          },
-          ENGRAM_CLOUD_URL,
-          () => plugin.saveSettings()
-        ), new import_obsidian20.Notice("Switched to Engram cloud \u2014 sign in to continue."), redisplay();
-      })
-    );
-    return;
-  }
-  action === "auto-switch" && await applyApiUrlChange(
-    {
-      settings: plugin.settings,
-      api: plugin.api,
-      noteStream: plugin.noteStream,
-      resetAuthProvider: () => {
-        plugin.authProvider = null;
-      }
-    },
-    ENGRAM_CLOUD_URL,
-    () => plugin.saveSettings()
-  );
-  let aboutSetting = new import_obsidian20.Setting(containerEl).setName("New to Engram?").setDesc("Create an account, read the docs, and learn more at ");
-  aboutSetting.settingEl.addClass("engram-setup-cta"), aboutSetting.descEl.createEl("a", {
-    text: "engram.page",
-    href: ENGRAM_MARKETING_URL,
-    attr: { target: "_blank", rel: "noopener" }
-  }), aboutSetting.descEl.appendText("."), renderAuthSection(ctx), renderVaultSection(ctx);
-}
-
-// src/tabs/advanced-tab.ts
-var import_obsidian21 = require("obsidian"), PROBLEMATIC_DIRS = [
-  { pattern: "node_modules/", label: "node_modules", desc: "Node.js dependencies" },
-  { pattern: ".venv/", label: ".venv", desc: "Python virtual environment" },
-  { pattern: "venv/", label: "venv", desc: "Python virtual environment" },
-  { pattern: "__pycache__/", label: "__pycache__", desc: "Python bytecode cache" },
-  { pattern: "vendor/", label: "vendor", desc: "Vendored dependencies" },
-  { pattern: ".gradle/", label: ".gradle", desc: "Gradle build cache" },
-  { pattern: "target/", label: "target", desc: "Rust/Java build output" },
-  { pattern: "build/", label: "build", desc: "Build output" },
-  { pattern: ".next/", label: ".next", desc: "Next.js build output" },
-  { pattern: "dist/", label: "dist", desc: "Distribution build output" },
-  { pattern: ".cargo/", label: ".cargo", desc: "Cargo cache" },
-  { pattern: "Pods/", label: "Pods", desc: "CocoaPods dependencies" },
-  { pattern: ".dart_tool/", label: ".dart_tool", desc: "Dart tool cache" },
-  { pattern: ".cache/", label: ".cache", desc: "Generic cache directory" }
-];
-function renderAdvancedTab(ctx) {
-  let { containerEl, app, plugin, redisplay } = ctx;
-  new import_obsidian21.Setting(containerEl).setName("Sync behavior").setHeading(), new import_obsidian21.Setting(containerEl).setName("Debounce (ms)").setDesc("Delay after editing before pushing. Prevents flooding during typing.").addText(
-    (text2) => text2.setPlaceholder("2000").setValue(String(plugin.settings.debounceMs)).onChange(async (value) => {
-      let num = Number.parseInt(value, 10);
-      !Number.isNaN(num) && num >= 100 && (plugin.settings.debounceMs = num, await plugin.saveSettings());
-    })
-  ), new import_obsidian21.Setting(containerEl).setName("Ignore patterns").setHeading(), renderIgnoreWarnings(containerEl, app, plugin, redisplay), new import_obsidian21.Setting(containerEl).setName("Custom patterns").setDesc(
-    `Paths to skip (one per line). Folder patterns end with /. Built-in: ${app.vault.configDir}/, .trash/, .git/`
-  ).addTextArea((text2) => {
-    text2.setPlaceholder(`drafts/
-secret.md`).setValue(plugin.settings.ignorePatterns).onChange(async (value) => {
-      plugin.settings.ignorePatterns = value, await plugin.saveSettings();
-    }), text2.inputEl.rows = 6, text2.inputEl.addClass("engram-ignore-textarea");
-  }).settingEl.addClass("engram-ignore-setting"), new import_obsidian21.Setting(containerEl).setName("Diagnostics").setHeading(), new import_obsidian21.Setting(containerEl).setName("Diagnostics").setDesc(
-    "Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use."
-  ).addToggle(
-    (toggle) => toggle.setValue(plugin.settings.diagnosticsEnabled).onChange(async (value) => {
-      plugin.settings.diagnosticsEnabled = value, await plugin.saveSettings();
-    })
-  ), new import_obsidian21.Setting(containerEl).setName("Diagnostics detail").setDesc(
-    "Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info."
-  ).addDropdown(
-    (dropdown) => dropdown.addOptions({
-      error: "Errors only",
-      warn: "Warnings and errors",
-      info: "Info (default)",
-      debug: "Debug (verbose)"
-    }).setValue(plugin.settings.remoteLogLevel).onChange(async (value) => {
-      plugin.settings.remoteLogLevel = value, await plugin.saveSettings();
-    })
-  ), new import_obsidian21.Setting(containerEl).setName("About").setHeading();
-  let aboutList = containerEl.createEl("ul", { cls: "engram-about-list" }), versionItem = aboutList.createEl("li");
-  versionItem.createSpan({ text: "Version: " }), versionItem.createSpan({ text: plugin.manifest.version });
-  let repoItem = aboutList.createEl("li");
-  repoItem.createSpan({ text: "Source: " }), repoItem.createEl("a", {
-    text: "github.com/engram-app/Engram-obsidian",
-    href: "https://github.com/engram-app/Engram-obsidian"
-  }), aboutList.createEl("li").createSpan({ text: "License: MIT" });
-}
-function renderIgnoreWarnings(containerEl, app, plugin, redisplay) {
-  let currentIgnores = plugin.settings.ignorePatterns, detected = [];
-  for (let dir of PROBLEMATIC_DIRS) {
-    if (currentIgnores.includes(dir.pattern)) continue;
-    let folder = app.vault.getFolderByPath(dir.label);
-    if (folder) {
-      let count2 = 0, walk = (f) => {
-        for (let child of f.children)
-          child instanceof import_obsidian21.TFolder ? walk(child) : count2++;
-      };
-      walk(folder), detected.push({ ...dir, count: count2 });
-    }
-  }
-  if (detected.length !== 0)
-    for (let item of detected)
-      new import_obsidian21.Setting(containerEl).setName(`\u26A0 Detected: ${item.label}/ (${item.count.toLocaleString()} files)`).setDesc(`${item.desc} \u2014 should not be synced`).addButton(
-        (btn) => btn.setButtonText("Add to ignores").setCta().onClick(async () => {
-          let current = plugin.settings.ignorePatterns.trim();
-          plugin.settings.ignorePatterns = current ? `${current}
-${item.pattern}` : item.pattern, await plugin.saveSettings(), new import_obsidian21.Notice(`Added ${item.pattern} to ignore patterns`), redisplay();
-        })
-      ).settingEl.addClass("engram-status-warning");
-}
-
-// src/tabs/start-tab.ts
-function pickInitialTab(settings) {
-  return !!settings.apiUrl && (!!settings.apiKey || !!settings.refreshToken) ? "account" : "about";
-}
-
 // src/tabs/sync-center-tab.ts
 function renderSyncCenterTab(ctx) {
   let { containerEl, plugin } = ctx, refresh = () => renderSyncCenter(containerEl, plugin, refresh);
@@ -18039,10 +18460,15 @@ function renderSyncCenterTab(ctx) {
 }
 
 // src/settings.ts
-var EngramSyncSettingTab = class extends import_obsidian22.PluginSettingTab {
+var EngramSyncSettingTab = class extends import_obsidian23.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.statusContainerEl = null;
+    /** The wrapper this tab currently has installed in the engine's single
+     *  onSyncProgress slot, and whatever was in the slot before it. See
+     *  installProgressBar. */
+    this.installedProgressCb = null;
+    this.prevProgressCb = null;
     /** Container the UI was last drawn into. Differs by path: this.containerEl
      *  on <1.13 (display()), the render-hatch host on 1.13+. rerender() targets
      *  it so redisplay/device-flow re-renders land in the right place. */
@@ -18109,8 +18535,8 @@ var EngramSyncSettingTab = class extends import_obsidian22.PluginSettingTab {
       text: "Syncing...",
       cls: "engram-progress-label"
     }), progressBarInner = progressContainer.createDiv({ cls: "engram-progress-bar-outer" }).createDiv({ cls: "engram-progress-bar-inner" }), prevTotals = /* @__PURE__ */ new Map();
-    this.plugin.syncEngine.onSyncProgress = (progress) => {
-      var _a, _b;
+    this.installProgressBar((progress) => {
+      var _a, _b, _c;
       if (progress.phase === "complete") {
         progressContainer.removeClass("is-active"), prevTotals.clear();
         return;
@@ -18122,11 +18548,11 @@ var EngramSyncSettingTab = class extends import_obsidian22.PluginSettingTab {
         (_b = prevTotals.get(progress.phase)) != null ? _b : 0
       );
       prevTotals.set(progress.phase, total);
-      let phaseLabel = progress.phase === "deleting" ? "Deleting local files" : progress.phase === "pushing" ? "Pushing notes" : progress.phase === "pulling" ? "Pulling notes" : "Syncing attachments", failedSuffix = progress.failed > 0 ? ` (${progress.failed} failed)` : "";
+      let phaseLabel = (_c = PHASE_FALLBACK_LABEL[progress.phase]) != null ? _c : progress.phase, failedSuffix = progress.failed > 0 ? ` (${progress.failed} failed)` : "";
       progressLabel.setText(
         total > 0 ? `${phaseLabel}... ${current}/${total}${failedSuffix}` : `${phaseLabel}... ${current}${failedSuffix}`
       ), progressBarInner.style.width = `${pct}%`;
-    };
+    });
     let tabs = [
       { id: "about", label: "\u{1F44B} Welcome", render: renderAboutTab },
       { id: "account", label: "\u2601\uFE0F Cloud", render: renderAccountTab },
@@ -18142,14 +18568,17 @@ var EngramSyncSettingTab = class extends import_obsidian22.PluginSettingTab {
       let tab = (_a = tabs.find((t) => t.id === tabId)) != null ? _a : tabs[0];
       if (!tab) return;
       let btn = tabBar.querySelector(`[data-tab="${tab.id}"]`);
-      btn == null || btn.addClass("is-active"), tab.render({ ...ctx, containerEl: contentEl });
+      btn == null || btn.addClass("is-active"), Promise.resolve(tab.render({ ...ctx, containerEl: contentEl })).catch(
+        (e) => {
+          new import_obsidian23.Notice(`Engram: settings tab failed to render (${errMsg(e)})`);
+        }
+      );
     }, ctx = {
       containerEl: contentEl,
       app: this.app,
       plugin: this.plugin,
       redisplay: () => this.rerender(),
       startDeviceFlow: () => this.startDeviceFlow(),
-      openProgressModal: () => this.openProgressModal(),
       switchToTab: (id2) => activateTab(id2)
     };
     for (let tab of tabs) {
@@ -18162,12 +18591,36 @@ var EngramSyncSettingTab = class extends import_obsidian22.PluginSettingTab {
     let startTab = tabs.find((t) => t.id === this.activeTab) ? this.activeTab : "account";
     activateTab(startTab);
   }
-  /** Open a progress modal and wire it to the sync engine's progress callback. */
-  async openProgressModal() {
-    let modal = new SyncProgressModal(this.app), prevCallback = this.plugin.syncEngine.onSyncProgress;
-    return this.plugin.syncEngine.onSyncProgress = (progress) => {
-      modal.update(progress), prevCallback == null || prevCallback(progress);
-    }, modal.open(), await new Promise((resolve) => window.requestAnimationFrame(resolve)), modal;
+  /** Install `render` into the engine's single onSyncProgress slot by
+   *  CHAINING, mirroring runSyncWithProgress: capture the previous callback
+   *  and forward to it. A bare assignment here silently disconnected an open
+   *  SyncProgressModal whenever settings (re)rendered mid-sync, and the
+   *  modal's own restore then wiped the settings bar. Re-install replaces the
+   *  prior wrapper (re-render must not stack), and a wrapper that is no
+   *  longer current renders nothing but keeps forwarding — it may be held
+   *  mid-chain by a modal that captured it.
+   *
+   *  `prev` is captured PER WRAPPER in the closure, never read off the shared
+   *  field at call time: a modal can restore a superseded wrapper into the
+   *  slot, and a later install then points the field at that same dead
+   *  wrapper — a call-time read makes it forward to itself (unbounded
+   *  recursion, crashing the in-flight sync's emit). The field exists only
+   *  for uninstall's head-restore. */
+  installProgressBar(render) {
+    this.uninstallProgressBar();
+    let prev = this.plugin.syncEngine.onSyncProgress;
+    this.prevProgressCb = prev;
+    let wrapper = (progress) => {
+      this.installedProgressCb === wrapper && render(progress), prev == null || prev(progress);
+    };
+    this.installedProgressCb = wrapper, this.plugin.syncEngine.onSyncProgress = wrapper;
+  }
+  /** Detach the settings progress bar (hide/re-render). Restores the slot
+   *  when this wrapper is still at the head; if a modal chained on top, the
+   *  wrapper stays in its chain but goes inert (see installProgressBar). */
+  uninstallProgressBar() {
+    let wrapper = this.installedProgressCb;
+    wrapper && (this.installedProgressCb = null, this.plugin.syncEngine.onSyncProgress === wrapper && (this.plugin.syncEngine.onSyncProgress = this.prevProgressCb));
   }
   async startDeviceFlow() {
     let result = await new DeviceFlowModal(this.app, this.plugin).waitForResult();
@@ -18195,7 +18648,7 @@ var EngramSyncSettingTab = class extends import_obsidian22.PluginSettingTab {
     }
   }
   hide() {
-    this.plugin.onStatusBarChange = null, this.statusContainerEl = null, this.activeContainerEl = null;
+    this.plugin.onStatusBarChange = null, this.uninstallProgressBar(), this.statusContainerEl = null, this.activeContainerEl = null;
   }
 };
 
@@ -18220,7 +18673,7 @@ function createSingleFlight() {
 }
 
 // src/sync.ts
-var import_obsidian23 = require("obsidian");
+var import_obsidian24 = require("obsidian");
 
 // src/ignored-files.ts
 var IgnoredFiles = class {
@@ -18257,6 +18710,17 @@ var IgnoredFiles = class {
 };
 
 // src/offline-queue.ts
+var QueuePriority = {
+  /** The note the user currently has open. */
+  OpenNote: 0,
+  /** Ordinary edit-driven sync. The default. */
+  Normal: 10,
+  /** Bulk work: initial import, full push, resync sweeps. */
+  Background: 20
+};
+function queuedReason(state) {
+  return state.queued === 0 ? null : state.offline ? "offline" : state.syncBlocked ? "sync-blocked" : state.inFlight > 0 ? "in-progress" : "waiting";
+}
 function dedupKey(pathOrEntry, vaultId) {
   return typeof pathOrEntry == "object" ? pathOrEntry.vaultId ? `${pathOrEntry.vaultId}:${pathOrEntry.path}` : pathOrEntry.path : vaultId ? `${vaultId}:${pathOrEntry}` : pathOrEntry;
 }
@@ -18291,9 +18755,25 @@ var OfflineQueue = class {
     var _a;
     return ((_a = this.entries.get(dedupKey(path, vaultId))) == null ? void 0 : _a.action) === "delete";
   }
-  /** Get all entries sorted by timestamp (oldest first). */
+  /** Remove a path's queued work immediately, without waiting on a persist
+   *  round trip. `dequeue` awaits persistence, which is right after a
+   *  successful sync but wrong for a rename or a vault switch: the caller needs
+   *  the entry gone before the flush loop can pick up work for a path that no
+   *  longer exists. Returns whether anything was removed. */
+  cancel(path, vaultId) {
+    let removed = this.entries.delete(dedupKey(path, vaultId));
+    return removed && this.schedulePersist(), removed;
+  }
+  /** Get all entries in flush order: priority first, then oldest-first within
+   *  a priority. An entry with no `priority` (persisted before the field
+   *  existed) counts as Normal, so an upgrade never demotes pending work. */
   all() {
-    return Array.from(this.entries.values()).sort((a, b) => a.timestamp - b.timestamp);
+    return Array.from(this.entries.values()).sort(
+      (a, b) => {
+        var _a, _b;
+        return ((_a = a.priority) != null ? _a : QueuePriority.Normal) - ((_b = b.priority) != null ? _b : QueuePriority.Normal) || a.timestamp - b.timestamp;
+      }
+    );
   }
   /** Number of queued entries. */
   get size() {
@@ -18311,13 +18791,77 @@ var OfflineQueue = class {
   schedulePersist() {
     this.persistTimer || (this.persistTimer = window.setTimeout(() => {
       var _a;
-      this.persistTimer = null, (_a = this.persistFn) == null || _a.call(this, this.all());
+      this.persistTimer = null, (_a = this.persistFn) == null || _a.call(this, this.all()).catch((e) => {
+        rlog().warn("queue", `debounced persist failed: ${errMsg(e)}`);
+      });
     }, this.persistDelayMs));
   }
   /** Persist immediately (cancels any pending debounced persist). */
   async persistNow() {
     var _a;
     this.persistTimer && (window.clearTimeout(this.persistTimer), this.persistTimer = null), await ((_a = this.persistFn) == null ? void 0 : _a.call(this, this.all()));
+  }
+};
+
+// src/synced-file.ts
+var SyncedFile = class {
+  constructor() {
+    /** Marker → pending expiry timer id. */
+    this.markers = /* @__PURE__ */ new Map();
+  }
+  get empty() {
+    return this.markers.size === 0;
+  }
+}, SyncedFileTable = class {
+  constructor(clock) {
+    this.clock = clock;
+    this.files = /* @__PURE__ */ new Map();
+  }
+  get size() {
+    return this.files.size;
+  }
+  /** Set `marker` on `path` for `ms`. Re-marking REPLACES the pending timer
+   *  rather than stacking a second one — two live timers for one marker means
+   *  the first expiry closes a window the second call had just extended. */
+  mark(path, marker, ms) {
+    var _a;
+    let file = (_a = this.files.get(path)) != null ? _a : new SyncedFile();
+    this.files.set(path, file);
+    let existing = file.markers.get(marker);
+    existing !== void 0 && this.clock.clearTimeout(existing), file.markers.set(
+      marker,
+      this.clock.setTimeout(() => {
+        file.markers.delete(marker), file.empty && this.files.get(path) === file && this.files.delete(path);
+      }, ms)
+    );
+  }
+  has(path, marker) {
+    var _a, _b;
+    return (_b = (_a = this.files.get(path)) == null ? void 0 : _a.markers.has(marker)) != null ? _b : !1;
+  }
+  /** Drop `marker` now and cancel its pending expiry. */
+  clearMarker(path, marker) {
+    let file = this.files.get(path), timer = file == null ? void 0 : file.markers.get(marker);
+    !file || timer === void 0 || (this.clock.clearTimeout(timer), file.markers.delete(marker), file.empty && this.files.delete(path));
+  }
+  /** Move a path's state. Any state already at `newPath` is discarded, with its
+   *  timers cancelled — orphaning them would fire callbacks against an entry
+   *  no longer in the table. */
+  rename(oldPath, newPath) {
+    let file = this.files.get(oldPath);
+    file && (this.forget(newPath), this.files.delete(oldPath), this.files.set(newPath, file));
+  }
+  /** Drop a path entirely, cancelling its timers. */
+  forget(path) {
+    let file = this.files.get(path);
+    if (file) {
+      for (let timer of file.markers.values()) this.clock.clearTimeout(timer);
+      this.files.delete(path);
+    }
+  }
+  /** Cancel every outstanding timer. Call on teardown. */
+  destroy() {
+    for (let path of [...this.files.keys()]) this.forget(path);
   }
 };
 
@@ -18391,9 +18935,6 @@ async function reconcileColdStart(file, crdt, onCorruption, maxBytes = MAX_CRDT_
     (_a = crdt.enroll) == null || _a.call(crdt, file.noteId);
   }
 }
-function isHttpStatus(e, status) {
-  return typeof e == "object" && e !== null && e.status === status;
-}
 function countFolders(paths) {
   let set2 = /* @__PURE__ */ new Set();
   for (let p of paths) {
@@ -18403,12 +18944,6 @@ function countFolders(paths) {
   return set2.size;
 }
 var ECHO_COOLDOWN_MS = 5e3, RECENT_DELETE_COOLDOWN_MS = 6e4, DEGRADED_NOTICE_DEBOUNCE_MS = 1500, DEGRADED_NOTICE_DURATION_MS = 1e4, ALWAYS_IGNORED = [".trash/", ".git/"];
-function fnv1a(s) {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++)
-    h ^= s.charCodeAt(i), h = Math.imul(h, 16777619);
-  return h >>> 0;
-}
 var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   "png",
   "jpg",
@@ -18446,7 +18981,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   webm: "video/webm",
   zip: "application/zip",
   canvas: "application/json"
-}, _SyncEngine = class _SyncEngine {
+}, PUSH_BATCH_SIZE = 10, _SyncEngine = class _SyncEngine {
   constructor(app, api, settings, saveData, time = new DefaultTimeProvider()) {
     this.app = app;
     this.api = api;
@@ -18460,21 +18995,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.degradedNoticeTimer = null;
     this.ignorePatterns = [];
     this.pushing = /* @__PURE__ */ new Set();
-    this.recentlyPushed = /* @__PURE__ */ new Map();
-    /** Paths whose local trash APPLIED a remote change (WS delete, pull
-     *  tombstone, relocation/orphan cleanup). The vault 'delete' event that
-     *  trash fires must not push a DELETE back to the server: the server
-     *  already knows, and the path-keyed CAS-less delete would kill a note
-     *  recreated at the same path in between (wipe→re-push, delete→recreate).
-     *  Found by test_86's settle assert: B's echo-push landed after A's
-     *  replace-remote re-upload and tombstoned the fresh note. */
-    this.remotelyDeleted = /* @__PURE__ */ new Map();
-    /** Paths just written to disk by flushFromCrdt (remote CRDT update → disk).
-     *  Distinct from recentlyPushed (WS echo suppression after a push): only the
-     *  CRDT disk-write echo must be swallowed by handleModify. Folding this into
-     *  recentlyPushed would make handleModify drop REAL user edits within the
-     *  post-push cooldown — silently losing edits and breaking conflict detection. */
-    this.recentlyFlushed = /* @__PURE__ */ new Map();
+    /** Per-path echo-suppression markers (#358). Replaces three parallel
+     *  path-keyed TTL maps — `recentlyPushed`, `remotelyDeleted`,
+     *  `recentlyFlushed` — with one object per file. See synced-file.ts for the
+     *  meaning of each marker and why `flushed` must stay distinct from `pushed`.
+     *  Unlike the maps it replaces, its timers are cancelled on destroy(). */
+    this.files = new SyncedFileTable({
+      setTimeout: (cb, ms) => this.time.setTimeout(cb, ms),
+      clearTimeout: (id2) => this.time.clearTimeout(id2)
+    });
     /** note_ids THIS device recently deleted. Both CRDT convergence paths
      *  (the op-log replay's `applyOp` and `applyPushedNoteUpdate`'s fan-out)
      *  refuse to resurrect an id in here for RECENT_DELETE_COOLDOWN_MS. A stale
@@ -18501,6 +19030,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.syncBlocked = !1;
     this.activePushCount = 0;
     this.maxConcurrentPushes = 5;
+    /** >0 while a bulk sweep (pushAll / fullSync) is running. Queue entries it
+     *  produces get Background priority — see priorityForPath. */
+    this.bulkDepth = 0;
     this.pushWaiters = [];
     this.queue = new OfflineQueue();
     /** Per-file sync metadata (content hash + server version).
@@ -18970,7 +19502,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   cacheManifestOwners(manifest) {
     this.manifestPathOwners = new Map(
-      manifest.notes.filter((n) => n.id).map((n) => [(0, import_obsidian23.normalizePath)(n.path), n.id])
+      manifest.notes.filter((n) => n.id).map((n) => [(0, import_obsidian24.normalizePath)(n.path), n.id])
     ), this.manifestOwnersFetchedAt = Date.now();
   }
   /** Trash files whose refused id-keyed-move turned out to be a genuine
@@ -19088,7 +19620,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  exists. Md + size gated exactly like the pre-push enroll (an oversized
    *  doc must never enroll — 8 MB WS frame limit). */
   refireEnrollmentOnFirstConfirm(noteId, path, content) {
-    !noteId || !this.crdtEnrollment || this.isNoteConfirmed(noteId) || this.isCrdtEligiblePath(path) && (exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES) || this.isLiveBound((0, import_obsidian23.normalizePath)(path)) && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId)));
+    !noteId || !this.crdtEnrollment || this.isNoteConfirmed(noteId) || this.isCrdtEligiblePath(path) && (exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES) || this.isLiveBound((0, import_obsidian24.normalizePath)(path)) && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId)));
   }
   /** Drop a note_id's confirmed status when its server row is deleted, so a
    *  subsequent push of the same id (a rename's new-path push) takes the
@@ -19153,7 +19685,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  the server, so REMOTE_ORIGIN suppression is untouched. */
   async applyCrdtCreateAck(localId, serverId, path) {
     var _a, _b, _c, _d, _e;
-    let normalized = (0, import_obsidian23.normalizePath)(path), effectiveId = localId, transferredLiveContent = !1;
+    let normalized = (0, import_obsidian24.normalizePath)(path), effectiveId = localId, transferredLiveContent = !1;
     if (serverId && serverId !== localId) {
       if ((_a = this.noteIdMap) == null || _a.set(normalized, serverId), effectiveId = serverId, rlog().info(
         "crdt",
@@ -19183,7 +19715,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       (_d = this.crdtEnrollment) == null || _d.reset(localId);
     }
     let file = this.crdt && !transferredLiveContent ? this.app.vault.getAbstractFileByPath(normalized) : null;
-    if (this.crdt && file instanceof import_obsidian23.TFile && this.isCrdtEligible(file))
+    if (this.crdt && file instanceof import_obsidian24.TFile && this.isCrdtEligible(file))
       try {
         let consumed = await routeModify(
           {
@@ -19219,7 +19751,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  adopt the server lineage instead of re-encoding it (backend #846
    *  lineage doubling). Unknown paths return false (authored notes seed). */
   isUnchangedSynced(path, content) {
-    let state = this.syncState.get((0, import_obsidian23.normalizePath)(path));
+    let state = this.syncState.get((0, import_obsidian24.normalizePath)(path));
     return state !== void 0 && state.hash === fnv1a(content);
   }
   /** True only when this path has a recorded CRDT baseline that disagrees
@@ -19229,7 +19761,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  cold-start does NOT open a Y.Doc per note (the reconnect-storm amplifier).
    *  Inverse of isUnchangedSynced except it also requires a baseline to exist. */
   needsColdReconcile(path, content) {
-    let state = this.syncState.get((0, import_obsidian23.normalizePath)(path));
+    let state = this.syncState.get((0, import_obsidian24.normalizePath)(path));
     return state !== void 0 && state.hash !== fnv1a(content);
   }
   /** Should an inbound delete preserve `disk` as a keep-both conflict copy
@@ -19261,10 +19793,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     var _a, _b;
     if (this.syncBlocked)
       return devLog().log("sync-blocked", `flushFromCrdt short-circuited \u2014 gate closed: ${path}`), !0;
-    let normalized = (0, import_obsidian23.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized);
-    if (file instanceof import_obsidian23.TFile && await this.app.vault.cachedRead(file) === content)
+    let normalized = (0, import_obsidian24.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized);
+    if (file instanceof import_obsidian24.TFile && await this.app.vault.cachedRead(file) === content)
       return this.recordCrdtBaseline(normalized, content), !0;
-    if (file instanceof import_obsidian23.TFile && content.trim() === "") {
+    if (file instanceof import_obsidian24.TFile && content.trim() === "") {
       let prev = "";
       try {
         prev = await this.app.vault.cachedRead(file);
@@ -19286,7 +19818,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     this.markRecentlyFlushed(normalized);
     try {
-      return file instanceof import_obsidian23.TFile ? await this.app.vault.modify(file, content) : await this.createFileWithFolders(normalized, content), this.recordCrdtBaseline(normalized, content), !0;
+      return file instanceof import_obsidian24.TFile ? await this.app.vault.modify(file, content) : await this.createFileWithFolders(normalized, content), this.recordCrdtBaseline(normalized, content), !0;
     } catch (e) {
       return rlog().error("crdt", `flushFromCrdt: write failed for ${path}: ${errMsg(e)}`), !1;
     }
@@ -19307,7 +19839,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   async recordLiveBoundBaseline(file) {
     try {
       this.recordCrdtBaseline(
-        (0, import_obsidian23.normalizePath)(file.path),
+        (0, import_obsidian24.normalizePath)(file.path),
         await this.app.vault.cachedRead(file)
       );
     } catch (e) {
@@ -19342,8 +19874,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   async captureDiskDriftBeforeRemote(path, noteId) {
     var _a, _b;
     if (!this.crdt) return;
-    let normalized = (0, import_obsidian23.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized);
-    if (!(file instanceof import_obsidian23.TFile)) return;
+    let normalized = (0, import_obsidian24.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized);
+    if (!(file instanceof import_obsidian24.TFile)) return;
     let disk;
     try {
       disk = await this.app.vault.cachedRead(file);
@@ -19393,8 +19925,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  Best-effort: isolates its own failure, never throws. */
   async adoptHistoryLessNote(path, noteId, update, head) {
     if (!this.crdt) return "deferred";
-    let normalized = (0, import_obsidian23.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized), disk = null;
-    if (file instanceof import_obsidian23.TFile)
+    let normalized = (0, import_obsidian24.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized), disk = null;
+    if (file instanceof import_obsidian24.TFile)
       try {
         disk = await this.app.vault.cachedRead(file);
       } catch (e) {
@@ -19424,8 +19956,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  real errors (disk full, permission, illegal path) propagate. Returns the
    *  conflict path written. */
   async writeDriftConflictCopy(normalized, localDisk) {
-    let stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-"), ext = normalized.endsWith(".canvas") ? "canvas" : "md", conflictPath = `${normalized.replace(/\.(md|canvas)$/, "")} (conflict ${stamp}).${ext}`;
-    return await this.createFileWithFolders(conflictPath, localDisk), this.syncState.set((0, import_obsidian23.normalizePath)(conflictPath), { hash: fnv1a(localDisk) }), conflictPath;
+    let stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-"), ext = isCanvasPath(normalized) ? "canvas" : "md", conflictPath = `${normalized.replace(/\.(md|canvas)$/, "")} (conflict ${stamp}).${ext}`;
+    return await this.createFileWithFolders(conflictPath, localDisk), this.syncState.set((0, import_obsidian24.normalizePath)(conflictPath), { hash: fnv1a(localDisk) }), conflictPath;
   }
   /** Materialize an EMPTY note whose emptiness the server has just confirmed.
    *
@@ -19456,7 +19988,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       return;
     }
     if (!this.isCrdtEligiblePath(path)) return;
-    let normalized = (0, import_obsidian23.normalizePath)(path);
+    let normalized = (0, import_obsidian24.normalizePath)(path);
     if (this.app.vault.getAbstractFileByPath(normalized)) return;
     if (this.recentlyDeleted.has(noteId)) {
       rlog().info("crdt", `empty-materialize skip (recent local delete): ${normalized}`);
@@ -19488,9 +20020,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  null), where the isSynced gate is the backstop. */
   async materializeRelocated(path, noteId) {
     var _a, _b;
-    if (!this.crdt || !this.isCrdtEligiblePath(path) || typeof this.crdt.isSynced != "function" || !this.crdt.isSynced(noteId) || this.app.vault.getAbstractFileByPath((0, import_obsidian23.normalizePath)(path))) return;
+    if (!this.crdt || !this.isCrdtEligiblePath(path) || typeof this.crdt.isSynced != "function" || !this.crdt.isSynced(noteId) || this.app.vault.getAbstractFileByPath((0, import_obsidian24.normalizePath)(path))) return;
     let text2 = await this.crdt.projectedText(noteId), canonical = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId)) != null ? _b : null;
-    if (canonical !== null && (0, import_obsidian23.normalizePath)(canonical) !== (0, import_obsidian23.normalizePath)(path)) {
+    if (canonical !== null && (0, import_obsidian24.normalizePath)(canonical) !== (0, import_obsidian24.normalizePath)(path)) {
       rlog().info(
         "ws",
         `Stale materialize skipped for ${noteId}: canonical=${canonical} captured=${path}`
@@ -19593,7 +20125,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       this.seqHealLastAt = now, this.catchupViaSeqReplay();
       return;
     }
-    this.seqHealTimer === null && (this.seqHealTimer = window.setTimeout(() => {
+    this.seqHealTimer === null && (this.seqHealTimer = this.time.setTimeout(() => {
       this.seqHealTimer = null, this.seqHealLastAt = Date.now(), rlog().info("crdt", "gap-heal replay (trailing, throttled)"), this.catchupViaSeqReplay();
     }, _SyncEngine.SEQ_HEAL_COOLDOWN_MS - since));
   }
@@ -19668,10 +20200,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   getCrdtHead(path) {
     var _a;
-    return (_a = this.syncState.get((0, import_obsidian23.normalizePath)(path))) == null ? void 0 : _a.crdtHead;
+    return (_a = this.syncState.get((0, import_obsidian24.normalizePath)(path))) == null ? void 0 : _a.crdtHead;
   }
   setCrdtHead(path, head) {
-    let key = (0, import_obsidian23.normalizePath)(path), existing = this.syncState.get(key);
+    let key = (0, import_obsidian24.normalizePath)(path), existing = this.syncState.get(key);
     this.syncState.set(key, { ...existing != null ? existing : { hash: 0 }, crdtHead: head });
   }
   /** Public: consumed as `CrdtManagerOptions.canSendLive` by the wiring in
@@ -19738,33 +20270,72 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     return this.ignoredFiles.has(path) ? !0 : this.ignorePatterns.some((pattern) => pattern.endsWith("/") ? path.startsWith(pattern) || path.includes(`/${pattern}`) : path === pattern || path.endsWith(`/${pattern}`));
   }
   isMarkdown(file) {
-    return file instanceof import_obsidian23.TFile && file.extension === "md";
+    return file instanceof import_obsidian24.TFile && file.extension === "md";
+  }
+  /** Stage the convergence episode a socket re-handshake must commit, then
+   *  fire the re-handshake. The {stage, converge} pair was written out
+   *  five times; a field added to one copy and not another silently forked
+   *  the commit contract. */
+  stageAndConverge(noteId, path, serverHash, content, version, seq2) {
+    this.pendingConvergence.set(noteId, { path, serverHash, content, version, seq: seq2 }), this.socketConverge(path, noteId);
+  }
+  /** The full local cleanup for a remotely-deleted file: trash it (marked so
+   *  this device's own vault-delete event is echo-suppressed), prune any
+   *  now-empty parent folders, and drop its sync/merge-base state. This
+   *  four-line block existed verbatim at three sites plus partial variants.
+   *  `dropBase` is false only for attachments, which have no merge base. */
+  async applyRemoteRemoval(file, opts) {
+    var _a;
+    let normalized = (0, import_obsidian24.normalizePath)(file.path);
+    await this.trashRemotelyDeleted(file), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (opts == null ? void 0 : opts.dropBase) !== !1 && ((_a = this.baseStore) == null || _a.delete(normalized));
+  }
+  /** Injected-clock sleep: tests advance time instead of spending it. The
+   *  inline window.setTimeout promise this replaces bypassed the injected
+   *  TimeProvider at three sites. */
+  sleep(ms) {
+    return new Promise((resolve) => this.time.setTimeout(resolve, ms));
+  }
+  /** The vault a queue entry belongs to: its own stamp, else the current
+   *  vault (pre-stamp entries), else undefined. Was inlined 5x in the flush
+   *  path. */
+  entryVaultId(entry) {
+    var _a, _b;
+    return (_b = (_a = entry.vaultId) != null ? _a : this.settings.vaultId) != null ? _b : void 0;
+  }
+  /** Close a note's CRDT room: destroy the doc (the registry clears its
+   *  enrollment at the destroy choke point) and reset the enrollment port,
+   *  which is a separate object only in test harnesses. This pair was
+   *  hand-written at 6 call sites; a missed pair left a tombstoned id
+   *  enrolled forever. */
+  async teardownCrdtDoc(noteId) {
+    var _a, _b;
+    await ((_a = this.crdt) == null ? void 0 : _a.removeDoc(noteId)), (_b = this.crdtEnrollment) == null || _b.reset(noteId);
   }
   /** CRDT-eligible = markdown OR canvas: both sync over the Yjs transport
    *  (the manager's docKind picks the per-type schema). Binary/attachment
    *  types are NOT eligible and stay on the REST/attachment path. */
   isCrdtEligible(file) {
-    return file instanceof import_obsidian23.TFile && (file.extension === "md" || file.extension === "canvas");
+    return file instanceof import_obsidian24.TFile && isCrdtEligiblePath(file.path);
   }
   /** Path-string variant of isCrdtEligible for the pull/apply path, which works
    *  with normalized paths (from a NoteChange), not TFile handles. */
   isCrdtEligiblePath(path) {
-    return path.endsWith(".md") || path.endsWith(".canvas");
+    return isCrdtEligiblePath(path);
   }
   /** True for a canvas note path. Canvas is CRDT but STRUCTURAL: its authoritative
    *  content lives in the Yjs doc, never notes.content (which the backend keeps
    *  vestigial for canvas), so the pull path must converge it over the Yjs
    *  handshake, never by writing the seq-feed `content`. */
   isCanvasPath(path) {
-    return path.endsWith(".canvas");
+    return isCanvasPath(path);
   }
   /** Check if a file should be synced (markdown, canvas, or binary attachment). */
   isSyncable(file) {
-    return file instanceof import_obsidian23.TFile ? TEXT_EXTENSIONS.has(file.extension) || BINARY_EXTENSIONS.has(file.extension) : !1;
+    return file instanceof import_obsidian24.TFile ? TEXT_EXTENSIONS.has(file.extension) || BINARY_EXTENSIONS.has(file.extension) : !1;
   }
   /** Check if a file is a binary attachment (not text). */
   isBinaryFile(file) {
-    return file instanceof import_obsidian23.TFile ? BINARY_EXTENSIONS.has(file.extension) : !1;
+    return file instanceof import_obsidian24.TFile ? BINARY_EXTENSIONS.has(file.extension) : !1;
   }
   /** Get MIME type for a file. */
   getMimeType(file) {
@@ -19783,12 +20354,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       return;
     }
     let crdtManaged = !!this.crdt && this.isCrdtEligible(file);
-    if (!crdtManaged && this.recentlyFlushed.has(file.path)) {
+    if (!crdtManaged && this.files.has(file.path, "flushed")) {
       rlog().info("sync", `Modify echo skip (recently flushed from CRDT): ${file.path}`);
       return;
     }
     if (crdtManaged && this.isLiveBound(file.path)) {
-      file instanceof import_obsidian23.TFile && this.recordLiveBoundBaseline(file);
+      file instanceof import_obsidian24.TFile && this.recordLiveBoundBaseline(file);
       return;
     }
     let armedPath = file.path, existing = this.debounceTimers.get(armedPath);
@@ -19800,7 +20371,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Handle a vault delete event. */
   async handleDelete(file) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+    var _a, _b, _c, _d, _e;
     if (this.syncBlocked) {
       devLog().log("sync-blocked", "handleDelete short-circuited \u2014 gate closed");
       return;
@@ -19809,23 +20380,23 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let isBinary = this.isBinaryFile(file), existing = this.debounceTimers.get(file.path);
     existing && (this.time.clearTimeout(existing), this.debounceTimers.delete(file.path));
     let crdtNoteId = isBinary ? null : (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(file.path)) != null ? _b : null;
-    if (crdtNoteId && this.markRecentlyDeleted(crdtNoteId), isBinary || (_c = this.noteIdMap) == null || _c.delete(file.path), this.syncState.delete((0, import_obsidian23.normalizePath)(file.path)), this.remotelyDeleted.has(file.path)) {
-      this.remotelyDeleted.delete(file.path), rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`), this.isCrdtEligible(file) && crdtNoteId && (await ((_d = this.crdt) == null ? void 0 : _d.removeDoc(crdtNoteId)), (_e = this.crdtEnrollment) == null || _e.reset(crdtNoteId));
+    if (crdtNoteId && this.markRecentlyDeleted(crdtNoteId), isBinary || (_c = this.noteIdMap) == null || _c.delete(file.path), this.syncState.delete((0, import_obsidian24.normalizePath)(file.path)), this.files.has(file.path, "remotelyDeleted")) {
+      this.files.clearMarker(file.path, "remotelyDeleted"), rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`), this.isCrdtEligible(file) && crdtNoteId && await this.teardownCrdtDoc(crdtNoteId);
       return;
     }
     try {
-      isBinary ? (await this.api.deleteAttachment(file.path), this.goOnline()) : this.isCrdtEligible(file) ? crdtNoteId && ((_f = this.crdtEnqueue) == null || _f.call(this, { kind: "delete", docId: crdtNoteId, path: file.path })) : (await this.api.deleteNote(file.path), this.goOnline()), this.isCrdtEligible(file) && crdtNoteId && (await ((_g = this.crdt) == null ? void 0 : _g.removeDoc(crdtNoteId)), (_h = this.crdtEnrollment) == null || _h.reset(crdtNoteId));
+      isBinary ? (await this.api.deleteAttachment(file.path), this.goOnline()) : this.isCrdtEligible(file) ? crdtNoteId && ((_d = this.crdtEnqueue) == null || _d.call(this, { kind: "delete", docId: crdtNoteId, path: file.path })) : (await this.api.deleteNote(file.path), this.goOnline()), this.isCrdtEligible(file) && crdtNoteId && await this.teardownCrdtDoc(crdtNoteId);
     } catch (e) {
       if (isHttpStatus(e, 404)) {
-        this.goOnline(), this.isCrdtEligible(file) && crdtNoteId && (await ((_i = this.crdt) == null ? void 0 : _i.removeDoc(crdtNoteId)), (_j = this.crdtEnrollment) == null || _j.reset(crdtNoteId));
+        this.goOnline(), this.isCrdtEligible(file) && crdtNoteId && await this.teardownCrdtDoc(crdtNoteId);
         return;
       }
-      console.error("Engram Sync: failed to delete %s", file.path, e), await this.enqueueChange({
+      console.error("Engram Sync: failed to delete %s", file.path, e), rlog().error("push", `Delete failed (queued): ${file.path} | ${errMsg(e)}`), await this.enqueueChange({
         path: file.path,
         action: "delete",
         kind: isBinary ? "attachment" : "note",
         timestamp: Date.now(),
-        vaultId: (_k = this.settings.vaultId) != null ? _k : void 0
+        vaultId: (_e = this.settings.vaultId) != null ? _e : void 0
       }), this.maybeGoOffline(e);
     }
   }
@@ -19842,7 +20413,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       try {
         isBinary ? (await this.api.deleteAttachment(oldPath), this.goOnline()) : this.isCrdtEligible(file) || (await this.api.deleteNote(oldPath), this.goOnline());
       } catch (e) {
-        isHttpStatus(e, 404) ? this.goOnline() : (console.error("Engram Sync: failed to delete old path %s", oldPath, e), await this.enqueueChange({
+        isHttpStatus(e, 404) ? this.goOnline() : (console.error("Engram Sync: failed to delete old path %s", oldPath, e), rlog().error(
+          "push",
+          `Rename old-leg delete failed (queued): ${oldPath} | ${errMsg(e)}`
+        ), await this.enqueueChange({
           path: oldPath,
           action: "delete",
           kind: isBinary ? "attachment" : "note",
@@ -19850,7 +20424,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           vaultId: (_b = this.settings.vaultId) != null ? _b : void 0
         }), this.maybeGoOffline(e));
       }
-    isBinary || ((_c = this.baseStore) == null || _c.rename((0, import_obsidian23.normalizePath)(oldPath), (0, import_obsidian23.normalizePath)(file.path)), this.syncState.delete((0, import_obsidian23.normalizePath)(oldPath)), this.unconfirmNoteId((_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(file.path)) != null ? _e : null)), this.shouldIgnore(file.path) || await this.pushFile(file);
+    isBinary || ((_c = this.baseStore) == null || _c.rename((0, import_obsidian24.normalizePath)(oldPath), (0, import_obsidian24.normalizePath)(file.path)), this.syncState.delete((0, import_obsidian24.normalizePath)(oldPath)), this.unconfirmNoteId((_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(file.path)) != null ? _e : null)), this.shouldIgnore(file.path) || await this.pushFile(file);
   }
   /** Push a folder-create from the vault to the server's explicit-folder
    *  table. Idempotent client-side (skips folders already in the set) and
@@ -19895,8 +20469,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (!this.explicitFolders) return;
     let loaded = (_c = (_b = (_a = this.app.vault).getAllLoadedFiles) == null ? void 0 : _b.call(_a)) != null ? _c : [];
     for (let f of loaded) {
-      if (!(f instanceof import_obsidian23.TFolder)) continue;
-      let path = (0, import_obsidian23.normalizePath)(f.path);
+      if (!(f instanceof import_obsidian24.TFolder)) continue;
+      let path = (0, import_obsidian24.normalizePath)(f.path);
       if (!(!path || path === "/") && !this.shouldIgnore(path) && !this.explicitFolders.has(path) && !this.subtreeHasSyncableFile(f))
         try {
           await this.api.createFolder(path), await this.explicitFolders.add(path);
@@ -19908,9 +20482,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   /** True if any descendant file (at any depth) is syncable and not ignored. */
   subtreeHasSyncableFile(folder) {
     for (let child of folder.children)
-      if (child instanceof import_obsidian23.TFolder) {
+      if (child instanceof import_obsidian24.TFolder) {
         if (this.subtreeHasSyncableFile(child)) return !0;
-      } else if (child instanceof import_obsidian23.TFile && this.isSyncable(child) && !this.shouldIgnore(child.path))
+      } else if (child instanceof import_obsidian24.TFile && this.isSyncable(child) && !this.shouldIgnore(child.path))
         return !0;
     return !1;
   }
@@ -19938,7 +20512,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  pushModifiedFiles) pass force without this, so they stay quiet on
    *  plan-gated attachments. */
   async pushFile(file, force = !1, bypassPlanSkip = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w;
     if (this.pushing.has(file.path)) return !1;
     if (!bypassPlanSkip && this.isBinaryFile(file) && this.hasInformationalIssue(file.path))
       return devLog().log("push", `skip (plan-informational): ${file.path}`), !1;
@@ -19973,13 +20547,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     try {
       let mtime = file.stat.mtime / 1e3;
       if (isBinary) {
-        let buffer = await this.app.vault.readBinary(file), base64 = arrayBufferToBase64(buffer), hash = fnv1a(base64), existing = this.syncState.get((0, import_obsidian23.normalizePath)(file.path));
+        let buffer = await this.app.vault.readBinary(file), base64 = arrayBufferToBase64(buffer), hash = fnv1a(base64), existing = this.syncState.get((0, import_obsidian24.normalizePath)(file.path));
         if (!force && existing !== void 0 && hash === existing.hash)
           return devLog().log("push", `skip (echo): ${file.path}`), rlog().info("push", `Echo skip (attachment): ${file.path} | hash=${hash}`), !1;
         let mimeType = this.getMimeType(file);
-        await this.api.pushAttachment(file.path, base64, mimeType, mtime), this.syncState.set((0, import_obsidian23.normalizePath)(file.path), { hash });
+        await this.api.pushAttachment(file.path, base64, mimeType, mtime), this.syncState.set((0, import_obsidian24.normalizePath)(file.path), { hash });
       } else {
-        let content = await this.app.vault.cachedRead(file), hash = fnv1a(content), existing = this.syncState.get((0, import_obsidian23.normalizePath)(file.path));
+        let content = await this.app.vault.cachedRead(file), hash = fnv1a(content), existing = this.syncState.get((0, import_obsidian24.normalizePath)(file.path));
         if (!force && existing !== void 0 && hash === existing.hash)
           return devLog().log("push", `skip (echo): ${file.path}`), rlog().info("push", `Echo skip: ${file.path} | hash=${hash}`), !1;
         let noteId = (_c = (_b = this.noteIdMap) == null ? void 0 : _b.get(file.path)) != null ? _c : null;
@@ -20007,24 +20581,24 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             this.crdt,
             MAX_CRDT_NOTE_BYTES
           );
-          return consumed !== null ? (this.syncState.set((0, import_obsidian23.normalizePath)(file.path), {
+          return consumed !== null ? (this.syncState.set((0, import_obsidian24.normalizePath)(file.path), {
             ...existing,
             hash: fnv1a(consumed)
-          }), this.isLiveBound((0, import_obsidian23.normalizePath)(file.path)) && ((_f = this.crdtEnrollment) == null || _f.enroll(noteId)), success = !0, ((_h = (_g = this.crdtLive) == null ? void 0 : _g.call(this)) != null ? _h : !0) ? (devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0) : (await this.enqueueCrdtEdit(file, noteId), this.flushQueue(), devLog().log(
+          }), this.isLiveBound((0, import_obsidian24.normalizePath)(file.path)) && ((_f = this.crdtEnrollment) == null || _f.enroll(noteId)), success = !0, ((_h = (_g = this.crdtLive) == null ? void 0 : _g.call(this)) != null ? _h : !0) ? (devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0) : (await this.enqueueCrdtEdit(file, noteId), this.flushQueue(), devLog().log(
             "push",
             `crdt edit queued durably (channel down): ${file.path}`
           ), rlog().info(
             "push",
             `CRDT edit queued durably (channel down): ${file.path}`
-          ), !0)) : (this.isCrdtEligible(file) && !exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES) && this.isLiveBound((0, import_obsidian23.normalizePath)(file.path)) && ((_i = this.crdtEnrollment) == null || _i.enroll(noteId)), !0);
+          ), !0)) : (this.isCrdtEligible(file) && !exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES) && this.isLiveBound((0, import_obsidian24.normalizePath)(file.path)) && ((_i = this.crdtEnrollment) == null || _i.enroll(noteId)), !0);
         }
         if (this.crdtCreate && this.crdt && noteId && this.isCrdtEligible(file) && !this.hasServerNote(noteId) && ((_k = (_j = this.crdtLive) == null ? void 0 : _j.call(this)) == null || _k) && !exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES))
           try {
             let serverId = await this.crdtCreate(noteId, pushedPath), effectiveId = noteId;
             try {
               let consumed;
-              if (serverId && serverId !== noteId && this.isLiveBound((0, import_obsidian23.normalizePath)(pushedPath))) {
-                (_l = this.noteIdMap) == null || _l.set((0, import_obsidian23.normalizePath)(pushedPath), serverId), effectiveId = serverId;
+              if (serverId && serverId !== noteId && this.isLiveBound((0, import_obsidian24.normalizePath)(pushedPath))) {
+                (_l = this.noteIdMap) == null || _l.set((0, import_obsidian24.normalizePath)(pushedPath), serverId), effectiveId = serverId;
                 let mintText = await this.crdt.projectedText(noteId), serverHadContent = typeof this.crdt.hasHistory == "function" && await this.crdt.hasHistory(serverId);
                 consumed = await this.crdt.applyLocalEdit(serverId, mintText), mintText.length > 0 && serverHadContent && rlog().warn(
                   "crdt",
@@ -20032,9 +20606,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 ), rlog().info(
                   "crdt",
                   `crdt_create ADOPT: remapped live editor ${pushedPath} ${noteId} -> ${serverId}`
-                ), (_m = this.crdtEditorRebind) == null || _m.call(this, pushedPath), await this.crdt.removeDoc(noteId), (_n = this.crdtEnrollment) == null || _n.reset(noteId);
+                ), (_m = this.crdtEditorRebind) == null || _m.call(this, pushedPath), await this.teardownCrdtDoc(noteId);
               } else
-                serverId && serverId !== noteId && ((_o = this.noteIdMap) == null || _o.set((0, import_obsidian23.normalizePath)(pushedPath), serverId), rlog().info(
+                serverId && serverId !== noteId && ((_n = this.noteIdMap) == null || _n.set((0, import_obsidian24.normalizePath)(pushedPath), serverId), rlog().info(
                   "crdt",
                   `crdt_create ADOPT: remapped ${pushedPath} ${noteId} -> ${serverId}`
                 ), effectiveId = serverId), consumed = await routeModify(
@@ -20046,14 +20620,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                   this.crdt,
                   MAX_CRDT_NOTE_BYTES
                 );
-              return this.setCrdtHead(pushedPath, CRDT_HEAD_CREATED), this.confirmNoteId(effectiveId), await this.flushHeldEditsOnCreateAck(effectiveId, pushedPath), consumed !== null ? this.syncState.set((0, import_obsidian23.normalizePath)(pushedPath), {
+              return this.setCrdtHead(pushedPath, CRDT_HEAD_CREATED), this.confirmNoteId(effectiveId), await this.flushHeldEditsOnCreateAck(effectiveId, pushedPath), consumed !== null ? (this.syncState.set((0, import_obsidian24.normalizePath)(pushedPath), {
                 ...existing,
                 hash: fnv1a(consumed),
                 crdtHead: CRDT_HEAD_CREATED
-              }) : rlog().warn(
+              }), success = !0) : rlog().warn(
                 "crdt",
                 `crdt_create ok but body seed declined (will deliver on next edit): ${pushedPath}`
-              ), this.isLiveBound((0, import_obsidian23.normalizePath)(pushedPath)) && ((_p = this.crdtEnrollment) == null || _p.enroll(effectiveId)), devLog().log(
+              ), this.isLiveBound((0, import_obsidian24.normalizePath)(pushedPath)) && ((_o = this.crdtEnrollment) == null || _o.enroll(effectiveId)), devLog().log(
                 "push",
                 `crdt_create ok: ${pushedPath} (id=${effectiveId})`
               ), rlog().info(
@@ -20085,13 +20659,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           );
         else if (serverPath && serverPath !== pushedPath) {
           let localFile = this.app.vault.getFileByPath(pushedPath);
-          localFile && (await this.app.vault.rename(localFile, serverPath), new import_obsidian23.Notice(
+          localFile && (await this.app.vault.rename(localFile, serverPath), new import_obsidian24.Notice(
             `Engram Sync: renamed "${pushedPath.split("/").pop()}" (unsupported characters)`
-          )), this.syncState.delete((0, import_obsidian23.normalizePath)(pushedPath)), this.syncState.set((0, import_obsidian23.normalizePath)(serverPath), { hash }), (_q = this.noteIdMap) == null || _q.delete((0, import_obsidian23.normalizePath)(pushedPath)), (_r = this.noteIdMap) == null || _r.set((0, import_obsidian23.normalizePath)(serverPath), resp.note.id);
+          )), this.syncState.delete((0, import_obsidian24.normalizePath)(pushedPath)), this.syncState.set((0, import_obsidian24.normalizePath)(serverPath), { hash }), (_p = this.noteIdMap) == null || _p.delete((0, import_obsidian24.normalizePath)(pushedPath)), (_q = this.noteIdMap) == null || _q.set((0, import_obsidian24.normalizePath)(serverPath), resp.note.id);
         } else
-          this.syncState.set((0, import_obsidian23.normalizePath)(file.path), { hash }), (_s = this.noteIdMap) == null || _s.set((0, import_obsidian23.normalizePath)(file.path), resp.note.id);
+          this.syncState.set((0, import_obsidian24.normalizePath)(file.path), { hash }), (_r = this.noteIdMap) == null || _r.set((0, import_obsidian24.normalizePath)(file.path), resp.note.id);
         file.path === pushedPath && (pushedNoteParse = {
-          path: (_t2 = resp.note.path) != null ? _t2 : pushedPath,
+          path: (_s = resp.note.path) != null ? _s : pushedPath,
           parseStatus: resp.note.parse_status,
           parseReason: resp.note.parse_reason
         });
@@ -20120,8 +20694,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         lastFailedAt: now,
         attempts: 1
       });
-      let attempts = (_v = (_u = this.issues.get(file.path)) == null ? void 0 : _u.attempts) != null ? _v : 1;
-      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_w = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
+      let attempts = (_u = (_t2 = this.issues.get(file.path)) == null ? void 0 : _t2.attempts) != null ? _u : 1;
+      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_v = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
         "push",
         `Push failed: ${file.path} \u2014 ${msg} | category=${classified.category}`,
         e instanceof Error ? e.stack : void 0
@@ -20131,7 +20705,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         kind: isBinary ? "attachment" : "note",
         mtime: file.stat.mtime / 1e3,
         timestamp: Date.now(),
-        vaultId: (_x = this.settings.vaultId) != null ? _x : void 0
+        vaultId: (_w = this.settings.vaultId) != null ? _w : void 0
       }), this.maybeGoOffline(e);
     } finally {
       this.pushing.delete(pushedPath), this.releasePushSlot(), success && this.markRecentlyPushed(pushedPath), this.emitStatus();
@@ -20164,7 +20738,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Drain the batch failure tally for an aggregated, deduped Notice. Returns
    *  the count of generic failures since the last drain plus the first server
-   *  message seen, and resets the tally. Callers (main.ts) fire one Notice. */
+   *  message seen, and resets the tally. Consumed by the in-class batch
+   *  toast (flushFailureSummaryToast); public for tests. */
   drainFailureSummary() {
     let count2 = this.failuresThisBatch, firstMessage = this.firstFailureMessageThisBatch;
     return this.failuresThisBatch = 0, this.firstFailureMessageThisBatch = void 0, { count: count2, firstMessage };
@@ -20177,7 +20752,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let { count: count2, firstMessage } = this.drainFailureSummary();
     if (count2 <= 0) return;
     let noun = count2 === 1 ? "file" : "files", detail = firstMessage ? ` (${firstMessage})` : "";
-    new import_obsidian23.Notice(`Engram: ${count2} ${noun} failed to sync${detail} \u2014 open Sync Center`, 1e4), rlog().warn("push", `${count2} ${noun} failed to sync${detail}`);
+    new import_obsidian24.Notice(`Engram: ${count2} ${noun} failed to sync${detail} \u2014 open Sync Center`, 1e4), rlog().warn("push", `${count2} ${noun} failed to sync${detail}`);
   }
   /** Emit a single batched toast covering all attachments skipped this batch
    *  with `needs_pro`. Called once at the end of pushModifiedFiles / pushAll.
@@ -20189,7 +20764,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (this.attachmentLimitedThisBatch = 0, this.lastBatchSkipped = count2, count2 <= 0 || this.attachmentLimitToastShown) return;
     this.attachmentLimitToastShown = !0;
     let noun = count2 === 1 ? "attachment" : "attachments";
-    new import_obsidian23.Notice(`Engram: ${count2} ${noun} skipped \u2014 upgrade to sync images & PDFs.`, 1e4), rlog().info(
+    new import_obsidian24.Notice(`Engram: ${count2} ${noun} skipped \u2014 upgrade to sync images & PDFs.`, 1e4), rlog().info(
       "push",
       `Skipped ${count2} ${noun} (attachments_disabled) \u2014 batched toast emitted`
     );
@@ -20234,8 +20809,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let skipped = this.issues.all().filter((i) => issueDisposition(i.category) === "informational");
     if (skipped.length !== 0) {
       for (let issue of skipped) {
-        let file = this.app.vault.getAbstractFileByPath((0, import_obsidian23.normalizePath)(issue.path));
-        file instanceof import_obsidian23.TFile && await this.pushFile(
+        let file = this.app.vault.getAbstractFileByPath((0, import_obsidian24.normalizePath)(issue.path));
+        file instanceof import_obsidian24.TFile && await this.pushFile(
           file,
           /* force */
           !0,
@@ -20243,11 +20818,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           !0
         );
       }
-      new import_obsidian23.Notice(`Engram: plan upgraded \u2014 syncing ${skipped.length} attachment(s)\u2026`, 6e3);
+      new import_obsidian24.Notice(`Engram: plan upgraded \u2014 syncing ${skipped.length} attachment(s)\u2026`, 6e3);
     }
   }
-  /** Mark `path` in a TTL map, resetting any pending expiry. Shared body of
-   *  the three echo-suppression marks below; destroy() sweeps the same maps. */
+  /** Mark `path` in a TTL map, resetting any pending expiry. Sole remaining
+   *  caller is markRecentlyDeleted (the other echo-suppression marks moved to
+   *  SyncedFileTable, #358); destroy() sweeps the same map. */
   markWithTtl(map3, path, ms) {
     let existing = map3.get(path);
     existing && this.time.clearTimeout(existing);
@@ -20262,22 +20838,22 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  handleDelete — every sync-applied deletion must route through here, or
    *  its echo-push can tombstone a note recreated at the path since. */
   async trashRemotelyDeleted(file) {
-    this.markWithTtl(this.remotelyDeleted, file.path, ECHO_COOLDOWN_MS), await this.app.fileManager.trashFile(file);
+    this.files.mark(file.path, "remotelyDeleted", ECHO_COOLDOWN_MS), await this.app.fileManager.trashFile(file);
   }
   /** Suppress WebSocket echoes for a path for ECHO_COOLDOWN_MS after push. */
   markRecentlyPushed(path) {
-    this.markWithTtl(this.recentlyPushed, path, ECHO_COOLDOWN_MS);
+    this.files.mark(path, "pushed", ECHO_COOLDOWN_MS);
   }
   /** Check if a path was recently pushed (for echo suppression). */
   // biome-ignore lint/correctness/noUnusedPrivateClassMembers: read by tests/sync.test.ts via (engine as any)
   isRecentlyPushed(path) {
-    return this.recentlyPushed.has(path);
+    return this.files.has(path, "pushed");
   }
   /** Suppress the handleModify echo of a flushFromCrdt disk write for
    *  ECHO_COOLDOWN_MS. Separate from recentlyPushed so a post-push cooldown
    *  never swallows a genuine local edit. */
   markRecentlyFlushed(path) {
-    this.markWithTtl(this.recentlyFlushed, path, ECHO_COOLDOWN_MS);
+    this.files.mark(path, "flushed", ECHO_COOLDOWN_MS);
   }
   /** Record a note_id THIS device just deleted so neither CRDT convergence
    *  path resurrects it during the delete-wins window (backend #970). */
@@ -20302,7 +20878,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  ponytail: recentlyFlushed's 5s cooldown is the guard's window — a push
    *  delayed past it escapes; debounce is 500ms, fine. */
   shouldDeferMint(path) {
-    return !!this.noteIdMap && !this.noteIdMap.get(path) && this.recentlyFlushed.has((0, import_obsidian23.normalizePath)(path));
+    return !!this.noteIdMap && !this.noteIdMap.get(path) && this.files.has((0, import_obsidian24.normalizePath)(path), "flushed");
   }
   // --- Pull: Engram → local vault ---
   /** Free `noteId`'s Y.Doc after a remote update has been applied and its head
@@ -20318,7 +20894,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  which case that room now owns the doc's lifecycle and it must stay
    *  resident. */
   hibernateIfIdle(path, noteId) {
-    if (this.crdt && !this.isLiveBound((0, import_obsidian23.normalizePath)(path)))
+    if (this.crdt && !this.isLiveBound((0, import_obsidian24.normalizePath)(path)))
       try {
         this.crdt.closeDoc(noteId);
       } catch (e) {
@@ -20364,7 +20940,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     var _a, _b, _c, _d, _e, _f;
     let deadline = Date.now() + this.enumerateWaitMs;
     for (; (!this.crdtCatchupSince || !this.crdt || !((_b = (_a = this.crdtLive) == null ? void 0 : _a.call(this)) != null && _b)) && Date.now() < deadline; )
-      await new Promise((resolve) => window.setTimeout(resolve, 100));
+      await this.sleep(100);
     if (!this.crdtCatchupSince || !this.crdt || !((_d = (_c = this.crdtLive) == null ? void 0 : _c.call(this)) != null && _d))
       throw new Error("Sync preview needs the live socket (op-log enumeration)");
     let byId = /* @__PURE__ */ new Map(), attachments = /* @__PURE__ */ new Map(), cursor = 0, cursorId = null;
@@ -20419,7 +20995,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     for (let attempt = 0; attempt < 10; attempt++) {
       let res = await this.catchupViaSeqReplay(opts);
       if (res.ran) return res;
-      await new Promise((resolve) => window.setTimeout(resolve, 50));
+      await this.sleep(50);
     }
     return null;
   }
@@ -20534,8 +21110,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   async discoverAnnouncedNote(noteId, path) {
     var _a;
     if (!this.crdt || !this.crdtCatchupSince || this.isSyncBlocked()) return;
-    let normalized = (0, import_obsidian23.normalizePath)(path);
-    if (!this.shouldIgnore(normalized) && !this.isLiveBound(normalized) && !(this.app.vault.getAbstractFileByPath(normalized) instanceof import_obsidian23.TFile) && !this.recentlyDeleted.has(noteId) && !this.queue.hasPendingDelete(normalized, (_a = this.settings.vaultId) != null ? _a : void 0))
+    let normalized = (0, import_obsidian24.normalizePath)(path);
+    if (!this.shouldIgnore(normalized) && !this.isLiveBound(normalized) && !(this.app.vault.getAbstractFileByPath(normalized) instanceof import_obsidian24.TFile) && !this.recentlyDeleted.has(noteId) && !this.queue.hasPendingDelete(normalized, (_a = this.settings.vaultId) != null ? _a : void 0))
       try {
         this.noteIdMap && this.noteIdMap.pathForId(noteId) !== normalized && (this.noteIdMap.set(normalized, noteId), await this.saveData({ noteIds: this.noteIdMap.toJSON() })), this.confirmNoteId(noteId), await this.catchupViaSeqReplay();
       } catch (e) {
@@ -20564,7 +21140,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         return rlog().info("crdt", `fan-out drop: id unmapped after reconcile note=${noteId}`), "deferred";
       rlog().info("crdt", `fan-out for unmapped id healed via manifest: ${path}`);
     }
-    if (this.confirmNoteId(noteId), this.isLiveBound((0, import_obsidian23.normalizePath)(path)))
+    if (this.confirmNoteId(noteId), this.isLiveBound((0, import_obsidian24.normalizePath)(path)))
       try {
         return await this.crdt.applyRemoteUpdate(noteId, update), this.setCrdtHead(path, head), "applied";
       } catch (e) {
@@ -20621,7 +21197,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       return;
     }
     devLog().log("crdt", `socket converge: cooldown skip for ${path} \u2014 arming trailing fire`);
-    let remaining = this.healCooldownMs - (now - last2), timer = window.setTimeout(() => {
+    let remaining = this.healCooldownMs - (now - last2), timer = this.time.setTimeout(() => {
       this.crdtHealTrailingTimers.delete(noteId), this.fireCrdtReHandshake(path, noteId);
     }, remaining);
     this.crdtHealTrailingTimers.set(noteId, timer);
@@ -20725,7 +21301,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   releaseHealRoom(noteId, path) {
     var _a, _b, _c;
     let current = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId)) != null ? _b : path;
-    if (!(current && this.isLiveBound((0, import_obsidian23.normalizePath)(current)))) {
+    if (!(current && this.isLiveBound((0, import_obsidian24.normalizePath)(current)))) {
       if ((_c = this.crdtEnrollment) == null || _c.reset(noteId), current)
         this.hibernateIfIdle(current, noteId);
       else if (this.crdt)
@@ -20751,7 +21327,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   async healNoteOnOpen(path) {
     var _a, _b;
     if (!this.crdt) return;
-    let normalized = (0, import_obsidian23.normalizePath)(path), noteId = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(normalized)) != null ? _b : null;
+    let normalized = (0, import_obsidian24.normalizePath)(path), noteId = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(normalized)) != null ? _b : null;
     if (noteId)
       try {
         if (!this.isNoteConfirmed(noteId)) {
@@ -20769,14 +21345,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  the deferral only saves redundant echo traffic, it is not a correctness
    *  gate. The normal end-of-pull drain clears this timer. */
   schedulePostPullDrain() {
-    this.postPullDrainTimer === null && (this.postPullDrainTimer = window.setTimeout(() => {
+    this.postPullDrainTimer === null && (this.postPullDrainTimer = this.time.setTimeout(() => {
       this.postPullDrainTimer = null, this.flushPostPullPushes();
     }, this.postPullMaxDeferMs));
   }
   /** Push any files that were modified during pull. Echo suppression will
    *  naturally skip sync-engine writes; only real user edits get pushed. */
   async flushPostPullPushes() {
-    if (this.postPullDrainTimer !== null && (window.clearTimeout(this.postPullDrainTimer), this.postPullDrainTimer = null), this.pendingPostPullPushes.size === 0) return;
+    if (this.postPullDrainTimer !== null && (this.time.clearTimeout(this.postPullDrainTimer), this.postPullDrainTimer = null), this.pendingPostPullPushes.size === 0) return;
     let paths = [...this.pendingPostPullPushes];
     this.pendingPostPullPushes.clear(), devLog().log("push", `flushing ${paths.length} post-pull pushes`), rlog().info("push", `Post-pull flush: ${paths.length} files`);
     for (let path of paths) {
@@ -20852,7 +21428,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             total,
             failed: deleteFailed,
             currentPath: file.path
-          }), (i + 1) % 20 === 0 && await new Promise((resolve) => window.setTimeout(resolve, 0));
+          }), (i + 1) % 20 === 0 && await this.sleep(0);
         }
         devLog().log(
           "pull",
@@ -20882,7 +21458,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  so the CRDT-managed first-delivery / rename new-leg both converge through
    *  `applyOp`. */
   eventToOp(event, content, id2) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c;
     return {
       kind: "upsert",
       id: id2,
@@ -20892,14 +21468,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       folder: (_a = event.folder) != null ? _a : "",
       title: (_b = event.title) != null ? _b : "",
       tags: (_c = event.tags) != null ? _c : [],
-      mtime: (_d = event.mtime) != null ? _d : Date.now(),
-      updated_at: (_e = event.updated_at) != null ? _e : (/* @__PURE__ */ new Date()).toISOString(),
+      // Absence stays absence — see the SyncOp field doc and the guard
+      // comment in handleStreamEvent (client-receipt time must become
+      // undefined, not a value).
+      mtime: event.mtime,
+      updated_at: event.updated_at,
       version: event.version
     };
   }
   /** Handle a WebSocket stream event (upsert or delete). */
   async handleStreamEvent(event) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z;
     if (this.syncBlocked) {
       devLog().log("sync-blocked", "handleStreamEvent short-circuited \u2014 gate closed");
       return;
@@ -20920,15 +21499,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         rlog().info("ws", `Echo skip (pushing): ${event.path}`);
         return;
       }
-      if (this.recentlyPushed.has(event.path)) {
+      if (this.files.has(event.path, "pushed")) {
         rlog().info("ws", `Echo skip (recently pushed): ${event.path}`);
         return;
       }
     }
     if (event.event_type === "upsert" && !isAttachment && event.content_hash !== void 0) {
-      let stored = this.syncState.get((0, import_obsidian23.normalizePath)(event.path));
+      let stored = this.syncState.get((0, import_obsidian24.normalizePath)(event.path));
       if ((stored == null ? void 0 : stored.serverHash) === event.content_hash) {
-        event.version != null && event.version !== stored.version && this.syncState.set((0, import_obsidian23.normalizePath)(event.path), {
+        event.version != null && event.version !== stored.version && this.syncState.set((0, import_obsidian24.normalizePath)(event.path), {
           ...stored,
           version: event.version
         }), rlog().info("ws", `Hash skip: ${event.path}`);
@@ -20936,15 +21515,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       }
     }
     if (event.event_type === "delete") {
-      let normalized = (0, import_obsidian23.normalizePath)(event.path);
+      let normalized = (0, import_obsidian24.normalizePath)(event.path);
       if (this.deviceId && event.device_id === this.deviceId) {
         rlog().info("ws", `Echo skip (own device): ${event.path}`);
         return;
       }
       let currentId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null, targetId = (_f = event.id) != null ? _f : currentId, roomId = targetId != null ? targetId : currentId, relocatedPath = roomId && (_h = (_g = this.noteIdMap) == null ? void 0 : _g.pathForId(roomId)) != null ? _h : null;
-      if (relocatedPath !== null && (0, import_obsidian23.normalizePath)(relocatedPath) !== normalized) {
+      if (relocatedPath !== null && (0, import_obsidian24.normalizePath)(relocatedPath) !== normalized) {
         let existing2 = this.app.vault.getFileByPath(normalized);
-        existing2 && (await this.trashRemotelyDeleted(existing2), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_i = this.baseStore) == null || _i.delete(normalized)), ((_j = this.noteIdMap) == null ? void 0 : _j.get(normalized)) === roomId && this.noteIdMap.delete(normalized), rlog().info(
+        existing2 && await this.applyRemoteRemoval(existing2), ((_i = this.noteIdMap) == null ? void 0 : _i.get(normalized)) === roomId && this.noteIdMap.delete(normalized), rlog().info(
           "ws",
           `Delete is rename old-leg (id relocated to ${relocatedPath}); old path trashed, room preserved: ${normalized}`
         );
@@ -20974,12 +21553,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             `received-delete drift check failed for ${normalized}: ${errMsg(e)}`
           );
         }
-        await this.trashRemotelyDeleted(existing), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_k = this.baseStore) == null || _k.delete(normalized);
+        await this.applyRemoteRemoval(existing);
       }
       if (this.isCrdtEligiblePath(normalized)) {
-        (_l = this.noteIdMap) == null || _l.delete(normalized);
+        (_j = this.noteIdMap) == null || _j.delete(normalized);
         let roomId2 = targetId != null ? targetId : currentId;
-        roomId2 && (await ((_m = this.crdt) == null ? void 0 : _m.removeDoc(roomId2)), (_n = this.crdtEnrollment) == null || _n.reset(roomId2));
+        roomId2 && await this.teardownCrdtDoc(roomId2);
       }
       return;
     }
@@ -20998,68 +21577,73 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             },
             attachment.content_base64
           );
-        } else if (this.crdt && this.isCrdtEligiblePath(event.path) && ((_p = event.id) != null ? _p : (_o = this.noteIdMap) != null && _o.get(event.path))) {
-          let noteId = (_r = event.id) != null ? _r : (_q = this.noteIdMap) == null ? void 0 : _q.get(event.path), canonicalPath = (_t2 = (_s = this.noteIdMap) == null ? void 0 : _s.pathForId(noteId)) != null ? _t2 : null;
-          if (canonicalPath !== null && (0, import_obsidian23.normalizePath)(canonicalPath) !== (0, import_obsidian23.normalizePath)(event.path))
+        } else if (this.crdt && this.isCrdtEligiblePath(event.path) && ((_l = event.id) != null ? _l : (_k = this.noteIdMap) != null && _k.get(event.path))) {
+          let noteId = (_n = event.id) != null ? _n : (_m = this.noteIdMap) == null ? void 0 : _m.get(event.path), canonicalPath = (_p = (_o = this.noteIdMap) == null ? void 0 : _o.pathForId(noteId)) != null ? _p : null;
+          if (canonicalPath !== null && (0, import_obsidian24.normalizePath)(canonicalPath) !== (0, import_obsidian24.normalizePath)(event.path))
             rlog().info(
               "ws",
               `Stale-path upsert ignored for ${noteId}: canonical=${canonicalPath} event=${event.path}`
             );
           else {
-            (_u = this.noteIdMap) == null || _u.set(event.path, noteId), this.confirmNoteId(noteId), (this.isCanvasPath((0, import_obsidian23.normalizePath)(event.path)) || this.isLiveBound((0, import_obsidian23.normalizePath)(event.path))) && ((_v = this.crdtEnrollment) == null || _v.enroll(noteId));
-            let np = (0, import_obsidian23.normalizePath)(event.path), priorState = this.syncState.get(np);
+            (_q = this.noteIdMap) == null || _q.set(event.path, noteId), this.confirmNoteId(noteId), (this.isCanvasPath((0, import_obsidian24.normalizePath)(event.path)) || this.isLiveBound((0, import_obsidian24.normalizePath)(event.path))) && ((_r = this.crdtEnrollment) == null || _r.enroll(noteId));
+            let np = (0, import_obsidian24.normalizePath)(event.path), priorState = this.syncState.get(np);
             event.content_hash !== void 0 && (priorState == null ? void 0 : priorState.serverHash) === void 0 && this.syncState.set(np, {
-              hash: (_w = priorState == null ? void 0 : priorState.hash) != null ? _w : fnv1a(""),
-              version: (_x = event.version) != null ? _x : priorState == null ? void 0 : priorState.version,
+              hash: (_s = priorState == null ? void 0 : priorState.hash) != null ? _s : fnv1a(""),
+              version: (_t2 = event.version) != null ? _t2 : priorState == null ? void 0 : priorState.version,
               serverHash: event.content_hash
             }), rlog().info(
               "ws",
               `CRDT-managed: skipping legacy body apply for ${event.path}`
             );
             let synced = typeof this.crdt.isSynced == "function" && this.crdt.isSynced(noteId);
-            priorState === void 0 && !synced && !this.isLiveBound(np) && !this.app.vault.getAbstractFileByPath(np) && event.content !== void 0 && await this.applyOp(this.eventToOp(event, event.content, noteId)), priorState === void 0 && event.content !== void 0 && ((_y = this.noteIdMap) == null ? void 0 : _y.pathForId(noteId)) === np && !this.app.vault.getAbstractFileByPath(np) ? await this.applyOp(this.eventToOp(event, event.content, noteId)) : (this.materializeRelocated(event.path, noteId), this.app.vault.getAbstractFileByPath(np) || this.catchupViaSeqReplay());
+            priorState === void 0 && !synced && !this.isLiveBound(np) && !this.app.vault.getAbstractFileByPath(np) && event.content !== void 0 && await this.applyOp(this.eventToOp(event, event.content, noteId)), priorState === void 0 && event.content !== void 0 && ((_u = this.noteIdMap) == null ? void 0 : _u.pathForId(noteId)) === np && !this.app.vault.getAbstractFileByPath(np) ? await this.applyOp(this.eventToOp(event, event.content, noteId)) : (await this.materializeRelocated(event.path, noteId), this.app.vault.getAbstractFileByPath(np) || this.catchupViaSeqReplay());
           }
         } else event.content !== void 0 ? await this.applyChange({
           path: event.path,
-          title: (_z = event.title) != null ? _z : "",
+          title: (_v = event.title) != null ? _v : "",
           content: event.content,
           content_hash: event.content_hash,
-          folder: (_A = event.folder) != null ? _A : "",
-          tags: (_B = event.tags) != null ? _B : [],
-          mtime: (_C = event.mtime) != null ? _C : Date.now(),
-          updated_at: (_D = event.updated_at) != null ? _D : (/* @__PURE__ */ new Date()).toISOString(),
+          folder: (_w = event.folder) != null ? _w : "",
+          tags: (_x = event.tags) != null ? _x : [],
+          // applyChange reads neither field; sentinels, not clock lies.
+          mtime: (_y = event.mtime) != null ? _y : 0,
+          updated_at: (_z = event.updated_at) != null ? _z : "",
           deleted: !1,
           version: event.version
         }) : this.catchupViaSeqReplay();
       } catch (e) {
-        console.error("Engram Sync: failed to apply WebSocket event %s", event.path, e);
+        console.error("Engram Sync: failed to apply WebSocket event %s", event.path, e), rlog().error(
+          "ws",
+          `Apply failed: ${event.event_type} ${event.path} | ${errMsg(e)}`,
+          e instanceof Error ? e.stack : void 0
+        );
       }
   }
   async moveIfIdRelocated(id2, newPath, eventTs) {
     var _a, _b, _c, _d, _e;
     let priorPath = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(id2)) != null ? _b : null;
-    if (!priorPath || (0, import_obsidian23.normalizePath)(priorPath) === (0, import_obsidian23.normalizePath)(newPath)) return;
+    if (!priorPath || (0, import_obsidian24.normalizePath)(priorPath) === (0, import_obsidian24.normalizePath)(newPath)) return;
     if (eventTs !== void 0) {
       let lastTs = this.lastRelocationTs.get(id2);
       if (lastTs !== void 0 && eventTs < lastTs) {
         rlog().info(
           "pull",
-          `Id-keyed move IGNORED (stale event ts=${eventTs} <= last-applied ts=${lastTs}): ${id2} -> ${newPath}`
+          `Id-keyed move IGNORED (stale event ts=${eventTs} < last-applied ts=${lastTs}): ${id2} -> ${newPath}`
         );
         return;
       }
       this.lastRelocationTs.set(id2, eventTs);
     }
-    let owner = await this.manifestOwnerOf((0, import_obsidian23.normalizePath)(priorPath));
+    let owner = await this.manifestOwnerOf((0, import_obsidian24.normalizePath)(priorPath));
     if (owner !== null && owner !== id2) {
       rlog().warn(
         "pull",
         `Id-keyed move REFUSED (${owner === void 0 ? "ownership unknown" : "cross-wire"}): ${priorPath} not confirmed as ${id2}'s old path \u2014 rebinding to ${newPath}, no trash`
-      ), (_c = this.noteIdMap) == null || _c.set(newPath, id2), this.pendingOrphanSweep.add((0, import_obsidian23.normalizePath)(priorPath));
+      ), (_c = this.noteIdMap) == null || _c.set(newPath, id2), this.pendingOrphanSweep.add((0, import_obsidian24.normalizePath)(priorPath));
       return;
     }
-    (_d = this.noteIdMap) == null || _d.rename(priorPath, newPath), this.syncState.delete((0, import_obsidian23.normalizePath)(priorPath)), (_e = this.baseStore) == null || _e.delete((0, import_obsidian23.normalizePath)(priorPath));
-    let oldFile = this.app.vault.getFileByPath((0, import_obsidian23.normalizePath)(priorPath));
+    (_d = this.noteIdMap) == null || _d.rename(priorPath, newPath), this.syncState.delete((0, import_obsidian24.normalizePath)(priorPath)), (_e = this.baseStore) == null || _e.delete((0, import_obsidian24.normalizePath)(priorPath));
+    let oldFile = this.app.vault.getFileByPath((0, import_obsidian24.normalizePath)(priorPath));
     if (oldFile)
       try {
         let content = await this.app.vault.cachedRead(oldFile);
@@ -21067,7 +21651,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           await this.trashRemotelyDeleted(oldFile);
         } catch (e) {
         }
-        this.app.vault.getAbstractFileByPath((0, import_obsidian23.normalizePath)(newPath)) ? rlog().info(
+        this.app.vault.getAbstractFileByPath((0, import_obsidian24.normalizePath)(newPath)) ? rlog().info(
           "pull",
           `Id-keyed move: skipping stale disk flush for ${newPath} \u2014 already exists (a concurrent flush won the race)`
         ) : await this.flushFromCrdt(newPath, content), rlog().info("pull", `Id-keyed move: ${priorPath} -> ${newPath} (id=${id2})`);
@@ -21116,20 +21700,20 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  materialize/merge/tombstone/resurrection logic to the shared `applyChange`
    *  core. Attachments are NOT ops (they stay on the binary channel). */
   async applyOp(op) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d, _e, _f;
     if (!op.path) return !1;
     if (op.kind === "upsert" && (this.recentlyDeleted.has(op.id) || this.queue.hasPendingDelete(
-      (0, import_obsidian23.normalizePath)(op.path),
+      (0, import_obsidian24.normalizePath)(op.path),
       (_a = this.settings.vaultId) != null ? _a : void 0
     )))
       return rlog().info("crdt", `op-replay skip (recent/pending local delete): ${op.id}`), !1;
     if (op.kind === "upsert") {
-      let relocationTs = Date.parse(op.updated_at);
+      let relocationTs = Date.parse((_b = op.updated_at) != null ? _b : "");
       await this.moveIfIdRelocated(
         op.id,
         op.path,
         Number.isNaN(relocationTs) ? void 0 : relocationTs
-      ), (_b = this.noteIdMap) == null || _b.set(op.path, op.id), this.confirmNoteId(op.id), this.shouldIgnore(op.path) || this.recordParseStatus(op.path, "note", op.parse_status, op.parse_reason);
+      ), (_c = this.noteIdMap) == null || _c.set(op.path, op.id), this.confirmNoteId(op.id), this.shouldIgnore(op.path) || this.recordParseStatus(op.path, "note", op.parse_status, op.parse_reason);
     }
     let nc = {
       path: op.path,
@@ -21138,13 +21722,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       content_hash: op.content_hash,
       folder: op.folder,
       tags: op.tags,
-      mtime: op.mtime,
-      updated_at: op.updated_at,
+      // applyChange reads neither field; sentinels only satisfy the shape.
+      mtime: (_d = op.mtime) != null ? _d : 0,
+      updated_at: (_e = op.updated_at) != null ? _e : "",
       deleted: op.kind === "delete",
       version: op.version,
       seq: op.seq
     }, applied = await this.applyChange(nc);
-    return op.kind === "delete" && ((_c = this.noteIdMap) == null || _c.delete(op.path)), applied;
+    return op.kind === "delete" && ((_f = this.noteIdMap) == null || _f.delete(op.path)), applied;
   }
   /** Manifest-diff reconcile: trash files the server deleted while we were
    *  away (in baseline, absent from the manifest) and drop their baseline, then
@@ -21167,12 +21752,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (m) {
       if (this.authGeneration === authGen) {
         let serverPaths = /* @__PURE__ */ new Set([
-          ...m.notes.map((n) => (0, import_obsidian23.normalizePath)(n.path)),
-          ...m.attachments.map((a) => (0, import_obsidian23.normalizePath)(a.path))
+          ...m.notes.map((n) => (0, import_obsidian24.normalizePath)(n.path)),
+          ...m.attachments.map((a) => (0, import_obsidian24.normalizePath)(a.path))
         ]);
         for (let file of this.app.vault.getFiles()) {
           if (!this.isSyncable(file) || this.shouldIgnore(file.path)) continue;
-          let np = (0, import_obsidian23.normalizePath)(file.path);
+          let np = (0, import_obsidian24.normalizePath)(file.path);
           if (!serverPaths.has(np) && this.syncState.has(np))
             try {
               await this.trashRemotelyDeleted(file), this.syncState.delete(np), (_a = this.baseStore) == null || _a.delete(np), rlog().info("pull", `Reconcile: server-deleted \u2192 trashed ${file.path}`);
@@ -21234,7 +21819,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     for (let entry of manifest.notes) {
       let seq2 = entry.seq;
       if (typeof seq2 != "number" || !Number.isFinite(seq2) || seq2 > cursor) continue;
-      let path = (0, import_obsidian23.normalizePath)(entry.path), stored = this.syncState.get(path), recorded = stored ? (_b = stored.seq) != null ? _b : Number.POSITIVE_INFINITY : -1;
+      let path = (0, import_obsidian24.normalizePath)(entry.path), stored = this.syncState.get(path), recorded = stored ? (_b = stored.seq) != null ? _b : Number.POSITIVE_INFINITY : -1;
       if (seq2 > recorded) {
         if ((stored == null ? void 0 : stored.serverHash) !== void 0 && stored.serverHash === entry.content_hash) {
           this.syncState.set(path, { ...stored, seq: seq2 });
@@ -21258,18 +21843,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (!manifest || !this.crdt) return 0;
     let poked = 0;
     for (let entry of manifest.notes) {
-      let path = (0, import_obsidian23.normalizePath)(entry.path);
+      let path = (0, import_obsidian24.normalizePath)(entry.path);
       if (!this.isLiveBound(path)) continue;
       let stored = this.syncState.get(path);
       if (entry.crdt_head && (stored == null ? void 0 : stored.crdtHead) === entry.crdt_head || entry.content_hash && (stored == null ? void 0 : stored.serverHash) === entry.content_hash) continue;
       let noteId = (_c = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(path)) != null ? _b : entry.id) != null ? _c : null;
       if (noteId)
         try {
-          entry.content_hash && this.pendingConvergence.set(noteId, {
-            path,
-            serverHash: entry.content_hash,
-            content: null
-          }), this.socketConverge(path, noteId), poked++;
+          entry.content_hash ? this.stageAndConverge(noteId, path, entry.content_hash, null) : this.socketConverge(path, noteId), poked++;
         } catch (e) {
           rlog().warn("crdt", `live-bound heal failed for ${path}: ${errMsg(e)}`);
         }
@@ -21281,11 +21862,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  Returns true when a file was actually created, modified, or trashed.
    *  When forceOverwrite is true, bypass the anti-stale version guard. */
   async applyChange(change, forceOverwrite = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v;
     if (this.shouldIgnore(change.path))
       return devLog().log("pull", `applyChange SKIP (ignored): ${change.path}`), !1;
     !change.deleted && change.content === "" && change.content_hash && (this.emptyContentHash = change.content_hash);
-    let normalized = (0, import_obsidian23.normalizePath)(change.path);
+    let normalized = (0, import_obsidian24.normalizePath)(change.path);
     if (change.deleted) {
       devLog().log("pull", `applyChange DELETE: ${change.path}`);
       let crdtNoteId = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(normalized)) != null ? _b : null, crdtManaged = !!this.crdt && crdtNoteId !== null, existing2 = this.app.vault.getFileByPath(normalized);
@@ -21332,16 +21913,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               `CRDT tombstone honoured (no drift): ${change.path} | syncedHash=${(_e = lastSynced == null ? void 0 : lastSynced.hash) != null ? _e : "none"}`
             );
         }
-        return await this.trashRemotelyDeleted(existing2), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_f = this.baseStore) == null || _f.delete(normalized), rlog().info("pull", `Deleted: ${change.path}`), crdtNoteId && this.isCrdtEligiblePath(normalized) && ((_g = this.noteIdMap) == null || _g.delete(normalized), await ((_h = this.crdt) == null ? void 0 : _h.removeDoc(crdtNoteId)), (_i = this.crdtEnrollment) == null || _i.reset(crdtNoteId)), !0;
+        return await this.applyRemoteRemoval(existing2), rlog().info("pull", `Deleted: ${change.path}`), crdtNoteId && this.isCrdtEligiblePath(normalized) && ((_f = this.noteIdMap) == null || _f.delete(normalized), await this.teardownCrdtDoc(crdtNoteId)), !0;
       }
       return !1;
     }
     let content = change.content;
     if (content === void 0)
       throw new Error(`applyChange: missing content for ${change.path}`);
-    let crdtOwnsBody = !!(this.crdt && this.isCrdtEligiblePath(normalized)), noteId = (_k = (_j = this.noteIdMap) == null ? void 0 : _j.get(normalized)) != null ? _k : null;
+    let crdtOwnsBody = !!(this.crdt && this.isCrdtEligiblePath(normalized)), noteId = (_h = (_g = this.noteIdMap) == null ? void 0 : _g.get(normalized)) != null ? _h : null;
     if (!forceOverwrite && !(crdtOwnsBody && noteId) && change.version !== void 0) {
-      let known = (_l = this.syncState.get(normalized)) == null ? void 0 : _l.version;
+      let known = (_i = this.syncState.get(normalized)) == null ? void 0 : _i.version;
       if (known !== void 0 && known >= change.version && this.app.vault.getFileByPath(normalized))
         return rlog().info(
           "pull",
@@ -21350,16 +21931,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     if (crdtOwnsBody) {
       if (this.isCanvasPath(normalized))
-        return noteId && ((_m = this.crdtEnrollment) == null || _m.enroll(noteId)), rlog().info("pull", `CRDT canvas: enroll for Yjs convergence ${change.path}`), !1;
+        return noteId && ((_j = this.crdtEnrollment) == null || _j.enroll(noteId)), rlog().info("pull", `CRDT canvas: enroll for Yjs convergence ${change.path}`), !1;
       if (!this.app.vault.getFileByPath(normalized))
-        noteId && this.isLiveBound(normalized) && ((_n = this.crdtEnrollment) == null || _n.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content);
+        noteId && this.isLiveBound(normalized) && ((_k = this.crdtEnrollment) == null || _k.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content);
       else {
-        noteId && this.isLiveBound(normalized) && ((_o = this.crdtEnrollment) == null || _o.enroll(noteId));
+        noteId && this.isLiveBound(normalized) && ((_l = this.crdtEnrollment) == null || _l.enroll(noteId));
         let stored = this.syncState.get(normalized), contentMatches = !change.content_hash || (stored == null ? void 0 : stored.serverHash) === change.content_hash;
         if (change.seq !== void 0 ? (stored == null ? void 0 : stored.seq) !== void 0 && (change.seq < stored.seq || change.seq === stored.seq && contentMatches) : (stored == null ? void 0 : stored.version) !== void 0 && change.version !== void 0 && change.version <= stored.version)
           rlog().info(
             "pull",
-            `CRDT catch-up: stale row (seq ${(_p = change.seq) != null ? _p : "-"}/${(_q = stored == null ? void 0 : stored.seq) != null ? _q : "-"} v${(_r = change.version) != null ? _r : "-"}/${(_s = stored == null ? void 0 : stored.version) != null ? _s : "-"}) \u2014 history, skip ${change.path}`
+            `CRDT catch-up: stale row (seq ${(_m = change.seq) != null ? _m : "-"}/${(_n = stored == null ? void 0 : stored.seq) != null ? _n : "-"} v${(_o = change.version) != null ? _o : "-"}/${(_p = stored == null ? void 0 : stored.version) != null ? _p : "-"}) \u2014 history, skip ${change.path}`
           );
         else if (change.content_hash && (stored == null ? void 0 : stored.serverHash) !== change.content_hash)
           if (this.isLiveBound(normalized)) {
@@ -21370,13 +21951,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             ), this.crdtRehandshakeAttempts.set(key, {
               hash: change.content_hash,
               attempts
-            }), noteId && (this.pendingConvergence.set(noteId, {
-              path: normalized,
-              serverHash: change.content_hash,
+            }), noteId && this.stageAndConverge(
+              noteId,
+              normalized,
+              change.content_hash,
               content,
-              version: change.version,
-              seq: change.seq
-            }), this.socketConverge(normalized, noteId));
+              change.version,
+              change.seq
+            );
           } else {
             let localFile = this.app.vault.getFileByPath(normalized), localNow = localFile ? await this.app.vault.cachedRead(localFile) : null;
             if (noteId && stored !== void 0 && stored.hash !== void 0 && content !== void 0 && fnv1a(content) === stored.hash && // The wipe-class quiet-record below takes precedence: no
@@ -21386,13 +21968,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               return rlog().info(
                 "pull",
                 `CRDT catch-up: baseline-content row (echo/lagged), socket re-handshake ${change.path}`
-              ), this.pendingConvergence.set(noteId, {
-                path: normalized,
-                serverHash: change.content_hash,
-                content: null,
-                version: change.version,
-                seq: change.seq
-              }), this.socketConverge(normalized, noteId), !1;
+              ), this.stageAndConverge(
+                noteId,
+                normalized,
+                change.content_hash,
+                null,
+                change.version,
+                change.seq
+              ), !1;
             if (localNow !== null && (stored == null ? void 0 : stored.hash) !== void 0 && fnv1a(localNow) !== stored.hash && localNow !== content && localNow !== null) {
               rlog().warn(
                 "pull",
@@ -21410,34 +21993,36 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               return copy2 === null ? (rlog().warn(
                 "conflict",
                 `drift-copy failed \u2014 leaving ${normalized} intact, deferring convergence to next catch-up`
-              ), !1) : (new import_obsidian23.Notice(
+              ), !1) : (new import_obsidian24.Notice(
                 `Engram: sync conflict on ${normalized} \u2014 your local edit was saved as ${copy2}`
-              ), noteId && (this.pendingConvergence.set(noteId, {
-                path: normalized,
-                serverHash: change.content_hash,
+              ), noteId && this.stageAndConverge(
+                noteId,
+                normalized,
+                change.content_hash,
                 content,
-                version: change.version,
-                seq: change.seq
-              }), this.socketConverge(normalized, noteId)), !1);
+                change.version,
+                change.seq
+              ), !1);
             }
             noteId && (stored == null ? void 0 : stored.serverHash) === void 0 && localNow !== null && localNow === content ? (rlog().info(
               "pull",
               `CRDT catch-up: no-CAS-base quiet record (disk==row) ${change.path}`
             ), this.syncState.set(normalized, {
-              ...(_t2 = this.syncState.get(normalized)) != null ? _t2 : {},
+              ...(_q = this.syncState.get(normalized)) != null ? _q : {},
               hash: fnv1a(content),
               version: change.version,
               serverHash: change.content_hash
             })) : noteId ? (rlog().warn(
               "pull",
               `CRDT catch-up: diverged cold note, socket re-handshake ${change.path}`
-            ), this.pendingConvergence.set(noteId, {
-              path: normalized,
-              serverHash: change.content_hash,
+            ), this.stageAndConverge(
+              noteId,
+              normalized,
+              change.content_hash,
               content,
-              version: change.version,
-              seq: change.seq
-            }), this.socketConverge(normalized, noteId)) : (rlog().warn(
+              change.version,
+              change.seq
+            )) : (rlog().warn(
               "pull",
               `CRDT catch-up: pull backfilling diverged note (no note_id) ${change.path}`
             ), await this.flushFromCrdt(normalized, content), this.syncState.set(normalized, {
@@ -21462,14 +22047,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         // E1 (#1065): record the row's seq so the manifest validator can
         // integer-diff this path (a legacy change without one keeps the
         // prior value rather than erasing it).
-        seq: typeof change.seq == "number" ? change.seq : (_u = this.syncState.get(normalized)) == null ? void 0 : _u.seq
-      }), change.version != null && ((_v = this.baseStore) == null || _v.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1) : (devLog().log("pull", `applyChange OVERWRITE: ${change.path} (len=${content.length})`), await this.modifyFile(existing, content), this.syncState.set(normalized, {
+        seq: typeof change.seq == "number" ? change.seq : (_r = this.syncState.get(normalized)) == null ? void 0 : _r.seq
+      }), change.version != null && ((_s = this.baseStore) == null || _s.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1) : (devLog().log("pull", `applyChange OVERWRITE: ${change.path} (len=${content.length})`), await this.modifyFile(existing, content), this.syncState.set(normalized, {
         hash: fnv1a(content),
         version: change.version,
         serverHash: change.content_hash,
         // E1 (#1065): seq recorded for the manifest validator's integer diff.
-        seq: typeof change.seq == "number" ? change.seq : (_w = this.syncState.get(normalized)) == null ? void 0 : _w.seq
-      }), change.version != null && ((_x = this.baseStore) == null || _x.set(normalized, content, change.version)), rlog().info(
+        seq: typeof change.seq == "number" ? change.seq : (_t2 = this.syncState.get(normalized)) == null ? void 0 : _t2.seq
+      }), change.version != null && ((_u = this.baseStore) == null || _u.set(normalized, content, change.version)), rlog().info(
         "pull",
         `Applied: ${change.path} | localLen=${localContent.length} | remoteLen=${content.length}`
       ), !0);
@@ -21490,17 +22075,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       serverHash: change.content_hash,
       // E1 (#1065): seq recorded for the manifest validator's integer diff.
       seq: typeof change.seq == "number" ? change.seq : void 0
-    }), change.version != null && ((_y = this.baseStore) == null || _y.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
+    }), change.version != null && ((_v = this.baseStore) == null || _v.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
   }
   /** Apply a remote attachment change to the vault.
    *  If contentBase64 is provided (from WebSocket), use it directly. Otherwise fetch it.
    *  Returns true when a file was actually created, modified, or trashed. */
   async applyAttachmentChange(change, contentBase64) {
     if (this.shouldIgnore(change.path)) return !1;
-    let normalized = (0, import_obsidian23.normalizePath)(change.path);
+    let normalized = (0, import_obsidian24.normalizePath)(change.path);
     if (change.deleted) {
       let existing2 = this.app.vault.getFileByPath(normalized);
-      return existing2 ? (await this.trashRemotelyDeleted(existing2), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), rlog().info("pull", `Attachment deleted: ${change.path}`), !0) : !1;
+      return existing2 ? (await this.applyRemoteRemoval(existing2, { dropBase: !1 }), rlog().info("pull", `Attachment deleted: ${change.path}`), !0) : !1;
     }
     let resolvedBase64 = contentBase64 != null ? contentBase64 : (await this.api.getAttachment(change.path)).content_base64, buffer = base64ToArrayBuffer(resolvedBase64), existing = this.app.vault.getFileByPath(normalized), hash = fnv1a(resolvedBase64);
     if (existing) {
@@ -21529,7 +22114,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       await this.app.vault.create(normalized, content);
     } catch (e) {
       let raced = this.app.vault.getAbstractFileByPath(normalized);
-      if (raced instanceof import_obsidian23.TFile) {
+      if (raced instanceof import_obsidian24.TFile) {
         await this.modifyFile(raced, content);
         return;
       }
@@ -21580,7 +22165,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     await this.explicitFolders.replaceAll(names);
     for (let prev of removed) {
       let existing = this.app.vault.getAbstractFileByPath(prev);
-      if (existing instanceof import_obsidian23.TFolder && !(existing.children.length > 0))
+      if (existing instanceof import_obsidian24.TFolder && !(existing.children.length > 0))
         try {
           await this.app.fileManager.trashFile(existing);
         } catch (e) {
@@ -21603,13 +22188,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let folder = filePath.includes("/") ? filePath.substring(0, filePath.lastIndexOf("/")) : "";
     for (; folder; ) {
       let existing = this.app.vault.getAbstractFileByPath(folder);
-      if (!(existing instanceof import_obsidian23.TFolder) || existing.children.length > 0 || (_a = this.explicitFolders) != null && _a.has(folder)) break;
+      if (!(existing instanceof import_obsidian24.TFolder) || existing.children.length > 0 || (_a = this.explicitFolders) != null && _a.has(folder)) break;
       await this.app.fileManager.trashFile(existing), folder = folder.includes("/") ? folder.substring(0, folder.lastIndexOf("/")) : "";
     }
   }
   // --- Full sync (startup) ---
   /** Full bidirectional sync: pull remote changes, then push local changes. */
   async fullSync() {
+    return this.inBulkSweep(() => this.fullSyncInner());
+  }
+  async fullSyncInner() {
     var _a;
     if (this.syncBlocked)
       return devLog().log("sync-blocked", "fullSync short-circuited \u2014 gate closed"), { pulled: 0, pushed: 0 };
@@ -21662,7 +22250,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (!this.crdtCreateBatch || !this.crdt) return { genesis: [], known: noteFiles };
     let genesis = [], known = [];
     for (let f of noteFiles) {
-      let id2 = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get((0, import_obsidian23.normalizePath)(f.path))) != null ? _b : null;
+      let id2 = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get((0, import_obsidian24.normalizePath)(f.path))) != null ? _b : null;
       this.hasServerNote(id2) ? known.push(f) : genesis.push(f);
     }
     return { genesis, known };
@@ -21687,7 +22275,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  that already carries a local CRDT lineage to `pushFile` instead. */
   recordCrdtGenesisPushed(file, content, serverId) {
     var _a, _b;
-    let np = (0, import_obsidian23.normalizePath)(file.path);
+    let np = (0, import_obsidian24.normalizePath)(file.path);
     (_a = this.noteIdMap) == null || _a.set(np, serverId), this.confirmNoteId(serverId), this.setCrdtHead(file.path, CRDT_HEAD_CREATED);
     let existing = (_b = this.syncState.get(np)) != null ? _b : { hash: 0 };
     this.syncState.set(np, {
@@ -21761,7 +22349,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       onProgress == null || onProgress(pushed, failed);
     };
     for (let file of files) {
-      let np = (0, import_obsidian23.normalizePath)(file.path);
+      let np = (0, import_obsidian24.normalizePath)(file.path);
       if (this.shouldDeferMint(np)) {
         rlog().info(
           "push",
@@ -21783,10 +22371,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         await this.pushFile(file, !0) ? pushed++ : failed++;
         continue;
       }
-      let b64 = this.encodeGenesisFrame(
-        content,
-        file.extension === "canvas" ? "canvas" : "note"
-      ), size2 = b64.length, pushedPath = file.path, noteId = (_d = (_c = this.noteIdMap) == null ? void 0 : _c.get(np)) != null ? _d : uuid7();
+      let b64 = this.encodeGenesisFrame(content, docKindFor(file.path)), size2 = b64.length, pushedPath = file.path, noteId = (_d = (_c = this.noteIdMap) == null ? void 0 : _c.get(np)) != null ? _d : uuid7();
       if (this.noteIdMap && !this.noteIdMap.get(np) && this.noteIdMap.set(np, noteId), size2 > PAYLOAD_BUDGET) {
         await this.pushFile(file, !0) ? pushed++ : failed++;
         continue;
@@ -21823,7 +22408,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       firstFailedAt: now,
       lastFailedAt: now,
       attempts: 1
-    }), !wasDegraded && mapped.category === "frontmatter" && (this.pendingDegraded.add(path), this.degradedNoticeTimer && window.clearTimeout(this.degradedNoticeTimer), this.degradedNoticeTimer = window.setTimeout(
+    }), !wasDegraded && mapped.category === "frontmatter" && (this.pendingDegraded.add(path), this.degradedNoticeTimer && this.time.clearTimeout(this.degradedNoticeTimer), this.degradedNoticeTimer = this.time.setTimeout(
       () => this.flushDegradedNotice(),
       DEGRADED_NOTICE_DEBOUNCE_MS
     ));
@@ -21837,7 +22422,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let paths = [...this.pendingDegraded];
     if (this.pendingDegraded.clear(), paths.length !== 0)
       if (paths.length === 1) {
-        let [path] = paths, noticeEl = new import_obsidian23.Notice(
+        let [path] = paths, noticeEl = new import_obsidian24.Notice(
           `Engram: frontmatter problem in "${path.split("/").pop()}"`,
           DEGRADED_NOTICE_DURATION_MS
         ).noticeEl, link = noticeEl == null ? void 0 : noticeEl.createEl("a", { text: "Open note" });
@@ -21845,7 +22430,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           this.app.workspace.openLinkText(path, "");
         });
       } else
-        new import_obsidian23.Notice(
+        new import_obsidian24.Notice(
           `Engram: ${paths.length} notes have frontmatter problems. Open Sync Center to fix.`,
           DEGRADED_NOTICE_DURATION_MS
         );
@@ -21856,6 +22441,38 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   emitPushing(current, total, failed, currentPath) {
     var _a;
     (_a = this.onSyncProgress) == null || _a.call(this, { phase: "pushing", current, total, failed, currentPath });
+  }
+  /** Shared push pipeline: split notes/attachments, bulk-create genesis
+   *  notes over crdt_create_batch, then per-file push in batches of
+   *  PUSH_BATCH_SIZE with progress. The two callers had drifted: the
+   *  incremental copy reported failed=0 to the progress UI even when the
+   *  genesis batch failed files.
+   *
+   *  mode "force" (pushAll): pushFile(force), per-file failures caught,
+   *  counted and written to the sync log — a full push must survive bad
+   *  files. mode "incremental" (pushModifiedFiles): unforced, no sync-log
+   *  entries, and a per-file throw propagates to the caller's error
+   *  boundary, exactly as before the extraction. */
+  async pushPartitioned(toSync, mode) {
+    var _a;
+    let total = toSync.length, noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), { genesis, known } = this.partitionGenesis(noteFiles), genesisOutcome = await this.pushGenesisBatch(genesis, (pushedSoFar, failedSoFar) => {
+      this.emitPushing(pushedSoFar, total, failedSoFar);
+    }), pushed = genesisOutcome.pushed, failed = genesisOutcome.failed, perFile = [...known, ...attachFiles];
+    for (let i = 0; i < perFile.length; i += PUSH_BATCH_SIZE) {
+      let batch = perFile.slice(i, i + PUSH_BATCH_SIZE), results = await Promise.all(
+        batch.map(async (f) => {
+          if (mode === "incremental") return this.pushFile(f);
+          try {
+            let ok = await this.pushFile(f, !0);
+            return ok ? this.logEntry("push", f.path, "ok") : this.logEntry("skip", f.path, "skipped", void 0, "unchanged"), ok;
+          } catch (e) {
+            return failed++, this.logEntry("push", f.path, "error", errMsg(e)), !1;
+          }
+        })
+      );
+      pushed += results.filter(Boolean).length, this.emitPushing(pushed, total, failed, (_a = batch[batch.length - 1]) == null ? void 0 : _a.path);
+    }
+    return { pushed, failed };
   }
   /** Push files modified since `sinceTimestamp` (default: `lastSync`) — both
    *  genuinely-modified tracked files and never-before-synced local-only
@@ -21869,16 +22486,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     devLog().log("push", `pushModifiedFiles: ${toSync.length} files modified since ${since}`), rlog().info("push", `PushModified: ${toSync.length} files modified since ${since}`);
     let total = toSync.length;
     total > 0 && this.emitPushing(0, total, 0);
-    let noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), { genesis, known } = this.partitionGenesis(noteFiles), genesisOutcome = await this.pushGenesisBatch(genesis, (pushedSoFar, failedSoFar) => {
-      this.emitPushing(pushedSoFar, total, failedSoFar);
-    });
-    pushed += genesisOutcome.pushed;
-    let perFile = [...known, ...attachFiles];
-    for (let i = 0; i < perFile.length; i += 10) {
-      let batch = perFile.slice(i, i + 10), results = await Promise.all(batch.map((f) => this.pushFile(f)));
-      pushed += results.filter(Boolean).length, this.emitPushing(pushed, total, 0);
-    }
-    return this.flushAttachmentLimitedToast(), this.flushFailureSummaryToast(), pushed;
+    let outcome = await this.pushPartitioned(toSync, "incremental");
+    return pushed += outcome.pushed, this.flushAttachmentLimitedToast(), this.flushFailureSummaryToast(), pushed;
   }
   /** Compute what a sync would do without executing it (dry-run preview).
    *
@@ -21975,10 +22584,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  can't shield a remote extra from the wipe (test_86). */
   snapshotLocalPaths() {
     return new Set(
-      this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path)).map((f) => (0, import_obsidian23.normalizePath)(f.path))
+      this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path)).map((f) => (0, import_obsidian24.normalizePath)(f.path))
     );
   }
   async pushAll(opts = {}) {
+    return this.inBulkSweep(() => this.pushAllInner(opts));
+  }
+  async pushAllInner(opts = {}) {
     var _a, _b, _c, _d, _e, _f, _g, _h;
     if (this.syncBlocked)
       return devLog().log("sync-blocked", "pushAll short-circuited \u2014 gate closed"), 0;
@@ -22007,7 +22619,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         replaceExtras = {
           ids: [...serverIds].filter((id2) => !localIds.has(id2)),
           attachments: [...serverAttachmentPaths].filter(
-            (p) => !snap.has((0, import_obsidian23.normalizePath)(p))
+            (p) => !snap.has((0, import_obsidian24.normalizePath)(p))
           )
         };
       }
@@ -22015,31 +22627,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let toSync = this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path));
     if (opts.localSnapshot) {
       let snap = opts.localSnapshot;
-      toSync = toSync.filter((f) => snap.has((0, import_obsidian23.normalizePath)(f.path)));
+      toSync = toSync.filter((f) => snap.has((0, import_obsidian24.normalizePath)(f.path)));
     }
     let pushed = 0, failed = 0, total = toSync.length;
     devLog().log("push", `pushAll: ${total} files`), rlog().info("push", `PushAll started \u2014 ${total} files`), this.emitPushing(0, total, 0);
-    let noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), { genesis, known } = this.partitionGenesis(noteFiles), genesisOutcome = await this.pushGenesisBatch(genesis, (pushedSoFar, failedSoFar) => {
-      this.emitPushing(pushedSoFar, total, failedSoFar);
-    });
-    pushed += genesisOutcome.pushed, failed += genesisOutcome.failed;
-    let perFile = [...known, ...attachFiles];
-    for (let i = 0; i < perFile.length; i += 10) {
-      let batch = perFile.slice(i, i + 10), results = await Promise.all(
-        batch.map(async (f) => {
-          try {
-            let ok2 = await this.pushFile(f, !0);
-            return ok2 ? this.logEntry("push", f.path, "ok") : this.logEntry("skip", f.path, "skipped", void 0, "unchanged"), ok2;
-          } catch (e) {
-            failed++;
-            let msg = errMsg(e);
-            return this.logEntry("push", f.path, "error", msg), !1;
-          }
-        })
-      );
-      pushed += results.filter(Boolean).length, this.emitPushing(pushed, total, failed, batch[batch.length - 1].path);
-    }
-    if (replaceExtras) {
+    let outcome = await this.pushPartitioned(toSync, "force");
+    if (pushed += outcome.pushed, failed += outcome.failed, replaceExtras) {
       let delTotal = replaceExtras.ids.length + replaceExtras.attachments.length, delDone = 0;
       (_d = this.onSyncProgress) == null || _d.call(this, { phase: "deleting", current: 0, total: delTotal, failed: 0 });
       for (let id2 of replaceExtras.ids) {
@@ -22095,9 +22688,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         );
         let snap = opts.localSnapshot;
         for (let path of toFix) {
-          if (snap && !snap.has((0, import_obsidian23.normalizePath)(path)))
+          if (snap && !snap.has((0, import_obsidian24.normalizePath)(path)))
             continue;
-          let file = this.app.vault.getFileByPath((0, import_obsidian23.normalizePath)(path));
+          let file = this.app.vault.getFileByPath((0, import_obsidian24.normalizePath)(path));
           file && await this.pushFile(file, !0);
         }
       }
@@ -22129,7 +22722,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         missing.push(file.path);
       else {
         serverNotes.delete(file.path);
-        let stored = this.syncState.get((0, import_obsidian23.normalizePath)(file.path)), content = await this.app.vault.cachedRead(file), locallyModified = stored === void 0 || stored.hash !== fnv1a(content), serverDrifted = (stored == null ? void 0 : stored.serverHash) !== void 0 && stored.serverHash !== serverHash;
+        let stored = this.syncState.get((0, import_obsidian24.normalizePath)(file.path)), content = await this.app.vault.cachedRead(file), locallyModified = stored === void 0 || stored.hash !== fnv1a(content), serverDrifted = (stored == null ? void 0 : stored.serverHash) !== void 0 && stored.serverHash !== serverHash;
         (locallyModified || serverDrifted) && diverged.push(file.path);
       }
     }
@@ -22143,16 +22736,57 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     ), { missing, diverged, extraOnServer };
   }
   // --- Offline queue ---
-  /** Queue a change for retry and go offline. */
+  /** Flush priority for a path.
+   *
+   *  A live-bound path is one the user has open in an editor — the single case
+   *  where queue latency is directly visible — so it outranks everything even
+   *  during a bulk sweep. Otherwise, work generated inside a bulk sweep sinks
+   *  to Background so an interactive edit made mid-import is not stuck behind
+   *  thousands of retries. */
+  priorityForPath(path) {
+    var _a;
+    return (_a = this.isLiveBound) != null && _a.call(this, path) ? QueuePriority.OpenNote : this.bulkDepth > 0 ? QueuePriority.Background : QueuePriority.Normal;
+  }
+  /** Run `fn` with queue entries it produces marked as bulk work. A counter
+   *  rather than a boolean because fullSync calls pushAll — a boolean would be
+   *  cleared by the inner call while the outer sweep was still running. */
+  async inBulkSweep(fn) {
+    this.bulkDepth += 1;
+    try {
+      return await fn();
+    } finally {
+      this.bulkDepth -= 1;
+    }
+  }
+  /** Why the queue is not draining, or null when nothing is queued. Surfaced
+   *  in the Sync Center so a held queue reads as a reason instead of a
+   *  spinner. */
+  queuedReason() {
+    return queuedReason({
+      queued: this.queue.size,
+      inFlight: this.pushing.size,
+      offline: this.offline,
+      syncBlocked: this.syncBlocked
+    });
+  }
+  /** Queue a change for retry and go offline.
+   *
+   *  Assigns a flush priority when the caller did not: the note the user has
+   *  open jumps ahead of everything else, so a bulk import cannot make the file
+   *  being edited wait behind thousands of background entries. */
   async enqueueChange(entry) {
-    await this.queue.enqueue(entry), this.emitStatus();
+    var _a;
+    await this.queue.enqueue({
+      ...entry,
+      priority: (_a = entry.priority) != null ? _a : this.priorityForPath(entry.path)
+    }), this.emitStatus();
   }
   /** Record a terminal (non-retryable) flush failure in the Sync Center and
    *  dequeue the entry so it doesn't retry forever. Reached only from the legacy
    *  note/attachment catch since Phase E3 — the crdt drain branch makes no
    *  fallible HTTP call anymore (it settles via the socket round-trip). */
   async recordTerminalIssue(entry, classified) {
-    var _a, _b, _c, _d;
+    var _a, _b;
     let now = Date.now();
     this.issues.record({
       path: entry.path,
@@ -22164,7 +22798,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       firstFailedAt: now,
       lastFailedAt: now,
       attempts: 1
-    }), issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_b = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), await this.queue.dequeue(entry.path, (_d = (_c = entry.vaultId) != null ? _c : this.settings.vaultId) != null ? _d : void 0);
+    }), issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_b = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), await this.queue.dequeue(entry.path, this.entryVaultId(entry));
   }
   /** Decide the fate of a queue entry whose flush just failed, and act on it.
    *  runFlushQueue's legacy note/attachment catch routes here (the crdt drain
@@ -22194,7 +22828,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   /** Transition back to online mode. */
   goOnline() {
     this.offline && (this.offline = !1, this.lastError = "", this.stopHealthCheck(), devLog().log("lifecycle", `went online \u2014 flushing queue (${this.queue.size} entries)`), rlog().info("lifecycle", `Went online \u2014 flushing queue (${this.queue.size} entries)`), this.emitStatus(), this.flushQueue().catch((e) => {
-      console.error("Engram Sync: queue flush failed", e);
+      console.error("Engram Sync: queue flush failed", e), rlog().error("queue", `Flush failed after reconnect: ${errMsg(e)}`);
     }));
   }
   /** Start health checks while offline, with exponential backoff (5s → 10s →
@@ -22203,7 +22837,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   startHealthCheck() {
     if (this.healthCheckTimer) return;
     let tick = () => {
-      this.healthCheckTimer = window.setTimeout(() => {
+      this.healthCheckTimer = this.time.setTimeout(() => {
         (async () => {
           try {
             if (await this.api.health()) {
@@ -22220,7 +22854,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Stop health checks and reset the backoff. */
   stopHealthCheck() {
-    this.healthCheckTimer && (window.clearTimeout(this.healthCheckTimer), this.healthCheckTimer = null), this.healthCheckFailures = 0;
+    this.healthCheckTimer && (this.time.clearTimeout(this.healthCheckTimer), this.healthCheckTimer = null), this.healthCheckFailures = 0;
   }
   /** Flush queued changes oldest-first. Stops on first failure. */
   /** Retry every transient (auto-retryable) failure now — including ones
@@ -22232,7 +22866,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     var _a;
     for (let issue of this.issues.all()) {
       if (issueDisposition(issue.category, issue.parseReason) !== "transient") continue;
-      let file = this.app.vault.getFileByPath((0, import_obsidian23.normalizePath)(issue.path));
+      let file = this.app.vault.getFileByPath((0, import_obsidian24.normalizePath)(issue.path));
       if (!file) {
         this.issues.clear(issue.path);
         continue;
@@ -22280,7 +22914,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     return total;
   }
   async runFlushQueue() {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
+    var _a, _b, _c, _d, _e, _f, _g;
     let entries = this.queue.all();
     if (entries.length === 0) return 0;
     devLog().log("queue", `flush start \u2014 ${entries.length} entries`), rlog().info("queue", `Queue flush start \u2014 ${entries.length} entries`);
@@ -22299,10 +22933,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           if (!base64) {
             let file = this.app.vault.getFileByPath(entry.path);
             if (!file) {
-              await this.queue.dequeue(
-                entry.path,
-                (_b = (_a = entry.vaultId) != null ? _a : this.settings.vaultId) != null ? _b : void 0
-              ), this.issues.clear(entry.path), flushed++;
+              await this.queue.dequeue(entry.path, this.entryVaultId(entry)), this.issues.clear(entry.path), flushed++;
               continue;
             }
             let buffer = await this.app.vault.readBinary(file);
@@ -22311,25 +22942,22 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           await this.api.pushAttachment(entry.path, base64, mimeType, mtime);
         } else {
           if (entry.crdt && entry.noteId) {
-            this.crdt && ((_d = (_c = this.crdtLive) == null ? void 0 : _c.call(this)) != null && _d) && (this.pendingQueueDeliveries.set(entry.noteId, {
+            this.crdt && ((_b = (_a = this.crdtLive) == null ? void 0 : _a.call(this)) != null && _b) && (this.pendingQueueDeliveries.set(entry.noteId, {
               path: entry.path,
-              vaultId: (_f = (_e = entry.vaultId) != null ? _e : this.settings.vaultId) != null ? _f : void 0
-            }), this.socketConverge((0, import_obsidian23.normalizePath)(entry.path), entry.noteId));
+              vaultId: this.entryVaultId(entry)
+            }), this.socketConverge((0, import_obsidian24.normalizePath)(entry.path), entry.noteId));
             continue;
           }
           let content = entry.content, mtime = entry.mtime;
           if (content === void 0) {
             let file = this.app.vault.getFileByPath(entry.path);
             if (!file) {
-              entry.crdt && entry.noteId && ((_g = this.crdtEnrollment) == null || _g.enroll(entry.noteId)), await this.queue.dequeue(
-                entry.path,
-                (_i = (_h = entry.vaultId) != null ? _h : this.settings.vaultId) != null ? _i : void 0
-              ), this.issues.clear(entry.path), flushed++;
+              entry.crdt && entry.noteId && ((_c = this.crdtEnrollment) == null || _c.enroll(entry.noteId)), await this.queue.dequeue(entry.path, this.entryVaultId(entry)), this.issues.clear(entry.path), flushed++;
               continue;
             }
             content = await this.app.vault.cachedRead(file), mtime = file.stat.mtime / 1e3;
           }
-          let replayNp = (0, import_obsidian23.normalizePath)(entry.path), replayId = (_k = (_j = this.noteIdMap) == null ? void 0 : _j.get(replayNp)) != null ? _k : null;
+          let replayNp = (0, import_obsidian24.normalizePath)(entry.path), replayId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(replayNp)) != null ? _e : null;
           if (!replayId && this.noteIdMap) {
             if (this.shouldDeferMint(replayNp)) {
               rlog().info(
@@ -22359,18 +22987,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             conflicted && await this.pushFile(conflicted, !0);
           }
           if (!("conflict" in resp) && content !== void 0) {
-            let np = (0, import_obsidian23.normalizePath)(entry.path);
+            let np = (0, import_obsidian24.normalizePath)(entry.path);
             this.syncState.set(np, {
               hash: fnv1a(content),
               version: resp.note.version,
               serverHash: resp.note.content_hash
-            }), resp.note.version != null && ((_l = this.baseStore) == null || _l.set(np, content, resp.note.version)), resp.note.id && ((_m = this.noteIdMap) == null || _m.set(np, resp.note.id), this.refireEnrollmentOnFirstConfirm(resp.note.id, entry.path, content), this.confirmNoteId(resp.note.id));
+            }), resp.note.version != null && ((_f = this.baseStore) == null || _f.set(np, content, resp.note.version)), resp.note.id && ((_g = this.noteIdMap) == null || _g.set(np, resp.note.id), this.refireEnrollmentOnFirstConfirm(resp.note.id, entry.path, content), this.confirmNoteId(resp.note.id));
           }
         }
-        await this.queue.dequeue(
-          entry.path,
-          (_o = (_n = entry.vaultId) != null ? _n : this.settings.vaultId) != null ? _o : void 0
-        ), this.issues.clear(entry.path), flushed++;
+        await this.queue.dequeue(entry.path, this.entryVaultId(entry)), this.issues.clear(entry.path), flushed++;
       } catch (e) {
         if (await this.handleFlushFailure(entry, e) === "retry") break;
       }
@@ -22395,22 +23020,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   destroy() {
     for (let timer of this.debounceTimers.values())
       this.time.clearTimeout(timer);
-    this.debounceTimers.clear();
-    for (let timer of this.recentlyPushed.values())
-      this.time.clearTimeout(timer);
-    this.recentlyPushed.clear();
-    for (let timer of this.recentlyFlushed.values())
-      this.time.clearTimeout(timer);
-    this.recentlyFlushed.clear();
-    for (let timer of this.remotelyDeleted.values())
-      this.time.clearTimeout(timer);
-    this.remotelyDeleted.clear();
+    this.debounceTimers.clear(), this.files.destroy();
     for (let timer of this.recentlyDeleted.values())
       this.time.clearTimeout(timer);
-    this.recentlyDeleted.clear(), this.pendingPostPullPushes.clear(), this.seqHealTimer !== null && (window.clearTimeout(this.seqHealTimer), this.seqHealTimer = null), this.postPullDrainTimer !== null && (window.clearTimeout(this.postPullDrainTimer), this.postPullDrainTimer = null);
+    this.recentlyDeleted.clear(), this.pendingPostPullPushes.clear(), this.seqHealTimer !== null && (this.time.clearTimeout(this.seqHealTimer), this.seqHealTimer = null), this.postPullDrainTimer !== null && (this.time.clearTimeout(this.postPullDrainTimer), this.postPullDrainTimer = null);
     for (let timer of this.crdtHealTrailingTimers.values())
-      window.clearTimeout(timer);
-    this.crdtHealTrailingTimers.clear(), this.pendingQueueDeliveries.clear(), this.degradedNoticeTimer && window.clearTimeout(this.degradedNoticeTimer), this.degradedNoticeTimer = null, this.pendingDegraded.clear(), this.stopHealthCheck(), this.queue.destroy();
+      this.time.clearTimeout(timer);
+    this.crdtHealTrailingTimers.clear(), this.pendingConvergence.clear(), this.crdtRehandshakeAttempts.clear(), this.crdtHealCooldown.clear(), this.pendingQueueDeliveries.clear(), this.degradedNoticeTimer && this.time.clearTimeout(this.degradedNoticeTimer), this.degradedNoticeTimer = null, this.pendingDegraded.clear(), this.stopHealthCheck(), this.queue.destroy();
   }
 };
 _SyncEngine.MANIFEST_OWNERS_TTL_MS = 3e4, _SyncEngine.SEQ_HEAL_COOLDOWN_MS = 4e3;
@@ -22423,20 +23039,17 @@ function channelConnectionKey(settings) {
 }
 async function computeSyncFingerprint(settings) {
   let authPart = settings.refreshToken ? settings.userEmail || "" : settings.apiKey || "", vaultPart = settings.vaultId || "", input = `${authPart}|${vaultPart}`;
-  if (input === "|") return "";
-  let data = new TextEncoder().encode(input), hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, "0")).join("");
+  return input === "|" ? "" : sha256Hex(input);
 }
 
 // src/sync-log.ts
 var SyncLog = class {
   constructor(capacity = 500) {
     this.buffer = [];
-    this.subscribers = /* @__PURE__ */ new Set();
     this.capacity = capacity;
   }
   append(entry) {
-    this.buffer.push(entry), this.buffer.length > this.capacity && this.buffer.splice(0, this.buffer.length - this.capacity), this.notify();
+    this.buffer.push(entry), this.buffer.length > this.capacity && this.buffer.splice(0, this.buffer.length - this.capacity);
   }
   entries() {
     return [...this.buffer];
@@ -22445,60 +23058,7 @@ var SyncLog = class {
     return this.buffer.filter((e) => e.result === "error").length;
   }
   clear() {
-    this.buffer.length = 0, this.notify();
-  }
-  /** Subscribe to append/clear events. Returns an unsubscribe handle.
-   *  Used by the Sync Center pane to live-render the Activity feed. */
-  subscribe(fn) {
-    return this.subscribers.add(fn), () => {
-      this.subscribers.delete(fn);
-    };
-  }
-  notify() {
-    for (let fn of this.subscribers) fn();
-  }
-};
-
-// src/sync-log-modal.ts
-var import_obsidian24 = require("obsidian"), ACTION_ICONS = {
-  push: "\u2191",
-  pull: "\u2193",
-  delete: "\u2715",
-  conflict: "\u26A1",
-  skip: "\u23ED",
-  error: "\u2717"
-}, SyncLogModal = class extends import_obsidian24.Modal {
-  constructor(app, syncLog) {
-    super(app), this.syncLog = syncLog;
-  }
-  onOpen() {
-    var _a;
-    let { contentEl } = this;
-    contentEl.empty(), contentEl.addClass("engram-sync-log-modal"), contentEl.createEl("h2", { text: "Sync log" });
-    let entries = this.syncLog.entries(), errorCount = this.syncLog.errorCount();
-    if (contentEl.createEl("p", {
-      cls: "engram-sync-log-header"
-    }).setText(
-      entries.length === 0 ? "No sync activity this session." : `Showing ${entries.length} entries${errorCount > 0 ? ` (${errorCount} errors)` : ""}`
-    ), entries.length === 0) return;
-    let list2 = contentEl.createDiv({ cls: "engram-sync-log-list" });
-    for (let entry of entries) {
-      let row = list2.createDiv({ cls: "engram-sync-log-entry" }), time = entry.timestamp.toLocaleTimeString([], {
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit"
-      }), icon = (_a = ACTION_ICONS[entry.action]) != null ? _a : "?", status = entry.result === "ok" ? "\u2713" : entry.result === "error" ? "\u2717" : "\u23ED", line = `${time}  ${icon} ${entry.action.padEnd(8)} ${entry.path}  ${status}`, span = row.createSpan({ text: line });
-      entry.result === "error" && (span.addClass("engram-sync-log-entry-error"), entry.error && row.createDiv({
-        text: `         \u2514 ${entry.error}`,
-        cls: "engram-sync-log-error"
-      })), entry.details && row.createDiv({
-        text: `         \u2514 ${entry.details}`,
-        cls: "engram-sync-log-detail"
-      });
-    }
-  }
-  onClose() {
-    this.contentEl.empty();
+    this.buffer.length = 0;
   }
 };
 
@@ -22531,8 +23091,8 @@ async function checkForPluginUpdate(currentVersion) {
 
 // src/main.ts
 async function generateClientId(app) {
-  let adapter = app.vault.adapter, input = (adapter instanceof import_obsidian26.FileSystemAdapter ? adapter.getBasePath() : void 0) || app.vault.getName(), data = new TextEncoder().encode(input), hashBuffer = await crypto.subtle.digest("SHA-256", data), hashArray = new Uint8Array(hashBuffer);
-  return Array.from(hashArray).map((b) => b.toString(16).padStart(2, "0")).join("");
+  let adapter = app.vault.adapter, input = (adapter instanceof import_obsidian26.FileSystemAdapter ? adapter.getBasePath() : void 0) || app.vault.getName();
+  return sha256Hex(input);
 }
 function shouldReuseLiveStream(hasStream, everConnected, connectionKey, liveChannelKey) {
   return hasStream && everConnected && connectionKey === liveChannelKey;
@@ -22545,6 +23105,17 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
     this.api = new EngramApi("", "");
+    /** Dev-build only: registry of outstanding async work, exposed through the
+     *  debug snapshot so a wedged sync shows up as a long-lived pending entry
+     *  instead of having to be inferred from logs. Null in production. */
+    this.promiseTracker = null;
+    /** Timeline capture for the CRDT seams (#356). Constructed once and kept for
+     *  the plugin's lifetime — it reads the flag on every record call, so
+     *  toggling recording never needs the CRDT stack rebuilt. Its buffer is
+     *  bounded, and it costs one predicate call per seam while off. */
+    this.syncRecorder = new SyncRecorder({
+      enabled: () => this.flags.crdtRecording
+    });
     /** Persist the user's chosen search mode as the new default. Passed to the
      *  search view + modal so a mode switch in either surface sticks. */
     this.persistSearchMode = (mode) => {
@@ -22653,6 +23224,13 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
      *  double-toast the user. */
     this.dataRecoveryNotified = !1;
   }
+  /** Resolved feature flags (stored overrides applied over schema defaults).
+   *  Recomputed on every read so a settings toggle takes effect without a
+   *  reload — these are cheap (a fixed-size object literal), and caching one
+   *  would just add an invalidation bug. */
+  get flags() {
+    return resolveFlags(this.settings.featureFlags);
+  }
   /** Whether the WebSocket channel is currently connected (for settings UI). */
   isLiveConnected() {
     return this.liveConnected;
@@ -22688,7 +23266,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
   }
   async onload() {
     var _a, _b, _c;
-    initDevLog(), devLog().log("lifecycle", "plugin loading"), rlog().info("lifecycle", `onload start \u2014 v${this.manifest.version}`), activeDocument.body.classList.add("engram-vault-sync-active"), await this.loadSettings(), shouldShowWaitlistPrompt(this.settings) && this.app.workspace.onLayoutReady(() => {
+    initDevLog(), setLogSink((level, category, message) => {
+      devLog().log(category, message), level === "error" ? rlog().error(category, message) : level === "warn" ? rlog().warn(category, message) : level === "info" && rlog().info(category, message);
+    }), devLog().log("lifecycle", "plugin loading"), rlog().info("lifecycle", `onload start \u2014 v${this.manifest.version}`), activeDocument.body.classList.add("engram-vault-sync-active"), await this.loadSettings(), shouldShowWaitlistPrompt(this.settings) && this.app.workspace.onLayoutReady(() => {
       new EmailCaptureModal(this.app, () => {
         this.settings.waitlistPromptSeen = !0, this.saveSettings();
       }).open();
@@ -22705,7 +23285,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       `Plugin loading | v${this.manifest.version} | ${import_obsidian26.Platform.isMobile ? "mobile" : "desktop"}`
     ), this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
       data.lastSync !== void 0 && this.syncEngine.setLastSync(data.lastSync), data.catchupSeq !== void 0 && this.syncEngine.setCatchupSeq(data.catchupSeq), data.catchupId !== void 0 && this.syncEngine.setCatchupId(data.catchupId), data.manifestSeq !== void 0 && this.syncEngine.setManifestSeq(data.manifestSeq), await this.savePluginData(this.syncEngine.getLastSync());
-    }), this.syncLog = new SyncLog(), this.syncEngine.syncLog = this.syncLog, this.syncEngine.setCrdtLiveCheck(() => {
+    }), this.syncEngine.syncLog = this.syncLog, this.syncEngine.setCrdtLiveCheck(() => {
       var _a2, _b2;
       return (_b2 = (_a2 = this.noteStream) == null ? void 0 : _a2.isCrdtConnected()) != null ? _b2 : !1;
     }), this.syncEngine.setNoteIdMap(this.noteIdMap), this.syncEngine.setDeviceId(this.deviceId), this.syncEngine.setCrdtBoundBufferText(
@@ -22782,7 +23362,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         var _a2;
         if (this.syncEngine.isSyncBlocked()) return;
         let file = this.app.workspace.getActiveFile();
-        file instanceof import_obsidian26.TFile && file.extension === "md" && ((_a2 = this.crdtEnrollment) == null || _a2.enroll(this.noteIdMap.getOrMint(file.path)));
+        file instanceof import_obsidian26.TFile && isMarkdownPath(file.path) && ((_a2 = this.crdtEnrollment) == null || _a2.enroll(this.noteIdMap.getOrMint(file.path)));
       })
     ), this.registerEvent(
       this.app.vault.on("delete", (file) => {
@@ -22801,14 +23381,20 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       })
     ), registerDiagnostics(this), this.registerDomEvent(activeDocument, "visibilitychange", () => {
       var _a2, _b2;
-      activeDocument.visibilityState === "hidden" ? (rlog().flush(), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.baseStore) == null || _a2.save()) : activeDocument.visibilityState === "visible" && ((_b2 = this.noteStream) == null || _b2.onResume());
+      activeDocument.visibilityState === "hidden" ? (rlog().flush(), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.baseStore) == null || _a2.save().catch((e) => {
+        devLog().log("base-store", `save failed: ${errMsg(e)}`);
+      })) : activeDocument.visibilityState === "visible" && ((_b2 = this.noteStream) == null || _b2.onResume());
     }), this.addCommand({
       id: "sync-now",
       name: "Sync now",
       callback: async () => {
-        new import_obsidian26.Notice("Engram sync: syncing...");
-        let { pulled, pushed } = await this.syncEngine.fullSync();
-        new import_obsidian26.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+        try {
+          new import_obsidian26.Notice("Engram sync: syncing...");
+          let { pulled, pushed } = await this.syncEngine.fullSync();
+          new import_obsidian26.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+        } catch (e) {
+          this.handleSyncError("Manual sync", e, { notice: !0 });
+        }
       }
     }), this.addCommand({
       id: "disconnect",
@@ -22820,36 +23406,48 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       id: "push-all",
       name: "Push entire vault",
       callback: async () => {
-        let count2 = await this.syncEngine.pushAll();
-        new import_obsidian26.Notice(`Engram Sync: pushed ${count2} files`);
+        try {
+          let count2 = await this.syncEngine.pushAll();
+          new import_obsidian26.Notice(`Engram Sync: pushed ${count2} files`);
+        } catch (e) {
+          this.handleSyncError("Push all", e, { notice: !0 });
+        }
       }
     }), this.addCommand({
       id: "check-sync",
       name: "Check sync status",
       callback: async () => {
-        new import_obsidian26.Notice("Engram sync: checking...");
-        let result = await this.syncEngine.reconcile();
-        if (!result) {
-          new import_obsidian26.Notice(
-            "Engram sync: server does not support reconciliation (update backend)"
-          );
-          return;
-        }
-        let { missing, diverged, extraOnServer } = result;
-        if (missing.length === 0 && diverged.length === 0 && extraOnServer.length === 0)
-          new import_obsidian26.Notice("Engram sync: everything in sync");
-        else {
-          let parts = [];
-          missing.length > 0 && parts.push(`${missing.length} missing on server`), diverged.length > 0 && parts.push(`${diverged.length} diverged`), extraOnServer.length > 0 && parts.push(`${extraOnServer.length} only on server`), new import_obsidian26.Notice(`Engram Sync: ${parts.join(", ")}`);
+        try {
+          new import_obsidian26.Notice("Engram sync: checking...");
+          let result = await this.syncEngine.reconcile();
+          if (!result) {
+            new import_obsidian26.Notice(
+              "Engram sync: server does not support reconciliation (update backend)"
+            );
+            return;
+          }
+          let { missing, diverged, extraOnServer } = result;
+          if (missing.length === 0 && diverged.length === 0 && extraOnServer.length === 0)
+            new import_obsidian26.Notice("Engram sync: everything in sync");
+          else {
+            let parts = [];
+            missing.length > 0 && parts.push(`${missing.length} missing on server`), diverged.length > 0 && parts.push(`${diverged.length} diverged`), extraOnServer.length > 0 && parts.push(`${extraOnServer.length} only on server`), new import_obsidian26.Notice(`Engram Sync: ${parts.join(", ")}`);
+          }
+        } catch (e) {
+          this.handleSyncError("Sync check", e, { notice: !0 });
         }
       }
     }), this.addCommand({
       id: "pull-all",
       name: "Pull all from server (force overwrite)",
       callback: async () => {
-        new import_obsidian26.Notice("Engram sync: pulling all from server...");
-        let count2 = await this.syncEngine.pullAll();
-        new import_obsidian26.Notice(`Engram Sync: pulled ${count2} files from server`);
+        try {
+          new import_obsidian26.Notice("Engram sync: pulling all from server...");
+          let count2 = await this.syncEngine.pullAll();
+          new import_obsidian26.Notice(`Engram Sync: pulled ${count2} files from server`);
+        } catch (e) {
+          this.handleSyncError("Pull all", e, { notice: !0 });
+        }
       }
     }), this.addCommand({
       id: "show-sync-log",
@@ -22880,22 +23478,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       id: "open-search-sidebar",
       name: "Open search sidebar",
       callback: async () => {
-        let existing = this.app.workspace.getLeavesOfType(SEARCH_VIEW_TYPE);
-        if (existing[0]) {
-          this.app.workspace.revealLeaf(existing[0]);
-          return;
-        }
-        let leaf = this.app.workspace.getRightLeaf(!1);
-        leaf && (await leaf.setViewState({ type: SEARCH_VIEW_TYPE, active: !0 }), this.app.workspace.revealLeaf(leaf));
+        await this.revealSearchSidebar();
       }
     }), this.addRibbonIcon("brain-circuit", "Engram search", async () => {
-      let existing = this.app.workspace.getLeavesOfType(SEARCH_VIEW_TYPE);
-      if (existing[0]) {
-        this.app.workspace.revealLeaf(existing[0]);
-        return;
-      }
-      let leaf = this.app.workspace.getRightLeaf(!1);
-      leaf && (await leaf.setViewState({ type: SEARCH_VIEW_TYPE, active: !0 }), this.app.workspace.revealLeaf(leaf));
+      await this.revealSearchSidebar();
     }), this.addCommand({
       id: "open-sync-center",
       name: "Open sync center",
@@ -22910,20 +23496,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         }
         new import_obsidian26.Notice("Engram sync: syncing..."), this.syncEngine.fullSync().then(({ pulled, pushed }) => {
           new import_obsidian26.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
-        }).catch((e) => {
-          if (e instanceof LimitExceededError) {
-            notifyLimitExceeded(e), rlog().info(
-              "lifecycle",
-              `Manual sync blocked \u2014 limit reached (${e.reason})`
-            );
-            return;
-          }
-          console.error("Engram Sync: manual sync failed", e), rlog().error(
-            "lifecycle",
-            `Manual sync failed: ${errMsg(e)}`,
-            e instanceof Error ? e.stack : void 0
-          ), new import_obsidian26.Notice("Engram sync: sync failed");
-        });
+        }).catch((e) => this.handleSyncError("Manual sync", e, { notice: !0 }));
       }
     }), this.registerEditorExtension([liveBindingPlugin]), this.registerEvent(this.app.workspace.on("file-open", (file) => this.handleFileOpen(file))), this.registerEvent(
       this.app.workspace.on("active-leaf-change", () => {
@@ -23009,23 +23582,35 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
             let pushed = await this.syncEngine.pushModifiedFiles();
             pushed > 0 && new import_obsidian26.Notice(`Engram Sync: pushed ${pushed}`);
           } catch (e) {
-            if (e instanceof LimitExceededError) {
-              notifyLimitExceeded(e), rlog().info(
-                "lifecycle",
-                `Startup sync blocked \u2014 limit reached (${e.reason})`
-              );
-              return;
-            }
-            console.error("Engram Sync: startup sync failed", e), rlog().error("lifecycle", `Startup sync failed: ${errMsg(e)}`);
+            this.handleSyncError("Startup sync", e);
           }
         else
           await this.doSyncWithFirstSyncCheck();
       }
     });
   }
+  /** Shared error boundary for user-initiated sync entry points (palette
+   *  commands, status-bar click, startup sync, sync after settings change).
+   *  A limit hit always gets the upgrade toast; anything else lands in
+   *  console + rlog, plus a failure Notice only when the user explicitly
+   *  asked for the sync (`notice: true`) — background syncs must not toast
+   *  every offline launch. */
+  handleSyncError(context, e, opts) {
+    if (e instanceof LimitExceededError) {
+      notifyLimitExceeded(e), rlog().info("lifecycle", `${context} blocked \u2014 limit reached (${e.reason})`);
+      return;
+    }
+    console.error(`Engram Sync: ${context} failed`, e), rlog().error(
+      "lifecycle",
+      `${context} failed: ${errMsg(e)}`,
+      e instanceof Error ? e.stack : void 0
+    ), opts != null && opts.notice && new import_obsidian26.Notice("Engram sync: sync failed");
+  }
   onunload() {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
-    (_a = this.crdtWiring) == null || _a.dispose(), devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.api.beacon.flush(), this.savePluginData(this.syncEngine.getLastSync()), (_b = this.baseStore) == null || _b.prune(), (_c = this.baseStore) == null || _c.save(), (_d = this.crdtOpQueue) == null || _d.dispose(), (_e = this.syncEngine) == null || _e.destroy(), (_f = this.noteStream) == null || _f.disconnect(), setLiveBindingCoordinator(null), (_g = this.crdtLiveViews) == null || _g.destroy(), this.crdtLiveViews = null, (_h = this.crdtManager) == null || _h.destroyAll(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), destroyDevLog(), window["__ $YJS$ __"] = void 0;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+    (_a = this.crdtWiring) == null || _a.dispose(), devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.api.beacon.flush(), this.syncEngine && this.savePluginData(this.syncEngine.getLastSync()), (_b = this.baseStore) == null || _b.prune(), (_c = this.baseStore) == null || _c.save().catch((e) => {
+      devLog().log("base-store", `save failed: ${errMsg(e)}`);
+    }), (_d = this.crdtOpQueue) == null || _d.dispose(), (_e = this.syncEngine) == null || _e.destroy(), (_f = this.noteStream) == null || _f.disconnect(), setLiveBindingCoordinator(null), (_g = this.crdtLiveViews) == null || _g.destroy(), this.crdtLiveViews = null, (_h = this.crdtManager) == null || _h.destroyAll(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), uninstallDebugApi(), setLogSink(null), setActiveTracker(null), (_i = this.promiseTracker) == null || _i.destroy(), this.promiseTracker = null, destroyDevLog(), window["__ $YJS$ __"] = void 0;
   }
   async loadSettings() {
     var _a, _b;
@@ -23048,8 +23633,58 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       deviceId: this.deviceId
     });
   }
+  /**
+   * Install or remove `window.__engramDebug` to match the diagnostics setting.
+   *
+   * Called from saveSettings (the user toggled diagnostics) and after the CRDT
+   * stack is rebuilt (the registry it closes over was replaced). Cheap and
+   * idempotent, so both callers can fire it unconditionally.
+   */
+  refreshDebugApi() {
+    let registry = this.crdtManager;
+    if (!this.settings.diagnosticsEnabled || !registry) {
+      uninstallDebugApi();
+      return;
+    }
+    installDebugApi(
+      createDebugApi({
+        registry: {
+          hasDoc: (id2) => registry.hasDoc(id2),
+          projectedText: (id2) => registry.projectedText(id2),
+          hasHistory: (id2) => registry.hasHistory(id2),
+          encodeStateVector: (id2) => registry.encodeStateVector(id2),
+          isSynced: (id2) => registry.isSynced(id2),
+          hasPendingGap: (id2) => registry.hasPendingGap(id2),
+          hasUndeliveredOps: (id2) => registry.hasUndeliveredOps(id2),
+          enrolled: registry.enrolled,
+          removedIds: registry.removedIds,
+          residentIds: () => [...registry.docs.keys()]
+        },
+        idForPath: (path) => this.noteIdMap.get(path),
+        pathForId: (id2) => this.noteIdMap.pathForId(id2),
+        readDisk: async (path) => {
+          let file = this.app.vault.getAbstractFileByPath((0, import_obsidian26.normalizePath)(path));
+          if (!(file instanceof import_obsidian26.TFile)) return null;
+          let content = await this.app.vault.read(file);
+          return { length: content.length, mtime: file.stat.mtime, content };
+        },
+        // exportSyncState() copies the whole map per call. Acceptable: this
+        // runs only when a human invokes the console API, never on a sync path.
+        syncStateFor: (path) => this.syncEngine.exportSyncState()[(0, import_obsidian26.normalizePath)(path)],
+        isLiveBound: (path) => {
+          var _a, _b;
+          return (_b = (_a = this.crdtLiveViews) == null ? void 0 : _a.isBound(path)) != null ? _b : !1;
+        },
+        pendingPromises: () => {
+          var _a, _b;
+          return (_b = (_a = this.promiseTracker) == null ? void 0 : _a.pending()) != null ? _b : [];
+        },
+        recorder: this.syncRecorder
+      })
+    );
+  }
   async saveSettings() {
-    this.api.updateConfig(this.settings.apiUrl, this.settings.apiKey), this.api.setVaultId(this.settings.vaultId), this.api.setTracingEnabled(this.settings.diagnosticsEnabled), this.syncEngine.updateSettings(this.settings), rlog().setLevelThreshold(this.settings.remoteLogLevel), rlog().setEnabled(this.settings.diagnosticsEnabled), this.startSyncInterval(), this.setupNoteStream(), await this.savePluginData(this.syncEngine.getLastSync()), this.hasAuthConfigured() ? this.registerVault().then(async (registered) => {
+    this.api.updateConfig(this.settings.apiUrl, this.settings.apiKey), this.api.setVaultId(this.settings.vaultId), this.api.setTracingEnabled(this.settings.diagnosticsEnabled), this.syncEngine.updateSettings(this.settings), rlog().setLevelThreshold(this.settings.remoteLogLevel), rlog().setEnabled(this.settings.diagnosticsEnabled), this.refreshDebugApi(), this.startSyncInterval(), this.setupNoteStream(), await this.savePluginData(this.syncEngine.getLastSync()), this.hasAuthConfigured() ? this.registerVault().then(async (registered) => {
       if (!registered) {
         await this.applySyncGate();
         return;
@@ -23060,21 +23695,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         let { pulled, pushed } = await this.syncEngine.fullSync();
         (pulled > 0 || pushed > 0) && new import_obsidian26.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
       } catch (e) {
-        if (e instanceof LimitExceededError) {
-          notifyLimitExceeded(e), rlog().info(
-            "lifecycle",
-            `Sync after settings change blocked \u2014 limit reached (${e.reason})`
-          );
-          return;
-        }
-        console.error("Engram Sync: sync after settings change failed", e), rlog().error(
-          "lifecycle",
-          `Sync after settings change failed: ${errMsg(e)}`
-        );
+        this.handleSyncError("Sync after settings change", e);
       }
-    }).catch((e) => {
-      console.error("Engram Sync: sync after settings change failed", e), rlog().error("lifecycle", `Sync after settings change failed: ${errMsg(e)}`);
-    }) : (this.syncEngine.setSyncBlocked(!0), rlog().setEnabled(!1));
+    }).catch((e) => this.handleSyncError("Sync after settings change", e)) : (this.syncEngine.setSyncBlocked(!0), rlog().setEnabled(!1));
   }
   /** Register this vault with the backend. Must be called before sync starts.
    *  Returns true if registration succeeded (or vault was already registered).
@@ -23203,13 +23826,13 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
    */
   handleFileOpen(file) {
     var _a;
-    (_a = this.crdtLiveViews) == null || _a.refresh(), file != null && file.path.endsWith(".md") && this.syncEngine.healNoteOnOpen(file.path);
+    (_a = this.crdtLiveViews) == null || _a.refresh(), file && isMarkdownPath(file.path) && this.syncEngine.healNoteOnOpen(file.path);
   }
   createAuthProvider() {
     var _a, _b, _c;
     if (this.settings.refreshToken) {
       let refreshFn = async (token) => {
-        let base = this.settings.apiUrl.replace(/\/+$/, ""), apiUrl = base.endsWith("/api") ? base : `${base}/api`, resp = await withTimeout(
+        let apiUrl = EngramApi.normalizeBaseUrl(this.settings.apiUrl), resp = await withTimeout(
           (0, import_obsidian26.requestUrl)({
             url: `${apiUrl}/auth/token/refresh`,
             method: "POST",
@@ -23244,10 +23867,31 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     return this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null;
   }
   async saveOAuthTokens(refreshToken, vaultId, userEmail) {
-    this.syncEngine.bumpAuthGeneration(), this.settings.refreshToken = refreshToken, this.settings.userEmail = userEmail, this.settings.authMethod = "oauth", this.settings.vaultId = vaultId, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, this.authProvider = this.createAuthProvider(), this.authProvider && this.api.setAuthProvider(this.authProvider), await this.saveSettings(), this.authProvider && this.noteStream && (this.noteStream.setAuthProvider(this.authProvider), this.noteStream.setAuthProbe(() => this.api.getMe()));
+    this.syncEngine.bumpAuthGeneration(), this.settings.refreshToken = refreshToken, this.settings.userEmail = userEmail, this.settings.authMethod = "oauth", this.settings.vaultId = vaultId, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, this.authProvider = this.createAuthProvider(), await this.commitAuthProviderSwap();
   }
   async clearOAuthTokens() {
-    this.syncEngine.bumpAuthGeneration(), this.settings.refreshToken = void 0, this.settings.userEmail = void 0, this.settings.authMethod = null, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, this.authProvider = this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null, this.authProvider && this.api.setAuthProvider(this.authProvider), await this.saveSettings(), this.authProvider && this.noteStream && (this.noteStream.setAuthProvider(this.authProvider), this.noteStream.setAuthProbe(() => this.api.getMe()));
+    this.syncEngine.bumpAuthGeneration(), this.settings.refreshToken = void 0, this.settings.userEmail = void 0, this.settings.authMethod = null, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, this.authProvider = this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null, await this.commitAuthProviderSwap();
+  }
+  /** Reveal the search sidebar, creating its leaf on first use. Shared by the
+   *  palette command and the ribbon icon (previously byte-identical copies). */
+  async revealSearchSidebar() {
+    let existing = this.app.workspace.getLeavesOfType(SEARCH_VIEW_TYPE);
+    if (existing[0]) {
+      this.app.workspace.revealLeaf(existing[0]);
+      return;
+    }
+    let leaf = this.app.workspace.getRightLeaf(!1);
+    leaf && (await leaf.setViewState({ type: SEARCH_VIEW_TYPE, active: !0 }), this.app.workspace.revealLeaf(leaf));
+  }
+  /** Shared tail of saveOAuthTokens/clearOAuthTokens: wire the (already
+   *  swapped) provider onto the api BEFORE saveSettings() rebuilds the note
+   *  channel — the rebuild freezes the channel topic's userId from
+   *  api.getMe() at construction, so a stale provider mints a doomed
+   *  crdt:<oldUser>:<vault> topic the backend rejects "unauthorized" and
+   *  live sync stays dead until reload. Then persist and hand the provider
+   *  to the live stream. */
+  async commitAuthProviderSwap() {
+    this.authProvider && this.api.setAuthProvider(this.authProvider), await this.saveSettings(), this.authProvider && this.noteStream && (this.noteStream.setAuthProvider(this.authProvider), this.noteStream.setAuthProbe(() => this.api.getMe()));
   }
   setupNoteStream() {
     var _a, _b, _c, _d, _e;
@@ -23398,6 +24042,20 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           let wiring2 = createCrdtWiring({
             noteIdMap: this.noteIdMap,
             syncEngine: this.syncEngine,
+            recorder: this.syncRecorder,
+            // BaseStore is keyed by vault path and already holds exactly the
+            // last-synced content its own docstring calls "the common
+            // ancestor for 3-way merge"; the registry is keyed by note_id,
+            // so resolve through the id map.
+            lcaFor: (noteId) => {
+              var _a3, _b2, _c2;
+              let path = this.noteIdMap.pathForId(noteId);
+              return path && (_c2 = (_b2 = (_a3 = this.baseStore) == null ? void 0 : _a3.get(path)) == null ? void 0 : _b2.content) != null ? _c2 : null;
+            },
+            onDirtyMerge: (noteId) => rlog().warn(
+              "crdt",
+              `LCA merge left unapplied hunks for ${noteId} \u2014 fell back to the two-way path`
+            ),
             // `?? false`: a null socket (mid-reconnect) must read as REFUSED so
             // the frame is held in unsentDocIds and flushed on rejoin — never
             // silently dropped as if sent.
@@ -23446,7 +24104,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
             }
           ), this.crdtStackKey = channelConnectionKey(this.settings);
         }
-        (_a2 = this.crdtLiveViews) == null || _a2.refresh();
+        (_a2 = this.crdtLiveViews) == null || _a2.refresh(), this.refreshDebugApi();
         let wiring = this.crdtWiring;
         wiring && (channel.onCrdtMessage = wiring.onCrdtMessage, channel.onCrdtDocReady = wiring.onCrdtDocReady, channel.onCrdtNoteNotFound = wiring.onCrdtNoteNotFound, channel.onNoteYjsUpdate = wiring.onNoteYjsUpdate), channel.onCrdtJoined = () => {
           var _a3;

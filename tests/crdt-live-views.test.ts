@@ -334,6 +334,8 @@ describe("CrdtLiveViews.destroy() flush safety", () => {
 			manager: manager as never,
 			enrollment: {} as never,
 			resolveId: (p: string) => `id:${p}`,
+			// Mapped case: destroy() resolves existing ids only (never mints).
+			resolveExistingId: (p: string) => `id:${p}`,
 			flushToDisk: async (path, content) => {
 				flushed.push({ path, content });
 			},
@@ -366,6 +368,40 @@ describe("CrdtLiveViews.destroy() flush safety", () => {
 		const { lv, flushed } = make(new Map()); // hasDoc is false for everything
 		bind(lv, "a.md", "v1");
 		await lv.destroy();
+		expect(flushed).toEqual([]);
+	});
+});
+
+describe("destroy() teardown flush (repo-review 2026-08)", () => {
+	it("never mints an id for a bound path whose mapping is gone (same NEVER-mint rule as release)", async () => {
+		// destroy() used the minting resolveId while its sibling
+		// onLastViewerRelease documents the 2026-07-28 incident: minting on a
+		// teardown path resurrects a deleted note under a fresh, untombstoned id.
+		let mintCalls = 0;
+		const flushed: Array<{ path: string; content: string }> = [];
+		const lv = new CrdtLiveViews({
+			app: {
+				vault: { getAbstractFileByPath: (p: string) => new TFile(p) },
+				workspace: { getLeavesOfType: () => [] },
+			} as never,
+			manager: {
+				hasDoc: () => true,
+				residentText: () => ({ text: { toJSON: () => "resident" } }),
+				getText: async () => "x",
+			} as never,
+			enrollment: {} as never,
+			resolveId: (p: string) => {
+				mintCalls++;
+				return `id:${p}`;
+			},
+			resolveExistingId: () => null, // deleted note: mapping cleared
+			flushToDisk: async (path: string, content: string) => {
+				flushed.push({ path, content });
+			},
+		});
+		lv.onBind("a.md", "v1");
+		await lv.destroy();
+		expect(mintCalls).toBe(0);
 		expect(flushed).toEqual([]);
 	});
 });
