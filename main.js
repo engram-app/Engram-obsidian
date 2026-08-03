@@ -18460,6 +18460,28 @@ function renderSyncCenterTab(ctx) {
 }
 
 // src/settings.ts
+function makeProgressBarRender(progressContainer, progressLabel, progressBarInner, getPlannedPhases) {
+  let prevTotals = /* @__PURE__ */ new Map();
+  return (progress) => {
+    var _a, _b, _c;
+    if (!progressContainer.isConnected) return;
+    if (progress.phase === "complete") {
+      progressContainer.removeClass("is-active"), prevTotals.clear();
+      return;
+    }
+    progressContainer.hasClass("is-active") || prevTotals.clear(), progressContainer.addClass("is-active");
+    let planned = (_a = getPlannedPhases()) == null ? void 0 : _a.find((p) => p.phase === progress.phase), { current, total, pct } = settingsBarCounts(
+      progress,
+      planned,
+      (_b = prevTotals.get(progress.phase)) != null ? _b : 0
+    );
+    prevTotals.set(progress.phase, total);
+    let phaseLabel = (_c = PHASE_FALLBACK_LABEL[progress.phase]) != null ? _c : progress.phase, failedSuffix = progress.failed > 0 ? ` (${progress.failed} failed)` : "";
+    progressLabel.setText(
+      total > 0 ? `${phaseLabel}... ${current}/${total}${failedSuffix}` : `${phaseLabel}... ${current}${failedSuffix}`
+    ), progressBarInner.style.width = `${pct}%`;
+  };
+}
 var EngramSyncSettingTab = class extends import_obsidian23.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
@@ -18534,25 +18556,15 @@ var EngramSyncSettingTab = class extends import_obsidian23.PluginSettingTab {
     let progressContainer = containerEl.createDiv({ cls: "engram-sync-progress" }), progressLabel = progressContainer.createEl("p", {
       text: "Syncing...",
       cls: "engram-progress-label"
-    }), progressBarInner = progressContainer.createDiv({ cls: "engram-progress-bar-outer" }).createDiv({ cls: "engram-progress-bar-inner" }), prevTotals = /* @__PURE__ */ new Map();
-    this.installProgressBar((progress) => {
-      var _a, _b, _c;
-      if (progress.phase === "complete") {
-        progressContainer.removeClass("is-active"), prevTotals.clear();
-        return;
-      }
-      progressContainer.hasClass("is-active") || prevTotals.clear(), progressContainer.addClass("is-active");
-      let planned = (_a = this.plugin.activeSyncPhases) == null ? void 0 : _a.find((p) => p.phase === progress.phase), { current, total, pct } = settingsBarCounts(
-        progress,
-        planned,
-        (_b = prevTotals.get(progress.phase)) != null ? _b : 0
-      );
-      prevTotals.set(progress.phase, total);
-      let phaseLabel = (_c = PHASE_FALLBACK_LABEL[progress.phase]) != null ? _c : progress.phase, failedSuffix = progress.failed > 0 ? ` (${progress.failed} failed)` : "";
-      progressLabel.setText(
-        total > 0 ? `${phaseLabel}... ${current}/${total}${failedSuffix}` : `${phaseLabel}... ${current}${failedSuffix}`
-      ), progressBarInner.style.width = `${pct}%`;
-    });
+    }), progressBarInner = progressContainer.createDiv({ cls: "engram-progress-bar-outer" }).createDiv({ cls: "engram-progress-bar-inner" });
+    this.installProgressBar(
+      makeProgressBarRender(
+        progressContainer,
+        progressLabel,
+        progressBarInner,
+        () => this.plugin.activeSyncPhases
+      )
+    );
     let tabs = [
       { id: "about", label: "\u{1F44B} Welcome", render: renderAboutTab },
       { id: "account", label: "\u2601\uFE0F Cloud", render: renderAccountTab },
