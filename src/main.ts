@@ -460,41 +460,36 @@ export default class EngramSyncPlugin extends Plugin {
 
 		this.syncEngine.syncLog = this.syncLog;
 
-		// Level-triggered CRDT-liveness check for the push path. setCrdtManager is
-		// edge-triggered (set on crdt: join, cleared on disconnect) and can go stale
-		// — set, but the channel dead-but-set after an auth swap. Reading the live
-		// join state at push time lets pushFile fall back to REST instead of
-		// dropping the update into a channel the server no longer routes (#915).
-		// Reads this.noteStream at call time, so it always reflects the current
-		// channel; null stream → not live → REST.
-		this.syncEngine.setCrdtLiveCheck(() => this.noteStream?.isCrdtConnected() ?? false);
-
-		// Path -> note_id sidecar (Task 4/5 of the note_id-keyed CRDT rework).
-		// this.noteIdMap is already loaded from data.json by loadSettings() above
-		// (called before onload reaches this point), so this wiring sees the
-		// persisted map, not an empty one.
-		this.syncEngine.setNoteIdMap(this.noteIdMap);
-
-		// Own device id (minted in loadSettings, sent as X-Device-Id by the API
-		// client) — lets the engine drop server fanout echoes of its own REST
-		// deletes (#970).
-		this.syncEngine.setDeviceId(this.deviceId);
-
-		// NOTE: the old setCrdtEditorDetach / setCrdtEditorRebind wiring is gone.
-		// The editor binding is now a CM6 ViewPlugin (live-binding.ts) that owns its
-		// own per-view lifecycle and re-resolves its note_id on every update, so a
+		// Boot-stage CRDT ports (one patch; the channel-join stage wires the rest).
+		// NOTE: the old editorDetach/editorRebind wiring is gone. The editor
+		// binding is now a CM6 ViewPlugin (live-binding.ts) that owns its own
+		// per-view lifecycle and re-resolves its note_id on every update, so a
 		// genesis ADOPT (path -> serverId remap) is picked up automatically and no
 		// doc is ever torn down under an open editor (persistent-doc model).
-
-		// Fix wave 7 (#191 slice): commitCrdtConvergence's phantom-binding
-		// check reads the bound editor's live buffer, and (on a rebind)
-		// nudges its save the same way wiring.ts's onBoundUpdate does.
-		this.syncEngine.setCrdtBoundBufferText(
-			(path) => this.crdtLiveViews?.boundBufferText(path) ?? null,
-		);
-		this.syncEngine.setCrdtRequestSave((path) =>
-			this.crdtLiveViews?.requestSaveForBoundPath(path),
-		);
+		this.syncEngine.setCrdtPorts({
+			// Level-triggered CRDT-liveness check for the push path. The manager
+			// port is edge-triggered (set on crdt: join, cleared on disconnect) and
+			// can go stale — set, but the channel dead-but-set after an auth swap.
+			// Reading the live join state at push time lets pushFile fall back to
+			// REST instead of dropping the update into a channel the server no
+			// longer routes (#915). Reads this.noteStream at call time, so it
+			// always reflects the current channel; null stream → not live → REST.
+			live: () => this.noteStream?.isCrdtConnected() ?? false,
+			// Path -> note_id sidecar (Task 4/5 of the note_id-keyed CRDT rework).
+			// this.noteIdMap is already loaded from data.json by loadSettings()
+			// above (called before onload reaches this point), so this wiring sees
+			// the persisted map, not an empty one.
+			noteIdMap: this.noteIdMap,
+			// Own device id (minted in loadSettings, sent as X-Device-Id by the API
+			// client) — lets the engine drop server fanout echoes of its own REST
+			// deletes (#970).
+			deviceId: this.deviceId,
+			// Fix wave 7 (#191 slice): commitCrdtConvergence's phantom-binding
+			// check reads the bound editor's live buffer, and (on a rebind)
+			// nudges its save the same way wiring.ts's onBoundUpdate does.
+			boundBufferText: (path) => this.crdtLiveViews?.boundBufferText(path) ?? null,
+			requestSave: (path) => this.crdtLiveViews?.requestSaveForBoundPath(path),
+		});
 
 		// Base content store for 3-way merge (lazy-loaded after layout ready)
 		const basesPath = `${this.manifest.dir}/sync-bases.json`;
@@ -573,16 +568,17 @@ export default class EngramSyncPlugin extends Plugin {
 		// until joined). registerInterval auto-clears on unload.
 		this.registerInterval(window.setInterval(() => void this.crdtOpQueue?.tick(), 5000));
 		// Wire the SyncEngine's durable create/delete enqueue hook to the queue.
-		this.syncEngine.setCrdtEnqueue((op) =>
-			this.crdtOpQueue?.enqueue({
-				id: crypto.randomUUID(),
-				kind: op.kind,
-				docId: op.docId,
-				payload: { path: op.path },
-				enqueuedAt: Date.now(),
-				attempts: 0,
-			}),
-		);
+		this.syncEngine.setCrdtPorts({
+			enqueue: (op) =>
+				this.crdtOpQueue?.enqueue({
+					id: crypto.randomUUID(),
+					kind: op.kind,
+					docId: op.docId,
+					payload: { path: op.path },
+					enqueuedAt: Date.now(),
+					attempts: 0,
+				}),
+		});
 
 		// Restore last sync timestamp, offline queue, and sync state
 		const saved = await this.loadPluginData();
@@ -1711,8 +1707,7 @@ export default class EngramSyncPlugin extends Plugin {
 			// Clear the SyncEngine references explicitly (setConnected(false) is
 			// transition-gated and can no-op under offline retention), so a destroyed
 			// manager never outlives its session as a zombie.
-			this.syncEngine.setCrdtManager(null);
-			this.syncEngine.setCrdtEnrollment(null);
+			this.syncEngine.setCrdtPorts({ manager: null, enrollment: null });
 			// A genuinely new identity must re-confirm CRDT support before offline
 			// capture stays active (degrades to legacy until the new server joins).
 			this.crdtEverJoined = false;
@@ -1938,7 +1933,7 @@ export default class EngramSyncPlugin extends Plugin {
 						// a brand-new channel pre-join). Fall back to the legacy path
 						// exactly as before so we don't hold a null manager as "active".
 						if (!this.crdtEverJoined) {
-							this.syncEngine.setCrdtManager(null);
+							this.syncEngine.setCrdtPorts({ manager: null });
 							rlog().info(
 								"crdt",
 								"Disconnected before crdt: join — CRDT routing cleared, legacy path active",
@@ -1999,21 +1994,22 @@ export default class EngramSyncPlugin extends Plugin {
 				// into the engine. Harmless to wire unconditionally — each sender is
 				// only consulted once the engine's own crdt manager is set (vaultId
 				// bound), so this is a no-op on a legacy/non-CRDT connection.
-				this.syncEngine.setCrdtCreate((id, path) => channel.crdtCreate(id, path));
-				this.syncEngine.setCrdtCreateBatch((creates) => channel.crdtCreateBatch(creates));
-				// Direct AWAITED delete for handleRename's ordered tombstone->resurrect
-				// relocation (the durable-queue delete is still wired below for the
-				// non-rename / offline paths).
-				this.syncEngine.setCrdtDelete((id) => channel.crdtDeleteAcked(id));
-				// Delete (and durable create genesis) now route through the plugin-
-				// lifetime crdtOpQueue, wired once in onload, not per-channel here.
-				// Single-path convergence: seq-ordered op-log replayed over the socket.
-				// Vault-mismatch guard (#314) + composite-cursor forwarding (#312),
-				// extracted to a tested helper so a dropped arg can't silently make
-				// the fix inert (TS bivariance accepts a shorter closure).
-				this.syncEngine.setCrdtCatchupSince(
-					makeCrdtCatchupSender(channel, () => this.settings.vaultId),
-				);
+				this.syncEngine.setCrdtPorts({
+					create: (id, path) => channel.crdtCreate(id, path),
+					createBatch: (creates) => channel.crdtCreateBatch(creates),
+					// Direct AWAITED delete for handleRename's ordered tombstone->
+					// resurrect relocation (the durable-queue delete is still wired
+					// below for the non-rename / offline paths). Delete (and durable
+					// create genesis) otherwise route through the plugin-lifetime
+					// crdtOpQueue, wired once in onload, not per-channel here.
+					delete: (id) => channel.crdtDeleteAcked(id),
+					// Single-path convergence: seq-ordered op-log replayed over the
+					// socket. Vault-mismatch guard (#314) + composite-cursor
+					// forwarding (#312), extracted to a tested helper so a dropped
+					// arg can't silently make the fix inert (TS bivariance accepts a
+					// shorter closure).
+					catchupSince: makeCrdtCatchupSender(channel, () => this.settings.vaultId),
+				});
 
 				// Wire CRDT transport through this channel.
 				// Only wire when vaultId is known: the crdt: topic is keyed by
@@ -2108,7 +2104,7 @@ export default class EngramSyncPlugin extends Plugin {
 						this.crdtWiring = wiring;
 						this.crdtManager = wiring.manager;
 						this.crdtEnrollment = wiring.enrollment;
-						this.syncEngine.setCrdtEnrollment(this.crdtEnrollment);
+						this.syncEngine.setCrdtPorts({ enrollment: this.crdtEnrollment });
 						this.crdtLiveViews = new CrdtLiveViews({
 							app: this.app,
 							manager: this.crdtManager,
@@ -2132,9 +2128,9 @@ export default class EngramSyncPlugin extends Plugin {
 						// Tell the sync engine which paths have a live editor binding so its
 						// disk-modify handler skips re-feeding disk content into the Y.Text
 						// for open notes (the binding owns them).
-						this.syncEngine.setLiveBoundCheck(
-							(path) => this.crdtLiveViews?.isBound(path) ?? false,
-						);
+						this.syncEngine.setCrdtPorts({
+							liveBound: (path) => this.crdtLiveViews?.isBound(path) ?? false,
+						});
 						// Remember the identity this stack belongs to. setupNoteStream tears
 						// the stack down ONLY when this key changes (real vault/account/backend
 						// switch), never on a plain transport reconnect.
@@ -2163,7 +2159,7 @@ export default class EngramSyncPlugin extends Plugin {
 							"crdt: topic joined — activating CRDT routing in SyncEngine",
 						);
 						this.crdtEverJoined = true;
-						this.syncEngine.setCrdtManager(this.crdtManager);
+						this.syncEngine.setCrdtPorts({ manager: this.crdtManager });
 						// Relay model: the crdt: topic is now joined, so frames can go out.
 						// Mark every resident provider connected — this re-advertises each
 						// via syncStep1 (a state-vector diff, never a full re-push) AND
@@ -2201,7 +2197,7 @@ export default class EngramSyncPlugin extends Plugin {
 						);
 						// Degrade to legacy: mirror the "never-joined disconnect" path.
 						this.crdtEverJoined = false;
-						this.syncEngine.setCrdtManager(null);
+						this.syncEngine.setCrdtPorts({ manager: null });
 						// Invalidate any handshake marks so a future re-join starts clean.
 						this.crdtManager?.clearSynced();
 						// Relay model: no crdt: topic → providers offline (buffer, don't send).

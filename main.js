@@ -19459,26 +19459,33 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.lastRelocationTs = /* @__PURE__ */ new Map();
     this.parseIgnorePatterns();
   }
+  /** Wire (a subset of) the CRDT ports in one call — see CrdtPorts. Only
+   *  keys present in the patch are assigned, so each lifecycle stage names
+   *  exactly what it wires (or clears, via explicit null). */
+  setCrdtPorts(ports) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
+    "manager" in ports && (this.crdt = (_a = ports.manager) != null ? _a : null), "deviceId" in ports && (this.deviceId = (_b = ports.deviceId) != null ? _b : null), "editorDetach" in ports && (this.crdtEditorDetach = (_c = ports.editorDetach) != null ? _c : null), "editorRebind" in ports && (this.crdtEditorRebind = (_d = ports.editorRebind) != null ? _d : null), "boundBufferText" in ports && (this.crdtBoundBufferText = (_e = ports.boundBufferText) != null ? _e : null), "requestSave" in ports && (this.crdtRequestSave = (_f = ports.requestSave) != null ? _f : null), "noteIdMap" in ports && (this.noteIdMap = (_g = ports.noteIdMap) != null ? _g : null), "enrollment" in ports && (this.crdtEnrollment = (_h = ports.enrollment) != null ? _h : null), "create" in ports && (this.crdtCreate = (_i = ports.create) != null ? _i : null), "createBatch" in ports && (this.crdtCreateBatch = (_j = ports.createBatch) != null ? _j : null), "delete" in ports && (this.crdtDelete = (_k = ports.delete) != null ? _k : null), "enqueue" in ports && (this.crdtEnqueue = (_l = ports.enqueue) != null ? _l : null), "live" in ports && (this.crdtLive = (_m = ports.live) != null ? _m : null), ports.liveBound && (this.isLiveBound = ports.liveBound), "catchupSince" in ports && (this.crdtCatchupSince = (_n = ports.catchupSince) != null ? _n : null);
+  }
   setCrdtManager(mgr) {
-    this.crdt = mgr;
+    this.setCrdtPorts({ manager: mgr });
   }
   setDeviceId(id2) {
-    this.deviceId = id2;
+    this.setCrdtPorts({ deviceId: id2 });
   }
   setCrdtEditorDetach(fn) {
-    this.crdtEditorDetach = fn;
+    this.setCrdtPorts({ editorDetach: fn });
   }
   setCrdtEditorRebind(fn) {
-    this.crdtEditorRebind = fn;
+    this.setCrdtPorts({ editorRebind: fn });
   }
   setCrdtBoundBufferText(fn) {
-    this.crdtBoundBufferText = fn;
+    this.setCrdtPorts({ boundBufferText: fn });
   }
   setCrdtRequestSave(fn) {
-    this.crdtRequestSave = fn;
+    this.setCrdtPorts({ requestSave: fn });
   }
   setNoteIdMap(map3) {
-    this.noteIdMap = map3;
+    this.setCrdtPorts({ noteIdMap: map3 });
   }
   /** Who does the server say owns `path` (normalized)? Returns the owning id,
    *  null when a FRESH manifest confirms the path is absent, or undefined
@@ -19644,19 +19651,19 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.confirmedNoteIds.clear();
   }
   setCrdtEnrollment(enrollment) {
-    this.crdtEnrollment = enrollment;
+    this.setCrdtPorts({ enrollment });
   }
   setCrdtCreate(fn) {
-    this.crdtCreate = fn;
+    this.setCrdtPorts({ create: fn });
   }
   setCrdtCreateBatch(fn) {
-    this.crdtCreateBatch = fn;
+    this.setCrdtPorts({ createBatch: fn });
   }
   setCrdtDelete(fn) {
-    this.crdtDelete = fn;
+    this.setCrdtPorts({ delete: fn });
   }
   setCrdtEnqueue(fn) {
-    this.crdtEnqueue = fn;
+    this.setCrdtPorts({ enqueue: fn });
   }
   /** A durable queued `crdt_create` acked by the server. On ADOPT (serverId
    *  differs from the local mint, the path was already owned by a live note
@@ -19732,10 +19739,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.setCrdtHead(path, CRDT_HEAD_CREATED), this.confirmNoteId(effectiveId), await this.flushHeldEditsOnCreateAck(effectiveId, path);
   }
   setCrdtLiveCheck(fn) {
-    this.crdtLive = fn;
+    this.setCrdtPorts({ live: fn });
   }
   setLiveBoundCheck(fn) {
-    this.isLiveBound = fn;
+    this.setCrdtPorts({ liveBound: fn });
   }
   /** Adopt-first seed gate input (CrdtManager.isUnchangedSynced): true when
    *  `content` hashes to exactly what this engine last synced for `path` —
@@ -20918,7 +20925,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       }
   }
   setCrdtCatchupSince(fn) {
-    this.crdtCatchupSince = fn;
+    this.setCrdtPorts({ catchupSince: fn });
   }
   /** Returns the number of ops applied across this replay (incl. any coalesced
    *  re-run) plus the sets of server note-ids and attachment paths seen
@@ -23289,20 +23296,39 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       `Plugin loading | v${this.manifest.version} | ${import_obsidian26.Platform.isMobile ? "mobile" : "desktop"}`
     ), this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
       data.lastSync !== void 0 && this.syncEngine.setLastSync(data.lastSync), data.catchupSeq !== void 0 && this.syncEngine.setCatchupSeq(data.catchupSeq), data.catchupId !== void 0 && this.syncEngine.setCatchupId(data.catchupId), data.manifestSeq !== void 0 && this.syncEngine.setManifestSeq(data.manifestSeq), await this.savePluginData(this.syncEngine.getLastSync());
-    }), this.syncEngine.syncLog = this.syncLog, this.syncEngine.setCrdtLiveCheck(() => {
-      var _a2, _b2;
-      return (_b2 = (_a2 = this.noteStream) == null ? void 0 : _a2.isCrdtConnected()) != null ? _b2 : !1;
-    }), this.syncEngine.setNoteIdMap(this.noteIdMap), this.syncEngine.setDeviceId(this.deviceId), this.syncEngine.setCrdtBoundBufferText(
-      (path) => {
+    }), this.syncEngine.syncLog = this.syncLog, this.syncEngine.setCrdtPorts({
+      // Level-triggered CRDT-liveness check for the push path. The manager
+      // port is edge-triggered (set on crdt: join, cleared on disconnect) and
+      // can go stale — set, but the channel dead-but-set after an auth swap.
+      // Reading the live join state at push time lets pushFile fall back to
+      // REST instead of dropping the update into a channel the server no
+      // longer routes (#915). Reads this.noteStream at call time, so it
+      // always reflects the current channel; null stream → not live → REST.
+      live: () => {
+        var _a2, _b2;
+        return (_b2 = (_a2 = this.noteStream) == null ? void 0 : _a2.isCrdtConnected()) != null ? _b2 : !1;
+      },
+      // Path -> note_id sidecar (Task 4/5 of the note_id-keyed CRDT rework).
+      // this.noteIdMap is already loaded from data.json by loadSettings()
+      // above (called before onload reaches this point), so this wiring sees
+      // the persisted map, not an empty one.
+      noteIdMap: this.noteIdMap,
+      // Own device id (minted in loadSettings, sent as X-Device-Id by the API
+      // client) — lets the engine drop server fanout echoes of its own REST
+      // deletes (#970).
+      deviceId: this.deviceId,
+      // Fix wave 7 (#191 slice): commitCrdtConvergence's phantom-binding
+      // check reads the bound editor's live buffer, and (on a rebind)
+      // nudges its save the same way wiring.ts's onBoundUpdate does.
+      boundBufferText: (path) => {
         var _a2, _b2;
         return (_b2 = (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.boundBufferText(path)) != null ? _b2 : null;
-      }
-    ), this.syncEngine.setCrdtRequestSave(
-      (path) => {
+      },
+      requestSave: (path) => {
         var _a2;
         return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.requestSaveForBoundPath(path);
       }
-    );
+    });
     let basesPath = `${this.manifest.dir}/sync-bases.json`;
     this.baseStore = new BaseStore(this.app.vault.adapter, basesPath), this.syncEngine.baseStore = this.baseStore;
     let explicitFoldersPath = `${this.manifest.dir}/explicit-folders.json`;
@@ -23343,8 +23369,8 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     }), this.registerInterval(window.setInterval(() => {
       var _a2;
       (_a2 = this.crdtOpQueue) == null ? void 0 : _a2.tick();
-    }, 5e3)), this.syncEngine.setCrdtEnqueue(
-      (op) => {
+    }, 5e3)), this.syncEngine.setCrdtPorts({
+      enqueue: (op) => {
         var _a2;
         return (_a2 = this.crdtOpQueue) == null ? void 0 : _a2.enqueue({
           id: crypto.randomUUID(),
@@ -23355,7 +23381,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           attempts: 0
         });
       }
-    );
+    });
     let saved = await this.loadPluginData();
     saved != null && saved.lastSync && this.syncEngine.setLastSync(saved.lastSync), (saved == null ? void 0 : saved.catchupSeq) !== void 0 && this.syncEngine.setCatchupSeq(saved.catchupSeq), (saved == null ? void 0 : saved.catchupId) !== void 0 && this.syncEngine.setCatchupId(saved.catchupId), (saved == null ? void 0 : saved.manifestSeq) !== void 0 && this.syncEngine.setManifestSeq(saved.manifestSeq), (_a = saved == null ? void 0 : saved.offlineQueue) != null && _a.length && this.syncEngine.queue.load(saved.offlineQueue), (_b = saved == null ? void 0 : saved.crdtOpQueue) != null && _b.length && ((_c = this.crdtOpQueue) == null || _c.load(saved.crdtOpQueue)), (saved == null ? void 0 : saved.syncStateVaultId) !== void 0 && this.syncEngine.setSyncStateVaultId(saved.syncStateVaultId), saved != null && saved.syncState ? this.syncEngine.importSyncState(saved.syncState) : saved != null && saved.syncedHashes && (this.syncEngine.importHashes(saved.syncedHashes), devLog().log("lifecycle", "Migrated legacy syncedHashes \u2192 syncState")), this.syncEngine.issues.hydrate(saved == null ? void 0 : saved.syncIssues), this.syncEngine.ignoredFiles.hydrate(saved == null ? void 0 : saved.ignoredFiles), this.settings.planState && this.syncEngine.hydratePlanState(this.settings.planState), this.settingTab = new EngramSyncSettingTab(this.app, this), this.addSettingTab(this.settingTab), this.registerEvent(
       this.app.vault.on("modify", (file) => {
@@ -23907,7 +23933,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       this.liveChannelKey
     ))
       return;
-    this.liveChannelKey = connectionKey, this.everConnected = !1, connectionKey !== this.crdtStackKey && (setLiveBindingCoordinator(null), (_a = this.crdtLiveViews) == null || _a.destroy(), this.crdtLiveViews = null, (_b = this.crdtWiring) == null || _b.dispose(), this.crdtWiring = null, (_c = this.crdtManager) == null || _c.destroyAll(), this.crdtManager = null, (_d = this.crdtEnrollment) == null || _d.resetAll(), this.crdtEnrollment = null, this.crdtStackKey = null, this.syncEngine.setCrdtManager(null), this.syncEngine.setCrdtEnrollment(null), this.crdtEverJoined = !1), (_e = this.noteStream) == null || _e.disconnect(), this.noteStream = null, this.channelEpoch++, rlog().setClientContext(this.deviceId, this.settings.vaultId);
+    this.liveChannelKey = connectionKey, this.everConnected = !1, connectionKey !== this.crdtStackKey && (setLiveBindingCoordinator(null), (_a = this.crdtLiveViews) == null || _a.destroy(), this.crdtLiveViews = null, (_b = this.crdtWiring) == null || _b.dispose(), this.crdtWiring = null, (_c = this.crdtManager) == null || _c.destroyAll(), this.crdtManager = null, (_d = this.crdtEnrollment) == null || _d.resetAll(), this.crdtEnrollment = null, this.crdtStackKey = null, this.syncEngine.setCrdtPorts({ manager: null, enrollment: null }), this.crdtEverJoined = !1), (_e = this.noteStream) == null || _e.disconnect(), this.noteStream = null, this.channelEpoch++, rlog().setClientContext(this.deviceId, this.settings.vaultId);
     let hasAuth = this.settings.apiKey || this.settings.refreshToken;
     if (!this.settings.apiUrl || !hasAuth) {
       this.liveConnected = !1, this.updateStatusBar(this.syncEngine.getStatus());
@@ -24008,7 +24034,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         this.liveConnected = connected, connected && (this.everConnected = !0), connected || this.api.failWedgedRequests(), this.updateStatusBar(this.syncEngine.getStatus()), connected ? this.syncEngine.clearConfirmedNoteIds() : (this.crdtEverJoined ? rlog().info(
           "crdt",
           "Disconnected \u2014 CRDT routing RETAINED for offline capture (Y.Doc + IDB)"
-        ) : (this.syncEngine.setCrdtManager(null), rlog().info(
+        ) : (this.syncEngine.setCrdtPorts({ manager: null }), rlog().info(
           "crdt",
           "Disconnected before crdt: join \u2014 CRDT routing cleared, legacy path active"
         )), (_a3 = this.crdtManager) == null || _a3.clearSynced(), (_b2 = this.crdtManager) == null || _b2.setConnected(!1));
@@ -24022,9 +24048,22 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       }, channel.onPlanState = (raw) => {
         let parsed = parsePlanState(raw, Date.now());
         parsed && queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
-      }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.syncEngine.setCrdtCreate((id2, path) => channel.crdtCreate(id2, path)), this.syncEngine.setCrdtCreateBatch((creates) => channel.crdtCreateBatch(creates)), this.syncEngine.setCrdtDelete((id2) => channel.crdtDeleteAcked(id2)), this.syncEngine.setCrdtCatchupSince(
-        makeCrdtCatchupSender(channel, () => this.settings.vaultId)
-      ), this.settings.vaultId) {
+      }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.syncEngine.setCrdtPorts({
+        create: (id2, path) => channel.crdtCreate(id2, path),
+        createBatch: (creates) => channel.crdtCreateBatch(creates),
+        // Direct AWAITED delete for handleRename's ordered tombstone->
+        // resurrect relocation (the durable-queue delete is still wired
+        // below for the non-rename / offline paths). Delete (and durable
+        // create genesis) otherwise route through the plugin-lifetime
+        // crdtOpQueue, wired once in onload, not per-channel here.
+        delete: (id2) => channel.crdtDeleteAcked(id2),
+        // Single-path convergence: seq-ordered op-log replayed over the
+        // socket. Vault-mismatch guard (#314) + composite-cursor
+        // forwarding (#312), extracted to a tested helper so a dropped
+        // arg can't silently make the fix inert (TS bivariance accepts a
+        // shorter closure).
+        catchupSince: makeCrdtCatchupSender(channel, () => this.settings.vaultId)
+      }), this.settings.vaultId) {
         let dbPrefix = this.settings.vaultId;
         if (typeof indexedDB.databases == "function" ? await ensureDocSchema(dbPrefix, window.localStorage, {
           list: () => indexedDB.databases(),
@@ -24087,7 +24126,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
             // (crdtHead-backed) survives reconnect; confirmedNoteIds does not.
             canSendLive: (id2) => this.syncEngine.hasServerNote(id2)
           });
-          this.crdtWiring = wiring2, this.crdtManager = wiring2.manager, this.crdtEnrollment = wiring2.enrollment, this.syncEngine.setCrdtEnrollment(this.crdtEnrollment), this.crdtLiveViews = new CrdtLiveViews({
+          this.crdtWiring = wiring2, this.crdtManager = wiring2.manager, this.crdtEnrollment = wiring2.enrollment, this.syncEngine.setCrdtPorts({ enrollment: this.crdtEnrollment }), this.crdtLiveViews = new CrdtLiveViews({
             app: this.app,
             manager: this.crdtManager,
             enrollment: this.crdtEnrollment,
@@ -24101,12 +24140,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
               "crdt",
               `Last-release flush failed for ${path} (doc left resident): ${err instanceof Error ? err.message : String(err)}`
             )
-          }), setLiveBindingCoordinator(this.crdtLiveViews), this.syncEngine.setLiveBoundCheck(
-            (path) => {
+          }), setLiveBindingCoordinator(this.crdtLiveViews), this.syncEngine.setCrdtPorts({
+            liveBound: (path) => {
               var _a3, _b2;
               return (_b2 = (_a3 = this.crdtLiveViews) == null ? void 0 : _a3.isBound(path)) != null ? _b2 : !1;
             }
-          ), this.crdtStackKey = channelConnectionKey(this.settings);
+          }), this.crdtStackKey = channelConnectionKey(this.settings);
         }
         (_a2 = this.crdtLiveViews) == null || _a2.refresh(), this.refreshDebugApi();
         let wiring = this.crdtWiring;
@@ -24115,7 +24154,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           rlog().info(
             "crdt",
             "crdt: topic joined \u2014 activating CRDT routing in SyncEngine"
-          ), this.crdtEverJoined = !0, this.syncEngine.setCrdtManager(this.crdtManager), (_a3 = this.crdtManager) == null || _a3.setConnected(!0), (async () => {
+          ), this.crdtEverJoined = !0, this.syncEngine.setCrdtPorts({ manager: this.crdtManager }), (_a3 = this.crdtManager) == null || _a3.setConnected(!0), (async () => {
             var _a4;
             await ((_a4 = this.crdtOpQueue) == null ? void 0 : _a4.onJoined()), await this.onCrdtTopicJoined();
           })();
@@ -24124,7 +24163,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           rlog().warn(
             "crdt",
             `crdt: topic join rejected (reason=${reason != null ? reason : "unknown"}) \u2014 degrading to legacy pushNote path`
-          ), this.crdtEverJoined = !1, this.syncEngine.setCrdtManager(null), (_a3 = this.crdtManager) == null || _a3.clearSynced(), (_b2 = this.crdtManager) == null || _b2.setConnected(!1), (_c2 = this.crdtEnrollment) == null || _c2.resetAll(), reason === "crdt_proto_too_old" && (this.crdtProtoTooOldNoticeShown || (this.crdtProtoTooOldNoticeShown = !0, new import_obsidian26.Notice(
+          ), this.crdtEverJoined = !1, this.syncEngine.setCrdtPorts({ manager: null }), (_a3 = this.crdtManager) == null || _a3.clearSynced(), (_b2 = this.crdtManager) == null || _b2.setConnected(!1), (_c2 = this.crdtEnrollment) == null || _c2.resetAll(), reason === "crdt_proto_too_old" && (this.crdtProtoTooOldNoticeShown || (this.crdtProtoTooOldNoticeShown = !0, new import_obsidian26.Notice(
             "Engram sync: live sync requires a plugin update \u2014 please update the Engram vault sync plugin.",
             1e4
           ), rlog().warn(

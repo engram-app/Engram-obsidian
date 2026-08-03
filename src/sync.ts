@@ -304,6 +304,46 @@ const MIME_TYPES: Record<string, string> = {
  *  the force pipeline). Was a magic 10 in two places. */
 const PUSH_BATCH_SIZE = 10;
 
+type CrdtCreateBatchFn = (creates: { doc_id: string; path: string; b64: string }[]) => Promise<{
+	results: { doc_id: string; status: "ok" | "error"; reason?: string; limit?: number }[];
+}>;
+
+type CrdtCatchupSinceFn = (
+	cursorSeq: number,
+	limit?: number,
+	cursorId?: string | null,
+) => Promise<{
+	changes: SyncChange[];
+	has_more: boolean;
+	next_seq: number | null;
+	next_id?: string | null;
+}>;
+
+/** Late-injection wiring for the CRDT stack (#376 prerequisite 2). main.ts
+ *  wires these in stages — boot, channel join, teardown — each stage passing
+ *  only its subset to `setCrdtPorts`. A key must be PRESENT in the patch to
+ *  be assigned; an explicitly-null key clears that port. The individual
+ *  `setX` methods on SyncEngine are thin shims over this, kept because they
+ *  are harness-facing surface (engram/e2e/headless/run.ts and
+ *  tests/sim/replica.ts drive them). */
+export interface CrdtPorts {
+	manager?: ProviderRegistry | null;
+	deviceId?: string | null;
+	editorDetach?: (() => void) | null;
+	editorRebind?: ((path: string) => void) | null;
+	boundBufferText?: ((path: string) => string | null) | null;
+	requestSave?: ((path: string) => void) | null;
+	noteIdMap?: NoteIdMap | null;
+	enrollment?: { enroll(path: string): void; reset(path: string): void } | null;
+	create?: ((docId: string, path: string) => Promise<string>) | null;
+	createBatch?: CrdtCreateBatchFn | null;
+	delete?: ((docId: string) => Promise<{ doc_id: string }>) | null;
+	enqueue?: ((op: { kind: "create" | "delete"; docId: string; path: string }) => void) | null;
+	live?: (() => boolean) | null;
+	liveBound?: (path: string) => boolean;
+	catchupSince?: CrdtCatchupSinceFn | null;
+}
+
 export class SyncEngine {
 	private debounceTimers: Map<string, number> = new Map();
 	/** Paths that newly degraded (ok/none -> frontmatter issue) since the last
@@ -419,8 +459,29 @@ export class SyncEngine {
 	 *  note_id, matching the backend's note_id lookup. */
 	private crdt: ProviderRegistry | null = null;
 
+	/** Wire (a subset of) the CRDT ports in one call — see CrdtPorts. Only
+	 *  keys present in the patch are assigned, so each lifecycle stage names
+	 *  exactly what it wires (or clears, via explicit null). */
+	setCrdtPorts(ports: CrdtPorts): void {
+		if ("manager" in ports) this.crdt = ports.manager ?? null;
+		if ("deviceId" in ports) this.deviceId = ports.deviceId ?? null;
+		if ("editorDetach" in ports) this.crdtEditorDetach = ports.editorDetach ?? null;
+		if ("editorRebind" in ports) this.crdtEditorRebind = ports.editorRebind ?? null;
+		if ("boundBufferText" in ports) this.crdtBoundBufferText = ports.boundBufferText ?? null;
+		if ("requestSave" in ports) this.crdtRequestSave = ports.requestSave ?? null;
+		if ("noteIdMap" in ports) this.noteIdMap = ports.noteIdMap ?? null;
+		if ("enrollment" in ports) this.crdtEnrollment = ports.enrollment ?? null;
+		if ("create" in ports) this.crdtCreate = ports.create ?? null;
+		if ("createBatch" in ports) this.crdtCreateBatch = ports.createBatch ?? null;
+		if ("delete" in ports) this.crdtDelete = ports.delete ?? null;
+		if ("enqueue" in ports) this.crdtEnqueue = ports.enqueue ?? null;
+		if ("live" in ports) this.crdtLive = ports.live ?? null;
+		if (ports.liveBound) this.isLiveBound = ports.liveBound;
+		if ("catchupSince" in ports) this.crdtCatchupSince = ports.catchupSince ?? null;
+	}
+
 	setCrdtManager(mgr: ProviderRegistry | null): void {
-		this.crdt = mgr;
+		this.setCrdtPorts({ manager: mgr });
 	}
 
 	/** This install's opaque device id (main.ts mints + persists it; the API
@@ -432,7 +493,7 @@ export class SyncEngine {
 	private deviceId: string | null = null;
 
 	setDeviceId(id: string | null): void {
-		this.deviceId = id;
+		this.setCrdtPorts({ deviceId: id });
 	}
 
 	/** Detaches every live editor binding (CrdtLiveViews.detachAll, wired by
@@ -453,7 +514,7 @@ export class SyncEngine {
 	private crdtEditorDetach: (() => void) | null = null;
 
 	setCrdtEditorDetach(fn: (() => void) | null): void {
-		this.crdtEditorDetach = fn;
+		this.setCrdtPorts({ editorDetach: fn });
 	}
 
 	/** Rebinds the live editor showing `path` off its current (now orphaned)
@@ -465,7 +526,7 @@ export class SyncEngine {
 	private crdtEditorRebind: ((path: string) => void) | null = null;
 
 	setCrdtEditorRebind(fn: ((path: string) => void) | null): void {
-		this.crdtEditorRebind = fn;
+		this.setCrdtPorts({ editorRebind: fn });
 	}
 
 	/** Fix wave 7 (#191 slice): reads the LIVE editor buffer currently shown
@@ -477,7 +538,7 @@ export class SyncEngine {
 	private crdtBoundBufferText: ((path: string) => string | null) | null = null;
 
 	setCrdtBoundBufferText(fn: ((path: string) => string | null) | null): void {
-		this.crdtBoundBufferText = fn;
+		this.setCrdtPorts({ boundBufferText: fn });
 	}
 
 	/** Fix wave 7: nudges the bound editor's save (CrdtLiveViews.requestSaveForBoundPath,
@@ -487,7 +548,7 @@ export class SyncEngine {
 	private crdtRequestSave: ((path: string) => void) | null = null;
 
 	setCrdtRequestSave(fn: ((path: string) => void) | null): void {
-		this.crdtRequestSave = fn;
+		this.setCrdtPorts({ requestSave: fn });
 	}
 
 	/** Path -> note_id sidecar (Task 4, `src/crdt/note-id-map.ts`). Owned by
@@ -499,7 +560,7 @@ export class SyncEngine {
 	private noteIdMap: NoteIdMap | null = null;
 
 	setNoteIdMap(map: NoteIdMap | null): void {
-		this.noteIdMap = map;
+		this.setCrdtPorts({ noteIdMap: map });
 	}
 
 	/** Populate `noteIdMap` authoritatively from the server manifest's
@@ -885,7 +946,7 @@ export class SyncEngine {
 	setCrdtEnrollment(
 		enrollment: { enroll(path: string): void; reset(path: string): void } | null,
 	): void {
-		this.crdtEnrollment = enrollment;
+		this.setCrdtPorts({ enrollment });
 	}
 
 	/** Socket-native new-note genesis (Plan B1, Task 3). When wired, a brand-new
@@ -901,28 +962,15 @@ export class SyncEngine {
 	private crdtCreate: ((docId: string, path: string) => Promise<string>) | null = null;
 
 	setCrdtCreate(fn: ((docId: string, path: string) => Promise<string>) | null): void {
-		this.crdtCreate = fn;
+		this.setCrdtPorts({ create: fn });
 	}
 
 	/** Socket-native BATCH genesis. Consumer wiring (genesis routing / chunking
 	 *  to the server's 100-create cap) is a later task; this is plumbing only. */
-	private crdtCreateBatch:
-		| ((creates: { doc_id: string; path: string; b64: string }[]) => Promise<{
-				results: {
-					doc_id: string;
-					status: "ok" | "error";
-					reason?: string;
-					limit?: number;
-				}[];
-		  }>)
-		| null = null;
+	private crdtCreateBatch: CrdtCreateBatchFn | null = null;
 
-	setCrdtCreateBatch(
-		fn: (creates: { doc_id: string; path: string; b64: string }[]) => Promise<{
-			results: { doc_id: string; status: "ok" | "error"; reason?: string; limit?: number }[];
-		}>,
-	): void {
-		this.crdtCreateBatch = fn;
+	setCrdtCreateBatch(fn: CrdtCreateBatchFn): void {
+		this.setCrdtPorts({ createBatch: fn });
 	}
 
 	/** Direct AWAITED `crdt_delete` (resolves once the server has durably applied
@@ -936,7 +984,7 @@ export class SyncEngine {
 	private crdtDelete: ((docId: string) => Promise<{ doc_id: string }>) | null = null;
 
 	setCrdtDelete(fn: ((docId: string) => Promise<{ doc_id: string }>) | null): void {
-		this.crdtDelete = fn;
+		this.setCrdtPorts({ delete: fn });
 	}
 
 	/** Durable enqueue hook for socket-native create/delete (Plan B2). Wired to
@@ -955,7 +1003,7 @@ export class SyncEngine {
 	setCrdtEnqueue(
 		fn: ((op: { kind: "create" | "delete"; docId: string; path: string }) => void) | null,
 	): void {
-		this.crdtEnqueue = fn;
+		this.setCrdtPorts({ enqueue: fn });
 	}
 
 	/** A durable queued `crdt_create` acked by the server. On ADOPT (serverId
@@ -1080,7 +1128,7 @@ export class SyncEngine {
 	private crdtLive: (() => boolean) | null = null;
 
 	setCrdtLiveCheck(fn: (() => boolean) | null): void {
-		this.crdtLive = fn;
+		this.setCrdtPorts({ live: fn });
 	}
 
 	/** True when a path currently has a live editor binding (an open, bound
@@ -1093,7 +1141,7 @@ export class SyncEngine {
 	private isLiveBound: (path: string) => boolean = () => false;
 
 	setLiveBoundCheck(fn: (path: string) => boolean): void {
-		this.isLiveBound = fn;
+		this.setCrdtPorts({ liveBound: fn });
 	}
 
 	/** How long enumerateServerState waits for the op-log socket to become
@@ -3454,32 +3502,10 @@ export class SyncEngine {
 		}
 	}
 
-	private crdtCatchupSince:
-		| ((
-				cursorSeq: number,
-				limit?: number,
-				cursorId?: string | null,
-		  ) => Promise<{
-				changes: SyncChange[];
-				has_more: boolean;
-				next_seq: number | null;
-				next_id?: string | null;
-		  }>)
-		| null = null;
+	private crdtCatchupSince: CrdtCatchupSinceFn | null = null;
 
-	setCrdtCatchupSince(
-		fn: (
-			cursorSeq: number,
-			limit?: number,
-			cursorId?: string | null,
-		) => Promise<{
-			changes: SyncChange[];
-			has_more: boolean;
-			next_seq: number | null;
-			next_id?: string | null;
-		}>,
-	): void {
-		this.crdtCatchupSince = fn;
+	setCrdtCatchupSince(fn: CrdtCatchupSinceFn): void {
+		this.setCrdtPorts({ catchupSince: fn });
 	}
 
 	/** Single-path convergence on (re)connect: replay the seq-ordered op-log over
