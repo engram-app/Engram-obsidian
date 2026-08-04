@@ -119,3 +119,103 @@ a server-side `Logger.warning(category: :sync)` (`crdt_channel.ex` `log_dropped`
 A brand-new note open in the editor emits one step1 before its create-ack lands,
 so expect one `sync` warn per new note per reconnect. Bounded and low, but if
 you are triaging a `sync` warn burst, this is a known contributor.
+
+---
+
+# The write side of the same gate: `adoptCreateAck` (2026-08-03)
+
+Everything above is the PULL side — a handshake wrongly held by the gate. This
+section is the WRITE side: what opens the gate, and the ordering the create-ack
+paths must keep. Added here rather than in a new doc on purpose — see the trap.
+
+## Which call opens the gate
+
+**`setCrdtHead`, not `confirmNoteId`.** The wiring at the top of this doc is the
+authority:
+
+```
+main.ts    canSendLive: (id) => syncEngine.hasServerNote(id)
+sync.ts    hasServerNote(id) === (getCrdtHead(pathForId(id)) != null)
+```
+
+`confirmNoteId` populates `confirmedNoteIds`, which is **session-scoped** —
+`clearConfirmedNoteIds` fires from `channel.onStatusChange`'s connected branch,
+i.e. on every reconnect. `canSendLive` needs a signal that SURVIVES reconnect,
+which is why it was deliberately moved OFF `confirmedNoteIds` onto the
+`crdtHead` oracle. `isNoteConfirmed`'s own doc comment in `sync.ts` says this.
+
+`confirmedNoteIds` still has two readers, neither of which is the live-send
+gate: `refireEnrollmentOnFirstConfirm` (re-fire STEP1 once the row exists) and
+`healNoteOnOpen` (catch-up-vs-heal branching).
+
+**Two conditions, not one.** `hasServerNote` resolves the id through the
+noteIdMap FIRST and returns false if that lookup misses:
+
+```ts
+const path = this.noteIdMap?.pathForId(noteId);
+if (!path) return false;
+return this.getCrdtHead(path) != null;
+```
+
+So the gate needs BOTH a noteIdMap entry AND a head on that path — an id absent
+from the map is gated just as hard as one with no head. That is why
+`adoptCreateAck` does `noteIdMap.set` as its first statement, before the oracle
+flip: flipping the head for a path whose id is not yet mapped leaves the gate
+shut anyway.
+
+## The trap this cost us
+
+The inline comments at all three create-ack call sites said the gate was opened
+by "confirm it, then flush" — attributing it to `confirmNoteId`. The CODE was
+always correct (`setCrdtHead` ran first), but the comments pointed a reader at
+the wrong load-bearing line. Someone preserving "confirm before flush" while
+moving `setCrdtHead` after the flush would ship into a still-closed gate.
+
+That wording then got consolidated into one authoritative doc comment on
+`adoptCreateAck`, which is what made it worth fixing rather than tolerating.
+Caught in review of PR #382, fixed in `22b756d`.
+
+**When you touch this, trust the wiring (`main.ts` `canSendLive:`) over any
+prose — including this doc.**
+
+## The three create-ack paths, and why they are one function now
+
+"The server acked our `crdt_create`" bookkeeping existed three times, and one
+copy had already leaked a step historically (the queued path missed the
+mint-retire the live path did). They also disagreed on ordering. Merged into one
+`adoptCreateAck(effectiveId, path, consumed, opts?)` in PR #382 (closes #377):
+
+| caller | context |
+|---|---|
+| `pushFile`'s genesis branch | live — may transfer an editor's mint buffer, retires the mint doc |
+| `applyCrdtCreateAck` | durable queued — seeds from disk |
+| `recordCrdtGenesisPushed` | batch — content shipped inline in the batch frame |
+
+The ADOPT half (mint-buffer transfer, mint retire) deliberately stays with each
+caller: it legitimately differs per path. Only the shared tail merged.
+
+**Ordering, load-bearing:**
+
+1. `setCrdtHead` before the flush — the sentinel flips `hasServerNote`, which IS
+   the gate (above). Flush before it and the held edits ship into a closed gate.
+2. Echo baseline before the AWAITED flush. `flushHeldEditsOnCreateAck` is
+   awaited; stamping the baseline after it leaves a window where the create's
+   own broadcast returns before the baseline that suppresses it exists. The
+   queued path already had this order; the live path did not, and #382 aligned
+   them. This is a behavior change, not just a refactor.
+
+`opts.flushHeld: false` is the batch path only — it seeds no local doc, so it
+has no gated updates to flush. That is the one honest difference of the three,
+and it is a named argument specifically so it cannot go missing silently again.
+
+A `null` `consumed` means nothing was transmitted, so no baseline is stamped —
+the seed-declined and post-create-throw exits. The post-create-throw exit leaves
+the echo-cooldown window closed conservatively; an unsuppressed self-echo there
+is absorbed by the hash-skip dedupe.
+
+## Line numbers above are pre-refactor
+
+The `sync.ts:NNNN` references earlier in this doc predate PR #380/#382, which
+inserted ~130 lines. Several were already stale before that. Grep for the symbol,
+not the line. (The same rot affects the `sync.ts:NNNN` self-references inside
+`src/sync.ts` — 4 of 5 pointed at blank or unrelated lines as of 2026-08-03.)
