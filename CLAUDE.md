@@ -175,5 +175,6 @@ Required status checks on `main`: `build-and-test`, `version-check / version-che
 - Prod `auth-failure-burst` alert traced to our own client (`Bearer ` with an empty token logs `reason=no_auth`, not `signature_error`; unlinked installs loop 401s and the log push re-reports them) → `docs/context/empty-bearer-no-auth-401-loop.md`
 - Convergence sim tier fidelity gaps (`tests/sim/` — differential gate pays rent; seeded random-op suite does NOT converge, kept as a runnable tool not a test) → `docs/context/crdt-convergence-sim-fidelity-gaps.md`
 - A note that logs `re-handshake fired` and then goes silent forever (the create-ack gate swallowing syncStep1; plus how to read `ci-debug` client logs without misordering them) → `docs/context/crdt-pull-gated-by-create-ack.md`
+- Touching create-ack bookkeeping, or wondering what actually opens the live-send gate (`setCrdtHead`/`hasServerNote`, NOT `confirmNoteId` — and the ordering `adoptCreateAck` must keep) → `docs/context/crdt-pull-gated-by-create-ack.md`
 
 @/home/open-claw/documents/code-projects/ops-agent/docs/self-updating-docs.md
