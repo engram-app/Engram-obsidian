@@ -5,7 +5,7 @@ import { type App, Notice, PluginSettingTab, type Setting } from "obsidian";
 import { DeviceFlowModal } from "./device-flow-modal";
 import { errMsg } from "./error-util";
 import type EngramSyncPlugin from "./main";
-import { PHASE_FALLBACK_LABEL, settingsBarCounts } from "./sync-progress-modal";
+import { PHASE_FALLBACK_LABEL, type PlannedPhase, settingsBarCounts } from "./sync-progress-modal";
 import { renderAboutTab } from "./tabs/about-tab";
 import { renderAccountTab } from "./tabs/account-tab";
 import { renderAdvancedTab } from "./tabs/advanced-tab";
@@ -14,6 +14,57 @@ import { pickInitialTab } from "./tabs/start-tab";
 import { renderSyncCenterTab } from "./tabs/sync-center-tab";
 import type { TabContext } from "./tabs/types";
 import type { SyncProgress } from "./types";
+
+/** Build the settings pane's progress-bar render callback. Extracted
+ *  DOM-agnostic (like renderCompletionSummary) so the teardown-without-hide
+ *  guard is testable: on 1.13+ Obsidian can tear down and recreate the
+ *  render-hatch row WITHOUT calling hide(), so uninstallProgressBar never
+ *  runs and this callback survives with a closure over detached DOM. Guard
+ *  with isConnected like renderStatus() does — go inert instead of rendering
+ *  into (and retaining) detached nodes; the installProgressBar wrapper still
+ *  forwards to `prev` regardless. */
+export function makeProgressBarRender(
+	progressContainer: HTMLElement,
+	progressLabel: HTMLElement,
+	progressBarInner: HTMLElement,
+	getPlannedPhases: () => PlannedPhase[] | null,
+): (progress: SyncProgress) => void {
+	// Per-phase previous denominator, so a fallback (plan-less) row keeps its
+	// total when the engine momentarily reports 0. Cleared on completion.
+	const prevTotals = new Map<string, number>();
+	return (progress) => {
+		if (!progressContainer.isConnected) return;
+		if (progress.phase === "complete") {
+			progressContainer.removeClass("is-active");
+			prevTotals.clear();
+			return;
+		}
+		// A new sync's first event (container was inactive): drop any denominators
+		// left over from a prior sync that ended without a "complete" (e.g. it
+		// errored), so a stale total can't leak into this run's fallback rows.
+		if (!progressContainer.hasClass("is-active")) prevTotals.clear();
+		progressContainer.addClass("is-active");
+		// Route through the same plan-aware, clamped logic as the modal so
+		// this bar can't sit stuck-low, pin at a fake 100%, or overshoot.
+		const planned = getPlannedPhases()?.find((p) => p.phase === progress.phase);
+		const { current, total, pct } = settingsBarCounts(
+			progress,
+			planned,
+			prevTotals.get(progress.phase) ?? 0,
+		);
+		prevTotals.set(progress.phase, total);
+		const phaseLabel = PHASE_FALLBACK_LABEL[progress.phase] ?? progress.phase;
+		const failedSuffix = progress.failed > 0 ? ` (${progress.failed} failed)` : "";
+		// total 0 = indeterminate (unknown-length incremental pull): show the
+		// running count as activity, no misleading "N / 0".
+		progressLabel.setText(
+			total > 0
+				? `${phaseLabel}... ${current}/${total}${failedSuffix}`
+				: `${phaseLabel}... ${current}${failedSuffix}`,
+		);
+		progressBarInner.style.width = `${pct}%`;
+	};
+}
 
 export class EngramSyncSettingTab extends PluginSettingTab {
 	plugin: EngramSyncPlugin;
@@ -123,40 +174,14 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 		const progressBarOuter = progressContainer.createDiv({ cls: "engram-progress-bar-outer" });
 		const progressBarInner = progressBarOuter.createDiv({ cls: "engram-progress-bar-inner" });
 
-		// Per-phase previous denominator, so a fallback (plan-less) row keeps its
-		// total when the engine momentarily reports 0. Cleared on completion.
-		const prevTotals = new Map<string, number>();
-		this.installProgressBar((progress) => {
-			if (progress.phase === "complete") {
-				progressContainer.removeClass("is-active");
-				prevTotals.clear();
-				return;
-			}
-			// A new sync's first event (container was inactive): drop any denominators
-			// left over from a prior sync that ended without a "complete" (e.g. it
-			// errored), so a stale total can't leak into this run's fallback rows.
-			if (!progressContainer.hasClass("is-active")) prevTotals.clear();
-			progressContainer.addClass("is-active");
-			// Route through the same plan-aware, clamped logic as the modal so
-			// this bar can't sit stuck-low, pin at a fake 100%, or overshoot.
-			const planned = this.plugin.activeSyncPhases?.find((p) => p.phase === progress.phase);
-			const { current, total, pct } = settingsBarCounts(
-				progress,
-				planned,
-				prevTotals.get(progress.phase) ?? 0,
-			);
-			prevTotals.set(progress.phase, total);
-			const phaseLabel = PHASE_FALLBACK_LABEL[progress.phase] ?? progress.phase;
-			const failedSuffix = progress.failed > 0 ? ` (${progress.failed} failed)` : "";
-			// total 0 = indeterminate (unknown-length incremental pull): show the
-			// running count as activity, no misleading "N / 0".
-			progressLabel.setText(
-				total > 0
-					? `${phaseLabel}... ${current}/${total}${failedSuffix}`
-					: `${phaseLabel}... ${current}${failedSuffix}`,
-			);
-			progressBarInner.style.width = `${pct}%`;
-		});
+		this.installProgressBar(
+			makeProgressBarRender(
+				progressContainer,
+				progressLabel,
+				progressBarInner,
+				() => this.plugin.activeSyncPhases,
+			),
+		);
 
 		// ── Tab bar ──
 		const tabs = [
