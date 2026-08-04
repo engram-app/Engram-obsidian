@@ -1,7 +1,30 @@
 import { describe, expect, test } from "bun:test";
 import "fake-indexeddb/auto";
 import * as YDoc from "yjs";
+import { isDestroyedError } from "../../src/crdt/destroyed-error";
 import { ProviderRegistry } from "../../src/crdt/provider-registry";
+
+/** Hand a frame to the other device the way the REAL transport does.
+ *
+ *  `receive` is fire-and-forget here, so its rejection needs an observer or it
+ *  becomes an unhandled rejection — and Bun blames those on whichever test is
+ *  running, not the one that leaked it (which is why this surfaced as a ~1/8
+ *  flake landing on unrelated tests). `destroyAll` ends every lifetime, and
+ *  `Lifetime.guard` rejects any `receive` still hydrating at that moment, so a
+ *  DestroyedError at teardown is expected.
+ *
+ *  Swallow exactly that and nothing else, mirroring the production call site
+ *  (`onCrdtMessage` in src/crdt/wiring.ts, which drops `isDestroyedError` and
+ *  re-surfaces everything else). A real fault must still fail the test. */
+function deliver(to: () => ProviderRegistry, id: string, frame: string): void {
+	queueMicrotask(() => {
+		void to()
+			.receive(id, frame)
+			.catch((e: unknown) => {
+				if (!isDestroyedError(e)) throw e;
+			});
+	});
+}
 
 // Two "devices", each its own ProviderRegistry with an isolated IndexedDB store
 // (dbPrefix). An in-memory relay routes every frame one device sends for a
@@ -17,7 +40,7 @@ function twoDevices() {
 	A = new ProviderRegistry({
 		dbPrefix: "devA",
 		send: (id, frame) => {
-			if (up) queueMicrotask(() => void B.receive(id, frame));
+			if (up) deliver(() => B, id, frame);
 			return up;
 		},
 		onFlushToDisk: (id, content) => {
@@ -27,7 +50,7 @@ function twoDevices() {
 	B = new ProviderRegistry({
 		dbPrefix: "devB",
 		send: (id, frame) => {
-			if (up) queueMicrotask(() => void A.receive(id, frame));
+			if (up) deliver(() => A, id, frame);
 			return up;
 		},
 		onFlushToDisk: (id, content) => {
