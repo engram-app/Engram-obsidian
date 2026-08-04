@@ -148,6 +148,21 @@ which is why it was deliberately moved OFF `confirmedNoteIds` onto the
 gate: `refireEnrollmentOnFirstConfirm` (re-fire STEP1 once the row exists) and
 `healNoteOnOpen` (catch-up-vs-heal branching).
 
+**Two conditions, not one.** `hasServerNote` resolves the id through the
+noteIdMap FIRST and returns false if that lookup misses:
+
+```ts
+const path = this.noteIdMap?.pathForId(noteId);
+if (!path) return false;
+return this.getCrdtHead(path) != null;
+```
+
+So the gate needs BOTH a noteIdMap entry AND a head on that path — an id absent
+from the map is gated just as hard as one with no head. That is why
+`adoptCreateAck` does `noteIdMap.set` as its first statement, before the oracle
+flip: flipping the head for a path whose id is not yet mapped leaves the gate
+shut anyway.
+
 ## The trap this cost us
 
 The inline comments at all three create-ack call sites said the gate was opened
