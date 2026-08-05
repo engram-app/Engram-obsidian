@@ -1289,3 +1289,128 @@ describe("eventToOp timestamp honesty (repo-review 2026-08)", () => {
 		expect(op.updated_at).toBe("2026-01-01T00:00:10Z");
 	});
 });
+
+describe("moveIfIdRelocated must not discard content when newPath exists but is EMPTY (e2e test_34, 0-byte clobber)", () => {
+	// The 5-of-7-red-nights folder-rename failure. Two code paths race for the
+	// new path and BOTH behave 'correctly' in isolation:
+	//
+	//   1. CRDT discovery (sync.ts) calls flushFromCrdt(newPath, content) for a
+	//      note this device has never had on disk. flushFromCrdt's content-loss
+	//      guard is gated on `file instanceof TFile`, so on the CREATE branch an
+	//      empty `content` is written with no guard at all -> 0-byte file.
+	//
+	//   2. moveIfIdRelocated reads the OLD file's real body, then hits its
+	//      CREATE-ONLY GUARD: `if (getAbstractFileByPath(newPath))` -> skip.
+	//
+	// The guard's own comment states its assumption -- that an existing newPath
+	// means "a CONCURRENT doc-triggered flush already wrote content" whose bytes
+	// are newer than ours. That assumption is FALSE when the concurrent flush
+	// wrote an EMPTY placeholder, and the skip then throws away the only copy of
+	// the body. B is left with a 0-byte note forever; wait_for_delivery's
+	// non-empty guard never satisfies and the test times out at 120s.
+	//
+	// "Exists" is not "has content".
+	test("an empty placeholder at newPath does NOT suppress the flush of real content", async () => {
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("E2E/RenameFolder34/Note1.md", "id-empty-target");
+		engine.setNoteIdMap(noteIdMap);
+		manifestWith([{ id: "id-empty-target", path: "E2E/RenamedFolder34/Note1.md" }]);
+
+		const oldFile = new TFile("E2E/RenameFolder34/Note1.md");
+		// The 0-byte placeholder CRDT discovery just created at the new path.
+		const emptyNewFile = new TFile("E2E/RenamedFolder34/Note1.md");
+
+		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
+			p === "E2E/RenameFolder34/Note1.md"
+				? oldFile
+				: p === "E2E/RenamedFolder34/Note1.md"
+					? emptyNewFile
+					: null,
+		);
+		(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockImplementation(
+			(p: string) =>
+				p === "E2E/RenamedFolder34/Note1.md"
+					? emptyNewFile
+					: p === "E2E/RenameFolder34/Note1.md"
+						? oldFile
+						: null,
+		);
+		// Old path holds the real body; the new-path placeholder is empty.
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockImplementation((f: TFile) =>
+			Promise.resolve(f === oldFile ? "# Note 1\nIn old folder" : ""),
+		);
+		(mockApp.vault.modify as ReturnType<typeof mock>).mockClear();
+		(mockApp.vault.create as ReturnType<typeof mock>).mockClear();
+
+		engine.setCrdtManager({
+			isSynced: mock().mockReturnValue(true),
+			projectedText: mock().mockResolvedValue(""),
+		} as any);
+		engine.setCrdtEnrollment({ enroll: mock(() => {}), reset: mock(() => {}) } as any);
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			kind: "note",
+			id: "id-empty-target",
+			path: "E2E/RenamedFolder34/Note1.md",
+			timestamp: 2,
+			title: "Note1",
+			folder: "E2E/RenamedFolder34",
+			tags: [],
+			mtime: 2,
+			updated_at: "2026-01-01T00:00:00Z",
+		} as any);
+
+		// The body must reach the new path. The file already exists, so
+		// flushFromCrdt takes its modify branch.
+		expect(mockApp.vault.modify).toHaveBeenCalledWith(emptyNewFile, "# Note 1\nIn old folder");
+	});
+
+	test("a NON-empty file at newPath still suppresses the flush (the guard's real purpose)", async () => {
+		// The guard exists for a reason: a concurrent doc-triggered flush that
+		// wrote REAL content must not be overwritten with the old file's bytes,
+		// which are never newer. Narrowing it to "empty only" must not weaken
+		// that -- this is the regression fence for the fix above.
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Old.md", "id-nonempty-target");
+		engine.setNoteIdMap(noteIdMap);
+		manifestWith([{ id: "id-nonempty-target", path: "New.md" }]);
+
+		const oldFile = new TFile("Old.md");
+		const freshNewFile = new TFile("New.md");
+
+		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
+			p === "Old.md" ? oldFile : p === "New.md" ? freshNewFile : null,
+		);
+		(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockImplementation(
+			(p: string) => (p === "New.md" ? freshNewFile : p === "Old.md" ? oldFile : null),
+		);
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockImplementation((f: TFile) =>
+			Promise.resolve(f === oldFile ? "stale old bytes" : "# winner from the CRDT doc"),
+		);
+		(mockApp.vault.modify as ReturnType<typeof mock>).mockClear();
+
+		engine.setCrdtManager({
+			isSynced: mock().mockReturnValue(true),
+			projectedText: mock().mockResolvedValue(""),
+		} as any);
+		engine.setCrdtEnrollment({ enroll: mock(() => {}), reset: mock(() => {}) } as any);
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			kind: "note",
+			id: "id-nonempty-target",
+			path: "New.md",
+			timestamp: 2,
+			title: "New",
+			folder: "",
+			tags: [],
+			mtime: 2,
+			updated_at: "2026-01-01T00:00:00Z",
+		} as any);
+
+		expect(mockApp.vault.modify).not.toHaveBeenCalledWith(freshNewFile, "stale old bytes");
+	});
+});

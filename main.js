@@ -21719,9 +21719,18 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           await this.trashRemotelyDeleted(oldFile);
         } catch (e) {
         }
-        this.app.vault.getAbstractFileByPath((0, import_obsidian24.normalizePath)(newPath)) ? rlog().info(
+        let existingAtNew = this.app.vault.getAbstractFileByPath((0, import_obsidian24.normalizePath)(newPath)), existingBody = null;
+        if (existingAtNew instanceof import_obsidian24.TFile)
+          try {
+            existingBody = await this.app.vault.cachedRead(existingAtNew);
+          } catch (e) {
+          }
+        existingAtNew && !(existingAtNew instanceof import_obsidian24.TFile) ? rlog().info(
           "pull",
-          `Id-keyed move: skipping stale disk flush for ${newPath} \u2014 already exists (a concurrent flush won the race)`
+          `Id-keyed move: skipping disk flush for ${newPath} \u2014 a non-file already occupies the path`
+        ) : existingBody !== null && existingBody.trim() !== "" ? rlog().info(
+          "pull",
+          `Id-keyed move: skipping stale disk flush for ${newPath} \u2014 already holds content (a concurrent flush won the race)`
         ) : await this.flushFromCrdt(newPath, content), rlog().info("pull", `Id-keyed move: ${priorPath} -> ${newPath} (id=${id2})`);
       } catch (e) {
         rlog().warn(
