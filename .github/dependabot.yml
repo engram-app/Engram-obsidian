@@ -18,9 +18,9 @@ updates:
       semver-minor-days: 7
       semver-patch-days: 3
     groups:
-      plugin-patches:
+      plugin-minor:
         applies-to: version-updates
-        update-types: [patch]
+        update-types: [patch, minor]
 
   - package-ecosystem: github-actions
     directory: /
