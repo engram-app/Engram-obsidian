@@ -3,13 +3,24 @@
     name: codeql
 
     on:
-      push:
-        branches: [main]
+      # NO `push: [main]`. A squash-merge re-scans the exact tree the PR just
+      # scanned — CodeQL was ~121 runner-min/week on Engram-obsidian alone,
+      # nearly all of it re-analysing unchanged code. PRs are still gated, so
+      # nothing reaches main unscanned.
+      #
+      # TRADE-OFF, understood and accepted: code-scanning alerts on the default
+      # branch are populated by `push` events, so the Security tab's baseline
+      # now refreshes on the weekly cron rather than on every merge. Worst case
+      # an alert introduced just after a Monday run shows on its PR but does not
+      # appear in the default-branch alert list until the next Monday.
+      # Re-add `push: [main]` here if per-merge baseline freshness is ever
+      # needed more than the runner time.
       pull_request:
         branches: [main]
       schedule:
         # Weekly scan against unchanged code — catches newly-published
-        # advisories that match dependencies already on main.
+        # advisories that match dependencies already on main, AND refreshes the
+        # default-branch baseline now that `push` no longer does.
         - cron: "0 8 * * 1"
 
     permissions:
