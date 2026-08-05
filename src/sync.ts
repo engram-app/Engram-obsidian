@@ -5102,10 +5102,42 @@ export class SyncEngine {
 				// doc-triggered flush already wrote to newPath during that window
 				// with these old-file bytes, which are never newer. Re-check right
 				// before flushing — mirrors materializeRelocated's own exists check.
-				if (this.app.vault.getAbstractFileByPath(normalizePath(newPath))) {
+				//
+				// NARROWED to "already holds CONTENT" (e2e test_34, 0-byte clobber).
+				// The guard's premise is that an existing newPath means a concurrent
+				// flush already wrote a BETTER body. That is false when the concurrent
+				// flush wrote an EMPTY one: CRDT discovery calls
+				// flushFromCrdt(newPath, content) for a note this device has never had
+				// on disk, and flushFromCrdt's own content-loss guard is gated on
+				// `file instanceof TFile` — so on its CREATE branch an empty body is
+				// written with no guard at all. A bare exists() check then made THIS
+				// path discard the only copy of the real body, leaving B with a 0-byte
+				// note forever (wait_for_delivery's non-empty guard never satisfies →
+				// 120s timeout, 5 of 7 red nights).
+				//
+				// "Exists" is not "has content". Yielding to a non-empty target keeps
+				// the original protection intact.
+				const existingAtNew = this.app.vault.getAbstractFileByPath(normalizePath(newPath));
+				let existingBody: string | null = null;
+				if (existingAtNew instanceof TFile) {
+					try {
+						existingBody = await this.app.vault.cachedRead(existingAtNew);
+					} catch {
+						// Unreadable — treat as "holds nothing worth keeping" so the
+						// flush proceeds. Losing the body is the worse failure.
+					}
+				}
+				if (existingAtNew && !(existingAtNew instanceof TFile)) {
+					// A folder squatting the note path: not ours to overwrite, and
+					// flushFromCrdt would fail on it. Same skip as before.
 					rlog().info(
 						"pull",
-						`Id-keyed move: skipping stale disk flush for ${newPath} — already exists (a concurrent flush won the race)`,
+						`Id-keyed move: skipping disk flush for ${newPath} — a non-file already occupies the path`,
+					);
+				} else if (existingBody !== null && existingBody.trim() !== "") {
+					rlog().info(
+						"pull",
+						`Id-keyed move: skipping stale disk flush for ${newPath} — already holds content (a concurrent flush won the race)`,
 					);
 				} else {
 					await this.flushFromCrdt(newPath, content);
