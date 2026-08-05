@@ -2086,7 +2086,13 @@ var _NoteChannel = class _NoteChannel {
     let crdtT = this.crdtTopic;
     if (crdtT) {
       let msgRef = String(++this.ref);
-      this.crdtJoinMsgRef = msgRef, this.send([this.crdtJoinRef, msgRef, crdtT, "phx_join", { crdt_proto: 2 }]);
+      this.crdtJoinMsgRef = msgRef, this.send([
+        this.crdtJoinRef,
+        msgRef,
+        crdtT,
+        "phx_join",
+        { crdt_proto: 2, client_type: "obsidian" }
+      ]);
     }
   }
   startHeartbeat() {
