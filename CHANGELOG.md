@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.20.0](https://github.com/engram-app/Engram-obsidian/compare/1.19.0...1.20.0) (2026-08-05)
+
+
+### Features
+
+* **crdt:** make LCA three-way merge the default path ([#368](https://github.com/engram-app/Engram-obsidian/issues/368)) ([90b2127](https://github.com/engram-app/Engram-obsidian/commit/90b21279cc73b2284cfcbe08799f2dc81dd69bae)), closes [#364](https://github.com/engram-app/Engram-obsidian/issues/364)
+* tag crdt join with client_type obsidian ([#389](https://github.com/engram-app/Engram-obsidian/issues/389)) ([a8ad8ab](https://github.com/engram-app/Engram-obsidian/commit/a8ad8abf858794134a96dc5465206e8bce94c752))
+
+
+### Bug Fixes
+
+* **deps:** clear three new audit advisories ([#385](https://github.com/engram-app/Engram-obsidian/issues/385)) ([a04129e](https://github.com/engram-app/Engram-obsidian/commit/a04129e120e658f5baf6c4125df3322924a11a24))
+* repo-review remediation — safety/correctness fixes, dead-code purge, DRY consolidation ([#374](https://github.com/engram-app/Engram-obsidian/issues/374)) ([1baf9ad](https://github.com/engram-app/Engram-obsidian/commit/1baf9adacbe61d6c198bef69896ae14be39b4a97))
+* **settings:** isConnected guard on the progress bar ([#379](https://github.com/engram-app/Engram-obsidian/issues/379)) ([bcaad06](https://github.com/engram-app/Engram-obsidian/commit/bcaad06913f4b8bc2e5cee6af9bc350531233fbd)), closes [#375](https://github.com/engram-app/Engram-obsidian/issues/375)
+
 ## [1.19.0](https://github.com/engram-app/Engram-obsidian/compare/1.18.1...1.19.0) (2026-07-31)
 
 
