@@ -21,6 +21,31 @@ updates:
       plugin-minor:
         applies-to: version-updates
         update-types: [patch, minor]
+    # Two deps are blocked for reasons Dependabot cannot see, and it
+    # re-proposed both weekly. Worse, each lands INSIDE plugin-minor,
+    # so one undecidable dep held the whole group's safe bumps hostage.
+    ignore:
+      # obsidian 1.13.x deprecates ButtonComponent.setWarning() in favour
+      # of setDestructive(). lint:obsidian runs `eslint --max-warnings 0`,
+      # so the deprecation warning is a hard failure, and every escape
+      # hatch is closed: setDestructive() does not exist on our declared
+      # floor (manifest.json minAppVersion 1.7.2, would throw at runtime),
+      # suppressing no-deprecated is forbidden by repo policy, and
+      # feature-detection still trips the rule on the else branch.
+      #
+      # The real blocker is a SUPPORT-MATRIX decision — raising
+      # minAppVersion drops users below it — and that is explicitly not
+      # to be made as part of a dependency bump. Held at 1.8.7 until
+      # that call is made. See engram-workspace docs/context/
+      # obsidian-1-13-setwarning-deprecation.md.
+      - dependency-name: "obsidian"
+        update-types: ["version-update:semver-minor", "version-update:semver-major"]
+      # TypeScript 7 is the native (Go) compiler port and does not ship
+      # the programmatic TypeScript API. typescript-eslint drives that
+      # API, so the plugin cannot take 7.x. Upstream blocker, no local
+      # fix. See docs/context/typescript-7-toolchain-block.md.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /
