@@ -92,7 +92,26 @@ describe("NoteChannel CRDT topic join", () => {
 			.find((m: unknown[]) => (m[2] as string).startsWith("crdt:"));
 
 		expect(crdtJoin).toBeDefined();
-		expect(crdtJoin![4]).toEqual({ crdt_proto: 2 });
+		expect(crdtJoin![4]).toEqual({ crdt_proto: 2, client_type: "obsidian" });
+
+		channel.disconnect();
+	});
+
+	test("crdt topic join payload tags client_type: obsidian", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		const crdtJoin = lastWsInstance.sent
+			.map((s: string) => JSON.parse(s) as unknown[])
+			.find((m: unknown[]) => (m[2] as string).startsWith("crdt:"));
+
+		// The tag tells the backend Obsidian rewrites its own [[wikilinks]] on
+		// rename, so the server must NOT enqueue its rewriter (engram#648
+		// Phase 2, exactly-one-rewriter invariant). Removing this tag would
+		// re-enter the untagged compromise path on old backends and, once the
+		// backend default flips, cause DOUBLE rewrites. Do not remove.
+		expect((crdtJoin![4] as Record<string, unknown>).client_type).toBe("obsidian");
 
 		channel.disconnect();
 	});

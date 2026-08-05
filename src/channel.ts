@@ -884,7 +884,15 @@ export class NoteChannel {
 			// Capture the join ref so handleMessage can distinguish a join-error reply
 			// (this ref) from per-message error replies (a different ref) — see crdtJoinMsgRef.
 			this.crdtJoinMsgRef = msgRef;
-			this.send([this.crdtJoinRef, msgRef, crdtT, "phx_join", { crdt_proto: 2 }]);
+			// client_type: Obsidian owns link-rewrites for its own renames
+			// (engram#648 Phase 2 one-rewriter invariant; backend gates on this tag).
+			this.send([
+				this.crdtJoinRef,
+				msgRef,
+				crdtT,
+				"phx_join",
+				{ crdt_proto: 2, client_type: "obsidian" },
+			]);
 		}
 	}
 
