@@ -7098,6 +7098,14 @@ function frontmatterPrefixLen(editorText) {
   let { fmBlock, body } = splitFrontmatter(editorText);
   return fmBlock === null ? 0 : editorText.length - body.length;
 }
+function classifyEditSpan(fromA, toA, prefix) {
+  return fromA >= prefix ? "body" : toA <= prefix ? "frontmatter" : "spans";
+}
+function fmCreationBodyDiff(prefixBefore, beforeDoc, afterDoc) {
+  if (prefixBefore !== 0) return null;
+  let prefixAfter = frontmatterPrefixLen(afterDoc);
+  return prefixAfter === 0 ? null : textDiffToChangeSpec(beforeDoc, afterDoc.slice(prefixAfter));
+}
 function needsReattach(bound, path, noteId, coordinator2) {
   return path !== bound.path || noteId !== bound.noteId || coordinator2 !== bound.coordinator;
 }
@@ -7193,19 +7201,38 @@ var LiveBindingValue = class {
     let ytext = this.ytext;
     for (let tr of u.transactions) {
       if (!tr.docChanged || tr.annotation(ySyncAnnotation) === this.editor) continue;
-      let prefix = frontmatterPrefixLen(tr.startState.doc.toString()), changes = [], spansFrontmatter = !1;
+      let beforeDoc = tr.startState.doc.toString(), prefix = frontmatterPrefixLen(beforeDoc), creation = fmCreationBodyDiff(prefix, beforeDoc, tr.state.doc.toString());
+      if (creation !== null) {
+        try {
+          this.writeYText(ytext, creation);
+        } catch (err) {
+          rlog().error(
+            "crdt-live-binding",
+            `fm-creation forward failed for ${this.path}: ${String(err)}`
+          ), this.scheduleDriftCheck();
+        }
+        continue;
+      }
+      let changes = [], spansFrontmatter = !1;
       if (tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
-        if (!(toA <= prefix)) {
-          if (fromA < prefix) {
+        let span = classifyEditSpan(fromA, toA, prefix);
+        switch (span) {
+          case "frontmatter":
+            return;
+          // entirely inside frontmatter — the FM hook owns it
+          case "spans":
             spansFrontmatter = !0;
             return;
-          }
-          changes.push({
-            fromA: fromA - prefix,
-            toA: toA - prefix,
-            insert: inserted.sliceString(0, inserted.length, `
+          case "body":
+            changes.push({
+              fromA: fromA - prefix,
+              toA: toA - prefix,
+              insert: inserted.sliceString(0, inserted.length, `
 `)
-          });
+            });
+            return;
+          default:
+            return span;
         }
       }), spansFrontmatter && this.scheduleDriftCheck(), changes.length !== 0)
         try {
@@ -7482,7 +7509,7 @@ var CrdtFrontmatterHook = class {
     if (!path) return;
     let uninstall = patchFrontmatterSave(view, (newText) => {
       this.deps.getYText(path).then((ytext) => {
-        diffIntoYText(ytext, newText);
+        diffIntoYText(ytext, splitFrontmatter(newText).body);
       }).catch(
         (err) => rlog().error("crdt-frontmatter", `getYText failed for ${path}: ${String(err)}`)
       );

@@ -32,6 +32,51 @@ export function frontmatterPrefixLen(editorText: string): number {
 	return fmBlock === null ? 0 : editorText.length - body.length;
 }
 
+/** Classify a CM edit (PRE-change offsets) against the frontmatter block that
+ *  occupies [0, prefix) of the editor document.
+ *   - "body": forward to the Y.Text, mapped by -prefix.
+ *   - "frontmatter": drop — the FM hook owns frontmatter sync.
+ *   - "spans": straddles the boundary — repair via drift check, not a guess.
+ *  The END boundary belongs to the BODY: a pure insert at fromA === toA === prefix
+ *  is typing at the start of the first body line (offset 0 of the Y.Text, and
+ *  with no frontmatter at all that is position 0 of the document). The START
+ *  boundary belongs to FRONTMATTER: a pure insert at 0 before an existing
+ *  opening fence is frontmatter-owned. Classifying
+ *  it as frontmatter silently drops the keystroke, shifts every following edit
+ *  by the dropped length, and the drift check then "repairs" the editor to the
+ *  mangled doc — the type-at-start-of-note corruption bug. */
+export function classifyEditSpan(
+	fromA: number,
+	toA: number,
+	prefix: number,
+): "body" | "frontmatter" | "spans" {
+	if (fromA >= prefix) return "body";
+	if (toA <= prefix) return "frontmatter";
+	return "spans";
+}
+
+/** Handle a transaction that CREATES a frontmatter block (prefix 0 -> N in one
+ *  transaction: a pasted `---` block at position 0, a select-all paste of a
+ *  full note, a typed fence completion). Per-change classification against the
+ *  PRE-change prefix of 0 is meaningless here — the same characters flip from
+ *  body to frontmatter mid-transaction, and classifyEditSpan would forward the
+ *  FM block into the body-only Y.Text (duplicated after the next drift
+ *  re-adopt). Returns the body(before) -> body(after) diff to forward instead
+ *  (empty when the body is unchanged, e.g. a pure FM paste), or null when the
+ *  transaction did not create frontmatter and the normal per-change path owns
+ *  it. */
+export function fmCreationBodyDiff(
+	prefixBefore: number,
+	beforeDoc: string,
+	afterDoc: string,
+): CmChangeSpec[] | null {
+	if (prefixBefore !== 0) return null;
+	const prefixAfter = frontmatterPrefixLen(afterDoc);
+	if (prefixAfter === 0) return null;
+	// prefixBefore === 0 -> the whole pre-change doc IS the body.
+	return textDiffToChangeSpec(beforeDoc, afterDoc.slice(prefixAfter));
+}
+
 /** True when the editor must detach from its current doc and re-attach. Catches
  *  THREE cases:
  *   - path changed  -> Obsidian reused this editor for a different file.
