@@ -14,6 +14,8 @@
 #                               more (decisions logged to stderr)
 #   prereleases.sh for-pr N [keep]
 #                            -> "<id>\t<tag>" for PR N's previews, minus [keep]
+#   prereleases.sh release-less-tags
+#                            -> "-\t<tag>" for preview/RC tags with no release
 #   prereleases.sh delete    -> reads "<id>\t<tag>" on stdin, removes the
 #                               release and its tag
 #   prereleases.sh selftest  -> asserts the version rule; needs no network
@@ -80,9 +82,39 @@ cmd_for_pr() {
 	cmd_list | filter_pr "$pr" "$keep"
 }
 
+# Preview/RC TAGS that have no release, emitted as "-\t<tag>" so `delete` skips
+# the release call. Enumerating releases alone can never see these: deleting a
+# release leaves its tag behind, which is exactly what the old `|| true` on the
+# tag DELETE produced (release gone, tag delete failed, nobody told). Without
+# this they are unreachable by any sweep, forever.
+cmd_release_less_tags() {
+	require_env
+	local page=1 batch n released tag
+	released=$(mktemp)
+	cmd_list | cut -f2 | sort -u > "$released"
+
+	while :; do
+		batch=$(curl --fail -sS "${AUTH[@]}" "${API}/tags?per_page=100&page=${page}")
+		n=$(jq 'length' <<<"$batch")
+		if [ "$n" -eq 0 ]; then break; fi
+		while read -r tag; do
+			if [ -z "$tag" ]; then continue; fi
+			case "$tag" in
+				*-pr.* | *-rc.*)
+					if ! grep -qxF "$tag" "$released"; then
+						printf -- '-\t%s\n' "$tag"
+					fi
+					;;
+			esac
+		done < <(jq -r '.[].name' <<<"$batch")
+		if [ "$n" -lt 100 ]; then break; fi
+		page=$((page + 1))
+	done
+}
+
 cmd_orphans() {
 	require_env
-	local stable id tag pr state base
+	local stable id tag pr state base note
 	# Highest stable release, by numeric version rather than publish order.
 	stable=$(gh release list --limit 100 --json tagName,isPrerelease \
 		--jq '[.[] | select(.isPrerelease==false) | .tagName | ltrimstr("v")]
@@ -90,8 +122,11 @@ cmd_orphans() {
 	stable="${stable:-0.0.0}"
 	echo "current stable: ${stable}" >&2
 
+	# Both sources classify identically: a release-less tag is just as orphaned
+	# as its release would have been, and must not survive on a technicality.
 	while IFS=$'\t' read -r id tag; do
-		if [ -z "$id" ]; then continue; fi
+		if [ -z "$tag" ]; then continue; fi
+		if [ "$id" = "-" ]; then note=" [tag only]"; else note=""; fi
 		case "$tag" in
 			# PR preview: the PR's own state is authoritative, so a preview
 			# outlives exactly as long as its PR is open. State-based, so a
@@ -100,9 +135,9 @@ cmd_orphans() {
 				pr=$(preview_pr_number "$tag")
 				state=$(gh api "repos/${GH_REPO}/pulls/${pr}" --jq .state 2>/dev/null || echo "missing")
 				if [ "$state" = "open" ]; then
-					echo "keep    ${tag} (PR #${pr} open)" >&2
+					echo "keep    ${tag} (PR #${pr} open)${note}" >&2
 				else
-					echo "orphan  ${tag} (PR #${pr} ${state})" >&2
+					echo "orphan  ${tag} (PR #${pr} ${state})${note}" >&2
 					printf '%s\t%s\n' "$id" "$tag"
 				fi
 				;;
@@ -113,17 +148,17 @@ cmd_orphans() {
 				base=${tag%%-rc.*}
 				base=${base#v}
 				if version_superseded "$base" "$stable"; then
-					echo "orphan  ${tag} (superseded by stable ${stable})" >&2
+					echo "orphan  ${tag} (superseded by stable ${stable})${note}" >&2
 					printf '%s\t%s\n' "$id" "$tag"
 				else
-					echo "keep    ${tag} (ahead of stable ${stable})" >&2
+					echo "keep    ${tag} (ahead of stable ${stable})${note}" >&2
 				fi
 				;;
 			*)
-				echo "keep    ${tag} (unrecognised prerelease shape)" >&2
+				echo "keep    ${tag} (unrecognised prerelease shape)${note}" >&2
 				;;
 		esac
-	done < <(cmd_list)
+	done < <(cmd_list; cmd_release_less_tags)
 }
 
 cmd_delete() {
@@ -146,8 +181,12 @@ cmd_delete() {
 	fi
 
 	while IFS=$'\t' read -r id tag; do
-		if [ -z "$id" ]; then continue; fi
-		curl --fail -sS -X DELETE "${AUTH[@]}" "${API}/releases/${id}" > /dev/null
+		if [ -z "$tag" ]; then continue; fi
+		# id "-" means the tag has no release (see release-less-tags): there is
+		# nothing to DELETE on the releases endpoint, only the ref below.
+		if [ "$id" != "-" ]; then
+			curl --fail -sS -X DELETE "${AUTH[@]}" "${API}/releases/${id}" > /dev/null
+		fi
 		# The tag can legitimately already be gone (a release deleted by hand
 		# leaves none), so 404/422 is success here; anything else is real and
 		# must not be swallowed.
@@ -233,10 +272,11 @@ case "${1:-}" in
 	list) cmd_list ;;
 	orphans) cmd_orphans ;;
 	for-pr) cmd_for_pr "${2:-}" "${3:-}" ;;
+	release-less-tags) cmd_release_less_tags ;;
 	delete) cmd_delete ;;
 	selftest) cmd_selftest ;;
 	*)
-		echo "usage: $0 {list|orphans|for-pr <n> [keep-tag]|delete|selftest}" >&2
+		echo "usage: $0 {list|orphans|for-pr <n> [keep-tag]|release-less-tags|delete|selftest}" >&2
 		exit 2
 		;;
 esac
