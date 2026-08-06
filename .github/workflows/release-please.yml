@@ -106,6 +106,8 @@ jobs:
               --arg br "$PR_BRANCH" \
               '{message: $msg, content: $content, sha: $sha, branch: $br}')
 
+            # flags:4 = SUPPRESS_EMBEDS. Discord auto-embeds every URL, so messages
+            # rendered as a stack of preview cards. Links stay clickable without them.
             HTTP_STATUS=$(curl -sS -o /tmp/versions-put-response.json -w '%{http_code}' -X PUT \
               -H "Accept: application/vnd.github+json" \
               -H "Authorization: Bearer $GH_TOKEN" \
@@ -211,11 +213,13 @@ jobs:
               "Engram Vault Sync" "$TAG" "$RELEASE_URL") || CONTENT=""
           fi
           [ -n "$CONTENT" ] || CONTENT=$(printf '**Engram Vault Sync %s** released\n%s' "$TAG" "$RELEASE_URL")
+          # flags:4 = SUPPRESS_EMBEDS. Discord auto-embeds every URL, so messages
+          # rendered as a stack of preview cards. Links stay clickable without them.
           HTTP_STATUS=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
             -H 'Content-Type: application/json' \
             -H 'User-Agent: engram-ci/1.0 (+https://github.com/engram-app/Engram-obsidian)' \
             --max-time 10 \
-            --data "$(jq -nc --arg c "$CONTENT" --arg u 'Engram Releases' '{content:$c,username:$u}')" \
+            --data "$(jq -nc --arg c "$CONTENT" --arg u 'Engram Releases' '{content:$c,username:$u,flags:4}')" \
             "$WEBHOOK") || HTTP_STATUS="000"
           case "$HTTP_STATUS" in
             2??) echo "Discord announce OK (HTTP $HTTP_STATUS)" ;;
