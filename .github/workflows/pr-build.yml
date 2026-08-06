@@ -87,6 +87,7 @@ jobs:
       - name: Prune superseded previews for this PR
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           KEEP: ${{ steps.v.outputs.tag }}
           PR_NUM: ${{ github.event.pull_request.number }}
         run: |
@@ -95,24 +96,6 @@ jobs:
           # tags so an open PR never accumulates one-per-commit. The SHA stays in
           # the tag (each build remains individually pinnable while current);
           # pr-cleanup.yml removes the survivor too when the PR closes.
-          API="https://api.github.com/repos/${{ github.repository }}"
-          tmp=$(mktemp); page=1
-          while :; do
-            batch=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "$API/releases?per_page=100&page=$page")
-            n=$(echo "$batch" | jq 'length'); [ "$n" -eq 0 ] && break
-            echo "$batch" | jq -r --arg pr "$PR_NUM" --arg keep "$KEEP" \
-              '.[] | select(.prerelease==true
-                            and (.tag_name|test("-pr\\."+$pr+"(\\.|$)"))
-                            and .tag_name != $keep)
-               | "\(.id)\t\(.tag_name)"' >> "$tmp"
-            [ "$n" -lt 100 ] && break
-            page=$((page+1))
-          done
-          while IFS=$'\t' read -r id tag; do
-            [ -z "$id" ] && continue
-            curl -sS -X DELETE -H "Authorization: Bearer $GH_TOKEN" "$API/releases/$id" > /dev/null || true
-            curl -sS -X DELETE -H "Authorization: Bearer $GH_TOKEN" "$API/git/refs/tags/$tag" > /dev/null || true
-            echo "pruned $tag"
-          done < "$tmp"
+          SH=.github/scripts/prereleases.sh
+          chmod +x "$SH"
+          "$SH" for-pr "$PR_NUM" "$KEEP" | "$SH" delete
