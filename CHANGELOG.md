@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.20.1](https://github.com/engram-app/Engram-obsidian/compare/1.20.0...1.20.1) (2026-08-06)
+
+
+### Bug Fixes
+
+* **crdt:** stop dropping inserts at the frontmatter boundary (first-line typing corruption) ([#396](https://github.com/engram-app/Engram-obsidian/issues/396)) ([9d4f1e4](https://github.com/engram-app/Engram-obsidian/commit/9d4f1e4a7b5fca404e7a15b4c22a5e69de0f2d56))
+* **sync:** id-keyed move must not discard content over an EMPTY target ([#394](https://github.com/engram-app/Engram-obsidian/issues/394)) ([efee0b6](https://github.com/engram-app/Engram-obsidian/commit/efee0b6d088de414e244f7edbca6e99090ad2899))
+
 ## [1.20.0](https://github.com/engram-app/Engram-obsidian/compare/1.19.0...1.20.0) (2026-08-05)
 
 
