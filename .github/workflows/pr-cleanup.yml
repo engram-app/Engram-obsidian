@@ -17,33 +17,18 @@ jobs:
   cleanup:
     runs-on: [self-hosted, linux, x64, isolated]
     steps:
+      - uses: actions/checkout@v7
+
       - name: Delete this PR's preview releases + tags
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           PR_NUM: ${{ github.event.pull_request.number }}
         run: |
           set -euo pipefail
           # Match this PR's preview tags: <version>-pr.<PR_NUM>.<sha> and the
           # sha-less form <version>-pr.<PR_NUM>. The (\.|$) boundary after the
           # number stops PR 28 from matching PR 284's tags.
-          API="https://api.github.com/repos/${{ github.repository }}"
-          # Collect all matches across pages BEFORE deleting, so deletions don't
-          # shift pagination out from under us.
-          tmp=$(mktemp); page=1
-          while :; do
-            batch=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "$API/releases?per_page=100&page=$page")
-            n=$(echo "$batch" | jq 'length'); [ "$n" -eq 0 ] && break
-            echo "$batch" | jq -r --arg pr "$PR_NUM" \
-              '.[] | select(.prerelease==true and (.tag_name|test("-pr\\."+$pr+"(\\.|$)")))
-               | "\(.id)\t\(.tag_name)"' >> "$tmp"
-            [ "$n" -lt 100 ] && break
-            page=$((page+1))
-          done
-          while IFS=$'\t' read -r id tag; do
-            [ -z "$id" ] && continue
-            curl -sS -X DELETE -H "Authorization: Bearer $GH_TOKEN" "$API/releases/$id" > /dev/null || true
-            curl -sS -X DELETE -H "Authorization: Bearer $GH_TOKEN" "$API/git/refs/tags/$tag" > /dev/null || true
-            echo "deleted $tag"
-          done < "$tmp"
+          SH=.github/scripts/prereleases.sh
+          chmod +x "$SH"
+          "$SH" for-pr "$PR_NUM" | "$SH" delete
