@@ -35,6 +35,7 @@ import {
 import {
 	classifyEditSpan,
 	decideReconcile,
+	fmCreationBodyDiff,
 	frontmatterPrefixLen,
 	needsReattach,
 } from "./live-binding-decisions";
@@ -185,11 +186,29 @@ class LiveBindingValue implements PluginValue {
 			// frontmatter block occupies the first `prefix` chars of the CM document,
 			// which the body-only Y.Text does not have. Offsets are against the
 			// PRE-change doc, so compute the prefix from the transaction's start state.
-			const prefix = frontmatterPrefixLen(tr.startState.doc.toString());
+			const beforeDoc = tr.startState.doc.toString();
+			const prefix = frontmatterPrefixLen(beforeDoc);
+			// A transaction that CREATES frontmatter (prefix 0 -> N) invalidates
+			// per-change classification (the same chars flip from body to FM);
+			// forward the body->body diff instead — empty for a pure FM paste.
+			const creation = fmCreationBodyDiff(prefix, beforeDoc, tr.state.doc.toString());
+			if (creation !== null) {
+				try {
+					this.writeYText(ytext, creation);
+				} catch (err) {
+					rlog().error(
+						"crdt-live-binding",
+						`fm-creation forward failed for ${this.path}: ${String(err)}`,
+					);
+					this.scheduleDriftCheck();
+				}
+				continue;
+			}
 			const changes: Array<{ fromA: number; toA: number; insert: string }> = [];
 			let spansFrontmatter = false;
 			tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
-				switch (classifyEditSpan(fromA, toA, prefix)) {
+				const span = classifyEditSpan(fromA, toA, prefix);
+				switch (span) {
 					case "frontmatter":
 						return; // entirely inside frontmatter — the FM hook owns it
 					case "spans":
@@ -201,6 +220,13 @@ class LiveBindingValue implements PluginValue {
 							toA: toA - prefix,
 							insert: inserted.sliceString(0, inserted.length, "\n"),
 						});
+						return;
+					default: {
+						// Compile-time exhaustiveness: a new variant must not silently
+						// drop edits (the bug class this file exists to kill).
+						const exhaustive: never = span;
+						return exhaustive;
+					}
 				}
 			});
 			if (spansFrontmatter) this.scheduleDriftCheck();

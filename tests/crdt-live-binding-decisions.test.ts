@@ -3,6 +3,7 @@ import { splitFrontmatter } from "../src/crdt/frontmatter-codec";
 import {
 	classifyEditSpan,
 	decideReconcile,
+	fmCreationBodyDiff,
 	frontmatterPrefixLen,
 	needsReattach,
 } from "../src/crdt/live/live-binding-decisions";
@@ -94,6 +95,57 @@ describe("classifyEditSpan", () => {
 
 	it("flags edits straddling the frontmatter boundary", () => {
 		expect(classifyEditSpan(10, 20, 17)).toBe("spans");
+	});
+
+	it("drops a pure insert at position 0 BEFORE an existing opening fence", () => {
+		// The START boundary belongs to frontmatter — mirror image of the prefix
+		// boundary, deliberately unchanged behavior.
+		expect(classifyEditSpan(0, 0, 17)).toBe("frontmatter");
+	});
+});
+
+describe("fmCreationBodyDiff", () => {
+	// A transaction that CREATES frontmatter (prefix 0 -> N) makes per-change
+	// offset classification meaningless: the same characters flip from body to
+	// frontmatter mid-transaction. The helper returns a body->body diff to
+	// forward instead, or null when the transaction did not create frontmatter.
+	const fm = "---\nfoo: 1\n---\n";
+
+	/** Apply specs (offsets against the ORIGINAL text) with a running shift,
+	 *  mirroring applyCmChangesToYText. */
+	function applySpecs(text: string, specs: ReturnType<typeof fmCreationBodyDiff>): string {
+		let adj = 0;
+		for (const c of specs ?? []) {
+			text = text.slice(0, c.from + adj) + c.insert + text.slice(c.to + adj);
+			adj += c.insert.length - (c.to - c.from);
+		}
+		return text;
+	}
+
+	it("returns null when no frontmatter was created", () => {
+		expect(fmCreationBodyDiff(0, "body", "body edited")).toBeNull();
+		// Doc already had frontmatter (prefixBefore > 0): normal path owns it.
+		expect(fmCreationBodyDiff(fm.length, `${fm}body`, `${fm}body!`)).toBeNull();
+	});
+
+	it("returns an empty diff for a pure FM-block paste before an unchanged body", () => {
+		// Body is untouched -> nothing to forward; the FM path syncs the block.
+		expect(fmCreationBodyDiff(0, "body", `${fm}body`)).toEqual([]);
+	});
+
+	it("returns the body diff when one transaction replaces the whole doc (select-all paste)", () => {
+		const specs = fmCreationBodyDiff(0, "old body", `${fm}new body`);
+		expect(specs).not.toBeNull();
+		// Applying the specs to the old body must yield the new body.
+		expect(applySpecs("old body", specs)).toBe("new body");
+	});
+
+	it("empties the body when the whole doc became a frontmatter-only note", () => {
+		// Typed fence completion: the stray fence chars were forwarded as body
+		// while the block was unterminated; on completion they must be removed.
+		const specs = fmCreationBodyDiff(0, "---\nfoo: 1\n--", "---\nfoo: 1\n---");
+		expect(specs).not.toBeNull();
+		expect(applySpecs("---\nfoo: 1\n--", specs)).toBe("");
 	});
 });
 
