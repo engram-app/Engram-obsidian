@@ -154,6 +154,7 @@ Required status checks on `main`: `build-and-test`, `version-check / version-che
 - Class map, sync algorithm, API endpoints, type definitions → `docs/internals.md`
 - CDP + Obsidian remote debugging (MCP devtools, evaluate_script) → `docs/engram-ops.md`
 - Version-bump.mjs foot-gun (running it directly drops `version` from `manifest.json`) → `docs/context/version-bump-script.md`
+- Releases page full of orphaned `-pr.N` / `-rc.N` prereleases, or a closed PR's preview never got deleted (`pull_request: closed` never fires for superseded dependabot PRs; `prereleases.sh` + daily `preview-reconcile.yml`) → `docs/context/preview-release-cleanup.md`
 
 **Cross-repo (workspace)**
 - Server ops, infra, deployment → `../engram-workspace/docs/deployment.md`
