@@ -32,6 +32,27 @@ export function frontmatterPrefixLen(editorText: string): number {
 	return fmBlock === null ? 0 : editorText.length - body.length;
 }
 
+/** Classify a CM edit (PRE-change offsets) against the frontmatter block that
+ *  occupies [0, prefix) of the editor document.
+ *   - "body": forward to the Y.Text, mapped by -prefix.
+ *   - "frontmatter": drop — the FM hook owns frontmatter sync.
+ *   - "spans": straddles the boundary — repair via drift check, not a guess.
+ *  The boundary belongs to the BODY: a pure insert at fromA === toA === prefix
+ *  is typing at the start of the first body line (offset 0 of the Y.Text, and
+ *  with no frontmatter at all that is position 0 of the document). Classifying
+ *  it as frontmatter silently drops the keystroke, shifts every following edit
+ *  by the dropped length, and the drift check then "repairs" the editor to the
+ *  mangled doc — the type-at-start-of-note corruption bug. */
+export function classifyEditSpan(
+	fromA: number,
+	toA: number,
+	prefix: number,
+): "body" | "frontmatter" | "spans" {
+	if (fromA >= prefix) return "body";
+	if (toA <= prefix) return "frontmatter";
+	return "spans";
+}
+
 /** True when the editor must detach from its current doc and re-attach. Catches
  *  THREE cases:
  *   - path changed  -> Obsidian reused this editor for a different file.

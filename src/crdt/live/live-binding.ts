@@ -32,7 +32,12 @@ import {
 	type YDeltaEntry,
 	yDeltaToChangeSpec,
 } from "./cm-yjs-bridge";
-import { decideReconcile, frontmatterPrefixLen, needsReattach } from "./live-binding-decisions";
+import {
+	classifyEditSpan,
+	decideReconcile,
+	frontmatterPrefixLen,
+	needsReattach,
+} from "./live-binding-decisions";
 
 /** Interval for the drift backstop (Relay's DRIFT_CHECK_DELAY is 3000ms). */
 const DRIFT_CHECK_MS = 3000;
@@ -184,16 +189,19 @@ class LiveBindingValue implements PluginValue {
 			const changes: Array<{ fromA: number; toA: number; insert: string }> = [];
 			let spansFrontmatter = false;
 			tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
-				if (toA <= prefix) return; // entirely inside frontmatter — the FM hook owns it
-				if (fromA < prefix) {
-					spansFrontmatter = true; // straddles the boundary — repair via drift, not a guess
-					return;
+				switch (classifyEditSpan(fromA, toA, prefix)) {
+					case "frontmatter":
+						return; // entirely inside frontmatter — the FM hook owns it
+					case "spans":
+						spansFrontmatter = true; // straddles the boundary — repair via drift, not a guess
+						return;
+					case "body":
+						changes.push({
+							fromA: fromA - prefix,
+							toA: toA - prefix,
+							insert: inserted.sliceString(0, inserted.length, "\n"),
+						});
 				}
-				changes.push({
-					fromA: fromA - prefix,
-					toA: toA - prefix,
-					insert: inserted.sliceString(0, inserted.length, "\n"),
-				});
 			});
 			if (spansFrontmatter) this.scheduleDriftCheck();
 			if (changes.length === 0) continue;

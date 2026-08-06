@@ -1,6 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { splitFrontmatter } from "../src/crdt/frontmatter-codec";
 import {
+	classifyEditSpan,
 	decideReconcile,
 	frontmatterPrefixLen,
 	needsReattach,
@@ -63,6 +64,36 @@ describe("frontmatterPrefixLen", () => {
 		for (const text of inputs) {
 			expect(text.slice(frontmatterPrefixLen(text))).toBe(splitFrontmatter(text).body);
 		}
+	});
+});
+
+describe("classifyEditSpan", () => {
+	// THE first-line mangling bug: frontmatter occupies [0, prefix), so a pure
+	// insert AT the boundary (fromA === toA === prefix) is the first body char —
+	// classifying it as frontmatter silently drops the keystroke from the Y.Text,
+	// and the drift check then reverts/mangles what the user typed.
+	it("forwards a pure insert at position 0 with no frontmatter (prefix 0)", () => {
+		expect(classifyEditSpan(0, 0, 0)).toBe("body");
+	});
+
+	it("forwards a pure insert at the frontmatter boundary (start of first body line)", () => {
+		expect(classifyEditSpan(17, 17, 17)).toBe("body");
+	});
+
+	it("forwards ordinary body edits", () => {
+		expect(classifyEditSpan(3, 5, 0)).toBe("body"); // replace, no FM
+		expect(classifyEditSpan(20, 21, 17)).toBe("body"); // delete past the FM block
+		expect(classifyEditSpan(17, 18, 17)).toBe("body"); // delete the first body char
+	});
+
+	it("drops edits entirely inside frontmatter (the FM hook owns them)", () => {
+		expect(classifyEditSpan(2, 2, 17)).toBe("frontmatter"); // insert inside FM
+		expect(classifyEditSpan(2, 5, 17)).toBe("frontmatter"); // delete inside FM
+		expect(classifyEditSpan(10, 17, 17)).toBe("frontmatter"); // delete ending at boundary
+	});
+
+	it("flags edits straddling the frontmatter boundary", () => {
+		expect(classifyEditSpan(10, 20, 17)).toBe("spans");
 	});
 });
 
