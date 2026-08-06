@@ -48,6 +48,15 @@ jobs:
       - name: Run tests
         run: bun test
 
+      - name: Discord release-notes formatter self-check
+        # Guards scripts/discord_release_notes.sh, whose only caller is the
+        # release-time announce step in release-please.yml. Without this a
+        # regression stays invisible until a release posts a broken or
+        # over-cap message — and over-cap means Discord 400s it, which the
+        # announce step only warns about. Not picked up by `bun test`
+        # (shell, not a .test.ts).
+        run: bash tests/scripts/discord_release_notes_test.sh
+
   # Trigger backend E2E after plugin passes — tests full Obsidian ↔ backend sync
   trigger-e2e:
     needs: build-and-test
