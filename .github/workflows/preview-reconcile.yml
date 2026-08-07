@@ -1,0 +1,48 @@
+name: Preview release reconcile
+
+# Safety net for pr-cleanup.yml. That workflow fires on `pull_request: closed`,
+# which is a single event with no retry, and if it never fires, the preview is
+# orphaned forever with nothing to notice. It demonstrably does not fire for
+# dependabot PRs that are closed unmerged after being superseded (the branch
+# conflicts with main once its replacement lands, so GitHub cannot compute the
+# merge ref and never schedules the run). That silently orphaned 11 previews.
+#
+# So instead of trusting the event, reconcile the actual state daily: any
+# preview whose PR is closed, and any legacy `-rc.N` prerelease at or below the
+# current stable release, gets removed. Being state-based rather than
+# event-based, this is self-healing: a missed event costs at most a day.
+#
+# Run it by hand (workflow_dispatch) with dry_run to see what it would remove.
+
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "List what would be deleted without deleting it"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  reconcile:
+    runs-on: [self-hosted, linux, x64, isolated]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Select and remove orphaned prereleases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          # Scheduled runs always delete; manual runs default to a dry run.
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && '1' || '0' }}
+        run: |
+          set -euo pipefail
+          SH=.github/scripts/prereleases.sh
+          chmod +x "$SH"
+          "$SH" selftest
+          "$SH" orphans | "$SH" delete
