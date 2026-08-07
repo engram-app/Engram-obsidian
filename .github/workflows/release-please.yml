@@ -13,11 +13,14 @@ permissions:
 jobs:
   release-please:
     runs-on: [self-hosted, linux, x64, isolated]
-    # Job level, NOT step level: a step's own `env:` block is not in scope for
-    # that step's `if:`, so `env.WEBHOOK != ''` on the announce step below was
-    # permanently false and the Discord announce has never once fired.
     env:
-      WEBHOOK: ${{ secrets.DISCORD_RELEASES_WEBHOOK_URL }}
+      # WEBHOOK used to be hoisted here to dodge an `if: env.WEBHOOK != ''`
+      # scoping problem on the announce step. The announce step no longer
+      # gates on `if:` at all — it reads the webhook and returns early when
+      # unset — so the value lives on the step that uses it, and the webhook
+      # itself now comes from the org-level DISCORD_ANNOUNCEMENTS_WEBHOOK_URL
+      # that engram-infra populates from SOPS.
+      #
       # Without this, every `gh` call in this job dies with "none of the git
       # remotes configured for this repository point to a known GitHub host".
       # `gh` infers the repo from `git remote -v`, and our self-hosted runners
@@ -103,6 +106,8 @@ jobs:
               --arg br "$PR_BRANCH" \
               '{message: $msg, content: $content, sha: $sha, branch: $br}')
 
+            # flags:4 = SUPPRESS_EMBEDS. Discord auto-embeds every URL, so messages
+            # rendered as a stack of preview cards. Links stay clickable without them.
             HTTP_STATUS=$(curl -sS -o /tmp/versions-put-response.json -w '%{http_code}' -X PUT \
               -H "Accept: application/vnd.github+json" \
               -H "Authorization: Bearer $GH_TOKEN" \
@@ -186,17 +191,36 @@ jobs:
           done
           echo "Verified $TAG has main.js, manifest.json and styles.css"
 
-      - name: Announce to Discord (#releases)
-        if: steps.release.outputs.release_created == 'true' && env.WEBHOOK != ''
+      - name: Announce release (announcements)
+        if: steps.release.outputs.release_created == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG: ${{ steps.release.outputs.tag_name }}
+          WEBHOOK: ${{ secrets.DISCORD_ANNOUNCEMENTS_WEBHOOK_URL }}
         run: |
-          set -euo pipefail
+          set -uo pipefail
+          [ -n "$WEBHOOK" ] || { echo "No announcements webhook configured — skipping."; exit 0; }
           NOTES=$(gh release view "$TAG" --repo "${{ github.repository }}" --json body -q .body || echo "")
-          CONTENT=$(printf '**Engram Vault Sync %s** released.\n\n%s' "$TAG" "$NOTES")
-          HTTP_STATUS=$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' --max-time 5 \
-            --data "$(jq -nc --arg c "$CONTENT" '{content:$c}')" "$WEBHOOK")
+          RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/$TAG"
+          # Previously this posted the FULL release body with no cap. Discord
+          # rejects content over 2000 chars with a 400, and the case below
+          # only warns — so a big release announced nothing and said so in a
+          # log nobody reads. The formatter owns the cap (and drops ci/deps
+          # scoped entries, which are not announcements).
+          CONTENT=""
+          if [ -f scripts/discord_release_notes.sh ]; then
+            CONTENT=$(printf '%s' "$NOTES" | bash scripts/discord_release_notes.sh \
+              "Engram Vault Sync" "$TAG" "$RELEASE_URL") || CONTENT=""
+          fi
+          [ -n "$CONTENT" ] || CONTENT=$(printf '**Engram Vault Sync %s** released\n%s' "$TAG" "$RELEASE_URL")
+          # flags:4 = SUPPRESS_EMBEDS. Discord auto-embeds every URL, so messages
+          # rendered as a stack of preview cards. Links stay clickable without them.
+          HTTP_STATUS=$(curl -sS -o /dev/null -w '%{http_code}' -X POST \
+            -H 'Content-Type: application/json' \
+            -H 'User-Agent: engram-ci/1.0 (+https://github.com/engram-app/Engram-obsidian)' \
+            --max-time 10 \
+            --data "$(jq -nc --arg c "$CONTENT" --arg u 'Engram Releases' '{content:$c,username:$u,flags:4}')" \
+            "$WEBHOOK") || HTTP_STATUS="000"
           case "$HTTP_STATUS" in
             2??) echo "Discord announce OK (HTTP $HTTP_STATUS)" ;;
             *) echo "::warning::Discord announce failed (HTTP $HTTP_STATUS)" ;;
