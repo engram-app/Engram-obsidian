@@ -7,7 +7,6 @@ import { isMarkdownPath } from "../../file-kind";
 import { isDestroyedError } from "../destroyed-error";
 import { CONTENT_KEY } from "../frontmatter-codec";
 import type { ProviderRegistry } from "../provider-registry";
-import { CrdtFrontmatterHook } from "./frontmatter-hook";
 import type { LiveBindingCoordinator } from "./live-binding";
 import { getMarkdownFilePath } from "./obsidian-internals";
 import { CrdtReadingView } from "./reading-view";
@@ -89,20 +88,19 @@ export interface CrdtLiveViewsDeps {
 	onReleaseError?: (path: string, err: unknown) => void;
 }
 
-/** Owns the non-editor CRDT view concerns (frontmatter properties + reading-mode
- *  render) and the viewer refcount, and serves as the LiveBindingCoordinator for
+/** Owns the non-editor CRDT view concerns (reading-mode render) and the viewer
+ *  refcount, and serves as the LiveBindingCoordinator for
  *  the editor ViewPlugin (live-binding.ts). The editor text binding itself lives
  *  in the ViewPlugin now — a CM6-owned per-view lifecycle that cannot be wiped by
  *  Obsidian's setViewData (the old Compartment-based wedge class). */
 export class CrdtLiveViews implements LiveBindingCoordinator {
 	private readonly deps: CrdtLiveViewsDeps;
 	private readonly refcount: ViewerRefcount;
-	private readonly frontmatter: CrdtFrontmatterHook;
 	private readonly reading: CrdtReadingView;
 	/** Fix wave 6: per-path trailing-debounce timers for `requestSaveForBoundPath`. */
 	private readonly saveNudgeTimers = new Map<string, number>();
-	/** Last path each view's frontmatter/reading hooks were attached for, so a
-	 *  file switch that reuses the view detaches the stale hooks before re-attach. */
+	/** Last path each view's reading hook was attached for, so a file switch that
+	 *  reuses the view detaches the stale hook before re-attach. */
 	private readonly hookPaths = new WeakMap<MdView, string>();
 	/** Coalesce guard: one file switch fires active-leaf-change + file-open
 	 *  (± layout-change), each calling refresh(). Same-microtask duplicates
@@ -116,10 +114,6 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 			// A flush/getText failure leaves the doc resident (correct: never free what
 			// we couldn't persist) — surface it instead of swallowing the rejection.
 			this.onLastViewerRelease(path).catch((e) => this.deps.onReleaseError?.(path, e));
-		});
-		this.frontmatter = new CrdtFrontmatterHook({
-			getPath: (v) => getMarkdownFilePath(v),
-			getYText: (path) => this.getYText(path),
 		});
 		this.reading = new CrdtReadingView({
 			getYText: (path) => this.getYText(path),
@@ -244,7 +238,7 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 	}
 
 	/** Re-evaluate open markdown leaves: enroll each, and (re)attach the
-	 *  frontmatter + reading-mode hooks. The editor TEXT binding is handled
+	 *  reading-mode hook. The editor TEXT binding is handled
 	 *  independently by the ViewPlugin (CM6-owned), so refresh() no longer binds
 	 *  editors — it only covers the concerns without a per-view CM lifecycle. */
 	refresh(): void {
@@ -259,17 +253,15 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 			const path = getMarkdownFilePath(view);
 			if (!path || !isMarkdownPath(path)) continue;
 			// If this view was showing a different note (rename / reuse), detach the
-			// stale hooks first so their idempotency guard does not block the rebind.
+			// stale hook first so its idempotency guard does not block the rebind.
 			const prev = this.hookPaths.get(view);
 			if (prev !== undefined && prev !== path) {
-				this.frontmatter.detach(view);
 				this.reading.detach(view);
 			}
 			this.hookPaths.set(view, path);
 			// Reading-only leaves have no CM editor (no ViewPlugin), so enroll here
 			// too. Idempotent + edge-guarded, so an already-enrolled note is ~free.
 			this.deps.enrollment.enroll(this.deps.resolveId(path));
-			this.frontmatter.attach(view);
 			void this.reading.attach(view, path);
 		}
 	}
@@ -286,8 +278,7 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 			window.clearTimeout(timer);
 		}
 		this.saveNudgeTimers.clear();
-		// Detach all frontmatter + reading-view hooks.
-		this.frontmatter.detachAll();
+		// Detach all reading-view hooks.
 		this.reading.detachAll();
 		const flushes: Array<Promise<void>> = [];
 		for (const path of this.refcount.boundPaths()) {

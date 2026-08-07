@@ -66,27 +66,3 @@ export function patchPreviewEdit(
 		preview.edit = original;
 	};
 }
-
-export function patchFrontmatterSave(
-	view: unknown,
-	onSave: (newText: string) => void,
-): (() => void) | null {
-	// Relay ViewHookPlugin.ts patches view.saveFrontmatter, then reads view.text
-	// for the post-save full document text (not view.data). view.text is the internal
-	// field Obsidian keeps in sync with the file's content after a save.
-	const v = view as { saveFrontmatter?: (...a: unknown[]) => unknown; text?: string };
-	if (typeof v.saveFrontmatter !== "function") return null;
-	const original = v.saveFrontmatter.bind(v);
-	v.saveFrontmatter = (...args: unknown[]) => {
-		const result = original(...args);
-		try {
-			if (typeof v.text === "string") onSave(v.text);
-		} catch {
-			// swallow: a hook failure must not break Obsidian's own save.
-		}
-		return result;
-	};
-	return () => {
-		v.saveFrontmatter = original;
-	};
-}

@@ -7429,26 +7429,6 @@ function isDestroyedError(error) {
   return error instanceof DestroyedError;
 }
 
-// src/crdt/bridge.ts
-var import_diff_match_patch3 = __toESM(require_diff_match_patch(), 1), dmp2 = new import_diff_match_patch3.diff_match_patch();
-function seedOnce(text2, disk, hasLca) {
-  if (hasLca) return !1;
-  let current = text2.toJSON();
-  return current === disk || current.length > 0 ? !1 : (text2.insert(0, disk), !0);
-}
-function diffIntoYText(text2, incoming) {
-  let current = text2.toJSON();
-  if (current === incoming) return;
-  let diffs = dmp2.diff_main(current, incoming);
-  dmp2.diff_cleanupSemantic(diffs);
-  let apply = () => {
-    let cursor = 0;
-    for (let [op, data] of diffs)
-      op === 0 ? cursor += data.length : op === 1 ? (text2.insert(cursor, data), cursor += data.length) : text2.delete(cursor, data.length);
-  };
-  text2.doc ? text2.doc.transact(apply) : apply();
-}
-
 // src/crdt/live/obsidian-internals.ts
 function getMarkdownFilePath(view) {
   var _a;
@@ -7478,60 +7458,6 @@ function patchPreviewEdit(view, consume) {
     preview.edit = original;
   });
 }
-function patchFrontmatterSave(view, onSave) {
-  let v = view;
-  if (typeof v.saveFrontmatter != "function") return null;
-  let original = v.saveFrontmatter.bind(v);
-  return v.saveFrontmatter = (...args2) => {
-    let result = original(...args2);
-    try {
-      typeof v.text == "string" && onSave(v.text);
-    } catch (e) {
-    }
-    return result;
-  }, () => {
-    v.saveFrontmatter = original;
-  };
-}
-
-// src/crdt/live/frontmatter-hook.ts
-var CrdtFrontmatterHook = class {
-  constructor(deps) {
-    this.uninstallers = /* @__PURE__ */ new WeakMap();
-    /** Strong-reference set so detachAll() can iterate all attached views.
-     *  The WeakMap alone is not iterable. */
-    this.attached = /* @__PURE__ */ new Set();
-    this.deps = deps;
-  }
-  attach(view) {
-    if (typeof view != "object" || view === null || this.uninstallers.has(view)) return;
-    let path = this.deps.getPath(view);
-    if (!path) return;
-    let uninstall = patchFrontmatterSave(view, (newText) => {
-      this.deps.getYText(path).then((ytext) => {
-        diffIntoYText(ytext, splitFrontmatter(newText).body);
-      }).catch(
-        (err) => rlog().error("crdt-frontmatter", `getYText failed for ${path}: ${String(err)}`)
-      );
-    });
-    if (!uninstall) {
-      rlog().info("crdt", `frontmatter hook unavailable for ${path}, using disk path`);
-      return;
-    }
-    this.uninstallers.set(view, uninstall), this.attached.add(view);
-  }
-  detach(view) {
-    if (typeof view != "object" || view === null) return;
-    let uninstall = this.uninstallers.get(view);
-    uninstall && (uninstall(), this.uninstallers.delete(view), this.attached.delete(view));
-  }
-  /** Detach all currently attached views. Called by CrdtLiveViews.destroy(). */
-  detachAll() {
-    for (let view of this.attached)
-      this.detach(view);
-    this.attached.clear();
-  }
-};
 
 // src/crdt/live/reading-view.ts
 var READING_EDIT_ORIGIN = { source: "crdt-reading-view" }, CrdtReadingView = class {
@@ -7636,8 +7562,8 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
   constructor(deps) {
     /** Fix wave 6: per-path trailing-debounce timers for `requestSaveForBoundPath`. */
     this.saveNudgeTimers = /* @__PURE__ */ new Map();
-    /** Last path each view's frontmatter/reading hooks were attached for, so a
-     *  file switch that reuses the view detaches the stale hooks before re-attach. */
+    /** Last path each view's reading hook was attached for, so a file switch that
+     *  reuses the view detaches the stale hook before re-attach. */
     this.hookPaths = /* @__PURE__ */ new WeakMap();
     /** Coalesce guard: one file switch fires active-leaf-change + file-open
      *  (± layout-change), each calling refresh(). Same-microtask duplicates
@@ -7649,9 +7575,6 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
         var _a, _b;
         return (_b = (_a = this.deps).onReleaseError) == null ? void 0 : _b.call(_a, path, e);
       });
-    }), this.frontmatter = new CrdtFrontmatterHook({
-      getPath: (v) => getMarkdownFilePath(v),
-      getYText: (path) => this.getYText(path)
     }), this.reading = new CrdtReadingView({
       getYText: (path) => this.getYText(path),
       isReadingMode: (v) => v instanceof import_obsidian3.MarkdownView && v.getMode() === "preview",
@@ -7747,7 +7670,7 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
     return (await this.deps.manager.getDoc(noteId)).getText(CONTENT_KEY);
   }
   /** Re-evaluate open markdown leaves: enroll each, and (re)attach the
-   *  frontmatter + reading-mode hooks. The editor TEXT binding is handled
+   *  reading-mode hook. The editor TEXT binding is handled
    *  independently by the ViewPlugin (CM6-owned), so refresh() no longer binds
    *  editors — it only covers the concerns without a per-view CM lifecycle. */
   refresh() {
@@ -7761,7 +7684,7 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
         let path = getMarkdownFilePath(view);
         if (!path || !isMarkdownPath(path)) continue;
         let prev = this.hookPaths.get(view);
-        prev !== void 0 && prev !== path && (this.frontmatter.detach(view), this.reading.detach(view)), this.hookPaths.set(view, path), this.deps.enrollment.enroll(this.deps.resolveId(path)), this.frontmatter.attach(view), this.reading.attach(view, path);
+        prev !== void 0 && prev !== path && this.reading.detach(view), this.hookPaths.set(view, path), this.deps.enrollment.enroll(this.deps.resolveId(path)), this.reading.attach(view, path);
       }
     }
   }
@@ -7774,7 +7697,7 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
   destroy() {
     for (let timer of this.saveNudgeTimers.values())
       window.clearTimeout(timer);
-    this.saveNudgeTimers.clear(), this.frontmatter.detachAll(), this.reading.detachAll();
+    this.saveNudgeTimers.clear(), this.reading.detachAll();
     let flushes = [];
     for (let path of this.refcount.boundPaths()) {
       let noteId = this.deps.resolveExistingId(path);
@@ -14491,11 +14414,11 @@ function jsonEqual(a, b) {
 }
 
 // src/crdt/lca-merge.ts
-var import_diff_match_patch4 = __toESM(require_diff_match_patch(), 1);
+var import_diff_match_patch3 = __toESM(require_diff_match_patch(), 1);
 function mergeDiskOntoDoc(base, disk, current) {
   if (base === disk) return { text: current, clean: !0 };
   if (base === current) return { text: disk, clean: !0 };
-  let dmp3 = new import_diff_match_patch4.diff_match_patch(), patches = dmp3.patch_make(base, disk), [merged, applied] = dmp3.patch_apply(patches, current);
+  let dmp3 = new import_diff_match_patch3.diff_match_patch(), patches = dmp3.patch_make(base, disk), [merged, applied] = dmp3.patch_apply(patches, current);
   return { text: merged, clean: applied.every(Boolean) };
 }
 
@@ -14666,6 +14589,26 @@ var NoteProvider = class {
     this.doc.off("update", this.updateHandler);
   }
 };
+
+// src/crdt/bridge.ts
+var import_diff_match_patch4 = __toESM(require_diff_match_patch(), 1), dmp2 = new import_diff_match_patch4.diff_match_patch();
+function seedOnce(text2, disk, hasLca) {
+  if (hasLca) return !1;
+  let current = text2.toJSON();
+  return current === disk || current.length > 0 ? !1 : (text2.insert(0, disk), !0);
+}
+function diffIntoYText(text2, incoming) {
+  let current = text2.toJSON();
+  if (current === incoming) return;
+  let diffs = dmp2.diff_main(current, incoming);
+  dmp2.diff_cleanupSemantic(diffs);
+  let apply = () => {
+    let cursor = 0;
+    for (let [op, data] of diffs)
+      op === 0 ? cursor += data.length : op === 1 ? (text2.insert(cursor, data), cursor += data.length) : text2.delete(cursor, data.length);
+  };
+  text2.doc ? text2.doc.transact(apply) : apply();
+}
 
 // src/crdt/note-seed.ts
 function textHasHistory(text2) {
