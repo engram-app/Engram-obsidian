@@ -3613,6 +3613,69 @@ export class SyncEngine {
 		return (nextId ?? "") > (curId ?? "");
 	}
 
+	/** Rows per op-log page. The backend clamps `limit` to its own feed cap, so
+	 *  this must not exceed it (`merged_changes_page`). */
+	private static readonly OP_LOG_PAGE_SIZE = 500;
+	/** Loop ceiling for an op-log walk — corruption protection, not a real
+	 *  backlog limit (500 rows x 100k pages). */
+	private static readonly OP_LOG_MAX_PAGES = 100_000;
+
+	/** Page the seq-ordered op-log (`crdt_catchup_since`) from a start cursor,
+	 *  handing every row to `onRow` and each page's end cursor to `onPage`.
+	 *
+	 *  The single pager for BOTH walkers of this feed — `runSeqReplayOnce` (which
+	 *  applies ops and persists the cursor) and `enumerateServerState` (a pure
+	 *  read for the sync preview). It owns the mechanics they used to duplicate:
+	 *  page size, loop ceiling, the composite {seq,id} advance, and the
+	 *  stuck-cursor guard (#378).
+	 *
+	 *  Fetch errors PROPAGATE — the two callers want opposite things and that is
+	 *  the one behaviour that must stay per-caller: the replay swallows them to
+	 *  keep the pages it already applied, the preview lets them surface rather
+	 *  than render a plan off a short walk. */
+	private async walkOpLog(opts: {
+		seq: number;
+		id: string | null;
+		onRow: (c: SyncChange) => void | Promise<void>;
+		onPage?: (seq: number, id: string | null) => void | Promise<void>;
+	}): Promise<void> {
+		const fetchPage = this.crdtCatchupSince;
+		if (!fetchPage) return;
+		let cursor = opts.seq;
+		let cursorId = opts.id;
+		for (let page = 0; page < SyncEngine.OP_LOG_MAX_PAGES; page++) {
+			const pageStartSeq = cursor;
+			const pageStartId = cursorId;
+			const resp = await fetchPage(cursor, SyncEngine.OP_LOG_PAGE_SIZE, cursorId);
+			for (const c of resp.changes) {
+				await opts.onRow(c);
+				// Advance past every row SEEN (handled or skipped) so the cursor is
+				// monotonic and a permanently-unappliable op can't stall the feed.
+				// Composite (seq, id): the feed is {seq,id}-sorted and the backend
+				// derives its own `next` from the page's LAST row
+				// (`merged_changes_page`), so the row-derived max here equals the
+				// server's {next_seq, next_id} — one advance rule serves both walkers.
+				if (
+					this.cursorAdvances(
+						typeof c.seq === "number" ? c.seq : null,
+						c.id ?? null,
+						cursor,
+						cursorId,
+					)
+				) {
+					cursor = c.seq;
+					cursorId = c.id ?? null;
+				}
+			}
+			await opts.onPage?.(cursor, cursorId);
+			if (!resp.has_more) break;
+			// Stuck-cursor guard: if a page returned rows but the composite cursor
+			// did NOT advance from the page start (a backend quirk / an empty page
+			// with has_more), stop rather than refetch the same window forever.
+			if (!this.cursorAdvances(cursor, cursorId, pageStartSeq, pageStartId)) break;
+		}
+	}
+
 	private async enumerateServerState(): Promise<{
 		notes: Map<string, { deleted: boolean; content?: string; contentHash?: string }>;
 		attachments: Map<string, { deleted: boolean }>;
@@ -3636,13 +3699,13 @@ export class SyncEngine {
 		}
 		const byId = new Map<string, Extract<SyncChange, { type: "note" }>>();
 		const attachments = new Map<string, { deleted: boolean }>();
-		let cursor = 0;
-		let cursorId: string | null = null;
-		// Loop ceiling is corruption protection, not a real limit (mirrors
-		// runSeqReplayOnce): 100k pages x 500 rows.
-		for (let page = 0; page < 100_000; page++) {
-			const resp = await this.crdtCatchupSince(cursor, 500, cursorId);
-			for (const c of resp.changes) {
+		// A pure read: no `onPage`, so the real catch-up cursor is never touched.
+		// Fetch errors propagate — the preview must fail visibly, never render a
+		// wrong (short) plan.
+		await this.walkOpLog({
+			seq: 0,
+			id: null,
+			onRow: (c) => {
 				if (c.type === "attachment") {
 					if (c.path) attachments.set(c.path, { deleted: c.deleted });
 				} else if (c.id && c.path) {
@@ -3651,16 +3714,8 @@ export class SyncEngine {
 					// the fold on null and surface as a bogus toPull in the plan.
 					byId.set(c.id, c);
 				}
-			}
-			if (!resp.has_more) break;
-			// Composite advance: `next_seq` can EQUAL `cursor` for an attachment
-			// move's two same-seq rows split across the page boundary (#312); the
-			// paired `next_id` continues past the exact row. A non-advancing cursor
-			// (backend quirk / pre-#312 empty next) breaks the loop.
-			if (!this.cursorAdvances(resp.next_seq, resp.next_id ?? null, cursor, cursorId)) break;
-			cursor = resp.next_seq as number;
-			cursorId = resp.next_id ?? null;
-		}
+			},
+		});
 		const notes = new Map<
 			string,
 			{ deleted: boolean; content?: string; contentHash?: string }
@@ -3852,83 +3907,57 @@ export class SyncEngine {
 		}
 		this.seqRewindFloor = null;
 		let applied = 0;
-		// Bound the loop far above any real backlog (matches pullViaCursor). Applies
-		// are idempotent, so persisting the cursor per page is at-least-once safe.
-		for (let page = 0; page < 100_000; page++) {
-			const pageStartSeq = cursor;
-			const pageStartId = cursorId;
-			let resp: {
-				changes: SyncChange[];
-				has_more: boolean;
-				next_seq: number | null;
-				next_id?: string | null;
-			};
-			try {
-				resp = await this.crdtCatchupSince(cursor, 500, cursorId);
-			} catch (e) {
-				rlog().warn("crdt", `seq-replay: fetch failed at cursor=${cursor} — ${errMsg(e)}`);
-				return applied;
-			}
-			for (const c of resp.changes) {
-				if (!enumerateOnly) {
-					try {
-						await this.applySyncChange(c);
-						applied += 1;
-					} catch (e) {
-						// One bad op (e.g. illegal filename) must not wedge the feed — log
-						// and skip, same isolation as pullViaCursor.
-						rlog().error("crdt", `seq-replay: skipped ${c.path} — ${errMsg(e)}`);
+		try {
+			await this.walkOpLog({
+				seq: cursor,
+				id: cursorId,
+				onRow: async (c) => {
+					if (!enumerateOnly) {
+						try {
+							await this.applySyncChange(c);
+							applied += 1;
+						} catch (e) {
+							// One bad op (e.g. illegal filename) must not wedge the feed — log
+							// and skip, same isolation as pullViaCursor.
+							rlog().error("crdt", `seq-replay: skipped ${c.path} — ${errMsg(e)}`);
+						}
 					}
-				}
-				// Advance past every op we've SEEN (applied or skipped) so the cursor
-				// is monotonic and a permanently-unappliable op can't stall the feed.
-				// Composite (seq, id): the feed is {seq,id}-sorted, so the last row of
-				// a page is its max — that becomes the resume point persisted below.
-				if (
-					this.cursorAdvances(
-						typeof c.seq === "number" ? c.seq : null,
-						c.id ?? null,
-						cursor,
-						cursorId,
-					)
-				) {
-					cursor = c.seq;
-					cursorId = c.id ?? null;
-				}
-				// Every non-deleted id/path SEEN (applied or skipped) — the
-				// pull-all-delete / push-all-delete choices (Tasks 5/5b/6) need the
-				// full server id-set and attachment-path-set, not just the
-				// successfully-applied subset.
-				if (c.type === "attachment") {
-					if (!c.deleted) serverAttachmentPaths.add(c.path);
-				} else if (c.id && !c.deleted) {
-					serverIds.add(c.id);
-				}
-			}
-			// enumerateOnly must not move the real catch-up cursor — a later
-			// genuine catch-up needs to still see every op this enumeration walked
-			// past, since none of them were applied.
-			if (!enumerateOnly) {
-				// Persist the COMPOSITE resume point: an interrupted replay that
-				// stopped mid equal-seq pair must resume at (seq, id), not seq-only,
-				// or the sibling row is skipped (#312). The gap-heal fence still
-				// reads catchupSeq (seq) only — it is untouched.
-				this.setCatchupSeq(cursor);
-				this.setCatchupId(cursorId);
-				await this.saveData({
-					catchupSeq: this.getCatchupSeq(),
-					catchupId: this.getCatchupId(),
-				});
-			}
-			if (!resp.has_more) break;
-			// Stuck-cursor guard: the per-op advance above already moved `cursor`
-			// to this page's max {seq, id} (the feed is sorted, so that equals the
-			// backend's {next_seq, next_id}). If a page returned rows but the
-			// composite cursor did NOT advance from the page start (a backend quirk
-			// / empty page with has_more), stop rather than refetch forever. This
-			// replaces the old seq-only `next_seq > cursor` guard, which would have
-			// wrongly refused to advance across an equal-seq pair boundary.
-			if (!this.cursorAdvances(cursor, cursorId, pageStartSeq, pageStartId)) break;
+					// Every non-deleted id/path SEEN (applied or skipped) — the
+					// pull-all-delete / push-all-delete choices (Tasks 5/5b/6) need the
+					// full server id-set and attachment-path-set, not just the
+					// successfully-applied subset.
+					if (c.type === "attachment") {
+						if (!c.deleted) serverAttachmentPaths.add(c.path);
+					} else if (c.id && !c.deleted) {
+						serverIds.add(c.id);
+					}
+				},
+				onPage: async (seq, id) => {
+					// Tracked even when we don't persist, so a fetch failure below logs
+					// the cursor the walk actually reached.
+					cursor = seq;
+					cursorId = id;
+					// enumerateOnly must not move the real catch-up cursor — a later
+					// genuine catch-up needs to still see every op this enumeration
+					// walked past, since none of them were applied.
+					if (enumerateOnly) return;
+					// Persist the COMPOSITE resume point: an interrupted replay that
+					// stopped mid equal-seq pair must resume at (seq, id), not seq-only,
+					// or the sibling row is skipped (#312). The gap-heal fence still
+					// reads catchupSeq (seq) only — it is untouched. Applies are
+					// idempotent, so persisting per page is at-least-once safe.
+					this.setCatchupSeq(seq);
+					this.setCatchupId(id);
+					await this.saveData({
+						catchupSeq: this.getCatchupSeq(),
+						catchupId: this.getCatchupId(),
+					});
+				},
+			});
+		} catch (e) {
+			// A mid-walk fetch failure keeps whatever pages already applied (and
+			// their persisted cursor) — the next pass resumes from there.
+			rlog().warn("crdt", `seq-replay: fetch failed at cursor=${cursor} — ${errMsg(e)}`);
 		}
 		return applied;
 	}
