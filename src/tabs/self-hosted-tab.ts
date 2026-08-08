@@ -92,11 +92,19 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
 				.setButtonText("Save")
 				.setCta()
 				.onClick(async () => {
-					const cleared = await applyApiUrlChange(
+					const { cleared, rejected } = await applyApiUrlChange(
 						pluginSwitchTarget(plugin),
 						pendingUrl.trim(),
 						() => plugin.saveSettings(),
 					);
+					if (rejected) {
+						// Deliberately no redisplay: the typed value stays in the box
+						// so the user can correct it instead of retyping from scratch.
+						new Notice(
+							"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000",
+						);
+						return;
+					}
 					if (cleared) {
 						new Notice("Engram backend changed — sign in again to continue.");
 					}

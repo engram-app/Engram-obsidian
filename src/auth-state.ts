@@ -163,19 +163,31 @@ export function pluginSwitchTarget(plugin: {
 	};
 }
 
+/** Outcome of a URL change. `rejected` means nothing was written: the value did
+ *  not parse as a complete origin. Such a value was previously stored silently,
+ *  leaving apiUrl set to something no downstream consumer could resolve, with no
+ *  error surfaced to the user. */
+export interface ApiUrlChangeResult {
+	cleared: boolean;
+	rejected: boolean;
+}
+
 /** Update `target.settings.apiUrl` and, if the new URL points at a different
  *  backend origin, wipe backend-scoped auth state, null out the API auth
  *  provider, reset the live in-memory auth provider (so a stale old-backend
  *  access token can't be replayed against the new origin), and disconnect the
  *  live note stream — then persist via `save`.
- *  Returns true when auth was cleared. Mutates `target.settings` in place so
- *  external references (SyncEngine, etc.) keep observing the same object. */
+ *  Mutates `target.settings` in place so external references (SyncEngine, etc.)
+ *  keep observing the same object. */
 export async function applyApiUrlChange(
 	target: ApiUrlSwitchTarget,
 	newUrl: string,
 	save: () => Promise<void>,
-): Promise<boolean> {
-	if (target.settings.apiUrl === newUrl) return false;
+): Promise<ApiUrlChangeResult> {
+	if (target.settings.apiUrl === newUrl) return { cleared: false, rejected: false };
+	// Refuse anything that is not a complete origin. Storing it would leave the
+	// plugin pointed at an unusable address with nothing shown to the user.
+	if (!completeOrigin(newUrl)) return { cleared: false, rejected: true };
 	const cleared = isBackendChange(target.settings.apiUrl, newUrl);
 	if (cleared) {
 		// Mutate in place — withClearedAuth is the single source of truth for
@@ -187,5 +199,5 @@ export async function applyApiUrlChange(
 	}
 	target.settings.apiUrl = newUrl;
 	await save();
-	return cleared;
+	return { cleared, rejected: false };
 }

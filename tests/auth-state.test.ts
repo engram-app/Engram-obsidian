@@ -211,7 +211,7 @@ describe("applyApiUrlChange", () => {
 	test("same origin: updates apiUrl, preserves auth, returns false", async () => {
 		const target = makeTarget({ apiUrl: "https://engram.ras.band" });
 		const save = mock(async () => {});
-		const cleared = await applyApiUrlChange(target, "https://engram.ras.band/api", save);
+		const { cleared } = await applyApiUrlChange(target, "https://engram.ras.band/api", save);
 		expect(cleared).toBe(false);
 		expect(target.settings.apiUrl).toBe("https://engram.ras.band/api");
 		expect(target.settings.apiKey).toBe("engram_secret123");
@@ -226,7 +226,7 @@ describe("applyApiUrlChange", () => {
 	test("identical URL: skips save and stream disconnect (no-op)", async () => {
 		const target = makeTarget({ apiUrl: "https://engram.ras.band" });
 		const save = mock(async () => {});
-		const cleared = await applyApiUrlChange(target, "https://engram.ras.band", save);
+		const { cleared } = await applyApiUrlChange(target, "https://engram.ras.band", save);
 		expect(cleared).toBe(false);
 		expect(target.settings.apiKey).toBe("engram_secret123");
 		expect(target.api.setAuthProvider).not.toHaveBeenCalled();
@@ -237,7 +237,7 @@ describe("applyApiUrlChange", () => {
 	test("different origin: clears auth, disconnects stream, nulls api provider", async () => {
 		const target = makeTarget({ apiUrl: "https://engram.ras.band" });
 		const save = mock(async () => {});
-		const cleared = await applyApiUrlChange(target, "http://engram.ax", save);
+		const { cleared } = await applyApiUrlChange(target, "http://engram.ax", save);
 		expect(cleared).toBe(true);
 		expect(target.settings.apiUrl).toBe("http://engram.ax");
 		expect(target.settings.apiKey).toBe("");
@@ -260,22 +260,59 @@ describe("applyApiUrlChange", () => {
 		expect(target.resetAuthProvider).toHaveBeenCalledTimes(1);
 	});
 
-	test("partial URL (still typing): updates apiUrl, preserves auth, returns false", async () => {
+	// Behaviour CHANGED deliberately. This previously stored the partial value,
+	// leaving apiUrl set to something no downstream consumer could resolve, with
+	// no error surfaced. Save now refuses it and keeps the configured URL.
+	test("partial URL: rejected, stored URL and auth both untouched", async () => {
 		const target = makeTarget({ apiUrl: "https://engram.ras.band" });
 		const save = mock(async () => {});
-		const cleared = await applyApiUrlChange(target, "https://engr", save);
+		const { cleared, rejected } = await applyApiUrlChange(target, "https://engr", save);
+		expect(rejected).toBe(true);
 		expect(cleared).toBe(false);
-		expect(target.settings.apiUrl).toBe("https://engr");
+		expect(target.settings.apiUrl).toBe("https://engram.ras.band");
 		expect(target.settings.apiKey).toBe("engram_secret123");
 		expect(target.api.setAuthProvider).not.toHaveBeenCalled();
 		expect(target.noteStream?.disconnect).not.toHaveBeenCalled();
+		expect(save).not.toHaveBeenCalled();
+	});
+
+	test("URL with no scheme: rejected, stored URL untouched", async () => {
+		const target = makeTarget({ apiUrl: "https://engram.ras.band" });
+		const save = mock(async () => {});
+		const { rejected } = await applyApiUrlChange(target, "localhost:4000", save);
+		expect(rejected).toBe(true);
+		expect(target.settings.apiUrl).toBe("https://engram.ras.band");
+		expect(save).not.toHaveBeenCalled();
+	});
+
+	test("empty URL: rejected, stored URL untouched", async () => {
+		const target = makeTarget({ apiUrl: "https://engram.ras.band" });
+		const save = mock(async () => {});
+		const { rejected } = await applyApiUrlChange(target, "", save);
+		expect(rejected).toBe(true);
+		expect(target.settings.apiUrl).toBe("https://engram.ras.band");
+		expect(save).not.toHaveBeenCalled();
+	});
+
+	test("complete loopback URL: accepted and clears auth", async () => {
+		const target = makeTarget({ apiUrl: "https://engram.ras.band" });
+		const save = mock(async () => {});
+		const { cleared, rejected } = await applyApiUrlChange(
+			target,
+			"http://127.0.0.1:4000",
+			save,
+		);
+		expect(rejected).toBe(false);
+		expect(cleared).toBe(true);
+		expect(target.settings.apiUrl).toBe("http://127.0.0.1:4000");
+		expect(save).toHaveBeenCalledTimes(1);
 	});
 
 	test("noteStream null: does not throw", async () => {
 		const target = makeTarget({ apiUrl: "https://engram.ras.band" });
 		target.noteStream = null;
 		const save = mock(async () => {});
-		const cleared = await applyApiUrlChange(target, "http://engram.ax", save);
+		const { cleared } = await applyApiUrlChange(target, "http://engram.ax", save);
 		expect(cleared).toBe(true);
 		expect(target.api.setAuthProvider).toHaveBeenCalledWith(null);
 	});
