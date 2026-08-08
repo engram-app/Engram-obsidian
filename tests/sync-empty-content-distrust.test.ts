@@ -83,6 +83,7 @@ describe("inline-empty content with a content_hash is fetched, not written", () 
 			serverIds: new Set(),
 			serverAttachmentPaths: new Set(),
 			ran: true,
+			complete: true,
 		});
 
 		await engine.handleStreamEvent({

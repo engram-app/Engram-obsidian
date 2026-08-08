@@ -3459,6 +3459,17 @@ describe("SyncEngine.pullAll with deleteLocalExtras", () => {
 		const engine = createEngine();
 		const localOnly = new TFile("local-only.md", Date.now());
 		(mockApp.vault.getFiles as jest.Mock).mockReturnValue([localOnly]);
+		// Wire a socket that reports an EMPTY server over a COMPLETE walk. The
+		// engine must KNOW the server is empty before it trashes local extras —
+		// leaving the socket unwired makes the replay return empty sets it never
+		// earned, and a delete decision on those is the trash-the-whole-vault bug.
+		engine.setCrdtManager({} as any);
+		engine.setCrdtCatchupSince(async () => ({
+			changes: [],
+			has_more: false,
+			next_seq: null,
+			next_id: null,
+		}));
 
 		await engine.pullAll({ deleteLocalExtras: true });
 

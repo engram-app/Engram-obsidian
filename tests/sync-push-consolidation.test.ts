@@ -450,6 +450,7 @@ describe("SyncEngine.pullAll — replay-from-0 (Task 5)", () => {
 			serverIds: new Set(["kept-id"]),
 			serverAttachmentPaths: new Set<string>(),
 			ran: true,
+			complete: true,
 		});
 
 		await engine.pullAll({ deleteLocalExtras: true });
@@ -478,6 +479,7 @@ describe("SyncEngine.pullAll — replay-from-0 (Task 5)", () => {
 			serverIds: new Set<string>(),
 			serverAttachmentPaths: new Set<string>(),
 			ran: true,
+			complete: true,
 		});
 
 		await engine.pullAll({ deleteLocalExtras: true });
@@ -496,6 +498,7 @@ describe("SyncEngine.pullAll — replay-from-0 (Task 5)", () => {
 			serverIds: new Set<string>(),
 			serverAttachmentPaths: new Set(["Attachments/kept.png"]),
 			ran: true,
+			complete: true,
 		});
 
 		await engine.pullAll({ deleteLocalExtras: true });
@@ -516,6 +519,7 @@ describe("SyncEngine.pullAll — replay-from-0 (Task 5)", () => {
 			serverIds: new Set<string>(),
 			serverAttachmentPaths: new Set<string>(),
 			ran: true,
+			complete: true,
 		});
 
 		await engine.pullAll({ deleteLocalExtras: true });
@@ -563,6 +567,7 @@ describe("destructive sync choices — coalesced-replay whole-vault data-loss gu
 			serverIds: new Set(["kept-id"]),
 			serverAttachmentPaths: new Set<string>(),
 			ran: true,
+			complete: true,
 		});
 
 		await engine.pullAll({ deleteLocalExtras: true });
@@ -596,6 +601,7 @@ describe("SyncEngine.pushAll — replace-remote via crdtDelete + attachment-dele
 			serverIds: new Set(["local-keep-id", "remote-extra-id"]),
 			serverAttachmentPaths: new Set(["Keep.png", "remote-extra.png"]),
 			ran: true,
+			complete: true,
 		});
 		engine.setCrdtCreateBatch(async (creates) => ({
 			results: creates.map((c) => ({ doc_id: c.doc_id, status: "ok" as const })),

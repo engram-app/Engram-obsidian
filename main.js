@@ -18969,7 +18969,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   webm: "video/webm",
   zip: "application/zip",
   canvas: "application/json"
-}, PUSH_BATCH_SIZE = 10, _SyncEngine = class _SyncEngine {
+}, PUSH_BATCH_SIZE = 10, OpLogFetchError = class extends Error {
+  constructor(cursorSeq, cause) {
+    super(`op-log fetch failed at cursor=${cursorSeq} \u2014 ${errMsg(cause)}`);
+    this.cursorSeq = cursorSeq;
+    this.name = "OpLogFetchError";
+  }
+}, _SyncEngine = class _SyncEngine {
   constructor(app, api, settings, saveData, time = new DefaultTimeProvider()) {
     this.app = app;
     this.api = api;
@@ -20978,21 +20984,56 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   cursorAdvances(nextSeq, nextId, curSeq, curId) {
     return typeof nextSeq != "number" ? !1 : nextSeq > curSeq ? !0 : nextSeq < curSeq ? !1 : (nextId != null ? nextId : "") > (curId != null ? curId : "");
   }
+  /** Page the seq-ordered op-log (`crdt_catchup_since`) from a start cursor,
+   *  handing every row to `onRow` and each page's end cursor to `onPage`.
+   *
+   *  The single pager for BOTH walkers of this feed — `runSeqReplayOnce` (which
+   *  applies ops and persists the cursor) and `enumerateServerState` (a pure
+   *  read for the sync preview). It owns the mechanics they used to duplicate:
+   *  page size, loop ceiling, the composite {seq,id} advance, and the
+   *  stuck-cursor guard (#378).
+   *
+   *  Fetch errors PROPAGATE — the two callers want opposite things and that is
+   *  the one behaviour that must stay per-caller: the replay swallows them to
+   *  keep the pages it already applied, the preview lets them surface rather
+   *  than render a plan off a short walk. */
+  async walkOpLog(opts) {
+    var _a, _b, _c;
+    let fetchPage = this.crdtCatchupSince;
+    if (!fetchPage) return;
+    let cursor = opts.seq, cursorId = opts.id;
+    for (let page = 0; page < _SyncEngine.OP_LOG_MAX_PAGES; page++) {
+      let pageStartSeq = cursor, pageStartId = cursorId, resp;
+      try {
+        resp = await fetchPage(cursor, _SyncEngine.OP_LOG_PAGE_SIZE, cursorId);
+      } catch (e) {
+        throw new OpLogFetchError(cursor, e);
+      }
+      for (let c of resp.changes)
+        await opts.onRow(c), this.cursorAdvances(
+          typeof c.seq == "number" ? c.seq : null,
+          (_a = c.id) != null ? _a : null,
+          cursor,
+          cursorId
+        ) && (cursor = c.seq, cursorId = (_b = c.id) != null ? _b : null);
+      if (await ((_c = opts.onPage) == null ? void 0 : _c.call(opts, cursor, cursorId)), !resp.has_more || !this.cursorAdvances(cursor, cursorId, pageStartSeq, pageStartId)) break;
+    }
+  }
   async enumerateServerState() {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c, _d;
     let deadline = Date.now() + this.enumerateWaitMs;
     for (; (!this.crdtCatchupSince || !this.crdt || !((_b = (_a = this.crdtLive) == null ? void 0 : _a.call(this)) != null && _b)) && Date.now() < deadline; )
       await this.sleep(100);
     if (!this.crdtCatchupSince || !this.crdt || !((_d = (_c = this.crdtLive) == null ? void 0 : _c.call(this)) != null && _d))
       throw new Error("Sync preview needs the live socket (op-log enumeration)");
-    let byId = /* @__PURE__ */ new Map(), attachments = /* @__PURE__ */ new Map(), cursor = 0, cursorId = null;
-    for (let page = 0; page < 1e5; page++) {
-      let resp = await this.crdtCatchupSince(cursor, 500, cursorId);
-      for (let c of resp.changes)
+    let byId = /* @__PURE__ */ new Map(), attachments = /* @__PURE__ */ new Map();
+    await this.walkOpLog({
+      seq: 0,
+      id: null,
+      onRow: (c) => {
         c.type === "attachment" ? c.path && attachments.set(c.path, { deleted: c.deleted }) : c.id && c.path && byId.set(c.id, c);
-      if (!resp.has_more || !this.cursorAdvances(resp.next_seq, (_e = resp.next_id) != null ? _e : null, cursor, cursorId)) break;
-      cursor = resp.next_seq, cursorId = (_f = resp.next_id) != null ? _f : null;
-    }
+      }
+    });
     let notes = /* @__PURE__ */ new Map();
     for (let c of byId.values())
       notes.set(c.path, {
@@ -21006,22 +21047,24 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     var _a, _b, _c;
     let serverIds = /* @__PURE__ */ new Set(), serverAttachmentPaths = /* @__PURE__ */ new Set();
     if (this.seqReplayRunning)
-      return this.seqReplayAgain = !0, { applied: 0, serverIds, serverAttachmentPaths, ran: !1 };
+      return this.seqReplayAgain = !0, { applied: 0, serverIds, serverAttachmentPaths, ran: !1, complete: !1 };
     this.seqReplayRunning = !0;
-    let applied = 0;
+    let applied = 0, complete = !0;
     try {
-      do
-        this.seqReplayAgain = !1, applied += await this.runSeqReplayOnce(
+      do {
+        this.seqReplayAgain = !1;
+        let pass = await this.runSeqReplayOnce(
           ((_a = opts.fromZero) != null ? _a : !1) || ((_b = opts.enumerateOnly) != null ? _b : !1),
           serverIds,
           serverAttachmentPaths,
           (_c = opts.enumerateOnly) != null ? _c : !1
         );
-      while (this.seqReplayAgain);
+        applied += pass.applied, pass.complete || (complete = !1);
+      } while (this.seqReplayAgain);
     } finally {
       this.seqReplayRunning = !1;
     }
-    return { applied, serverIds, serverAttachmentPaths, ran: !0 };
+    return { applied, serverIds, serverAttachmentPaths, ran: !0, complete };
   }
   /** Run `catchupViaSeqReplay` for a DESTRUCTIVE delete decision (pull-all wipe,
    *  push-all replace-remote). Retries until THIS call executes the replay
@@ -21036,7 +21079,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   async catchupViaSeqReplayExclusive(opts) {
     for (let attempt = 0; attempt < 10; attempt++) {
       let res = await this.catchupViaSeqReplay(opts);
-      if (res.ran) return res;
+      if (res.ran)
+        return res.complete ? res : (rlog().error(
+          "crdt",
+          "seq-replay: exclusive replay ended INCOMPLETE (walk stopped short) \u2014 refusing to hand back partial server sets"
+        ), null);
       await this.sleep(50);
     }
     return null;
@@ -21095,8 +21142,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
   }
   async runSeqReplayOnce(fromZero, serverIds, serverAttachmentPaths, enumerateOnly = !1) {
-    var _a, _b, _c;
-    if (!this.crdtCatchupSince || !this.crdt) return 0;
+    var _a;
+    if (!this.crdtCatchupSince || !this.crdt) return { applied: 0, complete: !1 };
     let activeVault = (_a = this.settings.vaultId) != null ? _a : null, resumable = !fromZero && this.syncStateVaultId === activeVault, cursor = resumable ? this.getCatchupSeq() : 0, cursorId = resumable ? this.getCatchupId() : null;
     if (this.seqRewindFloor !== null && !fromZero) {
       let floored = Math.min(cursor, this.seqRewindFloor);
@@ -21104,33 +21151,31 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     this.seqRewindFloor = null;
     let applied = 0;
-    for (let page = 0; page < 1e5; page++) {
-      let pageStartSeq = cursor, pageStartId = cursorId, resp;
-      try {
-        resp = await this.crdtCatchupSince(cursor, 500, cursorId);
-      } catch (e) {
-        return rlog().warn("crdt", `seq-replay: fetch failed at cursor=${cursor} \u2014 ${errMsg(e)}`), applied;
-      }
-      for (let c of resp.changes) {
-        if (!enumerateOnly)
-          try {
-            await this.applySyncChange(c), applied += 1;
-          } catch (e) {
-            rlog().error("crdt", `seq-replay: skipped ${c.path} \u2014 ${errMsg(e)}`);
-          }
-        this.cursorAdvances(
-          typeof c.seq == "number" ? c.seq : null,
-          (_b = c.id) != null ? _b : null,
-          cursor,
-          cursorId
-        ) && (cursor = c.seq, cursorId = (_c = c.id) != null ? _c : null), c.type === "attachment" ? c.deleted || serverAttachmentPaths.add(c.path) : c.id && !c.deleted && serverIds.add(c.id);
-      }
-      if (enumerateOnly || (this.setCatchupSeq(cursor), this.setCatchupId(cursorId), await this.saveData({
-        catchupSeq: this.getCatchupSeq(),
-        catchupId: this.getCatchupId()
-      })), !resp.has_more || !this.cursorAdvances(cursor, cursorId, pageStartSeq, pageStartId)) break;
+    try {
+      await this.walkOpLog({
+        seq: cursor,
+        id: cursorId,
+        onRow: async (c) => {
+          if (!enumerateOnly)
+            try {
+              await this.applySyncChange(c), applied += 1;
+            } catch (e) {
+              rlog().error("crdt", `seq-replay: skipped ${c.path} \u2014 ${errMsg(e)}`);
+            }
+          c.type === "attachment" ? c.deleted || serverAttachmentPaths.add(c.path) : c.id && !c.deleted && serverIds.add(c.id);
+        },
+        onPage: async (seq2, id2) => {
+          cursor = seq2, cursorId = id2, !enumerateOnly && (this.setCatchupSeq(seq2), this.setCatchupId(id2), await this.saveData({
+            catchupSeq: this.getCatchupSeq(),
+            catchupId: this.getCatchupId()
+          }));
+        }
+      });
+    } catch (e) {
+      if (!(e instanceof OpLogFetchError)) throw e;
+      return rlog().warn("crdt", `seq-replay: ${e.message}`), { applied, complete: !1 };
     }
-    return applied;
+    return { applied, complete: !0 };
   }
   /** Per-note discovery from a room-open announce that carries a path
    *  (`crdt_doc_ready`, backend adds `path`). An EMPTY note's genesis integrates
@@ -23071,7 +23116,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.crdtHealTrailingTimers.clear(), this.pendingConvergence.clear(), this.crdtRehandshakeAttempts.clear(), this.crdtHealCooldown.clear(), this.pendingQueueDeliveries.clear(), this.degradedNoticeTimer && this.time.clearTimeout(this.degradedNoticeTimer), this.degradedNoticeTimer = null, this.pendingDegraded.clear(), this.stopHealthCheck(), this.queue.destroy();
   }
 };
-_SyncEngine.MANIFEST_OWNERS_TTL_MS = 3e4, _SyncEngine.SEQ_HEAL_COOLDOWN_MS = 4e3;
+_SyncEngine.MANIFEST_OWNERS_TTL_MS = 3e4, _SyncEngine.SEQ_HEAL_COOLDOWN_MS = 4e3, /** Rows per op-log page. The backend clamps `limit` to its own feed cap, so
+ *  this must not exceed it (`merged_changes_page`). */
+_SyncEngine.OP_LOG_PAGE_SIZE = 500, /** Loop ceiling for an op-log walk — corruption protection, not a real
+ *  backlog limit (500 rows x 100k pages). */
+_SyncEngine.OP_LOG_MAX_PAGES = 1e5;
 var SyncEngine = _SyncEngine;
 
 // src/sync-fingerprint.ts

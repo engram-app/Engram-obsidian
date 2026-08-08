@@ -744,6 +744,7 @@ describe("SyncEngine.pushAll with progress", () => {
 			serverIds: new Set<string>(),
 			serverAttachmentPaths: new Set<string>(),
 			ran: true,
+			complete: true,
 		});
 
 		// Seed some sync state that should be cleared

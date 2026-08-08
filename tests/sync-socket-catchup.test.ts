@@ -421,6 +421,10 @@ describe("catchupViaSeqReplay", () => {
 			serverIds: new Set(),
 			serverAttachmentPaths: new Set(),
 			ran: true,
+			// NOT complete: the walk never happened, so the empty sets describe our
+			// ignorance, not the server. A destructive caller reading these as
+			// "server has nothing" would trash the vault.
+			complete: false,
 		});
 	});
 
@@ -830,6 +834,7 @@ describe("catchUp manifestSeq short-circuit (Phase E1)", () => {
 			serverIds: new Set(),
 			serverAttachmentPaths: new Set(),
 			ran: true,
+			complete: true,
 		});
 		const folders = spyOn(engine as any, "syncExplicitFolders").mockResolvedValue(undefined);
 		return { reconcile, heal, validate, replay, folders };
@@ -935,6 +940,7 @@ describe("catchUp identity-swap delete guard (#283)", () => {
 			serverIds: new Set(),
 			serverAttachmentPaths: new Set(),
 			ran: true,
+			complete: true,
 		});
 		spyOn(engine as any, "healDivergedLiveBoundNotes").mockResolvedValue(0);
 		spyOn(engine as any, "syncExplicitFolders").mockResolvedValue(undefined);
@@ -1007,5 +1013,188 @@ describe("validateFromManifest (E1 #1065) — hash-aware seq-stamp closes the no
 
 		expect(behind).toBe(1); // real content divergence — must re-serve
 		expect(e.exportSyncState()[path]?.seq).toBe(800); // untouched
+	});
+});
+
+/**
+ * The op-log pager contract shared by BOTH walkers of `crdt_catchup_since`:
+ * `runSeqReplayOnce` (applies + persists the cursor) and
+ * `enumerateServerState` (pure read for the sync preview). #378 extracted the
+ * pagination mechanics they used to duplicate — page size, loop ceiling,
+ * composite {seq,id} advance, stuck-cursor guard. These tests pin the parts
+ * that must stay identical, and the ONE part that must stay different (fetch
+ * error policy), so the two callers cannot drift apart again.
+ *
+ * The stuck-cursor tests are self-limiting: the mock THROWS once the walker
+ * has fetched more pages than the guard should ever allow. A removed guard
+ * fails the test in milliseconds instead of spinning the 100k-page ceiling.
+ */
+describe("op-log pager — contract shared by replay + enumerate", () => {
+	function noteRow(seq: number, id: string, path: string) {
+		return {
+			type: "note" as const,
+			id,
+			seq,
+			path,
+			title: path.replace(/\.md$/, ""),
+			content: `c${seq}`,
+			content_hash: `h${seq}`,
+			folder: "",
+			tags: [],
+			mtime: seq,
+			updated_at: "2026-01-01T00:00:00Z",
+			deleted: false,
+		};
+	}
+
+	/** An engine wired for `enumerateServerState` (needs a live crdt socket). */
+	function makeEnumerableEngine(): SyncEngine {
+		const e = makeEngineWithCrdt({ closeDoc: () => {} });
+		e.setCrdtLiveCheck(() => true);
+		return e;
+	}
+
+	test("both walkers request the same op-log page size", async () => {
+		const limits: Array<number | undefined> = [];
+		const feed = async (_cursor: number, limit?: number) => {
+			limits.push(limit);
+			return { changes: [], has_more: false, next_seq: null, next_id: null };
+		};
+
+		const replayEngine = makeEngineWithCrdt({ closeDoc: () => {} });
+		replayEngine.setCrdtCatchupSince(feed);
+		await replayEngine.catchupViaSeqReplay();
+
+		const previewEngine = makeEnumerableEngine();
+		previewEngine.setCrdtCatchupSince(feed);
+		await (previewEngine as any).enumerateServerState();
+
+		expect(limits).toEqual([500, 500]);
+	});
+
+	test("replay stops when a page fails to advance the composite cursor", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		(engine as any).applySyncChange = mock(async () => true);
+		let calls = 0;
+		engine.setCrdtCatchupSince(async () => {
+			calls += 1;
+			if (calls > 2) throw new Error("stuck-cursor guard did not fire (replay)");
+			// Page 2 re-serves page 1's final row: the composite cursor cannot
+			// advance past the page start, so the walk must stop rather than
+			// refetch the same page forever.
+			return {
+				changes: [noteRow(5, "id-a", "Notes/a.md")],
+				has_more: true,
+				next_seq: 5,
+				next_id: "id-a",
+			};
+		});
+
+		await engine.catchupViaSeqReplay();
+
+		expect(calls).toBe(2);
+	});
+
+	test("enumerate stops when a page fails to advance the composite cursor", async () => {
+		const engine = makeEnumerableEngine();
+		let calls = 0;
+		engine.setCrdtCatchupSince(async () => {
+			calls += 1;
+			if (calls > 2) throw new Error("stuck-cursor guard did not fire (enumerate)");
+			return {
+				changes: [noteRow(5, "id-a", "Notes/a.md")],
+				has_more: true,
+				next_seq: 5,
+				next_id: "id-a",
+			};
+		});
+
+		await (engine as any).enumerateServerState();
+
+		expect(calls).toBe(2);
+	});
+
+	test("an exclusive replay refuses a walk that stopped early (partial server sets)", async () => {
+		// The destructive pull-all-delete path trusts serverIds/serverAttachmentPaths
+		// to decide which local files are server-absent "extras" and trash them. It
+		// guards against a COALESCED replay (empty sets) — but a walk cut short by a
+		// mid-walk socket drop returns partial, NON-empty sets, sails past that
+		// guard, and every note the walk never reached looks like an extra.
+		// catchupViaSeqReplayExclusive must return null so the caller aborts.
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		(engine as any).applySyncChange = mock(async () => true);
+		let calls = 0;
+		engine.setCrdtCatchupSince(async () => {
+			calls += 1;
+			if (calls === 1) {
+				return {
+					changes: [noteRow(5, "id-a", "Notes/a.md")],
+					has_more: true,
+					next_seq: 5,
+					next_id: "id-a",
+				};
+			}
+			throw new Error("socket dropped");
+		});
+
+		const res = await (engine as any).catchupViaSeqReplayExclusive({ fromZero: true });
+
+		expect(res).toBeNull();
+	});
+
+	test("a persist failure is not swallowed as a fetch failure", async () => {
+		// The replay deliberately swallows FETCH errors so it keeps the pages it
+		// already applied. It must not also swallow errors from its OWN work: a
+		// saveData failure means the resume cursor never landed, and reporting
+		// success anyway hands a destructive caller (catchupViaSeqReplayExclusive
+		// -> pull-all-delete) a serverIds set built from a walk that stopped early.
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		(engine as any).applySyncChange = mock(async () => true);
+		(engine as any).saveData = mock(async () => {
+			throw new Error("disk full");
+		});
+		engine.setCrdtCatchupSince(async () => ({
+			changes: [noteRow(5, "id-a", "Notes/a.md")],
+			has_more: false,
+			next_seq: null,
+			next_id: null,
+		}));
+
+		await expect(engine.catchupViaSeqReplay()).rejects.toThrow("disk full");
+	});
+
+	test("a mid-walk fetch failure surfaces to the preview but not to the replay", async () => {
+		// The one place the two walkers MUST differ. The preview renders a plan
+		// the user acts on, so a partial walk has to error visibly rather than
+		// under-report server state. The replay keeps the pages it already
+		// applied and resumes from the persisted cursor on the next pass.
+		const boom = () => {
+			let calls = 0;
+			return async () => {
+				calls += 1;
+				if (calls === 1) {
+					return {
+						changes: [noteRow(5, "id-a", "Notes/a.md")],
+						has_more: true,
+						next_seq: 5,
+						next_id: "id-a",
+					};
+				}
+				throw new Error("socket dropped");
+			};
+		};
+
+		const replayEngine = makeEngineWithCrdt({ closeDoc: () => {} });
+		(replayEngine as any).applySyncChange = mock(async () => true);
+		replayEngine.setCrdtCatchupSince(boom());
+		const { applied } = await replayEngine.catchupViaSeqReplay();
+		expect(applied).toBe(1);
+		expect(replayEngine.getCatchupSeq()).toBe(5);
+
+		const previewEngine = makeEnumerableEngine();
+		previewEngine.setCrdtCatchupSince(boom());
+		await expect((previewEngine as any).enumerateServerState()).rejects.toThrow(
+			"socket dropped",
+		);
 	});
 });
