@@ -15270,7 +15270,7 @@ var MAX_QUEUE = 500, OP_TTL_MS = 300 * 1e3, MAX_ATTEMPTS = 8, BASE_BACKOFF_MS = 
     this.persistFn = null;
     this.persistTimer = null;
     var _a;
-    this.send = deps.send, this.now = deps.now, this.onDrop = deps.onDrop, this.opts = { ...DEFAULT_OPTIONS, ...deps.options }, this.persistDelayMs = (_a = deps.persistDelayMs) != null ? _a : PERSIST_DELAY_MS;
+    this.send = deps.send, this.now = deps.now, this.onDrop = deps.onDrop, this.currentVaultId = deps.currentVaultId, this.opts = { ...DEFAULT_OPTIONS, ...deps.options }, this.persistDelayMs = (_a = deps.persistDelayMs) != null ? _a : PERSIST_DELAY_MS;
   }
   /** Number of distinct pending ops (docIds). */
   size() {
@@ -15304,23 +15304,6 @@ var MAX_QUEUE = 500, OP_TTL_MS = 300 * 1e3, MAX_ATTEMPTS = 8, BASE_BACKOFF_MS = 
       }
       this.entries.size >= this.opts.maxQueue && this.evictOldest(), this.entries.set(op.docId, { op: { ...op, attempts: 0 }, nextAttemptAt: 0 });
     }
-  }
-  /** Drop every pending op and persist the empty queue.
-   *
-   *  A queued op carries a bare `docId` and NO vault (see CrdtOp), so it is
-   *  delivered blind on whatever crdt: topic is joined when it finally flushes.
-   *  Across a vault change that means the PREVIOUS vault's note ids arriving on
-   *  the NEW vault's channel, where the server cannot place them -- the client
-   *  half of the cross-vault id-collision class (engram #1318). The ops are per-
-   *  vault state, exactly like the note-id map and the relocation timestamps
-   *  that SyncEngine.wipePerVaultState already drops, so they are dropped in
-   *  lockstep with those.
-   *
-   *  Dropping is safe, not lossy: switching vaults clears `lastSync`, so the
-   *  next full sync against the old vault re-derives and re-pushes anything
-   *  these ops carried. */
-  clear() {
-    this.entries.size !== 0 && (this.entries.clear(), this.schedulePersist());
   }
   /** Cancel any pending persist timer. Call on plugin unload. */
   dispose() {
@@ -15357,6 +15340,22 @@ var MAX_QUEUE = 500, OP_TTL_MS = 300 * 1e3, MAX_ATTEMPTS = 8, BASE_BACKOFF_MS = 
     let entry = this.entries.get(first.value);
     this.entries.delete(first.value), entry && ((_a = this.onDrop) == null || _a.call(this, entry.op, "overflow")), this.schedulePersist();
   }
+  /** Drop and notify if the op belongs to a vault we are no longer syncing.
+   *
+   *  Checked HERE, at send time, rather than by a hook on the vault switch: the
+   *  crdt: topic rejoin flushes this queue, and on the OAuth-relogin route that
+   *  happens BEFORE any sync-start hook runs, so a switch-time clear was already
+   *  too late. Checking per op also keeps a same-vault reset non-destructive --
+   *  a queued delete has no REST fallback, so dropping the whole outbox on any
+   *  vault-state reset resurrected deleted notes.
+   *
+   *  Goes through onDrop like every other undelivered removal, so a discarded op
+   *  leaves the same warn-level trail the others do. */
+  dropIfForeignVault(docId, entry) {
+    var _a, _b, _c, _d;
+    let current = (_b = (_a = this.currentVaultId) == null ? void 0 : _a.call(this)) != null ? _b : null, owner = (_c = entry.op.vaultId) != null ? _c : null;
+    return !owner || !current || owner === current ? !1 : (this.entries.delete(docId), (_d = this.onDrop) == null || _d.call(this, entry.op, "vault-changed"), this.schedulePersist(), !0);
+  }
   /** Drop and notify if the op has aged past its TTL. Returns true if dropped. */
   dropIfExpired(docId, entry) {
     var _a;
@@ -15382,7 +15381,7 @@ var MAX_QUEUE = 500, OP_TTL_MS = 300 * 1e3, MAX_ATTEMPTS = 8, BASE_BACKOFF_MS = 
       try {
         for (let docId of [...this.entries.keys()]) {
           let entry = this.entries.get(docId);
-          entry && (this.dropIfExpired(docId, entry) || entry.nextAttemptAt > this.now() || await this.attempt(docId, entry));
+          entry && (this.dropIfExpired(docId, entry) || this.dropIfForeignVault(docId, entry) || entry.nextAttemptAt > this.now() || await this.attempt(docId, entry));
         }
       } finally {
         this.flushing = !1;
@@ -23462,6 +23461,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         }
       }),
       now: () => Date.now(),
+      // Read live, never captured: the queue re-checks each op against the
+      // vault we are syncing RIGHT NOW, at send time.
+      currentVaultId: () => {
+        var _a2;
+        return (_a2 = this.settings.vaultId) != null ? _a2 : null;
+      },
       onDrop: (op, reason) => rlog().warn(
         "crdt",
         `crdt_${op.kind} dropped (${reason}) without delivery: ${op.docId}`
@@ -23473,25 +23478,33 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       (_a2 = this.crdtOpQueue) == null ? void 0 : _a2.tick();
     }, 5e3)), this.syncEngine.setCrdtPorts({
       enqueue: (op) => {
-        var _a2;
-        return (_a2 = this.crdtOpQueue) == null ? void 0 : _a2.enqueue({
+        var _a2, _b2;
+        return (_b2 = this.crdtOpQueue) == null ? void 0 : _b2.enqueue({
           id: crypto.randomUUID(),
           kind: op.kind,
           docId: op.docId,
           payload: { path: op.path },
           enqueuedAt: Date.now(),
-          attempts: 0
+          attempts: 0,
+          // A docId only means anything inside its vault; stamp the op so a
+          // switch cannot deliver it blind on another vault's topic.
+          vaultId: (_a2 = this.settings.vaultId) != null ? _a2 : null
         });
       },
-      // Vault change: discard the previous vault's outbound work. Both halves
-      // key by note_id with no vault attached, so both would otherwise be
-      // delivered against the NEW vault's topic under ids the OLD vault owns.
-      // Wired here (not inside SyncEngine) because the queue and the CRDT
-      // wiring are owned by the plugin; SyncEngine calls this from
-      // wipePerVaultState so BOTH vault-change routes stay in lockstep.
+      // Vault change: drop the unsent-doc tracking set, which holds the
+      // PREVIOUS vault's note ids and would otherwise be STEP1'd against the
+      // new topic by reEnrollUnsent.
+      //
+      // The op QUEUE is deliberately NOT wiped here. It used to be, and that
+      // was wrong twice over: this hook runs at the head of a sync, by which
+      // point the topic rejoin has already flushed the queue (so the leak
+      // stayed open on the OAuth-relogin route), and it discarded queued
+      // DELETES, which have no REST fallback and cannot be re-derived from
+      // disk -- the deleted note came back on the next catch-up. Ops now carry
+      // their vaultId and self-drop at send time instead.
       resetOutbox: () => {
-        var _a2, _b2;
-        (_a2 = this.crdtOpQueue) == null || _a2.clear(), (_b2 = this.crdtWiring) == null || _b2.clearUnsent();
+        var _a2;
+        (_a2 = this.crdtWiring) == null || _a2.clearUnsent();
       }
     });
     let saved = await this.loadPluginData();
@@ -24416,7 +24429,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           createVault: (name) => this.api.createVault(name),
           applyVaultChange: async (id2, name) => {
             var _a2, _b2;
-            return this.settings.vaultId = id2, this.settings.remoteVaultName = name, this.api.setVaultId(id2), this.syncEngine.updateSettings(this.settings), await this.syncEngine.resetForVaultChange(), this.syncGateAcceptedFor = null, this.lastMapReconcileAt = 0, (_a2 = this.crdtWiring) == null || _a2.clearStrandHealAttempts(), this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), (_b2 = this.settingTab) == null || _b2.rerender(), this.setupNoteStream(), this.syncEngine.computeSyncPlan("full");
+            return id2 === this.settings.vaultId ? (this.settings.remoteVaultName = name, this.syncEngine.computeSyncPlan("full")) : (this.settings.vaultId = id2, this.settings.remoteVaultName = name, this.api.setVaultId(id2), this.syncEngine.updateSettings(this.settings), await this.syncEngine.resetForVaultChange(), this.syncGateAcceptedFor = null, this.lastMapReconcileAt = 0, (_a2 = this.crdtWiring) == null || _a2.clearStrandHealAttempts(), this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), (_b2 = this.settingTab) == null || _b2.rerender(), this.setupNoteStream(), this.syncEngine.computeSyncPlan("full"));
           }
         });
         this.syncEngine.computeSyncPlan("full").then((plan) => modal.setPlan(plan)).catch((e) => {

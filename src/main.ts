@@ -553,6 +553,9 @@ export default class EngramSyncPlugin extends Plugin {
 				},
 			}),
 			now: () => Date.now(),
+			// Read live, never captured: the queue re-checks each op against the
+			// vault we are syncing RIGHT NOW, at send time.
+			currentVaultId: () => this.settings.vaultId ?? null,
 			onDrop: (op, reason) =>
 				rlog().warn(
 					"crdt",
@@ -577,15 +580,22 @@ export default class EngramSyncPlugin extends Plugin {
 					payload: { path: op.path },
 					enqueuedAt: Date.now(),
 					attempts: 0,
+					// A docId only means anything inside its vault; stamp the op so a
+					// switch cannot deliver it blind on another vault's topic.
+					vaultId: this.settings.vaultId ?? null,
 				}),
-			// Vault change: discard the previous vault's outbound work. Both halves
-			// key by note_id with no vault attached, so both would otherwise be
-			// delivered against the NEW vault's topic under ids the OLD vault owns.
-			// Wired here (not inside SyncEngine) because the queue and the CRDT
-			// wiring are owned by the plugin; SyncEngine calls this from
-			// wipePerVaultState so BOTH vault-change routes stay in lockstep.
+			// Vault change: drop the unsent-doc tracking set, which holds the
+			// PREVIOUS vault's note ids and would otherwise be STEP1'd against the
+			// new topic by reEnrollUnsent.
+			//
+			// The op QUEUE is deliberately NOT wiped here. It used to be, and that
+			// was wrong twice over: this hook runs at the head of a sync, by which
+			// point the topic rejoin has already flushed the queue (so the leak
+			// stayed open on the OAuth-relogin route), and it discarded queued
+			// DELETES, which have no REST fallback and cannot be re-derived from
+			// disk -- the deleted note came back on the next catch-up. Ops now carry
+			// their vaultId and self-drop at send time instead.
 			resetOutbox: () => {
-				this.crdtOpQueue?.clear();
 				this.crdtWiring?.clearUnsent();
 			},
 		});
@@ -2436,6 +2446,15 @@ export default class EngramSyncPlugin extends Plugin {
 					listVaults: () => this.api.listVaults(),
 					createVault: (name) => this.api.createVault(name),
 					applyVaultChange: async (id, name) => {
+						// The picker lists EVERY vault including the active one, so a
+						// user can "change" to the vault they are already on. That is
+						// not a vault change: falling through would wipe lastSync and
+						// the per-vault state for no reason, and the empty lastSync
+						// then pulls back anything deleted-but-not-yet-pushed.
+						if (id === this.settings.vaultId) {
+							this.settings.remoteVaultName = name;
+							return this.syncEngine.computeSyncPlan("full");
+						}
 						// Persist the new vault target without going through
 						// saveSettings — that path would re-fire
 						// doSyncWithFirstSyncCheck for the closed gate and stack

@@ -106,13 +106,16 @@ describe("vault change wipes note identity (plugin #200)", () => {
 	});
 
 	test("both vault-change routes also drop the outbound CRDT work", async () => {
-		// The note-id map was never the only carrier. A queued CrdtOp holds a bare
-		// docId with NO vault, and the unsent-doc set is the same shape, so both
-		// survive a switch and get delivered against the NEW vault's topic under
-		// ids the OLD vault owns. That is the client half of the cross-vault
-		// collision the server now re-mints around (engram #1318). Asserted on BOTH
-		// routes because wipePerVaultState exists precisely to keep them in
-		// lockstep -- a drop wired to only one re-opens the hazard on the other.
+		// The note-id map was never the only carrier: unsentDocIds holds the same
+		// per-vault note ids, and reEnrollUnsent would STEP1 them against the NEW
+		// vault's topic. Asserted on BOTH routes because wipePerVaultState exists
+		// precisely to keep them in lockstep -- a drop wired to only one re-opens
+		// the hazard on the other.
+		//
+		// The op QUEUE is NOT dropped here. Ops carry their own vaultId and
+		// self-drop at send time, which is both earlier (the topic rejoin flushes
+		// before this hook runs) and narrower (a queued delete for the CURRENT
+		// vault has no REST fallback and must survive).
 		for (const route of ["backstop", "picker"] as const) {
 			const engine = createEngine("vault-B");
 			const resetOutbox = mock();
