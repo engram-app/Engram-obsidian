@@ -1,3 +1,4 @@
+import { completeOrigin } from "./auth-state";
 import {
 	BACKEND_SCOPED_FIELDS,
 	type BackendMode,
@@ -27,9 +28,12 @@ export function applySlot(settings: EngramSyncSettings, slot: BackendSlot): void
 
 export type ConnectionState = "connected" | "needs-url" | "needs-auth";
 
-/** What, if anything, the active backend is still missing. Read by BOTH the
- *  Connection tab banner and the sync guard, so the two cannot disagree about
- *  whether the plugin is usable. */
+/** What, if anything, the active backend is still missing. Drives the Connection
+ *  tab's "Not connected" banner.
+ *
+ *  Deliberately NOT a sync gate. Gating fullSync on this was implemented and
+ *  reverted: fullSyncInner already calls api.ping() to surface a clear error, and
+ *  the guard replaced that error with a silent `return {pulled: 0, pushed: 0}`. */
 export function connectionState(
 	settings: Pick<EngramSyncSettings, "apiUrl" | "apiKey" | "refreshToken">,
 ): ConnectionState {
@@ -51,6 +55,7 @@ function emptySlot(apiUrl: string): BackendSlot {
 		accessToken: undefined,
 		accessTokenExpiresAt: undefined,
 		accessTokenVaultId: undefined,
+		planState: null,
 	};
 }
 
@@ -94,6 +99,22 @@ export function switchMode(
  *  misclassify a legacy Cloud install as self-hosted. */
 export function migrateBackendMode(settings: EngramSyncSettings, cloudUrl: string): boolean {
 	if (settings.backendMode === "cloud" || settings.backendMode === "selfhost") return false;
-	settings.backendMode = settings.apiUrl === cloudUrl ? "cloud" : "selfhost";
+	settings.backendMode = modeForUrl(settings.apiUrl, cloudUrl);
+	// A fresh install has no URL and no credentials to lose, so adopt Cloud's
+	// fixed URL outright. This is what the deleted cloudTabAction "auto-switch"
+	// branch did; without it a new user lands in the self-hosted form and the
+	// Welcome tab's cloud CTA leads to a device flow against an empty base URL.
+	if (settings.backendMode === "cloud" && !settings.apiUrl) settings.apiUrl = cloudUrl;
 	return true;
+}
+
+/** Which mode a given apiUrl represents. Compares ORIGINS, not raw strings: a
+ *  stored Cloud URL carrying a trailing slash or an `/api` path is still Cloud.
+ *  An empty URL is an unconfigured install, which onboards to Cloud. */
+export function modeForUrl(apiUrl: string, cloudUrl: string): BackendMode {
+	if (!apiUrl) return "cloud";
+	const a = completeOrigin(apiUrl);
+	const c = completeOrigin(cloudUrl);
+	if (a && c) return a === c ? "cloud" : "selfhost";
+	return apiUrl === cloudUrl ? "cloud" : "selfhost";
 }

@@ -6,8 +6,10 @@ import {
 	type PreflightResult,
 	pluginSwitchTarget,
 } from "../auth-state";
+import { modeForUrl } from "../backend-mode";
 import { errMsg } from "../error-util";
 import type { TabContext } from "./types";
+import { ENGRAM_CLOUD_URL } from "./urls";
 
 const PREFLIGHT_DEBOUNCE_MS = 600;
 
@@ -105,6 +107,15 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
 						);
 						return;
 					}
+					// Keep the explicit mode in step with the URL. Pasting the Cloud
+					// address into this box IS a switch to Cloud; leaving backendMode
+					// on "selfhost" would make the next dropdown switch stash the
+					// Cloud config into the self-host slot.
+					plugin.settings.backendMode = modeForUrl(
+						plugin.settings.apiUrl,
+						ENGRAM_CLOUD_URL,
+					);
+					await plugin.saveSettings();
 					if (cleared) {
 						new Notice("Engram backend changed — sign in again to continue.");
 					}

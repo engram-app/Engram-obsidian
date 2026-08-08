@@ -203,8 +203,8 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 			if (!tab) return;
 			const btn = tabBar.querySelector<HTMLElement>(`[data-tab="${tab.id}"]`);
 			btn?.addClass("is-active");
-			// Tab renders are async (account tab awaits applyApiUrlChange /
-			// saveSettings); a rejection must surface, not vanish into `void`.
+			// Tab renders are async (the connection tab awaits saveSettings);
+			// a rejection must surface, not vanish into `void`.
 			void Promise.resolve(tab.render({ ...ctx, containerEl: contentEl })).catch(
 				(e: unknown) => {
 					new Notice(`Engram: settings tab failed to render (${errMsg(e)})`);

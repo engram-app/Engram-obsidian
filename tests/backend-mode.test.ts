@@ -5,6 +5,7 @@ import {
 	captureSlot,
 	connectionState,
 	migrateBackendMode,
+	modeForUrl,
 	switchMode,
 } from "../src/backend-mode";
 import { BACKEND_SCOPED_FIELDS, type EngramSyncSettings } from "../src/types";
@@ -169,11 +170,15 @@ describe("migrateBackendMode", () => {
 		expect(settings.backendMode).toBe("selfhost");
 	});
 
-	test("infers selfhost from an empty URL (fresh install)", () => {
+	// CHANGED deliberately: a fresh install now onboards to Cloud, restoring what
+	// the deleted cloudTabAction "auto-switch" branch did. Classifying it
+	// "selfhost" sent new users to the self-hosted form and made the Welcome
+	// tab's sign-in run a device flow against an empty base URL.
+	test("infers cloud from an empty URL (fresh install onboards to Cloud)", () => {
 		const settings = fullSettings({ apiUrl: "" });
 		settings.backendMode = undefined;
 		expect(migrateBackendMode(settings, CLOUD)).toBe(true);
-		expect(settings.backendMode).toBe("selfhost");
+		expect(settings.backendMode).toBe("cloud");
 	});
 
 	test("is a no-op once backendMode is set", () => {
@@ -190,5 +195,62 @@ describe("migrateBackendMode", () => {
 		expect(settings.refreshToken).toBe("refresh_abc");
 		expect(settings.vaultId).toBe("vault-1");
 		expect(settings.inactiveBackend).toBeUndefined();
+	});
+});
+
+describe("modeForUrl", () => {
+	test("empty URL onboards to cloud", () => {
+		expect(modeForUrl("", CLOUD)).toBe("cloud");
+	});
+
+	test("cloud URL with a trailing slash is still cloud", () => {
+		expect(modeForUrl("https://api.engram.page/", CLOUD)).toBe("cloud");
+	});
+
+	test("cloud URL with an /api path is still cloud", () => {
+		expect(modeForUrl("https://api.engram.page/api", CLOUD)).toBe("cloud");
+	});
+
+	test("any other host is selfhost", () => {
+		expect(modeForUrl("https://engram.example.com", CLOUD)).toBe("selfhost");
+		expect(modeForUrl("http://127.0.0.1:4000", CLOUD)).toBe("selfhost");
+	});
+});
+
+describe("migrateBackendMode onboarding", () => {
+	test("a fresh install adopts cloud AND the cloud URL", () => {
+		const settings = fullSettings({ apiUrl: "", apiKey: "", refreshToken: undefined });
+		settings.backendMode = undefined;
+		expect(migrateBackendMode(settings, CLOUD)).toBe(true);
+		expect(settings.backendMode).toBe("cloud");
+		// Without this a new user lands in the self-hosted form and the Welcome
+		// tab's sign-in runs a device flow against an empty base URL.
+		expect(settings.apiUrl).toBe(CLOUD);
+	});
+
+	test("a configured self-host install is untouched", () => {
+		const settings = fullSettings({ apiUrl: "https://engram.example.com" });
+		settings.backendMode = undefined;
+		migrateBackendMode(settings, CLOUD);
+		expect(settings.backendMode).toBe("selfhost");
+		expect(settings.apiUrl).toBe("https://engram.example.com");
+	});
+
+	test("a cloud install with a trailing slash is classified cloud, not selfhost", () => {
+		const settings = fullSettings({ apiUrl: "https://api.engram.page/" });
+		settings.backendMode = undefined;
+		migrateBackendMode(settings, CLOUD);
+		expect(settings.backendMode).toBe("cloud");
+	});
+});
+
+describe("switchMode carries planState", () => {
+	test("plan limits do not leak across backends", () => {
+		const settings = fullSettings({ backendMode: "cloud", apiUrl: CLOUD });
+		settings.planState = { tier: "pro" } as never;
+		switchMode(settings, "selfhost", CLOUD);
+		expect(settings.planState).toBeNull();
+		switchMode(settings, "cloud", CLOUD);
+		expect(settings.planState).toEqual({ tier: "pro" } as never);
 	});
 });

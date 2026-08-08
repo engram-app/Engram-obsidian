@@ -1,6 +1,5 @@
 import { Notice, Setting } from "obsidian";
-import { pluginSwitchTarget } from "../auth-state";
-import { connectionState, switchMode } from "../backend-mode";
+import { connectionState } from "../backend-mode";
 import type { BackendMode } from "../types";
 import {
 	renderAuthSection,
@@ -9,7 +8,7 @@ import {
 	renderVaultSection,
 } from "./self-hosted-tab";
 import type { TabContext } from "./types";
-import { ENGRAM_CLOUD_URL, ENGRAM_MARKETING_URL } from "./urls";
+import { ENGRAM_MARKETING_URL } from "./urls";
 
 const MODE_LABELS: Record<BackendMode, string> = {
 	cloud: "Engram Cloud",
@@ -38,14 +37,11 @@ export function renderConnectionTab(ctx: TabContext): void {
 			dd.setValue(mode);
 			dd.onChange(async (value) => {
 				const target = value as BackendMode;
-				if (!switchMode(plugin.settings, target, ENGRAM_CLOUD_URL)) return;
-				// Tear down anything bound to the OLD backend before persisting.
-				// An access token signed by one backend must never be replayed
-				// against another. Same three steps as applyApiUrlChange.
-				plugin.api.setAuthProvider(null);
-				pluginSwitchTarget(plugin).resetAuthProvider();
-				plugin.noteStream?.disconnect();
-				await plugin.saveSettings();
+				// Delegate: a mode switch is a full identity swap and must follow the
+				// same bump/rebuild/commit sequence as an OAuth login. Hand-rolling a
+				// subset here previously nulled the auth provider without rebuilding
+				// it and skipped bumpAuthGeneration.
+				if (!(await plugin.switchBackendMode(target))) return;
 				new Notice(`Switched to ${MODE_LABELS[target]}.`);
 				redisplay();
 			});

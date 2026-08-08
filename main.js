@@ -763,6 +763,16 @@ function completeOrigin(url) {
   let host = parsed.hostname, isLocalhost = host === "localhost", isIPv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(host), hasTld = /\.[a-z]{2,}$/i.test(host);
   return !isLocalhost && !isIPv4 && !hasTld ? null : `${parsed.protocol}//${parsed.host}`.toLowerCase();
 }
+function isSaveableUrl(url) {
+  if (!url) return !1;
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch (e) {
+    return !1;
+  }
+  return parsed.protocol !== "http:" && parsed.protocol !== "https:" ? !1 : parsed.hostname.length > 0;
+}
 function isBackendChange(oldUrl, newUrl) {
   let oldO = completeOrigin(oldUrl), newO = completeOrigin(newUrl);
   return !oldO || !newO ? !1 : oldO !== newO;
@@ -805,7 +815,7 @@ function pluginSwitchTarget(plugin) {
 async function applyApiUrlChange(target, newUrl, save) {
   var _a;
   if (target.settings.apiUrl === newUrl) return { cleared: !1, rejected: !1 };
-  if (!completeOrigin(newUrl)) return { cleared: !1, rejected: !0 };
+  if (!isSaveableUrl(newUrl)) return { cleared: !1, rejected: !0 };
   let cleared = isBackendChange(target.settings.apiUrl, newUrl);
   return cleared && (Object.assign(target.settings, withClearedAuth(target.settings)), target.api.setAuthProvider(null), target.resetAuthProvider(), (_a = target.noteStream) == null || _a.disconnect()), target.settings.apiUrl = newUrl, await save(), { cleared, rejected: !1 };
 }
@@ -1570,7 +1580,11 @@ var BACKEND_SCOPED_FIELDS = [
   "remoteVaultName",
   "accessToken",
   "accessTokenExpiresAt",
-  "accessTokenVaultId"
+  "accessTokenVaultId",
+  // Plan/tier limits are pushed by the backend over its own WebSocket, so they
+  // belong to whichever backend sent them. Leaving this out kept a Cloud paid
+  // tier in force after switching to a self-hosted server.
+  "planState"
 ], DEFAULT_SETTINGS = {
   apiUrl: "",
   apiKey: "",
@@ -1614,7 +1628,8 @@ function emptySlot(apiUrl) {
     remoteVaultName: void 0,
     accessToken: void 0,
     accessTokenExpiresAt: void 0,
-    accessTokenVaultId: void 0
+    accessTokenVaultId: void 0,
+    planState: null
   };
 }
 function switchMode(settings, target, cloudUrl) {
@@ -1623,7 +1638,12 @@ function switchMode(settings, target, cloudUrl) {
   return applySlot(settings, incoming), target === "cloud" && !settings.apiUrl && (settings.apiUrl = cloudUrl), settings.inactiveBackend = outgoing, settings.backendMode = target, !0;
 }
 function migrateBackendMode(settings, cloudUrl) {
-  return settings.backendMode === "cloud" || settings.backendMode === "selfhost" ? !1 : (settings.backendMode = settings.apiUrl === cloudUrl ? "cloud" : "selfhost", !0);
+  return settings.backendMode === "cloud" || settings.backendMode === "selfhost" ? !1 : (settings.backendMode = modeForUrl(settings.apiUrl, cloudUrl), settings.backendMode === "cloud" && !settings.apiUrl && (settings.apiUrl = cloudUrl), !0);
+}
+function modeForUrl(apiUrl, cloudUrl) {
+  if (!apiUrl) return "cloud";
+  let a = completeOrigin(apiUrl), c = completeOrigin(cloudUrl);
+  return a && c ? a === c ? "cloud" : "selfhost" : apiUrl === cloudUrl ? "cloud" : "selfhost";
 }
 
 // src/base-store.ts
@@ -17030,9 +17050,9 @@ function renderAboutTab(ctx) {
   ), heading(containerEl, "Stay in the loop"), renderWaitlistSection(containerEl), heading(containerEl, "Getting set up");
   let account = new import_obsidian16.Setting(containerEl).setName("1. Make an account");
   account.descEl.appendText("Create a hosted account at "), externalLink(account.descEl, "engram.page", ENGRAM_MARKETING_URL), account.descEl.appendText(", or self-host the backend ("), externalLink(account.descEl, "setup guide", ENGRAM_SELFHOST_URL), account.descEl.appendText(")."), new import_obsidian16.Setting(containerEl).setName("2. Connect your vault to Engram").setDesc(
-    "Sign in (or enter your server URL and key) on the cloud tab, then run your first sync."
+    "Sign in (or enter your server URL and key) on the connection tab, then run your first sync."
   ).addButton(
-    (btn) => btn.setButtonText("Open cloud tab").setCta().onClick(() => switchToTab("connection"))
+    (btn) => btn.setButtonText("Open connection tab").setCta().onClick(() => switchToTab("connection"))
   );
   let ai = new import_obsidian16.Setting(containerEl).setName("3. Connect your AI");
   ai.descEl.appendText(
@@ -17208,7 +17228,10 @@ function renderEngramUrlSetting(ctx) {
         );
         return;
       }
-      cleared && new import_obsidian18.Notice("Engram backend changed \u2014 sign in again to continue."), redisplay();
+      plugin.settings.backendMode = modeForUrl(
+        plugin.settings.apiUrl,
+        ENGRAM_CLOUD_URL
+      ), await plugin.saveSettings(), cleared && new import_obsidian18.Notice("Engram backend changed \u2014 sign in again to continue."), redisplay();
     })
   ), completeOrigin(plugin.settings.apiUrl) && runPreflight(plugin.settings.apiUrl);
 }
@@ -17353,9 +17376,8 @@ function renderConnectionTab(ctx) {
   let { containerEl, plugin, redisplay } = ctx, mode = (_a = plugin.settings.backendMode) != null ? _a : "selfhost";
   new import_obsidian19.Setting(containerEl).setName("Backend").setDesc("Where this vault syncs to. Each backend keeps its own sign-in.").addDropdown((dd) => {
     dd.addOption("cloud", MODE_LABELS.cloud), dd.addOption("selfhost", MODE_LABELS.selfhost), dd.setValue(mode), dd.onChange(async (value) => {
-      var _a2;
       let target = value;
-      switchMode(plugin.settings, target, ENGRAM_CLOUD_URL) && (plugin.api.setAuthProvider(null), pluginSwitchTarget(plugin).resetAuthProvider(), (_a2 = plugin.noteStream) == null || _a2.disconnect(), await plugin.saveSettings(), new import_obsidian19.Notice(`Switched to ${MODE_LABELS[target]}.`), redisplay());
+      await plugin.switchBackendMode(target) && (new import_obsidian19.Notice(`Switched to ${MODE_LABELS[target]}.`), redisplay());
     });
   });
   let state = connectionState(plugin.settings);
@@ -24021,8 +24043,28 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
   async saveOAuthTokens(refreshToken, vaultId, userEmail) {
     this.syncEngine.bumpAuthGeneration(), this.settings.refreshToken = refreshToken, this.settings.userEmail = userEmail, this.settings.authMethod = "oauth", this.settings.vaultId = vaultId, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, this.authProvider = this.createAuthProvider(), await this.commitAuthProviderSwap();
   }
+  /** Swap the active backend (Cloud <-> self-hosted). A mode switch is a full
+   *  identity swap, exactly like an OAuth login or logout, so it follows the
+   *  same sequence those do rather than a hand-rolled subset:
+   *
+   *    1. bumpAuthGeneration FIRST (#283) — a catch-up manifest fetch already in
+   *       flight against the OLD backend must refuse its destructive
+   *       delete-reconcile, or notes live in the incoming backend get trashed as
+   *       "server-deleted" against the outgoing backend's stale snapshot.
+   *    2. swap the credential set (switchMode stashes outgoing, restores incoming).
+   *    3. REBUILD the auth provider from the restored credentials. Nulling it
+   *       without rebuilding leaves an OAuth backend with no credential source at
+   *       all until Obsidian is reloaded, while the UI still reads "Signed in".
+   *    4. commitAuthProviderSwap: wire the provider onto the api BEFORE
+   *       saveSettings rebuilds the note channel, then persist.
+   *
+   *  Returns false when already in the target mode. */
+  async switchBackendMode(target) {
+    var _a;
+    return switchMode(this.settings, target, ENGRAM_CLOUD_URL) ? (this.syncEngine.bumpAuthGeneration(), (_a = this.noteStream) == null || _a.disconnect(), this.authProvider = this.createAuthProvider(), this.authProvider || this.api.setAuthProvider(null), await this.commitAuthProviderSwap(), !0) : !1;
+  }
   async clearOAuthTokens() {
-    this.syncEngine.bumpAuthGeneration(), this.settings.refreshToken = void 0, this.settings.userEmail = void 0, this.settings.authMethod = null, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, this.authProvider = this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null, await this.commitAuthProviderSwap();
+    this.syncEngine.bumpAuthGeneration(), this.settings.inactiveBackend = void 0, this.settings.refreshToken = void 0, this.settings.userEmail = void 0, this.settings.authMethod = null, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, this.authProvider = this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null, await this.commitAuthProviderSwap();
   }
   /** Reveal the search sidebar, creating its leaf on first use. Shared by the
    *  palette command and the ribbon icon (previously byte-identical copies). */

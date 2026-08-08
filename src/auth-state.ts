@@ -35,6 +35,29 @@ export function completeOrigin(url: string): string | null {
 	return `${parsed.protocol}//${parsed.host}`.toLowerCase();
 }
 
+/** Is this a URL the user could sensibly be SAVING as their server address?
+ *
+ *  Deliberately more permissive than `completeOrigin`. That one answers a
+ *  different question ("has the user finished typing?") and must stay strict, or
+ *  `isBackendChange` clears auth mid-keystroke. This one gates an explicit Save
+ *  click, where the only real question is whether the address is usable at all.
+ *
+ *  So it accepts what completeOrigin rejects but a self-hoster legitimately runs:
+ *  single-label hosts (`http://engram:4000` — docker-compose service names,
+ *  Tailscale MagicDNS, Windows host names) and IPv6 literals (`http://[::1]:4000`).
+ *  It still rejects an empty string, an unparseable value, and non-HTTP schemes. */
+export function isSaveableUrl(url: string): boolean {
+	if (!url) return false;
+	let parsed: URL;
+	try {
+		parsed = new URL(url);
+	} catch {
+		return false;
+	}
+	if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+	return parsed.hostname.length > 0;
+}
+
 /** Returns true only when both URLs parse to a *complete-looking* origin AND
  *  those origins differ. Path, query, trailing slash, and case differences in
  *  host do NOT count. Partial URLs (mid-keystroke) and empty URLs return false. */
@@ -154,9 +177,11 @@ export async function applyApiUrlChange(
 	save: () => Promise<void>,
 ): Promise<ApiUrlChangeResult> {
 	if (target.settings.apiUrl === newUrl) return { cleared: false, rejected: false };
-	// Refuse anything that is not a complete origin. Storing it would leave the
-	// plugin pointed at an unusable address with nothing shown to the user.
-	if (!completeOrigin(newUrl)) return { cleared: false, rejected: true };
+	// Refuse anything unusable as a server address. Storing it would leave the
+	// plugin pointed at an address it can never reach, with nothing shown to the
+	// user. Gated on isSaveableUrl, NOT completeOrigin: the latter is the
+	// mid-typing heuristic and rejects legitimate single-label and IPv6 hosts.
+	if (!isSaveableUrl(newUrl)) return { cleared: false, rejected: true };
 	const cleared = isBackendChange(target.settings.apiUrl, newUrl);
 	if (cleared) {
 		// Mutate in place — withClearedAuth is the single source of truth for

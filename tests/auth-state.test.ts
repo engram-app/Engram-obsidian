@@ -5,6 +5,7 @@ import {
 	completeOrigin,
 	interpretHealthProbe,
 	isBackendChange,
+	isSaveableUrl,
 	migrateCloudApiUrl,
 	withClearedAuth,
 } from "../src/auth-state";
@@ -262,17 +263,20 @@ describe("applyApiUrlChange", () => {
 	// Behaviour CHANGED deliberately. This previously stored the partial value,
 	// leaving apiUrl set to something no downstream consumer could resolve, with
 	// no error surfaced. Save now refuses it and keeps the configured URL.
-	test("partial URL: rejected, stored URL and auth both untouched", async () => {
+	// A single-label host is ACCEPTED on an explicit Save. This is the deliberate
+	// cost of unblocking `http://engram:4000` (docker-compose service names,
+	// Tailscale MagicDNS, Windows host names) and `http://[::1]:4000`: nothing
+	// distinguishes a real single-label host from a half-typed one, and Save is an
+	// explicit click, not a keystroke. The preflight status still reports whether
+	// anything answers. Mid-typing auth-clearing is guarded by completeOrigin,
+	// which stays strict — see "false when new URL is partial (still typing)".
+	test("single-label URL: accepted on explicit Save", async () => {
 		const target = makeTarget({ apiUrl: "https://engram.ras.band" });
 		const save = mock(async () => {});
-		const { cleared, rejected } = await applyApiUrlChange(target, "https://engr", save);
-		expect(rejected).toBe(true);
-		expect(cleared).toBe(false);
-		expect(target.settings.apiUrl).toBe("https://engram.ras.band");
-		expect(target.settings.apiKey).toBe("engram_secret123");
-		expect(target.api.setAuthProvider).not.toHaveBeenCalled();
-		expect(target.noteStream?.disconnect).not.toHaveBeenCalled();
-		expect(save).not.toHaveBeenCalled();
+		const { rejected } = await applyApiUrlChange(target, "https://engr", save);
+		expect(rejected).toBe(false);
+		expect(target.settings.apiUrl).toBe("https://engr");
+		expect(save).toHaveBeenCalledTimes(1);
 	});
 
 	test("URL with no scheme: rejected, stored URL untouched", async () => {
@@ -358,5 +362,38 @@ describe("migrateCloudApiUrl", () => {
 
 	test("returns null for an unparseable mid-typing URL", () => {
 		expect(migrateCloudApiUrl("https://app", ENGRAM_CLOUD_URL)).toBeNull();
+	});
+});
+
+describe("isSaveableUrl", () => {
+	test("accepts single-label hosts (docker-compose, Tailscale MagicDNS)", () => {
+		expect(isSaveableUrl("http://engram:4000")).toBe(true);
+	});
+
+	test("accepts IPv6 literals", () => {
+		expect(isSaveableUrl("http://[::1]:4000")).toBe(true);
+	});
+
+	test("accepts the ordinary cases", () => {
+		expect(isSaveableUrl("http://127.0.0.1:4000")).toBe(true);
+		expect(isSaveableUrl("https://engram.example.com")).toBe(true);
+		expect(isSaveableUrl("http://localhost:8000")).toBe(true);
+	});
+
+	test("rejects empty, scheme-less, and non-HTTP", () => {
+		expect(isSaveableUrl("")).toBe(false);
+		expect(isSaveableUrl("localhost:4000")).toBe(false);
+		expect(isSaveableUrl("not a url")).toBe(false);
+		expect(isSaveableUrl("ftp://engram.example.com")).toBe(false);
+	});
+});
+
+describe("applyApiUrlChange accepts hosts completeOrigin rejects", () => {
+	test("a single-label self-host URL saves (regression: Save used to reject it)", async () => {
+		const target = makeTarget({ apiUrl: "https://engram.ras.band" });
+		const save = mock(async () => {});
+		const { rejected } = await applyApiUrlChange(target, "http://engram:4000", save);
+		expect(rejected).toBe(false);
+		expect(target.settings.apiUrl).toBe("http://engram:4000");
 	});
 });

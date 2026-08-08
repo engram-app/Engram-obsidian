@@ -19,6 +19,10 @@ export const BACKEND_SCOPED_FIELDS = [
 	"accessToken",
 	"accessTokenExpiresAt",
 	"accessTokenVaultId",
+	// Plan/tier limits are pushed by the backend over its own WebSocket, so they
+	// belong to whichever backend sent them. Leaving this out kept a Cloud paid
+	// tier in force after switching to a self-hosted server.
+	"planState",
 ] as const;
 
 export type BackendScopedField = (typeof BACKEND_SCOPED_FIELDS)[number];
