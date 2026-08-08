@@ -146,6 +146,26 @@ export class CrdtOpQueue {
 		}
 	}
 
+	/** Drop every pending op and persist the empty queue.
+	 *
+	 *  A queued op carries a bare `docId` and NO vault (see CrdtOp), so it is
+	 *  delivered blind on whatever crdt: topic is joined when it finally flushes.
+	 *  Across a vault change that means the PREVIOUS vault's note ids arriving on
+	 *  the NEW vault's channel, where the server cannot place them -- the client
+	 *  half of the cross-vault id-collision class (engram #1318). The ops are per-
+	 *  vault state, exactly like the note-id map and the relocation timestamps
+	 *  that SyncEngine.wipePerVaultState already drops, so they are dropped in
+	 *  lockstep with those.
+	 *
+	 *  Dropping is safe, not lossy: switching vaults clears `lastSync`, so the
+	 *  next full sync against the old vault re-derives and re-pushes anything
+	 *  these ops carried. */
+	clear(): void {
+		if (this.entries.size === 0) return;
+		this.entries.clear();
+		this.schedulePersist();
+	}
+
 	/** Cancel any pending persist timer. Call on plugin unload. */
 	dispose(): void {
 		if (this.persistTimer !== null) {

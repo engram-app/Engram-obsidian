@@ -578,6 +578,16 @@ export default class EngramSyncPlugin extends Plugin {
 					enqueuedAt: Date.now(),
 					attempts: 0,
 				}),
+			// Vault change: discard the previous vault's outbound work. Both halves
+			// key by note_id with no vault attached, so both would otherwise be
+			// delivered against the NEW vault's topic under ids the OLD vault owns.
+			// Wired here (not inside SyncEngine) because the queue and the CRDT
+			// wiring are owned by the plugin; SyncEngine calls this from
+			// wipePerVaultState so BOTH vault-change routes stay in lockstep.
+			resetOutbox: () => {
+				this.crdtOpQueue?.clear();
+				this.crdtWiring?.clearUnsent();
+			},
 		});
 
 		// Restore last sync timestamp, offline queue, and sync state

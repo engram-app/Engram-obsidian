@@ -121,6 +121,11 @@ export interface CrdtWiring {
 	 *  since-deleted note is never re-enrolled on the next rejoin (a spurious STEP1
 	 *  that could race delete-wins / resurrect the note). */
 	forgetUnsent: (docId: string) => void;
+	/** Drop the WHOLE unsent-tracking set. Call on a vault change: these are the
+	 *  PREVIOUS vault's note ids, and reEnrollUnsent would otherwise STEP1 every
+	 *  one of them against the new vault's topic, where they resolve to nothing.
+	 *  Per-vault state, dropped in lockstep with the note-id map (engram #1318). */
+	clearUnsent: () => void;
 	/** Clear the pending strand-heal timer (call from the plugin's onunload). */
 	dispose: () => void;
 }
@@ -514,6 +519,9 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		},
 		forgetUnsent: (docId) => {
 			unsentDocIds.delete(docId);
+		},
+		clearUnsent: () => {
+			unsentDocIds.clear();
 		},
 		dispose,
 	};
