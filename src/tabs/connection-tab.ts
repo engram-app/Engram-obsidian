@@ -8,7 +8,6 @@ import {
 	renderVaultSection,
 } from "./self-hosted-tab";
 import type { TabContext } from "./types";
-import { ENGRAM_MARKETING_URL } from "./urls";
 
 const MODE_LABELS: Record<BackendMode, string> = {
 	cloud: "Engram Cloud",
@@ -57,17 +56,11 @@ export function renderConnectionTab(ctx: TabContext): void {
 		warning.settingEl.addClass("engram-connection-warning");
 	}
 
-	// No standalone "New to Engram?" block. Sign-in already covers signup: the
-	// device-flow page (/link) sits behind the web app's AuthGuard, which sends a
-	// signed-out visitor to the sign-in screen, and that screen offers account
-	// creation. A separate "create an account first" CTA read as a prerequisite
-	// step that does not exist. The marketing link now rides along with sign-in.
 	if (mode === "selfhost") {
 		const repo = new Setting(containerEl)
 			.setName("Run your own Engram server")
 			.setDesc("Engram is the backend that powers sync and semantic search.");
 		repo.settingEl.addClass("engram-setup-cta");
-		repo.descEl.addClass("engram-server-cta-desc");
 		repo.descEl.createEl("a", {
 			text: "github.com/engram-app/engram",
 			href: "https://github.com/engram-app/engram",
@@ -75,7 +68,7 @@ export function renderConnectionTab(ctx: TabContext): void {
 		renderEngramUrlSetting(ctx);
 	}
 
-	renderAuthSection(ctx, mode === "cloud" ? { learnMoreUrl: ENGRAM_MARKETING_URL } : undefined);
+	renderAuthSection(ctx);
 	renderVaultSection(ctx);
 	if (mode === "selfhost") renderSupportSection(ctx);
 }

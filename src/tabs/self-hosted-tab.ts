@@ -9,9 +9,14 @@ import {
 import { modeForUrl } from "../backend-mode";
 import { errMsg } from "../error-util";
 import type { TabContext } from "./types";
-import { ENGRAM_CLOUD_URL } from "./urls";
+import { ENGRAM_CLOUD_URL, ENGRAM_MARKETING_URL } from "./urls";
 
 const PREFLIGHT_DEBOUNCE_MS = 600;
+
+/** Engram API keys carry this prefix. Kept as a constant so Save can VALIDATE
+ *  the format instead of describing it: the obsidianmd sentence-case lint
+ *  rewrites a lowercase "engram_" in prose to "Engram_", which is wrong. */
+const API_KEY_PREFIX = "engram_";
 
 /** Render the "Engram URL" field with a debounced background preflight that
  *  confirms the URL points at a real Engram server, committed via an explicit
@@ -130,24 +135,31 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
 /** Render Authentication section — OAuth status / API key / sign-in CTAs.
  *
  *  States:
- *    - Unauth: both Sign-in row and API-key row visible, separated by an "or"
- *      divider. API-key field uses a buffered Save button (no per-keystroke
- *      writes).
+ *    - Unauth: a Sign-in row, then an "API key" heading and its Token row.
  *    - OAuth locked: only the signed-in row + Sign out.
- *    - API key locked: only the "Using API key" row + Clear / Switch to sign in. */
-export interface AuthSectionOptions {
-	/** Marketing URL appended to the sign-in row as a "Learn more" link. Cloud
-	 *  only: a self-hoster's docs are their own server, not engram.page. */
-	learnMoreUrl?: string;
-}
-
-export function renderAuthSection(ctx: TabContext, opts?: AuthSectionOptions): void {
+ *    - API key locked: only the "Using API key" row + Clear / Switch to sign in.
+ *
+ *  Cloud mode hangs the engram.page link off the Authentication HEADING, not
+ *  the sign-in row: the two locked states return early, so a link on the
+ *  sign-in row is invisible to every signed-in user — which is precisely who
+ *  needs the account and billing pages. */
+export function renderAuthSection(ctx: TabContext): void {
 	const { containerEl, plugin, redisplay, startDeviceFlow } = ctx;
 
 	const isOAuth = !!plugin.settings.refreshToken;
 	const hasApiKey = !!plugin.settings.apiKey;
 
-	new Setting(containerEl).setName("Authentication").setHeading();
+	const heading = new Setting(containerEl).setName("Authentication").setHeading();
+	if ((plugin.settings.backendMode ?? "selfhost") === "cloud") {
+		// Descriptive link text, not "Learn more": the destination should be
+		// readable from the link alone (screen-reader link lists give no
+		// surrounding context).
+		heading.descEl.createEl("a", {
+			text: "engram.page",
+			href: ENGRAM_MARKETING_URL,
+			attr: { target: "_blank", rel: "noopener" },
+		});
+	}
 
 	if (isOAuth) {
 		new Setting(containerEl)
@@ -191,14 +203,12 @@ export function renderAuthSection(ctx: TabContext, opts?: AuthSectionOptions): v
 		return;
 	}
 
-	// Unauth — show both methods side-by-side via stacked rows + divider.
-	//
 	// One row covers both new and returning users. The device-flow page sits
 	// behind the web app's AuthGuard, so a signed-out browser lands on the
 	// sign-in screen, which offers account creation. There is no separate
 	// "make an account first" step, and advertising one implied a prerequisite
 	// that does not exist.
-	const signIn = new Setting(containerEl)
+	new Setting(containerEl)
 		.setName("Sign in with Engram")
 		.setDesc(
 			"Opens your browser to sign in, or create an account if you don't have one yet, then links this vault.",
@@ -215,23 +225,11 @@ export function renderAuthSection(ctx: TabContext, opts?: AuthSectionOptions): v
 					}),
 				),
 		);
-	if (opts?.learnMoreUrl) {
-		// Own the separator explicitly. A trailing space on setDesc's string is
-		// not reliably preserved before an appended inline node, which rendered
-		// as "…this vault.Learn more".
-		signIn.descEl.appendText(" ");
-		signIn.descEl.createEl("a", {
-			text: "Learn more",
-			href: opts.learnMoreUrl,
-			attr: { target: "_blank", rel: "noopener" },
-		});
-		signIn.descEl.appendText(".");
-	}
 
-	// A real section heading, not a bare "or" rule. The rest of the settings UI
-	// uses setHeading() for section breaks (Sync behavior, Diagnostics, Feature
-	// flags), and a heading carries its own divider, so the hand-rolled one
-	// stacked a second line against the following row's border-top.
+	// setHeading(), matching every other section break in the settings UI (Sync
+	// behavior, Diagnostics, Feature flags). A heading draws its own divider, so
+	// this replaced a hand-rolled one that stacked a second line against the
+	// following row's border-top.
 	new Setting(containerEl)
 		.setName("API key")
 		.setDesc("Or authenticate with a token instead of signing in.")
@@ -260,6 +258,17 @@ export function renderAuthSection(ctx: TabContext, opts?: AuthSectionOptions): v
 					const trimmed = pendingKey.trim();
 					if (!trimmed) {
 						new Notice("Enter an API key first");
+						return;
+					}
+					// Check the prefix rather than describing it in prose. The
+					// placeholder that showed the format vanishes the moment the
+					// field has content, and this field is type=password, so a
+					// pasted JWT or truncated key otherwise saved cleanly and only
+					// surfaced later as opaque 401s.
+					if (!trimmed.startsWith(API_KEY_PREFIX)) {
+						new Notice(
+							`That does not look like an Engram API key (expected ${API_KEY_PREFIX}…).`,
+						);
 						return;
 					}
 					plugin.settings.apiKey = trimmed;
