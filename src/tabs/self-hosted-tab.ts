@@ -135,7 +135,13 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
  *      writes).
  *    - OAuth locked: only the signed-in row + Sign out.
  *    - API key locked: only the "Using API key" row + Clear / Switch to sign in. */
-export function renderAuthSection(ctx: TabContext): void {
+export interface AuthSectionOptions {
+	/** Marketing URL appended to the sign-in row as a "Learn more" link. Cloud
+	 *  only: a self-hoster's docs are their own server, not engram.page. */
+	learnMoreUrl?: string;
+}
+
+export function renderAuthSection(ctx: TabContext, opts?: AuthSectionOptions): void {
 	const { containerEl, plugin, redisplay, startDeviceFlow } = ctx;
 
 	const isOAuth = !!plugin.settings.refreshToken;
@@ -186,9 +192,17 @@ export function renderAuthSection(ctx: TabContext): void {
 	}
 
 	// Unauth — show both methods side-by-side via stacked rows + divider.
-	new Setting(containerEl)
+	//
+	// One row covers both new and returning users. The device-flow page sits
+	// behind the web app's AuthGuard, so a signed-out browser lands on the
+	// sign-in screen, which offers account creation. There is no separate
+	// "make an account first" step, and advertising one implied a prerequisite
+	// that does not exist.
+	const signIn = new Setting(containerEl)
 		.setName("Sign in with Engram")
-		.setDesc("Links your Obsidian vault to your Engram account. Opens a browser window.")
+		.setDesc(
+			"Opens your browser to sign in, or create an account if you don't have one yet, then links this vault. ",
+		)
 		.addButton((btn) =>
 			btn
 				.setButtonText("Sign in")
@@ -201,6 +215,14 @@ export function renderAuthSection(ctx: TabContext): void {
 					}),
 				),
 		);
+	if (opts?.learnMoreUrl) {
+		signIn.descEl.createEl("a", {
+			text: "Learn more",
+			href: opts.learnMoreUrl,
+			attr: { target: "_blank", rel: "noopener" },
+		});
+		signIn.descEl.appendText(".");
+	}
 
 	containerEl.createDiv({ cls: "engram-auth-divider", text: "or" });
 

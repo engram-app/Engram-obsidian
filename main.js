@@ -17235,7 +17235,7 @@ function renderEngramUrlSetting(ctx) {
     })
   ), completeOrigin(plugin.settings.apiUrl) && runPreflight(plugin.settings.apiUrl);
 }
-function renderAuthSection(ctx) {
+function renderAuthSection(ctx, opts) {
   var _a;
   let { containerEl, plugin, redisplay, startDeviceFlow } = ctx, isOAuth = !!plugin.settings.refreshToken, hasApiKey = !!plugin.settings.apiKey;
   if (new import_obsidian18.Setting(containerEl).setName("Authentication").setHeading(), isOAuth) {
@@ -17260,13 +17260,20 @@ function renderAuthSection(ctx) {
     );
     return;
   }
-  new import_obsidian18.Setting(containerEl).setName("Sign in with Engram").setDesc("Links your Obsidian vault to your Engram account. Opens a browser window.").addButton(
+  let signIn = new import_obsidian18.Setting(containerEl).setName("Sign in with Engram").setDesc(
+    "Opens your browser to sign in, or create an account if you don't have one yet, then links this vault. "
+  ).addButton(
     (btn) => btn.setButtonText("Sign in").setCta().onClick(
       () => startDeviceFlow().catch((e) => {
         new import_obsidian18.Notice(`Engram: sign-in failed (${errMsg(e)})`);
       })
     )
-  ), containerEl.createDiv({ cls: "engram-auth-divider", text: "or" });
+  );
+  opts != null && opts.learnMoreUrl && (signIn.descEl.createEl("a", {
+    text: "Learn more",
+    href: opts.learnMoreUrl,
+    attr: { target: "_blank", rel: "noopener" }
+  }), signIn.descEl.appendText(".")), containerEl.createDiv({ cls: "engram-auth-divider", text: "or" });
   let pendingKey = "";
   new import_obsidian18.Setting(containerEl).setName("API key").setDesc("Bearer token from Engram (starts with Engram_).").addText((text2) => {
     text2.setPlaceholder("engram_abc123...").onChange((value) => {
@@ -17385,21 +17392,14 @@ function renderConnectionTab(ctx) {
     let message = state === "needs-url" ? "Not connected. Enter your Engram server URL below to start syncing." : "Not connected. Sign in below to start syncing.";
     new import_obsidian19.Setting(containerEl).setName(message).settingEl.addClass("engram-connection-warning");
   }
-  if (mode === "cloud") {
-    let about = new import_obsidian19.Setting(containerEl).setName("New to Engram?").setDesc("Create an account, read the docs, and learn more at ");
-    about.settingEl.addClass("engram-setup-cta"), about.descEl.createEl("a", {
-      text: "engram.page",
-      href: ENGRAM_MARKETING_URL,
-      attr: { target: "_blank", rel: "noopener" }
-    }), about.descEl.appendText(".");
-  } else {
+  if (mode === "selfhost") {
     let repo = new import_obsidian19.Setting(containerEl).setName("Run your own Engram server").setDesc("Engram is the backend that powers sync and semantic search.");
     repo.settingEl.addClass("engram-setup-cta"), repo.descEl.addClass("engram-server-cta-desc"), repo.descEl.createEl("a", {
       text: "github.com/engram-app/engram",
       href: "https://github.com/engram-app/engram"
     }), renderEngramUrlSetting(ctx);
   }
-  renderAuthSection(ctx), renderVaultSection(ctx), mode === "selfhost" && renderSupportSection(ctx);
+  renderAuthSection(ctx, mode === "cloud" ? { learnMoreUrl: ENGRAM_MARKETING_URL } : void 0), renderVaultSection(ctx), mode === "selfhost" && renderSupportSection(ctx);
 }
 
 // src/tabs/start-tab.ts

@@ -57,18 +57,12 @@ export function renderConnectionTab(ctx: TabContext): void {
 		warning.settingEl.addClass("engram-connection-warning");
 	}
 
-	if (mode === "cloud") {
-		const about = new Setting(containerEl)
-			.setName("New to Engram?")
-			.setDesc("Create an account, read the docs, and learn more at ");
-		about.settingEl.addClass("engram-setup-cta");
-		about.descEl.createEl("a", {
-			text: "engram.page",
-			href: ENGRAM_MARKETING_URL,
-			attr: { target: "_blank", rel: "noopener" },
-		});
-		about.descEl.appendText(".");
-	} else {
+	// No standalone "New to Engram?" block. Sign-in already covers signup: the
+	// device-flow page (/link) sits behind the web app's AuthGuard, which sends a
+	// signed-out visitor to the sign-in screen, and that screen offers account
+	// creation. A separate "create an account first" CTA read as a prerequisite
+	// step that does not exist. The marketing link now rides along with sign-in.
+	if (mode === "selfhost") {
 		const repo = new Setting(containerEl)
 			.setName("Run your own Engram server")
 			.setDesc("Engram is the backend that powers sync and semantic search.");
@@ -81,7 +75,7 @@ export function renderConnectionTab(ctx: TabContext): void {
 		renderEngramUrlSetting(ctx);
 	}
 
-	renderAuthSection(ctx);
+	renderAuthSection(ctx, mode === "cloud" ? { learnMoreUrl: ENGRAM_MARKETING_URL } : undefined);
 	renderVaultSection(ctx);
 	if (mode === "selfhost") renderSupportSection(ctx);
 }
