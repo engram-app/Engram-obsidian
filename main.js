@@ -17273,9 +17273,9 @@ function renderAuthSection(ctx, opts) {
     text: "Learn more",
     href: opts.learnMoreUrl,
     attr: { target: "_blank", rel: "noopener" }
-  }), signIn.descEl.appendText(".")), containerEl.createDiv({ cls: "engram-auth-divider", text: "or" });
+  }), signIn.descEl.appendText(".")), new import_obsidian18.Setting(containerEl).setName("API key").setDesc("Or authenticate with a token instead of signing in.").setHeading();
   let pendingKey = "";
-  new import_obsidian18.Setting(containerEl).setName("API key").setDesc("Bearer token from Engram (starts with Engram_).").addText((text2) => {
+  new import_obsidian18.Setting(containerEl).setName("Token").setDesc("Bearer token from your Engram account.").addText((text2) => {
     text2.setPlaceholder("engram_abc123...").onChange((value) => {
       pendingKey = value;
     }), text2.inputEl.type = "password", text2.inputEl.addClass("engram-api-key-input");

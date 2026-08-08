@@ -228,12 +228,23 @@ export function renderAuthSection(ctx: TabContext, opts?: AuthSectionOptions): v
 		signIn.descEl.appendText(".");
 	}
 
-	containerEl.createDiv({ cls: "engram-auth-divider", text: "or" });
+	// A real section heading, not a bare "or" rule. The rest of the settings UI
+	// uses setHeading() for section breaks (Sync behavior, Diagnostics, Feature
+	// flags), and a heading carries its own divider, so the hand-rolled one
+	// stacked a second line against the following row's border-top.
+	new Setting(containerEl)
+		.setName("API key")
+		.setDesc("Or authenticate with a token instead of signing in.")
+		.setHeading();
 
 	let pendingKey = "";
 	const apiKeySetting = new Setting(containerEl)
-		.setName("API key")
-		.setDesc("Bearer token from Engram (starts with Engram_).")
+		.setName("Token")
+		// The key prefix is deliberately NOT named here. The obsidianmd
+		// sentence-case rule treats "engram" as a proper noun and rewrites it to
+		// "Engram_", which is wrong: real keys are lowercase. The input's
+		// placeholder shows the true format instead.
+		.setDesc("Bearer token from your Engram account.")
 		.addText((text) => {
 			text.setPlaceholder("engram_abc123...").onChange((value) => {
 				pendingKey = value;
