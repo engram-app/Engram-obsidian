@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { withClearedAuth } from "../src/auth-state";
-import { applySlot, captureSlot } from "../src/backend-mode";
+import { applySlot, captureSlot, connectionState, switchMode } from "../src/backend-mode";
 import { BACKEND_SCOPED_FIELDS, type EngramSyncSettings } from "../src/types";
 
 const fullSettings = (override: Partial<EngramSyncSettings> = {}): EngramSyncSettings => ({
@@ -63,5 +63,87 @@ describe("drift guard", () => {
 		for (const key of cleared) {
 			expect(BACKEND_SCOPED_FIELDS as readonly string[]).toContain(key);
 		}
+	});
+});
+
+const CLOUD = "https://api.engram.page";
+
+describe("connectionState", () => {
+	test("needs-url when apiUrl is empty", () => {
+		expect(connectionState({ apiUrl: "", apiKey: "", refreshToken: undefined })).toBe(
+			"needs-url",
+		);
+	});
+
+	test("needs-auth when a URL is set but no credential", () => {
+		expect(connectionState({ apiUrl: CLOUD, apiKey: "", refreshToken: undefined })).toBe(
+			"needs-auth",
+		);
+	});
+
+	test("connected with an apiKey", () => {
+		expect(
+			connectionState({ apiUrl: CLOUD, apiKey: "engram_k", refreshToken: undefined }),
+		).toBe("connected");
+	});
+
+	test("connected with a refreshToken", () => {
+		expect(connectionState({ apiUrl: CLOUD, apiKey: "", refreshToken: "r" })).toBe("connected");
+	});
+});
+
+describe("switchMode", () => {
+	test("no-op when already in the target mode", () => {
+		const settings = fullSettings({ backendMode: "selfhost" });
+		expect(switchMode(settings, "selfhost", CLOUD)).toBe(false);
+		expect(settings.apiUrl).toBe("https://engram.example.com");
+	});
+
+	test("switching to cloud with no stash seeds the cloud URL and clears credentials", () => {
+		const settings = fullSettings({ backendMode: "selfhost" });
+		expect(switchMode(settings, "cloud", CLOUD)).toBe(true);
+		expect(settings.backendMode).toBe("cloud");
+		expect(settings.apiUrl).toBe(CLOUD);
+		expect(settings.apiKey).toBe("");
+		expect(settings.refreshToken).toBeUndefined();
+		expect(connectionState(settings)).toBe("needs-auth");
+	});
+
+	test("switching to selfhost with no stash leaves the URL empty", () => {
+		const settings = fullSettings({ backendMode: "cloud", apiUrl: CLOUD });
+		expect(switchMode(settings, "selfhost", CLOUD)).toBe(true);
+		expect(settings.apiUrl).toBe("");
+		expect(connectionState(settings)).toBe("needs-url");
+	});
+
+	test("round-trip restores the original backend's credentials", () => {
+		const settings = fullSettings({ backendMode: "selfhost" });
+		switchMode(settings, "cloud", CLOUD);
+		settings.apiKey = "cloud_key";
+		settings.userEmail = "cloud@example.com";
+
+		switchMode(settings, "selfhost", CLOUD);
+		expect(settings.apiUrl).toBe("https://engram.example.com");
+		expect(settings.apiKey).toBe("engram_secret123");
+		expect(settings.userEmail).toBe("todd@example.com");
+
+		switchMode(settings, "cloud", CLOUD);
+		expect(settings.apiKey).toBe("cloud_key");
+		expect(settings.userEmail).toBe("cloud@example.com");
+	});
+
+	test("mutates settings in place", () => {
+		const settings = fullSettings({ backendMode: "selfhost" });
+		const before = settings;
+		switchMode(settings, "cloud", CLOUD);
+		expect(settings).toBe(before);
+	});
+
+	test("a stash missing apiUrl is treated as empty, never half-restored", () => {
+		const settings = fullSettings({ backendMode: "selfhost" });
+		settings.inactiveBackend = { apiKey: "orphan_key" } as never;
+		switchMode(settings, "cloud", CLOUD);
+		expect(settings.apiUrl).toBe(CLOUD);
+		expect(settings.apiKey).toBe("");
 	});
 });
