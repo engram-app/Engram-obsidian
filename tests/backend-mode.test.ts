@@ -1,6 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { withClearedAuth } from "../src/auth-state";
-import { applySlot, captureSlot, connectionState, switchMode } from "../src/backend-mode";
+import {
+	applySlot,
+	captureSlot,
+	connectionState,
+	migrateBackendMode,
+	switchMode,
+} from "../src/backend-mode";
 import { BACKEND_SCOPED_FIELDS, type EngramSyncSettings } from "../src/types";
 
 const fullSettings = (override: Partial<EngramSyncSettings> = {}): EngramSyncSettings => ({
@@ -145,5 +151,44 @@ describe("switchMode", () => {
 		switchMode(settings, "cloud", CLOUD);
 		expect(settings.apiUrl).toBe(CLOUD);
 		expect(settings.apiKey).toBe("");
+	});
+});
+
+describe("migrateBackendMode", () => {
+	test("infers cloud from a stored cloud URL", () => {
+		const settings = fullSettings({ apiUrl: CLOUD });
+		settings.backendMode = undefined;
+		expect(migrateBackendMode(settings, CLOUD)).toBe(true);
+		expect(settings.backendMode).toBe("cloud");
+	});
+
+	test("infers selfhost from any other URL", () => {
+		const settings = fullSettings({ apiUrl: "https://engram.example.com" });
+		settings.backendMode = undefined;
+		expect(migrateBackendMode(settings, CLOUD)).toBe(true);
+		expect(settings.backendMode).toBe("selfhost");
+	});
+
+	test("infers selfhost from an empty URL (fresh install)", () => {
+		const settings = fullSettings({ apiUrl: "" });
+		settings.backendMode = undefined;
+		expect(migrateBackendMode(settings, CLOUD)).toBe(true);
+		expect(settings.backendMode).toBe("selfhost");
+	});
+
+	test("is a no-op once backendMode is set", () => {
+		const settings = fullSettings({ apiUrl: CLOUD, backendMode: "selfhost" });
+		expect(migrateBackendMode(settings, CLOUD)).toBe(false);
+		expect(settings.backendMode).toBe("selfhost");
+	});
+
+	test("never signs anyone out", () => {
+		const settings = fullSettings({ apiUrl: CLOUD });
+		settings.backendMode = undefined;
+		migrateBackendMode(settings, CLOUD);
+		expect(settings.apiKey).toBe("engram_secret123");
+		expect(settings.refreshToken).toBe("refresh_abc");
+		expect(settings.vaultId).toBe("vault-1");
+		expect(settings.inactiveBackend).toBeUndefined();
 	});
 });

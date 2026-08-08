@@ -84,3 +84,16 @@ export function switchMode(
 	settings.backendMode = target;
 	return true;
 }
+
+/** One-time upgrade for installs that predate explicit backendMode. Infers the
+ *  mode from the stored apiUrl, which was the old (derived) source of truth.
+ *  Credentials are left exactly where they are: nobody is signed out.
+ *
+ *  MUST run AFTER migrateCloudApiUrl, which normalizes a legacy Cloud host onto
+ *  ENGRAM_CLOUD_URL. Running first would read the un-normalized URL and
+ *  misclassify a legacy Cloud install as self-hosted. */
+export function migrateBackendMode(settings: EngramSyncSettings, cloudUrl: string): boolean {
+	if (settings.backendMode === "cloud" || settings.backendMode === "selfhost") return false;
+	settings.backendMode = settings.apiUrl === cloudUrl ? "cloud" : "selfhost";
+	return true;
+}

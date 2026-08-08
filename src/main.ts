@@ -24,6 +24,7 @@ import {
 	seededAccessToken,
 } from "./auth";
 import { migrateCloudApiUrl, withClearedAuth } from "./auth-state";
+import { migrateBackendMode } from "./backend-mode";
 import { BaseStore } from "./base-store";
 import { connectRetryDelayMs, makeCrdtCatchupSender, NoteChannel } from "./channel";
 import { liveBindingPlugin, setLiveBindingCoordinator } from "./crdt/live/live-binding";
@@ -1173,6 +1174,12 @@ export default class EngramSyncPlugin extends Plugin {
 		const migratedUrl = migrateCloudApiUrl(this.settings.apiUrl, ENGRAM_CLOUD_URL);
 		if (migratedUrl && migratedUrl !== this.settings.apiUrl) {
 			this.settings.apiUrl = migratedUrl;
+			dirty = true;
+		}
+		// Infer backendMode for installs that predate it. Runs AFTER the URL
+		// migration above so a legacy Cloud host is already normalized and gets
+		// classified as cloud, not self-hosted.
+		if (migrateBackendMode(this.settings, ENGRAM_CLOUD_URL)) {
 			dirty = true;
 		}
 		// Generate stable client ID on first load (persisted forever)
