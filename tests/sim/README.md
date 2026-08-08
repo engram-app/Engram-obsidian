@@ -20,10 +20,16 @@ bun test tests/sim/regressions.test.ts   # just the gate
 
 ## Replaying a random-exploration seed
 
-The seeded 5-replica random harness is a **runnable tool, not a test**
-(`random-harness.ts`, not `random.test.ts` — `bun test` never collects it).
-It exists because two tier-fidelity gaps (below) mean it can't converge
-reliably yet, so it isn't wired as a pass/fail gate:
+The seeded 5-replica random suite **is a gate** — `random.test.ts`, collected by
+`bun test`. Replay a specific seed with:
+
+```bash
+SIM_SEED=123 bun test tests/sim/random.test.ts
+```
+
+Alongside it, `random-harness.ts` stays a **runnable tool, not a test** (a `.ts`,
+so `bun test` never collects it). It is for longer exploration runs than a gate
+should take — many fresh seeds in one go via `SIM_ITERATIONS`:
 
 ```bash
 SIM_SEED=123 bun --preload ./tests/preload.ts tests/sim/random-harness.ts
@@ -110,4 +116,5 @@ as a gate — see `regressions.test.ts` docblocks for the exact commits.
 | `oracle.ts` | `assertConverged` (strict 3-surface equality + reconnect) and `findWipes` (the #288 non-empty→empty write-journal detector). |
 | `scenarios.ts` | Named, seeded, deterministic scripts (`equalSeqFence`, `test85MissedDeliveryLocalPush`, `genesisWipe`) backing the differential gate. |
 | `regressions.test.ts` | The differential regression gate itself — what CI runs. |
-| `random-harness.ts` | NON-test seeded 5-replica exploration tool (see "Replaying a seed" above) — not wired as a gate pending the two fidelity gaps. |
+| `random.test.ts` | The seeded 5-replica random convergence gate — random interleaved concurrent edits under drop faults, strict oracle at quiescence. Green since fidelity gap #1 closed. |
+| `random-harness.ts` | NON-test seeded 5-replica exploration tool (see "Replaying a seed" above) — for long multi-seed runs (`SIM_ITERATIONS`) beyond what a gate should cost. |

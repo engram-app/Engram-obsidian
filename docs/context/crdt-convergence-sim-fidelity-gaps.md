@@ -4,48 +4,60 @@ The convergence sim tier (`tests/sim/`) boots N real headless `SyncEngine`
 replicas against a CRDT-only `ModelServer` + deterministic `Scheduler`, then
 `assertConverged` (`oracle.ts`) checks all three surfaces strictly: disk +
 Y.Doc projected text + `noteIdMap` id, plus no-extra-notes and `findWipes`
-(#288). The scripted **differential gate** (`regressions.test.ts`) is green and
-pays rent today.
+(#288).
 
-A **seeded random-op suite** (5 replicas × 1000 ops) does NOT converge in this
-tier and is kept as a runnable tool, not a test:
+Two suites run in `bun test` today, both gating:
 
-    tests/sim/random-harness.ts   →   SIM_SEED=n bun --preload ./tests/preload.ts tests/sim/random-harness.ts
+- `regressions.test.ts` — the scripted **differential gate**
+- `random.test.ts` — the **seeded random-op suite**: 5 replicas driving a long
+  stream of random, interleaved concurrent edits under drop faults + full-sync
+  churn. Fresh seed per iteration from real entropy (the one sanctioned
+  nondeterminism: *which* seed to explore), deterministic under that seed,
+  `SIM_SEED=n bun test tests/sim/random.test.ts` to replay. The seed and its
+  replay command are printed for every iteration.
 
-(`.ts`, not `.test.ts`, so `bun test` never collects it — no skipped test.
-`--preload` is required because `obsidian` is mocked in `tests/preload.ts`.)
+> **History.** The random suite used to be a de-tested tool
+> (`random-harness.ts`, `.ts` not `.test.ts`) because it could not converge in
+> this tier. Gap #1 below is what blocked it; that gap is now closed and the
+> suite is a real test.
 
-## Why the random suite can't be green yet — two fidelity gaps
+## Gap #1 — headless replicas never enroll → history-less conflict storm — **CLOSED**
 
-### Gap #1 — headless replicas never enroll → history-less conflict storm
-Sim replicas have no Obsidian editor, so `deps.isBound(path) → false` ALWAYS
+Sim replicas had no Obsidian editor, so `deps.isBound(path) → false` ALWAYS
 (`replica.ts`, by design). STEP1 enrollment (giving a note a live CRDT Y.Doc
 with history) happens ONLY when `isBound` is true
-(`src/crdt/wiring.ts` `onCrdtDocReady:340-343`). So every sim note stays
-perpetually history-less (materialized via catch-up-to-disk, never a live
-handshake). Two replicas concurrently editing a shared history-less note take
-the keep-both drift path (`src/sync.ts reconcileDriftOntoServer:1294-1356 →
-writeDriftConflictCopy:1358`), spawning `<name> (conflict <date>).md` copies
-that are themselves history-less and re-conflict without bound.
+(`src/crdt/wiring.ts` `onCrdtDocReady`). So every sim note stayed perpetually
+history-less (materialized via catch-up-to-disk, never a live handshake). Two
+replicas concurrently editing a shared history-less note took the keep-both
+drift path (`src/sync.ts` `reconcileDriftOntoServer` → `writeDriftConflictCopy`),
+spawning `<name> (conflict <date>).md` copies that were themselves history-less
+and re-conflicted without bound.
 
-Not a production bug: in real Obsidian you can't edit a note without opening it,
-which enrolls it history-FULL (the `applyLocalEdit` diff-merge path,
-`sync.ts:1314-1337`). **Fix (P2 tier fidelity):** model editor
-binding/enrollment so a note can go history-FULL (e.g. a Replica op that "opens"
-a note → `isBound` true → STEP1 enroll).
+Never a production bug: in real Obsidian you can't edit a note without opening
+it, which enrolls it history-FULL (the `applyLocalEdit` diff-merge path).
 
-### Gap #2 — model omits `note_changed` → delete + rename don't propagate live
+**Closed by** modelling editor binding/enrollment in the tier: `Replica.openNote`
+→ `isBound` true → real STEP1 enrollment → history-FULL Y.Doc, edits stream via
+the live-editor path, `deferUntilSeeded` honored. With notes history-FULL,
+sustained concurrent editing converges through the real 3-way CRDT merge.
+
+## Gap #2 — model omits `note_changed` → delete + rename don't propagate live — **OPEN** (#406)
+
 `ModelServer` never emits `note_changed` (its documented CRDT-only divergence).
 That event drives, on remote devices: rename old-path cleanup via
-`moveIfIdRelocated` (`src/sync.ts:4030-4046`) and live delete-trash. So a
-rename/delete only reaches other replicas via a later reconnect catch-up,
-leaving stale old-path files / undeleted stragglers at quiescence. Rename is
-already excluded from the harness op mix for this reason; e2e test_10/test_34
-converge renames against the REAL backend, so this is a model gap, not a plugin
-bug. **Fix (P2):** model `note_changed` fan-out — or route delete/rename to the
-P2 headless tier that uses the real backend.
+`moveIfIdRelocated` (`src/sync.ts`) and live delete-trash. So a rename/delete
+only reaches other replicas via a later reconnect catch-up, leaving stale
+old-path files / undeleted stragglers at quiescence. Delete and rename are
+therefore excluded from the random suite's op mix.
 
-## Finding #3 — suspected REAL bug, HELD from filing
+A model gap, not a plugin bug: e2e `test_10`/`test_34` converge renames against
+the REAL backend.
+
+**Fix:** model `note_changed` fan-out, or route delete/rename to a tier backed by
+the real backend. Tracked in #406.
+
+## Finding #3 — suspected strand — **FILED as #295**
+
 Under drop/offline, some notes end **stranded on a replica whose catch-up cursor
 has advanced to that note's seq without materializing its content** → permanent
 strand. Witness: seed `3440604223`, `n22.md` server seq 262, replicas A/B report
@@ -53,12 +65,17 @@ strand. Witness: seed `3440604223`, `n22.md` server seq 262, replicas A/B report
 `seq > cursor`, so 262 never re-delivers. Iterated reconnect (5 rounds) does NOT
 heal it; zero `seq-replay: skipped` lines.
 
-Hypothesis (file:line): a catch-up `applySyncChange` that echo/hash-dedups a row
-(`src/sync.ts:4048-4069`) still lets the loop advance the cursor past that row's
-seq (`runSeqReplayOnce:4432`), so a row not materialized locally is never
-revisited — the "silent-skip consumes a feed entry" hazard the code's own
-comment warns about (`applyLiveOpWithSeq`, `sync.ts:1604-1606`).
+Hypothesis: a catch-up `applySyncChange` that echo/hash-dedups a row still lets
+the walk advance the cursor past that row's seq, so a row not materialized
+locally is never revisited — the "silent-skip consumes a feed entry" hazard the
+code's own comment warns about (`applyLiveOpWithSeq`, `src/sync.ts`).
 
-**Why held:** entangled with #1/#2 (the always-history-less state changes which
-apply branch a catch-up row takes). Re-isolate on a faithful tier (after #1/#2
-land), starting from the witness seed above, before filing an issue.
+The advance itself is deliberate and now lives in exactly one place —
+`walkOpLog` (#378) advances past every row SEEN, applied or skipped, so that a
+permanently-unappliable op cannot stall the feed. That is the trade this
+finding probes: *can't stall* was bought with *can strand*. One place to fix,
+if it is confirmed.
+
+> This was originally held from filing pending gaps #1 and #2. It has since been
+> filed as #295, and gap #1 has closed — so the faithful tier it was waiting for
+> now exists. Re-isolate from the witness seed above.
