@@ -1,4 +1,4 @@
-# Plugin Connection Tab + Explicit Backend Mode — Design
+# Plugin Connection Tab and Explicit Backend Mode: Design
 
 _Date: 2026-08-08_
 _Repo: `engram-app/Engram-obsidian` (local dir `engram-obsidian-sync`)_
@@ -22,7 +22,7 @@ const isOnCloud = plugin.settings.apiUrl === ENGRAM_CLOUD_URL;
 One `apiUrl` field serves both Cloud and Self-hosted. Everything below follows from that:
 
 1. **Stale pre-fill (reported 2026-08-08).** `withClearedAuth` clears eight auth fields but never
-   `apiUrl` — correctly, a URL is not a credential. So after disconnecting from Cloud, the
+   `apiUrl`, which is correct: a URL is not a credential. So after disconnecting from Cloud, the
    Self-hosted tab's URL box pre-fills with `https://api.engram.page`. It looks like the plugin is
    insisting on the old backend.
 2. **`cloudTabAction` is scar tissue.** It exists solely to decide whether *visiting* the Cloud tab
@@ -36,7 +36,7 @@ One `apiUrl` field serves both Cloud and Self-hosted. Everything below follows f
    complaint: `completeOrigin` returns null so `isBackendChange` is false and auth survives, but
    `apiUrl` is set to a value nothing downstream can use, with no error shown.
 
-Note the pages are **not** near-duplicates in code — `account-tab.ts` is ~60 lines that already
+Note the pages are **not** near-duplicates in code. `account-tab.ts` is ~60 lines that already
 imports `renderAuthSection` / `renderVaultSection` from `self-hosted-tab.ts`. The duplication is
 in the UX, not the source. Merging deletes little code by itself; the value is in removing the
 derived-state inference and the machinery built around it.
@@ -46,14 +46,14 @@ derived-state inference and the machinery built around it.
 | Decision | Choice | Rationale |
 |---|---|---|
 | Toggle semantics | Switches active backend **immediately** | What you see is what's connected |
-| Credentials | **Per-mode slots** | Makes the immediate switch non-destructive and reversible — no confirm dialog needed |
+| Credentials | **Per-mode slots** | Makes the immediate switch non-destructive and reversible, no confirm dialog needed |
 | Tabs | Cloud + Self-hosted → one **Connection** tab | Bar becomes Welcome / Connection / Sync Center / Advanced |
 | Unconfigured mode | **Pause sync**, show what's missing | Makes the unrepresentable state real |
 | Storage shape | **Flat active fields + one stashed slot** (Approach B) | Same behavior as a nested per-mode object, a fraction of the diff, does not touch the sync read path |
 
 ### Approach B over A
 
-Approach A (`backends: { cloud: {...}, selfhost: {...} }`) is more obviously correct — the modes
+Approach A (`backends: { cloud: {...}, selfhost: {...} }`) is more obviously correct: the modes
 cannot contaminate each other structurally. It was rejected for now because every read site of
 `settings.apiUrl` / `settings.apiKey` changes: SyncEngine, `EngramApi`, `device-flow-modal.ts`,
 `noteStream`, migrations. That is a wide diff through the sync path while a separate data-loss bug
@@ -61,7 +61,7 @@ is open and 1.20.1 is in the wild.
 
 B keeps the flat fields as the active backend, so all downstream consumers are untouched. The
 tradeoff: flat fields become a cache of "whichever mode is active", so correctness rests on the
-swap being atomic. It is — one `saveSettings()` writes `data.json` once. B → A is a mechanical
+swap being atomic. It is: one `saveSettings()` writes `data.json` once. B → A is a mechanical
 follow-up if structural isolation is later wanted.
 
 ## Data model
@@ -93,7 +93,7 @@ user toggles back. Both must consume `BACKEND_SCOPED_FIELDS`, and a unit test gu
 
 ## Module: `src/backend-mode.ts`
 
-Pure — no Obsidian imports, so it unit-tests without the DOM stack. Same pattern as `auth-state.ts`.
+Pure, no Obsidian imports, so it unit-tests without the DOM stack. Same pattern as `auth-state.ts`.
 
 | Function | Responsibility |
 |---|---|
@@ -101,19 +101,19 @@ Pure — no Obsidian imports, so it unit-tests without the DOM stack. Same patte
 | `applySlot(settings, slot): void` | Write a slot back **in place** |
 | `switchMode(settings, target, cloudUrl): boolean` | Swap active ↔ `inactiveBackend`; returns whether anything changed |
 | `migrateBackendMode(settings, cloudUrl): void` | One-time: infer mode from stored `apiUrl` |
-
-`cloudUrl` is a parameter, not an import, on both functions — it keeps the module free of
-`tabs/urls.ts` and lets tests pin the value. `switchMode` needs it to seed `apiUrl` when the
-cloud slot is empty.
 | `connectionState(settings)` | `"connected" \| "needs-url" \| "needs-auth"` |
 
-**In-place mutation is required, not stylistic.** `applyApiUrlChange` mutates deliberately — *"so
+`cloudUrl` is a parameter, not an import, on both functions. It keeps the module free of
+`tabs/urls.ts` and lets tests pin the value. `switchMode` needs it to seed `apiUrl` when the
+cloud slot is empty.
+
+**In-place mutation is required, not stylistic.** `applyApiUrlChange` mutates deliberately: *"so
 external references (SyncEngine, etc.) keep observing the same object."* `switchMode` must follow
 suit or SyncEngine holds a stale settings object after every toggle.
 
 **Empty-slot defaults on switch:**
 - → `cloud` with no stash: `apiUrl = ENGRAM_CLOUD_URL` (fixed and known)
-- → `selfhost` with no stash: `apiUrl = ""` — the previously unrepresentable state, and what stops
+- → `selfhost` with no stash: `apiUrl = ""`, the previously unrepresentable state, and what stops
   the stale Cloud URL appearing
 
 `connectionState` is read by both the UI banner and the sync gate, so "what's missing" cannot
@@ -123,12 +123,12 @@ disagree between them.
 
 Rendered top to bottom:
 
-1. **Backend toggle** — two-segment control bound to `backendMode`
-2. **Connection status** — from `connectionState`; rendered only when not `"connected"`
-3. **URL field** — self-hosted only. Cloud shows a static "Engram Cloud (api.engram.page)" line
-4. **Authentication** — existing `renderAuthSection`, unchanged
-5. **Vault** — existing `renderVaultSection`, unchanged
-6. **Support / repo CTA** — self-hosted only
+1. **Backend toggle**, two-segment control bound to `backendMode`
+2. **Connection status**, from `connectionState`; rendered only when not `"connected"`
+3. **URL field**, self-hosted only. Cloud shows a static "Engram Cloud (api.engram.page)" line
+4. **Authentication**, existing `renderAuthSection`, unchanged
+5. **Vault**, existing `renderVaultSection`, unchanged
+6. **Support / repo CTA**, self-hosted only
 
 The URL field keeps its **buffered Save button**. Not incidental: per-keystroke commit previously
 called `applyApiUrlChange` on every character, clearing auth and redisplaying the tab mid-edit,
@@ -138,7 +138,7 @@ destroying the input and stealing focus. Preserve the buffered pattern.
 
 ```
 user clicks other segment
-  → switchMode(settings, target)      // capture active → stash; restore other slot in place
+  → switchMode(settings, target, cloudUrl)   // capture active → stash; restore other slot in place
   → plugin.api.setAuthProvider(null)
   → plugin.resetAuthProvider()
   → plugin.noteStream?.disconnect()
@@ -146,7 +146,7 @@ user clicks other segment
   → redisplay()
 ```
 
-No confirm dialog and no credential wipe — that is what per-mode slots buy. The three teardown
+No confirm dialog and no credential wipe. That is what per-mode slots buy. The three teardown
 steps are lifted from `applyApiUrlChange`'s `cleared` branch and are required for the same reason:
 an access token signed by one backend must never be replayed against another.
 
@@ -156,8 +156,8 @@ changed while in self-hosted mode."
 ## Sync gate
 
 `connectionState(settings) !== "connected"` blocks sync and surfaces as a distinct status, not an
-error. `renderStatus` already models a non-error waiting state (*"Connected — waiting for first
-sync decision"*); this adds *"Not connected — <what's missing>"*. Being unconfigured is a normal
+error. `renderStatus` already models a non-error waiting state (*"Connected, waiting for first
+sync decision"*); this adds *"Not connected, <what's missing>"*. Being unconfigured is a normal
 state, not a failure.
 
 ## Deletions
@@ -166,14 +166,14 @@ state, not a failure.
 - `renderCloudLockBanner`
 - `src/tabs/account-tab.ts` (folded into the Connection tab)
 - the `isOnCloud` inference at `self-hosted-tab.ts:21`
-- `pickInitialTab` simplifies — no longer chooses between two auth tabs
+- `pickInitialTab` simplifies, no longer chooses between two auth tabs
 
 `migrateCloudApiUrl` is **retained**: it handles the legacy `app.engram.page` → `api.engram.page`
 rewrite, which is about edge hostnames, not mode.
 
 ## Migration
 
-In `main.ts` `loadSettings`, **after** the existing `migrateCloudApiUrl` call — order matters, the
+In `main.ts` `loadSettings`, **after** the existing `migrateCloudApiUrl` call, order matters, the
 URL must be normalized before mode is inferred from it:
 
 - `apiUrl === ENGRAM_CLOUD_URL` → `backendMode: "cloud"`
@@ -183,11 +183,11 @@ URL must be normalized before mode is inferred from it:
 
 ## Error handling
 
-- **Unparseable URL on Save** — reject with an inline message and leave the stored URL untouched.
+- **Unparseable URL on Save**, reject with an inline message and leave the stored URL untouched.
   Fixes the existing bug where junk is silently persisted.
-- **Toggle mid-sync** — `noteStream.disconnect()` before the swap; in-flight requests fail closed
+- **Toggle mid-sync**, `noteStream.disconnect()` before the swap; in-flight requests fail closed
   against the old backend rather than being retried against the new one.
-- **Corrupt/partial `inactiveBackend`** — a slot missing `apiUrl` is treated as empty and falls
+- **Corrupt/partial `inactiveBackend`**, a slot missing `apiUrl` is treated as empty and falls
   through to `needs-url`, never restored as a half-slot.
 
 ## Testing
@@ -197,7 +197,7 @@ Unit, pure, `tests/backend-mode.test.ts`:
 - round-trip: cloud → selfhost → cloud restores the original credentials exactly
 - switching to an unconfigured mode yields `needs-url` (selfhost) / `needs-auth` (cloud)
 - **drift guard**: the `BACKEND_SCOPED_FIELDS` list matches `withClearedAuth`'s field set. This is
-  the test to insist on — the drift failure silently eats a field on toggle and stays invisible
+  the test to insist on, the drift failure silently eats a field on toggle and stays invisible
   until someone adds a backend-scoped setting months later
 - migration: cloud URL → `cloud`; self-host URL → `selfhost`; empty → `selfhost`; no credentials lost
 - `applySlot` mutates in place (same object identity), so SyncEngine's reference stays live
@@ -206,6 +206,6 @@ Unit, pure, `tests/backend-mode.test.ts`:
 ## Out of scope
 
 - Approach A's nested per-mode storage (mechanical follow-up if wanted)
-- The `crdt_create` cross-vault id-reuse data-loss bug — tracked separately in
+- The `crdt_create` cross-vault id-reuse data-loss bug, tracked separately in
   `engram/docs/context/crdt-create-cross-vault-id-reuse.md`
 - Any change to `renderAuthSection` / `renderVaultSection` internals
