@@ -1101,6 +1101,61 @@ derivation rather than a second writer of the syncBlocked flag."
 
 ---
 
+### Task 7: E2E touch points
+
+**Files:**
+- Modify: `../engram/e2e/helpers/cdp.py:1595-1605` (`open_settings_tab` docstring)
+
+**Interfaces:**
+- Consumes: the `"connection"` tab id from Task 4
+- Produces: nothing
+
+**Scope finding (checked before writing this task).** The e2e suite drives sync programmatically, not through the settings UI, so the tab merge barely touches it:
+
+1. **No test asserts on tab labels.** The only `Cloud` match under `e2e/tests/` is a comment about Qdrant Cloud.
+2. **Every settings seed sets both a URL and a credential.** `e2e/helpers/obsidian.py:148-149` writes `apiUrl` + `apiKey`; `e2e/helpers/oauth.py:249-250` writes `apiKey` / `refreshToken`. So `connectionState` returns `connected` and the Task 6 sync guard never fires. No seed needs a new field.
+3. **`migrateBackendMode` does the right thing unprompted.** Seeds carry a local test URL, not `api.engram.page`, so the migration classifies them `selfhost`. Correct, and no e2e change needed.
+4. **`open_settings_tab` is already dead.** It calls `app.setting.activeTab.selectSubtab(...)`, and `selectSubtab` does not exist anywhere in the plugin source. It also has zero callers in the suite. Only its docstring's tab enum is stale.
+
+- [ ] **Step 1: Update the stale docstring**
+
+In `../engram/e2e/helpers/cdp.py`, change:
+
+```python
+        tab ∈ {'cloud','self-hosted','sync-center','advanced'}
+```
+
+to:
+
+```python
+        tab ∈ {'about','connection','sync-center','advanced'}
+```
+
+- [ ] **Step 2: Confirm nothing else references the old tab ids**
+
+Run from the `engram` repo root:
+
+```bash
+grep -rn "self-hosted\|'cloud'\|\"cloud\"" e2e/ --include=*.py
+```
+
+Expected: no hits outside the docstring you just changed.
+
+- [ ] **Step 3: Commit (in the engram repo, on its own branch)**
+
+```bash
+cd ../engram
+git switch -c chore/e2e-connection-tab-id
+git add e2e/helpers/cdp.py
+git commit -m "chore(e2e): update open_settings_tab docstring for the merged Connection tab"
+```
+
+Use a `chore/` prefix, not `ci/`: a `ci/` branch gets no CI on this repo.
+
+**Do NOT** attempt to make `open_settings_tab` work. `selectSubtab` never existed; fixing it is unrelated scope and it has no callers.
+
+---
+
 ## Self-Review
 
 **Spec coverage:**
