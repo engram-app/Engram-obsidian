@@ -201,7 +201,7 @@ export function renderAuthSection(ctx: TabContext, opts?: AuthSectionOptions): v
 	const signIn = new Setting(containerEl)
 		.setName("Sign in with Engram")
 		.setDesc(
-			"Opens your browser to sign in, or create an account if you don't have one yet, then links this vault. ",
+			"Opens your browser to sign in, or create an account if you don't have one yet, then links this vault.",
 		)
 		.addButton((btn) =>
 			btn
@@ -216,6 +216,10 @@ export function renderAuthSection(ctx: TabContext, opts?: AuthSectionOptions): v
 				),
 		);
 	if (opts?.learnMoreUrl) {
+		// Own the separator explicitly. A trailing space on setDesc's string is
+		// not reliably preserved before an appended inline node, which rendered
+		// as "…this vault.Learn more".
+		signIn.descEl.appendText(" ");
 		signIn.descEl.createEl("a", {
 			text: "Learn more",
 			href: opts.learnMoreUrl,

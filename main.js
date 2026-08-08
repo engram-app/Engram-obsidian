@@ -17261,7 +17261,7 @@ function renderAuthSection(ctx, opts) {
     return;
   }
   let signIn = new import_obsidian18.Setting(containerEl).setName("Sign in with Engram").setDesc(
-    "Opens your browser to sign in, or create an account if you don't have one yet, then links this vault. "
+    "Opens your browser to sign in, or create an account if you don't have one yet, then links this vault."
   ).addButton(
     (btn) => btn.setButtonText("Sign in").setCta().onClick(
       () => startDeviceFlow().catch((e) => {
@@ -17269,7 +17269,7 @@ function renderAuthSection(ctx, opts) {
       })
     )
   );
-  opts != null && opts.learnMoreUrl && (signIn.descEl.createEl("a", {
+  opts != null && opts.learnMoreUrl && (signIn.descEl.appendText(" "), signIn.descEl.createEl("a", {
     text: "Learn more",
     href: opts.learnMoreUrl,
     attr: { target: "_blank", rel: "noopener" }

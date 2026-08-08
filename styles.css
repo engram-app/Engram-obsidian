@@ -430,6 +430,14 @@
 	margin-left: 1em;
 }
 
+/* The divider already draws its own rule. Obsidian gives every .setting-item a
+   border-top, so the API-key row that follows stacked a SECOND line immediately
+   under the "or". Suppress it and let the divider's own margin do the spacing. */
+.engram-auth-divider + .setting-item {
+	border-top: none;
+	padding-top: 0;
+}
+
 .engram-vault-current-name {
 	font-family: var(--font-monospace);
 	color: var(--text-accent);
