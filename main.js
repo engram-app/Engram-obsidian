@@ -18969,7 +18969,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   webm: "video/webm",
   zip: "application/zip",
   canvas: "application/json"
-}, PUSH_BATCH_SIZE = 10, _SyncEngine = class _SyncEngine {
+}, PUSH_BATCH_SIZE = 10, OpLogFetchError = class extends Error {
+  constructor(cursorSeq, cause) {
+    super(`op-log fetch failed at cursor=${cursorSeq} \u2014 ${errMsg(cause)}`);
+    this.cursorSeq = cursorSeq;
+    this.name = "OpLogFetchError";
+  }
+}, _SyncEngine = class _SyncEngine {
   constructor(app, api, settings, saveData, time = new DefaultTimeProvider()) {
     this.app = app;
     this.api = api;
@@ -20997,7 +21003,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (!fetchPage) return;
     let cursor = opts.seq, cursorId = opts.id;
     for (let page = 0; page < _SyncEngine.OP_LOG_MAX_PAGES; page++) {
-      let pageStartSeq = cursor, pageStartId = cursorId, resp = await fetchPage(cursor, _SyncEngine.OP_LOG_PAGE_SIZE, cursorId);
+      let pageStartSeq = cursor, pageStartId = cursorId, resp;
+      try {
+        resp = await fetchPage(cursor, _SyncEngine.OP_LOG_PAGE_SIZE, cursorId);
+      } catch (e) {
+        throw new OpLogFetchError(cursor, e);
+      }
       for (let c of resp.changes)
         await opts.onRow(c), this.cursorAdvances(
           typeof c.seq == "number" ? c.seq : null,
@@ -21036,22 +21047,24 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     var _a, _b, _c;
     let serverIds = /* @__PURE__ */ new Set(), serverAttachmentPaths = /* @__PURE__ */ new Set();
     if (this.seqReplayRunning)
-      return this.seqReplayAgain = !0, { applied: 0, serverIds, serverAttachmentPaths, ran: !1 };
+      return this.seqReplayAgain = !0, { applied: 0, serverIds, serverAttachmentPaths, ran: !1, complete: !1 };
     this.seqReplayRunning = !0;
-    let applied = 0;
+    let applied = 0, complete = !0;
     try {
-      do
-        this.seqReplayAgain = !1, applied += await this.runSeqReplayOnce(
+      do {
+        this.seqReplayAgain = !1;
+        let pass = await this.runSeqReplayOnce(
           ((_a = opts.fromZero) != null ? _a : !1) || ((_b = opts.enumerateOnly) != null ? _b : !1),
           serverIds,
           serverAttachmentPaths,
           (_c = opts.enumerateOnly) != null ? _c : !1
         );
-      while (this.seqReplayAgain);
+        applied += pass.applied, pass.complete || (complete = !1);
+      } while (this.seqReplayAgain);
     } finally {
       this.seqReplayRunning = !1;
     }
-    return { applied, serverIds, serverAttachmentPaths, ran: !0 };
+    return { applied, serverIds, serverAttachmentPaths, ran: !0, complete };
   }
   /** Run `catchupViaSeqReplay` for a DESTRUCTIVE delete decision (pull-all wipe,
    *  push-all replace-remote). Retries until THIS call executes the replay
@@ -21066,7 +21079,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   async catchupViaSeqReplayExclusive(opts) {
     for (let attempt = 0; attempt < 10; attempt++) {
       let res = await this.catchupViaSeqReplay(opts);
-      if (res.ran) return res;
+      if (res.ran)
+        return res.complete ? res : (rlog().error(
+          "crdt",
+          "seq-replay: exclusive replay ended INCOMPLETE (walk stopped short) \u2014 refusing to hand back partial server sets"
+        ), null);
       await this.sleep(50);
     }
     return null;
@@ -21126,7 +21143,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   async runSeqReplayOnce(fromZero, serverIds, serverAttachmentPaths, enumerateOnly = !1) {
     var _a;
-    if (!this.crdtCatchupSince || !this.crdt) return 0;
+    if (!this.crdtCatchupSince || !this.crdt) return { applied: 0, complete: !1 };
     let activeVault = (_a = this.settings.vaultId) != null ? _a : null, resumable = !fromZero && this.syncStateVaultId === activeVault, cursor = resumable ? this.getCatchupSeq() : 0, cursorId = resumable ? this.getCatchupId() : null;
     if (this.seqRewindFloor !== null && !fromZero) {
       let floored = Math.min(cursor, this.seqRewindFloor);
@@ -21155,9 +21172,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         }
       });
     } catch (e) {
-      rlog().warn("crdt", `seq-replay: fetch failed at cursor=${cursor} \u2014 ${errMsg(e)}`);
+      if (!(e instanceof OpLogFetchError)) throw e;
+      return rlog().warn("crdt", `seq-replay: ${e.message}`), { applied, complete: !1 };
     }
-    return applied;
+    return { applied, complete: !0 };
   }
   /** Per-note discovery from a room-open announce that carries a path
    *  (`crdt_doc_ready`, backend adds `path`). An EMPTY note's genesis integrates

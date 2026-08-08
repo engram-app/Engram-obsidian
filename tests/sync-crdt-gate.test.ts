@@ -327,6 +327,7 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 			serverIds: new Set(),
 			serverAttachmentPaths: new Set(),
 			ran: true,
+			complete: true,
 		});
 
 		await engine.handleStreamEvent({

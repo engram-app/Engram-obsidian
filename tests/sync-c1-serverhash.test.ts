@@ -233,6 +233,7 @@ describe("C1 branch routes a first-delivery idle note to the op-log (Phase E3)",
 			serverIds: new Set(),
 			serverAttachmentPaths: new Set(),
 			ran: true,
+			complete: true,
 		});
 
 		await engine.handleStreamEvent({

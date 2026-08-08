@@ -421,6 +421,10 @@ describe("catchupViaSeqReplay", () => {
 			serverIds: new Set(),
 			serverAttachmentPaths: new Set(),
 			ran: true,
+			// NOT complete: the walk never happened, so the empty sets describe our
+			// ignorance, not the server. A destructive caller reading these as
+			// "server has nothing" would trash the vault.
+			complete: false,
 		});
 	});
 
@@ -830,6 +834,7 @@ describe("catchUp manifestSeq short-circuit (Phase E1)", () => {
 			serverIds: new Set(),
 			serverAttachmentPaths: new Set(),
 			ran: true,
+			complete: true,
 		});
 		const folders = spyOn(engine as any, "syncExplicitFolders").mockResolvedValue(undefined);
 		return { reconcile, heal, validate, replay, folders };
@@ -935,6 +940,7 @@ describe("catchUp identity-swap delete guard (#283)", () => {
 			serverIds: new Set(),
 			serverAttachmentPaths: new Set(),
 			ran: true,
+			complete: true,
 		});
 		spyOn(engine as any, "healDivergedLiveBoundNotes").mockResolvedValue(0);
 		spyOn(engine as any, "syncExplicitFolders").mockResolvedValue(undefined);
@@ -1106,6 +1112,55 @@ describe("op-log pager — contract shared by replay + enumerate", () => {
 		await (engine as any).enumerateServerState();
 
 		expect(calls).toBe(2);
+	});
+
+	test("an exclusive replay refuses a walk that stopped early (partial server sets)", async () => {
+		// The destructive pull-all-delete path trusts serverIds/serverAttachmentPaths
+		// to decide which local files are server-absent "extras" and trash them. It
+		// guards against a COALESCED replay (empty sets) — but a walk cut short by a
+		// mid-walk socket drop returns partial, NON-empty sets, sails past that
+		// guard, and every note the walk never reached looks like an extra.
+		// catchupViaSeqReplayExclusive must return null so the caller aborts.
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		(engine as any).applySyncChange = mock(async () => true);
+		let calls = 0;
+		engine.setCrdtCatchupSince(async () => {
+			calls += 1;
+			if (calls === 1) {
+				return {
+					changes: [noteRow(5, "id-a", "Notes/a.md")],
+					has_more: true,
+					next_seq: 5,
+					next_id: "id-a",
+				};
+			}
+			throw new Error("socket dropped");
+		});
+
+		const res = await (engine as any).catchupViaSeqReplayExclusive({ fromZero: true });
+
+		expect(res).toBeNull();
+	});
+
+	test("a persist failure is not swallowed as a fetch failure", async () => {
+		// The replay deliberately swallows FETCH errors so it keeps the pages it
+		// already applied. It must not also swallow errors from its OWN work: a
+		// saveData failure means the resume cursor never landed, and reporting
+		// success anyway hands a destructive caller (catchupViaSeqReplayExclusive
+		// -> pull-all-delete) a serverIds set built from a walk that stopped early.
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		(engine as any).applySyncChange = mock(async () => true);
+		(engine as any).saveData = mock(async () => {
+			throw new Error("disk full");
+		});
+		engine.setCrdtCatchupSince(async () => ({
+			changes: [noteRow(5, "id-a", "Notes/a.md")],
+			has_more: false,
+			next_seq: null,
+			next_id: null,
+		}));
+
+		await expect(engine.catchupViaSeqReplay()).rejects.toThrow("disk full");
 	});
 
 	test("a mid-walk fetch failure surfaces to the preview but not to the replay", async () => {

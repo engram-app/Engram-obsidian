@@ -347,6 +347,24 @@ export interface CrdtPorts {
 	catchupSince?: CrdtCatchupSinceFn | null;
 }
 
+/** Thrown by `walkOpLog` when the op-log FETCH itself fails, so a caller can
+ *  swallow a transport failure WITHOUT also swallowing errors raised by its own
+ *  `onRow` / `onPage` work. The seq-replay needs exactly that distinction: a
+ *  dropped socket is recoverable (keep the pages already applied, resume next
+ *  pass), but a failed cursor persist is not — reporting success there would
+ *  hand a destructive caller a server-id set built from a walk that stopped
+ *  early. The original failure is folded into the message rather than passed as
+ *  `cause` — `lib` is ES2021 here, where `Error`'s options argument isn't typed. */
+class OpLogFetchError extends Error {
+	constructor(
+		readonly cursorSeq: number,
+		cause: unknown,
+	) {
+		super(`op-log fetch failed at cursor=${cursorSeq} — ${errMsg(cause)}`);
+		this.name = "OpLogFetchError";
+	}
+}
+
 export class SyncEngine {
 	private debounceTimers: Map<string, number> = new Map();
 	/** Paths that newly degraded (ok/none -> frontmatter issue) since the last
@@ -3646,7 +3664,14 @@ export class SyncEngine {
 		for (let page = 0; page < SyncEngine.OP_LOG_MAX_PAGES; page++) {
 			const pageStartSeq = cursor;
 			const pageStartId = cursorId;
-			const resp = await fetchPage(cursor, SyncEngine.OP_LOG_PAGE_SIZE, cursorId);
+			let resp: Awaited<ReturnType<CrdtCatchupSinceFn>>;
+			try {
+				resp = await fetchPage(cursor, SyncEngine.OP_LOG_PAGE_SIZE, cursorId);
+			} catch (e) {
+				// Tagged so a caller can tell a transport failure apart from a failure
+				// in its own onRow/onPage work. Both used to look identical.
+				throw new OpLogFetchError(cursor, e);
+			}
 			for (const c of resp.changes) {
 				await opts.onRow(c);
 				// Advance past every row SEEN (handled or skipped) so the cursor is
@@ -3741,29 +3766,39 @@ export class SyncEngine {
 		 *  set from a coalesced call would mean "server has nothing" and trash the
 		 *  whole vault (the data-loss bug). Non-destructive callers ignore it. */
 		ran: boolean;
+		/** `false` when a replay pass did not reach the end of the feed (a mid-walk
+		 *  fetch failure, or no socket at all), so the server sets are PARTIAL.
+		 *  Orthogonal to `ran`: a call can run exclusively and still come back
+		 *  incomplete. Destructive delete decisions require BOTH. */
+		complete: boolean;
 	}> {
 		const serverIds = new Set<string>();
 		const serverAttachmentPaths = new Set<string>();
 		if (this.seqReplayRunning) {
 			this.seqReplayAgain = true;
-			return { applied: 0, serverIds, serverAttachmentPaths, ran: false };
+			return { applied: 0, serverIds, serverAttachmentPaths, ran: false, complete: false };
 		}
 		this.seqReplayRunning = true;
 		let applied = 0;
+		let complete = true;
 		try {
 			do {
 				this.seqReplayAgain = false;
-				applied += await this.runSeqReplayOnce(
+				const pass = await this.runSeqReplayOnce(
 					(opts.fromZero ?? false) || (opts.enumerateOnly ?? false),
 					serverIds,
 					serverAttachmentPaths,
 					opts.enumerateOnly ?? false,
 				);
+				applied += pass.applied;
+				// The sets accumulate across coalesced passes, so ONE short pass taints
+				// the whole result — never OR this back to true.
+				if (!pass.complete) complete = false;
 			} while (this.seqReplayAgain);
 		} finally {
 			this.seqReplayRunning = false;
 		}
-		return { applied, serverIds, serverAttachmentPaths, ran: true };
+		return { applied, serverIds, serverAttachmentPaths, ran: true, complete };
 	}
 
 	/** Run `catchupViaSeqReplay` for a DESTRUCTIVE delete decision (pull-all wipe,
@@ -3786,7 +3821,20 @@ export class SyncEngine {
 	} | null> {
 		for (let attempt = 0; attempt < 10; attempt++) {
 			const res = await this.catchupViaSeqReplay(opts);
-			if (res.ran) return res;
+			if (res.ran) {
+				// Ran exclusively but the walk stopped short (socket dropped mid-feed,
+				// or no socket at all): the sets are a PARTIAL view of the server. That
+				// is just as unsafe as the coalesced empty-set case — every file the
+				// walk never reached looks server-absent — so refuse it the same way.
+				if (!res.complete) {
+					rlog().error(
+						"crdt",
+						"seq-replay: exclusive replay ended INCOMPLETE (walk stopped short) — refusing to hand back partial server sets",
+					);
+					return null;
+				}
+				return res;
+			}
 			await this.sleep(50);
 		}
 		return null;
@@ -3876,8 +3924,15 @@ export class SyncEngine {
 		serverIds: Set<string>,
 		serverAttachmentPaths: Set<string>,
 		enumerateOnly = false,
-	): Promise<number> {
-		if (!this.crdtCatchupSince || !this.crdt) return 0;
+		/** `complete` is false when the walk did NOT reach the end of the feed, so
+		 *  `serverIds`/`serverAttachmentPaths` are a PARTIAL view of the server. Any
+		 *  caller making a delete decision must refuse them: a partial set is
+		 *  indistinguishable from "the server doesn't have these" and would trash
+		 *  every local file the walk never reached. */
+	): Promise<{ applied: number; complete: boolean }> {
+		// Never walked at all — sets are empty, which must NOT read as "server is
+		// empty" to a destructive caller.
+		if (!this.crdtCatchupSince || !this.crdt) return { applied: 0, complete: false };
 		// The seq cursor is per-vault: `seq` is allocated per vault, so a cursor
 		// from one vault is meaningless in another. If our recorded per-vault
 		// state belongs to a DIFFERENT vault than the active one — an OAuth /
@@ -3955,11 +4010,18 @@ export class SyncEngine {
 				},
 			});
 		} catch (e) {
-			// A mid-walk fetch failure keeps whatever pages already applied (and
-			// their persisted cursor) — the next pass resumes from there.
-			rlog().warn("crdt", `seq-replay: fetch failed at cursor=${cursor} — ${errMsg(e)}`);
+			// ONLY a fetch failure is swallowed: it keeps whatever pages already
+			// applied (and their persisted cursor), and the next pass resumes from
+			// there. Anything else — above all a failed cursor persist — stays loud.
+			if (!(e instanceof OpLogFetchError)) throw e;
+			rlog().warn("crdt", `seq-replay: ${e.message}`);
+			// The walk stopped short, so the server sets are partial. Applied ops are
+			// still real (and the cursor is persisted), so the pull itself succeeded —
+			// but a delete decision built on these sets would trash every file the
+			// walk never reached.
+			return { applied, complete: false };
 		}
-		return applied;
+		return { applied, complete: true };
 	}
 
 	/** Per-note discovery from a room-open announce that carries a path
