@@ -1,5 +1,5 @@
 import { LEGACY_CLOUD_HOSTS } from "./tabs/urls";
-import type { EngramSyncSettings } from "./types";
+import type { BackendScopedField, EngramSyncSettings } from "./types";
 
 /** If `apiUrl` points at a legacy Cloud host (one that used to serve the REST
  *  API but no longer does — e.g. `app.engram.page`, now the SPA-only Cloudflare
@@ -70,24 +70,33 @@ export function interpretHealthProbe(status: number, body: unknown): PreflightRe
 	return { kind: "reachable" };
 }
 
+/** Credential fields cleared on a backend change. A strict subset of
+ *  BACKEND_SCOPED_FIELDS: apiUrl and remoteVaultName are backend-scoped but are
+ *  not credentials, so a mode switch stashes them rather than wiping them.
+ *
+ *  The `satisfies` clause is the compile-time half of the drift guard. A typo,
+ *  or a field that is not backend-scoped, fails tsc. The runtime half lives in
+ *  tests/backend-mode.test.ts and catches the opposite direction: a field this
+ *  function clears that BACKEND_SCOPED_FIELDS forgot to stash. */
+const CLEARED_AUTH_VALUES = {
+	apiKey: "",
+	refreshToken: undefined,
+	userEmail: undefined,
+	authMethod: null,
+	vaultId: null,
+	// The cached access token (plus its expiry + vault binding) is signed by
+	// the minting backend and only valid there. Leaving it set lets a backend
+	// switch replay a stale token against the new origin → signature_error.
+	accessToken: undefined,
+	accessTokenExpiresAt: undefined,
+	accessTokenVaultId: undefined,
+} as const satisfies Partial<Record<BackendScopedField, unknown>>;
+
 /** Returns a copy of settings with all backend-scoped auth state cleared.
  *  Preserves clientId (stable per-install), apiUrl (caller sets it separately),
  *  and unrelated user prefs (ignorePatterns, debounceMs, etc.). */
 export function withClearedAuth(settings: EngramSyncSettings): EngramSyncSettings {
-	return {
-		...settings,
-		apiKey: "",
-		refreshToken: undefined,
-		userEmail: undefined,
-		authMethod: null,
-		vaultId: null,
-		// The cached access token (plus its expiry + vault binding) is signed by
-		// the minting backend and only valid there. Leaving it set lets a backend
-		// switch replay a stale token against the new origin → signature_error.
-		accessToken: undefined,
-		accessTokenExpiresAt: undefined,
-		accessTokenVaultId: undefined,
-	};
+	return { ...settings, ...CLEARED_AUTH_VALUES };
 }
 
 /** Minimal plugin surface needed to apply an apiUrl change. Defined here so

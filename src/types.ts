@@ -1,6 +1,28 @@
 import type { FeatureFlags } from "./feature-flags";
 import type { PlanState } from "./plan-state";
 
+/** Which backend this vault syncs to. Explicit state, never inferred from apiUrl. */
+export type BackendMode = "cloud" | "selfhost";
+
+/** Fields owned by exactly one backend. Switching backends stashes and restores
+ *  precisely this set. `withClearedAuth` clears the credential subset of it.
+ *  Both consume this list so the two can never drift: a field added here but
+ *  missed there would be cleared on switch and never restored. */
+export const BACKEND_SCOPED_FIELDS = [
+	"apiUrl",
+	"apiKey",
+	"refreshToken",
+	"userEmail",
+	"authMethod",
+	"vaultId",
+	"remoteVaultName",
+	"accessToken",
+	"accessTokenExpiresAt",
+	"accessTokenVaultId",
+] as const;
+
+export type BackendScopedField = (typeof BACKEND_SCOPED_FIELDS)[number];
+
 /** Plugin settings stored in data.json */
 export interface EngramSyncSettings {
 	/** Engram base URL (e.g. "http://10.0.20.214:8000") */
@@ -66,7 +88,17 @@ export interface EngramSyncSettings {
 	 *  index this directly, or a retired key in an old data.json leaks through.
 	 *  See `feature-flags.ts`. */
 	featureFlags?: Partial<FeatureFlags>;
+	/** Which backend is active. Optional so `migrateBackendMode` can detect a
+	 *  pre-migration install. Deliberately absent from DEFAULT_SETTINGS for that
+	 *  reason; always present after first load. */
+	backendMode?: BackendMode;
+	/** The other backend's stashed URL and credentials, so switching modes is
+	 *  reversible without re-authenticating. */
+	inactiveBackend?: BackendSlot;
 }
+
+/** One backend's complete configuration. */
+export type BackendSlot = Pick<EngramSyncSettings, BackendScopedField>;
 
 /** Which search backend the panel uses. */
 export type SearchMode = "semantic" | "keyword" | "hybrid";
