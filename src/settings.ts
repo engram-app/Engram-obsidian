@@ -7,9 +7,8 @@ import { errMsg } from "./error-util";
 import type EngramSyncPlugin from "./main";
 import { PHASE_FALLBACK_LABEL, type PlannedPhase, settingsBarCounts } from "./sync-progress-modal";
 import { renderAboutTab } from "./tabs/about-tab";
-import { renderAccountTab } from "./tabs/account-tab";
 import { renderAdvancedTab } from "./tabs/advanced-tab";
-import { renderSelfHostedTab } from "./tabs/self-hosted-tab";
+import { renderConnectionTab } from "./tabs/connection-tab";
 import { pickInitialTab } from "./tabs/start-tab";
 import { renderSyncCenterTab } from "./tabs/sync-center-tab";
 import type { TabContext } from "./tabs/types";
@@ -186,8 +185,7 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 		// ── Tab bar ──
 		const tabs = [
 			{ id: "about" as const, label: "👋 Welcome", render: renderAboutTab },
-			{ id: "account" as const, label: "☁️ Cloud", render: renderAccountTab },
-			{ id: "self-hosted" as const, label: "🖥️ Self-hosted", render: renderSelfHostedTab },
+			{ id: "connection" as const, label: "🔌 Connection", render: renderConnectionTab },
 			{ id: "sync-center" as const, label: "🔄 Sync Center", render: renderSyncCenterTab },
 			{ id: "advanced" as const, label: "⚙️ Advanced", render: renderAdvancedTab },
 		];
@@ -232,8 +230,8 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 			btn.addEventListener("click", () => activateTab(tab.id));
 		}
 
-		// Activate the remembered tab (or default to "account")
-		const startTab = tabs.find((t) => t.id === this.activeTab) ? this.activeTab : "account";
+		// Activate the remembered tab (or default to "connection")
+		const startTab = tabs.find((t) => t.id === this.activeTab) ? this.activeTab : "connection";
 		activateTab(startTab);
 	}
 

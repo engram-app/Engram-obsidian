@@ -430,23 +430,6 @@
 	margin-left: 1em;
 }
 
-.engram-mode-lock-banner {
-	background: var(--background-secondary);
-	border: 1px solid var(--background-modifier-border);
-	border-radius: 6px;
-	padding: 1em 1.25em;
-	margin: 0.5em 0 1em;
-}
-
-.engram-mode-lock-banner p {
-	margin: 0 0 0.5em;
-}
-
-.engram-mode-lock-banner p:last-child {
-	margin-bottom: 0;
-	color: var(--text-muted);
-}
-
 .engram-vault-current-name {
 	font-family: var(--font-monospace);
 	color: var(--text-accent);
@@ -1771,4 +1754,8 @@ body.is-mobile .engram-support-buttons > a {
 .engram-about-waitlist-success {
 	color: var(--text-success);
 	font-weight: var(--font-semibold);
+}
+
+.engram-connection-warning .setting-item-name {
+	color: var(--text-warning);
 }

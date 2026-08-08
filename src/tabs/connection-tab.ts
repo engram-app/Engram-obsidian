@@ -1,0 +1,91 @@
+import { Notice, Setting } from "obsidian";
+import { pluginSwitchTarget } from "../auth-state";
+import { connectionState, switchMode } from "../backend-mode";
+import type { BackendMode } from "../types";
+import {
+	renderAuthSection,
+	renderEngramUrlSetting,
+	renderSupportSection,
+	renderVaultSection,
+} from "./self-hosted-tab";
+import type { TabContext } from "./types";
+import { ENGRAM_CLOUD_URL, ENGRAM_MARKETING_URL } from "./urls";
+
+const MODE_LABELS: Record<BackendMode, string> = {
+	cloud: "Engram Cloud",
+	selfhost: "Self-hosted",
+};
+
+/** The single Connection tab. Replaces the former Cloud and Self-hosted tabs.
+ *
+ *  Mode is read from explicit settings.backendMode, never inferred from apiUrl.
+ *  That inference is what made merely VISITING the old Cloud tab a mutation
+ *  (see the deleted cloudTabAction and PR #162): navigation is now inert, and
+ *  only the toggle changes anything. */
+export function renderConnectionTab(ctx: TabContext): void {
+	const { containerEl, plugin, redisplay } = ctx;
+	const mode: BackendMode = plugin.settings.backendMode ?? "selfhost";
+
+	// ponytail: a dropdown, not a custom segmented control. Same two-choice
+	// semantics, standard Obsidian affordance, zero new CSS. Swap for segmented
+	// buttons only if the visual matters more than the maintenance.
+	new Setting(containerEl)
+		.setName("Backend")
+		.setDesc("Where this vault syncs to. Each backend keeps its own sign-in.")
+		.addDropdown((dd) => {
+			dd.addOption("cloud", MODE_LABELS.cloud);
+			dd.addOption("selfhost", MODE_LABELS.selfhost);
+			dd.setValue(mode);
+			dd.onChange(async (value) => {
+				const target = value as BackendMode;
+				if (!switchMode(plugin.settings, target, ENGRAM_CLOUD_URL)) return;
+				// Tear down anything bound to the OLD backend before persisting.
+				// An access token signed by one backend must never be replayed
+				// against another. Same three steps as applyApiUrlChange.
+				plugin.api.setAuthProvider(null);
+				pluginSwitchTarget(plugin).resetAuthProvider();
+				plugin.noteStream?.disconnect();
+				await plugin.saveSettings();
+				new Notice(`Switched to ${MODE_LABELS[target]}.`);
+				redisplay();
+			});
+		});
+
+	const state = connectionState(plugin.settings);
+	if (state !== "connected") {
+		const message =
+			state === "needs-url"
+				? "Not connected. Enter your Engram server URL below to start syncing."
+				: "Not connected. Sign in below to start syncing.";
+		const warning = new Setting(containerEl).setName(message);
+		warning.settingEl.addClass("engram-connection-warning");
+	}
+
+	if (mode === "cloud") {
+		const about = new Setting(containerEl)
+			.setName("New to Engram?")
+			.setDesc("Create an account, read the docs, and learn more at ");
+		about.settingEl.addClass("engram-setup-cta");
+		about.descEl.createEl("a", {
+			text: "engram.page",
+			href: ENGRAM_MARKETING_URL,
+			attr: { target: "_blank", rel: "noopener" },
+		});
+		about.descEl.appendText(".");
+	} else {
+		const repo = new Setting(containerEl)
+			.setName("Run your own Engram server")
+			.setDesc("Engram is the backend that powers sync and semantic search.");
+		repo.settingEl.addClass("engram-setup-cta");
+		repo.descEl.addClass("engram-server-cta-desc");
+		repo.descEl.createEl("a", {
+			text: "github.com/engram-app/engram",
+			href: "https://github.com/engram-app/engram",
+		});
+		renderEngramUrlSetting(ctx);
+	}
+
+	renderAuthSection(ctx);
+	renderVaultSection(ctx);
+	if (mode === "selfhost") renderSupportSection(ctx);
+}

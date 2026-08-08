@@ -86,7 +86,7 @@ export function renderAboutTab(ctx: TabContext): void {
 			btn
 				.setButtonText("Open cloud tab")
 				.setCta()
-				.onClick(() => switchToTab("account")),
+				.onClick(() => switchToTab("connection")),
 		);
 
 	const ai = new Setting(containerEl).setName("3. Connect your AI");

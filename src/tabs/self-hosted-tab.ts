@@ -8,39 +8,8 @@ import {
 } from "../auth-state";
 import { errMsg } from "../error-util";
 import type { TabContext } from "./types";
-import { ENGRAM_CLOUD_URL } from "./urls";
 
 const PREFLIGHT_DEBOUNCE_MS = 600;
-
-export function renderSelfHostedTab(ctx: TabContext): void {
-	const { containerEl, plugin } = ctx;
-
-	// Lock the tab when the user is signed into Engram Cloud — both modes share
-	// the same auth fields, so showing the auth UI here would let them sign out
-	// of Cloud from the wrong tab. Sign-out has to happen via the Cloud tab.
-	const isOnCloud = plugin.settings.apiUrl === ENGRAM_CLOUD_URL;
-	const hasAuth = !!plugin.settings.apiKey || !!plugin.settings.refreshToken;
-	if (isOnCloud && hasAuth) {
-		renderCloudLockBanner(containerEl);
-		return;
-	}
-
-	const repoSetting = new Setting(containerEl)
-		.setName("Run your own Engram server")
-		.setDesc("Engram is the backend that powers sync and semantic search.");
-	repoSetting.settingEl.addClass("engram-setup-cta");
-	repoSetting.descEl.addClass("engram-server-cta-desc");
-	repoSetting.descEl.createEl("a", {
-		text: "github.com/engram-app/engram",
-		href: "https://github.com/engram-app/engram",
-	});
-
-	renderEngramUrlSetting(ctx);
-
-	renderAuthSection(ctx);
-	renderVaultSection(ctx);
-	renderSupportSection(ctx);
-}
 
 /** Render the "Engram URL" field with a debounced background preflight that
  *  confirms the URL points at a real Engram server, committed via an explicit
@@ -137,17 +106,6 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
 
 	// Surface the current backend's status immediately on open (no typing needed).
 	if (completeOrigin(plugin.settings.apiUrl)) runPreflight(plugin.settings.apiUrl);
-}
-
-/** Render the "you're on Cloud" banner that replaces the entire Self-hosted
- *  body when the active backend is Cloud. Keeps the user from bypassing the
- *  Cloud tab to manage Cloud auth. */
-function renderCloudLockBanner(containerEl: HTMLElement): void {
-	const banner = containerEl.createDiv({ cls: "engram-mode-lock-banner" });
-	banner.createEl("p", { text: "You're connected to Engram cloud." });
-	banner.createEl("p", {
-		text: "To set up a self-hosted Engram server, sign out from the cloud tab first. That will release the connection so you can point the plugin at your own server.",
-	});
 }
 
 /** Render Authentication section — OAuth status / API key / sign-in CTAs.
