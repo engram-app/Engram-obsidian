@@ -114,37 +114,6 @@ export interface ApiUrlSwitchTarget {
 	resetAuthProvider: () => void;
 }
 
-/** What renderAccountTab should do given the current settings and cloud URL.
- *
- *  - ``render``: already on cloud (or path-only difference) — just render the tab.
- *  - ``prompt-switch``: a different backend is configured (a self-host URL,
- *    with or without credentials). Render an explicit "Switch to Engram cloud"
- *    button; do NOT auto-wipe. A typed self-host URL is real user input even
- *    before credentials exist, so rendering the Cloud tab must never clobber it.
- *  - ``auto-switch``: only a truly fresh install (apiUrl never set) — no URL and
- *    no creds to lose, so silently adopt the cloud URL.
- *
- *  Why this exists: ``renderAccountTab`` used to auto-call ``applyApiUrlChange``
- *  on every tab activation. For self-hosted users with valid credentials,
- *  simply navigating to the "Cloud" tab silently nuked their apiKey/refreshToken/
- *  vaultId via ``withClearedAuth`` — destructive UX, surfaced by the e2e
- *  apiKey-wipe diagnostic on PR #162 (test_65 → test_69 cascade). */
-export function cloudTabAction(
-	settings: EngramSyncSettings,
-	cloudUrl: string,
-): "render" | "prompt-switch" | "auto-switch" {
-	// Fresh install (apiUrl never set) — adopt cloud silently. No creds to
-	// preserve and no existing backend to migrate from.
-	if (!settings.apiUrl) return "auto-switch";
-	// Same-origin (even with /api path difference) — no apply needed.
-	if (!isBackendChange(settings.apiUrl, cloudUrl)) return "render";
-	// A different backend is configured (e.g. a self-host URL entered before
-	// credentials). Never silently overwrite it — prompt for an explicit switch,
-	// whether or not creds are stored. Auto-switch is reserved for the empty-URL
-	// fresh install above; anything else is real user input to preserve.
-	return "prompt-switch";
-}
-
 /** The ApiUrlSwitchTarget for the live plugin instance. One construction site
  *  — this literal was copy-pasted at three settings-tab call sites. */
 export function pluginSwitchTarget(plugin: {
