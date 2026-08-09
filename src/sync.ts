@@ -339,6 +339,10 @@ export interface CrdtPorts {
 	createBatch?: CrdtCreateBatchFn | null;
 	delete?: ((docId: string) => Promise<{ doc_id: string }>) | null;
 	enqueue?: ((op: { kind: "create" | "delete"; docId: string; path: string }) => void) | null;
+	/** Drop every outbound CRDT op still pending delivery, plus the unsent-doc
+	 *  tracking set. Both key work by note_id with no vault attached, so both are
+	 *  per-vault state that a vault change must discard (engram #1318). */
+	resetOutbox?: (() => void) | null;
 	live?: (() => boolean) | null;
 	/** Nulling this restores the default never-bound check rather than leaving
 	 *  the port empty — `isLiveBound` is called unconditionally on the push
@@ -496,6 +500,7 @@ export class SyncEngine {
 		if ("createBatch" in ports) this.crdtCreateBatch = ports.createBatch ?? null;
 		if ("delete" in ports) this.crdtDelete = ports.delete ?? null;
 		if ("enqueue" in ports) this.crdtEnqueue = ports.enqueue ?? null;
+		if ("resetOutbox" in ports) this.crdtResetOutbox = ports.resetOutbox ?? null;
 		if ("live" in ports) this.crdtLive = ports.live ?? null;
 		if ("liveBound" in ports) this.isLiveBound = ports.liveBound ?? (() => false);
 		if ("catchupSince" in ports) this.crdtCatchupSince = ports.catchupSince ?? null;
@@ -1070,6 +1075,9 @@ export class SyncEngine {
 	private crdtEnqueue:
 		| ((op: { kind: "create" | "delete"; docId: string; path: string }) => void)
 		| null = null;
+
+	/** See CrdtPorts.resetOutbox. */
+	private crdtResetOutbox: (() => void) | null = null;
 
 	setCrdtEnqueue(
 		fn: ((op: { kind: "create" | "delete"; docId: string; path: string }) => void) | null,
@@ -1963,6 +1971,16 @@ export class SyncEngine {
 		// instance is shared with main.ts + live views.
 		this.noteIdMap?.clear();
 		this.clearConfirmedNoteIds();
+		// The durable op queue and the unsent-doc set are the two places a note_id
+		// outlives the vault it was minted in. A CrdtOp carries a bare docId and NO
+		// vault, so a create still pending when the user switches vaults is flushed
+		// blind on the NEW vault's topic under an id the OLD vault owns -- the
+		// server then cannot place it (engram #1318, the cross-vault collision the
+		// server now re-mints around). reEnrollUnsent has the same shape: it would
+		// STEP1 the previous vault's ids against the new topic. Dropping both is
+		// safe because lastSync is cleared above, so a later switch BACK re-derives
+		// and re-pushes anything they carried.
+		this.crdtResetOutbox?.();
 		// note_ids are only unique WITHIN a vault (final review MINOR-6) — a
 		// relocation timestamp recorded for an id under the OLD vault must not
 		// survive to stale-gate an unrelated note that happens to reuse the same

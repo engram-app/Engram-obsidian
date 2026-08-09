@@ -380,3 +380,65 @@ describe("strict TTL", () => {
 		expect(drops).toEqual(["ttl"]);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// 8. vault-stamped ops: a foreign vault's op is dropped at send time
+// ---------------------------------------------------------------------------
+
+describe("vault-stamped ops", () => {
+	test("an op for another vault is dropped before send, with an onDrop trail", async () => {
+		// A CrdtOp used to carry no vault, so anything still queued at switch time
+		// was delivered blind on the NEW vault's topic under the OLD vault's ids.
+		// Checked at SEND rather than at switch time on purpose: the topic rejoin
+		// flushes the queue before any switch-time hook runs.
+		const clock = fakeClock();
+		const { fn: send, calls } = scriptedSend();
+		const drops: [CrdtOp, DropReason][] = [];
+		const q = new CrdtOpQueue({
+			send,
+			now: clock.now,
+			onDrop: (op, reason) => drops.push([op, reason]),
+			currentVaultId: () => "vault-B",
+		});
+
+		q.enqueue(makeOp("doc-a", "create", { vaultId: "vault-A" }));
+		await q.onJoined();
+
+		expect(calls).toHaveLength(0);
+		expect(drops.map(([op, reason]) => [op.docId, reason])).toEqual([
+			["doc-a", "vault-changed"],
+		]);
+	});
+
+	test("an op for the CURRENT vault still sends (deletes must survive a same-vault reset)", async () => {
+		// A delete has no REST fallback: the tombstone lives only here. Dropping
+		// the whole outbox on any vault-state reset resurrected deleted notes.
+		const clock = fakeClock();
+		const { fn: send, calls } = scriptedSend();
+		const q = new CrdtOpQueue({
+			send,
+			now: clock.now,
+			currentVaultId: () => "vault-B",
+		});
+
+		q.enqueue(makeOp("doc-b", "delete", { vaultId: "vault-B" }));
+		await q.onJoined();
+
+		expect(calls.map((o) => o.docId)).toEqual(["doc-b"]);
+	});
+
+	test("an op persisted before vault stamping (no vaultId) still sends", async () => {
+		const clock = fakeClock();
+		const { fn: send, calls } = scriptedSend();
+		const q = new CrdtOpQueue({
+			send,
+			now: clock.now,
+			currentVaultId: () => "vault-B",
+		});
+
+		q.enqueue(makeOp("doc-legacy", "create"));
+		await q.onJoined();
+
+		expect(calls.map((o) => o.docId)).toEqual(["doc-legacy"]);
+	});
+});

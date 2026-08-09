@@ -27,10 +27,15 @@ export type CrdtOp = {
 	payload: unknown;
 	enqueuedAt: number;
 	attempts: number;
+	/** Vault this op was minted against. A docId is only meaningful WITHIN a
+	 *  vault, so an op that outlives a vault switch must not be delivered blind
+	 *  on the new vault's topic. Optional: ops persisted before this field
+	 *  existed have none and are delivered as before. */
+	vaultId?: string | null;
 };
 
 /** Why an op was dropped without being acked. */
-export type DropReason = "ttl" | "overflow" | "max-attempts";
+export type DropReason = "ttl" | "overflow" | "max-attempts" | "vault-changed";
 
 /** Result of an outbound send attempt. */
 export type SendResult = "ok" | "error" | "timeout";
@@ -66,6 +71,9 @@ export type CrdtOpQueueDeps = {
 	send: (op: CrdtOp) => Promise<SendResult>;
 	now: () => number;
 	onDrop?: (op: CrdtOp, reason: DropReason) => void;
+	/** The vault the plugin is syncing RIGHT NOW. Ops stamped with a different
+	 *  vault are dropped at send time rather than delivered on its topic. */
+	currentVaultId?: () => string | null;
 	options?: Partial<CrdtOpQueueOptions>;
 	/** Debounce window for persist writes, coalescing rapid mutations. */
 	persistDelayMs?: number;
@@ -95,6 +103,7 @@ export class CrdtOpQueue {
 	private readonly send: (op: CrdtOp) => Promise<SendResult>;
 	private readonly now: () => number;
 	private readonly onDrop?: (op: CrdtOp, reason: DropReason) => void;
+	private readonly currentVaultId?: () => string | null;
 	private readonly opts: CrdtOpQueueOptions;
 
 	private persistFn: ((ops: CrdtOp[]) => Promise<void> | void) | null = null;
@@ -105,6 +114,7 @@ export class CrdtOpQueue {
 		this.send = deps.send;
 		this.now = deps.now;
 		this.onDrop = deps.onDrop;
+		this.currentVaultId = deps.currentVaultId;
 		this.opts = { ...DEFAULT_OPTIONS, ...deps.options };
 		this.persistDelayMs = deps.persistDelayMs ?? PERSIST_DELAY_MS;
 	}
@@ -198,6 +208,28 @@ export class CrdtOpQueue {
 		this.schedulePersist();
 	}
 
+	/** Drop and notify if the op belongs to a vault we are no longer syncing.
+	 *
+	 *  Checked HERE, at send time, rather than by a hook on the vault switch: the
+	 *  crdt: topic rejoin flushes this queue, and on the OAuth-relogin route that
+	 *  happens BEFORE any sync-start hook runs, so a switch-time clear was already
+	 *  too late. Checking per op also keeps a same-vault reset non-destructive --
+	 *  a queued delete has no REST fallback, so dropping the whole outbox on any
+	 *  vault-state reset resurrected deleted notes.
+	 *
+	 *  Goes through onDrop like every other undelivered removal, so a discarded op
+	 *  leaves the same warn-level trail the others do. */
+	private dropIfForeignVault(docId: string, entry: Entry): boolean {
+		const current = this.currentVaultId?.() ?? null;
+		const owner = entry.op.vaultId ?? null;
+		// No stamp (pre-upgrade op) or no current vault: nothing to compare.
+		if (!owner || !current || owner === current) return false;
+		this.entries.delete(docId);
+		this.onDrop?.(entry.op, "vault-changed");
+		this.schedulePersist();
+		return true;
+	}
+
 	/** Drop and notify if the op has aged past its TTL. Returns true if dropped. */
 	private dropIfExpired(docId: string, entry: Entry): boolean {
 		if (this.now() - entry.op.enqueuedAt <= this.opts.opTtlMs) return false;
@@ -235,6 +267,7 @@ export class CrdtOpQueue {
 				const entry = this.entries.get(docId);
 				if (!entry) continue;
 				if (this.dropIfExpired(docId, entry)) continue;
+				if (this.dropIfForeignVault(docId, entry)) continue;
 				if (entry.nextAttemptAt > this.now()) continue;
 				await this.attempt(docId, entry);
 			}

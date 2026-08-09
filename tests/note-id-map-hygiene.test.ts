@@ -105,6 +105,44 @@ describe("vault change wipes note identity (plugin #200)", () => {
 		expect((engine as any).isNoteConfirmed("id-from-vault-A")).toBe(false);
 	});
 
+	test("both vault-change routes also drop the outbound CRDT work", async () => {
+		// The note-id map was never the only carrier: unsentDocIds holds the same
+		// per-vault note ids, and reEnrollUnsent would STEP1 them against the NEW
+		// vault's topic. Asserted on BOTH routes because wipePerVaultState exists
+		// precisely to keep them in lockstep -- a drop wired to only one re-opens
+		// the hazard on the other.
+		//
+		// The op QUEUE is NOT dropped here. Ops carry their own vaultId and
+		// self-drop at send time, which is both earlier (the topic rejoin flushes
+		// before this hook runs) and narrower (a queued delete for the CURRENT
+		// vault has no REST fallback and must survive).
+		for (const route of ["backstop", "picker"] as const) {
+			const engine = createEngine("vault-B");
+			const resetOutbox = mock();
+			engine.setCrdtPorts({ resetOutbox });
+
+			if (route === "backstop") {
+				engine.setSyncStateVaultId("vault-A");
+				await (engine as any).invalidateIfVaultChanged();
+			} else {
+				await engine.resetForVaultChange();
+			}
+
+			expect(resetOutbox).toHaveBeenCalledTimes(1);
+		}
+	});
+
+	test("same vault: outbox survives (it is still this vault's work)", async () => {
+		const engine = createEngine("vault-A");
+		const resetOutbox = mock();
+		engine.setCrdtPorts({ resetOutbox });
+		engine.setSyncStateVaultId("vault-A");
+
+		await (engine as any).invalidateIfVaultChanged();
+
+		expect(resetOutbox).not.toHaveBeenCalled();
+	});
+
 	test("same vault: map untouched", async () => {
 		const engine = createEngine("vault-A");
 		const map = new NoteIdMap();
