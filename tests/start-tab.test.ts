@@ -16,13 +16,13 @@ describe("pickInitialTab", () => {
 
 	it("lands configured (URL + API key) users on the cloud tab", () => {
 		expect(pickInitialTab({ apiUrl: "https://app.engram.page", apiKey: "engram_abc" })).toBe(
-			"account",
+			"connection",
 		);
 	});
 
 	it("lands configured (URL + OAuth) users on the cloud tab", () => {
 		expect(pickInitialTab({ apiUrl: "https://app.engram.page", refreshToken: "rt_123" })).toBe(
-			"account",
+			"connection",
 		);
 	});
 });

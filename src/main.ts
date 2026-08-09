@@ -24,6 +24,7 @@ import {
 	seededAccessToken,
 } from "./auth";
 import { migrateCloudApiUrl, withClearedAuth } from "./auth-state";
+import { migrateBackendMode, switchMode } from "./backend-mode";
 import { BaseStore } from "./base-store";
 import { connectRetryDelayMs, makeCrdtCatchupSender, NoteChannel } from "./channel";
 import { liveBindingPlugin, setLiveBindingCoordinator } from "./crdt/live/live-binding";
@@ -72,7 +73,7 @@ import {
 	SyncProgressModal,
 } from "./sync-progress-modal";
 import { ENGRAM_CLOUD_URL, engramWebUrl } from "./tabs/urls";
-import type { QueueEntry, SyncChoice, SyncIssue, SyncPlan } from "./types";
+import type { BackendMode, QueueEntry, SyncChoice, SyncIssue, SyncPlan } from "./types";
 import {
 	DEFAULT_SETTINGS,
 	type EngramSyncSettings,
@@ -1195,6 +1196,12 @@ export default class EngramSyncPlugin extends Plugin {
 			this.settings.apiUrl = migratedUrl;
 			dirty = true;
 		}
+		// Infer backendMode for installs that predate it. Runs AFTER the URL
+		// migration above so a legacy Cloud host is already normalized and gets
+		// classified as cloud, not self-hosted.
+		if (migrateBackendMode(this.settings, ENGRAM_CLOUD_URL)) {
+			dirty = true;
+		}
 		// Generate stable client ID on first load (persisted forever)
 		if (!this.settings.clientId) {
 			this.settings.clientId = await generateClientId(this.app);
@@ -1620,10 +1627,39 @@ export default class EngramSyncPlugin extends Plugin {
 		await this.commitAuthProviderSwap();
 	}
 
+	/** Swap the active backend (Cloud <-> self-hosted). A mode switch is a full
+	 *  identity swap, exactly like an OAuth login or logout, so it follows the
+	 *  same sequence those do rather than a hand-rolled subset:
+	 *
+	 *    1. bumpAuthGeneration FIRST (#283) — a catch-up manifest fetch already in
+	 *       flight against the OLD backend must refuse its destructive
+	 *       delete-reconcile, or notes live in the incoming backend get trashed as
+	 *       "server-deleted" against the outgoing backend's stale snapshot.
+	 *    2. swap the credential set (switchMode stashes outgoing, restores incoming).
+	 *    3. REBUILD the auth provider from the restored credentials. Nulling it
+	 *       without rebuilding leaves an OAuth backend with no credential source at
+	 *       all until Obsidian is reloaded, while the UI still reads "Signed in".
+	 *    4. commitAuthProviderSwap: wire the provider onto the api BEFORE
+	 *       saveSettings rebuilds the note channel, then persist.
+	 *
+	 *  Returns false when already in the target mode. */
+	async switchBackendMode(target: BackendMode): Promise<boolean> {
+		if (!switchMode(this.settings, target, ENGRAM_CLOUD_URL)) return false;
+		this.syncEngine.bumpAuthGeneration();
+		this.noteStream?.disconnect();
+		this.authProvider = this.createAuthProvider();
+		if (!this.authProvider) this.api.setAuthProvider(null);
+		await this.commitAuthProviderSwap();
+		return true;
+	}
+
 	async clearOAuthTokens(): Promise<void> {
 		// #283: same identity-swap guard as saveOAuthTokens — a logout swaps the
 		// provider too, so a straddling manifest fetch must not delete-reconcile.
 		this.syncEngine.bumpAuthGeneration();
+		// A sign-out must not leave the OTHER backend's credentials sitting in
+		// data.json: that file replicates to every machine syncing .obsidian.
+		this.settings.inactiveBackend = undefined;
 		this.settings.refreshToken = undefined;
 		this.settings.userEmail = undefined;
 		this.settings.authMethod = null;

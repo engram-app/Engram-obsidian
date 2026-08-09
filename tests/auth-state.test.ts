@@ -2,10 +2,10 @@ import { describe, expect, mock, test } from "bun:test";
 import {
 	type ApiUrlSwitchTarget,
 	applyApiUrlChange,
-	cloudTabAction,
 	completeOrigin,
 	interpretHealthProbe,
 	isBackendChange,
+	isSaveableUrl,
 	migrateCloudApiUrl,
 	withClearedAuth,
 } from "../src/auth-state";
@@ -211,7 +211,7 @@ describe("applyApiUrlChange", () => {
 	test("same origin: updates apiUrl, preserves auth, returns false", async () => {
 		const target = makeTarget({ apiUrl: "https://engram.ras.band" });
 		const save = mock(async () => {});
-		const cleared = await applyApiUrlChange(target, "https://engram.ras.band/api", save);
+		const { cleared } = await applyApiUrlChange(target, "https://engram.ras.band/api", save);
 		expect(cleared).toBe(false);
 		expect(target.settings.apiUrl).toBe("https://engram.ras.band/api");
 		expect(target.settings.apiKey).toBe("engram_secret123");
@@ -226,7 +226,7 @@ describe("applyApiUrlChange", () => {
 	test("identical URL: skips save and stream disconnect (no-op)", async () => {
 		const target = makeTarget({ apiUrl: "https://engram.ras.band" });
 		const save = mock(async () => {});
-		const cleared = await applyApiUrlChange(target, "https://engram.ras.band", save);
+		const { cleared } = await applyApiUrlChange(target, "https://engram.ras.band", save);
 		expect(cleared).toBe(false);
 		expect(target.settings.apiKey).toBe("engram_secret123");
 		expect(target.api.setAuthProvider).not.toHaveBeenCalled();
@@ -237,7 +237,7 @@ describe("applyApiUrlChange", () => {
 	test("different origin: clears auth, disconnects stream, nulls api provider", async () => {
 		const target = makeTarget({ apiUrl: "https://engram.ras.band" });
 		const save = mock(async () => {});
-		const cleared = await applyApiUrlChange(target, "http://engram.ax", save);
+		const { cleared } = await applyApiUrlChange(target, "http://engram.ax", save);
 		expect(cleared).toBe(true);
 		expect(target.settings.apiUrl).toBe("http://engram.ax");
 		expect(target.settings.apiKey).toBe("");
@@ -260,22 +260,62 @@ describe("applyApiUrlChange", () => {
 		expect(target.resetAuthProvider).toHaveBeenCalledTimes(1);
 	});
 
-	test("partial URL (still typing): updates apiUrl, preserves auth, returns false", async () => {
+	// Behaviour CHANGED deliberately. This previously stored the partial value,
+	// leaving apiUrl set to something no downstream consumer could resolve, with
+	// no error surfaced. Save now refuses it and keeps the configured URL.
+	// A single-label host is ACCEPTED on an explicit Save. This is the deliberate
+	// cost of unblocking `http://engram:4000` (docker-compose service names,
+	// Tailscale MagicDNS, Windows host names) and `http://[::1]:4000`: nothing
+	// distinguishes a real single-label host from a half-typed one, and Save is an
+	// explicit click, not a keystroke. The preflight status still reports whether
+	// anything answers. Mid-typing auth-clearing is guarded by completeOrigin,
+	// which stays strict — see "false when new URL is partial (still typing)".
+	test("single-label URL: accepted on explicit Save", async () => {
 		const target = makeTarget({ apiUrl: "https://engram.ras.band" });
 		const save = mock(async () => {});
-		const cleared = await applyApiUrlChange(target, "https://engr", save);
-		expect(cleared).toBe(false);
+		const { rejected } = await applyApiUrlChange(target, "https://engr", save);
+		expect(rejected).toBe(false);
 		expect(target.settings.apiUrl).toBe("https://engr");
-		expect(target.settings.apiKey).toBe("engram_secret123");
-		expect(target.api.setAuthProvider).not.toHaveBeenCalled();
-		expect(target.noteStream?.disconnect).not.toHaveBeenCalled();
+		expect(save).toHaveBeenCalledTimes(1);
+	});
+
+	test("URL with no scheme: rejected, stored URL untouched", async () => {
+		const target = makeTarget({ apiUrl: "https://engram.ras.band" });
+		const save = mock(async () => {});
+		const { rejected } = await applyApiUrlChange(target, "localhost:4000", save);
+		expect(rejected).toBe(true);
+		expect(target.settings.apiUrl).toBe("https://engram.ras.band");
+		expect(save).not.toHaveBeenCalled();
+	});
+
+	test("empty URL: rejected, stored URL untouched", async () => {
+		const target = makeTarget({ apiUrl: "https://engram.ras.band" });
+		const save = mock(async () => {});
+		const { rejected } = await applyApiUrlChange(target, "", save);
+		expect(rejected).toBe(true);
+		expect(target.settings.apiUrl).toBe("https://engram.ras.band");
+		expect(save).not.toHaveBeenCalled();
+	});
+
+	test("complete loopback URL: accepted and clears auth", async () => {
+		const target = makeTarget({ apiUrl: "https://engram.ras.band" });
+		const save = mock(async () => {});
+		const { cleared, rejected } = await applyApiUrlChange(
+			target,
+			"http://127.0.0.1:4000",
+			save,
+		);
+		expect(rejected).toBe(false);
+		expect(cleared).toBe(true);
+		expect(target.settings.apiUrl).toBe("http://127.0.0.1:4000");
+		expect(save).toHaveBeenCalledTimes(1);
 	});
 
 	test("noteStream null: does not throw", async () => {
 		const target = makeTarget({ apiUrl: "https://engram.ras.band" });
 		target.noteStream = null;
 		const save = mock(async () => {});
-		const cleared = await applyApiUrlChange(target, "http://engram.ax", save);
+		const { cleared } = await applyApiUrlChange(target, "http://engram.ax", save);
 		expect(cleared).toBe(true);
 		expect(target.api.setAuthProvider).toHaveBeenCalledWith(null);
 	});
@@ -286,59 +326,6 @@ describe("applyApiUrlChange", () => {
 		const save = mock(async () => {});
 		await applyApiUrlChange(target, "http://engram.ax", save);
 		expect(target.settings).toBe(settingsRef);
-	});
-});
-
-describe("cloudTabAction", () => {
-	const CLOUD = "https://app.engram.page";
-
-	test("already on cloud: render normally — never switch", () => {
-		expect(cloudTabAction(fullSettings({ apiUrl: CLOUD }), CLOUD)).toBe("render");
-	});
-
-	test("self-hosted with apiKey: require explicit click (no auto-wipe)", () => {
-		const settings = fullSettings({
-			apiUrl: "http://localhost:8100",
-			apiKey: "engram_key",
-			refreshToken: undefined,
-		});
-		expect(cloudTabAction(settings, CLOUD)).toBe("prompt-switch");
-	});
-
-	test("self-hosted with refreshToken: require explicit click", () => {
-		const settings = fullSettings({
-			apiUrl: "http://localhost:8100",
-			apiKey: "",
-			refreshToken: "rt_abc",
-		});
-		expect(cloudTabAction(settings, CLOUD)).toBe("prompt-switch");
-	});
-
-	test("self-hosted with no creds: prompt, never silently overwrite the typed URL", () => {
-		const settings = fullSettings({
-			apiUrl: "http://localhost:8100",
-			apiKey: "",
-			refreshToken: undefined,
-		});
-		// A configured self-host URL (even before credentials exist) is real
-		// user input — merely rendering the Cloud tab must not clobber it with
-		// the cloud URL. Prompt for an explicit switch instead.
-		expect(cloudTabAction(settings, CLOUD)).toBe("prompt-switch");
-	});
-
-	test("fresh install (no apiUrl) with no creds: auto-switch to cloud", () => {
-		const settings = fullSettings({
-			apiUrl: "",
-			apiKey: "",
-			refreshToken: undefined,
-		});
-		expect(cloudTabAction(settings, CLOUD)).toBe("auto-switch");
-	});
-
-	test("self-hosted same origin as cloud (path differs only): treat as cloud", () => {
-		// applyApiUrlChange would not wipe in this case, so don't prompt either.
-		const settings = fullSettings({ apiUrl: "https://app.engram.page/api" });
-		expect(cloudTabAction(settings, CLOUD)).toBe("render");
 	});
 });
 
@@ -375,5 +362,38 @@ describe("migrateCloudApiUrl", () => {
 
 	test("returns null for an unparseable mid-typing URL", () => {
 		expect(migrateCloudApiUrl("https://app", ENGRAM_CLOUD_URL)).toBeNull();
+	});
+});
+
+describe("isSaveableUrl", () => {
+	test("accepts single-label hosts (docker-compose, Tailscale MagicDNS)", () => {
+		expect(isSaveableUrl("http://engram:4000")).toBe(true);
+	});
+
+	test("accepts IPv6 literals", () => {
+		expect(isSaveableUrl("http://[::1]:4000")).toBe(true);
+	});
+
+	test("accepts the ordinary cases", () => {
+		expect(isSaveableUrl("http://127.0.0.1:4000")).toBe(true);
+		expect(isSaveableUrl("https://engram.example.com")).toBe(true);
+		expect(isSaveableUrl("http://localhost:8000")).toBe(true);
+	});
+
+	test("rejects empty, scheme-less, and non-HTTP", () => {
+		expect(isSaveableUrl("")).toBe(false);
+		expect(isSaveableUrl("localhost:4000")).toBe(false);
+		expect(isSaveableUrl("not a url")).toBe(false);
+		expect(isSaveableUrl("ftp://engram.example.com")).toBe(false);
+	});
+});
+
+describe("applyApiUrlChange accepts hosts completeOrigin rejects", () => {
+	test("a single-label self-host URL saves (regression: Save used to reject it)", async () => {
+		const target = makeTarget({ apiUrl: "https://engram.ras.band" });
+		const save = mock(async () => {});
+		const { rejected } = await applyApiUrlChange(target, "http://engram:4000", save);
+		expect(rejected).toBe(false);
+		expect(target.settings.apiUrl).toBe("http://engram:4000");
 	});
 });

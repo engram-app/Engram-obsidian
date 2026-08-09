@@ -333,7 +333,7 @@
 	font-family: var(--font-monospace);
 }
 
-/* Prominent CTA box — shared by Self-hosted Setup and Cloud "New to Engram?" */
+/* Prominent CTA box — the self-hosted "Run your own Engram server" block. */
 .engram-setup-cta {
 	padding: 16px;
 	background: var(--background-secondary);
@@ -354,16 +354,12 @@
 	margin-top: 4px;
 }
 
+/* Drops to its own line so the long GitHub URL never wraps mid-string. */
 .engram-setup-cta .setting-item-description a {
-	font-weight: 600;
-	color: var(--text-accent);
-}
-
-/* Self-hosted "Get it here →" repo link drops to its own line so the long
-   GitHub URL never wraps mid-string. Scoped so the inline cloud link is unaffected. */
-.engram-server-cta-desc a {
 	display: block;
 	margin-top: 4px;
+	font-weight: 600;
+	color: var(--text-accent);
 }
 
 /* Give the Engram URL field room — let the control fill the row and the input
@@ -401,50 +397,6 @@
 
 .engram-url-preflight.is-unreachable {
 	color: var(--text-error);
-}
-
-.engram-auth-divider {
-	display: flex;
-	align-items: center;
-	text-align: center;
-	color: var(--text-normal);
-	font-size: 0.95em;
-	font-weight: 600;
-	letter-spacing: 0.15em;
-	text-transform: uppercase;
-	margin: 1.5em 0;
-}
-
-.engram-auth-divider::before,
-.engram-auth-divider::after {
-	content: "";
-	flex: 1;
-	border-bottom: 2px solid var(--background-modifier-border-hover);
-}
-
-.engram-auth-divider::before {
-	margin-right: 1em;
-}
-
-.engram-auth-divider::after {
-	margin-left: 1em;
-}
-
-.engram-mode-lock-banner {
-	background: var(--background-secondary);
-	border: 1px solid var(--background-modifier-border);
-	border-radius: 6px;
-	padding: 1em 1.25em;
-	margin: 0.5em 0 1em;
-}
-
-.engram-mode-lock-banner p {
-	margin: 0 0 0.5em;
-}
-
-.engram-mode-lock-banner p:last-child {
-	margin-bottom: 0;
-	color: var(--text-muted);
 }
 
 .engram-vault-current-name {
@@ -841,7 +793,9 @@ body.is-mobile .engram-support-buttons > a {
 	font-weight: 600;
 	font-size: 0.95em;
 	box-shadow: 0 2px 6px rgba(255, 94, 91, 0.25);
-	transition: transform 0.15s ease, box-shadow 0.15s ease;
+	transition:
+		transform 0.15s ease,
+		box-shadow 0.15s ease;
 }
 
 .engram-support-buttons a.engram-kofi-button:hover {
@@ -873,7 +827,9 @@ body.is-mobile .engram-support-buttons > a {
 	font-weight: 600;
 	font-size: 0.95em;
 	box-shadow: 0 2px 6px rgba(234, 74, 170, 0.25);
-	transition: transform 0.15s ease, box-shadow 0.15s ease;
+	transition:
+		transform 0.15s ease,
+		box-shadow 0.15s ease;
 }
 
 .engram-support-buttons a.engram-sponsor-button:hover {
@@ -1771,4 +1727,8 @@ body.is-mobile .engram-support-buttons > a {
 .engram-about-waitlist-success {
 	color: var(--text-success);
 	font-weight: var(--font-semibold);
+}
+
+.engram-connection-warning .setting-item-name {
+	color: var(--text-warning);
 }

@@ -1,5 +1,5 @@
 import { LEGACY_CLOUD_HOSTS } from "./tabs/urls";
-import type { EngramSyncSettings } from "./types";
+import type { BackendScopedField, EngramSyncSettings } from "./types";
 
 /** If `apiUrl` points at a legacy Cloud host (one that used to serve the REST
  *  API but no longer does — e.g. `app.engram.page`, now the SPA-only Cloudflare
@@ -33,6 +33,29 @@ export function completeOrigin(url: string): string | null {
 	const hasTld = /\.[a-z]{2,}$/i.test(host);
 	if (!isLocalhost && !isIPv4 && !hasTld) return null;
 	return `${parsed.protocol}//${parsed.host}`.toLowerCase();
+}
+
+/** Is this a URL the user could sensibly be SAVING as their server address?
+ *
+ *  Deliberately more permissive than `completeOrigin`. That one answers a
+ *  different question ("has the user finished typing?") and must stay strict, or
+ *  `isBackendChange` clears auth mid-keystroke. This one gates an explicit Save
+ *  click, where the only real question is whether the address is usable at all.
+ *
+ *  So it accepts what completeOrigin rejects but a self-hoster legitimately runs:
+ *  single-label hosts (`http://engram:4000` — docker-compose service names,
+ *  Tailscale MagicDNS, Windows host names) and IPv6 literals (`http://[::1]:4000`).
+ *  It still rejects an empty string, an unparseable value, and non-HTTP schemes. */
+export function isSaveableUrl(url: string): boolean {
+	if (!url) return false;
+	let parsed: URL;
+	try {
+		parsed = new URL(url);
+	} catch {
+		return false;
+	}
+	if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+	return parsed.hostname.length > 0;
 }
 
 /** Returns true only when both URLs parse to a *complete-looking* origin AND
@@ -70,24 +93,33 @@ export function interpretHealthProbe(status: number, body: unknown): PreflightRe
 	return { kind: "reachable" };
 }
 
+/** Credential fields cleared on a backend change. A strict subset of
+ *  BACKEND_SCOPED_FIELDS: apiUrl and remoteVaultName are backend-scoped but are
+ *  not credentials, so a mode switch stashes them rather than wiping them.
+ *
+ *  The `satisfies` clause is the compile-time half of the drift guard. A typo,
+ *  or a field that is not backend-scoped, fails tsc. The runtime half lives in
+ *  tests/backend-mode.test.ts and catches the opposite direction: a field this
+ *  function clears that BACKEND_SCOPED_FIELDS forgot to stash. */
+const CLEARED_AUTH_VALUES = {
+	apiKey: "",
+	refreshToken: undefined,
+	userEmail: undefined,
+	authMethod: null,
+	vaultId: null,
+	// The cached access token (plus its expiry + vault binding) is signed by
+	// the minting backend and only valid there. Leaving it set lets a backend
+	// switch replay a stale token against the new origin → signature_error.
+	accessToken: undefined,
+	accessTokenExpiresAt: undefined,
+	accessTokenVaultId: undefined,
+} as const satisfies Partial<Record<BackendScopedField, unknown>>;
+
 /** Returns a copy of settings with all backend-scoped auth state cleared.
  *  Preserves clientId (stable per-install), apiUrl (caller sets it separately),
  *  and unrelated user prefs (ignorePatterns, debounceMs, etc.). */
 export function withClearedAuth(settings: EngramSyncSettings): EngramSyncSettings {
-	return {
-		...settings,
-		apiKey: "",
-		refreshToken: undefined,
-		userEmail: undefined,
-		authMethod: null,
-		vaultId: null,
-		// The cached access token (plus its expiry + vault binding) is signed by
-		// the minting backend and only valid there. Leaving it set lets a backend
-		// switch replay a stale token against the new origin → signature_error.
-		accessToken: undefined,
-		accessTokenExpiresAt: undefined,
-		accessTokenVaultId: undefined,
-	};
+	return { ...settings, ...CLEARED_AUTH_VALUES };
 }
 
 /** Minimal plugin surface needed to apply an apiUrl change. Defined here so
@@ -103,37 +135,6 @@ export interface ApiUrlSwitchTarget {
 	 *  would replay it against the new origin until reload. Resetting it makes a
 	 *  backend switch behave like a fresh load. */
 	resetAuthProvider: () => void;
-}
-
-/** What renderAccountTab should do given the current settings and cloud URL.
- *
- *  - ``render``: already on cloud (or path-only difference) — just render the tab.
- *  - ``prompt-switch``: a different backend is configured (a self-host URL,
- *    with or without credentials). Render an explicit "Switch to Engram cloud"
- *    button; do NOT auto-wipe. A typed self-host URL is real user input even
- *    before credentials exist, so rendering the Cloud tab must never clobber it.
- *  - ``auto-switch``: only a truly fresh install (apiUrl never set) — no URL and
- *    no creds to lose, so silently adopt the cloud URL.
- *
- *  Why this exists: ``renderAccountTab`` used to auto-call ``applyApiUrlChange``
- *  on every tab activation. For self-hosted users with valid credentials,
- *  simply navigating to the "Cloud" tab silently nuked their apiKey/refreshToken/
- *  vaultId via ``withClearedAuth`` — destructive UX, surfaced by the e2e
- *  apiKey-wipe diagnostic on PR #162 (test_65 → test_69 cascade). */
-export function cloudTabAction(
-	settings: EngramSyncSettings,
-	cloudUrl: string,
-): "render" | "prompt-switch" | "auto-switch" {
-	// Fresh install (apiUrl never set) — adopt cloud silently. No creds to
-	// preserve and no existing backend to migrate from.
-	if (!settings.apiUrl) return "auto-switch";
-	// Same-origin (even with /api path difference) — no apply needed.
-	if (!isBackendChange(settings.apiUrl, cloudUrl)) return "render";
-	// A different backend is configured (e.g. a self-host URL entered before
-	// credentials). Never silently overwrite it — prompt for an explicit switch,
-	// whether or not creds are stored. Auto-switch is reserved for the empty-URL
-	// fresh install above; anything else is real user input to preserve.
-	return "prompt-switch";
 }
 
 /** The ApiUrlSwitchTarget for the live plugin instance. One construction site
@@ -154,19 +155,33 @@ export function pluginSwitchTarget(plugin: {
 	};
 }
 
+/** Outcome of a URL change. `rejected` means nothing was written: the value did
+ *  not parse as a complete origin. Such a value was previously stored silently,
+ *  leaving apiUrl set to something no downstream consumer could resolve, with no
+ *  error surfaced to the user. */
+export interface ApiUrlChangeResult {
+	cleared: boolean;
+	rejected: boolean;
+}
+
 /** Update `target.settings.apiUrl` and, if the new URL points at a different
  *  backend origin, wipe backend-scoped auth state, null out the API auth
  *  provider, reset the live in-memory auth provider (so a stale old-backend
  *  access token can't be replayed against the new origin), and disconnect the
  *  live note stream — then persist via `save`.
- *  Returns true when auth was cleared. Mutates `target.settings` in place so
- *  external references (SyncEngine, etc.) keep observing the same object. */
+ *  Mutates `target.settings` in place so external references (SyncEngine, etc.)
+ *  keep observing the same object. */
 export async function applyApiUrlChange(
 	target: ApiUrlSwitchTarget,
 	newUrl: string,
 	save: () => Promise<void>,
-): Promise<boolean> {
-	if (target.settings.apiUrl === newUrl) return false;
+): Promise<ApiUrlChangeResult> {
+	if (target.settings.apiUrl === newUrl) return { cleared: false, rejected: false };
+	// Refuse anything unusable as a server address. Storing it would leave the
+	// plugin pointed at an address it can never reach, with nothing shown to the
+	// user. Gated on isSaveableUrl, NOT completeOrigin: the latter is the
+	// mid-typing heuristic and rejects legitimate single-label and IPv6 hosts.
+	if (!isSaveableUrl(newUrl)) return { cleared: false, rejected: true };
 	const cleared = isBackendChange(target.settings.apiUrl, newUrl);
 	if (cleared) {
 		// Mutate in place — withClearedAuth is the single source of truth for
@@ -178,5 +193,5 @@ export async function applyApiUrlChange(
 	}
 	target.settings.apiUrl = newUrl;
 	await save();
-	return cleared;
+	return { cleared, rejected: false };
 }

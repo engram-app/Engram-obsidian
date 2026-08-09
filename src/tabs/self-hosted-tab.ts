@@ -6,41 +6,17 @@ import {
 	type PreflightResult,
 	pluginSwitchTarget,
 } from "../auth-state";
+import { modeForUrl } from "../backend-mode";
 import { errMsg } from "../error-util";
 import type { TabContext } from "./types";
-import { ENGRAM_CLOUD_URL } from "./urls";
+import { ENGRAM_CLOUD_URL, ENGRAM_MARKETING_URL } from "./urls";
 
 const PREFLIGHT_DEBOUNCE_MS = 600;
 
-export function renderSelfHostedTab(ctx: TabContext): void {
-	const { containerEl, plugin } = ctx;
-
-	// Lock the tab when the user is signed into Engram Cloud — both modes share
-	// the same auth fields, so showing the auth UI here would let them sign out
-	// of Cloud from the wrong tab. Sign-out has to happen via the Cloud tab.
-	const isOnCloud = plugin.settings.apiUrl === ENGRAM_CLOUD_URL;
-	const hasAuth = !!plugin.settings.apiKey || !!plugin.settings.refreshToken;
-	if (isOnCloud && hasAuth) {
-		renderCloudLockBanner(containerEl);
-		return;
-	}
-
-	const repoSetting = new Setting(containerEl)
-		.setName("Run your own Engram server")
-		.setDesc("Engram is the backend that powers sync and semantic search.");
-	repoSetting.settingEl.addClass("engram-setup-cta");
-	repoSetting.descEl.addClass("engram-server-cta-desc");
-	repoSetting.descEl.createEl("a", {
-		text: "github.com/engram-app/engram",
-		href: "https://github.com/engram-app/engram",
-	});
-
-	renderEngramUrlSetting(ctx);
-
-	renderAuthSection(ctx);
-	renderVaultSection(ctx);
-	renderSupportSection(ctx);
-}
+/** Engram API keys carry this prefix. Kept as a constant so Save can VALIDATE
+ *  the format instead of describing it: the obsidianmd sentence-case lint
+ *  rewrites a lowercase "engram_" in prose to "Engram_", which is wrong. */
+const API_KEY_PREFIX = "engram_";
 
 /** Render the "Engram URL" field with a debounced background preflight that
  *  confirms the URL points at a real Engram server, committed via an explicit
@@ -123,11 +99,28 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
 				.setButtonText("Save")
 				.setCta()
 				.onClick(async () => {
-					const cleared = await applyApiUrlChange(
+					const { cleared, rejected } = await applyApiUrlChange(
 						pluginSwitchTarget(plugin),
 						pendingUrl.trim(),
 						() => plugin.saveSettings(),
 					);
+					if (rejected) {
+						// Deliberately no redisplay: the typed value stays in the box
+						// so the user can correct it instead of retyping from scratch.
+						new Notice(
+							"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000",
+						);
+						return;
+					}
+					// Keep the explicit mode in step with the URL. Pasting the Cloud
+					// address into this box IS a switch to Cloud; leaving backendMode
+					// on "selfhost" would make the next dropdown switch stash the
+					// Cloud config into the self-host slot.
+					plugin.settings.backendMode = modeForUrl(
+						plugin.settings.apiUrl,
+						ENGRAM_CLOUD_URL,
+					);
+					await plugin.saveSettings();
 					if (cleared) {
 						new Notice("Engram backend changed — sign in again to continue.");
 					}
@@ -139,32 +132,34 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
 	if (completeOrigin(plugin.settings.apiUrl)) runPreflight(plugin.settings.apiUrl);
 }
 
-/** Render the "you're on Cloud" banner that replaces the entire Self-hosted
- *  body when the active backend is Cloud. Keeps the user from bypassing the
- *  Cloud tab to manage Cloud auth. */
-function renderCloudLockBanner(containerEl: HTMLElement): void {
-	const banner = containerEl.createDiv({ cls: "engram-mode-lock-banner" });
-	banner.createEl("p", { text: "You're connected to Engram cloud." });
-	banner.createEl("p", {
-		text: "To set up a self-hosted Engram server, sign out from the cloud tab first. That will release the connection so you can point the plugin at your own server.",
-	});
-}
-
 /** Render Authentication section — OAuth status / API key / sign-in CTAs.
  *
  *  States:
- *    - Unauth: both Sign-in row and API-key row visible, separated by an "or"
- *      divider. API-key field uses a buffered Save button (no per-keystroke
- *      writes).
+ *    - Unauth: a Sign-in row, then an "API key" heading and its Token row.
  *    - OAuth locked: only the signed-in row + Sign out.
- *    - API key locked: only the "Using API key" row + Clear / Switch to sign in. */
+ *    - API key locked: only the "Using API key" row + Clear / Switch to sign in.
+ *
+ *  Cloud mode hangs the engram.page link off the Authentication HEADING, not
+ *  the sign-in row: the two locked states return early, so a link on the
+ *  sign-in row is invisible to every signed-in user — which is precisely who
+ *  needs the account and billing pages. */
 export function renderAuthSection(ctx: TabContext): void {
 	const { containerEl, plugin, redisplay, startDeviceFlow } = ctx;
 
 	const isOAuth = !!plugin.settings.refreshToken;
 	const hasApiKey = !!plugin.settings.apiKey;
 
-	new Setting(containerEl).setName("Authentication").setHeading();
+	const heading = new Setting(containerEl).setName("Authentication").setHeading();
+	if ((plugin.settings.backendMode ?? "selfhost") === "cloud") {
+		// Descriptive link text, not "Learn more": the destination should be
+		// readable from the link alone (screen-reader link lists give no
+		// surrounding context).
+		heading.descEl.createEl("a", {
+			text: "engram.page",
+			href: ENGRAM_MARKETING_URL,
+			attr: { target: "_blank", rel: "noopener" },
+		});
+	}
 
 	if (isOAuth) {
 		new Setting(containerEl)
@@ -208,10 +203,16 @@ export function renderAuthSection(ctx: TabContext): void {
 		return;
 	}
 
-	// Unauth — show both methods side-by-side via stacked rows + divider.
+	// One row covers both new and returning users. The device-flow page sits
+	// behind the web app's AuthGuard, so a signed-out browser lands on the
+	// sign-in screen, which offers account creation. There is no separate
+	// "make an account first" step, and advertising one implied a prerequisite
+	// that does not exist.
 	new Setting(containerEl)
 		.setName("Sign in with Engram")
-		.setDesc("Links your Obsidian vault to your Engram account. Opens a browser window.")
+		.setDesc(
+			"Opens your browser to sign in, or create an account if you don't have one yet, then links this vault.",
+		)
 		.addButton((btn) =>
 			btn
 				.setButtonText("Sign in")
@@ -225,12 +226,23 @@ export function renderAuthSection(ctx: TabContext): void {
 				),
 		);
 
-	containerEl.createDiv({ cls: "engram-auth-divider", text: "or" });
+	// setHeading(), matching every other section break in the settings UI (Sync
+	// behavior, Diagnostics, Feature flags). A heading draws its own divider, so
+	// this replaced a hand-rolled one that stacked a second line against the
+	// following row's border-top.
+	new Setting(containerEl)
+		.setName("API key")
+		.setDesc("Or authenticate with a token instead of signing in.")
+		.setHeading();
 
 	let pendingKey = "";
 	const apiKeySetting = new Setting(containerEl)
-		.setName("API key")
-		.setDesc("Bearer token from Engram (starts with Engram_).")
+		.setName("Token")
+		// The key prefix is deliberately NOT named here. The obsidianmd
+		// sentence-case rule treats "engram" as a proper noun and rewrites it to
+		// "Engram_", which is wrong: real keys are lowercase. The input's
+		// placeholder shows the true format instead.
+		.setDesc("Bearer token from your Engram account.")
 		.addText((text) => {
 			text.setPlaceholder("engram_abc123...").onChange((value) => {
 				pendingKey = value;
@@ -246,6 +258,17 @@ export function renderAuthSection(ctx: TabContext): void {
 					const trimmed = pendingKey.trim();
 					if (!trimmed) {
 						new Notice("Enter an API key first");
+						return;
+					}
+					// Check the prefix rather than describing it in prose. The
+					// placeholder that showed the format vanishes the moment the
+					// field has content, and this field is type=password, so a
+					// pasted JWT or truncated key otherwise saved cleanly and only
+					// surfaced later as opaque 401s.
+					if (!trimmed.startsWith(API_KEY_PREFIX)) {
+						new Notice(
+							`That does not look like an Engram API key (expected ${API_KEY_PREFIX}…).`,
+						);
 						return;
 					}
 					plugin.settings.apiKey = trimmed;

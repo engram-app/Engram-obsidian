@@ -80,13 +80,13 @@ export function renderAboutTab(ctx: TabContext): void {
 	new Setting(containerEl)
 		.setName("2. Connect your vault to Engram")
 		.setDesc(
-			"Sign in (or enter your server URL and key) on the cloud tab, then run your first sync.",
+			"Sign in (or enter your server URL and key) on the connection tab, then run your first sync.",
 		)
 		.addButton((btn) =>
 			btn
-				.setButtonText("Open cloud tab")
+				.setButtonText("Open connection tab")
 				.setCta()
-				.onClick(() => switchToTab("account")),
+				.onClick(() => switchToTab("connection")),
 		);
 
 	const ai = new Setting(containerEl).setName("3. Connect your AI");
