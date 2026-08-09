@@ -7,6 +7,14 @@
 //
 // Our only additions on top of the template: the `obsidianmd/ui/sentence-case`
 // brand allow-list for src files.
+//
+// ponytail: this file is what pins us below TypeScript 7. typescript-eslint
+// hard-throws on TS >= 7 ("does not support TS 7.0") before any config loads —
+// no flag, no env var — because TS 7 is the Go rewrite and the in-process `ts.*`
+// API it reads types from no longer exists. Every version refuses it, canary
+// included. Unblocks when typescript-eslint/typescript-eslint#10940 ships;
+// likely needs `typescript` + `typescript-eslint` bumped in one PR (our ^8
+// caret won't reach a v9). Context and Dependabot history: #353.
 import { globalIgnores } from "eslint/config";
 import obsidianmd from "eslint-plugin-obsidianmd";
 import globals from "globals";
