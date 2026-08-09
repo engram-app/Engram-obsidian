@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.21.0](https://github.com/engram-app/Engram-obsidian/compare/1.20.1...1.21.0) (2026-08-09)
+
+
+### Features
+
+* **ci:** announce releases to the announcements channel, with a cap ([#398](https://github.com/engram-app/Engram-obsidian/issues/398)) ([e52a3d3](https://github.com/engram-app/Engram-obsidian/commit/e52a3d3d879e49686ee37b73bff340df539d4854))
+* **settings:** merge Cloud and Self-hosted into one Connection tab ([#408](https://github.com/engram-app/Engram-obsidian/issues/408)) ([e2d70cc](https://github.com/engram-app/Engram-obsidian/commit/e2d70cc48223c863dac854fd6746c8ae3db21d5e))
+
+
+### Bug Fixes
+
+* **ci:** reconcile orphaned preview releases instead of trusting one event ([#397](https://github.com/engram-app/Engram-obsidian/issues/397)) ([289d234](https://github.com/engram-app/Engram-obsidian/commit/289d234dc1083ec120f9ab786c67835d7ec88188))
+* **ci:** reconcile preview TAGS that outlived their release ([#400](https://github.com/engram-app/Engram-obsidian/issues/400)) ([d9c6b37](https://github.com/engram-app/Engram-obsidian/commit/d9c6b375d3fbc1448b7e7d51487df17b54418cf1))
+* **deps:** raise the js-yaml override past GHSA-5p4m-2wfm-xmqj ([#402](https://github.com/engram-app/Engram-obsidian/issues/402)) ([519a202](https://github.com/engram-app/Engram-obsidian/commit/519a2027dcdfe9b83a1894afaa724ffca711f000))
+* **sync:** drop the outbound CRDT work on a vault change ([#409](https://github.com/engram-app/Engram-obsidian/issues/409)) ([e67f199](https://github.com/engram-app/Engram-obsidian/commit/e67f1998e820aacf824c7b75f580b688ab5f2b61))
+* **sync:** stamp outbound CRDT ops with their vault instead of wiping the outbox ([#410](https://github.com/engram-app/Engram-obsidian/issues/410)) ([81a32ba](https://github.com/engram-app/Engram-obsidian/commit/81a32ba33692c613a7f73e882baa9605c4300d6d))
+
 ## [1.20.1](https://github.com/engram-app/Engram-obsidian/compare/1.20.0...1.20.1) (2026-08-06)
 
 
