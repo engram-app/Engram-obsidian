@@ -382,58 +382,63 @@ describe("strict TTL", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 8. clear(): vault change drops the whole outbox
+// 8. vault-stamped ops: a foreign vault's op is dropped at send time
 // ---------------------------------------------------------------------------
 
-describe("clear on vault change", () => {
-	test("drops every pending op so none is delivered on the new vault's topic", async () => {
-		// A queued op carries a bare docId and NO vault, so after a vault switch it
-		// would be sent blind on the new vault's channel under an id the PREVIOUS
-		// vault owns. That is the client half of the cross-vault id-collision class
-		// (engram #1318): the server sees an id it cannot place in this vault.
+describe("vault-stamped ops", () => {
+	test("an op for another vault is dropped before send, with an onDrop trail", async () => {
+		// A CrdtOp used to carry no vault, so anything still queued at switch time
+		// was delivered blind on the NEW vault's topic under the OLD vault's ids.
+		// Checked at SEND rather than at switch time on purpose: the topic rejoin
+		// flushes the queue before any switch-time hook runs.
 		const clock = fakeClock();
 		const { fn: send, calls } = scriptedSend();
-		const q = makeQueue({ send, now: clock.now });
+		const drops: [CrdtOp, DropReason][] = [];
+		const q = new CrdtOpQueue({
+			send,
+			now: clock.now,
+			onDrop: (op, reason) => drops.push([op, reason]),
+			currentVaultId: () => "vault-B",
+		});
 
-		q.enqueue(makeOp("doc-a", "create"));
-		q.enqueue(makeOp("doc-b", "delete"));
-
-		q.clear();
+		q.enqueue(makeOp("doc-a", "create", { vaultId: "vault-A" }));
 		await q.onJoined();
 
 		expect(calls).toHaveLength(0);
+		expect(drops.map(([op, reason]) => [op.docId, reason])).toEqual([
+			["doc-a", "vault-changed"],
+		]);
 	});
 
-	test("persists the emptied queue, so a reload cannot resurrect the old vault's ops", async () => {
-		// Without the persist the ops survive on disk and come back through load()
-		// on the next start, re-arming the exact collision the clear prevents.
+	test("an op for the CURRENT vault still sends (deletes must survive a same-vault reset)", async () => {
+		// A delete has no REST fallback: the tombstone lives only here. Dropping
+		// the whole outbox on any vault-state reset resurrected deleted notes.
 		const clock = fakeClock();
-		const { fn: send } = scriptedSend();
-		const persisted: CrdtOp[][] = [];
-		const q = new CrdtOpQueue({ send, now: clock.now, persistDelayMs: 0 });
-		q.setPersist((ops) => {
-			persisted.push(ops);
+		const { fn: send, calls } = scriptedSend();
+		const q = new CrdtOpQueue({
+			send,
+			now: clock.now,
+			currentVaultId: () => "vault-B",
 		});
 
-		q.enqueue(makeOp("doc-a", "create"));
-		q.clear();
+		q.enqueue(makeOp("doc-b", "delete", { vaultId: "vault-B" }));
+		await q.onJoined();
 
-		await new Promise((r) => setTimeout(r, 5));
-		expect(persisted.at(-1)).toEqual([]);
+		expect(calls.map((o) => o.docId)).toEqual(["doc-b"]);
 	});
 
-	test("is a no-op on an already-empty queue (no pointless write)", async () => {
+	test("an op persisted before vault stamping (no vaultId) still sends", async () => {
 		const clock = fakeClock();
-		const { fn: send } = scriptedSend();
-		const persisted: CrdtOp[][] = [];
-		const q = new CrdtOpQueue({ send, now: clock.now, persistDelayMs: 0 });
-		q.setPersist((ops) => {
-			persisted.push(ops);
+		const { fn: send, calls } = scriptedSend();
+		const q = new CrdtOpQueue({
+			send,
+			now: clock.now,
+			currentVaultId: () => "vault-B",
 		});
 
-		q.clear();
+		q.enqueue(makeOp("doc-legacy", "create"));
+		await q.onJoined();
 
-		await new Promise((r) => setTimeout(r, 5));
-		expect(persisted).toHaveLength(0);
+		expect(calls.map((o) => o.docId)).toEqual(["doc-legacy"]);
 	});
 });
