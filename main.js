@@ -16834,6 +16834,18 @@ function optionBreakdown(plan, choice) {
       };
   }
 }
+function simplifiedFirstSync(plan) {
+  let remote = plan.serverNoteCount + plan.serverAttachmentCount, local = plan.localNoteCount + plan.localAttachmentCount;
+  return remote === 0 && local === 0 ? { mode: "fresh" } : remote === 0 ? {
+    mode: "upload",
+    notes: plan.localNoteCount,
+    attachments: plan.localAttachmentCount
+  } : local === 0 ? {
+    mode: "download",
+    notes: plan.serverNoteCount,
+    attachments: plan.serverAttachmentCount
+  } : null;
+}
 
 // src/sync-progress-modal.ts
 function describePlannedWork(choice, plan, firstSync) {
@@ -17880,6 +17892,11 @@ var MERGE_CARD = {
       this.renderPlanLoading(contentEl, context);
       return;
     }
+    let simple = simplifiedFirstSync(this.state.plan);
+    if (simple) {
+      this.renderSimplified(contentEl, simple, context);
+      return;
+    }
     let empty = isPlanEmpty(this.state.plan);
     this.renderHeader(contentEl, empty ? "up-to-date" : context), this.renderComparison(contentEl), this.renderSkippedAttachmentsNote(contentEl);
     let options = contentEl.createDiv({ cls: "engram-sync-preview-options" });
@@ -17889,6 +17906,22 @@ var MERGE_CARD = {
     });
     let mergeRow = options.createDiv({ cls: "engram-sync-preview-options-merge" });
     this.renderOptionCard(mergeRow, MERGE_CARD), this.renderAdvancedOptions(options), this.renderFooter(contentEl, empty ? "Close" : "Cancel", empty);
+  }
+  /** The one-click screen for an empty-side first sync. One primary action
+   *  (always smart-merge — non-destructive by construction), plus the footer's
+   *  Cancel / Change vault. See simplifiedFirstSync for the decision. */
+  renderSimplified(parent, simple, context) {
+    this.renderHeader(parent, context);
+    let box = parent.createDiv({ cls: "engram-sync-preview-simple" }), counts = (n, a) => `${plural(n, "note")}${a > 0 ? ` and ${plural(a, "attachment")}` : ""}`, body, action;
+    simple.mode === "upload" ? (body = `This vault is empty on the server. Upload your ${counts(simple.notes, simple.attachments)}?`, action = "Upload everything") : simple.mode === "download" ? (body = `This device's vault is empty. Download ${counts(simple.notes, simple.attachments)} from the server?`, action = "Download everything") : (body = "Nothing to sync yet \u2014 this vault is empty on both sides. Start syncing and everything you write appears on your other devices.", action = "Start syncing"), box.createEl("p", { text: body, cls: "engram-sync-preview-simple-body" }), simple.mode !== "fresh" && box.createEl("p", {
+      text: "Nothing will be deleted.",
+      cls: "engram-sync-preview-simple-note"
+    }), box.createEl("button", {
+      text: action,
+      cls: "engram-sync-preview-simple-action mod-cta"
+    }).addEventListener("click", () => {
+      this.state.pickOption("smart-merge"), this.render();
+    }), this.renderFooter(parent, "Cancel", !1);
   }
   /** Instant-open loading state: the modal is on screen while computeSyncPlan
    *  runs. Shows the context header plus a calm progress line (or the load

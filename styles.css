@@ -1732,3 +1732,24 @@ body.is-mobile .engram-support-buttons > a {
 .engram-connection-warning .setting-item-name {
 	color: var(--text-warning);
 }
+
+/* One-click first-sync (empty-side) screen */
+.engram-sync-preview-simple {
+	margin: 16px 0;
+}
+
+.engram-sync-preview-simple-body {
+	font-size: var(--font-ui-medium);
+	margin: 0 0 4px 0;
+}
+
+.engram-sync-preview-simple-note {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	margin: 0 0 12px 0;
+}
+
+.engram-sync-preview-simple-action {
+	width: 100%;
+	padding: 10px;
+}

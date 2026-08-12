@@ -10,7 +10,9 @@ import {
 	isPlanEmpty,
 	type OptionBreakdown,
 	optionBreakdown,
+	plural,
 	pluralWord,
+	simplifiedFirstSync,
 } from "./sync-plan-format";
 import type { SyncChoice, SyncPlan, SyncPreviewContext, VaultInfo } from "./types";
 
@@ -399,6 +401,16 @@ export class SyncPreviewModal extends Modal {
 			return;
 		}
 
+		// One-click first-sync screens: when one side is empty there is exactly
+		// one sane action, so skip the five-option ceremony (delete variants are
+		// a foot-gun on an onboarding screen). Both sides populated → the full
+		// preview below — the only case a human needs to weigh.
+		const simple = simplifiedFirstSync(this.state.plan);
+		if (simple) {
+			this.renderSimplified(contentEl, simple, context);
+			return;
+		}
+
 		const empty = isPlanEmpty(this.state.plan);
 
 		this.renderHeader(contentEl, empty ? "up-to-date" : context);
@@ -424,6 +436,51 @@ export class SyncPreviewModal extends Modal {
 		this.renderAdvancedOptions(options);
 
 		this.renderFooter(contentEl, empty ? "Close" : "Cancel", empty);
+	}
+
+	/** The one-click screen for an empty-side first sync. One primary action
+	 *  (always smart-merge — non-destructive by construction), plus the footer's
+	 *  Cancel / Change vault. See simplifiedFirstSync for the decision. */
+	private renderSimplified(
+		parent: HTMLElement,
+		simple: NonNullable<ReturnType<typeof simplifiedFirstSync>>,
+		context: SyncPreviewContext,
+	): void {
+		this.renderHeader(parent, context);
+		const box = parent.createDiv({ cls: "engram-sync-preview-simple" });
+		const counts = (n: number, a: number) =>
+			`${plural(n, "note")}${a > 0 ? ` and ${plural(a, "attachment")}` : ""}`;
+		let body: string;
+		let action: string;
+		if (simple.mode === "upload") {
+			body = `This vault is empty on the server. Upload your ${counts(simple.notes, simple.attachments)}?`;
+			action = "Upload everything";
+		} else if (simple.mode === "download") {
+			body = `This device's vault is empty. Download ${counts(simple.notes, simple.attachments)} from the server?`;
+			action = "Download everything";
+		} else {
+			body =
+				"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.";
+			action = "Start syncing";
+		}
+		box.createEl("p", { text: body, cls: "engram-sync-preview-simple-body" });
+		if (simple.mode !== "fresh") {
+			box.createEl("p", {
+				text: "Nothing will be deleted.",
+				cls: "engram-sync-preview-simple-note",
+			});
+		}
+		const btn = box.createEl("button", {
+			text: action,
+			cls: "engram-sync-preview-simple-action mod-cta",
+		});
+		btn.addEventListener("click", () => {
+			// Always the non-destructive merge: on an empty remote it uploads
+			// everything, on an empty device it downloads everything.
+			this.state.pickOption("smart-merge");
+			this.render();
+		});
+		this.renderFooter(parent, "Cancel", false);
 	}
 
 	/** Instant-open loading state: the modal is on screen while computeSyncPlan

@@ -186,3 +186,38 @@ export function optionBreakdown(plan: SyncPlan, choice: SyncChoice): OptionBreak
 			};
 	}
 }
+
+/** The one-click first-sync decision. When exactly one side is empty there is
+ *  a single sane action — a non-destructive merge that uploads or downloads
+ *  everything — so the five-option preview is ceremony (and its delete
+ *  variants are a foot-gun on an onboarding screen). Both sides populated →
+ *  null → full preview: that is the only case a human needs to weigh.
+ *
+ *  Safety invariant: every simplified mode maps to smart-merge. If an "empty"
+ *  verdict is ever wrong (partial enumeration), a merge costs nothing — it
+ *  never deletes. The delete variants stay unreachable from these screens. */
+export type SimplifiedFirstSync =
+	| { mode: "upload"; notes: number; attachments: number }
+	| { mode: "download"; notes: number; attachments: number }
+	| { mode: "fresh" };
+
+export function simplifiedFirstSync(plan: SyncPlan): SimplifiedFirstSync | null {
+	const remote = plan.serverNoteCount + plan.serverAttachmentCount;
+	const local = plan.localNoteCount + plan.localAttachmentCount;
+	if (remote === 0 && local === 0) return { mode: "fresh" };
+	if (remote === 0) {
+		return {
+			mode: "upload",
+			notes: plan.localNoteCount,
+			attachments: plan.localAttachmentCount,
+		};
+	}
+	if (local === 0) {
+		return {
+			mode: "download",
+			notes: plan.serverNoteCount,
+			attachments: plan.serverAttachmentCount,
+		};
+	}
+	return null;
+}
