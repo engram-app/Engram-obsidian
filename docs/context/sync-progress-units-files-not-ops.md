@@ -39,3 +39,13 @@ delete history. PR #412 fixed three instances of this class:
   complete`) — a stub missing `files`/`failed` makes `_pullAll` return
   `undefined`/NaN counts.
 - The pinning tests live in `tests/sync-progress-firstsync.test.ts`.
+
+## Update (per-file genesis rewrite, follow-up PR)
+
+`crdt_create_batch` was retired client-side right after PR #412: genesis notes
+now ride the same bounded per-file `pushFile` loop as everything else
+(Relay's BackgroundSync shape: per-file work units, per-file progress events,
+per-file failure isolation, PUSH_BATCH_SIZE concurrent). The server handler
+stays for older plugin versions. The chunk-size/chunk-timeout notes above are
+historical context for why the batch kept failing; the batch no longer exists
+in the plugin.

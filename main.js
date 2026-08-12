@@ -1707,11 +1707,7 @@ function expBackoff(baseMs, attempt, capMs) {
 }
 
 // src/channel.ts
-var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, RESUME_PROBE_MS = 5e3;
-function batchCreateTimeoutMs(count2) {
-  return 1e4 + 400 * count2;
-}
-var RECONNECT_JITTER_DEFAULT_MS = 5e3, RECONNECT_JITTER_MAX_MS = 6e4, RATE_LIMITED_JOIN_FLOOR_MS = 1e4;
+var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, RESUME_PROBE_MS = 5e3, RECONNECT_JITTER_DEFAULT_MS = 5e3, RECONNECT_JITTER_MAX_MS = 6e4, RATE_LIMITED_JOIN_FLOOR_MS = 1e4;
 function connectRetryDelayMs(attempt, baseMs = 2e3) {
   return expBackoff(baseMs, attempt, RECONNECT_JITTER_MAX_MS);
 }
@@ -1970,16 +1966,6 @@ var _NoteChannel = class _NoteChannel {
    *  orphaning edits. */
   async crdtCreate(docId, path) {
     return (await this.sendRequest("crdt_create", { doc_id: docId, path })).doc_id;
-  }
-  /** Batch create: mirrors crdtCreate but takes a list (server caps it at 100
-   *  creates per request; chunking is the caller's concern). The deadline
-   *  scales with the chunk — see batchCreateTimeoutMs. */
-  async crdtCreateBatch(creates) {
-    return await this.sendRequest(
-      "crdt_create_batch",
-      { creates },
-      batchCreateTimeoutMs(creates.length)
-    );
   }
   /** Delete a note over the socket, AWAITING the server ack (idempotent). The
    *  backend replies `{:ok, %{doc_id}}` even when the note is already gone, so a
@@ -14560,10 +14546,6 @@ function toB64(bytes) {
 function fromB64(b64) {
   return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 }
-function encodeUpdateFrame(update) {
-  let encoder = createEncoder();
-  return writeVarUint(encoder, MESSAGE_SYNC), writeUpdate(encoder, update), toB64(toUint8Array(encoder));
-}
 
 // src/crdt/note-provider.ts
 var NoteProvider = class {
@@ -19372,9 +19354,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  falls through to the REST create (still functional in this additive phase,
      *  removed in Plan B2). Unset → genesis stays on the REST-first path. */
     this.crdtCreate = null;
-    /** Socket-native BATCH genesis. Consumer wiring (genesis routing / chunking
-     *  to the server's 100-create cap) is a later task; this is plumbing only. */
-    this.crdtCreateBatch = null;
     /** Direct AWAITED `crdt_delete` (resolves once the server has durably applied
      *  the tombstone). Used by handleRename to ORDER the old-path tombstone before
      *  the new-path `crdt_create` resurrect: the backend relocates a note only via
@@ -19556,8 +19535,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  keys present in the patch are assigned, so each lifecycle stage names
    *  exactly what it wires (or clears, via explicit null). */
   setCrdtPorts(ports) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
-    "manager" in ports && (this.crdt = (_a = ports.manager) != null ? _a : null), "deviceId" in ports && (this.deviceId = (_b = ports.deviceId) != null ? _b : null), "editorDetach" in ports && (this.crdtEditorDetach = (_c = ports.editorDetach) != null ? _c : null), "editorRebind" in ports && (this.crdtEditorRebind = (_d = ports.editorRebind) != null ? _d : null), "boundBufferText" in ports && (this.crdtBoundBufferText = (_e = ports.boundBufferText) != null ? _e : null), "requestSave" in ports && (this.crdtRequestSave = (_f = ports.requestSave) != null ? _f : null), "noteIdMap" in ports && (this.noteIdMap = (_g = ports.noteIdMap) != null ? _g : null), "enrollment" in ports && (this.crdtEnrollment = (_h = ports.enrollment) != null ? _h : null), "create" in ports && (this.crdtCreate = (_i = ports.create) != null ? _i : null), "createBatch" in ports && (this.crdtCreateBatch = (_j = ports.createBatch) != null ? _j : null), "delete" in ports && (this.crdtDelete = (_k = ports.delete) != null ? _k : null), "enqueue" in ports && (this.crdtEnqueue = (_l = ports.enqueue) != null ? _l : null), "resetOutbox" in ports && (this.crdtResetOutbox = (_m = ports.resetOutbox) != null ? _m : null), "live" in ports && (this.crdtLive = (_n = ports.live) != null ? _n : null), "liveBound" in ports && (this.isLiveBound = (_o = ports.liveBound) != null ? _o : (() => !1)), "catchupSince" in ports && (this.crdtCatchupSince = (_p = ports.catchupSince) != null ? _p : null);
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
+    "manager" in ports && (this.crdt = (_a = ports.manager) != null ? _a : null), "deviceId" in ports && (this.deviceId = (_b = ports.deviceId) != null ? _b : null), "editorDetach" in ports && (this.crdtEditorDetach = (_c = ports.editorDetach) != null ? _c : null), "editorRebind" in ports && (this.crdtEditorRebind = (_d = ports.editorRebind) != null ? _d : null), "boundBufferText" in ports && (this.crdtBoundBufferText = (_e = ports.boundBufferText) != null ? _e : null), "requestSave" in ports && (this.crdtRequestSave = (_f = ports.requestSave) != null ? _f : null), "noteIdMap" in ports && (this.noteIdMap = (_g = ports.noteIdMap) != null ? _g : null), "enrollment" in ports && (this.crdtEnrollment = (_h = ports.enrollment) != null ? _h : null), "create" in ports && (this.crdtCreate = (_i = ports.create) != null ? _i : null), "delete" in ports && (this.crdtDelete = (_j = ports.delete) != null ? _j : null), "enqueue" in ports && (this.crdtEnqueue = (_k = ports.enqueue) != null ? _k : null), "resetOutbox" in ports && (this.crdtResetOutbox = (_l = ports.resetOutbox) != null ? _l : null), "live" in ports && (this.crdtLive = (_m = ports.live) != null ? _m : null), "liveBound" in ports && (this.isLiveBound = (_n = ports.liveBound) != null ? _n : (() => !1)), "catchupSince" in ports && (this.crdtCatchupSince = (_o = ports.catchupSince) != null ? _o : null);
   }
   setCrdtManager(mgr) {
     this.setCrdtPorts({ manager: mgr });
@@ -19712,16 +19691,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     noteId && this.confirmedNoteIds.add(noteId);
   }
   /** The bookkeeping every "the server acked our `crdt_create`" path runs once
-   *  the authoritative id is known. THREE callers reach it — pushFile's live
-   *  genesis branch, the durable queued ack (`applyCrdtCreateAck`), and the
-   *  batch path (`recordCrdtGenesisPushed`) — and a step going missing from one
-   *  of them is exactly the drift this exists to end (the queued path once
-   *  leaked the mint-retire the live path did).
+   *  the authoritative id is known. TWO callers reach it — pushFile's live
+   *  genesis branch and the durable queued ack (`applyCrdtCreateAck`) — and a
+   *  step going missing from one of them is exactly the drift this exists to
+   *  end (the queued path once leaked the mint-retire the live path did).
    *
    *  The ADOPT half (transfer a live mint buffer, retire the orphaned mint doc)
    *  stays with each caller: it legitimately differs by path — a live editor
-   *  buffer, a queued disk seed, or nothing at all for a batch note that never
-   *  minted a local doc.
+   *  buffer vs a queued disk seed.
    *
    *  Order is load-bearing:
    *   - `setCrdtHead` BEFORE the flush. The sentinel flips `hasServerNote`,
@@ -19782,9 +19759,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   setCrdtCreate(fn) {
     this.setCrdtPorts({ create: fn });
-  }
-  setCrdtCreateBatch(fn) {
-    this.setCrdtPorts({ createBatch: fn });
   }
   setCrdtDelete(fn) {
     this.setCrdtPorts({ delete: fn });
@@ -21008,8 +20982,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.markWithTtl(this.recentlyDeleted, noteId, RECENT_DELETE_COOLDOWN_MS);
   }
   /** MINT REFUSAL (backend #972, PRs #216/#217) — the single decision both
-   *  mint seams route through: pushFile and pushGenesisBatch's flushChunk
-   *  must honor identical ownership invariants
+   *  every mint seam routes through
    *  (docs/context/crdt-batch-push-duplication.md). A mint means "brand-new,
    *  never-synced local note". A file this engine itself recently flushed to
    *  disk (flushFromCrdt → recentlyFlushed) can never be that — the engine
@@ -22476,164 +22449,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       vaultId: (_a = this.settings.vaultId) != null ? _a : void 0
     });
   }
-  /** Split note files into genesis (never-server-known → crdt_create_batch) and
-   *  server-known (→ the per-file pushFile loop). Genesis is decided by the same
-   *  `hasServerNote` oracle pushFile routes on (crdtHead != null). When the batch
-   *  op is unwired, every note goes to the per-file side — pushFile's own
-   *  crdt_create / REST genesis still creates never-synced notes there. */
-  partitionGenesis(noteFiles) {
-    var _a, _b;
-    if (!this.crdtCreateBatch || !this.crdt) return { genesis: [], known: noteFiles };
-    let genesis = [], known = [];
-    for (let f of noteFiles) {
-      let id2 = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get((0, import_obsidian24.normalizePath)(f.path))) != null ? _b : null;
-      this.hasServerNote(id2) ? known.push(f) : genesis.push(f);
-    }
-    return { genesis, known };
-  }
-  /** Build the base64 `messageSync` frame that carries a brand-new note's
-   *  initial content inline in `crdt_create_batch`. Reuses the manager's exact
-   *  seed encoding (`encodeGenesisUpdate`) + the channel's exact update-frame
-   *  wrap (`encodeUpdateFrame`), so the frame the server applies via
-   *  SharedDoc.send_yjs_message is byte-identical to what a live `crdt_msg`
-   *  would deliver — a divergent encoding would corrupt content on merge. */
-  encodeGenesisFrame(content, kind = "note") {
-    return encodeUpdateFrame(this.crdt.encodeGenesisUpdate(content, kind));
-  }
-  /** Record local state after a genesis note's server row is created (batch
-   *  path). Mirrors pushFile's post-`crdt_create` bookkeeping (sync.ts ~2574):
-   *  adopt the authoritative id, flip the `hasServerNote` oracle via a sentinel
-   *  crdtHead, and stamp the echo baseline from the pushed content so a later
-   *  identical edit is hash-skipped — the guard that prevents a second-lineage
-   *  doubling (#846) since the device never seeds its own real doc from this
-   *  content (it adopts the server lineage on the first handshake). Only ever
-   *  reached for a genuinely history-LESS note: the batch caller routes any note
-   *  that already carries a local CRDT lineage to `pushFile` instead.
-   *
-   *  `flushHeld: false` is the one way this path differs from the other two
-   *  create-ack callers: a batched note never minted a local doc (the content
-   *  shipped inline in the batch frame), so there are no gated updates to
-   *  flush. */
-  async recordCrdtGenesisPushed(file, content, serverId) {
-    await this.adoptCreateAck(serverId, file.path, content, { flushHeld: !1 }), this.issues.clear(file.path);
-  }
-  /** Bulk-create genesis notes (never-server-known) through ONE
-   *  `crdt_create_batch` round-trip, carrying each note's initial content inline
-   *  as a `messageSync` frame. Server-known notes are NOT handled here — the
-   *  caller routes them through the per-file `pushFile` loop.
-   *
-   *  Preserves the batch edge cases pushNotesViaBatch owned:
-   *   - mint-refusal (#217): an engine-flushed, id-relocated path is skipped;
-   *   - id-adoption: the server-echoed winning `doc_id` (a create-race) is adopted;
-   *   - delete-wins: a `recently_deleted` result trashes the local file (converge);
-   *   - oversized: a note whose frame exceeds the payload budget routes to
-   *     pushFile so the server's 413 yields the proper too_large issue;
-   *   - #245 path snapshot: each entry's path is snapshotted for the request
-   *     lifetime (TFile.path is live);
-   *   - chunk ≤100 notes / ~6MB per request (the server caps creates at 100).
-   *
-   *  A live-bound genesis note is NOT batched (it routes to pushFile too): its
-   *  editor may hold keystrokes not yet on disk, and a disk-content frame would
-   *  drop them — pushFile's live-adopt path transfers the in-flight buffer. */
-  async pushGenesisBatch(files, onProgress) {
-    var _a, _b, _c, _d;
-    if (!this.crdtCreateBatch || !this.crdt) return { pushed: 0, failed: 0 };
-    let MAX_CREATES = 25, PAYLOAD_BUDGET = 6e6, pushed = 0, failed = 0, chunk = [], chunkBytes = 0, flush = async () => {
-      var _a2;
-      if (chunk.length === 0) return;
-      let sent = chunk;
-      chunk = [], chunkBytes = 0;
-      for (let e of sent) this.pushing.add(e.pushedPath);
-      let recentlyDeletedPaths = /* @__PURE__ */ new Set();
-      try {
-        let results;
-        try {
-          ({ results } = await this.crdtCreateBatch(
-            sent.map((e) => ({ doc_id: e.noteId, path: e.pushedPath, b64: e.b64 }))
-          ));
-        } catch (err) {
-          let msg = errMsg(err);
-          rlog().error(
-            "push",
-            `crdt_create_batch chunk failed (${sent.length} notes): ${msg}`
-          );
-          for (let e of sent)
-            failed++, this.logEntry("push", e.file.path, "error", msg), this.issues.record({
-              path: e.file.path,
-              kind: "note",
-              category: "other",
-              message: msg,
-              firstFailedAt: Date.now(),
-              lastFailedAt: Date.now(),
-              attempts: 1
-            });
-          onProgress == null || onProgress(pushed, failed);
-          return;
-        }
-        for (let i = 0; i < sent.length; i++) {
-          let e = sent[i], r = results[i];
-          if ((r == null ? void 0 : r.status) === "ok")
-            await this.recordCrdtGenesisPushed(e.file, e.content, r.doc_id), pushed++, this.logEntry("push", e.pushedPath, "ok");
-          else if ((r == null ? void 0 : r.reason) === "recently_deleted")
-            rlog().info(
-              "push",
-              `recently_deleted \u2014 trashing local ${e.file.path} to honor remote delete`
-            ), this.pushing.delete(e.pushedPath), recentlyDeletedPaths.add(e.pushedPath), await this.trashRemotelyDeleted(e.file), this.logEntry("push", e.file.path, "skipped", "recently_deleted");
-          else if ((r == null ? void 0 : r.reason) === "id_conflict" || (r == null ? void 0 : r.reason) === "version_conflict")
-            this.pushing.delete(e.pushedPath), await this.pushFile(e.file, !0) ? pushed++ : failed++;
-          else {
-            failed++;
-            let reason = (_a2 = r == null ? void 0 : r.reason) != null ? _a2 : "create_failed";
-            this.issues.record({
-              path: e.file.path,
-              kind: "note",
-              category: "other",
-              message: reason,
-              firstFailedAt: Date.now(),
-              lastFailedAt: Date.now(),
-              attempts: 1
-            }), this.logEntry("push", e.file.path, "error", reason);
-          }
-        }
-        this.goOnline();
-      } finally {
-        for (let e of sent)
-          this.pushing.delete(e.pushedPath), recentlyDeletedPaths.has(e.pushedPath) || this.markRecentlyPushed(e.pushedPath);
-      }
-      onProgress == null || onProgress(pushed, failed);
-    };
-    for (let file of files) {
-      let np = (0, import_obsidian24.normalizePath)(file.path);
-      if (this.shouldDeferMint(np)) {
-        rlog().info(
-          "push",
-          `Mint refused (engine-flushed, id relocated away): ${file.path}`
-        ), this.logEntry("skip", file.path, "skipped", void 0, "mint-deferred");
-        continue;
-      }
-      if (this.isLiveBound(np)) {
-        await this.pushFile(file, !0) ? pushed++ : failed++;
-        continue;
-      }
-      let existingId = (_a = this.noteIdMap) == null ? void 0 : _a.get(np);
-      if (existingId && typeof ((_b = this.crdt) == null ? void 0 : _b.hasHistory) == "function" && await this.crdt.hasHistory(existingId)) {
-        await this.pushFile(file, !0) ? pushed++ : failed++;
-        continue;
-      }
-      let content = await this.app.vault.read(file);
-      if (exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES)) {
-        await this.pushFile(file, !0) ? pushed++ : failed++;
-        continue;
-      }
-      let b64 = this.encodeGenesisFrame(content, docKindFor(file.path)), size2 = b64.length, pushedPath = file.path, noteId = (_d = (_c = this.noteIdMap) == null ? void 0 : _c.get(np)) != null ? _d : uuid7();
-      if (this.noteIdMap && !this.noteIdMap.get(np) && this.noteIdMap.set(np, noteId), size2 > PAYLOAD_BUDGET) {
-        await this.pushFile(file, !0) ? pushed++ : failed++;
-        continue;
-      }
-      (chunk.length >= MAX_CREATES || chunkBytes + size2 > PAYLOAD_BUDGET) && await flush(), chunk.push({ file, pushedPath, noteId, b64, content }), chunkBytes += size2;
-    }
-    return await flush(), { pushed, failed };
-  }
   /** Record or clear a note's frontmatter parse issue from a backend
    *  parse_status/parse_reason. Called on every push success + feed apply. When
    *  the note parses cleanly we clear ONLY a prior frontmatter issue for the path
@@ -22696,35 +22511,43 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     var _a;
     (_a = this.onSyncProgress) == null || _a.call(this, { phase: "pushing", current, total, failed, currentPath });
   }
-  /** Shared push pipeline: split notes/attachments, bulk-create genesis
-   *  notes over crdt_create_batch, then per-file push in batches of
-   *  PUSH_BATCH_SIZE with progress. The two callers had drifted: the
-   *  incremental copy reported failed=0 to the progress UI even when the
-   *  genesis batch failed files.
+  /** Shared push pipeline: every file — genesis notes, server-known notes,
+   *  attachments — rides ONE bounded per-file loop (Promise.all over
+   *  PUSH_BATCH_SIZE slices). pushFile's socket-native genesis (crdt_create)
+   *  owns brand-new notes; the retired crdt_create_batch RPC was a second,
+   *  lesser copy of that path (Relay-pattern rewrite: per-file work units,
+   *  per-file progress, per-file failure isolation — a failure strands one
+   *  file, not a 25-note chunk).
    *
-   *  mode "force" (pushAll): pushFile(force), per-file failures caught,
-   *  counted and written to the sync log — a full push must survive bad
-   *  files. mode "incremental" (pushModifiedFiles): unforced, no sync-log
-   *  entries, and a per-file throw propagates to the caller's error
-   *  boundary, exactly as before the extraction. */
+   *  mode "force" (pushAll) writes per-file sync-log entries; "incremental"
+   *  (pushModifiedFiles) doesn't. In BOTH modes a per-file throw is counted
+   *  and recorded as an issue, never propagated — one bad file (or one
+   *  crdt_create timeout) must not abort the rest of a first sync. Progress
+   *  is emitted per completed file. */
   async pushPartitioned(toSync, mode) {
-    var _a;
-    let total = toSync.length, noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), { genesis, known } = this.partitionGenesis(noteFiles), genesisOutcome = await this.pushGenesisBatch(genesis, (pushedSoFar, failedSoFar) => {
-      this.emitPushing(pushedSoFar, total, failedSoFar);
-    }), pushed = genesisOutcome.pushed, failed = genesisOutcome.failed, perFile = [...known, ...attachFiles];
-    for (let i = 0; i < perFile.length; i += PUSH_BATCH_SIZE) {
-      let batch = perFile.slice(i, i + PUSH_BATCH_SIZE), results = await Promise.all(
+    let total = toSync.length, pushed = 0, failed = 0;
+    for (let i = 0; i < toSync.length; i += PUSH_BATCH_SIZE) {
+      let batch = toSync.slice(i, i + PUSH_BATCH_SIZE);
+      await Promise.all(
         batch.map(async (f) => {
-          if (mode === "incremental") return this.pushFile(f);
           try {
-            let ok = await this.pushFile(f, !0);
-            return ok ? this.logEntry("push", f.path, "ok") : this.logEntry("skip", f.path, "skipped", void 0, "unchanged"), ok;
+            await this.pushFile(f, mode === "force") ? (pushed++, mode === "force" && this.logEntry("push", f.path, "ok")) : mode === "force" && this.logEntry("skip", f.path, "skipped", void 0, "unchanged");
           } catch (e) {
-            return failed++, this.logEntry("push", f.path, "error", errMsg(e)), !1;
+            failed++;
+            let msg = errMsg(e);
+            this.logEntry("push", f.path, "error", msg), this.issues.record({
+              path: f.path,
+              kind: this.isBinaryFile(f) ? "attachment" : "note",
+              category: "other",
+              message: msg,
+              firstFailedAt: Date.now(),
+              lastFailedAt: Date.now(),
+              attempts: 1
+            });
           }
+          this.emitPushing(pushed, total, failed, f.path);
         })
       );
-      pushed += results.filter(Boolean).length, this.emitPushing(pushed, total, failed, (_a = batch[batch.length - 1]) == null ? void 0 : _a.path);
     }
     return { pushed, failed };
   }
@@ -24341,7 +24164,6 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         parsed && queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
       }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.syncEngine.setCrdtPorts({
         create: (id2, path) => channel.crdtCreate(id2, path),
-        createBatch: (creates) => channel.crdtCreateBatch(creates),
         // Direct AWAITED delete for handleRename's ordered tombstone->
         // resurrect relocation (the durable-queue delete is still wired
         // below for the non-rename / offline paths). Delete (and durable

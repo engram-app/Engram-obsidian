@@ -170,45 +170,17 @@ describe("first-sync progress reporting (op-log replay)", () => {
 		expect(pulled).toBe(2);
 	});
 
-	test("fullSync completion carries genesis-batch push failures", async () => {
+	test("fullSync completion carries genesis push failures", async () => {
 		const { engine, events } = makeEngine([]);
 		const file = new TFile("Notes/new.md", Date.now());
 		(engine as any).app.vault.getFiles = mock().mockReturnValue([file]);
-		engine.setCrdtCreateBatch(async () => ({
-			results: [{ doc_id: "id-new", status: "error" as const, reason: "create_failed" }],
-		}));
+		(engine as any).pushFile = mock().mockRejectedValue(
+			new Error("sendRequest timeout: crdt_create"),
+		);
 
 		await engine.fullSync();
 
 		const complete = events.find((p) => p.phase === "complete");
 		expect(complete?.failed).toBe(1);
-	});
-});
-
-describe("pushGenesisBatch — a timed-out chunk is counted, not fatal", () => {
-	// Root cause (measured on local dev): the server needs ~13s to create a
-	// 100-note chunk, the channel deadline was a flat 10s, and the resulting
-	// throw aborted the ENTIRE first sync — while the server kept committing
-	// the creates. A chunk-level failure must degrade to counted failures so
-	// the remaining chunks (and the rest of the sync) still run. Chunks are
-	// 25 notes so the Uploading row ticks every few seconds instead of
-	// per-hundred.
-	test("first chunk rejects → its files count as failed, second chunk still pushes", async () => {
-		const { engine } = makeEngine([]);
-		const files = Array.from({ length: 26 }, (_, i) => new TFile(`Notes/n${i}.md`, Date.now()));
-		let calls = 0;
-		engine.setCrdtCreateBatch(async (creates) => {
-			calls++;
-			if (calls === 1) throw new Error("sendRequest timeout: crdt_create_batch");
-			return {
-				results: creates.map((c) => ({ doc_id: c.doc_id, status: "ok" as const })),
-			};
-		});
-
-		const out = await (engine as any).pushGenesisBatch(files);
-
-		expect(calls).toBe(2); // the second chunk was still attempted
-		expect(out.failed).toBe(25); // the whole first chunk, counted not thrown
-		expect(out.pushed).toBe(1);
 	});
 });

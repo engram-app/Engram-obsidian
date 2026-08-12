@@ -6,17 +6,12 @@ import { arrayBufferToBase64, base64ToArrayBuffer, type EngramApi } from "./api"
 import type { BaseStore } from "./base-store";
 import { fnv1a } from "./content-hash";
 import type { NoteIdMap } from "./crdt/note-id-map";
-import type { DocKind, ProviderRegistry } from "./crdt/provider-registry";
+import type { ProviderRegistry } from "./crdt/provider-registry";
 import { uuid7 } from "./crdt/uuid7";
-import { encodeUpdateFrame } from "./crdt/wire";
 import { devLog } from "./dev-log";
 import { errMsg, isHttpStatus } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
-import {
-	isCanvasPath as canvasPath,
-	isCrdtEligiblePath as crdtEligiblePath,
-	docKindFor,
-} from "./file-kind";
+import { isCanvasPath as canvasPath, isCrdtEligiblePath as crdtEligiblePath } from "./file-kind";
 import { IgnoredFiles } from "./ignored-files";
 import {
 	categorizeError,
@@ -304,10 +299,6 @@ const MIME_TYPES: Record<string, string> = {
  *  the force pipeline). Was a magic 10 in two places. */
 const PUSH_BATCH_SIZE = 10;
 
-type CrdtCreateBatchFn = (creates: { doc_id: string; path: string; b64: string }[]) => Promise<{
-	results: { doc_id: string; status: "ok" | "error"; reason?: string; limit?: number }[];
-}>;
-
 type CrdtCatchupSinceFn = (
 	cursorSeq: number,
 	limit?: number,
@@ -336,7 +327,6 @@ export interface CrdtPorts {
 	noteIdMap?: NoteIdMap | null;
 	enrollment?: { enroll(path: string): void; reset(path: string): void } | null;
 	create?: ((docId: string, path: string) => Promise<string>) | null;
-	createBatch?: CrdtCreateBatchFn | null;
 	delete?: ((docId: string) => Promise<{ doc_id: string }>) | null;
 	enqueue?: ((op: { kind: "create" | "delete"; docId: string; path: string }) => void) | null;
 	/** Drop every outbound CRDT op still pending delivery, plus the unsent-doc
@@ -497,7 +487,6 @@ export class SyncEngine {
 		if ("noteIdMap" in ports) this.noteIdMap = ports.noteIdMap ?? null;
 		if ("enrollment" in ports) this.crdtEnrollment = ports.enrollment ?? null;
 		if ("create" in ports) this.crdtCreate = ports.create ?? null;
-		if ("createBatch" in ports) this.crdtCreateBatch = ports.createBatch ?? null;
 		if ("delete" in ports) this.crdtDelete = ports.delete ?? null;
 		if ("enqueue" in ports) this.crdtEnqueue = ports.enqueue ?? null;
 		if ("resetOutbox" in ports) this.crdtResetOutbox = ports.resetOutbox ?? null;
@@ -908,16 +897,14 @@ export class SyncEngine {
 	}
 
 	/** The bookkeeping every "the server acked our `crdt_create`" path runs once
-	 *  the authoritative id is known. THREE callers reach it — pushFile's live
-	 *  genesis branch, the durable queued ack (`applyCrdtCreateAck`), and the
-	 *  batch path (`recordCrdtGenesisPushed`) — and a step going missing from one
-	 *  of them is exactly the drift this exists to end (the queued path once
-	 *  leaked the mint-retire the live path did).
+	 *  the authoritative id is known. TWO callers reach it — pushFile's live
+	 *  genesis branch and the durable queued ack (`applyCrdtCreateAck`) — and a
+	 *  step going missing from one of them is exactly the drift this exists to
+	 *  end (the queued path once leaked the mint-retire the live path did).
 	 *
 	 *  The ADOPT half (transfer a live mint buffer, retire the orphaned mint doc)
 	 *  stays with each caller: it legitimately differs by path — a live editor
-	 *  buffer, a queued disk seed, or nothing at all for a batch note that never
-	 *  minted a local doc.
+	 *  buffer vs a queued disk seed.
 	 *
 	 *  Order is load-bearing:
 	 *   - `setCrdtHead` BEFORE the flush. The sentinel flips `hasServerNote`,
@@ -1039,14 +1026,6 @@ export class SyncEngine {
 
 	setCrdtCreate(fn: ((docId: string, path: string) => Promise<string>) | null): void {
 		this.setCrdtPorts({ create: fn });
-	}
-
-	/** Socket-native BATCH genesis. Consumer wiring (genesis routing / chunking
-	 *  to the server's 100-create cap) is a later task; this is plumbing only. */
-	private crdtCreateBatch: CrdtCreateBatchFn | null = null;
-
-	setCrdtCreateBatch(fn: CrdtCreateBatchFn): void {
-		this.setCrdtPorts({ createBatch: fn });
 	}
 
 	/** Direct AWAITED `crdt_delete` (resolves once the server has durably applied
@@ -3527,8 +3506,7 @@ export class SyncEngine {
 	}
 
 	/** MINT REFUSAL (backend #972, PRs #216/#217) — the single decision both
-	 *  mint seams route through: pushFile and pushGenesisBatch's flushChunk
-	 *  must honor identical ownership invariants
+	 *  every mint seam routes through
 	 *  (docs/context/crdt-batch-push-duplication.md). A mint means "brand-new,
 	 *  never-synced local note". A file this engine itself recently flushed to
 	 *  disk (flushFromCrdt → recentlyFlushed) can never be that — the engine
@@ -6644,285 +6622,6 @@ export class SyncEngine {
 		});
 	}
 
-	/** Split note files into genesis (never-server-known → crdt_create_batch) and
-	 *  server-known (→ the per-file pushFile loop). Genesis is decided by the same
-	 *  `hasServerNote` oracle pushFile routes on (crdtHead != null). When the batch
-	 *  op is unwired, every note goes to the per-file side — pushFile's own
-	 *  crdt_create / REST genesis still creates never-synced notes there. */
-	private partitionGenesis(noteFiles: TFile[]): { genesis: TFile[]; known: TFile[] } {
-		if (!this.crdtCreateBatch || !this.crdt) return { genesis: [], known: noteFiles };
-		const genesis: TFile[] = [];
-		const known: TFile[] = [];
-		for (const f of noteFiles) {
-			const id = this.noteIdMap?.get(normalizePath(f.path)) ?? null;
-			if (this.hasServerNote(id)) known.push(f);
-			else genesis.push(f);
-		}
-		return { genesis, known };
-	}
-
-	/** Build the base64 `messageSync` frame that carries a brand-new note's
-	 *  initial content inline in `crdt_create_batch`. Reuses the manager's exact
-	 *  seed encoding (`encodeGenesisUpdate`) + the channel's exact update-frame
-	 *  wrap (`encodeUpdateFrame`), so the frame the server applies via
-	 *  SharedDoc.send_yjs_message is byte-identical to what a live `crdt_msg`
-	 *  would deliver — a divergent encoding would corrupt content on merge. */
-	private encodeGenesisFrame(content: string, kind: DocKind = "note"): string {
-		// Thread the doc kind: this is the ONE encode site that bypasses the
-		// manager's docKind (a throwaway doc, no entry()), so a canvas batch-genesis
-		// must be told to seed structurally — else it stuffs canvas JSON into the
-		// markdown body Y.Text and every peer projects an empty {nodes,edges} (#306).
-		return encodeUpdateFrame(this.crdt!.encodeGenesisUpdate(content, kind));
-	}
-
-	/** Record local state after a genesis note's server row is created (batch
-	 *  path). Mirrors pushFile's post-`crdt_create` bookkeeping (sync.ts ~2574):
-	 *  adopt the authoritative id, flip the `hasServerNote` oracle via a sentinel
-	 *  crdtHead, and stamp the echo baseline from the pushed content so a later
-	 *  identical edit is hash-skipped — the guard that prevents a second-lineage
-	 *  doubling (#846) since the device never seeds its own real doc from this
-	 *  content (it adopts the server lineage on the first handshake). Only ever
-	 *  reached for a genuinely history-LESS note: the batch caller routes any note
-	 *  that already carries a local CRDT lineage to `pushFile` instead.
-	 *
-	 *  `flushHeld: false` is the one way this path differs from the other two
-	 *  create-ack callers: a batched note never minted a local doc (the content
-	 *  shipped inline in the batch frame), so there are no gated updates to
-	 *  flush. */
-	private async recordCrdtGenesisPushed(
-		file: TFile,
-		content: string,
-		serverId: string,
-	): Promise<void> {
-		await this.adoptCreateAck(serverId, file.path, content, { flushHeld: false });
-		this.issues.clear(file.path);
-	}
-
-	/** Bulk-create genesis notes (never-server-known) through ONE
-	 *  `crdt_create_batch` round-trip, carrying each note's initial content inline
-	 *  as a `messageSync` frame. Server-known notes are NOT handled here — the
-	 *  caller routes them through the per-file `pushFile` loop.
-	 *
-	 *  Preserves the batch edge cases pushNotesViaBatch owned:
-	 *   - mint-refusal (#217): an engine-flushed, id-relocated path is skipped;
-	 *   - id-adoption: the server-echoed winning `doc_id` (a create-race) is adopted;
-	 *   - delete-wins: a `recently_deleted` result trashes the local file (converge);
-	 *   - oversized: a note whose frame exceeds the payload budget routes to
-	 *     pushFile so the server's 413 yields the proper too_large issue;
-	 *   - #245 path snapshot: each entry's path is snapshotted for the request
-	 *     lifetime (TFile.path is live);
-	 *   - chunk ≤100 notes / ~6MB per request (the server caps creates at 100).
-	 *
-	 *  A live-bound genesis note is NOT batched (it routes to pushFile too): its
-	 *  editor may hold keystrokes not yet on disk, and a disk-content frame would
-	 *  drop them — pushFile's live-adopt path transfers the in-flight buffer. */
-	private async pushGenesisBatch(
-		files: TFile[],
-		onProgress?: (pushed: number, failed: number) => void,
-	): Promise<{ pushed: number; failed: number }> {
-		if (!this.crdtCreateBatch || !this.crdt) return { pushed: 0, failed: 0 };
-		// Server caps creates at 100, but 25 is the sweet spot: the server does
-		// real per-note work (~130ms/note measured on dev), so a 25-chunk stays
-		// a few seconds per request — the Uploading row ticks every chunk, and a
-		// failed/timed-out chunk strands 25 notes, not 100. Keep the accumulated
-		// frames under the Plug.Parsers request-body limit (same budget as
-		// pushNotesViaBatch).
-		const MAX_CREATES = 25;
-		const PAYLOAD_BUDGET = 6_000_000;
-
-		let pushed = 0;
-		let failed = 0;
-		type Entry = {
-			file: TFile;
-			pushedPath: string;
-			noteId: string;
-			b64: string;
-			content: string;
-		};
-		let chunk: Entry[] = [];
-		let chunkBytes = 0;
-
-		const flush = async (): Promise<void> => {
-			if (chunk.length === 0) return;
-			const sent = chunk;
-			chunk = [];
-			chunkBytes = 0;
-			for (const e of sent) this.pushing.add(e.pushedPath);
-			// Fix (review): recently_deleted entries below trash the local file —
-			// marking a trashed path "recently pushed" is semantically wrong, so
-			// track them and skip the mark in the finally below.
-			const recentlyDeletedPaths = new Set<string>();
-			try {
-				let results: Awaited<ReturnType<CrdtCreateBatchFn>>["results"];
-				try {
-					({ results } = await this.crdtCreateBatch!(
-						sent.map((e) => ({ doc_id: e.noteId, path: e.pushedPath, b64: e.b64 })),
-					));
-				} catch (err) {
-					// Chunk-level failure (timeout / socket drop): count every entry
-					// as failed and keep going — a single bad chunk must not abort
-					// the whole first sync. NOTE: on a timeout the server may STILL
-					// commit these creates (the reply just arrived too late); the
-					// next sync re-runs them and converges via the id_conflict ADOPT
-					// path below.
-					const msg = errMsg(err);
-					rlog().error(
-						"push",
-						`crdt_create_batch chunk failed (${sent.length} notes): ${msg}`,
-					);
-					for (const e of sent) {
-						failed++;
-						this.logEntry("push", e.file.path, "error", msg);
-						this.issues.record({
-							path: e.file.path,
-							kind: "note",
-							category: "other",
-							message: msg,
-							firstFailedAt: Date.now(),
-							lastFailedAt: Date.now(),
-							attempts: 1,
-						});
-					}
-					onProgress?.(pushed, failed);
-					return;
-				}
-				// Match by INDEX, not id: the backend guarantees `results` is
-				// index-aligned with `creates` (ordered Task.async_stream phases
-				// since engram#1194, pinned by a backend channel test with a
-				// mid-batch conflict), and an id_conflict result echoes the
-				// EXISTING note's id, not the one we sent — an id lookup would
-				// miss it.
-				for (let i = 0; i < sent.length; i++) {
-					const e = sent[i]!;
-					const r = results[i];
-					if (r?.status === "ok") {
-						// Clean create: the server echoes the sent id (no create-race).
-						await this.recordCrdtGenesisPushed(e.file, e.content, r.doc_id);
-						pushed++;
-						this.logEntry("push", e.pushedPath, "ok");
-					} else if (r?.reason === "recently_deleted") {
-						// Delete-wins: the path was deleted on another device within the
-						// window. Converge by trashing our local copy — not a failure.
-						rlog().info(
-							"push",
-							`recently_deleted — trashing local ${e.file.path} to honor remote delete`,
-						);
-						this.pushing.delete(e.pushedPath);
-						recentlyDeletedPaths.add(e.pushedPath);
-						await this.trashRemotelyDeleted(e.file);
-						this.logEntry("push", e.file.path, "skipped", "recently_deleted");
-					} else if (r?.reason === "id_conflict" || r?.reason === "version_conflict") {
-						// Create-race: the path is already owned by a live note under
-						// another id (our frame was NOT applied). Hand the file to the
-						// single-note path, which owns the full ADOPT — remap to the
-						// existing id and transfer our content onto that lineage.
-						this.pushing.delete(e.pushedPath);
-						if (await this.pushFile(e.file, true)) pushed++;
-						else failed++;
-					} else {
-						failed++;
-						const reason = r?.reason ?? "create_failed";
-						this.issues.record({
-							path: e.file.path,
-							kind: "note",
-							category: "other",
-							message: reason,
-							firstFailedAt: Date.now(),
-							lastFailedAt: Date.now(),
-							attempts: 1,
-						});
-						this.logEntry("push", e.file.path, "error", reason);
-					}
-				}
-				this.goOnline();
-			} finally {
-				for (const e of sent) {
-					this.pushing.delete(e.pushedPath);
-					// Fix (review): don't mark a just-trashed path as recently pushed —
-					// the file is gone, so there is nothing to protect from a re-push.
-					if (!recentlyDeletedPaths.has(e.pushedPath))
-						this.markRecentlyPushed(e.pushedPath);
-				}
-			}
-			onProgress?.(pushed, failed);
-		};
-
-		for (const file of files) {
-			const np = normalizePath(file.path);
-			// Mint-refusal (#217): an engine-flushed path whose id was relocated
-			// away must not mint a fresh row here — skip, don't fail.
-			if (this.shouldDeferMint(np)) {
-				rlog().info(
-					"push",
-					`Mint refused (engine-flushed, id relocated away): ${file.path}`,
-				);
-				this.logEntry("skip", file.path, "skipped", undefined, "mint-deferred");
-				continue;
-			}
-			// Live-bound genesis stays on the single-note path: its editor may hold
-			// unflushed keystrokes a disk-content frame would drop (pushFile's
-			// live-adopt transfers the in-flight buffer).
-			if (this.isLiveBound(np)) {
-				if (await this.pushFile(file, true)) pushed++;
-				else failed++;
-				continue;
-			}
-			// A note that already carries a local CRDT lineage is NOT a true genesis
-			// (genesis = brand-new, no history anywhere). Its lineage may already be
-			// on the server (offline-captured then channel-synced before this sync),
-			// so minting a THROWAWAY second lineage via crdt_create_batch makes the
-			// server merge both → the note body DOUBLES (#188 class, test_86
-			// push-all-delete-remote with a second live client echoing the merge).
-			// Route it to pushFile, which diffs disk into its REAL doc (idempotent on
-			// an unchanged body) and pushes THAT lineage — never a second one.
-			const existingId = this.noteIdMap?.get(np);
-			if (
-				existingId &&
-				typeof this.crdt?.hasHistory === "function" &&
-				(await this.crdt.hasHistory(existingId))
-			) {
-				if (await this.pushFile(file, true)) pushed++;
-				else failed++;
-				continue;
-			}
-			const content = await this.app.vault.read(file);
-			// CRDT-eligibility gate: a note's raw content can exceed
-			// MAX_CRDT_NOTE_BYTES while its b64 frame still fits under
-			// PAYLOAD_BUDGET (base64 is ~+33%, not the ~2x that would make these
-			// caps equivalent) — that note would slip into crdt_create_batch here
-			// but get refused for CRDT management by every other seam (manager.ts
-			// L739, sync.ts L2475/L2504/L2680), leaving a server-held CRDT room
-			// that the client's own edits then bypass via legacy REST: split-brain.
-			// Gate on content BEFORE minting/encoding so it never gets a doc_id.
-			if (exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES)) {
-				if (await this.pushFile(file, true)) pushed++;
-				else failed++;
-				continue;
-			}
-			const b64 = this.encodeGenesisFrame(content, docKindFor(file.path));
-			const size = b64.length;
-			// #245: snapshot the path now — TFile.path is live and a mid-request
-			// rename would otherwise desync result matching + the pushing set.
-			const pushedPath = file.path;
-			const noteId = this.noteIdMap?.get(np) ?? uuid7();
-			if (this.noteIdMap && !this.noteIdMap.get(np)) this.noteIdMap.set(np, noteId);
-			// Oversized single note → single-note flow (413 → proper too_large
-			// issue), and never let one huge frame blow the request-body limit.
-			if (size > PAYLOAD_BUDGET) {
-				if (await this.pushFile(file, true)) pushed++;
-				else failed++;
-				continue;
-			}
-			if (chunk.length >= MAX_CREATES || chunkBytes + size > PAYLOAD_BUDGET) {
-				await flush();
-			}
-			chunk.push({ file, pushedPath, noteId, b64, content });
-			chunkBytes += size;
-		}
-		await flush();
-		return { pushed, failed };
-	}
-
 	/** Record or clear a note's frontmatter parse issue from a backend
 	 *  parse_status/parse_reason. Called on every push success + feed apply. When
 	 *  the note parses cleanly we clear ONLY a prior frontmatter issue for the path
@@ -7007,55 +6706,55 @@ export class SyncEngine {
 		this.onSyncProgress?.({ phase: "pushing", current, total, failed, currentPath });
 	}
 
-	/** Shared push pipeline: split notes/attachments, bulk-create genesis
-	 *  notes over crdt_create_batch, then per-file push in batches of
-	 *  PUSH_BATCH_SIZE with progress. The two callers had drifted: the
-	 *  incremental copy reported failed=0 to the progress UI even when the
-	 *  genesis batch failed files.
+	/** Shared push pipeline: every file — genesis notes, server-known notes,
+	 *  attachments — rides ONE bounded per-file loop (Promise.all over
+	 *  PUSH_BATCH_SIZE slices). pushFile's socket-native genesis (crdt_create)
+	 *  owns brand-new notes; the retired crdt_create_batch RPC was a second,
+	 *  lesser copy of that path (Relay-pattern rewrite: per-file work units,
+	 *  per-file progress, per-file failure isolation — a failure strands one
+	 *  file, not a 25-note chunk).
 	 *
-	 *  mode "force" (pushAll): pushFile(force), per-file failures caught,
-	 *  counted and written to the sync log — a full push must survive bad
-	 *  files. mode "incremental" (pushModifiedFiles): unforced, no sync-log
-	 *  entries, and a per-file throw propagates to the caller's error
-	 *  boundary, exactly as before the extraction. */
+	 *  mode "force" (pushAll) writes per-file sync-log entries; "incremental"
+	 *  (pushModifiedFiles) doesn't. In BOTH modes a per-file throw is counted
+	 *  and recorded as an issue, never propagated — one bad file (or one
+	 *  crdt_create timeout) must not abort the rest of a first sync. Progress
+	 *  is emitted per completed file. */
 	private async pushPartitioned(
 		toSync: TFile[],
 		mode: "incremental" | "force",
 	): Promise<{ pushed: number; failed: number }> {
 		const total = toSync.length;
-		const noteFiles = toSync.filter((f: TFile) => !this.isBinaryFile(f));
-		const attachFiles = toSync.filter((f: TFile) => this.isBinaryFile(f));
-		const { genesis, known } = this.partitionGenesis(noteFiles);
-
-		const genesisOutcome = await this.pushGenesisBatch(genesis, (pushedSoFar, failedSoFar) => {
-			this.emitPushing(pushedSoFar, total, failedSoFar);
-		});
-		let pushed = genesisOutcome.pushed;
-		let failed = genesisOutcome.failed;
-
-		const perFile = [...known, ...attachFiles];
-		for (let i = 0; i < perFile.length; i += PUSH_BATCH_SIZE) {
-			const batch = perFile.slice(i, i + PUSH_BATCH_SIZE);
-			const results = await Promise.all(
+		let pushed = 0;
+		let failed = 0;
+		for (let i = 0; i < toSync.length; i += PUSH_BATCH_SIZE) {
+			const batch = toSync.slice(i, i + PUSH_BATCH_SIZE);
+			await Promise.all(
 				batch.map(async (f: TFile) => {
-					if (mode === "incremental") return this.pushFile(f);
 					try {
-						const ok = await this.pushFile(f, true);
+						const ok = await this.pushFile(f, mode === "force");
 						if (ok) {
-							this.logEntry("push", f.path, "ok");
-						} else {
+							pushed++;
+							if (mode === "force") this.logEntry("push", f.path, "ok");
+						} else if (mode === "force") {
 							this.logEntry("skip", f.path, "skipped", undefined, "unchanged");
 						}
-						return ok;
 					} catch (e) {
 						failed++;
-						this.logEntry("push", f.path, "error", errMsg(e));
-						return false;
+						const msg = errMsg(e);
+						this.logEntry("push", f.path, "error", msg);
+						this.issues.record({
+							path: f.path,
+							kind: this.isBinaryFile(f) ? "attachment" : "note",
+							category: "other",
+							message: msg,
+							firstFailedAt: Date.now(),
+							lastFailedAt: Date.now(),
+							attempts: 1,
+						});
 					}
+					this.emitPushing(pushed, total, failed, f.path);
 				}),
 			);
-			pushed += results.filter(Boolean).length;
-			this.emitPushing(pushed, total, failed, batch[batch.length - 1]?.path);
 		}
 		return { pushed, failed };
 	}
