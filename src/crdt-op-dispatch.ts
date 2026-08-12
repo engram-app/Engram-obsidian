@@ -56,9 +56,7 @@ export function crdtOpFailureReason(err: unknown): string | null {
 	}
 }
 
-/** The two acked socket calls the queue dispatches over. (crdt_create_batch is
- *  wired separately via `setCrdtCreateBatch`, not through this queue, so it is
- *  intentionally not a member here.) */
+/** The two acked socket calls the queue dispatches over. */
 export type CrdtOpChannel = {
 	crdtCreate(docId: string, path: string): Promise<string>;
 	crdtDeleteAcked(docId: string): Promise<{ doc_id: string }>;

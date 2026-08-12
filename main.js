@@ -19169,22 +19169,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  editor-detach/rebind wiring just after it). Null in tests/older
      *  callers: the drop is then skipped. */
     this.deviceId = null;
-    /** Detaches every live editor binding (CrdtLiveViews.detachAll, wired by
-     *  main.ts). Replace-remote's crdtDelete destroys Y.Docs whose files stay
-     *  on disk and may be OPEN — unlike the WS-delete path, no trashFile
-     *  closes the view, so a still-attached binding would write keystrokes
-     *  into a destroyed doc (the never-span-a-load class,
-     *  crdt-editor-bind-race-pollution.md). Bindings re-establish via the
-     *  normal refresh events; meanwhile edits flow through handleModify as
-     *  plain pushes.
-     *
-     *  DEAD as of #258 (main.ts:443 — "the old setCrdtEditorDetach /
-     *  setCrdtEditorRebind wiring is gone"): nothing reads this field any more.
-     *  The setter is retained because it is still part of the harness-facing
-     *  surface — engram/e2e/headless/run.ts:330 and tests/sim/replica.ts:447
-     *  both call it. Removing the pair therefore needs a paired backend PR. */
-    // biome-ignore lint/correctness/noUnusedPrivateClassMembers: setter is harness-facing surface, see above
-    this.crdtEditorDetach = null;
     /** Rebinds the live editor showing `path` off its current (now orphaned)
      *  Y.Doc onto the note's freshly-resolved id (CrdtLiveViews.rebindPath,
      *  wired by main.ts). Used after a genesis ADOPT remaps path -> serverId
@@ -19540,18 +19524,22 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  and a user-driven sync (fullSync via the progress modal) can both call
      *  this concurrently; two loops interleaving independent counters was the
      *  progress bar "jumping 40→100→30" bug — and double-pushed every file.
-     *  A concurrent caller JOINS the running push (shares its promise) instead
-     *  of starting a second one. A joiner's own `sinceTimestamp` scope is
-     *  dropped for that call — its files are picked up by the next cycle. */
+     *
+     *  Coalesce-with-rerun (same shape as catchupViaSeqReplay's single-flight):
+     *  a concurrent caller JOINS the running push AND schedules exactly one
+     *  follow-up run after it settles. Join-only (no rerun) swallowed a file
+     *  created after the running push snapshotted its file list — e2e test_39's
+     *  concurrent-push note sat unpushed until the next poll cycle. */
     this.pushModifiedInFlight = null;
+    this.pushModifiedAgain = !1;
     this.parseIgnorePatterns();
   }
   /** Wire (a subset of) the CRDT ports in one call — see CrdtPorts. Only
    *  keys present in the patch are assigned, so each lifecycle stage names
    *  exactly what it wires (or clears, via explicit null). */
   setCrdtPorts(ports) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
-    "manager" in ports && (this.crdt = (_a = ports.manager) != null ? _a : null), "deviceId" in ports && (this.deviceId = (_b = ports.deviceId) != null ? _b : null), "editorDetach" in ports && (this.crdtEditorDetach = (_c = ports.editorDetach) != null ? _c : null), "editorRebind" in ports && (this.crdtEditorRebind = (_d = ports.editorRebind) != null ? _d : null), "boundBufferText" in ports && (this.crdtBoundBufferText = (_e = ports.boundBufferText) != null ? _e : null), "requestSave" in ports && (this.crdtRequestSave = (_f = ports.requestSave) != null ? _f : null), "noteIdMap" in ports && (this.noteIdMap = (_g = ports.noteIdMap) != null ? _g : null), "enrollment" in ports && (this.crdtEnrollment = (_h = ports.enrollment) != null ? _h : null), "create" in ports && (this.crdtCreate = (_i = ports.create) != null ? _i : null), "delete" in ports && (this.crdtDelete = (_j = ports.delete) != null ? _j : null), "enqueue" in ports && (this.crdtEnqueue = (_k = ports.enqueue) != null ? _k : null), "resetOutbox" in ports && (this.crdtResetOutbox = (_l = ports.resetOutbox) != null ? _l : null), "live" in ports && (this.crdtLive = (_m = ports.live) != null ? _m : null), "liveBound" in ports && (this.isLiveBound = (_n = ports.liveBound) != null ? _n : (() => !1)), "catchupSince" in ports && (this.crdtCatchupSince = (_o = ports.catchupSince) != null ? _o : null);
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
+    "manager" in ports && (this.crdt = (_a = ports.manager) != null ? _a : null), "deviceId" in ports && (this.deviceId = (_b = ports.deviceId) != null ? _b : null), "editorRebind" in ports && (this.crdtEditorRebind = (_c = ports.editorRebind) != null ? _c : null), "boundBufferText" in ports && (this.crdtBoundBufferText = (_d = ports.boundBufferText) != null ? _d : null), "requestSave" in ports && (this.crdtRequestSave = (_e = ports.requestSave) != null ? _e : null), "noteIdMap" in ports && (this.noteIdMap = (_f = ports.noteIdMap) != null ? _f : null), "enrollment" in ports && (this.crdtEnrollment = (_g = ports.enrollment) != null ? _g : null), "create" in ports && (this.crdtCreate = (_h = ports.create) != null ? _h : null), "delete" in ports && (this.crdtDelete = (_i = ports.delete) != null ? _i : null), "enqueue" in ports && (this.crdtEnqueue = (_j = ports.enqueue) != null ? _j : null), "resetOutbox" in ports && (this.crdtResetOutbox = (_k = ports.resetOutbox) != null ? _k : null), "live" in ports && (this.crdtLive = (_l = ports.live) != null ? _l : null), "liveBound" in ports && (this.isLiveBound = (_m = ports.liveBound) != null ? _m : (() => !1)), "catchupSince" in ports && (this.crdtCatchupSince = (_n = ports.catchupSince) != null ? _n : null);
   }
   setCrdtManager(mgr) {
     this.setCrdtPorts({ manager: mgr });
@@ -19559,8 +19547,25 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   setDeviceId(id2) {
     this.setCrdtPorts({ deviceId: id2 });
   }
-  setCrdtEditorDetach(fn) {
-    this.setCrdtPorts({ editorDetach: fn });
+  /** Detaches every live editor binding (CrdtLiveViews.detachAll, wired by
+   *  main.ts). Replace-remote's crdtDelete destroys Y.Docs whose files stay
+   *  on disk and may be OPEN — unlike the WS-delete path, no trashFile
+   *  closes the view, so a still-attached binding would write keystrokes
+   *  into a destroyed doc (the never-span-a-load class,
+   *  crdt-editor-bind-race-pollution.md). Bindings re-establish via the
+   *  normal refresh events; meanwhile edits flow through handleModify as
+   *  plain pushes.
+   *
+   *  DEAD as of #258 (main.ts:443 — "the old setCrdtEditorDetach /
+   *  setCrdtEditorRebind wiring is gone"): nothing reads this field any more.
+   *  The setter is retained because it is still part of the harness-facing
+   *  surface — engram/e2e/headless/run.ts:330 and tests/sim/replica.ts:447
+   *  both call it. Removing the pair therefore needs a paired backend PR. */
+  /** No-op harness-compat shim (paired-cleanup pending): the field and port
+   *  behind this were deleted — nothing ever read them. engram/e2e/headless/
+   *  run.ts:330 and tests/sim/replica.ts:447 still call the setter, so it
+   *  stays until a paired backend PR drops those calls. */
+  setCrdtEditorDetach(_fn) {
   }
   setCrdtEditorRebind(fn) {
     this.setCrdtPorts({ editorRebind: fn });
@@ -22572,8 +22577,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     return { pushed, failed };
   }
   async pushModifiedFiles(sinceTimestamp) {
-    return this.pushModifiedInFlight ? this.pushModifiedInFlight : (this.pushModifiedInFlight = this.pushModifiedFilesInner(sinceTimestamp).finally(() => {
-      this.pushModifiedInFlight = null;
+    return this.pushModifiedInFlight ? (this.pushModifiedAgain = !0, this.pushModifiedInFlight) : (this.pushModifiedInFlight = (async () => {
+      let out = await this.pushModifiedFilesInner(sinceTimestamp);
+      for (; this.pushModifiedAgain; ) {
+        this.pushModifiedAgain = !1;
+        let more = await this.pushModifiedFilesInner();
+        out = { pushed: out.pushed + more.pushed, failed: out.failed + more.failed };
+      }
+      return out;
+    })().finally(() => {
+      this.pushModifiedInFlight = null, this.pushModifiedAgain = !1;
     }), this.pushModifiedInFlight);
   }
   async pushModifiedFilesInner(sinceTimestamp) {
@@ -23318,6 +23331,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
      *  stack two SyncPreviewModal instances. A second call while one preview is
      *  open is a silent no-op. See single-flight.ts. */
     this.syncPreviewGuard = createSingleFlight();
+    /** True while a dead-vault check/heal is running — a burst of vault-scoped
+     *  404s (folders + attachments + notes all fail together) must trigger ONE
+     *  heal, not one per failed request. */
+    this.healingVault = !1;
     /** True once we have surfaced a data.json recovery/corruption Notice this
      *  session, so the two load paths (loadSettings + onload restore) don't
      *  double-toast the user. */
@@ -23746,7 +23763,29 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       "lifecycle",
       `${context} failed: ${errMsg(e)}`,
       e instanceof Error ? e.stack : void 0
-    ), opts != null && opts.notice && new import_obsidian26.Notice("Engram sync: sync failed");
+    ), this.healDeadVault(e), opts != null && opts.notice && new import_obsidian26.Notice("Engram sync: sync failed");
+  }
+  /** If `e` is an HTTP 404 and the active vault id is absent from the
+   *  server's vault list, the vault is gone: clear the id, re-block sync,
+   *  and reopen the preview in the vault picker so the user re-picks or
+   *  creates one. A 404 for any OTHER reason (note not found etc.) is left
+   *  alone — the vault-list check is the discriminator. */
+  async healDeadVault(e) {
+    if (!this.healingVault && !(!isHttpStatus(e, 404) || !this.settings.vaultId)) {
+      this.healingVault = !0;
+      try {
+        if ((await this.api.listVaults()).some((v) => v.id === this.settings.vaultId)) return;
+        rlog().warn(
+          "lifecycle",
+          `Active vault ${this.settings.vaultId} no longer exists server-side \u2014 clearing and reopening the picker`
+        ), this.settings.vaultId = null, this.settings.remoteVaultName = void 0, this.syncGateAcceptedFor = null, this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), new import_obsidian26.Notice(
+          "Engram: this vault no longer exists on the server. Pick or create a vault to continue."
+        ), await this.doSyncWithFirstSyncCheck({ startInVaultPicker: !0 });
+      } catch (e2) {
+      } finally {
+        this.healingVault = !1;
+      }
+    }
   }
   onunload() {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i;

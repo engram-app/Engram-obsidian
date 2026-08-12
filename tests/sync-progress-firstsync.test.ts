@@ -21,7 +21,6 @@ import { DEFAULT_SETTINGS, type SyncChange, type SyncProgress } from "../src/typ
 const makeApi = () =>
 	({
 		pushNote: mock().mockResolvedValue({ note: {}, chunks_indexed: 1 }),
-		pushNotesBatch: mock().mockRejectedValue({ status: 404 }),
 		deleteNote: mock().mockResolvedValue({ deleted: true, path: "" }),
 		health: mock().mockResolvedValue(true),
 		ping: mock().mockResolvedValue({ ok: true }),
@@ -201,21 +200,58 @@ describe("progress-stream integrity (jumping-bar + phantom-download fixes)", () 
 		expect(Math.max(...pulling.map((p) => p.current), 0)).toBe(1);
 	});
 
-	test("concurrent pushModifiedFiles calls share ONE run (no interleaved counters)", async () => {
+	test("concurrent pushModifiedFiles runs never overlap (joiner coalesces into a follow-up)", async () => {
 		const { engine } = makeEngine([]);
 		const file = new TFile("Notes/one.md", Date.now());
 		(engine as any).app.vault.getFiles = mock().mockReturnValue([file]);
-		let calls = 0;
 		(engine as any).pushFile = mock().mockImplementation(async () => {
-			calls++;
 			await new Promise((r) => setTimeout(r, 20));
 			return true;
 		});
+		// The invariant that killed the jumping progress bar: at most ONE push
+		// loop at a time — a joiner waits and triggers a sequential follow-up,
+		// never a second interleaved loop with its own counters.
+		const inner = (engine as any).pushModifiedFilesInner.bind(engine);
+		let active = 0;
+		let maxActive = 0;
+		(engine as any).pushModifiedFilesInner = async (s?: string) => {
+			active++;
+			maxActive = Math.max(maxActive, active);
+			try {
+				return await inner(s);
+			} finally {
+				active--;
+			}
+		};
 
 		const [a, b] = await Promise.all([engine.pushModifiedFiles(), engine.pushModifiedFiles()]);
 
-		expect(calls).toBe(1); // ONE loop ran; the second call joined it
-		expect(a).toEqual({ pushed: 1, failed: 0 });
-		expect(b).toEqual({ pushed: 1, failed: 0 });
+		expect(maxActive).toBe(1);
+		expect(a).toEqual(b); // joiner shares the coalesced result
 	});
+});
+
+test("a push requested mid-run is not swallowed — one follow-up run picks it up (e2e test_39)", async () => {
+	const { engine } = makeEngine([]);
+	const fileA = new TFile("Notes/A.md", Date.now());
+	const fileB = new TFile("Notes/B.md", Date.now());
+	const vaultFiles = [fileA];
+	(engine as any).app.vault.getFiles = mock(() => [...vaultFiles]);
+	const pushedPaths: string[] = [];
+	(engine as any).pushFile = mock().mockImplementation(async (f: TFile) => {
+		pushedPaths.push(f.path);
+		await new Promise((r) => setTimeout(r, 20));
+		return true;
+	});
+
+	const first = engine.pushModifiedFiles();
+	// B is created while the first run is already in flight — its trigger
+	// must cause a follow-up run, not vanish into the joined promise.
+	await new Promise((r) => setTimeout(r, 5));
+	vaultFiles.push(fileB);
+	const second = engine.pushModifiedFiles();
+	await Promise.all([first, second]);
+
+	expect(pushedPaths).toContain("Notes/A.md");
+	expect(pushedPaths).toContain("Notes/B.md");
 });

@@ -320,7 +320,6 @@ type CrdtCatchupSinceFn = (
 export interface CrdtPorts {
 	manager?: ProviderRegistry | null;
 	deviceId?: string | null;
-	editorDetach?: (() => void) | null;
 	editorRebind?: ((path: string) => void) | null;
 	boundBufferText?: ((path: string) => string | null) | null;
 	requestSave?: ((path: string) => void) | null;
@@ -480,7 +479,6 @@ export class SyncEngine {
 	setCrdtPorts(ports: CrdtPorts): void {
 		if ("manager" in ports) this.crdt = ports.manager ?? null;
 		if ("deviceId" in ports) this.deviceId = ports.deviceId ?? null;
-		if ("editorDetach" in ports) this.crdtEditorDetach = ports.editorDetach ?? null;
 		if ("editorRebind" in ports) this.crdtEditorRebind = ports.editorRebind ?? null;
 		if ("boundBufferText" in ports) this.crdtBoundBufferText = ports.boundBufferText ?? null;
 		if ("requestSave" in ports) this.crdtRequestSave = ports.requestSave ?? null;
@@ -525,12 +523,11 @@ export class SyncEngine {
 	 *  The setter is retained because it is still part of the harness-facing
 	 *  surface — engram/e2e/headless/run.ts:330 and tests/sim/replica.ts:447
 	 *  both call it. Removing the pair therefore needs a paired backend PR. */
-	// biome-ignore lint/correctness/noUnusedPrivateClassMembers: setter is harness-facing surface, see above
-	private crdtEditorDetach: (() => void) | null = null;
-
-	setCrdtEditorDetach(fn: (() => void) | null): void {
-		this.setCrdtPorts({ editorDetach: fn });
-	}
+	/** No-op harness-compat shim (paired-cleanup pending): the field and port
+	 *  behind this were deleted — nothing ever read them. engram/e2e/headless/
+	 *  run.ts:330 and tests/sim/replica.ts:447 still call the setter, so it
+	 *  stays until a paired backend PR drops those calls. */
+	setCrdtEditorDetach(_fn: (() => void) | null): void {}
 
 	/** Rebinds the live editor showing `path` off its current (now orphaned)
 	 *  Y.Doc onto the note's freshly-resolved id (CrdtLiveViews.rebindPath,
@@ -2825,7 +2822,7 @@ export class SyncEngine {
 				// markdown save. Routing is gated on hasServerNote (server=): a note
 				// the server already holds (crdtHead != null) routes over CRDT ops; a
 				// never-server-known note takes the genesis crdt_create path below.
-				// `confirmed` is a legacy diagnostic; it no longer drives routing.
+				// `confirmed` no longer drives routing (still read by refire/convergence).
 				if (this.isCrdtEligible(file)) {
 					rlog().info(
 						"push",
@@ -6780,15 +6777,34 @@ export class SyncEngine {
 	 *  and a user-driven sync (fullSync via the progress modal) can both call
 	 *  this concurrently; two loops interleaving independent counters was the
 	 *  progress bar "jumping 40→100→30" bug — and double-pushed every file.
-	 *  A concurrent caller JOINS the running push (shares its promise) instead
-	 *  of starting a second one. A joiner's own `sinceTimestamp` scope is
-	 *  dropped for that call — its files are picked up by the next cycle. */
+	 *
+	 *  Coalesce-with-rerun (same shape as catchupViaSeqReplay's single-flight):
+	 *  a concurrent caller JOINS the running push AND schedules exactly one
+	 *  follow-up run after it settles. Join-only (no rerun) swallowed a file
+	 *  created after the running push snapshotted its file list — e2e test_39's
+	 *  concurrent-push note sat unpushed until the next poll cycle. */
 	private pushModifiedInFlight: Promise<{ pushed: number; failed: number }> | null = null;
+	private pushModifiedAgain = false;
 
 	async pushModifiedFiles(sinceTimestamp?: string): Promise<{ pushed: number; failed: number }> {
-		if (this.pushModifiedInFlight) return this.pushModifiedInFlight;
-		this.pushModifiedInFlight = this.pushModifiedFilesInner(sinceTimestamp).finally(() => {
+		if (this.pushModifiedInFlight) {
+			this.pushModifiedAgain = true;
+			return this.pushModifiedInFlight;
+		}
+		this.pushModifiedInFlight = (async () => {
+			let out = await this.pushModifiedFilesInner(sinceTimestamp);
+			// Untracked (never-synced) files are always included regardless of
+			// `since`, so the rerun's default window is enough for the joiner's
+			// trigger; N joiners coalesce into ONE rerun.
+			while (this.pushModifiedAgain) {
+				this.pushModifiedAgain = false;
+				const more = await this.pushModifiedFilesInner();
+				out = { pushed: out.pushed + more.pushed, failed: out.failed + more.failed };
+			}
+			return out;
+		})().finally(() => {
 			this.pushModifiedInFlight = null;
+			this.pushModifiedAgain = false;
 		});
 		return this.pushModifiedInFlight;
 	}

@@ -49,7 +49,7 @@ declare const DEV_MODE: boolean;
 import { sha256Hex } from "./content-hash";
 import { registerDiagnostics } from "./diagnostics";
 import { EmailCaptureModal } from "./email-capture-modal";
-import { errMsg } from "./error-util";
+import { errMsg, isHttpStatus } from "./error-util";
 import { ExplicitFolders } from "./explicit-folders";
 import { LimitExceededError } from "./limit-error";
 import { notifyLimitExceeded } from "./limit-toast";
@@ -1103,8 +1103,54 @@ export default class EngramSyncPlugin extends Plugin {
 			`${context} failed: ${errMsg(e)}`,
 			e instanceof Error ? e.stack : undefined,
 		);
+		// A 404 on a vault-scoped call can mean the ACTIVE vault no longer
+		// exists server-side (deleted from the web app / another device). The
+		// old behavior — surface "HTTP 404" and keep the dead id — strands the
+		// plugin forever: the accepted-gate fingerprint still matches, so every
+		// later sync goes straight back to the dead vault and 404s again. Verify
+		// against the authoritative vault list and self-heal by reopening the
+		// picker (same recovery the web SPA's reconcileActiveVault does).
+		void this.healDeadVault(e);
 		if (opts?.notice) {
 			new Notice("Engram sync: sync failed");
+		}
+	}
+
+	/** True while a dead-vault check/heal is running — a burst of vault-scoped
+	 *  404s (folders + attachments + notes all fail together) must trigger ONE
+	 *  heal, not one per failed request. */
+	private healingVault = false;
+
+	/** If `e` is an HTTP 404 and the active vault id is absent from the
+	 *  server's vault list, the vault is gone: clear the id, re-block sync,
+	 *  and reopen the preview in the vault picker so the user re-picks or
+	 *  creates one. A 404 for any OTHER reason (note not found etc.) is left
+	 *  alone — the vault-list check is the discriminator. */
+	private async healDeadVault(e: unknown): Promise<void> {
+		if (this.healingVault) return;
+		if (!isHttpStatus(e, 404) || !this.settings.vaultId) return;
+		this.healingVault = true;
+		try {
+			const vaults = await this.api.listVaults();
+			if (vaults.some((v) => v.id === this.settings.vaultId)) return;
+			rlog().warn(
+				"lifecycle",
+				`Active vault ${this.settings.vaultId} no longer exists server-side — clearing and reopening the picker`,
+			);
+			this.settings.vaultId = null;
+			this.settings.remoteVaultName = undefined;
+			this.syncGateAcceptedFor = null;
+			this.syncEngine.setSyncBlocked(true);
+			await this.savePluginData(this.syncEngine.getLastSync());
+			new Notice(
+				"Engram: this vault no longer exists on the server. Pick or create a vault to continue.",
+			);
+			await this.doSyncWithFirstSyncCheck({ startInVaultPicker: true });
+		} catch {
+			// listVaults itself failed (offline?) — nothing to conclude; the next
+			// sync error re-runs this check.
+		} finally {
+			this.healingVault = false;
 		}
 	}
 
