@@ -15287,7 +15287,8 @@ var TERMINAL_REASONS = /* @__PURE__ */ new Set([
   "id_conflict",
   "version_conflict",
   "bad_doc_id",
-  "implausible_state_vector"
+  "implausible_state_vector",
+  "recently_deleted"
 ]), LIMIT_REASONS = /* @__PURE__ */ new Set(["notes_cap_reached"]);
 function crdtOpFailureReason(err) {
   let m = (err instanceof Error ? err.message : String(err)).match(/request failed: (\{.*\})/s);
@@ -19148,6 +19149,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.onStatusChange = null;
     /** Called after each batch during pushAll/pullAll to report progress. */
     this.onSyncProgress = null;
+    /** Fired (fire-and-forget) when a sync step swallows an error to keep the
+     *  flow alive — the swallowing is deliberate (one bad file must not abort a
+     *  sync), but a vault-scoped HTTP 404 buried this way is how a DEAD VAULT
+     *  presents, and the dead-vault self-heal (main.ts healDeadVault) can only
+     *  run if it sees the error (review finding 2). */
+    this.onVaultScopedError = null;
     /** Last-known plan/entitlement state, fed by the channel's `onPlanState`
      *  callback (user-topic join reply + `subscription_activated`). Drives the
      *  upgrade-triggered re-sync of plan-skipped attachments. Null until the
@@ -20660,7 +20667,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  pushModifiedFiles) pass force without this, so they stay quiet on
    *  plan-gated attachments. */
   async pushFile(file, force = !1, bypassPlanSkip = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x;
     if (this.pushing.has(file.path)) return !1;
     if (!bypassPlanSkip && this.isBinaryFile(file) && this.hasInformationalIssue(file.path))
       return devLog().log("push", `skip (plan-informational): ${file.path}`), !1;
@@ -20782,10 +20789,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               ), await this.adoptCreateAck(effectiveId, pushedPath, null), !0;
             }
           } catch (err) {
-            return rlog().warn(
+            return crdtOpFailureReason(err) === "recently_deleted" ? (rlog().info(
+              "push",
+              `recently_deleted \u2014 trashing local ${pushedPath} to honor remote delete`
+            ), await this.trashRemotelyDeleted(file), this.logEntry("push", pushedPath, "skipped", "recently_deleted"), !1) : (rlog().warn(
               "crdt",
               `crdt_create failed, enqueued for durable retry: ${pushedPath} | ${String(err)}`
-            ), this.crdtEnqueue ? (this.crdtEnqueue({ kind: "create", docId: noteId, path: pushedPath }), !0) : !1;
+            ), (_p = this.crdtEnqueue) == null || _p.call(this, { kind: "create", docId: noteId, path: pushedPath }), !1);
           }
         if (this.isCrdtEligible(file) && !exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES))
           return this.crdtEnqueue && this.crdt && noteId && !this.hasServerNote(noteId) && this.crdtEnqueue({ kind: "create", docId: noteId, path: pushedPath }), !1;
@@ -20802,11 +20812,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           let localFile = this.app.vault.getFileByPath(pushedPath);
           localFile && (await this.app.vault.rename(localFile, serverPath), new import_obsidian24.Notice(
             `Engram Sync: renamed "${pushedPath.split("/").pop()}" (unsupported characters)`
-          )), this.dropPath((0, import_obsidian24.normalizePath)(pushedPath), { dropBase: !1 }), this.stampSyncedRow((0, import_obsidian24.normalizePath)(serverPath), { hash }), (_p = this.noteIdMap) == null || _p.delete((0, import_obsidian24.normalizePath)(pushedPath)), (_q = this.noteIdMap) == null || _q.set((0, import_obsidian24.normalizePath)(serverPath), resp.note.id);
+          )), this.dropPath((0, import_obsidian24.normalizePath)(pushedPath), { dropBase: !1 }), this.stampSyncedRow((0, import_obsidian24.normalizePath)(serverPath), { hash }), (_q = this.noteIdMap) == null || _q.delete((0, import_obsidian24.normalizePath)(pushedPath)), (_r = this.noteIdMap) == null || _r.set((0, import_obsidian24.normalizePath)(serverPath), resp.note.id);
         } else
-          this.stampSyncedRow((0, import_obsidian24.normalizePath)(file.path), { hash }), (_r = this.noteIdMap) == null || _r.set((0, import_obsidian24.normalizePath)(file.path), resp.note.id);
+          this.stampSyncedRow((0, import_obsidian24.normalizePath)(file.path), { hash }), (_s = this.noteIdMap) == null || _s.set((0, import_obsidian24.normalizePath)(file.path), resp.note.id);
         file.path === pushedPath && (pushedNoteParse = {
-          path: (_s = resp.note.path) != null ? _s : pushedPath,
+          path: (_t2 = resp.note.path) != null ? _t2 : pushedPath,
           parseStatus: resp.note.parse_status,
           parseReason: resp.note.parse_reason
         });
@@ -20835,8 +20845,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         lastFailedAt: now,
         attempts: 1
       });
-      let attempts = (_u = (_t2 = this.issues.get(file.path)) == null ? void 0 : _t2.attempts) != null ? _u : 1;
-      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_v = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
+      let attempts = (_v = (_u = this.issues.get(file.path)) == null ? void 0 : _u.attempts) != null ? _v : 1;
+      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_w = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
         "push",
         `Push failed: ${file.path} \u2014 ${msg} | category=${classified.category}`,
         e instanceof Error ? e.stack : void 0
@@ -20846,7 +20856,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         kind: isBinary ? "attachment" : "note",
         mtime: file.stat.mtime / 1e3,
         timestamp: Date.now(),
-        vaultId: (_w = this.settings.vaultId) != null ? _w : void 0
+        vaultId: (_x = this.settings.vaultId) != null ? _x : void 0
       }), this.maybeGoOffline(e);
     } finally {
       this.pushing.delete(pushedPath), this.releasePushSlot(), success && this.markRecentlyPushed(pushedPath), this.emitStatus();
@@ -21143,13 +21153,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         applied: 0,
         files: 0,
         failed: 0,
+        deletes: 0,
         serverIds,
         serverAttachmentPaths,
         ran: !1,
         complete: !1
       };
     this.seqReplayRunning = !0;
-    let applied = 0, files = 0, failed = 0, complete = !0;
+    let applied = 0, files = 0, failed = 0, deletes = 0, complete = !0;
     try {
       do {
         this.seqReplayAgain = !1;
@@ -21160,12 +21171,21 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           (_c = opts.enumerateOnly) != null ? _c : !1,
           opts.onFileApplied
         );
-        applied += pass.applied, files += pass.files, failed += pass.failed, pass.complete || (complete = !1);
+        applied += pass.applied, files += pass.files, failed += pass.failed, deletes += pass.deletes, pass.complete || (complete = !1);
       } while (this.seqReplayAgain);
     } finally {
       this.seqReplayRunning = !1;
     }
-    return { applied, files, failed, serverIds, serverAttachmentPaths, ran: !0, complete };
+    return {
+      applied,
+      files,
+      failed,
+      deletes,
+      serverIds,
+      serverAttachmentPaths,
+      ran: !0,
+      complete
+    };
   }
   /** Run `catchupViaSeqReplay` for a DESTRUCTIVE delete decision (pull-all wipe,
    *  push-all replace-remote). Retries until THIS call executes the replay
@@ -21214,9 +21234,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  validator plus steps 1
    *  and 3. */
   async catchUp(opts = {}) {
+    var _a;
     let pulledFiles = 0, onFileApplied = opts.reportProgress ? (path) => {
-      var _a;
-      (_a = this.onSyncProgress) == null || _a.call(this, {
+      var _a2;
+      (_a2 = this.onSyncProgress) == null || _a2.call(this, {
         phase: "pulling",
         current: ++pulledFiles,
         total: 0,
@@ -21230,11 +21251,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       );
       if (manifest != null && manifest.unchanged) {
         await this.seedEmptyFolders();
-        let { files: files2, failed: failed2 } = await this.catchupViaSeqReplay({ onFileApplied });
-        return { files: files2, failed: failed2 };
+        let { files: files2, failed: failed2, deletes: deletes2 } = await this.catchupViaSeqReplay({
+          onFileApplied
+        });
+        return { files: files2, failed: failed2, deletes: deletes2 };
       }
       await this.reconcileFromManifest(manifest, authGenAtFetch);
-      let behind = this.validateFromManifest(manifest), { files, failed } = await this.catchupViaSeqReplay({ onFileApplied }), poked = await this.healDivergedLiveBoundNotes(manifest);
+      let behind = this.validateFromManifest(manifest), { files, failed, deletes } = await this.catchupViaSeqReplay({ onFileApplied }), poked = await this.healDivergedLiveBoundNotes(manifest);
       try {
         await this.syncExplicitFolders();
       } catch (e) {
@@ -21244,26 +21267,26 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           e instanceof Error ? e.stack : void 0
         );
       }
-      return typeof (manifest == null ? void 0 : manifest.change_seq) == "number" && behind === 0 && poked === 0 && (this.setManifestSeq(manifest.change_seq), await this.saveData({ manifestSeq: this.manifestSeq })), { files, failed };
+      return typeof (manifest == null ? void 0 : manifest.change_seq) == "number" && behind === 0 && poked === 0 && (this.setManifestSeq(manifest.change_seq), await this.saveData({ manifestSeq: this.manifestSeq })), { files, failed, deletes };
     } catch (e) {
       return rlog().error(
         "pull",
         `Catch-up failed: ${errMsg(e)}`,
         e instanceof Error ? e.stack : void 0
-      ), { files: 0, failed: 0 };
+      ), (_a = this.onVaultScopedError) == null || _a.call(this, e), { files: 0, failed: 0, deletes: 0 };
     }
   }
   async runSeqReplayOnce(fromZero, serverIds, serverAttachmentPaths, enumerateOnly = !1, onFileApplied) {
     var _a;
     if (!this.crdtCatchupSince || !this.crdt)
-      return { applied: 0, files: 0, failed: 0, complete: !1 };
+      return { applied: 0, files: 0, failed: 0, deletes: 0, complete: !1 };
     let activeVault = (_a = this.settings.vaultId) != null ? _a : null, resumable = !fromZero && this.syncStateVaultId === activeVault, cursor = resumable ? this.getCatchupSeq() : 0, cursorId = resumable ? this.getCatchupId() : null;
     if (this.seqRewindFloor !== null && !fromZero) {
       let floored = Math.min(cursor, this.seqRewindFloor);
       floored !== cursor && (cursorId = null), cursor = floored;
     }
     this.seqRewindFloor = null;
-    let applied = 0, files = 0, failed = 0;
+    let applied = 0, files = 0, failed = 0, deletes = 0;
     try {
       await this.walkOpLog({
         seq: cursor,
@@ -21272,7 +21295,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           if (!enumerateOnly)
             try {
               let changed = await this.applySyncChange(c);
-              applied += 1, !c.deleted && changed && (files += 1, onFileApplied == null || onFileApplied(c.path));
+              applied += 1, !c.deleted && changed ? (files += 1, onFileApplied == null || onFileApplied(c.path)) : c.deleted && changed && (deletes += 1);
             } catch (e) {
               failed += 1, rlog().error("crdt", `seq-replay: skipped ${c.path} \u2014 ${errMsg(e)}`);
             }
@@ -21287,9 +21310,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       });
     } catch (e) {
       if (!(e instanceof OpLogFetchError)) throw e;
-      return rlog().warn("crdt", `seq-replay: ${e.message}`), { applied, files, failed, complete: !1 };
+      return rlog().warn("crdt", `seq-replay: ${e.message}`), { applied, files, failed, deletes, complete: !1 };
     }
-    return { applied, files, failed, complete: !0 };
+    return { applied, files, failed, deletes, complete: !0 };
   }
   /** Per-note discovery from a room-open announce that carries a path
    *  (`crdt_doc_ready`, backend adds `path`). An EMPTY note's genesis integrates
@@ -22204,7 +22227,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 null,
                 change.version,
                 change.seq
-              ), !1;
+              ), !0;
             if (localNow !== null && (stored == null ? void 0 : stored.hash) !== void 0 && fnv1a(localNow) !== stored.hash && localNow !== content && localNow !== null) {
               rlog().warn(
                 "pull",
@@ -22231,7 +22254,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 content,
                 change.version,
                 change.seq
-              ), !1);
+              ), !0);
             }
             if (noteId && (stored == null ? void 0 : stored.serverHash) === void 0 && localNow !== null && localNow === content)
               rlog().info(
@@ -22549,16 +22572,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  and recorded as an issue, never propagated — one bad file (or one
    *  crdt_create timeout) must not abort the rest of a first sync. Progress
    *  is emitted per completed file. */
-  async pushPartitioned(toSync, mode) {
+  async pushPartitioned(toSync, mode, base = { pushed: 0, failed: 0 }) {
     let total = toSync.length, pushed = 0, failed = 0;
     for (let i = 0; i < toSync.length; i += PUSH_BATCH_SIZE) {
       let batch = toSync.slice(i, i + PUSH_BATCH_SIZE);
       await Promise.all(
         batch.map(async (f) => {
+          var _a;
           try {
             await this.pushFile(f, mode === "force") ? (pushed++, mode === "force" && this.logEntry("push", f.path, "ok")) : mode === "force" && this.logEntry("skip", f.path, "skipped", void 0, "unchanged");
           } catch (e) {
-            failed++;
+            failed++, (_a = this.onVaultScopedError) == null || _a.call(this, e);
             let msg = errMsg(e);
             this.logEntry("push", f.path, "error", msg), this.issues.record({
               path: f.path,
@@ -22570,31 +22594,38 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               attempts: 1
             });
           }
-          this.emitPushing(pushed, total, failed, f.path);
+          this.emitPushing(
+            base.pushed + pushed,
+            base.pushed + total,
+            base.failed + failed,
+            f.path
+          );
         })
       );
     }
     return { pushed, failed };
   }
   async pushModifiedFiles(sinceTimestamp) {
-    return this.pushModifiedInFlight ? (this.pushModifiedAgain = !0, this.pushModifiedInFlight) : (this.pushModifiedInFlight = (async () => {
-      let out = await this.pushModifiedFilesInner(sinceTimestamp);
-      for (; this.pushModifiedAgain; ) {
-        this.pushModifiedAgain = !1;
-        let more = await this.pushModifiedFilesInner();
-        out = { pushed: out.pushed + more.pushed, failed: out.failed + more.failed };
+    return this.pushModifiedInFlight ? (this.pushModifiedAgain = !0, this.pushModifiedInFlight.then((r) => ({ ...r, joined: !0 }))) : (this.pushModifiedInFlight = (async () => {
+      try {
+        let out = await this.pushModifiedFilesInner(sinceTimestamp);
+        for (; this.pushModifiedAgain; ) {
+          this.pushModifiedAgain = !1;
+          let more = await this.pushModifiedFilesInner(void 0, out);
+          out = { pushed: out.pushed + more.pushed, failed: out.failed + more.failed };
+        }
+        return out;
+      } finally {
+        this.pushModifiedInFlight = null, this.pushModifiedAgain = !1;
       }
-      return out;
-    })().finally(() => {
-      this.pushModifiedInFlight = null, this.pushModifiedAgain = !1;
-    }), this.pushModifiedInFlight);
+    })(), this.pushModifiedInFlight);
   }
-  async pushModifiedFilesInner(sinceTimestamp) {
+  async pushModifiedFilesInner(sinceTimestamp, base = { pushed: 0, failed: 0 }) {
     let since = sinceTimestamp != null ? sinceTimestamp : this.lastSync, sinceMs = since ? new Date(since).getTime() : 0, files = this.app.vault.getFiles(), pushed = 0, toSync = files.filter((f) => !this.isSyncable(f) || this.shouldIgnore(f.path) ? !1 : this.syncState.has(f.path) ? f.stat.mtime > sinceMs : !0);
     devLog().log("push", `pushModifiedFiles: ${toSync.length} files modified since ${since}`), rlog().info("push", `PushModified: ${toSync.length} files modified since ${since}`);
     let total = toSync.length;
-    total > 0 && this.emitPushing(0, total, 0);
-    let outcome = await this.pushPartitioned(toSync, "incremental");
+    total > 0 && this.emitPushing(base.pushed, base.pushed + total, base.failed);
+    let outcome = await this.pushPartitioned(toSync, "incremental", base);
     return pushed += outcome.pushed, this.flushAttachmentLimitedToast(), this.flushFailureSummaryToast(), { pushed, failed: outcome.failed };
   }
   /** Compute what a sync would do without executing it (dry-run preview).
@@ -23316,6 +23347,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
      *  auth/vault change. Compared against current fingerprint to decide
      *  whether the sync gate should be open. */
     this.syncGateAcceptedFor = null;
+    /** The live SyncPreviewModal, if one is open. Held so healDeadVault can
+     *  close a preview that sits on a just-nulled vault before reopening the
+     *  picker (the syncPreviewGuard makes a reopen a no-op while it lives). */
+    this.openPreviewModal = null;
     /** Timestamp (ms) of the last noteIdMap manifest-reconcile attempt.
      *  Reconciling on EVERY reconnect (not just the first) is required so a
      *  note another device created during a disconnect is discovered — see
@@ -23400,7 +23435,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       "lifecycle",
       `Plugin loading | v${this.manifest.version} | ${import_obsidian26.Platform.isMobile ? "mobile" : "desktop"}`
     ), this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
-      data.lastSync !== void 0 && this.syncEngine.setLastSync(data.lastSync), data.catchupSeq !== void 0 && this.syncEngine.setCatchupSeq(data.catchupSeq), data.catchupId !== void 0 && this.syncEngine.setCatchupId(data.catchupId), data.manifestSeq !== void 0 && this.syncEngine.setManifestSeq(data.manifestSeq), await this.savePluginData(this.syncEngine.getLastSync());
+      data.lastSync !== void 0 && (this.syncEngine.setLastSync(data.lastSync), this.syncEngine.onVaultScopedError = (e) => {
+        this.healDeadVault(e);
+      }), data.catchupSeq !== void 0 && this.syncEngine.setCatchupSeq(data.catchupSeq), data.catchupId !== void 0 && this.syncEngine.setCatchupId(data.catchupId), data.manifestSeq !== void 0 && this.syncEngine.setManifestSeq(data.manifestSeq), await this.savePluginData(this.syncEngine.getLastSync());
     }), this.syncEngine.syncLog = this.syncLog, this.syncEngine.setCrdtPorts({
       // Level-triggered CRDT-liveness check for the push path. The manager
       // port is edge-triggered (set on crdt: join, cleared on disconnect) and
@@ -23738,8 +23775,8 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         if (gateOpen)
           try {
             (_c2 = this.noteStream) != null && _c2.isCrdtConnected() && await this.syncEngine.catchupViaSeqReplay();
-            let { pushed } = await this.syncEngine.pushModifiedFiles();
-            pushed > 0 && new import_obsidian26.Notice(`Engram Sync: pushed ${pushed}`);
+            let res = await this.syncEngine.pushModifiedFiles();
+            res.pushed > 0 && !res.joined && new import_obsidian26.Notice(`Engram Sync: pushed ${res.pushed}`);
           } catch (e) {
             this.handleSyncError("Startup sync", e);
           }
@@ -23771,6 +23808,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
    *  creates one. A 404 for any OTHER reason (note not found etc.) is left
    *  alone — the vault-list check is the discriminator. */
   async healDeadVault(e) {
+    var _a;
     if (!this.healingVault && !(!isHttpStatus(e, 404) || !this.settings.vaultId)) {
       this.healingVault = !0;
       try {
@@ -23778,7 +23816,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         rlog().warn(
           "lifecycle",
           `Active vault ${this.settings.vaultId} no longer exists server-side \u2014 clearing and reopening the picker`
-        ), this.settings.vaultId = null, this.settings.remoteVaultName = void 0, this.syncGateAcceptedFor = null, this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), new import_obsidian26.Notice(
+        ), this.settings.vaultId = null, this.settings.remoteVaultName = void 0, this.api.setVaultId(null), this.syncGateAcceptedFor = null, this.syncEngine.setSyncBlocked(!0), (_a = this.openPreviewModal) == null || _a.close(), this.openPreviewModal = null, await this.savePluginData(this.syncEngine.getLastSync()), new import_obsidian26.Notice(
           "Engram: this vault no longer exists on the server. Pick or create a vault to continue."
         ), await this.doSyncWithFirstSyncCheck({ startInVaultPicker: !0 });
       } catch (e2) {
@@ -24481,9 +24519,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           modal.setPlanError(
             "Could not compare with the cloud. Check your connection."
           ), rlog().error("lifecycle", `Sync plan compute failed: ${errMsg(e)}`);
-        });
+        }), this.openPreviewModal = modal;
         let choice = await modal.awaitChoice();
-        await this.runSyncWithProgress(choice, {
+        this.openPreviewModal = null, await this.runSyncWithProgress(choice, {
           plan: modal.getPlan(),
           firstSync: context === "first-time"
         });
@@ -24523,8 +24561,8 @@ Last sync: ${date.toLocaleString()}`;
     this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), this.hasAuthConfigured() && (this.syncInterval = window.setInterval(() => {
       (async () => {
         try {
-          let { files: pulled } = await this.syncEngine.catchUp();
-          pulled > 0 && new import_obsidian26.Notice(`Engram Sync: pulled ${pulled} changes`);
+          let { files: pulled, deletes } = await this.syncEngine.catchUp();
+          pulled + deletes > 0 && new import_obsidian26.Notice(`Engram Sync: pulled ${pulled + deletes} changes`);
         } catch (e) {
           console.error("Engram Sync: periodic catch-up failed", e);
         }

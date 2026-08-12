@@ -227,7 +227,12 @@ describe("progress-stream integrity (jumping-bar + phantom-download fixes)", () 
 		const [a, b] = await Promise.all([engine.pushModifiedFiles(), engine.pushModifiedFiles()]);
 
 		expect(maxActive).toBe(1);
-		expect(a).toEqual(b); // joiner shares the coalesced result
+		// Joiner shares the coalesced counts (its result additionally carries
+		// the `joined` marker — see the double-report finding test below).
+		expect({ pushed: b.pushed, failed: b.failed }).toEqual({
+			pushed: a.pushed,
+			failed: a.failed,
+		});
 	});
 });
 
@@ -254,4 +259,131 @@ test("a push requested mid-run is not swallowed — one follow-up run picks it u
 
 	expect(pushedPaths).toContain("Notes/A.md");
 	expect(pushedPaths).toContain("Notes/B.md");
+});
+
+describe("review findings — genesis rejection semantics", () => {
+	function genesisEngine() {
+		const made = makeEngine([]);
+		const trashed: string[] = [];
+		(made.engine as any).trashRemotelyDeleted = async (f: TFile) => trashed.push(f.path);
+		const enqueued: unknown[] = [];
+		(made.engine as any).setCrdtEnqueue?.((op: unknown) => enqueued.push(op));
+		if (!(made.engine as any).crdtEnqueue) {
+			(made.engine as any).crdtEnqueue = (op: unknown) => enqueued.push(op);
+		}
+		return { ...made, trashed, enqueued };
+	}
+
+	test("crdt_create rejected recently_deleted → local copy trashed, NOT pushed, NOT enqueued (delete-wins)", async () => {
+		const { engine, trashed, enqueued } = genesisEngine();
+		(engine as any).crdtCreate = async () => {
+			throw new Error('request failed: {"reason":"recently_deleted"}');
+		};
+		const file = new TFile("Notes/Deleted.md", Date.now());
+
+		const ok = await (engine as any).pushFile(file, true);
+
+		expect(ok).toBe(false);
+		expect(trashed).toEqual(["Notes/Deleted.md"]);
+		expect(enqueued).toHaveLength(0);
+	});
+
+	test("crdt_create rejected for a transient reason → enqueued for retry but NOT counted pushed", async () => {
+		const { engine, trashed, enqueued } = genesisEngine();
+		(engine as any).crdtCreate = async () => {
+			throw new Error('request failed: {"reason":"rate_limited"}');
+		};
+		const file = new TFile("Notes/Limited.md", Date.now());
+
+		const ok = await (engine as any).pushFile(file, true);
+
+		expect(ok).toBe(false); // queued is not synced — the recap must not count it
+		expect(enqueued).toHaveLength(1);
+		expect(trashed).toHaveLength(0);
+	});
+});
+
+describe("review findings — vault-scoped error escalation + delete counting", () => {
+	test("a per-file 404 reaches onVaultScopedError even though the loop swallows it", async () => {
+		const { engine } = makeEngine([]);
+		const file = new TFile("Notes/x.md", Date.now());
+		(engine as any).app.vault.getFiles = mock().mockReturnValue([file]);
+		(engine as any).pushFile = mock().mockRejectedValue(
+			Object.assign(new Error("HTTP 404"), { status: 404 }),
+		);
+		const seen: unknown[] = [];
+		(engine as any).onVaultScopedError = (e: unknown) => seen.push(e);
+
+		await engine.pushModifiedFiles();
+
+		expect(seen).toHaveLength(1);
+		expect((seen[0] as { status?: number }).status).toBe(404);
+	});
+
+	test("catchUp reports tombstone applies as deletes so a delete-only poll is visible", async () => {
+		const { engine } = makeEngine([
+			noteRow({
+				id: "id-gone",
+				seq: 9,
+				path: "Notes/gone.md",
+				deleted: true,
+				content: undefined,
+			}),
+		]);
+		const apply = spyOn(engine, "applySyncChange").mockResolvedValue(true);
+
+		const res = await engine.catchUp();
+
+		expect(apply).toHaveBeenCalled();
+		expect(res.files).toBe(0);
+		expect((res as { deletes?: number }).deletes).toBe(1);
+	});
+});
+
+describe("review findings — rerun progress continuity + joiner marker", () => {
+	test("a coalesced rerun continues counters from the first run instead of resetting to 0", async () => {
+		const { engine, events } = makeEngine([]);
+		const fileA = new TFile("Notes/A.md", Date.now());
+		const fileB = new TFile("Notes/B.md", Date.now());
+		const vaultFiles = [fileA];
+		(engine as any).app.vault.getFiles = mock(() => [...vaultFiles]);
+		(engine as any).pushFile = mock().mockImplementation(async () => {
+			await new Promise((r) => setTimeout(r, 15));
+			return true;
+		});
+
+		const first = engine.pushModifiedFiles();
+		await new Promise((r) => setTimeout(r, 5));
+		vaultFiles.push(fileB);
+		const second = engine.pushModifiedFiles();
+		await Promise.all([first, second]);
+
+		const pushing = events.filter((p) => p.phase === "pushing");
+		// After any event reports N pushed, no later event may report fewer.
+		let high = 0;
+		for (const p of pushing) {
+			expect(p.current).toBeGreaterThanOrEqual(high === 0 ? 0 : Math.min(high, p.current));
+			if (p.current < high) throw new Error(`progress regressed: ${p.current} after ${high}`);
+			high = Math.max(high, p.current);
+		}
+		// Both runs' work visible cumulatively. The mocked pushFile records no
+		// syncState, so the rerun legitimately re-pushes A too — the invariant
+		// is monotonicity plus B's push being visible, not an exact count.
+		expect(high).toBeGreaterThanOrEqual(2);
+	});
+
+	test("a joiner's result is marked joined so callers don't double-report the same push", async () => {
+		const { engine } = makeEngine([]);
+		const file = new TFile("Notes/one.md", Date.now());
+		(engine as any).app.vault.getFiles = mock().mockReturnValue([file]);
+		(engine as any).pushFile = mock().mockImplementation(async () => {
+			await new Promise((r) => setTimeout(r, 15));
+			return true;
+		});
+
+		const [a, b] = await Promise.all([engine.pushModifiedFiles(), engine.pushModifiedFiles()]);
+
+		expect((a as { joined?: boolean }).joined).toBeUndefined();
+		expect((b as { joined?: boolean }).joined).toBe(true);
+	});
 });

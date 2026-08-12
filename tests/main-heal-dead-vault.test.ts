@@ -14,7 +14,11 @@ function makeFakePlugin(over: Record<string, unknown> = {}) {
 		healingVault: false,
 		settings: { vaultId: "dead-vault-id", remoteVaultName: "Dead" },
 		syncGateAcceptedFor: "some-fingerprint",
-		api: { listVaults: mock().mockResolvedValue([{ id: "other-vault" }]) },
+		api: {
+			listVaults: mock().mockResolvedValue([{ id: "other-vault" }]),
+			setVaultId: mock(),
+		},
+		openPreviewModal: { close: mock() },
 		syncEngine: { setSyncBlocked: mock(), getLastSync: mock().mockReturnValue("") },
 		savePluginData: mock().mockResolvedValue(undefined),
 		doSyncWithFirstSyncCheck: mock().mockResolvedValue(undefined),
@@ -32,6 +36,8 @@ const err404 = Object.assign(new Error("HTTP 404"), { status: 404 });
 describe("healDeadVault", () => {
 	test("vault absent from the server list → clears id, blocks sync, reopens picker", async () => {
 		const { fake, heal } = makeFakePlugin();
+		// Captured up front: the heal nulls the field after closing.
+		const previewClose = (fake.openPreviewModal as { close: unknown }).close;
 
 		await heal(err404);
 
@@ -41,6 +47,12 @@ describe("healDeadVault", () => {
 		expect(fake.doSyncWithFirstSyncCheck as any).toHaveBeenCalledWith({
 			startInVaultPicker: true,
 		});
+		// Finding 10: the API client must drop the dead vault id too, or every
+		// non-sync request keeps stamping the dead X-Vault-ID and re-404s.
+		expect((fake.api.setVaultId as any).mock.calls[0][0]).toBeNull();
+		// Finding 9: a stale open preview must be closed before reopening the
+		// picker — the guard makes the reopen a no-op while it is open.
+		expect(previewClose as any).toHaveBeenCalled();
 	});
 
 	test("vault still exists server-side → 404 was about something else, no heal", async () => {

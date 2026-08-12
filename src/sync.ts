@@ -8,6 +8,7 @@ import { fnv1a } from "./content-hash";
 import type { NoteIdMap } from "./crdt/note-id-map";
 import type { ProviderRegistry } from "./crdt/provider-registry";
 import { uuid7 } from "./crdt/uuid7";
+import { crdtOpFailureReason } from "./crdt-op-dispatch";
 import { devLog } from "./dev-log";
 import { errMsg, isHttpStatus } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
@@ -454,6 +455,13 @@ export class SyncEngine {
 
 	/** Called after each batch during pushAll/pullAll to report progress. */
 	onSyncProgress: ((progress: SyncProgress) => void) | null = null;
+
+	/** Fired (fire-and-forget) when a sync step swallows an error to keep the
+	 *  flow alive — the swallowing is deliberate (one bad file must not abort a
+	 *  sync), but a vault-scoped HTTP 404 buried this way is how a DEAD VAULT
+	 *  presents, and the dead-vault self-heal (main.ts healDeadVault) can only
+	 *  run if it sees the error (review finding 2). */
+	onVaultScopedError: ((e: unknown) => void) | null = null;
 
 	/** Last-known plan/entitlement state, fed by the channel's `onPlanState`
 	 *  callback (user-topic join reply + `subscription_activated`). Drives the
@@ -3129,21 +3137,32 @@ export class SyncEngine {
 							return true;
 						}
 					} catch (err) {
-						// crdtCreate itself REJECTED (delete-wins window, rate-limit, bad
-						// path): the row was never created. CRDT is the sole md-note path
-						// now, there is no REST create to fall back to. Enqueue a durable
-						// crdt_create so the genesis is HELD and retried (transient reasons)
-						// or surfaced (terminal) by the CrdtOpQueue instead of riding a
-						// best-effort reconnect re-push that can silently drop it. Return
-						// handled so we don't fall into the non-md/oversized REST branch.
+						// crdtCreate itself REJECTED — the row was never created. Two cases.
+						//
+						// recently_deleted (delete-wins window, backend #970): the path was
+						// just deleted on another device. Converge by TRASHING our local
+						// copy, exactly what the retired batch path did — retrying past the
+						// window resurrects the note on every device (review finding 1).
+						const createReason = crdtOpFailureReason(err);
+						if (createReason === "recently_deleted") {
+							rlog().info(
+								"push",
+								`recently_deleted — trashing local ${pushedPath} to honor remote delete`,
+							);
+							await this.trashRemotelyDeleted(file);
+							this.logEntry("push", pushedPath, "skipped", "recently_deleted");
+							return false;
+						}
+						// Anything else (rate-limit, transport): enqueue a durable
+						// crdt_create so the genesis is HELD and retried (transient) or
+						// surfaced (terminal) by the CrdtOpQueue. Return FALSE — a queued
+						// create is not a synced note; counting it as pushed let the recap
+						// claim success for notes the queue could still drop (finding 3).
 						rlog().warn(
 							"crdt",
 							`crdt_create failed, enqueued for durable retry: ${pushedPath} | ${String(err)}`,
 						);
-						if (this.crdtEnqueue) {
-							this.crdtEnqueue({ kind: "create", docId: noteId, path: pushedPath });
-							return true;
-						}
+						this.crdtEnqueue?.({ kind: "create", docId: noteId, path: pushedPath });
 						return false;
 					}
 				}
@@ -3765,6 +3784,8 @@ export class SyncEngine {
 		files: number;
 		/** Rows whose apply threw (logged + skipped so the feed never wedges). */
 		failed: number;
+		/** Tombstone rows that actually trashed a local file. */
+		deletes: number;
 		serverIds: Set<string>;
 		serverAttachmentPaths: Set<string>;
 		/** `true` when THIS call executed the replay loop exclusively (so
@@ -3788,6 +3809,7 @@ export class SyncEngine {
 				applied: 0,
 				files: 0,
 				failed: 0,
+				deletes: 0,
 				serverIds,
 				serverAttachmentPaths,
 				ran: false,
@@ -3798,6 +3820,7 @@ export class SyncEngine {
 		let applied = 0;
 		let files = 0;
 		let failed = 0;
+		let deletes = 0;
 		let complete = true;
 		try {
 			do {
@@ -3812,6 +3835,7 @@ export class SyncEngine {
 				applied += pass.applied;
 				files += pass.files;
 				failed += pass.failed;
+				deletes += pass.deletes;
 				// The sets accumulate across coalesced passes, so ONE short pass taints
 				// the whole result — never OR this back to true.
 				if (!pass.complete) complete = false;
@@ -3819,7 +3843,16 @@ export class SyncEngine {
 		} finally {
 			this.seqReplayRunning = false;
 		}
-		return { applied, files, failed, serverIds, serverAttachmentPaths, ran: true, complete };
+		return {
+			applied,
+			files,
+			failed,
+			deletes,
+			serverIds,
+			serverAttachmentPaths,
+			ran: true,
+			complete,
+		};
 	}
 
 	/** Run `catchupViaSeqReplay` for a DESTRUCTIVE delete decision (pull-all wipe,
@@ -3890,7 +3923,7 @@ export class SyncEngine {
 	 *  and 3. */
 	async catchUp(
 		opts: { reportProgress?: boolean } = {},
-	): Promise<{ files: number; failed: number }> {
+	): Promise<{ files: number; failed: number; deletes: number }> {
 		// FILE-unit progress for the sync UI (fullSync's pull leg). Opt-in: the
 		// background poll/reconnect callers emit nothing, exactly as before —
 		// they have no progress surface and never emit a terminal "complete".
@@ -3925,12 +3958,14 @@ export class SyncEngine {
 				// watermark — an idle vault must not strand a local empty folder
 				// forever. Cheap: no-ops when nothing local is untracked.
 				await this.seedEmptyFolders();
-				const { files, failed } = await this.catchupViaSeqReplay({ onFileApplied });
-				return { files, failed };
+				const { files, failed, deletes } = await this.catchupViaSeqReplay({
+					onFileApplied,
+				});
+				return { files, failed, deletes };
 			}
 			await this.reconcileFromManifest(manifest, authGenAtFetch);
 			const behind = this.validateFromManifest(manifest);
-			const { files, failed } = await this.catchupViaSeqReplay({ onFileApplied });
+			const { files, failed, deletes } = await this.catchupViaSeqReplay({ onFileApplied });
 			const poked = await this.healDivergedLiveBoundNotes(manifest);
 			try {
 				await this.syncExplicitFolders();
@@ -3950,14 +3985,15 @@ export class SyncEngine {
 				this.setManifestSeq(manifest.change_seq);
 				await this.saveData({ manifestSeq: this.manifestSeq });
 			}
-			return { files, failed };
+			return { files, failed, deletes };
 		} catch (e) {
 			rlog().error(
 				"pull",
 				`Catch-up failed: ${errMsg(e)}`,
 				e instanceof Error ? e.stack : undefined,
 			);
-			return { files: 0, failed: 0 };
+			this.onVaultScopedError?.(e);
+			return { files: 0, failed: 0, deletes: 0 };
 		}
 	}
 
@@ -3972,11 +4008,17 @@ export class SyncEngine {
 		 *  caller making a delete decision must refuse them: a partial set is
 		 *  indistinguishable from "the server doesn't have these" and would trash
 		 *  every local file the walk never reached. */
-	): Promise<{ applied: number; files: number; failed: number; complete: boolean }> {
+	): Promise<{
+		applied: number;
+		files: number;
+		failed: number;
+		deletes: number;
+		complete: boolean;
+	}> {
 		// Never walked at all — sets are empty, which must NOT read as "server is
 		// empty" to a destructive caller.
 		if (!this.crdtCatchupSince || !this.crdt)
-			return { applied: 0, files: 0, failed: 0, complete: false };
+			return { applied: 0, files: 0, failed: 0, deletes: 0, complete: false };
 		// The seq cursor is per-vault: `seq` is allocated per vault, so a cursor
 		// from one vault is meaningless in another. If our recorded per-vault
 		// state belongs to a DIFFERENT vault than the active one — an OAuth /
@@ -4008,6 +4050,7 @@ export class SyncEngine {
 		let applied = 0;
 		let files = 0;
 		let failed = 0;
+		let deletes = 0;
 		try {
 			await this.walkOpLog({
 				seq: cursor,
@@ -4025,6 +4068,12 @@ export class SyncEngine {
 							if (!c.deleted && changed) {
 								files += 1;
 								onFileApplied?.(c.path);
+							} else if (c.deleted && changed) {
+								// A tombstone that actually trashed a local file — surfaced
+								// separately so a delete-only poll is still user-visible
+								// (review finding: the "pulled N changes" notice vanished
+								// when the count moved to non-deleted files only).
+								deletes += 1;
 							}
 						} catch (e) {
 							// One bad op (e.g. illegal filename) must not wedge the feed — log
@@ -4075,9 +4124,9 @@ export class SyncEngine {
 			// still real (and the cursor is persisted), so the pull itself succeeded —
 			// but a delete decision built on these sets would trash every file the
 			// walk never reached.
-			return { applied, files, failed, complete: false };
+			return { applied, files, failed, deletes, complete: false };
 		}
-		return { applied, files, failed, complete: true };
+		return { applied, files, failed, deletes, complete: true };
 	}
 
 	/** Per-note discovery from a room-open announce that carries a path
@@ -6100,7 +6149,10 @@ export class SyncEngine {
 								change.version,
 								change.seq,
 							);
-							return false;
+							// Diverged: a converge was FIRED that will rewrite this file —
+							// report it as a pulled file, or the recap says "Already up to
+							// date" while bodies are actively rewritten (review finding 5).
+							return true;
 						}
 						const localDiverged =
 							localNow !== null &&
@@ -6153,7 +6205,10 @@ export class SyncEngine {
 									change.seq,
 								);
 							}
-							return false;
+							// Diverged: a converge was FIRED that will rewrite this file —
+							// report it as a pulled file, or the recap says "Already up to
+							// date" while bodies are actively rewritten (review finding 5).
+							return true;
 						}
 
 						if (
@@ -6729,6 +6784,7 @@ export class SyncEngine {
 	private async pushPartitioned(
 		toSync: TFile[],
 		mode: "incremental" | "force",
+		base: { pushed: number; failed: number } = { pushed: 0, failed: 0 },
 	): Promise<{ pushed: number; failed: number }> {
 		const total = toSync.length;
 		let pushed = 0;
@@ -6747,6 +6803,7 @@ export class SyncEngine {
 						}
 					} catch (e) {
 						failed++;
+						this.onVaultScopedError?.(e);
 						const msg = errMsg(e);
 						this.logEntry("push", f.path, "error", msg);
 						this.issues.record({
@@ -6759,7 +6816,12 @@ export class SyncEngine {
 							attempts: 1,
 						});
 					}
-					this.emitPushing(pushed, total, failed, f.path);
+					this.emitPushing(
+						base.pushed + pushed,
+						base.pushed + total,
+						base.failed + failed,
+						f.path,
+					);
 				}),
 			);
 		}
@@ -6786,31 +6848,47 @@ export class SyncEngine {
 	private pushModifiedInFlight: Promise<{ pushed: number; failed: number }> | null = null;
 	private pushModifiedAgain = false;
 
-	async pushModifiedFiles(sinceTimestamp?: string): Promise<{ pushed: number; failed: number }> {
+	async pushModifiedFiles(
+		sinceTimestamp?: string,
+	): Promise<{ pushed: number; failed: number; joined?: boolean }> {
 		if (this.pushModifiedInFlight) {
 			this.pushModifiedAgain = true;
-			return this.pushModifiedInFlight;
+			// `joined`: this caller's result is the SAME physical work as the run
+			// it joined — callers that report counts (the startup Notice) use it
+			// to avoid double-reporting what another surface already reported
+			// (review finding 8).
+			return this.pushModifiedInFlight.then((r) => ({ ...r, joined: true }));
 		}
 		this.pushModifiedInFlight = (async () => {
-			let out = await this.pushModifiedFilesInner(sinceTimestamp);
-			// Untracked (never-synced) files are always included regardless of
-			// `since`, so the rerun's default window is enough for the joiner's
-			// trigger; N joiners coalesce into ONE rerun.
-			while (this.pushModifiedAgain) {
+			try {
+				let out = await this.pushModifiedFilesInner(sinceTimestamp);
+				// Untracked (never-synced) files are always included regardless of
+				// `since`, so the rerun's default window is enough for the joiner's
+				// trigger; N joiners coalesce into ONE rerun. The rerun continues
+				// the progress counters from `out` (base offsets) so the Uploading
+				// row never snaps back to 0 mid-sync (review finding 7).
+				while (this.pushModifiedAgain) {
+					this.pushModifiedAgain = false;
+					const more = await this.pushModifiedFilesInner(undefined, out);
+					out = { pushed: out.pushed + more.pushed, failed: out.failed + more.failed };
+				}
+				return out;
+			} finally {
+				// Inside the async body — cleared synchronously after the LAST
+				// pushModifiedAgain check with no await in between, so a joiner can
+				// never set the flag into a window where it gets wiped unseen (the
+				// .finally-on-the-promise variant had exactly that microtask race:
+				// review finding 6).
+				this.pushModifiedInFlight = null;
 				this.pushModifiedAgain = false;
-				const more = await this.pushModifiedFilesInner();
-				out = { pushed: out.pushed + more.pushed, failed: out.failed + more.failed };
 			}
-			return out;
-		})().finally(() => {
-			this.pushModifiedInFlight = null;
-			this.pushModifiedAgain = false;
-		});
+		})();
 		return this.pushModifiedInFlight;
 	}
 
 	private async pushModifiedFilesInner(
 		sinceTimestamp?: string,
+		base: { pushed: number; failed: number } = { pushed: 0, failed: 0 },
 	): Promise<{ pushed: number; failed: number }> {
 		// Use ?? not || so an empty-string prePullSync (first connect, never
 		// synced) is preserved and maps to epoch below — || would discard "" and
@@ -6833,10 +6911,10 @@ export class SyncEngine {
 		// shows progress too (the engine emits nothing otherwise).
 		const total = toSync.length;
 		if (total > 0) {
-			this.emitPushing(0, total, 0);
+			this.emitPushing(base.pushed, base.pushed + total, base.failed);
 		}
 
-		const outcome = await this.pushPartitioned(toSync, "incremental");
+		const outcome = await this.pushPartitioned(toSync, "incremental", base);
 		pushed += outcome.pushed;
 
 		this.flushAttachmentLimitedToast();

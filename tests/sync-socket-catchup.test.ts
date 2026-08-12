@@ -420,6 +420,7 @@ describe("catchupViaSeqReplay", () => {
 			applied: 0,
 			files: 0,
 			failed: 0,
+			deletes: 0,
 			serverIds: new Set(),
 			serverAttachmentPaths: new Set(),
 			ran: true,
