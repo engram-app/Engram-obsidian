@@ -186,3 +186,57 @@ export function optionBreakdown(plan: SyncPlan, choice: SyncChoice): OptionBreak
 			};
 	}
 }
+
+/** The one-click first-sync decision. When exactly one side is empty there is
+ *  a single sane action — a non-destructive merge that uploads or downloads
+ *  everything — so the five-option preview is ceremony (and its delete
+ *  variants are a foot-gun on an onboarding screen). Both sides populated →
+ *  null → full preview: that is the only case a human needs to weigh.
+ *
+ *  Safety invariant: every simplified mode maps to smart-merge. If an "empty"
+ *  verdict is ever wrong (partial enumeration), a merge costs nothing — it
+ *  never deletes. The delete variants stay unreachable from these screens. */
+export type SimplifiedFirstSync =
+	| { mode: "upload"; notes: number; attachments: number }
+	| { mode: "download"; notes: number; attachments: number }
+	| { mode: "fresh" };
+
+export function simplifiedFirstSync(plan: SyncPlan): SimplifiedFirstSync | null {
+	// Simplify ONLY when the plan itself is one clean direction. The counts
+	// alone LIE in exactly the dangerous cases: serverNoteCount counts live
+	// rows, so a fully-TOMBSTONED server vault reads "empty" while smart-merge
+	// would apply those tombstones and wipe the local vault behind an explicit
+	// no-deletion promise (review finding — the data-loss trap). Any pending
+	// deletion, conflict, or counter-direction transfer disqualifies.
+	if (
+		plan.toDeleteLocal.length > 0 ||
+		plan.toDeleteRemote.length > 0 ||
+		plan.conflicts.length > 0
+	) {
+		return null;
+	}
+	const remote = plan.serverNoteCount + plan.serverAttachmentCount;
+	const local = plan.localNoteCount + plan.localAttachmentCount;
+	const pulls = plan.toPull.notes.length + plan.toPull.attachments.length;
+	const pushes = plan.toPush.notes.length + plan.toPush.attachments.length;
+	if (remote === 0 && local === 0) {
+		return pulls + pushes === 0 ? { mode: "fresh" } : null;
+	}
+	if (remote === 0) {
+		if (pulls > 0) return null; // counter-direction: the "empty" read is stale
+		return {
+			mode: "upload",
+			notes: plan.localNoteCount,
+			attachments: plan.localAttachmentCount,
+		};
+	}
+	if (local === 0) {
+		if (pushes > 0) return null;
+		return {
+			mode: "download",
+			notes: plan.serverNoteCount,
+			attachments: plan.serverAttachmentCount,
+		};
+	}
+	return null;
+}

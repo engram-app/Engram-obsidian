@@ -10,7 +10,9 @@ import {
 	isPlanEmpty,
 	type OptionBreakdown,
 	optionBreakdown,
+	plural,
 	pluralWord,
+	simplifiedFirstSync,
 } from "./sync-plan-format";
 import type { SyncChoice, SyncPlan, SyncPreviewContext, VaultInfo } from "./types";
 
@@ -302,6 +304,42 @@ export interface SyncPreviewOptions {
 	attachmentsTextOnly?: boolean;
 }
 
+/** The one-click screen's copy, pure for tests. Zero-count clauses are
+ *  dropped ("0 notes" never renders — review finding), and the no-deletion
+ *  note is scoped to THIS DEVICE: that claim is verifiable (the dirty-plan
+ *  guard in simplifiedFirstSync excludes pending local deletions), while the
+ *  old absolute "Nothing will be deleted" could be falsified by queued
+ *  offline deletes tombstoning the server after the promise. */
+export function simplifiedScreenCopy(simple: NonNullable<ReturnType<typeof simplifiedFirstSync>>): {
+	body: string;
+	action: string;
+	note: string | null;
+} {
+	if (simple.mode === "fresh") {
+		return {
+			body: "Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.",
+			action: "Start syncing",
+			note: null,
+		};
+	}
+	const parts: string[] = [];
+	if (simple.notes > 0) parts.push(plural(simple.notes, "note"));
+	if (simple.attachments > 0) parts.push(plural(simple.attachments, "attachment"));
+	const what = parts.join(" and ") || "files";
+	if (simple.mode === "upload") {
+		return {
+			body: `This vault is empty on the server. Upload your ${what}?`,
+			action: "Upload everything",
+			note: "Nothing will be removed from this device.",
+		};
+	}
+	return {
+		body: `This device's vault is empty. Download ${what} from the server?`,
+		action: "Download everything",
+		note: "Nothing will be removed from this device.",
+	};
+}
+
 export class SyncPreviewModal extends Modal {
 	private state: SyncPreviewState;
 	private resolvedChoice: SyncChoice | null = null;
@@ -399,6 +437,19 @@ export class SyncPreviewModal extends Modal {
 			return;
 		}
 
+		// One-click first-sync screens: when one side is empty there is exactly
+		// one sane action, so skip the five-option ceremony (delete variants are
+		// a foot-gun on an onboarding screen). Both sides populated → the full
+		// preview below — the only case a human needs to weigh.
+		const simple = simplifiedFirstSync(this.state.plan);
+		// "fresh" in a review context is just an up-to-date linked vault — the
+		// regular preview's up-to-date header is the right screen, not a
+		// "Start syncing" pitch (review finding).
+		if (simple && (simple.mode !== "fresh" || context !== "review")) {
+			this.renderSimplified(contentEl, simple, context);
+			return;
+		}
+
 		const empty = isPlanEmpty(this.state.plan);
 
 		this.renderHeader(contentEl, empty ? "up-to-date" : context);
@@ -424,6 +475,39 @@ export class SyncPreviewModal extends Modal {
 		this.renderAdvancedOptions(options);
 
 		this.renderFooter(contentEl, empty ? "Close" : "Cancel", empty);
+	}
+
+	/** The one-click screen for an empty-side first sync. One primary action
+	 *  (always smart-merge — non-destructive by construction), plus the footer's
+	 *  Cancel / Change vault. See simplifiedFirstSync for the decision. */
+	private renderSimplified(
+		parent: HTMLElement,
+		simple: NonNullable<ReturnType<typeof simplifiedFirstSync>>,
+		context: SyncPreviewContext,
+	): void {
+		this.renderHeader(parent, context);
+		const box = parent.createDiv({ cls: "engram-sync-preview-simple" });
+		const copy = simplifiedScreenCopy(simple);
+		box.createEl("p", { text: copy.body, cls: "engram-sync-preview-simple-body" });
+		if (copy.note) {
+			box.createEl("p", {
+				text: copy.note,
+				cls: "engram-sync-preview-simple-note",
+			});
+		}
+		const btn = box.createEl("button", {
+			text: copy.action,
+			cls: "engram-sync-preview-simple-action mod-cta",
+		});
+		btn.addEventListener("click", () => {
+			// Always the non-destructive merge: on an empty remote it uploads
+			// everything, on an empty device it downloads everything.
+			// pickOption("smart-merge") starts the sync and closes this modal —
+			// no re-render needed (smart-merge never hits the confirm view).
+			this.state.pickOption("smart-merge");
+		});
+		this.renderSkippedAttachmentsNote(parent);
+		this.renderFooter(parent, "Cancel", false);
 	}
 
 	/** Instant-open loading state: the modal is on screen while computeSyncPlan
