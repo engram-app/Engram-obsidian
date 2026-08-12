@@ -215,7 +215,7 @@ describe("pushGenesisBatch — direct", () => {
 		expect((engine as any).issues.get("Notes/Bad.md")?.message).toContain("notes_cap_reached");
 	});
 
-	test("chunks at 100 notes per crdt_create_batch call (never exceeds the server cap)", async () => {
+	test("chunks at 25 notes per crdt_create_batch call (progress ticks, small blast radius, under the server cap)", async () => {
 		const files = Array.from(
 			{ length: 250 },
 			(_, i) => new TFile(`Notes/n${i}.md`, Date.now()),
@@ -230,7 +230,7 @@ describe("pushGenesisBatch — direct", () => {
 
 		const out = await (engine as any).pushGenesisBatch(files);
 
-		expect(chunkSizes).toEqual([100, 100, 50]);
+		expect(chunkSizes).toEqual([25, 25, 25, 25, 25, 25, 25, 25, 25, 25]);
 		expect(chunkSizes.every((n) => n <= 100)).toBe(true);
 		expect(out.pushed).toBe(250);
 	});

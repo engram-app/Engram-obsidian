@@ -1707,7 +1707,11 @@ function expBackoff(baseMs, attempt, capMs) {
 }
 
 // src/channel.ts
-var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, RESUME_PROBE_MS = 5e3, RECONNECT_JITTER_DEFAULT_MS = 5e3, RECONNECT_JITTER_MAX_MS = 6e4, RATE_LIMITED_JOIN_FLOOR_MS = 1e4;
+var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, RESUME_PROBE_MS = 5e3;
+function batchCreateTimeoutMs(count2) {
+  return 1e4 + 400 * count2;
+}
+var RECONNECT_JITTER_DEFAULT_MS = 5e3, RECONNECT_JITTER_MAX_MS = 6e4, RATE_LIMITED_JOIN_FLOOR_MS = 1e4;
 function connectRetryDelayMs(attempt, baseMs = 2e3) {
   return expBackoff(baseMs, attempt, RECONNECT_JITTER_MAX_MS);
 }
@@ -1968,9 +1972,14 @@ var _NoteChannel = class _NoteChannel {
     return (await this.sendRequest("crdt_create", { doc_id: docId, path })).doc_id;
   }
   /** Batch create: mirrors crdtCreate but takes a list (server caps it at 100
-   *  creates per request; chunking is the caller's concern). */
+   *  creates per request; chunking is the caller's concern). The deadline
+   *  scales with the chunk — see batchCreateTimeoutMs. */
   async crdtCreateBatch(creates) {
-    return await this.sendRequest("crdt_create_batch", { creates });
+    return await this.sendRequest(
+      "crdt_create_batch",
+      { creates },
+      batchCreateTimeoutMs(creates.length)
+    );
   }
   /** Delete a note over the socket, AWAITING the server ack (idempotent). The
    *  backend replies `{:ok, %{doc_id}}` even when the note is already gone, so a
@@ -22529,7 +22538,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   async pushGenesisBatch(files, onProgress) {
     var _a, _b, _c, _d;
     if (!this.crdtCreateBatch || !this.crdt) return { pushed: 0, failed: 0 };
-    let MAX_CREATES = 100, PAYLOAD_BUDGET = 6e6, pushed = 0, failed = 0, chunk = [], chunkBytes = 0, flush = async () => {
+    let MAX_CREATES = 25, PAYLOAD_BUDGET = 6e6, pushed = 0, failed = 0, chunk = [], chunkBytes = 0, flush = async () => {
       var _a2;
       if (chunk.length === 0) return;
       let sent = chunk;
@@ -22537,9 +22546,30 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       for (let e of sent) this.pushing.add(e.pushedPath);
       let recentlyDeletedPaths = /* @__PURE__ */ new Set();
       try {
-        let { results } = await this.crdtCreateBatch(
-          sent.map((e) => ({ doc_id: e.noteId, path: e.pushedPath, b64: e.b64 }))
-        );
+        let results;
+        try {
+          ({ results } = await this.crdtCreateBatch(
+            sent.map((e) => ({ doc_id: e.noteId, path: e.pushedPath, b64: e.b64 }))
+          ));
+        } catch (err) {
+          let msg = errMsg(err);
+          rlog().error(
+            "push",
+            `crdt_create_batch chunk failed (${sent.length} notes): ${msg}`
+          );
+          for (let e of sent)
+            failed++, this.logEntry("push", e.file.path, "error", msg), this.issues.record({
+              path: e.file.path,
+              kind: "note",
+              category: "other",
+              message: msg,
+              firstFailedAt: Date.now(),
+              lastFailedAt: Date.now(),
+              attempts: 1
+            });
+          onProgress == null || onProgress(pushed, failed);
+          return;
+        }
         for (let i = 0; i < sent.length; i++) {
           let e = sent[i], r = results[i];
           if ((r == null ? void 0 : r.status) === "ok")

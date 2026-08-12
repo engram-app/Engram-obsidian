@@ -6721,9 +6721,13 @@ export class SyncEngine {
 		onProgress?: (pushed: number, failed: number) => void,
 	): Promise<{ pushed: number; failed: number }> {
 		if (!this.crdtCreateBatch || !this.crdt) return { pushed: 0, failed: 0 };
-		// Server caps creates at 100; keep the accumulated frames under the
-		// Plug.Parsers request-body limit (same budget as pushNotesViaBatch).
-		const MAX_CREATES = 100;
+		// Server caps creates at 100, but 25 is the sweet spot: the server does
+		// real per-note work (~130ms/note measured on dev), so a 25-chunk stays
+		// a few seconds per request — the Uploading row ticks every chunk, and a
+		// failed/timed-out chunk strands 25 notes, not 100. Keep the accumulated
+		// frames under the Plug.Parsers request-body limit (same budget as
+		// pushNotesViaBatch).
+		const MAX_CREATES = 25;
 		const PAYLOAD_BUDGET = 6_000_000;
 
 		let pushed = 0;
@@ -6749,9 +6753,39 @@ export class SyncEngine {
 			// track them and skip the mark in the finally below.
 			const recentlyDeletedPaths = new Set<string>();
 			try {
-				const { results } = await this.crdtCreateBatch!(
-					sent.map((e) => ({ doc_id: e.noteId, path: e.pushedPath, b64: e.b64 })),
-				);
+				let results: Awaited<ReturnType<CrdtCreateBatchFn>>["results"];
+				try {
+					({ results } = await this.crdtCreateBatch!(
+						sent.map((e) => ({ doc_id: e.noteId, path: e.pushedPath, b64: e.b64 })),
+					));
+				} catch (err) {
+					// Chunk-level failure (timeout / socket drop): count every entry
+					// as failed and keep going — a single bad chunk must not abort
+					// the whole first sync. NOTE: on a timeout the server may STILL
+					// commit these creates (the reply just arrived too late); the
+					// next sync re-runs them and converges via the id_conflict ADOPT
+					// path below.
+					const msg = errMsg(err);
+					rlog().error(
+						"push",
+						`crdt_create_batch chunk failed (${sent.length} notes): ${msg}`,
+					);
+					for (const e of sent) {
+						failed++;
+						this.logEntry("push", e.file.path, "error", msg);
+						this.issues.record({
+							path: e.file.path,
+							kind: "note",
+							category: "other",
+							message: msg,
+							firstFailedAt: Date.now(),
+							lastFailedAt: Date.now(),
+							attempts: 1,
+						});
+					}
+					onProgress?.(pushed, failed);
+					return;
+				}
 				// Match by INDEX, not id: the backend guarantees `results` is
 				// index-aligned with `creates` (ordered Task.async_stream phases
 				// since engram#1194, pinned by a backend channel test with a
