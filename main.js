@@ -19501,6 +19501,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.seqRewindFloor = null;
     /** When true, vault delete events are suppressed (used during local wipe). */
     this.suppressDeletes = !1;
+    /** Paths THIS ENGINE trashed (wipe pass, orphan sweep, remote-delete
+     *  apply, recently_deleted convergence). Durable — consumed by
+     *  handleDelete, cleared when the path is recreated — never expired by a
+     *  timer. The 5s `remotelyDeleted` TTL was the 2026-08-12 data-loss seam
+     *  (#416): a mass trash outlives the TTL, the late vault delete events
+     *  look user-made, and the engine pushes them as real server deletions. */
+    this.engineTrashedPaths = /* @__PURE__ */ new Set();
     /** Paths modified during a pull that need pushing once pull completes. */
     this.pendingPostPullPushes = /* @__PURE__ */ new Set();
     this.crdtCatchupSince = null;
@@ -20554,8 +20561,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   // --- Push: local → Engram ---
   /** Handle a vault modify/create event with debounce. */
+  /** A file (re)appeared at `path` — any engine-trash record for it is
+   *  stale and must not swallow a future genuine delete of the new file. */
+  noteRecreatedPath(path) {
+    this.engineTrashedPaths.delete(path);
+  }
   handleModify(file) {
-    if (this.syncBlocked) {
+    if (this.noteRecreatedPath(file.path), this.syncBlocked) {
       devLog().log("sync-blocked", "handleModify short-circuited \u2014 gate closed");
       return;
     }
@@ -20591,8 +20603,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let isBinary = this.isBinaryFile(file), existing = this.debounceTimers.get(file.path);
     existing && (this.time.clearTimeout(existing), this.debounceTimers.delete(file.path));
     let crdtNoteId = isBinary ? null : (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(file.path)) != null ? _b : null;
-    if (crdtNoteId && this.markRecentlyDeleted(crdtNoteId), isBinary || (_c = this.noteIdMap) == null || _c.delete(file.path), this.dropPath((0, import_obsidian24.normalizePath)(file.path), { dropBase: !1 }), this.files.has(file.path, "remotelyDeleted")) {
-      this.files.clearMarker(file.path, "remotelyDeleted"), rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`), this.isCrdtEligible(file) && crdtNoteId && await this.teardownCrdtDoc(crdtNoteId);
+    crdtNoteId && this.markRecentlyDeleted(crdtNoteId), isBinary || (_c = this.noteIdMap) == null || _c.delete(file.path);
+    let hadSyncEvidence = this.syncState.has((0, import_obsidian24.normalizePath)(file.path));
+    if (this.dropPath((0, import_obsidian24.normalizePath)(file.path), { dropBase: !1 }), this.files.has(file.path, "remotelyDeleted") || this.engineTrashedPaths.has(file.path)) {
+      this.files.clearMarker(file.path, "remotelyDeleted"), this.engineTrashedPaths.delete(file.path), rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`), this.isCrdtEligible(file) && crdtNoteId && await this.teardownCrdtDoc(crdtNoteId);
+      return;
+    }
+    if (!hadSyncEvidence) {
+      rlog().warn("push", `Delete push REFUSED (no sync evidence): ${file.path}`), this.isCrdtEligible(file) && crdtNoteId && await this.teardownCrdtDoc(crdtNoteId);
       return;
     }
     try {
@@ -21045,7 +21063,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  handleDelete — every sync-applied deletion must route through here, or
    *  its echo-push can tombstone a note recreated at the path since. */
   async trashRemotelyDeleted(file) {
-    this.files.mark(file.path, "remotelyDeleted", ECHO_COOLDOWN_MS), await this.app.fileManager.trashFile(file);
+    this.files.mark(file.path, "remotelyDeleted", ECHO_COOLDOWN_MS), this.engineTrashedPaths.add(file.path), await this.app.fileManager.trashFile(file);
   }
   /** Suppress WebSocket echoes for a path for ECHO_COOLDOWN_MS after push. */
   markRecentlyPushed(path) {

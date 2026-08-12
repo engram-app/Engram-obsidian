@@ -2257,7 +2257,14 @@ export class SyncEngine {
 	// --- Push: local → Engram ---
 
 	/** Handle a vault modify/create event with debounce. */
+	/** A file (re)appeared at `path` — any engine-trash record for it is
+	 *  stale and must not swallow a future genuine delete of the new file. */
+	noteRecreatedPath(path: string): void {
+		this.engineTrashedPaths.delete(path);
+	}
+
 	handleModify(file: TAbstractFile): void {
+		this.noteRecreatedPath(file.path);
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", "handleModify short-circuited — gate closed");
 			return;
@@ -2341,6 +2348,14 @@ export class SyncEngine {
 	/** When true, vault delete events are suppressed (used during local wipe). */
 	suppressDeletes = false;
 
+	/** Paths THIS ENGINE trashed (wipe pass, orphan sweep, remote-delete
+	 *  apply, recently_deleted convergence). Durable — consumed by
+	 *  handleDelete, cleared when the path is recreated — never expired by a
+	 *  timer. The 5s `remotelyDeleted` TTL was the 2026-08-12 data-loss seam
+	 *  (#416): a mass trash outlives the TTL, the late vault delete events
+	 *  look user-made, and the engine pushes them as real server deletions. */
+	private readonly engineTrashedPaths = new Set<string>();
+
 	/** Handle a vault delete event. */
 	async handleDelete(file: TAbstractFile): Promise<void> {
 		if (this.syncBlocked) {
@@ -2387,6 +2402,7 @@ export class SyncEngine {
 		// recreated file's push is skipped and it never reaches the server.
 		// (dropBase:false — the local-delete path never dropped the merge base
 		// here; base cleanup belongs to the remote-removal path.)
+		const hadSyncEvidence = this.syncState.has(normalizePath(file.path));
 		this.dropPath(normalizePath(file.path), { dropBase: false });
 
 		// This trash APPLIED a remote change (trashRemotelyDeleted marked it):
@@ -2395,9 +2411,28 @@ export class SyncEngine {
 		// (replace-remote wipe→re-push, delete→recreate) and tombstones the
 		// FRESH note. Local bookkeeping above still ran; mirror the CRDT
 		// teardown the push path would have done and stop.
-		if (this.files.has(file.path, "remotelyDeleted")) {
+		if (
+			this.files.has(file.path, "remotelyDeleted") ||
+			this.engineTrashedPaths.has(file.path)
+		) {
 			this.files.clearMarker(file.path, "remotelyDeleted");
+			this.engineTrashedPaths.delete(file.path);
 			rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`);
+			if (this.isCrdtEligible(file) && crdtNoteId) {
+				await this.teardownCrdtDoc(crdtNoteId);
+			}
+			return;
+		}
+
+		// EVIDENCE RULE (#416): a delete may be pushed ONLY for a path this
+		// engine recorded sync evidence for. No syncState entry = we never
+		// completed a sync of this path = nothing of the user's to delete
+		// server-side; pushing anyway is how the 2026-08-12 incident turned a
+		// client-side bookkeeping hole into 39 prod tombstones. Cost of a
+		// false refusal is benign resurrection on the next pull; cost of a
+		// false push is data loss. Local bookkeeping above already ran.
+		if (!hadSyncEvidence) {
+			rlog().warn("push", `Delete push REFUSED (no sync evidence): ${file.path}`);
 			if (this.isCrdtEligible(file) && crdtNoteId) {
 				await this.teardownCrdtDoc(crdtNoteId);
 			}
@@ -3494,6 +3529,7 @@ export class SyncEngine {
 	 *  its echo-push can tombstone a note recreated at the path since. */
 	private async trashRemotelyDeleted(file: TAbstractFile): Promise<void> {
 		this.files.mark(file.path, "remotelyDeleted", ECHO_COOLDOWN_MS);
+		this.engineTrashedPaths.add(file.path);
 		await this.app.fileManager.trashFile(file);
 	}
 
