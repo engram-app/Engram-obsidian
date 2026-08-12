@@ -184,3 +184,38 @@ describe("first-sync progress reporting (op-log replay)", () => {
 		expect(complete?.failed).toBe(1);
 	});
 });
+
+describe("progress-stream integrity (jumping-bar + phantom-download fixes)", () => {
+	test("a no-op replay row (apply returned false) is not counted as a downloaded file", async () => {
+		const { engine, events } = makeEngine(threeRowFeed());
+		// Second row applies as a no-op (already up to date locally).
+		const apply = spyOn(engine, "applySyncChange");
+		apply.mockResolvedValueOnce(true).mockResolvedValueOnce(false).mockResolvedValue(true);
+
+		const pulled = await engine.pullAll();
+
+		expect(pulled).toBe(1);
+		const complete = events.find((p) => p.phase === "complete");
+		expect(complete?.current).toBe(1);
+		const pulling = events.filter((p) => p.phase === "pulling" && p.current > 0);
+		expect(Math.max(...pulling.map((p) => p.current), 0)).toBe(1);
+	});
+
+	test("concurrent pushModifiedFiles calls share ONE run (no interleaved counters)", async () => {
+		const { engine } = makeEngine([]);
+		const file = new TFile("Notes/one.md", Date.now());
+		(engine as any).app.vault.getFiles = mock().mockReturnValue([file]);
+		let calls = 0;
+		(engine as any).pushFile = mock().mockImplementation(async () => {
+			calls++;
+			await new Promise((r) => setTimeout(r, 20));
+			return true;
+		});
+
+		const [a, b] = await Promise.all([engine.pushModifiedFiles(), engine.pushModifiedFiles()]);
+
+		expect(calls).toBe(1); // ONE loop ran; the second call joined it
+		expect(a).toEqual({ pushed: 1, failed: 0 });
+		expect(b).toEqual({ pushed: 1, failed: 0 });
+	});
+});

@@ -4018,12 +4018,14 @@ export class SyncEngine {
 				onRow: async (c) => {
 					if (!enumerateOnly) {
 						try {
-							await this.applySyncChange(c);
+							const changed = await this.applySyncChange(c);
 							applied += 1;
-							// FILE units for the progress UI: tombstones and folder-marker
-							// rows are op-log bookkeeping, not downloaded files — counting
-							// them made the recap disagree with the plan's file count.
-							if (!c.deleted) {
+							// FILE units for the progress UI: tombstones, folder-marker rows,
+							// and no-op re-applies (rows the vault already matched — applyOp
+							// returned false) are op-log bookkeeping, not downloaded files.
+							// Counting them made the recap disagree with the plan AND showed
+							// a Downloading bar on a sync with nothing to download.
+							if (!c.deleted && changed) {
 								files += 1;
 								onFileApplied?.(c.path);
 							}
@@ -5910,6 +5912,10 @@ export class SyncEngine {
 				// note ships local edits without enrollment.
 				if (noteId && this.isLiveBound(normalized)) this.crdtEnrollment?.enroll(noteId);
 				rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`);
+				// (return true below: this leg CREATES the file — the branch-wide
+				// `return false` violated the "true when a file was actually
+				// created" contract and made every pulled md note count as a
+				// no-op in the download progress/recap.)
 				// The /changes payload already carries the authoritative body, so
 				// materialize it now — awaited within this pull, so a caller that
 				// pulls-then-checks (e.g. triggerFullSync) sees the file immediately.
@@ -5924,6 +5930,7 @@ export class SyncEngine {
 				// edits; its later STEP2 (identical content) is a harmless idempotent
 				// re-flush suppressed by markRecentlyFlushed.
 				await this.flushFromCrdt(normalized, content);
+				return true;
 			} else {
 				// The note exists locally and CRDT owns its body for LIVE edits — but
 				// this pull entry is the authoritative safety net. The old behavior
@@ -6221,6 +6228,9 @@ export class SyncEngine {
 								serverHash: change.content_hash,
 								seq: change.seq,
 							});
+							// This leg WROTE the body to disk — report it (contract:
+							// "true when a file was actually created, modified…").
+							return true;
 						}
 					}
 				} else {
@@ -6766,7 +6776,26 @@ export class SyncEngine {
 	 *  wired. Public: also called directly by the connect path (onLayoutReady,
 	 *  Plan B1 Task 6), which no longer runs fullSync's REST pull leg but still
 	 *  needs this push leg to create/upload local-only notes on (re)connect. */
+	/** The one in-flight pushModifiedFiles run. The connect-path startup sync
+	 *  and a user-driven sync (fullSync via the progress modal) can both call
+	 *  this concurrently; two loops interleaving independent counters was the
+	 *  progress bar "jumping 40→100→30" bug — and double-pushed every file.
+	 *  A concurrent caller JOINS the running push (shares its promise) instead
+	 *  of starting a second one. A joiner's own `sinceTimestamp` scope is
+	 *  dropped for that call — its files are picked up by the next cycle. */
+	private pushModifiedInFlight: Promise<{ pushed: number; failed: number }> | null = null;
+
 	async pushModifiedFiles(sinceTimestamp?: string): Promise<{ pushed: number; failed: number }> {
+		if (this.pushModifiedInFlight) return this.pushModifiedInFlight;
+		this.pushModifiedInFlight = this.pushModifiedFilesInner(sinceTimestamp).finally(() => {
+			this.pushModifiedInFlight = null;
+		});
+		return this.pushModifiedInFlight;
+	}
+
+	private async pushModifiedFilesInner(
+		sinceTimestamp?: string,
+	): Promise<{ pushed: number; failed: number }> {
 		// Use ?? not || so an empty-string prePullSync (first connect, never
 		// synced) is preserved and maps to epoch below — || would discard "" and
 		// fall back to this.lastSync, which pull() just advanced to server_time,
@@ -6796,8 +6825,8 @@ export class SyncEngine {
 
 		this.flushAttachmentLimitedToast();
 		this.flushFailureSummaryToast();
-		// `failed` counts genesis-batch failures — per-file throws propagate to
-		// the caller instead. It used to be silently dropped here, letting
+		// `failed` counts per-file failures (throws are caught + counted in
+		// pushPartitioned). It used to be silently dropped here, letting
 		// fullSync's recap claim "All synced" over real failures.
 		return { pushed, failed: outcome.failed };
 	}

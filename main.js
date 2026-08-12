@@ -19529,6 +19529,21 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  two genuinely different relocations for the same id within one second
      *  can tie exactly. A tie can't be proven newer, so it must not win. */
     this.lastRelocationTs = /* @__PURE__ */ new Map();
+    /** Push files modified since `sinceTimestamp` (default: `lastSync`) — both
+     *  genuinely-modified tracked files and never-before-synced local-only
+     *  notes (always included regardless of mtime). A brand-new note's first
+     *  push routes through pushFile's socket-native genesis (crdt_create) when
+     *  wired. Public: also called directly by the connect path (onLayoutReady,
+     *  Plan B1 Task 6), which no longer runs fullSync's REST pull leg but still
+     *  needs this push leg to create/upload local-only notes on (re)connect. */
+    /** The one in-flight pushModifiedFiles run. The connect-path startup sync
+     *  and a user-driven sync (fullSync via the progress modal) can both call
+     *  this concurrently; two loops interleaving independent counters was the
+     *  progress bar "jumping 40→100→30" bug — and double-pushed every file.
+     *  A concurrent caller JOINS the running push (shares its promise) instead
+     *  of starting a second one. A joiner's own `sinceTimestamp` scope is
+     *  dropped for that call — its files are picked up by the next cycle. */
+    this.pushModifiedInFlight = null;
     this.parseIgnorePatterns();
   }
   /** Wire (a subset of) the CRDT ports in one call — see CrdtPorts. Only
@@ -21251,7 +21266,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         onRow: async (c) => {
           if (!enumerateOnly)
             try {
-              await this.applySyncChange(c), applied += 1, c.deleted || (files += 1, onFileApplied == null || onFileApplied(c.path));
+              let changed = await this.applySyncChange(c);
+              applied += 1, !c.deleted && changed && (files += 1, onFileApplied == null || onFileApplied(c.path));
             } catch (e) {
               failed += 1, rlog().error("crdt", `seq-replay: skipped ${c.path} \u2014 ${errMsg(e)}`);
             }
@@ -22142,9 +22158,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (crdtOwnsBody) {
       if (this.isCanvasPath(normalized))
         return noteId && ((_j = this.crdtEnrollment) == null || _j.enroll(noteId)), rlog().info("pull", `CRDT canvas: enroll for Yjs convergence ${change.path}`), !1;
-      if (!this.app.vault.getFileByPath(normalized))
-        noteId && this.isLiveBound(normalized) && ((_k = this.crdtEnrollment) == null || _k.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content);
-      else {
+      if (this.app.vault.getFileByPath(normalized)) {
         noteId && this.isLiveBound(normalized) && ((_l = this.crdtEnrollment) == null || _l.enroll(noteId));
         let stored = this.syncState.get(normalized), contentMatches = !change.content_hash || (stored == null ? void 0 : stored.serverHash) === change.content_hash;
         if (change.seq !== void 0 ? (stored == null ? void 0 : stored.seq) !== void 0 && (change.seq < stored.seq || change.seq === stored.seq && contentMatches) : (stored == null ? void 0 : stored.version) !== void 0 && change.version !== void 0 && change.version <= stored.version)
@@ -22214,36 +22228,42 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 change.seq
               ), !1);
             }
-            noteId && (stored == null ? void 0 : stored.serverHash) === void 0 && localNow !== null && localNow === content ? (rlog().info(
-              "pull",
-              `CRDT catch-up: no-CAS-base quiet record (disk==row) ${change.path}`
-            ), this.patchSyncedRow(normalized, {
-              hash: fnv1a(content),
-              version: change.version,
-              serverHash: change.content_hash
-            })) : noteId ? (rlog().warn(
-              "pull",
-              `CRDT catch-up: diverged cold note, socket re-handshake ${change.path}`
-            ), this.stageAndConverge(
-              noteId,
-              normalized,
-              change.content_hash,
-              content,
-              change.version,
-              change.seq
-            )) : (rlog().warn(
-              "pull",
-              `CRDT catch-up: pull backfilling diverged note (no note_id) ${change.path}`
-            ), await this.flushFromCrdt(normalized, content), this.stampSyncedRow(normalized, {
-              hash: fnv1a(content),
-              version: change.version,
-              serverHash: change.content_hash,
-              seq: change.seq
-            }));
+            if (noteId && (stored == null ? void 0 : stored.serverHash) === void 0 && localNow !== null && localNow === content)
+              rlog().info(
+                "pull",
+                `CRDT catch-up: no-CAS-base quiet record (disk==row) ${change.path}`
+              ), this.patchSyncedRow(normalized, {
+                hash: fnv1a(content),
+                version: change.version,
+                serverHash: change.content_hash
+              });
+            else if (noteId)
+              rlog().warn(
+                "pull",
+                `CRDT catch-up: diverged cold note, socket re-handshake ${change.path}`
+              ), this.stageAndConverge(
+                noteId,
+                normalized,
+                change.content_hash,
+                content,
+                change.version,
+                change.seq
+              );
+            else
+              return rlog().warn(
+                "pull",
+                `CRDT catch-up: pull backfilling diverged note (no note_id) ${change.path}`
+              ), await this.flushFromCrdt(normalized, content), this.stampSyncedRow(normalized, {
+                hash: fnv1a(content),
+                version: change.version,
+                serverHash: change.content_hash,
+                seq: change.seq
+              }), !0;
           }
         else
           rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);
-      }
+      } else
+        return noteId && this.isLiveBound(normalized) && ((_k = this.crdtEnrollment) == null || _k.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content), !0;
       return !1;
     }
     let existing = this.app.vault.getFileByPath(normalized);
@@ -22551,14 +22571,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     return { pushed, failed };
   }
-  /** Push files modified since `sinceTimestamp` (default: `lastSync`) — both
-   *  genuinely-modified tracked files and never-before-synced local-only
-   *  notes (always included regardless of mtime). A brand-new note's first
-   *  push routes through pushFile's socket-native genesis (crdt_create) when
-   *  wired. Public: also called directly by the connect path (onLayoutReady,
-   *  Plan B1 Task 6), which no longer runs fullSync's REST pull leg but still
-   *  needs this push leg to create/upload local-only notes on (re)connect. */
   async pushModifiedFiles(sinceTimestamp) {
+    return this.pushModifiedInFlight ? this.pushModifiedInFlight : (this.pushModifiedInFlight = this.pushModifiedFilesInner(sinceTimestamp).finally(() => {
+      this.pushModifiedInFlight = null;
+    }), this.pushModifiedInFlight);
+  }
+  async pushModifiedFilesInner(sinceTimestamp) {
     let since = sinceTimestamp != null ? sinceTimestamp : this.lastSync, sinceMs = since ? new Date(since).getTime() : 0, files = this.app.vault.getFiles(), pushed = 0, toSync = files.filter((f) => !this.isSyncable(f) || this.shouldIgnore(f.path) ? !1 : this.syncState.has(f.path) ? f.stat.mtime > sinceMs : !0);
     devLog().log("push", `pushModifiedFiles: ${toSync.length} files modified since ${since}`), rlog().info("push", `PushModified: ${toSync.length} files modified since ${since}`);
     let total = toSync.length;
