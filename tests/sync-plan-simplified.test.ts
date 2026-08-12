@@ -57,3 +57,57 @@ describe("simplifiedFirstSync", () => {
 		).toBeNull();
 	});
 });
+
+describe("simplifiedFirstSync — dirty-plan guards (review findings)", () => {
+	test("tombstoned server (toDeleteLocal pending) NEVER simplifies — the data-loss trap", () => {
+		// serverNoteCount counts live rows only; a fully-tombstoned vault reads
+		// "empty" while smart-merge would apply those tombstones and wipe local.
+		expect(
+			simplifiedFirstSync(
+				plan({ localNoteCount: 316, toDeleteLocal: ["Notes/a.md", "Notes/b.md"] }),
+			),
+		).toBeNull();
+	});
+
+	test("conflicts present never simplify", () => {
+		expect(
+			simplifiedFirstSync(plan({ localNoteCount: 3, conflicts: ["Notes/c.md"] })),
+		).toBeNull();
+	});
+
+	test("counter-direction pulls block upload mode", () => {
+		expect(
+			simplifiedFirstSync(
+				plan({ localNoteCount: 3, toPull: { notes: ["Notes/ghost.md"], attachments: [] } }),
+			),
+		).toBeNull();
+	});
+
+	test("counter-direction pushes block download mode", () => {
+		expect(
+			simplifiedFirstSync(
+				plan({
+					serverNoteCount: 3,
+					toPush: { notes: ["Notes/local.md"], attachments: [] },
+				}),
+			),
+		).toBeNull();
+	});
+});
+
+describe("simplifiedScreenCopy — onboarding copy (review findings)", () => {
+	test("attachments-only vault never says '0 notes'", async () => {
+		const { simplifiedScreenCopy } = await import("../src/sync-preview-modal");
+		const c = simplifiedScreenCopy({ mode: "upload", notes: 0, attachments: 3 });
+		expect(c.body).not.toContain("0 notes");
+		expect(c.body).toContain("3 attachments");
+	});
+
+	test("no-deletion note is scoped to this device (verifiable), not absolute", async () => {
+		const { simplifiedScreenCopy } = await import("../src/sync-preview-modal");
+		const up = simplifiedScreenCopy({ mode: "upload", notes: 2, attachments: 0 });
+		const down = simplifiedScreenCopy({ mode: "download", notes: 2, attachments: 0 });
+		expect(up.note).toBe("Nothing will be removed from this device.");
+		expect(down.note).toBe("Nothing will be removed from this device.");
+	});
+});

@@ -202,10 +202,28 @@ export type SimplifiedFirstSync =
 	| { mode: "fresh" };
 
 export function simplifiedFirstSync(plan: SyncPlan): SimplifiedFirstSync | null {
+	// Simplify ONLY when the plan itself is one clean direction. The counts
+	// alone LIE in exactly the dangerous cases: serverNoteCount counts live
+	// rows, so a fully-TOMBSTONED server vault reads "empty" while smart-merge
+	// would apply those tombstones and wipe the local vault behind an explicit
+	// no-deletion promise (review finding — the data-loss trap). Any pending
+	// deletion, conflict, or counter-direction transfer disqualifies.
+	if (
+		plan.toDeleteLocal.length > 0 ||
+		plan.toDeleteRemote.length > 0 ||
+		plan.conflicts.length > 0
+	) {
+		return null;
+	}
 	const remote = plan.serverNoteCount + plan.serverAttachmentCount;
 	const local = plan.localNoteCount + plan.localAttachmentCount;
-	if (remote === 0 && local === 0) return { mode: "fresh" };
+	const pulls = plan.toPull.notes.length + plan.toPull.attachments.length;
+	const pushes = plan.toPush.notes.length + plan.toPush.attachments.length;
+	if (remote === 0 && local === 0) {
+		return pulls + pushes === 0 ? { mode: "fresh" } : null;
+	}
 	if (remote === 0) {
+		if (pulls > 0) return null; // counter-direction: the "empty" read is stale
 		return {
 			mode: "upload",
 			notes: plan.localNoteCount,
@@ -213,6 +231,7 @@ export function simplifiedFirstSync(plan: SyncPlan): SimplifiedFirstSync | null 
 		};
 	}
 	if (local === 0) {
+		if (pushes > 0) return null;
 		return {
 			mode: "download",
 			notes: plan.serverNoteCount,

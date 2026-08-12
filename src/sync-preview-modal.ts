@@ -304,6 +304,42 @@ export interface SyncPreviewOptions {
 	attachmentsTextOnly?: boolean;
 }
 
+/** The one-click screen's copy, pure for tests. Zero-count clauses are
+ *  dropped ("0 notes" never renders — review finding), and the no-deletion
+ *  note is scoped to THIS DEVICE: that claim is verifiable (the dirty-plan
+ *  guard in simplifiedFirstSync excludes pending local deletions), while the
+ *  old absolute "Nothing will be deleted" could be falsified by queued
+ *  offline deletes tombstoning the server after the promise. */
+export function simplifiedScreenCopy(simple: NonNullable<ReturnType<typeof simplifiedFirstSync>>): {
+	body: string;
+	action: string;
+	note: string | null;
+} {
+	if (simple.mode === "fresh") {
+		return {
+			body: "Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.",
+			action: "Start syncing",
+			note: null,
+		};
+	}
+	const parts: string[] = [];
+	if (simple.notes > 0) parts.push(plural(simple.notes, "note"));
+	if (simple.attachments > 0) parts.push(plural(simple.attachments, "attachment"));
+	const what = parts.join(" and ") || "files";
+	if (simple.mode === "upload") {
+		return {
+			body: `This vault is empty on the server. Upload your ${what}?`,
+			action: "Upload everything",
+			note: "Nothing will be removed from this device.",
+		};
+	}
+	return {
+		body: `This device's vault is empty. Download ${what} from the server?`,
+		action: "Download everything",
+		note: "Nothing will be removed from this device.",
+	};
+}
+
 export class SyncPreviewModal extends Modal {
 	private state: SyncPreviewState;
 	private resolvedChoice: SyncChoice | null = null;
@@ -406,7 +442,10 @@ export class SyncPreviewModal extends Modal {
 		// a foot-gun on an onboarding screen). Both sides populated → the full
 		// preview below — the only case a human needs to weigh.
 		const simple = simplifiedFirstSync(this.state.plan);
-		if (simple) {
+		// "fresh" in a review context is just an up-to-date linked vault — the
+		// regular preview's up-to-date header is the right screen, not a
+		// "Start syncing" pitch (review finding).
+		if (simple && (simple.mode !== "fresh" || context !== "review")) {
 			this.renderSimplified(contentEl, simple, context);
 			return;
 		}
@@ -448,38 +487,26 @@ export class SyncPreviewModal extends Modal {
 	): void {
 		this.renderHeader(parent, context);
 		const box = parent.createDiv({ cls: "engram-sync-preview-simple" });
-		const counts = (n: number, a: number) =>
-			`${plural(n, "note")}${a > 0 ? ` and ${plural(a, "attachment")}` : ""}`;
-		let body: string;
-		let action: string;
-		if (simple.mode === "upload") {
-			body = `This vault is empty on the server. Upload your ${counts(simple.notes, simple.attachments)}?`;
-			action = "Upload everything";
-		} else if (simple.mode === "download") {
-			body = `This device's vault is empty. Download ${counts(simple.notes, simple.attachments)} from the server?`;
-			action = "Download everything";
-		} else {
-			body =
-				"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.";
-			action = "Start syncing";
-		}
-		box.createEl("p", { text: body, cls: "engram-sync-preview-simple-body" });
-		if (simple.mode !== "fresh") {
+		const copy = simplifiedScreenCopy(simple);
+		box.createEl("p", { text: copy.body, cls: "engram-sync-preview-simple-body" });
+		if (copy.note) {
 			box.createEl("p", {
-				text: "Nothing will be deleted.",
+				text: copy.note,
 				cls: "engram-sync-preview-simple-note",
 			});
 		}
 		const btn = box.createEl("button", {
-			text: action,
+			text: copy.action,
 			cls: "engram-sync-preview-simple-action mod-cta",
 		});
 		btn.addEventListener("click", () => {
 			// Always the non-destructive merge: on an empty remote it uploads
 			// everything, on an empty device it downloads everything.
+			// pickOption("smart-merge") starts the sync and closes this modal —
+			// no re-render needed (smart-merge never hits the confirm view).
 			this.state.pickOption("smart-merge");
-			this.render();
 		});
+		this.renderSkippedAttachmentsNote(parent);
 		this.renderFooter(parent, "Cancel", false);
 	}
 

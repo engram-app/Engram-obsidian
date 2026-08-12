@@ -16835,12 +16835,14 @@ function optionBreakdown(plan, choice) {
   }
 }
 function simplifiedFirstSync(plan) {
-  let remote = plan.serverNoteCount + plan.serverAttachmentCount, local = plan.localNoteCount + plan.localAttachmentCount;
-  return remote === 0 && local === 0 ? { mode: "fresh" } : remote === 0 ? {
+  if (plan.toDeleteLocal.length > 0 || plan.toDeleteRemote.length > 0 || plan.conflicts.length > 0)
+    return null;
+  let remote = plan.serverNoteCount + plan.serverAttachmentCount, local = plan.localNoteCount + plan.localAttachmentCount, pulls = plan.toPull.notes.length + plan.toPull.attachments.length, pushes = plan.toPush.notes.length + plan.toPush.attachments.length;
+  return remote === 0 && local === 0 ? pulls + pushes === 0 ? { mode: "fresh" } : null : remote === 0 ? pulls > 0 ? null : {
     mode: "upload",
     notes: plan.localNoteCount,
     attachments: plan.localAttachmentCount
-  } : local === 0 ? {
+  } : local === 0 ? pushes > 0 ? null : {
     mode: "download",
     notes: plan.serverNoteCount,
     attachments: plan.serverAttachmentCount
@@ -17838,7 +17840,28 @@ var MERGE_CARD = {
   "first-time": "Set up sync for this vault",
   "vault-switch": "You are now pointing at a different cloud vault",
   review: "Sync preview"
-}, SyncPreviewModal = class extends import_obsidian21.Modal {
+};
+function simplifiedScreenCopy(simple) {
+  if (simple.mode === "fresh")
+    return {
+      body: "Nothing to sync yet \u2014 this vault is empty on both sides. Start syncing and everything you write appears on your other devices.",
+      action: "Start syncing",
+      note: null
+    };
+  let parts = [];
+  simple.notes > 0 && parts.push(plural(simple.notes, "note")), simple.attachments > 0 && parts.push(plural(simple.attachments, "attachment"));
+  let what = parts.join(" and ") || "files";
+  return simple.mode === "upload" ? {
+    body: `This vault is empty on the server. Upload your ${what}?`,
+    action: "Upload everything",
+    note: "Nothing will be removed from this device."
+  } : {
+    body: `This device's vault is empty. Download ${what} from the server?`,
+    action: "Download everything",
+    note: "Nothing will be removed from this device."
+  };
+}
+var SyncPreviewModal = class extends import_obsidian21.Modal {
   constructor(app, plan, opts) {
     super(app);
     this.opts = opts;
@@ -17893,7 +17916,7 @@ var MERGE_CARD = {
       return;
     }
     let simple = simplifiedFirstSync(this.state.plan);
-    if (simple) {
+    if (simple && (simple.mode !== "fresh" || context !== "review")) {
       this.renderSimplified(contentEl, simple, context);
       return;
     }
@@ -17912,16 +17935,16 @@ var MERGE_CARD = {
    *  Cancel / Change vault. See simplifiedFirstSync for the decision. */
   renderSimplified(parent, simple, context) {
     this.renderHeader(parent, context);
-    let box = parent.createDiv({ cls: "engram-sync-preview-simple" }), counts = (n, a) => `${plural(n, "note")}${a > 0 ? ` and ${plural(a, "attachment")}` : ""}`, body, action;
-    simple.mode === "upload" ? (body = `This vault is empty on the server. Upload your ${counts(simple.notes, simple.attachments)}?`, action = "Upload everything") : simple.mode === "download" ? (body = `This device's vault is empty. Download ${counts(simple.notes, simple.attachments)} from the server?`, action = "Download everything") : (body = "Nothing to sync yet \u2014 this vault is empty on both sides. Start syncing and everything you write appears on your other devices.", action = "Start syncing"), box.createEl("p", { text: body, cls: "engram-sync-preview-simple-body" }), simple.mode !== "fresh" && box.createEl("p", {
-      text: "Nothing will be deleted.",
+    let box = parent.createDiv({ cls: "engram-sync-preview-simple" }), copy2 = simplifiedScreenCopy(simple);
+    box.createEl("p", { text: copy2.body, cls: "engram-sync-preview-simple-body" }), copy2.note && box.createEl("p", {
+      text: copy2.note,
       cls: "engram-sync-preview-simple-note"
     }), box.createEl("button", {
-      text: action,
+      text: copy2.action,
       cls: "engram-sync-preview-simple-action mod-cta"
     }).addEventListener("click", () => {
-      this.state.pickOption("smart-merge"), this.render();
-    }), this.renderFooter(parent, "Cancel", !1);
+      this.state.pickOption("smart-merge");
+    }), this.renderSkippedAttachmentsNote(parent), this.renderFooter(parent, "Cancel", !1);
   }
   /** Instant-open loading state: the modal is on screen while computeSyncPlan
    *  runs. Shows the context header plus a calm progress line (or the load
