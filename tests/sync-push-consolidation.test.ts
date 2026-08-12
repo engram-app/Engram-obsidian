@@ -1,9 +1,8 @@
 /**
- * Tests: single-write-path genesis push (Task 3). `pushGenesisBatch` routes
- * brand-new (never-server-known) note creates through ONE `crdt_create_batch`
- * round-trip carrying content inline, and both `pushAll` and
- * `pushModifiedFiles` partition their note files into genesis (→ batch) vs
- * server-known (→ the existing per-file `pushFile` loop).
+ * Tests: single-write-path push pipeline. Genesis (never-server-known) notes
+ * ride the same bounded per-file `pushFile` loop as everything else — the
+ * crdt_create_batch RPC and its chunking were retired (Relay-pattern rewrite:
+ * per-file work units, per-file progress, per-file failure isolation).
  *
  * Uses the real harness: a mock CrdtManager wired via `setCrdtManager`, the
  * shared mock vault/api, and `setCrdtHead`/noteIdMap to mark a note
@@ -28,7 +27,7 @@ import { NoteIdMap } from "../src/crdt/note-id-map";
 import type { ProviderRegistry as CrdtManagerType } from "../src/crdt/provider-registry";
 import { ProviderRegistry } from "../src/crdt/provider-registry";
 import { encodeUpdateFrame, fromB64 } from "../src/crdt/wire";
-import { MAX_CRDT_NOTE_BYTES, SyncEngine } from "../src/sync";
+import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 function makeApp(files: TFile[], contentByPath: Record<string, string>): any {
@@ -77,7 +76,7 @@ function makeApi(): EngramApi {
 	} as unknown as EngramApi;
 }
 
-/** A mock CrdtManager sufficient for the genesis-batch path. `encodeGenesisUpdate`
+/** A mock CrdtManager sufficient for the push pipeline. `encodeGenesisUpdate`
  *  returns tiny deterministic bytes (the real byte-exact encoding is covered by
  *  the dedicated round-trip test below). */
 function mockCrdt(over: Partial<CrdtManagerType> = {}): Partial<CrdtManagerType> {
@@ -107,253 +106,18 @@ function makeEngine(
 	return { engine, app, api };
 }
 
-/** Mark a note server-known: map its path→id and record a crdtHead so the
- *  `hasServerNote` oracle returns true (mirrors the catch-up harness). */
-function markServerKnown(engine: SyncEngine, path: string, id: string): void {
-	(engine as any).noteIdMap.set(path, id);
-	(engine as any).setCrdtHead(path, "srv-head");
-}
-
-describe("pushGenesisBatch — direct", () => {
-	test("bulk-creates a genesis note, adopts the echoed id, and flips it server-known", async () => {
+describe("pushModifiedFiles — genesis rides the per-file loop", () => {
+	test("a never-synced note is pushed via pushFile (socket-native genesis)", async () => {
 		const file = new TFile("Notes/Fresh.md", Date.now());
-		const { engine } = makeEngine([file], { "Notes/Fresh.md": "# Fresh" });
-		let sent: any[] = [];
-		// Clean create: the backend echoes the SENT id (Enum.map_reduce, in order).
-		engine.setCrdtCreateBatch(async (creates) => {
-			sent = creates;
-			return { results: creates.map((c) => ({ doc_id: c.doc_id, status: "ok" as const })) };
-		});
-
-		const out = await (engine as any).pushGenesisBatch([file]);
-
-		expect(out).toEqual({ pushed: 1, failed: 0 });
-		expect(sent).toHaveLength(1);
-		expect(sent[0].path).toBe("Notes/Fresh.md");
-		expect(typeof sent[0].b64).toBe("string"); // content frame carried inline
-		const adopted = sent[0].doc_id;
-		expect((engine as any).noteIdMap.get("Notes/Fresh.md")).toBe(adopted);
-		// The note is now server-known (crdtHead recorded) so future edits route CRDT.
-		expect((engine as any).hasServerNote(adopted)).toBe(true);
-	});
-
-	test("id-adoption: an id_conflict (create-race) routes to pushFile for the full ADOPT", async () => {
-		// The backend surfaces a create-race as a status:error id_conflict echoing
-		// the EXISTING note's id — the single-note pushFile path owns remap+content
-		// transfer onto that lineage, so the batch hands the file off to it.
-		const file = new TFile("Notes/Race.md", Date.now());
-		const { engine } = makeEngine([file], { "Notes/Race.md": "# Race" });
+		const { engine } = makeEngine([file], { "Notes/Fresh.md": "# fresh" });
 		const pushFile = mock().mockResolvedValue(true);
 		(engine as any).pushFile = pushFile;
-		engine.setCrdtCreateBatch(async (creates) => ({
-			results: creates.map(() => ({
-				doc_id: "existing-live-id",
-				status: "error" as const,
-				reason: "id_conflict",
-			})),
-		}));
 
-		const out = await (engine as any).pushGenesisBatch([file]);
+		const pushed = await engine.pushModifiedFiles();
 
 		expect(pushFile).toHaveBeenCalledTimes(1);
 		expect(pushFile.mock.calls[0][0]).toBe(file);
-		expect(out).toEqual({ pushed: 1, failed: 0 });
-	});
-
-	test("mint-refusal (#217): a recently-flushed, id-relocated path is skipped, never batched", async () => {
-		const file = new TFile("Notes/Flushed.md", Date.now());
-		const { engine } = makeEngine([file], { "Notes/Flushed.md": "# F" });
-		// shouldDeferMint = mapped-map + no id for path + path recentlyFlushed.
-		(engine as any).files.mark("Notes/Flushed.md", "flushed", 60_000);
-		let called = 0;
-		engine.setCrdtCreateBatch(async (creates) => {
-			called++;
-			return { results: creates.map((c) => ({ doc_id: c.doc_id, status: "ok" as const })) };
-		});
-
-		const out = await (engine as any).pushGenesisBatch([file]);
-
-		expect(called).toBe(0); // never sent
-		expect(out).toEqual({ pushed: 0, failed: 0 });
-	});
-
-	test("delete-wins: a recently_deleted result trashes the local file (converge, not fail)", async () => {
-		const file = new TFile("Notes/Gone.md", Date.now());
-		const { engine } = makeEngine([file], { "Notes/Gone.md": "# Gone" });
-		const trashed: string[] = [];
-		(engine as any).trashRemotelyDeleted = async (f: any) => {
-			trashed.push(f.path);
-		};
-		engine.setCrdtCreateBatch(async (creates) => ({
-			results: creates.map((c) => ({
-				doc_id: c.doc_id,
-				status: "error" as const,
-				reason: "recently_deleted",
-			})),
-		}));
-
-		const out = await (engine as any).pushGenesisBatch([file]);
-
-		expect(trashed).toContain("Notes/Gone.md");
-		expect(out.failed).toBe(0); // converge, not a failure
-	});
-
-	test("an error result records an issue and counts as failed", async () => {
-		const file = new TFile("Notes/Bad.md", Date.now());
-		const { engine } = makeEngine([file], { "Notes/Bad.md": "# Bad" });
-		engine.setCrdtCreateBatch(async (creates) => ({
-			results: creates.map((c) => ({
-				doc_id: c.doc_id,
-				status: "error" as const,
-				reason: "notes_cap_reached",
-			})),
-		}));
-
-		const out = await (engine as any).pushGenesisBatch([file]);
-
-		expect(out.failed).toBe(1);
-		expect((engine as any).issues.get("Notes/Bad.md")?.message).toContain("notes_cap_reached");
-	});
-
-	test("chunks at 25 notes per crdt_create_batch call (progress ticks, small blast radius, under the server cap)", async () => {
-		const files = Array.from(
-			{ length: 250 },
-			(_, i) => new TFile(`Notes/n${i}.md`, Date.now()),
-		);
-		const content = Object.fromEntries(files.map((f) => [f.path, "# n"]));
-		const { engine } = makeEngine(files, content);
-		const chunkSizes: number[] = [];
-		engine.setCrdtCreateBatch(async (creates) => {
-			chunkSizes.push(creates.length);
-			return { results: creates.map((c) => ({ doc_id: c.doc_id, status: "ok" as const })) };
-		});
-
-		const out = await (engine as any).pushGenesisBatch(files);
-
-		expect(chunkSizes).toEqual([25, 25, 25, 25, 25, 25, 25, 25, 25, 25]);
-		expect(chunkSizes.every((n) => n <= 100)).toBe(true);
-		expect(out.pushed).toBe(250);
-	});
-
-	test("an oversized single note routes to pushFile (for the too_large issue), not the batch", async () => {
-		const file = new TFile("Notes/Huge.md", Date.now());
-		const { engine } = makeEngine([file], { "Notes/Huge.md": "x" });
-		// encodeGenesisUpdate returns a frame past the 6MB payload budget.
-		(engine as any).crdt.encodeGenesisUpdate = () => new Uint8Array(7_000_000);
-		let batchCalled = 0;
-		engine.setCrdtCreateBatch(async (creates) => {
-			batchCalled++;
-			return { results: creates.map((c) => ({ doc_id: c.doc_id, status: "ok" as const })) };
-		});
-		const pushFile = mock().mockResolvedValue(true);
-		(engine as any).pushFile = pushFile;
-
-		const out = await (engine as any).pushGenesisBatch([file]);
-
-		expect(batchCalled).toBe(0); // never entered the batch
-		expect(pushFile).toHaveBeenCalledTimes(1);
-		expect(pushFile.mock.calls[0][0]).toBe(file);
-		expect(out.pushed).toBe(1);
-	});
-
-	test("oversized-CONTENT note (exceeds MAX_CRDT_NOTE_BYTES) routes to pushFile, never crdt_create_batch — even though its b64 frame fits well under the payload budget", async () => {
-		// Fix (review, Important): the b64-budget check alone lets a note with
-		// 4-4.5MB of CONTENT slip into crdt_create_batch when its (mocked,
-		// fixed-size) frame is tiny — the client then refuses to CRDT-manage it
-		// (every other seam gates on MAX_CRDT_NOTE_BYTES: manager.ts:739,
-		// sync.ts:2475/2504/2680), leaving a server-held CRDT room the client's
-		// own later edits bypass via legacy REST. Gate on raw content bytes.
-		const file = new TFile("Notes/BigContent.md", Date.now());
-		const content = "x".repeat(MAX_CRDT_NOTE_BYTES + 1);
-		const { engine } = makeEngine([file], { "Notes/BigContent.md": content });
-		let batchCalled = 0;
-		engine.setCrdtCreateBatch(async (creates) => {
-			batchCalled++;
-			return { results: creates.map((c) => ({ doc_id: c.doc_id, status: "ok" as const })) };
-		});
-		const pushFile = mock().mockResolvedValue(true);
-		(engine as any).pushFile = pushFile;
-
-		const out = await (engine as any).pushGenesisBatch([file]);
-
-		expect(batchCalled).toBe(0); // never entered crdt_create_batch
-		expect(pushFile).toHaveBeenCalledTimes(1);
-		expect(pushFile.mock.calls[0][0]).toBe(file);
-		expect(out.pushed).toBe(1);
-	});
-
-	test("#245: a mid-flight rename during crdt_create_batch is tracked by the snapshotted pushedPath, not the live path", async () => {
-		const file = new TFile("Notes/RenameOld.md", Date.now());
-		const { engine } = makeEngine([file], { "Notes/RenameOld.md": "# body" });
-		const markedPaths: string[] = [];
-		(engine as any).markRecentlyPushed = (p: string) => markedPaths.push(p);
-		engine.setCrdtCreateBatch(async (creates) => {
-			// The user renames the file while the create request is in flight.
-			file.path = "Notes/RenameNew.md";
-			return { results: creates.map((c) => ({ doc_id: c.doc_id, status: "ok" as const })) };
-		});
-
-		const out = await (engine as any).pushGenesisBatch([file]);
-
-		expect(out).toEqual({ pushed: 1, failed: 0 });
-		// The pushing-set entry and the recently-pushed mark are keyed to the
-		// path actually SENT (pre-rename) — mirrors the REST #245 fix
-		// (tests/sync-id-adoption.test.ts) where result matching + state
-		// recording use the request-time snapshot, not TFile.path (which is
-		// live and would otherwise desync mid-request).
-		expect(markedPaths).toEqual(["Notes/RenameOld.md"]);
-		expect((engine as any).pushing.has("Notes/RenameOld.md")).toBe(false);
-		expect((engine as any).pushing.has("Notes/RenameNew.md")).toBe(false);
-	});
-
-	test("no-op when crdtCreateBatch is unwired", async () => {
-		const file = new TFile("Notes/x.md", Date.now());
-		const { engine } = makeEngine([file], { "Notes/x.md": "# x" });
-		const out = await (engine as any).pushGenesisBatch([file]);
-		expect(out).toEqual({ pushed: 0, failed: 0 });
-	});
-});
-
-describe("pushAll / pushModifiedFiles — genesis partition", () => {
-	test("server-known notes skip crdt_create_batch (go via the per-file pushFile loop)", async () => {
-		const known = new TFile("Notes/Known.md", Date.now());
-		const genesis = new TFile("Notes/New.md", Date.now());
-		const { engine } = makeEngine([known, genesis], {
-			"Notes/Known.md": "# Known",
-			"Notes/New.md": "# New",
-		});
-		markServerKnown(engine, "Notes/Known.md", "id-known");
-
-		const batchCalls: any[] = [];
-		engine.setCrdtCreateBatch(async (creates) => {
-			batchCalls.push(...creates);
-			return { results: creates.map((c) => ({ doc_id: c.doc_id, status: "ok" as const })) };
-		});
-		const pushFile = mock().mockResolvedValue(true);
-		(engine as any).pushFile = pushFile;
-
-		await engine.pushAll({ replaceRemote: false });
-
-		// Only the genesis note reached the batch; the known note did NOT.
-		expect(batchCalls.map((c) => c.path)).toEqual(["Notes/New.md"]);
-		// The server-known note went through the per-file pushFile loop.
-		const pushFilePaths = pushFile.mock.calls.map((c: any[]) => c[0].path);
-		expect(pushFilePaths).toContain("Notes/Known.md");
-		expect(pushFilePaths).not.toContain("Notes/New.md");
-	});
-
-	test("pushModifiedFiles routes a never-synced note through the genesis batch", async () => {
-		const genesis = new TFile("Notes/Fresh.md", Date.now());
-		const { engine } = makeEngine([genesis], { "Notes/Fresh.md": "# Fresh" });
-		const batchCalls: any[] = [];
-		engine.setCrdtCreateBatch(async (creates) => {
-			batchCalls.push(...creates);
-			return { results: creates.map((c) => ({ doc_id: c.doc_id, status: "ok" as const })) };
-		});
-
-		await engine.pushModifiedFiles("1970-01-01T00:00:00Z");
-
-		expect(batchCalls.map((c) => c.path)).toEqual(["Notes/Fresh.md"]);
+		expect(pushed).toEqual({ pushed: 1, failed: 0 });
 	});
 });
 
@@ -605,9 +369,7 @@ describe("SyncEngine.pushAll — replace-remote via crdtDelete + attachment-dele
 			ran: true,
 			complete: true,
 		});
-		engine.setCrdtCreateBatch(async (creates) => ({
-			results: creates.map((c) => ({ doc_id: c.doc_id, status: "ok" as const })),
-		}));
+		(engine as any).pushFile = mock().mockResolvedValue(true);
 		// The sacred invariant tripwire: a replace-remote sync must NEVER trash a
 		// local file (the 2026-07-08 vault-wipe incident). Spy the only local-trash
 		// seam and assert it stays untouched.
@@ -641,9 +403,7 @@ describe("SyncEngine.pushAll — replace-remote via crdtDelete + attachment-dele
 		(engine as any).applySyncChange = applySpy;
 		(engine as any).crdtDelete = async (id: string) => ({ doc_id: id });
 		(api.deleteAttachment as any) = mock().mockResolvedValue({ deleted: true, path: "" });
-		engine.setCrdtCreateBatch(async (creates) => ({
-			results: creates.map((c) => ({ doc_id: c.doc_id, status: "ok" as const })),
-		}));
+		(engine as any).pushFile = mock().mockResolvedValue(true);
 
 		engine.setCrdtCatchupSince(async () => ({
 			changes: [
@@ -679,5 +439,56 @@ describe("SyncEngine.pushAll — replace-remote via crdtDelete + attachment-dele
 		await engine.pushAll({ replaceRemote: true, localSnapshot: new Set<string>() });
 
 		expect(applySpy).not.toHaveBeenCalled(); // enumeration did NOT pull the extras in
+	});
+});
+
+describe("pushPartitioned — per-file genesis (no batch RPC)", () => {
+	// Relay-pattern rewrite: genesis notes ride the same bounded per-file loop
+	// as everything else. pushFile's socket-native genesis (crdt_create) already
+	// owns every edge case the batch mirrored (mint-refusal, ADOPT, delete-wins,
+	// oversized→REST); the batch was a second, lesser copy of that path and a
+	// 25-note blast radius on every failure. Per-file = per-file progress and
+	// per-file failure isolation.
+	test("genesis notes route through pushFile, one call per file", async () => {
+		const files = [0, 1, 2].map((i) => new TFile(`Notes/g${i}.md`, Date.now()));
+		const { engine } = makeEngine(files, Object.fromEntries(files.map((f) => [f.path, "# g"])));
+		const pushFile = mock().mockResolvedValue(true);
+		(engine as any).pushFile = pushFile;
+
+		const out = await (engine as any).pushPartitioned(files, "incremental");
+
+		expect(pushFile).toHaveBeenCalledTimes(3);
+		expect(out).toEqual({ pushed: 3, failed: 0 });
+	});
+
+	test("emits pushing progress per completed file, not per chunk", async () => {
+		const files = [0, 1, 2].map((i) => new TFile(`Notes/p${i}.md`, Date.now()));
+		const { engine } = makeEngine(files, Object.fromEntries(files.map((f) => [f.path, "# p"])));
+		(engine as any).pushFile = mock().mockResolvedValue(true);
+		const currents: number[] = [];
+		engine.onSyncProgress = (p) => {
+			if (p.phase === "pushing") currents.push(p.current);
+		};
+
+		await (engine as any).pushPartitioned(files, "incremental");
+
+		// One event per completed file; the count climbs to the full total.
+		expect(currents.length).toBeGreaterThanOrEqual(3);
+		expect(Math.max(...currents)).toBe(3);
+	});
+
+	test("incremental mode: one file's failure is counted, the rest still push", async () => {
+		const files = [0, 1, 2].map((i) => new TFile(`Notes/f${i}.md`, Date.now()));
+		const { engine } = makeEngine(files, Object.fromEntries(files.map((f) => [f.path, "# f"])));
+		(engine as any).pushFile = mock().mockImplementation((f: TFile) =>
+			f.path === "Notes/f1.md"
+				? Promise.reject(new Error("sendRequest timeout: crdt_create"))
+				: Promise.resolve(true),
+		);
+
+		const out = await (engine as any).pushPartitioned(files, "incremental");
+
+		expect(out).toEqual({ pushed: 2, failed: 1 });
+		expect((engine as any).issues.get("Notes/f1.md")?.message).toContain("timeout");
 	});
 });

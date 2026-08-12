@@ -511,7 +511,10 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 		// discovered note is NOT enrolled — its body arrived room-free and future
 		// updates come over the vault-channel fanout; enrolling every discovered
 		// note on connect is the enrollment storm P2 removes.
-		expect(result).toBe(false);
+		// `true`: this leg CREATES the file, and applyChange's contract is "true
+		// when a file was actually created" — the old `false` here made every
+		// pulled md note count as a no-op in the download progress/recap.
+		expect(result).toBe(true);
 		expect(enroll).not.toHaveBeenCalled();
 		expect(mockApp.vault.create).toHaveBeenCalled();
 		expect((mockApp.vault.create as any).mock.calls[0][1]).toContain("remote content");

@@ -32,15 +32,6 @@ const RESUME_PROBE_MS = 5_000;
  *  reconnects over random(0, window) so the freshly-booted node isn't
  *  stampeded. Overridden per-connection by the server-advertised value from
  *  the sync join reply; this constant is the crash-safe floor. */
-/** Deadline for one crdt_create_batch request. The server does real per-note
- *  work inline (transaction + encrypt + CRDT room spawn + seed + checkpoint —
- *  measured ~130ms/note on a dev backend), so a flat 10s deadline lost to a
- *  legitimately-working large chunk: the client aborted while the server kept
- *  committing. Base + per-note budget with ~3× headroom over the measurement. */
-export function batchCreateTimeoutMs(count: number): number {
-	return 10_000 + 400 * count;
-}
-
 export const RECONNECT_JITTER_DEFAULT_MS = 5_000;
 /** Hard ceiling on any server-advertised jitter window — guards against a
  *  malformed/hostile join reply making the client hang. Non-positive windows
@@ -453,21 +444,6 @@ export class NoteChannel {
 			doc_id: string;
 		};
 		return res.doc_id;
-	}
-
-	/** Batch create: mirrors crdtCreate but takes a list (server caps it at 100
-	 *  creates per request; chunking is the caller's concern). The deadline
-	 *  scales with the chunk — see batchCreateTimeoutMs. */
-	async crdtCreateBatch(creates: { doc_id: string; path: string; b64: string }[]): Promise<{
-		results: { doc_id: string; status: "ok" | "error"; reason?: string; limit?: number }[];
-	}> {
-		return (await this.sendRequest(
-			"crdt_create_batch",
-			{ creates },
-			batchCreateTimeoutMs(creates.length),
-		)) as {
-			results: { doc_id: string; status: "ok" | "error"; reason?: string; limit?: number }[];
-		};
 	}
 
 	/** Delete a note over the socket, AWAITING the server ack (idempotent). The

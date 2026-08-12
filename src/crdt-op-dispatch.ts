@@ -8,13 +8,15 @@
  * Error taxonomy (backend reasons from crdt_channel.ex handle_in):
  *  - resolve / server :ok            → "ok"  (delivered; queue drops it)
  *  - RETRYABLE reject                → "error" / "timeout" (queue retries):
- *      rate_limited, recently_deleted (delete-wins window), any unstructured
- *      failure (socket not joined, disconnect, network), a request timeout.
+ *      rate_limited, any unstructured failure (socket not joined, disconnect,
+ *      network), a request timeout.
  *  - LIMIT reject                    → "error" (RETRYABLE) AND routed through
  *      onLimit so the user is TOLD via the limit toast: notes_cap_reached is a
  *      plan cap that is TRANSIENT (freeing a note / upgrading clears it), so it
  *      must retry (bounded) and self-deliver once cleared, not drop after one
  *      attempt. Surfaced once per op (the queue retries on backoff).
+ *      recently_deleted moved from RETRYABLE to TERMINAL (finding 1): a
+ *      delete-wins reject retried past its window resurrects the note.
  *  - TERMINAL reject                 → "ok" to REMOVE it (retrying cannot help)
  *      BUT routed through onTerminal so it is logged/surfaced, never silently
  *      vanished: id_conflict, version_conflict, bad_doc_id,
@@ -26,12 +28,17 @@
 
 import type { CrdtOp, SendResult } from "./crdt-op-queue";
 
-/** Server reasons where a retry cannot succeed. remove the op (surfaced). */
+/** Server reasons where a retry cannot succeed. remove the op (surfaced).
+ *  recently_deleted is TERMINAL for creates (review finding 1): the path was
+ *  deleted on another device inside the delete-wins window — retrying past the
+ *  window would RESURRECT the note everywhere. The local copy converges via
+ *  the tombstone on the next catch-up replay. */
 export const TERMINAL_REASONS: ReadonlySet<string> = new Set([
 	"id_conflict",
 	"version_conflict",
 	"bad_doc_id",
 	"implausible_state_vector",
+	"recently_deleted",
 ]);
 
 /** Server reasons that are TRANSIENT plan limits: the user can clear them (free
@@ -56,9 +63,7 @@ export function crdtOpFailureReason(err: unknown): string | null {
 	}
 }
 
-/** The two acked socket calls the queue dispatches over. (crdt_create_batch is
- *  wired separately via `setCrdtCreateBatch`, not through this queue, so it is
- *  intentionally not a member here.) */
+/** The two acked socket calls the queue dispatches over. */
 export type CrdtOpChannel = {
 	crdtCreate(docId: string, path: string): Promise<string>;
 	crdtDeleteAcked(docId: string): Promise<{ doc_id: string }>;

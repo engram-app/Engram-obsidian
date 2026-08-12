@@ -510,7 +510,6 @@ export class Replica {
 
 		// Socket-native create/delete/catchup senders (main.ts:1815-1826).
 		engine.setCrdtCreate((docId, path) => channel.crdtCreate(docId, path));
-		engine.setCrdtCreateBatch((creates) => channel.crdtCreateBatch(creates));
 		engine.setCrdtDelete((docId) => channel.crdtDeleteAcked(docId));
 		engine.setCrdtCatchupSince((cursorSeq, limit) =>
 			channel.crdtCatchupSince(cursorSeq, limit),

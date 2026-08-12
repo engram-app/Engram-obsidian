@@ -243,8 +243,7 @@ export class SyncProgressModal extends Modal {
 	private summaryEl!: HTMLElement;
 	private verifyEl!: HTMLElement;
 	private hintEl!: HTMLElement;
-	private bgBtn!: HTMLButtonElement;
-	private closeBtn!: HTMLButtonElement;
+	private actionBtn!: HTMLButtonElement;
 
 	private rows: RowState[] = [];
 	private readonly rowEls = new Map<SyncProgress["phase"], RowEls>();
@@ -333,12 +332,13 @@ export class SyncProgressModal extends Modal {
 			cls: "engram-progress-hint",
 		});
 
+		// ONE button: closing is the only action this modal has (the sync keeps
+		// running either way), so two buttons was two labels for one behavior —
+		// and Obsidian's theme styles button display, which defeats the [hidden]
+		// attribute the old show-one-hide-other swap relied on (both rendered).
 		const buttons = contentEl.createDiv({ cls: "engram-progress-buttons" });
-		this.bgBtn = buttons.createEl("button", { text: "Run in background" });
-		this.bgBtn.addEventListener("click", () => this.close());
-		this.closeBtn = buttons.createEl("button", { text: "Done", cls: "mod-cta" });
-		this.closeBtn.hidden = true;
-		this.closeBtn.addEventListener("click", () => this.close());
+		this.actionBtn = buttons.createEl("button", { text: "Run in background" });
+		this.actionBtn.addEventListener("click", () => this.close());
 
 		this.renderRows();
 		this.tickTimer = window.setInterval(() => this.tick(), TICK_INTERVAL_MS);
@@ -456,8 +456,8 @@ export class SyncProgressModal extends Modal {
 		this.verifyEl.hidden = !this.opts.webUrl;
 
 		this.hintEl.hidden = true;
-		this.bgBtn.hidden = true;
-		this.closeBtn.hidden = false;
+		this.actionBtn.setText("Done");
+		this.actionBtn.addClass("mod-cta");
 	}
 
 	private renderRows(): void {

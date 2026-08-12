@@ -21,7 +21,6 @@ import { DEFAULT_SETTINGS, type SyncChange, type SyncProgress } from "../src/typ
 const makeApi = () =>
 	({
 		pushNote: mock().mockResolvedValue({ note: {}, chunks_indexed: 1 }),
-		pushNotesBatch: mock().mockRejectedValue({ status: 404 }),
 		deleteNote: mock().mockResolvedValue({ deleted: true, path: "" }),
 		health: mock().mockResolvedValue(true),
 		ping: mock().mockResolvedValue({ ok: true }),
@@ -170,13 +169,13 @@ describe("first-sync progress reporting (op-log replay)", () => {
 		expect(pulled).toBe(2);
 	});
 
-	test("fullSync completion carries genesis-batch push failures", async () => {
+	test("fullSync completion carries genesis push failures", async () => {
 		const { engine, events } = makeEngine([]);
 		const file = new TFile("Notes/new.md", Date.now());
 		(engine as any).app.vault.getFiles = mock().mockReturnValue([file]);
-		engine.setCrdtCreateBatch(async () => ({
-			results: [{ doc_id: "id-new", status: "error" as const, reason: "create_failed" }],
-		}));
+		(engine as any).pushFile = mock().mockRejectedValue(
+			new Error("sendRequest timeout: crdt_create"),
+		);
 
 		await engine.fullSync();
 
@@ -185,30 +184,206 @@ describe("first-sync progress reporting (op-log replay)", () => {
 	});
 });
 
-describe("pushGenesisBatch — a timed-out chunk is counted, not fatal", () => {
-	// Root cause (measured on local dev): the server needs ~13s to create a
-	// 100-note chunk, the channel deadline was a flat 10s, and the resulting
-	// throw aborted the ENTIRE first sync — while the server kept committing
-	// the creates. A chunk-level failure must degrade to counted failures so
-	// the remaining chunks (and the rest of the sync) still run. Chunks are
-	// 25 notes so the Uploading row ticks every few seconds instead of
-	// per-hundred.
-	test("first chunk rejects → its files count as failed, second chunk still pushes", async () => {
+describe("progress-stream integrity (jumping-bar + phantom-download fixes)", () => {
+	test("a no-op replay row (apply returned false) is not counted as a downloaded file", async () => {
+		const { engine, events } = makeEngine(threeRowFeed());
+		// Second row applies as a no-op (already up to date locally).
+		const apply = spyOn(engine, "applySyncChange");
+		apply.mockResolvedValueOnce(true).mockResolvedValueOnce(false).mockResolvedValue(true);
+
+		const pulled = await engine.pullAll();
+
+		expect(pulled).toBe(1);
+		const complete = events.find((p) => p.phase === "complete");
+		expect(complete?.current).toBe(1);
+		const pulling = events.filter((p) => p.phase === "pulling" && p.current > 0);
+		expect(Math.max(...pulling.map((p) => p.current), 0)).toBe(1);
+	});
+
+	test("concurrent pushModifiedFiles runs never overlap (joiner coalesces into a follow-up)", async () => {
 		const { engine } = makeEngine([]);
-		const files = Array.from({ length: 26 }, (_, i) => new TFile(`Notes/n${i}.md`, Date.now()));
-		let calls = 0;
-		engine.setCrdtCreateBatch(async (creates) => {
-			calls++;
-			if (calls === 1) throw new Error("sendRequest timeout: crdt_create_batch");
-			return {
-				results: creates.map((c) => ({ doc_id: c.doc_id, status: "ok" as const })),
-			};
+		const file = new TFile("Notes/one.md", Date.now());
+		(engine as any).app.vault.getFiles = mock().mockReturnValue([file]);
+		(engine as any).pushFile = mock().mockImplementation(async () => {
+			await new Promise((r) => setTimeout(r, 20));
+			return true;
+		});
+		// The invariant that killed the jumping progress bar: at most ONE push
+		// loop at a time — a joiner waits and triggers a sequential follow-up,
+		// never a second interleaved loop with its own counters.
+		const inner = (engine as any).pushModifiedFilesInner.bind(engine);
+		let active = 0;
+		let maxActive = 0;
+		(engine as any).pushModifiedFilesInner = async (s?: string) => {
+			active++;
+			maxActive = Math.max(maxActive, active);
+			try {
+				return await inner(s);
+			} finally {
+				active--;
+			}
+		};
+
+		const [a, b] = await Promise.all([engine.pushModifiedFiles(), engine.pushModifiedFiles()]);
+
+		expect(maxActive).toBe(1);
+		// Joiner shares the coalesced counts (its result additionally carries
+		// the `joined` marker — see the double-report finding test below).
+		expect({ pushed: b.pushed, failed: b.failed }).toEqual({
+			pushed: a.pushed,
+			failed: a.failed,
+		});
+	});
+});
+
+test("a push requested mid-run is not swallowed — one follow-up run picks it up (e2e test_39)", async () => {
+	const { engine } = makeEngine([]);
+	const fileA = new TFile("Notes/A.md", Date.now());
+	const fileB = new TFile("Notes/B.md", Date.now());
+	const vaultFiles = [fileA];
+	(engine as any).app.vault.getFiles = mock(() => [...vaultFiles]);
+	const pushedPaths: string[] = [];
+	(engine as any).pushFile = mock().mockImplementation(async (f: TFile) => {
+		pushedPaths.push(f.path);
+		await new Promise((r) => setTimeout(r, 20));
+		return true;
+	});
+
+	const first = engine.pushModifiedFiles();
+	// B is created while the first run is already in flight — its trigger
+	// must cause a follow-up run, not vanish into the joined promise.
+	await new Promise((r) => setTimeout(r, 5));
+	vaultFiles.push(fileB);
+	const second = engine.pushModifiedFiles();
+	await Promise.all([first, second]);
+
+	expect(pushedPaths).toContain("Notes/A.md");
+	expect(pushedPaths).toContain("Notes/B.md");
+});
+
+describe("review findings — genesis rejection semantics", () => {
+	function genesisEngine() {
+		const made = makeEngine([]);
+		const trashed: string[] = [];
+		(made.engine as any).trashRemotelyDeleted = async (f: TFile) => trashed.push(f.path);
+		const enqueued: unknown[] = [];
+		(made.engine as any).setCrdtEnqueue?.((op: unknown) => enqueued.push(op));
+		if (!(made.engine as any).crdtEnqueue) {
+			(made.engine as any).crdtEnqueue = (op: unknown) => enqueued.push(op);
+		}
+		return { ...made, trashed, enqueued };
+	}
+
+	test("crdt_create rejected recently_deleted → local copy trashed, NOT pushed, NOT enqueued (delete-wins)", async () => {
+		const { engine, trashed, enqueued } = genesisEngine();
+		(engine as any).crdtCreate = async () => {
+			throw new Error('request failed: {"reason":"recently_deleted"}');
+		};
+		const file = new TFile("Notes/Deleted.md", Date.now());
+
+		const ok = await (engine as any).pushFile(file, true);
+
+		expect(ok).toBe(false);
+		expect(trashed).toEqual(["Notes/Deleted.md"]);
+		expect(enqueued).toHaveLength(0);
+	});
+
+	test("crdt_create rejected for a transient reason → enqueued for retry but NOT counted pushed", async () => {
+		const { engine, trashed, enqueued } = genesisEngine();
+		(engine as any).crdtCreate = async () => {
+			throw new Error('request failed: {"reason":"rate_limited"}');
+		};
+		const file = new TFile("Notes/Limited.md", Date.now());
+
+		const ok = await (engine as any).pushFile(file, true);
+
+		expect(ok).toBe(false); // queued is not synced — the recap must not count it
+		expect(enqueued).toHaveLength(1);
+		expect(trashed).toHaveLength(0);
+	});
+});
+
+describe("review findings — vault-scoped error escalation + delete counting", () => {
+	test("a per-file 404 reaches onVaultScopedError even though the loop swallows it", async () => {
+		const { engine } = makeEngine([]);
+		const file = new TFile("Notes/x.md", Date.now());
+		(engine as any).app.vault.getFiles = mock().mockReturnValue([file]);
+		(engine as any).pushFile = mock().mockRejectedValue(
+			Object.assign(new Error("HTTP 404"), { status: 404 }),
+		);
+		const seen: unknown[] = [];
+		(engine as any).onVaultScopedError = (e: unknown) => seen.push(e);
+
+		await engine.pushModifiedFiles();
+
+		expect(seen).toHaveLength(1);
+		expect((seen[0] as { status?: number }).status).toBe(404);
+	});
+
+	test("catchUp reports tombstone applies as deletes so a delete-only poll is visible", async () => {
+		const { engine } = makeEngine([
+			noteRow({
+				id: "id-gone",
+				seq: 9,
+				path: "Notes/gone.md",
+				deleted: true,
+				content: undefined,
+			}),
+		]);
+		const apply = spyOn(engine, "applySyncChange").mockResolvedValue(true);
+
+		const res = await engine.catchUp();
+
+		expect(apply).toHaveBeenCalled();
+		expect(res.files).toBe(0);
+		expect((res as { deletes?: number }).deletes).toBe(1);
+	});
+});
+
+describe("review findings — rerun progress continuity + joiner marker", () => {
+	test("a coalesced rerun continues counters from the first run instead of resetting to 0", async () => {
+		const { engine, events } = makeEngine([]);
+		const fileA = new TFile("Notes/A.md", Date.now());
+		const fileB = new TFile("Notes/B.md", Date.now());
+		const vaultFiles = [fileA];
+		(engine as any).app.vault.getFiles = mock(() => [...vaultFiles]);
+		(engine as any).pushFile = mock().mockImplementation(async () => {
+			await new Promise((r) => setTimeout(r, 15));
+			return true;
 		});
 
-		const out = await (engine as any).pushGenesisBatch(files);
+		const first = engine.pushModifiedFiles();
+		await new Promise((r) => setTimeout(r, 5));
+		vaultFiles.push(fileB);
+		const second = engine.pushModifiedFiles();
+		await Promise.all([first, second]);
 
-		expect(calls).toBe(2); // the second chunk was still attempted
-		expect(out.failed).toBe(25); // the whole first chunk, counted not thrown
-		expect(out.pushed).toBe(1);
+		const pushing = events.filter((p) => p.phase === "pushing");
+		// After any event reports N pushed, no later event may report fewer.
+		let high = 0;
+		for (const p of pushing) {
+			expect(p.current).toBeGreaterThanOrEqual(high === 0 ? 0 : Math.min(high, p.current));
+			if (p.current < high) throw new Error(`progress regressed: ${p.current} after ${high}`);
+			high = Math.max(high, p.current);
+		}
+		// Both runs' work visible cumulatively. The mocked pushFile records no
+		// syncState, so the rerun legitimately re-pushes A too — the invariant
+		// is monotonicity plus B's push being visible, not an exact count.
+		expect(high).toBeGreaterThanOrEqual(2);
+	});
+
+	test("a joiner's result is marked joined so callers don't double-report the same push", async () => {
+		const { engine } = makeEngine([]);
+		const file = new TFile("Notes/one.md", Date.now());
+		(engine as any).app.vault.getFiles = mock().mockReturnValue([file]);
+		(engine as any).pushFile = mock().mockImplementation(async () => {
+			await new Promise((r) => setTimeout(r, 15));
+			return true;
+		});
+
+		const [a, b] = await Promise.all([engine.pushModifiedFiles(), engine.pushModifiedFiles()]);
+
+		expect((a as { joined?: boolean }).joined).toBeUndefined();
+		expect((b as { joined?: boolean }).joined).toBe(true);
 	});
 });

@@ -1707,11 +1707,7 @@ function expBackoff(baseMs, attempt, capMs) {
 }
 
 // src/channel.ts
-var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, RESUME_PROBE_MS = 5e3;
-function batchCreateTimeoutMs(count2) {
-  return 1e4 + 400 * count2;
-}
-var RECONNECT_JITTER_DEFAULT_MS = 5e3, RECONNECT_JITTER_MAX_MS = 6e4, RATE_LIMITED_JOIN_FLOOR_MS = 1e4;
+var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, RESUME_PROBE_MS = 5e3, RECONNECT_JITTER_DEFAULT_MS = 5e3, RECONNECT_JITTER_MAX_MS = 6e4, RATE_LIMITED_JOIN_FLOOR_MS = 1e4;
 function connectRetryDelayMs(attempt, baseMs = 2e3) {
   return expBackoff(baseMs, attempt, RECONNECT_JITTER_MAX_MS);
 }
@@ -1970,16 +1966,6 @@ var _NoteChannel = class _NoteChannel {
    *  orphaning edits. */
   async crdtCreate(docId, path) {
     return (await this.sendRequest("crdt_create", { doc_id: docId, path })).doc_id;
-  }
-  /** Batch create: mirrors crdtCreate but takes a list (server caps it at 100
-   *  creates per request; chunking is the caller's concern). The deadline
-   *  scales with the chunk — see batchCreateTimeoutMs. */
-  async crdtCreateBatch(creates) {
-    return await this.sendRequest(
-      "crdt_create_batch",
-      { creates },
-      batchCreateTimeoutMs(creates.length)
-    );
   }
   /** Delete a note over the socket, AWAITING the server ack (idempotent). The
    *  backend replies `{:ok, %{doc_id}}` even when the note is already gone, so a
@@ -14560,10 +14546,6 @@ function toB64(bytes) {
 function fromB64(b64) {
   return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 }
-function encodeUpdateFrame(update) {
-  let encoder = createEncoder();
-  return writeVarUint(encoder, MESSAGE_SYNC), writeUpdate(encoder, update), toB64(toUint8Array(encoder));
-}
 
 // src/crdt/note-provider.ts
 var NoteProvider = class {
@@ -15305,7 +15287,8 @@ var TERMINAL_REASONS = /* @__PURE__ */ new Set([
   "id_conflict",
   "version_conflict",
   "bad_doc_id",
-  "implausible_state_vector"
+  "implausible_state_vector",
+  "recently_deleted"
 ]), LIMIT_REASONS = /* @__PURE__ */ new Set(["notes_cap_reached"]);
 function crdtOpFailureReason(err) {
   let m = (err instanceof Error ? err.message : String(err)).match(/request failed: (\{.*\})/s);
@@ -16964,7 +16947,7 @@ var SyncProgressModal = class extends import_obsidian15.Modal {
       cls: "engram-progress-hint"
     });
     let buttons = contentEl.createDiv({ cls: "engram-progress-buttons" });
-    this.bgBtn = buttons.createEl("button", { text: "Run in background" }), this.bgBtn.addEventListener("click", () => this.close()), this.closeBtn = buttons.createEl("button", { text: "Done", cls: "mod-cta" }), this.closeBtn.hidden = !0, this.closeBtn.addEventListener("click", () => this.close()), this.renderRows(), this.tickTimer = window.setInterval(() => this.tick(), TICK_INTERVAL_MS);
+    this.actionBtn = buttons.createEl("button", { text: "Run in background" }), this.actionBtn.addEventListener("click", () => this.close()), this.renderRows(), this.tickTimer = window.setInterval(() => this.tick(), TICK_INTERVAL_MS);
   }
   /** Called by the sync engine's progress callback. Buffers the update. */
   update(progress) {
@@ -17027,7 +17010,7 @@ var SyncProgressModal = class extends import_obsidian15.Modal {
     };
     this.statusEl.setText("Sync complete"), this.pathEl.setText(""), this.recapEl.setText(describeCompletion(summary)), this.recapEl.hidden = !1, this.summaryEl.empty(), renderCompletionSummary(this.summaryEl, summary, this.opts.webUrl), this.summaryEl.hidden = !1, summary.failed > 0 ? (this.failedEl.setText(
       `${summary.failed} failed. Run "Engram: Show sync log" for details.`
-    ), this.failedEl.hidden = !1) : this.failedEl.hidden = !0, this.verifyEl.hidden = !this.opts.webUrl, this.hintEl.hidden = !0, this.bgBtn.hidden = !0, this.closeBtn.hidden = !1;
+    ), this.failedEl.hidden = !1) : this.failedEl.hidden = !0, this.verifyEl.hidden = !this.opts.webUrl, this.hintEl.hidden = !0, this.actionBtn.setText("Done"), this.actionBtn.addClass("mod-cta");
   }
   renderRows() {
     for (let row of this.rows) {
@@ -19166,6 +19149,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.onStatusChange = null;
     /** Called after each batch during pushAll/pullAll to report progress. */
     this.onSyncProgress = null;
+    /** Fired (fire-and-forget) when a sync step swallows an error to keep the
+     *  flow alive — the swallowing is deliberate (one bad file must not abort a
+     *  sync), but a vault-scoped HTTP 404 buried this way is how a DEAD VAULT
+     *  presents, and the dead-vault self-heal (main.ts healDeadVault) can only
+     *  run if it sees the error (review finding 2). */
+    this.onVaultScopedError = null;
     /** Last-known plan/entitlement state, fed by the channel's `onPlanState`
      *  callback (user-topic join reply + `subscription_activated`). Drives the
      *  upgrade-triggered re-sync of plan-skipped attachments. Null until the
@@ -19187,22 +19176,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  editor-detach/rebind wiring just after it). Null in tests/older
      *  callers: the drop is then skipped. */
     this.deviceId = null;
-    /** Detaches every live editor binding (CrdtLiveViews.detachAll, wired by
-     *  main.ts). Replace-remote's crdtDelete destroys Y.Docs whose files stay
-     *  on disk and may be OPEN — unlike the WS-delete path, no trashFile
-     *  closes the view, so a still-attached binding would write keystrokes
-     *  into a destroyed doc (the never-span-a-load class,
-     *  crdt-editor-bind-race-pollution.md). Bindings re-establish via the
-     *  normal refresh events; meanwhile edits flow through handleModify as
-     *  plain pushes.
-     *
-     *  DEAD as of #258 (main.ts:443 — "the old setCrdtEditorDetach /
-     *  setCrdtEditorRebind wiring is gone"): nothing reads this field any more.
-     *  The setter is retained because it is still part of the harness-facing
-     *  surface — engram/e2e/headless/run.ts:330 and tests/sim/replica.ts:447
-     *  both call it. Removing the pair therefore needs a paired backend PR. */
-    // biome-ignore lint/correctness/noUnusedPrivateClassMembers: setter is harness-facing surface, see above
-    this.crdtEditorDetach = null;
     /** Rebinds the live editor showing `path` off its current (now orphaned)
      *  Y.Doc onto the note's freshly-resolved id (CrdtLiveViews.rebindPath,
      *  wired by main.ts). Used after a genesis ADOPT remaps path -> serverId
@@ -19372,9 +19345,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  falls through to the REST create (still functional in this additive phase,
      *  removed in Plan B2). Unset → genesis stays on the REST-first path. */
     this.crdtCreate = null;
-    /** Socket-native BATCH genesis. Consumer wiring (genesis routing / chunking
-     *  to the server's 100-create cap) is a later task; this is plumbing only. */
-    this.crdtCreateBatch = null;
     /** Direct AWAITED `crdt_delete` (resolves once the server has durably applied
      *  the tombstone). Used by handleRename to ORDER the old-path tombstone before
      *  the new-path `crdt_create` resurrect: the backend relocates a note only via
@@ -19550,14 +19520,33 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  two genuinely different relocations for the same id within one second
      *  can tie exactly. A tie can't be proven newer, so it must not win. */
     this.lastRelocationTs = /* @__PURE__ */ new Map();
+    /** Push files modified since `sinceTimestamp` (default: `lastSync`) — both
+     *  genuinely-modified tracked files and never-before-synced local-only
+     *  notes (always included regardless of mtime). A brand-new note's first
+     *  push routes through pushFile's socket-native genesis (crdt_create) when
+     *  wired. Public: also called directly by the connect path (onLayoutReady,
+     *  Plan B1 Task 6), which no longer runs fullSync's REST pull leg but still
+     *  needs this push leg to create/upload local-only notes on (re)connect. */
+    /** The one in-flight pushModifiedFiles run. The connect-path startup sync
+     *  and a user-driven sync (fullSync via the progress modal) can both call
+     *  this concurrently; two loops interleaving independent counters was the
+     *  progress bar "jumping 40→100→30" bug — and double-pushed every file.
+     *
+     *  Coalesce-with-rerun (same shape as catchupViaSeqReplay's single-flight):
+     *  a concurrent caller JOINS the running push AND schedules exactly one
+     *  follow-up run after it settles. Join-only (no rerun) swallowed a file
+     *  created after the running push snapshotted its file list — e2e test_39's
+     *  concurrent-push note sat unpushed until the next poll cycle. */
+    this.pushModifiedInFlight = null;
+    this.pushModifiedAgain = !1;
     this.parseIgnorePatterns();
   }
   /** Wire (a subset of) the CRDT ports in one call — see CrdtPorts. Only
    *  keys present in the patch are assigned, so each lifecycle stage names
    *  exactly what it wires (or clears, via explicit null). */
   setCrdtPorts(ports) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
-    "manager" in ports && (this.crdt = (_a = ports.manager) != null ? _a : null), "deviceId" in ports && (this.deviceId = (_b = ports.deviceId) != null ? _b : null), "editorDetach" in ports && (this.crdtEditorDetach = (_c = ports.editorDetach) != null ? _c : null), "editorRebind" in ports && (this.crdtEditorRebind = (_d = ports.editorRebind) != null ? _d : null), "boundBufferText" in ports && (this.crdtBoundBufferText = (_e = ports.boundBufferText) != null ? _e : null), "requestSave" in ports && (this.crdtRequestSave = (_f = ports.requestSave) != null ? _f : null), "noteIdMap" in ports && (this.noteIdMap = (_g = ports.noteIdMap) != null ? _g : null), "enrollment" in ports && (this.crdtEnrollment = (_h = ports.enrollment) != null ? _h : null), "create" in ports && (this.crdtCreate = (_i = ports.create) != null ? _i : null), "createBatch" in ports && (this.crdtCreateBatch = (_j = ports.createBatch) != null ? _j : null), "delete" in ports && (this.crdtDelete = (_k = ports.delete) != null ? _k : null), "enqueue" in ports && (this.crdtEnqueue = (_l = ports.enqueue) != null ? _l : null), "resetOutbox" in ports && (this.crdtResetOutbox = (_m = ports.resetOutbox) != null ? _m : null), "live" in ports && (this.crdtLive = (_n = ports.live) != null ? _n : null), "liveBound" in ports && (this.isLiveBound = (_o = ports.liveBound) != null ? _o : (() => !1)), "catchupSince" in ports && (this.crdtCatchupSince = (_p = ports.catchupSince) != null ? _p : null);
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
+    "manager" in ports && (this.crdt = (_a = ports.manager) != null ? _a : null), "deviceId" in ports && (this.deviceId = (_b = ports.deviceId) != null ? _b : null), "editorRebind" in ports && (this.crdtEditorRebind = (_c = ports.editorRebind) != null ? _c : null), "boundBufferText" in ports && (this.crdtBoundBufferText = (_d = ports.boundBufferText) != null ? _d : null), "requestSave" in ports && (this.crdtRequestSave = (_e = ports.requestSave) != null ? _e : null), "noteIdMap" in ports && (this.noteIdMap = (_f = ports.noteIdMap) != null ? _f : null), "enrollment" in ports && (this.crdtEnrollment = (_g = ports.enrollment) != null ? _g : null), "create" in ports && (this.crdtCreate = (_h = ports.create) != null ? _h : null), "delete" in ports && (this.crdtDelete = (_i = ports.delete) != null ? _i : null), "enqueue" in ports && (this.crdtEnqueue = (_j = ports.enqueue) != null ? _j : null), "resetOutbox" in ports && (this.crdtResetOutbox = (_k = ports.resetOutbox) != null ? _k : null), "live" in ports && (this.crdtLive = (_l = ports.live) != null ? _l : null), "liveBound" in ports && (this.isLiveBound = (_m = ports.liveBound) != null ? _m : (() => !1)), "catchupSince" in ports && (this.crdtCatchupSince = (_n = ports.catchupSince) != null ? _n : null);
   }
   setCrdtManager(mgr) {
     this.setCrdtPorts({ manager: mgr });
@@ -19565,8 +19554,25 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   setDeviceId(id2) {
     this.setCrdtPorts({ deviceId: id2 });
   }
-  setCrdtEditorDetach(fn) {
-    this.setCrdtPorts({ editorDetach: fn });
+  /** Detaches every live editor binding (CrdtLiveViews.detachAll, wired by
+   *  main.ts). Replace-remote's crdtDelete destroys Y.Docs whose files stay
+   *  on disk and may be OPEN — unlike the WS-delete path, no trashFile
+   *  closes the view, so a still-attached binding would write keystrokes
+   *  into a destroyed doc (the never-span-a-load class,
+   *  crdt-editor-bind-race-pollution.md). Bindings re-establish via the
+   *  normal refresh events; meanwhile edits flow through handleModify as
+   *  plain pushes.
+   *
+   *  DEAD as of #258 (main.ts:443 — "the old setCrdtEditorDetach /
+   *  setCrdtEditorRebind wiring is gone"): nothing reads this field any more.
+   *  The setter is retained because it is still part of the harness-facing
+   *  surface — engram/e2e/headless/run.ts:330 and tests/sim/replica.ts:447
+   *  both call it. Removing the pair therefore needs a paired backend PR. */
+  /** No-op harness-compat shim (paired-cleanup pending): the field and port
+   *  behind this were deleted — nothing ever read them. engram/e2e/headless/
+   *  run.ts:330 and tests/sim/replica.ts:447 still call the setter, so it
+   *  stays until a paired backend PR drops those calls. */
+  setCrdtEditorDetach(_fn) {
   }
   setCrdtEditorRebind(fn) {
     this.setCrdtPorts({ editorRebind: fn });
@@ -19712,16 +19718,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     noteId && this.confirmedNoteIds.add(noteId);
   }
   /** The bookkeeping every "the server acked our `crdt_create`" path runs once
-   *  the authoritative id is known. THREE callers reach it — pushFile's live
-   *  genesis branch, the durable queued ack (`applyCrdtCreateAck`), and the
-   *  batch path (`recordCrdtGenesisPushed`) — and a step going missing from one
-   *  of them is exactly the drift this exists to end (the queued path once
-   *  leaked the mint-retire the live path did).
+   *  the authoritative id is known. TWO callers reach it — pushFile's live
+   *  genesis branch and the durable queued ack (`applyCrdtCreateAck`) — and a
+   *  step going missing from one of them is exactly the drift this exists to
+   *  end (the queued path once leaked the mint-retire the live path did).
    *
    *  The ADOPT half (transfer a live mint buffer, retire the orphaned mint doc)
    *  stays with each caller: it legitimately differs by path — a live editor
-   *  buffer, a queued disk seed, or nothing at all for a batch note that never
-   *  minted a local doc.
+   *  buffer vs a queued disk seed.
    *
    *  Order is load-bearing:
    *   - `setCrdtHead` BEFORE the flush. The sentinel flips `hasServerNote`,
@@ -19782,9 +19786,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   setCrdtCreate(fn) {
     this.setCrdtPorts({ create: fn });
-  }
-  setCrdtCreateBatch(fn) {
-    this.setCrdtPorts({ createBatch: fn });
   }
   setCrdtDelete(fn) {
     this.setCrdtPorts({ delete: fn });
@@ -20666,7 +20667,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  pushModifiedFiles) pass force without this, so they stay quiet on
    *  plan-gated attachments. */
   async pushFile(file, force = !1, bypassPlanSkip = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x;
     if (this.pushing.has(file.path)) return !1;
     if (!bypassPlanSkip && this.isBinaryFile(file) && this.hasInformationalIssue(file.path))
       return devLog().log("push", `skip (plan-informational): ${file.path}`), !1;
@@ -20788,10 +20789,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               ), await this.adoptCreateAck(effectiveId, pushedPath, null), !0;
             }
           } catch (err) {
-            return rlog().warn(
+            return crdtOpFailureReason(err) === "recently_deleted" ? (rlog().info(
+              "push",
+              `recently_deleted \u2014 trashing local ${pushedPath} to honor remote delete`
+            ), await this.trashRemotelyDeleted(file), this.logEntry("push", pushedPath, "skipped", "recently_deleted"), !1) : (rlog().warn(
               "crdt",
               `crdt_create failed, enqueued for durable retry: ${pushedPath} | ${String(err)}`
-            ), this.crdtEnqueue ? (this.crdtEnqueue({ kind: "create", docId: noteId, path: pushedPath }), !0) : !1;
+            ), (_p = this.crdtEnqueue) == null || _p.call(this, { kind: "create", docId: noteId, path: pushedPath }), !1);
           }
         if (this.isCrdtEligible(file) && !exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES))
           return this.crdtEnqueue && this.crdt && noteId && !this.hasServerNote(noteId) && this.crdtEnqueue({ kind: "create", docId: noteId, path: pushedPath }), !1;
@@ -20808,11 +20812,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           let localFile = this.app.vault.getFileByPath(pushedPath);
           localFile && (await this.app.vault.rename(localFile, serverPath), new import_obsidian24.Notice(
             `Engram Sync: renamed "${pushedPath.split("/").pop()}" (unsupported characters)`
-          )), this.dropPath((0, import_obsidian24.normalizePath)(pushedPath), { dropBase: !1 }), this.stampSyncedRow((0, import_obsidian24.normalizePath)(serverPath), { hash }), (_p = this.noteIdMap) == null || _p.delete((0, import_obsidian24.normalizePath)(pushedPath)), (_q = this.noteIdMap) == null || _q.set((0, import_obsidian24.normalizePath)(serverPath), resp.note.id);
+          )), this.dropPath((0, import_obsidian24.normalizePath)(pushedPath), { dropBase: !1 }), this.stampSyncedRow((0, import_obsidian24.normalizePath)(serverPath), { hash }), (_q = this.noteIdMap) == null || _q.delete((0, import_obsidian24.normalizePath)(pushedPath)), (_r = this.noteIdMap) == null || _r.set((0, import_obsidian24.normalizePath)(serverPath), resp.note.id);
         } else
-          this.stampSyncedRow((0, import_obsidian24.normalizePath)(file.path), { hash }), (_r = this.noteIdMap) == null || _r.set((0, import_obsidian24.normalizePath)(file.path), resp.note.id);
+          this.stampSyncedRow((0, import_obsidian24.normalizePath)(file.path), { hash }), (_s = this.noteIdMap) == null || _s.set((0, import_obsidian24.normalizePath)(file.path), resp.note.id);
         file.path === pushedPath && (pushedNoteParse = {
-          path: (_s = resp.note.path) != null ? _s : pushedPath,
+          path: (_t2 = resp.note.path) != null ? _t2 : pushedPath,
           parseStatus: resp.note.parse_status,
           parseReason: resp.note.parse_reason
         });
@@ -20841,8 +20845,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         lastFailedAt: now,
         attempts: 1
       });
-      let attempts = (_u = (_t2 = this.issues.get(file.path)) == null ? void 0 : _t2.attempts) != null ? _u : 1;
-      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_v = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
+      let attempts = (_v = (_u = this.issues.get(file.path)) == null ? void 0 : _u.attempts) != null ? _v : 1;
+      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_w = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
         "push",
         `Push failed: ${file.path} \u2014 ${msg} | category=${classified.category}`,
         e instanceof Error ? e.stack : void 0
@@ -20852,7 +20856,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         kind: isBinary ? "attachment" : "note",
         mtime: file.stat.mtime / 1e3,
         timestamp: Date.now(),
-        vaultId: (_w = this.settings.vaultId) != null ? _w : void 0
+        vaultId: (_x = this.settings.vaultId) != null ? _x : void 0
       }), this.maybeGoOffline(e);
     } finally {
       this.pushing.delete(pushedPath), this.releasePushSlot(), success && this.markRecentlyPushed(pushedPath), this.emitStatus();
@@ -21008,8 +21012,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.markWithTtl(this.recentlyDeleted, noteId, RECENT_DELETE_COOLDOWN_MS);
   }
   /** MINT REFUSAL (backend #972, PRs #216/#217) — the single decision both
-   *  mint seams route through: pushFile and pushGenesisBatch's flushChunk
-   *  must honor identical ownership invariants
+   *  every mint seam routes through
    *  (docs/context/crdt-batch-push-duplication.md). A mint means "brand-new,
    *  never-synced local note". A file this engine itself recently flushed to
    *  disk (flushFromCrdt → recentlyFlushed) can never be that — the engine
@@ -21150,13 +21153,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         applied: 0,
         files: 0,
         failed: 0,
+        deletes: 0,
         serverIds,
         serverAttachmentPaths,
         ran: !1,
         complete: !1
       };
     this.seqReplayRunning = !0;
-    let applied = 0, files = 0, failed = 0, complete = !0;
+    let applied = 0, files = 0, failed = 0, deletes = 0, complete = !0;
     try {
       do {
         this.seqReplayAgain = !1;
@@ -21167,12 +21171,21 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           (_c = opts.enumerateOnly) != null ? _c : !1,
           opts.onFileApplied
         );
-        applied += pass.applied, files += pass.files, failed += pass.failed, pass.complete || (complete = !1);
+        applied += pass.applied, files += pass.files, failed += pass.failed, deletes += pass.deletes, pass.complete || (complete = !1);
       } while (this.seqReplayAgain);
     } finally {
       this.seqReplayRunning = !1;
     }
-    return { applied, files, failed, serverIds, serverAttachmentPaths, ran: !0, complete };
+    return {
+      applied,
+      files,
+      failed,
+      deletes,
+      serverIds,
+      serverAttachmentPaths,
+      ran: !0,
+      complete
+    };
   }
   /** Run `catchupViaSeqReplay` for a DESTRUCTIVE delete decision (pull-all wipe,
    *  push-all replace-remote). Retries until THIS call executes the replay
@@ -21221,9 +21234,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  validator plus steps 1
    *  and 3. */
   async catchUp(opts = {}) {
+    var _a;
     let pulledFiles = 0, onFileApplied = opts.reportProgress ? (path) => {
-      var _a;
-      (_a = this.onSyncProgress) == null || _a.call(this, {
+      var _a2;
+      (_a2 = this.onSyncProgress) == null || _a2.call(this, {
         phase: "pulling",
         current: ++pulledFiles,
         total: 0,
@@ -21237,11 +21251,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       );
       if (manifest != null && manifest.unchanged) {
         await this.seedEmptyFolders();
-        let { files: files2, failed: failed2 } = await this.catchupViaSeqReplay({ onFileApplied });
-        return { files: files2, failed: failed2 };
+        let { files: files2, failed: failed2, deletes: deletes2 } = await this.catchupViaSeqReplay({
+          onFileApplied
+        });
+        return { files: files2, failed: failed2, deletes: deletes2 };
       }
       await this.reconcileFromManifest(manifest, authGenAtFetch);
-      let behind = this.validateFromManifest(manifest), { files, failed } = await this.catchupViaSeqReplay({ onFileApplied }), poked = await this.healDivergedLiveBoundNotes(manifest);
+      let behind = this.validateFromManifest(manifest), { files, failed, deletes } = await this.catchupViaSeqReplay({ onFileApplied }), poked = await this.healDivergedLiveBoundNotes(manifest);
       try {
         await this.syncExplicitFolders();
       } catch (e) {
@@ -21251,26 +21267,26 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           e instanceof Error ? e.stack : void 0
         );
       }
-      return typeof (manifest == null ? void 0 : manifest.change_seq) == "number" && behind === 0 && poked === 0 && (this.setManifestSeq(manifest.change_seq), await this.saveData({ manifestSeq: this.manifestSeq })), { files, failed };
+      return typeof (manifest == null ? void 0 : manifest.change_seq) == "number" && behind === 0 && poked === 0 && (this.setManifestSeq(manifest.change_seq), await this.saveData({ manifestSeq: this.manifestSeq })), { files, failed, deletes };
     } catch (e) {
       return rlog().error(
         "pull",
         `Catch-up failed: ${errMsg(e)}`,
         e instanceof Error ? e.stack : void 0
-      ), { files: 0, failed: 0 };
+      ), (_a = this.onVaultScopedError) == null || _a.call(this, e), { files: 0, failed: 0, deletes: 0 };
     }
   }
   async runSeqReplayOnce(fromZero, serverIds, serverAttachmentPaths, enumerateOnly = !1, onFileApplied) {
     var _a;
     if (!this.crdtCatchupSince || !this.crdt)
-      return { applied: 0, files: 0, failed: 0, complete: !1 };
+      return { applied: 0, files: 0, failed: 0, deletes: 0, complete: !1 };
     let activeVault = (_a = this.settings.vaultId) != null ? _a : null, resumable = !fromZero && this.syncStateVaultId === activeVault, cursor = resumable ? this.getCatchupSeq() : 0, cursorId = resumable ? this.getCatchupId() : null;
     if (this.seqRewindFloor !== null && !fromZero) {
       let floored = Math.min(cursor, this.seqRewindFloor);
       floored !== cursor && (cursorId = null), cursor = floored;
     }
     this.seqRewindFloor = null;
-    let applied = 0, files = 0, failed = 0;
+    let applied = 0, files = 0, failed = 0, deletes = 0;
     try {
       await this.walkOpLog({
         seq: cursor,
@@ -21278,7 +21294,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         onRow: async (c) => {
           if (!enumerateOnly)
             try {
-              await this.applySyncChange(c), applied += 1, c.deleted || (files += 1, onFileApplied == null || onFileApplied(c.path));
+              let changed = await this.applySyncChange(c);
+              applied += 1, !c.deleted && changed ? (files += 1, onFileApplied == null || onFileApplied(c.path)) : c.deleted && changed && (deletes += 1);
             } catch (e) {
               failed += 1, rlog().error("crdt", `seq-replay: skipped ${c.path} \u2014 ${errMsg(e)}`);
             }
@@ -21293,9 +21310,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       });
     } catch (e) {
       if (!(e instanceof OpLogFetchError)) throw e;
-      return rlog().warn("crdt", `seq-replay: ${e.message}`), { applied, files, failed, complete: !1 };
+      return rlog().warn("crdt", `seq-replay: ${e.message}`), { applied, files, failed, deletes, complete: !1 };
     }
-    return { applied, files, failed, complete: !0 };
+    return { applied, files, failed, deletes, complete: !0 };
   }
   /** Per-note discovery from a room-open announce that carries a path
    *  (`crdt_doc_ready`, backend adds `path`). An EMPTY note's genesis integrates
@@ -22169,9 +22186,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (crdtOwnsBody) {
       if (this.isCanvasPath(normalized))
         return noteId && ((_j = this.crdtEnrollment) == null || _j.enroll(noteId)), rlog().info("pull", `CRDT canvas: enroll for Yjs convergence ${change.path}`), !1;
-      if (!this.app.vault.getFileByPath(normalized))
-        noteId && this.isLiveBound(normalized) && ((_k = this.crdtEnrollment) == null || _k.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content);
-      else {
+      if (this.app.vault.getFileByPath(normalized)) {
         noteId && this.isLiveBound(normalized) && ((_l = this.crdtEnrollment) == null || _l.enroll(noteId));
         let stored = this.syncState.get(normalized), contentMatches = !change.content_hash || (stored == null ? void 0 : stored.serverHash) === change.content_hash;
         if (change.seq !== void 0 ? (stored == null ? void 0 : stored.seq) !== void 0 && (change.seq < stored.seq || change.seq === stored.seq && contentMatches) : (stored == null ? void 0 : stored.version) !== void 0 && change.version !== void 0 && change.version <= stored.version)
@@ -22212,7 +22227,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 null,
                 change.version,
                 change.seq
-              ), !1;
+              ), !0;
             if (localNow !== null && (stored == null ? void 0 : stored.hash) !== void 0 && fnv1a(localNow) !== stored.hash && localNow !== content && localNow !== null) {
               rlog().warn(
                 "pull",
@@ -22239,38 +22254,44 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 content,
                 change.version,
                 change.seq
-              ), !1);
+              ), !0);
             }
-            noteId && (stored == null ? void 0 : stored.serverHash) === void 0 && localNow !== null && localNow === content ? (rlog().info(
-              "pull",
-              `CRDT catch-up: no-CAS-base quiet record (disk==row) ${change.path}`
-            ), this.patchSyncedRow(normalized, {
-              hash: fnv1a(content),
-              version: change.version,
-              serverHash: change.content_hash
-            })) : noteId ? (rlog().warn(
-              "pull",
-              `CRDT catch-up: diverged cold note, socket re-handshake ${change.path}`
-            ), this.stageAndConverge(
-              noteId,
-              normalized,
-              change.content_hash,
-              content,
-              change.version,
-              change.seq
-            )) : (rlog().warn(
-              "pull",
-              `CRDT catch-up: pull backfilling diverged note (no note_id) ${change.path}`
-            ), await this.flushFromCrdt(normalized, content), this.stampSyncedRow(normalized, {
-              hash: fnv1a(content),
-              version: change.version,
-              serverHash: change.content_hash,
-              seq: change.seq
-            }));
+            if (noteId && (stored == null ? void 0 : stored.serverHash) === void 0 && localNow !== null && localNow === content)
+              rlog().info(
+                "pull",
+                `CRDT catch-up: no-CAS-base quiet record (disk==row) ${change.path}`
+              ), this.patchSyncedRow(normalized, {
+                hash: fnv1a(content),
+                version: change.version,
+                serverHash: change.content_hash
+              });
+            else if (noteId)
+              rlog().warn(
+                "pull",
+                `CRDT catch-up: diverged cold note, socket re-handshake ${change.path}`
+              ), this.stageAndConverge(
+                noteId,
+                normalized,
+                change.content_hash,
+                content,
+                change.version,
+                change.seq
+              );
+            else
+              return rlog().warn(
+                "pull",
+                `CRDT catch-up: pull backfilling diverged note (no note_id) ${change.path}`
+              ), await this.flushFromCrdt(normalized, content), this.stampSyncedRow(normalized, {
+                hash: fnv1a(content),
+                version: change.version,
+                serverHash: change.content_hash,
+                seq: change.seq
+              }), !0;
           }
         else
           rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);
-      }
+      } else
+        return noteId && this.isLiveBound(normalized) && ((_k = this.crdtEnrollment) == null || _k.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content), !0;
       return !1;
     }
     let existing = this.app.vault.getFileByPath(normalized);
@@ -22476,164 +22497,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       vaultId: (_a = this.settings.vaultId) != null ? _a : void 0
     });
   }
-  /** Split note files into genesis (never-server-known → crdt_create_batch) and
-   *  server-known (→ the per-file pushFile loop). Genesis is decided by the same
-   *  `hasServerNote` oracle pushFile routes on (crdtHead != null). When the batch
-   *  op is unwired, every note goes to the per-file side — pushFile's own
-   *  crdt_create / REST genesis still creates never-synced notes there. */
-  partitionGenesis(noteFiles) {
-    var _a, _b;
-    if (!this.crdtCreateBatch || !this.crdt) return { genesis: [], known: noteFiles };
-    let genesis = [], known = [];
-    for (let f of noteFiles) {
-      let id2 = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get((0, import_obsidian24.normalizePath)(f.path))) != null ? _b : null;
-      this.hasServerNote(id2) ? known.push(f) : genesis.push(f);
-    }
-    return { genesis, known };
-  }
-  /** Build the base64 `messageSync` frame that carries a brand-new note's
-   *  initial content inline in `crdt_create_batch`. Reuses the manager's exact
-   *  seed encoding (`encodeGenesisUpdate`) + the channel's exact update-frame
-   *  wrap (`encodeUpdateFrame`), so the frame the server applies via
-   *  SharedDoc.send_yjs_message is byte-identical to what a live `crdt_msg`
-   *  would deliver — a divergent encoding would corrupt content on merge. */
-  encodeGenesisFrame(content, kind = "note") {
-    return encodeUpdateFrame(this.crdt.encodeGenesisUpdate(content, kind));
-  }
-  /** Record local state after a genesis note's server row is created (batch
-   *  path). Mirrors pushFile's post-`crdt_create` bookkeeping (sync.ts ~2574):
-   *  adopt the authoritative id, flip the `hasServerNote` oracle via a sentinel
-   *  crdtHead, and stamp the echo baseline from the pushed content so a later
-   *  identical edit is hash-skipped — the guard that prevents a second-lineage
-   *  doubling (#846) since the device never seeds its own real doc from this
-   *  content (it adopts the server lineage on the first handshake). Only ever
-   *  reached for a genuinely history-LESS note: the batch caller routes any note
-   *  that already carries a local CRDT lineage to `pushFile` instead.
-   *
-   *  `flushHeld: false` is the one way this path differs from the other two
-   *  create-ack callers: a batched note never minted a local doc (the content
-   *  shipped inline in the batch frame), so there are no gated updates to
-   *  flush. */
-  async recordCrdtGenesisPushed(file, content, serverId) {
-    await this.adoptCreateAck(serverId, file.path, content, { flushHeld: !1 }), this.issues.clear(file.path);
-  }
-  /** Bulk-create genesis notes (never-server-known) through ONE
-   *  `crdt_create_batch` round-trip, carrying each note's initial content inline
-   *  as a `messageSync` frame. Server-known notes are NOT handled here — the
-   *  caller routes them through the per-file `pushFile` loop.
-   *
-   *  Preserves the batch edge cases pushNotesViaBatch owned:
-   *   - mint-refusal (#217): an engine-flushed, id-relocated path is skipped;
-   *   - id-adoption: the server-echoed winning `doc_id` (a create-race) is adopted;
-   *   - delete-wins: a `recently_deleted` result trashes the local file (converge);
-   *   - oversized: a note whose frame exceeds the payload budget routes to
-   *     pushFile so the server's 413 yields the proper too_large issue;
-   *   - #245 path snapshot: each entry's path is snapshotted for the request
-   *     lifetime (TFile.path is live);
-   *   - chunk ≤100 notes / ~6MB per request (the server caps creates at 100).
-   *
-   *  A live-bound genesis note is NOT batched (it routes to pushFile too): its
-   *  editor may hold keystrokes not yet on disk, and a disk-content frame would
-   *  drop them — pushFile's live-adopt path transfers the in-flight buffer. */
-  async pushGenesisBatch(files, onProgress) {
-    var _a, _b, _c, _d;
-    if (!this.crdtCreateBatch || !this.crdt) return { pushed: 0, failed: 0 };
-    let MAX_CREATES = 25, PAYLOAD_BUDGET = 6e6, pushed = 0, failed = 0, chunk = [], chunkBytes = 0, flush = async () => {
-      var _a2;
-      if (chunk.length === 0) return;
-      let sent = chunk;
-      chunk = [], chunkBytes = 0;
-      for (let e of sent) this.pushing.add(e.pushedPath);
-      let recentlyDeletedPaths = /* @__PURE__ */ new Set();
-      try {
-        let results;
-        try {
-          ({ results } = await this.crdtCreateBatch(
-            sent.map((e) => ({ doc_id: e.noteId, path: e.pushedPath, b64: e.b64 }))
-          ));
-        } catch (err) {
-          let msg = errMsg(err);
-          rlog().error(
-            "push",
-            `crdt_create_batch chunk failed (${sent.length} notes): ${msg}`
-          );
-          for (let e of sent)
-            failed++, this.logEntry("push", e.file.path, "error", msg), this.issues.record({
-              path: e.file.path,
-              kind: "note",
-              category: "other",
-              message: msg,
-              firstFailedAt: Date.now(),
-              lastFailedAt: Date.now(),
-              attempts: 1
-            });
-          onProgress == null || onProgress(pushed, failed);
-          return;
-        }
-        for (let i = 0; i < sent.length; i++) {
-          let e = sent[i], r = results[i];
-          if ((r == null ? void 0 : r.status) === "ok")
-            await this.recordCrdtGenesisPushed(e.file, e.content, r.doc_id), pushed++, this.logEntry("push", e.pushedPath, "ok");
-          else if ((r == null ? void 0 : r.reason) === "recently_deleted")
-            rlog().info(
-              "push",
-              `recently_deleted \u2014 trashing local ${e.file.path} to honor remote delete`
-            ), this.pushing.delete(e.pushedPath), recentlyDeletedPaths.add(e.pushedPath), await this.trashRemotelyDeleted(e.file), this.logEntry("push", e.file.path, "skipped", "recently_deleted");
-          else if ((r == null ? void 0 : r.reason) === "id_conflict" || (r == null ? void 0 : r.reason) === "version_conflict")
-            this.pushing.delete(e.pushedPath), await this.pushFile(e.file, !0) ? pushed++ : failed++;
-          else {
-            failed++;
-            let reason = (_a2 = r == null ? void 0 : r.reason) != null ? _a2 : "create_failed";
-            this.issues.record({
-              path: e.file.path,
-              kind: "note",
-              category: "other",
-              message: reason,
-              firstFailedAt: Date.now(),
-              lastFailedAt: Date.now(),
-              attempts: 1
-            }), this.logEntry("push", e.file.path, "error", reason);
-          }
-        }
-        this.goOnline();
-      } finally {
-        for (let e of sent)
-          this.pushing.delete(e.pushedPath), recentlyDeletedPaths.has(e.pushedPath) || this.markRecentlyPushed(e.pushedPath);
-      }
-      onProgress == null || onProgress(pushed, failed);
-    };
-    for (let file of files) {
-      let np = (0, import_obsidian24.normalizePath)(file.path);
-      if (this.shouldDeferMint(np)) {
-        rlog().info(
-          "push",
-          `Mint refused (engine-flushed, id relocated away): ${file.path}`
-        ), this.logEntry("skip", file.path, "skipped", void 0, "mint-deferred");
-        continue;
-      }
-      if (this.isLiveBound(np)) {
-        await this.pushFile(file, !0) ? pushed++ : failed++;
-        continue;
-      }
-      let existingId = (_a = this.noteIdMap) == null ? void 0 : _a.get(np);
-      if (existingId && typeof ((_b = this.crdt) == null ? void 0 : _b.hasHistory) == "function" && await this.crdt.hasHistory(existingId)) {
-        await this.pushFile(file, !0) ? pushed++ : failed++;
-        continue;
-      }
-      let content = await this.app.vault.read(file);
-      if (exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES)) {
-        await this.pushFile(file, !0) ? pushed++ : failed++;
-        continue;
-      }
-      let b64 = this.encodeGenesisFrame(content, docKindFor(file.path)), size2 = b64.length, pushedPath = file.path, noteId = (_d = (_c = this.noteIdMap) == null ? void 0 : _c.get(np)) != null ? _d : uuid7();
-      if (this.noteIdMap && !this.noteIdMap.get(np) && this.noteIdMap.set(np, noteId), size2 > PAYLOAD_BUDGET) {
-        await this.pushFile(file, !0) ? pushed++ : failed++;
-        continue;
-      }
-      (chunk.length >= MAX_CREATES || chunkBytes + size2 > PAYLOAD_BUDGET) && await flush(), chunk.push({ file, pushedPath, noteId, b64, content }), chunkBytes += size2;
-    }
-    return await flush(), { pushed, failed };
-  }
   /** Record or clear a note's frontmatter parse issue from a backend
    *  parse_status/parse_reason. Called on every push success + feed apply. When
    *  the note parses cleanly we clear ONLY a prior frontmatter issue for the path
@@ -22696,51 +22559,73 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     var _a;
     (_a = this.onSyncProgress) == null || _a.call(this, { phase: "pushing", current, total, failed, currentPath });
   }
-  /** Shared push pipeline: split notes/attachments, bulk-create genesis
-   *  notes over crdt_create_batch, then per-file push in batches of
-   *  PUSH_BATCH_SIZE with progress. The two callers had drifted: the
-   *  incremental copy reported failed=0 to the progress UI even when the
-   *  genesis batch failed files.
+  /** Shared push pipeline: every file — genesis notes, server-known notes,
+   *  attachments — rides ONE bounded per-file loop (Promise.all over
+   *  PUSH_BATCH_SIZE slices). pushFile's socket-native genesis (crdt_create)
+   *  owns brand-new notes; the retired crdt_create_batch RPC was a second,
+   *  lesser copy of that path (Relay-pattern rewrite: per-file work units,
+   *  per-file progress, per-file failure isolation — a failure strands one
+   *  file, not a 25-note chunk).
    *
-   *  mode "force" (pushAll): pushFile(force), per-file failures caught,
-   *  counted and written to the sync log — a full push must survive bad
-   *  files. mode "incremental" (pushModifiedFiles): unforced, no sync-log
-   *  entries, and a per-file throw propagates to the caller's error
-   *  boundary, exactly as before the extraction. */
-  async pushPartitioned(toSync, mode) {
-    var _a;
-    let total = toSync.length, noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), { genesis, known } = this.partitionGenesis(noteFiles), genesisOutcome = await this.pushGenesisBatch(genesis, (pushedSoFar, failedSoFar) => {
-      this.emitPushing(pushedSoFar, total, failedSoFar);
-    }), pushed = genesisOutcome.pushed, failed = genesisOutcome.failed, perFile = [...known, ...attachFiles];
-    for (let i = 0; i < perFile.length; i += PUSH_BATCH_SIZE) {
-      let batch = perFile.slice(i, i + PUSH_BATCH_SIZE), results = await Promise.all(
+   *  mode "force" (pushAll) writes per-file sync-log entries; "incremental"
+   *  (pushModifiedFiles) doesn't. In BOTH modes a per-file throw is counted
+   *  and recorded as an issue, never propagated — one bad file (or one
+   *  crdt_create timeout) must not abort the rest of a first sync. Progress
+   *  is emitted per completed file. */
+  async pushPartitioned(toSync, mode, base = { pushed: 0, failed: 0 }) {
+    let total = toSync.length, pushed = 0, failed = 0;
+    for (let i = 0; i < toSync.length; i += PUSH_BATCH_SIZE) {
+      let batch = toSync.slice(i, i + PUSH_BATCH_SIZE);
+      await Promise.all(
         batch.map(async (f) => {
-          if (mode === "incremental") return this.pushFile(f);
+          var _a;
           try {
-            let ok = await this.pushFile(f, !0);
-            return ok ? this.logEntry("push", f.path, "ok") : this.logEntry("skip", f.path, "skipped", void 0, "unchanged"), ok;
+            await this.pushFile(f, mode === "force") ? (pushed++, mode === "force" && this.logEntry("push", f.path, "ok")) : mode === "force" && this.logEntry("skip", f.path, "skipped", void 0, "unchanged");
           } catch (e) {
-            return failed++, this.logEntry("push", f.path, "error", errMsg(e)), !1;
+            failed++, (_a = this.onVaultScopedError) == null || _a.call(this, e);
+            let msg = errMsg(e);
+            this.logEntry("push", f.path, "error", msg), this.issues.record({
+              path: f.path,
+              kind: this.isBinaryFile(f) ? "attachment" : "note",
+              category: "other",
+              message: msg,
+              firstFailedAt: Date.now(),
+              lastFailedAt: Date.now(),
+              attempts: 1
+            });
           }
+          this.emitPushing(
+            base.pushed + pushed,
+            base.pushed + total,
+            base.failed + failed,
+            f.path
+          );
         })
       );
-      pushed += results.filter(Boolean).length, this.emitPushing(pushed, total, failed, (_a = batch[batch.length - 1]) == null ? void 0 : _a.path);
     }
     return { pushed, failed };
   }
-  /** Push files modified since `sinceTimestamp` (default: `lastSync`) — both
-   *  genuinely-modified tracked files and never-before-synced local-only
-   *  notes (always included regardless of mtime). A brand-new note's first
-   *  push routes through pushFile's socket-native genesis (crdt_create) when
-   *  wired. Public: also called directly by the connect path (onLayoutReady,
-   *  Plan B1 Task 6), which no longer runs fullSync's REST pull leg but still
-   *  needs this push leg to create/upload local-only notes on (re)connect. */
   async pushModifiedFiles(sinceTimestamp) {
+    return this.pushModifiedInFlight ? (this.pushModifiedAgain = !0, this.pushModifiedInFlight.then((r) => ({ ...r, joined: !0 }))) : (this.pushModifiedInFlight = (async () => {
+      try {
+        let out = await this.pushModifiedFilesInner(sinceTimestamp);
+        for (; this.pushModifiedAgain; ) {
+          this.pushModifiedAgain = !1;
+          let more = await this.pushModifiedFilesInner(void 0, out);
+          out = { pushed: out.pushed + more.pushed, failed: out.failed + more.failed };
+        }
+        return out;
+      } finally {
+        this.pushModifiedInFlight = null, this.pushModifiedAgain = !1;
+      }
+    })(), this.pushModifiedInFlight);
+  }
+  async pushModifiedFilesInner(sinceTimestamp, base = { pushed: 0, failed: 0 }) {
     let since = sinceTimestamp != null ? sinceTimestamp : this.lastSync, sinceMs = since ? new Date(since).getTime() : 0, files = this.app.vault.getFiles(), pushed = 0, toSync = files.filter((f) => !this.isSyncable(f) || this.shouldIgnore(f.path) ? !1 : this.syncState.has(f.path) ? f.stat.mtime > sinceMs : !0);
     devLog().log("push", `pushModifiedFiles: ${toSync.length} files modified since ${since}`), rlog().info("push", `PushModified: ${toSync.length} files modified since ${since}`);
     let total = toSync.length;
-    total > 0 && this.emitPushing(0, total, 0);
-    let outcome = await this.pushPartitioned(toSync, "incremental");
+    total > 0 && this.emitPushing(base.pushed, base.pushed + total, base.failed);
+    let outcome = await this.pushPartitioned(toSync, "incremental", base);
     return pushed += outcome.pushed, this.flushAttachmentLimitedToast(), this.flushFailureSummaryToast(), { pushed, failed: outcome.failed };
   }
   /** Compute what a sync would do without executing it (dry-run preview).
@@ -23462,6 +23347,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
      *  auth/vault change. Compared against current fingerprint to decide
      *  whether the sync gate should be open. */
     this.syncGateAcceptedFor = null;
+    /** The live SyncPreviewModal, if one is open. Held so healDeadVault can
+     *  close a preview that sits on a just-nulled vault before reopening the
+     *  picker (the syncPreviewGuard makes a reopen a no-op while it lives). */
+    this.openPreviewModal = null;
     /** Timestamp (ms) of the last noteIdMap manifest-reconcile attempt.
      *  Reconciling on EVERY reconnect (not just the first) is required so a
      *  note another device created during a disconnect is discovered — see
@@ -23477,6 +23366,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
      *  stack two SyncPreviewModal instances. A second call while one preview is
      *  open is a silent no-op. See single-flight.ts. */
     this.syncPreviewGuard = createSingleFlight();
+    /** True while a dead-vault check/heal is running — a burst of vault-scoped
+     *  404s (folders + attachments + notes all fail together) must trigger ONE
+     *  heal, not one per failed request. */
+    this.healingVault = !1;
     /** True once we have surfaced a data.json recovery/corruption Notice this
      *  session, so the two load paths (loadSettings + onload restore) don't
      *  double-toast the user. */
@@ -23542,7 +23435,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       "lifecycle",
       `Plugin loading | v${this.manifest.version} | ${import_obsidian26.Platform.isMobile ? "mobile" : "desktop"}`
     ), this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
-      data.lastSync !== void 0 && this.syncEngine.setLastSync(data.lastSync), data.catchupSeq !== void 0 && this.syncEngine.setCatchupSeq(data.catchupSeq), data.catchupId !== void 0 && this.syncEngine.setCatchupId(data.catchupId), data.manifestSeq !== void 0 && this.syncEngine.setManifestSeq(data.manifestSeq), await this.savePluginData(this.syncEngine.getLastSync());
+      data.lastSync !== void 0 && (this.syncEngine.setLastSync(data.lastSync), this.syncEngine.onVaultScopedError = (e) => {
+        this.healDeadVault(e);
+      }), data.catchupSeq !== void 0 && this.syncEngine.setCatchupSeq(data.catchupSeq), data.catchupId !== void 0 && this.syncEngine.setCatchupId(data.catchupId), data.manifestSeq !== void 0 && this.syncEngine.setManifestSeq(data.manifestSeq), await this.savePluginData(this.syncEngine.getLastSync());
     }), this.syncEngine.syncLog = this.syncLog, this.syncEngine.setCrdtPorts({
       // Level-triggered CRDT-liveness check for the push path. The manager
       // port is edge-triggered (set on crdt: join, cleared on disconnect) and
@@ -23880,8 +23775,8 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         if (gateOpen)
           try {
             (_c2 = this.noteStream) != null && _c2.isCrdtConnected() && await this.syncEngine.catchupViaSeqReplay();
-            let { pushed } = await this.syncEngine.pushModifiedFiles();
-            pushed > 0 && new import_obsidian26.Notice(`Engram Sync: pushed ${pushed}`);
+            let res = await this.syncEngine.pushModifiedFiles();
+            res.pushed > 0 && !res.joined && new import_obsidian26.Notice(`Engram Sync: pushed ${res.pushed}`);
           } catch (e) {
             this.handleSyncError("Startup sync", e);
           }
@@ -23905,7 +23800,30 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       "lifecycle",
       `${context} failed: ${errMsg(e)}`,
       e instanceof Error ? e.stack : void 0
-    ), opts != null && opts.notice && new import_obsidian26.Notice("Engram sync: sync failed");
+    ), this.healDeadVault(e), opts != null && opts.notice && new import_obsidian26.Notice("Engram sync: sync failed");
+  }
+  /** If `e` is an HTTP 404 and the active vault id is absent from the
+   *  server's vault list, the vault is gone: clear the id, re-block sync,
+   *  and reopen the preview in the vault picker so the user re-picks or
+   *  creates one. A 404 for any OTHER reason (note not found etc.) is left
+   *  alone — the vault-list check is the discriminator. */
+  async healDeadVault(e) {
+    var _a;
+    if (!this.healingVault && !(!isHttpStatus(e, 404) || !this.settings.vaultId)) {
+      this.healingVault = !0;
+      try {
+        if ((await this.api.listVaults()).some((v) => v.id === this.settings.vaultId)) return;
+        rlog().warn(
+          "lifecycle",
+          `Active vault ${this.settings.vaultId} no longer exists server-side \u2014 clearing and reopening the picker`
+        ), this.settings.vaultId = null, this.settings.remoteVaultName = void 0, this.api.setVaultId(null), this.syncGateAcceptedFor = null, this.syncEngine.setSyncBlocked(!0), (_a = this.openPreviewModal) == null || _a.close(), this.openPreviewModal = null, await this.savePluginData(this.syncEngine.getLastSync()), new import_obsidian26.Notice(
+          "Engram: this vault no longer exists on the server. Pick or create a vault to continue."
+        ), await this.doSyncWithFirstSyncCheck({ startInVaultPicker: !0 });
+      } catch (e2) {
+      } finally {
+        this.healingVault = !1;
+      }
+    }
   }
   onunload() {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i;
@@ -24341,7 +24259,6 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         parsed && queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
       }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.syncEngine.setCrdtPorts({
         create: (id2, path) => channel.crdtCreate(id2, path),
-        createBatch: (creates) => channel.crdtCreateBatch(creates),
         // Direct AWAITED delete for handleRename's ordered tombstone->
         // resurrect relocation (the durable-queue delete is still wired
         // below for the non-rename / offline paths). Delete (and durable
@@ -24602,9 +24519,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           modal.setPlanError(
             "Could not compare with the cloud. Check your connection."
           ), rlog().error("lifecycle", `Sync plan compute failed: ${errMsg(e)}`);
-        });
+        }), this.openPreviewModal = modal;
         let choice = await modal.awaitChoice();
-        await this.runSyncWithProgress(choice, {
+        this.openPreviewModal = null, await this.runSyncWithProgress(choice, {
           plan: modal.getPlan(),
           firstSync: context === "first-time"
         });
@@ -24644,8 +24561,8 @@ Last sync: ${date.toLocaleString()}`;
     this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), this.hasAuthConfigured() && (this.syncInterval = window.setInterval(() => {
       (async () => {
         try {
-          let { files: pulled } = await this.syncEngine.catchUp();
-          pulled > 0 && new import_obsidian26.Notice(`Engram Sync: pulled ${pulled} changes`);
+          let { files: pulled, deletes } = await this.syncEngine.catchUp();
+          pulled + deletes > 0 && new import_obsidian26.Notice(`Engram Sync: pulled ${pulled + deletes} changes`);
         } catch (e) {
           console.error("Engram Sync: periodic catch-up failed", e);
         }

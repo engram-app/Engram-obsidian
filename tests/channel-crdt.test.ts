@@ -5,8 +5,8 @@
  * - inbound crdt_msg routes to onCrdtMessage callback
  * - crdt topic join error is graceful (does not affect connected state)
  */
-import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { batchCreateTimeoutMs, NoteChannel } from "../src/channel";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { NoteChannel } from "../src/channel";
 
 let _lastWsUrl: string | null = null;
 let lastWsInstance: any = null;
@@ -1126,27 +1126,6 @@ describe("NoteChannel CRDT frame senders", () => {
 		channel.disconnect();
 	});
 
-	test("crdtCreateBatch sends crdt_create_batch with the creates and returns results", async () => {
-		const { channel, ws } = await joinedCrdtChannel();
-		const creates = [{ doc_id: "id1", path: "A.md", b64: "Zg==" }];
-		const p = channel.crdtCreateBatch(creates);
-		const frame = ws.sent
-			.map((s: string) => JSON.parse(s))
-			.find((f: unknown[]) => f[3] === "crdt_create_batch");
-		expect(frame[4]).toEqual({ creates });
-		const reply = { results: [{ doc_id: "id1", status: "ok" }] };
-		simulateMessage(ws, [
-			null,
-			frame[1],
-			"crdt:u1:v1",
-			"phx_reply",
-			{ status: "ok", response: reply },
-		]);
-		await expect(p).resolves.toEqual(reply);
-
-		channel.disconnect();
-	});
-
 	test("crdtDeleteAcked sends the frame and resolves on the server ack", async () => {
 		const { channel, ws } = await joinedCrdtChannel();
 		const p = channel.crdtDeleteAcked("n1");
@@ -1182,34 +1161,6 @@ describe("in-flight sendRequest on unclean close (repo-review 2026-08)", () => {
 			new Promise((r) => setTimeout(() => r("still-pending"), 100)),
 		]);
 		expect(outcome).toBe("rejected");
-		channel.disconnect();
-	});
-});
-
-describe("crdtCreateBatch timeout scales with chunk size", () => {
-	// A flat 10s deadline lost to a measured ~13s server cost for a big chunk
-	// (per-note transaction + room spawn + seed). The deadline must grow with
-	// the number of creates so a legitimately slow-but-working batch is not
-	// aborted client-side while the server commits it anyway.
-	test("passes a size-scaled timeout to sendRequest", async () => {
-		const { channel } = await joinedCrdtChannel();
-		const spy = spyOn(channel, "sendRequest").mockResolvedValue({ results: [] });
-		const creates = Array.from({ length: 25 }, (_, i) => ({
-			doc_id: `id${i}`,
-			path: `N${i}.md`,
-			b64: "Zg==",
-		}));
-
-		await channel.crdtCreateBatch(creates);
-
-		expect(spy).toHaveBeenCalledWith(
-			"crdt_create_batch",
-			{ creates },
-			batchCreateTimeoutMs(25),
-		);
-		// Scaling must be real: a full chunk gets strictly more budget than one note.
-		expect(batchCreateTimeoutMs(25)).toBeGreaterThan(batchCreateTimeoutMs(1));
-
 		channel.disconnect();
 	});
 });

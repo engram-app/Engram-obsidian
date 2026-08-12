@@ -49,7 +49,7 @@ declare const DEV_MODE: boolean;
 import { sha256Hex } from "./content-hash";
 import { registerDiagnostics } from "./diagnostics";
 import { EmailCaptureModal } from "./email-capture-modal";
-import { errMsg } from "./error-util";
+import { errMsg, isHttpStatus } from "./error-util";
 import { ExplicitFolders } from "./explicit-folders";
 import { LimitExceededError } from "./limit-error";
 import { notifyLimitExceeded } from "./limit-toast";
@@ -306,6 +306,10 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  auth/vault change. Compared against current fingerprint to decide
 	 *  whether the sync gate should be open. */
 	private syncGateAcceptedFor: string | null = null;
+	/** The live SyncPreviewModal, if one is open. Held so healDeadVault can
+	 *  close a preview that sits on a just-nulled vault before reopening the
+	 *  picker (the syncPreviewGuard makes a reopen a no-op while it lives). */
+	private openPreviewModal: { close(): void } | null = null;
 
 	/** Timestamp (ms) of the last noteIdMap manifest-reconcile attempt.
 	 *  Reconciling on EVERY reconnect (not just the first) is required so a
@@ -446,6 +450,11 @@ export default class EngramSyncPlugin extends Plugin {
 			// lastSync-only write never clobbers catchupSeq and vice-versa.
 			if (data.lastSync !== undefined) {
 				this.syncEngine.setLastSync(data.lastSync);
+				// Vault-scoped errors are swallowed inside the sync flows (one bad file
+				// must not abort a sync) — this side-channel lets the dead-vault heal see
+				// them anyway (review finding 2). healDeadVault self-discriminates: only
+				// a 404 whose vault is truly absent from the server list heals.
+				this.syncEngine.onVaultScopedError = (e) => void this.healDeadVault(e);
 			}
 			if (data.catchupSeq !== undefined) {
 				this.syncEngine.setCatchupSeq(data.catchupSeq);
@@ -1070,9 +1079,11 @@ export default class EngramSyncPlugin extends Plugin {
 					// offline-created note here routes through pushFile's genesis branch,
 					// which itself enqueues a durable crdt_create when the topic is not yet
 					// joined (sync.ts:2546). The queue is the safety net either way.
-					const { pushed } = await this.syncEngine.pushModifiedFiles();
-					if (pushed > 0) {
-						new Notice(`Engram Sync: pushed ${pushed}`);
+					const res = await this.syncEngine.pushModifiedFiles();
+					// joined = this call rode another surface's run (e.g. the modal
+					// sync); that surface reports the same numbers — don't double up.
+					if (res.pushed > 0 && !res.joined) {
+						new Notice(`Engram Sync: pushed ${res.pushed}`);
 					}
 				} catch (e) {
 					this.handleSyncError("Startup sync", e);
@@ -1103,8 +1114,63 @@ export default class EngramSyncPlugin extends Plugin {
 			`${context} failed: ${errMsg(e)}`,
 			e instanceof Error ? e.stack : undefined,
 		);
+		// A 404 on a vault-scoped call can mean the ACTIVE vault no longer
+		// exists server-side (deleted from the web app / another device). The
+		// old behavior — surface "HTTP 404" and keep the dead id — strands the
+		// plugin forever: the accepted-gate fingerprint still matches, so every
+		// later sync goes straight back to the dead vault and 404s again. Verify
+		// against the authoritative vault list and self-heal by reopening the
+		// picker (same recovery the web SPA's reconcileActiveVault does).
+		void this.healDeadVault(e);
 		if (opts?.notice) {
 			new Notice("Engram sync: sync failed");
+		}
+	}
+
+	/** True while a dead-vault check/heal is running — a burst of vault-scoped
+	 *  404s (folders + attachments + notes all fail together) must trigger ONE
+	 *  heal, not one per failed request. */
+	private healingVault = false;
+
+	/** If `e` is an HTTP 404 and the active vault id is absent from the
+	 *  server's vault list, the vault is gone: clear the id, re-block sync,
+	 *  and reopen the preview in the vault picker so the user re-picks or
+	 *  creates one. A 404 for any OTHER reason (note not found etc.) is left
+	 *  alone — the vault-list check is the discriminator. */
+	private async healDeadVault(e: unknown): Promise<void> {
+		if (this.healingVault) return;
+		if (!isHttpStatus(e, 404) || !this.settings.vaultId) return;
+		this.healingVault = true;
+		try {
+			const vaults = await this.api.listVaults();
+			if (vaults.some((v) => v.id === this.settings.vaultId)) return;
+			rlog().warn(
+				"lifecycle",
+				`Active vault ${this.settings.vaultId} no longer exists server-side — clearing and reopening the picker`,
+			);
+			this.settings.vaultId = null;
+			this.settings.remoteVaultName = undefined;
+			// Finding 10: EngramApi keeps its OWN vault id and stamps it on every
+			// request — clearing only the settings field leaves non-sync requests
+			// (sync-center retries, attachment fetches) 404ing on the dead header.
+			this.api.setVaultId(null);
+			this.syncGateAcceptedFor = null;
+			this.syncEngine.setSyncBlocked(true);
+			// Finding 9: a preview/picker already open sits on the now-nulled
+			// vault, and the syncPreviewGuard makes the reopen below a silent
+			// no-op while it lives. Close it first so the picker reopens fresh.
+			this.openPreviewModal?.close();
+			this.openPreviewModal = null;
+			await this.savePluginData(this.syncEngine.getLastSync());
+			new Notice(
+				"Engram: this vault no longer exists on the server. Pick or create a vault to continue.",
+			);
+			await this.doSyncWithFirstSyncCheck({ startInVaultPicker: true });
+		} catch {
+			// listVaults itself failed (offline?) — nothing to conclude; the next
+			// sync error re-runs this check.
+		} finally {
+			this.healingVault = false;
 		}
 	}
 
@@ -2052,7 +2118,6 @@ export default class EngramSyncPlugin extends Plugin {
 				// bound), so this is a no-op on a legacy/non-CRDT connection.
 				this.syncEngine.setCrdtPorts({
 					create: (id, path) => channel.crdtCreate(id, path),
-					createBatch: (creates) => channel.crdtCreateBatch(creates),
 					// Direct AWAITED delete for handleRename's ordered tombstone->
 					// resurrect relocation (the durable-queue delete is still wired
 					// below for the non-rename / offline paths). Delete (and durable
@@ -2545,7 +2610,9 @@ export default class EngramSyncPlugin extends Plugin {
 						rlog().error("lifecycle", `Sync plan compute failed: ${errMsg(e)}`);
 					});
 
+				this.openPreviewModal = modal;
 				const choice = await modal.awaitChoice();
+				this.openPreviewModal = null;
 
 				await this.runSyncWithProgress(choice, {
 					plan: modal.getPlan(),
@@ -2647,9 +2714,11 @@ export default class EngramSyncPlugin extends Plugin {
 					// Socket-only fallback poll (no REST): reconcile manifest
 					// server-deletes/folder-markers + replay the op-log. No-ops when
 					// the socket is down; a wedged socket recovers on reconnect.
-					const { files: pulled } = await this.syncEngine.catchUp();
-					if (pulled > 0) {
-						new Notice(`Engram Sync: pulled ${pulled} changes`);
+					const { files: pulled, deletes } = await this.syncEngine.catchUp();
+					// deletes counted separately (finding: a delete-only poll used to
+					// trash local files with NO user-visible indication).
+					if (pulled + deletes > 0) {
+						new Notice(`Engram Sync: pulled ${pulled + deletes} changes`);
 					}
 				} catch (e) {
 					// biome-ignore lint/suspicious/noConsole: error boundary
