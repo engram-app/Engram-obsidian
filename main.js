@@ -16946,7 +16946,7 @@ var SyncProgressModal = class extends import_obsidian15.Modal {
       cls: "engram-progress-hint"
     });
     let buttons = contentEl.createDiv({ cls: "engram-progress-buttons" });
-    this.bgBtn = buttons.createEl("button", { text: "Run in background" }), this.bgBtn.addEventListener("click", () => this.close()), this.closeBtn = buttons.createEl("button", { text: "Done", cls: "mod-cta" }), this.closeBtn.hidden = !0, this.closeBtn.addEventListener("click", () => this.close()), this.renderRows(), this.tickTimer = window.setInterval(() => this.tick(), TICK_INTERVAL_MS);
+    this.actionBtn = buttons.createEl("button", { text: "Run in background" }), this.actionBtn.addEventListener("click", () => this.close()), this.renderRows(), this.tickTimer = window.setInterval(() => this.tick(), TICK_INTERVAL_MS);
   }
   /** Called by the sync engine's progress callback. Buffers the update. */
   update(progress) {
@@ -17009,7 +17009,7 @@ var SyncProgressModal = class extends import_obsidian15.Modal {
     };
     this.statusEl.setText("Sync complete"), this.pathEl.setText(""), this.recapEl.setText(describeCompletion(summary)), this.recapEl.hidden = !1, this.summaryEl.empty(), renderCompletionSummary(this.summaryEl, summary, this.opts.webUrl), this.summaryEl.hidden = !1, summary.failed > 0 ? (this.failedEl.setText(
       `${summary.failed} failed. Run "Engram: Show sync log" for details.`
-    ), this.failedEl.hidden = !1) : this.failedEl.hidden = !0, this.verifyEl.hidden = !this.opts.webUrl, this.hintEl.hidden = !0, this.bgBtn.hidden = !0, this.closeBtn.hidden = !1;
+    ), this.failedEl.hidden = !1) : this.failedEl.hidden = !0, this.verifyEl.hidden = !this.opts.webUrl, this.hintEl.hidden = !0, this.actionBtn.setText("Done"), this.actionBtn.addClass("mod-cta");
   }
   renderRows() {
     for (let row of this.rows) {
