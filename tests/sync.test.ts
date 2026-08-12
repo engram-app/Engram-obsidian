@@ -1239,9 +1239,11 @@ describe("SyncEngine.fullSync (catch-up wiring)", () => {
 	// silent reconnect/startup catch-up.
 	test("fullSync routes its pull-half through catchUp (seq-replay), not the REST pull()", async () => {
 		const engine = createEngine();
-		const catchUp = jest.spyOn(engine, "catchUp").mockResolvedValue(0);
+		const catchUp = jest.spyOn(engine, "catchUp").mockResolvedValue({ files: 0, failed: 0 });
 		const pull = jest.spyOn(engine as any, "pull");
-		const pushModified = jest.spyOn(engine as any, "pushModifiedFiles").mockResolvedValue(0);
+		const pushModified = jest
+			.spyOn(engine as any, "pushModifiedFiles")
+			.mockResolvedValue({ pushed: 0, failed: 0 });
 
 		await engine.fullSync();
 
@@ -1257,9 +1259,9 @@ describe("SyncEngine.fullSync (catch-up wiring)", () => {
 			if (p.phase === "complete") completeCurrent = p.current;
 		};
 
-		// Download-only sync: 2 ops applied via seq-replay, nothing local to push.
-		jest.spyOn(engine, "catchUp").mockResolvedValue(2);
-		jest.spyOn(engine as any, "pushModifiedFiles").mockResolvedValue(0);
+		// Download-only sync: 2 files applied via seq-replay, nothing local to push.
+		jest.spyOn(engine, "catchUp").mockResolvedValue({ files: 2, failed: 0 });
+		jest.spyOn(engine as any, "pushModifiedFiles").mockResolvedValue({ pushed: 0, failed: 0 });
 
 		const { pulled, pushed } = await engine.fullSync();
 
