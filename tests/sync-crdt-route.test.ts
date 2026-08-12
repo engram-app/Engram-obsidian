@@ -1193,6 +1193,8 @@ describe("Task 4: local delete enqueues a durable crdt_delete", () => {
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("Notes/gone.md", "note-uuid");
 		const engine = createEngine(noteIdMap);
+		// #416 evidence rule: a delete push requires recorded sync evidence.
+		(engine as any).syncState.set("Notes/gone.md", { hash: 1 });
 		const enqueued: Array<{ kind: string; docId: string; path: string }> = [];
 		engine.setCrdtEnqueue((op) => enqueued.push(op));
 
@@ -1211,6 +1213,8 @@ describe("Task 4: local delete enqueues a durable crdt_delete", () => {
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("Notes/gone.md", "note-uuid");
 		const engine = createEngine(noteIdMap);
+		// #416 evidence rule: a delete push requires recorded sync evidence.
+		(engine as any).syncState.set("Notes/gone.md", { hash: 1 });
 		const enqueued: Array<{ kind: string; docId: string; path: string }> = [];
 		engine.setCrdtEnqueue((op) => enqueued.push(op));
 

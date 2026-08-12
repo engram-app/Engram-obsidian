@@ -293,6 +293,8 @@ describe("SyncEngine.handleDelete", () => {
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("Notes/Old.canvas", "id-canvas-del");
 		engine.setNoteIdMap(noteIdMap);
+		// #416 evidence rule: a delete push requires recorded sync evidence.
+		(engine as any).syncState.set("Notes/Old.canvas", { hash: 1 });
 
 		const file = new TFile("Notes/Old.canvas");
 		await engine.handleDelete(file);
@@ -1535,6 +1537,8 @@ describe("SyncEngine offline queue integration", () => {
 		(mockApi.deleteAttachment as jest.Mock).mockRejectedValueOnce(new Error("network"));
 
 		const engine = createEngine();
+		// #416 evidence rule: a delete push requires recorded sync evidence.
+		(engine as any).syncState.set("Notes/Deleted.png", { hash: 1 });
 		const file = new TFile("Notes/Deleted.png");
 
 		await engine.handleDelete(file);
@@ -1872,6 +1876,8 @@ describe("SyncEngine binary push", () => {
 
 	test("binary file delete calls deleteAttachment", async () => {
 		const engine = createEngine();
+		// #416 evidence rule: a delete push requires recorded sync evidence.
+		(engine as any).syncState.set("Assets/old.png", { hash: 1 });
 		const file = new TFile("Assets/old.png");
 
 		await engine.handleDelete(file);
