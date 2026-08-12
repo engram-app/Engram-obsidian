@@ -3773,8 +3773,23 @@ export class SyncEngine {
 		return { notes, attachments };
 	}
 
-	async catchupViaSeqReplay(opts: { fromZero?: boolean; enumerateOnly?: boolean } = {}): Promise<{
+	async catchupViaSeqReplay(
+		opts: {
+			fromZero?: boolean;
+			enumerateOnly?: boolean;
+			/** Fired once per non-deleted note/attachment row successfully applied —
+			 *  FILE units (the plan's denominator), not op-log rows. Drives the
+			 *  per-file "pulling" progress the UI seeds from the plan. */
+			onFileApplied?: (path: string) => void;
+		} = {},
+	): Promise<{
 		applied: number;
+		/** Non-deleted rows applied without throwing — the "files downloaded"
+		 *  count in the same units the sync plan counts. Tombstones and folder
+		 *  markers are excluded, so this is the honest "N synced" numerator. */
+		files: number;
+		/** Rows whose apply threw (logged + skipped so the feed never wedges). */
+		failed: number;
 		serverIds: Set<string>;
 		serverAttachmentPaths: Set<string>;
 		/** `true` when THIS call executed the replay loop exclusively (so
@@ -3794,10 +3809,20 @@ export class SyncEngine {
 		const serverAttachmentPaths = new Set<string>();
 		if (this.seqReplayRunning) {
 			this.seqReplayAgain = true;
-			return { applied: 0, serverIds, serverAttachmentPaths, ran: false, complete: false };
+			return {
+				applied: 0,
+				files: 0,
+				failed: 0,
+				serverIds,
+				serverAttachmentPaths,
+				ran: false,
+				complete: false,
+			};
 		}
 		this.seqReplayRunning = true;
 		let applied = 0;
+		let files = 0;
+		let failed = 0;
 		let complete = true;
 		try {
 			do {
@@ -3807,8 +3832,11 @@ export class SyncEngine {
 					serverIds,
 					serverAttachmentPaths,
 					opts.enumerateOnly ?? false,
+					opts.onFileApplied,
 				);
 				applied += pass.applied;
+				files += pass.files;
+				failed += pass.failed;
 				// The sets accumulate across coalesced passes, so ONE short pass taints
 				// the whole result — never OR this back to true.
 				if (!pass.complete) complete = false;
@@ -3816,7 +3844,7 @@ export class SyncEngine {
 		} finally {
 			this.seqReplayRunning = false;
 		}
-		return { applied, serverIds, serverAttachmentPaths, ran: true, complete };
+		return { applied, files, failed, serverIds, serverAttachmentPaths, ran: true, complete };
 	}
 
 	/** Run `catchupViaSeqReplay` for a DESTRUCTIVE delete decision (pull-all wipe,
@@ -3832,8 +3860,11 @@ export class SyncEngine {
 	private async catchupViaSeqReplayExclusive(opts: {
 		fromZero?: boolean;
 		enumerateOnly?: boolean;
+		onFileApplied?: (path: string) => void;
 	}): Promise<{
 		applied: number;
+		files: number;
+		failed: number;
 		serverIds: Set<string>;
 		serverAttachmentPaths: Set<string>;
 	} | null> {
@@ -3876,12 +3907,30 @@ export class SyncEngine {
 	 *      onto one `catchupSeq` removed it, so this restores that guarantee.
 	 *   4. `syncExplicitFolders` — pull the server's empty-folder markers to disk
 	 *      and propagate remote folder deletes.
-	 *  Returns the applied-op count (for the progress recap / poll notice). Never
+	 *  Returns the downloaded FILE count (non-deleted rows applied — the unit the
+	 *  sync plan and recap use) plus the count of rows whose apply threw. Never
 	 *  throws — mirrors the old pull() error boundary so a caller (fullSync/poll)
 	 *  never has to guard it. The manifest is fetched once and shared by the
 	 *  validator plus steps 1
 	 *  and 3. */
-	async catchUp(): Promise<number> {
+	async catchUp(
+		opts: { reportProgress?: boolean } = {},
+	): Promise<{ files: number; failed: number }> {
+		// FILE-unit progress for the sync UI (fullSync's pull leg). Opt-in: the
+		// background poll/reconnect callers emit nothing, exactly as before —
+		// they have no progress surface and never emit a terminal "complete".
+		let pulledFiles = 0;
+		const onFileApplied = opts.reportProgress
+			? (path: string): void => {
+					this.onSyncProgress?.({
+						phase: "pulling",
+						current: ++pulledFiles,
+						total: 0,
+						failed: 0,
+						currentPath: path,
+					});
+				}
+			: undefined;
 		try {
 			// #283: capture before the fetch so reconcileFromManifest can refuse its
 			// destructive pass if an OAuth swap lands while the manifest is in flight.
@@ -3901,12 +3950,12 @@ export class SyncEngine {
 				// watermark — an idle vault must not strand a local empty folder
 				// forever. Cheap: no-ops when nothing local is untracked.
 				await this.seedEmptyFolders();
-				const { applied } = await this.catchupViaSeqReplay();
-				return applied;
+				const { files, failed } = await this.catchupViaSeqReplay({ onFileApplied });
+				return { files, failed };
 			}
 			await this.reconcileFromManifest(manifest, authGenAtFetch);
 			const behind = this.validateFromManifest(manifest);
-			const { applied } = await this.catchupViaSeqReplay();
+			const { files, failed } = await this.catchupViaSeqReplay({ onFileApplied });
 			const poked = await this.healDivergedLiveBoundNotes(manifest);
 			try {
 				await this.syncExplicitFolders();
@@ -3926,14 +3975,14 @@ export class SyncEngine {
 				this.setManifestSeq(manifest.change_seq);
 				await this.saveData({ manifestSeq: this.manifestSeq });
 			}
-			return applied;
+			return { files, failed };
 		} catch (e) {
 			rlog().error(
 				"pull",
 				`Catch-up failed: ${errMsg(e)}`,
 				e instanceof Error ? e.stack : undefined,
 			);
-			return 0;
+			return { files: 0, failed: 0 };
 		}
 	}
 
@@ -3942,15 +3991,17 @@ export class SyncEngine {
 		serverIds: Set<string>,
 		serverAttachmentPaths: Set<string>,
 		enumerateOnly = false,
+		onFileApplied?: (path: string) => void,
 		/** `complete` is false when the walk did NOT reach the end of the feed, so
 		 *  `serverIds`/`serverAttachmentPaths` are a PARTIAL view of the server. Any
 		 *  caller making a delete decision must refuse them: a partial set is
 		 *  indistinguishable from "the server doesn't have these" and would trash
 		 *  every local file the walk never reached. */
-	): Promise<{ applied: number; complete: boolean }> {
+	): Promise<{ applied: number; files: number; failed: number; complete: boolean }> {
 		// Never walked at all — sets are empty, which must NOT read as "server is
 		// empty" to a destructive caller.
-		if (!this.crdtCatchupSince || !this.crdt) return { applied: 0, complete: false };
+		if (!this.crdtCatchupSince || !this.crdt)
+			return { applied: 0, files: 0, failed: 0, complete: false };
 		// The seq cursor is per-vault: `seq` is allocated per vault, so a cursor
 		// from one vault is meaningless in another. If our recorded per-vault
 		// state belongs to a DIFFERENT vault than the active one — an OAuth /
@@ -3980,6 +4031,8 @@ export class SyncEngine {
 		}
 		this.seqRewindFloor = null;
 		let applied = 0;
+		let files = 0;
+		let failed = 0;
 		try {
 			await this.walkOpLog({
 				seq: cursor,
@@ -3989,9 +4042,17 @@ export class SyncEngine {
 						try {
 							await this.applySyncChange(c);
 							applied += 1;
+							// FILE units for the progress UI: tombstones and folder-marker
+							// rows are op-log bookkeeping, not downloaded files — counting
+							// them made the recap disagree with the plan's file count.
+							if (!c.deleted) {
+								files += 1;
+								onFileApplied?.(c.path);
+							}
 						} catch (e) {
 							// One bad op (e.g. illegal filename) must not wedge the feed — log
 							// and skip, same isolation as pullViaCursor.
+							failed += 1;
 							rlog().error("crdt", `seq-replay: skipped ${c.path} — ${errMsg(e)}`);
 						}
 					}
@@ -4037,9 +4098,9 @@ export class SyncEngine {
 			// still real (and the cursor is persisted), so the pull itself succeeded —
 			// but a delete decision built on these sets would trash every file the
 			// walk never reached.
-			return { applied, complete: false };
+			return { applied, files, failed, complete: false };
 		}
-		return { applied, complete: true };
+		return { applied, files, failed, complete: true };
 	}
 
 	/** Per-note discovery from a room-open announce that carries a path
@@ -4546,16 +4607,34 @@ export class SyncEngine {
 		try {
 			this.onSyncProgress?.({ phase: "pulling", current: 0, total: 0, failed: 0 });
 
+			// Per-file progress in FILE units (the plan's denominator) — the raw
+			// op-count would balloon past the plan on vaults with delete history.
+			let pulledFiles = 0;
+			const onFileApplied = (path: string): void => {
+				this.onSyncProgress?.({
+					phase: "pulling",
+					current: ++pulledFiles,
+					total: 0,
+					failed: 0,
+					currentPath: path,
+				});
+			};
+
 			// Destructive wipe MUST decide the trash set from an EXCLUSIVE replay
 			// (real, complete server sets). A coalesced replay returns EMPTY sets —
 			// treating those as "server has nothing" trashes the whole vault. Abort
 			// the wipe rather than trash on untrustworthy sets. Pull-all-keep is
 			// non-destructive, so it may coalesce harmlessly.
 			let applied: number;
+			let pulledFileCount: number;
+			let replayFailed: number;
 			let serverIds: Set<string>;
 			let serverAttachmentPaths: Set<string>;
 			if (wipe) {
-				const replay = await this.catchupViaSeqReplayExclusive({ fromZero: true });
+				const replay = await this.catchupViaSeqReplayExclusive({
+					fromZero: true,
+					onFileApplied,
+				});
 				if (!replay) {
 					this.lastError =
 						"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.";
@@ -4569,11 +4648,21 @@ export class SyncEngine {
 					);
 					return 0;
 				}
-				({ applied, serverIds, serverAttachmentPaths } = replay);
+				({
+					applied,
+					files: pulledFileCount,
+					failed: replayFailed,
+					serverIds,
+					serverAttachmentPaths,
+				} = replay);
 			} else {
-				({ applied, serverIds, serverAttachmentPaths } = await this.catchupViaSeqReplay({
-					fromZero: true,
-				}));
+				({
+					applied,
+					files: pulledFileCount,
+					failed: replayFailed,
+					serverIds,
+					serverAttachmentPaths,
+				} = await this.catchupViaSeqReplay({ fromZero: true, onFileApplied }));
 			}
 
 			devLog().log(
@@ -4582,6 +4671,7 @@ export class SyncEngine {
 			);
 			rlog().info("pull", `${label} replay done — applied=${applied}`);
 
+			let deleteFailed = 0;
 			if (wipe) {
 				// Suppress delete sync — these are locally-decided extras, not a
 				// server-originated delete; stays true until the local trash pass
@@ -4596,7 +4686,6 @@ export class SyncEngine {
 				});
 				const total = extras.length;
 				this.onSyncProgress?.({ phase: "deleting", current: 0, total, failed: 0 });
-				let deleteFailed = 0;
 				for (let i = 0; i < extras.length; i++) {
 					const file = extras[i]!;
 					try {
@@ -4629,16 +4718,23 @@ export class SyncEngine {
 				);
 			}
 
+			// The recap counts FILES (the plan's unit), not op-log rows — `applied`
+			// includes tombstones and superseded rows and overshoots the plan's
+			// promise on any vault with delete history. Failures are real: replay
+			// rows that threw plus local-extra trashes that failed.
 			this.onSyncProgress?.({
 				phase: "complete",
-				current: applied,
-				total: applied,
-				failed: 0,
+				current: pulledFileCount,
+				total: pulledFileCount,
+				failed: replayFailed + deleteFailed,
 			});
 
-			devLog().log("pull", `${label}: done — applied=${applied}`);
-			rlog().info("pull", `${label} done — applied=${applied}`);
-			return applied;
+			devLog().log(
+				"pull",
+				`${label}: done — files=${pulledFileCount} (ops applied=${applied})`,
+			);
+			rlog().info("pull", `${label} done — files=${pulledFileCount} (ops=${applied})`);
+			return pulledFileCount;
 		} catch (e) {
 			// biome-ignore lint/suspicious/noConsole: error boundary
 			console.error("Engram Sync: pullAll failed", e);
@@ -6490,22 +6586,26 @@ export class SyncEngine {
 		// the old and new lastSync values.
 		const prePullSync = this.lastSync;
 
-		const pulled = await this.catchUp();
-		const pushed = await this.pushModifiedFiles(prePullSync);
+		const pull = await this.catchUp({ reportProgress: true });
+		const pulled = pull.files;
+		const push = await this.pushModifiedFiles(prePullSync);
+		const pushed = push.pushed;
 
 		// Close out the progress UI (mirrors pushAll's terminal "complete").
 		// The recap's "N synced" reads `current`, so it must count BOTH legs —
 		// a download-only sync (pushed=0) still synced `pulled` notes and must
-		// not report "Nothing needed syncing". pushModifiedFiles already flushed
-		// the plan-skip tally into lastBatchSkipped, so surface it here as
-		// `skipped` (disjoint from failed — informational skips never increment
-		// the failure counter).
+		// not report "Nothing needed syncing". Both legs are FILE counts (the
+		// plan's unit). `failed` carries both legs too — the recap used to
+		// hardcode 0 and claim "All synced" over real genesis-batch failures.
+		// pushModifiedFiles already flushed the plan-skip tally into
+		// lastBatchSkipped, so surface it here as `skipped` (disjoint from
+		// failed — informational skips never increment the failure counter).
 		const synced = pulled + pushed;
 		this.onSyncProgress?.({
 			phase: "complete",
 			current: synced,
 			total: synced,
-			failed: 0,
+			failed: pull.failed + push.failed,
 			skipped: this.lastBatchSkipped,
 		});
 
@@ -6933,7 +7033,7 @@ export class SyncEngine {
 	 *  wired. Public: also called directly by the connect path (onLayoutReady,
 	 *  Plan B1 Task 6), which no longer runs fullSync's REST pull leg but still
 	 *  needs this push leg to create/upload local-only notes on (re)connect. */
-	async pushModifiedFiles(sinceTimestamp?: string): Promise<number> {
+	async pushModifiedFiles(sinceTimestamp?: string): Promise<{ pushed: number; failed: number }> {
 		// Use ?? not || so an empty-string prePullSync (first connect, never
 		// synced) is preserved and maps to epoch below — || would discard "" and
 		// fall back to this.lastSync, which pull() just advanced to server_time,
@@ -6963,7 +7063,10 @@ export class SyncEngine {
 
 		this.flushAttachmentLimitedToast();
 		this.flushFailureSummaryToast();
-		return pushed;
+		// `failed` counts genesis-batch failures — per-file throws propagate to
+		// the caller instead. It used to be silently dropped here, letting
+		// fullSync's recap claim "All synced" over real failures.
+		return { pushed, failed: outcome.failed };
 	}
 
 	/** Compute what a sync would do without executing it (dry-run preview).

@@ -424,6 +424,8 @@ describe("SyncEngine.pullAll — replay-from-0 (Task 5)", () => {
 			fromZero = o?.fromZero;
 			return {
 				applied: 1,
+				files: 1,
+				failed: 0,
 				serverIds: new Set(["s1"]),
 				serverAttachmentPaths: new Set<string>(),
 			};

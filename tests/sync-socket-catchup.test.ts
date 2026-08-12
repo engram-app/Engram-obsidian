@@ -418,6 +418,8 @@ describe("catchupViaSeqReplay", () => {
 		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
 		await expect(engine.catchupViaSeqReplay()).resolves.toEqual({
 			applied: 0,
+			files: 0,
+			failed: 0,
 			serverIds: new Set(),
 			serverAttachmentPaths: new Set(),
 			ran: true,

@@ -1070,7 +1070,7 @@ export default class EngramSyncPlugin extends Plugin {
 					// offline-created note here routes through pushFile's genesis branch,
 					// which itself enqueues a durable crdt_create when the topic is not yet
 					// joined (sync.ts:2546). The queue is the safety net either way.
-					const pushed = await this.syncEngine.pushModifiedFiles();
+					const { pushed } = await this.syncEngine.pushModifiedFiles();
 					if (pushed > 0) {
 						new Notice(`Engram Sync: pushed ${pushed}`);
 					}
@@ -2647,7 +2647,7 @@ export default class EngramSyncPlugin extends Plugin {
 					// Socket-only fallback poll (no REST): reconcile manifest
 					// server-deletes/folder-markers + replay the op-log. No-ops when
 					// the socket is down; a wedged socket recovers on reconnect.
-					const pulled = await this.syncEngine.catchUp();
+					const { files: pulled } = await this.syncEngine.catchUp();
 					if (pulled > 0) {
 						new Notice(`Engram Sync: pulled ${pulled} changes`);
 					}

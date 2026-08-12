@@ -741,6 +741,8 @@ describe("SyncEngine.pushAll with progress", () => {
 		engine.syncLog = new SyncLog();
 		(engine as any).catchupViaSeqReplay = async () => ({
 			applied: 1,
+			files: 1,
+			failed: 0,
 			serverIds: new Set<string>(),
 			serverAttachmentPaths: new Set<string>(),
 			ran: true,
