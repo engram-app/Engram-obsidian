@@ -202,7 +202,16 @@ export class OAuthAuth implements AuthProvider {
 		try {
 			const result = await this.refreshFn(this.refreshToken);
 			if (this.disposed) {
-				throw new Error("OAuthAuth disposed: refresh result discarded");
+				// Disposed mid-flight: serve the (still-valid) access token to the
+				// callers already parked on this refresh so an in-progress sync
+				// finishes cleanly — but adopt NOTHING. Mutating state or firing
+				// onTokenRotated here would persist a forked chain over the NEW
+				// provider's freshly-written tokens.
+				rlog().info(
+					"auth",
+					"OAuth refresh resolved after dispose — serving parked callers, discarding rotation",
+				);
+				return result.access_token;
 			}
 			this.accessToken = result.access_token;
 			this.refreshToken = result.refresh_token;

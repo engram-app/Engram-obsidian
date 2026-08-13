@@ -1544,16 +1544,17 @@ var ApiKeyAuth = class {
       throw this.authenticated = !1, new Error("Not authenticated: refresh token cleared");
     try {
       let result = await this.refreshFn(this.refreshToken);
-      if (this.disposed)
-        throw new Error("OAuthAuth disposed: refresh result discarded");
-      return this.accessToken = result.access_token, this.refreshToken = result.refresh_token, this.expiresAt = Date.now() + result.expires_in * 1e3, this.authenticated = !0, await ((_a = this.onTokenRotated) == null ? void 0 : _a.call(this, {
+      return this.disposed ? (rlog().info(
+        "auth",
+        "OAuth refresh resolved after dispose \u2014 serving parked callers, discarding rotation"
+      ), result.access_token) : (this.accessToken = result.access_token, this.refreshToken = result.refresh_token, this.expiresAt = Date.now() + result.expires_in * 1e3, this.authenticated = !0, await ((_a = this.onTokenRotated) == null ? void 0 : _a.call(this, {
         refreshToken: result.refresh_token,
         accessToken: result.access_token,
         expiresAt: this.expiresAt
       })), rlog().info(
         "auth",
         `OAuth refresh ok \u2014 accessTokenLen=${result.access_token.length} expiresInS=${result.expires_in}`
-      ), this.accessToken;
+      ), this.accessToken);
     } catch (err) {
       if (this.disposed)
         throw err;

@@ -468,7 +468,7 @@ describe("OAuthAuth.dispose — the token-chain fork fence (#420)", () => {
 		expect(mockRefreshFn).not.toHaveBeenCalled();
 	});
 
-	it("a refresh resolving AFTER dispose is discarded — no state update, no persistence", async () => {
+	it("a refresh resolving AFTER dispose serves waiters but adopts nothing — no state update, no persistence", async () => {
 		let resolveRefresh!: (v: unknown) => void;
 		mockRefreshFn.mockReturnValue(new Promise((r) => (resolveRefresh = r)));
 		const rotated: unknown[] = [];
@@ -488,13 +488,17 @@ describe("OAuthAuth.dispose — the token-chain fork fence (#420)", () => {
 			expires_in: 3600,
 		});
 
-		await expect(inflight).rejects.toThrow(/disposed/);
-		// The late rotation must NOT persist — it would clobber the NEW
-		// provider's freshly-linked tokens on disk with a forked chain.
+		// Callers already parked on the shared in-flight refresh get the access
+		// token (valid server-side regardless of the swap) so a mid-flight sync
+		// finishes cleanly instead of aborting with errors...
+		await expect(inflight).resolves.toBe("jwt_late");
+		// ...but the rotation is NOT adopted or persisted — that would clobber
+		// the NEW provider's freshly-linked tokens on disk with a forked chain.
 		expect(rotated).toHaveLength(0);
 		expect(auth.getRefreshToken()).not.toBe("engram_rt_forked");
+		// And brand-new callers on the disposed instance still reject.
+		await expect(auth.getToken()).rejects.toThrow(/disposed/);
 	});
-
 	it("a definitive rejection after dispose does not fire onAuthInvalidated", async () => {
 		const err = Object.assign(new Error("revoked"), { status: 401 });
 		let rejectRefresh!: (e: unknown) => void;
