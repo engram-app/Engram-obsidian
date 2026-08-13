@@ -529,3 +529,103 @@ describe("coalesce semantics are opt-in (#422 review round 1)", () => {
 		expect(res.files).toBe(1);
 	});
 });
+
+describe("coalesced callers still receive the per-file stream", () => {
+	test("a progress-reporting catch-up that coalesces still gets per-file pulling events", async () => {
+		// Prod 2026-08-13: on a first sync the topic-join handler always starts
+		// the replay first (it is one of 11 bare `catchupViaSeqReplay()` call
+		// sites), so the user's sync modal ALWAYS coalesces behind it. #422 made
+		// the coalesced return report honest counts, but the early return never
+		// reaches the `opts.onFileApplied` hand-off at the exclusive call site —
+		// the callback is silently discarded. The modal therefore blocks for the
+		// whole replay with a dead 0% bar and no filenames, then prints one
+		// final number. Counts alone are not the contract; the STREAM is.
+		const feed = [
+			noteRow({ id: "id-a", seq: 1, path: "Notes/a.md" }),
+			noteRow({ id: "id-b", seq: 2, path: "Notes/b.md" }),
+		];
+		const { engine, events } = makeEngine(feed);
+		let releaseFirstFetch!: () => void;
+		const gate = new Promise<void>((r) => (releaseFirstFetch = r));
+		let call = 0;
+		engine.setCrdtCatchupSince(async () => {
+			call += 1;
+			if (call === 1) await gate;
+			return { changes: call <= 2 ? feed : [], has_more: false, next_seq: null };
+		});
+
+		// The background caller (join handler) wins the race and runs exclusively.
+		const background = engine.catchUp({ reportProgress: false });
+		await new Promise((r) => setTimeout(r, 10));
+		// The user's modal arrives second and coalesces.
+		const modal = engine.catchUp({ reportProgress: true });
+		await new Promise((r) => setTimeout(r, 10));
+		releaseFirstFetch();
+		await Promise.all([background, modal]);
+
+		const pulls = events.filter((e) => e.phase === "pulling");
+		expect(pulls.map((e) => e.current)).toEqual([1, 2]);
+		// The filenames the "Downloading <name>" row renders.
+		expect(pulls.map((e) => e.currentPath)).toEqual(["Notes/a.md", "Notes/b.md"]);
+	});
+});
+
+describe("hasServerNote after a handshake heal (#339)", () => {
+	type Staged = {
+		path: string;
+		serverHash: string;
+		content: string | null;
+		version?: number;
+		seq?: number;
+	};
+	const stage = (engine: SyncEngine, noteId: string, staged: Staged): void => {
+		(engine as unknown as { pendingConvergence: Map<string, Staged> }).pendingConvergence.set(
+			noteId,
+			staged,
+		);
+	};
+
+	test("a note that converged via STEP2 is known to exist on the server", async () => {
+		// The server just handed us this note's full state, so it demonstrably
+		// holds a row for it. Without a crdtHead the oracle says false and the
+		// note's next push takes the genesis path — on a first sync that
+		// misroutes the WHOLE pulled vault through crdtCreateBatch, which is
+		// what surfaced as "122 files to upload" from an empty local vault.
+		const { engine } = makeEngine([]);
+		const map = new NoteIdMap();
+		map.set("Notes/a.md", "id-a");
+		engine.setNoteIdMap(map);
+		stage(engine, "id-a", {
+			path: "Notes/a.md",
+			serverHash: "h1",
+			content: "server body",
+			version: 3,
+			seq: 7,
+		});
+
+		await engine.commitCrdtConvergence("id-a");
+
+		expect(engine.hasServerNote("id-a")).toBe(true);
+	});
+
+	test("an EMPTY converged doc does NOT claim the server has the note", async () => {
+		// Boundary guard: a handshake that returns nothing is not proof of a
+		// server row, and genesis is the correct route for it. Setting the
+		// sentinel here would strand a genuinely-new note with no create.
+		const { engine } = makeEngine([]);
+		const map = new NoteIdMap();
+		map.set("Notes/empty.md", "id-empty");
+		engine.setNoteIdMap(map);
+		stage(engine, "id-empty", {
+			path: "Notes/empty.md",
+			serverHash: "h0",
+			content: "",
+			version: 1,
+			seq: 1,
+		});
+
+		await engine.commitCrdtConvergence("id-empty");
+
+		expect(engine.hasServerNote("id-empty")).toBe(false);
+	});
+});

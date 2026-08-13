@@ -3762,6 +3762,15 @@ export class SyncEngine {
 		failed: number;
 		deletes: number;
 	}> | null = null;
+	/** Per-file tick subscribers for the RUNNING replay session. The counts a
+	 *  coalescing caller awaits are only half the contract — its progress UI
+	 *  also needs the STREAM, and the early return can't reach the exclusive
+	 *  call site's `onFileApplied` hand-off. On a first sync the join handler
+	 *  always owns the replay (it is one of many bare `catchupViaSeqReplay()`
+	 *  callers), so the user's modal ALWAYS coalesces: without this it renders
+	 *  a dead 0% bar with no filenames for the whole pull, then one final
+	 *  number. Registration is scoped to each caller's own await. */
+	private seqReplayFileListeners = new Set<(path: string) => void>();
 	private seqHealLastAt = 0;
 	private seqHealTimer: number | null = null;
 	private static readonly SEQ_HEAL_COOLDOWN_MS = 4_000;
@@ -3999,7 +4008,19 @@ export class SyncEngine {
 			// Safe: seqReplayRunning=true means the running task is suspended at
 			// an await INSIDE its loop (the exit path from condition-check to
 			// finally has no await), so it always sees the flag we just set.
-			const running = await this.seqReplayResult?.catch(() => null);
+			//
+			// Subscribe to the running session's per-file ticks for the duration
+			// of this await, so a progress-reporting coalescer renders the live
+			// "Downloading <name>" stream instead of a frozen bar. Ticks already
+			// applied before we registered are lost by construction — the counts
+			// below still report the session's true totals.
+			if (opts.onFileApplied) this.seqReplayFileListeners.add(opts.onFileApplied);
+			let running: { applied: number; files: number; failed: number; deletes: number } | null;
+			try {
+				running = (await this.seqReplayResult?.catch(() => null)) ?? null;
+			} finally {
+				if (opts.onFileApplied) this.seqReplayFileListeners.delete(opts.onFileApplied);
+			}
 			return {
 				applied: running?.applied ?? 0,
 				files: running?.files ?? 0,
@@ -4026,6 +4047,12 @@ export class SyncEngine {
 			// must tick the progress feed once, or `current` outruns the plan's
 			// denominator and the bar pins at 100% while files keep arriving.
 			const tickedKeys = new Set<string>();
+			// This session owns the tick fan-out: its own caller's callback and
+			// every coalescer that registers while it runs see the same stream.
+			if (opts.onFileApplied) this.seqReplayFileListeners.add(opts.onFileApplied);
+			const emitFileApplied = (path: string): void => {
+				for (const listener of [...this.seqReplayFileListeners]) listener(path);
+			};
 			try {
 				do {
 					this.seqReplayAgain = false;
@@ -4035,7 +4062,7 @@ export class SyncEngine {
 						serverAttachmentPaths,
 						tickedKeys,
 						opts.enumerateOnly ?? false,
-						opts.onFileApplied,
+						emitFileApplied,
 					);
 					applied += pass.applied;
 					files += pass.files;
@@ -4046,6 +4073,7 @@ export class SyncEngine {
 					if (!pass.complete) complete = false;
 				} while (this.seqReplayAgain);
 			} finally {
+				if (opts.onFileApplied) this.seqReplayFileListeners.delete(opts.onFileApplied);
 				this.seqReplayRunning = false;
 			}
 			return {
@@ -4716,6 +4744,15 @@ export class SyncEngine {
 				serverHash: staged.serverHash,
 				version: staged.version,
 				seq: staged.seq,
+				// #339: a STEP2 that delivered CONTENT is proof the server holds a
+				// row for this note — we just merged the server's own ops for it.
+				// Without flipping the oracle, `hasServerNote` stays false and the
+				// note's next push takes the genesis branch; on a first sync
+				// `splitGenesisVsKnown` then misroutes the entire freshly-pulled
+				// vault through crdtCreateBatch (prod 2026-08-13: "122 files to
+				// upload" from an empty local vault). An EMPTY converged doc is NOT
+				// proof — genesis stays the correct route there, so gate on content.
+				...(staged.content ? { crdtHead: CRDT_HEAD_CREATED } : {}),
 			});
 			rlog().info("crdt", `socket converge: STEP2 committed ${path}`);
 		} catch (e) {

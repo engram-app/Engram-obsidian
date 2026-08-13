@@ -19590,6 +19590,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     /** Resolves with the running replay session's counts — what a coalescing
      *  caller awaits so it can report real work instead of zeros. */
     this.seqReplayResult = null;
+    /** Per-file tick subscribers for the RUNNING replay session. The counts a
+     *  coalescing caller awaits are only half the contract — its progress UI
+     *  also needs the STREAM, and the early return can't reach the exclusive
+     *  call site's `onFileApplied` hand-off. On a first sync the join handler
+     *  always owns the replay (it is one of many bare `catchupViaSeqReplay()`
+     *  callers), so the user's modal ALWAYS coalesces: without this it renders
+     *  a dead 0% bar with no filenames for the whole pull, then one final
+     *  number. Registration is scoped to each caller's own await. */
+    this.seqReplayFileListeners = /* @__PURE__ */ new Set();
     this.seqHealLastAt = 0;
     this.seqHealTimer = null;
     /** Ceiling on how long an edit may sit in pendingPostPullPushes while a
@@ -21320,7 +21329,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     return { notes, attachments };
   }
   async catchupViaSeqReplay(opts = {}) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f;
     let serverIds = /* @__PURE__ */ new Set(), serverAttachmentPaths = /* @__PURE__ */ new Set();
     if (this.seqReplayRunning) {
       if (this.seqReplayAgain = !0, !opts.awaitCoalesced)
@@ -21334,12 +21343,18 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           ran: !1,
           complete: !1
         };
-      let running = await ((_a = this.seqReplayResult) == null ? void 0 : _a.catch(() => null));
+      opts.onFileApplied && this.seqReplayFileListeners.add(opts.onFileApplied);
+      let running;
+      try {
+        running = (_b = await ((_a = this.seqReplayResult) == null ? void 0 : _a.catch(() => null))) != null ? _b : null;
+      } finally {
+        opts.onFileApplied && this.seqReplayFileListeners.delete(opts.onFileApplied);
+      }
       return {
-        applied: (_b = running == null ? void 0 : running.applied) != null ? _b : 0,
-        files: (_c = running == null ? void 0 : running.files) != null ? _c : 0,
-        failed: (_d = running == null ? void 0 : running.failed) != null ? _d : 0,
-        deletes: (_e = running == null ? void 0 : running.deletes) != null ? _e : 0,
+        applied: (_c = running == null ? void 0 : running.applied) != null ? _c : 0,
+        files: (_d = running == null ? void 0 : running.files) != null ? _d : 0,
+        failed: (_e = running == null ? void 0 : running.failed) != null ? _e : 0,
+        deletes: (_f = running == null ? void 0 : running.deletes) != null ? _f : 0,
         // Still EMPTY sets + ran:false — the counts are honest but the
         // sets belong to the other caller's walk; destructive decisions
         // keep requiring ran && complete.
@@ -21353,6 +21368,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let session = (async () => {
       var _a2, _b2, _c2;
       let applied = 0, files = 0, failed = 0, deletes = 0, complete = !0, tickedKeys = /* @__PURE__ */ new Set();
+      opts.onFileApplied && this.seqReplayFileListeners.add(opts.onFileApplied);
+      let emitFileApplied = (path) => {
+        for (let listener of [...this.seqReplayFileListeners]) listener(path);
+      };
       try {
         do {
           this.seqReplayAgain = !1;
@@ -21362,12 +21381,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             serverAttachmentPaths,
             tickedKeys,
             (_c2 = opts.enumerateOnly) != null ? _c2 : !1,
-            opts.onFileApplied
+            emitFileApplied
           );
           applied += pass.applied, files += pass.files, failed += pass.failed, deletes += pass.deletes, pass.complete || (complete = !1);
         } while (this.seqReplayAgain);
       } finally {
-        this.seqReplayRunning = !1;
+        opts.onFileApplied && this.seqReplayFileListeners.delete(opts.onFileApplied), this.seqReplayRunning = !1;
       }
       return {
         applied,
@@ -21712,7 +21731,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         hash: localHash,
         serverHash: staged.serverHash,
         version: staged.version,
-        seq: staged.seq
+        seq: staged.seq,
+        // #339: a STEP2 that delivered CONTENT is proof the server holds a
+        // row for this note — we just merged the server's own ops for it.
+        // Without flipping the oracle, `hasServerNote` stays false and the
+        // note's next push takes the genesis branch; on a first sync
+        // `splitGenesisVsKnown` then misroutes the entire freshly-pulled
+        // vault through crdtCreateBatch (prod 2026-08-13: "122 files to
+        // upload" from an empty local vault). An EMPTY converged doc is NOT
+        // proof — genesis stays the correct route there, so gate on content.
+        ...staged.content ? { crdtHead: CRDT_HEAD_CREATED } : {}
       }), rlog().info("crdt", `socket converge: STEP2 committed ${path}`);
     } catch (e) {
       rlog().warn("crdt", `socket converge: commit failed for ${path}: ${errMsg(e)}`);
