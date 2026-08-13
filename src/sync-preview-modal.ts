@@ -146,6 +146,16 @@ export class SyncPreviewState {
 	}
 }
 
+/** Plan-load failure copy for the preview modal. Auth state decides the
+ *  message: blaming the connection when the real problem is a dead login sent
+ *  the 2026-08-12 incident user into a retry limbo — the signed-out copy must
+ *  say "sign in", never "check your connection". Pure for testing. */
+export function planLoadErrorMessage(hasAuth: boolean): string {
+	return hasAuth
+		? "Could not compare with the cloud. Check your connection."
+		: "Your login expired — sign in again in Engram settings to continue.";
+}
+
 /** Map a createVault rejection to a short human label. LimitExceededError =
  *  402 from the standardized backend body (spec §4.6), 422 = validation
  *  (e.g. duplicate/empty name), else a generic connection message. Pure

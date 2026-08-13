@@ -10,7 +10,7 @@ import type EngramSyncPlugin from "./main";
 import type { QueuedReason } from "./offline-queue";
 import { ACTION_ICONS } from "./sync-log-modal";
 import { plural } from "./sync-plan-format";
-import { SyncPreviewModal } from "./sync-preview-modal";
+import { planLoadErrorMessage, SyncPreviewModal } from "./sync-preview-modal";
 import { DEFAULT_UPGRADE_URL } from "./tabs/urls";
 import type { SyncIssue, SyncIssueCategory, SyncLogEntry } from "./types";
 
@@ -152,9 +152,7 @@ function renderActions(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: (
 			void plugin.syncEngine
 				.computeSyncPlan("full")
 				.then((p) => modal.setPlan(p))
-				.catch(() =>
-					modal.setPlanError("Could not compare with the cloud. Check your connection."),
-				);
+				.catch(() => modal.setPlanError(planLoadErrorMessage(plugin.hasAuthConfigured())));
 			const choice = await modal.awaitChoice();
 			// change-vault is unreachable here (showChangeVault: false), but assert in
 			// case a future caller flips that flag without updating this dispatch site.

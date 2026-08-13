@@ -387,3 +387,67 @@ describe("review findings — rerun progress continuity + joiner marker", () => 
 		expect((b as { joined?: boolean }).joined).toBe(true);
 	});
 });
+
+describe("first-sync progress honesty (#420 P2)", () => {
+	test("multiple op-log rows for one note tick the file counter ONCE", async () => {
+		// The plan's denominator is folded per note; a note with N ops must not
+		// contribute N ticks or the bar pins at 100% while files keep arriving.
+		const feed = [
+			noteRow({ id: "id-a", seq: 1, path: "Notes/a.md", content: "v1" }),
+			noteRow({ id: "id-a", seq: 2, path: "Notes/a.md", content: "v2" }),
+			noteRow({ id: "id-b", seq: 3, path: "Notes/b.md" }),
+		];
+		const { engine, events } = makeEngine(feed);
+
+		const res = await engine.catchUp({ reportProgress: true });
+
+		expect(res.files).toBe(2);
+		const pulls = events.filter((e) => e.phase === "pulling");
+		expect(pulls.length).toBe(2);
+		expect(pulls.map((e) => e.current)).toEqual([1, 2]);
+	});
+
+	test("a catch-up coalescing behind an in-flight replay reports the REAL file count", async () => {
+		// Returning {files: 0} from the coalesced call made the one-click first
+		// sync report "Already up to date" while the join-triggered replay was
+		// still downloading the vault behind the modal.
+		const feed = [
+			noteRow({ id: "id-a", seq: 1, path: "Notes/a.md" }),
+			noteRow({ id: "id-b", seq: 2, path: "Notes/b.md" }),
+		];
+		const { engine } = makeEngine(feed);
+		let releaseFirstFetch!: () => void;
+		const gate = new Promise<void>((r) => (releaseFirstFetch = r));
+		let call = 0;
+		engine.setCrdtCatchupSince(async () => {
+			call += 1;
+			if (call === 1) await gate;
+			return { changes: call <= 2 ? feed : [], has_more: false, next_seq: null };
+		});
+
+		const first = engine.catchUp({ reportProgress: false });
+		// Let the first call reach the (gated) fetch before the second starts.
+		await new Promise((r) => setTimeout(r, 10));
+		const second = engine.catchUp({ reportProgress: true });
+		await new Promise((r) => setTimeout(r, 10));
+		releaseFirstFetch();
+
+		const [firstRes, secondRes] = await Promise.all([first, second]);
+		expect(firstRes.files).toBe(2);
+		// The coalesced caller waited for the running replay and reports what it
+		// actually downloaded — not a fabricated "nothing to do".
+		expect(secondRes.files).toBe(2);
+	});
+
+	test("a catch-up that dies at the boundary reports a failure, not success", async () => {
+		const { engine } = makeEngine([]);
+		(engine as unknown as { api: { getManifest: () => Promise<never> } }).api.getManifest =
+			mock().mockRejectedValue(new Error("HTTP 401"));
+
+		const res = await engine.catchUp({ reportProgress: true });
+
+		// files 0 + failed 0 renders as "All synced" in the completion modal —
+		// a dead-auth first sync must never claim success.
+		expect(res.failed).toBeGreaterThan(0);
+	});
+});
