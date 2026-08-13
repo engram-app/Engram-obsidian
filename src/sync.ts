@@ -2398,23 +2398,40 @@ export class SyncEngine {
 
 		const isBinary = this.isBinaryFile(file);
 
-		// STALE-ECHO GUARD (#419 pre-merge review finding 5): a live file at
-		// this path right now means this delete event is for a REPLACED file
-		// (trash → recreate → late echo). Running the bookkeeping below would
-		// unmap, evidence-drop, and tombstone the FRESH note. Consume the trash
-		// record the event matches (if any) and stop.
-		if (this.app.vault.getFileByPath(file.path)) {
-			this.consumeEngineTrash(file.path);
-			this.files.clearMarker(file.path, "remotelyDeleted");
-			rlog().info("vault", `Delete echo for replaced path — skipped: ${file.path}`);
-			return;
-		}
-
-		// Cancel any pending push for this file
+		// Cancel any pending push for this path FIRST — even for echo events.
+		// A timer armed for the trashed file must die with it; surviving the
+		// early-return below, it would fire against whatever now occupies the
+		// path and push partial mid-materialize content (round-3 finding 3).
 		const existing = this.debounceTimers.get(file.path);
 		if (existing) {
 			this.time.clearTimeout(existing);
 			this.debounceTimers.delete(file.path);
+		}
+
+		// STALE-ECHO GUARD (#419 reviews, rounds 2+3): a live file at this path
+		// right now means this delete event is for a REPLACED file. Running the
+		// bookkeeping below would unmap, evidence-drop, and tombstone the FRESH
+		// note, so we stop here either way — but the two causes are logged
+		// apart: consuming an engine-trash record (or live echo marker) is the
+		// expected trash→recreate→late-echo shape; NO echo evidence means an
+		// external flow (git checkout, another sync tool) deleted-and-replaced
+		// the path, and skipping keeps the safe direction (the old server row
+		// survives and resurrects/conflicts on pull, vs. path/id-ambiguous
+		// bookkeeping that could delete the REPLACEMENT). The distinct warn is
+		// the tripwire if that class turns real in the field.
+		if (this.app.vault.getFileByPath(file.path)) {
+			const wasEcho =
+				this.consumeEngineTrash(file.path) || this.files.has(file.path, "remotelyDeleted");
+			this.files.clearMarker(file.path, "remotelyDeleted");
+			if (wasEcho) {
+				rlog().info("vault", `Delete echo for replaced path — skipped: ${file.path}`);
+			} else {
+				rlog().warn(
+					"vault",
+					`Delete event for reoccupied path SKIPPED (no echo evidence): ${file.path}`,
+				);
+			}
+			return;
 		}
 
 		// Resolve the note_id BEFORE clearing the map (removeDoc/reset below need
@@ -2657,9 +2674,10 @@ export class SyncEngine {
 						kind: isBinary ? "attachment" : "note",
 						timestamp: Date.now(),
 						vaultId: this.settings.vaultId ?? undefined,
-						// The catch is reachable only after an evidenced API call ran
-						// (refused legs never call out), so this is always true.
-						evidenced: true,
+						// Provably equal to `true` today (refused legs never call out),
+						// but kept code-derived so a future throwing edit inside the
+						// refusal legs cannot silently stamp evidence (round-3 review).
+						evidenced: hadOldEvidence,
 					});
 					this.maybeGoOffline(e);
 				}
@@ -3617,13 +3635,20 @@ export class SyncEngine {
 		this.files.mark(file.path, "remotelyDeleted", ECHO_COOLDOWN_MS);
 		// Increment BEFORE the trash (Obsidian can dispatch the delete event
 		// during the await), but roll back on a throw: a trash that failed left
-		// the file in place, and a stranded counter would consume the user's
-		// NEXT genuine delete of it (#419 pre-merge review finding 2).
-		this.engineTrashedPaths.set(file.path, (this.engineTrashedPaths.get(file.path) ?? 0) + 1);
+		// the file in place, and stranded echo state (counter OR the 5s marker)
+		// would swallow the user's NEXT genuine delete of it (#419 reviews,
+		// rounds 2+3). The rollback is conditional on our own increment still
+		// being unconsumed — if the partial trash's delete event already fired
+		// during the await, decrementing again would steal a sibling counter.
+		const before = this.engineTrashedPaths.get(file.path) ?? 0;
+		this.engineTrashedPaths.set(file.path, before + 1);
 		try {
 			await this.app.fileManager.trashFile(file);
 		} catch (e) {
-			this.consumeEngineTrash(file.path);
+			if ((this.engineTrashedPaths.get(file.path) ?? 0) > before) {
+				this.consumeEngineTrash(file.path);
+			}
+			this.files.clearMarker(file.path, "remotelyDeleted");
 			throw e;
 		}
 	}
@@ -4290,7 +4315,8 @@ export class SyncEngine {
 		// offline queue. The seq replay's applyOp re-checks these per op, but the
 		// early return also avoids a pointless replay for a note we're deleting.
 		if (this.recentlyDeleted.has(noteId)) return;
-		if (this.queue.hasPendingDelete(normalized, this.settings.vaultId ?? undefined)) return;
+		if (this.queue.hasPendingEvidencedDelete(normalized, this.settings.vaultId ?? undefined))
+			return;
 		try {
 			// Learn + persist the id->path mapping (discovery source, like catchup).
 			if (this.noteIdMap && this.noteIdMap.pathForId(noteId) !== normalized) {
@@ -5578,7 +5604,7 @@ export class SyncEngine {
 		if (
 			op.kind === "upsert" &&
 			(this.recentlyDeleted.has(op.id) ||
-				this.queue.hasPendingDelete(
+				this.queue.hasPendingEvidencedDelete(
 					normalizePath(op.path),
 					this.settings.vaultId ?? undefined,
 				))

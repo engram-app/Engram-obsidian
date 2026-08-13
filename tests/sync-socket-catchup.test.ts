@@ -111,6 +111,10 @@ describe("discoverAnnouncedNote (e2e test_27 — announce-driven immediate empty
 			action: "delete",
 			kind: "note",
 			timestamp: Date.now(),
+			// Legit queued deletes carry the #416 evidence stamp; only those
+			// suppress announce-driven discovery (unevidenced ones are doomed
+			// to be dropped by the drain gate and must not hide live notes).
+			evidenced: true,
 		});
 		mockApp.vault.create.mockClear();
 		let replayed = false;

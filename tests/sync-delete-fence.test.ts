@@ -291,9 +291,11 @@ describe("pre-merge review hardening (#419 round 2)", () => {
 		(e as any).app.fileManager.trashFile = mock().mockRejectedValue(new Error("EBUSY"));
 
 		await expect((e as any).trashRemotelyDeleted(file)).rejects.toThrow("EBUSY");
-		(e as any).files.clearMarker(file.path, "remotelyDeleted");
 
-		// The file never left the vault; the user now deletes it for real.
+		// The file never left the vault; the user deletes it for real WITHIN the
+		// 5s marker window — the rollback must have cleared BOTH the counter and
+		// the remotelyDeleted marker (round-3 review: the marker half was missed
+		// and the old version of this test masked it with a manual clearMarker).
 		await e.handleDelete(file);
 		expect(deleteAttachment).toHaveBeenCalledTimes(1);
 	});
@@ -345,5 +347,36 @@ describe("pre-merge review hardening (#419 round 2)", () => {
 		]);
 		expect(e.queue.hasPendingEvidencedDelete("doomed/a.md", undefined)).toBe(false);
 		expect(e.queue.hasPendingEvidencedDelete("real/b.md", undefined)).toBe(true);
+	});
+});
+
+describe("round-3 hardening", () => {
+	test("a stale echo for a reoccupied path still cancels the pending push timer", async () => {
+		const { e } = makeEngine();
+		const file = makeAttachmentFile("reoccupied/x.png");
+		await (e as any).trashRemotelyDeleted(file);
+		// A push timer armed for the old file...
+		const timer = setTimeout(() => {}, 60_000);
+		(e as any).debounceTimers.set(file.path, timer);
+		// ...and a fresh file already at the path when the late echo lands.
+		(e as any).app.vault.getFileByPath = mock().mockReturnValue(makeAttachmentFile(file.path));
+
+		await e.handleDelete(file);
+
+		expect((e as any).debounceTimers.has(file.path)).toBe(false);
+		clearTimeout(timer);
+	});
+
+	test("probe semantics: an unstamped queued create still counts as pending", async () => {
+		const { e, crdtDeletes } = makeEngine();
+		const file = makeNoteFile("fresh/unstamped.md");
+		(e as any).noteIdMap.set(file.path, "id-unstamped");
+		// Simulate main.ts's owner semantics: unstamped op (vaultId undefined)
+		// is delivered to the current vault, so the probe reports it pending.
+		e.setCrdtHasPendingOp((id: string) => id === "id-unstamped");
+
+		await e.handleDelete(file);
+
+		expect(crdtDeletes).toEqual([file.path]);
 	});
 });
