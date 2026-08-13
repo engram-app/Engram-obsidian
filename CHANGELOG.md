@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.22.0](https://github.com/engram-app/Engram-obsidian/compare/1.21.0...1.22.0) (2026-08-13)
+
+
+### Features
+
+* **sync:** one-click first sync when one side is empty ([#415](https://github.com/engram-app/Engram-obsidian/issues/415)) ([96cc320](https://github.com/engram-app/Engram-obsidian/commit/96cc320d3d8d4359bdee15435b633acd3b6e31e7))
+
+
+### Bug Fixes
+
+* **auth:** dispose replaced OAuth providers so token chains never fork ([#421](https://github.com/engram-app/Engram-obsidian/issues/421)) ([fb51656](https://github.com/engram-app/Engram-obsidian/commit/fb51656d139b739f9f389d7cb5294d9df0f3bfbc))
+* honest failure UX + accurate first-sync progress ([#422](https://github.com/engram-app/Engram-obsidian/issues/422)) ([fd5663e](https://github.com/engram-app/Engram-obsidian/commit/fd5663ed9e816c1298693fcf8d023d1c0ce4ee76))
+* **sync:** close every delete-push bypass the post-merge review found ([#419](https://github.com/engram-app/Engram-obsidian/issues/419)) ([c9d8c7d](https://github.com/engram-app/Engram-obsidian/commit/c9d8c7d26f8ea8d7a2c9fe8316bbc56d12b2322b))
+* **sync:** delete-push fence — engine trashes and unsynced paths never delete server data ([#417](https://github.com/engram-app/Engram-obsidian/issues/417)) ([8a4b075](https://github.com/engram-app/Engram-obsidian/commit/8a4b0750d45d2e37141b8107a5a030b209511075)), closes [#416](https://github.com/engram-app/Engram-obsidian/issues/416)
+* **sync:** report first-sync progress in file units ([#412](https://github.com/engram-app/Engram-obsidian/issues/412)) ([e60b478](https://github.com/engram-app/Engram-obsidian/commit/e60b4788af8214afb5f94de819cfbb91f21aef8a))
+
 ## [1.21.0](https://github.com/engram-app/Engram-obsidian/compare/1.20.1...1.21.0) (2026-08-09)
 
 
