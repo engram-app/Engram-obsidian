@@ -588,9 +588,10 @@ describe("hasServerNote after a handshake heal (#339)", () => {
 	test("a note that converged via STEP2 is known to exist on the server", async () => {
 		// The server just handed us this note's full state, so it demonstrably
 		// holds a row for it. Without a crdtHead the oracle says false and the
-		// note's next push takes the genesis path — on a first sync that
-		// misroutes the WHOLE pulled vault through crdtCreateBatch, which is
-		// what surfaced as "122 files to upload" from an empty local vault.
+		// note's next push takes pushFile's genesis branch (the `!hasServerNote`
+		// arm) instead of the live-CRDT arm — on a first sync that re-uploads the
+		// WHOLE pulled vault, which surfaced as "122 files to upload" from an
+		// empty local vault.
 		const { engine } = makeEngine([]);
 		const map = new NoteIdMap();
 		map.set("Notes/a.md", "id-a");
@@ -606,6 +607,49 @@ describe("hasServerNote after a handshake heal (#339)", () => {
 		await engine.commitCrdtConvergence("id-a");
 
 		expect(engine.hasServerNote("id-a")).toBe(true);
+	});
+
+	test("a note pulled by a first sync is known to exist on the server", async () => {
+		// THE journey this issue is actually about, and the one my first fix
+		// missed. A fresh vault materialises every note through the discovery
+		// branch (`flushFromCrdt` -> `recordCrdtBaseline`, no markCreated) —
+		// `commitCrdtConvergence` never runs, so driving that function directly
+		// proved nothing. The row came off the server's own op-log feed, which
+		// IS proof the server holds it; without a head the note's next push
+		// takes pushFile's genesis branch and the whole pulled vault re-uploads.
+		const { engine } = makeEngine([noteRow({ id: "id-a", seq: 1, path: "Notes/a.md" })]);
+
+		await engine.catchUp({ reportProgress: true });
+
+		expect(engine.hasServerNote("id-a")).toBe(true);
+	});
+
+	test("the sentinel never downgrades an authoritative crdtHead", async () => {
+		// patchSyncedRow MERGES, so writing the placeholder over a real head
+		// recorded by applyPushedNoteUpdate would invert the sentinel's contract
+		// and defeat the convergence cost gate — re-firing STEP1 forever.
+		const { engine } = makeEngine([]);
+		const map = new NoteIdMap();
+		map.set("Notes/a.md", "id-a");
+		engine.setNoteIdMap(map);
+		(engine as unknown as { setCrdtHead(p: string, h: string): void }).setCrdtHead(
+			"Notes/a.md",
+			"real-server-head-abc",
+		);
+		stage(engine, "id-a", {
+			path: "Notes/a.md",
+			serverHash: "h1",
+			content: "server body",
+			version: 3,
+			seq: 7,
+		});
+
+		await engine.commitCrdtConvergence("id-a");
+
+		const head = (
+			engine as unknown as { getCrdtHead(p: string): string | undefined }
+		).getCrdtHead("Notes/a.md");
+		expect(head).toBe("real-server-head-abc");
 	});
 
 	test("an EMPTY converged doc does NOT claim the server has the note", async () => {

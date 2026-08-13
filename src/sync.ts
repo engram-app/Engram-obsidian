@@ -1387,7 +1387,11 @@ export class SyncEngine {
 	 *  only the content hash is refreshed. `markCreated` additionally flips the
 	 *  `hasServerNote` oracle via the CRDT_HEAD_CREATED sentinel (genesis /
 	 *  create-ack adopt sites); the first convergence overwrites the sentinel
-	 *  with the authoritative head. */
+	 *  with the authoritative head.
+	 *
+	 *  Pulled-from-feed sites do NOT go through `markCreated` — they call
+	 *  `markServerKnown` after the flush, which fills a missing head without
+	 *  ever overwriting a real one. */
 	private recordCrdtBaseline(
 		normalized: string,
 		content: string,
@@ -2073,6 +2077,21 @@ export class SyncEngine {
 
 	private setCrdtHead(path: string, head: string): void {
 		this.patchSyncedRow(normalizePath(path), { crdtHead: head });
+	}
+
+	/** Flip the `hasServerNote` oracle for a note the server demonstrably holds,
+	 *  without ever DOWNGRADING an authoritative head to the placeholder.
+	 *
+	 *  `patchSyncedRow` merges, so writing CRDT_HEAD_CREATED over a real head
+	 *  recorded by `applyPushedNoteUpdate` would invert the sentinel's contract
+	 *  and permanently defeat the convergence cost gate (`getCrdtHead ===
+	 *  serverHead` -> skip), re-firing STEP1 for that note forever. The sentinel
+	 *  only ever fills a HOLE. */
+	private markServerKnown(path: string): void {
+		const normalized = normalizePath(path);
+		if (this.getCrdtHead(normalized) == null) {
+			this.setCrdtHead(normalized, CRDT_HEAD_CREATED);
+		}
 	}
 
 	/** Public: consumed as `CrdtManagerOptions.canSendLive` by the wiring in
@@ -4050,8 +4069,20 @@ export class SyncEngine {
 			// This session owns the tick fan-out: its own caller's callback and
 			// every coalescer that registers while it runs see the same stream.
 			if (opts.onFileApplied) this.seqReplayFileListeners.add(opts.onFileApplied);
+			// One bad subscriber must not take down the stream. This runs INSIDE
+			// the per-row try that increments `failed`, so an unguarded throw
+			// would both mis-count a successfully applied row as failed AND
+			// starve every later subscriber — including the exclusive owner's own
+			// progress. Pre-fan-out that blast radius was one caller; now it is
+			// all of them, so the guard is load-bearing, not defensive noise.
 			const emitFileApplied = (path: string): void => {
-				for (const listener of [...this.seqReplayFileListeners]) listener(path);
+				for (const listener of [...this.seqReplayFileListeners]) {
+					try {
+						listener(path);
+					} catch (e) {
+						devLog().log("sync", `progress subscriber threw for ${path}: ${errMsg(e)}`);
+					}
+				}
 			};
 			try {
 				do {
@@ -4744,16 +4775,15 @@ export class SyncEngine {
 				serverHash: staged.serverHash,
 				version: staged.version,
 				seq: staged.seq,
-				// #339: a STEP2 that delivered CONTENT is proof the server holds a
-				// row for this note — we just merged the server's own ops for it.
-				// Without flipping the oracle, `hasServerNote` stays false and the
-				// note's next push takes the genesis branch; on a first sync
-				// `splitGenesisVsKnown` then misroutes the entire freshly-pulled
-				// vault through crdtCreateBatch (prod 2026-08-13: "122 files to
-				// upload" from an empty local vault). An EMPTY converged doc is NOT
-				// proof — genesis stays the correct route there, so gate on content.
-				...(staged.content ? { crdtHead: CRDT_HEAD_CREATED } : {}),
 			});
+
+			// #339: a STEP2 that delivered CONTENT is proof the server holds a row
+			// for this note — we just merged the server's own ops for it. An EMPTY
+			// converged doc is NOT proof; genesis stays the correct route there.
+			//
+			// Via markServerKnown so the placeholder can only fill a hole, never
+			// overwrite an authoritative head this note already has.
+			if (staged.content) this.markServerKnown(path);
 			rlog().info("crdt", `socket converge: STEP2 committed ${path}`);
 		} catch (e) {
 			rlog().warn("crdt", `socket converge: commit failed for ${path}: ${errMsg(e)}`);
@@ -6275,6 +6305,15 @@ export class SyncEngine {
 				// edits; its later STEP2 (identical content) is a harmless idempotent
 				// re-flush suppressed by markRecentlyFlushed.
 				await this.flushFromCrdt(normalized, content);
+				// This row came off the server's own op-log feed, so the server
+				// demonstrably holds it (#339). Without a head `hasServerNote` says
+				// otherwise, and pushFile's write routing takes the genesis branch
+				// (the `!hasServerNote` arm) instead of the live-CRDT arm — on a
+				// first sync that re-uploads the WHOLE freshly-pulled vault (prod
+				// 2026-08-13: "122 files to upload" from an empty local vault).
+				// This is the branch a fresh vault actually takes;
+				// commitCrdtConvergence never runs here.
+				this.markServerKnown(normalized);
 				return true;
 			} else {
 				// The note exists locally and CRDT owns its body for LIVE edits — but
@@ -6573,6 +6612,9 @@ export class SyncEngine {
 								`CRDT catch-up: pull backfilling diverged note (no note_id) ${change.path}`,
 							);
 							await this.flushFromCrdt(normalized, content);
+							// Same feed, same proof (#339): a backfilled row is still the
+							// server telling us it holds this note.
+							this.markServerKnown(normalized);
 							this.stampSyncedRow(normalized, {
 								hash: fnv1a(content),
 								version: change.version,

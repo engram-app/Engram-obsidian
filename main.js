@@ -20114,7 +20114,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  only the content hash is refreshed. `markCreated` additionally flips the
    *  `hasServerNote` oracle via the CRDT_HEAD_CREATED sentinel (genesis /
    *  create-ack adopt sites); the first convergence overwrites the sentinel
-   *  with the authoritative head. */
+   *  with the authoritative head.
+   *
+   *  Pulled-from-feed sites do NOT go through `markCreated` — they call
+   *  `markServerKnown` after the flush, which fills a missing head without
+   *  ever overwriting a real one. */
   recordCrdtBaseline(normalized, content, opts) {
     this.patchSyncedRow(normalized, {
       hash: fnv1a(content),
@@ -20495,6 +20499,18 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   setCrdtHead(path, head) {
     this.patchSyncedRow((0, import_obsidian24.normalizePath)(path), { crdtHead: head });
+  }
+  /** Flip the `hasServerNote` oracle for a note the server demonstrably holds,
+   *  without ever DOWNGRADING an authoritative head to the placeholder.
+   *
+   *  `patchSyncedRow` merges, so writing CRDT_HEAD_CREATED over a real head
+   *  recorded by `applyPushedNoteUpdate` would invert the sentinel's contract
+   *  and permanently defeat the convergence cost gate (`getCrdtHead ===
+   *  serverHead` -> skip), re-firing STEP1 for that note forever. The sentinel
+   *  only ever fills a HOLE. */
+  markServerKnown(path) {
+    let normalized = (0, import_obsidian24.normalizePath)(path);
+    this.getCrdtHead(normalized) == null && this.setCrdtHead(normalized, CRDT_HEAD_CREATED);
   }
   /** Public: consumed as `CrdtManagerOptions.canSendLive` by the wiring in
    *  main.ts (`createCrdtWiring({ canSendLive: (id) => this.syncEngine.hasServerNote(id) })`)
@@ -21370,7 +21386,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       let applied = 0, files = 0, failed = 0, deletes = 0, complete = !0, tickedKeys = /* @__PURE__ */ new Set();
       opts.onFileApplied && this.seqReplayFileListeners.add(opts.onFileApplied);
       let emitFileApplied = (path) => {
-        for (let listener of [...this.seqReplayFileListeners]) listener(path);
+        for (let listener of [...this.seqReplayFileListeners])
+          try {
+            listener(path);
+          } catch (e) {
+            devLog().log("sync", `progress subscriber threw for ${path}: ${errMsg(e)}`);
+          }
       };
       try {
         do {
@@ -21731,17 +21752,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         hash: localHash,
         serverHash: staged.serverHash,
         version: staged.version,
-        seq: staged.seq,
-        // #339: a STEP2 that delivered CONTENT is proof the server holds a
-        // row for this note — we just merged the server's own ops for it.
-        // Without flipping the oracle, `hasServerNote` stays false and the
-        // note's next push takes the genesis branch; on a first sync
-        // `splitGenesisVsKnown` then misroutes the entire freshly-pulled
-        // vault through crdtCreateBatch (prod 2026-08-13: "122 files to
-        // upload" from an empty local vault). An EMPTY converged doc is NOT
-        // proof — genesis stays the correct route there, so gate on content.
-        ...staged.content ? { crdtHead: CRDT_HEAD_CREATED } : {}
-      }), rlog().info("crdt", `socket converge: STEP2 committed ${path}`);
+        seq: staged.seq
+      }), staged.content && this.markServerKnown(path), rlog().info("crdt", `socket converge: STEP2 committed ${path}`);
     } catch (e) {
       rlog().warn("crdt", `socket converge: commit failed for ${path}: ${errMsg(e)}`);
     }
@@ -22529,7 +22541,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               return rlog().warn(
                 "pull",
                 `CRDT catch-up: pull backfilling diverged note (no note_id) ${change.path}`
-              ), await this.flushFromCrdt(normalized, content), this.stampSyncedRow(normalized, {
+              ), await this.flushFromCrdt(normalized, content), this.markServerKnown(normalized), this.stampSyncedRow(normalized, {
                 hash: fnv1a(content),
                 version: change.version,
                 serverHash: change.content_hash,
@@ -22539,7 +22551,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         else
           rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);
       } else
-        return noteId && this.isLiveBound(normalized) && ((_k = this.crdtEnrollment) == null || _k.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content), !0;
+        return noteId && this.isLiveBound(normalized) && ((_k = this.crdtEnrollment) == null || _k.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content), this.markServerKnown(normalized), !0;
       return !1;
     }
     let existing = this.app.vault.getFileByPath(normalized);
