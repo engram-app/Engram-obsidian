@@ -10,7 +10,7 @@ import type EngramSyncPlugin from "./main";
 import type { QueuedReason } from "./offline-queue";
 import { ACTION_ICONS } from "./sync-log-modal";
 import { plural } from "./sync-plan-format";
-import { SyncPreviewModal } from "./sync-preview-modal";
+import { planLoadErrorMessage, SyncPreviewModal } from "./sync-preview-modal";
 import { DEFAULT_UPGRADE_URL } from "./tabs/urls";
 import type { SyncIssue, SyncIssueCategory, SyncLogEntry } from "./types";
 
@@ -152,10 +152,16 @@ function renderActions(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: (
 			void plugin.syncEngine
 				.computeSyncPlan("full")
 				.then((p) => modal.setPlan(p))
-				.catch(() =>
-					modal.setPlanError("Could not compare with the cloud. Check your connection."),
-				);
-			const choice = await modal.awaitChoice();
+				.catch(() => modal.setPlanError(planLoadErrorMessage(plugin.hasAuthConfigured())));
+			// Registered so auth invalidation can flip this modal to the sign-in
+			// error too, not just the first-sync command's modal.
+			plugin.trackPreviewModal(modal);
+			let choice: Awaited<ReturnType<typeof modal.awaitChoice>>;
+			try {
+				choice = await modal.awaitChoice();
+			} finally {
+				plugin.untrackPreviewModal(modal);
+			}
 			// change-vault is unreachable here (showChangeVault: false), but assert in
 			// case a future caller flips that flag without updating this dispatch site.
 			if (choice === "change-vault") {

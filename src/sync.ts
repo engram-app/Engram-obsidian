@@ -3754,6 +3754,14 @@ export class SyncEngine {
 	 *  committed during the replay is never missed. */
 	private seqReplayRunning = false;
 	private seqReplayAgain = false;
+	/** Resolves with the running replay session's counts — what a coalescing
+	 *  caller awaits so it can report real work instead of zeros. */
+	private seqReplayResult: Promise<{
+		applied: number;
+		files: number;
+		failed: number;
+		deletes: number;
+	}> | null = null;
 	private seqHealLastAt = 0;
 	private seqHealTimer: number | null = null;
 	private static readonly SEQ_HEAL_COOLDOWN_MS = 4_000;
@@ -3931,6 +3939,12 @@ export class SyncEngine {
 			 *  FILE units (the plan's denominator), not op-log rows. Drives the
 			 *  per-file "pulling" progress the UI seeds from the plan. */
 			onFileApplied?: (path: string) => void;
+			/** When this call COALESCES behind an in-flight replay: true = wait
+			 *  for the running session and return its real counts (the sync
+			 *  modal's honest-recap path); false/absent = return zeros instantly
+			 *  (poll, join handler, exclusive retry loop — callers that must not
+			 *  block for a whole replay or claim another caller's work). */
+			awaitCoalesced?: boolean;
 		} = {},
 	): Promise<{
 		applied: number;
@@ -3961,11 +3975,39 @@ export class SyncEngine {
 		const serverAttachmentPaths = new Set<string>();
 		if (this.seqReplayRunning) {
 			this.seqReplayAgain = true;
+			if (!opts.awaitCoalesced) {
+				// Fast-return zeros: the poll, the topic-join handler, and the
+				// exclusive destructive loop all depend on a coalesced call being
+				// near-instant (blocking the join handler defers the op-queue
+				// drain for the whole replay; real counts here fire spurious
+				// "pulled N changes" toasts for another caller's work).
+				return {
+					applied: 0,
+					files: 0,
+					failed: 0,
+					deletes: 0,
+					serverIds,
+					serverAttachmentPaths,
+					ran: false,
+					complete: false,
+				};
+			}
+			// Progress-reporting caller (the sync modal): WAIT for the running
+			// session and report its real counts. Returning zeros here made a
+			// coalesced fullSync tell the progress modal "Already up to date"
+			// while the join-triggered replay was still downloading the vault.
+			// Safe: seqReplayRunning=true means the running task is suspended at
+			// an await INSIDE its loop (the exit path from condition-check to
+			// finally has no await), so it always sees the flag we just set.
+			const running = await this.seqReplayResult?.catch(() => null);
 			return {
-				applied: 0,
-				files: 0,
-				failed: 0,
-				deletes: 0,
+				applied: running?.applied ?? 0,
+				files: running?.files ?? 0,
+				failed: running?.failed ?? 0,
+				deletes: running?.deletes ?? 0,
+				// Still EMPTY sets + ran:false — the counts are honest but the
+				// sets belong to the other caller's walk; destructive decisions
+				// keep requiring ran && complete.
 				serverIds,
 				serverAttachmentPaths,
 				ran: false,
@@ -3973,42 +4015,59 @@ export class SyncEngine {
 			};
 		}
 		this.seqReplayRunning = true;
-		let applied = 0;
-		let files = 0;
-		let failed = 0;
-		let deletes = 0;
-		let complete = true;
+		const session = (async () => {
+			let applied = 0;
+			let files = 0;
+			let failed = 0;
+			let deletes = 0;
+			let complete = true;
+			// FILE-unit dedupe across every pass of this session: the op-log has
+			// one row per op, the plan counts folded files — a note with N ops
+			// must tick the progress feed once, or `current` outruns the plan's
+			// denominator and the bar pins at 100% while files keep arriving.
+			const tickedKeys = new Set<string>();
+			try {
+				do {
+					this.seqReplayAgain = false;
+					const pass = await this.runSeqReplayOnce(
+						(opts.fromZero ?? false) || (opts.enumerateOnly ?? false),
+						serverIds,
+						serverAttachmentPaths,
+						tickedKeys,
+						opts.enumerateOnly ?? false,
+						opts.onFileApplied,
+					);
+					applied += pass.applied;
+					files += pass.files;
+					failed += pass.failed;
+					deletes += pass.deletes;
+					// The sets accumulate across coalesced passes, so ONE short pass taints
+					// the whole result — never OR this back to true.
+					if (!pass.complete) complete = false;
+				} while (this.seqReplayAgain);
+			} finally {
+				this.seqReplayRunning = false;
+			}
+			return {
+				applied,
+				files,
+				failed,
+				deletes,
+				serverIds,
+				serverAttachmentPaths,
+				ran: true,
+				complete,
+			};
+		})();
+		this.seqReplayResult = session;
 		try {
-			do {
-				this.seqReplayAgain = false;
-				const pass = await this.runSeqReplayOnce(
-					(opts.fromZero ?? false) || (opts.enumerateOnly ?? false),
-					serverIds,
-					serverAttachmentPaths,
-					opts.enumerateOnly ?? false,
-					opts.onFileApplied,
-				);
-				applied += pass.applied;
-				files += pass.files;
-				failed += pass.failed;
-				deletes += pass.deletes;
-				// The sets accumulate across coalesced passes, so ONE short pass taints
-				// the whole result — never OR this back to true.
-				if (!pass.complete) complete = false;
-			} while (this.seqReplayAgain);
+			return await session;
 		} finally {
-			this.seqReplayRunning = false;
+			// Guarded: a new owner can start in the microtask window between the
+			// IIFE clearing seqReplayRunning and this continuation running —
+			// nulling unconditionally would drop the NEW session's promise.
+			if (this.seqReplayResult === session) this.seqReplayResult = null;
 		}
-		return {
-			applied,
-			files,
-			failed,
-			deletes,
-			serverIds,
-			serverAttachmentPaths,
-			ran: true,
-			complete,
-		};
 	}
 
 	/** Run `catchupViaSeqReplay` for a DESTRUCTIVE delete decision (pull-all wipe,
@@ -4116,12 +4175,16 @@ export class SyncEngine {
 				await this.seedEmptyFolders();
 				const { files, failed, deletes } = await this.catchupViaSeqReplay({
 					onFileApplied,
+					awaitCoalesced: opts.reportProgress,
 				});
 				return { files, failed, deletes };
 			}
 			await this.reconcileFromManifest(manifest, authGenAtFetch);
 			const behind = this.validateFromManifest(manifest);
-			const { files, failed, deletes } = await this.catchupViaSeqReplay({ onFileApplied });
+			const { files, failed, deletes } = await this.catchupViaSeqReplay({
+				onFileApplied,
+				awaitCoalesced: opts.reportProgress,
+			});
 			const poked = await this.healDivergedLiveBoundNotes(manifest);
 			try {
 				await this.syncExplicitFolders();
@@ -4149,7 +4212,10 @@ export class SyncEngine {
 				e instanceof Error ? e.stack : undefined,
 			);
 			this.onVaultScopedError?.(e);
-			return { files: 0, failed: 0, deletes: 0 };
+			// failed:1 so a progress-reporting caller (the sync modal) renders a
+			// failure instead of "All synced" — a dead-auth or dead-manifest
+			// catch-up must never read as success. Background pollers ignore it.
+			return { files: 0, failed: 1, deletes: 0 };
 		}
 	}
 
@@ -4157,6 +4223,9 @@ export class SyncEngine {
 		fromZero: boolean,
 		serverIds: Set<string>,
 		serverAttachmentPaths: Set<string>,
+		/** Session-scoped: keys already counted as downloaded files. Multiple
+		 *  op-log rows for the same note/attachment tick the file counter once. */
+		tickedKeys: Set<string>,
 		enumerateOnly = false,
 		onFileApplied?: (path: string) => void,
 		/** `complete` is false when the walk did NOT reach the end of the feed, so
@@ -4222,8 +4291,16 @@ export class SyncEngine {
 							// Counting them made the recap disagree with the plan AND showed
 							// a Downloading bar on a sync with nothing to download.
 							if (!c.deleted && changed) {
-								files += 1;
-								onFileApplied?.(c.path);
+								// One row per op, but the plan (the progress denominator)
+								// counts folded FILES — dedupe so a note with N ops ticks once.
+								// Keyed by IDENTITY for both kinds: a rename mid-log changes
+								// the path but is still one planned file.
+								const key = `${c.type === "attachment" ? "a" : "n"}:${c.id ?? c.path}`;
+								if (!tickedKeys.has(key)) {
+									tickedKeys.add(key);
+									files += 1;
+									onFileApplied?.(c.path);
+								}
 							} else if (c.deleted && changed) {
 								// A tombstone that actually trashed a local file — surfaced
 								// separately so a delete-only poll is still user-visible
@@ -4839,13 +4916,41 @@ export class SyncEngine {
 					serverAttachmentPaths,
 				} = replay);
 			} else {
+				// Keep-branch needs the from-zero replay to ACTUALLY run too: a
+				// coalesced call rides an incremental session (fromZero silently
+				// dropped), so files behind the persisted cursor never re-download
+				// while the recap claims a completed restore. Bounded retry until
+				// this call runs the replay itself — but unlike the wipe, an
+				// INCOMPLETE walk is fine: pulled files are real and nothing is
+				// trashed off the partial sets.
+				let replay: {
+					applied: number;
+					files: number;
+					failed: number;
+					serverIds: Set<string>;
+					serverAttachmentPaths: Set<string>;
+				} | null = null;
+				for (let attempt = 0; attempt < 10; attempt++) {
+					const res = await this.catchupViaSeqReplay({ fromZero: true, onFileApplied });
+					if (res.ran) {
+						replay = res;
+						break;
+					}
+					await this.sleep(50);
+				}
+				if (!replay) {
+					this.lastError =
+						"Pull all aborted: another sync is running (replay contention). Try again when it finishes.";
+					rlog().warn("pull", `${label} ABORTED: replay never ran exclusively`);
+					return 0;
+				}
 				({
 					applied,
 					files: pulledFileCount,
 					failed: replayFailed,
 					serverIds,
 					serverAttachmentPaths,
-				} = await this.catchupViaSeqReplay({ fromZero: true, onFileApplied }));
+				} = replay);
 			}
 
 			devLog().log(

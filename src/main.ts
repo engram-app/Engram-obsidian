@@ -65,7 +65,7 @@ import { reconcileColdStart, SyncEngine } from "./sync";
 import { channelConnectionKey, computeSyncFingerprint } from "./sync-fingerprint";
 import { SyncLog } from "./sync-log";
 import { SyncLogModal } from "./sync-log-modal";
-import { SyncPreviewModal } from "./sync-preview-modal";
+import { planLoadErrorMessage, SyncPreviewModal } from "./sync-preview-modal";
 import {
 	describePlannedWork,
 	type PlannedPhase,
@@ -309,7 +309,7 @@ export default class EngramSyncPlugin extends Plugin {
 	/** The live SyncPreviewModal, if one is open. Held so healDeadVault can
 	 *  close a preview that sits on a just-nulled vault before reopening the
 	 *  picker (the syncPreviewGuard makes a reopen a no-op while it lives). */
-	private openPreviewModal: { close(): void } | null = null;
+	private openPreviewModal: { close(): void; setPlanError(msg: string): void } | null = null;
 
 	/** Timestamp (ms) of the last noteIdMap manifest-reconcile attempt.
 	 *  Reconciling on EVERY reconnect (not just the first) is required so a
@@ -906,7 +906,12 @@ export default class EngramSyncPlugin extends Plugin {
 		this.statusBarEl.addClass("engram-status-bar-clickable");
 
 		this.registerDomEvent(this.statusBarEl, "click", () => {
-			if (!this.hasAuthConfigured()) return;
+			if (!this.hasAuthConfigured()) {
+				// Signed out: a silent dead click here was the incident's limbo —
+				// route to settings where the re-link lives.
+				this.openConnectionSettings();
+				return;
+			}
 
 			if (this.syncEngine.isSyncBlocked()) {
 				// Gate is closed — open SyncPreviewModal so the user can pick
@@ -1568,6 +1573,10 @@ export default class EngramSyncPlugin extends Plugin {
 		this.noteStream = null;
 		this.liveConnected = false;
 		this.everConnected = false;
+		// An open preview modal is now waiting on an enumeration that can never
+		// succeed — flip it to the sign-in error instead of letting it spin out
+		// the 8s enumerate budget and blame the connection.
+		this.openPreviewModal?.setPlanError(planLoadErrorMessage(false));
 		await this.savePluginData(this.syncEngine.getLastSync());
 		this.updateStatusBar(this.syncEngine.getStatus());
 		if (notify) {
@@ -2530,7 +2539,7 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  startup sync, post-saveSettings sync, the status-bar click handler, and
 	 *  the periodic sync interval — all of which need to fire for OAuth users
 	 *  too, not just static-key users. */
-	private hasAuthConfigured(): boolean {
+	hasAuthConfigured(): boolean {
 		return (
 			Boolean(this.settings.apiUrl) &&
 			Boolean(this.settings.apiKey || this.settings.refreshToken)
@@ -2660,9 +2669,7 @@ export default class EngramSyncPlugin extends Plugin {
 					.computeSyncPlan("full")
 					.then((plan) => modal.setPlan(plan))
 					.catch((e) => {
-						modal.setPlanError(
-							"Could not compare with the cloud. Check your connection.",
-						);
+						modal.setPlanError(planLoadErrorMessage(this.hasAuthConfigured()));
 						rlog().error("lifecycle", `Sync plan compute failed: ${errMsg(e)}`);
 					});
 
@@ -2676,9 +2683,11 @@ export default class EngramSyncPlugin extends Plugin {
 				});
 			} catch (e) {
 				// biome-ignore lint/suspicious/noConsole: error boundary
-				console.error("Engram Sync: sync preview failed", e);
-				new Notice("Engram sync: preview failed — check connection");
-				rlog().error("lifecycle", `Sync preview failed: ${errMsg(e)}`);
+				console.error("Engram Sync: sync failed", e);
+				// This boundary wraps BOTH the preview and the sync run it
+				// dispatches — "preview failed" here mislabeled real sync failures.
+				new Notice("Engram: sync failed. Open the sync log for details.");
+				rlog().error("lifecycle", `Sync (preview or run) failed: ${errMsg(e)}`);
 			}
 		});
 	}
@@ -2691,6 +2700,27 @@ export default class EngramSyncPlugin extends Plugin {
 	}
 
 	/** Open the plugin settings on the Sync Center tab. */
+	/** Register/unregister the preview modal that auth invalidation should poke
+	 *  with the sign-in error. Public so BOTH entry points (first-sync command
+	 *  and Sync Center) share the seam — the Sync Center modal missing it left
+	 *  the incident's 8s-spin-then-blame-connection limbo alive there. */
+	trackPreviewModal(modal: { close(): void; setPlanError(msg: string): void }): void {
+		this.openPreviewModal = modal;
+	}
+
+	untrackPreviewModal(modal: { close(): void; setPlanError(msg: string): void }): void {
+		if (this.openPreviewModal === modal) this.openPreviewModal = null;
+	}
+
+	openConnectionSettings(): void {
+		this.settingTab?.setInitialTab("connection");
+		const setting = (
+			this.app as unknown as { setting: { open(): void; openTabById(id: string): void } }
+		).setting;
+		setting.open();
+		setting.openTabById(this.manifest.id);
+	}
+
 	openSyncCenterSettings(): void {
 		this.settingTab?.setInitialTab("sync-center");
 		const setting = (
@@ -2709,7 +2739,13 @@ export default class EngramSyncPlugin extends Plugin {
 		let text: string;
 		let tooltip: string;
 
-		if (blocked && status.state !== "syncing") {
+		if (!this.hasAuthConfigured()) {
+			// Signed out (or never linked): "ready" here was a lie the 2026-08-12
+			// incident shipped — after a forced sign-out the bar claimed ready
+			// while every sync path was dead.
+			text = "Engram: signed out";
+			tooltip = "Not signed in. Click to open settings and reconnect.";
+		} else if (blocked && status.state !== "syncing") {
 			// Sync gate closed — user has not picked a direction in SyncPreviewModal
 			// for the current auth+vault fingerprint. Show a click-to-resolve nag.
 			text =
@@ -2739,7 +2775,10 @@ export default class EngramSyncPlugin extends Plugin {
 		}
 
 		const errorCount = this.syncLog?.errorCount() ?? 0;
-		if (errorCount > 0 && status.state === "idle" && !blocked) {
+		// hasAuthConfigured guard: dead auth PRODUCES logged sync errors, so
+		// without it the error badge overwrites "signed out" in exactly the
+		// forced-sign-out state the branch above exists for.
+		if (errorCount > 0 && status.state === "idle" && !blocked && this.hasAuthConfigured()) {
 			text = `Engram: ⚠ ${errorCount} sync errors`;
 		}
 

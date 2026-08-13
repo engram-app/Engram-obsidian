@@ -387,3 +387,145 @@ describe("review findings — rerun progress continuity + joiner marker", () => 
 		expect((b as { joined?: boolean }).joined).toBe(true);
 	});
 });
+
+describe("first-sync progress honesty (#420 P2)", () => {
+	test("multiple op-log rows for one note tick the file counter ONCE", async () => {
+		// The plan's denominator is folded per note; a note with N ops must not
+		// contribute N ticks or the bar pins at 100% while files keep arriving.
+		const feed = [
+			noteRow({ id: "id-a", seq: 1, path: "Notes/a.md", content: "v1" }),
+			noteRow({ id: "id-a", seq: 2, path: "Notes/a.md", content: "v2" }),
+			noteRow({ id: "id-b", seq: 3, path: "Notes/b.md" }),
+		];
+		const { engine, events } = makeEngine(feed);
+
+		const res = await engine.catchUp({ reportProgress: true });
+
+		expect(res.files).toBe(2);
+		const pulls = events.filter((e) => e.phase === "pulling");
+		expect(pulls.length).toBe(2);
+		expect(pulls.map((e) => e.current)).toEqual([1, 2]);
+	});
+
+	test("a catch-up coalescing behind an in-flight replay reports the REAL file count", async () => {
+		// Returning {files: 0} from the coalesced call made the one-click first
+		// sync report "Already up to date" while the join-triggered replay was
+		// still downloading the vault behind the modal.
+		const feed = [
+			noteRow({ id: "id-a", seq: 1, path: "Notes/a.md" }),
+			noteRow({ id: "id-b", seq: 2, path: "Notes/b.md" }),
+		];
+		const { engine } = makeEngine(feed);
+		let releaseFirstFetch!: () => void;
+		const gate = new Promise<void>((r) => (releaseFirstFetch = r));
+		let call = 0;
+		engine.setCrdtCatchupSince(async () => {
+			call += 1;
+			if (call === 1) await gate;
+			return { changes: call <= 2 ? feed : [], has_more: false, next_seq: null };
+		});
+
+		const first = engine.catchUp({ reportProgress: false });
+		// Let the first call reach the (gated) fetch before the second starts.
+		await new Promise((r) => setTimeout(r, 10));
+		const second = engine.catchUp({ reportProgress: true });
+		await new Promise((r) => setTimeout(r, 10));
+		releaseFirstFetch();
+
+		const [firstRes, secondRes] = await Promise.all([first, second]);
+		expect(firstRes.files).toBe(2);
+		// The coalesced caller waited for the running replay and reports what it
+		// actually downloaded — not a fabricated "nothing to do".
+		expect(secondRes.files).toBe(2);
+	});
+
+	test("a catch-up that dies at the boundary reports a failure, not success", async () => {
+		const { engine } = makeEngine([]);
+		(engine as unknown as { api: { getManifest: () => Promise<never> } }).api.getManifest =
+			mock().mockRejectedValue(new Error("HTTP 401"));
+
+		const res = await engine.catchUp({ reportProgress: true });
+
+		// files 0 + failed 0 renders as "All synced" in the completion modal —
+		// a dead-auth first sync must never claim success.
+		expect(res.failed).toBeGreaterThan(0);
+	});
+});
+
+describe("coalesce semantics are opt-in (#422 review round 1)", () => {
+	const gatedEngine = () => {
+		const feed = [
+			noteRow({ id: "id-a", seq: 1, path: "Notes/a.md" }),
+			noteRow({ id: "id-b", seq: 2, path: "Notes/b.md" }),
+		];
+		const { engine } = makeEngine(feed);
+		let release!: () => void;
+		const gate = new Promise<void>((r) => (release = r));
+		let call = 0;
+		engine.setCrdtCatchupSince(async () => {
+			call += 1;
+			if (call === 1) await gate;
+			return { changes: call <= 2 ? feed : [], has_more: false, next_seq: null };
+		});
+		return { engine, release };
+	};
+
+	test("a non-progress catch-up coalesces to zeros instantly (poll/join semantics)", async () => {
+		const { engine, release } = gatedEngine();
+		const owner = engine.catchUp({ reportProgress: true });
+		await new Promise((r) => setTimeout(r, 10));
+
+		// The 5-min poll and the topic-join handler depend on the old fast
+		// return: blocking them behind a long replay defers the op-queue drain,
+		// and real counts here fire a spurious "pulled N changes" toast.
+		const start = Date.now();
+		const polled = await engine.catchUp({ reportProgress: false });
+		expect(polled.files).toBe(0);
+		expect(Date.now() - start).toBeLessThan(200);
+
+		release();
+		await owner;
+	});
+
+	test("pull-all-keep refuses to fake success when the replay coalesces", async () => {
+		const { engine, release } = gatedEngine();
+		const owner = engine.catchUp({ reportProgress: true });
+		await new Promise((r) => setTimeout(r, 10));
+
+		// A coalesced pull-all never replays from zero — reporting the running
+		// incremental session's counts would claim a full-vault restore that
+		// did not happen.
+		const pulled = await engine.pullAll({ deleteLocalExtras: false });
+		expect(pulled).toBe(0);
+		expect(engine.getStatus().error ?? "").toMatch(/another sync|contention|aborted/i);
+
+		release();
+		await owner;
+	});
+
+	test("attachment rows dedupe by id across a rename, like notes", async () => {
+		const attRow = (over: Record<string, unknown>) =>
+			({
+				type: "attachment",
+				id: "att-1",
+				seq: 1,
+				path: "Files/x.png",
+				mime_type: "image/png",
+				size_bytes: 3,
+				mtime: 1,
+				updated_at: "2026-01-01T00:00:00Z",
+				deleted: false,
+				...over,
+			}) as unknown as SyncChange;
+		const feed = [
+			attRow({ seq: 1, path: "Files/x.png" }),
+			attRow({ seq: 2, path: "Files/renamed.png" }),
+		];
+		const { engine } = makeEngine(feed);
+
+		const res = await engine.catchUp({ reportProgress: true });
+		// One attachment renamed mid-log is ONE planned file — two path-keyed
+		// ticks would overrun the plan's denominator (the pinned-bar bug).
+		expect(res.files).toBe(1);
+	});
+});
