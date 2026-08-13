@@ -16734,7 +16734,7 @@ var DeviceFlowModal = class extends import_obsidian14.Modal {
         }),
         15e3
       );
-      if (resp.status === 428) return;
+      if (resp.status === 400 || resp.status === 428) return;
       if (resp.status >= 200 && resp.status < 300) {
         this.pollInterval && window.clearInterval(this.pollInterval);
         let result = resp.json;

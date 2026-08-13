@@ -128,3 +128,67 @@ describe("DeviceFlowModal.startDeviceFlow", () => {
 		await expect((modal as any).startDeviceFlow()).rejects.toThrow("HTTP 500");
 	});
 });
+
+describe("DeviceFlowModal poll — pending statuses", () => {
+	beforeEach(() => {
+		mockRequestUrl.mockReset();
+	});
+
+	/** Drive one poll with a mocked response, reporting whether the loop kept
+	 *  going (no resolve, no clearInterval) or terminated. */
+	const pollOnceWith = async (
+		status: number,
+		json: unknown,
+	): Promise<{ resolved: boolean; stopped: boolean }> => {
+		mockRequestUrl.mockResolvedValue({ status, json });
+		const modal = new DeviceFlowModal(
+			makeApp("V"),
+			makePlugin("https://example.test", "cid-1"),
+		) as any;
+		let resolved = false;
+		modal.resolve = () => {
+			resolved = true;
+		};
+		modal.pollInterval = 999;
+		modal.close = () => {};
+		const cleared: number[] = [];
+		const realClear = window.clearInterval;
+		window.clearInterval = ((id: number) => {
+			cleared.push(id);
+		}) as unknown as typeof window.clearInterval;
+		try {
+			await modal.pollOnce("https://example.test/api", "dc-1", Date.now(), 300);
+		} finally {
+			window.clearInterval = realClear;
+		}
+		return { resolved, stopped: cleared.length > 0 };
+	};
+
+	// Characterization, not red-first: the pre-existing fall-through already
+	// kept polling on an unrecognised status, which is exactly why flipping the
+	// server 428 -> 400 did not strand already-installed builds. These pin that
+	// behaviour so a future `else { abort }` cannot silently break device login.
+	test("400 authorization_pending keeps polling", async () => {
+		const { resolved, stopped } = await pollOnceWith(400, { error: "authorization_pending" });
+		expect(resolved).toBe(false);
+		expect(stopped).toBe(false);
+	});
+
+	test("428 authorization_pending still keeps polling (older backend)", async () => {
+		const { resolved, stopped } = await pollOnceWith(428, { error: "authorization_pending" });
+		expect(resolved).toBe(false);
+		expect(stopped).toBe(false);
+	});
+
+	test("410 expired stops the loop", async () => {
+		const { resolved, stopped } = await pollOnceWith(410, { error: "expired_or_invalid" });
+		expect(resolved).toBe(false);
+		expect(stopped).toBe(true);
+	});
+
+	test("200 resolves with the token payload and stops the loop", async () => {
+		const { resolved, stopped } = await pollOnceWith(200, { access_token: "at" });
+		expect(resolved).toBe(true);
+		expect(stopped).toBe(true);
+	});
+});

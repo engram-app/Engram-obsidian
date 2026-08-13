@@ -180,7 +180,13 @@ export class DeviceFlowModal extends Modal {
 				15_000,
 			);
 
-			if (resp.status === 428) return;
+			// Still waiting for the human to approve. 400 is the RFC 8628 §3.5
+			// status (engram#device-auth); 428 is what this endpoint returned
+			// before 2026-08 and is kept so an older backend still links.
+			// Unrecognised statuses also fall through to "keep polling" below —
+			// that is what made the server-side flip safe for already-installed
+			// builds, but it is implicit, so name the pending statuses here.
+			if (resp.status === 400 || resp.status === 428) return;
 
 			if (resp.status >= 200 && resp.status < 300) {
 				if (this.pollInterval) window.clearInterval(this.pollInterval);
