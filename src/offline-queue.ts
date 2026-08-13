@@ -116,6 +116,15 @@ export class OfflineQueue {
 		return this.entries.get(dedupKey(path, vaultId))?.action === "delete";
 	}
 
+	/** Like hasPendingDelete, but only for entries the drain will actually
+	 *  PUSH. Unevidenced deletes are predestined to be dropped by the #416
+	 *  drain gate — letting them suppress catch-up recreation would hide a
+	 *  note behind a delete that never happens. */
+	hasPendingEvidencedDelete(path: string, vaultId?: string): boolean {
+		const entry = this.entries.get(dedupKey(path, vaultId));
+		return entry?.action === "delete" && entry.evidenced === true;
+	}
+
 	/** Remove a path's queued work immediately, without waiting on a persist
 	 *  round trip. `dequeue` awaits persistence, which is right after a
 	 *  successful sync but wrong for a rename or a vault switch: the caller needs

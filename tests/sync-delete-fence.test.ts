@@ -282,3 +282,68 @@ describe("rename old-leg delete (review finding 2)", () => {
 		expect(deleteAttachment).toHaveBeenCalledWith("img/pic.png");
 	});
 });
+
+describe("pre-merge review hardening (#419 round 2)", () => {
+	test("a failed trashFile rolls the counter back — the next genuine delete pushes", async () => {
+		const { e, deleteAttachment } = makeEngine();
+		const file = makeAttachmentFile("locked/file.png");
+		recordSyncEvidence(e, file.path);
+		(e as any).app.fileManager.trashFile = mock().mockRejectedValue(new Error("EBUSY"));
+
+		await expect((e as any).trashRemotelyDeleted(file)).rejects.toThrow("EBUSY");
+		(e as any).files.clearMarker(file.path, "remotelyDeleted");
+
+		// The file never left the vault; the user now deletes it for real.
+		await e.handleDelete(file);
+		expect(deleteAttachment).toHaveBeenCalledTimes(1);
+	});
+
+	test("a vault switch clears stranded trash counters", async () => {
+		const { e, deleteAttachment } = makeEngine();
+		const file = makeAttachmentFile("Inbox.png");
+		recordSyncEvidence(e, file.path);
+		await (e as any).trashRemotelyDeleted(file);
+		(e as any).files.clearMarker(file.path, "remotelyDeleted");
+
+		await e.resetForVaultChange();
+
+		// New vault, same path: the old counter must not consume this delete.
+		recordSyncEvidence(e, file.path);
+		await e.handleDelete(file);
+		expect(deleteAttachment).toHaveBeenCalledTimes(1);
+	});
+
+	test("a late delete event for a REPLACED path leaves the fresh note's state intact", async () => {
+		const { e, crdtDeletes } = makeEngine();
+		const file = makeNoteFile("replaced/note.md");
+		await (e as any).trashRemotelyDeleted(file);
+		(e as any).files.clearMarker(file.path, "remotelyDeleted");
+
+		// A fresh file now lives at the path (pull recreated it) with new state.
+		(e as any).app.vault.getFileByPath = mock().mockReturnValue(makeNoteFile(file.path));
+		(e as any).noteIdMap.set(file.path, "id-fresh");
+		recordSyncEvidence(e, file.path);
+
+		await e.handleDelete(file);
+
+		// The stale echo must not unmap/tombstone/push against the fresh note.
+		expect(crdtDeletes).toHaveLength(0);
+		expect((e as any).noteIdMap.get(file.path)).toBe("id-fresh");
+		expect((e as any).syncState.has(file.path)).toBe(true);
+		expect((e as any).recentlyDeleted.has("id-fresh")).toBe(false);
+		// ...and the counter was consumed, so a real later delete pushes.
+		(e as any).app.vault.getFileByPath = mock().mockReturnValue(null);
+		await e.handleDelete(file);
+		expect(crdtDeletes).toEqual([file.path]);
+	});
+
+	test("an unevidenced queued delete does not suppress catch-up recreation", () => {
+		const { e } = makeEngine();
+		e.queue.load([
+			{ path: "doomed/a.md", action: "delete", timestamp: 1 },
+			{ path: "real/b.md", action: "delete", evidenced: true, timestamp: 2 },
+		]);
+		expect(e.queue.hasPendingEvidencedDelete("doomed/a.md", undefined)).toBe(false);
+		expect(e.queue.hasPendingEvidencedDelete("real/b.md", undefined)).toBe(true);
+	});
+});

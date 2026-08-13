@@ -46,12 +46,6 @@ export class ExplicitFolders {
 		await this.persist();
 	}
 
-	/** Drop every marker (vault switch — the set is vault-scoped). */
-	async clear(): Promise<void> {
-		this.set.clear();
-		await this.persist();
-	}
-
 	async delete(path: string): Promise<void> {
 		this.set.delete(path);
 		await this.persist();

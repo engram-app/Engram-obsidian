@@ -15881,10 +15881,6 @@ var ExplicitFolders = class {
   async add(path) {
     this.set.add(path), await this.persist();
   }
-  /** Drop every marker (vault switch — the set is vault-scoped). */
-  async clear() {
-    this.set.clear(), await this.persist();
-  }
   async delete(path) {
     this.set.delete(path), await this.persist();
   }
@@ -18883,6 +18879,14 @@ var OfflineQueue = class {
     var _a;
     return ((_a = this.entries.get(dedupKey(path, vaultId))) == null ? void 0 : _a.action) === "delete";
   }
+  /** Like hasPendingDelete, but only for entries the drain will actually
+   *  PUSH. Unevidenced deletes are predestined to be dropped by the #416
+   *  drain gate — letting them suppress catch-up recreation would hide a
+   *  note behind a delete that never happens. */
+  hasPendingEvidencedDelete(path, vaultId) {
+    let entry = this.entries.get(dedupKey(path, vaultId));
+    return (entry == null ? void 0 : entry.action) === "delete" && entry.evidenced === !0;
+  }
   /** Remove a path's queued work immediately, without waiting on a persist
    *  round trip. `dequeue` awaits persistence, which is right after a
    *  successful sync but wrong for a rename or a vault switch: the caller needs
@@ -20231,7 +20235,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       rlog().info("crdt", `empty-materialize skip (recent local delete): ${normalized}`);
       return;
     }
-    if (this.queue.hasPendingDelete(normalized, (_a = this.settings.vaultId) != null ? _a : void 0)) {
+    if (this.queue.hasPendingEvidencedDelete(normalized, (_a = this.settings.vaultId) != null ? _a : void 0)) {
       rlog().info("crdt", `empty-materialize skip (delete queued): ${normalized}`);
       return;
     }
@@ -20372,7 +20376,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  point; a wipe that exists on only one path re-opens #200. */
   async wipePerVaultState() {
     var _a, _b, _c;
-    this.syncState.clear(), this.lastSync = "", this.catchupSeq = 0, this.catchupId = null, this.manifestSeq = 0, this.lastValidatorRewind = null, (_a = this.noteIdMap) == null || _a.clear(), this.clearConfirmedNoteIds(), (_b = this.crdtResetOutbox) == null || _b.call(this), this.lastRelocationTs.clear(), await ((_c = this.explicitFolders) == null ? void 0 : _c.clear()), await this.saveData({ lastSync: "" });
+    this.syncState.clear(), this.lastSync = "", this.catchupSeq = 0, this.catchupId = null, this.manifestSeq = 0, this.lastValidatorRewind = null, (_a = this.noteIdMap) == null || _a.clear(), this.clearConfirmedNoteIds(), (_b = this.crdtResetOutbox) == null || _b.call(this), this.lastRelocationTs.clear(), this.engineTrashedPaths.clear(), await ((_c = this.explicitFolders) == null ? void 0 : _c.replaceAll([])), await this.saveData({ lastSync: "" });
   }
   /** Reset all per-vault sync bookkeeping. Used when the user switches the
    *  active server vault inside the SyncPreviewModal so the next sync starts
@@ -20617,7 +20621,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       return;
     }
     if (!this.ready || !this.isSyncable(file) || this.shouldIgnore(file.path)) return;
-    let isBinary = this.isBinaryFile(file), existing = this.debounceTimers.get(file.path);
+    let isBinary = this.isBinaryFile(file);
+    if (this.app.vault.getFileByPath(file.path)) {
+      this.consumeEngineTrash(file.path), this.files.clearMarker(file.path, "remotelyDeleted"), rlog().info("vault", `Delete echo for replaced path \u2014 skipped: ${file.path}`);
+      return;
+    }
+    let existing = this.debounceTimers.get(file.path);
     existing && (this.time.clearTimeout(existing), this.debounceTimers.delete(file.path));
     let crdtNoteId = isBinary ? null : (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(file.path)) != null ? _b : null;
     isBinary || (_c = this.noteIdMap) == null || _c.delete(file.path);
@@ -20687,7 +20696,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           kind: isBinary ? "attachment" : "note",
           timestamp: Date.now(),
           vaultId: (_b = this.settings.vaultId) != null ? _b : void 0,
-          evidenced: hadOldEvidence
+          // The catch is reachable only after an evidenced API call ran
+          // (refused legs never call out), so this is always true.
+          evidenced: !0
         }), this.maybeGoOffline(e));
       }
     isBinary || ((_c = this.baseStore) == null || _c.rename((0, import_obsidian24.normalizePath)(oldPath), (0, import_obsidian24.normalizePath)(file.path)), this.dropPath((0, import_obsidian24.normalizePath)(oldPath), { dropBase: !1 }), this.unconfirmNoteId((_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(file.path)) != null ? _e : null)), this.shouldIgnore(file.path) || await this.pushFile(file);
@@ -21101,7 +21112,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  its echo-push can tombstone a note recreated at the path since. */
   async trashRemotelyDeleted(file) {
     var _a;
-    this.files.mark(file.path, "remotelyDeleted", ECHO_COOLDOWN_MS), this.engineTrashedPaths.set(file.path, ((_a = this.engineTrashedPaths.get(file.path)) != null ? _a : 0) + 1), await this.app.fileManager.trashFile(file);
+    this.files.mark(file.path, "remotelyDeleted", ECHO_COOLDOWN_MS), this.engineTrashedPaths.set(file.path, ((_a = this.engineTrashedPaths.get(file.path)) != null ? _a : 0) + 1);
+    try {
+      await this.app.fileManager.trashFile(file);
+    } catch (e) {
+      throw this.consumeEngineTrash(file.path), e;
+    }
   }
   /** Suppress WebSocket echoes for a path for ECHO_COOLDOWN_MS after push. */
   markRecentlyPushed(path) {
@@ -23638,7 +23654,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     }, 5e3)), this.syncEngine.setCrdtHasPendingOp(
       (docId) => {
         var _a2, _b2;
-        return (_b2 = (_a2 = this.crdtOpQueue) == null ? void 0 : _a2.all().some((op) => op.docId === docId)) != null ? _b2 : !1;
+        return (_b2 = (_a2 = this.crdtOpQueue) == null ? void 0 : _a2.all().some(
+          (op) => {
+            var _a3;
+            return op.docId === docId && op.kind === "create" && op.vaultId === ((_a3 = this.settings.vaultId) != null ? _a3 : null);
+          }
+        )) != null ? _b2 : !1;
       }
     ), this.syncEngine.setCrdtPorts({
       enqueue: (op) => {

@@ -1651,7 +1651,7 @@ export class SyncEngine {
 			rlog().info("crdt", `empty-materialize skip (recent local delete): ${normalized}`);
 			return;
 		}
-		if (this.queue.hasPendingDelete(normalized, this.settings.vaultId ?? undefined)) {
+		if (this.queue.hasPendingEvidencedDelete(normalized, this.settings.vaultId ?? undefined)) {
 			rlog().info("crdt", `empty-materialize skip (delete queued): ${normalized}`);
 			return;
 		}
@@ -1980,10 +1980,15 @@ export class SyncEngine {
 		// id in the new vault. Living here (not just resetForVaultChange) keeps
 		// BOTH vault-change paths in lockstep, per this method's contract.
 		this.lastRelocationTs.clear();
+		// Engine-trash counters are path-keyed and therefore vault-scoped: a
+		// counter stranded in the OLD vault (event eaten by a throw or a closed
+		// gate) must not consume a same-path delete in the NEW one (#419
+		// pre-merge review finding 4).
+		this.engineTrashedPaths.clear();
 		// Folder markers are vault-scoped too: a stale set after a switch lets
 		// handleFolderDelete push marker deletes against the NEW vault (post-
 		// merge review finding 8 — data-safe but cross-vault noise).
-		await this.explicitFolders?.clear();
+		await this.explicitFolders?.replaceAll([]);
 		await this.saveData({ lastSync: "" });
 	}
 
@@ -2393,6 +2398,18 @@ export class SyncEngine {
 
 		const isBinary = this.isBinaryFile(file);
 
+		// STALE-ECHO GUARD (#419 pre-merge review finding 5): a live file at
+		// this path right now means this delete event is for a REPLACED file
+		// (trash → recreate → late echo). Running the bookkeeping below would
+		// unmap, evidence-drop, and tombstone the FRESH note. Consume the trash
+		// record the event matches (if any) and stop.
+		if (this.app.vault.getFileByPath(file.path)) {
+			this.consumeEngineTrash(file.path);
+			this.files.clearMarker(file.path, "remotelyDeleted");
+			rlog().info("vault", `Delete echo for replaced path — skipped: ${file.path}`);
+			return;
+		}
+
 		// Cancel any pending push for this file
 		const existing = this.debounceTimers.get(file.path);
 		if (existing) {
@@ -2575,7 +2592,10 @@ export class SyncEngine {
 		// oldPath this device has no standing to issue it (the incident's
 		// lost-bookkeeping state re-enters through renames otherwise). A skipped
 		// old-leg delete costs a stale server copy that the next pull surfaces;
-		// a wrong one deletes another device's data.
+		// a wrong one deletes another device's data. Known accepted cost (#419
+		// pre-merge review): attachments synced before attachment stamping
+		// existed have no row, so their first rename leaves the old server path
+		// behind until a pull reconciles it — safe-direction, self-healing.
 		const hadOldEvidence = this.syncState.has(normalizePath(oldPath));
 		if (!this.shouldIgnore(oldPath)) {
 			try {
@@ -2637,7 +2657,9 @@ export class SyncEngine {
 						kind: isBinary ? "attachment" : "note",
 						timestamp: Date.now(),
 						vaultId: this.settings.vaultId ?? undefined,
-						evidenced: hadOldEvidence,
+						// The catch is reachable only after an evidenced API call ran
+						// (refused legs never call out), so this is always true.
+						evidenced: true,
 					});
 					this.maybeGoOffline(e);
 				}
@@ -3593,8 +3615,17 @@ export class SyncEngine {
 	 *  its echo-push can tombstone a note recreated at the path since. */
 	private async trashRemotelyDeleted(file: TAbstractFile): Promise<void> {
 		this.files.mark(file.path, "remotelyDeleted", ECHO_COOLDOWN_MS);
+		// Increment BEFORE the trash (Obsidian can dispatch the delete event
+		// during the await), but roll back on a throw: a trash that failed left
+		// the file in place, and a stranded counter would consume the user's
+		// NEXT genuine delete of it (#419 pre-merge review finding 2).
 		this.engineTrashedPaths.set(file.path, (this.engineTrashedPaths.get(file.path) ?? 0) + 1);
-		await this.app.fileManager.trashFile(file);
+		try {
+			await this.app.fileManager.trashFile(file);
+		} catch (e) {
+			this.consumeEngineTrash(file.path);
+			throw e;
+		}
 	}
 
 	/** Suppress WebSocket echoes for a path for ECHO_COOLDOWN_MS after push. */
@@ -7718,6 +7749,15 @@ export class SyncEngine {
 					// evidence stamp; replaying them blind re-runs the incident
 					// around the handleDelete fence. Drop them loudly: the server
 					// copy survives and the next pull reconciles.
+					//
+					// DELIBERATE migration cost (#419 pre-merge review): a LEGIT
+					// delete queued by the one release that had the evidence rule
+					// but not this stamp is indistinguishable from a poisoned entry
+					// and gets dropped too — the deleted file resurrects once and
+					// the user deletes it again. Poisoned entries and legit ones
+					// cannot be told apart retroactively (both dropped their
+					// syncState at delete time); dropping is the side whose failure
+					// is recoverable.
 					if (!entry.evidenced) {
 						rlog().warn(
 							"queue",
