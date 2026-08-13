@@ -41,6 +41,12 @@ export interface AuthProvider {
 	 * leave this undefined; callers should treat its absence as "no recovery possible".
 	 */
 	invalidateAccessToken?(): void;
+	/**
+	 * Retire this provider when it is being REPLACED: no further network calls,
+	 * token rotations, or persistence callbacks. Optional — providers without a
+	 * rotating credential chain (static API keys) have nothing to retire.
+	 */
+	dispose?(): void;
 }
 
 export type RefreshFn = (refreshToken: string) => Promise<{
