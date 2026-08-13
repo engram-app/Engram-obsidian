@@ -83,7 +83,11 @@ describe("engine-trashed paths never push their delete", () => {
 		expect(deleteAttachment).not.toHaveBeenCalled();
 	});
 
-	test("a recreate clears the record, so a later REAL user delete pushes", async () => {
+	test("the record is CONSUMED by the trash's own delete event, so a later REAL user delete pushes", async () => {
+		// Consumption-based, not clear-on-recreate (post-merge review finding 1:
+		// clearing on recreate let the late trash echo through as a push against
+		// the FRESH note). Sequence: trash → recreate → late trash echo (consumes)
+		// → genuine user delete (pushes).
 		const { e, deleteAttachment } = makeEngine();
 		const file = makeAttachmentFile("a/pic.png");
 		recordSyncEvidence(e, file.path);
@@ -91,13 +95,36 @@ describe("engine-trashed paths never push their delete", () => {
 		await (e as any).trashRemotelyDeleted(file);
 		(e as any).files.clearMarker(file.path, "remotelyDeleted");
 
-		// File comes back (pull or user recreate) — the trash record must not
-		// outlive it and swallow the next genuine delete.
-		e.noteRecreatedPath(file.path);
+		// Recreate at the path (pull) — must NOT clear the pending record.
 		recordSyncEvidence(e, file.path);
 
+		// Late delete event for the OLD trashed file: consumed as an echo, no push.
 		await e.handleDelete(file);
+		expect(deleteAttachment).not.toHaveBeenCalled();
 
+		// Genuine user delete of the recreated file: pushes.
+		recordSyncEvidence(e, file.path);
+		await e.handleDelete(file);
+		expect(deleteAttachment).toHaveBeenCalledTimes(1);
+	});
+
+	test("a wipe-pass delete event landing DURING suppressDeletes still consumes the record", async () => {
+		// Review finding 4: the suppressDeletes early-return ran before the echo
+		// consume, stranding a permanent record that would swallow a future
+		// genuine delete at the path.
+		const { e, deleteAttachment } = makeEngine();
+		const file = makeAttachmentFile("wipe/extra.png");
+		recordSyncEvidence(e, file.path);
+
+		await (e as any).trashRemotelyDeleted(file);
+		(e as any).suppressDeletes = true;
+		await e.handleDelete(file); // in-window echo: consumed, no push
+		(e as any).suppressDeletes = false;
+		expect(deleteAttachment).not.toHaveBeenCalled();
+
+		// Path is later reused and genuinely deleted — must push.
+		recordSyncEvidence(e, file.path);
+		await e.handleDelete(file);
 		expect(deleteAttachment).toHaveBeenCalledTimes(1);
 	});
 });
@@ -143,6 +170,210 @@ describe("evidence rule: no syncState entry → no delete push", () => {
 		(e as any).noteIdMap.set(file.path, "id-y");
 		(e as any).setCrdtHead(file.path, "h1");
 		recordSyncEvidence(e, file.path);
+
+		await e.handleDelete(file);
+
+		expect(crdtDeletes).toEqual([file.path]);
+	});
+});
+
+describe("refusal side effects (review findings 5+7)", () => {
+	test("refusal with a PENDING crdt create enqueues the superseding delete", async () => {
+		const { e, crdtDeletes } = makeEngine();
+		const file = makeNoteFile("fresh/unacked.md");
+		(e as any).noteIdMap.set(file.path, "id-pending");
+		e.setCrdtHasPendingOp((id: string) => id === "id-pending");
+
+		await e.handleDelete(file);
+
+		// Queue coalesces by docId: the delete supersedes the pending create,
+		// restoring the pre-fence create/delete coalesce semantics.
+		expect(crdtDeletes).toEqual([file.path]);
+	});
+
+	test("pure refusal (no pending op) does not tombstone the id for delete-wins", async () => {
+		const { e, crdtDeletes } = makeEngine();
+		const file = makeNoteFile("never/synced.md");
+		(e as any).noteIdMap.set(file.path, "id-x");
+		e.setCrdtHasPendingOp(() => false);
+
+		await e.handleDelete(file);
+
+		expect(crdtDeletes).toHaveLength(0);
+		// The promised remedy for a wrong refusal is next-pull resurrection —
+		// a recentlyDeleted tombstone would block it for the delete-wins window.
+		expect((e as any).recentlyDeleted.has("id-x")).toBe(false);
+	});
+});
+
+describe("offline-queue delete drain (review finding 0)", () => {
+	test("a persisted delete entry WITHOUT an evidence stamp is dropped, not pushed", async () => {
+		const { e, deleteAttachment } = makeEngine();
+		e.queue.load([
+			{ path: "poison/old.png", action: "delete", kind: "attachment", timestamp: 1 },
+		]);
+
+		await e.flushQueue();
+
+		expect(deleteAttachment).not.toHaveBeenCalled();
+		expect(e.queue.size).toBe(0);
+	});
+
+	test("an evidenced delete entry still pushes", async () => {
+		const { e, deleteAttachment } = makeEngine();
+		e.queue.load([
+			{
+				path: "known/gone.png",
+				action: "delete",
+				kind: "attachment",
+				timestamp: 1,
+				evidenced: true,
+			},
+		]);
+
+		await e.flushQueue();
+
+		expect(deleteAttachment).toHaveBeenCalledTimes(1);
+		expect(e.queue.size).toBe(0);
+	});
+});
+
+describe("queue-replayed attachment gains evidence (review finding 6)", () => {
+	test("an attachment uploaded only via the queue drain can later be deleted", async () => {
+		const { e, deleteAttachment } = makeEngine();
+		(e as any).api.pushAttachment = mock().mockResolvedValue({ attachment: {} });
+		e.queue.load([
+			{
+				path: "flaky/photo.png",
+				action: "upsert",
+				contentBase64: "AQID",
+				mimeType: "image/png",
+				mtime: 100,
+				kind: "attachment",
+				timestamp: 1,
+			},
+		]);
+
+		await e.flushQueue();
+
+		// The replay must stamp sync evidence, or this delete is refused forever.
+		await e.handleDelete(makeAttachmentFile("flaky/photo.png"));
+		expect(deleteAttachment).toHaveBeenCalledWith("flaky/photo.png");
+	});
+});
+
+describe("rename old-leg delete (review finding 2)", () => {
+	test("rename of a never-synced attachment does not push the old-path delete", async () => {
+		const { e, deleteAttachment } = makeEngine();
+		const file = makeAttachmentFile("img/pic2.png");
+
+		await e.handleRename(file, "img/pic.png");
+
+		expect(deleteAttachment).not.toHaveBeenCalled();
+	});
+
+	test("rename of a synced attachment still deletes the old path", async () => {
+		const { e, deleteAttachment } = makeEngine();
+		const file = makeAttachmentFile("img/pic2.png");
+		recordSyncEvidence(e, "img/pic.png");
+
+		await e.handleRename(file, "img/pic.png");
+
+		expect(deleteAttachment).toHaveBeenCalledWith("img/pic.png");
+	});
+});
+
+describe("pre-merge review hardening (#419 round 2)", () => {
+	test("a failed trashFile rolls the counter back — the next genuine delete pushes", async () => {
+		const { e, deleteAttachment } = makeEngine();
+		const file = makeAttachmentFile("locked/file.png");
+		recordSyncEvidence(e, file.path);
+		(e as any).app.fileManager.trashFile = mock().mockRejectedValue(new Error("EBUSY"));
+
+		await expect((e as any).trashRemotelyDeleted(file)).rejects.toThrow("EBUSY");
+
+		// The file never left the vault; the user deletes it for real WITHIN the
+		// 5s marker window — the rollback must have cleared BOTH the counter and
+		// the remotelyDeleted marker (round-3 review: the marker half was missed
+		// and the old version of this test masked it with a manual clearMarker).
+		await e.handleDelete(file);
+		expect(deleteAttachment).toHaveBeenCalledTimes(1);
+	});
+
+	test("a vault switch clears stranded trash counters", async () => {
+		const { e, deleteAttachment } = makeEngine();
+		const file = makeAttachmentFile("Inbox.png");
+		recordSyncEvidence(e, file.path);
+		await (e as any).trashRemotelyDeleted(file);
+		(e as any).files.clearMarker(file.path, "remotelyDeleted");
+
+		await e.resetForVaultChange();
+
+		// New vault, same path: the old counter must not consume this delete.
+		recordSyncEvidence(e, file.path);
+		await e.handleDelete(file);
+		expect(deleteAttachment).toHaveBeenCalledTimes(1);
+	});
+
+	test("a late delete event for a REPLACED path leaves the fresh note's state intact", async () => {
+		const { e, crdtDeletes } = makeEngine();
+		const file = makeNoteFile("replaced/note.md");
+		await (e as any).trashRemotelyDeleted(file);
+		(e as any).files.clearMarker(file.path, "remotelyDeleted");
+
+		// A fresh file now lives at the path (pull recreated it) with new state.
+		(e as any).app.vault.getFileByPath = mock().mockReturnValue(makeNoteFile(file.path));
+		(e as any).noteIdMap.set(file.path, "id-fresh");
+		recordSyncEvidence(e, file.path);
+
+		await e.handleDelete(file);
+
+		// The stale echo must not unmap/tombstone/push against the fresh note.
+		expect(crdtDeletes).toHaveLength(0);
+		expect((e as any).noteIdMap.get(file.path)).toBe("id-fresh");
+		expect((e as any).syncState.has(file.path)).toBe(true);
+		expect((e as any).recentlyDeleted.has("id-fresh")).toBe(false);
+		// ...and the counter was consumed, so a real later delete pushes.
+		(e as any).app.vault.getFileByPath = mock().mockReturnValue(null);
+		await e.handleDelete(file);
+		expect(crdtDeletes).toEqual([file.path]);
+	});
+
+	test("an unevidenced queued delete does not suppress catch-up recreation", () => {
+		const { e } = makeEngine();
+		e.queue.load([
+			{ path: "doomed/a.md", action: "delete", timestamp: 1 },
+			{ path: "real/b.md", action: "delete", evidenced: true, timestamp: 2 },
+		]);
+		expect(e.queue.hasPendingEvidencedDelete("doomed/a.md", undefined)).toBe(false);
+		expect(e.queue.hasPendingEvidencedDelete("real/b.md", undefined)).toBe(true);
+	});
+});
+
+describe("round-3 hardening", () => {
+	test("a stale echo for a reoccupied path still cancels the pending push timer", async () => {
+		const { e } = makeEngine();
+		const file = makeAttachmentFile("reoccupied/x.png");
+		await (e as any).trashRemotelyDeleted(file);
+		// A push timer armed for the old file...
+		const timer = setTimeout(() => {}, 60_000);
+		(e as any).debounceTimers.set(file.path, timer);
+		// ...and a fresh file already at the path when the late echo lands.
+		(e as any).app.vault.getFileByPath = mock().mockReturnValue(makeAttachmentFile(file.path));
+
+		await e.handleDelete(file);
+
+		expect((e as any).debounceTimers.has(file.path)).toBe(false);
+		clearTimeout(timer);
+	});
+
+	test("probe semantics: an unstamped queued create still counts as pending", async () => {
+		const { e, crdtDeletes } = makeEngine();
+		const file = makeNoteFile("fresh/unstamped.md");
+		(e as any).noteIdMap.set(file.path, "id-unstamped");
+		// Simulate main.ts's owner semantics: unstamped op (vaultId undefined)
+		// is delivered to the current vault, so the probe reports it pending.
+		e.setCrdtHasPendingOp((id: string) => id === "id-unstamped");
 
 		await e.handleDelete(file);
 

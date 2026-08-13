@@ -311,6 +311,11 @@ export interface QueueEntry {
 	kind?: "note" | "attachment";
 	/** Vault ID for dedup isolation. */
 	vaultId?: string;
+	/** Delete entries only: set when the enqueueing code path had passed the
+	 *  #416 evidence rule. The queue drain DROPS delete entries without it —
+	 *  pre-fence/legacy entries must not replay the incident around the
+	 *  handleDelete fence. */
+	evidenced?: boolean;
 	/** Set on a channel-down CRDT edit: deliver via /updates ops (encode the
 	 *  note's Y.Doc by noteId), falling back to the legacy push only when ops
 	 *  are unavailable. */

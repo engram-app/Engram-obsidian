@@ -114,6 +114,10 @@ describe("deleted note must not re-materialize empty", () => {
 			action: "delete",
 			kind: "note",
 			timestamp: Date.now(),
+			// A legit offline delete always carries the #416 evidence stamp;
+			// only evidenced entries suppress re-materialization (unevidenced
+			// ones are predestined to be dropped by the drain gate).
+			evidenced: true,
 		});
 
 		await e.materializeEmptyDiscovered("gone.md", "id-gone");

@@ -581,6 +581,26 @@ export default class EngramSyncPlugin extends Plugin {
 		// until joined). registerInterval auto-clears on unload.
 		this.registerInterval(window.setInterval(() => void this.crdtOpQueue?.tick(), 5000));
 		// Wire the SyncEngine's durable create/delete enqueue hook to the queue.
+		// The pending-op probe feeds the evidence rule's supersede exception: a
+		// create-then-delete must coalesce in-queue, not resurrect (#416 review).
+		// CREATE-only and CURRENT-vault-only (pre-merge review of #419): the
+		// supersede branch's safety argument — "the delete either supersedes the
+		// queued create or no-ops server-side" — collapses for a pending EDIT or
+		// a foreign-vault op, where the enqueued delete could reach a note the
+		// server genuinely owns despite this device having no sync evidence.
+		this.syncEngine.setCrdtHasPendingOp(
+			(docId) =>
+				this.crdtOpQueue?.all().some((op) => {
+					if (op.docId !== docId || op.kind !== "create") return false;
+					// Mirror the queue's OWN delivery semantics (dropIfForeignVault):
+					// an unstamped/null owner means "current vault" and WILL be
+					// delivered — the probe must count it, or a delete for such a
+					// doc is refused while its queued create still fires (round-3
+					// review finding 1).
+					const owner = op.vaultId ?? null;
+					return owner === null || owner === (this.settings.vaultId ?? null);
+				}) ?? false,
+		);
 		this.syncEngine.setCrdtPorts({
 			enqueue: (op) =>
 				this.crdtOpQueue?.enqueue({

@@ -1063,6 +1063,15 @@ export class SyncEngine {
 	/** See CrdtPorts.resetOutbox. */
 	private crdtResetOutbox: (() => void) | null = null;
 
+	/** Wired by main.ts to the durable CrdtOpQueue: true when an op for this
+	 *  docId is still pending (unsent create/edit). Consulted by the evidence
+	 *  rule so a create-then-delete supersedes instead of resurrecting. */
+	private crdtHasPendingOp: ((docId: string) => boolean) | null = null;
+
+	setCrdtHasPendingOp(fn: ((docId: string) => boolean) | null): void {
+		this.crdtHasPendingOp = fn;
+	}
+
 	setCrdtEnqueue(
 		fn: ((op: { kind: "create" | "delete"; docId: string; path: string }) => void) | null,
 	): void {
@@ -1642,7 +1651,7 @@ export class SyncEngine {
 			rlog().info("crdt", `empty-materialize skip (recent local delete): ${normalized}`);
 			return;
 		}
-		if (this.queue.hasPendingDelete(normalized, this.settings.vaultId ?? undefined)) {
+		if (this.queue.hasPendingEvidencedDelete(normalized, this.settings.vaultId ?? undefined)) {
 			rlog().info("crdt", `empty-materialize skip (delete queued): ${normalized}`);
 			return;
 		}
@@ -1971,6 +1980,15 @@ export class SyncEngine {
 		// id in the new vault. Living here (not just resetForVaultChange) keeps
 		// BOTH vault-change paths in lockstep, per this method's contract.
 		this.lastRelocationTs.clear();
+		// Engine-trash counters are path-keyed and therefore vault-scoped: a
+		// counter stranded in the OLD vault (event eaten by a throw or a closed
+		// gate) must not consume a same-path delete in the NEW one (#419
+		// pre-merge review finding 4).
+		this.engineTrashedPaths.clear();
+		// Folder markers are vault-scoped too: a stale set after a switch lets
+		// handleFolderDelete push marker deletes against the NEW vault (post-
+		// merge review finding 8 — data-safe but cross-vault noise).
+		await this.explicitFolders?.replaceAll([]);
 		await this.saveData({ lastSync: "" });
 	}
 
@@ -2257,14 +2275,7 @@ export class SyncEngine {
 	// --- Push: local → Engram ---
 
 	/** Handle a vault modify/create event with debounce. */
-	/** A file (re)appeared at `path` — any engine-trash record for it is
-	 *  stale and must not swallow a future genuine delete of the new file. */
-	noteRecreatedPath(path: string): void {
-		this.engineTrashedPaths.delete(path);
-	}
-
 	handleModify(file: TAbstractFile): void {
-		this.noteRecreatedPath(file.path);
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", "handleModify short-circuited — gate closed");
 			return;
@@ -2348,13 +2359,27 @@ export class SyncEngine {
 	/** When true, vault delete events are suppressed (used during local wipe). */
 	suppressDeletes = false;
 
-	/** Paths THIS ENGINE trashed (wipe pass, orphan sweep, remote-delete
-	 *  apply, recently_deleted convergence). Durable — consumed by
-	 *  handleDelete, cleared when the path is recreated — never expired by a
-	 *  timer. The 5s `remotelyDeleted` TTL was the 2026-08-12 data-loss seam
-	 *  (#416): a mass trash outlives the TTL, the late vault delete events
-	 *  look user-made, and the engine pushes them as real server deletions. */
-	private readonly engineTrashedPaths = new Set<string>();
+	/** Per-path count of trashes THIS ENGINE performed (wipe pass, orphan
+	 *  sweep, remote-delete apply, recently_deleted convergence). Durable —
+	 *  each trash increments, each vault delete event for the path consumes
+	 *  one — never expired by a timer and never cleared on recreate. The 5s
+	 *  `remotelyDeleted` TTL was the 2026-08-12 data-loss seam (#416): a mass
+	 *  trash outlives the TTL and the late delete events push as user deletes.
+	 *  Clear-on-recreate was the post-merge review's finding 1: it let the
+	 *  late echo of a trash land AFTER a pull recreated the path and push a
+	 *  delete against the FRESH note. Counters keep every trash matched 1:1
+	 *  with its own event regardless of interleaving; the only leak is a
+	 *  crash that eats the event, costing one echo-skipped (resurrectable)
+	 *  delete at that path later — the cheap failure. */
+	private readonly engineTrashedPaths = new Map<string, number>();
+
+	private consumeEngineTrash(path: string): boolean {
+		const n = this.engineTrashedPaths.get(path) ?? 0;
+		if (n <= 0) return false;
+		if (n === 1) this.engineTrashedPaths.delete(path);
+		else this.engineTrashedPaths.set(path, n - 1);
+		return true;
+	}
 
 	/** Handle a vault delete event. */
 	async handleDelete(file: TAbstractFile): Promise<void> {
@@ -2363,30 +2388,55 @@ export class SyncEngine {
 			return;
 		}
 		if (!this.ready) return;
-		if (this.suppressDeletes) return;
+		// NOTE: no suppressDeletes early-return here (post-merge review finding
+		// 4): every wipe-pass trash is in engineTrashedPaths, and consuming the
+		// record DURING the suppression window keeps the counter matched 1:1
+		// with its event. The early return stranded permanent entries that later
+		// swallowed genuine deletes at the same path.
 		if (!this.isSyncable(file)) return;
 		if (this.shouldIgnore(file.path)) return;
 
 		const isBinary = this.isBinaryFile(file);
 
-		// Cancel any pending push for this file
+		// Cancel any pending push for this path FIRST — even for echo events.
+		// A timer armed for the trashed file must die with it; surviving the
+		// early-return below, it would fire against whatever now occupies the
+		// path and push partial mid-materialize content (round-3 finding 3).
 		const existing = this.debounceTimers.get(file.path);
 		if (existing) {
 			this.time.clearTimeout(existing);
 			this.debounceTimers.delete(file.path);
 		}
 
+		// STALE-ECHO GUARD (#419 reviews, rounds 2+3): a live file at this path
+		// right now means this delete event is for a REPLACED file. Running the
+		// bookkeeping below would unmap, evidence-drop, and tombstone the FRESH
+		// note, so we stop here either way — but the two causes are logged
+		// apart: consuming an engine-trash record (or live echo marker) is the
+		// expected trash→recreate→late-echo shape; NO echo evidence means an
+		// external flow (git checkout, another sync tool) deleted-and-replaced
+		// the path, and skipping keeps the safe direction (the old server row
+		// survives and resurrects/conflicts on pull, vs. path/id-ambiguous
+		// bookkeeping that could delete the REPLACEMENT). The distinct warn is
+		// the tripwire if that class turns real in the field.
+		if (this.app.vault.getFileByPath(file.path)) {
+			const wasEcho =
+				this.consumeEngineTrash(file.path) || this.files.has(file.path, "remotelyDeleted");
+			this.files.clearMarker(file.path, "remotelyDeleted");
+			if (wasEcho) {
+				rlog().info("vault", `Delete echo for replaced path — skipped: ${file.path}`);
+			} else {
+				rlog().warn(
+					"vault",
+					`Delete event for reoccupied path SKIPPED (no echo evidence): ${file.path}`,
+				);
+			}
+			return;
+		}
+
 		// Resolve the note_id BEFORE clearing the map (removeDoc/reset below need
 		// it to tear down the right CRDT doc, keyed by id not path).
 		const crdtNoteId = !isBinary ? (this.noteIdMap?.get(file.path) ?? null) : null;
-
-		// Tombstone the id BEFORE clearing the mapping and issuing the delete, so a
-		// racing catch-up head map (which still lists the not-yet-committed delete)
-		// or a late fan-out cannot resurrect it. Covers every exit path below
-		// (socket delete, REST delete, remote-echo skip, offline enqueue). Marked
-		// on any known id, regardless of which send path runs.
-
-		if (crdtNoteId) this.markRecentlyDeleted(crdtNoteId);
 
 		// Clear the file's note_id mapping — the vault file is genuinely gone,
 		// so a note later recreated at this path must mint a fresh id rather
@@ -2411,12 +2461,15 @@ export class SyncEngine {
 		// (replace-remote wipe→re-push, delete→recreate) and tombstones the
 		// FRESH note. Local bookkeeping above still ran; mirror the CRDT
 		// teardown the push path would have done and stop.
-		if (
-			this.files.has(file.path, "remotelyDeleted") ||
-			this.engineTrashedPaths.has(file.path)
-		) {
+		// Consume BEFORE the || — inside the 5s marker window the short-circuit
+		// would strand the counter entry, and a stranded entry later swallows a
+		// genuine delete at the path (the wipe-window leak, review finding 4).
+		const wasEngineTrash = this.consumeEngineTrash(file.path);
+		if (this.files.has(file.path, "remotelyDeleted") || wasEngineTrash) {
 			this.files.clearMarker(file.path, "remotelyDeleted");
-			this.engineTrashedPaths.delete(file.path);
+			// A converged REMOTE delete: tombstone the id so a racing catch-up or
+			// late fan-out cannot resurrect it (delete-wins, backend #970).
+			if (crdtNoteId) this.markRecentlyDeleted(crdtNoteId);
 			rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`);
 			if (this.isCrdtEligible(file) && crdtNoteId) {
 				await this.teardownCrdtDoc(crdtNoteId);
@@ -2432,12 +2485,33 @@ export class SyncEngine {
 		// false refusal is benign resurrection on the next pull; cost of a
 		// false push is data loss. Local bookkeeping above already ran.
 		if (!hadSyncEvidence) {
+			// Exception: a crdt_create for this id still PENDING in the durable op
+			// queue means the server may be about to learn the note — enqueue the
+			// delete so the queue's docId coalescing supersedes the create (the
+			// pre-fence test_10 semantics). Harmless even if the create already
+			// fired: a delete for a never-evidenced id either supersedes in-queue
+			// or terminally no-ops server-side. Without this, a create-then-delete
+			// note resurrects when the queued create fires (review finding 5).
+			if (crdtNoteId && this.crdtHasPendingOp?.(crdtNoteId)) {
+				this.markRecentlyDeleted(crdtNoteId);
+				this.crdtEnqueue?.({ kind: "delete", docId: crdtNoteId, path: file.path });
+				if (this.isCrdtEligible(file)) await this.teardownCrdtDoc(crdtNoteId);
+				rlog().info("push", `Delete superseded pending create: ${file.path}`);
+				return;
+			}
+			// Pure refusal: deliberately NO markRecentlyDeleted — the documented
+			// remedy for a wrong refusal is next-pull resurrection, and the
+			// delete-wins tombstone would block exactly that for 60s (finding 7).
 			rlog().warn("push", `Delete push REFUSED (no sync evidence): ${file.path}`);
 			if (this.isCrdtEligible(file) && crdtNoteId) {
 				await this.teardownCrdtDoc(crdtNoteId);
 			}
 			return;
 		}
+
+		// Tombstone the id BEFORE clearing the mapping and issuing the delete, so
+		// a racing catch-up head map or late fan-out cannot resurrect it.
+		if (crdtNoteId) this.markRecentlyDeleted(crdtNoteId);
 
 		try {
 			if (isBinary) {
@@ -2489,6 +2563,10 @@ export class SyncEngine {
 				kind: isBinary ? "attachment" : "note",
 				timestamp: Date.now(),
 				vaultId: this.settings.vaultId ?? undefined,
+				// This branch is only reachable past the evidence rule — stamp it
+				// so the queue drain can tell fenced deletes from legacy/pre-fence
+				// entries it must drop (#416 review finding 0).
+				evidenced: true,
 			});
 			this.maybeGoOffline(e);
 		}
@@ -2525,12 +2603,29 @@ export class SyncEngine {
 			this.noteIdMap?.rename(oldPath, file.path);
 		}
 
-		// Delete old path if it wasn't ignored
+		// Delete old path if it wasn't ignored.
+		// EVIDENCE RULE (#416, review finding 3): the old-leg delete is a real
+		// server deletion keyed by path — without recorded sync evidence for
+		// oldPath this device has no standing to issue it (the incident's
+		// lost-bookkeeping state re-enters through renames otherwise). A skipped
+		// old-leg delete costs a stale server copy that the next pull surfaces;
+		// a wrong one deletes another device's data. Known accepted cost (#419
+		// pre-merge review): attachments synced before attachment stamping
+		// existed have no row, so their first rename leaves the old server path
+		// behind until a pull reconciles it — safe-direction, self-healing.
+		const hadOldEvidence = this.syncState.has(normalizePath(oldPath));
 		if (!this.shouldIgnore(oldPath)) {
 			try {
 				if (isBinary) {
-					await this.api.deleteAttachment(oldPath);
-					this.goOnline();
+					if (hadOldEvidence) {
+						await this.api.deleteAttachment(oldPath);
+						this.goOnline();
+					} else {
+						rlog().warn(
+							"push",
+							`Rename old-leg delete REFUSED (no sync evidence): ${oldPath}`,
+						);
+					}
 				} else if (this.isCrdtEligible(file)) {
 					// Phase E2 (rename-as-move): NO tombstone (markdown AND canvas since
 					// #306 — a rename keeps the extension, so gating on the new file's
@@ -2544,11 +2639,16 @@ export class SyncEngine {
 					// carried: the #970 delete-wins window could eat a rename as a
 					// recreate-after-delete, and the delete+create pair could
 					// coalesce on the docId-keyed CrdtOpQueue (the test_10 class).
-				} else {
+				} else if (hadOldEvidence) {
 					// Defensive fallback (unreachable for current syncable text — md +
 					// canvas both rename-as-move above; kept for a future REST-only type).
 					await this.api.deleteNote(oldPath);
 					this.goOnline();
+				} else {
+					rlog().warn(
+						"push",
+						`Rename old-leg delete REFUSED (no sync evidence): ${oldPath}`,
+					);
 				}
 				// Task 6 (note_id-keyed CRDT): a rename must NOT tear down the CRDT
 				// doc. Its key is now the note's stable note_id (unchanged by a
@@ -2574,6 +2674,10 @@ export class SyncEngine {
 						kind: isBinary ? "attachment" : "note",
 						timestamp: Date.now(),
 						vaultId: this.settings.vaultId ?? undefined,
+						// Provably equal to `true` today (refused legs never call out),
+						// but kept code-derived so a future throwing edit inside the
+						// refusal legs cannot silently stamp evidence (round-3 review).
+						evidenced: hadOldEvidence,
 					});
 					this.maybeGoOffline(e);
 				}
@@ -3529,8 +3633,24 @@ export class SyncEngine {
 	 *  its echo-push can tombstone a note recreated at the path since. */
 	private async trashRemotelyDeleted(file: TAbstractFile): Promise<void> {
 		this.files.mark(file.path, "remotelyDeleted", ECHO_COOLDOWN_MS);
-		this.engineTrashedPaths.add(file.path);
-		await this.app.fileManager.trashFile(file);
+		// Increment BEFORE the trash (Obsidian can dispatch the delete event
+		// during the await), but roll back on a throw: a trash that failed left
+		// the file in place, and stranded echo state (counter OR the 5s marker)
+		// would swallow the user's NEXT genuine delete of it (#419 reviews,
+		// rounds 2+3). The rollback is conditional on our own increment still
+		// being unconsumed — if the partial trash's delete event already fired
+		// during the await, decrementing again would steal a sibling counter.
+		const before = this.engineTrashedPaths.get(file.path) ?? 0;
+		this.engineTrashedPaths.set(file.path, before + 1);
+		try {
+			await this.app.fileManager.trashFile(file);
+		} catch (e) {
+			if ((this.engineTrashedPaths.get(file.path) ?? 0) > before) {
+				this.consumeEngineTrash(file.path);
+			}
+			this.files.clearMarker(file.path, "remotelyDeleted");
+			throw e;
+		}
 	}
 
 	/** Suppress WebSocket echoes for a path for ECHO_COOLDOWN_MS after push. */
@@ -4195,7 +4315,8 @@ export class SyncEngine {
 		// offline queue. The seq replay's applyOp re-checks these per op, but the
 		// early return also avoids a pointless replay for a note we're deleting.
 		if (this.recentlyDeleted.has(noteId)) return;
-		if (this.queue.hasPendingDelete(normalized, this.settings.vaultId ?? undefined)) return;
+		if (this.queue.hasPendingEvidencedDelete(normalized, this.settings.vaultId ?? undefined))
+			return;
 		try {
 			// Learn + persist the id->path mapping (discovery source, like catchup).
 			if (this.noteIdMap && this.noteIdMap.pathForId(noteId) !== normalized) {
@@ -5483,7 +5604,7 @@ export class SyncEngine {
 		if (
 			op.kind === "upsert" &&
 			(this.recentlyDeleted.has(op.id) ||
-				this.queue.hasPendingDelete(
+				this.queue.hasPendingEvidencedDelete(
 					normalizePath(op.path),
 					this.settings.vaultId ?? undefined,
 				))
@@ -7648,15 +7769,37 @@ export class SyncEngine {
 			if (this.syncBlocked) break;
 			try {
 				if (entry.action === "delete") {
-					try {
-						if (entry.kind === "attachment") {
-							await this.api.deleteAttachment(entry.path);
-						} else {
-							await this.api.deleteNote(entry.path);
+					// FENCE (#416 review finding 0): the drain is a delete-push path
+					// too. Entries persisted before the fence shipped (or by a
+					// pre-fence plugin — the incident's poisoned queues) carry no
+					// evidence stamp; replaying them blind re-runs the incident
+					// around the handleDelete fence. Drop them loudly: the server
+					// copy survives and the next pull reconciles.
+					//
+					// DELIBERATE migration cost (#419 pre-merge review): a LEGIT
+					// delete queued by the one release that had the evidence rule
+					// but not this stamp is indistinguishable from a poisoned entry
+					// and gets dropped too — the deleted file resurrects once and
+					// the user deletes it again. Poisoned entries and legit ones
+					// cannot be told apart retroactively (both dropped their
+					// syncState at delete time); dropping is the side whose failure
+					// is recoverable.
+					if (!entry.evidenced) {
+						rlog().warn(
+							"queue",
+							`Queued delete DROPPED (no evidence stamp): ${entry.path}`,
+						);
+					} else {
+						try {
+							if (entry.kind === "attachment") {
+								await this.api.deleteAttachment(entry.path);
+							} else {
+								await this.api.deleteNote(entry.path);
+							}
+						} catch (e) {
+							// 404 means already deleted — dequeue and continue
+							if (!isHttpStatus(e, 404)) throw e;
 						}
-					} catch (e) {
-						// 404 means already deleted — dequeue and continue
-						if (!isHttpStatus(e, 404)) throw e;
 					}
 				} else if (entry.kind === "attachment") {
 					// Legacy entries may have content inline; new entries are content-free
@@ -7677,6 +7820,10 @@ export class SyncEngine {
 						mtime = file.stat.mtime / 1000;
 					}
 					await this.api.pushAttachment(entry.path, base64, mimeType!, mtime!);
+					// Mirror the live push path's stamp (review finding 6): without
+					// it an attachment whose only successful upload rode the queue
+					// has no sync evidence and its later delete is refused forever.
+					this.stampSyncedRow(normalizePath(entry.path), { hash: fnv1a(base64) });
 				} else {
 					// Durable CRDT delivery (Phase E3 — REST /updates deleted): the
 					// edit lives durably in the Y.Doc (IndexedDB, keyed by noteId);
