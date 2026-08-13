@@ -1558,6 +1558,7 @@ export default class EngramSyncPlugin extends Plugin {
 		rlog().info("auth", `Clearing auth + prompting re-link (${reason})`);
 		Object.assign(this.settings, withClearedAuth(this.settings));
 		this.api.setAuthProvider(null);
+		this.retireAuthProvider();
 		this.authProvider = null;
 		this.noteStream?.disconnect();
 		this.noteStream = null;
@@ -1709,6 +1710,7 @@ export default class EngramSyncPlugin extends Plugin {
 		// live sync stays silently dead until a reload. (Unlike the e2e swap helper,
 		// this path has no second setupNoteStream, so shouldReuseLiveStream can't
 		// recover the doomed channel — see tests/main-stream-reuse.test.ts.)
+		this.retireAuthProvider();
 		this.authProvider = this.createAuthProvider();
 		await this.commitAuthProviderSwap();
 	}
@@ -1733,6 +1735,7 @@ export default class EngramSyncPlugin extends Plugin {
 		if (!switchMode(this.settings, target, ENGRAM_CLOUD_URL)) return false;
 		this.syncEngine.bumpAuthGeneration();
 		this.noteStream?.disconnect();
+		this.retireAuthProvider();
 		this.authProvider = this.createAuthProvider();
 		if (!this.authProvider) this.api.setAuthProvider(null);
 		await this.commitAuthProviderSwap();
@@ -1759,6 +1762,7 @@ export default class EngramSyncPlugin extends Plugin {
 		// topic while the socket authenticates with the apiKey identity → the
 		// backend rejects the join "unauthorized" and live sync stays dead until
 		// a reload.
+		this.retireAuthProvider();
 		this.authProvider = this.settings.apiKey
 			? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId)
 			: null;
@@ -1777,6 +1781,18 @@ export default class EngramSyncPlugin extends Plugin {
 		if (leaf) {
 			await leaf.setViewState({ type: SEARCH_VIEW_TYPE, active: true });
 			void this.app.workspace.revealLeaf(leaf);
+		}
+	}
+
+	/** Retire the outgoing provider before any swap replaces it. Two live
+	 *  OAuthAuth instances refreshing the same rotating token chain fork it,
+	 *  and the server's reuse detection revokes the whole family — which is
+	 *  what killed a prod first-sync mid-flight on 2026-08-12. Disposal also
+	 *  keeps a refresh already in flight on the OLD instance from persisting
+	 *  its (forked) result over the NEW instance's tokens on disk. */
+	private retireAuthProvider(): void {
+		if (this.authProvider instanceof OAuthAuth) {
+			this.authProvider.dispose();
 		}
 	}
 

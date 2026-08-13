@@ -108,6 +108,14 @@ export class OAuthAuth implements AuthProvider {
 	// prompts a re-link so a dead token can't be replayed forever.
 	private readonly onAuthInvalidated?: () => void | Promise<void>;
 	private authInvalidatedFired = false;
+	// Set when the host replaces this provider (relink, backend-mode switch,
+	// unlink). A disposed provider must never touch the network or the rotating
+	// token chain again: two live instances refreshing the same chain fork it,
+	// and the server's reuse detection revokes the whole token family
+	// (prod incident 2026-08-12). A refresh already in flight at dispose time
+	// has its result discarded — persisting it would clobber the NEW provider's
+	// tokens on disk with the forked chain.
+	private disposed = false;
 
 	/** Buffer in ms — refresh if token expires within this window. */
 	private static EXPIRY_BUFFER_MS = 60_000;
@@ -132,7 +140,15 @@ export class OAuthAuth implements AuthProvider {
 		this.onAuthInvalidated = onAuthInvalidated;
 	}
 
+	/** Retire this provider: no further network calls, rotations, or callbacks. */
+	dispose(): void {
+		this.disposed = true;
+	}
+
 	async getToken(): Promise<string> {
+		if (this.disposed) {
+			throw new Error("OAuthAuth disposed: provider was replaced");
+		}
 		if (this.accessToken && this.expiresAt > Date.now() + OAuthAuth.EXPIRY_BUFFER_MS) {
 			return this.accessToken;
 		}
@@ -164,6 +180,9 @@ export class OAuthAuth implements AuthProvider {
 		}
 		try {
 			const result = await this.refreshFn(this.refreshToken);
+			if (this.disposed) {
+				throw new Error("OAuthAuth disposed: refresh result discarded");
+			}
 			this.accessToken = result.access_token;
 			this.refreshToken = result.refresh_token;
 			this.expiresAt = Date.now() + result.expires_in * 1000;
@@ -181,6 +200,12 @@ export class OAuthAuth implements AuthProvider {
 			);
 			return this.accessToken;
 		} catch (err) {
+			if (this.disposed) {
+				// The disposed provider's fate says nothing about the live chain —
+				// no state mutation, no logging, and never onAuthInvalidated (which
+				// would clear the NEW provider's persisted auth).
+				throw err;
+			}
 			this.authenticated = false;
 			this.accessToken = null;
 			this.expiresAt = 0;

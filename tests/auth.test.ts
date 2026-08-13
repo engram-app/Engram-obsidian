@@ -448,3 +448,76 @@ describe("OAuthAuth self-heal on definitive rejection", () => {
 		expect(auth.getRefreshToken()).toBe("engram_rt_live");
 	});
 });
+
+describe("OAuthAuth.dispose — the token-chain fork fence (#420)", () => {
+	// Prod incident 2026-08-12: a provider swap left the OLD OAuthAuth instance
+	// alive and wired somewhere; both instances refreshed the same rotating
+	// token chain, the server's reuse detection saw the fork and revoked the
+	// whole family mid-first-sync. dispose() is the fence: a replaced provider
+	// must never touch the network, the chain, or persisted tokens again.
+	let mockRefreshFn: ReturnType<typeof mock>;
+	beforeEach(() => {
+		mockRefreshFn = mock();
+	});
+
+	it("getToken on a disposed provider rejects without calling refreshFn", async () => {
+		const auth = new OAuthAuth("engram_rt_old", "vault-1", "user@test.com", mockRefreshFn);
+		auth.dispose();
+
+		await expect(auth.getToken()).rejects.toThrow(/disposed/);
+		expect(mockRefreshFn).not.toHaveBeenCalled();
+	});
+
+	it("a refresh resolving AFTER dispose is discarded — no state update, no persistence", async () => {
+		let resolveRefresh!: (v: unknown) => void;
+		mockRefreshFn.mockReturnValue(new Promise((r) => (resolveRefresh = r)));
+		const rotated: unknown[] = [];
+		const auth = new OAuthAuth(
+			"engram_rt_old",
+			"vault-1",
+			"user@test.com",
+			mockRefreshFn as any,
+			(tokens) => void rotated.push(tokens),
+		);
+
+		const inflight = auth.getToken();
+		auth.dispose();
+		resolveRefresh({
+			access_token: "jwt_late",
+			refresh_token: "engram_rt_forked",
+			expires_in: 3600,
+		});
+
+		await expect(inflight).rejects.toThrow(/disposed/);
+		// The late rotation must NOT persist — it would clobber the NEW
+		// provider's freshly-linked tokens on disk with a forked chain.
+		expect(rotated).toHaveLength(0);
+		expect(auth.getRefreshToken()).not.toBe("engram_rt_forked");
+	});
+
+	it("a definitive rejection after dispose does not fire onAuthInvalidated", async () => {
+		const err = Object.assign(new Error("revoked"), { status: 401 });
+		let rejectRefresh!: (e: unknown) => void;
+		mockRefreshFn.mockReturnValue(new Promise((_r, rej) => (rejectRefresh = rej)));
+		let invalidated = 0;
+		const auth = new OAuthAuth(
+			"engram_rt_old",
+			"vault-1",
+			"user@test.com",
+			mockRefreshFn as any,
+			undefined,
+			null,
+			0,
+			() => void invalidated++,
+		);
+
+		const inflight = auth.getToken();
+		auth.dispose();
+		rejectRefresh(err);
+
+		await expect(inflight).rejects.toThrow();
+		// The DISPOSED provider's fate says nothing about the NEW chain — it
+		// must not clear persisted auth or prompt a re-link.
+		expect(invalidated).toBe(0);
+	});
+});

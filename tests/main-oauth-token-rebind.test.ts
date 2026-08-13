@@ -15,7 +15,8 @@
  * saveOAuthTokens has none, so the doomed channel persists. The fix is to wire
  * the new provider onto `this.api` BEFORE saveSettings() runs the rebuild.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, spyOn, test } from "bun:test";
+import { OAuthAuth } from "../src/auth";
 import EngramSyncPlugin from "../src/main";
 
 describe("saveOAuthTokens auth-provider ordering", () => {
@@ -139,5 +140,91 @@ describe("saveOAuthTokens auth-provider ordering", () => {
 		// OAuth fields cleared before the save.
 		expect(fakeThis.settings.refreshToken).toBeUndefined();
 		expect(fakeThis.settings.authMethod).toBeNull();
+	});
+});
+
+describe("provider swaps dispose the outgoing OAuthAuth (#420)", () => {
+	// Two live OAuthAuth instances refreshing the same rotating token chain fork
+	// it; the server's reuse detection revokes the whole family (prod incident
+	// 2026-08-12). Every path that replaces this.authProvider must dispose the
+	// outgoing instance first.
+	function oldOAuthProvider() {
+		const old = new OAuthAuth("engram_rt_old", "vault-1", "old@test.com", mock());
+		return { old, disposeSpy: spyOn(old, "dispose") };
+	}
+
+	function baseFake(old: OAuthAuth) {
+		return Object.assign(Object.create(EngramSyncPlugin.prototype), {
+			settings: {} as Record<string, unknown>,
+			authProvider: old,
+			createAuthProvider() {
+				return { tag: "new-provider" };
+			},
+			api: {
+				setAuthProvider(_p: unknown) {},
+				getMe() {
+					return Promise.resolve({ id: "u" });
+				},
+			},
+			noteStream: {
+				disconnect() {},
+				setAuthProvider(_p: unknown) {},
+				setAuthProbe(_f: unknown) {},
+			},
+			async saveSettings() {},
+			syncEngine: {
+				bumpAuthGeneration() {},
+				getLastSync() {
+					return 0;
+				},
+				getStatus() {
+					return "idle";
+				},
+			},
+			async savePluginData(_ls: unknown) {},
+			updateStatusBar(_s: unknown) {},
+		});
+	}
+
+	test("saveOAuthTokens disposes the outgoing provider", async () => {
+		const { old, disposeSpy } = oldOAuthProvider();
+		await EngramSyncPlugin.prototype.saveOAuthTokens.call(
+			baseFake(old) as never,
+			"rt",
+			"vault-2",
+			"new@test.com",
+		);
+		expect(disposeSpy).toHaveBeenCalledTimes(1);
+	});
+
+	test("switchBackendMode disposes the outgoing provider", async () => {
+		const { old, disposeSpy } = oldOAuthProvider();
+		const fake = baseFake(old);
+		fake.settings = { backendMode: "cloud", apiUrl: "https://api.engram.page" };
+		const switched = await EngramSyncPlugin.prototype.switchBackendMode.call(
+			fake as never,
+			"selfhost",
+		);
+		expect(switched).toBe(true);
+		expect(disposeSpy).toHaveBeenCalledTimes(1);
+	});
+
+	test("clearOAuthTokens disposes the outgoing provider", async () => {
+		const { old, disposeSpy } = oldOAuthProvider();
+		await EngramSyncPlugin.prototype.clearOAuthTokens.call(baseFake(old) as never);
+		expect(disposeSpy).toHaveBeenCalledTimes(1);
+	});
+
+	test("clearAuthAndPromptRelink disposes the outgoing provider", async () => {
+		const { old, disposeSpy } = oldOAuthProvider();
+		const fake = baseFake(old);
+		fake.settings = { refreshToken: "rt" };
+		fake.noteStream = null;
+		await (
+			EngramSyncPlugin.prototype as unknown as {
+				clearAuthAndPromptRelink(reason: string, notify: boolean): Promise<void>;
+			}
+		).clearAuthAndPromptRelink.call(fake as never, "test", false);
+		expect(disposeSpy).toHaveBeenCalledTimes(1);
 	});
 });
