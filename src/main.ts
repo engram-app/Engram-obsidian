@@ -581,6 +581,11 @@ export default class EngramSyncPlugin extends Plugin {
 		// until joined). registerInterval auto-clears on unload.
 		this.registerInterval(window.setInterval(() => void this.crdtOpQueue?.tick(), 5000));
 		// Wire the SyncEngine's durable create/delete enqueue hook to the queue.
+		// The pending-op probe feeds the evidence rule's supersede exception: a
+		// create-then-delete must coalesce in-queue, not resurrect (#416 review).
+		this.syncEngine.setCrdtHasPendingOp(
+			(docId) => this.crdtOpQueue?.all().some((op) => op.docId === docId) ?? false,
+		);
 		this.syncEngine.setCrdtPorts({
 			enqueue: (op) =>
 				this.crdtOpQueue?.enqueue({

@@ -1445,7 +1445,12 @@ describe("OfflineQueue", () => {
 			mtime: 100,
 			timestamp: 1,
 		});
-		await queue.enqueue({ path: "Notes/B.md", action: "delete", timestamp: 2 });
+		await queue.enqueue({
+			path: "Notes/B.md",
+			action: "delete",
+			evidenced: true,
+			timestamp: 2,
+		});
 
 		const entries = queue.all();
 		expect(entries.map((e: any) => e.path)).toEqual(["Notes/A.md", "Notes/B.md", "Notes/C.md"]);
@@ -1455,7 +1460,7 @@ describe("OfflineQueue", () => {
 		const queue = new OfflineQueue();
 		queue.load([
 			{ path: "Notes/X.md", action: "upsert", content: "X", mtime: 100, timestamp: 1 },
-			{ path: "Notes/Y.md", action: "delete", timestamp: 2 },
+			{ path: "Notes/Y.md", action: "delete", evidenced: true, timestamp: 2 },
 		]);
 
 		expect(queue.size).toBe(2);
@@ -1498,7 +1503,12 @@ describe("OfflineQueue", () => {
 		expect(persisted.length).toBe(2);
 		expect(persisted[1]).toEqual([]);
 
-		await queue.enqueue({ path: "Notes/B.md", action: "delete", timestamp: 2 });
+		await queue.enqueue({
+			path: "Notes/B.md",
+			action: "delete",
+			evidenced: true,
+			timestamp: 2,
+		});
 		// clear persists immediately (cancels pending enqueue debounce)
 		await queue.clear();
 		expect(persisted.length).toBe(3);
@@ -1664,7 +1674,7 @@ describe("SyncEngine offline queue integration", () => {
 		// Pre-load queue
 		engine.queue.load([
 			{ path: "Notes/A.md", action: "upsert", content: "A", mtime: 100, timestamp: 1 },
-			{ path: "Notes/B.md", action: "delete", timestamp: 2 },
+			{ path: "Notes/B.md", action: "delete", evidenced: true, timestamp: 2 },
 			{ path: "Notes/C.md", action: "upsert", content: "C", mtime: 300, timestamp: 3 },
 		]);
 
@@ -1791,7 +1801,13 @@ describe("SyncEngine offline queue integration", () => {
 				kind: "attachment",
 				timestamp: 1,
 			},
-			{ path: "Assets/old.pdf", action: "delete", kind: "attachment", timestamp: 2 },
+			{
+				path: "Assets/old.pdf",
+				action: "delete",
+				evidenced: true,
+				kind: "attachment",
+				timestamp: 2,
+			},
 		]);
 
 		(mockApi.pushAttachment as jest.Mock).mockResolvedValue({ attachment: {} });

@@ -1108,6 +1108,7 @@ describe("sign-out gate — flushQueue respects syncBlocked", () => {
 		).queue.enqueue({
 			path: "Notes/old.md",
 			action: "delete",
+			evidenced: true,
 			kind: "note",
 			timestamp: Date.now(),
 		});
@@ -1128,6 +1129,7 @@ describe("sign-out gate — flushQueue respects syncBlocked", () => {
 		).queue.enqueue({
 			path: "Notes/old.md",
 			action: "delete",
+			evidenced: true,
 			kind: "note",
 			timestamp: Date.now(),
 		});
@@ -1149,12 +1151,14 @@ describe("sign-out gate — flushQueue respects syncBlocked", () => {
 		await q.enqueue({
 			path: "Notes/a.md",
 			action: "delete",
+			evidenced: true,
 			kind: "note",
 			timestamp: Date.now(),
 		});
 		await q.enqueue({
 			path: "Notes/b.md",
 			action: "delete",
+			evidenced: true,
 			kind: "note",
 			timestamp: Date.now(),
 		});
