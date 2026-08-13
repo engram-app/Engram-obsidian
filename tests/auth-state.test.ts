@@ -7,6 +7,7 @@ import {
 	isBackendChange,
 	isSaveableUrl,
 	migrateCloudApiUrl,
+	pluginSwitchTarget,
 	withClearedAuth,
 } from "../src/auth-state";
 import { ENGRAM_CLOUD_URL } from "../src/tabs/urls";
@@ -395,5 +396,26 @@ describe("applyApiUrlChange accepts hosts completeOrigin rejects", () => {
 		const { rejected } = await applyApiUrlChange(target, "http://engram:4000", save);
 		expect(rejected).toBe(false);
 		expect(target.settings.apiUrl).toBe("http://engram:4000");
+	});
+});
+
+describe("pluginSwitchTarget.resetAuthProvider (#420)", () => {
+	test("disposes the outgoing provider before nulling it", () => {
+		let disposed = 0;
+		const plugin = {
+			settings: {} as never,
+			api: { setAuthProvider(_p: null) {} },
+			noteStream: null,
+			authProvider: {
+				dispose() {
+					disposed++;
+				},
+			},
+		};
+		pluginSwitchTarget(plugin).resetAuthProvider();
+		// An undisposed instance's in-flight refresh would later persist rotated
+		// tokens back into the settings the user just wiped.
+		expect(disposed).toBe(1);
+		expect(plugin.authProvider).toBeNull();
 	});
 });

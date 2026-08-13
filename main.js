@@ -808,7 +808,8 @@ function pluginSwitchTarget(plugin) {
     api: plugin.api,
     noteStream: plugin.noteStream,
     resetAuthProvider: () => {
-      plugin.authProvider = null;
+      var _a, _b;
+      (_b = (_a = plugin.authProvider) == null ? void 0 : _a.dispose) == null || _b.call(_a), plugin.authProvider = null;
     }
   };
 }
@@ -1494,9 +1495,35 @@ var ApiKeyAuth = class {
     this.authenticated = !0;
     this.inflightRefresh = null;
     this.authInvalidatedFired = !1;
+    // Set when the host replaces this provider (relink, backend-mode switch,
+    // unlink). A disposed provider must never touch the network or the rotating
+    // token chain again: two live instances refreshing the same chain fork it,
+    // and the server's reuse detection revokes the whole token family
+    // (prod incident 2026-08-12). A refresh already in flight at dispose time
+    // has its result discarded — persisting it would clobber the NEW provider's
+    // tokens on disk with the forked chain.
+    this.disposed = !1;
     this.refreshToken = refreshToken, this.vaultId = vaultId, this.userEmail = userEmail, this.refreshFn = refreshFn, this.onTokenRotated = onTokenRotated, this.accessToken = initialAccessToken, this.expiresAt = initialExpiresAt, this.onAuthInvalidated = onAuthInvalidated;
   }
+  /** Retire this provider: no further network calls, rotations, or callbacks. */
+  dispose() {
+    this.disposed = !0;
+  }
+  /** Wait for any in-flight refresh to finish (success or failure) WITHOUT
+   *  starting one. A swap site that intends to KEEP this chain (backend-mode
+   *  switch stashes it for switch-back) must settle before capturing
+   *  settings: the server may have already consumed the old token, and
+   *  stashing it would replay a dead token later — tripping the server's
+   *  reuse detection, which revokes the whole family. */
+  async settle() {
+    try {
+      await this.inflightRefresh;
+    } catch (e) {
+    }
+  }
   async getToken() {
+    if (this.disposed)
+      throw new Error("OAuthAuth disposed: provider was replaced");
     if (this.accessToken && this.expiresAt > Date.now() + _OAuthAuth.EXPIRY_BUFFER_MS)
       return this.accessToken;
     if (this.inflightRefresh)
@@ -1517,15 +1544,20 @@ var ApiKeyAuth = class {
       throw this.authenticated = !1, new Error("Not authenticated: refresh token cleared");
     try {
       let result = await this.refreshFn(this.refreshToken);
-      return this.accessToken = result.access_token, this.refreshToken = result.refresh_token, this.expiresAt = Date.now() + result.expires_in * 1e3, this.authenticated = !0, await ((_a = this.onTokenRotated) == null ? void 0 : _a.call(this, {
+      return this.disposed ? (rlog().info(
+        "auth",
+        "OAuth refresh resolved after dispose \u2014 serving parked callers, discarding rotation"
+      ), result.access_token) : (this.accessToken = result.access_token, this.refreshToken = result.refresh_token, this.expiresAt = Date.now() + result.expires_in * 1e3, this.authenticated = !0, await ((_a = this.onTokenRotated) == null ? void 0 : _a.call(this, {
         refreshToken: result.refresh_token,
         accessToken: result.access_token,
         expiresAt: this.expiresAt
       })), rlog().info(
         "auth",
         `OAuth refresh ok \u2014 accessTokenLen=${result.access_token.length} expiresInS=${result.expires_in}`
-      ), this.accessToken;
+      ), this.accessToken);
     } catch (err) {
+      if (this.disposed)
+        throw err;
       this.authenticated = !1, this.accessToken = null, this.expiresAt = 0;
       let status = statusOf(err), definitive = status === 400 || status === 401 || status === 403 || status === 404;
       if (rlog().error(
@@ -23976,7 +24008,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
   }
   onunload() {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i;
-    (_a = this.crdtWiring) == null || _a.dispose(), devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.api.beacon.flush(), this.syncEngine && this.savePluginData(this.syncEngine.getLastSync()), (_b = this.baseStore) == null || _b.prune(), (_c = this.baseStore) == null || _c.save().catch((e) => {
+    this.retireAuthProvider(), (_a = this.crdtWiring) == null || _a.dispose(), devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.api.beacon.flush(), this.syncEngine && this.savePluginData(this.syncEngine.getLastSync()), (_b = this.baseStore) == null || _b.prune(), (_c = this.baseStore) == null || _c.save().catch((e) => {
       devLog().log("base-store", `save failed: ${errMsg(e)}`);
     }), (_d = this.crdtOpQueue) == null || _d.dispose(), (_e = this.syncEngine) == null || _e.destroy(), (_f = this.noteStream) == null || _f.disconnect(), setLiveBindingCoordinator(null), (_g = this.crdtLiveViews) == null || _g.destroy(), this.crdtLiveViews = null, (_h = this.crdtManager) == null || _h.destroyAll(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), uninstallDebugApi(), setLogSink(null), setActiveTracker(null), (_i = this.promiseTracker) == null || _i.destroy(), this.promiseTracker = null, destroyDevLog(), window["__ $YJS$ __"] = void 0;
   }
@@ -24173,7 +24205,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
    */
   async clearAuthAndPromptRelink(reason, notify) {
     var _a;
-    !this.settings.refreshToken && !this.settings.apiKey || (rlog().info("auth", `Clearing auth + prompting re-link (${reason})`), Object.assign(this.settings, withClearedAuth(this.settings)), this.api.setAuthProvider(null), this.authProvider = null, (_a = this.noteStream) == null || _a.disconnect(), this.noteStream = null, this.liveConnected = !1, this.everConnected = !1, await this.savePluginData(this.syncEngine.getLastSync()), this.updateStatusBar(this.syncEngine.getStatus()), notify && new import_obsidian26.Notice("Engram: your login expired \u2014 open Engram settings to reconnect."));
+    !this.settings.refreshToken && !this.settings.apiKey || (rlog().info("auth", `Clearing auth + prompting re-link (${reason})`), Object.assign(this.settings, withClearedAuth(this.settings)), this.api.setAuthProvider(null), this.replaceAuthProvider(null), (_a = this.noteStream) == null || _a.disconnect(), this.noteStream = null, this.liveConnected = !1, this.everConnected = !1, await this.savePluginData(this.syncEngine.getLastSync()), this.updateStatusBar(this.syncEngine.getStatus()), notify && new import_obsidian26.Notice("Engram: your login expired \u2014 open Engram settings to reconnect."));
   }
   /**
    * Fired by OAuthAuth when the server DEFINITIVELY rejects the stored refresh
@@ -24235,7 +24267,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     return this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null;
   }
   async saveOAuthTokens(refreshToken, vaultId, userEmail) {
-    this.syncEngine.bumpAuthGeneration(), this.settings.refreshToken = refreshToken, this.settings.userEmail = userEmail, this.settings.authMethod = "oauth", this.settings.vaultId = vaultId, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, this.authProvider = this.createAuthProvider(), await this.commitAuthProviderSwap();
+    this.syncEngine.bumpAuthGeneration(), this.settings.refreshToken = refreshToken, this.settings.userEmail = userEmail, this.settings.authMethod = "oauth", this.settings.vaultId = vaultId, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, this.replaceAuthProvider(this.createAuthProvider()), await this.commitAuthProviderSwap();
   }
   /** Swap the active backend (Cloud <-> self-hosted). A mode switch is a full
    *  identity swap, exactly like an OAuth login or logout, so it follows the
@@ -24255,10 +24287,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
    *  Returns false when already in the target mode. */
   async switchBackendMode(target) {
     var _a;
-    return switchMode(this.settings, target, ENGRAM_CLOUD_URL) ? (this.syncEngine.bumpAuthGeneration(), (_a = this.noteStream) == null || _a.disconnect(), this.authProvider = this.createAuthProvider(), this.authProvider || this.api.setAuthProvider(null), await this.commitAuthProviderSwap(), !0) : !1;
+    return this.authProvider instanceof OAuthAuth && await this.authProvider.settle(), switchMode(this.settings, target, ENGRAM_CLOUD_URL) ? (this.syncEngine.bumpAuthGeneration(), (_a = this.noteStream) == null || _a.disconnect(), this.replaceAuthProvider(this.createAuthProvider()), await this.commitAuthProviderSwap(), !0) : !1;
   }
   async clearOAuthTokens() {
-    this.syncEngine.bumpAuthGeneration(), this.settings.inactiveBackend = void 0, this.settings.refreshToken = void 0, this.settings.userEmail = void 0, this.settings.authMethod = null, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, this.authProvider = this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null, await this.commitAuthProviderSwap();
+    this.syncEngine.bumpAuthGeneration(), this.settings.inactiveBackend = void 0, this.settings.refreshToken = void 0, this.settings.userEmail = void 0, this.settings.authMethod = null, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, this.replaceAuthProvider(
+      this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null
+    ), await this.commitAuthProviderSwap();
   }
   /** Reveal the search sidebar, creating its leaf on first use. Shared by the
    *  palette command and the ribbon icon (previously byte-identical copies). */
@@ -24271,6 +24305,23 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     let leaf = this.app.workspace.getRightLeaf(!1);
     leaf && (await leaf.setViewState({ type: SEARCH_VIEW_TYPE, active: !0 }), this.app.workspace.revealLeaf(leaf));
   }
+  /** Retire the outgoing provider before any swap replaces it. Two live
+   *  OAuthAuth instances refreshing the same rotating token chain fork it,
+   *  and the server's reuse detection revokes the whole family — which is
+   *  what killed a prod first-sync mid-flight on 2026-08-12. Disposal also
+   *  keeps a refresh already in flight on the OLD instance from persisting
+   *  its (forked) result over the NEW instance's tokens on disk. */
+  retireAuthProvider() {
+    this.authProvider instanceof OAuthAuth && this.authProvider.dispose();
+  }
+  /** The ONLY way to overwrite this.authProvider: retire the outgoing
+   *  instance, then assign. A raw assignment that skips retirement is how
+   *  the two-live-refresher fork silently returns — route every new swap
+   *  path through here. (auth-state.ts's resetAuthProvider closure disposes
+   *  on its own because it types the plugin structurally.) */
+  replaceAuthProvider(next) {
+    this.retireAuthProvider(), this.authProvider = next;
+  }
   /** Shared tail of saveOAuthTokens/clearOAuthTokens: wire the (already
    *  swapped) provider onto the api BEFORE saveSettings() rebuilds the note
    *  channel — the rebuild freezes the channel topic's userId from
@@ -24279,7 +24330,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
    *  live sync stays dead until reload. Then persist and hand the provider
    *  to the live stream. */
   async commitAuthProviderSwap() {
-    this.authProvider && this.api.setAuthProvider(this.authProvider), await this.saveSettings(), this.authProvider && this.noteStream && (this.noteStream.setAuthProvider(this.authProvider), this.noteStream.setAuthProbe(() => this.api.getMe()));
+    this.api.setAuthProvider(this.authProvider), await this.saveSettings(), this.authProvider && this.noteStream && (this.noteStream.setAuthProvider(this.authProvider), this.noteStream.setAuthProbe(() => this.api.getMe()));
   }
   setupNoteStream() {
     var _a, _b, _c, _d, _e;

@@ -143,13 +143,18 @@ export function pluginSwitchTarget(plugin: {
 	settings: ApiUrlSwitchTarget["settings"];
 	api: ApiUrlSwitchTarget["api"];
 	noteStream: ApiUrlSwitchTarget["noteStream"];
-	authProvider: unknown;
+	authProvider: { dispose?: () => void } | null;
 }): ApiUrlSwitchTarget {
 	return {
 		settings: plugin.settings,
 		api: plugin.api,
 		noteStream: plugin.noteStream,
 		resetAuthProvider: () => {
+			// Dispose before dropping the reference: an undisposed OAuthAuth with
+			// a refresh in flight would later persist rotated tokens back into
+			// the settings this switch just wiped — resurrecting credentials and
+			// leaving a rogue refresher forking the rotating token chain.
+			plugin.authProvider?.dispose?.();
 			plugin.authProvider = null;
 		},
 	};

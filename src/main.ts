@@ -1195,6 +1195,11 @@ export default class EngramSyncPlugin extends Plugin {
 	}
 
 	onunload(): void {
+		// Retire the provider FIRST: a plugin update/reload replaces this whole
+		// instance, and an in-flight refresh resolving post-unload would persist
+		// over the NEW instance's data.json and fork the rotating token chain
+		// (two live refreshers → server reuse detection revokes the family).
+		this.retireAuthProvider();
 		this.crdtWiring?.dispose();
 		devLog().log("lifecycle", "plugin unloading");
 		rlog().info("lifecycle", "Plugin unloading");
@@ -1558,7 +1563,7 @@ export default class EngramSyncPlugin extends Plugin {
 		rlog().info("auth", `Clearing auth + prompting re-link (${reason})`);
 		Object.assign(this.settings, withClearedAuth(this.settings));
 		this.api.setAuthProvider(null);
-		this.authProvider = null;
+		this.replaceAuthProvider(null);
 		this.noteStream?.disconnect();
 		this.noteStream = null;
 		this.liveConnected = false;
@@ -1709,7 +1714,7 @@ export default class EngramSyncPlugin extends Plugin {
 		// live sync stays silently dead until a reload. (Unlike the e2e swap helper,
 		// this path has no second setupNoteStream, so shouldReuseLiveStream can't
 		// recover the doomed channel — see tests/main-stream-reuse.test.ts.)
-		this.authProvider = this.createAuthProvider();
+		this.replaceAuthProvider(this.createAuthProvider());
 		await this.commitAuthProviderSwap();
 	}
 
@@ -1730,11 +1735,16 @@ export default class EngramSyncPlugin extends Plugin {
 	 *
 	 *  Returns false when already in the target mode. */
 	async switchBackendMode(target: BackendMode): Promise<boolean> {
+		// Drain any in-flight refresh BEFORE switchMode captures the outgoing
+		// credential slot. The server may have already consumed the old token;
+		// settling lets the rotation persist into settings so the stash holds
+		// the LIVE token — stashing the consumed one would replay a dead token
+		// on switch-back and trip reuse detection (revoking the whole family).
+		if (this.authProvider instanceof OAuthAuth) await this.authProvider.settle();
 		if (!switchMode(this.settings, target, ENGRAM_CLOUD_URL)) return false;
 		this.syncEngine.bumpAuthGeneration();
 		this.noteStream?.disconnect();
-		this.authProvider = this.createAuthProvider();
-		if (!this.authProvider) this.api.setAuthProvider(null);
+		this.replaceAuthProvider(this.createAuthProvider());
 		await this.commitAuthProviderSwap();
 		return true;
 	}
@@ -1759,9 +1769,11 @@ export default class EngramSyncPlugin extends Plugin {
 		// topic while the socket authenticates with the apiKey identity → the
 		// backend rejects the join "unauthorized" and live sync stays dead until
 		// a reload.
-		this.authProvider = this.settings.apiKey
-			? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId)
-			: null;
+		this.replaceAuthProvider(
+			this.settings.apiKey
+				? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId)
+				: null,
+		);
 		await this.commitAuthProviderSwap();
 	}
 
@@ -1780,6 +1792,28 @@ export default class EngramSyncPlugin extends Plugin {
 		}
 	}
 
+	/** Retire the outgoing provider before any swap replaces it. Two live
+	 *  OAuthAuth instances refreshing the same rotating token chain fork it,
+	 *  and the server's reuse detection revokes the whole family — which is
+	 *  what killed a prod first-sync mid-flight on 2026-08-12. Disposal also
+	 *  keeps a refresh already in flight on the OLD instance from persisting
+	 *  its (forked) result over the NEW instance's tokens on disk. */
+	private retireAuthProvider(): void {
+		if (this.authProvider instanceof OAuthAuth) {
+			this.authProvider.dispose();
+		}
+	}
+
+	/** The ONLY way to overwrite this.authProvider: retire the outgoing
+	 *  instance, then assign. A raw assignment that skips retirement is how
+	 *  the two-live-refresher fork silently returns — route every new swap
+	 *  path through here. (auth-state.ts's resetAuthProvider closure disposes
+	 *  on its own because it types the plugin structurally.) */
+	private replaceAuthProvider(next: AuthProvider | null): void {
+		this.retireAuthProvider();
+		this.authProvider = next;
+	}
+
 	/** Shared tail of saveOAuthTokens/clearOAuthTokens: wire the (already
 	 *  swapped) provider onto the api BEFORE saveSettings() rebuilds the note
 	 *  channel — the rebuild freezes the channel topic's userId from
@@ -1788,9 +1822,11 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  live sync stays dead until reload. Then persist and hand the provider
 	 *  to the live stream. */
 	private async commitAuthProviderSwap(): Promise<void> {
-		if (this.authProvider) {
-			this.api.setAuthProvider(this.authProvider);
-		}
+		// Unconditional: wiring null on sign-out matters as much as wiring the
+		// new provider — a skipped rewire leaves the api holding the previous
+		// (now disposed) instance, and every later call throws "OAuthAuth
+		// disposed" instead of running unauthenticated.
+		this.api.setAuthProvider(this.authProvider);
 
 		await this.saveSettings();
 

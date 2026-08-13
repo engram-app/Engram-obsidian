@@ -448,3 +448,128 @@ describe("OAuthAuth self-heal on definitive rejection", () => {
 		expect(auth.getRefreshToken()).toBe("engram_rt_live");
 	});
 });
+
+describe("OAuthAuth.dispose — the token-chain fork fence (#420)", () => {
+	// Prod incident 2026-08-12: a provider swap left the OLD OAuthAuth instance
+	// alive and wired somewhere; both instances refreshed the same rotating
+	// token chain, the server's reuse detection saw the fork and revoked the
+	// whole family mid-first-sync. dispose() is the fence: a replaced provider
+	// must never touch the network, the chain, or persisted tokens again.
+	let mockRefreshFn: ReturnType<typeof mock>;
+	beforeEach(() => {
+		mockRefreshFn = mock();
+	});
+
+	it("getToken on a disposed provider rejects without calling refreshFn", async () => {
+		const auth = new OAuthAuth("engram_rt_old", "vault-1", "user@test.com", mockRefreshFn);
+		auth.dispose();
+
+		await expect(auth.getToken()).rejects.toThrow(/disposed/);
+		expect(mockRefreshFn).not.toHaveBeenCalled();
+	});
+
+	it("a refresh resolving AFTER dispose serves waiters but adopts nothing — no state update, no persistence", async () => {
+		let resolveRefresh!: (v: unknown) => void;
+		mockRefreshFn.mockReturnValue(new Promise((r) => (resolveRefresh = r)));
+		const rotated: unknown[] = [];
+		const auth = new OAuthAuth(
+			"engram_rt_old",
+			"vault-1",
+			"user@test.com",
+			mockRefreshFn as any,
+			(tokens) => void rotated.push(tokens),
+		);
+
+		const inflight = auth.getToken();
+		auth.dispose();
+		resolveRefresh({
+			access_token: "jwt_late",
+			refresh_token: "engram_rt_forked",
+			expires_in: 3600,
+		});
+
+		// Callers already parked on the shared in-flight refresh get the access
+		// token (valid server-side regardless of the swap) so a mid-flight sync
+		// finishes cleanly instead of aborting with errors...
+		await expect(inflight).resolves.toBe("jwt_late");
+		// ...but the rotation is NOT adopted or persisted — that would clobber
+		// the NEW provider's freshly-linked tokens on disk with a forked chain.
+		expect(rotated).toHaveLength(0);
+		expect(auth.getRefreshToken()).not.toBe("engram_rt_forked");
+		// And brand-new callers on the disposed instance still reject.
+		await expect(auth.getToken()).rejects.toThrow(/disposed/);
+	});
+	it("a definitive rejection after dispose does not fire onAuthInvalidated", async () => {
+		const err = Object.assign(new Error("revoked"), { status: 401 });
+		let rejectRefresh!: (e: unknown) => void;
+		mockRefreshFn.mockReturnValue(new Promise((_r, rej) => (rejectRefresh = rej)));
+		let invalidated = 0;
+		const auth = new OAuthAuth(
+			"engram_rt_old",
+			"vault-1",
+			"user@test.com",
+			mockRefreshFn as any,
+			undefined,
+			null,
+			0,
+			() => void invalidated++,
+		);
+
+		const inflight = auth.getToken();
+		auth.dispose();
+		rejectRefresh(err);
+
+		await expect(inflight).rejects.toThrow();
+		// The DISPOSED provider's fate says nothing about the NEW chain — it
+		// must not clear persisted auth or prompt a re-link.
+		expect(invalidated).toBe(0);
+	});
+});
+
+describe("OAuthAuth.settle — drain an in-flight rotation before retiring (#420)", () => {
+	it("resolves immediately when no refresh is in flight", async () => {
+		const auth = new OAuthAuth("engram_rt_old", "vault-1", "user@test.com", mock());
+		await auth.settle();
+	});
+
+	it("waits for the in-flight refresh so its rotation persists, then dispose discards nothing", async () => {
+		let resolveRefresh!: (v: unknown) => void;
+		const refreshFn = mock(() => new Promise((r) => (resolveRefresh = r)));
+		const rotated: string[] = [];
+		const auth = new OAuthAuth(
+			"engram_rt_old",
+			"vault-1",
+			"user@test.com",
+			refreshFn as never,
+			(tokens) => void rotated.push(tokens.refreshToken),
+		);
+
+		const inflight = auth.getToken();
+		const settled = auth.settle();
+		resolveRefresh({
+			access_token: "jwt_1",
+			refresh_token: "engram_rt_new",
+			expires_in: 3600,
+		});
+		await settled;
+
+		// The rotation completed and persisted BEFORE settle resolved — the
+		// caller may now stash/capture settings knowing they hold the live token.
+		expect(rotated).toEqual(["engram_rt_new"]);
+		expect(await inflight).toBe("jwt_1");
+		auth.dispose();
+		expect(auth.getRefreshToken()).toBe("engram_rt_new");
+	});
+
+	it("swallows a failing in-flight refresh", async () => {
+		let rejectRefresh!: (e: unknown) => void;
+		const refreshFn = mock(() => new Promise((_r, rej) => (rejectRefresh = rej)));
+		const auth = new OAuthAuth("engram_rt_old", "vault-1", "user@test.com", refreshFn as never);
+
+		const inflight = auth.getToken().catch(() => "swallowed");
+		const settled = auth.settle();
+		rejectRefresh(new Error("network down"));
+		await settled;
+		expect(await inflight).toBe("swallowed");
+	});
+});
