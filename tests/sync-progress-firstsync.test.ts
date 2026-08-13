@@ -451,3 +451,81 @@ describe("first-sync progress honesty (#420 P2)", () => {
 		expect(res.failed).toBeGreaterThan(0);
 	});
 });
+
+describe("coalesce semantics are opt-in (#422 review round 1)", () => {
+	const gatedEngine = () => {
+		const feed = [
+			noteRow({ id: "id-a", seq: 1, path: "Notes/a.md" }),
+			noteRow({ id: "id-b", seq: 2, path: "Notes/b.md" }),
+		];
+		const { engine } = makeEngine(feed);
+		let release!: () => void;
+		const gate = new Promise<void>((r) => (release = r));
+		let call = 0;
+		engine.setCrdtCatchupSince(async () => {
+			call += 1;
+			if (call === 1) await gate;
+			return { changes: call <= 2 ? feed : [], has_more: false, next_seq: null };
+		});
+		return { engine, release };
+	};
+
+	test("a non-progress catch-up coalesces to zeros instantly (poll/join semantics)", async () => {
+		const { engine, release } = gatedEngine();
+		const owner = engine.catchUp({ reportProgress: true });
+		await new Promise((r) => setTimeout(r, 10));
+
+		// The 5-min poll and the topic-join handler depend on the old fast
+		// return: blocking them behind a long replay defers the op-queue drain,
+		// and real counts here fire a spurious "pulled N changes" toast.
+		const start = Date.now();
+		const polled = await engine.catchUp({ reportProgress: false });
+		expect(polled.files).toBe(0);
+		expect(Date.now() - start).toBeLessThan(200);
+
+		release();
+		await owner;
+	});
+
+	test("pull-all-keep refuses to fake success when the replay coalesces", async () => {
+		const { engine, release } = gatedEngine();
+		const owner = engine.catchUp({ reportProgress: true });
+		await new Promise((r) => setTimeout(r, 10));
+
+		// A coalesced pull-all never replays from zero — reporting the running
+		// incremental session's counts would claim a full-vault restore that
+		// did not happen.
+		const pulled = await engine.pullAll({ deleteLocalExtras: false });
+		expect(pulled).toBe(0);
+		expect(engine.getStatus().error ?? "").toMatch(/another sync|contention|aborted/i);
+
+		release();
+		await owner;
+	});
+
+	test("attachment rows dedupe by id across a rename, like notes", async () => {
+		const attRow = (over: Record<string, unknown>) =>
+			({
+				type: "attachment",
+				id: "att-1",
+				seq: 1,
+				path: "Files/x.png",
+				mime_type: "image/png",
+				size_bytes: 3,
+				mtime: 1,
+				updated_at: "2026-01-01T00:00:00Z",
+				deleted: false,
+				...over,
+			}) as unknown as SyncChange;
+		const feed = [
+			attRow({ seq: 1, path: "Files/x.png" }),
+			attRow({ seq: 2, path: "Files/renamed.png" }),
+		];
+		const { engine } = makeEngine(feed);
+
+		const res = await engine.catchUp({ reportProgress: true });
+		// One attachment renamed mid-log is ONE planned file — two path-keyed
+		// ticks would overrun the plan's denominator (the pinned-bar bug).
+		expect(res.files).toBe(1);
+	});
+});

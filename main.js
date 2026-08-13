@@ -17800,7 +17800,7 @@ var SyncPreviewState = class {
   }
 };
 function planLoadErrorMessage(hasAuth) {
-  return hasAuth ? "Could not compare with the cloud. Check your connection." : "Your login expired \u2014 sign in again in Engram settings to continue.";
+  return hasAuth ? "Could not compare with the cloud. Check your connection." : "Your login expired. Sign in again in Engram settings to continue.";
 }
 function describeCreateVaultError(e) {
   return e instanceof LimitExceededError ? toastFor(e.reason) : statusOf(e) === 422 ? "Couldn't create vault \u2014 the name may be invalid or already in use." : "Could not create the vault \u2014 check your connection and try again.";
@@ -18369,8 +18369,13 @@ function renderActions(parent, plugin, refresh) {
         showChangeVault: !1,
         context: "review"
       });
-      plugin.syncEngine.computeSyncPlan("full").then((p) => modal.setPlan(p)).catch(() => modal.setPlanError(planLoadErrorMessage(plugin.hasAuthConfigured())));
-      let choice = await modal.awaitChoice();
+      plugin.syncEngine.computeSyncPlan("full").then((p) => modal.setPlan(p)).catch(() => modal.setPlanError(planLoadErrorMessage(plugin.hasAuthConfigured()))), plugin.trackPreviewModal(modal);
+      let choice;
+      try {
+        choice = await modal.awaitChoice();
+      } finally {
+        plugin.untrackPreviewModal(modal);
+      }
       if (choice === "change-vault")
         throw new Error("Sync Center received change-vault choice, caller missing");
       await plugin.runSyncWithProgress(choice, { plan: modal.getPlan() });
@@ -21318,7 +21323,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     var _a, _b, _c, _d, _e;
     let serverIds = /* @__PURE__ */ new Set(), serverAttachmentPaths = /* @__PURE__ */ new Set();
     if (this.seqReplayRunning) {
-      this.seqReplayAgain = !0;
+      if (this.seqReplayAgain = !0, !opts.awaitCoalesced)
+        return {
+          applied: 0,
+          files: 0,
+          failed: 0,
+          deletes: 0,
+          serverIds,
+          serverAttachmentPaths,
+          ran: !1,
+          complete: !1
+        };
       let running = await ((_a = this.seqReplayResult) == null ? void 0 : _a.catch(() => null));
       return {
         applied: (_b = running == null ? void 0 : running.applied) != null ? _b : 0,
@@ -21369,7 +21384,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     try {
       return await session;
     } finally {
-      this.seqReplayResult = null;
+      this.seqReplayResult === session && (this.seqReplayResult = null);
     }
   }
   /** Run `catchupViaSeqReplay` for a DESTRUCTIVE delete decision (pull-all wipe,
@@ -21437,12 +21452,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       if (manifest != null && manifest.unchanged) {
         await this.seedEmptyFolders();
         let { files: files2, failed: failed2, deletes: deletes2 } = await this.catchupViaSeqReplay({
-          onFileApplied
+          onFileApplied,
+          awaitCoalesced: opts.reportProgress
         });
         return { files: files2, failed: failed2, deletes: deletes2 };
       }
       await this.reconcileFromManifest(manifest, authGenAtFetch);
-      let behind = this.validateFromManifest(manifest), { files, failed, deletes } = await this.catchupViaSeqReplay({ onFileApplied }), poked = await this.healDivergedLiveBoundNotes(manifest);
+      let behind = this.validateFromManifest(manifest), { files, failed, deletes } = await this.catchupViaSeqReplay({
+        onFileApplied,
+        awaitCoalesced: opts.reportProgress
+      }), poked = await this.healDivergedLiveBoundNotes(manifest);
       try {
         await this.syncExplicitFolders();
       } catch (e) {
@@ -21482,7 +21501,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             try {
               let changed = await this.applySyncChange(c);
               if (applied += 1, !c.deleted && changed) {
-                let key = c.type === "attachment" ? `a:${c.path}` : `n:${(_a2 = c.id) != null ? _a2 : c.path}`;
+                let key = `${c.type === "attachment" ? "a" : "n"}:${(_a2 = c.id) != null ? _a2 : c.path}`;
                 tickedKeys.has(key) || (tickedKeys.add(key), files += 1, onFileApplied == null || onFileApplied(c.path));
               } else c.deleted && changed && (deletes += 1);
             } catch (e) {
@@ -21828,14 +21847,26 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           serverIds,
           serverAttachmentPaths
         } = replay);
-      } else
+      } else {
+        let replay = null;
+        for (let attempt = 0; attempt < 10; attempt++) {
+          let res = await this.catchupViaSeqReplay({ fromZero: !0, onFileApplied });
+          if (res.ran) {
+            replay = res;
+            break;
+          }
+          await this.sleep(50);
+        }
+        if (!replay)
+          return this.lastError = "Pull all aborted: another sync is running (replay contention). Try again when it finishes.", rlog().warn("pull", `${label} ABORTED: replay never ran exclusively`), 0;
         ({
           applied,
           files: pulledFileCount,
           failed: replayFailed,
           serverIds,
           serverAttachmentPaths
-        } = await this.catchupViaSeqReplay({ fromZero: !0, onFileApplied }));
+        } = replay);
+      }
       devLog().log(
         "pull",
         `${label}: replay applied=${applied}, serverIds=${serverIds.size}, serverAttachmentPaths=${serverAttachmentPaths.size}`
@@ -24750,7 +24781,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           firstSync: context === "first-time"
         });
       } catch (e) {
-        console.error("Engram Sync: sync failed", e), new import_obsidian26.Notice("Engram: sync failed \u2014 open the sync log for details"), rlog().error("lifecycle", `Sync (preview or run) failed: ${errMsg(e)}`);
+        console.error("Engram Sync: sync failed", e), new import_obsidian26.Notice("Engram: sync failed. Open the sync log for details."), rlog().error("lifecycle", `Sync (preview or run) failed: ${errMsg(e)}`);
       }
     });
   }
@@ -24761,6 +24792,16 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     await this.savePluginData(this.syncEngine.getLastSync());
   }
   /** Open the plugin settings on the Sync Center tab. */
+  /** Register/unregister the preview modal that auth invalidation should poke
+   *  with the sign-in error. Public so BOTH entry points (first-sync command
+   *  and Sync Center) share the seam — the Sync Center modal missing it left
+   *  the incident's 8s-spin-then-blame-connection limbo alive there. */
+  trackPreviewModal(modal) {
+    this.openPreviewModal = modal;
+  }
+  untrackPreviewModal(modal) {
+    this.openPreviewModal === modal && (this.openPreviewModal = null);
+  }
   openConnectionSettings() {
     var _a;
     (_a = this.settingTab) == null || _a.setInitialTab("connection");
@@ -24778,9 +24819,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     var _a, _b, _c, _d, _e;
     if (!this.statusBarEl) return;
     let blocked = (_b = (_a = this.syncEngine) == null ? void 0 : _a.isSyncBlocked()) != null ? _b : !1, text2, tooltip;
-    this.hasAuthConfigured() ? blocked && status.state !== "syncing" ? (text2 = status.pending > 0 ? `Engram: sync paused (${status.pending} queued)` : "Engram: sync paused", tooltip = "Sync paused \u2014 click to choose a sync direction") : status.state === "offline" ? (text2 = status.queued > 0 ? `Engram: offline (${status.queued} queued)` : "Engram: offline", tooltip = "Server unreachable \u2014 changes will sync when connected") : status.state === "error" ? (text2 = "Engram: error", tooltip = status.error || "Unknown error") : status.state === "syncing" ? (text2 = status.pending > 0 ? `Engram: syncing (${status.pending})` : "Engram: syncing", tooltip = "Sync in progress...") : status.pending > 0 ? (text2 = `Engram: pending (${status.pending})`, tooltip = `${status.pending} file(s) queued`) : this.liveConnected ? (text2 = "Engram: live", tooltip = "WebSocket connected \u2014 live sync active") : (text2 = "Engram: ready", tooltip = "Click to sync") : (text2 = "Engram: signed out", tooltip = "Not signed in \u2014 click to open settings and reconnect");
+    this.hasAuthConfigured() ? blocked && status.state !== "syncing" ? (text2 = status.pending > 0 ? `Engram: sync paused (${status.pending} queued)` : "Engram: sync paused", tooltip = "Sync paused \u2014 click to choose a sync direction") : status.state === "offline" ? (text2 = status.queued > 0 ? `Engram: offline (${status.queued} queued)` : "Engram: offline", tooltip = "Server unreachable \u2014 changes will sync when connected") : status.state === "error" ? (text2 = "Engram: error", tooltip = status.error || "Unknown error") : status.state === "syncing" ? (text2 = status.pending > 0 ? `Engram: syncing (${status.pending})` : "Engram: syncing", tooltip = "Sync in progress...") : status.pending > 0 ? (text2 = `Engram: pending (${status.pending})`, tooltip = `${status.pending} file(s) queued`) : this.liveConnected ? (text2 = "Engram: live", tooltip = "WebSocket connected \u2014 live sync active") : (text2 = "Engram: ready", tooltip = "Click to sync") : (text2 = "Engram: signed out", tooltip = "Not signed in. Click to open settings and reconnect.");
     let errorCount = (_d = (_c = this.syncLog) == null ? void 0 : _c.errorCount()) != null ? _d : 0;
-    if (errorCount > 0 && status.state === "idle" && !blocked && (text2 = `Engram: \u26A0 ${errorCount} sync errors`), status.lastSync) {
+    if (errorCount > 0 && status.state === "idle" && !blocked && this.hasAuthConfigured() && (text2 = `Engram: \u26A0 ${errorCount} sync errors`), status.lastSync) {
       let date = new Date(status.lastSync);
       tooltip += `
 Last sync: ${date.toLocaleString()}`;

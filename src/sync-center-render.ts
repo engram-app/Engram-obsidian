@@ -153,7 +153,15 @@ function renderActions(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: (
 				.computeSyncPlan("full")
 				.then((p) => modal.setPlan(p))
 				.catch(() => modal.setPlanError(planLoadErrorMessage(plugin.hasAuthConfigured())));
-			const choice = await modal.awaitChoice();
+			// Registered so auth invalidation can flip this modal to the sign-in
+			// error too, not just the first-sync command's modal.
+			plugin.trackPreviewModal(modal);
+			let choice: Awaited<ReturnType<typeof modal.awaitChoice>>;
+			try {
+				choice = await modal.awaitChoice();
+			} finally {
+				plugin.untrackPreviewModal(modal);
+			}
 			// change-vault is unreachable here (showChangeVault: false), but assert in
 			// case a future caller flips that flag without updating this dispatch site.
 			if (choice === "change-vault") {

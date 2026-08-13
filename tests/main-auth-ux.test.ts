@@ -103,3 +103,90 @@ describe("clearAuthAndPromptRelink surfaces into an open preview modal", () => {
 		expect(planErrors).toEqual([planLoadErrorMessage(false)]);
 	});
 });
+
+describe("round-1 review fixes (#422)", () => {
+	test("signed-out status wins over the sync-error override", () => {
+		const texts: string[] = [];
+		const fake = Object.assign(Object.create(EngramSyncPlugin.prototype), {
+			settings: {},
+			statusBarEl: {
+				setText(t: string) {
+					texts.push(t);
+				},
+				setAttribute(_k: string, _v: string) {},
+			},
+			syncEngine: {
+				isSyncBlocked() {
+					return false;
+				},
+			},
+			// Dead auth PRODUCES logged sync errors — the exact state the
+			// signed-out branch exists for must not be masked by the error badge.
+			syncLog: {
+				errorCount() {
+					return 3;
+				},
+			},
+			liveConnected: false,
+		});
+		(
+			EngramSyncPlugin.prototype as unknown as {
+				updateStatusBar(this: unknown, s: SyncStatus): void;
+			}
+		).updateStatusBar.call(fake, { state: "idle", pending: 0, queued: 0 } as SyncStatus);
+		expect(texts[0]).toMatch(/signed out/i);
+	});
+
+	test("trackPreviewModal registers a modal for the auth poke; untrack clears it", async () => {
+		const planErrors: string[] = [];
+		const modal = {
+			close() {},
+			setPlanError(msg: string) {
+				planErrors.push(msg);
+			},
+		};
+		const proto = EngramSyncPlugin.prototype as unknown as {
+			trackPreviewModal(this: unknown, m: unknown): void;
+			untrackPreviewModal(this: unknown, m: unknown): void;
+			clearAuthAndPromptRelink(this: unknown, reason: string, notify: boolean): Promise<void>;
+		};
+		const base = {
+			settings: { refreshToken: "rt" } as Record<string, unknown>,
+			api: { setAuthProvider(_p: unknown) {} },
+			authProvider: null,
+			noteStream: null,
+			liveConnected: false,
+			everConnected: false,
+			openPreviewModal: null as unknown,
+			async savePluginData(_ls: unknown) {},
+			syncEngine: {
+				getLastSync() {
+					return 0;
+				},
+				getStatus() {
+					return { state: "idle", pending: 0, queued: 0 };
+				},
+			},
+			updateStatusBar(_s: unknown) {},
+		};
+		const fake = Object.assign(Object.create(EngramSyncPlugin.prototype), base);
+
+		proto.trackPreviewModal.call(fake, modal);
+		await proto.clearAuthAndPromptRelink.call(fake, "test", false);
+		expect(planErrors).toEqual([planLoadErrorMessage(false)]);
+
+		const fake2 = Object.assign(Object.create(EngramSyncPlugin.prototype), base, {
+			settings: { refreshToken: "rt" },
+		});
+		proto.trackPreviewModal.call(fake2, modal);
+		proto.untrackPreviewModal.call(fake2, modal);
+		planErrors.length = 0;
+		await proto.clearAuthAndPromptRelink.call(fake2, "test", false);
+		expect(planErrors).toEqual([]);
+	});
+
+	test("no em dashes in the new user-facing copy", () => {
+		expect(planLoadErrorMessage(true)).not.toContain("\u2014");
+		expect(planLoadErrorMessage(false)).not.toContain("\u2014");
+	});
+});

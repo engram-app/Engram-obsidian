@@ -153,7 +153,7 @@ export class SyncPreviewState {
 export function planLoadErrorMessage(hasAuth: boolean): string {
 	return hasAuth
 		? "Could not compare with the cloud. Check your connection."
-		: "Your login expired — sign in again in Engram settings to continue.";
+		: "Your login expired. Sign in again in Engram settings to continue.";
 }
 
 /** Map a createVault rejection to a short human label. LimitExceededError =

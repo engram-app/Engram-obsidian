@@ -2686,7 +2686,7 @@ export default class EngramSyncPlugin extends Plugin {
 				console.error("Engram Sync: sync failed", e);
 				// This boundary wraps BOTH the preview and the sync run it
 				// dispatches — "preview failed" here mislabeled real sync failures.
-				new Notice("Engram: sync failed — open the sync log for details");
+				new Notice("Engram: sync failed. Open the sync log for details.");
 				rlog().error("lifecycle", `Sync (preview or run) failed: ${errMsg(e)}`);
 			}
 		});
@@ -2700,6 +2700,18 @@ export default class EngramSyncPlugin extends Plugin {
 	}
 
 	/** Open the plugin settings on the Sync Center tab. */
+	/** Register/unregister the preview modal that auth invalidation should poke
+	 *  with the sign-in error. Public so BOTH entry points (first-sync command
+	 *  and Sync Center) share the seam — the Sync Center modal missing it left
+	 *  the incident's 8s-spin-then-blame-connection limbo alive there. */
+	trackPreviewModal(modal: { close(): void; setPlanError(msg: string): void }): void {
+		this.openPreviewModal = modal;
+	}
+
+	untrackPreviewModal(modal: { close(): void; setPlanError(msg: string): void }): void {
+		if (this.openPreviewModal === modal) this.openPreviewModal = null;
+	}
+
 	openConnectionSettings(): void {
 		this.settingTab?.setInitialTab("connection");
 		const setting = (
@@ -2732,7 +2744,7 @@ export default class EngramSyncPlugin extends Plugin {
 			// incident shipped — after a forced sign-out the bar claimed ready
 			// while every sync path was dead.
 			text = "Engram: signed out";
-			tooltip = "Not signed in — click to open settings and reconnect";
+			tooltip = "Not signed in. Click to open settings and reconnect.";
 		} else if (blocked && status.state !== "syncing") {
 			// Sync gate closed — user has not picked a direction in SyncPreviewModal
 			// for the current auth+vault fingerprint. Show a click-to-resolve nag.
@@ -2763,7 +2775,10 @@ export default class EngramSyncPlugin extends Plugin {
 		}
 
 		const errorCount = this.syncLog?.errorCount() ?? 0;
-		if (errorCount > 0 && status.state === "idle" && !blocked) {
+		// hasAuthConfigured guard: dead auth PRODUCES logged sync errors, so
+		// without it the error badge overwrites "signed out" in exactly the
+		// forced-sign-out state the branch above exists for.
+		if (errorCount > 0 && status.state === "idle" && !blocked && this.hasAuthConfigured()) {
 			text = `Engram: ⚠ ${errorCount} sync errors`;
 		}
 
