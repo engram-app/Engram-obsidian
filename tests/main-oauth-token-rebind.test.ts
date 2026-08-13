@@ -228,3 +228,75 @@ describe("provider swaps dispose the outgoing OAuthAuth (#420)", () => {
 		expect(disposeSpy).toHaveBeenCalledTimes(1);
 	});
 });
+
+describe("swap-site hardening round 2 (#420 review)", () => {
+	test("switchBackendMode stashes the ROTATED token when a refresh is in flight", async () => {
+		let resolveRefresh!: (v: unknown) => void;
+		const refreshFn = mock(() => new Promise((r) => (resolveRefresh = r)));
+		const settings: Record<string, unknown> = {
+			backendMode: "cloud",
+			apiUrl: "https://api.engram.page",
+			refreshToken: "engram_rt_consumed",
+		};
+		const old = new OAuthAuth(
+			"engram_rt_consumed",
+			"vault-1",
+			"u@test.com",
+			refreshFn as never,
+			(tokens) => {
+				settings.refreshToken = tokens.refreshToken;
+			},
+		);
+		const fake = Object.assign(Object.create(EngramSyncPlugin.prototype), {
+			settings,
+			authProvider: old,
+			createAuthProvider() {
+				return null;
+			},
+			api: { setAuthProvider(_p: unknown) {} },
+			noteStream: null,
+			async saveSettings() {},
+			syncEngine: { bumpAuthGeneration() {} },
+		});
+
+		void old.getToken();
+		const switching = EngramSyncPlugin.prototype.switchBackendMode.call(
+			fake as never,
+			"selfhost",
+		);
+		resolveRefresh({
+			access_token: "jwt_1",
+			refresh_token: "engram_rt_rotated",
+			expires_in: 3600,
+		});
+		expect(await switching).toBe(true);
+
+		// The server consumed engram_rt_consumed mid-switch. The stash must hold
+		// the ROTATED token, or switching back replays a dead token and trips
+		// the server's reuse detection (revoking the whole family).
+		const stash = settings.inactiveBackend as { refreshToken?: string };
+		expect(stash.refreshToken).toBe("engram_rt_rotated");
+	});
+
+	test("clearOAuthTokens with no apiKey wires null onto the api (not the disposed provider)", async () => {
+		const old = new OAuthAuth("engram_rt_old", "vault-1", "u@test.com", mock());
+		const wired: unknown[] = [];
+		const fake = Object.assign(Object.create(EngramSyncPlugin.prototype), {
+			settings: {} as Record<string, unknown>,
+			authProvider: old,
+			api: {
+				setAuthProvider(p: unknown) {
+					wired.push(p);
+				},
+			},
+			noteStream: null,
+			async saveSettings() {},
+			syncEngine: { bumpAuthGeneration() {} },
+		});
+
+		await EngramSyncPlugin.prototype.clearOAuthTokens.call(fake as never);
+		// The api must not be left holding the disposed provider — every later
+		// call would throw "OAuthAuth disposed" instead of running unauthenticated.
+		expect(wired).toEqual([null]);
+	});
+});

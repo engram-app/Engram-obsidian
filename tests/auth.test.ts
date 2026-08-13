@@ -521,3 +521,51 @@ describe("OAuthAuth.dispose — the token-chain fork fence (#420)", () => {
 		expect(invalidated).toBe(0);
 	});
 });
+
+describe("OAuthAuth.settle — drain an in-flight rotation before retiring (#420)", () => {
+	it("resolves immediately when no refresh is in flight", async () => {
+		const auth = new OAuthAuth("engram_rt_old", "vault-1", "user@test.com", mock());
+		await auth.settle();
+	});
+
+	it("waits for the in-flight refresh so its rotation persists, then dispose discards nothing", async () => {
+		let resolveRefresh!: (v: unknown) => void;
+		const refreshFn = mock(() => new Promise((r) => (resolveRefresh = r)));
+		const rotated: string[] = [];
+		const auth = new OAuthAuth(
+			"engram_rt_old",
+			"vault-1",
+			"user@test.com",
+			refreshFn as never,
+			(tokens) => void rotated.push(tokens.refreshToken),
+		);
+
+		const inflight = auth.getToken();
+		const settled = auth.settle();
+		resolveRefresh({
+			access_token: "jwt_1",
+			refresh_token: "engram_rt_new",
+			expires_in: 3600,
+		});
+		await settled;
+
+		// The rotation completed and persisted BEFORE settle resolved — the
+		// caller may now stash/capture settings knowing they hold the live token.
+		expect(rotated).toEqual(["engram_rt_new"]);
+		expect(await inflight).toBe("jwt_1");
+		auth.dispose();
+		expect(auth.getRefreshToken()).toBe("engram_rt_new");
+	});
+
+	it("swallows a failing in-flight refresh", async () => {
+		let rejectRefresh!: (e: unknown) => void;
+		const refreshFn = mock(() => new Promise((_r, rej) => (rejectRefresh = rej)));
+		const auth = new OAuthAuth("engram_rt_old", "vault-1", "user@test.com", refreshFn as never);
+
+		const inflight = auth.getToken().catch(() => "swallowed");
+		const settled = auth.settle();
+		rejectRefresh(new Error("network down"));
+		await settled;
+		expect(await inflight).toBe("swallowed");
+	});
+});

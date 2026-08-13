@@ -145,6 +145,21 @@ export class OAuthAuth implements AuthProvider {
 		this.disposed = true;
 	}
 
+	/** Wait for any in-flight refresh to finish (success or failure) WITHOUT
+	 *  starting one. A swap site that intends to KEEP this chain (backend-mode
+	 *  switch stashes it for switch-back) must settle before capturing
+	 *  settings: the server may have already consumed the old token, and
+	 *  stashing it would replay a dead token later — tripping the server's
+	 *  reuse detection, which revokes the whole family. */
+	async settle(): Promise<void> {
+		try {
+			await this.inflightRefresh;
+		} catch {
+			// The failure already rejected the getToken() callers; settle only
+			// guarantees the rotation (if any) has persisted.
+		}
+	}
+
 	async getToken(): Promise<string> {
 		if (this.disposed) {
 			throw new Error("OAuthAuth disposed: provider was replaced");
