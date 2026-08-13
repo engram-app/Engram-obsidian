@@ -1,7 +1,7 @@
 /**
  * Tests for remote-log.ts — RemoteLogger buffer, flush, threshold, ring buffer.
  */
-import { beforeEach, describe, expect, jest, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import {
 	destroyRemoteLog,
 	initRemoteLog,
@@ -403,5 +403,54 @@ describe("verbose remote logging reaches Loki", () => {
 		// warn/error ship regardless (Category.loki_ship? passes them); flagging
 		// them would only add noise to the payload.
 		expect(sent[0]?.[0]?.diagnostic).toBeUndefined();
+	});
+});
+
+describe("anomaly() bypasses the diagnostics gate", () => {
+	// Same global-singleton teardown as the rest of this file.
+	afterEach(async () => {
+		await destroyRemoteLog();
+	});
+
+	// Prod 2026-08-13: a first sync silently dropped 316 of 316 notes and we had
+	// NOTHING to look at — `diagnosticsEnabled` defaults false, so every
+	// rlog() call on the pull path was a no-op. The one moment we most need
+	// telemetry is a user's first sync, which is exactly when nobody has opted
+	// into diagnostics yet. anomaly() is the narrow escape hatch: COUNTS AND
+	// REASONS ONLY, never paths or content, so it respects what the setting is
+	// actually protecting (verbose per-note telemetry) while making a silent
+	// failure visible.
+	const makeLogger = () => {
+		const sent: any[] = [];
+		const logger = initRemoteLog();
+		logger.configure(
+			async (batch: any[]) => {
+				sent.push(...batch);
+			},
+			"1.0.0-test",
+			"test",
+		);
+		logger.setEnabled(false);
+		return { logger, sent };
+	};
+
+	test("an anomaly ships even with diagnostics OFF", async () => {
+		const { logger, sent } = makeLogger();
+
+		logger.anomaly("sync", "replay consumed 316 rows and produced 0 files");
+		await logger.flush();
+
+		expect(sent.length).toBe(1);
+		expect(sent[0].message).toContain("316");
+		expect(sent[0].level).toBe("warn");
+	});
+
+	test("an ordinary info line stays suppressed with diagnostics OFF", async () => {
+		const { logger, sent } = makeLogger();
+
+		logger.info("sync", "routine chatter");
+		await logger.flush();
+
+		expect(sent.length).toBe(0);
 	});
 });

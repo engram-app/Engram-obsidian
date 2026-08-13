@@ -128,15 +128,36 @@ export class RemoteLogger {
 		this.pushFn = null;
 	}
 
+	/** A silent failure the user cannot see and we cannot debug. Ships at warn
+	 *  EVEN WHEN DIAGNOSTICS ARE OFF, and bypasses the level threshold.
+	 *
+	 *  Why the bypass exists: `diagnosticsEnabled` defaults false, so every
+	 *  rlog() call is a no-op on a fresh install — and a user's FIRST sync is
+	 *  simultaneously the most likely thing to break and the least likely to
+	 *  have telemetry enabled. Prod 2026-08-13: a first sync dropped 316 of 316
+	 *  notes and produced exactly zero client log lines to look at.
+	 *
+	 *  CONTRACT — callers must honour it: counts and reasons ONLY. Never a
+	 *  path, a title, or note content. The setting is protecting the user from
+	 *  verbose per-note telemetry, and that protection stays intact; what it
+	 *  must not do is hide the fact that sync silently did nothing. */
+	anomaly(category: string, message: string): void {
+		this.addEntry("warn", category, message, undefined, false, true);
+	}
+
 	private addEntry(
 		level: "error" | "warn" | "info",
 		category: string,
 		message: string,
 		stack?: string,
 		diagnostic?: boolean,
+		force?: boolean,
 	): void {
-		if (!this.enabled || !this.pushFn) return;
-		if (LEVEL_SEVERITY[level] < LEVEL_SEVERITY[this.levelThreshold]) return;
+		if (!this.pushFn) return;
+		if (!force) {
+			if (!this.enabled) return;
+			if (LEVEL_SEVERITY[level] < LEVEL_SEVERITY[this.levelThreshold]) return;
+		}
 
 		const entry: RemoteLogEntry = {
 			ts: new Date().toISOString(),
@@ -198,6 +219,7 @@ interface NoopLogger {
 	warn(category: string, message: string): void;
 	info(category: string, message: string): void;
 	diag(category: string, message: string): void;
+	anomaly(category: string, message: string): void;
 	setConnId(id: string | null): void;
 	setClientContext(deviceId: string | null, vaultId: string | null): void;
 	setLevelThreshold(level: RemoteLogLevel): void;
@@ -212,6 +234,7 @@ const _noop: NoopLogger = {
 	warn() {},
 	info() {},
 	diag() {},
+	anomaly() {},
 	setConnId() {},
 	setClientContext() {},
 	setLevelThreshold() {},

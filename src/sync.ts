@@ -4103,6 +4103,25 @@ export class SyncEngine {
 					// the whole result — never OR this back to true.
 					if (!pass.complete) complete = false;
 				} while (this.seqReplayAgain);
+				// Outcome check. `applied` counts every row the feed handed us;
+				// `files` and `deletes` count what actually reached disk. All three
+				// passes done and applied > 0 with NOTHING materialised or trashed
+				// means the feed did work and the vault got none of it — the shape
+				// of the 2026-08-13 prod failure, where 316 note rows arrived, 73
+				// folders landed, and not one note did.
+				//
+				// Shipped via rlog().anomaly so it survives `diagnosticsEnabled:
+				// false` (the default). That failure produced ZERO client log lines
+				// precisely because a fresh install has telemetry off, which is the
+				// same install most likely to hit a first-sync bug. Counts only —
+				// no paths — so the setting still protects what it is meant to.
+				if (applied > 0 && files === 0 && deletes === 0) {
+					rlog().anomaly(
+						"sync",
+						`replay produced no files: applied=${applied} files=0 deletes=0 ` +
+							`failed=${failed} complete=${complete}`,
+					);
+				}
 			} finally {
 				if (opts.onFileApplied) this.seqReplayFileListeners.delete(opts.onFileApplied);
 				this.seqReplayRunning = false;

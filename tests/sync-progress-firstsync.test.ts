@@ -9,12 +9,13 @@
  * and real failure tallies. Mock-engine pattern mirrors
  * tests/sync-socket-catchup.test.ts.
  */
-import { describe, expect, mock, spyOn, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import "fake-indexeddb/auto";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import type { ProviderRegistry as CrdtManager } from "../src/crdt/provider-registry";
+import { destroyRemoteLog, initRemoteLog } from "../src/remote-log";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS, type SyncChange, type SyncProgress } from "../src/types";
 
@@ -671,5 +672,60 @@ describe("hasServerNote after a handshake heal (#339)", () => {
 		await engine.commitCrdtConvergence("id-empty");
 
 		expect(engine.hasServerNote("id-empty")).toBe(false);
+	});
+});
+
+describe("replay outcome summary (prod 2026-08-13 blindness)", () => {
+	// initRemoteLog() installs a GLOBAL singleton. Leaving it configured leaks a
+	// live logger into every later test file in the process — it made
+	// crdt/wiring.test.ts fail in the full run while passing alone.
+	afterEach(async () => {
+		await destroyRemoteLog();
+	});
+
+	/** Capture what the plugin would ship, with diagnostics OFF — the default,
+	 *  and the state Todd's install was in when 316 of 316 notes vanished with
+	 *  zero client log lines to look at. */
+	const captureShipped = () => {
+		const sent: Array<{ level: string; category: string; message: string }> = [];
+		const logger = initRemoteLog();
+		logger.configure(
+			async (batch: any[]) => {
+				sent.push(...batch);
+			},
+			"test",
+			"test",
+		);
+		logger.setEnabled(false);
+		return { sent, flush: () => logger.flush() };
+	};
+
+	test("a replay that consumes rows but produces NOTHING reports itself", async () => {
+		// applied > 0, files === 0, deletes === 0 — work went in, nothing came
+		// out. That is the exact shape of the prod failure and it was silent.
+		const { sent, flush } = captureShipped();
+		const { engine } = makeEngine(threeRowFeed());
+		spyOn(engine, "applySyncChange").mockResolvedValue(false);
+
+		await engine.catchUp({ reportProgress: true });
+		await flush();
+
+		const anomaly = sent.find((e) => e.message.includes("produced no files"));
+		expect(anomaly).toBeDefined();
+		expect(anomaly?.level).toBe("warn");
+		// Counts + reasons only — never a path. The diagnostics setting is
+		// protecting the user from per-note telemetry and that stays intact.
+		expect(anomaly?.message).not.toContain("Notes/");
+		expect(anomaly?.message).toContain("applied=3");
+	});
+
+	test("a healthy replay stays silent with diagnostics off", async () => {
+		const { sent, flush } = captureShipped();
+		const { engine } = makeEngine(threeRowFeed());
+
+		await engine.catchUp({ reportProgress: true });
+		await flush();
+
+		expect(sent.filter((e) => e.message.includes("produced no files")).length).toBe(0);
 	});
 });

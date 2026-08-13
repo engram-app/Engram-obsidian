@@ -985,8 +985,25 @@ var LEVEL_SEVERITY = {
   async destroy() {
     this.stopTimer(), await this.flush(), this.buffer = [], this.pushFn = null;
   }
-  addEntry(level, category, message, stack, diagnostic) {
-    if (!this.enabled || !this.pushFn || LEVEL_SEVERITY[level] < LEVEL_SEVERITY[this.levelThreshold]) return;
+  /** A silent failure the user cannot see and we cannot debug. Ships at warn
+   *  EVEN WHEN DIAGNOSTICS ARE OFF, and bypasses the level threshold.
+   *
+   *  Why the bypass exists: `diagnosticsEnabled` defaults false, so every
+   *  rlog() call is a no-op on a fresh install — and a user's FIRST sync is
+   *  simultaneously the most likely thing to break and the least likely to
+   *  have telemetry enabled. Prod 2026-08-13: a first sync dropped 316 of 316
+   *  notes and produced exactly zero client log lines to look at.
+   *
+   *  CONTRACT — callers must honour it: counts and reasons ONLY. Never a
+   *  path, a title, or note content. The setting is protecting the user from
+   *  verbose per-note telemetry, and that protection stays intact; what it
+   *  must not do is hide the fact that sync silently did nothing. */
+  anomaly(category, message) {
+    this.addEntry("warn", category, message, void 0, !1, !0);
+  }
+  addEntry(level, category, message, stack, diagnostic, force) {
+    if (!this.pushFn || !force && (!this.enabled || LEVEL_SEVERITY[level] < LEVEL_SEVERITY[this.levelThreshold]))
+      return;
     let entry = {
       ts: (/* @__PURE__ */ new Date()).toISOString(),
       level,
@@ -1014,6 +1031,8 @@ var LEVEL_SEVERITY = {
   info() {
   },
   diag() {
+  },
+  anomaly() {
   },
   setConnId() {
   },
@@ -21406,6 +21425,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           );
           applied += pass.applied, files += pass.files, failed += pass.failed, deletes += pass.deletes, pass.complete || (complete = !1);
         } while (this.seqReplayAgain);
+        applied > 0 && files === 0 && deletes === 0 && rlog().anomaly(
+          "sync",
+          `replay produced no files: applied=${applied} files=0 deletes=0 failed=${failed} complete=${complete}`
+        );
       } finally {
         opts.onFileApplied && this.seqReplayFileListeners.delete(opts.onFileApplied), this.seqReplayRunning = !1;
       }
