@@ -46,6 +46,9 @@ export class DeviceFlowModal extends Modal {
 
 	onOpen(): void {
 		const { contentEl } = this;
+		// Shared sizing with the preview + progress modals — this is step one of
+		// one task, so the window must not change shape between steps.
+		contentEl.addClass("engram-flow-modal");
 		contentEl.empty();
 		contentEl.createEl("h2", { text: "Link Obsidian to Engram" });
 		const statusEl = contentEl.createEl("p", { text: "Starting..." });

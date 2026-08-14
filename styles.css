@@ -1226,6 +1226,35 @@ body.is-mobile .engram-support-buttons > a {
 }
 
 /* SyncPreviewModal */
+
+/* Shared chrome for the connect -> preview -> progress flow.
+
+   These three modals run back-to-back as one user task, but each was a
+   separate Modal relying on Obsidian's content-driven sizing, so every step
+   came out a different width and height. A resize is the strongest cue a UI
+   has for "this is a different thing", which is why one flow read as three
+   unrelated dialogs.
+
+   Sizing only — each modal keeps its own body styles. Staged fix; the real
+   one is a single shell with the steps as renderers (see engram-app
+   issue for the flow-shell refactor). */
+.engram-flow-modal {
+	/* min(), not a flat value: Obsidian on mobile is narrower than 32em and a
+	   hard min-width would overflow the viewport. */
+	min-width: min(32em, 100%);
+	min-height: 16em;
+	display: flex;
+	flex-direction: column;
+}
+
+/* Matches .engram-sync-preview-header exactly, so the two modals that use a
+   bare h2 stop looking like a different product mid-flow. */
+.engram-flow-modal h2 {
+	margin: 0 0 1em 0;
+	font-size: 1.4em;
+	font-weight: 600;
+}
+
 .engram-sync-preview-modal .engram-sync-preview-header {
 	margin: 0 0 1em 0;
 	font-size: 1.4em;
@@ -1249,6 +1278,7 @@ body.is-mobile .engram-support-buttons > a {
 	color: var(--text-muted);
 	padding: 1.5em 0;
 	text-align: center;
+
 	/* Reserve the body so the modal does not collapse to one line and then
 	   snap back open when the plan lands. That resize is what made a single
 	   modal read as three different ones. */

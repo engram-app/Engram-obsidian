@@ -16736,7 +16736,7 @@ var DeviceFlowModal = class extends import_obsidian14.Modal {
   }
   onOpen() {
     let { contentEl } = this;
-    contentEl.empty(), contentEl.createEl("h2", { text: "Link Obsidian to Engram" });
+    contentEl.addClass("engram-flow-modal"), contentEl.empty(), contentEl.createEl("h2", { text: "Link Obsidian to Engram" });
     let statusEl = contentEl.createEl("p", { text: "Starting..." });
     this.beginDeviceFlow(contentEl, statusEl);
   }
@@ -17078,7 +17078,7 @@ var SyncProgressModal = class extends import_obsidian15.Modal {
   onOpen() {
     var _a;
     let { contentEl } = this;
-    contentEl.empty(), contentEl.addClass("engram-sync-progress-modal"), contentEl.createEl("h2", { text: "Syncing your vault" }), this.opts.intro && contentEl.createEl("p", { text: this.opts.intro, cls: "engram-progress-intro" }), this.statusEl = contentEl.createEl("p", {
+    contentEl.empty(), contentEl.addClass("engram-sync-progress-modal"), contentEl.addClass("engram-flow-modal"), contentEl.createEl("h2", { text: "Syncing your vault" }), this.opts.intro && contentEl.createEl("p", { text: this.opts.intro, cls: "engram-progress-intro" }), this.statusEl = contentEl.createEl("p", {
       text: "Getting started\u2026",
       cls: "engram-progress-status"
     }), this.rowsWrap = contentEl.createDiv({ cls: "engram-progress-rows" }), this.rows = ((_a = this.opts.phases) != null ? _a : []).map((p) => ({
@@ -18037,7 +18037,7 @@ var SyncPreviewModal = class extends import_obsidian21.Modal {
     });
   }
   onOpen() {
-    this.contentEl.addClass("engram-sync-preview-modal"), this.startLoadingTextTimer(), this.opts.initialView === "vault-picker" ? this.openVaultPicker() : this.render();
+    this.contentEl.addClass("engram-sync-preview-modal"), this.contentEl.addClass("engram-flow-modal"), this.startLoadingTextTimer(), this.opts.initialView === "vault-picker" ? this.openVaultPicker() : this.render();
   }
   onClose() {
     var _a;

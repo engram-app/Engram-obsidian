@@ -266,6 +266,7 @@ export class SyncProgressModal extends Modal {
 		const { contentEl } = this;
 		contentEl.empty();
 		contentEl.addClass("engram-sync-progress-modal");
+		contentEl.addClass("engram-flow-modal");
 
 		contentEl.createEl("h2", { text: "Syncing your vault" });
 

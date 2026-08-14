@@ -398,6 +398,7 @@ export class SyncPreviewModal extends Modal {
 
 	onOpen(): void {
 		this.contentEl.addClass("engram-sync-preview-modal");
+		this.contentEl.addClass("engram-flow-modal");
 		this.startLoadingTextTimer();
 		if (this.opts.initialView === "vault-picker") {
 			void this.openVaultPicker();
