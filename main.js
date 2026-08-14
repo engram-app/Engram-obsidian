@@ -20071,7 +20071,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   async flushFromCrdt(path, content) {
     var _a, _b;
     if (this.syncBlocked)
-      return devLog().log("sync-blocked", `flushFromCrdt short-circuited \u2014 gate closed: ${path}`), !0;
+      return devLog().log("sync-blocked", `flushFromCrdt short-circuited \u2014 gate closed: ${path}`), !1;
     let normalized = (0, import_obsidian24.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized);
     if (file instanceof import_obsidian24.TFile && await this.app.vault.cachedRead(file) === content)
       return this.recordCrdtBaseline(normalized, content), !0;
@@ -21427,7 +21427,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         } while (this.seqReplayAgain);
         applied > 0 && files === 0 && deletes === 0 && rlog().anomaly(
           "sync",
-          `replay produced no files: applied=${applied} files=0 deletes=0 failed=${failed} complete=${complete}`
+          `replay produced no files: applied=${applied} files=0 deletes=0 failed=${failed} complete=${complete} blocked=${this.syncBlocked}`
         );
       } finally {
         opts.onFileApplied && this.seqReplayFileListeners.delete(opts.onFileApplied), this.seqReplayRunning = !1;
@@ -22574,7 +22574,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         else
           rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);
       } else
-        return noteId && this.isLiveBound(normalized) && ((_k = this.crdtEnrollment) == null || _k.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content), this.markServerKnown(normalized), !0;
+        return noteId && this.isLiveBound(normalized) && ((_k = this.crdtEnrollment) == null || _k.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content) ? (this.markServerKnown(normalized), !0) : !1;
       return !1;
     }
     let existing = this.app.vault.getFileByPath(normalized);

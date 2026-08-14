@@ -729,3 +729,55 @@ describe("replay outcome summary (prod 2026-08-13 blindness)", () => {
 		expect(sent.filter((e) => e.message.includes("produced no files")).length).toBe(0);
 	});
 });
+
+describe("the sync gate must not fake success (prod 2026-08-13 root cause)", () => {
+	afterEach(async () => {
+		await destroyRemoteLog();
+	});
+
+	const captureShipped = () => {
+		const sent: Array<{ level: string; message: string }> = [];
+		const logger = initRemoteLog();
+		logger.configure(
+			async (b: any[]) => {
+				sent.push(...b);
+			},
+			"test",
+			"test",
+		);
+		logger.setEnabled(false);
+		return { sent, flush: () => logger.flush() };
+	};
+
+	test("a gate-blocked pull writes nothing and does NOT count files", async () => {
+		// THE bug. flushFromCrdt short-circuited on syncBlocked and returned
+		// TRUE, so a write that never happened counted as a downloaded file:
+		// the bar hit 100%, the recap claimed success, the anomaly could not
+		// fire, and the only trace was a devLog that never leaves the machine.
+		// Folders bypass the gate (direct vault.createFolder), which is why the
+		// user saw folders arrive and not one note.
+		const { sent, flush } = captureShipped();
+		const { engine } = makeEngine(threeRowFeed());
+		engine.setSyncBlocked(true);
+
+		const res = await engine.catchUp({ reportProgress: true });
+		await flush();
+
+		expect(res.files).toBe(0);
+		const anomaly = sent.find((e) => e.message.includes("produced no files"));
+		expect(anomaly).toBeDefined();
+		expect(anomaly?.level).toBe("warn");
+	});
+
+	test("with the gate open the same feed materialises normally", async () => {
+		const { sent, flush } = captureShipped();
+		const { engine } = makeEngine(threeRowFeed());
+		engine.setSyncBlocked(false);
+
+		const res = await engine.catchUp({ reportProgress: true });
+		await flush();
+
+		expect(res.files).toBe(2);
+		expect(sent.filter((e) => e.message.includes("produced no files")).length).toBe(0);
+	});
+});

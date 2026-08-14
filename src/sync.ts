@@ -1270,8 +1270,18 @@ export class SyncEngine {
 	 *  CRDT frames cannot overwrite local files before the user picks a direction. */
 	async flushFromCrdt(path: string, content: string): Promise<boolean> {
 		if (this.syncBlocked) {
+			// FALSE, not true. This wrote nothing, and claiming otherwise is what
+			// made the 2026-08-13 prod failure invisible: the `true` propagated
+			// into `changed`, counted the note as a downloaded file, drove the bar
+			// to 100%, made the recap claim success, and suppressed the
+			// no-files-produced anomaly — all while the vault stayed empty.
+			// Folders bypass this gate entirely (direct vault.createFolder), which
+			// is why the user saw every folder arrive and not one note.
+			//
+			// A no-op must never report as work. The caller decides what to do
+			// about a closed gate; it cannot decide anything if we lie to it.
 			devLog().log("sync-blocked", `flushFromCrdt short-circuited — gate closed: ${path}`);
-			return true;
+			return false;
 		}
 		const normalized = normalizePath(path);
 		const file = this.app.vault.getAbstractFileByPath(normalized);
@@ -4116,10 +4126,14 @@ export class SyncEngine {
 				// same install most likely to hit a first-sync bug. Counts only —
 				// no paths — so the setting still protects what it is meant to.
 				if (applied > 0 && files === 0 && deletes === 0) {
+					// `blocked` is the first thing to look at: a closed first-sync
+					// gate silently no-ops every note write while folders (which
+					// bypass it) still land. That combination — folders arrive,
+					// notes do not — is the 2026-08-13 signature.
 					rlog().anomaly(
 						"sync",
 						`replay produced no files: applied=${applied} files=0 deletes=0 ` +
-							`failed=${failed} complete=${complete}`,
+							`failed=${failed} complete=${complete} blocked=${this.syncBlocked}`,
 					);
 				}
 			} finally {
@@ -6323,7 +6337,11 @@ export class SyncEngine {
 				// hold the body here, so write it. CRDT stays the single writer for LIVE
 				// edits; its later STEP2 (identical content) is a harmless idempotent
 				// re-flush suppressed by markRecentlyFlushed.
-				await this.flushFromCrdt(normalized, content);
+				// Propagate the write result instead of hardcoding `return true`.
+				// The old unconditional true meant a gate-blocked no-op still
+				// counted as a materialised file (2026-08-13).
+				const wrote = await this.flushFromCrdt(normalized, content);
+				if (!wrote) return false;
 				// This row came off the server's own op-log feed, so the server
 				// demonstrably holds it (#339). Without a head `hasServerNote` says
 				// otherwise, and pushFile's write routing takes the genesis branch
