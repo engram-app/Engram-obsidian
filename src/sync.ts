@@ -2902,37 +2902,30 @@ export class SyncEngine {
 			}
 		}
 
-		// Echo suppression for notes, ABOVE the push slot (#426). Materialising a
-		// pulled note fires a vault modify event, so a first sync of N notes
-		// queues N pushes that all turn out to be echoes — and each one used to
-		// burn a bounded push slot, a status repaint and a "Push start" log line
-		// before bailing (~800 of the ~1,200 client log lines on the 315-note
-		// first sync of 2026-08-13). Identical predicate to the one this replaces,
-		// so no push that would have gone out is dropped; it now costs a cached
-		// read instead of a slot.
+		// Echo FILTER for notes, ABOVE the push slot (#426). Materialising a pulled
+		// note fires a vault modify event, so a first sync of N notes queues N
+		// pushes that all turn out to be echoes — and each one used to burn a
+		// bounded push slot, a status repaint and a "Push start" log line before
+		// bailing (~800 of the ~1,200 client log lines on the 315-note first sync
+		// of 2026-08-13). Same predicate the note branch used to apply inside the
+		// slot, so nothing that would have been pushed is dropped.
 		//
-		// It must also stay AHEAD of the CRDT routing branch below, not just the
-		// legacy REST path: a disk write this engine itself just made
-		// (materializeRelocated -> flushFromCrdt -> recordCrdtBaseline records this
-		// exact hash) fires create/modify same as a real edit. Routing that echo
-		// into routeModify/applyLocalEdit diffs `content` against the Y.Doc's
-		// CURRENT state — if the doc has meanwhile advanced (a concurrent remote
-		// update landed in the room), the diff is a genuine-looking but stale
-		// delta that DELETES the just-arrived remote content, not a harmless no-op
-		// (e2e test_37 content-loss: first append vanishes).
+		// A filter, and ONLY a filter: nothing read here is transmitted. The body
+		// that gets pushed is re-read below, after the slot, because the wait can
+		// be long and a pre-wait snapshot diffed into the Y.Doc's CURRENT state is
+		// the stale delta that DELETES just-arrived remote content (e2e test_37).
+		// Deciding "is this an echo" on a slightly older body is safe — the answer
+		// only gets more conservative. Deciding WHAT TO SEND on one is not.
 		//
 		// Attachments keep their check inside the slot: theirs needs the base64
 		// body, which is the expensive part — hoisting it would not avoid it.
 		const isBinary = this.isBinaryFile(file);
-		let noteContent = "";
-		let noteHash = 0;
 		if (!isBinary) {
-			noteContent = await this.app.vault.cachedRead(file);
-			noteHash = fnv1a(noteContent);
+			const echoHash = fnv1a(await this.app.vault.cachedRead(file));
 			const existing = this.syncState.get(normalizePath(file.path));
-			if (!force && existing !== undefined && noteHash === existing.hash) {
+			if (!force && existing !== undefined && echoHash === existing.hash) {
 				devLog().log("push", `skip (echo): ${file.path}`);
-				rlog().info("push", `Echo skip: ${file.path} | hash=${noteHash}`);
+				rlog().info("push", `Echo skip: ${file.path} | hash=${echoHash}`);
 				return false;
 			}
 		}

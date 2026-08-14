@@ -20898,12 +20898,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         }), issueDisposition(gate.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_a = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = gate.message)), devLog().log("push", `skip (pre-gate ${gate.category}): ${file.path}`), !1;
       }
     }
-    let isBinary = this.isBinaryFile(file), noteContent = "", noteHash = 0;
+    let isBinary = this.isBinaryFile(file);
     if (!isBinary) {
-      noteContent = await this.app.vault.cachedRead(file), noteHash = fnv1a(noteContent);
-      let existing = this.syncState.get((0, import_obsidian24.normalizePath)(file.path));
-      if (!force && existing !== void 0 && noteHash === existing.hash)
-        return devLog().log("push", `skip (echo): ${file.path}`), rlog().info("push", `Echo skip: ${file.path} | hash=${noteHash}`), !1;
+      let echoHash = fnv1a(await this.app.vault.cachedRead(file)), existing = this.syncState.get((0, import_obsidian24.normalizePath)(file.path));
+      if (!force && existing !== void 0 && echoHash === existing.hash)
+        return devLog().log("push", `skip (echo): ${file.path}`), rlog().info("push", `Echo skip: ${file.path} | hash=${echoHash}`), !1;
     }
     await this.acquirePushSlot();
     let pushedPath = file.path;
