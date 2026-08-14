@@ -9,6 +9,11 @@ const HEARTBEAT_MS = 30_000;
 interface Options {
 	/** Override for tests. Production always wants HEARTBEAT_MS. */
 	heartbeatMs?: number;
+	/** Called with true once the topic is actually joined, false on any
+	 *  failure. Surfaced in the modal so "is the live path working?" is a
+	 *  thing you can SEE, rather than something inferred from how long the
+	 *  flow took. */
+	onStatus?: (live: boolean) => void;
 }
 
 /**
@@ -69,6 +74,7 @@ export function waitForDeviceAuthorization(
 	} catch (e) {
 		// WebSockets blocked outright. The fallback poll carries the flow.
 		devLog().log("device-flow", `socket construct failed: ${errMsg(e)}`);
+		opts.onStatus?.(false);
 		return dispose;
 	}
 
@@ -101,6 +107,15 @@ export function waitForDeviceAuthorization(
 			// topic, but a stray frame must never be read as our authorization.
 			if (frame[2] === topic && frame[3] === "authorized") {
 				onAuthorized();
+				return;
+			}
+			// The join reply is the only proof the live path actually works —
+			// the socket opening says nothing, because a channel whose join
+			// crashes server-side still gets you a happily OPEN socket first.
+			if (frame[2] === topic && frame[3] === "phx_reply") {
+				const ok = (frame[4] as { status?: string } | undefined)?.status === "ok";
+				devLog().log("device-flow", `join reply status=${ok ? "ok" : "error"}`);
+				opts.onStatus?.(ok);
 			}
 		} catch (e) {
 			devLog().log("device-flow", `socket frame parse failed: ${errMsg(e)}`);
@@ -108,8 +123,18 @@ export function waitForDeviceAuthorization(
 	};
 
 	socket.onerror = () => {
-		// Not fatal and not worth surfacing: the poll is still running.
+		// Not fatal: the poll is still running. But the user should be told
+		// which path they are on.
 		devLog().log("device-flow", "socket error — falling back to poll");
+		opts.onStatus?.(false);
+	};
+
+	socket.onclose = (evt: CloseEvent) => {
+		if (disposed) {
+			return;
+		}
+		devLog().log("device-flow", `socket closed code=${evt.code} — falling back to poll`);
+		opts.onStatus?.(false);
 	};
 
 	return dispose;

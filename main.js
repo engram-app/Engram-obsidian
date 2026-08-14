@@ -16661,6 +16661,7 @@ var import_obsidian14 = require("obsidian");
 // src/device-flow-socket.ts
 var HEARTBEAT_MS = 3e4;
 function waitForDeviceAuthorization(apiUrl, deviceCode, onAuthorized, opts = {}) {
+  var _a;
   let topic = `device:${deviceCode}`, socket = null, heartbeat = null, disposed = !1, ref = 0, dispose = () => {
     disposed = !0, heartbeat !== null && (window.clearInterval(heartbeat), heartbeat = null);
     try {
@@ -16673,7 +16674,7 @@ function waitForDeviceAuthorization(apiUrl, deviceCode, onAuthorized, opts = {})
     let wsBase = apiUrl.replace(/\/api\/?$/, "").replace(/^http/, "ws");
     socket = new WebSocket(`${wsBase}/socket/device/websocket?vsn=2.0.0`);
   } catch (e) {
-    return devLog().log("device-flow", `socket construct failed: ${errMsg(e)}`), dispose;
+    return devLog().log("device-flow", `socket construct failed: ${errMsg(e)}`), (_a = opts.onStatus) == null || _a.call(opts, !1), dispose;
   }
   let send = (frame) => {
     try {
@@ -16683,20 +16684,32 @@ function waitForDeviceAuthorization(apiUrl, deviceCode, onAuthorized, opts = {})
     }
   };
   return socket.onopen = () => {
-    var _a;
+    var _a2;
     disposed || (send(["1", String(++ref), topic, "phx_join", {}]), heartbeat = window.setInterval(() => {
       send([null, String(++ref), "phoenix", "heartbeat", {}]);
-    }, (_a = opts.heartbeatMs) != null ? _a : HEARTBEAT_MS));
+    }, (_a2 = opts.heartbeatMs) != null ? _a2 : HEARTBEAT_MS));
   }, socket.onmessage = (evt) => {
+    var _a2, _b;
     if (!disposed)
       try {
         let frame = JSON.parse(String(evt.data));
-        frame[2] === topic && frame[3] === "authorized" && onAuthorized();
+        if (frame[2] === topic && frame[3] === "authorized") {
+          onAuthorized();
+          return;
+        }
+        if (frame[2] === topic && frame[3] === "phx_reply") {
+          let ok = ((_a2 = frame[4]) == null ? void 0 : _a2.status) === "ok";
+          devLog().log("device-flow", `join reply status=${ok ? "ok" : "error"}`), (_b = opts.onStatus) == null || _b.call(opts, ok);
+        }
       } catch (e) {
         devLog().log("device-flow", `socket frame parse failed: ${errMsg(e)}`);
       }
   }, socket.onerror = () => {
-    devLog().log("device-flow", "socket error \u2014 falling back to poll");
+    var _a2;
+    devLog().log("device-flow", "socket error \u2014 falling back to poll"), (_a2 = opts.onStatus) == null || _a2.call(opts, !1);
+  }, socket.onclose = (evt) => {
+    var _a2;
+    disposed || (devLog().log("device-flow", `socket closed code=${evt.code} \u2014 falling back to poll`), (_a2 = opts.onStatus) == null || _a2.call(opts, !1));
   }, dispose;
 }
 
@@ -16717,6 +16730,7 @@ var DeviceFlowModal = class extends import_obsidian14.Modal {
     this.pollInterval = null;
     this.disposeSocket = null;
     this.exchanging = !1;
+    this.waitingEl = null;
     this.aborted = !1;
     this.plugin = plugin;
   }
@@ -16772,16 +16786,26 @@ var DeviceFlowModal = class extends import_obsidian14.Modal {
       navigator.clipboard.writeText(resp.user_code), new import_obsidian14.Notice("Code copied!");
     }), contentEl.createEl("p", {
       text: "A browser window has opened. Sign in and enter this code to link your vault."
-    }), contentEl.createEl("p", {
-      text: "Waiting for authorization...",
-      cls: "engram-device-waiting"
-    }), contentEl.createDiv({ cls: "engram-device-buttons" }).createEl("button", { text: "Cancel" }).addEventListener("click", () => this.close()), window.open(verificationUrlWithCode(resp.verification_url, resp.user_code));
+    }), this.waitingEl = contentEl.createEl("p", { cls: "engram-device-waiting" }), this.setWaitingStatus(!1), contentEl.createDiv({ cls: "engram-device-buttons" }).createEl("button", { text: "Cancel" }).addEventListener("click", () => this.close()), window.open(verificationUrlWithCode(resp.verification_url, resp.user_code));
+  }
+  /** Say which path we are actually on. Without this, "the socket isn't
+   *  working" and "the socket is working" look identical from the outside
+   *  until you time the flow with a stopwatch. */
+  setWaitingStatus(live) {
+    this.waitingEl && this.waitingEl.setText(
+      live ? "Waiting for authorization \u2014 connected, this will complete instantly." : "Waiting for authorization \u2014 no live connection, checking every 30s."
+    );
   }
   startPolling(deviceCode) {
     let apiUrl = EngramApi.normalizeBaseUrl(this.plugin.settings.apiUrl);
-    this.disposeSocket = waitForDeviceAuthorization(apiUrl, deviceCode, () => {
-      this.exchangeNow(apiUrl, deviceCode);
-    });
+    this.disposeSocket = waitForDeviceAuthorization(
+      apiUrl,
+      deviceCode,
+      () => {
+        this.exchangeNow(apiUrl, deviceCode);
+      },
+      { onStatus: (live) => this.setWaitingStatus(live) }
+    );
     let startedAt = Date.now(), maxSeconds = 300, poll = async () => {
       if (!(this.aborted || this.exchanging)) {
         this.exchanging = !0;

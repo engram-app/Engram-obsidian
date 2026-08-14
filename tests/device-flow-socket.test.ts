@@ -120,6 +120,53 @@ describe("waitForDeviceAuthorization", () => {
 		expect(fired).toBe(0);
 	});
 
+	// The socket OPENING proves nothing — a channel whose join crashes
+	// server-side still leaves you with a happily open socket. Only the join
+	// reply distinguishes "live" from "silently on the fallback poll".
+	test("reports live only after the join is acked, not on open", () => {
+		const seen: boolean[] = [];
+		waitForDeviceAuthorization("http://localhost:4000/api", "dev-code-9", () => {}, {
+			onStatus: (live) => seen.push(live),
+		});
+		lastWs?.onopen?.();
+		expect(seen).toEqual([]);
+
+		lastWs?.onmessage?.({
+			data: JSON.stringify(["1", "1", "device:dev-code-9", "phx_reply", { status: "ok" }]),
+		});
+		expect(seen).toEqual([true]);
+	});
+
+	test("reports not-live when the join is rejected", () => {
+		const seen: boolean[] = [];
+		waitForDeviceAuthorization("http://localhost:4000/api", "dev-code-10", () => {}, {
+			onStatus: (live) => seen.push(live),
+		});
+		lastWs?.onopen?.();
+		lastWs?.onmessage?.({
+			data: JSON.stringify([
+				"1",
+				"1",
+				"device:dev-code-10",
+				"phx_reply",
+				{ status: "error", response: { reason: "unknown_or_expired" } },
+			]),
+		});
+		expect(seen).toEqual([false]);
+	});
+
+	// This is the exact shape of the bug that shipped: the server killed the
+	// transport right after join, and nothing told the user.
+	test("reports not-live when the server closes the socket", () => {
+		const seen: boolean[] = [];
+		waitForDeviceAuthorization("http://localhost:4000/api", "dev-code-11", () => {}, {
+			onStatus: (live) => seen.push(live),
+		});
+		lastWs?.onopen?.();
+		lastWs?.onclose?.({ code: 1011, reason: "", wasClean: false });
+		expect(seen).toEqual([false]);
+	});
+
 	// The flow can run for the code's full 300s lifetime. Phoenix drops idle
 	// sockets around 60s, so without a heartbeat the listener would silently
 	// die partway through and the user would be back to waiting on the

@@ -36,6 +36,7 @@ export class DeviceFlowModal extends Modal {
 	private pollInterval: number | null = null;
 	private disposeSocket: (() => void) | null = null;
 	private exchanging = false;
+	private waitingEl: HTMLElement | null = null;
 	private aborted = false;
 
 	constructor(app: App, plugin: EngramSyncPlugin) {
@@ -143,16 +144,28 @@ export class DeviceFlowModal extends Modal {
 			text: "A browser window has opened. Sign in and enter this code to link your vault.",
 		});
 
-		contentEl.createEl("p", {
-			text: "Waiting for authorization...",
-			cls: "engram-device-waiting",
-		});
+		// Text is set by setWaitingStatus once the socket reports in. Starts
+		// pessimistic: until the join is acked we are genuinely on the poll.
+		this.waitingEl = contentEl.createEl("p", { cls: "engram-device-waiting" });
+		this.setWaitingStatus(false);
 
 		const btnContainer = contentEl.createDiv({ cls: "engram-device-buttons" });
 		const cancelBtn = btnContainer.createEl("button", { text: "Cancel" });
 		cancelBtn.addEventListener("click", () => this.close());
 
 		window.open(verificationUrlWithCode(resp.verification_url, resp.user_code));
+	}
+
+	/** Say which path we are actually on. Without this, "the socket isn't
+	 *  working" and "the socket is working" look identical from the outside
+	 *  until you time the flow with a stopwatch. */
+	private setWaitingStatus(live: boolean): void {
+		if (!this.waitingEl) return;
+		this.waitingEl.setText(
+			live
+				? "Waiting for authorization — connected, this will complete instantly."
+				: "Waiting for authorization — no live connection, checking every 30s.",
+		);
 	}
 
 	private startPolling(deviceCode: string): void {
@@ -162,9 +175,14 @@ export class DeviceFlowModal extends Modal {
 		// so completion is immediate instead of landing somewhere in a 5s
 		// window. The interval below is now only a fallback for networks that
 		// block WebSockets — see waitForDeviceAuthorization.
-		this.disposeSocket = waitForDeviceAuthorization(apiUrl, deviceCode, () => {
-			void this.exchangeNow(apiUrl, deviceCode);
-		});
+		this.disposeSocket = waitForDeviceAuthorization(
+			apiUrl,
+			deviceCode,
+			() => {
+				void this.exchangeNow(apiUrl, deviceCode);
+			},
+			{ onStatus: (live) => this.setWaitingStatus(live) },
+		);
 
 		// Wall-clock deadline, not a tick counter: a 15s-timeout request holding
 		// its 5s tick hostage made `elapsed += 5` undercount real time.
