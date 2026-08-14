@@ -5,7 +5,7 @@
  */
 import { beforeEach, describe, expect, type Mock, test } from "bun:test";
 import { requestUrl } from "obsidian";
-import { DeviceFlowModal } from "../src/device-flow-modal";
+import { DeviceFlowModal, verificationUrlWithCode } from "../src/device-flow-modal";
 
 const mockRequestUrl = requestUrl as unknown as Mock<() => Promise<any>>;
 
@@ -190,5 +190,29 @@ describe("DeviceFlowModal poll — pending statuses", () => {
 		const { resolved, stopped } = await pollOnceWith(200, { access_token: "at" });
 		expect(resolved).toBe(true);
 		expect(stopped).toBe(true);
+	});
+});
+
+describe("verificationUrlWithCode", () => {
+	test("appends the user code so /link prefills instead of asking for a re-type", () => {
+		expect(verificationUrlWithCode("https://app.engram.page/link", "ENGR-7X4K")).toBe(
+			"https://app.engram.page/link?code=ENGR-7X4K",
+		);
+	});
+
+	test("preserves an existing query string", () => {
+		expect(
+			verificationUrlWithCode("https://app.engram.page/link?src=obsidian", "ENGR-7X4K"),
+		).toBe("https://app.engram.page/link?src=obsidian&code=ENGR-7X4K");
+	});
+
+	test("overwrites a stale code rather than duplicating the param", () => {
+		expect(
+			verificationUrlWithCode("https://app.engram.page/link?code=OLD-CODE", "ENGR-7X4K"),
+		).toBe("https://app.engram.page/link?code=ENGR-7X4K");
+	});
+
+	test("falls back to the bare URL when the backend sends something unparseable", () => {
+		expect(verificationUrlWithCode("not a url", "ENGR-7X4K")).toBe("not a url");
 	});
 });

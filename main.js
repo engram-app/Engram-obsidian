@@ -16657,6 +16657,14 @@ var import_obsidian23 = require("obsidian");
 
 // src/device-flow-modal.ts
 var import_obsidian14 = require("obsidian");
+function verificationUrlWithCode(verificationUrl, userCode) {
+  try {
+    let url = new URL(verificationUrl);
+    return url.searchParams.set("code", userCode), url.toString();
+  } catch (e) {
+    return verificationUrl;
+  }
+}
 var DeviceFlowModal = class extends import_obsidian14.Modal {
   constructor(app, plugin) {
     super(app);
@@ -16720,7 +16728,7 @@ var DeviceFlowModal = class extends import_obsidian14.Modal {
     }), contentEl.createEl("p", {
       text: "Waiting for authorization...",
       cls: "engram-device-waiting"
-    }), contentEl.createDiv({ cls: "engram-device-buttons" }).createEl("button", { text: "Cancel" }).addEventListener("click", () => this.close()), window.open(resp.verification_url);
+    }), contentEl.createDiv({ cls: "engram-device-buttons" }).createEl("button", { text: "Cancel" }).addEventListener("click", () => this.close()), window.open(verificationUrlWithCode(resp.verification_url, resp.user_code));
   }
   startPolling(deviceCode) {
     let apiUrl = EngramApi.normalizeBaseUrl(this.plugin.settings.apiUrl), startedAt = Date.now(), maxSeconds = 300, inFlight = !1, poll = async () => {

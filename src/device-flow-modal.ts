@@ -12,6 +12,23 @@ export interface DeviceFlowResult {
 	expires_in: number;
 }
 
+// RFC 8628 §3.3.1 `verification_uri_complete`: hand the browser the code so
+// /link prefills (and auto-verifies) instead of making the user retype what
+// the plugin already knows. The backend returns the bare page URL, so the
+// plugin — which holds both halves — is where they get joined.
+// Safe to put in the URL: authorizing still requires a signed-in user to pick
+// a vault and click Sync, and the page scrubs the param out of history on
+// arrival. Falls back to the bare URL if the backend ever sends a non-URL.
+export function verificationUrlWithCode(verificationUrl: string, userCode: string): string {
+	try {
+		const url = new URL(verificationUrl);
+		url.searchParams.set("code", userCode);
+		return url.toString();
+	} catch {
+		return verificationUrl;
+	}
+}
+
 export class DeviceFlowModal extends Modal {
 	private plugin: EngramSyncPlugin;
 	private resolve: (result: DeviceFlowResult | null) => void = () => {};
@@ -127,7 +144,7 @@ export class DeviceFlowModal extends Modal {
 		const cancelBtn = btnContainer.createEl("button", { text: "Cancel" });
 		cancelBtn.addEventListener("click", () => this.close());
 
-		window.open(resp.verification_url);
+		window.open(verificationUrlWithCode(resp.verification_url, resp.user_code));
 	}
 
 	private startPolling(deviceCode: string): void {
