@@ -9,12 +9,13 @@
  * and real failure tallies. Mock-engine pattern mirrors
  * tests/sync-socket-catchup.test.ts.
  */
-import { describe, expect, mock, spyOn, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import "fake-indexeddb/auto";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import type { ProviderRegistry as CrdtManager } from "../src/crdt/provider-registry";
+import { destroyRemoteLog, initRemoteLog } from "../src/remote-log";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS, type SyncChange, type SyncProgress } from "../src/types";
 
@@ -527,5 +528,327 @@ describe("coalesce semantics are opt-in (#422 review round 1)", () => {
 		// One attachment renamed mid-log is ONE planned file — two path-keyed
 		// ticks would overrun the plan's denominator (the pinned-bar bug).
 		expect(res.files).toBe(1);
+	});
+});
+
+describe("coalesced callers still receive the per-file stream", () => {
+	test("a progress-reporting catch-up that coalesces still gets per-file pulling events", async () => {
+		// Prod 2026-08-13: on a first sync the topic-join handler always starts
+		// the replay first (it is one of 11 bare `catchupViaSeqReplay()` call
+		// sites), so the user's sync modal ALWAYS coalesces behind it. #422 made
+		// the coalesced return report honest counts, but the early return never
+		// reaches the `opts.onFileApplied` hand-off at the exclusive call site —
+		// the callback is silently discarded. The modal therefore blocks for the
+		// whole replay with a dead 0% bar and no filenames, then prints one
+		// final number. Counts alone are not the contract; the STREAM is.
+		const feed = [
+			noteRow({ id: "id-a", seq: 1, path: "Notes/a.md" }),
+			noteRow({ id: "id-b", seq: 2, path: "Notes/b.md" }),
+		];
+		const { engine, events } = makeEngine(feed);
+		let releaseFirstFetch!: () => void;
+		const gate = new Promise<void>((r) => (releaseFirstFetch = r));
+		let call = 0;
+		engine.setCrdtCatchupSince(async () => {
+			call += 1;
+			if (call === 1) await gate;
+			return { changes: call <= 2 ? feed : [], has_more: false, next_seq: null };
+		});
+
+		// The background caller (join handler) wins the race and runs exclusively.
+		const background = engine.catchUp({ reportProgress: false });
+		await new Promise((r) => setTimeout(r, 10));
+		// The user's modal arrives second and coalesces.
+		const modal = engine.catchUp({ reportProgress: true });
+		await new Promise((r) => setTimeout(r, 10));
+		releaseFirstFetch();
+		await Promise.all([background, modal]);
+
+		const pulls = events.filter((e) => e.phase === "pulling");
+		expect(pulls.map((e) => e.current)).toEqual([1, 2]);
+		// The filenames the "Downloading <name>" row renders.
+		expect(pulls.map((e) => e.currentPath)).toEqual(["Notes/a.md", "Notes/b.md"]);
+	});
+});
+
+describe("hasServerNote after a handshake heal (#339)", () => {
+	type Staged = {
+		path: string;
+		serverHash: string;
+		content: string | null;
+		version?: number;
+		seq?: number;
+	};
+	const stage = (engine: SyncEngine, noteId: string, staged: Staged): void => {
+		(engine as unknown as { pendingConvergence: Map<string, Staged> }).pendingConvergence.set(
+			noteId,
+			staged,
+		);
+	};
+
+	test("a note that converged via STEP2 is known to exist on the server", async () => {
+		// The server just handed us this note's full state, so it demonstrably
+		// holds a row for it. Without a crdtHead the oracle says false and the
+		// note's next push takes pushFile's genesis branch (the `!hasServerNote`
+		// arm) instead of the live-CRDT arm — on a first sync that re-uploads the
+		// WHOLE pulled vault, which surfaced as "122 files to upload" from an
+		// empty local vault.
+		const { engine } = makeEngine([]);
+		const map = new NoteIdMap();
+		map.set("Notes/a.md", "id-a");
+		engine.setNoteIdMap(map);
+		stage(engine, "id-a", {
+			path: "Notes/a.md",
+			serverHash: "h1",
+			content: "server body",
+			version: 3,
+			seq: 7,
+		});
+
+		await engine.commitCrdtConvergence("id-a");
+
+		expect(engine.hasServerNote("id-a")).toBe(true);
+	});
+
+	test("a note pulled by a first sync is known to exist on the server", async () => {
+		// THE journey this issue is actually about, and the one my first fix
+		// missed. A fresh vault materialises every note through the discovery
+		// branch (`flushFromCrdt` -> `recordCrdtBaseline`, no markCreated) —
+		// `commitCrdtConvergence` never runs, so driving that function directly
+		// proved nothing. The row came off the server's own op-log feed, which
+		// IS proof the server holds it; without a head the note's next push
+		// takes pushFile's genesis branch and the whole pulled vault re-uploads.
+		const { engine } = makeEngine([noteRow({ id: "id-a", seq: 1, path: "Notes/a.md" })]);
+
+		await engine.catchUp({ reportProgress: true });
+
+		expect(engine.hasServerNote("id-a")).toBe(true);
+	});
+
+	test("the sentinel never downgrades an authoritative crdtHead", async () => {
+		// patchSyncedRow MERGES, so writing the placeholder over a real head
+		// recorded by applyPushedNoteUpdate would invert the sentinel's contract
+		// and defeat the convergence cost gate — re-firing STEP1 forever.
+		const { engine } = makeEngine([]);
+		const map = new NoteIdMap();
+		map.set("Notes/a.md", "id-a");
+		engine.setNoteIdMap(map);
+		(engine as unknown as { setCrdtHead(p: string, h: string): void }).setCrdtHead(
+			"Notes/a.md",
+			"real-server-head-abc",
+		);
+		stage(engine, "id-a", {
+			path: "Notes/a.md",
+			serverHash: "h1",
+			content: "server body",
+			version: 3,
+			seq: 7,
+		});
+
+		await engine.commitCrdtConvergence("id-a");
+
+		const head = (
+			engine as unknown as { getCrdtHead(p: string): string | undefined }
+		).getCrdtHead("Notes/a.md");
+		expect(head).toBe("real-server-head-abc");
+	});
+
+	test("an EMPTY converged doc does NOT claim the server has the note", async () => {
+		// Boundary guard: a handshake that returns nothing is not proof of a
+		// server row, and genesis is the correct route for it. Setting the
+		// sentinel here would strand a genuinely-new note with no create.
+		const { engine } = makeEngine([]);
+		const map = new NoteIdMap();
+		map.set("Notes/empty.md", "id-empty");
+		engine.setNoteIdMap(map);
+		stage(engine, "id-empty", {
+			path: "Notes/empty.md",
+			serverHash: "h0",
+			content: "",
+			version: 1,
+			seq: 1,
+		});
+
+		await engine.commitCrdtConvergence("id-empty");
+
+		expect(engine.hasServerNote("id-empty")).toBe(false);
+	});
+});
+
+describe("replay outcome summary (prod 2026-08-13 blindness)", () => {
+	// initRemoteLog() installs a GLOBAL singleton. Leaving it configured leaks a
+	// live logger into every later test file in the process — it made
+	// crdt/wiring.test.ts fail in the full run while passing alone.
+	afterEach(async () => {
+		await destroyRemoteLog();
+	});
+
+	/** Capture what the plugin would ship, with diagnostics OFF — the default,
+	 *  and the state Todd's install was in when 316 of 316 notes vanished with
+	 *  zero client log lines to look at. */
+	const captureShipped = () => {
+		const sent: Array<{ level: string; category: string; message: string }> = [];
+		const logger = initRemoteLog();
+		logger.configure(
+			async (batch: any[]) => {
+				sent.push(...batch);
+			},
+			"test",
+			"test",
+		);
+		logger.setEnabled(false);
+		return { sent, flush: () => logger.flush() };
+	};
+
+	test("a replay that consumes rows but produces NOTHING reports itself", async () => {
+		// applied > 0, files === 0, deletes === 0 — work went in, nothing came
+		// out. That is the exact shape of the prod failure and it was silent.
+		const { sent, flush } = captureShipped();
+		const { engine } = makeEngine(threeRowFeed());
+		spyOn(engine, "applySyncChange").mockResolvedValue(false);
+
+		await engine.catchUp({ reportProgress: true });
+		await flush();
+
+		const anomaly = sent.find((e) => e.message.includes("produced no files"));
+		expect(anomaly).toBeDefined();
+		expect(anomaly?.level).toBe("warn");
+		// Counts + reasons only — never a path. The diagnostics setting is
+		// protecting the user from per-note telemetry and that stays intact.
+		expect(anomaly?.message).not.toContain("Notes/");
+		expect(anomaly?.message).toContain("applied=3");
+	});
+
+	test("a healthy replay stays silent with diagnostics off", async () => {
+		const { sent, flush } = captureShipped();
+		const { engine } = makeEngine(threeRowFeed());
+
+		await engine.catchUp({ reportProgress: true });
+		await flush();
+
+		expect(sent.filter((e) => e.message.includes("produced no files")).length).toBe(0);
+	});
+});
+
+describe("the sync gate must not fake success (prod 2026-08-13 root cause)", () => {
+	afterEach(async () => {
+		await destroyRemoteLog();
+	});
+
+	const captureShipped = () => {
+		const sent: Array<{ level: string; message: string }> = [];
+		const logger = initRemoteLog();
+		logger.configure(
+			async (b: any[]) => {
+				sent.push(...b);
+			},
+			"test",
+			"test",
+		);
+		logger.setEnabled(false);
+		return { sent, flush: () => logger.flush() };
+	};
+
+	test("a gate-blocked pull writes nothing and does NOT count files", async () => {
+		// THE bug. flushFromCrdt short-circuited on syncBlocked and returned
+		// TRUE, so a write that never happened counted as a downloaded file:
+		// the bar hit 100%, the recap claimed success, the anomaly could not
+		// fire, and the only trace was a devLog that never leaves the machine.
+		// Folders bypass the gate (direct vault.createFolder), which is why the
+		// user saw folders arrive and not one note.
+		const { sent, flush } = captureShipped();
+		const { engine } = makeEngine(threeRowFeed());
+		engine.setSyncBlocked(true);
+
+		const res = await engine.catchUp({ reportProgress: true });
+		await flush();
+
+		expect(res.files).toBe(0);
+		// The signal is the gate-skip line, not "produced no files": we now bail
+		// before walking, so there are no rows to have produced nothing from.
+		// Either way the user's pull must not silently claim success.
+		const anomaly = sent.find((e) => e.message.includes("sync gate closed"));
+		expect(anomaly).toBeDefined();
+		expect(anomaly?.level).toBe("warn");
+	});
+
+	test("with the gate open the same feed materialises normally", async () => {
+		const { sent, flush } = captureShipped();
+		const { engine } = makeEngine(threeRowFeed());
+		engine.setSyncBlocked(false);
+
+		const res = await engine.catchUp({ reportProgress: true });
+		await flush();
+
+		expect(res.files).toBe(2);
+		expect(sent.filter((e) => e.message.includes("produced no files")).length).toBe(0);
+	});
+});
+
+describe("a gate-blocked replay must not walk the feed at all", () => {
+	afterEach(async () => {
+		await destroyRemoteLog();
+	});
+
+	test("blocked: no fetch, and the catch-up cursor does NOT advance", async () => {
+		// DATA LOSS, not just wasted work. onPage persists the cursor after each
+		// page and exempts only `enumerateOnly` — whose comment reasons exactly
+		// the right way ("a later genuine catch-up needs to still see every op
+		// this enumeration walked past, since none of them were applied") and
+		// then misses the gate case, where equally none of them were applied.
+		//
+		// So a blocked walk advanced the cursor past 316 notes it never wrote,
+		// and the next replay resumed AFTER them. They were only ever recovered
+		// by the manifest validator's rewind — machinery that exists to paper
+		// over this.
+		//
+		// It is also the prod CPU spike: the server decrypts and serialises the
+		// whole feed for a pass whose every row is discarded, and then does it
+		// again for the real pass.
+		const { engine } = makeEngine(threeRowFeed());
+		let fetches = 0;
+		engine.setCrdtCatchupSince(async () => {
+			fetches += 1;
+			return { changes: threeRowFeed(), has_more: false, next_seq: null };
+		});
+		engine.setCatchupSeq(0);
+		engine.setSyncBlocked(true);
+
+		const res = await engine.catchUp({ reportProgress: true });
+
+		expect(fetches).toBe(0);
+		expect(engine.getCatchupSeq()).toBe(0);
+		expect(res.files).toBe(0);
+	});
+
+	test("blocked: the replay reports ran=false AND complete=false", async () => {
+		// Load-bearing: we walked nothing, so the empty server sets are not
+		// evidence. Destructive delete decisions require ran && complete, and
+		// trusting an empty set here would read as "the server has nothing" and
+		// trash the vault.
+		const { engine } = makeEngine(threeRowFeed());
+		engine.setSyncBlocked(true);
+
+		const res = await engine.catchupViaSeqReplay({});
+
+		expect(res.ran).toBe(false);
+		expect(res.complete).toBe(false);
+		expect(res.serverIds.size).toBe(0);
+	});
+
+	test("open: the feed is walked and the cursor advances", async () => {
+		const { engine } = makeEngine(threeRowFeed());
+		let fetches = 0;
+		engine.setCrdtCatchupSince(async () => {
+			fetches += 1;
+			return { changes: threeRowFeed(), has_more: false, next_seq: null };
+		});
+		engine.setCatchupSeq(0);
+		engine.setSyncBlocked(false);
+
+		await engine.catchUp({ reportProgress: true });
+
+		expect(fetches).toBeGreaterThan(0);
+		expect(engine.getCatchupSeq()).toBeGreaterThan(0);
 	});
 });

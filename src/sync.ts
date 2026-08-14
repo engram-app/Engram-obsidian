@@ -1270,8 +1270,18 @@ export class SyncEngine {
 	 *  CRDT frames cannot overwrite local files before the user picks a direction. */
 	async flushFromCrdt(path: string, content: string): Promise<boolean> {
 		if (this.syncBlocked) {
+			// FALSE, not true. This wrote nothing, and claiming otherwise is what
+			// made the 2026-08-13 prod failure invisible: the `true` propagated
+			// into `changed`, counted the note as a downloaded file, drove the bar
+			// to 100%, made the recap claim success, and suppressed the
+			// no-files-produced anomaly — all while the vault stayed empty.
+			// Folders bypass this gate entirely (direct vault.createFolder), which
+			// is why the user saw every folder arrive and not one note.
+			//
+			// A no-op must never report as work. The caller decides what to do
+			// about a closed gate; it cannot decide anything if we lie to it.
 			devLog().log("sync-blocked", `flushFromCrdt short-circuited — gate closed: ${path}`);
-			return true;
+			return false;
 		}
 		const normalized = normalizePath(path);
 		const file = this.app.vault.getAbstractFileByPath(normalized);
@@ -1387,7 +1397,11 @@ export class SyncEngine {
 	 *  only the content hash is refreshed. `markCreated` additionally flips the
 	 *  `hasServerNote` oracle via the CRDT_HEAD_CREATED sentinel (genesis /
 	 *  create-ack adopt sites); the first convergence overwrites the sentinel
-	 *  with the authoritative head. */
+	 *  with the authoritative head.
+	 *
+	 *  Pulled-from-feed sites do NOT go through `markCreated` — they call
+	 *  `markServerKnown` after the flush, which fills a missing head without
+	 *  ever overwriting a real one. */
 	private recordCrdtBaseline(
 		normalized: string,
 		content: string,
@@ -2073,6 +2087,21 @@ export class SyncEngine {
 
 	private setCrdtHead(path: string, head: string): void {
 		this.patchSyncedRow(normalizePath(path), { crdtHead: head });
+	}
+
+	/** Flip the `hasServerNote` oracle for a note the server demonstrably holds,
+	 *  without ever DOWNGRADING an authoritative head to the placeholder.
+	 *
+	 *  `patchSyncedRow` merges, so writing CRDT_HEAD_CREATED over a real head
+	 *  recorded by `applyPushedNoteUpdate` would invert the sentinel's contract
+	 *  and permanently defeat the convergence cost gate (`getCrdtHead ===
+	 *  serverHead` -> skip), re-firing STEP1 for that note forever. The sentinel
+	 *  only ever fills a HOLE. */
+	private markServerKnown(path: string): void {
+		const normalized = normalizePath(path);
+		if (this.getCrdtHead(normalized) == null) {
+			this.setCrdtHead(normalized, CRDT_HEAD_CREATED);
+		}
 	}
 
 	/** Public: consumed as `CrdtManagerOptions.canSendLive` by the wiring in
@@ -2873,6 +2902,34 @@ export class SyncEngine {
 			}
 		}
 
+		// Echo FILTER for notes, ABOVE the push slot (#426). Materialising a pulled
+		// note fires a vault modify event, so a first sync of N notes queues N
+		// pushes that all turn out to be echoes — and each one used to burn a
+		// bounded push slot, a status repaint and a "Push start" log line before
+		// bailing (~800 of the ~1,200 client log lines on the 315-note first sync
+		// of 2026-08-13). Same predicate the note branch used to apply inside the
+		// slot, so nothing that would have been pushed is dropped.
+		//
+		// A filter, and ONLY a filter: nothing read here is transmitted. The body
+		// that gets pushed is re-read below, after the slot, because the wait can
+		// be long and a pre-wait snapshot diffed into the Y.Doc's CURRENT state is
+		// the stale delta that DELETES just-arrived remote content (e2e test_37).
+		// Deciding "is this an echo" on a slightly older body is safe — the answer
+		// only gets more conservative. Deciding WHAT TO SEND on one is not.
+		//
+		// Attachments keep their check inside the slot: theirs needs the base64
+		// body, which is the expensive part — hoisting it would not avoid it.
+		const isBinary = this.isBinaryFile(file);
+		if (!isBinary) {
+			const echoHash = fnv1a(await this.app.vault.cachedRead(file));
+			const existing = this.syncState.get(normalizePath(file.path));
+			if (!force && existing !== undefined && echoHash === existing.hash) {
+				devLog().log("push", `skip (echo): ${file.path}`);
+				rlog().info("push", `Echo skip: ${file.path} | hash=${echoHash}`);
+				return false;
+			}
+		}
+
 		await this.acquirePushSlot();
 		// Snapshot the path for the lifetime of this push. TFile.path is LIVE —
 		// a user rename landing while the request is in flight mutates it, and
@@ -2884,7 +2941,6 @@ export class SyncEngine {
 		this.lastError = "";
 		this.emitStatus();
 
-		const isBinary = this.isBinaryFile(file);
 		let success = false;
 		// Set in the note branch below so recordParseStatus can run AFTER the
 		// shared issues.clear(file.path) — resp (and thus parse_status) is only
@@ -2920,29 +2976,20 @@ export class SyncEngine {
 				await this.api.pushAttachment(file.path, base64, mimeType, mtime);
 				this.stampSyncedRow(normalizePath(file.path), { hash });
 			} else {
+				// RE-READ after the slot. The pre-slot read (#426) exists only to
+				// bail on echoes cheaply; it must not be the body we transmit.
+				// acquirePushSlot can block for as long as the queue ahead of us
+				// takes, and `content` is diffed into the Y.Doc's CURRENT state
+				// below — a snapshot taken before that wait is exactly the "stale
+				// delta that DELETES the just-arrived remote content" failure the
+				// echo guard above is written to prevent (e2e test_37). Observing a
+				// newer body here is the correct outcome, not a hazard: the newest
+				// content is what should be pushed.
+				//
+				// Costs one extra cachedRead, and only on the non-echo path — every
+				// echo already returned above without taking a slot.
 				const content = await this.app.vault.cachedRead(file);
-
-				// Echo suppression — skip pushing if content matches what the sync
-				// engine last wrote (pull/WebSocket/flushFromCrdt). Must run BEFORE
-				// the CRDT routing branch below, not just the legacy REST path: a
-				// disk write this engine itself just made (e.g. materializeRelocated
-				// discovering a note and calling flushFromCrdt, which records this
-				// exact hash via recordCrdtBaseline) fires vault's create/modify
-				// event same as a real edit. Routing that echo into
-				// routeModify/applyLocalEdit unconditionally diffs "content" against
-				// the Y.Doc's CURRENT state — if the Y.Doc has meanwhile advanced
-				// (e.g. a concurrent remote update just landed in the room), the
-				// diff is a genuine-looking but stale delta that DELETES the
-				// just-arrived remote content, not a harmless no-op (e2e test_37
-				// content-loss: first append vanishes). Hoisting this hash check
-				// above the CRDT branch closes that hole for both paths.
 				const hash = fnv1a(content);
-				const existing = this.syncState.get(normalizePath(file.path));
-				if (!force && existing !== undefined && hash === existing.hash) {
-					devLog().log("push", `skip (echo): ${file.path}`);
-					rlog().info("push", `Echo skip: ${file.path} | hash=${hash}`);
-					return false;
-				}
 
 				// note_id-keyed CRDT rework (Task 5): resolve (or mint) this note's
 				// stable id BEFORE routing, so both the CRDT path (Task 6) and the
@@ -3762,6 +3809,15 @@ export class SyncEngine {
 		failed: number;
 		deletes: number;
 	}> | null = null;
+	/** Per-file tick subscribers for the RUNNING replay session. The counts a
+	 *  coalescing caller awaits are only half the contract — its progress UI
+	 *  also needs the STREAM, and the early return can't reach the exclusive
+	 *  call site's `onFileApplied` hand-off. On a first sync the join handler
+	 *  always owns the replay (it is one of many bare `catchupViaSeqReplay()`
+	 *  callers), so the user's modal ALWAYS coalesces: without this it renders
+	 *  a dead 0% bar with no filenames for the whole pull, then one final
+	 *  number. Registration is scoped to each caller's own await. */
+	private seqReplayFileListeners = new Set<(path: string) => void>();
 	private seqHealLastAt = 0;
 	private seqHealTimer: number | null = null;
 	private static readonly SEQ_HEAL_COOLDOWN_MS = 4_000;
@@ -3973,6 +4029,46 @@ export class SyncEngine {
 	}> {
 		const serverIds = new Set<string>();
 		const serverAttachmentPaths = new Set<string>();
+
+		// Gate closed: walk NOTHING. The block used to live per-file inside
+		// flushFromCrdt, so a blocked replay still fetched every page, and the
+		// server still decrypted and serialised every row, for a pass whose
+		// every write was discarded — then the real pass did it all again. That
+		// doubling is the prod pull CPU spike.
+		//
+		// The correctness half is worse. `onPage` persists the catch-up cursor
+		// after each page and exempts only `enumerateOnly`, whose comment
+		// reasons it exactly right — "a later genuine catch-up needs to still
+		// see every op this enumeration walked past, since none of them were
+		// applied" — and then misses this case, where equally none of them were
+		// applied. So a blocked walk advanced the cursor PAST notes it never
+		// wrote, and the next replay resumed after them. They came back only if
+		// the manifest validator happened to rewind; that repair machinery is
+		// largely compensating for this.
+		//
+		// `complete: false` is load-bearing: we walked nothing, so the empty
+		// server sets are not evidence, and no destructive delete decision may
+		// trust them (they require ran && complete).
+		if (this.syncBlocked) {
+			devLog().log("sync-blocked", "catchupViaSeqReplay skipped — gate closed");
+			// Ships even with diagnostics off. Skipping the walk is correct, but a
+			// pull that returns nothing because a gate is shut must still be
+			// visible — silently doing nothing and reporting success is the bug
+			// this whole series came from. One line per blocked attempt, not one
+			// per note. Counts only, no paths.
+			rlog().anomaly("sync", "catch-up skipped — sync gate closed (blocked=true)");
+			return {
+				applied: 0,
+				files: 0,
+				failed: 0,
+				deletes: 0,
+				serverIds,
+				serverAttachmentPaths,
+				ran: false,
+				complete: false,
+			};
+		}
+
 		if (this.seqReplayRunning) {
 			this.seqReplayAgain = true;
 			if (!opts.awaitCoalesced) {
@@ -3999,7 +4095,19 @@ export class SyncEngine {
 			// Safe: seqReplayRunning=true means the running task is suspended at
 			// an await INSIDE its loop (the exit path from condition-check to
 			// finally has no await), so it always sees the flag we just set.
-			const running = await this.seqReplayResult?.catch(() => null);
+			//
+			// Subscribe to the running session's per-file ticks for the duration
+			// of this await, so a progress-reporting coalescer renders the live
+			// "Downloading <name>" stream instead of a frozen bar. Ticks already
+			// applied before we registered are lost by construction — the counts
+			// below still report the session's true totals.
+			if (opts.onFileApplied) this.seqReplayFileListeners.add(opts.onFileApplied);
+			let running: { applied: number; files: number; failed: number; deletes: number } | null;
+			try {
+				running = (await this.seqReplayResult?.catch(() => null)) ?? null;
+			} finally {
+				if (opts.onFileApplied) this.seqReplayFileListeners.delete(opts.onFileApplied);
+			}
 			return {
 				applied: running?.applied ?? 0,
 				files: running?.files ?? 0,
@@ -4026,6 +4134,24 @@ export class SyncEngine {
 			// must tick the progress feed once, or `current` outruns the plan's
 			// denominator and the bar pins at 100% while files keep arriving.
 			const tickedKeys = new Set<string>();
+			// This session owns the tick fan-out: its own caller's callback and
+			// every coalescer that registers while it runs see the same stream.
+			if (opts.onFileApplied) this.seqReplayFileListeners.add(opts.onFileApplied);
+			// One bad subscriber must not take down the stream. This runs INSIDE
+			// the per-row try that increments `failed`, so an unguarded throw
+			// would both mis-count a successfully applied row as failed AND
+			// starve every later subscriber — including the exclusive owner's own
+			// progress. Pre-fan-out that blast radius was one caller; now it is
+			// all of them, so the guard is load-bearing, not defensive noise.
+			const emitFileApplied = (path: string): void => {
+				for (const listener of [...this.seqReplayFileListeners]) {
+					try {
+						listener(path);
+					} catch (e) {
+						devLog().log("sync", `progress subscriber threw for ${path}: ${errMsg(e)}`);
+					}
+				}
+			};
 			try {
 				do {
 					this.seqReplayAgain = false;
@@ -4035,7 +4161,7 @@ export class SyncEngine {
 						serverAttachmentPaths,
 						tickedKeys,
 						opts.enumerateOnly ?? false,
-						opts.onFileApplied,
+						emitFileApplied,
 					);
 					applied += pass.applied;
 					files += pass.files;
@@ -4045,7 +4171,31 @@ export class SyncEngine {
 					// the whole result — never OR this back to true.
 					if (!pass.complete) complete = false;
 				} while (this.seqReplayAgain);
+				// Outcome check. `applied` counts every row the feed handed us;
+				// `files` and `deletes` count what actually reached disk. All three
+				// passes done and applied > 0 with NOTHING materialised or trashed
+				// means the feed did work and the vault got none of it — the shape
+				// of the 2026-08-13 prod failure, where 316 note rows arrived, 73
+				// folders landed, and not one note did.
+				//
+				// Shipped via rlog().anomaly so it survives `diagnosticsEnabled:
+				// false` (the default). That failure produced ZERO client log lines
+				// precisely because a fresh install has telemetry off, which is the
+				// same install most likely to hit a first-sync bug. Counts only —
+				// no paths — so the setting still protects what it is meant to.
+				if (applied > 0 && files === 0 && deletes === 0) {
+					// `blocked` is the first thing to look at: a closed first-sync
+					// gate silently no-ops every note write while folders (which
+					// bypass it) still land. That combination — folders arrive,
+					// notes do not — is the 2026-08-13 signature.
+					rlog().anomaly(
+						"sync",
+						`replay produced no files: applied=${applied} files=0 deletes=0 ` +
+							`failed=${failed} complete=${complete} blocked=${this.syncBlocked}`,
+					);
+				}
 			} finally {
+				if (opts.onFileApplied) this.seqReplayFileListeners.delete(opts.onFileApplied);
 				this.seqReplayRunning = false;
 			}
 			return {
@@ -4717,6 +4867,14 @@ export class SyncEngine {
 				version: staged.version,
 				seq: staged.seq,
 			});
+
+			// #339: a STEP2 that delivered CONTENT is proof the server holds a row
+			// for this note — we just merged the server's own ops for it. An EMPTY
+			// converged doc is NOT proof; genesis stays the correct route there.
+			//
+			// Via markServerKnown so the placeholder can only fill a hole, never
+			// overwrite an authoritative head this note already has.
+			if (staged.content) this.markServerKnown(path);
 			rlog().info("crdt", `socket converge: STEP2 committed ${path}`);
 		} catch (e) {
 			rlog().warn("crdt", `socket converge: commit failed for ${path}: ${errMsg(e)}`);
@@ -6237,7 +6395,20 @@ export class SyncEngine {
 				// hold the body here, so write it. CRDT stays the single writer for LIVE
 				// edits; its later STEP2 (identical content) is a harmless idempotent
 				// re-flush suppressed by markRecentlyFlushed.
-				await this.flushFromCrdt(normalized, content);
+				// Propagate the write result instead of hardcoding `return true`.
+				// The old unconditional true meant a gate-blocked no-op still
+				// counted as a materialised file (2026-08-13).
+				const wrote = await this.flushFromCrdt(normalized, content);
+				if (!wrote) return false;
+				// This row came off the server's own op-log feed, so the server
+				// demonstrably holds it (#339). Without a head `hasServerNote` says
+				// otherwise, and pushFile's write routing takes the genesis branch
+				// (the `!hasServerNote` arm) instead of the live-CRDT arm — on a
+				// first sync that re-uploads the WHOLE freshly-pulled vault (prod
+				// 2026-08-13: "122 files to upload" from an empty local vault).
+				// This is the branch a fresh vault actually takes;
+				// commitCrdtConvergence never runs here.
+				this.markServerKnown(normalized);
 				return true;
 			} else {
 				// The note exists locally and CRDT owns its body for LIVE edits — but
@@ -6535,7 +6706,21 @@ export class SyncEngine {
 								"pull",
 								`CRDT catch-up: pull backfilling diverged note (no note_id) ${change.path}`,
 							);
-							await this.flushFromCrdt(normalized, content);
+							// Gate the bookkeeping on the write, same as the discovery
+							// branch. Stamping a hash for content that never reached disk
+							// tells the engine disk matches the server, so the resulting
+							// divergence is invisible and never repaired — a quieter
+							// version of the 2026-08-13 failure. Unreachable today (the
+							// replay bails before this when the gate is shut), which is
+							// precisely why it must not depend on that staying true.
+							// `false` is the honest answer under this function's contract
+							// ("true when a file was actually created/modified") — the
+							// same reason flushFromCrdt itself stopped returning true
+							// for a gate-blocked no-op.
+							if (!(await this.flushFromCrdt(normalized, content))) return false;
+							// Same feed, same proof (#339): a backfilled row is still the
+							// server telling us it holds this note.
+							this.markServerKnown(normalized);
 							this.stampSyncedRow(normalized, {
 								hash: fnv1a(content),
 								version: change.version,

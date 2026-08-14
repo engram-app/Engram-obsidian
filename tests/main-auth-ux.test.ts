@@ -190,3 +190,65 @@ describe("round-1 review fixes (#422)", () => {
 		expect(planLoadErrorMessage(false)).not.toContain("\u2014");
 	});
 });
+
+describe("opening the sync gate re-runs the catch-up (#425)", () => {
+	// While the gate is shut, catchupViaSeqReplay now bails before walking, so
+	// no feed rows are consumed and the cursor is preserved. That is correct —
+	// but it means the rows are still WAITING when the gate opens, and nothing
+	// was asking for them: markSyncGateAccepted re-fired STEP1 enrollment and
+	// then stopped. The pull only happened if the user separately triggered a
+	// FullSync, which is precisely the path that failed in prod on 2026-08-13.
+	const fakePlugin = () => {
+		const calls: string[] = [];
+		const fake = Object.assign(Object.create(EngramSyncPlugin.prototype), {
+			settings: {
+				refreshToken: "rt",
+				userEmail: "a@b.test",
+				vaultId: "v1",
+				apiKey: "",
+			},
+			syncGateAcceptedFor: null,
+			syncEngine: {
+				setSyncBlocked(v: boolean) {
+					calls.push(`setSyncBlocked(${v})`);
+				},
+				getLastSync: () => 0,
+				getStatus: () => ({ state: "idle", pending: 0, queued: 0 }),
+				catchupViaSeqReplay: async () => {
+					calls.push("catchupViaSeqReplay");
+					return {};
+				},
+			},
+			crdtEnrollment: {
+				resetAll() {
+					calls.push("resetAll");
+				},
+			},
+			async savePluginData() {},
+			updateStatusBar() {},
+		});
+		return { fake, calls };
+	};
+
+	test("markSyncGateAccepted unblocks AND pulls what the gate held back", async () => {
+		const { fake, calls } = fakePlugin();
+
+		await fake.markSyncGateAccepted();
+
+		expect(calls).toContain("setSyncBlocked(false)");
+		expect(calls).toContain("catchupViaSeqReplay");
+		// Order matters: pulling before the unblock would bail on the closed gate.
+		expect(calls.indexOf("setSyncBlocked(false)")).toBeLessThan(
+			calls.indexOf("catchupViaSeqReplay"),
+		);
+	});
+
+	test("an empty fingerprint neither unblocks nor pulls", async () => {
+		const { fake, calls } = fakePlugin();
+		fake.settings = { refreshToken: "", userEmail: "", vaultId: "", apiKey: "" };
+
+		await fake.markSyncGateAccepted();
+
+		expect(calls).toEqual([]);
+	});
+});

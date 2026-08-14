@@ -985,8 +985,25 @@ var LEVEL_SEVERITY = {
   async destroy() {
     this.stopTimer(), await this.flush(), this.buffer = [], this.pushFn = null;
   }
-  addEntry(level, category, message, stack, diagnostic) {
-    if (!this.enabled || !this.pushFn || LEVEL_SEVERITY[level] < LEVEL_SEVERITY[this.levelThreshold]) return;
+  /** A silent failure the user cannot see and we cannot debug. Ships at warn
+   *  EVEN WHEN DIAGNOSTICS ARE OFF, and bypasses the level threshold.
+   *
+   *  Why the bypass exists: `diagnosticsEnabled` defaults false, so every
+   *  rlog() call is a no-op on a fresh install — and a user's FIRST sync is
+   *  simultaneously the most likely thing to break and the least likely to
+   *  have telemetry enabled. Prod 2026-08-13: a first sync dropped 316 of 316
+   *  notes and produced exactly zero client log lines to look at.
+   *
+   *  CONTRACT — callers must honour it: counts and reasons ONLY. Never a
+   *  path, a title, or note content. The setting is protecting the user from
+   *  verbose per-note telemetry, and that protection stays intact; what it
+   *  must not do is hide the fact that sync silently did nothing. */
+  anomaly(category, message) {
+    this.addEntry("warn", category, message, void 0, !1, !0);
+  }
+  addEntry(level, category, message, stack, diagnostic, force) {
+    if (!this.pushFn || !force && (!this.enabled || LEVEL_SEVERITY[level] < LEVEL_SEVERITY[this.levelThreshold]))
+      return;
     let entry = {
       ts: (/* @__PURE__ */ new Date()).toISOString(),
       level,
@@ -1014,6 +1031,8 @@ var LEVEL_SEVERITY = {
   info() {
   },
   diag() {
+  },
+  anomaly() {
   },
   setConnId() {
   },
@@ -16734,7 +16753,7 @@ var DeviceFlowModal = class extends import_obsidian14.Modal {
         }),
         15e3
       );
-      if (resp.status === 428) return;
+      if (resp.status === 400 || resp.status === 428) return;
       if (resp.status >= 200 && resp.status < 300) {
         this.pollInterval && window.clearInterval(this.pollInterval);
         let result = resp.json;
@@ -19590,6 +19609,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     /** Resolves with the running replay session's counts — what a coalescing
      *  caller awaits so it can report real work instead of zeros. */
     this.seqReplayResult = null;
+    /** Per-file tick subscribers for the RUNNING replay session. The counts a
+     *  coalescing caller awaits are only half the contract — its progress UI
+     *  also needs the STREAM, and the early return can't reach the exclusive
+     *  call site's `onFileApplied` hand-off. On a first sync the join handler
+     *  always owns the replay (it is one of many bare `catchupViaSeqReplay()`
+     *  callers), so the user's modal ALWAYS coalesces: without this it renders
+     *  a dead 0% bar with no filenames for the whole pull, then one final
+     *  number. Registration is scoped to each caller's own await. */
+    this.seqReplayFileListeners = /* @__PURE__ */ new Set();
     this.seqHealLastAt = 0;
     this.seqHealTimer = null;
     /** Ceiling on how long an edit may sit in pendingPostPullPushes while a
@@ -20043,7 +20071,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   async flushFromCrdt(path, content) {
     var _a, _b;
     if (this.syncBlocked)
-      return devLog().log("sync-blocked", `flushFromCrdt short-circuited \u2014 gate closed: ${path}`), !0;
+      return devLog().log("sync-blocked", `flushFromCrdt short-circuited \u2014 gate closed: ${path}`), !1;
     let normalized = (0, import_obsidian24.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized);
     if (file instanceof import_obsidian24.TFile && await this.app.vault.cachedRead(file) === content)
       return this.recordCrdtBaseline(normalized, content), !0;
@@ -20105,7 +20133,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  only the content hash is refreshed. `markCreated` additionally flips the
    *  `hasServerNote` oracle via the CRDT_HEAD_CREATED sentinel (genesis /
    *  create-ack adopt sites); the first convergence overwrites the sentinel
-   *  with the authoritative head. */
+   *  with the authoritative head.
+   *
+   *  Pulled-from-feed sites do NOT go through `markCreated` — they call
+   *  `markServerKnown` after the flush, which fills a missing head without
+   *  ever overwriting a real one. */
   recordCrdtBaseline(normalized, content, opts) {
     this.patchSyncedRow(normalized, {
       hash: fnv1a(content),
@@ -20487,6 +20519,18 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   setCrdtHead(path, head) {
     this.patchSyncedRow((0, import_obsidian24.normalizePath)(path), { crdtHead: head });
   }
+  /** Flip the `hasServerNote` oracle for a note the server demonstrably holds,
+   *  without ever DOWNGRADING an authoritative head to the placeholder.
+   *
+   *  `patchSyncedRow` merges, so writing CRDT_HEAD_CREATED over a real head
+   *  recorded by `applyPushedNoteUpdate` would invert the sentinel's contract
+   *  and permanently defeat the convergence cost gate (`getCrdtHead ===
+   *  serverHead` -> skip), re-firing STEP1 for that note forever. The sentinel
+   *  only ever fills a HOLE. */
+  markServerKnown(path) {
+    let normalized = (0, import_obsidian24.normalizePath)(path);
+    this.getCrdtHead(normalized) == null && this.setCrdtHead(normalized, CRDT_HEAD_CREATED);
+  }
   /** Public: consumed as `CrdtManagerOptions.canSendLive` by the wiring in
    *  main.ts (`createCrdtWiring({ canSendLive: (id) => this.syncEngine.hasServerNote(id) })`)
    *  so a note's live crdt_msg sends stay held until its create is acked —
@@ -20854,10 +20898,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         }), issueDisposition(gate.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_a = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = gate.message)), devLog().log("push", `skip (pre-gate ${gate.category}): ${file.path}`), !1;
       }
     }
+    let isBinary = this.isBinaryFile(file);
+    if (!isBinary) {
+      let echoHash = fnv1a(await this.app.vault.cachedRead(file)), existing = this.syncState.get((0, import_obsidian24.normalizePath)(file.path));
+      if (!force && existing !== void 0 && echoHash === existing.hash)
+        return devLog().log("push", `skip (echo): ${file.path}`), rlog().info("push", `Echo skip: ${file.path} | hash=${echoHash}`), !1;
+    }
     await this.acquirePushSlot();
     let pushedPath = file.path;
     this.pushing.add(pushedPath), this.lastError = "", this.emitStatus();
-    let isBinary = this.isBinaryFile(file), success = !1, pushedNoteParse;
+    let success = !1, pushedNoteParse;
     devLog().log(
       "push",
       `start ${isBinary ? "attachment" : "note"}: ${file.path} (active=${this.activePushCount})`
@@ -20874,10 +20924,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         let mimeType = this.getMimeType(file);
         await this.api.pushAttachment(file.path, base64, mimeType, mtime), this.stampSyncedRow((0, import_obsidian24.normalizePath)(file.path), { hash });
       } else {
-        let content = await this.app.vault.cachedRead(file), hash = fnv1a(content), existing = this.syncState.get((0, import_obsidian24.normalizePath)(file.path));
-        if (!force && existing !== void 0 && hash === existing.hash)
-          return devLog().log("push", `skip (echo): ${file.path}`), rlog().info("push", `Echo skip: ${file.path} | hash=${hash}`), !1;
-        let noteId = (_c = (_b = this.noteIdMap) == null ? void 0 : _b.get(file.path)) != null ? _c : null;
+        let content = await this.app.vault.cachedRead(file), hash = fnv1a(content), noteId = (_c = (_b = this.noteIdMap) == null ? void 0 : _b.get(file.path)) != null ? _c : null;
         if (!noteId && this.noteIdMap) {
           if (this.shouldDeferMint(file.path))
             return rlog().info(
@@ -21320,8 +21367,19 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     return { notes, attachments };
   }
   async catchupViaSeqReplay(opts = {}) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f;
     let serverIds = /* @__PURE__ */ new Set(), serverAttachmentPaths = /* @__PURE__ */ new Set();
+    if (this.syncBlocked)
+      return devLog().log("sync-blocked", "catchupViaSeqReplay skipped \u2014 gate closed"), rlog().anomaly("sync", "catch-up skipped \u2014 sync gate closed (blocked=true)"), {
+        applied: 0,
+        files: 0,
+        failed: 0,
+        deletes: 0,
+        serverIds,
+        serverAttachmentPaths,
+        ran: !1,
+        complete: !1
+      };
     if (this.seqReplayRunning) {
       if (this.seqReplayAgain = !0, !opts.awaitCoalesced)
         return {
@@ -21334,12 +21392,18 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           ran: !1,
           complete: !1
         };
-      let running = await ((_a = this.seqReplayResult) == null ? void 0 : _a.catch(() => null));
+      opts.onFileApplied && this.seqReplayFileListeners.add(opts.onFileApplied);
+      let running;
+      try {
+        running = (_b = await ((_a = this.seqReplayResult) == null ? void 0 : _a.catch(() => null))) != null ? _b : null;
+      } finally {
+        opts.onFileApplied && this.seqReplayFileListeners.delete(opts.onFileApplied);
+      }
       return {
-        applied: (_b = running == null ? void 0 : running.applied) != null ? _b : 0,
-        files: (_c = running == null ? void 0 : running.files) != null ? _c : 0,
-        failed: (_d = running == null ? void 0 : running.failed) != null ? _d : 0,
-        deletes: (_e = running == null ? void 0 : running.deletes) != null ? _e : 0,
+        applied: (_c = running == null ? void 0 : running.applied) != null ? _c : 0,
+        files: (_d = running == null ? void 0 : running.files) != null ? _d : 0,
+        failed: (_e = running == null ? void 0 : running.failed) != null ? _e : 0,
+        deletes: (_f = running == null ? void 0 : running.deletes) != null ? _f : 0,
         // Still EMPTY sets + ran:false — the counts are honest but the
         // sets belong to the other caller's walk; destructive decisions
         // keep requiring ran && complete.
@@ -21353,6 +21417,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let session = (async () => {
       var _a2, _b2, _c2;
       let applied = 0, files = 0, failed = 0, deletes = 0, complete = !0, tickedKeys = /* @__PURE__ */ new Set();
+      opts.onFileApplied && this.seqReplayFileListeners.add(opts.onFileApplied);
+      let emitFileApplied = (path) => {
+        for (let listener of [...this.seqReplayFileListeners])
+          try {
+            listener(path);
+          } catch (e) {
+            devLog().log("sync", `progress subscriber threw for ${path}: ${errMsg(e)}`);
+          }
+      };
       try {
         do {
           this.seqReplayAgain = !1;
@@ -21362,12 +21435,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             serverAttachmentPaths,
             tickedKeys,
             (_c2 = opts.enumerateOnly) != null ? _c2 : !1,
-            opts.onFileApplied
+            emitFileApplied
           );
           applied += pass.applied, files += pass.files, failed += pass.failed, deletes += pass.deletes, pass.complete || (complete = !1);
         } while (this.seqReplayAgain);
+        applied > 0 && files === 0 && deletes === 0 && rlog().anomaly(
+          "sync",
+          `replay produced no files: applied=${applied} files=0 deletes=0 failed=${failed} complete=${complete} blocked=${this.syncBlocked}`
+        );
       } finally {
-        this.seqReplayRunning = !1;
+        opts.onFileApplied && this.seqReplayFileListeners.delete(opts.onFileApplied), this.seqReplayRunning = !1;
       }
       return {
         applied,
@@ -21713,7 +21790,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         serverHash: staged.serverHash,
         version: staged.version,
         seq: staged.seq
-      }), rlog().info("crdt", `socket converge: STEP2 committed ${path}`);
+      }), staged.content && this.markServerKnown(path), rlog().info("crdt", `socket converge: STEP2 committed ${path}`);
     } catch (e) {
       rlog().warn("crdt", `socket converge: commit failed for ${path}: ${errMsg(e)}`);
     }
@@ -22501,17 +22578,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               return rlog().warn(
                 "pull",
                 `CRDT catch-up: pull backfilling diverged note (no note_id) ${change.path}`
-              ), await this.flushFromCrdt(normalized, content), this.stampSyncedRow(normalized, {
+              ), await this.flushFromCrdt(normalized, content) ? (this.markServerKnown(normalized), this.stampSyncedRow(normalized, {
                 hash: fnv1a(content),
                 version: change.version,
                 serverHash: change.content_hash,
                 seq: change.seq
-              }), !0;
+              }), !0) : !1;
           }
         else
           rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);
       } else
-        return noteId && this.isLiveBound(normalized) && ((_k = this.crdtEnrollment) == null || _k.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content), !0;
+        return noteId && this.isLiveBound(normalized) && ((_k = this.crdtEnrollment) == null || _k.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content) ? (this.markServerKnown(normalized), !0) : !1;
       return !1;
     }
     let existing = this.app.vault.getFileByPath(normalized);
@@ -24743,7 +24820,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       );
       return;
     }
-    this.syncGateAcceptedFor = fp, this.syncEngine.setSyncBlocked(!1), (_a = this.crdtEnrollment) == null || _a.resetAll(), await this.savePluginData(this.syncEngine.getLastSync()), this.updateStatusBar(this.syncEngine.getStatus());
+    this.syncGateAcceptedFor = fp, this.syncEngine.setSyncBlocked(!1), (_a = this.crdtEnrollment) == null || _a.resetAll(), this.syncEngine.catchupViaSeqReplay().catch((e) => {
+      rlog().warn("lifecycle", `gate-open catch-up failed: ${errMsg(e)}`);
+    }), await this.savePluginData(this.syncEngine.getLastSync()), this.updateStatusBar(this.syncEngine.getStatus());
   }
   /** Decide which header copy the SyncPreviewModal should use based on the
    *  saved gate fingerprint. Never accepted before = first-time onboarding;

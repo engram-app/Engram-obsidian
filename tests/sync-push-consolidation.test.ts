@@ -17,6 +17,7 @@ import { TFile } from "obsidian";
 import * as syncProtocol from "y-protocols/sync";
 import * as Y from "yjs";
 import type { EngramApi } from "../src/api";
+import { fnv1a } from "../src/content-hash";
 import {
 	CONTENT_KEY,
 	frontmatterOf,
@@ -493,5 +494,39 @@ describe("pushPartitioned — per-file genesis (no batch RPC)", () => {
 
 		expect(out).toEqual({ pushed: 2, failed: 1 });
 		expect((engine as any).issues.get("Notes/f1.md")?.message).toContain("timeout");
+	});
+});
+
+describe("pushFile — echo suppression runs before the push slot (#426)", () => {
+	test("an echoed note does not queue behind in-flight pushes", async () => {
+		const file = new TFile("Notes/Echo.md", Date.now());
+		const { engine } = makeEngine([file], { "Notes/Echo.md": "# same" });
+		// The engine itself wrote this content (flushFromCrdt → recordCrdtBaseline),
+		// so syncState already holds the exact disk hash. Obsidian still fires a
+		// modify event for it; the resulting push is pure echo.
+		(engine as any).stampSyncedRow("Notes/Echo.md", { hash: fnv1a("# same") });
+		// Every push slot held by a real in-flight upload.
+		(engine as any).activePushCount = (engine as any).maxConcurrentPushes;
+
+		const result = await Promise.race([
+			(engine as any).pushFile(file),
+			new Promise((r) => setTimeout(() => r("HUNG"), 50)),
+		]);
+
+		expect(result).toBe(false);
+	});
+
+	test("a genuinely changed note still waits for a slot", async () => {
+		const file = new TFile("Notes/Real.md", Date.now());
+		const { engine } = makeEngine([file], { "Notes/Real.md": "# edited" });
+		(engine as any).stampSyncedRow("Notes/Real.md", { hash: fnv1a("# stale") });
+		(engine as any).activePushCount = (engine as any).maxConcurrentPushes;
+
+		const result = await Promise.race([
+			(engine as any).pushFile(file),
+			new Promise((r) => setTimeout(() => r("HUNG"), 50)),
+		]);
+
+		expect(result).toBe("HUNG");
 	});
 });
