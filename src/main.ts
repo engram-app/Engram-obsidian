@@ -2582,6 +2582,14 @@ export default class EngramSyncPlugin extends Plugin {
 		// is exactly the path that left a vault empty in prod on 2026-08-13.
 		// After setSyncBlocked(false), never before, or this bails on the gate
 		// it is meant to be draining.
+		//
+		// Deliberately fire-and-forget and WITHOUT an onFileApplied: this call is
+		// the safety net, not the UI. When the user came through the preview modal
+		// the follow-on sync owns the progress surface, and the replay's tick
+		// fan-out means whichever of the two starts first still feeds that
+		// surface. Awaiting here would instead stall the modal's own dismissal
+		// behind a full vault pull. The trade is that an accept with no follow-on
+		// sync pulls silently — correct, just quiet.
 		void this.syncEngine.catchupViaSeqReplay().catch((e) => {
 			rlog().warn("lifecycle", `gate-open catch-up failed: ${errMsg(e)}`);
 		});

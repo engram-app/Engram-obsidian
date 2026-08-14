@@ -20925,7 +20925,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         let mimeType = this.getMimeType(file);
         await this.api.pushAttachment(file.path, base64, mimeType, mtime), this.stampSyncedRow((0, import_obsidian24.normalizePath)(file.path), { hash });
       } else {
-        let content = noteContent, hash = noteHash, noteId = (_c = (_b = this.noteIdMap) == null ? void 0 : _b.get(file.path)) != null ? _c : null;
+        let content = await this.app.vault.cachedRead(file), hash = fnv1a(content), noteId = (_c = (_b = this.noteIdMap) == null ? void 0 : _b.get(file.path)) != null ? _c : null;
         if (!noteId && this.noteIdMap) {
           if (this.shouldDeferMint(file.path))
             return rlog().info(
@@ -22579,12 +22579,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               return rlog().warn(
                 "pull",
                 `CRDT catch-up: pull backfilling diverged note (no note_id) ${change.path}`
-              ), await this.flushFromCrdt(normalized, content), this.markServerKnown(normalized), this.stampSyncedRow(normalized, {
+              ), await this.flushFromCrdt(normalized, content) ? (this.markServerKnown(normalized), this.stampSyncedRow(normalized, {
                 hash: fnv1a(content),
                 version: change.version,
                 serverHash: change.content_hash,
                 seq: change.seq
-              }), !0;
+              }), !0) : !1;
           }
         else
           rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);

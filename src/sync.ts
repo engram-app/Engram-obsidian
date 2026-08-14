@@ -2983,11 +2983,20 @@ export class SyncEngine {
 				await this.api.pushAttachment(file.path, base64, mimeType, mtime);
 				this.stampSyncedRow(normalizePath(file.path), { hash });
 			} else {
-				// Read + echo-checked above the push slot (#426). Reused here rather
-				// than re-read: cachedRead is cheap but not free, and a second read
-				// could observe a DIFFERENT body than the one we hash-checked.
-				const content = noteContent;
-				const hash = noteHash;
+				// RE-READ after the slot. The pre-slot read (#426) exists only to
+				// bail on echoes cheaply; it must not be the body we transmit.
+				// acquirePushSlot can block for as long as the queue ahead of us
+				// takes, and `content` is diffed into the Y.Doc's CURRENT state
+				// below — a snapshot taken before that wait is exactly the "stale
+				// delta that DELETES the just-arrived remote content" failure the
+				// echo guard above is written to prevent (e2e test_37). Observing a
+				// newer body here is the correct outcome, not a hazard: the newest
+				// content is what should be pushed.
+				//
+				// Costs one extra cachedRead, and only on the non-echo path — every
+				// echo already returned above without taking a slot.
+				const content = await this.app.vault.cachedRead(file);
+				const hash = fnv1a(content);
 
 				// note_id-keyed CRDT rework (Task 5): resolve (or mint) this note's
 				// stable id BEFORE routing, so both the CRDT path (Task 6) and the
@@ -6704,7 +6713,18 @@ export class SyncEngine {
 								"pull",
 								`CRDT catch-up: pull backfilling diverged note (no note_id) ${change.path}`,
 							);
-							await this.flushFromCrdt(normalized, content);
+							// Gate the bookkeeping on the write, same as the discovery
+							// branch. Stamping a hash for content that never reached disk
+							// tells the engine disk matches the server, so the resulting
+							// divergence is invisible and never repaired — a quieter
+							// version of the 2026-08-13 failure. Unreachable today (the
+							// replay bails before this when the gate is shut), which is
+							// precisely why it must not depend on that staying true.
+							// `false` is the honest answer under this function's contract
+							// ("true when a file was actually created/modified") — the
+							// same reason flushFromCrdt itself stopped returning true
+							// for a gate-blocked no-op.
+							if (!(await this.flushFromCrdt(normalized, content))) return false;
 							// Same feed, same proof (#339): a backfilled row is still the
 							// server telling us it holds this note.
 							this.markServerKnown(normalized);
