@@ -91,6 +91,22 @@ describe("waitForDeviceAuthorization", () => {
 		expect(fired).toBe(1);
 	});
 
+	// Verified against the real server: a Phoenix broadcast arrives with BOTH
+	// join_ref and ref null, not the string refs a reply carries. Matching on
+	// those positions instead of the topic would have silently ignored it.
+	test("accepts the real broadcast frame shape (null join_ref and ref)", () => {
+		let fired = 0;
+		waitForDeviceAuthorization("http://localhost:4000/api", "dev-code-8", () => {
+			fired += 1;
+		});
+		lastWs?.onopen?.();
+		lastWs?.onmessage?.({
+			data: JSON.stringify([null, null, "device:dev-code-8", "authorized", {}]),
+		});
+
+		expect(fired).toBe(1);
+	});
+
 	test("ignores events for a different device code", () => {
 		let fired = 0;
 		waitForDeviceAuthorization("http://localhost:4000/api", "mine", () => {

@@ -283,11 +283,13 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 				result.vault_id,
 				result.user_email,
 			);
-			// Tokens are now persisted, so a sync can authenticate — arm the
-			// modal's "Start first sync" button. The modal deliberately stays
-			// open after linking to tell the user that step still exists.
-			modal.markLinked();
 			this.rerender();
+			// Go straight into the first-sync preview. Linking connects the
+			// account but syncs nothing, and the preview is where that gets said
+			// AND acted on — so it replaces the old "you're linked, now click
+			// here" screen rather than sitting behind it. Tokens are persisted
+			// above, so the sync can authenticate.
+			void this.plugin.doSyncWithFirstSyncCheck();
 		}
 	}
 
