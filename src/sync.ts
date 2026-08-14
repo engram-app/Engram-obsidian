@@ -2902,6 +2902,41 @@ export class SyncEngine {
 			}
 		}
 
+		// Echo suppression for notes, ABOVE the push slot (#426). Materialising a
+		// pulled note fires a vault modify event, so a first sync of N notes
+		// queues N pushes that all turn out to be echoes — and each one used to
+		// burn a bounded push slot, a status repaint and a "Push start" log line
+		// before bailing (~800 of the ~1,200 client log lines on the 315-note
+		// first sync of 2026-08-13). Identical predicate to the one this replaces,
+		// so no push that would have gone out is dropped; it now costs a cached
+		// read instead of a slot.
+		//
+		// It must also stay AHEAD of the CRDT routing branch below, not just the
+		// legacy REST path: a disk write this engine itself just made
+		// (materializeRelocated -> flushFromCrdt -> recordCrdtBaseline records this
+		// exact hash) fires create/modify same as a real edit. Routing that echo
+		// into routeModify/applyLocalEdit diffs `content` against the Y.Doc's
+		// CURRENT state — if the doc has meanwhile advanced (a concurrent remote
+		// update landed in the room), the diff is a genuine-looking but stale
+		// delta that DELETES the just-arrived remote content, not a harmless no-op
+		// (e2e test_37 content-loss: first append vanishes).
+		//
+		// Attachments keep their check inside the slot: theirs needs the base64
+		// body, which is the expensive part — hoisting it would not avoid it.
+		const isBinary = this.isBinaryFile(file);
+		let noteContent = "";
+		let noteHash = 0;
+		if (!isBinary) {
+			noteContent = await this.app.vault.cachedRead(file);
+			noteHash = fnv1a(noteContent);
+			const existing = this.syncState.get(normalizePath(file.path));
+			if (!force && existing !== undefined && noteHash === existing.hash) {
+				devLog().log("push", `skip (echo): ${file.path}`);
+				rlog().info("push", `Echo skip: ${file.path} | hash=${noteHash}`);
+				return false;
+			}
+		}
+
 		await this.acquirePushSlot();
 		// Snapshot the path for the lifetime of this push. TFile.path is LIVE —
 		// a user rename landing while the request is in flight mutates it, and
@@ -2913,7 +2948,6 @@ export class SyncEngine {
 		this.lastError = "";
 		this.emitStatus();
 
-		const isBinary = this.isBinaryFile(file);
 		let success = false;
 		// Set in the note branch below so recordParseStatus can run AFTER the
 		// shared issues.clear(file.path) — resp (and thus parse_status) is only
@@ -2949,29 +2983,11 @@ export class SyncEngine {
 				await this.api.pushAttachment(file.path, base64, mimeType, mtime);
 				this.stampSyncedRow(normalizePath(file.path), { hash });
 			} else {
-				const content = await this.app.vault.cachedRead(file);
-
-				// Echo suppression — skip pushing if content matches what the sync
-				// engine last wrote (pull/WebSocket/flushFromCrdt). Must run BEFORE
-				// the CRDT routing branch below, not just the legacy REST path: a
-				// disk write this engine itself just made (e.g. materializeRelocated
-				// discovering a note and calling flushFromCrdt, which records this
-				// exact hash via recordCrdtBaseline) fires vault's create/modify
-				// event same as a real edit. Routing that echo into
-				// routeModify/applyLocalEdit unconditionally diffs "content" against
-				// the Y.Doc's CURRENT state — if the Y.Doc has meanwhile advanced
-				// (e.g. a concurrent remote update just landed in the room), the
-				// diff is a genuine-looking but stale delta that DELETES the
-				// just-arrived remote content, not a harmless no-op (e2e test_37
-				// content-loss: first append vanishes). Hoisting this hash check
-				// above the CRDT branch closes that hole for both paths.
-				const hash = fnv1a(content);
-				const existing = this.syncState.get(normalizePath(file.path));
-				if (!force && existing !== undefined && hash === existing.hash) {
-					devLog().log("push", `skip (echo): ${file.path}`);
-					rlog().info("push", `Echo skip: ${file.path} | hash=${hash}`);
-					return false;
-				}
+				// Read + echo-checked above the push slot (#426). Reused here rather
+				// than re-read: cachedRead is cheap but not free, and a second read
+				// could observe a DIFFERENT body than the one we hash-checked.
+				const content = noteContent;
+				const hash = noteHash;
 
 				// note_id-keyed CRDT rework (Task 5): resolve (or mint) this note's
 				// stable id BEFORE routing, so both the CRDT path (Task 6) and the

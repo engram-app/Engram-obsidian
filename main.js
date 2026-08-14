@@ -20898,10 +20898,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         }), issueDisposition(gate.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_a = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = gate.message)), devLog().log("push", `skip (pre-gate ${gate.category}): ${file.path}`), !1;
       }
     }
+    let isBinary = this.isBinaryFile(file), noteContent = "", noteHash = 0;
+    if (!isBinary) {
+      noteContent = await this.app.vault.cachedRead(file), noteHash = fnv1a(noteContent);
+      let existing = this.syncState.get((0, import_obsidian24.normalizePath)(file.path));
+      if (!force && existing !== void 0 && noteHash === existing.hash)
+        return devLog().log("push", `skip (echo): ${file.path}`), rlog().info("push", `Echo skip: ${file.path} | hash=${noteHash}`), !1;
+    }
     await this.acquirePushSlot();
     let pushedPath = file.path;
     this.pushing.add(pushedPath), this.lastError = "", this.emitStatus();
-    let isBinary = this.isBinaryFile(file), success = !1, pushedNoteParse;
+    let success = !1, pushedNoteParse;
     devLog().log(
       "push",
       `start ${isBinary ? "attachment" : "note"}: ${file.path} (active=${this.activePushCount})`
@@ -20918,10 +20925,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         let mimeType = this.getMimeType(file);
         await this.api.pushAttachment(file.path, base64, mimeType, mtime), this.stampSyncedRow((0, import_obsidian24.normalizePath)(file.path), { hash });
       } else {
-        let content = await this.app.vault.cachedRead(file), hash = fnv1a(content), existing = this.syncState.get((0, import_obsidian24.normalizePath)(file.path));
-        if (!force && existing !== void 0 && hash === existing.hash)
-          return devLog().log("push", `skip (echo): ${file.path}`), rlog().info("push", `Echo skip: ${file.path} | hash=${hash}`), !1;
-        let noteId = (_c = (_b = this.noteIdMap) == null ? void 0 : _b.get(file.path)) != null ? _c : null;
+        let content = noteContent, hash = noteHash, noteId = (_c = (_b = this.noteIdMap) == null ? void 0 : _b.get(file.path)) != null ? _c : null;
         if (!noteId && this.noteIdMap) {
           if (this.shouldDeferMint(file.path))
             return rlog().info(
@@ -24817,7 +24821,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       );
       return;
     }
-    this.syncGateAcceptedFor = fp, this.syncEngine.setSyncBlocked(!1), (_a = this.crdtEnrollment) == null || _a.resetAll(), await this.savePluginData(this.syncEngine.getLastSync()), this.updateStatusBar(this.syncEngine.getStatus());
+    this.syncGateAcceptedFor = fp, this.syncEngine.setSyncBlocked(!1), (_a = this.crdtEnrollment) == null || _a.resetAll(), this.syncEngine.catchupViaSeqReplay().catch((e) => {
+      rlog().warn("lifecycle", `gate-open catch-up failed: ${errMsg(e)}`);
+    }), await this.savePluginData(this.syncEngine.getLastSync()), this.updateStatusBar(this.syncEngine.getStatus());
   }
   /** Decide which header copy the SyncPreviewModal should use based on the
    *  saved gate fingerprint. Never accepted before = first-time onboarding;
