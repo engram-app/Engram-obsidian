@@ -21366,6 +21366,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   async catchupViaSeqReplay(opts = {}) {
     var _a, _b, _c, _d, _e, _f;
     let serverIds = /* @__PURE__ */ new Set(), serverAttachmentPaths = /* @__PURE__ */ new Set();
+    if (this.syncBlocked)
+      return devLog().log("sync-blocked", "catchupViaSeqReplay skipped \u2014 gate closed"), rlog().anomaly("sync", "catch-up skipped \u2014 sync gate closed (blocked=true)"), {
+        applied: 0,
+        files: 0,
+        failed: 0,
+        deletes: 0,
+        serverIds,
+        serverAttachmentPaths,
+        ran: !1,
+        complete: !1
+      };
     if (this.seqReplayRunning) {
       if (this.seqReplayAgain = !0, !opts.awaitCoalesced)
         return {

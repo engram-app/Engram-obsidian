@@ -4011,6 +4011,46 @@ export class SyncEngine {
 	}> {
 		const serverIds = new Set<string>();
 		const serverAttachmentPaths = new Set<string>();
+
+		// Gate closed: walk NOTHING. The block used to live per-file inside
+		// flushFromCrdt, so a blocked replay still fetched every page, and the
+		// server still decrypted and serialised every row, for a pass whose
+		// every write was discarded — then the real pass did it all again. That
+		// doubling is the prod pull CPU spike.
+		//
+		// The correctness half is worse. `onPage` persists the catch-up cursor
+		// after each page and exempts only `enumerateOnly`, whose comment
+		// reasons it exactly right — "a later genuine catch-up needs to still
+		// see every op this enumeration walked past, since none of them were
+		// applied" — and then misses this case, where equally none of them were
+		// applied. So a blocked walk advanced the cursor PAST notes it never
+		// wrote, and the next replay resumed after them. They came back only if
+		// the manifest validator happened to rewind; that repair machinery is
+		// largely compensating for this.
+		//
+		// `complete: false` is load-bearing: we walked nothing, so the empty
+		// server sets are not evidence, and no destructive delete decision may
+		// trust them (they require ran && complete).
+		if (this.syncBlocked) {
+			devLog().log("sync-blocked", "catchupViaSeqReplay skipped — gate closed");
+			// Ships even with diagnostics off. Skipping the walk is correct, but a
+			// pull that returns nothing because a gate is shut must still be
+			// visible — silently doing nothing and reporting success is the bug
+			// this whole series came from. One line per blocked attempt, not one
+			// per note. Counts only, no paths.
+			rlog().anomaly("sync", "catch-up skipped — sync gate closed (blocked=true)");
+			return {
+				applied: 0,
+				files: 0,
+				failed: 0,
+				deletes: 0,
+				serverIds,
+				serverAttachmentPaths,
+				ran: false,
+				complete: false,
+			};
+		}
+
 		if (this.seqReplayRunning) {
 			this.seqReplayAgain = true;
 			if (!opts.awaitCoalesced) {

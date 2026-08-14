@@ -764,7 +764,10 @@ describe("the sync gate must not fake success (prod 2026-08-13 root cause)", () 
 		await flush();
 
 		expect(res.files).toBe(0);
-		const anomaly = sent.find((e) => e.message.includes("produced no files"));
+		// The signal is the gate-skip line, not "produced no files": we now bail
+		// before walking, so there are no rows to have produced nothing from.
+		// Either way the user's pull must not silently claim success.
+		const anomaly = sent.find((e) => e.message.includes("sync gate closed"));
 		expect(anomaly).toBeDefined();
 		expect(anomaly?.level).toBe("warn");
 	});
@@ -779,5 +782,73 @@ describe("the sync gate must not fake success (prod 2026-08-13 root cause)", () 
 
 		expect(res.files).toBe(2);
 		expect(sent.filter((e) => e.message.includes("produced no files")).length).toBe(0);
+	});
+});
+
+describe("a gate-blocked replay must not walk the feed at all", () => {
+	afterEach(async () => {
+		await destroyRemoteLog();
+	});
+
+	test("blocked: no fetch, and the catch-up cursor does NOT advance", async () => {
+		// DATA LOSS, not just wasted work. onPage persists the cursor after each
+		// page and exempts only `enumerateOnly` — whose comment reasons exactly
+		// the right way ("a later genuine catch-up needs to still see every op
+		// this enumeration walked past, since none of them were applied") and
+		// then misses the gate case, where equally none of them were applied.
+		//
+		// So a blocked walk advanced the cursor past 316 notes it never wrote,
+		// and the next replay resumed AFTER them. They were only ever recovered
+		// by the manifest validator's rewind — machinery that exists to paper
+		// over this.
+		//
+		// It is also the prod CPU spike: the server decrypts and serialises the
+		// whole feed for a pass whose every row is discarded, and then does it
+		// again for the real pass.
+		const { engine } = makeEngine(threeRowFeed());
+		let fetches = 0;
+		engine.setCrdtCatchupSince(async () => {
+			fetches += 1;
+			return { changes: threeRowFeed(), has_more: false, next_seq: null };
+		});
+		engine.setCatchupSeq(0);
+		engine.setSyncBlocked(true);
+
+		const res = await engine.catchUp({ reportProgress: true });
+
+		expect(fetches).toBe(0);
+		expect(engine.getCatchupSeq()).toBe(0);
+		expect(res.files).toBe(0);
+	});
+
+	test("blocked: the replay reports ran=false AND complete=false", async () => {
+		// Load-bearing: we walked nothing, so the empty server sets are not
+		// evidence. Destructive delete decisions require ran && complete, and
+		// trusting an empty set here would read as "the server has nothing" and
+		// trash the vault.
+		const { engine } = makeEngine(threeRowFeed());
+		engine.setSyncBlocked(true);
+
+		const res = await engine.catchupViaSeqReplay({});
+
+		expect(res.ran).toBe(false);
+		expect(res.complete).toBe(false);
+		expect(res.serverIds.size).toBe(0);
+	});
+
+	test("open: the feed is walked and the cursor advances", async () => {
+		const { engine } = makeEngine(threeRowFeed());
+		let fetches = 0;
+		engine.setCrdtCatchupSince(async () => {
+			fetches += 1;
+			return { changes: threeRowFeed(), has_more: false, next_seq: null };
+		});
+		engine.setCatchupSeq(0);
+		engine.setSyncBlocked(false);
+
+		await engine.catchUp({ reportProgress: true });
+
+		expect(fetches).toBeGreaterThan(0);
+		expect(engine.getCatchupSeq()).toBeGreaterThan(0);
 	});
 });
