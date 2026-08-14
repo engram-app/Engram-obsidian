@@ -16657,6 +16657,50 @@ var import_obsidian23 = require("obsidian");
 
 // src/device-flow-modal.ts
 var import_obsidian14 = require("obsidian");
+
+// src/device-flow-socket.ts
+var HEARTBEAT_MS = 3e4;
+function waitForDeviceAuthorization(apiUrl, deviceCode, onAuthorized, opts = {}) {
+  let topic = `device:${deviceCode}`, socket = null, heartbeat = null, disposed = !1, ref = 0, dispose = () => {
+    disposed = !0, heartbeat !== null && (window.clearInterval(heartbeat), heartbeat = null);
+    try {
+      socket == null || socket.close();
+    } catch (e) {
+    }
+    socket = null;
+  };
+  try {
+    let wsBase = apiUrl.replace(/\/api\/?$/, "").replace(/^http/, "ws");
+    socket = new WebSocket(`${wsBase}/socket/device/websocket?vsn=2.0.0`);
+  } catch (e) {
+    return devLog().log("device-flow", `socket construct failed: ${errMsg(e)}`), dispose;
+  }
+  let send = (frame) => {
+    try {
+      socket == null || socket.send(JSON.stringify(frame));
+    } catch (e) {
+      devLog().log("device-flow", `socket send failed: ${errMsg(e)}`);
+    }
+  };
+  return socket.onopen = () => {
+    var _a;
+    disposed || (send(["1", String(++ref), topic, "phx_join", {}]), heartbeat = window.setInterval(() => {
+      send([null, String(++ref), "phoenix", "heartbeat", {}]);
+    }, (_a = opts.heartbeatMs) != null ? _a : HEARTBEAT_MS));
+  }, socket.onmessage = (evt) => {
+    if (!disposed)
+      try {
+        let frame = JSON.parse(String(evt.data));
+        frame[2] === topic && frame[3] === "authorized" && onAuthorized();
+      } catch (e) {
+        devLog().log("device-flow", `socket frame parse failed: ${errMsg(e)}`);
+      }
+  }, socket.onerror = () => {
+    devLog().log("device-flow", "socket error \u2014 falling back to poll");
+  }, dispose;
+}
+
+// src/device-flow-modal.ts
 function verificationUrlWithCode(verificationUrl, userCode) {
   try {
     let url = new URL(verificationUrl);
@@ -16671,6 +16715,8 @@ var DeviceFlowModal = class extends import_obsidian14.Modal {
     this.resolve = () => {
     };
     this.pollInterval = null;
+    this.disposeSocket = null;
+    this.exchanging = !1;
     this.aborted = !1;
     this.plugin = plugin;
   }
@@ -16689,7 +16735,8 @@ var DeviceFlowModal = class extends import_obsidian14.Modal {
     }
   }
   onClose() {
-    this.aborted = !0, this.pollInterval && (window.clearInterval(this.pollInterval), this.pollInterval = null), this.contentEl.empty(), this.resolve(null);
+    var _a;
+    this.aborted = !0, this.pollInterval && (window.clearInterval(this.pollInterval), this.pollInterval = null), (_a = this.disposeSocket) == null || _a.call(this), this.disposeSocket = null, this.contentEl.empty(), this.resolve(null);
   }
   waitForResult() {
     return new Promise((resolve) => {
@@ -16731,19 +16778,39 @@ var DeviceFlowModal = class extends import_obsidian14.Modal {
     }), contentEl.createDiv({ cls: "engram-device-buttons" }).createEl("button", { text: "Cancel" }).addEventListener("click", () => this.close()), window.open(verificationUrlWithCode(resp.verification_url, resp.user_code));
   }
   startPolling(deviceCode) {
-    let apiUrl = EngramApi.normalizeBaseUrl(this.plugin.settings.apiUrl), startedAt = Date.now(), maxSeconds = 300, inFlight = !1, poll = async () => {
-      if (!(this.aborted || inFlight)) {
-        inFlight = !0;
+    let apiUrl = EngramApi.normalizeBaseUrl(this.plugin.settings.apiUrl);
+    this.disposeSocket = waitForDeviceAuthorization(apiUrl, deviceCode, () => {
+      this.exchangeNow(apiUrl, deviceCode);
+    });
+    let startedAt = Date.now(), maxSeconds = 300, poll = async () => {
+      if (!(this.aborted || this.exchanging)) {
+        this.exchanging = !0;
         try {
           await this.pollOnce(apiUrl, deviceCode, startedAt, maxSeconds);
         } finally {
-          inFlight = !1;
+          this.exchanging = !1;
         }
       }
     };
     this.pollInterval = window.setInterval(() => {
       poll();
-    }, 5e3);
+    }, 3e4);
+  }
+  /** Socket said the code was authorized: exchange it once, right now.
+   *
+   *  Guarded because the fallback interval is still armed — without this a
+   *  poll already in flight and the socket-triggered exchange could both
+   *  redeem, and the loser would see the 410 from a single-use code and
+   *  render "expired" over a flow that actually succeeded. */
+  async exchangeNow(apiUrl, deviceCode) {
+    if (!(this.aborted || this.exchanging)) {
+      this.exchanging = !0;
+      try {
+        await this.pollOnce(apiUrl, deviceCode, Date.now(), 300);
+      } finally {
+        this.exchanging = !1;
+      }
+    }
   }
   async pollOnce(apiUrl, deviceCode, startedAt, maxSeconds) {
     if ((Date.now() - startedAt) / 1e3 >= maxSeconds) {

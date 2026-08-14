@@ -1,6 +1,7 @@
 import { type App, Modal, Notice, requestUrl } from "obsidian";
 import { EngramApi, withTimeout } from "./api";
 import { devLog } from "./dev-log";
+import { waitForDeviceAuthorization } from "./device-flow-socket";
 import { errMsg } from "./error-util";
 import type EngramSyncPlugin from "./main";
 
@@ -33,6 +34,8 @@ export class DeviceFlowModal extends Modal {
 	private plugin: EngramSyncPlugin;
 	private resolve: (result: DeviceFlowResult | null) => void = () => {};
 	private pollInterval: number | null = null;
+	private disposeSocket: (() => void) | null = null;
+	private exchanging = false;
 	private aborted = false;
 
 	constructor(app: App, plugin: EngramSyncPlugin) {
@@ -65,6 +68,11 @@ export class DeviceFlowModal extends Modal {
 			window.clearInterval(this.pollInterval);
 			this.pollInterval = null;
 		}
+		// Cancelling the modal must take the socket with it — otherwise every
+		// abandoned link attempt leaves a live WebSocket (and its heartbeat)
+		// running for the rest of the Obsidian session.
+		this.disposeSocket?.();
+		this.disposeSocket = null;
 		this.contentEl.empty();
 		this.resolve(null);
 	}
@@ -149,6 +157,15 @@ export class DeviceFlowModal extends Modal {
 
 	private startPolling(deviceCode: string): void {
 		const apiUrl = EngramApi.normalizeBaseUrl(this.plugin.settings.apiUrl);
+
+		// Primary path: the server tells us the instant the browser authorizes,
+		// so completion is immediate instead of landing somewhere in a 5s
+		// window. The interval below is now only a fallback for networks that
+		// block WebSockets — see waitForDeviceAuthorization.
+		this.disposeSocket = waitForDeviceAuthorization(apiUrl, deviceCode, () => {
+			void this.exchangeNow(apiUrl, deviceCode);
+		});
+
 		// Wall-clock deadline, not a tick counter: a 15s-timeout request holding
 		// its 5s tick hostage made `elapsed += 5` undercount real time.
 		const startedAt = Date.now();
@@ -156,21 +173,43 @@ export class DeviceFlowModal extends Modal {
 		// One request at a time: the interval fires regardless of whether the
 		// previous poll (up to 15s) is still in flight, which stacked up to three
 		// concurrent token requests.
-		let inFlight = false;
-
+		//
+		// Deliberately `this.exchanging` and not a local flag — the socket path
+		// redeems the same single-use code, so the two must share one guard or
+		// the loser of that race renders "expired" over a successful link.
 		const poll = async (): Promise<void> => {
-			if (this.aborted || inFlight) return;
-			inFlight = true;
+			if (this.aborted || this.exchanging) return;
+			this.exchanging = true;
 			try {
 				await this.pollOnce(apiUrl, deviceCode, startedAt, maxSeconds);
 			} finally {
-				inFlight = false;
+				this.exchanging = false;
 			}
 		};
 
+		// 30s, not 5s. This is no longer how the flow completes — the socket is —
+		// so it exists purely to rescue a user whose network blocks WebSockets.
+		// Tightening it would just add request volume to the common path where
+		// it never wins the race.
 		this.pollInterval = window.setInterval(() => {
 			void poll();
-		}, 5000);
+		}, 30_000);
+	}
+
+	/** Socket said the code was authorized: exchange it once, right now.
+	 *
+	 *  Guarded because the fallback interval is still armed — without this a
+	 *  poll already in flight and the socket-triggered exchange could both
+	 *  redeem, and the loser would see the 410 from a single-use code and
+	 *  render "expired" over a flow that actually succeeded. */
+	private async exchangeNow(apiUrl: string, deviceCode: string): Promise<void> {
+		if (this.aborted || this.exchanging) return;
+		this.exchanging = true;
+		try {
+			await this.pollOnce(apiUrl, deviceCode, Date.now(), 300);
+		} finally {
+			this.exchanging = false;
+		}
 	}
 
 	private async pollOnce(
