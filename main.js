@@ -16717,6 +16717,7 @@ var DeviceFlowModal = class extends import_obsidian14.Modal {
     this.pollInterval = null;
     this.disposeSocket = null;
     this.exchanging = !1;
+    this.linkedSyncBtn = null;
     this.aborted = !1;
     this.plugin = plugin;
   }
@@ -16812,7 +16813,37 @@ var DeviceFlowModal = class extends import_obsidian14.Modal {
       }
     }
   }
+  /** Success screen. The modal used to just close here, so a successful link
+   *  was indistinguishable from the modal crashing — it vanished, said
+   *  nothing, and left the user with no idea that linking does NOT sync
+   *  anything on its own and a first sync still has to be started.
+   *
+   *  The sync button starts disabled: syncing needs persisted tokens, and
+   *  those are written by the caller after `waitForResult()` resolves. It is
+   *  armed by `markLinked()` so a fast click can't kick off a sync that would
+   *  401 on a token that isn't saved yet. */
+  renderLinked(result) {
+    let { contentEl } = this;
+    contentEl.empty(), contentEl.createEl("h2", { text: "Vault linked" }), result.user_email && contentEl.createEl("p", { text: `Signed in as ${result.user_email}.` }), contentEl.createEl("p", {
+      text: "Nothing has synced yet \u2014 linking only connects the account. Start the first sync to push this vault to Engram."
+    });
+    let btnContainer = contentEl.createDiv({ cls: "engram-device-buttons" });
+    btnContainer.createEl("button", { text: "Later" }).addEventListener("click", () => this.close());
+    let syncBtn = btnContainer.createEl("button", {
+      text: "Finishing link\u2026",
+      cls: "mod-cta"
+    });
+    syncBtn.disabled = !0, syncBtn.addEventListener("click", () => {
+      this.close(), this.plugin.doSyncWithFirstSyncCheck();
+    }), this.linkedSyncBtn = syncBtn;
+  }
+  /** Called by the caller once the tokens are persisted — only then is a sync
+   *  able to authenticate. No-op if the linked screen was never rendered. */
+  markLinked() {
+    this.linkedSyncBtn && (this.linkedSyncBtn.disabled = !1, this.linkedSyncBtn.setText("Start first sync"));
+  }
   async pollOnce(apiUrl, deviceCode, startedAt, maxSeconds) {
+    var _a;
     if ((Date.now() - startedAt) / 1e3 >= maxSeconds) {
       this.pollInterval && window.clearInterval(this.pollInterval), this.renderExpired();
       return;
@@ -16830,10 +16861,10 @@ var DeviceFlowModal = class extends import_obsidian14.Modal {
       );
       if (resp.status === 400 || resp.status === 428) return;
       if (resp.status >= 200 && resp.status < 300) {
-        this.pollInterval && window.clearInterval(this.pollInterval);
+        this.pollInterval && window.clearInterval(this.pollInterval), (_a = this.disposeSocket) == null || _a.call(this), this.disposeSocket = null;
         let result = resp.json;
-        this.resolve(result), this.resolve = () => {
-        }, this.close();
+        this.renderLinked(result), this.resolve(result), this.resolve = () => {
+        };
         return;
       }
       if (resp.status === 410) {
@@ -18879,12 +18910,12 @@ var EngramSyncSettingTab = class extends import_obsidian23.PluginSettingTab {
     wrapper && (this.installedProgressCb = null, this.plugin.syncEngine.onSyncProgress === wrapper && (this.plugin.syncEngine.onSyncProgress = this.prevProgressCb));
   }
   async startDeviceFlow() {
-    let result = await new DeviceFlowModal(this.app, this.plugin).waitForResult();
+    let modal = new DeviceFlowModal(this.app, this.plugin), result = await modal.waitForResult();
     result && (await this.plugin.saveOAuthTokens(
       result.refresh_token,
       result.vault_id,
       result.user_email
-    ), this.rerender());
+    ), modal.markLinked(), this.rerender());
   }
   /** Render (or re-render) the connection status row in place. Idempotent —
    *  empties the container first so it can be wired to live status events. */

@@ -216,3 +216,60 @@ describe("verificationUrlWithCode", () => {
 		expect(verificationUrlWithCode("not a url", "ENGR-7X4K")).toBe("not a url");
 	});
 });
+
+describe("post-link guidance", () => {
+	const linkSuccessfully = () => {
+		mockRequestUrl.mockResolvedValue({
+			status: 200,
+			json: { access_token: "at", refresh_token: "rt", user_email: "me@example.test" },
+		});
+		const modal = new DeviceFlowModal(
+			makeApp("V"),
+			makePlugin("https://example.test", "cid-1"),
+		) as any;
+		const closed: number[] = [];
+		modal.close = () => closed.push(1);
+		modal.resolve = () => {};
+		modal.pollInterval = null;
+		const rendered: unknown[] = [];
+		modal.renderLinked = (r: unknown) => rendered.push(r);
+		return { modal, closed, rendered };
+	};
+
+	// The modal used to close itself the instant the exchange succeeded, so a
+	// successful link looked identical to the modal crashing: it just vanished,
+	// with no confirmation and no hint that a first sync still has to be run.
+	test("a successful exchange does NOT silently close the modal", async () => {
+		const { modal, closed } = linkSuccessfully();
+		await modal.pollOnce("https://example.test/api", "dc-1", Date.now(), 300);
+		expect(closed.length).toBe(0);
+	});
+
+	test("a successful exchange renders the linked screen instead", async () => {
+		const { modal, rendered } = linkSuccessfully();
+		await modal.pollOnce("https://example.test/api", "dc-1", Date.now(), 300);
+		expect(rendered.length).toBe(1);
+		expect((rendered[0] as { user_email: string }).user_email).toBe("me@example.test");
+	});
+
+	test("the linked screen renders before the promise resolves", async () => {
+		// The caller saves tokens on resolve and then calls markLinked(), which
+		// needs the screen to already exist. Render-then-resolve, not the reverse.
+		const { modal } = linkSuccessfully();
+		const order: string[] = [];
+		modal.renderLinked = () => order.push("render");
+		modal.resolve = () => order.push("resolve");
+		await modal.pollOnce("https://example.test/api", "dc-1", Date.now(), 300);
+		expect(order).toEqual(["render", "resolve"]);
+	});
+
+	// Syncing needs persisted tokens. The button stays disabled until the caller
+	// confirms the save, so a fast click can't start a sync that would 401.
+	test("markLinked is a no-op when there is no linked screen", () => {
+		const modal = new DeviceFlowModal(
+			makeApp("V"),
+			makePlugin("https://example.test", "cid-1"),
+		) as any;
+		expect(() => modal.markLinked()).not.toThrow();
+	});
+});

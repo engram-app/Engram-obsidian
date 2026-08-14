@@ -36,6 +36,7 @@ export class DeviceFlowModal extends Modal {
 	private pollInterval: number | null = null;
 	private disposeSocket: (() => void) | null = null;
 	private exchanging = false;
+	private linkedSyncBtn: HTMLButtonElement | null = null;
 	private aborted = false;
 
 	constructor(app: App, plugin: EngramSyncPlugin) {
@@ -212,6 +213,56 @@ export class DeviceFlowModal extends Modal {
 		}
 	}
 
+	/** Success screen. The modal used to just close here, so a successful link
+	 *  was indistinguishable from the modal crashing — it vanished, said
+	 *  nothing, and left the user with no idea that linking does NOT sync
+	 *  anything on its own and a first sync still has to be started.
+	 *
+	 *  The sync button starts disabled: syncing needs persisted tokens, and
+	 *  those are written by the caller after `waitForResult()` resolves. It is
+	 *  armed by `markLinked()` so a fast click can't kick off a sync that would
+	 *  401 on a token that isn't saved yet. */
+	private renderLinked(result: DeviceFlowResult): void {
+		const { contentEl } = this;
+		contentEl.empty();
+		contentEl.createEl("h2", { text: "Vault linked" });
+
+		if (result.user_email) {
+			contentEl.createEl("p", { text: `Signed in as ${result.user_email}.` });
+		}
+
+		contentEl.createEl("p", {
+			text: "Nothing has synced yet — linking only connects the account. Start the first sync to push this vault to Engram.",
+		});
+
+		const btnContainer = contentEl.createDiv({ cls: "engram-device-buttons" });
+
+		const laterBtn = btnContainer.createEl("button", { text: "Later" });
+		laterBtn.addEventListener("click", () => this.close());
+
+		const syncBtn = btnContainer.createEl("button", {
+			text: "Finishing link…",
+			cls: "mod-cta",
+		});
+		syncBtn.disabled = true;
+		syncBtn.addEventListener("click", () => {
+			// Close first, then sync. doSyncWithFirstSyncCheck opens its own
+			// preview modal, and stacking one over this leaves a modal cascade
+			// the user has to dismiss twice.
+			this.close();
+			void this.plugin.doSyncWithFirstSyncCheck();
+		});
+		this.linkedSyncBtn = syncBtn;
+	}
+
+	/** Called by the caller once the tokens are persisted — only then is a sync
+	 *  able to authenticate. No-op if the linked screen was never rendered. */
+	markLinked(): void {
+		if (!this.linkedSyncBtn) return;
+		this.linkedSyncBtn.disabled = false;
+		this.linkedSyncBtn.setText("Start first sync");
+	}
+
 	private async pollOnce(
 		apiUrl: string,
 		deviceCode: string,
@@ -246,10 +297,15 @@ export class DeviceFlowModal extends Modal {
 
 			if (resp.status >= 200 && resp.status < 300) {
 				if (this.pollInterval) window.clearInterval(this.pollInterval);
+				this.disposeSocket?.();
+				this.disposeSocket = null;
 				const result = resp.json as DeviceFlowResult;
+				// Render BEFORE resolving. Resolving hands control to the caller,
+				// which persists the tokens and then calls markLinked() to arm the
+				// sync button — that button has to exist by then.
+				this.renderLinked(result);
 				this.resolve(result);
 				this.resolve = () => {};
-				this.close();
 				return;
 			}
 
