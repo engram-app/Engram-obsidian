@@ -1249,6 +1249,13 @@ body.is-mobile .engram-support-buttons > a {
 	color: var(--text-muted);
 	padding: 1.5em 0;
 	text-align: center;
+	/* Reserve the body so the modal does not collapse to one line and then
+	   snap back open when the plan lands. That resize is what made a single
+	   modal read as three different ones. */
+	min-height: 8em;
+	display: flex;
+	align-items: center;
+	justify-content: center;
 }
 
 .engram-sync-preview-picker-body {

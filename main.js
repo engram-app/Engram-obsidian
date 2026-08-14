@@ -18015,21 +18015,33 @@ function simplifiedScreenCopy(simple) {
     note: "Nothing will be removed from this device."
   };
 }
+var LOADING_TEXT_DELAY_MS = 400, LOADING_MIN_VISIBLE_MS = 600;
+function loadingHoldMs(shownAt, now) {
+  if (shownAt === null) return 0;
+  let held = now - shownAt;
+  return held >= LOADING_MIN_VISIBLE_MS ? 0 : LOADING_MIN_VISIBLE_MS - held;
+}
 var SyncPreviewModal = class extends import_obsidian21.Modal {
   constructor(app, plan, opts) {
     super(app);
     this.opts = opts;
     this.resolvedChoice = null;
     this.resolveFn = null;
+    this.loadingTextTimer = null;
+    this.holdTimer = null;
+    /** null until the "Comparing…" line is actually on screen. Doubles as the
+     *  flag renderPlanLoading reads and the clock the hold window measures. */
+    this.loadingTextShownAt = null;
     this.remoteVaultName = opts.remoteVaultName, this.state = new SyncPreviewState(plan, (choice) => {
       this.resolvedChoice = choice, this.close();
     });
   }
   onOpen() {
-    this.contentEl.addClass("engram-sync-preview-modal"), this.opts.initialView === "vault-picker" ? this.openVaultPicker() : this.render();
+    this.contentEl.addClass("engram-sync-preview-modal"), this.startLoadingTextTimer(), this.opts.initialView === "vault-picker" ? this.openVaultPicker() : this.render();
   }
   onClose() {
     var _a;
+    this.clearLoadingTimers();
     let resolve = this.resolveFn;
     this.resolveFn = null, this.contentEl.empty(), resolve && resolve((_a = this.resolvedChoice) != null ? _a : "cancel");
   }
@@ -18044,13 +18056,38 @@ var SyncPreviewModal = class extends import_obsidian21.Modal {
    *  applyVaultChange's replacePlan is authoritative and a late-arriving plan
    *  for the old vault must not clobber it. */
   setPlan(plan) {
-    this.state.plan == null && (this.state.replacePlan(plan), this.state.view === "preview" && this.render());
+    if (this.state.plan != null) return;
+    let hold = loadingHoldMs(this.loadingTextShownAt, Date.now());
+    if (hold > 0) {
+      this.holdTimer = window.setTimeout(() => {
+        this.holdTimer = null, this.applyPlan(plan);
+      }, hold);
+      return;
+    }
+    this.applyPlan(plan);
+  }
+  applyPlan(plan) {
+    this.state.plan == null && (this.clearLoadingTimers(), this.state.replacePlan(plan), this.state.view === "preview" && this.render());
+  }
+  /** The loading LINE is deferred, not the modal — the modal itself opens
+   *  instantly and keeps its header/footer the whole time. A plan that
+   *  resolves inside this window therefore shows no loading copy at all,
+   *  which is the point: a sentence displayed for 80ms is a flicker, not
+   *  information. Slowing every sync down to make it readable would tax the
+   *  fast path forever to fix a frame nobody wanted. */
+  startLoadingTextTimer() {
+    this.state.plan == null && (this.loadingTextTimer = window.setTimeout(() => {
+      this.loadingTextTimer = null, this.state.plan == null && (this.loadingTextShownAt = Date.now(), this.state.view === "preview" && this.render());
+    }, LOADING_TEXT_DELAY_MS));
+  }
+  clearLoadingTimers() {
+    this.loadingTextTimer !== null && (window.clearTimeout(this.loadingTextTimer), this.loadingTextTimer = null), this.holdTimer !== null && (window.clearTimeout(this.holdTimer), this.holdTimer = null);
   }
   /** Surface a plan-load failure in the instant-open loading view. Skipped once
    *  a plan exists (e.g. the user switched vaults), so a stale failure never
    *  overwrites a good plan. */
   setPlanError(message) {
-    this.state.plan == null && (this.state.planError = message, this.state.view === "preview" && this.render());
+    this.state.plan == null && (this.clearLoadingTimers(), this.loadingTextShownAt = Date.now(), this.state.planError = message, this.state.view === "preview" && this.render());
   }
   /** The plan the user ultimately chose against (after any vault switch), or
    *  null if it never loaded. Lets the caller describe the planned work in the
@@ -18110,7 +18147,7 @@ var SyncPreviewModal = class extends import_obsidian21.Modal {
     this.state.planError ? body.createSpan({
       cls: "engram-sync-preview-picker-error",
       text: this.state.planError
-    }) : body.createSpan({ text: "Comparing your vault with the cloud\u2026" }), this.renderFooter(parent, "Cancel", !1);
+    }) : this.loadingTextShownAt !== null && body.createSpan({ text: "Comparing your vault with the cloud\u2026" }), this.renderFooter(parent, "Cancel", !1);
   }
   /** Dismiss + optional "Change vault" footer, shared by the loaded preview
    *  and the loading state (previously identical blocks). */

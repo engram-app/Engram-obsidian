@@ -350,6 +350,25 @@ export function simplifiedScreenCopy(simple: NonNullable<ReturnType<typeof simpl
 	};
 }
 
+/** Wait this long before the "Comparing…" line appears. Plans that resolve
+ *  faster show no loading copy at all. */
+const LOADING_TEXT_DELAY_MS = 400;
+/** Once that line IS on screen, keep it there at least this long. */
+const LOADING_MIN_VISIBLE_MS = 600;
+
+/** How long to hold the loaded plan back so the "Comparing…" line stays
+ *  readable. 0 when the line was never shown (the fast path — nothing to
+ *  hold) or has already had its time.
+ *
+ *  Deliberately NOT a blanket delay on every sync: the fast case should feel
+ *  instant, and only a line that actually reached the screen has earned the
+ *  right to stay on it. */
+export function loadingHoldMs(shownAt: number | null, now: number): number {
+	if (shownAt === null) return 0;
+	const held = now - shownAt;
+	return held >= LOADING_MIN_VISIBLE_MS ? 0 : LOADING_MIN_VISIBLE_MS - held;
+}
+
 export class SyncPreviewModal extends Modal {
 	private state: SyncPreviewState;
 	private resolvedChoice: SyncChoice | null = null;
@@ -371,8 +390,15 @@ export class SyncPreviewModal extends Modal {
 		});
 	}
 
+	private loadingTextTimer: number | null = null;
+	private holdTimer: number | null = null;
+	/** null until the "Comparing…" line is actually on screen. Doubles as the
+	 *  flag renderPlanLoading reads and the clock the hold window measures. */
+	private loadingTextShownAt: number | null = null;
+
 	onOpen(): void {
 		this.contentEl.addClass("engram-sync-preview-modal");
+		this.startLoadingTextTimer();
 		if (this.opts.initialView === "vault-picker") {
 			void this.openVaultPicker();
 		} else {
@@ -381,6 +407,7 @@ export class SyncPreviewModal extends Modal {
 	}
 
 	onClose(): void {
+		this.clearLoadingTimers();
 		// Defensive: if the user dismisses via Esc/backdrop before picking,
 		// treat that as a cancel.
 		const resolve = this.resolveFn;
@@ -403,8 +430,53 @@ export class SyncPreviewModal extends Modal {
 	 *  for the old vault must not clobber it. */
 	setPlan(plan: SyncPlan): void {
 		if (this.state.plan != null) return;
+
+		// If "Comparing…" is on screen, let it be readable. Swapping it out
+		// after 80ms is what made the step feel skipped rather than fast.
+		const hold = loadingHoldMs(this.loadingTextShownAt, Date.now());
+		if (hold > 0) {
+			this.holdTimer = window.setTimeout(() => {
+				this.holdTimer = null;
+				this.applyPlan(plan);
+			}, hold);
+			return;
+		}
+
+		this.applyPlan(plan);
+	}
+
+	private applyPlan(plan: SyncPlan): void {
+		if (this.state.plan != null) return;
+		this.clearLoadingTimers();
 		this.state.replacePlan(plan);
 		if (this.state.view === "preview") this.render();
+	}
+
+	/** The loading LINE is deferred, not the modal — the modal itself opens
+	 *  instantly and keeps its header/footer the whole time. A plan that
+	 *  resolves inside this window therefore shows no loading copy at all,
+	 *  which is the point: a sentence displayed for 80ms is a flicker, not
+	 *  information. Slowing every sync down to make it readable would tax the
+	 *  fast path forever to fix a frame nobody wanted. */
+	private startLoadingTextTimer(): void {
+		if (this.state.plan != null) return;
+		this.loadingTextTimer = window.setTimeout(() => {
+			this.loadingTextTimer = null;
+			if (this.state.plan != null) return;
+			this.loadingTextShownAt = Date.now();
+			if (this.state.view === "preview") this.render();
+		}, LOADING_TEXT_DELAY_MS);
+	}
+
+	private clearLoadingTimers(): void {
+		if (this.loadingTextTimer !== null) {
+			window.clearTimeout(this.loadingTextTimer);
+			this.loadingTextTimer = null;
+		}
+		if (this.holdTimer !== null) {
+			window.clearTimeout(this.holdTimer);
+			this.holdTimer = null;
+		}
 	}
 
 	/** Surface a plan-load failure in the instant-open loading view. Skipped once
@@ -412,6 +484,10 @@ export class SyncPreviewModal extends Modal {
 	 *  overwrites a good plan. */
 	setPlanError(message: string): void {
 		if (this.state.plan != null) return;
+		this.clearLoadingTimers();
+		// An error is not a progress message — show it the instant it exists,
+		// regardless of where the delay window stands.
+		this.loadingTextShownAt = Date.now();
 		this.state.planError = message;
 		if (this.state.view === "preview") this.render();
 	}
@@ -532,7 +608,7 @@ export class SyncPreviewModal extends Modal {
 				cls: "engram-sync-preview-picker-error",
 				text: this.state.planError,
 			});
-		} else {
+		} else if (this.loadingTextShownAt !== null) {
 			body.createSpan({ text: "Comparing your vault with the cloud…" });
 		}
 

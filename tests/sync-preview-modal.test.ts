@@ -6,6 +6,7 @@ import {
 	countSkippedAttachments,
 	describeCreateVaultError,
 	HEADER_BY_CONTEXT,
+	loadingHoldMs,
 	mergeHelperText,
 	SyncPreviewState,
 	skippedAttachmentsLine,
@@ -443,5 +444,31 @@ describe("HEADER_BY_CONTEXT", () => {
 		expect(HEADER_BY_CONTEXT["vault-switch"]).toBe(
 			"You are now pointing at a different cloud vault",
 		);
+	});
+});
+
+describe("loadingHoldMs — 'Comparing…' pacing", () => {
+	// The fast path. A plan that resolves before the line ever appears must not
+	// be delayed at all: there is nothing on screen to keep readable, and
+	// padding it would tax every quick sync to fix a frame no one saw.
+	test("no hold when the line was never shown", () => {
+		expect(loadingHoldMs(null, 1_000_000)).toBe(0);
+	});
+
+	// The bug being fixed: the line appeared and was replaced ~80ms later, which
+	// reads as a step being skipped rather than a step being fast.
+	test("holds out the remainder when the line just appeared", () => {
+		expect(loadingHoldMs(1_000_000, 1_000_080)).toBe(520);
+	});
+
+	test("no hold once the line has had its full time", () => {
+		expect(loadingHoldMs(1_000_000, 1_000_600)).toBe(0);
+		expect(loadingHoldMs(1_000_000, 1_005_000)).toBe(0);
+	});
+
+	// A slow plan is the case the line exists for — it has been readable for
+	// ages, so landing the results must be instant, not delayed again.
+	test("never delays a genuinely slow plan", () => {
+		expect(loadingHoldMs(1_000_000, 1_008_000)).toBe(0);
 	});
 });
