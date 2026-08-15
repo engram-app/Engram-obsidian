@@ -98,6 +98,23 @@ export class OfflineQueue {
 		}
 	}
 
+	/** The queue as it should be WRITTEN to disk: no note bodies.
+	 *
+	 *  Current code never enqueues content — every call site has been
+	 *  content-free since the V8 OOM work — but a data.json from an older build
+	 *  still carries full note text and whole base64 attachments, and nothing
+	 *  ever removed them. That file lives in `.obsidian/` and is the file users
+	 *  are asked to paste into a bug report.
+	 *
+	 *  Stripped on the way OUT, not on the way in: a legacy entry's inline
+	 *  content is still the only copy for a file that was deleted or renamed
+	 *  during the offline window, so dropping it at load would lose the change.
+	 *  This way the body stays usable for this session and stops being written
+	 *  back, so it disappears from disk on the next save. */
+	persistable(): QueueEntry[] {
+		return this.all().map(({ content: _c, contentBase64: _b, ...lean }) => lean);
+	}
+
 	/** Add or replace a queued change for a path. Persistence is debounced. */
 	async enqueue(entry: QueueEntry): Promise<void> {
 		this.entries.set(dedupKey(entry), entry);
@@ -174,7 +191,7 @@ export class OfflineQueue {
 			// A failed data.json write means queued work silently vanishes on the
 			// next reload; persistNow propagates the same failure to its caller,
 			// so the debounced path must at least leave a trace.
-			void this.persistFn?.(this.all()).catch((e) => {
+			void this.persistFn?.(this.persistable()).catch((e) => {
 				rlog().warn("queue", `debounced persist failed: ${errMsg(e)}`);
 			});
 		}, this.persistDelayMs);
@@ -186,6 +203,6 @@ export class OfflineQueue {
 			window.clearTimeout(this.persistTimer);
 			this.persistTimer = null;
 		}
-		await this.persistFn?.(this.all());
+		await this.persistFn?.(this.persistable());
 	}
 }

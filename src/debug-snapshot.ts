@@ -32,7 +32,6 @@ export interface SnapshotContentView {
 	/** FNV-1a of the content. Present even when the content itself is withheld,
 	 *  so doc and disk remain comparable in a redacted snapshot. */
 	hash: string;
-	content?: string;
 }
 
 export interface DocView extends SnapshotContentView {

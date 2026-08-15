@@ -1517,7 +1517,9 @@ export default class EngramSyncPlugin extends Plugin {
 			// Manifest since_seq watermark (E1 #1065) — re-listed for the same
 			// wholesale-save reason.
 			manifestSeq: this.syncEngine.getManifestSeq(),
-			offlineQueue: offlineQueue ?? this.syncEngine.queue.all(),
+			// persistable(), not all(): note bodies from legacy entries must not be
+			// written back into data.json — see OfflineQueue.persistable.
+			offlineQueue: offlineQueue ?? this.syncEngine.queue.persistable(),
 			// Re-listed on every wholesale save (like offlineQueue) or the next
 			// saveData() wipes the durable CRDT ops.
 			crdtOpQueue: this.crdtOpQueue?.all() ?? [],

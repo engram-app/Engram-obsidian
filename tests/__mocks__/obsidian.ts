@@ -227,17 +227,10 @@ export const __settingCapture: {
 	// Section/row names, so a test can assert WHICH settings a tab rendered —
 	// the only way to check progressive disclosure without a real DOM.
 	names: string[];
-	// Descriptions. Usually flavour text, but where a toggle's description IS
-	// the consent the user gives (see sync-recording-consent.test.ts), the
-	// wording is behaviour and deserves an assertion.
-	descs: string[];
-	toggles: ToggleComponent[];
 } = {
 	texts: [],
 	buttons: [],
 	names: [],
-	descs: [],
-	toggles: [],
 };
 
 export class Setting {
@@ -249,8 +242,7 @@ export class Setting {
 		__settingCapture.names.push(name);
 		return this;
 	}
-	setDesc(desc: string): this {
-		__settingCapture.descs.push(desc);
+	setDesc(_desc: string): this {
 		return this;
 	}
 	setHeading(): this {
@@ -284,10 +276,12 @@ export class Setting {
 		cb(d);
 		return this;
 	}
+	// Present so a tab that draws switches can be rendered in a test at all —
+	// advanced-tab could not be before. Deliberately not captured: nothing
+	// asserts on toggles yet, and an unused capture array is the kind of
+	// scaffolding that outlives the test it was built for.
 	addToggle(cb: (t: ToggleComponent) => void): this {
-		const t = new ToggleComponent();
-		cb(t);
-		__settingCapture.toggles.push(t);
+		cb(new ToggleComponent());
 		return this;
 	}
 }

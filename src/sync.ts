@@ -3405,8 +3405,14 @@ export class SyncEngine {
 							`Engram Sync: renamed "${pushedPath.split("/").pop()}" (unsupported characters)`,
 						);
 					}
-					// (dropBase:false — legacy REST rename; the base entry, if any,
-					// was never dropped here.)
+					// Move the merge base with the file. It was previously left
+					// behind entirely: dropBase:false with no baseStore.rename, so a
+					// server-side path sanitization stranded the note's FULL TEXT
+					// under a path that no longer exists, with nothing to ever evict
+					// it but the 50MB LRU. Renaming keeps the base useful as an LCA
+					// AND removes the old key, so the dropBase:false below is now
+					// just "already handled" rather than "deliberately skipped".
+					this.baseStore?.rename(normalizePath(pushedPath), normalizePath(serverPath));
 					this.dropPath(normalizePath(pushedPath), { dropBase: false });
 					this.stampSyncedRow(normalizePath(serverPath), { hash });
 					this.noteIdMap?.delete(normalizePath(pushedPath));

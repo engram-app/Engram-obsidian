@@ -69,8 +69,6 @@ export interface CrdtWiringDeps {
 	 *  it — each real device has its own browser origin. Set only by tests that
 	 *  run two "devices" against one shared fake-indexeddb process. */
 	dbPrefix?: string;
-	/** Timeline capture (#356). Handed straight to the registry, which is where
-	 *  every recordable seam already passes through. Omitted = no recording. */
 	/** Merge base for a note_id (#357), resolved through the id map to the path
 	 *  BaseStore is keyed by. Omitted = the pre-LCA path. */
 	lcaFor?: (noteId: string) => string | null;

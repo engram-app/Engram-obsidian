@@ -286,3 +286,54 @@ describe("OfflineQueue destroy", () => {
 		jest.useRealTimers();
 	});
 });
+
+/**
+ * Retention: `data.json` lives in `.obsidian/` and is the file users are asked
+ * to paste into a bug report. Current code never queues note bodies — every
+ * enqueue site has been content-free since the V8 OOM work — but a `data.json`
+ * written by an older build still carries full note text and whole base64
+ * attachments, and nothing ever removed them.
+ */
+describe("legacy note bodies are shed on save", () => {
+	test("persistable() writes no note body, while the queue keeps it usable", () => {
+		const q = new OfflineQueue();
+
+		q.load([
+			{
+				path: "Personal/Therapy.md",
+				action: "upsert",
+				timestamp: 1,
+				attempts: 0,
+				content: "SECRET-BODY-hunter2",
+			},
+			{
+				path: "img/scan.png",
+				action: "upsert",
+				kind: "attachment",
+				timestamp: 2,
+				attempts: 0,
+				contentBase64: "QUJDREVGRw==",
+			},
+		] as never);
+
+		const persisted = JSON.stringify(q.persistable());
+		expect(persisted).not.toContain("SECRET-BODY-hunter2");
+		expect(persisted).not.toContain("QUJDREVGRw==");
+		// Every entry still persists — only the bodies are dropped.
+		expect(q.persistable()).toHaveLength(2);
+		expect(
+			q
+				.persistable()
+				.map((e) => e.path)
+				.sort(),
+		).toEqual(["Personal/Therapy.md", "img/scan.png"]);
+
+		// In memory the body survives. A legacy entry's inline content is the
+		// only copy left for a file that was deleted or renamed during the
+		// offline window, so stripping at LOAD would have lost that change —
+		// eight existing tests said so, which is why the strip moved here.
+		expect(q.all().find((e) => e.path === "Personal/Therapy.md")?.content).toBe(
+			"SECRET-BODY-hunter2",
+		);
+	});
+});

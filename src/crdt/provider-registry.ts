@@ -83,11 +83,6 @@ export interface ProviderRegistryOpts {
 	 *  written, but the caller may want to record an issue — a dirty merge is the
 	 *  honest conflict signal that the two-way diff never produced. */
 	onDirtyMerge?: (noteId: string) => void;
-	/** Optional timeline capture (#356). Injected HERE rather than at each call
-	 *  site because every seam worth recording — receive, send, local edit, raw
-	 *  remote update, enroll, reset, connection, flush — already passes through
-	 *  this class. One hook, eight seams, no instrumentation scattered across
-	 *  sync.ts and the live views. No-op when absent or when its flag is off. */
 }
 
 export class ProviderRegistry {
@@ -185,11 +180,7 @@ export class ProviderRegistry {
 			// here could silently drift from the shipped one (it did: the suite
 			// exercised only the duplicate, so #1130 could regress green).
 			send: (frame, kind) => {
-				const accepted = this.opts.send(noteId, frame, kind);
-				// Record the ACCEPTED result, not merely the attempt: a refused frame
-				// (socket unjoined, create-gate holding) is buffered for later, and
-				// that distinction is exactly what a delivery investigation needs.
-				return accepted;
+				return this.opts.send(noteId, frame, kind);
 			},
 			onSynced: () => {
 				this.opts.onSynced?.(noteId);
@@ -218,9 +209,6 @@ export class ProviderRegistry {
 			if (origin !== provider && origin !== REMOTE) return;
 			entry.remoteSeq += 1;
 			const projected = this.project(entry);
-			// Hash, never content: a timeline is exportable and note bodies are
-			// private. Two hashes are enough to tell "did this write change
-			// anything" and to line a flush up against a later disk read.
 			const flush = Promise.resolve(this.opts.onFlushToDisk(noteId, projected)).then((ok) => {
 				if (ok === false) throw new Error(`flushFromCrdt write failure for ${noteId}`);
 			});
@@ -365,10 +353,8 @@ export class ProviderRegistry {
 		// server's lineage (avoids the #846 doubling). "Consumed, nothing to push".
 		if (!lca && this.opts.isUnchangedSynced?.(noteId, content)) return content;
 
-		// Recorded AFTER the guards, so a timeline shows what the doc actually
-		// consumed rather than what the caller offered. `lca` is here because
-		// history-vs-no-history picks the seed strategy, and getting that wrong is
-		// the #846 lineage-doubling class.
+		// `lca` decides the seed strategy — history vs no history — and getting
+		// that wrong is the #846 lineage-doubling class.
 
 		if (e.kind === "canvas") {
 			return seedCanvasInto(e.doc, content) ? content : null;
@@ -496,8 +482,6 @@ export class ProviderRegistry {
 	 *  outlives the socket. */
 	setConnected(connected: boolean): void {
 		this.connected = connected;
-		// Vault-wide, so noteId is null. Reconnect boundaries are the single most
-		// useful landmark when reading a timeline back.
 		for (const e of this.entries.values()) e.provider.setConnected(connected);
 	}
 

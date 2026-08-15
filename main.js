@@ -18940,9 +18940,9 @@ var RETIRED_SETTING_KEYS = [
   "tracingEnabled",
   // CRDT is the sole markdown path; there is nothing left to switch off.
   "enableCrdt",
-  // The feature-flag framework is gone. Its only flag (crdtRecording) now
-  // follows diagnosticsEnabled, so a stored override object would linger in
-  // data.json reading like a live setting.
+  // The feature-flag framework is gone, and the recorder it gated with it, so
+  // a stored override object would linger in data.json reading like a live
+  // setting for something that no longer exists.
   "featureFlags"
 ];
 function stripRetiredSettings(settings) {
@@ -19034,6 +19034,22 @@ var OfflineQueue = class {
     for (let entry of entries)
       this.entries.set(dedupKey(entry), entry);
   }
+  /** The queue as it should be WRITTEN to disk: no note bodies.
+   *
+   *  Current code never enqueues content — every call site has been
+   *  content-free since the V8 OOM work — but a data.json from an older build
+   *  still carries full note text and whole base64 attachments, and nothing
+   *  ever removed them. That file lives in `.obsidian/` and is the file users
+   *  are asked to paste into a bug report.
+   *
+   *  Stripped on the way OUT, not on the way in: a legacy entry's inline
+   *  content is still the only copy for a file that was deleted or renamed
+   *  during the offline window, so dropping it at load would lose the change.
+   *  This way the body stays usable for this session and stops being written
+   *  back, so it disappears from disk on the next save. */
+  persistable() {
+    return this.all().map(({ content: _c, contentBase64: _b, ...lean }) => lean);
+  }
   /** Add or replace a queued change for a path. Persistence is debounced. */
   async enqueue(entry) {
     this.entries.set(dedupKey(entry), entry), this.schedulePersist();
@@ -19092,7 +19108,7 @@ var OfflineQueue = class {
   schedulePersist() {
     this.persistTimer || (this.persistTimer = window.setTimeout(() => {
       var _a;
-      this.persistTimer = null, (_a = this.persistFn) == null || _a.call(this, this.all()).catch((e) => {
+      this.persistTimer = null, (_a = this.persistFn) == null || _a.call(this, this.persistable()).catch((e) => {
         rlog().warn("queue", `debounced persist failed: ${errMsg(e)}`);
       });
     }, this.persistDelayMs));
@@ -19100,7 +19116,7 @@ var OfflineQueue = class {
   /** Persist immediately (cancels any pending debounced persist). */
   async persistNow() {
     var _a;
-    this.persistTimer && (window.clearTimeout(this.persistTimer), this.persistTimer = null), await ((_a = this.persistFn) == null ? void 0 : _a.call(this, this.all()));
+    this.persistTimer && (window.clearTimeout(this.persistTimer), this.persistTimer = null), await ((_a = this.persistFn) == null ? void 0 : _a.call(this, this.persistable()));
   }
 };
 
@@ -20989,7 +21005,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  pushModifiedFiles) pass force without this, so they stay quiet on
    *  plan-gated attachments. */
   async pushFile(file, force = !1, bypassPlanSkip = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y;
     if (this.pushing.has(file.path)) return !1;
     if (!bypassPlanSkip && this.isBinaryFile(file) && this.hasInformationalIssue(file.path))
       return devLog().log("push", `skip (plan-informational): ${file.path}`), !1;
@@ -21137,11 +21153,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           let localFile = this.app.vault.getFileByPath(pushedPath);
           localFile && (await this.app.vault.rename(localFile, serverPath), new import_obsidian24.Notice(
             `Engram Sync: renamed "${pushedPath.split("/").pop()}" (unsupported characters)`
-          )), this.dropPath((0, import_obsidian24.normalizePath)(pushedPath), { dropBase: !1 }), this.stampSyncedRow((0, import_obsidian24.normalizePath)(serverPath), { hash }), (_q = this.noteIdMap) == null || _q.delete((0, import_obsidian24.normalizePath)(pushedPath)), (_r = this.noteIdMap) == null || _r.set((0, import_obsidian24.normalizePath)(serverPath), resp.note.id);
+          )), (_q = this.baseStore) == null || _q.rename((0, import_obsidian24.normalizePath)(pushedPath), (0, import_obsidian24.normalizePath)(serverPath)), this.dropPath((0, import_obsidian24.normalizePath)(pushedPath), { dropBase: !1 }), this.stampSyncedRow((0, import_obsidian24.normalizePath)(serverPath), { hash }), (_r = this.noteIdMap) == null || _r.delete((0, import_obsidian24.normalizePath)(pushedPath)), (_s = this.noteIdMap) == null || _s.set((0, import_obsidian24.normalizePath)(serverPath), resp.note.id);
         } else
-          this.stampSyncedRow((0, import_obsidian24.normalizePath)(file.path), { hash }), (_s = this.noteIdMap) == null || _s.set((0, import_obsidian24.normalizePath)(file.path), resp.note.id);
+          this.stampSyncedRow((0, import_obsidian24.normalizePath)(file.path), { hash }), (_t2 = this.noteIdMap) == null || _t2.set((0, import_obsidian24.normalizePath)(file.path), resp.note.id);
         file.path === pushedPath && (pushedNoteParse = {
-          path: (_t2 = resp.note.path) != null ? _t2 : pushedPath,
+          path: (_u = resp.note.path) != null ? _u : pushedPath,
           parseStatus: resp.note.parse_status,
           parseReason: resp.note.parse_reason
         });
@@ -21170,8 +21186,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         lastFailedAt: now,
         attempts: 1
       });
-      let attempts = (_v = (_u = this.issues.get(file.path)) == null ? void 0 : _u.attempts) != null ? _v : 1;
-      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_w = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
+      let attempts = (_w = (_v = this.issues.get(file.path)) == null ? void 0 : _v.attempts) != null ? _w : 1;
+      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_x = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
         "push",
         `Push failed: ${file.path} \u2014 ${msg} | category=${classified.category}`,
         e instanceof Error ? e.stack : void 0
@@ -21181,7 +21197,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         kind: isBinary ? "attachment" : "note",
         mtime: file.stat.mtime / 1e3,
         timestamp: Date.now(),
-        vaultId: (_x = this.settings.vaultId) != null ? _x : void 0
+        vaultId: (_y = this.settings.vaultId) != null ? _y : void 0
       }), this.maybeGoOffline(e);
     } finally {
       this.pushing.delete(pushedPath), this.releasePushSlot(), success && this.markRecentlyPushed(pushedPath), this.emitStatus();
@@ -24406,7 +24422,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       // Manifest since_seq watermark (E1 #1065) — re-listed for the same
       // wholesale-save reason.
       manifestSeq: this.syncEngine.getManifestSeq(),
-      offlineQueue: offlineQueue != null ? offlineQueue : this.syncEngine.queue.all(),
+      // persistable(), not all(): note bodies from legacy entries must not be
+      // written back into data.json — see OfflineQueue.persistable.
+      offlineQueue: offlineQueue != null ? offlineQueue : this.syncEngine.queue.persistable(),
       // Re-listed on every wholesale save (like offlineQueue) or the next
       // saveData() wipes the durable CRDT ops.
       crdtOpQueue: (_c = (_b = this.crdtOpQueue) == null ? void 0 : _b.all()) != null ? _c : [],

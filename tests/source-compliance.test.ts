@@ -301,8 +301,20 @@ describe("Plugin guidelines — never use the global `app` object", () => {
  * has to edit this file, which is the point.
  */
 describe("privacy — no content retention for export", () => {
+	// Matched on the IDENTIFIER, not the module string. findInSources runs its
+	// predicate against stripCommentsAndStrings(), which blanks every string
+	// literal — so a regex looking for `from "../sync-recorder"` was testing
+	// `from ""` and could never fail. It passed against the pre-removal source,
+	// which is the definition of a guard that does not guard.
 	test("the sync recorder stays deleted", () => {
-		const found = findInSources((line) => /from\s+["'].*sync-recorder["']/.test(line));
+		const found = findInSources((line) => /\bSyncRecorder\b|\bserializeTimeline\b/.test(line));
+		expect(found).toEqual([]);
+	});
+
+	// The content escape hatch on the debug snapshot. Nothing else stops it
+	// coming back, and its whole failure mode is that it looks harmless.
+	test("the debug snapshot has no content opt-in", () => {
+		const found = findInSources((line) => /\bincludeContent\b|\bSnapshotOpts\b/.test(line));
 		expect(found).toEqual([]);
 	});
 
@@ -310,8 +322,15 @@ describe("privacy — no content retention for export", () => {
 	// seams recorded a length or a hash and were fine; this is the one that
 	// carried the body.
 	test("no frame or update is stashed in a payload object", () => {
-		const re = /\b(frame|frameB64|update|content|text|body)\s*:\s*(frameB64|frame|update)\b/;
-		const found = findInSources((line) => re.test(line));
+		// Two shapes, because this codebase writes both: an explicit
+		// `{ frame: frameB64 }` and the shorthand `{ frameB64 }` / `{ b64 }`
+		// it prefers elsewhere (channel.ts sends `{ doc_id: docId, b64 }`).
+		// A guard that only knew the explicit form would have missed the
+		// shorthand rewrite of the very line it was written for.
+		const explicit =
+			/\b(frame|frameB64|update|content|text|body)\s*:\s*(frameB64|frame|update|b64)\b/;
+		const shorthand = /\{\s*(frameB64|b64)\s*[,}]/;
+		const found = findInSources((line) => explicit.test(line) || shorthand.test(line));
 		expect(found).toEqual([]);
 	});
 

@@ -1,6 +1,7 @@
 /**
  * Settings migrations for persisted plugin data (data.json `settings`).
  */
+import type { EngramSyncSettings } from "./types";
 
 /** Collapse the three legacy diagnostics toggles (`remoteLoggingEnabled`,
  *  `diagnosticMode`, `tracingEnabled`) into the single `diagnosticsEnabled`.
@@ -29,11 +30,25 @@ export const RETIRED_SETTING_KEYS = [
 	"tracingEnabled",
 	// CRDT is the sole markdown path; there is nothing left to switch off.
 	"enableCrdt",
-	// The feature-flag framework is gone. Its only flag (crdtRecording) now
-	// follows diagnosticsEnabled, so a stored override object would linger in
-	// data.json reading like a live setting.
+	// The feature-flag framework is gone, and the recorder it gated with it, so
+	// a stored override object would linger in data.json reading like a live
+	// setting for something that no longer exists.
 	"featureFlags",
 ] as const;
+
+/** Compile-time proof that nothing in the list above is still a live setting.
+ *
+ *  A runtime test can only check keys present in DEFAULT_SETTINGS, and several
+ *  live fields are deliberately absent from it (`backendMode`, `vaultId`,
+ *  `waitlistPromptSeen` — each says so in its own docstring). So retiring
+ *  "backendMode" by fat-finger would pass every test and silently wipe every
+ *  install's backend selection on the next load. This fails `tsc` instead. */
+type RetiredKeyIsNotLive =
+	Extract<(typeof RETIRED_SETTING_KEYS)[number], keyof EngramSyncSettings> extends never
+		? true
+		: never;
+const _retiredKeysAreDead: RetiredKeyIsNotLive = true;
+void _retiredKeysAreDead;
 
 /** Drop retired keys from a settings object, in place. */
 export function stripRetiredSettings(settings: Record<string, unknown>): void {
