@@ -1,5 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import { __settingCapture } from "obsidian";
+import { EngramApi } from "../src/api";
 import {
 	applyVaultSwitch,
 	describeListVaultsError,
@@ -153,6 +154,49 @@ describe("renderEngramUrlSetting — no Save button", () => {
 	test("commits on blur, so a server that is not running yet can still be saved", () => {
 		render("");
 		expect(__settingCapture.texts[0]?.blurCb).toBeTruthy();
+	});
+
+	// The probe committing IS the design (there is no Save button), but commit
+	// ends in redisplay(), which tears the field out of the DOM. Doing that
+	// while the user is still typing in it eats their caret mid-word.
+	test("a commit fired while the field is focused hands focus back", async () => {
+		__settingCapture.texts.length = 0;
+		const plugin: any = {
+			settings: { apiUrl: "", apiKey: "", refreshToken: "" },
+			api: { setAuthProvider: () => {} },
+			noteStream: { disconnect: () => {} },
+			resetAuthProvider: () => {},
+			saveSettings: async () => {},
+		};
+		const ctx: any = { containerEl: {}, app: {}, plugin, redisplay: () => {} };
+		// redisplay rebuilds the tab — that is what destroys the input.
+		ctx.redisplay = () => renderEngramUrlSetting(ctx);
+		renderEngramUrlSetting(ctx);
+
+		const typed = __settingCapture.texts[0];
+		const g = globalThis as any;
+		g.document = { activeElement: typed?.inputEl, hasFocus: () => true };
+		const realProbe = (EngramApi as any).probeHealth;
+		(EngramApi as any).probeHealth = async () => ({ kind: "engram", version: "1.2.3" });
+		try {
+			typed?.changeCb?.("http://127.0.0.1:4000");
+			// Past the 600ms preflight debounce, then let the probe + commit settle.
+			await new Promise((r) => setTimeout(r, 900));
+		} finally {
+			(EngramApi as any).probeHealth = realProbe;
+			g.document = undefined;
+		}
+
+		expect(plugin.settings.apiUrl).toBe("http://127.0.0.1:4000");
+		const rebuilt = __settingCapture.texts[__settingCapture.texts.length - 1];
+		expect(rebuilt).not.toBe(typed);
+		expect(rebuilt?.focused).toBe(true);
+		// Caret at the end: the user was appending, and a select-all would make
+		// their next keystroke wipe the URL.
+		expect(rebuilt?.caret).toEqual([
+			"http://127.0.0.1:4000".length,
+			"http://127.0.0.1:4000".length,
+		]);
 	});
 
 	// Alt-tabbing out of Obsidian fires blur on the focused input too. That is

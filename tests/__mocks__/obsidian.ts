@@ -168,11 +168,21 @@ class TextComponent {
 	// component doing that throws mid-render, and the failure surfaces as a
 	// confusing "the field was never captured" rather than as itself.
 	blurCb: (() => void) | null = null;
+	/** Did the component under test put the caret back into this field? */
+	focused = false;
+	caret: [number, number] | null = null;
 	inputEl: any = {
 		type: "text",
+		value: "",
 		addClass: () => {},
 		addEventListener: (evt: string, cb: () => void) => {
 			if (evt === "blur") this.blurCb = cb;
+		},
+		focus: () => {
+			this.focused = true;
+		},
+		setSelectionRange: (a: number, b: number) => {
+			this.caret = [a, b];
 		},
 	};
 	setPlaceholder(_p: string): this {
@@ -180,6 +190,7 @@ class TextComponent {
 	}
 	setValue(v: string): this {
 		this.value = v;
+		this.inputEl.value = v;
 		return this;
 	}
 	getValue(): string {
