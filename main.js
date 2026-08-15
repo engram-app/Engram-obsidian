@@ -15694,29 +15694,6 @@ function uninstallDebugApi() {
   delete window[GLOBAL_KEY];
 }
 
-// src/feature-flags.ts
-var FLAG_SCHEMA = {
-  crdtRecording: {
-    default: !1,
-    category: "debugging",
-    title: "Record CRDT sync timeline",
-    description: "Capture an ordered event timeline for each synced note so a sync failure can be replayed offline. Metadata and note content stay local."
-  }
-}, FLAG_KEYS = Object.keys(FLAG_SCHEMA);
-function resolveFlags(stored) {
-  let out = {};
-  for (let key of FLAG_KEYS) {
-    let value = stored == null ? void 0 : stored[key];
-    out[key] = typeof value == "boolean" ? value : FLAG_SCHEMA[key].default;
-  }
-  return out;
-}
-function visibleFlags(diagnosticsEnabled) {
-  return FLAG_KEYS.filter(
-    (key) => diagnosticsEnabled || FLAG_SCHEMA[key].category === "labs"
-  ).map((key) => [key, FLAG_SCHEMA[key]]);
-}
-
 // src/has-logging.ts
 var sink = null;
 function setLogSink(next) {
@@ -17294,8 +17271,7 @@ function renderAboutTab(ctx) {
 }
 
 // src/tabs/advanced-tab.ts
-var import_obsidian17 = require("obsidian");
-var PROBLEMATIC_DIRS = [
+var import_obsidian17 = require("obsidian"), PROBLEMATIC_DIRS = [
   { pattern: "node_modules/", label: "node_modules", desc: "Node.js dependencies" },
   { pattern: ".venv/", label: ".venv", desc: "Python virtual environment" },
   { pattern: "venv/", label: "venv", desc: "Python virtual environment" },
@@ -17342,7 +17318,7 @@ secret.md`).setValue(plugin.settings.ignorePatterns).onChange(async (value) => {
     }).setValue(plugin.settings.remoteLogLevel).onChange(async (value) => {
       plugin.settings.remoteLogLevel = value, await plugin.saveSettings();
     })
-  ), renderFeatureFlags(ctx), new import_obsidian17.Setting(containerEl).setName("About").setHeading();
+  ), new import_obsidian17.Setting(containerEl).setName("About").setHeading();
   let aboutList = containerEl.createEl("ul", { cls: "engram-about-list" }), versionItem = aboutList.createEl("li");
   versionItem.createSpan({ text: "Version: " }), versionItem.createSpan({ text: plugin.manifest.version });
   let repoItem = aboutList.createEl("li");
@@ -17350,23 +17326,6 @@ secret.md`).setValue(plugin.settings.ignorePatterns).onChange(async (value) => {
     text: "github.com/engram-app/Engram-obsidian",
     href: "https://github.com/engram-app/Engram-obsidian"
   }), aboutList.createEl("li").createSpan({ text: "License: MIT" });
-}
-function renderFeatureFlags(ctx) {
-  let { containerEl, plugin } = ctx, visible = visibleFlags(plugin.settings.diagnosticsEnabled);
-  if (visible.length !== 0) {
-    new import_obsidian17.Setting(containerEl).setName("Feature flags").setHeading();
-    for (let [key, schema4] of visible) {
-      let setting = new import_obsidian17.Setting(containerEl).setName(schema4.title).setDesc(schema4.description).addToggle(
-        (toggle) => toggle.setValue(plugin.flags[key]).onChange(async (value) => {
-          plugin.settings.featureFlags = {
-            ...plugin.settings.featureFlags,
-            [key]: value
-          }, await plugin.saveSettings();
-        })
-      );
-      schema4.category === "danger" && setting.settingEl.addClass("engram-status-warning");
-    }
-  }
 }
 function renderIgnoreWarnings(containerEl, app, plugin, redisplay) {
   let currentIgnores = plugin.settings.ignorePatterns, detected = [];
@@ -19047,6 +19006,22 @@ var EngramSyncSettingTab = class extends import_obsidian23.PluginSettingTab {
 // src/settings-migrate.ts
 function migrateDiagnosticsEnabled(raw) {
   return raw ? typeof raw.diagnosticsEnabled == "boolean" ? raw.diagnosticsEnabled : !!(raw.remoteLoggingEnabled || raw.diagnosticMode || raw.tracingEnabled) : !1;
+}
+var RETIRED_SETTING_KEYS = [
+  // Collapsed into diagnosticsEnabled.
+  "remoteLoggingEnabled",
+  "diagnosticMode",
+  "tracingEnabled",
+  // CRDT is the sole markdown path; there is nothing left to switch off.
+  "enableCrdt",
+  // The feature-flag framework is gone. Its only flag (crdtRecording) now
+  // follows diagnosticsEnabled, so a stored override object would linger in
+  // data.json reading like a live setting.
+  "featureFlags"
+];
+function stripRetiredSettings(settings) {
+  for (let key of RETIRED_SETTING_KEYS)
+    delete settings[key];
 }
 
 // src/single-flight.ts
@@ -23767,11 +23742,16 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
      *  instead of having to be inferred from logs. Null in production. */
     this.promiseTracker = null;
     /** Timeline capture for the CRDT seams (#356). Constructed once and kept for
-     *  the plugin's lifetime — it reads the flag on every record call, so
+     *  the plugin's lifetime — it reads the predicate on every record call, so
      *  toggling recording never needs the CRDT stack rebuilt. Its buffer is
-     *  bounded, and it costs one predicate call per seam while off. */
+     *  bounded, and it costs one predicate call per seam while off.
+     *
+     *  Driven by Diagnostics rather than its own switch. The flag it used to
+     *  read only ever appeared once Diagnostics was on, so the extra toggle
+     *  bought a second decision for the same audience — and #356, the reason it
+     *  shipped behind a flag, is closed. */
     this.syncRecorder = new SyncRecorder({
-      enabled: () => this.flags.crdtRecording
+      enabled: () => this.settings.diagnosticsEnabled
     });
     /** Persist the user's chosen search mode as the new default. Passed to the
      *  search view + modal so a mode switch in either surface sticks. */
@@ -23888,13 +23868,6 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
      *  session, so the two load paths (loadSettings + onload restore) don't
      *  double-toast the user. */
     this.dataRecoveryNotified = !1;
-  }
-  /** Resolved feature flags (stored overrides applied over schema defaults).
-   *  Recomputed on every read so a settings toggle takes effect without a
-   *  reload — these are cheap (a fixed-size object literal), and caching one
-   *  would just add an invalidation bug. */
-  get flags() {
-    return resolveFlags(this.settings.featureFlags);
   }
   /** Whether the WebSocket channel is currently connected (for settings UI). */
   isLiveConnected() {
@@ -24362,15 +24335,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     let data = await this.loadPluginData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data == null ? void 0 : data.settings);
     let rawSettings = data == null ? void 0 : data.settings;
-    this.settings.diagnosticsEnabled = migrateDiagnosticsEnabled(rawSettings);
-    for (let legacy of [
-      "remoteLoggingEnabled",
-      "diagnosticMode",
-      "tracingEnabled",
-      "enableCrdt"
-    ])
-      delete this.settings[legacy];
-    this.syncGateAcceptedFor = (_a = data == null ? void 0 : data.syncGateAcceptedFor) != null ? _a : null, this.noteIdMap = NoteIdMap.fromJSON(data == null ? void 0 : data.noteIds);
+    this.settings.diagnosticsEnabled = migrateDiagnosticsEnabled(rawSettings), stripRetiredSettings(this.settings), this.syncGateAcceptedFor = (_a = data == null ? void 0 : data.syncGateAcceptedFor) != null ? _a : null, this.noteIdMap = NoteIdMap.fromJSON(data == null ? void 0 : data.noteIds);
     let dirty = !1, migratedUrl = migrateCloudApiUrl(this.settings.apiUrl, ENGRAM_CLOUD_URL);
     migratedUrl && migratedUrl !== this.settings.apiUrl && (this.settings.apiUrl = migratedUrl, dirty = !0), migrateBackendMode(this.settings, ENGRAM_CLOUD_URL) && (dirty = !0), this.settings.clientId || (this.settings.clientId = await generateClientId(this.app), dirty = !0), this.deviceId = (_b = data == null ? void 0 : data.deviceId) != null ? _b : null, this.deviceId || (this.deviceId = crypto.randomUUID(), dirty = !0), dirty && await this.writePluginData({
       ...data,

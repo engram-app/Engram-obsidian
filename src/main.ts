@@ -37,7 +37,6 @@ import { makeCrdtOpSend } from "./crdt-op-dispatch";
 import { type CrdtOp, CrdtOpQueue } from "./crdt-op-queue";
 import { createDebugApi, installDebugApi, uninstallDebugApi } from "./debug-api";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
-import { type FeatureFlags, resolveFlags } from "./feature-flags";
 import { isMarkdownPath } from "./file-kind";
 import { setLogSink } from "./has-logging";
 import { SyncRecorder } from "./sync-recorder";
@@ -59,7 +58,7 @@ import { destroyRemoteLog, initRemoteLog, rlog } from "./remote-log";
 import { SearchModal } from "./search-modal";
 import { SEARCH_VIEW_TYPE, SearchView } from "./search-view";
 import { EngramSyncSettingTab } from "./settings";
-import { migrateDiagnosticsEnabled } from "./settings-migrate";
+import { migrateDiagnosticsEnabled, stripRetiredSettings } from "./settings-migrate";
 import { createSingleFlight } from "./single-flight";
 import { reconcileColdStart, SyncEngine } from "./sync";
 import { channelConnectionKey, computeSyncFingerprint } from "./sync-fingerprint";
@@ -193,20 +192,18 @@ export default class EngramSyncPlugin extends Plugin {
 	promiseTracker: PromiseTracker | null = null;
 
 	/** Timeline capture for the CRDT seams (#356). Constructed once and kept for
-	 *  the plugin's lifetime — it reads the flag on every record call, so
+	 *  the plugin's lifetime — it reads the predicate on every record call, so
 	 *  toggling recording never needs the CRDT stack rebuilt. Its buffer is
-	 *  bounded, and it costs one predicate call per seam while off. */
+	 *  bounded, and it costs one predicate call per seam while off.
+	 *
+	 *  Driven by Diagnostics rather than its own switch. The flag it used to
+	 *  read only ever appeared once Diagnostics was on, so the extra toggle
+	 *  bought a second decision for the same audience — and #356, the reason it
+	 *  shipped behind a flag, is closed. */
 	readonly syncRecorder: SyncRecorder = new SyncRecorder({
-		enabled: () => this.flags.crdtRecording,
+		enabled: () => this.settings.diagnosticsEnabled,
 	});
 
-	/** Resolved feature flags (stored overrides applied over schema defaults).
-	 *  Recomputed on every read so a settings toggle takes effect without a
-	 *  reload — these are cheap (a fixed-size object literal), and caching one
-	 *  would just add an invalidation bug. */
-	get flags(): FeatureFlags {
-		return resolveFlags(this.settings.featureFlags);
-	}
 	/** Persist the user's chosen search mode as the new default. Passed to the
 	 *  search view + modal so a mode switch in either surface sticks. */
 	private persistSearchMode = (mode: SearchMode): void => {
@@ -1269,16 +1266,9 @@ export default class EngramSyncPlugin extends Plugin {
 		// then drop the stale keys so the next save persists only the new shape.
 		const rawSettings = data?.settings as Record<string, unknown> | undefined;
 		this.settings.diagnosticsEnabled = migrateDiagnosticsEnabled(rawSettings);
-		// enableCrdt: the setting was deleted (CRDT is the sole md path) — drop
-		// the stale key from persisted data.json on next save.
-		for (const legacy of [
-			"remoteLoggingEnabled",
-			"diagnosticMode",
-			"tracingEnabled",
-			"enableCrdt",
-		]) {
-			delete (this.settings as unknown as Record<string, unknown>)[legacy];
-		}
+		// Retired keys (see RETIRED_SETTING_KEYS for what and why) are dropped
+		// here so the next save persists only the current shape.
+		stripRetiredSettings(this.settings as unknown as Record<string, unknown>);
 		this.syncGateAcceptedFor = data?.syncGateAcceptedFor ?? null;
 		this.noteIdMap = NoteIdMap.fromJSON(data?.noteIds);
 		// Migrate a stored Cloud apiUrl off the legacy SPA host (app.engram.page,
