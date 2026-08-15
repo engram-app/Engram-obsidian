@@ -39,7 +39,6 @@ import { createDebugApi, installDebugApi, uninstallDebugApi } from "./debug-api"
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
 import { isMarkdownPath } from "./file-kind";
 import { setLogSink } from "./has-logging";
-import { SyncRecorder } from "./sync-recorder";
 import { PromiseTracker, setActiveTracker } from "./track-promise";
 
 /** Replaced by esbuild at build time (see esbuild.config.mjs `define`). */
@@ -190,21 +189,6 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  debug snapshot so a wedged sync shows up as a long-lived pending entry
 	 *  instead of having to be inferred from logs. Null in production. */
 	promiseTracker: PromiseTracker | null = null;
-
-	/** Timeline capture for the CRDT seams (#356). Constructed once and kept for
-	 *  the plugin's lifetime — it reads the predicate on every record call, so
-	 *  toggling recording never needs the CRDT stack rebuilt. Its buffer is
-	 *  bounded, and it costs one predicate call per seam while off.
-	 *
-	 *  Bounded in EVENTS (5,000), not bytes — and the `receive` seam holds whole
-	 *  frames, so a long session with large notes retains real memory until
-	 *  `__engramDebug.clearTimeline()`. That is why this stays opt-in and off by
-	 *  default rather than riding the Diagnostics switch: see
-	 *  `syncRecordingEnabled`, and docs/context/v8-oom-prevention.md for why
-	 *  this plugin is careful about retained content. */
-	readonly syncRecorder: SyncRecorder = new SyncRecorder({
-		enabled: () => this.settings.syncRecordingEnabled,
-	});
 
 	/** Persist the user's chosen search mode as the new default. Passed to the
 	 *  search view + modal so a mode switch in either surface sticks. */
@@ -1355,7 +1339,6 @@ export default class EngramSyncPlugin extends Plugin {
 				syncStateFor: (path) => this.syncEngine.exportSyncState()[normalizePath(path)],
 				isLiveBound: (path) => this.crdtLiveViews?.isBound(path) ?? false,
 				pendingPromises: () => this.promiseTracker?.pending() ?? [],
-				recorder: this.syncRecorder,
 			}),
 		);
 	}
@@ -2248,7 +2231,6 @@ export default class EngramSyncPlugin extends Plugin {
 						const wiring = createCrdtWiring({
 							noteIdMap: this.noteIdMap,
 							syncEngine: this.syncEngine,
-							recorder: this.syncRecorder,
 							// BaseStore is keyed by vault path and already holds exactly the
 							// last-synced content its own docstring calls "the common
 							// ancestor for 3-way merge"; the registry is keyed by note_id,

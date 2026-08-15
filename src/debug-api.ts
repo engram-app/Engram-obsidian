@@ -5,26 +5,26 @@
  * inspect a real user's install while they are looking at the broken note. A
  * dev-only handle would be absent in exactly the situation it exists for.
  *
+ * Snapshots carry hashes and lengths, never note text. There is deliberately
+ * no opt-in for content: the audience for this API is a user pasting its
+ * output into a bug report, and "just pass true" is how note bodies end up in
+ * public issues. A hash mismatch is what these investigations actually turn
+ * on; if the text itself is needed, it is in the vault, and asking for it is
+ * a conversation rather than a console flag.
+ *
  * Usage from the developer console:
- *   await __engramDebug.note("notes/a.md")          // redacted
- *   await __engramDebug.note("notes/a.md", true)    // with content
+ *   await __engramDebug.note("notes/a.md")
  *   __engramDebug.vault()
  */
 
 import type { SnapshotDeps, SnapshotRegistry } from "./debug-snapshot";
 import { buildNoteSnapshot, buildVaultSnapshot } from "./debug-snapshot";
-import { type SyncEvent, serializeTimeline } from "./sync-recorder";
 
 const GLOBAL_KEY = "__engramDebug";
 
 export interface DebugApi {
-	note(key: string, includeContent?: boolean): Promise<unknown>;
+	note(key: string): Promise<unknown>;
 	vault(): unknown;
-	/** Recorded sync timeline (#356), optionally narrowed to one note. Returns
-	 *  the JSON a replay fixture is made of — copy it out of the console, or
-	 *  attach it to a bug report. */
-	timeline(noteId?: string): string;
-	clearTimeline(): void;
 }
 
 export interface DebugApiHost {
@@ -35,24 +35,14 @@ export interface DebugApiHost {
 	syncStateFor: SnapshotDeps["syncStateFor"];
 	isLiveBound(path: string): boolean;
 	pendingPromises(): { label: string; ageMs: number }[];
-	recorder: { timeline(noteId?: string): SyncEvent[]; clear(): void };
 }
 
 export function createDebugApi(host: DebugApiHost): DebugApi {
 	const deps: SnapshotDeps = host;
 	return {
-		note: (key, includeContent = false) => buildNoteSnapshot(key, deps, { includeContent }),
+		note: (key) => buildNoteSnapshot(key, deps),
 		vault: () => buildVaultSnapshot(deps),
-		// Accepts a path as well as an id, matching `note()` — an investigation
-		// starts from whichever the evidence contained.
-		timeline: (noteId) =>
-			serializeTimeline(host.recorder.timeline(noteId ? resolveId(host, noteId) : undefined)),
-		clearTimeline: () => host.recorder.clear(),
 	};
-}
-
-function resolveId(host: DebugApiHost, key: string): string {
-	return host.idForPath(key) ?? key;
 }
 
 export function installDebugApi(api: DebugApi): void {

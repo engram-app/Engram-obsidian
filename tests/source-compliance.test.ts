@@ -287,3 +287,38 @@ describe("Plugin guidelines — never use the global `app` object", () => {
 		expect(found).toEqual([]);
 	});
 });
+
+/**
+ * Privacy invariant: nothing in the plugin may retain note content for export.
+ *
+ * A CRDT wire frame or Yjs update is NOT opaque — the note body is recoverable
+ * from it, base64 or not. The sync recorder stored whole inbound frames in a
+ * 5,000-entry buffer that `__engramDebug.timeline()` serialized to a string a
+ * user could paste into a public issue. It was removed for that reason.
+ *
+ * These are text-level guards, so they cannot catch every reintroduction — but
+ * they catch the shapes that actually occurred, and a deliberate new capture
+ * has to edit this file, which is the point.
+ */
+describe("privacy — no content retention for export", () => {
+	test("the sync recorder stays deleted", () => {
+		const found = findInSources((line) => /from\s+["'].*sync-recorder["']/.test(line));
+		expect(found).toEqual([]);
+	});
+
+	// The offending shape: a whole frame or update handed to a buffer. Sibling
+	// seams recorded a length or a hash and were fine; this is the one that
+	// carried the body.
+	test("no frame or update is stashed in a payload object", () => {
+		const re = /\b(frame|frameB64|update|content|text|body)\s*:\s*(frameB64|frame|update)\b/;
+		const found = findInSources((line) => re.test(line));
+		expect(found).toEqual([]);
+	});
+
+	// `record(...)` was the recorder's entry point. If a timeline ever comes
+	// back, it comes back through a review that reads this test.
+	test("no recorder-style record() calls survive", () => {
+		const found = findInSources((line) => /recorder\??\.\s*record\s*\(/.test(line));
+		expect(found).toEqual([]);
+	});
+});

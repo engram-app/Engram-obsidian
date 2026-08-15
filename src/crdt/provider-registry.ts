@@ -12,9 +12,7 @@
 // re-handshake) become no-ops the persistent doc doesn't need.
 import { IndexeddbPersistence } from "y-indexeddb";
 import * as Y from "yjs";
-import { fnv1a } from "../content-hash";
 import { Lifetime } from "../lifetime";
-import type { SyncRecorder } from "../sync-recorder";
 import { projectCanvas, seedCanvasInto } from "./canvas-codec";
 import { isDestroyedError, NoteDestroyedError } from "./destroyed-error";
 import { CONTENT_KEY, frontmatterOf, projectNote, rawFrontmatterOf } from "./frontmatter-codec";
@@ -90,7 +88,6 @@ export interface ProviderRegistryOpts {
 	 *  remote update, enroll, reset, connection, flush — already passes through
 	 *  this class. One hook, eight seams, no instrumentation scattered across
 	 *  sync.ts and the live views. No-op when absent or when its flag is off. */
-	recorder?: SyncRecorder;
 }
 
 export class ProviderRegistry {
@@ -192,7 +189,6 @@ export class ProviderRegistry {
 				// Record the ACCEPTED result, not merely the attempt: a refused frame
 				// (socket unjoined, create-gate holding) is buffered for later, and
 				// that distinction is exactly what a delivery investigation needs.
-				this.opts.recorder?.record("send", noteId, { kind, accepted });
 				return accepted;
 			},
 			onSynced: () => {
@@ -225,11 +221,6 @@ export class ProviderRegistry {
 			// Hash, never content: a timeline is exportable and note bodies are
 			// private. Two hashes are enough to tell "did this write change
 			// anything" and to line a flush up against a later disk read.
-			this.opts.recorder?.record("flush", noteId, {
-				hash: fnv1a(projected).toString(16),
-				length: projected.length,
-				remoteSeq: entry.remoteSeq,
-			});
 			const flush = Promise.resolve(this.opts.onFlushToDisk(noteId, projected)).then((ok) => {
 				if (ok === false) throw new Error(`flushFromCrdt write failure for ${noteId}`);
 			});
@@ -325,13 +316,6 @@ export class ProviderRegistry {
 		if (base !== null && base !== undefined && e.kind === "note") {
 			const merged = mergeDiskOntoDoc(base, diskContent, this.project(e));
 			if (merged.clean) {
-				this.opts.recorder?.record("localEdit", noteId, {
-					hash: fnv1a(merged.text).toString(16),
-					length: merged.text.length,
-					lca: true,
-					merged: true,
-					kind: e.kind,
-				});
 				seedContentInto(e.doc, e.text, merged.text, docHasHistory(e.doc, e.kind));
 				return merged.text;
 			}
@@ -385,12 +369,6 @@ export class ProviderRegistry {
 		// consumed rather than what the caller offered. `lca` is here because
 		// history-vs-no-history picks the seed strategy, and getting that wrong is
 		// the #846 lineage-doubling class.
-		this.opts.recorder?.record("localEdit", noteId, {
-			hash: fnv1a(content).toString(16),
-			length: content.length,
-			lca,
-			kind: e.kind,
-		});
 
 		if (e.kind === "canvas") {
 			return seedCanvasInto(e.doc, content) ? content : null;
@@ -412,7 +390,6 @@ export class ProviderRegistry {
 		// fanned it back -> an infinite echo storm. The disk-flush listener fires for
 		// the provider origin too, so the merge still writes to disk. (Relay parity:
 		// everything the sync machinery applies uses the provider as origin.)
-		this.opts.recorder?.record("remoteUpdate", noteId, { bytes: update.byteLength });
 		Y.applyUpdate(e.doc, update, e.provider);
 		const flush = e.pendingFlush;
 		if (flush) {
@@ -460,7 +437,6 @@ export class ProviderRegistry {
 	/** Route an inbound wire frame to its provider (creating it if a fan-out
 	 *  announced a note this device hasn't opened). */
 	async receive(noteId: string, frameB64: string): Promise<void> {
-		this.opts.recorder?.record("receive", noteId, { frame: frameB64 });
 		(await this.entry(noteId)).provider.receive(frameB64);
 	}
 
@@ -474,7 +450,6 @@ export class ProviderRegistry {
 		// below is the fire-and-forget wrapper that absorbs it.
 		this.assertAlive(noteId);
 		this.enrolledIds.add(noteId);
-		this.opts.recorder?.record("enroll", noteId, {});
 		const e = await this.entry(noteId);
 		e.provider.setAdvertised(true);
 		if (this.connected) e.provider.setConnected(true);
@@ -495,7 +470,6 @@ export class ProviderRegistry {
 	 *  out. reset+enroll = a fresh re-handshake. */
 	reset(noteId: string): void {
 		this.enrolledIds.delete(noteId);
-		this.opts.recorder?.record("reset", noteId, {});
 		const e = this.entries.get(noteId);
 		if (!e) return;
 		e.provider.setAdvertised(false);
@@ -524,10 +498,6 @@ export class ProviderRegistry {
 		this.connected = connected;
 		// Vault-wide, so noteId is null. Reconnect boundaries are the single most
 		// useful landmark when reading a timeline back.
-		this.opts.recorder?.record("connection", null, {
-			connected,
-			resident: this.entries.size,
-		});
 		for (const e of this.entries.values()) e.provider.setConnected(connected);
 	}
 

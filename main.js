@@ -1647,7 +1647,6 @@ var BACKEND_SCOPED_FIELDS = [
   ignorePatterns: "",
   debounceMs: 2e3,
   diagnosticsEnabled: !1,
-  syncRecordingEnabled: !1,
   remoteLogLevel: "info",
   vaultId: null,
   clientId: "",
@@ -2258,7 +2257,10 @@ var _NoteChannel = class _NoteChannel {
     try {
       msg = JSON.parse(raw);
     } catch (e) {
-      rlog().error("channel", `Failed to parse message: ${raw}`);
+      rlog().error(
+        "channel",
+        `Failed to parse message: ${raw.length} bytes starting ${JSON.stringify(raw.slice(0, 40))}`
+      );
       return;
     }
     let [, ref, topic, event, payload] = msg;
@@ -14842,11 +14844,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
       // production runs and what tests/crdt/wiring.test.ts pins. A duplicate
       // here could silently drift from the shipped one (it did: the suite
       // exercised only the duplicate, so #1130 could regress green).
-      send: (frame, kind2) => {
-        var _a2;
-        let accepted = this.opts.send(noteId, frame, kind2);
-        return (_a2 = this.opts.recorder) == null || _a2.record("send", noteId, { kind: kind2, accepted }), accepted;
-      },
+      send: (frame, kind2) => this.opts.send(noteId, frame, kind2),
       onSynced: () => {
         var _a2, _b2, _c2, _d;
         (_b2 = (_a2 = this.opts).onSynced) == null || _b2.call(_a2, noteId), text2.length === 0 && ((_d = (_c2 = this.opts).onEmptyStep2) == null || _d.call(_c2, noteId));
@@ -14868,16 +14866,9 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
       lifetime: new Lifetime()
     };
     return doc2.on("update", (_u, origin) => {
-      var _a2;
       if (!entry.lifetime.active || origin !== provider && origin !== REMOTE) return;
       entry.remoteSeq += 1;
-      let projected = this.project(entry);
-      (_a2 = this.opts.recorder) == null || _a2.record("flush", noteId, {
-        hash: fnv1a(projected).toString(16),
-        length: projected.length,
-        remoteSeq: entry.remoteSeq
-      });
-      let flush = Promise.resolve(this.opts.onFlushToDisk(noteId, projected)).then((ok) => {
+      let projected = this.project(entry), flush = Promise.resolve(this.opts.onFlushToDisk(noteId, projected)).then((ok) => {
         if (ok === !1) throw new Error(`flushFromCrdt write failure for ${noteId}`);
       });
       entry.pendingFlush = flush, flush.catch(() => {
@@ -14921,7 +14912,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
    *  Ports CrdtManager.applyLocalEdit: stale-snapshot guard + adopt-first gate +
    *  the shared seedContentInto codec. */
   async applyLocalEdit(noteId, diskContent, hasLca, reread) {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
+    var _a, _b, _c, _d, _e, _f;
     if (this.removed.has(noteId)) return null;
     let e = await this.entry(noteId);
     if (!e.lifetime.active) return null;
@@ -14929,14 +14920,8 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
     if (base != null && e.kind === "note") {
       let merged = mergeDiskOntoDoc(base, diskContent, this.project(e));
       if (merged.clean)
-        return (_c = this.opts.recorder) == null || _c.record("localEdit", noteId, {
-          hash: fnv1a(merged.text).toString(16),
-          length: merged.text.length,
-          lca: !0,
-          merged: !0,
-          kind: e.kind
-        }), seedContentInto(e.doc, e.text, merged.text, docHasHistory(e.doc, e.kind)), merged.text;
-      (_e = (_d = this.opts).onDirtyMerge) == null || _e.call(_d, noteId);
+        return seedContentInto(e.doc, e.text, merged.text, docHasHistory(e.doc, e.kind)), merged.text;
+      (_d = (_c = this.opts).onDirtyMerge) == null || _d.call(_c, noteId);
     }
     if (reread) {
       let stable = !1;
@@ -14958,21 +14943,15 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
       if (!stable) return null;
     }
     let lca = hasLca != null ? hasLca : docHasHistory(e.doc, e.kind);
-    return !lca && ((_g = (_f = this.opts).isUnchangedSynced) != null && _g.call(_f, noteId, content)) ? content : ((_h = this.opts.recorder) == null || _h.record("localEdit", noteId, {
-      hash: fnv1a(content).toString(16),
-      length: content.length,
-      lca,
-      kind: e.kind
-    }), e.kind === "canvas" ? seedCanvasInto(e.doc, content) ? content : null : (seedContentInto(e.doc, e.text, content, lca), content));
+    return !lca && ((_f = (_e = this.opts).isUnchangedSynced) != null && _f.call(_e, noteId, content)) ? content : e.kind === "canvas" ? seedCanvasInto(e.doc, content) ? content : null : (seedContentInto(e.doc, e.text, content, lca), content);
   }
   /** Apply a raw Yjs update (vault-channel fan-out) as a remote merge, awaiting
    *  its disk flush so a write failure can be surfaced (#235). */
   async applyRemoteUpdate(noteId, update) {
-    var _a;
     if (this.removed.has(noteId)) return;
     let e = await this.entry(noteId);
     if (!e.lifetime.active) return;
-    (_a = this.opts.recorder) == null || _a.record("remoteUpdate", noteId, { bytes: update.byteLength }), applyUpdate(e.doc, update, e.provider);
+    applyUpdate(e.doc, update, e.provider);
     let flush = e.pendingFlush;
     flush && (e.pendingFlush = null, await flush);
   }
@@ -15007,16 +14986,14 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
   /** Route an inbound wire frame to its provider (creating it if a fan-out
    *  announced a note this device hasn't opened). */
   async receive(noteId, frameB64) {
-    var _a;
-    (_a = this.opts.recorder) == null || _a.record("receive", noteId, { frame: frameB64 }), (await this.entry(noteId)).provider.receive(frameB64);
+    (await this.entry(noteId)).provider.receive(frameB64);
   }
   /** Enroll: OPEN a room for this note — advertise syncStep1 (the down-sync
    *  pull) now and on every reconnect. Only open/live-bound notes call this; a
    *  cold SEND or fan-out RECEIVE stays room-free. (CrdtChannel.startSync +
    *  CrdtEnrollment.enroll collapse to this.) */
   async startSync(noteId) {
-    var _a;
-    this.assertAlive(noteId), this.enrolledIds.add(noteId), (_a = this.opts.recorder) == null || _a.record("enroll", noteId, {});
+    this.assertAlive(noteId), this.enrolledIds.add(noteId);
     let e = await this.entry(noteId);
     e.provider.setAdvertised(!0), this.connected && e.provider.setConnected(!0);
   }
@@ -15029,8 +15006,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
    *  ops still work (the note converges over the fan-out); the server room idles
    *  out. reset+enroll = a fresh re-handshake. */
   reset(noteId) {
-    var _a;
-    this.enrolledIds.delete(noteId), (_a = this.opts.recorder) == null || _a.record("reset", noteId, {});
+    this.enrolledIds.delete(noteId);
     let e = this.entries.get(noteId);
     e && (e.provider.setAdvertised(!1), e.provider.synced = !1);
   }
@@ -15044,11 +15020,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
    *  connect each re-advertises via syncStep1 — the reason the doc layer
    *  outlives the socket. */
   setConnected(connected) {
-    var _a;
-    this.connected = connected, (_a = this.opts.recorder) == null || _a.record("connection", null, {
-      connected,
-      resident: this.entries.size
-    });
+    this.connected = connected;
     for (let e of this.entries.values()) e.provider.setConnected(connected);
   }
   // --- Synced bookkeeping -----------------------------------------------------
@@ -15213,7 +15185,6 @@ function createCrdtWiring(deps) {
     unsentDocIds.add(docId);
   }, registry = new ProviderRegistry({
     dbPrefix: deps.dbPrefix,
-    recorder: deps.recorder,
     lcaFor: deps.lcaFor,
     onDirtyMerge: deps.onDirtyMerge,
     send: (docId, frame, kind) => {
@@ -15550,7 +15521,7 @@ function resolveKey(key, deps) {
   let pathFromId = deps.pathForId(key);
   return pathFromId ? { path: pathFromId, noteId: key } : { path: key, noteId: null };
 }
-async function buildNoteSnapshot(key, deps, opts = {}) {
+async function buildNoteSnapshot(key, deps) {
   let errors = [], { path, noteId } = resolveKey(key, deps), idForPath = path ? deps.idForPath(path) : null, pathForId = noteId ? deps.pathForId(noteId) : null, removed = noteId ? deps.registry.removedIds.has(noteId) : !1, resident = noteId ? deps.registry.hasDoc(noteId) : !1, doc2 = null, docContent = null;
   if (noteId && resident)
     try {
@@ -15559,8 +15530,7 @@ async function buildNoteSnapshot(key, deps, opts = {}) {
         length: content.length,
         hash: hashOf(content),
         hasHistory: await deps.registry.hasHistory(noteId),
-        stateVectorBytes: (await deps.registry.encodeStateVector(noteId)).byteLength,
-        ...opts.includeContent ? { content } : {}
+        stateVectorBytes: (await deps.registry.encodeStateVector(noteId)).byteLength
       };
     } catch (e) {
       errors.push(`doc: ${describe(e)}`);
@@ -15572,8 +15542,7 @@ async function buildNoteSnapshot(key, deps, opts = {}) {
       read && (diskContent = read.content, disk = {
         length: read.length,
         hash: hashOf(read.content),
-        mtime: read.mtime,
-        ...opts.includeContent ? { content: read.content } : {}
+        mtime: read.mtime
       });
     } catch (e) {
       errors.push(`disk: ${describe(e)}`);
@@ -15635,58 +15604,14 @@ function buildVaultSnapshot(deps) {
   };
 }
 
-// src/sync-recorder.ts
-var DEFAULT_CAPACITY = 5e3, SyncRecorder = class {
-  constructor(opts) {
-    this.events = [];
-    this.nextSeq = 0;
-    var _a;
-    this.enabled = opts.enabled, this.capacity = (_a = opts.capacity) != null ? _a : DEFAULT_CAPACITY;
-  }
-  /**
-   * Append one event.
-   *
-   * When recording is off this is a bare predicate call and a return — cheap
-   * enough to sit on the hot receive path. `nextSeq` deliberately does NOT
-   * advance for a suppressed event: a timeline captured across a mid-session
-   * toggle would otherwise show numbering gaps that read as dropped frames.
-   */
-  record(kind, noteId, data) {
-    this.enabled() && (this.events.push({ seq: this.nextSeq++, kind, noteId, data }), this.events.length > this.capacity && this.events.splice(0, this.events.length - this.capacity));
-  }
-  /** Recorded events in causal order, optionally narrowed to one note. The
-   *  retained window keeps its original seq numbers, so a truncated timeline
-   *  still reports how much preceded it. */
-  timeline(noteId) {
-    let all2 = [...this.events];
-    return noteId ? all2.filter((e) => e.noteId === noteId) : all2;
-  }
-  /** Drop buffered events. The seq counter keeps going: restarting numbering
-   *  would make two timelines from one session look like the same events. */
-  clear() {
-    this.events.length = 0;
-  }
-};
-function serializeTimeline(events) {
-  return JSON.stringify(events);
-}
-
 // src/debug-api.ts
 var GLOBAL_KEY = "__engramDebug";
 function createDebugApi(host) {
   let deps = host;
   return {
-    note: (key, includeContent = !1) => buildNoteSnapshot(key, deps, { includeContent }),
-    vault: () => buildVaultSnapshot(deps),
-    // Accepts a path as well as an id, matching `note()` — an investigation
-    // starts from whichever the evidence contained.
-    timeline: (noteId) => serializeTimeline(host.recorder.timeline(noteId ? resolveId(host, noteId) : void 0)),
-    clearTimeline: () => host.recorder.clear()
+    note: (key) => buildNoteSnapshot(key, deps),
+    vault: () => buildVaultSnapshot(deps)
   };
-}
-function resolveId(host, key) {
-  var _a;
-  return (_a = host.idForPath(key)) != null ? _a : key;
 }
 function installDebugApi(api) {
   window[GLOBAL_KEY] = api;
@@ -17318,12 +17243,6 @@ secret.md`).setValue(plugin.settings.ignorePatterns).onChange(async (value) => {
       debug: "Debug (verbose)"
     }).setValue(plugin.settings.remoteLogLevel).onChange(async (value) => {
       plugin.settings.remoteLogLevel = value, await plugin.saveSettings();
-    })
-  ), plugin.settings.diagnosticsEnabled && new import_obsidian17.Setting(containerEl).setName("Record sync timeline").setDesc(
-    "Capture sync activity on this device so a sync failure can be replayed offline. The recording includes note content and stays on this device \u2014 nothing is sent automatically, but anything you export with the debug console will contain it. Leave off unless you are chasing a bug."
-  ).addToggle(
-    (toggle) => toggle.setValue(plugin.settings.syncRecordingEnabled).onChange(async (value) => {
-      plugin.settings.syncRecordingEnabled = value, await plugin.saveSettings();
     })
   ), new import_obsidian17.Setting(containerEl).setName("About").setHeading();
   let aboutList = containerEl.createEl("ul", { cls: "engram-about-list" }), versionItem = aboutList.createEl("li");
@@ -23748,20 +23667,6 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
      *  debug snapshot so a wedged sync shows up as a long-lived pending entry
      *  instead of having to be inferred from logs. Null in production. */
     this.promiseTracker = null;
-    /** Timeline capture for the CRDT seams (#356). Constructed once and kept for
-     *  the plugin's lifetime — it reads the predicate on every record call, so
-     *  toggling recording never needs the CRDT stack rebuilt. Its buffer is
-     *  bounded, and it costs one predicate call per seam while off.
-     *
-     *  Bounded in EVENTS (5,000), not bytes — and the `receive` seam holds whole
-     *  frames, so a long session with large notes retains real memory until
-     *  `__engramDebug.clearTimeline()`. That is why this stays opt-in and off by
-     *  default rather than riding the Diagnostics switch: see
-     *  `syncRecordingEnabled`, and docs/context/v8-oom-prevention.md for why
-     *  this plugin is careful about retained content. */
-    this.syncRecorder = new SyncRecorder({
-      enabled: () => this.settings.syncRecordingEnabled
-    });
     /** Persist the user's chosen search mode as the new default. Passed to the
      *  search view + modal so a mode switch in either surface sticks. */
     this.persistSearchMode = (mode) => {
@@ -24397,8 +24302,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         pendingPromises: () => {
           var _a, _b;
           return (_b = (_a = this.promiseTracker) == null ? void 0 : _a.pending()) != null ? _b : [];
-        },
-        recorder: this.syncRecorder
+        }
       })
     );
   }
@@ -24812,7 +24716,6 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           let wiring2 = createCrdtWiring({
             noteIdMap: this.noteIdMap,
             syncEngine: this.syncEngine,
-            recorder: this.syncRecorder,
             // BaseStore is keyed by vault path and already holds exactly the
             // last-synced content its own docstring calls "the common
             // ancestor for 3-way merge"; the registry is keyed by note_id,
