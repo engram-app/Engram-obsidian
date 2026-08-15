@@ -18016,6 +18016,9 @@ function simplifiedScreenCopy(simple) {
   };
 }
 var LOADING_TEXT_DELAY_MS = 400, LOADING_MIN_VISIBLE_MS = 600;
+function emptyPlanDismiss(context) {
+  return context === "review" ? { label: "Close", accept: !1 } : { label: "Done", accept: !0 };
+}
 function loadingHoldMs(shownAt, now) {
   if (shownAt === null) return 0;
   let held = now - shownAt;
@@ -18119,7 +18122,17 @@ var SyncPreviewModal = class extends import_obsidian21.Modal {
       text: mergeHelperText(optionBreakdown(this.requirePlan(), "smart-merge"), context)
     });
     let mergeRow = options.createDiv({ cls: "engram-sync-preview-options-merge" });
-    this.renderOptionCard(mergeRow, MERGE_CARD), this.renderAdvancedOptions(options), this.renderFooter(contentEl, empty ? "Close" : "Cancel", empty);
+    if (this.renderOptionCard(mergeRow, MERGE_CARD), this.renderAdvancedOptions(options), empty) {
+      let { label, accept } = emptyPlanDismiss(context);
+      this.renderFooter(
+        contentEl,
+        label,
+        !0,
+        accept ? () => this.state.pickOption("smart-merge") : void 0
+      );
+      return;
+    }
+    this.renderFooter(contentEl, "Cancel", !1);
   }
   /** The one-click screen for an empty-side first sync. One primary action
    *  (always smart-merge — non-destructive by construction), plus the footer's
@@ -18151,7 +18164,7 @@ var SyncPreviewModal = class extends import_obsidian21.Modal {
   }
   /** Dismiss + optional "Change vault" footer, shared by the loaded preview
    *  and the loading state (previously identical blocks). */
-  renderFooter(parent, dismissLabel, dismissCta) {
+  renderFooter(parent, dismissLabel, dismissCta, dismissAction) {
     var _a;
     let gated = ((_a = this.opts.context) != null ? _a : "review") !== "review" && !dismissCta;
     gated && parent.createEl("p", {
@@ -18162,7 +18175,13 @@ var SyncPreviewModal = class extends import_obsidian21.Modal {
     footer.createEl("button", {
       text: gated ? "Not now" : dismissLabel,
       cls: dismissCta ? "mod-cta" : void 0
-    }).addEventListener("click", () => this.state.cancel()), this.opts.showChangeVault && footer.createEl("button", { text: "Change vault" }).addEventListener("click", () => {
+    }).addEventListener("click", () => {
+      if (dismissAction) {
+        dismissAction();
+        return;
+      }
+      this.state.cancel();
+    }), this.opts.showChangeVault && footer.createEl("button", { text: "Change vault" }).addEventListener("click", () => {
       this.openVaultPicker();
     });
   }

@@ -363,6 +363,26 @@ const LOADING_MIN_VISIBLE_MS = 600;
  *  Deliberately NOT a blanket delay on every sync: the fast case should feel
  *  instant, and only a line that actually reached the screen has earned the
  *  right to stay on it. */
+/** What the button on the "nothing to sync" screen should say and do.
+ *
+ *  Both sides already match, so there is no transfer to run — but in a GATED
+ *  context the sync gate still has to be accepted or the plugin stays inert.
+ *  "Close" used to dispatch `cancel`, which returns false from
+ *  runSyncFromChoice and never reaches markSyncGateAccepted: a user whose
+ *  vault was already in sync from another device clicked the one obvious
+ *  button and silently ended up with sync blocked forever.
+ *
+ *  In "review" the gate is already open and there genuinely is nothing to do,
+ *  so dismissing is correct there. */
+export function emptyPlanDismiss(context: SyncPreviewContext): {
+	label: string;
+	accept: boolean;
+} {
+	return context === "review"
+		? { label: "Close", accept: false }
+		: { label: "Done", accept: true };
+}
+
 export function loadingHoldMs(shownAt: number | null, now: number): number {
 	if (shownAt === null) return 0;
 	const held = now - shownAt;
@@ -561,7 +581,20 @@ export class SyncPreviewModal extends Modal {
 
 		this.renderAdvancedOptions(options);
 
-		this.renderFooter(contentEl, empty ? "Close" : "Cancel", empty);
+		if (empty) {
+			// Accepting the gate is the whole job on this screen — see
+			// emptyPlanDismiss. smart-merge is a no-op transfer here (the sides
+			// match) that routes through markSyncGateAccepted.
+			const { label, accept } = emptyPlanDismiss(context);
+			this.renderFooter(
+				contentEl,
+				label,
+				true,
+				accept ? () => this.state.pickOption("smart-merge") : undefined,
+			);
+			return;
+		}
+		this.renderFooter(contentEl, "Cancel", false);
 	}
 
 	/** The one-click screen for an empty-side first sync. One primary action
@@ -618,7 +651,12 @@ export class SyncPreviewModal extends Modal {
 
 	/** Dismiss + optional "Change vault" footer, shared by the loaded preview
 	 *  and the loading state (previously identical blocks). */
-	private renderFooter(parent: HTMLElement, dismissLabel: string, dismissCta: boolean): void {
+	private renderFooter(
+		parent: HTMLElement,
+		dismissLabel: string,
+		dismissCta: boolean,
+		dismissAction?: () => void,
+	): void {
 		// "review" is a manual sync with the gate already open — walking away
 		// costs nothing. The other contexts are opened BY the closed gate, and
 		// that gate stops every sync path, not just this run: dismiss here and
@@ -643,7 +681,13 @@ export class SyncPreviewModal extends Modal {
 			text: gated ? "Not now" : dismissLabel,
 			cls: dismissCta ? "mod-cta" : undefined,
 		});
-		dismissBtn.addEventListener("click", () => this.state.cancel());
+		dismissBtn.addEventListener("click", () => {
+			if (dismissAction) {
+				dismissAction();
+				return;
+			}
+			this.state.cancel();
+		});
 		if (this.opts.showChangeVault) {
 			const changeBtn = footer.createEl("button", { text: "Change vault" });
 			changeBtn.addEventListener("click", () => {

@@ -5,6 +5,7 @@ import {
 	confirmActions,
 	countSkippedAttachments,
 	describeCreateVaultError,
+	emptyPlanDismiss,
 	HEADER_BY_CONTEXT,
 	loadingHoldMs,
 	mergeHelperText,
@@ -470,5 +471,23 @@ describe("loadingHoldMs — 'Comparing…' pacing", () => {
 	// ages, so landing the results must be instant, not delayed again.
 	test("never delays a genuinely slow plan", () => {
 		expect(loadingHoldMs(1_000_000, 1_008_000)).toBe(0);
+	});
+});
+
+describe("emptyPlanDismiss — the nothing-to-sync screen", () => {
+	// The bug: "Close" dispatched `cancel`, which returns false from
+	// runSyncFromChoice and never reaches markSyncGateAccepted. A user whose
+	// vault was already in sync from another device clicked the one obvious
+	// button and ended up with sync silently blocked forever.
+	test("a gated context must ACCEPT, not dismiss", () => {
+		expect(emptyPlanDismiss("first-time")).toEqual({ label: "Done", accept: true });
+		expect(emptyPlanDismiss("vault-switch")).toEqual({ label: "Done", accept: true });
+	});
+
+	// Manual sync with the gate already open: nothing to transfer and nothing
+	// to accept, so running a pointless fullSync just to emit "pulled 0,
+	// pushed 0" would be noise.
+	test("review dismisses, because there is genuinely nothing to do", () => {
+		expect(emptyPlanDismiss("review")).toEqual({ label: "Close", accept: false });
 	});
 });
