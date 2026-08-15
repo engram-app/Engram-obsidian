@@ -2479,10 +2479,18 @@ export class SyncEngine {
 		// recorded content hash is now stale, and left behind it echo-suppresses
 		// a later create at the same path whose content hashes the same, so the
 		// recreated file's push is skipped and it never reaches the server.
-		// (dropBase:false — the local-delete path never dropped the merge base
-		// here; base cleanup belongs to the remote-removal path.)
+		// The merge base goes WITH it. The base is the full text of the note, and
+		// keeping it after a delete meant the body of a note the user deleted
+		// (and emptied from trash) stayed in sync-bases.json inside .obsidian/ —
+		// a directory people commit to git, sync through iCloud, and zip into
+		// bug reports — until LRU eviction happened to reach it at 50MB. It also
+		// never made sense on its own terms: the line above drops syncState here
+		// precisely BECAUSE stale bookkeeping at a recreated path causes bugs,
+		// and a stale base is the same hazard with a copy of the content
+		// attached. A recreate at this path has no common ancestor to merge
+		// against anyway.
 		const hadSyncEvidence = this.syncState.has(normalizePath(file.path));
-		this.dropPath(normalizePath(file.path), { dropBase: false });
+		this.dropPath(normalizePath(file.path));
 
 		// This trash APPLIED a remote change (trashRemotelyDeleted marked it):
 		// the server already knows. Never push the DELETE back — path-keyed and

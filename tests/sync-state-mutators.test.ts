@@ -101,6 +101,21 @@ describe("dropPath", () => {
 		expect(dropped).toEqual(["a.md"]);
 	});
 
+	// The local-delete path used to pass dropBase:false, so deleting a note left
+	// its full text in sync-bases.json — inside .obsidian/, which people commit
+	// and sync — until LRU eviction happened to reach it at 50MB. The default
+	// (drop it) is what the delete path now uses.
+	test("the default drops the base, so a deleted note keeps no body on disk", () => {
+		const e = makeEngine();
+		const dropped: string[] = [];
+		e.baseStore = { delete: (p: string) => dropped.push(p) };
+		e.stampSyncedRow("Personal/Therapy.md", { hash: 1 });
+
+		e.dropPath("Personal/Therapy.md");
+
+		expect(dropped).toEqual(["Personal/Therapy.md"]);
+	});
+
 	test("dropBase:false leaves the CAS base alone (rename/echo-skip sites)", () => {
 		const e = makeEngine();
 		const dropped: string[] = [];

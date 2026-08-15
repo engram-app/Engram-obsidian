@@ -20830,7 +20830,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let crdtNoteId = isBinary ? null : (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(file.path)) != null ? _b : null;
     isBinary || (_c = this.noteIdMap) == null || _c.delete(file.path);
     let hadSyncEvidence = this.syncState.has((0, import_obsidian24.normalizePath)(file.path));
-    this.dropPath((0, import_obsidian24.normalizePath)(file.path), { dropBase: !1 });
+    this.dropPath((0, import_obsidian24.normalizePath)(file.path));
     let wasEngineTrash = this.consumeEngineTrash(file.path);
     if (this.files.has(file.path, "remotelyDeleted") || wasEngineTrash) {
       this.files.clearMarker(file.path, "remotelyDeleted"), crdtNoteId && this.markRecentlyDeleted(crdtNoteId), rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`), this.isCrdtEligible(file) && crdtNoteId && await this.teardownCrdtDoc(crdtNoteId);
