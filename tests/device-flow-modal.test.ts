@@ -5,7 +5,7 @@
  */
 import { beforeEach, describe, expect, type Mock, test } from "bun:test";
 import { requestUrl } from "obsidian";
-import { DeviceFlowModal } from "../src/device-flow-modal";
+import { DeviceFlowModal, verificationUrlWithCode } from "../src/device-flow-modal";
 
 const mockRequestUrl = requestUrl as unknown as Mock<() => Promise<any>>;
 
@@ -190,5 +190,189 @@ describe("DeviceFlowModal poll — pending statuses", () => {
 		const { resolved, stopped } = await pollOnceWith(200, { access_token: "at" });
 		expect(resolved).toBe(true);
 		expect(stopped).toBe(true);
+	});
+});
+
+describe("verificationUrlWithCode", () => {
+	test("appends the user code so /link prefills instead of asking for a re-type", () => {
+		expect(verificationUrlWithCode("https://app.engram.page/link", "ENGR-7X4K")).toBe(
+			"https://app.engram.page/link?code=ENGR-7X4K",
+		);
+	});
+
+	test("preserves an existing query string", () => {
+		expect(
+			verificationUrlWithCode("https://app.engram.page/link?src=obsidian", "ENGR-7X4K"),
+		).toBe("https://app.engram.page/link?src=obsidian&code=ENGR-7X4K");
+	});
+
+	test("overwrites a stale code rather than duplicating the param", () => {
+		expect(
+			verificationUrlWithCode("https://app.engram.page/link?code=OLD-CODE", "ENGR-7X4K"),
+		).toBe("https://app.engram.page/link?code=ENGR-7X4K");
+	});
+
+	test("falls back to the bare URL when the backend sends something unparseable", () => {
+		expect(verificationUrlWithCode("not a url", "ENGR-7X4K")).toBe("not a url");
+	});
+});
+
+describe("post-link handoff", () => {
+	// The modal used to gain a "you're linked, click to continue" screen. That
+	// step only confirmed what the next screen already implies, so it went away
+	// again: on success the modal closes and the caller opens the first-sync
+	// preview directly.
+	test("a successful exchange resolves and closes", async () => {
+		mockRequestUrl.mockResolvedValue({
+			status: 200,
+			json: { access_token: "at", refresh_token: "rt", user_email: "me@example.test" },
+		});
+		const modal = new DeviceFlowModal(
+			makeApp("V"),
+			makePlugin("https://example.test", "cid-1"),
+		) as any;
+		let resolvedWith: unknown = null;
+		let closed = 0;
+		modal.resolve = (r: unknown) => {
+			resolvedWith = r;
+		};
+		modal.close = () => {
+			closed += 1;
+		};
+		modal.pollInterval = null;
+
+		await modal.pollOnce("https://example.test/api", "dc-1", Date.now(), 300);
+
+		expect((resolvedWith as { user_email: string }).user_email).toBe("me@example.test");
+		expect(closed).toBe(1);
+	});
+});
+
+/**
+ * The expired-code retry path. "Try again" re-enters onOpen(), and onOpen ends
+ * in startPolling() — which ASSIGNS this.disposeSocket and this.pollInterval.
+ * Without an explicit teardown first, the previous attempt's WebSocket and its
+ * 30s heartbeat survive for the rest of the Obsidian session, and the orphan's
+ * onAuthorized closure (holding the OLD, dead device_code) can still take the
+ * `exchanging` lock and stall the retry the user is watching.
+ */
+describe("DeviceFlowModal — retry after expiry", () => {
+	const makeModal = () => {
+		const modal = new DeviceFlowModal(makeApp("V"), makePlugin("https://example.test", "cid"));
+		return modal as any;
+	};
+
+	test("resetFlow disposes the socket, the interval, and the exchange lock", () => {
+		const modal = makeModal();
+		let disposed = 0;
+		modal.disposeSocket = () => {
+			disposed += 1;
+		};
+		modal.pollInterval = window.setInterval(() => {}, 60_000);
+		modal.exchanging = true;
+		modal.pendingAuthorized = true;
+
+		modal.resetFlow();
+
+		expect(disposed).toBe(1);
+		expect(modal.disposeSocket).toBeNull();
+		expect(modal.pollInterval).toBeNull();
+		expect(modal.exchanging).toBe(false);
+		expect(modal.pendingAuthorized).toBe(false);
+	});
+
+	test("'Try again' tears the old attempt down BEFORE starting a new one", () => {
+		const modal = makeModal();
+		const order: string[] = [];
+		modal.resetFlow = () => order.push("reset");
+		modal.onOpen = () => order.push("open");
+
+		modal.renderExpired();
+		modal.contentEl.__find("Try again").click();
+
+		expect(order).toEqual(["reset", "open"]);
+	});
+
+	// The fallback poll and the socket redeem the SAME single-use code, so they
+	// share one `exchanging` lock. Dropping the socket's notification when that
+	// lock is held throws away the entire benefit of the live path: the poll in
+	// flight almost certainly STARTED before the user authorized, so it comes
+	// back "still waiting" and the link stalls until the next 30s tick.
+	test("an authorized push during an in-flight exchange is retried, not dropped", async () => {
+		const modal = makeModal();
+		let exchanges = 0;
+		modal.pollOnce = async () => {
+			exchanges += 1;
+			// The socket fires while the first exchange is still running.
+			if (exchanges === 1) await modal.exchangeNow("https://x/api", "code-1");
+		};
+
+		await modal.exchangeNow("https://x/api", "code-1");
+
+		expect(exchanges).toBe(2);
+		expect(modal.pendingAuthorized).toBe(false);
+	});
+
+	test("a dropped notification does not leave the lock stuck", async () => {
+		const modal = makeModal();
+		modal.pollOnce = async () => {
+			throw new Error("network");
+		};
+
+		await expect(modal.exchangeNow("https://x/api", "code-1")).rejects.toThrow("network");
+		expect(modal.exchanging).toBe(false);
+	});
+
+	// A Modal is not part of the plugin's component tree, so nothing tears it
+	// down on unload (update, disable). Without registering, an abandoned link
+	// attempt keeps a 30s timer and a live WebSocket for as long as Obsidian
+	// stays open.
+	test("the fallback timer and socket are registered for plugin unload", () => {
+		const registered: Array<() => void> = [];
+		const intervals: number[] = [];
+		const plugin: any = {
+			settings: { apiUrl: "https://example.test", clientId: "cid" },
+			registerInterval: (id: number) => {
+				intervals.push(id);
+				return id;
+			},
+			register: (cb: () => void) => registered.push(cb),
+		};
+		const modal = new DeviceFlowModal(makeApp("V"), plugin) as any;
+
+		const origWs = (globalThis as any).WebSocket;
+		(globalThis as any).WebSocket = class {
+			onopen: any = null;
+			onclose: any = null;
+			onmessage: any = null;
+			onerror: any = null;
+			send() {}
+			close() {}
+		};
+		try {
+			modal.startPolling("code-1");
+		} finally {
+			(globalThis as any).WebSocket = origWs;
+		}
+
+		expect(intervals.length).toBe(1);
+		expect(modal.pollInterval).toBe(intervals[0]);
+		expect(registered.length).toBe(1);
+
+		// The registered callback is the same teardown close() runs.
+		registered[0]();
+		expect(modal.pollInterval).toBeNull();
+		expect(modal.disposeSocket).toBeNull();
+	});
+
+	test("closing the modal also disposes the socket", () => {
+		const modal = makeModal();
+		let disposed = 0;
+		modal.disposeSocket = () => {
+			disposed += 1;
+		};
+		modal.onClose();
+		expect(disposed).toBe(1);
+		expect(modal.aborted).toBe(true);
 	});
 });

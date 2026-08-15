@@ -1,5 +1,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import { __settingCapture } from "obsidian";
+import { EngramApi } from "../src/api";
 import {
 	applyVaultSwitch,
 	describeListVaultsError,
@@ -123,5 +124,119 @@ describe("describeListVaultsError", () => {
 		expect(describeListVaultsError(undefined)).toBe(
 			"Could not reach Engram — check connection",
 		);
+	});
+});
+
+describe("renderEngramUrlSetting — no Save button", () => {
+	function render(apiUrl: string) {
+		__settingCapture.texts.length = 0;
+		__settingCapture.buttons.length = 0;
+		const plugin: any = {
+			settings: { apiUrl, apiKey: "", refreshToken: "" },
+			api: {},
+			noteStream: {},
+			saveSettings: async () => {},
+		};
+		renderEngramUrlSetting({ containerEl: {}, app: {}, plugin, redisplay: () => {} } as any);
+	}
+
+	// The debounced preflight already tells the user whether the address works.
+	// A Save button beside it asked them to confirm what the page had just
+	// confirmed for them.
+	test("renders no button — the preflight is the confirmation", () => {
+		render("https://staging.engram.page");
+		expect(__settingCapture.buttons.length).toBe(0);
+	});
+
+	// applyApiUrlChange is a backend IDENTITY swap (clears auth, bumps the auth
+	// generation). Reaching it on every keystroke is the bug this field was
+	// rebuilt to fix, so blur has to be a real, separate commit path.
+	test("commits on blur, so a server that is not running yet can still be saved", () => {
+		render("");
+		expect(__settingCapture.texts[0]?.blurCb).toBeTruthy();
+	});
+
+	// The probe committing IS the design (there is no Save button), but commit
+	// ends in redisplay(), which tears the field out of the DOM. Doing that
+	// while the user is still typing in it eats their caret mid-word.
+	test("a commit fired while the field is focused hands focus back", async () => {
+		__settingCapture.texts.length = 0;
+		const plugin: any = {
+			settings: { apiUrl: "", apiKey: "", refreshToken: "" },
+			api: { setAuthProvider: () => {} },
+			noteStream: { disconnect: () => {} },
+			resetAuthProvider: () => {},
+			saveSettings: async () => {},
+		};
+		const ctx: any = { containerEl: {}, app: {}, plugin, redisplay: () => {} };
+		// redisplay rebuilds the tab — that is what destroys the input.
+		ctx.redisplay = () => renderEngramUrlSetting(ctx);
+		renderEngramUrlSetting(ctx);
+
+		const typed = __settingCapture.texts[0];
+		const g = globalThis as any;
+		g.document = { activeElement: typed?.inputEl, hasFocus: () => true };
+		const realProbe = (EngramApi as any).probeHealth;
+		(EngramApi as any).probeHealth = async () => ({ kind: "engram", version: "1.2.3" });
+		try {
+			typed?.changeCb?.("http://127.0.0.1:4000");
+			// Past the 600ms preflight debounce, then let the probe + commit settle.
+			await new Promise((r) => setTimeout(r, 900));
+		} finally {
+			(EngramApi as any).probeHealth = realProbe;
+			g.document = undefined;
+		}
+
+		expect(plugin.settings.apiUrl).toBe("http://127.0.0.1:4000");
+		const rebuilt = __settingCapture.texts[__settingCapture.texts.length - 1];
+		expect(rebuilt).not.toBe(typed);
+		expect(rebuilt?.focused).toBe(true);
+		// Caret at the end: the user was appending, and a select-all would make
+		// their next keystroke wipe the URL.
+		expect(rebuilt?.caret).toEqual([
+			"http://127.0.0.1:4000".length,
+			"http://127.0.0.1:4000".length,
+		]);
+	});
+
+	// Alt-tabbing out of Obsidian fires blur on the focused input too. That is
+	// not "I meant that" — it is a half-typed address the user is coming back
+	// to, and committing it swaps the stored backend (and clears auth) behind
+	// their back while they are looking at another window.
+	test("does NOT commit when blur came from the whole window losing focus", async () => {
+		const saved: string[] = [];
+		__settingCapture.texts.length = 0;
+		const plugin: any = {
+			settings: { apiUrl: "https://staging.engram.page", apiKey: "", refreshToken: "" },
+			api: { setAuthProvider: () => {} },
+			noteStream: { disconnect: () => {} },
+			resetAuthProvider: () => {},
+			saveSettings: async () => {
+				saved.push(plugin.settings.apiUrl);
+			},
+		};
+		renderEngramUrlSetting({
+			containerEl: {},
+			app: {},
+			plugin,
+			redisplay: () => {},
+		} as any);
+
+		const text = __settingCapture.texts[0];
+		text?.changeCb?.("http://halfway");
+
+		// No DOM in this runner, and the guard reads the real one. A blurred
+		// window is exactly `document.hasFocus() === false`.
+		const g = globalThis as any;
+		g.document = { hasFocus: () => false, activeElement: null };
+		try {
+			text?.blurCb?.();
+			await Promise.resolve();
+		} finally {
+			g.document = undefined;
+		}
+
+		expect(saved).toEqual([]);
+		expect(plugin.settings.apiUrl).toBe("https://staging.engram.page");
 	});
 });

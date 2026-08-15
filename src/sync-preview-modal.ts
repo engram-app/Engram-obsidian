@@ -293,6 +293,16 @@ export interface SyncPreviewOptions {
 	showChangeVault: boolean;
 	/** Drives header copy. Defaults to "review" when not provided. */
 	context?: SyncPreviewContext;
+	/** Is the sync gate currently CLOSED — i.e. does walking away from this
+	 *  modal leave the vault syncing nothing?
+	 *
+	 *  Separate from `context` on purpose. `context` answers "what should the
+	 *  header say", and it never carries "review" from the first-sync path
+	 *  (derivePreviewContext only returns first-time / vault-switch), so keying
+	 *  the gate warning and the empty-plan action off it told an already-syncing
+	 *  user that nothing would sync, and ran a pointless full sync on dismiss.
+	 *  Callers pass syncEngine.isSyncBlocked(), which is the actual fact. */
+	gateClosed?: boolean;
 	/** Fetches the list of vaults the user can switch to. Called when the
 	 *  user presses Change Vault. Required when showChangeVault is true. */
 	listVaults?: () => Promise<VaultInfo[]>;
@@ -350,6 +360,43 @@ export function simplifiedScreenCopy(simple: NonNullable<ReturnType<typeof simpl
 	};
 }
 
+/** Wait this long before the "Comparing…" line appears. Plans that resolve
+ *  faster show no loading copy at all. */
+const LOADING_TEXT_DELAY_MS = 400;
+/** Once that line IS on screen, keep it there at least this long. */
+const LOADING_MIN_VISIBLE_MS = 600;
+
+/** What the button on the "nothing to sync" screen should say and do.
+ *
+ *  Both sides already match, so there is no transfer to run — but in a GATED
+ *  context the sync gate still has to be accepted or the plugin stays inert.
+ *  "Close" used to dispatch `cancel`, which returns false from
+ *  runSyncFromChoice and never reaches markSyncGateAccepted: a user whose
+ *  vault was already in sync from another device clicked the one obvious
+ *  button and silently ended up with sync blocked forever.
+ *
+ *  With the gate already open there genuinely is nothing to do, so plain
+ *  dismissal is correct. */
+export function emptyPlanDismiss(gateClosed: boolean): {
+	label: string;
+	accept: boolean;
+} {
+	return gateClosed ? { label: "Done", accept: true } : { label: "Close", accept: false };
+}
+
+/** How long to hold the loaded plan back so the "Comparing…" line stays
+ *  readable. 0 when the line was never shown (the fast path — nothing to
+ *  hold) or has already had its time.
+ *
+ *  Deliberately NOT a blanket delay on every sync: the fast case should feel
+ *  instant, and only a line that actually reached the screen has earned the
+ *  right to stay on it. */
+export function loadingHoldMs(shownAt: number | null, now: number): number {
+	if (shownAt === null) return 0;
+	const held = now - shownAt;
+	return held >= LOADING_MIN_VISIBLE_MS ? 0 : LOADING_MIN_VISIBLE_MS - held;
+}
+
 export class SyncPreviewModal extends Modal {
 	private state: SyncPreviewState;
 	private resolvedChoice: SyncChoice | null = null;
@@ -371,8 +418,16 @@ export class SyncPreviewModal extends Modal {
 		});
 	}
 
+	private loadingTextTimer: number | null = null;
+	private holdTimer: number | null = null;
+	/** null until the "Comparing…" line is actually on screen. Doubles as the
+	 *  flag renderPlanLoading reads and the clock the hold window measures. */
+	private loadingTextShownAt: number | null = null;
+
 	onOpen(): void {
 		this.contentEl.addClass("engram-sync-preview-modal");
+		this.contentEl.addClass("engram-flow-modal");
+		this.startLoadingTextTimer();
 		if (this.opts.initialView === "vault-picker") {
 			void this.openVaultPicker();
 		} else {
@@ -381,6 +436,7 @@ export class SyncPreviewModal extends Modal {
 	}
 
 	onClose(): void {
+		this.clearLoadingTimers();
 		// Defensive: if the user dismisses via Esc/backdrop before picking,
 		// treat that as a cancel.
 		const resolve = this.resolveFn;
@@ -403,8 +459,53 @@ export class SyncPreviewModal extends Modal {
 	 *  for the old vault must not clobber it. */
 	setPlan(plan: SyncPlan): void {
 		if (this.state.plan != null) return;
+
+		// If "Comparing…" is on screen, let it be readable. Swapping it out
+		// after 80ms is what made the step feel skipped rather than fast.
+		const hold = loadingHoldMs(this.loadingTextShownAt, Date.now());
+		if (hold > 0) {
+			this.holdTimer = window.setTimeout(() => {
+				this.holdTimer = null;
+				this.applyPlan(plan);
+			}, hold);
+			return;
+		}
+
+		this.applyPlan(plan);
+	}
+
+	private applyPlan(plan: SyncPlan): void {
+		if (this.state.plan != null) return;
+		this.clearLoadingTimers();
 		this.state.replacePlan(plan);
 		if (this.state.view === "preview") this.render();
+	}
+
+	/** The loading LINE is deferred, not the modal — the modal itself opens
+	 *  instantly and keeps its header/footer the whole time. A plan that
+	 *  resolves inside this window therefore shows no loading copy at all,
+	 *  which is the point: a sentence displayed for 80ms is a flicker, not
+	 *  information. Slowing every sync down to make it readable would tax the
+	 *  fast path forever to fix a frame nobody wanted. */
+	private startLoadingTextTimer(): void {
+		if (this.state.plan != null) return;
+		this.loadingTextTimer = window.setTimeout(() => {
+			this.loadingTextTimer = null;
+			if (this.state.plan != null) return;
+			this.loadingTextShownAt = Date.now();
+			if (this.state.view === "preview") this.render();
+		}, LOADING_TEXT_DELAY_MS);
+	}
+
+	private clearLoadingTimers(): void {
+		if (this.loadingTextTimer !== null) {
+			window.clearTimeout(this.loadingTextTimer);
+			this.loadingTextTimer = null;
+		}
+		if (this.holdTimer !== null) {
+			window.clearTimeout(this.holdTimer);
+			this.holdTimer = null;
+		}
 	}
 
 	/** Surface a plan-load failure in the instant-open loading view. Skipped once
@@ -412,6 +513,10 @@ export class SyncPreviewModal extends Modal {
 	 *  overwrites a good plan. */
 	setPlanError(message: string): void {
 		if (this.state.plan != null) return;
+		this.clearLoadingTimers();
+		// An error is not a progress message — show it the instant it exists,
+		// regardless of where the delay window stands.
+		this.loadingTextShownAt = Date.now();
 		this.state.planError = message;
 		if (this.state.view === "preview") this.render();
 	}
@@ -484,7 +589,20 @@ export class SyncPreviewModal extends Modal {
 
 		this.renderAdvancedOptions(options);
 
-		this.renderFooter(contentEl, empty ? "Close" : "Cancel", empty);
+		if (empty) {
+			// Accepting the gate is the whole job on this screen — see
+			// emptyPlanDismiss. smart-merge is a no-op transfer here (the sides
+			// match) that routes through markSyncGateAccepted.
+			const { label, accept } = emptyPlanDismiss(this.opts.gateClosed ?? false);
+			this.renderFooter(
+				contentEl,
+				label,
+				true,
+				accept ? () => this.state.pickOption("smart-merge") : undefined,
+			);
+			return;
+		}
+		this.renderFooter(contentEl, "Cancel", false);
 	}
 
 	/** The one-click screen for an empty-side first sync. One primary action
@@ -532,7 +650,7 @@ export class SyncPreviewModal extends Modal {
 				cls: "engram-sync-preview-picker-error",
 				text: this.state.planError,
 			});
-		} else {
+		} else if (this.loadingTextShownAt !== null) {
 			body.createSpan({ text: "Comparing your vault with the cloud…" });
 		}
 
@@ -541,13 +659,43 @@ export class SyncPreviewModal extends Modal {
 
 	/** Dismiss + optional "Change vault" footer, shared by the loaded preview
 	 *  and the loading state (previously identical blocks). */
-	private renderFooter(parent: HTMLElement, dismissLabel: string, dismissCta: boolean): void {
+	private renderFooter(
+		parent: HTMLElement,
+		dismissLabel: string,
+		dismissCta: boolean,
+		dismissAction?: () => void,
+	): void {
+		// "review" is a manual sync with the gate already open — walking away
+		// costs nothing. The other contexts are opened BY the closed gate, and
+		// that gate stops every sync path, not just this run: dismiss here and
+		// the vault silently syncs nothing at all, forever, until it is resolved.
+		//
+		// So say that at the decision point rather than after it, and drop the
+		// word "Cancel" — there is no operation in flight to cancel, and the
+		// choice is genuinely deferrable.
+		//
+		// Skipped when dismissCta: that is the nothing-to-sync screen, where the
+		// button is the primary action and there is no choice being deferred.
+		const gated = (this.opts.gateClosed ?? false) && !dismissCta;
+		if (gated) {
+			parent.createEl("p", {
+				cls: "engram-sync-preview-gate-note",
+				text: "Until you choose, nothing in this vault will sync.",
+			});
+		}
+
 		const footer = parent.createDiv({ cls: "engram-sync-preview-footer" });
 		const dismissBtn = footer.createEl("button", {
-			text: dismissLabel,
+			text: gated ? "Not now" : dismissLabel,
 			cls: dismissCta ? "mod-cta" : undefined,
 		});
-		dismissBtn.addEventListener("click", () => this.state.cancel());
+		dismissBtn.addEventListener("click", () => {
+			if (dismissAction) {
+				dismissAction();
+				return;
+			}
+			this.state.cancel();
+		});
 		if (this.opts.showChangeVault) {
 			const changeBtn = footer.createEl("button", { text: "Change vault" });
 			changeBtn.addEventListener("click", () => {

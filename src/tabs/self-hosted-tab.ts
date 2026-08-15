@@ -13,21 +13,29 @@ import { ENGRAM_CLOUD_URL, ENGRAM_MARKETING_URL } from "./urls";
 
 const PREFLIGHT_DEBOUNCE_MS = 600;
 
-/** Engram API keys carry this prefix. Kept as a constant so Save can VALIDATE
- *  the format instead of describing it: the obsidianmd sentence-case lint
- *  rewrites a lowercase "engram_" in prose to "Engram_", which is wrong. */
+/** Module scope on purpose: a commit ends in `redisplay()`, which rebuilds this
+ *  whole tab, so the flag has to outlive the render that set it. */
+let refocusUrlInput = false;
+
+/** Engram API keys carry this prefix. Kept as a constant so the key field can
+ *  VALIDATE the format instead of describing it: the obsidianmd sentence-case
+ *  lint rewrites a lowercase "engram_" in prose to "Engram_", which is wrong. */
 const API_KEY_PREFIX = "engram_";
 
 /** Render the "Engram URL" field with a debounced background preflight that
- *  confirms the URL points at a real Engram server, committed via an explicit
- *  Save button (same buffered pattern as the API-key field).
+ *  confirms the URL points at a real Engram server, and commits on that
+ *  confirmation.
  *
- *  Why this shape: the original handler called `applyApiUrlChange` on every
- *  keystroke. Once a complete origin was typed it cleared auth and
- *  `redisplay()`'d the whole tab mid-edit — destroying the input and stealing
- *  focus on every character. Now keystrokes only buffer the value + schedule a
- *  read-only `/health` probe; the apiUrl is committed only when the user clicks
- *  Save, the single point that may clear auth and redisplay. */
+ *  There is deliberately no Save button. The preflight already tells the user
+ *  whether the address works; a button next to it asked them to confirm a
+ *  thing the page had just confirmed for them.
+ *
+ *  Why keystrokes still only buffer: the original handler called
+ *  `applyApiUrlChange` on every keystroke. Once a complete origin was typed it
+ *  cleared auth and `redisplay()`'d the whole tab mid-edit — destroying the
+ *  input and stealing focus on every character. Commit is therefore reached
+ *  from exactly two places, both of which mean "the user is done typing": a
+ *  probe that confirms an Engram backend, or blur. */
 export function renderEngramUrlSetting(ctx: TabContext): void {
 	const { containerEl, plugin, redisplay } = ctx;
 
@@ -37,12 +45,13 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
 	const status = setting.descEl.createDiv({ cls: "engram-url-preflight" });
 	const STATUS_CLASSES = ["is-checking", "is-engram", "is-reachable", "is-unreachable"];
 
-	// Buffer the typed value; only the Save button writes it to settings.
+	// Buffer the typed value; only commit() writes it to settings.
 	let pendingUrl = plugin.settings.apiUrl;
 	let debounce: number | null = null;
 	// Monotonic token: a slow probe that resolves after the user kept typing
 	// must not overwrite the status belonging to a newer value.
 	let probeSeq = 0;
+	let inputEl: HTMLInputElement | null = null;
 
 	const renderStatus = (result: PreflightResult): void => {
 		status.removeClasses(STATUS_CLASSES);
@@ -62,7 +71,7 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
 		}
 	};
 
-	const runPreflight = (value: string): void => {
+	const runPreflight = (value: string, mayCommit = false): void => {
 		if (!completeOrigin(value)) {
 			status.removeClasses(STATUS_CLASSES);
 			status.setText("");
@@ -76,57 +85,84 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
 			if (seq !== probeSeq) return; // superseded by a newer probe
 			status.removeClass("is-checking");
 			renderStatus(result);
+			// The probe IS the confirmation — a Save button next to it was a
+			// second, worse one. Commit only on a verified Engram backend:
+			// "reachable" means something answered but is not Engram, and
+			// committing that would clear auth for a typo.
+			if (mayCommit && result.kind === "engram") {
+				// commit() ends in redisplay(), which tears this input out of the
+				// DOM. If the user is still in the field, that eats their caret
+				// mid-word. Remember it so the rebuilt field takes focus back.
+				refocusUrlInput = document.activeElement === inputEl;
+				void commit();
+			}
 		});
 	};
 
-	setting
-		.addText((text) => {
-			// Pre-fill the saved URL so the configured backend is always visible
-			// (unlike the API-key field, the URL isn't a secret and the user needs
-			// to confirm it's correct). `pendingUrl` already mirrors this value, so
-			// an untouched Save stays a no-op — applyApiUrlChange short-circuits
-			// when the URL is unchanged — and never wipes the configured URL.
-			text.setPlaceholder("https://engram.example.com");
-			text.setValue(plugin.settings.apiUrl);
-			text.onChange((value) => {
-				pendingUrl = value;
-				if (debounce !== null) window.clearTimeout(debounce);
-				debounce = window.setTimeout(() => runPreflight(value), PREFLIGHT_DEBOUNCE_MS);
-			});
-		})
-		.addButton((btn) =>
-			btn
-				.setButtonText("Save")
-				.setCta()
-				.onClick(async () => {
-					const { cleared, rejected } = await applyApiUrlChange(
-						pluginSwitchTarget(plugin),
-						pendingUrl.trim(),
-						() => plugin.saveSettings(),
-					);
-					if (rejected) {
-						// Deliberately no redisplay: the typed value stays in the box
-						// so the user can correct it instead of retyping from scratch.
-						new Notice(
-							"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000",
-						);
-						return;
-					}
-					// Keep the explicit mode in step with the URL. Pasting the Cloud
-					// address into this box IS a switch to Cloud; leaving backendMode
-					// on "selfhost" would make the next dropdown switch stash the
-					// Cloud config into the self-host slot.
-					plugin.settings.backendMode = modeForUrl(
-						plugin.settings.apiUrl,
-						ENGRAM_CLOUD_URL,
-					);
-					await plugin.saveSettings();
-					if (cleared) {
-						new Notice("Engram backend changed — sign in again to continue.");
-					}
-					redisplay();
-				}),
+	/** The one place that may clear auth and redisplay. applyApiUrlChange is a
+	 *  backend IDENTITY swap, so it must never fire mid-keystroke: only on a
+	 *  confirmed Engram server, or on blur once the user has stopped typing. */
+	const commit = async (): Promise<void> => {
+		const next = pendingUrl.trim();
+		if (next === plugin.settings.apiUrl) return;
+		const { cleared, rejected } = await applyApiUrlChange(
+			pluginSwitchTarget(plugin),
+			next,
+			() => plugin.saveSettings(),
 		);
+		if (rejected) {
+			// Deliberately no redisplay: the typed value stays in the box so the
+			// user can correct it instead of retyping from scratch.
+			new Notice(
+				"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000",
+			);
+			return;
+		}
+		// Keep the explicit mode in step with the URL. Pasting the Cloud address
+		// into this box IS a switch to Cloud; leaving backendMode on "selfhost"
+		// would make the next dropdown switch stash the Cloud config into the
+		// self-host slot.
+		plugin.settings.backendMode = modeForUrl(plugin.settings.apiUrl, ENGRAM_CLOUD_URL);
+		await plugin.saveSettings();
+		if (cleared) {
+			new Notice("Engram backend changed — sign in again to continue.");
+		}
+		redisplay();
+	};
+
+	setting.addText((text) => {
+		inputEl = text.inputEl;
+		// Pre-fill the saved URL so the configured backend is always visible
+		// (unlike the API-key field, the URL isn't a secret and the user needs
+		// to confirm it's correct).
+		text.setPlaceholder("https://engram.example.com");
+		text.setValue(plugin.settings.apiUrl);
+		text.onChange((value) => {
+			pendingUrl = value;
+			if (debounce !== null) window.clearTimeout(debounce);
+			debounce = window.setTimeout(() => runPreflight(value, true), PREFLIGHT_DEBOUNCE_MS);
+		});
+		// Blur fallback: someone pointing at a server they have not started yet
+		// would otherwise be unable to save at all, because the probe never
+		// confirms. Leaving the field is an unambiguous "I meant that".
+		text.inputEl.addEventListener("blur", () => {
+			// Alt-tabbing out of Obsidian fires blur too, and that is NOT "I meant
+			// that" — it is a half-typed address the user is coming back to.
+			// Committing it swaps the stored backend behind their back.
+			if (!document.hasFocus()) return;
+			if (debounce !== null) window.clearTimeout(debounce);
+			void commit();
+		});
+
+		if (refocusUrlInput) {
+			refocusUrlInput = false;
+			text.inputEl.focus();
+			// Caret to the end: the user was appending (port, path), and
+			// select-all-on-focus would make the next keystroke wipe the URL.
+			const end = text.inputEl.value.length;
+			text.inputEl.setSelectionRange(end, end);
+		}
+	});
 
 	// Surface the current backend's status immediately on open (no typing needed).
 	if (completeOrigin(plugin.settings.apiUrl)) runPreflight(plugin.settings.apiUrl);

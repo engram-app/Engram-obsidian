@@ -95,6 +95,12 @@ export class Plugin {
 		return { setText: () => {} };
 	}
 	registerEvent(_evt: any): void {}
+	// Component teardown hooks. The real ones fire on plugin unload; tests only
+	// need them to exist and to hand back the id registerInterval returns.
+	registerInterval(id: number): number {
+		return id;
+	}
+	register(_cb: () => any): void {}
 }
 
 export class PluginSettingTab {
@@ -106,8 +112,22 @@ export class PluginSettingTab {
 }
 
 /** Chainable DOM-element stub used by the Setting mock. */
-function makeEl(): any {
+export function makeEl(): any {
 	const el: any = {
+		// Real elements get detached; code under test calls this on placeholders
+		// it swaps out. Without it the failure reads as an unrelated TypeError
+		// deep inside a .catch, which is a miserable thing to debug.
+		remove: () => el,
+		empty: () => el,
+		// Record handlers. A modal's only affordance IS its buttons, so a mock
+		// that swallows the listener makes every "what happens when the user
+		// clicks Try again" test unwritable.
+		listeners: {} as Record<string, () => void>,
+		addEventListener: (evt: string, cb: () => void) => {
+			el.listeners[evt] = cb;
+			return el;
+		},
+		click: () => el.listeners.click?.(),
 		addClass: () => el,
 		removeClass: () => el,
 		removeClasses: () => el,
@@ -117,9 +137,25 @@ function makeEl(): any {
 		},
 		setAttribute: () => el,
 		textContent: "",
-		createDiv: () => makeEl(),
-		createSpan: () => makeEl(),
-		createEl: () => makeEl(),
+		// Keep the tree. Tests need to reach the button a modal rendered three
+		// levels down, and a mock that returns orphans makes that impossible.
+		children: [] as any[],
+		createDiv: (opts?: any) => el.__child("div", opts),
+		createSpan: (opts?: any) => el.__child("span", opts),
+		createEl: (tag: string, opts?: any) => el.__child(tag, opts),
+		__child: (tag: string, opts?: any) => {
+			const child = makeEl();
+			child.tag = tag;
+			if (typeof opts?.text === "string") child.textContent = opts.text;
+			el.children.push(child);
+			return child;
+		},
+		/** Depth-first search of the rendered tree by visible text. */
+		__find: (text: string): any =>
+			el.children.reduce(
+				(hit: any, c: any) => hit ?? (c.textContent === text ? c : c.__find(text)),
+				null,
+			),
 	};
 	return el;
 }
@@ -127,12 +163,34 @@ function makeEl(): any {
 class TextComponent {
 	value = "";
 	changeCb: ((v: string) => void) | null = null;
-	inputEl: any = { type: "text", addClass: () => {} };
+	// Real Obsidian TextComponents expose the underlying <input>, and callers
+	// attach listeners to it (blur, keydown). Without addEventListener here a
+	// component doing that throws mid-render, and the failure surfaces as a
+	// confusing "the field was never captured" rather than as itself.
+	blurCb: (() => void) | null = null;
+	/** Did the component under test put the caret back into this field? */
+	focused = false;
+	caret: [number, number] | null = null;
+	inputEl: any = {
+		type: "text",
+		value: "",
+		addClass: () => {},
+		addEventListener: (evt: string, cb: () => void) => {
+			if (evt === "blur") this.blurCb = cb;
+		},
+		focus: () => {
+			this.focused = true;
+		},
+		setSelectionRange: (a: number, b: number) => {
+			this.caret = [a, b];
+		},
+	};
 	setPlaceholder(_p: string): this {
 		return this;
 	}
 	setValue(v: string): this {
 		this.value = v;
+		this.inputEl.value = v;
 		return this;
 	}
 	getValue(): string {
@@ -163,9 +221,16 @@ class ButtonComponent {
 
 /** Components created during the last render, for assertions in tests.
  *  Reset it in a beforeEach when rendering Settings. */
-export const __settingCapture: { texts: TextComponent[]; buttons: ButtonComponent[] } = {
+export const __settingCapture: {
+	texts: TextComponent[];
+	buttons: ButtonComponent[];
+	// Section/row names, so a test can assert WHICH settings a tab rendered —
+	// the only way to check progressive disclosure without a real DOM.
+	names: string[];
+} = {
 	texts: [],
 	buttons: [],
+	names: [],
 };
 
 export class Setting {
@@ -173,7 +238,8 @@ export class Setting {
 	descEl: any = makeEl();
 	controlEl: any = makeEl();
 	constructor(_containerEl: any) {}
-	setName(_name: string): this {
+	setName(name: string): this {
+		__settingCapture.names.push(name);
 		return this;
 	}
 	setDesc(_desc: string): this {
@@ -218,21 +284,7 @@ export class FileSystemAdapter {
 
 export class Modal {
 	app: any;
-	contentEl: any = {
-		empty: () => {},
-		createEl: (_tag: string, _opts?: any) => ({
-			setText: () => {},
-			style: {},
-		}),
-		createDiv: (_opts?: any) => ({
-			createEl: (_tag: string, _opts2?: any) => ({
-				setText: () => {},
-				addEventListener: () => {},
-				style: {},
-			}),
-			style: {},
-		}),
-	};
+	contentEl: any = makeEl();
 	constructor(app: any) {
 		this.app = app;
 	}

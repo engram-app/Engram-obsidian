@@ -58,12 +58,30 @@ export function isSaveableUrl(url: string): boolean {
 	return parsed.hostname.length > 0;
 }
 
-/** Returns true only when both URLs parse to a *complete-looking* origin AND
- *  those origins differ. Path, query, trailing slash, and case differences in
- *  host do NOT count. Partial URLs (mid-keystroke) and empty URLs return false. */
+/** scheme://host:port for any URL `isSaveableUrl` accepts, lowercased.
+ *  Null when the URL is not something we would store at all. */
+function saveableOrigin(url: string): string | null {
+	if (!isSaveableUrl(url)) return null;
+	// Already proven parseable by isSaveableUrl.
+	const parsed = new URL(url);
+	return `${parsed.protocol}//${parsed.host}`.toLowerCase();
+}
+
+/** Returns true when both URLs are storable server addresses AND their origins
+ *  differ. Path, query, trailing slash, and host case do NOT count. An empty or
+ *  unusable URL on either side returns false.
+ *
+ *  Judged with `isSaveableUrl`, not `completeOrigin`: this is only ever reached
+ *  from `applyApiUrlChange`, which has already accepted the URL for storage.
+ *  Using the stricter mid-typing heuristic here meant the two disagreed about
+ *  single-label and IPv6 hosts — `http://engram:4000`, i.e. the docker-compose
+ *  and Tailscale names self-hosters actually use. The URL got saved and the OLD
+ *  backend's credentials were kept, so the plugin pointed at a new server
+ *  holding tokens it would never accept: every call failed while the settings
+ *  page looked green. The two questions must be answered by one predicate. */
 export function isBackendChange(oldUrl: string, newUrl: string): boolean {
-	const oldO = completeOrigin(oldUrl);
-	const newO = completeOrigin(newUrl);
+	const oldO = saveableOrigin(oldUrl);
+	const newO = saveableOrigin(newUrl);
 	if (!oldO || !newO) return false;
 	return oldO !== newO;
 }

@@ -284,6 +284,12 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 				result.user_email,
 			);
 			this.rerender();
+			// Go straight into the first-sync preview. Linking connects the
+			// account but syncs nothing, and the preview is where that gets said
+			// AND acted on — so it replaces the old "you're linked, now click
+			// here" screen rather than sitting behind it. Tokens are persisted
+			// above, so the sync can authenticate.
+			void this.plugin.doSyncWithFirstSyncCheck();
 		}
 	}
 

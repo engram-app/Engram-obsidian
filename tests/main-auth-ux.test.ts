@@ -43,6 +43,14 @@ describe("status bar when signed out", () => {
 		return { fake, texts };
 	}
 	const idle: SyncStatus = { state: "idle", pending: 0, queued: 0 } as SyncStatus;
+	// The 2026-08-12 incident is a user who WAS working and then got forcibly
+	// signed out — so they have a lastSync. That is what makes "signed out" the
+	// right words for them, and what distinguishes them from someone who never
+	// linked at all (covered separately below).
+	const idleAfterWorking: SyncStatus = {
+		...idle,
+		lastSync: "2026-08-12T00:00:00Z",
+	} as SyncStatus;
 
 	test("no auth configured → says signed out, not ready", () => {
 		const { fake, texts } = fakeFor({});
@@ -50,8 +58,23 @@ describe("status bar when signed out", () => {
 			EngramSyncPlugin.prototype as unknown as {
 				updateStatusBar(this: unknown, s: SyncStatus): void;
 			}
-		).updateStatusBar.call(fake, idle);
+		).updateStatusBar.call(fake, idleAfterWorking);
 		expect(texts[0]).toMatch(/signed out/i);
+		expect(texts[0]).not.toMatch(/ready/i);
+	});
+
+	// A user who never linked was never signed IN, so "signed out" reads like
+	// something broke rather than something is unfinished. Same protection —
+	// still never "ready" — different words.
+	test("never synced → says not connected, still not ready", () => {
+		const { fake, texts } = fakeFor({});
+		(
+			EngramSyncPlugin.prototype as unknown as {
+				updateStatusBar(this: unknown, s: SyncStatus): void;
+			}
+		).updateStatusBar.call(fake, idle);
+		expect(texts[0]).toMatch(/not connected/i);
+		expect(texts[0]).not.toMatch(/ready/i);
 	});
 
 	test("auth configured → unchanged ready state", () => {
@@ -133,8 +156,16 @@ describe("round-1 review fixes (#422)", () => {
 			EngramSyncPlugin.prototype as unknown as {
 				updateStatusBar(this: unknown, s: SyncStatus): void;
 			}
-		).updateStatusBar.call(fake, { state: "idle", pending: 0, queued: 0 } as SyncStatus);
+		).updateStatusBar.call(fake, {
+			state: "idle",
+			pending: 0,
+			queued: 0,
+			// Had been syncing before the forced sign-out — that is the incident.
+			lastSync: "2026-08-12T00:00:00Z",
+		} as SyncStatus);
 		expect(texts[0]).toMatch(/signed out/i);
+		// The point of the guard: the error badge must not overwrite it.
+		expect(texts[0]).not.toMatch(/sync errors/i);
 	});
 
 	test("trackPreviewModal registers a modal for the auth poke; untrack clears it", async () => {
