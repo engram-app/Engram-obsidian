@@ -95,6 +95,12 @@ export class Plugin {
 		return { setText: () => {} };
 	}
 	registerEvent(_evt: any): void {}
+	// Component teardown hooks. The real ones fire on plugin unload; tests only
+	// need them to exist and to hand back the id registerInterval returns.
+	registerInterval(id: number): number {
+		return id;
+	}
+	register(_cb: () => any): void {}
 }
 
 export class PluginSettingTab {
@@ -113,7 +119,15 @@ export function makeEl(): any {
 		// deep inside a .catch, which is a miserable thing to debug.
 		remove: () => el,
 		empty: () => el,
-		addEventListener: () => el,
+		// Record handlers. A modal's only affordance IS its buttons, so a mock
+		// that swallows the listener makes every "what happens when the user
+		// clicks Try again" test unwritable.
+		listeners: {} as Record<string, () => void>,
+		addEventListener: (evt: string, cb: () => void) => {
+			el.listeners[evt] = cb;
+			return el;
+		},
+		click: () => el.listeners.click?.(),
 		addClass: () => el,
 		removeClass: () => el,
 		removeClasses: () => el,
@@ -123,9 +137,25 @@ export function makeEl(): any {
 		},
 		setAttribute: () => el,
 		textContent: "",
-		createDiv: () => makeEl(),
-		createSpan: () => makeEl(),
-		createEl: () => makeEl(),
+		// Keep the tree. Tests need to reach the button a modal rendered three
+		// levels down, and a mock that returns orphans makes that impossible.
+		children: [] as any[],
+		createDiv: (opts?: any) => el.__child("div", opts),
+		createSpan: (opts?: any) => el.__child("span", opts),
+		createEl: (tag: string, opts?: any) => el.__child(tag, opts),
+		__child: (tag: string, opts?: any) => {
+			const child = makeEl();
+			child.tag = tag;
+			if (typeof opts?.text === "string") child.textContent = opts.text;
+			el.children.push(child);
+			return child;
+		},
+		/** Depth-first search of the rendered tree by visible text. */
+		__find: (text: string): any =>
+			el.children.reduce(
+				(hit: any, c: any) => hit ?? (c.textContent === text ? c : c.__find(text)),
+				null,
+			),
 	};
 	return el;
 }
@@ -243,21 +273,7 @@ export class FileSystemAdapter {
 
 export class Modal {
 	app: any;
-	contentEl: any = {
-		empty: () => {},
-		createEl: (_tag: string, _opts?: any) => ({
-			setText: () => {},
-			style: {},
-		}),
-		createDiv: (_opts?: any) => ({
-			createEl: (_tag: string, _opts2?: any) => ({
-				setText: () => {},
-				addEventListener: () => {},
-				style: {},
-			}),
-			style: {},
-		}),
-	};
+	contentEl: any = makeEl();
 	constructor(app: any) {
 		this.app = app;
 	}

@@ -36,6 +36,8 @@ export class DeviceFlowModal extends Modal {
 	private pollInterval: number | null = null;
 	private disposeSocket: (() => void) | null = null;
 	private exchanging = false;
+	/** Socket said "authorized" while an exchange was already in flight. */
+	private pendingAuthorized = false;
 	private waitingEl: HTMLElement | null = null;
 	private aborted = false;
 
@@ -66,17 +68,28 @@ export class DeviceFlowModal extends Modal {
 		}
 	}
 
-	onClose(): void {
-		this.aborted = true;
+	/** Tear down everything belonging to ONE attempt at the flow.
+	 *
+	 *  Both exits need this. Close is the obvious one; "Try again" is the one
+	 *  that bit: it re-ran onOpen(), and startPolling() then OVERWROTE
+	 *  disposeSocket and pollInterval, leaking the previous socket and its
+	 *  heartbeat for the rest of the Obsidian session. Worse, the orphan's
+	 *  onAuthorized closure still held the OLD device_code and could take
+	 *  `exchanging`, blocking the retry the user is standing there watching. */
+	private resetFlow(): void {
 		if (this.pollInterval) {
 			window.clearInterval(this.pollInterval);
 			this.pollInterval = null;
 		}
-		// Cancelling the modal must take the socket with it — otherwise every
-		// abandoned link attempt leaves a live WebSocket (and its heartbeat)
-		// running for the rest of the Obsidian session.
 		this.disposeSocket?.();
 		this.disposeSocket = null;
+		this.exchanging = false;
+		this.pendingAuthorized = false;
+	}
+
+	onClose(): void {
+		this.aborted = true;
+		this.resetFlow();
 		this.contentEl.empty();
 		this.resolve(null);
 	}
@@ -206,15 +219,22 @@ export class DeviceFlowModal extends Modal {
 			} finally {
 				this.exchanging = false;
 			}
+			await this.drainPendingAuthorized(apiUrl, deviceCode);
 		};
 
 		// 30s, not 5s. This is no longer how the flow completes — the socket is —
 		// so it exists purely to rescue a user whose network blocks WebSockets.
 		// Tightening it would just add request volume to the common path where
 		// it never wins the race.
-		this.pollInterval = window.setInterval(() => {
-			void poll();
-		}, 30_000);
+		// registerInterval + register so a plugin unload (update, disable) takes
+		// the fallback timer AND the socket with it. A Modal is not a child of
+		// the plugin's component tree, so nothing else would.
+		this.pollInterval = this.plugin.registerInterval(
+			window.setInterval(() => {
+				void poll();
+			}, 30_000),
+		);
+		this.plugin.register(() => this.resetFlow());
 	}
 
 	/** Socket said the code was authorized: exchange it once, right now.
@@ -224,13 +244,31 @@ export class DeviceFlowModal extends Modal {
 	 *  redeem, and the loser would see the 410 from a single-use code and
 	 *  render "expired" over a flow that actually succeeded. */
 	private async exchangeNow(apiUrl: string, deviceCode: string): Promise<void> {
-		if (this.aborted || this.exchanging) return;
+		if (this.aborted) return;
+		if (this.exchanging) {
+			// Don't drop the notification. The in-flight request is very likely a
+			// fallback poll that STARTED before the user authorized, so it will
+			// come back 400 "still waiting" — and without this the live path's
+			// whole benefit is lost to the next 30s tick.
+			this.pendingAuthorized = true;
+			return;
+		}
 		this.exchanging = true;
 		try {
 			await this.pollOnce(apiUrl, deviceCode, Date.now(), 300);
 		} finally {
 			this.exchanging = false;
 		}
+		await this.drainPendingAuthorized(apiUrl, deviceCode);
+	}
+
+	/** Re-run an exchange that arrived while the lock was held. Bounded: the
+	 *  flag is only ever set while `exchanging` is true, and cleared before the
+	 *  retry, so this cannot loop. */
+	private async drainPendingAuthorized(apiUrl: string, deviceCode: string): Promise<void> {
+		if (!this.pendingAuthorized || this.aborted) return;
+		this.pendingAuthorized = false;
+		await this.exchangeNow(apiUrl, deviceCode);
 	}
 
 	private async pollOnce(
@@ -302,8 +340,11 @@ export class DeviceFlowModal extends Modal {
 
 		const retryBtn = btnContainer.createEl("button", { text: "Try again", cls: "mod-cta" });
 		retryBtn.addEventListener("click", () => {
+			// Kill the expired attempt's socket and interval BEFORE onOpen()
+			// starts a fresh set — see resetFlow.
+			this.resetFlow();
 			this.aborted = false;
-			void this.onOpen();
+			this.onOpen();
 		});
 
 		const closeBtn = btnContainer.createEl("button", { text: "Close" });

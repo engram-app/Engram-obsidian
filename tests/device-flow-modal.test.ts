@@ -247,3 +247,60 @@ describe("post-link handoff", () => {
 		expect(closed).toBe(1);
 	});
 });
+
+/**
+ * The expired-code retry path. "Try again" re-enters onOpen(), and onOpen ends
+ * in startPolling() — which ASSIGNS this.disposeSocket and this.pollInterval.
+ * Without an explicit teardown first, the previous attempt's WebSocket and its
+ * 30s heartbeat survive for the rest of the Obsidian session, and the orphan's
+ * onAuthorized closure (holding the OLD, dead device_code) can still take the
+ * `exchanging` lock and stall the retry the user is watching.
+ */
+describe("DeviceFlowModal — retry after expiry", () => {
+	const makeModal = () => {
+		const modal = new DeviceFlowModal(makeApp("V"), makePlugin("https://example.test", "cid"));
+		return modal as any;
+	};
+
+	test("resetFlow disposes the socket, the interval, and the exchange lock", () => {
+		const modal = makeModal();
+		let disposed = 0;
+		modal.disposeSocket = () => {
+			disposed += 1;
+		};
+		modal.pollInterval = window.setInterval(() => {}, 60_000);
+		modal.exchanging = true;
+		modal.pendingAuthorized = true;
+
+		modal.resetFlow();
+
+		expect(disposed).toBe(1);
+		expect(modal.disposeSocket).toBeNull();
+		expect(modal.pollInterval).toBeNull();
+		expect(modal.exchanging).toBe(false);
+		expect(modal.pendingAuthorized).toBe(false);
+	});
+
+	test("'Try again' tears the old attempt down BEFORE starting a new one", () => {
+		const modal = makeModal();
+		const order: string[] = [];
+		modal.resetFlow = () => order.push("reset");
+		modal.onOpen = () => order.push("open");
+
+		modal.renderExpired();
+		modal.contentEl.__find("Try again").click();
+
+		expect(order).toEqual(["reset", "open"]);
+	});
+
+	test("closing the modal also disposes the socket", () => {
+		const modal = makeModal();
+		let disposed = 0;
+		modal.disposeSocket = () => {
+			disposed += 1;
+		};
+		modal.onClose();
+		expect(disposed).toBe(1);
+		expect(modal.aborted).toBe(true);
+	});
+});

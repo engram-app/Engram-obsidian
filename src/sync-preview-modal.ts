@@ -293,6 +293,16 @@ export interface SyncPreviewOptions {
 	showChangeVault: boolean;
 	/** Drives header copy. Defaults to "review" when not provided. */
 	context?: SyncPreviewContext;
+	/** Is the sync gate currently CLOSED — i.e. does walking away from this
+	 *  modal leave the vault syncing nothing?
+	 *
+	 *  Separate from `context` on purpose. `context` answers "what should the
+	 *  header say", and it never carries "review" from the first-sync path
+	 *  (derivePreviewContext only returns first-time / vault-switch), so keying
+	 *  the gate warning and the empty-plan action off it told an already-syncing
+	 *  user that nothing would sync, and ran a pointless full sync on dismiss.
+	 *  Callers pass syncEngine.isSyncBlocked(), which is the actual fact. */
+	gateClosed?: boolean;
 	/** Fetches the list of vaults the user can switch to. Called when the
 	 *  user presses Change Vault. Required when showChangeVault is true. */
 	listVaults?: () => Promise<VaultInfo[]>;
@@ -372,15 +382,13 @@ const LOADING_MIN_VISIBLE_MS = 600;
  *  vault was already in sync from another device clicked the one obvious
  *  button and silently ended up with sync blocked forever.
  *
- *  In "review" the gate is already open and there genuinely is nothing to do,
- *  so dismissing is correct there. */
-export function emptyPlanDismiss(context: SyncPreviewContext): {
+ *  With the gate already open there genuinely is nothing to do, so plain
+ *  dismissal is correct. */
+export function emptyPlanDismiss(gateClosed: boolean): {
 	label: string;
 	accept: boolean;
 } {
-	return context === "review"
-		? { label: "Close", accept: false }
-		: { label: "Done", accept: true };
+	return gateClosed ? { label: "Done", accept: true } : { label: "Close", accept: false };
 }
 
 export function loadingHoldMs(shownAt: number | null, now: number): number {
@@ -585,7 +593,7 @@ export class SyncPreviewModal extends Modal {
 			// Accepting the gate is the whole job on this screen — see
 			// emptyPlanDismiss. smart-merge is a no-op transfer here (the sides
 			// match) that routes through markSyncGateAccepted.
-			const { label, accept } = emptyPlanDismiss(context);
+			const { label, accept } = emptyPlanDismiss(this.opts.gateClosed ?? false);
 			this.renderFooter(
 				contentEl,
 				label,
@@ -668,7 +676,7 @@ export class SyncPreviewModal extends Modal {
 		//
 		// Skipped when dismissCta: that is the nothing-to-sync screen, where the
 		// button is the primary action and there is no choice being deferred.
-		const gated = (this.opts.context ?? "review") !== "review" && !dismissCta;
+		const gated = (this.opts.gateClosed ?? false) && !dismissCta;
 		if (gated) {
 			parent.createEl("p", {
 				cls: "engram-sync-preview-gate-note",

@@ -773,8 +773,13 @@ function isSaveableUrl(url) {
   }
   return parsed.protocol !== "http:" && parsed.protocol !== "https:" ? !1 : parsed.hostname.length > 0;
 }
+function saveableOrigin(url) {
+  if (!isSaveableUrl(url)) return null;
+  let parsed = new URL(url);
+  return `${parsed.protocol}//${parsed.host}`.toLowerCase();
+}
 function isBackendChange(oldUrl, newUrl) {
-  let oldO = completeOrigin(oldUrl), newO = completeOrigin(newUrl);
+  let oldO = saveableOrigin(oldUrl), newO = saveableOrigin(newUrl);
   return !oldO || !newO ? !1 : oldO !== newO;
 }
 function interpretHealthProbe(status, body) {
@@ -16689,7 +16694,7 @@ function waitForDeviceAuthorization(apiUrl, deviceCode, onAuthorized, opts = {})
       send([null, String(++ref), "phoenix", "heartbeat", {}]);
     }, (_a2 = opts.heartbeatMs) != null ? _a2 : HEARTBEAT_MS));
   }, socket.onmessage = (evt) => {
-    var _a2, _b;
+    var _a2, _b, _c;
     if (!disposed)
       try {
         let frame = JSON.parse(String(evt.data));
@@ -16697,19 +16702,23 @@ function waitForDeviceAuthorization(apiUrl, deviceCode, onAuthorized, opts = {})
           onAuthorized();
           return;
         }
+        if (frame[2] === topic && (frame[3] === "phx_error" || frame[3] === "phx_close")) {
+          (_a2 = opts.onStatus) == null || _a2.call(opts, !1);
+          return;
+        }
         if (frame[2] === topic && frame[3] === "phx_reply") {
-          let ok = ((_a2 = frame[4]) == null ? void 0 : _a2.status) === "ok";
-          devLog().log("device-flow", `join reply status=${ok ? "ok" : "error"}`), (_b = opts.onStatus) == null || _b.call(opts, ok);
+          let ok = ((_b = frame[4]) == null ? void 0 : _b.status) === "ok";
+          devLog().log("device-flow", `join reply status=${ok ? "ok" : "error"}`), (_c = opts.onStatus) == null || _c.call(opts, ok);
         }
       } catch (e) {
         devLog().log("device-flow", `socket frame parse failed: ${errMsg(e)}`);
       }
   }, socket.onerror = () => {
     var _a2;
-    devLog().log("device-flow", "socket error \u2014 falling back to poll"), (_a2 = opts.onStatus) == null || _a2.call(opts, !1);
+    disposed || (devLog().log("device-flow", "socket error \u2014 falling back to poll"), (_a2 = opts.onStatus) == null || _a2.call(opts, !1));
   }, socket.onclose = (evt) => {
     var _a2;
-    disposed || (devLog().log("device-flow", `socket closed code=${evt.code} \u2014 falling back to poll`), (_a2 = opts.onStatus) == null || _a2.call(opts, !1));
+    disposed || (devLog().log("device-flow", `socket closed code=${evt.code} \u2014 falling back to poll`), (_a2 = opts.onStatus) == null || _a2.call(opts, !1), dispose());
   }, dispose;
 }
 
@@ -16730,6 +16739,8 @@ var DeviceFlowModal = class extends import_obsidian14.Modal {
     this.pollInterval = null;
     this.disposeSocket = null;
     this.exchanging = !1;
+    /** Socket said "authorized" while an exchange was already in flight. */
+    this.pendingAuthorized = !1;
     this.waitingEl = null;
     this.aborted = !1;
     this.plugin = plugin;
@@ -16748,9 +16759,20 @@ var DeviceFlowModal = class extends import_obsidian14.Modal {
       statusEl.setText("Failed to start device flow. Check your Engram URL and try again.");
     }
   }
-  onClose() {
+  /** Tear down everything belonging to ONE attempt at the flow.
+   *
+   *  Both exits need this. Close is the obvious one; "Try again" is the one
+   *  that bit: it re-ran onOpen(), and startPolling() then OVERWROTE
+   *  disposeSocket and pollInterval, leaking the previous socket and its
+   *  heartbeat for the rest of the Obsidian session. Worse, the orphan's
+   *  onAuthorized closure still held the OLD device_code and could take
+   *  `exchanging`, blocking the retry the user is standing there watching. */
+  resetFlow() {
     var _a;
-    this.aborted = !0, this.pollInterval && (window.clearInterval(this.pollInterval), this.pollInterval = null), (_a = this.disposeSocket) == null || _a.call(this), this.disposeSocket = null, this.contentEl.empty(), this.resolve(null);
+    this.pollInterval && (window.clearInterval(this.pollInterval), this.pollInterval = null), (_a = this.disposeSocket) == null || _a.call(this), this.disposeSocket = null, this.exchanging = !1, this.pendingAuthorized = !1;
+  }
+  onClose() {
+    this.aborted = !0, this.resetFlow(), this.contentEl.empty(), this.resolve(null);
   }
   waitForResult() {
     return new Promise((resolve) => {
@@ -16814,11 +16836,14 @@ var DeviceFlowModal = class extends import_obsidian14.Modal {
         } finally {
           this.exchanging = !1;
         }
+        await this.drainPendingAuthorized(apiUrl, deviceCode);
       }
     };
-    this.pollInterval = window.setInterval(() => {
-      poll();
-    }, 3e4);
+    this.pollInterval = this.plugin.registerInterval(
+      window.setInterval(() => {
+        poll();
+      }, 3e4)
+    ), this.plugin.register(() => this.resetFlow());
   }
   /** Socket said the code was authorized: exchange it once, right now.
    *
@@ -16827,14 +16852,25 @@ var DeviceFlowModal = class extends import_obsidian14.Modal {
    *  redeem, and the loser would see the 410 from a single-use code and
    *  render "expired" over a flow that actually succeeded. */
   async exchangeNow(apiUrl, deviceCode) {
-    if (!(this.aborted || this.exchanging)) {
+    if (!this.aborted) {
+      if (this.exchanging) {
+        this.pendingAuthorized = !0;
+        return;
+      }
       this.exchanging = !0;
       try {
         await this.pollOnce(apiUrl, deviceCode, Date.now(), 300);
       } finally {
         this.exchanging = !1;
       }
+      await this.drainPendingAuthorized(apiUrl, deviceCode);
     }
+  }
+  /** Re-run an exchange that arrived while the lock was held. Bounded: the
+   *  flag is only ever set while `exchanging` is true, and cleared before the
+   *  retry, so this cannot loop. */
+  async drainPendingAuthorized(apiUrl, deviceCode) {
+    !this.pendingAuthorized || this.aborted || (this.pendingAuthorized = !1, await this.exchangeNow(apiUrl, deviceCode));
   }
   async pollOnce(apiUrl, deviceCode, startedAt, maxSeconds) {
     var _a;
@@ -16874,7 +16910,7 @@ var DeviceFlowModal = class extends import_obsidian14.Modal {
     contentEl.empty(), contentEl.createEl("h2", { text: "Link Obsidian to Engram" }), contentEl.createEl("p", { text: "Code expired. Please try again." });
     let btnContainer = contentEl.createDiv({ cls: "engram-device-buttons" });
     btnContainer.createEl("button", { text: "Try again", cls: "mod-cta" }).addEventListener("click", () => {
-      this.aborted = !1, this.onOpen();
+      this.resetFlow(), this.aborted = !1, this.onOpen();
     }), btnContainer.createEl("button", { text: "Close" }).addEventListener("click", () => this.close());
   }
 };
@@ -17361,11 +17397,11 @@ var import_obsidian19 = require("obsidian");
 
 // src/tabs/self-hosted-tab.ts
 var import_obsidian18 = require("obsidian");
-var PREFLIGHT_DEBOUNCE_MS = 600, API_KEY_PREFIX = "engram_";
+var PREFLIGHT_DEBOUNCE_MS = 600, refocusUrlInput = !1, API_KEY_PREFIX = "engram_";
 function renderEngramUrlSetting(ctx) {
   let { containerEl, plugin, redisplay } = ctx, setting = new import_obsidian18.Setting(containerEl).setName("Engram URL");
   setting.settingEl.addClass("engram-url-setting");
-  let status = setting.descEl.createDiv({ cls: "engram-url-preflight" }), STATUS_CLASSES = ["is-checking", "is-engram", "is-reachable", "is-unreachable"], pendingUrl = plugin.settings.apiUrl, debounce = null, probeSeq = 0, renderStatus = (result) => {
+  let status = setting.descEl.createDiv({ cls: "engram-url-preflight" }), STATUS_CLASSES = ["is-checking", "is-engram", "is-reachable", "is-unreachable"], pendingUrl = plugin.settings.apiUrl, debounce = null, probeSeq = 0, inputEl = null, renderStatus = (result) => {
     switch (status.removeClasses(STATUS_CLASSES), result.kind) {
       case "engram":
         status.addClass("is-engram"), status.setText(`\u2713 Engram server reachable (v${result.version})`);
@@ -17384,7 +17420,7 @@ function renderEngramUrlSetting(ctx) {
     }
     let seq2 = ++probeSeq;
     status.removeClasses(STATUS_CLASSES), status.addClass("is-checking"), status.setText("Checking server\u2026"), EngramApi.probeHealth(value).then((result) => {
-      seq2 === probeSeq && (status.removeClass("is-checking"), renderStatus(result), mayCommit && result.kind === "engram" && commit());
+      seq2 === probeSeq && (status.removeClass("is-checking"), renderStatus(result), mayCommit && result.kind === "engram" && (refocusUrlInput = document.activeElement === inputEl, commit()));
     });
   }, commit = async () => {
     let next = pendingUrl.trim();
@@ -17403,11 +17439,15 @@ function renderEngramUrlSetting(ctx) {
     plugin.settings.backendMode = modeForUrl(plugin.settings.apiUrl, ENGRAM_CLOUD_URL), await plugin.saveSettings(), cleared && new import_obsidian18.Notice("Engram backend changed \u2014 sign in again to continue."), redisplay();
   };
   setting.addText((text2) => {
-    text2.setPlaceholder("https://engram.example.com"), text2.setValue(plugin.settings.apiUrl), text2.onChange((value) => {
+    if (inputEl = text2.inputEl, text2.setPlaceholder("https://engram.example.com"), text2.setValue(plugin.settings.apiUrl), text2.onChange((value) => {
       pendingUrl = value, debounce !== null && window.clearTimeout(debounce), debounce = window.setTimeout(() => runPreflight(value, !0), PREFLIGHT_DEBOUNCE_MS);
     }), text2.inputEl.addEventListener("blur", () => {
-      debounce !== null && window.clearTimeout(debounce), commit();
-    });
+      document.hasFocus() && (debounce !== null && window.clearTimeout(debounce), commit());
+    }), refocusUrlInput) {
+      refocusUrlInput = !1, text2.inputEl.focus();
+      let end = text2.inputEl.value.length;
+      text2.inputEl.setSelectionRange(end, end);
+    }
   }), completeOrigin(plugin.settings.apiUrl) && runPreflight(plugin.settings.apiUrl);
 }
 function renderAuthSection(ctx) {
@@ -18024,8 +18064,8 @@ function simplifiedScreenCopy(simple) {
   };
 }
 var LOADING_TEXT_DELAY_MS = 400, LOADING_MIN_VISIBLE_MS = 600;
-function emptyPlanDismiss(context) {
-  return context === "review" ? { label: "Close", accept: !1 } : { label: "Done", accept: !0 };
+function emptyPlanDismiss(gateClosed) {
+  return gateClosed ? { label: "Done", accept: !0 } : { label: "Close", accept: !1 };
 }
 function loadingHoldMs(shownAt, now) {
   if (shownAt === null) return 0;
@@ -18111,7 +18151,7 @@ var SyncPreviewModal = class extends import_obsidian21.Modal {
     contentEl.empty(), this.state.view === "preview" ? this.renderPreview() : this.state.view === "vault-picker" ? this.renderVaultPicker() : this.renderConfirm();
   }
   renderPreview() {
-    var _a;
+    var _a, _b;
     let { contentEl } = this, context = (_a = this.opts.context) != null ? _a : "review";
     if (this.state.plan == null) {
       this.renderPlanLoading(contentEl, context);
@@ -18131,7 +18171,7 @@ var SyncPreviewModal = class extends import_obsidian21.Modal {
     });
     let mergeRow = options.createDiv({ cls: "engram-sync-preview-options-merge" });
     if (this.renderOptionCard(mergeRow, MERGE_CARD), this.renderAdvancedOptions(options), empty) {
-      let { label, accept } = emptyPlanDismiss(context);
+      let { label, accept } = emptyPlanDismiss((_b = this.opts.gateClosed) != null ? _b : !1);
       this.renderFooter(
         contentEl,
         label,
@@ -18174,7 +18214,7 @@ var SyncPreviewModal = class extends import_obsidian21.Modal {
    *  and the loading state (previously identical blocks). */
   renderFooter(parent, dismissLabel, dismissCta, dismissAction) {
     var _a;
-    let gated = ((_a = this.opts.context) != null ? _a : "review") !== "review" && !dismissCta;
+    let gated = ((_a = this.opts.gateClosed) != null ? _a : !1) && !dismissCta;
     gated && parent.createEl("p", {
       cls: "engram-sync-preview-gate-note",
       text: "Until you choose, nothing in this vault will sync."
@@ -18556,7 +18596,8 @@ function renderActions(parent, plugin, refresh) {
       let modal = new SyncPreviewModal(plugin.app, null, {
         remoteVaultName: plugin.settings.remoteVaultName,
         showChangeVault: !1,
-        context: "review"
+        context: "review",
+        gateClosed: plugin.syncEngine.isSyncBlocked()
       });
       plugin.syncEngine.computeSyncPlan("full").then((p) => modal.setPlan(p)).catch(() => modal.setPlanError(planLoadErrorMessage(plugin.hasAuthConfigured()))), plugin.trackPreviewModal(modal);
       let choice;
@@ -25012,6 +25053,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           remoteVaultName: this.settings.remoteVaultName,
           showChangeVault: !0,
           context,
+          // The fact, not the copy variable: this decides whether the
+          // modal warns that nothing will sync until you choose.
+          gateClosed: this.syncEngine.isSyncBlocked(),
           initialView: opts.startInVaultPicker ? "vault-picker" : "preview",
           attachmentsTextOnly: (_b = (_a = this.syncEngine.getPlanState()) == null ? void 0 : _a.attachmentsTextOnly) != null ? _b : !1,
           listVaults: () => this.api.listVaults(),

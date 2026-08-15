@@ -13,6 +13,10 @@ import { ENGRAM_CLOUD_URL, ENGRAM_MARKETING_URL } from "./urls";
 
 const PREFLIGHT_DEBOUNCE_MS = 600;
 
+/** Module scope on purpose: a commit ends in `redisplay()`, which rebuilds this
+ *  whole tab, so the flag has to outlive the render that set it. */
+let refocusUrlInput = false;
+
 /** Engram API keys carry this prefix. Kept as a constant so the key field can
  *  VALIDATE the format instead of describing it: the obsidianmd sentence-case
  *  lint rewrites a lowercase "engram_" in prose to "Engram_", which is wrong. */
@@ -47,6 +51,7 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
 	// Monotonic token: a slow probe that resolves after the user kept typing
 	// must not overwrite the status belonging to a newer value.
 	let probeSeq = 0;
+	let inputEl: HTMLInputElement | null = null;
 
 	const renderStatus = (result: PreflightResult): void => {
 		status.removeClasses(STATUS_CLASSES);
@@ -84,7 +89,13 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
 			// second, worse one. Commit only on a verified Engram backend:
 			// "reachable" means something answered but is not Engram, and
 			// committing that would clear auth for a typo.
-			if (mayCommit && result.kind === "engram") void commit();
+			if (mayCommit && result.kind === "engram") {
+				// commit() ends in redisplay(), which tears this input out of the
+				// DOM. If the user is still in the field, that eats their caret
+				// mid-word. Remember it so the rebuilt field takes focus back.
+				refocusUrlInput = document.activeElement === inputEl;
+				void commit();
+			}
 		});
 	};
 
@@ -120,6 +131,7 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
 	};
 
 	setting.addText((text) => {
+		inputEl = text.inputEl;
 		// Pre-fill the saved URL so the configured backend is always visible
 		// (unlike the API-key field, the URL isn't a secret and the user needs
 		// to confirm it's correct).
@@ -134,9 +146,22 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
 		// would otherwise be unable to save at all, because the probe never
 		// confirms. Leaving the field is an unambiguous "I meant that".
 		text.inputEl.addEventListener("blur", () => {
+			// Alt-tabbing out of Obsidian fires blur too, and that is NOT "I meant
+			// that" — it is a half-typed address the user is coming back to.
+			// Committing it swaps the stored backend behind their back.
+			if (!document.hasFocus()) return;
 			if (debounce !== null) window.clearTimeout(debounce);
 			void commit();
 		});
+
+		if (refocusUrlInput) {
+			refocusUrlInput = false;
+			text.inputEl.focus();
+			// Caret to the end: the user was appending (port, path), and
+			// select-all-on-focus would make the next keystroke wipe the URL.
+			const end = text.inputEl.value.length;
+			text.inputEl.setSelectionRange(end, end);
+		}
 	});
 
 	// Surface the current backend's status immediately on open (no typing needed).

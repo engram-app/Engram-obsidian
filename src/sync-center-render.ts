@@ -148,6 +148,7 @@ function renderActions(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: (
 				remoteVaultName: plugin.settings.remoteVaultName,
 				showChangeVault: false,
 				context: "review",
+				gateClosed: plugin.syncEngine.isSyncBlocked(),
 			});
 			void plugin.syncEngine
 				.computeSyncPlan("full")

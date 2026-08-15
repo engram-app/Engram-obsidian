@@ -2624,6 +2624,9 @@ export default class EngramSyncPlugin extends Plugin {
 					remoteVaultName: this.settings.remoteVaultName,
 					showChangeVault: true,
 					context,
+					// The fact, not the copy variable: this decides whether the
+					// modal warns that nothing will sync until you choose.
+					gateClosed: this.syncEngine.isSyncBlocked(),
 					initialView: opts.startInVaultPicker ? "vault-picker" : "preview",
 					attachmentsTextOnly:
 						this.syncEngine.getPlanState()?.attachmentsTextOnly ?? false,

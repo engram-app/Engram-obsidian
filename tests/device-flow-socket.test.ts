@@ -217,6 +217,44 @@ describe("waitForDeviceAuthorization", () => {
 		expect(fired).toBe(0);
 	});
 
+	// The channel can die AFTER a successful join (server crash, code expiry
+	// sweep) while the transport stays open. Nothing else would notice, and the
+	// modal would keep promising "connected, this will complete instantly"
+	// while the user is silently back on the 30s poll.
+	test("reports not-live when the channel errors after joining", () => {
+		const seen: boolean[] = [];
+		waitForDeviceAuthorization("http://localhost:4000/api", "dev-code-12", () => {}, {
+			onStatus: (live) => seen.push(live),
+		});
+		lastWs?.onopen?.();
+		lastWs?.onmessage?.({
+			data: JSON.stringify(["1", "1", "device:dev-code-12", "phx_reply", { status: "ok" }]),
+		});
+		lastWs?.onmessage?.({
+			data: JSON.stringify([null, null, "device:dev-code-12", "phx_error", {}]),
+		});
+		expect(seen).toEqual([true, false]);
+	});
+
+	// There is no reconnect, so a closed socket means this listener is finished.
+	// Leaving the heartbeat armed just fires every 30s at a dead socket for the
+	// rest of the session.
+	test("a closed socket stops the heartbeat", async () => {
+		waitForDeviceAuthorization("http://localhost:4000/api", "dev-code-13", () => {}, {
+			heartbeatMs: 1,
+		});
+		const ws = lastWs as MockWebSocket;
+		ws.onopen?.();
+		await new Promise((r) => setTimeout(r, 10));
+		const before = frames(ws).filter((f) => f[3] === "heartbeat").length;
+		expect(before).toBeGreaterThan(0);
+
+		ws.onclose?.({ code: 1006, reason: "", wasClean: false });
+		await new Promise((r) => setTimeout(r, 15));
+
+		expect(frames(ws).filter((f) => f[3] === "heartbeat").length).toBe(before);
+	});
+
 	// A blocked WebSocket must not take the whole flow down with it — the REST
 	// fallback poll is still running underneath.
 	test("survives a socket that fails to construct", () => {

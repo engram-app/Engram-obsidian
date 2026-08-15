@@ -154,4 +154,45 @@ describe("renderEngramUrlSetting — no Save button", () => {
 		render("");
 		expect(__settingCapture.texts[0]?.blurCb).toBeTruthy();
 	});
+
+	// Alt-tabbing out of Obsidian fires blur on the focused input too. That is
+	// not "I meant that" — it is a half-typed address the user is coming back
+	// to, and committing it swaps the stored backend (and clears auth) behind
+	// their back while they are looking at another window.
+	test("does NOT commit when blur came from the whole window losing focus", async () => {
+		const saved: string[] = [];
+		__settingCapture.texts.length = 0;
+		const plugin: any = {
+			settings: { apiUrl: "https://staging.engram.page", apiKey: "", refreshToken: "" },
+			api: { setAuthProvider: () => {} },
+			noteStream: { disconnect: () => {} },
+			resetAuthProvider: () => {},
+			saveSettings: async () => {
+				saved.push(plugin.settings.apiUrl);
+			},
+		};
+		renderEngramUrlSetting({
+			containerEl: {},
+			app: {},
+			plugin,
+			redisplay: () => {},
+		} as any);
+
+		const text = __settingCapture.texts[0];
+		text?.changeCb?.("http://halfway");
+
+		// No DOM in this runner, and the guard reads the real one. A blurred
+		// window is exactly `document.hasFocus() === false`.
+		const g = globalThis as any;
+		g.document = { hasFocus: () => false, activeElement: null };
+		try {
+			text?.blurCb?.();
+			await Promise.resolve();
+		} finally {
+			g.document = undefined;
+		}
+
+		expect(saved).toEqual([]);
+		expect(plugin.settings.apiUrl).toBe("https://staging.engram.page");
+	});
 });

@@ -36,8 +36,20 @@ describe("isBackendChange", () => {
 		expect(isBackendChange("", "https://engram.ras.band")).toBe(false);
 	});
 
-	test("false when new URL is partial (still typing)", () => {
-		expect(isBackendChange("https://engram.ras.band", "https://engr")).toBe(false);
+	// This function is no longer the mid-typing guard — nothing calls it on a
+	// keystroke. `applyApiUrlChange` calls it AFTER accepting the URL for
+	// storage, so a single-label host is a real backend, not a half-typed one,
+	// and the credentials of the previous backend must not survive the swap.
+	test("true for a single-label host — that is a server, not a half-typed URL", () => {
+		expect(isBackendChange("https://engram.ras.band", "http://engram:4000")).toBe(true);
+	});
+
+	test("false when the single-label host is unchanged", () => {
+		expect(isBackendChange("http://engram:4000", "http://engram:4000/api")).toBe(false);
+	});
+
+	test("true for an IPv6 literal swap", () => {
+		expect(isBackendChange("http://[::1]:4000", "http://[::2]:4000")).toBe(true);
 	});
 
 	test("false when both URLs target the same origin", () => {

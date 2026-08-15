@@ -109,6 +109,15 @@ export function waitForDeviceAuthorization(
 				onAuthorized();
 				return;
 			}
+			// A channel that dies AFTER joining leaves the socket open, so
+			// without this the modal keeps promising "connected, this will
+			// complete instantly" while the user is silently back on the poll —
+			// the same failure class the join-reply check exists to kill, just
+			// on the other side of a successful join.
+			if (frame[2] === topic && (frame[3] === "phx_error" || frame[3] === "phx_close")) {
+				opts.onStatus?.(false);
+				return;
+			}
 			// The join reply is the only proof the live path actually works —
 			// the socket opening says nothing, because a channel whose join
 			// crashes server-side still gets you a happily OPEN socket first.
@@ -123,6 +132,9 @@ export function waitForDeviceAuthorization(
 	};
 
 	socket.onerror = () => {
+		if (disposed) {
+			return;
+		}
 		// Not fatal: the poll is still running. But the user should be told
 		// which path they are on.
 		devLog().log("device-flow", "socket error — falling back to poll");
@@ -135,6 +147,11 @@ export function waitForDeviceAuthorization(
 		}
 		devLog().log("device-flow", `socket closed code=${evt.code} — falling back to poll`);
 		opts.onStatus?.(false);
+		// There is no reconnect, so the listener is genuinely finished. Without
+		// this the heartbeat keeps firing every 30s at a CLOSED socket, throwing
+		// into the swallowed catch — dead work on a path whose whole contract is
+		// "silent and harmless". dispose() is idempotent.
+		dispose();
 	};
 
 	return dispose;
