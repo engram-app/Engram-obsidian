@@ -619,9 +619,28 @@ export class SyncPreviewModal extends Modal {
 	/** Dismiss + optional "Change vault" footer, shared by the loaded preview
 	 *  and the loading state (previously identical blocks). */
 	private renderFooter(parent: HTMLElement, dismissLabel: string, dismissCta: boolean): void {
+		// "review" is a manual sync with the gate already open — walking away
+		// costs nothing. The other contexts are opened BY the closed gate, and
+		// that gate stops every sync path, not just this run: dismiss here and
+		// the vault silently syncs nothing at all, forever, until it is resolved.
+		//
+		// So say that at the decision point rather than after it, and drop the
+		// word "Cancel" — there is no operation in flight to cancel, and the
+		// choice is genuinely deferrable.
+		//
+		// Skipped when dismissCta: that is the nothing-to-sync screen, where the
+		// button is the primary action and there is no choice being deferred.
+		const gated = (this.opts.context ?? "review") !== "review" && !dismissCta;
+		if (gated) {
+			parent.createEl("p", {
+				cls: "engram-sync-preview-gate-note",
+				text: "Until you choose, nothing in this vault will sync.",
+			});
+		}
+
 		const footer = parent.createDiv({ cls: "engram-sync-preview-footer" });
 		const dismissBtn = footer.createEl("button", {
-			text: dismissLabel,
+			text: gated ? "Not now" : dismissLabel,
 			cls: dismissCta ? "mod-cta" : undefined,
 		});
 		dismissBtn.addEventListener("click", () => this.state.cancel());

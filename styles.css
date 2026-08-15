@@ -1536,6 +1536,12 @@ body.is-mobile .engram-support-buttons > a {
 	color: var(--text-on-accent);
 }
 
+.engram-sync-preview-gate-note {
+	margin: 0 0 0.5em 0;
+	color: var(--text-muted);
+	font-size: 0.9em;
+}
+
 .engram-sync-preview-footer {
 	display: flex;
 	justify-content: flex-end;

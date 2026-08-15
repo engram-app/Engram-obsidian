@@ -2695,6 +2695,19 @@ export default class EngramSyncPlugin extends Plugin {
 				const choice = await modal.awaitChoice();
 				this.openPreviewModal = null;
 
+				// Dismissing without a choice leaves the gate CLOSED, and the gate
+				// stops every sync path (sync.ts isSyncBlocked callers) — not just
+				// this run. The vault then silently syncs nothing at all, so say so
+				// once, here, instead of relying on the user noticing a small label
+				// change in the status bar they were not looking at.
+				if (choice === "cancel" && this.syncEngine.isSyncBlocked()) {
+					new Notice(
+						"Engram: sync is not set up yet, so nothing in this vault will sync.\n" +
+							"Click \u201cEngram: finish setup\u201d in the status bar to pick up where you left off.",
+						10_000,
+					);
+				}
+
 				await this.runSyncWithProgress(choice, {
 					plan: modal.getPlan(),
 					firstSync: context === "first-time",
@@ -2757,20 +2770,28 @@ export default class EngramSyncPlugin extends Plugin {
 		let text: string;
 		let tooltip: string;
 
+		// Never completed a sync => this user is mid-SETUP, not mid-anything-else.
+		// "paused" and "signed out" both imply a working state that lapsed, which
+		// sends a first-run user off looking for what broke instead of finishing
+		// the two steps they abandoned.
+		const neverSynced = !status.lastSync;
+
 		if (!this.hasAuthConfigured()) {
 			// Signed out (or never linked): "ready" here was a lie the 2026-08-12
 			// incident shipped — after a forced sign-out the bar claimed ready
 			// while every sync path was dead.
-			text = "Engram: signed out";
-			tooltip = "Not signed in. Click to open settings and reconnect.";
+			text = neverSynced ? "Engram: not connected" : "Engram: signed out";
+			tooltip = neverSynced
+				? "Not connected yet. Click to open settings and link this vault."
+				: "Not signed in. Click to open settings and reconnect.";
 		} else if (blocked && status.state !== "syncing") {
 			// Sync gate closed — user has not picked a direction in SyncPreviewModal
 			// for the current auth+vault fingerprint. Show a click-to-resolve nag.
-			text =
-				status.pending > 0
-					? `Engram: sync paused (${status.pending} queued)`
-					: "Engram: sync paused";
-			tooltip = "Sync paused — click to choose a sync direction";
+			const label = neverSynced ? "Engram: finish setup" : "Engram: sync paused";
+			text = status.pending > 0 ? `${label} (${status.pending} queued)` : label;
+			tooltip = neverSynced
+				? "Setup is not finished — nothing will sync until you choose a sync direction. Click to finish."
+				: "Sync paused — click to choose a sync direction";
 		} else if (status.state === "offline") {
 			text =
 				status.queued > 0 ? `Engram: offline (${status.queued} queued)` : "Engram: offline";

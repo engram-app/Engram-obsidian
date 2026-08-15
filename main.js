@@ -18152,9 +18152,15 @@ var SyncPreviewModal = class extends import_obsidian21.Modal {
   /** Dismiss + optional "Change vault" footer, shared by the loaded preview
    *  and the loading state (previously identical blocks). */
   renderFooter(parent, dismissLabel, dismissCta) {
+    var _a;
+    let gated = ((_a = this.opts.context) != null ? _a : "review") !== "review" && !dismissCta;
+    gated && parent.createEl("p", {
+      cls: "engram-sync-preview-gate-note",
+      text: "Until you choose, nothing in this vault will sync."
+    });
     let footer = parent.createDiv({ cls: "engram-sync-preview-footer" });
     footer.createEl("button", {
-      text: dismissLabel,
+      text: gated ? "Not now" : dismissLabel,
       cls: dismissCta ? "mod-cta" : void 0
     }).addEventListener("click", () => this.state.cancel()), this.opts.showChangeVault && footer.createEl("button", { text: "Change vault" }).addEventListener("click", () => {
       this.openVaultPicker();
@@ -24992,7 +24998,11 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           modal.setPlanError(planLoadErrorMessage(this.hasAuthConfigured())), rlog().error("lifecycle", `Sync plan compute failed: ${errMsg(e)}`);
         }), this.openPreviewModal = modal;
         let choice = await modal.awaitChoice();
-        this.openPreviewModal = null, await this.runSyncWithProgress(choice, {
+        this.openPreviewModal = null, choice === "cancel" && this.syncEngine.isSyncBlocked() && new import_obsidian26.Notice(
+          `Engram: sync is not set up yet, so nothing in this vault will sync.
+Click \u201CEngram: finish setup\u201D in the status bar to pick up where you left off.`,
+          1e4
+        ), await this.runSyncWithProgress(choice, {
           plan: modal.getPlan(),
           firstSync: context === "first-time"
         });
@@ -25034,8 +25044,13 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
   updateStatusBar(status) {
     var _a, _b, _c, _d, _e;
     if (!this.statusBarEl) return;
-    let blocked = (_b = (_a = this.syncEngine) == null ? void 0 : _a.isSyncBlocked()) != null ? _b : !1, text2, tooltip;
-    this.hasAuthConfigured() ? blocked && status.state !== "syncing" ? (text2 = status.pending > 0 ? `Engram: sync paused (${status.pending} queued)` : "Engram: sync paused", tooltip = "Sync paused \u2014 click to choose a sync direction") : status.state === "offline" ? (text2 = status.queued > 0 ? `Engram: offline (${status.queued} queued)` : "Engram: offline", tooltip = "Server unreachable \u2014 changes will sync when connected") : status.state === "error" ? (text2 = "Engram: error", tooltip = status.error || "Unknown error") : status.state === "syncing" ? (text2 = status.pending > 0 ? `Engram: syncing (${status.pending})` : "Engram: syncing", tooltip = "Sync in progress...") : status.pending > 0 ? (text2 = `Engram: pending (${status.pending})`, tooltip = `${status.pending} file(s) queued`) : this.liveConnected ? (text2 = "Engram: live", tooltip = "WebSocket connected \u2014 live sync active") : (text2 = "Engram: ready", tooltip = "Click to sync") : (text2 = "Engram: signed out", tooltip = "Not signed in. Click to open settings and reconnect.");
+    let blocked = (_b = (_a = this.syncEngine) == null ? void 0 : _a.isSyncBlocked()) != null ? _b : !1, text2, tooltip, neverSynced = !status.lastSync;
+    if (!this.hasAuthConfigured())
+      text2 = neverSynced ? "Engram: not connected" : "Engram: signed out", tooltip = neverSynced ? "Not connected yet. Click to open settings and link this vault." : "Not signed in. Click to open settings and reconnect.";
+    else if (blocked && status.state !== "syncing") {
+      let label = neverSynced ? "Engram: finish setup" : "Engram: sync paused";
+      text2 = status.pending > 0 ? `${label} (${status.pending} queued)` : label, tooltip = neverSynced ? "Setup is not finished \u2014 nothing will sync until you choose a sync direction. Click to finish." : "Sync paused \u2014 click to choose a sync direction";
+    } else status.state === "offline" ? (text2 = status.queued > 0 ? `Engram: offline (${status.queued} queued)` : "Engram: offline", tooltip = "Server unreachable \u2014 changes will sync when connected") : status.state === "error" ? (text2 = "Engram: error", tooltip = status.error || "Unknown error") : status.state === "syncing" ? (text2 = status.pending > 0 ? `Engram: syncing (${status.pending})` : "Engram: syncing", tooltip = "Sync in progress...") : status.pending > 0 ? (text2 = `Engram: pending (${status.pending})`, tooltip = `${status.pending} file(s) queued`) : this.liveConnected ? (text2 = "Engram: live", tooltip = "WebSocket connected \u2014 live sync active") : (text2 = "Engram: ready", tooltip = "Click to sync");
     let errorCount = (_d = (_c = this.syncLog) == null ? void 0 : _c.errorCount()) != null ? _d : 0;
     if (errorCount > 0 && status.state === "idle" && !blocked && this.hasAuthConfigured() && (text2 = `Engram: \u26A0 ${errorCount} sync errors`), status.lastSync) {
       let date = new Date(status.lastSync);
