@@ -263,7 +263,7 @@ export function renderAuthSection(ctx: TabContext): void {
 		);
 
 	// setHeading(), matching every other section break in the settings UI (Sync
-	// behavior, Diagnostics, Feature flags). A heading draws its own divider, so
+	// behavior, Diagnostics). A heading draws its own divider, so
 	// this replaced a hand-rolled one that stacked a second line against the
 	// following row's border-top.
 	new Setting(containerEl)

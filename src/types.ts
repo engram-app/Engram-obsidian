@@ -44,6 +44,16 @@ export interface EngramSyncSettings {
 	 *  Collapses the former remoteLoggingEnabled / diagnosticMode / tracingEnabled
 	 *  trio (migrated in settings-migrate.ts). */
 	diagnosticsEnabled: boolean;
+	/** Capture a local CRDT sync timeline for offline replay.
+	 *
+	 *  Its OWN switch, deliberately not folded into `diagnosticsEnabled`. The
+	 *  `receive` seam records whole inbound wire frames, and a Yjs frame carries
+	 *  the note body in it — the replayer needs exactly that to reconstruct a
+	 *  failure (tests/helpers/replay.ts). Diagnostics promises "metadata only,
+	 *  never note content" and means it: that pipeline ships to the server.
+	 *  This one never leaves the device until a human exports it, which is a
+	 *  different bargain and so gets asked separately. */
+	syncRecordingEnabled: boolean;
 	/** Minimum severity that ships while `diagnosticsEnabled` is on. Entries
 	 *  below this threshold are dropped before buffering, so they never occupy
 	 *  the ring buffer or count toward the flush threshold. This is a VOLUME
@@ -119,6 +129,7 @@ export const DEFAULT_SETTINGS: EngramSyncSettings = {
 	ignorePatterns: "",
 	debounceMs: 2000,
 	diagnosticsEnabled: false,
+	syncRecordingEnabled: false,
 	remoteLogLevel: "info",
 	vaultId: null,
 	clientId: "",

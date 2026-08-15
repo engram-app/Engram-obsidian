@@ -196,12 +196,14 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  toggling recording never needs the CRDT stack rebuilt. Its buffer is
 	 *  bounded, and it costs one predicate call per seam while off.
 	 *
-	 *  Driven by Diagnostics rather than its own switch. The flag it used to
-	 *  read only ever appeared once Diagnostics was on, so the extra toggle
-	 *  bought a second decision for the same audience — and #356, the reason it
-	 *  shipped behind a flag, is closed. */
+	 *  Bounded in EVENTS (5,000), not bytes — and the `receive` seam holds whole
+	 *  frames, so a long session with large notes retains real memory until
+	 *  `__engramDebug.clearTimeline()`. That is why this stays opt-in and off by
+	 *  default rather than riding the Diagnostics switch: see
+	 *  `syncRecordingEnabled`, and docs/context/v8-oom-prevention.md for why
+	 *  this plugin is careful about retained content. */
 	readonly syncRecorder: SyncRecorder = new SyncRecorder({
-		enabled: () => this.settings.diagnosticsEnabled,
+		enabled: () => this.settings.syncRecordingEnabled,
 	});
 
 	/** Persist the user's chosen search mode as the new default. Passed to the

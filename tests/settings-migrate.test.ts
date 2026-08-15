@@ -11,6 +11,7 @@ import {
 	RETIRED_SETTING_KEYS,
 	stripRetiredSettings,
 } from "../src/settings-migrate";
+import { DEFAULT_SETTINGS } from "../src/types";
 
 describe("migrateDiagnosticsEnabled", () => {
 	test("undefined / empty persisted settings -> off", () => {
@@ -48,6 +49,29 @@ describe("stripRetiredSettings", () => {
 	// data.json keeps a setting the code no longer reads — it reads like a live
 	// switch to anyone opening the file, and it is the reason `enableCrdt`
 	// needed cleaning up long after the setting itself was deleted.
+	// THE assertion that justifies extracting the list at all. Retiring a key
+	// that DEFAULT_SETTINGS still provides would have Object.assign supply the
+	// value and this helper delete it moments later, leaving a live setting
+	// undefined at runtime while TypeScript still claims the field is present.
+	// The loop-over-the-list test below cannot catch that: a key which is both
+	// retired and live passes it trivially.
+	test("no retired key is still a live default", () => {
+		expect(RETIRED_SETTING_KEYS.filter((k) => k in DEFAULT_SETTINGS)).toEqual([]);
+	});
+
+	// Pinned by literal, not by looping RETIRED_SETTING_KEYS: a test that
+	// iterates the list under test goes green the moment someone deletes an
+	// entry from it, which is exactly the regression it claims to prevent.
+	test("the retired list still contains every key we have retired", () => {
+		expect([...RETIRED_SETTING_KEYS]).toEqual([
+			"remoteLoggingEnabled",
+			"diagnosticMode",
+			"tracingEnabled",
+			"enableCrdt",
+			"featureFlags",
+		]);
+	});
+
 	test("removes every retired key", () => {
 		const settings: Record<string, unknown> = {
 			apiUrl: "https://engram.example",

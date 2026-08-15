@@ -1647,6 +1647,7 @@ var BACKEND_SCOPED_FIELDS = [
   ignorePatterns: "",
   debounceMs: 2e3,
   diagnosticsEnabled: !1,
+  syncRecordingEnabled: !1,
   remoteLogLevel: "info",
   vaultId: null,
   clientId: "",
@@ -17318,6 +17319,12 @@ secret.md`).setValue(plugin.settings.ignorePatterns).onChange(async (value) => {
     }).setValue(plugin.settings.remoteLogLevel).onChange(async (value) => {
       plugin.settings.remoteLogLevel = value, await plugin.saveSettings();
     })
+  ), plugin.settings.diagnosticsEnabled && new import_obsidian17.Setting(containerEl).setName("Record sync timeline").setDesc(
+    "Capture sync activity on this device so a sync failure can be replayed offline. The recording includes note content and stays on this device \u2014 nothing is sent automatically, but anything you export with the debug console will contain it. Leave off unless you are chasing a bug."
+  ).addToggle(
+    (toggle) => toggle.setValue(plugin.settings.syncRecordingEnabled).onChange(async (value) => {
+      plugin.settings.syncRecordingEnabled = value, await plugin.saveSettings();
+    })
   ), new import_obsidian17.Setting(containerEl).setName("About").setHeading();
   let aboutList = containerEl.createEl("ul", { cls: "engram-about-list" }), versionItem = aboutList.createEl("li");
   versionItem.createSpan({ text: "Version: " }), versionItem.createSpan({ text: plugin.manifest.version });
@@ -23746,12 +23753,14 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
      *  toggling recording never needs the CRDT stack rebuilt. Its buffer is
      *  bounded, and it costs one predicate call per seam while off.
      *
-     *  Driven by Diagnostics rather than its own switch. The flag it used to
-     *  read only ever appeared once Diagnostics was on, so the extra toggle
-     *  bought a second decision for the same audience — and #356, the reason it
-     *  shipped behind a flag, is closed. */
+     *  Bounded in EVENTS (5,000), not bytes — and the `receive` seam holds whole
+     *  frames, so a long session with large notes retains real memory until
+     *  `__engramDebug.clearTimeline()`. That is why this stays opt-in and off by
+     *  default rather than riding the Diagnostics switch: see
+     *  `syncRecordingEnabled`, and docs/context/v8-oom-prevention.md for why
+     *  this plugin is careful about retained content. */
     this.syncRecorder = new SyncRecorder({
-      enabled: () => this.settings.diagnosticsEnabled
+      enabled: () => this.settings.syncRecordingEnabled
     });
     /** Persist the user's chosen search mode as the new default. Passed to the
      *  search view + modal so a mode switch in either surface sticks. */

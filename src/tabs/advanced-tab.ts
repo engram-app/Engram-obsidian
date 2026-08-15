@@ -99,6 +99,26 @@ export function renderAdvancedTab(ctx: TabContext): void {
 				}),
 		);
 
+	// Shown only once diagnostics are on: this is instrumentation, and a user
+	// who has not opted into troubleshooting has no reason to be offered it.
+	// The description says content, plainly. Diagnostics above promises
+	// "metadata only, never note content" about what ships to the server; a
+	// recorded timeline carries note text and is a different consent, so it is
+	// asked for separately rather than folded into that switch.
+	if (plugin.settings.diagnosticsEnabled) {
+		new Setting(containerEl)
+			.setName("Record sync timeline")
+			.setDesc(
+				"Capture sync activity on this device so a sync failure can be replayed offline. The recording includes note content and stays on this device — nothing is sent automatically, but anything you export with the debug console will contain it. Leave off unless you are chasing a bug.",
+			)
+			.addToggle((toggle) =>
+				toggle.setValue(plugin.settings.syncRecordingEnabled).onChange(async (value) => {
+					plugin.settings.syncRecordingEnabled = value;
+					await plugin.saveSettings();
+				}),
+			);
+	}
+
 	// ── About ──
 	new Setting(containerEl).setName("About").setHeading();
 

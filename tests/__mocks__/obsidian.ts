@@ -227,10 +227,17 @@ export const __settingCapture: {
 	// Section/row names, so a test can assert WHICH settings a tab rendered —
 	// the only way to check progressive disclosure without a real DOM.
 	names: string[];
+	// Descriptions. Usually flavour text, but where a toggle's description IS
+	// the consent the user gives (see sync-recording-consent.test.ts), the
+	// wording is behaviour and deserves an assertion.
+	descs: string[];
+	toggles: ToggleComponent[];
 } = {
 	texts: [],
 	buttons: [],
 	names: [],
+	descs: [],
+	toggles: [],
 };
 
 export class Setting {
@@ -242,7 +249,8 @@ export class Setting {
 		__settingCapture.names.push(name);
 		return this;
 	}
-	setDesc(_desc: string): this {
+	setDesc(desc: string): this {
+		__settingCapture.descs.push(desc);
 		return this;
 	}
 	setHeading(): this {
@@ -263,7 +271,42 @@ export class Setting {
 		__settingCapture.buttons.push(b);
 		return this;
 	}
-	addDropdown(_cb: any): this {
+	addDropdown(cb: any): this {
+		// The real one hands back a builder; returning a no-op object keeps a
+		// chained .addOptions().setValue().onChange() from throwing.
+		const d: Record<string, (...args: any[]) => any> = {
+			addOption: () => d,
+			addOptions: () => d,
+			setValue: () => d,
+			setDisabled: () => d,
+			onChange: () => d,
+		};
+		cb(d);
+		return this;
+	}
+	addToggle(cb: (t: ToggleComponent) => void): this {
+		const t = new ToggleComponent();
+		cb(t);
+		__settingCapture.toggles.push(t);
+		return this;
+	}
+}
+
+export class ToggleComponent {
+	value = false;
+	changeCb: ((v: boolean) => void) | null = null;
+	setValue(v: boolean): this {
+		this.value = v;
+		return this;
+	}
+	getValue(): boolean {
+		return this.value;
+	}
+	setDisabled(_d: boolean): this {
+		return this;
+	}
+	onChange(cb: (v: boolean) => void): this {
+		this.changeCb = cb;
 		return this;
 	}
 }
