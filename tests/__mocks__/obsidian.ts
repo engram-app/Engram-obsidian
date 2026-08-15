@@ -106,8 +106,14 @@ export class PluginSettingTab {
 }
 
 /** Chainable DOM-element stub used by the Setting mock. */
-function makeEl(): any {
+export function makeEl(): any {
 	const el: any = {
+		// Real elements get detached; code under test calls this on placeholders
+		// it swaps out. Without it the failure reads as an unrelated TypeError
+		// deep inside a .catch, which is a miserable thing to debug.
+		remove: () => el,
+		empty: () => el,
+		addEventListener: () => el,
 		addClass: () => el,
 		removeClass: () => el,
 		removeClasses: () => el,
@@ -127,7 +133,18 @@ function makeEl(): any {
 class TextComponent {
 	value = "";
 	changeCb: ((v: string) => void) | null = null;
-	inputEl: any = { type: "text", addClass: () => {} };
+	// Real Obsidian TextComponents expose the underlying <input>, and callers
+	// attach listeners to it (blur, keydown). Without addEventListener here a
+	// component doing that throws mid-render, and the failure surfaces as a
+	// confusing "the field was never captured" rather than as itself.
+	blurCb: (() => void) | null = null;
+	inputEl: any = {
+		type: "text",
+		addClass: () => {},
+		addEventListener: (evt: string, cb: () => void) => {
+			if (evt === "blur") this.blurCb = cb;
+		},
+	};
 	setPlaceholder(_p: string): this {
 		return this;
 	}
@@ -163,9 +180,16 @@ class ButtonComponent {
 
 /** Components created during the last render, for assertions in tests.
  *  Reset it in a beforeEach when rendering Settings. */
-export const __settingCapture: { texts: TextComponent[]; buttons: ButtonComponent[] } = {
+export const __settingCapture: {
+	texts: TextComponent[];
+	buttons: ButtonComponent[];
+	// Section/row names, so a test can assert WHICH settings a tab rendered —
+	// the only way to check progressive disclosure without a real DOM.
+	names: string[];
+} = {
 	texts: [],
 	buttons: [],
+	names: [],
 };
 
 export class Setting {
@@ -173,7 +197,8 @@ export class Setting {
 	descEl: any = makeEl();
 	controlEl: any = makeEl();
 	constructor(_containerEl: any) {}
-	setName(_name: string): this {
+	setName(name: string): this {
+		__settingCapture.names.push(name);
 		return this;
 	}
 	setDesc(_desc: string): this {

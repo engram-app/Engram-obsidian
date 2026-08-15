@@ -68,7 +68,47 @@ export function renderConnectionTab(ctx: TabContext): void {
 		renderEngramUrlSetting(ctx);
 	}
 
-	renderAuthSection(ctx);
-	renderVaultSection(ctx);
+	// Progressive disclosure: signing in and picking a vault are impossible
+	// without a server to do them against, so self-host starts with the URL
+	// field alone instead of three sections the user cannot act on yet.
+	//
+	// Keyed on "has a URL been configured", NOT on whether the server answers
+	// right now. Hiding on a live probe failure would make a 30-second outage
+	// look like the auth and vault sections had been wiped — the exact screen
+	// a user in that state most needs to see. A dead server shows as the
+	// warning above, never as a disappearance.
+	//
+	// Cloud has no URL step (the address is fixed), so it always discloses.
+	if (mode === "cloud" || state !== "needs-url") {
+		renderAuthSection(ctx);
+		renderFinishSetupRow(ctx);
+		renderVaultSection(ctx);
+	}
 	if (mode === "selfhost") renderSupportSection(ctx);
+}
+
+/** Sitting between auth and vault: the user is signed in and has a vault, but
+ *  dismissed the sync preview without choosing a direction.
+ *
+ *  That leaves the gate closed, and the gate stops EVERY sync path — the vault
+ *  syncs nothing at all until it is resolved. The status bar says so, but the
+ *  settings page is where someone goes to work out why nothing is happening,
+ *  so it has to say so here too. */
+function renderFinishSetupRow(ctx: TabContext): void {
+	const { containerEl, plugin } = ctx;
+	if (!plugin.hasAuthConfigured()) return;
+	if (!plugin.syncEngine.isSyncBlocked()) return;
+
+	const row = new Setting(containerEl)
+		.setName("Finish sync setup")
+		.setDesc("Nothing in this vault syncs until you choose how to merge it with the server.")
+		.addButton((btn) =>
+			btn
+				.setButtonText("Choose sync direction")
+				.setCta()
+				.onClick(() => {
+					void plugin.doSyncWithFirstSyncCheck();
+				}),
+		);
+	row.settingEl.addClass("engram-connection-warning");
 }

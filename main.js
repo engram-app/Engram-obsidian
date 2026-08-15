@@ -17377,39 +17377,38 @@ function renderEngramUrlSetting(ctx) {
         status.addClass("is-unreachable"), status.setText("\u2717 couldn't reach a server at this URL");
         break;
     }
-  }, runPreflight = (value) => {
+  }, runPreflight = (value, mayCommit = !1) => {
     if (!completeOrigin(value)) {
       status.removeClasses(STATUS_CLASSES), status.setText("");
       return;
     }
     let seq2 = ++probeSeq;
     status.removeClasses(STATUS_CLASSES), status.addClass("is-checking"), status.setText("Checking server\u2026"), EngramApi.probeHealth(value).then((result) => {
-      seq2 === probeSeq && (status.removeClass("is-checking"), renderStatus(result));
+      seq2 === probeSeq && (status.removeClass("is-checking"), renderStatus(result), mayCommit && result.kind === "engram" && commit());
     });
+  }, commit = async () => {
+    let next = pendingUrl.trim();
+    if (next === plugin.settings.apiUrl) return;
+    let { cleared, rejected } = await applyApiUrlChange(
+      pluginSwitchTarget(plugin),
+      next,
+      () => plugin.saveSettings()
+    );
+    if (rejected) {
+      new import_obsidian18.Notice(
+        "That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000"
+      );
+      return;
+    }
+    plugin.settings.backendMode = modeForUrl(plugin.settings.apiUrl, ENGRAM_CLOUD_URL), await plugin.saveSettings(), cleared && new import_obsidian18.Notice("Engram backend changed \u2014 sign in again to continue."), redisplay();
   };
   setting.addText((text2) => {
     text2.setPlaceholder("https://engram.example.com"), text2.setValue(plugin.settings.apiUrl), text2.onChange((value) => {
-      pendingUrl = value, debounce !== null && window.clearTimeout(debounce), debounce = window.setTimeout(() => runPreflight(value), PREFLIGHT_DEBOUNCE_MS);
+      pendingUrl = value, debounce !== null && window.clearTimeout(debounce), debounce = window.setTimeout(() => runPreflight(value, !0), PREFLIGHT_DEBOUNCE_MS);
+    }), text2.inputEl.addEventListener("blur", () => {
+      debounce !== null && window.clearTimeout(debounce), commit();
     });
-  }).addButton(
-    (btn) => btn.setButtonText("Save").setCta().onClick(async () => {
-      let { cleared, rejected } = await applyApiUrlChange(
-        pluginSwitchTarget(plugin),
-        pendingUrl.trim(),
-        () => plugin.saveSettings()
-      );
-      if (rejected) {
-        new import_obsidian18.Notice(
-          "That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000"
-        );
-        return;
-      }
-      plugin.settings.backendMode = modeForUrl(
-        plugin.settings.apiUrl,
-        ENGRAM_CLOUD_URL
-      ), await plugin.saveSettings(), cleared && new import_obsidian18.Notice("Engram backend changed \u2014 sign in again to continue."), redisplay();
-    })
-  ), completeOrigin(plugin.settings.apiUrl) && runPreflight(plugin.settings.apiUrl);
+  }), completeOrigin(plugin.settings.apiUrl) && runPreflight(plugin.settings.apiUrl);
 }
 function renderAuthSection(ctx) {
   var _a, _b;
@@ -17580,7 +17579,16 @@ function renderConnectionTab(ctx) {
       href: "https://github.com/engram-app/engram"
     }), renderEngramUrlSetting(ctx);
   }
-  renderAuthSection(ctx), renderVaultSection(ctx), mode === "selfhost" && renderSupportSection(ctx);
+  (mode === "cloud" || state !== "needs-url") && (renderAuthSection(ctx), renderFinishSetupRow(ctx), renderVaultSection(ctx)), mode === "selfhost" && renderSupportSection(ctx);
+}
+function renderFinishSetupRow(ctx) {
+  let { containerEl, plugin } = ctx;
+  if (!plugin.hasAuthConfigured() || !plugin.syncEngine.isSyncBlocked()) return;
+  new import_obsidian19.Setting(containerEl).setName("Finish sync setup").setDesc("Nothing in this vault syncs until you choose how to merge it with the server.").addButton(
+    (btn) => btn.setButtonText("Choose sync direction").setCta().onClick(() => {
+      plugin.doSyncWithFirstSyncCheck();
+    })
+  ).settingEl.addClass("engram-connection-warning");
 }
 
 // src/tabs/start-tab.ts

@@ -125,3 +125,33 @@ describe("describeListVaultsError", () => {
 		);
 	});
 });
+
+describe("renderEngramUrlSetting — no Save button", () => {
+	function render(apiUrl: string) {
+		__settingCapture.texts.length = 0;
+		__settingCapture.buttons.length = 0;
+		const plugin: any = {
+			settings: { apiUrl, apiKey: "", refreshToken: "" },
+			api: {},
+			noteStream: {},
+			saveSettings: async () => {},
+		};
+		renderEngramUrlSetting({ containerEl: {}, app: {}, plugin, redisplay: () => {} } as any);
+	}
+
+	// The debounced preflight already tells the user whether the address works.
+	// A Save button beside it asked them to confirm what the page had just
+	// confirmed for them.
+	test("renders no button — the preflight is the confirmation", () => {
+		render("https://staging.engram.page");
+		expect(__settingCapture.buttons.length).toBe(0);
+	});
+
+	// applyApiUrlChange is a backend IDENTITY swap (clears auth, bumps the auth
+	// generation). Reaching it on every keystroke is the bug this field was
+	// rebuilt to fix, so blur has to be a real, separate commit path.
+	test("commits on blur, so a server that is not running yet can still be saved", () => {
+		render("");
+		expect(__settingCapture.texts[0]?.blurCb).toBeTruthy();
+	});
+});
