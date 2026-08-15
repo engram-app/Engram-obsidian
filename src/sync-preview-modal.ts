@@ -366,13 +366,6 @@ const LOADING_TEXT_DELAY_MS = 400;
 /** Once that line IS on screen, keep it there at least this long. */
 const LOADING_MIN_VISIBLE_MS = 600;
 
-/** How long to hold the loaded plan back so the "Comparing…" line stays
- *  readable. 0 when the line was never shown (the fast path — nothing to
- *  hold) or has already had its time.
- *
- *  Deliberately NOT a blanket delay on every sync: the fast case should feel
- *  instant, and only a line that actually reached the screen has earned the
- *  right to stay on it. */
 /** What the button on the "nothing to sync" screen should say and do.
  *
  *  Both sides already match, so there is no transfer to run — but in a GATED
@@ -391,6 +384,13 @@ export function emptyPlanDismiss(gateClosed: boolean): {
 	return gateClosed ? { label: "Done", accept: true } : { label: "Close", accept: false };
 }
 
+/** How long to hold the loaded plan back so the "Comparing…" line stays
+ *  readable. 0 when the line was never shown (the fast path — nothing to
+ *  hold) or has already had its time.
+ *
+ *  Deliberately NOT a blanket delay on every sync: the fast case should feel
+ *  instant, and only a line that actually reached the screen has earned the
+ *  right to stay on it. */
 export function loadingHoldMs(shownAt: number | null, now: number): number {
 	if (shownAt === null) return 0;
 	const held = now - shownAt;

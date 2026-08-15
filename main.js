@@ -25071,7 +25071,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         let choice = await modal.awaitChoice();
         this.openPreviewModal = null, choice === "cancel" && this.syncEngine.isSyncBlocked() && new import_obsidian26.Notice(
           `Engram: sync is not set up yet, so nothing in this vault will sync.
-Click \u201CEngram: finish setup\u201D in the status bar to pick up where you left off.`,
+Click the Engram item in the status bar to pick up where you left off.`,
           1e4
         ), await this.runSyncWithProgress(choice, {
           plan: modal.getPlan(),

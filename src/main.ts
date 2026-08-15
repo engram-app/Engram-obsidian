@@ -2704,9 +2704,13 @@ export default class EngramSyncPlugin extends Plugin {
 				// once, here, instead of relying on the user noticing a small label
 				// change in the status bar they were not looking at.
 				if (choice === "cancel" && this.syncEngine.isSyncBlocked()) {
+					// Names the status bar ITEM, not a label. The bar says "finish
+					// setup" only when this vault has never synced; a user who has
+					// synced before sees "sync paused", and quoting the wrong words
+					// sends them looking for something that is not there.
 					new Notice(
 						"Engram: sync is not set up yet, so nothing in this vault will sync.\n" +
-							"Click \u201cEngram: finish setup\u201d in the status bar to pick up where you left off.",
+							"Click the Engram item in the status bar to pick up where you left off.",
 						10_000,
 					);
 				}
