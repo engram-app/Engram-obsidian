@@ -1,39 +1,44 @@
-import { fnv1a } from "./content-hash";
-
 /**
  * Opaque, correlatable references to notes for LOG LINES.
  *
  * A vault path is the most revealing thing this plugin knows. `Medical/`,
  * `Divorce 2026/`, `Job search/` — the folder name gives up the sensitive fact
- * without anyone reading the note. Note bodies, titles and paths are encrypted
- * at rest with per-user keys; logging the path in clear puts it in
- * `client_logs`, CloudWatch and Loki, outside that boundary.
+ * without anyone reading the note. Bodies, titles and paths are encrypted at
+ * rest with per-user keys; logging the path in clear puts it in `client_logs`,
+ * CloudWatch and Loki, outside that boundary.
  *
- * What a sync bug actually needs from a log line is: WHICH note, WHAT failed,
- * and whether it is one note or a hundred. A human-readable path answers none
- * of those better than a stable opaque token does — it is just the format we
- * happened to log.
+ * What a sync bug needs from a log line is WHICH note, WHAT failed, and whether
+ * it is one note or a hundred. A path answers none of those better than an
+ * opaque token does — it is just the format we happened to log.
  *
- * ## The token
+ * ## Why a counter and not a hash
  *
- * `fnv1a(sessionSalt + path)`, base-36. The salt is random per plugin session,
- * lives only in memory, and is never sent anywhere — so the token cannot be
- * brute-forced back to a path by anyone holding the logs, which a bare hash of
- * a short string like "Medical" absolutely could be.
+ * The first version was `fnv1a(sessionSalt + path)`. That is broken by
+ * construction, and review demonstrated it recovering real paths:
  *
- * Stable for the life of a session, which is the window a sync investigation
- * lives in. It deliberately does NOT correlate across devices or restarts: for
- * that you want `noteId`, which is already an opaque UUID and already in scope
- * on the CRDT paths.
+ *   FNV-1a is a streaming hash with NO finalization, so a salt prefix only sets
+ *   the 32-bit initial state. The round `h = (h ^ c) * 0x01000193` is odd, hence
+ *   invertible mod 2^32 — run it backwards over any ONE known (path, ref) pair
+ *   and the salted state falls out exactly. Every other ref in that session is
+ *   then a dictionary lookup. Salting bought nothing against an attacker with a
+ *   single pair, and log lines hand those out.
  *
- * 32 bits collides somewhere around a few tens of thousands of distinct paths
- * in one session. That is fine for grouping log lines and is not fine for
- * anything else — do not use this as an identity.
+ * A per-session counter has no state to invert and no preimage to search. `n7`
+ * is not derived from the path at all; it is a label handed out in first-seen
+ * order. The map is the only thing that could reverse it, and it never leaves
+ * the process.
  *
- * Not a security boundary on its own. It is the "never log the path" rule made
- * convenient, so the rule survives contact with a developer in a hurry.
+ * Correlation within a session — the window a sync investigation lives in — is
+ * exactly preserved: the same path always gets the same label. It deliberately
+ * does NOT correlate across devices or restarts. For that use `noteId`, which
+ * is already an opaque UUID and already in scope on the CRDT paths.
  */
-const SESSION_SALT = `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+
+/** Bounded so a large vault cannot turn a debug aid into a memory leak. Past
+ *  the cap, refs degrade to `n?` — correlation is lost, privacy is not. */
+const MAX_TRACKED = 10_000;
+
+const labels = new Map<string, string>();
 
 /** A file-like with a vault path — `TFile` and our own row shapes both fit. */
 type PathLike = { path: string };
@@ -52,23 +57,18 @@ function pathOf(value: string | PathLike | null | undefined): string {
 export function noteRef(value: string | PathLike | null | undefined): string {
 	const path = pathOf(value);
 	if (!path) return "n?";
-	return `n${fnv1a(SESSION_SALT + path).toString(36)}`;
+
+	const existing = labels.get(path);
+	if (existing) return existing;
+	if (labels.size >= MAX_TRACKED) return "n?";
+
+	const label = `n${labels.size + 1}`;
+	labels.set(path, label);
+	return label;
 }
 
-/**
- * Structure without identity — extension and folder depth.
- *
- * For the handful of lines where the SHAPE of the path was the signal (a
- * deeply nested folder, an unexpected extension) rather than which note it was.
- * Neither field can name a folder.
- */
-export function noteShape(value: string | PathLike | null | undefined): string {
-	const path = pathOf(value);
-	if (!path) return "ext=? depth=0";
-	const dot = path.lastIndexOf(".");
-	const slash = path.lastIndexOf("/");
-	const ext = dot > slash && dot !== -1 ? path.slice(dot + 1).toLowerCase() : "none";
-	const depth = path.split("/").length - 1;
-	// Bounded so a pathological name cannot itself become the payload.
-	return `ext=${ext.slice(0, 12)} depth=${depth}`;
+/** Test-only: drop the label table so a suite can assert first-seen numbering
+ *  without depending on what ran before it. */
+export function __resetNoteRefs(): void {
+	labels.clear();
 }

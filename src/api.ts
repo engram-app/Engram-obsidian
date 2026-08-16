@@ -8,7 +8,6 @@ import type { AuthProvider } from "./auth";
 import { interpretHealthProbe, type PreflightResult } from "./auth-state";
 import { isHttpStatus, statusOf } from "./error-util";
 import { LimitExceededError } from "./limit-error";
-import { noteRef } from "./note-ref";
 import { BeaconBuffer } from "./observability/beacon";
 import { newTraceContext } from "./observability/traceGen";
 import { type RemoteLogEntry, rlog } from "./remote-log";
@@ -235,7 +234,7 @@ export class EngramApi {
 					}
 					rlog().warn(
 						"api",
-						`${method} ${noteRef(path)} failed after 401 retry — status=${retryStatus ?? "none"} vault=${this.vaultId ?? "none"}`,
+						`${method} ${beaconRoute(path)} failed after 401 retry — status=${retryStatus ?? "none"} vault=${this.vaultId ?? "none"}`,
 					);
 					throw e2;
 				}
@@ -245,7 +244,7 @@ export class EngramApi {
 			// to misread as a missing note otherwise). Token itself is never logged.
 			rlog().warn(
 				"api",
-				`${method} ${noteRef(path)} failed — status=${status ?? "none"} vault=${this.vaultId ?? "none"}`,
+				`${method} ${beaconRoute(path)} failed — status=${status ?? "none"} vault=${this.vaultId ?? "none"}`,
 			);
 			throw e;
 		}
@@ -679,7 +678,10 @@ export function beaconRoute(path: string): string {
 		.split("/")
 		.map((seg) => {
 			if (!seg || seg === ":id") return seg;
-			return STATIC_ROUTE_SEGMENTS.has(seg.toLowerCase()) ? seg : ":seg";
+			// Case-SENSITIVE. Our own route segments are lowercase, so folding case
+			// buys nothing and costs the whole point: a vault folder named `Notes`,
+			// `Search` or `Health` matched the allowlist and was emitted verbatim.
+			return STATIC_ROUTE_SEGMENTS.has(seg) ? seg : ":seg";
 		})
 		.join("/")
 		.slice(0, 64);

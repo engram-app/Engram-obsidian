@@ -11,7 +11,7 @@
  * gets routed around; a reference that leaks the path defeats the point.
  */
 import { describe, expect, test } from "bun:test";
-import { noteRef, noteShape } from "../src/note-ref";
+import { noteRef } from "../src/note-ref";
 
 const SENSITIVE = [
 	"Medical/2026 biopsy results.md",
@@ -60,35 +60,5 @@ describe("noteRef — correlation still works", () => {
 		for (const value of ["", null, undefined]) {
 			expect(noteRef(value)).toBe("n?");
 		}
-	});
-});
-
-describe("noteShape — structure without identity", () => {
-	test("reports extension and depth, names no folder", () => {
-		const shape = noteShape("Medical/2026/biopsy results.md");
-
-		expect(shape).toBe("ext=md depth=2");
-		expect(shape).not.toContain("Medical");
-		expect(shape).not.toContain("biopsy");
-	});
-
-	test("a file with no extension", () => {
-		expect(noteShape("Untitled")).toBe("ext=none depth=0");
-	});
-
-	// A dot in a FOLDER name is not an extension.
-	test("a dotted folder does not become the extension", () => {
-		expect(noteShape("v1.2/notes.md")).toBe("ext=md depth=1");
-	});
-
-	// The extension is caller-controlled text, so it is bounded — otherwise a
-	// pathological name becomes the payload the function exists to prevent.
-	test("a pathological extension is truncated", () => {
-		const shape = noteShape(`note.${"x".repeat(200)}`);
-		expect(shape.length).toBeLessThan(40);
-	});
-
-	test("nullish input does not throw", () => {
-		expect(noteShape(null)).toBe("ext=? depth=0");
 	});
 });

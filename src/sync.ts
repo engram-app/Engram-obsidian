@@ -1565,7 +1565,7 @@ export class SyncEngine {
 				const copy = await this.writeDriftConflictCopy(normalized, disk);
 				rlog().info(
 					"conflict",
-					`history-less drift → keep-both | original=${noteRef(normalized)} copy=${copy}`,
+					`history-less drift → keep-both | original=${noteRef(normalized)} copy=${noteRef(copy)}`,
 				);
 			} catch (e) {
 				rlog().error(
@@ -1723,7 +1723,7 @@ export class SyncEngine {
 		if (canonical !== null && normalizePath(canonical) !== normalizePath(path)) {
 			rlog().info(
 				"ws",
-				`Stale materialize skipped for ${noteId}: canonical=${canonical} captured=${noteRef(path)}`,
+				`Stale materialize skipped for ${noteId}: canonical=${noteRef(canonical)} captured=${noteRef(path)}`,
 			);
 			return;
 		}
@@ -4888,7 +4888,7 @@ export class SyncEngine {
 				if (buffer !== null && buffer !== staged.content) {
 					rlog().warn(
 						"crdt",
-						`socket converge: phantom binding rebound for ${boundPath}`,
+						`socket converge: phantom binding rebound for ${noteRef(boundPath)}`,
 					);
 					this.crdtEditorRebind?.(boundPath);
 					this.crdtRequestSave?.(boundPath);
@@ -5426,7 +5426,7 @@ export class SyncEngine {
 				if (this.noteIdMap?.get(normalized) === roomId) this.noteIdMap.delete(normalized);
 				rlog().info(
 					"ws",
-					`Delete is rename old-leg (id relocated to ${relocatedPath}); old path trashed, room preserved: ${noteRef(normalized)}`,
+					`Delete is rename old-leg (id relocated to ${noteRef(relocatedPath)}); old path trashed, room preserved: ${noteRef(normalized)}`,
 				);
 				return;
 			}
@@ -5454,7 +5454,7 @@ export class SyncEngine {
 						const copy = await this.writeDriftConflictCopy(normalized, disk);
 						rlog().info(
 							"conflict",
-							`received-delete drift → keep-both | original=${noteRef(normalized)} copy=${copy}`,
+							`received-delete drift → keep-both | original=${noteRef(normalized)} copy=${noteRef(copy)}`,
 						);
 					}
 				} catch (e) {
@@ -5545,7 +5545,7 @@ export class SyncEngine {
 					) {
 						rlog().info(
 							"ws",
-							`Stale-path upsert ignored for ${noteId}: canonical=${canonicalPath} event=${noteRef(event.path)}`,
+							`Stale-path upsert ignored for ${noteId}: canonical=${noteRef(canonicalPath)} event=${noteRef(event.path)}`,
 						);
 					} else {
 						this.noteIdMap?.set(event.path, noteId);
@@ -5761,7 +5761,7 @@ export class SyncEngine {
 			rlog().warn(
 				"pull",
 				`Id-keyed move REFUSED (${owner === undefined ? "ownership unknown" : "cross-wire"}): ` +
-					`${priorPath} not confirmed as ${id}'s old path — rebinding to ${noteRef(newPath)}, no trash`,
+					`${noteRef(priorPath)} not confirmed as ${id}'s old path — rebinding to ${noteRef(newPath)}, no trash`,
 			);
 			// set() keeps the map a bijection: it evicts priorPath->id without
 			// touching priorPath's file, syncState, or baseStore (they belong to
@@ -5852,12 +5852,12 @@ export class SyncEngine {
 				}
 				rlog().info(
 					"pull",
-					`Id-keyed move: ${priorPath} -> ${noteRef(newPath)} (id=${id})`,
+					`Id-keyed move: ${noteRef(priorPath)} -> ${noteRef(newPath)} (id=${id})`,
 				);
 			} catch (e) {
 				rlog().warn(
 					"pull",
-					`Id-keyed move file ops failed (old file vanished mid-flight?): ${priorPath} -> ${noteRef(newPath)} — ${errMsg(e)}`,
+					`Id-keyed move file ops failed (old file vanished mid-flight?): ${noteRef(priorPath)} -> ${noteRef(newPath)} — ${errMsg(e)}`,
 				);
 				// No disk content to flush here, and the caller's isSynced-gated
 				// materializeRelocated backstop may ALSO decline (fresh-boot
@@ -6309,7 +6309,7 @@ export class SyncEngine {
 							);
 							rlog().info(
 								"conflict",
-								`CRDT tombstone drift → keep-both | original=${noteRef(normalized)} copy=${copy}`,
+								`CRDT tombstone drift → keep-both | original=${noteRef(normalized)} copy=${noteRef(copy)}`,
 							);
 						} catch (e) {
 							rlog().warn(

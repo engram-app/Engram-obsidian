@@ -357,7 +357,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		onPersistError: (noteId, err) => {
 			rlog().warn(
 				"crdt",
-				`IndexedDB persist error for ${noteIdMap.pathForId(noteId) ?? noteId} — sync continues in-memory: ${errMsg(err)}`,
+				`IndexedDB persist error for ${noteRef(noteIdMap.pathForId(noteId))} (id=${noteId}) — sync continues in-memory: ${errMsg(err)}`,
 			);
 		},
 		// Convergence commit (idempotent; no-op when nothing staged). The text-verify

@@ -300,6 +300,29 @@ describe("Plugin guidelines — never use the global `app` object", () => {
  * they catch the shapes that actually occurred, and a deliberate new capture
  * has to edit this file, which is the point.
  */
+
+/** The inside of every `${...}` in a template, brace-balanced.
+ *
+ *  A `\$\{[^{}]*\}` regex cannot cross a nested brace, so `${f({ k: v })}` and
+ *  a nested template were skipped entirely — not flagged, not inspected. An
+ *  expression the guard never looks at is indistinguishable from a safe one. */
+function interpolations(text: string): string[] {
+	const out: string[] = [];
+	for (let i = 0; i < text.length - 1; i++) {
+		if (text[i] !== "$" || text[i + 1] !== "{") continue;
+		let depth = 1;
+		let j = i + 2;
+		for (; j < text.length && depth > 0; j++) {
+			if (text[j] === "{") depth++;
+			else if (text[j] === "}") depth--;
+		}
+		if (depth !== 0) continue;
+		out.push(text.slice(i + 2, j - 1));
+		i = j - 1;
+	}
+	return out;
+}
+
 describe("privacy — no content retention for export", () => {
 	// Matched on the IDENTIFIER, not the module string. findInSources runs its
 	// predicate against stripCommentsAndStrings(), which blanks every string
@@ -334,8 +357,12 @@ describe("privacy — no content retention for export", () => {
 	//   * a stash nested INSIDE the exempt wire send's payload
 	//   * string building: `this.log += docId + ":" + b64`
 	// Catching those needs dataflow, not regex. The runtime seam
-	// (`redactPathLike` in remote-log.ts) is where enforcement that cannot be
-	// evaded by rewriting belongs; this guard is the cheap first net.
+	// (`safeSlug` / the `anomaly()` argument validation in remote-log.ts) is
+	// where enforcement that cannot be evaded by rewriting belongs; this guard
+	// is the cheap first net. An earlier version of this comment pointed at
+	// `redactPathLike`, which was deleted with the redactor it belonged to —
+	// a guard whose comment cites a function that does not exist reads as
+	// stronger than it is.
 	test("no frame or update is stashed in a payload object", () => {
 		// Token-level, not literal-level. `[^{}]*` cannot cross a nested brace,
 		// so `{ ts, meta: {}, b64 }` and `[Date.now(), ids[0], b64]` both walked
@@ -416,8 +443,35 @@ describe("privacy — no content retention for export", () => {
 	// one. A guard anchored on an argument that is already safe reports healthy
 	// while blind — that is exactly how the anomaly() guard failed review.
 	test("no rlog() call interpolates a path", () => {
-		const NAMEY =
-			/\.path\b|\bpath\b|\bpaths\b|basename|\bnormalized\b|\bpushedPath\b|\bnewPath\b|\boldPath\b|\bserverPath\b|\bfilePath\b/;
+		// Anything whose NAME says "path", plus the specific carriers this
+		// codebase uses. The previous version enumerated only nine names and was
+		// green while `copy`, `canonical`, `canonicalPath`, `priorPath` and
+		// `relocatedPath` printed in clear on nine lines — a hand-listed guard
+		// covers the sites you already remembered, which are not the ones that
+		// leak. `/path/i` now catches every `*Path` / `path*` name without an
+		// edit, and the rest are named because their names do not say "path".
+		// Case-INSENSITIVE, and the flag lives on the RegExp rather than on the
+		// pieces. `/path/i.source` is the plain string "path" — `.source` drops
+		// the flag — so an earlier version of this line matched lowercase only
+		// and walked straight past `canonicalPath`, `priorPath` and
+		// `relocatedPath`, which are three of the nine leaks it was written to
+		// catch. Verified by reverting each shape and watching this test go red.
+		const NAMEY_RE =
+			/path|\b(normalized|canonical|copy|basename|dirname|folder|folders|dest|destination|src|link|wikilink|title|query)\b/i;
+
+		// A count of paths is exactly what we want kept — `${paths.length}` names
+		// no folder, and a guard that flags counts gets deleted. Anchored on the
+		// WHOLE expression: `${a.length}` is a count, `${a.length} of ${b.path}`
+		// is two expressions (each checked), and `${dir.length + p.path}` is not
+		// a count at all and must not slip through on its `.length` suffix.
+		const COUNT_ONLY = /^[\w.?[\]()]*\.(length|size)$/;
+
+		// `noteRef(x)` alone is sanctioned. `noteRef(x) + copy` is not — the
+		// previous `includes("noteRef(")` test exempted the whole expression on
+		// the strength of one safe call inside it, so concatenating a raw path
+		// onto a wrapped one was a free pass.
+		const WRAPPED_ONLY = /^(noteRef|beaconRoute)\((?:[^()]|\([^()]*\))*\)$/;
+
 		const findings: Finding[] = [];
 		let inspected = 0;
 
@@ -435,18 +489,15 @@ describe("privacy — no content retention for export", () => {
 				inspected += 1;
 
 				const args = f.text.slice(start, i - 1);
-				for (const expr of args.match(/\$\{[^{}]*\}/g) ?? []) {
-					// noteRef()/noteShape() are the sanctioned wrappers.
-					if (expr.includes("noteRef(") || expr.includes("noteShape(")) continue;
-					// A COUNT of paths is the thing we want kept — `${paths.length}`
-					// names no folder. A guard that flags counts gets deleted, and
-					// then it guards nothing.
-					if (/\.(length|size)\s*\}$/.test(expr)) continue;
-					if (NAMEY.test(expr)) {
+				for (const inner of interpolations(args)) {
+					const expr = inner.trim();
+					if (WRAPPED_ONLY.test(expr)) continue;
+					if (COUNT_ONLY.test(expr)) continue;
+					if (NAMEY_RE.test(expr)) {
 						findings.push({
 							file: f.rel,
 							line: f.text.slice(0, m.index).split("\n").length,
-							snippet: expr,
+							snippet: `\${${expr}}`,
 						});
 					}
 				}
