@@ -2213,10 +2213,6 @@ export default class EngramSyncPlugin extends Plugin {
 
 				this.noteStream = channel;
 				this.indexChannel = channel;
-				// Advertise syncStep1 for the index doc on every (re)connect, the same
-				// way a note room re-solicits its state.
-				this.indexRoom.setConnected(true);
-				this.indexRoom.connect();
 				if (this.authProvider) {
 					// setAuthProbe already wired above at construction (same channel
 					// object, same closure), so re-wiring it here would be a no-op.
@@ -2398,6 +2394,13 @@ export default class EngramSyncPlugin extends Plugin {
 							"crdt: topic joined — activating CRDT routing in SyncEngine",
 						);
 						this.crdtEverJoined = true;
+						// Advertise syncStep1 for the index doc HERE, not when the socket
+						// was assigned. `sendIndexCrdt` refuses until the crdt: topic join
+						// is acked, so connecting earlier guaranteed a refused frame (and
+						// its warn) on every single connect — routine noise reported as a
+						// problem, for a frame the provider then re-sent anyway.
+						this.indexRoom.setConnected(true);
+						this.indexRoom.connect();
 						this.syncEngine.setCrdtPorts({ manager: this.crdtManager });
 						// Relay model: the crdt: topic is now joined, so frames can go out.
 						// Mark every resident provider connected — this re-advertises each
