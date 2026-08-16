@@ -337,7 +337,21 @@ describe("privacy — no content retention for export", () => {
 		// ...which means the legitimate wire send now matches. Handing a frame
 		// to the transport is what the transport is FOR; the rule is about
 		// stashing one somewhere it can be read back later.
-		const wireSend = /\.send\s*\(/;
+		//
+		// A bare `.send(` exemption is a working bypass — a stash nested inside
+		// the call is invisible to a line-scoped rule:
+		//
+		//   this.ws?.send(this.recordFrame({ doc_id: docId, b64 }));
+		//
+		// ...which passed. So the exemption is pinned to the exact shape of the
+		// one real wire send: the crdtJoinRef array, with the payload as its
+		// LAST element (`}]);`). Wrap that payload in anything and the tail
+		// stops matching, so the wrapper is caught.
+		//
+		// Anchored on identifiers, never a string literal: findInSources runs
+		// its predicate against stripCommentsAndStrings(), so `"crdt_msg"` is
+		// blanked to `""` and a regex naming it can never match.
+		const wireSend = /this\.send\(\[this\.crdtJoinRef[^\]]*\}\]\)/;
 		const found = findInSources(
 			(line) => (explicit.test(line) || shorthand.test(line)) && !wireSend.test(line),
 		);
@@ -368,6 +382,7 @@ describe("privacy — no content retention for export", () => {
 		// literals, so an unbalanced one captures MORE text than the call.
 		// That errs toward flagging, which is the safe direction for a guard.
 		const calls: Finding[] = [];
+		let parsed = 0;
 		for (const f of sources) {
 			for (const m of f.text.matchAll(/\.anomaly\s*\(/g)) {
 				const start = (m.index ?? 0) + m[0].length;
@@ -379,20 +394,30 @@ describe("privacy — no content retention for export", () => {
 				}
 				const args = f.text.slice(start, i - 1);
 				const line = f.text.slice(0, m.index).split("\n").length;
+				parsed += 1;
+				// SUBSTRING, not \b-delimited: `${tfile.basename}` has no word
+				// boundary before "file" or before "name", so a \b version read
+				// straight past the most idiomatic path expression in an
+				// Obsidian plugin.
+				const danger = /path|file|title|content|name|query|folder|text|body|msg|message/i;
 				for (const expr of args.match(/\$\{[^}]*\}/g) ?? []) {
-					if (/\b(path|file|title|content|name|query|folder|text|body)\b/i.test(expr)) {
+					if (danger.test(expr)) {
 						calls.push({ file: f.rel, line, snippet: expr });
+					}
+				}
+				// Concatenation is the same leak without a `${}` to look at:
+				// `anomaly("sync", "skipped " + file.path)`.
+				for (const operand of args.split("+").slice(1)) {
+					if (danger.test(operand)) {
+						calls.push({ file: f.rel, line, snippet: operand.trim() });
 					}
 				}
 			}
 		}
 		expect(calls).toEqual([]);
-	});
-
-	// If anomaly() ever loses its call sites the guard above passes vacuously,
-	// exactly like the sync-recorder test did before it was fixed.
-	test("anomaly() still has call sites for the guard to inspect", () => {
-		const sites = sources.flatMap((f) => f.text.match(/\.anomaly\s*\(/g) ?? []);
-		expect(sites.length).toBeGreaterThan(0);
+		// Vacuity check, inside the test that depends on it: a global
+		// `.anomaly(` count would stay green while the paren-matcher silently
+		// parsed nothing. This asserts the guard actually inspected calls.
+		expect(parsed).toBeGreaterThan(0);
 	});
 });
