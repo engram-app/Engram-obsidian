@@ -7887,194 +7887,6 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
   }
 };
 
-// src/crdt/uuid7.ts
-function uuid7() {
-  var _a, _b;
-  let tsHex = Date.now().toString(16).padStart(12, "0").slice(-12), rand = new Uint8Array(10);
-  crypto.getRandomValues(rand), rand[0] = ((_a = rand[0]) != null ? _a : 0) & 15 | 112, rand[2] = ((_b = rand[2]) != null ? _b : 0) & 63 | 128;
-  let hex2 = bytesToHex;
-  return [
-    tsHex.slice(0, 8),
-    tsHex.slice(8, 12),
-    hex2(rand.subarray(0, 2)),
-    hex2(rand.subarray(2, 4)),
-    hex2(rand.subarray(4, 10))
-  ].join("-");
-}
-
-// src/crdt/note-id-map.ts
-function isValidPath(path) {
-  return !!path && path !== "null" && path !== "undefined";
-}
-var NoteIdMap = class _NoteIdMap {
-  constructor() {
-    this.byPath = /* @__PURE__ */ new Map();
-    /** Reverse index (note_id -> path), kept in sync by set/delete/rename. */
-    this.byId = /* @__PURE__ */ new Map();
-  }
-  get(path) {
-    var _a;
-    return (_a = this.byPath.get(path)) != null ? _a : null;
-  }
-  /** Resolve `path`'s id, minting + storing a fresh UUIDv7 if this is the
-   *  first time this path has been seen. Centralizes the mint-or-reuse
-   *  pattern (previously inlined separately in pushFile and duplicated for
-   *  the live-editor binding), so a concurrent "first touch" from either
-   *  seam (first save vs. first open) always converges on one id. */
-  getOrMint(path) {
-    if (!isValidPath(path))
-      throw new Error(`NoteIdMap.getOrMint: invalid path ${JSON.stringify(path)}`);
-    let existing = this.get(path);
-    if (existing) return existing;
-    let id2 = uuid7();
-    return this.set(path, id2), id2;
-  }
-  /** Reverse lookup: the path last known to correspond to `id`, or null if
-   *  this device has never learned/minted a mapping for it (e.g. a
-   *  `crdt_doc_ready` announce for a note created on another device that
-   *  hasn't reached this device via a regular sync pull yet). */
-  pathForId(id2) {
-    var _a;
-    return (_a = this.byId.get(id2)) != null ? _a : null;
-  }
-  set(path, id2) {
-    if (!isValidPath(path) || !id2) return;
-    let oldId = this.byPath.get(path);
-    oldId !== void 0 && oldId !== id2 && this.byId.delete(oldId);
-    let oldPath = this.byId.get(id2);
-    oldPath !== void 0 && oldPath !== path && this.byPath.delete(oldPath), this.byPath.set(path, id2), this.byId.set(id2, path);
-  }
-  delete(path) {
-    let id2 = this.byPath.get(path);
-    id2 !== void 0 && this.byId.delete(id2), this.byPath.delete(path);
-  }
-  rename(oldPath, newPath) {
-    let id2 = this.byPath.get(oldPath);
-    if (id2 === void 0) return;
-    let displacedId = this.byPath.get(newPath);
-    displacedId !== void 0 && displacedId !== id2 && this.byId.delete(displacedId), this.byPath.delete(oldPath), this.byPath.set(newPath, id2), this.byId.set(id2, newPath);
-  }
-  /** Drop every mapping. Used on vault change: the map is per-vault identity
-   *  state — carrying ids across vaults routes CRDT frames to another
-   *  vault's notes (plugin #200). Mutates in place so every holder of the
-   *  instance (main, sync engine, live views) sees the wipe. */
-  clear() {
-    this.byPath.clear(), this.byId.clear();
-  }
-  toJSON() {
-    return Object.fromEntries(this.byPath);
-  }
-  static fromJSON(o) {
-    let m = new _NoteIdMap();
-    for (let [p, id2] of Object.entries(o != null ? o : {})) m.set(p, id2);
-    return m;
-  }
-};
-
-// src/crdt/schema.ts
-async function ensureDocSchema(vaultId, storage, dbs) {
-  let markerKey = `engram-crdt-doc-schema/${vaultId}`;
-  if (storage.getItem(markerKey) === "2")
-    return !1;
-  let allDbs = await dbs.list(), prefix = `${vaultId}/`, dbsToWipe = allDbs.filter((db) => {
-    var _a, _b;
-    return (_b = (_a = db.name) == null ? void 0 : _a.startsWith(prefix)) != null ? _b : !1;
-  }).map((db) => db.name);
-  for (let name of dbsToWipe)
-    await dbs.drop(name);
-  return storage.setItem(markerKey, "2"), !0;
-}
-
-// src/crdt/invariants.ts
-var list = (items, max2 = 5) => {
-  let all2 = [...items], head = all2.slice(0, max2).join(", ");
-  return all2.length > max2 ? `${head} (+${all2.length - max2} more)` : head;
-}, STANDARD_INVARIANTS = [
-  {
-    id: "removed-implies-not-resident",
-    description: "A tombstoned note must have no resident Y.Doc",
-    check(ctx) {
-      let bad = [...ctx.removedNoteIds].filter((id2) => ctx.residentNoteIds.has(id2));
-      return bad.length ? `resident docs for removed note_ids: ${list(bad)}` : null;
-    }
-  },
-  {
-    id: "removed-implies-not-enrolled",
-    description: "A tombstoned note must not hold an open room",
-    check(ctx) {
-      let bad = [...ctx.removedNoteIds].filter((id2) => ctx.enrolledNoteIds.has(id2));
-      return bad.length ? `open rooms for removed note_ids: ${list(bad)}` : null;
-    }
-  },
-  {
-    id: "enrolled-implies-resident",
-    description: "An enrolled note must have a resident doc to advertise",
-    check(ctx) {
-      let bad = [...ctx.enrolledNoteIds].filter((id2) => !ctx.residentNoteIds.has(id2));
-      return bad.length ? `enrolled but not resident: ${list(bad)}` : null;
-    }
-  },
-  {
-    id: "live-bound-implies-mapped",
-    description: "A live-bound path must resolve to a note_id",
-    check(ctx) {
-      let bad = [...ctx.liveBoundPaths].filter((p) => ctx.idForPath(p) === null);
-      return bad.length ? `live-bound paths with no note_id: ${list(bad)}` : null;
-    }
-  },
-  {
-    id: "id-map-bijective",
-    description: "path\u2192id and id\u2192path must agree in both directions",
-    check(ctx) {
-      let bad = [];
-      for (let path of ctx.mappedPaths) {
-        let id2 = ctx.idForPath(path);
-        id2 !== null && ctx.pathForId(id2) !== path && bad.push(`${path}\u2192${id2}\u2192${ctx.pathForId(id2)}`);
-      }
-      return bad.length ? `id-map direction mismatch: ${list(bad)}` : null;
-    }
-  }
-], InvariantChecker = class {
-  constructor(opts) {
-    this.opts = opts;
-    this.timer = null;
-    var _a;
-    this.invariants = (_a = opts.invariants) != null ? _a : STANDARD_INVARIANTS;
-  }
-  /** Run every invariant once. Returns the violations found (also reported via
-   *  onViolation). A throwing invariant is itself a violation — a check that
-   *  cannot evaluate is never evidence that the property holds. */
-  async checkAll() {
-    let ctx = this.opts.getContext(), violations = [];
-    for (let inv of this.invariants) {
-      let detail;
-      try {
-        detail = await inv.check(ctx);
-      } catch (e) {
-        detail = `check threw: ${e instanceof Error ? e.message : String(e)}`;
-      }
-      if (detail !== null) {
-        let violation = { id: inv.id, description: inv.description, detail };
-        violations.push(violation), this.opts.onViolation(violation);
-      }
-    }
-    return violations;
-  }
-  startPeriodicChecks(ms) {
-    var _a;
-    if (this.timer !== null) return;
-    let schedule = (_a = this.opts.setInterval) != null ? _a : ((cb, delay) => window.setInterval(cb, delay));
-    this.timer = schedule(() => {
-      this.checkAll();
-    }, ms);
-  }
-  stop() {
-    var _a;
-    if (this.timer === null) return;
-    ((_a = this.opts.clearInterval) != null ? _a : ((id2) => window.clearInterval(id2)))(this.timer), this.timer = null;
-  }
-};
-
 // node_modules/lib0/map.js
 var create = () => /* @__PURE__ */ new Map(), copy = (m) => {
   let r = create();
@@ -14313,6 +14125,557 @@ var Item = class _Item extends AbstractStruct {
 glo[importIdentifier] === !0 && console.error("Yjs was already imported. This breaks constructor checks and will lead to issues! - https://github.com/yjs/yjs/issues/438");
 glo[importIdentifier] = !0;
 
+// node_modules/y-protocols/sync.js
+var messageYjsSyncStep1 = 0, messageYjsSyncStep2 = 1, messageYjsUpdate = 2, writeSyncStep1 = (encoder, doc2) => {
+  writeVarUint(encoder, messageYjsSyncStep1);
+  let sv = encodeStateVector(doc2);
+  writeVarUint8Array(encoder, sv);
+}, writeSyncStep2 = (encoder, doc2, encodedStateVector) => {
+  writeVarUint(encoder, messageYjsSyncStep2), writeVarUint8Array(encoder, encodeStateAsUpdate(doc2, encodedStateVector));
+}, readSyncStep1 = (decoder, encoder, doc2) => writeSyncStep2(encoder, doc2, readVarUint8Array(decoder)), readSyncStep2 = (decoder, doc2, transactionOrigin, errorHandler) => {
+  try {
+    applyUpdate(doc2, readVarUint8Array(decoder), transactionOrigin);
+  } catch (error) {
+    errorHandler != null && errorHandler(
+      /** @type {Error} */
+      error
+    ), console.error("Caught error while handling a Yjs update", error);
+  }
+}, writeUpdate = (encoder, update) => {
+  writeVarUint(encoder, messageYjsUpdate), writeVarUint8Array(encoder, update);
+}, readUpdate = readSyncStep2, readSyncMessage = (decoder, encoder, doc2, transactionOrigin, errorHandler) => {
+  let messageType = readVarUint(decoder);
+  switch (messageType) {
+    case messageYjsSyncStep1:
+      readSyncStep1(decoder, encoder, doc2);
+      break;
+    case messageYjsSyncStep2:
+      readSyncStep2(decoder, doc2, transactionOrigin, errorHandler);
+      break;
+    case messageYjsUpdate:
+      readUpdate(decoder, doc2, transactionOrigin, errorHandler);
+      break;
+    default:
+      throw new Error("Unknown message type");
+  }
+  return messageType;
+};
+
+// src/crdt/wire.ts
+var MESSAGE_SYNC = 0;
+function toB64(bytes) {
+  return btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(""));
+}
+function fromB64(b64) {
+  return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+}
+
+// src/crdt/note-provider.ts
+var NoteProvider = class {
+  constructor(doc2, opts = {}) {
+    /** True once an inbound syncStep2 has been applied (Relay parity). */
+    this.synced = !1;
+    this.connected = !1;
+    /** True when this note has an OPEN room — it advertises syncStep1 (the
+     *  down-sync PULL request) on connect + reconnect. A note that only SENDS
+     *  (a cold edit to a closed note) or only RECEIVES (vault-channel fan-out)
+     *  stays un-advertised: it delivers/merges ops WITHOUT opening a room, so an
+     *  idle note never contributes to the server room fan-out (the connect-storm
+     *  the fan-out design avoids). Set via setAdvertised on enroll. */
+    this.advertised = !1;
+    /** Frames produced while the transport was down; flushed on reconnect. Each
+     *  keeps its own kind: a buffered frame must be re-offered under the SAME
+     *  classification it was produced with, or the flush would re-gate a
+     *  handshake reply as an op and strand it in the buffer forever. */
+    this.buffer = [];
+    var _a;
+    this.doc = doc2, this.send = (_a = opts.send) != null ? _a : (() => !1), this.onSynced = opts.onSynced, this.active = !opts.deferActivation, this.updateHandler = (update, origin) => {
+      if (origin === this || !this.active)
+        return;
+      let encoder = createEncoder();
+      writeVarUint(encoder, MESSAGE_SYNC), writeUpdate(encoder, update), this.broadcast(toB64(toUint8Array(encoder)), "op");
+    }, this.doc.on("update", this.updateHandler);
+  }
+  /** Enable broadcasting of local doc updates. Call ONLY after local persistence
+   *  has finished replaying (IndexedDB whenSynced), so the replayed state is not
+   *  re-broadcast — syncStep1 on connect already advertises it. No-op if the
+   *  provider started active (a direct, no-persistence caller). */
+  activate() {
+    this.active = !0;
+  }
+  /** True when the server holds our latest state: connected, we have seen at
+   *  least one inbound syncStep2, and nothing is waiting in the offline send
+   *  buffer. Idle eviction (ProviderRegistry.closeDoc) is data-safe ONLY then — an
+   *  offline/unsynced/buffered doc must stay resident so its edits re-advertise on
+   *  reconnect (the switch-away recovery guarantee; evicting it would reintroduce
+   *  the "moving between files, only some make it" data-loss class). */
+  isFullySynced() {
+    return this.connected && this.synced && this.buffer.length === 0;
+  }
+  /** True when this doc holds local work the server has NOT received: the
+   *  handshake never completed, or frames are sitting in the offline buffer.
+   *
+   *  Deliberately NOT gated on `connected`, unlike isFullySynced: a doc whose
+   *  frames were all handed to the transport before the socket dropped has
+   *  nothing undelivered, and treating a momentary disconnect as data-at-risk
+   *  would make every offline delete leave a keep-both copy behind. Eviction
+   *  safety needs the stricter question (is the server current RIGHT NOW);
+   *  a destructive path needs this one (would teardown lose anything). */
+  hasUndeliveredWork() {
+    return !this.synced || this.buffer.length > 0;
+  }
+  /** Swap the transport (e.g. after a socket reconnect built a fresh channel).
+   *  The doc + buffer are untouched. */
+  setSend(send) {
+    this.send = send;
+  }
+  /** Relay's broadcastMessage: send now if connected, else buffer for the next
+   *  onopen flush. A refused send (transport down mid-flight) also buffers. */
+  broadcast(frame, kind) {
+    this.connected && this.send(frame, kind) || this.buffer.push({ frame, kind });
+  }
+  /** Relay's onopen: (re)connect the transport. */
+  connect() {
+    this.setConnected(!0);
+  }
+  /** Open (true) or close (false) this note's room. Advertising sends syncStep1
+   *  on the false->true EDGE only (the down-sync pull). Un-advertising stops the
+   *  re-advertise but leaves the transport connected — SEND/RECEIVE of ops still
+   *  work (idle notes converge over the fan-out without a room).
+   *
+   *  Transition-guarded: a redundant setAdvertised(true) on an ALREADY-advertised
+   *  note must NOT re-fire syncStep1. The server answers every inbound syncStep1
+   *  with a fresh [syncStep2, syncStep1] pair, so a re-enroll on every
+   *  `crdt_doc_ready` announce (which the server also sends to the sender) turned
+   *  into an endless re-handshake storm. Relay sends syncStep1 once per
+   *  connection; a real re-handshake goes reset()->enroll() (advertised flips
+   *  false then true, so this edge fires again). */
+  setAdvertised(advertised) {
+    this.advertised !== advertised && (this.advertised = advertised, advertised && this.connected && this.sendSyncStep1());
+  }
+  setConnected(connected) {
+    if (!connected) {
+      this.connected = !1;
+      return;
+    }
+    let wasConnected = this.connected;
+    this.connected = !0, this.advertised && !wasConnected && this.sendSyncStep1();
+    let pending = this.buffer.splice(0);
+    for (let held of pending)
+      this.send(held.frame, held.kind) || this.buffer.push(held);
+  }
+  sendSyncStep1() {
+    let encoder = createEncoder();
+    writeVarUint(encoder, MESSAGE_SYNC), writeSyncStep1(encoder, this.doc), this.send(toB64(toUint8Array(encoder)), "handshake");
+  }
+  /** Relay's messageHandlers[messageSync]: apply an inbound frame and, for an
+   *  inbound syncStep1, reply with syncStep2. The reply is sent ONLY when it
+   *  carries a sub-message (length > 1) — a syncStep2/update yields an empty
+   *  reply, so there's no STEP1 echo loop. `this` is the apply origin so the
+   *  updateHandler above suppresses re-sending remote-applied ops. */
+  receive(frameB64) {
+    var _a;
+    let decoder = createDecoder(fromB64(frameB64));
+    if (readVarUint(decoder) !== MESSAGE_SYNC) return;
+    let reply = createEncoder();
+    writeVarUint(reply, MESSAGE_SYNC);
+    let syncType = readSyncMessage(decoder, reply, this.doc, this);
+    length(reply) > 1 && this.broadcast(toB64(toUint8Array(reply)), "handshake"), syncType === messageYjsSyncStep2 && !this.synced && (this.synced = !0, (_a = this.onSynced) == null || _a.call(this));
+  }
+  /** Detach the update listener. Call ONLY when the note truly closes / on
+   *  unload — NOT on a transport reconnect (Relay's provider.destroy). */
+  destroy() {
+    this.doc.off("update", this.updateHandler);
+  }
+};
+
+// src/crdt/uuid7.ts
+function uuid7() {
+  var _a, _b;
+  let tsHex = Date.now().toString(16).padStart(12, "0").slice(-12), rand = new Uint8Array(10);
+  crypto.getRandomValues(rand), rand[0] = ((_a = rand[0]) != null ? _a : 0) & 15 | 112, rand[2] = ((_b = rand[2]) != null ? _b : 0) & 63 | 128;
+  let hex2 = bytesToHex;
+  return [
+    tsHex.slice(0, 8),
+    tsHex.slice(8, 12),
+    hex2(rand.subarray(0, 2)),
+    hex2(rand.subarray(2, 4)),
+    hex2(rand.subarray(4, 10))
+  ].join("-");
+}
+
+// src/crdt/sync-store.ts
+var SyncStore = class {
+  constructor(map3) {
+    this.map = map3;
+    this.overlay = /* @__PURE__ */ new Map();
+    this.deleteSet = /* @__PURE__ */ new Set();
+    /** old path -> new path. */
+    this.renames = /* @__PURE__ */ new Map();
+    /** note_ids minted locally whose note the server has not acknowledged. */
+    this.pendingUpload = /* @__PURE__ */ new Set();
+    /** id -> path, over committed + overlay. Rebuilt on demand rather than
+     *  maintained per write: a folder move touches N paths, and paying N reverse
+     *  updates per mutation to serve a lookup that may never happen is the wrong
+     *  trade. Invalidated by every mutation and by remote updates. */
+    this.reverse = null;
+    this.map.observe(() => {
+      this.reverse = null;
+    });
+  }
+  /** Follow the rename chain to the path an entry lives at NOW.
+   *
+   *  Chained because two renames can land before either is promoted (a folder
+   *  move followed by a second move of the same subtree). Bounded by the number
+   *  of pending renames, and self-referential input cannot loop it. */
+  resolvePath(path) {
+    let current = path, seen = /* @__PURE__ */ new Set([current]);
+    for (; this.renames.has(current); ) {
+      let next = this.renames.get(current);
+      if (seen.has(next)) break;
+      seen.add(next), current = next;
+    }
+    return current;
+  }
+  /** Meta for `path`, consulting every layer, or null if this store has no
+   *  entry for it (or it is pending deletion). */
+  getMeta(path) {
+    var _a, _b;
+    let resolved = this.resolvePath(path);
+    return this.deleteSet.has(resolved) ? null : (_b = (_a = this.overlay.get(resolved)) != null ? _a : this.map.get(resolved)) != null ? _b : null;
+  }
+  /** The note_id for `path`, or null. The `NoteIdMap.get` replacement. */
+  get(path) {
+    var _a, _b;
+    return (_b = (_a = this.getMeta(path)) == null ? void 0 : _a.note_id) != null ? _b : null;
+  }
+  has(path) {
+    return this.getMeta(path) !== null;
+  }
+  /** Resolve `path`'s id, minting one into the OVERLAY if this is the first
+   *  time it has been seen.
+   *
+   *  A minted id is also `pendingUpload`: it exists on this device and nowhere
+   *  else until the server confirms the note. That distinction is what stops a
+   *  second device treating an unacknowledged local id as authoritative.
+   *
+   *  Throws on a garbage path for the same reason `NoteIdMap.getOrMint` does —
+   *  a literal "null" key was found minted and CRDT-enrolled in a prod
+   *  data.json (2026-07-07). Minting for a phantom path binds a real doc to a
+   *  file that does not exist, so the caller's null-path bug must surface here
+   *  rather than downstream. */
+  getOrMint(path) {
+    if (!path || path === "null" || path === "undefined")
+      throw new Error(`SyncStore.getOrMint: invalid path ${JSON.stringify(path)}`);
+    let existing = this.get(path);
+    if (existing) return existing;
+    let note_id = uuid7();
+    return this.set(path, { note_id }), this.pendingUpload.add(note_id), note_id;
+  }
+  /** Stage `meta` for `path`. Visible to reads immediately, invisible to other
+   *  devices until `commit()`. */
+  set(path, meta) {
+    let resolved = this.resolvePath(path), prior = this.pathForId(meta.note_id);
+    prior && prior !== resolved && (this.overlay.delete(prior), this.deleteSet.add(prior)), this.overlay.set(resolved, meta), this.deleteSet.delete(resolved), this.reverse = null;
+  }
+  /** Stage a delete. The path stops resolving immediately. */
+  delete(path) {
+    let resolved = this.resolvePath(path);
+    this.deleteSet.add(resolved), this.overlay.delete(resolved), this.reverse = null;
+  }
+  /** Stage a rename. `oldPath` keeps resolving — to the same id — until this
+   *  is promoted and Obsidian's own rename event has landed.
+   *
+   *  A rename of a path this store has never seen is NOT a no-op: it records
+   *  the redirect anyway, so a subsequent `getOrMint(oldPath)` and
+   *  `getOrMint(newPath)` converge on ONE id instead of minting two. That
+   *  convergence is the whole point of the layer. */
+  rename(oldPath, newPath) {
+    if (oldPath === newPath) return;
+    let meta = this.getMeta(oldPath), from2 = this.resolvePath(oldPath);
+    meta && this.overlay.set(newPath, meta), this.renames.set(from2, newPath), this.deleteSet.delete(from2), this.overlay.delete(from2), this.reverse = null;
+  }
+  /** Whether `note_id` was minted here and is still unconfirmed. */
+  isPendingUpload(note_id) {
+    return this.pendingUpload.has(note_id);
+  }
+  /** The server has acknowledged the note, so the id is no longer provisional.
+   *  NOT cleared by `commit()`: committing publishes the id to other devices,
+   *  which is a different fact from the server having stored the note. */
+  confirmUpload(note_id) {
+    this.pendingUpload.delete(note_id);
+  }
+  /** Reverse lookup, over committed + overlay. */
+  pathForId(note_id) {
+    var _a;
+    if (!this.reverse) {
+      let index = /* @__PURE__ */ new Map();
+      this.map.forEach((meta, path) => {
+        this.deleteSet.has(path) || index.set(meta.note_id, path);
+      });
+      for (let [path, meta] of this.overlay)
+        this.deleteSet.has(path) || index.set(meta.note_id, path);
+      this.reverse = index;
+    }
+    return (_a = this.reverse.get(note_id)) != null ? _a : null;
+  }
+  /** Every live entry, committed + staged, with deletions applied. The
+   *  snapshot `data.json` persistence and any full-vault reconcile read. */
+  entries() {
+    let out = /* @__PURE__ */ new Map();
+    this.map.forEach((meta, path) => {
+      this.deleteSet.has(path) || out.set(path, meta);
+    });
+    for (let [path, meta] of this.overlay)
+      this.deleteSet.has(path) || out.set(path, meta);
+    return [...out];
+  }
+  /** Drop everything, staged and committed.
+   *
+   *  Used on vault change: this is per-vault identity state, and carrying ids
+   *  across vaults routes CRDT frames at another vault's notes (plugin #200).
+   *  The committed half is cleared inside a transaction so peers see one
+   *  update, not one per path. */
+  clear() {
+    var _a;
+    this.overlay.clear(), this.deleteSet.clear(), this.renames.clear(), this.pendingUpload.clear(), this.reverse = null, this.map.size > 0 && ((_a = this.map.doc) == null || _a.transact(() => {
+      this.map.clear();
+    }));
+  }
+  /** True when there is staged state that `commit()` would publish. */
+  get dirty() {
+    return this.overlay.size > 0 || this.deleteSet.size > 0 || this.renames.size > 0;
+  }
+  /** Promote every staged layer into the shared doc in ONE transaction.
+   *
+   *  One transaction, not N: a folder move stages a rename per descendant, and
+   *  promoting them individually would reach observers as N separate updates —
+   *  N chances for another device to observe a half-moved folder. The server
+   *  fold and every peer see the move whole or not at all.
+   *
+   *  Removals are applied BEFORE additions so that a path which is both
+   *  deleted and re-added (delete then create, same tick) ends up present.
+   *  `pendingUpload` deliberately survives — see `confirmUpload`. */
+  commit(origin) {
+    var _a;
+    this.dirty && ((_a = this.map.doc) == null || _a.transact(() => {
+      for (let from2 of this.renames.keys()) this.map.delete(from2);
+      for (let path of this.deleteSet) this.map.delete(path);
+      for (let [path, meta] of this.overlay) this.map.set(path, meta);
+    }, origin), this.overlay.clear(), this.deleteSet.clear(), this.renames.clear(), this.reverse = null);
+  }
+  /** Drop all staged state without publishing it. For a failed operation the
+   *  caller has already rolled back on disk. */
+  rollback() {
+    this.overlay.clear(), this.deleteSet.clear(), this.renames.clear(), this.reverse = null;
+  }
+};
+
+// src/crdt/index-room.ts
+var FILEMETA_MAP = "filemeta_v0", IndexRoom = class {
+  constructor(deps) {
+    this.doc = new Doc(), this.store = new SyncStore(this.doc.getMap(FILEMETA_MAP)), this.provider = new NoteProvider(this.doc, {
+      // The provider classifies frames so a handshake reply is never gated
+      // behind an op. The index room has no create-ack gate, so both classes
+      // take the same path out.
+      send: (frame) => deps.send(frame),
+      onSynced: deps.onSynced
+    });
+  }
+  /** Advertise syncStep1 and start exchanging state. */
+  connect() {
+    this.provider.connect();
+  }
+  /** Transport up/down. Down buffers rather than drops — an index write made
+   *  offline is a claim, and losing it silently is the failure mode the server
+   *  tail log exists to prevent on the other side of the wire. */
+  setConnected(connected) {
+    this.provider.setConnected(connected);
+  }
+  /** Feed an inbound `crdt_index_msg` frame. */
+  receive(b64) {
+    this.provider.receive(b64);
+  }
+  /** True once the peer's state has landed. Reading the store before this is
+   *  legal but answers only from local layers — a caller that needs to know
+   *  the difference (do not mint an id for a path the server already knows)
+   *  must wait for it. */
+  get synced() {
+    return this.provider.synced;
+  }
+  destroy() {
+    this.provider.destroy(), this.doc.destroy();
+  }
+};
+
+// src/crdt/note-id-map.ts
+var NoteIdMap = class _NoteIdMap {
+  /** Pass the live index room's store to sync identity with the vault. The
+   *  default is a detached doc: `fromJSON` and any test that just wants a map
+   *  still work, they simply have no peers. */
+  constructor(store) {
+    this.batching = !1;
+    this.store = store != null ? store : new SyncStore(new Doc().getMap(FILEMETA_MAP));
+  }
+  flush() {
+    this.batching || this.store.commit();
+  }
+  /** Run `fn` with commits deferred, then publish once.
+   *
+   *  A folder move stages a rename per descendant. Committing each one
+   *  separately reaches observers as N updates — N chances to see a half-moved
+   *  folder — which is the shape of the folder-rename bugs we have had. */
+  batch(fn) {
+    let outer = this.batching;
+    this.batching = !0;
+    try {
+      fn();
+    } finally {
+      this.batching = outer, this.flush();
+    }
+  }
+  get(path) {
+    return this.store.get(path);
+  }
+  /** Resolve `path`'s id, minting a fresh UUIDv7 if this is the first time it
+   *  has been seen. Throws on a garbage path — see `SyncStore.getOrMint`. */
+  getOrMint(path) {
+    let id2 = this.store.getOrMint(path);
+    return this.flush(), id2;
+  }
+  pathForId(id2) {
+    return this.store.pathForId(id2);
+  }
+  /** Learn a mapping. Unlike `getOrMint` this refuses garbage quietly rather
+   *  than throwing: it arrives from pull feeds and push responses, where one
+   *  bad row must not take down the batch. */
+  set(path, id2) {
+    !path || path === "null" || path === "undefined" || !id2 || (this.store.set(path, { note_id: id2 }), this.flush());
+  }
+  delete(path) {
+    this.store.delete(path), this.flush();
+  }
+  rename(oldPath, newPath) {
+    this.store.rename(oldPath, newPath), this.flush();
+  }
+  clear() {
+    this.store.clear();
+  }
+  toJSON() {
+    return Object.fromEntries(this.store.entries().map(([path, meta]) => [path, meta.note_id]));
+  }
+  static fromJSON(o) {
+    let m = new _NoteIdMap();
+    return m.batch(() => {
+      for (let [p, id2] of Object.entries(o != null ? o : {})) m.set(p, id2);
+    }), m;
+  }
+};
+
+// src/crdt/schema.ts
+async function ensureDocSchema(vaultId, storage, dbs) {
+  let markerKey = `engram-crdt-doc-schema/${vaultId}`;
+  if (storage.getItem(markerKey) === "2")
+    return !1;
+  let allDbs = await dbs.list(), prefix = `${vaultId}/`, dbsToWipe = allDbs.filter((db) => {
+    var _a, _b;
+    return (_b = (_a = db.name) == null ? void 0 : _a.startsWith(prefix)) != null ? _b : !1;
+  }).map((db) => db.name);
+  for (let name of dbsToWipe)
+    await dbs.drop(name);
+  return storage.setItem(markerKey, "2"), !0;
+}
+
+// src/crdt/invariants.ts
+var list = (items, max2 = 5) => {
+  let all2 = [...items], head = all2.slice(0, max2).join(", ");
+  return all2.length > max2 ? `${head} (+${all2.length - max2} more)` : head;
+}, STANDARD_INVARIANTS = [
+  {
+    id: "removed-implies-not-resident",
+    description: "A tombstoned note must have no resident Y.Doc",
+    check(ctx) {
+      let bad = [...ctx.removedNoteIds].filter((id2) => ctx.residentNoteIds.has(id2));
+      return bad.length ? `resident docs for removed note_ids: ${list(bad)}` : null;
+    }
+  },
+  {
+    id: "removed-implies-not-enrolled",
+    description: "A tombstoned note must not hold an open room",
+    check(ctx) {
+      let bad = [...ctx.removedNoteIds].filter((id2) => ctx.enrolledNoteIds.has(id2));
+      return bad.length ? `open rooms for removed note_ids: ${list(bad)}` : null;
+    }
+  },
+  {
+    id: "enrolled-implies-resident",
+    description: "An enrolled note must have a resident doc to advertise",
+    check(ctx) {
+      let bad = [...ctx.enrolledNoteIds].filter((id2) => !ctx.residentNoteIds.has(id2));
+      return bad.length ? `enrolled but not resident: ${list(bad)}` : null;
+    }
+  },
+  {
+    id: "live-bound-implies-mapped",
+    description: "A live-bound path must resolve to a note_id",
+    check(ctx) {
+      let bad = [...ctx.liveBoundPaths].filter((p) => ctx.idForPath(p) === null);
+      return bad.length ? `live-bound paths with no note_id: ${list(bad)}` : null;
+    }
+  },
+  {
+    id: "id-map-bijective",
+    description: "path\u2192id and id\u2192path must agree in both directions",
+    check(ctx) {
+      let bad = [];
+      for (let path of ctx.mappedPaths) {
+        let id2 = ctx.idForPath(path);
+        id2 !== null && ctx.pathForId(id2) !== path && bad.push(`${path}\u2192${id2}\u2192${ctx.pathForId(id2)}`);
+      }
+      return bad.length ? `id-map direction mismatch: ${list(bad)}` : null;
+    }
+  }
+], InvariantChecker = class {
+  constructor(opts) {
+    this.opts = opts;
+    this.timer = null;
+    var _a;
+    this.invariants = (_a = opts.invariants) != null ? _a : STANDARD_INVARIANTS;
+  }
+  /** Run every invariant once. Returns the violations found (also reported via
+   *  onViolation). A throwing invariant is itself a violation — a check that
+   *  cannot evaluate is never evidence that the property holds. */
+  async checkAll() {
+    let ctx = this.opts.getContext(), violations = [];
+    for (let inv of this.invariants) {
+      let detail;
+      try {
+        detail = await inv.check(ctx);
+      } catch (e) {
+        detail = `check threw: ${e instanceof Error ? e.message : String(e)}`;
+      }
+      if (detail !== null) {
+        let violation = { id: inv.id, description: inv.description, detail };
+        violations.push(violation), this.opts.onViolation(violation);
+      }
+    }
+    return violations;
+  }
+  startPeriodicChecks(ms) {
+    var _a;
+    if (this.timer !== null) return;
+    let schedule = (_a = this.opts.setInterval) != null ? _a : ((cb, delay) => window.setInterval(cb, delay));
+    this.timer = schedule(() => {
+      this.checkAll();
+    }, ms);
+  }
+  stop() {
+    var _a;
+    if (this.timer === null) return;
+    ((_a = this.opts.clearInterval) != null ? _a : ((id2) => window.clearInterval(id2)))(this.timer), this.timer = null;
+  }
+};
+
 // node_modules/lib0/indexeddb.js
 var rtop = (request) => create4((resolve, reject) => {
   request.onerror = (event) => reject(new Error(event.target.error)), request.onsuccess = (event) => resolve(event.target.result);
@@ -14591,170 +14954,6 @@ function mergeDiskOntoDoc(base, disk, current) {
   let dmp3 = new import_diff_match_patch3.diff_match_patch(), patches = dmp3.patch_make(base, disk), [merged, applied] = dmp3.patch_apply(patches, current);
   return { text: merged, clean: applied.every(Boolean) };
 }
-
-// node_modules/y-protocols/sync.js
-var messageYjsSyncStep1 = 0, messageYjsSyncStep2 = 1, messageYjsUpdate = 2, writeSyncStep1 = (encoder, doc2) => {
-  writeVarUint(encoder, messageYjsSyncStep1);
-  let sv = encodeStateVector(doc2);
-  writeVarUint8Array(encoder, sv);
-}, writeSyncStep2 = (encoder, doc2, encodedStateVector) => {
-  writeVarUint(encoder, messageYjsSyncStep2), writeVarUint8Array(encoder, encodeStateAsUpdate(doc2, encodedStateVector));
-}, readSyncStep1 = (decoder, encoder, doc2) => writeSyncStep2(encoder, doc2, readVarUint8Array(decoder)), readSyncStep2 = (decoder, doc2, transactionOrigin, errorHandler) => {
-  try {
-    applyUpdate(doc2, readVarUint8Array(decoder), transactionOrigin);
-  } catch (error) {
-    errorHandler != null && errorHandler(
-      /** @type {Error} */
-      error
-    ), console.error("Caught error while handling a Yjs update", error);
-  }
-}, writeUpdate = (encoder, update) => {
-  writeVarUint(encoder, messageYjsUpdate), writeVarUint8Array(encoder, update);
-}, readUpdate = readSyncStep2, readSyncMessage = (decoder, encoder, doc2, transactionOrigin, errorHandler) => {
-  let messageType = readVarUint(decoder);
-  switch (messageType) {
-    case messageYjsSyncStep1:
-      readSyncStep1(decoder, encoder, doc2);
-      break;
-    case messageYjsSyncStep2:
-      readSyncStep2(decoder, doc2, transactionOrigin, errorHandler);
-      break;
-    case messageYjsUpdate:
-      readUpdate(decoder, doc2, transactionOrigin, errorHandler);
-      break;
-    default:
-      throw new Error("Unknown message type");
-  }
-  return messageType;
-};
-
-// src/crdt/wire.ts
-var MESSAGE_SYNC = 0;
-function toB64(bytes) {
-  return btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(""));
-}
-function fromB64(b64) {
-  return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-}
-
-// src/crdt/note-provider.ts
-var NoteProvider = class {
-  constructor(doc2, opts = {}) {
-    /** True once an inbound syncStep2 has been applied (Relay parity). */
-    this.synced = !1;
-    this.connected = !1;
-    /** True when this note has an OPEN room — it advertises syncStep1 (the
-     *  down-sync PULL request) on connect + reconnect. A note that only SENDS
-     *  (a cold edit to a closed note) or only RECEIVES (vault-channel fan-out)
-     *  stays un-advertised: it delivers/merges ops WITHOUT opening a room, so an
-     *  idle note never contributes to the server room fan-out (the connect-storm
-     *  the fan-out design avoids). Set via setAdvertised on enroll. */
-    this.advertised = !1;
-    /** Frames produced while the transport was down; flushed on reconnect. Each
-     *  keeps its own kind: a buffered frame must be re-offered under the SAME
-     *  classification it was produced with, or the flush would re-gate a
-     *  handshake reply as an op and strand it in the buffer forever. */
-    this.buffer = [];
-    var _a;
-    this.doc = doc2, this.send = (_a = opts.send) != null ? _a : (() => !1), this.onSynced = opts.onSynced, this.active = !opts.deferActivation, this.updateHandler = (update, origin) => {
-      if (origin === this || !this.active)
-        return;
-      let encoder = createEncoder();
-      writeVarUint(encoder, MESSAGE_SYNC), writeUpdate(encoder, update), this.broadcast(toB64(toUint8Array(encoder)), "op");
-    }, this.doc.on("update", this.updateHandler);
-  }
-  /** Enable broadcasting of local doc updates. Call ONLY after local persistence
-   *  has finished replaying (IndexedDB whenSynced), so the replayed state is not
-   *  re-broadcast — syncStep1 on connect already advertises it. No-op if the
-   *  provider started active (a direct, no-persistence caller). */
-  activate() {
-    this.active = !0;
-  }
-  /** True when the server holds our latest state: connected, we have seen at
-   *  least one inbound syncStep2, and nothing is waiting in the offline send
-   *  buffer. Idle eviction (ProviderRegistry.closeDoc) is data-safe ONLY then — an
-   *  offline/unsynced/buffered doc must stay resident so its edits re-advertise on
-   *  reconnect (the switch-away recovery guarantee; evicting it would reintroduce
-   *  the "moving between files, only some make it" data-loss class). */
-  isFullySynced() {
-    return this.connected && this.synced && this.buffer.length === 0;
-  }
-  /** True when this doc holds local work the server has NOT received: the
-   *  handshake never completed, or frames are sitting in the offline buffer.
-   *
-   *  Deliberately NOT gated on `connected`, unlike isFullySynced: a doc whose
-   *  frames were all handed to the transport before the socket dropped has
-   *  nothing undelivered, and treating a momentary disconnect as data-at-risk
-   *  would make every offline delete leave a keep-both copy behind. Eviction
-   *  safety needs the stricter question (is the server current RIGHT NOW);
-   *  a destructive path needs this one (would teardown lose anything). */
-  hasUndeliveredWork() {
-    return !this.synced || this.buffer.length > 0;
-  }
-  /** Swap the transport (e.g. after a socket reconnect built a fresh channel).
-   *  The doc + buffer are untouched. */
-  setSend(send) {
-    this.send = send;
-  }
-  /** Relay's broadcastMessage: send now if connected, else buffer for the next
-   *  onopen flush. A refused send (transport down mid-flight) also buffers. */
-  broadcast(frame, kind) {
-    this.connected && this.send(frame, kind) || this.buffer.push({ frame, kind });
-  }
-  /** Relay's onopen: (re)connect the transport. */
-  connect() {
-    this.setConnected(!0);
-  }
-  /** Open (true) or close (false) this note's room. Advertising sends syncStep1
-   *  on the false->true EDGE only (the down-sync pull). Un-advertising stops the
-   *  re-advertise but leaves the transport connected — SEND/RECEIVE of ops still
-   *  work (idle notes converge over the fan-out without a room).
-   *
-   *  Transition-guarded: a redundant setAdvertised(true) on an ALREADY-advertised
-   *  note must NOT re-fire syncStep1. The server answers every inbound syncStep1
-   *  with a fresh [syncStep2, syncStep1] pair, so a re-enroll on every
-   *  `crdt_doc_ready` announce (which the server also sends to the sender) turned
-   *  into an endless re-handshake storm. Relay sends syncStep1 once per
-   *  connection; a real re-handshake goes reset()->enroll() (advertised flips
-   *  false then true, so this edge fires again). */
-  setAdvertised(advertised) {
-    this.advertised !== advertised && (this.advertised = advertised, advertised && this.connected && this.sendSyncStep1());
-  }
-  setConnected(connected) {
-    if (!connected) {
-      this.connected = !1;
-      return;
-    }
-    let wasConnected = this.connected;
-    this.connected = !0, this.advertised && !wasConnected && this.sendSyncStep1();
-    let pending = this.buffer.splice(0);
-    for (let held of pending)
-      this.send(held.frame, held.kind) || this.buffer.push(held);
-  }
-  sendSyncStep1() {
-    let encoder = createEncoder();
-    writeVarUint(encoder, MESSAGE_SYNC), writeSyncStep1(encoder, this.doc), this.send(toB64(toUint8Array(encoder)), "handshake");
-  }
-  /** Relay's messageHandlers[messageSync]: apply an inbound frame and, for an
-   *  inbound syncStep1, reply with syncStep2. The reply is sent ONLY when it
-   *  carries a sub-message (length > 1) — a syncStep2/update yields an empty
-   *  reply, so there's no STEP1 echo loop. `this` is the apply origin so the
-   *  updateHandler above suppresses re-sending remote-applied ops. */
-  receive(frameB64) {
-    var _a;
-    let decoder = createDecoder(fromB64(frameB64));
-    if (readVarUint(decoder) !== MESSAGE_SYNC) return;
-    let reply = createEncoder();
-    writeVarUint(reply, MESSAGE_SYNC);
-    let syncType = readSyncMessage(decoder, reply, this.doc, this);
-    length(reply) > 1 && this.broadcast(toB64(toUint8Array(reply)), "handshake"), syncType === messageYjsSyncStep2 && !this.synced && (this.synced = !0, (_a = this.onSynced) == null || _a.call(this));
-  }
-  /** Detach the update listener. Call ONLY when the note truly closes / on
-   *  unload — NOT on a transport reconnect (Relay's provider.destroy). */
-  destroy() {
-    this.doc.off("update", this.updateHandler);
-  }
-};
 
 // src/crdt/bridge.ts
 var import_diff_match_patch4 = __toESM(require_diff_match_patch(), 1), dmp2 = new import_diff_match_patch4.diff_match_patch();
@@ -23817,7 +24016,24 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     /** Path -> note_id sidecar, hydrated from data.json on load. Used by later
      *  tasks to mint ids for new notes, learn ids from pull responses, and key
      *  the CRDT manager by note_id instead of path. */
-    this.noteIdMap = new NoteIdMap();
+    /** The live channel, for seams that outlive a single socket. `noteStream` is
+     *  the same object under a narrower interface; the index room needs the
+     *  concrete type for `sendIndexCrdt`. */
+    this.indexChannel = null;
+    /** The per-vault index room (#362): the shared `filemeta_v0` doc that IS
+     *  note identity. Constructed once and re-pointed at each new socket, since
+     *  the doc outlives the connection — a frame produced while the socket is
+     *  down is buffered by the provider and flushed on rejoin. */
+    this.indexRoom = new IndexRoom({
+      send: (b64) => {
+        var _a, _b;
+        return (_b = (_a = this.indexChannel) == null ? void 0 : _a.sendIndexCrdt(b64)) != null ? _b : !1;
+      }
+    });
+    /** Path -> note_id identity. Backed by `indexRoom.store` as of #362, so it
+     *  is a view onto the shared doc rather than a private map hydrated from
+     *  data.json. data.json is now a CACHE of it, not the source of truth. */
+    this.noteIdMap = new NoteIdMap(this.indexRoom.store);
     this.syncLog = new SyncLog();
     /** Per-install device id sent as X-Device-Id so the backend attributes its
      *  sync watermark per device. Random UUID minted on first load, persisted
@@ -24404,7 +24620,11 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       "enableCrdt"
     ])
       delete this.settings[legacy];
-    this.syncGateAcceptedFor = (_a = data == null ? void 0 : data.syncGateAcceptedFor) != null ? _a : null, this.noteIdMap = NoteIdMap.fromJSON(data == null ? void 0 : data.noteIds);
+    this.syncGateAcceptedFor = (_a = data == null ? void 0 : data.syncGateAcceptedFor) != null ? _a : null, this.noteIdMap.batch(() => {
+      var _a2;
+      for (let [path, id2] of Object.entries((_a2 = data == null ? void 0 : data.noteIds) != null ? _a2 : {}))
+        this.noteIdMap.set(path, id2);
+    });
     let dirty = !1, migratedUrl = migrateCloudApiUrl(this.settings.apiUrl, ENGRAM_CLOUD_URL);
     migratedUrl && migratedUrl !== this.settings.apiUrl && (this.settings.apiUrl = migratedUrl, dirty = !0), migrateBackendMode(this.settings, ENGRAM_CLOUD_URL) && (dirty = !0), this.settings.clientId || (this.settings.clientId = await generateClientId(this.app), dirty = !0), this.deviceId = (_b = data == null ? void 0 : data.deviceId) != null ? _b : null, this.deviceId || (this.deviceId = crypto.randomUUID(), dirty = !0), dirty && await this.writePluginData({
       ...data,
@@ -24836,7 +25056,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       }, channel.onPlanState = (raw) => {
         let parsed = parsePlanState(raw, Date.now());
         parsed && queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
-      }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.syncEngine.setCrdtPorts({
+      }, this.noteStream = channel, this.indexChannel = channel, this.indexRoom.setConnected(!0), this.indexRoom.connect(), this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.syncEngine.setCrdtPorts({
         create: (id2, path) => channel.crdtCreate(id2, path),
         // Direct AWAITED delete for handleRename's ordered tombstone->
         // resurrect relocation (the durable-queue delete is still wired
@@ -24936,7 +25156,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         }
         (_a2 = this.crdtLiveViews) == null || _a2.refresh(), this.refreshDebugApi();
         let wiring = this.crdtWiring;
-        wiring && (channel.onCrdtMessage = wiring.onCrdtMessage, channel.onCrdtDocReady = wiring.onCrdtDocReady, channel.onCrdtNoteNotFound = wiring.onCrdtNoteNotFound, channel.onNoteYjsUpdate = wiring.onNoteYjsUpdate), channel.onCrdtJoined = () => {
+        wiring && (channel.onCrdtMessage = wiring.onCrdtMessage, channel.onCrdtDocReady = wiring.onCrdtDocReady, channel.onCrdtNoteNotFound = wiring.onCrdtNoteNotFound, channel.onNoteYjsUpdate = wiring.onNoteYjsUpdate);
+        let indexRoom = this.indexRoom;
+        indexRoom && (channel.onIndexMessage = (b64) => indexRoom.receive(b64)), channel.onCrdtJoined = () => {
           var _a3;
           rlog().info(
             "crdt",

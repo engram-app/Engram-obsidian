@@ -27,6 +27,7 @@ import { migrateCloudApiUrl, withClearedAuth } from "./auth-state";
 import { migrateBackendMode, switchMode } from "./backend-mode";
 import { BaseStore } from "./base-store";
 import { connectRetryDelayMs, makeCrdtCatchupSender, NoteChannel } from "./channel";
+import { IndexRoom } from "./crdt/index-room";
 import { liveBindingPlugin, setLiveBindingCoordinator } from "./crdt/live/live-binding";
 import { CrdtLiveViews } from "./crdt/live/live-views";
 import { NoteIdMap } from "./crdt/note-id-map";
@@ -218,7 +219,34 @@ export default class EngramSyncPlugin extends Plugin {
 	/** Path -> note_id sidecar, hydrated from data.json on load. Used by later
 	 *  tasks to mint ids for new notes, learn ids from pull responses, and key
 	 *  the CRDT manager by note_id instead of path. */
-	noteIdMap: NoteIdMap = new NoteIdMap();
+	/** The live channel, for seams that outlive a single socket. `noteStream` is
+	 *  the same object under a narrower interface; the index room needs the
+	 *  concrete type for `sendIndexCrdt`. */
+	private indexChannel: NoteChannel | null = null;
+
+	/** The per-vault index room (#362): the shared `filemeta_v0` doc that IS
+	 *  note identity. Constructed once and re-pointed at each new socket, since
+	 *  the doc outlives the connection — a frame produced while the socket is
+	 *  down is buffered by the provider and flushed on rejoin. */
+	indexRoom: IndexRoom = new IndexRoom({
+		// Capability check, not a swallowed error. A channel that predates this
+		// seam reports "not deliverable" and the provider BUFFERS the frame,
+		// flushing it on the next connect — which is the same contract as being
+		// offline. Throwing here would abort the rest of connectChannel and take
+		// note sync down with it, so the failure mode has to be "held", not
+		// "crash the connect path".
+		send: (b64) => {
+			const channel = this.indexChannel;
+			return typeof channel?.sendIndexCrdt === "function"
+				? channel.sendIndexCrdt(b64)
+				: false;
+		},
+	});
+
+	/** Path -> note_id identity. Backed by `indexRoom.store` as of #362, so it
+	 *  is a view onto the shared doc rather than a private map hydrated from
+	 *  data.json. data.json is now a CACHE of it, not the source of truth. */
+	noteIdMap: NoteIdMap = new NoteIdMap(this.indexRoom.store);
 	syncLog: SyncLog = new SyncLog();
 	/** Per-install device id sent as X-Device-Id so the backend attributes its
 	 *  sync watermark per device. Random UUID minted on first load, persisted
@@ -1280,7 +1308,20 @@ export default class EngramSyncPlugin extends Plugin {
 			delete (this.settings as unknown as Record<string, unknown>)[legacy];
 		}
 		this.syncGateAcceptedFor = data?.syncGateAcceptedFor ?? null;
-		this.noteIdMap = NoteIdMap.fromJSON(data?.noteIds);
+		// SEED the existing map rather than replacing it. The instance is bound to
+		// `indexRoom.store`, and every holder (sync engine, live views) captures
+		// the instance — swapping it here would leave them pointed at a map that
+		// is no longer the vault's identity.
+		//
+		// data.json is now a cache: it warms the store so the plugin can resolve
+		// ids offline, before the room has synced. Whatever the room brings down
+		// merges over it — CRDT, so a stale cached entry loses to a real claim
+		// rather than fighting it.
+		this.noteIdMap.batch(() => {
+			for (const [path, id] of Object.entries(data?.noteIds ?? {})) {
+				this.noteIdMap.set(path, id);
+			}
+		});
 		// Migrate a stored Cloud apiUrl off the legacy SPA host (app.engram.page,
 		// which 405s API POSTs post-cutover) onto the canonical REST host. Same
 		// backend + credentials — only the edge hostname moved, so auth is kept.
@@ -2171,6 +2212,11 @@ export default class EngramSyncPlugin extends Plugin {
 				};
 
 				this.noteStream = channel;
+				this.indexChannel = channel;
+				// Advertise syncStep1 for the index doc on every (re)connect, the same
+				// way a note room re-solicits its state.
+				this.indexRoom.setConnected(true);
+				this.indexRoom.connect();
 				if (this.authProvider) {
 					// setAuthProbe already wired above at construction (same channel
 					// object, same closure), so re-wiring it here would be a no-op.
@@ -2334,6 +2380,13 @@ export default class EngramSyncPlugin extends Plugin {
 						channel.onCrdtDocReady = wiring.onCrdtDocReady;
 						channel.onCrdtNoteNotFound = wiring.onCrdtNoteNotFound;
 						channel.onNoteYjsUpdate = wiring.onNoteYjsUpdate;
+					}
+					// The per-vault index room (#362). Re-pointed on every reconnect
+					// alongside the note handlers, for the same reason: the room
+					// outlives the socket, so a new channel needs its inbound route.
+					const indexRoom = this.indexRoom;
+					if (indexRoom) {
+						channel.onIndexMessage = (b64) => indexRoom.receive(b64);
 					}
 					// Deferred activation: only engage CRDT routing in the SyncEngine
 					// after the server confirms the crdt: topic join. Against a non-CRDT

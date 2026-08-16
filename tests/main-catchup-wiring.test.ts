@@ -92,6 +92,14 @@ function makeFakeThis(catchup: () => Promise<void>, pull: () => Promise<number>,
 			set: () => {},
 			toJSON: () => ({}),
 		},
+		// connectChannel re-points the index room at each new socket (#362). The
+		// real field is always initialised, so the double models it rather than
+		// the production path defending against its absence.
+		indexRoom: {
+			setConnected: () => {},
+			connect: () => {},
+			receive: () => {},
+		},
 		app: {
 			workspace: { getLeavesOfType: () => [] },
 		},

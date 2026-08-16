@@ -130,6 +130,21 @@ export class SyncStore {
 	 *  devices until `commit()`. */
 	set(path: string, meta: FileMeta): void {
 		const resolved = this.resolvePath(path);
+
+		// ID-KEYED REMOVAL. An entry naming this note at some OTHER path is stale
+		// the moment we claim it here — a claim is a MOVE, not a copy. This is the
+		// same rule the server applies in `Identity.mutate`, and it has to hold on
+		// both sides or the two disagree about what a claim means.
+		//
+		// Without it, two paths resolve to one id and `pathForId` answers with
+		// whichever was written last, which is how inbound CRDT content for a note
+		// gets flushed onto the wrong file.
+		const prior = this.pathForId(meta.note_id);
+		if (prior && prior !== resolved) {
+			this.overlay.delete(prior);
+			this.deleteSet.add(prior);
+		}
+
 		this.overlay.set(resolved, meta);
 		// A set UNDOES a pending delete of the same path: staging both and
 		// promoting delete-then-set would otherwise depend on commit order.
@@ -196,6 +211,39 @@ export class SyncStore {
 		}
 
 		return this.reverse.get(note_id) ?? null;
+	}
+
+	/** Every live entry, committed + staged, with deletions applied. The
+	 *  snapshot `data.json` persistence and any full-vault reconcile read. */
+	entries(): [string, FileMeta][] {
+		const out = new Map<string, FileMeta>();
+		this.map.forEach((meta, path) => {
+			if (!this.deleteSet.has(path)) out.set(path, meta);
+		});
+		for (const [path, meta] of this.overlay) {
+			if (!this.deleteSet.has(path)) out.set(path, meta);
+		}
+		return [...out];
+	}
+
+	/** Drop everything, staged and committed.
+	 *
+	 *  Used on vault change: this is per-vault identity state, and carrying ids
+	 *  across vaults routes CRDT frames at another vault's notes (plugin #200).
+	 *  The committed half is cleared inside a transaction so peers see one
+	 *  update, not one per path. */
+	clear(): void {
+		this.overlay.clear();
+		this.deleteSet.clear();
+		this.renames.clear();
+		this.pendingUpload.clear();
+		this.reverse = null;
+
+		if (this.map.size > 0) {
+			this.map.doc?.transact(() => {
+				this.map.clear();
+			});
+		}
 	}
 
 	/** True when there is staged state that `commit()` would publish. */
