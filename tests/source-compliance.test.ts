@@ -340,4 +340,49 @@ describe("privacy — no content retention for export", () => {
 		const found = findInSources((line) => /recorder\??\.\s*record\s*\(/.test(line));
 		expect(found).toEqual([]);
 	});
+
+	// `anomaly()` is the ONE rlog path that ships with diagnostics OFF (it
+	// passes force=true, bypassing both `enabled` and the level threshold).
+	// Every other rlog call is gated behind a setting the user opted into, so
+	// paths travelling through those are consented telemetry. Anomaly lines
+	// are not consented, and remote-log.ts states the contract in a comment:
+	// "counts and reasons ONLY. Never a path, a title, or note content."
+	// A comment is not a control. This is.
+	//
+	// Only INTERPOLATED expressions are inspected, never the literal prose:
+	// the existing call site legitimately reads "replay produced no files:",
+	// and a guard that matched author-written words would fire on that and
+	// get deleted. Runtime values are the thing that can carry user data.
+	test("anomaly() interpolates no path, title, or content", () => {
+		// Naive paren matching — it does not know about parens inside string
+		// literals, so an unbalanced one captures MORE text than the call.
+		// That errs toward flagging, which is the safe direction for a guard.
+		const calls: Finding[] = [];
+		for (const f of sources) {
+			for (const m of f.text.matchAll(/\.anomaly\s*\(/g)) {
+				const start = (m.index ?? 0) + m[0].length;
+				let depth = 1;
+				let i = start;
+				for (; i < f.text.length && depth > 0; i++) {
+					if (f.text[i] === "(") depth++;
+					else if (f.text[i] === ")") depth--;
+				}
+				const args = f.text.slice(start, i - 1);
+				const line = f.text.slice(0, m.index).split("\n").length;
+				for (const expr of args.match(/\$\{[^}]*\}/g) ?? []) {
+					if (/\b(path|file|title|content|name|query|folder|text|body)\b/i.test(expr)) {
+						calls.push({ file: f.rel, line, snippet: expr });
+					}
+				}
+			}
+		}
+		expect(calls).toEqual([]);
+	});
+
+	// If anomaly() ever loses its call sites the guard above passes vacuously,
+	// exactly like the sync-recorder test did before it was fixed.
+	test("anomaly() still has call sites for the guard to inspect", () => {
+		const sites = sources.flatMap((f) => f.text.match(/\.anomaly\s*\(/g) ?? []);
+		expect(sites.length).toBeGreaterThan(0);
+	});
 });
