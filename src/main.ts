@@ -1258,6 +1258,11 @@ export default class EngramSyncPlugin extends Plugin {
 		});
 		this.crdtOpQueue?.dispose();
 		this.syncEngine?.destroy();
+		// Publish any claim staged in the final tick BEFORE the socket goes. It
+		// used to run after disconnect, so the frame was refused, buffered, and
+		// then thrown away with the provider — the id survived in data.json but
+		// the vault was never told.
+		this.noteIdMap.flushNow();
 		this.noteStream?.disconnect();
 		setLiveBindingCoordinator(null);
 		// destroy() captures each bound doc's content SYNCHRONOUSLY before it
@@ -1269,7 +1274,6 @@ export default class EngramSyncPlugin extends Plugin {
 		// Publish anything staged in the final tick BEFORE the socket goes, then
 		// detach the room's listeners. Without the flush a claim made in the last
 		// tick commits into a doc whose provider is already discarded.
-		this.noteIdMap.flushNow();
 		this.indexRoom.destroy();
 		void this.crdtManager?.destroyAll();
 		// CrdtChannel has no teardown — it is a stateless frame dispatcher with no

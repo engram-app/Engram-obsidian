@@ -44,8 +44,15 @@ export interface FileMeta {
 export class SyncStore {
 	private readonly overlay = new Map<string, FileMeta>();
 	private readonly deleteSet = new Set<string>();
-	/** old path -> new path. */
-	private readonly renames = new Map<string, string>();
+	/** old path -> where it went, and WHICH entry moved.
+	 *
+	 *  Keyed by the moving entry's id, not by path alone. A path-keyed chain
+	 *  crosses lineages whenever one rename's new path is another's old path —
+	 *  a same-tick rotation (`b->c` then `a->b`) walked a->b->c and resolved
+	 *  `a` onto c's id. `id` is null for a redirect recorded on a path this
+	 *  store has never seen: that exists only so a folder cascade converges on
+	 *  one id, and a chain must stop there rather than guess. */
+	private readonly renames = new Map<string, { to: string; id: string | null }>();
 	/** note_ids minted locally whose note the server has not acknowledged. */
 	private readonly pendingUpload = new Set<string>();
 
@@ -104,14 +111,25 @@ export class SyncStore {
 	 *  move followed by a second move of the same subtree). Bounded by the number
 	 *  of pending renames, and self-referential input cannot loop it. */
 	private resolvePath(path: string): string {
-		let current = path;
-		const seen = new Set<string>([current]);
+		const first = this.renames.get(path);
+		if (!first) return path;
 
-		while (this.renames.has(current)) {
-			const next = this.renames.get(current) as string;
-			if (seen.has(next)) break;
-			seen.add(next);
-			current = next;
+		let current = first.to;
+		const seen = new Set<string>([path, current]);
+
+		// Follow only while the SAME entry keeps moving. A hop belonging to a
+		// different note is someone else's rename that happens to share this key.
+		while (first.id) {
+			const next = this.renames.get(current);
+			if (!next || next.id !== first.id) break;
+			// The chain closed back on where it started: the entry was moved away
+			// and moved back in the same tick, so it is home. Stopping one hop
+			// short here reported it at an intermediate path that nothing holds,
+			// and the caller minted a second id for a note that already had one.
+			if (next.to === path) return path;
+			if (seen.has(next.to)) break;
+			current = next.to;
+			seen.add(current);
 		}
 
 		return current;
@@ -128,7 +146,11 @@ export class SyncStore {
 		// The rename layer is NOT about keeping the old path alive to readers —
 		// it is about not MINTING a second id for it. That distinction lives in
 		// `getOrMint`, which resolves through the redirect on purpose.
-		if (this.renames.has(path)) return null;
+		// Renamed away means gone — UNLESS something has since been staged here.
+		// A rotation (`b -> c`, then `a -> b`) makes `b` both a rename source and
+		// a rename target in the same tick, and reporting it empty made the
+		// second move re-mint for a note that already had an id.
+		if (this.renames.has(path) && !this.overlay.has(path)) return null;
 		if (this.deleteSet.has(path)) return null;
 		// Cache LAST: anything the shared doc knows outranks a local memory of it.
 		return this.overlay.get(path) ?? this.map.get(path) ?? this.cache.get(path) ?? null;
@@ -173,8 +195,18 @@ export class SyncStore {
 		// half: a folder rename fires one event per descendant, and anything that
 		// touches an old path mid-cascade must find the SAME id rather than mint a
 		// new one and resurrect the old path on every device.
-		const existing = this.getMeta(this.resolvePath(path))?.note_id ?? null;
-		if (existing) return existing;
+		const resolved = this.resolvePath(path);
+		const existing = this.getMeta(resolved)?.note_id ?? null;
+		if (existing) {
+			// If that id is known ONLY from the local cache, the vault has never
+			// been told about it. Returning it without staging a claim leaves the
+			// id live on this device and absent from the authoritative index, so
+			// another device mints a duplicate for the same file.
+			const published =
+				this.overlay.get(resolved)?.note_id ?? this.map.get(resolved)?.note_id;
+			if (!published) this.set(resolved, { note_id: existing });
+			return existing;
+		}
 
 		const note_id = uuid7();
 		this.set(path, { note_id });
@@ -250,7 +282,10 @@ export class SyncStore {
 		// never seen published a bare DELETE of it and claimed nothing at the new
 		// path, silently unclaiming a note that exists on other devices.
 		if (!meta) {
-			this.renames.set(from, newPath);
+			this.renames.set(from, { to: newPath, id: null });
+			// The target may be staged for deletion; leaving it there makes the
+			// destination read as unclaimed and anything resolving it re-mints.
+			this.deleteSet.delete(newPath);
 			this.reverse = null;
 			return;
 		}
@@ -271,7 +306,7 @@ export class SyncStore {
 		}
 
 		this.overlay.set(newPath, meta);
-		this.renames.set(from, newPath);
+		this.renames.set(from, { to: newPath, id: meta.note_id });
 		// The old path must not also be staged for deletion — `commit()` removes
 		// it via the rename, and a deleteSet entry would race the set of the new
 		// path if the two ever shared a key.

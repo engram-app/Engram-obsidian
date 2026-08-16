@@ -8880,7 +8880,14 @@ var SyncStore = class {
     this.map = map3;
     this.overlay = /* @__PURE__ */ new Map();
     this.deleteSet = /* @__PURE__ */ new Set();
-    /** old path -> new path. */
+    /** old path -> where it went, and WHICH entry moved.
+     *
+     *  Keyed by the moving entry's id, not by path alone. A path-keyed chain
+     *  crosses lineages whenever one rename's new path is another's old path —
+     *  a same-tick rotation (`b->c` then `a->b`) walked a->b->c and resolved
+     *  `a` onto c's id. `id` is null for a redirect recorded on a path this
+     *  store has never seen: that exists only so a folder cascade converges on
+     *  one id, and a chain must stop there rather than guess. */
     this.renames = /* @__PURE__ */ new Map();
     /** note_ids minted locally whose note the server has not acknowledged. */
     this.pendingUpload = /* @__PURE__ */ new Set();
@@ -8929,11 +8936,15 @@ var SyncStore = class {
    *  move followed by a second move of the same subtree). Bounded by the number
    *  of pending renames, and self-referential input cannot loop it. */
   resolvePath(path) {
-    let current = path, seen = /* @__PURE__ */ new Set([current]);
-    for (; this.renames.has(current); ) {
+    let first = this.renames.get(path);
+    if (!first) return path;
+    let current = first.to, seen = /* @__PURE__ */ new Set([path, current]);
+    for (; first.id; ) {
       let next = this.renames.get(current);
-      if (seen.has(next)) break;
-      seen.add(next), current = next;
+      if (!next || next.id !== first.id) break;
+      if (next.to === path) return path;
+      if (seen.has(next.to)) break;
+      current = next.to, seen.add(current);
     }
     return current;
   }
@@ -8941,7 +8952,7 @@ var SyncStore = class {
    *  entry for it (or it is pending deletion). */
   getMeta(path) {
     var _a, _b, _c;
-    return this.renames.has(path) || this.deleteSet.has(path) ? null : (_c = (_b = (_a = this.overlay.get(path)) != null ? _a : this.map.get(path)) != null ? _b : this.cache.get(path)) != null ? _c : null;
+    return this.renames.has(path) && !this.overlay.has(path) || this.deleteSet.has(path) ? null : (_c = (_b = (_a = this.overlay.get(path)) != null ? _a : this.map.get(path)) != null ? _b : this.cache.get(path)) != null ? _c : null;
   }
   /** Warm the local cache from `data.json`. Never staged and never published —
    *  it lets ids resolve offline, before the room has synced, without asserting
@@ -8970,11 +8981,12 @@ var SyncStore = class {
    *  file that does not exist, so the caller's null-path bug must surface here
    *  rather than downstream. */
   getOrMint(path) {
-    var _a, _b;
+    var _a, _b, _c, _d, _e;
     if (!path || path === "null" || path === "undefined")
       throw new Error(`SyncStore.getOrMint: invalid path ${JSON.stringify(path)}`);
-    let existing = (_b = (_a = this.getMeta(this.resolvePath(path))) == null ? void 0 : _a.note_id) != null ? _b : null;
-    if (existing) return existing;
+    let resolved = this.resolvePath(path), existing = (_b = (_a = this.getMeta(resolved)) == null ? void 0 : _a.note_id) != null ? _b : null;
+    if (existing)
+      return ((_e = (_c = this.overlay.get(resolved)) == null ? void 0 : _c.note_id) != null ? _e : (_d = this.map.get(resolved)) != null && _d.note_id) || this.set(resolved, { note_id: existing }), existing;
     let note_id = uuid7();
     return this.set(path, { note_id }), this.pendingUpload.add(note_id), note_id;
   }
@@ -9004,12 +9016,12 @@ var SyncStore = class {
     if (oldPath === newPath) return;
     let meta = this.getMeta(oldPath), from2 = this.resolvePath(oldPath);
     if (!meta) {
-      this.renames.set(from2, newPath), this.reverse = null;
+      this.renames.set(from2, { to: newPath, id: null }), this.deleteSet.delete(newPath), this.reverse = null;
       return;
     }
     this.renamedAway.add(from2), this.deleteSet.delete(newPath);
     let displaced = (_c = (_a = this.overlay.get(newPath)) == null ? void 0 : _a.note_id) != null ? _c : (_b = this.map.get(newPath)) == null ? void 0 : _b.note_id;
-    displaced && displaced !== meta.note_id && !this.stagedHolds(displaced) && this.evicted.add(displaced), this.overlay.set(newPath, meta), this.renames.set(from2, newPath), this.deleteSet.delete(from2), this.overlay.delete(from2), this.reverse = null;
+    displaced && displaced !== meta.note_id && !this.stagedHolds(displaced) && this.evicted.add(displaced), this.overlay.set(newPath, meta), this.renames.set(from2, { to: newPath, id: meta.note_id }), this.deleteSet.delete(from2), this.overlay.delete(from2), this.reverse = null;
   }
   /** Whether `note_id` was minted here and is still unconfirmed. */
   isPendingUpload(note_id) {
@@ -9023,24 +9035,27 @@ var SyncStore = class {
   }
   /** Reverse lookup, over committed + overlay. */
   pathForId(note_id) {
-    var _a, _b;
+    var _a, _b, _c, _d, _e;
     if (!this.reverse) {
       let index = /* @__PURE__ */ new Map();
-      for (let [path, meta] of this.cache)
-        this.deleteSet.has(path) || index.set(meta.note_id, path);
+      for (let [path, meta] of this.cache) {
+        if (this.deleteSet.has(path)) continue;
+        let live = (_c = (_a = this.overlay.get(path)) == null ? void 0 : _a.note_id) != null ? _c : (_b = this.map.get(path)) == null ? void 0 : _b.note_id;
+        live && live !== meta.note_id || index.set(meta.note_id, path);
+      }
       this.map.forEach((meta, path) => {
         this.deleteSet.has(path) || index.set(meta.note_id, path);
       });
       for (let [path, meta] of this.overlay)
         this.deleteSet.has(path) || index.set(meta.note_id, path);
       for (let from2 of this.renames.keys()) {
-        let meta = (_a = this.map.get(from2)) != null ? _a : this.cache.get(from2);
+        let meta = (_d = this.map.get(from2)) != null ? _d : this.cache.get(from2);
         meta && index.get(meta.note_id) === from2 && index.delete(meta.note_id);
       }
       for (let id2 of this.evicted) index.delete(id2);
       this.reverse = index;
     }
-    return (_b = this.reverse.get(note_id)) != null ? _b : null;
+    return (_e = this.reverse.get(note_id)) != null ? _e : null;
   }
   /** Every live entry, committed + staged, with deletions applied. The
    *  snapshot `data.json` persistence and any full-vault reconcile read. */
@@ -9091,12 +9106,12 @@ var SyncStore = class {
       for (let from2 of this.renamedAway) this.map.delete(from2);
       for (let path of this.deleteSet) this.map.delete(path);
       for (let [path, meta] of this.overlay) this.map.set(path, meta);
-    }, origin), this.overlay.clear(), this.deleteSet.clear(), this.renames.clear(), this.renamedAway.clear(), this.reverse = null);
+    }, origin), this.overlay.clear(), this.deleteSet.clear(), this.renames.clear(), this.renamedAway.clear(), this.evicted.clear(), this.reverse = null);
   }
   /** Drop all staged state without publishing it. For a failed operation the
    *  caller has already rolled back on disk. */
   rollback() {
-    this.overlay.clear(), this.deleteSet.clear(), this.renames.clear(), this.renamedAway.clear(), this.reverse = null;
+    this.overlay.clear(), this.deleteSet.clear(), this.renames.clear(), this.renamedAway.clear(), this.evicted.clear(), this.reverse = null;
   }
 };
 
@@ -14618,6 +14633,9 @@ var NoteIdMap = class _NoteIdMap {
   constructor(store) {
     this.batching = !1;
     this.flushScheduled = !1;
+    /** Called when `clear()` runs, so the vault-change backstop replaces the
+     *  index room rather than only dropping local layers. Set by main.ts. */
+    this.onReset = null;
     this.store = store != null ? store : new SyncStore(new Doc().getMap(FILEMETA_MAP));
   }
   /** Publish staged state, coalescing everything staged in the same tick.
@@ -14695,7 +14713,8 @@ var NoteIdMap = class _NoteIdMap {
     this.store.rename(oldPath, newPath), this.flush();
   }
   clear() {
-    this.store.clear();
+    var _a;
+    this.store.clear(), (_a = this.onReset) == null || _a.call(this);
   }
   toJSON() {
     return Object.fromEntries(this.store.entries().map(([path, meta]) => [path, meta.note_id]));
@@ -24073,7 +24092,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     /** Path -> note_id identity. Backed by `indexRoom.store` as of #362, so it
      *  is a view onto the shared doc rather than a private map hydrated from
      *  data.json. data.json is now a CACHE of it, not the source of truth. */
-    this.noteIdMap = new NoteIdMap(this.indexRoom.store);
+    this.noteIdMap = this.makeNoteIdMap();
     this.syncLog = new SyncLog();
     /** Per-install device id sent as X-Device-Id so the backend attributes its
      *  sync watermark per device. Random UUID minted on first load, persisted
@@ -24178,6 +24197,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
      *  session, so the two load paths (loadSettings + onload restore) don't
      *  double-toast the user. */
     this.dataRecoveryNotified = !1;
+  }
+  makeNoteIdMap() {
+    let map3 = new NoteIdMap(this.indexRoom.store);
+    return map3.onReset = () => this.resetIndexRoomForVault(), map3;
   }
   /** `?.` alone: before the first connectChannel there is no channel, and the
    *  provider correctly BUFFERS the frame for the next connect. */
@@ -24661,7 +24684,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     var _a, _b, _c, _d, _e, _f, _g, _h, _i;
     this.retireAuthProvider(), (_a = this.crdtWiring) == null || _a.dispose(), devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.api.beacon.flush(), this.syncEngine && this.savePluginData(this.syncEngine.getLastSync()), (_b = this.baseStore) == null || _b.prune(), (_c = this.baseStore) == null || _c.save().catch((e) => {
       devLog().log("base-store", `save failed: ${errMsg(e)}`);
-    }), (_d = this.crdtOpQueue) == null || _d.dispose(), (_e = this.syncEngine) == null || _e.destroy(), (_f = this.noteStream) == null || _f.disconnect(), setLiveBindingCoordinator(null), (_g = this.crdtLiveViews) == null || _g.destroy(), this.crdtLiveViews = null, this.noteIdMap.flushNow(), this.indexRoom.destroy(), (_h = this.crdtManager) == null || _h.destroyAll(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), uninstallDebugApi(), setLogSink(null), setActiveTracker(null), (_i = this.promiseTracker) == null || _i.destroy(), this.promiseTracker = null, destroyDevLog(), window["__ $YJS$ __"] = void 0;
+    }), (_d = this.crdtOpQueue) == null || _d.dispose(), (_e = this.syncEngine) == null || _e.destroy(), this.noteIdMap.flushNow(), (_f = this.noteStream) == null || _f.disconnect(), setLiveBindingCoordinator(null), (_g = this.crdtLiveViews) == null || _g.destroy(), this.crdtLiveViews = null, this.indexRoom.destroy(), (_h = this.crdtManager) == null || _h.destroyAll(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), uninstallDebugApi(), setLogSink(null), setActiveTracker(null), (_i = this.promiseTracker) == null || _i.destroy(), this.promiseTracker = null, destroyDevLog(), window["__ $YJS$ __"] = void 0;
   }
   async loadSettings() {
     var _a, _b;
@@ -25090,7 +25113,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         ) : (this.syncEngine.setCrdtPorts({ manager: null }), rlog().info(
           "crdt",
           "Disconnected before crdt: join \u2014 CRDT routing cleared, legacy path active"
-        )), (_a3 = this.crdtManager) == null || _a3.clearSynced(), (_b2 = this.crdtManager) == null || _b2.setConnected(!1));
+        )), (_a3 = this.crdtManager) == null || _a3.clearSynced(), (_b2 = this.crdtManager) == null || _b2.setConnected(!1), this.indexRoom.setConnected(!1));
       }, channel.onVaultDeleted = () => {
         var _a3;
         new import_obsidian26.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a3 = this.noteStream) == null || _a3.disconnect();
@@ -25216,7 +25239,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           rlog().warn(
             "crdt",
             `crdt: topic join rejected (reason=${reason != null ? reason : "unknown"}) \u2014 degrading to legacy pushNote path`
-          ), this.crdtEverJoined = !1, this.syncEngine.setCrdtPorts({ manager: null }), (_a3 = this.crdtManager) == null || _a3.clearSynced(), (_b2 = this.crdtManager) == null || _b2.setConnected(!1), (_c2 = this.crdtEnrollment) == null || _c2.resetAll(), reason === "crdt_proto_too_old" && (this.crdtProtoTooOldNoticeShown || (this.crdtProtoTooOldNoticeShown = !0, new import_obsidian26.Notice(
+          ), this.crdtEverJoined = !1, this.syncEngine.setCrdtPorts({ manager: null }), (_a3 = this.crdtManager) == null || _a3.clearSynced(), (_b2 = this.crdtManager) == null || _b2.setConnected(!1), this.indexRoom.setConnected(!1), (_c2 = this.crdtEnrollment) == null || _c2.resetAll(), reason === "crdt_proto_too_old" && (this.crdtProtoTooOldNoticeShown || (this.crdtProtoTooOldNoticeShown = !0, new import_obsidian26.Notice(
             "Engram sync: live sync requires a plugin update \u2014 please update the Engram vault sync plugin.",
             1e4
           ), rlog().warn(

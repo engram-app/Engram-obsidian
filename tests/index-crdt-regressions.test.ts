@@ -256,3 +256,66 @@ describe("round 2: the fixes had their own defects", () => {
 		expect(store.pathForId("Y")).toBe("a.md");
 	});
 });
+
+describe("round 3: rename chains and cache-only ids", () => {
+	// #434. A path-keyed chain crosses lineages whenever one rename's NEW path is
+	// another's OLD path. A same-tick rotation walked a->b->c and resolved `a`
+	// onto c's id — the wrong-mint cross-file overwrite shape, in the staged
+	// window before commit.
+	test("a same-tick rotation does not resolve onto the other note's id", () => {
+		const doc = new Y.Doc();
+		const shared = doc.getMap<{ note_id: string }>("filemeta_v0");
+		const store = new SyncStore(shared);
+		shared.set("note.md", { note_id: "X" });
+		shared.set("new.md", { note_id: "C" });
+
+		store.rename("note.md", "note-old.md");
+		store.rename("new.md", "note.md");
+
+		expect(store.getOrMint("new.md")).toBe("C");
+		expect(store.getOrMint("note-old.md")).toBe("X");
+	});
+
+	test("a rename round trip does not strand the original path", () => {
+		const doc = new Y.Doc();
+		const shared = doc.getMap<{ note_id: string }>("filemeta_v0");
+		const store = new SyncStore(shared);
+		shared.set("a.md", { note_id: "X" });
+
+		store.rename("a.md", "b.md");
+		store.rename("b.md", "a.md");
+
+		// Back where it started: it must NOT mint a second id for a note that
+		// already has one.
+		expect(store.getOrMint("a.md")).toBe("X");
+	});
+
+	// An id known only from data.json has never been asserted to the vault.
+	// Handing it out without staging a claim leaves it live locally and absent
+	// from the authoritative index, so another device mints a duplicate.
+	test("getOrMint publishes a claim for a cache-only id", () => {
+		const doc = new Y.Doc();
+		const shared = doc.getMap<{ note_id: string }>("filemeta_v0");
+		const store = new SyncStore(shared);
+		store.seed("a.md", { note_id: "cached" });
+
+		expect(store.getOrMint("a.md")).toBe("cached");
+		store.commit();
+
+		expect(shared.get("a.md")).toEqual({ note_id: "cached" });
+	});
+
+	// An unknown-source rename must still un-delete its target, or a same-tick
+	// delete+rename leaves the destination reading unclaimed and it re-mints.
+	test("an unknown-source rename un-deletes its target", () => {
+		const doc = new Y.Doc();
+		const shared = doc.getMap<{ note_id: string }>("filemeta_v0");
+		const store = new SyncStore(shared);
+		shared.set("b.md", { note_id: "id-b" });
+
+		store.delete("b.md");
+		store.rename("unknown.md", "b.md");
+
+		expect(store.get("b.md")).toBe("id-b");
+	});
+});
