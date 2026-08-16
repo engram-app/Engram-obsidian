@@ -38,32 +38,35 @@ const MAX_BUFFER = 200;
 const FLUSH_INTERVAL_MS = 30_000;
 const FLUSH_THRESHOLD = 20;
 
-/** Blank anything path-shaped in a message that ships WITHOUT user consent.
+/** The shape an anomaly line may take.
  *
- *  Two shapes, both drawn from what actually leaks:
- *    - a token containing a `/` or `\` separator — `Medical/labs.md`
- *    - a token ending in a file extension — `labs.md`, `board.canvas`
+ *  Values are numbers and booleans ONLY. A string cannot be passed, so there is
+ *  no free text to sanitize and nothing to evade — which is the point.
+ */
+export type AnomalyCounts = Record<string, number | boolean>;
+
+/** A fixed, developer-written slug: lowercase, digits, underscores. */
+const ANOMALY_CODE = /^[a-z0-9_]+$/;
+
+/** Render an anomaly line from a code and counts.
  *
- *  Counts and reasons survive untouched: `applied=3`, `blocked=true`,
- *  `complete=false`, `catch-up skipped — sync gate closed`. Quotes and
- *  parentheses are trimmed off each token before testing so
- *  `open 'Medical/labs.md'` is caught, not just a bare path.
+ *  Replaces a free-text message plus a redactor. The redactor could not work:
+ *  it split on whitespace, so `Divorce settlement draft.md` lost only its last
+ *  token, and `TFile.basename` — which Obsidian returns WITHOUT the extension —
+ *  survived whole. A note title IS prose; no text filter can separate it from a
+ *  reason string, because there is no difference to find.
  *
- *  Deliberately blunt. It runs only on the anomaly path, where the alternative
- *  is shipping a path with telemetry off, and over-redacting a count costs a
- *  diagnostic while under-redacting costs the user's folder structure. */
-export function redactPathLike(message: string): string {
-	return message
-		.split(/(\s+)/)
-		.map((token) => {
-			const bare = token.replace(/^["'`([]+|["'`)\].,;:]+$/g, "");
-			if (!bare) return token;
-			if (/[/\\]/.test(bare) || /\.[A-Za-z0-9]{1,6}$/.test(bare)) {
-				return token.replace(bare, "[redacted]");
-			}
-			return token;
-		})
-		.join("");
+ *  So the free text is gone. `code` is a literal slug and anything else becomes
+ *  `invalid_code`; values are coerced to a number or a boolean and anything
+ *  else is dropped. A path cannot be expressed in this type. */
+export function formatAnomaly(code: string, counts: AnomalyCounts = {}): string {
+	const safeCode = ANOMALY_CODE.test(code) ? code : "invalid_code";
+	const pairs = Object.entries(counts).flatMap(([key, value]) => {
+		if (!ANOMALY_CODE.test(key)) return [];
+		if (typeof value === "boolean") return [`${key}=${value}`];
+		return Number.isFinite(value) ? [`${key}=${value}`] : [];
+	});
+	return pairs.length > 0 ? `${safeCode} ${pairs.join(" ")}` : safeCode;
 }
 
 export class RemoteLogger {
@@ -165,21 +168,19 @@ export class RemoteLogger {
 	 *  have telemetry enabled. Prod 2026-08-13: a first sync dropped 316 of 316
 	 *  notes and produced exactly zero client log lines to look at.
 	 *
-	 *  CONTRACT — counts and reasons ONLY. Never a path, a title, or note
-	 *  content. The setting is protecting the user from verbose per-note
-	 *  telemetry, and that protection stays intact; what it must not do is hide
-	 *  the fact that sync silently did nothing.
+	 *  CONTRACT — ENFORCED BY THE TYPE, not by a filter and not by a comment.
+	 *  `code` is a developer-written slug and `counts` holds numbers and
+	 *  booleans. There is no string parameter, so a path, a title or note
+	 *  content cannot be expressed here at all.
 	 *
-	 *  ENFORCED HERE, not just asserted in a source-compliance test. That test
-	 *  reads `${...}` interpolations and cannot see `${p}`, `${dest}`,
-	 *  `${String(err)}` or a helper call — and `${String(err)}` is already the
-	 *  house idiom, appearing 7x in src/. Obsidian's adapter throws
-	 *  `ENOENT: no such file or directory, open 'Medical/labs.md'`, so ONE copy
-	 *  of that idiom into an anomaly() call ships a note path with diagnostics
-	 *  OFF. Sanitizing at the choke point catches every shape, however the
-	 *  string was built. */
-	anomaly(category: string, message: string): void {
-		this.addEntry("warn", category, redactPathLike(message), undefined, false, true);
+	 *  The previous shape took free text and ran a redactor over it. That could
+	 *  not hold: the redactor split on whitespace, so a filename with spaces
+	 *  (`Divorce settlement draft.md`) lost only its final token, and
+	 *  `TFile.basename` — no extension — survived intact. A note title is
+	 *  prose; no text filter separates it from a reason string, because there
+	 *  is nothing to separate. Removing the free text removes the problem. */
+	anomaly(category: string, code: string, counts: AnomalyCounts = {}): void {
+		this.addEntry("warn", category, formatAnomaly(code, counts), undefined, false, true);
 	}
 
 	private addEntry(

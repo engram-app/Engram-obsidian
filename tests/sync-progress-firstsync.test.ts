@@ -710,7 +710,7 @@ describe("replay outcome summary (prod 2026-08-13 blindness)", () => {
 		await engine.catchUp({ reportProgress: true });
 		await flush();
 
-		const anomaly = sent.find((e) => e.message.includes("produced no files"));
+		const anomaly = sent.find((e) => e.message.includes("replay_produced_no_files"));
 		expect(anomaly).toBeDefined();
 		expect(anomaly?.level).toBe("warn");
 		// Counts + reasons only — never a path. The diagnostics setting is
@@ -767,7 +767,7 @@ describe("the sync gate must not fake success (prod 2026-08-13 root cause)", () 
 		// The signal is the gate-skip line, not "produced no files": we now bail
 		// before walking, so there are no rows to have produced nothing from.
 		// Either way the user's pull must not silently claim success.
-		const anomaly = sent.find((e) => e.message.includes("sync gate closed"));
+		const anomaly = sent.find((e) => e.message.includes("catch_up_skipped_sync_gate_closed"));
 		expect(anomaly).toBeDefined();
 		expect(anomaly?.level).toBe("warn");
 	});

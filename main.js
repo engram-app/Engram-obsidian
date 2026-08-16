@@ -927,12 +927,10 @@ var LEVEL_SEVERITY = {
   info: 1,
   warn: 2,
   error: 3
-}, MAX_BUFFER = 200, FLUSH_INTERVAL_MS = 3e4, FLUSH_THRESHOLD = 20;
-function redactPathLike(message) {
-  return message.split(/(\s+)/).map((token) => {
-    let bare = token.replace(/^["'`([]+|["'`)\].,;:]+$/g, "");
-    return bare && (/[/\\]/.test(bare) || /\.[A-Za-z0-9]{1,6}$/.test(bare)) ? token.replace(bare, "[redacted]") : token;
-  }).join("");
+}, MAX_BUFFER = 200, FLUSH_INTERVAL_MS = 3e4, FLUSH_THRESHOLD = 20, ANOMALY_CODE = /^[a-z0-9_]+$/;
+function formatAnomaly(code, counts = {}) {
+  let safeCode = ANOMALY_CODE.test(code) ? code : "invalid_code", pairs2 = Object.entries(counts).flatMap(([key, value]) => ANOMALY_CODE.test(key) ? typeof value == "boolean" ? [`${key}=${value}`] : Number.isFinite(value) ? [`${key}=${value}`] : [] : []);
+  return pairs2.length > 0 ? `${safeCode} ${pairs2.join(" ")}` : safeCode;
 }
 var RemoteLogger = class {
   constructor() {
@@ -1006,21 +1004,19 @@ var RemoteLogger = class {
    *  have telemetry enabled. Prod 2026-08-13: a first sync dropped 316 of 316
    *  notes and produced exactly zero client log lines to look at.
    *
-   *  CONTRACT — counts and reasons ONLY. Never a path, a title, or note
-   *  content. The setting is protecting the user from verbose per-note
-   *  telemetry, and that protection stays intact; what it must not do is hide
-   *  the fact that sync silently did nothing.
+   *  CONTRACT — ENFORCED BY THE TYPE, not by a filter and not by a comment.
+   *  `code` is a developer-written slug and `counts` holds numbers and
+   *  booleans. There is no string parameter, so a path, a title or note
+   *  content cannot be expressed here at all.
    *
-   *  ENFORCED HERE, not just asserted in a source-compliance test. That test
-   *  reads `${...}` interpolations and cannot see `${p}`, `${dest}`,
-   *  `${String(err)}` or a helper call — and `${String(err)}` is already the
-   *  house idiom, appearing 7x in src/. Obsidian's adapter throws
-   *  `ENOENT: no such file or directory, open 'Medical/labs.md'`, so ONE copy
-   *  of that idiom into an anomaly() call ships a note path with diagnostics
-   *  OFF. Sanitizing at the choke point catches every shape, however the
-   *  string was built. */
-  anomaly(category, message) {
-    this.addEntry("warn", category, redactPathLike(message), void 0, !1, !0);
+   *  The previous shape took free text and ran a redactor over it. That could
+   *  not hold: the redactor split on whitespace, so a filename with spaces
+   *  (`Divorce settlement draft.md`) lost only its final token, and
+   *  `TFile.basename` — no extension — survived intact. A note title is
+   *  prose; no text filter separates it from a reason string, because there
+   *  is nothing to separate. Removing the free text removes the problem. */
+  anomaly(category, code, counts = {}) {
+    this.addEntry("warn", category, formatAnomaly(code, counts), void 0, !1, !0);
   }
   addEntry(level, category, message, stack, diagnostic, force) {
     if (!this.pushFn || !force && (!this.enabled || LEVEL_SEVERITY[level] < LEVEL_SEVERITY[this.levelThreshold]))
@@ -21514,7 +21510,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     var _a, _b, _c, _d, _e, _f;
     let serverIds = /* @__PURE__ */ new Set(), serverAttachmentPaths = /* @__PURE__ */ new Set();
     if (this.syncBlocked)
-      return devLog().log("sync-blocked", "catchupViaSeqReplay skipped \u2014 gate closed"), rlog().anomaly("sync", "catch-up skipped \u2014 sync gate closed (blocked=true)"), {
+      return devLog().log("sync-blocked", "catchupViaSeqReplay skipped \u2014 gate closed"), rlog().anomaly("sync", "catch_up_skipped_sync_gate_closed", { blocked: !0 }), {
         applied: 0,
         files: 0,
         failed: 0,
@@ -21583,10 +21579,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           );
           applied += pass.applied, files += pass.files, failed += pass.failed, deletes += pass.deletes, pass.complete || (complete = !1);
         } while (this.seqReplayAgain);
-        applied > 0 && files === 0 && deletes === 0 && rlog().anomaly(
-          "sync",
-          `replay produced no files: applied=${applied} files=0 deletes=0 failed=${failed} complete=${complete} blocked=${this.syncBlocked}`
-        );
+        applied > 0 && files === 0 && deletes === 0 && rlog().anomaly("sync", "replay_produced_no_files", {
+          applied,
+          files: 0,
+          deletes: 0,
+          failed,
+          complete,
+          blocked: this.syncBlocked
+        });
       } finally {
         opts.onFileApplied && this.seqReplayFileListeners.delete(opts.onFileApplied), this.seqReplayRunning = !1;
       }

@@ -3,51 +3,98 @@
  * "counts and reasons only" contract is the difference between consented
  * telemetry and a note path leaving the device unasked.
  *
- * A source-compliance regex cannot enforce it. That guard reads `${...}`
- * interpolations, so it is blind to `${p}`, `${dest}`, `${String(err)}`, and to
- * a helper call with no interpolation at all — and `${String(err)}` is already
- * the house idiom, appearing 7x in src/. Obsidian's adapter throws
- * `ENOENT: no such file or directory, open 'Medical/labs.md'`.
+ * Two earlier attempts at enforcing it failed, and the reason both failed is
+ * the same: they filtered free text.
  *
- * So the enforcement is at the choke point, and these are the shapes it has to
- * survive in both directions: paths blanked, counts untouched.
+ *   1. A source-compliance regex over `${...}` interpolations. Blind to
+ *      `${p}`, `${String(err)}` and helper calls.
+ *   2. A runtime redactor that split on whitespace and blanked tokens holding
+ *      a separator or an extension. It let `Divorce settlement draft.md`
+ *      through as "Divorce settlement [redacted]", and `TFile.basename` —
+ *      which Obsidian returns WITHOUT the extension — through untouched.
+ *
+ * A note title IS prose. No text filter separates it from a reason string,
+ * because there is no difference to find. So the free text is gone: `code` is
+ * a developer-written slug and `counts` holds numbers and booleans. A path
+ * cannot be expressed in the type.
  */
 import { describe, expect, test } from "bun:test";
-import { redactPathLike } from "../src/remote-log";
+import { formatAnomaly } from "../src/remote-log";
 
-describe("redactPathLike — paths never survive", () => {
+describe("formatAnomaly — a path cannot be expressed", () => {
+	// Every one of these defeated the previous redactor. None of them is
+	// representable now: the values are not numbers or booleans, so they are
+	// dropped rather than rendered.
 	test.each([
-		["ENOENT: no such file or directory, open 'Medical/labs.md'", ["Medical", "labs.md"]],
-		["replay skipped Journal/2026-08-14 therapy.md", ["Journal", "therapy.md"]],
-		["write failed for board.canvas", ["board.canvas"]],
-		["rename Old/Path.md -> New/Path.md", ["Old", "New"]],
-		["failed: C:\\Vault\\Private.md", ["Private.md"]],
-	])("blanks the path in %s", (message, forbidden) => {
-		const out = redactPathLike(message);
-		for (const fragment of forbidden) {
-			expect(out).not.toContain(fragment);
-		}
-		expect(out).toContain("[redacted]");
+		["Divorce settlement draft.md", "a filename with spaces"],
+		["Divorce", "TFile.basename — no extension"],
+		["Medical/labs.md", "a full path"],
+		["ENOENT: no such file or directory, open 'Medical/labs.md'", "an Obsidian error"],
+		["Notes.textbundle", "an extension longer than 6 chars"],
+	])("drops %s (%s)", (leak) => {
+		const line = formatAnomaly("replay_produced_no_files", {
+			applied: 3,
+			// @ts-expect-error — the type forbids this; the runtime drops it too.
+			path: leak,
+		});
+
+		expect(line).not.toContain(leak);
+		expect(line).not.toContain("Divorce");
+		expect(line).not.toContain("Medical");
+	});
+
+	// The code itself is the other caller-controlled string.
+	test("a code that is not a slug becomes invalid_code", () => {
+		expect(formatAnomaly("skipped Medical/labs.md")).toBe("invalid_code");
+	});
+
+	test("a key that is not a slug is dropped", () => {
+		expect(formatAnomaly("sync_stalled", { "Medical/labs.md": 1, applied: 2 })).toBe(
+			"sync_stalled applied=2",
+		);
 	});
 });
 
-describe("redactPathLike — counts and reasons survive", () => {
-	// If this half fails the guard gets deleted, so it matters as much as the
-	// half above. These are the two real anomaly() call sites, verbatim.
-	test.each([
-		"catch-up skipped — sync gate closed (blocked=true)",
-		"replay produced no files: applied=12 files=0 deletes=0 failed=1 complete=true blocked=false",
-		"handshake timed out after 30s",
-		"queue drained: 40 ok, 2 retried",
-	])("leaves %s untouched", (message) => {
-		expect(redactPathLike(message)).toBe(message);
+describe("formatAnomaly — counts survive intact", () => {
+	// The other half matters as much: a mechanism that mangles `applied=12`
+	// gets routed around. The previous redactor destroyed every decimal —
+	// `v1.2.3`, `12.5s` and `0.95` all became [redacted].
+	test("renders the real call site's counts", () => {
+		expect(
+			formatAnomaly("replay_produced_no_files", {
+				applied: 12,
+				files: 0,
+				deletes: 0,
+				failed: 1,
+				complete: true,
+				blocked: false,
+			}),
+		).toBe(
+			"replay_produced_no_files applied=12 files=0 deletes=0 failed=1 complete=true blocked=false",
+		);
+	});
+
+	test("decimals and negatives survive", () => {
+		expect(formatAnomaly("pacer", { ratio: 0.95, drift: -1.5 })).toBe(
+			"pacer ratio=0.95 drift=-1.5",
+		);
+	});
+
+	test("a bare code with no counts", () => {
+		expect(formatAnomaly("catch_up_skipped_sync_gate_closed")).toBe(
+			"catch_up_skipped_sync_gate_closed",
+		);
+	});
+
+	test("NaN and Infinity are dropped rather than rendered", () => {
+		expect(formatAnomaly("pacer", { a: Number.NaN, b: Number.POSITIVE_INFINITY, c: 1 })).toBe(
+			"pacer c=1",
+		);
 	});
 });
 
-// The sanitizer is worthless if anomaly() stops calling it. Reverting the call
-// in remote-log.ts must fail here, not only in a source-text guard.
-describe("anomaly() is actually wired to the sanitizer", () => {
-	test("a path passed to anomaly() never reaches the entry", async () => {
+describe("anomaly() is actually wired to formatAnomaly", () => {
+	test("a value that is not a count never reaches the entry", async () => {
 		const { initRemoteLog } = await import("../src/remote-log");
 		const sent: { message: string }[] = [];
 
@@ -61,11 +108,13 @@ describe("anomaly() is actually wired to the sanitizer", () => {
 		);
 		logger.setEnabled(false); // diagnostics OFF — anomaly() bypasses this
 
-		logger.anomaly("sync", "replay skipped Medical/labs.md");
+		// @ts-expect-error — the type forbids a string value.
+		logger.anomaly("sync", "replay_skipped", { path: "Medical/labs.md", applied: 2 });
 		await logger.flush();
 
 		expect(sent.length).toBeGreaterThan(0);
 		expect(sent[0].message).not.toContain("Medical");
-		expect(sent[0].message).not.toContain("labs.md");
+		expect(sent[0].message).not.toContain("labs");
+		expect(sent[0].message).toBe("replay_skipped applied=2");
 	});
 });

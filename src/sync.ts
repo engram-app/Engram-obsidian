@@ -4070,7 +4070,7 @@ export class SyncEngine {
 			// visible — silently doing nothing and reporting success is the bug
 			// this whole series came from. One line per blocked attempt, not one
 			// per note. Counts only, no paths.
-			rlog().anomaly("sync", "catch-up skipped — sync gate closed (blocked=true)");
+			rlog().anomaly("sync", "catch_up_skipped_sync_gate_closed", { blocked: true });
 			return {
 				applied: 0,
 				files: 0,
@@ -4202,11 +4202,14 @@ export class SyncEngine {
 					// gate silently no-ops every note write while folders (which
 					// bypass it) still land. That combination — folders arrive,
 					// notes do not — is the 2026-08-13 signature.
-					rlog().anomaly(
-						"sync",
-						`replay produced no files: applied=${applied} files=0 deletes=0 ` +
-							`failed=${failed} complete=${complete} blocked=${this.syncBlocked}`,
-					);
+					rlog().anomaly("sync", "replay_produced_no_files", {
+						applied,
+						files: 0,
+						deletes: 0,
+						failed,
+						complete,
+						blocked: this.syncBlocked,
+					});
 				}
 			} finally {
 				if (opts.onFileApplied) this.seqReplayFileListeners.delete(opts.onFileApplied);
