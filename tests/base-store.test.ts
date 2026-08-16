@@ -152,3 +152,49 @@ describe("BaseStore", () => {
 		});
 	});
 });
+
+/**
+ * Retention: a merge base is the FULL TEXT of a note, kept in
+ * sync-bases.json inside `.obsidian/` — a directory people commit to git, sync
+ * through iCloud, and zip into bug reports. So a base that outlives its note is
+ * the body of a deleted note sitting on disk indefinitely: eviction is LRU at
+ * 50MB, which for most vaults is never.
+ */
+describe("a deleted note leaves no body behind", () => {
+	it("removes the entry and writes a file that no longer contains the body", async () => {
+		const adapter = makeFakeAdapter();
+		const path = ".obsidian/plugins/engram-vault-sync/sync-bases.json";
+		const store = new BaseStore(adapter, path);
+		const secret = "SECRET-BODY-hunter2";
+
+		store.set("Personal/Therapy.md", secret, 1);
+		await store.save();
+		expect(adapter.files[path]).toContain(secret);
+
+		store.delete("Personal/Therapy.md");
+		await store.save();
+
+		expect(store.get("Personal/Therapy.md")).toBeUndefined();
+		expect(adapter.files[path]).not.toContain(secret);
+	});
+
+	// Byte accounting has to come back with it, or the store slowly convinces
+	// itself it is full and evicts LIVE bases while a deleted note's bytes are
+	// still counted against the budget.
+	//
+	// entryBytes = (path.length + content.length) * 2 + 32. With a budget of
+	// 1000, "b.md" (4) + 400 chars = 840 fits alone; if the deleted "a.md"
+	// entry's 840 were still counted, the total would read 1680 and prune would
+	// evict the only live entry.
+	it("reclaims the bytes so eviction stays honest", () => {
+		const store = new BaseStore(makeFakeAdapter(), "bases.json", 1000);
+		const body = "x".repeat(400);
+
+		store.set("a.md", body, 1);
+		store.delete("a.md");
+		store.set("b.md", body, 1);
+		store.prune();
+
+		expect(store.get("b.md")).toBeDefined();
+	});
+});

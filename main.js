@@ -927,7 +927,15 @@ var LEVEL_SEVERITY = {
   info: 1,
   warn: 2,
   error: 3
-}, MAX_BUFFER = 200, FLUSH_INTERVAL_MS = 3e4, FLUSH_THRESHOLD = 20, RemoteLogger = class {
+}, MAX_BUFFER = 200, FLUSH_INTERVAL_MS = 3e4, FLUSH_THRESHOLD = 20, ANOMALY_CODE = /^[a-z0-9_]+$/;
+function safeSlug(value, fallback) {
+  return typeof value == "string" && ANOMALY_CODE.test(value) ? value : fallback;
+}
+function formatAnomaly(code, counts = {}) {
+  let safeCode = safeSlug(code, "invalid_code"), pairs2 = Object.entries(counts != null ? counts : {}).flatMap(([key, value]) => ANOMALY_CODE.test(key) ? typeof value == "boolean" ? [`${key}=${value}`] : Number.isFinite(value) ? [`${key}=${value}`] : [] : []);
+  return pairs2.length > 0 ? `${safeCode} ${pairs2.join(" ")}` : safeCode;
+}
+var RemoteLogger = class {
   constructor() {
     this.buffer = [];
     this.flushTimer = null;
@@ -999,12 +1007,34 @@ var LEVEL_SEVERITY = {
    *  have telemetry enabled. Prod 2026-08-13: a first sync dropped 316 of 316
    *  notes and produced exactly zero client log lines to look at.
    *
-   *  CONTRACT — callers must honour it: counts and reasons ONLY. Never a
-   *  path, a title, or note content. The setting is protecting the user from
-   *  verbose per-note telemetry, and that protection stays intact; what it
-   *  must not do is hide the fact that sync silently did nothing. */
-  anomaly(category, message) {
-    this.addEntry("warn", category, message, void 0, !1, !0);
+   *  CONTRACT — ENFORCED, not asserted in a comment. BOTH string parameters
+   *  are slug-validated and `counts` holds numbers and booleans, so a path, a
+   *  title or note content cannot be expressed in any argument.
+   *
+   *  `category` is validated too, and that is not cosmetic. It was left free
+   *  while `code` was locked down, and it reads like a label slot — so
+   *  `anomaly(file.path, "note_skipped", { seq })` is a natural thing to
+   *  write. It rides the same force:true path, lands in `client_logs.category`
+   *  unvalidated, and the backend interpolates it into a Logger MESSAGE BODY
+   *  (`logs.ex`, "[client:#{category}]"), which RedactFilter refuses to touch
+   *  and which ships to Loki at warn. Same leak the free-text removal was for,
+   *  one argument to the left.
+   *
+   *  The previous shape took free text and ran a redactor over it. That could
+   *  not hold: the redactor split on whitespace, so a filename with spaces
+   *  (`Divorce settlement draft.md`) lost only its final token, and
+   *  `TFile.basename` — no extension — survived intact. A note title is
+   *  prose; no text filter separates it from a reason string, because there
+   *  is nothing to separate. Removing the free text removes the problem. */
+  anomaly(category, code, counts = {}) {
+    this.addEntry(
+      "warn",
+      safeSlug(category, "invalid_category"),
+      formatAnomaly(code, counts),
+      void 0,
+      !1,
+      !0
+    );
   }
   addEntry(level, category, message, stack, diagnostic, force) {
     if (!this.pushFn || !force && (!this.enabled || LEVEL_SEVERITY[level] < LEVEL_SEVERITY[this.levelThreshold]))
@@ -2257,7 +2287,10 @@ var _NoteChannel = class _NoteChannel {
     try {
       msg = JSON.parse(raw);
     } catch (e) {
-      rlog().error("channel", `Failed to parse message: ${raw}`);
+      rlog().error(
+        "channel",
+        `Failed to parse message: ${raw.length} bytes starting ${JSON.stringify(raw.slice(0, 40))}`
+      );
       return;
     }
     let [, ref, topic, event, payload] = msg;
@@ -14841,11 +14874,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
       // production runs and what tests/crdt/wiring.test.ts pins. A duplicate
       // here could silently drift from the shipped one (it did: the suite
       // exercised only the duplicate, so #1130 could regress green).
-      send: (frame, kind2) => {
-        var _a2;
-        let accepted = this.opts.send(noteId, frame, kind2);
-        return (_a2 = this.opts.recorder) == null || _a2.record("send", noteId, { kind: kind2, accepted }), accepted;
-      },
+      send: (frame, kind2) => this.opts.send(noteId, frame, kind2),
       onSynced: () => {
         var _a2, _b2, _c2, _d;
         (_b2 = (_a2 = this.opts).onSynced) == null || _b2.call(_a2, noteId), text2.length === 0 && ((_d = (_c2 = this.opts).onEmptyStep2) == null || _d.call(_c2, noteId));
@@ -14867,16 +14896,9 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
       lifetime: new Lifetime()
     };
     return doc2.on("update", (_u, origin) => {
-      var _a2;
       if (!entry.lifetime.active || origin !== provider && origin !== REMOTE) return;
       entry.remoteSeq += 1;
-      let projected = this.project(entry);
-      (_a2 = this.opts.recorder) == null || _a2.record("flush", noteId, {
-        hash: fnv1a(projected).toString(16),
-        length: projected.length,
-        remoteSeq: entry.remoteSeq
-      });
-      let flush = Promise.resolve(this.opts.onFlushToDisk(noteId, projected)).then((ok) => {
+      let projected = this.project(entry), flush = Promise.resolve(this.opts.onFlushToDisk(noteId, projected)).then((ok) => {
         if (ok === !1) throw new Error(`flushFromCrdt write failure for ${noteId}`);
       });
       entry.pendingFlush = flush, flush.catch(() => {
@@ -14920,7 +14942,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
    *  Ports CrdtManager.applyLocalEdit: stale-snapshot guard + adopt-first gate +
    *  the shared seedContentInto codec. */
   async applyLocalEdit(noteId, diskContent, hasLca, reread) {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
+    var _a, _b, _c, _d, _e, _f;
     if (this.removed.has(noteId)) return null;
     let e = await this.entry(noteId);
     if (!e.lifetime.active) return null;
@@ -14928,14 +14950,8 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
     if (base != null && e.kind === "note") {
       let merged = mergeDiskOntoDoc(base, diskContent, this.project(e));
       if (merged.clean)
-        return (_c = this.opts.recorder) == null || _c.record("localEdit", noteId, {
-          hash: fnv1a(merged.text).toString(16),
-          length: merged.text.length,
-          lca: !0,
-          merged: !0,
-          kind: e.kind
-        }), seedContentInto(e.doc, e.text, merged.text, docHasHistory(e.doc, e.kind)), merged.text;
-      (_e = (_d = this.opts).onDirtyMerge) == null || _e.call(_d, noteId);
+        return seedContentInto(e.doc, e.text, merged.text, docHasHistory(e.doc, e.kind)), merged.text;
+      (_d = (_c = this.opts).onDirtyMerge) == null || _d.call(_c, noteId);
     }
     if (reread) {
       let stable = !1;
@@ -14957,21 +14973,15 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
       if (!stable) return null;
     }
     let lca = hasLca != null ? hasLca : docHasHistory(e.doc, e.kind);
-    return !lca && ((_g = (_f = this.opts).isUnchangedSynced) != null && _g.call(_f, noteId, content)) ? content : ((_h = this.opts.recorder) == null || _h.record("localEdit", noteId, {
-      hash: fnv1a(content).toString(16),
-      length: content.length,
-      lca,
-      kind: e.kind
-    }), e.kind === "canvas" ? seedCanvasInto(e.doc, content) ? content : null : (seedContentInto(e.doc, e.text, content, lca), content));
+    return !lca && ((_f = (_e = this.opts).isUnchangedSynced) != null && _f.call(_e, noteId, content)) ? content : e.kind === "canvas" ? seedCanvasInto(e.doc, content) ? content : null : (seedContentInto(e.doc, e.text, content, lca), content);
   }
   /** Apply a raw Yjs update (vault-channel fan-out) as a remote merge, awaiting
    *  its disk flush so a write failure can be surfaced (#235). */
   async applyRemoteUpdate(noteId, update) {
-    var _a;
     if (this.removed.has(noteId)) return;
     let e = await this.entry(noteId);
     if (!e.lifetime.active) return;
-    (_a = this.opts.recorder) == null || _a.record("remoteUpdate", noteId, { bytes: update.byteLength }), applyUpdate(e.doc, update, e.provider);
+    applyUpdate(e.doc, update, e.provider);
     let flush = e.pendingFlush;
     flush && (e.pendingFlush = null, await flush);
   }
@@ -15006,16 +15016,14 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
   /** Route an inbound wire frame to its provider (creating it if a fan-out
    *  announced a note this device hasn't opened). */
   async receive(noteId, frameB64) {
-    var _a;
-    (_a = this.opts.recorder) == null || _a.record("receive", noteId, { frame: frameB64 }), (await this.entry(noteId)).provider.receive(frameB64);
+    (await this.entry(noteId)).provider.receive(frameB64);
   }
   /** Enroll: OPEN a room for this note — advertise syncStep1 (the down-sync
    *  pull) now and on every reconnect. Only open/live-bound notes call this; a
    *  cold SEND or fan-out RECEIVE stays room-free. (CrdtChannel.startSync +
    *  CrdtEnrollment.enroll collapse to this.) */
   async startSync(noteId) {
-    var _a;
-    this.assertAlive(noteId), this.enrolledIds.add(noteId), (_a = this.opts.recorder) == null || _a.record("enroll", noteId, {});
+    this.assertAlive(noteId), this.enrolledIds.add(noteId);
     let e = await this.entry(noteId);
     e.provider.setAdvertised(!0), this.connected && e.provider.setConnected(!0);
   }
@@ -15028,8 +15036,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
    *  ops still work (the note converges over the fan-out); the server room idles
    *  out. reset+enroll = a fresh re-handshake. */
   reset(noteId) {
-    var _a;
-    this.enrolledIds.delete(noteId), (_a = this.opts.recorder) == null || _a.record("reset", noteId, {});
+    this.enrolledIds.delete(noteId);
     let e = this.entries.get(noteId);
     e && (e.provider.setAdvertised(!1), e.provider.synced = !1);
   }
@@ -15043,11 +15050,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
    *  connect each re-advertises via syncStep1 — the reason the doc layer
    *  outlives the socket. */
   setConnected(connected) {
-    var _a;
-    this.connected = connected, (_a = this.opts.recorder) == null || _a.record("connection", null, {
-      connected,
-      resident: this.entries.size
-    });
+    this.connected = connected;
     for (let e of this.entries.values()) e.provider.setConnected(connected);
   }
   // --- Synced bookkeeping -----------------------------------------------------
@@ -15212,7 +15215,6 @@ function createCrdtWiring(deps) {
     unsentDocIds.add(docId);
   }, registry = new ProviderRegistry({
     dbPrefix: deps.dbPrefix,
-    recorder: deps.recorder,
     lcaFor: deps.lcaFor,
     onDirtyMerge: deps.onDirtyMerge,
     send: (docId, frame, kind) => {
@@ -15549,7 +15551,7 @@ function resolveKey(key, deps) {
   let pathFromId = deps.pathForId(key);
   return pathFromId ? { path: pathFromId, noteId: key } : { path: key, noteId: null };
 }
-async function buildNoteSnapshot(key, deps, opts = {}) {
+async function buildNoteSnapshot(key, deps) {
   let errors = [], { path, noteId } = resolveKey(key, deps), idForPath = path ? deps.idForPath(path) : null, pathForId = noteId ? deps.pathForId(noteId) : null, removed = noteId ? deps.registry.removedIds.has(noteId) : !1, resident = noteId ? deps.registry.hasDoc(noteId) : !1, doc2 = null, docContent = null;
   if (noteId && resident)
     try {
@@ -15558,8 +15560,7 @@ async function buildNoteSnapshot(key, deps, opts = {}) {
         length: content.length,
         hash: hashOf(content),
         hasHistory: await deps.registry.hasHistory(noteId),
-        stateVectorBytes: (await deps.registry.encodeStateVector(noteId)).byteLength,
-        ...opts.includeContent ? { content } : {}
+        stateVectorBytes: (await deps.registry.encodeStateVector(noteId)).byteLength
       };
     } catch (e) {
       errors.push(`doc: ${describe(e)}`);
@@ -15571,8 +15572,7 @@ async function buildNoteSnapshot(key, deps, opts = {}) {
       read && (diskContent = read.content, disk = {
         length: read.length,
         hash: hashOf(read.content),
-        mtime: read.mtime,
-        ...opts.includeContent ? { content: read.content } : {}
+        mtime: read.mtime
       });
     } catch (e) {
       errors.push(`disk: ${describe(e)}`);
@@ -15634,87 +15634,20 @@ function buildVaultSnapshot(deps) {
   };
 }
 
-// src/sync-recorder.ts
-var DEFAULT_CAPACITY = 5e3, SyncRecorder = class {
-  constructor(opts) {
-    this.events = [];
-    this.nextSeq = 0;
-    var _a;
-    this.enabled = opts.enabled, this.capacity = (_a = opts.capacity) != null ? _a : DEFAULT_CAPACITY;
-  }
-  /**
-   * Append one event.
-   *
-   * When recording is off this is a bare predicate call and a return — cheap
-   * enough to sit on the hot receive path. `nextSeq` deliberately does NOT
-   * advance for a suppressed event: a timeline captured across a mid-session
-   * toggle would otherwise show numbering gaps that read as dropped frames.
-   */
-  record(kind, noteId, data) {
-    this.enabled() && (this.events.push({ seq: this.nextSeq++, kind, noteId, data }), this.events.length > this.capacity && this.events.splice(0, this.events.length - this.capacity));
-  }
-  /** Recorded events in causal order, optionally narrowed to one note. The
-   *  retained window keeps its original seq numbers, so a truncated timeline
-   *  still reports how much preceded it. */
-  timeline(noteId) {
-    let all2 = [...this.events];
-    return noteId ? all2.filter((e) => e.noteId === noteId) : all2;
-  }
-  /** Drop buffered events. The seq counter keeps going: restarting numbering
-   *  would make two timelines from one session look like the same events. */
-  clear() {
-    this.events.length = 0;
-  }
-};
-function serializeTimeline(events) {
-  return JSON.stringify(events);
-}
-
 // src/debug-api.ts
 var GLOBAL_KEY = "__engramDebug";
 function createDebugApi(host) {
   let deps = host;
   return {
-    note: (key, includeContent = !1) => buildNoteSnapshot(key, deps, { includeContent }),
-    vault: () => buildVaultSnapshot(deps),
-    // Accepts a path as well as an id, matching `note()` — an investigation
-    // starts from whichever the evidence contained.
-    timeline: (noteId) => serializeTimeline(host.recorder.timeline(noteId ? resolveId(host, noteId) : void 0)),
-    clearTimeline: () => host.recorder.clear()
+    note: (key) => buildNoteSnapshot(key, deps),
+    vault: () => buildVaultSnapshot(deps)
   };
-}
-function resolveId(host, key) {
-  var _a;
-  return (_a = host.idForPath(key)) != null ? _a : key;
 }
 function installDebugApi(api) {
   window[GLOBAL_KEY] = api;
 }
 function uninstallDebugApi() {
   delete window[GLOBAL_KEY];
-}
-
-// src/feature-flags.ts
-var FLAG_SCHEMA = {
-  crdtRecording: {
-    default: !1,
-    category: "debugging",
-    title: "Record CRDT sync timeline",
-    description: "Capture an ordered event timeline for each synced note so a sync failure can be replayed offline. Metadata and note content stay local."
-  }
-}, FLAG_KEYS = Object.keys(FLAG_SCHEMA);
-function resolveFlags(stored) {
-  let out = {};
-  for (let key of FLAG_KEYS) {
-    let value = stored == null ? void 0 : stored[key];
-    out[key] = typeof value == "boolean" ? value : FLAG_SCHEMA[key].default;
-  }
-  return out;
-}
-function visibleFlags(diagnosticsEnabled) {
-  return FLAG_KEYS.filter(
-    (key) => diagnosticsEnabled || FLAG_SCHEMA[key].category === "labs"
-  ).map((key) => [key, FLAG_SCHEMA[key]]);
 }
 
 // src/has-logging.ts
@@ -17294,8 +17227,7 @@ function renderAboutTab(ctx) {
 }
 
 // src/tabs/advanced-tab.ts
-var import_obsidian17 = require("obsidian");
-var PROBLEMATIC_DIRS = [
+var import_obsidian17 = require("obsidian"), PROBLEMATIC_DIRS = [
   { pattern: "node_modules/", label: "node_modules", desc: "Node.js dependencies" },
   { pattern: ".venv/", label: ".venv", desc: "Python virtual environment" },
   { pattern: "venv/", label: "venv", desc: "Python virtual environment" },
@@ -17342,7 +17274,7 @@ secret.md`).setValue(plugin.settings.ignorePatterns).onChange(async (value) => {
     }).setValue(plugin.settings.remoteLogLevel).onChange(async (value) => {
       plugin.settings.remoteLogLevel = value, await plugin.saveSettings();
     })
-  ), renderFeatureFlags(ctx), new import_obsidian17.Setting(containerEl).setName("About").setHeading();
+  ), new import_obsidian17.Setting(containerEl).setName("About").setHeading();
   let aboutList = containerEl.createEl("ul", { cls: "engram-about-list" }), versionItem = aboutList.createEl("li");
   versionItem.createSpan({ text: "Version: " }), versionItem.createSpan({ text: plugin.manifest.version });
   let repoItem = aboutList.createEl("li");
@@ -17350,23 +17282,6 @@ secret.md`).setValue(plugin.settings.ignorePatterns).onChange(async (value) => {
     text: "github.com/engram-app/Engram-obsidian",
     href: "https://github.com/engram-app/Engram-obsidian"
   }), aboutList.createEl("li").createSpan({ text: "License: MIT" });
-}
-function renderFeatureFlags(ctx) {
-  let { containerEl, plugin } = ctx, visible = visibleFlags(plugin.settings.diagnosticsEnabled);
-  if (visible.length !== 0) {
-    new import_obsidian17.Setting(containerEl).setName("Feature flags").setHeading();
-    for (let [key, schema4] of visible) {
-      let setting = new import_obsidian17.Setting(containerEl).setName(schema4.title).setDesc(schema4.description).addToggle(
-        (toggle) => toggle.setValue(plugin.flags[key]).onChange(async (value) => {
-          plugin.settings.featureFlags = {
-            ...plugin.settings.featureFlags,
-            [key]: value
-          }, await plugin.saveSettings();
-        })
-      );
-      schema4.category === "danger" && setting.settingEl.addClass("engram-status-warning");
-    }
-  }
 }
 function renderIgnoreWarnings(containerEl, app, plugin, redisplay) {
   let currentIgnores = plugin.settings.ignorePatterns, detected = [];
@@ -19048,6 +18963,22 @@ var EngramSyncSettingTab = class extends import_obsidian23.PluginSettingTab {
 function migrateDiagnosticsEnabled(raw) {
   return raw ? typeof raw.diagnosticsEnabled == "boolean" ? raw.diagnosticsEnabled : !!(raw.remoteLoggingEnabled || raw.diagnosticMode || raw.tracingEnabled) : !1;
 }
+var RETIRED_SETTING_KEYS = [
+  // Collapsed into diagnosticsEnabled.
+  "remoteLoggingEnabled",
+  "diagnosticMode",
+  "tracingEnabled",
+  // CRDT is the sole markdown path; there is nothing left to switch off.
+  "enableCrdt",
+  // The feature-flag framework is gone, and the recorder it gated with it, so
+  // a stored override object would linger in data.json reading like a live
+  // setting for something that no longer exists.
+  "featureFlags"
+];
+function stripRetiredSettings(settings) {
+  for (let key of RETIRED_SETTING_KEYS)
+    delete settings[key];
+}
 
 // src/single-flight.ts
 function createSingleFlight() {
@@ -19133,6 +19064,22 @@ var OfflineQueue = class {
     for (let entry of entries)
       this.entries.set(dedupKey(entry), entry);
   }
+  /** The queue as it should be WRITTEN to disk: no note bodies.
+   *
+   *  Current code never enqueues content — every call site has been
+   *  content-free since the V8 OOM work — but a data.json from an older build
+   *  still carries full note text and whole base64 attachments, and nothing
+   *  ever removed them. That file lives in `.obsidian/` and is the file users
+   *  are asked to paste into a bug report.
+   *
+   *  Stripped on the way OUT, not on the way in: a legacy entry's inline
+   *  content is still the only copy for a file that was deleted or renamed
+   *  during the offline window, so dropping it at load would lose the change.
+   *  This way the body stays usable for this session and stops being written
+   *  back, so it disappears from disk on the next save. */
+  persistable() {
+    return this.all().map(({ content: _c, contentBase64: _b, ...lean }) => lean);
+  }
   /** Add or replace a queued change for a path. Persistence is debounced. */
   async enqueue(entry) {
     this.entries.set(dedupKey(entry), entry), this.schedulePersist();
@@ -19191,7 +19138,7 @@ var OfflineQueue = class {
   schedulePersist() {
     this.persistTimer || (this.persistTimer = window.setTimeout(() => {
       var _a;
-      this.persistTimer = null, (_a = this.persistFn) == null || _a.call(this, this.all()).catch((e) => {
+      this.persistTimer = null, (_a = this.persistFn) == null || _a.call(this, this.persistable()).catch((e) => {
         rlog().warn("queue", `debounced persist failed: ${errMsg(e)}`);
       });
     }, this.persistDelayMs));
@@ -19199,7 +19146,7 @@ var OfflineQueue = class {
   /** Persist immediately (cancels any pending debounced persist). */
   async persistNow() {
     var _a;
-    this.persistTimer && (window.clearTimeout(this.persistTimer), this.persistTimer = null), await ((_a = this.persistFn) == null ? void 0 : _a.call(this, this.all()));
+    this.persistTimer && (window.clearTimeout(this.persistTimer), this.persistTimer = null), await ((_a = this.persistFn) == null ? void 0 : _a.call(this, this.persistable()));
   }
 };
 
@@ -20929,7 +20876,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let crdtNoteId = isBinary ? null : (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(file.path)) != null ? _b : null;
     isBinary || (_c = this.noteIdMap) == null || _c.delete(file.path);
     let hadSyncEvidence = this.syncState.has((0, import_obsidian24.normalizePath)(file.path));
-    this.dropPath((0, import_obsidian24.normalizePath)(file.path), { dropBase: !1 });
+    this.dropPath((0, import_obsidian24.normalizePath)(file.path));
     let wasEngineTrash = this.consumeEngineTrash(file.path);
     if (this.files.has(file.path, "remotelyDeleted") || wasEngineTrash) {
       this.files.clearMarker(file.path, "remotelyDeleted"), crdtNoteId && this.markRecentlyDeleted(crdtNoteId), rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`), this.isCrdtEligible(file) && crdtNoteId && await this.teardownCrdtDoc(crdtNoteId);
@@ -21088,7 +21035,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  pushModifiedFiles) pass force without this, so they stay quiet on
    *  plan-gated attachments. */
   async pushFile(file, force = !1, bypassPlanSkip = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y;
     if (this.pushing.has(file.path)) return !1;
     if (!bypassPlanSkip && this.isBinaryFile(file) && this.hasInformationalIssue(file.path))
       return devLog().log("push", `skip (plan-informational): ${file.path}`), !1;
@@ -21236,11 +21183,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           let localFile = this.app.vault.getFileByPath(pushedPath);
           localFile && (await this.app.vault.rename(localFile, serverPath), new import_obsidian24.Notice(
             `Engram Sync: renamed "${pushedPath.split("/").pop()}" (unsupported characters)`
-          )), this.dropPath((0, import_obsidian24.normalizePath)(pushedPath), { dropBase: !1 }), this.stampSyncedRow((0, import_obsidian24.normalizePath)(serverPath), { hash }), (_q = this.noteIdMap) == null || _q.delete((0, import_obsidian24.normalizePath)(pushedPath)), (_r = this.noteIdMap) == null || _r.set((0, import_obsidian24.normalizePath)(serverPath), resp.note.id);
+          )), (_q = this.baseStore) == null || _q.rename((0, import_obsidian24.normalizePath)(pushedPath), (0, import_obsidian24.normalizePath)(serverPath)), this.dropPath((0, import_obsidian24.normalizePath)(pushedPath), { dropBase: !1 }), this.stampSyncedRow((0, import_obsidian24.normalizePath)(serverPath), { hash }), (_r = this.noteIdMap) == null || _r.delete((0, import_obsidian24.normalizePath)(pushedPath)), (_s = this.noteIdMap) == null || _s.set((0, import_obsidian24.normalizePath)(serverPath), resp.note.id);
         } else
-          this.stampSyncedRow((0, import_obsidian24.normalizePath)(file.path), { hash }), (_s = this.noteIdMap) == null || _s.set((0, import_obsidian24.normalizePath)(file.path), resp.note.id);
+          this.stampSyncedRow((0, import_obsidian24.normalizePath)(file.path), { hash }), (_t2 = this.noteIdMap) == null || _t2.set((0, import_obsidian24.normalizePath)(file.path), resp.note.id);
         file.path === pushedPath && (pushedNoteParse = {
-          path: (_t2 = resp.note.path) != null ? _t2 : pushedPath,
+          path: (_u = resp.note.path) != null ? _u : pushedPath,
           parseStatus: resp.note.parse_status,
           parseReason: resp.note.parse_reason
         });
@@ -21269,8 +21216,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         lastFailedAt: now,
         attempts: 1
       });
-      let attempts = (_v = (_u = this.issues.get(file.path)) == null ? void 0 : _u.attempts) != null ? _v : 1;
-      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_w = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
+      let attempts = (_w = (_v = this.issues.get(file.path)) == null ? void 0 : _v.attempts) != null ? _w : 1;
+      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_x = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
         "push",
         `Push failed: ${file.path} \u2014 ${msg} | category=${classified.category}`,
         e instanceof Error ? e.stack : void 0
@@ -21280,7 +21227,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         kind: isBinary ? "attachment" : "note",
         mtime: file.stat.mtime / 1e3,
         timestamp: Date.now(),
-        vaultId: (_x = this.settings.vaultId) != null ? _x : void 0
+        vaultId: (_y = this.settings.vaultId) != null ? _y : void 0
       }), this.maybeGoOffline(e);
     } finally {
       this.pushing.delete(pushedPath), this.releasePushSlot(), success && this.markRecentlyPushed(pushedPath), this.emitStatus();
@@ -21581,7 +21528,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     var _a, _b, _c, _d, _e, _f;
     let serverIds = /* @__PURE__ */ new Set(), serverAttachmentPaths = /* @__PURE__ */ new Set();
     if (this.syncBlocked)
-      return devLog().log("sync-blocked", "catchupViaSeqReplay skipped \u2014 gate closed"), rlog().anomaly("sync", "catch-up skipped \u2014 sync gate closed (blocked=true)"), {
+      return devLog().log("sync-blocked", "catchupViaSeqReplay skipped \u2014 gate closed"), rlog().anomaly("sync", "catch_up_skipped_sync_gate_closed", { blocked: !0 }), {
         applied: 0,
         files: 0,
         failed: 0,
@@ -21650,10 +21597,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           );
           applied += pass.applied, files += pass.files, failed += pass.failed, deletes += pass.deletes, pass.complete || (complete = !1);
         } while (this.seqReplayAgain);
-        applied > 0 && files === 0 && deletes === 0 && rlog().anomaly(
-          "sync",
-          `replay produced no files: applied=${applied} files=0 deletes=0 failed=${failed} complete=${complete} blocked=${this.syncBlocked}`
-        );
+        applied > 0 && files === 0 && deletes === 0 && rlog().anomaly("sync", "replay_produced_no_files", {
+          applied,
+          files: 0,
+          deletes: 0,
+          failed,
+          complete,
+          blocked: this.syncBlocked
+        });
       } finally {
         opts.onFileApplied && this.seqReplayFileListeners.delete(opts.onFileApplied), this.seqReplayRunning = !1;
       }
@@ -23766,13 +23717,6 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
      *  debug snapshot so a wedged sync shows up as a long-lived pending entry
      *  instead of having to be inferred from logs. Null in production. */
     this.promiseTracker = null;
-    /** Timeline capture for the CRDT seams (#356). Constructed once and kept for
-     *  the plugin's lifetime — it reads the flag on every record call, so
-     *  toggling recording never needs the CRDT stack rebuilt. Its buffer is
-     *  bounded, and it costs one predicate call per seam while off. */
-    this.syncRecorder = new SyncRecorder({
-      enabled: () => this.flags.crdtRecording
-    });
     /** Persist the user's chosen search mode as the new default. Passed to the
      *  search view + modal so a mode switch in either surface sticks. */
     this.persistSearchMode = (mode) => {
@@ -23888,13 +23832,6 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
      *  session, so the two load paths (loadSettings + onload restore) don't
      *  double-toast the user. */
     this.dataRecoveryNotified = !1;
-  }
-  /** Resolved feature flags (stored overrides applied over schema defaults).
-   *  Recomputed on every read so a settings toggle takes effect without a
-   *  reload — these are cheap (a fixed-size object literal), and caching one
-   *  would just add an invalidation bug. */
-  get flags() {
-    return resolveFlags(this.settings.featureFlags);
   }
   /** Whether the WebSocket channel is currently connected (for settings UI). */
   isLiveConnected() {
@@ -24362,15 +24299,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     let data = await this.loadPluginData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data == null ? void 0 : data.settings);
     let rawSettings = data == null ? void 0 : data.settings;
-    this.settings.diagnosticsEnabled = migrateDiagnosticsEnabled(rawSettings);
-    for (let legacy of [
-      "remoteLoggingEnabled",
-      "diagnosticMode",
-      "tracingEnabled",
-      "enableCrdt"
-    ])
-      delete this.settings[legacy];
-    this.syncGateAcceptedFor = (_a = data == null ? void 0 : data.syncGateAcceptedFor) != null ? _a : null, this.noteIdMap = NoteIdMap.fromJSON(data == null ? void 0 : data.noteIds);
+    this.settings.diagnosticsEnabled = migrateDiagnosticsEnabled(rawSettings), stripRetiredSettings(this.settings), this.syncGateAcceptedFor = (_a = data == null ? void 0 : data.syncGateAcceptedFor) != null ? _a : null, this.noteIdMap = NoteIdMap.fromJSON(data == null ? void 0 : data.noteIds);
     let dirty = !1, migratedUrl = migrateCloudApiUrl(this.settings.apiUrl, ENGRAM_CLOUD_URL);
     migratedUrl && migratedUrl !== this.settings.apiUrl && (this.settings.apiUrl = migratedUrl, dirty = !0), migrateBackendMode(this.settings, ENGRAM_CLOUD_URL) && (dirty = !0), this.settings.clientId || (this.settings.clientId = await generateClientId(this.app), dirty = !0), this.deviceId = (_b = data == null ? void 0 : data.deviceId) != null ? _b : null, this.deviceId || (this.deviceId = crypto.randomUUID(), dirty = !0), dirty && await this.writePluginData({
       ...data,
@@ -24423,8 +24352,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         pendingPromises: () => {
           var _a, _b;
           return (_b = (_a = this.promiseTracker) == null ? void 0 : _a.pending()) != null ? _b : [];
-        },
-        recorder: this.syncRecorder
+        }
       })
     );
   }
@@ -24528,7 +24456,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       // Manifest since_seq watermark (E1 #1065) — re-listed for the same
       // wholesale-save reason.
       manifestSeq: this.syncEngine.getManifestSeq(),
-      offlineQueue: offlineQueue != null ? offlineQueue : this.syncEngine.queue.all(),
+      // persistable(), not all(): note bodies from legacy entries must not be
+      // written back into data.json — see OfflineQueue.persistable.
+      offlineQueue: offlineQueue != null ? offlineQueue : this.syncEngine.queue.persistable(),
       // Re-listed on every wholesale save (like offlineQueue) or the next
       // saveData() wipes the durable CRDT ops.
       crdtOpQueue: (_c = (_b = this.crdtOpQueue) == null ? void 0 : _b.all()) != null ? _c : [],
@@ -24838,7 +24768,6 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           let wiring2 = createCrdtWiring({
             noteIdMap: this.noteIdMap,
             syncEngine: this.syncEngine,
-            recorder: this.syncRecorder,
             // BaseStore is keyed by vault path and already holds exactly the
             // last-synced content its own docstring calls "the common
             // ancestor for 3-way merge"; the registry is keyed by note_id,

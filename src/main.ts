@@ -37,10 +37,8 @@ import { makeCrdtOpSend } from "./crdt-op-dispatch";
 import { type CrdtOp, CrdtOpQueue } from "./crdt-op-queue";
 import { createDebugApi, installDebugApi, uninstallDebugApi } from "./debug-api";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
-import { type FeatureFlags, resolveFlags } from "./feature-flags";
 import { isMarkdownPath } from "./file-kind";
 import { setLogSink } from "./has-logging";
-import { SyncRecorder } from "./sync-recorder";
 import { PromiseTracker, setActiveTracker } from "./track-promise";
 
 /** Replaced by esbuild at build time (see esbuild.config.mjs `define`). */
@@ -59,7 +57,7 @@ import { destroyRemoteLog, initRemoteLog, rlog } from "./remote-log";
 import { SearchModal } from "./search-modal";
 import { SEARCH_VIEW_TYPE, SearchView } from "./search-view";
 import { EngramSyncSettingTab } from "./settings";
-import { migrateDiagnosticsEnabled } from "./settings-migrate";
+import { migrateDiagnosticsEnabled, stripRetiredSettings } from "./settings-migrate";
 import { createSingleFlight } from "./single-flight";
 import { reconcileColdStart, SyncEngine } from "./sync";
 import { channelConnectionKey, computeSyncFingerprint } from "./sync-fingerprint";
@@ -192,21 +190,6 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  instead of having to be inferred from logs. Null in production. */
 	promiseTracker: PromiseTracker | null = null;
 
-	/** Timeline capture for the CRDT seams (#356). Constructed once and kept for
-	 *  the plugin's lifetime — it reads the flag on every record call, so
-	 *  toggling recording never needs the CRDT stack rebuilt. Its buffer is
-	 *  bounded, and it costs one predicate call per seam while off. */
-	readonly syncRecorder: SyncRecorder = new SyncRecorder({
-		enabled: () => this.flags.crdtRecording,
-	});
-
-	/** Resolved feature flags (stored overrides applied over schema defaults).
-	 *  Recomputed on every read so a settings toggle takes effect without a
-	 *  reload — these are cheap (a fixed-size object literal), and caching one
-	 *  would just add an invalidation bug. */
-	get flags(): FeatureFlags {
-		return resolveFlags(this.settings.featureFlags);
-	}
 	/** Persist the user's chosen search mode as the new default. Passed to the
 	 *  search view + modal so a mode switch in either surface sticks. */
 	private persistSearchMode = (mode: SearchMode): void => {
@@ -1269,16 +1252,9 @@ export default class EngramSyncPlugin extends Plugin {
 		// then drop the stale keys so the next save persists only the new shape.
 		const rawSettings = data?.settings as Record<string, unknown> | undefined;
 		this.settings.diagnosticsEnabled = migrateDiagnosticsEnabled(rawSettings);
-		// enableCrdt: the setting was deleted (CRDT is the sole md path) — drop
-		// the stale key from persisted data.json on next save.
-		for (const legacy of [
-			"remoteLoggingEnabled",
-			"diagnosticMode",
-			"tracingEnabled",
-			"enableCrdt",
-		]) {
-			delete (this.settings as unknown as Record<string, unknown>)[legacy];
-		}
+		// Retired keys (see RETIRED_SETTING_KEYS for what and why) are dropped
+		// here so the next save persists only the current shape.
+		stripRetiredSettings(this.settings as unknown as Record<string, unknown>);
 		this.syncGateAcceptedFor = data?.syncGateAcceptedFor ?? null;
 		this.noteIdMap = NoteIdMap.fromJSON(data?.noteIds);
 		// Migrate a stored Cloud apiUrl off the legacy SPA host (app.engram.page,
@@ -1363,7 +1339,6 @@ export default class EngramSyncPlugin extends Plugin {
 				syncStateFor: (path) => this.syncEngine.exportSyncState()[normalizePath(path)],
 				isLiveBound: (path) => this.crdtLiveViews?.isBound(path) ?? false,
 				pendingPromises: () => this.promiseTracker?.pending() ?? [],
-				recorder: this.syncRecorder,
 			}),
 		);
 	}
@@ -1542,7 +1517,9 @@ export default class EngramSyncPlugin extends Plugin {
 			// Manifest since_seq watermark (E1 #1065) — re-listed for the same
 			// wholesale-save reason.
 			manifestSeq: this.syncEngine.getManifestSeq(),
-			offlineQueue: offlineQueue ?? this.syncEngine.queue.all(),
+			// persistable(), not all(): note bodies from legacy entries must not be
+			// written back into data.json — see OfflineQueue.persistable.
+			offlineQueue: offlineQueue ?? this.syncEngine.queue.persistable(),
 			// Re-listed on every wholesale save (like offlineQueue) or the next
 			// saveData() wipes the durable CRDT ops.
 			crdtOpQueue: this.crdtOpQueue?.all() ?? [],
@@ -2256,7 +2233,6 @@ export default class EngramSyncPlugin extends Plugin {
 						const wiring = createCrdtWiring({
 							noteIdMap: this.noteIdMap,
 							syncEngine: this.syncEngine,
-							recorder: this.syncRecorder,
 							// BaseStore is keyed by vault path and already holds exactly the
 							// last-synced content its own docstring calls "the common
 							// ancestor for 3-way merge"; the registry is keyed by note_id,
