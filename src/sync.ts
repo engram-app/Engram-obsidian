@@ -24,6 +24,7 @@ import {
 	shouldRetryAfterFailure,
 } from "./issue-store";
 import { isTextAttachment } from "./mime";
+import { noteRef } from "./note-ref";
 import {
 	// Aliased: the SyncEngine method below has the same name, and an unqualified
 	// call resolving to the module function while `this.queuedReason` resolves to
@@ -201,7 +202,10 @@ export async function reconcileColdStart(
 	} catch (e) {
 		// Storage write failure: do not masquerade as corruption. The CRDT
 		// handshake will converge the state once connectivity is restored.
-		rlog().warn("crdt", `reconcileColdStart: write failed for ${file.path}: ${errMsg(e)}`);
+		rlog().warn(
+			"crdt",
+			`reconcileColdStart: write failed for ${noteRef(file.path)}: ${errMsg(e)}`,
+		);
 	}
 	// A drifted note must always get a handshake: when the doc is history-less
 	// and the adopt-first seed gate skipped inside applyLocalEdit (IDB-evicted
@@ -891,7 +895,7 @@ export class SyncEngine {
 		try {
 			await this.crdt.flushHeldState(noteId);
 		} catch (e) {
-			rlog().warn("crdt", `create-ack flush failed for ${path}: ${errMsg(e)}`);
+			rlog().warn("crdt", `create-ack flush failed for ${noteRef(path)}: ${errMsg(e)}`);
 			this.crdtEnrollment?.reset(noteId);
 			this.crdtEnrollment?.enroll(noteId);
 		}
@@ -1122,7 +1126,7 @@ export class SyncEngine {
 			effectiveId = serverId;
 			rlog().info(
 				"crdt",
-				`crdt_create (queued) ADOPT: remapped ${path} ${localId} -> ${serverId}`,
+				`crdt_create (queued) ADOPT: remapped ${noteRef(path)} ${localId} -> ${serverId}`,
 			);
 			// Live-bound adopt: the mint doc holds the user's live keystrokes (the
 			// editor forwards there), which lag disk. Transfer them into serverId
@@ -1177,7 +1181,7 @@ export class SyncEngine {
 				// self-heals on the note's next edit. Never fall back to REST.
 				rlog().warn(
 					"crdt",
-					`crdt_create (queued) body seed failed for ${path}: ${errMsg(e)}`,
+					`crdt_create (queued) body seed failed for ${noteRef(path)}: ${errMsg(e)}`,
 				);
 			}
 		}
@@ -1326,7 +1330,7 @@ export class SyncEngine {
 				if (docText.trim() !== "") {
 					rlog().warn(
 						"crdt",
-						`flushFromCrdt: refused empty over ${prev.length}B for ${normalized} — CRDT doc still holds content (stale remote projection)`,
+						`flushFromCrdt: refused empty over ${prev.length}B for ${noteRef(normalized)} — CRDT doc still holds content (stale remote projection)`,
 					);
 					return true;
 				}
@@ -1357,7 +1361,7 @@ export class SyncEngine {
 			// intentionally NOT reached here — a failed write must not mark the note
 			// synced. Best-effort callers (pull/materialize) ignore the return and
 			// keep today's log-and-continue behavior.
-			rlog().error("crdt", `flushFromCrdt: write failed for ${path}: ${errMsg(e)}`);
+			rlog().error("crdt", `flushFromCrdt: write failed for ${noteRef(path)}: ${errMsg(e)}`);
 			return false;
 		}
 	}
@@ -1491,7 +1495,7 @@ export class SyncEngine {
 		} catch (e) {
 			rlog().warn(
 				"crdt",
-				`captureDiskDriftBeforeRemote: seed failed for ${path}: ${errMsg(e)}`,
+				`captureDiskDriftBeforeRemote: seed failed for ${noteRef(path)}: ${errMsg(e)}`,
 			);
 		}
 	}
@@ -1561,12 +1565,12 @@ export class SyncEngine {
 				const copy = await this.writeDriftConflictCopy(normalized, disk);
 				rlog().info(
 					"conflict",
-					`history-less drift → keep-both | original=${normalized} copy=${copy}`,
+					`history-less drift → keep-both | original=${noteRef(normalized)} copy=${copy}`,
 				);
 			} catch (e) {
 				rlog().error(
 					"conflict",
-					`history-less keep-both copy failed for ${normalized}: ${errMsg(e)}. Aborting apply to retain the local edit for retry`,
+					`history-less keep-both copy failed for ${noteRef(normalized)}: ${errMsg(e)}. Aborting apply to retain the local edit for retry`,
 				);
 				return "deferred";
 			}
@@ -1593,7 +1597,10 @@ export class SyncEngine {
 			// empty doc. Storm-safe: only actively-edited notes fan out (not
 			// catch-up-scale enumerations) and the 15s per-note cooldown coalesces
 			// bursts (the CI 29942250643 class this branch once guarded against).
-			rlog().info("crdt", `history-less delta pends for ${normalized} — socket converge`);
+			rlog().info(
+				"crdt",
+				`history-less delta pends for ${noteRef(normalized)} — socket converge`,
+			);
 			this.socketConverge(normalized, noteId);
 			return "deferred";
 		}
@@ -1662,11 +1669,14 @@ export class SyncEngine {
 		// covers a delete already sent; hasPendingDelete (by path) covers one
 		// still sitting unsent in the offline queue.
 		if (this.recentlyDeleted.has(noteId)) {
-			rlog().info("crdt", `empty-materialize skip (recent local delete): ${normalized}`);
+			rlog().info(
+				"crdt",
+				`empty-materialize skip (recent local delete): ${noteRef(normalized)}`,
+			);
 			return;
 		}
 		if (this.queue.hasPendingEvidencedDelete(normalized, this.settings.vaultId ?? undefined)) {
-			rlog().info("crdt", `empty-materialize skip (delete queued): ${normalized}`);
+			rlog().info("crdt", `empty-materialize skip (delete queued): ${noteRef(normalized)}`);
 			return;
 		}
 
@@ -1713,7 +1723,7 @@ export class SyncEngine {
 		if (canonical !== null && normalizePath(canonical) !== normalizePath(path)) {
 			rlog().info(
 				"ws",
-				`Stale materialize skipped for ${noteId}: canonical=${canonical} captured=${path}`,
+				`Stale materialize skipped for ${noteId}: canonical=${canonical} captured=${noteRef(path)}`,
 			);
 			return;
 		}
@@ -2334,7 +2344,10 @@ export class SyncEngine {
 		// guard off the CRDT path (legacy writes, attachments).
 		const crdtManaged = !!this.crdt && this.isCrdtEligible(file);
 		if (!crdtManaged && this.files.has(file.path, "flushed")) {
-			rlog().info("sync", `Modify echo skip (recently flushed from CRDT): ${file.path}`);
+			rlog().info(
+				"sync",
+				`Modify echo skip (recently flushed from CRDT): ${noteRef(file.path)}`,
+			);
 			return;
 		}
 
@@ -2453,11 +2466,14 @@ export class SyncEngine {
 				this.consumeEngineTrash(file.path) || this.files.has(file.path, "remotelyDeleted");
 			this.files.clearMarker(file.path, "remotelyDeleted");
 			if (wasEcho) {
-				rlog().info("vault", `Delete echo for replaced path — skipped: ${file.path}`);
+				rlog().info(
+					"vault",
+					`Delete echo for replaced path — skipped: ${noteRef(file.path)}`,
+				);
 			} else {
 				rlog().warn(
 					"vault",
-					`Delete event for reoccupied path SKIPPED (no echo evidence): ${file.path}`,
+					`Delete event for reoccupied path SKIPPED (no echo evidence): ${noteRef(file.path)}`,
 				);
 			}
 			return;
@@ -2507,7 +2523,7 @@ export class SyncEngine {
 			// A converged REMOTE delete: tombstone the id so a racing catch-up or
 			// late fan-out cannot resurrect it (delete-wins, backend #970).
 			if (crdtNoteId) this.markRecentlyDeleted(crdtNoteId);
-			rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`);
+			rlog().info("vault", `Delete echo skip (remote-applied): ${noteRef(file.path)}`);
 			if (this.isCrdtEligible(file) && crdtNoteId) {
 				await this.teardownCrdtDoc(crdtNoteId);
 			}
@@ -2533,13 +2549,13 @@ export class SyncEngine {
 				this.markRecentlyDeleted(crdtNoteId);
 				this.crdtEnqueue?.({ kind: "delete", docId: crdtNoteId, path: file.path });
 				if (this.isCrdtEligible(file)) await this.teardownCrdtDoc(crdtNoteId);
-				rlog().info("push", `Delete superseded pending create: ${file.path}`);
+				rlog().info("push", `Delete superseded pending create: ${noteRef(file.path)}`);
 				return;
 			}
 			// Pure refusal: deliberately NO markRecentlyDeleted — the documented
 			// remedy for a wrong refusal is next-pull resurrection, and the
 			// delete-wins tombstone would block exactly that for 60s (finding 7).
-			rlog().warn("push", `Delete push REFUSED (no sync evidence): ${file.path}`);
+			rlog().warn("push", `Delete push REFUSED (no sync evidence): ${noteRef(file.path)}`);
 			if (this.isCrdtEligible(file) && crdtNoteId) {
 				await this.teardownCrdtDoc(crdtNoteId);
 			}
@@ -2593,7 +2609,7 @@ export class SyncEngine {
 			}
 			// biome-ignore lint/suspicious/noConsole: error boundary
 			console.error("Engram Sync: failed to delete %s", file.path, e);
-			rlog().error("push", `Delete failed (queued): ${file.path} | ${errMsg(e)}`);
+			rlog().error("push", `Delete failed (queued): ${noteRef(file.path)} | ${errMsg(e)}`);
 			await this.enqueueChange({
 				path: file.path,
 				action: "delete",
@@ -2660,7 +2676,7 @@ export class SyncEngine {
 					} else {
 						rlog().warn(
 							"push",
-							`Rename old-leg delete REFUSED (no sync evidence): ${oldPath}`,
+							`Rename old-leg delete REFUSED (no sync evidence): ${noteRef(oldPath)}`,
 						);
 					}
 				} else if (this.isCrdtEligible(file)) {
@@ -2684,7 +2700,7 @@ export class SyncEngine {
 				} else {
 					rlog().warn(
 						"push",
-						`Rename old-leg delete REFUSED (no sync evidence): ${oldPath}`,
+						`Rename old-leg delete REFUSED (no sync evidence): ${noteRef(oldPath)}`,
 					);
 				}
 				// Task 6 (note_id-keyed CRDT): a rename must NOT tear down the CRDT
@@ -2703,7 +2719,7 @@ export class SyncEngine {
 					console.error("Engram Sync: failed to delete old path %s", oldPath, e);
 					rlog().error(
 						"push",
-						`Rename old-leg delete failed (queued): ${oldPath} | ${errMsg(e)}`,
+						`Rename old-leg delete failed (queued): ${noteRef(oldPath)} | ${errMsg(e)}`,
 					);
 					await this.enqueueChange({
 						path: oldPath,
@@ -2763,7 +2779,7 @@ export class SyncEngine {
 			await this.explicitFolders.add(path);
 		} catch (e) {
 			devLog().log("push", `createFolder("${path}") failed: ${errMsg(e)}`);
-			rlog().warn("push", `createFolder("${path}") failed: ${errMsg(e)}`);
+			rlog().warn("push", `createFolder("${noteRef(path)}") failed: ${errMsg(e)}`);
 		}
 	}
 
@@ -2783,7 +2799,7 @@ export class SyncEngine {
 			await this.api.deleteFolder(path);
 		} catch (e) {
 			devLog().log("push", `deleteFolder("${path}") failed: ${errMsg(e)}`);
-			rlog().warn("push", `deleteFolder("${path}") failed: ${errMsg(e)}`);
+			rlog().warn("push", `deleteFolder("${noteRef(path)}") failed: ${errMsg(e)}`);
 		} finally {
 			await this.explicitFolders.delete(path);
 		}
@@ -2814,7 +2830,7 @@ export class SyncEngine {
 				await this.explicitFolders.add(path);
 			} catch (e) {
 				devLog().log("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`);
-				rlog().warn("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`);
+				rlog().warn("push", `seedEmptyFolders("${noteRef(path)}") failed: ${errMsg(e)}`);
 			}
 		}
 	}
@@ -2933,7 +2949,7 @@ export class SyncEngine {
 			const existing = this.syncState.get(normalizePath(file.path));
 			if (!force && existing !== undefined && echoHash === existing.hash) {
 				devLog().log("push", `skip (echo): ${file.path}`);
-				rlog().info("push", `Echo skip: ${file.path} | hash=${echoHash}`);
+				rlog().info("push", `Echo skip: ${noteRef(file.path)} | hash=${echoHash}`);
 				return false;
 			}
 		}
@@ -2962,7 +2978,7 @@ export class SyncEngine {
 		);
 		rlog().info(
 			"push",
-			`Push start: ${file.path} | type=${isBinary ? "attachment" : "note"} | active=${this.activePushCount}`,
+			`Push start: ${noteRef(file.path)} | type=${isBinary ? "attachment" : "note"} | active=${this.activePushCount}`,
 		);
 
 		try {
@@ -2977,7 +2993,10 @@ export class SyncEngine {
 				const existing = this.syncState.get(normalizePath(file.path));
 				if (!force && existing !== undefined && hash === existing.hash) {
 					devLog().log("push", `skip (echo): ${file.path}`);
-					rlog().info("push", `Echo skip (attachment): ${file.path} | hash=${hash}`);
+					rlog().info(
+						"push",
+						`Echo skip (attachment): ${noteRef(file.path)} | hash=${hash}`,
+					);
 					return false;
 				}
 				const mimeType = this.getMimeType(file);
@@ -3012,7 +3031,7 @@ export class SyncEngine {
 					if (this.shouldDeferMint(file.path)) {
 						rlog().info(
 							"push",
-							`Mint refused (engine-flushed file, id relocated away): ${file.path}`,
+							`Mint refused (engine-flushed file, id relocated away): ${noteRef(file.path)}`,
 						);
 						return false;
 					}
@@ -3028,7 +3047,7 @@ export class SyncEngine {
 				if (this.isCrdtEligible(file)) {
 					rlog().info(
 						"push",
-						`route: ${file.path} crdt=${!!this.crdt} server=${this.hasServerNote(noteId)} confirmed=${noteId ? this.isNoteConfirmed(noteId) : false} live=${this.crdtLive?.() ?? true} id=${noteId ?? "none"}`,
+						`route: ${noteRef(file.path)} crdt=${!!this.crdt} server=${this.hasServerNote(noteId)} confirmed=${noteId ? this.isNoteConfirmed(noteId) : false} live=${this.crdtLive?.() ?? true} id=${noteId ?? "none"}`,
 					);
 				}
 
@@ -3126,12 +3145,12 @@ export class SyncEngine {
 							);
 							rlog().info(
 								"push",
-								`CRDT edit queued durably (channel down): ${file.path}`,
+								`CRDT edit queued durably (channel down): ${noteRef(file.path)}`,
 							);
 							return true;
 						}
 						devLog().log("push", `crdt ok: ${file.path}`);
-						rlog().info("push", `CRDT push ok: ${file.path}`);
+						rlog().info("push", `CRDT push ok: ${noteRef(file.path)}`);
 						return true;
 					}
 					// DECLINED (handshake gate): applyLocalEdit did not consume because
@@ -3233,12 +3252,12 @@ export class SyncEngine {
 								if (mintText.length > 0 && serverHadContent) {
 									rlog().warn(
 										"crdt",
-										`crdt_create ADOPT: transferred non-empty buffer into a non-empty server doc (possible two-lineage merge): ${pushedPath} ${noteId} -> ${serverId}`,
+										`crdt_create ADOPT: transferred non-empty buffer into a non-empty server doc (possible two-lineage merge): ${noteRef(pushedPath)} ${noteId} -> ${serverId}`,
 									);
 								}
 								rlog().info(
 									"crdt",
-									`crdt_create ADOPT: remapped live editor ${pushedPath} ${noteId} -> ${serverId}`,
+									`crdt_create ADOPT: remapped live editor ${noteRef(pushedPath)} ${noteId} -> ${serverId}`,
 								);
 								// The ViewPlugin re-resolves path -> serverId on its next update
 								// and re-attaches itself; the reattach-triggering keystroke is
@@ -3255,7 +3274,7 @@ export class SyncEngine {
 									this.noteIdMap?.set(normalizePath(pushedPath), serverId);
 									rlog().info(
 										"crdt",
-										`crdt_create ADOPT: remapped ${pushedPath} ${noteId} -> ${serverId}`,
+										`crdt_create ADOPT: remapped ${noteRef(pushedPath)} ${noteId} -> ${serverId}`,
 									);
 									effectiveId = serverId;
 								}
@@ -3293,7 +3312,7 @@ export class SyncEngine {
 								// and delivers the body. Upgrade path: retry the seed here.
 								rlog().warn(
 									"crdt",
-									`crdt_create ok but body seed declined (will deliver on next edit): ${pushedPath}`,
+									`crdt_create ok but body seed declined (will deliver on next edit): ${noteRef(pushedPath)}`,
 								);
 							}
 							// Vault-channel fan-out: enroll (STEP1) only for a live-bound note,
@@ -3308,7 +3327,7 @@ export class SyncEngine {
 							);
 							rlog().info(
 								"push",
-								`CRDT create ok: ${pushedPath} | id=${effectiveId}`,
+								`CRDT create ok: ${noteRef(pushedPath)} | id=${effectiveId}`,
 							);
 							return true;
 						} catch (seedErr) {
@@ -3322,7 +3341,7 @@ export class SyncEngine {
 							// the next edit's CRDT-op push.
 							rlog().warn(
 								"crdt",
-								`crdt_create ok but post-create step threw (row exists, self-heals on next edit): ${pushedPath} | ${String(seedErr)}`,
+								`crdt_create ok but post-create step threw (row exists, self-heals on next edit): ${noteRef(pushedPath)} | ${String(seedErr)}`,
 							);
 							// Baseline deliberately null: this exit may have transmitted, but
 							// leaves the echo-cooldown window closed conservatively (an
@@ -3341,7 +3360,7 @@ export class SyncEngine {
 						if (createReason === "recently_deleted") {
 							rlog().info(
 								"push",
-								`recently_deleted — trashing local ${pushedPath} to honor remote delete`,
+								`recently_deleted — trashing local ${noteRef(pushedPath)} to honor remote delete`,
 							);
 							await this.trashRemotelyDeleted(file);
 							this.logEntry("push", pushedPath, "skipped", "recently_deleted");
@@ -3354,7 +3373,7 @@ export class SyncEngine {
 						// claim success for notes the queue could still drop (finding 3).
 						rlog().warn(
 							"crdt",
-							`crdt_create failed, enqueued for durable retry: ${pushedPath} | ${String(err)}`,
+							`crdt_create failed, enqueued for durable retry: ${noteRef(pushedPath)} | ${String(err)}`,
 						);
 						this.crdtEnqueue?.({ kind: "create", docId: noteId, path: pushedPath });
 						return false;
@@ -3440,7 +3459,10 @@ export class SyncEngine {
 				);
 			}
 			devLog().log("push", `ok: ${file.path}`);
-			rlog().info("push", `Push ok: ${file.path} | type=${isBinary ? "attachment" : "note"}`);
+			rlog().info(
+				"push",
+				`Push ok: ${noteRef(file.path)} | type=${isBinary ? "attachment" : "note"}`,
+			);
 			this.goOnline();
 		} catch (e) {
 			const msg = errMsg(e);
@@ -3482,7 +3504,7 @@ export class SyncEngine {
 			devLog().log("error", `push failed: ${file.path} — ${msg} (${classified.category})`);
 			rlog().error(
 				"push",
-				`Push failed: ${file.path} — ${msg} | category=${classified.category}`,
+				`Push failed: ${noteRef(file.path)} — ${msg} | category=${classified.category}`,
 				e instanceof Error ? e.stack : undefined,
 			);
 			this.logEntry("push", file.path, "error", msg, classified.category);
@@ -4479,7 +4501,10 @@ export class SyncEngine {
 							// One bad op (e.g. illegal filename) must not wedge the feed — log
 							// and skip, same isolation as pullViaCursor.
 							failed += 1;
-							rlog().error("crdt", `seq-replay: skipped ${c.path} — ${errMsg(e)}`);
+							rlog().error(
+								"crdt",
+								`seq-replay: skipped ${noteRef(c.path)} — ${errMsg(e)}`,
+							);
 						}
 					}
 					// Every non-deleted id/path SEEN (applied or skipped) — the
@@ -4572,7 +4597,7 @@ export class SyncEngine {
 			// content and can never pend (unlike the retired crdt_catchup_delta).
 			await this.catchupViaSeqReplay();
 		} catch (e) {
-			rlog().warn("crdt", `discoverAnnouncedNote failed for ${path}: ${errMsg(e)}`);
+			rlog().warn("crdt", `discoverAnnouncedNote failed for ${noteRef(path)}: ${errMsg(e)}`);
 		}
 	}
 
@@ -4619,7 +4644,7 @@ export class SyncEngine {
 				rlog().info("crdt", `fan-out drop: id unmapped after reconcile note=${noteId}`);
 				return "deferred"; // genuinely unknown — first-discovery is pull()'s job
 			}
-			rlog().info("crdt", `fan-out for unmapped id healed via manifest: ${path}`);
+			rlog().info("crdt", `fan-out for unmapped id healed via manifest: ${noteRef(path)}`);
 		}
 		// A fan-out for a mapped note is the server pushing that note's bytes —
 		// authoritative proof it has a row. So confirm it here rather than dropping
@@ -4664,7 +4689,7 @@ export class SyncEngine {
 			} catch (e) {
 				rlog().error(
 					"crdt",
-					`Live-bound fan-out apply failed for ${path}: ${errMsg(e)}`,
+					`Live-bound fan-out apply failed for ${noteRef(path)}: ${errMsg(e)}`,
 					e instanceof Error ? e.stack : undefined,
 				);
 				return "deferred";
@@ -4701,7 +4726,7 @@ export class SyncEngine {
 					typeof this.crdt.hasPendingGap === "function" &&
 					(await this.crdt.hasPendingGap(noteId));
 				if (hadGap) {
-					rlog().warn("crdt", `gap heal: socket re-handshake for ${path}`);
+					rlog().warn("crdt", `gap heal: socket re-handshake for ${noteRef(path)}`);
 					this.socketConverge(path, noteId);
 					return "deferred";
 				}
@@ -4717,7 +4742,10 @@ export class SyncEngine {
 			// (or a subsequent push) will retry convergence. Not freed: a failed
 			// apply is left for retry, not hibernated.
 			devLog().log("crdt", `applyPushedNoteUpdate: ${path} failed — ${errMsg(e)}`);
-			rlog().warn("crdt", `Vault-channel update apply failed for ${path}: ${errMsg(e)}`);
+			rlog().warn(
+				"crdt",
+				`Vault-channel update apply failed for ${noteRef(path)}: ${errMsg(e)}`,
+			);
 			return "deferred";
 		}
 	}
@@ -4774,7 +4802,7 @@ export class SyncEngine {
 		this.crdtHealCooldown.set(noteId, Date.now());
 		this.crdtEnrollment?.reset(noteId);
 		this.crdtEnrollment?.enroll(noteId);
-		rlog().info("crdt", `socket converge: re-handshake fired for ${path}`);
+		rlog().info("crdt", `socket converge: re-handshake fired for ${noteRef(path)}`);
 	}
 
 	/** Commit a staged convergence (see `pendingConvergence` — staged by BOTH
@@ -4818,11 +4846,14 @@ export class SyncEngine {
 			try {
 				await this.queue.dequeue(queued.path, queued.vaultId);
 				this.issues.clear(queued.path);
-				rlog().info("queue", `CRDT delivery settled via socket round-trip: ${queued.path}`);
+				rlog().info(
+					"queue",
+					`CRDT delivery settled via socket round-trip: ${noteRef(queued.path)}`,
+				);
 			} catch (e) {
 				rlog().warn(
 					"queue",
-					`CRDT delivery settle failed for ${queued.path}: ${errMsg(e)}`,
+					`CRDT delivery settle failed for ${noteRef(queued.path)}: ${errMsg(e)}`,
 				);
 			}
 		}
@@ -4892,9 +4923,12 @@ export class SyncEngine {
 			// Via markServerKnown so the placeholder can only fill a hole, never
 			// overwrite an authoritative head this note already has.
 			if (staged.content) this.markServerKnown(path);
-			rlog().info("crdt", `socket converge: STEP2 committed ${path}`);
+			rlog().info("crdt", `socket converge: STEP2 committed ${noteRef(path)}`);
 		} catch (e) {
-			rlog().warn("crdt", `socket converge: commit failed for ${path}: ${errMsg(e)}`);
+			rlog().warn(
+				"crdt",
+				`socket converge: commit failed for ${noteRef(path)}: ${errMsg(e)}`,
+			);
 		}
 		this.releaseHealRoom(noteId, path);
 	}
@@ -4961,7 +4995,7 @@ export class SyncEngine {
 			if (!this.isLiveBound(normalized)) return; // idle confirmed notes heal on reconnect (#5)
 			this.socketConverge(normalized, noteId);
 		} catch (e) {
-			rlog().warn("crdt", `healNoteOnOpen ${path}: ${errMsg(e)}`);
+			rlog().warn("crdt", `healNoteOnOpen ${noteRef(path)}: ${errMsg(e)}`);
 		}
 	}
 
@@ -5248,7 +5282,10 @@ export class SyncEngine {
 		}
 		if (this.shouldIgnore(event.path)) return;
 		devLog().log("ws", `${event.event_type} ${event.kind ?? "note"}: ${event.path}`);
-		rlog().info("ws", `Event: ${event.event_type} ${event.kind ?? "note"}: ${event.path}`);
+		rlog().info(
+			"ws",
+			`Event: ${event.event_type} ${event.kind ?? "note"}: ${noteRef(event.path)}`,
+		);
 
 		const isAttachment = event.kind === "attachment";
 
@@ -5274,7 +5311,10 @@ export class SyncEngine {
 			event.content_hash &&
 			event.content_hash !== this.emptyContentHash
 		) {
-			rlog().info("ws", `Inline-empty body distrusted, routing to catch-up: ${event.path}`);
+			rlog().info(
+				"ws",
+				`Inline-empty body distrusted, routing to catch-up: ${noteRef(event.path)}`,
+			);
 			event.content = undefined;
 		}
 
@@ -5311,11 +5351,11 @@ export class SyncEngine {
 		// re-pushes it). A redundant delete just no-ops in the delete branch below.
 		if (event.event_type !== "delete") {
 			if (this.pushing.has(event.path)) {
-				rlog().info("ws", `Echo skip (pushing): ${event.path}`);
+				rlog().info("ws", `Echo skip (pushing): ${noteRef(event.path)}`);
 				return;
 			}
 			if (this.files.has(event.path, "pushed")) {
-				rlog().info("ws", `Echo skip (recently pushed): ${event.path}`);
+				rlog().info("ws", `Echo skip (recently pushed): ${noteRef(event.path)}`);
 				return;
 			}
 		}
@@ -5329,7 +5369,7 @@ export class SyncEngine {
 				if (event.version != null && event.version !== stored.version) {
 					this.patchSyncedRow(normalizePath(event.path), { version: event.version });
 				}
-				rlog().info("ws", `Hash skip: ${event.path}`);
+				rlog().info("ws", `Hash skip: ${noteRef(event.path)}`);
 				return;
 			}
 		}
@@ -5342,7 +5382,7 @@ export class SyncEngine {
 			// existing suppression (pushing/recentlyPushed/hash-skip) — their
 			// echoes also drive id-relocation, so they are not dropped here.
 			if (this.deviceId && event.device_id === this.deviceId) {
-				rlog().info("ws", `Echo skip (own device): ${event.path}`);
+				rlog().info("ws", `Echo skip (own device): ${noteRef(event.path)}`);
 				return;
 			}
 			// A delete is an AUTHORITATIVE CRDT operation applied directly here — no
@@ -5386,7 +5426,7 @@ export class SyncEngine {
 				if (this.noteIdMap?.get(normalized) === roomId) this.noteIdMap.delete(normalized);
 				rlog().info(
 					"ws",
-					`Delete is rename old-leg (id relocated to ${relocatedPath}); old path trashed, room preserved: ${normalized}`,
+					`Delete is rename old-leg (id relocated to ${relocatedPath}); old path trashed, room preserved: ${noteRef(normalized)}`,
 				);
 				return;
 			}
@@ -5394,7 +5434,7 @@ export class SyncEngine {
 			if (existing && targetId && currentId && targetId !== currentId) {
 				rlog().info(
 					"ws",
-					`Delete for dead id ${targetId} ignored — ${normalized} recreated as ${currentId}`,
+					`Delete for dead id ${targetId} ignored — ${noteRef(normalized)} recreated as ${currentId}`,
 				);
 				return;
 			}
@@ -5414,13 +5454,13 @@ export class SyncEngine {
 						const copy = await this.writeDriftConflictCopy(normalized, disk);
 						rlog().info(
 							"conflict",
-							`received-delete drift → keep-both | original=${normalized} copy=${copy}`,
+							`received-delete drift → keep-both | original=${noteRef(normalized)} copy=${copy}`,
 						);
 					}
 				} catch (e) {
 					rlog().warn(
 						"conflict",
-						`received-delete drift check failed for ${normalized}: ${errMsg(e)}`,
+						`received-delete drift check failed for ${noteRef(normalized)}: ${errMsg(e)}`,
 					);
 				}
 				// trashRemotelyDeleted marks remotelyDeleted, so this device's own
@@ -5505,7 +5545,7 @@ export class SyncEngine {
 					) {
 						rlog().info(
 							"ws",
-							`Stale-path upsert ignored for ${noteId}: canonical=${canonicalPath} event=${event.path}`,
+							`Stale-path upsert ignored for ${noteId}: canonical=${canonicalPath} event=${noteRef(event.path)}`,
 						);
 					} else {
 						this.noteIdMap?.set(event.path, noteId);
@@ -5550,7 +5590,7 @@ export class SyncEngine {
 						}
 						rlog().info(
 							"ws",
-							`CRDT-managed: skipping legacy body apply for ${event.path}`,
+							`CRDT-managed: skipping legacy body apply for ${noteRef(event.path)}`,
 						);
 						// First-delivery materialization (Phase C step 2). A never-seen note
 						// (no prior baseline, no local file) materializes here; one with a
@@ -5631,7 +5671,7 @@ export class SyncEngine {
 				// Sync-critical failure — must reach Loki, not just the local console.
 				rlog().error(
 					"ws",
-					`Apply failed: ${event.event_type} ${event.path} | ${errMsg(e)}`,
+					`Apply failed: ${event.event_type} ${noteRef(event.path)} | ${errMsg(e)}`,
 					e instanceof Error ? e.stack : undefined,
 				);
 			}
@@ -5699,7 +5739,7 @@ export class SyncEngine {
 				rlog().info(
 					"pull",
 					`Id-keyed move IGNORED (stale event ts=${eventTs} < last-applied ts=${lastTs}): ` +
-						`${id} -> ${newPath}`,
+						`${id} -> ${noteRef(newPath)}`,
 				);
 				return;
 			}
@@ -5721,7 +5761,7 @@ export class SyncEngine {
 			rlog().warn(
 				"pull",
 				`Id-keyed move REFUSED (${owner === undefined ? "ownership unknown" : "cross-wire"}): ` +
-					`${priorPath} not confirmed as ${id}'s old path — rebinding to ${newPath}, no trash`,
+					`${priorPath} not confirmed as ${id}'s old path — rebinding to ${noteRef(newPath)}, no trash`,
 			);
 			// set() keeps the map a bijection: it evicts priorPath->id without
 			// touching priorPath's file, syncState, or baseStore (they belong to
@@ -5800,21 +5840,24 @@ export class SyncEngine {
 					// flushFromCrdt would fail on it. Same skip as before.
 					rlog().info(
 						"pull",
-						`Id-keyed move: skipping disk flush for ${newPath} — a non-file already occupies the path`,
+						`Id-keyed move: skipping disk flush for ${noteRef(newPath)} — a non-file already occupies the path`,
 					);
 				} else if (existingBody !== null && existingBody.trim() !== "") {
 					rlog().info(
 						"pull",
-						`Id-keyed move: skipping stale disk flush for ${newPath} — already holds content (a concurrent flush won the race)`,
+						`Id-keyed move: skipping stale disk flush for ${noteRef(newPath)} — already holds content (a concurrent flush won the race)`,
 					);
 				} else {
 					await this.flushFromCrdt(newPath, content);
 				}
-				rlog().info("pull", `Id-keyed move: ${priorPath} -> ${newPath} (id=${id})`);
+				rlog().info(
+					"pull",
+					`Id-keyed move: ${priorPath} -> ${noteRef(newPath)} (id=${id})`,
+				);
 			} catch (e) {
 				rlog().warn(
 					"pull",
-					`Id-keyed move file ops failed (old file vanished mid-flight?): ${priorPath} -> ${newPath} — ${errMsg(e)}`,
+					`Id-keyed move file ops failed (old file vanished mid-flight?): ${priorPath} -> ${noteRef(newPath)} — ${errMsg(e)}`,
 				);
 				// No disk content to flush here, and the caller's isSynced-gated
 				// materializeRelocated backstop may ALSO decline (fresh-boot
@@ -6016,11 +6059,14 @@ export class SyncEngine {
 				try {
 					await this.trashRemotelyDeleted(file);
 					this.dropPath(np);
-					rlog().info("pull", `Reconcile: server-deleted → trashed ${file.path}`);
+					rlog().info(
+						"pull",
+						`Reconcile: server-deleted → trashed ${noteRef(file.path)}`,
+					);
 				} catch (e) {
 					rlog().error(
 						"pull",
-						`Reconcile trash failed (retried next run): ${file.path} — ${errMsg(e)}`,
+						`Reconcile trash failed (retried next run): ${noteRef(file.path)} — ${errMsg(e)}`,
 						e instanceof Error ? e.stack : undefined,
 					);
 				}
@@ -6156,7 +6202,7 @@ export class SyncEngine {
 				}
 				poked++;
 			} catch (e) {
-				rlog().warn("crdt", `live-bound heal failed for ${path}: ${errMsg(e)}`);
+				rlog().warn("crdt", `live-bound heal failed for ${noteRef(path)}: ${errMsg(e)}`);
 			}
 		}
 		return poked;
@@ -6233,7 +6279,7 @@ export class SyncEngine {
 					if (!crdtManaged) {
 						rlog().info(
 							"pull",
-							`Tombstone skipped (resurrection): ${change.path}` +
+							`Tombstone skipped (resurrection): ${noteRef(change.path)}` +
 								` | localHash=${localHash}` +
 								` | syncedHash=${lastSynced?.hash ?? "none"}` +
 								` | localLen=${localContent.length}`,
@@ -6248,7 +6294,7 @@ export class SyncEngine {
 						} catch (e) {
 							rlog().error(
 								"pull",
-								`Resurrection push failed: ${change.path} | err=${errMsg(e)}`,
+								`Resurrection push failed: ${noteRef(change.path)} | err=${errMsg(e)}`,
 							);
 						}
 						return false;
@@ -6263,25 +6309,25 @@ export class SyncEngine {
 							);
 							rlog().info(
 								"conflict",
-								`CRDT tombstone drift → keep-both | original=${normalized} copy=${copy}`,
+								`CRDT tombstone drift → keep-both | original=${noteRef(normalized)} copy=${copy}`,
 							);
 						} catch (e) {
 							rlog().warn(
 								"conflict",
-								`CRDT tombstone drift capture failed for ${normalized}: ${errMsg(e)}`,
+								`CRDT tombstone drift capture failed for ${noteRef(normalized)}: ${errMsg(e)}`,
 							);
 						}
 					} else {
 						rlog().info(
 							"pull",
-							`CRDT tombstone honoured (no drift): ${change.path}` +
+							`CRDT tombstone honoured (no drift): ${noteRef(change.path)}` +
 								` | syncedHash=${lastSynced?.hash ?? "none"}`,
 						);
 					}
 					// fall through to trash below
 				}
 				await this.applyRemoteRemoval(existing);
-				rlog().info("pull", `Deleted: ${change.path}`);
+				rlog().info("pull", `Deleted: ${noteRef(change.path)}`);
 				// Tear the CRDT room down so a note recreated at this path starts
 				// fresh (no ghost lineage). Gated on note_id + .md — a legacy note
 				// (crdtNoteId null) or attachment is a no-op, so the non-CRDT trash
@@ -6342,7 +6388,7 @@ export class SyncEngine {
 			) {
 				rlog().info(
 					"pull",
-					`applyChange skip (stale v${change.version} <= synced v${known}): ${change.path}`,
+					`applyChange skip (stale v${change.version} <= synced v${known}): ${noteRef(change.path)}`,
 				);
 				return false;
 			}
@@ -6370,7 +6416,10 @@ export class SyncEngine {
 			// note_yjs_update fan-out room-free, so this is not an enrollment storm.
 			if (this.isCanvasPath(normalized)) {
 				if (noteId) this.crdtEnrollment?.enroll(noteId);
-				rlog().info("pull", `CRDT canvas: enroll for Yjs convergence ${change.path}`);
+				rlog().info(
+					"pull",
+					`CRDT canvas: enroll for Yjs convergence ${noteRef(change.path)}`,
+				);
 				return false;
 			}
 			// noteId resolved above (shared with the anti-stale guard). This is
@@ -6394,7 +6443,7 @@ export class SyncEngine {
 				// connect (the enrollment storm). Send stays intact — an idle CRDT
 				// note ships local edits without enrollment.
 				if (noteId && this.isLiveBound(normalized)) this.crdtEnrollment?.enroll(noteId);
-				rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`);
+				rlog().info("pull", `CRDT discovery: enrolling new note ${noteRef(change.path)}`);
 				// (return true below: this leg CREATES the file — the branch-wide
 				// `return false` violated the "true when a file was actually
 				// created" contract and made every pulled md note count as a
@@ -6504,7 +6553,7 @@ export class SyncEngine {
 				if (staleRow) {
 					rlog().info(
 						"pull",
-						`CRDT catch-up: stale row (seq ${change.seq ?? "-"}/${stored?.seq ?? "-"} v${change.version ?? "-"}/${stored?.version ?? "-"}) — history, skip ${change.path}`,
+						`CRDT catch-up: stale row (seq ${change.seq ?? "-"}/${stored?.seq ?? "-"} v${change.version ?? "-"}/${stored?.version ?? "-"}) — history, skip ${noteRef(change.path)}`,
 					);
 				} else if (change.content_hash && stored?.serverHash !== change.content_hash) {
 					if (this.isLiveBound(normalized)) {
@@ -6527,7 +6576,7 @@ export class SyncEngine {
 								: 1;
 						rlog().warn(
 							"pull",
-							`CRDT catch-up: diverged + live-bound, socket re-handshake (attempt ${attempts}) ${change.path}`,
+							`CRDT catch-up: diverged + live-bound, socket re-handshake (attempt ${attempts}) ${noteRef(change.path)}`,
 						);
 						this.crdtRehandshakeAttempts.set(key, {
 							hash: change.content_hash,
@@ -6589,7 +6638,7 @@ export class SyncEngine {
 						) {
 							rlog().info(
 								"pull",
-								`CRDT catch-up: baseline-content row (echo/lagged), socket re-handshake ${change.path}`,
+								`CRDT catch-up: baseline-content row (echo/lagged), socket re-handshake ${noteRef(change.path)}`,
 							);
 							this.stageAndConverge(
 								noteId,
@@ -6619,7 +6668,7 @@ export class SyncEngine {
 							// the CRDT double-divergence case).
 							rlog().warn(
 								"pull",
-								`CRDT catch-up: local+remote both diverged, drift-copy + converge ${change.path}`,
+								`CRDT catch-up: local+remote both diverged, drift-copy + converge ${noteRef(change.path)}`,
 							);
 							let copy: string | null = null;
 							try {
@@ -6627,7 +6676,7 @@ export class SyncEngine {
 							} catch (e) {
 								rlog().warn(
 									"conflict",
-									`drift-copy capture failed for ${normalized}: ${errMsg(e)}`,
+									`drift-copy capture failed for ${noteRef(normalized)}: ${errMsg(e)}`,
 								);
 							}
 							if (copy === null) {
@@ -6638,7 +6687,7 @@ export class SyncEngine {
 								// re-attempts the copy for this still-diverged row.
 								rlog().warn(
 									"conflict",
-									`drift-copy failed — leaving ${normalized} intact, deferring convergence to next catch-up`,
+									`drift-copy failed — leaving ${noteRef(normalized)} intact, deferring convergence to next catch-up`,
 								);
 								return false;
 							}
@@ -6686,7 +6735,7 @@ export class SyncEngine {
 							// diverged branches consume it properly.
 							rlog().info(
 								"pull",
-								`CRDT catch-up: no-CAS-base quiet record (disk==row) ${change.path}`,
+								`CRDT catch-up: no-CAS-base quiet record (disk==row) ${noteRef(change.path)}`,
 							);
 							this.patchSyncedRow(normalized, {
 								hash: fnv1a(content),
@@ -6705,7 +6754,7 @@ export class SyncEngine {
 							// (the D2 stomp class); Yjs merge is monotonic.
 							rlog().warn(
 								"pull",
-								`CRDT catch-up: diverged cold note, socket re-handshake ${change.path}`,
+								`CRDT catch-up: diverged cold note, socket re-handshake ${noteRef(change.path)}`,
 							);
 							this.stageAndConverge(
 								noteId,
@@ -6721,7 +6770,7 @@ export class SyncEngine {
 							// backfill, unchanged from before.
 							rlog().warn(
 								"pull",
-								`CRDT catch-up: pull backfilling diverged note (no note_id) ${change.path}`,
+								`CRDT catch-up: pull backfilling diverged note (no note_id) ${noteRef(change.path)}`,
 							);
 							// Gate the bookkeeping on the write, same as the discovery
 							// branch. Stamping a hash for content that never reached disk
@@ -6750,7 +6799,10 @@ export class SyncEngine {
 						}
 					}
 				} else {
-					rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);
+					rlog().info(
+						"pull",
+						`CRDT-managed: re-enroll for catch-up ${noteRef(change.path)}`,
+					);
 				}
 			}
 			// A CRDT-managed note (markdown OR canvas since #306) is fully handled
@@ -6785,7 +6837,7 @@ export class SyncEngine {
 				if (change.version != null) {
 					this.baseStore?.set(normalized, content, change.version);
 				}
-				rlog().info("pull", `Unchanged: ${change.path}`);
+				rlog().info("pull", `Unchanged: ${noteRef(change.path)}`);
 				return false;
 			}
 
@@ -6807,7 +6859,7 @@ export class SyncEngine {
 			}
 			rlog().info(
 				"pull",
-				`Applied: ${change.path} | localLen=${localContent.length} | remoteLen=${content.length}`,
+				`Applied: ${noteRef(change.path)} | localLen=${localContent.length} | remoteLen=${content.length}`,
 			);
 			return true;
 		}
@@ -6818,7 +6870,7 @@ export class SyncEngine {
 		} catch (createErr) {
 			rlog().error(
 				"pull",
-				`applyChange CREATE FAILED: ${normalized}`,
+				`applyChange CREATE FAILED: ${noteRef(normalized)}`,
 				createErr instanceof Error ? createErr.stack : undefined,
 			);
 			throw createErr;
@@ -6833,7 +6885,7 @@ export class SyncEngine {
 		if (change.version != null) {
 			this.baseStore?.set(normalized, content, change.version);
 		}
-		rlog().info("pull", `Created: ${change.path} | len=${content.length}`);
+		rlog().info("pull", `Created: ${noteRef(change.path)} | len=${content.length}`);
 		return true;
 	}
 
@@ -6852,7 +6904,7 @@ export class SyncEngine {
 			const existing = this.app.vault.getFileByPath(normalized);
 			if (existing) {
 				await this.applyRemoteRemoval(existing, { dropBase: false });
-				rlog().info("pull", `Attachment deleted: ${change.path}`);
+				rlog().info("pull", `Attachment deleted: ${noteRef(change.path)}`);
 				return true;
 			}
 			return false;
@@ -6875,19 +6927,25 @@ export class SyncEngine {
 					this.stampSyncedRow(normalized, { hash });
 					rlog().info(
 						"pull",
-						`Attachment unchanged: ${change.path} | bytes=${buffer.byteLength}`,
+						`Attachment unchanged: ${noteRef(change.path)} | bytes=${buffer.byteLength}`,
 					);
 					return false;
 				}
 			}
 			await this.app.vault.modifyBinary(existing, buffer);
 			this.stampSyncedRow(normalized, { hash });
-			rlog().info("pull", `Attachment applied: ${change.path} | bytes=${buffer.byteLength}`);
+			rlog().info(
+				"pull",
+				`Attachment applied: ${noteRef(change.path)} | bytes=${buffer.byteLength}`,
+			);
 			return true;
 		}
 		await this.createBinaryFileWithFolders(normalized, buffer);
 		this.stampSyncedRow(normalized, { hash });
-		rlog().info("pull", `Attachment created: ${change.path} | bytes=${buffer.byteLength}`);
+		rlog().info(
+			"pull",
+			`Attachment created: ${noteRef(change.path)} | bytes=${buffer.byteLength}`,
+		);
 		return true;
 	}
 
@@ -8094,7 +8152,7 @@ export class SyncEngine {
 					if (!entry.evidenced) {
 						rlog().warn(
 							"queue",
-							`Queued delete DROPPED (no evidence stamp): ${entry.path}`,
+							`Queued delete DROPPED (no evidence stamp): ${noteRef(entry.path)}`,
 						);
 					} else {
 						try {
@@ -8200,7 +8258,7 @@ export class SyncEngine {
 						if (this.shouldDeferMint(replayNp)) {
 							rlog().info(
 								"queue",
-								`Replay mint refused (engine-flushed, id relocated away): ${entry.path}`,
+								`Replay mint refused (engine-flushed, id relocated away): ${noteRef(entry.path)}`,
 							);
 							continue;
 						}

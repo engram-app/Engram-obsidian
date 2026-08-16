@@ -1,5 +1,6 @@
 import { errMsg } from "../error-util";
 import { docKindFor } from "../file-kind";
+import { noteRef } from "../note-ref";
 import { rlog } from "../remote-log";
 import type { SyncEngine } from "../sync";
 import { isDestroyedError } from "./destroyed-error";
@@ -249,13 +250,13 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 					if (!ok)
 						rlog().warn(
 							"crdt",
-							`strand-heal flush refused for ${path} — retained in Y.Doc`,
+							`strand-heal flush refused for ${noteRef(path)} — retained in Y.Doc`,
 						);
 				})
 				.catch((e) =>
 					rlog().warn(
 						"crdt",
-						`strand-heal flush failed for ${path}: ${errMsg(e)} — retained in Y.Doc`,
+						`strand-heal flush failed for ${noteRef(path)}: ${errMsg(e)} — retained in Y.Doc`,
 					),
 				);
 		}

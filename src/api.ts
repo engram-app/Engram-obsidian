@@ -8,6 +8,7 @@ import type { AuthProvider } from "./auth";
 import { interpretHealthProbe, type PreflightResult } from "./auth-state";
 import { isHttpStatus, statusOf } from "./error-util";
 import { LimitExceededError } from "./limit-error";
+import { noteRef } from "./note-ref";
 import { BeaconBuffer } from "./observability/beacon";
 import { newTraceContext } from "./observability/traceGen";
 import { type RemoteLogEntry, rlog } from "./remote-log";
@@ -234,7 +235,7 @@ export class EngramApi {
 					}
 					rlog().warn(
 						"api",
-						`${method} ${path} failed after 401 retry — status=${retryStatus ?? "none"} vault=${this.vaultId ?? "none"}`,
+						`${method} ${noteRef(path)} failed after 401 retry — status=${retryStatus ?? "none"} vault=${this.vaultId ?? "none"}`,
 					);
 					throw e2;
 				}
@@ -244,7 +245,7 @@ export class EngramApi {
 			// to misread as a missing note otherwise). Token itself is never logged.
 			rlog().warn(
 				"api",
-				`${method} ${path} failed — status=${status ?? "none"} vault=${this.vaultId ?? "none"}`,
+				`${method} ${noteRef(path)} failed — status=${status ?? "none"} vault=${this.vaultId ?? "none"}`,
 			);
 			throw e;
 		}
@@ -630,18 +631,58 @@ export class EngramApi {
 const UUID_SEGMENT = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
 /** First UUID in a request path — the note/attachment the call is about, or
- *  null. UUIDs are non-sensitive; paths are never sent raw (see beaconRoute). */
+ *  null. UUIDs are non-sensitive; beaconRoute reduces everything else in the
+ *  path to `:seg`, so no vault segment leaves this function. */
 export function beaconNoteId(path: string): string | null {
 	UUID_SEGMENT.lastIndex = 0;
 	return UUID_SEGMENT.exec(path)?.[0]?.toLowerCase() ?? null;
 }
 
-/** Request path with UUID segments collapsed to `:id` and the query dropped —
- *  a bounded-cardinality route label safe for span attributes (<=64 bytes per
- *  the server-side BeaconSanitizer contract). */
+/** Route segments that are OURS. Everything else in a request path is the
+ *  user's — `/notes/Medical/biopsy.md` is three segments of vault structure. */
+const STATIC_ROUTE_SEGMENTS = new Set([
+	"api",
+	"attachments",
+	"changes",
+	"explicit",
+	"folders",
+	"health",
+	"heads",
+	"logs",
+	"manifest",
+	"me",
+	"notes",
+	"register",
+	"search",
+	"sync",
+	"updates",
+	"vault",
+	"vaults",
+]);
+
+/** Request path reduced to its ROUTE SHAPE — a bounded-cardinality label safe
+ *  for span attributes.
+ *
+ *  Collapsing UUIDs alone was not enough, and the old comment ("paths are never
+ *  sent raw") was wrong: `deleteNote`/`deleteAttachment` build the path from the
+ *  vault-relative note path, so `/notes/Medical/Divorce settlement draft.md`
+ *  went out whole, truncated at 64 bytes. The server's BeaconSanitizer rejects
+ *  a path smuggled into `engram.note_id` but admits `engram.route` on length
+ *  alone, so it landed as an OTel attribute in Tempo.
+ *
+ *  Allowlist, not denylist: an unrecognised segment is assumed to be the user's.
+ *  A new route that forgets to register here reads `:seg`, which costs one
+ *  unhelpful label — the other direction costs a folder name. */
 export function beaconRoute(path: string): string {
-	const bare = path.split("?")[0] ?? path;
-	return bare.replace(UUID_SEGMENT, ":id").slice(0, 64);
+	const bare = (path.split("?")[0] ?? path).replace(UUID_SEGMENT, ":id");
+	return bare
+		.split("/")
+		.map((seg) => {
+			if (!seg || seg === ":id") return seg;
+			return STATIC_ROUTE_SEGMENTS.has(seg.toLowerCase()) ? seg : ":seg";
+		})
+		.join("/")
+		.slice(0, 64);
 }
 
 function parseLimitExceededError(e: unknown): LimitExceededError {

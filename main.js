@@ -861,6 +861,32 @@ var LimitExceededError = class extends Error {
   }
 };
 
+// src/content-hash.ts
+function fnv1a(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++)
+    h ^= s.charCodeAt(i), h = Math.imul(h, 16777619);
+  return h >>> 0;
+}
+function bytesToHex(bytes) {
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+async function sha256Hex(input) {
+  let digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+  return bytesToHex(new Uint8Array(digest));
+}
+
+// src/note-ref.ts
+var SESSION_SALT = `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+function pathOf(value) {
+  var _a;
+  return value ? typeof value == "string" ? value : (_a = value.path) != null ? _a : "" : "";
+}
+function noteRef(value) {
+  let path = pathOf(value);
+  return path ? `n${fnv1a(SESSION_SALT + path).toString(36)}` : "n?";
+}
+
 // src/observability/beacon.ts
 var BeaconBuffer = class {
   constructor(transport) {
@@ -895,21 +921,6 @@ var BeaconBuffer = class {
     }
   }
 };
-
-// src/content-hash.ts
-function fnv1a(s) {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++)
-    h ^= s.charCodeAt(i), h = Math.imul(h, 16777619);
-  return h >>> 0;
-}
-function bytesToHex(bytes) {
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
-}
-async function sha256Hex(input) {
-  let digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
-  return bytesToHex(new Uint8Array(digest));
-}
 
 // src/observability/traceGen.ts
 function hex(bytes) {
@@ -1229,13 +1240,13 @@ var EngramApi = class _EngramApi {
           let retryStatus = statusOf(e2);
           throw retryStatus === 402 ? parseLimitExceededError(e2) : (rlog().warn(
             "api",
-            `${method} ${path} failed after 401 retry \u2014 status=${retryStatus != null ? retryStatus : "none"} vault=${(_b = this.vaultId) != null ? _b : "none"}`
+            `${method} ${noteRef(path)} failed after 401 retry \u2014 status=${retryStatus != null ? retryStatus : "none"} vault=${(_b = this.vaultId) != null ? _b : "none"}`
           ), e2);
         }
       }
       throw rlog().warn(
         "api",
-        `${method} ${path} failed \u2014 status=${status != null ? status : "none"} vault=${(_c = this.vaultId) != null ? _c : "none"}`
+        `${method} ${noteRef(path)} failed \u2014 status=${status != null ? status : "none"} vault=${(_c = this.vaultId) != null ? _c : "none"}`
       ), e;
     }
   }
@@ -1470,9 +1481,28 @@ function beaconNoteId(path) {
   var _a, _b, _c;
   return UUID_SEGMENT.lastIndex = 0, (_c = (_b = (_a = UUID_SEGMENT.exec(path)) == null ? void 0 : _a[0]) == null ? void 0 : _b.toLowerCase()) != null ? _c : null;
 }
+var STATIC_ROUTE_SEGMENTS = /* @__PURE__ */ new Set([
+  "api",
+  "attachments",
+  "changes",
+  "explicit",
+  "folders",
+  "health",
+  "heads",
+  "logs",
+  "manifest",
+  "me",
+  "notes",
+  "register",
+  "search",
+  "sync",
+  "updates",
+  "vault",
+  "vaults"
+]);
 function beaconRoute(path) {
   var _a;
-  return ((_a = path.split("?")[0]) != null ? _a : path).replace(UUID_SEGMENT, ":id").slice(0, 64);
+  return ((_a = path.split("?")[0]) != null ? _a : path).replace(UUID_SEGMENT, ":id").split("/").map((seg) => !seg || seg === ":id" || STATIC_ROUTE_SEGMENTS.has(seg.toLowerCase()) ? seg : ":seg").join("/").slice(0, 64);
 }
 function parseLimitExceededError(e) {
   let err = e, body = {};
@@ -2371,7 +2401,7 @@ var _NoteChannel = class _NoteChannel {
     }
     if (event === "note_changed" && payload) {
       let streamEvent = toStreamEvent(payload);
-      rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`), (_l = this.onEvent) == null || _l.call(this, streamEvent);
+      rlog().info("channel", `Event: ${streamEvent.event_type} ${noteRef(streamEvent.path)}`), (_l = this.onEvent) == null || _l.call(this, streamEvent);
       return;
     }
     if (event === "notes.batch" && payload && payload.op === "upsert") {
@@ -7377,7 +7407,7 @@ var LiveBindingValue = class {
         } catch (err) {
           rlog().error(
             "crdt-live-binding",
-            `fm-creation forward failed for ${this.path}: ${String(err)}`
+            `fm-creation forward failed for ${noteRef(this.path)}: ${String(err)}`
           ), this.scheduleDriftCheck();
         }
         continue;
@@ -7409,7 +7439,7 @@ var LiveBindingValue = class {
         } catch (err) {
           rlog().error(
             "crdt-live-binding",
-            `forward failed for ${this.path}: ${String(err)}`
+            `forward failed for ${noteRef(this.path)}: ${String(err)}`
           ), this.scheduleDriftCheck();
         }
     }
@@ -7453,7 +7483,7 @@ var LiveBindingValue = class {
     } catch (err) {
       rlog().error(
         "crdt-live-binding",
-        `reconcile ${action.kind} failed for ${this.path}: ${String(err)}`
+        `reconcile ${action.kind} failed for ${noteRef(this.path)}: ${String(err)}`
       );
     }
     this.goLive(text2);
@@ -7502,7 +7532,10 @@ var LiveBindingValue = class {
             annotations: [ySyncAnnotation.of(this.editor)]
           });
         } catch (err) {
-          rlog().error("crdt-live-binding", `paint failed for ${this.path}: ${String(err)}`), this.scheduleDriftCheck();
+          rlog().error(
+            "crdt-live-binding",
+            `paint failed for ${noteRef(this.path)}: ${String(err)}`
+          ), this.scheduleDriftCheck();
         }
     }, text2.observe(this.observer), this.ready = !0, this.scheduleDriftCheck();
   }
@@ -7528,7 +7561,7 @@ var LiveBindingValue = class {
     if (editorText !== docText) {
       rlog().warn(
         "crdt-live-binding",
-        `drift on ${this.path} (editor ${editorText.length} vs doc ${docText.length}) - re-adopting`
+        `drift on ${noteRef(this.path)} (editor ${editorText.length} vs doc ${docText.length}) - re-adopting`
       );
       try {
         this.editor.dispatch({
@@ -7538,7 +7571,7 @@ var LiveBindingValue = class {
       } catch (err) {
         rlog().error(
           "crdt-live-binding",
-          `drift re-adopt failed for ${this.path}: ${String(err)}`
+          `drift re-adopt failed for ${noteRef(this.path)}: ${String(err)}`
         );
       }
     }
@@ -7647,7 +7680,10 @@ var READING_EDIT_ORIGIN = { source: "crdt-reading-view" }, CrdtReadingView = cla
     let placeholder = () => {
     };
     this.observers.set(view, placeholder), this.attached.add(view);
-    let ytext = await this.deps.getYText(path).catch((err) => (rlog().error("crdt-reading-view", `getYText failed for ${path}: ${String(err)}`), this.observers.get(view) === placeholder && (this.observers.delete(view), this.attached.delete(view)), null));
+    let ytext = await this.deps.getYText(path).catch((err) => (rlog().error(
+      "crdt-reading-view",
+      `getYText failed for ${noteRef(path)}: ${String(err)}`
+    ), this.observers.get(view) === placeholder && (this.observers.delete(view), this.attached.delete(view)), null));
     if (!ytext || this.observers.get(view) !== placeholder) return;
     this.rendered.set(view, ytext.toJSON());
     let handler = () => {
@@ -15192,12 +15228,12 @@ function createCrdtWiring(deps) {
       deps.isBound(path) || syncEngine.flushFromCrdt(path, content).then((ok) => {
         ok || rlog().warn(
           "crdt",
-          `strand-heal flush refused for ${path} \u2014 retained in Y.Doc`
+          `strand-heal flush refused for ${noteRef(path)} \u2014 retained in Y.Doc`
         );
       }).catch(
         (e) => rlog().warn(
           "crdt",
-          `strand-heal flush failed for ${path}: ${errMsg(e)} \u2014 retained in Y.Doc`
+          `strand-heal flush failed for ${noteRef(path)}: ${errMsg(e)} \u2014 retained in Y.Doc`
         )
       );
   }
@@ -19277,7 +19313,10 @@ async function reconcileColdStart(file, crdt, onCorruption, maxBytes = MAX_CRDT_
     try {
       file.reread ? await crdt.applyLocalEdit(file.noteId, file.diskContent, void 0, file.reread) : await crdt.applyLocalEdit(file.noteId, file.diskContent);
     } catch (e) {
-      rlog().warn("crdt", `reconcileColdStart: write failed for ${file.path}: ${errMsg(e)}`);
+      rlog().warn(
+        "crdt",
+        `reconcileColdStart: write failed for ${noteRef(file.path)}: ${errMsg(e)}`
+      );
     }
     (_a = crdt.enroll) == null || _a.call(crdt, file.noteId);
   }
@@ -20019,7 +20058,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       try {
         await this.crdt.flushHeldState(noteId);
       } catch (e) {
-        rlog().warn("crdt", `create-ack flush failed for ${path}: ${errMsg(e)}`), (_a = this.crdtEnrollment) == null || _a.reset(noteId), (_b = this.crdtEnrollment) == null || _b.enroll(noteId);
+        rlog().warn("crdt", `create-ack flush failed for ${noteRef(path)}: ${errMsg(e)}`), (_a = this.crdtEnrollment) == null || _a.reset(noteId), (_b = this.crdtEnrollment) == null || _b.enroll(noteId);
       }
   }
   confirmNoteId(noteId) {
@@ -20135,7 +20174,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (serverId && serverId !== localId) {
       if ((_a = this.noteIdMap) == null || _a.set(normalized, serverId), effectiveId = serverId, rlog().info(
         "crdt",
-        `crdt_create (queued) ADOPT: remapped ${path} ${localId} -> ${serverId}`
+        `crdt_create (queued) ADOPT: remapped ${noteRef(path)} ${localId} -> ${serverId}`
       ), this.crdt && this.isLiveBound(normalized))
         try {
           let mintText = await this.crdt.projectedText(localId);
@@ -20171,7 +20210,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       } catch (e) {
         rlog().warn(
           "crdt",
-          `crdt_create (queued) body seed failed for ${path}: ${errMsg(e)}`
+          `crdt_create (queued) body seed failed for ${noteRef(path)}: ${errMsg(e)}`
         );
       }
     await this.adoptCreateAck(effectiveId, path, consumed);
@@ -20249,7 +20288,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         if (docText.trim() !== "")
           return rlog().warn(
             "crdt",
-            `flushFromCrdt: refused empty over ${prev.length}B for ${normalized} \u2014 CRDT doc still holds content (stale remote projection)`
+            `flushFromCrdt: refused empty over ${prev.length}B for ${noteRef(normalized)} \u2014 CRDT doc still holds content (stale remote projection)`
           ), !0;
       }
     }
@@ -20257,7 +20296,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     try {
       return file instanceof import_obsidian24.TFile ? await this.app.vault.modify(file, content) : await this.createFileWithFolders(normalized, content), this.recordCrdtBaseline(normalized, content), !0;
     } catch (e) {
-      return rlog().error("crdt", `flushFromCrdt: write failed for ${path}: ${errMsg(e)}`), !1;
+      return rlog().error("crdt", `flushFromCrdt: write failed for ${noteRef(path)}: ${errMsg(e)}`), !1;
     }
   }
   // ── syncState mutators (#376 prerequisite) ──────────────────────────────
@@ -20365,7 +20404,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       } catch (e) {
         rlog().warn(
           "crdt",
-          `captureDiskDriftBeforeRemote: seed failed for ${path}: ${errMsg(e)}`
+          `captureDiskDriftBeforeRemote: seed failed for ${noteRef(path)}: ${errMsg(e)}`
         );
       }
   }
@@ -20409,17 +20448,20 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         let copy2 = await this.writeDriftConflictCopy(normalized, disk);
         rlog().info(
           "conflict",
-          `history-less drift \u2192 keep-both | original=${normalized} copy=${copy2}`
+          `history-less drift \u2192 keep-both | original=${noteRef(normalized)} copy=${copy2}`
         );
       } catch (e) {
         return rlog().error(
           "conflict",
-          `history-less keep-both copy failed for ${normalized}: ${errMsg(e)}. Aborting apply to retain the local edit for retry`
+          `history-less keep-both copy failed for ${noteRef(normalized)}: ${errMsg(e)}. Aborting apply to retain the local edit for retry`
         ), "deferred";
       }
       this.recordCrdtBaseline(normalized, disk);
     }
-    return await this.crdt.applyRemoteUpdate(noteId, update), typeof this.crdt.hasPendingGap == "function" && await this.crdt.hasPendingGap(noteId) ? (rlog().info("crdt", `history-less delta pends for ${normalized} \u2014 socket converge`), this.socketConverge(normalized, noteId), "deferred") : (this.setCrdtHead(normalized, head), "applied");
+    return await this.crdt.applyRemoteUpdate(noteId, update), typeof this.crdt.hasPendingGap == "function" && await this.crdt.hasPendingGap(noteId) ? (rlog().info(
+      "crdt",
+      `history-less delta pends for ${noteRef(normalized)} \u2014 socket converge`
+    ), this.socketConverge(normalized, noteId), "deferred") : (this.setCrdtHead(normalized, head), "applied");
   }
   /** Write `localDisk` to a dated `<name> (conflict <date>).md` copy beside
    *  `normalized` and record its baseline so it isn't re-pushed as drift.
@@ -20463,11 +20505,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let normalized = (0, import_obsidian24.normalizePath)(path);
     if (this.app.vault.getAbstractFileByPath(normalized)) return;
     if (this.recentlyDeleted.has(noteId)) {
-      rlog().info("crdt", `empty-materialize skip (recent local delete): ${normalized}`);
+      rlog().info(
+        "crdt",
+        `empty-materialize skip (recent local delete): ${noteRef(normalized)}`
+      );
       return;
     }
     if (this.queue.hasPendingEvidencedDelete(normalized, (_a = this.settings.vaultId) != null ? _a : void 0)) {
-      rlog().info("crdt", `empty-materialize skip (delete queued): ${normalized}`);
+      rlog().info("crdt", `empty-materialize skip (delete queued): ${noteRef(normalized)}`);
       return;
     }
     let text2 = this.crdt ? await this.crdt.projectedText(noteId) : "";
@@ -20497,7 +20542,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (canonical !== null && (0, import_obsidian24.normalizePath)(canonical) !== (0, import_obsidian24.normalizePath)(path)) {
       rlog().info(
         "ws",
-        `Stale materialize skipped for ${noteId}: canonical=${canonical} captured=${path}`
+        `Stale materialize skipped for ${noteId}: canonical=${canonical} captured=${noteRef(path)}`
       );
       return;
     }
@@ -20837,7 +20882,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     let crdtManaged = !!this.crdt && this.isCrdtEligible(file);
     if (!crdtManaged && this.files.has(file.path, "flushed")) {
-      rlog().info("sync", `Modify echo skip (recently flushed from CRDT): ${file.path}`);
+      rlog().info(
+        "sync",
+        `Modify echo skip (recently flushed from CRDT): ${noteRef(file.path)}`
+      );
       return;
     }
     if (crdtManaged && this.isLiveBound(file.path)) {
@@ -20867,9 +20915,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let isBinary = this.isBinaryFile(file), existing = this.debounceTimers.get(file.path);
     if (existing && (this.time.clearTimeout(existing), this.debounceTimers.delete(file.path)), this.app.vault.getFileByPath(file.path)) {
       let wasEcho = this.consumeEngineTrash(file.path) || this.files.has(file.path, "remotelyDeleted");
-      this.files.clearMarker(file.path, "remotelyDeleted"), wasEcho ? rlog().info("vault", `Delete echo for replaced path \u2014 skipped: ${file.path}`) : rlog().warn(
+      this.files.clearMarker(file.path, "remotelyDeleted"), wasEcho ? rlog().info(
         "vault",
-        `Delete event for reoccupied path SKIPPED (no echo evidence): ${file.path}`
+        `Delete echo for replaced path \u2014 skipped: ${noteRef(file.path)}`
+      ) : rlog().warn(
+        "vault",
+        `Delete event for reoccupied path SKIPPED (no echo evidence): ${noteRef(file.path)}`
       );
       return;
     }
@@ -20879,15 +20930,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.dropPath((0, import_obsidian24.normalizePath)(file.path));
     let wasEngineTrash = this.consumeEngineTrash(file.path);
     if (this.files.has(file.path, "remotelyDeleted") || wasEngineTrash) {
-      this.files.clearMarker(file.path, "remotelyDeleted"), crdtNoteId && this.markRecentlyDeleted(crdtNoteId), rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`), this.isCrdtEligible(file) && crdtNoteId && await this.teardownCrdtDoc(crdtNoteId);
+      this.files.clearMarker(file.path, "remotelyDeleted"), crdtNoteId && this.markRecentlyDeleted(crdtNoteId), rlog().info("vault", `Delete echo skip (remote-applied): ${noteRef(file.path)}`), this.isCrdtEligible(file) && crdtNoteId && await this.teardownCrdtDoc(crdtNoteId);
       return;
     }
     if (!hadSyncEvidence) {
       if (crdtNoteId && ((_d = this.crdtHasPendingOp) != null && _d.call(this, crdtNoteId))) {
-        this.markRecentlyDeleted(crdtNoteId), (_e = this.crdtEnqueue) == null || _e.call(this, { kind: "delete", docId: crdtNoteId, path: file.path }), this.isCrdtEligible(file) && await this.teardownCrdtDoc(crdtNoteId), rlog().info("push", `Delete superseded pending create: ${file.path}`);
+        this.markRecentlyDeleted(crdtNoteId), (_e = this.crdtEnqueue) == null || _e.call(this, { kind: "delete", docId: crdtNoteId, path: file.path }), this.isCrdtEligible(file) && await this.teardownCrdtDoc(crdtNoteId), rlog().info("push", `Delete superseded pending create: ${noteRef(file.path)}`);
         return;
       }
-      rlog().warn("push", `Delete push REFUSED (no sync evidence): ${file.path}`), this.isCrdtEligible(file) && crdtNoteId && await this.teardownCrdtDoc(crdtNoteId);
+      rlog().warn("push", `Delete push REFUSED (no sync evidence): ${noteRef(file.path)}`), this.isCrdtEligible(file) && crdtNoteId && await this.teardownCrdtDoc(crdtNoteId);
       return;
     }
     crdtNoteId && this.markRecentlyDeleted(crdtNoteId);
@@ -20898,7 +20949,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         this.goOnline(), this.isCrdtEligible(file) && crdtNoteId && await this.teardownCrdtDoc(crdtNoteId);
         return;
       }
-      console.error("Engram Sync: failed to delete %s", file.path, e), rlog().error("push", `Delete failed (queued): ${file.path} | ${errMsg(e)}`), await this.enqueueChange({
+      console.error("Engram Sync: failed to delete %s", file.path, e), rlog().error("push", `Delete failed (queued): ${noteRef(file.path)} | ${errMsg(e)}`), await this.enqueueChange({
         path: file.path,
         action: "delete",
         kind: isBinary ? "attachment" : "note",
@@ -20926,15 +20977,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       try {
         isBinary ? hadOldEvidence ? (await this.api.deleteAttachment(oldPath), this.goOnline()) : rlog().warn(
           "push",
-          `Rename old-leg delete REFUSED (no sync evidence): ${oldPath}`
+          `Rename old-leg delete REFUSED (no sync evidence): ${noteRef(oldPath)}`
         ) : this.isCrdtEligible(file) || (hadOldEvidence ? (await this.api.deleteNote(oldPath), this.goOnline()) : rlog().warn(
           "push",
-          `Rename old-leg delete REFUSED (no sync evidence): ${oldPath}`
+          `Rename old-leg delete REFUSED (no sync evidence): ${noteRef(oldPath)}`
         ));
       } catch (e) {
         isHttpStatus(e, 404) ? this.goOnline() : (console.error("Engram Sync: failed to delete old path %s", oldPath, e), rlog().error(
           "push",
-          `Rename old-leg delete failed (queued): ${oldPath} | ${errMsg(e)}`
+          `Rename old-leg delete failed (queued): ${noteRef(oldPath)} | ${errMsg(e)}`
         ), await this.enqueueChange({
           path: oldPath,
           action: "delete",
@@ -20960,7 +21011,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       try {
         await this.api.createFolder(path), await this.explicitFolders.add(path);
       } catch (e) {
-        devLog().log("push", `createFolder("${path}") failed: ${errMsg(e)}`), rlog().warn("push", `createFolder("${path}") failed: ${errMsg(e)}`);
+        devLog().log("push", `createFolder("${path}") failed: ${errMsg(e)}`), rlog().warn("push", `createFolder("${noteRef(path)}") failed: ${errMsg(e)}`);
       }
   }
   /** Push a folder-delete to the server. Only fires for folders we believe
@@ -20974,7 +21025,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       try {
         await this.api.deleteFolder(path);
       } catch (e) {
-        devLog().log("push", `deleteFolder("${path}") failed: ${errMsg(e)}`), rlog().warn("push", `deleteFolder("${path}") failed: ${errMsg(e)}`);
+        devLog().log("push", `deleteFolder("${path}") failed: ${errMsg(e)}`), rlog().warn("push", `deleteFolder("${noteRef(path)}") failed: ${errMsg(e)}`);
       } finally {
         await this.explicitFolders.delete(path);
       }
@@ -20998,7 +21049,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         try {
           await this.api.createFolder(path), await this.explicitFolders.add(path);
         } catch (e) {
-          devLog().log("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`), rlog().warn("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`);
+          devLog().log("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`), rlog().warn("push", `seedEmptyFolders("${noteRef(path)}") failed: ${errMsg(e)}`);
         }
     }
   }
@@ -21060,7 +21111,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (!isBinary) {
       let echoHash = fnv1a(await this.app.vault.cachedRead(file)), existing = this.syncState.get((0, import_obsidian24.normalizePath)(file.path));
       if (!force && existing !== void 0 && echoHash === existing.hash)
-        return devLog().log("push", `skip (echo): ${file.path}`), rlog().info("push", `Echo skip: ${file.path} | hash=${echoHash}`), !1;
+        return devLog().log("push", `skip (echo): ${file.path}`), rlog().info("push", `Echo skip: ${noteRef(file.path)} | hash=${echoHash}`), !1;
     }
     await this.acquirePushSlot();
     let pushedPath = file.path;
@@ -21071,14 +21122,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       `start ${isBinary ? "attachment" : "note"}: ${file.path} (active=${this.activePushCount})`
     ), rlog().info(
       "push",
-      `Push start: ${file.path} | type=${isBinary ? "attachment" : "note"} | active=${this.activePushCount}`
+      `Push start: ${noteRef(file.path)} | type=${isBinary ? "attachment" : "note"} | active=${this.activePushCount}`
     );
     try {
       let mtime = file.stat.mtime / 1e3;
       if (isBinary) {
         let buffer = await this.app.vault.readBinary(file), base64 = arrayBufferToBase64(buffer), hash = fnv1a(base64), existing = this.syncState.get((0, import_obsidian24.normalizePath)(file.path));
         if (!force && existing !== void 0 && hash === existing.hash)
-          return devLog().log("push", `skip (echo): ${file.path}`), rlog().info("push", `Echo skip (attachment): ${file.path} | hash=${hash}`), !1;
+          return devLog().log("push", `skip (echo): ${file.path}`), rlog().info(
+            "push",
+            `Echo skip (attachment): ${noteRef(file.path)} | hash=${hash}`
+          ), !1;
         let mimeType = this.getMimeType(file);
         await this.api.pushAttachment(file.path, base64, mimeType, mtime), this.stampSyncedRow((0, import_obsidian24.normalizePath)(file.path), { hash });
       } else {
@@ -21087,13 +21141,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           if (this.shouldDeferMint(file.path))
             return rlog().info(
               "push",
-              `Mint refused (engine-flushed file, id relocated away): ${file.path}`
+              `Mint refused (engine-flushed file, id relocated away): ${noteRef(file.path)}`
             ), !1;
           noteId = uuid7(), this.noteIdMap.set(file.path, noteId);
         }
         if (this.isCrdtEligible(file) && rlog().info(
           "push",
-          `route: ${file.path} crdt=${!!this.crdt} server=${this.hasServerNote(noteId)} confirmed=${noteId ? this.isNoteConfirmed(noteId) : !1} live=${(_e = (_d = this.crdtLive) == null ? void 0 : _d.call(this)) != null ? _e : !0} id=${noteId != null ? noteId : "none"}`
+          `route: ${noteRef(file.path)} crdt=${!!this.crdt} server=${this.hasServerNote(noteId)} confirmed=${noteId ? this.isNoteConfirmed(noteId) : !1} live=${(_e = (_d = this.crdtLive) == null ? void 0 : _d.call(this)) != null ? _e : !0} id=${noteId != null ? noteId : "none"}`
         ), this.crdt && noteId && this.hasServerNote(noteId)) {
           let consumed = await routeModify(
             {
@@ -21107,12 +21161,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             this.crdt,
             MAX_CRDT_NOTE_BYTES
           );
-          return consumed !== null ? (this.recordCrdtBaseline((0, import_obsidian24.normalizePath)(file.path), consumed), this.isLiveBound((0, import_obsidian24.normalizePath)(file.path)) && ((_f = this.crdtEnrollment) == null || _f.enroll(noteId)), success = !0, ((_h = (_g = this.crdtLive) == null ? void 0 : _g.call(this)) != null ? _h : !0) ? (devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0) : (await this.enqueueCrdtEdit(file, noteId), this.flushQueue(), devLog().log(
+          return consumed !== null ? (this.recordCrdtBaseline((0, import_obsidian24.normalizePath)(file.path), consumed), this.isLiveBound((0, import_obsidian24.normalizePath)(file.path)) && ((_f = this.crdtEnrollment) == null || _f.enroll(noteId)), success = !0, ((_h = (_g = this.crdtLive) == null ? void 0 : _g.call(this)) != null ? _h : !0) ? (devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${noteRef(file.path)}`), !0) : (await this.enqueueCrdtEdit(file, noteId), this.flushQueue(), devLog().log(
             "push",
             `crdt edit queued durably (channel down): ${file.path}`
           ), rlog().info(
             "push",
-            `CRDT edit queued durably (channel down): ${file.path}`
+            `CRDT edit queued durably (channel down): ${noteRef(file.path)}`
           ), !0)) : (this.isCrdtEligible(file) && !exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES) && this.isLiveBound((0, import_obsidian24.normalizePath)(file.path)) && ((_i = this.crdtEnrollment) == null || _i.enroll(noteId)), !0);
         }
         if (this.crdtCreate && this.crdt && noteId && this.isCrdtEligible(file) && !this.hasServerNote(noteId) && ((_k = (_j = this.crdtLive) == null ? void 0 : _j.call(this)) == null || _k) && !exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES))
@@ -21125,15 +21179,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 let mintText = await this.crdt.projectedText(noteId), serverHadContent = typeof this.crdt.hasHistory == "function" && await this.crdt.hasHistory(serverId);
                 consumed = await this.crdt.applyLocalEdit(serverId, mintText), mintText.length > 0 && serverHadContent && rlog().warn(
                   "crdt",
-                  `crdt_create ADOPT: transferred non-empty buffer into a non-empty server doc (possible two-lineage merge): ${pushedPath} ${noteId} -> ${serverId}`
+                  `crdt_create ADOPT: transferred non-empty buffer into a non-empty server doc (possible two-lineage merge): ${noteRef(pushedPath)} ${noteId} -> ${serverId}`
                 ), rlog().info(
                   "crdt",
-                  `crdt_create ADOPT: remapped live editor ${pushedPath} ${noteId} -> ${serverId}`
+                  `crdt_create ADOPT: remapped live editor ${noteRef(pushedPath)} ${noteId} -> ${serverId}`
                 ), (_m = this.crdtEditorRebind) == null || _m.call(this, pushedPath), await this.teardownCrdtDoc(noteId);
               } else
                 serverId && serverId !== noteId && ((_n = this.noteIdMap) == null || _n.set((0, import_obsidian24.normalizePath)(pushedPath), serverId), rlog().info(
                   "crdt",
-                  `crdt_create ADOPT: remapped ${pushedPath} ${noteId} -> ${serverId}`
+                  `crdt_create ADOPT: remapped ${noteRef(pushedPath)} ${noteId} -> ${serverId}`
                 ), effectiveId = serverId), consumed = await routeModify(
                   {
                     crdtEligible: !0,
@@ -21145,27 +21199,27 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 );
               return await this.adoptCreateAck(effectiveId, pushedPath, consumed), consumed !== null ? success = !0 : rlog().warn(
                 "crdt",
-                `crdt_create ok but body seed declined (will deliver on next edit): ${pushedPath}`
+                `crdt_create ok but body seed declined (will deliver on next edit): ${noteRef(pushedPath)}`
               ), this.isLiveBound((0, import_obsidian24.normalizePath)(pushedPath)) && ((_o = this.crdtEnrollment) == null || _o.enroll(effectiveId)), devLog().log(
                 "push",
                 `crdt_create ok: ${pushedPath} (id=${effectiveId})`
               ), rlog().info(
                 "push",
-                `CRDT create ok: ${pushedPath} | id=${effectiveId}`
+                `CRDT create ok: ${noteRef(pushedPath)} | id=${effectiveId}`
               ), !0;
             } catch (seedErr) {
               return rlog().warn(
                 "crdt",
-                `crdt_create ok but post-create step threw (row exists, self-heals on next edit): ${pushedPath} | ${String(seedErr)}`
+                `crdt_create ok but post-create step threw (row exists, self-heals on next edit): ${noteRef(pushedPath)} | ${String(seedErr)}`
               ), await this.adoptCreateAck(effectiveId, pushedPath, null), !0;
             }
           } catch (err) {
             return crdtOpFailureReason(err) === "recently_deleted" ? (rlog().info(
               "push",
-              `recently_deleted \u2014 trashing local ${pushedPath} to honor remote delete`
+              `recently_deleted \u2014 trashing local ${noteRef(pushedPath)} to honor remote delete`
             ), await this.trashRemotelyDeleted(file), this.logEntry("push", pushedPath, "skipped", "recently_deleted"), !1) : (rlog().warn(
               "crdt",
-              `crdt_create failed, enqueued for durable retry: ${pushedPath} | ${String(err)}`
+              `crdt_create failed, enqueued for durable retry: ${noteRef(pushedPath)} | ${String(err)}`
             ), (_p = this.crdtEnqueue) == null || _p.call(this, { kind: "create", docId: noteId, path: pushedPath }), !1);
           }
         if (this.isCrdtEligible(file) && !exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES))
@@ -21197,7 +21251,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         "note",
         pushedNoteParse.parseStatus,
         pushedNoteParse.parseReason
-      ), devLog().log("push", `ok: ${file.path}`), rlog().info("push", `Push ok: ${file.path} | type=${isBinary ? "attachment" : "note"}`), this.goOnline();
+      ), devLog().log("push", `ok: ${file.path}`), rlog().info(
+        "push",
+        `Push ok: ${noteRef(file.path)} | type=${isBinary ? "attachment" : "note"}`
+      ), this.goOnline();
     } catch (e) {
       let msg = errMsg(e), classified = categorizeError(e);
       issueDisposition(classified.category) !== "informational" && console.error("Engram Sync: failed to push %s", file.path, e);
@@ -21219,7 +21276,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       let attempts = (_w = (_v = this.issues.get(file.path)) == null ? void 0 : _v.attempts) != null ? _w : 1;
       issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_x = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
         "push",
-        `Push failed: ${file.path} \u2014 ${msg} | category=${classified.category}`,
+        `Push failed: ${noteRef(file.path)} \u2014 ${msg} | category=${classified.category}`,
         e instanceof Error ? e.stack : void 0
       ), this.logEntry("push", file.path, "error", msg, classified.category), shouldRetryAfterFailure(classified, attempts) && await this.enqueueChange({
         path: file.path,
@@ -21744,7 +21801,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 tickedKeys.has(key) || (tickedKeys.add(key), files += 1, onFileApplied == null || onFileApplied(c.path));
               } else c.deleted && changed && (deletes += 1);
             } catch (e) {
-              failed += 1, rlog().error("crdt", `seq-replay: skipped ${c.path} \u2014 ${errMsg(e)}`);
+              failed += 1, rlog().error(
+                "crdt",
+                `seq-replay: skipped ${noteRef(c.path)} \u2014 ${errMsg(e)}`
+              );
             }
           c.type === "attachment" ? c.deleted || serverAttachmentPaths.add(c.path) : c.id && !c.deleted && serverIds.add(c.id);
         },
@@ -21786,7 +21846,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       try {
         this.noteIdMap && this.noteIdMap.pathForId(noteId) !== normalized && (this.noteIdMap.set(normalized, noteId), await this.saveData({ noteIds: this.noteIdMap.toJSON() })), this.confirmNoteId(noteId), await this.catchupViaSeqReplay();
       } catch (e) {
-        rlog().warn("crdt", `discoverAnnouncedNote failed for ${path}: ${errMsg(e)}`);
+        rlog().warn("crdt", `discoverAnnouncedNote failed for ${noteRef(path)}: ${errMsg(e)}`);
       }
   }
   /** Apply a Yjs update fanned out over the vault channel (`note_yjs_update`)
@@ -21809,7 +21869,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (!path) {
       if (this.ensureNoteIdMapped(noteId), await this.idMapReconcileInflight, path = (_d = (_c = this.noteIdMap) == null ? void 0 : _c.pathForId(noteId)) != null ? _d : null, !path)
         return rlog().info("crdt", `fan-out drop: id unmapped after reconcile note=${noteId}`), "deferred";
-      rlog().info("crdt", `fan-out for unmapped id healed via manifest: ${path}`);
+      rlog().info("crdt", `fan-out for unmapped id healed via manifest: ${noteRef(path)}`);
     }
     if (this.confirmNoteId(noteId), this.isLiveBound((0, import_obsidian24.normalizePath)(path)))
       try {
@@ -21817,19 +21877,22 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       } catch (e) {
         return rlog().error(
           "crdt",
-          `Live-bound fan-out apply failed for ${path}: ${errMsg(e)}`,
+          `Live-bound fan-out apply failed for ${noteRef(path)}: ${errMsg(e)}`,
           e instanceof Error ? e.stack : void 0
         ), "deferred";
       }
     try {
       if (typeof this.crdt.hasHistory == "function" ? await this.crdt.hasHistory(noteId) : !0) {
         if (await this.captureDiskDriftBeforeRemote(path, noteId), await this.crdt.applyRemoteUpdate(noteId, update), typeof this.crdt.hasPendingGap == "function" && await this.crdt.hasPendingGap(noteId))
-          return rlog().warn("crdt", `gap heal: socket re-handshake for ${path}`), this.socketConverge(path, noteId), "deferred";
+          return rlog().warn("crdt", `gap heal: socket re-handshake for ${noteRef(path)}`), this.socketConverge(path, noteId), "deferred";
         this.setCrdtHead(path, head);
       } else if (await this.adoptHistoryLessNote(path, noteId, update, head) !== "applied") return "deferred";
       return this.hibernateIfIdle(path, noteId), "applied";
     } catch (e) {
-      return devLog().log("crdt", `applyPushedNoteUpdate: ${path} failed \u2014 ${errMsg(e)}`), rlog().warn("crdt", `Vault-channel update apply failed for ${path}: ${errMsg(e)}`), "deferred";
+      return devLog().log("crdt", `applyPushedNoteUpdate: ${path} failed \u2014 ${errMsg(e)}`), rlog().warn(
+        "crdt",
+        `Vault-channel update apply failed for ${noteRef(path)}: ${errMsg(e)}`
+      ), "deferred";
     }
   }
   /** Socket-native re-handshake for a diverged LIVE-BOUND note (single-path
@@ -21878,7 +21941,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  ONLY called on a real fire, never on a suppressed attempt. */
   fireCrdtReHandshake(path, noteId) {
     var _a, _b;
-    this.crdtHealCooldown.set(noteId, Date.now()), (_a = this.crdtEnrollment) == null || _a.reset(noteId), (_b = this.crdtEnrollment) == null || _b.enroll(noteId), rlog().info("crdt", `socket converge: re-handshake fired for ${path}`);
+    this.crdtHealCooldown.set(noteId, Date.now()), (_a = this.crdtEnrollment) == null || _a.reset(noteId), (_b = this.crdtEnrollment) == null || _b.enroll(noteId), rlog().info("crdt", `socket converge: re-handshake fired for ${noteRef(path)}`);
   }
   /** Commit a staged convergence (see `pendingConvergence` — staged by BOTH
    *  the live-bound and the cold catch-up legs since Phase E3) — the ONLY
@@ -21916,11 +21979,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (queued) {
       this.pendingQueueDeliveries.delete(noteId);
       try {
-        await this.queue.dequeue(queued.path, queued.vaultId), this.issues.clear(queued.path), rlog().info("queue", `CRDT delivery settled via socket round-trip: ${queued.path}`);
+        await this.queue.dequeue(queued.path, queued.vaultId), this.issues.clear(queued.path), rlog().info(
+          "queue",
+          `CRDT delivery settled via socket round-trip: ${noteRef(queued.path)}`
+        );
       } catch (e) {
         rlog().warn(
           "queue",
-          `CRDT delivery settle failed for ${queued.path}: ${errMsg(e)}`
+          `CRDT delivery settle failed for ${noteRef(queued.path)}: ${errMsg(e)}`
         );
       }
     }
@@ -21952,9 +22018,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         serverHash: staged.serverHash,
         version: staged.version,
         seq: staged.seq
-      }), staged.content && this.markServerKnown(path), rlog().info("crdt", `socket converge: STEP2 committed ${path}`);
+      }), staged.content && this.markServerKnown(path), rlog().info("crdt", `socket converge: STEP2 committed ${noteRef(path)}`);
     } catch (e) {
-      rlog().warn("crdt", `socket converge: commit failed for ${path}: ${errMsg(e)}`);
+      rlog().warn(
+        "crdt",
+        `socket converge: commit failed for ${noteRef(path)}: ${errMsg(e)}`
+      );
     }
     this.releaseHealRoom(noteId, path);
   }
@@ -22007,7 +22076,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         if (!this.isLiveBound(normalized)) return;
         this.socketConverge(normalized, noteId);
       } catch (e) {
-        rlog().warn("crdt", `healNoteOnOpen ${path}: ${errMsg(e)}`);
+        rlog().warn("crdt", `healNoteOnOpen ${noteRef(path)}: ${errMsg(e)}`);
       }
   }
   /** Arm a one-shot bounded drain for the deferral above. Draining early is
@@ -22192,9 +22261,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       return;
     }
     if (this.shouldIgnore(event.path)) return;
-    devLog().log("ws", `${event.event_type} ${(_a = event.kind) != null ? _a : "note"}: ${event.path}`), rlog().info("ws", `Event: ${event.event_type} ${(_b = event.kind) != null ? _b : "note"}: ${event.path}`);
+    devLog().log("ws", `${event.event_type} ${(_a = event.kind) != null ? _a : "note"}: ${event.path}`), rlog().info(
+      "ws",
+      `Event: ${event.event_type} ${(_b = event.kind) != null ? _b : "note"}: ${noteRef(event.path)}`
+    );
     let isAttachment = event.kind === "attachment";
-    if (event.event_type === "upsert" && event.content === "" && event.content_hash && event.content_hash !== this.emptyContentHash && (rlog().info("ws", `Inline-empty body distrusted, routing to catch-up: ${event.path}`), event.content = void 0), event.event_type === "upsert" && !isAttachment && event.id) {
+    if (event.event_type === "upsert" && event.content === "" && event.content_hash && event.content_hash !== this.emptyContentHash && (rlog().info(
+      "ws",
+      `Inline-empty body distrusted, routing to catch-up: ${noteRef(event.path)}`
+    ), event.content = void 0), event.event_type === "upsert" && !isAttachment && event.id) {
       let wsRelocationTs = Date.parse((_c = event.updated_at) != null ? _c : "");
       await this.moveIfIdRelocated(
         event.id,
@@ -22204,25 +22279,25 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     if (event.event_type !== "delete") {
       if (this.pushing.has(event.path)) {
-        rlog().info("ws", `Echo skip (pushing): ${event.path}`);
+        rlog().info("ws", `Echo skip (pushing): ${noteRef(event.path)}`);
         return;
       }
       if (this.files.has(event.path, "pushed")) {
-        rlog().info("ws", `Echo skip (recently pushed): ${event.path}`);
+        rlog().info("ws", `Echo skip (recently pushed): ${noteRef(event.path)}`);
         return;
       }
     }
     if (event.event_type === "upsert" && !isAttachment && event.content_hash !== void 0) {
       let stored = this.syncState.get((0, import_obsidian24.normalizePath)(event.path));
       if ((stored == null ? void 0 : stored.serverHash) === event.content_hash) {
-        event.version != null && event.version !== stored.version && this.patchSyncedRow((0, import_obsidian24.normalizePath)(event.path), { version: event.version }), rlog().info("ws", `Hash skip: ${event.path}`);
+        event.version != null && event.version !== stored.version && this.patchSyncedRow((0, import_obsidian24.normalizePath)(event.path), { version: event.version }), rlog().info("ws", `Hash skip: ${noteRef(event.path)}`);
         return;
       }
     }
     if (event.event_type === "delete") {
       let normalized = (0, import_obsidian24.normalizePath)(event.path);
       if (this.deviceId && event.device_id === this.deviceId) {
-        rlog().info("ws", `Echo skip (own device): ${event.path}`);
+        rlog().info("ws", `Echo skip (own device): ${noteRef(event.path)}`);
         return;
       }
       let currentId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null, targetId = (_f = event.id) != null ? _f : currentId, roomId = targetId != null ? targetId : currentId, relocatedPath = roomId && (_h = (_g = this.noteIdMap) == null ? void 0 : _g.pathForId(roomId)) != null ? _h : null;
@@ -22230,7 +22305,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         let existing2 = this.app.vault.getFileByPath(normalized);
         existing2 && await this.applyRemoteRemoval(existing2), ((_i = this.noteIdMap) == null ? void 0 : _i.get(normalized)) === roomId && this.noteIdMap.delete(normalized), rlog().info(
           "ws",
-          `Delete is rename old-leg (id relocated to ${relocatedPath}); old path trashed, room preserved: ${normalized}`
+          `Delete is rename old-leg (id relocated to ${relocatedPath}); old path trashed, room preserved: ${noteRef(normalized)}`
         );
         return;
       }
@@ -22238,7 +22313,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       if (existing && targetId && currentId && targetId !== currentId) {
         rlog().info(
           "ws",
-          `Delete for dead id ${targetId} ignored \u2014 ${normalized} recreated as ${currentId}`
+          `Delete for dead id ${targetId} ignored \u2014 ${noteRef(normalized)} recreated as ${currentId}`
         );
         return;
       }
@@ -22249,13 +22324,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             let copy2 = await this.writeDriftConflictCopy(normalized, disk);
             rlog().info(
               "conflict",
-              `received-delete drift \u2192 keep-both | original=${normalized} copy=${copy2}`
+              `received-delete drift \u2192 keep-both | original=${noteRef(normalized)} copy=${copy2}`
             );
           }
         } catch (e) {
           rlog().warn(
             "conflict",
-            `received-delete drift check failed for ${normalized}: ${errMsg(e)}`
+            `received-delete drift check failed for ${noteRef(normalized)}: ${errMsg(e)}`
           );
         }
         await this.applyRemoteRemoval(existing);
@@ -22287,7 +22362,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           if (canonicalPath !== null && (0, import_obsidian24.normalizePath)(canonicalPath) !== (0, import_obsidian24.normalizePath)(event.path))
             rlog().info(
               "ws",
-              `Stale-path upsert ignored for ${noteId}: canonical=${canonicalPath} event=${event.path}`
+              `Stale-path upsert ignored for ${noteId}: canonical=${canonicalPath} event=${noteRef(event.path)}`
             );
           else {
             (_q = this.noteIdMap) == null || _q.set(event.path, noteId), this.confirmNoteId(noteId), (this.isCanvasPath((0, import_obsidian24.normalizePath)(event.path)) || this.isLiveBound((0, import_obsidian24.normalizePath)(event.path))) && ((_r = this.crdtEnrollment) == null || _r.enroll(noteId));
@@ -22298,7 +22373,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               serverHash: event.content_hash
             }), rlog().info(
               "ws",
-              `CRDT-managed: skipping legacy body apply for ${event.path}`
+              `CRDT-managed: skipping legacy body apply for ${noteRef(event.path)}`
             );
             let synced = typeof this.crdt.isSynced == "function" && this.crdt.isSynced(noteId);
             priorState === void 0 && !synced && !this.isLiveBound(np) && !this.app.vault.getAbstractFileByPath(np) && event.content !== void 0 && await this.applyOp(this.eventToOp(event, event.content, noteId)), priorState === void 0 && event.content !== void 0 && ((_u = this.noteIdMap) == null ? void 0 : _u.pathForId(noteId)) === np && !this.app.vault.getAbstractFileByPath(np) ? await this.applyOp(this.eventToOp(event, event.content, noteId)) : (await this.materializeRelocated(event.path, noteId), this.app.vault.getAbstractFileByPath(np) || this.catchupViaSeqReplay());
@@ -22319,7 +22394,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       } catch (e) {
         console.error("Engram Sync: failed to apply WebSocket event %s", event.path, e), rlog().error(
           "ws",
-          `Apply failed: ${event.event_type} ${event.path} | ${errMsg(e)}`,
+          `Apply failed: ${event.event_type} ${noteRef(event.path)} | ${errMsg(e)}`,
           e instanceof Error ? e.stack : void 0
         );
       }
@@ -22333,7 +22408,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       if (lastTs !== void 0 && eventTs < lastTs) {
         rlog().info(
           "pull",
-          `Id-keyed move IGNORED (stale event ts=${eventTs} < last-applied ts=${lastTs}): ${id2} -> ${newPath}`
+          `Id-keyed move IGNORED (stale event ts=${eventTs} < last-applied ts=${lastTs}): ${id2} -> ${noteRef(newPath)}`
         );
         return;
       }
@@ -22343,7 +22418,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (owner !== null && owner !== id2) {
       rlog().warn(
         "pull",
-        `Id-keyed move REFUSED (${owner === void 0 ? "ownership unknown" : "cross-wire"}): ${priorPath} not confirmed as ${id2}'s old path \u2014 rebinding to ${newPath}, no trash`
+        `Id-keyed move REFUSED (${owner === void 0 ? "ownership unknown" : "cross-wire"}): ${priorPath} not confirmed as ${id2}'s old path \u2014 rebinding to ${noteRef(newPath)}, no trash`
       ), (_c = this.noteIdMap) == null || _c.set(newPath, id2), this.pendingOrphanSweep.add((0, import_obsidian24.normalizePath)(priorPath));
       return;
     }
@@ -22364,15 +22439,18 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           }
         existingAtNew && !(existingAtNew instanceof import_obsidian24.TFile) ? rlog().info(
           "pull",
-          `Id-keyed move: skipping disk flush for ${newPath} \u2014 a non-file already occupies the path`
+          `Id-keyed move: skipping disk flush for ${noteRef(newPath)} \u2014 a non-file already occupies the path`
         ) : existingBody !== null && existingBody.trim() !== "" ? rlog().info(
           "pull",
-          `Id-keyed move: skipping stale disk flush for ${newPath} \u2014 already holds content (a concurrent flush won the race)`
-        ) : await this.flushFromCrdt(newPath, content), rlog().info("pull", `Id-keyed move: ${priorPath} -> ${newPath} (id=${id2})`);
+          `Id-keyed move: skipping stale disk flush for ${noteRef(newPath)} \u2014 already holds content (a concurrent flush won the race)`
+        ) : await this.flushFromCrdt(newPath, content), rlog().info(
+          "pull",
+          `Id-keyed move: ${priorPath} -> ${noteRef(newPath)} (id=${id2})`
+        );
       } catch (e) {
         rlog().warn(
           "pull",
-          `Id-keyed move file ops failed (old file vanished mid-flight?): ${priorPath} -> ${newPath} \u2014 ${errMsg(e)}`
+          `Id-keyed move file ops failed (old file vanished mid-flight?): ${priorPath} -> ${noteRef(newPath)} \u2014 ${errMsg(e)}`
         ), this.catchupViaSeqReplay();
       }
   }
@@ -22473,11 +22551,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           let np = (0, import_obsidian24.normalizePath)(file.path);
           if (!serverPaths.has(np) && this.syncState.has(np))
             try {
-              await this.trashRemotelyDeleted(file), this.dropPath(np), rlog().info("pull", `Reconcile: server-deleted \u2192 trashed ${file.path}`);
+              await this.trashRemotelyDeleted(file), this.dropPath(np), rlog().info(
+                "pull",
+                `Reconcile: server-deleted \u2192 trashed ${noteRef(file.path)}`
+              );
             } catch (e) {
               rlog().error(
                 "pull",
-                `Reconcile trash failed (retried next run): ${file.path} \u2014 ${errMsg(e)}`,
+                `Reconcile trash failed (retried next run): ${noteRef(file.path)} \u2014 ${errMsg(e)}`,
                 e instanceof Error ? e.stack : void 0
               );
             }
@@ -22565,7 +22646,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         try {
           entry.content_hash ? this.stageAndConverge(noteId, path, entry.content_hash, null) : this.socketConverge(path, noteId), poked++;
         } catch (e) {
-          rlog().warn("crdt", `live-bound heal failed for ${path}: ${errMsg(e)}`);
+          rlog().warn("crdt", `live-bound heal failed for ${noteRef(path)}: ${errMsg(e)}`);
         }
     }
     return poked;
@@ -22589,7 +22670,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           if (!crdtManaged) {
             rlog().info(
               "pull",
-              `Tombstone skipped (resurrection): ${change.path} | localHash=${localHash} | syncedHash=${(_c = lastSynced == null ? void 0 : lastSynced.hash) != null ? _c : "none"} | localLen=${localContent.length}`
+              `Tombstone skipped (resurrection): ${noteRef(change.path)} | localHash=${localHash} | syncedHash=${(_c = lastSynced == null ? void 0 : lastSynced.hash) != null ? _c : "none"} | localLen=${localContent.length}`
             ), devLog().log(
               "pull",
               `applyChange DELETE skipped (resurrection): ${change.path} (localHash=${localHash} !== syncedHash=${(_d = lastSynced == null ? void 0 : lastSynced.hash) != null ? _d : "none"})`
@@ -22599,7 +22680,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             } catch (e) {
               rlog().error(
                 "pull",
-                `Resurrection push failed: ${change.path} | err=${errMsg(e)}`
+                `Resurrection push failed: ${noteRef(change.path)} | err=${errMsg(e)}`
               );
             }
             return !1;
@@ -22612,21 +22693,21 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               );
               rlog().info(
                 "conflict",
-                `CRDT tombstone drift \u2192 keep-both | original=${normalized} copy=${copy2}`
+                `CRDT tombstone drift \u2192 keep-both | original=${noteRef(normalized)} copy=${copy2}`
               );
             } catch (e) {
               rlog().warn(
                 "conflict",
-                `CRDT tombstone drift capture failed for ${normalized}: ${errMsg(e)}`
+                `CRDT tombstone drift capture failed for ${noteRef(normalized)}: ${errMsg(e)}`
               );
             }
           else
             rlog().info(
               "pull",
-              `CRDT tombstone honoured (no drift): ${change.path} | syncedHash=${(_e = lastSynced == null ? void 0 : lastSynced.hash) != null ? _e : "none"}`
+              `CRDT tombstone honoured (no drift): ${noteRef(change.path)} | syncedHash=${(_e = lastSynced == null ? void 0 : lastSynced.hash) != null ? _e : "none"}`
             );
         }
-        return await this.applyRemoteRemoval(existing2), rlog().info("pull", `Deleted: ${change.path}`), crdtNoteId && this.isCrdtEligiblePath(normalized) && ((_f = this.noteIdMap) == null || _f.delete(normalized), await this.teardownCrdtDoc(crdtNoteId)), !0;
+        return await this.applyRemoteRemoval(existing2), rlog().info("pull", `Deleted: ${noteRef(change.path)}`), crdtNoteId && this.isCrdtEligiblePath(normalized) && ((_f = this.noteIdMap) == null || _f.delete(normalized), await this.teardownCrdtDoc(crdtNoteId)), !0;
       }
       return !1;
     }
@@ -22639,26 +22720,29 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       if (known !== void 0 && known >= change.version && this.app.vault.getFileByPath(normalized))
         return rlog().info(
           "pull",
-          `applyChange skip (stale v${change.version} <= synced v${known}): ${change.path}`
+          `applyChange skip (stale v${change.version} <= synced v${known}): ${noteRef(change.path)}`
         ), !1;
     }
     if (crdtOwnsBody) {
       if (this.isCanvasPath(normalized))
-        return noteId && ((_j = this.crdtEnrollment) == null || _j.enroll(noteId)), rlog().info("pull", `CRDT canvas: enroll for Yjs convergence ${change.path}`), !1;
+        return noteId && ((_j = this.crdtEnrollment) == null || _j.enroll(noteId)), rlog().info(
+          "pull",
+          `CRDT canvas: enroll for Yjs convergence ${noteRef(change.path)}`
+        ), !1;
       if (this.app.vault.getFileByPath(normalized)) {
         noteId && this.isLiveBound(normalized) && ((_l = this.crdtEnrollment) == null || _l.enroll(noteId));
         let stored = this.syncState.get(normalized), contentMatches = !change.content_hash || (stored == null ? void 0 : stored.serverHash) === change.content_hash;
         if (change.seq !== void 0 ? (stored == null ? void 0 : stored.seq) !== void 0 && (change.seq < stored.seq || change.seq === stored.seq && contentMatches) : (stored == null ? void 0 : stored.version) !== void 0 && change.version !== void 0 && change.version <= stored.version)
           rlog().info(
             "pull",
-            `CRDT catch-up: stale row (seq ${(_m = change.seq) != null ? _m : "-"}/${(_n = stored == null ? void 0 : stored.seq) != null ? _n : "-"} v${(_o = change.version) != null ? _o : "-"}/${(_p = stored == null ? void 0 : stored.version) != null ? _p : "-"}) \u2014 history, skip ${change.path}`
+            `CRDT catch-up: stale row (seq ${(_m = change.seq) != null ? _m : "-"}/${(_n = stored == null ? void 0 : stored.seq) != null ? _n : "-"} v${(_o = change.version) != null ? _o : "-"}/${(_p = stored == null ? void 0 : stored.version) != null ? _p : "-"}) \u2014 history, skip ${noteRef(change.path)}`
           );
         else if (change.content_hash && (stored == null ? void 0 : stored.serverHash) !== change.content_hash)
           if (this.isLiveBound(normalized)) {
             let key = noteId != null ? noteId : normalized, prevAttempt = this.crdtRehandshakeAttempts.get(key), attempts = (prevAttempt == null ? void 0 : prevAttempt.hash) === change.content_hash ? prevAttempt.attempts + 1 : 1;
             rlog().warn(
               "pull",
-              `CRDT catch-up: diverged + live-bound, socket re-handshake (attempt ${attempts}) ${change.path}`
+              `CRDT catch-up: diverged + live-bound, socket re-handshake (attempt ${attempts}) ${noteRef(change.path)}`
             ), this.crdtRehandshakeAttempts.set(key, {
               hash: change.content_hash,
               attempts
@@ -22678,7 +22762,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             !(stored.serverHash === void 0 && localNow === content))
               return rlog().info(
                 "pull",
-                `CRDT catch-up: baseline-content row (echo/lagged), socket re-handshake ${change.path}`
+                `CRDT catch-up: baseline-content row (echo/lagged), socket re-handshake ${noteRef(change.path)}`
               ), this.stageAndConverge(
                 noteId,
                 normalized,
@@ -22690,7 +22774,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             if (localNow !== null && (stored == null ? void 0 : stored.hash) !== void 0 && fnv1a(localNow) !== stored.hash && localNow !== content && localNow !== null) {
               rlog().warn(
                 "pull",
-                `CRDT catch-up: local+remote both diverged, drift-copy + converge ${change.path}`
+                `CRDT catch-up: local+remote both diverged, drift-copy + converge ${noteRef(change.path)}`
               );
               let copy2 = null;
               try {
@@ -22698,12 +22782,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               } catch (e) {
                 rlog().warn(
                   "conflict",
-                  `drift-copy capture failed for ${normalized}: ${errMsg(e)}`
+                  `drift-copy capture failed for ${noteRef(normalized)}: ${errMsg(e)}`
                 );
               }
               return copy2 === null ? (rlog().warn(
                 "conflict",
-                `drift-copy failed \u2014 leaving ${normalized} intact, deferring convergence to next catch-up`
+                `drift-copy failed \u2014 leaving ${noteRef(normalized)} intact, deferring convergence to next catch-up`
               ), !1) : (new import_obsidian24.Notice(
                 `Engram: sync conflict on ${normalized} \u2014 your local edit was saved as ${copy2}`
               ), noteId && this.stageAndConverge(
@@ -22718,7 +22802,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             if (noteId && (stored == null ? void 0 : stored.serverHash) === void 0 && localNow !== null && localNow === content)
               rlog().info(
                 "pull",
-                `CRDT catch-up: no-CAS-base quiet record (disk==row) ${change.path}`
+                `CRDT catch-up: no-CAS-base quiet record (disk==row) ${noteRef(change.path)}`
               ), this.patchSyncedRow(normalized, {
                 hash: fnv1a(content),
                 version: change.version,
@@ -22727,7 +22811,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             else if (noteId)
               rlog().warn(
                 "pull",
-                `CRDT catch-up: diverged cold note, socket re-handshake ${change.path}`
+                `CRDT catch-up: diverged cold note, socket re-handshake ${noteRef(change.path)}`
               ), this.stageAndConverge(
                 noteId,
                 normalized,
@@ -22739,7 +22823,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             else
               return rlog().warn(
                 "pull",
-                `CRDT catch-up: pull backfilling diverged note (no note_id) ${change.path}`
+                `CRDT catch-up: pull backfilling diverged note (no note_id) ${noteRef(change.path)}`
               ), await this.flushFromCrdt(normalized, content) ? (this.markServerKnown(normalized), this.stampSyncedRow(normalized, {
                 hash: fnv1a(content),
                 version: change.version,
@@ -22748,9 +22832,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               }), !0) : !1;
           }
         else
-          rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);
+          rlog().info(
+            "pull",
+            `CRDT-managed: re-enroll for catch-up ${noteRef(change.path)}`
+          );
       } else
-        return noteId && this.isLiveBound(normalized) && ((_k = this.crdtEnrollment) == null || _k.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content) ? (this.markServerKnown(normalized), !0) : !1;
+        return noteId && this.isLiveBound(normalized) && ((_k = this.crdtEnrollment) == null || _k.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${noteRef(change.path)}`), await this.flushFromCrdt(normalized, content) ? (this.markServerKnown(normalized), !0) : !1;
       return !1;
     }
     let existing = this.app.vault.getFileByPath(normalized);
@@ -22764,7 +22851,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         // integer-diff this path (a legacy change without one keeps the
         // prior value rather than erasing it).
         seq: typeof change.seq == "number" ? change.seq : (_q = this.syncState.get(normalized)) == null ? void 0 : _q.seq
-      }), change.version != null && ((_r = this.baseStore) == null || _r.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1) : (devLog().log("pull", `applyChange OVERWRITE: ${change.path} (len=${content.length})`), await this.modifyFile(existing, content), this.stampSyncedRow(normalized, {
+      }), change.version != null && ((_r = this.baseStore) == null || _r.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${noteRef(change.path)}`), !1) : (devLog().log("pull", `applyChange OVERWRITE: ${change.path} (len=${content.length})`), await this.modifyFile(existing, content), this.stampSyncedRow(normalized, {
         hash: fnv1a(content),
         version: change.version,
         serverHash: change.content_hash,
@@ -22772,7 +22859,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         seq: typeof change.seq == "number" ? change.seq : (_s = this.syncState.get(normalized)) == null ? void 0 : _s.seq
       }), change.version != null && ((_t2 = this.baseStore) == null || _t2.set(normalized, content, change.version)), rlog().info(
         "pull",
-        `Applied: ${change.path} | localLen=${localContent.length} | remoteLen=${content.length}`
+        `Applied: ${noteRef(change.path)} | localLen=${localContent.length} | remoteLen=${content.length}`
       ), !0);
     }
     devLog().log("pull", `applyChange CREATE: ${normalized} (len=${content.length})`);
@@ -22781,7 +22868,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     } catch (createErr) {
       throw rlog().error(
         "pull",
-        `applyChange CREATE FAILED: ${normalized}`,
+        `applyChange CREATE FAILED: ${noteRef(normalized)}`,
         createErr instanceof Error ? createErr.stack : void 0
       ), createErr;
     }
@@ -22791,7 +22878,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       serverHash: change.content_hash,
       // E1 (#1065): seq recorded for the manifest validator's integer diff.
       seq: typeof change.seq == "number" ? change.seq : void 0
-    }), change.version != null && ((_u = this.baseStore) == null || _u.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
+    }), change.version != null && ((_u = this.baseStore) == null || _u.set(normalized, content, change.version)), rlog().info("pull", `Created: ${noteRef(change.path)} | len=${content.length}`), !0;
   }
   /** Apply a remote attachment change to the vault.
    *  If contentBase64 is provided (from WebSocket), use it directly. Otherwise fetch it.
@@ -22801,7 +22888,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let normalized = (0, import_obsidian24.normalizePath)(change.path);
     if (change.deleted) {
       let existing2 = this.app.vault.getFileByPath(normalized);
-      return existing2 ? (await this.applyRemoteRemoval(existing2, { dropBase: !1 }), rlog().info("pull", `Attachment deleted: ${change.path}`), !0) : !1;
+      return existing2 ? (await this.applyRemoteRemoval(existing2, { dropBase: !1 }), rlog().info("pull", `Attachment deleted: ${noteRef(change.path)}`), !0) : !1;
     }
     let resolvedBase64 = contentBase64 != null ? contentBase64 : (await this.api.getAttachment(change.path)).content_base64, buffer = base64ToArrayBuffer(resolvedBase64), existing = this.app.vault.getFileByPath(normalized), hash = fnv1a(resolvedBase64);
     if (existing) {
@@ -22810,12 +22897,18 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         if (this.arrayBuffersEqual(localBuffer, buffer))
           return this.stampSyncedRow(normalized, { hash }), rlog().info(
             "pull",
-            `Attachment unchanged: ${change.path} | bytes=${buffer.byteLength}`
+            `Attachment unchanged: ${noteRef(change.path)} | bytes=${buffer.byteLength}`
           ), !1;
       }
-      return await this.app.vault.modifyBinary(existing, buffer), this.stampSyncedRow(normalized, { hash }), rlog().info("pull", `Attachment applied: ${change.path} | bytes=${buffer.byteLength}`), !0;
+      return await this.app.vault.modifyBinary(existing, buffer), this.stampSyncedRow(normalized, { hash }), rlog().info(
+        "pull",
+        `Attachment applied: ${noteRef(change.path)} | bytes=${buffer.byteLength}`
+      ), !0;
     }
-    return await this.createBinaryFileWithFolders(normalized, buffer), this.stampSyncedRow(normalized, { hash }), rlog().info("pull", `Attachment created: ${change.path} | bytes=${buffer.byteLength}`), !0;
+    return await this.createBinaryFileWithFolders(normalized, buffer), this.stampSyncedRow(normalized, { hash }), rlog().info(
+      "pull",
+      `Attachment created: ${noteRef(change.path)} | bytes=${buffer.byteLength}`
+    ), !0;
   }
   /** Create a text file, ensuring parent folders exist. */
   /** Modify a file using vault.process() when available (scroll-safe),
@@ -23524,7 +23617,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           if (!entry.evidenced)
             rlog().warn(
               "queue",
-              `Queued delete DROPPED (no evidence stamp): ${entry.path}`
+              `Queued delete DROPPED (no evidence stamp): ${noteRef(entry.path)}`
             );
           else
             try {
@@ -23566,7 +23659,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             if (this.shouldDeferMint(replayNp)) {
               rlog().info(
                 "queue",
-                `Replay mint refused (engine-flushed, id relocated away): ${entry.path}`
+                `Replay mint refused (engine-flushed, id relocated away): ${noteRef(entry.path)}`
               );
               continue;
             }
@@ -24220,7 +24313,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
                   () => {
                     rlog().warn(
                       "crdt",
-                      `reconcileColdStart: Y.Doc corrupted for ${file.path} \u2014 falling back to disk content`
+                      `reconcileColdStart: Y.Doc corrupted for ${noteRef(file.path)} \u2014 falling back to disk content`
                     ), new import_obsidian26.Notice(
                       `Engram Sync: sync state for "${file.path.split("/").pop()}" was unreadable \u2014 using the on-disk copy.`,
                       8e3
@@ -24230,7 +24323,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
             }).catch((e) => {
               rlog().warn(
                 "crdt",
-                `reconcileColdStart: failed to read ${file.path}: ${errMsg(e)}`
+                `reconcileColdStart: failed to read ${noteRef(file.path)}: ${errMsg(e)}`
               );
             });
           }
@@ -24820,7 +24913,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
             }),
             onReleaseError: (path, err) => rlog().warn(
               "crdt",
-              `Last-release flush failed for ${path} (doc left resident): ${err instanceof Error ? err.message : String(err)}`
+              `Last-release flush failed for ${noteRef(path)} (doc left resident): ${err instanceof Error ? err.message : String(err)}`
             )
           }), setLiveBindingCoordinator(this.crdtLiveViews), this.syncEngine.setCrdtPorts({
             liveBound: (path) => {

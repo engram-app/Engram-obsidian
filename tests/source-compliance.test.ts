@@ -406,6 +406,58 @@ describe("privacy — no content retention for export", () => {
 		expect(findings).toEqual([]);
 	});
 
+	// A vault path is the most revealing thing this plugin knows: `Medical/`,
+	// `Divorce 2026/`, `Job search/` give up the sensitive fact without anyone
+	// reading the note. Bodies, titles and paths are encrypted at rest with
+	// per-user keys — logging the path in clear puts it in client_logs,
+	// CloudWatch and Loki, outside that boundary.
+	//
+	// Anchored on `rlog()` and reading ALL of its arguments, not on the first
+	// one. A guard anchored on an argument that is already safe reports healthy
+	// while blind — that is exactly how the anomaly() guard failed review.
+	test("no rlog() call interpolates a path", () => {
+		const NAMEY =
+			/\.path\b|\bpath\b|\bpaths\b|basename|\bnormalized\b|\bpushedPath\b|\bnewPath\b|\boldPath\b|\bserverPath\b|\bfilePath\b/;
+		const findings: Finding[] = [];
+		let inspected = 0;
+
+		for (const f of sources) {
+			if (f.rel.endsWith("note-ref.ts")) continue;
+			for (const m of f.text.matchAll(/rlog\(\)\.(error|warn|info|diag)\(/g)) {
+				let depth = 1;
+				let i = (m.index ?? 0) + m[0].length;
+				const start = i;
+				for (; i < f.text.length && depth > 0; i++) {
+					if (f.text[i] === "(") depth++;
+					else if (f.text[i] === ")") depth--;
+				}
+				if (depth !== 0) continue;
+				inspected += 1;
+
+				const args = f.text.slice(start, i - 1);
+				for (const expr of args.match(/\$\{[^{}]*\}/g) ?? []) {
+					// noteRef()/noteShape() are the sanctioned wrappers.
+					if (expr.includes("noteRef(") || expr.includes("noteShape(")) continue;
+					// A COUNT of paths is the thing we want kept — `${paths.length}`
+					// names no folder. A guard that flags counts gets deleted, and
+					// then it guards nothing.
+					if (/\.(length|size)\s*\}$/.test(expr)) continue;
+					if (NAMEY.test(expr)) {
+						findings.push({
+							file: f.rel,
+							line: f.text.slice(0, m.index).split("\n").length,
+							snippet: expr,
+						});
+					}
+				}
+			}
+		}
+
+		// Vacuity: this file has shipped a guard over zero call sites before.
+		expect(inspected).toBeGreaterThan(0);
+		expect(findings).toEqual([]);
+	});
+
 	// `record(...)` was the recorder's entry point. If a timeline ever comes
 	// back, it comes back through a review that reads this test.
 	test("no recorder-style record() calls survive", () => {
