@@ -1899,6 +1899,9 @@ var _NoteChannel = class _NoteChannel {
     this.onPlanState = null;
     /** Inbound CRDT frames from the server. `docId` is the note's bare note_id. */
     this.onCrdtMessage = null;
+    /** A frame from the per-VAULT index room (`filemeta_v0`). No doc_id: there is
+     *  exactly one index room per vault, so the topic identifies it. */
+    this.onIndexMessage = null;
     /** A room became active on the server for `docId` (announced via
      *  `broadcast_from!`, so only OTHER devices see it). Trigger a sync-step-1
      *  for this doc so a device that doesn't yet have the note pulls it. */
@@ -1997,6 +2000,29 @@ var _NoteChannel = class _NoteChannel {
       )), !1;
     }
     return this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_msg", { doc_id: docId, b64 }]), !0;
+  }
+  /** Send a frame to the per-VAULT index room (`filemeta_v0`).
+   *
+   *  Same topic, same join_ref discipline and same held-not-lost semantics as
+   *  `sendCrdt`, minus the doc_id — one index room per vault, so the topic is
+   *  the address. Refusing before the join is acked is the honest signal for the
+   *  same reason it is there: a frame with a stale join_ref is dropped
+   *  server-side without a reply.
+   *
+   *  The refusal is NOT throttled per doc the way sendCrdt's is: there is only
+   *  one index room, so a warn per refused frame during an offline window would
+   *  be one stream rather than N. It shares the throttle map under a fixed key. */
+  sendIndexCrdt(b64) {
+    var _a;
+    let t = this.crdtTopic;
+    if (!t || !this.crdtJoined) {
+      let now = Date.now();
+      return now - ((_a = this.lastRefusedWarnAt.get(_NoteChannel.INDEX_REFUSAL_KEY)) != null ? _a : 0) >= _NoteChannel.REFUSED_WARN_THROTTLE_MS && (this.lastRefusedWarnAt.set(_NoteChannel.INDEX_REFUSAL_KEY, now), rlog().warn(
+        "channel",
+        `sendIndexCrdt refused (crdt topic not joined): joined=${this.crdtJoined} \u2014 held, recovers on rejoin`
+      )), !1;
+    }
+    return this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_index_msg", { b64 }]), !0;
   }
   /** Push a request frame on the crdt topic and resolve when the matching
    *  phx_reply (same ref) arrives. Rejects on error reply, timeout, or
@@ -2252,7 +2278,7 @@ var _NoteChannel = class _NoteChannel {
     }
   }
   handleMessage(raw) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
     let msg;
     try {
       msg = JSON.parse(raw);
@@ -2323,29 +2349,34 @@ var _NoteChannel = class _NoteChannel {
       docId && b64 && ((_i = this.onCrdtMessage) == null || _i.call(this, docId, b64));
       return;
     }
+    if (event === "crdt_index_msg" && payload) {
+      let b64 = payload.b64;
+      b64 && ((_j = this.onIndexMessage) == null || _j.call(this, b64));
+      return;
+    }
     if (event === "note_yjs_update" && payload) {
       let noteId = payload.note_id, b64 = payload.b64, head = payload.head, rawSeq = payload.seq, seq2 = Number.isInteger(rawSeq) ? rawSeq : void 0;
-      noteId && b64 && head && ((_j = this.onNoteYjsUpdate) == null || _j.call(this, noteId, b64, head, seq2));
+      noteId && b64 && head && ((_k = this.onNoteYjsUpdate) == null || _k.call(this, noteId, b64, head, seq2));
       return;
     }
     if (event === "crdt_doc_ready" && payload) {
       let docId = payload.doc_id;
       if (docId) {
         let path = payload.path;
-        (_k = this.onCrdtDocReady) == null || _k.call(this, docId, path);
+        (_l = this.onCrdtDocReady) == null || _l.call(this, docId, path);
       }
       return;
     }
     if (event === "note_changed" && payload) {
       let streamEvent = toStreamEvent(payload);
-      rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`), (_l = this.onEvent) == null || _l.call(this, streamEvent);
+      rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`), (_m = this.onEvent) == null || _m.call(this, streamEvent);
       return;
     }
     if (event === "notes.batch" && payload && payload.op === "upsert") {
-      let notes = (_m = payload.notes) != null ? _m : [];
+      let notes = (_n = payload.notes) != null ? _n : [];
       rlog().info("channel", `Batch digest: ${notes.length} notes`);
       for (let n of notes)
-        (_n = this.onEvent) == null || _n.call(
+        (_o = this.onEvent) == null || _o.call(
           this,
           // Batch digests are metadata-only by protocol: content/device_id
           // stay structurally excluded even if the server ever adds them.
@@ -2387,7 +2418,10 @@ var _NoteChannel = class _NoteChannel {
     }, base + jitter);
   }
 };
-_NoteChannel.REFUSED_WARN_THROTTLE_MS = 3e3;
+_NoteChannel.REFUSED_WARN_THROTTLE_MS = 3e3, /** Throttle key for the index room's refusals. Not a doc id — the map is
+ *  keyed by doc, and the index room has none. A UUID-shaped sentinel would be
+ *  indistinguishable from a real doc in a log line, so it reads as what it is. */
+_NoteChannel.INDEX_REFUSAL_KEY = "__index_room__";
 var NoteChannel = _NoteChannel;
 
 // src/crdt/live/live-binding.ts

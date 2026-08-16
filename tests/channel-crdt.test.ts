@@ -1164,3 +1164,57 @@ describe("in-flight sendRequest on unclean close (repo-review 2026-08)", () => {
 		channel.disconnect();
 	});
 });
+
+// The per-VAULT index room (`filemeta_v0`, engram-app/Engram#1146). Same topic
+// and same join_ref discipline as a note frame, minus the doc_id — there is one
+// index room per vault, so the topic is the address.
+describe("NoteChannel index-room transport", () => {
+	test("sendIndexCrdt pushes crdt_index_msg with no doc_id", async () => {
+		const { channel, ws } = await joinedCrdtChannel();
+		ws.sent.length = 0;
+
+		expect(channel.sendIndexCrdt("aGVsbG8=")).toBe(true);
+
+		const frames = ws.sent.map((s: string) => JSON.parse(s));
+		const frame = frames.find((f: unknown[]) => f[3] === "crdt_index_msg");
+		expect(frame).toBeDefined();
+		expect(frame[2]).toBe("crdt:u1:v1");
+		expect(frame[4]).toEqual({ b64: "aGVsbG8=" });
+		// A frame with a stale/absent join_ref is dropped server-side WITHOUT a
+		// reply, so carrying the crdt: join_ref is the whole contract.
+		expect(frame[0]).not.toBeNull();
+	});
+
+	test("inbound crdt_index_msg routes to onIndexMessage", async () => {
+		const { channel, ws } = await joinedCrdtChannel();
+		const seen: string[] = [];
+		channel.onIndexMessage = (b64) => seen.push(b64);
+
+		simulateMessage(ws, [null, null, "crdt:u1:v1", "crdt_index_msg", { b64: "d29ybGQ=" }]);
+
+		expect(seen).toEqual(["d29ybGQ="]);
+	});
+
+	// Held, not lost: the caller re-offers on rejoin, exactly as sendCrdt's
+	// refusal contract does. Returning true here would report a frame as
+	// delivered that the server never saw.
+	test("sendIndexCrdt refuses before the crdt join is acked", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		expect(channel.sendIndexCrdt("aGVsbG8=")).toBe(false);
+	});
+
+	// A note frame must never be mistaken for an index frame: they share a topic
+	// and differ only by event name and the presence of doc_id.
+	test("an index frame does not reach the note-frame callback", async () => {
+		const { channel, ws } = await joinedCrdtChannel();
+		let noteFrames = 0;
+		channel.onCrdtMessage = () => noteFrames++;
+
+		simulateMessage(ws, [null, null, "crdt:u1:v1", "crdt_index_msg", { b64: "d29ybGQ=" }]);
+
+		expect(noteFrames).toBe(0);
+	});
+});
