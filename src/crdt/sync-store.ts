@@ -296,9 +296,16 @@ export class SyncStore {
 	pathForId(note_id: string): string | null {
 		if (!this.reverse) {
 			const index = new Map<string, string>();
-			// Cache first so committed/overlay overwrite it.
+			// Cache first so committed/overlay overwrite it — but ONLY where they
+			// know the same id. The index is keyed by ID, so a committed entry
+			// does not displace a cache entry whose path was reassigned to a
+			// different note; the stale id kept resolving onto the new note's
+			// file, which is the wrong-mint cross-file overwrite shape.
 			for (const [path, meta] of this.cache) {
-				if (!this.deleteSet.has(path)) index.set(meta.note_id, path);
+				if (this.deleteSet.has(path)) continue;
+				const live = this.overlay.get(path)?.note_id ?? this.map.get(path)?.note_id;
+				if (live && live !== meta.note_id) continue;
+				index.set(meta.note_id, path);
 			}
 			// Committed first, overlay second: overlay is the newer truth, so it
 			// must win where both know the id.
@@ -328,6 +335,7 @@ export class SyncStore {
 		for (const [path, meta] of this.cache) {
 			if (!this.deleteSet.has(path)) out.set(path, meta);
 		}
+		// (committed/overlay below overwrite by PATH, which is the right key here)
 		this.map.forEach((meta, path) => {
 			if (!this.deleteSet.has(path)) out.set(path, meta);
 		});
@@ -391,6 +399,12 @@ export class SyncStore {
 		this.deleteSet.clear();
 		this.renames.clear();
 		this.renamedAway.clear();
+		// Eviction is bookkeeping for the STAGED window only. Once the commit
+		// lands, a displaced id genuinely has no entry anywhere, so the set is
+		// redundant — and keeping it is pure blindness: a peer that re-claims
+		// that id at another path would never be visible to `pathForId` again,
+		// leaving inbound frames for the note with no disk path to resolve to.
+		this.evicted.clear();
 		this.reverse = null;
 	}
 
@@ -401,6 +415,8 @@ export class SyncStore {
 		this.deleteSet.clear();
 		this.renames.clear();
 		this.renamedAway.clear();
+		// Nothing was published, so nothing was displaced.
+		this.evicted.clear();
 		this.reverse = null;
 	}
 }

@@ -189,3 +189,70 @@ describe("inbound frames from the socket", () => {
 		expect(b.receive(captured)).toBe(true);
 	});
 });
+
+describe("round 2: the fixes had their own defects", () => {
+	// The first fix worked only for the first connect of a session. Nothing
+	// called setConnected(false), so on rejoin `wasConnected` was already true
+	// and the syncStep1 edge never fired — write-only again, one drop later.
+	test("re-handshakes after a drop and rejoin", () => {
+		let frames = 0;
+		const room = new IndexRoom({
+			send: () => {
+				frames++;
+				return true;
+			},
+		});
+		room.connect();
+		const afterFirst = frames;
+
+		room.setConnected(false); // what main.ts now does on disconnect
+		room.connect();
+
+		expect(frames).toBeGreaterThan(afterFirst);
+	});
+
+	// `evicted` was never cleared, so a peer re-claiming a displaced id at
+	// another path stayed invisible to pathForId for the rest of the session —
+	// inbound frames for that note had no disk path to resolve to.
+	test("eviction does not outlive the commit that caused it", () => {
+		const doc = new Y.Doc();
+		const shared = doc.getMap<{ note_id: string }>("filemeta_v0");
+		const store = new SyncStore(shared);
+
+		shared.set("A.md", { note_id: "Y" });
+		store.set("A.md", { note_id: "X" }); // displaces Y
+		store.commit();
+		shared.set("B.md", { note_id: "Y" }); // peer re-claims Y elsewhere
+
+		expect(store.pathForId("Y")).toBe("B.md");
+	});
+
+	test("rollback un-evicts, because nothing was published", () => {
+		const doc = new Y.Doc();
+		const shared = doc.getMap<{ note_id: string }>("filemeta_v0");
+		const store = new SyncStore(shared);
+
+		shared.set("A.md", { note_id: "Y" });
+		store.set("A.md", { note_id: "X" });
+		store.rollback();
+
+		expect(store.pathForId("Y")).toBe("A.md");
+	});
+
+	// The reverse index is keyed by ID, so a committed entry only displaces a
+	// cache entry when it knows the SAME id. Where the path was reassigned to a
+	// different note, the stale cached id kept resolving onto the new note's
+	// file — the wrong-mint cross-file overwrite shape.
+	test("a stale cached id does not resolve onto another note's file", () => {
+		const doc = new Y.Doc();
+		const shared = doc.getMap<{ note_id: string }>("filemeta_v0");
+		const store = new SyncStore(shared);
+
+		store.seed("a.md", { note_id: "X" }); // stale data.json
+		shared.set("a.md", { note_id: "Y" }); // the vault reassigned a.md
+
+		expect(store.get("a.md")).toBe("Y");
+		expect(store.pathForId("X")).toBeNull();
+		expect(store.pathForId("Y")).toBe("a.md");
+	});
+});

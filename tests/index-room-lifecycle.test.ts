@@ -104,6 +104,10 @@ describe("resetIndexRoomForVault", () => {
 			},
 		});
 		fake.noteIdMap.rebind(fake.indexRoom.store);
+		// CONNECT it. Without this the provider's broadcast is short-circuited on
+		// `connected`, the send callback is unreachable, and the counter is pinned
+		// at zero — so the test passed against the exact bug it names.
+		fake.indexRoom.connect();
 		fake.noteIdMap.set("a.md", "id-a");
 		fake.noteIdMap.flushNow();
 		const before = framesFromOld;

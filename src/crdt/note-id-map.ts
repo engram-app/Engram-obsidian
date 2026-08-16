@@ -144,8 +144,13 @@ export class NoteIdMap {
 		this.flush();
 	}
 
+	/** Called when `clear()` runs, so the vault-change backstop replaces the
+	 *  index room rather than only dropping local layers. Set by main.ts. */
+	onReset: (() => void) | null = null;
+
 	clear(): void {
 		this.store.clear();
+		this.onReset?.();
 	}
 
 	toJSON(): Record<string, string> {

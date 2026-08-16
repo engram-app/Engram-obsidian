@@ -216,7 +216,18 @@ export default class EngramSyncPlugin extends Plugin {
 	/** Path -> note_id identity. Backed by `indexRoom.store` as of #362, so it
 	 *  is a view onto the shared doc rather than a private map hydrated from
 	 *  data.json. data.json is now a CACHE of it, not the source of truth. */
-	noteIdMap: NoteIdMap = new NoteIdMap(this.indexRoom.store);
+	noteIdMap: NoteIdMap = this.makeNoteIdMap();
+
+	private makeNoteIdMap(): NoteIdMap {
+		const map = new NoteIdMap(this.indexRoom.store);
+		// `clear()` is the shared wipe for BOTH vault-change routes — the picker
+		// and the `invalidateIfVaultChanged` backstop — and its own docstring
+		// warns that "a wipe that exists on only one path re-opens #200". Since
+		// clear() became local-only it cannot drop the committed doc, so it has
+		// to trigger the room replacement that can.
+		map.onReset = () => this.resetIndexRoomForVault();
+		return map;
+	}
 
 	/** `?.` alone: before the first connectChannel there is no channel, and the
 	 *  provider correctly BUFFERS the frame for the next connect. */
@@ -2180,6 +2191,11 @@ export default class EngramSyncPlugin extends Plugin {
 						// buffer (flushed via syncStep1 on the next setConnected(true)) and
 						// no frame is written to a dead socket.
 						this.crdtManager?.setConnected(false);
+						// The index room too. `connect()` fires syncStep1 on the
+						// false->true edge, so a room left marked connected across a
+						// drop never re-handshakes on rejoin — the write-only bug,
+						// deferred to the first disconnect instead of fixed.
+						this.indexRoom.setConnected(false);
 					}
 				};
 
@@ -2442,6 +2458,7 @@ export default class EngramSyncPlugin extends Plugin {
 						this.crdtManager?.clearSynced();
 						// Relay model: no crdt: topic → providers offline (buffer, don't send).
 						this.crdtManager?.setConnected(false);
+						this.indexRoom.setConnected(false);
 						// A later same-socket rejoin must re-fire STEP1s; resetAll clears the once-per-session guard.
 						this.crdtEnrollment?.resetAll();
 						if (reason === "crdt_proto_too_old") {
