@@ -70,17 +70,6 @@ function stripCommentsAndStrings(text: string): string {
 		.replace(/'(?:[^'\\]|\\.)*'/g, "''");
 }
 
-/** Blank comments while keeping every byte offset identical, so a match found
- *  in the result can be sliced out of the ORIGINAL text at the same index.
- *  `stripCommentsAndStrings` cannot be used for that: it rewrites `"…"` to `""`
- *  and shifts everything after it. */
-function blankCommentsKeepingOffsets(text: string): string {
-	const blank = (m: string) => m.replace(/[^\n]/g, " ");
-	return text
-		.replace(/\/\*[\s\S]*?\*\//g, blank)
-		.replace(/(^|[^:\\])\/\/[^\n]*/g, (m, p1) => p1 + blank(m.slice(p1.length)));
-}
-
 type Finding = { file: string; line: number; snippet: string };
 
 function findInSources(
