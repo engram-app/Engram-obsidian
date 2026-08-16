@@ -41,6 +41,21 @@ export class IndexRoom {
 			send: (frame) => deps.send(frame),
 			onSynced: deps.onSynced,
 		});
+
+		// ADVERTISED. `NoteProvider` sends syncStep1 only when advertised, and it
+		// defaults to false because a note room must be able to deliver ops
+		// WITHOUT opening a room (the connect-storm the fan-out design avoids).
+		// The index room is the opposite case: it has exactly one room per vault
+		// and it must pull the vault's persisted state.
+		//
+		// Without this the room was WRITE-ONLY. It never asked for state, so a
+		// device knew only what its own data.json cached, and `getOrMint` minted a
+		// fresh id for any note the server already owned — a duplicate, which the
+		// server's projection then repathed the row to match. Set in the
+		// constructor rather than in `connect()` so it cannot be missed by a
+		// caller that flips `setConnected` first and consumes the false->true
+		// edge before advertising.
+		this.provider.setAdvertised(true);
 	}
 
 	/** Advertise syncStep1 and start exchanging state. */
@@ -55,9 +70,20 @@ export class IndexRoom {
 		this.provider.setConnected(connected);
 	}
 
-	/** Feed an inbound `crdt_index_msg` frame. */
-	receive(b64: string): void {
-		this.provider.receive(b64);
+	/** Feed an inbound `crdt_index_msg` frame.
+	 *
+	 *  Returns false when the frame could not be applied. A malformed or hostile
+	 *  frame must not throw out of the socket's message handler — the note path
+	 *  makes the same guarantee ("never leak an unhandled rejection from the
+	 *  inbound hot path") and has a regression test for it. Throwing here escaped
+	 *  to window.onerror, which never reaches rlog() and so is invisible in Loki. */
+	receive(b64: string): boolean {
+		try {
+			this.provider.receive(b64);
+			return true;
+		} catch {
+			return false;
+		}
 	}
 
 	/** True once the peer's state has landed. Reading the store before this is

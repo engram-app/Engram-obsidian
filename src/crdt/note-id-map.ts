@@ -30,7 +30,7 @@ import { SyncStore } from "./sync-store";
  * publishes as ONE update instead of N. Use it wherever a loop mutates.
  */
 export class NoteIdMap {
-	readonly store: SyncStore;
+	store: SyncStore;
 	private batching = false;
 
 	/** Pass the live index room's store to sync identity with the vault. The
@@ -89,6 +89,23 @@ export class NoteIdMap {
 		}
 	}
 
+	/** Point this map at a different store — used when the vault changes and the
+	 *  index room is REPLACED (a fresh Y.Doc). The instance is captured by the
+	 *  sync engine and the live views, so it must be re-pointed in place rather
+	 *  than swapped out from under them. */
+	rebind(store: SyncStore): void {
+		this.store = store;
+		this.flushScheduled = false;
+	}
+
+	/** Warm the local cache from data.json. Never published — see
+	 *  `SyncStore.seed`. */
+	seed(ids: Record<string, string> | undefined): void {
+		for (const [path, id] of Object.entries(ids ?? {})) {
+			this.store.seed(path, { note_id: id });
+		}
+	}
+
 	get(path: string): string | null {
 		return this.store.get(path);
 	}
@@ -137,9 +154,7 @@ export class NoteIdMap {
 
 	static fromJSON(o: Record<string, string> | undefined): NoteIdMap {
 		const m = new NoteIdMap();
-		m.batch(() => {
-			for (const [p, id] of Object.entries(o ?? {})) m.set(p, id);
-		});
+		m.seed(o);
 		return m;
 	}
 }

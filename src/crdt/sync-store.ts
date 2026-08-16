@@ -49,6 +49,40 @@ export class SyncStore {
 	/** note_ids minted locally whose note the server has not acknowledged. */
 	private readonly pendingUpload = new Set<string>();
 
+	/** Locally-cached identity from `data.json`. Read-only fallback: consulted
+	 *  LAST, never staged, never published.
+	 *
+	 *  Seeding the cache through `set()` was a data-loss bug. A Y.Map is
+	 *  last-write-wins by causality with no notion of "cache" versus "claim", so
+	 *  republishing a stale cache on every launch either overwrote a fresher
+	 *  claim from another device or — via id-keyed removal — published a DELETE
+	 *  of the path that claim lived at. The cache is evidence about the past; it
+	 *  is not a claim, and it must not be able to make one. */
+	private readonly cache = new Map<string, FileMeta>();
+
+	/** note_ids that have been displaced from their path by a later claim. They
+	 *  must stop answering `pathForId`, or a late frame for a dead lineage
+	 *  resolves to a live file. Cleared when the id is claimed again. */
+	private readonly evicted = new Set<string>();
+
+	/** Rename sources this store actually held an entry for — the only keys
+	 *  `commit()` may delete. A redirect recorded for an unknown path is for
+	 *  resolution only and must never publish a deletion. */
+	private readonly renamedAway = new Set<string>();
+
+	/** Whether some staged entry already claims `id` at a path.
+	 *
+	 *  Guards the eviction below. A cross-wire repair (`A→Y, B→X` corrected to
+	 *  `A→X, B→Y`) sets both paths in turn, and the second `set` sees B's
+	 *  COMMITTED id — `X` — as displaced, even though the first `set` just
+	 *  re-claimed `X` at `A.md`. Evicting on that reading dropped `X` entirely,
+	 *  so `reconcileNoteIdMapFromManifest`, whose whole purpose is repairing a
+	 *  cross-wire, unclaimed one of the two notes it was fixing. */
+	private stagedHolds(id: string): boolean {
+		for (const meta of this.overlay.values()) if (meta.note_id === id) return true;
+		return false;
+	}
+
 	/** id -> path, over committed + overlay. Rebuilt on demand rather than
 	 *  maintained per write: a folder move touches N paths, and paying N reverse
 	 *  updates per mutation to serve a lookup that may never happen is the wrong
@@ -96,7 +130,17 @@ export class SyncStore {
 		// `getOrMint`, which resolves through the redirect on purpose.
 		if (this.renames.has(path)) return null;
 		if (this.deleteSet.has(path)) return null;
-		return this.overlay.get(path) ?? this.map.get(path) ?? null;
+		// Cache LAST: anything the shared doc knows outranks a local memory of it.
+		return this.overlay.get(path) ?? this.map.get(path) ?? this.cache.get(path) ?? null;
+	}
+
+	/** Warm the local cache from `data.json`. Never staged and never published —
+	 *  it lets ids resolve offline, before the room has synced, without asserting
+	 *  anything to other devices. */
+	seed(path: string, meta: FileMeta): void {
+		if (!path || path === "null" || path === "undefined" || !meta?.note_id) return;
+		this.cache.set(path, meta);
+		this.reverse = null;
 	}
 
 	/** The note_id for `path`, or null. The `NoteIdMap.get` replacement. */
@@ -157,6 +201,20 @@ export class SyncStore {
 			this.deleteSet.add(prior);
 		}
 
+		// The OTHER eviction, which `origin/main`'s NoteIdMap had and the first
+		// version of this store dropped: if `resolved` currently holds a
+		// DIFFERENT id, that id no longer lives anywhere and its reverse entry
+		// must go. Without it `pathForId(displaced)` kept answering `resolved`,
+		// so a late frame for the dead lineage resolved to a real file and
+		// flushed the wrong content onto it — and `reconcileNoteIdMapFromManifest`,
+		// whose whole job is repairing a cross-wire, became a way to publish a
+		// delete of a path it had just claimed.
+		const displaced = this.overlay.get(resolved)?.note_id ?? this.map.get(resolved)?.note_id;
+		if (displaced && displaced !== meta.note_id && !this.stagedHolds(displaced)) {
+			this.evicted.add(displaced);
+		}
+		this.evicted.delete(meta.note_id);
+
 		this.overlay.set(resolved, meta);
 		// A set UNDOES a pending delete of the same path: staging both and
 		// promoting delete-then-set would otherwise depend on commit order.
@@ -185,7 +243,34 @@ export class SyncStore {
 		const meta = this.getMeta(oldPath);
 		const from = this.resolvePath(oldPath);
 
-		if (meta) this.overlay.set(newPath, meta);
+		// An unknown path still records the REDIRECT — that is what stops a folder
+		// cascade minting a second id for a descendant this device never opened.
+		// What it must NOT do is schedule a delete: `commit()` used to remove
+		// every rename key unconditionally, so renaming a path this store had
+		// never seen published a bare DELETE of it and claimed nothing at the new
+		// path, silently unclaiming a note that exists on other devices.
+		if (!meta) {
+			this.renames.set(from, newPath);
+			this.reverse = null;
+			return;
+		}
+
+		// Only a rename we actually hold an entry for removes the old key.
+		this.renamedAway.add(from);
+
+		// The target may be staged for deletion (rename-over-an-existing-file, or
+		// a delete+rename pair in one batch). Leaving it there made the
+		// destination read as unclaimed, so anything resolving it re-minted — the
+		// resurrection window this layer exists to remove, on the target side.
+		this.deleteSet.delete(newPath);
+
+		// The id displaced from the target is no longer anywhere.
+		const displaced = this.overlay.get(newPath)?.note_id ?? this.map.get(newPath)?.note_id;
+		if (displaced && displaced !== meta.note_id && !this.stagedHolds(displaced)) {
+			this.evicted.add(displaced);
+		}
+
+		this.overlay.set(newPath, meta);
 		this.renames.set(from, newPath);
 		// The old path must not also be staged for deletion — `commit()` removes
 		// it via the rename, and a deleteSet entry would race the set of the new
@@ -211,6 +296,10 @@ export class SyncStore {
 	pathForId(note_id: string): string | null {
 		if (!this.reverse) {
 			const index = new Map<string, string>();
+			// Cache first so committed/overlay overwrite it.
+			for (const [path, meta] of this.cache) {
+				if (!this.deleteSet.has(path)) index.set(meta.note_id, path);
+			}
 			// Committed first, overlay second: overlay is the newer truth, so it
 			// must win where both know the id.
 			this.map.forEach((meta, path) => {
@@ -219,6 +308,12 @@ export class SyncStore {
 			for (const [path, meta] of this.overlay) {
 				if (!this.deleteSet.has(path)) index.set(meta.note_id, path);
 			}
+			// A path renamed away no longer holds its id at the OLD key.
+			for (const from of this.renames.keys()) {
+				const meta = this.map.get(from) ?? this.cache.get(from);
+				if (meta && index.get(meta.note_id) === from) index.delete(meta.note_id);
+			}
+			for (const id of this.evicted) index.delete(id);
 			this.reverse = index;
 		}
 
@@ -229,33 +324,43 @@ export class SyncStore {
 	 *  snapshot `data.json` persistence and any full-vault reconcile read. */
 	entries(): [string, FileMeta][] {
 		const out = new Map<string, FileMeta>();
+		// Cache first, so committed/overlay outrank it — same precedence as reads.
+		for (const [path, meta] of this.cache) {
+			if (!this.deleteSet.has(path)) out.set(path, meta);
+		}
 		this.map.forEach((meta, path) => {
 			if (!this.deleteSet.has(path)) out.set(path, meta);
 		});
 		for (const [path, meta] of this.overlay) {
 			if (!this.deleteSet.has(path)) out.set(path, meta);
 		}
+		// A path renamed away is gone; enumerating it would cache two paths for
+		// one id, which the next launch would republish as two claims.
+		for (const from of this.renames.keys()) out.delete(from);
 		return [...out];
 	}
 
 	/** Drop everything, staged and committed.
 	 *
-	 *  Used on vault change: this is per-vault identity state, and carrying ids
-	 *  across vaults routes CRDT frames at another vault's notes (plugin #200).
-	 *  The committed half is cleared inside a transaction so peers see one
-	 *  update, not one per path. */
+	 *  LOCAL ONLY, deliberately. Deleting the committed keys published a wipe of
+	 *  the vault's entire authoritative index to whichever room the socket was
+	 *  still joined to — the OLD vault on a switch, or the NEW one if the frame
+	 *  was buffered and flushed after the rejoin. Neither vault asked for it.
+	 *
+	 *  Dropping a vault's identity state is done by REPLACING the room (a fresh
+	 *  Y.Doc), not by emptying the shared one: a doc nobody is looking at emits
+	 *  nothing, and reusing one across vaults strands every later claim as a
+	 *  pending struct anyway (its clock is ahead of the new room's). See
+	 *  `IndexRoom` and main.ts's vault-change teardown. */
 	clear(): void {
 		this.overlay.clear();
 		this.deleteSet.clear();
 		this.renames.clear();
+		this.renamedAway.clear();
 		this.pendingUpload.clear();
+		this.cache.clear();
+		this.evicted.clear();
 		this.reverse = null;
-
-		if (this.map.size > 0) {
-			this.map.doc?.transact(() => {
-				this.map.clear();
-			});
-		}
 	}
 
 	/** True when there is staged state that `commit()` would publish. */
@@ -277,7 +382,7 @@ export class SyncStore {
 		if (!this.dirty) return;
 
 		this.map.doc?.transact(() => {
-			for (const from of this.renames.keys()) this.map.delete(from);
+			for (const from of this.renamedAway) this.map.delete(from);
 			for (const path of this.deleteSet) this.map.delete(path);
 			for (const [path, meta] of this.overlay) this.map.set(path, meta);
 		}, origin);
@@ -285,6 +390,7 @@ export class SyncStore {
 		this.overlay.clear();
 		this.deleteSet.clear();
 		this.renames.clear();
+		this.renamedAway.clear();
 		this.reverse = null;
 	}
 
@@ -294,6 +400,7 @@ export class SyncStore {
 		this.overlay.clear();
 		this.deleteSet.clear();
 		this.renames.clear();
+		this.renamedAway.clear();
 		this.reverse = null;
 	}
 }

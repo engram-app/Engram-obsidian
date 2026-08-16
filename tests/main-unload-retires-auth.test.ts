@@ -44,6 +44,11 @@ describe("onunload auth-provider retirement", () => {
 			crdtManager: null,
 			syncInterval: null,
 			promiseTracker: null,
+			// onunload publishes any final staged claim and detaches the index
+			// room's listeners (#362). Modelled on the double rather than made
+			// optional in production — both fields always exist on a real plugin.
+			noteIdMap: { flushNow: () => {} },
+			indexRoom: { destroy: () => {} },
 		});
 
 		EngramSyncPlugin.prototype.onunload.call(fake as never);

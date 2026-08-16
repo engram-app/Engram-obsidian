@@ -211,25 +211,37 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  note identity. Constructed once and re-pointed at each new socket, since
 	 *  the doc outlives the connection — a frame produced while the socket is
 	 *  down is buffered by the provider and flushed on rejoin. */
-	indexRoom: IndexRoom = new IndexRoom({
-		// Capability check, not a swallowed error. A channel that predates this
-		// seam reports "not deliverable" and the provider BUFFERS the frame,
-		// flushing it on the next connect — which is the same contract as being
-		// offline. Throwing here would abort the rest of connectChannel and take
-		// note sync down with it, so the failure mode has to be "held", not
-		// "crash the connect path".
-		send: (b64) => {
-			const channel = this.indexChannel;
-			return typeof channel?.sendIndexCrdt === "function"
-				? channel.sendIndexCrdt(b64)
-				: false;
-		},
-	});
+	indexRoom: IndexRoom = this.makeIndexRoom();
 
 	/** Path -> note_id identity. Backed by `indexRoom.store` as of #362, so it
 	 *  is a view onto the shared doc rather than a private map hydrated from
 	 *  data.json. data.json is now a CACHE of it, not the source of truth. */
 	noteIdMap: NoteIdMap = new NoteIdMap(this.indexRoom.store);
+
+	/** `?.` alone: before the first connectChannel there is no channel, and the
+	 *  provider correctly BUFFERS the frame for the next connect. */
+	private makeIndexRoom(): IndexRoom {
+		return new IndexRoom({ send: (b64) => this.indexChannel?.sendIndexCrdt(b64) ?? false });
+	}
+
+	/** REPLACE the index room when the vault changes.
+	 *
+	 *  Not `store.clear()`. Two bugs lived there. Clearing the committed map is a
+	 *  real Yjs deletion on the SHARED doc, so it broadcast "delete every path"
+	 *  to whichever room the socket was still joined to — the OLD vault, or the
+	 *  NEW one if the frame was buffered past the rejoin. And reusing one Y.Doc
+	 *  across vaults strands every later claim: its clock is already ahead of the
+	 *  new room, so Yjs parks the update as a pending struct awaiting deps that
+	 *  live in the other vault, and the server acks it happily.
+	 *
+	 *  A fresh doc has a fresh clientID and an empty clock, and a discarded doc
+	 *  nobody observes broadcasts nothing. */
+	resetIndexRoomForVault(): void {
+		this.indexRoom.destroy();
+		this.indexRoom = this.makeIndexRoom();
+		this.noteIdMap.rebind(this.indexRoom.store);
+		this.indexChannel = null;
+	}
 	syncLog: SyncLog = new SyncLog();
 	/** Per-install device id sent as X-Device-Id so the backend attributes its
 	 *  sync watermark per device. Random UUID minted on first load, persisted
@@ -1243,6 +1255,11 @@ export default class EngramSyncPlugin extends Plugin {
 		// real content, not an empty read of a torn-down doc.
 		void this.crdtLiveViews?.destroy();
 		this.crdtLiveViews = null;
+		// Publish anything staged in the final tick BEFORE the socket goes, then
+		// detach the room's listeners. Without the flush a claim made in the last
+		// tick commits into a doc whose provider is already discarded.
+		this.noteIdMap.flushNow();
+		this.indexRoom.destroy();
 		void this.crdtManager?.destroyAll();
 		// CrdtChannel has no teardown — it is a stateless frame dispatcher with no
 		// open resources; the WebSocket it dispatches over is owned by the Phoenix
@@ -1293,11 +1310,13 @@ export default class EngramSyncPlugin extends Plugin {
 		// ids offline, before the room has synced. Whatever the room brings down
 		// merges over it — CRDT, so a stale cached entry loses to a real claim
 		// rather than fighting it.
-		this.noteIdMap.batch(() => {
-			for (const [path, id] of Object.entries(data?.noteIds ?? {})) {
-				this.noteIdMap.set(path, id);
-			}
-		});
+		// SEED, not set. `set` stages a claim and publishes it; a Y.Map is
+		// last-write-wins by causality with no notion of "cache" versus "claim",
+		// so republishing data.json on every launch overwrote fresher claims from
+		// other devices and — through id-keyed removal — published DELETES of the
+		// paths those claims lived at. The cache is evidence about the past, and
+		// it is not allowed to make a claim.
+		this.noteIdMap.seed(data?.noteIds);
 		// Migrate a stored Cloud apiUrl off the legacy SPA host (app.engram.page,
 		// which 405s API POSTs post-cutover) onto the canonical REST host. Same
 		// backend + credentials — only the edge hostname moved, so auth is kept.
@@ -2375,7 +2394,10 @@ export default class EngramSyncPlugin extends Plugin {
 						// is acked, so connecting earlier guaranteed a refused frame (and
 						// its warn) on every single connect — routine noise reported as a
 						// problem, for a frame the provider then re-sent anyway.
-						this.indexRoom.setConnected(true);
+						// connect() alone: it flips connected false->true, and the
+						// provider sends syncStep1 on exactly that edge. Calling
+						// setConnected(true) first consumed the edge and skipped the
+						// handshake — the write-only bug, reintroduced by the fix.
 						this.indexRoom.connect();
 						this.syncEngine.setCrdtPorts({ manager: this.crdtManager });
 						// Relay model: the crdt: topic is now joined, so frames can go out.
@@ -2710,6 +2732,7 @@ export default class EngramSyncPlugin extends Plugin {
 						// so it won't stack a second modal. computeSyncPlan's
 						// enumerateServerState waits for the new join to land before
 						// enumerating (SyncEngine.enumerateWaitMs).
+						this.resetIndexRoomForVault();
 						this.setupNoteStream();
 						return this.syncEngine.computeSyncPlan("full");
 					},

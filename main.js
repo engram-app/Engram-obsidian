@@ -8884,6 +8884,24 @@ var SyncStore = class {
     this.renames = /* @__PURE__ */ new Map();
     /** note_ids minted locally whose note the server has not acknowledged. */
     this.pendingUpload = /* @__PURE__ */ new Set();
+    /** Locally-cached identity from `data.json`. Read-only fallback: consulted
+     *  LAST, never staged, never published.
+     *
+     *  Seeding the cache through `set()` was a data-loss bug. A Y.Map is
+     *  last-write-wins by causality with no notion of "cache" versus "claim", so
+     *  republishing a stale cache on every launch either overwrote a fresher
+     *  claim from another device or — via id-keyed removal — published a DELETE
+     *  of the path that claim lived at. The cache is evidence about the past; it
+     *  is not a claim, and it must not be able to make one. */
+    this.cache = /* @__PURE__ */ new Map();
+    /** note_ids that have been displaced from their path by a later claim. They
+     *  must stop answering `pathForId`, or a late frame for a dead lineage
+     *  resolves to a live file. Cleared when the id is claimed again. */
+    this.evicted = /* @__PURE__ */ new Set();
+    /** Rename sources this store actually held an entry for — the only keys
+     *  `commit()` may delete. A redirect recorded for an unknown path is for
+     *  resolution only and must never publish a deletion. */
+    this.renamedAway = /* @__PURE__ */ new Set();
     /** id -> path, over committed + overlay. Rebuilt on demand rather than
      *  maintained per write: a folder move touches N paths, and paying N reverse
      *  updates per mutation to serve a lookup that may never happen is the wrong
@@ -8892,6 +8910,18 @@ var SyncStore = class {
     this.map.observe(() => {
       this.reverse = null;
     });
+  }
+  /** Whether some staged entry already claims `id` at a path.
+   *
+   *  Guards the eviction below. A cross-wire repair (`A→Y, B→X` corrected to
+   *  `A→X, B→Y`) sets both paths in turn, and the second `set` sees B's
+   *  COMMITTED id — `X` — as displaced, even though the first `set` just
+   *  re-claimed `X` at `A.md`. Evicting on that reading dropped `X` entirely,
+   *  so `reconcileNoteIdMapFromManifest`, whose whole purpose is repairing a
+   *  cross-wire, unclaimed one of the two notes it was fixing. */
+  stagedHolds(id2) {
+    for (let meta of this.overlay.values()) if (meta.note_id === id2) return !0;
+    return !1;
   }
   /** Follow the rename chain to the path an entry lives at NOW.
    *
@@ -8910,8 +8940,14 @@ var SyncStore = class {
   /** Meta for `path`, consulting every layer, or null if this store has no
    *  entry for it (or it is pending deletion). */
   getMeta(path) {
-    var _a, _b;
-    return this.renames.has(path) || this.deleteSet.has(path) ? null : (_b = (_a = this.overlay.get(path)) != null ? _a : this.map.get(path)) != null ? _b : null;
+    var _a, _b, _c;
+    return this.renames.has(path) || this.deleteSet.has(path) ? null : (_c = (_b = (_a = this.overlay.get(path)) != null ? _a : this.map.get(path)) != null ? _b : this.cache.get(path)) != null ? _c : null;
+  }
+  /** Warm the local cache from `data.json`. Never staged and never published —
+   *  it lets ids resolve offline, before the room has synced, without asserting
+   *  anything to other devices. */
+  seed(path, meta) {
+    !path || path === "null" || path === "undefined" || !(meta != null && meta.note_id) || (this.cache.set(path, meta), this.reverse = null);
   }
   /** The note_id for `path`, or null. The `NoteIdMap.get` replacement. */
   get(path) {
@@ -8945,8 +8981,11 @@ var SyncStore = class {
   /** Stage `meta` for `path`. Visible to reads immediately, invisible to other
    *  devices until `commit()`. */
   set(path, meta) {
+    var _a, _b, _c;
     let resolved = this.resolvePath(path), prior = this.pathForId(meta.note_id);
-    prior && prior !== resolved && (this.overlay.delete(prior), this.deleteSet.add(prior)), this.overlay.set(resolved, meta), this.deleteSet.delete(resolved), this.reverse = null;
+    prior && prior !== resolved && (this.overlay.delete(prior), this.deleteSet.add(prior));
+    let displaced = (_c = (_a = this.overlay.get(resolved)) == null ? void 0 : _a.note_id) != null ? _c : (_b = this.map.get(resolved)) == null ? void 0 : _b.note_id;
+    displaced && displaced !== meta.note_id && !this.stagedHolds(displaced) && this.evicted.add(displaced), this.evicted.delete(meta.note_id), this.overlay.set(resolved, meta), this.deleteSet.delete(resolved), this.reverse = null;
   }
   /** Stage a delete. The path stops resolving immediately. */
   delete(path) {
@@ -8961,9 +9000,16 @@ var SyncStore = class {
    *  `getOrMint(newPath)` converge on ONE id instead of minting two. That
    *  convergence is the whole point of the layer. */
   rename(oldPath, newPath) {
+    var _a, _b, _c;
     if (oldPath === newPath) return;
     let meta = this.getMeta(oldPath), from2 = this.resolvePath(oldPath);
-    meta && this.overlay.set(newPath, meta), this.renames.set(from2, newPath), this.deleteSet.delete(from2), this.overlay.delete(from2), this.reverse = null;
+    if (!meta) {
+      this.renames.set(from2, newPath), this.reverse = null;
+      return;
+    }
+    this.renamedAway.add(from2), this.deleteSet.delete(newPath);
+    let displaced = (_c = (_a = this.overlay.get(newPath)) == null ? void 0 : _a.note_id) != null ? _c : (_b = this.map.get(newPath)) == null ? void 0 : _b.note_id;
+    displaced && displaced !== meta.note_id && !this.stagedHolds(displaced) && this.evicted.add(displaced), this.overlay.set(newPath, meta), this.renames.set(from2, newPath), this.deleteSet.delete(from2), this.overlay.delete(from2), this.reverse = null;
   }
   /** Whether `note_id` was minted here and is still unconfirmed. */
   isPendingUpload(note_id) {
@@ -8977,40 +9023,53 @@ var SyncStore = class {
   }
   /** Reverse lookup, over committed + overlay. */
   pathForId(note_id) {
-    var _a;
+    var _a, _b;
     if (!this.reverse) {
       let index = /* @__PURE__ */ new Map();
+      for (let [path, meta] of this.cache)
+        this.deleteSet.has(path) || index.set(meta.note_id, path);
       this.map.forEach((meta, path) => {
         this.deleteSet.has(path) || index.set(meta.note_id, path);
       });
       for (let [path, meta] of this.overlay)
         this.deleteSet.has(path) || index.set(meta.note_id, path);
+      for (let from2 of this.renames.keys()) {
+        let meta = (_a = this.map.get(from2)) != null ? _a : this.cache.get(from2);
+        meta && index.get(meta.note_id) === from2 && index.delete(meta.note_id);
+      }
+      for (let id2 of this.evicted) index.delete(id2);
       this.reverse = index;
     }
-    return (_a = this.reverse.get(note_id)) != null ? _a : null;
+    return (_b = this.reverse.get(note_id)) != null ? _b : null;
   }
   /** Every live entry, committed + staged, with deletions applied. The
    *  snapshot `data.json` persistence and any full-vault reconcile read. */
   entries() {
     let out = /* @__PURE__ */ new Map();
+    for (let [path, meta] of this.cache)
+      this.deleteSet.has(path) || out.set(path, meta);
     this.map.forEach((meta, path) => {
       this.deleteSet.has(path) || out.set(path, meta);
     });
     for (let [path, meta] of this.overlay)
       this.deleteSet.has(path) || out.set(path, meta);
+    for (let from2 of this.renames.keys()) out.delete(from2);
     return [...out];
   }
   /** Drop everything, staged and committed.
    *
-   *  Used on vault change: this is per-vault identity state, and carrying ids
-   *  across vaults routes CRDT frames at another vault's notes (plugin #200).
-   *  The committed half is cleared inside a transaction so peers see one
-   *  update, not one per path. */
+   *  LOCAL ONLY, deliberately. Deleting the committed keys published a wipe of
+   *  the vault's entire authoritative index to whichever room the socket was
+   *  still joined to — the OLD vault on a switch, or the NEW one if the frame
+   *  was buffered and flushed after the rejoin. Neither vault asked for it.
+   *
+   *  Dropping a vault's identity state is done by REPLACING the room (a fresh
+   *  Y.Doc), not by emptying the shared one: a doc nobody is looking at emits
+   *  nothing, and reusing one across vaults strands every later claim as a
+   *  pending struct anyway (its clock is ahead of the new room's). See
+   *  `IndexRoom` and main.ts's vault-change teardown. */
   clear() {
-    var _a;
-    this.overlay.clear(), this.deleteSet.clear(), this.renames.clear(), this.pendingUpload.clear(), this.reverse = null, this.map.size > 0 && ((_a = this.map.doc) == null || _a.transact(() => {
-      this.map.clear();
-    }));
+    this.overlay.clear(), this.deleteSet.clear(), this.renames.clear(), this.renamedAway.clear(), this.pendingUpload.clear(), this.cache.clear(), this.evicted.clear(), this.reverse = null;
   }
   /** True when there is staged state that `commit()` would publish. */
   get dirty() {
@@ -9029,15 +9088,15 @@ var SyncStore = class {
   commit(origin) {
     var _a;
     this.dirty && ((_a = this.map.doc) == null || _a.transact(() => {
-      for (let from2 of this.renames.keys()) this.map.delete(from2);
+      for (let from2 of this.renamedAway) this.map.delete(from2);
       for (let path of this.deleteSet) this.map.delete(path);
       for (let [path, meta] of this.overlay) this.map.set(path, meta);
-    }, origin), this.overlay.clear(), this.deleteSet.clear(), this.renames.clear(), this.reverse = null);
+    }, origin), this.overlay.clear(), this.deleteSet.clear(), this.renames.clear(), this.renamedAway.clear(), this.reverse = null);
   }
   /** Drop all staged state without publishing it. For a failed operation the
    *  caller has already rolled back on disk. */
   rollback() {
-    this.overlay.clear(), this.deleteSet.clear(), this.renames.clear(), this.reverse = null;
+    this.overlay.clear(), this.deleteSet.clear(), this.renames.clear(), this.renamedAway.clear(), this.reverse = null;
   }
 };
 
@@ -9050,7 +9109,7 @@ var FILEMETA_MAP = "filemeta_v0", IndexRoom = class {
       // take the same path out.
       send: (frame) => deps.send(frame),
       onSynced: deps.onSynced
-    });
+    }), this.provider.setAdvertised(!0);
   }
   /** Advertise syncStep1 and start exchanging state. */
   connect() {
@@ -9062,9 +9121,19 @@ var FILEMETA_MAP = "filemeta_v0", IndexRoom = class {
   setConnected(connected) {
     this.provider.setConnected(connected);
   }
-  /** Feed an inbound `crdt_index_msg` frame. */
+  /** Feed an inbound `crdt_index_msg` frame.
+   *
+   *  Returns false when the frame could not be applied. A malformed or hostile
+   *  frame must not throw out of the socket's message handler — the note path
+   *  makes the same guarantee ("never leak an unhandled rejection from the
+   *  inbound hot path") and has a regression test for it. Throwing here escaped
+   *  to window.onerror, which never reaches rlog() and so is invisible in Loki. */
   receive(b64) {
-    this.provider.receive(b64);
+    try {
+      return this.provider.receive(b64), !0;
+    } catch (e) {
+      return !1;
+    }
   }
   /** True once the peer's state has landed. Reading the store before this is
    *  legal but answers only from local layers — a caller that needs to know
@@ -14588,6 +14657,19 @@ var NoteIdMap = class _NoteIdMap {
       this.batching = outer, this.batching || this.flushNow();
     }
   }
+  /** Point this map at a different store — used when the vault changes and the
+   *  index room is REPLACED (a fresh Y.Doc). The instance is captured by the
+   *  sync engine and the live views, so it must be re-pointed in place rather
+   *  than swapped out from under them. */
+  rebind(store) {
+    this.store = store, this.flushScheduled = !1;
+  }
+  /** Warm the local cache from data.json. Never published — see
+   *  `SyncStore.seed`. */
+  seed(ids) {
+    for (let [path, id2] of Object.entries(ids != null ? ids : {}))
+      this.store.seed(path, { note_id: id2 });
+  }
   get(path) {
     return this.store.get(path);
   }
@@ -14620,9 +14702,7 @@ var NoteIdMap = class _NoteIdMap {
   }
   static fromJSON(o) {
     let m = new _NoteIdMap();
-    return m.batch(() => {
-      for (let [p, id2] of Object.entries(o != null ? o : {})) m.set(p, id2);
-    }), m;
+    return m.seed(o), m;
   }
 };
 
@@ -23989,18 +24069,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
      *  note identity. Constructed once and re-pointed at each new socket, since
      *  the doc outlives the connection — a frame produced while the socket is
      *  down is buffered by the provider and flushed on rejoin. */
-    this.indexRoom = new IndexRoom({
-      // Capability check, not a swallowed error. A channel that predates this
-      // seam reports "not deliverable" and the provider BUFFERS the frame,
-      // flushing it on the next connect — which is the same contract as being
-      // offline. Throwing here would abort the rest of connectChannel and take
-      // note sync down with it, so the failure mode has to be "held", not
-      // "crash the connect path".
-      send: (b64) => {
-        let channel = this.indexChannel;
-        return typeof (channel == null ? void 0 : channel.sendIndexCrdt) == "function" ? channel.sendIndexCrdt(b64) : !1;
-      }
-    });
+    this.indexRoom = this.makeIndexRoom();
     /** Path -> note_id identity. Backed by `indexRoom.store` as of #362, so it
      *  is a view onto the shared doc rather than a private map hydrated from
      *  data.json. data.json is now a CACHE of it, not the source of truth. */
@@ -24109,6 +24178,29 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
      *  session, so the two load paths (loadSettings + onload restore) don't
      *  double-toast the user. */
     this.dataRecoveryNotified = !1;
+  }
+  /** `?.` alone: before the first connectChannel there is no channel, and the
+   *  provider correctly BUFFERS the frame for the next connect. */
+  makeIndexRoom() {
+    return new IndexRoom({ send: (b64) => {
+      var _a, _b;
+      return (_b = (_a = this.indexChannel) == null ? void 0 : _a.sendIndexCrdt(b64)) != null ? _b : !1;
+    } });
+  }
+  /** REPLACE the index room when the vault changes.
+   *
+   *  Not `store.clear()`. Two bugs lived there. Clearing the committed map is a
+   *  real Yjs deletion on the SHARED doc, so it broadcast "delete every path"
+   *  to whichever room the socket was still joined to — the OLD vault, or the
+   *  NEW one if the frame was buffered past the rejoin. And reusing one Y.Doc
+   *  across vaults strands every later claim: its clock is already ahead of the
+   *  new room, so Yjs parks the update as a pending struct awaiting deps that
+   *  live in the other vault, and the server acks it happily.
+   *
+   *  A fresh doc has a fresh clientID and an empty clock, and a discarded doc
+   *  nobody observes broadcasts nothing. */
+  resetIndexRoomForVault() {
+    this.indexRoom.destroy(), this.indexRoom = this.makeIndexRoom(), this.noteIdMap.rebind(this.indexRoom.store), this.indexChannel = null;
   }
   /** Whether the WebSocket channel is currently connected (for settings UI). */
   isLiveConnected() {
@@ -24569,18 +24661,14 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     var _a, _b, _c, _d, _e, _f, _g, _h, _i;
     this.retireAuthProvider(), (_a = this.crdtWiring) == null || _a.dispose(), devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.api.beacon.flush(), this.syncEngine && this.savePluginData(this.syncEngine.getLastSync()), (_b = this.baseStore) == null || _b.prune(), (_c = this.baseStore) == null || _c.save().catch((e) => {
       devLog().log("base-store", `save failed: ${errMsg(e)}`);
-    }), (_d = this.crdtOpQueue) == null || _d.dispose(), (_e = this.syncEngine) == null || _e.destroy(), (_f = this.noteStream) == null || _f.disconnect(), setLiveBindingCoordinator(null), (_g = this.crdtLiveViews) == null || _g.destroy(), this.crdtLiveViews = null, (_h = this.crdtManager) == null || _h.destroyAll(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), uninstallDebugApi(), setLogSink(null), setActiveTracker(null), (_i = this.promiseTracker) == null || _i.destroy(), this.promiseTracker = null, destroyDevLog(), window["__ $YJS$ __"] = void 0;
+    }), (_d = this.crdtOpQueue) == null || _d.dispose(), (_e = this.syncEngine) == null || _e.destroy(), (_f = this.noteStream) == null || _f.disconnect(), setLiveBindingCoordinator(null), (_g = this.crdtLiveViews) == null || _g.destroy(), this.crdtLiveViews = null, this.noteIdMap.flushNow(), this.indexRoom.destroy(), (_h = this.crdtManager) == null || _h.destroyAll(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), uninstallDebugApi(), setLogSink(null), setActiveTracker(null), (_i = this.promiseTracker) == null || _i.destroy(), this.promiseTracker = null, destroyDevLog(), window["__ $YJS$ __"] = void 0;
   }
   async loadSettings() {
     var _a, _b;
     let data = await this.loadPluginData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data == null ? void 0 : data.settings);
     let rawSettings = data == null ? void 0 : data.settings;
-    this.settings.diagnosticsEnabled = migrateDiagnosticsEnabled(rawSettings), stripRetiredSettings(this.settings), this.syncGateAcceptedFor = (_a = data == null ? void 0 : data.syncGateAcceptedFor) != null ? _a : null, this.noteIdMap.batch(() => {
-      var _a2;
-      for (let [path, id2] of Object.entries((_a2 = data == null ? void 0 : data.noteIds) != null ? _a2 : {}))
-        this.noteIdMap.set(path, id2);
-    });
+    this.settings.diagnosticsEnabled = migrateDiagnosticsEnabled(rawSettings), stripRetiredSettings(this.settings), this.syncGateAcceptedFor = (_a = data == null ? void 0 : data.syncGateAcceptedFor) != null ? _a : null, this.noteIdMap.seed(data == null ? void 0 : data.noteIds);
     let dirty = !1, migratedUrl = migrateCloudApiUrl(this.settings.apiUrl, ENGRAM_CLOUD_URL);
     migratedUrl && migratedUrl !== this.settings.apiUrl && (this.settings.apiUrl = migratedUrl, dirty = !0), migrateBackendMode(this.settings, ENGRAM_CLOUD_URL) && (dirty = !0), this.settings.clientId || (this.settings.clientId = await generateClientId(this.app), dirty = !0), this.deviceId = (_b = data == null ? void 0 : data.deviceId) != null ? _b : null, this.deviceId || (this.deviceId = crypto.randomUUID(), dirty = !0), dirty && await this.writePluginData({
       ...data,
@@ -25119,7 +25207,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           rlog().info(
             "crdt",
             "crdt: topic joined \u2014 activating CRDT routing in SyncEngine"
-          ), this.crdtEverJoined = !0, this.indexRoom.setConnected(!0), this.indexRoom.connect(), this.syncEngine.setCrdtPorts({ manager: this.crdtManager }), (_a3 = this.crdtManager) == null || _a3.setConnected(!0), (async () => {
+          ), this.crdtEverJoined = !0, this.indexRoom.connect(), this.syncEngine.setCrdtPorts({ manager: this.crdtManager }), (_a3 = this.crdtManager) == null || _a3.setConnected(!0), (async () => {
             var _a4;
             await ((_a4 = this.crdtOpQueue) == null ? void 0 : _a4.onJoined()), await this.onCrdtTopicJoined();
           })();
@@ -25274,7 +25362,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           createVault: (name) => this.api.createVault(name),
           applyVaultChange: async (id2, name) => {
             var _a2, _b2;
-            return id2 === this.settings.vaultId ? (this.settings.remoteVaultName = name, this.syncEngine.computeSyncPlan("full")) : (this.settings.vaultId = id2, this.settings.remoteVaultName = name, this.api.setVaultId(id2), this.syncEngine.updateSettings(this.settings), await this.syncEngine.resetForVaultChange(), this.syncGateAcceptedFor = null, this.lastMapReconcileAt = 0, (_a2 = this.crdtWiring) == null || _a2.clearStrandHealAttempts(), this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), (_b2 = this.settingTab) == null || _b2.rerender(), this.setupNoteStream(), this.syncEngine.computeSyncPlan("full"));
+            return id2 === this.settings.vaultId ? (this.settings.remoteVaultName = name, this.syncEngine.computeSyncPlan("full")) : (this.settings.vaultId = id2, this.settings.remoteVaultName = name, this.api.setVaultId(id2), this.syncEngine.updateSettings(this.settings), await this.syncEngine.resetForVaultChange(), this.syncGateAcceptedFor = null, this.lastMapReconcileAt = 0, (_a2 = this.crdtWiring) == null || _a2.clearStrandHealAttempts(), this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), (_b2 = this.settingTab) == null || _b2.rerender(), this.resetIndexRoomForVault(), this.setupNoteStream(), this.syncEngine.computeSyncPlan("full"));
           }
         });
         this.syncEngine.computeSyncPlan("full").then((plan) => modal.setPlan(plan)).catch((e) => {
