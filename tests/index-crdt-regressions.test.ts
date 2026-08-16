@@ -293,7 +293,13 @@ describe("round 3: rename chains and cache-only ids", () => {
 	// An id known only from data.json has never been asserted to the vault.
 	// Handing it out without staging a claim leaves it live locally and absent
 	// from the authoritative index, so another device mints a duplicate.
-	test("getOrMint publishes a claim for a cache-only id", () => {
+	// INVERTED after round 4. This used to assert that getOrMint publishes a
+	// claim for a cache-only id. That is actively harmful: `set` runs id-keyed
+	// removal, so when another device has already moved the note, the live path
+	// gets staged for DELETION — the stale cache publishing a delete of the very
+	// claim it should defer to. main.ts's cold-start loop calls getOrMint for
+	// every markdown file before the room syncs, so it was whole-vault.
+	test("getOrMint does NOT publish a claim for a cache-only id", () => {
 		const doc = new Y.Doc();
 		const shared = doc.getMap<{ note_id: string }>("filemeta_v0");
 		const store = new SyncStore(shared);
@@ -302,7 +308,69 @@ describe("round 3: rename chains and cache-only ids", () => {
 		expect(store.getOrMint("a.md")).toBe("cached");
 		store.commit();
 
-		expect(shared.get("a.md")).toEqual({ note_id: "cached" });
+		expect(shared.has("a.md")).toBe(false);
+	});
+
+	// The failure that revert protects: a peer moved the note, our data.json is
+	// stale, and the cold-start loop resolves the old path.
+	test("a stale cache does not delete the path the note actually lives at", () => {
+		const doc = new Y.Doc();
+		const shared = doc.getMap<{ note_id: string }>("filemeta_v0");
+		const store = new SyncStore(shared);
+		shared.set("new.md", { note_id: "N" }); // a peer renamed old.md -> new.md
+		store.seed("old.md", { note_id: "N" }); // our stale data.json
+
+		store.getOrMint("old.md"); // cold-start loop over on-disk files
+		store.commit();
+
+		expect(shared.get("new.md")).toEqual({ note_id: "N" });
+		expect(shared.has("new.md")).toBe(true);
+	});
+
+	// F2: a folder moved twice, over descendants this device never opened. Both
+	// hops are id: null, and refusing to chain them minted a fresh id per hop.
+	test("a twice-moved unknown folder converges on ONE id", () => {
+		const store = new SyncStore(new Y.Doc().getMap("filemeta_v0"));
+
+		store.rename("A/x.md", "B/x.md");
+		store.rename("B/x.md", "C/x.md");
+
+		expect(store.getOrMint("A/x.md")).toBe(store.getOrMint("C/x.md"));
+	});
+
+	// F5: the pivot — the one path that is simultaneously a rename source and a
+	// rename target. The original rotation test asserted only the two paths that
+	// were never at risk.
+	test("the rotation pivot resolves to its new occupant, not the old one", () => {
+		const doc = new Y.Doc();
+		const shared = doc.getMap<{ note_id: string }>("filemeta_v0");
+		const store = new SyncStore(shared);
+		shared.set("note.md", { note_id: "X" });
+		shared.set("new.md", { note_id: "C" });
+
+		store.rename("note.md", "note-old.md");
+		store.rename("new.md", "note.md");
+
+		expect(store.getOrMint("note.md")).toBe("C");
+	});
+
+	// F3: the third move takes the file now AT the pivot. It must not follow the
+	// previous occupant's redirect.
+	test("moving off a re-occupied path does not strand the other note", () => {
+		const doc = new Y.Doc();
+		const shared = doc.getMap<{ note_id: string }>("filemeta_v0");
+		const store = new SyncStore(shared);
+		shared.set("a.md", { note_id: "A" });
+		shared.set("b.md", { note_id: "B" });
+
+		store.rename("b.md", "c.md");
+		store.rename("a.md", "b.md");
+		store.rename("b.md", "d.md");
+		store.commit();
+
+		expect(shared.get("d.md")).toEqual({ note_id: "A" });
+		expect(shared.get("c.md")).toEqual({ note_id: "B" });
+		expect(shared.has("b.md")).toBe(false);
 	});
 
 	// An unknown-source rename must still un-delete its target, or a same-tick

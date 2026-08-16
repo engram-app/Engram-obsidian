@@ -8936,12 +8936,15 @@ var SyncStore = class {
    *  move followed by a second move of the same subtree). Bounded by the number
    *  of pending renames, and self-referential input cannot loop it. */
   resolvePath(path) {
+    var _a;
     let first = this.renames.get(path);
     if (!first) return path;
+    let occupant = (_a = this.overlay.get(path)) == null ? void 0 : _a.note_id;
+    if (occupant && first.id && occupant !== first.id) return path;
     let current = first.to, seen = /* @__PURE__ */ new Set([path, current]);
-    for (; first.id; ) {
+    for (; ; ) {
       let next = this.renames.get(current);
-      if (!next || next.id !== first.id) break;
+      if (!next || next.id && first.id && next.id !== first.id) break;
       if (next.to === path) return path;
       if (seen.has(next.to)) break;
       current = next.to, seen.add(current);
@@ -8981,12 +8984,11 @@ var SyncStore = class {
    *  file that does not exist, so the caller's null-path bug must surface here
    *  rather than downstream. */
   getOrMint(path) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b;
     if (!path || path === "null" || path === "undefined")
       throw new Error(`SyncStore.getOrMint: invalid path ${JSON.stringify(path)}`);
     let resolved = this.resolvePath(path), existing = (_b = (_a = this.getMeta(resolved)) == null ? void 0 : _a.note_id) != null ? _b : null;
-    if (existing)
-      return ((_e = (_c = this.overlay.get(resolved)) == null ? void 0 : _c.note_id) != null ? _e : (_d = this.map.get(resolved)) != null && _d.note_id) || this.set(resolved, { note_id: existing }), existing;
+    if (existing) return existing;
     let note_id = uuid7();
     return this.set(path, { note_id }), this.pendingUpload.add(note_id), note_id;
   }

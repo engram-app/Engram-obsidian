@@ -114,14 +114,26 @@ export class SyncStore {
 		const first = this.renames.get(path);
 		if (!first) return path;
 
+		// The first hop is id-guarded like the rest. A rotation leaves a redirect
+		// on a path that a DIFFERENT note has since moved into, and following it
+		// resolved the new occupant onto the previous one's id — two paths for one
+		// id, the other note unclaimed, and an editor binding opening the wrong
+		// doc.
+		const occupant = this.overlay.get(path)?.note_id;
+		if (occupant && first.id && occupant !== first.id) return path;
+
 		let current = first.to;
 		const seen = new Set<string>([path, current]);
 
 		// Follow only while the SAME entry keeps moving. A hop belonging to a
 		// different note is someone else's rename that happens to share this key.
-		while (first.id) {
+		while (true) {
 			const next = this.renames.get(current);
-			if (!next || next.id !== first.id) break;
+			// Stop only when crossing into a DIFFERENT known entry. An unknown
+			// hop (id: null) is the folder-cascade case the chain exists for —
+			// refusing to follow it minted a fresh id per hop, duplicating every
+			// descendant of a twice-moved folder.
+			if (!next || (next.id && first.id && next.id !== first.id)) break;
 			// The chain closed back on where it started: the entry was moved away
 			// and moved back in the same tick, so it is home. Stopping one hop
 			// short here reported it at an intermediate path that nothing holds,
@@ -197,16 +209,18 @@ export class SyncStore {
 		// new one and resurrect the old path on every device.
 		const resolved = this.resolvePath(path);
 		const existing = this.getMeta(resolved)?.note_id ?? null;
-		if (existing) {
-			// If that id is known ONLY from the local cache, the vault has never
-			// been told about it. Returning it without staging a claim leaves the
-			// id live on this device and absent from the authoritative index, so
-			// another device mints a duplicate for the same file.
-			const published =
-				this.overlay.get(resolved)?.note_id ?? this.map.get(resolved)?.note_id;
-			if (!published) this.set(resolved, { note_id: existing });
-			return existing;
-		}
+		// Deliberately does NOT stage a claim for an id known only from the cache.
+		// That was tried and reverted: `set` runs id-keyed removal, so if another
+		// device had already moved the note, `pathForId` answered with the LIVE
+		// path and that path got staged for deletion — the cache publishing a
+		// delete of the claim it was supposed to defer to. `main.ts`'s cold-start
+		// loop calls this for EVERY markdown file before the room has synced, so
+		// the blast radius was the whole vault on an offline start.
+		//
+		// The gap it tried to close is real but belongs elsewhere: an id known
+		// only locally should be asserted once the room is SYNCED, where the
+		// current claim is knowable, not guessed at from a stale cache.
+		if (existing) return existing;
 
 		const note_id = uuid7();
 		this.set(path, { note_id });
