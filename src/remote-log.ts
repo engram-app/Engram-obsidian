@@ -48,6 +48,16 @@ export type AnomalyCounts = Record<string, number | boolean>;
 /** A fixed, developer-written slug: lowercase, digits, underscores. */
 const ANOMALY_CODE = /^[a-z0-9_]+$/;
 
+/** Return `value` only if it is a slug string, else `fallback`.
+ *
+ *  Returns the FALLBACK for a non-string rather than the input: `RegExp.test`
+ *  stringifies its argument, so a bare ternary handed `12345` back the number
+ *  and made the `: string` return type a lie. Only reachable through an
+ *  untyped call, but this is the function that decides what ships. */
+function safeSlug(value: unknown, fallback: string): string {
+	return typeof value === "string" && ANOMALY_CODE.test(value) ? value : fallback;
+}
+
 /** Render an anomaly line from a code and counts.
  *
  *  Replaces a free-text message plus a redactor. The redactor could not work:
@@ -59,9 +69,9 @@ const ANOMALY_CODE = /^[a-z0-9_]+$/;
  *  So the free text is gone. `code` is a literal slug and anything else becomes
  *  `invalid_code`; values are coerced to a number or a boolean and anything
  *  else is dropped. A path cannot be expressed in this type. */
-export function formatAnomaly(code: string, counts: AnomalyCounts = {}): string {
-	const safeCode = ANOMALY_CODE.test(code) ? code : "invalid_code";
-	const pairs = Object.entries(counts).flatMap(([key, value]) => {
+export function formatAnomaly(code: string, counts: AnomalyCounts | null = {}): string {
+	const safeCode = safeSlug(code, "invalid_code");
+	const pairs = Object.entries(counts ?? {}).flatMap(([key, value]) => {
 		if (!ANOMALY_CODE.test(key)) return [];
 		if (typeof value === "boolean") return [`${key}=${value}`];
 		return Number.isFinite(value) ? [`${key}=${value}`] : [];
@@ -168,10 +178,18 @@ export class RemoteLogger {
 	 *  have telemetry enabled. Prod 2026-08-13: a first sync dropped 316 of 316
 	 *  notes and produced exactly zero client log lines to look at.
 	 *
-	 *  CONTRACT — ENFORCED BY THE TYPE, not by a filter and not by a comment.
-	 *  `code` is a developer-written slug and `counts` holds numbers and
-	 *  booleans. There is no string parameter, so a path, a title or note
-	 *  content cannot be expressed here at all.
+	 *  CONTRACT — ENFORCED, not asserted in a comment. BOTH string parameters
+	 *  are slug-validated and `counts` holds numbers and booleans, so a path, a
+	 *  title or note content cannot be expressed in any argument.
+	 *
+	 *  `category` is validated too, and that is not cosmetic. It was left free
+	 *  while `code` was locked down, and it reads like a label slot — so
+	 *  `anomaly(file.path, "note_skipped", { seq })` is a natural thing to
+	 *  write. It rides the same force:true path, lands in `client_logs.category`
+	 *  unvalidated, and the backend interpolates it into a Logger MESSAGE BODY
+	 *  (`logs.ex`, "[client:#{category}]"), which RedactFilter refuses to touch
+	 *  and which ships to Loki at warn. Same leak the free-text removal was for,
+	 *  one argument to the left.
 	 *
 	 *  The previous shape took free text and ran a redactor over it. That could
 	 *  not hold: the redactor split on whitespace, so a filename with spaces
@@ -180,7 +198,14 @@ export class RemoteLogger {
 	 *  prose; no text filter separates it from a reason string, because there
 	 *  is nothing to separate. Removing the free text removes the problem. */
 	anomaly(category: string, code: string, counts: AnomalyCounts = {}): void {
-		this.addEntry("warn", category, formatAnomaly(code, counts), undefined, false, true);
+		this.addEntry(
+			"warn",
+			safeSlug(category, "invalid_category"),
+			formatAnomaly(code, counts),
+			undefined,
+			false,
+			true,
+		);
 	}
 
 	private addEntry(
@@ -257,7 +282,7 @@ interface NoopLogger {
 	warn(category: string, message: string): void;
 	info(category: string, message: string): void;
 	diag(category: string, message: string): void;
-	anomaly(category: string, message: string): void;
+	anomaly(category: string, code: string, counts?: AnomalyCounts): void;
 	setConnId(id: string | null): void;
 	setClientContext(deviceId: string | null, vaultId: string | null): void;
 	setLevelThreshold(level: RemoteLogLevel): void;

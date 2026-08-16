@@ -43,6 +43,73 @@ describe("formatAnomaly — a path cannot be expressed", () => {
 		expect(line).not.toContain("Medical");
 	});
 
+	// `category` is the OTHER string parameter, and it was left free while
+	// `code` was locked down. It reads like a label slot, so
+	// `anomaly(file.path, "note_skipped", { seq })` is a natural thing to
+	// write — and it rides the same force:true path into
+	// `client_logs.category`, which the backend interpolates into a Logger
+	// MESSAGE BODY ("[client:#{category}]") that RedactFilter refuses to touch
+	// and that ships to Loki at warn.
+	test("a category that is not a slug is replaced", async () => {
+		const { initRemoteLog } = await import("../src/remote-log");
+		const sent: { category: string }[] = [];
+
+		const logger = initRemoteLog();
+		logger.configure(
+			async (entries) => {
+				sent.push(...entries);
+			},
+			"1.0.0",
+			"test",
+		);
+		logger.setEnabled(false); // diagnostics OFF — anomaly() bypasses this
+
+		logger.anomaly("Medical/Divorce settlement draft.md", "note_skipped", { seq: 1 });
+		await logger.flush();
+
+		expect(sent.length).toBe(1);
+		expect(sent[0].category).toBe("invalid_category");
+		expect(JSON.stringify(sent[0])).not.toContain("Divorce");
+		expect(JSON.stringify(sent[0])).not.toContain("Medical");
+	});
+
+	test("a real category still passes through", async () => {
+		const { initRemoteLog } = await import("../src/remote-log");
+		const sent: { category: string }[] = [];
+
+		const logger = initRemoteLog();
+		logger.configure(
+			async (entries) => {
+				sent.push(...entries);
+			},
+			"1.0.0",
+			"test",
+		);
+		logger.setEnabled(false);
+
+		logger.anomaly("sync", "note_skipped", { seq: 1 });
+		await logger.flush();
+
+		expect(sent[0].category).toBe("sync");
+	});
+
+	// A log helper must not be the thing that breaks the path it guards. The
+	// backend's safe_reason/1 got a catch-all in this same series for exactly
+	// this; `= {}` only covers undefined, so an explicit null threw.
+	test("a null counts object does not throw", () => {
+		expect(() => formatAnomaly("sync_stalled", null)).not.toThrow();
+		expect(formatAnomaly("sync_stalled", null)).toBe("sync_stalled");
+	});
+
+	// `RegExp.test` stringifies, so a bare ternary handed a non-string back
+	// unchanged and made the `: string` return type a lie.
+	test("a non-string code returns the fallback string, not the input", () => {
+		// @ts-expect-error — untyped callers are the only way in.
+		expect(formatAnomaly(12345)).toBe("invalid_code");
+		// @ts-expect-error
+		expect(formatAnomaly(null)).toBe("invalid_code");
+	});
+
 	// The code itself is the other caller-controlled string.
 	test("a code that is not a slug becomes invalid_code", () => {
 		expect(formatAnomaly("skipped Medical/labs.md")).toBe("invalid_code");

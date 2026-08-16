@@ -928,8 +928,11 @@ var LEVEL_SEVERITY = {
   warn: 2,
   error: 3
 }, MAX_BUFFER = 200, FLUSH_INTERVAL_MS = 3e4, FLUSH_THRESHOLD = 20, ANOMALY_CODE = /^[a-z0-9_]+$/;
+function safeSlug(value, fallback) {
+  return typeof value == "string" && ANOMALY_CODE.test(value) ? value : fallback;
+}
 function formatAnomaly(code, counts = {}) {
-  let safeCode = ANOMALY_CODE.test(code) ? code : "invalid_code", pairs2 = Object.entries(counts).flatMap(([key, value]) => ANOMALY_CODE.test(key) ? typeof value == "boolean" ? [`${key}=${value}`] : Number.isFinite(value) ? [`${key}=${value}`] : [] : []);
+  let safeCode = safeSlug(code, "invalid_code"), pairs2 = Object.entries(counts != null ? counts : {}).flatMap(([key, value]) => ANOMALY_CODE.test(key) ? typeof value == "boolean" ? [`${key}=${value}`] : Number.isFinite(value) ? [`${key}=${value}`] : [] : []);
   return pairs2.length > 0 ? `${safeCode} ${pairs2.join(" ")}` : safeCode;
 }
 var RemoteLogger = class {
@@ -1004,10 +1007,18 @@ var RemoteLogger = class {
    *  have telemetry enabled. Prod 2026-08-13: a first sync dropped 316 of 316
    *  notes and produced exactly zero client log lines to look at.
    *
-   *  CONTRACT — ENFORCED BY THE TYPE, not by a filter and not by a comment.
-   *  `code` is a developer-written slug and `counts` holds numbers and
-   *  booleans. There is no string parameter, so a path, a title or note
-   *  content cannot be expressed here at all.
+   *  CONTRACT — ENFORCED, not asserted in a comment. BOTH string parameters
+   *  are slug-validated and `counts` holds numbers and booleans, so a path, a
+   *  title or note content cannot be expressed in any argument.
+   *
+   *  `category` is validated too, and that is not cosmetic. It was left free
+   *  while `code` was locked down, and it reads like a label slot — so
+   *  `anomaly(file.path, "note_skipped", { seq })` is a natural thing to
+   *  write. It rides the same force:true path, lands in `client_logs.category`
+   *  unvalidated, and the backend interpolates it into a Logger MESSAGE BODY
+   *  (`logs.ex`, "[client:#{category}]"), which RedactFilter refuses to touch
+   *  and which ships to Loki at warn. Same leak the free-text removal was for,
+   *  one argument to the left.
    *
    *  The previous shape took free text and ran a redactor over it. That could
    *  not hold: the redactor split on whitespace, so a filename with spaces
@@ -1016,7 +1027,14 @@ var RemoteLogger = class {
    *  prose; no text filter separates it from a reason string, because there
    *  is nothing to separate. Removing the free text removes the problem. */
   anomaly(category, code, counts = {}) {
-    this.addEntry("warn", category, formatAnomaly(code, counts), void 0, !1, !0);
+    this.addEntry(
+      "warn",
+      safeSlug(category, "invalid_category"),
+      formatAnomaly(code, counts),
+      void 0,
+      !1,
+      !0
+    );
   }
   addEntry(level, category, message, stack, diagnostic, force) {
     if (!this.pushFn || !force && (!this.enabled || LEVEL_SEVERITY[level] < LEVEL_SEVERITY[this.levelThreshold]))
