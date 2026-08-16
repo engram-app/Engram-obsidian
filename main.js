@@ -927,7 +927,14 @@ var LEVEL_SEVERITY = {
   info: 1,
   warn: 2,
   error: 3
-}, MAX_BUFFER = 200, FLUSH_INTERVAL_MS = 3e4, FLUSH_THRESHOLD = 20, RemoteLogger = class {
+}, MAX_BUFFER = 200, FLUSH_INTERVAL_MS = 3e4, FLUSH_THRESHOLD = 20;
+function redactPathLike(message) {
+  return message.split(/(\s+)/).map((token) => {
+    let bare = token.replace(/^["'`([]+|["'`)\].,;:]+$/g, "");
+    return bare && (/[/\\]/.test(bare) || /\.[A-Za-z0-9]{1,6}$/.test(bare)) ? token.replace(bare, "[redacted]") : token;
+  }).join("");
+}
+var RemoteLogger = class {
   constructor() {
     this.buffer = [];
     this.flushTimer = null;
@@ -999,12 +1006,21 @@ var LEVEL_SEVERITY = {
    *  have telemetry enabled. Prod 2026-08-13: a first sync dropped 316 of 316
    *  notes and produced exactly zero client log lines to look at.
    *
-   *  CONTRACT — callers must honour it: counts and reasons ONLY. Never a
-   *  path, a title, or note content. The setting is protecting the user from
-   *  verbose per-note telemetry, and that protection stays intact; what it
-   *  must not do is hide the fact that sync silently did nothing. */
+   *  CONTRACT — counts and reasons ONLY. Never a path, a title, or note
+   *  content. The setting is protecting the user from verbose per-note
+   *  telemetry, and that protection stays intact; what it must not do is hide
+   *  the fact that sync silently did nothing.
+   *
+   *  ENFORCED HERE, not just asserted in a source-compliance test. That test
+   *  reads `${...}` interpolations and cannot see `${p}`, `${dest}`,
+   *  `${String(err)}` or a helper call — and `${String(err)}` is already the
+   *  house idiom, appearing 7x in src/. Obsidian's adapter throws
+   *  `ENOENT: no such file or directory, open 'Medical/labs.md'`, so ONE copy
+   *  of that idiom into an anomaly() call ships a note path with diagnostics
+   *  OFF. Sanitizing at the choke point catches every shape, however the
+   *  string was built. */
   anomaly(category, message) {
-    this.addEntry("warn", category, message, void 0, !1, !0);
+    this.addEntry("warn", category, redactPathLike(message), void 0, !1, !0);
   }
   addEntry(level, category, message, stack, diagnostic, force) {
     if (!this.pushFn || !force && (!this.enabled || LEVEL_SEVERITY[level] < LEVEL_SEVERITY[this.levelThreshold]))

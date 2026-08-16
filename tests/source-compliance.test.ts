@@ -70,6 +70,17 @@ function stripCommentsAndStrings(text: string): string {
 		.replace(/'(?:[^'\\]|\\.)*'/g, "''");
 }
 
+/** Blank comments while keeping every byte offset identical, so a match found
+ *  in the result can be sliced out of the ORIGINAL text at the same index.
+ *  `stripCommentsAndStrings` cannot be used for that: it rewrites `"…"` to `""`
+ *  and shifts everything after it. */
+function blankCommentsKeepingOffsets(text: string): string {
+	const blank = (m: string) => m.replace(/[^\n]/g, " ");
+	return text
+		.replace(/\/\*[\s\S]*?\*\//g, blank)
+		.replace(/(^|[^:\\])\/\/[^\n]*/g, (m, p1) => p1 + blank(m.slice(p1.length)));
+}
+
 type Finding = { file: string; line: number; snippet: string };
 
 function findInSources(
@@ -321,41 +332,81 @@ describe("privacy — no content retention for export", () => {
 	// The offending shape: a whole frame or update handed to a buffer. Sibling
 	// seams recorded a length or a hash and were fine; this is the one that
 	// carried the body.
+	//
+	// WHAT THIS CATCHES — an object or array literal, on ONE line or across
+	// several, holding `b64` / `frameB64` / a `frame:`-style key, anywhere
+	// except the single real wire send.
+	//
+	// WHAT IT DOES NOT — and this list is the point of writing it down, because
+	// a text guard whose comment overstates its reach is worse than no guard:
+	// the next reviewer trusts it.
+	//   * an ALIAS: `const payload = b64; buf.push({ ts, payload })`
+	//   * two statements: `const r = {}; r.b64 = b64; buf.push(r)`
+	//   * a stash nested INSIDE the exempt wire send's payload
+	//   * string building: `this.log += docId + ":" + b64`
+	// Catching those needs dataflow, not regex. The runtime seam
+	// (`redactPathLike` in remote-log.ts) is where enforcement that cannot be
+	// evaded by rewriting belongs; this guard is the cheap first net.
 	test("no frame or update is stashed in a payload object", () => {
-		// Two shapes, because this codebase writes both: an explicit
-		// `{ frame: frameB64 }` and the shorthand `{ frameB64 }` / `{ b64 }`
-		// it prefers elsewhere (channel.ts sends `{ doc_id: docId, b64 }`).
-		// A guard that only knew the explicit form would have missed the
-		// shorthand rewrite of the very line it was written for.
-		const explicit =
-			/\b(frame|frameB64|update|content|text|body)\s*:\s*(frameB64|frame|update|b64)\b/;
-		// Anywhere in the literal, not just first: the realistic reintroduction
-		// is `this.buf.push({ ts, noteId, b64 })`, and a first-property-only
-		// regex missed that — along with `{ doc_id: docId, b64 }`, the exact
-		// line this rule's comment cites.
-		const shorthand = /\{[^}]*\b(frameB64|b64)\s*[,}]/;
-		// ...which means the legitimate wire send now matches. Handing a frame
-		// to the transport is what the transport is FOR; the rule is about
-		// stashing one somewhere it can be read back later.
+		// Whole-file, not per-line. `[^}]*` spans newlines, so a literal that
+		// biome wrapped past lineWidth is still seen — the previous per-line
+		// version missed its own cited example, `{ ts, noteId, b64 }`, the
+		// moment the formatter broke it across lines.
+		const shapes = [
+			// `{ frame: frameB64 }` and friends.
+			/\b(frame|frameB64|update|content|text|body)\s*:\s*(frameB64|frame|update|b64)\b/g,
+			// `{ ts, noteId, b64 }` — shorthand anywhere in the literal. The
+			// leading `[([=:,]` or `return` keeps this to object-literal
+			// positions: a bare `\{` also matches a BLOCK, and
+			// `if (noteId && b64 && head) {` followed by a call using b64 was a
+			// live false positive. A guard that cries wolf gets deleted.
+			/[([=:,]\s*\{[^{}]*\b(frameB64|b64)\s*[,}]/g,
+			/\breturn\s*\{[^{}]*\b(frameB64|b64)\s*[,}]/g,
+			// `push([Date.now(), docId, b64])` — array element, not a property.
+			/\[[^\][]*\b(frameB64|b64)\s*[,\]]/g,
+		];
+		// The one legitimate wire send. Handing a frame to the transport is what
+		// the transport is FOR; the rule is about stashing one somewhere it can
+		// be read back later. Anchored on identifiers, never a string literal:
+		// the predicate runs on stripCommentsAndStrings(), so `"crdt_msg"` is
+		// blanked to `""` and a regex naming it could never match.
+		const wireSend = /this\.send\(\[this\.crdtJoinRef/;
+		// ...and the exemption is judged on the LITERAL, not just the
+		// statement. Exempting the whole statement let a stash hide inside the
+		// payload:
 		//
-		// A bare `.send(` exemption is a working bypass — a stash nested inside
-		// the call is invisible to a line-scoped rule:
+		//   this.send([this.crdtJoinRef, t, "crdt_msg",
+		//             { doc_id: docId, b64: this.record({ b64 }) }]);
 		//
-		//   this.ws?.send(this.recordFrame({ doc_id: docId, b64 }));
-		//
-		// ...which passed. So the exemption is pinned to the exact shape of the
-		// one real wire send: the crdtJoinRef array, with the payload as its
-		// LAST element (`}]);`). Wrap that payload in anything and the tail
-		// stops matching, so the wrapper is caught.
-		//
-		// Anchored on identifiers, never a string literal: findInSources runs
-		// its predicate against stripCommentsAndStrings(), so `"crdt_msg"` is
-		// blanked to `""` and a regex naming it can never match.
-		const wireSend = /this\.send\(\[this\.crdtJoinRef[^\]]*\}\]\)/;
-		const found = findInSources(
-			(line) => (explicit.test(line) || shorthand.test(line)) && !wireSend.test(line),
-		);
-		expect(found).toEqual([]);
+		// The inner `{ b64 }` is its own match, and a statement-scoped
+		// exemption waved it through. Only this exact payload is exempt.
+		const wirePayload = /^\{doc_id:docId,b64\}$/;
+
+		const findings: Finding[] = [];
+		for (const f of sources) {
+			const stripped = stripCommentsAndStrings(f.text);
+			for (const shape of shapes) {
+				shape.lastIndex = 0;
+				let m: RegExpExecArray | null = shape.exec(stripped);
+				while (m !== null) {
+					// The statement this literal sits in, so the exemption is
+					// judged on the call and not on one wrapped line of it.
+					const from = stripped.lastIndexOf(";", m.index) + 1;
+					const statement = stripped.slice(from, shape.lastIndex);
+					const literal = m[0].replace(/^[([=:,]\s*/, "").replace(/\s+/g, "");
+					const exempt = wireSend.test(statement) && wirePayload.test(literal);
+					if (!exempt) {
+						findings.push({
+							file: f.rel,
+							line: stripped.slice(0, m.index).split("\n").length,
+							snippet: m[0].replace(/\s+/g, " ").trim(),
+						});
+					}
+					m = shape.exec(stripped);
+				}
+			}
+		}
+		expect(findings).toEqual([]);
 	});
 
 	// `record(...)` was the recorder's entry point. If a timeline ever comes
@@ -378,46 +429,79 @@ describe("privacy — no content retention for export", () => {
 	// and a guard that matched author-written words would fire on that and
 	// get deleted. Runtime values are the thing that can carry user data.
 	test("anomaly() interpolates no path, title, or content", () => {
-		// Naive paren matching — it does not know about parens inside string
-		// literals, so an unbalanced one captures MORE text than the call.
-		// That errs toward flagging, which is the safe direction for a guard.
 		const calls: Finding[] = [];
-		let parsed = 0;
+		// Counts CLOSED calls only. The previous counter incremented once per
+		// `.anomaly(` match, which is arithmetically the same as the global
+		// match count it replaced — and it scanned raw text, so a comment
+		// reading `// see rlog().anomaly(cat, msg)` satisfied it with zero real
+		// call sites inspected. Both holes are closed: comment-free text below,
+		// and only a balanced call increments.
+		let closedCalls = 0;
+
 		for (const f of sources) {
-			for (const m of f.text.matchAll(/\.anomaly\s*\(/g)) {
+			// Offset-PRESERVING blanking, so a call site found here can be
+			// sliced out of the original text at the same index. `sources`'
+			// stripCommentsAndStrings collapses "…" to "" and shifts every
+			// later offset, which is why this guard cannot reuse it — and
+			// template literals must stay readable anyway, since their `${}`
+			// contents are the whole point.
+			const searchable = blankCommentsKeepingOffsets(f.text);
+
+			for (const m of searchable.matchAll(/\.anomaly\s*\(/g)) {
 				const start = (m.index ?? 0) + m[0].length;
 				let depth = 1;
 				let i = start;
-				for (; i < f.text.length && depth > 0; i++) {
-					if (f.text[i] === "(") depth++;
-					else if (f.text[i] === ")") depth--;
+				for (; i < searchable.length && depth > 0; i++) {
+					if (searchable[i] === "(") depth++;
+					else if (searchable[i] === ")") depth--;
 				}
+				if (depth !== 0) continue; // unbalanced — not a real call
+				closedCalls += 1;
+
 				const args = f.text.slice(start, i - 1);
 				const line = f.text.slice(0, m.index).split("\n").length;
-				parsed += 1;
+
 				// SUBSTRING, not \b-delimited: `${tfile.basename}` has no word
 				// boundary before "file" or before "name", so a \b version read
 				// straight past the most idiomatic path expression in an
 				// Obsidian plugin.
+				//
+				// Blunt on purpose, and it WILL flag an innocent count named
+				// `fileCount` or `nameLen`. Rename it — that is a cheaper price
+				// than the \b version, which could not see the shape this guard
+				// exists for. Do not widen the exception list instead.
+				//
+				// This is the cheap net, not the enforcement. `${p}`, `${dest}`
+				// and `${String(err)}` all read clean here, and the last of
+				// those is already the house idiom (7x in src/). What actually
+				// holds the contract is `redactPathLike` at the anomaly() choke
+				// point in remote-log.ts, which sees the finished string.
 				const danger = /path|file|title|content|name|query|folder|text|body|msg|message/i;
-				for (const expr of args.match(/\$\{[^}]*\}/g) ?? []) {
+				const interpolations = args.match(/\$\{[^}]*\}/g) ?? [];
+				for (const expr of interpolations) {
 					if (danger.test(expr)) {
 						calls.push({ file: f.rel, line, snippet: expr });
 					}
 				}
-				// Concatenation is the same leak without a `${}` to look at:
-				// `anomaly("sync", "skipped " + file.path)`.
-				for (const operand of args.split("+").slice(1)) {
-					if (danger.test(operand)) {
-						calls.push({ file: f.rel, line, snippet: operand.trim() });
+
+				// Concatenation is the same leak with no `${}` to inspect:
+				// `anomaly("sync", "skipped " + file.path)`. Interpolations are
+				// removed first (they are already checked, and `${a + fileCount}`
+				// otherwise false-positived as concatenation), and string-literal
+				// operands are skipped — the real call site reads "replay
+				// produced no files:", which is prose containing "file".
+				const outsideInterpolations = args.replace(/\$\{[^}]*\}/g, "");
+				for (const operand of outsideInterpolations.split("+").slice(1)) {
+					const trimmed = operand.trim();
+					if (/^["'`]/.test(trimmed)) continue;
+					if (danger.test(trimmed)) {
+						calls.push({ file: f.rel, line, snippet: trimmed });
 					}
 				}
 			}
 		}
+
 		expect(calls).toEqual([]);
-		// Vacuity check, inside the test that depends on it: a global
-		// `.anomaly(` count would stay green while the paren-matcher silently
-		// parsed nothing. This asserts the guard actually inspected calls.
-		expect(parsed).toBeGreaterThan(0);
+		expect(closedCalls).toBeGreaterThan(0);
 	});
 });

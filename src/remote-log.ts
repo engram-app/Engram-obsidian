@@ -38,6 +38,34 @@ const MAX_BUFFER = 200;
 const FLUSH_INTERVAL_MS = 30_000;
 const FLUSH_THRESHOLD = 20;
 
+/** Blank anything path-shaped in a message that ships WITHOUT user consent.
+ *
+ *  Two shapes, both drawn from what actually leaks:
+ *    - a token containing a `/` or `\` separator — `Medical/labs.md`
+ *    - a token ending in a file extension — `labs.md`, `board.canvas`
+ *
+ *  Counts and reasons survive untouched: `applied=3`, `blocked=true`,
+ *  `complete=false`, `catch-up skipped — sync gate closed`. Quotes and
+ *  parentheses are trimmed off each token before testing so
+ *  `open 'Medical/labs.md'` is caught, not just a bare path.
+ *
+ *  Deliberately blunt. It runs only on the anomaly path, where the alternative
+ *  is shipping a path with telemetry off, and over-redacting a count costs a
+ *  diagnostic while under-redacting costs the user's folder structure. */
+export function redactPathLike(message: string): string {
+	return message
+		.split(/(\s+)/)
+		.map((token) => {
+			const bare = token.replace(/^["'`([]+|["'`)\].,;:]+$/g, "");
+			if (!bare) return token;
+			if (/[/\\]/.test(bare) || /\.[A-Za-z0-9]{1,6}$/.test(bare)) {
+				return token.replace(bare, "[redacted]");
+			}
+			return token;
+		})
+		.join("");
+}
+
 export class RemoteLogger {
 	private buffer: RemoteLogEntry[] = [];
 	private flushTimer: number | null = null;
@@ -137,12 +165,21 @@ export class RemoteLogger {
 	 *  have telemetry enabled. Prod 2026-08-13: a first sync dropped 316 of 316
 	 *  notes and produced exactly zero client log lines to look at.
 	 *
-	 *  CONTRACT — callers must honour it: counts and reasons ONLY. Never a
-	 *  path, a title, or note content. The setting is protecting the user from
-	 *  verbose per-note telemetry, and that protection stays intact; what it
-	 *  must not do is hide the fact that sync silently did nothing. */
+	 *  CONTRACT — counts and reasons ONLY. Never a path, a title, or note
+	 *  content. The setting is protecting the user from verbose per-note
+	 *  telemetry, and that protection stays intact; what it must not do is hide
+	 *  the fact that sync silently did nothing.
+	 *
+	 *  ENFORCED HERE, not just asserted in a source-compliance test. That test
+	 *  reads `${...}` interpolations and cannot see `${p}`, `${dest}`,
+	 *  `${String(err)}` or a helper call — and `${String(err)}` is already the
+	 *  house idiom, appearing 7x in src/. Obsidian's adapter throws
+	 *  `ENOENT: no such file or directory, open 'Medical/labs.md'`, so ONE copy
+	 *  of that idiom into an anomaly() call ships a note path with diagnostics
+	 *  OFF. Sanitizing at the choke point catches every shape, however the
+	 *  string was built. */
 	anomaly(category: string, message: string): void {
-		this.addEntry("warn", category, message, undefined, false, true);
+		this.addEntry("warn", category, redactPathLike(message), undefined, false, true);
 	}
 
 	private addEntry(
