@@ -40,8 +40,35 @@ export class NoteIdMap {
 		this.store = store ?? new SyncStore(new Y.Doc().getMap(FILEMETA_MAP));
 	}
 
+	/** Publish staged state, coalescing everything staged in the same tick.
+	 *
+	 *  Obsidian fires `rename` ONCE PER DESCENDANT for a folder rename (see
+	 *  `SyncEngine.replayFromSeq`: "a folder rename fires N times"), and each one
+	 *  arrives as its own `handleRename` call. Committing per call would publish
+	 *  a 200-file folder move as 200 updates — 200 chances for a peer to observe
+	 *  a half-moved folder, which is the shape of every folder-rename bug we have
+	 *  had.
+	 *
+	 *  A microtask is enough because those N events arrive in one tick. It also
+	 *  costs nothing in correctness: reads are served from the layers and are
+	 *  already immediate, so deferring only the PUBLICATION changes what peers
+	 *  see, not what this device sees. */
 	private flush(): void {
-		if (!this.batching) this.store.commit();
+		if (this.batching || this.flushScheduled) return;
+		this.flushScheduled = true;
+		queueMicrotask(() => {
+			this.flushScheduled = false;
+			if (!this.batching) this.store.commit();
+		});
+	}
+
+	private flushScheduled = false;
+
+	/** Publish immediately rather than at the end of the tick. For shutdown and
+	 *  for any caller that must know the frame has been handed to the wire. */
+	flushNow(): void {
+		this.flushScheduled = false;
+		this.store.commit();
 	}
 
 	/** Run `fn` with commits deferred, then publish once.
@@ -56,7 +83,9 @@ export class NoteIdMap {
 			fn();
 		} finally {
 			this.batching = outer;
-			this.flush();
+			// Synchronous: a caller that asked for a batch is telling us where the
+			// unit of work ends, so publishing it is not something to defer.
+			if (!this.batching) this.flushNow();
 		}
 	}
 

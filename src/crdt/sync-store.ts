@@ -86,9 +86,17 @@ export class SyncStore {
 	/** Meta for `path`, consulting every layer, or null if this store has no
 	 *  entry for it (or it is pending deletion). */
 	getMeta(path: string): FileMeta | null {
-		const resolved = this.resolvePath(path);
-		if (this.deleteSet.has(resolved)) return null;
-		return this.overlay.get(resolved) ?? this.map.get(resolved) ?? null;
+		// A path that has been renamed AWAY is gone, and `get`/`has` must say so.
+		// Callers ask this to mean "is there a note here?", and answering yes for
+		// a path the user just moved off breaks the delete/ignore decisions built
+		// on it.
+		//
+		// The rename layer is NOT about keeping the old path alive to readers —
+		// it is about not MINTING a second id for it. That distinction lives in
+		// `getOrMint`, which resolves through the redirect on purpose.
+		if (this.renames.has(path)) return null;
+		if (this.deleteSet.has(path)) return null;
+		return this.overlay.get(path) ?? this.map.get(path) ?? null;
 	}
 
 	/** The note_id for `path`, or null. The `NoteIdMap.get` replacement. */
@@ -117,7 +125,11 @@ export class SyncStore {
 			throw new Error(`SyncStore.getOrMint: invalid path ${JSON.stringify(path)}`);
 		}
 
-		const existing = this.get(path);
+		// Resolve through the rename redirect FIRST. This is the anti-resurrection
+		// half: a folder rename fires one event per descendant, and anything that
+		// touches an old path mid-cascade must find the SAME id rather than mint a
+		// new one and resurrect the old path on every device.
+		const existing = this.getMeta(this.resolvePath(path))?.note_id ?? null;
 		if (existing) return existing;
 
 		const note_id = uuid7();

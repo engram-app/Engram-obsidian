@@ -8,6 +8,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import * as Y from "yjs";
+import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncStore } from "../src/crdt/sync-store";
 
 function store_(): { store: SyncStore; doc: Y.Doc; map: Y.Map<any> } {
@@ -80,13 +81,18 @@ describe("the rename layer", () => {
 	// where the old path stops resolving before the rename is agreed, so anything
 	// touching it mints a NEW id and resurrects the path on both devices. Here
 	// there is no window to race.
-	test("the OLD path keeps resolving to the same id until commit", () => {
+	// The split contract. `get`/`has` mean "is there a note HERE" — a path the
+	// user renamed away is gone, and the delete/ignore decisions built on that
+	// answer depend on it. Not minting a SECOND id for the old path is a
+	// different question, and lives in getOrMint.
+	test("get() reports the OLD path as gone, and the new one as present", () => {
 		const { store, map } = store_();
 		map.set("Old/a.md", { note_id: "id-a" });
 
 		store.rename("Old/a.md", "New/a.md");
 
-		expect(store.get("Old/a.md")).toBe("id-a");
+		expect(store.get("Old/a.md")).toBeNull();
+		expect(store.has("Old/a.md")).toBe(false);
 		expect(store.get("New/a.md")).toBe("id-a");
 	});
 
@@ -118,7 +124,8 @@ describe("the rename layer", () => {
 		store.rename("a.md", "b.md");
 		store.rename("b.md", "c.md");
 
-		expect(store.get("a.md")).toBe("id-a");
+		expect(store.get("a.md")).toBeNull();
+		expect(store.getOrMint("a.md")).toBe("id-a");
 		expect(store.get("c.md")).toBe("id-a");
 
 		store.commit();
@@ -291,5 +298,55 @@ describe("getOrMint", () => {
 	test.each(["", "null", "undefined"])("refuses the garbage path %p", (bad) => {
 		const { store } = store_();
 		expect(() => store.getOrMint(bad)).toThrow();
+	});
+});
+
+// NoteIdMap-level behaviour: the coalescing that makes a folder move ONE update.
+describe("NoteIdMap publication", () => {
+	async function tick() {
+		await new Promise<void>((r) => queueMicrotask(() => r()));
+		await new Promise<void>((r) => queueMicrotask(() => r()));
+	}
+
+	test("N renames in one tick publish as ONE update", async () => {
+		const doc = new Y.Doc();
+		const store = new SyncStore(doc.getMap<any>("filemeta_v0"));
+		const map = new NoteIdMap(store);
+
+		map.batch(() => {
+			for (let i = 0; i < 5; i++) map.set(`Old/${i}.md`, `id-${i}`);
+		});
+
+		let updates = 0;
+		doc.on("update", () => updates++);
+
+		// Exactly what Obsidian does for a folder rename: one event per descendant.
+		for (let i = 0; i < 5; i++) map.rename(`Old/${i}.md`, `New/${i}.md`);
+		await tick();
+
+		expect(updates).toBe(1);
+		expect(map.get("New/3.md")).toBe("id-3");
+		expect(map.get("Old/3.md")).toBeNull();
+	});
+
+	test("reads do not wait for the publication tick", () => {
+		const doc = new Y.Doc();
+		const map = new NoteIdMap(new SyncStore(doc.getMap<any>("filemeta_v0")));
+
+		map.set("a.md", "id-a");
+
+		// Deferring publication must not defer visibility to THIS device.
+		expect(map.get("a.md")).toBe("id-a");
+	});
+
+	test("flushNow publishes without waiting", () => {
+		const doc = new Y.Doc();
+		const store = new SyncStore(doc.getMap<any>("filemeta_v0"));
+		const map = new NoteIdMap(store);
+
+		map.set("a.md", "id-a");
+		map.flushNow();
+
+		expect(doc.getMap<any>("filemeta_v0").get("a.md")).toEqual({ note_id: "id-a" });
 	});
 });
