@@ -4802,7 +4802,10 @@ export class SyncEngine {
 		this.crdtHealCooldown.set(noteId, Date.now());
 		this.crdtEnrollment?.reset(noteId);
 		this.crdtEnrollment?.enroll(noteId);
-		rlog().info("crdt", `socket converge: re-handshake fired for ${noteRef(path)}`);
+		rlog().info(
+			"crdt",
+			`socket converge: re-handshake fired for ${noteRef(path)} note_id=${noteId}`,
+		);
 	}
 
 	/** Commit a staged convergence (see `pendingConvergence` — staged by BOTH
@@ -4888,7 +4891,7 @@ export class SyncEngine {
 				if (buffer !== null && buffer !== staged.content) {
 					rlog().warn(
 						"crdt",
-						`socket converge: phantom binding rebound for ${noteRef(boundPath)}`,
+						`socket converge: phantom binding rebound for ${noteRef(boundPath)} note_id=${noteId}`,
 					);
 					this.crdtEditorRebind?.(boundPath);
 					this.crdtRequestSave?.(boundPath);
@@ -4923,11 +4926,14 @@ export class SyncEngine {
 			// Via markServerKnown so the placeholder can only fill a hole, never
 			// overwrite an authoritative head this note already has.
 			if (staged.content) this.markServerKnown(path);
-			rlog().info("crdt", `socket converge: STEP2 committed ${noteRef(path)}`);
+			rlog().info(
+				"crdt",
+				`socket converge: STEP2 committed ${noteRef(path)} note_id=${noteId}`,
+			);
 		} catch (e) {
 			rlog().warn(
 				"crdt",
-				`socket converge: commit failed for ${noteRef(path)}: ${errMsg(e)}`,
+				`socket converge: commit failed for ${noteRef(path)} note_id=${noteId}: ${errMsg(e)}`,
 			);
 		}
 		this.releaseHealRoom(noteId, path);
