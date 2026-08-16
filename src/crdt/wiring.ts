@@ -2,7 +2,6 @@ import { errMsg } from "../error-util";
 import { docKindFor } from "../file-kind";
 import { rlog } from "../remote-log";
 import type { SyncEngine } from "../sync";
-import type { SyncRecorder } from "../sync-recorder";
 import { isDestroyedError } from "./destroyed-error";
 import { InvariantChecker, type InvariantViolation } from "./invariants";
 import type { NoteIdMap } from "./note-id-map";
@@ -70,9 +69,6 @@ export interface CrdtWiringDeps {
 	 *  it — each real device has its own browser origin. Set only by tests that
 	 *  run two "devices" against one shared fake-indexeddb process. */
 	dbPrefix?: string;
-	/** Timeline capture (#356). Handed straight to the registry, which is where
-	 *  every recordable seam already passes through. Omitted = no recording. */
-	recorder?: SyncRecorder;
 	/** Merge base for a note_id (#357), resolved through the id map to the path
 	 *  BaseStore is keyed by. Omitted = the pre-LCA path. */
 	lcaFor?: (noteId: string) => string | null;
@@ -304,7 +300,6 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	// provider sends its own local updates through this `send`.
 	const registry = new ProviderRegistry({
 		dbPrefix: deps.dbPrefix,
-		recorder: deps.recorder,
 		lcaFor: deps.lcaFor,
 		onDirtyMerge: deps.onDirtyMerge,
 		send: (docId, frame, kind) => {

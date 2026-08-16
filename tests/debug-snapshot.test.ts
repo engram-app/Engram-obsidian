@@ -91,16 +91,17 @@ describe("buildNoteSnapshot", () => {
 		expect(snap.docMatchesDisk).toBe(false);
 	});
 
-	test("omits content by default and includes it only on request", async () => {
-		const withoutContent = await buildNoteSnapshot("notes/a.md", deps());
-		const withContent = await buildNoteSnapshot("notes/a.md", deps(), { includeContent: true });
+	// There is no longer an opt-in. The audience for this snapshot is a user
+	// pasting it into a bug report, and "just pass true" is how note bodies end
+	// up in public issues — the flag was the leak, not the default.
+	test("never carries note text, in any form", async () => {
+		const snap = await buildNoteSnapshot("notes/a.md", deps());
 
-		// Note bodies are private. A snapshot pasted into a support ticket must
-		// not carry them unless the user deliberately asked.
-		expect(withoutContent.doc?.content).toBeUndefined();
-		expect(withoutContent.disk?.content).toBeUndefined();
-		expect(withContent.doc?.content).toBe(DOC_TEXT);
-		expect(withContent.disk?.content).toBe(DOC_TEXT);
+		expect(snap.doc?.content).toBeUndefined();
+		expect(snap.disk?.content).toBeUndefined();
+		// Belt and braces: the body must not survive anywhere in the payload
+		// under a different key.
+		expect(JSON.stringify(snap)).not.toContain(DOC_TEXT);
 	});
 
 	test("hashes content even when it is withheld, so two sides stay comparable", async () => {

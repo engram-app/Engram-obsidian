@@ -263,7 +263,44 @@ export class Setting {
 		__settingCapture.buttons.push(b);
 		return this;
 	}
-	addDropdown(_cb: any): this {
+	addDropdown(cb: any): this {
+		// The real one hands back a builder; returning a no-op object keeps a
+		// chained .addOptions().setValue().onChange() from throwing.
+		const d: Record<string, (...args: any[]) => any> = {
+			addOption: () => d,
+			addOptions: () => d,
+			setValue: () => d,
+			setDisabled: () => d,
+			onChange: () => d,
+		};
+		cb(d);
+		return this;
+	}
+	// Present so a tab that draws switches can be rendered in a test at all —
+	// advanced-tab could not be before. Deliberately not captured: nothing
+	// asserts on toggles yet, and an unused capture array is the kind of
+	// scaffolding that outlives the test it was built for.
+	addToggle(cb: (t: ToggleComponent) => void): this {
+		cb(new ToggleComponent());
+		return this;
+	}
+}
+
+export class ToggleComponent {
+	value = false;
+	changeCb: ((v: boolean) => void) | null = null;
+	setValue(v: boolean): this {
+		this.value = v;
+		return this;
+	}
+	getValue(): boolean {
+		return this.value;
+	}
+	setDisabled(_d: boolean): this {
+		return this;
+	}
+	onChange(cb: (v: boolean) => void): this {
+		this.changeCb = cb;
 		return this;
 	}
 }

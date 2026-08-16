@@ -954,7 +954,17 @@ export class NoteChannel {
 		try {
 			msg = JSON.parse(raw) as unknown[];
 		} catch {
-			rlog().error("channel", `Failed to parse message: ${raw}`);
+			// Length and a prefix, never the frame. Frames on this socket carry
+			// note bodies — inline `content` on note_changed, and base64 Yjs
+			// updates on crdt_msg — and this logger ships to the server, where
+			// the settings copy promises "metadata only, never note content".
+			// The realistic trigger is a truncated oversized frame, i.e. exactly
+			// the case where the body IS the payload. 40 chars is enough to see
+			// the wire shape (`[null,null,"topic"…`) without carrying content.
+			rlog().error(
+				"channel",
+				`Failed to parse message: ${raw.length} bytes starting ${JSON.stringify(raw.slice(0, 40))}`,
+			);
 			return;
 		}
 

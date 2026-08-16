@@ -2479,10 +2479,18 @@ export class SyncEngine {
 		// recorded content hash is now stale, and left behind it echo-suppresses
 		// a later create at the same path whose content hashes the same, so the
 		// recreated file's push is skipped and it never reaches the server.
-		// (dropBase:false — the local-delete path never dropped the merge base
-		// here; base cleanup belongs to the remote-removal path.)
+		// The merge base goes WITH it. The base is the full text of the note, and
+		// keeping it after a delete meant the body of a note the user deleted
+		// (and emptied from trash) stayed in sync-bases.json inside .obsidian/ —
+		// a directory people commit to git, sync through iCloud, and zip into
+		// bug reports — until LRU eviction happened to reach it at 50MB. It also
+		// never made sense on its own terms: the line above drops syncState here
+		// precisely BECAUSE stale bookkeeping at a recreated path causes bugs,
+		// and a stale base is the same hazard with a copy of the content
+		// attached. A recreate at this path has no common ancestor to merge
+		// against anyway.
 		const hadSyncEvidence = this.syncState.has(normalizePath(file.path));
-		this.dropPath(normalizePath(file.path), { dropBase: false });
+		this.dropPath(normalizePath(file.path));
 
 		// This trash APPLIED a remote change (trashRemotelyDeleted marked it):
 		// the server already knows. Never push the DELETE back — path-keyed and
@@ -3397,8 +3405,14 @@ export class SyncEngine {
 							`Engram Sync: renamed "${pushedPath.split("/").pop()}" (unsupported characters)`,
 						);
 					}
-					// (dropBase:false — legacy REST rename; the base entry, if any,
-					// was never dropped here.)
+					// Move the merge base with the file. It was previously left
+					// behind entirely: dropBase:false with no baseStore.rename, so a
+					// server-side path sanitization stranded the note's FULL TEXT
+					// under a path that no longer exists, with nothing to ever evict
+					// it but the 50MB LRU. Renaming keeps the base useful as an LCA
+					// AND removes the old key, so the dropBase:false below is now
+					// just "already handled" rather than "deliberately skipped".
+					this.baseStore?.rename(normalizePath(pushedPath), normalizePath(serverPath));
 					this.dropPath(normalizePath(pushedPath), { dropBase: false });
 					this.stampSyncedRow(normalizePath(serverPath), { hash });
 					this.noteIdMap?.delete(normalizePath(pushedPath));
@@ -4056,7 +4070,7 @@ export class SyncEngine {
 			// visible — silently doing nothing and reporting success is the bug
 			// this whole series came from. One line per blocked attempt, not one
 			// per note. Counts only, no paths.
-			rlog().anomaly("sync", "catch-up skipped — sync gate closed (blocked=true)");
+			rlog().anomaly("sync", "catch_up_skipped_sync_gate_closed", { blocked: true });
 			return {
 				applied: 0,
 				files: 0,
@@ -4188,11 +4202,14 @@ export class SyncEngine {
 					// gate silently no-ops every note write while folders (which
 					// bypass it) still land. That combination — folders arrive,
 					// notes do not — is the 2026-08-13 signature.
-					rlog().anomaly(
-						"sync",
-						`replay produced no files: applied=${applied} files=0 deletes=0 ` +
-							`failed=${failed} complete=${complete} blocked=${this.syncBlocked}`,
-					);
+					rlog().anomaly("sync", "replay_produced_no_files", {
+						applied,
+						files: 0,
+						deletes: 0,
+						failed,
+						complete,
+						blocked: this.syncBlocked,
+					});
 				}
 			} finally {
 				if (opts.onFileApplied) this.seqReplayFileListeners.delete(opts.onFileApplied);

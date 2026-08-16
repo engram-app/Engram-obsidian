@@ -380,3 +380,27 @@ describe("round-3 hardening", () => {
 		expect(crdtDeletes).toEqual([file.path]);
 	});
 });
+
+/**
+ * Retention: deleting a note must not leave its body on disk.
+ *
+ * The merge base is the FULL TEXT of the note, stored in sync-bases.json under
+ * `.obsidian/` — a directory people commit to git, sync through iCloud, and zip
+ * into bug reports. handleDelete used to pass `dropBase: false`, so a user who
+ * deleted a note and emptied the trash still had its body sitting there until
+ * LRU eviction happened to reach it at 50MB, which for most vaults is never.
+ */
+describe("a deleted note takes its merge base with it", () => {
+	test("handleDelete drops the stored body, not just the sync row", async () => {
+		const { e } = makeEngine();
+		const file = makeNoteFile("Personal/Therapy.md");
+		recordSyncEvidence(e, file.path);
+
+		const droppedBases: string[] = [];
+		(e as any).baseStore = { delete: (p: string) => droppedBases.push(p) };
+
+		await e.handleDelete(file);
+
+		expect(droppedBases).toEqual(["Personal/Therapy.md"]);
+	});
+});

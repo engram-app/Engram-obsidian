@@ -437,7 +437,7 @@ describe("anomaly() bypasses the diagnostics gate", () => {
 	test("an anomaly ships even with diagnostics OFF", async () => {
 		const { logger, sent } = makeLogger();
 
-		logger.anomaly("sync", "replay consumed 316 rows and produced 0 files");
+		logger.anomaly("sync", "replay_produced_no_files", { rows: 316, files: 0 });
 		await logger.flush();
 
 		expect(sent.length).toBe(1);

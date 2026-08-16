@@ -287,3 +287,193 @@ describe("Plugin guidelines — never use the global `app` object", () => {
 		expect(found).toEqual([]);
 	});
 });
+
+/**
+ * Privacy invariant: nothing in the plugin may retain note content for export.
+ *
+ * A CRDT wire frame or Yjs update is NOT opaque — the note body is recoverable
+ * from it, base64 or not. The sync recorder stored whole inbound frames in a
+ * 5,000-entry buffer that `__engramDebug.timeline()` serialized to a string a
+ * user could paste into a public issue. It was removed for that reason.
+ *
+ * These are text-level guards, so they cannot catch every reintroduction — but
+ * they catch the shapes that actually occurred, and a deliberate new capture
+ * has to edit this file, which is the point.
+ */
+describe("privacy — no content retention for export", () => {
+	// Matched on the IDENTIFIER, not the module string. findInSources runs its
+	// predicate against stripCommentsAndStrings(), which blanks every string
+	// literal — so a regex looking for `from "../sync-recorder"` was testing
+	// `from ""` and could never fail. It passed against the pre-removal source,
+	// which is the definition of a guard that does not guard.
+	test("the sync recorder stays deleted", () => {
+		const found = findInSources((line) => /\bSyncRecorder\b|\bserializeTimeline\b/.test(line));
+		expect(found).toEqual([]);
+	});
+
+	// The content escape hatch on the debug snapshot. Nothing else stops it
+	// coming back, and its whole failure mode is that it looks harmless.
+	test("the debug snapshot has no content opt-in", () => {
+		const found = findInSources((line) => /\bincludeContent\b|\bSnapshotOpts\b/.test(line));
+		expect(found).toEqual([]);
+	});
+
+	// The offending shape: a whole frame or update handed to a buffer. Sibling
+	// seams recorded a length or a hash and were fine; this is the one that
+	// carried the body.
+	//
+	// WHAT THIS CATCHES — an object or array literal, on ONE line or across
+	// several, holding `b64` / `frameB64` / a `frame:`-style key, anywhere
+	// except the single real wire send.
+	//
+	// WHAT IT DOES NOT — and this list is the point of writing it down, because
+	// a text guard whose comment overstates its reach is worse than no guard:
+	// the next reviewer trusts it.
+	//   * an ALIAS: `const payload = b64; buf.push({ ts, payload })`
+	//   * two statements: `const r = {}; r.b64 = b64; buf.push(r)`
+	//   * a stash nested INSIDE the exempt wire send's payload
+	//   * string building: `this.log += docId + ":" + b64`
+	// Catching those needs dataflow, not regex. The runtime seam
+	// (`redactPathLike` in remote-log.ts) is where enforcement that cannot be
+	// evaded by rewriting belongs; this guard is the cheap first net.
+	test("no frame or update is stashed in a payload object", () => {
+		// Token-level, not literal-level. `[^{}]*` cannot cross a nested brace,
+		// so `{ ts, meta: {}, b64 }` and `[Date.now(), ids[0], b64]` both walked
+		// past the previous version. Matching `b64` in shorthand POSITION —
+		// preceded by `{`, `,` or `[`, followed by `,`, `}` or `]` — needs no
+		// span at all, so nesting cannot defeat it.
+		// One level of nesting allowed inside the literal — `[^{}]*` alone could
+		// not cross `{ ts, meta: {}, b64 }` or `[Date.now(), ids[0], b64]`, which
+		// are ordinary shapes, not contrived ones.
+		//
+		// ONE level, not "all of them". This is a hand-rolled depth-1 matcher, so
+		// `{ ts, m: { a: { b: 1 } }, b64 }` is NOT caught, and neither are a
+		// spread (`{ ...{ b64 } }`), a getter, or a nested subscript
+		// (`[a[b[0]], b64]`). Raising the constant does not close the class; only
+		// a parser would. Stated plainly because the previous version of this
+		// comment claimed the bypass set was closed when it had merely grown by
+		// one — and a guard trusted beyond its reach is worse than none.
+		//
+		// Still anchored on literal POSITION (`[([=:,]` before the brace). A bare
+		// token match like `, b64,` cannot tell an object literal from a call
+		// argument, and flagged `this.onNoteYjsUpdate?.(noteId, b64, head, seq)`.
+		// A guard that cries wolf gets deleted.
+		const shapes = [
+			/\b(frame|frameB64|update|content|text|body)\s*:\s*(frameB64|frame|update|b64)\b/g,
+			/[([=:,]\s*\{(?:[^{}]|\{[^{}]*\})*?\b(frameB64|b64)\s*[,}]/g,
+			/[([=:,]\s*\[(?:[^[\]]|\[[^[\]]*\])*?\b(frameB64|b64)\s*[,\]]/g,
+		];
+		// The one legitimate wire send, matched as a WHOLE STATEMENT rather than
+		// by an anchor within it. A statement-scoped `wireSend.test(...)` let a
+		// stash hide inside the exempt call:
+		//
+		//   this.send([this.crdtJoinRef, t, "crdt_msg",
+		//             { doc_id: docId, b64: this.record({ b64 }) }]);
+		//
+		// Requiring the entire statement to equal the known-good form means any
+		// wrapper, extra argument or reordering stops matching and is caught.
+		const wireStatement =
+			/^this\.send\(\[this\.crdtJoinRef,[^{}]*\{\s*doc_id:\s*docId,\s*b64\s*\}\]\);$/;
+
+		// The per-vault index room's wire send (#362). A SECOND exact form rather
+		// than a loosened first one: it differs only by having no doc_id — there
+		// is one index room per vault, so the topic is the address — and widening
+		// the original to make doc_id optional would exempt any `{ b64 }` object
+		// reachable from a `this.send([this.crdtJoinRef, ...])` call, which is
+		// most of what this check exists to catch.
+		const indexWireStatement = /^this\.send\(\[this\.crdtJoinRef,[^{}]*\{\s*b64\s*\}\]\);$/;
+
+		const findings: Finding[] = [];
+		for (const f of sources) {
+			const stripped = stripCommentsAndStrings(f.text);
+			for (const shape of shapes) {
+				shape.lastIndex = 0;
+				let m: RegExpExecArray | null = shape.exec(stripped);
+				while (m !== null) {
+					const from = stripped.lastIndexOf(";", m.index) + 1;
+					const to = stripped.indexOf(";", shape.lastIndex - 1);
+					// Leading `}` / `{` from the enclosing block survive the slice
+					// (the previous statement's `;` is further back than the
+					// block close), and they broke the `^` anchor — so the
+					// exemption never matched and the real wire send was flagged.
+					const statement = stripped
+						.slice(from, to === -1 ? undefined : to + 1)
+						.replace(/\s+/g, "")
+						.replace(/^[^A-Za-z_$]*/, "");
+					if (!wireStatement.test(statement) && !indexWireStatement.test(statement)) {
+						findings.push({
+							file: f.rel,
+							line: stripped.slice(0, m.index).split("\n").length,
+							snippet: m[0].replace(/\s+/g, " ").trim(),
+						});
+					}
+					m = shape.exec(stripped);
+				}
+			}
+		}
+		expect(findings).toEqual([]);
+	});
+
+	// `record(...)` was the recorder's entry point. If a timeline ever comes
+	// back, it comes back through a review that reads this test.
+	test("no recorder-style record() calls survive", () => {
+		const found = findInSources((line) => /recorder\??\.\s*record\s*\(/.test(line));
+		expect(found).toEqual([]);
+	});
+
+	// `anomaly()` is the ONE rlog path that ships with diagnostics OFF (it
+	// passes force=true, bypassing both `enabled` and the level threshold).
+	// Every other rlog call is gated behind a setting the user opted into, so
+	// paths travelling through those are consented telemetry. Anomaly lines
+	// are not consented, and remote-log.ts states the contract in a comment:
+	// "counts and reasons ONLY. Never a path, a title, or note content."
+	// A comment is not a control. This is.
+	//
+	// Only INTERPOLATED expressions are inspected, never the literal prose:
+	// the existing call site legitimately reads "replay produced no files:",
+	// and a guard that matched author-written words would fire on that and
+	// get deleted. Runtime values are the thing that can carry user data.
+	// `anomaly(category, code, counts)` carries no free text: `counts` holds
+	// numbers and booleans, and BOTH strings are slug-validated at runtime, so a
+	// path is not expressible in any argument. That is the enforcement. This
+	// guard exists so the codes stay greppable — a computed argument becomes
+	// `invalid_code` / `invalid_category` at runtime, which is a dead telemetry
+	// line rather than a disclosure, but a dead line is still a bug.
+	//
+	// Anchored on `.anomaly(` and reading BOTH string arguments. The previous
+	// version anchored on a literal FIRST argument (`/\.anomaly\(\s*"[a-z]+"/`),
+	// which meant a call site with a computed category — the leaking shape —
+	// simply did not match and was never inspected. It reported healthy while
+	// blind, and its anti-vacuity count was satisfied by the two well-formed
+	// call sites.
+	test("anomaly() is called with literal slug category and code", () => {
+		const findings: Finding[] = [];
+		let inspected = 0;
+
+		for (const f of sources) {
+			for (const m of f.text.matchAll(/\.anomaly\(([^)]*)/g)) {
+				inspected += 1;
+				const args = (m[1] ?? "").split(",");
+				const line = f.text.slice(0, m.index).split("\n").length;
+				for (const [i, label] of [
+					[0, "category"],
+					[1, "code"],
+				] as const) {
+					const arg = (args[i] ?? "").trim();
+					if (!/^"[a-z0-9_]+"$/.test(arg)) {
+						findings.push({
+							file: f.rel,
+							line,
+							snippet: `${label}: ${arg || "(missing)"}`,
+						});
+					}
+				}
+			}
+		}
+
+		// Vacuity: a guard over zero call sites proves nothing, and this file
+		// has shipped exactly that before.
+		expect(inspected).toBeGreaterThan(0);
+		expect(findings).toEqual([]);
+	});
+});

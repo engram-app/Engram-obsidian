@@ -12,7 +12,7 @@
  * 1. **Content is withheld by default.** Note bodies are private, and a
  *    snapshot is exactly the kind of thing that gets pasted into a support
  *    ticket. Lengths and hashes are always present so the two sides stay
- *    comparable; the text itself needs `{ includeContent: true }`.
+ *    comparable; the text itself is never included — see debug-api.
  *
  * 2. **Every section degrades independently.** A snapshot that throws on the
  *    broken state it exists to describe is useless precisely when it is needed,
@@ -32,8 +32,6 @@ export interface SnapshotContentView {
 	/** FNV-1a of the content. Present even when the content itself is withheld,
 	 *  so doc and disk remain comparable in a redacted snapshot. */
 	hash: string;
-	/** Only when `includeContent` was requested. */
-	content?: string;
 }
 
 export interface DocView extends SnapshotContentView {
@@ -118,11 +116,6 @@ export interface SnapshotDeps {
 	pendingPromises(): { label: string; ageMs: number }[];
 }
 
-export interface SnapshotOpts {
-	/** Include raw note content. Off by default: see the module comment. */
-	includeContent?: boolean;
-}
-
 const hashOf = (content: string): string => fnv1a(content).toString(16);
 
 function describe(err: unknown): string {
@@ -151,11 +144,7 @@ function resolveKey(
 	return { path: key, noteId: null };
 }
 
-export async function buildNoteSnapshot(
-	key: string,
-	deps: SnapshotDeps,
-	opts: SnapshotOpts = {},
-): Promise<NoteSnapshot> {
+export async function buildNoteSnapshot(key: string, deps: SnapshotDeps): Promise<NoteSnapshot> {
 	const errors: string[] = [];
 	const { path, noteId } = resolveKey(key, deps);
 
@@ -176,7 +165,6 @@ export async function buildNoteSnapshot(
 				hash: hashOf(content),
 				hasHistory: await deps.registry.hasHistory(noteId),
 				stateVectorBytes: (await deps.registry.encodeStateVector(noteId)).byteLength,
-				...(opts.includeContent ? { content } : {}),
 			};
 		} catch (e) {
 			errors.push(`doc: ${describe(e)}`);
@@ -194,7 +182,6 @@ export async function buildNoteSnapshot(
 					length: read.length,
 					hash: hashOf(read.content),
 					mtime: read.mtime,
-					...(opts.includeContent ? { content: read.content } : {}),
 				};
 			}
 		} catch (e) {
