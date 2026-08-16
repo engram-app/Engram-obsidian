@@ -329,8 +329,18 @@ describe("privacy — no content retention for export", () => {
 		// shorthand rewrite of the very line it was written for.
 		const explicit =
 			/\b(frame|frameB64|update|content|text|body)\s*:\s*(frameB64|frame|update|b64)\b/;
-		const shorthand = /\{\s*(frameB64|b64)\s*[,}]/;
-		const found = findInSources((line) => explicit.test(line) || shorthand.test(line));
+		// Anywhere in the literal, not just first: the realistic reintroduction
+		// is `this.buf.push({ ts, noteId, b64 })`, and a first-property-only
+		// regex missed that — along with `{ doc_id: docId, b64 }`, the exact
+		// line this rule's comment cites.
+		const shorthand = /\{[^}]*\b(frameB64|b64)\s*[,}]/;
+		// ...which means the legitimate wire send now matches. Handing a frame
+		// to the transport is what the transport is FOR; the rule is about
+		// stashing one somewhere it can be read back later.
+		const wireSend = /\.send\s*\(/;
+		const found = findInSources(
+			(line) => (explicit.test(line) || shorthand.test(line)) && !wireSend.test(line),
+		);
 		expect(found).toEqual([]);
 	});
 
