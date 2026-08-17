@@ -146,3 +146,66 @@ describe("invariant catalogue", () => {
 		expect(new Set(ids).size).toBe(ids.length);
 	});
 });
+
+/**
+ * `detail` is a log line.
+ *
+ * `wiring.ts` interpolates it straight into `rlog().warn("crdt", ...)`, so
+ * every violation ships whatever the check put in the string. Two of them
+ * listed vault paths — up to five per violation — and the source guard could
+ * not see it: at the call site the expression reads `${v.detail}`, which names
+ * nothing path-like.
+ *
+ * This is the behavioural pin for that. It asserts on the DETAIL text, which is
+ * the thing that actually reaches Loki, rather than on the shape of the source.
+ */
+describe("invariant details carry no vault path", () => {
+	const SECRET = "Medical/2026 biopsy results.md";
+
+	const details = async (c: InvariantContext) => {
+		const seen: string[] = [];
+		const checker = new InvariantChecker({
+			getContext: () => c,
+			onViolation: (v) => seen.push(v.detail),
+		});
+		await checker.checkAll();
+		return seen;
+	};
+
+	test("live-bound-implies-mapped names no folder", async () => {
+		// Bound but unmapped — idForPath returns null, so the invariant fires.
+		const out = await details(ctx({ liveBoundPaths: new Set([SECRET]) }));
+
+		expect(out.length).toBe(1); // the violation really fired
+		expect(out[0]).toContain("live-bound paths with no note_id");
+		expect(out[0]).not.toContain("Medical");
+		expect(out[0]).not.toContain("biopsy");
+	});
+
+	test("id-map-bijective names no folder", async () => {
+		// A one-way map: path→id resolves, id→path does not agree.
+		const broken = ctx({
+			mappedPaths: new Set([SECRET]),
+			idForPath: (p) => (p === SECRET ? "id-x" : null),
+			pathForId: () => "Divorce 2026/settlement.md",
+		});
+
+		const out = await details(broken);
+
+		expect(out.length).toBe(1);
+		expect(out[0]).toContain("id-map direction mismatch");
+		expect(out[0]).toContain("id-x"); // the note_id is kept — it is opaque
+		expect(out[0]).not.toContain("Medical");
+		expect(out[0]).not.toContain("Divorce");
+	});
+
+	// The three id-listing invariants must NOT be scrubbed — a note_id is an
+	// opaque UUID, and blanking it would cost the whole diagnostic for nothing.
+	test("note_ids stay readable", async () => {
+		const out = await details(
+			ctx({ removedNoteIds: new Set(["id-a"]), residentNoteIds: new Set(["id-a"]) }),
+		);
+
+		expect(out.some((d) => d.includes("id-a"))).toBe(true);
+	});
+});

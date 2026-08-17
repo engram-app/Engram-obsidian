@@ -27,6 +27,7 @@ import { expect, spyOn, test } from "bun:test";
 import "fake-indexeddb/auto";
 import { NoteIdMap } from "../../src/crdt/note-id-map";
 import { type CrdtWiring, createCrdtWiring } from "../../src/crdt/wiring";
+import { noteRef } from "../../src/note-ref";
 import { rlog } from "../../src/remote-log";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -404,7 +405,13 @@ test("a refused stranded-flush disk write is logged, not silently dropped", asyn
 	await sleep(20); // let the (un-awaited) flush promise settle
 
 	const warns = warnSpy.mock.calls as unknown as Array<[string, string]>;
-	expect(warns.some(([cat, msg]) => cat === "crdt" && msg.includes("FB/fail.md"))).toBe(true);
+	// The note is named by its opaque ref, never its path — a folder name is
+	// the most revealing thing this plugin knows, and log lines leave the
+	// device. The assertion still pins WHICH note, which is what it was for.
+	expect(warns.some(([cat, msg]) => cat === "crdt" && msg.includes(noteRef("FB/fail.md")))).toBe(
+		true,
+	);
+	expect(warns.some(([, msg]) => msg.includes("FB/fail.md"))).toBe(false);
 
 	warnSpy.mockRestore();
 	await destroy(a, b);

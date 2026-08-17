@@ -112,4 +112,28 @@ describe("beacon path attributes (2026-07-14 deaf-note observability)", () => {
 	test("beaconRoute stays within the 64-byte sanitizer bound", () => {
 		expect(beaconRoute(`/x/${"a".repeat(100)}`).length).toBeLessThanOrEqual(64);
 	});
+
+	// The reason this function was rewritten. deleteNote/deleteAttachment build
+	// the request path from the vault-relative NOTE PATH, so collapsing UUIDs
+	// alone sent `/notes/Medical/Divorce settlement draft.md` out whole. The
+	// server's BeaconSanitizer rejects a path in `engram.note_id` but admits
+	// `engram.route` on length alone, so it landed as an OTel span attribute.
+	test("beaconRoute never emits a vault path segment", () => {
+		const route = beaconRoute("/notes/Medical/Divorce%20settlement%20draft.md");
+
+		expect(route).toBe("/notes/:seg/:seg");
+		expect(route).not.toContain("Medical");
+		expect(route).not.toContain("Divorce");
+	});
+
+	test("beaconRoute keeps segments that are ours", () => {
+		expect(beaconRoute("/api/notes/sync/changes")).toBe("/api/notes/sync/changes");
+		expect(beaconRoute("/folders/explicit")).toBe("/folders/explicit");
+	});
+
+	// Allowlist, not denylist: an unregistered route reads :seg, which costs one
+	// unhelpful label. The other direction costs a folder name.
+	test("an unregistered route segment fails closed", () => {
+		expect(beaconRoute("/notes/brandnewthing")).toBe("/notes/:seg");
+	});
 });

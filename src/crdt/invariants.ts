@@ -1,3 +1,5 @@
+import { noteRef } from "../note-ref";
+
 /**
  * Runtime invariant checking.
  *
@@ -14,6 +16,17 @@
  * (`synced-means-disk-matches-baseline`) can be added without redesign.
  */
 
+/**
+ * `detail` is interpolated directly into an rlog warn (`wiring.ts`), so it is a
+ * log line even though nothing here is named "log". Paths go through
+ * `noteRef`; note_ids are opaque UUIDs and stay readable.
+ *
+ * This is the indirection the source guard cannot see: at the call site the
+ * expression reads `${v.detail}`, which names nothing path-like, while the
+ * string behind it listed up to five vault paths per violation. Enforcement
+ * for this one is the behavioural test in `tests/crdt-invariants.test.ts`, not
+ * the text guard.
+ */
 export interface InvariantContext {
 	/** note_ids tombstoned by removeDoc. */
 	removedNoteIds: ReadonlySet<string>;
@@ -78,7 +91,9 @@ export const STANDARD_INVARIANTS: InvariantDefinition[] = [
 		description: "A live-bound path must resolve to a note_id",
 		check(ctx) {
 			const bad = [...ctx.liveBoundPaths].filter((p) => ctx.idForPath(p) === null);
-			return bad.length ? `live-bound paths with no note_id: ${list(bad)}` : null;
+			return bad.length
+				? `live-bound paths with no note_id: ${list(bad.map(noteRef))}`
+				: null;
 		},
 	},
 	{
@@ -89,7 +104,8 @@ export const STANDARD_INVARIANTS: InvariantDefinition[] = [
 			for (const path of ctx.mappedPaths) {
 				const id = ctx.idForPath(path);
 				if (id === null) continue;
-				if (ctx.pathForId(id) !== path) bad.push(`${path}→${id}→${ctx.pathForId(id)}`);
+				if (ctx.pathForId(id) !== path)
+					bad.push(`${noteRef(path)}→${id}→${noteRef(ctx.pathForId(id))}`);
 			}
 			return bad.length ? `id-map direction mismatch: ${list(bad)}` : null;
 		},

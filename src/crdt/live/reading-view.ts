@@ -1,6 +1,7 @@
 // src/crdt/live/reading-view.ts
 // Adapted from Relay src/plugins/PreviewRenderer.ts (No-Instructions/Relay).
 import type * as Y from "yjs";
+import { noteRef } from "../../note-ref";
 import { rlog } from "../../remote-log";
 import { applyCmChangesToYText, textDiffToChangeSpec } from "./cm-yjs-bridge";
 import { frontmatterPrefixLen, mergeTypedEdits } from "./live-binding-decisions";
@@ -50,7 +51,10 @@ export class CrdtReadingView {
 		this.observers.set(view, placeholder);
 		this.attached.add(view);
 		const ytext = await this.deps.getYText(path).catch((err: unknown) => {
-			rlog().error("crdt-reading-view", `getYText failed for ${path}: ${String(err)}`);
+			rlog().error(
+				"crdt-reading-view",
+				`getYText failed for ${noteRef(path)}: ${String(err)}`,
+			);
 			// Same identity rule as the success path: a detach + re-attach during
 			// the await means these slots belong to the NEWER attach — a late
 			// rejection must not cancel its reservation.
