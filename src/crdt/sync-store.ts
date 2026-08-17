@@ -115,7 +115,13 @@ export class SyncStore {
 			// indirection over: a peer re-claiming the path would never be visible
 			// to `getMeta` or `pathForId` again, so `getOrMint` would mint a SECOND
 			// id for a note that already has one and publish it over the live claim.
-			for (const key of event.keysChanged) this.forgotten.delete(key);
+			//
+			// `keysChanged` is `Set<any>` in yjs's types, so the key is narrowed
+			// rather than asserted. A Y.Map key is always a string; the guard costs
+			// one typeof per changed key and keeps the boundary honest.
+			for (const key of event.keysChanged) {
+				if (typeof key === "string") this.forgotten.delete(key);
+			}
 			this.reverse = null;
 		});
 	}
