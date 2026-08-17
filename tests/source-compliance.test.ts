@@ -470,7 +470,13 @@ describe("privacy — no content retention for export", () => {
 		// previous `includes("noteRef(")` test exempted the whole expression on
 		// the strength of one safe call inside it, so concatenating a raw path
 		// onto a wrapped one was a free pass.
-		const WRAPPED_ONLY = /^(noteRef|beaconRoute)\((?:[^()]|\([^()]*\))*\)$/;
+		//
+		// `errMsg` is here because its SECOND argument is a path handed over to
+		// be redacted: `errMsg(e, path)` removes that exact string from the
+		// error text. Passing a path there is the fix, not the violation, and a
+		// guard that flags the fix gets switched off. Still whole-expression,
+		// so `errMsg(e) + path` is caught.
+		const WRAPPED_ONLY = /^(noteRef|beaconRoute|errMsg)\((?:[^()]|\([^()]*\))*\)$/;
 
 		const findings: Finding[] = [];
 		let inspected = 0;
