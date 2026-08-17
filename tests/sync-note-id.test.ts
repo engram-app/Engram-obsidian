@@ -5,7 +5,7 @@
  * - handleRename re-keys the map (id stable, path moves).
  */
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { TFile } from "obsidian";
+import { MarkdownView, TFile } from "obsidian";
 import * as Y from "yjs";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
@@ -76,7 +76,10 @@ const mockApp = {
 		getName: mock().mockReturnValue("Test Vault"),
 	},
 	fileManager: { trashFile: mock().mockResolvedValue(undefined) },
-	workspace: { getActiveViewOfType: mock().mockReturnValue(null) },
+	workspace: {
+		getActiveViewOfType: mock().mockReturnValue(null),
+		getLeavesOfType: mock().mockReturnValue([]),
+	},
 } as any;
 
 function createEngine(): SyncEngine {
@@ -257,6 +260,53 @@ describe("id-keyed move: pull upsert at a new path for a known id trashes the ol
 		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(oldFile);
 		expect(noteIdMap.pathForId("id-move")).toBe("New.md");
 		expect(noteIdMap.get("Old.md")).toBeNull();
+	});
+
+	// A relocation is implemented as read-old + trash-old + create-new, NOT
+	// `vault.rename()` — so Obsidian never learns these are "the same" file,
+	// and any open editor leaf showing the old file gets orphaned by the
+	// trash. Obsidian's own fallback then yanks focus to whatever the leaf
+	// showed before, which is the "forced to look at the previous file I was
+	// editing" report: a rename performed in the web app trashed the note the
+	// user had open in Obsidian, and nothing pointed the editor at its new
+	// location.
+	test("an id-keyed move redirects an editor leaf open on the old file to the new one", async () => {
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Old.md", "id-redirect");
+		engine.setNoteIdMap(noteIdMap);
+		manifestWith([{ id: "id-redirect", path: "New.md" }]);
+
+		const oldFile = new TFile("Old.md");
+		const newFile = new TFile("New.md");
+		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
+			p === "Old.md" ? oldFile : null,
+		);
+		(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockImplementation(
+			(p: string) => (p === "New.md" ? newFile : null),
+		);
+
+		const leafView = new MarkdownView();
+		leafView.file = oldFile;
+		const openFile = mock().mockResolvedValue(undefined);
+		const leaf = { view: leafView, openFile } as any;
+		(mockApp.workspace.getLeavesOfType as ReturnType<typeof mock>).mockReturnValue([leaf]);
+
+		await engine.applySyncChange({
+			type: "note",
+			id: "id-redirect",
+			seq: 2,
+			path: "New.md",
+			title: "New",
+			content: "body",
+			folder: "",
+			tags: [],
+			mtime: 2,
+			updated_at: "2026-01-01T00:00:00Z",
+			deleted: false,
+		} as any);
+
+		expect(openFile).toHaveBeenCalledWith(newFile);
 	});
 
 	// A rename changes no CONTENT, so the merge base is still the note's common

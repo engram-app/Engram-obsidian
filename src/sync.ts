@@ -1,7 +1,16 @@
 /**
  * Sync engine — handles push/pull logic, debouncing, and ignore patterns.
  */
-import { type App, Notice, normalizePath, type TAbstractFile, TFile, TFolder } from "obsidian";
+import {
+	type App,
+	MarkdownView,
+	Notice,
+	normalizePath,
+	type TAbstractFile,
+	TFile,
+	TFolder,
+	type WorkspaceLeaf,
+} from "obsidian";
 import { arrayBufferToBase64, base64ToArrayBuffer, type EngramApi } from "./api";
 import type { BaseStore } from "./base-store";
 import { fnv1a } from "./content-hash";
@@ -5828,6 +5837,22 @@ export class SyncEngine {
 		// leave the duplicate this fix exists to remove). rename() above keeps the
 		// RAW priorPath — it must match the byPath key exactly to re-key the id.
 		const oldFile = this.app.vault.getFileByPath(normalizePath(priorPath));
+		// A relocation is read-old + trash-old + create-new, never
+		// `vault.rename()` — the content may need CRDT-resolved bytes, not the old
+		// file's on-disk body, and Obsidian's rename API has no way to supply
+		// that. But that means Obsidian never learns these are "the same" note:
+		// trashing an open leaf's file is native Obsidian behaviour for ANY
+		// delete, and it yanks the leaf to whatever it showed before — the
+		// "forced to look at the previous file I was editing" report. Captured
+		// here, BEFORE the trash, because by the time the redirect below runs
+		// Obsidian's own fallback has often already moved the leaf off oldFile.
+		const leavesToRedirect: WorkspaceLeaf[] = oldFile
+			? this.app.workspace
+					.getLeavesOfType("markdown")
+					.filter(
+						(leaf) => leaf.view instanceof MarkdownView && leaf.view.file === oldFile,
+					)
+			: [];
 		if (oldFile) {
 			// MID-FLIGHT VANISH GUARD (round 4, e2e test_10 CI run 28915097812):
 			// the old file can be trashed CONCURRENTLY while this function is
@@ -5900,6 +5925,16 @@ export class SyncEngine {
 					"pull",
 					`Id-keyed move: ${noteRef(priorPath)} -> ${noteRef(newPath)} (id=${id})`,
 				);
+				// Point any leaf the trash just orphaned at the note's new home. The
+				// leaf reference was captured before the trash on purpose (see
+				// above) — re-deriving "which leaf was on oldFile" here would find
+				// nothing, because Obsidian has typically already reassigned it.
+				if (leavesToRedirect.length > 0) {
+					const newFile = this.app.vault.getAbstractFileByPath(normalizePath(newPath));
+					if (newFile instanceof TFile) {
+						for (const leaf of leavesToRedirect) void leaf.openFile(newFile);
+					}
+				}
 			} catch (e) {
 				rlog().warn(
 					"pull",

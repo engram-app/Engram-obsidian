@@ -51,7 +51,10 @@ const mockApp = {
 		rename: mock().mockResolvedValue(undefined),
 	},
 	fileManager: { trashFile: mock().mockResolvedValue(undefined) },
-	workspace: { getActiveViewOfType: mock().mockReturnValue(null) },
+	workspace: {
+		getActiveViewOfType: mock().mockReturnValue(null),
+		getLeavesOfType: mock().mockReturnValue([]),
+	},
 } as any;
 
 function createEngine(): SyncEngine {
