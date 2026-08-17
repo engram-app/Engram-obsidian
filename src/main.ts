@@ -39,6 +39,7 @@ import { createDebugApi, installDebugApi, uninstallDebugApi } from "./debug-api"
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
 import { isMarkdownPath } from "./file-kind";
 import { setLogSink } from "./has-logging";
+import { noteRef } from "./note-ref";
 import { PromiseTracker, setActiveTracker } from "./track-promise";
 
 /** Replaced by esbuild at build time (see esbuild.config.mjs `define`). */
@@ -1045,7 +1046,7 @@ export default class EngramSyncPlugin extends Plugin {
 								() => {
 									rlog().warn(
 										"crdt",
-										`reconcileColdStart: Y.Doc corrupted for ${file.path} — falling back to disk content`,
+										`reconcileColdStart: Y.Doc corrupted for ${noteRef(file.path)} — falling back to disk content`,
 									);
 									new Notice(
 										`Engram Sync: sync state for "${file.path.split("/").pop()}" was unreadable — using the on-disk copy.`,
@@ -1057,7 +1058,7 @@ export default class EngramSyncPlugin extends Plugin {
 						.catch((e) => {
 							rlog().warn(
 								"crdt",
-								`reconcileColdStart: failed to read ${file.path}: ${errMsg(e)}`,
+								`reconcileColdStart: failed to read ${noteRef(file.path)}: ${errMsg(e)}`,
 							);
 						});
 				}
@@ -2280,7 +2281,7 @@ export default class EngramSyncPlugin extends Plugin {
 							onReleaseError: (path, err) =>
 								rlog().warn(
 									"crdt",
-									`Last-release flush failed for ${path} (doc left resident): ${err instanceof Error ? err.message : String(err)}`,
+									`Last-release flush failed for ${noteRef(path)} (doc left resident): ${err instanceof Error ? err.message : String(err)}`,
 								),
 						});
 						// Point the editor ViewPlugin at this stack's coordinator. Set on the

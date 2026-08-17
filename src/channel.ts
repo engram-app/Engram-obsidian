@@ -1,6 +1,7 @@
 import type { AuthProvider } from "./auth";
 import { expBackoff } from "./backoff";
 import { errMsg } from "./error-util";
+import { noteRef } from "./note-ref";
 import { rlog } from "./remote-log";
 
 /** How long to wait before reconnecting when no auth token is available
@@ -1134,7 +1135,7 @@ export class NoteChannel {
 
 		if (event === "note_changed" && payload) {
 			const streamEvent = toStreamEvent(payload);
-			rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`);
+			rlog().info("channel", `Event: ${streamEvent.event_type} ${noteRef(streamEvent.path)}`);
 			this.onEvent?.(streamEvent);
 			// Mirror every other branch: nothing below applies to this event.
 			return;

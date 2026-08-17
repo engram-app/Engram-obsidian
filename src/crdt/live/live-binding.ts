@@ -24,6 +24,7 @@ import { type EditorView, type PluginValue, ViewPlugin, type ViewUpdate } from "
 import { editorInfoField } from "obsidian";
 import type * as Y from "yjs";
 import { isMarkdownPath } from "../../file-kind";
+import { noteRef } from "../../note-ref";
 import { rlog } from "../../remote-log";
 import {
 	applyCmChangesToYText,
@@ -198,7 +199,7 @@ class LiveBindingValue implements PluginValue {
 				} catch (err) {
 					rlog().error(
 						"crdt-live-binding",
-						`fm-creation forward failed for ${this.path}: ${String(err)}`,
+						`fm-creation forward failed for ${noteRef(this.path)}: ${String(err)}`,
 					);
 					this.scheduleDriftCheck();
 				}
@@ -238,7 +239,7 @@ class LiveBindingValue implements PluginValue {
 				// update() and wedge the editor. Log and let the drift check reconcile.
 				rlog().error(
 					"crdt-live-binding",
-					`forward failed for ${this.path}: ${String(err)}`,
+					`forward failed for ${noteRef(this.path)}: ${String(err)}`,
 				);
 				this.scheduleDriftCheck();
 			}
@@ -326,7 +327,7 @@ class LiveBindingValue implements PluginValue {
 			// and go live anyway — the drift check goLive schedules re-converges it.
 			rlog().error(
 				"crdt-live-binding",
-				`reconcile ${action.kind} failed for ${this.path}: ${String(err)}`,
+				`reconcile ${action.kind} failed for ${noteRef(this.path)}: ${String(err)}`,
 			);
 		}
 		this.goLive(text);
@@ -391,7 +392,10 @@ class LiveBindingValue implements PluginValue {
 				// A dispatch mid-update / offset disagreement throws here (inside a Y.Text
 				// observe callback, which would otherwise break painting for this
 				// transaction). Swallow and let the drift check re-adopt the doc.
-				rlog().error("crdt-live-binding", `paint failed for ${this.path}: ${String(err)}`);
+				rlog().error(
+					"crdt-live-binding",
+					`paint failed for ${noteRef(this.path)}: ${String(err)}`,
+				);
 				this.scheduleDriftCheck();
 			}
 		};
@@ -432,7 +436,7 @@ class LiveBindingValue implements PluginValue {
 			// actually reaches Loki.
 			rlog().warn(
 				"crdt-live-binding",
-				`drift on ${this.path} (editor ${editorText.length} vs doc ${docText.length}) - re-adopting`,
+				`drift on ${noteRef(this.path)} (editor ${editorText.length} vs doc ${docText.length}) - re-adopting`,
 			);
 			try {
 				this.editor.dispatch({
@@ -442,7 +446,7 @@ class LiveBindingValue implements PluginValue {
 			} catch (err) {
 				rlog().error(
 					"crdt-live-binding",
-					`drift re-adopt failed for ${this.path}: ${String(err)}`,
+					`drift re-adopt failed for ${noteRef(this.path)}: ${String(err)}`,
 				);
 			}
 		}
