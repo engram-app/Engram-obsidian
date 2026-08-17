@@ -267,3 +267,49 @@ describe("connectChannel reconnect catch-up", () => {
 		expect(reconcile).toHaveBeenCalledTimes(1);
 	});
 });
+
+// The index room's connect/disconnect wiring (#362). Round 4 found this
+// untested: the round-2 regression test called `setConnected(false)` itself and
+// asserted on IndexRoom, which already had that capability — so it passed
+// against the unfixed main.ts and the real fix could be deleted with a green
+// suite. This drives the actual handlers.
+describe("index room connect/disconnect wiring", () => {
+	test("a disconnect marks the index room offline, so a rejoin re-handshakes", async () => {
+		const calls: boolean[] = [];
+		const fakeThis = makeFakeThis(
+			() => Promise.resolve(),
+			() => Promise.resolve(0),
+		);
+		fakeThis.indexRoom = {
+			setConnected: (v: boolean) => calls.push(v),
+			connect: () => {},
+			receive: () => {},
+		};
+
+		await EngramSyncPlugin.prototype.connectChannel.call(fakeThis as never);
+		fakeThis.noteStream?.onStatusChange?.(true);
+		fakeThis.noteStream?.onStatusChange?.(false);
+
+		// Without this the room stays marked connected across the drop, so
+		// connect() finds no false->true edge on rejoin and never sends syncStep1.
+		expect(calls).toContain(false);
+	});
+
+	test("the crdt join advertises the index room", async () => {
+		let connected = 0;
+		const fakeThis = makeFakeThis(
+			() => Promise.resolve(),
+			() => Promise.resolve(0),
+		);
+		fakeThis.indexRoom = {
+			setConnected: () => {},
+			connect: () => connected++,
+			receive: () => {},
+		};
+
+		await EngramSyncPlugin.prototype.connectChannel.call(fakeThis as never);
+		fakeThis.noteStream?.onCrdtJoined?.();
+
+		expect(connected).toBe(1);
+	});
+});
