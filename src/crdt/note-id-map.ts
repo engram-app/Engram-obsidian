@@ -1,125 +1,182 @@
-import { uuid7 } from "./uuid7";
+import * as Y from "yjs";
+import { FILEMETA_MAP } from "./index-room";
+import { SyncStore } from "./sync-store";
 
-/** Path -> note_id sidecar (Task 4 of the note_id-keyed CRDT rework).
+/** Path <-> note_id identity for a vault.
  *
- * The CRDT document is being re-keyed by stable `note_id` instead of vault
- * path, because a rename currently looks like a delete+create to the CRDT
- * layer. This map is the plugin-side bridge: it remembers which note_id a
- * given path was last known to correspond to, and survives renames without
- * losing the id. Persisted in data.json (see main.ts PluginData.noteIds) so
- * it outlives a plugin reload.
+ * As of #362 this is an ADAPTER over `SyncStore`, not a pair of Maps. The
+ * public surface is unchanged on purpose — every call site (sync engine, live
+ * views, main, channel) keeps working — but the truth now lives in the shared
+ * `filemeta_v0` doc rather than in `data.json`.
  *
- * Later tasks (5, 6) use this to mint ids for new notes, learn ids from
- * pull responses, and key the CRDT manager by note_id.
+ * That is the whole point of engram-app/Engram#1146. Identity used to live in
+ * three places that had to agree — this map, the REST manifest, and the seq
+ * cursor — and `relay-pattern-audit.md` traces every drift incident we have had
+ * to that split. One CRDT, synced through the same channel as content, has no
+ * such class of bug because there is nothing to disagree with.
  *
- * Task 6 adds the REVERSE direction (`pathForId`): the CRDT wire (channel
- * frames, `crdt_doc_ready` announces) is keyed by bare note_id, but disk I/O
- * is keyed by path — so inbound traffic needs id->path just as much as
- * outbound traffic needs path->id. The reverse map is maintained internally
- * by `set`/`delete`/`rename` so the two directions never drift apart.
+ * ## Why the API did not change
+ *
+ * Rewriting ~5 call sites across sync/wiring/main/channel in the same change
+ * that moves the storage would make a behaviour regression indistinguishable
+ * from a refactor mistake. The layered semantics are additive here: `get` still
+ * answers immediately, mutations still take effect immediately, and the only
+ * new thing is that they also reach other devices.
+ *
+ * ## Committing
+ *
+ * Mutations auto-commit, so a caller that knew nothing about layering behaves
+ * as before. `batch(fn)` defers the commit so a folder move — N renames —
+ * publishes as ONE update instead of N. Use it wherever a loop mutates.
  */
-/** A vault path that may legitimately key this map. Rejects the garbage a
- *  nullish caller produces after string coercion — a literal "null" key was
- *  found minted + CRDT-enrolled in a prod data.json (2026-07-07 incident). */
-function isValidPath(path: string): boolean {
-	return !!path && path !== "null" && path !== "undefined";
-}
-
 export class NoteIdMap {
-	private readonly byPath = new Map<string, string>();
-	/** Reverse index (note_id -> path), kept in sync by set/delete/rename. */
-	private readonly byId = new Map<string, string>();
+	store: SyncStore;
+	private batching = false;
 
-	get(path: string): string | null {
-		return this.byPath.get(path) ?? null;
+	/** Pass the live index room's store to sync identity with the vault. The
+	 *  default is a detached doc: `fromJSON` and any test that just wants a map
+	 *  still work, they simply have no peers. */
+	constructor(store?: SyncStore) {
+		this.store = store ?? new SyncStore(new Y.Doc().getMap(FILEMETA_MAP));
 	}
 
-	/** Resolve `path`'s id, minting + storing a fresh UUIDv7 if this is the
-	 *  first time this path has been seen. Centralizes the mint-or-reuse
-	 *  pattern (previously inlined separately in pushFile and duplicated for
-	 *  the live-editor binding), so a concurrent "first touch" from either
-	 *  seam (first save vs. first open) always converges on one id. */
-	getOrMint(path: string): string {
-		if (!isValidPath(path)) {
-			// Loud on purpose: minting an id for a garbage path binds a real CRDT
-			// doc to a phantom file. The caller has a null-path bug — surface it.
-			throw new Error(`NoteIdMap.getOrMint: invalid path ${JSON.stringify(path)}`);
+	/** Publish staged state, coalescing everything staged in the same tick.
+	 *
+	 *  Obsidian fires `rename` ONCE PER DESCENDANT for a folder rename (see
+	 *  `SyncEngine.replayFromSeq`: "a folder rename fires N times"), and each one
+	 *  arrives as its own `handleRename` call. Committing per call would publish
+	 *  a 200-file folder move as 200 updates — 200 chances for a peer to observe
+	 *  a half-moved folder, which is the shape of every folder-rename bug we have
+	 *  had.
+	 *
+	 *  A microtask is enough because those N events arrive in one tick. It also
+	 *  costs nothing in correctness: reads are served from the layers and are
+	 *  already immediate, so deferring only the PUBLICATION changes what peers
+	 *  see, not what this device sees. */
+	private flush(): void {
+		if (this.batching || this.flushScheduled) return;
+		this.flushScheduled = true;
+		queueMicrotask(() => {
+			this.flushScheduled = false;
+			if (!this.batching) this.store.commit();
+		});
+	}
+
+	private flushScheduled = false;
+
+	/** Publish immediately rather than at the end of the tick. For shutdown and
+	 *  for any caller that must know the frame has been handed to the wire. */
+	flushNow(): void {
+		this.flushScheduled = false;
+		this.store.commit();
+	}
+
+	/** Run `fn` with commits deferred, then publish once.
+	 *
+	 *  A folder move stages a rename per descendant. Committing each one
+	 *  separately reaches observers as N updates — N chances to see a half-moved
+	 *  folder — which is the shape of the folder-rename bugs we have had. */
+	batch(fn: () => void): void {
+		const outer = this.batching;
+		this.batching = true;
+		try {
+			fn();
+		} finally {
+			this.batching = outer;
+			// Synchronous: a caller that asked for a batch is telling us where the
+			// unit of work ends, so publishing it is not something to defer.
+			if (!this.batching) this.flushNow();
 		}
-		const existing = this.get(path);
-		if (existing) return existing;
-		const id = uuid7();
-		this.set(path, id);
+	}
+
+	/** Point this map at a different store — used when the vault changes and the
+	 *  index room is REPLACED (a fresh Y.Doc). The instance is captured by the
+	 *  sync engine and the live views, so it must be re-pointed in place rather
+	 *  than swapped out from under them. */
+	rebind(store: SyncStore): void {
+		this.store = store;
+		this.flushScheduled = false;
+	}
+
+	/** Warm the local cache from data.json. Never published — see
+	 *  `SyncStore.seed`. */
+	seed(ids: Record<string, string> | undefined): void {
+		for (const [path, id] of Object.entries(ids ?? {})) {
+			this.store.seed(path, { note_id: id });
+		}
+	}
+
+	get(path: string): string | null {
+		return this.store.get(path);
+	}
+
+	/** Resolve `path`'s id, minting a fresh UUIDv7 if this is the first time it
+	 *  has been seen. Throws on a garbage path — see `SyncStore.getOrMint`. */
+	getOrMint(path: string): string {
+		const id = this.store.getOrMint(path);
+		this.flush();
 		return id;
 	}
 
-	/** Reverse lookup: the path last known to correspond to `id`, or null if
-	 *  this device has never learned/minted a mapping for it (e.g. a
-	 *  `crdt_doc_ready` announce for a note created on another device that
-	 *  hasn't reached this device via a regular sync pull yet). */
 	pathForId(id: string): string | null {
-		return this.byId.get(id) ?? null;
+		return this.store.pathForId(id);
 	}
 
+	/** Learn a mapping. Unlike `getOrMint` this refuses garbage quietly rather
+	 *  than throwing: it arrives from pull feeds and push responses, where one
+	 *  bad row must not take down the batch. */
 	set(path: string, id: string): void {
-		// Defense-in-depth vs. getOrMint's throw: set() arrives from more callers
-		// (pull feeds, push responses) — refuse to store garbage, don't crash them.
-		if (!isValidPath(path) || !id) return;
-		// A path can only ever point at one id — if it previously pointed at a
-		// DIFFERENT id, that stale reverse entry must go, or pathForId(oldId)
-		// would keep resolving to this path after it's been reassigned.
-		const oldId = this.byPath.get(path);
-		if (oldId !== undefined && oldId !== id) {
-			this.byId.delete(oldId);
-		}
-		// ...and if `id` previously lived at a DIFFERENT path, evict that stale
-		// forward entry too. Otherwise both paths keep resolving to `id` (two
-		// paths -> one id) and pathForId(id) points at whichever was set last —
-		// letting inbound CRDT content for `id` flush onto the wrong file.
-		const oldPath = this.byId.get(id);
-		if (oldPath !== undefined && oldPath !== path) {
-			this.byPath.delete(oldPath);
-		}
-		this.byPath.set(path, id);
-		this.byId.set(id, path);
+		if (!path || path === "null" || path === "undefined" || !id) return;
+		this.store.set(path, { note_id: id });
+		this.flush();
 	}
 
+	/** Unchanged from `origin/main`: LOCAL only.
+	 *
+	 *  The remaining callers are local hygiene reacting to something ANOTHER
+	 *  device already published — a remote delete, a remote rename's old leg, a
+	 *  stale room-id mapping. The peer's frame carries the removal; this side
+	 *  only has to stop answering for the path until it lands. Publishing these
+	 *  removed the path from every other device's index, which is what broke
+	 *  `test_drifted_map_self_heals_on_inbound_edit`: local drift propagated, so
+	 *  no healthy peer was left to heal from.
+	 *
+	 *  The one caller that DOES mean "the note is gone" — the local vault-delete
+	 *  in `handleDelete` — uses `release/1`. */
 	delete(path: string): void {
-		const id = this.byPath.get(path);
-		if (id !== undefined) this.byId.delete(id);
-		this.byPath.delete(path);
+		this.store.forget(path);
+	}
+
+	/** Publish a claim release. For a note the user actually deleted. */
+	release(path: string): void {
+		this.store.delete(path);
+		this.flush();
 	}
 
 	rename(oldPath: string, newPath: string): void {
-		const id = this.byPath.get(oldPath);
-		if (id === undefined) return;
-		// Mirror set()'s cleanup: if newPath already pointed at a DIFFERENT id,
-		// that id's reverse entry must go, or pathForId(displacedId) would keep
-		// resolving to newPath after it's been overwritten here.
-		const displacedId = this.byPath.get(newPath);
-		if (displacedId !== undefined && displacedId !== id) {
-			this.byId.delete(displacedId);
-		}
-		this.byPath.delete(oldPath);
-		this.byPath.set(newPath, id);
-		this.byId.set(id, newPath);
+		// Unchanged contract: renaming a path this map has never seen is a no-op
+		// for the CALLER's purposes. The store still records the redirect, which
+		// is what stops a folder move minting a second id for the same file.
+		this.store.rename(oldPath, newPath);
+		this.flush();
 	}
 
-	/** Drop every mapping. Used on vault change: the map is per-vault identity
-	 *  state — carrying ids across vaults routes CRDT frames to another
-	 *  vault's notes (plugin #200). Mutates in place so every holder of the
-	 *  instance (main, sync engine, live views) sees the wipe. */
+	/** Called when `clear()` runs, so the vault-change backstop replaces the
+	 *  index room rather than only dropping local layers. Set by main.ts. */
+	onReset: (() => void) | null = null;
+
 	clear(): void {
-		this.byPath.clear();
-		this.byId.clear();
+		this.store.clear();
+		this.onReset?.();
 	}
 
 	toJSON(): Record<string, string> {
-		return Object.fromEntries(this.byPath);
+		return Object.fromEntries(this.store.entries().map(([path, meta]) => [path, meta.note_id]));
 	}
 
 	static fromJSON(o: Record<string, string> | undefined): NoteIdMap {
 		const m = new NoteIdMap();
-		for (const [p, id] of Object.entries(o ?? {})) m.set(p, id);
+		m.seed(o);
 		return m;
 	}
 }

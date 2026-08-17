@@ -402,6 +402,14 @@ describe("privacy — no content retention for export", () => {
 		const wireStatement =
 			/^this\.send\(\[this\.crdtJoinRef,[^{}]*\{\s*doc_id:\s*docId,\s*b64\s*\}\]\);$/;
 
+		// The per-vault index room's wire send (#362). A SECOND exact form rather
+		// than a loosened first one: it differs only by having no doc_id — there
+		// is one index room per vault, so the topic is the address — and widening
+		// the original to make doc_id optional would exempt any `{ b64 }` object
+		// reachable from a `this.send([this.crdtJoinRef, ...])` call, which is
+		// most of what this check exists to catch.
+		const indexWireStatement = /^this\.send\(\[this\.crdtJoinRef,[^{}]*\{\s*b64\s*\}\]\);$/;
+
 		const findings: Finding[] = [];
 		for (const f of sources) {
 			const stripped = stripCommentsAndStrings(f.text);
@@ -419,7 +427,7 @@ describe("privacy — no content retention for export", () => {
 						.slice(from, to === -1 ? undefined : to + 1)
 						.replace(/\s+/g, "")
 						.replace(/^[^A-Za-z_$]*/, "");
-					if (!wireStatement.test(statement)) {
+					if (!wireStatement.test(statement) && !indexWireStatement.test(statement)) {
 						findings.push({
 							file: f.rel,
 							line: stripped.slice(0, m.index).split("\n").length,

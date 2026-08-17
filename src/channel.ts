@@ -197,6 +197,11 @@ export class NoteChannel {
 	 *  the mutual handshake re-solicits its state, so this is a transient. */
 	private lastRefusedWarnAt = new Map<string, number>();
 	private static readonly REFUSED_WARN_THROTTLE_MS = 3000;
+
+	/** Throttle key for the index room's refusals. Not a doc id — the map is
+	 *  keyed by doc, and the index room has none. A UUID-shaped sentinel would be
+	 *  indistinguishable from a real doc in a log line, so it reads as what it is. */
+	private static readonly INDEX_REFUSAL_KEY = "__index_room__";
 	/**
 	 * The `ref` value sent with the crdt: topic phx_join frame.
 	 * Stored so handleMessage can distinguish a join-error reply (ref matches)
@@ -265,6 +270,10 @@ export class NoteChannel {
 	onPlanState: ((plan: unknown) => void) | null = null;
 	/** Inbound CRDT frames from the server. `docId` is the note's bare note_id. */
 	onCrdtMessage: ((docId: string, b64: string) => void) | null = null;
+
+	/** A frame from the per-VAULT index room (`filemeta_v0`). No doc_id: there is
+	 *  exactly one index room per vault, so the topic identifies it. */
+	onIndexMessage: ((b64: string) => void) | null = null;
 	/** A room became active on the server for `docId` (announced via
 	 *  `broadcast_from!`, so only OTHER devices see it). Trigger a sync-step-1
 	 *  for this doc so a device that doesn't yet have the note pulls it. */
@@ -411,6 +420,38 @@ export class NoteChannel {
 		// match the joined channel and silently drops the frame (every CRDT update
 		// vanished before reaching the backend).
 		this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_msg", { doc_id: docId, b64 }]);
+		return true;
+	}
+
+	/** Send a frame to the per-VAULT index room (`filemeta_v0`).
+	 *
+	 *  Same topic, same join_ref discipline and same held-not-lost semantics as
+	 *  `sendCrdt`, minus the doc_id — one index room per vault, so the topic is
+	 *  the address. Refusing before the join is acked is the honest signal for the
+	 *  same reason it is there: a frame with a stale join_ref is dropped
+	 *  server-side without a reply.
+	 *
+	 *  The refusal is NOT throttled per doc the way sendCrdt's is: there is only
+	 *  one index room, so a warn per refused frame during an offline window would
+	 *  be one stream rather than N. It shares the throttle map under a fixed key. */
+	sendIndexCrdt(b64: string): boolean {
+		const t = this.crdtTopic;
+		if (!t || !this.crdtJoined) {
+			const now = Date.now();
+			if (
+				now - (this.lastRefusedWarnAt.get(NoteChannel.INDEX_REFUSAL_KEY) ?? 0) >=
+				NoteChannel.REFUSED_WARN_THROTTLE_MS
+			) {
+				this.lastRefusedWarnAt.set(NoteChannel.INDEX_REFUSAL_KEY, now);
+				rlog().warn(
+					"channel",
+					`sendIndexCrdt refused (crdt topic not joined): joined=${this.crdtJoined} — held, recovers on rejoin`,
+				);
+			}
+			return false;
+		}
+
+		this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_index_msg", { b64 }]);
 		return true;
 	}
 
@@ -1096,6 +1137,14 @@ export class NoteChannel {
 			const b64 = payload.b64 as string | undefined;
 			if (docId && b64) {
 				this.onCrdtMessage?.(docId, b64);
+			}
+			return;
+		}
+
+		if (event === "crdt_index_msg" && payload) {
+			const b64 = payload.b64 as string | undefined;
+			if (b64) {
+				this.onIndexMessage?.(b64);
 			}
 			return;
 		}
