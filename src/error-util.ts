@@ -72,6 +72,25 @@ const BARE_PATH = new RegExp(
  *   * a vault file with an extension outside `VAULT_EXT`, or none at all
  *   * a path split across interpolations before it ever reaches here
  *
+ * All three require the path to be UNQUOTED. Every quoted form is already
+ * clean regardless of extension, because `QUOTED_PATH` keys on the separator
+ * and not the suffix — verified against quoted weird-extension, quoted
+ * no-extension and quoted folder-only inputs.
+ *
+ * That is why they are left open rather than chased. Node quotes the path in
+ * every fs error, Obsidian's adapter surfaces Node's, and our own code cannot
+ * produce the unquoted form because the source guard forces `noteRef` at the
+ * call site. The remaining shape needs a third party to write a vault path
+ * into prose with no quotes — which nothing we depend on has been observed to
+ * do. Closing it would mean scrubbing ANY token holding a separator, which
+ * certainly destroys `application/json`, `src/sync.ts:412` and every URL, in
+ * exchange for a disclosure nobody has seen.
+ *
+ * If a path IS ever observed in client logs, the fix is exact rather than
+ * broader: give `errMsg` the known path as a second argument and redact that
+ * literal string. The ~40 sites that matter already hold it — they sit beside
+ * a `noteRef(path)` call. Do that, not a greedier regex.
+ *
  * Paths in logs are prevented at the CALL SITES (`noteRef`, enforced by the
  * source guard) and in the anomaly path (slug validation). This function is
  * the backstop for text we do not author, not the primary control.

@@ -175,3 +175,28 @@ describe("errMsg — unquoted vault paths", () => {
 		expect(errMsg(new Error("could not parse note.md"))).toBe("could not parse note.md");
 	});
 });
+
+/**
+ * Why the remaining gaps are left open.
+ *
+ * The scrub does not catch an UNQUOTED path with an unusual extension, no
+ * extension, or a folder with no file. Those are documented as open, and this
+ * is the evidence behind that call: every QUOTED form is clean regardless of
+ * suffix, because the quoted rule keys on the separator rather than the
+ * extension. Node quotes the path in every fs error and Obsidian surfaces
+ * Node's, so the covered set is the set that actually occurs.
+ *
+ * If this ever goes red, the covered set shrank and the decision needs
+ * revisiting — that is the entire point of pinning it.
+ */
+describe("errMsg — quoted paths are clean whatever the suffix", () => {
+	test.each([
+		["an extension outside the vault set", "failed on '/vault/Medical/data.xyz'"],
+		["no extension at all", "failed on '/vault/Medical/untitled'"],
+		["a folder with no file", "EEXIST: file already exists, mkdir '/vault/Medical'"],
+		["a relative path, no extension", "cannot read 'Medical/notes'"],
+	])("%s", (_name, raw) => {
+		expect(raw).toContain("Medical"); // the leak, before the scrub
+		expect(errMsg(new Error(raw))).not.toContain("Medical");
+	});
+});
