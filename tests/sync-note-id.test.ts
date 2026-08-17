@@ -6,8 +6,10 @@
  */
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { TFile } from "obsidian";
+import * as Y from "yjs";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
+import { SyncStore } from "../src/crdt/sync-store";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -196,6 +198,27 @@ describe("rename/delete drop stale sync-state (echo-suppression on recreate)", (
 		await engine.handleDelete(new TFile("a.md"));
 
 		expect(engine.exportSyncState()["a.md"]).toBeUndefined();
+	});
+
+	// The wiring half of Task 5. The store-level `release()` was covered, but
+	// `handleDelete` called the LOCAL-only `delete()`, so the id vanished from
+	// data.json while the claim survived in the shared doc — and the doc outlives
+	// the process. Same-session a recreate still minted fresh (the local layers
+	// hid the entry), so only a restart or a second device saw the resurrection.
+	test("handleDelete releases the claim from the shared index", async () => {
+		const engine = createEngine();
+		const doc = new Y.Doc();
+		const shared = doc.getMap<{ note_id: string }>("filemeta_v0");
+		const noteIdMap = new NoteIdMap(new SyncStore(shared));
+		noteIdMap.set("a.md", "id-dead");
+		noteIdMap.flushNow();
+		engine.setNoteIdMap(noteIdMap);
+		expect(shared.get("a.md")).toEqual({ note_id: "id-dead" });
+
+		await engine.handleDelete(new TFile("a.md"));
+		noteIdMap.flushNow();
+
+		expect(shared.has("a.md")).toBe(false);
 	});
 });
 

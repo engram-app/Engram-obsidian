@@ -106,7 +106,16 @@ export class SyncStore {
 		// A remote update invalidates the reverse index just as a local one does.
 		// Without this a path learned from another device answers `pathForId`
 		// with a stale answer, or none.
-		this.map.observe(() => {
+		this.map.observe((event) => {
+			// A forget is a bridge, not a verdict: every caller forgets a path
+			// because some OTHER device has removed or moved it, and is covering
+			// the window until that device's frame arrives. When the frame lands
+			// and rewrites the key, the bridge has served its purpose — holding
+			// it past that point is the permanent-blindness bug `evicted` had, one
+			// indirection over: a peer re-claiming the path would never be visible
+			// to `getMeta` or `pathForId` again, so `getOrMint` would mint a SECOND
+			// id for a note that already has one and publish it over the live claim.
+			for (const key of event.keysChanged) this.forgotten.delete(key);
 			this.reverse = null;
 		});
 	}
@@ -254,6 +263,19 @@ export class SyncStore {
 			this.deleteSet.add(prior);
 		}
 
+		// A forgotten path is hidden from `pathForId`, so the removal above cannot
+		// see a committed claim for this id sitting there — and the doc would keep
+		// BOTH, two paths naming one note, which is the wrong-mint cross-file
+		// overwrite shape on the client and an unconvergeable fixpoint on the
+		// server. Claiming the id here is a genuine move, so publishing the old
+		// key's removal is correct; it is not the local-hygiene case `forget()`
+		// exists to protect.
+		for (const path of this.forgotten) {
+			if (path === resolved || this.map.get(path)?.note_id !== meta.note_id) continue;
+			this.deleteSet.add(path);
+			this.forgotten.delete(path);
+		}
+
 		// The OTHER eviction, which `origin/main`'s NoteIdMap had and the first
 		// version of this store dropped: if `resolved` currently holds a
 		// DIFFERENT id, that id no longer lives anywhere and its reverse entry
@@ -289,11 +311,17 @@ export class SyncStore {
 	 *  drift injected on one device propagated to the other, so there was no
 	 *  healthy peer left to heal from. */
 	forget(path: string): void {
-		const resolved = this.resolvePath(path);
-		this.overlay.delete(resolved);
-		this.cache.delete(resolved);
+		// LITERAL path, deliberately unresolved. `delete()` resolves because it
+		// publishes and the entry really did move; a forget that resolved reached
+		// through a staged rename and dropped the overlay entry at the TARGET,
+		// while `renamedAway` still had the source armed for removal — so
+		// `commit()` published a bare deletion and every other device lost the
+		// claim. That is the exact failure this method exists to prevent, so
+		// resolving here made it violate its own invariant.
+		this.overlay.delete(path);
+		this.cache.delete(path);
 		// The committed entry cannot be removed without publishing, so hide it.
-		this.forgotten.add(resolved);
+		this.forgotten.add(path);
 		this.reverse = null;
 	}
 
@@ -314,6 +342,13 @@ export class SyncStore {
 	 *  convergence is the whole point of the layer. */
 	rename(oldPath: string, newPath: string): void {
 		if (oldPath === newPath) return;
+
+		// A real note is moving INTO the target, so a local forget of it is now
+		// stale — and left standing it hides the note from every read, which makes
+		// `getOrMint` mint a duplicate id for a file that already has one. Cleared
+		// on BOTH branches below (known and unknown source): the target becomes
+		// occupied either way.
+		this.forgotten.delete(newPath);
 
 		const meta = this.getMeta(oldPath);
 		const from = this.resolvePath(oldPath);

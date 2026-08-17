@@ -439,3 +439,162 @@ describe("a local forget is local", () => {
 		expect(shared.has("a.md")).toBe(false);
 	});
 });
+
+/**
+ * Round 5, against the `forgotten` set that fixed the e2e drift failure above.
+ *
+ * Four confirmed defects, and the shape of every one of them was already on
+ * record: `forgotten` is a second `evicted`, and `evicted` had been fixed for
+ * permanence one round earlier. A hiding layer that nothing clears is blindness,
+ * not caution.
+ */
+describe("a forget is a bridge, not a verdict", () => {
+	/** Two stores on two docs, wired so a commit on one reaches the other. */
+	function pair() {
+		const a = new Y.Doc();
+		const b = new Y.Doc();
+		const sync = () => {
+			Y.applyUpdate(a, Y.encodeStateAsUpdate(b, Y.encodeStateVector(a)));
+			Y.applyUpdate(b, Y.encodeStateAsUpdate(a, Y.encodeStateVector(b)));
+		};
+		return {
+			a: new SyncStore(a.getMap("filemeta_v0")),
+			b: new SyncStore(b.getMap("filemeta_v0")),
+			sync,
+		};
+	}
+
+	// The healing route the e2e actually exercises. The round-4 test asserted
+	// healing via a LOCAL set — the one path that could not fail — while the
+	// inbound path this whole PR builds stayed deaf for the session.
+	test("a peer re-claiming the path clears the forget", () => {
+		const { a, b, sync } = pair();
+		a.set("a.md", { note_id: "id-a" });
+		a.commit();
+		sync();
+
+		a.forget("a.md");
+		b.set("a.md", { note_id: "id-new" });
+		b.commit();
+		sync();
+
+		expect(a.get("a.md")).toBe("id-new");
+		expect(a.pathForId("id-new")).toBe("a.md");
+		// The duplicate-mint consequence, stated directly: a deaf path re-mints.
+		expect(a.getOrMint("a.md")).toBe("id-new");
+	});
+
+	// Latent while the overlay covers it, permanent once commit() clears the
+	// overlay — which is why a test that stops at the staged window misses it.
+	// The observer above also catches this one (the commit writes the key), so
+	// it is a behaviour test, not the proof that `rename` needs its own clear.
+	test("a local rename into a forgotten path clears the forget", () => {
+		const doc = new Y.Doc();
+		const store = new SyncStore(doc.getMap("filemeta_v0"));
+		store.set("a.md", { note_id: "id-a" });
+		store.commit();
+
+		store.forget("b.md");
+		store.rename("a.md", "b.md");
+		store.commit();
+
+		expect(store.get("b.md")).toBe("id-a");
+		expect(store.pathForId("id-a")).toBe("b.md");
+		expect(store.getOrMint("b.md")).toBe("id-a");
+	});
+
+	// THIS is why `rename` clears it itself. A rename whose SOURCE this device
+	// has never seen — a folder move cascading over a descendant nobody opened —
+	// records a redirect and writes nothing, so the commit changes no key and
+	// yrs fires no observer at all. The forget would never be cleared, and the
+	// target's committed claim would stay invisible to the getOrMint the
+	// redirect exists to feed.
+	test("an unknown-source rename into a forgotten path clears it too", () => {
+		const doc = new Y.Doc();
+		const store = new SyncStore(doc.getMap("filemeta_v0"));
+		store.set("b.md", { note_id: "id-b" });
+		store.commit();
+
+		store.forget("b.md");
+		store.rename("never-seen.md", "b.md");
+		store.commit();
+
+		expect(store.get("b.md")).toBe("id-b");
+		expect(store.getOrMint("b.md")).toBe("id-b");
+	});
+
+	// `set`'s id-keyed removal asks `pathForId` where the id lives now. A forget
+	// hides the answer, so the stale claim was never staged for deletion and the
+	// doc kept two paths naming one note — the wrong-mint cross-file overwrite
+	// shape here, and a fixpoint the server's projection cannot converge.
+	test("claiming a forgotten id elsewhere still removes the old key", () => {
+		const doc = new Y.Doc();
+		const shared = doc.getMap<{ note_id: string }>("filemeta_v0");
+		const store = new SyncStore(shared);
+		store.set("a.md", { note_id: "id-a" });
+		store.commit();
+
+		store.forget("a.md");
+		store.set("b.md", { note_id: "id-a" });
+		store.commit();
+
+		expect([...shared.keys()]).toEqual(["b.md"]);
+	});
+
+	// forget() resolved through the rename chain, so it dropped the overlay entry
+	// at the TARGET while `renamedAway` still had the source armed — commit()
+	// then published a bare deletion. The local-only method violating its own
+	// invariant, in the same failure mode it was written to fix.
+	test("forgetting a rename SOURCE does not publish a deletion", () => {
+		const doc = new Y.Doc();
+		const shared = doc.getMap<{ note_id: string }>("filemeta_v0");
+		const map = new NoteIdMap(new SyncStore(shared));
+		map.set("a.md", "id-a");
+		map.flushNow();
+
+		map.batch(() => {
+			map.rename("a.md", "b.md");
+			map.delete("a.md");
+		});
+		map.flushNow();
+
+		expect(shared.get("b.md")).toEqual({ note_id: "id-a" });
+	});
+
+	// The `entries()` half, which had no coverage at all: deleting the forgotten
+	// filter left the id in data.json, so the next launch seeded a path the
+	// device had deliberately stopped answering for.
+	test("entries() omits a forgotten path", () => {
+		const doc = new Y.Doc();
+		const store = new SyncStore(doc.getMap("filemeta_v0"));
+		store.set("a.md", { note_id: "id-a" });
+		store.commit();
+
+		store.forget("a.md");
+
+		expect(store.entries()).toEqual([]);
+	});
+});
+
+// Task 5: a file recreated at a deleted note's path must mint a FRESH id. The
+// local vault-delete was routed to the local-only forget, so the id was erased
+// from data.json but the claim survived in the doc — and the doc outlives the
+// process. Same-session the resurrection was invisible; a restart, or any other
+// device, adopted the dead lineage immediately.
+describe("a deleted note releases its claim", () => {
+	test("a path released on one device re-mints fresh on another", () => {
+		const doc = new Y.Doc();
+		const shared = doc.getMap<{ note_id: string }>("filemeta_v0");
+		const map = new NoteIdMap(new SyncStore(shared));
+		map.set("gone.md", "id-dead");
+		map.flushNow();
+
+		map.release("gone.md");
+		map.flushNow();
+
+		// A second store over the same doc IS the restart / other-device case.
+		const fresh = new NoteIdMap(new SyncStore(shared));
+		expect(fresh.get("gone.md")).toBeNull();
+		expect(fresh.getOrMint("gone.md")).not.toBe("id-dead");
+	});
+});

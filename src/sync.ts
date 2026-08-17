@@ -2487,8 +2487,14 @@ export class SyncEngine {
 		// so a note later recreated at this path must mint a fresh id rather
 		// than resurrecting the deleted note's (Task 5). Attachments have no
 		// entries in this map (path -> note_id only), so gated on !isBinary.
+		// `release`, not `delete`: this is the one caller that genuinely means "the
+		// note is gone", so the claim has to come out of the shared index too. A
+		// local-only forget left the committed entry standing, so the id was erased
+		// from data.json but survived in the doc — and after a restart (or on any
+		// other device, immediately) a file recreated at this path adopted the
+		// deleted note's id, resurrecting the lineage Task 5 exists to bury.
 		if (!isBinary) {
-			this.noteIdMap?.delete(file.path);
+			this.noteIdMap?.release(file.path);
 		}
 
 		// Drop the deleted path's sync-state entry (notes AND attachments): its
@@ -3434,7 +3440,13 @@ export class SyncEngine {
 					this.baseStore?.rename(normalizePath(pushedPath), normalizePath(serverPath));
 					this.dropPath(normalizePath(pushedPath), { dropBase: false });
 					this.stampSyncedRow(normalizePath(serverPath), { hash });
-					this.noteIdMap?.delete(normalizePath(pushedPath));
+					// The server MOVED the note (path sanitization), so the old path's
+					// claim is genuinely dead and must be released, not just
+					// forgotten: a forget hides the old key from `pathForId`, which
+					// is exactly what the `set` below consults to remove a stale
+					// claim — so both keys survived in the doc, naming one note at
+					// two paths.
+					this.noteIdMap?.release(normalizePath(pushedPath));
 					this.noteIdMap?.set(normalizePath(serverPath), resp.note.id);
 				} else {
 					this.stampSyncedRow(normalizePath(file.path), { hash });

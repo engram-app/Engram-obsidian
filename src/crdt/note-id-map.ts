@@ -133,12 +133,16 @@ export class NoteIdMap {
 
 	/** Unchanged from `origin/main`: LOCAL only.
 	 *
-	 *  Callers are local hygiene — dropping a stale room-id mapping, a reconcile
-	 *  clearing a bad entry, drift repair. None of them mean "this note is gone
-	 *  from the vault", and publishing them removed the path from every other
-	 *  device's index. Releasing a claim for a genuinely deleted note is
-	 *  `release/1`, and wiring the delete path to it is part of the remaining
-	 *  client-write work on #362 rather than a side effect of this refactor. */
+	 *  The remaining callers are local hygiene reacting to something ANOTHER
+	 *  device already published — a remote delete, a remote rename's old leg, a
+	 *  stale room-id mapping. The peer's frame carries the removal; this side
+	 *  only has to stop answering for the path until it lands. Publishing these
+	 *  removed the path from every other device's index, which is what broke
+	 *  `test_drifted_map_self_heals_on_inbound_edit`: local drift propagated, so
+	 *  no healthy peer was left to heal from.
+	 *
+	 *  The one caller that DOES mean "the note is gone" — the local vault-delete
+	 *  in `handleDelete` — uses `release/1`. */
 	delete(path: string): void {
 		this.store.forget(path);
 	}
