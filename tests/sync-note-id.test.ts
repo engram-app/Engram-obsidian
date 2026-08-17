@@ -259,6 +259,59 @@ describe("id-keyed move: pull upsert at a new path for a known id trashes the ol
 		expect(noteIdMap.get("Old.md")).toBeNull();
 	});
 
+	// A rename changes no CONTENT, so the merge base is still the note's common
+	// ancestor — it just lives under a new key. Deleting it leaves the note with
+	// no LCA, and the 3-way merge has nothing to merge against: every subsequent
+	// edit reads as a divergence and lands as a keep-both conflict copy, over and
+	// over, until a reload rebuilds the base from a full pull.
+	//
+	// Reported from real use: renaming in the WEB app propagated the rename to
+	// Obsidian, then "typing stopped syncing" and Obsidian wrote a conflict file
+	// repeatedly. Reloading Obsidian fixed it, which is what proves the lost
+	// state was the base and not anything on the server.
+	//
+	// The LOCAL rename path already gets this right (`baseStore.rename` then
+	// `dropPath(old, {dropBase: false})`); the REMOTE leg simply never got the
+	// same treatment.
+	test("a remote relocation MOVES the merge base instead of deleting it", async () => {
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Old.md", "id-base");
+		engine.setNoteIdMap(noteIdMap);
+		manifestWith([{ id: "id-base", path: "New.md" }]);
+
+		const renamed: Array<[string, string]> = [];
+		const deleted: string[] = [];
+		(engine as any).baseStore = {
+			get: () => ({ content: "ancestor", version: 1, ts: 0 }),
+			set: () => {},
+			rename: (from: string, to: string) => renamed.push([from, to]),
+			delete: (path: string) => deleted.push(path),
+		};
+
+		const oldFile = new TFile("Old.md");
+		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
+			p === "Old.md" ? oldFile : null,
+		);
+
+		await engine.applySyncChange({
+			type: "note",
+			id: "id-base",
+			seq: 2,
+			path: "New.md",
+			title: "New",
+			content: "body",
+			folder: "",
+			tags: [],
+			mtime: 2,
+			updated_at: "2026-01-01T00:00:00Z",
+			deleted: false,
+		} as any);
+
+		expect(renamed).toContainEqual(["Old.md", "New.md"]);
+		expect(deleted).not.toContain("Old.md");
+	});
+
 	test("handleStreamEvent moves on a realtime upsert for a known id (belt-and-suspenders)", async () => {
 		const engine = createEngine();
 		const noteIdMap = new NoteIdMap();

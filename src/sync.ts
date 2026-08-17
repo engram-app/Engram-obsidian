@@ -5804,9 +5804,25 @@ export class SyncEngine {
 			return;
 		}
 		this.noteIdMap?.rename(priorPath, newPath);
-		// Drop the old path's stale caches so a later create there isn't
-		// echo-suppressed and no diverged base survives the move.
-		this.dropPath(normalizePath(priorPath));
+		// Carry the merge base WITH the note, exactly as the local rename leg does
+		// (`handleRename` → `baseStore.rename` + `dropPath(dropBase: false)`).
+		//
+		// This used to drop the base outright, on the reasoning that "no diverged
+		// base survives the move". But a relocation moves a path and changes no
+		// content, so the base is not diverged — it is the note's common ancestor
+		// under a stale key. Deleting it leaves the note with NO ancestor, and a
+		// 3-way merge with nothing to merge against reads every later edit as a
+		// divergence and writes a keep-both conflict copy. Repeatedly, because
+		// nothing re-establishes the base until a reload does a full pull.
+		//
+		// Found in real use: a rename performed in the WEB app reached Obsidian,
+		// then "typing stopped syncing" and conflict files kept appearing.
+		// Reloading Obsidian fixed it — which is what proves the lost state was
+		// local and the server was fine all along.
+		this.baseStore?.rename(normalizePath(priorPath), normalizePath(newPath));
+		// Still drop the old path's sync-state so a later create there isn't
+		// echo-suppressed; only the base is preserved, and it moved above.
+		this.dropPath(normalizePath(priorPath), { dropBase: false });
 		// normalizePath for the vault lookup (map keys arrive normalized from the
 		// server feed, but a non-normalized key would silently miss the trash and
 		// leave the duplicate this fix exists to remove). rename() above keeps the
