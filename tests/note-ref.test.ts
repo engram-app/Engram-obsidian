@@ -10,8 +10,8 @@
  * Both directions matter here. A reference nobody can correlate is useless and
  * gets routed around; a reference that leaks the path defeats the point.
  */
-import { describe, expect, test } from "bun:test";
-import { noteRef } from "../src/note-ref";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { __resetNoteRefs, noteRef } from "../src/note-ref";
 
 const SENSITIVE = [
 	"Medical/2026 biopsy results.md",
@@ -59,6 +59,47 @@ describe("noteRef — correlation still works", () => {
 	test("empty and nullish inputs do not throw", () => {
 		for (const value of ["", null, undefined]) {
 			expect(noteRef(value)).toBe("n?");
+		}
+	});
+});
+
+describe("noteRef — the MAX_TRACKED cap", () => {
+	beforeEach(() => __resetNoteRefs());
+
+	// 10_000 is the cap in note-ref.ts. Asserted by behaviour rather than by
+	// importing the constant, so the test still means something if the number
+	// moves: what is pinned is that a cap EXISTS and where it bites.
+	const CAP = 10_000;
+	const fill = () => {
+		for (let i = 0; i < CAP; i++) noteRef(`Medical/note-${i}.md`);
+	};
+
+	test("a new path past the cap degrades to n? rather than growing", () => {
+		fill();
+		expect(noteRef("Medical/one too many.md")).toBe("n?");
+	});
+
+	// The ordering that matters. The cap check sits AFTER the map lookup, so a
+	// note already being followed keeps its ref for the whole session. Hoisting
+	// the check above the lookup would make every ref in a large vault go dark
+	// at once — the logs would still be private, and completely useless.
+	test("a path seen before the cap still resolves after it", () => {
+		const first = noteRef("Medical/labs.md");
+		fill();
+
+		expect(noteRef("Medical/one too many.md")).toBe("n?");
+		expect(noteRef("Medical/labs.md")).toBe(first);
+	});
+
+	// The point of the cap is a bounded table, not a bounded label. A
+	// degraded ref must still not carry the thing it replaced.
+	test("the degraded ref carries no part of the path", () => {
+		fill();
+		const ref = noteRef("Medical/2026 biopsy results.md");
+
+		expect(ref).toBe("n?");
+		for (const marker of ["Medical", "biopsy", "2026", ".md"]) {
+			expect(ref).not.toContain(marker);
 		}
 	});
 });
