@@ -359,13 +359,21 @@ test("onCrdtMessage with a malformed frame logs a warn instead of an unhandled r
 	// Not valid base64 / not a valid yjs frame — handleFrame rejects. The wiring
 	// must catch it (log + drop the frame), never leak an unhandled rejection.
 	dev.wiring.onCrdtMessage("bad-frame-id", "!!!not-a-frame!!!");
-	await sleep(20);
 
-	expect(warnSpy).toHaveBeenCalled();
-	const [category, message] = warnSpy.mock.calls[warnSpy.mock.calls.length - 1] as unknown as [
-		string,
-		string,
-	];
+	// Poll rather than `sleep(20)`. The rejection is caught and logged
+	// asynchronously, so a fixed window is a bet on scheduler latency that a
+	// loaded CI runner loses.
+	const matching = () =>
+		(warnSpy.mock.calls as unknown as [string, string][]).filter(([, m]) =>
+			m?.includes("bad-frame-id"),
+		);
+	await waitFor(() => matching().length > 0, "warn logged for the malformed frame");
+
+	// Match on OUR call, not the last one. `rlog()` is a module-level singleton,
+	// so the spy sees every warn in the process — a room draining or a peer
+	// reconnecting nearby would take the last slot and this would assert against
+	// someone else's message.
+	const [category, message] = matching()[0];
 	expect(category).toBe("crdt");
 	expect(message).toContain("bad-frame-id");
 
