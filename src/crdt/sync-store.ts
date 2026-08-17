@@ -72,6 +72,12 @@ export class SyncStore {
 	 *  resolves to a live file. Cleared when the id is claimed again. */
 	private readonly evicted = new Set<string>();
 
+	/** Paths forgotten LOCALLY. Hidden from reads here, never published, and
+	 *  cleared the moment the path is learned again — which is what makes the
+	 *  drift self-heal work: the mapping goes away on this device only, and the
+	 *  next inbound edit re-learns it. */
+	private readonly forgotten = new Set<string>();
+
 	/** Rename sources this store actually held an entry for — the only keys
 	 *  `commit()` may delete. A redirect recorded for an unknown path is for
 	 *  resolution only and must never publish a deletion. */
@@ -164,6 +170,7 @@ export class SyncStore {
 		// second move re-mint for a note that already had an id.
 		if (this.renames.has(path) && !this.overlay.has(path)) return null;
 		if (this.deleteSet.has(path)) return null;
+		if (this.forgotten.has(path) && !this.overlay.has(path)) return null;
 		// Cache LAST: anything the shared doc knows outranks a local memory of it.
 		return this.overlay.get(path) ?? this.map.get(path) ?? this.cache.get(path) ?? null;
 	}
@@ -261,6 +268,7 @@ export class SyncStore {
 		}
 		this.evicted.delete(meta.note_id);
 
+		this.forgotten.delete(resolved);
 		this.overlay.set(resolved, meta);
 		// A set UNDOES a pending delete of the same path: staging both and
 		// promoting delete-then-set would otherwise depend on commit order.
@@ -268,7 +276,28 @@ export class SyncStore {
 		this.reverse = null;
 	}
 
-	/** Stage a delete. The path stops resolving immediately. */
+	/** Forget a mapping LOCALLY, without telling anyone.
+	 *
+	 *  `delete()` stages a deletion and publishes it, which is right when the
+	 *  user deleted the note and wrong for local hygiene — dropping a stale
+	 *  room-id mapping, or a reconcile clearing a bad entry. On `origin/main`
+	 *  `NoteIdMap.delete` was purely local, so routing every caller through the
+	 *  publishing variant silently upgraded local bookkeeping into a claim that
+	 *  removed the path from every other device's index.
+	 *
+	 *  That is what broke `test_drifted_map_self_heals_on_inbound_edit`: the
+	 *  drift injected on one device propagated to the other, so there was no
+	 *  healthy peer left to heal from. */
+	forget(path: string): void {
+		const resolved = this.resolvePath(path);
+		this.overlay.delete(resolved);
+		this.cache.delete(resolved);
+		// The committed entry cannot be removed without publishing, so hide it.
+		this.forgotten.add(resolved);
+		this.reverse = null;
+	}
+
+	/** Stage a delete AND publish it. For a note the user actually deleted. */
 	delete(path: string): void {
 		const resolved = this.resolvePath(path);
 		this.deleteSet.add(resolved);
@@ -369,6 +398,10 @@ export class SyncStore {
 				const meta = this.map.get(from) ?? this.cache.get(from);
 				if (meta && index.get(meta.note_id) === from) index.delete(meta.note_id);
 			}
+			for (const path of this.forgotten) {
+				const meta = this.map.get(path) ?? this.cache.get(path);
+				if (meta && index.get(meta.note_id) === path) index.delete(meta.note_id);
+			}
 			for (const id of this.evicted) index.delete(id);
 			this.reverse = index;
 		}
@@ -394,6 +427,7 @@ export class SyncStore {
 		// A path renamed away is gone; enumerating it would cache two paths for
 		// one id, which the next launch would republish as two claims.
 		for (const from of this.renames.keys()) out.delete(from);
+		for (const path of this.forgotten) if (!this.overlay.has(path)) out.delete(path);
 		return [...out];
 	}
 
@@ -416,6 +450,7 @@ export class SyncStore {
 		this.renamedAway.clear();
 		this.pendingUpload.clear();
 		this.cache.clear();
+		this.forgotten.clear();
 		this.evicted.clear();
 		this.reverse = null;
 	}

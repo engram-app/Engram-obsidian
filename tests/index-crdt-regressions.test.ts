@@ -387,3 +387,55 @@ describe("round 3: rename chains and cache-only ids", () => {
 		expect(store.get("b.md")).toBe("id-b");
 	});
 });
+
+// The e2e drift self-heal failure (test_drifted_map_self_heals_on_inbound_edit).
+// It was the first test to run this code against a real backend, and it failed
+// immediately — the class of bug unit tests with our code on both ends cannot
+// see.
+describe("a local forget is local", () => {
+	test("delete() does not publish, so drift on one device stays there", () => {
+		const doc = new Y.Doc();
+		const shared = doc.getMap<{ note_id: string }>("filemeta_v0");
+		const map = new NoteIdMap(new SyncStore(shared));
+		map.set("a.md", "id-a");
+		map.flushNow();
+
+		map.delete("a.md");
+		map.flushNow();
+
+		// Locally forgotten...
+		expect(map.get("a.md")).toBeNull();
+		expect(map.pathForId("id-a")).toBeNull();
+		// ...but the vault's claim is untouched. Publishing it removed the path
+		// from every other device's index, so the drift injected on one device
+		// propagated and there was no healthy peer left to heal from.
+		expect(shared.get("a.md")).toEqual({ note_id: "id-a" });
+	});
+
+	test("re-learning the path heals it", () => {
+		const doc = new Y.Doc();
+		const map = new NoteIdMap(new SyncStore(doc.getMap("filemeta_v0")));
+		map.set("a.md", "id-a");
+		map.flushNow();
+		map.delete("a.md");
+
+		map.set("a.md", "id-a");
+		map.flushNow();
+
+		expect(map.get("a.md")).toBe("id-a");
+		expect(map.pathForId("id-a")).toBe("a.md");
+	});
+
+	test("release() DOES publish, for a note the user actually deleted", () => {
+		const doc = new Y.Doc();
+		const shared = doc.getMap<{ note_id: string }>("filemeta_v0");
+		const map = new NoteIdMap(new SyncStore(shared));
+		map.set("a.md", "id-a");
+		map.flushNow();
+
+		map.release("a.md");
+		map.flushNow();
+
+		expect(shared.has("a.md")).toBe(false);
+	});
+});

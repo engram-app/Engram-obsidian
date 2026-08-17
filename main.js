@@ -8951,6 +8951,11 @@ var SyncStore = class {
      *  must stop answering `pathForId`, or a late frame for a dead lineage
      *  resolves to a live file. Cleared when the id is claimed again. */
     this.evicted = /* @__PURE__ */ new Set();
+    /** Paths forgotten LOCALLY. Hidden from reads here, never published, and
+     *  cleared the moment the path is learned again — which is what makes the
+     *  drift self-heal work: the mapping goes away on this device only, and the
+     *  next inbound edit re-learns it. */
+    this.forgotten = /* @__PURE__ */ new Set();
     /** Rename sources this store actually held an entry for — the only keys
      *  `commit()` may delete. A redirect recorded for an unknown path is for
      *  resolution only and must never publish a deletion. */
@@ -9001,7 +9006,7 @@ var SyncStore = class {
    *  entry for it (or it is pending deletion). */
   getMeta(path) {
     var _a, _b, _c;
-    return this.renames.has(path) && !this.overlay.has(path) || this.deleteSet.has(path) ? null : (_c = (_b = (_a = this.overlay.get(path)) != null ? _a : this.map.get(path)) != null ? _b : this.cache.get(path)) != null ? _c : null;
+    return this.renames.has(path) && !this.overlay.has(path) || this.deleteSet.has(path) || this.forgotten.has(path) && !this.overlay.has(path) ? null : (_c = (_b = (_a = this.overlay.get(path)) != null ? _a : this.map.get(path)) != null ? _b : this.cache.get(path)) != null ? _c : null;
   }
   /** Warm the local cache from `data.json`. Never staged and never published —
    *  it lets ids resolve offline, before the room has synced, without asserting
@@ -9045,9 +9050,25 @@ var SyncStore = class {
     let resolved = this.resolvePath(path), prior = this.pathForId(meta.note_id);
     prior && prior !== resolved && (this.overlay.delete(prior), this.deleteSet.add(prior));
     let displaced = (_c = (_a = this.overlay.get(resolved)) == null ? void 0 : _a.note_id) != null ? _c : (_b = this.map.get(resolved)) == null ? void 0 : _b.note_id;
-    displaced && displaced !== meta.note_id && !this.stagedHolds(displaced) && this.evicted.add(displaced), this.evicted.delete(meta.note_id), this.overlay.set(resolved, meta), this.deleteSet.delete(resolved), this.reverse = null;
+    displaced && displaced !== meta.note_id && !this.stagedHolds(displaced) && this.evicted.add(displaced), this.evicted.delete(meta.note_id), this.forgotten.delete(resolved), this.overlay.set(resolved, meta), this.deleteSet.delete(resolved), this.reverse = null;
   }
-  /** Stage a delete. The path stops resolving immediately. */
+  /** Forget a mapping LOCALLY, without telling anyone.
+   *
+   *  `delete()` stages a deletion and publishes it, which is right when the
+   *  user deleted the note and wrong for local hygiene — dropping a stale
+   *  room-id mapping, or a reconcile clearing a bad entry. On `origin/main`
+   *  `NoteIdMap.delete` was purely local, so routing every caller through the
+   *  publishing variant silently upgraded local bookkeeping into a claim that
+   *  removed the path from every other device's index.
+   *
+   *  That is what broke `test_drifted_map_self_heals_on_inbound_edit`: the
+   *  drift injected on one device propagated to the other, so there was no
+   *  healthy peer left to heal from. */
+  forget(path) {
+    let resolved = this.resolvePath(path);
+    this.overlay.delete(resolved), this.cache.delete(resolved), this.forgotten.add(resolved), this.reverse = null;
+  }
+  /** Stage a delete AND publish it. For a note the user actually deleted. */
   delete(path) {
     let resolved = this.resolvePath(path);
     this.deleteSet.add(resolved), this.overlay.delete(resolved), this.reverse = null;
@@ -9083,7 +9104,7 @@ var SyncStore = class {
   }
   /** Reverse lookup, over committed + overlay. */
   pathForId(note_id) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f;
     if (!this.reverse) {
       let index = /* @__PURE__ */ new Map();
       for (let [path, meta] of this.cache) {
@@ -9100,10 +9121,14 @@ var SyncStore = class {
         let meta = (_d = this.map.get(from2)) != null ? _d : this.cache.get(from2);
         meta && index.get(meta.note_id) === from2 && index.delete(meta.note_id);
       }
+      for (let path of this.forgotten) {
+        let meta = (_e = this.map.get(path)) != null ? _e : this.cache.get(path);
+        meta && index.get(meta.note_id) === path && index.delete(meta.note_id);
+      }
       for (let id2 of this.evicted) index.delete(id2);
       this.reverse = index;
     }
-    return (_e = this.reverse.get(note_id)) != null ? _e : null;
+    return (_f = this.reverse.get(note_id)) != null ? _f : null;
   }
   /** Every live entry, committed + staged, with deletions applied. The
    *  snapshot `data.json` persistence and any full-vault reconcile read. */
@@ -9117,6 +9142,7 @@ var SyncStore = class {
     for (let [path, meta] of this.overlay)
       this.deleteSet.has(path) || out.set(path, meta);
     for (let from2 of this.renames.keys()) out.delete(from2);
+    for (let path of this.forgotten) this.overlay.has(path) || out.delete(path);
     return [...out];
   }
   /** Drop everything, staged and committed.
@@ -9132,7 +9158,7 @@ var SyncStore = class {
    *  pending struct anyway (its clock is ahead of the new room's). See
    *  `IndexRoom` and main.ts's vault-change teardown. */
   clear() {
-    this.overlay.clear(), this.deleteSet.clear(), this.renames.clear(), this.renamedAway.clear(), this.pendingUpload.clear(), this.cache.clear(), this.evicted.clear(), this.reverse = null;
+    this.overlay.clear(), this.deleteSet.clear(), this.renames.clear(), this.renamedAway.clear(), this.pendingUpload.clear(), this.cache.clear(), this.forgotten.clear(), this.evicted.clear(), this.reverse = null;
   }
   /** True when there is staged state that `commit()` would publish. */
   get dirty() {
@@ -14760,7 +14786,19 @@ var NoteIdMap = class _NoteIdMap {
   set(path, id2) {
     !path || path === "null" || path === "undefined" || !id2 || (this.store.set(path, { note_id: id2 }), this.flush());
   }
+  /** Unchanged from `origin/main`: LOCAL only.
+   *
+   *  Callers are local hygiene — dropping a stale room-id mapping, a reconcile
+   *  clearing a bad entry, drift repair. None of them mean "this note is gone
+   *  from the vault", and publishing them removed the path from every other
+   *  device's index. Releasing a claim for a genuinely deleted note is
+   *  `release/1`, and wiring the delete path to it is part of the remaining
+   *  client-write work on #362 rather than a side effect of this refactor. */
   delete(path) {
+    this.store.forget(path);
+  }
+  /** Publish a claim release. For a note the user actually deleted. */
+  release(path) {
     this.store.delete(path), this.flush();
   }
   rename(oldPath, newPath) {

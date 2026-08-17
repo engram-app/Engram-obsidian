@@ -131,7 +131,20 @@ export class NoteIdMap {
 		this.flush();
 	}
 
+	/** Unchanged from `origin/main`: LOCAL only.
+	 *
+	 *  Callers are local hygiene — dropping a stale room-id mapping, a reconcile
+	 *  clearing a bad entry, drift repair. None of them mean "this note is gone
+	 *  from the vault", and publishing them removed the path from every other
+	 *  device's index. Releasing a claim for a genuinely deleted note is
+	 *  `release/1`, and wiring the delete path to it is part of the remaining
+	 *  client-write work on #362 rather than a side effect of this refactor. */
 	delete(path: string): void {
+		this.store.forget(path);
+	}
+
+	/** Publish a claim release. For a note the user actually deleted. */
+	release(path: string): void {
 		this.store.delete(path);
 		this.flush();
 	}
