@@ -204,7 +204,7 @@ export async function reconcileColdStart(
 		// handshake will converge the state once connectivity is restored.
 		rlog().warn(
 			"crdt",
-			`reconcileColdStart: write failed for ${noteRef(file.path)}: ${errMsg(e)}`,
+			`reconcileColdStart: write failed for ${noteRef(file.path)}: ${errMsg(e, file.path)}`,
 		);
 	}
 	// A drifted note must always get a handshake: when the doc is history-less
@@ -895,7 +895,7 @@ export class SyncEngine {
 		try {
 			await this.crdt.flushHeldState(noteId);
 		} catch (e) {
-			rlog().warn("crdt", `create-ack flush failed for ${noteRef(path)}: ${errMsg(e)}`);
+			rlog().warn("crdt", `create-ack flush failed for ${noteRef(path)}: ${errMsg(e, path)}`);
 			this.crdtEnrollment?.reset(noteId);
 			this.crdtEnrollment?.enroll(noteId);
 		}
@@ -1181,7 +1181,7 @@ export class SyncEngine {
 				// self-heals on the note's next edit. Never fall back to REST.
 				rlog().warn(
 					"crdt",
-					`crdt_create (queued) body seed failed for ${noteRef(path)}: ${errMsg(e)}`,
+					`crdt_create (queued) body seed failed for ${noteRef(path)}: ${errMsg(e, path)}`,
 				);
 			}
 		}
@@ -1361,7 +1361,10 @@ export class SyncEngine {
 			// intentionally NOT reached here — a failed write must not mark the note
 			// synced. Best-effort callers (pull/materialize) ignore the return and
 			// keep today's log-and-continue behavior.
-			rlog().error("crdt", `flushFromCrdt: write failed for ${noteRef(path)}: ${errMsg(e)}`);
+			rlog().error(
+				"crdt",
+				`flushFromCrdt: write failed for ${noteRef(path)}: ${errMsg(e, path)}`,
+			);
 			return false;
 		}
 	}
@@ -1495,7 +1498,7 @@ export class SyncEngine {
 		} catch (e) {
 			rlog().warn(
 				"crdt",
-				`captureDiskDriftBeforeRemote: seed failed for ${noteRef(path)}: ${errMsg(e)}`,
+				`captureDiskDriftBeforeRemote: seed failed for ${noteRef(path)}: ${errMsg(e, path)}`,
 			);
 		}
 	}
@@ -1570,7 +1573,7 @@ export class SyncEngine {
 			} catch (e) {
 				rlog().error(
 					"conflict",
-					`history-less keep-both copy failed for ${noteRef(normalized)}: ${errMsg(e)}. Aborting apply to retain the local edit for retry`,
+					`history-less keep-both copy failed for ${noteRef(normalized)}: ${errMsg(e, normalized)}. Aborting apply to retain the local edit for retry`,
 				);
 				return "deferred";
 			}
@@ -2615,7 +2618,10 @@ export class SyncEngine {
 			}
 			// biome-ignore lint/suspicious/noConsole: error boundary
 			console.error("Engram Sync: failed to delete %s", file.path, e);
-			rlog().error("push", `Delete failed (queued): ${noteRef(file.path)} | ${errMsg(e)}`);
+			rlog().error(
+				"push",
+				`Delete failed (queued): ${noteRef(file.path)} | ${errMsg(e, file.path)}`,
+			);
 			await this.enqueueChange({
 				path: file.path,
 				action: "delete",
@@ -2725,7 +2731,7 @@ export class SyncEngine {
 					console.error("Engram Sync: failed to delete old path %s", oldPath, e);
 					rlog().error(
 						"push",
-						`Rename old-leg delete failed (queued): ${noteRef(oldPath)} | ${errMsg(e)}`,
+						`Rename old-leg delete failed (queued): ${noteRef(oldPath)} | ${errMsg(e, oldPath)}`,
 					);
 					await this.enqueueChange({
 						path: oldPath,
@@ -2785,7 +2791,7 @@ export class SyncEngine {
 			await this.explicitFolders.add(path);
 		} catch (e) {
 			devLog().log("push", `createFolder("${path}") failed: ${errMsg(e)}`);
-			rlog().warn("push", `createFolder("${noteRef(path)}") failed: ${errMsg(e)}`);
+			rlog().warn("push", `createFolder("${noteRef(path)}") failed: ${errMsg(e, path)}`);
 		}
 	}
 
@@ -2805,7 +2811,7 @@ export class SyncEngine {
 			await this.api.deleteFolder(path);
 		} catch (e) {
 			devLog().log("push", `deleteFolder("${path}") failed: ${errMsg(e)}`);
-			rlog().warn("push", `deleteFolder("${noteRef(path)}") failed: ${errMsg(e)}`);
+			rlog().warn("push", `deleteFolder("${noteRef(path)}") failed: ${errMsg(e, path)}`);
 		} finally {
 			await this.explicitFolders.delete(path);
 		}
@@ -2836,7 +2842,10 @@ export class SyncEngine {
 				await this.explicitFolders.add(path);
 			} catch (e) {
 				devLog().log("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`);
-				rlog().warn("push", `seedEmptyFolders("${noteRef(path)}") failed: ${errMsg(e)}`);
+				rlog().warn(
+					"push",
+					`seedEmptyFolders("${noteRef(path)}") failed: ${errMsg(e, path)}`,
+				);
 			}
 		}
 	}
@@ -4515,7 +4524,7 @@ export class SyncEngine {
 							failed += 1;
 							rlog().error(
 								"crdt",
-								`seq-replay: skipped ${noteRef(c.path)} — ${errMsg(e)}`,
+								`seq-replay: skipped ${noteRef(c.path)} — ${errMsg(e, c.path)}`,
 							);
 						}
 					}
@@ -4609,7 +4618,10 @@ export class SyncEngine {
 			// content and can never pend (unlike the retired crdt_catchup_delta).
 			await this.catchupViaSeqReplay();
 		} catch (e) {
-			rlog().warn("crdt", `discoverAnnouncedNote failed for ${noteRef(path)}: ${errMsg(e)}`);
+			rlog().warn(
+				"crdt",
+				`discoverAnnouncedNote failed for ${noteRef(path)}: ${errMsg(e, path)}`,
+			);
 		}
 	}
 
@@ -4701,7 +4713,7 @@ export class SyncEngine {
 			} catch (e) {
 				rlog().error(
 					"crdt",
-					`Live-bound fan-out apply failed for ${noteRef(path)}: ${errMsg(e)}`,
+					`Live-bound fan-out apply failed for ${noteRef(path)}: ${errMsg(e, path)}`,
 					e instanceof Error ? e.stack : undefined,
 				);
 				return "deferred";
@@ -4756,7 +4768,7 @@ export class SyncEngine {
 			devLog().log("crdt", `applyPushedNoteUpdate: ${path} failed — ${errMsg(e)}`);
 			rlog().warn(
 				"crdt",
-				`Vault-channel update apply failed for ${noteRef(path)}: ${errMsg(e)}`,
+				`Vault-channel update apply failed for ${noteRef(path)}: ${errMsg(e, path)}`,
 			);
 			return "deferred";
 		}
@@ -4868,7 +4880,7 @@ export class SyncEngine {
 			} catch (e) {
 				rlog().warn(
 					"queue",
-					`CRDT delivery settle failed for ${noteRef(queued.path)}: ${errMsg(e)}`,
+					`CRDT delivery settle failed for ${noteRef(queued.path)}: ${errMsg(e, queued.path)}`,
 				);
 			}
 		}
@@ -4945,7 +4957,7 @@ export class SyncEngine {
 		} catch (e) {
 			rlog().warn(
 				"crdt",
-				`socket converge: commit failed for ${noteRef(path)} note_id=${noteId}: ${errMsg(e)}`,
+				`socket converge: commit failed for ${noteRef(path)} note_id=${noteId}: ${errMsg(e, path)}`,
 			);
 		}
 		this.releaseHealRoom(noteId, path);
@@ -5013,7 +5025,7 @@ export class SyncEngine {
 			if (!this.isLiveBound(normalized)) return; // idle confirmed notes heal on reconnect (#5)
 			this.socketConverge(normalized, noteId);
 		} catch (e) {
-			rlog().warn("crdt", `healNoteOnOpen ${noteRef(path)}: ${errMsg(e)}`);
+			rlog().warn("crdt", `healNoteOnOpen ${noteRef(path)}: ${errMsg(e, path)}`);
 		}
 	}
 
@@ -5478,7 +5490,7 @@ export class SyncEngine {
 				} catch (e) {
 					rlog().warn(
 						"conflict",
-						`received-delete drift check failed for ${noteRef(normalized)}: ${errMsg(e)}`,
+						`received-delete drift check failed for ${noteRef(normalized)}: ${errMsg(e, normalized)}`,
 					);
 				}
 				// trashRemotelyDeleted marks remotelyDeleted, so this device's own
@@ -5689,7 +5701,7 @@ export class SyncEngine {
 				// Sync-critical failure — must reach Loki, not just the local console.
 				rlog().error(
 					"ws",
-					`Apply failed: ${event.event_type} ${noteRef(event.path)} | ${errMsg(e)}`,
+					`Apply failed: ${event.event_type} ${noteRef(event.path)} | ${errMsg(e, event.path)}`,
 					e instanceof Error ? e.stack : undefined,
 				);
 			}
@@ -5875,7 +5887,7 @@ export class SyncEngine {
 			} catch (e) {
 				rlog().warn(
 					"pull",
-					`Id-keyed move file ops failed (old file vanished mid-flight?): ${noteRef(priorPath)} -> ${noteRef(newPath)} — ${errMsg(e)}`,
+					`Id-keyed move file ops failed (old file vanished mid-flight?): ${noteRef(priorPath)} -> ${noteRef(newPath)} — ${errMsg(e, [priorPath, newPath])}`,
 				);
 				// No disk content to flush here, and the caller's isSynced-gated
 				// materializeRelocated backstop may ALSO decline (fresh-boot
@@ -6084,7 +6096,7 @@ export class SyncEngine {
 				} catch (e) {
 					rlog().error(
 						"pull",
-						`Reconcile trash failed (retried next run): ${noteRef(file.path)} — ${errMsg(e)}`,
+						`Reconcile trash failed (retried next run): ${noteRef(file.path)} — ${errMsg(e, file.path)}`,
 						e instanceof Error ? e.stack : undefined,
 					);
 				}
@@ -6220,7 +6232,10 @@ export class SyncEngine {
 				}
 				poked++;
 			} catch (e) {
-				rlog().warn("crdt", `live-bound heal failed for ${noteRef(path)}: ${errMsg(e)}`);
+				rlog().warn(
+					"crdt",
+					`live-bound heal failed for ${noteRef(path)}: ${errMsg(e, path)}`,
+				);
 			}
 		}
 		return poked;
@@ -6312,7 +6327,7 @@ export class SyncEngine {
 						} catch (e) {
 							rlog().error(
 								"pull",
-								`Resurrection push failed: ${noteRef(change.path)} | err=${errMsg(e)}`,
+								`Resurrection push failed: ${noteRef(change.path)} | err=${errMsg(e, change.path)}`,
 							);
 						}
 						return false;
@@ -6332,7 +6347,7 @@ export class SyncEngine {
 						} catch (e) {
 							rlog().warn(
 								"conflict",
-								`CRDT tombstone drift capture failed for ${noteRef(normalized)}: ${errMsg(e)}`,
+								`CRDT tombstone drift capture failed for ${noteRef(normalized)}: ${errMsg(e, normalized)}`,
 							);
 						}
 					} else {
@@ -6694,7 +6709,7 @@ export class SyncEngine {
 							} catch (e) {
 								rlog().warn(
 									"conflict",
-									`drift-copy capture failed for ${noteRef(normalized)}: ${errMsg(e)}`,
+									`drift-copy capture failed for ${noteRef(normalized)}: ${errMsg(e, normalized)}`,
 								);
 							}
 							if (copy === null) {

@@ -1109,7 +1109,7 @@ export default class EngramSyncPlugin extends Plugin {
 						.catch((e) => {
 							rlog().warn(
 								"crdt",
-								`reconcileColdStart: failed to read ${noteRef(file.path)}: ${errMsg(e)}`,
+								`reconcileColdStart: failed to read ${noteRef(file.path)}: ${errMsg(e, file.path)}`,
 							);
 						});
 				}
