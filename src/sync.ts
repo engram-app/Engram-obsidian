@@ -2655,6 +2655,22 @@ export class SyncEngine {
 		if (!this.ready) return;
 		if (!this.isSyncable(file)) return;
 
+		// ECHO GUARD: this rename is the engine's own, applied to follow a remote
+		// peer's rename (`moveIfIdRelocated`). Obsidian cannot tell that move from
+		// a user drag — it fires the same vault event — so without this the move
+		// is pushed back as a fresh rename, and the two devices trade renames.
+		// The id map, base and sync-state were all re-keyed by the mover before
+		// the rename was applied, so there is nothing left to do here.
+		if (this.files.has(normalizePath(oldPath), "remotelyRenamed")) {
+			this.files.clearMarker(normalizePath(oldPath), "remotelyRenamed");
+			this.files.clearMarker(normalizePath(file.path), "remotelyRenamed");
+			rlog().info(
+				"vault",
+				`Rename echo suppressed (engine applied a remote rename): ${noteRef(oldPath)} -> ${noteRef(file.path)}`,
+			);
+			return;
+		}
+
 		const isBinary = this.isBinaryFile(file);
 
 		// Cancel any push still armed under the OLD path. Capturing armedPath at
@@ -5837,15 +5853,58 @@ export class SyncEngine {
 		// leave the duplicate this fix exists to remove). rename() above keeps the
 		// RAW priorPath — it must match the byPath key exactly to re-key the id.
 		const oldFile = this.app.vault.getFileByPath(normalizePath(priorPath));
-		// A relocation is read-old + trash-old + create-new, never
-		// `vault.rename()` — the content may need CRDT-resolved bytes, not the old
-		// file's on-disk body, and Obsidian's rename API has no way to supply
-		// that. But that means Obsidian never learns these are "the same" note:
-		// trashing an open leaf's file is native Obsidian behaviour for ANY
-		// delete, and it yanks the leaf to whatever it showed before — the
-		// "forced to look at the previous file I was editing" report. Captured
-		// here, BEFORE the trash, because by the time the redirect below runs
-		// Obsidian's own fallback has often already moved the leaf off oldFile.
+
+		// A remote rename is a RENAME. Ask Obsidian to move the file, so the file
+		// keeps its identity: open editors follow it, undo history survives, the
+		// graph re-points, and no delete/create pair is fabricated. Everything
+		// below this is the fallback for when a true rename cannot apply.
+		//
+		// This path used to be read-old + trash-old + create-new unconditionally,
+		// which Obsidian cannot distinguish from "the user deleted a note and made
+		// a different one". That produced two user-visible bugs — a trashed open
+		// file yanked the editor to an unrelated note, and the merge base was
+		// destroyed so every later edit became a conflict copy.
+		//
+		// `vault.rename`, NOT `fileManager.renameFile`: the latter also rewrites
+		// `[[links]]` in other notes, and for a remote-origin rename the SERVER
+		// already did that (`genesis_relocate_live` enqueues the rewrite for
+		// non-obsidian origins). Rewriting again here would break the
+		// exactly-one-rewriter invariant and double-apply.
+		if (oldFile && !this.app.vault.getAbstractFileByPath(normalizePath(newPath))) {
+			try {
+				const parent = normalizePath(newPath).includes("/")
+					? normalizePath(newPath).substring(0, normalizePath(newPath).lastIndexOf("/"))
+					: "";
+				if (parent) await this.ensureFolder(parent);
+				// Both paths: Obsidian's rename event carries old and new, and the
+				// guard in `handleRename` keys off the OLD one. Marked before the
+				// call because the event can dispatch synchronously inside it.
+				this.files.mark(normalizePath(priorPath), "remotelyRenamed", ECHO_COOLDOWN_MS);
+				this.files.mark(normalizePath(newPath), "remotelyRenamed", ECHO_COOLDOWN_MS);
+				await this.app.vault.rename(oldFile, normalizePath(newPath));
+				rlog().info(
+					"pull",
+					`Id-keyed move (true rename): ${noteRef(priorPath)} -> ${noteRef(newPath)} (id=${id})`,
+				);
+				return;
+			} catch (e) {
+				// Destination appeared underneath us, a permission error, whatever —
+				// clear the echo markers so a LATER genuine user rename of either
+				// path is not swallowed, then fall through to the copy/trash path.
+				this.files.clearMarker(normalizePath(priorPath), "remotelyRenamed");
+				this.files.clearMarker(normalizePath(newPath), "remotelyRenamed");
+				rlog().warn(
+					"pull",
+					`True rename failed, falling back to copy+trash: ${noteRef(priorPath)} -> ${noteRef(newPath)} — ${errMsg(e, [priorPath, newPath])}`,
+				);
+			}
+		}
+
+		// FALLBACK. Reached when the destination is already occupied (a concurrent
+		// flush won the race) or the rename above threw. Obsidian never learns the
+		// two files are one note here, so the leaf redirect below is still needed.
+		// Captured BEFORE the trash — afterwards Obsidian's own delete-fallback has
+		// usually already moved the leaf off oldFile.
 		const leavesToRedirect: WorkspaceLeaf[] = oldFile
 			? this.app.workspace
 					.getLeavesOfType("markdown")

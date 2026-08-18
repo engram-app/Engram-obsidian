@@ -43,8 +43,13 @@ export interface MarkerClock {
  *   vault modify/create event. Deliberately distinct from `pushed`: reusing one
  *   marker for both made `handleModify` drop real user edits inside the window.
  * - `remotelyDeleted` — deleted by a remote peer; suppress the local delete echo.
+ * - `remotelyRenamed` — moved on disk by the engine to follow a remote peer's
+ *   rename. Obsidian fires a `rename` vault event for that move exactly as it
+ *   would for a user drag, so without this the echo is pushed straight back to
+ *   the server as a fresh rename. Marked on BOTH the old and new path: the
+ *   event carries both, and which one a guard consults depends on the caller.
  */
-export type FileMarker = "pushed" | "flushed" | "remotelyDeleted";
+export type FileMarker = "pushed" | "flushed" | "remotelyDeleted" | "remotelyRenamed";
 
 /** One file's live sync state. Currently just markers; later passes add the
  *  debounce timer, in-flight push state, and the per-path heal counters. */
