@@ -17,6 +17,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
+import { BaseStore } from "../src/base-store";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
@@ -152,6 +153,10 @@ async function remoteRename(
 	// discovery, none of which leave a record the engine can consult later.
 	map.set(to, ID);
 	engine.setNoteIdMap(map);
+	// A note this engine has synced carries bookkeeping for its path. Modelling
+	// that is not a concession to the code: without it the harness describes a
+	// file the engine has never seen, which is a different scenario.
+	(engine as unknown as { syncState: Map<string, unknown> }).syncState.set(from, { hash: 1 });
 
 	const frames =
 		opts.order === "delete-first"
@@ -212,6 +217,9 @@ describe("a remote rename moves the file", () => {
 			["v2.md", "v3.md"],
 			["v3.md", "v4.md"],
 		]) {
+			(engine as unknown as { syncState: Map<string, unknown> }).syncState.set(from, {
+				hash: 1,
+			});
 			map.set(to, ID);
 			await Promise.all([
 				engine.handleStreamEvent(upsert(to)),
@@ -312,5 +320,113 @@ describe("what must still happen normally", () => {
 
 		expect(h.present.has("Recycled.md")).toBe(true);
 		expect(h.bodies.get("Recycled.md")).toBe("someone else's note");
+	});
+});
+
+describe("review hardening", () => {
+	test("destroy() sweeps the relocation timers", async () => {
+		// Every other TTL map here is swept on teardown; one that is not leaves
+		// timers firing against a torn-down engine after a plugin reload.
+		const cleared: number[] = [];
+		const h = makeVault({ "Old.md": "body" });
+		const clock = {
+			setTimeout: (fn: () => void, ms: number) => setTimeout(fn, ms) as unknown as number,
+			clearTimeout: (id: number) => {
+				cleared.push(id);
+				clearTimeout(id);
+			},
+			now: () => Date.now(),
+		};
+		const engine = new SyncEngine(
+			h.app,
+			api,
+			{ ...DEFAULT_SETTINGS, debounceMs: 1 },
+			mock().mockResolvedValue(undefined),
+			clock as never,
+		);
+		engine.setReady();
+		h.attach(engine);
+		const map = new NoteIdMap();
+		map.set("Old.md", ID);
+		engine.setNoteIdMap(map);
+		map.set("New.md", ID); // arms a relocation timer
+
+		const before = cleared.length;
+		engine.destroy();
+
+		expect(cleared.length).toBeGreaterThan(before);
+		expect(
+			(engine as unknown as { relocatedFrom: Map<string, unknown> }).relocatedFrom.size,
+		).toBe(0);
+	});
+
+	test("the trash path carries the merge base to the note's new home", async () => {
+		// Runs when something else won the race to materialize the new path. The
+		// base was being destroyed with the old path, leaving the live note with no
+		// common ancestor — so the next divergence writes a conflict copy.
+		const h = makeVault({ "Old.md": "original", "New.md": "already here" });
+		const engine = makeEngine(h.app);
+		h.attach(engine);
+		const bases = new BaseStore(
+			{ read: async () => "", write: async () => {}, exists: async () => false } as never,
+			"bases.json",
+		);
+		bases.set("Old.md", "original", 1);
+		(engine as unknown as { baseStore: BaseStore | null }).baseStore = bases;
+		const map = new NoteIdMap();
+		map.seed({ "Old.md": ID });
+		map.set("New.md", ID);
+		engine.setNoteIdMap(map);
+
+		await engine.handleStreamEvent(del("Old.md"));
+		await settle();
+
+		expect(bases.get("New.md")).toBeDefined();
+		expect(bases.get("Old.md")).toBeUndefined();
+	});
+
+	test("a never-synced local file at the remembered path is not moved", async () => {
+		// A locally created note carries no claim, so the claim check waves it
+		// through — and a path we just vacated is exactly where a user makes one.
+		// Sync evidence is what separates "our old file" from "their new file".
+		const h = makeVault({ "Old.md": "the user's brand new note" });
+		const engine = makeEngine(h.app);
+		h.attach(engine);
+		const map = new NoteIdMap();
+		map.seed({ "Old.md": ID });
+		map.set("New.md", ID);
+		engine.setNoteIdMap(map);
+		// Deliberately NO syncState entry for Old.md.
+
+		await engine.handleStreamEvent(upsert("New.md", "mine"));
+		await settle();
+
+		expect(h.present.has("Old.md")).toBe(true);
+		expect(h.bodies.get("Old.md")).toBe("the user's brand new note");
+	});
+
+	test("a hung event does not block the ones behind it", async () => {
+		const h = makeVault({});
+		const engine = makeEngine(h.app);
+		h.attach(engine);
+		engine.setNoteIdMap(new NoteIdMap());
+		const e = engine as unknown as {
+			applyStreamEvent(ev: unknown): Promise<void>;
+			time: { setTimeout(fn: () => void, ms: number): number };
+		};
+		const seen: string[] = [];
+		const original = e.applyStreamEvent.bind(e);
+		e.applyStreamEvent = async (ev: any) => {
+			seen.push(ev.path);
+			if (ev.path === "Hangs.md") return new Promise<void>(() => {}); // never settles
+			return original(ev);
+		};
+		// The stall release is scheduled on the injected clock; fire it immediately.
+		e.time.setTimeout = (fn: () => void) => setTimeout(fn, 0) as unknown as number;
+
+		void engine.handleStreamEvent(upsert("Hangs.md"));
+		await engine.handleStreamEvent(upsert("After.md"));
+
+		expect(seen).toContain("After.md");
 	});
 });

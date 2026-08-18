@@ -252,6 +252,10 @@ const RECENT_DELETE_COOLDOWN_MS = 60_000;
  *  Generous next to the milliseconds a racing flush needs, and short next to
  *  the lifetime of a path that might legitimately be recreated. */
 const RELOCATION_MEMORY_MS = 30_000;
+/** How long the serialized stream queue waits on one event before moving on.
+ *  Generous next to any real apply (disk + a manifest fetch), short next to a
+ *  session. */
+const STREAM_EVENT_STALL_MS = 30_000;
 
 /** Debounce window for the ok->degraded transition Notice: aggregates a
  *  burst of newly-degraded notes (e.g. a batch push) into one Notice. */
@@ -612,11 +616,7 @@ export class SyncEngine {
 			// a rename degraded into create-here + trash-there. The record is what
 			// lets whoever DOES materialize the path turn its create into a move,
 			// so the outcome no longer depends on who wins.
-			this.relocatedFrom.set(normalizePath(to), normalizePath(from));
-			this.time.setTimeout(
-				() => this.relocatedFrom.delete(normalizePath(to)),
-				RELOCATION_MEMORY_MS,
-			);
+			this.rememberRelocation(normalizePath(from), normalizePath(to));
 			void this.renameFollowingIdentity(from, to);
 		});
 	}
@@ -650,7 +650,23 @@ export class SyncEngine {
 	 *  might still arrive. Bounded by a TTL: a note that is never materialized at
 	 *  the new path must not pin a stale origin forever, or a LATER genuine
 	 *  create at that path would be turned into a move of an unrelated file. */
-	private relocatedFrom = new Map<string, string>();
+	private relocatedFrom = new Map<string, { from: string; timer: number }>();
+
+	/** Remember where a note came from, for as long as a materialization might
+	 *  still arrive. The expiry timer is HELD, not fired and forgotten: every
+	 *  other TTL map here is swept by `destroy()`, and one that is not leaves
+	 *  timers firing against a torn-down engine after a plugin reload. That is
+	 *  the exact trap `SyncedFileTable` was written to close -- "adding a fourth
+	 *  marker meant remembering to add a fourth loop" -- so this one holds its
+	 *  handle and is swept with the rest. */
+	private rememberRelocation(from: string, to: string): void {
+		const existing = this.relocatedFrom.get(to);
+		if (existing) this.time.clearTimeout(existing.timer);
+		this.relocatedFrom.set(to, {
+			from,
+			timer: this.time.setTimeout(() => this.relocatedFrom.delete(to), RELOCATION_MEMORY_MS),
+		});
+	}
 
 	/** Fallback origin for a note being materialized at `target`, for the case
 	 *  `relocatedFrom` never saw the move.
@@ -678,6 +694,19 @@ export class SyncEngine {
 			// note, is safe to move.
 			const holder = this.noteIdMap?.get(at) ?? null;
 			if (holder && holder !== id) continue;
+			// EVIDENCE: this engine must have synced that path itself. A note the
+			// user created locally and never synced carries NO claim, so the check
+			// above waves it through -- and a path we vacated is exactly where a
+			// user is likely to make one ("Foo.md" again). Moving it would hand
+			// their file to a different note. Sync evidence is the cheap
+			// discriminator (no read), and its absence fails toward an ordinary
+			// create, which is recoverable.
+			// Either form of bookkeeping counts. Requiring sync-state alone would
+			// gate the recovery on state that other paths legitimately drop, and
+			// this fallback is the ONLY thing standing between a remote rename and
+			// a recreate -- narrowing it too far silently reinstates the bug. A
+			// stranger's never-synced file has neither.
+			if (!this.syncState.has(at) && !this.baseStore?.get(at)) continue;
 			if (this.app.vault.getFileByPath?.(at)) return at;
 		}
 		return undefined;
@@ -2637,7 +2666,10 @@ export class SyncEngine {
 			this.files.clearMarker(file.path, "renamedAway");
 			this.files.clearMarker(file.path, "remotelyDeleted");
 			this.consumeEngineTrash(file.path);
-			this.dropPath(normalizePath(file.path));
+			// `dropBase: false` -- the base was carried to the note's new path by
+			// the old-leg branch above. Dropping it here would destroy it after the
+			// carry, which is worse than never carrying it at all.
+			this.dropPath(normalizePath(file.path), { dropBase: false });
 			rlog().info(
 				"vault",
 				`Delete is rename old-leg — id-keyed state preserved: ${noteRef(file.path)}`,
@@ -5571,7 +5603,29 @@ export class SyncEngine {
 	 *  unordered application is the bug. Per-note lanes if it ever matters. */
 	handleStreamEvent(event: NoteStreamEvent): Promise<void> {
 		const applied = this.streamTail.then(() => this.applyStreamEvent(event));
-		this.streamTail = applied.catch(() => {});
+		// The TAIL is bounded, the event is not. Serializing means a single event
+		// that never settles stops every later one for the life of the session --
+		// a total sync stall, not merely added latency. The stalled event keeps
+		// running (it cannot be cancelled); the queue simply stops waiting on it.
+		this.streamTail = new Promise<void>((resolve) => {
+			let settled = false;
+			const release = () => {
+				if (settled) return;
+				settled = true;
+				this.time.clearTimeout(timer);
+				resolve();
+			};
+			const timer = this.time.setTimeout(() => {
+				if (settled) return;
+				settled = true;
+				rlog().warn(
+					"ws",
+					`Stream event still running after ${STREAM_EVENT_STALL_MS}ms — releasing the queue so later events are not blocked`,
+				);
+				resolve();
+			}, STREAM_EVENT_STALL_MS);
+			applied.then(release, release);
+		});
 		return applied;
 	}
 
@@ -5761,6 +5815,15 @@ export class SyncEngine {
 					}
 				}
 				if (existing) {
+					// Carry the merge base to the note's new home BEFORE trashing the
+					// old file. This is the only point that knows both paths: the
+					// vault delete event this trash fires reaches `handleDelete`
+					// knowing only the old one, so a base left behind there is
+					// destroyed outright. The note then has no common ancestor at its
+					// new path and the next divergence resolves by writing a conflict
+					// copy -- the same failure the mover's own base carry exists to
+					// prevent, one branch over.
+					this.baseStore?.rename(normalized, normalizePath(relocatedPath));
 					// Carry "this is a rename's old leg" across the trash boundary.
 					// applyRemoteRemoval fires a vault delete event, and handleDelete
 					// cannot otherwise tell it apart from a note genuinely dying — so
@@ -7479,7 +7542,8 @@ export class SyncEngine {
 		// the map has already been moved, so it answers `normalized` for this id
 		// and the old name is gone from it. `relocatedFrom` is the only remaining
 		// record, captured at the instant identity moved.
-		const cameFrom = this.relocatedFrom.get(normalized) ?? this.staleOriginFor(normalized);
+		const cameFrom =
+			this.relocatedFrom.get(normalized)?.from ?? this.staleOriginFor(normalized);
 		if (cameFrom && cameFrom !== normalized) {
 			const existing = this.app.vault.getFileByPath?.(cameFrom);
 			if (existing && !this.app.vault.getAbstractFileByPath?.(normalized)) {
@@ -8889,6 +8953,10 @@ export class SyncEngine {
 			this.time.clearTimeout(timer);
 		}
 		this.recentlyDeleted.clear();
+		for (const { timer } of this.relocatedFrom.values()) {
+			this.time.clearTimeout(timer);
+		}
+		this.relocatedFrom.clear();
 		this.pendingPostPullPushes.clear();
 		if (this.seqHealTimer !== null) {
 			this.time.clearTimeout(this.seqHealTimer);

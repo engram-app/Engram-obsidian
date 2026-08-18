@@ -129,6 +129,7 @@ export class SyncStore {
 				if (typeof key === "string") this.forgotten.delete(key);
 			}
 			this.reverse = null;
+			this.cacheById = null;
 		});
 	}
 
@@ -203,6 +204,7 @@ export class SyncStore {
 		if (!path || path === "null" || path === "undefined" || !meta?.note_id) return;
 		this.cache.set(path, meta);
 		this.reverse = null;
+		this.cacheById = null;
 	}
 
 	/** Every path this store has ever associated with `note_id`, newest source
@@ -218,16 +220,35 @@ export class SyncStore {
 	 *  the cache is a snapshot from load time and may name a path that has since
 	 *  been deleted, or reused by a different note. */
 	priorPathsForId(note_id: string): string[] {
+		// Indexed, not scanned. This is consulted once per materialized note, so a
+		// linear pass over the cache would make a first sync quadratic in vault
+		// size -- and the caller reaches it on every create, because the map is
+		// already claimed at the target by the time anything is written.
+		//
+		// Built lazily and dropped by the same invalidation as `reverse`: the
+		// cache only changes via `seed`, but `resolvePath` depends on the rename
+		// chain, so a stale index would answer with pre-rename paths.
+		if (!this.cacheById) {
+			const index = new Map<string, string[]>();
+			for (const [path, meta] of this.cache) {
+				const at = index.get(meta.note_id);
+				if (at) at.push(path);
+				else index.set(meta.note_id, [path]);
+			}
+			this.cacheById = index;
+		}
 		const now = this.pathForId(note_id);
 		const out: string[] = [];
-		for (const [path, meta] of this.cache) {
-			if (meta.note_id !== note_id) continue;
+		for (const path of this.cacheById.get(note_id) ?? []) {
 			const resolved = this.resolvePath(path);
 			if (resolved === now) continue;
 			out.push(resolved);
 		}
 		return out;
 	}
+
+	/** note_id -> the cache paths naming it. See `priorPathsForId`. */
+	private cacheById: Map<string, string[]> | null = null;
 
 	/** The note_id for `path`, or null. The `NoteIdMap.get` replacement. */
 	get(path: string): string | null {

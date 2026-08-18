@@ -1870,10 +1870,9 @@ describe("materializing a note that already exists elsewhere MOVES it", () => {
 		const fs = modelVaultFs({ "Old.md": "old body" });
 		const engine = createEngine();
 		engine.setNoteIdMap(new NoteIdMap());
-		(engine as unknown as { relocatedFrom: Map<string, string> }).relocatedFrom.set(
-			"New.md",
-			"Old.md",
-		);
+		(
+			engine as unknown as { relocatedFrom: Map<string, { from: string; timer: number }> }
+		).relocatedFrom.set("New.md", { from: "Old.md", timer: 0 });
 
 		await (
 			engine as unknown as { createFileWithFolders(p: string, c: string): Promise<void> }
@@ -1923,6 +1922,11 @@ describe("the origin survives a move the store never announced", () => {
 		const map = new NoteIdMap();
 		// data.json load: the note was at Old.md.
 		map.seed({ "Old.md": "id-1" });
+		// A note this engine synced carries bookkeeping for its path; the cached
+		// origin is only trusted for such a path, so the harness must model it.
+		(engine as unknown as { syncState: Map<string, unknown> }).syncState.set("Old.md", {
+			hash: 1,
+		});
 		// Move the map BEFORE the engine is watching. That is the state the trace
 		// showed -- the map already at the new path, no record of the old one --
 		// and doing it this way produces it without faking any internals.
