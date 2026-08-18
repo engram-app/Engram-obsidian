@@ -430,3 +430,49 @@ describe("review hardening", () => {
 		expect(seen).toContain("After.md");
 	});
 });
+
+describe("a note learned THIS session can still be moved", () => {
+	// The gap e2e test_93 found and a manual test could not. The data.json cache
+	// only knows notes present at load; a note received during the session goes
+	// to the store's overlay and never enters it, so a rename of a
+	// freshly-received note had no origin to recover and recreated the file.
+	//
+	// The engine's own registry is what closes it: it records where this process
+	// put each note's bytes, which covers notes of any age.
+	test("received, then renamed, in one session: moved not recreated", async () => {
+		const h = makeVault({});
+		const engine = makeEngine(h.app);
+		h.attach(engine);
+		const map = new NoteIdMap();
+		engine.setNoteIdMap(map);
+		// NOTE: no `seed()` anywhere -- this note has never been in data.json.
+
+		// 1. The note arrives for the first time and is materialized.
+		map.set("Fresh.md", ID);
+		await engine.handleStreamEvent(upsert("Fresh.md", "hello"));
+		await settle();
+		expect(h.present.has("Fresh.md")).toBe(true);
+		(engine as unknown as { syncState: Map<string, unknown> }).syncState.set("Fresh.md", {
+			hash: 1,
+		});
+
+		// 2. A peer renames it. Identity moves ahead of the file -- and by a route
+		// that leaves NO live record, which is the field behaviour: the doc-ready
+		// announce, catch-up and discovery all reach the map without going through
+		// the relocation signal. Detaching the handler models that exactly, and
+		// isolates the fallback the registry exists to serve.
+		map.setRelocateHandler(() => {});
+		(h.vault.rename as ReturnType<typeof mock>).mockClear();
+		(h.vault.create as ReturnType<typeof mock>).mockClear();
+		map.set("Renamed.md", ID);
+		await Promise.all([
+			engine.handleStreamEvent(upsert("Renamed.md", "hello")),
+			engine.handleStreamEvent(del("Fresh.md")),
+		]);
+		await settle();
+
+		expect([...h.present.keys()]).toEqual(["Renamed.md"]);
+		expect(h.vault.rename).toHaveBeenCalled();
+		expect(h.vault.create).not.toHaveBeenCalled();
+	});
+});

@@ -652,6 +652,35 @@ export class SyncEngine {
 	 *  create at that path would be turned into a move of an unrelated file. */
 	private relocatedFrom = new Map<string, { from: string; timer: number }>();
 
+	/** note_id -> where THIS engine last put that note's file.
+	 *
+	 *  The registry Relay has as `files: Map<guid, IFile>`: an engine-owned
+	 *  id->file binding, separate from the shared identity map. It exists because
+	 *  the shared map cannot answer "where is this note's file" during a rename --
+	 *  a claim erases the old key by design, which is precisely what makes a
+	 *  rename indistinguishable from a note appearing from nowhere.
+	 *
+	 *  It supersedes the `data.json` cache fallback, which only ever knew notes
+	 *  present at load: a note learned during the session is written to the
+	 *  store's overlay, never its seed cache, so a rename of a freshly-received
+	 *  note had no origin to recover and recreated the file. Caught by e2e
+	 *  test_93 (inode changed), invisible to a manual test on a note that
+	 *  predated a plugin reload.
+	 *
+	 *  Best-effort by nature -- an in-memory record of what this process did, not
+	 *  an authority. Consumers verify against the disk before acting on it. */
+	private fileForNote = new Map<string, string>();
+
+	/** Record that `path` currently holds whichever note claims it. Called after
+	 *  this engine puts a note's bytes somewhere: a create, a move, a local
+	 *  rename. Cheap enough to call on every write, and a miss only costs the
+	 *  recreate this exists to avoid. */
+	private rememberFileFor(path: string): void {
+		const at = normalizePath(path);
+		const id = this.noteIdMap?.get(at) ?? null;
+		if (id) this.fileForNote.set(id, at);
+	}
+
 	/** Remember where a note came from, for as long as a materialization might
 	 *  still arrive. The expiry timer is HELD, not fired and forgotten: every
 	 *  other TTL map here is swept by `destroy()`, and one that is not leaves
@@ -684,7 +713,15 @@ export class SyncEngine {
 	private staleOriginFor(target: string): string | undefined {
 		const id = this.noteIdMap?.get(target) ?? null;
 		if (!id) return undefined;
-		for (const candidate of this.noteIdMap?.priorPathsForId?.(id) ?? []) {
+		// The registry first: it knows notes learned this session, which the
+		// data.json cache never does. Both are hints, and both go through the same
+		// verification below.
+		const remembered = this.fileForNote.get(id);
+		const candidates = [
+			...(remembered && remembered !== target ? [remembered] : []),
+			...(this.noteIdMap?.priorPathsForId?.(id) ?? []),
+		];
+		for (const candidate of candidates) {
 			const at = normalizePath(candidate);
 			if (at === target) continue;
 			// The remembered path may have been REUSED by a different note since
@@ -745,6 +782,7 @@ export class SyncEngine {
 			// went anywhere.
 			this.baseStore?.rename(src, dest);
 			this.dropPath(src, { dropBase: false });
+			this.rememberFileFor(dest);
 			rlog().info("pull", `Followed identity move: ${noteRef(src)} -> ${noteRef(dest)}`);
 		} catch (e) {
 			this.files.clearMarker(src, "remotelyRenamed");
@@ -7557,12 +7595,18 @@ export class SyncEngine {
 				const moved = this.app.vault.getFileByPath?.(normalized);
 				if (moved) {
 					await this.modifyFile(moved, content);
+					this.rememberFileFor(normalized);
 					return;
 				}
 			}
 		}
 		try {
 			await this.app.vault.create(normalized, content);
+			// The load-bearing call. A note received this session is created here
+			// and nowhere else, so without this the registry only ever knows notes
+			// that were on disk at startup -- which is exactly the hole e2e
+			// test_93 fell through while a manual test on an older note passed.
+			this.rememberFileFor(normalized);
 		} catch (e) {
 			// A concurrent materialization path (pull vs WS delivery) can create
 			// this file between the caller's existence check and our create —
@@ -7572,6 +7616,7 @@ export class SyncEngine {
 			const raced = this.app.vault.getAbstractFileByPath(normalized);
 			if (raced instanceof TFile) {
 				await this.modifyFile(raced, content);
+				this.rememberFileFor(normalized);
 				return;
 			}
 			throw e;
@@ -8961,6 +9006,7 @@ export class SyncEngine {
 			this.time.clearTimeout(timer);
 		}
 		this.relocatedFrom.clear();
+		this.fileForNote.clear();
 		this.pendingPostPullPushes.clear();
 		if (this.seqHealTimer !== null) {
 			this.time.clearTimeout(this.seqHealTimer);
