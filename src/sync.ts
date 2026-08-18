@@ -1,7 +1,16 @@
 /**
  * Sync engine — handles push/pull logic, debouncing, and ignore patterns.
  */
-import { type App, Notice, normalizePath, type TAbstractFile, TFile, TFolder } from "obsidian";
+import {
+	type App,
+	MarkdownView,
+	Notice,
+	normalizePath,
+	type TAbstractFile,
+	TFile,
+	TFolder,
+	type WorkspaceLeaf,
+} from "obsidian";
 import { arrayBufferToBase64, base64ToArrayBuffer, type EngramApi } from "./api";
 import type { BaseStore } from "./base-store";
 import { fnv1a } from "./content-hash";
@@ -239,6 +248,14 @@ const ECHO_COOLDOWN_MS = 5000;
  *  delete-then-recreate window: within it the server won't have a live row for
  *  this id anyway (delete-wins), so honoring the local tombstone is exact. */
 const RECENT_DELETE_COOLDOWN_MS = 60_000;
+/** How long a relocation's origin stays available to a later materialization.
+ *  Generous next to the milliseconds a racing flush needs, and short next to
+ *  the lifetime of a path that might legitimately be recreated. */
+const RELOCATION_MEMORY_MS = 30_000;
+/** How long the serialized stream queue waits on one event before moving on.
+ *  Generous next to any real apply (disk + a manifest fetch), short next to a
+ *  session. */
+const STREAM_EVENT_STALL_MS = 30_000;
 
 /** Debounce window for the ok->degraded transition Notice: aggregates a
  *  burst of newly-degraded notes (e.g. a batch push) into one Notice. */
@@ -388,7 +405,7 @@ export class SyncEngine {
 	 *  applies. Keyed by note_id (the key both paths check by), unlike the
 	 *  path-keyed offline-queue `hasPendingDelete` guard which only covers a
 	 *  delete STILL queued (this covers one already sent/dequeued). */
-	private recentlyDeleted: Map<string, number> = new Map();
+	private recentlyDeleted: Map<string, { timer: number; path: string }> = new Map();
 	private pulling = false;
 	private lastSync = "";
 	private lastError = "";
@@ -585,6 +602,198 @@ export class SyncEngine {
 
 	setNoteIdMap(map: NoteIdMap | null): void {
 		this.setCrdtPorts({ noteIdMap: map });
+		// Follow identity with the bytes. The store reports a claim MOVING; this
+		// engine owns the vault, so it performs the corresponding file move.
+		//
+		// Optional call: several suites pass structural doubles for this port
+		// (a bare `{ tag: "map" }`, a stub with only the two methods under test),
+		// and wiring a diagnostic-adjacent hook must not be what breaks them. In
+		// production this is always a real NoteIdMap, so the method is always there.
+		map?.setRelocateHandler?.((from, to) => {
+			// RECORD FIRST, move second. The move can lose: a concurrent flush or
+			// the discovery create may reach the new path first, and then this
+			// rename finds the target occupied and gives up -- which is exactly how
+			// a rename degraded into create-here + trash-there. The record is what
+			// lets whoever DOES materialize the path turn its create into a move,
+			// so the outcome no longer depends on who wins.
+			this.rememberRelocation(normalizePath(from), normalizePath(to));
+			void this.renameFollowingIdentity(from, to);
+		});
+	}
+
+	/** Move a note's file to follow a relocation of its identity.
+	 *
+	 *  A rename arrives as identity first: some path now claims a note that lived
+	 *  somewhere else. The map is updated early (the doc-ready announce,
+	 *  discovery) and the file is not, so by the time the rename's upsert is
+	 *  applied `pathForId` already reports the new location -- the relocation
+	 *  check sees nothing to do, the create branch finds the target empty and
+	 *  writes a NEW file, and the rename's delete leg trashes the old one. The
+	 *  note survives with its id and loses its file identity: open tabs close,
+	 *  backlinks and creation date reset. That is the "it deleted and remade my
+	 *  note" report.
+	 *
+	 *  Doing it here means the move happens the moment identity moves, whichever
+	 *  path moved it, instead of being reconstructed later from a delete/create
+	 *  pair that no longer carries both halves.
+	 *
+	 *  `vault.rename`, deliberately, NOT `fileManager.renameFile`: the server has
+	 *  already rewritten links for a rename it originated, and renameFile would
+	 *  rewrite them a second time (the exactly-one-rewriter invariant).
+	 *
+	 *  Best effort by construction. If the source is gone the move already
+	 *  happened (a local rename this device performed reaches the store the same
+	 *  way, after Obsidian moved the file). If the target is occupied, something
+	 *  else materialized it and overwriting is not this function's call -- the
+	 *  existing convergence paths own that. */
+	/** New path -> the path its note came from, for as long as a materialization
+	 *  might still arrive. Bounded by a TTL: a note that is never materialized at
+	 *  the new path must not pin a stale origin forever, or a LATER genuine
+	 *  create at that path would be turned into a move of an unrelated file. */
+	private relocatedFrom = new Map<string, { from: string; timer: number }>();
+
+	/** note_id -> where THIS engine last put that note's file.
+	 *
+	 *  The registry Relay has as `files: Map<guid, IFile>`: an engine-owned
+	 *  id->file binding, separate from the shared identity map. It exists because
+	 *  the shared map cannot answer "where is this note's file" during a rename --
+	 *  a claim erases the old key by design, which is precisely what makes a
+	 *  rename indistinguishable from a note appearing from nowhere.
+	 *
+	 *  It supersedes the `data.json` cache fallback, which only ever knew notes
+	 *  present at load: a note learned during the session is written to the
+	 *  store's overlay, never its seed cache, so a rename of a freshly-received
+	 *  note had no origin to recover and recreated the file. Caught by e2e
+	 *  test_93 (inode changed), invisible to a manual test on a note that
+	 *  predated a plugin reload.
+	 *
+	 *  Best-effort by nature -- an in-memory record of what this process did, not
+	 *  an authority. Consumers verify against the disk before acting on it. */
+	private fileForNote = new Map<string, string>();
+
+	/** Record that `path` currently holds whichever note claims it. Called after
+	 *  this engine puts a note's bytes somewhere: a create, a move, a local
+	 *  rename. Cheap enough to call on every write, and a miss only costs the
+	 *  recreate this exists to avoid. */
+	private rememberFileFor(path: string): void {
+		const at = normalizePath(path);
+		const id = this.noteIdMap?.get(at) ?? null;
+		if (id) this.fileForNote.set(id, at);
+	}
+
+	/** Remember where a note came from, for as long as a materialization might
+	 *  still arrive. The expiry timer is HELD, not fired and forgotten: every
+	 *  other TTL map here is swept by `destroy()`, and one that is not leaves
+	 *  timers firing against a torn-down engine after a plugin reload. That is
+	 *  the exact trap `SyncedFileTable` was written to close -- "adding a fourth
+	 *  marker meant remembering to add a fourth loop" -- so this one holds its
+	 *  handle and is swept with the rest. */
+	private rememberRelocation(from: string, to: string): void {
+		const existing = this.relocatedFrom.get(to);
+		if (existing) this.time.clearTimeout(existing.timer);
+		this.relocatedFrom.set(to, {
+			from,
+			timer: this.time.setTimeout(() => this.relocatedFrom.delete(to), RELOCATION_MEMORY_MS),
+		});
+	}
+
+	/** Fallback origin for a note being materialized at `target`, for the case
+	 *  `relocatedFrom` never saw the move.
+	 *
+	 *  The live record only exists when the relocation ran through the store's
+	 *  claim path. In the field the map is reached other ways -- the doc-ready
+	 *  announce, catch-up, discovery -- and then the move is already done by the
+	 *  time anything observable happens, with no record of where the note came
+	 *  from. data.json's cached mapping is not erased by a claim, so it still
+	 *  remembers, and this asks it.
+	 *
+	 *  Strictly a hint: the cache is a load-time snapshot, so the candidate is
+	 *  returned only if a file is actually sitting there. The caller additionally
+	 *  requires `target` to be empty before moving anything. */
+	private staleOriginFor(target: string): string | undefined {
+		const id = this.noteIdMap?.get(target) ?? null;
+		if (!id) return undefined;
+		// The registry first: it knows notes learned this session, which the
+		// data.json cache never does. Both are hints, and both go through the same
+		// verification below.
+		const remembered = this.fileForNote.get(id);
+		const candidates = [
+			...(remembered && remembered !== target ? [remembered] : []),
+			...(this.noteIdMap?.priorPathsForId?.(id) ?? []),
+		];
+		for (const candidate of candidates) {
+			const at = normalizePath(candidate);
+			if (at === target) continue;
+			// The remembered path may have been REUSED by a different note since
+			// the snapshot was taken. Moving it then would hand one note's file to
+			// another -- silent data loss, and worse than the recreate this exists
+			// to avoid. Only an unclaimed path, or one still claimed by this same
+			// note, is safe to move.
+			const holder = this.noteIdMap?.get(at) ?? null;
+			if (holder && holder !== id) continue;
+			// EVIDENCE: this engine must have synced that path itself. A note the
+			// user created locally and never synced carries NO claim, so the check
+			// above waves it through -- and a path we vacated is exactly where a
+			// user is likely to make one ("Foo.md" again). Moving it would hand
+			// their file to a different note. Sync evidence is the cheap
+			// discriminator (no read), and its absence fails toward an ordinary
+			// create, which is recoverable.
+			// Either form of bookkeeping counts. Requiring sync-state alone would
+			// gate the recovery on state that other paths legitimately drop, and
+			// this fallback is the ONLY thing standing between a remote rename and
+			// a recreate -- narrowing it too far silently reinstates the bug. A
+			// stranger's never-synced file has neither.
+			if (!this.syncState.has(at) && !this.baseStore?.get(at)) continue;
+			if (this.app.vault.getFileByPath?.(at)) return at;
+		}
+		return undefined;
+	}
+
+	private async renameFollowingIdentity(from: string, to: string): Promise<void> {
+		const src = normalizePath(from);
+		const dest = normalizePath(to);
+		if (src === dest) return;
+		const file = this.app.vault.getFileByPath?.(src);
+		if (!file) return;
+		if (this.app.vault.getAbstractFileByPath?.(dest)) return;
+		try {
+			const folder = dest.includes("/") ? dest.slice(0, dest.lastIndexOf("/")) : "";
+			if (folder) await this.ensureFolder(folder);
+			// Obsidian fires a vault `rename` for this move exactly as it would for
+			// a user drag; without the marker the echo is pushed back as a fresh
+			// rename. Marked on BOTH ends -- the event carries both, and which one
+			// a guard reads depends on the caller.
+			this.files.mark(src, "remotelyRenamed", ECHO_COOLDOWN_MS);
+			this.files.mark(dest, "remotelyRenamed", ECHO_COOLDOWN_MS);
+			await this.app.vault.rename(file, dest);
+			// Relay's `doc.move(path)` step: having moved the bytes, move the
+			// bookkeeping that was filed under the old path. Skipping it is not
+			// harmless — the rename echo guard below returns early precisely
+			// BECAUSE it assumes the mover already did this ("the id map, base and
+			// sync-state were all re-keyed by the mover"), so a mover that does not
+			// leaves the merge base and sync-state stranded on a path that no
+			// longer exists. The next convergence then has no common ancestor for
+			// the note and resolves by writing a conflict copy.
+			//
+			// Same shape as the other mover: carry the base across (the content did
+			// not change, only its name), then drop the old path's sync-state.
+			// Done AFTER the rename, not before, so a failed move leaves the
+			// bookkeeping intact rather than destroying state for a file that never
+			// went anywhere.
+			this.baseStore?.rename(src, dest);
+			this.dropPath(src, { dropBase: false });
+			this.rememberFileFor(dest);
+			rlog().info("pull", `Followed identity move: ${noteRef(src)} -> ${noteRef(dest)}`);
+		} catch (e) {
+			this.files.clearMarker(src, "remotelyRenamed");
+			this.files.clearMarker(dest, "remotelyRenamed");
+			// Not fatal and not silent: the note still converges through the
+			// create/delete pair, just without keeping its file identity.
+			rlog().warn(
+				"pull",
+				`Identity move could not follow on disk (${noteRef(src)} -> ${noteRef(dest)}): ${errMsg(e, dest)}`,
+			);
+		}
 	}
 
 	/** Populate `noteIdMap` authoritatively from the server manifest's
@@ -2482,6 +2691,30 @@ export class SyncEngine {
 			return;
 		}
 
+		// RENAME OLD LEG. The engine trashed this path to follow a remote rename;
+		// the note is alive at its new path. Everything below is keyed by note_id
+		// — releasing the claim, the delete-wins tombstone, the CRDT teardown —
+		// and every one of them would be aimed at a LIVING note. Drop only the
+		// path-scoped bookkeeping and stop.
+		//
+		// Placed above the id resolution deliberately: the map is mid-relocation
+		// here, so whether `get(oldPath)` still answers the id is a race, and a
+		// guard that depends on the answer is a guard that works some of the time.
+		if (this.files.has(file.path, "renamedAway")) {
+			this.files.clearMarker(file.path, "renamedAway");
+			this.files.clearMarker(file.path, "remotelyDeleted");
+			this.consumeEngineTrash(file.path);
+			// `dropBase: false` -- the base was carried to the note's new path by
+			// the old-leg branch above. Dropping it here would destroy it after the
+			// carry, which is worse than never carrying it at all.
+			this.dropPath(normalizePath(file.path), { dropBase: false });
+			rlog().info(
+				"vault",
+				`Delete is rename old-leg — id-keyed state preserved: ${noteRef(file.path)}`,
+			);
+			return;
+		}
+
 		// Resolve the note_id BEFORE clearing the map (removeDoc/reset below need
 		// it to tear down the right CRDT doc, keyed by id not path).
 		const crdtNoteId = !isBinary ? (this.noteIdMap?.get(file.path) ?? null) : null;
@@ -2529,9 +2762,31 @@ export class SyncEngine {
 		const wasEngineTrash = this.consumeEngineTrash(file.path);
 		if (this.files.has(file.path, "remotelyDeleted") || wasEngineTrash) {
 			this.files.clearMarker(file.path, "remotelyDeleted");
-			// A converged REMOTE delete: tombstone the id so a racing catch-up or
-			// late fan-out cannot resurrect it (delete-wins, backend #970).
-			if (crdtNoteId) this.markRecentlyDeleted(crdtNoteId);
+			// NO TOMBSTONE HERE. This branch fires for a delete the SERVER already
+			// applied and we are mirroring to disk. The id-keyed tombstone exists
+			// for the opposite case (below): a delete THIS device originated, whose
+			// round trip a peer's in-flight frame could undo. Once the server owns
+			// the decision, a later server frame for the same id is not a
+			// resurrection to suppress — it is newer truth to honour, and the only
+			// frame that carries it is the one this guard was silencing.
+			//
+			// A rename is broadcast as two frames (new path upsert + old path
+			// delete). Tombstoning off the delete leg muted the note the rename
+			// had just moved: 60s of `fan-out skip (recent local delete)` and
+			// `op-replay skip`, with `teardownCrdtDoc` having destroyed the doc
+			// underneath the open editor (`NoteDestroyedError`). The user-visible
+			// bug is "the rename lands, then typing stops syncing" — self-healing
+			// only on reload or when the window lapses. Reported 2026-08-18.
+			//
+			// Delete-wins (backend #970) is unaffected: it is about OUR delete
+			// racing a peer, and that path still tombstones. A genuine remote
+			// delete needs no local tombstone — nothing will re-announce a note
+			// the server has removed, and if the server DOES re-announce it, the
+			// note is alive and we want it back.
+			//
+			// The doc teardown stays: the file is gone from disk, so the room
+			// should not stay resident. Re-enrolment rebuilds it from the server,
+			// which is exactly what the tombstone used to prevent.
 			rlog().info("vault", `Delete echo skip (remote-applied): ${noteRef(file.path)}`);
 			if (this.isCrdtEligible(file) && crdtNoteId) {
 				await this.teardownCrdtDoc(crdtNoteId);
@@ -2555,7 +2810,7 @@ export class SyncEngine {
 			// or terminally no-ops server-side. Without this, a create-then-delete
 			// note resurrects when the queued create fires (review finding 5).
 			if (crdtNoteId && this.crdtHasPendingOp?.(crdtNoteId)) {
-				this.markRecentlyDeleted(crdtNoteId);
+				this.markRecentlyDeleted(crdtNoteId, file.path);
 				this.crdtEnqueue?.({ kind: "delete", docId: crdtNoteId, path: file.path });
 				if (this.isCrdtEligible(file)) await this.teardownCrdtDoc(crdtNoteId);
 				rlog().info("push", `Delete superseded pending create: ${noteRef(file.path)}`);
@@ -2573,7 +2828,7 @@ export class SyncEngine {
 
 		// Tombstone the id BEFORE clearing the mapping and issuing the delete, so
 		// a racing catch-up head map or late fan-out cannot resurrect it.
-		if (crdtNoteId) this.markRecentlyDeleted(crdtNoteId);
+		if (crdtNoteId) this.markRecentlyDeleted(crdtNoteId, file.path);
 
 		try {
 			if (isBinary) {
@@ -2645,6 +2900,22 @@ export class SyncEngine {
 		}
 		if (!this.ready) return;
 		if (!this.isSyncable(file)) return;
+
+		// ECHO GUARD: this rename is the engine's own, applied to follow a remote
+		// peer's rename (`moveIfIdRelocated`). Obsidian cannot tell that move from
+		// a user drag — it fires the same vault event — so without this the move
+		// is pushed back as a fresh rename, and the two devices trade renames.
+		// The id map, base and sync-state were all re-keyed by the mover before
+		// the rename was applied, so there is nothing left to do here.
+		if (this.files.has(normalizePath(oldPath), "remotelyRenamed")) {
+			this.files.clearMarker(normalizePath(oldPath), "remotelyRenamed");
+			this.files.clearMarker(normalizePath(file.path), "remotelyRenamed");
+			rlog().info(
+				"vault",
+				`Rename echo suppressed (engine applied a remote rename): ${noteRef(oldPath)} -> ${noteRef(file.path)}`,
+			);
+			return;
+		}
 
 		const isBinary = this.isBinaryFile(file);
 
@@ -3718,18 +3989,6 @@ export class SyncEngine {
 		new Notice(`Engram: plan upgraded — syncing ${skipped.length} attachment(s)…`, 6_000);
 	}
 
-	/** Mark `path` in a TTL map, resetting any pending expiry. Sole remaining
-	 *  caller is markRecentlyDeleted (the other echo-suppression marks moved to
-	 *  SyncedFileTable, #358); destroy() sweeps the same map. */
-	private markWithTtl(map: Map<string, number>, path: string, ms: number): void {
-		const existing = map.get(path);
-		if (existing) this.time.clearTimeout(existing);
-		const timer = this.time.setTimeout(() => {
-			map.delete(path);
-		}, ms);
-		map.set(path, timer);
-	}
-
 	/** Trash a file whose deletion was decided REMOTELY (WS delete event, pull
 	 *  tombstone, relocation/orphan/bootstrap cleanup). Marks the path first so
 	 *  the vault 'delete' event this trash fires skips the server push in
@@ -3776,9 +4035,53 @@ export class SyncEngine {
 	}
 
 	/** Record a note_id THIS device just deleted so neither CRDT convergence
-	 *  path resurrects it during the delete-wins window (backend #970). */
-	private markRecentlyDeleted(noteId: string): void {
-		this.markWithTtl(this.recentlyDeleted, noteId, RECENT_DELETE_COOLDOWN_MS);
+	 *  path resurrects it during the delete-wins window (backend #970).
+	 *
+	 *  `path` is stored with it because the tombstone alone cannot tell the two
+	 *  things it must distinguish apart: a stale echo of THIS delete (same path
+	 *  — block it, that is the whole point of #970) from the other leg of a
+	 *  RENAME (different path — the note is alive and must not be blocked). See
+	 *  `clearTombstoneOnRelocation`. Inlines the former `markWithTtl`, whose
+	 *  only caller this was. */
+	private markRecentlyDeleted(noteId: string, path: string): void {
+		const existing = this.recentlyDeleted.get(noteId);
+		if (existing) this.time.clearTimeout(existing.timer);
+		this.recentlyDeleted.set(noteId, {
+			path: normalizePath(path),
+			timer: this.time.setTimeout(() => {
+				this.recentlyDeleted.delete(noteId);
+			}, RECENT_DELETE_COOLDOWN_MS),
+		});
+	}
+
+	/** An inbound upsert is the server asserting an id is ALIVE at a path. If
+	 *  that path differs from the one this device tombstoned the id at, the two
+	 *  frames are the two legs of ONE rename, and the "delete" was never a user
+	 *  delete — so the tombstone has to come off.
+	 *
+	 *  The rename guard one level up (`relocated`, in the delete branch) only
+	 *  catches this when the upsert for the NEW path is processed FIRST, which
+	 *  is the order its comment assumes. Prod delivers the other order too: with
+	 *  the delete first, `pathForId` still answers the OLD path, the delete reads
+	 *  as genuine, and the id is tombstoned for 60s and its Y.Doc destroyed. Both
+	 *  convergence paths then skip the note (`fan-out skip`, `op-replay skip`)
+	 *  and the editor's doc is gone — the user-visible bug is "the rename lands,
+	 *  then typing stops syncing", self-healing only on reload or after the TTL.
+	 *  Checking the RECORDED path instead of arrival order is order-independent,
+	 *  so neither delivery order can produce it.
+	 *
+	 *  A same-path upsert is exactly the stale echo #970 exists to block: leave
+	 *  that tombstone standing. */
+	private clearTombstoneOnRelocation(noteId: string, path: string): void {
+		const tomb = this.recentlyDeleted.get(noteId);
+		if (!tomb || tomb.path === normalizePath(path)) return;
+		this.time.clearTimeout(tomb.timer);
+		this.recentlyDeleted.delete(noteId);
+		rlog().info(
+			"ws",
+			`Delete tombstone cleared — ${noteId} is alive at ${noteRef(path)}, so the delete of ` +
+				`${noteRef(tomb.path)} was a rename's old leg`,
+		);
 	}
 
 	/** MINT REFUSAL (backend #972, PRs #216/#217) — the single decision both
@@ -5304,8 +5607,67 @@ export class SyncEngine {
 		};
 	}
 
-	/** Handle a WebSocket stream event (upsert or delete). */
-	async handleStreamEvent(event: NoteStreamEvent): Promise<void> {
+	/** Tail of the serialized stream-event chain. See `handleStreamEvent`. */
+	private streamTail: Promise<void> = Promise.resolve();
+
+	/** Handle a WebSocket stream event (upsert or delete), STRICTLY IN ARRIVAL
+	 *  ORDER — one event's application completes before the next begins.
+	 *
+	 *  The server orders the two legs of a rename deliberately: the new path's
+	 *  upsert is broadcast BEFORE the old path's delete, at every rename seam
+	 *  (`Notes.rename_note`, `do_rewrite_note`, the folder-rename fan-out), so
+	 *  that a receiver relocates the note's id first and the delete then reads
+	 *  as a relocation leg rather than a genuine death. The delete branch's
+	 *  guards are written on exactly that premise.
+	 *
+	 *  The client used to throw that ordering away: `onEvent` fired
+	 *  `void handleStreamEvent(event)` per frame, so the two legs ran as
+	 *  concurrent async tasks and either could reach its decision point first.
+	 *  When the delete won, `pathForId` still answered the OLD path, so the
+	 *  rename read as a genuine delete: the note's id was tombstoned for the
+	 *  60s delete-wins window and its Y.Doc destroyed. Both convergence paths
+	 *  then skipped the note (`fan-out skip (recent local delete)`,
+	 *  `op-replay skip`) and the editor's doc was gone
+	 *  (`NoteDestroyedError`) — a rename that lands and then silently stops
+	 *  syncing until a reload or the TTL. Reported live after a web-app rename,
+	 *  2026-08-18.
+	 *
+	 *  Serializing here rather than at the call site keeps the guarantee with
+	 *  the invariant that depends on it, and gives it to every caller and test.
+	 *  Errors are isolated per event so one rejection cannot poison the tail.
+	 *
+	 *  ponytail: head-of-line blocking is the accepted cost — a slow event now
+	 *  delays later ones. These handlers already await disk and network, and
+	 *  unordered application is the bug. Per-note lanes if it ever matters. */
+	handleStreamEvent(event: NoteStreamEvent): Promise<void> {
+		const applied = this.streamTail.then(() => this.applyStreamEvent(event));
+		// The TAIL is bounded, the event is not. Serializing means a single event
+		// that never settles stops every later one for the life of the session --
+		// a total sync stall, not merely added latency. The stalled event keeps
+		// running (it cannot be cancelled); the queue simply stops waiting on it.
+		this.streamTail = new Promise<void>((resolve) => {
+			let settled = false;
+			const release = () => {
+				if (settled) return;
+				settled = true;
+				this.time.clearTimeout(timer);
+				resolve();
+			};
+			const timer = this.time.setTimeout(() => {
+				if (settled) return;
+				settled = true;
+				rlog().warn(
+					"ws",
+					`Stream event still running after ${STREAM_EVENT_STALL_MS}ms — releasing the queue so later events are not blocked`,
+				);
+				resolve();
+			}, STREAM_EVENT_STALL_MS);
+			applied.then(release, release);
+		});
+		return applied;
+	}
+
+	private async applyStreamEvent(event: NoteStreamEvent): Promise<void> {
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", "handleStreamEvent short-circuited — gate closed");
 			return;
@@ -5354,6 +5716,29 @@ export class SyncEngine {
 		// test_10). moveIfIdRelocated is idempotent — it no-ops unless the id
 		// already maps to a different local path. Gated on a known id
 		// (attachments aren't keyed).
+		if (event.event_type === "upsert" && !isAttachment) {
+			// RENAME TRACE (1/3). The guard below requires `event.id`; without it
+			// the relocation check never runs at all and the note falls through to
+			// discovery, which materializes a NEW file while the delete leg trashes
+			// the old one. That is indistinguishable in the logs from a relocation
+			// that ran and declined, so record which one happened.
+			// Hoisted, not inlined: the gate's sanctioned-wrapper pattern allows one
+			// level of nesting inside `noteRef(...)`, so a lookup call inside the
+			// argument falls through to the namey check and trips it.
+			const idHome = event.id ? (this.noteIdMap?.pathForId(event.id) ?? null) : null;
+			const holder = event.id
+				? (this.noteIdMap?.get(normalizePath(event.path)) ?? "none")
+				: "n/a";
+			// `diag`, not `info`: one line per inbound upsert is one line per note on
+			// a first sync. Kept rather than deleted because these three lines are
+			// what finally made this diagnosable -- but behind the diagnostics
+			// switch, where per-note volume is the point.
+			rlog().diag(
+				"pull",
+				`rename-trace 1/3 upsert id=${event.id ?? "MISSING"} -> ${noteRef(event.path)} ` +
+					`mapSaysIdLivesAt=${noteRef(idHome)} mapSaysTargetHolds=${holder}`,
+			);
+		}
 		if (event.event_type === "upsert" && !isAttachment && event.id) {
 			// eventTs must be on the SAME clock base as the pull path's relocationTs
 			// (Date.parse(c.updated_at), server clock) — NOT event.timestamp, which
@@ -5448,7 +5833,48 @@ export class SyncEngine {
 				// echo-suppressed and never re-pushed. A rename changes no content,
 				// so the bytes are preserved at the new path — no drift keep-both copy.
 				const existing = this.app.vault.getFileByPath(normalized);
+				// The id has moved to `relocatedPath`. If nothing is there yet, this
+				// file IS the note -- move it rather than destroying it and leaving
+				// the upsert to build a replacement. Trashing here is only correct
+				// once the note exists at its new home.
+				//
+				// Reachable whenever the delete leg is applied before the upsert.
+				// The server orders them the other way and the engine now preserves
+				// that order, so this is the belt to that braces: if the delete ever
+				// does arrive first, the difference is a moved file versus a
+				// destroyed-and-rebuilt one.
+				if (
+					existing &&
+					!this.app.vault.getAbstractFileByPath(normalizePath(relocatedPath))
+				) {
+					await this.renameFollowingIdentity(normalized, normalizePath(relocatedPath));
+					if (this.app.vault.getFileByPath(normalizePath(relocatedPath))) {
+						rlog().info(
+							"ws",
+							`Delete is rename old-leg — file moved to its new home: ${noteRef(normalized)}`,
+						);
+						return;
+					}
+				}
 				if (existing) {
+					// Carry the merge base to the note's new home BEFORE trashing the
+					// old file. This is the only point that knows both paths: the
+					// vault delete event this trash fires reaches `handleDelete`
+					// knowing only the old one, so a base left behind there is
+					// destroyed outright. The note then has no common ancestor at its
+					// new path and the next divergence resolves by writing a conflict
+					// copy -- the same failure the mover's own base carry exists to
+					// prevent, one branch over.
+					this.baseStore?.rename(normalized, normalizePath(relocatedPath));
+					// Carry "this is a rename's old leg" across the trash boundary.
+					// applyRemoteRemoval fires a vault delete event, and handleDelete
+					// cannot otherwise tell it apart from a note genuinely dying — so
+					// it tore down the id's CRDT doc, destroying the very room this
+					// branch exists to preserve. The doc stayed destroyed
+					// (`NoteDestroyedError` on every later read, re-enrolment does not
+					// revive a destroyed Y.Doc), which is the live half of the
+					// 2026-08-18 "rename lands, then typing stops syncing" report.
+					this.files.mark(normalized, "renamedAway", ECHO_COOLDOWN_MS);
 					await this.applyRemoteRemoval(existing);
 				}
 				// Only clear a stale old-path→id mapping if one still points at the
@@ -5753,8 +6179,42 @@ export class SyncEngine {
 	private lastRelocationTs = new Map<string, number>();
 
 	private async moveIfIdRelocated(id: string, newPath: string, eventTs?: number): Promise<void> {
+		// Both authoritative upsert paths (the WS broadcast and the pull feed)
+		// funnel through here, and this runs BEFORE the early return below on
+		// purpose: when the delete leg was processed first it already released the
+		// id's mapping, so `priorPath` is null and there is no "move" left to make
+		// — but the tombstone that leg left behind is still muting the live note.
+		this.clearTombstoneOnRelocation(id, newPath);
 		const priorPath = this.noteIdMap?.pathForId(id) ?? null;
-		if (!priorPath || normalizePath(priorPath) === normalizePath(newPath)) return;
+		if (!priorPath || normalizePath(priorPath) === normalizePath(newPath)) {
+			// RENAME TRACE (2/3). This return decides move-vs-recreate for every
+			// inbound relocation and was silent, so a vault where it fires EVERY
+			// time looked identical to one where renames work.
+			//
+			// Two causes, different fixes:
+			//   "map already at target" -- the map believes the note is already
+			//     there. Harmless only if the FILE moved too; the map and the disk
+			//     are different things and only `sourceOnDisk` distinguishes them.
+			//   "no prior path"        -- no record of where the note lived, so
+			//     there is nothing to move from.
+			// Locals avoid the word "path": the redaction gate rejects any rlog
+			// interpolation naming one, since `event.msg` is not scrubbed.
+			const why = priorPath ? "map already at target" : "no prior";
+			const targetOnDisk = !!this.app.vault.getAbstractFileByPath?.(normalizePath(newPath));
+			const sourceOnDisk = priorPath
+				? !!this.app.vault.getAbstractFileByPath?.(normalizePath(priorPath))
+				: false;
+			rlog().diag(
+				"pull",
+				`rename-trace 2/3 SKIPPED (${why}) id=${id} from=${noteRef(priorPath)} ` +
+					`to=${noteRef(newPath)} sourceOnDisk=${sourceOnDisk} targetOnDisk=${targetOnDisk}`,
+			);
+			return;
+		}
+		rlog().info(
+			"pull",
+			`rename-trace 2/3 PROCEEDING id=${id} from=${noteRef(priorPath)} to=${noteRef(newPath)}`,
+		);
 		if (eventTs !== undefined) {
 			const lastTs = this.lastRelocationTs.get(id);
 			// STRICT `<` (e2e test_34): the backend gives a whole folder-rename op ONE
@@ -5804,14 +6264,89 @@ export class SyncEngine {
 			return;
 		}
 		this.noteIdMap?.rename(priorPath, newPath);
-		// Drop the old path's stale caches so a later create there isn't
-		// echo-suppressed and no diverged base survives the move.
-		this.dropPath(normalizePath(priorPath));
+		// Carry the merge base WITH the note, exactly as the local rename leg does
+		// (`handleRename` → `baseStore.rename` + `dropPath(dropBase: false)`).
+		//
+		// This used to drop the base outright, on the reasoning that "no diverged
+		// base survives the move". But a relocation moves a path and changes no
+		// content, so the base is not diverged — it is the note's common ancestor
+		// under a stale key. Deleting it leaves the note with NO ancestor, and a
+		// 3-way merge with nothing to merge against reads every later edit as a
+		// divergence and writes a keep-both conflict copy. Repeatedly, because
+		// nothing re-establishes the base until a reload does a full pull.
+		//
+		// Found in real use: a rename performed in the WEB app reached Obsidian,
+		// then "typing stopped syncing" and conflict files kept appearing.
+		// Reloading Obsidian fixed it — which is what proves the lost state was
+		// local and the server was fine all along.
+		this.baseStore?.rename(normalizePath(priorPath), normalizePath(newPath));
+		// Still drop the old path's sync-state so a later create there isn't
+		// echo-suppressed; only the base is preserved, and it moved above.
+		this.dropPath(normalizePath(priorPath), { dropBase: false });
 		// normalizePath for the vault lookup (map keys arrive normalized from the
 		// server feed, but a non-normalized key would silently miss the trash and
 		// leave the duplicate this fix exists to remove). rename() above keeps the
 		// RAW priorPath — it must match the byPath key exactly to re-key the id.
 		const oldFile = this.app.vault.getFileByPath(normalizePath(priorPath));
+
+		// A remote rename is a RENAME. Ask Obsidian to move the file, so the file
+		// keeps its identity: open editors follow it, undo history survives, the
+		// graph re-points, and no delete/create pair is fabricated. Everything
+		// below this is the fallback for when a true rename cannot apply.
+		//
+		// This path used to be read-old + trash-old + create-new unconditionally,
+		// which Obsidian cannot distinguish from "the user deleted a note and made
+		// a different one". That produced two user-visible bugs — a trashed open
+		// file yanked the editor to an unrelated note, and the merge base was
+		// destroyed so every later edit became a conflict copy.
+		//
+		// `vault.rename`, NOT `fileManager.renameFile`: the latter also rewrites
+		// `[[links]]` in other notes, and for a remote-origin rename the SERVER
+		// already did that (`genesis_relocate_live` enqueues the rewrite for
+		// non-obsidian origins). Rewriting again here would break the
+		// exactly-one-rewriter invariant and double-apply.
+		if (oldFile && !this.app.vault.getAbstractFileByPath(normalizePath(newPath))) {
+			try {
+				const parent = normalizePath(newPath).includes("/")
+					? normalizePath(newPath).substring(0, normalizePath(newPath).lastIndexOf("/"))
+					: "";
+				if (parent) await this.ensureFolder(parent);
+				// Both paths: Obsidian's rename event carries old and new, and the
+				// guard in `handleRename` keys off the OLD one. Marked before the
+				// call because the event can dispatch synchronously inside it.
+				this.files.mark(normalizePath(priorPath), "remotelyRenamed", ECHO_COOLDOWN_MS);
+				this.files.mark(normalizePath(newPath), "remotelyRenamed", ECHO_COOLDOWN_MS);
+				await this.app.vault.rename(oldFile, normalizePath(newPath));
+				rlog().info(
+					"pull",
+					`Id-keyed move (true rename): ${noteRef(priorPath)} -> ${noteRef(newPath)} (id=${id})`,
+				);
+				return;
+			} catch (e) {
+				// Destination appeared underneath us, a permission error, whatever —
+				// clear the echo markers so a LATER genuine user rename of either
+				// path is not swallowed, then fall through to the copy/trash path.
+				this.files.clearMarker(normalizePath(priorPath), "remotelyRenamed");
+				this.files.clearMarker(normalizePath(newPath), "remotelyRenamed");
+				rlog().warn(
+					"pull",
+					`True rename failed, falling back to copy+trash: ${noteRef(priorPath)} -> ${noteRef(newPath)} — ${errMsg(e, [priorPath, newPath])}`,
+				);
+			}
+		}
+
+		// FALLBACK. Reached when the destination is already occupied (a concurrent
+		// flush won the race) or the rename above threw. Obsidian never learns the
+		// two files are one note here, so the leaf redirect below is still needed.
+		// Captured BEFORE the trash — afterwards Obsidian's own delete-fallback has
+		// usually already moved the leaf off oldFile.
+		const leavesToRedirect: WorkspaceLeaf[] = oldFile
+			? this.app.workspace
+					.getLeavesOfType("markdown")
+					.filter(
+						(leaf) => leaf.view instanceof MarkdownView && leaf.view.file === oldFile,
+					)
+			: [];
 		if (oldFile) {
 			// MID-FLIGHT VANISH GUARD (round 4, e2e test_10 CI run 28915097812):
 			// the old file can be trashed CONCURRENTLY while this function is
@@ -5884,6 +6419,16 @@ export class SyncEngine {
 					"pull",
 					`Id-keyed move: ${noteRef(priorPath)} -> ${noteRef(newPath)} (id=${id})`,
 				);
+				// Point any leaf the trash just orphaned at the note's new home. The
+				// leaf reference was captured before the trash on purpose (see
+				// above) — re-deriving "which leaf was on oldFile" here would find
+				// nothing, because Obsidian has typically already reassigned it.
+				if (leavesToRedirect.length > 0) {
+					const newFile = this.app.vault.getAbstractFileByPath(normalizePath(newPath));
+					if (newFile instanceof TFile) {
+						for (const leaf of leavesToRedirect) void leaf.openFile(newFile);
+					}
+				}
 			} catch (e) {
 				rlog().warn(
 					"pull",
@@ -6476,6 +7021,17 @@ export class SyncEngine {
 				// connect (the enrollment storm). Send stays intact — an idle CRDT
 				// note ships local edits without enrollment.
 				if (noteId && this.isLiveBound(normalized)) this.crdtEnrollment?.enroll(noteId);
+				// RENAME TRACE (3/3). This branch CREATES a file because nothing is
+				// at the target. For a rename that is the wrong verb -- the note
+				// exists, elsewhere -- and this is the line users see as "it deleted
+				// and remade my note". Record where the map thinks this id lives, so
+				// a create that should have been a move is identifiable.
+				const idHome = noteId ? (this.noteIdMap?.pathForId(noteId) ?? null) : null;
+				rlog().diag(
+					"pull",
+					`rename-trace 3/3 CREATING ${noteRef(change.path)} id=${noteId ?? "none"} ` +
+						`mapSaysIdLivesAt=${noteRef(idHome)}`,
+				);
 				rlog().info("pull", `CRDT discovery: enrolling new note ${noteRef(change.path)}`);
 				// (return true below: this leg CREATES the file — the branch-wide
 				// `return false` violated the "true when a file was actually
@@ -6995,6 +7551,28 @@ export class SyncEngine {
 		}
 	}
 
+	/** Create a note's file at `normalized` -- or MOVE it there, if the note this
+	 *  path now claims already has a file somewhere else.
+	 *
+	 *  Every path that materializes a note funnels through here, which is why the
+	 *  check belongs here and not in any one of them. A remote rename arrives as
+	 *  identity first, and several paths race to put bytes at the new location:
+	 *  the id-keyed mover, the discovery create, the CRDT flush. Whichever wins,
+	 *  the others see an occupied target and fall back to create-here +
+	 *  trash-there. The bytes end up right and the FILE does not: Obsidian sees a
+	 *  brand-new note, so open tabs close, backlinks re-resolve and the creation
+	 *  date resets. That is the "it makes a new file and deletes the other one"
+	 *  report, and it is the same report whichever path happened to win.
+	 *
+	 *  Obsidian does have the function this wants -- `vault.rename` -- but no
+	 *  caller could reach it, because by the time anyone knew the new path they
+	 *  had already lost the old one. Resolving the note's id back to its current
+	 *  file is what makes the move expressible at all.
+	 *
+	 *  `vault.rename`, not `fileManager.renameFile`: the server rewrote links for
+	 *  a rename it originated, and renameFile would rewrite them again (the
+	 *  exactly-one-rewriter invariant). Relay uses renameFile because its server
+	 *  does not rewrite at all. */
 	private async createFileWithFolders(normalized: string, content: string): Promise<void> {
 		const folder = normalized.includes("/")
 			? normalized.substring(0, normalized.lastIndexOf("/"))
@@ -7002,8 +7580,33 @@ export class SyncEngine {
 		if (folder) {
 			await this.ensureFolder(folder);
 		}
+		// Where did the note claiming this path come from? NOT asked of the map:
+		// the map has already been moved, so it answers `normalized` for this id
+		// and the old name is gone from it. `relocatedFrom` is the only remaining
+		// record, captured at the instant identity moved.
+		const cameFrom =
+			this.relocatedFrom.get(normalized)?.from ?? this.staleOriginFor(normalized);
+		if (cameFrom && cameFrom !== normalized) {
+			const existing = this.app.vault.getFileByPath?.(cameFrom);
+			if (existing && !this.app.vault.getAbstractFileByPath?.(normalized)) {
+				await this.renameFollowingIdentity(cameFrom, normalized);
+				// Re-check rather than assume: a failed move falls through to the
+				// create below, which is the old behaviour and still converges.
+				const moved = this.app.vault.getFileByPath?.(normalized);
+				if (moved) {
+					await this.modifyFile(moved, content);
+					this.rememberFileFor(normalized);
+					return;
+				}
+			}
+		}
 		try {
 			await this.app.vault.create(normalized, content);
+			// The load-bearing call. A note received this session is created here
+			// and nowhere else, so without this the registry only ever knows notes
+			// that were on disk at startup -- which is exactly the hole e2e
+			// test_93 fell through while a manual test on an older note passed.
+			this.rememberFileFor(normalized);
 		} catch (e) {
 			// A concurrent materialization path (pull vs WS delivery) can create
 			// this file between the caller's existence check and our create —
@@ -7013,6 +7616,7 @@ export class SyncEngine {
 			const raced = this.app.vault.getAbstractFileByPath(normalized);
 			if (raced instanceof TFile) {
 				await this.modifyFile(raced, content);
+				this.rememberFileFor(normalized);
 				return;
 			}
 			throw e;
@@ -8394,10 +8998,15 @@ export class SyncEngine {
 		this.debounceTimers.clear();
 		// Was three near-identical clear-every-timer loops, one per marker map.
 		this.files.destroy();
-		for (const timer of this.recentlyDeleted.values()) {
+		for (const { timer } of this.recentlyDeleted.values()) {
 			this.time.clearTimeout(timer);
 		}
 		this.recentlyDeleted.clear();
+		for (const { timer } of this.relocatedFrom.values()) {
+			this.time.clearTimeout(timer);
+		}
+		this.relocatedFrom.clear();
+		this.fileForNote.clear();
 		this.pendingPostPullPushes.clear();
 		if (this.seqHealTimer !== null) {
 			this.time.clearTimeout(this.seqHealTimer);

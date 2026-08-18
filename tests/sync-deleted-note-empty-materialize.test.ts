@@ -91,7 +91,9 @@ describe("deleted note must not re-materialize empty", () => {
 
 		// The delete has been issued: handleDelete tombstones the id before the
 		// send, which is the state a racing empty-STEP2 arrives in.
-		(e as unknown as { markRecentlyDeleted(id: string): void }).markRecentlyDeleted("id-gone");
+		(
+			e as unknown as { markRecentlyDeleted(id: string, path: string): void }
+		).markRecentlyDeleted("id-gone", "gone.md");
 
 		await e.materializeEmptyDiscovered("gone.md", "id-gone");
 

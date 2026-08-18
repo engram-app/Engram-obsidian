@@ -5,11 +5,13 @@
  * - handleRename re-keys the map (id stable, path moves).
  */
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { TFile } from "obsidian";
+import { MarkdownView, TFile } from "obsidian";
 import * as Y from "yjs";
 import type { EngramApi } from "../src/api";
+import { BaseStore } from "../src/base-store";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncStore } from "../src/crdt/sync-store";
+import { destroyRemoteLog, initRemoteLog } from "../src/remote-log";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -76,8 +78,75 @@ const mockApp = {
 		getName: mock().mockReturnValue("Test Vault"),
 	},
 	fileManager: { trashFile: mock().mockResolvedValue(undefined) },
-	workspace: { getActiveViewOfType: mock().mockReturnValue(null) },
+	workspace: {
+		getActiveViewOfType: mock().mockReturnValue(null),
+		getLeavesOfType: mock().mockReturnValue([]),
+	},
 } as any;
+
+/** Model Obsidian's `vault.rename`: the file MOVES. Lookups find it at the new
+ *  path and no longer at the old, its body travels with it, and renaming onto an
+ *  occupied path rejects — which is the atomicity the relocation path relies on
+ *  when it races a concurrent flush.
+ *
+ *  Without this the double reports a rename as a silent no-op, and every
+ *  assertion about where content ended up is vacuous. */
+function modelVaultFs(initial: Record<string, string>): {
+	present: Map<string, TFile>;
+	bodies: Map<string, string>;
+} {
+	const present = new Map<string, TFile>();
+	const bodies = new Map<string, string>();
+	for (const [path, body] of Object.entries(initial)) {
+		present.set(path, new TFile(path));
+		bodies.set(path, body);
+	}
+	const lookup = (pth: string) => present.get(pth) ?? null;
+	(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation(lookup);
+	(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockImplementation(lookup);
+	(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockImplementation((f: TFile) =>
+		Promise.resolve(bodies.get(f.path) ?? ""),
+	);
+	(mockApp.vault.rename as ReturnType<typeof mock>).mockImplementation(
+		async (f: TFile, to: string) => {
+			if (present.has(to)) throw new Error(`File already exists: ${to}`);
+			present.delete(f.path);
+			const body = bodies.get(f.path) ?? "";
+			bodies.delete(f.path);
+			f.path = to;
+			present.set(to, f);
+			bodies.set(to, body);
+		},
+	);
+	(mockApp.vault.create as ReturnType<typeof mock>).mockImplementation(
+		async (pth: string, body: string) => {
+			present.set(pth, new TFile(pth));
+			bodies.set(pth, body);
+		},
+	);
+	(mockApp.vault.modify as ReturnType<typeof mock>).mockImplementation(
+		async (f: TFile, body: string) => {
+			bodies.set(f.path, body);
+		},
+	);
+	// `modifyFile` prefers vault.process when present, and the shared stub returns
+	// the transformed string without storing it — so any assertion about content
+	// written through that route passes or fails for the wrong reason. Model it.
+	(mockApp.vault.process as ReturnType<typeof mock>).mockImplementation(
+		async (f: TFile, fn: (d: string) => string) => {
+			const next = fn(bodies.get(f.path) ?? "");
+			bodies.set(f.path, next);
+			return next;
+		},
+	);
+	(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockImplementation(
+		async (f: TFile) => {
+			present.delete(f.path);
+			bodies.delete(f.path);
+		},
+	);
+	return { present, bodies };
+}
 
 function createEngine(): SyncEngine {
 	const engine = new SyncEngine(
@@ -117,6 +186,18 @@ beforeEach(() => {
 		.mockReset()
 		.mockReturnValue(null);
 	(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockReset().mockReturnValue(null);
+	// `modelVaultFs` installs implementations on these too. Without a reset they
+	// leak into later tests, where a stale virtual filesystem can make an
+	// assertion pass for reasons the test never set up.
+	(mockApp.vault.rename as ReturnType<typeof mock>).mockReset().mockResolvedValue(undefined);
+	(mockApp.vault.create as ReturnType<typeof mock>).mockReset().mockResolvedValue(undefined);
+	(mockApp.vault.modify as ReturnType<typeof mock>).mockReset().mockResolvedValue(undefined);
+	(mockApp.vault.process as ReturnType<typeof mock>)
+		.mockReset()
+		.mockImplementation((_f: TFile, fn: (d: string) => string) => Promise.resolve(fn("")));
+	(mockApp.fileManager.trashFile as ReturnType<typeof mock>)
+		.mockReset()
+		.mockResolvedValue(undefined);
 });
 
 describe("pull/changes apply path learns note_id into the map", () => {
@@ -222,7 +303,7 @@ describe("rename/delete drop stale sync-state (echo-suppression on recreate)", (
 	});
 });
 
-describe("id-keyed move: pull upsert at a new path for a known id trashes the old file", () => {
+describe("id-keyed move: pull upsert at a new path for a known id RENAMES the old file", () => {
 	test("applySyncChange moves the note instead of leaving a duplicate", async () => {
 		const engine = createEngine();
 		const noteIdMap = new NoteIdMap();
@@ -253,10 +334,112 @@ describe("id-keyed move: pull upsert at a new path for a known id trashes the ol
 			deleted: false,
 		} as any);
 
-		// Old file trashed, id re-keyed to the new path, no lingering old mapping.
-		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(oldFile);
+		// A RENAME, not a trash+recreate: Obsidian keeps the file's identity, so
+		// open editors follow it and no delete/create pair is fabricated.
+		expect(mockApp.vault.rename).toHaveBeenCalledWith(oldFile, "New.md");
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
 		expect(noteIdMap.pathForId("id-move")).toBe("New.md");
 		expect(noteIdMap.get("Old.md")).toBeNull();
+	});
+
+	// A relocation is implemented as read-old + trash-old + create-new, NOT
+	// `vault.rename()` — so Obsidian never learns these are "the same" file,
+	// and any open editor leaf showing the old file gets orphaned by the
+	// trash. Obsidian's own fallback then yanks focus to whatever the leaf
+	// showed before, which is the "forced to look at the previous file I was
+	// editing" report: a rename performed in the web app trashed the note the
+	// user had open in Obsidian, and nothing pointed the editor at its new
+	// location.
+	test("an id-keyed move redirects an editor leaf open on the old file to the new one", async () => {
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Old.md", "id-redirect");
+		engine.setNoteIdMap(noteIdMap);
+		manifestWith([{ id: "id-redirect", path: "New.md" }]);
+
+		const oldFile = new TFile("Old.md");
+		const newFile = new TFile("New.md");
+		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
+			p === "Old.md" ? oldFile : null,
+		);
+		(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockImplementation(
+			(p: string) => (p === "New.md" ? newFile : null),
+		);
+
+		const leafView = new MarkdownView();
+		leafView.file = oldFile;
+		const openFile = mock().mockResolvedValue(undefined);
+		const leaf = { view: leafView, openFile } as any;
+		(mockApp.workspace.getLeavesOfType as ReturnType<typeof mock>).mockReturnValue([leaf]);
+
+		await engine.applySyncChange({
+			type: "note",
+			id: "id-redirect",
+			seq: 2,
+			path: "New.md",
+			title: "New",
+			content: "body",
+			folder: "",
+			tags: [],
+			mtime: 2,
+			updated_at: "2026-01-01T00:00:00Z",
+			deleted: false,
+		} as any);
+
+		expect(openFile).toHaveBeenCalledWith(newFile);
+	});
+
+	// A rename changes no CONTENT, so the merge base is still the note's common
+	// ancestor — it just lives under a new key. Deleting it leaves the note with
+	// no LCA, and the 3-way merge has nothing to merge against: every subsequent
+	// edit reads as a divergence and lands as a keep-both conflict copy, over and
+	// over, until a reload rebuilds the base from a full pull.
+	//
+	// Reported from real use: renaming in the WEB app propagated the rename to
+	// Obsidian, then "typing stopped syncing" and Obsidian wrote a conflict file
+	// repeatedly. Reloading Obsidian fixed it, which is what proves the lost
+	// state was the base and not anything on the server.
+	//
+	// The LOCAL rename path already gets this right (`baseStore.rename` then
+	// `dropPath(old, {dropBase: false})`); the REMOTE leg simply never got the
+	// same treatment.
+	test("a remote relocation MOVES the merge base instead of deleting it", async () => {
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Old.md", "id-base");
+		engine.setNoteIdMap(noteIdMap);
+		manifestWith([{ id: "id-base", path: "New.md" }]);
+
+		const renamed: Array<[string, string]> = [];
+		const deleted: string[] = [];
+		(engine as any).baseStore = {
+			get: () => ({ content: "ancestor", version: 1, ts: 0 }),
+			set: () => {},
+			rename: (from: string, to: string) => renamed.push([from, to]),
+			delete: (path: string) => deleted.push(path),
+		};
+
+		const oldFile = new TFile("Old.md");
+		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
+			p === "Old.md" ? oldFile : null,
+		);
+
+		await engine.applySyncChange({
+			type: "note",
+			id: "id-base",
+			seq: 2,
+			path: "New.md",
+			title: "New",
+			content: "body",
+			folder: "",
+			tags: [],
+			mtime: 2,
+			updated_at: "2026-01-01T00:00:00Z",
+			deleted: false,
+		} as any);
+
+		expect(renamed).toContainEqual(["Old.md", "New.md"]);
+		expect(deleted).not.toContain("Old.md");
 	});
 
 	test("handleStreamEvent moves on a realtime upsert for a known id (belt-and-suspenders)", async () => {
@@ -288,7 +471,8 @@ describe("id-keyed move: pull upsert at a new path for a known id trashes the ol
 			updated_at: "2026-01-01T00:00:00Z",
 		} as any);
 
-		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(oldFile);
+		expect(mockApp.vault.rename).toHaveBeenCalledWith(oldFile, "New.md");
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
 		expect(noteIdMap.pathForId("id-ws-move")).toBe("New.md");
 		expect(noteIdMap.get("Old.md")).toBeNull();
 	});
@@ -327,7 +511,7 @@ describe("id-keyed move: pull upsert at a new path for a known id trashes the ol
 			updated_at: "2026-01-01T00:00:00Z",
 		} as any);
 
-		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(oldFile);
+		expect(mockApp.vault.rename).toHaveBeenCalledWith(oldFile, "New.md");
 		expect(noteIdMap.pathForId("id-echo-move")).toBe("New.md");
 	});
 });
@@ -335,26 +519,25 @@ describe("id-keyed move: pull upsert at a new path for a known id trashes the ol
 describe("CRDT-managed rename materializes the new path when enroll() no-ops (#189)", () => {
 	test("handleStreamEvent writes New.md from the already-synced CRDT doc", async () => {
 		// e2e test_10: B already received Old.md live (this session) before A
-		// renames it. moveIfIdRelocated trashes Old.md and re-keys the map, but
-		// a rename changes no doc content, so no Y.Doc update ever fires
-		// onFlushToDisk — and crdtEnrollment.enroll() is a documented
-		// per-session no-op for an id already enrolled. Without a direct
-		// materialize, New.md is never written: received=yes materialized=no.
+		// renames it. The original bug was that moveIfIdRelocated TRASHED Old.md
+		// and re-keyed the map, but a rename changes no doc content, so no Y.Doc
+		// update ever fired onFlushToDisk and enroll() is a per-session no-op for
+		// an already-enrolled id — New.md was never written (received=yes
+		// materialized=no), and #189 added a CRDT-projection materialize to cover
+		// it.
+		//
+		// Moving the file instead of trashing it removes the hole rather than
+		// covering it: the bytes arrive at the new path because they were never
+		// deleted. The CRDT backstop still matters where there IS no local source
+		// file — that case has its own test below.
 		const engine = createEngine();
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("Old.md", "id-relocate");
 		engine.setNoteIdMap(noteIdMap);
 		manifestWith([{ id: "id-relocate", path: "New.md" }]);
-		(mockApp.vault.create as ReturnType<typeof mock>).mockClear();
-		(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockClear();
 
-		const oldFile = new TFile("Old.md");
-		(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockImplementation(
-			(p: string) => (p === "Old.md" ? oldFile : null),
-		);
-		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
-			p === "Old.md" ? oldFile : null,
-		);
+		const fs = modelVaultFs({ "Old.md": "# Rename Test\nunchanged body" });
+		const oldFile = fs.present.get("Old.md") as TFile;
 
 		const projectedText = mock().mockResolvedValue("# Rename Test\nunchanged body");
 		engine.setCrdtManager({
@@ -378,12 +561,11 @@ describe("CRDT-managed rename materializes the new path when enroll() no-ops (#1
 			updated_at: "2026-01-01T00:00:00Z",
 		} as any);
 
-		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(oldFile);
-		expect(projectedText).toHaveBeenCalledWith("id-relocate");
-		expect(mockApp.vault.create).toHaveBeenCalledWith(
-			"New.md",
-			"# Rename Test\nunchanged body",
-		);
+		expect(mockApp.vault.rename).toHaveBeenCalledWith(oldFile, "New.md");
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
+		// The outcome #189 cared about, reached by moving rather than re-creating.
+		expect(fs.bodies.get("New.md")).toBe("# Rename Test\nunchanged body");
+		expect(fs.present.has("Old.md")).toBe(false);
 	});
 
 	test("a LIVE-BOUND note whose CRDT handshake hasn't completed does NOT materialize (avoids premature-empty writes)", async () => {
@@ -446,14 +628,8 @@ describe("moveIfIdRelocated materializes the new path from ON-DISK content direc
 		engine.setNoteIdMap(noteIdMap);
 		manifestWith([{ id: "id-fresh-race", path: "New.md" }]);
 
-		const oldFile = new TFile("Old.md");
-		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
-			p === "Old.md" ? oldFile : null,
-		);
-		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(
-			"# Rename Test\nreal content already on disk",
-		);
-		(mockApp.vault.create as ReturnType<typeof mock>).mockClear();
+		const fs = modelVaultFs({ "Old.md": "# Rename Test\nreal content already on disk" });
+		const oldFile = fs.present.get("Old.md") as TFile;
 		(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockClear();
 
 		// isSynced is FALSE — this device's STEP2 handshake for this note_id has
@@ -476,13 +652,14 @@ describe("moveIfIdRelocated materializes the new path from ON-DISK content direc
 			updated_at: "2026-01-01T00:00:00Z",
 		} as any);
 
-		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(oldFile);
-		expect(mockApp.vault.create).toHaveBeenCalledWith(
-			"New.md",
-			"# Rename Test\nreal content already on disk",
-		);
-		// The isSynced-gated CRDT backstop must not have been needed at all —
-		// the disk-content path materialized New.md first.
+		// The content reaches the new path by MOVING with the file — no read,
+		// trash and re-create, so nothing depends on the CRDT handshake having
+		// landed. Asserted as an outcome (where the bytes ended up) rather than
+		// which vault call delivered them.
+		expect(mockApp.vault.rename).toHaveBeenCalledWith(oldFile, "New.md");
+		expect(fs.bodies.get("New.md")).toBe("# Rename Test\nreal content already on disk");
+		expect(fs.present.has("Old.md")).toBe(false);
+		// The isSynced-gated CRDT backstop must not have been needed at all.
 		expect(projectedText).not.toHaveBeenCalled();
 	});
 
@@ -542,6 +719,14 @@ describe("moveIfIdRelocated survives the old file vanishing MID-FLIGHT (round 4,
 		const engine = createEngine();
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("Old.md", "id-race-trash");
+		// FORCE THE FALLBACK. A relocation now moves the file with `vault.rename`
+		// and returns; the read/trash/re-create path below it only runs when that
+		// cannot apply (destination already taken, adapter error). This test is
+		// about that fallback's guards, so make the rename reject the way Obsidian
+		// does when the destination exists.
+		(mockApp.vault.rename as ReturnType<typeof mock>).mockRejectedValue(
+			new Error("File already exists"),
+		);
 		engine.setNoteIdMap(noteIdMap);
 		manifestWith([{ id: "id-race-trash", path: "New.md" }]);
 
@@ -741,11 +926,12 @@ describe("moveIfIdRelocated ignores a stale/out-of-order WS event that would rel
 			updated_at: "2026-01-01T00:00:10Z",
 		} as any);
 
-		expect(mockApp.fileManager.trashFile).toHaveBeenCalledTimes(1);
+		expect(mockApp.vault.rename).toHaveBeenCalledTimes(1);
 		expect(noteIdMap.pathForId("id-stale-echo")).toBe("New.md");
 
 		(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockClear();
 		(mockApp.vault.create as ReturnType<typeof mock>).mockClear();
+		(mockApp.vault.rename as ReturnType<typeof mock>).mockClear();
 
 		// 2) A STALE echo arrives with the OLD path and an OLDER `updated_at`
 		// (00:00:00Z < 00:00:10Z) — must be ignored, not treated as a second
@@ -765,8 +951,9 @@ describe("moveIfIdRelocated ignores a stale/out-of-order WS event that would rel
 			updated_at: "2026-01-01T00:00:00Z",
 		} as any);
 
-		// The already-applied forward relocation must stand: New.md is not
+		// The already-applied forward relocation must stand: nothing is moved or
 		// trashed, and the map is not re-keyed backward.
+		expect(mockApp.vault.rename).not.toHaveBeenCalled();
 		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
 		expect(noteIdMap.pathForId("id-stale-echo")).toBe("New.md");
 	});
@@ -987,6 +1174,14 @@ describe("moveIfIdRelocated's disk-content flush must be create-only (final revi
 		const engine = createEngine();
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("Old.md", "id-race-overwrite");
+		// FORCE THE FALLBACK. A relocation now moves the file with `vault.rename`
+		// and returns; the read/trash/re-create path below it only runs when that
+		// cannot apply (destination already taken, adapter error). This test is
+		// about that fallback's guards, so make the rename reject the way Obsidian
+		// does when the destination exists.
+		(mockApp.vault.rename as ReturnType<typeof mock>).mockRejectedValue(
+			new Error("File already exists"),
+		);
 		engine.setNoteIdMap(noteIdMap);
 		manifestWith([{ id: "id-race-overwrite", path: "New.md" }]);
 
@@ -1435,5 +1630,335 @@ describe("moveIfIdRelocated must not discard content when newPath exists but is 
 		} as any);
 
 		expect(mockApp.vault.modify).not.toHaveBeenCalledWith(freshNewFile, "stale old bytes");
+	});
+});
+
+describe("a remote rename must not kill the renamed note's live sync", () => {
+	// Reported live 2026-08-18: renaming a note in the web app propagated the
+	// rename to Obsidian, and then typing in either client stopped syncing.
+	// Obsidian's plugin log:
+	//
+	//   ws     Event: delete note: n41
+	//   ws     Event: upsert note: n426
+	//   vault  create .../mommy v5.md      <- new file
+	//   vault  delete .../mommy v4.md      <- old file
+	//   crdt   fan-out skip (recent local delete): 01a011f9-...
+	//   crdt   op-replay skip (recent/pending local delete): 01a011f9-...
+	//   error  getYText failed: NoteDestroyedError: Note was destroyed
+	//
+	// A rename is broadcast as two frames, and the server orders them
+	// deliberately — new path's upsert first, old path's delete second — so the
+	// receiver relocates the id before the delete arrives and the delete then
+	// reads as a relocation leg. The client dropped that ordering on the floor:
+	// each frame was applied as its own un-awaited async task. When the delete
+	// won the race, `pathForId` still answered the OLD path, the rename read as
+	// a genuine death, and the id was tombstoned for the 60s delete-wins window
+	// with its Y.Doc destroyed — which is precisely the two skips and the
+	// NoteDestroyedError above.
+	const ID = "01a011f9-3b85-79b3-af2f-de167b256949";
+	const OLD = "mommy v4.md";
+	const NEW = "mommy v5.md";
+
+	/** Wire a rename's two frames into the engine and report what survived. */
+	async function renameOverTheWire(order: "server" | "delete-first") {
+		const fs = modelVaultFs({ [OLD]: "hello" });
+		// Trashing dispatches Obsidian's vault delete event — the boundary the
+		// tombstone crosses, so the bug is invisible without it.
+		(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockImplementation(
+			async (f: TFile) => {
+				fs.present.delete(f.path);
+				fs.bodies.delete(f.path);
+				await engine.handleDelete(f);
+			},
+		);
+		manifestWith([{ id: ID, path: NEW }]);
+
+		const engine = createEngine();
+		const map = new NoteIdMap();
+		map.set(OLD, ID);
+		engine.setNoteIdMap(map);
+
+		const removeDoc = mock().mockResolvedValue(undefined);
+		engine.setCrdtManager({
+			isSynced: mock().mockReturnValue(true),
+			projectedText: mock().mockResolvedValue("hello"),
+			removeDoc,
+		} as any);
+		engine.setCrdtEnrollment({ enroll: mock(() => {}), reset: mock(() => {}) } as any);
+
+		const upsert = {
+			event_type: "upsert",
+			kind: "note",
+			id: ID,
+			path: NEW,
+			timestamp: 2,
+			updated_at: "2026-01-01T00:00:02Z",
+		} as any;
+		const del = {
+			event_type: "delete",
+			kind: "note",
+			id: ID,
+			path: OLD,
+			timestamp: 3,
+			updated_at: "2026-01-01T00:00:03Z",
+		} as any;
+
+		// Fire-and-forget, exactly as main.ts's `channel.onEvent` does — the
+		// engine, not the call site, is what must impose order.
+		const frames = order === "server" ? [upsert, del] : [del, upsert];
+		await Promise.all(frames.map((f) => engine.handleStreamEvent(f)));
+		await flush();
+		return { fs, map, removeDoc, engine };
+	}
+
+	test("server order: the note is MOVED, and its CRDT room is never torn down", async () => {
+		const { fs, map, removeDoc } = await renameOverTheWire("server");
+
+		expect([...fs.present.keys()]).toEqual([NEW]);
+		expect(map.pathForId(ID)).toBe(NEW);
+		// The whole point of ordering the upsert first: the id relocates, the
+		// delete reads as the old leg, and the live doc is left alone.
+		expect(removeDoc).not.toHaveBeenCalled();
+	});
+
+	test("delete-first: the id is NOT left tombstoned, so live updates still land", async () => {
+		// Even with the legs reversed the note must not end up muted. This is the
+		// state the user hit: file renamed correctly, note silently deaf.
+		const { fs, map, engine } = await renameOverTheWire("delete-first");
+
+		expect([...fs.present.keys()]).toEqual([NEW]);
+		expect(map.pathForId(ID)).toBe(NEW);
+
+		// Assert the literal symptom. A tombstoned id makes BOTH convergence
+		// paths refuse the note by id, each announcing itself in the log — those
+		// two lines are what the user's report contained. Matching on their text
+		// keeps the test tied to the reported failure rather than to whichever
+		// internal branch happens to reach them.
+		//
+		// Asserted as "no line anywhere matches", never "the last line was X":
+		// rlog is a process singleton, so a spy on it sees every line the engine
+		// emits, and an index-based assertion silently drifts with unrelated logging.
+		const lines: string[] = [];
+		const log = initRemoteLog() as unknown as Record<string, unknown>;
+		for (const level of ["info", "warn", "error", "debug"]) {
+			log[level] = (_cat: string, msg: string) => void lines.push(msg);
+		}
+		try {
+			await engine.applyPushedNoteUpdate(ID, Y.encodeStateAsUpdate(new Y.Doc()), "h");
+			await engine.catchupViaSeqReplay?.();
+			expect(lines.filter((l) => l.includes("recent local delete"))).toEqual([]);
+			expect(lines.filter((l) => l.includes("recent/pending local delete"))).toEqual([]);
+		} finally {
+			await destroyRemoteLog();
+		}
+	});
+});
+
+describe("the file follows its identity when a note is relocated remotely", () => {
+	// The bug users saw as "it deleted and remade my note". A remote rename
+	// arrives as IDENTITY first: the map is moved early (doc-ready announce,
+	// discovery) and the file is not. By the time the rename's upsert applies,
+	// `pathForId` already reports the new location, so the relocation check
+	// concludes there is nothing to move, the create branch finds the target
+	// empty and writes a NEW file, and the delete leg trashes the old one.
+	//
+	// Traced live 2026-08-18:
+	//   1/3 upsert id=01a011f9 -> n426 mapSaysIdLivesAt=n426
+	//   2/3 SKIPPED (map already at target) targetOnDisk=false
+	//   3/3 CREATING n426
+	//
+	// So the move has to happen when identity moves, which is the only moment
+	// both the old and new path are known.
+	test("claiming a note at a new path MOVES its file there", async () => {
+		const fs = modelVaultFs({ "Old.md": "body" });
+		const engine = createEngine();
+		const map = new NoteIdMap();
+		map.set("Old.md", "id-1");
+		engine.setNoteIdMap(map);
+		// A REAL BaseStore, not a stub: the assertion is that the entry moves keys,
+		// which a stub with a hand-written `rename` would satisfy by construction.
+		const bases = new BaseStore(
+			{ read: async () => "", write: async () => {}, exists: async () => false } as never,
+			"bases.json",
+		);
+		bases.set("Old.md", "body", 1);
+		(engine as unknown as { baseStore: BaseStore | null }).baseStore = bases;
+
+		// Identity moves — exactly what the announce/discovery path does.
+		map.set("New.md", "id-1");
+		await flush();
+
+		expect([...fs.present.keys()]).toEqual(["New.md"]);
+		expect(fs.bodies.get("New.md")).toBe("body");
+		// The merge base must travel with the note. The rename echo guard returns
+		// early assuming the mover re-keyed it; a base stranded on the old path
+		// leaves the next convergence with no common ancestor, which it resolves
+		// by writing a conflict copy — the other half of the user's report.
+		expect(bases.get("New.md")).toBeDefined();
+		expect(bases.get("Old.md")).toBeUndefined();
+	});
+
+	test("a claim for a brand-new note creates nothing and moves nothing", async () => {
+		const fs = modelVaultFs({ "Other.md": "other" });
+		const engine = createEngine();
+		const map = new NoteIdMap();
+		engine.setNoteIdMap(map);
+
+		map.set("Fresh.md", "id-fresh");
+		await flush();
+
+		// No prior claim, so there is no move to make — and nothing else is touched.
+		expect([...fs.present.keys()]).toEqual(["Other.md"]);
+	});
+
+	test("an occupied target is left alone — convergence owns that, not this", async () => {
+		const fs = modelVaultFs({ "Old.md": "mine", "New.md": "someone else" });
+		const engine = createEngine();
+		const map = new NoteIdMap();
+		map.set("Old.md", "id-1");
+		engine.setNoteIdMap(map);
+
+		map.set("New.md", "id-1");
+		await flush();
+
+		expect(fs.bodies.get("New.md")).toBe("someone else");
+		// Asserted on the CALL, not just the outcome: the vault double rejects an
+		// occupied destination, so the bytes survive either way and an
+		// outcome-only assertion passes even with the guard deleted (it did).
+		// The guard's job is to not attempt the move at all — attempting it means
+		// a thrown rename and a spurious warning on every legitimate race.
+		expect(mockApp.vault.rename).not.toHaveBeenCalled();
+	});
+
+	test("the move survives a vault switch (rebind re-attaches the handler)", async () => {
+		const fs = modelVaultFs({ "A.md": "body" });
+		const engine = createEngine();
+		const map = new NoteIdMap();
+		engine.setNoteIdMap(map);
+		// Vault change replaces the index room's store; the handler lives on the
+		// store, so without re-attaching, relocations stop following silently.
+		map.rebind(new SyncStore(new Y.Doc().getMap("filemeta_v0")));
+
+		map.set("A.md", "id-1");
+		map.set("B.md", "id-1");
+		await flush();
+
+		expect([...fs.present.keys()]).toEqual(["B.md"]);
+	});
+});
+
+describe("materializing a note that already exists elsewhere MOVES it", () => {
+	// Whichever path wins the race to put bytes at a renamed note's new location
+	// -- the id-keyed mover, the discovery create, the CRDT flush -- the loser
+	// sees an occupied target and degrades to create-here + trash-there. Traced
+	// live 2026-08-18:
+	//
+	//   Id-keyed move: skipping stale disk flush for n426 -- already holds
+	//     content (a concurrent flush won the race)
+	//   vault create .../mommy v15.md
+	//   vault delete .../mommy v14.md
+	//
+	// The bytes were right and the file was new, so Obsidian closed the tab and
+	// reset the note's identity. They all funnel through createFileWithFolders,
+	// so the note's own id is what decides create-vs-move, once, for all of them.
+	test("a create for a path whose note lives elsewhere renames instead", async () => {
+		// Isolates the FUNNEL. The eager move that runs when identity relocates is
+		// covered above; this is the fallback for when that move loses the race,
+		// which is what the prod log showed ("already holds content — a concurrent
+		// flush won the race"). The funnel's only input is the recorded origin, so
+		// the test supplies exactly that and nothing else.
+		const fs = modelVaultFs({ "Old.md": "old body" });
+		const engine = createEngine();
+		engine.setNoteIdMap(new NoteIdMap());
+		(
+			engine as unknown as { relocatedFrom: Map<string, { from: string; timer: number }> }
+		).relocatedFrom.set("New.md", { from: "Old.md", timer: 0 });
+
+		await (
+			engine as unknown as { createFileWithFolders(p: string, c: string): Promise<void> }
+		).createFileWithFolders("New.md", "new body");
+
+		// Moved, not duplicated — and critically nothing left at the old name for
+		// a delete leg to clean up afterwards, which is what made Obsidian treat
+		// the note as brand new.
+		expect([...fs.present.keys()]).toEqual(["New.md"]);
+		expect(fs.bodies.get("New.md")).toBe("new body");
+		expect(mockApp.vault.rename).toHaveBeenCalled();
+	});
+
+	test("a genuinely new note is still created, not moved", async () => {
+		const fs = modelVaultFs({});
+		const engine = createEngine();
+		engine.setNoteIdMap(new NoteIdMap());
+
+		await (
+			engine as unknown as {
+				createFileWithFolders(p: string, c: string): Promise<void>;
+			}
+		).createFileWithFolders("Fresh.md", "hello");
+
+		expect(fs.bodies.get("Fresh.md")).toBe("hello");
+		expect(mockApp.vault.rename).not.toHaveBeenCalled();
+	});
+});
+
+describe("the origin survives a move the store never announced", () => {
+	// The live `relocatedFrom` record only exists when the relocation ran through
+	// the store's claim path. In the field the map is reached other ways -- the
+	// doc-ready announce, catch-up, discovery -- and by the time anything
+	// observable happens the map already answers the new path with no record of
+	// the old one. Traced live 2026-08-18:
+	//
+	//   rename-trace 1/3 upsert -> n426 mapSaysIdLivesAt=n426   (already moved)
+	//   rename-trace 3/3 CREATING n426
+	//   vault create .../mommy v17.md
+	//   vault delete .../mommy v16.md
+	//
+	// data.json's cached mapping is not erased by a claim, so it still remembers
+	// where the note was, and that is enough to turn the create back into a move.
+	test("a create still becomes a move using the cached origin", async () => {
+		const fs = modelVaultFs({ "Old.md": "old body" });
+		const engine = createEngine();
+		const map = new NoteIdMap();
+		// data.json load: the note was at Old.md.
+		map.seed({ "Old.md": "id-1" });
+		// A note this engine synced carries bookkeeping for its path; the cached
+		// origin is only trusted for such a path, so the harness must model it.
+		(engine as unknown as { syncState: Map<string, unknown> }).syncState.set("Old.md", {
+			hash: 1,
+		});
+		// Move the map BEFORE the engine is watching. That is the state the trace
+		// showed -- the map already at the new path, no record of the old one --
+		// and doing it this way produces it without faking any internals.
+		map.set("New.md", "id-1");
+		engine.setNoteIdMap(map);
+
+		await (
+			engine as unknown as { createFileWithFolders(p: string, c: string): Promise<void> }
+		).createFileWithFolders("New.md", "new body");
+
+		expect([...fs.present.keys()]).toEqual(["New.md"]);
+		expect(fs.bodies.get("New.md")).toBe("new body");
+		expect(mockApp.vault.rename).toHaveBeenCalled();
+	});
+
+	test("a stale cached origin whose file is gone does not misfire", async () => {
+		// The cache is a load-time snapshot. If nothing is actually sitting at the
+		// remembered path, there is nothing to move and a normal create must run —
+		// otherwise a note legitimately recreated at a reused path would drag an
+		// unrelated file with it.
+		const fs = modelVaultFs({});
+		const engine = createEngine();
+		const map = new NoteIdMap();
+		map.seed({ "Deleted.md": "id-1" });
+		map.set("New.md", "id-1");
+		engine.setNoteIdMap(map);
+
+		await (
+			engine as unknown as { createFileWithFolders(p: string, c: string): Promise<void> }
+		).createFileWithFolders("New.md", "new body");
+
+		expect(fs.bodies.get("New.md")).toBe("new body");
+		expect(mockApp.vault.rename).not.toHaveBeenCalled();
 	});
 });

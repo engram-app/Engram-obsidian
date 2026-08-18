@@ -102,6 +102,12 @@ export class SyncStore {
 	 *  trade. Invalidated by every mutation and by remote updates. */
 	private reverse: Map<string, string> | null = null;
 
+	/** Notified when a claim MOVES a note: `(from, to, note_id)`. The store owns
+	 *  identity, not the filesystem, so it reports the move and lets the engine
+	 *  decide what to do about the bytes on disk. Optional so the store stays
+	 *  usable headless (tests, the index room before the engine exists). */
+	onRelocate?: (from: string, to: string, note_id: string) => void;
+
 	constructor(private readonly map: Y.Map<FileMeta>) {
 		// A remote update invalidates the reverse index just as a local one does.
 		// Without this a path learned from another device answers `pathForId`
@@ -123,6 +129,7 @@ export class SyncStore {
 				if (typeof key === "string") this.forgotten.delete(key);
 			}
 			this.reverse = null;
+			this.cacheById = null;
 		});
 	}
 
@@ -197,7 +204,51 @@ export class SyncStore {
 		if (!path || path === "null" || path === "undefined" || !meta?.note_id) return;
 		this.cache.set(path, meta);
 		this.reverse = null;
+		this.cacheById = null;
 	}
+
+	/** Every path this store has ever associated with `note_id`, newest source
+	 *  first, EXCLUDING the one it resolves to now.
+	 *
+	 *  `pathForId` answers where a note is; this answers where it was. A claim is
+	 *  a move, so `set` erases the old key the moment the new one is claimed --
+	 *  after which nothing can say a rename happened rather than a note appearing
+	 *  from nowhere. The seeded cache (data.json) is not erased by `set`, so it
+	 *  outlives the move and can still be asked.
+	 *
+	 *  Callers must treat the answer as a HINT and verify it against the disk:
+	 *  the cache is a snapshot from load time and may name a path that has since
+	 *  been deleted, or reused by a different note. */
+	priorPathsForId(note_id: string): string[] {
+		// Indexed, not scanned. This is consulted once per materialized note, so a
+		// linear pass over the cache would make a first sync quadratic in vault
+		// size -- and the caller reaches it on every create, because the map is
+		// already claimed at the target by the time anything is written.
+		//
+		// Built lazily and dropped by the same invalidation as `reverse`: the
+		// cache only changes via `seed`, but `resolvePath` depends on the rename
+		// chain, so a stale index would answer with pre-rename paths.
+		if (!this.cacheById) {
+			const index = new Map<string, string[]>();
+			for (const [path, meta] of this.cache) {
+				const at = index.get(meta.note_id);
+				if (at) at.push(path);
+				else index.set(meta.note_id, [path]);
+			}
+			this.cacheById = index;
+		}
+		const now = this.pathForId(note_id);
+		const out: string[] = [];
+		for (const path of this.cacheById.get(note_id) ?? []) {
+			const resolved = this.resolvePath(path);
+			if (resolved === now) continue;
+			out.push(resolved);
+		}
+		return out;
+	}
+
+	/** note_id -> the cache paths naming it. See `priorPathsForId`. */
+	private cacheById: Map<string, string[]> | null = null;
 
 	/** The note_id for `path`, or null. The `NoteIdMap.get` replacement. */
 	get(path: string): string | null {
@@ -267,6 +318,26 @@ export class SyncStore {
 		if (prior && prior !== resolved) {
 			this.overlay.delete(prior);
 			this.deleteSet.add(prior);
+			// THE RENAME, observed at the one moment both halves are known.
+			//
+			// A claim is a move, and this is where the store learns it: the note
+			// was at `prior`, it is at `resolved` now. Nothing downstream can
+			// reconstruct that pair -- once this returns, the map answers only
+			// `resolved`, so every later consumer sees a note that has "always"
+			// been there and a file that was never moved to match.
+			//
+			// That gap is what made a remote rename land as delete + recreate. The
+			// map is moved early (the doc-ready announce, discovery), so by the
+			// time the rename's upsert arrives `pathForId` already reports the new
+			// location, the relocation check concludes there is nothing to do, and
+			// the create branch -- finding the target empty -- makes a new file
+			// while the rename's delete leg trashes the old one. The note keeps its
+			// id and loses its file: open tabs, backlinks and creation date all
+			// reset.
+			//
+			// Emitting here follows Relay, which derives one `rename` op from the
+			// same observation rather than reconciling a delete against a create.
+			this.onRelocate?.(prior, resolved, meta.note_id);
 		}
 
 		// A forgotten path is hidden from `pathForId`, so the removal above cannot

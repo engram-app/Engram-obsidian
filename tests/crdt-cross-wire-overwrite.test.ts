@@ -51,7 +51,10 @@ const mockApp = {
 		rename: mock().mockResolvedValue(undefined),
 	},
 	fileManager: { trashFile: mock().mockResolvedValue(undefined) },
-	workspace: { getActiveViewOfType: mock().mockReturnValue(null) },
+	workspace: {
+		getActiveViewOfType: mock().mockReturnValue(null),
+		getLeavesOfType: mock().mockReturnValue([]),
+	},
 } as any;
 
 function createEngine(): SyncEngine {
@@ -67,6 +70,7 @@ function createEngine(): SyncEngine {
 
 beforeEach(() => {
 	(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockClear();
+	(mockApp.vault.rename as ReturnType<typeof mock>).mockClear();
 	(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockReset();
 	getManifest.mockReset().mockResolvedValue(null);
 });
@@ -194,7 +198,7 @@ describe("cross-wired map must not destroy an unrelated note", () => {
 		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
 	});
 
-	test("legit server rename (priorPath absent from manifest) -> old file IS trashed (test_10 preserved)", async () => {
+	test("legit server rename (priorPath absent from manifest) -> old file IS moved (test_10 preserved)", async () => {
 		const engine = createEngine();
 		const map = new NoteIdMap();
 		map.set("Old.md", "id-move");
@@ -209,12 +213,15 @@ describe("cross-wired map must not destroy an unrelated note", () => {
 
 		await engine.applySyncChange(upsert("id-move", "New.md"));
 
-		// The id-keyed move must still clean up the genuinely-renamed old file.
-		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(oldFile);
+		// The id-keyed move must still clear the genuinely-renamed old path — by
+		// MOVING the file now rather than trashing it, so no duplicate survives
+		// and the note keeps its identity in Obsidian.
+		expect(mockApp.vault.rename).toHaveBeenCalledWith(oldFile, "New.md");
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
 		expect(map.pathForId("id-move")).toBe("New.md");
 	});
 
-	test("stale manifest still lists priorPath under the SAME id -> rename is real, trash proceeds", async () => {
+	test("stale manifest still lists priorPath under the SAME id -> rename is real, move proceeds", async () => {
 		const engine = createEngine();
 		const map = new NoteIdMap();
 		map.set("Old.md", "id-move");
@@ -230,6 +237,7 @@ describe("cross-wired map must not destroy an unrelated note", () => {
 
 		await engine.applySyncChange(upsert("id-move", "New.md"));
 
-		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(oldFile);
+		expect(mockApp.vault.rename).toHaveBeenCalledWith(oldFile, "New.md");
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
 	});
 });

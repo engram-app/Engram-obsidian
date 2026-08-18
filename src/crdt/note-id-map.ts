@@ -96,6 +96,11 @@ export class NoteIdMap {
 	rebind(store: SyncStore): void {
 		this.store = store;
 		this.flushScheduled = false;
+		// Re-attach: the handler lives on the STORE, and a vault switch hands us a
+		// brand new one. Without this the engine stops following relocations after
+		// the first vault change, which is the quiet half of every "works until you
+		// switch vaults" bug.
+		if (this.relocateHandler) store.onRelocate = this.relocateHandler;
 	}
 
 	/** Warm the local cache from data.json. Never published — see
@@ -116,6 +121,22 @@ export class NoteIdMap {
 		const id = this.store.getOrMint(path);
 		this.flush();
 		return id;
+	}
+
+	/** Forward the store's relocation signal to the engine, which owns the
+	 *  vault. Set here rather than on the store directly so callers keep dealing
+	 *  with one identity object and a `rebind` (vault switch) cannot silently
+	 *  leave the handler attached to the discarded store. */
+	setRelocateHandler(fn: (from: string, to: string, id: string) => void): void {
+		this.relocateHandler = fn;
+		this.store.onRelocate = fn;
+	}
+
+	private relocateHandler: ((from: string, to: string, id: string) => void) | null = null;
+
+	/** Where this note used to live. See `SyncStore.priorPathsForId`. */
+	priorPathsForId(id: string): string[] {
+		return this.store.priorPathsForId(id);
 	}
 
 	pathForId(id: string): string | null {
