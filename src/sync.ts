@@ -5906,7 +5906,28 @@ export class SyncEngine {
 		// — but the tombstone that leg left behind is still muting the live note.
 		this.clearTombstoneOnRelocation(id, newPath);
 		const priorPath = this.noteIdMap?.pathForId(id) ?? null;
-		if (!priorPath || normalizePath(priorPath) === normalizePath(newPath)) return;
+		if (!priorPath || normalizePath(priorPath) === normalizePath(newPath)) {
+			// This return decides rename-vs-recreate for every inbound relocation,
+			// and it used to be silent — so a vault where it ALWAYS fired looked
+			// identical in the logs to one where the rename path worked. It is the
+			// difference between Obsidian moving the file (identity, tabs and
+			// backlinks intact) and discovery materializing a new one while the
+			// delete leg trashes the old, which is what users see as "it deleted
+			// and remade my note".
+			//
+			// `priorPath === null` is the interesting case: the server said this id
+			// moved, but this device has no record of where it lived, so there is
+			// nothing to move FROM. Only logged when there is a decision to explain
+			// — a same-path no-op is just idempotent redelivery.
+			if (!priorPath) {
+				rlog().info(
+					"pull",
+					`Id-keyed move SKIPPED (no prior path known for ${id}) — ` +
+						`${noteRef(newPath)} will materialize via discovery, not a rename`,
+				);
+			}
+			return;
+		}
 		if (eventTs !== undefined) {
 			const lastTs = this.lastRelocationTs.get(id);
 			// STRICT `<` (e2e test_34): the backend gives a whole folder-rename op ONE
