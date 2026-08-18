@@ -670,7 +670,15 @@ export class SyncEngine {
 		if (!id) return undefined;
 		for (const candidate of this.noteIdMap?.priorPathsForId?.(id) ?? []) {
 			const at = normalizePath(candidate);
-			if (at !== target && this.app.vault.getFileByPath?.(at)) return at;
+			if (at === target) continue;
+			// The remembered path may have been REUSED by a different note since
+			// the snapshot was taken. Moving it then would hand one note's file to
+			// another -- silent data loss, and worse than the recreate this exists
+			// to avoid. Only an unclaimed path, or one still claimed by this same
+			// note, is safe to move.
+			const holder = this.noteIdMap?.get(at) ?? null;
+			if (holder && holder !== id) continue;
+			if (this.app.vault.getFileByPath?.(at)) return at;
 		}
 		return undefined;
 	}
@@ -5729,6 +5737,29 @@ export class SyncEngine {
 				// echo-suppressed and never re-pushed. A rename changes no content,
 				// so the bytes are preserved at the new path — no drift keep-both copy.
 				const existing = this.app.vault.getFileByPath(normalized);
+				// The id has moved to `relocatedPath`. If nothing is there yet, this
+				// file IS the note -- move it rather than destroying it and leaving
+				// the upsert to build a replacement. Trashing here is only correct
+				// once the note exists at its new home.
+				//
+				// Reachable whenever the delete leg is applied before the upsert.
+				// The server orders them the other way and the engine now preserves
+				// that order, so this is the belt to that braces: if the delete ever
+				// does arrive first, the difference is a moved file versus a
+				// destroyed-and-rebuilt one.
+				if (
+					existing &&
+					!this.app.vault.getAbstractFileByPath(normalizePath(relocatedPath))
+				) {
+					await this.renameFollowingIdentity(normalized, normalizePath(relocatedPath));
+					if (this.app.vault.getFileByPath(normalizePath(relocatedPath))) {
+						rlog().info(
+							"ws",
+							`Delete is rename old-leg — file moved to its new home: ${noteRef(normalized)}`,
+						);
+						return;
+					}
+				}
 				if (existing) {
 					// Carry "this is a rename's old leg" across the trash boundary.
 					// applyRemoteRemoval fires a vault delete event, and handleDelete
