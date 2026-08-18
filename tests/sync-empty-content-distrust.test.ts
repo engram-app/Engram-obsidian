@@ -159,6 +159,68 @@ describe("inline-empty content with a content_hash is fetched, not written", () 
 		expect(created.map((c: unknown[]) => c[0])).toContain("b.md");
 	});
 
+	test("#1377: a learned H_empty must NOT zero a note whose local file has bytes", async () => {
+		// The vault-wide learn makes hash -> content non-injective: hmac("") is
+		// ONE constant for the whole vault. For a note whose last checkpoint was
+		// empty but which now has uncheckpointed ops, the feed serves the REAL
+		// body under that same stored H_empty (#1375 keeps the facade's hash on
+		// purpose). A later meta-projected cascade broadcast then carries
+		// content:"" + content_hash:H_empty, matches the learned value, and
+		// materializes a 0-byte file OVER the body the feed just delivered.
+		//
+		// Trusting "" is only ever destructive when local has bytes. That is the
+		// discriminator: not which note, but whether the write destroys data.
+		const engine = createEngine();
+		engine.setCrdtManager({
+			applyLocalEdit: mock().mockReturnValue("x"),
+			isSynced: mock().mockReturnValue(false),
+		} as any);
+		engine.setNoteIdMap(new NoteIdMap());
+		engine.setLiveBoundCheck(() => false);
+		const replay = spyOn(engine as any, "catchupViaSeqReplay").mockResolvedValue({
+			applied: 0,
+			serverIds: new Set(),
+			serverAttachmentPaths: new Set(),
+			ran: true,
+			complete: true,
+		});
+
+		// An op-log row for a DIFFERENT, genuinely empty note teaches H_empty.
+		await engine.applyChange({
+			path: "genuinely-empty.md",
+			action: "upsert",
+			content: "",
+			content_hash: "H-empty",
+			version: 1,
+			mtime: 1,
+		} as any);
+
+		// The victim already holds the real body on disk (delivered by the feed).
+		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
+			p === "victim.md" ? { path: "victim.md", stat: { size: 4096, mtime: 1 } } : null,
+		);
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			path: "victim.md",
+			id: "note-id-victim",
+			content: "",
+			content_hash: "H-empty",
+			version: 2,
+		} as any);
+
+		// No 0-byte write over the VICTIM specifically. (genuinely-empty.md is
+		// legitimately created as 0 bytes by the teaching applyChange above, so
+		// asserting over every call would pass/fail for the wrong reason.)
+		const writes = [
+			...(mockApp.vault.modify as ReturnType<typeof mock>).mock.calls,
+			...(mockApp.vault.create as ReturnType<typeof mock>).mock.calls,
+		].filter((c: unknown[]) => c[0] === "victim.md" || (c[0] as any)?.path === "victim.md");
+		for (const call of writes) expect(call[1]).not.toBe("");
+		// Distrusted, so it heals through the authoritative op-log rows instead.
+		expect(replay).toHaveBeenCalled();
+	});
+
 	test("a genuinely empty inline body WITHOUT a content_hash is applied inline", async () => {
 		// No hash means no poisoning is possible: the legacy inline-apply keeps its
 		// behavior and writes the empty body straight through, no distrust/catch-up.

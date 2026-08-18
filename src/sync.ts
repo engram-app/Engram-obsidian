@@ -5697,11 +5697,29 @@ export class SyncEngine {
 		// hash is trustworthy without a round-trip. A stale learned value (DEK
 		// rotation, account swap) simply stops matching — the failure direction
 		// is an extra replay/fetch, never a 0-byte write.
+		//
+		// ...EXCEPT that the learn is vault-wide and cannot be, because
+		// content_hash is a per-user HMAC: hmac("") is ONE constant for the whole
+		// vault, so `hash === emptyContentHash` proves "this hash means empty",
+		// NOT "this note is empty" (#1377). A note whose last checkpoint was empty
+		// but which now has uncheckpointed ops carries that same H_empty as its
+		// STORED hash — #1375 deliberately keeps the facade's — while the feed
+		// serves its REAL body under it. The cascade broadcast that follows then
+		// matches the learned value and zeroes the body the feed just delivered.
+		//
+		// Note-scoping the learn would not fix it and would delete the
+		// optimization: trusting "" only for a note already known empty buys
+		// nothing, since writing "" over an empty note is a no-op. The real
+		// discriminator is not WHICH note but whether the write DESTROYS bytes —
+		// trusting inline "" is only ever harmful against a local file that has
+		// some. `stat.size` answers that without reading the file, and the
+		// distrust path is the same one that already heals via the op-log rows.
 		if (
 			event.event_type === "upsert" &&
 			event.content === "" &&
 			event.content_hash &&
-			event.content_hash !== this.emptyContentHash
+			(event.content_hash !== this.emptyContentHash ||
+				(this.app.vault.getFileByPath(normalizePath(event.path))?.stat?.size ?? 0) > 0)
 		) {
 			rlog().info(
 				"ws",
