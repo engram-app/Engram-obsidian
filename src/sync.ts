@@ -5691,7 +5691,11 @@ export class SyncEngine {
 			const holder = event.id
 				? (this.noteIdMap?.get(normalizePath(event.path)) ?? "none")
 				: "n/a";
-			rlog().info(
+			// `diag`, not `info`: one line per inbound upsert is one line per note on
+			// a first sync. Kept rather than deleted because these three lines are
+			// what finally made this diagnosable -- but behind the diagnostics
+			// switch, where per-note volume is the point.
+			rlog().diag(
 				"pull",
 				`rename-trace 1/3 upsert id=${event.id ?? "MISSING"} -> ${noteRef(event.path)} ` +
 					`mapSaysIdLivesAt=${noteRef(idHome)} mapSaysTargetHolds=${holder}`,
@@ -6162,7 +6166,7 @@ export class SyncEngine {
 			const sourceOnDisk = priorPath
 				? !!this.app.vault.getAbstractFileByPath?.(normalizePath(priorPath))
 				: false;
-			rlog().info(
+			rlog().diag(
 				"pull",
 				`rename-trace 2/3 SKIPPED (${why}) id=${id} from=${noteRef(priorPath)} ` +
 					`to=${noteRef(newPath)} sourceOnDisk=${sourceOnDisk} targetOnDisk=${targetOnDisk}`,
@@ -6985,7 +6989,7 @@ export class SyncEngine {
 				// and remade my note". Record where the map thinks this id lives, so
 				// a create that should have been a move is identifiable.
 				const idHome = noteId ? (this.noteIdMap?.pathForId(noteId) ?? null) : null;
-				rlog().info(
+				rlog().diag(
 					"pull",
 					`rename-trace 3/3 CREATING ${noteRef(change.path)} id=${noteId ?? "none"} ` +
 						`mapSaysIdLivesAt=${noteRef(idHome)}`,
