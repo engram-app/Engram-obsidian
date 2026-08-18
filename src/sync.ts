@@ -1629,6 +1629,26 @@ export class SyncEngine {
 		});
 	}
 
+	/** Un-bank the echo baseline for a frame the server DROPPED (note_not_found).
+	 *
+	 *  `recordCrdtBaseline` stamps the transmitted content the instant
+	 *  `routeModify` consumes it into the local Y.Doc — before any server ack,
+	 *  because the live channel normally carries it from there. When the backend
+	 *  instead drops the frame, nothing walks that stamp back, so the hoisted
+	 *  echo gate in `pushFile` hash-matches those exact bytes and skips every
+	 *  retry: the content is stranded for the life of the vault, not merely
+	 *  delayed. Seen in CI as `Echo skip: <note> | hash=1821472990` repeating
+	 *  forever after a `note_not_found` drop (e2e test_27).
+	 *
+	 *  Resetting to the `hash: 0` no-baseline default is the honest state: we do
+	 *  not know the server has this content, so the next push must re-send it.
+	 *  Never touches crdtHead/version — only the claim about what was delivered. */
+	clearPushedBaselineForId(docId: string): void {
+		const path = this.noteIdMap?.pathForId(docId);
+		if (!path) return;
+		this.patchSyncedRow(normalizePath(path), { hash: 0 });
+	}
+
 	/** Refresh a LIVE-BOUND note's baseline from the autosave that just landed.
 	 *  Fire-and-forget from handleModify's editor-owns-the-file gate (which is
 	 *  synchronous): the read is the same `cachedRead` the push path would have
@@ -3311,6 +3331,10 @@ export class SyncEngine {
 				// or a concurrent push for the same path reuses the same id rather
 				// than minting a second one.
 				let noteId = this.noteIdMap?.get(file.path) ?? null;
+				// An id minted by THIS push cannot be one the server has ever issued,
+				// whatever the path-keyed oracle says. See the `mintedNow` gate on the
+				// CRDT-ops branch below.
+				let mintedNow = false;
 				if (!noteId && this.noteIdMap) {
 					// MINT REFUSAL (issue #972, e2e test_34) — see shouldDeferMint.
 					// Skip the push: the relocation/pull owns this path's fate.
@@ -3323,6 +3347,7 @@ export class SyncEngine {
 					}
 					noteId = uuid7();
 					this.noteIdMap.set(file.path, noteId);
+					mintedNow = true;
 				}
 
 				// Routing observability: which inputs decide CRDT-vs-REST for this
@@ -3362,7 +3387,21 @@ export class SyncEngine {
 				// Live-vs-durable-queue is decided by the post-await `crdtLiveNow`
 				// re-check below (Task 5) — the channel can drop during the awaited
 				// `routeModify` seed.
-				if (this.crdt && noteId && this.hasServerNote(noteId)) {
+				// `!mintedNow`: hasServerNote is PATH-keyed — it resolves the id to a
+				// path and asks whether that PATH has a crdtHead (recorded under the
+				// vault path; see setCrdtHead). The wire is ID-keyed. So an id minted
+				// moments ago for a path whose server row already exists inherits that
+				// path's "the server knows this" verdict and sends an op under an id
+				// the backend never issued, which it drops as note_not_found — the
+				// bytes are gone, and the echo baseline banked below means no retry
+				// ever re-sends them. Traced in CI (e2e test_27, release-v0.17.0):
+				//   route: … server=false id=…cd61   (create, row keyed cd61)
+				//   route: … server=true  id=…d1a9   (id-map entry lost, fresh mint)
+				//   crdt_msg dropped by server (note_not_found): …d1a9
+				// A fresh mint therefore falls through to the genesis crdt_create
+				// branch, which ADOPTS the server's authoritative id for a path it
+				// already owns and re-keys the map — the recovery that already exists.
+				if (this.crdt && noteId && !mintedNow && this.hasServerNote(noteId)) {
 					const consumed = await routeModify(
 						{
 							crdtEligible: this.isCrdtEligible(file),
@@ -3479,7 +3518,12 @@ export class SyncEngine {
 					this.crdt &&
 					noteId &&
 					this.isCrdtEligible(file) &&
-					!this.hasServerNote(noteId) &&
+					// `mintedNow ||`: same path-vs-id keying trap as the ops branch
+					// above. A fresh mint on a path the server already owns must reach
+					// crdt_create precisely SO THAT the ADOPT branch can hand back the
+					// authoritative id; gating it out on the path's stale head is what
+					// left the note with no route at all.
+					(mintedNow || !this.hasServerNote(noteId)) &&
 					(this.crdtLive?.() ?? true) &&
 					!exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES)
 				) {

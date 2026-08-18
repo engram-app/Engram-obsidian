@@ -1962,3 +1962,129 @@ describe("the origin survives a move the store never announced", () => {
 		expect(mockApp.vault.rename).not.toHaveBeenCalled();
 	});
 });
+
+describe("a re-minted id must never be treated as server-known (e2e test_27, note_not_found content loss)", () => {
+	// Root cause, traced from CI client logs (release-v0.17.0, e2e-clerk):
+	//
+	//   route: n90 ... server=false id=01a0145d-cd61-…   <- create, server row keyed cd61
+	//   modify path=E2E/EmptyNote.md bytes=44
+	//   route: n90 ... server=true  id=01a0145d-d1a9-…   <- FRESH id, minted by pushFile
+	//   CRDT push ok: n90
+	//   crdt_msg dropped by server (note_not_found): 01a0145d-d1a9-…
+	//
+	// `hasServerNote(id)` resolves the id to a PATH and asks whether that PATH
+	// has a crdtHead. The head is recorded under the vault path (see
+	// setCrdtHead's own comment), so an id minted seconds ago for a path that
+	// already has a server row inherits that path's "the server knows this"
+	// verdict — and routes over the id-keyed CRDT ops branch, which the backend
+	// drops as note_not_found because it never issued that id. The oracle is
+	// path-keyed; the wire is id-keyed.
+	//
+	// Asserts the INVARIANT (which id reaches the wire), not the mechanism, so
+	// it survives a change in how the id is recovered.
+	test("a lost id-map entry on a server-known path must not send a freshly minted id", async () => {
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		engine.setNoteIdMap(noteIdMap);
+		const applyLocalEdit = mock(async (_id: string, c: string) => c);
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		engine.setCrdtEnrollment({ enroll: mock(() => {}) } as any);
+		engine.setCrdtLiveCheck(() => true);
+		// Model the server's crdt_create, not a stub that echoes: a path the
+		// server already owns comes back with the AUTHORITATIVE id (the ADOPT
+		// branch), which is the whole recovery mechanism under test. An echoing
+		// stub would hand back the client's fresh mint and pass by construction.
+		const serverRows = new Map<string, string>();
+		engine.setCrdtCreate(async (id: string, p: string) => {
+			const existing = serverRows.get(p);
+			if (existing) return existing;
+			serverRows.set(p, id);
+			return id;
+		});
+
+		// Device A authors the note itself: an EMPTY note takes the socket-native
+		// genesis path, which creates the server row under the client's mint and
+		// flips the hasServerNote oracle for the PATH. Nothing marks the file
+		// engine-flushed, so shouldDeferMint (which covers only engine-written
+		// files) does not apply here — this is the field shape.
+		const path = "Notes/Empty.md";
+		const file = new TFile(path, Date.now());
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue("");
+		await (engine as any).pushFile(file);
+
+		const serverId = noteIdMap.get(path);
+		expect(serverId).toBeTruthy(); // genesis really did run and claim an id
+
+		// The id-map entry is lost. In the field this is a SyncStore hiding layer
+		// that never expired (docs/context/crdt-sync-store-hiding-layers.md); the
+		// engine cannot tell that apart from a path it has never seen.
+		noteIdMap.delete(path);
+
+		// The note's first real content lands on disk.
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(
+			"# No Longer Empty\nThis note has content now.",
+		);
+		applyLocalEdit.mockClear();
+		await (engine as any).pushFile(file);
+
+		// An id-keyed CRDT op may only be sent under an id the server issued.
+		// Sending under a fresh mint is the bug: the backend drops the frame as
+		// note_not_found and the bytes are gone.
+		for (const call of applyLocalEdit.mock.calls) {
+			expect(call[0]).toBe(serverId);
+		}
+		// And the push must not have silently done nothing, which would strand
+		// the content just as surely (guards the assertion above against being
+		// vacuous).
+		expect(applyLocalEdit.mock.calls.length).toBeGreaterThan(0);
+	});
+
+	// Second defect, independent of the first: the echo-hash baseline is banked
+	// the instant routeModify consumes the edit into the local Y.Doc
+	// (sync.ts recordCrdtBaseline, "CRDT push ok"), with no server ack. When the
+	// server then drops the frame, nothing un-banks it — so every later push of
+	// that same content is `Echo skip` and the bytes are stranded for good.
+	// Observed in CI as `Echo skip: n90 | hash=1821472990` repeating after the
+	// note_not_found drop.
+	test("a frame the server dropped must not leave the content echo-skipped forever", async () => {
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		engine.setNoteIdMap(noteIdMap);
+		const applyLocalEdit = mock(async (_id: string, c: string) => c);
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		engine.setCrdtEnrollment({ enroll: mock(() => {}) } as any);
+		engine.setCrdtLiveCheck(() => true);
+
+		await engine.applySyncChange({
+			id: "id-dropped",
+			path: "Notes/Dropped.md",
+			title: "Dropped",
+			content: "",
+			folder: "",
+			tags: [],
+			mtime: 1,
+			updated_at: "2026-01-01T00:00:00Z",
+			deleted: false,
+			version: 1,
+		} as any);
+		(engine as unknown as { setCrdtHead(p: string, h: string): void }).setCrdtHead(
+			"Notes/Dropped.md",
+			"server-head",
+		);
+
+		const body = "# No Longer Empty\nThis note has content now.";
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(body);
+		const file = new TFile("Notes/Dropped.md", Date.now());
+		await (engine as any).pushFile(file);
+		expect(applyLocalEdit).toHaveBeenCalled();
+
+		// The server rejects the frame: it never issued this note_id.
+		(engine as any).clearPushedBaselineForId(noteIdMap.get("Notes/Dropped.md"));
+
+		// The same bytes are still on disk and still undelivered. A retry must
+		// actually re-send them rather than hash-match the banked baseline.
+		applyLocalEdit.mockClear();
+		await (engine as any).pushFile(file);
+		expect(applyLocalEdit).toHaveBeenCalled();
+	});
+});
