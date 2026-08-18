@@ -5919,13 +5919,30 @@ export class SyncEngine {
 			// moved, but this device has no record of where it lived, so there is
 			// nothing to move FROM. Only logged when there is a decision to explain
 			// — a same-path no-op is just idempotent redelivery.
-			if (!priorPath) {
-				rlog().info(
-					"pull",
-					`Id-keyed move SKIPPED (no prior path known for ${id}) — ` +
-						`${noteRef(newPath)} will materialize via discovery, not a rename`,
-				);
-			}
+			// Both branches are logged, and deliberately: they have different
+			// causes and only one of them is benign.
+			//   priorPath === newPath — the map already believes the note lives at
+			//     the new path. Benign ONLY if the file moved too; if the map moved
+			//     without the file, this return skips the move that was owed.
+			//   priorPath === null    — no record of where the note lived, so there
+			//     is nothing to move FROM.
+			// `onDisk` disambiguates them: it is the question the map cannot answer
+			// and the one that actually decides whether a rename is still owed.
+			//
+			// Both locals are named to survive the log-redaction gate, which flags
+			// any interpolation whose expression mentions "path" — the reason being
+			// that `event.msg` is the one field RedactFilter does not scrub, so a
+			// path reaching a message is a real leak. `noteRef()` is the sanctioned
+			// wrapper; everything else must be a verdict, not a name.
+			const why = priorPath ? "map already at new path" : "no prior path known";
+			// Optional call: several unit harnesses stub only the vault methods
+			// their subject uses, and a diagnostic must not be the thing that
+			// throws in them.
+			const materialized = !!this.app.vault.getAbstractFileByPath?.(normalizePath(newPath));
+			rlog().info(
+				"pull",
+				`Id-keyed move SKIPPED (${why}) id=${id} -> ${noteRef(newPath)} materialized=${materialized}`,
+			);
 			return;
 		}
 		if (eventTs !== undefined) {
