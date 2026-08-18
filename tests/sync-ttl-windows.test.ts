@@ -44,8 +44,8 @@ function engineWithClock() {
 	);
 	engine.setReady();
 	const probe = engine as unknown as {
-		markRecentlyDeleted(id: string): void;
-		recentlyDeleted: Map<string, number>;
+		markRecentlyDeleted(id: string, path: string): void;
+		recentlyDeleted: Map<string, { timer: number; path: string }>;
 		markRecentlyFlushed(path: string): void;
 		markRecentlyPushed(path: string): void;
 		files: SyncedFileTable;
@@ -56,7 +56,7 @@ function engineWithClock() {
 describe("recentlyDeleted cooldown", () => {
 	test("still suppresses a resurrection one tick before the window closes", () => {
 		const { clock, probe } = engineWithClock();
-		probe.markRecentlyDeleted("id-a");
+		probe.markRecentlyDeleted("id-a", "id-a.md");
 
 		clock.advance(RECENT_DELETE_COOLDOWN_MS - 1);
 
@@ -65,7 +65,7 @@ describe("recentlyDeleted cooldown", () => {
 
 	test("releases the id once the window elapses", () => {
 		const { clock, probe } = engineWithClock();
-		probe.markRecentlyDeleted("id-a");
+		probe.markRecentlyDeleted("id-a", "id-a.md");
 
 		clock.advance(RECENT_DELETE_COOLDOWN_MS);
 
@@ -74,10 +74,10 @@ describe("recentlyDeleted cooldown", () => {
 
 	test("re-marking restarts the window rather than stacking timers", () => {
 		const { clock, probe } = engineWithClock();
-		probe.markRecentlyDeleted("id-a");
+		probe.markRecentlyDeleted("id-a", "id-a.md");
 
 		clock.advance(RECENT_DELETE_COOLDOWN_MS - 10);
-		probe.markRecentlyDeleted("id-a");
+		probe.markRecentlyDeleted("id-a", "id-a.md");
 		clock.advance(20); // past the ORIGINAL deadline, not the refreshed one
 
 		expect(probe.recentlyDeleted.has("id-a")).toBe(true);
@@ -86,9 +86,9 @@ describe("recentlyDeleted cooldown", () => {
 
 	test("windows expire independently per id", () => {
 		const { clock, probe } = engineWithClock();
-		probe.markRecentlyDeleted("id-early");
+		probe.markRecentlyDeleted("id-early", "id-early.md");
 		clock.advance(30_000);
-		probe.markRecentlyDeleted("id-late");
+		probe.markRecentlyDeleted("id-late", "id-late.md");
 
 		clock.advance(RECENT_DELETE_COOLDOWN_MS - 30_000);
 

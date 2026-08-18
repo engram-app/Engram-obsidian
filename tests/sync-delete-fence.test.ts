@@ -404,3 +404,99 @@ describe("a deleted note takes its merge base with it", () => {
 		expect(droppedBases).toEqual(["Personal/Therapy.md"]);
 	});
 });
+
+describe("a delete the SERVER already applied must not tombstone the note id", () => {
+	// The id-keyed tombstone (`recentlyDeleted`, 60s) makes both CRDT
+	// convergence paths refuse a note by id. It exists for delete-wins
+	// (backend #970): a delete THIS device originated, whose round trip an
+	// in-flight peer frame could undo.
+	//
+	// It was ALSO being set when mirroring a delete the server had already
+	// applied, and that is where it did damage. A rename is broadcast as two
+	// frames — an upsert for the new path and a delete for the old — so the
+	// delete leg tombstoned the very note the rename had just moved: 60s of
+	// `fan-out skip (recent local delete)` and `op-replay skip`, with the doc
+	// destroyed underneath the open editor. Reported live 2026-08-18 as "the
+	// rename lands, then typing stops syncing", self-healing on reload.
+	//
+	// Nothing covered this branch, which is why four rounds of tests on the
+	// surrounding code never caught it.
+	function tombstoned(e: SyncEngine, id: string): boolean {
+		return (e as any).recentlyDeleted.has(id);
+	}
+
+	test("mirroring a remote delete leaves the id un-tombstoned", async () => {
+		const { e } = makeEngine();
+		const file = makeNoteFile("Old.md");
+		(e as any).noteIdMap.set(file.path, "id-moved");
+		recordSyncEvidence(e, file.path);
+
+		// trashRemotelyDeleted marks the path, so the vault delete event this
+		// fires is recognised as our own mirror of a server decision.
+		await (e as any).trashRemotelyDeleted(file);
+		await e.handleDelete(file);
+
+		expect(tombstoned(e, "id-moved")).toBe(false);
+	});
+
+	test("a LOCAL user delete still tombstones — delete-wins is untouched", async () => {
+		// The case #970 is actually about: our delete is in flight, and a peer
+		// frame that predates it must not resurrect the note.
+		const { e } = makeEngine();
+		const file = makeNoteFile("Gone.md");
+		(e as any).noteIdMap.set(file.path, "id-gone");
+		recordSyncEvidence(e, file.path);
+
+		await e.handleDelete(file);
+
+		expect(tombstoned(e, "id-gone")).toBe(true);
+	});
+});
+
+describe("a rename's old leg must not destroy the note's CRDT room", () => {
+	// The delete branch detects a rename's old leg correctly and says so
+	// ("room preserved"). Then it trashes the old file, and THAT vault delete
+	// event re-enters handleDelete as an ordinary delete — which tore down the
+	// id's Y.Doc. A destroyed Y.Doc does not come back: re-enrolment logged
+	// `Vault-channel update apply failed: Note was destroyed` and every reader
+	// threw `NoteDestroyedError`, so the renamed note was dead in the editor
+	// until reload. Live report 2026-08-18, second half.
+	test("the doc survives, and no delete is pushed for the old path", async () => {
+		const { e, crdtDeletes } = makeEngine();
+		const file = makeNoteFile("Old.md");
+		(e as any).noteIdMap.set(file.path, "id-moved");
+		recordSyncEvidence(e, file.path);
+
+		const removeDoc = mock().mockResolvedValue(undefined);
+		const reset = mock(() => {});
+		e.setCrdtManager({ removeDoc } as any);
+		e.setCrdtEnrollment({ enroll: mock(() => {}), reset } as any);
+
+		// What the old-leg branch does: declare intent, then trash.
+		(e as any).files.mark(file.path, "renamedAway", 5_000);
+		await (e as any).trashRemotelyDeleted(file);
+		await e.handleDelete(file);
+
+		expect(removeDoc).not.toHaveBeenCalled();
+		expect(reset).not.toHaveBeenCalled();
+		expect(crdtDeletes).toEqual([]);
+	});
+
+	test("an ordinary remote delete DOES still tear the room down", async () => {
+		// The marker must be the discriminator, not a blanket exemption: a note
+		// genuinely deleted elsewhere should not leave a resident room behind.
+		const { e } = makeEngine();
+		const file = makeNoteFile("Gone.md");
+		(e as any).noteIdMap.set(file.path, "id-gone");
+		recordSyncEvidence(e, file.path);
+
+		const removeDoc = mock().mockResolvedValue(undefined);
+		e.setCrdtManager({ removeDoc } as any);
+		e.setCrdtEnrollment({ enroll: mock(() => {}), reset: mock(() => {}) } as any);
+
+		await (e as any).trashRemotelyDeleted(file);
+		await e.handleDelete(file);
+
+		expect(removeDoc).toHaveBeenCalledWith("id-gone");
+	});
+});
