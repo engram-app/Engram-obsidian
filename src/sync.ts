@@ -248,6 +248,10 @@ const ECHO_COOLDOWN_MS = 5000;
  *  delete-then-recreate window: within it the server won't have a live row for
  *  this id anyway (delete-wins), so honoring the local tombstone is exact. */
 const RECENT_DELETE_COOLDOWN_MS = 60_000;
+/** How long a relocation's origin stays available to a later materialization.
+ *  Generous next to the milliseconds a racing flush needs, and short next to
+ *  the lifetime of a path that might legitimately be recreated. */
+const RELOCATION_MEMORY_MS = 30_000;
 
 /** Debounce window for the ok->degraded transition Notice: aggregates a
  *  burst of newly-degraded notes (e.g. a batch push) into one Notice. */
@@ -601,7 +605,20 @@ export class SyncEngine {
 		// (a bare `{ tag: "map" }`, a stub with only the two methods under test),
 		// and wiring a diagnostic-adjacent hook must not be what breaks them. In
 		// production this is always a real NoteIdMap, so the method is always there.
-		map?.setRelocateHandler?.((from, to) => void this.followRelocationOnDisk(from, to));
+		map?.setRelocateHandler?.((from, to) => {
+			// RECORD FIRST, move second. The move can lose: a concurrent flush or
+			// the discovery create may reach the new path first, and then this
+			// rename finds the target occupied and gives up -- which is exactly how
+			// a rename degraded into create-here + trash-there. The record is what
+			// lets whoever DOES materialize the path turn its create into a move,
+			// so the outcome no longer depends on who wins.
+			this.relocatedFrom.set(normalizePath(to), normalizePath(from));
+			this.time.setTimeout(
+				() => this.relocatedFrom.delete(normalizePath(to)),
+				RELOCATION_MEMORY_MS,
+			);
+			void this.renameFollowingIdentity(from, to);
+		});
 	}
 
 	/** Move a note's file to follow a relocation of its identity.
@@ -629,7 +646,13 @@ export class SyncEngine {
 	 *  way, after Obsidian moved the file). If the target is occupied, something
 	 *  else materialized it and overwriting is not this function's call -- the
 	 *  existing convergence paths own that. */
-	private async followRelocationOnDisk(from: string, to: string): Promise<void> {
+	/** New path -> the path its note came from, for as long as a materialization
+	 *  might still arrive. Bounded by a TTL: a note that is never materialized at
+	 *  the new path must not pin a stale origin forever, or a LATER genuine
+	 *  create at that path would be turned into a move of an unrelated file. */
+	private relocatedFrom = new Map<string, string>();
+
+	private async renameFollowingIdentity(from: string, to: string): Promise<void> {
 		const src = normalizePath(from);
 		const dest = normalizePath(to);
 		if (src === dest) return;
@@ -7369,12 +7392,52 @@ export class SyncEngine {
 		}
 	}
 
+	/** Create a note's file at `normalized` -- or MOVE it there, if the note this
+	 *  path now claims already has a file somewhere else.
+	 *
+	 *  Every path that materializes a note funnels through here, which is why the
+	 *  check belongs here and not in any one of them. A remote rename arrives as
+	 *  identity first, and several paths race to put bytes at the new location:
+	 *  the id-keyed mover, the discovery create, the CRDT flush. Whichever wins,
+	 *  the others see an occupied target and fall back to create-here +
+	 *  trash-there. The bytes end up right and the FILE does not: Obsidian sees a
+	 *  brand-new note, so open tabs close, backlinks re-resolve and the creation
+	 *  date resets. That is the "it makes a new file and deletes the other one"
+	 *  report, and it is the same report whichever path happened to win.
+	 *
+	 *  Obsidian does have the function this wants -- `vault.rename` -- but no
+	 *  caller could reach it, because by the time anyone knew the new path they
+	 *  had already lost the old one. Resolving the note's id back to its current
+	 *  file is what makes the move expressible at all.
+	 *
+	 *  `vault.rename`, not `fileManager.renameFile`: the server rewrote links for
+	 *  a rename it originated, and renameFile would rewrite them again (the
+	 *  exactly-one-rewriter invariant). Relay uses renameFile because its server
+	 *  does not rewrite at all. */
 	private async createFileWithFolders(normalized: string, content: string): Promise<void> {
 		const folder = normalized.includes("/")
 			? normalized.substring(0, normalized.lastIndexOf("/"))
 			: "";
 		if (folder) {
 			await this.ensureFolder(folder);
+		}
+		// Where did the note claiming this path come from? NOT asked of the map:
+		// the map has already been moved, so it answers `normalized` for this id
+		// and the old name is gone from it. `relocatedFrom` is the only remaining
+		// record, captured at the instant identity moved.
+		const cameFrom = this.relocatedFrom.get(normalized);
+		if (cameFrom && cameFrom !== normalized) {
+			const existing = this.app.vault.getFileByPath?.(cameFrom);
+			if (existing && !this.app.vault.getAbstractFileByPath?.(normalized)) {
+				await this.renameFollowingIdentity(cameFrom, normalized);
+				// Re-check rather than assume: a failed move falls through to the
+				// create below, which is the old behaviour and still converges.
+				const moved = this.app.vault.getFileByPath?.(normalized);
+				if (moved) {
+					await this.modifyFile(moved, content);
+					return;
+				}
+			}
 		}
 		try {
 			await this.app.vault.create(normalized, content);

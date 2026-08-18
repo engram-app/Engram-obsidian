@@ -129,6 +129,16 @@ function modelVaultFs(initial: Record<string, string>): {
 			bodies.set(f.path, body);
 		},
 	);
+	// `modifyFile` prefers vault.process when present, and the shared stub returns
+	// the transformed string without storing it — so any assertion about content
+	// written through that route passes or fails for the wrong reason. Model it.
+	(mockApp.vault.process as ReturnType<typeof mock>).mockImplementation(
+		async (f: TFile, fn: (d: string) => string) => {
+			const next = fn(bodies.get(f.path) ?? "");
+			bodies.set(f.path, next);
+			return next;
+		},
+	);
 	(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockImplementation(
 		async (f: TFile) => {
 			present.delete(f.path);
@@ -182,6 +192,9 @@ beforeEach(() => {
 	(mockApp.vault.rename as ReturnType<typeof mock>).mockReset().mockResolvedValue(undefined);
 	(mockApp.vault.create as ReturnType<typeof mock>).mockReset().mockResolvedValue(undefined);
 	(mockApp.vault.modify as ReturnType<typeof mock>).mockReset().mockResolvedValue(undefined);
+	(mockApp.vault.process as ReturnType<typeof mock>)
+		.mockReset()
+		.mockImplementation((_f: TFile, fn: (d: string) => string) => Promise.resolve(fn("")));
 	(mockApp.fileManager.trashFile as ReturnType<typeof mock>)
 		.mockReset()
 		.mockResolvedValue(undefined);
@@ -1831,5 +1844,61 @@ describe("the file follows its identity when a note is relocated remotely", () =
 		await flush();
 
 		expect([...fs.present.keys()]).toEqual(["B.md"]);
+	});
+});
+
+describe("materializing a note that already exists elsewhere MOVES it", () => {
+	// Whichever path wins the race to put bytes at a renamed note's new location
+	// -- the id-keyed mover, the discovery create, the CRDT flush -- the loser
+	// sees an occupied target and degrades to create-here + trash-there. Traced
+	// live 2026-08-18:
+	//
+	//   Id-keyed move: skipping stale disk flush for n426 -- already holds
+	//     content (a concurrent flush won the race)
+	//   vault create .../mommy v15.md
+	//   vault delete .../mommy v14.md
+	//
+	// The bytes were right and the file was new, so Obsidian closed the tab and
+	// reset the note's identity. They all funnel through createFileWithFolders,
+	// so the note's own id is what decides create-vs-move, once, for all of them.
+	test("a create for a path whose note lives elsewhere renames instead", async () => {
+		// Isolates the FUNNEL. The eager move that runs when identity relocates is
+		// covered above; this is the fallback for when that move loses the race,
+		// which is what the prod log showed ("already holds content — a concurrent
+		// flush won the race"). The funnel's only input is the recorded origin, so
+		// the test supplies exactly that and nothing else.
+		const fs = modelVaultFs({ "Old.md": "old body" });
+		const engine = createEngine();
+		engine.setNoteIdMap(new NoteIdMap());
+		(engine as unknown as { relocatedFrom: Map<string, string> }).relocatedFrom.set(
+			"New.md",
+			"Old.md",
+		);
+
+		await (
+			engine as unknown as { createFileWithFolders(p: string, c: string): Promise<void> }
+		).createFileWithFolders("New.md", "new body");
+
+		// Moved, not duplicated — and critically nothing left at the old name for
+		// a delete leg to clean up afterwards, which is what made Obsidian treat
+		// the note as brand new.
+		expect([...fs.present.keys()]).toEqual(["New.md"]);
+		expect(fs.bodies.get("New.md")).toBe("new body");
+		expect(mockApp.vault.rename).toHaveBeenCalled();
+	});
+
+	test("a genuinely new note is still created, not moved", async () => {
+		const fs = modelVaultFs({});
+		const engine = createEngine();
+		engine.setNoteIdMap(new NoteIdMap());
+
+		await (
+			engine as unknown as {
+				createFileWithFolders(p: string, c: string): Promise<void>;
+			}
+		).createFileWithFolders("Fresh.md", "hello");
+
+		expect(fs.bodies.get("Fresh.md")).toBe("hello");
+		expect(mockApp.vault.rename).not.toHaveBeenCalled();
 	});
 });
