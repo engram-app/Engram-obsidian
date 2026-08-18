@@ -10,6 +10,7 @@ import * as Y from "yjs";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncStore } from "../src/crdt/sync-store";
+import { destroyRemoteLog, initRemoteLog } from "../src/remote-log";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -1615,5 +1616,126 @@ describe("moveIfIdRelocated must not discard content when newPath exists but is 
 		} as any);
 
 		expect(mockApp.vault.modify).not.toHaveBeenCalledWith(freshNewFile, "stale old bytes");
+	});
+});
+
+describe("a remote rename must not kill the renamed note's live sync", () => {
+	// Reported live 2026-08-18: renaming a note in the web app propagated the
+	// rename to Obsidian, and then typing in either client stopped syncing.
+	// Obsidian's plugin log:
+	//
+	//   ws     Event: delete note: n41
+	//   ws     Event: upsert note: n426
+	//   vault  create .../mommy v5.md      <- new file
+	//   vault  delete .../mommy v4.md      <- old file
+	//   crdt   fan-out skip (recent local delete): 01a011f9-...
+	//   crdt   op-replay skip (recent/pending local delete): 01a011f9-...
+	//   error  getYText failed: NoteDestroyedError: Note was destroyed
+	//
+	// A rename is broadcast as two frames, and the server orders them
+	// deliberately — new path's upsert first, old path's delete second — so the
+	// receiver relocates the id before the delete arrives and the delete then
+	// reads as a relocation leg. The client dropped that ordering on the floor:
+	// each frame was applied as its own un-awaited async task. When the delete
+	// won the race, `pathForId` still answered the OLD path, the rename read as
+	// a genuine death, and the id was tombstoned for the 60s delete-wins window
+	// with its Y.Doc destroyed — which is precisely the two skips and the
+	// NoteDestroyedError above.
+	const ID = "01a011f9-3b85-79b3-af2f-de167b256949";
+	const OLD = "mommy v4.md";
+	const NEW = "mommy v5.md";
+
+	/** Wire a rename's two frames into the engine and report what survived. */
+	async function renameOverTheWire(order: "server" | "delete-first") {
+		const fs = modelVaultFs({ [OLD]: "hello" });
+		// Trashing dispatches Obsidian's vault delete event — the boundary the
+		// tombstone crosses, so the bug is invisible without it.
+		(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockImplementation(
+			async (f: TFile) => {
+				fs.present.delete(f.path);
+				fs.bodies.delete(f.path);
+				await engine.handleDelete(f);
+			},
+		);
+		manifestWith([{ id: ID, path: NEW }]);
+
+		const engine = createEngine();
+		const map = new NoteIdMap();
+		map.set(OLD, ID);
+		engine.setNoteIdMap(map);
+
+		const removeDoc = mock().mockResolvedValue(undefined);
+		engine.setCrdtManager({
+			isSynced: mock().mockReturnValue(true),
+			projectedText: mock().mockResolvedValue("hello"),
+			removeDoc,
+		} as any);
+		engine.setCrdtEnrollment({ enroll: mock(() => {}), reset: mock(() => {}) } as any);
+
+		const upsert = {
+			event_type: "upsert",
+			kind: "note",
+			id: ID,
+			path: NEW,
+			timestamp: 2,
+			updated_at: "2026-01-01T00:00:02Z",
+		} as any;
+		const del = {
+			event_type: "delete",
+			kind: "note",
+			id: ID,
+			path: OLD,
+			timestamp: 3,
+			updated_at: "2026-01-01T00:00:03Z",
+		} as any;
+
+		// Fire-and-forget, exactly as main.ts's `channel.onEvent` does — the
+		// engine, not the call site, is what must impose order.
+		const frames = order === "server" ? [upsert, del] : [del, upsert];
+		await Promise.all(frames.map((f) => engine.handleStreamEvent(f)));
+		await flush();
+		return { fs, map, removeDoc, engine };
+	}
+
+	test("server order: the note is MOVED, and its CRDT room is never torn down", async () => {
+		const { fs, map, removeDoc } = await renameOverTheWire("server");
+
+		expect([...fs.present.keys()]).toEqual([NEW]);
+		expect(map.pathForId(ID)).toBe(NEW);
+		// The whole point of ordering the upsert first: the id relocates, the
+		// delete reads as the old leg, and the live doc is left alone.
+		expect(removeDoc).not.toHaveBeenCalled();
+	});
+
+	test("delete-first: the id is NOT left tombstoned, so live updates still land", async () => {
+		// Even with the legs reversed the note must not end up muted. This is the
+		// state the user hit: file renamed correctly, note silently deaf.
+		const { fs, map, engine } = await renameOverTheWire("delete-first");
+
+		expect([...fs.present.keys()]).toEqual([NEW]);
+		expect(map.pathForId(ID)).toBe(NEW);
+
+		// Assert the literal symptom. A tombstoned id makes BOTH convergence
+		// paths refuse the note by id, each announcing itself in the log — those
+		// two lines are what the user's report contained. Matching on their text
+		// keeps the test tied to the reported failure rather than to whichever
+		// internal branch happens to reach them.
+		//
+		// Asserted as "no line anywhere matches", never "the last line was X":
+		// rlog is a process singleton, so a spy on it sees every line the engine
+		// emits, and an index-based assertion silently drifts with unrelated logging.
+		const lines: string[] = [];
+		const log = initRemoteLog() as unknown as Record<string, unknown>;
+		for (const level of ["info", "warn", "error", "debug"]) {
+			log[level] = (_cat: string, msg: string) => void lines.push(msg);
+		}
+		try {
+			await engine.applyPushedNoteUpdate(ID, Y.encodeStateAsUpdate(new Y.Doc()), "h");
+			await engine.catchupViaSeqReplay?.();
+			expect(lines.filter((l) => l.includes("recent local delete"))).toEqual([]);
+			expect(lines.filter((l) => l.includes("recent/pending local delete"))).toEqual([]);
+		} finally {
+			await destroyRemoteLog();
+		}
 	});
 });

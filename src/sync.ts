@@ -397,7 +397,7 @@ export class SyncEngine {
 	 *  applies. Keyed by note_id (the key both paths check by), unlike the
 	 *  path-keyed offline-queue `hasPendingDelete` guard which only covers a
 	 *  delete STILL queued (this covers one already sent/dequeued). */
-	private recentlyDeleted: Map<string, number> = new Map();
+	private recentlyDeleted: Map<string, { timer: number; path: string }> = new Map();
 	private pulling = false;
 	private lastSync = "";
 	private lastError = "";
@@ -2540,7 +2540,7 @@ export class SyncEngine {
 			this.files.clearMarker(file.path, "remotelyDeleted");
 			// A converged REMOTE delete: tombstone the id so a racing catch-up or
 			// late fan-out cannot resurrect it (delete-wins, backend #970).
-			if (crdtNoteId) this.markRecentlyDeleted(crdtNoteId);
+			if (crdtNoteId) this.markRecentlyDeleted(crdtNoteId, file.path);
 			rlog().info("vault", `Delete echo skip (remote-applied): ${noteRef(file.path)}`);
 			if (this.isCrdtEligible(file) && crdtNoteId) {
 				await this.teardownCrdtDoc(crdtNoteId);
@@ -2564,7 +2564,7 @@ export class SyncEngine {
 			// or terminally no-ops server-side. Without this, a create-then-delete
 			// note resurrects when the queued create fires (review finding 5).
 			if (crdtNoteId && this.crdtHasPendingOp?.(crdtNoteId)) {
-				this.markRecentlyDeleted(crdtNoteId);
+				this.markRecentlyDeleted(crdtNoteId, file.path);
 				this.crdtEnqueue?.({ kind: "delete", docId: crdtNoteId, path: file.path });
 				if (this.isCrdtEligible(file)) await this.teardownCrdtDoc(crdtNoteId);
 				rlog().info("push", `Delete superseded pending create: ${noteRef(file.path)}`);
@@ -2582,7 +2582,7 @@ export class SyncEngine {
 
 		// Tombstone the id BEFORE clearing the mapping and issuing the delete, so
 		// a racing catch-up head map or late fan-out cannot resurrect it.
-		if (crdtNoteId) this.markRecentlyDeleted(crdtNoteId);
+		if (crdtNoteId) this.markRecentlyDeleted(crdtNoteId, file.path);
 
 		try {
 			if (isBinary) {
@@ -3743,18 +3743,6 @@ export class SyncEngine {
 		new Notice(`Engram: plan upgraded — syncing ${skipped.length} attachment(s)…`, 6_000);
 	}
 
-	/** Mark `path` in a TTL map, resetting any pending expiry. Sole remaining
-	 *  caller is markRecentlyDeleted (the other echo-suppression marks moved to
-	 *  SyncedFileTable, #358); destroy() sweeps the same map. */
-	private markWithTtl(map: Map<string, number>, path: string, ms: number): void {
-		const existing = map.get(path);
-		if (existing) this.time.clearTimeout(existing);
-		const timer = this.time.setTimeout(() => {
-			map.delete(path);
-		}, ms);
-		map.set(path, timer);
-	}
-
 	/** Trash a file whose deletion was decided REMOTELY (WS delete event, pull
 	 *  tombstone, relocation/orphan/bootstrap cleanup). Marks the path first so
 	 *  the vault 'delete' event this trash fires skips the server push in
@@ -3801,9 +3789,53 @@ export class SyncEngine {
 	}
 
 	/** Record a note_id THIS device just deleted so neither CRDT convergence
-	 *  path resurrects it during the delete-wins window (backend #970). */
-	private markRecentlyDeleted(noteId: string): void {
-		this.markWithTtl(this.recentlyDeleted, noteId, RECENT_DELETE_COOLDOWN_MS);
+	 *  path resurrects it during the delete-wins window (backend #970).
+	 *
+	 *  `path` is stored with it because the tombstone alone cannot tell the two
+	 *  things it must distinguish apart: a stale echo of THIS delete (same path
+	 *  — block it, that is the whole point of #970) from the other leg of a
+	 *  RENAME (different path — the note is alive and must not be blocked). See
+	 *  `clearTombstoneOnRelocation`. Inlines the former `markWithTtl`, whose
+	 *  only caller this was. */
+	private markRecentlyDeleted(noteId: string, path: string): void {
+		const existing = this.recentlyDeleted.get(noteId);
+		if (existing) this.time.clearTimeout(existing.timer);
+		this.recentlyDeleted.set(noteId, {
+			path: normalizePath(path),
+			timer: this.time.setTimeout(() => {
+				this.recentlyDeleted.delete(noteId);
+			}, RECENT_DELETE_COOLDOWN_MS),
+		});
+	}
+
+	/** An inbound upsert is the server asserting an id is ALIVE at a path. If
+	 *  that path differs from the one this device tombstoned the id at, the two
+	 *  frames are the two legs of ONE rename, and the "delete" was never a user
+	 *  delete — so the tombstone has to come off.
+	 *
+	 *  The rename guard one level up (`relocated`, in the delete branch) only
+	 *  catches this when the upsert for the NEW path is processed FIRST, which
+	 *  is the order its comment assumes. Prod delivers the other order too: with
+	 *  the delete first, `pathForId` still answers the OLD path, the delete reads
+	 *  as genuine, and the id is tombstoned for 60s and its Y.Doc destroyed. Both
+	 *  convergence paths then skip the note (`fan-out skip`, `op-replay skip`)
+	 *  and the editor's doc is gone — the user-visible bug is "the rename lands,
+	 *  then typing stops syncing", self-healing only on reload or after the TTL.
+	 *  Checking the RECORDED path instead of arrival order is order-independent,
+	 *  so neither delivery order can produce it.
+	 *
+	 *  A same-path upsert is exactly the stale echo #970 exists to block: leave
+	 *  that tombstone standing. */
+	private clearTombstoneOnRelocation(noteId: string, path: string): void {
+		const tomb = this.recentlyDeleted.get(noteId);
+		if (!tomb || tomb.path === normalizePath(path)) return;
+		this.time.clearTimeout(tomb.timer);
+		this.recentlyDeleted.delete(noteId);
+		rlog().info(
+			"ws",
+			`Delete tombstone cleared — ${noteId} is alive at ${noteRef(path)}, so the delete of ` +
+				`${noteRef(tomb.path)} was a rename's old leg`,
+		);
 	}
 
 	/** MINT REFUSAL (backend #972, PRs #216/#217) — the single decision both
@@ -5329,8 +5361,45 @@ export class SyncEngine {
 		};
 	}
 
-	/** Handle a WebSocket stream event (upsert or delete). */
-	async handleStreamEvent(event: NoteStreamEvent): Promise<void> {
+	/** Tail of the serialized stream-event chain. See `handleStreamEvent`. */
+	private streamTail: Promise<void> = Promise.resolve();
+
+	/** Handle a WebSocket stream event (upsert or delete), STRICTLY IN ARRIVAL
+	 *  ORDER — one event's application completes before the next begins.
+	 *
+	 *  The server orders the two legs of a rename deliberately: the new path's
+	 *  upsert is broadcast BEFORE the old path's delete, at every rename seam
+	 *  (`Notes.rename_note`, `do_rewrite_note`, the folder-rename fan-out), so
+	 *  that a receiver relocates the note's id first and the delete then reads
+	 *  as a relocation leg rather than a genuine death. The delete branch's
+	 *  guards are written on exactly that premise.
+	 *
+	 *  The client used to throw that ordering away: `onEvent` fired
+	 *  `void handleStreamEvent(event)` per frame, so the two legs ran as
+	 *  concurrent async tasks and either could reach its decision point first.
+	 *  When the delete won, `pathForId` still answered the OLD path, so the
+	 *  rename read as a genuine delete: the note's id was tombstoned for the
+	 *  60s delete-wins window and its Y.Doc destroyed. Both convergence paths
+	 *  then skipped the note (`fan-out skip (recent local delete)`,
+	 *  `op-replay skip`) and the editor's doc was gone
+	 *  (`NoteDestroyedError`) — a rename that lands and then silently stops
+	 *  syncing until a reload or the TTL. Reported live after a web-app rename,
+	 *  2026-08-18.
+	 *
+	 *  Serializing here rather than at the call site keeps the guarantee with
+	 *  the invariant that depends on it, and gives it to every caller and test.
+	 *  Errors are isolated per event so one rejection cannot poison the tail.
+	 *
+	 *  ponytail: head-of-line blocking is the accepted cost — a slow event now
+	 *  delays later ones. These handlers already await disk and network, and
+	 *  unordered application is the bug. Per-note lanes if it ever matters. */
+	handleStreamEvent(event: NoteStreamEvent): Promise<void> {
+		const applied = this.streamTail.then(() => this.applyStreamEvent(event));
+		this.streamTail = applied.catch(() => {});
+		return applied;
+	}
+
+	private async applyStreamEvent(event: NoteStreamEvent): Promise<void> {
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", "handleStreamEvent short-circuited — gate closed");
 			return;
@@ -5778,6 +5847,12 @@ export class SyncEngine {
 	private lastRelocationTs = new Map<string, number>();
 
 	private async moveIfIdRelocated(id: string, newPath: string, eventTs?: number): Promise<void> {
+		// Both authoritative upsert paths (the WS broadcast and the pull feed)
+		// funnel through here, and this runs BEFORE the early return below on
+		// purpose: when the delete leg was processed first it already released the
+		// id's mapping, so `priorPath` is null and there is no "move" left to make
+		// — but the tombstone that leg left behind is still muting the live note.
+		this.clearTombstoneOnRelocation(id, newPath);
 		const priorPath = this.noteIdMap?.pathForId(id) ?? null;
 		if (!priorPath || normalizePath(priorPath) === normalizePath(newPath)) return;
 		if (eventTs !== undefined) {
@@ -8504,7 +8579,7 @@ export class SyncEngine {
 		this.debounceTimers.clear();
 		// Was three near-identical clear-every-timer loops, one per marker map.
 		this.files.destroy();
-		for (const timer of this.recentlyDeleted.values()) {
+		for (const { timer } of this.recentlyDeleted.values()) {
 			this.time.clearTimeout(timer);
 		}
 		this.recentlyDeleted.clear();
