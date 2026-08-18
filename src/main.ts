@@ -2399,6 +2399,11 @@ export default class EngramSyncPlugin extends Plugin {
 					const indexRoom = this.indexRoom;
 					if (indexRoom) {
 						channel.onIndexMessage = (b64) => indexRoom.receive(b64);
+						// A refused index frame is a lost path->id claim until something
+						// re-offers it. Put it back in the provider's offline buffer so the
+						// next connect flush carries it, rather than waiting for a rejoin
+						// handshake to re-derive it (#433).
+						channel.onIndexFrameRejected = (b64) => indexRoom.requeue(b64);
 					}
 					// Deferred activation: only engage CRDT routing in the SyncEngine
 					// after the server confirms the crdt: topic join. Against a non-CRDT

@@ -408,7 +408,15 @@ describe("privacy — no content retention for export", () => {
 		// the original to make doc_id optional would exempt any `{ b64 }` object
 		// reachable from a `this.send([this.crdtJoinRef, ...])` call, which is
 		// most of what this check exists to catch.
-		const indexWireStatement = /^this\.send\(\[this\.crdtJoinRef,[^{}]*\{\s*b64\s*\}\]\);$/;
+		// The optional `const <name> =` prefix is the ONLY widening: `send` reports
+		// whether the frame reached the transport (#433), and an index frame must
+		// honour that to re-buffer on a half-open socket. It still pins the exact
+		// wire shape, so a wrapper around the payload, an extra argument or a
+		// reordering is caught as before — the result is read, never the frame
+		// rewritten. Deliberately not applied to `wireStatement`: no note-frame
+		// caller needs the boolean, so widening it too would exempt more for free.
+		const indexWireStatement =
+			/^(?:const[A-Za-z_$][\w$]*=)?this\.send\(\[this\.crdtJoinRef,[^{}]*\{\s*b64\s*\}\]\);$/;
 
 		const findings: Finding[] = [];
 		for (const f of sources) {

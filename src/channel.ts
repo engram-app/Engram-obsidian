@@ -282,6 +282,19 @@ export class NoteChannel {
 	 *  (backend #955 error reply). The create-race cross-wire signature — wire
 	 *  to the sync engine's live id-map reconcile (ensureNoteIdMapped). */
 	onCrdtNoteNotFound: ((docId: string) => void) | null = null;
+
+	/** Called when the server REFUSES an index frame (`rate_limited`,
+	 *  `index_frame_rejected`). Carries the exact b64 so the caller can re-offer
+	 *  it — an index frame is a path->id claim, and a claim the server never
+	 *  applied leaves it answering for a path it does not own. */
+	onIndexFrameRejected: ((b64: string, reason: string) => void) | null = null;
+
+	/** Index frames awaiting their phx_reply, by ref. The server replies to EVERY
+	 *  `crdt_index_msg` (ok or error), so entries drain on reply and the map stays
+	 *  at the in-flight count. Cleared on close: those frames are re-derived by
+	 *  the rejoin handshake, which answers an inbound syncStep1 with a
+	 *  [syncStep2, syncStep1] pair and so re-offers whatever the server lacks. */
+	private readonly inFlightIndexFrames = new Map<string, string>();
 	/** Fired when the `crdt:` topic join is acknowledged by the server.
 	 *  Use this to activate CRDT routing in the SyncEngine — only wire
 	 *  `setCrdtManager` after this fires, so the legacy pushNote path stays
@@ -451,7 +464,19 @@ export class NoteChannel {
 			return false;
 		}
 
-		this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_index_msg", { b64 }]);
+		const ref = String(++this.ref);
+		// Kept as a bare statement, result captured — `source-compliance` exempts
+		// this EXACT wire shape and any wrapper around it (an `if (!...)`) stops
+		// matching, which is the point of that guard.
+		const delivered = this.send([this.crdtJoinRef, ref, t, "crdt_index_msg", { b64 }]);
+		if (!delivered) {
+			rlog().warn(
+				"channel",
+				"sendIndexCrdt refused (socket not OPEN) — held, recovers on rejoin",
+			);
+			return false;
+		}
+		this.inFlightIndexFrames.set(ref, b64);
 		return true;
 	}
 
@@ -814,6 +839,7 @@ export class NoteChannel {
 			// crdtJoined that lets sendCrdt bypass the join-ack contract on the
 			// next socket and skips re-firing onCrdtJoined (#191).
 			this.crdtJoined = false;
+			this.inFlightIndexFrames.clear();
 			this.setConnected(false);
 
 			// Real browsers always pass a CloseEvent here; some lightweight test
@@ -990,6 +1016,27 @@ export class NoteChannel {
 					const response = (payload as { response?: unknown })?.response;
 					if (status === "ok") pending.resolve(response);
 					else pending.reject(new Error(`request failed: ${JSON.stringify(response)}`));
+					return;
+				}
+
+				// An index frame's own reply, handled before the join-error cascade
+				// below. Without this a refused identity claim surfaced as "Channel
+				// join error on crdt:..." — a lie that reads as a connection fault,
+				// and one nothing acted on, so the claim was simply gone.
+				const indexFrame = this.inFlightIndexFrames.get(ref);
+				if (indexFrame !== undefined) {
+					this.inFlightIndexFrames.delete(ref);
+					const status = (payload as { status?: string })?.status;
+					if (status !== "ok") {
+						const reason = (payload as { response?: { reason?: unknown } })?.response
+							?.reason;
+						const label = typeof reason === "string" ? reason : "unknown";
+						rlog().warn(
+							"channel",
+							`Index frame refused by server (${label}) — re-offering on next flush`,
+						);
+						this.onIndexFrameRejected?.(indexFrame, label);
+					}
 					return;
 				}
 			}
@@ -1212,7 +1259,11 @@ export class NoteChannel {
 		}
 	}
 
-	private send(msg: unknown[]): void {
+	/** Returns whether the frame actually reached the transport. Callers that
+	 *  can recover from a refusal (sendIndexCrdt -> the provider's offline
+	 *  buffer) MUST honour it: `crdtJoined` is only reset in `onclose`, so there
+	 *  is a real half-open window where the topic reads joined and this no-ops. */
+	private send(msg: unknown[]): boolean {
 		if (this.ws?.readyState === WebSocket.OPEN) {
 			const frame = JSON.stringify(msg);
 			// Observability only - never skip or alter the send itself. Only warn
@@ -1227,7 +1278,9 @@ export class NoteChannel {
 				);
 			}
 			this.ws.send(frame);
+			return true;
 		}
+		return false;
 	}
 
 	private setConnected(value: boolean): void {
@@ -1239,6 +1292,7 @@ export class NoteChannel {
 				// fire again if the new backend also supports CRDT; until then
 				// the legacy pushNote path takes over.
 				this.crdtJoined = false;
+				this.inFlightIndexFrames.clear();
 			}
 			this.onStatusChange?.(value);
 		}
