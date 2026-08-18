@@ -646,6 +646,22 @@ export class SyncEngine {
 			this.files.mark(src, "remotelyRenamed", ECHO_COOLDOWN_MS);
 			this.files.mark(dest, "remotelyRenamed", ECHO_COOLDOWN_MS);
 			await this.app.vault.rename(file, dest);
+			// Relay's `doc.move(path)` step: having moved the bytes, move the
+			// bookkeeping that was filed under the old path. Skipping it is not
+			// harmless — the rename echo guard below returns early precisely
+			// BECAUSE it assumes the mover already did this ("the id map, base and
+			// sync-state were all re-keyed by the mover"), so a mover that does not
+			// leaves the merge base and sync-state stranded on a path that no
+			// longer exists. The next convergence then has no common ancestor for
+			// the note and resolves by writing a conflict copy.
+			//
+			// Same shape as the other mover: carry the base across (the content did
+			// not change, only its name), then drop the old path's sync-state.
+			// Done AFTER the rename, not before, so a failed move leaves the
+			// bookkeeping intact rather than destroying state for a file that never
+			// went anywhere.
+			this.baseStore?.rename(src, dest);
+			this.dropPath(src, { dropBase: false });
 			rlog().info("pull", `Followed identity move: ${noteRef(src)} -> ${noteRef(dest)}`);
 		} catch (e) {
 			this.files.clearMarker(src, "remotelyRenamed");

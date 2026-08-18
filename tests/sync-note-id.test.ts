@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { MarkdownView, TFile } from "obsidian";
 import * as Y from "yjs";
 import type { EngramApi } from "../src/api";
+import { BaseStore } from "../src/base-store";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncStore } from "../src/crdt/sync-store";
 import { destroyRemoteLog, initRemoteLog } from "../src/remote-log";
@@ -1761,6 +1762,14 @@ describe("the file follows its identity when a note is relocated remotely", () =
 		const map = new NoteIdMap();
 		map.set("Old.md", "id-1");
 		engine.setNoteIdMap(map);
+		// A REAL BaseStore, not a stub: the assertion is that the entry moves keys,
+		// which a stub with a hand-written `rename` would satisfy by construction.
+		const bases = new BaseStore(
+			{ read: async () => "", write: async () => {}, exists: async () => false } as never,
+			"bases.json",
+		);
+		bases.set("Old.md", "body", 1);
+		(engine as unknown as { baseStore: BaseStore | null }).baseStore = bases;
 
 		// Identity moves — exactly what the announce/discovery path does.
 		map.set("New.md", "id-1");
@@ -1768,6 +1777,12 @@ describe("the file follows its identity when a note is relocated remotely", () =
 
 		expect([...fs.present.keys()]).toEqual(["New.md"]);
 		expect(fs.bodies.get("New.md")).toBe("body");
+		// The merge base must travel with the note. The rename echo guard returns
+		// early assuming the mover re-keyed it; a base stranded on the old path
+		// leaves the next convergence with no common ancestor, which it resolves
+		// by writing a conflict copy — the other half of the user's report.
+		expect(bases.get("New.md")).toBeDefined();
+		expect(bases.get("Old.md")).toBeUndefined();
 	});
 
 	test("a claim for a brand-new note creates nothing and moves nothing", async () => {
