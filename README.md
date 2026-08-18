@@ -6,8 +6,6 @@
 
 **Sync your vault everywhere, and let any AI read and write it.** Your notes become memory your AI can search, cite, and build on.
 
-Semantic + keyword + hybrid search · MCP-native · desktop & mobile · no telemetry
-
 **[Start free at engram.page →](https://engram.page)** · No credit card, ready in minutes.
 
 [Setup](#setup) · [Connect your AI](#connect-your-ai) · [API](https://engram.page/docs/api) · [User guide](docs/user-guide.md) · [Self-host](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
@@ -16,15 +14,15 @@ Semantic + keyword + hybrid search · MCP-native · desktop & mobile · no telem
 
 ## What you get
 
+- **Your AI works *inside* your vault.** Connect Claude, Cursor, or ChatGPT over [MCP](#connect-your-ai). It reads your notes for context and writes new ones back:
 - **Your notes, on every device.** Write on your laptop, it's on your phone, and changes your AI makes show up too.
 - **Find anything, by meaning or exact words.** Hit the search icon and pick a mode: *Semantic* turns *"our policy on refunds"* into **"Customer support playbook,"** even when the note never says "policy"; *Keyword* matches exact terms locally (works offline, no quota); *Hybrid* blends both.
 - **Your vault is programmable.** A full [REST + WebSocket API](https://engram.page/docs/api) wraps every note: automate, integrate, or build apps on your own knowledge.
-- **Your AI works *inside* your vault.** Connect Claude, Cursor, or ChatGPT over [MCP](#connect-your-ai). It reads your notes for context and writes new ones back:
 
 ```text
 You      Pull together what we know about the Henderson account.
 
-Claude   🔎  searched your vault → "Henderson"  ·  found 4 notes
+Claude   🔎  searched your vault ·  found 4 notes
          They're mid-renewal, flagged onboarding gaps in Q2,
          and asked about the analytics add-on.
 
