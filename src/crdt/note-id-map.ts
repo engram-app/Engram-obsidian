@@ -134,6 +134,11 @@ export class NoteIdMap {
 
 	private relocateHandler: ((from: string, to: string, id: string) => void) | null = null;
 
+	/** Where this note used to live. See `SyncStore.priorPathsForId`. */
+	priorPathsForId(id: string): string[] {
+		return this.store.priorPathsForId(id);
+	}
+
 	pathForId(id: string): string | null {
 		return this.store.pathForId(id);
 	}

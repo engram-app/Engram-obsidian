@@ -205,6 +205,30 @@ export class SyncStore {
 		this.reverse = null;
 	}
 
+	/** Every path this store has ever associated with `note_id`, newest source
+	 *  first, EXCLUDING the one it resolves to now.
+	 *
+	 *  `pathForId` answers where a note is; this answers where it was. A claim is
+	 *  a move, so `set` erases the old key the moment the new one is claimed --
+	 *  after which nothing can say a rename happened rather than a note appearing
+	 *  from nowhere. The seeded cache (data.json) is not erased by `set`, so it
+	 *  outlives the move and can still be asked.
+	 *
+	 *  Callers must treat the answer as a HINT and verify it against the disk:
+	 *  the cache is a snapshot from load time and may name a path that has since
+	 *  been deleted, or reused by a different note. */
+	priorPathsForId(note_id: string): string[] {
+		const now = this.pathForId(note_id);
+		const out: string[] = [];
+		for (const [path, meta] of this.cache) {
+			if (meta.note_id !== note_id) continue;
+			const resolved = this.resolvePath(path);
+			if (resolved === now) continue;
+			out.push(resolved);
+		}
+		return out;
+	}
+
 	/** The note_id for `path`, or null. The `NoteIdMap.get` replacement. */
 	get(path: string): string | null {
 		return this.getMeta(path)?.note_id ?? null;

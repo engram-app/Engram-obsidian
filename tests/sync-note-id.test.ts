@@ -1902,3 +1902,59 @@ describe("materializing a note that already exists elsewhere MOVES it", () => {
 		expect(mockApp.vault.rename).not.toHaveBeenCalled();
 	});
 });
+
+describe("the origin survives a move the store never announced", () => {
+	// The live `relocatedFrom` record only exists when the relocation ran through
+	// the store's claim path. In the field the map is reached other ways -- the
+	// doc-ready announce, catch-up, discovery -- and by the time anything
+	// observable happens the map already answers the new path with no record of
+	// the old one. Traced live 2026-08-18:
+	//
+	//   rename-trace 1/3 upsert -> n426 mapSaysIdLivesAt=n426   (already moved)
+	//   rename-trace 3/3 CREATING n426
+	//   vault create .../mommy v17.md
+	//   vault delete .../mommy v16.md
+	//
+	// data.json's cached mapping is not erased by a claim, so it still remembers
+	// where the note was, and that is enough to turn the create back into a move.
+	test("a create still becomes a move using the cached origin", async () => {
+		const fs = modelVaultFs({ "Old.md": "old body" });
+		const engine = createEngine();
+		const map = new NoteIdMap();
+		// data.json load: the note was at Old.md.
+		map.seed({ "Old.md": "id-1" });
+		// Move the map BEFORE the engine is watching. That is the state the trace
+		// showed -- the map already at the new path, no record of the old one --
+		// and doing it this way produces it without faking any internals.
+		map.set("New.md", "id-1");
+		engine.setNoteIdMap(map);
+
+		await (
+			engine as unknown as { createFileWithFolders(p: string, c: string): Promise<void> }
+		).createFileWithFolders("New.md", "new body");
+
+		expect([...fs.present.keys()]).toEqual(["New.md"]);
+		expect(fs.bodies.get("New.md")).toBe("new body");
+		expect(mockApp.vault.rename).toHaveBeenCalled();
+	});
+
+	test("a stale cached origin whose file is gone does not misfire", async () => {
+		// The cache is a load-time snapshot. If nothing is actually sitting at the
+		// remembered path, there is nothing to move and a normal create must run —
+		// otherwise a note legitimately recreated at a reused path would drag an
+		// unrelated file with it.
+		const fs = modelVaultFs({});
+		const engine = createEngine();
+		const map = new NoteIdMap();
+		map.seed({ "Deleted.md": "id-1" });
+		map.set("New.md", "id-1");
+		engine.setNoteIdMap(map);
+
+		await (
+			engine as unknown as { createFileWithFolders(p: string, c: string): Promise<void> }
+		).createFileWithFolders("New.md", "new body");
+
+		expect(fs.bodies.get("New.md")).toBe("new body");
+		expect(mockApp.vault.rename).not.toHaveBeenCalled();
+	});
+});

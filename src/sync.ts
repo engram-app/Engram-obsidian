@@ -652,6 +652,29 @@ export class SyncEngine {
 	 *  create at that path would be turned into a move of an unrelated file. */
 	private relocatedFrom = new Map<string, string>();
 
+	/** Fallback origin for a note being materialized at `target`, for the case
+	 *  `relocatedFrom` never saw the move.
+	 *
+	 *  The live record only exists when the relocation ran through the store's
+	 *  claim path. In the field the map is reached other ways -- the doc-ready
+	 *  announce, catch-up, discovery -- and then the move is already done by the
+	 *  time anything observable happens, with no record of where the note came
+	 *  from. data.json's cached mapping is not erased by a claim, so it still
+	 *  remembers, and this asks it.
+	 *
+	 *  Strictly a hint: the cache is a load-time snapshot, so the candidate is
+	 *  returned only if a file is actually sitting there. The caller additionally
+	 *  requires `target` to be empty before moving anything. */
+	private staleOriginFor(target: string): string | undefined {
+		const id = this.noteIdMap?.get(target) ?? null;
+		if (!id) return undefined;
+		for (const candidate of this.noteIdMap?.priorPathsForId?.(id) ?? []) {
+			const at = normalizePath(candidate);
+			if (at !== target && this.app.vault.getFileByPath?.(at)) return at;
+		}
+		return undefined;
+	}
+
 	private async renameFollowingIdentity(from: string, to: string): Promise<void> {
 		const src = normalizePath(from);
 		const dest = normalizePath(to);
@@ -7425,7 +7448,7 @@ export class SyncEngine {
 		// the map has already been moved, so it answers `normalized` for this id
 		// and the old name is gone from it. `relocatedFrom` is the only remaining
 		// record, captured at the instant identity moved.
-		const cameFrom = this.relocatedFrom.get(normalized);
+		const cameFrom = this.relocatedFrom.get(normalized) ?? this.staleOriginFor(normalized);
 		if (cameFrom && cameFrom !== normalized) {
 			const existing = this.app.vault.getFileByPath?.(cameFrom);
 			if (existing && !this.app.vault.getAbstractFileByPath?.(normalized)) {
