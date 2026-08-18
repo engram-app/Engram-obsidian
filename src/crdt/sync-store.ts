@@ -102,6 +102,12 @@ export class SyncStore {
 	 *  trade. Invalidated by every mutation and by remote updates. */
 	private reverse: Map<string, string> | null = null;
 
+	/** Notified when a claim MOVES a note: `(from, to, note_id)`. The store owns
+	 *  identity, not the filesystem, so it reports the move and lets the engine
+	 *  decide what to do about the bytes on disk. Optional so the store stays
+	 *  usable headless (tests, the index room before the engine exists). */
+	onRelocate?: (from: string, to: string, note_id: string) => void;
+
 	constructor(private readonly map: Y.Map<FileMeta>) {
 		// A remote update invalidates the reverse index just as a local one does.
 		// Without this a path learned from another device answers `pathForId`
@@ -267,6 +273,26 @@ export class SyncStore {
 		if (prior && prior !== resolved) {
 			this.overlay.delete(prior);
 			this.deleteSet.add(prior);
+			// THE RENAME, observed at the one moment both halves are known.
+			//
+			// A claim is a move, and this is where the store learns it: the note
+			// was at `prior`, it is at `resolved` now. Nothing downstream can
+			// reconstruct that pair -- once this returns, the map answers only
+			// `resolved`, so every later consumer sees a note that has "always"
+			// been there and a file that was never moved to match.
+			//
+			// That gap is what made a remote rename land as delete + recreate. The
+			// map is moved early (the doc-ready announce, discovery), so by the
+			// time the rename's upsert arrives `pathForId` already reports the new
+			// location, the relocation check concludes there is nothing to do, and
+			// the create branch -- finding the target empty -- makes a new file
+			// while the rename's delete leg trashes the old one. The note keeps its
+			// id and loses its file: open tabs, backlinks and creation date all
+			// reset.
+			//
+			// Emitting here follows Relay, which derives one `rename` op from the
+			// same observation rather than reconciling a delete against a create.
+			this.onRelocate?.(prior, resolved, meta.note_id);
 		}
 
 		// A forgotten path is hidden from `pathForId`, so the removal above cannot

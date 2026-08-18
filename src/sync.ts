@@ -594,6 +594,69 @@ export class SyncEngine {
 
 	setNoteIdMap(map: NoteIdMap | null): void {
 		this.setCrdtPorts({ noteIdMap: map });
+		// Follow identity with the bytes. The store reports a claim MOVING; this
+		// engine owns the vault, so it performs the corresponding file move.
+		//
+		// Optional call: several suites pass structural doubles for this port
+		// (a bare `{ tag: "map" }`, a stub with only the two methods under test),
+		// and wiring a diagnostic-adjacent hook must not be what breaks them. In
+		// production this is always a real NoteIdMap, so the method is always there.
+		map?.setRelocateHandler?.((from, to) => void this.followRelocationOnDisk(from, to));
+	}
+
+	/** Move a note's file to follow a relocation of its identity.
+	 *
+	 *  A rename arrives as identity first: some path now claims a note that lived
+	 *  somewhere else. The map is updated early (the doc-ready announce,
+	 *  discovery) and the file is not, so by the time the rename's upsert is
+	 *  applied `pathForId` already reports the new location -- the relocation
+	 *  check sees nothing to do, the create branch finds the target empty and
+	 *  writes a NEW file, and the rename's delete leg trashes the old one. The
+	 *  note survives with its id and loses its file identity: open tabs close,
+	 *  backlinks and creation date reset. That is the "it deleted and remade my
+	 *  note" report.
+	 *
+	 *  Doing it here means the move happens the moment identity moves, whichever
+	 *  path moved it, instead of being reconstructed later from a delete/create
+	 *  pair that no longer carries both halves.
+	 *
+	 *  `vault.rename`, deliberately, NOT `fileManager.renameFile`: the server has
+	 *  already rewritten links for a rename it originated, and renameFile would
+	 *  rewrite them a second time (the exactly-one-rewriter invariant).
+	 *
+	 *  Best effort by construction. If the source is gone the move already
+	 *  happened (a local rename this device performed reaches the store the same
+	 *  way, after Obsidian moved the file). If the target is occupied, something
+	 *  else materialized it and overwriting is not this function's call -- the
+	 *  existing convergence paths own that. */
+	private async followRelocationOnDisk(from: string, to: string): Promise<void> {
+		const src = normalizePath(from);
+		const dest = normalizePath(to);
+		if (src === dest) return;
+		const file = this.app.vault.getFileByPath?.(src);
+		if (!file) return;
+		if (this.app.vault.getAbstractFileByPath?.(dest)) return;
+		try {
+			const folder = dest.includes("/") ? dest.slice(0, dest.lastIndexOf("/")) : "";
+			if (folder) await this.ensureFolder(folder);
+			// Obsidian fires a vault `rename` for this move exactly as it would for
+			// a user drag; without the marker the echo is pushed back as a fresh
+			// rename. Marked on BOTH ends -- the event carries both, and which one
+			// a guard reads depends on the caller.
+			this.files.mark(src, "remotelyRenamed", ECHO_COOLDOWN_MS);
+			this.files.mark(dest, "remotelyRenamed", ECHO_COOLDOWN_MS);
+			await this.app.vault.rename(file, dest);
+			rlog().info("pull", `Followed identity move: ${noteRef(src)} -> ${noteRef(dest)}`);
+		} catch (e) {
+			this.files.clearMarker(src, "remotelyRenamed");
+			this.files.clearMarker(dest, "remotelyRenamed");
+			// Not fatal and not silent: the note still converges through the
+			// create/delete pair, just without keeping its file identity.
+			rlog().warn(
+				"pull",
+				`Identity move could not follow on disk (${noteRef(src)} -> ${noteRef(dest)}): ${errMsg(e, dest)}`,
+			);
+		}
 	}
 
 	/** Populate `noteIdMap` authoritatively from the server manifest's

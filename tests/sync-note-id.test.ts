@@ -1739,3 +1739,82 @@ describe("a remote rename must not kill the renamed note's live sync", () => {
 		}
 	});
 });
+
+describe("the file follows its identity when a note is relocated remotely", () => {
+	// The bug users saw as "it deleted and remade my note". A remote rename
+	// arrives as IDENTITY first: the map is moved early (doc-ready announce,
+	// discovery) and the file is not. By the time the rename's upsert applies,
+	// `pathForId` already reports the new location, so the relocation check
+	// concludes there is nothing to move, the create branch finds the target
+	// empty and writes a NEW file, and the delete leg trashes the old one.
+	//
+	// Traced live 2026-08-18:
+	//   1/3 upsert id=01a011f9 -> n426 mapSaysIdLivesAt=n426
+	//   2/3 SKIPPED (map already at target) targetOnDisk=false
+	//   3/3 CREATING n426
+	//
+	// So the move has to happen when identity moves, which is the only moment
+	// both the old and new path are known.
+	test("claiming a note at a new path MOVES its file there", async () => {
+		const fs = modelVaultFs({ "Old.md": "body" });
+		const engine = createEngine();
+		const map = new NoteIdMap();
+		map.set("Old.md", "id-1");
+		engine.setNoteIdMap(map);
+
+		// Identity moves — exactly what the announce/discovery path does.
+		map.set("New.md", "id-1");
+		await flush();
+
+		expect([...fs.present.keys()]).toEqual(["New.md"]);
+		expect(fs.bodies.get("New.md")).toBe("body");
+	});
+
+	test("a claim for a brand-new note creates nothing and moves nothing", async () => {
+		const fs = modelVaultFs({ "Other.md": "other" });
+		const engine = createEngine();
+		const map = new NoteIdMap();
+		engine.setNoteIdMap(map);
+
+		map.set("Fresh.md", "id-fresh");
+		await flush();
+
+		// No prior claim, so there is no move to make — and nothing else is touched.
+		expect([...fs.present.keys()]).toEqual(["Other.md"]);
+	});
+
+	test("an occupied target is left alone — convergence owns that, not this", async () => {
+		const fs = modelVaultFs({ "Old.md": "mine", "New.md": "someone else" });
+		const engine = createEngine();
+		const map = new NoteIdMap();
+		map.set("Old.md", "id-1");
+		engine.setNoteIdMap(map);
+
+		map.set("New.md", "id-1");
+		await flush();
+
+		expect(fs.bodies.get("New.md")).toBe("someone else");
+		// Asserted on the CALL, not just the outcome: the vault double rejects an
+		// occupied destination, so the bytes survive either way and an
+		// outcome-only assertion passes even with the guard deleted (it did).
+		// The guard's job is to not attempt the move at all — attempting it means
+		// a thrown rename and a spurious warning on every legitimate race.
+		expect(mockApp.vault.rename).not.toHaveBeenCalled();
+	});
+
+	test("the move survives a vault switch (rebind re-attaches the handler)", async () => {
+		const fs = modelVaultFs({ "A.md": "body" });
+		const engine = createEngine();
+		const map = new NoteIdMap();
+		engine.setNoteIdMap(map);
+		// Vault change replaces the index room's store; the handler lives on the
+		// store, so without re-attaching, relocations stop following silently.
+		map.rebind(new SyncStore(new Y.Doc().getMap("filemeta_v0")));
+
+		map.set("A.md", "id-1");
+		map.set("B.md", "id-1");
+		await flush();
+
+		expect([...fs.present.keys()]).toEqual(["B.md"]);
+	});
+});
