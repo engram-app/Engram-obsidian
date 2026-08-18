@@ -2538,9 +2538,31 @@ export class SyncEngine {
 		const wasEngineTrash = this.consumeEngineTrash(file.path);
 		if (this.files.has(file.path, "remotelyDeleted") || wasEngineTrash) {
 			this.files.clearMarker(file.path, "remotelyDeleted");
-			// A converged REMOTE delete: tombstone the id so a racing catch-up or
-			// late fan-out cannot resurrect it (delete-wins, backend #970).
-			if (crdtNoteId) this.markRecentlyDeleted(crdtNoteId, file.path);
+			// NO TOMBSTONE HERE. This branch fires for a delete the SERVER already
+			// applied and we are mirroring to disk. The id-keyed tombstone exists
+			// for the opposite case (below): a delete THIS device originated, whose
+			// round trip a peer's in-flight frame could undo. Once the server owns
+			// the decision, a later server frame for the same id is not a
+			// resurrection to suppress — it is newer truth to honour, and the only
+			// frame that carries it is the one this guard was silencing.
+			//
+			// A rename is broadcast as two frames (new path upsert + old path
+			// delete). Tombstoning off the delete leg muted the note the rename
+			// had just moved: 60s of `fan-out skip (recent local delete)` and
+			// `op-replay skip`, with `teardownCrdtDoc` having destroyed the doc
+			// underneath the open editor (`NoteDestroyedError`). The user-visible
+			// bug is "the rename lands, then typing stops syncing" — self-healing
+			// only on reload or when the window lapses. Reported 2026-08-18.
+			//
+			// Delete-wins (backend #970) is unaffected: it is about OUR delete
+			// racing a peer, and that path still tombstones. A genuine remote
+			// delete needs no local tombstone — nothing will re-announce a note
+			// the server has removed, and if the server DOES re-announce it, the
+			// note is alive and we want it back.
+			//
+			// The doc teardown stays: the file is gone from disk, so the room
+			// should not stay resident. Re-enrolment rebuilds it from the server,
+			// which is exactly what the tombstone used to prevent.
 			rlog().info("vault", `Delete echo skip (remote-applied): ${noteRef(file.path)}`);
 			if (this.isCrdtEligible(file) && crdtNoteId) {
 				await this.teardownCrdtDoc(crdtNoteId);
