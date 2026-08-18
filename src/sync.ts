@@ -2491,6 +2491,27 @@ export class SyncEngine {
 			return;
 		}
 
+		// RENAME OLD LEG. The engine trashed this path to follow a remote rename;
+		// the note is alive at its new path. Everything below is keyed by note_id
+		// — releasing the claim, the delete-wins tombstone, the CRDT teardown —
+		// and every one of them would be aimed at a LIVING note. Drop only the
+		// path-scoped bookkeeping and stop.
+		//
+		// Placed above the id resolution deliberately: the map is mid-relocation
+		// here, so whether `get(oldPath)` still answers the id is a race, and a
+		// guard that depends on the answer is a guard that works some of the time.
+		if (this.files.has(file.path, "renamedAway")) {
+			this.files.clearMarker(file.path, "renamedAway");
+			this.files.clearMarker(file.path, "remotelyDeleted");
+			this.consumeEngineTrash(file.path);
+			this.dropPath(normalizePath(file.path));
+			rlog().info(
+				"vault",
+				`Delete is rename old-leg — id-keyed state preserved: ${noteRef(file.path)}`,
+			);
+			return;
+		}
+
 		// Resolve the note_id BEFORE clearing the map (removeDoc/reset below need
 		// it to tear down the right CRDT doc, keyed by id not path).
 		const crdtNoteId = !isBinary ? (this.noteIdMap?.get(file.path) ?? null) : null;
@@ -5565,6 +5586,15 @@ export class SyncEngine {
 				// so the bytes are preserved at the new path — no drift keep-both copy.
 				const existing = this.app.vault.getFileByPath(normalized);
 				if (existing) {
+					// Carry "this is a rename's old leg" across the trash boundary.
+					// applyRemoteRemoval fires a vault delete event, and handleDelete
+					// cannot otherwise tell it apart from a note genuinely dying — so
+					// it tore down the id's CRDT doc, destroying the very room this
+					// branch exists to preserve. The doc stayed destroyed
+					// (`NoteDestroyedError` on every later read, re-enrolment does not
+					// revive a destroyed Y.Doc), which is the live half of the
+					// 2026-08-18 "rename lands, then typing stops syncing" report.
+					this.files.mark(normalized, "renamedAway", ECHO_COOLDOWN_MS);
 					await this.applyRemoteRemoval(existing);
 				}
 				// Only clear a stale old-path→id mapping if one still points at the
