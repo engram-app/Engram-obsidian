@@ -5491,6 +5491,25 @@ export class SyncEngine {
 		// test_10). moveIfIdRelocated is idempotent — it no-ops unless the id
 		// already maps to a different local path. Gated on a known id
 		// (attachments aren't keyed).
+		if (event.event_type === "upsert" && !isAttachment) {
+			// RENAME TRACE (1/3). The guard below requires `event.id`; without it
+			// the relocation check never runs at all and the note falls through to
+			// discovery, which materializes a NEW file while the delete leg trashes
+			// the old one. That is indistinguishable in the logs from a relocation
+			// that ran and declined, so record which one happened.
+			// Hoisted, not inlined: the gate's sanctioned-wrapper pattern allows one
+			// level of nesting inside `noteRef(...)`, so a lookup call inside the
+			// argument falls through to the namey check and trips it.
+			const idHome = event.id ? (this.noteIdMap?.pathForId(event.id) ?? null) : null;
+			const holder = event.id
+				? (this.noteIdMap?.get(normalizePath(event.path)) ?? "none")
+				: "n/a";
+			rlog().info(
+				"pull",
+				`rename-trace 1/3 upsert id=${event.id ?? "MISSING"} -> ${noteRef(event.path)} ` +
+					`mapSaysIdLivesAt=${noteRef(idHome)} mapSaysTargetHolds=${holder}`,
+			);
+		}
 		if (event.event_type === "upsert" && !isAttachment && event.id) {
 			// eventTs must be on the SAME clock base as the pull path's relocationTs
 			// (Date.parse(c.updated_at), server clock) — NOT event.timestamp, which
@@ -5906,7 +5925,35 @@ export class SyncEngine {
 		// — but the tombstone that leg left behind is still muting the live note.
 		this.clearTombstoneOnRelocation(id, newPath);
 		const priorPath = this.noteIdMap?.pathForId(id) ?? null;
-		if (!priorPath || normalizePath(priorPath) === normalizePath(newPath)) return;
+		if (!priorPath || normalizePath(priorPath) === normalizePath(newPath)) {
+			// RENAME TRACE (2/3). This return decides move-vs-recreate for every
+			// inbound relocation and was silent, so a vault where it fires EVERY
+			// time looked identical to one where renames work.
+			//
+			// Two causes, different fixes:
+			//   "map already at target" -- the map believes the note is already
+			//     there. Harmless only if the FILE moved too; the map and the disk
+			//     are different things and only `sourceOnDisk` distinguishes them.
+			//   "no prior path"        -- no record of where the note lived, so
+			//     there is nothing to move from.
+			// Locals avoid the word "path": the redaction gate rejects any rlog
+			// interpolation naming one, since `event.msg` is not scrubbed.
+			const why = priorPath ? "map already at target" : "no prior";
+			const targetOnDisk = !!this.app.vault.getAbstractFileByPath?.(normalizePath(newPath));
+			const sourceOnDisk = priorPath
+				? !!this.app.vault.getAbstractFileByPath?.(normalizePath(priorPath))
+				: false;
+			rlog().info(
+				"pull",
+				`rename-trace 2/3 SKIPPED (${why}) id=${id} from=${noteRef(priorPath)} ` +
+					`to=${noteRef(newPath)} sourceOnDisk=${sourceOnDisk} targetOnDisk=${targetOnDisk}`,
+			);
+			return;
+		}
+		rlog().info(
+			"pull",
+			`rename-trace 2/3 PROCEEDING id=${id} from=${noteRef(priorPath)} to=${noteRef(newPath)}`,
+		);
 		if (eventTs !== undefined) {
 			const lastTs = this.lastRelocationTs.get(id);
 			// STRICT `<` (e2e test_34): the backend gives a whole folder-rename op ONE
@@ -6713,6 +6760,17 @@ export class SyncEngine {
 				// connect (the enrollment storm). Send stays intact — an idle CRDT
 				// note ships local edits without enrollment.
 				if (noteId && this.isLiveBound(normalized)) this.crdtEnrollment?.enroll(noteId);
+				// RENAME TRACE (3/3). This branch CREATES a file because nothing is
+				// at the target. For a rename that is the wrong verb -- the note
+				// exists, elsewhere -- and this is the line users see as "it deleted
+				// and remade my note". Record where the map thinks this id lives, so
+				// a create that should have been a move is identifiable.
+				const idHome = noteId ? (this.noteIdMap?.pathForId(noteId) ?? null) : null;
+				rlog().info(
+					"pull",
+					`rename-trace 3/3 CREATING ${noteRef(change.path)} id=${noteId ?? "none"} ` +
+						`mapSaysIdLivesAt=${noteRef(idHome)}`,
+				);
 				rlog().info("pull", `CRDT discovery: enrolling new note ${noteRef(change.path)}`);
 				// (return true below: this leg CREATES the file — the branch-wide
 				// `return false` violated the "true when a file was actually
