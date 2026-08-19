@@ -8521,7 +8521,26 @@ export class SyncEngine {
 		// is not "new" — the tombstone branch owns it (delete-wins; pushing would
 		// fight the <60s recreate refusal).
 		for (const path of localNotes) {
-			if (!serverNotes.has(path)) toPushNotes.push(path);
+			if (serverNotes.has(path)) continue;
+			// ...nor is a path the server DEMONSTRABLY holds, however stale the
+			// enumeration above is. `crdtHead` is written only by a server-delivered
+			// head or a confirmed create (see `markServerKnown`), so a non-null head
+			// means the row exists server-side and this snapshot is merely older than
+			// the pull that just landed the file.
+			//
+			// Without this, any re-plan DURING a sync — and a reconnect fires one —
+			// offers the freshly downloaded vault straight back as an upload. That is
+			// the "N files to upload" symptom (prod 2026-08-13; seen again 2026-08-19
+			// as the preview flipping mid-run to upload what it had just downloaded).
+			//
+			// #424 fixed the WRITE-ROUTING half of this (pushFile consults
+			// `hasServerNote`) and left the planner classifying on the snapshot alone:
+			// one question asked of two predicates, only one of them wired up. That
+			// split is why `test_90` stayed green — it asserts `pushed == 0`,
+			// downstream of the miscount — while the number the modal renders stayed
+			// wrong. Keep these two reading the same oracle.
+			if (this.getCrdtHead(path) != null) continue;
+			toPushNotes.push(path);
 		}
 
 		// Categorise server attachment rows

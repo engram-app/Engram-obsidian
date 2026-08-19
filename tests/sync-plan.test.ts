@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
-import { fnv1a, SyncEngine } from "../src/sync";
+import { CRDT_HEAD_CREATED, fnv1a, SyncEngine } from "../src/sync";
 import type { SyncProgress } from "../src/types";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -401,6 +401,44 @@ describe("SyncEngine.computeSyncPlan", () => {
 		expect(plan.toPush.notes).toContain("Notes/another.md");
 		expect(plan.toPull.notes).toEqual([]);
 		expect(plan.localNoteCount).toBe(2);
+	});
+
+	// A re-plan mid-run (a reconnect fires one) enumerates a server snapshot that
+	// can predate the pull that just landed these files. Classifying on the
+	// snapshot ALONE then offers the freshly-downloaded vault straight back as an
+	// upload — the "N files to upload" symptom, reported again 2026-08-19 as the
+	// preview flipping to uploading what it had just downloaded.
+	//
+	// `crdtHead` is the second half of the answer and the pull path already
+	// records it (`markServerKnown`), but `computeSyncPlan` never consulted it:
+	// one question, two predicates, and only one of them was wired up. The
+	// 2026-08-13 fix taught the WRITE-ROUTING leg (`hasServerNote`) and left the
+	// planner reading the snapshot alone, which is why `test_90` stayed green
+	// (it asserts `pushed == 0`, downstream of the miscount) while the number the
+	// modal renders stayed wrong.
+	test("a freshly PULLED note is not offered back as an upload when the server snapshot lags", async () => {
+		const engine = createEngine();
+		mockApp.vault.getFiles.mockReturnValue([makeTFile("Notes/pulled.md")]);
+		// Snapshot predates the pull: the op-log knows nothing about this path.
+		wireFeed(engine, [[]]);
+		// What the pull path leaves behind for a note the server demonstrably holds.
+		(engine as any).syncState.set("Notes/pulled.md", { crdtHead: CRDT_HEAD_CREATED });
+
+		const plan = await engine.computeSyncPlan("full");
+
+		expect(plan.toPush.notes).not.toContain("Notes/pulled.md");
+	});
+
+	// The fence above must not swallow genuinely local-only notes: absent a
+	// recorded head, an unknown path is still new and still uploads.
+	test("a local-only note with no recorded head still counts as toPush", async () => {
+		const engine = createEngine();
+		mockApp.vault.getFiles.mockReturnValue([makeTFile("Notes/brand-new.md")]);
+		wireFeed(engine, [[]]);
+
+		const plan = await engine.computeSyncPlan("full");
+
+		expect(plan.toPush.notes).toContain("Notes/brand-new.md");
 	});
 
 	test("server rows not present locally are counted as toPull", async () => {
