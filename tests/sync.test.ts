@@ -2735,17 +2735,22 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 			const applyLocalEdit = mock(async (_id: string, c: string) => c);
 			const applyRemoteUpdate = mock(async () => {});
 			const encodeGenesisUpdate = mock((c: string) => new TextEncoder().encode(c));
+			// Default: no local history (the true first-ever-create shape most of
+			// these tests exercise) so the fast path is reachable. H1's rename
+			// scenario overrides this to true.
+			const hasHistory = mock(async () => false);
 			engine.setCrdtManager({
 				applyLocalEdit,
 				applyRemoteUpdate,
 				encodeGenesisUpdate,
+				hasHistory,
 			} as any);
 			engine.setCrdtCreate(crdtCreateImpl);
 			// pushFile only mints/resolves a note_id (and so only reaches the
 			// genesis branch at all) when a NoteIdMap is wired — without one,
 			// noteId stays null and the whole crdt_create branch is skipped.
 			engine.setNoteIdMap(new NoteIdMap());
-			return { engine, applyLocalEdit, applyRemoteUpdate, encodeGenesisUpdate };
+			return { engine, applyLocalEdit, applyRemoteUpdate, encodeGenesisUpdate, hasHistory };
 		}
 
 		test("skips the crdt_msg body seed when the server seeded the note at genesis, applying the SAME update bytes locally instead", async () => {
@@ -2812,6 +2817,110 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 			expect(applyRemoteUpdate).not.toHaveBeenCalled();
 			expect(applyLocalEdit).toHaveBeenCalledTimes(1);
 			expect(applyLocalEdit.mock.calls[0]?.[0]).toBe("server-owns-this");
+		});
+
+		// H1 (HIGH, data corruption, adversarial review): renaming an UNOPENED
+		// note whose note_id this device has previously synced hits the genesis
+		// branch with a note_id whose LOCAL doc already has full history —
+		// handleRename drops the old path's syncState, so hasServerNote is false
+		// at the new path and pushFile routes through crdt_create despite this
+		// being nothing like a new note. The server's own seed_against correctly
+		// no-ops when the row's content already matches the frame (seeded:true,
+		// nothing written) — but `encodeGenesisUpdate` always mints a FRESH
+		// throwaway Y.Doc/clientID, so applying that frame raw onto this
+		// device's ALREADY-POPULATED doc is two concurrent inserts of the same
+		// text; Yjs (YATA) keeps both. Real ProviderRegistry (not a mock) so the
+		// merge semantics are the actual production ones, not an assertion on
+		// mock call counts.
+		test("H1: renaming an unopened note whose local doc already has history does not double the body", async () => {
+			const noteId = "id-rename-no-double";
+			const content = "line one\n";
+
+			const registry = new ProviderRegistry({
+				dbPrefix: `sync-test-rename-no-double-${Math.random().toString(36).slice(2)}`,
+				send: () => true,
+				onFlushToDisk: async () => true,
+			});
+			registry.setConnected(true);
+			// Pre-establish LOCAL history for this note_id — mirrors a device
+			// that previously synced/opened this note (IndexedDB-persisted, full
+			// lineage) even though the note is unopened/idle right now.
+			await registry.applyLocalEdit(noteId, content);
+			expect(await registry.hasHistory(noteId)).toBe(true);
+
+			const engine = createEngine();
+			engine.setCrdtManager(registry);
+			const noteIdMap = new NoteIdMap();
+			noteIdMap.set("Notes/Old.md", noteId);
+			engine.setNoteIdMap(noteIdMap);
+			(engine as unknown as { confirmNoteId(id: string): void }).confirmNoteId(noteId);
+			engine.setCrdtLiveCheck(() => true);
+			// The row already holds `content` (no adopt, same id) — modelled by a
+			// stub that replies seeded:true without touching the registry, since
+			// the real server never writes on this "already matches" path either
+			// (seed_against clause 1: read-back never reached).
+			engine.setCrdtCreate(async (docId) => ({ docId, seeded: true }));
+
+			(mockApp.vault.cachedRead as jest.Mock).mockResolvedValue(content);
+			const file = new TFile("Notes/New.md", Date.now());
+			await engine.handleRename(file, "Notes/Old.md");
+
+			// Not doubled: the local doc's projected text is still exactly
+			// `content`, not `content` merged with an independent second copy
+			// of itself.
+			expect(await registry.projectedText(noteId)).toBe(content);
+
+			registry.destroyAll();
+		});
+
+		// M1 (MEDIUM, adversarial review): pushFile freezes `content` before the
+		// crdt_create network round-trip. Anything that writes to disk during
+		// that gap — an importer's second pass, Obsidian Sync, git pull,
+		// Templater, an external editor — must survive, not get silently
+		// reverted by the flush the local apply triggers. The stub's
+		// `crdtCreate` implementation flips a shared `disk` var the instant it's
+		// called, simulating a write landing exactly during the round-trip;
+		// every read after that point (the pre-apply capture, and the
+		// drift-merge's own reread) sees the drifted content.
+		test("M1: disk drift during the crdt_create round-trip is preserved, not reverted", async () => {
+			const registry = new ProviderRegistry({
+				dbPrefix: `sync-test-genesis-drift-${Math.random().toString(36).slice(2)}`,
+				send: () => true,
+				onFlushToDisk: async () => true,
+			});
+			registry.setConnected(true);
+			const engine = createEngine();
+			engine.setCrdtManager(registry);
+			const noteIdMap = new NoteIdMap();
+			engine.setNoteIdMap(noteIdMap);
+
+			const frozenContent = "line one\n";
+			const driftedContent = "line one\nline two (drifted in during the round-trip)\n";
+			let disk = frozenContent;
+			(mockApp.vault.cachedRead as jest.Mock).mockImplementation(async () => disk);
+			engine.setCrdtCreate(async (docId) => {
+				// Simulates an external write landing DURING the network round-trip
+				// — after pushFile already froze `content`, before seeded:true
+				// comes back.
+				disk = driftedContent;
+				return { docId, seeded: true };
+			});
+
+			const file = new TFile("Notes/Drift.md", Date.now());
+			const ok = await (
+				engine as unknown as { pushFile(f: TFile): Promise<boolean> }
+			).pushFile(file);
+			expect(ok).toBe(true);
+
+			const noteId = noteIdMap.get("Notes/Drift.md");
+			expect(noteId).toBeTruthy();
+			if (!noteId) throw new Error("noteId not minted");
+
+			// The drift survives: the doc holds the drifted content, not the
+			// stale frozen snapshot that would have silently reverted it.
+			expect(await registry.projectedText(noteId)).toBe(driftedContent);
+
+			registry.destroyAll();
 		});
 
 		// HIGH finding regression test: drives pushFile through TWO real saves —

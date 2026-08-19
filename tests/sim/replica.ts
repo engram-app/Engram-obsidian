@@ -451,8 +451,12 @@ export class Replica {
 		const crdtOpQueue = new CrdtOpQueue({
 			send: makeCrdtOpSend({
 				channel: () => noteStream,
-				onCreated: (localId, serverId, path) =>
-					engine.applyCrdtCreateAck(localId, serverId, path),
+				// #1409 (review H4): mirrors main.ts's wiring — without this, a
+				// replayed create in the sim never exercises the genesis-frame
+				// fast path, only the inline pushFile one.
+				buildGenesisFrame: (path) => engine.buildGenesisFrame(path),
+				onCreated: (localId, serverId, path, seeded, genesis) =>
+					engine.applyCrdtCreateAck(localId, serverId, path, seeded, genesis),
 				// Limit/terminal surfacing is UI (toasts) in prod — never reached against
 				// the model server; keep the queue's error taxonomy wired without the UI.
 				onTerminal: () => {},

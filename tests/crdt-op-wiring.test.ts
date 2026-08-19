@@ -49,7 +49,56 @@ describe("makeCrdtOpSend dispatch + taxonomy", () => {
 			onTerminal: () => {},
 		});
 		await expect(send(op("create", "local-id", "N.md"))).resolves.toBe("ok");
-		expect(onCreated).toHaveBeenCalledWith("local-id", "server-id", "N.md");
+		// #1409: onCreated also carries seeded + the (here-unwired) genesis frame.
+		expect(onCreated).toHaveBeenCalledWith("local-id", "server-id", "N.md", false, undefined);
+	});
+
+	// H4 (adversarial review): a replayed create must still carry the genesis
+	// body, or every note that ever failed its FIRST create attempt (rate
+	// limit, offline, pre-join) opens a room on delivery — the exact case
+	// #1409 exists to avoid. Proves buildGenesisFrame's return value reaches
+	// BOTH crdtCreate's b64 argument and onCreated's genesis argument.
+	test("H4: buildGenesisFrame's frame is sent as b64 and forwarded to onCreated", async () => {
+		const crdtCreate = mock(async (_docId: string, _path: string, b64?: string) => ({
+			docId: "server-id",
+			seeded: b64 !== undefined,
+		}));
+		const onCreated = mock(() => {});
+		const genesis = {
+			b64: "BASE64FRAME",
+			update: new Uint8Array([1, 2, 3]),
+			content: "note body",
+		};
+		const send = makeCrdtOpSend({
+			channel: () => fakeChannel({ crdtCreate }),
+			buildGenesisFrame: async () => genesis,
+			onCreated,
+			onTerminal: () => {},
+		});
+
+		await expect(send(op("create", "local-id", "N.md"))).resolves.toBe("ok");
+
+		expect(crdtCreate).toHaveBeenCalledWith("local-id", "N.md", "BASE64FRAME");
+		expect(onCreated).toHaveBeenCalledWith("local-id", "server-id", "N.md", true, genesis);
+	});
+
+	test("H4: a note that doesn't qualify (buildGenesisFrame returns undefined) sends a bodyless create as before", async () => {
+		const crdtCreate = mock(async (docId: string, _path: string, b64?: string) => ({
+			docId,
+			seeded: b64 !== undefined,
+		}));
+		const onCreated = mock(() => {});
+		const send = makeCrdtOpSend({
+			channel: () => fakeChannel({ crdtCreate }),
+			buildGenesisFrame: async () => undefined,
+			onCreated,
+			onTerminal: () => {},
+		});
+
+		await expect(send(op("create", "local-id", "N.md"))).resolves.toBe("ok");
+
+		expect(crdtCreate).toHaveBeenCalledWith("local-id", "N.md");
+		expect(onCreated).toHaveBeenCalledWith("local-id", "local-id", "N.md", false, undefined);
 	});
 
 	test("delete resolve → ok", async () => {

@@ -18,7 +18,7 @@ import type { NoteIdMap } from "./crdt/note-id-map";
 import type { ProviderRegistry } from "./crdt/provider-registry";
 import { uuid7 } from "./crdt/uuid7";
 import { encodeUpdateFrame } from "./crdt/wire";
-import { crdtOpFailureReason } from "./crdt-op-dispatch";
+import { crdtOpFailureReason, type GenesisFrame } from "./crdt-op-dispatch";
 import { devLog } from "./dev-log";
 import { errMsg, isHttpStatus } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
@@ -1336,8 +1336,25 @@ export class SyncEngine {
 	 *  the inline live seed did NOT run (genesis branch skipped pre-join, or the
 	 *  live crdt_create rejected). It cannot re-enqueue a remote-applied update:
 	 *  the seed is the note's own local disk content, not anything received from
-	 *  the server, so REMOTE_ORIGIN suppression is untouched. */
-	async applyCrdtCreateAck(localId: string, serverId: string, path: string): Promise<void> {
+	 *  the server, so REMOTE_ORIGIN suppression is untouched.
+	 *
+	 *  `seeded` + `genesis` (review H4, #1409): the durable queue's `send` now
+	 *  builds a genesis body too (buildGenesisFrame, re-read from disk at SEND
+	 *  time — a replayed create's original snapshot could be stale by the time
+	 *  it actually fires, and isn't persisted into the queue at all). When the
+	 *  server confirms it landed, this applies the SAME bytes locally instead
+	 *  of falling through to the disk-seed routeModify call below — which
+	 *  would open the very room #1409 exists to avoid. Mirrors pushFile's own
+	 *  seeded-gated local apply exactly, guard-for-guard (H1: never on a doc
+	 *  that already has history; M1: capture+merge any disk drift between the
+	 *  frame's read and this ack). */
+	async applyCrdtCreateAck(
+		localId: string,
+		serverId: string,
+		path: string,
+		seeded = false,
+		genesis?: GenesisFrame,
+	): Promise<void> {
 		const normalized = normalizePath(path);
 		let effectiveId = localId;
 		// What the manager actually took, from whichever of the two seed routes
@@ -1395,17 +1412,63 @@ export class SyncEngine {
 				: null;
 		if (this.crdt && file instanceof TFile && this.isCrdtEligible(file)) {
 			try {
-				// The echo baseline comes off what the manager CONSUMED (adoptCreateAck
-				// stamps it) so a later revert to this content isn't hash-skipped.
-				consumed = await routeModify(
-					{
-						crdtEligible: true,
-						noteId: effectiveId,
-						readContent: () => this.app.vault.cachedRead(file),
-					},
-					this.crdt,
-					MAX_CRDT_NOTE_BYTES,
-				);
+				// Never trust `seeded` across an ADOPT remap (same defence in depth
+				// as pushFile's live genesis branch) — only `serverId === localId`
+				// reaches the fast path.
+				const effectiveIdHasHistory =
+					typeof this.crdt.hasHistory === "function"
+						? await this.crdt.hasHistory(effectiveId)
+						: true;
+				if (seeded && serverId === localId && genesis && !effectiveIdHasHistory) {
+					// M1: `genesis.content` was frozen when buildGenesisFrame read disk,
+					// before the crdt_create round-trip. Capture whatever's on disk NOW,
+					// before the apply's flush can silently revert a write that landed
+					// in that window (an importer's second pass, Obsidian Sync, git
+					// pull, Templater, an external editor).
+					let preApplyDisk: string | null = null;
+					try {
+						preApplyDisk = await this.app.vault.cachedRead(file);
+					} catch {
+						// unreadable — proceed without drift protection
+					}
+					// Apply the EXACT SAME update bytes the server accepted — origin =
+					// the provider, so it does NOT re-broadcast and does NOT open a
+					// room. A H1-class collision is impossible here: effectiveIdHasHistory
+					// was just proven false, so this device's doc is empty.
+					await this.crdt.applyRemoteUpdate(effectiveId, genesis.update);
+					consumed = genesis.content;
+					if (preApplyDisk !== null && preApplyDisk !== genesis.content) {
+						// Drift happened. The doc NOW has history (just established
+						// above), so this is a safe minimal diff onto that baseline —
+						// mirrors pushFile's own post-apply drift merge.
+						const merged = await this.crdt.applyLocalEdit(
+							effectiveId,
+							preApplyDisk,
+							undefined,
+							() => this.app.vault.cachedRead(file),
+						);
+						if (merged !== null) consumed = merged;
+					}
+				} else {
+					// The echo baseline comes off what the manager CONSUMED
+					// (adoptCreateAck stamps it) so a later revert to this content
+					// isn't hash-skipped. Also the correct path when
+					// effectiveIdHasHistory is true (H1): applyLocalEdit's own `lca`
+					// defaults to docHasHistory, so this is a safe minimal diff onto
+					// the EXISTING lineage, and its live reread naturally handles a
+					// note that gained content since the frame was built (review H4's
+					// third point: the server's seed_against clause 3 declines —
+					// seeded: false — for exactly that case, landing here).
+					consumed = await routeModify(
+						{
+							crdtEligible: true,
+							noteId: effectiveId,
+							readContent: () => this.app.vault.cachedRead(file),
+						},
+						this.crdt,
+						MAX_CRDT_NOTE_BYTES,
+					);
+				}
 			} catch (e) {
 				// The row exists (crdt_create already acked); a failed body seed
 				// self-heals on the note's next edit. Never fall back to REST.
@@ -1418,6 +1481,56 @@ export class SyncEngine {
 		// Task 1's canSendLive gate held effectiveId's live update(s) (including
 		// the disk-content seed above) until this exact moment.
 		await this.adoptCreateAck(effectiveId, path, consumed);
+	}
+
+	/** True when a note qualifies for the genesis-frame fast path (#1409):
+	 *  markdown (not canvas — `encodeGenesisUpdate`'s note branch is the
+	 *  markdown seeder), not live-bound (a live editor's frozen content can
+	 *  lag unflushed keystrokes), within the CRDT transport cap, and CRDT is
+	 *  wired at all. Shared by pushFile's inline genesis create and
+	 *  `buildGenesisFrame` (the durable queue's replayed create) so the gate
+	 *  cannot drift between the two call sites — a lesson from #1130
+	 *  (duplicated gates silently diverging). */
+	private qualifiesForGenesisFrame(path: string, content: string): boolean {
+		return (
+			!!this.crdt &&
+			!canvasPath(path) &&
+			!this.isLiveBound(normalizePath(path)) &&
+			!exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES)
+		);
+	}
+
+	/** Build the b64 genesis frame for a durable-queue REPLAYED create (review
+	 *  H4, #1409). Without this, `crdt-op-dispatch.ts` sent every retried
+	 *  create bodyless, so a note whose FIRST create attempt failed (rate-
+	 *  limited, offline, pre-join) always fell back to the room-opening
+	 *  disk-seed on delivery — inverting the whole point of #1409 on exactly
+	 *  the vault shape (many large notes bumping the server's ~24 KB text /
+	 *  32 KB base64 create-lane size gate) where the memory pressure this
+	 *  fix targets is worst.
+	 *
+	 *  Re-reads disk FRESH here rather than trusting whatever content the op
+	 *  was originally enqueued with: a retry can fire much later (rate-limit
+	 *  backoff, a long reconnect), the queue is IndexedDB-persisted so
+	 *  stashing the body there would bloat it with content that may be stale
+	 *  by the time it's ever sent, and `qualifiesForGenesisFrame`'s own gates
+	 *  (live-bound, size) can only be evaluated against CURRENT state anyway.
+	 *  Returns undefined (bodyless create, falls back to the existing
+	 *  disk-seed path in `applyCrdtCreateAck`) when the note doesn't qualify,
+	 *  is gone, or is unreadable. */
+	async buildGenesisFrame(path: string): Promise<GenesisFrame | undefined> {
+		if (!this.crdt) return undefined;
+		const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
+		if (!(file instanceof TFile)) return undefined;
+		let content: string;
+		try {
+			content = await this.app.vault.cachedRead(file);
+		} catch {
+			return undefined;
+		}
+		if (!this.qualifiesForGenesisFrame(path, content)) return undefined;
+		const update = this.crdt.encodeGenesisUpdate(content);
+		return { b64: encodeUpdateFrame(update), update, content };
 	}
 
 	/** Optional level-triggered check: is the `crdt:` topic JOINED right now?
@@ -3559,20 +3672,15 @@ export class SyncEngine {
 						// #1409: hand the body to crdt_create so the server can write it
 						// with a detached Y.Doc instead of opening a room per file — a
 						// full-vault import otherwise spins up one OTP room process per
-						// note. Markdown only (`encodeGenesisUpdate`'s note branch is the
-						// markdown seeder; canvas has a different Y.Doc shape — the
-						// registry's own `kind` param handles that split, but this genesis
-						// path only ever sends the note shape) and only when the note is
-						// NOT live-bound — a live-bound note's frozen `content` can lag
-						// unflushed keystrokes, which is exactly why the disk-seed branch
-						// below re-reads via cachedRead instead of trusting `content`.
-						// `genesisUpdate` is kept as the raw Yjs bytes (not just the wire
-						// frame) so a `seeded: true` reply can apply the SAME update to
-						// this device's own doc below — see that comment for why.
-						const genesisUpdate =
-							!canvasPath(pushedPath) && !this.isLiveBound(normalizePath(pushedPath))
-								? this.crdt.encodeGenesisUpdate(content)
-								: undefined;
+						// note. Gated by qualifiesForGenesisFrame (shared with the durable
+						// queue's replayed create, buildGenesisFrame, below) — markdown
+						// only, not live-bound, in-cap. `genesisUpdate` is kept as the raw
+						// Yjs bytes (not just the wire frame) so a `seeded: true` reply can
+						// apply the SAME update to this device's own doc below — see that
+						// comment for why.
+						const genesisUpdate = this.qualifiesForGenesisFrame(pushedPath, content)
+							? this.crdt.encodeGenesisUpdate(content)
+							: undefined;
 						const { docId: serverId, seeded } =
 							genesisUpdate === undefined
 								? await this.crdtCreate(noteId, pushedPath)
@@ -3660,29 +3768,109 @@ export class SyncEngine {
 								// that were ever wrong, honouring it here would stamp a
 								// baseline for a body that was never sent to the row we
 								// actually remapped to, which is silent data loss).
-								if (seeded && serverId === noteId && genesisUpdate) {
-									// The server confirmed our genesis frame landed. Apply the
-									// EXACT SAME update bytes to this device's own (still-empty)
-									// doc — origin = the provider, so it does NOT re-broadcast
-									// and does NOT open a room — so this device's lineage is
-									// the one the server has, instead of staying empty until
-									// the next edit seeds a SECOND, independent lineage (the
-									// #846 doubling: an empty doc has no history, so its next
-									// applyLocalEdit takes the seedOnce/lca=false path and
-									// inserts the whole body as new ops, which the server then
-									// merges with the genesis lineage it already holds).
-									// Verified no inbound path does this for us: catch-up
-									// replay (discoverAnnouncedNote) returns early once the
-									// file exists on disk, and the idle-note catch-up backfill
-									// (applyChange's diverged branch) writes DISK content only
-									// — it never touches the Y.Doc for a non-live-bound note.
+								//
+								// Review H1 (HIGH, data corruption): also never trust `seeded`
+								// when THIS DEVICE'S OWN doc for effectiveId already has
+								// history. That happens for a rename of a note this device
+								// has previously synced/opened — same note_id, so its
+								// IndexedDB-persisted doc keeps the full lineage even while
+								// idle now. handleRename drops the old path's syncState, so
+								// the new path's push takes this genesis branch despite the
+								// note being anything but new. The server's own seed_against
+								// correctly no-ops when its row content already matches the
+								// frame (seeded:true, nothing written) — but encodeGenesisUpdate
+								// always mints a FRESH throwaway Y.Doc/clientID, so a raw
+								// Y.applyUpdate of that frame onto THIS device's non-empty doc
+								// is two concurrent inserts of the same text at the same
+								// position; YATA keeps both, doubling the body once the
+								// resulting flush lands on disk. Same history predicate every
+								// sibling seed path already gates on (applyLocalEdit's `lca`,
+								// seedOnce's own `current.length > 0` bail,
+								// captureDiskDriftBeforeRemote's documented precondition) —
+								// reusing `crdt.hasHistory`, already called this same way a
+								// few lines up in the live-ADOPT branch. Unknown (older test
+								// fake without the method) fails CLOSED: assume history exists
+								// and take the safe diff path below rather than risk doubling.
+								const effectiveIdHasHistory =
+									typeof this.crdt.hasHistory === "function"
+										? await this.crdt.hasHistory(effectiveId)
+										: true;
+								if (
+									seeded &&
+									serverId === noteId &&
+									genesisUpdate &&
+									!effectiveIdHasHistory
+								) {
+									// The server confirmed our genesis frame landed against an
+									// empty row and this device's own doc is ALSO empty — the
+									// only case where a raw local apply is safe (no existing
+									// lineage to collide with).
+									//
+									// Review M1 (MEDIUM): `content` was frozen before the
+									// crdt_create network round-trip. Anything that wrote to
+									// disk during that gap — an importer's second pass, Obsidian
+									// Sync, git pull, Templater, an external editor — would
+									// otherwise be silently reverted by the flush the apply
+									// below triggers, and `consumed = content` would then stamp
+									// a stale baseline that makes the next push echo-skip it.
+									// Capture whatever is on disk RIGHT NOW, before that flush
+									// can destroy it. Best-effort: an unreadable file proceeds
+									// without drift protection rather than blocking the create,
+									// matching captureDiskDriftBeforeRemote's own contract.
+									let preApplyDisk: string | null = null;
+									try {
+										preApplyDisk = await this.app.vault.cachedRead(file);
+									} catch {
+										// unreadable — proceed without drift protection
+									}
+									// Apply the EXACT SAME update bytes to this device's own
+									// (still-empty) doc — origin = the provider, so it does NOT
+									// re-broadcast and does NOT open a room — so this device's
+									// lineage is the one the server has, instead of staying
+									// empty until the next edit seeds a SECOND, independent
+									// lineage (the #846 doubling: an empty doc has no history,
+									// so its next applyLocalEdit would take the
+									// seedOnce/lca=false path and insert the whole body as new
+									// ops, which the server then merges with the genesis
+									// lineage it already holds). Verified no inbound path does
+									// this for us: catch-up replay (discoverAnnouncedNote)
+									// returns early once the file exists on disk, and the
+									// idle-note catch-up backfill (applyChange's diverged
+									// branch) writes DISK content only — it never touches the
+									// Y.Doc for a non-live-bound note.
 									await this.crdt.applyRemoteUpdate(effectiveId, genesisUpdate);
 									consumed = content;
+									if (preApplyDisk !== null && preApplyDisk !== content) {
+										// Drift happened during the round-trip. The doc NOW has
+										// history (just established above), so — unlike
+										// captureDiskDriftBeforeRemote, which runs BEFORE its
+										// remote apply because a baseline already exists to diff
+										// against — this merge runs AFTER, because no baseline
+										// existed until this exact moment. Same underlying
+										// mechanism (applyLocalEdit onto a history-full doc is a
+										// safe minimal diff, not a second lineage), just
+										// reordered because the "remote update" here IS the
+										// baseline. A decline (e.g. size cap) leaves `consumed`
+										// at the still-valid genesis baseline rather than nulling
+										// out a create that DID succeed.
+										const merged = await this.crdt.applyLocalEdit(
+											effectiveId,
+											preApplyDisk,
+											undefined,
+											() => this.app.vault.cachedRead(file),
+										);
+										if (merged !== null) consumed = merged;
+									}
 								} else {
 									// Seed the body under the effective id via the Y.Doc update
 									// listener, which forwards it over the channel (crdt_msg). A
 									// LIVE reread, not the frozen `content`, backs the manager's
-									// stale-snapshot guard.
+									// stale-snapshot guard. Also the correct path when
+									// effectiveIdHasHistory is true (H1): applyLocalEdit's own
+									// `lca` defaults to docHasHistory, so this is a safe minimal
+									// diff onto the EXISTING lineage — not a second one — and,
+									// as a bonus, its live reread gives the rename case the same
+									// drift protection M1 gives the true-genesis case.
 									consumed = await routeModify(
 										{
 											crdtEligible: true,
