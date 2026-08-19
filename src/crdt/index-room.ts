@@ -82,21 +82,6 @@ export class IndexRoom {
 		this.provider.requeue(b64, "op");
 	}
 
-	/** Frames are waiting to go out. */
-	get hasBuffered(): boolean {
-		return this.provider.hasBuffered;
-	}
-
-	/** Re-offer buffered frames on a socket that is already up.
-	 *
-	 *  Without this, `requeue` was decorative: the buffer drains on the
-	 *  disconnected->connected EDGE, which for the index room only happens on a
-	 *  fresh crdt-topic join, so a rate-limited claim waited for exactly the
-	 *  rejoin it would have recovered on anyway. */
-	drain(): void {
-		this.provider.drain();
-	}
-
 	/** Feed an inbound `crdt_index_msg` frame.
 	 *
 	 *  Returns false when the frame could not be applied. A malformed or hostile

@@ -399,12 +399,6 @@ describe("privacy — no content retention for export", () => {
 		//
 		// Requiring the entire statement to equal the known-good form means any
 		// wrapper, extra argument or reordering stops matching and is caught.
-		// An optional `return` prefix, nothing more. Added for a live reason: `sendCrdt` must honour whether
-		// the frame actually reached the transport (the half-open window), and
-		// wiring.ts keys the provider buffer on that boolean. Still pins the exact
-		// wire shape, so a wrapper around the payload, an extra argument or a
-		// reordering is caught as before. The result is read, never the frame
-		// rewritten.
 		// Two accommodations, both for the FORMATTER, not for semantics:
 		// an optional `return` prefix (sendCrdt must honour whether the frame
 		// reached the transport, and wiring.ts keys the provider buffer on that

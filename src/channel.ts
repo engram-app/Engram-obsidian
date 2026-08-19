@@ -481,10 +481,20 @@ export class NoteChannel {
 		// matching, which is the point of that guard.
 		const delivered = this.send([this.crdtJoinRef, ref, t, "crdt_index_msg", { b64 }]);
 		if (!delivered) {
-			rlog().warn(
-				"channel",
-				"sendIndexCrdt refused (socket not OPEN) — held, recovers on rejoin",
-			);
+			// Throttled on the SAME key as the not-joined refusal above, for the
+			// same reason: a half-open window refuses every frame the provider
+			// re-offers, and each warn is shipped to the server by rlog().
+			const now = Date.now();
+			if (
+				now - (this.lastRefusedWarnAt.get(NoteChannel.INDEX_REFUSAL_KEY) ?? 0) >=
+				NoteChannel.REFUSED_WARN_THROTTLE_MS
+			) {
+				this.lastRefusedWarnAt.set(NoteChannel.INDEX_REFUSAL_KEY, now);
+				rlog().warn(
+					"channel",
+					"sendIndexCrdt refused (socket not OPEN) — held, recovers on rejoin",
+				);
+			}
 			return false;
 		}
 		this.inFlightIndexFrames.set(ref, b64);
@@ -1024,10 +1034,17 @@ export class NoteChannel {
 			if (this.inFlightIndexFrames.size > 0) {
 				rlog().warn(
 					"channel",
-					`phx_error on ${topic} — dropping ${this.inFlightIndexFrames.size} in-flight index frame(s), recovered by the rejoin handshake`,
+					`phx_error on ${topic} — dropping ${this.inFlightIndexFrames.size} in-flight index frame(s)`,
 				);
 				this.inFlightIndexFrames.clear();
 			}
+			// Resetting crdtJoined is the load-bearing half. This client has NO
+			// per-topic rejoin, so after a channel crash the socket stays OPEN
+			// against a DEAD join_ref: without this, sendCrdt/sendIndexCrdt keep
+			// returning true while the server drops every frame against it.
+			// Refusing makes the provider buffer them until the socket closes and
+			// rejoins, which is the only recovery this client actually has.
+			this.crdtJoined = false;
 		}
 
 		if (event === "phx_reply") {

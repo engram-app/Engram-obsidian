@@ -169,33 +169,29 @@ describe("requeue + drain (the re-offer path, #433)", () => {
 		};
 	}
 
-	test("a requeued frame is held, then re-sent by drain()", () => {
-		const { room, sent, refuse, allow } = refusable();
+	test("a requeued frame is re-offered on the next rejoin", () => {
+		const { room, sent } = refusable();
 		sent.length = 0;
 
-		// The channel accepted this one on the wire, so the provider does NOT
-		// buffer it; only the server's later error reply says it was refused.
-		// set() stages into the overlay; commit() is what publishes a frame.
+		// The channel accepted this on the wire, so the provider does NOT buffer
+		// it; only the server's later error reply says it was refused.
 		room.store.set("Notes/claim.md", { note_id: "note-1" });
 		room.store.commit();
 		const delivered = sent.pop();
 		expect(delivered).toBeDefined();
-		expect(room.hasBuffered).toBe(false);
 
 		room.requeue(delivered as string);
-		expect(room.hasBuffered).toBe(true);
+		sent.length = 0;
 
-		// Drain on a socket that is already up. Without this the frame waits for
-		// a rejoin, which is exactly the recovery requeue was meant to beat.
-		room.drain();
+		// A REJOIN is what flushes it. Deliberately not a poll: forcing a flush
+		// with setConnected(true) consumes the false->true edge, so the real
+		// rejoin then skips its syncStep1 and the room goes write-only.
+		room.setConnected(false);
+		room.connect();
 		expect(sent).toContain(delivered);
-		expect(room.hasBuffered).toBe(false);
-
-		refuse();
-		allow();
 	});
 
-	test("a drain that is still refused keeps the frame rather than dropping it", () => {
+	test("a rejoin that is still refused keeps the frame rather than dropping it", () => {
 		const { room, sent, refuse, allow } = refusable();
 		room.store.set("Notes/claim2.md", { note_id: "note-2" });
 		room.store.commit();
@@ -203,13 +199,14 @@ describe("requeue + drain (the re-offer path, #433)", () => {
 
 		room.requeue(delivered);
 		refuse();
-		room.drain();
-		// Still held: a refused re-offer must not silently consume the claim.
-		expect(room.hasBuffered).toBe(true);
+		room.setConnected(false);
+		room.connect();
 
 		allow();
-		room.drain();
-		expect(room.hasBuffered).toBe(false);
+		sent.length = 0;
+		room.setConnected(false);
+		room.connect();
+		// Still there to be re-offered: a refused rejoin must not consume the claim.
 		expect(sent).toContain(delivered);
 	});
 });

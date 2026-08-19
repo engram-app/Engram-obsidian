@@ -1307,6 +1307,20 @@ describe("NoteChannel index-room transport", () => {
 		expect(rejects).toBe(0);
 	});
 
+	// A channel crash leaves the socket OPEN against a DEAD join_ref, and this
+	// client has no per-topic rejoin. Both senders must start refusing, or they
+	// report frames delivered that the server drops on the floor.
+	test("phx_error on the crdt topic makes both senders refuse", async () => {
+		const { channel, ws } = await joinedCrdtChannel();
+		ws.sent.length = 0;
+
+		simulateMessage(ws, [null, null, "crdt:u1:v1", "phx_error", {}]);
+
+		expect(channel.sendIndexCrdt("aGVsbG8=")).toBe(false);
+		expect(channel.sendCrdt("doc-1", "aGVsbG8=")).toBe(false);
+		expect(ws.sent.length).toBe(0);
+	});
+
 	// A note frame must never be mistaken for an index frame: they share a topic
 	// and differ only by event name and the presence of doc_id.
 	test("an index frame does not reach the note-frame callback", async () => {
