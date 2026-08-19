@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.23.1](https://github.com/engram-app/Engram-obsidian/compare/1.23.0...1.23.1) (2026-08-18)
+
+
+### Bug Fixes
+
+* **sync:** a freshly minted note_id is never server-known ([#447](https://github.com/engram-app/Engram-obsidian/issues/447)) ([20d9ea1](https://github.com/engram-app/Engram-obsidian/commit/20d9ea1021c0fc2010f69ac31ba6cd737f5c1b83))
+
+## [1.23.0](https://github.com/engram-app/Engram-obsidian/compare/1.22.0...1.23.0) (2026-08-18)
+
+
+### Features
+
+* **crdt:** client half of the index CRDT — SyncStore over filemeta_v0 ([#431](https://github.com/engram-app/Engram-obsidian/issues/431)) ([d0a6c99](https://github.com/engram-app/Engram-obsidian/commit/d0a6c9944aea3f75d63fb18829583652796a4480))
+* **device-flow:** carry the code in the verification URL ([#428](https://github.com/engram-app/Engram-obsidian/issues/428)) ([2623680](https://github.com/engram-app/Engram-obsidian/commit/2623680b58d1df137b6503f3cc2527180703ae0c))
+
+
+### Bug Fixes
+
+* **privacy:** delete the unquoted-path regex, redact the known path exactly ([#438](https://github.com/engram-app/Engram-obsidian/issues/438)) ([99c1953](https://github.com/engram-app/Engram-obsidian/commit/99c1953df2fc6d147483692e414e8ed46d0d28a2))
+* **privacy:** scrub unquoted vault paths from error messages ([#437](https://github.com/engram-app/Engram-obsidian/issues/437)) ([fdc13d0](https://github.com/engram-app/Engram-obsidian/commit/fdc13d01e3b7cd6bc479d64f0acdc09d9a66a935))
+* **privacy:** stop logging vault paths ([#436](https://github.com/engram-app/Engram-obsidian/issues/436)) ([b21f9a3](https://github.com/engram-app/Engram-obsidian/commit/b21f9a36cda29bdf0c2d292315904687e5ca7c16))
+* **sync:** a remote rename must move the note, not destroy and rebuild it ([#441](https://github.com/engram-app/Engram-obsidian/issues/441)) ([3ff7038](https://github.com/engram-app/Engram-obsidian/commit/3ff7038587a66295669102400e9f0161133be5a5))
+* **sync:** first-sync progress stream and server oracle ([#424](https://github.com/engram-app/Engram-obsidian/issues/424)) ([7a90941](https://github.com/engram-app/Engram-obsidian/commit/7a90941694341931772edc8d0630c5d81554c0fd))
+
 ## [1.22.0](https://github.com/engram-app/Engram-obsidian/compare/1.21.0...1.22.0) (2026-08-13)
 
 

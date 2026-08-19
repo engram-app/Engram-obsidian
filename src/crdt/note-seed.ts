@@ -29,6 +29,30 @@ export function docHasHistory(doc: Y.Doc, kind: "note" | "canvas"): boolean {
 	return kind === "canvas" ? !canvasIsEmpty(doc) : textHasHistory(doc.getText(CONTENT_KEY));
 }
 
+/** Whole-document history check for a RAW `Y.applyUpdate` site (#1409's
+ *  genesis local-apply). Unlike `docHasHistory` (body-only — the seed-
+ *  strategy `lca` decision `applyLocalEdit`/`seedContentInto` make, which
+ *  stays safe regardless of frontmatter state because frontmatter has its
+ *  own separate upsert-by-key merge via `applyFrontmatterInto`), a raw
+ *  `Y.applyUpdate` has no such per-key merge — it is a concurrent INSERT
+ *  into WHATEVER shared types the frame touches, body Y.Text and the
+ *  frontmatter ORDER_KEY Y.Array alike. A frontmatter-only note (empty
+ *  body) with existing history was passing `docHasHistory` = false,
+ *  reaching the raw-apply fast path, and getting its ORDER_KEY entries
+ *  doubled by YATA the same way an empty-body check let H1's body double
+ *  (round 2 review finding). Do NOT use this for `applyLocalEdit`'s `lca`
+ *  decision — it stays body-only there; this predicate exists ONLY for a
+ *  raw-apply site's own history gate. */
+export function docHasAnyHistory(doc: Y.Doc, kind: "note" | "canvas"): boolean {
+	if (docHasHistory(doc, kind)) return true;
+	if (kind === "canvas") return false;
+	return (
+		doc.getArray<string>(ORDER_KEY).length > 0 ||
+		doc.getMap<string>(FRONTMATTER_KEY).size > 0 ||
+		doc.getMap<string>(RAW_FRONTMATTER_KEY).size > 0
+	);
+}
+
 /** Upsert parsed frontmatter into the doc's Y.Map/Y.Array (only changed keys
  *  written, absent keys deleted, order replaced). A locally-parsed good value
  *  supersedes any stale degraded raw span for the same key. */

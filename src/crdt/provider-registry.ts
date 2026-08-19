@@ -18,7 +18,7 @@ import { isDestroyedError, NoteDestroyedError } from "./destroyed-error";
 import { CONTENT_KEY, frontmatterOf, projectNote, rawFrontmatterOf } from "./frontmatter-codec";
 import { mergeDiskOntoDoc } from "./lca-merge";
 import { type FrameKind, NoteProvider } from "./note-provider";
-import { docHasHistory, seedContentInto } from "./note-seed";
+import { docHasAnyHistory, docHasHistory, seedContentInto } from "./note-seed";
 
 export type DocKind = "note" | "canvas";
 
@@ -265,6 +265,15 @@ export class ProviderRegistry {
 	async hasHistory(noteId: string): Promise<boolean> {
 		const e = await this.entry(noteId);
 		return docHasHistory(e.doc, e.kind);
+	}
+
+	/** Whole-document (body + frontmatter) history check — see
+	 *  `docHasAnyHistory`'s docstring. Only for a raw `Y.applyUpdate` site's own
+	 *  history gate (#1409's genesis local-apply); `hasHistory` above stays
+	 *  the one every other caller (the `lca` seed-strategy decision) uses. */
+	async hasAnyHistory(noteId: string): Promise<boolean> {
+		const e = await this.entry(noteId);
+		return docHasAnyHistory(e.doc, e.kind);
 	}
 
 	hasDoc(noteId: string): boolean {

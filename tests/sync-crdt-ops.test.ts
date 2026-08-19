@@ -166,6 +166,104 @@ describe("applyCrdtCreateAck seeds the body on peers (not a 0-byte row)", () => 
 		expect(reset).toHaveBeenCalledWith("id-1");
 		expect((e as any).hasServerNote("srv-2")).toBe(true);
 	});
+
+	// H4 (adversarial review, #1409): a REPLAYED create (buildGenesisFrame +
+	// crdt_create over the durable queue) must apply its genesis body locally
+	// the same seeded-gated way pushFile's inline create does — otherwise
+	// EVERY queued create seeds over crdt_msg (opening a room), which is the
+	// exact case #1409 was written to eliminate: any create that fails its
+	// first attempt (rate limit, offline, pre-join) always goes through here.
+	// Real ProviderRegistry (not the fake `crdt` stub above), asserting on
+	// the transport's own `send` callback: `applyRemoteUpdate`'s provider
+	// origin does NOT trigger a wire send (no room), whereas the OLD
+	// unconditional routeModify -> applyLocalEdit path (default/local
+	// origin) DOES — content equality alone can't tell the two mechanisms
+	// apart when there's nothing to double against yet, so this has to
+	// observe the actual wire behaviour, not just the resulting text.
+	test("H4: seeded:true applies the genesis update locally instead of reseeding over crdt_msg (no room)", async () => {
+		const content = "queued genesis body\n";
+		const wireSends: string[] = [];
+		const registry = new ProviderRegistry({
+			dbPrefix: `sync-crdt-ops-h4-${Math.random().toString(36).slice(2)}`,
+			send: (noteId) => {
+				wireSends.push(noteId);
+				return true;
+			},
+			onFlushToDisk: async () => true,
+		});
+		registry.setConnected(true);
+		const testFile = new TFile("id-1.md");
+		const localApp = {
+			...mockApp,
+			vault: {
+				...mockApp.vault,
+				getAbstractFileByPath: mock().mockReturnValue(testFile),
+				cachedRead: mock().mockResolvedValue(content),
+			},
+		};
+		const e = new SyncEngine(
+			localApp as any,
+			mockApi,
+			{ ...DEFAULT_SETTINGS, debounceMs: 1 },
+			mock().mockResolvedValue(undefined),
+		);
+		e.setCrdtManager(registry);
+		e.setReady();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("id-1.md", "id-1");
+		e.setNoteIdMap(noteIdMap);
+
+		// What buildGenesisFrame would have produced, sent, and gotten confirmed
+		// (seeded:true — the server's row already/now holds `content`).
+		const update = registry.encodeGenesisUpdate(content);
+		await (e as any).applyCrdtCreateAck("id-1", "id-1", "id-1.md", true, { update, content });
+
+		expect(await registry.projectedText("id-1")).toBe(content);
+		expect((e as any).hasServerNote("id-1")).toBe(true);
+		// The fix: no crdt_msg went out — the body reached the server over
+		// crdt_create's b64, not a room-opening wire send.
+		expect(wireSends).toEqual([]);
+	});
+
+	test("H4: seeded:false (server declined — e.g. the note gained content) falls back to the disk-seed path", async () => {
+		const { e, applyLocalEdit } = seedHarness({
+			localId: "id-1",
+			content: "disk content after the frame was built",
+		});
+		await (e as any).applyCrdtCreateAck("id-1", "id-1", "id-1.md", false, {
+			update: new Uint8Array([9, 9, 9]),
+			content: "stale frame content",
+		});
+
+		// Falls through to the existing disk-seed path (routeModify), reading
+		// current disk — never trusts the stale genesis frame content.
+		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
+		expect(applyLocalEdit.mock.calls[0]?.[1]).toBe("disk content after the frame was built");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// buildGenesisFrame must fail closed to `undefined` on ANY throw, not just a
+// disk-read error. makeCrdtOpSend's own try/catch treats a thrown
+// buildGenesisFrame as a failed crdt_create (retried, then dropped at max
+// attempts) — that defeats the documented "falls back to a bodyless create"
+// degradation, which only holds when buildGenesisFrame *returns* undefined.
+// ---------------------------------------------------------------------------
+describe("buildGenesisFrame fails closed (#1409 round 3, LOW)", () => {
+	test("an unexpected throw from encodeGenesisUpdate resolves to undefined, never rejects", async () => {
+		const testFile = new TFile("id-1.md");
+		const e = engine({
+			crdt: {
+				encodeGenesisUpdate: () => {
+					throw new Error("boom");
+				},
+			},
+		});
+		(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockReturnValue(testFile);
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue("body");
+
+		await expect(e.buildGenesisFrame("id-1.md")).resolves.toBeUndefined();
+	});
 });
 
 // The in-memory `scheduleCrdtFlush`/`flushCrdtState`/`crdtFlushTimers` debounce
