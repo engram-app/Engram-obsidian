@@ -432,8 +432,19 @@ export class NoteChannel {
 		// messages by (topic, join_ref); sending null here means the server can't
 		// match the joined channel and silently drops the frame (every CRDT update
 		// vanished before reaching the backend).
-		this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_msg", { doc_id: docId, b64 }]);
-		return true;
+		// Same honesty contract as sendIndexCrdt below, and for the same reason:
+		// `send` no-ops unless readyState is OPEN while `crdtJoined` is only reset
+		// in `onclose`, so there is a real half-open window. wiring.ts keys BOTH
+		// the provider's offline buffer and `unsentDocIds` on this boolean, so
+		// returning true here dropped a note-content op with nothing left to
+		// re-offer it. Fixing only the index path left the larger caller broken.
+		return this.send([
+			this.crdtJoinRef,
+			String(++this.ref),
+			t,
+			"crdt_msg",
+			{ doc_id: docId, b64 },
+		]);
 	}
 
 	/** Send a frame to the per-VAULT index room (`filemeta_v0`).
@@ -1002,6 +1013,22 @@ export class NoteChannel {
 			string,
 			Record<string, unknown>,
 		];
+
+		// A channel-level error tears the topic down without replying to the
+		// frames already in flight on it. Without this their entries sit in
+		// `inFlightIndexFrames` holding full frame BODIES until the socket
+		// closes — a server-side crash-loop then grows the map for the life of
+		// the connection. The frames themselves are not lost: the rejoin
+		// handshake re-offers whatever the server lacks, same as `onclose`.
+		if (event === "phx_error" && topic === this.crdtTopic) {
+			if (this.inFlightIndexFrames.size > 0) {
+				rlog().warn(
+					"channel",
+					`phx_error on ${topic} — dropping ${this.inFlightIndexFrames.size} in-flight index frame(s), recovered by the rejoin handshake`,
+				);
+				this.inFlightIndexFrames.clear();
+			}
+		}
 
 		if (event === "phx_reply") {
 			// A sendRequest awaiting this exact ref takes priority over the

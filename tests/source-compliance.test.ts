@@ -399,8 +399,21 @@ describe("privacy — no content retention for export", () => {
 		//
 		// Requiring the entire statement to equal the known-good form means any
 		// wrapper, extra argument or reordering stops matching and is caught.
+		// An optional `return` prefix, nothing more. Added for a live reason: `sendCrdt` must honour whether
+		// the frame actually reached the transport (the half-open window), and
+		// wiring.ts keys the provider buffer on that boolean. Still pins the exact
+		// wire shape, so a wrapper around the payload, an extra argument or a
+		// reordering is caught as before. The result is read, never the frame
+		// rewritten.
+		// Two accommodations, both for the FORMATTER, not for semantics:
+		// an optional `return` prefix (sendCrdt must honour whether the frame
+		// reached the transport, and wiring.ts keys the provider buffer on that
+		// boolean), and an optional trailing comma, because biome breaks a
+		// wire send that crosses the line width into a multi-line array and
+		// appends one. Neither loosens what is pinned: the payload object shape,
+		// the argument list and their order still have to match exactly.
 		const wireStatement =
-			/^this\.send\(\[this\.crdtJoinRef,[^{}]*\{\s*doc_id:\s*docId,\s*b64\s*\}\]\);$/;
+			/^(?:return)?this\.send\(\[this\.crdtJoinRef,[^{}]*\{\s*doc_id:\s*docId,\s*b64\s*\},?\]\);$/;
 
 		// The per-vault index room's wire send (#362). A SECOND exact form rather
 		// than a loosened first one: it differs only by having no doc_id — there
@@ -416,7 +429,7 @@ describe("privacy — no content retention for export", () => {
 		// rewritten. Deliberately not applied to `wireStatement`: no note-frame
 		// caller needs the boolean, so widening it too would exempt more for free.
 		const indexWireStatement =
-			/^(?:const[A-Za-z_$][\w$]*=)?this\.send\(\[this\.crdtJoinRef,[^{}]*\{\s*b64\s*\}\]\);$/;
+			/^(?:const[A-Za-z_$][\w$]*=)?this\.send\(\[this\.crdtJoinRef,[^{}]*\{\s*b64\s*\},?\]\);$/;
 
 		const findings: Finding[] = [];
 		for (const f of sources) {

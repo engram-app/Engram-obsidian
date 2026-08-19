@@ -614,7 +614,20 @@ export default class EngramSyncPlugin extends Plugin {
 		});
 		// Drive retries: a due op past its backoff is re-sent on each tick (no-op
 		// until joined). registerInterval auto-clears on unload.
-		this.registerInterval(window.setInterval(() => void this.crdtOpQueue?.tick(), 5000));
+		this.registerInterval(
+			window.setInterval(() => {
+				void this.crdtOpQueue?.tick();
+				// Drain re-offered index frames on the SAME tick rather than adding a
+				// timer. Without this `requeue` was decorative: the provider buffer
+				// empties on the disconnected->connected EDGE, which for the index
+				// room only happens on a fresh crdt-topic join, so a rate-limited
+				// claim waited for exactly the rejoin it would have recovered on
+				// anyway. Gated on `hasBuffered` so a drained provider is not poked
+				// every 5s, and `drain()` cannot re-fire syncStep1 (no edge), which
+				// is what keeps this clear of the 2026-07 re-handshake storm.
+				if (this.indexRoom?.hasBuffered) this.indexRoom.drain();
+			}, 5000),
+		);
 		// Wire the SyncEngine's durable create/delete enqueue hook to the queue.
 		// The pending-op probe feeds the evidence rule's supersede exception: a
 		// create-then-delete must coalesce in-queue, not resurrect (#416 review).
@@ -2400,10 +2413,25 @@ export default class EngramSyncPlugin extends Plugin {
 					if (indexRoom) {
 						channel.onIndexMessage = (b64) => indexRoom.receive(b64);
 						// A refused index frame is a lost path->id claim until something
-						// re-offers it. Put it back in the provider's offline buffer so the
-						// next connect flush carries it, rather than waiting for a rejoin
-						// handshake to re-derive it (#433).
-						channel.onIndexFrameRejected = (b64) => indexRoom.requeue(b64);
+						// re-offers it (#433). Re-offer ONLY what can succeed on a retry.
+						//
+						// `rate_limited` is transient: the same frame will be accepted once
+						// the budget refills. `index_frame_rejected` is the server's
+						// terminal bucket (bad base64, oversized frame, implausible state
+						// vector) — re-offering it means re-sending a poison frame on every
+						// drain forever, and a buffer that can never empty. Drop it loudly
+						// instead: the claim is lost either way, and a log line an operator
+						// can find beats an invisible retry loop.
+						channel.onIndexFrameRejected = (b64, reason) => {
+							if (reason === "rate_limited") {
+								indexRoom.requeue(b64);
+								return;
+							}
+							rlog().error(
+								"crdt",
+								`index frame refused terminally (${reason}) — claim dropped, not retried`,
+							);
+						};
 					}
 					// Deferred activation: only engage CRDT routing in the SyncEngine
 					// after the server confirms the crdt: topic join. Against a non-CRDT

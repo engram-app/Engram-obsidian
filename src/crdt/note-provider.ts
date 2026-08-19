@@ -169,6 +169,25 @@ export class NoteProvider {
 		this.buffer.push({ frame, kind });
 	}
 
+	/** True when frames are waiting in the offline buffer.
+	 *
+	 *  Narrower than `hasUndeliveredWork()`, which also reports "not synced".
+	 *  A caller that wants to know whether a DRAIN would do anything needs this
+	 *  one, or it re-drains a fully-flushed provider on every poll. */
+	get hasBuffered(): boolean {
+		return this.buffer.length > 0;
+	}
+
+	/** Flush the offline buffer WITHOUT pretending to reconnect.
+	 *
+	 *  `setConnected(true)` fires syncStep1 only on the disconnected->connected
+	 *  EDGE, so calling it while already connected drains the buffer and nothing
+	 *  else. That distinction is the whole reason this is safe to poll: a
+	 *  re-advertise on every tick is the 2026-07 re-handshake storm. */
+	drain(): void {
+		this.setConnected(true);
+	}
+
 	/** Relay's onopen: (re)connect the transport. */
 	connect(): void {
 		this.setConnected(true);
