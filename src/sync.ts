@@ -1414,10 +1414,16 @@ export class SyncEngine {
 			try {
 				// Never trust `seeded` across an ADOPT remap (same defence in depth
 				// as pushFile's live genesis branch) — only `serverId === localId`
-				// reaches the fast path.
+				// reaches the fast path. `hasAnyHistory` (not `hasHistory`, round 2
+				// review finding): `hasHistory` is body-only, so a frontmatter-only
+				// note with an empty body but existing history reported false,
+				// passed the old guard, and got its frontmatter ORDER_KEY doubled
+				// the same way H1's body doubled — see note-seed.ts's
+				// `docHasAnyHistory` docstring for why a raw Y.applyUpdate needs the
+				// whole-document check and `applyLocalEdit`'s `lca` doesn't.
 				const effectiveIdHasHistory =
-					typeof this.crdt.hasHistory === "function"
-						? await this.crdt.hasHistory(effectiveId)
+					typeof this.crdt.hasAnyHistory === "function"
+						? await this.crdt.hasAnyHistory(effectiveId)
 						: true;
 				if (seeded && serverId === localId && genesis && !effectiveIdHasHistory) {
 					// M1: `genesis.content` was frozen when buildGenesisFrame read disk,
@@ -1434,20 +1440,32 @@ export class SyncEngine {
 					// Apply the EXACT SAME update bytes the server accepted — origin =
 					// the provider, so it does NOT re-broadcast and does NOT open a
 					// room. A H1-class collision is impossible here: effectiveIdHasHistory
-					// was just proven false, so this device's doc is empty.
+					// was just proven false, so this device's doc is empty. This apply
+					// AWAITS its own disk flush (wiring.ts's onFlushToDisk ->
+					// flushFromCrdt), which writes `genesis.content` — so `preApplyDisk`
+					// (captured a line above, BEFORE this call) is the only surviving
+					// record of anything that drifted in during the round-trip; disk
+					// itself is reverted to `genesis.content` the instant this resolves.
 					await this.crdt.applyRemoteUpdate(effectiveId, genesis.update);
 					consumed = genesis.content;
 					if (preApplyDisk !== null && preApplyDisk !== genesis.content) {
 						// Drift happened. The doc NOW has history (just established
 						// above), so this is a safe minimal diff onto that baseline —
-						// mirrors pushFile's own post-apply drift merge.
-						const merged = await this.crdt.applyLocalEdit(
-							effectiveId,
-							preApplyDisk,
-							undefined,
-							() => this.app.vault.cachedRead(file),
-						);
-						if (merged !== null) consumed = merged;
+						// mirrors pushFile's own post-apply drift merge. NO `reread`
+						// callback: `preApplyDisk` (captured before the revert above) IS
+						// the merge input — a reread here would re-read the JUST-
+						// REVERTED disk and silently discard the drift (round 2 review
+						// finding: the bug this fix exists to prevent). `applyLocalEdit`
+						// on a local/default origin does NOT auto-flush (only
+						// provider/REMOTE origins do — ensureEntrySync's update
+						// listener), so the merged text is explicitly written to disk
+						// via flushFromCrdt below; without it the doc would hold the
+						// correct merge while disk stayed reverted.
+						const merged = await this.crdt.applyLocalEdit(effectiveId, preApplyDisk);
+						if (merged !== null) {
+							consumed = merged;
+							await this.flushFromCrdt(normalized, merged);
+						}
 					}
 				} else {
 					// The echo baseline comes off what the manager CONSUMED
@@ -1517,20 +1535,25 @@ export class SyncEngine {
 	 *  (live-bound, size) can only be evaluated against CURRENT state anyway.
 	 *  Returns undefined (bodyless create, falls back to the existing
 	 *  disk-seed path in `applyCrdtCreateAck`) when the note doesn't qualify,
-	 *  is gone, or is unreadable. */
+	 *  is gone, or is unreadable — and also on ANY unexpected throw (round 2
+	 *  review finding): the caller (`crdt-op-dispatch.ts`'s `makeCrdtOpSend`)
+	 *  has no try/catch around this call, so letting anything escape would
+	 *  abort the whole create dispatch and get treated as a FAILED
+	 *  `crdt_create` (retried, eventually dropped as max-attempts) — when the
+	 *  create itself would very likely still succeed fine without a body.
+	 *  Fails CLOSED to the documented degradation, not open to a dropped op. */
 	async buildGenesisFrame(path: string): Promise<GenesisFrame | undefined> {
-		if (!this.crdt) return undefined;
-		const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
-		if (!(file instanceof TFile)) return undefined;
-		let content: string;
 		try {
-			content = await this.app.vault.cachedRead(file);
+			if (!this.crdt) return undefined;
+			const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
+			if (!(file instanceof TFile)) return undefined;
+			const content = await this.app.vault.cachedRead(file);
+			if (!this.qualifiesForGenesisFrame(path, content)) return undefined;
+			const update = this.crdt.encodeGenesisUpdate(content);
+			return { b64: encodeUpdateFrame(update), update, content };
 		} catch {
 			return undefined;
 		}
-		if (!this.qualifiesForGenesisFrame(path, content)) return undefined;
-		const update = this.crdt.encodeGenesisUpdate(content);
-		return { b64: encodeUpdateFrame(update), update, content };
 	}
 
 	/** Optional level-triggered check: is the `crdt:` topic JOINED right now?
@@ -3783,17 +3806,22 @@ export class SyncEngine {
 								// Y.applyUpdate of that frame onto THIS device's non-empty doc
 								// is two concurrent inserts of the same text at the same
 								// position; YATA keeps both, doubling the body once the
-								// resulting flush lands on disk. Same history predicate every
-								// sibling seed path already gates on (applyLocalEdit's `lca`,
-								// seedOnce's own `current.length > 0` bail,
-								// captureDiskDriftBeforeRemote's documented precondition) —
-								// reusing `crdt.hasHistory`, already called this same way a
-								// few lines up in the live-ADOPT branch. Unknown (older test
-								// fake without the method) fails CLOSED: assume history exists
-								// and take the safe diff path below rather than risk doubling.
+								// resulting flush lands on disk. `hasAnyHistory`, NOT
+								// `hasHistory` (round 2 review finding): `hasHistory` is
+								// body-only (note-seed.ts's `textHasHistory`), so a
+								// frontmatter-only note with an empty body but existing
+								// history reported false, passed this guard, and got its
+								// frontmatter ORDER_KEY Y.Array doubled by YATA the same way
+								// an empty-body guard let the body double for H1 — a raw
+								// Y.applyUpdate is a concurrent insert into WHATEVER shared
+								// types the frame touches, not just the body `applyLocalEdit`'s
+								// `lca` cares about. See `docHasAnyHistory`'s docstring.
+								// Unknown (older test fake without the method) fails CLOSED:
+								// assume history exists and take the safe diff path below
+								// rather than risk doubling.
 								const effectiveIdHasHistory =
-									typeof this.crdt.hasHistory === "function"
-										? await this.crdt.hasHistory(effectiveId)
+									typeof this.crdt.hasAnyHistory === "function"
+										? await this.crdt.hasAnyHistory(effectiveId)
 										: true;
 								if (
 									seeded &&
@@ -3838,6 +3866,11 @@ export class SyncEngine {
 									// idle-note catch-up backfill (applyChange's diverged
 									// branch) writes DISK content only — it never touches the
 									// Y.Doc for a non-live-bound note.
+									// This AWAITS its own disk flush (wiring.ts's onFlushToDisk
+									// -> flushFromCrdt), writing `content` — so `preApplyDisk`
+									// (captured above, BEFORE this call) is the only surviving
+									// record of anything that drifted in during the round-trip;
+									// disk is reverted to `content` the instant this resolves.
 									await this.crdt.applyRemoteUpdate(effectiveId, genesisUpdate);
 									consumed = content;
 									if (preApplyDisk !== null && preApplyDisk !== content) {
@@ -3850,16 +3883,29 @@ export class SyncEngine {
 										// mechanism (applyLocalEdit onto a history-full doc is a
 										// safe minimal diff, not a second lineage), just
 										// reordered because the "remote update" here IS the
-										// baseline. A decline (e.g. size cap) leaves `consumed`
-										// at the still-valid genesis baseline rather than nulling
-										// out a create that DID succeed.
+										// baseline. NO `reread` callback: `preApplyDisk` (captured
+										// BEFORE the revert above) IS the merge input — a reread
+										// here would re-read the JUST-REVERTED disk and silently
+										// discard the drift (round 2 review finding: the bug this
+										// fix exists to prevent). `applyLocalEdit` on a
+										// local/default origin does NOT auto-flush (only
+										// provider/REMOTE origins do), so the merged text is
+										// explicitly written via flushFromCrdt below — without it
+										// the doc holds the correct merge while disk stays
+										// reverted. A decline (e.g. size cap, merged === null)
+										// leaves `consumed` at the still-valid genesis baseline
+										// rather than nulling out a create that DID succeed.
 										const merged = await this.crdt.applyLocalEdit(
 											effectiveId,
 											preApplyDisk,
-											undefined,
-											() => this.app.vault.cachedRead(file),
 										);
-										if (merged !== null) consumed = merged;
+										if (merged !== null) {
+											consumed = merged;
+											await this.flushFromCrdt(
+												normalizePath(pushedPath),
+												merged,
+											);
+										}
 									}
 								} else {
 									// Seed the body under the effective id via the Y.Doc update

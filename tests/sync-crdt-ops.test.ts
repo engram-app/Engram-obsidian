@@ -242,6 +242,30 @@ describe("applyCrdtCreateAck seeds the body on peers (not a 0-byte row)", () => 
 	});
 });
 
+// ---------------------------------------------------------------------------
+// buildGenesisFrame must fail closed to `undefined` on ANY throw, not just a
+// disk-read error. makeCrdtOpSend's own try/catch treats a thrown
+// buildGenesisFrame as a failed crdt_create (retried, then dropped at max
+// attempts) — that defeats the documented "falls back to a bodyless create"
+// degradation, which only holds when buildGenesisFrame *returns* undefined.
+// ---------------------------------------------------------------------------
+describe("buildGenesisFrame fails closed (#1409 round 3, LOW)", () => {
+	test("an unexpected throw from encodeGenesisUpdate resolves to undefined, never rejects", async () => {
+		const testFile = new TFile("id-1.md");
+		const e = engine({
+			crdt: {
+				encodeGenesisUpdate: () => {
+					throw new Error("boom");
+				},
+			},
+		});
+		(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockReturnValue(testFile);
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue("body");
+
+		await expect(e.buildGenesisFrame("id-1.md")).resolves.toBeUndefined();
+	});
+});
+
 // The in-memory `scheduleCrdtFlush`/`flushCrdtState`/`crdtFlushTimers` debounce
 // was retired (Task 3, Phase 2b remediation) in favor of routing every
 // channel-down CRDT edit through the DURABLE offline queue: pushFile seeds the

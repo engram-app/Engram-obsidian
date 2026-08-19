@@ -2737,20 +2737,28 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 			const encodeGenesisUpdate = mock((c: string) => new TextEncoder().encode(c));
 			// Default: no local history (the true first-ever-create shape most of
 			// these tests exercise) so the fast path is reachable. H1's rename
-			// scenario overrides this to true.
-			const hasHistory = mock(async () => false);
+			// scenario overrides this to true. hasAnyHistory (round 2 review
+			// finding), NOT hasHistory — the fast-path guard checks the
+			// whole-document (body + frontmatter) predicate.
+			const hasAnyHistory = mock(async () => false);
 			engine.setCrdtManager({
 				applyLocalEdit,
 				applyRemoteUpdate,
 				encodeGenesisUpdate,
-				hasHistory,
+				hasAnyHistory,
 			} as any);
 			engine.setCrdtCreate(crdtCreateImpl);
 			// pushFile only mints/resolves a note_id (and so only reaches the
 			// genesis branch at all) when a NoteIdMap is wired — without one,
 			// noteId stays null and the whole crdt_create branch is skipped.
 			engine.setNoteIdMap(new NoteIdMap());
-			return { engine, applyLocalEdit, applyRemoteUpdate, encodeGenesisUpdate, hasHistory };
+			return {
+				engine,
+				applyLocalEdit,
+				applyRemoteUpdate,
+				encodeGenesisUpdate,
+				hasAnyHistory,
+			};
 		}
 
 		test("skips the crdt_msg body seed when the server seeded the note at genesis, applying the SAME update bytes locally instead", async () => {
@@ -2873,20 +2881,83 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 			registry.destroyAll();
 		});
 
+		// H1-frontmatter (round 2 adversarial review, HIGH): the same corruption
+		// through a different door. `docHasHistory` (what the H1 guard used to
+		// call, via `hasHistory`) is BODY-ONLY (note-seed.ts's `textHasHistory`
+		// is `text.length > 0`). A note with frontmatter but an EMPTY body has
+		// history — this device has synced it before — but `hasHistory` reports
+		// false, passes the guard, and the raw genesis apply concurrently
+		// inserts into the frontmatter ORDER_KEY Y.Array. YATA keeps both
+		// entries and emitFrontmatter iterates `order`, emitting the key twice.
+		// Fixed by `hasAnyHistory` (whole-document: body OR frontmatter).
+		test("H1-frontmatter: renaming an unopened frontmatter-only note does not double the frontmatter", async () => {
+			const noteId = "id-rename-fm-no-double";
+			const content = "---\ntags: alpha\n---\n";
+
+			const registry = new ProviderRegistry({
+				dbPrefix: `sync-test-rename-fm-no-double-${Math.random().toString(36).slice(2)}`,
+				send: () => true,
+				onFlushToDisk: async () => true,
+			});
+			registry.setConnected(true);
+			// Pre-establish LOCAL history via frontmatter ALONE (empty body) — the
+			// exact shape the body-only predicate misses.
+			await registry.applyLocalEdit(noteId, content);
+			expect(await registry.hasHistory(noteId)).toBe(false); // body-only: misses it
+			expect(await registry.hasAnyHistory(noteId)).toBe(true); // whole-doc: catches it
+
+			const engine = createEngine();
+			engine.setCrdtManager(registry);
+			const noteIdMap = new NoteIdMap();
+			noteIdMap.set("Notes/Old.md", noteId);
+			engine.setNoteIdMap(noteIdMap);
+			(engine as unknown as { confirmNoteId(id: string): void }).confirmNoteId(noteId);
+			engine.setCrdtLiveCheck(() => true);
+			engine.setCrdtCreate(async (docId) => ({ docId, seeded: true }));
+
+			(mockApp.vault.cachedRead as jest.Mock).mockResolvedValue(content);
+			const file = new TFile("Notes/New.md", Date.now());
+			await engine.handleRename(file, "Notes/Old.md");
+
+			// Not doubled: exactly one "tags: alpha" line, not two.
+			expect(await registry.projectedText(noteId)).toBe(content);
+
+			registry.destroyAll();
+		});
+
 		// M1 (MEDIUM, adversarial review): pushFile freezes `content` before the
 		// crdt_create network round-trip. Anything that writes to disk during
 		// that gap — an importer's second pass, Obsidian Sync, git pull,
 		// Templater, an external editor — must survive, not get silently
 		// reverted by the flush the local apply triggers. The stub's
 		// `crdtCreate` implementation flips a shared `disk` var the instant it's
-		// called, simulating a write landing exactly during the round-trip;
-		// every read after that point (the pre-apply capture, and the
-		// drift-merge's own reread) sees the drifted content.
+		// called, simulating a write landing exactly during the round-trip.
+		//
+		// Round 2 review finding: the FIRST version of this test used a
+		// no-op `onFlushToDisk: async () => true` and passed for the wrong
+		// reason — `applyRemoteUpdate`'s own auto-flush (wiring.ts's real
+		// onFlushToDisk -> flushFromCrdt -> vault.modify) never actually
+		// reverted the fake disk, so the reread bug this test exists to
+		// catch never triggered. `onFlushToDisk` here now WRITES to the
+		// shared `disk` var, same as production, so the revert is real and
+		// the fix (an explicit flushFromCrdt after the drift-merge) has to
+		// genuinely undo it — a false-green stub would fail this the same
+		// way it failed to catch the original bug.
 		test("M1: disk drift during the crdt_create round-trip is preserved, not reverted", async () => {
+			const frozenContent = "line one\n";
+			const driftedContent = "line one\nline two (drifted in during the round-trip)\n";
+			let disk = frozenContent;
+
 			const registry = new ProviderRegistry({
 				dbPrefix: `sync-test-genesis-drift-${Math.random().toString(36).slice(2)}`,
 				send: () => true,
-				onFlushToDisk: async () => true,
+				// Production-shaped: this is the same effect wiring.ts's real
+				// onFlushToDisk (-> flushFromCrdt -> vault.modify) has. A stub
+				// that doesn't write can never expose a revert-then-lose-drift
+				// bug, because nothing ever gets reverted.
+				onFlushToDisk: async (_noteId, content) => {
+					disk = content;
+				},
 			});
 			registry.setConnected(true);
 			const engine = createEngine();
@@ -2894,10 +2965,16 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 			const noteIdMap = new NoteIdMap();
 			engine.setNoteIdMap(noteIdMap);
 
-			const frozenContent = "line one\n";
-			const driftedContent = "line one\nline two (drifted in during the round-trip)\n";
-			let disk = frozenContent;
+			const testFile = new TFile("Notes/Drift.md", Date.now());
 			(mockApp.vault.cachedRead as jest.Mock).mockImplementation(async () => disk);
+			(mockApp.vault.getAbstractFileByPath as jest.Mock).mockReturnValue(testFile);
+			// flushFromCrdt (the explicit post-merge write the fix adds) calls
+			// vault.modify directly — must also land in the shared `disk`.
+			(mockApp.vault.modify as jest.Mock).mockImplementation(
+				async (_file: unknown, content: string) => {
+					disk = content;
+				},
+			);
 			engine.setCrdtCreate(async (docId) => {
 				// Simulates an external write landing DURING the network round-trip
 				// — after pushFile already froze `content`, before seeded:true
@@ -2906,19 +2983,24 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 				return { docId, seeded: true };
 			});
 
-			const file = new TFile("Notes/Drift.md", Date.now());
 			const ok = await (
 				engine as unknown as { pushFile(f: TFile): Promise<boolean> }
-			).pushFile(file);
+			).pushFile(testFile);
 			expect(ok).toBe(true);
 
 			const noteId = noteIdMap.get("Notes/Drift.md");
 			expect(noteId).toBeTruthy();
 			if (!noteId) throw new Error("noteId not minted");
 
-			// The drift survives: the doc holds the drifted content, not the
-			// stale frozen snapshot that would have silently reverted it.
+			// The drift survives in the doc, not the stale frozen snapshot that
+			// would have silently reverted it...
 			expect(await registry.projectedText(noteId)).toBe(driftedContent);
+			// ...AND on disk. This is the assertion the non-writing stub could
+			// never fail: applyRemoteUpdate's own auto-flush reverts `disk` to
+			// `frozenContent` the instant it resolves; only the fix's explicit
+			// flushFromCrdt call after the drift-merge brings disk back in sync
+			// with the doc.
+			expect(disk).toBe(driftedContent);
 
 			registry.destroyAll();
 		});
