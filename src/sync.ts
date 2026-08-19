@@ -6047,11 +6047,45 @@ export class SyncEngine {
 		// hash is trustworthy without a round-trip. A stale learned value (DEK
 		// rotation, account swap) simply stops matching — the failure direction
 		// is an extra replay/fetch, never a 0-byte write.
+		//
+		// ...EXCEPT that the learn is vault-wide and cannot be, because
+		// content_hash is a per-user HMAC: hmac("") is ONE constant for the whole
+		// vault, so `hash === emptyContentHash` proves "this hash means empty",
+		// NOT "this note is empty" (#1377). A note whose last checkpoint was empty
+		// but which now has uncheckpointed ops carries that same H_empty as its
+		// STORED hash — #1375 deliberately keeps the facade's — while the feed
+		// serves its REAL body under it. The cascade broadcast that follows then
+		// matches the learned value and zeroes the body the feed just delivered.
+		//
+		// Note-scoping the learn would not fix it and would delete the
+		// optimization: trusting "" only for a note already known empty buys
+		// nothing, since writing "" over an empty note is a no-op. The real
+		// discriminator is not WHICH note but whether the write DESTROYS bytes —
+		// trusting inline "" is only ever harmful against a local file that has
+		// some. `stat.size` answers that without reading the file, and the
+		// distrust path is the same one that already heals via the op-log rows.
+		//
+		// WHICH write this protects: the legacy `applyChange` fallback below.
+		// The CRDT branch's two inline-apply sites are already gated on
+		// `!getAbstractFileByPath(np)`, so they cannot overwrite an existing
+		// file no matter what this decides — a guard keyed on "a file with
+		// bytes exists" is inert there by construction. `applyChange` has no
+		// such gate and will happily write "" over a populated file.
+		//
+		// Probe by ID, not by `event.path`. A folder-rename cascade — the shape
+		// that produces these meta-projected broadcasts in the first place —
+		// names the NEW path while the bytes are still at the OLD one, and
+		// `moveIfIdRelocated` only relocates them further down. Reading
+		// `event.path` there sees no file, scores 0 bytes, and trusts the ""
+		// that is about to land on the file the relocation just moved.
+		const emptyTrustPath =
+			(event.id ? this.noteIdMap?.pathForId(event.id) : null) ?? event.path;
 		if (
 			event.event_type === "upsert" &&
 			event.content === "" &&
 			event.content_hash &&
-			event.content_hash !== this.emptyContentHash
+			(event.content_hash !== this.emptyContentHash ||
+				(this.app.vault.getFileByPath(normalizePath(emptyTrustPath))?.stat?.size ?? 0) > 0)
 		) {
 			rlog().info(
 				"ws",

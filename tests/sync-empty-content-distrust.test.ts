@@ -14,6 +14,7 @@
  * write. A genuinely empty note costs one GET and still converges.
  */
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncEngine } from "../src/sync";
@@ -157,6 +158,66 @@ describe("inline-empty content with a content_hash is fetched, not written", () 
 		} as any);
 		const created = (mockApp.vault.create as ReturnType<typeof mock>).mock.calls;
 		expect(created.map((c: unknown[]) => c[0])).toContain("b.md");
+	});
+
+	/** Register a file so BOTH vault accessors agree it exists.
+	 *
+	 *  `getFileByPath` is `getAbstractFileByPath` narrowed to TFile, so real
+	 *  Obsidian can never answer "a file here" to one and "nothing here" to the
+	 *  other. Mocking only the first fakes an impossible vault — and the CRDT
+	 *  branch keys its inline-apply gate on `getAbstractFileByPath`, so that
+	 *  inconsistency alone flips behavior and makes a guard look load-bearing
+	 *  when it is inert.
+	 */
+	function registerFile(path: string, size: number): void {
+		// A REAL TFile. Every write in sync.ts is gated on `instanceof TFile`
+		// (`vault.modify` at the flush site, the cachedRead idempotency skip,
+		// the content-loss guard), so a plain object silently routes around all
+		// of them and any "no empty write landed" assertion passes vacuously.
+		const file = new TFile(path, 1, size);
+		const at = (p: string) => (p === path ? file : null);
+		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation(at);
+		(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockImplementation(at);
+	}
+
+	test("#1377: the rename cascade is probed by id, where the bytes actually are", async () => {
+		// The shape that produces these broadcasts. The upsert names the NEW
+		// path while the file is still at the OLD one, so probing event.path
+		// finds nothing, scores 0 bytes and trusts the "". Probing the id's
+		// current local path sees the bytes and refuses.
+		const engine = createEngine();
+		const replay = spyOn(engine as any, "catchupViaSeqReplay").mockResolvedValue({
+			applied: 0,
+		});
+		const idMap = new NoteIdMap();
+		idMap.set("Old/moved.md", "note-id-moved");
+		engine.setNoteIdMap(idMap);
+
+		await engine.applyChange({
+			path: "genuinely-empty.md",
+			action: "upsert",
+			content: "",
+			content_hash: "H-empty",
+			version: 1,
+			mtime: 1,
+		} as any);
+
+		// Bytes live at the OLD path; nothing exists at the new one yet.
+		registerFile("Old/moved.md", 2048);
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			path: "New/moved.md",
+			id: "note-id-moved",
+			content: "",
+			content_hash: "H-empty",
+			version: 2,
+		} as any);
+
+		expect(replay).toHaveBeenCalled();
+		for (const call of (mockApp.vault.create as ReturnType<typeof mock>).mock.calls) {
+			if (call[0] === "New/moved.md") expect(call[1]).not.toBe("");
+		}
 	});
 
 	test("a genuinely empty inline body WITHOUT a content_hash is applied inline", async () => {
