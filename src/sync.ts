@@ -15,6 +15,7 @@ import { arrayBufferToBase64, base64ToArrayBuffer, type EngramApi } from "./api"
 import type { BaseStore } from "./base-store";
 import { fnv1a } from "./content-hash";
 import type { NoteIdMap } from "./crdt/note-id-map";
+import { genesisFrameFor } from "./crdt/note-seed";
 import type { ProviderRegistry } from "./crdt/provider-registry";
 import { uuid7 } from "./crdt/uuid7";
 import { crdtOpFailureReason } from "./crdt-op-dispatch";
@@ -347,7 +348,13 @@ export interface CrdtPorts {
 	requestSave?: ((path: string) => void) | null;
 	noteIdMap?: NoteIdMap | null;
 	enrollment?: { enroll(path: string): void; reset(path: string): void } | null;
-	create?: ((docId: string, path: string) => Promise<string>) | null;
+	create?:
+		| ((
+				docId: string,
+				path: string,
+				b64?: string,
+		  ) => Promise<{ docId: string; seeded: boolean }>)
+		| null;
 	delete?: ((docId: string) => Promise<{ doc_id: string }>) | null;
 	enqueue?: ((op: { kind: "create" | "delete"; docId: string; path: string }) => void) | null;
 	/** Drop every outbound CRDT op still pending delivery, plus the unsent-doc
@@ -1240,9 +1247,23 @@ export class SyncEngine {
 	 *  loss). Rejects on delete-wins / rate-limit / bad-path; the caller logs and
 	 *  falls through to the REST create (still functional in this additive phase,
 	 *  removed in Plan B2). Unset → genesis stays on the REST-first path. */
-	private crdtCreate: ((docId: string, path: string) => Promise<string>) | null = null;
+	private crdtCreate:
+		| ((
+				docId: string,
+				path: string,
+				b64?: string,
+		  ) => Promise<{ docId: string; seeded: boolean }>)
+		| null = null;
 
-	setCrdtCreate(fn: ((docId: string, path: string) => Promise<string>) | null): void {
+	setCrdtCreate(
+		fn:
+			| ((
+					docId: string,
+					path: string,
+					b64?: string,
+			  ) => Promise<{ docId: string; seeded: boolean }>)
+			| null,
+	): void {
 		this.setCrdtPorts({ create: fn });
 	}
 
@@ -3534,7 +3555,23 @@ export class SyncEngine {
 						// to the REST cascade: that would create a duplicate/misrouted row
 						// under the stale mint against a path the server already owns. The
 						// inner try/catch handles that post-create case locally.
-						const serverId = await this.crdtCreate(noteId, pushedPath);
+						//
+						// #1409: hand the body to crdt_create so the server can write it
+						// with a detached Y.Doc instead of opening a room per file — a
+						// full-vault import otherwise spins up one OTP room process per
+						// note. Markdown only (seedContentInto is the markdown seeder;
+						// canvas has a different Y.Doc shape) and only when the note is
+						// NOT live-bound — a live-bound note's frozen `content` can lag
+						// unflushed keystrokes, which is exactly why the disk-seed branch
+						// below re-reads via cachedRead instead of trusting `content`.
+						const genesisFrame =
+							file.extension === "md" && !this.isLiveBound(normalizePath(pushedPath))
+								? genesisFrameFor(content)
+								: undefined;
+						const { docId: serverId, seeded } =
+							genesisFrame === undefined
+								? await this.crdtCreate(noteId, pushedPath)
+								: await this.crdtCreate(noteId, pushedPath, genesisFrame);
 						let effectiveId = noteId;
 						try {
 							// On ADOPT (serverId !== noteId) the path is already owned by a
@@ -3608,19 +3645,31 @@ export class SyncEngine {
 									);
 									effectiveId = serverId;
 								}
-								// Seed the body under the effective id: the Y.Doc update
-								// listener forwards it over the channel (crdt_msg). A LIVE
-								// reread, not the frozen `content`, backs the manager's
-								// stale-snapshot guard.
-								consumed = await routeModify(
-									{
-										crdtEligible: true,
-										noteId: effectiveId,
-										readContent: () => this.app.vault.cachedRead(file),
-									},
-									this.crdt,
-									MAX_CRDT_NOTE_BYTES,
-								);
+								// #1409: the server already applied our genesis frame and
+								// confirmed the body is durably readable, so re-sending it
+								// over crdt_msg would open the very room this exists to
+								// avoid. `seeded` is false on every uncertain path (adopt,
+								// live room, bad frame, checkpoint skip, or no frame sent
+								// at all — canvas/live-bound/oversized), so this only
+								// short-circuits on a positive confirmation; `content` is
+								// exactly what the server now holds, matching
+								// adoptCreateAck's baseline below.
+								//
+								// Otherwise: seed the body under the effective id via the
+								// Y.Doc update listener, which forwards it over the channel
+								// (crdt_msg). A LIVE reread, not the frozen `content`, backs
+								// the manager's stale-snapshot guard.
+								consumed = seeded
+									? content
+									: await routeModify(
+											{
+												crdtEligible: true,
+												noteId: effectiveId,
+												readContent: () => this.app.vault.cachedRead(file),
+											},
+											this.crdt,
+											MAX_CRDT_NOTE_BYTES,
+										);
 							}
 							// Task 1's canSendLive gate held effectiveId's live update(s)
 							// (including the seed above) until this exact moment, so nothing

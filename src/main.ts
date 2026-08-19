@@ -2241,7 +2241,7 @@ export default class EngramSyncPlugin extends Plugin {
 				// only consulted once the engine's own crdt manager is set (vaultId
 				// bound), so this is a no-op on a legacy/non-CRDT connection.
 				this.syncEngine.setCrdtPorts({
-					create: (id, path) => channel.crdtCreate(id, path),
+					create: (id, path, b64) => channel.crdtCreate(id, path, b64),
 					// Direct AWAITED delete for handleRename's ordered tombstone->
 					// resurrect relocation (the durable-queue delete is still wired
 					// below for the non-rename / offline paths). Delete (and durable

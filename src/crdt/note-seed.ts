@@ -5,7 +5,7 @@
 // Obsidian's INDEPENDENT disk files across devices, which Relay itself never
 // needs (Relay docs are the source of truth; ours mirror files on disk). Pure,
 // no Obsidian imports.
-import type * as Y from "yjs";
+import * as Y from "yjs";
 import { diffIntoYText, seedOnce } from "./bridge";
 import { canvasIsEmpty } from "./canvas-codec";
 import {
@@ -16,6 +16,7 @@ import {
 	RAW_FRONTMATTER_KEY,
 	splitFrontmatter,
 } from "./frontmatter-codec";
+import { encodeUpdateFrame } from "./wire";
 
 /** True when a body Y.Text already carries CRDT history (non-empty after IDB
  *  rehydration). A history-less doc must adopt server state, never seed disk
@@ -72,4 +73,22 @@ export function seedContentInto(doc: Y.Doc, text: Y.Text, content: string, lca: 
 		applyFrontmatterInto(doc, order, values);
 		if (!seedOnce(text, body, lca)) diffIntoYText(text, body);
 	});
+}
+
+/** Encode `content` as a base64 `messageSync` update frame — the genesis body a
+ *  brand-new note hands to `crdt_create` so the server can persist it with a
+ *  detached doc instead of opening a room (#1409).
+ *
+ *  Routes through `seedContentInto`, NOT `seedOnce`: frontmatter lives in its own
+ *  Y.Map, and seeding the raw string into the body Y.Text would ship the YAML
+ *  block as literal body text on every imported note. `encodeUpdateFrame` is the
+ *  same codec the live crdt_msg path uses, so the two are byte-identical. */
+export function genesisFrameFor(content: string): string {
+	const doc = new Y.Doc();
+	try {
+		seedContentInto(doc, doc.getText(CONTENT_KEY), content, false);
+		return encodeUpdateFrame(Y.encodeStateAsUpdate(doc));
+	} finally {
+		doc.destroy();
+	}
 }

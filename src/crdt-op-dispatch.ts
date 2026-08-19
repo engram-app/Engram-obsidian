@@ -65,7 +65,10 @@ export function crdtOpFailureReason(err: unknown): string | null {
 
 /** The two acked socket calls the queue dispatches over. */
 export type CrdtOpChannel = {
-	crdtCreate(docId: string, path: string): Promise<string>;
+	// #1409: the durable queue retries a create with no body in hand (it only
+	// ever tracked docId/path), so `seeded` is always false here and unused —
+	// the shape just has to match NoteChannel.crdtCreate's real return type.
+	crdtCreate(docId: string, path: string): Promise<{ docId: string; seeded: boolean }>;
 	crdtDeleteAcked(docId: string): Promise<{ doc_id: string }>;
 };
 
@@ -95,7 +98,7 @@ export function makeCrdtOpSend(hooks: CrdtSendHooks): (op: CrdtOp) => Promise<Se
 		try {
 			if (op.kind === "create") {
 				const path = (op.payload as { path?: string })?.path ?? "";
-				const serverId = await ch.crdtCreate(op.docId, path);
+				const { docId: serverId } = await ch.crdtCreate(op.docId, path);
 				try {
 					await hooks.onCreated(op.docId, serverId, path);
 				} catch {

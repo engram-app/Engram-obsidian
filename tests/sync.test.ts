@@ -330,7 +330,10 @@ describe("SyncEngine.handleRename", () => {
 		// crdt_create for the SAME id at the new path (the backend relocates).
 		const engine = createEngine();
 		const crdtDelete = mock().mockResolvedValue({ doc_id: "id-canvas-move" });
-		const crdtCreate = mock().mockResolvedValue("id-canvas-move");
+		// Canvas never carries a genesis b64 frame (#1409 is markdown-only, since
+		// seedContentInto is the markdown seeder), so the call keeps its 2-arg
+		// shape below.
+		const crdtCreate = mock().mockResolvedValue({ docId: "id-canvas-move", seeded: false });
 		const enqueued: Array<{ kind: string; docId: string }> = [];
 		engine.setCrdtManager({
 			applyLocalEdit: mock(async (_id: string, c: string) => c),
@@ -363,7 +366,7 @@ describe("SyncEngine.handleRename", () => {
 		// hazard on the docId-keyed op queue (the old test_10 class).
 		const engine = createEngine();
 		const crdtDelete = mock().mockResolvedValue({ doc_id: "id-md-move" });
-		const crdtCreate = mock().mockResolvedValue("id-md-move");
+		const crdtCreate = mock().mockResolvedValue({ docId: "id-md-move", seeded: false });
 		const enqueued: Array<{ kind: string; docId: string }> = [];
 		engine.setCrdtManager({
 			applyLocalEdit: mock(async (_id: string, c: string) => c),
@@ -384,7 +387,10 @@ describe("SyncEngine.handleRename", () => {
 
 		expect(crdtDelete).not.toHaveBeenCalled();
 		expect(enqueued.some((op) => op.kind === "delete")).toBe(false);
-		expect(crdtCreate).toHaveBeenCalledWith("id-md-move", "Notes/New.md");
+		// A markdown, non-live-bound genesis now also carries a 3rd genesis-frame
+		// arg (#1409) — pin the id/path, not the frame's exact bytes.
+		expect(crdtCreate.mock.calls[0]?.[0]).toBe("id-md-move");
+		expect(crdtCreate.mock.calls[0]?.[1]).toBe("Notes/New.md");
 		expect(mockApi.deleteNote).not.toHaveBeenCalled();
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});
@@ -2692,6 +2698,62 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 		// Force push should bypass suppression
 		await (engine as any).pushFile(file, true);
 		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
+	});
+
+	// #1409: crdt_create now carries the genesis body (a base64 update frame),
+	// so the server can write it with a detached Y.Doc instead of opening a
+	// room per file (a full-vault import used to spin up one OTP room process
+	// per note). `seeded: true` means the server confirmed the body is
+	// durably readable, so pushFile's disk-seed routeModify call — which
+	// would otherwise open the room this exists to avoid — is skipped.
+	describe("genesis body seed (#1409)", () => {
+		function genesisEngine(
+			crdtCreateImpl: (
+				docId: string,
+				path: string,
+				b64?: string,
+			) => Promise<{ docId: string; seeded: boolean }>,
+		) {
+			const engine = createEngine();
+			const applyLocalEdit = mock(async (_id: string, c: string) => c);
+			engine.setCrdtManager({ applyLocalEdit } as any);
+			engine.setCrdtCreate(crdtCreateImpl);
+			// pushFile only mints/resolves a note_id (and so only reaches the
+			// genesis branch at all) when a NoteIdMap is wired — without one,
+			// noteId stays null and the whole crdt_create branch is skipped.
+			engine.setNoteIdMap(new NoteIdMap());
+			return { engine, applyLocalEdit };
+		}
+
+		test("skips the crdt_msg body seed when the server seeded the note at genesis", async () => {
+			const { engine, applyLocalEdit } = genesisEngine(async (docId) => ({
+				docId,
+				seeded: true,
+			}));
+			const file = new TFile("Notes/Seeded.md", Date.now());
+
+			const ok = await (
+				engine as unknown as { pushFile(f: TFile): Promise<boolean> }
+			).pushFile(file);
+
+			expect(ok).toBe(true);
+			expect(applyLocalEdit).not.toHaveBeenCalled();
+		});
+
+		test("falls back to the crdt_msg body seed when the server did not seed", async () => {
+			const { engine, applyLocalEdit } = genesisEngine(async (docId) => ({
+				docId,
+				seeded: false,
+			}));
+			const file = new TFile("Notes/NotSeeded.md", Date.now());
+
+			const ok = await (
+				engine as unknown as { pushFile(f: TFile): Promise<boolean> }
+			).pushFile(file);
+
+			expect(ok).toBe(true);
+			expect(applyLocalEdit).toHaveBeenCalledTimes(1);
+		});
 	});
 
 	test("echo-skip no-op push does not open the recently-pushed suppression window (Engram#944)", async () => {

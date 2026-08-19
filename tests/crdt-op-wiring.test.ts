@@ -34,7 +34,7 @@ describe("crdtOpFailureReason", () => {
 describe("makeCrdtOpSend dispatch + taxonomy", () => {
 	function fakeChannel(overrides: Partial<CrdtOpChannel> = {}): CrdtOpChannel {
 		return {
-			crdtCreate: mock(async (docId: string) => docId),
+			crdtCreate: mock(async (docId: string) => ({ docId, seeded: false })),
 			crdtDeleteAcked: mock(async (docId: string) => ({ doc_id: docId })),
 			...overrides,
 		};
@@ -43,7 +43,8 @@ describe("makeCrdtOpSend dispatch + taxonomy", () => {
 	test("create resolve → ok, and onCreated gets the server's id", async () => {
 		const onCreated = mock(() => {});
 		const send = makeCrdtOpSend({
-			channel: () => fakeChannel({ crdtCreate: async () => "server-id" }),
+			channel: () =>
+				fakeChannel({ crdtCreate: async () => ({ docId: "server-id", seeded: false }) }),
 			onCreated,
 			onTerminal: () => {},
 		});

@@ -1011,7 +1011,7 @@ describe("Task 3: new-note genesis routes through crdt_create", () => {
 		const created: Array<{ id: string; path: string }> = [];
 		engine.setCrdtCreate(async (id: string, path: string) => {
 			created.push({ id, path });
-			return id; // server adopts the client-minted id (no collision).
+			return { docId: id, seeded: false }; // server adopts the client-minted id (no collision).
 		});
 
 		const file = new TFile("Notes/brand-new.md");
@@ -1041,7 +1041,10 @@ describe("Task 3: new-note genesis routes through crdt_create", () => {
 		const enroll = mock((_id: string) => {});
 		engine.setCrdtEnrollment({ enroll, reset: mock(() => {}) } as any);
 		// Server already owns this path under a live note with a different id.
-		engine.setCrdtCreate(async (_id: string, _path: string) => "server-owns-this");
+		engine.setCrdtCreate(async (_id: string, _path: string) => ({
+			docId: "server-owns-this",
+			seeded: false,
+		}));
 
 		const file = new TFile("Notes/collision.md");
 		await (
@@ -1083,7 +1086,7 @@ describe("Task 3: new-note genesis routes through crdt_create", () => {
 		let mintId = "";
 		engine.setCrdtCreate(async (id: string, _path: string) => {
 			mintId = id;
-			return "server-owns-this";
+			return { docId: "server-owns-this", seeded: false };
 		});
 
 		const file = new TFile("Notes/collision-live.md");
@@ -1119,7 +1122,10 @@ describe("Task 3: new-note genesis routes through crdt_create", () => {
 		engine.setCrdtEnrollment({ enroll: mock(() => {}), reset: mock(() => {}) } as any);
 		const rebinds: string[] = [];
 		engine.setCrdtEditorRebind((p: string) => rebinds.push(p));
-		engine.setCrdtCreate(async (_id: string, _path: string) => "server-owns-this");
+		engine.setCrdtCreate(async (_id: string, _path: string) => ({
+			docId: "server-owns-this",
+			seeded: false,
+		}));
 
 		const file = new TFile("Notes/collision-idle.md");
 		await (
@@ -1155,7 +1161,10 @@ describe("Task 3: new-note genesis routes through crdt_create", () => {
 		engine.setLiveBoundCheck(() => true);
 		const enroll = mock((_id: string) => {});
 		engine.setCrdtEnrollment({ enroll, reset: mock(() => {}) } as any);
-		engine.setCrdtCreate(async (_id: string, _path: string) => "server-owns-this");
+		engine.setCrdtCreate(async (_id: string, _path: string) => ({
+			docId: "server-owns-this",
+			seeded: false,
+		}));
 
 		const file = new TFile("Notes/collision-throw.md");
 		const result = await (
@@ -1484,7 +1493,7 @@ describe("genesis echo-cooldown window (repo-review 2026-08)", () => {
 		engine.setCrdtManager({
 			applyLocalEdit: mock(async (_id: string, c: string) => c),
 		} as any);
-		engine.setCrdtCreate(async (id: string) => id);
+		engine.setCrdtCreate(async (id: string) => ({ docId: id, seeded: false }));
 
 		const file = new TFile("Notes/brand-new.md");
 		engine.handleModify(file);

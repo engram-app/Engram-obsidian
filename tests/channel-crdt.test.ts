@@ -1121,7 +1121,50 @@ describe("NoteChannel CRDT frame senders", () => {
 			"phx_reply",
 			{ status: "ok", response: { doc_id: "server-id-Y" } },
 		]);
-		await expect(p).resolves.toBe("server-id-Y");
+		// An older server / no-b64 reply omits `seeded` entirely — the safe
+		// default is "not seeded" (#1409).
+		await expect(p).resolves.toEqual({ docId: "server-id-Y", seeded: false });
+
+		channel.disconnect();
+	});
+
+	// #1409: the genesis-body fast path. crdt_create carries an optional b64
+	// frame; the reply's `seeded` flag tells pushFile whether it may skip its
+	// own crdt_msg body send.
+	test("crdtCreate forwards the genesis frame and returns the seeded flag", async () => {
+		const { channel, ws } = await joinedCrdtChannel();
+		const p = channel.crdtCreate("local-id", "A.md", "BASE64FRAME");
+		const frame = ws.sent
+			.map((s: string) => JSON.parse(s))
+			.find((f: unknown[]) => f[3] === "crdt_create");
+		expect(frame[4]).toMatchObject({ doc_id: "local-id", path: "A.md", b64: "BASE64FRAME" });
+		simulateMessage(ws, [
+			null,
+			frame[1],
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "ok", response: { doc_id: "server-id", seeded: true } },
+		]);
+		await expect(p).resolves.toEqual({ docId: "server-id", seeded: true });
+
+		channel.disconnect();
+	});
+
+	test("crdtCreate omits b64 from the payload when not given", async () => {
+		const { channel, ws } = await joinedCrdtChannel();
+		const p = channel.crdtCreate("local-id", "A.md");
+		const frame = ws.sent
+			.map((s: string) => JSON.parse(s))
+			.find((f: unknown[]) => f[3] === "crdt_create");
+		expect(frame[4]).toEqual({ doc_id: "local-id", path: "A.md" });
+		simulateMessage(ws, [
+			null,
+			frame[1],
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "ok", response: { doc_id: "local-id", seeded: false } },
+		]);
+		await expect(p).resolves.toEqual({ docId: "local-id", seeded: false });
 
 		channel.disconnect();
 	});

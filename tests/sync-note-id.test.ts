@@ -1997,9 +1997,9 @@ describe("a re-minted id must never be treated as server-known (e2e test_27, not
 		const serverRows = new Map<string, string>();
 		engine.setCrdtCreate(async (id: string, p: string) => {
 			const existing = serverRows.get(p);
-			if (existing) return existing;
+			if (existing) return { docId: existing, seeded: false };
 			serverRows.set(p, id);
-			return id;
+			return { docId: id, seeded: false };
 		});
 
 		// Device A authors the note itself: an EMPTY note takes the socket-native
