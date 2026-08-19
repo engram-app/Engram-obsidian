@@ -5714,12 +5714,28 @@ export class SyncEngine {
 		// trusting inline "" is only ever harmful against a local file that has
 		// some. `stat.size` answers that without reading the file, and the
 		// distrust path is the same one that already heals via the op-log rows.
+		//
+		// WHICH write this protects: the legacy `applyChange` fallback below.
+		// The CRDT branch's two inline-apply sites are already gated on
+		// `!getAbstractFileByPath(np)`, so they cannot overwrite an existing
+		// file no matter what this decides — a guard keyed on "a file with
+		// bytes exists" is inert there by construction. `applyChange` has no
+		// such gate and will happily write "" over a populated file.
+		//
+		// Probe by ID, not by `event.path`. A folder-rename cascade — the shape
+		// that produces these meta-projected broadcasts in the first place —
+		// names the NEW path while the bytes are still at the OLD one, and
+		// `moveIfIdRelocated` only relocates them further down. Reading
+		// `event.path` there sees no file, scores 0 bytes, and trusts the ""
+		// that is about to land on the file the relocation just moved.
+		const emptyTrustPath =
+			(event.id ? this.noteIdMap?.pathForId(event.id) : null) ?? event.path;
 		if (
 			event.event_type === "upsert" &&
 			event.content === "" &&
 			event.content_hash &&
 			(event.content_hash !== this.emptyContentHash ||
-				(this.app.vault.getFileByPath(normalizePath(event.path))?.stat?.size ?? 0) > 0)
+				(this.app.vault.getFileByPath(normalizePath(emptyTrustPath))?.stat?.size ?? 0) > 0)
 		) {
 			rlog().info(
 				"ws",
