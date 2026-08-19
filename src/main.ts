@@ -575,8 +575,13 @@ export default class EngramSyncPlugin extends Plugin {
 		this.crdtOpQueue = new CrdtOpQueue({
 			send: makeCrdtOpSend({
 				channel: () => this.noteStream,
-				onCreated: (localId, serverId, path) =>
-					this.syncEngine.applyCrdtCreateAck(localId, serverId, path),
+				// #1409 (review H4): re-read disk and build the genesis body at SEND
+				// time so a replayed create (rate-limit backoff, pre-join hold, a
+				// long reconnect) still carries a body instead of always falling
+				// back to the room-opening disk-seed on delivery.
+				buildGenesisFrame: (path) => this.syncEngine.buildGenesisFrame(path),
+				onCreated: (localId, serverId, path, seeded, genesis) =>
+					this.syncEngine.applyCrdtCreateAck(localId, serverId, path, seeded, genesis),
 				onTerminal: (op, reason) =>
 					// A create/delete that retrying cannot fix. Surface it (error log) so
 					// it never silently vanishes; the queue then drops it (no infinite retry).
@@ -2241,7 +2246,7 @@ export default class EngramSyncPlugin extends Plugin {
 				// only consulted once the engine's own crdt manager is set (vaultId
 				// bound), so this is a no-op on a legacy/non-CRDT connection.
 				this.syncEngine.setCrdtPorts({
-					create: (id, path) => channel.crdtCreate(id, path),
+					create: (id, path, b64) => channel.crdtCreate(id, path, b64),
 					// Direct AWAITED delete for handleRename's ordered tombstone->
 					// resurrect relocation (the durable-queue delete is still wired
 					// below for the non-rename / offline paths). Delete (and durable

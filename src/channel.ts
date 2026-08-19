@@ -160,6 +160,16 @@ function wsOrigin(baseUrl: string): string {
 	return baseUrl.replace(/\/+$/, "").replace(/\/api$/, "");
 }
 
+/** Result of `crdtCreate` — see its docstring. Named (not inlined) so the
+ *  return-type annotation carries no `;` between its two members right next
+ *  to the wire-send statement the source-compliance privacy guard
+ *  (tests/source-compliance.test.ts) exempts by exact text. */
+export type CrdtCreateResult = { docId: string; seeded: boolean };
+
+/** Raw server reply shape for `crdt_create`, before the docId/seeded rename —
+ *  same "no inline `;`" reasoning as CrdtCreateResult above. */
+type CrdtCreateReply = { doc_id: string; seeded?: boolean };
+
 export class NoteChannel {
 	private ws: WebSocket | null = null;
 	private ref = 0;
@@ -526,12 +536,29 @@ export class NoteChannel {
 	/** Genesis a server row over the socket. Returns the server's authoritative
 	 *  doc_id — on ADOPT (path already owned by a different live note) the server
 	 *  returns a DIFFERENT id, which Task 3 uses to remap the local note and avoid
-	 *  orphaning edits. */
-	async crdtCreate(docId: string, path: string): Promise<string> {
-		const res = (await this.sendRequest("crdt_create", { doc_id: docId, path })) as {
-			doc_id: string;
-		};
-		return res.doc_id;
+	 *  orphaning edits.
+	 *
+	 *  `b64` is an optional genesis frame (#1409). When present the server applies
+	 *  it to a detached Y.Doc and checkpoints it WITHOUT opening a room, which is
+	 *  what keeps a full-vault import from allocating one OTP process per file.
+	 *  `seeded` reports whether the body is durably readable server-side; it is
+	 *  false on adopt, on a live room, on a malformed frame, and on any checkpoint
+	 *  skip. A false ALWAYS means "fall back to the crdt_msg seed", never "retry
+	 *  the create". */
+	async crdtCreate(docId: string, path: string, b64?: string): Promise<CrdtCreateResult> {
+		// This literal is a THIRD legitimate wire-send the source-compliance
+		// privacy guard (tests/source-compliance.test.ts) allowlists by exact
+		// statement, beside `wireStatement`/`indexWireStatement`. It is written
+		// naturally (not dodged via an alias/two-statement bypass — the guard's
+		// own comments call that out as a known blind spot) precisely so the
+		// guard can see it; if this statement's shape ever changes, update
+		// `crdtCreateWireStatement` there to match.
+		const res = (await this.sendRequest("crdt_create", {
+			doc_id: docId,
+			path,
+			...(b64 === undefined ? {} : { b64 }),
+		})) as CrdtCreateReply;
+		return { docId: res.doc_id, seeded: res.seeded === true };
 	}
 
 	/** Delete a note over the socket, AWAITING the server ack (idempotent). The

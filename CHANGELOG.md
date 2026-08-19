@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.23.1](https://github.com/engram-app/Engram-obsidian/compare/1.23.0...1.23.1) (2026-08-18)
+
+
+### Bug Fixes
+
+* **sync:** a freshly minted note_id is never server-known ([#447](https://github.com/engram-app/Engram-obsidian/issues/447)) ([20d9ea1](https://github.com/engram-app/Engram-obsidian/commit/20d9ea1021c0fc2010f69ac31ba6cd737f5c1b83))
+
 ## [1.23.0](https://github.com/engram-app/Engram-obsidian/compare/1.22.0...1.23.0) (2026-08-18)
 
 

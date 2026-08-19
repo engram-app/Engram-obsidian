@@ -19,6 +19,7 @@ type WiringSyncEngine = Pick<
 	| "reconcileNoteIdMapFromManifest"
 	| "isSyncBlocked"
 	| "ensureNoteIdMapped"
+	| "clearPushedBaselineForId"
 	| "applyPushedNoteUpdate"
 	| "discoverAnnouncedNote"
 	| "applyLiveOpWithSeq"
@@ -466,6 +467,12 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	// and we gate here too, matching the sibling onCrdtDocReady.
 	const onCrdtNoteNotFound = (docId: string): void => {
 		if (syncEngine.isSyncBlocked()) return;
+		// Healing the map is only half of it: the dropped frame's content was
+		// already banked as the echo baseline when routeModify consumed it, so a
+		// re-mapped note would still echo-skip its own undelivered bytes forever.
+		// Un-bank first — the reconcile below can re-key the map out from under
+		// the lookup this needs.
+		syncEngine.clearPushedBaselineForId(docId);
 		syncEngine.ensureNoteIdMapped(docId);
 	};
 
