@@ -65,17 +65,57 @@ export function crdtOpFailureReason(err: unknown): string | null {
 
 /** The two acked socket calls the queue dispatches over. */
 export type CrdtOpChannel = {
-	crdtCreate(docId: string, path: string): Promise<string>;
+	crdtCreate(
+		docId: string,
+		path: string,
+		b64?: string,
+	): Promise<{ docId: string; seeded: boolean }>;
 	crdtDeleteAcked(docId: string): Promise<{ doc_id: string }>;
 };
+
+/** The bytes a genesis frame was built from, kept alongside the wire frame so
+ *  a `seeded: true` reply can apply the EXACT SAME update locally (review
+ *  H4) instead of re-deriving it — a second `encodeGenesisUpdate` call mints
+ *  a DIFFERENT throwaway Y.Doc/clientID, which would be a causally
+ *  UNRELATED lineage to what the server actually stored, not an equivalent
+ *  one: any future incremental edit built against one could not integrate
+ *  into the other (its origin pointers reference ops the receiving doc has
+ *  never seen), risking the exact corruption class this fix exists to
+ *  prevent, just deferred to the note's next real edit instead of its
+ *  create. */
+export type GenesisFrame = { b64: string; update: Uint8Array; content: string };
 
 export type CrdtSendHooks = {
 	/** The current channel, or null when no socket is up (→ hold + retry). */
 	channel: () => CrdtOpChannel | null;
-	/** A create acked: serverId is the AUTHORITATIVE id (differs on ADOPT). May
-	 *  seed the body asynchronously; awaited so a queued create materializes WITH
-	 *  its content, and a post-ack throw is swallowed (the row already exists). */
-	onCreated: (localId: string, serverId: string, path: string) => void | Promise<void>;
+	/** #1409 (review H4): build the genesis body for a create op, called right
+	 *  before `crdtCreate`. Re-reads disk AT SEND TIME rather than trusting a
+	 *  snapshot captured when the op was originally enqueued — a queued create
+	 *  can replay much later (rate-limit backoff, a long reconnect), and
+	 *  persisting the body into the op itself would bloat the (IndexedDB-
+	 *  backed) queue with content that's stale by the time it matters.
+	 *  Returns undefined when the note doesn't qualify (canvas, live-bound,
+	 *  oversized, gone, unreadable) or CRDT is unset — the create still
+	 *  sends, just without a body; `onCreated`'s existing disk-seed path
+	 *  delivers it instead, exactly like before this fix. Optional so a
+	 *  caller/test that never wires it keeps the old bodyless-create
+	 *  behaviour. */
+	buildGenesisFrame?: (path: string) => Promise<GenesisFrame | undefined>;
+	/** A create acked: serverId is the AUTHORITATIVE id (differs on ADOPT).
+	 *  `seeded` + `genesis` (present only when a frame was actually sent) let
+	 *  the caller apply the SAME bytes locally instead of re-seeding from
+	 *  disk over crdt_msg — which would open the very room #1409 exists to
+	 *  avoid — mirroring pushFile's own seeded-gated local apply. May seed
+	 *  the body asynchronously; awaited so a queued create materializes WITH
+	 *  its content, and a post-ack throw is swallowed (the row already
+	 *  exists). */
+	onCreated: (
+		localId: string,
+		serverId: string,
+		path: string,
+		seeded: boolean,
+		genesis?: GenesisFrame,
+	) => void | Promise<void>;
 	/** A terminally-failed op about to be dropped. surface it (error log). */
 	onTerminal: (op: CrdtOp, reason: string) => void;
 	/** A retryable PLAN-LIMIT reject (e.g. notes_cap_reached). Surface to the user
@@ -95,9 +135,12 @@ export function makeCrdtOpSend(hooks: CrdtSendHooks): (op: CrdtOp) => Promise<Se
 		try {
 			if (op.kind === "create") {
 				const path = (op.payload as { path?: string })?.path ?? "";
-				const serverId = await ch.crdtCreate(op.docId, path);
+				const genesis = await hooks.buildGenesisFrame?.(path);
+				const { docId: serverId, seeded } = genesis
+					? await ch.crdtCreate(op.docId, path, genesis.b64)
+					: await ch.crdtCreate(op.docId, path);
 				try {
-					await hooks.onCreated(op.docId, serverId, path);
+					await hooks.onCreated(op.docId, serverId, path, seeded, genesis);
 				} catch {
 					// crdt_create already ACKED: the row exists (possibly remapped).
 					// A post-ack step (body seed) throwing must NOT retry the create:

@@ -400,7 +400,7 @@ describe("Task 3: create-before-edit wire ordering (regression)", () => {
 		engine.setCrdtManager(mgr);
 		engine.setCrdtCreate(async (id: string, _path: string) => {
 			wire.push({ kind: "create", id });
-			return id; // server adopts the client-minted id (no ADOPT remap)
+			return { docId: id, seeded: false }; // server adopts the client-minted id (no ADOPT remap)
 		});
 
 		// Fast typing: a local edit lands in the Y.Doc BEFORE the note's
