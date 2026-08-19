@@ -70,6 +70,18 @@ export class IndexRoom {
 		this.provider.setConnected(connected);
 	}
 
+	/** Re-buffer a frame the server refused (`rate_limited`,
+	 *  `index_frame_rejected`) so it is re-offered on the next connect flush.
+	 *
+	 *  Kind is always "op": the index room has no create-ack gate, so handshake
+	 *  and op frames take the same path out (see the provider wiring above) and
+	 *  the classification cannot strand anything here the way it could on a note
+	 *  room. Without this the claim waits for the next reconnect handshake to be
+	 *  re-derived, and until then the server answers a path it does not own. */
+	requeue(b64: string): void {
+		this.provider.requeue(b64, "op");
+	}
+
 	/** Feed an inbound `crdt_index_msg` frame.
 	 *
 	 *  Returns false when the frame could not be applied. A malformed or hostile

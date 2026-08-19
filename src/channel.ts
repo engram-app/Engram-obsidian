@@ -292,6 +292,19 @@ export class NoteChannel {
 	 *  (backend #955 error reply). The create-race cross-wire signature — wire
 	 *  to the sync engine's live id-map reconcile (ensureNoteIdMapped). */
 	onCrdtNoteNotFound: ((docId: string) => void) | null = null;
+
+	/** Called when the server REFUSES an index frame (`rate_limited`,
+	 *  `index_frame_rejected`). Carries the exact b64 so the caller can re-offer
+	 *  it — an index frame is a path->id claim, and a claim the server never
+	 *  applied leaves it answering for a path it does not own. */
+	onIndexFrameRejected: ((b64: string, reason: string) => void) | null = null;
+
+	/** Index frames awaiting their phx_reply, by ref. The server replies to EVERY
+	 *  `crdt_index_msg` (ok or error), so entries drain on reply and the map stays
+	 *  at the in-flight count. Cleared on close: those frames are re-derived by
+	 *  the rejoin handshake, which answers an inbound syncStep1 with a
+	 *  [syncStep2, syncStep1] pair and so re-offers whatever the server lacks. */
+	private readonly inFlightIndexFrames = new Map<string, string>();
 	/** Fired when the `crdt:` topic join is acknowledged by the server.
 	 *  Use this to activate CRDT routing in the SyncEngine — only wire
 	 *  `setCrdtManager` after this fires, so the legacy pushNote path stays
@@ -429,8 +442,19 @@ export class NoteChannel {
 		// messages by (topic, join_ref); sending null here means the server can't
 		// match the joined channel and silently drops the frame (every CRDT update
 		// vanished before reaching the backend).
-		this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_msg", { doc_id: docId, b64 }]);
-		return true;
+		// Same honesty contract as sendIndexCrdt below, and for the same reason:
+		// `send` no-ops unless readyState is OPEN while `crdtJoined` is only reset
+		// in `onclose`, so there is a real half-open window. wiring.ts keys BOTH
+		// the provider's offline buffer and `unsentDocIds` on this boolean, so
+		// returning true here dropped a note-content op with nothing left to
+		// re-offer it. Fixing only the index path left the larger caller broken.
+		return this.send([
+			this.crdtJoinRef,
+			String(++this.ref),
+			t,
+			"crdt_msg",
+			{ doc_id: docId, b64 },
+		]);
 	}
 
 	/** Send a frame to the per-VAULT index room (`filemeta_v0`).
@@ -461,7 +485,29 @@ export class NoteChannel {
 			return false;
 		}
 
-		this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_index_msg", { b64 }]);
+		const ref = String(++this.ref);
+		// Kept as a bare statement, result captured — `source-compliance` exempts
+		// this EXACT wire shape and any wrapper around it (an `if (!...)`) stops
+		// matching, which is the point of that guard.
+		const delivered = this.send([this.crdtJoinRef, ref, t, "crdt_index_msg", { b64 }]);
+		if (!delivered) {
+			// Throttled on the SAME key as the not-joined refusal above, for the
+			// same reason: a half-open window refuses every frame the provider
+			// re-offers, and each warn is shipped to the server by rlog().
+			const now = Date.now();
+			if (
+				now - (this.lastRefusedWarnAt.get(NoteChannel.INDEX_REFUSAL_KEY) ?? 0) >=
+				NoteChannel.REFUSED_WARN_THROTTLE_MS
+			) {
+				this.lastRefusedWarnAt.set(NoteChannel.INDEX_REFUSAL_KEY, now);
+				rlog().warn(
+					"channel",
+					"sendIndexCrdt refused (socket not OPEN) — held, recovers on rejoin",
+				);
+			}
+			return false;
+		}
+		this.inFlightIndexFrames.set(ref, b64);
 		return true;
 	}
 
@@ -841,6 +887,7 @@ export class NoteChannel {
 			// crdtJoined that lets sendCrdt bypass the join-ack contract on the
 			// next socket and skips re-firing onCrdtJoined (#191).
 			this.crdtJoined = false;
+			this.inFlightIndexFrames.clear();
 			this.setConnected(false);
 
 			// Real browsers always pass a CloseEvent here; some lightweight test
@@ -1004,6 +1051,29 @@ export class NoteChannel {
 			Record<string, unknown>,
 		];
 
+		// A channel-level error tears the topic down without replying to the
+		// frames already in flight on it. Without this their entries sit in
+		// `inFlightIndexFrames` holding full frame BODIES until the socket
+		// closes — a server-side crash-loop then grows the map for the life of
+		// the connection. The frames themselves are not lost: the rejoin
+		// handshake re-offers whatever the server lacks, same as `onclose`.
+		if (event === "phx_error" && topic === this.crdtTopic) {
+			if (this.inFlightIndexFrames.size > 0) {
+				rlog().warn(
+					"channel",
+					`phx_error on ${topic} — dropping ${this.inFlightIndexFrames.size} in-flight index frame(s)`,
+				);
+				this.inFlightIndexFrames.clear();
+			}
+			// Resetting crdtJoined is the load-bearing half. This client has NO
+			// per-topic rejoin, so after a channel crash the socket stays OPEN
+			// against a DEAD join_ref: without this, sendCrdt/sendIndexCrdt keep
+			// returning true while the server drops every frame against it.
+			// Refusing makes the provider buffer them until the socket closes and
+			// rejoins, which is the only recovery this client actually has.
+			this.crdtJoined = false;
+		}
+
 		if (event === "phx_reply") {
 			// A sendRequest awaiting this exact ref takes priority over the
 			// topic-join cascade below — it's a one-shot request/response, not a
@@ -1017,6 +1087,27 @@ export class NoteChannel {
 					const response = (payload as { response?: unknown })?.response;
 					if (status === "ok") pending.resolve(response);
 					else pending.reject(new Error(`request failed: ${JSON.stringify(response)}`));
+					return;
+				}
+
+				// An index frame's own reply, handled before the join-error cascade
+				// below. Without this a refused identity claim surfaced as "Channel
+				// join error on crdt:..." — a lie that reads as a connection fault,
+				// and one nothing acted on, so the claim was simply gone.
+				const indexFrame = this.inFlightIndexFrames.get(ref);
+				if (indexFrame !== undefined) {
+					this.inFlightIndexFrames.delete(ref);
+					const status = (payload as { status?: string })?.status;
+					if (status !== "ok") {
+						const reason = (payload as { response?: { reason?: unknown } })?.response
+							?.reason;
+						const label = typeof reason === "string" ? reason : "unknown";
+						rlog().warn(
+							"channel",
+							`Index frame refused by server (${label}) — re-offering on next flush`,
+						);
+						this.onIndexFrameRejected?.(indexFrame, label);
+					}
 					return;
 				}
 			}
@@ -1239,7 +1330,11 @@ export class NoteChannel {
 		}
 	}
 
-	private send(msg: unknown[]): void {
+	/** Returns whether the frame actually reached the transport. Callers that
+	 *  can recover from a refusal (sendIndexCrdt -> the provider's offline
+	 *  buffer) MUST honour it: `crdtJoined` is only reset in `onclose`, so there
+	 *  is a real half-open window where the topic reads joined and this no-ops. */
+	private send(msg: unknown[]): boolean {
 		if (this.ws?.readyState === WebSocket.OPEN) {
 			const frame = JSON.stringify(msg);
 			// Observability only - never skip or alter the send itself. Only warn
@@ -1254,7 +1349,9 @@ export class NoteChannel {
 				);
 			}
 			this.ws.send(frame);
+			return true;
 		}
+		return false;
 	}
 
 	private setConnected(value: boolean): void {
@@ -1266,6 +1363,7 @@ export class NoteChannel {
 				// fire again if the new backend also supports CRDT; until then
 				// the legacy pushNote path takes over.
 				this.crdtJoined = false;
+				this.inFlightIndexFrames.clear();
 			}
 			this.onStatusChange?.(value);
 		}

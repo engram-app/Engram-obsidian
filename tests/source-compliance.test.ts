@@ -399,8 +399,15 @@ describe("privacy — no content retention for export", () => {
 		//
 		// Requiring the entire statement to equal the known-good form means any
 		// wrapper, extra argument or reordering stops matching and is caught.
+		// Two accommodations, both for the FORMATTER, not for semantics:
+		// an optional `return` prefix (sendCrdt must honour whether the frame
+		// reached the transport, and wiring.ts keys the provider buffer on that
+		// boolean), and an optional trailing comma, because biome breaks a
+		// wire send that crosses the line width into a multi-line array and
+		// appends one. Neither loosens what is pinned: the payload object shape,
+		// the argument list and their order still have to match exactly.
 		const wireStatement =
-			/^this\.send\(\[this\.crdtJoinRef,[^{}]*\{\s*doc_id:\s*docId,\s*b64\s*\}\]\);$/;
+			/^(?:return)?this\.send\(\[this\.crdtJoinRef,[^{}]*\{\s*doc_id:\s*docId,\s*b64\s*\},?\]\);$/;
 
 		// The per-vault index room's wire send (#362). A SECOND exact form rather
 		// than a loosened first one: it differs only by having no doc_id — there
@@ -408,7 +415,15 @@ describe("privacy — no content retention for export", () => {
 		// the original to make doc_id optional would exempt any `{ b64 }` object
 		// reachable from a `this.send([this.crdtJoinRef, ...])` call, which is
 		// most of what this check exists to catch.
-		const indexWireStatement = /^this\.send\(\[this\.crdtJoinRef,[^{}]*\{\s*b64\s*\}\]\);$/;
+		// The optional `const <name> =` prefix is the ONLY widening: `send` reports
+		// whether the frame reached the transport (#433), and an index frame must
+		// honour that to re-buffer on a half-open socket. It still pins the exact
+		// wire shape, so a wrapper around the payload, an extra argument or a
+		// reordering is caught as before — the result is read, never the frame
+		// rewritten. Deliberately not applied to `wireStatement`: no note-frame
+		// caller needs the boolean, so widening it too would exempt more for free.
+		const indexWireStatement =
+			/^(?:const[A-Za-z_$][\w$]*=)?this\.send\(\[this\.crdtJoinRef,[^{}]*\{\s*b64\s*\},?\]\);$/;
 
 		// The THIRD legitimate wire send (#1409): `NoteChannel.crdtCreate`'s
 		// genesis-frame create. It is a plain `sendRequest` call, not a

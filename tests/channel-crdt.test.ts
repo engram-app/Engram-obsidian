@@ -1249,6 +1249,121 @@ describe("NoteChannel index-room transport", () => {
 		expect(channel.sendIndexCrdt("aGVsbG8=")).toBe(false);
 	});
 
+	// #433 (F8): `send` silently no-ops unless readyState is OPEN, but
+	// sendIndexCrdt returned true regardless, and crdtJoined is only reset in
+	// onclose. That half-open window reported a frame delivered that never left
+	// the client. The provider buffers on false, so honesty here IS the recovery.
+	test("sendIndexCrdt returns false when the socket is no longer OPEN", async () => {
+		const { channel, ws } = await joinedCrdtChannel();
+		ws.sent.length = 0;
+		ws.readyState = 3; // CLOSED, while crdtJoined is still true
+
+		expect(channel.sendIndexCrdt("aGVsbG8=")).toBe(false);
+		expect(ws.sent.length).toBe(0);
+	});
+
+	// The note-frame half of the same contract. wiring.ts keys BOTH the provider
+	// buffer and `unsentDocIds` on this boolean, so a `true` here on a dead
+	// socket drops a note-content op with nothing left to re-offer it.
+	test("sendCrdt returns false when the socket is no longer OPEN", async () => {
+		const { channel, ws } = await joinedCrdtChannel();
+		ws.sent.length = 0;
+		ws.readyState = 3; // CLOSED, while crdtJoined is still true
+
+		expect(channel.sendCrdt("doc-1", "aGVsbG8=")).toBe(false);
+		expect(ws.sent.length).toBe(0);
+	});
+
+	// #433 (F5): the server replies to EVERY crdt_index_msg. Its error replies
+	// (rate_limited, index_frame_rejected) previously fell through to the generic
+	// join-error branch and surfaced as "Channel join error on crdt:...", so a
+	// dropped identity claim looked like a connection problem and nothing
+	// re-offered the frame.
+	test("an error reply for an index frame hands the frame back to be re-offered", async () => {
+		const { channel, ws } = await joinedCrdtChannel();
+		ws.sent.length = 0;
+		const rejected: { b64: string; reason: string }[] = [];
+		channel.onIndexFrameRejected = (b64, reason) => rejected.push({ b64, reason });
+
+		expect(channel.sendIndexCrdt("aGVsbG8=")).toBe(true);
+		const frame = ws.sent
+			.map((x: string) => JSON.parse(x))
+			.find((f: unknown[]) => f[3] === "crdt_index_msg");
+		const ref = frame[1];
+
+		simulateMessage(ws, [
+			null,
+			ref,
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "error", response: { reason: "index_frame_rejected" } },
+		]);
+
+		expect(rejected).toEqual([{ b64: "aGVsbG8=", reason: "index_frame_rejected" }]);
+	});
+
+	test("a rate_limited reply for an index frame is handed back too", async () => {
+		const { channel, ws } = await joinedCrdtChannel();
+		ws.sent.length = 0;
+		const rejected: string[] = [];
+		channel.onIndexFrameRejected = (_b64, reason) => rejected.push(reason);
+
+		channel.sendIndexCrdt("cmF0ZQ==");
+		const ref = ws.sent
+			.map((x: string) => JSON.parse(x))
+			.find((f: unknown[]) => f[3] === "crdt_index_msg")[1];
+
+		simulateMessage(ws, [
+			null,
+			ref,
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "error", response: { reason: "rate_limited" } },
+		]);
+
+		expect(rejected).toEqual(["rate_limited"]);
+	});
+
+	// An accepted frame must drop its in-flight entry, or the map grows for the
+	// life of the socket and a later ref could collide with a stale entry.
+	test("an ok reply for an index frame does not re-offer it", async () => {
+		const { channel, ws } = await joinedCrdtChannel();
+		ws.sent.length = 0;
+		let rejects = 0;
+		channel.onIndexFrameRejected = () => rejects++;
+
+		channel.sendIndexCrdt("b2s=");
+		const ref = ws.sent
+			.map((x: string) => JSON.parse(x))
+			.find((f: unknown[]) => f[3] === "crdt_index_msg")[1];
+
+		simulateMessage(ws, [null, ref, "crdt:u1:v1", "phx_reply", { status: "ok", response: {} }]);
+		// A second, unrelated error reply on that same ref must find nothing.
+		simulateMessage(ws, [
+			null,
+			ref,
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "error", response: { reason: "index_frame_rejected" } },
+		]);
+
+		expect(rejects).toBe(0);
+	});
+
+	// A channel crash leaves the socket OPEN against a DEAD join_ref, and this
+	// client has no per-topic rejoin. Both senders must start refusing, or they
+	// report frames delivered that the server drops on the floor.
+	test("phx_error on the crdt topic makes both senders refuse", async () => {
+		const { channel, ws } = await joinedCrdtChannel();
+		ws.sent.length = 0;
+
+		simulateMessage(ws, [null, null, "crdt:u1:v1", "phx_error", {}]);
+
+		expect(channel.sendIndexCrdt("aGVsbG8=")).toBe(false);
+		expect(channel.sendCrdt("doc-1", "aGVsbG8=")).toBe(false);
+		expect(ws.sent.length).toBe(0);
+	});
+
 	// A note frame must never be mistaken for an index frame: they share a topic
 	// and differ only by event name and the presence of doc_id.
 	test("an index frame does not reach the note-frame callback", async () => {

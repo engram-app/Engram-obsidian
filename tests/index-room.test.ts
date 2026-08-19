@@ -139,3 +139,74 @@ describe("the map name is the wire contract", () => {
 		expect(a.doc.getMap("filemeta_v0").get("x.md")).toEqual({ note_id: "id-x" });
 	});
 });
+
+// #433 review finding: the four channel tests stopped at the callback, so
+// neither `requeue` nor the drain that makes it mean anything was covered.
+// This is the actual re-delivery path.
+describe("requeue + drain (the re-offer path, #433)", () => {
+	/** One room whose transport can be refused on demand, so a rejected frame
+	 *  can be handed back the way the channel hands it back. */
+	function refusable() {
+		const sent: string[] = [];
+		let accept = true;
+		const room = new IndexRoom({
+			send: (frame) => {
+				if (!accept) return false;
+				sent.push(frame);
+				return true;
+			},
+		});
+		room.connect();
+		return {
+			room,
+			sent,
+			refuse: () => {
+				accept = false;
+			},
+			allow: () => {
+				accept = true;
+			},
+		};
+	}
+
+	test("a requeued frame is re-offered on the next rejoin", () => {
+		const { room, sent } = refusable();
+		sent.length = 0;
+
+		// The channel accepted this on the wire, so the provider does NOT buffer
+		// it; only the server's later error reply says it was refused.
+		room.store.set("Notes/claim.md", { note_id: "note-1" });
+		room.store.commit();
+		const delivered = sent.pop();
+		expect(delivered).toBeDefined();
+
+		room.requeue(delivered as string);
+		sent.length = 0;
+
+		// A REJOIN is what flushes it. Deliberately not a poll: forcing a flush
+		// with setConnected(true) consumes the false->true edge, so the real
+		// rejoin then skips its syncStep1 and the room goes write-only.
+		room.setConnected(false);
+		room.connect();
+		expect(sent).toContain(delivered);
+	});
+
+	test("a rejoin that is still refused keeps the frame rather than dropping it", () => {
+		const { room, sent, refuse, allow } = refusable();
+		room.store.set("Notes/claim2.md", { note_id: "note-2" });
+		room.store.commit();
+		const delivered = sent.pop() as string;
+
+		room.requeue(delivered);
+		refuse();
+		room.setConnected(false);
+		room.connect();
+
+		allow();
+		sent.length = 0;
+		room.setConnected(false);
+		room.connect();
+		// Still there to be re-offered: a refused rejoin must not consume the claim.
+		expect(sent).toContain(delivered);
+	});
+});

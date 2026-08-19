@@ -158,6 +158,17 @@ export class NoteProvider {
 		this.buffer.push({ frame, kind });
 	}
 
+	/** Put a frame BACK in the offline buffer without sending it.
+	 *
+	 *  For a frame the transport accepted but the server then refused. `broadcast`
+	 *  cannot express that: it decides send-vs-buffer up front, and by the time
+	 *  the error reply lands the frame is long gone. Deliberately does NOT retry
+	 *  now — a refusal is usually a rate limit, and re-sending into one is how the
+	 *  2026-07 re-handshake storm worked. It rides the next connect flush instead. */
+	requeue(frame: string, kind: FrameKind): void {
+		this.buffer.push({ frame, kind });
+	}
+
 	/** Relay's onopen: (re)connect the transport. */
 	connect(): void {
 		this.setConnected(true);

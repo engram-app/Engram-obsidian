@@ -2404,6 +2404,34 @@ export default class EngramSyncPlugin extends Plugin {
 					const indexRoom = this.indexRoom;
 					if (indexRoom) {
 						channel.onIndexMessage = (b64) => indexRoom.receive(b64);
+						// A refused index frame is a lost path->id claim until something
+						// re-offers it (#433). Re-offer ONLY what can succeed on a retry.
+						//
+						// `rate_limited` is transient by definition: the same frame is
+						// accepted once the budget refills, so it is re-offered.
+						//
+						// `index_frame_rejected` is NOT purely terminal, and the wire cannot
+						// tell. Server-side it is a catch-all covering poison frames (bad
+						// base64, oversized, implausible state vector) AND transient causes
+						// like `ensure_index_room` failing to start the room. Re-offering a
+						// poison frame forever would leave a buffer that can never empty,
+						// which pins the doc resident, so this drops and logs.
+						//
+						// Dropping is survivable BECAUSE the rejoin handshake re-offers
+						// whatever the server lacks: the claim is still in the local doc.
+						// The right fix is for the backend to split the poison reasons out
+						// so this can retry the transient ones; until then the log line is
+						// the operator-visible signal.
+						channel.onIndexFrameRejected = (b64, reason) => {
+							if (reason === "rate_limited") {
+								indexRoom.requeue(b64);
+								return;
+							}
+							rlog().error(
+								"crdt",
+								`index frame refused terminally (${reason}) — claim dropped, not retried`,
+							);
+						};
 					}
 					// Deferred activation: only engage CRDT routing in the SyncEngine
 					// after the server confirms the crdt: topic join. Against a non-CRDT
