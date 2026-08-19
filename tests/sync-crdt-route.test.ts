@@ -212,6 +212,14 @@ function flush(ms = 50): Promise<void> {
 	return new Promise((r) => setTimeout(r, ms));
 }
 
+/** #1409: the genesis branch calls `crdt.encodeGenesisUpdate(content)` to build
+ *  the crdt_create b64 frame whenever the note is markdown and not live-bound.
+ *  Any test that reaches that branch (most of "Task 3") needs this on its
+ *  `setCrdtManager` stub, even when it never inspects the returned bytes. */
+function stubEncodeGenesisUpdate(): ReturnType<typeof mock> {
+	return mock((c: string) => new TextEncoder().encode(c));
+}
+
 /** Mark a note_id as server-confirmed (rest-first fix): pushFile only routes
  *  a note through CRDT once the server is known to have a row for it (learned
  *  from a pull, or confirmed by a prior successful REST push). Tests that
@@ -1007,7 +1015,10 @@ describe("Task 3: new-note genesis routes through crdt_create", () => {
 		const engine = createEngine(noteIdMap);
 		// The body is seeded into the Y.Doc after the row is created — the update
 		// listener forwards it over the channel. applyLocalEdit reports consumed.
-		engine.setCrdtManager({ applyLocalEdit: mock(async (_id: string, c: string) => c) } as any);
+		engine.setCrdtManager({
+			applyLocalEdit: mock(async (_id: string, c: string) => c),
+			encodeGenesisUpdate: stubEncodeGenesisUpdate(),
+		} as any);
 		const created: Array<{ id: string; path: string }> = [];
 		engine.setCrdtCreate(async (id: string, path: string) => {
 			created.push({ id, path });
@@ -1117,7 +1128,12 @@ describe("Task 3: new-note genesis routes through crdt_create", () => {
 		const applyLocalEdit = mock(async (_id: string, c: string) => c);
 		const projectedText = mock(async (_id: string) => "hello world");
 		const removeDoc = mock(async (_id: string) => {});
-		engine.setCrdtManager({ applyLocalEdit, projectedText, removeDoc } as any);
+		engine.setCrdtManager({
+			applyLocalEdit,
+			projectedText,
+			removeDoc,
+			encodeGenesisUpdate: stubEncodeGenesisUpdate(),
+		} as any);
 		engine.setLiveBoundCheck(() => false); // idle
 		engine.setCrdtEnrollment({ enroll: mock(() => {}), reset: mock(() => {}) } as any);
 		const rebinds: string[] = [];
@@ -1492,6 +1508,7 @@ describe("genesis echo-cooldown window (repo-review 2026-08)", () => {
 		const engine = createEngine(noteIdMap);
 		engine.setCrdtManager({
 			applyLocalEdit: mock(async (_id: string, c: string) => c),
+			encodeGenesisUpdate: stubEncodeGenesisUpdate(),
 		} as any);
 		engine.setCrdtCreate(async (id: string) => ({ docId: id, seeded: false }));
 

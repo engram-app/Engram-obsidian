@@ -410,6 +410,18 @@ describe("privacy — no content retention for export", () => {
 		// most of what this check exists to catch.
 		const indexWireStatement = /^this\.send\(\[this\.crdtJoinRef,[^{}]*\{\s*b64\s*\}\]\);$/;
 
+		// The THIRD legitimate wire send (#1409): `NoteChannel.crdtCreate`'s
+		// genesis-frame create. It is a plain `sendRequest` call, not a
+		// `this.send([this.crdtJoinRef, ...])` frame like the two above, so it
+		// gets its own exact form rather than being folded into either. Because
+		// no `;` separates the preceding method from this one in the stripped
+		// source (a class member has no statement terminator), the extracted
+		// "statement" includes the whole `crdtCreate` signature up to its own
+		// closing `;` — matched here as one literal block, same "exact text,
+		// not a loosened anchor" principle as the other two.
+		const crdtCreateWireStatement =
+			/^asynccrdtCreate\(docId:string,path:string,b64\?:string\):Promise<CrdtCreateResult>\{constres=\(awaitthis\.sendRequest\("",\{doc_id:docId,path,\.\.\.\(b64===undefined\?\{\}:\{b64\}\),\}\)\)asCrdtCreateReply;$/;
+
 		const findings: Finding[] = [];
 		for (const f of sources) {
 			const stripped = stripCommentsAndStrings(f.text);
@@ -427,7 +439,11 @@ describe("privacy — no content retention for export", () => {
 						.slice(from, to === -1 ? undefined : to + 1)
 						.replace(/\s+/g, "")
 						.replace(/^[^A-Za-z_$]*/, "");
-					if (!wireStatement.test(statement) && !indexWireStatement.test(statement)) {
+					if (
+						!wireStatement.test(statement) &&
+						!indexWireStatement.test(statement) &&
+						!crdtCreateWireStatement.test(statement)
+					) {
 						findings.push({
 							file: f.rel,
 							line: stripped.slice(0, m.index).split("\n").length,

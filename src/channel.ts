@@ -160,6 +160,16 @@ function wsOrigin(baseUrl: string): string {
 	return baseUrl.replace(/\/+$/, "").replace(/\/api$/, "");
 }
 
+/** Result of `crdtCreate` — see its docstring. Named (not inlined) so the
+ *  return-type annotation carries no `;` between its two members right next
+ *  to the wire-send statement the source-compliance privacy guard
+ *  (tests/source-compliance.test.ts) exempts by exact text. */
+export type CrdtCreateResult = { docId: string; seeded: boolean };
+
+/** Raw server reply shape for `crdt_create`, before the docId/seeded rename —
+ *  same "no inline `;`" reasoning as CrdtCreateResult above. */
+type CrdtCreateReply = { doc_id: string; seeded?: boolean };
+
 export class NoteChannel {
 	private ws: WebSocket | null = null;
 	private ref = 0;
@@ -489,23 +499,19 @@ export class NoteChannel {
 	 *  false on adopt, on a live room, on a malformed frame, and on any checkpoint
 	 *  skip. A false ALWAYS means "fall back to the crdt_msg seed", never "retry
 	 *  the create". */
-	async crdtCreate(
-		docId: string,
-		path: string,
-		b64?: string,
-	): Promise<{ docId: string; seeded: boolean }> {
-		// Built as a mutated variable, not an object literal carrying `b64` — the
-		// source-compliance privacy guard (tests/source-compliance.test.ts) flags
-		// any `{ ..., b64 }`-shaped literal outside the one exempted wire-send
-		// statement, since that shape is how a frame gets stashed in a buffer.
-		// This IS the legitimate one-time send (analogous to that exemption), so
-		// it sidesteps the shape rather than widening the guard.
-		const payload: Record<string, unknown> = { doc_id: docId, path };
-		if (b64 !== undefined) payload.b64 = b64;
-		const res = (await this.sendRequest("crdt_create", payload)) as {
-			doc_id: string;
-			seeded?: boolean;
-		};
+	async crdtCreate(docId: string, path: string, b64?: string): Promise<CrdtCreateResult> {
+		// This literal is a THIRD legitimate wire-send the source-compliance
+		// privacy guard (tests/source-compliance.test.ts) allowlists by exact
+		// statement, beside `wireStatement`/`indexWireStatement`. It is written
+		// naturally (not dodged via an alias/two-statement bypass — the guard's
+		// own comments call that out as a known blind spot) precisely so the
+		// guard can see it; if this statement's shape ever changes, update
+		// `crdtCreateWireStatement` there to match.
+		const res = (await this.sendRequest("crdt_create", {
+			doc_id: docId,
+			path,
+			...(b64 === undefined ? {} : { b64 }),
+		})) as CrdtCreateReply;
 		return { docId: res.doc_id, seeded: res.seeded === true };
 	}
 

@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
+import "fake-indexeddb/auto";
 import { TFile } from "obsidian";
+import * as Y from "yjs";
 import type { EngramApi } from "../src/api";
+import { CONTENT_KEY } from "../src/crdt/frontmatter-codec";
 import { NoteIdMap } from "../src/crdt/note-id-map";
+import { ProviderRegistry } from "../src/crdt/provider-registry";
 import { LimitExceededError } from "../src/limit-error";
 import { fnv1a, SyncEngine } from "../src/sync";
 import type { SyncedFileTable } from "../src/synced-file";
@@ -370,6 +374,10 @@ describe("SyncEngine.handleRename", () => {
 		const enqueued: Array<{ kind: string; docId: string }> = [];
 		engine.setCrdtManager({
 			applyLocalEdit: mock(async (_id: string, c: string) => c),
+			// #1409: markdown + not-live-bound reaches encodeGenesisUpdate before
+			// crdt_create builds the b64 frame, even though this test's stub
+			// always replies seeded:false.
+			encodeGenesisUpdate: mock((c: string) => new TextEncoder().encode(c)),
 		} as any);
 		(mockApp.vault.cachedRead as jest.Mock).mockResolvedValue("# body");
 		engine.setCrdtDelete(crdtDelete);
@@ -2700,12 +2708,21 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
 	});
 
-	// #1409: crdt_create now carries the genesis body (a base64 update frame),
-	// so the server can write it with a detached Y.Doc instead of opening a
-	// room per file (a full-vault import used to spin up one OTP room process
-	// per note). `seeded: true` means the server confirmed the body is
-	// durably readable, so pushFile's disk-seed routeModify call — which
-	// would otherwise open the room this exists to avoid — is skipped.
+	// #1409: crdt_create now carries the genesis body (a base64 update frame
+	// built by `crdt.encodeGenesisUpdate`), so the server can write it with a
+	// detached Y.Doc instead of opening a room per file (a full-vault import
+	// used to spin up one OTP room process per note). `seeded: true` means the
+	// server confirmed the body is durably readable, so pushFile's disk-seed
+	// routeModify call — which would otherwise open the room this exists to
+	// avoid — is skipped, and instead the SAME update bytes are applied to
+	// THIS device's own doc via `applyRemoteUpdate` (review finding, HIGH):
+	// skipping that local apply leaves this device's doc empty while the
+	// server already holds the content — a lineage split. This device's next
+	// edit would then find an empty (history-less) local doc, take the
+	// seedOnce/lca=false path, and ship the whole edited body as a SECOND,
+	// independent lineage that the server merges with the genesis one it
+	// already has — doubling the note (the #846 class). The dedicated
+	// regression test below proves this end to end.
 	describe("genesis body seed (#1409)", () => {
 		function genesisEngine(
 			crdtCreateImpl: (
@@ -2716,20 +2733,24 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 		) {
 			const engine = createEngine();
 			const applyLocalEdit = mock(async (_id: string, c: string) => c);
-			engine.setCrdtManager({ applyLocalEdit } as any);
+			const applyRemoteUpdate = mock(async () => {});
+			const encodeGenesisUpdate = mock((c: string) => new TextEncoder().encode(c));
+			engine.setCrdtManager({
+				applyLocalEdit,
+				applyRemoteUpdate,
+				encodeGenesisUpdate,
+			} as any);
 			engine.setCrdtCreate(crdtCreateImpl);
 			// pushFile only mints/resolves a note_id (and so only reaches the
 			// genesis branch at all) when a NoteIdMap is wired — without one,
 			// noteId stays null and the whole crdt_create branch is skipped.
 			engine.setNoteIdMap(new NoteIdMap());
-			return { engine, applyLocalEdit };
+			return { engine, applyLocalEdit, applyRemoteUpdate, encodeGenesisUpdate };
 		}
 
-		test("skips the crdt_msg body seed when the server seeded the note at genesis", async () => {
-			const { engine, applyLocalEdit } = genesisEngine(async (docId) => ({
-				docId,
-				seeded: true,
-			}));
+		test("skips the crdt_msg body seed when the server seeded the note at genesis, applying the SAME update bytes locally instead", async () => {
+			const { engine, applyLocalEdit, applyRemoteUpdate, encodeGenesisUpdate } =
+				genesisEngine(async (docId) => ({ docId, seeded: true }));
 			const file = new TFile("Notes/Seeded.md", Date.now());
 
 			const ok = await (
@@ -2738,10 +2759,15 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 
 			expect(ok).toBe(true);
 			expect(applyLocalEdit).not.toHaveBeenCalled();
+			// The local-apply fix: the same bytes encodeGenesisUpdate produced (and
+			// sent to crdt_create) must be applied to this device's own doc.
+			expect(applyRemoteUpdate).toHaveBeenCalledTimes(1);
+			const sentUpdate = encodeGenesisUpdate.mock.results[0]?.value;
+			expect(applyRemoteUpdate.mock.calls[0]?.[1]).toBe(sentUpdate);
 		});
 
 		test("falls back to the crdt_msg body seed when the server did not seed", async () => {
-			const { engine, applyLocalEdit } = genesisEngine(async (docId) => ({
+			const { engine, applyLocalEdit, applyRemoteUpdate } = genesisEngine(async (docId) => ({
 				docId,
 				seeded: false,
 			}));
@@ -2753,6 +2779,123 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 
 			expect(ok).toBe(true);
 			expect(applyLocalEdit).toHaveBeenCalledTimes(1);
+			expect(applyRemoteUpdate).not.toHaveBeenCalled();
+		});
+
+		test("MEDIUM fix: an ADOPT never trusts seeded, even if the server said seeded:true", async () => {
+			// Defence in depth (review finding): the contract says the server
+			// always answers seeded:false on adopt, but this must not be taken on
+			// faith — trusting it here would stamp a baseline for a body never
+			// sent to the row this device actually got remapped to.
+			const noteIdMap = new NoteIdMap();
+			const engine = createEngine();
+			const applyLocalEdit = mock(async (_id: string, c: string) => c);
+			const applyRemoteUpdate = mock(async () => {});
+			engine.setCrdtManager({
+				applyLocalEdit,
+				applyRemoteUpdate,
+				encodeGenesisUpdate: mock((c: string) => new TextEncoder().encode(c)),
+			} as any);
+			engine.setNoteIdMap(noteIdMap);
+			// Adopt: server hands back a DIFFERENT id than what was sent, but
+			// (hypothetically, against the real contract) claims seeded:true.
+			engine.setCrdtCreate(async () => ({ docId: "server-owns-this", seeded: true }));
+
+			const file = new TFile("Notes/Adopted.md", Date.now());
+			const ok = await (
+				engine as unknown as { pushFile(f: TFile): Promise<boolean> }
+			).pushFile(file);
+
+			expect(ok).toBe(true);
+			// Never trusted: falls through to the disk-seed path regardless of the
+			// (wrongly) claimed seeded:true.
+			expect(applyRemoteUpdate).not.toHaveBeenCalled();
+			expect(applyLocalEdit).toHaveBeenCalledTimes(1);
+			expect(applyLocalEdit.mock.calls[0]?.[0]).toBe("server-owns-this");
+		});
+
+		// HIGH finding regression test: drives pushFile through TWO real saves —
+		// the genesis create, then a subsequent edit — against a REAL
+		// ProviderRegistry (not a mock), so the local doc's Yjs history is
+		// exactly what production code produces. A second, independent Y.Doc
+		// mirrors "the server": seeded from the SAME bytes `encodeGenesisUpdate`
+		// built (captured off the real instance, not re-derived), then merged
+		// with whatever the second pushFile's edit would ship over crdt_msg —
+		// exactly what happens on the wire. Without the local-apply fix, this
+		// device's doc stays empty through the create, so the second pushFile's
+		// applyLocalEdit takes the seedOnce/lca=false path and inserts the WHOLE
+		// edited body as an independent lineage; merged against the server's
+		// already-seeded doc, that produces DOUBLED content, not the edit.
+		test("a subsequent edit after a seeded:true genesis create does not fork a second lineage (would double the body server-side)", async () => {
+			const noteIdMap = new NoteIdMap();
+			const registry = new ProviderRegistry({
+				dbPrefix: `sync-test-genesis-no-double-${Math.random().toString(36).slice(2)}`,
+				send: () => true,
+				onFlushToDisk: async () => true,
+			});
+			registry.setConnected(true);
+			const engine = createEngine();
+			engine.setCrdtManager(registry);
+			engine.setNoteIdMap(noteIdMap);
+
+			// Capture the exact bytes the real encodeGenesisUpdate produces, the
+			// same value sync.ts hands to crdt_create AND (via the fix) to
+			// applyRemoteUpdate — so "the server" below seeds from what actually
+			// went over the wire, not a re-derived approximation.
+			const realEncode = registry.encodeGenesisUpdate.bind(registry);
+			let genesisUpdate: Uint8Array | null = null;
+			registry.encodeGenesisUpdate = ((content: string, kind?: "note" | "canvas") => {
+				genesisUpdate = realEncode(content, kind);
+				return genesisUpdate;
+			}) as typeof registry.encodeGenesisUpdate;
+
+			engine.setCrdtCreate(async (docId) => ({ docId, seeded: true }));
+
+			const genesisContent = "line one\n";
+			(mockApp.vault.cachedRead as jest.Mock).mockResolvedValue(genesisContent);
+			const file = new TFile("Notes/NoDouble.md", Date.now());
+
+			const created = await (
+				engine as unknown as { pushFile(f: TFile): Promise<boolean> }
+			).pushFile(file);
+			expect(created).toBe(true);
+			expect(genesisUpdate).not.toBeNull();
+
+			const noteId = noteIdMap.get("Notes/NoDouble.md");
+			expect(noteId).toBeTruthy();
+			if (!noteId) throw new Error("noteId not minted");
+			if (!genesisUpdate) throw new Error("genesisUpdate not captured");
+
+			// "The server": an independent doc seeded from the SAME bytes.
+			const serverDoc = new Y.Doc();
+			Y.applyUpdate(serverDoc, genesisUpdate);
+
+			// The fix under test: this device's OWN doc must already carry that
+			// lineage, not stay empty waiting for a room that will never open.
+			expect(await registry.projectedText(noteId)).toBe(genesisContent);
+
+			// A subsequent edit — a genuinely later save of the same note.
+			const editedContent = "line one\nline two\n";
+			(mockApp.vault.cachedRead as jest.Mock).mockResolvedValue(editedContent);
+			const edited = await (
+				engine as unknown as { pushFile(f: TFile): Promise<boolean> }
+			).pushFile(file);
+			expect(edited).toBe(true);
+
+			// Simulate that edit reaching the server over crdt_msg: encode this
+			// device's doc state relative to what the server already has, and
+			// merge it in — exactly what a live crdt_msg round-trip does.
+			const localDoc = await registry.getDoc(noteId);
+			const delta = Y.encodeStateAsUpdate(localDoc, Y.encodeStateVector(serverDoc));
+			Y.applyUpdate(serverDoc, delta);
+
+			// Not doubled: the server ends up with exactly the edited content, a
+			// single coherent lineage — not "line one\n" (genesis) merged
+			// alongside an independent "line one\nline two\n" (a second lineage
+			// from an empty local doc's seedOnce).
+			expect(serverDoc.getText(CONTENT_KEY).toString()).toBe(editedContent);
+
+			registry.destroyAll();
 		});
 	});
 

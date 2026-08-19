@@ -44,6 +44,15 @@ describe("assertConverged", () => {
 		const { scheduler, server, a, b } = await bootPair(3);
 		await a.createNote("ok.md", "converged content\n");
 		await scheduler.drain();
+		// #1409: a genesis create no longer opens a room, so an ONLINE-but-idle
+		// peer no longer incidentally receives the body via live fan-out (it
+		// never did for a peer that was OFFLINE during the create and caught up
+		// later — verified against pre-#1409 `main`, same empty-doc/correct-disk
+		// shape). A cold note's Y.Doc is *intentionally* room-free until opened
+		// (sync.ts's discovery-branch docstring); open it here, the realistic
+		// action that drives the STEP1/STEP2 hydration this assertion needs.
+		await b.openNote("ok.md");
+		await scheduler.drain();
 
 		await expect(assertConverged([a, b], server, scheduler)).resolves.toBeUndefined();
 	});

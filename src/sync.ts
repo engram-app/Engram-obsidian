@@ -15,9 +15,9 @@ import { arrayBufferToBase64, base64ToArrayBuffer, type EngramApi } from "./api"
 import type { BaseStore } from "./base-store";
 import { fnv1a } from "./content-hash";
 import type { NoteIdMap } from "./crdt/note-id-map";
-import { genesisFrameFor } from "./crdt/note-seed";
 import type { ProviderRegistry } from "./crdt/provider-registry";
 import { uuid7 } from "./crdt/uuid7";
+import { encodeUpdateFrame } from "./crdt/wire";
 import { crdtOpFailureReason } from "./crdt-op-dispatch";
 import { devLog } from "./dev-log";
 import { errMsg, isHttpStatus } from "./error-util";
@@ -3559,19 +3559,28 @@ export class SyncEngine {
 						// #1409: hand the body to crdt_create so the server can write it
 						// with a detached Y.Doc instead of opening a room per file — a
 						// full-vault import otherwise spins up one OTP room process per
-						// note. Markdown only (seedContentInto is the markdown seeder;
-						// canvas has a different Y.Doc shape) and only when the note is
+						// note. Markdown only (`encodeGenesisUpdate`'s note branch is the
+						// markdown seeder; canvas has a different Y.Doc shape — the
+						// registry's own `kind` param handles that split, but this genesis
+						// path only ever sends the note shape) and only when the note is
 						// NOT live-bound — a live-bound note's frozen `content` can lag
 						// unflushed keystrokes, which is exactly why the disk-seed branch
 						// below re-reads via cachedRead instead of trusting `content`.
-						const genesisFrame =
-							file.extension === "md" && !this.isLiveBound(normalizePath(pushedPath))
-								? genesisFrameFor(content)
+						// `genesisUpdate` is kept as the raw Yjs bytes (not just the wire
+						// frame) so a `seeded: true` reply can apply the SAME update to
+						// this device's own doc below — see that comment for why.
+						const genesisUpdate =
+							!canvasPath(pushedPath) && !this.isLiveBound(normalizePath(pushedPath))
+								? this.crdt.encodeGenesisUpdate(content)
 								: undefined;
 						const { docId: serverId, seeded } =
-							genesisFrame === undefined
+							genesisUpdate === undefined
 								? await this.crdtCreate(noteId, pushedPath)
-								: await this.crdtCreate(noteId, pushedPath, genesisFrame);
+								: await this.crdtCreate(
+										noteId,
+										pushedPath,
+										encodeUpdateFrame(genesisUpdate),
+									);
 						let effectiveId = noteId;
 						try {
 							// On ADOPT (serverId !== noteId) the path is already owned by a
@@ -3645,31 +3654,45 @@ export class SyncEngine {
 									);
 									effectiveId = serverId;
 								}
-								// #1409: the server already applied our genesis frame and
-								// confirmed the body is durably readable, so re-sending it
-								// over crdt_msg would open the very room this exists to
-								// avoid. `seeded` is false on every uncertain path (adopt,
-								// live room, bad frame, checkpoint skip, or no frame sent
-								// at all — canvas/live-bound/oversized), so this only
-								// short-circuits on a positive confirmation; `content` is
-								// exactly what the server now holds, matching
-								// adoptCreateAck's baseline below.
-								//
-								// Otherwise: seed the body under the effective id via the
-								// Y.Doc update listener, which forwards it over the channel
-								// (crdt_msg). A LIVE reread, not the frozen `content`, backs
-								// the manager's stale-snapshot guard.
-								consumed = seeded
-									? content
-									: await routeModify(
-											{
-												crdtEligible: true,
-												noteId: effectiveId,
-												readContent: () => this.app.vault.cachedRead(file),
-											},
-											this.crdt,
-											MAX_CRDT_NOTE_BYTES,
-										);
+								// #1409: `serverId === noteId` (never trust `seeded` across an
+								// ADOPT remap — defence in depth: the contract says the
+								// server always answers `seeded: false` on adopt, but if
+								// that were ever wrong, honouring it here would stamp a
+								// baseline for a body that was never sent to the row we
+								// actually remapped to, which is silent data loss).
+								if (seeded && serverId === noteId && genesisUpdate) {
+									// The server confirmed our genesis frame landed. Apply the
+									// EXACT SAME update bytes to this device's own (still-empty)
+									// doc — origin = the provider, so it does NOT re-broadcast
+									// and does NOT open a room — so this device's lineage is
+									// the one the server has, instead of staying empty until
+									// the next edit seeds a SECOND, independent lineage (the
+									// #846 doubling: an empty doc has no history, so its next
+									// applyLocalEdit takes the seedOnce/lca=false path and
+									// inserts the whole body as new ops, which the server then
+									// merges with the genesis lineage it already holds).
+									// Verified no inbound path does this for us: catch-up
+									// replay (discoverAnnouncedNote) returns early once the
+									// file exists on disk, and the idle-note catch-up backfill
+									// (applyChange's diverged branch) writes DISK content only
+									// — it never touches the Y.Doc for a non-live-bound note.
+									await this.crdt.applyRemoteUpdate(effectiveId, genesisUpdate);
+									consumed = content;
+								} else {
+									// Seed the body under the effective id via the Y.Doc update
+									// listener, which forwards it over the channel (crdt_msg). A
+									// LIVE reread, not the frozen `content`, backs the manager's
+									// stale-snapshot guard.
+									consumed = await routeModify(
+										{
+											crdtEligible: true,
+											noteId: effectiveId,
+											readContent: () => this.app.vault.cachedRead(file),
+										},
+										this.crdt,
+										MAX_CRDT_NOTE_BYTES,
+									);
+								}
 							}
 							// Task 1's canSendLive gate held effectiveId's live update(s)
 							// (including the seed above) until this exact moment, so nothing

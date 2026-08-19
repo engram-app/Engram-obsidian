@@ -270,21 +270,30 @@ export class ModelServer {
 	): void {
 		const docId = payload.doc_id as string;
 		const path = payload.path as string;
+		const b64 = payload.b64 as string | undefined;
 		// ADOPT: if the path is already owned by a different live note, return that
 		// note's id (the create-race / adopt-first behaviour the client remaps on).
 		const owner = this.byPath.get(path);
 		let effectiveId = docId;
+		// #1409: seeded is true only for a genuine (non-adopt) genesis that carried
+		// a b64 frame we actually applied — mirrors the real backend's contract
+		// (`seeded: false` on adopt/no-frame/live-room/bad-frame), so a simulation
+		// run exercises the client's `seeded`-gated local-apply path (sync.ts) same
+		// as `handleCrdtCreateBatch` already does for the batch path.
+		let seeded = false;
 		if (owner && owner !== docId) {
 			effectiveId = owner;
 		} else if (!this.byId.has(docId)) {
-			// Genesis: an EMPTY body Y.Doc (genesisEmptyDoc default true — the prod
-			// adopt-first shape #288/#285 exploit). No body is carried by crdt_create,
-			// so the doc is empty regardless of the flag; the flag is retained for the
-			// P2 exploit naming and a future non-empty-genesis mode.
-			// ponytail: genesisEmptyDoc=false is currently indistinguishable (create
-			// carries no body) — kept per the brief, wired when a seed-at-create arrives.
+			// Genesis: an EMPTY body Y.Doc unless a genesis frame was sent, in which
+			// case it's applied below (genesisEmptyDoc default true — the prod
+			// adopt-first shape #288/#285 exploit; retained for the P2 exploit naming
+			// and a future non-empty-genesis-by-default mode).
 			void this.genesisEmptyDoc;
-			this.mint(docId, path);
+			const n = this.mint(docId, path);
+			if (b64) {
+				this.applyClientFrame(n, b64);
+				seeded = true;
+			}
 		}
 		// NOTE (P2 rename fidelity): a rename is client-modeled as crdt_delete(old id)
 		// THEN crdt_create(new path, SAME id). The real backend hits the tombstone and
@@ -294,7 +303,7 @@ export class ModelServer {
 		// omits note_changed (divergence #3), so remote old-path cleanup can't happen
 		// here — rename is a P2 server-tier concern and is excluded from the Task 8
 		// random suite. See p1-task-8-report.md.
-		this.reply(clientId, joinRef, ref, topic, "ok", { doc_id: effectiveId });
+		this.reply(clientId, joinRef, ref, topic, "ok", { doc_id: effectiveId, seeded });
 		// crdt_doc_ready is broadcast_from! — only OTHER devices see it (so an empty
 		// note can be discovered + STEP1-enrolled without a note_yjs_update fan-out).
 		this.broadcastOthers(
