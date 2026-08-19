@@ -1219,6 +1219,18 @@ describe("NoteChannel index-room transport", () => {
 		expect(ws.sent.length).toBe(0);
 	});
 
+	// The note-frame half of the same contract. wiring.ts keys BOTH the provider
+	// buffer and `unsentDocIds` on this boolean, so a `true` here on a dead
+	// socket drops a note-content op with nothing left to re-offer it.
+	test("sendCrdt returns false when the socket is no longer OPEN", async () => {
+		const { channel, ws } = await joinedCrdtChannel();
+		ws.sent.length = 0;
+		ws.readyState = 3; // CLOSED, while crdtJoined is still true
+
+		expect(channel.sendCrdt("doc-1", "aGVsbG8=")).toBe(false);
+		expect(ws.sent.length).toBe(0);
+	});
+
 	// #433 (F5): the server replies to EVERY crdt_index_msg. Its error replies
 	// (rate_limited, index_frame_rejected) previously fell through to the generic
 	// join-error branch and surfaced as "Channel join error on crdt:...", so a
