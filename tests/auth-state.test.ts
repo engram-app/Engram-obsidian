@@ -181,6 +181,27 @@ describe("withClearedAuth", () => {
 		expect(cleared.accessTokenVaultId).toBeUndefined();
 	});
 
+	test("clears the plan verdict — it belongs to the backend that issued it", () => {
+		// A tier verdict is scoped to the server that sent it. Carrying a Cloud
+		// Free-tier "notes only" plan onto a self-hosted server made
+		// preGateAttachment skip every image and PDF client-side, with no
+		// network call, on a server that would have accepted them. Null (not
+		// false) is required: unknown plan is what makes the pre-gate fall
+		// through and let the backend decide.
+		const cleared = withClearedAuth(
+			fullSettings({
+				planState: {
+					tier: "free",
+					attachmentsTextOnly: true,
+					maxFileBytes: 10_485_760,
+					attachmentBytesCap: null,
+					updatedAt: 1,
+				},
+			}),
+		);
+		expect(cleared.planState).toBeNull();
+	});
+
 	test("preserves apiUrl, clientId, and unrelated settings", () => {
 		const before = fullSettings({
 			apiUrl: "http://engram.ax",

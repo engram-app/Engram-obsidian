@@ -131,6 +131,16 @@ const CLEARED_AUTH_VALUES = {
 	accessToken: undefined,
 	accessTokenExpiresAt: undefined,
 	accessTokenVaultId: undefined,
+	// Not a credential, but a VERDICT the old backend issued about this user —
+	// and pointing the same mode at a different server is exactly when it stops
+	// applying. A mode switch stashes it (switching back to Cloud restores the
+	// Cloud plan); a URL change to a different backend must WIPE it, because the
+	// new server has said nothing yet. Leaving it set carried a Cloud Free-tier
+	// "notes only" verdict onto a self-hosted server, where `preGateAttachment`
+	// then skipped every image and PDF client-side without ever asking — the
+	// server would have accepted them. Null is the safe value: an unknown plan
+	// makes preGateAttachment fall through and let the backend decide.
+	planState: null,
 } as const satisfies Partial<Record<BackendScopedField, unknown>>;
 
 /** Returns a copy of settings with all backend-scoped auth state cleared.

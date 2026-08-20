@@ -17,7 +17,18 @@ export function parsePlanState(raw: unknown, now: number): PlanState | null {
 		// Validate, don't cast: an unknown backend tier ("team", a typo) must
 		// degrade to the most restrictive plan, not launder through the union.
 		tier: r.tier === "starter" || r.tier === "pro" ? r.tier : "free",
-		attachmentsTextOnly: r.attachments_text_only === true,
+		// MIGRATE step. The backend renamed this to the grant-shaped
+		// `attachments_all_types` (true == allowed) because the old
+		// restriction-shaped spelling inverted the meaning of "no limits" and
+		// silently blocked attachments on self-hosted servers. Prefer the new
+		// field; fall back to the legacy one so this build still works against
+		// a backend older than the rename. Falls back to permissive when
+		// NEITHER field is present, matching preGateAttachment's "unknown plan
+		// → let the backend decide" direction.
+		attachmentsTextOnly:
+			typeof r.attachments_all_types === "boolean"
+				? r.attachments_all_types === false
+				: r.attachments_text_only === true,
 		maxFileBytes: typeof r.max_file_bytes === "number" ? r.max_file_bytes : 0,
 		attachmentBytesCap:
 			typeof r.attachment_bytes_cap === "number" ? r.attachment_bytes_cap : null,
