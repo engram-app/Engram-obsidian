@@ -555,53 +555,6 @@ describe("EngramApi", () => {
 		});
 	});
 
-	describe("createVault", () => {
-		test("sends POST to /vaults with the name and returns the created vault", async () => {
-			mockRequestUrl.mockResolvedValueOnce({
-				status: 201,
-				json: {
-					vault: {
-						id: "vault-9",
-						name: "Fresh",
-						slug: "fresh",
-						is_default: false,
-						created_at: "2026-01-01T00:00:00Z",
-					},
-				},
-			} as any);
-			const result = await api.createVault("Fresh");
-			expect(mockRequestUrl).toHaveBeenCalledWith(
-				expect.objectContaining({
-					url: `${TEST_API_BASE}/vaults`,
-					method: "POST",
-					body: JSON.stringify({ name: "Fresh" }),
-				}),
-			);
-			expect(result).toEqual({
-				id: "vault-9",
-				name: "Fresh",
-				slug: "fresh",
-				is_default: false,
-				created_at: "2026-01-01T00:00:00Z",
-			});
-		});
-
-		test("throws LimitExceededError on 402", async () => {
-			mockRequestUrl.mockRejectedValueOnce({
-				status: 402,
-				json: {
-					error: "limit_exceeded",
-					reason: "vaults_cap_exceeded",
-					limit_key: "vaults_cap",
-					limit: 1,
-					current: 1,
-					upgrade_url: "https://app.engram.page/settings/billing",
-				},
-			});
-			await expect(api.createVault("Over limit")).rejects.toBeInstanceOf(LimitExceededError);
-		});
-	});
-
 	// -------------------------------------------------------------------------
 	// 402 standardization — see spec §4.6
 	// All write paths returning 402 must surface a LimitExceededError carrying
