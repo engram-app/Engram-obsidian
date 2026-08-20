@@ -9,7 +9,7 @@ import {
 import { modeForUrl } from "../backend-mode";
 import { errMsg } from "../error-util";
 import type { TabContext } from "./types";
-import { ENGRAM_CLOUD_URL, ENGRAM_MARKETING_URL } from "./urls";
+import { ENGRAM_CLOUD_URL } from "./urls";
 
 const PREFLIGHT_DEBOUNCE_MS = 600;
 
@@ -175,27 +175,16 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
  *    - OAuth locked: only the signed-in row + Sign out.
  *    - API key locked: only the "Using API key" row + Clear / Switch to sign in.
  *
- *  Cloud mode hangs the engram.page link off the Authentication HEADING, not
- *  the sign-in row: the two locked states return early, so a link on the
- *  sign-in row is invisible to every signed-in user — which is precisely who
- *  needs the account and billing pages. */
+ *  No marketing link here in cloud mode. It used to hang off the Authentication
+ *  heading; the Welcome tab's account row carries it now, which is where
+ *  someone looking for account or billing pages goes anyway. */
 export function renderAuthSection(ctx: TabContext): void {
 	const { containerEl, plugin, redisplay, startDeviceFlow } = ctx;
 
 	const isOAuth = !!plugin.settings.refreshToken;
 	const hasApiKey = !!plugin.settings.apiKey;
 
-	const heading = new Setting(containerEl).setName("Authentication").setHeading();
-	if ((plugin.settings.backendMode ?? "selfhost") === "cloud") {
-		// Descriptive link text, not "Learn more": the destination should be
-		// readable from the link alone (screen-reader link lists give no
-		// surrounding context).
-		heading.descEl.createEl("a", {
-			text: "engram.page",
-			href: ENGRAM_MARKETING_URL,
-			attr: { target: "_blank", rel: "noopener" },
-		});
-	}
+	new Setting(containerEl).setName("Authentication").setHeading();
 
 	if (isOAuth) {
 		new Setting(containerEl)
@@ -245,7 +234,7 @@ export function renderAuthSection(ctx: TabContext): void {
 	// "make an account first" step, and advertising one implied a prerequisite
 	// that does not exist.
 	new Setting(containerEl)
-		.setName("Sign in with Engram")
+		.setName("Sign in or create an account")
 		.setDesc(
 			"Opens your browser to sign in, or create an account if you don't have one yet, then links this vault.",
 		)
