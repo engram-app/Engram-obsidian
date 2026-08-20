@@ -175,9 +175,14 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
  *    - OAuth locked: only the signed-in row + Sign out.
  *    - API key locked: only the "Using API key" row + Clear / Switch to sign in.
  *
- *  No marketing link here in cloud mode. It used to hang off the Authentication
- *  heading; the Welcome tab's account row carries it now, which is where
- *  someone looking for account or billing pages goes anyway. */
+ *  No marketing link here in cloud mode — removed by request. Note what went
+ *  with it: it hung off the HEADING rather than the sign-in row precisely
+ *  because the two locked states return early, so the heading was the only
+ *  place a SIGNED-IN user could still see it. The Welcome tab's engram.page
+ *  link is inside "1. Make an account" under "Getting set up", which is setup
+ *  copy a signed-in user has no reason to read. So a signed-in cloud user now
+ *  has no in-plugin path to their account or billing pages. Add a real
+ *  account row to the signed-in branch below if that gap needs closing. */
 export function renderAuthSection(ctx: TabContext): void {
 	const { containerEl, plugin, redisplay, startDeviceFlow } = ctx;
 

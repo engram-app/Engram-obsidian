@@ -290,7 +290,27 @@ describe("DeviceFlowModal — retry after expiry", () => {
 		modal.renderExpired();
 		modal.contentEl.__find("Try again").click();
 
-		expect(order).toEqual(["reset", "open"]);
+		// Two resets: rendering the dead-end screen retires the attempt, and
+		// "Try again" retires it again before re-opening. resetFlow is
+		// idempotent, and the second one is what the ordering test is about.
+		expect(order).toEqual(["reset", "reset", "open"]);
+	});
+
+	// "Code expired. Please try again." is a terminal screen, but both expiry
+	// paths only cleared the interval. The socket stayed open and the resume
+	// listener stayed armed with `aborted` still false, so every return to the
+	// foreground fired another exchange of a dead device_code and re-rendered
+	// the same dead screen — forever, or until the plugin unloaded.
+	test("rendering the expired screen retires the whole attempt", () => {
+		const modal = makeModal();
+		let resets = 0;
+		modal.resetFlow = () => {
+			resets += 1;
+		};
+
+		modal.renderExpired();
+
+		expect(resets).toBe(1);
 	});
 
 	// The fallback poll and the socket redeem the SAME single-use code, so they
@@ -363,6 +383,31 @@ describe("DeviceFlowModal — retry after expiry", () => {
 		registered[0]();
 		expect(modal.pollInterval).toBeNull();
 		expect(modal.disposeSocket).toBeNull();
+	});
+
+	// startDeviceFlow is a network call with a 15s timeout. Cancelling during
+	// it runs onClose (aborted, resolve(null), resetFlow against nothing yet
+	// registered) — and then the await lands and the rest of the flow runs
+	// anyway, popping a browser window at someone who just cancelled and arming
+	// a socket, an interval and a document listener that onClose already came
+	// and went for. Only a plugin unload would ever clean them up.
+	test("a cancel during the start request stops the flow before it arms anything", async () => {
+		const modal = makeModal();
+		const armed: string[] = [];
+		modal.startDeviceFlow = async () => {
+			modal.onClose();
+			return {
+				device_code: "dc",
+				user_code: "AAAA-BBBB",
+				verification_url: "https://x/link",
+			};
+		};
+		modal.renderCodeScreen = () => armed.push("code-screen");
+		modal.startPolling = () => armed.push("polling");
+
+		await modal.beginDeviceFlow(modal.contentEl, { setText: () => {} });
+
+		expect(armed).toEqual([]);
 	});
 
 	test("closing the modal also disposes the socket", () => {
@@ -477,6 +522,33 @@ describe("DeviceFlowModal — foreground resume", () => {
 	test("resetFlow removes the resume listener", () => {
 		const { modal, exchanged, fire } = startFlow();
 		modal.resetFlow();
+		fire();
+		expect(exchanged).toEqual([]);
+		expect(listeners.size).toBe(0);
+	});
+
+	// `activeDocument` is not a constant — it tracks the FOCUSED Obsidian
+	// window, which is the whole reason the code reads it instead of
+	// `document`. Register while the main window has focus, click a popout,
+	// and a removal that re-reads the global unregisters from the wrong
+	// Document: the listener survives with the OLD device_code, and
+	// `onVisibilityChange = null` means nothing can ever reach it again.
+	// "Try again" then clears `aborted`, so the next foreground return
+	// exchanges the dead code, takes the 410, and wipes the fresh code screen
+	// with "Code expired".
+	test("removes the listener from the document it registered on, not the focused one", () => {
+		const { modal, exchanged, fire } = startFlow();
+
+		// Focus moves to a popout between arming the flow and tearing it down.
+		g.activeDocument = {
+			get visibilityState() {
+				return visibility.state;
+			},
+			addEventListener: () => {},
+			removeEventListener: () => {},
+		};
+		modal.resetFlow();
+
 		fire();
 		expect(exchanged).toEqual([]);
 		expect(listeners.size).toBe(0);
