@@ -2740,7 +2740,19 @@ export default class EngramSyncPlugin extends Plugin {
 					attachmentsTextOnly:
 						this.syncEngine.getPlanState()?.attachmentsTextOnly ?? false,
 					listVaults: () => this.api.listVaults(),
-					createVault: (name) => this.api.createVault(name),
+					// registerVault, NOT createVault: it is idempotent by client_id, so
+					// a retried or double-submitted create resolves to the SAME vault
+					// instead of making another one. createVault always makes a new
+					// vault, which is how one sync produced two vaults on 2026-08-20
+					// (292 notes orphaned in the first, 319 re-uploaded into the
+					// second). The modal mints one client_id per form visit.
+					createVault: async (name, clientId) => {
+						const reg = await this.api.registerVault(name, clientId);
+						// /vaults/register returns the vault flat, without created_at.
+						// The picker only reads id/name/slug/is_default; created_at is
+						// filled so the shape stays a VaultInfo for every consumer.
+						return { ...reg, created_at: new Date().toISOString() };
+					},
 					applyVaultChange: async (id, name) => {
 						// The picker lists EVERY vault including the active one, so a
 						// user can "change" to the vault they are already on. That is

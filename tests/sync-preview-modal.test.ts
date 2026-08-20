@@ -494,3 +494,41 @@ describe("emptyPlanDismiss — the nothing-to-sync screen", () => {
 		expect(emptyPlanDismiss(false)).toEqual({ label: "Close", accept: false });
 	});
 });
+
+describe("SyncPreviewState — duplicate-vault guard (2026-08-20)", () => {
+	// One sync produced TWO vaults: 292 notes orphaned in the first, 319
+	// re-uploaded into the second created two minutes later. Both had
+	// client_id=nil, the signature of POST /vaults (always creates) rather than
+	// POST /vaults/register (idempotent by client_id).
+	test("entering the form mints a client id, exiting clears it", () => {
+		const s = new SyncPreviewState();
+		expect(s.createVaultClientId).toBeNull();
+		s.enterCreateVault();
+		expect(typeof s.createVaultClientId).toBe("string");
+		s.exitCreateVault();
+		expect(s.createVaultClientId).toBeNull();
+	});
+
+	// The whole point: a retry after a failed submit must reuse the SAME id, so
+	// the server resolves it to the vault the first attempt may already have
+	// created instead of making another.
+	test("the client id survives an error so a retry is idempotent", () => {
+		const s = new SyncPreviewState();
+		s.enterCreateVault();
+		const first = s.createVaultClientId;
+		s.onVaultsError("boom");
+		expect(s.createVaultClientId).toBe(first);
+	});
+
+	test("the in-flight flag is a real lock, not the render flag", () => {
+		const s = new SyncPreviewState();
+		s.enterCreateVault();
+		expect(s.createVaultInFlight).toBe(false);
+		s.createVaultInFlight = true;
+		// vaultsLoading drives rendering only; it must not double as the lock.
+		s.vaultsLoading = false;
+		expect(s.createVaultInFlight).toBe(true);
+		s.exitCreateVault();
+		expect(s.createVaultInFlight).toBe(false);
+	});
+});
