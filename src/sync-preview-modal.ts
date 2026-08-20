@@ -36,6 +36,12 @@ export class SyncPreviewState {
 	/** Within the vault-picker, true while the "make a new vault" form is shown
 	 *  instead of the list of existing vaults. */
 	creatingVault = false;
+	/** Stable across retries of ONE create-vault form session — see
+	 *  enterCreateVault. Null when not on the form. */
+	createVaultClientId: string | null = null;
+	/** Guards against a second submit landing while the first POST is still in
+	 *  flight. `vaultsLoading` is a RENDER flag, not a lock. */
+	createVaultInFlight = false;
 	/** Whether the "advanced sync options" accordion (push/pull grid) is
 	 *  expanded. Collapsed by default so the modal leads with the Sync action. */
 	advancedOpen = false;
@@ -98,11 +104,18 @@ export class SyncPreviewState {
 		if (this.resolved) return;
 		this.creatingVault = true;
 		this.vaultsError = null;
+		// Minted ONCE per visit to the form, not per submit. That is what makes a
+		// retry idempotent: the same client_id resolves to the same vault
+		// server-side, so a double-submit returns the first vault instead of
+		// creating a second one.
+		this.createVaultClientId = crypto.randomUUID();
 	}
 
 	exitCreateVault(): void {
 		this.creatingVault = false;
 		this.vaultsError = null;
+		this.createVaultClientId = null;
+		this.createVaultInFlight = false;
 	}
 
 	onVaultsLoaded(vaults: VaultInfo[]): void {
@@ -312,7 +325,7 @@ export interface SyncPreviewOptions {
 	/** Creates a brand-new vault and returns it. When provided, the picker shows
 	 *  a "Make new vault" affordance. The created vault is then selected via
 	 *  applyVaultChange so the preview recalculates against the empty remote. */
-	createVault?: (name: string) => Promise<VaultInfo>;
+	createVault?: (name: string, clientId: string) => Promise<VaultInfo>;
 	/** Initial view the modal opens on. Defaults to "preview". Set to
 	 *  "vault-picker" when the user entered the modal via a "Change vault"
 	 *  affordance on the settings page. */
@@ -1125,12 +1138,23 @@ export class SyncPreviewModal extends Modal {
 			this.render();
 			return;
 		}
+		// A second submit while the first POST is still open creates a SECOND
+		// vault: observed 2026-08-20, one sync producing two vaults (292 notes
+		// orphaned, 319 re-uploaded into the replacement). vaultsLoading only
+		// drives rendering, so it cannot serve as the lock.
+		if (this.state.createVaultInFlight) return;
+		this.state.createVaultInFlight = true;
+
+		const clientId = this.state.createVaultClientId ?? crypto.randomUUID();
+		this.state.createVaultClientId = clientId;
+
 		this.state.vaultsLoading = true;
 		this.render();
 		let created: VaultInfo;
 		try {
-			created = await this.opts.createVault(trimmed);
+			created = await this.opts.createVault(trimmed, clientId);
 		} catch (e: unknown) {
+			this.state.createVaultInFlight = false;
 			this.state.vaultsLoading = false;
 			this.state.onVaultsError(describeCreateVaultError(e));
 			this.state.creatingVault = true; // remain on the form so the user can retry

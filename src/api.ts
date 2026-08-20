@@ -426,17 +426,6 @@ export class EngramApi {
 		return resp.json as VaultRegistrationResponse;
 	}
 
-	/** Create a brand-new, distinct vault for the current user. Unlike
-	 *  registerVault (idempotent by client_id), this always makes a new vault.
-	 *  Throws with status 402 if the user has reached their vault limit, or 422
-	 *  on validation errors. */
-	async createVault(name: string): Promise<VaultInfo> {
-		const resp = await this.request("POST", "/vaults", { name });
-		const vault = (resp.json as { vault?: VaultInfo }).vault;
-		if (!vault) throw new Error("Malformed /vaults response: missing vault");
-		return vault;
-	}
-
 	/** Fetch all vaults accessible by the current user. Throws the underlying
 	 *  request error (with `.status` for HTTP responses) so callers can render
 	 *  401/timeout/5xx distinctly from "successful empty list". */
