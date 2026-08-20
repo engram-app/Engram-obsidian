@@ -78,6 +78,9 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 	 *  on <1.13 (display()), the render-hatch host on 1.13+. rerender() targets
 	 *  it so redisplay/device-flow re-renders land in the right place. */
 	private activeContainerEl: HTMLElement | null = null;
+	/** Last sync-gate value this pane rendered against. See
+	 *  handleStatusBarChange — the gate is an EDGE, the status strip is a tick. */
+	private lastSyncBlocked = false;
 
 	constructor(app: App, plugin: EngramSyncPlugin) {
 		super(app, plugin);
@@ -160,7 +163,8 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 		this.statusContainerEl.addClasses(["engram-status-container"]);
 		this.renderStatus();
 
-		this.plugin.onStatusBarChange = () => this.renderStatus();
+		this.lastSyncBlocked = this.plugin.syncEngine?.isSyncBlocked() ?? false;
+		this.plugin.onStatusBarChange = () => this.handleStatusBarChange();
 
 		// ── Progress bar (hidden until sync is active, persists across tabs) ──
 		const progressContainer = containerEl.createDiv({ cls: "engram-sync-progress" });
@@ -352,6 +356,26 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 			const timeEl = statusEl.createDiv({ cls: "engram-status-time" });
 			timeEl.setText(`Last sync: ${date.toLocaleString()}`);
 		}
+	}
+
+	/** What the plugin's status-bar broadcast does to this pane.
+	 *
+	 *  Two jobs on one signal. The status strip re-draws every time — a handful
+	 *  of nodes whose text genuinely changes per tick.
+	 *
+	 *  The sync GATE is different. The Connection tab's "Finish sync setup" row
+	 *  is derived from it and drawn once, so nothing removed the row when the
+	 *  gate opened: a user who accepted the preview and watched the sync start
+	 *  was still being told nothing in this vault would sync. It has to be
+	 *  EDGE-triggered, though — this fires on every sync tick, and a full
+	 *  rerender per tick would empty and rebuild the pane under the cursor,
+	 *  losing scroll position and focus. */
+	private handleStatusBarChange(): void {
+		this.renderStatus();
+		const blocked = this.plugin.syncEngine?.isSyncBlocked() ?? false;
+		if (blocked === this.lastSyncBlocked) return;
+		this.lastSyncBlocked = blocked;
+		this.rerender();
 	}
 
 	hide(): void {
