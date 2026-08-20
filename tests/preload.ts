@@ -11,6 +11,19 @@ const g = globalThis as unknown as {
 };
 if (!g.window) g.window = globalThis;
 if (!g.activeDocument && g.document) g.activeDocument = g.document;
+// Obsidian exposes `activeDocument` — the document of the focused window, so
+// plugin code stays correct inside a popout. Bun's runtime has no DOM at all,
+// so anything registering a lifecycle listener on it (device-flow modal,
+// main.ts) would throw here. An inert stand-in is enough; tests that care
+// about the events replace it with their own fake.
+if (!g.activeDocument) {
+	g.activeDocument = {
+		visibilityState: "visible",
+		addEventListener: () => {},
+		removeEventListener: () => {},
+		body: { classList: { add() {}, remove() {} } },
+	} as unknown as typeof globalThis.document;
+}
 
 mock.module("obsidian", () => ({
 	...obsidianMock,

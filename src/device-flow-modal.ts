@@ -39,6 +39,8 @@ export class DeviceFlowModal extends Modal {
 	/** Socket said "authorized" while an exchange was already in flight. */
 	private pendingAuthorized = false;
 	private waitingEl: HTMLElement | null = null;
+	/** Foreground-resume listener, held so resetFlow can remove it. */
+	private onVisibilityChange: (() => void) | null = null;
 	private aborted = false;
 
 	constructor(app: App, plugin: EngramSyncPlugin) {
@@ -83,6 +85,10 @@ export class DeviceFlowModal extends Modal {
 		}
 		this.disposeSocket?.();
 		this.disposeSocket = null;
+		if (this.onVisibilityChange) {
+			activeDocument.removeEventListener("visibilitychange", this.onVisibilityChange);
+			this.onVisibilityChange = null;
+		}
 		this.exchanging = false;
 		this.pendingAuthorized = false;
 	}
@@ -222,6 +228,23 @@ export class DeviceFlowModal extends Modal {
 			await this.drainPendingAuthorized(apiUrl, deviceCode);
 		};
 
+		// Mobile suspends the WebView the moment the user leaves for the browser
+		// — which is exactly when authorization happens. Timers stop and the
+		// device socket is dropped (waitForDeviceAuthorization has no reconnect),
+		// so the `authorized` push arrives with nobody home. Coming back is the
+		// strongest available hint that something happened while we were away,
+		// so re-check right then instead of waiting out a 30s tick on a screen
+		// that says "linking" for a link that already succeeded.
+		//
+		// Same reasoning as the note channel's onResume in main.ts, which is why
+		// this reads activeDocument rather than document (popout windows).
+		this.onVisibilityChange = () => {
+			if (activeDocument.visibilityState === "visible") {
+				void this.exchangeNow(apiUrl, deviceCode);
+			}
+		};
+		activeDocument.addEventListener("visibilitychange", this.onVisibilityChange);
+
 		// 30s, not 5s. This is no longer how the flow completes — the socket is —
 		// so it exists purely to rescue a user whose network blocks WebSockets.
 		// Tightening it would just add request volume to the common path where
@@ -237,7 +260,9 @@ export class DeviceFlowModal extends Modal {
 		this.plugin.register(() => this.resetFlow());
 	}
 
-	/** Socket said the code was authorized: exchange it once, right now.
+	/** Something says the code may be authorized by now — the socket's push, or
+	 *  the app returning to the foreground after the push was missed. Exchange
+	 *  once, right now.
 	 *
 	 *  Guarded because the fallback interval is still armed — without this a
 	 *  poll already in flight and the socket-triggered exchange could both

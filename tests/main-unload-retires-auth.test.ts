@@ -14,11 +14,6 @@ import { describe, expect, mock, spyOn, test } from "bun:test";
 import { OAuthAuth } from "../src/auth";
 import EngramSyncPlugin from "../src/main";
 
-// onunload touches the Obsidian renderer global `activeDocument`, which the
-// preload only shims when a DOM `document` exists (it doesn't under bun).
-(globalThis as unknown as { activeDocument?: unknown }).activeDocument ??= {
-	body: { classList: { remove() {} } },
-};
 // DEV_MODE is an esbuild-injected define; bun test loads sources directly.
 (globalThis as unknown as { DEV_MODE?: boolean }).DEV_MODE ??= false;
 

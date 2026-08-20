@@ -3,7 +3,7 @@
  * carries the local Obsidian vault name so the web /link consent page
  * can pre-fill the "create new vault" field.
  */
-import { beforeEach, describe, expect, type Mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, type Mock, test } from "bun:test";
 import { requestUrl } from "obsidian";
 import { DeviceFlowModal, verificationUrlWithCode } from "../src/device-flow-modal";
 
@@ -374,5 +374,111 @@ describe("DeviceFlowModal — retry after expiry", () => {
 		modal.onClose();
 		expect(disposed).toBe(1);
 		expect(modal.aborted).toBe(true);
+	});
+});
+
+/**
+ * Mobile background/foreground.
+ *
+ * The OS suspends Obsidian's WebView the moment the user leaves for the
+ * browser — which is exactly when authorization happens. While suspended the
+ * fallback interval doesn't fire and the device socket is dropped (and
+ * `waitForDeviceAuthorization` has no reconnect), so the `authorized` push
+ * lands with nobody home. Coming back, the user then waits out a 30s tick on
+ * a screen that says "linking" for a link that already succeeded.
+ *
+ * Returning to the foreground is the strongest available hint that something
+ * happened while we were away — the same reasoning as the note channel's
+ * `onResume` in main.ts, which this flow never got.
+ */
+describe("DeviceFlowModal — foreground resume", () => {
+	const g = globalThis as any;
+	let origDocument: unknown;
+	let origWebSocket: unknown;
+	let listeners: Set<() => void>;
+	let visibility: { state: string };
+
+	beforeEach(() => {
+		origDocument = g.activeDocument;
+		origWebSocket = g.WebSocket;
+		listeners = new Set();
+		visibility = { state: "visible" };
+		g.activeDocument = {
+			get visibilityState() {
+				return visibility.state;
+			},
+			addEventListener: (type: string, fn: () => void) => {
+				if (type === "visibilitychange") listeners.add(fn);
+			},
+			removeEventListener: (type: string, fn: () => void) => {
+				if (type === "visibilitychange") listeners.delete(fn);
+			},
+		};
+		g.WebSocket = class {
+			onopen: unknown = null;
+			onclose: unknown = null;
+			onmessage: unknown = null;
+			onerror: unknown = null;
+			send() {}
+			close() {}
+		};
+	});
+
+	afterEach(() => {
+		g.activeDocument = origDocument;
+		g.WebSocket = origWebSocket;
+	});
+
+	/** Start one flow attempt with the fakes above, recording every exchange. */
+	const startFlow = () => {
+		const plugin: any = {
+			settings: { apiUrl: "https://example.test", clientId: "cid" },
+			registerInterval: (id: number) => id,
+			register: () => {},
+		};
+		const modal = new DeviceFlowModal(makeApp("V"), plugin) as any;
+		const exchanged: string[] = [];
+		modal.exchangeNow = async (_apiUrl: string, code: string) => {
+			exchanged.push(code);
+		};
+		modal.startPolling("code-1");
+		const fire = () => {
+			for (const fn of listeners) fn();
+		};
+		return { modal, exchanged, fire };
+	};
+
+	test("re-checks the code the moment the app comes back to the foreground", () => {
+		const { modal, exchanged, fire } = startFlow();
+		try {
+			fire();
+			expect(exchanged).toEqual(["code-1"]);
+		} finally {
+			modal.resetFlow();
+		}
+	});
+
+	// Going AWAY is not evidence of anything, and an exchange fired on the way
+	// out would be racing a WebView the OS is about to freeze.
+	test("does not exchange when the app is going to the background", () => {
+		const { modal, exchanged, fire } = startFlow();
+		try {
+			visibility.state = "hidden";
+			fire();
+			expect(exchanged).toEqual([]);
+		} finally {
+			modal.resetFlow();
+		}
+	});
+
+	// Same leak class as the socket and the interval: "Try again" re-runs
+	// startPolling, so an un-removed listener would stack one exchange per
+	// abandoned attempt, each holding a dead device_code.
+	test("resetFlow removes the resume listener", () => {
+		const { modal, exchanged, fire } = startFlow();
+		modal.resetFlow();
+		fire();
+		expect(exchanged).toEqual([]);
+		expect(listeners.size).toBe(0);
 	});
 });
