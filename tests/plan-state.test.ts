@@ -74,3 +74,40 @@ describe("tier validation (repo-review 2026-08)", () => {
 		expect(parsePlanState({ tier: "free" }, 1)?.tier).toBe("free");
 	});
 });
+
+describe("parsePlanState — attachments_all_types migration", () => {
+	const base = { tier: "free", max_file_bytes: 10, attachment_bytes_cap: null };
+
+	test("reads the grant-shaped field: true means non-text allowed", () => {
+		const p = parsePlanState({ ...base, attachments_all_types: true }, 1);
+		expect(p?.attachmentsTextOnly).toBe(false);
+	});
+
+	test("reads the grant-shaped field: false means text-only", () => {
+		const p = parsePlanState({ ...base, attachments_all_types: false }, 1);
+		expect(p?.attachmentsTextOnly).toBe(true);
+	});
+
+	test("the new field WINS over the legacy one while both ship", () => {
+		// The backend dual-emits during expand. If they ever disagreed, the
+		// grant-shaped field is the one derived from the single source of truth.
+		const p = parsePlanState(
+			{ ...base, attachments_all_types: true, attachments_text_only: true },
+			1,
+		);
+		expect(p?.attachmentsTextOnly).toBe(false);
+	});
+
+	test("falls back to the legacy field against an older backend", () => {
+		const p = parsePlanState({ ...base, attachments_text_only: true }, 1);
+		expect(p?.attachmentsTextOnly).toBe(true);
+	});
+
+	test("neither field present → permissive, so the backend decides", () => {
+		// Fail-open matches preGateAttachment's "unknown plan → do not pre-gate".
+		// Failing closed here would silently skip every attachment, which is the
+		// bug this whole change exists to remove.
+		const p = parsePlanState(base, 1);
+		expect(p?.attachmentsTextOnly).toBe(false);
+	});
+});
