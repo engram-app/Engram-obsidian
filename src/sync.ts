@@ -1509,13 +1509,44 @@ export class SyncEngine {
 	 *  `buildGenesisFrame` (the durable queue's replayed create) so the gate
 	 *  cannot drift between the two call sites — a lesson from #1130
 	 *  (duplicated gates silently diverging). */
-	private qualifiesForGenesisFrame(path: string, content: string): boolean {
-		return (
-			!!this.crdt &&
-			!canvasPath(path) &&
-			!this.isLiveBound(normalizePath(path)) &&
-			!exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES)
-		);
+	private async qualifiesForGenesisFrame(
+		noteId: string | null | undefined,
+		path: string,
+		content: string,
+	): Promise<boolean> {
+		if (!this.crdt) return false;
+		if (canvasPath(path)) return false;
+		if (this.isLiveBound(normalizePath(path))) return false;
+		if (exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES)) return false;
+
+		// A genesis frame is a BRAND-NEW lineage (encodeGenesisUpdate builds it in
+		// a throwaway Y.Doc), so it is only safe when this device holds no lineage
+		// of its own to collide with. Ship one anyway and the two lineages carry
+		// the same text with no shared identity — Yjs unions them and the body
+		// appears twice, the union is flushed to disk, and the NEXT sync doubles
+		// the doubled body. Measured on a real vault: 263 KB -> 4.38 MB over five
+		// syncs, 2x each, one note's opening line repeated 128 times.
+		//
+		// `applyCrdtCreateAck` already computes exactly this condition
+		// (`!effectiveIdHasHistory`) — but AFTER crdt_create has been sent, so it
+		// can only protect the local doc; it cannot unsend the second lineage.
+		// The check belongs here, before the frame is built.
+		//
+		// Fails CLOSED: if history can't be determined, assume it exists and take
+		// the bodyless create. That path opens a room per note (the cost #1409
+		// exists to remove), which is a performance regression — a doubled body is
+		// data loss, and the two are not tradeable.
+		// No resolvable id means we cannot ask whether a doc exists — and an id
+		// can go missing for reasons that CO-OCCUR with having a doc (a map
+		// reconcile mid-flight, a durable op replayed after the entry moved).
+		// Treat it as "history unknown" and take the safe path.
+		if (!noteId) return false;
+		if (typeof this.crdt.hasAnyHistory !== "function") return false;
+		try {
+			return !(await this.crdt.hasAnyHistory(noteId));
+		} catch {
+			return false;
+		}
 	}
 
 	/** Build the b64 genesis frame for a durable-queue REPLAYED create (review
@@ -1548,7 +1579,8 @@ export class SyncEngine {
 			const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
 			if (!(file instanceof TFile)) return undefined;
 			const content = await this.app.vault.cachedRead(file);
-			if (!this.qualifiesForGenesisFrame(path, content)) return undefined;
+			const noteId = this.noteIdMap?.get(path) ?? null;
+			if (!(await this.qualifiesForGenesisFrame(noteId, path, content))) return undefined;
 			const update = this.crdt.encodeGenesisUpdate(content);
 			return { b64: encodeUpdateFrame(update), update, content };
 		} catch {
@@ -3701,7 +3733,11 @@ export class SyncEngine {
 						// Yjs bytes (not just the wire frame) so a `seeded: true` reply can
 						// apply the SAME update to this device's own doc below — see that
 						// comment for why.
-						const genesisUpdate = this.qualifiesForGenesisFrame(pushedPath, content)
+						const genesisUpdate = (await this.qualifiesForGenesisFrame(
+							noteId,
+							pushedPath,
+							content,
+						))
 							? this.crdt.encodeGenesisUpdate(content)
 							: undefined;
 						const { docId: serverId, seeded } =
