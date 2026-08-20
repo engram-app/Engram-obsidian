@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.24.0](https://github.com/engram-app/Engram-obsidian/compare/1.23.1...1.24.0) (2026-08-20)
+
+
+### Features
+
+* **crdt:** send the genesis body with crdt_create ([#452](https://github.com/engram-app/Engram-obsidian/issues/452)) ([e557e35](https://github.com/engram-app/Engram-obsidian/commit/e557e35751b7c381af1102e7c0b90e052fd75926)), closes [#1409](https://github.com/engram-app/Engram-obsidian/issues/1409)
+
+
+### Bug Fixes
+
+* **crdt:** stop reporting a refused index frame as delivered ([#450](https://github.com/engram-app/Engram-obsidian/issues/450)) ([d64ffc8](https://github.com/engram-app/Engram-obsidian/commit/d64ffc80c92e6c83011cdf5a8661975bb39327f6))
+* **plan:** drop the plan verdict when the server changes ([#457](https://github.com/engram-app/Engram-obsidian/issues/457)) ([bc0a404](https://github.com/engram-app/Engram-obsidian/commit/bc0a404f0a5730946b4a52fcd0a7b5f67ecde1ac))
+* **sync:** probe the empty-trust guard by id, not by event.path ([#449](https://github.com/engram-app/Engram-obsidian/issues/449)) ([fb4d70b](https://github.com/engram-app/Engram-obsidian/commit/fb4d70b3bd7e5264a0520b95fca9457a4679c932))
+* **sync:** stop offering freshly pulled notes back as uploads ([#454](https://github.com/engram-app/Engram-obsidian/issues/454)) ([f4895ea](https://github.com/engram-app/Engram-obsidian/commit/f4895ea6050487cb52c4dbe38b84cf39f19533fd))
+* **vault:** stop one sync creating two vaults ([#456](https://github.com/engram-app/Engram-obsidian/issues/456)) ([5a68e60](https://github.com/engram-app/Engram-obsidian/commit/5a68e60cb644adb70467bad5d9c832442e72b2d2))
+
 ## [1.23.1](https://github.com/engram-app/Engram-obsidian/compare/1.23.0...1.23.1) (2026-08-18)
 
 
