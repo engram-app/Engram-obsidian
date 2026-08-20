@@ -285,7 +285,7 @@ describe("renderAuthSection — signed in", () => {
 	test("offers a route to the account page", () => {
 		const btn = renderSignedIn("https://api.engram.page");
 		expect(btn).toBeDefined();
-		expect(clickAndCapture(btn)).toEqual(["https://app.engram.page/settings/account"]);
+		expect(clickAndCapture(btn)).toEqual(["https://app.engram.page/#settings/account"]);
 	});
 
 	// engramWebUrl already knows cloud from self-host. A hardcoded cloud host
@@ -293,7 +293,7 @@ describe("renderAuthSection — signed in", () => {
 	// do not have, on a server that is not theirs.
 	test("sends a self-hosted user to their OWN server, not cloud", () => {
 		const btn = renderSignedIn("https://engram.example.test");
-		expect(clickAndCapture(btn)).toEqual(["https://engram.example.test/settings/account"]);
+		expect(clickAndCapture(btn)).toEqual(["https://engram.example.test/#settings/account"]);
 	});
 
 	test("still offers sign out", () => {

@@ -198,9 +198,15 @@ export function renderAuthSection(ctx: TabContext): void {
 			// serves its own SPA from the same origin, and sending that user to
 			// app.engram.page would be a billing page for an account they do not
 			// have on a server that is not theirs.
+			//
+			// Hash form, not the "/settings/account" path: that path is a LEGACY
+			// route the SPA keeps alive only through LegacySettingsRedirect, for
+			// old bookmarks. A plugin build outlives an SPA deploy by weeks, so
+			// pointing new code at a deliberately-deprecated redirect means the
+			// day it is deleted this button breaks in every installed copy.
 			.addButton((btn) =>
 				btn.setButtonText("Manage account").onClick(() => {
-					window.open(`${engramWebUrl(plugin.settings.apiUrl)}/settings/account`);
+					window.open(`${engramWebUrl(plugin.settings.apiUrl)}/#settings/account`);
 				}),
 			)
 			.addButton((btn) =>
