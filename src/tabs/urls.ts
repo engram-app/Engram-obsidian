@@ -16,9 +16,22 @@ export const ENGRAM_APP_URL = "https://app.engram.page";
 
 /** The browsable web-app URL for a given backend. Cloud points at the managed
  *  SPA host; a self-hosted backend serves its own SPA from the same origin, so
- *  its apiUrl is already the web URL. Pure for testing. */
+ *  its apiUrl is already the web URL. Pure for testing.
+ *
+ *  Normalizes first, because `settings.apiUrl` is stored VERBATIM —
+ *  `applyApiUrlChange` writes whatever was typed and `isSaveableUrl` accepts a
+ *  trailing slash and a path. This is the inverse of
+ *  `EngramApi.normalizeBaseUrl`, which strips trailing slashes and appends
+ *  "/api" at request time (and has an explicit branch for a value that already
+ *  ends in "/api", so that paste is an expected stored shape).
+ *
+ *  Without it: a stored "https://api.engram.page/" missed the cloud comparison
+ *  by one character and handed back the API host, and a self-hoster who pasted
+ *  the "/api" address got "<host>/api/..." — Phoenix serves the SPA shell from
+ *  the root scope only, so every caller that appends a path 404s. */
 export function engramWebUrl(apiUrl: string): string {
-	return apiUrl === ENGRAM_CLOUD_URL ? ENGRAM_APP_URL : apiUrl;
+	const base = apiUrl.replace(/\/+$/, "").replace(/\/api$/, "");
+	return base === ENGRAM_CLOUD_URL ? ENGRAM_APP_URL : base;
 }
 
 /** Hostnames previously used as the Cloud REST base that must be migrated to

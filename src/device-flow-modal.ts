@@ -39,6 +39,12 @@ export class DeviceFlowModal extends Modal {
 	/** Socket said "authorized" while an exchange was already in flight. */
 	private pendingAuthorized = false;
 	private waitingEl: HTMLElement | null = null;
+	/** Foreground-resume listener, held so resetFlow can remove it, paired with
+	 *  the Document it was actually registered on — `activeDocument` follows
+	 *  window focus, so re-reading it at removal time can unregister from the
+	 *  wrong document and strand the listener forever. */
+	private onVisibilityChange: (() => void) | null = null;
+	private visibilityDoc: Document | null = null;
 	private aborted = false;
 
 	constructor(app: App, plugin: EngramSyncPlugin) {
@@ -61,6 +67,11 @@ export class DeviceFlowModal extends Modal {
 	private async beginDeviceFlow(contentEl: HTMLElement, statusEl: HTMLElement): Promise<void> {
 		try {
 			const resp = await this.startDeviceFlow();
+			// onClose may have run during that request (up to 15s). Without this,
+			// a cancelled flow still pops a browser window at the user and arms a
+			// socket, an interval and a document listener that the teardown has
+			// already come and gone for — nothing but a plugin unload clears them.
+			if (this.aborted) return;
 			this.renderCodeScreen(contentEl, resp);
 			this.startPolling(resp.device_code);
 		} catch {
@@ -83,6 +94,11 @@ export class DeviceFlowModal extends Modal {
 		}
 		this.disposeSocket?.();
 		this.disposeSocket = null;
+		if (this.onVisibilityChange) {
+			this.visibilityDoc?.removeEventListener("visibilitychange", this.onVisibilityChange);
+			this.onVisibilityChange = null;
+			this.visibilityDoc = null;
+		}
 		this.exchanging = false;
 		this.pendingAuthorized = false;
 	}
@@ -222,6 +238,33 @@ export class DeviceFlowModal extends Modal {
 			await this.drainPendingAuthorized(apiUrl, deviceCode);
 		};
 
+		// Mobile suspends the WebView the moment the user leaves for the browser
+		// — which is exactly when authorization happens. Timers stop and the
+		// device socket is dropped (waitForDeviceAuthorization has no reconnect),
+		// so the `authorized` push arrives with nobody home. Coming back is the
+		// strongest available hint that something happened while we were away,
+		// so re-check right then instead of waiting out a 30s tick on a screen
+		// that says "linking" for a link that already succeeded.
+		//
+		// Same reasoning as the note channel's onResume in main.ts, which is why
+		// this reads activeDocument rather than document (popout windows).
+		//
+		// Captured once, NOT re-read in resetFlow: `activeDocument` follows the
+		// focused window, so a popout taking focus between arming and teardown
+		// would make removeEventListener a silent no-op. The orphan holds the old
+		// device_code, and "Try again" clears `aborted` — so the next foreground
+		// return exchanges the dead code, takes the 410, and wipes the freshly
+		// rendered code screen with "Code expired". Same orphan-closure class the
+		// socket already hit (see resetFlow).
+		const doc = activeDocument;
+		this.visibilityDoc = doc;
+		this.onVisibilityChange = () => {
+			if (doc.visibilityState === "visible") {
+				void this.exchangeNow(apiUrl, deviceCode);
+			}
+		};
+		doc.addEventListener("visibilitychange", this.onVisibilityChange);
+
 		// 30s, not 5s. This is no longer how the flow completes — the socket is —
 		// so it exists purely to rescue a user whose network blocks WebSockets.
 		// Tightening it would just add request volume to the common path where
@@ -237,7 +280,9 @@ export class DeviceFlowModal extends Modal {
 		this.plugin.register(() => this.resetFlow());
 	}
 
-	/** Socket said the code was authorized: exchange it once, right now.
+	/** Something says the code may be authorized by now — the socket's push, or
+	 *  the app returning to the foreground after the push was missed. Exchange
+	 *  once, right now.
 	 *
 	 *  Guarded because the fallback interval is still armed — without this a
 	 *  poll already in flight and the socket-triggered exchange could both
@@ -331,6 +376,12 @@ export class DeviceFlowModal extends Modal {
 	}
 
 	private renderExpired(): void {
+		// Terminal screen: retire the attempt. Both callers only cleared the
+		// interval, so the socket stayed open and the resume listener stayed
+		// armed with `aborted` still false — every return to the foreground
+		// exchanged a dead device_code and re-rendered this same screen.
+		// Idempotent, and "Try again" calls it again before re-opening.
+		this.resetFlow();
 		const contentEl = this.contentEl;
 		contentEl.empty();
 		contentEl.createEl("h2", { text: "Link Obsidian to Engram" });

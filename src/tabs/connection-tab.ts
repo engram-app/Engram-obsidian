@@ -47,12 +47,14 @@ export function renderConnectionTab(ctx: TabContext): void {
 		});
 
 	const state = connectionState(plugin.settings);
-	if (state !== "connected") {
-		const message =
-			state === "needs-url"
-				? "Not connected. Enter your Engram server URL below to start syncing."
-				: "Not connected. Sign in below to start syncing.";
-		const warning = new Setting(containerEl).setName(message);
+	// Only the missing-URL case gets a banner. The signed-out case had one too,
+	// and it said "Not connected. Sign in below to start syncing." directly
+	// above an Authentication section whose only row is a Sign in button — the
+	// same sentence twice, the second time with the button attached.
+	if (state === "needs-url") {
+		const warning = new Setting(containerEl).setName(
+			"Not connected. Enter your Engram server URL below to start syncing.",
+		);
 		warning.settingEl.addClass("engram-connection-warning");
 	}
 
