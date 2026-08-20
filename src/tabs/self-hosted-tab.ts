@@ -9,7 +9,7 @@ import {
 import { modeForUrl } from "../backend-mode";
 import { errMsg } from "../error-util";
 import type { TabContext } from "./types";
-import { ENGRAM_CLOUD_URL } from "./urls";
+import { ENGRAM_CLOUD_URL, engramWebUrl } from "./urls";
 
 const PREFLIGHT_DEBOUNCE_MS = 600;
 
@@ -175,14 +175,13 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
  *    - OAuth locked: only the signed-in row + Sign out.
  *    - API key locked: only the "Using API key" row + Clear / Switch to sign in.
  *
- *  No marketing link here in cloud mode — removed by request. Note what went
- *  with it: it hung off the HEADING rather than the sign-in row precisely
- *  because the two locked states return early, so the heading was the only
- *  place a SIGNED-IN user could still see it. The Welcome tab's engram.page
- *  link is inside "1. Make an account" under "Getting set up", which is setup
- *  copy a signed-in user has no reason to read. So a signed-in cloud user now
- *  has no in-plugin path to their account or billing pages. Add a real
- *  account row to the signed-in branch below if that gap needs closing. */
+ *  No marketing link on the heading any more. It hung there rather than on the
+ *  sign-in row precisely because the two locked states return early, so the
+ *  heading was the only place a SIGNED-IN user could still see it — and the
+ *  Welcome tab's engram.page link is inside "1. Make an account" setup copy,
+ *  which is not a route to billing. The signed-in row carries its own
+ *  "Manage account" button instead, which is both more specific and visible to
+ *  the people who actually need it. */
 export function renderAuthSection(ctx: TabContext): void {
 	const { containerEl, plugin, redisplay, startDeviceFlow } = ctx;
 
@@ -195,6 +194,15 @@ export function renderAuthSection(ctx: TabContext): void {
 		new Setting(containerEl)
 			.setName(`Signed in as ${plugin.settings.userEmail ?? "unknown"}`)
 			.setDesc("Authenticated via Engram account (OAuth).")
+			// engramWebUrl, not a hardcoded cloud host: a self-hosted backend
+			// serves its own SPA from the same origin, and sending that user to
+			// app.engram.page would be a billing page for an account they do not
+			// have on a server that is not theirs.
+			.addButton((btn) =>
+				btn.setButtonText("Manage account").onClick(() => {
+					window.open(`${engramWebUrl(plugin.settings.apiUrl)}/settings/account`);
+				}),
+			)
 			.addButton((btn) =>
 				btn.setButtonText("Sign out").onClick(async () => {
 					await plugin.clearOAuthTokens();

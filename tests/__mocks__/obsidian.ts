@@ -204,7 +204,11 @@ class TextComponent {
 
 class ButtonComponent {
 	clickCb: (() => void) | null = null;
-	setButtonText(_t: string): this {
+	/** Label, so a test can name the button it means instead of indexing into
+	 *  render order. */
+	text = "";
+	setButtonText(t: string): this {
+		this.text = t;
 		return this;
 	}
 	setCta(): this {

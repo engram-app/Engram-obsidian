@@ -4,6 +4,7 @@ import { EngramApi } from "../src/api";
 import {
 	applyVaultSwitch,
 	describeListVaultsError,
+	renderAuthSection,
 	renderEngramUrlSetting,
 	type VaultSwitchTarget,
 } from "../src/tabs/self-hosted-tab";
@@ -238,5 +239,65 @@ describe("renderEngramUrlSetting — no Save button", () => {
 
 		expect(saved).toEqual([]);
 		expect(plugin.settings.apiUrl).toBe("https://staging.engram.page");
+	});
+});
+
+/**
+ * The signed-in state returns early from renderAuthSection, so anything hung
+ * off the unauthenticated rows is invisible to exactly the people who need an
+ * account page. That is why the removed engram.page link lived on the section
+ * HEADING — and why removing it left a signed-in cloud user with no in-plugin
+ * route to their account or billing. This row is that route.
+ */
+describe("renderAuthSection — signed in", () => {
+	const renderSignedIn = (apiUrl: string) => {
+		__settingCapture.names.length = 0;
+		__settingCapture.buttons.length = 0;
+		renderAuthSection({
+			containerEl: {},
+			app: {},
+			plugin: {
+				settings: { apiUrl, apiKey: "", refreshToken: "rt", userEmail: "u@test.com" },
+			},
+			redisplay: () => {},
+			startDeviceFlow: async () => {},
+		} as any);
+		return __settingCapture.buttons.find((b) => b.text === "Manage account");
+	};
+
+	/** Click the button with window.open stubbed, and report where it aimed. */
+	const clickAndCapture = (btn: { clickCb: (() => void) | null } | undefined) => {
+		const g = globalThis as any;
+		const opened: string[] = [];
+		const orig = g.window.open;
+		g.window.open = (url: string) => {
+			opened.push(url);
+			return null;
+		};
+		try {
+			btn?.clickCb?.();
+		} finally {
+			g.window.open = orig;
+		}
+		return opened;
+	};
+
+	test("offers a route to the account page", () => {
+		const btn = renderSignedIn("https://api.engram.page");
+		expect(btn).toBeDefined();
+		expect(clickAndCapture(btn)).toEqual(["https://app.engram.page/settings/account"]);
+	});
+
+	// engramWebUrl already knows cloud from self-host. A hardcoded cloud host
+	// here would send a self-hosted user to a billing page for an account they
+	// do not have, on a server that is not theirs.
+	test("sends a self-hosted user to their OWN server, not cloud", () => {
+		const btn = renderSignedIn("https://engram.example.test");
+		expect(clickAndCapture(btn)).toEqual(["https://engram.example.test/settings/account"]);
+	});
+
+	test("still offers sign out", () => {
+		renderSignedIn("https://api.engram.page");
+		expect(__settingCapture.buttons.some((b) => b.text === "Sign out")).toBe(true);
 	});
 });
