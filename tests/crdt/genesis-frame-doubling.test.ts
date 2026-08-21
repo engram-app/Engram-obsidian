@@ -23,6 +23,7 @@ import type { EngramApi } from "../../src/api";
 import { CONTENT_KEY } from "../../src/crdt/frontmatter-codec";
 import { NoteIdMap } from "../../src/crdt/note-id-map";
 import { seedContentInto } from "../../src/crdt/note-seed";
+import { ProviderRegistry } from "../../src/crdt/provider-registry";
 import { SyncEngine } from "../../src/sync";
 import { DEFAULT_SETTINGS } from "../../src/types";
 
@@ -100,8 +101,11 @@ function engineWith(hasAnyHistory: boolean) {
 	return engine;
 }
 
+const ID_A = "01a02100-0000-7000-8000-00000000000a";
+const ID_B = "01a02100-0000-7000-8000-00000000000b";
+
 test("buildGenesisFrame returns a frame when this device has NO lineage yet", async () => {
-	const frame = await engineWith(false).buildGenesisFrame("Note.md");
+	const frame = await engineWith(false).buildGenesisFrame("Note.md", ID_A);
 	expect(frame).toBeDefined();
 	expect(frame?.content).toBe(BODY);
 });
@@ -111,6 +115,45 @@ test("buildGenesisFrame returns undefined when the local doc already has history
 	// two tests above prove will double the body. Falling back to the bodyless
 	// create is slower (it opens a room) but correct — and correctness of the
 	// user's content is not tradeable against room count.
-	const frame = await engineWith(true).buildGenesisFrame("Note.md");
+	const frame = await engineWith(true).buildGenesisFrame("Note.md", ID_B);
 	expect(frame).toBeUndefined();
+});
+
+test("the gate asks about the id being CREATED, not whatever the path maps to", async () => {
+	// Adversarial review 1. `buildGenesisFrame` used to resolve the id itself via
+	// `noteIdMap.get(path)`, but the create is made under the caller's op.docId.
+	// A rename or map reconcile between enqueue and replay makes those disagree,
+	// and the gate would then clear a note whose REAL doc holds lineage — the
+	// doubling bug, on the retry path.
+	const asked: string[] = [];
+	const engine = engineWith(false);
+	engine.setCrdtManager({
+		encodeGenesisUpdate: () => genesisUpdateFor(BODY),
+		hasAnyHistory: async (id: string) => {
+			asked.push(id);
+			return false;
+		},
+	} as never);
+
+	await engine.buildGenesisFrame("Note.md", ID_B);
+
+	// The map holds a DIFFERENT id for "Note.md" (minted in engineWith).
+	expect(asked).toEqual([ID_B]);
+});
+
+test("the real ProviderRegistry reports history after an actual local edit", async () => {
+	// The two gate tests above stub `hasAnyHistory`, so they pin the WIRING but
+	// not the truth of it. Without this, a change that made the real
+	// implementation always return false would sail through them and silently
+	// re-enable the doubling.
+	const registry = new ProviderRegistry({
+		dbPrefix: `doubling-real-${ID_A}`,
+		send: () => true,
+		onFlushToDisk: async () => {},
+		docKind: () => "note",
+	} as never);
+
+	expect(await registry.hasAnyHistory(ID_A)).toBe(false);
+	await registry.applyLocalEdit(ID_A, BODY);
+	expect(await registry.hasAnyHistory(ID_A)).toBe(true);
 });

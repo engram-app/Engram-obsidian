@@ -99,8 +99,16 @@ export type CrdtSendHooks = {
 	 *  sends, just without a body; `onCreated`'s existing disk-seed path
 	 *  delivers it instead, exactly like before this fix. Optional so a
 	 *  caller/test that never wires it keeps the old bodyless-create
-	 *  behaviour. */
-	buildGenesisFrame?: (path: string) => Promise<GenesisFrame | undefined>;
+	 *  behaviour.
+	 *
+	 *  `noteId` is the id the create will actually be made under (`op.docId`) —
+	 *  NOT re-derived from `path` inside. The frame's safety gate asks "does this
+	 *  device already hold lineage for this note", and asking that about a
+	 *  DIFFERENT id than the one being created is the doubling bug wearing a
+	 *  disguise: a rename or id-map reconcile between enqueue and replay makes
+	 *  `map.get(path)` disagree with `op.docId`, and the gate would then clear a
+	 *  note whose real doc has history. */
+	buildGenesisFrame?: (path: string, noteId: string) => Promise<GenesisFrame | undefined>;
 	/** A create acked: serverId is the AUTHORITATIVE id (differs on ADOPT).
 	 *  `seeded` + `genesis` (present only when a frame was actually sent) let
 	 *  the caller apply the SAME bytes locally instead of re-seeding from
@@ -135,7 +143,7 @@ export function makeCrdtOpSend(hooks: CrdtSendHooks): (op: CrdtOp) => Promise<Se
 		try {
 			if (op.kind === "create") {
 				const path = (op.payload as { path?: string })?.path ?? "";
-				const genesis = await hooks.buildGenesisFrame?.(path);
+				const genesis = await hooks.buildGenesisFrame?.(path, op.docId);
 				const { docId: serverId, seeded } = genesis
 					? await ch.crdtCreate(op.docId, path, genesis.b64)
 					: await ch.crdtCreate(op.docId, path);

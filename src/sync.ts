@@ -1541,11 +1541,43 @@ export class SyncEngine {
 		// reconcile mid-flight, a durable op replayed after the entry moved).
 		// Treat it as "history unknown" and take the safe path.
 		if (!noteId) return false;
-		if (typeof this.crdt.hasAnyHistory !== "function") return false;
+
+		// A port without `hasAnyHistory` cannot answer the only question that
+		// makes a genesis frame safe, so it takes the bodyless create — which
+		// silently reverts ALL of #1409 (a room per imported note) with no other
+		// symptom. `anomaly` ships even with diagnostics off, for exactly this
+		// class: a degradation nobody would otherwise discover. Counts only, no
+		// path or content.
+		if (typeof this.crdt.hasAnyHistory !== "function") {
+			rlog().anomaly("crdt", "genesis_gate_port_missing_history");
+			return false;
+		}
+
 		try {
 			return !(await this.crdt.hasAnyHistory(noteId));
 		} catch {
+			// A doc destroyed mid-check (NoteDestroyedError) or an IndexedDB fault.
+			// Unknown history — same safe path.
 			return false;
+		}
+	}
+
+	/** Re-assert, AFTER `crdt_create` acked, that the local doc still had no
+	 *  lineage when the frame was sent (#1409 follow-up, adversarial review 2).
+	 *
+	 *  `qualifiesForGenesisFrame` necessarily runs BEFORE the create round trip,
+	 *  so a live edit, a remote apply, or a catch-up landing in that window can
+	 *  give the doc history after the gate cleared it. The frame is already on
+	 *  the wire by then: the server holds a lineage this device did not adopt,
+	 *  which is the doubling shape, just narrower than the bug this fixes.
+	 *
+	 *  It cannot be repaired here — once both lineages exist with the same text,
+	 *  any convergence unions them; only prevention works. So this makes the race
+	 *  VISIBLE rather than pretending it is closed. Callers do not branch on it.
+	 *  Counts and a reason only, never a path. */
+	private reportGenesisRace(sentFrame: boolean, hadHistoryAfter: boolean): void {
+		if (sentFrame && hadHistoryAfter) {
+			rlog().anomaly("crdt", "genesis_frame_raced_lineage");
 		}
 	}
 
@@ -1573,13 +1605,16 @@ export class SyncEngine {
 	 *  `crdt_create` (retried, eventually dropped as max-attempts) — when the
 	 *  create itself would very likely still succeed fine without a body.
 	 *  Fails CLOSED to the documented degradation, not open to a dropped op. */
-	async buildGenesisFrame(path: string): Promise<GenesisFrame | undefined> {
+	async buildGenesisFrame(path: string, noteId: string): Promise<GenesisFrame | undefined> {
 		try {
 			if (!this.crdt) return undefined;
 			const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
 			if (!(file instanceof TFile)) return undefined;
 			const content = await this.app.vault.cachedRead(file);
-			const noteId = this.noteIdMap?.get(path) ?? null;
+			// `noteId` is the caller's op.docId — the id the create is actually made
+			// under. Deliberately NOT `this.noteIdMap.get(path)`: a rename or map
+			// reconcile between enqueue and replay makes those disagree, and the
+			// gate would then clear a note whose real doc holds lineage.
 			if (!(await this.qualifiesForGenesisFrame(noteId, path, content))) return undefined;
 			const update = this.crdt.encodeGenesisUpdate(content);
 			return { b64: encodeUpdateFrame(update), update, content };
@@ -3859,6 +3894,14 @@ export class SyncEngine {
 									typeof this.crdt.hasAnyHistory === "function"
 										? await this.crdt.hasAnyHistory(effectiveId)
 										: true;
+								// The gate cleared this note (no lineage) BEFORE the create
+								// round trip; if it has lineage now, something wrote during
+								// the window and the server holds a lineage we never adopted.
+								// Not repairable here — surfaced so it stops being invisible.
+								this.reportGenesisRace(
+									genesisUpdate !== undefined,
+									effectiveIdHasHistory,
+								);
 								if (
 									seeded &&
 									serverId === noteId &&

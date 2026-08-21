@@ -579,7 +579,8 @@ export default class EngramSyncPlugin extends Plugin {
 				// time so a replayed create (rate-limit backoff, pre-join hold, a
 				// long reconnect) still carries a body instead of always falling
 				// back to the room-opening disk-seed on delivery.
-				buildGenesisFrame: (path) => this.syncEngine.buildGenesisFrame(path),
+				buildGenesisFrame: (path, noteId) =>
+					this.syncEngine.buildGenesisFrame(path, noteId),
 				onCreated: (localId, serverId, path, seeded, genesis) =>
 					this.syncEngine.applyCrdtCreateAck(localId, serverId, path, seeded, genesis),
 				onTerminal: (op, reason) =>
