@@ -494,14 +494,46 @@ describe("DeviceFlowModal — foreground resume", () => {
 		modal.exchangeNow = async (_apiUrl: string, code: string) => {
 			exchanged.push(code);
 		};
-		modal.startPolling("code-1");
-		const fire = () => {
-			for (const fn of listeners) fn();
+		// A timer table the test drives by hand. clearTimeout is honoured, so
+		// "resetFlow cancels the probe" is a real assertion and not a stub that
+		// forgets to cancel.
+		const timers = new Map<number, () => void>();
+		let nextTimerId = 0;
+		const withFakeTimers = <T>(fn: () => T): T => {
+			const origSet = g.window.setTimeout;
+			const origClear = g.window.clearTimeout;
+			g.window.setTimeout = (cb: () => void) => {
+				nextTimerId += 1;
+				timers.set(nextTimerId, cb);
+				return nextTimerId;
+			};
+			g.window.clearTimeout = (id: number) => timers.delete(id);
+			try {
+				return fn();
+			} finally {
+				g.window.setTimeout = origSet;
+				g.window.clearTimeout = origClear;
+			}
+		};
+
+		withFakeTimers(() => modal.startPolling("code-1"));
+		const fire = () =>
+			withFakeTimers(() => {
+				for (const fn of listeners) fn();
+			});
+		/** Run whatever the resume deferred, the way the real timer would. */
+		const runDeferred = () => {
+			const pending = [...timers.values()];
+			timers.clear();
+			for (const fn of pending) fn();
 		};
 		// Kill the socket the way it really dies — onclose is what drives
 		// opts.onStatus(false) back into the modal.
 		const killSocket = () => sockets[0]?.onclose?.({ code: 1006 });
-		return { modal, exchanged, fire, killSocket };
+		/** resetFlow with the fake clock installed, so its clearTimeout lands on
+		 *  the table above rather than the real one. */
+		const resetWithTimers = () => withFakeTimers(() => modal.resetFlow());
+		return { modal, exchanged, fire, killSocket, runDeferred, resetWithTimers };
 	};
 
 	// THE REGRESSION. On desktop the socket never dies — window.open just puts
@@ -517,10 +549,48 @@ describe("DeviceFlowModal — foreground resume", () => {
 		try {
 			modal.socketLive = true;
 			fire();
+			// Nothing IMMEDIATELY: taking `exchanging` here is what parked the
+			// socket's own push behind a 15s POST and broke the desktop flow.
 			expect(exchanged).toEqual([]);
 		} finally {
 			modal.resetFlow();
 		}
+	});
+
+	// But `socketLive` is not trustworthy after a suspend, and channel.ts:642
+	// says so in as many words: "Mobile OSes suspend the socket while
+	// backgrounded; readyState can still report OPEN on a connection that is
+	// actually dead." The device socket has no liveness probe at all — its
+	// heartbeat is fire-and-forget and never tracks a reply — so a half-open
+	// mobile socket reports live forever and SKIPPING would silently restore
+	// the exact 30s stall this whole feature exists to remove.
+	//
+	// So: defer, don't skip. On desktop the push has already closed the modal
+	// by the time this runs, and the `aborted` check makes it a no-op.
+	test("a live socket only DEFERS the resume check, it does not cancel it", () => {
+		const { modal, exchanged, fire, runDeferred } = startFlow();
+		try {
+			modal.socketLive = true;
+			fire();
+			expect(exchanged).toEqual([]);
+
+			runDeferred();
+			expect(exchanged).toEqual(["code-1"]);
+		} finally {
+			modal.resetFlow();
+		}
+	});
+
+	// Otherwise the deferred probe is one more orphan holding a dead
+	// device_code — the same class of leak as the socket and the listener.
+	test("resetFlow cancels a deferred resume probe", () => {
+		const { modal, exchanged, fire, runDeferred, resetWithTimers } = startFlow();
+		modal.socketLive = true;
+		fire();
+		resetWithTimers();
+
+		runDeferred();
+		expect(exchanged).toEqual([]);
 	});
 
 	// The socket reports its own death (onclose / phx_error / a failed join all
