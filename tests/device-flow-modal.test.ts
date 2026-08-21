@@ -442,11 +442,15 @@ describe("DeviceFlowModal — foreground resume", () => {
 	let origWebSocket: unknown;
 	let listeners: Set<() => void>;
 	let visibility: { state: string };
+	/** The socket instance waitForDeviceAuthorization built, so a test can kill
+	 *  it the way the real one dies. */
+	let sockets: any[];
 
 	beforeEach(() => {
 		origDocument = g.activeDocument;
 		origWebSocket = g.WebSocket;
 		listeners = new Set();
+		sockets = [];
 		visibility = { state: "visible" };
 		g.activeDocument = {
 			get visibilityState() {
@@ -459,11 +463,15 @@ describe("DeviceFlowModal — foreground resume", () => {
 				if (type === "visibilitychange") listeners.delete(fn);
 			},
 		};
+		const captured = () => sockets;
 		g.WebSocket = class {
 			onopen: unknown = null;
-			onclose: unknown = null;
+			onclose: ((e: { code: number }) => void) | null = null;
 			onmessage: unknown = null;
 			onerror: unknown = null;
+			constructor() {
+				captured().push(this);
+			}
 			send() {}
 			close() {}
 		};
@@ -490,8 +498,44 @@ describe("DeviceFlowModal — foreground resume", () => {
 		const fire = () => {
 			for (const fn of listeners) fn();
 		};
-		return { modal, exchanged, fire };
+		// Kill the socket the way it really dies — onclose is what drives
+		// opts.onStatus(false) back into the modal.
+		const killSocket = () => sockets[0]?.onclose?.({ code: 1006 });
+		return { modal, exchanged, fire, killSocket };
 	};
+
+	// THE REGRESSION. On desktop the socket never dies — window.open just puts
+	// Obsidian behind the browser — so coming back is not evidence of a missed
+	// push. But the resume check took `exchanging`, the lock the socket path
+	// shares, and a POST holds it for up to 15s. The `authorized` push then
+	// arrived, found the lock held, and was deferred to `pendingAuthorized` to
+	// be drained AFTER that request finished. Instant became "sit on the code
+	// screen, then suddenly jump" — exactly the symptom, and the live path's
+	// whole benefit lost to a rescue for a problem desktop does not have.
+	test("does NOT exchange on resume while the socket is live", () => {
+		const { modal, exchanged, fire } = startFlow();
+		try {
+			modal.socketLive = true;
+			fire();
+			expect(exchanged).toEqual([]);
+		} finally {
+			modal.resetFlow();
+		}
+	});
+
+	// The socket reports its own death (onclose / phx_error / a failed join all
+	// call onStatus(false)), and THAT is when a resume is worth acting on.
+	test("exchanges on resume once the socket has reported itself dead", () => {
+		const { modal, exchanged, fire, killSocket } = startFlow();
+		try {
+			modal.socketLive = true;
+			killSocket();
+			fire();
+			expect(exchanged).toEqual(["code-1"]);
+		} finally {
+			modal.resetFlow();
+		}
+	});
 
 	test("re-checks the code the moment the app comes back to the foreground", () => {
 		const { modal, exchanged, fire } = startFlow();

@@ -45,6 +45,9 @@ export class DeviceFlowModal extends Modal {
 	 *  wrong document and strand the listener forever. */
 	private onVisibilityChange: (() => void) | null = null;
 	private visibilityDoc: Document | null = null;
+	/** Whether the live socket is currently joined, as the socket itself
+	 *  reports it. Gates the resume check — see the visibilitychange handler. */
+	private socketLive = false;
 	private aborted = false;
 
 	constructor(app: App, plugin: EngramSyncPlugin) {
@@ -99,6 +102,7 @@ export class DeviceFlowModal extends Modal {
 			this.onVisibilityChange = null;
 			this.visibilityDoc = null;
 		}
+		this.socketLive = false;
 		this.exchanging = false;
 		this.pendingAuthorized = false;
 	}
@@ -213,7 +217,12 @@ export class DeviceFlowModal extends Modal {
 			() => {
 				void this.exchangeNow(apiUrl, deviceCode);
 			},
-			{ onStatus: (live) => this.setWaitingStatus(live) },
+			{
+				onStatus: (live) => {
+					this.socketLive = live;
+					this.setWaitingStatus(live);
+				},
+			},
 		);
 
 		// Wall-clock deadline, not a tick counter: a 15s-timeout request holding
@@ -256,10 +265,20 @@ export class DeviceFlowModal extends Modal {
 		// return exchanges the dead code, takes the 410, and wipes the freshly
 		// rendered code screen with "Code expired". Same orphan-closure class the
 		// socket already hit (see resetFlow).
+		//
+		// Gated on the socket being DEAD, and that gate is load-bearing. On
+		// desktop the socket survives — window.open only puts Obsidian behind
+		// the browser — so coming back is not evidence of a missed push. Firing
+		// anyway took `exchanging`, the lock the socket path shares, and a POST
+		// holds it for up to 15s; the `authorized` push then found the lock held
+		// and was deferred to pendingAuthorized to drain after that request
+		// finished. That turned the instant path into "sit on the code screen,
+		// then suddenly jump" — a rescue for a problem desktop does not have,
+		// breaking the thing it was rescuing.
 		const doc = activeDocument;
 		this.visibilityDoc = doc;
 		this.onVisibilityChange = () => {
-			if (doc.visibilityState === "visible") {
+			if (doc.visibilityState === "visible" && !this.socketLive) {
 				void this.exchangeNow(apiUrl, deviceCode);
 			}
 		};
