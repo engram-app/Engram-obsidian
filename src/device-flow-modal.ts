@@ -51,9 +51,12 @@ export class DeviceFlowModal extends Modal {
 	 *  wrong document and strand the listener forever. */
 	private onVisibilityChange: (() => void) | null = null;
 	private visibilityDoc: Document | null = null;
-	/** Whether the live socket last reported itself joined. Advisory ONLY — see
-	 *  the visibilitychange handler for why it can lie. */
-	private socketLive = false;
+	/** Whether the socket has PROVED itself gone — a close, an error, or a
+	 *  rejected join. Starts false meaning "unproven", not "alive": before the
+	 *  join reply lands the socket is merely unknown, and treating unknown as
+	 *  dead let an early alt-tab steal the exchange lock. Only this one state
+	 *  is trustworthy; see the visibilitychange handler for why "live" isn't. */
+	private socketDead = false;
 	/** Pending deferred resume probe, held so resetFlow can cancel it. */
 	private resumeProbe: number | null = null;
 	private aborted = false;
@@ -112,7 +115,7 @@ export class DeviceFlowModal extends Modal {
 			this.onVisibilityChange = null;
 			this.visibilityDoc = null;
 		}
-		this.socketLive = false;
+		this.socketDead = false;
 		if (this.resumeProbe !== null) {
 			window.clearTimeout(this.resumeProbe);
 			this.resumeProbe = null;
@@ -240,7 +243,7 @@ export class DeviceFlowModal extends Modal {
 			},
 			{
 				onStatus: (live) => {
-					this.socketLive = live;
+					this.socketDead = !live;
 					this.setWaitingStatus(live);
 				},
 			},
@@ -296,25 +299,32 @@ export class DeviceFlowModal extends Modal {
 		// `authorized` push found the lock held and drained only afterwards.
 		// Instant became "sit on the code screen, then suddenly jump".
 		//
-		// But SKIPPING on a live socket is worse, and silently: `socketLive` is
-		// advisory. channel.ts:642 says it outright — "Mobile OSes suspend the
-		// socket while backgrounded; readyState can still report OPEN on a
-		// connection that is actually dead." This socket has no liveness probe
-		// at all (its heartbeat is fire-and-forget and never tracks a reply), so
-		// a half-open mobile socket reports live forever, and skipping would
-		// restore the exact 30s stall the resume check exists to remove — on the
-		// only platform that needs it. The clean-close case races too: nothing
-		// orders the close event before this one.
+		// But SKIPPING on a live socket is worse, and silently: "live" is not a
+		// trustworthy state. channel.ts:642 says it outright — "Mobile OSes
+		// suspend the socket while backgrounded; readyState can still report
+		// OPEN on a connection that is actually dead." This socket has no
+		// liveness probe at all (its heartbeat is fire-and-forget and never
+		// tracks a reply), so a half-open mobile socket reports live forever,
+		// and skipping would restore the exact 30s stall the resume check exists
+		// to remove — on the only platform that needs it. The clean-close case
+		// races too: nothing orders the close event before this one.
 		//
 		// Deferring satisfies both. On desktop the push has completed the flow
 		// and closed the modal well inside the delay, so `aborted` makes the
 		// probe a no-op and the lock is never contended. On mobile it rescues
-		// whatever the flag claims.
+		// whatever the socket claims.
+		//
+		// The immediate path is reserved for a socket that has PROVED itself
+		// gone, which is the one state worth trusting: nothing is coming, so
+		// there is nothing to collide with. Unproven defers like live does —
+		// before the join reply the socket is unknown, not dead, and firing on
+		// unknown let an alt-tab in the first few hundred ms steal the lock
+		// before the gate ever engaged.
 		const doc = activeDocument;
 		this.visibilityDoc = doc;
 		this.onVisibilityChange = () => {
 			if (doc.visibilityState !== "visible") return;
-			if (!this.socketLive) {
+			if (this.socketDead) {
 				void this.exchangeNow(apiUrl, deviceCode);
 				return;
 			}

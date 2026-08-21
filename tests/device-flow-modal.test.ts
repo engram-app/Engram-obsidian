@@ -530,10 +530,16 @@ describe("DeviceFlowModal — foreground resume", () => {
 		// Kill the socket the way it really dies — onclose is what drives
 		// opts.onStatus(false) back into the modal.
 		const killSocket = () => sockets[0]?.onclose?.({ code: 1006 });
+		/** Answer the join the way the server does, which is what drives
+		 *  opts.onStatus(true) back into the modal. */
+		const joinSocket = () =>
+			sockets[0]?.onmessage?.({
+				data: JSON.stringify(["1", "1", "device:code-1", "phx_reply", { status: "ok" }]),
+			});
 		/** resetFlow with the fake clock installed, so its clearTimeout lands on
 		 *  the table above rather than the real one. */
 		const resetWithTimers = () => withFakeTimers(() => modal.resetFlow());
-		return { modal, exchanged, fire, killSocket, runDeferred, resetWithTimers };
+		return { modal, exchanged, fire, killSocket, joinSocket, runDeferred, resetWithTimers };
 	};
 
 	// THE REGRESSION. On desktop the socket never dies — window.open just puts
@@ -544,33 +550,45 @@ describe("DeviceFlowModal — foreground resume", () => {
 	// be drained AFTER that request finished. Instant became "sit on the code
 	// screen, then suddenly jump" — exactly the symptom, and the live path's
 	// whole benefit lost to a rescue for a problem desktop does not have.
-	test("does NOT exchange on resume while the socket is live", () => {
+	//
+	// Default state, deliberately: the join reply has not landed here, so the
+	// socket is merely UNPROVEN rather than known-dead. Treating unproven as
+	// dead is what let an alt-tab in the first few hundred ms steal the lock
+	// before the gate ever engaged.
+	test("does not steal the exchange lock while the socket is unproven", () => {
 		const { modal, exchanged, fire } = startFlow();
 		try {
-			modal.socketLive = true;
 			fire();
-			// Nothing IMMEDIATELY: taking `exchanging` here is what parked the
-			// socket's own push behind a 15s POST and broke the desktop flow.
 			expect(exchanged).toEqual([]);
 		} finally {
 			modal.resetFlow();
 		}
 	});
 
-	// But `socketLive` is not trustworthy after a suspend, and channel.ts:642
-	// says so in as many words: "Mobile OSes suspend the socket while
-	// backgrounded; readyState can still report OPEN on a connection that is
-	// actually dead." The device socket has no liveness probe at all — its
+	test("does not steal the exchange lock while the socket is live either", () => {
+		const { modal, exchanged, fire, joinSocket } = startFlow();
+		try {
+			joinSocket();
+			fire();
+			expect(exchanged).toEqual([]);
+		} finally {
+			modal.resetFlow();
+		}
+	});
+
+	// A live-looking socket is not trustworthy after a suspend, and
+	// channel.ts:642 says so in as many words: "Mobile OSes suspend the socket
+	// while backgrounded; readyState can still report OPEN on a connection that
+	// is actually dead." The device socket has no liveness probe at all — its
 	// heartbeat is fire-and-forget and never tracks a reply — so a half-open
 	// mobile socket reports live forever and SKIPPING would silently restore
 	// the exact 30s stall this whole feature exists to remove.
 	//
 	// So: defer, don't skip. On desktop the push has already closed the modal
 	// by the time this runs, and the `aborted` check makes it a no-op.
-	test("a live socket only DEFERS the resume check, it does not cancel it", () => {
+	test("an unproven socket only DEFERS the resume check, it does not cancel it", () => {
 		const { modal, exchanged, fire, runDeferred } = startFlow();
 		try {
-			modal.socketLive = true;
 			fire();
 			expect(exchanged).toEqual([]);
 
@@ -585,7 +603,6 @@ describe("DeviceFlowModal — foreground resume", () => {
 	// device_code — the same class of leak as the socket and the listener.
 	test("resetFlow cancels a deferred resume probe", () => {
 		const { modal, exchanged, fire, runDeferred, resetWithTimers } = startFlow();
-		modal.socketLive = true;
 		fire();
 		resetWithTimers();
 
@@ -594,22 +611,12 @@ describe("DeviceFlowModal — foreground resume", () => {
 	});
 
 	// The socket reports its own death (onclose / phx_error / a failed join all
-	// call onStatus(false)), and THAT is when a resume is worth acting on.
-	test("exchanges on resume once the socket has reported itself dead", () => {
+	// call onStatus(false)). THAT is the one state where the live path is
+	// provably gone, so there is nothing to collide with and no reason to wait.
+	test("exchanges immediately once the socket has reported itself dead", () => {
 		const { modal, exchanged, fire, killSocket } = startFlow();
 		try {
-			modal.socketLive = true;
 			killSocket();
-			fire();
-			expect(exchanged).toEqual(["code-1"]);
-		} finally {
-			modal.resetFlow();
-		}
-	});
-
-	test("re-checks the code the moment the app comes back to the foreground", () => {
-		const { modal, exchanged, fire } = startFlow();
-		try {
 			fire();
 			expect(exchanged).toEqual(["code-1"]);
 		} finally {
