@@ -454,7 +454,7 @@ export class Replica {
 				// #1409 (review H4): mirrors main.ts's wiring — without this, a
 				// replayed create in the sim never exercises the genesis-frame
 				// fast path, only the inline pushFile one.
-				buildGenesisFrame: (path) => engine.buildGenesisFrame(path),
+				buildGenesisFrame: (path, noteId) => engine.buildGenesisFrame(path, noteId),
 				onCreated: (localId, serverId, path, seeded, genesis) =>
 					engine.applyCrdtCreateAck(localId, serverId, path, seeded, genesis),
 				// Limit/terminal surfacing is UI (toasts) in prod — never reached against
