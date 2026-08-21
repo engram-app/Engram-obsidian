@@ -1509,63 +1509,95 @@ export class SyncEngine {
 	 *  `buildGenesisFrame` (the durable queue's replayed create) so the gate
 	 *  cannot drift between the two call sites — a lesson from #1130
 	 *  (duplicated gates silently diverging). */
-	private async qualifiesForGenesisFrame(
+	private eligibleForGenesisFrame(path: string, content: string): boolean {
+		return (
+			!!this.crdt &&
+			!canvasPath(path) &&
+			!this.isLiveBound(normalizePath(path)) &&
+			!exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES)
+		);
+	}
+
+	/** The update bytes to send with `crdt_create`, or undefined for a bodyless
+	 *  create (#1409, + the doubling follow-up).
+	 *
+	 *  WHICH bytes is the whole correctness question. `encodeGenesisUpdate` builds
+	 *  the body in a THROWAWAY Y.Doc, so it is a brand-new lineage with a fresh
+	 *  clientID. That is correct only when this device holds no lineage of its
+	 *  own: ship it alongside an existing one and the two carry the same text
+	 *  with no shared identity, Yjs unions them on convergence, the body appears
+	 *  twice, the union is flushed to disk, and the next sync doubles the doubled
+	 *  body. Measured on a real vault: 263 KB -> 4.38 MB over five syncs, 2x
+	 *  each, one note's opening line repeated 128 times.
+	 *
+	 *  So when the doc DOES have history, send the doc's OWN state instead. The
+	 *  server then adopts this device's lineage rather than a rival — one lineage
+	 *  exists, so there is nothing to union.
+	 *
+	 *  Declining outright (an earlier revision of this fix) is NOT a safe
+	 *  fallback: a bodyless create leaves an empty server row, and the follow-up
+	 *  `routeModify` diffs disk against a doc that already equals it, producing
+	 *  ZERO ops — measured. The row stays empty. That trades doubled content for
+	 *  no content, which is worse. Undefined is returned only where there is also
+	 *  no state to send. */
+	private async genesisUpdateFor(
 		noteId: string | null | undefined,
 		path: string,
 		content: string,
-	): Promise<boolean> {
-		if (!this.crdt) return false;
-		if (canvasPath(path)) return false;
-		if (this.isLiveBound(normalizePath(path))) return false;
-		if (exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES)) return false;
+	): Promise<{ update: Uint8Array; fromThrowaway: boolean } | undefined> {
+		if (!this.crdt || !this.eligibleForGenesisFrame(path, content)) return undefined;
 
-		// A genesis frame is a BRAND-NEW lineage (encodeGenesisUpdate builds it in
-		// a throwaway Y.Doc), so it is only safe when this device holds no lineage
-		// of its own to collide with. Ship one anyway and the two lineages carry
-		// the same text with no shared identity — Yjs unions them and the body
-		// appears twice, the union is flushed to disk, and the NEXT sync doubles
-		// the doubled body. Measured on a real vault: 263 KB -> 4.38 MB over five
-		// syncs, 2x each, one note's opening line repeated 128 times.
-		//
-		// `applyCrdtCreateAck` already computes exactly this condition
-		// (`!effectiveIdHasHistory`) — but AFTER crdt_create has been sent, so it
-		// can only protect the local doc; it cannot unsend the second lineage.
-		// The check belongs here, before the frame is built.
-		//
-		// Fails CLOSED: if history can't be determined, assume it exists and take
-		// the bodyless create. That path opens a room per note (the cost #1409
-		// exists to remove), which is a performance regression — a doubled body is
-		// data loss, and the two are not tradeable.
-		// No resolvable id means we cannot ask whether a doc exists — and an id
-		// can go missing for reasons that CO-OCCUR with having a doc (a map
-		// reconcile mid-flight, a durable op replayed after the entry moved).
-		// Treat it as "history unknown" and take the safe path.
-		if (!noteId) return false;
+		// No resolvable id: cannot ask about history and cannot encode the doc's
+		// state either, since both are keyed by id. Bodyless create. An id can go
+		// missing for reasons that CO-OCCUR with having a doc (a map reconcile
+		// mid-flight, a durable op replayed after the entry moved).
+		if (!noteId) return undefined;
 
-		// A port without `hasAnyHistory` cannot answer the only question that
-		// makes a genesis frame safe, so it takes the bodyless create — which
-		// silently reverts ALL of #1409 (a room per imported note) with no other
-		// symptom. `anomaly` ships even with diagnostics off, for exactly this
-		// class: a degradation nobody would otherwise discover. Counts only, no
-		// path or content.
-		if (typeof this.crdt.hasAnyHistory !== "function") {
-			rlog().anomaly("crdt", "genesis_gate_port_missing_history");
-			return false;
+		let hasHistory: boolean;
+		try {
+			hasHistory =
+				typeof this.crdt.hasAnyHistory === "function"
+					? await this.crdt.hasAnyHistory(noteId)
+					: true; // unknown → assume the rival-lineage hazard exists
+		} catch {
+			// Doc destroyed mid-check (NoteDestroyedError) or an IndexedDB fault.
+			hasHistory = true;
+		}
+
+		if (!hasHistory) {
+			return { update: this.crdt.encodeGenesisUpdate(content), fromThrowaway: true };
+		}
+
+		// History present (or unknown): the throwaway-doc encoding is unsafe, so
+		// send this device's own lineage. A port that cannot encode it degrades to
+		// a bodyless create — which silently reverts #1409 (a room per imported
+		// note) with no other symptom, so it is surfaced. `anomaly` ships even
+		// with diagnostics off, for exactly this class. Counts only, never a path.
+		if (typeof this.crdt.encodeStateAsUpdate !== "function") {
+			rlog().anomaly("crdt", "genesis_gate_port_missing_state_encode");
+			return undefined;
 		}
 
 		try {
-			return !(await this.crdt.hasAnyHistory(noteId));
+			const state = await this.crdt.encodeStateAsUpdate(noteId);
+			// A doc's full state carries its edit history (and tombstones), so it
+			// can dwarf the content that passed the cap above. Bound it against the
+			// same budget rather than putting an unbounded frame on an 8 MB socket.
+			if (state.byteLength > MAX_CRDT_NOTE_BYTES) {
+				rlog().anomaly("crdt", "genesis_state_over_cap");
+				return undefined;
+			}
+			return { update: state, fromThrowaway: false };
 		} catch {
-			// A doc destroyed mid-check (NoteDestroyedError) or an IndexedDB fault.
-			// Unknown history — same safe path.
-			return false;
+			rlog().anomaly("crdt", "genesis_state_encode_failed");
+			return undefined;
 		}
 	}
 
 	/** Re-assert, AFTER `crdt_create` acked, that the local doc still had no
 	 *  lineage when the frame was sent (#1409 follow-up, adversarial review 2).
 	 *
-	 *  `qualifiesForGenesisFrame` necessarily runs BEFORE the create round trip,
+	 *  `genesisUpdateFor` necessarily runs BEFORE the create round trip,
 	 *  so a live edit, a remote apply, or a catch-up landing in that window can
 	 *  give the doc history after the gate cleared it. The frame is already on
 	 *  the wire by then: the server holds a lineage this device did not adopt,
@@ -1594,7 +1626,7 @@ export class SyncEngine {
 	 *  was originally enqueued with: a retry can fire much later (rate-limit
 	 *  backoff, a long reconnect), the queue is IndexedDB-persisted so
 	 *  stashing the body there would bloat it with content that may be stale
-	 *  by the time it's ever sent, and `qualifiesForGenesisFrame`'s own gates
+	 *  by the time it's ever sent, and `eligibleForGenesisFrame`'s own gates
 	 *  (live-bound, size) can only be evaluated against CURRENT state anyway.
 	 *  Returns undefined (bodyless create, falls back to the existing
 	 *  disk-seed path in `applyCrdtCreateAck`) when the note doesn't qualify,
@@ -1615,9 +1647,9 @@ export class SyncEngine {
 			// under. Deliberately NOT `this.noteIdMap.get(path)`: a rename or map
 			// reconcile between enqueue and replay makes those disagree, and the
 			// gate would then clear a note whose real doc holds lineage.
-			if (!(await this.qualifiesForGenesisFrame(noteId, path, content))) return undefined;
-			const update = this.crdt.encodeGenesisUpdate(content);
-			return { b64: encodeUpdateFrame(update), update, content };
+			const chosen = await this.genesisUpdateFor(noteId, path, content);
+			if (!chosen) return undefined;
+			return { b64: encodeUpdateFrame(chosen.update), update: chosen.update, content };
 		} catch {
 			return undefined;
 		}
@@ -3762,19 +3794,18 @@ export class SyncEngine {
 						// #1409: hand the body to crdt_create so the server can write it
 						// with a detached Y.Doc instead of opening a room per file — a
 						// full-vault import otherwise spins up one OTP room process per
-						// note. Gated by qualifiesForGenesisFrame (shared with the durable
+						// note. Gated by genesisUpdateFor (shared with the durable
 						// queue's replayed create, buildGenesisFrame, below) — markdown
 						// only, not live-bound, in-cap. `genesisUpdate` is kept as the raw
 						// Yjs bytes (not just the wire frame) so a `seeded: true` reply can
 						// apply the SAME update to this device's own doc below — see that
 						// comment for why.
-						const genesisUpdate = (await this.qualifiesForGenesisFrame(
+						const chosenGenesis = await this.genesisUpdateFor(
 							noteId,
 							pushedPath,
 							content,
-						))
-							? this.crdt.encodeGenesisUpdate(content)
-							: undefined;
+						);
+						const genesisUpdate = chosenGenesis?.update;
 						const { docId: serverId, seeded } =
 							genesisUpdate === undefined
 								? await this.crdtCreate(noteId, pushedPath)
@@ -3899,7 +3930,7 @@ export class SyncEngine {
 								// the window and the server holds a lineage we never adopted.
 								// Not repairable here — surfaced so it stops being invisible.
 								this.reportGenesisRace(
-									genesisUpdate !== undefined,
+									chosenGenesis?.fromThrowaway === true && serverId === noteId,
 									effectiveIdHasHistory,
 								);
 								if (

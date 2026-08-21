@@ -24,7 +24,7 @@ import { CONTENT_KEY } from "../../src/crdt/frontmatter-codec";
 import { NoteIdMap } from "../../src/crdt/note-id-map";
 import { seedContentInto } from "../../src/crdt/note-seed";
 import { ProviderRegistry } from "../../src/crdt/provider-registry";
-import { SyncEngine } from "../../src/sync";
+import { MAX_CRDT_NOTE_BYTES, SyncEngine } from "../../src/sync";
 import { DEFAULT_SETTINGS } from "../../src/types";
 
 const BODY = "# Title\n\nsome body text that must appear exactly once\n";
@@ -70,6 +70,10 @@ test("the doubling compounds once the union is flushed back to disk", () => {
 
 // --- The gate itself ---------------------------------------------------------
 
+/** The doc's OWN state — what a device with lineage must send instead of a
+ *  throwaway-doc encoding. Distinguishable from `genesisUpdateFor` by content. */
+const OWN_STATE = new Uint8Array([9, 9, 9, 9]);
+
 function engineWith(hasAnyHistory: boolean) {
 	const file = new TFile("Note.md");
 	const app = {
@@ -90,10 +94,11 @@ function engineWith(hasAnyHistory: boolean) {
 	);
 	engine.setCrdtManager({
 		encodeGenesisUpdate: () => genesisUpdateFor(BODY),
+		encodeStateAsUpdate: async () => OWN_STATE,
 		hasAnyHistory: async () => hasAnyHistory,
 	} as never);
-	// The gate asks `hasAnyHistory(noteId)`, so the path must resolve to an id —
-	// an unmapped path is treated as "history unknown" and covered separately.
+	// The selector asks `hasAnyHistory(noteId)`, so the path must resolve to an
+	// id — an unmapped path has no state to encode either, covered separately.
 	const map = new NoteIdMap();
 	map.getOrMint("Note.md");
 	engine.setNoteIdMap(map);
@@ -110,13 +115,42 @@ test("buildGenesisFrame returns a frame when this device has NO lineage yet", as
 	expect(frame?.content).toBe(BODY);
 });
 
-test("buildGenesisFrame returns undefined when the local doc already has history", async () => {
-	// The whole fix. Shipping a frame here creates the second lineage that the
-	// two tests above prove will double the body. Falling back to the bodyless
-	// create is slower (it opens a room) but correct — and correctness of the
-	// user's content is not tradeable against room count.
+test("with local history it sends the doc's OWN state, never a throwaway lineage", async () => {
+	// The whole fix. A throwaway-doc encoding here is the second lineage the two
+	// tests above prove will double the body. The doc's own state cannot double:
+	// there is only one lineage, so there is nothing to union.
 	const frame = await engineWith(true).buildGenesisFrame("Note.md", ID_B);
-	expect(frame).toBeUndefined();
+	expect(frame?.update).toEqual(OWN_STATE);
+});
+
+test("declining outright would leave the server row EMPTY — so it does not decline", async () => {
+	// Measured on the real ProviderRegistry: re-ingesting identical content emits
+	// ZERO ops (state vector unchanged), so a bodyless create's follow-up
+	// routeModify sends nothing and a fresh server row stays empty. An earlier
+	// revision of this fix declined here, trading doubled content for no content.
+	const frame = await engineWith(true).buildGenesisFrame("Note.md", ID_B);
+	expect(frame).toBeDefined();
+});
+
+test("a doc whose own state exceeds the cap declines rather than sending it", async () => {
+	const engine = engineWith(true);
+	engine.setCrdtManager({
+		encodeGenesisUpdate: () => genesisUpdateFor(BODY),
+		encodeStateAsUpdate: async () => new Uint8Array(MAX_CRDT_NOTE_BYTES + 1),
+		hasAnyHistory: async () => true,
+	} as never);
+	expect(await engine.buildGenesisFrame("Note.md", ID_B)).toBeUndefined();
+});
+
+test("unknown history is treated as history — own state, not a throwaway lineage", async () => {
+	// A port without `hasAnyHistory` cannot rule out the rival-lineage hazard.
+	const engine = engineWith(false);
+	engine.setCrdtManager({
+		encodeGenesisUpdate: () => genesisUpdateFor(BODY),
+		encodeStateAsUpdate: async () => OWN_STATE,
+	} as never);
+	const frame = await engine.buildGenesisFrame("Note.md", ID_B);
+	expect(frame?.update).toEqual(OWN_STATE);
 });
 
 test("the gate asks about the id being CREATED, not whatever the path maps to", async () => {
@@ -129,6 +163,7 @@ test("the gate asks about the id being CREATED, not whatever the path maps to", 
 	const engine = engineWith(false);
 	engine.setCrdtManager({
 		encodeGenesisUpdate: () => genesisUpdateFor(BODY),
+		encodeStateAsUpdate: async () => OWN_STATE,
 		hasAnyHistory: async (id: string) => {
 			asked.push(id);
 			return false;
