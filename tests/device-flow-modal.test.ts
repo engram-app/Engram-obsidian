@@ -442,11 +442,15 @@ describe("DeviceFlowModal — foreground resume", () => {
 	let origWebSocket: unknown;
 	let listeners: Set<() => void>;
 	let visibility: { state: string };
+	/** The socket instance waitForDeviceAuthorization built, so a test can kill
+	 *  it the way the real one dies. */
+	let sockets: any[];
 
 	beforeEach(() => {
 		origDocument = g.activeDocument;
 		origWebSocket = g.WebSocket;
 		listeners = new Set();
+		sockets = [];
 		visibility = { state: "visible" };
 		g.activeDocument = {
 			get visibilityState() {
@@ -459,11 +463,15 @@ describe("DeviceFlowModal — foreground resume", () => {
 				if (type === "visibilitychange") listeners.delete(fn);
 			},
 		};
+		const captured = () => sockets;
 		g.WebSocket = class {
 			onopen: unknown = null;
-			onclose: unknown = null;
+			onclose: ((e: { code: number }) => void) | null = null;
 			onmessage: unknown = null;
 			onerror: unknown = null;
+			constructor() {
+				captured().push(this);
+			}
 			send() {}
 			close() {}
 		};
@@ -486,16 +494,129 @@ describe("DeviceFlowModal — foreground resume", () => {
 		modal.exchangeNow = async (_apiUrl: string, code: string) => {
 			exchanged.push(code);
 		};
-		modal.startPolling("code-1");
-		const fire = () => {
-			for (const fn of listeners) fn();
+		// A timer table the test drives by hand. clearTimeout is honoured, so
+		// "resetFlow cancels the probe" is a real assertion and not a stub that
+		// forgets to cancel.
+		const timers = new Map<number, () => void>();
+		let nextTimerId = 0;
+		const withFakeTimers = <T>(fn: () => T): T => {
+			const origSet = g.window.setTimeout;
+			const origClear = g.window.clearTimeout;
+			g.window.setTimeout = (cb: () => void) => {
+				nextTimerId += 1;
+				timers.set(nextTimerId, cb);
+				return nextTimerId;
+			};
+			g.window.clearTimeout = (id: number) => timers.delete(id);
+			try {
+				return fn();
+			} finally {
+				g.window.setTimeout = origSet;
+				g.window.clearTimeout = origClear;
+			}
 		};
-		return { modal, exchanged, fire };
+
+		withFakeTimers(() => modal.startPolling("code-1"));
+		const fire = () =>
+			withFakeTimers(() => {
+				for (const fn of listeners) fn();
+			});
+		/** Run whatever the resume deferred, the way the real timer would. */
+		const runDeferred = () => {
+			const pending = [...timers.values()];
+			timers.clear();
+			for (const fn of pending) fn();
+		};
+		// Kill the socket the way it really dies — onclose is what drives
+		// opts.onStatus(false) back into the modal.
+		const killSocket = () => sockets[0]?.onclose?.({ code: 1006 });
+		/** Answer the join the way the server does, which is what drives
+		 *  opts.onStatus(true) back into the modal. */
+		const joinSocket = () =>
+			sockets[0]?.onmessage?.({
+				data: JSON.stringify(["1", "1", "device:code-1", "phx_reply", { status: "ok" }]),
+			});
+		/** resetFlow with the fake clock installed, so its clearTimeout lands on
+		 *  the table above rather than the real one. */
+		const resetWithTimers = () => withFakeTimers(() => modal.resetFlow());
+		return { modal, exchanged, fire, killSocket, joinSocket, runDeferred, resetWithTimers };
 	};
 
-	test("re-checks the code the moment the app comes back to the foreground", () => {
+	// THE REGRESSION. On desktop the socket never dies — window.open just puts
+	// Obsidian behind the browser — so coming back is not evidence of a missed
+	// push. But the resume check took `exchanging`, the lock the socket path
+	// shares, and a POST holds it for up to 15s. The `authorized` push then
+	// arrived, found the lock held, and was deferred to `pendingAuthorized` to
+	// be drained AFTER that request finished. Instant became "sit on the code
+	// screen, then suddenly jump" — exactly the symptom, and the live path's
+	// whole benefit lost to a rescue for a problem desktop does not have.
+	//
+	// Default state, deliberately: the join reply has not landed here, so the
+	// socket is merely UNPROVEN rather than known-dead. Treating unproven as
+	// dead is what let an alt-tab in the first few hundred ms steal the lock
+	// before the gate ever engaged.
+	test("does not steal the exchange lock while the socket is unproven", () => {
 		const { modal, exchanged, fire } = startFlow();
 		try {
+			fire();
+			expect(exchanged).toEqual([]);
+		} finally {
+			modal.resetFlow();
+		}
+	});
+
+	test("does not steal the exchange lock while the socket is live either", () => {
+		const { modal, exchanged, fire, joinSocket } = startFlow();
+		try {
+			joinSocket();
+			fire();
+			expect(exchanged).toEqual([]);
+		} finally {
+			modal.resetFlow();
+		}
+	});
+
+	// A live-looking socket is not trustworthy after a suspend, and
+	// channel.ts:642 says so in as many words: "Mobile OSes suspend the socket
+	// while backgrounded; readyState can still report OPEN on a connection that
+	// is actually dead." The device socket has no liveness probe at all — its
+	// heartbeat is fire-and-forget and never tracks a reply — so a half-open
+	// mobile socket reports live forever and SKIPPING would silently restore
+	// the exact 30s stall this whole feature exists to remove.
+	//
+	// So: defer, don't skip. On desktop the push has already closed the modal
+	// by the time this runs, and the `aborted` check makes it a no-op.
+	test("an unproven socket only DEFERS the resume check, it does not cancel it", () => {
+		const { modal, exchanged, fire, runDeferred } = startFlow();
+		try {
+			fire();
+			expect(exchanged).toEqual([]);
+
+			runDeferred();
+			expect(exchanged).toEqual(["code-1"]);
+		} finally {
+			modal.resetFlow();
+		}
+	});
+
+	// Otherwise the deferred probe is one more orphan holding a dead
+	// device_code — the same class of leak as the socket and the listener.
+	test("resetFlow cancels a deferred resume probe", () => {
+		const { modal, exchanged, fire, runDeferred, resetWithTimers } = startFlow();
+		fire();
+		resetWithTimers();
+
+		runDeferred();
+		expect(exchanged).toEqual([]);
+	});
+
+	// The socket reports its own death (onclose / phx_error / a failed join all
+	// call onStatus(false)). THAT is the one state where the live path is
+	// provably gone, so there is nothing to collide with and no reason to wait.
+	test("exchanges immediately once the socket has reported itself dead", () => {
+		const { modal, exchanged, fire, killSocket } = startFlow();
+		try {
+			killSocket();
 			fire();
 			expect(exchanged).toEqual(["code-1"]);
 		} finally {

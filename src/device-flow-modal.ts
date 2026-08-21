@@ -5,6 +5,12 @@ import { waitForDeviceAuthorization } from "./device-flow-socket";
 import { errMsg } from "./error-util";
 import type EngramSyncPlugin from "./main";
 
+/** How long a resume waits before probing when the socket claims to be live.
+ *  Long enough that a working socket has already completed the flow (making the
+ *  probe a no-op via `aborted`), short enough to beat the 30s fallback tick.
+ *  Mirrors channel.ts's RESUME_PROBE_MS, which exists for the same reason. */
+const RESUME_PROBE_MS = 5_000;
+
 export interface DeviceFlowResult {
 	access_token: string;
 	refresh_token: string;
@@ -45,6 +51,14 @@ export class DeviceFlowModal extends Modal {
 	 *  wrong document and strand the listener forever. */
 	private onVisibilityChange: (() => void) | null = null;
 	private visibilityDoc: Document | null = null;
+	/** Whether the socket has PROVED itself gone — a close, an error, or a
+	 *  rejected join. Starts false meaning "unproven", not "alive": before the
+	 *  join reply lands the socket is merely unknown, and treating unknown as
+	 *  dead let an early alt-tab steal the exchange lock. Only this one state
+	 *  is trustworthy; see the visibilitychange handler for why "live" isn't. */
+	private socketDead = false;
+	/** Pending deferred resume probe, held so resetFlow can cancel it. */
+	private resumeProbe: number | null = null;
 	private aborted = false;
 
 	constructor(app: App, plugin: EngramSyncPlugin) {
@@ -74,6 +88,8 @@ export class DeviceFlowModal extends Modal {
 			if (this.aborted) return;
 			this.renderCodeScreen(contentEl, resp);
 			this.startPolling(resp.device_code);
+			// Last, deliberately — see openVerificationPage.
+			this.openVerificationPage(resp);
 		} catch {
 			statusEl.setText("Failed to start device flow. Check your Engram URL and try again.");
 		}
@@ -98,6 +114,11 @@ export class DeviceFlowModal extends Modal {
 			this.visibilityDoc?.removeEventListener("visibilitychange", this.onVisibilityChange);
 			this.onVisibilityChange = null;
 			this.visibilityDoc = null;
+		}
+		this.socketDead = false;
+		if (this.resumeProbe !== null) {
+			window.clearTimeout(this.resumeProbe);
+			this.resumeProbe = null;
 		}
 		this.exchanging = false;
 		this.pendingAuthorized = false;
@@ -184,7 +205,14 @@ export class DeviceFlowModal extends Modal {
 		const btnContainer = contentEl.createDiv({ cls: "engram-device-buttons" });
 		const cancelBtn = btnContainer.createEl("button", { text: "Cancel" });
 		cancelBtn.addEventListener("click", () => this.close());
+	}
 
+	/** Send the user to the verification page. Called AFTER startPolling, never
+	 *  from renderCodeScreen: /link auto-verifies a prefilled code on arrival,
+	 *  so a signed-in user on a fast connection can authorize before the device
+	 *  topic is joined — and Phoenix does not replay a broadcast to a late
+	 *  subscriber, so that push is simply gone. Joining first closes the gap. */
+	private openVerificationPage(resp: { user_code: string; verification_url: string }): void {
 		window.open(verificationUrlWithCode(resp.verification_url, resp.user_code));
 	}
 
@@ -213,7 +241,12 @@ export class DeviceFlowModal extends Modal {
 			() => {
 				void this.exchangeNow(apiUrl, deviceCode);
 			},
-			{ onStatus: (live) => this.setWaitingStatus(live) },
+			{
+				onStatus: (live) => {
+					this.socketDead = !live;
+					this.setWaitingStatus(live);
+				},
+			},
 		);
 
 		// Wall-clock deadline, not a tick counter: a 15s-timeout request holding
@@ -256,12 +289,49 @@ export class DeviceFlowModal extends Modal {
 		// return exchanges the dead code, takes the 410, and wipes the freshly
 		// rendered code screen with "Code expired". Same orphan-closure class the
 		// socket already hit (see resetFlow).
+		//
+		// A live socket DEFERS this check; it never cancels it.
+		//
+		// Firing immediately regardless is what broke desktop: the socket
+		// survives there (window.open only puts Obsidian behind the browser), so
+		// the rescue was pure interference — it took `exchanging`, the lock the
+		// socket path shares, and a POST holds that for up to 15s, so the
+		// `authorized` push found the lock held and drained only afterwards.
+		// Instant became "sit on the code screen, then suddenly jump".
+		//
+		// But SKIPPING on a live socket is worse, and silently: "live" is not a
+		// trustworthy state. channel.ts:642 says it outright — "Mobile OSes
+		// suspend the socket while backgrounded; readyState can still report
+		// OPEN on a connection that is actually dead." This socket has no
+		// liveness probe at all (its heartbeat is fire-and-forget and never
+		// tracks a reply), so a half-open mobile socket reports live forever,
+		// and skipping would restore the exact 30s stall the resume check exists
+		// to remove — on the only platform that needs it. The clean-close case
+		// races too: nothing orders the close event before this one.
+		//
+		// Deferring satisfies both. On desktop the push has completed the flow
+		// and closed the modal well inside the delay, so `aborted` makes the
+		// probe a no-op and the lock is never contended. On mobile it rescues
+		// whatever the socket claims.
+		//
+		// The immediate path is reserved for a socket that has PROVED itself
+		// gone, which is the one state worth trusting: nothing is coming, so
+		// there is nothing to collide with. Unproven defers like live does —
+		// before the join reply the socket is unknown, not dead, and firing on
+		// unknown let an alt-tab in the first few hundred ms steal the lock
+		// before the gate ever engaged.
 		const doc = activeDocument;
 		this.visibilityDoc = doc;
 		this.onVisibilityChange = () => {
-			if (doc.visibilityState === "visible") {
+			if (doc.visibilityState !== "visible") return;
+			if (this.socketDead) {
 				void this.exchangeNow(apiUrl, deviceCode);
+				return;
 			}
+			this.resumeProbe = window.setTimeout(() => {
+				this.resumeProbe = null;
+				void this.exchangeNow(apiUrl, deviceCode);
+			}, RESUME_PROBE_MS);
 		};
 		doc.addEventListener("visibilitychange", this.onVisibilityChange);
 
