@@ -46,6 +46,9 @@ function makeEngine(overrides: Partial<Record<string, unknown>> = {}) {
 			read: mock().mockResolvedValue("body"),
 			cachedRead: mock().mockResolvedValue("body"),
 			readBinary: mock().mockResolvedValue(new Uint8Array([1, 2, 3]).buffer),
+			createBinary: mock().mockResolvedValue(undefined),
+			modifyBinary: mock().mockResolvedValue(undefined),
+			createFolder: mock().mockResolvedValue(undefined),
 			getAbstractFileByPath: mock().mockReturnValue(null),
 			getFileByPath: mock().mockReturnValue(null),
 			getFiles: mock().mockReturnValue([]),
@@ -287,5 +290,147 @@ describe("pushFile(force): attachments", () => {
 		await (e as any).pushFile(file, true, false, serverHashes);
 
 		expect(pushAttachment).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("inbound attachment events: skip the blob fetch when we already hold the bytes", () => {
+	function upsertEvent(extra: Record<string, unknown> = {}) {
+		return {
+			event_type: "upsert",
+			kind: "attachment",
+			path: "a/pic.png",
+			...extra,
+		} as any;
+	}
+
+	test("a matching content_hash skips the download entirely", async () => {
+		// Engram#961 (1): this was the download mirror of the re-upload loop —
+		// a peer that already held the exact bytes still GET the whole blob
+		// (possibly many MB) only to byte-compare and discover "unchanged".
+		const getAttachment = mock().mockResolvedValue({
+			path: "a/pic.png",
+			content_base64: "AQID",
+			mime_type: "image/png",
+			size_bytes: 3,
+			mtime: 1,
+			updated_at: "",
+			content_hash: "server-hash-1",
+		});
+		const { e } = makeEngine({ getAttachment });
+		(e as any).syncState.set("a/pic.png", {
+			hash: fnv1a(B64),
+			serverHash: "server-hash-1",
+		});
+
+		await (e as any).applyStreamEvent(upsertEvent({ content_hash: "server-hash-1" }));
+
+		expect(getAttachment).not.toHaveBeenCalled();
+	});
+
+	test("a DIFFERENT content_hash still downloads", async () => {
+		const getAttachment = mock().mockResolvedValue({
+			path: "a/pic.png",
+			content_base64: "AQID",
+			mime_type: "image/png",
+			size_bytes: 3,
+			mtime: 1,
+			updated_at: "",
+			content_hash: "server-hash-2",
+		});
+		const { e } = makeEngine({ getAttachment });
+		(e as any).syncState.set("a/pic.png", {
+			hash: fnv1a(B64),
+			serverHash: "server-hash-1",
+		});
+
+		await (e as any).applyStreamEvent(upsertEvent({ content_hash: "server-hash-2" }));
+
+		expect(getAttachment).toHaveBeenCalledTimes(1);
+	});
+
+	test("an event with NO content_hash still downloads (older backend)", async () => {
+		const getAttachment = mock().mockResolvedValue({
+			path: "a/pic.png",
+			content_base64: "AQID",
+			mime_type: "image/png",
+			size_bytes: 3,
+			mtime: 1,
+			updated_at: "",
+		});
+		const { e } = makeEngine({ getAttachment });
+		(e as any).syncState.set("a/pic.png", {
+			hash: fnv1a(B64),
+			serverHash: "server-hash-1",
+		});
+
+		await (e as any).applyStreamEvent(upsertEvent());
+
+		expect(getAttachment).toHaveBeenCalledTimes(1);
+	});
+
+	test("receiving an attachment records the server hash, so the NEXT event can skip", async () => {
+		// Without this the skip above could never fire on the device that
+		// actually received the file — it would hold bytes but no server hash.
+		const getAttachment = mock().mockResolvedValue({
+			path: "a/pic.png",
+			content_base64: "AQID",
+			mime_type: "image/png",
+			size_bytes: 3,
+			mtime: 1,
+			updated_at: "",
+			content_hash: "server-hash-9",
+		});
+		const { e } = makeEngine({ getAttachment });
+
+		await (e as any).applyAttachmentChange({
+			path: "a/pic.png",
+			mime_type: "image/png",
+			size_bytes: 3,
+			mtime: 1,
+			updated_at: "",
+			deleted: false,
+		});
+
+		expect((e as any).syncState.get("a/pic.png").serverHash).toBe("server-hash-9");
+	});
+});
+
+describe("a failed post-push reconcile must not fail the push", () => {
+	function attachmentFile(path: string): TFile {
+		const f = new TFile(path);
+		(f as any).stat = { mtime: 1000, size: 3 };
+		return f;
+	}
+
+	test("pushAll still resolves — and still reports what it pushed", async () => {
+		// reconcile() is a post-push REPAIR step: it runs after every file has
+		// already been uploaded. Letting its manifest call throw out of pushAll
+		// turned a sync that fully succeeded into a reported failure, and the
+		// user's natural response to that is to run the push again — which is
+		// how a "failure" becomes a re-upload loop.
+		const getManifest = mock(async () => {
+			throw new Error("manifest unavailable");
+		});
+		const { e, pushAttachment, app } = makeEngine({ getManifest });
+		const file = attachmentFile("a/pic.png");
+		app.vault.getFiles = mock().mockReturnValue([file]);
+		(e as any).isBinaryFile = () => true;
+
+		const pushed = await e.pushAll();
+
+		expect(pushAttachment).toHaveBeenCalledTimes(1);
+		expect(pushed).toBe(1);
+	});
+
+	test("reconcile() itself answers null rather than throwing", async () => {
+		const getManifest = mock(async () => {
+			throw new Error("manifest unavailable");
+		});
+		const { e } = makeEngine({ getManifest });
+
+		// null is the already-established "could not reconcile" answer (it is
+		// what an old backend without a manifest returns), so every caller
+		// already handles it.
+		expect(await e.reconcile()).toBeNull();
 	});
 });

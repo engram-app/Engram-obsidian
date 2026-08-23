@@ -6335,7 +6335,13 @@ export class SyncEngine {
 		// Protocol rev — hash-compare dedupe: if the event's content_hash
 		// matches the server hash we already hold for this path, the local
 		// copy is current; skip without touching the vault or the network.
-		if (event.event_type === "upsert" && !isAttachment && event.content_hash !== undefined) {
+		// Attachments included since 2026-08-23 (Engram#961): the broadcast now
+		// carries content_hash, and `applyAttachmentChange` records the
+		// server's hash on receive — so this can finally match for a blob and
+		// save a full multi-MB GET whose only outcome was "unchanged". Before
+		// both halves existed the check could never fire for an attachment,
+		// which is why it was excluded.
+		if (event.event_type === "upsert" && event.content_hash !== undefined) {
 			const stored = this.syncState.get(normalizePath(event.path));
 			if (stored?.serverHash === event.content_hash) {
 				if (event.version != null && event.version !== stored.version) {
@@ -8057,20 +8063,33 @@ export class SyncEngine {
 		}
 
 		// Fetch content if not provided
-		const resolvedBase64 =
-			contentBase64 ?? (await this.api.getAttachment(change.path)).content_base64;
+		let serverHash = change.content_hash;
+		let resolvedBase64 = contentBase64;
+		if (resolvedBase64 === undefined) {
+			const fetched = await this.api.getAttachment(change.path);
+			resolvedBase64 = fetched.content_base64;
+			// Prefer the value that came WITH the bytes we are about to write:
+			// it describes exactly this payload, whereas `change.content_hash`
+			// describes whatever the event announced.
+			serverHash = fetched.content_hash ?? serverHash;
+		}
 		const buffer = base64ToArrayBuffer(resolvedBase64);
 		const existing = this.app.vault.getFileByPath(normalized);
 		// Track the synced bytes so a later push echo-suppresses instead of
 		// re-uploading this attachment (keyed identically to the push side).
 		const hash = fnv1a(resolvedBase64);
+		// Recording the SERVER's hash is what lets the next broadcast for this
+		// path be answered without re-downloading the blob (Engram#961). Merge,
+		// never replace: a bare `set` would drop it again on the following
+		// write, which is the same bug that kept force-push unprovable.
+		const rowPatch = serverHash ? { hash, serverHash } : { hash };
 
 		if (existing) {
 			// Skip if content is identical — prevents modify event and push-back loop
 			if (existing.stat.size === buffer.byteLength) {
 				const localBuffer = await this.app.vault.readBinary(existing);
 				if (this.arrayBuffersEqual(localBuffer, buffer)) {
-					this.stampSyncedRow(normalized, { hash });
+					this.patchSyncedRow(normalized, rowPatch);
 					rlog().info(
 						"pull",
 						`Attachment unchanged: ${noteRef(change.path)} | bytes=${buffer.byteLength}`,
@@ -8079,7 +8098,7 @@ export class SyncEngine {
 				}
 			}
 			await this.app.vault.modifyBinary(existing, buffer);
-			this.stampSyncedRow(normalized, { hash });
+			this.patchSyncedRow(normalized, rowPatch);
 			rlog().info(
 				"pull",
 				`Attachment applied: ${noteRef(change.path)} | bytes=${buffer.byteLength}`,
@@ -8087,7 +8106,7 @@ export class SyncEngine {
 			return true;
 		}
 		await this.createBinaryFileWithFolders(normalized, buffer);
-		this.stampSyncedRow(normalized, { hash });
+		this.patchSyncedRow(normalized, rowPatch);
 		rlog().info(
 			"pull",
 			`Attachment created: ${noteRef(change.path)} | bytes=${buffer.byteLength}`,
@@ -9095,7 +9114,22 @@ export class SyncEngine {
 	async reconcile(): Promise<ReconcileResult | null> {
 		devLog().log("reconcile", "start");
 		rlog().info("reconcile", "Reconcile started");
-		const manifest = await this.api.getManifest();
+		// Reconcile is a post-push REPAIR pass — by the time it runs, every
+		// file has already been uploaded. Letting a manifest failure escape
+		// turned a sync that fully succeeded into a reported failure, and the
+		// user's natural response to a failed sync is to run it again: that is
+		// how a false failure becomes a re-upload loop. Scope the failure to
+		// the step that owns it and answer `null`, which is the already-
+		// established "could not reconcile" result every caller handles.
+		let manifest: Awaited<ReturnType<typeof this.api.getManifest>>;
+		try {
+			manifest = await this.api.getManifest();
+		} catch (e) {
+			// Loud, not swallowed: the repair pass did not run, and a caller
+			// reading only the push result would never know.
+			rlog().warn("reconcile", `Reconcile skipped — manifest unavailable: ${errMsg(e)}`);
+			return null;
+		}
 		if (!manifest) {
 			devLog().log("reconcile", "server does not support manifest — skipping");
 			rlog().info("reconcile", "Server does not support manifest — skipping");
