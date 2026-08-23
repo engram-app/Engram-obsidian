@@ -1553,11 +1553,15 @@ export class SyncEngine {
 		// mid-flight, a durable op replayed after the entry moved).
 		if (!noteId) return undefined;
 
+		// TRANSIENT, not the plain probe: this runs once per note in a first sync,
+		// and `hasAnyHistory` materializes a Y.Doc + IndexedDB connection that the
+		// registry (no LRU) then holds forever — a large vault OOM'd the Obsidian
+		// renderer. The transient form frees anything it had to materialize.
 		let hasHistory: boolean;
 		try {
 			hasHistory =
-				typeof this.crdt.hasAnyHistory === "function"
-					? await this.crdt.hasAnyHistory(noteId)
+				typeof this.crdt.hasAnyHistoryTransient === "function"
+					? await this.crdt.hasAnyHistoryTransient(noteId)
 					: true; // unknown → assume the rival-lineage hazard exists
 		} catch {
 			// Doc destroyed mid-check (NoteDestroyedError) or an IndexedDB fault.

@@ -276,6 +276,35 @@ export class ProviderRegistry {
 		return docHasAnyHistory(e.doc, e.kind);
 	}
 
+	/** `hasAnyHistory` that leaves residency exactly as it found it.
+	 *
+	 *  `entry()` is the choke point where a doc COMES INTO EXISTENCE, and this
+	 *  registry has no LRU (see `protect`/`unprotect` below) — a doc is resident
+	 *  until an idle hibernate or a delete frees it. That is fine for every
+	 *  caller that goes on to USE the doc, and a leak for a caller that only
+	 *  wants the predicate: #1409's genesis gate asks this about every note in a
+	 *  first sync, so on a large vault the plain `hasAnyHistory` pinned one
+	 *  Y.Doc + one open IndexedDB connection PER NOTE and OOM'd the renderer.
+	 *
+	 *  A doc that was already resident is answered in place and left alone
+	 *  (it may be live-bound). One materialized here is torn down with
+	 *  `clearData: false`, which frees the doc/provider/IndexedDB handle while
+	 *  leaving the persisted bytes untouched — the next `entry()` rehydrates
+	 *  the identical state, so this is observationally pure.
+	 *
+	 *  CALLER CONTRACT: only for a note the caller knows is not live-bound
+	 *  (`eligibleForGenesisFrame` checks exactly that before the genesis gate
+	 *  calls this). A bind that lands DURING hydration would be torn down here
+	 *  — the registry exposes no bind signal to check for, and inventing one
+	 *  for a path whose caller already excludes open editors buys nothing. */
+	async hasAnyHistoryTransient(noteId: string): Promise<boolean> {
+		const wasResident = this.entries.has(noteId);
+		const e = await this.entry(noteId);
+		const has = docHasAnyHistory(e.doc, e.kind);
+		if (!wasResident) await this.destroy(noteId, false);
+		return has;
+	}
+
 	hasDoc(noteId: string): boolean {
 		return this.entries.has(noteId);
 	}
