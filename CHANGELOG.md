@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.24.1](https://github.com/engram-app/Engram-obsidian/compare/1.24.0...1.24.1) (2026-08-23)
+
+
+### Bug Fixes
+
+* **crdt:** never ship a genesis frame for a note this device already has ([#460](https://github.com/engram-app/Engram-obsidian/issues/460)) ([efa4966](https://github.com/engram-app/Engram-obsidian/commit/efa4966df3503ab243a9a4305ed493e91b40d0ed))
+* **device-flow:** stop the resume probe stalling the desktop link flow ([#461](https://github.com/engram-app/Engram-obsidian/issues/461)) ([91a01c9](https://github.com/engram-app/Engram-obsidian/commit/91a01c9012ebff6b3572b4c8680e4a576ddeac13))
+* first-time connect and link UX ([#458](https://github.com/engram-app/Engram-obsidian/issues/458)) ([23bb305](https://github.com/engram-app/Engram-obsidian/commit/23bb3054bdb9196b95f0f1ef48b2475236f68fcc))
+* **sync:** skip the blob fetch when we already hold the bytes; don't fail a push on reconcile ([#463](https://github.com/engram-app/Engram-obsidian/issues/463)) ([41cec4f](https://github.com/engram-app/Engram-obsidian/commit/41cec4f0737e507b35e484157d2828ad0d33f347))
+* **sync:** stop re-uploading attachments the server already holds ([#462](https://github.com/engram-app/Engram-obsidian/issues/462)) ([d5cf0cc](https://github.com/engram-app/Engram-obsidian/commit/d5cf0cc31580990b14d0701def5ad43ead360cdd))
+
 ## [1.24.0](https://github.com/engram-app/Engram-obsidian/compare/1.23.1...1.24.0) (2026-08-20)
 
 
