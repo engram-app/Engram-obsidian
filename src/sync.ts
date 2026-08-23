@@ -1848,6 +1848,32 @@ export class SyncEngine {
 		this.syncState.set(path, state);
 	}
 
+	/** Can the server PROVE it still holds the bytes we last uploaded for
+	 *  `np`? Only then may a forced attachment push skip the upload.
+	 *
+	 *  This cannot be decided locally. The server's `content_hash` is an HMAC
+	 *  keyed off the user's DEK, which this client never holds — so we can
+	 *  never compute the expected hash for a local file (see
+	 *  `FileSyncState.serverHash`: "Never computed locally"). What we CAN do is
+	 *  remember the hash the server reported when it accepted our upload, and
+	 *  check that its current hash for that path is still the same one.
+	 *
+	 *  Every uncertain case answers false, so force keeps re-uploading:
+	 *   - no listing supplied (single-file push)      → unproven
+	 *   - we never recorded a serverHash              → unproven
+	 *   - the path is absent from the listing         → the repair case force is FOR
+	 *   - the server's hash moved since we recorded it → someone else wrote; ours should win
+	 */
+	private serverStillHasOurBytes(
+		np: string,
+		row: FileSyncState,
+		serverAttachmentHashes?: Map<string, string>,
+	): boolean {
+		if (!serverAttachmentHashes || row.serverHash === undefined) return false;
+		const current = serverAttachmentHashes.get(np);
+		return current !== undefined && current === row.serverHash;
+	}
+
 	/** MERGE onto `path`'s row as read at stamp time: refresh the named fields,
 	 *  preserve everything else already recorded. A missing row starts at
 	 *  `hash: 0` (the historical `?? { hash: 0 }` default). */
@@ -3441,8 +3467,19 @@ export class SyncEngine {
 	 *  parked attachment is actually re-uploaded — used ONLY by
 	 *  resyncSkippedAttachments on a plan upgrade. The bulk paths (pushAll /
 	 *  pushModifiedFiles) pass force without this, so they stay quiet on
-	 *  plan-gated attachments. */
-	private async pushFile(file: TFile, force = false, bypassPlanSkip = false): Promise<boolean> {
+	 *  plan-gated attachments.
+	 *
+	 *  `serverAttachmentHashes` maps normalized path -> the server's CURRENT
+	 *  content hash, supplied once per bulk sweep. It is what lets a FORCED
+	 *  attachment push prove convergence instead of re-sending megabytes; see
+	 *  `serverStillHasOurBytes`. Absent (single-file pushes) means unproven,
+	 *  and force re-uploads exactly as it always did. */
+	private async pushFile(
+		file: TFile,
+		force = false,
+		bypassPlanSkip = false,
+		serverAttachmentHashes?: Map<string, string>,
+	): Promise<boolean> {
 		if (this.pushing.has(file.path)) return false;
 
 		// Persistence shortcut: if this attachment was already parked under an
@@ -3552,18 +3589,40 @@ export class SyncEngine {
 				// this, pushModifiedFiles sees every attachment as untracked and
 				// re-pushes it on every fullSync (the "pushed N every Merge" loop).
 				const hash = fnv1a(base64);
-				const existing = this.syncState.get(normalizePath(file.path));
-				if (!force && existing !== undefined && hash === existing.hash) {
+				const np = normalizePath(file.path);
+				const existing = this.syncState.get(np);
+				const unchangedLocally = existing !== undefined && hash === existing.hash;
+				// A forced push distrusts the LOCAL stamp — rightly, since the
+				// server may have lost our copy. But it can still be satisfied by
+				// SERVER evidence: if the server's current hash for this path is
+				// the one we recorded when we last uploaded it, our bytes are
+				// demonstrably there and re-sending them is pure waste. Without
+				// this, every pushAll re-uploaded the whole vault's attachments
+				// (2026-08-21: 667 files, 90 minutes, ~30% of prod CPU).
+				if (
+					unchangedLocally &&
+					(!force || this.serverStillHasOurBytes(np, existing, serverAttachmentHashes))
+				) {
 					devLog().log("push", `skip (echo): ${file.path}`);
-					rlog().info(
+					// warn, not info: client `info` never reaches Loki, so the
+					// server side could not see these decisions at all.
+					rlog().warn(
 						"push",
-						`Echo skip (attachment): ${noteRef(file.path)} | hash=${hash}`,
+						`Echo skip (attachment): ${noteRef(file.path)} | hash=${hash} | forced=${force}`,
 					);
 					return false;
 				}
 				const mimeType = this.getMimeType(file);
-				await this.api.pushAttachment(file.path, base64, mimeType, mtime);
-				this.stampSyncedRow(normalizePath(file.path), { hash });
+				const attResp = await this.api.pushAttachment(file.path, base64, mimeType, mtime);
+				// MERGE: a bare `set` here dropped the serverHash this path needs
+				// on the NEXT forced push, which is what kept force permanently
+				// unable to prove convergence.
+				this.patchSyncedRow(np, {
+					hash,
+					...(attResp?.attachment?.content_hash
+						? { serverHash: attResp.attachment.content_hash }
+						: {}),
+				});
 			} else {
 				// RE-READ after the slot. The pre-slot read (#426) exists only to
 				// bail on echoes cheaply; it must not be the body we transmit.
@@ -8249,7 +8308,6 @@ export class SyncEngine {
 	/** Full bidirectional sync: pull remote changes, then push local changes. */
 	async fullSync(): Promise<{ pulled: number; pushed: number }> {
 		// Thin wrapper so the sweep is marked without reindenting the whole body.
-		// fullSync calls pushAll, so bulkDepth nests — hence a counter, not a flag.
 		return this.inBulkSweep(() => this.fullSyncInner());
 	}
 
@@ -8438,6 +8496,7 @@ export class SyncEngine {
 		toSync: TFile[],
 		mode: "incremental" | "force",
 		base: { pushed: number; failed: number } = { pushed: 0, failed: 0 },
+		serverAttachmentHashes?: Map<string, string>,
 	): Promise<{ pushed: number; failed: number }> {
 		const total = toSync.length;
 		let pushed = 0;
@@ -8447,7 +8506,12 @@ export class SyncEngine {
 			await Promise.all(
 				batch.map(async (f: TFile) => {
 					try {
-						const ok = await this.pushFile(f, mode === "force");
+						const ok = await this.pushFile(
+							f,
+							mode === "force",
+							false,
+							serverAttachmentHashes,
+						);
 						if (ok) {
 							pushed++;
 							if (mode === "force") this.logEntry("push", f.path, "ok");
@@ -8558,7 +8622,10 @@ export class SyncEngine {
 			return f.stat.mtime > sinceMs;
 		});
 		devLog().log("push", `pushModifiedFiles: ${toSync.length} files modified since ${since}`);
-		rlog().info("push", `PushModified: ${toSync.length} files modified since ${since}`);
+		// warn, not info: client `info` never reaches Loki. A bulk sweep firing
+		// repeatedly is the signature of a re-upload loop, and in 2026-08 that
+		// signature was invisible server-side for 90 minutes.
+		rlog().warn("push", `PushModified: ${toSync.length} files modified since ${since}`);
 
 		// Drive the progress UI the same way pushAll does, so the Merge path
 		// shows progress too (the engine emits nothing otherwise).
@@ -8760,6 +8827,33 @@ export class SyncEngine {
 		);
 	}
 
+	/** The server's current content hash per attachment path, fetched ONCE per
+	 *  bulk sweep so a forced push can prove convergence instead of re-sending
+	 *  every attachment in the vault. One request for the whole vault.
+	 *
+	 *  Returns undefined on any failure — including a `since_seq`-elided
+	 *  manifest body. Undefined means "unproven", so force falls back to
+	 *  re-uploading: the fail-safe direction is wasted bandwidth, never a
+	 *  skipped upload the server actually needed. */
+	private async fetchServerAttachmentHashes(): Promise<Map<string, string> | undefined> {
+		try {
+			const manifest = await this.api.getManifest();
+			if (!manifest?.attachments) return undefined;
+			const map = new Map<string, string>();
+			for (const entry of manifest.attachments) {
+				if (entry.content_hash) map.set(normalizePath(entry.path), entry.content_hash);
+			}
+			return map;
+		} catch (e) {
+			// Never fail a push because the optimization's input was unavailable.
+			rlog().warn(
+				"push",
+				`Attachment convergence check unavailable, forcing full re-upload: ${errMsg(e)}`,
+			);
+			return undefined;
+		}
+	}
+
 	async pushAll(
 		opts: { replaceRemote?: boolean; localSnapshot?: Set<string> } = {},
 	): Promise<number> {
@@ -8847,11 +8941,17 @@ export class SyncEngine {
 		const total = toSync.length;
 
 		devLog().log("push", `pushAll: ${total} files`);
-		rlog().info("push", `PushAll started — ${total} files`);
+		// warn, not info — see PushModified above (sweep entry is the loop tell).
+		rlog().warn("push", `PushAll started — ${total} files`);
 
 		this.emitPushing(0, total, 0);
 
-		const outcome = await this.pushPartitioned(toSync, "force");
+		const outcome = await this.pushPartitioned(
+			toSync,
+			"force",
+			undefined,
+			await this.fetchServerAttachmentHashes(),
+		);
 		pushed += outcome.pushed;
 		failed += outcome.failed;
 
@@ -9034,8 +9134,14 @@ export class SyncEngine {
 	}
 
 	/** Run `fn` with queue entries it produces marked as bulk work. A counter
-	 *  rather than a boolean because fullSync calls pushAll — a boolean would be
-	 *  cleared by the inner call while the outer sweep was still running. */
+	 *  rather than a boolean so a nested sweep cannot clear the mark while the
+	 *  outer one is still running.
+	 *
+	 *  The two sweeps (fullSync, pushAll) do NOT nest today — fullSyncInner
+	 *  pushes via `pushModifiedFiles`, not `pushAll`. This used to be justified
+	 *  as "fullSync calls pushAll", which stopped being true and misled a
+	 *  reader into believing the force path ran on every full sync. The counter
+	 *  stays because it is correct for free; the claim does not. */
 	private async inBulkSweep<T>(fn: () => Promise<T>): Promise<T> {
 		this.bulkDepth += 1;
 		try {
@@ -9334,11 +9440,38 @@ export class SyncEngine {
 						mimeType = this.getMimeType(file);
 						mtime = file.stat.mtime / 1000;
 					}
-					await this.api.pushAttachment(entry.path, base64, mimeType!, mtime!);
-					// Mirror the live push path's stamp (review finding 6): without
-					// it an attachment whose only successful upload rode the queue
-					// has no sync evidence and its later delete is refused forever.
-					this.stampSyncedRow(normalizePath(entry.path), { hash: fnv1a(base64) });
+					// This drain had NO content guard at all, so a queue entry that
+					// failed to settle re-uploaded the same bytes on every flush —
+					// one of the two paths behind the 2026-08-21 loop that held
+					// prod at ~30% CPU. Mirror the live path's echo skip.
+					const queuedNp = normalizePath(entry.path);
+					const queuedHash = fnv1a(base64);
+					const queuedRow = this.syncState.get(queuedNp);
+					if (queuedRow !== undefined && queuedHash === queuedRow.hash) {
+						// warn, not info: client `info` never reaches Loki, which is
+						// why this loop was undiagnosable from the server side.
+						rlog().warn(
+							"queue",
+							`Echo skip (attachment): ${noteRef(entry.path)} | hash=${queuedHash}`,
+						);
+					} else {
+						const attResp = await this.api.pushAttachment(
+							entry.path,
+							base64,
+							mimeType!,
+							mtime!,
+						);
+						// MERGE, don't replace (review finding 6 wanted the evidence
+						// stamp; a bare `set` also wiped any serverHash already
+						// recorded for the path, which is the one fact a later force
+						// push needs).
+						this.patchSyncedRow(queuedNp, {
+							hash: queuedHash,
+							...(attResp?.attachment?.content_hash
+								? { serverHash: attResp.attachment.content_hash }
+								: {}),
+						});
+					}
 				} else {
 					// Durable CRDT delivery (Phase E3 — REST /updates deleted): the
 					// edit lives durably in the Y.Doc (IndexedDB, keyed by noteId);
