@@ -222,6 +222,59 @@ describe("pushFile(force): attachments", () => {
 		expect(pushAttachment).toHaveBeenCalledTimes(1);
 	});
 
+	test("WIRING: pushAll fetches the listing and threads it — a converged vault uploads nothing", async () => {
+		// The tests above hand pushFile a map directly, which proves the
+		// decision but NOT that anything supplies it. Without this, pushAll
+		// could pass undefined forever and every test above would still pass
+		// while the loop continued in production.
+		const getManifest = mock().mockResolvedValue({
+			notes: [],
+			attachments: [{ path: "a/pic.png", content_hash: "server-hash-1" }],
+			total_notes: 0,
+			total_attachments: 1,
+		});
+		const { e, pushAttachment, app } = makeEngine({ getManifest });
+		const file = attachmentFile("a/pic.png");
+		app.vault.getFiles = mock().mockReturnValue([file]);
+		(e as any).isBinaryFile = () => true;
+		(e as any).syncState.set("a/pic.png", {
+			hash: fnv1a(B64),
+			serverHash: "server-hash-1",
+		});
+
+		await e.pushAll();
+
+		expect(getManifest).toHaveBeenCalled();
+		expect(pushAttachment).not.toHaveBeenCalled();
+	});
+
+	test("WIRING: an unavailable listing falls back to re-uploading, never to skipping", async () => {
+		// Fail-safe direction: the optimization's input going missing must cost
+		// bandwidth, never a skipped upload the server actually needed.
+		// Fails the FIRST call only — the pre-push convergence fetch. pushAll
+		// makes a second, independent manifest call in its post-push
+		// reconcile(), which is unguarded and would throw right past this
+		// assertion. (NOT mockRejectedValue: bun builds that rejected promise
+		// eagerly, so it lands as an unhandled rejection before it is called.)
+		let calls = 0;
+		const getManifest = mock(async () => {
+			if (++calls === 1) throw new Error("offline");
+			return { notes: [], attachments: [], total_notes: 0, total_attachments: 0 };
+		});
+		const { e, pushAttachment, app } = makeEngine({ getManifest });
+		const file = attachmentFile("a/pic.png");
+		app.vault.getFiles = mock().mockReturnValue([file]);
+		(e as any).isBinaryFile = () => true;
+		(e as any).syncState.set("a/pic.png", {
+			hash: fnv1a(B64),
+			serverHash: "server-hash-1",
+		});
+
+		await e.pushAll();
+
+		expect(pushAttachment).toHaveBeenCalledTimes(1);
+	});
+
 	test("force re-uploads when local bytes changed, even if the server hash matches", async () => {
 		const { e, pushAttachment } = makeEngine();
 		const file = attachmentFile("a/pic.png");

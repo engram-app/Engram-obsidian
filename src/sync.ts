@@ -3604,9 +3604,13 @@ export class SyncEngine {
 					(!force || this.serverStillHasOurBytes(np, existing, serverAttachmentHashes))
 				) {
 					devLog().log("push", `skip (echo): ${file.path}`);
-					// warn, not info: client `info` never reaches Loki, so the
-					// server side could not see these decisions at all.
-					rlog().warn(
+					// Stays at info DELIBERATELY. A converged pushAll skips every
+					// attachment in the vault, so promoting this to warn would emit
+					// one per file — 667 of them in the incident vault. The
+					// server-visible signal is the per-sweep summary in
+					// pushPartitioned, which carries the same information in one
+					// line and is what a loop actually looks like.
+					rlog().info(
 						"push",
 						`Echo skip (attachment): ${noteRef(file.path)} | hash=${hash} | forced=${force}`,
 					);
@@ -8542,6 +8546,14 @@ export class SyncEngine {
 				}),
 			);
 		}
+		// ONE line per sweep, at warn so it reaches Loki (client info does not).
+		// This is the loop's actual signature: the same sweep firing over and
+		// over with pushed=0 and everything skipped. Per-file logs cannot show
+		// that shape without emitting one entry per file.
+		rlog().warn(
+			"push",
+			`Sweep done (${mode}) — pushed=${pushed} skipped=${total - pushed - failed} failed=${failed} of ${total}`,
+		);
 		return { pushed, failed };
 	}
 
@@ -8834,7 +8846,14 @@ export class SyncEngine {
 	 *  Returns undefined on any failure — including a `since_seq`-elided
 	 *  manifest body. Undefined means "unproven", so force falls back to
 	 *  re-uploading: the fail-safe direction is wasted bandwidth, never a
-	 *  skipped upload the server actually needed. */
+	 *  skipped upload the server actually needed.
+	 *
+	 *  COST: this is a SECOND manifest fetch per pushAll — `reconcile()` makes
+	 *  its own afterwards. They are not interchangeable (this one asks what the
+	 *  server had BEFORE the push; reconcile asks what it has after), so they
+	 *  cannot be collapsed. Deliberate trade: ~240KB of manifest on the
+	 *  incident vault against ~478MB of re-uploaded attachments. Only manual
+	 *  full pushes pay it — the incremental path never calls this. */
 	private async fetchServerAttachmentHashes(): Promise<Map<string, string> | undefined> {
 		try {
 			const manifest = await this.api.getManifest();
@@ -8946,11 +8965,16 @@ export class SyncEngine {
 
 		this.emitPushing(0, total, 0);
 
+		// Only worth a round trip if this sweep actually carries attachments —
+		// a notes-only vault should not pay a whole-vault manifest fetch for a
+		// map nothing will read.
 		const outcome = await this.pushPartitioned(
 			toSync,
 			"force",
 			undefined,
-			await this.fetchServerAttachmentHashes(),
+			toSync.some((f: TFile) => this.isBinaryFile(f))
+				? await this.fetchServerAttachmentHashes()
+				: undefined,
 		);
 		pushed += outcome.pushed;
 		failed += outcome.failed;
