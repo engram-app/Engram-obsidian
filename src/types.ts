@@ -395,6 +395,10 @@ export interface AttachmentDetail {
 	mime_type: string;
 	size_bytes: number;
 	mtime: number;
+	/** Server's opaque content hash — record it as `FileSyncState.serverHash`
+	 *  on receive, so a later broadcast carrying the same hash can skip
+	 *  re-fetching these bytes. Optional: a pre-2026-08-23 backend omits it. */
+	content_hash?: string;
 	created_at: string;
 	updated_at: string;
 }
@@ -408,6 +412,10 @@ export interface AttachmentChange {
 	mtime: number;
 	updated_at: string;
 	deleted: boolean;
+	/** Server's opaque content hash, when the source carried one. Recorded as
+	 *  `FileSyncState.serverHash` so the next broadcast for this path can be
+	 *  answered without re-downloading the blob. */
+	content_hash?: string;
 }
 
 /** A single entry in the sync manifest (path + content hash). */
