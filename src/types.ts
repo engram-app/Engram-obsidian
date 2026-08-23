@@ -376,6 +376,12 @@ export interface AttachmentResponse {
 		mime_type: string;
 		size_bytes: number;
 		mtime: number;
+		/** The server's opaque content hash for the bytes we just sent. Record
+		 *  it (as `FileSyncState.serverHash`) — it is the ONLY way a later
+		 *  force push can prove the server still holds our copy, since the hash
+		 *  is HMAC-keyed off a DEK this client never has and so can never be
+		 *  computed locally. Optional: a pre-2026-08-23 backend omits it. */
+		content_hash?: string;
 		created_at: string;
 		updated_at: string;
 	};
