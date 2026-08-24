@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.24.2](https://github.com/engram-app/Engram-obsidian/compare/1.24.1...1.24.2) (2026-08-24)
+
+
+### Bug Fixes
+
+* **crdt:** stop the genesis history probe pinning a Y.Doc per note ([#464](https://github.com/engram-app/Engram-obsidian/issues/464)) ([867495e](https://github.com/engram-app/Engram-obsidian/commit/867495e550f3efc2c72c3b259e8537467e460024)), closes [#1409](https://github.com/engram-app/Engram-obsidian/issues/1409)
+
 ## [1.24.1](https://github.com/engram-app/Engram-obsidian/compare/1.24.0...1.24.1) (2026-08-23)
 
 
