@@ -1093,14 +1093,20 @@ export class SyncEngine {
 	 *  held body UNSENT this session (data-safe — it's still in the Y.Doc,
 	 *  never lost) but with no retry of its own. `reset+enroll` re-establishes
 	 *  the room's sync half (the same pairing used at every other re-handshake
-	 *  site here, e.g. `applyCrdtCreateAck`'s ADOPT branch). NOTE this is a
-	 *  PULL, not a push: the client STEP1 makes the server send back what the
-	 *  CLIENT is missing (server→client); the backend never STEP1s back, so the
-	 *  handshake does NOT re-push the held body. The held content actually
+	 *  site here, e.g. `applyCrdtCreateAck`'s ADOPT branch) — but, like every
+	 *  other enroll call site in this file, ONLY for a live-bound note (#1409):
+	 *  a bulk import's create-ack runs for hundreds of idle notes with no
+	 *  editor anywhere near them, and re-enrolling unconditionally there was
+	 *  exactly the room-per-imported-note storm #1409 exists to kill. NOTE this
+	 *  is a PULL, not a push: the client STEP1 makes the server send back what
+	 *  the CLIENT is missing (server→client); the backend never STEP1s back, so
+	 *  the handshake does NOT re-push the held body. The held content actually
 	 *  reaches the server on the note's NEXT local edit — `hasServerNote` is now
 	 *  true (create-ack set `crdtHead`), so `canSendLive` no longer holds it.
 	 *  Under a real transport fault the re-enroll STEP1 fails on the same
-	 *  transport anyway, so next-edit is the honest recovery.
+	 *  transport anyway, so next-edit is the honest recovery — which is also
+	 *  why an idle note needs no room-opening backstop at all: nothing is
+	 *  waiting on this flush the way a live editor's keystrokes are.
 	 *
 	 *  Race note: a keystroke can land during the awaited `flushHeldState`
 	 *  (the gate is already open by now, so it streams its own delta). That is
@@ -1112,6 +1118,7 @@ export class SyncEngine {
 			await this.crdt.flushHeldState(noteId);
 		} catch (e) {
 			rlog().warn("crdt", `create-ack flush failed for ${noteRef(path)}: ${errMsg(e, path)}`);
+			if (!this.isLiveBound(normalizePath(path))) return;
 			this.crdtEnrollment?.reset(noteId);
 			this.crdtEnrollment?.enroll(noteId);
 		}
