@@ -286,11 +286,13 @@ describe("SyncEngine.flushHeldEditsOnCreateAck", () => {
 		await expect(engine.flushHeldEditsOnCreateAck("note-3", "n3.md")).resolves.toBeUndefined();
 	});
 
-	// Defect 2 hardening: a thrown flush must not strand the note. It triggers
-	// the existing reset+enroll re-handshake pairing (the same one every other
-	// re-handshake site in sync.ts uses) as a self-heal backstop, instead of
-	// only warn-logging and giving up.
-	test("on flush failure, re-enrollment (reset+enroll) fires as a self-heal backstop", async () => {
+	// Defect 2 hardening: a thrown flush must not strand a LIVE-BOUND note. It
+	// triggers the existing reset+enroll re-handshake pairing (the same one
+	// every other re-handshake site in sync.ts uses) as a self-heal backstop,
+	// instead of only warn-logging and giving up. Gated on isLiveBound exactly
+	// like every other enroll call site in sync.ts — an editor is actually
+	// showing this note, so re-establishing the room is warranted.
+	test("on flush failure for a LIVE-BOUND note, re-enrollment (reset+enroll) fires as a self-heal backstop", async () => {
 		const engine = makeEngine();
 		const failingCrdt = {
 			flushHeldState: mock().mockRejectedValue(new Error("boom")),
@@ -299,11 +301,34 @@ describe("SyncEngine.flushHeldEditsOnCreateAck", () => {
 		const reset = mock();
 		const enroll = mock();
 		engine.setCrdtEnrollment({ reset, enroll });
+		engine.setCrdtPorts({ liveBound: () => true });
 
 		await expect(engine.flushHeldEditsOnCreateAck("note-4", "n4.md")).resolves.toBeUndefined(); // still never throws into the caller
 
 		expect(reset).toHaveBeenCalledWith("note-4");
 		expect(enroll).toHaveBeenCalledWith("note-4");
+	});
+
+	// #1409: a bulk import creates hundreds of notes with no editor anywhere
+	// near them. A flush failure there must NOT open a room — that is exactly
+	// the room-per-imported-note storm #1409 exists to kill. The content is
+	// safe in the Y.Doc either way; it ships on the note's next real edit, or
+	// the next time an editor actually binds it.
+	test("on flush failure for an IDLE (non-live-bound) note, self-heal does NOT enroll — stays room-free", async () => {
+		const engine = makeEngine();
+		const failingCrdt = {
+			flushHeldState: mock().mockRejectedValue(new Error("boom")),
+		};
+		engine.setCrdtManager(failingCrdt as any);
+		const reset = mock();
+		const enroll = mock();
+		engine.setCrdtEnrollment({ reset, enroll });
+		engine.setCrdtPorts({ liveBound: () => false });
+
+		await expect(engine.flushHeldEditsOnCreateAck("note-5", "n5.md")).resolves.toBeUndefined();
+
+		expect(reset).not.toHaveBeenCalled();
+		expect(enroll).not.toHaveBeenCalled();
 	});
 });
 

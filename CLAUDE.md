@@ -177,5 +177,6 @@ Required status checks on `main`: `build-and-test`, `version-check / version-che
 - Convergence sim tier fidelity gaps (`tests/sim/` — differential gate pays rent; seeded random-op suite does NOT converge, kept as a runnable tool not a test) → `docs/context/crdt-convergence-sim-fidelity-gaps.md`
 - A note that logs `re-handshake fired` and then goes silent forever (the create-ack gate swallowing syncStep1; plus how to read `ci-debug` client logs without misordering them) → `docs/context/crdt-pull-gated-by-create-ack.md`
 - Touching create-ack bookkeeping, or wondering what actually opens the live-send gate (`setCrdtHead`/`hasServerNote`, NOT `confirmNoteId` — and the ordering `adoptCreateAck` must keep) → `docs/context/crdt-pull-gated-by-create-ack.md`
+- Bulk first sync opens a CRDT room per idle (non-editor-open) note (`flushHeldEditsOnCreateAck`'s self-heal was the one `enroll()` call site not gated on `isLiveBound`; #1409 handshake half) → `docs/context/crdt-createack-selfheal-ungated-enroll.md`
 
 @/home/open-claw/documents/code-projects/ops-agent/docs/self-updating-docs.md
