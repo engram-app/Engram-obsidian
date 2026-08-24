@@ -3571,6 +3571,19 @@ export class SyncEngine {
 		// server-sanitized-rename check) must be made against the path we
 		// actually pushed, not wherever the file lives by reply time (#245).
 		const pushedPath = file.path;
+		// Re-check the guard HERE, not just at entry (line ~3494): two awaits sit
+		// between that check and this claim (the echo-hash read, acquirePushSlot),
+		// so two overlapping pushFile calls for the same path — e.g. two
+		// overlapping fullSync() sweeps, which nothing serializes — can both pass
+		// the stale check before either claims the slot, and both push. For a
+		// brand-new CRDT note that means two independent genesis lineages landing
+		// on the same server row. Nothing async happens between this check and the
+		// claim below, so this pairing IS atomic (single-threaded JS).
+		if (this.pushing.has(pushedPath)) {
+			this.releasePushSlot();
+			devLog().log("push", `skip (already pushing, lost the race): ${pushedPath}`);
+			return false;
+		}
 		this.pushing.add(pushedPath);
 		this.lastError = "";
 		this.emitStatus();
