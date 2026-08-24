@@ -2628,6 +2628,40 @@ describe("push concurrency limit", () => {
 
 		expect(completedCount).toBe(10);
 	});
+
+	// The reentrancy guard (`this.pushing.has(path)`) is checked once at entry,
+	// but two `await`s (the echo-hash read, `acquirePushSlot`) sit between that
+	// check and `this.pushing.add(path)`. Two overlapping pushFile calls for the
+	// SAME path — e.g. from two overlapping fullSync() sweeps, which is exactly
+	// the shape test_77/test_97/test_98/test_100's own retry loops produce
+	// (`while (...) { await trigger_full_sync(); ... }` never awaits the
+	// PREVIOUS call's completion) — can both pass the stale check before either
+	// claims the slot, so the file gets pushed twice concurrently. For a
+	// brand-new CRDT note that means two independent genesis lineages landing on
+	// the same server row (the 2026-08-24 main regression: test_97/98/100).
+	test("two concurrent pushFile calls for the SAME file push exactly once", async () => {
+		const engine = createEngine({ debounceMs: 10 });
+
+		let pushNoteCalls = 0;
+		(mockApi.pushNote as jest.Mock).mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					// Resolve on a later microtask so both racing calls are genuinely
+					// in flight together, not serialized by a same-tick resolution.
+					setTimeout(() => {
+						pushNoteCalls++;
+						resolve({ note: {}, chunks_indexed: 1 });
+					}, 5);
+				}),
+		);
+
+		(mockApp.vault.cachedRead as jest.Mock).mockResolvedValue("a".repeat(5 * 1024 * 1024));
+		const file = new TFile("Notes/Raced.md", Date.now());
+
+		await Promise.all([(engine as any).pushFile(file), (engine as any).pushFile(file)]);
+
+		expect(pushNoteCalls).toBe(1);
+	});
 });
 
 describe("SyncEngine.pushAll echo suppression fix", () => {
