@@ -282,3 +282,67 @@ describe("enrollment cleared on teardown", () => {
 		expect(reg.enrolled.size).toBe(0);
 	});
 });
+
+describe("hasAnyHistoryTransient residency", () => {
+	function oneDevice(prefix: string) {
+		return new ProviderRegistry({
+			dbPrefix: prefix,
+			send: () => true,
+			onFlushToDisk: () => true,
+		});
+	}
+
+	// The #1409 genesis gate asks this about EVERY note in a first sync. The
+	// plain `hasAnyHistory` routes through `entry()`, which is the one place a
+	// doc comes into existence, and this registry has no LRU — so the probe
+	// alone pinned a Y.Doc + an open IndexedDB connection per note and OOM'd
+	// the Obsidian renderer on a large vault.
+	test("probing a cold note leaves no resident doc behind", async () => {
+		const reg = oneDevice("devTransientCold");
+
+		expect(reg.hasDoc("cold.md")).toBe(false);
+		const has = await reg.hasAnyHistoryTransient("cold.md");
+
+		expect(has).toBe(false);
+		expect(reg.hasDoc("cold.md")).toBe(false);
+	});
+
+	test("probing many cold notes does not grow residency", async () => {
+		const reg = oneDevice("devTransientBulk");
+
+		for (let i = 0; i < 50; i++) await reg.hasAnyHistoryTransient(`bulk-${i}.md`);
+
+		// The leak this pins is proportional to notes probed, so a count is the
+		// assertion — one stray retained doc is the same bug, just slower.
+		const resident = Array.from({ length: 50 }, (_, i) => `bulk-${i}.md`).filter((id) =>
+			reg.hasDoc(id),
+		);
+		expect(resident).toEqual([]);
+	});
+
+	// The gate's whole purpose: a note this device already has lineage for must
+	// NOT be answered `false`, or it ships a rival-lineage genesis frame and the
+	// server unions two lineages into doubled content (#846).
+	test("still reports history for a note this device has edited", async () => {
+		const reg = oneDevice("devTransientWarm");
+
+		await reg.applyLocalEdit("warm.md", "some real content");
+		await flush();
+
+		expect(await reg.hasAnyHistoryTransient("warm.md")).toBe(true);
+	});
+
+	// A doc that was ALREADY resident (e.g. an open editor) must survive the
+	// probe — tearing that down is the switch-away data-loss class.
+	test("leaves an already-resident doc alone", async () => {
+		const reg = oneDevice("devTransientResident");
+
+		await reg.applyLocalEdit("open.md", "bound content");
+		await flush();
+		expect(reg.hasDoc("open.md")).toBe(true);
+
+		await reg.hasAnyHistoryTransient("open.md");
+
+		expect(reg.hasDoc("open.md")).toBe(true);
+	});
+});

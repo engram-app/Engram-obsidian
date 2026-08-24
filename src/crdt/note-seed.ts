@@ -76,8 +76,34 @@ export function applyFrontmatterInto(
 		for (const k of Object.keys(current)) {
 			if (!(k in values)) map.delete(k);
 		}
-		if (arr.length > 0) arr.delete(0, arr.length);
-		if (order.length > 0) arr.insert(0, order);
+		// Guarded like the map upsert above, and for the same reason: a CRDT
+		// records ops, not intentions. An unconditional delete+insert of an
+		// IDENTICAL order list writes no visible change but still mints ops under
+		// THIS device's clientID — and a device that had no ops on this doc
+		// becomes a second client, i.e. a second lineage.
+		//
+		// That is the 2026-08-23 first-sync corruption. `flushFromCrdt` writes the
+		// doc's projection back to disk, frontmatter does not round-trip
+		// byte-for-byte (`tags: [a, b]` is re-serialised as a block list), so
+		// Obsidian fires a real modify; handleModify deliberately skips its
+		// recently-flushed guard for CRDT notes on the premise that the echo is "a
+		// no-op"; applyLocalEdit then reached here and minted ops. Measured:
+		// `textLen 236->236` (body genuinely unchanged) alongside a 31-byte
+		// LOCAL-origin update, and the server ended up holding two clients for
+		// every note whose YAML did not round-trip — 224 of 316 on a real vault,
+		// each note's content stored twice.
+		//
+		// Order comparison is elementwise: `arr` is a Y.Array of key strings, so
+		// `toArray()` is a plain string[] and equality here means "the same keys in
+		// the same positions", which is exactly what the delete+insert would have
+		// re-established.
+		const currentOrder = arr.toArray();
+		const orderUnchanged =
+			currentOrder.length === order.length && currentOrder.every((k, i) => k === order[i]);
+		if (!orderUnchanged) {
+			if (arr.length > 0) arr.delete(0, arr.length);
+			if (order.length > 0) arr.insert(0, order);
+		}
 	});
 }
 

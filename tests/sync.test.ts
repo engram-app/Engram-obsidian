@@ -2740,12 +2740,20 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 			// scenario overrides this to true. hasAnyHistory (round 2 review
 			// finding), NOT hasHistory — the fast-path guard checks the
 			// whole-document (body + frontmatter) predicate.
+			//
+			// Wired under BOTH names, backing the same mock: the genesis gate calls
+			// the non-retaining `hasAnyHistoryTransient` (the plain probe leaked a
+			// Y.Doc per note and OOM'd the renderer), while the `effectiveId` sites
+			// still call `hasAnyHistory`. A port missing the name the caller asks
+			// for reads as "unknown" and assumes history, which silently disables
+			// the fast path these tests exercise.
 			const hasAnyHistory = mock(async () => false);
 			engine.setCrdtManager({
 				applyLocalEdit,
 				applyRemoteUpdate,
 				encodeGenesisUpdate,
 				hasAnyHistory,
+				hasAnyHistoryTransient: hasAnyHistory,
 			} as any);
 			engine.setCrdtCreate(crdtCreateImpl);
 			// pushFile only mints/resolves a note_id (and so only reaches the

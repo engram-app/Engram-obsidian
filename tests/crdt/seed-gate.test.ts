@@ -14,8 +14,11 @@
  * markSynced/clearSynced are the mark API and closeDoc is a no-op (the doc is
  * persistent across reconnect — see ProviderRegistry).
  */
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 import "fake-indexeddb/auto";
+import * as Y from "yjs";
+import { CONTENT_KEY, ORDER_KEY } from "../../src/crdt/frontmatter-codec";
+import { seedContentInto } from "../../src/crdt/note-seed";
 import { ProviderRegistry } from "../../src/crdt/provider-registry";
 
 // Each makeManager() call takes an explicit dbPrefix (which namespaces the
@@ -104,5 +107,59 @@ describe("seed lifecycle", () => {
 		const consumed = await m.applyLocalEdit("f.md", "some content", true);
 		expect(consumed).not.toBeNull();
 		await m.destroyAll();
+	});
+});
+
+describe("re-seeding identical frontmatter mints no ops (#1409 double-write)", () => {
+	// The 2026-08-23 first-sync corruption. `applyFrontmatterInto` guarded its
+	// MAP upsert ("only changed keys written") but replaced the ORDER array with
+	// an unconditional delete+insert. Rewriting an identical list writes nothing
+	// an observer can see, and a CRDT still records the ops — which mints the
+	// writing device as a NEW client on that doc. A device with no prior ops
+	// becomes a SECOND LINEAGE, and the server then holds the note twice.
+	//
+	// It fired because `flushFromCrdt` writes the doc's PROJECTION back to disk
+	// and frontmatter does not round-trip byte-for-byte (`tags: [a, b]` comes
+	// back as a block list), so Obsidian raised a real modify, handleModify
+	// deliberately skips its recently-flushed guard for CRDT notes, and the echo
+	// reached applyLocalEdit. Measured on a real vault: 224 of 316 notes held two
+	// clients, each holding a full copy.
+	//
+	// Asserted as "a second client appears", not "byte length grew": the two
+	// copies sometimes interleave rather than concatenate, so length alone is not
+	// a reliable tell (that is how the production sample first read as 17/60 when
+	// the true answer was 224/316).
+	const CONTENT = "---\ntags:\n  - alpha\n  - beta\nreviewed: 2026-08-23\n---\n\n# T\n\nbody\n";
+
+	function seedFresh(): Y.Doc {
+		const doc = new Y.Doc();
+		seedContentInto(doc, doc.getText(CONTENT_KEY), CONTENT, false);
+		return doc;
+	}
+
+	test("a second device re-seeding the SAME content adds no client", () => {
+		// Device A writes the note. Device B then ingests byte-identical content —
+		// the echo shape. B must stay invisible in the doc's client set.
+		const a = seedFresh();
+		const b = new Y.Doc();
+		Y.applyUpdate(b, Y.encodeStateAsUpdate(a));
+
+		const before = Y.decodeStateVector(Y.encodeStateVector(b)).size;
+		seedContentInto(b, b.getText(CONTENT_KEY), CONTENT, true);
+		const after = Y.decodeStateVector(Y.encodeStateVector(b)).size;
+
+		expect({ before, after }).toEqual({ before: 1, after: 1 });
+	});
+
+	test("a genuine frontmatter change still writes", () => {
+		// The guard must not turn into "frontmatter is immutable after the first
+		// seed" — reordering keys is a real edit and has to reach the doc.
+		const doc = seedFresh();
+		const reordered =
+			"---\nreviewed: 2026-08-23\ntags:\n  - alpha\n  - beta\n---\n\n# T\n\nbody\n";
+
+		seedContentInto(doc, doc.getText(CONTENT_KEY), reordered, true);
+
+		expect(doc.getArray<string>(ORDER_KEY).toArray()).toEqual(["reviewed", "tags"]);
 	});
 });

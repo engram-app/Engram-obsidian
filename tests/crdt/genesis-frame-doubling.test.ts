@@ -95,9 +95,9 @@ function engineWith(hasAnyHistory: boolean) {
 	engine.setCrdtManager({
 		encodeGenesisUpdate: () => genesisUpdateFor(BODY),
 		encodeStateAsUpdate: async () => OWN_STATE,
-		hasAnyHistory: async () => hasAnyHistory,
+		hasAnyHistoryTransient: async () => hasAnyHistory,
 	} as never);
-	// The selector asks `hasAnyHistory(noteId)`, so the path must resolve to an
+	// The selector asks `hasAnyHistoryTransient(noteId)`, so the path must resolve to an
 	// id — an unmapped path has no state to encode either, covered separately.
 	const map = new NoteIdMap();
 	map.getOrMint("Note.md");
@@ -137,13 +137,13 @@ test("a doc whose own state exceeds the cap declines rather than sending it", as
 	engine.setCrdtManager({
 		encodeGenesisUpdate: () => genesisUpdateFor(BODY),
 		encodeStateAsUpdate: async () => new Uint8Array(MAX_CRDT_NOTE_BYTES + 1),
-		hasAnyHistory: async () => true,
+		hasAnyHistoryTransient: async () => true,
 	} as never);
 	expect(await engine.buildGenesisFrame("Note.md", ID_B)).toBeUndefined();
 });
 
 test("unknown history is treated as history — own state, not a throwaway lineage", async () => {
-	// A port without `hasAnyHistory` cannot rule out the rival-lineage hazard.
+	// A port without `hasAnyHistoryTransient` cannot rule out the rival-lineage hazard.
 	const engine = engineWith(false);
 	engine.setCrdtManager({
 		encodeGenesisUpdate: () => genesisUpdateFor(BODY),
@@ -164,7 +164,7 @@ test("the gate asks about the id being CREATED, not whatever the path maps to", 
 	engine.setCrdtManager({
 		encodeGenesisUpdate: () => genesisUpdateFor(BODY),
 		encodeStateAsUpdate: async () => OWN_STATE,
-		hasAnyHistory: async (id: string) => {
+		hasAnyHistoryTransient: async (id: string) => {
 			asked.push(id);
 			return false;
 		},
@@ -177,7 +177,7 @@ test("the gate asks about the id being CREATED, not whatever the path maps to", 
 });
 
 test("the real ProviderRegistry reports history after an actual local edit", async () => {
-	// The two gate tests above stub `hasAnyHistory`, so they pin the WIRING but
+	// The two gate tests above stub `hasAnyHistoryTransient`, so they pin the WIRING but
 	// not the truth of it. Without this, a change that made the real
 	// implementation always return false would sail through them and silently
 	// re-enable the doubling.
@@ -188,7 +188,7 @@ test("the real ProviderRegistry reports history after an actual local edit", asy
 		docKind: () => "note",
 	} as never);
 
-	expect(await registry.hasAnyHistory(ID_A)).toBe(false);
+	expect(await registry.hasAnyHistoryTransient(ID_A)).toBe(false);
 	await registry.applyLocalEdit(ID_A, BODY);
-	expect(await registry.hasAnyHistory(ID_A)).toBe(true);
+	expect(await registry.hasAnyHistoryTransient(ID_A)).toBe(true);
 });
