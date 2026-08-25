@@ -588,6 +588,41 @@ describe("EngramApi", () => {
 			}
 		});
 
+		test("falls back to `error` when the body carries no `reason`", async () => {
+			// RequireApiWriteEnabled and EnforcePatCreation emit {"error": "..."}
+			// with no reason key. Keying on `reason` alone sent both to the
+			// generic "Limit reached" toast and left their copy unreachable.
+			mockRequestUrl.mockRejectedValueOnce({
+				status: 402,
+				json: {
+					error: "api_write_not_available",
+					upgrade_url: "https://app.engram.page/settings/billing",
+				},
+			});
+			try {
+				await api.pushNote("Notes/Test.md", "# Hello", 1234567890);
+				expect.unreachable("should have thrown");
+			} catch (err) {
+				expect((err as LimitExceededError).reason).toBe("api_write_not_available");
+			}
+		});
+
+		test("`error: limit_exceeded` with no reason stays unknown, not the literal", async () => {
+			// The standard envelope always pairs limit_exceeded with a reason.
+			// If the reason is missing, "limit_exceeded" is the envelope name and
+			// not a cause, so it must not become the toast key.
+			mockRequestUrl.mockRejectedValueOnce({
+				status: 402,
+				json: { error: "limit_exceeded" },
+			});
+			try {
+				await api.pushNote("Notes/Test.md", "# Hello", 1234567890);
+				expect.unreachable("should have thrown");
+			} catch (err) {
+				expect((err as LimitExceededError).reason).toBe("unknown");
+			}
+		});
+
 		test("pushAttachment throws LimitExceededError (file_too_large now 402)", async () => {
 			// Backend standardization moved file_too_large from 413 → 402; the
 			// plugin's 402 path is the new home for that case too.
