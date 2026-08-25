@@ -13,6 +13,7 @@ import {
 } from "obsidian";
 import { arrayBufferToBase64, base64ToArrayBuffer, type EngramApi } from "./api";
 import type { BaseStore } from "./base-store";
+import type { GenesisOutcome } from "./channel";
 import { fnv1a } from "./content-hash";
 import type { NoteIdMap } from "./crdt/note-id-map";
 import type { ProviderRegistry } from "./crdt/provider-registry";
@@ -356,7 +357,7 @@ export interface CrdtPorts {
 				docId: string,
 				path: string,
 				b64?: string,
-		  ) => Promise<{ docId: string; seeded: boolean }>)
+		  ) => Promise<{ docId: string; seeded: boolean; genesisOutcome: GenesisOutcome }>)
 		| null;
 	delete?: ((docId: string) => Promise<{ doc_id: string }>) | null;
 	enqueue?: ((op: { kind: "create" | "delete"; docId: string; path: string }) => void) | null;
@@ -1379,7 +1380,7 @@ export class SyncEngine {
 				docId: string,
 				path: string,
 				b64?: string,
-		  ) => Promise<{ docId: string; seeded: boolean }>)
+		  ) => Promise<{ docId: string; seeded: boolean; genesisOutcome: GenesisOutcome }>)
 		| null = null;
 
 	setCrdtCreate(
@@ -1388,7 +1389,7 @@ export class SyncEngine {
 					docId: string,
 					path: string,
 					b64?: string,
-			  ) => Promise<{ docId: string; seeded: boolean }>)
+			  ) => Promise<{ docId: string; seeded: boolean; genesisOutcome: GenesisOutcome }>)
 			| null,
 	): void {
 		this.setCrdtPorts({ create: fn });
@@ -1481,6 +1482,7 @@ export class SyncEngine {
 		path: string,
 		seeded = false,
 		genesis?: GenesisFrame,
+		genesisOutcome?: GenesisOutcome,
 	): Promise<void> {
 		const normalized = normalizePath(path);
 		let effectiveId = localId;
@@ -1547,6 +1549,7 @@ export class SyncEngine {
 					sameId: serverId === localId,
 					genesisUpdate: genesis?.update,
 					genesisContent: genesis?.content,
+					genesisOutcome,
 				});
 			} catch (e) {
 				// The row exists (crdt_create already acked); a failed body seed
@@ -2830,11 +2833,45 @@ export class SyncEngine {
 	 *
 	 *  Returns what the manager CONSUMED (the echo baseline for
 	 *  `adoptCreateAck`), or null if nothing transmitted. */
+	/** Pull the server's own lineage for `noteId` and adopt it, room-free
+	 *  (#1467). Applying is a monotonic merge, so this can only converge us
+	 *  toward the server — it never discards local history. Returns the
+	 *  projected text, or null when the read is unavailable (old backend, rate
+	 *  limit, dropped socket) and the caller must decide how to defer.
+	 *
+	 *  ONE implementation on purpose: both callers below reach it from a state
+	 *  where re-sending the body would mint a rival lineage, and a second copy
+	 *  is how the first one drifted (#476). */
+	private async adoptServerLineage(noteId: string, path: string): Promise<string | null> {
+		const fetchState = this.crdtDocState;
+		if (!fetchState || !this.crdt) return null;
+
+		try {
+			const { b64 } = await fetchState(noteId);
+			await this.crdt.applyRemoteUpdate(noteId, fromB64(b64));
+			rlog().info(
+				"crdt",
+				`create: adopted server lineage for ${noteRef(path)} — body not re-sent`,
+			);
+			return await this.crdt.projectedText(noteId);
+		} catch (e) {
+			rlog().warn(
+				"crdt",
+				`create: could not adopt server lineage for ${noteRef(path)}: ${errMsg(e, path)}`,
+			);
+			return null;
+		}
+	}
+
 	private async seedBodyAfterCreate(opts: {
 		effectiveId: string;
 		normalized: string;
 		file: TFile;
 		seeded: boolean;
+		/** What the server did with our genesis frame. `undefined` when the
+		 *  create carried no frame at all; null when the backend predates the
+		 *  field (#476). */
+		genesisOutcome?: GenesisOutcome;
 		/** `serverId === the id we asked for`. False means the server answered
 		 *  under an id of its own choosing, so the bytes it stored are filed
 		 *  under a lineage we have never seen. */
@@ -2903,25 +2940,9 @@ export class SyncEngine {
 
 			// The server re-id'd us (#1409): it stored our body under a lineage we
 			// do not have. Pushing again is exactly how the doubling happens, so
-			// ADOPT its lineage instead — a room-free read (#1467). Applying is a
-			// monotonic merge, so this can only converge us toward the server.
-			const fetchState = this.crdtDocState;
-			if (fetchState) {
-				try {
-					const { b64 } = await fetchState(effectiveId);
-					await this.crdt.applyRemoteUpdate(effectiveId, fromB64(b64));
-					rlog().info(
-						"crdt",
-						`create: adopted server lineage for ${noteRef(normalized)} (re-id) — body not re-sent`,
-					);
-					return await this.crdt.projectedText(effectiveId);
-				} catch (e) {
-					rlog().warn(
-						"crdt",
-						`create: could not adopt server lineage for ${noteRef(normalized)}: ${errMsg(e, normalized)}`,
-					);
-				}
-			}
+			// ADOPT its lineage instead.
+			const adopted = await this.adoptServerLineage(effectiveId, normalized);
+			if (adopted !== null) return adopted;
 
 			// No way to adopt (old backend, rate limit, dropped socket). Pushing
 			// here would double the body, so we deliberately do NOTHING: the
@@ -2936,10 +2957,44 @@ export class SyncEngine {
 			return null;
 		}
 
-		// Either the server declined the seed (it has nothing — pushing is the
-		// only way it ever gets the body), or this doc already carries a real
-		// lineage (so `applyLocalEdit`'s `lca` diffs against it instead of
-		// minting a rival). Both are safe to transmit.
+		// Past here we are about to transmit a body into a doc with NO history,
+		// which mints a fresh lineage. That is only safe if the server truly
+		// holds nothing. A doc that already carries history is fine either way —
+		// `applyLocalEdit`'s `lca` diffs against it rather than minting a rival —
+		// so history short-circuits the whole check.
+		//
+		// `occupied` was the remaining half of #476: the server declined our
+		// genesis because the row already carried a DIFFERENT body (a concurrent
+		// write landed inside the seed's write window, or a room owns the doc),
+		// and the old `seeded: false` reported that identically to "the server
+		// has nothing". We pushed, minted a rival lineage carrying the same text,
+		// and Yjs unioned the two into the note twice over.
+		//
+		// A null outcome is an older backend that sends only `seeded` and so
+		// cannot distinguish those. Rather than guess, ASK: adopting is a
+		// monotonic merge that is harmless when the server is empty, and a
+		// non-empty projection afterwards is direct evidence that pushing would
+		// be a SECOND transmission.
+		const known = opts.genesisOutcome;
+		if (!effectiveIdHasHistory && known !== "absent" && known !== "stored") {
+			const adopted = await this.adoptServerLineage(effectiveId, normalized);
+			if (adopted !== null && adopted.trim().length > 0) return adopted;
+
+			// Known-occupied and we could not read it back: pushing would double
+			// the body, so defer to the catch-up receive path instead. Slower than
+			// seeding, and the only option that cannot corrupt.
+			if (known === "occupied" && adopted === null) {
+				rlog().warn(
+					"crdt",
+					`create: server already holds a body for ${noteRef(normalized)} and its state ` +
+						`is unavailable — deferring to catch-up rather than re-sending the body`,
+				);
+				return null;
+			}
+		}
+
+		// The server holds nothing for this note, so pushing is not merely safe
+		// but the only thing that will ever fill it.
 		return await routeModify(
 			{
 				crdtEligible: true,
@@ -4217,14 +4272,17 @@ export class SyncEngine {
 							content,
 						);
 						const genesisUpdate = chosenGenesis?.update;
-						const { docId: serverId, seeded } =
-							genesisUpdate === undefined
-								? await this.crdtCreate(noteId, pushedPath)
-								: await this.crdtCreate(
-										noteId,
-										pushedPath,
-										encodeUpdateFrame(genesisUpdate),
-									);
+						const {
+							docId: serverId,
+							seeded,
+							genesisOutcome,
+						} = genesisUpdate === undefined
+							? await this.crdtCreate(noteId, pushedPath)
+							: await this.crdtCreate(
+									noteId,
+									pushedPath,
+									encodeUpdateFrame(genesisUpdate),
+								);
 						let effectiveId = noteId;
 						try {
 							// On ADOPT (serverId !== noteId) the path is already owned by a
@@ -4306,6 +4364,7 @@ export class SyncEngine {
 									sameId: serverId === noteId,
 									genesisUpdate,
 									genesisContent: content,
+									genesisOutcome,
 									// The gate cleared this note (no lineage) BEFORE the create
 									// round trip; lineage now means something wrote during that
 									// window and the server holds a lineage we never adopted.

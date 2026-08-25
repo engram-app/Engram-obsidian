@@ -26,6 +26,7 @@
  * MAX_ATTEMPTS (onDrop "max-attempts") or OP_TTL_MS, so nothing retries forever.
  */
 
+import type { GenesisOutcome } from "./channel";
 import type { CrdtOp, SendResult } from "./crdt-op-queue";
 
 /** Server reasons where a retry cannot succeed. remove the op (surfaced).
@@ -69,7 +70,7 @@ export type CrdtOpChannel = {
 		docId: string,
 		path: string,
 		b64?: string,
-	): Promise<{ docId: string; seeded: boolean }>;
+	): Promise<{ docId: string; seeded: boolean; genesisOutcome: GenesisOutcome }>;
 	crdtDeleteAcked(docId: string): Promise<{ doc_id: string }>;
 };
 
@@ -110,6 +111,8 @@ export type CrdtSendHooks = {
 	 *  note whose real doc has history. */
 	buildGenesisFrame?: (path: string, noteId: string) => Promise<GenesisFrame | undefined>;
 	/** A create acked: serverId is the AUTHORITATIVE id (differs on ADOPT).
+	 *  `genesisOutcome` says what the server DID with the frame — the caller must
+	 *  not decide whether to transmit a body from `seeded` alone (#476).
 	 *  `seeded` + `genesis` (present only when a frame was actually sent) let
 	 *  the caller apply the SAME bytes locally instead of re-seeding from
 	 *  disk over crdt_msg — which would open the very room #1409 exists to
@@ -123,6 +126,7 @@ export type CrdtSendHooks = {
 		path: string,
 		seeded: boolean,
 		genesis?: GenesisFrame,
+		genesisOutcome?: GenesisOutcome,
 	) => void | Promise<void>;
 	/** A terminally-failed op about to be dropped. surface it (error log). */
 	onTerminal: (op: CrdtOp, reason: string) => void;
@@ -144,11 +148,22 @@ export function makeCrdtOpSend(hooks: CrdtSendHooks): (op: CrdtOp) => Promise<Se
 			if (op.kind === "create") {
 				const path = (op.payload as { path?: string })?.path ?? "";
 				const genesis = await hooks.buildGenesisFrame?.(path, op.docId);
-				const { docId: serverId, seeded } = genesis
+				const {
+					docId: serverId,
+					seeded,
+					genesisOutcome,
+				} = genesis
 					? await ch.crdtCreate(op.docId, path, genesis.b64)
 					: await ch.crdtCreate(op.docId, path);
 				try {
-					await hooks.onCreated(op.docId, serverId, path, seeded, genesis);
+					await hooks.onCreated(
+						op.docId,
+						serverId,
+						path,
+						seeded,
+						genesis,
+						genesisOutcome,
+					);
 				} catch {
 					// crdt_create already ACKED: the row exists (possibly remapped).
 					// A post-ack step (body seed) throwing must NOT retry the create:

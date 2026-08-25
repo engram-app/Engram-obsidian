@@ -164,11 +164,27 @@ function wsOrigin(baseUrl: string): string {
  *  return-type annotation carries no `;` between its two members right next
  *  to the wire-send statement the source-compliance privacy guard
  *  (tests/source-compliance.test.ts) exempts by exact text. */
-export type CrdtCreateResult = { docId: string; seeded: boolean };
+export type CrdtCreateResult = {
+	docId: string;
+	seeded: boolean;
+	genesisOutcome: GenesisOutcome;
+};
+
+/** What the server did with our genesis frame (#476).
+ *
+ *  `seeded: boolean` could not express this: it reported false BOTH when the
+ *  server holds nothing (push the body) and when the server declined because
+ *  the row already holds a different one (pushing mints a rival lineage and
+ *  doubles the note). Those need opposite actions, so the outcome is named.
+ *
+ *  `null` means an older backend that only sends `seeded` — see
+ *  `seedBodyAfterCreate`, which then confirms the server's doc is empty before
+ *  pushing rather than assuming it. */
+export type GenesisOutcome = "stored" | "absent" | "occupied" | null;
 
 /** Raw server reply shape for `crdt_create`, before the docId/seeded rename —
  *  same "no inline `;`" reasoning as CrdtCreateResult above. */
-type CrdtCreateReply = { doc_id: string; seeded?: boolean };
+type CrdtCreateReply = { doc_id: string; seeded?: boolean; genesis?: string };
 
 export class NoteChannel {
 	private ws: WebSocket | null = null;
@@ -541,10 +557,11 @@ export class NoteChannel {
 	 *  `b64` is an optional genesis frame (#1409). When present the server applies
 	 *  it to a detached Y.Doc and checkpoints it WITHOUT opening a room, which is
 	 *  what keeps a full-vault import from allocating one OTP process per file.
-	 *  `seeded` reports whether the body is durably readable server-side; it is
-	 *  false on adopt, on a live room, on a malformed frame, and on any checkpoint
-	 *  skip. A false ALWAYS means "fall back to the crdt_msg seed", never "retry
-	 *  the create". */
+	 *  `genesisOutcome` reports WHICH thing happened — stored / absent / occupied
+	 *  — because the caller has to act differently on each. `seeded` is kept as
+	 *  the lossy legacy view (`stored` only) and must not be the sole input to a
+	 *  decision about whether to transmit a body (#476). No outcome ever means
+	 *  "retry the create". */
 	async crdtCreate(docId: string, path: string, b64?: string): Promise<CrdtCreateResult> {
 		// This literal is a THIRD legitimate wire-send the source-compliance
 		// privacy guard (tests/source-compliance.test.ts) allowlists by exact
@@ -558,7 +575,15 @@ export class NoteChannel {
 			path,
 			...(b64 === undefined ? {} : { b64 }),
 		})) as CrdtCreateReply;
-		return { docId: res.doc_id, seeded: res.seeded === true };
+		const outcome = res.genesis;
+		return {
+			docId: res.doc_id,
+			seeded: res.seeded === true,
+			genesisOutcome:
+				outcome === "stored" || outcome === "absent" || outcome === "occupied"
+					? outcome
+					: null,
+		};
 	}
 
 	/** Delete a note over the socket, AWAITING the server ack (idempotent). The

@@ -626,8 +626,15 @@ export default class EngramSyncPlugin extends Plugin {
 				// back to the room-opening disk-seed on delivery.
 				buildGenesisFrame: (path, noteId) =>
 					this.syncEngine.buildGenesisFrame(path, noteId),
-				onCreated: (localId, serverId, path, seeded, genesis) =>
-					this.syncEngine.applyCrdtCreateAck(localId, serverId, path, seeded, genesis),
+				onCreated: (localId, serverId, path, seeded, genesis, genesisOutcome) =>
+					this.syncEngine.applyCrdtCreateAck(
+						localId,
+						serverId,
+						path,
+						seeded,
+						genesis,
+						genesisOutcome,
+					),
 				onTerminal: (op, reason) =>
 					// A create/delete that retrying cannot fix. Surface it (error log) so
 					// it never silently vanishes; the queue then drops it (no infinite retry).
