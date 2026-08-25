@@ -105,48 +105,115 @@ describe("registerVault identity wipe (#1409)", () => {
 });
 
 /**
- * The persisted `noteIds` cache is per-VAULT identity. It used to be seeded
- * unconditionally on load, so a plugin reload after a vault change resurrected
- * the previous vault's path -> note_id entries — outliving every in-session
- * wipe, because those run against memory and not data.json. That is the route
- * the register-time wipe above does NOT cover: `registerVault` early-returns
- * when `settings.vaultId` is already set, which is the case on every reload.
+ * The persisted `noteIds` cache is per-VAULT identity, and its stamp is the
+ * fix's actual root-cause half.
+ *
+ * An earlier revision of this block RE-IMPLEMENTED the load-time gate inside
+ * the test file (`// Mirrors the load-time gate in main.ts`) and asserted
+ * against its own copy. It imported nothing and executed no production code, so
+ * all four of its tests passed unchanged with the real gate deleted AND with
+ * the stamp deleted — the two mutations a reviewer ran to prove it. It carried
+ * the label "#1409 root cause" while covering none of it.
+ *
+ * These drive the real methods.
  */
 describe("noteIds cache is vault-scoped (#1409 root cause)", () => {
-	function seedWith(data: Record<string, unknown>, activeVault: string | null) {
+	const IDS = { "Notes/a.md": "id-from-old-vault" };
+
+	/** Run the REAL load-time gate by calling loadSettings on a fake `this`. */
+	function loadWith(data: Record<string, unknown>, activeVault: string | null) {
 		const seeded: Array<Record<string, string> | undefined> = [];
 		const fake = {
 			settings: { vaultId: activeVault },
-			noteIdMap: { seed: (ids: Record<string, string> | undefined) => seeded.push(ids) },
-		};
-		// Mirrors the load-time gate in main.ts.
-		const cached = (data as { noteIdsVaultId?: string | null }).noteIdsVaultId;
-		const active = fake.settings.vaultId ?? null;
-		if (cached !== undefined && cached !== null && active !== null && cached !== active) {
-			// refused
-		} else {
-			fake.noteIdMap.seed((data as { noteIds?: Record<string, string> }).noteIds);
-		}
-		return seeded;
+			noteIdMap: {
+				seed: (ids: Record<string, string> | undefined) => seeded.push(ids),
+				toJSON: () => ({}),
+			},
+			loadPluginData: mock().mockResolvedValue(data),
+			writePluginData: mock().mockResolvedValue(undefined),
+			app: { vault: { getName: () => "V" } },
+		} as Record<string, unknown>;
+
+		const load = (EngramSyncPlugin.prototype as any).loadSettings as (
+			this: unknown,
+		) => Promise<void>;
+		return { fake, seeded, run: () => load.call(fake) };
 	}
 
-	const IDS = { "Notes/a.md": "id-from-old-vault" };
-
-	test("REFUSES a cache recorded under a different vault", () => {
-		expect(seedWith({ noteIds: IDS, noteIdsVaultId: "old-vault" }, "new-vault")).toEqual([]);
+	test("REFUSES a cache whose recorded provenance is a different vault", async () => {
+		const { seeded, run } = loadWith(
+			{ noteIds: IDS, noteIdsVaultId: "old-vault", settings: { vaultId: "new-vault" } },
+			"new-vault",
+		);
+		await run();
+		expect(seeded).toEqual([]);
 	});
 
-	test("accepts a cache recorded under the SAME vault", () => {
-		expect(seedWith({ noteIds: IDS, noteIdsVaultId: "same-vault" }, "same-vault")).toEqual([
-			IDS,
-		]);
+	test("accepts a cache recorded under the SAME vault", async () => {
+		const { seeded, run } = loadWith(
+			{ noteIds: IDS, noteIdsVaultId: "same-vault", settings: { vaultId: "same-vault" } },
+			"same-vault",
+		);
+		await run();
+		expect(seeded).toEqual([IDS]);
 	});
 
-	test("adopts a pre-upgrade cache with no recorded vault (no needless re-mint)", () => {
-		expect(seedWith({ noteIds: IDS }, "any-vault")).toEqual([IDS]);
+	test("adopts a pre-upgrade cache with no recorded vault (no needless re-mint)", async () => {
+		const { seeded, run } = loadWith(
+			{ noteIds: IDS, settings: { vaultId: "any-vault" } },
+			"any-vault",
+		);
+		await run();
+		expect(seeded).toEqual([IDS]);
+	});
+});
+
+/**
+ * The stamp that feeds the gate. It must record the map's PROVENANCE, not
+ * whichever vault happened to be active when the file was written — reading it
+ * from `settings.vaultId` at save time made the gate essentially unfireable,
+ * because ~10 fire-and-forget saves would restamp a stale map with the new
+ * vault before any reload.
+ */
+describe("noteIdsVaultId records provenance, not the active vault", () => {
+	function saveWith(owner: string | null, activeVault: string | null) {
+		let written: Record<string, unknown> | undefined;
+		const fake = {
+			settings: { vaultId: activeVault },
+			noteIdsOwner: owner,
+			noteIdMap: { toJSON: () => ({ "Notes/a.md": "id-1" }) },
+			syncGateAcceptedFor: null,
+			syncEngine: {
+				exportSyncState: () => ({}),
+				exportHashes: () => ({}),
+				getCatchupSeq: () => 0,
+				getCatchupId: () => null,
+				getManifestSeq: () => 0,
+				getSyncStateVaultId: () => null,
+				queue: { persistable: () => [] },
+				issues: { serialize: () => [] },
+				ignoredFiles: { serialize: () => [] },
+			},
+			writePluginData: async (d: Record<string, unknown>) => {
+				written = d;
+			},
+		} as Record<string, unknown>;
+
+		const save = (EngramSyncPlugin.prototype as any).savePluginData as (
+			this: unknown,
+		) => Promise<void>;
+		return { run: async () => (await save.call(fake), written) };
+	}
+
+	test("stamps the OWNER even when a different vault is already active", async () => {
+		// THE regression. The map still holds vault-A ids; `settings.vaultId` has
+		// already moved to B. Stamping B would make the gate accept A's map.
+		const written = await saveWith("vault-A", "vault-B").run();
+		expect(written?.noteIdsVaultId).toBe("vault-A");
 	});
 
-	test("accepts when there is no active vault yet (first run, nothing to conflict with)", () => {
-		expect(seedWith({ noteIds: IDS, noteIdsVaultId: "old-vault" }, null)).toEqual([IDS]);
+	test("stamps the active vault once the map has been re-owned", async () => {
+		const written = await saveWith("vault-B", "vault-B").run();
+		expect(written?.noteIdsVaultId).toBe("vault-B");
 	});
 });
