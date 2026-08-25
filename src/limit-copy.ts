@@ -29,13 +29,22 @@ const TABLE: Record<string, string> = {
 	api_write_not_available: "API keys need Pro. Sign in with your Engram account instead.",
 	account_suspended: "Account suspended. Contact support.",
 	no_tier: "Account setup incomplete.",
+	account_deleted: "This account was deleted. Contact support if that is wrong.",
+	onboarding_required: "Finish setting up your account at app.engram.page to start syncing.",
 };
 
-/** Join-rejection reasons that mean "your plan does not allow this", as
- *  opposed to a transient backend problem. `ChannelGate` emits these on the
- *  socket, where a retry can never succeed, so they are the only join errors
- *  worth interrupting the user for. */
-const PLAN_JOIN_REASONS = new Set(["api_access_not_available", "no_tier", "account_suspended"]);
+/** Join-rejection reasons a retry can never clear, so the user has to be told
+ *  rather than left watching a silent degrade to legacy. This is the exact set
+ *  `ChannelGate` emits minus `rotation_in_progress`, which IS transient and
+ *  stays log-only. `no_tier` is deliberately absent: it lives in the table
+ *  above for HTTP 402s but the socket never emits it, and listing it here
+ *  would be the same dead-string bug this set exists to fix. */
+const PLAN_JOIN_REASONS = new Set([
+	"api_access_not_available",
+	"account_suspended",
+	"account_deleted",
+	"onboarding_required",
+]);
 
 export function isPlanJoinReason(reason: string): boolean {
 	return PLAN_JOIN_REASONS.has(reason);

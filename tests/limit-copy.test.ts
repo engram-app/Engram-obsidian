@@ -42,13 +42,30 @@ describe("API-key plan reasons", () => {
 		expect(toastFor("api_write_not_available")).toBe(toastFor("api_access_not_available"));
 	});
 
-	test("isPlanJoinReason accepts plan rejections, rejects transient ones", () => {
-		expect(isPlanJoinReason("api_access_not_available")).toBe(true);
-		expect(isPlanJoinReason("no_tier")).toBe(true);
-		expect(isPlanJoinReason("account_suspended")).toBe(true);
-		// A backend wobble degrades to legacy and must stay log-only.
+	// The set must track what ChannelGate actually emits: account_deleted,
+	// account_suspended, api_access_not_available, rotation_in_progress,
+	// onboarding_required. Anything listed here that the server never sends is
+	// a dead string; anything omitted degrades to legacy in silence.
+	test("isPlanJoinReason covers every unrecoverable ChannelGate reason", () => {
+		for (const r of [
+			"api_access_not_available",
+			"account_suspended",
+			"account_deleted",
+			"onboarding_required",
+		]) {
+			expect(isPlanJoinReason(r)).toBe(true);
+			// Each must also have real copy, or the toast says "Limit reached".
+			expect(toastFor(r)).not.toBe(toastFor("some_unmapped_reason"));
+		}
+	});
+
+	test("transient and non-emitted reasons stay log-only", () => {
+		// rotation_in_progress clears on its own; degrading to legacy is a real
+		// recovery, so interrupting the user would be noise.
+		expect(isPlanJoinReason("rotation_in_progress")).toBe(false);
+		// no_tier is an HTTP 402 reason the socket never emits.
+		expect(isPlanJoinReason("no_tier")).toBe(false);
 		expect(isPlanJoinReason("server_error")).toBe(false);
-		expect(isPlanJoinReason("min_version")).toBe(false);
 	});
 
 	test("realtime_disabled is gone — no tier gates real-time sync", () => {
