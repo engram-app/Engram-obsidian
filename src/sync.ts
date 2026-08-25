@@ -450,11 +450,7 @@ export class SyncEngine {
 		collection: T,
 		dispose?: (value: T extends Map<unknown, infer V> ? V : never) => void,
 	): T {
-		this.sweepable.push({
-			on,
-			collection,
-			dispose: dispose as ((value: unknown) => void) | undefined,
-		});
+		this.sweepable.push({ on, collection, dispose });
 		return collection;
 	}
 
