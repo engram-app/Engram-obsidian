@@ -394,14 +394,92 @@ class OpLogFetchError extends Error {
 	}
 }
 
+/** A collection the engine can sweep on teardown. Map and Set both satisfy it. */
+type Sweepable = { clear(): void };
+
+/**
+ * The two teardowns a collection can die in. They are INDEPENDENT, not a
+ * severity ladder: `syncState` is swept on a vault switch but must survive
+ * `destroy()` (it is the persisted sync baseline, and blanking it there would
+ * force a full re-scan), while `debounceTimers` is the exact inverse — a
+ * debounce pending across a vault switch still describes a real local edit
+ * that still deserves a push. Collapsing these into one axis is what let the
+ * two hand-written lists drift apart in the first place.
+ */
+type SweepEvent = "vault" | "destroy";
+
 export class SyncEngine {
-	private debounceTimers: Map<string, number> = new Map();
+	/**
+	 * Every collection that a teardown has to sweep, declared WITH its scope so
+	 * that neither teardown path enumerates anything by hand.
+	 *
+	 * This replaces two independently-maintained lists — `destroy()` and
+	 * `wipePerVaultState()` — that had been drifting apart since March 2026.
+	 * Each was correct for its own job: `destroy()` swept the transient
+	 * per-note maps and deliberately spared the persisted `syncState`, while
+	 * `wipePerVaultState()` swept `syncState` + cursors + identity and left the
+	 * per-note maps alone. Nothing owned their INTERSECTION — state that is both
+	 * vault-scoped and transient — so eleven note_id- and path-keyed maps
+	 * survived a vault switch and went on addressing the NEW vault with the OLD
+	 * vault's ids (#1409). Six separate bug fixes added a field to one list and
+	 * not the other, because a declaration 3,000 lines from either list carries
+	 * no hint that a decision is owed.
+	 *
+	 * `vault`   — describes the remote vault (paths, note_ids, cursors).
+	 *             Swept on a vault switch AND on destroy.
+	 * `install` — local operating state that legitimately outlives a vault
+	 *             switch (in-flight push guards, debounce timers). Destroy only.
+	 *
+	 * Declared FIRST: class field initializers run top-to-bottom, and every
+	 * `track()` call below pushes into this array.
+	 */
+	private readonly sweepable: Array<{
+		on: readonly SweepEvent[];
+		collection: Sweepable;
+		dispose?: (value: unknown) => void;
+	}> = [];
+
+	/**
+	 * Register a collection for teardown and return it, so the scope decision
+	 * lives at the declaration rather than in a list somewhere else.
+	 * `dispose` runs per map value before the clear — that is where a timer
+	 * gets cancelled, so sweeping can never strand one.
+	 */
+	private track<T extends Sweepable>(
+		on: readonly SweepEvent[],
+		collection: T,
+		dispose?: (value: T extends Map<unknown, infer V> ? V : never) => void,
+	): T {
+		this.sweepable.push({
+			on,
+			collection,
+			dispose: dispose as ((value: unknown) => void) | undefined,
+		});
+		return collection;
+	}
+
+	/** Dispose + clear every tracked collection registered for `event`. */
+	private sweep(event: SweepEvent): void {
+		for (const entry of this.sweepable) {
+			if (!entry.on.includes(event)) continue;
+			if (entry.dispose) {
+				for (const value of (entry.collection as Map<unknown, unknown>).values()) {
+					entry.dispose(value);
+				}
+			}
+			entry.collection.clear();
+		}
+	}
+
+	private debounceTimers = this.track(["destroy"], new Map<string, number>(), (timer) =>
+		this.time.clearTimeout(timer),
+	);
 	/** Paths that newly degraded (ok/none -> frontmatter issue) since the last
 	 *  flush, awaiting the debounced Notice below. */
-	private pendingDegraded: Set<string> = new Set();
+	private pendingDegraded = this.track(["destroy"], new Set<string>());
 	private degradedNoticeTimer: number | null = null;
 	private ignorePatterns: string[] = [];
-	private pushing: Set<string> = new Set();
+	private pushing = this.track(["destroy"], new Set<string>());
 	/** Per-path echo-suppression markers (#358). Replaces three parallel
 	 *  path-keyed TTL maps — `recentlyPushed`, `remotelyDeleted`,
 	 *  `recentlyFlushed` — with one object per file. See synced-file.ts for the
@@ -419,7 +497,11 @@ export class SyncEngine {
 	 *  applies. Keyed by note_id (the key both paths check by), unlike the
 	 *  path-keyed offline-queue `hasPendingDelete` guard which only covers a
 	 *  delete STILL queued (this covers one already sent/dequeued). */
-	private recentlyDeleted: Map<string, { timer: number; path: string }> = new Map();
+	private recentlyDeleted = this.track(
+		["vault", "destroy"],
+		new Map<string, { timer: number; path: string }>(),
+		({ timer }) => this.time.clearTimeout(timer),
+	);
 	private pulling = false;
 	private lastSync = "";
 	private lastError = "";
@@ -447,7 +529,7 @@ export class SyncEngine {
 	 *  Used to detect whether the user actually modified a file since
 	 *  the last sync (Obsidian sets mtime to "now" on vault.modify(),
 	 *  making mtime-based detection unreliable). */
-	private syncState: Map<string, FileSyncState> = new Map();
+	private syncState = this.track(["vault"], new Map<string, FileSyncState>());
 
 	/** The server vaultId that the current syncState belongs to. lastSync and
 	 *  per-file hashes are scoped to one server vault; if the active vault
@@ -665,7 +747,11 @@ export class SyncEngine {
 	 *  might still arrive. Bounded by a TTL: a note that is never materialized at
 	 *  the new path must not pin a stale origin forever, or a LATER genuine
 	 *  create at that path would be turned into a move of an unrelated file. */
-	private relocatedFrom = new Map<string, { from: string; timer: number }>();
+	private relocatedFrom = this.track(
+		["vault", "destroy"],
+		new Map<string, { from: string; timer: number }>(),
+		({ timer }) => this.time.clearTimeout(timer),
+	);
 
 	/** note_id -> where THIS engine last put that note's file.
 	 *
@@ -684,7 +770,7 @@ export class SyncEngine {
 	 *
 	 *  Best-effort by nature -- an in-memory record of what this process did, not
 	 *  an authority. Consumers verify against the disk before acting on it. */
-	private fileForNote = new Map<string, string>();
+	private fileForNote = this.track(["vault", "destroy"], new Map<string, string>());
 
 	/** Record that `path` currently holds whichever note claims it. Called after
 	 *  this engine puts a note's bytes somewhere: a create, a move, a local
@@ -847,7 +933,7 @@ export class SyncEngine {
 	 *  refusal leaves a duplicate file no id references — nothing else would
 	 *  ever clean it. Swept by the next reconcile against a fresh manifest:
 	 *  absent from the manifest + unclaimed by the local map -> trash then. */
-	private pendingOrphanSweep = new Set<string>();
+	private pendingOrphanSweep = this.track(["vault", "destroy"], new Set<string>());
 
 	/** Who does the server say owns `path` (normalized)? Returns the owning id,
 	 *  null when a FRESH manifest confirms the path is absent, or undefined
@@ -995,14 +1081,20 @@ export class SyncEngine {
 	 *  next push (the rename's new-path push, same id) must go REST-first to
 	 *  move/resurrect the row, not CRDT (which the channel drops for a note the
 	 *  server sees as absent). Routing it CRDT would silently strand the rename. */
-	private confirmedNoteIds: Set<string> = new Set();
+	/** Vault-scoped: a confirmed id from the OLD vault would key CRDT frames and
+	 *  rooms against the NEW one — the cross-vault flavor of the 2026-07-07
+	 *  cross-wire class (plugin #200). Ids re-learn via manifest reconcile. */
+	private confirmedNoteIds = this.track(["vault", "destroy"], new Set<string>());
 
 	/** Per-note re-handshake attempt tracking for the live-bound catch-up path,
 	 *  keyed by note_id. `hash` is the server content_hash being retried; a new
 	 *  hash starts a fresh episode. Purely diagnostic now (the logged attempt
 	 *  number, and cleared on commit) — convergence recording lives entirely in
 	 *  `commitCrdtConvergence`; this map never gates a retry. */
-	private crdtRehandshakeAttempts: Map<string, { hash: string; attempts: number }> = new Map();
+	private crdtRehandshakeAttempts = this.track(
+		["vault", "destroy"],
+		new Map<string, { hash: string; attempts: number }>(),
+	);
 
 	/** Fix wave 1 (single-path D3 review): staged convergence for a diverged
 	 *  note, keyed by note_id — staged by the LIVE-BOUND leg and, since Phase
@@ -1032,10 +1124,19 @@ export class SyncEngine {
 	 *  compute client-side — so it stages `content: null`, which keeps the
 	 *  pre-wave-5 best-effort behavior (commit on the next non-empty frame,
 	 *  unverified). */
-	private pendingConvergence: Map<
-		string,
-		{ path: string; serverHash: string; content: string | null; version?: number; seq?: number }
-	> = new Map();
+	private pendingConvergence = this.track(
+		["vault", "destroy"],
+		new Map<
+			string,
+			{
+				path: string;
+				serverHash: string;
+				content: string | null;
+				version?: number;
+				seq?: number;
+			}
+		>(),
+	);
 
 	/** Fix wave 1: per-note_id cooldown for `socketConverge`'s STEP1
 	 *  re-handshake — bounds how often a live-bound note can re-fire reset+
@@ -1045,7 +1146,7 @@ export class SyncEngine {
 	 *  `Date.now()`, set ONLY when a handshake actually fires — never on a
 	 *  suppressed attempt. `healCooldownMs` is a public instance field so
 	 *  tests can shrink it. */
-	private crdtHealCooldown: Map<string, number> = new Map();
+	private crdtHealCooldown = this.track(["vault", "destroy"], new Map<string, number>());
 
 	/** Fix wave 2 (CI-found defect: `test_deaf_note_survives_handshake_rate_
 	 *  limit_and_heals_on_restore`): a poke suppressed by the cooldown must
@@ -1056,7 +1157,11 @@ export class SyncEngine {
 	 *  trailing timer per note_id for the remaining window; further pokes for
 	 *  the same note while a trailing timer is armed coalesce into it (no
 	 *  second timer). Cleared in `destroy()`. */
-	private crdtHealTrailingTimers: Map<string, number> = new Map();
+	private crdtHealTrailingTimers = this.track(
+		["vault", "destroy"],
+		new Map<string, number>(),
+		(timer) => this.time.clearTimeout(timer),
+	);
 
 	/** See `crdtHealCooldown`. 15s (fix wave 2, was 30s): long enough that
 	 *  open+catch-up+heal racing on the same note collapse to one handshake,
@@ -1072,7 +1177,10 @@ export class SyncEngine {
 	 *  pending local ops on that same round-trip. A nudge lost to a socket
 	 *  drop leaves the entry queued; the next flush re-fires (cooldown-
 	 *  bounded). Keyed by note_id → the entry's dequeue coordinates. */
-	private pendingQueueDeliveries: Map<string, { path: string; vaultId?: string }> = new Map();
+	private pendingQueueDeliveries = this.track(
+		["vault", "destroy"],
+		new Map<string, { path: string; vaultId?: string }>(),
+	);
 
 	/** Public: true once this SESSION observed this note's create-ack. Was
 	 *  formerly wired as `CrdtManagerOptions.canSendLive` in main.ts, but that
@@ -2443,7 +2551,13 @@ export class SyncEngine {
 	 *  `invalidateIfVaultChanged`) call this — keeping them in lockstep is the
 	 *  point; a wipe that exists on only one path re-opens #200. */
 	private async wipePerVaultState(): Promise<void> {
-		this.syncState.clear();
+		// Every collection registered for "vault" at its declaration — syncState,
+		// the note_id-keyed CRDT bookkeeping, the path-keyed markers — cleared in
+		// one pass, with timer-holding maps disposed by their declaration hooks.
+		// Before this, the list below was hand-written and eleven vault-scoped
+		// maps were missing from it (#1409); adding a field no longer requires
+		// remembering that this method exists.
+		this.sweep("vault");
 		this.lastSync = "";
 		// The socket op-log replay cursor marks a position in the OLD vault's
 		// seq feed — reset to 0 so the next catch-up replays the new vault from
@@ -2455,14 +2569,13 @@ export class SyncEngine {
 		// and wrongly short-circuit the first reconcile after a swap.
 		this.manifestSeq = 0;
 		this.lastValidatorRewind = null;
-		// The note-id map and confirmed set are per-vault identity state.
-		// Carrying them across vaults keys CRDT frames/rooms by another
-		// vault's note ids — the cross-vault flavor of the 2026-07-07
-		// cross-wire class (plugin #200). Wipe both; ids re-learn via the
-		// manifest reconcile + push adoption. clear() mutates in place: the
-		// instance is shared with main.ts + live views.
+		// The note-id map is per-vault identity state but is NOT a tracked
+		// collection: the instance is shared with main.ts + live views, so it is
+		// cleared in place rather than swept. Carrying it across vaults keys CRDT
+		// frames/rooms by another vault's note ids — the cross-vault flavor of the
+		// 2026-07-07 cross-wire class (plugin #200). Ids re-learn via the manifest
+		// reconcile + push adoption. (`confirmedNoteIds` rides the sweep above.)
 		this.noteIdMap?.clear();
-		this.clearConfirmedNoteIds();
 		// The durable op queue and the unsent-doc set are the two places a note_id
 		// outlives the vault it was minted in. A CrdtOp carries a bare docId and NO
 		// vault, so a create still pending when the user switches vaults is flushed
@@ -2473,17 +2586,6 @@ export class SyncEngine {
 		// safe because lastSync is cleared above, so a later switch BACK re-derives
 		// and re-pushes anything they carried.
 		this.crdtResetOutbox?.();
-		// note_ids are only unique WITHIN a vault (final review MINOR-6) — a
-		// relocation timestamp recorded for an id under the OLD vault must not
-		// survive to stale-gate an unrelated note that happens to reuse the same
-		// id in the new vault. Living here (not just resetForVaultChange) keeps
-		// BOTH vault-change paths in lockstep, per this method's contract.
-		this.lastRelocationTs.clear();
-		// Engine-trash counters are path-keyed and therefore vault-scoped: a
-		// counter stranded in the OLD vault (event eaten by a throw or a closed
-		// gate) must not consume a same-path delete in the NEW one (#419
-		// pre-merge review finding 4).
-		this.engineTrashedPaths.clear();
 		// Folder markers are vault-scoped too: a stale set after a switch lets
 		// handleFolderDelete push marker deletes against the NEW vault (post-
 		// merge review finding 8 — data-safe but cross-vault noise).
@@ -2737,13 +2839,12 @@ export class SyncEngine {
 		normalized: string;
 		file: TFile;
 		seeded: boolean;
-		/** `serverId === the id we asked for` — an ADOPT remap must never trust
-		 *  `seeded`, since the frame landed against a row we did not name. */
+		/** `serverId === the id we asked for`. False means the server answered
+		 *  under an id of its own choosing, so the bytes it stored are filed
+		 *  under a lineage we have never seen. */
 		sameId: boolean;
 		genesisUpdate: Uint8Array | undefined;
 		genesisContent: string | undefined;
-		/** pushFile surfaces a genesis race here; the queued path has no
-		 *  equivalent signal to report. */
 		onHistoryResolved?: (effectiveIdHasHistory: boolean) => void;
 	}): Promise<string | null> {
 		if (!this.crdt) return null;
@@ -3096,7 +3197,13 @@ export class SyncEngine {
 	 *  with its own event regardless of interleaving; the only leak is a
 	 *  crash that eats the event, costing one echo-skipped (resurrectable)
 	 *  delete at that path later — the cheap failure. */
-	private readonly engineTrashedPaths = new Map<string, number>();
+	/** Vault-scoped: path-keyed, so a counter stranded in the OLD vault (event
+	 *  eaten by a throw or a closed gate) must not consume a same-path delete in
+	 *  the NEW one (#419 pre-merge review finding 4). */
+	private readonly engineTrashedPaths = this.track(
+		["vault", "destroy"],
+		new Map<string, number>(),
+	);
 
 	private consumeEngineTrash(path: string): boolean {
 		const n = this.engineTrashedPaths.get(path) ?? 0;
@@ -3628,7 +3735,7 @@ export class SyncEngine {
 	}
 
 	/** Paths modified during a pull that need pushing once pull completes. */
-	private pendingPostPullPushes: Set<string> = new Set();
+	private pendingPostPullPushes = this.track(["vault", "destroy"], new Set<string>());
 
 	/** Push a single file to Engram. Returns true on success.
 	 *  When force is true, skip echo suppression (used by pushAll).
@@ -4753,7 +4860,12 @@ export class SyncEngine {
 	 *  callers), so the user's modal ALWAYS coalesces: without this it renders
 	 *  a dead 0% bar with no filenames for the whole pull, then one final
 	 *  number. Registration is scoped to each caller's own await. */
-	private seqReplayFileListeners = new Set<(path: string) => void>();
+	/** Destroy-only: this holds in-flight replay CALLBACKS, not vault data, and
+	 *  each registration already removes itself in a `finally`. Sweeping it on a
+	 *  vault switch would drop a listener out from under a replay that is still
+	 *  unwinding; the replay itself is what a switch has to stop, not its
+	 *  subscribers. */
+	private seqReplayFileListeners = this.track(["destroy"], new Set<(path: string) => void>());
 	private seqHealLastAt = 0;
 	private seqHealTimer: number | null = null;
 	private static readonly SEQ_HEAL_COOLDOWN_MS = 4_000;
@@ -6805,7 +6917,10 @@ export class SyncEngine {
 	 *  the pull feed's `updated_at` is only seconds-precision on the wire, so
 	 *  two genuinely different relocations for the same id within one second
 	 *  can tie exactly. A tie can't be proven newer, so it must not win. */
-	private lastRelocationTs = new Map<string, number>();
+	/** Vault-scoped: note_ids are unique only WITHIN a vault (review MINOR-6), so
+	 *  a relocation timestamp from the OLD vault must not stale-gate an unrelated
+	 *  note that reuses the same id in the new one. */
+	private lastRelocationTs = this.track(["vault", "destroy"], new Map<string, number>());
 
 	private async moveIfIdRelocated(id: string, newPath: string, eventTs?: number): Promise<void> {
 		// Both authoritative upsert paths (the WS broadcast and the pull feed)
@@ -9769,22 +9884,13 @@ export class SyncEngine {
 
 	/** Cancel all pending debounce, cooldown, and health check timers. */
 	destroy(): void {
-		for (const timer of this.debounceTimers.values()) {
-			this.time.clearTimeout(timer);
-		}
-		this.debounceTimers.clear();
-		// Was three near-identical clear-every-timer loops, one per marker map.
+		// Every tracked collection registered for "destroy", timers cancelled by
+		// the dispose hooks at their declarations. `syncState` is registered for
+		// "vault" only and so is deliberately spared here: it is the persisted
+		// sync baseline, not transient state.
+		this.sweep("destroy");
 		this.files.destroy();
-		for (const { timer } of this.recentlyDeleted.values()) {
-			this.time.clearTimeout(timer);
-		}
-		this.recentlyDeleted.clear();
-		for (const { timer } of this.relocatedFrom.values()) {
-			this.time.clearTimeout(timer);
-		}
-		this.relocatedFrom.clear();
-		this.fileForNote.clear();
-		this.pendingPostPullPushes.clear();
+		// Standalone timer handles — not collections, so they stay explicit.
 		if (this.seqHealTimer !== null) {
 			this.time.clearTimeout(this.seqHealTimer);
 			this.seqHealTimer = null;
@@ -9793,24 +9899,8 @@ export class SyncEngine {
 			this.time.clearTimeout(this.postPullDrainTimer);
 			this.postPullDrainTimer = null;
 		}
-		for (const timer of this.crdtHealTrailingTimers.values()) {
-			this.time.clearTimeout(timer);
-		}
-		this.crdtHealTrailingTimers.clear();
-		// Per-note CRDT bookkeeping that holds no timers, so nothing leaks if it
-		// survives — but it is per-engine-lifetime state and every sibling map
-		// above is swept here. Left behind, a reused engine would carry a stale
-		// heal cooldown (suppressing a handshake the new session needs), a stale
-		// re-handshake attempt count, and a staged convergence for a note whose
-		// room is gone. `syncState` is deliberately NOT in this list: it is the
-		// persisted sync baseline, not transient state.
-		this.pendingConvergence.clear();
-		this.crdtRehandshakeAttempts.clear();
-		this.crdtHealCooldown.clear();
-		this.pendingQueueDeliveries.clear();
 		if (this.degradedNoticeTimer) this.time.clearTimeout(this.degradedNoticeTimer);
 		this.degradedNoticeTimer = null;
-		this.pendingDegraded.clear();
 		this.stopHealthCheck();
 		this.queue.destroy();
 	}
