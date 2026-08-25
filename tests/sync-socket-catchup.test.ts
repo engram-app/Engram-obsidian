@@ -107,7 +107,7 @@ describe("discoverAnnouncedNote (e2e test_27 — announce-driven immediate empty
 		// the seq-replay for a recentlyDeleted / queued-delete note.
 		const crdt = {
 			hasHistory: (_id: string) => Promise.resolve(false),
-			applyRemoteUpdate: (_id: string, _u: Uint8Array) => Promise.resolve(),
+			applyRemoteUpdate: (_id: string, _u: Uint8Array) => Promise.resolve(true),
 			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([0])),
 			projectedText: (_id: string) => Promise.resolve(""),
 			closeDoc: () => {},
@@ -142,7 +142,7 @@ describe("discoverAnnouncedNote (e2e test_27 — announce-driven immediate empty
 		// for that id in the window must not trigger a catch-up that resurrects it.
 		const crdt = {
 			hasHistory: (_id: string) => Promise.resolve(false),
-			applyRemoteUpdate: (_id: string, _u: Uint8Array) => Promise.resolve(),
+			applyRemoteUpdate: (_id: string, _u: Uint8Array) => Promise.resolve(true),
 			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([0])),
 			projectedText: (_id: string) => Promise.resolve(""),
 			closeDoc: () => {},
@@ -165,7 +165,7 @@ describe("discoverAnnouncedNote (e2e test_27 — announce-driven immediate empty
 	test("never throws when the delta fetch fails (failure-isolated)", async () => {
 		const crdt = {
 			hasHistory: (_id: string) => Promise.resolve(false),
-			applyRemoteUpdate: (_id: string, _u: Uint8Array) => Promise.resolve(),
+			applyRemoteUpdate: (_id: string, _u: Uint8Array) => Promise.resolve(true),
 			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([0])),
 			projectedText: (_id: string) => Promise.resolve(""),
 			closeDoc: () => {},
@@ -1238,7 +1238,12 @@ describe("convergeColdNoteRoomFree (#1409 — cold notes converge without a room
 		const engine: SyncEngine = makeEngineWithCrdt({
 			applyRemoteUpdate: (id: string, u: Uint8Array) => {
 				applied.push([id, u]);
-				return Promise.resolve();
+				// TRUE = "a doc received this". False is the registry REFUSING
+				// (note removed, doc destroyed mid-hydration), and `markSynced`
+				// below must not run on a merge that never happened — it would
+				// record the note as converged holding none of the server's state,
+				// after which every catch-up compares equal hashes and skips it.
+				return Promise.resolve(true);
 			},
 			markSynced: (id: string) => void engine.commitCrdtConvergence(id),
 			closeDoc: () => {},
@@ -1314,6 +1319,29 @@ describe("convergeColdNoteRoomFree (#1409 — cold notes converge without a room
 
 		await Promise.resolve();
 		expect(engine.exportSyncState()["Notes/a.md"].serverHash).toBe("H2");
+	});
+
+	test("a REFUSED apply falls back to the room and does NOT record convergence", async () => {
+		// `applyRemoteUpdate` refuses silently when the note is in `removed` or
+		// its doc was destroyed mid-hydration — and its promise still RESOLVES.
+		// Treating resolution as a merge meant `markSynced` recorded a note as
+		// converged holding none of the server's state, after which every later
+		// catch-up compared equal hashes and skipped it. Permanently, silently.
+		const engine = coldEngine([]);
+		(engine as any).crdt.applyRemoteUpdate = () => Promise.resolve(false);
+		engine.setCrdtPorts({ docState: mock().mockResolvedValue({ b64: "AQID", head: "h" }) });
+		const converge = spyOn(engine as any, "socketConverge").mockImplementation(() => {});
+
+		await (engine as any).convergeColdNoteRoomFree(
+			"id-a",
+			"Notes/a.md",
+			CHANGE,
+			"server body",
+			"H2",
+		);
+
+		expect(converge).toHaveBeenCalledTimes(1);
+		expect(engine.exportSyncState()["Notes/a.md"].serverHash).toBe("H1");
 	});
 
 	test("falls back to the room handshake when the frame fails (old backend, rate limit, dropped socket)", async () => {

@@ -402,11 +402,21 @@ export class ProviderRegistry {
 	}
 
 	/** Apply a raw Yjs update (vault-channel fan-out) as a remote merge, awaiting
-	 *  its disk flush so a write failure can be surfaced (#235). */
-	async applyRemoteUpdate(noteId: string, update: Uint8Array): Promise<void> {
-		if (this.removed.has(noteId)) return; // deleted — a late fan-out must not resurrect
+	 *  its disk flush so a write failure can be surfaced (#235).
+	 *
+	 *  Returns whether the update actually reached a doc. The two refusals below
+	 *  are correct but were INVISIBLE, and two callers read the resolved promise
+	 *  as proof of a merge: `adoptServerLineage` then reported "adopted server
+	 *  lineage" for a doc that never received it and pushed the body into an
+	 *  empty doc — the #476 rival mint — while `convergeColdNoteRoomFree`
+	 *  called `markSynced` and recorded a note as converged that had merged
+	 *  nothing, so every later catch-up compared equal hashes and skipped it
+	 *  forever. A dropped update is not a failure worth throwing over; it just
+	 *  cannot be reported as success. */
+	async applyRemoteUpdate(noteId: string, update: Uint8Array): Promise<boolean> {
+		if (this.removed.has(noteId)) return false; // deleted — a late fan-out must not resurrect
 		const e = await this.entry(noteId);
-		if (!e.lifetime.active) return; // destroyed while we awaited hydration
+		if (!e.lifetime.active) return false; // destroyed while we awaited hydration
 		// Apply with the PROVIDER as origin (NOT a distinct REMOTE symbol): the
 		// provider's update handler suppresses its own origin, so a fanned-out update
 		// is NOT re-broadcast to the server. Applying it as a foreign origin (the old
@@ -420,6 +430,7 @@ export class ProviderRegistry {
 			e.pendingFlush = null;
 			await flush;
 		}
+		return true;
 	}
 
 	// --- Yjs encoding helpers (handshake / genesis) -----------------------------

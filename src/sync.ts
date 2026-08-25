@@ -2927,7 +2927,18 @@ export class SyncEngine {
 			return null;
 		}
 
-		await crdt.applyRemoteUpdate(noteId, fromB64(state.b64));
+		// A refused apply (note deleted, doc destroyed mid-hydration) is NOT an
+		// adopt. Reporting it as one is the doubling: the caller falls through and
+		// diffs the body into a doc that never received the server's lineage, and
+		// `applyLocalEdit` reads that as history-less and mints a rival.
+		if (!(await crdt.applyRemoteUpdate(noteId, fromB64(state.b64)))) {
+			rlog().warn(
+				"crdt",
+				`create: server state for ${noteRef(path)} was refused by the registry ` +
+					`(note removed or doc destroyed) — not an adopt`,
+			);
+			return null;
+		}
 		rlog().info("crdt", `create: adopted server lineage for ${noteRef(path)}`);
 		return await crdt.projectedText(noteId);
 	}
@@ -3045,9 +3056,17 @@ export class SyncEngine {
 		normalized: string;
 		file: TFile;
 		seeded: boolean;
-		/** What the server did with our genesis frame. `undefined` when the
-		 *  create carried no frame at all; null when the backend predates the
-		 *  field (#476). */
+		/** What the server did with our genesis frame.
+		 *
+		 *  `null` = the backend predates the field (#476). It does NOT mean "no
+		 *  frame was sent": a bodyless create still gets a real outcome, because
+		 *  the server reconciles its `:absent` seed result against the ROW before
+		 *  replying, so a bodyless create onto a non-empty row answers `occupied`.
+		 *
+		 *  `undefined` is reachable only from a caller that omits the field (test
+		 *  fakes, an older port shape). Handled identically to `null` — both fail
+		 *  the `!== "absent"` gate, so both take the confirm-before-pushing route,
+		 *  which is the conservative one. */
 		genesisOutcome?: GenesisOutcome;
 		/** `serverId === the id we asked for`. False means the server answered
 		 *  under an id of its own choosing, so the bytes it stored are filed
@@ -3320,7 +3339,14 @@ export class SyncEngine {
 				if (state === null) throw new Error("crdt_doc_state unavailable");
 				// Flushes disk on the merge and AWAITS that write, so a failed
 				// write rejects here rather than being reported as converged.
-				await this.crdt.applyRemoteUpdate(noteId, fromB64(state.b64));
+				// A REFUSED apply (note removed, doc destroyed mid-hydration)
+				// resolves without merging anything, and `markSynced` below would
+				// then record a note as converged that holds none of the server's
+				// state — after which every catch-up compares equal hashes and
+				// skips it, permanently. Fall back to the room.
+				if (!(await this.crdt.applyRemoteUpdate(noteId, fromB64(state.b64)))) {
+					throw new Error("registry refused the doc state (note removed or destroyed)");
+				}
 				// `onSynced` fires ONLY from NoteProvider.handleFrame on an
 				// inbound syncStep2 — an applyRemoteUpdate does not fire it. So
 				// the staged episode has to be driven to commit explicitly, or

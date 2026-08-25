@@ -40,7 +40,9 @@ const LOCAL_BODY = "the body sitting on local disk";
  *        history, transmitting is always safe (`lca` diffs against it), so the
  *        outcome only matters when this is false — the empty-doc case.
  */
-function makeEngine(opts: { hasHistory?: boolean; docState?: unknown } = {}) {
+function makeEngine(
+	opts: { hasHistory?: boolean; docState?: unknown; applyRefused?: boolean } = {},
+) {
 	const calls = {
 		applyLocalEdit: [] as string[],
 		applyRemoteUpdate: 0,
@@ -71,6 +73,12 @@ function makeEngine(opts: { hasHistory?: boolean; docState?: unknown } = {}) {
 		applyRemoteUpdate: async () => {
 			calls.applyRemoteUpdate++;
 			calls.order.push("applyRemoteUpdate");
+			// TRUE means "a doc actually received this". The registry returns
+			// false when it refuses (note removed, doc destroyed mid-hydration),
+			// and the adopt must not report success on a merge that never
+			// happened — a fake that answered void made every one of these tests
+			// pass against exactly that bug.
+			return opts.applyRefused !== true;
 		},
 		projectedText: async () => SERVER_BODY,
 		isCrdtEligible: () => true,
@@ -130,6 +138,22 @@ describe("genesis outcome decides whether a body may be transmitted (#476)", () 
 
 		const consumed = await seed(engine, "occupied");
 
+		expect(calls.applyLocalEdit).toEqual([]);
+		expect(consumed).toBeNull();
+	});
+
+	test("a REFUSED apply is not an adopt — it must not license the push", async () => {
+		// `applyRemoteUpdate` refuses silently when the note is in `removed` or
+		// its doc was destroyed mid-hydration. Its promise still RESOLVES, so
+		// reading resolution as proof of a merge meant logging "adopted server
+		// lineage" for a doc that received nothing and then diffing the body into
+		// it — which `applyLocalEdit` sees as history-less and mints a rival
+		// lineage for. The refusal has to be visible, and it now is.
+		const { engine, calls } = makeEngine({ applyRefused: true });
+
+		const consumed = await seed(engine, "occupied");
+
+		expect(calls.applyRemoteUpdate).toBe(1);
 		expect(calls.applyLocalEdit).toEqual([]);
 		expect(consumed).toBeNull();
 	});
