@@ -1494,6 +1494,42 @@ export default class EngramSyncPlugin extends Plugin {
 			this.settings.vaultId = result.id;
 			this.settings.remoteVaultName = result.name;
 			this.api.setVaultId(this.settings.vaultId);
+
+			// #1409 (root cause). Reaching here means `settings.vaultId` was
+			// FALSY, so this registration just bound the install to a vault it
+			// was not bound to a moment ago. Two live paths null the vaultId
+			// without touching identity state — the 404 "vault no longer exists"
+			// heal and `onVaultDeleted` — and neither runs
+			// `resetForVaultChange`, so the path -> note_id map survives into a
+			// vault that has no such notes.
+			//
+			// The consequence is not cosmetic: `crdt_create` then proposes the
+			// PREVIOUS vault's ids, the server cannot reuse a foreign-vault id
+			// and answers with a fresh one, `serverId !== noteId` fails the
+			// seeded fast path, and the else-leg's routeModify broadcasts a
+			// sync_update that opens a room PER NOTE. Measured on a real
+			// 423-item import: 225 rooms for 317 notes, all source=edit, with
+			// ZERO crdt_update_log rows written — every one of them redundant,
+			// because the roomless genesis seed had already stored the state.
+			// It is also the #1318 cross-vault collision class the SERVER had
+			// to grow a re-mint for.
+			//
+			// Wiping is unconditionally correct on THIS branch specifically: a
+			// vault we just registered into holds no notes of ours, so every
+			// entry in the map is provably about a different vault. Guarded on
+			// non-empty only to keep first-ever install a silent no-op — the
+			// wipe also clears lastSync/cursors, and doing that noisily on a
+			// fresh install would look like a bug.
+			const carried = Object.keys(this.noteIdMap.toJSON()).length;
+			if (carried > 0) {
+				rlog().warn(
+					"lifecycle",
+					`Registered a new vault (${result.id}) while holding ${carried} note-id ` +
+						`mappings from a previous vault — wiping per-vault identity state`,
+				);
+				await this.syncEngine.resetForVaultChange();
+			}
+
 			await this.saveSettings();
 			rlog().info("lifecycle", `Vault registered: id=${result.id} slug=${result.slug}`);
 			return true;
