@@ -572,6 +572,31 @@ export class NoteChannel {
 		};
 	}
 
+	/** Full Yjs state for `docId`, read WITHOUT starting a server room (#1409).
+	 *
+	 *  The alternative — a syncStep1 `crdt_msg` — routes through the backend's
+	 *  `ensure_room`, so every cold note that needed converging allocated a room
+	 *  for a note nobody has open. The server answers this one off the persisted
+	 *  snapshot + update-log tail (`CrdtTransport.read_delta`), which spawns
+	 *  nothing.
+	 *
+	 *  Returns base64 Yjs v1 update bytes. Applying them is a MERGE, so a
+	 *  checkpoint-lagged snapshot converges without reverting anything — the
+	 *  property that makes this a legal substitute for STEP2, and that the
+	 *  catch-up feed's plaintext `content` snapshot does NOT have.
+	 *
+	 *  Rejects carry the same reasons as a handshake: `rate_limited` (retryable),
+	 *  `note_not_found` (the caller's id-map is stale), `bad_doc_id` (terminal).
+	 *  Callers fall back to the room re-handshake — including on an
+	 *  `unmatched_topic`-shaped reject from a backend too old to know the
+	 *  frame, so a new plugin against an old server still converges. */
+	async crdtDocState(docId: string): Promise<{ b64: string; head: string }> {
+		return (await this.sendRequest("crdt_doc_state", { doc_id: docId })) as {
+			b64: string;
+			head: string;
+		};
+	}
+
 	/** Seq-ordered op-log page after `cursorSeq` (single-path catch-up). Each op
 	 *  carries FULL content (a SyncNoteChange or SyncAttachmentChange — the
 	 *  merged notes+attachments feed), so it is causally complete and can

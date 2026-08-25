@@ -17,7 +17,7 @@ import { fnv1a } from "./content-hash";
 import type { NoteIdMap } from "./crdt/note-id-map";
 import type { ProviderRegistry } from "./crdt/provider-registry";
 import { uuid7 } from "./crdt/uuid7";
-import { encodeUpdateFrame } from "./crdt/wire";
+import { encodeUpdateFrame, fromB64 } from "./crdt/wire";
 import { crdtOpFailureReason, type GenesisFrame } from "./crdt-op-dispatch";
 import { devLog } from "./dev-log";
 import { errMsg, isHttpStatus } from "./error-util";
@@ -333,6 +333,9 @@ type CrdtCatchupSinceFn = (
 	next_id?: string | null;
 }>;
 
+/** Room-free full Yjs state for one note — see `CrdtChannel.crdtDocState`. */
+type CrdtDocStateFn = (docId: string) => Promise<{ b64: string; head: string }>;
+
 /** Late-injection wiring for the CRDT stack (#376 prerequisite 2). main.ts
  *  wires these in stages — boot, channel join, teardown — each stage passing
  *  only its subset to `setCrdtPorts`. A key must be PRESENT in the patch to
@@ -367,6 +370,10 @@ export interface CrdtPorts {
 	 *  path, so it is the one port with no null state to fall into. */
 	liveBound?: ((path: string) => boolean) | null;
 	catchupSince?: CrdtCatchupSinceFn | null;
+	/** Room-FREE full-state read for one note (#1409). Null on a backend too
+	 *  old to serve `crdt_doc_state`; callers fall back to the room
+	 *  handshake, so an unwired port costs rooms, never convergence. */
+	docState?: CrdtDocStateFn | null;
 }
 
 /** Thrown by `walkOpLog` when the op-log FETCH itself fails, so a caller can
@@ -527,6 +534,7 @@ export class SyncEngine {
 		if ("live" in ports) this.crdtLive = ports.live ?? null;
 		if ("liveBound" in ports) this.isLiveBound = ports.liveBound ?? (() => false);
 		if ("catchupSince" in ports) this.crdtCatchupSince = ports.catchupSince ?? null;
+		if ("docState" in ports) this.crdtDocState = ports.docState ?? null;
 	}
 
 	setCrdtManager(mgr: ProviderRegistry | null): void {
@@ -2763,8 +2771,118 @@ export class SyncEngine {
 		version?: number,
 		seq?: number,
 	): void {
-		this.pendingConvergence.set(noteId, { path, serverHash, content, version, seq });
+		this.stageConvergence(noteId, path, serverHash, content, version, seq);
 		this.socketConverge(path, noteId);
+	}
+
+	/** The stage half of `stageAndConverge`, split out for the room-FREE
+	 *  delivery path (#1409): `convergeColdNoteRoomFree` stages the SAME
+	 *  episode and then delivers over `crdt_doc_state` instead of a room
+	 *  handshake. Kept as one writer so a field added here can't be missed by
+	 *  one of the two delivery paths — the exact fork this helper's own
+	 *  history is about. */
+	private stageConvergence(
+		noteId: string,
+		path: string,
+		serverHash: string,
+		content: string | null,
+		version?: number,
+		seq?: number,
+	): void {
+		this.pendingConvergence.set(noteId, { path, serverHash, content, version, seq });
+	}
+
+	/** Converge a diverged COLD note (nobody has it open) without allocating a
+	 *  server room — #1409's open half.
+	 *
+	 *  The room-based path this replaces is `stageAndConverge`: stage the
+	 *  episode, fire a STEP1, let STEP2 bring the ops back, and let
+	 *  `commitCrdtConvergence` record the stage once an inbound frame proves
+	 *  the round-trip. Every one of those STEP1s routed through the backend's
+	 *  `ensure_room`, so a bulk first sync allocated a room per cold note that
+	 *  fell through to catch-up.
+	 *
+	 *  `crdt_doc_state` returns the same Yjs state off the persisted snapshot +
+	 *  update-log tail with no room. Applying it is the same monotonic merge
+	 *  STEP2's ops would have been, so a checkpoint-lagged reply converges
+	 *  without reverting a fresher local edit — the property that makes this a
+	 *  legal substitute, and the one the feed's plaintext `content` lacks.
+	 *
+	 *  Convergence is recorded on the SAME proof as the room path: not "the
+	 *  fetch resolved", but the doc verifiably projecting the row's content.
+	 *  We stage first and let the manager's remote-merge listener drive
+	 *  `commitCrdtConvergence` exactly as it does for a STEP2, so an apply that
+	 *  lands short (a snapshot genuinely older than this feed row) leaves the
+	 *  stage in place for the next catch-up rather than recording a lie.
+	 *
+	 *  ANY failure falls back to the room handshake. An old backend rejects the
+	 *  unknown frame, a rate limit rejects it, a dropped socket rejects it — in
+	 *  all three the room is still the correct, more expensive answer.
+	 *  Convergence is the invariant; the room saving is the optimization. */
+	private async convergeColdNoteRoomFree(
+		noteId: string,
+		normalized: string,
+		change: NoteChange,
+		content: string | undefined,
+		serverHash: string,
+	): Promise<void> {
+		// Stage BEFORE either delivery attempt: both the room-free apply and the
+		// fallback handshake commit through this same staged episode, and a
+		// fresh content_hash overwrites any prior stage (a new episode, never a
+		// stale commit of superseded server content).
+		this.stageConvergence(
+			noteId,
+			normalized,
+			serverHash,
+			content ?? null,
+			change.version,
+			change.seq,
+		);
+
+		const fetchState = this.crdtDocState;
+		if (fetchState && this.crdt) {
+			try {
+				const { b64 } = await fetchState(noteId);
+				// Flushes disk on the merge and AWAITS that write, so a failed
+				// write rejects here rather than being reported as converged.
+				await this.crdt.applyRemoteUpdate(noteId, fromB64(b64));
+				// `onSynced` fires ONLY from NoteProvider.handleFrame on an
+				// inbound syncStep2 — an applyRemoteUpdate does not fire it. So
+				// the staged episode has to be driven to commit explicitly, or
+				// serverHash is never recorded, the note stays diverged, and
+				// every later catch-up re-fetches it forever. `markSynced` is
+				// the registry's manual trigger for exactly this.
+				//
+				// Triggering it DOES record convergence — `commitCrdtConvergence`
+				// has no text-verify gate (it was removed deliberately: a
+				// cosmetic projection difference wedged the stage forever). What
+				// justifies recording is the same thing that justified it after
+				// syncStep2: this reply is the server's FULL state, snapshot
+				// UNION update-log tail (`CrdtTransport.read_delta` with a nil
+				// state vector), so the post-merge doc provably holds everything
+				// the server held at read time. That is the same reconciliation
+				// strength STEP2 carries, off the same two sources — not a
+				// weaker proof standing in for it.
+				this.crdt.markSynced(noteId);
+				rlog().info(
+					"pull",
+					`CRDT catch-up: diverged cold note converged room-free ${noteRef(change.path)}`,
+				);
+				return;
+			} catch (e) {
+				rlog().warn(
+					"pull",
+					`CRDT catch-up: room-free converge failed for ${noteRef(change.path)}, ` +
+						`falling back to socket re-handshake: ${errMsg(e, change.path)}`,
+				);
+			}
+		}
+
+		rlog().warn(
+			"pull",
+			`CRDT catch-up: diverged cold note, socket re-handshake ${noteRef(change.path)}`,
+		);
+		this.socketConverge(normalized, noteId);
 	}
 
 	/** The full local cleanup for a remotely-deleted file: trash it (marked so
@@ -4691,6 +4809,8 @@ export class SyncEngine {
 	}
 
 	private crdtCatchupSince: CrdtCatchupSinceFn | null = null;
+
+	private crdtDocState: CrdtDocStateFn | null = null;
 
 	setCrdtCatchupSince(fn: CrdtCatchupSinceFn): void {
 		this.setCrdtPorts({ catchupSince: fn });
@@ -7940,26 +8060,33 @@ export class SyncEngine {
 								serverHash: change.content_hash,
 							});
 						} else if (noteId) {
-							// CRDT-enrolled cold note: SAME stage-then-fire pattern as
-							// the live-bound leg above (Phase E3 — the REST delta pull
-							// is deleted). The room re-handshake's STEP2 delivers the
-							// missing Yjs ops, the manager's remote-merge listener
-							// flushes disk, and commitCrdtConvergence records this
-							// stage only once the doc verifiably projects the row.
-							// Never write the feed's content SNAPSHOT — it is
-							// checkpoint-lagged and can revert a fresher live merge
-							// (the D2 stomp class); Yjs merge is monotonic.
-							rlog().warn(
-								"pull",
-								`CRDT catch-up: diverged cold note, socket re-handshake ${noteRef(change.path)}`,
-							);
-							this.stageAndConverge(
+							// CRDT-enrolled COLD note — nobody has this open in an
+							// editor. It still needs the server's Yjs ops (never the
+							// feed's plaintext `content`: that snapshot is
+							// checkpoint-lagged and can revert a fresher live merge,
+							// the D2 stomp class — Yjs merge is monotonic, a
+							// content write is not).
+							//
+							// #1409: getting those ops used to mean a room. The
+							// stage-then-fire pattern below fired a STEP1, the backend
+							// routed it through `ensure_room`, and a bulk first sync
+							// allocated one room per cold note that fell through to
+							// catch-up — measured as 100% of the rooms a 250-note
+							// import opened, and 81-583 per 1,000 notes under CI load.
+							// `crdt_doc_state` returns the same state off the persisted
+							// snapshot + tail with no room; the apply is the same
+							// monotonic merge STEP2's would have been.
+							//
+							// Falls back to the room handshake on ANY failure — an old
+							// backend that doesn't know the frame, a rate limit, a
+							// dropped socket. Convergence is the invariant; the room is
+							// only the expensive way to reach it.
+							await this.convergeColdNoteRoomFree(
 								noteId,
 								normalized,
-								change.content_hash,
+								change,
 								content,
-								change.version,
-								change.seq,
+								change.content_hash,
 							);
 						} else {
 							// No note_id (legacy GET /notes/changes path — no id to pull

@@ -2260,6 +2260,15 @@ export default class EngramSyncPlugin extends Plugin {
 					// arg can't silently make the fix inert (TS bivariance accepts a
 					// shorter closure).
 					catchupSince: makeCrdtCatchupSender(channel, () => this.settings.vaultId),
+					// Room-free full-state read for a diverged COLD note (#1409).
+					// Same vault guard as catchupSince: a stale channel would
+					// answer out of the WRONG vault's rows (#314).
+					docState: (id) => {
+						if (channel.getVaultId() !== this.settings.vaultId) {
+							throw new Error("crdt_doc_state: channel vault mismatch");
+						}
+						return channel.crdtDocState(id);
+					},
 				});
 
 				// Wire CRDT transport through this channel.
