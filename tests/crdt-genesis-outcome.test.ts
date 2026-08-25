@@ -134,6 +134,70 @@ describe("genesis outcome decides whether a body may be transmitted (#476)", () 
 		expect(consumed).toBeNull();
 	});
 
+	test("a defer stamps disk as the baseline, or it only POSTPONES the doubling", async () => {
+		// The half that made the defer real. Deferring leaves a history-less doc
+		// next to a server that has content — and that is precisely the state
+		// `applyLocalEdit` seeds a whole body into (`lca: false`), minting the
+		// rival lineage. So the note's very NEXT cold write re-armed #476 and the
+		// defer had bought exactly one write's delay.
+		//
+		// The baseline is what disarms it: the registry's adopt-first gate
+		// ("history-less AND unchanged-synced => consumed, nothing to push")
+		// holds the empty doc open until a handshake or catch-up fills it from
+		// the server.
+		const { engine } = makeEngine({
+			docState: async () => {
+				throw new Error("rate limited");
+			},
+		});
+
+		expect(engine.isUnchangedSynced("Notes/a.md", LOCAL_BODY)).toBe(false);
+		await seed(engine, "occupied");
+		expect(engine.isUnchangedSynced("Notes/a.md", LOCAL_BODY)).toBe(true);
+	});
+
+	test("re-id'd + unreadable server state: same defer, same baseline", async () => {
+		// The other defer site: the server took our bytes but filed them under an
+		// id we have never seen (`seeded` + `sameId: false`), and its lineage is
+		// unavailable. Identical hazard, so it must take the identical route —
+		// the two sites drifting apart is how this class survives.
+		const { engine, calls } = makeEngine({
+			docState: async () => {
+				throw new Error("rate limited");
+			},
+		});
+
+		const consumed = await engine.seedBodyAfterCreate({
+			effectiveId: "server-chosen-id",
+			normalized: "Notes/a.md",
+			file: { path: "Notes/a.md" },
+			seeded: true,
+			sameId: false,
+			genesisUpdate: undefined,
+			genesisContent: undefined,
+			genesisOutcome: "stored",
+		});
+
+		expect(consumed).toBeNull();
+		expect(calls.applyLocalEdit).toEqual([]);
+		expect(engine.isUnchangedSynced("Notes/a.md", LOCAL_BODY)).toBe(true);
+	});
+
+	test("an unreadable disk leaves the baseline alone rather than stamping a lie", async () => {
+		// A WRONG hash suppresses a real push for the life of the vault, which is
+		// strictly worse than the re-arm it would prevent. Absence is honest.
+		const { engine } = makeEngine({
+			docState: async () => {
+				throw new Error("rate limited");
+			},
+		});
+		engine.app.vault.cachedRead = mock().mockRejectedValue(new Error("EIO"));
+
+		await seed(engine, "occupied");
+
+		expect(engine.isUnchangedSynced("Notes/a.md", LOCAL_BODY)).toBe(false);
+	});
+
 	test("absent: transmits, because nothing else will ever fill the note", async () => {
 		const { engine, calls } = makeEngine();
 

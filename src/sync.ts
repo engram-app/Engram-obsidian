@@ -2905,6 +2905,54 @@ export class SyncEngine {
 		return await crdt.projectedText(noteId);
 	}
 
+	/** Give the note up to the server's lineage: transmit nothing now, and record
+	 *  disk as the baseline so nothing transmits it LATER either.
+	 *
+	 *  The baseline is the load-bearing half. Both callers reach here holding a
+	 *  history-less Y.Doc and a server that has content, and returning a bare
+	 *  null leaves exactly that state on the floor: `adoptCreateAck` stamps no
+	 *  baseline when nothing was consumed, so `isUnchangedSynced` reads false,
+	 *  so the note's very next cold write takes `applyLocalEdit`'s `lca: false`
+	 *  branch and seeds the whole body into the empty doc — minting the rival
+	 *  lineage this defer exists to avoid. The defer bought one write's delay,
+	 *  not safety (#1409 review).
+	 *
+	 *  Stamping disk arms the adopt-first gate the registry already has
+	 *  (provider-registry `applyLocalEdit`: history-less + unchanged-synced =>
+	 *  "consumed, nothing to push"), which holds the empty doc open until a
+	 *  handshake or catch-up fills it from the server. It also makes
+	 *  `needsColdReconcile` false, which is the same answer for the same
+	 *  reason: reconciling from disk IS the rival mint.
+	 *
+	 *  The hash is a claim about what may be re-encoded locally, not a claim
+	 *  that the server holds these exact bytes — under `occupied` it holds
+	 *  different ones, and the catch-up pull is what settles that.
+	 *
+	 *  An unreadable disk leaves the baseline alone: a WRONG hash would suppress
+	 *  a real push forever, which is worse than the re-arm it would prevent.
+	 *  Always returns null — the "nothing transmitted" contract. */
+	private async deferToServerLineage(
+		normalized: string,
+		file: TFile,
+		why: string,
+	): Promise<null> {
+		try {
+			this.recordCrdtBaseline(normalized, await this.app.vault.cachedRead(file));
+		} catch (e) {
+			rlog().warn(
+				"crdt",
+				`create: deferring ${noteRef(normalized)} but its disk content is unreadable ` +
+					`(${errMsg(e, normalized)}) — the next cold write may re-encode it`,
+			);
+		}
+		rlog().warn(
+			"crdt",
+			`create: ${why} for ${noteRef(normalized)} — deferring to catch-up rather than ` +
+				`re-sending the body`,
+		);
+		return null;
+	}
+
 	/** How many consecutive unanswered `crdt_doc_state` frames disable the read.
 	 *  ONE is too few: a modern backend produces the identical signal whenever
 	 *  the channel dies (phx_error does not reject pending replies, so a crash
@@ -3051,12 +3099,11 @@ export class SyncEngine {
 			// server already holds the content, and this note is now an ordinary
 			// diverged COLD note that the catch-up receive path converges. Slower
 			// than seeding, and the ONLY option that cannot corrupt.
-			rlog().warn(
-				"crdt",
-				`create: server seeded ${noteRef(normalized)} under a different id and its state ` +
-					`is unavailable — deferring to catch-up rather than re-sending the body`,
+			return await this.deferToServerLineage(
+				normalized,
+				file,
+				`server seeded it under a different id and its state is unavailable`,
 			);
-			return null;
 		}
 
 		// Past here we are about to transmit a body into a doc with NO history,
@@ -3111,12 +3158,11 @@ export class SyncEngine {
 			//             device. A possible doubling beats a certain blank.
 			if (adopted === null) {
 				if (known === "occupied") {
-					rlog().warn(
-						"crdt",
-						`create: server holds a body for ${noteRef(normalized)} and its lineage is ` +
-							`unavailable — deferring rather than re-sending`,
+					return await this.deferToServerLineage(
+						normalized,
+						file,
+						`server holds a body for it and its lineage is unavailable`,
 					);
-					return null;
 				}
 
 				rlog().warn(
