@@ -1456,7 +1456,25 @@ export class SyncEngine {
 							: "SLOW"
 					} seeded=${seeded} sameId=${serverId === localId} genesis=${!!genesis} hasHistory=${effectiveIdHasHistory} ${noteRef(path)}`,
 				);
-				if (seeded && serverId === localId && genesis && !effectiveIdHasHistory) {
+				// `serverId === localId` is DELIBERATELY not required (#1409 push half).
+				// It used to guard against trusting `seeded` across an ADOPT remap —
+				// but the server already answers `seeded: false` on its genuine
+				// `{:adopted, note}` arm, and `seed_against/7` only WRITES on its
+				// empty-row clause (the catch-all, "row already carries a different
+				// body", declines). So `seeded === true` ALREADY proves our genesis
+				// bytes landed in an empty row, whatever id came back.
+				//
+				// Requiring id equality on top cost a room per note on any first sync
+				// where this install still maps these paths to a PREVIOUS vault's ids:
+				// the server cannot reuse a foreign-vault id, returns a fresh one,
+				// `sameId` goes false, and the else-leg's routeModify emits a
+				// sync_update that opens a room to deliver state the server already
+				// has. Measured on a real 423-item import: 225 rooms, 317 notes, ZERO
+				// crdt_update_log rows written by any of them.
+				//
+				// `!effectiveIdHasHistory` still carries the anti-doubling weight — it
+				// is checked against the id we are about to write (effectiveId).
+				if (seeded && genesis && !effectiveIdHasHistory) {
 					// M1: `genesis.content` was frozen when buildGenesisFrame read disk,
 					// before the crdt_create round-trip. Capture whatever's on disk NOW,
 					// before the apply's flush can silently revert a write that landed
@@ -4165,12 +4183,13 @@ export class SyncEngine {
 											: "SLOW"
 									} seeded=${seeded} sameId=${serverId === noteId} genesis=${!!genesisUpdate} throwaway=${chosenGenesis?.fromThrowaway === true} hasHistory=${effectiveIdHasHistory} ${noteRef(pushedPath)}`,
 								);
-								if (
-									seeded &&
-									serverId === noteId &&
-									genesisUpdate &&
-									!effectiveIdHasHistory
-								) {
+								// serverId === noteId deliberately NOT required — see the
+								// twin guard in applyCrdtCreateAck for the full reasoning.
+								// `seeded === true` already proves the server wrote our
+								// genesis bytes into an EMPTY row (seed_against/7 writes on
+								// its empty-row clause only, and the real ADOPT arm always
+								// replies seeded: false).
+								if (seeded && genesisUpdate && !effectiveIdHasHistory) {
 									// The server confirmed our genesis frame landed against an
 									// empty row and this device's own doc is ALSO empty — the
 									// only case where a raw local apply is safe (no existing
