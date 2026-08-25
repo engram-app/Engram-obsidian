@@ -334,6 +334,10 @@ type CrdtCatchupSinceFn = (
 	next_id?: string | null;
 }>;
 
+/** Socket frame name for the room-free doc read, latched in `unsupportedFrames`
+ *  when a server proves it does not implement it. */
+const DOC_STATE_FRAME = "crdt_doc_state";
+
 /** Room-free full Yjs state for one note — see `CrdtChannel.crdtDocState`. */
 type CrdtDocStateFn = (docId: string) => Promise<{ b64: string; head: string }>;
 
@@ -2846,6 +2850,15 @@ export class SyncEngine {
 		const fetchState = this.crdtDocState;
 		if (!fetchState || !this.crdt) return null;
 
+		// A backend that predates `crdt_doc_state` never REPLIES to the frame —
+		// it does not reject it, so every call costs a full sendRequest timeout.
+		// Discovered once per session rather than once per note: unlatched, a
+		// bulk import against an older server pays that timeout on every create
+		// and the sync effectively stops (measured: e2e creates went from ~1.5s
+		// to ~2min each). Re-arms on a vault change, since that can mean a
+		// different backend entirely.
+		if (this.unsupportedFrames.has(DOC_STATE_FRAME)) return null;
+
 		try {
 			const { b64 } = await fetchState(noteId);
 			await this.crdt.applyRemoteUpdate(noteId, fromB64(b64));
@@ -2855,9 +2868,21 @@ export class SyncEngine {
 			);
 			return await this.crdt.projectedText(noteId);
 		} catch (e) {
+			const detail = errMsg(e, path);
+			// A TIMEOUT means the server never answered the frame at all, which is
+			// what an older backend does with an unknown event. A structured
+			// reject (rate limit, auth) is a real answer and must NOT latch.
+			if (/timeout/i.test(detail)) {
+				this.unsupportedFrames.add(DOC_STATE_FRAME);
+				rlog().warn(
+					"crdt",
+					`crdt_doc_state unanswered by this server — room-free doc reads disabled for ` +
+						`this session (older backend); falling back to the pre-#476 create path`,
+				);
+			}
 			rlog().warn(
 				"crdt",
-				`create: could not adopt server lineage for ${noteRef(path)}: ${errMsg(e, path)}`,
+				`create: could not adopt server lineage for ${noteRef(path)}: ${detail}`,
 			);
 			return null;
 		}
@@ -4937,6 +4962,12 @@ export class SyncEngine {
 	private crdtCatchupSince: CrdtCatchupSinceFn | null = null;
 
 	private crdtDocState: CrdtDocStateFn | null = null;
+
+	/** Socket frames this SERVER has proven it does not implement (it never
+	 *  answers, so each attempt costs a full request timeout). Vault-scoped
+	 *  because a vault switch can move us to a different backend entirely —
+	 *  self-host and SaaS are different servers at different versions. */
+	private unsupportedFrames = this.track(["vault", "destroy"], new Set<string>());
 
 	setCrdtCatchupSince(fn: CrdtCatchupSinceFn): void {
 		this.setCrdtPorts({ catchupSince: fn });

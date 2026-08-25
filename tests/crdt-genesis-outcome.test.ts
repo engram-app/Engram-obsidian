@@ -169,6 +169,47 @@ describe("an older backend that sends no outcome is confirmed, not guessed", () 
 		expect(calls.applyLocalEdit).toEqual([LOCAL_BODY]);
 	});
 
+	test("a server that never ANSWERS the read is latched off after one timeout", async () => {
+		// An older backend does not reject `crdt_doc_state` — it does not reply at
+		// all, so every probe costs a full sendRequest timeout. Unlatched, a bulk
+		// import pays that on every create and sync effectively stops: the e2e
+		// suite measured creates going from ~1.5s to ~2min each, which is how
+		// this regression was caught before it reached anyone.
+		let attempts = 0;
+		const { engine, calls } = makeEngine({
+			docState: async () => {
+				attempts++;
+				throw new Error("sendRequest timeout: crdt_doc_state");
+			},
+		});
+
+		await seed(engine, null);
+		await seed(engine, null);
+		await seed(engine, null);
+
+		expect(attempts).toBe(1);
+		// ...and every create still delivers its body, just without the probe.
+		expect(calls.applyLocalEdit).toEqual([LOCAL_BODY, LOCAL_BODY, LOCAL_BODY]);
+	});
+
+	test("a structured REJECT is a real answer and must not latch", async () => {
+		// Rate limits and auth errors mean the server implements the frame and
+		// declined this call. Latching on those would silently disable the
+		// doubling protection on a healthy backend for the rest of the session.
+		let attempts = 0;
+		const { engine } = makeEngine({
+			docState: async () => {
+				attempts++;
+				throw new Error('request failed: {"reason":"rate_limited"}');
+			},
+		});
+
+		await seed(engine, null);
+		await seed(engine, null);
+
+		expect(attempts).toBe(2);
+	});
+
 	test("null outcome + no room-free read at all: still transmits", async () => {
 		// Against a backend with NEITHER the outcome field nor `crdt_doc_state`,
 		// refusing to push would leave every note permanently blank. That is a
