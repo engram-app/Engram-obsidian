@@ -1097,16 +1097,24 @@ export class SyncEngine {
 	 *  other enroll call site in this file, ONLY for a live-bound note (#1409):
 	 *  a bulk import's create-ack runs for hundreds of idle notes with no
 	 *  editor anywhere near them, and re-enrolling unconditionally there was
-	 *  exactly the room-per-imported-note storm #1409 exists to kill. NOTE this
-	 *  is a PULL, not a push: the client STEP1 makes the server send back what
-	 *  the CLIENT is missing (server→client); the backend never STEP1s back, so
-	 *  the handshake does NOT re-push the held body. The held content actually
-	 *  reaches the server on the note's NEXT local edit — `hasServerNote` is now
-	 *  true (create-ack set `crdtHead`), so `canSendLive` no longer holds it.
-	 *  Under a real transport fault the re-enroll STEP1 fails on the same
-	 *  transport anyway, so next-edit is the honest recovery — which is also
-	 *  why an idle note needs no room-opening backstop at all: nothing is
-	 *  waiting on this flush the way a live editor's keystrokes are.
+	 *  exactly the room-per-imported-note storm #1409 exists to kill.
+	 *
+	 *  CORRECTED 2026-08-25: an earlier version of this comment claimed "the
+	 *  backend never STEP1s back, so the handshake does NOT re-push the held
+	 *  body". That is FALSE. `y_ex`'s `encode_sync_step1_response_v1`
+	 *  (deps/y_ex/native/yex/src/sync.rs) answers a client STEP1 with BOTH a
+	 *  STEP2 and the server's OWN STEP1, so the client's reply to that carries
+	 *  its pending ops — a re-handshake really is a two-way delivery. Do not
+	 *  reason about any re-handshake site from the old claim; it is why
+	 *  `socketConverge` can deliver a durably-queued edit at all.
+	 *
+	 *  Skipping the re-enroll for an idle note is still right, but for a
+	 *  different reason than that comment gave: the provider's buffered frames
+	 *  flush on the next `setConnected(true)` edge UNCONDITIONALLY — that flush
+	 *  is not gated on `advertised` (see NoteProvider.setConnected) — so a held
+	 *  body still ships on the next reconnect, room-free. The note's next local
+	 *  edit is a second path: `hasServerNote` is true by now (create-ack set
+	 *  `crdtHead`), so `canSendLive` no longer holds it.
 	 *
 	 *  Race note: a keystroke can land during the awaited `flushHeldState`
 	 *  (the gate is already open by now, so it streams its own delta). That is
@@ -5671,7 +5679,20 @@ export class SyncEngine {
 
 	/** The actual STEP1 fire, shared by the immediate and trailing-coalesced
 	 *  paths in `socketConverge`. Records the cooldown timestamp —
-	 *  ONLY called on a real fire, never on a suppressed attempt. */
+	 *  ONLY called on a real fire, never on a suppressed attempt.
+	 *
+	 *  DELIBERATELY NOT gated on `isLiveBound`, unlike the enroll sites in
+	 *  `pushFile`/`applyCrdtCreateAck`/`flushHeldEditsOnCreateAck`. This one is a
+	 *  DELIVERY path, not a pull: `runFlushQueue`'s crdt branch hands a durably
+	 *  queued edit to `socketConverge`, and the round-trip is what ships it —
+	 *  the server answers a client STEP1 with BOTH a STEP2 and its own STEP1
+	 *  (`y_ex` `encode_sync_step1_response_v1`), so the client's reply to that
+	 *  carries the pending ops. Gating this on live-bound would silently strand
+	 *  every IDLE note's queued edit, which is data loss, not a room saving.
+	 *
+	 *  It IS a real #1409 contributor — attribution measured it as the top
+	 *  client enroll caller — so if these rooms need to go, the fix is to give
+	 *  the queue a room-free delivery path, NOT to gate this call. */
 	private fireCrdtReHandshake(path: string, noteId: string): void {
 		this.crdtHealCooldown.set(noteId, Date.now());
 		this.crdtEnrollment?.reset(noteId);
