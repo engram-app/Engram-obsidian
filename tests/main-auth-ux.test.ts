@@ -91,9 +91,10 @@ describe("status bar when signed out", () => {
 describe("clearAuthAndPromptRelink surfaces into an open preview modal", () => {
 	test("sets the sign-in plan error on the open modal", async () => {
 		const planErrors: string[] = [];
+		let vaultWipes = 0;
 		const fake = Object.assign(Object.create(EngramSyncPlugin.prototype), {
 			settings: { refreshToken: "rt" } as Record<string, unknown>,
-			api: { setAuthProvider(_p: unknown) {} },
+			api: { setAuthProvider(_p: unknown) {}, setVaultId(_v: unknown) {} },
 			authProvider: null,
 			noteStream: null,
 			liveConnected: false,
@@ -105,6 +106,9 @@ describe("clearAuthAndPromptRelink surfaces into an open preview modal", () => {
 			},
 			async savePluginData(_ls: unknown) {},
 			syncEngine: {
+				async resetForVaultChange() {
+					vaultWipes++;
+				},
 				getLastSync() {
 					return 0;
 				},
@@ -124,6 +128,11 @@ describe("clearAuthAndPromptRelink surfaces into an open preview modal", () => {
 		// The open modal must flip to the sign-in error instead of spinning
 		// until the enumerate budget expires and blaming the connection.
 		expect(planErrors).toEqual([planLoadErrorMessage(false)]);
+		// #1409 review: `withClearedAuth` nulls `vaultId`, so this IS a vault
+		// change. Re-linking to a different account or a second vault used to
+		// inherit the previous vault's note-id map.
+		expect(vaultWipes).toBe(1);
+		expect(fake.settings.vaultId).toBeNull();
 	});
 });
 
@@ -183,7 +192,7 @@ describe("round-1 review fixes (#422)", () => {
 		};
 		const base = {
 			settings: { refreshToken: "rt" } as Record<string, unknown>,
-			api: { setAuthProvider(_p: unknown) {} },
+			api: { setAuthProvider(_p: unknown) {}, setVaultId(_v: unknown) {} },
 			authProvider: null,
 			noteStream: null,
 			liveConnected: false,
@@ -191,6 +200,7 @@ describe("round-1 review fixes (#422)", () => {
 			openPreviewModal: null as unknown,
 			async savePluginData(_ls: unknown) {},
 			syncEngine: {
+				async resetForVaultChange() {},
 				getLastSync() {
 					return 0;
 				},

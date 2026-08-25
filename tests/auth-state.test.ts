@@ -232,12 +232,14 @@ function makeTarget(overrides: Partial<EngramSyncSettings> = {}): ApiUrlSwitchTa
 	api: { setAuthProvider: ReturnType<typeof mock> };
 	noteStream: { disconnect: ReturnType<typeof mock> } | null;
 	resetAuthProvider: ReturnType<typeof mock>;
+	discardVaultScopedState: ReturnType<typeof mock>;
 } {
 	return {
 		settings: fullSettings(overrides),
 		api: { setAuthProvider: mock(() => {}) },
 		noteStream: { disconnect: mock(() => {}) },
 		resetAuthProvider: mock(() => {}),
+		discardVaultScopedState: mock(async () => {}),
 	};
 }
 
@@ -283,6 +285,33 @@ describe("applyApiUrlChange", () => {
 		expect(target.noteStream?.disconnect).toHaveBeenCalledTimes(1);
 		expect(target.resetAuthProvider).toHaveBeenCalledTimes(1);
 		expect(save).toHaveBeenCalledTimes(1);
+	});
+
+	test("different origin: wipes the vault-scoped state too", async () => {
+		// `withClearedAuth` nulls `vaultId`, which makes a backend change a VAULT
+		// change — and note_ids are unique only within the vault that issued
+		// them. Clearing the credentials while keeping the note-id map handed the
+		// new backend the old one's ids (#1409 review). Called with the
+		// already-nulled value, not a literal, so it tracks the cleared set.
+		const target = makeTarget({ apiUrl: "https://engram.ras.band" });
+		await applyApiUrlChange(
+			target,
+			"http://engram.ax",
+			mock(async () => {}),
+		);
+		expect(target.discardVaultScopedState).toHaveBeenCalledWith(null);
+	});
+
+	test("same origin: leaves the vault-scoped state alone", async () => {
+		// Not a vault change — wiping the map here would cost a full re-reconcile
+		// on every trailing-slash edit.
+		const target = makeTarget({ apiUrl: "https://engram.ras.band" });
+		await applyApiUrlChange(
+			target,
+			"https://engram.ras.band/api",
+			mock(async () => {}),
+		);
+		expect(target.discardVaultScopedState).not.toHaveBeenCalled();
 	});
 
 	test("different origin: resets the live in-memory auth provider", async () => {
@@ -444,6 +473,7 @@ describe("pluginSwitchTarget.resetAuthProvider (#420)", () => {
 					disposed++;
 				},
 			},
+			discardVaultScopedState: async () => {},
 		};
 		pluginSwitchTarget(plugin).resetAuthProvider();
 		// An undisposed instance's in-flight refresh would later persist rotated

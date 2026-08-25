@@ -602,7 +602,7 @@ describe("DeviceFlowModal — foreground resume", () => {
 	// Otherwise the deferred probe is one more orphan holding a dead
 	// device_code — the same class of leak as the socket and the listener.
 	test("resetFlow cancels a deferred resume probe", () => {
-		const { modal, exchanged, fire, runDeferred, resetWithTimers } = startFlow();
+		const { exchanged, fire, runDeferred, resetWithTimers } = startFlow();
 		fire();
 		resetWithTimers();
 

@@ -29,6 +29,7 @@ describe("saveOAuthTokens auth-provider ordering", () => {
 				return newProvider;
 			},
 			api: {
+				setVaultId(_v: unknown) {},
 				setAuthProvider(p: unknown) {
 					order.push(
 						p === newProvider ? "api.setAuthProvider:new" : "api.setAuthProvider:other",
@@ -102,6 +103,7 @@ describe("saveOAuthTokens auth-provider ordering", () => {
 				authMethod: "oauth",
 			} as Record<string, unknown>,
 			api: {
+				setVaultId(_v: unknown) {},
 				setAuthProvider(_p: unknown) {
 					order.push("api.setAuthProvider");
 				},
@@ -167,6 +169,7 @@ describe("provider swaps dispose the outgoing OAuthAuth (#420)", () => {
 				return { tag: "new-provider" };
 			},
 			api: {
+				setVaultId(_v: unknown) {},
 				setAuthProvider(_p: unknown) {},
 				getMe() {
 					return Promise.resolve({ id: "u" });
@@ -260,7 +263,7 @@ describe("swap-site hardening round 2 (#420 review)", () => {
 			createAuthProvider() {
 				return null;
 			},
-			api: { setAuthProvider(_p: unknown) {} },
+			api: { setAuthProvider(_p: unknown) {}, setVaultId(_v: unknown) {} },
 			noteStream: null,
 			async saveSettings() {},
 			syncEngine: { bumpAuthGeneration() {}, async resetForVaultChange() {} },
@@ -292,6 +295,7 @@ describe("swap-site hardening round 2 (#420 review)", () => {
 			settings: {} as Record<string, unknown>,
 			authProvider: old,
 			api: {
+				setVaultId(_v: unknown) {},
 				setAuthProvider(p: unknown) {
 					wired.push(p);
 				},

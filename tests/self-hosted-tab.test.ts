@@ -177,6 +177,7 @@ describe("renderEngramUrlSetting — no Save button", () => {
 			api: { setAuthProvider: () => {} },
 			noteStream: { disconnect: () => {} },
 			resetAuthProvider: () => {},
+			discardVaultScopedState: async () => {},
 			saveSettings: async () => {},
 		};
 		const ctx: any = { containerEl: {}, app: {}, plugin, redisplay: () => {} };
@@ -222,6 +223,7 @@ describe("renderEngramUrlSetting — no Save button", () => {
 			api: { setAuthProvider: () => {} },
 			noteStream: { disconnect: () => {} },
 			resetAuthProvider: () => {},
+			discardVaultScopedState: async () => {},
 			saveSettings: async () => {
 				saved.push(plugin.settings.apiUrl);
 			},

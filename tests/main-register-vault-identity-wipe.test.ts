@@ -202,7 +202,12 @@ describe("noteIdsVaultId records provenance, not the active vault", () => {
 		const save = (EngramSyncPlugin.prototype as any).savePluginData as (
 			this: unknown,
 		) => Promise<void>;
-		return { run: async () => (await save.call(fake), written) };
+		return {
+			run: async () => {
+				await save.call(fake);
+				return written;
+			},
+		};
 	}
 
 	test("stamps the OWNER even when a different vault is already active", async () => {

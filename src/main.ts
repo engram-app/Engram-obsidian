@@ -297,21 +297,14 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  vault — a no-op "switch" to the vault you are already on must not wipe
 	 *  anything. */
 	async switchVault(id: string, name?: string): Promise<void> {
-		this.settings.vaultId = id;
 		if (name !== undefined) this.settings.remoteVaultName = name;
-		this.api.setVaultId(id);
 		this.syncEngine.updateSettings(this.settings);
-		// Per-file hashes, lastSync, cursors AND the note-id map are scoped to
-		// the previous server vault.
-		await this.syncEngine.resetForVaultChange();
-		// The accepted-gate fingerprint covers (auth + vault); a new vault must
-		// re-prompt rather than inherit the old vault's consent.
-		this.syncGateAcceptedFor = null;
-		// New vault = new id/path space; re-reconcile on next connect (bypass
-		// the throttle — this isn't a storm, it's a real swap).
-		this.lastMapReconcileAt = 0;
-		// Strand-heal retry counts are keyed by the PREVIOUS vault's note_ids.
-		this.crdtWiring?.clearStrandHealAttempts();
+		// Per-file hashes, lastSync, cursors, the note-id map, the accepted-gate
+		// fingerprint, the reconcile throttle and the strand-heal counts are ALL
+		// scoped to the outgoing vault. This method used to spell out its own
+		// copy of that list, which is how the auth paths and this one drifted
+		// apart in the first place — one list, one owner.
+		await this.discardVaultScopedState(id);
 		this.syncEngine.setSyncBlocked(true);
 	}
 
@@ -1291,19 +1284,31 @@ export default class EngramSyncPlugin extends Plugin {
 		if (!isHttpStatus(e, 404) || !this.settings.vaultId) return;
 		this.healingVault = true;
 		try {
-			const vaults = await this.api.listVaults();
+			// ONLY the probe is allowed to fail silently — it is the one step whose
+			// failure means "nothing to conclude". The catch used to wrap the heal
+			// too, so a throw anywhere in it left the vault half-cleared with no
+			// log at all: the id stayed set, sync stayed unblocked, and the next
+			// 404 re-entered and failed the same way forever.
+			let vaults: Awaited<ReturnType<typeof this.api.listVaults>>;
+			try {
+				vaults = await this.api.listVaults();
+			} catch {
+				// listVaults itself failed (offline?) — the next sync error re-runs
+				// this check.
+				return;
+			}
 			if (vaults.some((v) => v.id === this.settings.vaultId)) return;
 			rlog().warn(
 				"lifecycle",
 				`Active vault ${this.settings.vaultId} no longer exists server-side — clearing and reopening the picker`,
 			);
-			this.settings.vaultId = null;
 			this.settings.remoteVaultName = undefined;
-			// Finding 10: EngramApi keeps its OWN vault id and stamps it on every
-			// request — clearing only the settings field leaves non-sync requests
-			// (sync-center retries, attachment fetches) 404ing on the dead header.
-			this.api.setVaultId(null);
-			this.syncGateAcceptedFor = null;
+			// The vault is GONE, so every note_id in the map addresses a vault
+			// that no longer exists. Nulling the id alone left that map to be
+			// carried into whichever vault the picker lands on next — the same
+			// cross-vault identity leak `switchVault` exists to prevent, reached
+			// through a different door (#1409 review).
+			await this.discardVaultScopedState(null);
 			this.syncEngine.setSyncBlocked(true);
 			// Finding 9: a preview/picker already open sits on the now-nulled
 			// vault, and the syncPreviewGuard makes the reopen below a silent
@@ -1315,9 +1320,10 @@ export default class EngramSyncPlugin extends Plugin {
 				"Engram: this vault no longer exists on the server. Pick or create a vault to continue.",
 			);
 			await this.doSyncWithFirstSyncCheck({ startInVaultPicker: true });
-		} catch {
-			// listVaults itself failed (offline?) — nothing to conclude; the next
-			// sync error re-runs this check.
+		} catch (err) {
+			// The heal itself broke. Surfaced, not swallowed: sync is now in an
+			// undefined state and a silent failure here is unobservable.
+			rlog().error("lifecycle", `Dead-vault heal failed midway: ${errMsg(err)}`);
 		} finally {
 			this.healingVault = false;
 		}
@@ -1783,6 +1789,14 @@ export default class EngramSyncPlugin extends Plugin {
 		if (!this.settings.refreshToken && !this.settings.apiKey) return;
 		rlog().info("auth", `Clearing auth + prompting re-link (${reason})`);
 		Object.assign(this.settings, withClearedAuth(this.settings));
+		// `withClearedAuth` nulls `vaultId` — which makes this a vault change,
+		// and every one of those has to wipe the vault-scoped identity state.
+		// It did not, so a re-link that lands on a DIFFERENT vault (a different
+		// account, or the same account's second vault) inherited the previous
+		// vault's note-id map and proposed its ids there. Passed the already-
+		// nulled value rather than a literal so this stays true if the cleared
+		// set ever changes.
+		await this.discardVaultScopedState(this.settings.vaultId ?? null);
 		this.api.setAuthProvider(null);
 		this.replaceAuthProvider(null);
 		this.noteStream?.disconnect();
@@ -1925,8 +1939,13 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  and the index room, or the new vault inherits ids that mean nothing on it.
 	 *
 	 *  Six of nine vault-changing paths used to skip all of this. */
-	private async discardVaultScopedState(vaultId: string | null): Promise<void> {
+	async discardVaultScopedState(vaultId: string | null): Promise<void> {
 		this.settings.vaultId = vaultId;
+		// EngramApi keeps its OWN copy and stamps it on every request. Setting it
+		// here rather than leaving it to a later `saveSettings` closes the window
+		// where the awaited reset below runs while requests still carry the
+		// OUTGOING vault's header.
+		this.api.setVaultId(vaultId);
 		await this.syncEngine.resetForVaultChange();
 		this.syncGateAcceptedFor = null;
 		this.lastMapReconcileAt = 0;
@@ -2403,10 +2422,16 @@ export default class EngramSyncPlugin extends Plugin {
 				channel.onVaultDeleted = () => {
 					new Notice("Engram: This vault has been deleted on the server.");
 					rlog().info("lifecycle", "Vault deleted on server — clearing vaultId");
-					this.settings.vaultId = null;
-					this.api.setVaultId(null);
-					// Use savePluginData instead of saveSettings to avoid triggering re-registration
-					void this.savePluginData(this.syncEngine.getLastSync());
+					// Same reasoning as healDeadVault: the vault is gone, so its
+					// note-id map, cursors and index room address nothing. Nulling
+					// only the id left them to be inherited by the next vault.
+					// Awaited before the save so the persisted data.json reflects
+					// the wipe rather than the pre-wipe map.
+					void this.discardVaultScopedState(null).then(() =>
+						// savePluginData, not saveSettings: the latter re-triggers
+						// registration.
+						this.savePluginData(this.syncEngine.getLastSync()),
+					);
 					this.noteStream?.disconnect();
 				};
 

@@ -2342,13 +2342,15 @@ export class SyncEngine {
 	 *  queue for terminal failures (e.g. 413 Payload Too Large). */
 	readonly issues: IssueStore = new IssueStore();
 
-	/** `IssueStore` already owns `clear(path)`, so it cannot satisfy the
+	/** Public only so the unused-private-member lint stays honest: the field
+	 *  exists to REGISTER at the declaration site, never to be read. `IssueStore`
+	 *  already owns `clear(path)`, so it cannot satisfy the
 	 *  sweepable shape directly — this adapter registers it without renaming a
 	 *  public API. Vault-scoped because plan-limit parks are per-vault: a Free
 	 *  vault's 402 attachments-disabled park must not suppress the same path on
 	 *  a Pro or self-host vault, where `pushFile` short-circuits BEFORE any
 	 *  request so nothing ever arrives to clear it (#1409 review). */
-	private readonly issuesSweeper = this.track(["vault", "destroy"], {
+	readonly issuesSweeper = this.track(["vault", "destroy"], {
 		clear: () => this.issues.clearAll(),
 	});
 

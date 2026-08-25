@@ -163,6 +163,12 @@ export interface ApiUrlSwitchTarget {
 	 *  would replay it against the new origin until reload. Resetting it makes a
 	 *  backend switch behave like a fresh load. */
 	resetAuthProvider: () => void;
+	/** Wipe the state scoped to the outgoing VAULT (note-id map + its provenance,
+	 *  cursors, sync gate, index room). `withClearedAuth` nulls `vaultId`, so a
+	 *  backend change is also a vault change — and clearing the credentials while
+	 *  keeping the map left the next backend inheriting note_ids that are unique
+	 *  only within the vault that issued them (#1409 review). */
+	discardVaultScopedState: (vaultId: string | null) => Promise<void>;
 }
 
 /** The ApiUrlSwitchTarget for the live plugin instance. One construction site
@@ -172,11 +178,13 @@ export function pluginSwitchTarget(plugin: {
 	api: ApiUrlSwitchTarget["api"];
 	noteStream: ApiUrlSwitchTarget["noteStream"];
 	authProvider: { dispose?: () => void } | null;
+	discardVaultScopedState: ApiUrlSwitchTarget["discardVaultScopedState"];
 }): ApiUrlSwitchTarget {
 	return {
 		settings: plugin.settings,
 		api: plugin.api,
 		noteStream: plugin.noteStream,
+		discardVaultScopedState: (id) => plugin.discardVaultScopedState(id),
 		resetAuthProvider: () => {
 			// Dispose before dropping the reference: an undisposed OAuthAuth with
 			// a refresh in flight would later persist rotated tokens back into
@@ -220,6 +228,10 @@ export async function applyApiUrlChange(
 		// Mutate in place — withClearedAuth is the single source of truth for
 		// which fields are backend-scoped, so any future addition stays one-place.
 		Object.assign(target.settings, withClearedAuth(target.settings));
+		// `withClearedAuth` just nulled `vaultId`. Awaited before the save below
+		// so the persisted data.json reflects the wiped map rather than the old
+		// backend's.
+		await target.discardVaultScopedState(target.settings.vaultId ?? null);
 		target.api.setAuthProvider(null);
 		target.resetAuthProvider();
 		target.noteStream?.disconnect();
