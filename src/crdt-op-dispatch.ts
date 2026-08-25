@@ -128,6 +128,11 @@ export type CrdtSendHooks = {
 		genesis?: GenesisFrame,
 		genesisOutcome?: GenesisOutcome,
 	) => void | Promise<void>;
+	/** A post-ack step (`onCreated`) threw. The create is NOT retried — the row
+	 *  already exists — but the failure must be visible: that same step confirms
+	 *  the id and flushes edits held by the `canSendLive` gate, so a silent
+	 *  throw strands keystrokes the user already typed. */
+	onPostAckError?: (docId: string, path: string, error: unknown) => void;
 	/** A terminally-failed op about to be dropped. surface it (error log). */
 	onTerminal: (op: CrdtOp, reason: string) => void;
 	/** A retryable PLAN-LIMIT reject (e.g. notes_cap_reached). Surface to the user
@@ -164,11 +169,18 @@ export function makeCrdtOpSend(hooks: CrdtSendHooks): (op: CrdtOp) => Promise<Se
 						genesis,
 						genesisOutcome,
 					);
-				} catch {
+				} catch (e) {
 					// crdt_create already ACKED: the row exists (possibly remapped).
-					// A post-ack step (body seed) throwing must NOT retry the create:
-					// that would duplicate/misroute the row. The body self-heals on the
-					// note's next edit.
+					// A post-ack step throwing must NOT retry the create — that would
+					// duplicate/misroute the row.
+					//
+					// It must not be SILENT either. `onCreated` also runs
+					// `adoptCreateAck`, which sets the id map, flips the
+					// has-server-note oracle, confirms the id, and flushes edits held
+					// by the `canSendLive` gate. A throw loses all of that, including
+					// keystrokes the user already typed, and the bare `catch {}` wrote
+					// nothing anywhere — unobservable by construction (#1409 review).
+					hooks.onPostAckError?.(op.docId, path, e);
 				}
 			} else if (op.kind === "delete") {
 				await ch.crdtDeleteAcked(op.docId);

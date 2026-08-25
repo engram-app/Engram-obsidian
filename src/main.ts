@@ -657,6 +657,15 @@ export default class EngramSyncPlugin extends Plugin {
 						genesis,
 						genesisOutcome,
 					),
+				onPostAckError: (docId, path, error) =>
+					// The row exists, so the create is not retried — but the ack's
+					// bookkeeping (id map, oracle, confirm, held-edit flush) did NOT
+					// complete, which can strand edits the user already typed. Logged
+					// at warn so it reaches Loki; info-level client logs do not.
+					rlog().warn(
+						"crdt",
+						`crdt_create post-ack step failed for ${docId} ${noteRef(path)}: ${errMsg(error, path)}`,
+					),
 				onTerminal: (op, reason) =>
 					// A create/delete that retrying cannot fix. Surface it (error log) so
 					// it never silently vanishes; the queue then drops it (no infinite retry).

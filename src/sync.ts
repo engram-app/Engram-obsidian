@@ -2878,12 +2878,31 @@ export class SyncEngine {
 	 *  where re-sending the body would mint a rival lineage, and a second copy
 	 *  is how the first one drifted (#476). */
 	private async adoptServerLineage(noteId: string, path: string): Promise<string | null> {
-		const state = await this.readServerDocState(noteId, path);
-		if (state === null || !this.crdt) return null;
+		// Capture the registry BEFORE the await. `setCrdtPorts` reassigns
+		// `this.crdt` on a vault change, so re-reading it after the round trip
+		// can apply the OLD vault's Yjs bytes into the NEW vault's registry under
+		// the same note_id — and note_ids are unique only WITHIN a vault, which
+		// is the very cross-vault identity bug this branch exists to close
+		// (#1409 review). Comparing identity afterwards turns a silent
+		// cross-vault write into a refusal.
+		const crdt = this.crdt;
+		if (!crdt) return null;
 
-		await this.crdt.applyRemoteUpdate(noteId, fromB64(state.b64));
+		const state = await this.readServerDocState(noteId, path);
+		if (state === null) return null;
+
+		if (this.crdt !== crdt) {
+			rlog().warn(
+				"crdt",
+				`create: vault changed while reading server state for ${noteRef(path)} — ` +
+					`discarding the reply rather than applying it to the new vault`,
+			);
+			return null;
+		}
+
+		await crdt.applyRemoteUpdate(noteId, fromB64(state.b64));
 		rlog().info("crdt", `create: adopted server lineage for ${noteRef(path)}`);
-		return await this.crdt.projectedText(noteId);
+		return await crdt.projectedText(noteId);
 	}
 
 	/** How many consecutive unanswered `crdt_doc_state` frames disable the read.
