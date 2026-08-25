@@ -168,6 +168,7 @@ Required status checks on `main`: `build-and-test`, `version-check / version-che
 - Community-scanner `no-unsafe-*` false-positive flood / outside contributors can't `bun install` (registry-poisoned lockfile; `scripts/check-lockfile-registry.mjs` guard) → `docs/context/scanner-type-resolution.md`
 
 **Sync / CRDT architecture & bug classes**
+- Adding a `Map`/`Set` field to `SyncEngine`, or state survived a vault switch and addressed the new vault with the old vault's ids → `docs/context/sync-engine-sweep-registry.md`
 - 3-way merge conflict-resolution algorithm → `docs/context/three-way-merge.md`
 - Logging architecture (dev-log categories, remote-log thresholds) → `docs/context/logging-architecture.md`
 - V8 OOM prevention on large-vault operations → `docs/context/v8-oom-prevention.md`
