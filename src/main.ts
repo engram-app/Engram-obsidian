@@ -254,6 +254,45 @@ export default class EngramSyncPlugin extends Plugin {
 	 *
 	 *  A fresh doc has a fresh clientID and an empty clock, and a discarded doc
 	 *  nobody observes broadcasts nothing. */
+	/** THE one place the active vault changes (#1409 consolidation).
+	 *
+	 *  There were two implementations: this one (reached from the sync-preview
+	 *  modal's picker) and `applyVaultSwitch` in the self-hosted tab, reached
+	 *  from the Connection page dropdown. They agreed on ONE of eight steps.
+	 *  The dropdown runs on a first pick AND when the stored vault no longer
+	 *  exists server-side — a real vault change carrying a full stale map — so
+	 *  the seven it skipped were live bugs, not dead code. Chief among them the
+	 *  path -> note_id map, which is per-vault identity: carrying it over makes
+	 *  `crdt_create` propose the old vault's ids (the #1318 collision class).
+	 *
+	 *  Persistence and UI follow-ups stay with the callers on purpose: the
+	 *  picker uses `savePluginData` precisely to AVOID `saveSettings`
+	 *  re-firing the sync-gate chain and stacking a second modal, while the
+	 *  dropdown wants exactly that chain. That difference is intentional; the
+	 *  state transition below is not allowed to differ.
+	 *
+	 *  Caller must have already established that `id` differs from the active
+	 *  vault — a no-op "switch" to the vault you are already on must not wipe
+	 *  anything. */
+	async switchVault(id: string, name?: string): Promise<void> {
+		this.settings.vaultId = id;
+		if (name !== undefined) this.settings.remoteVaultName = name;
+		this.api.setVaultId(id);
+		this.syncEngine.updateSettings(this.settings);
+		// Per-file hashes, lastSync, cursors AND the note-id map are scoped to
+		// the previous server vault.
+		await this.syncEngine.resetForVaultChange();
+		// The accepted-gate fingerprint covers (auth + vault); a new vault must
+		// re-prompt rather than inherit the old vault's consent.
+		this.syncGateAcceptedFor = null;
+		// New vault = new id/path space; re-reconcile on next connect (bypass
+		// the throttle — this isn't a storm, it's a real swap).
+		this.lastMapReconcileAt = 0;
+		// Strand-heal retry counts are keyed by the PREVIOUS vault's note_ids.
+		this.crdtWiring?.clearStrandHealAttempts();
+		this.syncEngine.setSyncBlocked(true);
+	}
+
 	resetIndexRoomForVault(): void {
 		this.indexRoom.destroy();
 		this.indexRoom = this.makeIndexRoom();
@@ -2853,25 +2892,7 @@ export default class EngramSyncPlugin extends Plugin {
 						// saveSettings — that path would re-fire
 						// doSyncWithFirstSyncCheck for the closed gate and stack
 						// a second modal on top of this one.
-						this.settings.vaultId = id;
-						this.settings.remoteVaultName = name;
-						this.api.setVaultId(id);
-						this.syncEngine.updateSettings(this.settings);
-						// Last sync and per-file hashes are scoped to the previous
-						// server vault. Without this reset, fullSync compares
-						// local mtime to a stale lastSync and pushes nothing —
-						// even when the new vault is empty.
-						await this.syncEngine.resetForVaultChange();
-						this.syncGateAcceptedFor = null;
-						// New vault = new id/path space; re-reconcile on next connect
-						// (bypass the throttle — this isn't a storm, it's a real swap).
-						this.lastMapReconcileAt = 0;
-						// Strand-heal retry counts are scoped to the previous vault's
-						// note_ids (final review MINOR-6) — stale counts here could
-						// prematurely give up on a note_id that happens to be reused
-						// in the new vault.
-						this.crdtWiring?.clearStrandHealAttempts();
-						this.syncEngine.setSyncBlocked(true);
+						await this.switchVault(id, name);
 						await this.savePluginData(this.syncEngine.getLastSync());
 						// Re-render the settings tab so the vault name span and
 						// any other vault-derived UI pick up the switch.

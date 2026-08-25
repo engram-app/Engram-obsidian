@@ -36,14 +36,19 @@ describe("renderEngramUrlSetting", () => {
 function makePlugin(initial: string | null): VaultSwitchTarget & {
 	api: { setVaultId: ReturnType<typeof mock> };
 	saveSettings: ReturnType<typeof mock>;
-	syncEngine: { resetForVaultChange: ReturnType<typeof mock> };
+	switchVault: ReturnType<typeof mock>;
 } {
-	return {
-		settings: { vaultId: initial },
+	const target = {
+		settings: { vaultId: initial } as { vaultId: string | null; remoteVaultName?: string },
 		api: { setVaultId: mock(() => {}) },
 		saveSettings: mock(async () => {}),
-		syncEngine: { resetForVaultChange: mock(async () => {}) },
+		switchVault: mock(async (id: string, name?: string) => {
+			target.settings.vaultId = id;
+			if (name !== undefined) target.settings.remoteVaultName = name;
+			target.api.setVaultId(id);
+		}),
 	};
+	return target;
 }
 
 describe("applyVaultSwitch", () => {
@@ -78,14 +83,17 @@ describe("applyVaultSwitch", () => {
 		expect(plugin.settings.vaultId).toBe("1");
 	});
 
-	test("setVaultId runs before saveSettings", async () => {
+	// Was "setVaultId runs before saveSettings". The api.setVaultId call moved
+	// INTO the shared `switchVault` transition (#1409 consolidation), so the
+	// ordering invariant is now asserted at that seam: the whole state
+	// transition must complete before anything is persisted, or a crash could
+	// leave the new vault id on disk beside the old vault's bookkeeping.
+	test("switchVault runs before saveSettings", async () => {
 		const order: string[] = [];
 		const plugin: VaultSwitchTarget = {
 			settings: { vaultId: "3" },
-			api: {
-				setVaultId: () => {
-					order.push("setVaultId");
-				},
+			switchVault: async () => {
+				order.push("switchVault");
 			},
 			saveSettings: async () => {
 				order.push("saveSettings");
@@ -94,7 +102,7 @@ describe("applyVaultSwitch", () => {
 
 		await applyVaultSwitch(plugin, "9");
 
-		expect(order).toEqual(["setVaultId", "saveSettings"]);
+		expect(order).toEqual(["switchVault", "saveSettings"]);
 	});
 });
 
@@ -312,13 +320,13 @@ describe("applyVaultSwitch resets per-vault state (#1409)", () => {
 	test("wipes per-vault bookkeeping on a real switch", async () => {
 		const plugin = makePlugin("old-vault");
 		await applyVaultSwitch(plugin, "new-vault");
-		expect(plugin.syncEngine.resetForVaultChange).toHaveBeenCalledTimes(1);
+		expect(plugin.switchVault).toHaveBeenCalledTimes(1);
 	});
 
 	test("resets BEFORE saveSettings — never persist a new vault id beside stale state", async () => {
 		const order: string[] = [];
 		const plugin = makePlugin("old-vault");
-		plugin.syncEngine.resetForVaultChange = mock(async () => {
+		plugin.switchVault = mock(async () => {
 			order.push("reset");
 		});
 		plugin.saveSettings = mock(async () => {
@@ -331,6 +339,6 @@ describe("applyVaultSwitch resets per-vault state (#1409)", () => {
 	test("no-op switch does NOT reset (selecting the vault you are already on)", async () => {
 		const plugin = makePlugin("same");
 		await applyVaultSwitch(plugin, "same");
-		expect(plugin.syncEngine.resetForVaultChange).not.toHaveBeenCalled();
+		expect(plugin.switchVault).not.toHaveBeenCalled();
 	});
 });

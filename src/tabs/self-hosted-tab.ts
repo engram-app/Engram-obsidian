@@ -488,15 +488,12 @@ export function describeListVaultsError(e: unknown): string {
  *  helper is unit-testable without dragging in the Obsidian DOM stack. */
 export interface VaultSwitchTarget {
 	settings: { vaultId: string | null; remoteVaultName?: string };
-	api: { setVaultId: (id: string | null) => void };
+	/** THE shared vault-change transition (main.ts). This used to be
+	 *  re-implemented here and agreed with the picker on 1 of 8 steps (#1409);
+	 *  the divergence is what let a previous vault's note-id map survive a
+	 *  switch. One path now, so it cannot drift again. */
+	switchVault: (id: string, name?: string) => Promise<void>;
 	saveSettings: () => Promise<void>;
-	/** #1409. Per-vault bookkeeping — the path -> note_id map above all — is
-	 *  scoped to the vault it was learned in. This interface narrows the plugin
-	 *  for testability, and `syncEngine` being absent from it is precisely why
-	 *  the reset was never wired here while main.ts's picker path
-	 *  (`applyVaultChange`) has always done it. Optional so existing callers and
-	 *  tests that construct a bare target still typecheck. */
-	syncEngine?: { resetForVaultChange: () => Promise<void> };
 }
 
 /** Apply a user-driven vault switch. Returns `true` if the active vault
@@ -508,26 +505,12 @@ export async function applyVaultSwitch(
 	value: string,
 	name?: string,
 ): Promise<boolean> {
+	// No-op guard stays HERE, before the shared transition: switching to the
+	// vault you are already on must not wipe per-vault state.
 	if (!value || value === plugin.settings.vaultId) return false;
-	plugin.settings.vaultId = value;
-	if (name !== undefined) plugin.settings.remoteVaultName = name;
-	plugin.api.setVaultId(value);
-	// #1409 ROOT CAUSE. Switching the active vault WITHOUT this left the
-	// previous vault's path -> note_id map live, so `crdt_create` proposed
-	// foreign-vault ids. The server cannot reuse one (the #1318 collision
-	// class), answers with a fresh id, `serverId !== noteId` fails the seeded
-	// fast path, and the fallback broadcasts a sync_update that opens a room
-	// PER NOTE. Measured on a real 423-item import: 225 rooms for 317 notes,
-	// all source=edit, ZERO crdt_update_log rows — every room redundant.
-	//
-	// main.ts's picker (`applyVaultChange`) has always done this; only the
-	// self-hosted settings path was missing it, which is why the bug reproduced
-	// on selfhost and never in the e2e harness.
-	//
-	// BEFORE saveSettings, mirroring applyVaultChange's ordering: the reset also
-	// clears lastSync/cursors, and persisting the new vault id beside the old
-	// vault's bookkeeping is the state we are trying to make unreachable.
-	await plugin.syncEngine?.resetForVaultChange();
+	await plugin.switchVault(value, name);
+	// saveSettings, not savePluginData — unlike the picker, this path WANTS the
+	// sync-gate chain to re-fire so the user is prompted for the new vault.
 	await plugin.saveSettings();
 	return true;
 }
