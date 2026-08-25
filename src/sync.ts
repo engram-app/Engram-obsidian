@@ -2856,31 +2856,94 @@ export class SyncEngine {
 				: true;
 		opts.onHistoryResolved?.(effectiveIdHasHistory);
 
-		if (
-			seeded &&
-			sameId &&
-			opts.genesisUpdate &&
-			opts.genesisContent !== undefined &&
-			!effectiveIdHasHistory
-		) {
-			let preApplyDisk: string | null = null;
-			try {
-				preApplyDisk = await this.app.vault.cachedRead(file);
-			} catch {
-				// unreadable — proceed without drift protection
+		// THE INVARIANT (#476): a note's body reaches the server exactly ONCE per
+		// create. Writing the body into an EMPTY doc mints a brand-new lineage
+		// with a fresh clientID; if the server already stored our genesis bytes,
+		// that lineage is a RIVAL carrying identical text with no shared
+		// identity. Yjs unions rivals rather than deduplicating them, so the body
+		// doubles, the merge flushes to disk, and the next import reads the
+		// doubled file and doubles it again. Measured: a 34 KB note reached
+		// 4.9 MB with its 225 distinct lines repeated 144 times.
+		//
+		// `seeded === true` is the server's statement that it holds our bytes. So
+		// the three states below are exhaustive, and only ONE of them may push:
+		//
+		//   seeded + empty doc  -> ADOPT the server's lineage (pull, never push)
+		//   not seeded          -> the server has nothing; pushing is correct
+		//   doc has history     -> a real lineage exists; routeModify's `lca`
+		//                          makes it a minimal diff onto that lineage,
+		//                          not a second one
+		//
+		// Expressing it as "which state are we in" rather than a conjunction of
+		// four booleans is deliberate: the conjunction form let ANY false
+		// condition fall through to a silent second transmission, and nothing
+		// detected it — not a test, not an assertion, not a log.
+		if (seeded && !effectiveIdHasHistory) {
+			// Cheapest legal route: the server took OUR bytes under OUR id, so we
+			// already hold exactly what it stored. No round trip needed.
+			if (sameId && opts.genesisUpdate && opts.genesisContent !== undefined) {
+				let preApplyDisk: string | null = null;
+				try {
+					preApplyDisk = await this.app.vault.cachedRead(file);
+				} catch {
+					// unreadable — proceed without drift protection
+				}
+				await this.crdt.applyRemoteUpdate(effectiveId, opts.genesisUpdate);
+				let consumed: string | null = opts.genesisContent;
+				// M1: `genesisContent` was frozen before the create round-trip, and
+				// the apply above flushes it over disk. Anything that landed in that
+				// window survives only in `preApplyDisk`. Merged back as a minimal
+				// diff (the doc has history now). NO reread — it would read the
+				// just-reverted disk and discard the drift.
+				if (preApplyDisk !== null && preApplyDisk !== opts.genesisContent) {
+					const merged = await this.crdt.applyLocalEdit(effectiveId, preApplyDisk);
+					if (merged !== null) {
+						consumed = merged;
+						await this.flushFromCrdt(normalized, merged);
+					}
+				}
+				return consumed;
 			}
-			await this.crdt.applyRemoteUpdate(effectiveId, opts.genesisUpdate);
-			let consumed: string | null = opts.genesisContent;
-			if (preApplyDisk !== null && preApplyDisk !== opts.genesisContent) {
-				const merged = await this.crdt.applyLocalEdit(effectiveId, preApplyDisk);
-				if (merged !== null) {
-					consumed = merged;
-					await this.flushFromCrdt(normalized, merged);
+
+			// The server re-id'd us (#1409): it stored our body under a lineage we
+			// do not have. Pushing again is exactly how the doubling happens, so
+			// ADOPT its lineage instead — a room-free read (#1467). Applying is a
+			// monotonic merge, so this can only converge us toward the server.
+			const fetchState = this.crdtDocState;
+			if (fetchState) {
+				try {
+					const { b64 } = await fetchState(effectiveId);
+					await this.crdt.applyRemoteUpdate(effectiveId, fromB64(b64));
+					rlog().info(
+						"crdt",
+						`create: adopted server lineage for ${noteRef(normalized)} (re-id) — body not re-sent`,
+					);
+					return await this.crdt.projectedText(effectiveId);
+				} catch (e) {
+					rlog().warn(
+						"crdt",
+						`create: could not adopt server lineage for ${noteRef(normalized)}: ${errMsg(e, normalized)}`,
+					);
 				}
 			}
-			return consumed;
+
+			// No way to adopt (old backend, rate limit, dropped socket). Pushing
+			// here would double the body, so we deliberately do NOTHING: the
+			// server already holds the content, and this note is now an ordinary
+			// diverged COLD note that the catch-up receive path converges. Slower
+			// than seeding, and the ONLY option that cannot corrupt.
+			rlog().warn(
+				"crdt",
+				`create: server seeded ${noteRef(normalized)} under a different id and its state ` +
+					`is unavailable — deferring to catch-up rather than re-sending the body`,
+			);
+			return null;
 		}
 
+		// Either the server declined the seed (it has nothing — pushing is the
+		// only way it ever gets the body), or this doc already carries a real
+		// lineage (so `applyLocalEdit`'s `lca` diffs against it instead of
+		// minting a rival). Both are safe to transmit.
 		return await routeModify(
 			{
 				crdtEligible: true,
