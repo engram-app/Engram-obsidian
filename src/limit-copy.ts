@@ -22,7 +22,11 @@ const TABLE: Record<string, string> = {
 	ai_conversations_per_day_exceeded: "Daily AI limit reached.",
 	ai_queries_per_conversation_exceeded: "Conversation length limit reached.",
 	ai_queries_per_day_exceeded: "Daily AI query limit reached.",
-	realtime_disabled: "Realtime sync requires upgrade.",
+	// Server rejects an API-key-authed socket or REST call outright: Cloud
+	// gates API keys behind Pro. Point at sign-in, which works on every plan,
+	// rather than at a generic "upgrade".
+	api_access_not_available: "API keys need Pro. Sign in with your Engram account instead.",
+	api_write_not_available: "API keys need Pro. Sign in with your Engram account instead.",
 	account_suspended: "Account suspended. Contact support.",
 	no_tier: "Account setup incomplete.",
 };
