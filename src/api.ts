@@ -691,8 +691,16 @@ function parseLimitExceededError(e: unknown): LimitExceededError {
 		}
 	}
 	const pick = <T>(key: string): T | null => (body[key] !== undefined ? (body[key] as T) : null);
+	// Fall back to `error` when `reason` is absent. Not every 402 uses the
+	// LimitResponse shape: RequireApiWriteEnabled and EnforcePatCreation emit
+	// {"error": "..."} with no reason, so keying on `reason` alone sent both to
+	// the generic "Limit reached" toast and made their copy unreachable.
 	return new LimitExceededError(
-		typeof body.reason === "string" ? body.reason : "unknown",
+		typeof body.reason === "string"
+			? body.reason
+			: typeof body.error === "string" && body.error !== "limit_exceeded"
+				? body.error
+				: "unknown",
 		sanitizeUpgradeUrl(body.upgrade_url),
 		pick<string>("limit_key"),
 		pick<number | boolean>("limit"),

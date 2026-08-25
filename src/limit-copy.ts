@@ -31,6 +31,16 @@ const TABLE: Record<string, string> = {
 	no_tier: "Account setup incomplete.",
 };
 
+/** Join-rejection reasons that mean "your plan does not allow this", as
+ *  opposed to a transient backend problem. `ChannelGate` emits these on the
+ *  socket, where a retry can never succeed, so they are the only join errors
+ *  worth interrupting the user for. */
+const PLAN_JOIN_REASONS = new Set(["api_access_not_available", "no_tier", "account_suspended"]);
+
+export function isPlanJoinReason(reason: string): boolean {
+	return PLAN_JOIN_REASONS.has(reason);
+}
+
 export function toastFor(reason: string): string {
 	return `Engram: ${TABLE[reason] ?? "Limit reached. Upgrade to continue."}`;
 }
