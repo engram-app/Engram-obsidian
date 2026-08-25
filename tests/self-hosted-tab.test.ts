@@ -36,11 +36,13 @@ describe("renderEngramUrlSetting", () => {
 function makePlugin(initial: string | null): VaultSwitchTarget & {
 	api: { setVaultId: ReturnType<typeof mock> };
 	saveSettings: ReturnType<typeof mock>;
+	syncEngine: { resetForVaultChange: ReturnType<typeof mock> };
 } {
 	return {
 		settings: { vaultId: initial },
 		api: { setVaultId: mock(() => {}) },
 		saveSettings: mock(async () => {}),
+		syncEngine: { resetForVaultChange: mock(async () => {}) },
 	};
 }
 
@@ -299,5 +301,36 @@ describe("renderAuthSection — signed in", () => {
 	test("still offers sign out", () => {
 		renderSignedIn("https://api.engram.page");
 		expect(__settingCapture.buttons.some((b) => b.text === "Sign out")).toBe(true);
+	});
+});
+
+// #1409 root cause: this path changed the active vault while leaving the
+// PREVIOUS vault's path -> note_id map live, so crdt_create proposed
+// foreign-vault ids and the server's re-id cost a room per note. main.ts's
+// picker always reset; only this selfhost path did not.
+describe("applyVaultSwitch resets per-vault state (#1409)", () => {
+	test("wipes per-vault bookkeeping on a real switch", async () => {
+		const plugin = makePlugin("old-vault");
+		await applyVaultSwitch(plugin, "new-vault");
+		expect(plugin.syncEngine.resetForVaultChange).toHaveBeenCalledTimes(1);
+	});
+
+	test("resets BEFORE saveSettings — never persist a new vault id beside stale state", async () => {
+		const order: string[] = [];
+		const plugin = makePlugin("old-vault");
+		plugin.syncEngine.resetForVaultChange = mock(async () => {
+			order.push("reset");
+		});
+		plugin.saveSettings = mock(async () => {
+			order.push("save");
+		});
+		await applyVaultSwitch(plugin, "new-vault");
+		expect(order).toEqual(["reset", "save"]);
+	});
+
+	test("no-op switch does NOT reset (selecting the vault you are already on)", async () => {
+		const plugin = makePlugin("same");
+		await applyVaultSwitch(plugin, "same");
+		expect(plugin.syncEngine.resetForVaultChange).not.toHaveBeenCalled();
 	});
 });
