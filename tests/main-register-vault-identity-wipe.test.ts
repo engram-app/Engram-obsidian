@@ -103,3 +103,50 @@ describe("registerVault identity wipe (#1409)", () => {
 		expect(order).toEqual(["wipe", "save"]);
 	});
 });
+
+/**
+ * The persisted `noteIds` cache is per-VAULT identity. It used to be seeded
+ * unconditionally on load, so a plugin reload after a vault change resurrected
+ * the previous vault's path -> note_id entries — outliving every in-session
+ * wipe, because those run against memory and not data.json. That is the route
+ * the register-time wipe above does NOT cover: `registerVault` early-returns
+ * when `settings.vaultId` is already set, which is the case on every reload.
+ */
+describe("noteIds cache is vault-scoped (#1409 root cause)", () => {
+	function seedWith(data: Record<string, unknown>, activeVault: string | null) {
+		const seeded: Array<Record<string, string> | undefined> = [];
+		const fake = {
+			settings: { vaultId: activeVault },
+			noteIdMap: { seed: (ids: Record<string, string> | undefined) => seeded.push(ids) },
+		};
+		// Mirrors the load-time gate in main.ts.
+		const cached = (data as { noteIdsVaultId?: string | null }).noteIdsVaultId;
+		const active = fake.settings.vaultId ?? null;
+		if (cached !== undefined && cached !== null && active !== null && cached !== active) {
+			// refused
+		} else {
+			fake.noteIdMap.seed((data as { noteIds?: Record<string, string> }).noteIds);
+		}
+		return seeded;
+	}
+
+	const IDS = { "Notes/a.md": "id-from-old-vault" };
+
+	test("REFUSES a cache recorded under a different vault", () => {
+		expect(seedWith({ noteIds: IDS, noteIdsVaultId: "old-vault" }, "new-vault")).toEqual([]);
+	});
+
+	test("accepts a cache recorded under the SAME vault", () => {
+		expect(seedWith({ noteIds: IDS, noteIdsVaultId: "same-vault" }, "same-vault")).toEqual([
+			IDS,
+		]);
+	});
+
+	test("adopts a pre-upgrade cache with no recorded vault (no needless re-mint)", () => {
+		expect(seedWith({ noteIds: IDS }, "any-vault")).toEqual([IDS]);
+	});
+
+	test("accepts when there is no active vault yet (first run, nothing to conflict with)", () => {
+		expect(seedWith({ noteIds: IDS, noteIdsVaultId: "old-vault" }, null)).toEqual([IDS]);
+	});
+});

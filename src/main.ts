@@ -130,6 +130,12 @@ interface PluginData {
 	syncGateAcceptedFor?: string | null;
 	/** Path -> note_id sidecar (NoteIdMap.toJSON()). See src/crdt/note-id-map.ts. */
 	noteIds?: Record<string, string>;
+	/** The server vaultId `noteIds` was recorded under (#1409). Identity is
+	 *  per-vault, so seeding this cache into a DIFFERENT vault makes
+	 *  `crdt_create` propose foreign ids — see the seed site for the full
+	 *  chain. `syncState` has carried the same guard (`syncStateVaultId`)
+	 *  since it was added; `noteIds` was the one that never got it. */
+	noteIdsVaultId?: string | null;
 }
 
 /** Whether setupNoteStream() may keep the existing stream instead of
@@ -1338,7 +1344,38 @@ export default class EngramSyncPlugin extends Plugin {
 		// other devices and — through id-keyed removal — published DELETES of the
 		// paths those claims lived at. The cache is evidence about the past, and
 		// it is not allowed to make a claim.
-		this.noteIdMap.seed(data?.noteIds);
+		// #1409 ROOT CAUSE. This cache is per-VAULT identity, and it used to be
+		// seeded unconditionally. Reload the plugin (a BRAT update, an Obsidian
+		// restart) after the active vault changed and the PREVIOUS vault's
+		// path -> note_id entries came straight back, outliving every in-session
+		// wipe (`resetForVaultChange` -> `noteIdMap.clear()` -> the index-room
+		// replacement) because those all run against memory, not this file.
+		//
+		// `crdt_create` then proposes the old vault's ids. The server cannot
+		// reuse a foreign-vault id (the #1318 collision class), answers with a
+		// fresh one, `serverId !== noteId` fails the seeded fast path, and the
+		// fallback broadcasts a sync_update that opens a room PER NOTE.
+		// Measured on a real 423-item import: 225 rooms for 317 notes, all
+		// source=edit, ZERO crdt_update_log rows — every room redundant.
+		//
+		// A MISSING recorded id is adopted, not discarded: pre-upgrade data.json
+		// has no `noteIdsVaultId`, and dropping a valid cache on upgrade would
+		// force a needless re-mint of every note.
+		const cachedIdsVault = data?.noteIdsVaultId;
+		const activeVault = this.settings.vaultId ?? null;
+		if (
+			cachedIdsVault !== undefined &&
+			cachedIdsVault !== null &&
+			activeVault !== null &&
+			cachedIdsVault !== activeVault
+		) {
+			rlog().warn(
+				"lifecycle",
+				`Dropping cached note-id map from vault ${cachedIdsVault} — active vault is ${activeVault}`,
+			);
+		} else {
+			this.noteIdMap.seed(data?.noteIds);
+		}
 		// Migrate a stored Cloud apiUrl off the legacy SPA host (app.engram.page,
 		// which 405s API POSTs post-cutover) onto the canonical REST host. Same
 		// backend + credentials — only the edge hostname moved, so auth is kept.
@@ -1649,6 +1686,9 @@ export default class EngramSyncPlugin extends Plugin {
 			ignoredFiles: this.syncEngine.ignoredFiles.serialize(),
 			syncGateAcceptedFor: this.syncGateAcceptedFor,
 			noteIds: this.noteIdMap.toJSON(),
+			// Stamp the vault this identity cache belongs to, so a later load
+			// into a different vault can refuse it (#1409).
+			noteIdsVaultId: this.settings.vaultId ?? null,
 		});
 	}
 
