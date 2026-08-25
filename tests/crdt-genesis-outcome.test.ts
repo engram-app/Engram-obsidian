@@ -45,6 +45,9 @@ function makeEngine(opts: { hasHistory?: boolean; docState?: unknown } = {}) {
 		applyLocalEdit: [] as string[],
 		applyRemoteUpdate: 0,
 		docState: 0,
+		/** Call ORDER — adopt-before-diff is the invariant, and a set of counts
+		 *  cannot express it. */
+		order: [] as string[],
 	};
 
 	const engine = new SyncEngine(
@@ -62,10 +65,12 @@ function makeEngine(opts: { hasHistory?: boolean; docState?: unknown } = {}) {
 		// doubling is back.
 		applyLocalEdit: async (_id: string, text: string) => {
 			calls.applyLocalEdit.push(text);
+			calls.order.push("applyLocalEdit");
 			return text;
 		},
 		applyRemoteUpdate: async () => {
 			calls.applyRemoteUpdate++;
+			calls.order.push("applyRemoteUpdate");
 		},
 		projectedText: async () => SERVER_BODY,
 		isCrdtEligible: () => true,
@@ -96,30 +101,27 @@ function seed(engine: AnyEngine, genesisOutcome: unknown) {
 }
 
 describe("genesis outcome decides whether a body may be transmitted (#476)", () => {
-	test("occupied: adopts the server's lineage and NEVER transmits", async () => {
+	test("occupied: adopts the server's lineage FIRST, then transmits as a diff", async () => {
+		// Adopting is the PRECONDITION for transmitting safely, not a substitute
+		// for it. An earlier revision returned the adopted text and stopped,
+		// which silently discarded the local body: `occupied` means the server
+		// holds a DIFFERENT body, so stopping means ours never arrives and the
+		// server's text gets stamped as the baseline over it.
 		const { engine, calls } = makeEngine();
 
-		const consumed = await seed(engine, "occupied");
+		await seed(engine, "occupied");
 
-		// The whole bug in one assertion.
-		expect(calls.applyLocalEdit).toEqual([]);
+		// Both halves, and the ORDER is the point: acquire identity, then diff
+		// onto it. Reversed, the push is a rival lineage — that is #476.
 		expect(calls.applyRemoteUpdate).toBe(1);
-		expect(consumed).toBe(SERVER_BODY);
-	});
-
-	test("absent: transmits, because nothing else will ever fill the note", async () => {
-		const { engine, calls } = makeEngine();
-
-		await seed(engine, "absent");
-
 		expect(calls.applyLocalEdit).toEqual([LOCAL_BODY]);
-		// Trusted outright — no confirmation round trip on the common path.
-		expect(calls.docState).toBe(0);
+		expect(calls.order).toEqual(["applyRemoteUpdate", "applyLocalEdit"]);
 	});
 
-	test("occupied with an unreadable server: transmits NOTHING and defers", async () => {
-		// Deferring costs a slow convergence through catch-up. Pushing costs a
-		// corrupted note. Only one of those is recoverable.
+	test("occupied: adopt FAILING transmits nothing — the server said it holds a body", async () => {
+		// Deferring costs a slow convergence. Pushing costs a corrupted note.
+		// Only one of those is recoverable, and here the server ASSERTED it holds
+		// content, so we are not guessing.
 		const { engine, calls } = makeEngine({
 			docState: async () => {
 				throw new Error("rate limited");
@@ -130,6 +132,16 @@ describe("genesis outcome decides whether a body may be transmitted (#476)", () 
 
 		expect(calls.applyLocalEdit).toEqual([]);
 		expect(consumed).toBeNull();
+	});
+
+	test("absent: transmits, because nothing else will ever fill the note", async () => {
+		const { engine, calls } = makeEngine();
+
+		await seed(engine, "absent");
+
+		expect(calls.applyLocalEdit).toEqual([LOCAL_BODY]);
+		// Trusted outright — no confirmation round trip on the common path.
+		expect(calls.docState).toBe(0);
 	});
 
 	test("a doc that already has history transmits regardless of outcome", async () => {
@@ -145,18 +157,28 @@ describe("genesis outcome decides whether a body may be transmitted (#476)", () 
 });
 
 describe("an older backend that sends no outcome is confirmed, not guessed", () => {
-	test("null outcome + server holds a body: adopts instead of transmitting", async () => {
-		// The pre-#476 server sends only `seeded`. Rather than inherit its
-		// ambiguity, ask: adopting is a monotonic merge that is harmless when the
-		// server is empty, and a non-empty projection afterwards is direct
-		// evidence that a push would be a SECOND transmission.
+	test("null outcome + adoptable server: adopts, then diffs onto that lineage", async () => {
+		// A null outcome means an older backend. Where the room-free read still
+		// answers, we can acquire the lineage and the push is a safe diff.
 		const { engine, calls } = makeEngine();
 
-		const consumed = await seed(engine, null);
+		await seed(engine, null);
 
 		expect(calls.docState).toBe(1);
-		expect(calls.applyLocalEdit).toEqual([]);
-		expect(consumed).toBe(SERVER_BODY);
+		expect(calls.order).toEqual(["applyRemoteUpdate", "applyLocalEdit"]);
+	});
+
+	test("null outcome + unverifiable server: transmits anyway, and says why", async () => {
+		// THE asymmetry with `occupied`. A backend predating `genesis` also
+		// predates `crdt_doc_state` — they ship together — so a null outcome
+		// guarantees the read is unavailable and we can never verify. Deferring
+		// here is NOT the safe pole: nothing else fills this note, so it stays
+		// blank on every device forever. A possible double beats a certain blank.
+		const { engine, calls } = makeEngine({ docState: null });
+
+		await seed(engine, null);
+
+		expect(calls.applyLocalEdit).toEqual([LOCAL_BODY]);
 	});
 
 	test("null outcome + server genuinely empty: falls through and transmits", async () => {

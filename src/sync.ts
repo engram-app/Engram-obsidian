@@ -3000,26 +3000,62 @@ export class SyncEngine {
 		// monotonic merge that is harmless when the server is empty, and a
 		// non-empty projection afterwards is direct evidence that pushing would
 		// be a SECOND transmission.
+		// ADOPT FIRST, THEN DIFF — never "adopt instead of pushing".
+		//
+		// An earlier revision returned the adopted text here and stopped. That
+		// looked safe and silently DISCARDED the local body: when the server
+		// holds a DIFFERENT body under our id (which is what `occupied` means),
+		// stopping after the adopt means our content never reaches the server and
+		// the adopted text is stamped as the baseline over it. The same shape hit
+		// the ADOPT path, where it overwrote a brand-new local note with another
+		// note's content.
+		//
+		// Adopting is not an alternative to transmitting, it is the PRECONDITION
+		// for transmitting safely. Once the server's lineage is applied the doc
+		// has history, so `applyLocalEdit` takes its `lca` path and emits a
+		// minimal diff onto the shared lineage — not the rival lineage whose YATA
+		// union is #476. So: adopt to acquire identity, then push as a diff.
+		//
+		// The only outcome that skips the push is `stored`, handled above: the
+		// server already holds exactly our bytes, so there is nothing to send.
 		const known = opts.genesisOutcome;
-		if (!effectiveIdHasHistory && known !== "absent" && known !== "stored") {
+		if (!effectiveIdHasHistory && known !== "absent") {
 			const adopted = await this.adoptServerLineage(effectiveId, normalized);
-			if (adopted !== null && adopted.trim().length > 0) return adopted;
 
-			// Known-occupied and we could not read it back: pushing would double
-			// the body, so defer to the catch-up receive path instead. Slower than
-			// seeding, and the only option that cannot corrupt.
-			if (known === "occupied" && adopted === null) {
+			// Adopt failed. What to do depends on whether the server ASSERTED it
+			// holds content, and the two answers are opposite:
+			//
+			//   occupied  the server said so. Pushing mints a rival, so defer.
+			//   null      we could not verify (a backend predating both `genesis`
+			//             and `crdt_doc_state` — they ship together, so a null
+			//             outcome guarantees the read is unavailable too). Here
+			//             deferring is NOT the safe pole: nothing else will ever
+			//             fill this note, so it stays blank forever on every
+			//             device. A possible doubling beats a certain blank.
+			if (adopted === null) {
+				if (known === "occupied") {
+					rlog().warn(
+						"crdt",
+						`create: server holds a body for ${noteRef(normalized)} and its lineage is ` +
+							`unavailable — deferring rather than re-sending`,
+					);
+					return null;
+				}
+
 				rlog().warn(
 					"crdt",
-					`create: server already holds a body for ${noteRef(normalized)} and its state ` +
-						`is unavailable — deferring to catch-up rather than re-sending the body`,
+					`create: cannot verify server state for ${noteRef(normalized)} (backend predates ` +
+						`crdt_doc_state) — transmitting, which risks the pre-#476 doubling`,
 				);
-				return null;
 			}
+			// Adopt succeeded. Fall through: the doc now has history, so the push
+			// below is an `lca` diff. This is deliberate even when `adopted` is
+			// empty — an empty projection means the server is genuinely blank and
+			// our body is the only copy.
 		}
 
-		// The server holds nothing for this note, so pushing is not merely safe
-		// but the only thing that will ever fill it.
+		// Either the server holds nothing (`absent`), or we now share its lineage
+		// and this is a minimal diff onto it.
 		return await routeModify(
 			{
 				crdtEligible: true,
