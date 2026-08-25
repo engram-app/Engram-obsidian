@@ -430,10 +430,10 @@ export class SyncEngine {
 	 * not the other, because a declaration 3,000 lines from either list carries
 	 * no hint that a decision is owed.
 	 *
-	 * `vault`   — describes the remote vault (paths, note_ids, cursors).
-	 *             Swept on a vault switch AND on destroy.
-	 * `install` — local operating state that legitimately outlives a vault
-	 *             switch (in-flight push guards, debounce timers). Destroy only.
+	 * `["vault", "destroy"]` — describes the remote vault (paths, note_ids,
+	 *             cursors). Swept on a vault switch AND on destroy.
+	 * `["destroy"]` — local operating state that legitimately outlives a vault
+	 *             switch (in-flight push guards, debounce timers).
 	 *
 	 * Declared FIRST: class field initializers run top-to-bottom, and every
 	 * `track()` call below pushes into this array.
@@ -459,16 +459,41 @@ export class SyncEngine {
 		return collection;
 	}
 
-	/** Dispose + clear every tracked collection registered for `event`. */
+	/** Dispose + clear every tracked collection registered for `event`.
+	 *
+	 *  Each entry is isolated. A throw used to abandon the whole sweep at the
+	 *  first bad entry, leaving every collection AFTER it fully populated — and
+	 *  since the registry exists precisely so a vault switch cannot leave the
+	 *  previous vault's note_ids behind, one throwing dispose would reinstate
+	 *  the bug for all of them, silently and in registration order. Failures are
+	 *  collected and logged; the `clear()` still runs even when the dispose for
+	 *  that same entry threw, because a leaked timer is a smaller problem than a
+	 *  retained cross-vault map. */
 	private sweep(event: SweepEvent): void {
+		const failures: string[] = [];
 		for (const entry of this.sweepable) {
 			if (!entry.on.includes(event)) continue;
 			if (entry.dispose) {
 				for (const value of (entry.collection as Map<unknown, unknown>).values()) {
-					entry.dispose(value);
+					try {
+						entry.dispose(value);
+					} catch (e) {
+						failures.push(`dispose: ${errMsg(e)}`);
+					}
 				}
 			}
-			entry.collection.clear();
+			try {
+				entry.collection.clear();
+			} catch (e) {
+				failures.push(`clear: ${errMsg(e)}`);
+			}
+		}
+		if (failures.length > 0) {
+			rlog().warn(
+				"lifecycle",
+				`sweep(${event}): ${failures.length} entr${failures.length === 1 ? "y" : "ies"} ` +
+					`failed but the rest were swept — ${failures.join("; ")}`,
+			);
 		}
 	}
 
@@ -3492,6 +3517,25 @@ export class SyncEngine {
 			// under a plan issue) would leave the bar painting the stale count
 			// forever — nothing polls it.
 			this.emitStatus();
+			// Re-check the gate AT FIRE TIME. `handleModify` checked it when the
+			// timer was armed, but the gate can close during the debounce window —
+			// a vault switch, a re-consent prompt, a dead-vault heal — and
+			// `pushFile` has no gate of its own. The armed timer then wrote into
+			// whatever vault is active when it fired, which after a switch is a
+			// DIFFERENT vault the user has not consented to sync yet.
+			//
+			// Dropping the push does not drop the edit: the file's disk content no
+			// longer matches its recorded baseline, so the full sync that runs when
+			// the gate reopens picks it up. That is also why `debounceTimers` stays
+			// destroy-only in the sweep registry — the pending edit is real, it just
+			// must not be delivered by this timer.
+			if (this.syncBlocked) {
+				devLog().log(
+					"sync-blocked",
+					`debounced push dropped — gate closed during the window: ${armedPath}`,
+				);
+				return;
+			}
 			void this.pushFile(file);
 		}, this.settings.debounceMs);
 

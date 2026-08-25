@@ -20,9 +20,15 @@ import { describe, expect, mock, test } from "bun:test";
 import EngramSyncPlugin from "../src/main";
 
 function makeFakePlugin(noteIds: Record<string, string>, over: Record<string, unknown> = {}) {
-	const fake = {
+	// Prototype-backed: registerVault delegates the transition to the real
+	// `discardVaultScopedState`, and a bare literal `this` would leave that
+	// undefined — the throw lands in registerVault's own catch and the suite
+	// goes green against a registration that wipes nothing.
+	const fake = Object.assign(Object.create(EngramSyncPlugin.prototype), {
 		// Falsy vaultId is what sends registerVault down the register-fresh leg.
 		settings: { vaultId: null, clientId: "client-1", remoteVaultName: undefined },
+		syncGateAcceptedFor: "stale-fingerprint",
+		lastMapReconcileAt: 999,
 		app: { vault: { getName: () => "My Vault" } },
 		api: {
 			registerVault: mock().mockResolvedValue({
@@ -36,7 +42,7 @@ function makeFakePlugin(noteIds: Record<string, string>, over: Record<string, un
 		syncEngine: { resetForVaultChange: mock().mockResolvedValue(undefined) },
 		saveSettings: mock().mockResolvedValue(undefined),
 		...over,
-	};
+	});
 	const register = (EngramSyncPlugin.prototype as any).registerVault as (
 		this: unknown,
 	) => Promise<boolean>;
@@ -55,16 +61,31 @@ describe("registerVault identity wipe (#1409)", () => {
 		// THE assertion: the stale map must not survive into the new vault.
 		expect(fake.syncEngine.resetForVaultChange as any).toHaveBeenCalled();
 		expect(fake.settings.vaultId).toBe("new-vault-id");
+		// ...and the WHOLE transition, not just the map. This ran one of the
+		// five steps on its own for months. The gate fingerprint covers (auth +
+		// vault), so leaving it set makes the new vault inherit the old one's
+		// consent instead of re-prompting.
+		expect(fake.syncGateAcceptedFor).toBeNull();
+		expect(fake.lastMapReconcileAt).toBe(0);
+		expect((fake.api.setVaultId as any).mock.calls.at(-1)?.[0]).toBe("new-vault-id");
 	});
 
-	test("first-ever install (empty map) is a silent no-op — no wipe", async () => {
-		// The wipe also clears lastSync/cursors; doing that on a fresh install
-		// would look like a bug and would re-scan for nothing.
+	test("an empty map does NOT prove empty cursors — wipe anyway, just quietly", async () => {
+		// This used to assert the opposite, on the reasoning that a fresh
+		// install has nothing to wipe. The reasoning skipped a step: the map is
+		// only one of the things `resetForVaultChange` clears. `onVaultDeleted`
+		// empties the map WITHOUT touching lastSync or the catch-up cursor, so
+		// registering after it hit this branch and inherited a watermark from a
+		// different vault — the first catch-up then resumed from a seq that
+		// means nothing here and skipped every note below it.
+		//
+		// On a genuine first install the wipe is a no-op, so gating it bought
+		// nothing. What the guard is still good for is the LOG.
 		const { fake, register } = makeFakePlugin({});
 
 		expect(await register()).toBe(true);
 
-		expect(fake.syncEngine.resetForVaultChange as any).not.toHaveBeenCalled();
+		expect(fake.syncEngine.resetForVaultChange as any).toHaveBeenCalled();
 		expect(fake.settings.vaultId).toBe("new-vault-id");
 	});
 

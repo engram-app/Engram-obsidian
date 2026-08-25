@@ -1614,9 +1614,7 @@ export default class EngramSyncPlugin extends Plugin {
 				this.app.vault.getName(),
 				this.settings.clientId,
 			);
-			this.settings.vaultId = result.id;
 			this.settings.remoteVaultName = result.name;
-			this.api.setVaultId(this.settings.vaultId);
 
 			// #1409 (root cause). Reaching here means `settings.vaultId` was
 			// FALSY, so this registration just bound the install to a vault it
@@ -1639,10 +1637,19 @@ export default class EngramSyncPlugin extends Plugin {
 			//
 			// Wiping is unconditionally correct on THIS branch specifically: a
 			// vault we just registered into holds no notes of ours, so every
-			// entry in the map is provably about a different vault. Guarded on
-			// non-empty only to keep first-ever install a silent no-op — the
-			// wipe also clears lastSync/cursors, and doing that noisily on a
-			// fresh install would look like a bug.
+			// entry in the map is provably about a different vault.
+			//
+			// The wipe used to be gated on `carried > 0` — a non-empty note-id
+			// map — which read as a cheap "first install is a silent no-op"
+			// optimisation and was a bug: the map is only ONE of the things
+			// `resetForVaultChange` clears. lastSync and the catch-up cursor are
+			// scoped to the vault too, and `onVaultDeleted` empties the map
+			// without touching them. Registering after that took the guard's
+			// false branch and inherited a watermark from a DIFFERENT vault, so
+			// the first catch-up resumed from a seq that means nothing here and
+			// skipped every note below it. The guard now covers only the log,
+			// which is all it was ever justified for — on a genuine first
+			// install the wipe is a no-op, not an optimisation worth a branch.
 			const carried = Object.keys(this.noteIdMap.toJSON()).length;
 			if (carried > 0) {
 				rlog().warn(
@@ -1650,8 +1657,11 @@ export default class EngramSyncPlugin extends Plugin {
 					`Registered a new vault (${result.id}) while holding ${carried} note-id ` +
 						`mappings from a previous vault — wiping per-vault identity state`,
 				);
-				await this.syncEngine.resetForVaultChange();
 			}
+			// The full transition, not just the map: the sync gate's accepted
+			// fingerprint, the reconcile throttle and the strand-heal counts are
+			// all keyed to the outgoing vault as well.
+			await this.discardVaultScopedState(result.id);
 
 			await this.saveSettings();
 			rlog().info("lifecycle", `Vault registered: id=${result.id} slug=${result.slug}`);

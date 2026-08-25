@@ -236,6 +236,39 @@ describe("sweeping disposes timers rather than stranding them", () => {
 		expect(e.crdtHealTrailingTimers.size).toBe(0);
 	});
 
+	test("one throwing dispose does not abandon the rest of the sweep", () => {
+		// The failure mode this registry exists to prevent, reintroduced by its
+		// own error handling: a throw used to abort the loop, so every collection
+		// registered AFTER the bad one stayed fully populated — carrying the old
+		// vault's note_ids into the new one, silently, in registration order.
+		const engine = createEngine();
+		const cleared: number[] = [];
+		(engine as unknown as { time: { clearTimeout(t: number): void } }).time = {
+			clearTimeout: (t: number) => {
+				if (t === 101) throw new Error("stale handle");
+				cleared.push(t);
+			},
+		};
+
+		const e = engine as unknown as {
+			recentlyDeleted: Map<string, { timer: number; path: string }>;
+			crdtHealTrailingTimers: Map<string, number>;
+			noteIdMapReconciled: Set<string>;
+			sweep(event: string): void;
+		};
+		e.recentlyDeleted.set("id-1", { timer: 101, path: "a.md" });
+		e.crdtHealTrailingTimers.set("id-2", 103);
+
+		e.sweep("vault");
+
+		// The throwing entry still gets CLEARED — a leaked timer is a smaller
+		// problem than a retained cross-vault map.
+		expect(e.recentlyDeleted.size).toBe(0);
+		// ...and everything after it was swept normally.
+		expect(cleared).toEqual([103]);
+		expect(e.crdtHealTrailingTimers.size).toBe(0);
+	});
+
 	test("a vault sweep leaves destroy-only collections alone", () => {
 		const engine = createEngine();
 		const e = engine as unknown as {

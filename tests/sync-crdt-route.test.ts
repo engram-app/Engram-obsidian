@@ -1521,3 +1521,41 @@ describe("genesis echo-cooldown window (repo-review 2026-08)", () => {
 		expect(files.has("Notes/brand-new.md", "pushed")).toBe(true);
 	});
 });
+
+describe("the debounce window is not a hole in the sync gate (#1409 review)", () => {
+	test("a gate that closes mid-window drops the armed push", async () => {
+		// `handleModify` checks the gate when it ARMS the timer; nothing checked
+		// it when the timer FIRED, and `pushFile` has no gate of its own. So an
+		// edit made just before a vault switch was delivered into whichever vault
+		// was active ~2s later — a vault the user had not consented to sync yet.
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("note.md", "id-note");
+		const engine = createEngine(noteIdMap);
+		const applyLocalEdit = mock(async (_id: string, c: string) => c);
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		markConfirmed(engine, "id-note");
+
+		engine.handleModify(new TFile("note.md"));
+		// The switch lands inside the debounce window.
+		engine.setSyncBlocked(true);
+		await flush();
+
+		expect(applyLocalEdit).not.toHaveBeenCalled();
+		// The edit is not lost: disk still disagrees with the recorded baseline,
+		// so the full sync that runs when the gate reopens picks it up.
+	});
+
+	test("an open gate still delivers it", async () => {
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("note.md", "id-note");
+		const engine = createEngine(noteIdMap);
+		const applyLocalEdit = mock(async (_id: string, c: string) => c);
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		markConfirmed(engine, "id-note");
+
+		engine.handleModify(new TFile("note.md"));
+		await flush();
+
+		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
+	});
+});
