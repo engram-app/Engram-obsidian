@@ -1448,6 +1448,14 @@ export class SyncEngine {
 					typeof this.crdt.hasAnyHistory === "function"
 						? await this.crdt.hasAnyHistory(effectiveId)
 						: true;
+				rlog().info(
+					"crdt",
+					`GENESIS_BRANCH site=ack ${
+						seeded && serverId === localId && genesis && !effectiveIdHasHistory
+							? "FAST"
+							: "SLOW"
+					} seeded=${seeded} sameId=${serverId === localId} genesis=${!!genesis} hasHistory=${effectiveIdHasHistory} ${noteRef(path)}`,
+				);
 				if (seeded && serverId === localId && genesis && !effectiveIdHasHistory) {
 					// M1: `genesis.content` was frozen when buildGenesisFrame read disk,
 					// before the crdt_create round-trip. Capture whatever's on disk NOW,
@@ -4145,6 +4153,17 @@ export class SyncEngine {
 								this.reportGenesisRace(
 									chosenGenesis?.fromThrowaway === true && serverId === noteId,
 									effectiveIdHasHistory,
+								);
+								rlog().info(
+									"crdt",
+									`GENESIS_BRANCH site=push ${
+										seeded &&
+										serverId === noteId &&
+										genesisUpdate &&
+										!effectiveIdHasHistory
+											? "FAST"
+											: "SLOW"
+									} seeded=${seeded} sameId=${serverId === noteId} genesis=${!!genesisUpdate} throwaway=${chosenGenesis?.fromThrowaway === true} hasHistory=${effectiveIdHasHistory} ${noteRef(pushedPath)}`,
 								);
 								if (
 									seeded &&
