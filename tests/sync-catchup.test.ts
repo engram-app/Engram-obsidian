@@ -124,6 +124,9 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		});
 		const closeDoc = mock();
 		engine.setCrdtManager({
+			// The real registry always answers this; the room-free read is only
+			// legal when it is false, because that frame cannot carry local ops up.
+			hasUndeliveredOps: () => false,
 			applyLocalEdit: mock().mockImplementation(async (_id: string, c: string) => c),
 			applyRemoteUpdate,
 			encodeStateVector,
@@ -234,6 +237,9 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 	test("no note_id (legacy /notes/changes path): falls back to the content-snapshot backfill unchanged", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({
+			// The real registry always answers this; the room-free read is only
+			// legal when it is false, because that frame cannot carry local ops up.
+			hasUndeliveredOps: () => false,
 			applyLocalEdit: mock().mockImplementation(async (_id: string, c: string) => c),
 			applyRemoteUpdate: mock().mockResolvedValue(undefined),
 			encodeStateVector: mock().mockResolvedValue(new Uint8Array([0])),

@@ -191,12 +191,18 @@ describe("an older backend that sends no outcome is confirmed, not guessed", () 
 		expect(calls.applyLocalEdit).toEqual([LOCAL_BODY]);
 	});
 
-	test("a server that never ANSWERS the read is latched off after one timeout", async () => {
+	test("a server that never ANSWERS the read is latched off after repeated timeouts", async () => {
 		// An older backend does not reject `crdt_doc_state` — it does not reply at
 		// all, so every probe costs a full sendRequest timeout. Unlatched, a bulk
 		// import pays that on every create and sync effectively stops: the e2e
 		// suite measured creates going from ~1.5s to ~2min each, which is how
 		// this regression was caught before it reached anyone.
+		//
+		// TWO strikes, not one. A modern backend produces the identical signal
+		// whenever the channel dies (phx_error does not reject pending replies,
+		// so a crash surfaces as a timeout), and one slow reply under import load
+		// is entirely reachable — latching on a single sample would disable the
+		// doubling protection on a healthy server for the rest of the session.
 		let attempts = 0;
 		const { engine, calls } = makeEngine({
 			docState: async () => {
@@ -209,7 +215,7 @@ describe("an older backend that sends no outcome is confirmed, not guessed", () 
 		await seed(engine, null);
 		await seed(engine, null);
 
-		expect(attempts).toBe(1);
+		expect(attempts).toBe(2);
 		// ...and every create still delivers its body, just without the probe.
 		expect(calls.applyLocalEdit).toEqual([LOCAL_BODY, LOCAL_BODY, LOCAL_BODY]);
 	});

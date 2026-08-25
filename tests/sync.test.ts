@@ -730,6 +730,10 @@ describe("SyncEngine.applySyncChange (apply behavior)", () => {
 		engine.setCrdtManager({
 			removeDoc: () => Promise.resolve(),
 			closeDoc: () => {},
+			// The real registry always answers this. The room-free catch-up read
+			// is only legal when it is false, because that frame is a READ and
+			// cannot carry local ops upward.
+			hasUndeliveredOps: () => false,
 		} as unknown as import("../src/crdt/provider-registry").ProviderRegistry);
 		const path = "Notes/Clean306.md";
 

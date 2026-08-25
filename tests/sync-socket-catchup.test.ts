@@ -74,7 +74,14 @@ function makeEngineWithCrdt(crdt: Partial<CrdtManager>): SyncEngine {
 		{ ...DEFAULT_SETTINGS, debounceMs: 1 },
 		mock().mockResolvedValue(undefined),
 	);
-	e.setCrdtManager(crdt as unknown as CrdtManager);
+	// The real registry always answers `hasUndeliveredOps`; partial doubles do
+	// not. Default it to false (nothing local pending) so existing tests keep
+	// exercising the room-free read, and let a caller override to assert the
+	// opposite. Spread FIRST so an explicit value in `crdt` wins.
+	e.setCrdtManager({
+		hasUndeliveredOps: () => false,
+		...crdt,
+	} as unknown as CrdtManager);
 	e.setReady();
 	const map = new NoteIdMap();
 	map.set("Notes/a.md", "id-a");

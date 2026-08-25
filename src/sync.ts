@@ -2878,43 +2878,70 @@ export class SyncEngine {
 	 *  where re-sending the body would mint a rival lineage, and a second copy
 	 *  is how the first one drifted (#476). */
 	private async adoptServerLineage(noteId: string, path: string): Promise<string | null> {
-		const fetchState = this.crdtDocState;
-		if (!fetchState || !this.crdt) return null;
+		const state = await this.readServerDocState(noteId, path);
+		if (state === null || !this.crdt) return null;
 
-		// A backend that predates `crdt_doc_state` never REPLIES to the frame —
-		// it does not reject it, so every call costs a full sendRequest timeout.
-		// Discovered once per session rather than once per note: unlatched, a
-		// bulk import against an older server pays that timeout on every create
-		// and the sync effectively stops (measured: e2e creates went from ~1.5s
-		// to ~2min each). Re-arms on a vault change, since that can mean a
-		// different backend entirely.
-		if (this.unsupportedFrames.has(DOC_STATE_FRAME)) return null;
+		await this.crdt.applyRemoteUpdate(noteId, fromB64(state.b64));
+		rlog().info("crdt", `create: adopted server lineage for ${noteRef(path)}`);
+		return await this.crdt.projectedText(noteId);
+	}
+
+	/** How many consecutive unanswered `crdt_doc_state` frames disable the read.
+	 *  ONE is too few: a modern backend produces the identical signal whenever
+	 *  the channel dies (phx_error does not reject pending replies, so a crash
+	 *  surfaces as a timeout), and under the bulk-import load this feature exists
+	 *  for, a single slow reply is entirely reachable. */
+	private static readonly DOC_STATE_TIMEOUT_LATCH = 2;
+
+	/** The ONE place `crdt_doc_state` is called.
+	 *
+	 *  Both callers route through here so the capability latch is checked AND
+	 *  set in the same place. Previously only `adoptServerLineage` consulted it,
+	 *  while `convergeColdNoteRoomFree` — the HIGHER-volume caller — neither
+	 *  checked nor set it, so the very pathology the latch was written for
+	 *  (~1.5s to ~2min per note against an older backend) ran undiminished on
+	 *  the other path.
+	 *
+	 *  Returns null when the read is unavailable; the caller decides how to
+	 *  degrade, because the two callers degrade differently. */
+	private async readServerDocState(
+		noteId: string,
+		path: string,
+	): Promise<{ b64: string } | null> {
+		const fetchState = this.crdtDocState;
+		if (!fetchState || this.unsupportedFrames.has(DOC_STATE_FRAME)) return null;
 
 		try {
-			const { b64 } = await fetchState(noteId);
-			await this.crdt.applyRemoteUpdate(noteId, fromB64(b64));
-			rlog().info(
-				"crdt",
-				`create: adopted server lineage for ${noteRef(path)} — body not re-sent`,
-			);
-			return await this.crdt.projectedText(noteId);
+			const state = await fetchState(noteId);
+			// A success proves the frame is supported — clear any partial strike
+			// count so one slow reply mid-import cannot accumulate toward a latch
+			// across an otherwise healthy session.
+			this.docStateTimeouts = 0;
+			return state;
 		} catch (e) {
 			const detail = errMsg(e, path);
-			// A TIMEOUT means the server never answered the frame at all, which is
-			// what an older backend does with an unknown event. A structured
-			// reject (rate limit, auth) is a real answer and must NOT latch.
+
+			// A TIMEOUT means the server never answered at all — an older backend
+			// does that with an unknown event. It is NOT proof of an old backend
+			// though: a channel crash looks identical from here, which is why the
+			// log below states the observation and not a diagnosis, and why it
+			// takes repeated strikes. A structured reject (rate limit, auth) is a
+			// real answer from a server that DOES implement the frame, and must
+			// never latch.
 			if (/timeout/i.test(detail)) {
-				this.unsupportedFrames.add(DOC_STATE_FRAME);
-				rlog().warn(
-					"crdt",
-					`crdt_doc_state unanswered by this server — room-free doc reads disabled for ` +
-						`this session (older backend); falling back to the pre-#476 create path`,
-				);
+				this.docStateTimeouts += 1;
+				if (this.docStateTimeouts >= SyncEngine.DOC_STATE_TIMEOUT_LATCH) {
+					this.unsupportedFrames.add(DOC_STATE_FRAME);
+					rlog().warn(
+						"crdt",
+						`crdt_doc_state went unanswered ${this.docStateTimeouts}x — disabling room-free ` +
+							`doc reads for this session. Either the backend predates the frame or the ` +
+							`channel is crashing; both look like this from the client.`,
+					);
+				}
 			}
-			rlog().warn(
-				"crdt",
-				`create: could not adopt server lineage for ${noteRef(path)}: ${detail}`,
-			);
+
+			rlog().warn("crdt", `crdt_doc_state failed for ${noteRef(path)}: ${detail}`);
 			return null;
 		}
 	}
@@ -3190,13 +3217,18 @@ export class SyncEngine {
 		// reads as undelivered), which is the right bias here: the room is always
 		// CORRECT, just more expensive. Convergence is the invariant; saving the
 		// room is the optimization.
-		const fetchState = this.crdtDocState;
-		if (fetchState && this.crdt && !this.crdt.hasUndeliveredOps(noteId)) {
+		if (this.crdt && !this.crdt.hasUndeliveredOps(noteId)) {
+			// Routed through the shared reader so this caller both CHECKS and
+			// FEEDS the capability latch. It used to do neither, so against an
+			// older backend every diverged cold note paid a full request timeout
+			// before falling back — the exact pathology the latch exists for,
+			// running on the higher-volume path (#1409 review).
+			const state = await this.readServerDocState(noteId, change.path);
 			try {
-				const { b64 } = await fetchState(noteId);
+				if (state === null) throw new Error("crdt_doc_state unavailable");
 				// Flushes disk on the merge and AWAITS that write, so a failed
 				// write rejects here rather than being reported as converged.
-				await this.crdt.applyRemoteUpdate(noteId, fromB64(b64));
+				await this.crdt.applyRemoteUpdate(noteId, fromB64(state.b64));
 				// `onSynced` fires ONLY from NoteProvider.handleFrame on an
 				// inbound syncStep2 — an applyRemoteUpdate does not fire it. So
 				// the staged episode has to be driven to commit explicitly, or
@@ -5047,6 +5079,10 @@ export class SyncEngine {
 	 *  because a vault switch can move us to a different backend entirely —
 	 *  self-host and SaaS are different servers at different versions. */
 	private unsupportedFrames = this.track(["vault", "destroy"], new Set<string>());
+
+	/** Consecutive unanswered `crdt_doc_state` frames. Reset by any success, and
+	 *  by a vault change (a different vault can mean a different backend). */
+	private docStateTimeouts = 0;
 
 	setCrdtCatchupSince(fn: CrdtCatchupSinceFn): void {
 		this.setCrdtPorts({ catchupSince: fn });
