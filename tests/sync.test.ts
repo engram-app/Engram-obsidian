@@ -2473,10 +2473,19 @@ describe("content-free queue entries", () => {
 		expect(engine.queue.size).toBe(0);
 	});
 
-	test("flushQueue drains to 0 even when entry.vaultId differs from current settings.vaultId", async () => {
-		// Regression: entries were dequeued by settings.vaultId, not entry.vaultId,
-		// so an entry enqueued under vault-A would never be removed after settings
-		// changed to vault-B — queue could never reach 0.
+	test("flushQueue drains a foreign-vault entry by DROPPING it, never delivering it", async () => {
+		// Two requirements, and the original test conflated them.
+		//
+		// The one that matters and still holds: the queue must reach 0. Entries
+		// were once dequeued by settings.vaultId rather than entry.vaultId, so an
+		// entry enqueued under vault-A could never be removed after settings moved
+		// to vault-B and the queue could never drain.
+		//
+		// The one that was a BUG: it also asserted the entry was delivered. But
+		// `this.api` points at whichever vault is active now, so delivering a
+		// vault-A entry executes it against vault-B — and for a delete that
+		// destroys an unrelated note at the same path (#1409 review). Draining is
+		// the invariant; delivering to the wrong vault never was.
 		const engine = createEngine({ vaultId: "vault-B" });
 
 		engine.queue.load([
@@ -2494,7 +2503,10 @@ describe("content-free queue entries", () => {
 
 		const flushed = await engine.flushQueue();
 
-		expect(flushed).toBe(1);
+		// Dropped, not delivered.
+		expect(flushed).toBe(0);
+		expect(mockApi.pushNote as jest.Mock).not.toHaveBeenCalled();
+		// ...and the queue still drains, which is what the regression was about.
 		expect(engine.queue.size).toBe(0);
 	});
 });

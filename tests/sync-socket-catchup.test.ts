@@ -1235,10 +1235,43 @@ describe("convergeColdNoteRoomFree (#1409 — cold notes converge without a room
 			},
 			markSynced: (id: string) => void engine.commitCrdtConvergence(id),
 			closeDoc: () => {},
+			// The real registry always answers this; the room-free read is only
+			// legal when it is false (the frame cannot carry local ops upward).
+			hasUndeliveredOps: () => false,
 		} as unknown as Partial<CrdtManager>);
 		engine.importSyncState({ "Notes/a.md": { hash: 1, serverHash: "H1" } });
 		return engine;
 	}
+
+	test("a note with UNDELIVERED local ops takes the room, not the read", async () => {
+		// `crdt_doc_state` is a READ. The handshake it replaces is bidirectional
+		// — the server answers syncStep1 with [syncStep2, syncStep1] and the
+		// client's reply to that second step1 IS the upload half.
+		//
+		// So taking this path with undelivered local ops downloads, marks the
+		// note synced, and never transmits them: complete on this device, blank
+		// on every other, and stamped in-sync so every later catch-up compares
+		// equal hashes and skips it. Permanently, with no error anywhere.
+		const applied: Array<[string, Uint8Array]> = [];
+		const engine = coldEngine(applied);
+		const docState = mock().mockResolvedValue({ b64: "AQID", head: "h" });
+		engine.setCrdtPorts({ docState });
+		(engine as any).crdt.hasUndeliveredOps = () => true;
+		const converge = spyOn(engine as any, "socketConverge").mockImplementation(() => {});
+
+		await (engine as any).convergeColdNoteRoomFree(
+			"id-a",
+			"Notes/a.md",
+			CHANGE,
+			"server body",
+			"H2",
+		);
+
+		// The read is never even attempted, and the bidirectional path runs.
+		expect(docState).not.toHaveBeenCalled();
+		expect(applied).toEqual([]);
+		expect(converge).toHaveBeenCalledTimes(1);
+	});
 
 	test("applies the room-free state and never fires the room handshake", async () => {
 		const applied: Array<[string, Uint8Array]> = [];

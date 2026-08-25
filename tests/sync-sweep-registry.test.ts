@@ -66,9 +66,17 @@ function registry(engine: SyncEngine): SweepEntry[] {
 }
 
 /**
- * Own enumerable Map/Set fields on the instance. Nested collections inside
- * composed objects (`queue`, `files`, `issues`) are those objects' own problem
- * — each owns its `destroy()` — so only the engine's own fields are in scope.
+ * Own enumerable Map/Set fields on the instance.
+ *
+ * This deliberately does NOT excuse composed objects. An earlier revision of
+ * this comment said `queue`, `files` and `issues` were "those objects' own
+ * problem — each owns its `destroy()`", which conflated HAS A TEARDOWN with IS
+ * NOT VAULT-SCOPED. All three were vault-scoped and none were swept: `files`
+ * held path-keyed echo markers that suppressed real events for the same path in
+ * the new vault, and the offline queue delivered a vault-A delete against
+ * vault-B. They are registered now, and a future composed object must be too —
+ * this helper simply cannot see inside them, so the reasoning has to be done at
+ * the declaration.
  */
 function ownCollections(engine: SyncEngine): Array<[string, Map<unknown, unknown> | Set<unknown>]> {
 	return Object.entries(engine).filter(
@@ -135,7 +143,7 @@ describe("the eleven collections that leaked across a vault switch (#1409)", () 
 	// silently re-tags one of them fails here with the field name.
 	const LEAKED = [
 		"fileForNote",
-		"manifestPathOwners",
+		"manifestOwners",
 		"pendingOrphanSweep",
 		"crdtRehandshakeAttempts",
 		"pendingConvergence",
@@ -152,14 +160,13 @@ describe("the eleven collections that leaked across a vault switch (#1409)", () 
 			const engine = createEngine();
 			const value = (engine as unknown as Record<string, unknown>)[field];
 
-			// `manifestPathOwners` is a nullable CACHE, not a live collection: it
-			// is discarded by nulling the field, which no registry can express.
-			// Assert that shape explicitly rather than skipping it.
-			if (value === null) {
-				expect(field).toBe("manifestPathOwners");
-				return;
-			}
-
+			// No escape hatch. An earlier revision of this test exempted
+			// `manifestPathOwners` with `if (value === null) return`, which
+			// asserted the field was NULLABLE rather than that anything cleared
+			// it — and that exemption was the only thing hiding a live leak
+			// through an entire review (#1409). The cache is now a tracked
+			// object owning both the map and its freshness stamp, so it is
+			// swept like everything else and needs no special case.
 			const entry = registry(engine).find((e) => e.collection === value);
 			expect(entry?.on).toContain("vault");
 		});

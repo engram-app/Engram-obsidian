@@ -485,11 +485,21 @@ export class SyncEngine {
 	 *  path-keyed TTL maps — `recentlyPushed`, `remotelyDeleted`,
 	 *  `recentlyFlushed` — with one object per file. See synced-file.ts for the
 	 *  meaning of each marker and why `flushed` must stay distinct from `pushed`.
-	 *  Unlike the maps it replaces, its timers are cancelled on destroy(). */
-	private readonly files = new SyncedFileTable({
-		setTimeout: (cb, ms) => this.time.setTimeout(cb, ms),
-		clearTimeout: (id) => this.time.clearTimeout(id),
-	});
+	 *  Unlike the maps it replaces, its timers are cancelled on teardown.
+	 *
+	 *  Vault-scoped: the markers are PATH-keyed, so one stranded from the old
+	 *  vault suppresses a real event for the same path in the new one — push
+	 *  `Notes/a.md` to vault A, switch within the 5s echo window, and vault B's
+	 *  DIFFERENT note at that path is dropped as an echo. `remotelyDeleted` has
+	 *  the same shape and swallows a genuine user delete. It escaped the
+	 *  registry only because it is a composed object rather than a Map. */
+	private readonly files = this.track(
+		["vault", "destroy"],
+		new SyncedFileTable({
+			setTimeout: (cb, ms) => this.time.setTimeout(cb, ms),
+			clearTimeout: (id) => this.time.clearTimeout(id),
+		}),
+	);
 	/** note_ids THIS device recently deleted. Both CRDT convergence paths
 	 *  (the op-log replay's `applyOp` and `applyPushedNoteUpdate`'s fan-out)
 	 *  refuse to resurrect an id in here for RECENT_DELETE_COOLDOWN_MS. A stale
@@ -918,15 +928,26 @@ export class SyncEngine {
 	 *  manifestOwnerOf. Used to verify the local map before DESTRUCTIVE ops
 	 *  (moveIfIdRelocated's trash) — the local map itself can be cross-wired,
 	 *  so it cannot vouch for itself. */
-	private manifestPathOwners: Map<string, string> | null = null;
-
-	/** Epoch ms of the last manifest fetch ATTEMPT (success or failure). A
-	 *  destructive verdict is only trusted from a snapshot younger than the
-	 *  TTL: a stale snapshot returns a false "absent" for any note created
-	 *  after it was taken, which would green-light trashing that note. The
-	 *  attempt stamp also negative-caches failures so a manifest-less backend
-	 *  doesn't get a fetch per relocation event. */
-	private manifestOwnersFetchedAt = 0;
+	/** The snapshot and its freshness stamp, as ONE sweepable unit.
+	 *
+	 *  They must move together. `owners` being null means "no trustworthy
+	 *  snapshot" (callers get `undefined` and refuse to destroy); an EMPTY but
+	 *  non-null map means "a fresh manifest says every path is absent", which
+	 *  authorizes trashing. So a bare `.clear()` on the map alone would be
+	 *  strictly worse than leaking it — which is exactly why this could not be
+	 *  a plain tracked Map, and why it was the one collection that survived the
+	 *  vault sweep (#1409 review). Encapsulated so it cannot be half-cleared.
+	 *
+	 *  `fetchedAt` stamps the last fetch ATTEMPT, success or failure, so a
+	 *  manifest-less backend negative-caches instead of refetching per event. */
+	private manifestOwners = this.track(["vault", "destroy"], {
+		owners: null as Map<string, string> | null,
+		fetchedAt: 0,
+		clear(): void {
+			this.owners = null;
+			this.fetchedAt = 0;
+		},
+	});
 	private static readonly MANIFEST_OWNERS_TTL_MS = 30_000;
 
 	/** Paths whose id-keyed-move trash was REFUSED (ownership unknowable or
@@ -943,14 +964,14 @@ export class SyncEngine {
 	 *  snapshot when older than the TTL; trash decisions are rare (renames),
 	 *  so the refresh cost lands only on that cold path. */
 	private async manifestOwnerOf(path: string): Promise<string | null | undefined> {
-		const age = Date.now() - this.manifestOwnersFetchedAt;
-		const fresh = this.manifestOwnersFetchedAt > 0 && age <= SyncEngine.MANIFEST_OWNERS_TTL_MS;
+		const age = Date.now() - this.manifestOwners.fetchedAt;
+		const fresh = this.manifestOwners.fetchedAt > 0 && age <= SyncEngine.MANIFEST_OWNERS_TTL_MS;
 		if (!fresh) {
-			this.manifestOwnersFetchedAt = Date.now();
+			this.manifestOwners.fetchedAt = Date.now();
 			// A failed/absent refresh leaves NO trustworthy snapshot: keeping a
 			// stale one would let its false "absent" answers authorize a wrong
 			// trash. Refusing (undefined) is always recoverable; a trash is not.
-			this.manifestPathOwners = null;
+			this.manifestOwners.owners = null;
 			try {
 				const manifest = await this.api.getManifest();
 				if (manifest) this.cacheManifestOwners(manifest);
@@ -958,15 +979,15 @@ export class SyncEngine {
 				// negative-cached by the attempt stamp above
 			}
 		}
-		if (!this.manifestPathOwners) return undefined;
-		return this.manifestPathOwners.get(path) ?? null;
+		if (!this.manifestOwners.owners) return undefined;
+		return this.manifestOwners.owners.get(path) ?? null;
 	}
 
 	private cacheManifestOwners(manifest: ManifestResponse): void {
-		this.manifestPathOwners = new Map(
+		this.manifestOwners.owners = new Map(
 			manifest.notes.filter((n) => n.id).map((n) => [normalizePath(n.path), n.id as string]),
 		);
-		this.manifestOwnersFetchedAt = Date.now();
+		this.manifestOwners.fetchedAt = Date.now();
 	}
 
 	/** Trash files whose refused id-keyed-move turned out to be a genuine
@@ -975,7 +996,7 @@ export class SyncEngine {
 	private async sweepPendingOrphans(): Promise<void> {
 		for (const p of [...this.pendingOrphanSweep]) {
 			this.pendingOrphanSweep.delete(p);
-			if (this.manifestPathOwners?.has(p)) continue; // live server-side note
+			if (this.manifestOwners.owners?.has(p)) continue; // live server-side note
 			if (this.noteIdMap?.get(p)) continue; // locally claimed again
 			const file = this.app.vault.getFileByPath(p);
 			if (!file) continue;
@@ -2321,6 +2342,16 @@ export class SyncEngine {
 	 *  queue for terminal failures (e.g. 413 Payload Too Large). */
 	readonly issues: IssueStore = new IssueStore();
 
+	/** `IssueStore` already owns `clear(path)`, so it cannot satisfy the
+	 *  sweepable shape directly — this adapter registers it without renaming a
+	 *  public API. Vault-scoped because plan-limit parks are per-vault: a Free
+	 *  vault's 402 attachments-disabled park must not suppress the same path on
+	 *  a Pro or self-host vault, where `pushFile` short-circuits BEFORE any
+	 *  request so nothing ever arrives to clear it (#1409 review). */
+	private readonly issuesSweeper = this.track(["vault", "destroy"], {
+		clear: () => this.issues.clearAll(),
+	});
+
 	/** Per-file explicit ignores (the Sync Center "Ignore" button). Honored by
 	 *  shouldIgnore so excluded files never enter push plans, isSyncable filters,
 	 *  or the Issues list. Distinct from settings.ignorePatterns (regex textarea). */
@@ -3116,12 +3147,9 @@ export class SyncEngine {
 	 *  without reverting a fresher local edit — the property that makes this a
 	 *  legal substitute, and the one the feed's plaintext `content` lacks.
 	 *
-	 *  Convergence is recorded on the SAME proof as the room path: not "the
-	 *  fetch resolved", but the doc verifiably projecting the row's content.
-	 *  We stage first and let the manager's remote-merge listener drive
-	 *  `commitCrdtConvergence` exactly as it does for a STEP2, so an apply that
-	 *  lands short (a snapshot genuinely older than this feed row) leaves the
-	 *  stage in place for the next catch-up rather than recording a lie.
+	 *  ONLY legal when this device holds no undelivered ops for the note — see
+	 *  the gate below. The frame is a read; it cannot carry anything upward, so
+	 *  a note with local work must take the room.
 	 *
 	 *  ANY failure falls back to the room handshake. An old backend rejects the
 	 *  unknown frame, a rate limit rejects it, a dropped socket rejects it — in
@@ -3147,8 +3175,23 @@ export class SyncEngine {
 			change.seq,
 		);
 
+		// THE PRECONDITION (adversarial review): `crdt_doc_state` is a READ. The
+		// room handshake it replaces is BIDIRECTIONAL — the server answers a
+		// syncStep1 with [syncStep2, syncStep1] and the client's reply to that
+		// second step1 IS the upload half. So this path can only converge a note
+		// the client has nothing to say about.
+		//
+		// Taken when the client DOES hold undelivered ops, it downloads, marks
+		// the note synced, and the local ops are never transmitted: complete on
+		// this device, blank everywhere else, and stamped as in-sync so every
+		// later catch-up compares equal hashes and skips it. Permanently.
+		//
+		// `hasUndeliveredOps` is the conservative question (a never-handshook doc
+		// reads as undelivered), which is the right bias here: the room is always
+		// CORRECT, just more expensive. Convergence is the invariant; saving the
+		// room is the optimization.
 		const fetchState = this.crdtDocState;
-		if (fetchState && this.crdt) {
+		if (fetchState && this.crdt && !this.crdt.hasUndeliveredOps(noteId)) {
 			try {
 				const { b64 } = await fetchState(noteId);
 				// Flushes disk on the merge and AWAITS that write, so a failed
@@ -9819,6 +9862,29 @@ export class SyncEngine {
 			// entries stay queued and drain when the gate reopens (re-auth →
 			// applySyncGate → fullSync → pushModifiedFiles → flushQueue).
 			if (this.syncBlocked) break;
+
+			// The entry was created under a DIFFERENT vault. `this.api` points at
+			// whichever vault is active now, so delivering it executes against the
+			// wrong one — and for a delete that is destructive: an offline delete
+			// of `Notes/x.md` queued in vault A fires `deleteNote("Notes/x.md")`
+			// against vault B once the consent gate reopens, destroying an
+			// unrelated note at the same path. The entries have always carried a
+			// `vaultId`, but it was used only as a DEDUP key, never to gate
+			// delivery. `CrdtOpQueue.dropIfForeignVault` already does exactly this
+			// for the CRDT outbox; the REST queue was the one that did not (#1409
+			// review).
+			const owner = this.entryVaultId(entry);
+			const active = this.settings.vaultId;
+			if (owner && active && owner !== active) {
+				rlog().warn(
+					"queue",
+					`Dropping queued op for ${noteRef(entry.path)} — queued under a different ` +
+						`vault (${owner.slice(0, 8)}), active is ${active.slice(0, 8)}`,
+				);
+				await this.queue.dequeue(entry.path, owner);
+				continue;
+			}
+
 			try {
 				if (entry.action === "delete") {
 					// FENCE (#416 review finding 0): the drain is a delete-push path
