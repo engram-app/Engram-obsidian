@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.24.3](https://github.com/engram-app/Engram-obsidian/compare/1.24.2...1.24.3) (2026-08-26)
+
+
+### Bug Fixes
+
+* **auth:** stop offering API keys to tiers that cannot use them ([#470](https://github.com/engram-app/Engram-obsidian/issues/470)) ([9809720](https://github.com/engram-app/Engram-obsidian/commit/9809720a19565e59461c4f099ae650c3ab4ca873))
+* **crdt:** [#1409](https://github.com/engram-app/Engram-obsidian/issues/1409) — room-free cold-note convergence, per-vault identity, and two path consolidations ([#474](https://github.com/engram-app/Engram-obsidian/issues/474)) ([c39d2a4](https://github.com/engram-app/Engram-obsidian/commit/c39d2a401c0db2b8888f46769bf7048f719e85bb))
+* **crdt:** gate create-ack self-heal enroll on isLiveBound ([#1409](https://github.com/engram-app/Engram-obsidian/issues/1409)) ([#466](https://github.com/engram-app/Engram-obsidian/issues/466)) ([0925c40](https://github.com/engram-app/Engram-obsidian/commit/0925c403cea65f970ace2cc931bbb7c6d196cad2))
+* **sync:** close pushFile's TOCTOU reentrancy race ([#467](https://github.com/engram-app/Engram-obsidian/issues/467)) ([cf48339](https://github.com/engram-app/Engram-obsidian/commit/cf483399bdbc7bf734afa997c9500fd09b3e79dc))
+
 ## [1.24.2](https://github.com/engram-app/Engram-obsidian/compare/1.24.1...1.24.2) (2026-08-24)
 
 
