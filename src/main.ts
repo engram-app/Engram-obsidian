@@ -2494,6 +2494,14 @@ export default class EngramSyncPlugin extends Plugin {
 						}
 						return channel.crdtDocState(id);
 					},
+					// #1409: release the server's room as soon as this device is
+					// done with the note, instead of leaving it to the 5-minute
+					// idle drain. Same vault guard as the two above — releasing
+					// against a stale channel would drop ANOTHER vault's room.
+					release: (id) => {
+						if (channel.getVaultId() !== this.settings.vaultId) return;
+						channel.crdtRelease(id);
+					},
 				});
 
 				// Wire CRDT transport through this channel.

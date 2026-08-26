@@ -591,6 +591,22 @@ export class NoteChannel {
 	 *  resolve means the delete is durably applied; a reject carries a retryable
 	 *  (rate_limited / not-joined / disconnect) or terminal (bad_doc_id) reason.
 	 *  Routed through the durable CrdtOpQueue; there is no REST delete fallback. */
+	/** #1409: tell the server this device is DONE with a note's room.
+	 *
+	 *  A room is `auto_exit: true` — it dies when its last observer leaves — but
+	 *  the channel becomes an observer on first contact and the only thing that
+	 *  ever released it was the room's own idle drain, five minutes later. On a
+	 *  bulk first sync each note needs its room for milliseconds and held it for
+	 *  minutes.
+	 *
+	 *  Fire-and-forget: the release is an optimisation, and a note whose release
+	 *  is lost simply falls back to the idle timer that governed everything
+	 *  before. Never let it fail a sync.
+	 */
+	crdtRelease(docId: string): void {
+		void this.sendRequest("crdt_release", { doc_id: docId }).catch(() => {});
+	}
+
 	async crdtDeleteAcked(docId: string): Promise<{ doc_id: string }> {
 		return (await this.sendRequest("crdt_delete", { doc_id: docId })) as {
 			doc_id: string;

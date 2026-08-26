@@ -379,6 +379,9 @@ export interface CrdtPorts {
 	 *  old to serve `crdt_doc_state`; callers fall back to the room
 	 *  handshake, so an unwired port costs rooms, never convergence. */
 	docState?: CrdtDocStateFn | null;
+	/** #1409: tell the server this device is done with a note's room, so its
+	 *  `auto_exit` can fire now instead of after the 5-minute idle drain. */
+	release?: ((docId: string) => void) | null;
 }
 
 /** Thrown by `walkOpLog` when the op-log FETCH itself fails, so a caller can
@@ -653,6 +656,7 @@ export class SyncEngine {
 		if ("liveBound" in ports) this.isLiveBound = ports.liveBound ?? (() => false);
 		if ("catchupSince" in ports) this.crdtCatchupSince = ports.catchupSince ?? null;
 		if ("docState" in ports) this.crdtDocState = ports.docState ?? null;
+		if ("release" in ports) this.crdtRelease = ports.release ?? null;
 	}
 
 	setCrdtManager(mgr: ProviderRegistry | null): void {
@@ -6378,6 +6382,11 @@ export class SyncEngine {
 	 *  test_cold_send_over_fanout_opens_no_room). `reset` also clears the
 	 *  channel's once-per-doc STEP1 gate so a FUTURE heal can re-handshake.
 	 *  A live-bound note keeps its room — the editor owns its lifecycle. */
+	/** #1409: the SERVER's half of a release. `releaseHealRoom` reset enrollment
+	 *  and closed the local doc and said nothing on the wire, so the server kept
+	 *  observing the room and it lived until the 5-minute idle drain. */
+	private crdtRelease: ((docId: string) => void) | null = null;
+
 	private releaseHealRoom(noteId: string, path: string | null): void {
 		// Re-resolve the CURRENT path — `path` may be the enqueue/staging-time
 		// path, and a rename in between would otherwise check liveness (and
@@ -6385,6 +6394,10 @@ export class SyncEngine {
 		// owns at its NEW path (silent data loss, the bind-race class).
 		const current = this.noteIdMap?.pathForId(noteId) ?? path;
 		if (current && this.isLiveBound(normalizePath(current))) return;
+		// Tell the SERVER too, or its observation keeps the room alive for the
+		// full idle window no matter what this device does locally. Same gate,
+		// both halves — an open editor keeps its warm room.
+		this.crdtRelease?.(noteId);
 		this.crdtEnrollment?.reset(noteId);
 		if (current) {
 			this.hibernateIfIdle(current, noteId);
