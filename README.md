@@ -50,7 +50,7 @@ Point your client at the Engram MCP server (`https://mcp.engram.page` on the hos
 
 ## Privacy
 
-- **Network use & accounts.** The plugin talks only to your Engram server, nothing else, no middlemen. You connect with your Engram account via OAuth sign-in or an API key.
+- **Network use & accounts.** The plugin talks only to your Engram server, nothing else, no middlemen. You connect with your Engram account via OAuth sign-in, which works on every plan. API keys are also supported, but on Engram Cloud they require the Pro plan; self-hosted servers have no such limit.
 - **No telemetry.** Optional remote logging (off by default) sends error/lifecycle events only to your server.
 - **Hosted privacy.** See [engram.page/privacy](https://engram.page/privacy). Paid tiers raise storage/search limits; self-hosting is free.
 

@@ -51,6 +51,7 @@ import { registerDiagnostics } from "./diagnostics";
 import { EmailCaptureModal } from "./email-capture-modal";
 import { errMsg, isHttpStatus } from "./error-util";
 import { ExplicitFolders } from "./explicit-folders";
+import { isPlanJoinReason } from "./limit-copy";
 import { LimitExceededError } from "./limit-error";
 import { notifyLimitExceeded } from "./limit-toast";
 import { parsePlanState } from "./plan-state";
@@ -2732,6 +2733,16 @@ export default class EngramSyncPlugin extends Plugin {
 							"crdt",
 							`crdt: topic join rejected (reason=${reason ?? "unknown"}) — degrading to legacy pushNote path`,
 						);
+						// A join rejected on a PLAN reason is not a transient backend
+						// wobble the user should sit through silently: it means their
+						// auth method is not entitled and no amount of retrying helps.
+						// Everything else keeps the log-only behaviour, since degrading
+						// to legacy is a real recovery and not worth a toast.
+						if (reason && isPlanJoinReason(reason)) {
+							notifyLimitExceeded(
+								new LimitExceededError(reason, null, null, null, null),
+							);
+						}
 						// Degrade to legacy: mirror the "never-joined disconnect" path.
 						this.crdtEverJoined = false;
 						this.syncEngine.setCrdtPorts({ manager: null });

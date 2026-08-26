@@ -68,7 +68,7 @@ The status bar at the bottom of Obsidian shows a quick indicator of sync state a
 | Notes aren't syncing | Open *Engram: Show sync log* or the Sync Center. Make sure the file type is supported and isn't in the ignore list. |
 | Conflicts every time I save | Your device and the server probably disagree on the time. Check both system clocks. |
 | Mobile crashes / won't load | File an issue with your phone OS and Obsidian version; mobile is supported and we want to know. |
-| Sign-in window won't finish | Fall back to an API key from your Engram dashboard. |
+| Sign-in window won't finish | Retry the sign-in; it is the only auth path on Free and Starter. On Pro (or any self-hosted server) you can fall back to an API key from your Engram dashboard. |
 | Big file won't upload | The Sync Center will show the reason. You can skip that file with *Ignore this file*. |
 
 Still stuck? [Open an issue](https://github.com/engram-app/Engram-obsidian/issues). Include your Obsidian version, your platform (desktop/mobile/OS), and a copy of the sync log.
