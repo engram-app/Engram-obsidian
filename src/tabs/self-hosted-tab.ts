@@ -494,7 +494,11 @@ export function describeListVaultsError(e: unknown): string {
  *  helper is unit-testable without dragging in the Obsidian DOM stack. */
 export interface VaultSwitchTarget {
 	settings: { vaultId: string | null; remoteVaultName?: string };
-	api: { setVaultId: (id: string | null) => void };
+	/** THE shared vault-change transition (main.ts). This used to be
+	 *  re-implemented here and agreed with the picker on 1 of 8 steps (#1409);
+	 *  the divergence is what let a previous vault's note-id map survive a
+	 *  switch. One path now, so it cannot drift again. */
+	switchVault: (id: string, name?: string) => Promise<void>;
 	saveSettings: () => Promise<void>;
 }
 
@@ -507,10 +511,12 @@ export async function applyVaultSwitch(
 	value: string,
 	name?: string,
 ): Promise<boolean> {
+	// No-op guard stays HERE, before the shared transition: switching to the
+	// vault you are already on must not wipe per-vault state.
 	if (!value || value === plugin.settings.vaultId) return false;
-	plugin.settings.vaultId = value;
-	if (name !== undefined) plugin.settings.remoteVaultName = name;
-	plugin.api.setVaultId(value);
+	await plugin.switchVault(value, name);
+	// saveSettings, not savePluginData — unlike the picker, this path WANTS the
+	// sync-gate chain to re-fire so the user is prompted for the new vault.
 	await plugin.saveSettings();
 	return true;
 }

@@ -74,7 +74,14 @@ function makeEngineWithCrdt(crdt: Partial<CrdtManager>): SyncEngine {
 		{ ...DEFAULT_SETTINGS, debounceMs: 1 },
 		mock().mockResolvedValue(undefined),
 	);
-	e.setCrdtManager(crdt as unknown as CrdtManager);
+	// The real registry always answers `hasUndeliveredOps`; partial doubles do
+	// not. Default it to false (nothing local pending) so existing tests keep
+	// exercising the room-free read, and let a caller override to assert the
+	// opposite. Spread FIRST so an explicit value in `crdt` wins.
+	e.setCrdtManager({
+		hasUndeliveredOps: () => false,
+		...crdt,
+	} as unknown as CrdtManager);
 	e.setReady();
 	const map = new NoteIdMap();
 	map.set("Notes/a.md", "id-a");
@@ -100,7 +107,7 @@ describe("discoverAnnouncedNote (e2e test_27 — announce-driven immediate empty
 		// the seq-replay for a recentlyDeleted / queued-delete note.
 		const crdt = {
 			hasHistory: (_id: string) => Promise.resolve(false),
-			applyRemoteUpdate: (_id: string, _u: Uint8Array) => Promise.resolve(),
+			applyRemoteUpdate: (_id: string, _u: Uint8Array) => Promise.resolve(true),
 			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([0])),
 			projectedText: (_id: string) => Promise.resolve(""),
 			closeDoc: () => {},
@@ -135,7 +142,7 @@ describe("discoverAnnouncedNote (e2e test_27 — announce-driven immediate empty
 		// for that id in the window must not trigger a catch-up that resurrects it.
 		const crdt = {
 			hasHistory: (_id: string) => Promise.resolve(false),
-			applyRemoteUpdate: (_id: string, _u: Uint8Array) => Promise.resolve(),
+			applyRemoteUpdate: (_id: string, _u: Uint8Array) => Promise.resolve(true),
 			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([0])),
 			projectedText: (_id: string) => Promise.resolve(""),
 			closeDoc: () => {},
@@ -158,7 +165,7 @@ describe("discoverAnnouncedNote (e2e test_27 — announce-driven immediate empty
 	test("never throws when the delta fetch fails (failure-isolated)", async () => {
 		const crdt = {
 			hasHistory: (_id: string) => Promise.resolve(false),
-			applyRemoteUpdate: (_id: string, _u: Uint8Array) => Promise.resolve(),
+			applyRemoteUpdate: (_id: string, _u: Uint8Array) => Promise.resolve(true),
 			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([0])),
 			projectedText: (_id: string) => Promise.resolve(""),
 			closeDoc: () => {},
@@ -1203,5 +1210,172 @@ describe("op-log pager — contract shared by replay + enumerate", () => {
 		await expect((previewEngine as any).enumerateServerState()).rejects.toThrow(
 			"socket dropped",
 		);
+	});
+});
+
+// #1409: a diverged COLD note (nobody has it open) used to converge via a
+// STEP1 re-handshake, and the backend routes every STEP1 through ensure_room —
+// so a bulk first sync allocated one server room per such note. Attribution on
+// a 250-note import put 100% of the rooms at this one call site. The room-free
+// `crdt_doc_state` read returns the same Yjs state off the persisted snapshot,
+// and applying it is the same monotonic merge STEP2's ops would have been.
+describe("convergeColdNoteRoomFree (#1409 — cold notes converge without a room)", () => {
+	const CHANGE = {
+		id: "id-a",
+		path: "Notes/a.md",
+		content_hash: "H2",
+		version: 2,
+		seq: 7,
+	} as unknown as SyncNoteChange;
+
+	// `markSynced` on the real registry re-enters SyncEngine via the onSynced
+	// port (crdt/wiring.ts), which is what drives commitCrdtConvergence. The
+	// double mirrors that so a test can prove the helper COMMITS, not merely
+	// that it stages — an earlier revision of these tests called
+	// commitCrdtConvergence by hand and would have passed against a version
+	// that never triggered it at all.
+	function coldEngine(applied: Array<[string, Uint8Array]>) {
+		const engine: SyncEngine = makeEngineWithCrdt({
+			applyRemoteUpdate: (id: string, u: Uint8Array) => {
+				applied.push([id, u]);
+				// TRUE = "a doc received this". False is the registry REFUSING
+				// (note removed, doc destroyed mid-hydration), and `markSynced`
+				// below must not run on a merge that never happened — it would
+				// record the note as converged holding none of the server's state,
+				// after which every catch-up compares equal hashes and skips it.
+				return Promise.resolve(true);
+			},
+			markSynced: (id: string) => void engine.commitCrdtConvergence(id),
+			closeDoc: () => {},
+			// The real registry always answers this; the room-free read is only
+			// legal when it is false (the frame cannot carry local ops upward).
+			hasUndeliveredOps: () => false,
+		} as unknown as Partial<CrdtManager>);
+		engine.importSyncState({ "Notes/a.md": { hash: 1, serverHash: "H1" } });
+		return engine;
+	}
+
+	test("a note with UNDELIVERED local ops takes the room, not the read", async () => {
+		// `crdt_doc_state` is a READ. The handshake it replaces is bidirectional
+		// — the server answers syncStep1 with [syncStep2, syncStep1] and the
+		// client's reply to that second step1 IS the upload half.
+		//
+		// So taking this path with undelivered local ops downloads, marks the
+		// note synced, and never transmits them: complete on this device, blank
+		// on every other, and stamped in-sync so every later catch-up compares
+		// equal hashes and skips it. Permanently, with no error anywhere.
+		const applied: Array<[string, Uint8Array]> = [];
+		const engine = coldEngine(applied);
+		const docState = mock().mockResolvedValue({ b64: "AQID", head: "h" });
+		engine.setCrdtPorts({ docState });
+		(engine as any).crdt.hasUndeliveredOps = () => true;
+		const converge = spyOn(engine as any, "socketConverge").mockImplementation(() => {});
+
+		await (engine as any).convergeColdNoteRoomFree(
+			"id-a",
+			"Notes/a.md",
+			CHANGE,
+			"server body",
+			"H2",
+		);
+
+		// The read is never even attempted, and the bidirectional path runs.
+		expect(docState).not.toHaveBeenCalled();
+		expect(applied).toEqual([]);
+		expect(converge).toHaveBeenCalledTimes(1);
+	});
+
+	test("applies the room-free state and never fires the room handshake", async () => {
+		const applied: Array<[string, Uint8Array]> = [];
+		const engine = coldEngine(applied);
+		const docState = mock().mockResolvedValue({ b64: "AQID", head: "h" });
+		engine.setCrdtPorts({ docState });
+		const converge = spyOn(engine as any, "socketConverge").mockImplementation(() => {});
+
+		await (engine as any).convergeColdNoteRoomFree(
+			"id-a",
+			"Notes/a.md",
+			CHANGE,
+			"server body",
+			"H2",
+		);
+
+		expect(docState).toHaveBeenCalledWith("id-a");
+		expect(applied).toEqual([["id-a", new Uint8Array([1, 2, 3])]]);
+		// THE assertion this whole change exists for.
+		expect(converge).not.toHaveBeenCalled();
+	});
+
+	test("DRIVES the convergence commit — applyRemoteUpdate does not fire onSynced, so an untriggered stage would leave the note diverged forever", async () => {
+		const engine = coldEngine([]);
+		engine.setCrdtPorts({ docState: mock().mockResolvedValue({ b64: "", head: "h" }) });
+		await (engine as any).convergeColdNoteRoomFree(
+			"id-a",
+			"Notes/a.md",
+			CHANGE,
+			"server body",
+			"H2",
+		);
+
+		await Promise.resolve();
+		expect(engine.exportSyncState()["Notes/a.md"].serverHash).toBe("H2");
+	});
+
+	test("a REFUSED apply falls back to the room and does NOT record convergence", async () => {
+		// `applyRemoteUpdate` refuses silently when the note is in `removed` or
+		// its doc was destroyed mid-hydration — and its promise still RESOLVES.
+		// Treating resolution as a merge meant `markSynced` recorded a note as
+		// converged holding none of the server's state, after which every later
+		// catch-up compared equal hashes and skipped it. Permanently, silently.
+		const engine = coldEngine([]);
+		(engine as any).crdt.applyRemoteUpdate = () => Promise.resolve(false);
+		engine.setCrdtPorts({ docState: mock().mockResolvedValue({ b64: "AQID", head: "h" }) });
+		const converge = spyOn(engine as any, "socketConverge").mockImplementation(() => {});
+
+		await (engine as any).convergeColdNoteRoomFree(
+			"id-a",
+			"Notes/a.md",
+			CHANGE,
+			"server body",
+			"H2",
+		);
+
+		expect(converge).toHaveBeenCalledTimes(1);
+		expect(engine.exportSyncState()["Notes/a.md"].serverHash).toBe("H1");
+	});
+
+	test("falls back to the room handshake when the frame fails (old backend, rate limit, dropped socket)", async () => {
+		const engine = coldEngine([]);
+		engine.setCrdtPorts({
+			docState: mock().mockRejectedValue(new Error("unmatched topic")),
+		});
+		const converge = spyOn(engine as any, "socketConverge").mockImplementation(() => {});
+
+		await (engine as any).convergeColdNoteRoomFree(
+			"id-a",
+			"Notes/a.md",
+			CHANGE,
+			"server body",
+			"H2",
+		);
+
+		expect(converge).toHaveBeenCalledTimes(1);
+		expect(converge.mock.calls[0]).toEqual(["Notes/a.md", "id-a"]);
+	});
+
+	test("falls back to the room handshake when the port is unwired entirely", async () => {
+		const engine = coldEngine([]);
+		engine.setCrdtPorts({ docState: null });
+		const converge = spyOn(engine as any, "socketConverge").mockImplementation(() => {});
+
+		await (engine as any).convergeColdNoteRoomFree(
+			"id-a",
+			"Notes/a.md",
+			CHANGE,
+			"server body",
+			"H2",
+		);
+
+		expect(converge).toHaveBeenCalledTimes(1);
 	});
 });

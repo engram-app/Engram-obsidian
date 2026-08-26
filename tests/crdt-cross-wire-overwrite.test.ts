@@ -133,10 +133,14 @@ describe("cross-wired map must not destroy an unrelated note", () => {
 
 		const e = engine as unknown as {
 			cacheManifestOwners(m: unknown): void;
-			manifestOwnersFetchedAt: number;
+			manifestOwners: { owners: Map<string, string> | null; fetchedAt: number };
 		};
 		e.cacheManifestOwners(manifest([{ id: "X", path: "A.md" }])); // old: a.md absent
-		e.manifestOwnersFetchedAt = Date.now() - 60_000; // aged past the 30s TTL
+		// The snapshot and its stamp are ONE sweepable unit now, so that a vault
+		// switch cannot leave a trusted-but-empty map behind — an empty map that
+		// still reads as fresh answers "absent" for every path and would
+		// authorize trashing (#1409 review).
+		e.manifestOwners.fetchedAt = Date.now() - 60_000; // aged past the 30s TTL
 		// Fresh server truth: Y now lives at a.md.
 		getManifest.mockResolvedValue(
 			manifest([

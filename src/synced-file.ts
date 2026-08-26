@@ -142,8 +142,19 @@ export class SyncedFileTable {
 		this.files.delete(path);
 	}
 
-	/** Cancel every outstanding timer. Call on teardown. */
-	destroy(): void {
+	/** Cancel every outstanding timer and drop every marker.
+	 *
+	 *  Named `clear` (not only `destroy`) so the table satisfies the engine's
+	 *  sweepable contract: its markers are PATH-keyed and therefore vault-scoped
+	 *  — an echo marker stranded from the old vault suppresses a real event for
+	 *  the same path in the new one. It escaped the sweep registry purely
+	 *  because it is a composed object rather than a Map (#1409 review). */
+	clear(): void {
 		for (const path of [...this.files.keys()]) this.forget(path);
+	}
+
+	/** Teardown alias — same work, kept for call-site clarity. */
+	destroy(): void {
+		this.clear();
 	}
 }

@@ -131,6 +131,12 @@ interface PluginData {
 	syncGateAcceptedFor?: string | null;
 	/** Path -> note_id sidecar (NoteIdMap.toJSON()). See src/crdt/note-id-map.ts. */
 	noteIds?: Record<string, string>;
+	/** The server vaultId `noteIds` was recorded under (#1409). Identity is
+	 *  per-vault, so seeding this cache into a DIFFERENT vault makes
+	 *  `crdt_create` propose foreign ids — see the seed site for the full
+	 *  chain. `syncState` has carried the same guard (`syncStateVaultId`)
+	 *  since it was added; `noteIds` was the one that never got it. */
+	noteIdsVaultId?: string | null;
 }
 
 /** Whether setupNoteStream() may keep the existing stream instead of
@@ -227,9 +233,31 @@ export default class EngramSyncPlugin extends Plugin {
 		// warns that "a wipe that exists on only one path re-opens #200". Since
 		// clear() became local-only it cannot drop the committed doc, so it has
 		// to trigger the room replacement that can.
-		map.onReset = () => this.resetIndexRoomForVault();
+		map.onReset = () => {
+			// An emptied map is valid for whatever vault is active NOW, so this
+			// is the one moment its provenance legitimately changes. Every
+			// vault-change route funnels through clear() (the picker and the
+			// `invalidateIfVaultChanged` backstop), and both set `vaultId`
+			// before wiping, so `settings.vaultId` here is already the new one.
+			this.noteIdsOwner = this.settings.vaultId ?? null;
+			this.resetIndexRoomForVault();
+		};
 		return map;
 	}
+
+	/** Which vault `noteIdMap`'s entries were minted under — its PROVENANCE, not
+	 *  the vault that happens to be active.
+	 *
+	 *  This used to be read from `settings.vaultId` at save time, which made the
+	 *  load-time gate essentially unfireable: there are ~10 fire-and-forget
+	 *  `savePluginData` call sites, so the instant any path set `vaultId = B`
+	 *  while the map still held A's entries, the next save wrote A's map STAMPED
+	 *  B and the gate then compared `B !== B` and seeded the foreign map. The
+	 *  gate could only ever fire if the process died before any save — the
+	 *  narrowest window in the system (#1409 review).
+	 *
+	 *  It now changes at exactly one moment: when the map is emptied. */
+	private noteIdsOwner: string | null = null;
 
 	/** `?.` alone: before the first connectChannel there is no channel, and the
 	 *  provider correctly BUFFERS the frame for the next connect. */
@@ -249,6 +277,38 @@ export default class EngramSyncPlugin extends Plugin {
 	 *
 	 *  A fresh doc has a fresh clientID and an empty clock, and a discarded doc
 	 *  nobody observes broadcasts nothing. */
+	/** THE one place the active vault changes (#1409 consolidation).
+	 *
+	 *  There were two implementations: this one (reached from the sync-preview
+	 *  modal's picker) and `applyVaultSwitch` in the self-hosted tab, reached
+	 *  from the Connection page dropdown. They agreed on ONE of eight steps.
+	 *  The dropdown runs on a first pick AND when the stored vault no longer
+	 *  exists server-side — a real vault change carrying a full stale map — so
+	 *  the seven it skipped were live bugs, not dead code. Chief among them the
+	 *  path -> note_id map, which is per-vault identity: carrying it over makes
+	 *  `crdt_create` propose the old vault's ids (the #1318 collision class).
+	 *
+	 *  Persistence and UI follow-ups stay with the callers on purpose: the
+	 *  picker uses `savePluginData` precisely to AVOID `saveSettings`
+	 *  re-firing the sync-gate chain and stacking a second modal, while the
+	 *  dropdown wants exactly that chain. That difference is intentional; the
+	 *  state transition below is not allowed to differ.
+	 *
+	 *  Caller must have already established that `id` differs from the active
+	 *  vault — a no-op "switch" to the vault you are already on must not wipe
+	 *  anything. */
+	async switchVault(id: string, name?: string): Promise<void> {
+		if (name !== undefined) this.settings.remoteVaultName = name;
+		this.syncEngine.updateSettings(this.settings);
+		// Per-file hashes, lastSync, cursors, the note-id map, the accepted-gate
+		// fingerprint, the reconcile throttle and the strand-heal counts are ALL
+		// scoped to the outgoing vault. This method used to spell out its own
+		// copy of that list, which is how the auth paths and this one drifted
+		// apart in the first place — one list, one owner.
+		await this.discardVaultScopedState(id);
+		this.syncEngine.setSyncBlocked(true);
+	}
+
 	resetIndexRoomForVault(): void {
 		this.indexRoom.destroy();
 		this.indexRoom = this.makeIndexRoom();
@@ -582,8 +642,24 @@ export default class EngramSyncPlugin extends Plugin {
 				// back to the room-opening disk-seed on delivery.
 				buildGenesisFrame: (path, noteId) =>
 					this.syncEngine.buildGenesisFrame(path, noteId),
-				onCreated: (localId, serverId, path, seeded, genesis) =>
-					this.syncEngine.applyCrdtCreateAck(localId, serverId, path, seeded, genesis),
+				onCreated: (localId, serverId, path, seeded, genesis, genesisOutcome) =>
+					this.syncEngine.applyCrdtCreateAck(
+						localId,
+						serverId,
+						path,
+						seeded,
+						genesis,
+						genesisOutcome,
+					),
+				onPostAckError: (docId, path, error) =>
+					// The row exists, so the create is not retried — but the ack's
+					// bookkeeping (id map, oracle, confirm, held-edit flush) did NOT
+					// complete, which can strand edits the user already typed. Logged
+					// at warn so it reaches Loki; info-level client logs do not.
+					rlog().warn(
+						"crdt",
+						`crdt_create post-ack step failed for ${docId} ${noteRef(path)}: ${errMsg(error, path)}`,
+					),
 				onTerminal: (op, reason) =>
 					// A create/delete that retrying cannot fix. Surface it (error log) so
 					// it never silently vanishes; the queue then drops it (no infinite retry).
@@ -1209,19 +1285,31 @@ export default class EngramSyncPlugin extends Plugin {
 		if (!isHttpStatus(e, 404) || !this.settings.vaultId) return;
 		this.healingVault = true;
 		try {
-			const vaults = await this.api.listVaults();
+			// ONLY the probe is allowed to fail silently — it is the one step whose
+			// failure means "nothing to conclude". The catch used to wrap the heal
+			// too, so a throw anywhere in it left the vault half-cleared with no
+			// log at all: the id stayed set, sync stayed unblocked, and the next
+			// 404 re-entered and failed the same way forever.
+			let vaults: Awaited<ReturnType<typeof this.api.listVaults>>;
+			try {
+				vaults = await this.api.listVaults();
+			} catch {
+				// listVaults itself failed (offline?) — the next sync error re-runs
+				// this check.
+				return;
+			}
 			if (vaults.some((v) => v.id === this.settings.vaultId)) return;
 			rlog().warn(
 				"lifecycle",
 				`Active vault ${this.settings.vaultId} no longer exists server-side — clearing and reopening the picker`,
 			);
-			this.settings.vaultId = null;
 			this.settings.remoteVaultName = undefined;
-			// Finding 10: EngramApi keeps its OWN vault id and stamps it on every
-			// request — clearing only the settings field leaves non-sync requests
-			// (sync-center retries, attachment fetches) 404ing on the dead header.
-			this.api.setVaultId(null);
-			this.syncGateAcceptedFor = null;
+			// The vault is GONE, so every note_id in the map addresses a vault
+			// that no longer exists. Nulling the id alone left that map to be
+			// carried into whichever vault the picker lands on next — the same
+			// cross-vault identity leak `switchVault` exists to prevent, reached
+			// through a different door (#1409 review).
+			await this.discardVaultScopedState(null);
 			this.syncEngine.setSyncBlocked(true);
 			// Finding 9: a preview/picker already open sits on the now-nulled
 			// vault, and the syncPreviewGuard makes the reopen below a silent
@@ -1233,9 +1321,10 @@ export default class EngramSyncPlugin extends Plugin {
 				"Engram: this vault no longer exists on the server. Pick or create a vault to continue.",
 			);
 			await this.doSyncWithFirstSyncCheck({ startInVaultPicker: true });
-		} catch {
-			// listVaults itself failed (offline?) — nothing to conclude; the next
-			// sync error re-runs this check.
+		} catch (err) {
+			// The heal itself broke. Surfaced, not swallowed: sync is now in an
+			// undefined state and a silent failure here is unobservable.
+			rlog().error("lifecycle", `Dead-vault heal failed midway: ${errMsg(err)}`);
 		} finally {
 			this.healingVault = false;
 		}
@@ -1339,7 +1428,41 @@ export default class EngramSyncPlugin extends Plugin {
 		// other devices and — through id-keyed removal — published DELETES of the
 		// paths those claims lived at. The cache is evidence about the past, and
 		// it is not allowed to make a claim.
-		this.noteIdMap.seed(data?.noteIds);
+		// #1409 ROOT CAUSE. This cache is per-VAULT identity, and it used to be
+		// seeded unconditionally. Reload the plugin (a BRAT update, an Obsidian
+		// restart) after the active vault changed and the PREVIOUS vault's
+		// path -> note_id entries came straight back, outliving every in-session
+		// wipe (`resetForVaultChange` -> `noteIdMap.clear()` -> the index-room
+		// replacement) because those all run against memory, not this file.
+		//
+		// `crdt_create` then proposes the old vault's ids. The server cannot
+		// reuse a foreign-vault id (the #1318 collision class), answers with a
+		// fresh one, `serverId !== noteId` fails the seeded fast path, and the
+		// fallback broadcasts a sync_update that opens a room PER NOTE.
+		// Measured on a real 423-item import: 225 rooms for 317 notes, all
+		// source=edit, ZERO crdt_update_log rows — every room redundant.
+		//
+		// A MISSING recorded id is adopted, not discarded: pre-upgrade data.json
+		// has no `noteIdsVaultId`, and dropping a valid cache on upgrade would
+		// force a needless re-mint of every note.
+		const cachedIdsVault = data?.noteIdsVaultId;
+		const activeVault = this.settings.vaultId ?? null;
+		if (
+			cachedIdsVault !== undefined &&
+			cachedIdsVault !== null &&
+			activeVault !== null &&
+			cachedIdsVault !== activeVault
+		) {
+			rlog().warn(
+				"lifecycle",
+				`Dropping cached note-id map from vault ${cachedIdsVault} — active vault is ${activeVault}`,
+			);
+		} else {
+			this.noteIdMap.seed(data?.noteIds);
+			// Carry the recorded provenance forward. An absent stamp (pre-upgrade
+			// data.json) adopts the active vault, matching the seed we just did.
+			this.noteIdsOwner = cachedIdsVault ?? activeVault;
+		}
 		// Migrate a stored Cloud apiUrl off the legacy SPA host (app.engram.page,
 		// which 405s API POSTs post-cutover) onto the canonical REST host. Same
 		// backend + credentials — only the edge hostname moved, so auth is kept.
@@ -1492,9 +1615,55 @@ export default class EngramSyncPlugin extends Plugin {
 				this.app.vault.getName(),
 				this.settings.clientId,
 			);
-			this.settings.vaultId = result.id;
 			this.settings.remoteVaultName = result.name;
-			this.api.setVaultId(this.settings.vaultId);
+
+			// #1409 (root cause). Reaching here means `settings.vaultId` was
+			// FALSY, so this registration just bound the install to a vault it
+			// was not bound to a moment ago. Two live paths null the vaultId
+			// without touching identity state — the 404 "vault no longer exists"
+			// heal and `onVaultDeleted` — and neither runs
+			// `resetForVaultChange`, so the path -> note_id map survives into a
+			// vault that has no such notes.
+			//
+			// The consequence is not cosmetic: `crdt_create` then proposes the
+			// PREVIOUS vault's ids, the server cannot reuse a foreign-vault id
+			// and answers with a fresh one, `serverId !== noteId` fails the
+			// seeded fast path, and the else-leg's routeModify broadcasts a
+			// sync_update that opens a room PER NOTE. Measured on a real
+			// 423-item import: 225 rooms for 317 notes, all source=edit, with
+			// ZERO crdt_update_log rows written — every one of them redundant,
+			// because the roomless genesis seed had already stored the state.
+			// It is also the #1318 cross-vault collision class the SERVER had
+			// to grow a re-mint for.
+			//
+			// Wiping is unconditionally correct on THIS branch specifically: a
+			// vault we just registered into holds no notes of ours, so every
+			// entry in the map is provably about a different vault.
+			//
+			// The wipe used to be gated on `carried > 0` — a non-empty note-id
+			// map — which read as a cheap "first install is a silent no-op"
+			// optimisation and was a bug: the map is only ONE of the things
+			// `resetForVaultChange` clears. lastSync and the catch-up cursor are
+			// scoped to the vault too, and `onVaultDeleted` empties the map
+			// without touching them. Registering after that took the guard's
+			// false branch and inherited a watermark from a DIFFERENT vault, so
+			// the first catch-up resumed from a seq that means nothing here and
+			// skipped every note below it. The guard now covers only the log,
+			// which is all it was ever justified for — on a genuine first
+			// install the wipe is a no-op, not an optimisation worth a branch.
+			const carried = Object.keys(this.noteIdMap.toJSON()).length;
+			if (carried > 0) {
+				rlog().warn(
+					"lifecycle",
+					`Registered a new vault (${result.id}) while holding ${carried} note-id ` +
+						`mappings from a previous vault — wiping per-vault identity state`,
+				);
+			}
+			// The full transition, not just the map: the sync gate's accepted
+			// fingerprint, the reconcile throttle and the strand-heal counts are
+			// all keyed to the outgoing vault as well.
+			await this.discardVaultScopedState(result.id);
+
 			await this.saveSettings();
 			rlog().info("lifecycle", `Vault registered: id=${result.id} slug=${result.slug}`);
 			return true;
@@ -1614,6 +1783,10 @@ export default class EngramSyncPlugin extends Plugin {
 			ignoredFiles: this.syncEngine.ignoredFiles.serialize(),
 			syncGateAcceptedFor: this.syncGateAcceptedFor,
 			noteIds: this.noteIdMap.toJSON(),
+			// The map's PROVENANCE, so a later load into a different vault can
+			// refuse it (#1409). Deliberately NOT `settings.vaultId` — see
+			// `noteIdsOwner`.
+			noteIdsVaultId: this.noteIdsOwner,
 		});
 	}
 
@@ -1627,6 +1800,14 @@ export default class EngramSyncPlugin extends Plugin {
 		if (!this.settings.refreshToken && !this.settings.apiKey) return;
 		rlog().info("auth", `Clearing auth + prompting re-link (${reason})`);
 		Object.assign(this.settings, withClearedAuth(this.settings));
+		// `withClearedAuth` nulls `vaultId` — which makes this a vault change,
+		// and every one of those has to wipe the vault-scoped identity state.
+		// It did not, so a re-link that lands on a DIFFERENT vault (a different
+		// account, or the same account's second vault) inherited the previous
+		// vault's note-id map and proposed its ids there. Passed the already-
+		// nulled value rather than a literal so this stays true if the cleared
+		// set ever changes.
+		await this.discardVaultScopedState(this.settings.vaultId ?? null);
 		this.api.setAuthProvider(null);
 		this.replaceAuthProvider(null);
 		this.noteStream?.disconnect();
@@ -1759,6 +1940,29 @@ export default class EngramSyncPlugin extends Plugin {
 		return null;
 	}
 
+	/** Drop every piece of state scoped to the OUTGOING vault and adopt `vaultId`.
+	 *
+	 *  The reset half of `switchVault`, split out because the auth paths reach a
+	 *  vault change through a different door: they are mid-credential-swap, so
+	 *  they must NOT re-enter the settings save or the sync gate that
+	 *  `switchVault` drives — they do their own, later in the same call. What
+	 *  they DO need is identical: the note-id map, its provenance, the cursors
+	 *  and the index room, or the new vault inherits ids that mean nothing on it.
+	 *
+	 *  Six of nine vault-changing paths used to skip all of this. */
+	async discardVaultScopedState(vaultId: string | null): Promise<void> {
+		this.settings.vaultId = vaultId;
+		// EngramApi keeps its OWN copy and stamps it on every request. Setting it
+		// here rather than leaving it to a later `saveSettings` closes the window
+		// where the awaited reset below runs while requests still carry the
+		// OUTGOING vault's header.
+		this.api.setVaultId(vaultId);
+		await this.syncEngine.resetForVaultChange();
+		this.syncGateAcceptedFor = null;
+		this.lastMapReconcileAt = 0;
+		this.crdtWiring?.clearStrandHealAttempts();
+	}
+
 	async saveOAuthTokens(refreshToken: string, vaultId: string, userEmail: string): Promise<void> {
 		// #283: mark the identity swap so an in-flight catch-up manifest fetch
 		// straddling this call refuses its destructive delete-reconcile (a stale
@@ -1767,7 +1971,13 @@ export default class EngramSyncPlugin extends Plugin {
 		this.settings.refreshToken = refreshToken;
 		this.settings.userEmail = userEmail;
 		this.settings.authMethod = "oauth";
-		this.settings.vaultId = vaultId;
+		// A device link or account swap moves us to a DIFFERENT vault, so the
+		// note-id map, cursors and index room must all be reset — note_ids are
+		// unique only WITHIN a vault. This used to be a raw assignment, so the
+		// install kept the previous vault's identity state and proposed foreign
+		// ids on the new one (#1409 review). Awaited before the settings save
+		// below, which rebuilds the note channel.
+		await this.discardVaultScopedState(vaultId);
 		// Fresh login — discard any stale persisted access token so the next
 		// request mints one against the new refresh token.
 		this.settings.accessToken = undefined;
@@ -1811,6 +2021,15 @@ export default class EngramSyncPlugin extends Plugin {
 		// on switch-back and trip reuse detection (revoking the whole family).
 		if (this.authProvider instanceof OAuthAuth) await this.authProvider.settle();
 		if (!switchMode(this.settings, target, ENGRAM_CLOUD_URL)) return false;
+
+		// `BACKEND_SCOPED_FIELDS` includes `vaultId`, so `switchMode` just moved
+		// us to a different vault on a different SERVER. Nothing here reset the
+		// identity state, so the install carried the outgoing backend's note-id
+		// map into the incoming one — and `setupNoteStream` below reconnected the
+		// SAME index-room Y.Doc, advertising vault A's `filemeta_v0` entries into
+		// vault B's room, which is verbatim what `resetIndexRoomForVault`'s own
+		// docstring warns about (#1409 review).
+		await this.discardVaultScopedState(this.settings.vaultId ?? null);
 		this.syncEngine.bumpAuthGeneration();
 		this.noteStream?.disconnect();
 		this.replaceAuthProvider(this.createAuthProvider());
@@ -2214,10 +2433,16 @@ export default class EngramSyncPlugin extends Plugin {
 				channel.onVaultDeleted = () => {
 					new Notice("Engram: This vault has been deleted on the server.");
 					rlog().info("lifecycle", "Vault deleted on server — clearing vaultId");
-					this.settings.vaultId = null;
-					this.api.setVaultId(null);
-					// Use savePluginData instead of saveSettings to avoid triggering re-registration
-					void this.savePluginData(this.syncEngine.getLastSync());
+					// Same reasoning as healDeadVault: the vault is gone, so its
+					// note-id map, cursors and index room address nothing. Nulling
+					// only the id left them to be inherited by the next vault.
+					// Awaited before the save so the persisted data.json reflects
+					// the wipe rather than the pre-wipe map.
+					void this.discardVaultScopedState(null).then(() =>
+						// savePluginData, not saveSettings: the latter re-triggers
+						// registration.
+						this.savePluginData(this.syncEngine.getLastSync()),
+					);
 					this.noteStream?.disconnect();
 				};
 
@@ -2261,6 +2486,23 @@ export default class EngramSyncPlugin extends Plugin {
 					// arg can't silently make the fix inert (TS bivariance accepts a
 					// shorter closure).
 					catchupSince: makeCrdtCatchupSender(channel, () => this.settings.vaultId),
+					// Room-free full-state read for a diverged COLD note (#1409).
+					// Same vault guard as catchupSince: a stale channel would
+					// answer out of the WRONG vault's rows (#314).
+					docState: (id) => {
+						if (channel.getVaultId() !== this.settings.vaultId) {
+							throw new Error("crdt_doc_state: channel vault mismatch");
+						}
+						return channel.crdtDocState(id);
+					},
+					// #1409: release the server's room as soon as this device is
+					// done with the note, instead of leaving it to the 5-minute
+					// idle drain. Same vault guard as the two above — releasing
+					// against a stale channel would drop ANOTHER vault's room.
+					release: (id) => {
+						if (channel.getVaultId() !== this.settings.vaultId) return;
+						channel.crdtRelease(id);
+					},
 				});
 
 				// Wire CRDT transport through this channel.
@@ -2779,25 +3021,7 @@ export default class EngramSyncPlugin extends Plugin {
 						// saveSettings — that path would re-fire
 						// doSyncWithFirstSyncCheck for the closed gate and stack
 						// a second modal on top of this one.
-						this.settings.vaultId = id;
-						this.settings.remoteVaultName = name;
-						this.api.setVaultId(id);
-						this.syncEngine.updateSettings(this.settings);
-						// Last sync and per-file hashes are scoped to the previous
-						// server vault. Without this reset, fullSync compares
-						// local mtime to a stale lastSync and pushes nothing —
-						// even when the new vault is empty.
-						await this.syncEngine.resetForVaultChange();
-						this.syncGateAcceptedFor = null;
-						// New vault = new id/path space; re-reconcile on next connect
-						// (bypass the throttle — this isn't a storm, it's a real swap).
-						this.lastMapReconcileAt = 0;
-						// Strand-heal retry counts are scoped to the previous vault's
-						// note_ids (final review MINOR-6) — stale counts here could
-						// prematurely give up on a note_id that happens to be reused
-						// in the new vault.
-						this.crdtWiring?.clearStrandHealAttempts();
-						this.syncEngine.setSyncBlocked(true);
+						await this.switchVault(id, name);
 						await this.savePluginData(this.syncEngine.getLastSync());
 						// Re-render the settings tab so the vault name span and
 						// any other vault-derived UI pick up the switch.

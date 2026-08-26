@@ -34,7 +34,11 @@ describe("crdtOpFailureReason", () => {
 describe("makeCrdtOpSend dispatch + taxonomy", () => {
 	function fakeChannel(overrides: Partial<CrdtOpChannel> = {}): CrdtOpChannel {
 		return {
-			crdtCreate: mock(async (docId: string) => ({ docId, seeded: false })),
+			crdtCreate: mock(async (docId: string) => ({
+				docId,
+				seeded: false,
+				genesisOutcome: "absent" as const,
+			})),
 			crdtDeleteAcked: mock(async (docId: string) => ({ doc_id: docId })),
 			...overrides,
 		};
@@ -44,13 +48,28 @@ describe("makeCrdtOpSend dispatch + taxonomy", () => {
 		const onCreated = mock(() => {});
 		const send = makeCrdtOpSend({
 			channel: () =>
-				fakeChannel({ crdtCreate: async () => ({ docId: "server-id", seeded: false }) }),
+				fakeChannel({
+					crdtCreate: async () => ({
+						docId: "server-id",
+						seeded: false,
+						genesisOutcome: "absent" as const,
+					}),
+				}),
 			onCreated,
 			onTerminal: () => {},
 		});
 		await expect(send(op("create", "local-id", "N.md"))).resolves.toBe("ok");
 		// #1409: onCreated also carries seeded + the (here-unwired) genesis frame.
-		expect(onCreated).toHaveBeenCalledWith("local-id", "server-id", "N.md", false, undefined);
+		// #476: and the server's genesis OUTCOME, which is what actually decides
+		// whether the body may be transmitted — `seeded` alone could not.
+		expect(onCreated).toHaveBeenCalledWith(
+			"local-id",
+			"server-id",
+			"N.md",
+			false,
+			undefined,
+			"absent",
+		);
 	});
 
 	// H4 (adversarial review): a replayed create must still carry the genesis
@@ -62,6 +81,7 @@ describe("makeCrdtOpSend dispatch + taxonomy", () => {
 		const crdtCreate = mock(async (_docId: string, _path: string, b64?: string) => ({
 			docId: "server-id",
 			seeded: b64 !== undefined,
+			genesisOutcome: b64 === undefined ? ("absent" as const) : ("stored" as const),
 		}));
 		const onCreated = mock(() => {});
 		const genesis = {
@@ -79,13 +99,21 @@ describe("makeCrdtOpSend dispatch + taxonomy", () => {
 		await expect(send(op("create", "local-id", "N.md"))).resolves.toBe("ok");
 
 		expect(crdtCreate).toHaveBeenCalledWith("local-id", "N.md", "BASE64FRAME");
-		expect(onCreated).toHaveBeenCalledWith("local-id", "server-id", "N.md", true, genesis);
+		expect(onCreated).toHaveBeenCalledWith(
+			"local-id",
+			"server-id",
+			"N.md",
+			true,
+			genesis,
+			"stored",
+		);
 	});
 
 	test("H4: a note that doesn't qualify (buildGenesisFrame returns undefined) sends a bodyless create as before", async () => {
 		const crdtCreate = mock(async (docId: string, _path: string, b64?: string) => ({
 			docId,
 			seeded: b64 !== undefined,
+			genesisOutcome: b64 === undefined ? ("absent" as const) : ("stored" as const),
 		}));
 		const onCreated = mock(() => {});
 		const send = makeCrdtOpSend({
@@ -98,7 +126,16 @@ describe("makeCrdtOpSend dispatch + taxonomy", () => {
 		await expect(send(op("create", "local-id", "N.md"))).resolves.toBe("ok");
 
 		expect(crdtCreate).toHaveBeenCalledWith("local-id", "N.md");
-		expect(onCreated).toHaveBeenCalledWith("local-id", "local-id", "N.md", false, undefined);
+		// No frame was sent, so the server has nothing to hold: `absent` is what
+		// permits the caller to transmit the body (#476).
+		expect(onCreated).toHaveBeenCalledWith(
+			"local-id",
+			"local-id",
+			"N.md",
+			false,
+			undefined,
+			"absent",
+		);
 	});
 
 	test("delete resolve → ok", async () => {

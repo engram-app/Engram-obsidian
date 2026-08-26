@@ -1122,8 +1122,14 @@ describe("NoteChannel CRDT frame senders", () => {
 			{ status: "ok", response: { doc_id: "server-id-Y" } },
 		]);
 		// An older server / no-b64 reply omits `seeded` entirely — the safe
-		// default is "not seeded" (#1409).
-		await expect(p).resolves.toEqual({ docId: "server-id-Y", seeded: false });
+		// default is "not seeded" (#1409). It also omits `genesis`, which is
+		// reported as null rather than guessed: the caller then CONFIRMS the
+		// server's doc is empty before transmitting a body (#476).
+		await expect(p).resolves.toEqual({
+			docId: "server-id-Y",
+			seeded: false,
+			genesisOutcome: null,
+		});
 
 		channel.disconnect();
 	});
@@ -1143,9 +1149,13 @@ describe("NoteChannel CRDT frame senders", () => {
 			frame[1],
 			"crdt:u1:v1",
 			"phx_reply",
-			{ status: "ok", response: { doc_id: "server-id", seeded: true } },
+			{ status: "ok", response: { doc_id: "server-id", seeded: true, genesis: "stored" } },
 		]);
-		await expect(p).resolves.toEqual({ docId: "server-id", seeded: true });
+		await expect(p).resolves.toEqual({
+			docId: "server-id",
+			seeded: true,
+			genesisOutcome: "stored",
+		});
 
 		channel.disconnect();
 	});
@@ -1162,9 +1172,13 @@ describe("NoteChannel CRDT frame senders", () => {
 			frame[1],
 			"crdt:u1:v1",
 			"phx_reply",
-			{ status: "ok", response: { doc_id: "local-id", seeded: false } },
+			{ status: "ok", response: { doc_id: "local-id", seeded: false, genesis: "absent" } },
 		]);
-		await expect(p).resolves.toEqual({ docId: "local-id", seeded: false });
+		await expect(p).resolves.toEqual({
+			docId: "local-id",
+			seeded: false,
+			genesisOutcome: "absent",
+		});
 
 		channel.disconnect();
 	});
