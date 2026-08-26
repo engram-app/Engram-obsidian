@@ -38,6 +38,12 @@ function makePlugin(initial: string | null): VaultSwitchTarget & {
 	saveSettings: ReturnType<typeof mock>;
 	switchVault: ReturnType<typeof mock>;
 } {
+	// The fake's `switchVault` mirrors the real one's observable effects so the
+	// no-op guard below has real state to guard against. It is NOT evidence:
+	// asserting `api.setVaultId` here would only re-read this script. What that
+	// method actually does is pinned in main-switch-vault-transition.test.ts;
+	// what belongs HERE is `applyVaultSwitch`'s own contract — whether, when and
+	// with what it delegates.
 	const target = {
 		settings: { vaultId: initial } as { vaultId: string | null; remoteVaultName?: string },
 		api: { setVaultId: mock(() => {}) },
@@ -56,7 +62,7 @@ describe("applyVaultSwitch", () => {
 		const plugin = makePlugin("3");
 		const changed = await applyVaultSwitch(plugin, "");
 		expect(changed).toBe(false);
-		expect(plugin.api.setVaultId).not.toHaveBeenCalled();
+		expect(plugin.switchVault).not.toHaveBeenCalled();
 	});
 
 	test("ignores no-op value (selecting the already-active vault)", async () => {
@@ -71,8 +77,9 @@ describe("applyVaultSwitch", () => {
 		const changed = await applyVaultSwitch(plugin, "9");
 
 		expect(changed).toBe(true);
-		expect(plugin.settings.vaultId).toBe("9");
-		expect(plugin.api.setVaultId).toHaveBeenCalledWith("9");
+		// The delegation contract, not the fake's own script: the id and the
+		// (absent) name are forwarded verbatim, and persistence follows.
+		expect(plugin.switchVault).toHaveBeenCalledWith("9", undefined);
 		expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
 	});
 
