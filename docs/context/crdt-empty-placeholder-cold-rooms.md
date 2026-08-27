@@ -110,16 +110,34 @@ nothing. Two cheap instruments cracked it in one session:
    its three conditions failed. Answer: **`disk-differs`, 100%**, killing the
    standing hypothesis that a recorded `serverHash` was skipping the guard.
 
-Then `adapter.read` alongside `cachedRead` proved the 0 bytes were real. Both
-instruments live on `chore/diag-enroll-all-devices` ("not for merge").
+Then `adapter.read` alongside `cachedRead` proved the 0 bytes were real.
+
+The branch that carried both instruments is **deleted** — do not go looking for
+it. They are ~10 lines each and faster to re-add than to find: a
+`Map<string, number>` on `SyncEngine` bumped in `fireCrdtReHandshake` from a
+`site` label threaded through `socketConverge`/`stageAndConverge`, and a second
+map bumped at the guard with a key naming which condition failed. The e2e reads
+them over CDP (`Object.fromEntries(...)` on the engine handle) — see
+`test_77_bulk_first_sync.py`'s site readout for the shape.
 
 **Confirm the leg you added actually fires.** A one-line probe log plus
 `docker logs | grep -c` is the difference between "0 rooms" meaning "it worked"
 and "0 rooms" meaning "it never ran."
 
 ## Repro loop
-~90 s per iteration, reproduces every run. Stack + env per
-`../../docs/context/local-crdt-e2e-repro.md`:
+~90 s per iteration, reproduces every run — but **you have to build the device
+topology yourself.** `test_77_bulk_first_sync` on `main` is SINGLE-DEVICE
+(`vault_a, cdp_a, api_sync`): A pushes and nothing receives. The #477 chain only
+appears on a device that PULLS the create row, so the 3-device variant used for
+this whole investigation was part of the (now deleted) diag branch, not main.
+
+To reproduce: take test_77's bulk-seed shape (close the gate, write N notes,
+accept the gate, `trigger_full_sync`), add `cdp_b` and drive `await
+cdp_b.trigger_full_sync()`, then look at B. `E2E_BULK_NOTE_COUNT` (already on
+main) lowers the count for a local loop — CI runs the full 1,000 and the default
+must never be lowered; the room bounds are calibrated to that size.
+
+Stack + env per `../../docs/context/local-crdt-e2e-repro.md`:
 
 ```bash
 cd backend/e2e && env ENGRAM_API_URL=http://localhost:8100/api \
@@ -130,13 +148,11 @@ cd backend/e2e && env ENGRAM_API_URL=http://localhost:8100/api \
   python3 -m pytest tests/test_77_bulk_first_sync.py -s --reruns 0
 ```
 
-`E2E_BULK_NOTE_COUNT` is a LOCAL override only (on the diag branch) — CI runs the
-full 1,000 and the default must never be lowered; the room bounds are calibrated
-to that size. Client `rlog()` lines land in `docker logs engram-crdt-engram-1` as
-`[client:*]`; their timestamps are ship-time, so never order by them.
+Client `rlog()` lines land in `docker logs engram-crdt-engram-1` as `[client:*]`;
+their timestamps are ship-time, so never order by them.
 
-**Room count needs n≥3.** Single runs range 0-4 on identical code; one run "proving"
-a win is noise.
+**Room count needs n>=3.** Single runs range 0-4 on identical code; one run
+"proving" a win is noise.
 
 ## Gotchas
 - `stampSyncedRow` REPLACES the row by contract — `crdtHead` lives in that same
