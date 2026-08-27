@@ -3273,6 +3273,57 @@ export class SyncEngine {
 		this.pendingConvergence.set(noteId, { path, serverHash, content, version, seq });
 	}
 
+	/** Is `normalized` a 0-byte placeholder THIS device wrote and never
+	 *  converged — the only state in which filling it from a feed snapshot is
+	 *  legal (#477)?
+	 *
+	 *  An empty file is NOT on its own a license to write. Three ways it lies,
+	 *  each of which this predicate has to exclude:
+	 *
+	 *  1. **The emptiness IS the converged state.** A remote clear applied
+	 *     through `flushFromCrdt` calls `recordCrdtBaseline("")`, so
+	 *     `stored.hash === fnv1a("")` and `localDiverged` reads FALSE — the
+	 *     drift-copy escape hatch never fires. A later checkpoint-lagged row
+	 *     carrying the PRE-clear body would then resurrect deleted content.
+	 *     `crdtHead` separates the two: a converged note carries a REAL head
+	 *     recorded by the apply, while a discovery placeholder carries only the
+	 *     `CRDT_HEAD_CREATED` sentinel — "the server has this note, we have
+	 *     never applied its ops."
+	 *  2. **The doc holds local work.** `hasUndeliveredOps` is the same
+	 *     precondition `convergeColdNoteRoomFree` uses, and for the same reason:
+	 *     a snapshot write, like a `crdt_doc_state` read, cannot carry anything
+	 *     upward. A note with undelivered ops must take the bidirectional room.
+	 *     (Conservative by design — a never-handshaken doc reads as undelivered
+	 *     on registries that track it, and an absent probe answers "yes".)
+	 *  3. **The cache invented the emptiness.** `localNow` comes from
+	 *     `cachedRead`, and a `cachedRead` right after a create is exactly where
+	 *     Obsidian's cache lies. Proving the 0 bytes needed `adapter.read` during
+	 *     the #477 investigation; a whole-file overwrite deserves the same proof.
+	 *     Any read failure answers false — the converge is always CORRECT, just
+	 *     more expensive.
+	 *
+	 *  What survives all three is a file this device created empty from a
+	 *  content-less create row and has never merged a single server op into. */
+	private async isUnconvergedEmptyPlaceholder(
+		noteId: string,
+		normalized: string,
+		localNow: string | null,
+	): Promise<boolean> {
+		if (localNow !== "") return false;
+		if (this.getCrdtHead(normalized) !== CRDT_HEAD_CREATED) return false;
+		if (typeof this.crdt?.hasUndeliveredOps !== "function") return false;
+		if (this.crdt.hasUndeliveredOps(noteId)) return false;
+		try {
+			return (await this.app.vault.adapter.read(normalized)) === "";
+		} catch (e) {
+			rlog().warn(
+				"pull",
+				`empty-placeholder check could not read ${noteRef(normalized)} — converging instead: ${errMsg(e, normalized)}`,
+			);
+			return false;
+		}
+	}
+
 	/** Converge a diverged COLD note (nobody has it open) without allocating a
 	 *  server room — #1409's open half.
 	 *
@@ -8489,6 +8540,50 @@ export class SyncEngine {
 								version: change.version,
 								serverHash: change.content_hash,
 							});
+						} else if (
+							noteId &&
+							content !== "" &&
+							(await this.isUnconvergedEmptyPlaceholder(noteId, normalized, localNow))
+						) {
+							// #477: this note is a 0-BYTE PLACEHOLDER this device wrote
+							// itself, and the row carries the body it was waiting for.
+							// Do exactly what the discovery leg does one pass earlier —
+							// write the body, flip the server-known oracle, record
+							// nothing else — instead of paying a `crdt_doc_state`
+							// round-trip (plus a room whenever that read falls back) to
+							// fetch a body this very row already carries.
+							//
+							// The bookkeeping is deliberately IDENTICAL to discovery's,
+							// which is what makes it safe: no `serverHash`, no `seq`. A
+							// row can lag its own `content_hash` (fresh hash, stale
+							// bytes — the test_82 deaf class), and recording that hash
+							// would mark the note in sync at bytes we cannot verify,
+							// after which every later row carrying that hash compares
+							// equal and is skipped. Permanently. Recording nothing keeps
+							// the note eligible for a real, proof-carrying converge.
+							//
+							// `isUnconvergedEmptyPlaceholder` is where the safety lives —
+							// see its contract for why an empty file is NOT on its own
+							// sufficient license to write.
+							rlog().info(
+								"pull",
+								`CRDT catch-up: filling empty placeholder from row ${noteRef(change.path)}`,
+							);
+							// A staged episode from an earlier pass is now superseded: its
+							// STEP2 would commit an OLDER serverHash/version/seq over what
+							// this row just materialized, walking `seq` backward and
+							// re-serving rows already consumed. `commitCrdtConvergence` is
+							// a no-op with nothing staged.
+							this.pendingConvergence.delete(noteId);
+							this.crdtRehandshakeAttempts.delete(noteId);
+							if (!(await this.flushFromCrdt(normalized, content))) return false;
+							// Same feed, same proof (#339): a row off the server's own
+							// op-log is the server telling us it holds this note. Merges
+							// (never replaces), so the placeholder's head survives.
+							this.markServerKnown(normalized);
+							// This leg WROTE the body to disk — report it (contract:
+							// "true when a file was actually created, modified…").
+							return true;
 						} else if (noteId) {
 							// CRDT-enrolled COLD note — nobody has this open in an
 							// editor. It still needs the server's Yjs ops (never the
@@ -8538,15 +8633,22 @@ export class SyncEngine {
 							// same reason flushFromCrdt itself stopped returning true
 							// for a gate-blocked no-op.
 							if (!(await this.flushFromCrdt(normalized, content))) return false;
-							// Same feed, same proof (#339): a backfilled row is still the
-							// server telling us it holds this note.
-							this.markServerKnown(normalized);
 							this.stampSyncedRow(normalized, {
 								hash: fnv1a(content),
 								version: change.version,
 								serverHash: change.content_hash,
 								seq: change.seq,
 							});
+							// Same feed, same proof (#339): a backfilled row is still the
+							// server telling us it holds this note.
+							//
+							// AFTER the stamp, not before: `stampSyncedRow` REPLACES the
+							// row by contract, so a head set first is dropped by the very
+							// next line. Inert on this leg — it is reached only with no
+							// note_id, and `crdtHead` is only ever written by paths that
+							// have one — but the ordering is the correct one to copy, and
+							// the wrong one is silent.
+							this.markServerKnown(normalized);
 							// This leg WROTE the body to disk — report it (contract:
 							// "true when a file was actually created, modified…").
 							return true;
