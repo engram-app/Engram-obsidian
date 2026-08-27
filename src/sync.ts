@@ -8489,7 +8489,7 @@ export class SyncEngine {
 								version: change.version,
 								serverHash: change.content_hash,
 							});
-						} else if (noteId) {
+						} else if (noteId && localNow !== "") {
 							// CRDT-enrolled COLD note — nobody has this open in an
 							// editor. It still needs the server's Yjs ops (never the
 							// feed's plaintext `content`: that snapshot is
@@ -8519,12 +8519,31 @@ export class SyncEngine {
 								change.content_hash,
 							);
 						} else {
-							// No note_id (legacy GET /notes/changes path — no id to pull
-							// a CRDT delta for): fall back to the content-snapshot
-							// backfill, unchanged from before.
+							// Backfill from the row's own snapshot. Two callers land here,
+							// both holding nothing on disk a converge could protect:
+							//
+							// 1. No note_id (legacy GET /notes/changes path — no id to pull
+							//    a CRDT delta for), unchanged from before.
+							// 2. #477: disk holds a 0-BYTE file. The discovery leg above
+							//    materializes a content-less create row as an EMPTY file
+							//    (measured: 20 of 150 notes on a bulk first sync, every one
+							//    from a v=1 row whose content_hash is the empty-content
+							//    hash). The row carrying the real body then reads as
+							//    "diverged cold", and each such note paid a `crdt_doc_state`
+							//    round-trip — plus a room whenever that read fell back — to
+							//    fetch a body this very row already carries.
+							//
+							// Writing the snapshot here does NOT reopen the D2 stomp class
+							// the cold leg guards against: that guard protects CONTENT ON
+							// DISK from a checkpoint-lagged projection, and an empty file
+							// has none. A genuine local blanking never reaches this line —
+							// it trips `localDiverged` above and takes the drift-copy
+							// branch, which preserves the local edit. This is the same
+							// write the discovery leg performs one pass earlier, for the
+							// same reason: the feed already carries the authoritative body.
 							rlog().warn(
 								"pull",
-								`CRDT catch-up: pull backfilling diverged note (no note_id) ${noteRef(change.path)}`,
+								`CRDT catch-up: pull backfilling diverged note (${noteId ? "empty local file" : "no note_id"}) ${noteRef(change.path)}`,
 							);
 							// Gate the bookkeeping on the write, same as the discovery
 							// branch. Stamping a hash for content that never reached disk

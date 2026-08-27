@@ -16,7 +16,7 @@
  *    (30s TTL, already fetched for the destructive-op guard) against the last
  *    synced serverHash; mismatch forces a fresh CRDT handshake (reset+enroll).
  */
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
@@ -303,6 +303,50 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		// identical/diverged branches consume it properly.
 		expect(state?.seq).toBeUndefined();
 		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+	});
+
+	test("#477: EMPTY local placeholder + a row that carries the body — backfill from the row, no converge at all", async () => {
+		// Measured on a 150-note bulk first sync (2026-08-26): the discovery leg
+		// materializes a content-less v=1 create row as a 0-BYTE file, and the
+		// row that later carries the real body then reads as "diverged cold" —
+		// paying a crdt_doc_state round-trip (and a room whenever that read
+		// falls back) to fetch a body the row itself already carries.
+		// Disk holds NOTHING, so there is no local content a converge could
+		// protect: write the body, exactly as the discovery leg does one pass
+		// earlier. A genuine local blanking never reaches here — it trips
+		// localDiverged above and takes the drift-copy branch.
+		const { engine, enroll, reset, applyRemoteUpdate } = crdtEngine();
+		const coldConverge = spyOn(engine as any, "convergeColdNoteRoomFree");
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		mockApp.vault.cachedRead.mockResolvedValue("");
+		// The baseline recorded when the empty placeholder was written.
+		engine.importSyncState({
+			"owned.md": { hash: fnv1a(""), version: 1, serverHash: "empty-row-hash" },
+		});
+
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "the body the create row never carried",
+			content_hash: "new-hash",
+			version: 2,
+			seq: 12,
+			mtime: 50,
+		} as any);
+
+		expect(coldConverge).not.toHaveBeenCalled();
+		expect(enroll).not.toHaveBeenCalled();
+		expect(reset).not.toHaveBeenCalled();
+		expect(applyRemoteUpdate).not.toHaveBeenCalled();
+		expect(mockApp.vault.modify).toHaveBeenCalledWith(
+			localFile,
+			"the body the create row never carried",
+		);
+		const state = engine.exportSyncState()["owned.md"];
+		expect(state?.serverHash).toBe("new-hash");
+		expect(state?.seq).toBe(12);
 	});
 
 	test("cold diverged leg issues ZERO REST calls — no getUpdates, no fetch (Phase E3 purge regression)", async () => {
