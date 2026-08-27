@@ -3273,6 +3273,57 @@ export class SyncEngine {
 		this.pendingConvergence.set(noteId, { path, serverHash, content, version, seq });
 	}
 
+	/** Is `normalized` a 0-byte placeholder THIS device wrote and never
+	 *  converged — the only state in which filling it from a feed snapshot is
+	 *  legal (#477)?
+	 *
+	 *  An empty file is NOT on its own a license to write. Three ways it lies,
+	 *  each of which this predicate has to exclude:
+	 *
+	 *  1. **The emptiness IS the converged state.** A remote clear applied
+	 *     through `flushFromCrdt` calls `recordCrdtBaseline("")`, so
+	 *     `stored.hash === fnv1a("")` and `localDiverged` reads FALSE — the
+	 *     drift-copy escape hatch never fires. A later checkpoint-lagged row
+	 *     carrying the PRE-clear body would then resurrect deleted content.
+	 *     `crdtHead` separates the two: a converged note carries a REAL head
+	 *     recorded by the apply, while a discovery placeholder carries only the
+	 *     `CRDT_HEAD_CREATED` sentinel — "the server has this note, we have
+	 *     never applied its ops."
+	 *  2. **The doc holds local work.** `hasUndeliveredOps` is the same
+	 *     precondition `convergeColdNoteRoomFree` uses, and for the same reason:
+	 *     a snapshot write, like a `crdt_doc_state` read, cannot carry anything
+	 *     upward. A note with undelivered ops must take the bidirectional room.
+	 *     (Conservative by design — a never-handshaken doc reads as undelivered
+	 *     on registries that track it, and an absent probe answers "yes".)
+	 *  3. **The cache invented the emptiness.** `localNow` comes from
+	 *     `cachedRead`, and a `cachedRead` right after a create is exactly where
+	 *     Obsidian's cache lies. Proving the 0 bytes needed `adapter.read` during
+	 *     the #477 investigation; a whole-file overwrite deserves the same proof.
+	 *     Any read failure answers false — the converge is always CORRECT, just
+	 *     more expensive.
+	 *
+	 *  What survives all three is a file this device created empty from a
+	 *  content-less create row and has never merged a single server op into. */
+	private async isUnconvergedEmptyPlaceholder(
+		noteId: string,
+		normalized: string,
+		localNow: string | null,
+	): Promise<boolean> {
+		if (localNow !== "") return false;
+		if (this.getCrdtHead(normalized) !== CRDT_HEAD_CREATED) return false;
+		if (typeof this.crdt?.hasUndeliveredOps !== "function") return false;
+		if (this.crdt.hasUndeliveredOps(noteId)) return false;
+		try {
+			return (await this.app.vault.adapter.read(normalized)) === "";
+		} catch (e) {
+			rlog().warn(
+				"pull",
+				`empty-placeholder check could not read ${noteRef(normalized)} — converging instead: ${errMsg(e, normalized)}`,
+			);
+			return false;
+		}
+	}
+
 	/** Converge a diverged COLD note (nobody has it open) without allocating a
 	 *  server room — #1409's open half.
 	 *
@@ -8489,7 +8540,51 @@ export class SyncEngine {
 								version: change.version,
 								serverHash: change.content_hash,
 							});
-						} else if (noteId && !(localNow === "" && content !== "")) {
+						} else if (
+							noteId &&
+							content !== "" &&
+							(await this.isUnconvergedEmptyPlaceholder(noteId, normalized, localNow))
+						) {
+							// #477: this note is a 0-BYTE PLACEHOLDER this device wrote
+							// itself, and the row carries the body it was waiting for.
+							// Do exactly what the discovery leg does one pass earlier —
+							// write the body, flip the server-known oracle, record
+							// nothing else — instead of paying a `crdt_doc_state`
+							// round-trip (plus a room whenever that read falls back) to
+							// fetch a body this very row already carries.
+							//
+							// The bookkeeping is deliberately IDENTICAL to discovery's,
+							// which is what makes it safe: no `serverHash`, no `seq`. A
+							// row can lag its own `content_hash` (fresh hash, stale
+							// bytes — the test_82 deaf class), and recording that hash
+							// would mark the note in sync at bytes we cannot verify,
+							// after which every later row carrying that hash compares
+							// equal and is skipped. Permanently. Recording nothing keeps
+							// the note eligible for a real, proof-carrying converge.
+							//
+							// `isUnconvergedEmptyPlaceholder` is where the safety lives —
+							// see its contract for why an empty file is NOT on its own
+							// sufficient license to write.
+							rlog().info(
+								"pull",
+								`CRDT catch-up: filling empty placeholder from row ${noteRef(change.path)}`,
+							);
+							// A staged episode from an earlier pass is now superseded: its
+							// STEP2 would commit an OLDER serverHash/version/seq over what
+							// this row just materialized, walking `seq` backward and
+							// re-serving rows already consumed. `commitCrdtConvergence` is
+							// a no-op with nothing staged.
+							this.pendingConvergence.delete(noteId);
+							this.crdtRehandshakeAttempts.delete(noteId);
+							if (!(await this.flushFromCrdt(normalized, content))) return false;
+							// Same feed, same proof (#339): a row off the server's own
+							// op-log is the server telling us it holds this note. Merges
+							// (never replaces), so the placeholder's head survives.
+							this.markServerKnown(normalized);
+							// This leg WROTE the body to disk — report it (contract:
+							// "true when a file was actually created, modified…").
+							return true;
+						} else if (noteId) {
 							// CRDT-enrolled COLD note — nobody has this open in an
 							// editor. It still needs the server's Yjs ops (never the
 							// feed's plaintext `content`: that snapshot is
@@ -8519,43 +8614,12 @@ export class SyncEngine {
 								change.content_hash,
 							);
 						} else {
-							// Backfill from the row's own snapshot. Two callers land here,
-							// both holding nothing on disk a converge could protect:
-							//
-							// 1. No note_id (legacy GET /notes/changes path — no id to pull
-							//    a CRDT delta for), unchanged from before.
-							// 2. #477: disk holds a 0-BYTE file AND this row carries a
-							//    body. The discovery leg above materializes a content-less
-							//    create row as an EMPTY file (measured: 20 of 150 notes on
-							//    a bulk first sync, every one from a v=1 row whose
-							//    content_hash is the empty-content hash). The row carrying
-							//    the real body then reads as "diverged cold", and each such
-							//    note paid a `crdt_doc_state` round-trip — plus a room
-							//    whenever that read fell back — to fetch a body this very
-							//    row already carries.
-							//
-							//    BOTH halves of that condition are load-bearing. With an
-							//    EMPTY row, `flushFromCrdt` short-circuits on "disk already
-							//    holds this content" and writes nothing, so this leg would
-							//    stamp serverHash + seq for a note whose disk stayed empty.
-							//    If such a row were a checkpoint-lagged projection (fresh
-							//    hash, stale bytes — the test_82 "went deaf on the stale
-							//    bytes" class), the note is recorded in sync while empty and
-							//    every later catch-up compares equal and skips it,
-							//    permanently. An empty row keeps the converge, whose commit
-							//    records only on proof.
-							//
-							// Writing the snapshot here does NOT reopen the D2 stomp class
-							// the cold leg guards against: that guard protects CONTENT ON
-							// DISK from a checkpoint-lagged projection, and an empty file
-							// has none. A genuine local blanking never reaches this line —
-							// it trips `localDiverged` above and takes the drift-copy
-							// branch, which preserves the local edit. This is the same
-							// write the discovery leg performs one pass earlier, for the
-							// same reason: the feed already carries the authoritative body.
+							// No note_id (legacy GET /notes/changes path — no id to pull
+							// a CRDT delta for): fall back to the content-snapshot
+							// backfill, unchanged from before.
 							rlog().warn(
 								"pull",
-								`CRDT catch-up: pull backfilling diverged note (${noteId ? "empty local file" : "no note_id"}) ${noteRef(change.path)}`,
+								`CRDT catch-up: pull backfilling diverged note (no note_id) ${noteRef(change.path)}`,
 							);
 							// Gate the bookkeeping on the write, same as the discovery
 							// branch. Stamping a hash for content that never reached disk
@@ -8580,13 +8644,10 @@ export class SyncEngine {
 							//
 							// AFTER the stamp, not before: `stampSyncedRow` REPLACES the
 							// row by contract, so a head set first is dropped by the very
-							// next line. That went unnoticed while only the legacy no-id
-							// leg reached here — `hasServerNote` is keyed by note_id, and
-							// a legacy note has none. A CRDT note with no head routes
-							// pushFile down the genesis branch and re-uploads a note it
-							// just downloaded (prod 2026-08-13, "122 files to upload" from
-							// an empty local vault), and holds its live crdt_msg sends
-							// (`canSendLive`).
+							// next line. Inert on this leg — it is reached only with no
+							// note_id, and `crdtHead` is only ever written by paths that
+							// have one — but the ordering is the correct one to copy, and
+							// the wrong one is silent.
 							this.markServerKnown(normalized);
 							// This leg WROTE the body to disk — report it (contract:
 							// "true when a file was actually created, modified…").

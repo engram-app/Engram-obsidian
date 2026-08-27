@@ -20,7 +20,7 @@ import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
-import { fnv1a, SyncEngine } from "../src/sync";
+import { CRDT_HEAD_CREATED, fnv1a, SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 const mockApi = {
@@ -54,6 +54,7 @@ const mockApp = {
 		trash: mock().mockResolvedValue(undefined),
 		rename: mock().mockResolvedValue(undefined),
 		getName: mock().mockReturnValue("Test Vault"),
+		adapter: { read: mock().mockResolvedValue("") },
 	},
 	fileManager: { trashFile: mock().mockResolvedValue(undefined) },
 	workspace: { getActiveViewOfType: mock().mockReturnValue(null) },
@@ -91,6 +92,7 @@ beforeEach(() => {
 		.mockReturnValue(null);
 	(mockApp.vault.create as ReturnType<typeof mock>).mockReset().mockResolvedValue(undefined);
 	(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockReset().mockResolvedValue("body");
+	(mockApp.vault.adapter.read as ReturnType<typeof mock>).mockReset().mockResolvedValue("");
 	(mockApp.vault.modify as ReturnType<typeof mock>).mockReset().mockResolvedValue(undefined);
 	(mockApp.vault.process as ReturnType<typeof mock>)
 		.mockReset()
@@ -305,55 +307,151 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(mockApp.vault.modify).not.toHaveBeenCalled();
 	});
 
-	test("#477: EMPTY local placeholder + a row that carries the body — backfill from the row, no converge at all", async () => {
+	/** The #477 shape: a 0-byte placeholder this device wrote from a
+	 *  content-less create row (so `crdtHead` is the CREATED sentinel and no
+	 *  serverHash was ever recorded), with disk empty through BOTH readers. */
+	function emptyPlaceholder(overrides: { adapterRead?: string } = {}) {
+		const made = crdtEngine();
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		mockApp.vault.cachedRead.mockResolvedValue("");
+		mockApp.vault.adapter.read.mockResolvedValue(overrides.adapterRead ?? "");
+		made.engine.importSyncState({
+			"owned.md": { hash: fnv1a(""), crdtHead: CRDT_HEAD_CREATED },
+		});
+		return { ...made, localFile };
+	}
+
+	const BODY = "the body the create row never carried";
+	const bodyRow = {
+		path: "owned.md",
+		action: "upsert",
+		content: BODY,
+		content_hash: "new-hash",
+		version: 2,
+		seq: 12,
+		mtime: 50,
+	};
+
+	test("#477: EMPTY placeholder + a row that carries the body — fill it from the row, no converge at all", async () => {
 		// Measured on a 150-note bulk first sync (2026-08-26): the discovery leg
 		// materializes a content-less v=1 create row as a 0-BYTE file, and the
 		// row that later carries the real body then reads as "diverged cold" —
 		// paying a crdt_doc_state round-trip (and a room whenever that read
 		// falls back) to fetch a body the row itself already carries.
-		// Disk holds NOTHING, so there is no local content a converge could
-		// protect: write the body, exactly as the discovery leg does one pass
-		// earlier. A genuine local blanking never reaches here — it trips
-		// localDiverged above and takes the drift-copy branch.
-		const { engine, enroll, reset, applyRemoteUpdate } = crdtEngine();
+		const { engine, enroll, reset, applyRemoteUpdate, localFile } = emptyPlaceholder();
 		const coldConverge = spyOn(engine as any, "convergeColdNoteRoomFree");
-		const localFile = new TFile("owned.md");
-		mockApp.vault.getFileByPath.mockReturnValue(localFile);
-		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
-		mockApp.vault.cachedRead.mockResolvedValue("");
-		// The baseline recorded when the empty placeholder was written.
-		engine.importSyncState({
-			"owned.md": { hash: fnv1a(""), version: 1, serverHash: "empty-row-hash" },
-		});
 
-		await engine.applyChange({
-			path: "owned.md",
-			action: "upsert",
-			content: "the body the create row never carried",
-			content_hash: "new-hash",
-			version: 2,
-			seq: 12,
-			mtime: 50,
-		} as any);
+		await engine.applyChange(bodyRow as any);
 
 		expect(coldConverge).not.toHaveBeenCalled();
 		expect(enroll).not.toHaveBeenCalled();
 		expect(reset).not.toHaveBeenCalled();
 		expect(applyRemoteUpdate).not.toHaveBeenCalled();
-		expect(mockApp.vault.modify).toHaveBeenCalledWith(
-			localFile,
-			"the body the create row never carried",
-		);
+		expect(mockApp.vault.modify).toHaveBeenCalledWith(localFile, BODY);
+		// Bookkeeping is IDENTICAL to the discovery leg's, and that is the
+		// safety property: a row can lag its own content_hash, so recording
+		// that hash would mark the note in sync at bytes we cannot verify and
+		// every later row carrying it would compare equal and be skipped.
 		const state = engine.exportSyncState()["owned.md"];
-		expect(state?.serverHash).toBe("new-hash");
-		expect(state?.seq).toBe(12);
-		// The row came off the server's own op-log feed, so the server
-		// demonstrably holds this note (#339). Without the head, pushFile's
-		// routing takes the genesis branch and re-uploads a note it just
-		// downloaded — prod 2026-08-13, "122 files to upload" from an empty
-		// local vault. `stampSyncedRow` REPLACES the row by contract, so the
-		// head has to be (re)established after it, not before.
+		expect(state?.hash).toBe(fnv1a(BODY));
+		expect(state?.serverHash).toBeUndefined();
+		expect(state?.seq).toBeUndefined();
+		// The server demonstrably holds this note (#339) — without the head,
+		// pushFile takes the genesis branch and re-uploads what it just
+		// downloaded (prod 2026-08-13, "122 files to upload" from an empty vault).
 		expect(engine.hasServerNote("note-id-1")).toBe(true);
+	});
+
+	test("#477: a CONVERGED empty note is not a placeholder — a lagged row must not resurrect cleared content", async () => {
+		// A remote clear applied through flushFromCrdt calls recordCrdtBaseline(""),
+		// so stored.hash === fnv1a("") and localDiverged reads FALSE — the
+		// drift-copy escape hatch never fires. What separates this from a
+		// placeholder is the head: a converged note carries a REAL one.
+		const { engine, localFile } = emptyPlaceholder();
+		const coldConverge = spyOn(engine as any, "convergeColdNoteRoomFree").mockImplementation(
+			async () => {},
+		);
+		engine.importSyncState({
+			"owned.md": { hash: fnv1a(""), crdtHead: "a-real-server-head" },
+		});
+
+		await engine.applyChange(bodyRow as any);
+
+		expect(coldConverge).toHaveBeenCalledTimes(1);
+		expect(mockApp.vault.modify).not.toHaveBeenCalledWith(localFile, BODY);
+	});
+
+	test("#477: undelivered local ops force the room — a snapshot write cannot carry them upward", async () => {
+		// Same precondition convergeColdNoteRoomFree enforces for crdt_doc_state,
+		// and for the same reason: this path is write-DOWN only, so a note with
+		// local work must take the bidirectional handshake.
+		const { engine, localFile } = emptyPlaceholder();
+		engine.setCrdtManager({
+			...((engine as any).crdt as any),
+			hasUndeliveredOps: () => true,
+		} as any);
+		const coldConverge = spyOn(engine as any, "convergeColdNoteRoomFree").mockImplementation(
+			async () => {},
+		);
+
+		await engine.applyChange(bodyRow as any);
+
+		expect(coldConverge).toHaveBeenCalledTimes(1);
+		expect(mockApp.vault.modify).not.toHaveBeenCalledWith(localFile, BODY);
+	});
+
+	test("#477: a cachedRead that invents the emptiness does not license the overwrite", async () => {
+		// cachedRead right after a create is exactly where Obsidian's cache lies —
+		// proving the 0 bytes took adapter.read during the investigation, and a
+		// whole-file overwrite deserves the same proof.
+		const { engine, localFile } = emptyPlaceholder({ adapterRead: "content the cache missed" });
+		const coldConverge = spyOn(engine as any, "convergeColdNoteRoomFree").mockImplementation(
+			async () => {},
+		);
+
+		await engine.applyChange(bodyRow as any);
+
+		expect(coldConverge).toHaveBeenCalledTimes(1);
+		expect(mockApp.vault.modify).not.toHaveBeenCalledWith(localFile, BODY);
+	});
+
+	test("#477: an unreadable file converges rather than guessing — the room is always correct", async () => {
+		const { engine, localFile } = emptyPlaceholder();
+		mockApp.vault.adapter.read.mockRejectedValue(new Error("EIO"));
+		const coldConverge = spyOn(engine as any, "convergeColdNoteRoomFree").mockImplementation(
+			async () => {},
+		);
+
+		await engine.applyChange(bodyRow as any);
+
+		expect(coldConverge).toHaveBeenCalledTimes(1);
+		expect(mockApp.vault.modify).not.toHaveBeenCalledWith(localFile, BODY);
+	});
+
+	test("#477: a superseded staged episode is dropped — its STEP2 must not patch older bookkeeping back", async () => {
+		// Pass 1 staged an episode and fell back to a room; pass 2 fills the file
+		// from a NEWER row. commitCrdtConvergence has no text-verify gate, so a
+		// surviving stage would patch its older serverHash/version/seq over what
+		// this row just materialized — walking seq backward and re-serving rows
+		// already consumed.
+		const { engine } = emptyPlaceholder();
+		(engine as any).pendingConvergence.set("note-id-1", {
+			path: "owned.md",
+			serverHash: "older-hash",
+			content: null,
+			version: 1,
+			seq: 4,
+		});
+
+		await engine.applyChange(bodyRow as any);
+		await engine.commitCrdtConvergence("note-id-1");
+
+		const state = engine.exportSyncState()["owned.md"];
+		expect(state?.serverHash).toBeUndefined();
+		expect(state?.seq).toBeUndefined();
+		expect(state?.hash).toBe(fnv1a(BODY));
 	});
 
 	test("#477 adversarial: empty disk AND an empty row still CONVERGES — never stamp a note we wrote no byte to", async () => {
