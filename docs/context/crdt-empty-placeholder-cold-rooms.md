@@ -33,17 +33,27 @@ Measured (150-note bulk first sync): 20 notes materialized empty; on the
 pre-`#474` tree 13-16 of them each bought a room, on `main` 2 did.
 
 ## The fix
-Gate the cold leg on disk being non-empty:
+Route an empty local file that this row can fill into the snapshot backfill
+instead of the cold converge:
 
 ```ts
-} else if (noteId && localNow !== "") {   // cold converge (room-free or room)
-} else {                                  // backfill from the row's snapshot
+} else if (noteId && !(localNow === "" && content !== "")) {   // cold converge
+} else {                                                       // backfill
 ```
 
-An empty file has no content a converge could protect, so the empty case falls
-through to the existing snapshot backfill (`flushFromCrdt` + `markServerKnown` +
-`stampSyncedRow`) — the same write the discovery leg performs one pass earlier,
+An empty file has no content a converge could protect, so it falls through to the
+existing snapshot backfill (`flushFromCrdt` + `stampSyncedRow` +
+`markServerKnown`) — the same write the discovery leg performs one pass earlier,
 for the same reason.
+
+**Both halves of the condition are load-bearing** (adversarial review found this,
+not the first draft). With an EMPTY row, `flushFromCrdt` short-circuits on "disk
+already holds this content" and writes nothing, so the leg would stamp
+`serverHash` + `seq` for a note whose disk stayed empty. If such a row were a
+checkpoint-lagged projection (fresh hash, stale bytes — the test_82 "went deaf on
+the stale bytes" class), the note is recorded in sync while empty and every later
+catch-up compares equal and skips it. Permanently. An empty row keeps the
+converge, whose commit records only on proof.
 
 This does **not** reopen the D2 stomp class the cold leg guards against: that
 guard protects *content on disk* from a checkpoint-lagged projection, and an
@@ -97,6 +107,27 @@ cd backend/e2e && env ENGRAM_API_URL=http://localhost:8100/api \
 full 1,000 and the default must never be lowered; the room bounds are calibrated
 to that size. Client `rlog()` lines land in `docker logs engram-crdt-engram-1` as
 `[client:*]`; their timestamps are ship-time, so never order by them.
+
+## `markServerKnown` before `stampSyncedRow` is a no-op
+Same backfill leg, found by the same review. The order was:
+
+```ts
+this.markServerKnown(normalized);   // setCrdtHead -> patchSyncedRow (merge)
+this.stampSyncedRow(normalized, {…}); // REPLACES the row — head gone
+```
+
+`stampSyncedRow`'s contract is an explicit wholesale REPLACE ("prior bookkeeping
+(crdtHead, seq, version…) is deliberately dropped"), and `crdtHead` lives in that
+same `syncState` row — so the head was erased by the very next line. It went
+unnoticed because only the legacy no-`note_id` leg reached here, and
+`hasServerNote` is keyed by note_id, which a legacy note doesn't have.
+
+For a CRDT note it bites: no head → `pushFile` takes the genesis branch and
+re-uploads a note it just downloaded (prod 2026-08-13, "122 files to upload" from
+an empty local vault), and `canSendLive` holds its live `crdt_msg` sends. Fixed by
+moving `markServerKnown` AFTER the stamp; `hasServerNote` is now asserted in the
+unit test. **If you add a field to a `stampSyncedRow` call site, check what the
+replace drops.**
 
 ## Gotchas
 - **Judge a fix by room STARTS and peak RSS during the sync**, not steady-state

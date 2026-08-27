@@ -347,6 +347,60 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		const state = engine.exportSyncState()["owned.md"];
 		expect(state?.serverHash).toBe("new-hash");
 		expect(state?.seq).toBe(12);
+		// The row came off the server's own op-log feed, so the server
+		// demonstrably holds this note (#339). Without the head, pushFile's
+		// routing takes the genesis branch and re-uploads a note it just
+		// downloaded — prod 2026-08-13, "122 files to upload" from an empty
+		// local vault. `stampSyncedRow` REPLACES the row by contract, so the
+		// head has to be (re)established after it, not before.
+		expect(engine.hasServerNote("note-id-1")).toBe(true);
+	});
+
+	test("#477 adversarial: empty disk AND an empty row still CONVERGES — never stamp a note we wrote no byte to", async () => {
+		// The #477 backfill is only legal when the row can actually FILL the
+		// empty file. With both sides empty, flushFromCrdt short-circuits on
+		// "disk already holds this content" and writes nothing — so taking the
+		// backfill would record serverHash + seq for a note whose disk stayed
+		// empty. If that row were a checkpoint-lagged projection (fresh hash,
+		// stale/empty bytes — the test_82 "went deaf on the stale bytes" class),
+		// the note is stamped in-sync while empty and every later catch-up
+		// compares equal and skips it. Permanently. Converge instead.
+		const { engine } = crdtEngine();
+		const coldConverge = spyOn(engine as any, "convergeColdNoteRoomFree").mockImplementation(
+			async () => {},
+		);
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		mockApp.vault.cachedRead.mockResolvedValue("");
+		// Baseline says we HELD content while disk reads empty, so neither the
+		// baseline-echo branch (which needs fnv1a(content) === stored.hash) nor
+		// localDiverged (which needs localNow !== content) fires — this is the
+		// state that actually reaches the leg under test.
+		engine.importSyncState({
+			"owned.md": {
+				hash: fnv1a("a body we no longer have"),
+				version: 1,
+				serverHash: "old-hash",
+			},
+		});
+
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "",
+			content_hash: "hash-that-claims-content",
+			version: 2,
+			seq: 12,
+			mtime: 50,
+		} as any);
+
+		expect(coldConverge).toHaveBeenCalledTimes(1);
+		// Nothing recorded: the converge's own commit is what records, once it
+		// has proof the doc holds the server's state.
+		const state = engine.exportSyncState()["owned.md"];
+		expect(state?.serverHash).toBe("old-hash");
+		expect(state?.seq).toBeUndefined();
 	});
 
 	test("cold diverged leg issues ZERO REST calls — no getUpdates, no fetch (Phase E3 purge regression)", async () => {

@@ -8489,7 +8489,7 @@ export class SyncEngine {
 								version: change.version,
 								serverHash: change.content_hash,
 							});
-						} else if (noteId && localNow !== "") {
+						} else if (noteId && !(localNow === "" && content !== "")) {
 							// CRDT-enrolled COLD note — nobody has this open in an
 							// editor. It still needs the server's Yjs ops (never the
 							// feed's plaintext `content`: that snapshot is
@@ -8524,14 +8524,26 @@ export class SyncEngine {
 							//
 							// 1. No note_id (legacy GET /notes/changes path — no id to pull
 							//    a CRDT delta for), unchanged from before.
-							// 2. #477: disk holds a 0-BYTE file. The discovery leg above
-							//    materializes a content-less create row as an EMPTY file
-							//    (measured: 20 of 150 notes on a bulk first sync, every one
-							//    from a v=1 row whose content_hash is the empty-content
-							//    hash). The row carrying the real body then reads as
-							//    "diverged cold", and each such note paid a `crdt_doc_state`
-							//    round-trip — plus a room whenever that read fell back — to
-							//    fetch a body this very row already carries.
+							// 2. #477: disk holds a 0-BYTE file AND this row carries a
+							//    body. The discovery leg above materializes a content-less
+							//    create row as an EMPTY file (measured: 20 of 150 notes on
+							//    a bulk first sync, every one from a v=1 row whose
+							//    content_hash is the empty-content hash). The row carrying
+							//    the real body then reads as "diverged cold", and each such
+							//    note paid a `crdt_doc_state` round-trip — plus a room
+							//    whenever that read fell back — to fetch a body this very
+							//    row already carries.
+							//
+							//    BOTH halves of that condition are load-bearing. With an
+							//    EMPTY row, `flushFromCrdt` short-circuits on "disk already
+							//    holds this content" and writes nothing, so this leg would
+							//    stamp serverHash + seq for a note whose disk stayed empty.
+							//    If such a row were a checkpoint-lagged projection (fresh
+							//    hash, stale bytes — the test_82 "went deaf on the stale
+							//    bytes" class), the note is recorded in sync while empty and
+							//    every later catch-up compares equal and skips it,
+							//    permanently. An empty row keeps the converge, whose commit
+							//    records only on proof.
 							//
 							// Writing the snapshot here does NOT reopen the D2 stomp class
 							// the cold leg guards against: that guard protects CONTENT ON
@@ -8557,15 +8569,25 @@ export class SyncEngine {
 							// same reason flushFromCrdt itself stopped returning true
 							// for a gate-blocked no-op.
 							if (!(await this.flushFromCrdt(normalized, content))) return false;
-							// Same feed, same proof (#339): a backfilled row is still the
-							// server telling us it holds this note.
-							this.markServerKnown(normalized);
 							this.stampSyncedRow(normalized, {
 								hash: fnv1a(content),
 								version: change.version,
 								serverHash: change.content_hash,
 								seq: change.seq,
 							});
+							// Same feed, same proof (#339): a backfilled row is still the
+							// server telling us it holds this note.
+							//
+							// AFTER the stamp, not before: `stampSyncedRow` REPLACES the
+							// row by contract, so a head set first is dropped by the very
+							// next line. That went unnoticed while only the legacy no-id
+							// leg reached here — `hasServerNote` is keyed by note_id, and
+							// a legacy note has none. A CRDT note with no head routes
+							// pushFile down the genesis branch and re-uploads a note it
+							// just downloaded (prod 2026-08-13, "122 files to upload" from
+							// an empty local vault), and holds its live crdt_msg sends
+							// (`canSendLive`).
+							this.markServerKnown(normalized);
 							// This leg WROTE the body to disk — report it (contract:
 							// "true when a file was actually created, modified…").
 							return true;
