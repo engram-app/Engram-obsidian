@@ -110,8 +110,15 @@ nothing. Two cheap instruments cracked it in one session:
    its three conditions failed. Answer: **`disk-differs`, 100%**, killing the
    standing hypothesis that a recorded `serverHash` was skipping the guard.
 
-Then `adapter.read` alongside `cachedRead` proved the 0 bytes were real. Both
-instruments live on `chore/diag-enroll-all-devices` ("not for merge").
+Then `adapter.read` alongside `cachedRead` proved the 0 bytes were real.
+
+The branch that carried both instruments is **deleted** — do not go looking for
+it. They are ~10 lines each and faster to re-add than to find: a
+`Map<string, number>` on `SyncEngine` bumped in `fireCrdtReHandshake` from a
+`site` label threaded through `socketConverge`/`stageAndConverge`, and a second
+map bumped at the guard with a key naming which condition failed. The e2e reads
+them over CDP (`Object.fromEntries(...)` on the engine handle) — see
+`test_77_bulk_first_sync.py`'s site readout for the shape.
 
 **Confirm the leg you added actually fires.** A one-line probe log plus
 `docker logs | grep -c` is the difference between "0 rooms" meaning "it worked"
