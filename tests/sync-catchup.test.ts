@@ -334,6 +334,53 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		mtime: 50,
 	};
 
+	test("#477 end-to-end: the DISCOVERY leg produces the state the fill leg requires", async () => {
+		// The load-bearing link, and the one every other #477 test assumes by
+		// hand-building `{hash: fnv1a(""), crdtHead: CRDT_HEAD_CREATED}` via
+		// importSyncState. Without this test, a change to what discovery records
+		// — a real head instead of the sentinel, or a serverHash — leaves all of
+		// them green while the fill leg silently stops firing forever. That is
+		// the same blind spot the room metric had: "0 rooms" was equally
+		// consistent with "it worked" and "it never ran".
+		const { engine } = crdtEngine();
+		const created = new TFile("owned.md");
+		// Nothing on disk yet: this is the discovery leg's own precondition.
+		mockApp.vault.getFileByPath.mockReturnValue(null);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(null);
+
+		// Pass 1 — the content-less v=1 create row off the op-log feed.
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "",
+			content_hash: "the-empty-content-hash",
+			version: 1,
+			seq: 1,
+			mtime: 10,
+		} as any);
+
+		expect(mockApp.vault.create).toHaveBeenCalledWith("owned.md", "");
+		// THE CONTRACT the fill leg depends on: a 0-byte file, the CREATED
+		// sentinel (never a real head), and no serverHash ever recorded.
+		const placeholder = engine.exportSyncState()["owned.md"];
+		expect(placeholder?.hash).toBe(fnv1a(""));
+		expect(placeholder?.crdtHead).toBe(CRDT_HEAD_CREATED);
+		expect(placeholder?.serverHash).toBeUndefined();
+
+		// Pass 2 — the row carrying the body, against the file pass 1 created.
+		mockApp.vault.getFileByPath.mockReturnValue(created);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(created);
+		mockApp.vault.cachedRead.mockResolvedValue("");
+		mockApp.vault.adapter.read.mockResolvedValue("");
+		const coldConverge = spyOn(engine as any, "convergeColdNoteRoomFree");
+
+		await engine.applyChange(bodyRow as any);
+
+		expect(coldConverge).not.toHaveBeenCalled();
+		expect(mockApp.vault.modify).toHaveBeenCalledWith(created, BODY);
+		expect(engine.exportSyncState()["owned.md"]?.hash).toBe(fnv1a(BODY));
+	});
+
 	test("#477: EMPTY placeholder + a row that carries the body — fill it from the row, no converge at all", async () => {
 		// Measured on a 150-note bulk first sync (2026-08-26): the discovery leg
 		// materializes a content-less v=1 create row as a 0-BYTE file, and the

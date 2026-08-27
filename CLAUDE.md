@@ -179,7 +179,7 @@ Required status checks on `main`: `build-and-test`, `version-check / version-che
 - A note that logs `re-handshake fired` and then goes silent forever (the create-ack gate swallowing syncStep1; plus how to read `ci-debug` client logs without misordering them) → `docs/context/crdt-pull-gated-by-create-ack.md`
 - Touching create-ack bookkeeping, or wondering what actually opens the live-send gate (`setCrdtHead`/`hasServerNote`, NOT `confirmNoteId` — and the ordering `adoptCreateAck` must keep) → `docs/context/crdt-pull-gated-by-create-ack.md`
 - Bulk first sync opens a CRDT room per idle (non-editor-open) note (`flushHeldEditsOnCreateAck`'s self-heal was the one `enroll()` call site not gated on `isLiveBound`; #1409 handshake half) → `docs/context/crdt-createack-selfheal-ungated-enroll.md`
-- Notes land EMPTY during a first sync and fill in a pass later, or you are about to treat a 0-byte file as "nothing to protect" (three ways an empty file lies: a converged clear, undelivered ops, a `cachedRead` that invented it) → `docs/context/crdt-empty-placeholder-cold-rooms.md`
+- About to treat a 0-byte file as "nothing to protect" (three ways an empty file lies: a converged clear, undelivered ops, a `cachedRead` that invented it) → `docs/context/crdt-empty-placeholder-cold-rooms.md`
 - Wondering why a catch-up leg records no `serverHash`/`seq`, or tempted to add one (a row can lag its own `content_hash`; recording it marks the note in sync at bytes you cannot verify and every later row compares equal and is skipped) → `docs/context/crdt-empty-placeholder-cold-rooms.md`
 
 @/home/open-claw/documents/code-projects/ops-agent/docs/self-updating-docs.md

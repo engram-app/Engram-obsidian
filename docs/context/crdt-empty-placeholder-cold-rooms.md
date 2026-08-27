@@ -1,11 +1,12 @@
-# Notes land EMPTY during a first sync, and an empty file lies three ways
+# An empty file lies three ways (and the first-sync placeholder it hides)
 
 _Last verified: 2026-08-27 (UTC)_
 
 ## Status
 Fixed on `fix/477-empty-placeholder-cold-rooms` (`Engram-obsidian#477`, PR #478).
-**The fix is a correctness/UX fix, not a perf one** — see "What this does NOT buy"
-before quoting a room number off it.
+**Read "What this does NOT buy" before quoting any number off this.** Both
+benefits this started out claiming — fewer rooms, and a visible empty-note
+window — were measured and did not survive.
 
 ## What This Is
 `#477` was filed as "cold-note catch-up opens a room per note", off a prod first
@@ -25,9 +26,8 @@ realer defect underneath, and killed the perf premise on the way.
    condition fails → the note takes the cold-converge leg to fetch a body **this
    very row already carries.**
 
-So for ~13% of a first sync, the user watches notes arrive EMPTY and fill in a
-pass later. That is the defect worth fixing. The room was a correct heal of a
-hole the client dug itself.
+The room was a correct heal of a hole the client dug itself. What the fix is
+actually worth is narrower than that sounds — see "What this does NOT buy".
 
 ## An empty file is not a license to write
 
@@ -65,9 +65,21 @@ what this row just materialized, walking `seq` backward and re-serving consumed
 rows. `commitCrdtConvergence` records unconditionally once a stage exists — there
 is no text-verify gate to save you.
 
-## What this does NOT buy: room count
+## What this does NOT buy: room count, or a visible empty-note window
 
-Measured, 150-note bulk first sync, n=3 each:
+**Tested and disproved.** A first-sync e2e asserting "B holds no 0-byte notes
+after its catch-up" passes on plain `main` too, twice — the cold converge fills
+the placeholder inside the same `trigger_full_sync()`. So the empty window is
+sub-pass, not a settled state a user sits looking at, and there is no e2e oracle
+at this granularity that can tell the two builds apart. The test was written,
+run against both, and deleted rather than shipped: a test that cannot fail is
+worse than no test, because it reads as coverage.
+
+What that leaves as the real benefit: **~13% of a first sync's notes stop paying
+a `crdt_doc_state` round-trip** for a body the row already carried. That is the
+whole of it.
+
+Room count, measured over a 150-note bulk first sync, n=3 each:
 
 | build | rooms |
 |---|---|
