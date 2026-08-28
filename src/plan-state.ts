@@ -3,6 +3,8 @@ export interface PlanState {
 	attachmentsTextOnly: boolean;
 	maxFileBytes: number;
 	attachmentBytesCap: number | null;
+	/** How many notes the plan indexes for search. null == uncapped. */
+	indexedNotesCap: number | null;
 	updatedAt: number;
 }
 
@@ -32,6 +34,13 @@ export function parsePlanState(raw: unknown, now: number): PlanState | null {
 		maxFileBytes: typeof r.max_file_bytes === "number" ? r.max_file_bytes : 0,
 		attachmentBytesCap:
 			typeof r.attachment_bytes_cap === "number" ? r.attachment_bytes_cap : null,
+		// Absent on a backend older than the free keyword-only tier → treat as
+		// uncapped, matching this file's "unknown plan → permissive" direction.
+		// A negative value is the backend's "unlimited" sentinel, not a cap of -1.
+		indexedNotesCap:
+			typeof r.indexed_notes_cap === "number" && r.indexed_notes_cap >= 0
+				? r.indexed_notes_cap
+				: null,
 		updatedAt: now,
 	};
 }

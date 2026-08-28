@@ -10,6 +10,7 @@ export class SearchModal extends Modal {
 	private api: EngramApi;
 	private defaultMode: SearchMode;
 	private onModeChange: (mode: SearchMode) => void;
+	private indexedNotesCap?: () => number | null;
 	private panel: SearchPanel | null = null;
 
 	constructor(
@@ -17,11 +18,13 @@ export class SearchModal extends Modal {
 		api: EngramApi,
 		defaultMode: SearchMode,
 		onModeChange: (mode: SearchMode) => void,
+		indexedNotesCap?: () => number | null,
 	) {
 		super(app);
 		this.api = api;
 		this.defaultMode = defaultMode;
 		this.onModeChange = onModeChange;
+		this.indexedNotesCap = indexedNotesCap;
 	}
 
 	onOpen(): void {
@@ -34,6 +37,7 @@ export class SearchModal extends Modal {
 			{
 				defaultMode: this.defaultMode,
 				onModeChange: this.onModeChange,
+				indexedNotesCap: this.indexedNotesCap,
 				onResultOpened: () => this.close(),
 			},
 		);

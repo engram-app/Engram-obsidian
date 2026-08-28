@@ -24,6 +24,30 @@ export interface SearchPanelOpts {
 	onModeChange?: (mode: SearchMode) => void;
 	/** Called after a result is opened (e.g. so the modal can close itself). */
 	onResultOpened?: () => void;
+	/** Current `indexed_notes_cap` from plan state, or null when uncapped.
+	 *  A getter, not a value: plan state arrives over the WebSocket and can
+	 *  change while the panel is open. */
+	indexedNotesCap?: () => number | null;
+}
+
+/**
+ * The "not everything is searchable" line, or null when it should stay quiet.
+ *
+ * Notes past the plan's indexed-note cap sync normally but are not searchable.
+ * Without this the only signal is an empty result list, which reads as "search
+ * is broken" rather than "this note isn't indexed" — and because the cap keeps
+ * the OLDEST notes, the ones that fall outside it are the user's newest work,
+ * which is the opposite of what anyone expects.
+ *
+ * Split out from the renderer because the panel only renders under Obsidian's
+ * HTMLElement extensions, which the unit suite does not have.
+ */
+export function capHintText(cap: number | null, total: number): string | null {
+	// null == uncapped plan. A negative value is the backend's "unlimited"
+	// sentinel, never a cap of -1.
+	if (cap === null || cap < 0) return null;
+	if (total <= cap) return null;
+	return `Searching ${cap.toLocaleString()} of ${total.toLocaleString()} notes. Upgrade to search everything.`;
 }
 
 export class SearchPanel {
@@ -343,12 +367,23 @@ export class SearchPanel {
 		}
 	}
 
+	private renderCapHint(): void {
+		const text = capHintText(
+			this.opts.indexedNotesCap?.() ?? null,
+			this.ctx.app.vault?.getMarkdownFiles?.().length ?? 0,
+		);
+		if (text === null) return;
+		this.resultsEl.createEl("p", { text, cls: "engram-search-cap-hint" });
+	}
+
 	private renderResults(query: string): void {
 		this.resultsEl.empty();
 		if (!this.results.length) {
 			this.resultsEl.createEl("p", { text: "No results found", cls: "engram-search-empty" });
+			this.renderCapHint();
 			return;
 		}
+		this.renderCapHint();
 		// Relative strength across the displayed set — drives the per-result bar.
 		const strengths = matchStrengths(this.results.map((r) => r.score));
 		this.results.forEach((result, i) => {
