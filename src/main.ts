@@ -979,6 +979,7 @@ export default class EngramSyncPlugin extends Plugin {
 					this.api,
 					this.settings.searchDefaultMode,
 					this.persistSearchMode,
+					() => this.syncEngine?.getPlanState()?.indexedNotesCap ?? null,
 				),
 		);
 
@@ -991,6 +992,7 @@ export default class EngramSyncPlugin extends Plugin {
 					this.api,
 					this.settings.searchDefaultMode,
 					this.persistSearchMode,
+					() => this.syncEngine?.getPlanState()?.indexedNotesCap ?? null,
 				).open();
 			},
 		});

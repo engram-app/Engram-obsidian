@@ -111,3 +111,22 @@ describe("parsePlanState — attachments_all_types migration", () => {
 		expect(p?.attachmentsTextOnly).toBe(false);
 	});
 });
+
+describe("parsePlanState — indexed_notes_cap", () => {
+	test("reads a real cap", () => {
+		const p = parsePlanState({ tier: "free", indexed_notes_cap: 2000 }, 1);
+		expect(p?.indexedNotesCap).toBe(2000);
+	});
+
+	test("treats the -1 unlimited sentinel as uncapped", () => {
+		const p = parsePlanState({ tier: "pro", indexed_notes_cap: -1 }, 1);
+		expect(p?.indexedNotesCap).toBeNull();
+	});
+
+	test("treats an older backend (field absent) as uncapped", () => {
+		// Permissive on unknown, matching this module's existing direction —
+		// a stale plugin must not tell users their notes are unsearchable.
+		const p = parsePlanState({ tier: "starter" }, 1);
+		expect(p?.indexedNotesCap).toBeNull();
+	});
+});
