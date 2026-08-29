@@ -3602,6 +3602,33 @@ export class SyncEngine {
 			// conflict. The editor's content IS in the Y.Doc, so recording it here
 			// is the truthful baseline, not an optimistic one.
 			if (file instanceof TFile) void this.recordLiveBoundBaseline(file);
+			// ...and the FRONTMATTER still has to be ingested. The skip above is
+			// right about the body (the binding forwards keystrokes into the
+			// Y.Text) and wrong about frontmatter, which the binding explicitly
+			// drops — `classifyEditSpan` returns "frontmatter" and the edit is not
+			// forwarded. Between the two, frontmatter typed into an OPEN note
+			// reached the doc by no route at all: #483 defect 1, confirmed by e2e
+			// (obsidian -> web passes with the note closed, fails with it open).
+			//
+			// Narrow on purpose. `seedFrontmatterInto` never touches the body, so
+			// this cannot reintroduce the whole-file re-diff churn the skip exists
+			// to prevent, and it carries the same unparseable guard — which matters
+			// here, because this runs on every autosave while the user is still
+			// mid-keystroke.
+			if (file instanceof TFile && this.crdt) {
+				const fmId = this.noteIdMap?.get(file.path) ?? null;
+				if (fmId) {
+					void this.app.vault
+						.cachedRead(file)
+						.then((disk) => this.crdt?.ingestFrontmatter(fmId, disk))
+						.catch((e) =>
+							rlog().warn(
+								"crdt",
+								`live-bound frontmatter ingest failed for ${noteRef(file.path)}: ${errMsg(e, file.path)}`,
+							),
+						);
+				}
+			}
 			return;
 		}
 

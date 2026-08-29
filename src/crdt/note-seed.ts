@@ -151,3 +151,28 @@ export function seedContentInto(doc: Y.Doc, text: Y.Text, content: string, lca: 
 		if (!seedOnce(text, splitBody, lca)) diffIntoYText(text, splitBody);
 	});
 }
+
+/** Ingest ONLY the frontmatter half of a disk read, leaving the body Y.Text
+ *  untouched.
+ *
+ *  For the live-bound path. `sync.ts` skips the whole disk-driven CRDT route
+ *  while a note is open, because the binding forwards every keystroke into the
+ *  Y.Text and re-diffing the file each autosave would churn the doc. Correct
+ *  for the body, and it also skipped the FRONTMATTER, which the binding drops
+ *  (`classifyEditSpan` -> "frontmatter"). Between the two, frontmatter typed
+ *  into an open note reached the doc by no route at all (#483 defect 1,
+ *  outbound half; e2e: obsidian -> web passes closed, fails open).
+ *
+ *  Deliberately NOT `seedContentInto` with a body guard bolted on: the body
+ *  belongs to the binding while bound, and the narrow entry point makes that
+ *  ownership explicit at the call site instead of implicit in a flag.
+ *
+ *  Shares the unparseable guard above, so a half-typed block is inert here too
+ *  — which matters more on this path, since it runs on every autosave while the
+ *  user is still typing. */
+export function seedFrontmatterInto(doc: Y.Doc, content: string): void {
+	const { fmBlock } = splitFrontmatter(content);
+	const parsed = fmBlock === null ? null : parseFrontmatter(fmBlock);
+	if (fmBlock !== null && parsed === null) return;
+	applyFrontmatterInto(doc, parsed ? parsed.order : [], parsed ? parsed.values : {});
+}

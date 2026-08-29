@@ -18,7 +18,7 @@ import { isDestroyedError, NoteDestroyedError } from "./destroyed-error";
 import { CONTENT_KEY, frontmatterOf, projectNote, rawFrontmatterOf } from "./frontmatter-codec";
 import { mergeDiskOntoDoc } from "./lca-merge";
 import { type FrameKind, NoteProvider } from "./note-provider";
-import { docHasAnyHistory, docHasHistory, seedContentInto } from "./note-seed";
+import { docHasAnyHistory, docHasHistory, seedContentInto, seedFrontmatterInto } from "./note-seed";
 
 export type DocKind = "note" | "canvas";
 
@@ -140,6 +140,21 @@ export class ProviderRegistry {
 	 *  legitimate access. Cleared only by destroyAll (stack teardown). */
 	private assertAlive(noteId: string): void {
 		if (this.removed.has(noteId)) throw new NoteDestroyedError(noteId);
+	}
+
+	/** Ingest ONLY the frontmatter of a disk read into `noteId`'s doc.
+	 *
+	 *  The live-bound path (#483 defect 1, outbound half). `sync.ts` skips the
+	 *  disk-driven CRDT route entirely while a note is open, so the binding owns
+	 *  the body — and the binding drops frontmatter keystrokes, so frontmatter
+	 *  typed into an open note reached the doc by no route at all.
+	 *
+	 *  Awaits `entry()`, never `ensureEntrySync`: writing into a doc that has not
+	 *  finished its IndexedDB replay mints ops on an empty doc and forks the
+	 *  lineage, which is the trap the pre-handshake seed gate exists for. */
+	async ingestFrontmatter(noteId: string, content: string): Promise<void> {
+		const e = await this.entry(noteId);
+		seedFrontmatterInto(e.doc, content);
 	}
 
 	private async entry(noteId: string): Promise<Entry> {

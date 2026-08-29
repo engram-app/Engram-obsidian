@@ -12,7 +12,7 @@
 import { describe, expect, it } from "bun:test";
 import * as Y from "yjs";
 import { CONTENT_KEY, frontmatterOf } from "../src/crdt/frontmatter-codec";
-import { seedContentInto } from "../src/crdt/note-seed";
+import { seedContentInto, seedFrontmatterInto } from "../src/crdt/note-seed";
 
 function seed(content: string, doc = new Y.Doc(), lca = false): Y.Doc {
 	seedContentInto(doc, doc.getText(CONTENT_KEY), content, lca);
@@ -120,5 +120,68 @@ describe("unparseable frontmatter is inert, not destructive", () => {
 		const doc = seed("---\ngone: soon\n---\nbody");
 		seed("body", doc, true);
 		expect(frontmatterOf(doc).values).toEqual({});
+	});
+});
+
+// #483 defect 1, outbound half. `sync.ts:3594` skips the disk-driven CRDT route
+// entirely while a note is live-bound:
+//
+//   if (crdtManaged && this.isLiveBound(file.path)) { ...baseline only...; return }
+//
+// Right for the BODY — the live binding forwards every keystroke into the
+// Y.Text, and re-diffing the whole file every autosave would churn the doc.
+// Wrong for the FRONTMATTER, which the binding drops (`classifyEditSpan` ->
+// "frontmatter"). Between the two, frontmatter typed into an OPEN note has no
+// route to the doc at all, which e2e confirmed: obsidian -> web fails with the
+// note open and passes with it closed.
+//
+// `seedFrontmatterInto` is the narrow half the bound path can safely run: the
+// same codec, the same unparseable guard, and it never touches the body.
+describe("seedFrontmatterInto (the live-bound ingest half)", () => {
+	function fm(content: string, doc = new Y.Doc()): Y.Doc {
+		seedFrontmatterInto(doc, content);
+		return doc;
+	}
+
+	it("ingests frontmatter without creating or touching the body", () => {
+		const doc = fm("---\ntags: [a]\n---\nbody here");
+		expect(frontmatterOf(doc).values).toMatchObject({ tags: '["a"]' });
+		// THE point of the narrow variant: the body is the binding's, not ours.
+		expect(doc.getText(CONTENT_KEY).toJSON()).toBe("");
+	});
+
+	it("leaves a body the binding already owns completely alone", () => {
+		const doc = seed("---\ntags: [a]\n---\ntyped in the editor");
+		seedFrontmatterInto(doc, "---\ntags: [b]\n---\nstale disk copy");
+		expect(frontmatterOf(doc).values).toMatchObject({ tags: '["b"]' });
+		expect(doc.getText(CONTENT_KEY).toJSON()).toBe("typed in the editor");
+	});
+
+	it("removes a key deleted while the note was open", () => {
+		const doc = seed("---\na: 1\nb: 2\n---\nbody");
+		seedFrontmatterInto(doc, "---\na: 1\n---\nbody");
+		expect(frontmatterOf(doc).values).toEqual({ a: "1" });
+	});
+
+	it("inherits the unparseable guard rather than deleting everything", () => {
+		const doc = seed("---\nkeep: me\n---\nbody");
+		seedFrontmatterInto(doc, "---\nkeep: me\nbad: [unclosed\n---\nbody");
+		expect(frontmatterOf(doc).values).toMatchObject({ keep: '"me"' });
+	});
+
+	it("clears the keys when the block is genuinely gone", () => {
+		const doc = seed("---\ngone: soon\n---\nbody");
+		seedFrontmatterInto(doc, "body");
+		expect(frontmatterOf(doc).values).toEqual({});
+	});
+
+	it("re-ingesting identical frontmatter mints no ops", () => {
+		// This runs on every autosave of an open note, so an identical re-ingest
+		// has to be free — otherwise it is the #846 second-lineage trap on a
+		// 2-second timer.
+		const doc = seed("---\ntags: [a]\n---\nbody");
+		const before = Y.encodeStateAsUpdate(doc).length;
+		seedFrontmatterInto(doc, "---\ntags: [a]\n---\nbody");
+		expect(Y.encodeStateAsUpdate(doc).length).toBe(before);
 	});
 });
