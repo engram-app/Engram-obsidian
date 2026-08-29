@@ -63,7 +63,7 @@ describe("ViewerRefcount", () => {
 describe("CrdtLiveViews doc lifecycle (onLastViewerRelease)", () => {
 	function makeLiveViews(opts?: {
 		flushToDisk?: (path: string, content: string) => Promise<void>;
-		getText?: (id: string) => Promise<string>;
+		projectedText?: (id: string) => Promise<string>;
 		/** The path has no id mapping — a deleted note's cleared entry. */
 		unmapped?: boolean;
 		/** The file is gone from the vault — deleted while its view was open. */
@@ -73,7 +73,7 @@ describe("CrdtLiveViews doc lifecycle (onLastViewerRelease)", () => {
 		const flushed: Array<{ path: string; content: string }> = [];
 		const releaseErrors: Array<{ path: string; err: unknown }> = [];
 		const manager = {
-			getText: opts?.getText ?? (async (id: string) => `text-of-${id}`),
+			projectedText: opts?.projectedText ?? (async (id: string) => `text-of-${id}`),
 			closeDoc: (id: string) => {
 				closed.push(id);
 			},
@@ -112,6 +112,46 @@ describe("CrdtLiveViews doc lifecycle (onLastViewerRelease)", () => {
 	// was already gone flushFromCrdt CREATED it — empty. Relay never reaches this
 	// state: its release resolves an existing guid (syncStore.get) instead of
 	// minting, and persists only a live document.
+
+	// --- Frontmatter stripped on close (#483, reported 2026-08-29) -----------
+	// The release flush read `manager.getText` — the body Y.Text alone. Closing
+	// a note therefore rewrote its file with the `---` block gone, while the
+	// Y.Doc (and so the web app) kept the keys. The two accessors sit next to
+	// each other on ProviderRegistry and differ only by name, so this pins WHICH
+	// one the teardown is allowed to use, with a double whose body and whole-file
+	// values disagree.
+	it("flushes the PROJECTION (frontmatter + body), never the body alone", async () => {
+		const FULL = "---\nstatus: published\n---\n\nbody v1\n";
+		const flushed: Array<{ path: string; content: string }> = [];
+		let bodyOnlyReads = 0;
+		const lv = new CrdtLiveViews({
+			app: { vault: { getAbstractFileByPath: (p: string) => new TFile(p) } } as never,
+			manager: {
+				projectedText: async () => FULL,
+				// If the teardown ever reaches for this again, the count catches it
+				// even though the flush assertion below would also fail.
+				getText: async () => {
+					bodyOnlyReads++;
+					return "\nbody v1\n";
+				},
+				closeDoc: () => {},
+			} as never,
+			enrollment: {} as never,
+			resolveId: (p: string) => `id:${p}`,
+			resolveExistingId: (p: string) => `id:${p}`,
+			flushToDisk: async (path, content) => {
+				flushed.push({ path, content });
+			},
+		});
+
+		lv.onBind("a.md", "v1");
+		lv.onRelease("a.md", "v1");
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(flushed).toEqual([{ path: "a.md", content: FULL }]);
+		expect(bodyOnlyReads).toBe(0);
+	});
 
 	it("does not flush when the path has no id mapping (deleted: entry cleared)", async () => {
 		const { lv, flushed } = makeLiveViews({ unmapped: true });
@@ -182,9 +222,9 @@ describe("CrdtLiveViews doc lifecycle (onLastViewerRelease)", () => {
 		expect(closed).toEqual([]); // never freed — we could not persist
 	});
 
-	it("a getText failure neither flushes nor frees", async () => {
+	it("a projection failure neither flushes nor frees", async () => {
 		const { lv, closed, flushed } = makeLiveViews({
-			getText: async () => {
+			projectedText: async () => {
 				throw new Error("no text");
 			},
 		});
@@ -235,7 +275,10 @@ describe("CrdtLiveViews.requestSaveForBoundPath (fix wave 6)", () => {
 
 	function makeLiveViewsWithViews(views: Array<InstanceType<typeof MdView>>) {
 		const app = { workspace: { getLeavesOfType: mock(() => views.map((view) => ({ view }))) } };
-		const manager = { getText: async (id: string) => `text-of-${id}`, closeDoc: () => {} };
+		const manager = {
+			projectedText: async (id: string) => `text-of-${id}`,
+			closeDoc: () => {},
+		};
 		const lv = new CrdtLiveViews({
 			app: app as never,
 			manager: manager as never,
@@ -290,7 +333,7 @@ describe("CrdtLiveViews.refresh() coalescing", () => {
 		const getLeaves = mock(() => [] as Array<{ view: unknown }>);
 		const lv = new CrdtLiveViews({
 			app: { workspace: { getLeavesOfType: getLeaves } } as never,
-			manager: { getText: async () => "", closeDoc: () => {} } as never,
+			manager: { projectedText: async () => "", closeDoc: () => {} } as never,
 			enrollment: {} as never,
 			resolveId: (p: string) => `id:${p}`,
 			resolveExistingId: (p: string) => `id:${p}`,
@@ -322,11 +365,8 @@ describe("CrdtLiveViews.destroy() flush safety", () => {
 		const flushed: Array<{ path: string; content: string }> = [];
 		const manager = {
 			hasDoc: (id: string) => resident.has(id),
-			residentText: (id: string) => ({
-				text: { toJSON: () => resident.get(id) ?? "" },
-				ready: Promise.resolve(),
-			}),
-			getText: async (id: string) => resident.get(id) ?? "",
+			residentProjection: (id: string) => resident.get(id) ?? "",
+			projectedText: async (id: string) => resident.get(id) ?? "",
 			closeDoc: () => {},
 		};
 		const lv = new CrdtLiveViews({
@@ -386,8 +426,8 @@ describe("destroy() teardown flush (repo-review 2026-08)", () => {
 			} as never,
 			manager: {
 				hasDoc: () => true,
-				residentText: () => ({ text: { toJSON: () => "resident" } }),
-				getText: async () => "x",
+				residentProjection: () => "resident",
+				projectedText: async () => "x",
 			} as never,
 			enrollment: {} as never,
 			resolveId: (p: string) => {

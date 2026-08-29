@@ -277,6 +277,17 @@ export class ProviderRegistry {
 		return this.project(await this.entry(noteId));
 	}
 
+	/** `projectedText` for an ALREADY-RESIDENT doc, synchronously.
+	 *
+	 *  Teardown only. `CrdtLiveViews.destroy()` must capture content BEFORE it
+	 *  returns, because its caller may destroy the manager immediately after —
+	 *  an awaited projection would then run `toJSON()` on a dead doc. Callers
+	 *  must gate on `hasDoc(noteId)`: this uses `ensureEntrySync`, which would
+	 *  otherwise materialize a fresh EMPTY doc and flush "" over the file. */
+	residentProjection(noteId: string): string {
+		return this.project(this.ensureEntrySync(noteId));
+	}
+
 	async hasHistory(noteId: string): Promise<boolean> {
 		const e = await this.entry(noteId);
 		return docHasHistory(e.doc, e.kind);

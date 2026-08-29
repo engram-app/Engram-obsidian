@@ -346,3 +346,65 @@ describe("hasAnyHistoryTransient residency", () => {
 		expect(reg.hasDoc("open.md")).toBe(true);
 	});
 });
+
+// #483, third defect. The teardown flushes (CrdtLiveViews.onLastViewerRelease
+// and .destroy()) wrote `getText`/`residentText` — the body Y.Text ALONE.
+// Frontmatter lives in separate shared types, so closing a note, or quitting
+// with one open, rewrote its file with no `---` block at all.
+//
+// The damage is quiet and it escalates. The Y.Doc keeps its frontmatter, so the
+// web app keeps showing the keys and nothing looks wrong until the file is
+// reopened. Worse, `flushFromCrdt` banks the body-only hash as the baseline, so
+// `pushFile`'s echo filter drops the modify event it just caused — the loss
+// stays local. The NEXT edit to that note hashes differently, gets through, and
+// `seedContentInto` reads a fenceless file as "the user removed all properties"
+// and deletes them server-side, on every device.
+//
+// These pin the accessor contract that made the misuse possible: two neighbours
+// on one object, one body-only and one whole-file, distinguishable by name only.
+describe("teardown projection includes frontmatter (#483)", () => {
+	function oneDevice(prefix: string) {
+		return new ProviderRegistry({
+			dbPrefix: prefix,
+			send: () => true,
+			onFlushToDisk: () => {},
+		});
+	}
+
+	const WITH_FM = "---\nstatus: published\nkeep: me\n---\n\nbody v1\n";
+
+	test("projectedText round-trips the frontmatter block; getText is body-only", async () => {
+		const reg = oneDevice("devProjectFm");
+		await reg.applyLocalEdit("fm.md", WITH_FM);
+		await flush();
+
+		// What the teardown flush writes now.
+		expect(await reg.projectedText("fm.md")).toBe(WITH_FM);
+
+		// What it used to write. getText is not wrong, it is just not a file —
+		// this asserts the difference is real so the two never look equivalent.
+		const body = await reg.getText("fm.md");
+		expect(body).toBe("\nbody v1\n");
+		expect(body).not.toContain("status:");
+	});
+
+	test("residentProjection matches projectedText, synchronously", async () => {
+		const reg = oneDevice("devResidentFm");
+		await reg.applyLocalEdit("fm.md", WITH_FM);
+		await flush();
+
+		// destroy() cannot await: its caller destroys the manager immediately
+		// after it returns. Same output, no await.
+		expect(reg.residentProjection("fm.md")).toBe(await reg.projectedText("fm.md"));
+		expect(reg.residentProjection("fm.md")).toContain("status: published");
+	});
+
+	test("a note with no frontmatter projects unchanged (no stray fence)", async () => {
+		const reg = oneDevice("devNoFm");
+		await reg.applyLocalEdit("plain.md", "just a body\n");
+		await flush();
+
+		expect(reg.residentProjection("plain.md")).toBe("just a body\n");
+		expect(await reg.projectedText("plain.md")).toBe("just a body\n");
+	});
+});

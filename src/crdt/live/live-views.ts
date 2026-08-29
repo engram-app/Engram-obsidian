@@ -83,7 +83,7 @@ export interface CrdtLiveViewsDeps {
 	resolveExistingId(path: string): string | null;
 	/** The existing disk flush (SyncEngine.flushFromCrdt). Called on last release. */
 	flushToDisk(path: string, content: string): Promise<void>;
-	/** Optional: surface a last-release flush/getText failure (the doc is left
+	/** Optional: surface a last-release flush/projection failure (the doc is left
 	 *  resident in that case) instead of dropping the rejection on the floor. */
 	onReleaseError?: (path: string, err: unknown) => void;
 }
@@ -111,7 +111,7 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 	constructor(deps: CrdtLiveViewsDeps) {
 		this.deps = deps;
 		this.refcount = new ViewerRefcount((path) => {
-			// A flush/getText failure leaves the doc resident (correct: never free what
+			// A flush/projection failure leaves the doc resident (correct: never free what
 			// we couldn't persist) — surface it instead of swallowing the rejection.
 			this.onLastViewerRelease(path).catch((e) => this.deps.onReleaseError?.(path, e));
 		});
@@ -253,7 +253,14 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 		// 3. A destroyed doc is expected here (delete races the view teardown) and
 		//    is swallowed — exactly and only this error, as Relay's LiveViews do.
 		try {
-			const text = await this.deps.manager.getText(noteId);
+			// PROJECTION, never `getText` (#483). `getText` is the body Y.Text
+			// alone; frontmatter lives in separate shared types, so flushing it
+			// writes a file with no `---` block and silently strips the user's
+			// properties on close. The doc itself is untouched, so the web app
+			// keeps showing them — local-only loss, invisible until reopen, and
+			// armed: the next edit to the note re-ingests the stripped file and
+			// propagates the deletion to every device.
+			const text = await this.deps.manager.projectedText(noteId);
 			await this.deps.flushToDisk(path, text);
 		} catch (e) {
 			if (isDestroyedError(e)) return;
@@ -320,7 +327,11 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 			// Only a resident doc can be flushed. Guard so we never materialize a fresh
 			// EMPTY doc for a torn-down path and clobber its file with "".
 			if (!this.deps.manager.hasDoc(noteId)) continue;
-			const content = this.deps.manager.residentText(noteId).text.toJSON();
+			// Same #483 defect as onLastViewerRelease, different trigger: quitting
+			// Obsidian (or a stack rebuild) with a note open stripped its
+			// frontmatter. `residentProjection` is the synchronous projection, so
+			// the capture-before-return guarantee above still holds.
+			const content = this.deps.manager.residentProjection(noteId);
 			flushes.push(
 				Promise.resolve(this.deps.flushToDisk(path, content)).catch((e) =>
 					this.deps.onReleaseError?.(path, e),
