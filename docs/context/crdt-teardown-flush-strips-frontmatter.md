@@ -22,8 +22,8 @@ obsidian it wiped the webapp frontmatter."
 
 ## What This Is
 `ProviderRegistry.getText` (`src/crdt/provider-registry.ts:271`) returns the
-body `Y.Text` **alone**. Frontmatter lives in three separate shared types, keyed
-in `src/crdt/frontmatter-codec.ts`:
+body `Y.Text` **alone**. Frontmatter lives in separate shared types; this plugin
+implements three, keyed in `src/crdt/frontmatter-codec.ts`:
 
 - `frontmatter` (`FRONTMATTER_KEY`, :17) — the key/value Y.Map
 - `frontmatter_raw` (`RAW_FRONTMATTER_KEY`, :19) — degraded-key verbatim spans
@@ -90,8 +90,14 @@ fresh empty doc and flushes `""` over a real file.
   type (`src/sync.ts:180`, wired at `src/main.ts:1178`) that the function body
   never reads (it uses `projectedText`, `sync.ts:196`). If you are auditing,
   treat any *new* `getText` caller as suspect by default.
-- There is no `frontmatter_types` shared type in this client. Three keys only,
-  listed above.
+- **There is a FOURTH shared type this plugin does not implement.** The web SPA
+  writes `frontmatter_types` (`engram: frontend/src/crdt/frontmatter-doc.ts:38`,
+  `TYPES_KEY`, read via `frontmatterMaps().types` at :50) — a per-key property
+  type. `src/crdt/frontmatter-codec.ts` defines no counterpart, so the plugin
+  neither reads nor writes it and `project()` cannot emit it. A typed property
+  (list / number / checkbox / date) set in the SPA therefore carries a type the
+  plugin has no representation for. **Known gap, NOT part of this fix and not
+  fixed by it** — do not read "the plugin has three keys" as "three keys exist".
 
 ## Why every existing test passed
 The CRDT e2e suite drives **body** text, and every frontmatter test to date
@@ -133,7 +139,9 @@ test suite. If a fifth turns up, assume the same shape: a path that handles
 - `src/crdt/live/live-views.ts:242` (`onLastViewerRelease`), `:313` (`destroy`)
 - `src/crdt/provider-registry.ts:132` (`project`), `:271` (`getText`), `:276`
   (`projectedText`), `:287` (`residentProjection`), `:226` (remote-update flush)
-- `src/crdt/frontmatter-codec.ts:17,19,21` — the three frontmatter keys
+- `src/crdt/frontmatter-codec.ts:17,19,21` — the three keys the plugin implements
+- `engram: frontend/src/crdt/frontmatter-doc.ts:38` — `frontmatter_types`, the
+  fourth shared type, SPA-only
 - `src/crdt/note-seed.ts:59` (`applyFrontmatterInto`), `:115` (`seedContentInto`)
 - `src/sync.ts:1869` (`flushFromCrdt`), `:2032` (`recordCrdtBaseline`),
   `:4320` (`pushFile` echo filter)
