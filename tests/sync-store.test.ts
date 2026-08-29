@@ -301,6 +301,65 @@ describe("getOrMint", () => {
 	});
 });
 
+// #451, observed in prod 2026-08-28: a claimed path stopped resolving
+// mid-session, `getOrMint` read that as "new path" and minted a second
+// UUIDv7, and every op sent under it was dropped `note_not_found` by a
+// backend that never issued it. `forget()` cannot remove a COMMITTED entry
+// without publishing, so it hides one — and the hide outranked a live claim.
+describe("getOrMint never mints over a live committed claim", () => {
+	test("a forgotten path resolves to the committed id instead of minting", () => {
+		const { store, map } = store_();
+		map.set("a.md", { note_id: "id-a" });
+
+		store.forget("a.md");
+		expect(store.get("a.md")).toBeNull(); // the hide is still doing its job
+
+		expect(store.getOrMint("a.md")).toBe("id-a");
+	});
+
+	test("resolving it clears the local hide, so the reverse index answers again", () => {
+		const { store, map } = store_();
+		map.set("a.md", { note_id: "id-a" });
+		store.forget("a.md");
+
+		store.getOrMint("a.md");
+
+		expect(store.pathForId("id-a")).toBe("a.md");
+	});
+
+	test("it publishes nothing — no claim, no id-keyed removal", () => {
+		const { store, map } = store_();
+		map.set("a.md", { note_id: "id-a" });
+		store.forget("a.md");
+
+		store.getOrMint("a.md");
+
+		expect(store.dirty).toBe(false);
+		store.commit();
+		expect(map.get("a.md")).toEqual({ note_id: "id-a" });
+	});
+
+	// The two local states that ARE verdicts keep their mint.
+	test("a DELETED path still mints — a recreate there is a new note", () => {
+		const { store, map } = store_();
+		map.set("a.md", { note_id: "id-a" });
+
+		store.delete("a.md");
+
+		expect(store.getOrMint("a.md")).not.toBe("id-a");
+	});
+
+	test("an EVICTED id is stale and still mints", () => {
+		const { store, map } = store_();
+		map.set("a.md", { note_id: "id-a" });
+		// Another path claims id-a, so a.md's committed entry no longer holds it.
+		store.set("b.md", { note_id: "id-a" });
+		store.forget("a.md");
+
+		expect(store.getOrMint("a.md")).not.toBe("id-a");
+	});
+});
+
 // NoteIdMap-level behaviour: the coalescing that makes a folder move ONE update.
 describe("NoteIdMap publication", () => {
 	async function tick() {
