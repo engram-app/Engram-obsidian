@@ -156,6 +156,37 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 		return this.refcount.boundPaths();
 	}
 
+	/** What the open editor for `path` is SHOWING, or null when no markdown view
+	 *  holds it.
+	 *
+	 *  Feeds `boundFlushDecision` (#483 defect 1): `requestSaveForBoundPath`
+	 *  saves the editor BUFFER, so it can only deliver what the live binding
+	 *  paints. Frontmatter is painted by nothing, and nudging on a remote
+	 *  frontmatter change writes the buffer's stale block back over it.
+	 *
+	 *  The EDITOR, not disk, on purpose: while the user types in the
+	 *  frontmatter block the buffer is ahead of disk, and a disk comparison
+	 *  would conclude "stale" and overwrite their keystrokes.
+	 *
+	 *  Returns null rather than "" for "no view": the caller treats null as
+	 *  "cannot confirm" and resolves toward writing, whereas "" would read as a
+	 *  genuinely empty note and compare equal to nothing. */
+	boundEditorText(path: string): string | null {
+		for (const leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
+			const view = leaf.view;
+			if (!(view instanceof MdView)) continue;
+			if (view.file?.path !== path) continue;
+			// Reading mode has no editor to read; the binding does not paint
+			// there either, so treat it as unconfirmable.
+			try {
+				return view.editor?.getValue() ?? null;
+			} catch {
+				return null;
+			}
+		}
+		return null;
+	}
+
 	/** Fix wave 6: nudge Obsidian's own save pipeline for the bound editor
 	 *  showing `path`, after a remote merge painted into it. `onFlushToDisk`
 	 *  skips the disk write for a bound path (the editor owns the file) — but

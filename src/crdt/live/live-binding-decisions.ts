@@ -27,6 +27,37 @@ merger.Patch_DeleteThreshold = 0.2;
  *  A private regex here once diverged on CRLF opening fences and on trailing
  *  spaces before the closing fence — each disagreement IS the offset-corruption
  *  class the doc above warns about. */
+/** What to do with a remote update that landed on a note the user has OPEN.
+ *
+ *  `wiring.ts` skips the disk write for a bound path and nudges Obsidian's own
+ *  save instead, because "a remote merge just painted in". True of the BODY,
+ *  which the live binding paints from the Y.Text. False of the FRONTMATTER,
+ *  which nothing in the plugin observes (#483 defect 1).
+ *
+ *  And the failure is not merely "the change does not arrive": `requestSave()`
+ *  saves the EDITOR BUFFER, which still holds the old frontmatter, so the stale
+ *  block goes to disk and `seedContentInto` writes it back into the doc. The
+ *  nudge REVERTS anything the binding does not paint.
+ *
+ *  Compared against what the editor is SHOWING, deliberately not against disk:
+ *  while the user types in the frontmatter block the disk is behind and the
+ *  editor is right, and writing over them would eat the keystrokes.
+ *
+ *  `editorText === null` (no readable view for the path) returns "write": we
+ *  could not confirm the editor is current, and writing is the only direction
+ *  that cannot silently lose the remote change. */
+export function boundFlushDecision(
+	editorText: string | null,
+	projection: string,
+): "nudge" | "write" {
+	if (editorText === null) return "write";
+	// The BLOCK, not the whole file. Whole-file equality would write on every
+	// keystroke and fight the editor for the body it already owns.
+	return splitFrontmatter(editorText).fmBlock === splitFrontmatter(projection).fmBlock
+		? "nudge"
+		: "write";
+}
+
 export function frontmatterPrefixLen(editorText: string): number {
 	const { fmBlock, body } = splitFrontmatter(editorText);
 	return fmBlock === null ? 0 : editorText.length - body.length;

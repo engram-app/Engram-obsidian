@@ -5,6 +5,7 @@ import { rlog } from "../remote-log";
 import type { SyncEngine } from "../sync";
 import { isDestroyedError } from "./destroyed-error";
 import { InvariantChecker, type InvariantViolation } from "./invariants";
+import { boundFlushDecision } from "./live/live-binding-decisions";
 import type { NoteIdMap } from "./note-id-map";
 import { ProviderRegistry } from "./provider-registry";
 import { fromB64 } from "./wire";
@@ -58,6 +59,19 @@ export interface CrdtWiringDeps {
 	 *  omitted in tests that don't exercise it. Never throws (the caller's
 	 *  contract, not enforced here). */
 	onBoundUpdate?: (path: string) => void;
+	/** What the OPEN editor for `path` currently shows, or null when there is no
+	 *  readable view for it. Backed by CrdtLiveViews, same lazy-closure reason
+	 *  as `isBound`.
+	 *
+	 *  Needed because `onBoundUpdate` nudges Obsidian to save the EDITOR BUFFER,
+	 *  and that buffer is only current for what the live binding paints — the
+	 *  body. Frontmatter is observed by nothing, so nudging on a remote
+	 *  frontmatter change writes the STALE block to disk and `seedContentInto`
+	 *  puts it back in the doc: a silent revert (#483 defect 1). Comparing the
+	 *  editor (not disk) is what makes it safe to type frontmatter locally.
+	 *  Optional: omitted means "cannot confirm", which `boundFlushDecision`
+	 *  resolves toward writing rather than reverting. */
+	boundEditorText?: (path: string) => string | null;
 	/** True once `noteId`'s crdt_create has been server-acked (its DB row
 	 *  exists) — CrdtManagerOptions.canSendLive. A brand-new note's live edits
 	 *  land in the Y.Doc immediately (never lost) but must NOT stream a
@@ -342,9 +356,21 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 			}
 			// The editor owns disk for a bound path; a remote merge just painted in,
 			// so nudge Obsidian's own save (fix wave 6) instead of double-writing.
+			//
+			// "Painted in" covers the BODY only. Nothing observes the frontmatter
+			// shared types, so on a remote frontmatter change the nudge saves the
+			// editor's STALE block over the new one and seedContentInto writes it
+			// back into the doc — the change is reverted, not merely delayed
+			// (#483 defect 1). Decide against what the editor is SHOWING: while the
+			// user types frontmatter locally the disk is behind and the editor is
+			// right, so a disk comparison here would eat their keystrokes.
 			if (deps.isBound(path)) {
-				deps.onBoundUpdate?.(path);
-				return undefined;
+				const shown = deps.boundEditorText?.(path) ?? null;
+				if (boundFlushDecision(shown, content) === "nudge") {
+					deps.onBoundUpdate?.(path);
+					return undefined;
+				}
+				// Fall through to the write: the editor cannot deliver this one.
 			}
 			// Return false on a real write failure so applyRemoteUpdate rejects and
 			// the caller leaves crdtHead unadvanced (#235).
