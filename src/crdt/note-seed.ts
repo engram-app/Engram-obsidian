@@ -115,11 +115,39 @@ export function applyFrontmatterInto(
 export function seedContentInto(doc: Y.Doc, text: Y.Text, content: string, lca: boolean): void {
 	const { fmBlock, body: splitBody } = splitFrontmatter(content);
 	const parsed = fmBlock === null ? null : parseFrontmatter(fmBlock);
+
+	// A null `parsed` means one of two OPPOSITE things, and treating them alike
+	// was #483 defect 2:
+	//
+	//   fmBlock === null  the note genuinely has no frontmatter. Clearing every
+	//                     key is correct, or frontmatter could never be removed.
+	//   parse failed      the note HAS frontmatter we could not model. Clearing
+	//                     every key destroys the user's properties.
+	//
+	// Both produced order=[] values={}, and `applyFrontmatterInto` deletes every
+	// key absent from `values` — so one unparseable block wiped the lot, the
+	// projection emitted a body-only note, and the flush wrote that over the
+	// file on every device. Half-typed YAML is invalid constantly, so this was
+	// reachable by ordinary typing, and the client parse is all-or-nothing: one
+	// bad key took out every good one.
+	//
+	// The server has never behaved this way — `Frontmatter.parse_for_ingest`
+	// keeps the good keys and preserves the unparseable one verbatim in the raws
+	// map. Matching that per-key behaviour needs a degraded parser the client
+	// does not have yet (#483 step 4); until then the honest answer to "I cannot
+	// read this" is to leave the frontmatter alone and let the next save retry.
+	const unparseable = fmBlock !== null && parsed === null;
 	const order = parsed ? parsed.order : [];
 	const values = parsed ? parsed.values : {};
-	const body = parsed !== null ? splitBody : content;
+
+	// `splitBody` unconditionally, never `content`. With no block the two are
+	// identical (splitFrontmatter returns `body: raw`), and on a FAILED parse
+	// `content` pushed the raw `---` fence into the body Y.Text — the
+	// fence-in-body shape the server's normalize_doc exists to heal. The block
+	// is still frontmatter when it does not parse; it is just frontmatter we
+	// are choosing not to touch.
 	doc.transact(() => {
-		applyFrontmatterInto(doc, order, values);
-		if (!seedOnce(text, body, lca)) diffIntoYText(text, body);
+		if (!unparseable) applyFrontmatterInto(doc, order, values);
+		if (!seedOnce(text, splitBody, lca)) diffIntoYText(text, splitBody);
 	});
 }

@@ -59,3 +59,66 @@ describe("seedContentInto frontmatter ingest", () => {
 		expect(doc.getText(CONTENT_KEY).toJSON()).toBe("new body");
 	});
 });
+
+// #483 defect 2. `seedContentInto` collapsed two opposite facts into one null:
+// "this note has no frontmatter" (delete every key: correct) and "this note has
+// frontmatter I could not parse" (delete every key: destroys the user's
+// properties). Half-typed YAML is invalid constantly, so the destructive branch
+// was reachable by ordinary typing, and the projection then wrote a body-only
+// note over the file on every device.
+//
+// The server has never behaved this way: `Frontmatter.parse_for_ingest` keeps
+// the good keys and preserves the unparseable one verbatim in the raws map.
+describe("unparseable frontmatter is inert, not destructive", () => {
+	const BAD = "---\nkeep: me\nbad: [unclosed\n---\nbody";
+
+	it("does not delete keys the doc already holds", () => {
+		const doc = seed("---\nkeep: me\nalso: here\n---\nbody");
+		seed(BAD, doc, true);
+		expect(frontmatterOf(doc).values).toMatchObject({
+			keep: '"me"',
+			also: '"here"',
+		});
+	});
+
+	it("leaves the key order intact", () => {
+		const doc = seed("---\nkeep: me\nalso: here\n---\nbody");
+		seed(BAD, doc, true);
+		expect(frontmatterOf(doc).order).toEqual(["keep", "also"]);
+	});
+
+	it("does not push the raw fence into the body Y.Text", () => {
+		// `body = parsed !== null ? splitBody : content` used the WHOLE file on a
+		// failed parse, so the `---` block landed in the body — the fence-in-body
+		// shape the server's normalize_doc exists to heal.
+		const doc = seed("---\nkeep: me\n---\nbody");
+		seed(BAD, doc, true);
+		expect(doc.getText(CONTENT_KEY).toJSON()).toBe("body");
+	});
+
+	it("still carries a body edit made in the same save", () => {
+		// Inert about frontmatter must not mean inert about everything: the user
+		// may have typed in the body during the same broken-YAML window.
+		const doc = seed("---\nkeep: me\n---\nold body");
+		seed("---\nkeep: me\nbad: [unclosed\n---\nnew body", doc, true);
+		expect(doc.getText(CONTENT_KEY).toJSON()).toBe("new body");
+	});
+
+	it("resumes normally once the YAML parses again", () => {
+		const doc = seed("---\nkeep: me\n---\nbody");
+		seed(BAD, doc, true);
+		seed("---\nkeep: me\nbad: [closed]\n---\nbody", doc, true);
+		expect(frontmatterOf(doc).values).toMatchObject({
+			keep: '"me"',
+			bad: '["closed"]',
+		});
+	});
+
+	it("a note that genuinely has NO frontmatter still clears its keys", () => {
+		// The other half of the null. Deleting the block must still delete the
+		// keys, or removing frontmatter would be impossible.
+		const doc = seed("---\ngone: soon\n---\nbody");
+		seed("body", doc, true);
+		expect(frontmatterOf(doc).values).toEqual({});
+	});
+});
