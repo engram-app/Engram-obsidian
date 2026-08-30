@@ -1092,8 +1092,6 @@ describe("Task 3: new-note genesis routes through crdt_create", () => {
 		const enroll = mock((_id: string) => {});
 		const reset = mock((_id: string) => {});
 		engine.setCrdtEnrollment({ enroll, reset } as any);
-		const rebinds: string[] = [];
-		engine.setCrdtEditorRebind((p: string) => rebinds.push(p));
 		let mintId = "";
 		engine.setCrdtCreate(async (id: string, _path: string) => {
 			mintId = id;
@@ -1112,15 +1110,15 @@ describe("Task 3: new-note genesis routes through crdt_create", () => {
 		expect(applyLocalEdit.mock.calls.length).toBe(1);
 		expect(applyLocalEdit.mock.calls[0]?.[0]).toBe("server-owns-this");
 		expect(applyLocalEdit.mock.calls[0]?.[1]).toBe("hello world"); // in-flight buffer, not disk
-		// Editor rebound off the orphaned mint onto serverId; mint doc retired.
-		expect(rebinds).toEqual(["Notes/collision-live.md"]);
+		// Mint doc retired. No external rebind call: the CM6 ViewPlugin re-resolves
+		// path -> serverId on its next update and re-attaches itself (#484).
 		expect(removeDoc).toHaveBeenCalledWith(mintId);
 		expect(reset).toHaveBeenCalledWith(mintId);
 		expect(enroll).toHaveBeenCalledWith("server-owns-this");
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});
 
-	test("idle ADOPT (rebind wired but note NOT live-bound): uses the disk-seed path, no transfer/rebind/removeDoc", async () => {
+	test("idle ADOPT (note NOT live-bound): uses the disk-seed path, no transfer/removeDoc", async () => {
 		// No live editor owns the note → nothing to preserve → the transfer branch
 		// must be skipped and the existing routeModify disk-seed runs unchanged.
 		const noteIdMap = new NoteIdMap();
@@ -1136,8 +1134,6 @@ describe("Task 3: new-note genesis routes through crdt_create", () => {
 		} as any);
 		engine.setLiveBoundCheck(() => false); // idle
 		engine.setCrdtEnrollment({ enroll: mock(() => {}), reset: mock(() => {}) } as any);
-		const rebinds: string[] = [];
-		engine.setCrdtEditorRebind((p: string) => rebinds.push(p));
 		engine.setCrdtCreate(async (_id: string, _path: string) => ({
 			docId: "server-owns-this",
 			seeded: false,
@@ -1157,7 +1153,6 @@ describe("Task 3: new-note genesis routes through crdt_create", () => {
 			expect.any(Function),
 		);
 		expect(projectedText).not.toHaveBeenCalled();
-		expect(rebinds).toEqual([]);
 		expect(removeDoc).not.toHaveBeenCalled();
 	});
 

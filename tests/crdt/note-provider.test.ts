@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import * as decoding from "lib0/decoding";
+import * as syncProtocol from "y-protocols/sync";
 import * as Y from "yjs";
 import { NoteProvider } from "../../src/crdt/note-provider";
+import { fromB64, MESSAGE_SYNC } from "../../src/crdt/wire";
 
 /**
  * Rebuild-copying-Relay tests. The provider is a faithful port of Relay's
@@ -139,5 +142,58 @@ describe("NoteProvider (Relay model)", () => {
 		p.setConnected(true);
 		expect(sent.length).toBe(0);
 		p.destroy();
+	});
+
+	test("an EMPTY syncStep2 still fires onSynced (#484)", async () => {
+		// #484 theorised that a re-handshake whose syncStep2 carries no ops yields
+		// no inbound frame, so `commitCrdtConvergence` never runs and catch-up
+		// re-fires forever. It does not: `receive` classifies the frame BEFORE any
+		// size check, and the `length > 1` gate suppresses only the OUTBOUND reply.
+		// A handshake that carries nothing back still commits — correctly, since
+		// "nothing to send" means the doc already holds the peer's state.
+		const docA = new Y.Doc();
+		docA.getText("content").insert(0, "same");
+		// Seed B from A's actual STATE, not by re-typing the same characters: two
+		// independently-typed "same"s are a disjoint lineage that merges to
+		// "samesame", and B's reply would carry 24 bytes of ops. Sharing the
+		// lineage is what makes the reply genuinely empty. Seeded BEFORE the
+		// provider exists so the applyUpdate isn't broadcast as a local edit.
+		const docB = new Y.Doc();
+		Y.applyUpdate(docB, Y.encodeStateAsUpdate(docA));
+
+		let synced = 0;
+		const a = new NoteProvider(docA, { onSynced: () => synced++ });
+		const b = new NoteProvider(docB);
+		const fromB: Uint8Array[] = [];
+		a.setSend((frame) => {
+			queueMicrotask(() => b.receive(frame));
+			return true;
+		});
+		b.setSend((frame) => {
+			fromB.push(fromB64(frame));
+			queueMicrotask(() => a.receive(frame));
+			return true;
+		});
+
+		a.setAdvertised(true);
+		a.connect();
+		b.connect();
+		await flush();
+
+		// B sent exactly one frame: a syncStep2 whose update is the 2-byte EMPTY
+		// update. Decoded rather than length-checked so a future change that makes
+		// it carry ops fails here instead of silently voiding this test.
+		expect(fromB.length).toBe(1);
+		const decoder = decoding.createDecoder(fromB[0] as Uint8Array);
+		expect(decoding.readVarUint(decoder)).toBe(MESSAGE_SYNC);
+		expect(decoding.readVarUint(decoder)).toBe(syncProtocol.messageYjsSyncStep2);
+		expect(Array.from(decoding.readVarUint8Array(decoder))).toEqual([0, 0]);
+
+		// That empty frame still flipped `synced` and fired the callback.
+		expect(a.synced).toBe(true);
+		expect(synced).toBe(1);
+		expect(docA.getText("content").toString()).toBe("same"); // no doubling
+		a.destroy();
+		b.destroy();
 	});
 });

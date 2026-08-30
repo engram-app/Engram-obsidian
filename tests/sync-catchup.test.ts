@@ -940,124 +940,14 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
 	});
 
-	test("fix wave 7 (a): verified commit + bound buffer already matches the converged doc — no rebind, no nudge", async () => {
-		const { engine, projectedText } = crdtEngine();
-		const localFile = new TFile("owned.md");
-		mockApp.vault.getFileByPath.mockReturnValue(localFile);
-		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
-		engine.setLiveBoundCheck((p: string) => p === "owned.md");
-		const rebinds: string[] = [];
-		engine.setCrdtEditorRebind((p: string) => rebinds.push(p));
-		const nudges: string[] = [];
-		engine.setCrdtRequestSave((p: string) => nudges.push(p));
-		// The editor repainted correctly — its buffer already holds the
-		// converged content.
-		engine.setCrdtBoundBufferText((p: string) => (p === "owned.md" ? "diverged body" : null));
-		engine.importSyncState({
-			"owned.md": { hash: 1, version: 1, serverHash: "old-hash" },
-		});
-
-		await engine.applyChange({
-			path: "owned.md",
-			action: "upsert",
-			content: "diverged body",
-			content_hash: "new-hash",
-			version: 2,
-			seq: 42,
-			mtime: 50,
-		} as any);
-
-		projectedText.mockResolvedValue("diverged body");
-		await engine.commitCrdtConvergence("note-id-1");
-
-		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("new-hash");
-		expect(rebinds).toEqual([]);
-		expect(nudges).toEqual([]);
-	});
-
-	test("fix wave 7 (b): verified commit + STALE bound buffer (phantom binding, #191) — rebinds exactly once, then nudges the save", async () => {
-		const { engine, projectedText } = crdtEngine();
-		const localFile = new TFile("owned.md");
-		mockApp.vault.getFileByPath.mockReturnValue(localFile);
-		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
-		engine.setLiveBoundCheck((p: string) => p === "owned.md");
-		const rebinds: string[] = [];
-		engine.setCrdtEditorRebind((p: string) => rebinds.push(p));
-		const nudges: string[] = [];
-		engine.setCrdtRequestSave((p: string) => nudges.push(p));
-		// The editor's Yjs binding detached (unclean close during a rate-limit
-		// window) while isLiveBound stayed true — its buffer never repainted,
-		// so it still shows the pre-converge content.
-		engine.setCrdtBoundBufferText((p: string) =>
-			p === "owned.md" ? "STALE — never repainted" : null,
-		);
-		engine.importSyncState({
-			"owned.md": { hash: 1, version: 1, serverHash: "old-hash" },
-		});
-
-		await engine.applyChange({
-			path: "owned.md",
-			action: "upsert",
-			content: "diverged body",
-			content_hash: "new-hash",
-			version: 2,
-			seq: 42,
-			mtime: 50,
-		} as any);
-
-		projectedText.mockResolvedValue("diverged body");
-		await engine.commitCrdtConvergence("note-id-1");
-
-		// Convergence still records — the doc itself is fine, only the editor
-		// binding was phantom.
-		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("new-hash");
-		expect(rebinds).toEqual(["owned.md"]);
-		expect(nudges).toEqual(["owned.md"]);
-	});
-
-	test("fix wave 7 (c): the path is no longer live-bound BY COMMIT TIME (editor closed meanwhile) — phantom-binding check never runs", async () => {
-		const { engine, projectedText } = crdtEngine();
-		const localFile = new TFile("owned.md");
-		mockApp.vault.getFileByPath.mockReturnValue(localFile);
-		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
-		let liveBound = true; // live-bound at staging time — required to stage content
-		engine.setLiveBoundCheck((p: string) => liveBound && p === "owned.md");
-		const rebinds: string[] = [];
-		engine.setCrdtEditorRebind((p: string) => rebinds.push(p));
-		const nudges: string[] = [];
-		engine.setCrdtRequestSave((p: string) => nudges.push(p));
-		const bufferReads: string[] = [];
-		engine.setCrdtBoundBufferText((p: string) => {
-			bufferReads.push(p);
-			return "would-mismatch-if-checked";
-		});
-		engine.importSyncState({
-			"owned.md": { hash: 1, version: 1, serverHash: "old-hash" },
-		});
-
-		await engine.applyChange({
-			path: "owned.md",
-			action: "upsert",
-			content: "diverged body",
-			content_hash: "new-hash",
-			version: 2,
-			seq: 42,
-			mtime: 50,
-		} as any);
-
-		// The editor closed between staging and the STEP2 commit — the note is
-		// no longer live-bound. The commit itself checks isLiveBound fresh, so
-		// this must gate the phantom-binding check off entirely (nothing to
-		// rebind — there's no editor left to be phantom).
-		liveBound = false;
-		projectedText.mockResolvedValue("diverged body");
-		await engine.commitCrdtConvergence("note-id-1");
-
-		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("new-hash");
-		expect(bufferReads).toEqual([]); // gated by isLiveBound before ever reading the buffer
-		expect(rebinds).toEqual([]);
-		expect(nudges).toEqual([]);
-	});
+	// (Removed: fix wave 7 (a)/(b)/(c) — the #191 phantom-binding check they
+	// covered is deleted (#484). It compared the bound editor's buffer against
+	// `staged.content`, the catch-up row's checkpoint-lagged plaintext, so a note
+	// being edited remotely tripped it as a matter of course; and its repair call
+	// went to an `editorRebind` port main.ts stopped wiring when the CM6
+	// ViewPlugin took over rebinding, so only these tests — which wired the port
+	// themselves — ever saw it do anything. The commit-records-the-stage behavior
+	// they also asserted is covered by the Relay test below.)
 
 	test("Relay: converged commit records the staged row on the first onSynced (no text-verify defer)", async () => {
 		const { engine, projectedText } = crdtEngine();
@@ -1168,6 +1058,161 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		await flush(60); // past the window
 		expect(reset).toHaveBeenCalledTimes(2);
 
+		engine.destroy();
+	});
+
+	// -------------------------------------------------------------------------
+	// #484: "fired re-handshakes" and "STEP2 committed" do not have to balance.
+	// The issue read a 99-fired / 67-committed gap on one live-bound note as a
+	// stuck loop on a stale serverHash. These three pin the difference between
+	// the benign shape and the real one, because the log line alone cannot tell
+	// them apart and `attempt N` is only a reliable tell in the second.
+	// -------------------------------------------------------------------------
+
+	test("#484 benign: two episodes overlap — 2 fires, 1 commit, and serverHash lands on the NEWEST hash", async () => {
+		// The catch-up tick stages a new episode while the previous handshake is
+		// still in flight. The fresh content_hash OVERWRITES the prior stage
+		// (sync.ts: "a new episode, never a stale commit of superseded server
+		// content"), so the syncStep2 that lands commits the NEWER row and latches
+		// `synced`; the second one finds nothing staged. Two fires, one commit, and
+		// the note is NOT behind — this is the 99/67 gap, and it is correct.
+		const { engine, reset } = crdtEngine();
+		engine.healCooldownMs = 0; // both ticks fire immediately
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		engine.importSyncState({
+			"owned.md": { hash: fnv1a("body"), version: 1, serverHash: "h0" },
+		});
+
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "edit one",
+			content_hash: "h1",
+			version: 2,
+			mtime: 1,
+		} as any);
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "edit two",
+			content_hash: "h2",
+			version: 3,
+			mtime: 2,
+		} as any);
+
+		expect(reset).toHaveBeenCalledTimes(2); // two re-handshakes FIRED
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("h0"); // neither leg records
+
+		// One syncStep2 lands. It commits the SURVIVING stage — h2, not h1.
+		await engine.commitCrdtConvergence("note-id-1");
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("h2");
+		// The stage is CONSUMED, not left behind: a stale stage surviving its own
+		// commit is how a later unrelated frame writes a superseded serverHash.
+		expect((engine as any).pendingConvergence.has("note-id-1")).toBe(false);
+
+		// The second handshake's frame arrives to an empty stage: a pure no-op, and
+		// critically NOT a rewind to h1.
+		await engine.commitCrdtConvergence("note-id-1");
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("h2");
+
+		// A tick now carrying h2 is converged and fires nothing more — no loop.
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "edit two",
+			content_hash: "h2",
+			version: 4,
+			mtime: 3,
+		} as any);
+		expect(reset).toHaveBeenCalledTimes(2);
+		engine.destroy();
+	});
+
+	test("#484 real: a handshake that never yields a frame leaves the stage uncommitted and re-fires the SAME hash — attempt climbs", async () => {
+		// The failure the issue described: the STEP1 goes out, the server answers
+		// nothing this device can commit on (a rate-limited handshake, a
+		// room_unavailable bounce), so onSynced never fires. serverHash stays stale
+		// and the next tick re-detects the identical divergence. Here the attempt
+		// counter DOES catch it, because the server content is not moving.
+		const { engine, reset } = crdtEngine();
+		engine.healCooldownMs = 0;
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		engine.importSyncState({
+			"owned.md": { hash: fnv1a("body"), version: 1, serverHash: "h0" },
+		});
+
+		const row = {
+			path: "owned.md",
+			action: "upsert",
+			content: "stuck body",
+			content_hash: "h1",
+			version: 2,
+			mtime: 1,
+		} as any;
+
+		// Three ticks, NO commitCrdtConvergence between them: no frame ever lands.
+		await engine.applyChange(row);
+		await engine.applyChange(row);
+		await engine.applyChange(row);
+
+		expect(reset).toHaveBeenCalledTimes(3);
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("h0"); // never advanced
+		const attempts = (engine as any).crdtRehandshakeAttempts.get("note-id-1");
+		expect(attempts).toEqual({ hash: "h1", attempts: 3 });
+
+		// The stage is still there, so a late frame still commits it.
+		await engine.commitCrdtConvergence("note-id-1");
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("h1");
+		engine.destroy();
+	});
+
+	test("#484 blind spot: uncommitted stages under a MOVING hash re-fire forever while attempt reads 1 every time", async () => {
+		// The case the issue's log actually showed, and the reason its `attempt 1`
+		// reading proved nothing either way. `crdtRehandshakeAttempts` resets
+		// whenever content_hash changes, so continuous remote editing pins it at 1
+		// no matter how long convergence has been stuck. Fires accumulate,
+		// serverHash never moves, and the counter reports health.
+		//
+		// This is the gap #484's third bullet asked for: what needs surfacing is
+		// "staged for N ticks without a commit", which no counter here tracks.
+		const { engine, reset } = crdtEngine();
+		engine.healCooldownMs = 0;
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		engine.importSyncState({
+			"owned.md": { hash: fnv1a("body"), version: 1, serverHash: "h0" },
+		});
+
+		for (let i = 1; i <= 5; i++) {
+			await engine.applyChange({
+				path: "owned.md",
+				action: "upsert",
+				content: `edit ${i}`,
+				content_hash: `h${i}`,
+				version: 1 + i,
+				mtime: i,
+			} as any);
+			// Every tick reports attempt 1 — a fresh hash resets the counter.
+			expect((engine as any).crdtRehandshakeAttempts.get("note-id-1")).toEqual({
+				hash: `h${i}`,
+				attempts: 1,
+			});
+		}
+
+		expect(reset).toHaveBeenCalledTimes(5); // five fires, zero commits
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("h0");
+		// Only the newest episode survives staging, so the eventual commit is
+		// correct — the cost is the four round-trips that bought nothing.
+		await engine.commitCrdtConvergence("note-id-1");
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("h5");
 		engine.destroy();
 	});
 

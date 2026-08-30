@@ -351,9 +351,6 @@ type CrdtDocStateFn = (docId: string) => Promise<{ b64: string; head: string }>;
 export interface CrdtPorts {
 	manager?: ProviderRegistry | null;
 	deviceId?: string | null;
-	editorRebind?: ((path: string) => void) | null;
-	boundBufferText?: ((path: string) => string | null) | null;
-	requestSave?: ((path: string) => void) | null;
 	noteIdMap?: NoteIdMap | null;
 	enrollment?: { enroll(path: string): void; reset(path: string): void } | null;
 	create?:
@@ -650,9 +647,6 @@ export class SyncEngine {
 	setCrdtPorts(ports: CrdtPorts): void {
 		if ("manager" in ports) this.crdt = ports.manager ?? null;
 		if ("deviceId" in ports) this.deviceId = ports.deviceId ?? null;
-		if ("editorRebind" in ports) this.crdtEditorRebind = ports.editorRebind ?? null;
-		if ("boundBufferText" in ports) this.crdtBoundBufferText = ports.boundBufferText ?? null;
-		if ("requestSave" in ports) this.crdtRequestSave = ports.requestSave ?? null;
 		if ("noteIdMap" in ports) this.noteIdMap = ports.noteIdMap ?? null;
 		if ("enrollment" in ports) this.crdtEnrollment = ports.enrollment ?? null;
 		if ("create" in ports) this.crdtCreate = ports.create ?? null;
@@ -702,39 +696,13 @@ export class SyncEngine {
 	 *  stays until a paired backend PR drops those calls. */
 	setCrdtEditorDetach(_fn: (() => void) | null): void {}
 
-	/** Rebinds the live editor showing `path` off its current (now orphaned)
-	 *  Y.Doc onto the note's freshly-resolved id (CrdtLiveViews.rebindPath,
-	 *  wired by main.ts). Used after a genesis ADOPT remaps path -> serverId
-	 *  under a live editor: the path is unchanged so refresh()'s bindTo
-	 *  short-circuits. Null in tests/headless — the adopt transfer branch is
-	 *  then skipped (no live editor to preserve) and the disk-seed path runs. */
-	private crdtEditorRebind: ((path: string) => void) | null = null;
-
-	setCrdtEditorRebind(fn: ((path: string) => void) | null): void {
-		this.setCrdtPorts({ editorRebind: fn });
-	}
-
-	/** Fix wave 7 (#191 slice): reads the LIVE editor buffer currently shown
-	 *  for `path` (CrdtLiveViews.boundBufferText, wired by main.ts) — used by
-	 *  commitCrdtConvergence to detect a phantom binding (isLiveBound true but
-	 *  the editor's Yjs binding silently detached, so its buffer never
-	 *  repaints). Null in tests/headless — the phantom-binding check is then
-	 *  skipped (nothing to compare). */
-	private crdtBoundBufferText: ((path: string) => string | null) | null = null;
-
-	setCrdtBoundBufferText(fn: ((path: string) => string | null) | null): void {
-		this.setCrdtPorts({ boundBufferText: fn });
-	}
-
-	/** Fix wave 7: nudges the bound editor's save (CrdtLiveViews.requestSaveForBoundPath,
-	 *  the same debounced call wiring.ts's onBoundUpdate uses) after a phantom
-	 *  binding is rebound, so the freshly-repainted buffer actually reaches
-	 *  disk instead of waiting on the next unrelated remote update. */
-	private crdtRequestSave: ((path: string) => void) | null = null;
-
-	setCrdtRequestSave(fn: ((path: string) => void) | null): void {
-		this.setCrdtPorts({ requestSave: fn });
-	}
+	/** No-op harness-compat shim, same shape as `setCrdtEditorDetach` above.
+	 *  The field and port behind it are gone: the CM6 ViewPlugin
+	 *  (live-binding.ts) re-resolves path -> note_id on every update and
+	 *  re-attaches itself, so nothing external ever needs to rebind an editor.
+	 *  engram/e2e/headless/run.ts:331 and tests/sim/replica.ts:448 still call
+	 *  this setter, so it stays until a paired backend PR drops those calls. */
+	setCrdtEditorRebind(_fn: ((path: string) => void) | null): void {}
 
 	/** Path -> note_id sidecar (Task 4, `src/crdt/note-id-map.ts`). Owned by
 	 *  main.ts (persisted in data.json); wired here so pushFile can mint/send
@@ -1162,8 +1130,8 @@ export class SyncEngine {
 	 *  identical bodies are a disjoint lineage; recording on that basis is the
 	 *  duplication class this replaces). Instead a diverged pull entry STAGES
 	 *  what it would record here, and `commitCrdtConvergence` (wired from
-	 *  CrdtManager's onSynced, fired only when a real inbound frame leaves the
-	 *  doc non-empty) commits it — actual op-level proof, not a text guess. A
+	 *  CrdtManager's onSynced, fired once per handshake cycle when the room's
+	 *  syncStep2 lands) commits it — actual op-level proof, not a text guess. A
 	 *  fresh content_hash overwrites any prior stage (new episode); nothing
 	 *  else prunes it — `commitCrdtConvergence` re-resolves the current path
 	 *  via noteIdMap and no-ops if the id was deleted, so a stale stage can
@@ -4762,13 +4730,12 @@ export class SyncEngine {
 								);
 								// The ViewPlugin re-resolves path -> serverId on its next update
 								// and re-attaches itself; the reattach-triggering keystroke is
-								// forwarded (not reverted). crdtEditorRebind is now an optional
-								// no-op in prod (the ViewPlugin owns rebinding) — kept only for
-								// the commitCrdtConvergence phantom-binding repair + its tests.
+								// forwarded (not reverted). No external rebind call here — the
+								// `crdtEditorRebind` port it used to make was never wired in
+								// prod (main.ts:570) and is deleted (#484).
 								// Keystroke-leak window: keystrokes landing in the mint doc
 								// between the projectedText read above and this removeDoc are
 								// dropped. Microtask-scale; accepted.
-								this.crdtEditorRebind?.(pushedPath);
 								await this.teardownCrdtDoc(noteId);
 							} else {
 								if (serverId && serverId !== noteId) {
@@ -6328,8 +6295,8 @@ export class SyncEngine {
 	 *  Always fires STEP1 (`reset`+`enroll`) on a diverged row — restores
 	 *  main's re-registration semantics unconditionally, no text compare.
 	 *  Convergence is recorded separately and ONLY on op-level proof: see
-	 *  `commitCrdtConvergence`, fired from CrdtManager's `onSynced` when a
-	 *  real inbound frame actually applies non-empty. Cooldown-gated per
+	 *  `commitCrdtConvergence`, fired from CrdtManager's `onSynced` when this
+	 *  handshake's syncStep2 lands. Cooldown-gated per
 	 *  note_id (`crdtHealCooldown`/`healCooldownMs`) so open+catch-up+heal all
 	 *  independently detecting the same divergence collapses to one handshake
 	 *  instead of draining the handshake budget (#193 starvation class).
@@ -6390,29 +6357,41 @@ export class SyncEngine {
 	/** Commit a staged convergence (see `pendingConvergence` — staged by BOTH
 	 *  the live-bound and the cold catch-up legs since Phase E3) — the ONLY
 	 *  place those legs' `serverHash`/`version`/`seq` get written. Wired
-	 *  from CrdtManager's `onSynced` (crdt/wiring.ts), which fires from
-	 *  `CrdtChannel.handleFrame` exactly when an inbound sync frame leaves the
-	 *  doc's text non-empty — real ops landed, not a guess.
+	 *  from CrdtManager's `onSynced` (crdt/wiring.ts). Two fire paths, and
+	 *  attributing a commit to the wrong one is how a log read goes wrong:
 	 *
-	 *  Fix wave 5: "an inbound frame landed" is necessary but NOT sufficient
-	 *  proof the STAGED row's ops are the ones that landed — `onSynced` fires
-	 *  on every non-empty frame, including an unrelated concurrent edit on
-	 *  the same doc, which could commit a stage a millisecond after staging,
-	 *  before the staged row's own ops ever arrived (CI run 29920053637).
-	 *  When the stage carries plaintext (`content !== null`), commit ONLY if
-	 *  the doc's projection now strictly equals it — the ops that produced a
-	 *  match came from the server room round-trip, so post-handshake
-	 *  text-equality IS sound proof here (unlike the deleted verify-first
-	 *  skip, which compared BEFORE any handshake ever fired). On a mismatch
-	 *  (or a `projectedText` throw — treated as mismatch, never commit on
-	 *  error) the stage is left in place; the next inbound frame re-runs this
-	 *  check, so the real edit's arrival commits it. A `content: null` stage
-	 *  (manifest heal — hash-only, keyed HMAC, uncomputable client-side)
-	 *  keeps the pre-wave-5 best-effort behavior: commit unverified on the
-	 *  next non-empty frame.
+	 *    1. The ROOM handshake — `NoteProvider.receive` on an inbound syncStep2,
+	 *       ONCE per handshake cycle, since the provider latches `synced` and
+	 *       only `ProviderRegistry.reset`/`clearSynced` re-arm it. An EMPTY
+	 *       syncStep2 still fires it: the provider classifies the frame before
+	 *       any size check, and the `length > 1` gate there suppresses only the
+	 *       outbound reply. A handshake that carries nothing back still commits,
+	 *       which is correct — nothing to send means the doc already holds the
+	 *       server's state.
+	 *    2. ROOM-FREE delivery — `convergeColdNoteRoomFree` calls
+	 *       `ProviderRegistry.markSynced` directly after a `crdt_doc_state` read
+	 *       merges (#1409), which invokes the same callback with no handshake
+	 *       and no frame. A cold note's commit normally comes from here, not
+	 *       from a re-handshake.
 	 *
-	 *  Idempotent and cheap when nothing is staged (steady-state live traffic
-	 *  fires this on every frame). Re-resolves the CURRENT path via
+	 *  A consequence worth knowing when reading logs (#484): re-handshakes
+	 *  FIRED can legitimately exceed commits. Under continuous remote editing
+	 *  the catch-up tick stages a new episode (a fresh `content_hash`
+	 *  overwrites the prior stage) and fires again before the previous
+	 *  syncStep2 returns; that syncStep2 commits the NEWEST stage and latches
+	 *  `synced`, so the second one finds nothing staged and fires nothing. Two
+	 *  fires, one commit, no loss. `crdtRehandshakeAttempts` reading 1 every
+	 *  time confirms this rather than contradicting it — the counter only
+	 *  advances on a REPEATED hash, so all-1s means every fire was a genuinely
+	 *  new server revision.
+	 *
+	 *  There is NO text-verify gate: `staged.content` is the catch-up row's
+	 *  checkpoint-lagged plaintext and the doc can rightly converge newer than
+	 *  it, so comparing against it wedged the commit permanently (and, in the
+	 *  deleted #191 phantom-binding check, produced a false positive on
+	 *  roughly a third of commits). Converged means converged — commit.
+	 *
+	 *  Idempotent and cheap when nothing is staged. Re-resolves the CURRENT path via
 	 *  `noteIdMap` rather than trusting the path captured at stage time, so a
 	 *  rename (path moved) or delete (id unmapped) between staging and commit
 	 *  can't write syncState at a stale/dead path — no separate teardown hook
@@ -6447,36 +6426,26 @@ export class SyncEngine {
 			if (queued) this.releaseHealRoom(noteId, queued.path);
 			return;
 		}
-		if (staged.content !== null) {
-			// Relay model: the provider fired onSynced from readSyncMessage — the doc
-			// is ALREADY converged with the server (syncStep2 reconciled the full
-			// state vector), so there is NO text-verify defer here. The old
-			// `projectedText === staged.content` gate wedged permanently whenever the
-			// projection differed by a cosmetic byte (frontmatter key order, a
-			// trailing newline): the stage never committed, syncState never advanced,
-			// and the note re-handshaked forever. Converged means converged — commit.
-			//
-			// Phantom-binding repair still applies (#191 slice): a rejected STEP1 /
-			// unclean close during a rate-limited window can detach the editor's Yjs
-			// binding while isLiveBound stays true (CI run 29923077791) — onFlushToDisk
-			// then skips forever (thinks the editor owns disk) and nothing repaints the
-			// stale buffer. If the bound buffer no longer matches the converged
-			// content, force a rebind through the bindEpoch-guarded machinery (never a
-			// raw setViewData, never an await between detach/rebind — see
-			// crdt-editor-bind-race-pollution.md) so it repaints, then nudge the save.
-			const boundPath = this.noteIdMap?.pathForId(noteId);
-			if (boundPath && this.isLiveBound(boundPath)) {
-				const buffer = this.crdtBoundBufferText?.(boundPath) ?? null;
-				if (buffer !== null && buffer !== staged.content) {
-					rlog().warn(
-						"crdt",
-						`socket converge: phantom binding rebound for ${noteRef(boundPath)} note_id=${noteId}`,
-					);
-					this.crdtEditorRebind?.(boundPath);
-					this.crdtRequestSave?.(boundPath);
-				}
-			}
-		}
+		// Relay model: the provider fired onSynced from readSyncMessage — the doc is
+		// ALREADY converged with the server (syncStep2 reconciled the full state
+		// vector), so there is NO text-verify defer here. The old
+		// `projectedText === staged.content` gate wedged permanently whenever the
+		// projection differed by a cosmetic byte (frontmatter key order, a trailing
+		// newline): the stage never committed, syncState never advanced, and the note
+		// re-handshaked forever. Converged means converged — commit.
+		//
+		// The #191 phantom-binding repair used to sit here, comparing the bound
+		// editor's buffer against `staged.content` and forcing a rebind on a
+		// mismatch. Deleted (#484): `staged.content` is the catch-up row's
+		// checkpoint-lagged plaintext, so on a note being edited remotely the doc
+		// rightly converges NEWER than the row and the buffer differs as a matter of
+		// course — the same reason the `projectedText` gate above was removed. It was
+		// firing on ~a third of commits in a normal editing session. It also could
+		// not act on what it found: main.ts stopped wiring `editorRebind` when the
+		// CM6 ViewPlugin took over rebinding (main.ts:570), so the repair was a
+		// no-op in prod and only the unit tests, which wired the port themselves,
+		// ever saw it work. If a real phantom binding needs detecting, it needs a
+		// signal that is not "buffer != a stale row snapshot".
 		this.pendingConvergence.delete(noteId);
 		this.crdtRehandshakeAttempts.delete(noteId);
 		const path = this.noteIdMap?.pathForId(noteId);
@@ -8478,9 +8447,12 @@ export class SyncEngine {
 						if (noteId) {
 							// A fresh content_hash overwrites any prior stage — a new
 							// episode, never a stale commit of superseded server content.
-							// content: the row's own plaintext (fix wave 5) — lets
-							// commitCrdtConvergence content-verify the commit instead of
-							// trusting that the next onSynced fire is FOR this row.
+							// content: the row's own plaintext. It does NOT gate the
+							// commit — the fix-wave-5 content-verify is gone (the row is
+							// checkpoint-lagged, so a doc that converged newer than it
+							// wedged the stage forever). Its only remaining reader is
+							// `markServerKnown`: a non-empty staged content is proof the
+							// server holds a row for this note (#339).
 							this.stageAndConverge(
 								noteId,
 								normalized,
