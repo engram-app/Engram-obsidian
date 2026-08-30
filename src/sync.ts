@@ -4446,6 +4446,44 @@ export class SyncEngine {
 					// MINT REFUSAL (issue #972, e2e test_34) — see shouldDeferMint.
 					// Skip the push: the relocation/pull owns this path's fate.
 					if (this.shouldDeferMint(file.path)) {
+						// ...but "don't mint" is NOT "throw the edit away" (#1503). The
+						// guard fires on `unmapped + engine-flushed`, and a path can be
+						// transiently unmapped for reasons that have nothing to do with a
+						// relocation — a full sync rebuilding the map is the proven one
+						// (#1489). A real local edit landing in that window used to return
+						// here with no queue entry and no retry, so it survived only if an
+						// unrelated PushModified sweep happened to re-pick the file later.
+						// In CI that was 107s; with no sweep it is silent data loss.
+						//
+						// The two cases are separable by CONTENT. #972 is our own
+						// flushFromCrdt write echoing back: disk still holds exactly what
+						// the engine wrote, and the relocation evicted the baseline, so
+						// there is nothing to compare and nothing worth saving — the old
+						// path is dead and re-queueing it would resurrect the note the
+						// guard exists to suppress. A genuine edit is the opposite: the
+						// baseline SURVIVES and disk has moved off it. `hash` is already
+						// computed above, so this costs no extra read.
+						const stored = this.syncState.get(normalizePath(file.path));
+						const movedOffBaseline = stored?.hash !== undefined && stored.hash !== hash;
+						if (movedOffBaseline) {
+							rlog().warn(
+								"push",
+								`Mint refused but edit PRESERVED (unmapped path, local edit): ${noteRef(file.path)}`,
+							);
+							// Content-free, exactly like the retry-after-failure enqueue
+							// below: the body is re-read at flush time, by which point the
+							// map has settled and runFlushQueue re-resolves the id. Its own
+							// shouldDeferMint check keeps the entry queued if it has not.
+							await this.enqueueChange({
+								path: file.path,
+								action: "upsert",
+								kind: "note",
+								mtime: file.stat.mtime / 1000,
+								timestamp: Date.now(),
+								vaultId: this.settings.vaultId ?? undefined,
+							});
+							return false;
+						}
 						rlog().info(
 							"push",
 							`Mint refused (engine-flushed file, id relocated away): ${noteRef(file.path)}`,
