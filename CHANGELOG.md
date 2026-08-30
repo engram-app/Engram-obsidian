@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.25.0](https://github.com/engram-app/Engram-obsidian/compare/1.24.3...1.25.0) (2026-08-30)
+
+
+### Features
+
+* **search:** tell Free users which notes are outside the index cap ([#481](https://github.com/engram-app/Engram-obsidian/issues/481)) ([a56a8d1](https://github.com/engram-app/Engram-obsidian/commit/a56a8d1533df19536a0ea013384ae0a296b9d93a))
+
+
+### Bug Fixes
+
+* **crdt:** don't converge a note whose local file is empty ([#477](https://github.com/engram-app/Engram-obsidian/issues/477)) ([#478](https://github.com/engram-app/Engram-obsidian/issues/478)) ([649f3f5](https://github.com/engram-app/Engram-obsidian/commit/649f3f513381667e8e12bb5b11382935ee1f8d24))
+* **crdt:** drop the dead phantom-binding repair ([#484](https://github.com/engram-app/Engram-obsidian/issues/484)) ([#485](https://github.com/engram-app/Engram-obsidian/issues/485)) ([806c478](https://github.com/engram-app/Engram-obsidian/commit/806c47871d25458676ca7905e41564b433b0eff8))
+* **crdt:** never mint over a live committed claim ([#482](https://github.com/engram-app/Engram-obsidian/issues/482)) ([0f7f535](https://github.com/engram-app/Engram-obsidian/commit/0f7f535dda43cbd3fea4f0170d000d78f18f2ac1))
+* **push:** don't drop a real edit when the mint is refused ([#486](https://github.com/engram-app/Engram-obsidian/issues/486)) ([7a80841](https://github.com/engram-app/Engram-obsidian/commit/7a80841bd451131b379be8dba4d1baf95ec9bdeb))
+
 ## [1.24.3](https://github.com/engram-app/Engram-obsidian/compare/1.24.2...1.24.3) (2026-08-26)
 
 
