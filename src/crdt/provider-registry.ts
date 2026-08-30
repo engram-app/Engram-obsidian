@@ -15,7 +15,13 @@ import * as Y from "yjs";
 import { Lifetime } from "../lifetime";
 import { projectCanvas, seedCanvasInto } from "./canvas-codec";
 import { isDestroyedError, NoteDestroyedError } from "./destroyed-error";
-import { CONTENT_KEY, frontmatterOf, projectNote, rawFrontmatterOf } from "./frontmatter-codec";
+import {
+	CONTENT_KEY,
+	frontmatterOf,
+	projectNote,
+	rawFrontmatterOf,
+	splitFrontmatter,
+} from "./frontmatter-codec";
 import { mergeDiskOntoDoc } from "./lca-merge";
 import { type FrameKind, NoteProvider } from "./note-provider";
 import { docHasAnyHistory, docHasHistory, seedContentInto, seedFrontmatterInto } from "./note-seed";
@@ -38,6 +44,9 @@ interface Entry {
 	/** Ticks on every remote merge — the stale-snapshot guard in applyLocalEdit
 	 *  uses it to detect a merge that interleaved a disk reread. */
 	remoteSeq: number;
+	/** The frontmatter block as of the last flush, so the next one can say
+	 *  whether the frontmatter CHANGED. `null` means "no block". */
+	lastFlushedFm: string | null;
 	/** In-flight disk-flush from the last remote merge; applyRemoteUpdate awaits
 	 *  it so a write failure can leave crdtHead unadvanced (#235). */
 	pendingFlush: Promise<void> | null;
@@ -62,6 +71,11 @@ export interface ProviderRegistryOpts {
 	onFlushToDisk: (
 		noteId: string,
 		content: string,
+		/** Did THIS update change the frontmatter block, as opposed to the body?
+		 *  The bound-path flush needs it: while a note is open the editor owns
+		 *  the body, but nothing in the editor represents frontmatter, so only a
+		 *  frontmatter change justifies writing under a live editor. */
+		fmChanged: boolean,
 	) => Promise<boolean | undefined> | boolean | undefined;
 	/** Adopt-first gate: content byte-identical to the last-synced content must
 	 *  NOT seed (would fork a second lineage → #846 doubling). */
@@ -213,6 +227,7 @@ export class ProviderRegistry {
 			kind,
 			ready: Promise.resolve(),
 			remoteSeq: 0,
+			lastFlushedFm: null,
 			pendingFlush: null,
 			lifetime: new Lifetime(),
 		};
@@ -224,7 +239,18 @@ export class ProviderRegistry {
 			if (origin !== provider && origin !== REMOTE) return;
 			entry.remoteSeq += 1;
 			const projected = this.project(entry);
-			const flush = Promise.resolve(this.opts.onFlushToDisk(noteId, projected)).then((ok) => {
+			// Compare the BLOCK against what the last flush projected, not against
+			// the editor. The editor is the wrong oracle: in Live Preview the CM
+			// document is body-only, so it never carries a fence, and comparing
+			// against it reported "frontmatter differs" for EVERY note that has
+			// any — turning the bound-path nudge into a direct write under a live
+			// editor on Obsidian's default mode.
+			const fmBlock = splitFrontmatter(projected).fmBlock;
+			const fmChanged = fmBlock !== entry.lastFlushedFm;
+			entry.lastFlushedFm = fmBlock;
+			const flush = Promise.resolve(
+				this.opts.onFlushToDisk(noteId, projected, fmChanged),
+			).then((ok) => {
 				if (ok === false) throw new Error(`flushFromCrdt write failure for ${noteId}`);
 			});
 			entry.pendingFlush = flush;

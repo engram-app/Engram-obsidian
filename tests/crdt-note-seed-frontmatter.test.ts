@@ -9,10 +9,15 @@
 //
 // These pin that contract. If a future change moves frontmatter ingest back
 // behind a view hook, the "no hook needed" premise breaks and these fail.
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 import * as Y from "yjs";
-import { CONTENT_KEY, frontmatterOf } from "../src/crdt/frontmatter-codec";
-import { seedContentInto, seedFrontmatterInto } from "../src/crdt/note-seed";
+import {
+	CONTENT_KEY,
+	frontmatterOf,
+	projectNote,
+	rawFrontmatterOf,
+} from "../src/crdt/frontmatter-codec";
+import { applyFrontmatterInto, seedContentInto, seedFrontmatterInto } from "../src/crdt/note-seed";
 
 function seed(content: string, doc = new Y.Doc(), lca = false): Y.Doc {
 	seedContentInto(doc, doc.getText(CONTENT_KEY), content, lca);
@@ -183,5 +188,70 @@ describe("seedFrontmatterInto (the live-bound ingest half)", () => {
 		const before = Y.encodeStateAsUpdate(doc).length;
 		seedFrontmatterInto(doc, "---\ntags: [a]\n---\nbody");
 		expect(Y.encodeStateAsUpdate(doc).length).toBe(before);
+	});
+});
+
+// Adversarial-review findings. The first fix for #483 defect 2 made EVERY
+// unreadable parse inert, which fixed the wipe and broke removal: a block that
+// holds no mapping is the user clearing their properties, not a block we cannot
+// read. `parseFrontmatterBlock` separates the two.
+describe("emptying a properties block clears the keys (#483 review)", () => {
+	const seeded = () => {
+		const doc = new Y.Doc();
+		applyFrontmatterInto(doc, ["secret"], { secret: JSON.stringify("leaked") });
+		return doc;
+	};
+	const project = (doc: Y.Doc) => {
+		const { order, values } = frontmatterOf(doc);
+		return projectNote(order, values, doc.getText(CONTENT_KEY).toJSON(), rawFrontmatterOf(doc));
+	};
+
+	// How you empty a properties block by hand in Source mode. Every one of
+	// these parses to "no mapping", and every one used to resurrect the keys on
+	// the next flush -- permanently, since the live-bound path re-runs it on
+	// every autosave.
+	test.each([
+		["blank line", "---\n\n---\nbody\n"],
+		["whitespace only", "---\n   \n---\nbody\n"],
+		["comments only", "---\n# nothing here\n---\nbody\n"],
+		["no lines at all", "---\n---\nbody\n"],
+	])("%s clears the keys", (_label, disk) => {
+		const doc = seeded();
+		seedContentInto(doc, doc.getText(CONTENT_KEY), disk, true);
+		expect(project(doc)).toBe("body\n");
+	});
+
+	// A block we genuinely cannot READ is the opposite case: the user is
+	// mid-keystroke and the keys must survive until it parses again.
+	test.each([
+		["syntax error", "---\nbad: [unclosed\n---\nbody\n"],
+		["a list, not a mapping", "---\n- a\n---\nbody\n"],
+	])("%s leaves the keys alone", (_label, disk) => {
+		const doc = seeded();
+		seedContentInto(doc, doc.getText(CONTENT_KEY), disk, true);
+		expect(project(doc)).toContain("secret: leaked");
+	});
+
+	// And on a doc with NO frontmatter to fall back on, an unreadable block has
+	// to survive somewhere or the first flush deletes it from the file. It rides
+	// in the body -- the fence-in-body shape the server's normalize_doc heals.
+	// Ugly and lossless beats tidy and destructive.
+	test("an unreadable block on a fresh doc round-trips instead of vanishing", () => {
+		const doc = new Y.Doc();
+		const disk = "---\ntags: [a, b\nstatus: draft\n---\nthe body\n";
+		seedContentInto(doc, doc.getText(CONTENT_KEY), disk, true);
+		expect(project(doc)).toBe(disk);
+	});
+
+	// seedFrontmatterInto runs on every autosave of an OPEN note, so the same
+	// split has to hold there or properties can never be deleted from one.
+	test("the live-bound path clears on empty and holds on unreadable", () => {
+		const cleared = seeded();
+		seedFrontmatterInto(cleared, "---\n\n---\nbody\n");
+		expect(project(cleared)).toBe("");
+
+		const held = seeded();
+		seedFrontmatterInto(held, "---\nbad: [unclosed\n---\nbody\n");
+		expect(project(held)).toContain("secret: leaked");
 	});
 });

@@ -11,8 +11,9 @@ import { canvasIsEmpty } from "./canvas-codec";
 import {
 	CONTENT_KEY,
 	FRONTMATTER_KEY,
+	type FrontmatterParse,
 	ORDER_KEY,
-	parseFrontmatter,
+	parseFrontmatterBlock,
 	RAW_FRONTMATTER_KEY,
 	splitFrontmatter,
 } from "./frontmatter-codec";
@@ -114,42 +115,49 @@ export function applyFrontmatterInto(
  *  diff; otherwise seed once. */
 export function seedContentInto(doc: Y.Doc, text: Y.Text, content: string, lca: boolean): void {
 	const { fmBlock, body: splitBody } = splitFrontmatter(content);
-	const parsed = fmBlock === null ? null : parseFrontmatter(fmBlock);
+	const parsed: FrontmatterParse =
+		fmBlock === null ? { kind: "empty" } : parseFrontmatterBlock(fmBlock);
 
-	// A null `parsed` means one of two OPPOSITE things, and treating them alike
-	// was #483 defect 2:
+	// Three cases, and the first fix for #483 defect 2 collapsed two of them.
 	//
-	//   fmBlock === null  the note genuinely has no frontmatter. Clearing every
-	//                     key is correct, or frontmatter could never be removed.
-	//   parse failed      the note HAS frontmatter we could not model. Clearing
-	//                     every key destroys the user's properties.
+	//   no fence / empty   the note has no properties, or the user just removed
+	//                      them. Clearing every key is correct, or frontmatter
+	//                      could never be removed at all.
+	//   ok                 apply it.
+	//   degraded           YAML we cannot model. Clearing would destroy the
+	//                      user's properties over a block they are still typing.
 	//
-	// Both produced order=[] values={}, and `applyFrontmatterInto` deletes every
-	// key absent from `values` — so one unparseable block wiped the lot, the
-	// projection emitted a body-only note, and the flush wrote that over the
-	// file on every device. Half-typed YAML is invalid constantly, so this was
-	// reachable by ordinary typing, and the client parse is all-or-nothing: one
-	// bad key took out every good one.
+	// Originally ALL of these cleared, so one unparseable block wiped the lot.
+	// The first fix made all three inert instead, which fixed the wipe and broke
+	// removal: `---\n\n---` — how you empty a properties block in Source mode —
+	// parses to nothing, so every key came back on the next flush, forever.
+	// `parseFrontmatterBlock` separates "holds no mapping" from "cannot be read".
 	//
-	// The server has never behaved this way — `Frontmatter.parse_for_ingest`
-	// keeps the good keys and preserves the unparseable one verbatim in the raws
-	// map. Matching that per-key behaviour needs a degraded parser the client
-	// does not have yet (#483 step 4); until then the honest answer to "I cannot
-	// read this" is to leave the frontmatter alone and let the next save retry.
-	const unparseable = fmBlock !== null && parsed === null;
-	const order = parsed ? parsed.order : [];
-	const values = parsed ? parsed.values : {};
+	// The server has never had this problem: `Frontmatter.parse_for_ingest`
+	// keeps the good keys and preserves the unreadable one verbatim in the raws
+	// map. Matching that PER-KEY still needs a degraded client parser (#483 step
+	// 4); this is the whole-block approximation of it.
+	//
+	// On a degraded block the raw text has to survive somewhere. If the doc
+	// already holds frontmatter, that is the last good version and the block
+	// heals from it. If it holds NONE — first sight of a note whose frontmatter
+	// is malformed — dropping to `splitBody` would delete the block from the
+	// file on the first flush, so the raw text rides in the body instead. That
+	// is the fence-in-body shape the server's normalize_doc exists to heal:
+	// ugly, and lossless, which beats tidy and destructive.
+	const degraded = parsed.kind === "degraded";
+	const body = degraded && !hasFrontmatter(doc) ? content : splitBody;
 
-	// `splitBody` unconditionally, never `content`. With no block the two are
-	// identical (splitFrontmatter returns `body: raw`), and on a FAILED parse
-	// `content` pushed the raw `---` fence into the body Y.Text — the
-	// fence-in-body shape the server's normalize_doc exists to heal. The block
-	// is still frontmatter when it does not parse; it is just frontmatter we
-	// are choosing not to touch.
 	doc.transact(() => {
-		if (!unparseable) applyFrontmatterInto(doc, order, values);
-		if (!seedOnce(text, splitBody, lca)) diffIntoYText(text, splitBody);
+		if (parsed.kind === "ok") applyFrontmatterInto(doc, parsed.order, parsed.values);
+		else if (parsed.kind === "empty") applyFrontmatterInto(doc, [], {});
+		if (!seedOnce(text, body, lca)) diffIntoYText(text, body);
 	});
+}
+
+/** Does the doc hold any frontmatter of its own to fall back on? */
+function hasFrontmatter(doc: Y.Doc): boolean {
+	return doc.getMap(FRONTMATTER_KEY).size > 0 || doc.getArray(ORDER_KEY).length > 0;
 }
 
 /** Ingest ONLY the frontmatter half of a disk read, leaving the body Y.Text
@@ -167,12 +175,15 @@ export function seedContentInto(doc: Y.Doc, text: Y.Text, content: string, lca: 
  *  belongs to the binding while bound, and the narrow entry point makes that
  *  ownership explicit at the call site instead of implicit in a flag.
  *
- *  Shares the unparseable guard above, so a half-typed block is inert here too
- *  — which matters more on this path, since it runs on every autosave while the
- *  user is still typing. */
+ *  Same three-way split as above, and it matters MORE here: this runs on every
+ *  autosave while the user is mid-keystroke, so a degraded block must be inert
+ *  — and an emptied one must still clear, or properties could never be deleted
+ *  from an open note. */
 export function seedFrontmatterInto(doc: Y.Doc, content: string): void {
 	const { fmBlock } = splitFrontmatter(content);
-	const parsed = fmBlock === null ? null : parseFrontmatter(fmBlock);
-	if (fmBlock !== null && parsed === null) return;
-	applyFrontmatterInto(doc, parsed ? parsed.order : [], parsed ? parsed.values : {});
+	const parsed: FrontmatterParse =
+		fmBlock === null ? { kind: "empty" } : parseFrontmatterBlock(fmBlock);
+	if (parsed.kind === "degraded") return;
+	if (parsed.kind === "empty") applyFrontmatterInto(doc, [], {});
+	else applyFrontmatterInto(doc, parsed.order, parsed.values);
 }

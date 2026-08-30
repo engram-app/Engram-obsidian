@@ -74,22 +74,54 @@ function sortDeep(v: unknown): unknown {
 	return v;
 }
 
-export function parseFrontmatter(
-	fmBlock: string,
-): { order: string[]; values: Record<string, string> } | null {
-	if (fmBlock === "") return { order: [], values: {} };
+/** A frontmatter block is one of three things, and they need OPPOSITE handling.
+ *
+ *  `parseFrontmatter` collapses all three into `null`, which is what made #483
+ *  defect 2 possible and then, in its first fix, reintroduced the same class in
+ *  reverse: treating every null as "leave the keys alone" meant EMPTYING a
+ *  properties block (`---\n\n---`, the ordinary way to clear one in Source
+ *  mode) silently resurrected every key from the doc.
+ *
+ *    empty     the block holds no mapping -- blank, whitespace, comments only.
+ *              The user removed their properties. Clearing is correct.
+ *    ok        a mapping, possibly with zero keys. Apply it.
+ *    degraded  YAML we cannot model: a syntax error mid-typing, or a valid
+ *              document that is not a mapping (a list, a bare scalar). Keep
+ *              what the doc already has; the user is mid-edit and the block
+ *              will parse again in a moment. */
+export type FrontmatterParse =
+	| { kind: "ok"; order: string[]; values: Record<string, string> }
+	| { kind: "empty" }
+	| { kind: "degraded" };
+
+export function parseFrontmatterBlock(fmBlock: string): FrontmatterParse {
+	if (fmBlock.trim() === "") return { kind: "empty" };
 	let doc: unknown;
 	try {
 		doc = yamlParse(fmBlock);
 	} catch {
-		return null;
+		return { kind: "degraded" };
 	}
-	if (!doc || typeof doc !== "object" || Array.isArray(doc)) return null;
+	// yaml returns null/undefined for a block that is only comments or blank
+	// lines. That is an EMPTY mapping, not a broken one.
+	if (doc === null || doc === undefined) return { kind: "empty" };
+	if (typeof doc !== "object" || Array.isArray(doc)) return { kind: "degraded" };
 	const map = doc as Record<string, unknown>;
 	const order = topLevelKeyOrder(fmBlock, map);
 	const values: Record<string, string> = {};
 	for (const k of Object.keys(map)) values[k] = canonicalJson(map[k]);
-	return { order, values };
+	return { kind: "ok", order, values };
+}
+
+/** Back-compat shape for callers that only need "did it give me a mapping".
+ *  Prefer `parseFrontmatterBlock`: this cannot tell empty from broken. */
+export function parseFrontmatter(
+	fmBlock: string,
+): { order: string[]; values: Record<string, string> } | null {
+	const result = parseFrontmatterBlock(fmBlock);
+	if (result.kind === "ok") return { order: result.order, values: result.values };
+	if (result.kind === "empty") return { order: [], values: {} };
+	return null;
 }
 
 // Recover source order: top-level keys appear as `key:` at column 0.

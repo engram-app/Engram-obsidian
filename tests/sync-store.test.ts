@@ -409,3 +409,44 @@ describe("NoteIdMap publication", () => {
 		expect(doc.getMap<any>("filemeta_v0").get("a.md")).toEqual({ note_id: "id-a" });
 	});
 });
+
+// Adversarial-review finding. The mint guard's ONLY production trigger is
+// `forget()`, and every production forget is a REMOTE delete -- which also
+// calls removeDoc, tombstoning the id for the session. Handing that id back
+// resurrects a destroyed doc: residentText throws inside the CM6 attach(),
+// enroll no-ops, and applyLocalEdit returns null, so the note cannot sync
+// until reload. The repo fixed this shape once already for LOCAL deletes.
+describe("the mint guard refuses a tombstoned claim", () => {
+	const storeWith = (tombstoned: Set<string>) => {
+		const store = new SyncStore(new Y.Doc().getMap("filemeta"));
+		store.setTombstoneCheck((id) => tombstoned.has(id));
+		return store;
+	};
+
+	test("a path forgotten by a REMOTE delete mints fresh once its id is tombstoned", () => {
+		const tombstoned = new Set<string>();
+		const store = storeWith(tombstoned);
+		const original = store.getOrMint("a.md");
+		store.commit();
+
+		// What sync.ts does on an inbound delete: forget the path, tear the doc down.
+		store.forget("a.md");
+		tombstoned.add(original);
+
+		const recreated = store.getOrMint("a.md");
+		expect(recreated).not.toBe(original);
+		expect(tombstoned.has(recreated)).toBe(false);
+	});
+
+	// The #451 case the guard exists for is unchanged: a live claim is still
+	// reused, so a path whose id merely went missing locally does not re-mint
+	// and strand itself as note_not_found.
+	test("a LIVE claim is still reused", () => {
+		const store = storeWith(new Set());
+		const original = store.getOrMint("b.md");
+		store.commit();
+		store.forget("b.md");
+
+		expect(store.getOrMint("b.md")).toBe(original);
+	});
+});

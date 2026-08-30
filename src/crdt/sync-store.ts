@@ -108,6 +108,16 @@ export class SyncStore {
 	 *  usable headless (tests, the index room before the engine exists). */
 	onRelocate?: (from: string, to: string, note_id: string) => void;
 
+	/** Has this note_id been permanently tombstoned by the CRDT manager?
+	 *  Injected because the store must not depend on the registry; see the
+	 *  aliveness check in `getOrMint`. Absent in tests that do not model it. */
+	private isTombstoned: (noteId: string) => boolean = () => false;
+
+	/** Wire the tombstone oracle. Called once, at stack construction. */
+	setTombstoneCheck(fn: (noteId: string) => boolean): void {
+		this.isTombstoned = fn;
+	}
+
 	constructor(private readonly map: Y.Map<FileMeta>) {
 		// A remote update invalidates the reverse index just as a local one does.
 		// Without this a path learned from another device answers `pathForId`
@@ -329,7 +339,20 @@ export class SyncStore {
 		// the chain stopped there, so the entry is mid-move and not ours to read.
 		if (!this.deleteSet.has(resolved) && !this.renames.has(resolved)) {
 			const claimed = this.map.get(resolved)?.note_id ?? null;
-			if (claimed && !this.evicted.has(claimed)) {
+			// A TOMBSTONED id is not a live claim, it is a headstone. `forgotten`
+			// is this guard's only production trigger, and every production
+			// `forget()` is a REMOTE delete — which also calls `removeDoc`, so the
+			// id's Y.Doc is destroyed for the rest of the session. Handing it back
+			// resurrects it: `residentText` throws NoteDestroyedError inside the
+			// CM6 `attach()` (which has no catch, so the binding dies), `enroll`
+			// silently no-ops, and every applyLocalEdit returns null. The note is
+			// unsyncable until reload, with no invariant watching for it.
+			//
+			// The repo already fixed this exact shape once, for the LOCAL delete
+			// path (index-crdt-regressions "a file recreated at a deleted note's
+			// path must mint a FRESH id"), by routing it to `release()`. The remote
+			// path still forgets, so the guard has to ask.
+			if (claimed && !this.evicted.has(claimed) && !this.isTombstoned(claimed)) {
 				this.forgotten.delete(resolved);
 				this.reverse = null;
 				return claimed;
