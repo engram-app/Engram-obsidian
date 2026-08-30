@@ -140,4 +140,43 @@ describe("NoteProvider (Relay model)", () => {
 		expect(sent.length).toBe(0);
 		p.destroy();
 	});
+
+	test("an EMPTY syncStep2 still fires onSynced, and reset re-arms it (#484)", async () => {
+		// #484 theorised that a re-handshake whose syncStep2 carries no ops yields
+		// no inbound frame, so `commitCrdtConvergence` never runs and catch-up
+		// re-fires forever. It does not: `receive` classifies the frame BEFORE any
+		// size check, and the `length > 1` gate suppresses only the OUTBOUND reply.
+		// A handshake that carries nothing back still commits — correctly, since
+		// "nothing to send" means the doc already holds the peer's state.
+		const docA = new Y.Doc();
+		const docB = new Y.Doc();
+		let synced = 0;
+		const a = new NoteProvider(docA, { onSynced: () => synced++ });
+		const b = new NoteProvider(docB);
+		link(a, b);
+
+		// Both peers already hold identical state, so B's syncStep2 reply to A's
+		// syncStep1 carries zero ops.
+		docA.getText("content").insert(0, "same");
+		docB.getText("content").insert(0, "same");
+		a.setAdvertised(true);
+		a.connect();
+		b.connect();
+		await flush();
+
+		expect(a.synced).toBe(true);
+		expect(synced).toBe(1);
+
+		// Relay parity: `synced` latches, so a second syncStep2 on the SAME cycle
+		// fires nothing. Only a re-handshake (reset -> advertise) re-arms it —
+		// which is why ProviderRegistry.reset clears the flag.
+		a.setAdvertised(false);
+		a.synced = false;
+		a.setAdvertised(true);
+		await flush();
+
+		expect(synced).toBe(2);
+		a.destroy();
+		b.destroy();
+	});
 });

@@ -940,124 +940,14 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
 	});
 
-	test("fix wave 7 (a): verified commit + bound buffer already matches the converged doc — no rebind, no nudge", async () => {
-		const { engine, projectedText } = crdtEngine();
-		const localFile = new TFile("owned.md");
-		mockApp.vault.getFileByPath.mockReturnValue(localFile);
-		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
-		engine.setLiveBoundCheck((p: string) => p === "owned.md");
-		const rebinds: string[] = [];
-		engine.setCrdtEditorRebind((p: string) => rebinds.push(p));
-		const nudges: string[] = [];
-		engine.setCrdtRequestSave((p: string) => nudges.push(p));
-		// The editor repainted correctly — its buffer already holds the
-		// converged content.
-		engine.setCrdtBoundBufferText((p: string) => (p === "owned.md" ? "diverged body" : null));
-		engine.importSyncState({
-			"owned.md": { hash: 1, version: 1, serverHash: "old-hash" },
-		});
-
-		await engine.applyChange({
-			path: "owned.md",
-			action: "upsert",
-			content: "diverged body",
-			content_hash: "new-hash",
-			version: 2,
-			seq: 42,
-			mtime: 50,
-		} as any);
-
-		projectedText.mockResolvedValue("diverged body");
-		await engine.commitCrdtConvergence("note-id-1");
-
-		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("new-hash");
-		expect(rebinds).toEqual([]);
-		expect(nudges).toEqual([]);
-	});
-
-	test("fix wave 7 (b): verified commit + STALE bound buffer (phantom binding, #191) — rebinds exactly once, then nudges the save", async () => {
-		const { engine, projectedText } = crdtEngine();
-		const localFile = new TFile("owned.md");
-		mockApp.vault.getFileByPath.mockReturnValue(localFile);
-		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
-		engine.setLiveBoundCheck((p: string) => p === "owned.md");
-		const rebinds: string[] = [];
-		engine.setCrdtEditorRebind((p: string) => rebinds.push(p));
-		const nudges: string[] = [];
-		engine.setCrdtRequestSave((p: string) => nudges.push(p));
-		// The editor's Yjs binding detached (unclean close during a rate-limit
-		// window) while isLiveBound stayed true — its buffer never repainted,
-		// so it still shows the pre-converge content.
-		engine.setCrdtBoundBufferText((p: string) =>
-			p === "owned.md" ? "STALE — never repainted" : null,
-		);
-		engine.importSyncState({
-			"owned.md": { hash: 1, version: 1, serverHash: "old-hash" },
-		});
-
-		await engine.applyChange({
-			path: "owned.md",
-			action: "upsert",
-			content: "diverged body",
-			content_hash: "new-hash",
-			version: 2,
-			seq: 42,
-			mtime: 50,
-		} as any);
-
-		projectedText.mockResolvedValue("diverged body");
-		await engine.commitCrdtConvergence("note-id-1");
-
-		// Convergence still records — the doc itself is fine, only the editor
-		// binding was phantom.
-		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("new-hash");
-		expect(rebinds).toEqual(["owned.md"]);
-		expect(nudges).toEqual(["owned.md"]);
-	});
-
-	test("fix wave 7 (c): the path is no longer live-bound BY COMMIT TIME (editor closed meanwhile) — phantom-binding check never runs", async () => {
-		const { engine, projectedText } = crdtEngine();
-		const localFile = new TFile("owned.md");
-		mockApp.vault.getFileByPath.mockReturnValue(localFile);
-		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
-		let liveBound = true; // live-bound at staging time — required to stage content
-		engine.setLiveBoundCheck((p: string) => liveBound && p === "owned.md");
-		const rebinds: string[] = [];
-		engine.setCrdtEditorRebind((p: string) => rebinds.push(p));
-		const nudges: string[] = [];
-		engine.setCrdtRequestSave((p: string) => nudges.push(p));
-		const bufferReads: string[] = [];
-		engine.setCrdtBoundBufferText((p: string) => {
-			bufferReads.push(p);
-			return "would-mismatch-if-checked";
-		});
-		engine.importSyncState({
-			"owned.md": { hash: 1, version: 1, serverHash: "old-hash" },
-		});
-
-		await engine.applyChange({
-			path: "owned.md",
-			action: "upsert",
-			content: "diverged body",
-			content_hash: "new-hash",
-			version: 2,
-			seq: 42,
-			mtime: 50,
-		} as any);
-
-		// The editor closed between staging and the STEP2 commit — the note is
-		// no longer live-bound. The commit itself checks isLiveBound fresh, so
-		// this must gate the phantom-binding check off entirely (nothing to
-		// rebind — there's no editor left to be phantom).
-		liveBound = false;
-		projectedText.mockResolvedValue("diverged body");
-		await engine.commitCrdtConvergence("note-id-1");
-
-		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("new-hash");
-		expect(bufferReads).toEqual([]); // gated by isLiveBound before ever reading the buffer
-		expect(rebinds).toEqual([]);
-		expect(nudges).toEqual([]);
-	});
+	// (Removed: fix wave 7 (a)/(b)/(c) — the #191 phantom-binding check they
+	// covered is deleted (#484). It compared the bound editor's buffer against
+	// `staged.content`, the catch-up row's checkpoint-lagged plaintext, so a note
+	// being edited remotely tripped it as a matter of course; and its repair call
+	// went to an `editorRebind` port main.ts stopped wiring when the CM6
+	// ViewPlugin took over rebinding, so only these tests — which wired the port
+	// themselves — ever saw it do anything. The commit-records-the-stage behavior
+	// they also asserted is covered by the Relay test below.)
 
 	test("Relay: converged commit records the staged row on the first onSynced (no text-verify defer)", async () => {
 		const { engine, projectedText } = crdtEngine();

@@ -590,11 +590,6 @@ export default class EngramSyncPlugin extends Plugin {
 			// client) — lets the engine drop server fanout echoes of its own REST
 			// deletes (#970).
 			deviceId: this.deviceId,
-			// Fix wave 7 (#191 slice): commitCrdtConvergence's phantom-binding
-			// check reads the bound editor's live buffer, and (on a rebind)
-			// nudges its save the same way wiring.ts's onBoundUpdate does.
-			boundBufferText: (path) => this.crdtLiveViews?.boundBufferText(path) ?? null,
-			requestSave: (path) => this.crdtLiveViews?.requestSaveForBoundPath(path),
 		});
 
 		// Base content store for 3-way merge (lazy-loaded after layout ready)

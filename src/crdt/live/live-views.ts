@@ -179,19 +179,6 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 		this.saveNudgeTimers.set(path, timer);
 	}
 
-	/** Fix wave 7 (#191 slice): read the live buffer of the editor currently
-	 *  showing `path`, for commitCrdtConvergence's phantom-binding check.
-	 *  Returns null when nothing shows the path (nothing to compare). */
-	boundBufferText(path: string): string | null {
-		for (const leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
-			const view = leaf.view;
-			if (!(view instanceof MdView)) continue;
-			if (getMarkdownFilePath(view) !== path) continue;
-			return view.getViewData();
-		}
-		return null;
-	}
-
 	private doRequestSave(path: string): void {
 		try {
 			for (const leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
