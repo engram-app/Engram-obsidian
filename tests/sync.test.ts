@@ -566,6 +566,48 @@ describe("SyncEngine.applySyncChange (apply behavior)", () => {
 
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 		expect(noteIdMap.get(oldPath)).toBeNull(); // no fresh mint
+		// Relocated away means the old path is DEAD — re-queueing it would
+		// resurrect exactly what #972 exists to prevent. Dropping is correct here.
+		expect(engine.queue.size).toBe(0);
+	});
+
+	test("a genuine edit on an engine-flushed UNMAPPED path is queued, not dropped (#1503)", async () => {
+		// Same guard, opposite case. `_confirm_room_free`'s trigger_full_sync
+		// leaves a path transiently unmapped; a real user edit landing in that
+		// window hits shouldDeferMint (unmapped + flushed) and used to
+		// `return false` with no retry and no queue entry. The edit then sat
+		// undelivered until an unrelated PushModified sweep happened to re-pick
+		// the file — 107s in the CI capture, and never in the worst case.
+		//
+		// The discriminator against #972 above: there the disk content is still
+		// exactly what the engine flushed (a pure echo of our own write, and the
+		// relocation evicted the baseline). Here the content has MOVED off the
+		// recorded baseline, which is proof of a real local edit.
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		engine.setNoteIdMap(noteIdMap);
+		const path = "E2E/Crdt/FanoutColdSend.md";
+
+		// Engine materializes the note and records its baseline.
+		noteIdMap.set(path, "id-true");
+		await engine.flushFromCrdt(path, "origin\n");
+
+		// A full sync transiently drops the path's mapping (#1489). The
+		// syncState baseline SURVIVES — this is not a relocation.
+		noteIdMap.delete(path);
+
+		// The user edits the note for real while the map is still unmapped.
+		const file = new TFile(path);
+		mockApp.vault.cachedRead.mockResolvedValue("origin\nCOLD_SEND_FROM_B\n");
+		await (engine as unknown as { pushFile(f: TFile): Promise<boolean> }).pushFile(file);
+
+		// Still no mint — the guard's job is intact.
+		expect(noteIdMap.get(path)).toBeNull();
+		// But the edit is NOT lost: it is queued for a retry that re-resolves
+		// the id once the map settles (runFlushQueue's own mint check).
+		expect(engine.queue.size).toBe(1);
+		const queued = engine.queue.all();
+		expect(queued[0]).toMatchObject({ path, action: "upsert", kind: "note" });
 	});
 
 	test("a CRDT-delivered note is trashed (not resurrected) when the server tombstones it", async () => {
