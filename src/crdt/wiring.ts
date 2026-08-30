@@ -5,7 +5,6 @@ import { rlog } from "../remote-log";
 import type { SyncEngine } from "../sync";
 import { isDestroyedError } from "./destroyed-error";
 import { InvariantChecker, type InvariantViolation } from "./invariants";
-import { boundFlushDecision } from "./live/live-binding-decisions";
 import type { NoteIdMap } from "./note-id-map";
 import { ProviderRegistry } from "./provider-registry";
 import { fromB64 } from "./wire";

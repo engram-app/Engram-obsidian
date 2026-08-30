@@ -2601,8 +2601,6 @@ export default class EngramSyncPlugin extends Plugin {
 								this.crdtLiveViews?.requestSaveForBoundPath(path),
 							// Lets the flush path tell "the editor already shows this" from
 							// "the editor is about to write a stale copy over it" (#483).
-							boundEditorText: (path) =>
-								this.crdtLiveViews?.boundEditorText(path) ?? null,
 							// Gate live crdt_msg on the note's create-ack. hasServerNote
 							// (crdtHead-backed) survives reconnect; confirmedNoteIds does not.
 							canSendLive: (id) => this.syncEngine.hasServerNote(id),
