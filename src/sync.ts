@@ -6319,14 +6319,22 @@ export class SyncEngine {
 	/** Commit a staged convergence (see `pendingConvergence` — staged by BOTH
 	 *  the live-bound and the cold catch-up legs since Phase E3) — the ONLY
 	 *  place those legs' `serverHash`/`version`/`seq` get written. Wired
-	 *  from CrdtManager's `onSynced` (crdt/wiring.ts), which fires from
-	 *  `NoteProvider.receive` on the room's syncStep2 — ONCE per handshake
-	 *  cycle, since the provider latches `synced` and only `reset()`
-	 *  (re-handshake) re-arms it. An EMPTY syncStep2 still fires it: the
-	 *  provider classifies the inbound frame before any size check, and the
-	 *  `length > 1` gate there suppresses only the outbound reply. So a
-	 *  handshake that carries nothing back still commits, which is correct —
-	 *  nothing to send means the doc already holds the server's state.
+	 *  from CrdtManager's `onSynced` (crdt/wiring.ts). Two fire paths, and
+	 *  attributing a commit to the wrong one is how a log read goes wrong:
+	 *
+	 *    1. The ROOM handshake — `NoteProvider.receive` on an inbound syncStep2,
+	 *       ONCE per handshake cycle, since the provider latches `synced` and
+	 *       only `ProviderRegistry.reset`/`clearSynced` re-arm it. An EMPTY
+	 *       syncStep2 still fires it: the provider classifies the frame before
+	 *       any size check, and the `length > 1` gate there suppresses only the
+	 *       outbound reply. A handshake that carries nothing back still commits,
+	 *       which is correct — nothing to send means the doc already holds the
+	 *       server's state.
+	 *    2. ROOM-FREE delivery — `convergeColdNoteRoomFree` calls
+	 *       `ProviderRegistry.markSynced` directly after a `crdt_doc_state` read
+	 *       merges (#1409), which invokes the same callback with no handshake
+	 *       and no frame. A cold note's commit normally comes from here, not
+	 *       from a re-handshake.
 	 *
 	 *  A consequence worth knowing when reading logs (#484): re-handshakes
 	 *  FIRED can legitimately exceed commits. Under continuous remote editing
@@ -8401,9 +8409,12 @@ export class SyncEngine {
 						if (noteId) {
 							// A fresh content_hash overwrites any prior stage — a new
 							// episode, never a stale commit of superseded server content.
-							// content: the row's own plaintext (fix wave 5) — lets
-							// commitCrdtConvergence content-verify the commit instead of
-							// trusting that the next onSynced fire is FOR this row.
+							// content: the row's own plaintext. It does NOT gate the
+							// commit — the fix-wave-5 content-verify is gone (the row is
+							// checkpoint-lagged, so a doc that converged newer than it
+							// wedged the stage forever). Its only remaining reader is
+							// `markServerKnown`: a non-empty staged content is proof the
+							// server holds a row for this note (#339).
 							this.stageAndConverge(
 								noteId,
 								normalized,
