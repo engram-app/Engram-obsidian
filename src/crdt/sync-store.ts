@@ -108,6 +108,16 @@ export class SyncStore {
 	 *  usable headless (tests, the index room before the engine exists). */
 	onRelocate?: (from: string, to: string, note_id: string) => void;
 
+	/** Has this note_id been permanently tombstoned by the CRDT manager?
+	 *  Injected because the store must not depend on the registry; see the
+	 *  aliveness check in `getOrMint`. Absent in tests that do not model it. */
+	private isTombstoned: (noteId: string) => boolean = () => false;
+
+	/** Wire the tombstone oracle. Called once, at stack construction. */
+	setTombstoneCheck(fn: (noteId: string) => boolean): void {
+		this.isTombstoned = fn;
+	}
+
 	constructor(private readonly map: Y.Map<FileMeta>) {
 		// A remote update invalidates the reverse index just as a local one does.
 		// Without this a path learned from another device answers `pathForId`
@@ -294,6 +304,60 @@ export class SyncStore {
 		// only locally should be asserted once the room is SYNCED, where the
 		// current claim is knowable, not guessed at from a stale cache.
 		if (existing) return existing;
+
+		// NEVER MINT OVER A CLAIM THE SHARED DOC STILL HOLDS (#451).
+		//
+		// `getMeta` returning null means "no local layer answers", which is not
+		// the same fact as "this path is unclaimed". `forget()` cannot remove a
+		// COMMITTED entry without publishing, so it hides one instead — and that
+		// hide used to outrank a live claim here. Minting then puts a SECOND id
+		// on a path the shared doc already names: every op goes out under an id
+		// the backend never issued, is dropped `note_not_found`, and the note
+		// forks. Observed in prod 2026-08-28, twice on one note ten minutes
+		// apart; the second mint left a row whose CRDT doc was empty over a
+		// non-empty facade and the note vanished from the web app.
+		//
+		// The class comment above `forgotten` already predicted this ("`getOrMint`
+		// would mint a SECOND id for a note that already has one and publish it
+		// over the live claim") and relied on `map.observe` clearing the hide when
+		// a remote frame rewrites the key. That clearing event does not fire when
+		// no frame arrives — offline, room not synced, or a note only this device
+		// has touched since. Reaching the same self-heal from a local read closes
+		// the window instead of narrowing it.
+		//
+		// NOT the reverted cache-claim fix: nothing is staged and nothing is
+		// published. No `set`, so no id-keyed removal, so no path can be staged
+		// for deletion — that revert's whole failure mode is unreachable from
+		// here. Clearing `forgotten` is local-only by construction.
+		//
+		// Two local states ARE verdicts and keep their mint:
+		//   * `deleteSet` — the user deleted the note, so a file reappearing at
+		//     that path is a NEW note and must get a fresh id.
+		//   * `evicted` — a later claim moved the id elsewhere, so the committed
+		//     entry naming it here is stale.
+		// A staged rename of `resolved` itself is excluded for the same reason:
+		// the chain stopped there, so the entry is mid-move and not ours to read.
+		if (!this.deleteSet.has(resolved) && !this.renames.has(resolved)) {
+			const claimed = this.map.get(resolved)?.note_id ?? null;
+			// A TOMBSTONED id is not a live claim, it is a headstone. `forgotten`
+			// is this guard's only production trigger, and every production
+			// `forget()` is a REMOTE delete — which also calls `removeDoc`, so the
+			// id's Y.Doc is destroyed for the rest of the session. Handing it back
+			// resurrects it: `residentText` throws NoteDestroyedError inside the
+			// CM6 `attach()` (which has no catch, so the binding dies), `enroll`
+			// silently no-ops, and every applyLocalEdit returns null. The note is
+			// unsyncable until reload, with no invariant watching for it.
+			//
+			// The repo already fixed this exact shape once, for the LOCAL delete
+			// path (index-crdt-regressions "a file recreated at a deleted note's
+			// path must mint a FRESH id"), by routing it to `release()`. The remote
+			// path still forgets, so the guard has to ask.
+			if (claimed && !this.evicted.has(claimed) && !this.isTombstoned(claimed)) {
+				this.forgotten.delete(resolved);
+				this.reverse = null;
+				return claimed;
+			}
+		}
 
 		const note_id = uuid7();
 		this.set(path, { note_id });

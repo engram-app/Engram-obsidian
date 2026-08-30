@@ -11,8 +11,9 @@ import { canvasIsEmpty } from "./canvas-codec";
 import {
 	CONTENT_KEY,
 	FRONTMATTER_KEY,
+	type FrontmatterParse,
 	ORDER_KEY,
-	parseFrontmatter,
+	parseFrontmatterBlock,
 	RAW_FRONTMATTER_KEY,
 	splitFrontmatter,
 } from "./frontmatter-codec";
@@ -114,12 +115,75 @@ export function applyFrontmatterInto(
  *  diff; otherwise seed once. */
 export function seedContentInto(doc: Y.Doc, text: Y.Text, content: string, lca: boolean): void {
 	const { fmBlock, body: splitBody } = splitFrontmatter(content);
-	const parsed = fmBlock === null ? null : parseFrontmatter(fmBlock);
-	const order = parsed ? parsed.order : [];
-	const values = parsed ? parsed.values : {};
-	const body = parsed !== null ? splitBody : content;
+	const parsed: FrontmatterParse =
+		fmBlock === null ? { kind: "empty" } : parseFrontmatterBlock(fmBlock);
+
+	// Three cases, and the first fix for #483 defect 2 collapsed two of them.
+	//
+	//   no fence / empty   the note has no properties, or the user just removed
+	//                      them. Clearing every key is correct, or frontmatter
+	//                      could never be removed at all.
+	//   ok                 apply it.
+	//   degraded           YAML we cannot model. Clearing would destroy the
+	//                      user's properties over a block they are still typing.
+	//
+	// Originally ALL of these cleared, so one unparseable block wiped the lot.
+	// The first fix made all three inert instead, which fixed the wipe and broke
+	// removal: `---\n\n---` — how you empty a properties block in Source mode —
+	// parses to nothing, so every key came back on the next flush, forever.
+	// `parseFrontmatterBlock` separates "holds no mapping" from "cannot be read".
+	//
+	// The server has never had this problem: `Frontmatter.parse_for_ingest`
+	// keeps the good keys and preserves the unreadable one verbatim in the raws
+	// map. Matching that PER-KEY still needs a degraded client parser (#483 step
+	// 4); this is the whole-block approximation of it.
+	//
+	// On a degraded block the raw text has to survive somewhere. If the doc
+	// already holds frontmatter, that is the last good version and the block
+	// heals from it. If it holds NONE — first sight of a note whose frontmatter
+	// is malformed — dropping to `splitBody` would delete the block from the
+	// file on the first flush, so the raw text rides in the body instead. That
+	// is the fence-in-body shape the server's normalize_doc exists to heal:
+	// ugly, and lossless, which beats tidy and destructive.
+	const degraded = parsed.kind === "degraded";
+	const body = degraded && !hasFrontmatter(doc) ? content : splitBody;
+
 	doc.transact(() => {
-		applyFrontmatterInto(doc, order, values);
+		if (parsed.kind === "ok") applyFrontmatterInto(doc, parsed.order, parsed.values);
+		else if (parsed.kind === "empty") applyFrontmatterInto(doc, [], {});
 		if (!seedOnce(text, body, lca)) diffIntoYText(text, body);
 	});
+}
+
+/** Does the doc hold any frontmatter of its own to fall back on? */
+function hasFrontmatter(doc: Y.Doc): boolean {
+	return doc.getMap(FRONTMATTER_KEY).size > 0 || doc.getArray(ORDER_KEY).length > 0;
+}
+
+/** Ingest ONLY the frontmatter half of a disk read, leaving the body Y.Text
+ *  untouched.
+ *
+ *  For the live-bound path. `sync.ts` skips the whole disk-driven CRDT route
+ *  while a note is open, because the binding forwards every keystroke into the
+ *  Y.Text and re-diffing the file each autosave would churn the doc. Correct
+ *  for the body, and it also skipped the FRONTMATTER, which the binding drops
+ *  (`classifyEditSpan` -> "frontmatter"). Between the two, frontmatter typed
+ *  into an open note reached the doc by no route at all (#483 defect 1,
+ *  outbound half; e2e: obsidian -> web passes closed, fails open).
+ *
+ *  Deliberately NOT `seedContentInto` with a body guard bolted on: the body
+ *  belongs to the binding while bound, and the narrow entry point makes that
+ *  ownership explicit at the call site instead of implicit in a flag.
+ *
+ *  Same three-way split as above, and it matters MORE here: this runs on every
+ *  autosave while the user is mid-keystroke, so a degraded block must be inert
+ *  — and an emptied one must still clear, or properties could never be deleted
+ *  from an open note. */
+export function seedFrontmatterInto(doc: Y.Doc, content: string): void {
+	const { fmBlock } = splitFrontmatter(content);
+	const parsed: FrontmatterParse =
+		fmBlock === null ? { kind: "empty" } : parseFrontmatterBlock(fmBlock);
+	if (parsed.kind === "degraded") return;
+	if (parsed.kind === "empty") applyFrontmatterInto(doc, [], {});
+	else applyFrontmatterInto(doc, parsed.order, parsed.values);
 }

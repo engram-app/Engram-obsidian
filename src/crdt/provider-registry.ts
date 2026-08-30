@@ -15,10 +15,16 @@ import * as Y from "yjs";
 import { Lifetime } from "../lifetime";
 import { projectCanvas, seedCanvasInto } from "./canvas-codec";
 import { isDestroyedError, NoteDestroyedError } from "./destroyed-error";
-import { CONTENT_KEY, frontmatterOf, projectNote, rawFrontmatterOf } from "./frontmatter-codec";
+import {
+	CONTENT_KEY,
+	frontmatterOf,
+	projectNote,
+	rawFrontmatterOf,
+	splitFrontmatter,
+} from "./frontmatter-codec";
 import { mergeDiskOntoDoc } from "./lca-merge";
 import { type FrameKind, NoteProvider } from "./note-provider";
-import { docHasAnyHistory, docHasHistory, seedContentInto } from "./note-seed";
+import { docHasAnyHistory, docHasHistory, seedContentInto, seedFrontmatterInto } from "./note-seed";
 
 export type DocKind = "note" | "canvas";
 
@@ -38,6 +44,9 @@ interface Entry {
 	/** Ticks on every remote merge — the stale-snapshot guard in applyLocalEdit
 	 *  uses it to detect a merge that interleaved a disk reread. */
 	remoteSeq: number;
+	/** The frontmatter block as of the last flush, so the next one can say
+	 *  whether the frontmatter CHANGED. `null` means "no block". */
+	lastFlushedFm: string | null;
 	/** In-flight disk-flush from the last remote merge; applyRemoteUpdate awaits
 	 *  it so a write failure can leave crdtHead unadvanced (#235). */
 	pendingFlush: Promise<void> | null;
@@ -62,6 +71,11 @@ export interface ProviderRegistryOpts {
 	onFlushToDisk: (
 		noteId: string,
 		content: string,
+		/** Did THIS update change the frontmatter block, as opposed to the body?
+		 *  The bound-path flush needs it: while a note is open the editor owns
+		 *  the body, but nothing in the editor represents frontmatter, so only a
+		 *  frontmatter change justifies writing under a live editor. */
+		fmChanged: boolean,
 	) => Promise<boolean | undefined> | boolean | undefined;
 	/** Adopt-first gate: content byte-identical to the last-synced content must
 	 *  NOT seed (would fork a second lineage → #846 doubling). */
@@ -142,6 +156,21 @@ export class ProviderRegistry {
 		if (this.removed.has(noteId)) throw new NoteDestroyedError(noteId);
 	}
 
+	/** Ingest ONLY the frontmatter of a disk read into `noteId`'s doc.
+	 *
+	 *  The live-bound path (#483 defect 1, outbound half). `sync.ts` skips the
+	 *  disk-driven CRDT route entirely while a note is open, so the binding owns
+	 *  the body — and the binding drops frontmatter keystrokes, so frontmatter
+	 *  typed into an open note reached the doc by no route at all.
+	 *
+	 *  Awaits `entry()`, never `ensureEntrySync`: writing into a doc that has not
+	 *  finished its IndexedDB replay mints ops on an empty doc and forks the
+	 *  lineage, which is the trap the pre-handshake seed gate exists for. */
+	async ingestFrontmatter(noteId: string, content: string): Promise<void> {
+		const e = await this.entry(noteId);
+		seedFrontmatterInto(e.doc, content);
+	}
+
 	private async entry(noteId: string): Promise<Entry> {
 		const e = this.ensureEntrySync(noteId);
 		// Guarded, not a bare await: a removeDoc landing DURING IndexedDB
@@ -198,6 +227,7 @@ export class ProviderRegistry {
 			kind,
 			ready: Promise.resolve(),
 			remoteSeq: 0,
+			lastFlushedFm: null,
 			pendingFlush: null,
 			lifetime: new Lifetime(),
 		};
@@ -209,7 +239,18 @@ export class ProviderRegistry {
 			if (origin !== provider && origin !== REMOTE) return;
 			entry.remoteSeq += 1;
 			const projected = this.project(entry);
-			const flush = Promise.resolve(this.opts.onFlushToDisk(noteId, projected)).then((ok) => {
+			// Compare the BLOCK against what the last flush projected, not against
+			// the editor. The editor is the wrong oracle: in Live Preview the CM
+			// document is body-only, so it never carries a fence, and comparing
+			// against it reported "frontmatter differs" for EVERY note that has
+			// any — turning the bound-path nudge into a direct write under a live
+			// editor on Obsidian's default mode.
+			const fmBlock = splitFrontmatter(projected).fmBlock;
+			const fmChanged = fmBlock !== entry.lastFlushedFm;
+			entry.lastFlushedFm = fmBlock;
+			const flush = Promise.resolve(
+				this.opts.onFlushToDisk(noteId, projected, fmChanged),
+			).then((ok) => {
 				if (ok === false) throw new Error(`flushFromCrdt write failure for ${noteId}`);
 			});
 			entry.pendingFlush = flush;
@@ -260,6 +301,17 @@ export class ProviderRegistry {
 	/** Full reconstructed file (frontmatter + body, or canvas JSON). */
 	async projectedText(noteId: string): Promise<string> {
 		return this.project(await this.entry(noteId));
+	}
+
+	/** `projectedText` for an ALREADY-RESIDENT doc, synchronously.
+	 *
+	 *  Teardown only. `CrdtLiveViews.destroy()` must capture content BEFORE it
+	 *  returns, because its caller may destroy the manager immediately after —
+	 *  an awaited projection would then run `toJSON()` on a dead doc. Callers
+	 *  must gate on `hasDoc(noteId)`: this uses `ensureEntrySync`, which would
+	 *  otherwise materialize a fresh EMPTY doc and flush "" over the file. */
+	residentProjection(noteId: string): string {
+		return this.project(this.ensureEntrySync(noteId));
 	}
 
 	async hasHistory(noteId: string): Promise<boolean> {

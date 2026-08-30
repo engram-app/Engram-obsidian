@@ -58,6 +58,19 @@ export interface CrdtWiringDeps {
 	 *  omitted in tests that don't exercise it. Never throws (the caller's
 	 *  contract, not enforced here). */
 	onBoundUpdate?: (path: string) => void;
+	/** What the OPEN editor for `path` currently shows, or null when there is no
+	 *  readable view for it. Backed by CrdtLiveViews, same lazy-closure reason
+	 *  as `isBound`.
+	 *
+	 *  Needed because `onBoundUpdate` nudges Obsidian to save the EDITOR BUFFER,
+	 *  and that buffer is only current for what the live binding paints — the
+	 *  body. Frontmatter is observed by nothing, so nudging on a remote
+	 *  frontmatter change writes the STALE block to disk and `seedContentInto`
+	 *  puts it back in the doc: a silent revert (#483 defect 1). Comparing the
+	 *  editor (not disk) is what makes it safe to type frontmatter locally.
+	 *  Optional: omitted means "cannot confirm", which `boundFlushDecision`
+	 *  resolves toward writing rather than reverting. */
+	boundEditorText?: (path: string) => string | null;
 	/** True once `noteId`'s crdt_create has been server-acked (its DB row
 	 *  exists) — CrdtManagerOptions.canSendLive. A brand-new note's live edits
 	 *  land in the Y.Doc immediately (never lost) but must NOT stream a
@@ -332,7 +345,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 			}
 			return ok;
 		},
-		onFlushToDisk: async (noteId, content) => {
+		onFlushToDisk: async (noteId, content, fmChanged) => {
 			const path = noteIdMap.pathForId(noteId);
 			if (!path) {
 				// Unknown id: content is safe in the Y.Doc; heal the id from the
@@ -342,7 +355,18 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 			}
 			// The editor owns disk for a bound path; a remote merge just painted in,
 			// so nudge Obsidian's own save (fix wave 6) instead of double-writing.
-			if (deps.isBound(path)) {
+			//
+			// "Painted in" covers the BODY only. Nothing observes the frontmatter
+			// shared types, so on a remote FRONTMATTER change the nudge saves the
+			// editor's stale block over the new one and seedContentInto writes it
+			// back into the doc — reverted, not merely delayed (#483 defect 1).
+			//
+			// `fmChanged` comes from the registry, which compares this projection's
+			// block against the previous one. It deliberately does NOT ask the
+			// editor: in Live Preview the CM document is body-only, so it carries
+			// no fence and every note WITH frontmatter looked changed — turning the
+			// nudge into a direct write under a live editor on the default mode.
+			if (deps.isBound(path) && !fmChanged) {
 				deps.onBoundUpdate?.(path);
 				return undefined;
 			}
@@ -475,6 +499,16 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		syncEngine.clearPushedBaselineForId(docId);
 		syncEngine.ensureNoteIdMapped(docId);
 	};
+
+	// The mint guard must be able to tell a live claim from a headstone. Wired
+	// here because it is the one place that holds both the identity store and
+	// the registry that owns tombstones; SyncStore itself must not reach for the
+	// registry. Without it, a note recreated at the path of a REMOTELY deleted
+	// one resolves to that note's destroyed doc and cannot sync until reload.
+	// Optional-chained for the test doubles, which hand in a bare NoteIdMap-shaped
+	// object with no store. Production always has one — NoteIdMap constructs its
+	// own when the index room does not supply it.
+	noteIdMap.store?.setTombstoneCheck?.((noteId) => registry.removedIds.has(noteId));
 
 	// Runtime invariants (Relay parity). Violations report at WARN — the level
 	// that actually reaches Loki — so structural drift surfaces in prod instead

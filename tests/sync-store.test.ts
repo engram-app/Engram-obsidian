@@ -301,6 +301,65 @@ describe("getOrMint", () => {
 	});
 });
 
+// #451, observed in prod 2026-08-28: a claimed path stopped resolving
+// mid-session, `getOrMint` read that as "new path" and minted a second
+// UUIDv7, and every op sent under it was dropped `note_not_found` by a
+// backend that never issued it. `forget()` cannot remove a COMMITTED entry
+// without publishing, so it hides one — and the hide outranked a live claim.
+describe("getOrMint never mints over a live committed claim", () => {
+	test("a forgotten path resolves to the committed id instead of minting", () => {
+		const { store, map } = store_();
+		map.set("a.md", { note_id: "id-a" });
+
+		store.forget("a.md");
+		expect(store.get("a.md")).toBeNull(); // the hide is still doing its job
+
+		expect(store.getOrMint("a.md")).toBe("id-a");
+	});
+
+	test("resolving it clears the local hide, so the reverse index answers again", () => {
+		const { store, map } = store_();
+		map.set("a.md", { note_id: "id-a" });
+		store.forget("a.md");
+
+		store.getOrMint("a.md");
+
+		expect(store.pathForId("id-a")).toBe("a.md");
+	});
+
+	test("it publishes nothing — no claim, no id-keyed removal", () => {
+		const { store, map } = store_();
+		map.set("a.md", { note_id: "id-a" });
+		store.forget("a.md");
+
+		store.getOrMint("a.md");
+
+		expect(store.dirty).toBe(false);
+		store.commit();
+		expect(map.get("a.md")).toEqual({ note_id: "id-a" });
+	});
+
+	// The two local states that ARE verdicts keep their mint.
+	test("a DELETED path still mints — a recreate there is a new note", () => {
+		const { store, map } = store_();
+		map.set("a.md", { note_id: "id-a" });
+
+		store.delete("a.md");
+
+		expect(store.getOrMint("a.md")).not.toBe("id-a");
+	});
+
+	test("an EVICTED id is stale and still mints", () => {
+		const { store, map } = store_();
+		map.set("a.md", { note_id: "id-a" });
+		// Another path claims id-a, so a.md's committed entry no longer holds it.
+		store.set("b.md", { note_id: "id-a" });
+		store.forget("a.md");
+
+		expect(store.getOrMint("a.md")).not.toBe("id-a");
+	});
+});
+
 // NoteIdMap-level behaviour: the coalescing that makes a folder move ONE update.
 describe("NoteIdMap publication", () => {
 	async function tick() {
@@ -348,5 +407,46 @@ describe("NoteIdMap publication", () => {
 		map.flushNow();
 
 		expect(doc.getMap<any>("filemeta_v0").get("a.md")).toEqual({ note_id: "id-a" });
+	});
+});
+
+// Adversarial-review finding. The mint guard's ONLY production trigger is
+// `forget()`, and every production forget is a REMOTE delete -- which also
+// calls removeDoc, tombstoning the id for the session. Handing that id back
+// resurrects a destroyed doc: residentText throws inside the CM6 attach(),
+// enroll no-ops, and applyLocalEdit returns null, so the note cannot sync
+// until reload. The repo fixed this shape once already for LOCAL deletes.
+describe("the mint guard refuses a tombstoned claim", () => {
+	const storeWith = (tombstoned: Set<string>) => {
+		const store = new SyncStore(new Y.Doc().getMap("filemeta"));
+		store.setTombstoneCheck((id) => tombstoned.has(id));
+		return store;
+	};
+
+	test("a path forgotten by a REMOTE delete mints fresh once its id is tombstoned", () => {
+		const tombstoned = new Set<string>();
+		const store = storeWith(tombstoned);
+		const original = store.getOrMint("a.md");
+		store.commit();
+
+		// What sync.ts does on an inbound delete: forget the path, tear the doc down.
+		store.forget("a.md");
+		tombstoned.add(original);
+
+		const recreated = store.getOrMint("a.md");
+		expect(recreated).not.toBe(original);
+		expect(tombstoned.has(recreated)).toBe(false);
+	});
+
+	// The #451 case the guard exists for is unchanged: a live claim is still
+	// reused, so a path whose id merely went missing locally does not re-mint
+	// and strand itself as note_not_found.
+	test("a LIVE claim is still reused", () => {
+		const store = storeWith(new Set());
+		const original = store.getOrMint("b.md");
+		store.commit();
+		store.forget("b.md");
+
+		expect(store.getOrMint("b.md")).toBe(original);
 	});
 });

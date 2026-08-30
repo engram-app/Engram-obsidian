@@ -27,6 +27,7 @@ merger.Patch_DeleteThreshold = 0.2;
  *  A private regex here once diverged on CRLF opening fences and on trailing
  *  spaces before the closing fence — each disagreement IS the offset-corruption
  *  class the doc above warns about. */
+
 export function frontmatterPrefixLen(editorText: string): number {
 	const { fmBlock, body } = splitFrontmatter(editorText);
 	return fmBlock === null ? 0 : editorText.length - body.length;

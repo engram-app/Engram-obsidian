@@ -556,6 +556,13 @@ export class SyncEngine {
 	 *  whether the user has accepted a sync direction in SyncPreviewModal for
 	 *  the current auth+vault fingerprint. */
 	private syncBlocked = false;
+	/** Whether THIS gate closure has already announced itself. One notice per
+	 *  closure: the gate stays shut until the user acts, and a nag on every
+	 *  keystroke is how a useful message becomes one people dismiss on sight. */
+	private blockedEditReported = false;
+	/** Announce a gate-blocked edit. Set by main.ts; unset in tests and in any
+	 *  headless construction, so the engine stays usable without a UI. */
+	onSyncBlockedEdit?: () => void;
 	private activePushCount = 0;
 	private maxConcurrentPushes = 5;
 	/** >0 while a bulk sweep (pushAll / fullSync) is running. Queue entries it
@@ -2451,11 +2458,23 @@ export class SyncEngine {
 
 	setSyncBlocked(blocked: boolean): void {
 		this.syncBlocked = blocked;
+		// Re-arm the announcement on every transition, so a LATER closure (a
+		// vault switch, a re-link) speaks up again instead of staying silent
+		// because some earlier closure already used up the one notice.
+		this.blockedEditReported = false;
 		devLog().log("lifecycle", `setSyncBlocked(${blocked})`);
 	}
 
 	isSyncBlocked(): boolean {
 		return this.syncBlocked;
+	}
+
+	/** Fire `onSyncBlockedEdit` at most once per gate closure. */
+	private reportBlockedEdit(): void {
+		if (this.blockedEditReported) return;
+		this.blockedEditReported = true;
+		rlog().warn("lifecycle", "edit blocked — sync gate closed, user not notified until now");
+		this.onSyncBlockedEdit?.();
 	}
 
 	setLastSync(timestamp: string): void {
@@ -3524,6 +3543,12 @@ export class SyncEngine {
 	handleModify(file: TAbstractFile): void {
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", "handleModify short-circuited — gate closed");
+			// A closed gate is silent everywhere except a status-bar label, and a
+			// user who does not happen to look there reads "my edits do nothing"
+			// as a dead sync engine. It cost hours on 2026-08-29. Announce it on
+			// the first EDIT — the moment the user's intent meets the gate — not
+			// on the close, which happens during setup when they are not editing.
+			this.reportBlockedEdit();
 			return;
 		}
 		if (!this.ready) return;
@@ -3577,6 +3602,33 @@ export class SyncEngine {
 			// conflict. The editor's content IS in the Y.Doc, so recording it here
 			// is the truthful baseline, not an optimistic one.
 			if (file instanceof TFile) void this.recordLiveBoundBaseline(file);
+			// ...and the FRONTMATTER still has to be ingested. The skip above is
+			// right about the body (the binding forwards keystrokes into the
+			// Y.Text) and wrong about frontmatter, which the binding explicitly
+			// drops — `classifyEditSpan` returns "frontmatter" and the edit is not
+			// forwarded. Between the two, frontmatter typed into an OPEN note
+			// reached the doc by no route at all: #483 defect 1, confirmed by e2e
+			// (obsidian -> web passes with the note closed, fails with it open).
+			//
+			// Narrow on purpose. `seedFrontmatterInto` never touches the body, so
+			// this cannot reintroduce the whole-file re-diff churn the skip exists
+			// to prevent, and it carries the same unparseable guard — which matters
+			// here, because this runs on every autosave while the user is still
+			// mid-keystroke.
+			if (file instanceof TFile && this.crdt) {
+				const fmId = this.noteIdMap?.get(file.path) ?? null;
+				if (fmId) {
+					void this.app.vault
+						.cachedRead(file)
+						.then((disk) => this.crdt?.ingestFrontmatter(fmId, disk))
+						.catch((e) =>
+							rlog().warn(
+								"crdt",
+								`live-bound frontmatter ingest failed for ${noteRef(file.path)}: ${errMsg(e, file.path)}`,
+							),
+						);
+				}
+			}
 			return;
 		}
 
@@ -3659,6 +3711,11 @@ export class SyncEngine {
 	async handleDelete(file: TAbstractFile): Promise<void> {
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", "handleDelete short-circuited — gate closed");
+			// Same reasoning as handleModify: a delete the user believes synced
+			// and which never left the device is worse than a silent edit, not
+			// better. Shares the once-per-closure latch, so a modify+delete pair
+			// still produces one notice.
+			this.reportBlockedEdit();
 			return;
 		}
 		if (!this.ready) return;

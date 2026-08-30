@@ -1112,6 +1112,13 @@ export default class EngramSyncPlugin extends Plugin {
 			// now so handlers can respond to vault events. The sync gate
 			// (`syncBlocked`) independently controls whether handlers push;
 			// readiness must not depend on a user-driven modal choice.
+			// A closed gate silences every push and pull path in the engine, and
+			// until now said so only through a status-bar label. On 2026-08-29 a
+			// device was repointed at another backend + vault, the fingerprint
+			// changed, the gate shut, and it read as a dead sync engine for
+			// hours. Speak up at the moment the user's edit meets the gate.
+			this.syncEngine.onSyncBlockedEdit = () => this.notifySyncGateClosed();
+
 			this.syncEngine.setReady();
 
 			if (!registered) return;
@@ -2592,6 +2599,8 @@ export default class EngramSyncPlugin extends Plugin {
 							// paints into an unfocused bound editor (CI doesn't flush it).
 							onBoundUpdate: (path) =>
 								this.crdtLiveViews?.requestSaveForBoundPath(path),
+							// Lets the flush path tell "the editor already shows this" from
+							// "the editor is about to write a stale copy over it" (#483).
 							// Gate live crdt_msg on the note's create-ack. hasServerNote
 							// (crdtHead-backed) survives reconnect; confirmedNoteIds does not.
 							canSendLive: (id) => this.syncEngine.hasServerNote(id),
@@ -2969,6 +2978,26 @@ export default class EngramSyncPlugin extends Plugin {
 	private derivePreviewContext(): SyncPreviewContext {
 		if (this.syncGateAcceptedFor == null) return "first-time";
 		return "vault-switch";
+	}
+
+	/** Tell the user their edit went nowhere, and offer the one action that
+	 *  fixes it. Fired at most once per gate closure by the engine.
+	 *
+	 *  Deliberately a notice with a button rather than opening the modal
+	 *  outright: the trigger is a keystroke in a note, and a modal stealing
+	 *  focus mid-sentence is its own bug report. */
+	private notifySyncGateClosed(): void {
+		const notice = new Notice(
+			"Engram: sync is paused — this edit was not synced. Choose a sync direction to resume.",
+			0,
+		);
+		const noticeEl = (notice as unknown as { noticeEl?: HTMLElement }).noticeEl;
+		if (!noticeEl) return;
+		const btn = noticeEl.createEl("button", { text: "Resume sync" });
+		btn.addEventListener("click", () => {
+			notice.hide();
+			void this.doSyncWithFirstSyncCheck();
+		});
 	}
 
 	/** Compute a sync plan and show SyncPreviewModal. Used after every
