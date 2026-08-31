@@ -3775,6 +3775,11 @@ export class SyncEngine {
 		// other device, immediately) a file recreated at this path adopted the
 		// deleted note's id, resurrecting the lineage Task 5 exists to bury.
 		if (!isBinary) {
+			// #1526 instrumentation: every path that stops answering for a note.
+			rlog().info(
+				"crdt",
+				`noteIdMap release: ${noteRef(file.path)} — handleDelete: user deleted the file`,
+			);
 			this.noteIdMap?.release(file.path);
 		}
 
@@ -4915,6 +4920,11 @@ export class SyncEngine {
 					// is exactly what the `set` below consults to remove a stale
 					// claim — so both keys survived in the doc, naming one note at
 					// two paths.
+					// #1526 instrumentation: every path that stops answering for a note.
+					rlog().info(
+						"crdt",
+						`noteIdMap release: ${noteRef(normalizePath(pushedPath))} — push: server rejected/relocated the pushed path`,
+					);
 					this.noteIdMap?.release(normalizePath(pushedPath));
 					this.noteIdMap?.set(normalizePath(serverPath), resp.note.id);
 				} else {
@@ -7149,7 +7159,16 @@ export class SyncEngine {
 				}
 				// Only clear a stale old-path→id mapping if one still points at the
 				// relocated room; leave the id's room mapping (new path) intact.
-				if (this.noteIdMap?.get(normalized) === roomId) this.noteIdMap.delete(normalized);
+				// #1526 instrumentation: every path that stops answering for a note.
+				// Logged INSIDE the guard — the unconditional form fired on every
+				// rename old-leg, including the ones that keep their mapping.
+				if (this.noteIdMap?.get(normalized) === roomId) {
+					rlog().info(
+						"crdt",
+						`noteIdMap delete: ${noteRef(normalized)} — ws delete: rename old-leg, id relocated away`,
+					);
+					this.noteIdMap.delete(normalized);
+				}
 				rlog().info(
 					"ws",
 					`Delete is rename old-leg (id relocated to ${noteRef(relocatedPath)}); old path trashed, room preserved: ${noteRef(normalized)}`,
@@ -7202,6 +7221,11 @@ export class SyncEngine {
 			// here targetId == currentId or one is null): clear the path mapping and
 			// tear down the room for that id.
 			if (this.isCrdtEligiblePath(normalized)) {
+				// #1526 instrumentation: every path that stops answering for a note.
+				rlog().info(
+					"crdt",
+					`noteIdMap delete: ${noteRef(normalized)} — ws delete: remote delete applied`,
+				);
 				this.noteIdMap?.delete(normalized);
 				const roomId = targetId ?? currentId;
 				if (roomId) {
@@ -7849,6 +7873,8 @@ export class SyncEngine {
 		const applied = await this.applyChange(nc);
 		// Retire the id now that applyChange has consumed the mapping (see the
 		// deferral note above). Idempotent with applyChange's own md teardown.
+		// #1526 instrumentation: every path that stops answering for a note.
+		rlog().info("crdt", `noteIdMap delete: ${noteRef(op.path)} — op-log replay: delete op`);
 		if (op.kind === "delete") this.noteIdMap?.delete(op.path);
 		return applied;
 	}
@@ -8185,6 +8211,11 @@ export class SyncEngine {
 				// path is unchanged. Clears the map too (idempotent with
 				// applySyncChange's deferred clear).
 				if (crdtNoteId && this.isCrdtEligiblePath(normalized)) {
+					// #1526 instrumentation: every path that stops answering for a note.
+					rlog().info(
+						"crdt",
+						`noteIdMap delete: ${noteRef(normalized)} — pull/catch-up: applyChange removal leg`,
+					);
 					this.noteIdMap?.delete(normalized);
 					await this.teardownCrdtDoc(crdtNoteId);
 				}
