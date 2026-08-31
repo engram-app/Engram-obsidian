@@ -7874,8 +7874,21 @@ export class SyncEngine {
 		// Retire the id now that applyChange has consumed the mapping (see the
 		// deferral note above). Idempotent with applyChange's own md teardown.
 		// #1526 instrumentation: every path that stops answering for a note.
-		rlog().info("crdt", `noteIdMap delete: ${noteRef(op.path)} — op-log replay: delete op`);
-		if (op.kind === "delete") this.noteIdMap?.delete(op.path);
+		// INSIDE the guard — outside it this fired on every replayed op, which
+		// made 139 ordinary ops read as 139 deletes. Carries both ids: the op's
+		// and whatever currently holds the path, because a stale delete replayed
+		// over a since-recreated note is the shape under suspicion.
+		if (op.kind === "delete") {
+			// Hoisted: the privacy guard rejects a raw path inside an rlog template
+			// literal, and `noteIdMap.get(op.path)` counts even though it yields an id.
+			const currentId = this.noteIdMap?.get(op.path) ?? "none";
+			rlog().info(
+				"crdt",
+				`noteIdMap delete: ${noteRef(op.path)} — op-log replay: delete op ` +
+					`op_id=${op.id} current_id=${currentId} seq=${op.seq}`,
+			);
+			this.noteIdMap?.delete(op.path);
+		}
 		return applied;
 	}
 
