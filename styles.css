@@ -873,29 +873,6 @@ body.is-mobile .engram-support-buttons > a {
 	box-shadow: var(--shadow-s);
 }
 
-.engram-sync-center-dot {
-	font-size: 14px;
-	line-height: 1;
-}
-
-.engram-sync-center-dot.is-idle {
-	color: var(--color-green);
-}
-
-.engram-sync-center-dot.is-syncing {
-	color: var(--color-blue);
-}
-
-.engram-sync-center-dot.is-offline,
-.engram-sync-center-dot.is-error {
-	color: var(--color-red);
-}
-
-.engram-sync-center-title {
-	font-weight: 600;
-	flex: 1;
-}
-
 .engram-sync-center-issue-badge {
 	background: var(--background-modifier-error);
 	color: var(--text-on-accent);

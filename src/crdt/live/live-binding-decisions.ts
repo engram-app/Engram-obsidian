@@ -2,8 +2,39 @@
 // reconcile + re-attach logic is unit-testable without mounting a real CodeMirror
 // editor. The ViewPlugin (live-binding.ts) executes whatever these return.
 import { diff_match_patch } from "diff-match-patch";
+import { isMarkdownPath } from "../../file-kind";
 import { splitFrontmatter } from "../frontmatter-codec";
 import { type CmChangeSpec, textDiffToChangeSpec } from "./cm-yjs-bridge";
+
+/** The shape of Obsidian's `editorInfoField` that the binding actually reads. */
+export interface EditorOwnerInfo {
+	file?: { path?: string } | null;
+	editor?: { cm?: unknown };
+}
+
+/** The markdown path `view` is the note editor FOR, or null when it must not bind.
+ *
+ *  The identity check is the whole point. Obsidian registers plugin editor
+ *  extensions into EVERY CM6 EditorView it builds, and it builds the Live Preview
+ *  table-cell editor with the PARENT editor's `owner` — so `editorInfoField`
+ *  inside a cell resolves to the very same MarkdownView, with the very same file.
+ *  Keying off the path alone bound the cell's tiny EditorView to the whole note's
+ *  Y.Text; the initial reconcile then saw "editor is stale disk, doc is
+ *  authoritative", adopted the ENTIRE document into that one cell, and the table
+ *  round-tripped it into the file and out to the server. Only the view that IS the
+ *  owner's own editor is the note. (Relay guards the same way, via findView.)
+ *
+ *  Null while `owner.editor.cm` is still unassigned: the ViewPlugin constructor
+ *  runs inside `new EditorView(...)`, before Obsidian stores the reference. The
+ *  binding re-resolves on every update, so it attaches on the first ViewUpdate. */
+export function ownedMarkdownPath(
+	view: unknown,
+	info: EditorOwnerInfo | null | undefined,
+): string | null {
+	if (!info || info.editor?.cm !== view) return null;
+	const path = info.file?.path ?? null;
+	return path && isMarkdownPath(path) ? path : null;
+}
 
 /** A dedicated dmp instance for the 3-way merge, tuned MUCH stricter than the
  *  defaults (Match_Threshold 0.5 / Patch_DeleteThreshold 0.5). Fuzzy patching

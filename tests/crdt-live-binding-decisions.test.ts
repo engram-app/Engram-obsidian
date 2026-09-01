@@ -6,6 +6,7 @@ import {
 	fmCreationBodyDiff,
 	frontmatterPrefixLen,
 	needsReattach,
+	ownedMarkdownPath,
 } from "../src/crdt/live/live-binding-decisions";
 
 describe("frontmatterPrefixLen", () => {
@@ -316,3 +317,45 @@ function applyCm(
 	}
 	return out;
 }
+
+describe("ownedMarkdownPath", () => {
+	const file = { path: "Notes/table.md" };
+
+	it("returns the path for the leaf's OWN editor view", () => {
+		const view = { id: "main" };
+		const info = { file, editor: { cm: view } };
+		expect(ownedMarkdownPath(view, info)).toBe("Notes/table.md");
+	});
+
+	it("returns null inside a table-cell editor that inherited the parent's info", () => {
+		// Obsidian builds the Live Preview table-cell editor with the PARENT
+		// editor's owner, so editorInfoField resolves to the same MarkdownView and
+		// the same file — but info.editor.cm is still the OUTER view. Binding here
+		// adopted the whole note body into one cell.
+		const main = { id: "main" };
+		const cell = { id: "table-cell" };
+		const info = { file, editor: { cm: main } };
+		expect(ownedMarkdownPath(cell, info)).toBeNull();
+	});
+
+	it("returns null when the info field is absent or has no file", () => {
+		const view = { id: "main" };
+		expect(ownedMarkdownPath(view, null)).toBeNull();
+		expect(ownedMarkdownPath(view, undefined)).toBeNull();
+		expect(ownedMarkdownPath(view, { file: null, editor: { cm: view } })).toBeNull();
+	});
+
+	it("returns null for a non-markdown file", () => {
+		const view = { id: "main" };
+		const info = { file: { path: "board.canvas" }, editor: { cm: view } };
+		expect(ownedMarkdownPath(view, info)).toBeNull();
+	});
+
+	it("returns null while the owner's editor reference is not yet assigned", () => {
+		// The ViewPlugin constructor runs INSIDE `new EditorView(...)`, before
+		// Obsidian assigns `owner.editor.cm`. No bind now; update() re-attaches.
+		const view = { id: "main" };
+		expect(ownedMarkdownPath(view, { file, editor: undefined })).toBeNull();
+		expect(ownedMarkdownPath(view, { file, editor: { cm: undefined } })).toBeNull();
+	});
+});
