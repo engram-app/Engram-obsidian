@@ -3312,21 +3312,21 @@ export class SyncEngine {
 		try {
 			await send(noteId, frame);
 			this.docUpdateTimeouts = 0;
-			// RECORD IT, or the room saving is handed straight back. The server
-			// now holds this doc's full state, but nothing local said so: the
-			// provider's `synced` flag is only set by an inbound syncStep2, so
-			// `hasUndeliveredOps` stays TRUE. That is the precondition
-			// `convergeColdNoteRoomFree` refuses on, so the very next catch-up
-			// takes the room handshake for this note — one room each, which is
-			// the cost this whole path exists to avoid. It also keeps
-			// `isFullySynced()` false, so the doc can never hibernate and the
-			// registry holds it for the session.
+			// NOT `markSynced` here, however tempting. Despite the name it does
+			// NOT set the provider's `synced` flag (see `ProviderRegistry`: "the
+			// provider owns its own `synced` flag (set on syncStep2), so
+			// markSynced is a no-op kept for call-surface compatibility"). All it
+			// does is fire `onSynced` -> `commitCrdtConvergence`, which COMMITS a
+			// staged catch-up episode — recording the note converged at a
+			// serverHash whose content was never applied, after which every later
+			// catch-up compares equal hashes and skips it. That is the deaf-note
+			// class, and it turned two fan-out e2e tests red when tried.
 			//
-			// `markSynced` is honest here for the same reason it is in
-			// `convergeColdNoteRoomFree`: the ack is the server confirming it
-			// merged the FULL state we just sent, which is the same fact a
-			// syncStep2 would have proven.
-			this.crdt?.markSynced?.(noteId);
+			// The real gap is still open (engram#1493 follow-up): the server holds
+			// our state but nothing local records it, so `hasUndeliveredOps` stays
+			// true and the next catch-up takes a room for this note. Closing it
+			// needs a primitive that sets the flag WITHOUT the convergence commit;
+			// there isn't one, and inventing it belongs in its own change.
 			return true;
 		} catch (e) {
 			this.noteDocUpdateFailure(e, entry.path);

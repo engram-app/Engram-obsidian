@@ -394,20 +394,6 @@ describe("room-free queue delivery (#1493)", () => {
 		});
 	}
 
-	test("an acked delivery is RECORDED, so the next catch-up needs no room", async () => {
-		// Without this the provider's `synced` flag stays false, `hasUndeliveredOps`
-		// stays true, and `convergeColdNoteRoomFree` refuses — handing back the
-		// room-per-note this path exists to avoid, one catch-up later.
-		const docUpdate = mock(async () => ({ head: "h1" }));
-		const markSynced = mock();
-		const { e } = queuedEngine({ docUpdate, markSynced });
-		await enqueueOne(e);
-
-		await e.flushQueue();
-
-		expect(markSynced).toHaveBeenCalledWith("id-1");
-	});
-
 	test("an EMPTY local doc is not reported as delivered", async () => {
 		// A no-op update the server acks would dequeue the entry as delivered
 		// while nothing moved — and the handshake it replaces would also have
