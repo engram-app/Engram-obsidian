@@ -23,25 +23,6 @@ const PROBLEMATIC_DIRS = [
 export function renderAdvancedTab(ctx: TabContext): void {
 	const { containerEl, app, plugin, redisplay } = ctx;
 
-	// ── Sync behavior ──
-	new Setting(containerEl).setName("Sync behavior").setHeading();
-
-	new Setting(containerEl)
-		.setName("Debounce (ms)")
-		.setDesc("Delay after editing before pushing. Prevents flooding during typing.")
-		.addText((text) =>
-			text
-				.setPlaceholder("2000")
-				.setValue(String(plugin.settings.debounceMs))
-				.onChange(async (value) => {
-					const num = Number.parseInt(value, 10);
-					if (!Number.isNaN(num) && num >= 100) {
-						plugin.settings.debounceMs = num;
-						await plugin.saveSettings();
-					}
-				}),
-		);
-
 	// ── Ignore patterns ──
 	new Setting(containerEl).setName("Ignore patterns").setHeading();
 
