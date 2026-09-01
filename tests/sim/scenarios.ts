@@ -280,3 +280,59 @@ export async function offlineEditSwitchAwayRecovers(seed = 911): Promise<SwitchA
 
 	return { topology: t, notePath, offlineEdit };
 }
+
+// ---------------------------------------------------------------------------
+// Scenario 6 — rename-then-delete inside the rename's push window (#489).
+//
+// A user makes a note, renames it, deletes it, then makes another note — which
+// Obsidian names "Untitled.md" again, reusing the freed path. Doing it quickly
+// puts the delete INSIDE the window where the rename's push has not landed yet.
+//
+// `handleRename` carries the merge base to the new path but used to DROP the
+// sync-state row, so `handleDelete`'s evidence rule (#416) found no evidence at
+// the new path and REFUSED to push the delete. The note stayed live on the
+// server, and the next `crdt_create` at the freed old path was ADOPTED onto
+// that orphan row (genesis_adopt_or_insert's `:adopted` branch) instead of
+// creating a note — the client's body discarded, the new file wearing the dead
+// note's id.
+// ---------------------------------------------------------------------------
+
+export interface RenameThenDeleteResult {
+	topology: Topology;
+	/** Path of the first note, freed by the delete and reused by the second. */
+	reusedPath: string;
+	/** Where the first note was renamed to before being deleted. */
+	renamedPath: string;
+	/** Id of the first (deleted) note. */
+	firstId: string | null;
+	/** Id the second note ended up with. Equal to `firstId` = adopted. */
+	secondId: string | null;
+}
+
+export async function renameThenDeleteFast(seed = 489): Promise<RenameThenDeleteResult> {
+	const t = await boot(seed, ["A"]);
+	const [a] = t.replicas;
+	const reusedPath = "Untitled.md";
+	const renamedPath = "Foo.md";
+
+	await a.createNote(reusedPath, "");
+	await t.scheduler.drain();
+	const firstId = a.noteIdMap.get(reusedPath) ?? null;
+
+	// No drain between: the delete lands while the rename's push is still in
+	// flight, which is the whole point of the scenario.
+	await a.renameNote(reusedPath, renamedPath);
+	await a.deleteNote(renamedPath);
+	await t.scheduler.drain();
+
+	await a.createNote(reusedPath, "");
+	await t.scheduler.drain();
+
+	return {
+		topology: t,
+		reusedPath,
+		renamedPath,
+		firstId,
+		secondId: a.noteIdMap.get(reusedPath) ?? null,
+	};
+}

@@ -83,10 +83,17 @@ describe("makeVault", () => {
 		expect(events).toEqual(["delete:Notes/a.md"]);
 	});
 
-	test("onDelete fires while the entity is still resolvable by path (real Obsidian semantics)", async () => {
-		const resolved: { path: string; type: "file" | "folder" | "null" }[] = [];
+	test("onDelete fires AFTER removal, carrying the entity kind (real Obsidian semantics)", async () => {
+		// Real Obsidian evicts the entity from its index before triggering
+		// `delete`, so `getAbstractFileByPath(path)` is null inside the handler.
+		// `SyncEngine.handleDelete`'s reoccupied-path guard reads exactly that to
+		// tell "this path was replaced" from "this note died" — and backend e2e
+		// test_05 (delete propagates to the server) proves the guard is false
+		// there. The shim used to fire BEFORE removal, which made the guard true
+		// on every sim delete, so no sim run ever reached the delete push.
+		const resolved: { path: string; type: "file" | "folder" | "null"; kind: string }[] = [];
 		const app = makeVault(rootDir, {
-			onDelete: (p) => {
+			onDelete: (p, isFolder) => {
 				const entity = app.vault.getAbstractFileByPath(p);
 				resolved.push({
 					path: p,
@@ -96,6 +103,7 @@ describe("makeVault", () => {
 							: entity instanceof TFolder
 								? "folder"
 								: "null",
+					kind: isFolder ? "folder" : "file",
 				});
 			},
 		});
@@ -106,8 +114,8 @@ describe("makeVault", () => {
 		await app.fileManager.trashFile(app.vault.getAbstractFileByPath("Notes/sub") as TFolder);
 
 		expect(resolved).toEqual([
-			{ path: "Notes/a.md", type: "file" },
-			{ path: "Notes/sub", type: "folder" },
+			{ path: "Notes/a.md", type: "null", kind: "file" },
+			{ path: "Notes/sub", type: "null", kind: "folder" },
 		]);
 	});
 

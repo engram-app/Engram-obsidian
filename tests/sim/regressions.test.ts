@@ -44,6 +44,7 @@ import {
 	genesisWipe,
 	offlineBoundEditRecovers,
 	offlineEditSwitchAwayRecovers,
+	renameThenDeleteFast,
 	test85MissedDeliveryLocalPush,
 } from "./scenarios";
 
@@ -157,6 +158,37 @@ test("#288 genesis-wipe: model tier does NOT flag a wipe, but does not converge 
 		await expect(
 			assertConverged(r.topology.replicas, r.topology.server, r.topology.scheduler),
 		).rejects.toThrow(/diverged from the server/);
+	} finally {
+		cleanup(r.topology);
+	}
+});
+
+// #489 — a rename dropped the note's sync evidence, so the delete that followed
+// it inside the push window was REFUSED and the note never died server-side.
+//
+// DIFFERENTIAL PROOF (source overlay):
+//   base  `git checkout <pre-fix> -- src/sync.ts` (handleRename calling
+//         `dropPath(oldPath, { dropBase: false })` instead of moving the row):
+//         `Delete push REFUSED (no sync evidence)`, the deleted note stays live
+//         on the server, and the next note at the freed path is ADOPTED onto it
+//         (`crdt_create ADOPT: remapped ... -> <dead id>`) — both assertions red.
+//   fix   evidence moves with the note (renamePath), the delete lands, and the
+//         second note gets its own id.
+test("#489 rename-then-delete: the delete lands and the next note is not adopted", async () => {
+	const r = await renameThenDeleteFast();
+	try {
+		const live = r.topology.server.state().notes;
+		// Asserted by ID, not by the renamed PATH. The model server keys notes by
+		// their ORIGINAL path and does not relocate on a same-id create, so
+		// `notes.has(renamedPath)` is false whether or not the rename ever
+		// transmitted — it reads like a check and proves nothing (review
+		// finding). The id is the honest question: is the deleted note gone?
+		expect([...live.values()].map((n) => n.id)).not.toContain(r.firstId);
+		// The note created at the freed path is its own note, not the dead one
+		// wearing a new path (the `:adopted` branch discards the client body).
+		expect(r.firstId).not.toBeNull();
+		expect(r.secondId).not.toBeNull();
+		expect(r.secondId).not.toBe(r.firstId);
 	} finally {
 		cleanup(r.topology);
 	}

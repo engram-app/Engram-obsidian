@@ -1986,6 +1986,58 @@ export class SyncEngine {
 		if (opts?.dropBase !== false) this.baseStore?.delete(path);
 	}
 
+	/** Move `path`'s sync bookkeeping to `to`, for a rename. The merge base is
+	 *  the caller's job (`baseStore.rename`) — this is the row beside it.
+	 *
+	 *  A rename moves a path and changes no content, so the recorded evidence is
+	 *  the NOTE's, not the path's. Dropping it (what both rename legs used to do)
+	 *  left the note with no evidence at its new path until the rename's push
+	 *  landed, and a delete inside that window hit `handleDelete`'s evidence rule
+	 *  (#416) and was REFUSED — so a note the user really deleted stayed live on
+	 *  the server, and the next `crdt_create` at the freed old path was ADOPTED
+	 *  onto that orphan row instead of creating a note (#489).
+	 *
+	 *  The OLD key still goes away, which is the half the drop got right: a stale
+	 *  row there echo-suppresses a later create whose content happens to hash the
+	 *  same (rename a note away, then make a new one at the old path). */
+	private renamePath(from: string, to: string): void {
+		const row = this.syncState.get(from);
+		this.syncState.delete(from);
+		if (!row) return;
+		// Do not clobber a row already at the destination. A rename-over means
+		// SOME note's bookkeeping at `to` is stale, but we cannot tell "the same
+		// note materialized twice" from "an unrelated note we are about to
+		// displace" — and overwriting the latter hands it a version that belongs
+		// to a different note, so its next write CASes against the wrong one.
+		// The old `dropPath` left the occupant alone; keep that.
+		if (this.syncState.has(to)) return;
+		// PRESENCE ONLY. `{ hash: 0 }`, not `{ ...row }` — every other field on
+		// that row is a PATH-scoped claim about the server, and after a rename
+		// none of them is true at `to` yet:
+		//
+		//   - `hash` — a rename changes no content, so a carried hash equals the
+		//     file's own and `pushFile`'s echo filter (above the push slot)
+		//     skips the relocation outright. `hash: 0` is the established
+		//     "content unknown here" marker (`clearPushedBaselineForId`) and
+		//     fnv1a never returns it.
+		//   - `crdtHead` — this one is worse, and e2e test_93 is what caught it.
+		//     `hasServerNote` is PATH-keyed (`getCrdtHead(pathForId(id))`), so a
+		//     carried head makes the engine believe the server already holds the
+		//     note AT THE NEW PATH. `pushFile` then takes the `crdt_msg` edit
+		//     branch, which carries no path and cannot move the row, instead of
+		//     the `crdt_create` genesis branch that IS the relocation
+		//     (genesis_relocate_live). The rename never transmits, and the CRDT
+		//     leg issues no old-leg delete to fall back on: "Note <new path> not
+		//     on server after 120s".
+		//   - `version` / `serverHash` — same family, CAS facts about a row the
+		//     server holds at the OLD path.
+		//
+		// What the delete-push evidence rule (#416) reads is `syncState.has(path)`
+		// — presence, nothing else. So presence is exactly what moves, and the
+		// new-path push re-establishes the rest from the server's own answer.
+		this.syncState.set(to, { hash: 0 });
+	}
+
 	/** Seed the last-synced baseline from content that just entered the local
 	 *  Y.Doc (a CRDT-driven disk write, or a pushed/transferred seed). Merges
 	 *  onto any existing entry so a prior sync's version/serverHash survive;
@@ -4068,15 +4120,16 @@ export class SyncEngine {
 		// Move base content entry to new path before pushing
 		if (!isBinary) {
 			this.baseStore?.rename(normalizePath(oldPath), normalizePath(file.path));
-			// Drop the OLD path's sync-state entry: no note lives there anymore, so
-			// its recorded content hash is stale. Left behind, it echo-suppresses a
-			// later create at the old path whose content happens to hash the same
-			// (rename a note away, then make a new note with identical content at
-			// the old path — the new note's push is skipped and it never syncs).
-			// The new-path push below re-establishes sync-state under file.path.
-			// (dropBase:false — the base moved with the note via baseStore.rename
-			// above; deleting it here would erase the just-renamed entry.)
-			this.dropPath(normalizePath(oldPath), { dropBase: false });
+			// Move the sync-state entry to the new path. The OLD key must go: its
+			// recorded content hash is stale there, and left behind it
+			// echo-suppresses a later create at the old path whose content happens
+			// to hash the same (rename a note away, then make a new note with
+			// identical content at the old path — the new note's push is skipped
+			// and it never syncs). The row itself is the NOTE's evidence and moves
+			// with it, so a delete before the new-path push lands is not refused.
+			// (The base moved with the note via baseStore.rename above; deleting it
+			// here would erase the just-renamed entry.)
+			this.renamePath(normalizePath(oldPath), normalizePath(file.path));
 			// Un-confirm the id so pushFile below takes the `crdt_create` genesis
 			// branch (not the crdt_msg edit branch, which carries no path and
 			// can't move the row): the create for a LIVE id at the new path IS
@@ -7553,9 +7606,10 @@ export class SyncEngine {
 		// Reloading Obsidian fixed it — which is what proves the lost state was
 		// local and the server was fine all along.
 		this.baseStore?.rename(normalizePath(priorPath), normalizePath(newPath));
-		// Still drop the old path's sync-state so a later create there isn't
-		// echo-suppressed; only the base is preserved, and it moved above.
-		this.dropPath(normalizePath(priorPath), { dropBase: false });
+		// The sync-state row moves WITH the note for the same reason the base
+		// does (see renamePath): the old key still goes away, so a later create
+		// there isn't echo-suppressed, but the evidence is not destroyed.
+		this.renamePath(normalizePath(priorPath), normalizePath(newPath));
 		// normalizePath for the vault lookup (map keys arrive normalized from the
 		// server feed, but a non-normalized key would silently miss the trash and
 		// leave the duplicate this fix exists to remove). rename() above keeps the

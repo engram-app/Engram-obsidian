@@ -18,6 +18,7 @@ import { describe, expect, mock, test } from "bun:test";
 import "fake-indexeddb/auto";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
+import { fnv1a } from "../src/content-hash";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
@@ -498,5 +499,131 @@ describe("a rename's old leg must not destroy the note's CRDT room", () => {
 		await e.handleDelete(file);
 
 		expect(removeDoc).toHaveBeenCalledWith("id-gone");
+	});
+});
+
+describe("a rename carries the evidence with the note (#489)", () => {
+	// The evidence rule is PATH-keyed; a note's identity is not. Both rename legs
+	// used to drop the sync-state row and let the following push re-establish it,
+	// which left a real, synced note with NO evidence for as long as that push
+	// took. A delete inside that window was refused, so the note never died
+	// server-side — and the next `crdt_create` at the freed old path was ADOPTED
+	// onto the orphan row instead of creating a note.
+
+	// REVIEW FINDING (#490): `recordSyncEvidence` stamps `{ hash: 1 }` while the
+	// harness reads back "body" — so the moved row never matches the file's real
+	// hash and `pushFile`'s echo filter can never fire. That is a state the
+	// product cannot produce: a CONVERGED note always has
+	// `row.hash === fnv1a(disk)`. Stamp the real hash, or this file's rename
+	// tests pass on a shape that does not exist.
+	function recordConvergedEvidence(e: SyncEngine, path: string, body: string): void {
+		(e as any).syncState.set(path, { hash: fnv1a(body), version: 3 });
+	}
+
+	test("a rename of a CONVERGED note still pushes (the relocation must transmit)", async () => {
+		// The rename's `crdt_create` at the new path IS the server-side move
+		// (genesis_relocate_live) — the CRDT branch issues no old-leg delete, so
+		// if this push is skipped the server keeps the note at its old path
+		// forever. Carrying the evidence row to the new path puts a matching
+		// hash in front of the echo filter, which is exactly what it is built to
+		// stop; the rename push must therefore be forced.
+		const { e } = makeEngine();
+		const oldPath = "a.md";
+		const newPath = "b.md";
+		(e as any).noteIdMap.set(oldPath, "id-converged");
+		recordConvergedEvidence(e, oldPath, "body");
+
+		const pushed: string[] = [];
+		const realPush = (e as any).pushFile.bind(e);
+		(e as any).pushFile = (file: any, force?: boolean, bypass?: boolean) => {
+			pushed.push(file.path);
+			return realPush(file, force, bypass);
+		};
+		const slots: string[] = [];
+		const realSlot = (e as any).acquirePushSlot.bind(e);
+		(e as any).acquirePushSlot = () => {
+			slots.push("slot");
+			return realSlot();
+		};
+
+		await e.handleRename(makeNoteFile(newPath), oldPath);
+
+		expect(pushed).toEqual([newPath]);
+		// The push must get PAST the echo filter, not just be called.
+		expect(slots.length).toBe(1);
+	});
+
+	// e2e test_93 caught this and the unit suite did not: `hasServerNote` is
+	// PATH-keyed (`getCrdtHead(pathForId(id))`), so a carried `crdtHead` makes
+	// the engine believe the server already holds the note AT THE NEW PATH. It
+	// then takes the crdt_msg edit branch — which carries no path and cannot
+	// move the row — instead of the crdt_create genesis branch that IS the
+	// relocation. Symptom: "Note <new path> not on server after 120s".
+	test("the moved row must not claim the server holds the note at the NEW path", async () => {
+		const { e } = makeEngine();
+		(e as any).noteIdMap.set("a.md", "id-head");
+		recordConvergedEvidence(e, "a.md", "body");
+		(e as any).setCrdtHead("a.md", "head-abc");
+		expect(e.hasServerNote("id-head")).toBe(true);
+
+		await e.handleRename(makeNoteFile("b.md"), "a.md");
+
+		// Evidence survives the move (that is the point of #489)...
+		expect((e as any).syncState.has("b.md")).toBe(true);
+		// ...but the server-knows-it-here oracle must read FALSE, or the push
+		// takes the pathless edit branch and the rename never transmits.
+		expect(e.hasServerNote("id-head")).toBe(false);
+	});
+
+	test("a rename-over leaves the occupant's row alone", async () => {
+		// Review finding: an unconditional set at the destination hands whatever
+		// note already lives there a version belonging to a DIFFERENT note, so
+		// its next write CASes against the wrong one. The old dropPath left it
+		// intact; keep that.
+		const { e } = makeEngine();
+		(e as any).noteIdMap.set("from.md", "id-mover");
+		recordConvergedEvidence(e, "from.md", "body");
+		(e as any).syncState.set("onto.md", { hash: 4242, version: 99 });
+
+		await e.handleRename(makeNoteFile("onto.md"), "from.md");
+
+		expect((e as any).syncState.get("onto.md")).toEqual({ hash: 4242, version: 99 });
+		expect((e as any).syncState.has("from.md")).toBe(false);
+	});
+
+	test("local rename: a delete right after it still pushes", async () => {
+		const { e, crdtDeletes } = makeEngine();
+		const oldPath = "Untitled.md";
+		const newPath = "Foo.md";
+		(e as any).noteIdMap.set(oldPath, "id-local-rename");
+		// CONVERGED shape (review finding): hash matches the harness's body, so
+		// the moved row sits in front of pushFile's echo filter exactly as it
+		// does in the product.
+		recordConvergedEvidence(e, oldPath, "body");
+
+		await e.handleRename(makeNoteFile(newPath), oldPath);
+		await e.handleDelete(makeNoteFile(newPath));
+
+		expect(crdtDeletes).toEqual([newPath]);
+		// The OLD key still goes away, or a later create there whose content
+		// hashes the same is echo-suppressed and never syncs.
+		expect((e as any).syncState.has(oldPath)).toBe(false);
+	});
+
+	test("remote relocation: a delete right after it still pushes", async () => {
+		const { e, crdtDeletes } = makeEngine();
+		const oldPath = "remote-rename.md";
+		const newPath = "remote-renamed.md";
+		(e as any).noteIdMap.set(oldPath, "id-remote-rename");
+		recordConvergedEvidence(e, oldPath, "body");
+		// Past the cross-wire guard: the manifest confirms the old path really
+		// is this id's. What the guard decides is out of scope here.
+		(e as any).manifestOwnerOf = async () => "id-remote-rename";
+
+		await (e as any).moveIfIdRelocated("id-remote-rename", newPath);
+		await e.handleDelete(makeNoteFile(newPath));
+
+		expect(crdtDeletes).toEqual([newPath]);
+		expect((e as any).syncState.has(oldPath)).toBe(false);
 	});
 });
