@@ -1066,6 +1066,22 @@ export class SyncEngine {
 		// run that while the sync gate is closed. Callers may also gate for
 		// their own reasons, but safety must not depend on them remembering.
 		if (this.syncBlocked) return;
+		// Same rule, second trigger (#491): a note THIS device just deleted is
+		// not map drift. `note_not_found` for a tombstoned id is the server
+		// answering CORRECTLY — the row is gone because we removed it — and the
+		// frame that provokes it is routine (a still-bound editor's in-flight
+		// crdt_msg, which also throws NoteDestroyedError once teardownCrdtDoc
+		// has run). Reconciling on it spends a whole-vault manifest sweep that
+		// MOVES files (set → onRelocate → renameFollowingIdentity) and TRASHES
+		// them (sweepPendingOrphans) to answer a question we already know the
+		// answer to. Users saw a note flash into existence and delete itself.
+		//
+		// The delete unmaps the id, so the `pathForId` early return below stops
+		// covering exactly the ids that need covering — this must come first.
+		// `applyLiveOpWithSeq`'s fan-out path already gates on the same
+		// tombstone, by the same key, before it calls this; the check belongs
+		// HERE so no caller has to remember (see the gate note above).
+		if (this.recentlyDeleted.has(noteId)) return;
 		if (this.noteIdMap.pathForId(noteId) !== null) return; // already mapped
 		if (this.idMapReconcileInflight) {
 			this.idMapReconcileQueued = true;
