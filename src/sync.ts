@@ -1021,6 +1021,19 @@ export class SyncEngine {
 		const manifestPaths = new Set(manifest.notes.map((n) => n.path));
 		for (const note of manifest.notes) {
 			if (!note.id) continue; // pre-T3.6 backend omitted id — cannot map it
+			// A note THIS device just deleted must not be re-mapped, however this
+			// reconcile was reached. `ensureNoteIdMapped` skips tombstoned ids so
+			// a `note_not_found` costs no fetch, but the other three callers
+			// (wiring's stranded-flush drain, main's cold-start and manual
+			// reconciles) come straight here — and a manifest fetched inside the
+			// delete-wins window still lists the note, because the delete has not
+			// landed or the snapshot predates it. Re-`set`ting it undoes
+			// `handleDelete`'s `release()`: `sweepPendingOrphans` then sees the
+			// path as locally claimed and skips it, and a later recreate at that
+			// path adopts the buried id through `getOrMint` instead of minting.
+			// Reconciling ANY id against a snapshot older than our own delete is
+			// the engine believing stale news over a fact it authored (#491).
+			if (this.recentlyDeleted.has(note.id)) continue;
 			const localPath = this.noteIdMap.pathForId(note.id);
 			if (localPath === note.path) continue; // already correct — nothing to do
 			if (localPath !== null && !manifestPaths.has(localPath)) {
@@ -1078,9 +1091,13 @@ export class SyncEngine {
 		//
 		// The delete unmaps the id, so the `pathForId` early return below stops
 		// covering exactly the ids that need covering — this must come first.
-		// `applyLiveOpWithSeq`'s fan-out path already gates on the same
+		// `applyPushedNoteUpdate`'s fan-out path already gates on the same
 		// tombstone, by the same key, before it calls this; the check belongs
 		// HERE so no caller has to remember (see the gate note above).
+		//
+		// This one saves the pointless manifest FETCH. It is not the safety
+		// boundary — `reconcileNoteIdMapFromManifest` has three other callers
+		// and carries its own tombstone skip; see there.
 		if (this.recentlyDeleted.has(noteId)) return;
 		if (this.noteIdMap.pathForId(noteId) !== null) return; // already mapped
 		if (this.idMapReconcileInflight) {

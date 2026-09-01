@@ -225,6 +225,38 @@ describe("ensureNoteIdMapped is intrinsically gate-safe", () => {
 		expect(map.pathForId("dead-1")).toBeNull();
 	});
 
+	// Review finding: the guard above only saves a fetch. The reconcile has
+	// three OTHER callers (wiring's stranded-flush drain, main's cold-start and
+	// manual reconciles) that reach the manifest loop without passing it, so the
+	// skip that actually protects data has to live in the loop.
+	test("the reconcile itself refuses to re-map a tombstoned id, however it was reached", async () => {
+		const engine = createEngine();
+		const map = new NoteIdMap();
+		engine.setNoteIdMap(map);
+		// A manifest fetched inside the delete-wins window still lists the note.
+		(mockApi.getManifest as ReturnType<typeof mock>).mockResolvedValue({
+			notes: [
+				{ id: "dead-2", path: "Untitled.md", content_hash: "h" },
+				{ id: "live-2", path: "Other.md", content_hash: "h" },
+			],
+			attachments: [],
+			total_notes: 2,
+			total_attachments: 0,
+			change_seq: 1,
+		});
+		(engine as any).markRecentlyDeleted("dead-2", "Untitled.md");
+
+		// Called directly, as main.ts and wiring.ts do — bypassing
+		// ensureNoteIdMapped's tombstone skip entirely.
+		await engine.reconcileNoteIdMapFromManifest();
+
+		// The deleted note stays unmapped: re-setting it would undo
+		// handleDelete's release() and let a recreate adopt the buried id.
+		expect(map.pathForId("dead-2")).toBeNull();
+		// ...and the rest of the manifest still reconciles normally.
+		expect(map.pathForId("live-2")).toBe("Other.md");
+	});
+
 	test("still reconciles an id with no tombstone (the drift case it exists for)", async () => {
 		const engine = createEngine();
 		const map = new NoteIdMap();
