@@ -2003,7 +2003,29 @@ export class SyncEngine {
 	private renamePath(from: string, to: string): void {
 		const row = this.syncState.get(from);
 		this.syncState.delete(from);
-		if (row) this.syncState.set(to, row);
+		if (!row) return;
+		// Do not clobber a row already at the destination. A rename-over means
+		// SOME note's bookkeeping at `to` is stale, but we cannot tell "the same
+		// note materialized twice" from "an unrelated note we are about to
+		// displace" — and overwriting the latter hands it a version that belongs
+		// to a different note, so its next write CASes against the wrong one.
+		// The old `dropPath` left the occupant alone; keep that.
+		if (this.syncState.has(to)) return;
+		// `hash: 0`, NOT the carried content hash. The row is evidence that the
+		// NOTE has synced; it is not evidence that the SERVER holds these bytes
+		// at THIS path — after a rename it demonstrably does not, and the
+		// new-path `crdt_create` IS the relocation (genesis_relocate_live). A
+		// rename changes no content, so a carried hash equals the file's own and
+		// `pushFile`'s echo filter (which sits above the push slot) would skip
+		// the relocation entirely — silently, and with no old-leg delete to fall
+		// back on, leaving the note at its old path server-side forever.
+		// `hash: 0` is the established "content unknown here" marker
+		// (`clearPushedBaselineForId`), and fnv1a never returns it.
+		//
+		// What the delete-push evidence rule (#416) actually reads is
+		// `syncState.has(path)` — presence, not the hash. So this carries
+		// exactly the fact that mattered and nothing that lies.
+		this.syncState.set(to, { ...row, hash: 0 });
 	}
 
 	/** Seed the last-synced baseline from content that just entered the local

@@ -178,9 +178,11 @@ test("#489 rename-then-delete: the delete lands and the next note is not adopted
 	const r = await renameThenDeleteFast();
 	try {
 		const live = r.topology.server.state().notes;
-		// The deleted note is gone server-side — under BOTH the path it was
-		// renamed to and the one it was created at.
-		expect(live.has(r.renamedPath)).toBe(false);
+		// Asserted by ID, not by the renamed PATH. The model server keys notes by
+		// their ORIGINAL path and does not relocate on a same-id create, so
+		// `notes.has(renamedPath)` is false whether or not the rename ever
+		// transmitted — it reads like a check and proves nothing (review
+		// finding). The id is the honest question: is the deleted note gone?
 		expect([...live.values()].map((n) => n.id)).not.toContain(r.firstId);
 		// The note created at the freed path is its own note, not the dead one
 		// wearing a new path (the `:adopted` branch discards the client body).
