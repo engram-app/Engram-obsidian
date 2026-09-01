@@ -357,10 +357,12 @@ describe("room-free queue delivery (#1493)", () => {
 		docUpdate?: (docId: string, b64: string) => Promise<{ head: string }>;
 		liveBound?: (path: string) => boolean;
 		encode?: (noteId: string) => Promise<Uint8Array>;
+		markSynced?: (noteId: string) => void;
 	}) {
 		const crdt = {
 			applyLocalEdit: async () => true,
-			encodeStateAsUpdate: opts.encode ?? (async () => new Uint8Array([1, 2, 3])),
+			encodeStateAsUpdate: opts.encode ?? (async () => new Uint8Array([1, 2, 3, 4, 5, 6])),
+			markSynced: opts.markSynced ?? (() => {}),
 		};
 		const enroll = mock();
 		const reset = mock();
@@ -391,6 +393,43 @@ describe("room-free queue delivery (#1493)", () => {
 			vaultId: "v",
 		});
 	}
+
+	test("an acked delivery is RECORDED, so the next catch-up needs no room", async () => {
+		// Without this the provider's `synced` flag stays false, `hasUndeliveredOps`
+		// stays true, and `convergeColdNoteRoomFree` refuses — handing back the
+		// room-per-note this path exists to avoid, one catch-up later.
+		const docUpdate = mock(async () => ({ head: "h1" }));
+		const markSynced = mock();
+		const { e } = queuedEngine({ docUpdate, markSynced });
+		await enqueueOne(e);
+
+		await e.flushQueue();
+
+		expect(markSynced).toHaveBeenCalledWith("id-1");
+	});
+
+	test("an EMPTY local doc is not reported as delivered", async () => {
+		// A no-op update the server acks would dequeue the entry as delivered
+		// while nothing moved — and the handshake it replaces would also have
+		// pulled the server's copy back.
+		const docUpdate = mock(async () => ({ head: "h1" }));
+		const {
+			e,
+			enqueue: _e,
+			...rest
+		} = queuedEngine({
+			docUpdate,
+			encode: async () => new Uint8Array([0, 0]),
+		});
+		void rest;
+		await enqueueOne(e);
+
+		const flushed = await e.flushQueue();
+
+		expect(docUpdate).not.toHaveBeenCalled();
+		expect(flushed).toBe(0);
+		expect(e.queue.size).toBe(1);
+	});
 
 	test("an IDLE note delivers over crdt_doc_update, dequeues on the ack, and fires NO handshake", async () => {
 		const docUpdate = mock(async () => ({ head: "h1" }));
