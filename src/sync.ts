@@ -1112,6 +1112,18 @@ export class SyncEngine {
 		// boundary — `reconcileNoteIdMapFromManifest` has three other callers
 		// and carries its own tombstone skip; see there.
 		if (this.recentlyDeleted.has(noteId)) return;
+
+		// An orphaned claim is repaired HERE, not by the reconcile below: the
+		// manifest cannot explain an id the server has never had, so the sweep
+		// would fetch the whole vault to learn nothing. See the method.
+		if (this.repairUnconfirmedClaim(noteId)) return;
+
+		// Already mapped — ordinary drift is repaired by the reconcile, and the
+		// ORPHANED-claim case (mapped by a claim the server never honoured) was
+		// handled above, because the manifest cannot explain an id the server
+		// has never had. Weakening this to also demand `hasServerNote` was tried
+		// and reverted: it buys nothing the repair above does not already cover
+		// and costs a whole-vault manifest fetch per unconfirmed id.
 		if (this.noteIdMap.pathForId(noteId) !== null) return; // already mapped
 		if (this.idMapReconcileInflight) {
 			this.idMapReconcileQueued = true;
@@ -1132,6 +1144,55 @@ export class SyncEngine {
 				this.idMapReconcileInflight = null;
 			}
 		})();
+	}
+
+	/** Re-drive the create for a note whose index claim the server cannot honour
+	 *  (#1550). Returns true when it handled the id, so the caller skips the
+	 *  manifest reconcile.
+	 *
+	 *  THE STATE: `filemeta_v0` holds `path → note_id`, no server row exists for
+	 *  that id, and the file is still on disk. `getOrMint` publishes a claim as
+	 *  soon as it mints, without waiting for `crdt_create` to be acked, so any
+	 *  create that fails to land leaves the claim behind. The note then exists on
+	 *  exactly one device, every `crdt_msg` for it is dropped `note_not_found`,
+	 *  and the server's projection worker retries the unresolvable entry forever
+	 *  (`applied=0 unresolved=N`, permanently, for that whole vault).
+	 *
+	 *  Why the manifest reconcile cannot fix it: that sweep iterates the notes
+	 *  the SERVER lists. An id the server has never had appears nowhere in it, so
+	 *  the loop never reaches the orphan — it costs a whole-vault fetch and
+	 *  changes nothing. This is a create that went missing, not a mapping that
+	 *  drifted, and the repair for a missing create is to make it again.
+	 *
+	 *  Re-created under the SAME id, deliberately, not a fresh mint: the local
+	 *  Y.Doc holding the user's content is keyed by this id, and the existing
+	 *  claim already names it. Creating the row under it makes all three sources
+	 *  agree at once and carries the body up through the queue's genesis frame. A
+	 *  re-mint would strand that doc and leave a second claim to clean up.
+	 *
+	 *  Idempotent: `CrdtOpQueue` keys by `docId` and supersedes in place, so a
+	 *  create already queued for this id is replaced, never duplicated.
+	 *
+	 *  `hasServerNote` is the gate that keeps this off healthy notes — it reads
+	 *  `crdtHead`, which only a create-ack or a server-delivered head writes, so
+	 *  it can never be satisfied by this device's own claim. No local file means
+	 *  there is nothing to create; that is ordinary drift and belongs to the
+	 *  reconcile. */
+	private repairUnconfirmedClaim(noteId: string): boolean {
+		if (!this.crdtEnqueue || !this.crdt) return false;
+		const path = this.noteIdMap?.pathForId(noteId);
+		if (!path || this.hasServerNote(noteId)) return false;
+		if (!this.app.vault.getFileByPath(normalizePath(path))) return false;
+
+		// warn, not info: client `info` never reaches Loki, and this is the only
+		// client-side signal that a note is stranded on one device.
+		rlog().warn(
+			"sync",
+			`Orphaned index claim for ${noteRef(path)} note_id=${noteId} — the server has no ` +
+				`row for it; re-enqueuing the create`,
+		);
+		this.crdtEnqueue({ kind: "create", docId: noteId, path });
+		return true;
 	}
 
 	private idMapReconcileInflight: Promise<void> | null = null;

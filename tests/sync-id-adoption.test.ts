@@ -143,6 +143,80 @@ describe("ensureNoteIdMapped — live reconcile on an unmappable announce id", (
 		expect(mockApi.getManifest).not.toHaveBeenCalled();
 	});
 
+	// #1550: `getOrMint` publishes a claim into filemeta_v0 as soon as it mints,
+	// without waiting for crdt_create to be acked. A create that then fails to
+	// land leaves the claim behind — the note exists on ONE device, every
+	// crdt_msg for it is dropped note_not_found, and the server's projection
+	// worker retries the unresolvable entry forever for that whole vault.
+	// Measured in prod 2026-09-01: two notes stranded for 16+ hours.
+	describe("an orphaned index claim re-drives the create (#1550)", () => {
+		function orphanEngine(opts: { fileExists: boolean }) {
+			const enqueue = mock();
+			const app = {
+				...mockApp,
+				vault: {
+					...mockApp.vault,
+					getFileByPath: mock().mockReturnValue(
+						opts.fileExists ? { path: "stranded.md" } : null,
+					),
+				},
+			};
+			const engine = new SyncEngine(
+				app as any,
+				mockApi,
+				{ ...DEFAULT_SETTINGS, debounceMs: 1 },
+				mock().mockResolvedValue(undefined),
+			);
+			engine.setReady();
+			const map = new NoteIdMap();
+			map.set("stranded.md", "orphan-id");
+			engine.setNoteIdMap(map);
+			engine.setCrdtPorts({ manager: {} as any, enqueue });
+			return { engine, enqueue };
+		}
+
+		test("re-enqueues the create under the SAME id, and skips the manifest sweep", async () => {
+			const { engine, enqueue } = orphanEngine({ fileExists: true });
+
+			engine.ensureNoteIdMapped("orphan-id");
+			await new Promise((r) => setTimeout(r, 50));
+
+			// The SAME id, not a fresh mint: the local Y.Doc holding the user's
+			// content is keyed by it, and the existing claim already names it.
+			expect(enqueue).toHaveBeenCalledWith({
+				kind: "create",
+				docId: "orphan-id",
+				path: "stranded.md",
+			});
+			// The manifest cannot explain an id the server has never had, so
+			// fetching the whole vault to learn nothing is pure cost.
+			expect(mockApi.getManifest).not.toHaveBeenCalled();
+		});
+
+		test("a note the server DOES know is left alone", async () => {
+			const { engine, enqueue } = orphanEngine({ fileExists: true });
+			// A server-delivered head is the one thing this device cannot forge.
+			(engine as any).setCrdtHead("stranded.md", "real-server-head");
+
+			engine.ensureNoteIdMapped("orphan-id");
+			await new Promise((r) => setTimeout(r, 50));
+
+			expect(enqueue).not.toHaveBeenCalled();
+		});
+
+		test("a claim with no file behind it is NOT re-created", async () => {
+			// Nothing to create, and inventing a row for a note that does not
+			// exist locally would be the projection worker's job, which it
+			// deliberately refuses for the same reason.
+			const { engine, enqueue } = orphanEngine({ fileExists: false });
+
+			engine.ensureNoteIdMapped("orphan-id");
+			await new Promise((r) => setTimeout(r, 50));
+
+			expect(enqueue).not.toHaveBeenCalled();
+		});
+	});
+
 	test("a burst of unknown ids coalesces into bounded manifest fetches", async () => {
 		const engine = createEngine();
 		const map = new NoteIdMap();
