@@ -2499,6 +2499,16 @@ export default class EngramSyncPlugin extends Plugin {
 						}
 						return channel.crdtDocState(id);
 					},
+					// Room-free delivery of a queued edit for an IDLE note (#1493).
+					// Same vault guard, and it matters MORE here than on the read:
+					// a stale channel would apply this device's ops into the WRONG
+					// vault's note, which is a write, not a wasted fetch.
+					docUpdate: (id, b64) => {
+						if (channel.getVaultId() !== this.settings.vaultId) {
+							throw new Error("crdt_doc_update: channel vault mismatch");
+						}
+						return channel.crdtDocUpdate(id, b64);
+					},
 					// #1409: release the server's room as soon as this device is
 					// done with the note, instead of leaving it to the 5-minute
 					// idle drain. Same vault guard as the two above — releasing

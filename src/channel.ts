@@ -638,6 +638,33 @@ export class NoteChannel {
 		};
 	}
 
+	/** ROOM-FREE delivery of this device's pending ops for an IDLE note (#1493) —
+	 *  the send half of the pair `crdtDocState` opened on the read side.
+	 *
+	 *  Every `crdt_msg` frame routes through the server's `ensure_room`,
+	 *  including a plain sync_update for a note nobody has open, so the durable
+	 *  queue's only delivery route (a full re-handshake per entry) allocated one
+	 *  room per queued note. A 1.4k-note flush put resident rooms at 314 against
+	 *  a cap of 64 in prod.
+	 *
+	 *  `b64` must be a `sync_update` message, NOT a syncStep1 — the server
+	 *  refuses a step1 here (`not_sync_update`) precisely because answering one
+	 *  would allocate the room this frame exists to avoid.
+	 *
+	 *  This is a WRITE, so unlike `crdtDocState` it needs no local precondition
+	 *  about undelivered work: a Yjs update carries our ops upward and the
+	 *  server merges. What it does NOT do is bring anything back — the down
+	 *  direction stays with catch-up + fan-out.
+	 *
+	 *  Callers fall back to the room re-handshake on ANY reject, including the
+	 *  `unmatched_topic`-shaped one from a backend too old to know the frame.
+	 *  Convergence is the invariant; the room saving is the optimization. */
+	async crdtDocUpdate(docId: string, b64: string): Promise<{ head: string }> {
+		return (await this.sendRequest("crdt_doc_update", { doc_id: docId, b64 })) as {
+			head: string;
+		};
+	}
+
 	/** Seq-ordered op-log page after `cursorSeq` (single-path catch-up). Each op
 	 *  carries FULL content (a SyncNoteChange or SyncAttachmentChange — the
 	 *  merged notes+attachments feed), so it is causally complete and can

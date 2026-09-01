@@ -347,6 +347,143 @@ describe("channel-down CRDT edit routes through the durable queue, delivered ove
 });
 
 // ---------------------------------------------------------------------------
+// #1493: the drain above is correct and allocates a server room PER QUEUED
+// NOTE, because every `crdt_msg` routes through the backend's `ensure_room`.
+// A 1.4k-note flush put prod at 314 resident rooms against a cap of 64.
+// `crdt_doc_update` delivers the same ops without leaving a room behind.
+// ---------------------------------------------------------------------------
+describe("room-free queue delivery (#1493)", () => {
+	function queuedEngine(opts: {
+		docUpdate?: (docId: string, b64: string) => Promise<{ head: string }>;
+		liveBound?: (path: string) => boolean;
+		encode?: (noteId: string) => Promise<Uint8Array>;
+	}) {
+		const crdt = {
+			applyLocalEdit: async () => true,
+			encodeStateAsUpdate: opts.encode ?? (async () => new Uint8Array([1, 2, 3])),
+		};
+		const enroll = mock();
+		const reset = mock();
+		const e = engine({
+			api: {
+				pushNote: async () => {
+					throw new Error("must not legacy-push a crdt entry");
+				},
+			} as Partial<EngramApi>,
+			crdt,
+		});
+		e.setCrdtEnrollment({ enroll, reset } as any);
+		e.setCrdtLiveCheck(() => true);
+		e.setCrdtPorts({
+			...(opts.docUpdate ? { docUpdate: opts.docUpdate } : {}),
+			...(opts.liveBound ? { liveBound: opts.liveBound } : {}),
+		});
+		return { e, enroll, reset };
+	}
+
+	async function enqueueOne(e: SyncEngine, path = "T.md") {
+		await e.queue.enqueue({
+			path,
+			action: "upsert",
+			noteId: "id-1",
+			crdt: true,
+			timestamp: 1,
+			vaultId: "v",
+		});
+	}
+
+	test("an IDLE note delivers over crdt_doc_update, dequeues on the ack, and fires NO handshake", async () => {
+		const docUpdate = mock(async () => ({ head: "h1" }));
+		const { e, enroll, reset } = queuedEngine({ docUpdate });
+		await enqueueOne(e);
+
+		const flushed = await e.flushQueue();
+
+		expect(docUpdate).toHaveBeenCalledTimes(1);
+		expect(docUpdate.mock.calls[0]?.[0]).toBe("id-1");
+		// The ack IS the delivery proof — unlike the handshake path there is no
+		// inbound frame to wait for, so the entry settles inline.
+		expect(flushed).toBe(1);
+		expect(e.queue.size).toBe(0);
+		// THE assertion: no room was asked for.
+		expect(reset).not.toHaveBeenCalled();
+		expect(enroll).not.toHaveBeenCalled();
+	});
+
+	test("a LIVE-BOUND note keeps the handshake — its room already exists", async () => {
+		const docUpdate = mock(async () => ({ head: "h1" }));
+		const { e, enroll, reset } = queuedEngine({ docUpdate, liveBound: () => true });
+		await enqueueOne(e);
+
+		await e.flushQueue();
+
+		// Nothing is saved by going room-free on a note that already holds a
+		// room, and the handshake also pulls, so the live path stays as it was.
+		expect(docUpdate).not.toHaveBeenCalled();
+		expect(reset).toHaveBeenCalledWith("id-1");
+		expect(enroll).toHaveBeenCalledWith("id-1");
+	});
+
+	test("a REFUSED write falls back to the re-handshake and leaves the entry queued", async () => {
+		const docUpdate = mock(async () => {
+			throw new Error("rate_limited");
+		});
+		const { e, enroll, reset } = queuedEngine({ docUpdate });
+		await enqueueOne(e);
+
+		const flushed = await e.flushQueue();
+
+		// Convergence is the invariant; the room saving is the optimization.
+		expect(reset).toHaveBeenCalledWith("id-1");
+		expect(enroll).toHaveBeenCalledWith("id-1");
+		expect(flushed).toBe(0);
+		expect(e.queue.size).toBe(1);
+	});
+
+	test("an unwired port (backend too old) degrades straight to the handshake", async () => {
+		const { e, enroll, reset } = queuedEngine({});
+		await enqueueOne(e);
+
+		await e.flushQueue();
+
+		expect(reset).toHaveBeenCalledWith("id-1");
+		expect(enroll).toHaveBeenCalledWith("id-1");
+		expect(e.queue.size).toBe(1);
+	});
+
+	test("repeated TIMEOUTS latch the frame off, so an old backend is paid for twice, not once per note", async () => {
+		// Without the latch a backend that predates the frame costs a full
+		// request timeout on EVERY queued note — a slower drain than never
+		// having the feature.
+		const docUpdate = mock(async () => {
+			throw new Error("sendRequest timeout: crdt_doc_update");
+		});
+		const { e } = queuedEngine({ docUpdate });
+
+		for (const path of ["A.md", "B.md", "C.md", "D.md"]) {
+			await enqueueOne(e, path);
+			await e.flushQueue();
+		}
+
+		expect(docUpdate).toHaveBeenCalledTimes(2);
+	});
+
+	test("a rejected write must NOT dequeue — the edit is only durable while queued", async () => {
+		// The failure that matters: dequeuing on anything short of an ack loses
+		// the edit if the fallback handshake never round-trips.
+		const docUpdate = mock(async () => {
+			throw new Error("doc_update_failed");
+		});
+		const { e } = queuedEngine({ docUpdate });
+		await enqueueOne(e);
+
+		await e.flushQueue();
+
+		expect(e.queue.all().find((q) => q.path === "T.md")?.noteId).toBe("id-1");
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Task 5 (folded into Task 3, same pushFile branch): a stale PRE-AWAIT
 // `crdtLive` snapshot must not decide live-vs-durable-queue. The channel can
 // drop DURING the awaited `routeModify` seed; pushFile must re-check liveness
