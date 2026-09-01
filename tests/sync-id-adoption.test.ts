@@ -150,14 +150,15 @@ describe("ensureNoteIdMapped — live reconcile on an unmappable announce id", (
 	// worker retries the unresolvable entry forever for that whole vault.
 	// Measured in prod 2026-09-01: two notes stranded for 16+ hours.
 	describe("an orphaned index claim re-drives the create (#1550)", () => {
-		function orphanEngine(opts: { fileExists: boolean }) {
+		function orphanEngine(opts: { fileExists: boolean; path?: string; size?: number }) {
+			const path = opts.path ?? "stranded.md";
 			const enqueue = mock();
 			const app = {
 				...mockApp,
 				vault: {
 					...mockApp.vault,
 					getFileByPath: mock().mockReturnValue(
-						opts.fileExists ? { path: "stranded.md" } : null,
+						opts.fileExists ? { path, stat: { size: opts.size ?? 64 } } : null,
 					),
 				},
 			};
@@ -169,17 +170,16 @@ describe("ensureNoteIdMapped — live reconcile on an unmappable announce id", (
 			);
 			engine.setReady();
 			const map = new NoteIdMap();
-			map.set("stranded.md", "orphan-id");
+			map.set(path, "orphan-id");
 			engine.setNoteIdMap(map);
 			engine.setCrdtPorts({ manager: {} as any, enqueue });
 			return { engine, enqueue };
 		}
 
-		test("re-enqueues the create under the SAME id, and skips the manifest sweep", async () => {
+		test("re-enqueues the create under the SAME id", () => {
 			const { engine, enqueue } = orphanEngine({ fileExists: true });
 
-			engine.ensureNoteIdMapped("orphan-id");
-			await new Promise((r) => setTimeout(r, 50));
+			expect(engine.repairOrphanedClaim("orphan-id")).toBe(true);
 
 			// The SAME id, not a fresh mint: the local Y.Doc holding the user's
 			// content is keyed by it, and the existing claim already names it.
@@ -188,31 +188,56 @@ describe("ensureNoteIdMapped — live reconcile on an unmappable announce id", (
 				docId: "orphan-id",
 				path: "stranded.md",
 			});
-			// The manifest cannot explain an id the server has never had, so
-			// fetching the whole vault to learn nothing is pure cost.
-			expect(mockApi.getManifest).not.toHaveBeenCalled();
 		});
 
-		test("a note the server DOES know is left alone", async () => {
+		test("only ONCE per id — the durable queue owns the retrying", () => {
+			// Re-enqueuing on every later note_not_found would add nothing but a
+			// Loki warn per reconnect.
+			const { engine, enqueue } = orphanEngine({ fileExists: true });
+
+			expect(engine.repairOrphanedClaim("orphan-id")).toBe(true);
+			expect(engine.repairOrphanedClaim("orphan-id")).toBe(false);
+			expect(enqueue).toHaveBeenCalledTimes(1);
+		});
+
+		test("a note the server DOES know is left alone", () => {
 			const { engine, enqueue } = orphanEngine({ fileExists: true });
 			// A server-delivered head is the one thing this device cannot forge.
 			(engine as any).setCrdtHead("stranded.md", "real-server-head");
 
-			engine.ensureNoteIdMapped("orphan-id");
-			await new Promise((r) => setTimeout(r, 50));
-
+			expect(engine.repairOrphanedClaim("orphan-id")).toBe(false);
 			expect(enqueue).not.toHaveBeenCalled();
 		});
 
-		test("a claim with no file behind it is NOT re-created", async () => {
-			// Nothing to create, and inventing a row for a note that does not
-			// exist locally would be the projection worker's job, which it
-			// deliberately refuses for the same reason.
+		test("an OVER-CAP note is left alone (it is off the CRDT path by design)", () => {
+			// A >4 MB note never enters the Yjs doc, so it never gets a crdtHead and
+			// satisfies every other condition here. Without the size gate the queue
+			// would build an over-cap genesis frame and burn its whole retry budget
+			// before surfacing a drop to the user.
+			const { engine, enqueue } = orphanEngine({ fileExists: true, size: 5 * 1024 * 1024 });
+
+			expect(engine.repairOrphanedClaim("orphan-id")).toBe(false);
+			expect(enqueue).not.toHaveBeenCalled();
+		});
+
+		// Canvas is deliberately NOT the example here: it IS CRDT-eligible
+		// (`isCrdtEligiblePath` = markdown OR canvas), so it is a note this repair
+		// SHOULD cover. An attachment is the real ineligible case — it stays on the
+		// REST path and so never carries a crdtHead either.
+		test("an ATTACHMENT is left alone (ineligible, so never head-stamped either)", () => {
+			const { engine, enqueue } = orphanEngine({ fileExists: true, path: "img/shot.png" });
+
+			expect(engine.repairOrphanedClaim("orphan-id")).toBe(false);
+			expect(enqueue).not.toHaveBeenCalled();
+		});
+
+		test("a claim with no file behind it is NOT re-created", () => {
+			// Nothing to create, and inventing a row for a note that does not exist
+			// locally would be the projection worker's job, which it deliberately
+			// refuses for the same reason.
 			const { engine, enqueue } = orphanEngine({ fileExists: false });
 
-			engine.ensureNoteIdMapped("orphan-id");
-			await new Promise((r) => setTimeout(r, 50));
-
+			expect(engine.repairOrphanedClaim("orphan-id")).toBe(false);
 			expect(enqueue).not.toHaveBeenCalled();
 		});
 	});
