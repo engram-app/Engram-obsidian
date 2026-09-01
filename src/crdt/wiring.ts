@@ -19,6 +19,7 @@ type WiringSyncEngine = Pick<
 	| "reconcileNoteIdMapFromManifest"
 	| "isSyncBlocked"
 	| "ensureNoteIdMapped"
+	| "repairOrphanedClaim"
 	| "clearPushedBaselineForId"
 	| "applyPushedNoteUpdate"
 	| "discoverAnnouncedNote"
@@ -497,6 +498,12 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		// Un-bank first — the reconcile below can re-key the map out from under
 		// the lookup this needs.
 		syncEngine.clearPushedBaselineForId(docId);
+		// THIS reply — not the announce — is the server stating it has no row for
+		// the id, which is what licenses re-driving the create (#1550). Handled
+		// before the reconcile because that sweep cannot see an orphan at all:
+		// it iterates the notes the server LISTS, and an id the server has never
+		// had appears in none of them.
+		if (syncEngine.repairOrphanedClaim(docId)) return;
 		syncEngine.ensureNoteIdMapped(docId);
 	};
 

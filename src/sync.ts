@@ -1112,6 +1112,7 @@ export class SyncEngine {
 		// boundary — `reconcileNoteIdMapFromManifest` has three other callers
 		// and carries its own tombstone skip; see there.
 		if (this.recentlyDeleted.has(noteId)) return;
+
 		if (this.noteIdMap.pathForId(noteId) !== null) return; // already mapped
 		if (this.idMapReconcileInflight) {
 			this.idMapReconcileQueued = true;
@@ -1133,6 +1134,90 @@ export class SyncEngine {
 			}
 		})();
 	}
+
+	/** Re-drive the create for a note whose index claim the server cannot honour
+	 *  (#1550).
+	 *
+	 *  THE STATE: `filemeta_v0` holds `path → note_id`, no server row exists for
+	 *  that id, and the file is still on disk. `getOrMint` publishes a claim as
+	 *  soon as it mints, without waiting for `crdt_create` to be acked, so any
+	 *  create that fails to land leaves the claim behind. The note then exists on
+	 *  exactly one device, every `crdt_msg` for it is dropped `note_not_found`,
+	 *  and the server's projection worker retries the unresolvable entry forever
+	 *  (`applied=0 unresolved=N`, permanently, for that whole vault).
+	 *
+	 *  Neither existing heal reaches it. `ensureNoteIdMapped` early-returns on
+	 *  `pathForId !== null`, and for an orphan the mapping IS the claim — the id
+	 *  vouches for itself. Even past that guard the manifest reconcile iterates
+	 *  the notes the SERVER lists, so an id the server has never had appears
+	 *  nowhere in it. This is a create that went missing, not a mapping that
+	 *  drifted, and the repair for a missing create is to make it again.
+	 *
+	 *  ONLY CALLED FROM THE `note_not_found` REPLY (`wiring.ts`
+	 *  `onCrdtNoteNotFound`), never from the `crdt_doc_ready` announce. That
+	 *  matters: the reply is the SERVER stating it has no row for this id, which
+	 *  is the only authoritative form of that fact available here. An earlier
+	 *  revision hung this off `ensureNoteIdMapped`, which the announce path also
+	 *  calls — and `hasServerNote` alone does NOT mean "the server lacks the
+	 *  row", because a missing `crdtHead` is a routine state for a healthy note:
+	 *  `renamePath` deliberately drops the head at the new path on every rename
+	 *  (so `pushFile` takes the genesis branch), and the converge legs only mark
+	 *  a note server-known when the staged content is non-empty (#339 — an empty
+	 *  converged doc is not proof). An empty note that another device opens, or
+	 *  any note inside the window after a rename, would have fired a spurious
+	 *  create on every announce.
+	 *
+	 *  Re-created under the SAME id, deliberately, not a fresh mint: the local
+	 *  Y.Doc holding the user's content is keyed by this id, and the existing
+	 *  claim already names it. Creating the row under it makes all three sources
+	 *  agree at once and carries the body up through the queue's genesis frame. A
+	 *  re-mint would strand that doc and leave a second claim to clean up.
+	 *
+	 *  Gated exactly like every other `crdtEnqueue({kind:"create"})` site: an
+	 *  ineligible path (canvas, non-markdown) or an over-cap note is kept OFF the
+	 *  CRDT path by design and therefore never has a `crdtHead` — so without
+	 *  these it would satisfy every condition here, build an over-cap genesis
+	 *  frame, and burn the queue's whole retry budget before surfacing a drop to
+	 *  the user. `stat.size` is the file's UTF-8 byte count, the same quantity
+	 *  `exceedsCrdtNoteLimit` measures, without reading the file.
+	 *
+	 *  ONCE PER ID PER SESSION. The durable queue owns retrying a create that
+	 *  fails; re-enqueuing on every subsequent `note_not_found` would add nothing
+	 *  but a Loki warn per reconnect. Every sibling heal in this file is
+	 *  similarly bounded (see `healCooldownMs`).
+	 *
+	 *  TRIGGER REQUIREMENT worth knowing: this needs a `crdt_msg` to go out for
+	 *  the orphan, and `canSendLive` holds ordinary ops behind `hasServerNote`.
+	 *  What escapes is a handshake — so the note must be enrolled: open in an
+	 *  editor, or in `unsentDocIds` and re-STEP1'd by `reEnrollUnsent` on rejoin
+	 *  (which is what fired in the 2026-09-01 prod case, on every reconnect). An
+	 *  orphan that is never opened and never edited is not reached from here. */
+	repairOrphanedClaim(noteId: string): boolean {
+		if (!this.crdtEnqueue || !this.crdt) return false;
+		if (this.repairedClaims.has(noteId)) return false;
+		const path = this.noteIdMap?.pathForId(noteId);
+		if (!path || this.hasServerNote(noteId)) return false;
+		if (!this.isCrdtEligiblePath(path)) return false;
+		const file = this.app.vault.getFileByPath(normalizePath(path));
+		if (!file) return false;
+		if ((file.stat?.size ?? 0) > MAX_CRDT_NOTE_BYTES) return false;
+
+		this.repairedClaims.add(noteId);
+		// warn, not info: client `info` never reaches Loki, and this is the only
+		// client-side signal that a note is stranded on one device.
+		rlog().warn(
+			"sync",
+			`Orphaned index claim for ${noteRef(path)} note_id=${noteId} — the server has no ` +
+				`row for it; re-enqueuing the create`,
+		);
+		this.crdtEnqueue({ kind: "create", docId: noteId, path });
+		return true;
+	}
+
+	/** Ids `repairOrphanedClaim` has already re-driven. Vault-scoped: a vault
+	 *  switch moves us to a different backend, where the same id's status is a
+	 *  fresh question. */
+	private repairedClaims = this.track(["vault", "destroy"], new Set<string>());
 
 	private idMapReconcileInflight: Promise<void> | null = null;
 	private idMapReconcileQueued = false;

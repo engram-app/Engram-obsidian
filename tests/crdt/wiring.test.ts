@@ -568,3 +568,46 @@ test("wiring gate: syncStep1 reaches sendCrdt for a held doc, ops do not", async
 	wiring.dispose();
 	await wiring.manager.destroyAll();
 });
+
+// #1550: the repair is only correct if it is actually WIRED. Deleting the call
+// in onCrdtNoteNotFound left every other test in this repo green, which is the
+// same shape as the mutation that once removed a rate-limit check unnoticed —
+// so this pins the wiring itself, not the method.
+test("#1550: a note_not_found reply drives the orphaned-claim repair, ahead of the id-map reconcile", async () => {
+	const map = new NoteIdMap();
+	const noteId = "note-orphan";
+	map.set("O/orphan.md", noteId);
+
+	const calls: string[] = [];
+	const syncEngine = {
+		flushFromCrdt: async () => true,
+		isUnchangedSynced: () => false,
+		materializeEmptyDiscovered: async () => {},
+		reconcileNoteIdMapFromManifest: async () => 0,
+		isSyncBlocked: () => false,
+		clearPushedBaselineForId: () => calls.push("clearBaseline"),
+		repairOrphanedClaim: (id: string) => {
+			calls.push(`repair:${id}`);
+			return true; // handled — the server said it has no row for this id
+		},
+		ensureNoteIdMapped: (id: string) => calls.push(`reconcile:${id}`),
+	};
+	const wiring = createCrdtWiring({
+		noteIdMap: map,
+		syncEngine,
+		sendCrdt: () => {},
+		isBound: () => false,
+		strandHealDebounceMs: 100_000,
+		dbPrefix: "orphanclaim",
+	});
+
+	wiring.onCrdtNoteNotFound(noteId);
+
+	// The echo baseline must be un-banked first either way, then the repair
+	// short-circuits the manifest sweep: that sweep iterates the notes the
+	// SERVER lists, so an id the server has never had appears in none of them.
+	expect(calls).toEqual(["clearBaseline", `repair:${noteId}`]);
+
+	wiring.dispose();
+	await wiring.manager.destroyAll();
+});
