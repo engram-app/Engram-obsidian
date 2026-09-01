@@ -87,7 +87,6 @@ const QUEUED_REASON_TEXT: Record<QueuedReason, string> = {
 };
 
 function renderHeader(parent: HTMLElement, plugin: EngramSyncPlugin): void {
-	const header = parent.createDiv({ cls: "engram-sync-center-header" });
 	const status = plugin.syncEngine.getStatus();
 	const all = plugin.syncEngine.issues.all();
 	// Three independent buckets, one per disposition. Informational (plan-limit)
@@ -103,12 +102,16 @@ function renderHeader(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 		(i) => issueDisposition(i.category, i.parseReason) === "transient",
 	).length;
 	const ignoredCount = plugin.syncEngine.ignoredFiles.size();
+	// Say WHY the queue is holding rather than leaving a bare count that reads
+	// as a hang. "waiting" is the case that previously showed an unexplained
+	// spinner: online, unblocked, nothing in flight, work still sitting there.
+	const reason = plugin.syncEngine.queuedReason();
 
-	const dot = header.createSpan({ cls: `engram-sync-center-dot is-${status.state}` });
-	dot.setText("●");
+	// ponytail: badges only — the settings status strip above already shows
+	// state + last sync. Nothing to badge means no empty box.
+	if (!planSkipCount && !attentionCount && !retryingCount && !ignoredCount && !reason) return;
 
-	const title = header.createSpan({ cls: "engram-sync-center-title" });
-	title.setText(`Engram Sync — ${status.state}`);
+	const header = parent.createDiv({ cls: "engram-sync-center-header" });
 
 	if (planSkipCount > 0) {
 		const badge = header.createSpan({ cls: "engram-sync-center-plan-badge" });
@@ -127,10 +130,6 @@ function renderHeader(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 		badge.setText(`${ignoredCount} ignored`);
 	}
 
-	// Say WHY the queue is holding rather than leaving a bare count that reads
-	// as a hang. "waiting" is the case that previously showed an unexplained
-	// spinner: online, unblocked, nothing in flight, work still sitting there.
-	const reason = plugin.syncEngine.queuedReason();
 	if (reason) {
 		const badge = header.createSpan({ cls: "engram-sync-center-queued-badge" });
 		badge.setText(`${status.queued} queued — ${QUEUED_REASON_TEXT[reason]}`);
@@ -577,18 +576,14 @@ function renderStats(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 		else noteCount++;
 	}
 
-	const lastSync = plugin.syncEngine.getLastSync();
 	const vaultId = plugin.settings.vaultId;
 
+	// Static facts only. Live counters (last sync, socket, queue, issues,
+	// ignored) are already on the status strip and in their own sections.
 	addStat(grid, "Local notes", String(noteCount));
 	addStat(grid, "Local attachments", String(attCount));
 	addStat(grid, "Vault", plugin.app.vault.getName());
 	addStat(grid, "Vault ID", vaultId ? String(vaultId) : "—");
-	addStat(grid, "Last sync", lastSync ? formatRelative(new Date(lastSync).getTime()) : "never");
-	addStat(grid, "Live (WebSocket)", plugin.isLiveConnected() ? "connected" : "disconnected");
-	addStat(grid, "Pending in queue", String(plugin.syncEngine.queue.size));
-	addStat(grid, "Issues", String(plugin.syncEngine.issues.count()));
-	addStat(grid, "Ignored", String(plugin.syncEngine.ignoredFiles.size()));
 }
 
 function addStat(parent: HTMLElement, label: string, value: string): void {
