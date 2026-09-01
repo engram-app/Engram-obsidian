@@ -1363,6 +1363,57 @@ describe("convergeColdNoteRoomFree (#1409 — cold notes converge without a room
 		expect(converge.mock.calls[0]).toEqual(["Notes/a.md", "id-a"]);
 	});
 
+	test("latches the READ frame off after two unsupported-looking replies, on bad_frame as well as on timeouts", async () => {
+		// This is the higher-volume of the two room-free frames: every diverged
+		// cold note calls it. Against a backend predating it, the catch-all
+		// `handle_in/3` answers `bad_frame` INSTANTLY — so a timeout-only latch
+		// never engaged and every note kept paying a round trip and a
+		// :handshake token, forever. The write frame's latch was fixed first and
+		// this one was left behind; both now share one predicate.
+		const engine = coldEngine([]);
+		const docState = mock().mockRejectedValue(
+			new Error('request failed: {"reason":"bad_frame"}'),
+		);
+		engine.setCrdtPorts({ docState });
+		const converge = spyOn(engine as any, "socketConverge").mockImplementation(() => {});
+
+		for (let i = 0; i < 4; i++) {
+			await (engine as any).convergeColdNoteRoomFree(
+				"id-a",
+				"Notes/a.md",
+				CHANGE,
+				"server body",
+				"H2",
+			);
+		}
+
+		expect(docState).toHaveBeenCalledTimes(2);
+		// Convergence still happens every time — the latch drops the
+		// optimization, never the correctness.
+		expect(converge).toHaveBeenCalledTimes(4);
+	});
+
+	test("a structured refusal of the READ frame never latches it", async () => {
+		const engine = coldEngine([]);
+		const docState = mock().mockRejectedValue(
+			new Error('request failed: {"reason":"rate_limited"}'),
+		);
+		engine.setCrdtPorts({ docState });
+		spyOn(engine as any, "socketConverge").mockImplementation(() => {});
+
+		for (let i = 0; i < 4; i++) {
+			await (engine as any).convergeColdNoteRoomFree(
+				"id-a",
+				"Notes/a.md",
+				CHANGE,
+				"server body",
+				"H2",
+			);
+		}
+
+		expect(docState).toHaveBeenCalledTimes(4);
+	});
+
 	test("falls back to the room handshake when the port is unwired entirely", async () => {
 		const engine = coldEngine([]);
 		engine.setCrdtPorts({ docState: null });

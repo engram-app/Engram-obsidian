@@ -342,8 +342,14 @@ const DOC_STATE_FRAME = "crdt_doc_state";
 type CrdtDocStateFn = (docId: string) => Promise<{ b64: string; head: string }>;
 
 /** Byte size at or below which a `Yjs.encodeStateAsUpdate` result carries no
- *  content. An empty v1 update is a 2-byte header (`0x00 0x00`), so anything
- *  this small is a doc with nothing in it rather than a small note. */
+ *  content. An empty v1 update is a 2-byte header (`0x00 0x00`) and the
+ *  smallest one carrying a single character is 11B, so there is no small note
+ *  this can misread as empty.
+ *
+ *  Pinned to encodeStateAsUpdate WITHOUT a state vector, and to v1: the same
+ *  empty doc encodes to 13B under `encodeStateAsUpdateV2`, and a FULL doc
+ *  encodes to 2B when diffed against its own state vector. Either change turns
+ *  this constant from a guard into a silent no-op or a false positive. */
 const EMPTY_YJS_UPDATE_BYTES = 2;
 
 /** Socket frame name for the room-free doc WRITE, latched in
@@ -511,17 +517,6 @@ export class SyncEngine {
 				`sweep(${event}): ${failures.length} entr${failures.length === 1 ? "y" : "ies"} ` +
 					`failed but the rest were swept — ${failures.join("; ")}`,
 			);
-		}
-
-		// `track()` only sweeps COLLECTIONS. The capability-latch strike counters
-		// are plain numbers, so they survived a vault change that clears
-		// `unsupportedFrames` — leaving a carried strike to latch a perfectly
-		// good backend off after a single timeout on the new vault. Both
-		// counters' own doc comments claimed this reset already happened; it did
-		// not, which is the failure mode where the comment is the bug.
-		if (event === "vault") {
-			this.docStateTimeouts = 0;
-			this.docUpdateTimeouts = 0;
 		}
 	}
 
@@ -3181,12 +3176,43 @@ export class SyncEngine {
 		return null;
 	}
 
-	/** How many consecutive unanswered `crdt_doc_state` frames disable the read.
-	 *  ONE is too few: a modern backend produces the identical signal whenever
-	 *  the channel dies (phx_error does not reject pending replies, so a crash
-	 *  surfaces as a timeout), and under the bulk-import load this feature exists
-	 *  for, a single slow reply is entirely reachable. */
-	private static readonly DOC_STATE_TIMEOUT_LATCH = 2;
+	/** How many consecutive unsupported-looking replies disable a room-free
+	 *  frame. ONE is too few: a modern backend produces the identical signal
+	 *  whenever the channel dies (phx_error does not reject pending replies, so
+	 *  a crash surfaces as a timeout), and under the bulk-import load this
+	 *  feature exists for, a single slow reply is entirely reachable. */
+	private static readonly FRAME_UNSUPPORTED_LATCH = 2;
+
+	/** Score one reply against `frame`'s capability latch; true when THIS reply
+	 *  latched it off. Two signals count, and neither is proof on its own:
+	 *
+	 *  - a TIMEOUT means the server never answered at all, which is what an
+	 *    older backend does with an unknown event — but a crashing channel looks
+	 *    identical from here.
+	 *  - `bad_frame` is the reply `CrdtChannel`'s catch-all `handle_in/3` gives
+	 *    INSTANTLY, and it is the likelier shape: latching on timeouts alone
+	 *    meant the latch never engaged against such a server, so every note paid
+	 *    a wasted round trip and an extra `:handshake` rate token, on the very
+	 *    lane whose starvation the 2026-07-07 incident was about. It is not
+	 *    exclusive to an old backend either — the same catch-all answers a
+	 *    malformed payload on a frame the server DOES implement.
+	 *
+	 *  Repeated strikes are what make the ambiguity tolerable. A STRUCTURED
+	 *  reject (rate_limited, note_not_found, doc_update_failed) is a real answer
+	 *  from a server that implements the frame and must never latch.
+	 *
+	 *  ONE predicate for both frames on purpose: it shipped on the write frame
+	 *  alone and left the read — the higher-volume caller — matching timeouts
+	 *  only, so against a backend predating both, the write latched off after
+	 *  two strikes while the read probed every cold note forever. */
+	private strikeFrame(frame: string, detail: string): boolean {
+		if (!/timeout/i.test(detail) && !/bad_frame/i.test(detail)) return false;
+		const strikes = (this.frameStrikes.get(frame) ?? 0) + 1;
+		this.frameStrikes.set(frame, strikes);
+		if (strikes < SyncEngine.FRAME_UNSUPPORTED_LATCH) return false;
+		this.unsupportedFrames.add(frame);
+		return true;
+	}
 
 	/** The ONE place `crdt_doc_state` is called.
 	 *
@@ -3211,29 +3237,20 @@ export class SyncEngine {
 			// A success proves the frame is supported — clear any partial strike
 			// count so one slow reply mid-import cannot accumulate toward a latch
 			// across an otherwise healthy session.
-			this.docStateTimeouts = 0;
+			this.frameStrikes.delete(DOC_STATE_FRAME);
 			return state;
 		} catch (e) {
 			const detail = errMsg(e, path);
 
-			// A TIMEOUT means the server never answered at all — an older backend
-			// does that with an unknown event. It is NOT proof of an old backend
-			// though: a channel crash looks identical from here, which is why the
-			// log below states the observation and not a diagnosis, and why it
-			// takes repeated strikes. A structured reject (rate limit, auth) is a
-			// real answer from a server that DOES implement the frame, and must
-			// never latch.
-			if (/timeout/i.test(detail)) {
-				this.docStateTimeouts += 1;
-				if (this.docStateTimeouts >= SyncEngine.DOC_STATE_TIMEOUT_LATCH) {
-					this.unsupportedFrames.add(DOC_STATE_FRAME);
-					rlog().warn(
-						"crdt",
-						`crdt_doc_state went unanswered ${this.docStateTimeouts}x — disabling room-free ` +
-							`doc reads for this session. Either the backend predates the frame or the ` +
-							`channel is crashing; both look like this from the client.`,
-					);
-				}
+			// The log states the OBSERVATION, not a diagnosis: an old backend and
+			// a crashing channel are indistinguishable from here.
+			if (this.strikeFrame(DOC_STATE_FRAME, detail)) {
+				rlog().warn(
+					"crdt",
+					`crdt_doc_state unsupported ${SyncEngine.FRAME_UNSUPPORTED_LATCH}x — disabling ` +
+						`room-free doc reads for this session. Either the backend predates the frame ` +
+						`or the channel is crashing; both look like this from the client.`,
+				);
 			}
 
 			rlog().warn("crdt", `crdt_doc_state failed for ${noteRef(path)}: ${detail}`);
@@ -3273,29 +3290,49 @@ export class SyncEngine {
 		const noteId = entry.noteId;
 		const send = this.crdtDocUpdate;
 		if (!noteId || !send || this.unsupportedFrames.has(DOC_UPDATE_FRAME)) return false;
-		if (typeof this.crdt?.encodeStateAsUpdate !== "function") return false;
+		// Capture the registry BEFORE the encode, and refuse if a vault change
+		// swapped it underneath — the same fence `adoptServerLineage` takes, and
+		// it matters MORE here for the reason `setCrdtPorts` gives: this is a
+		// WRITE. `setCrdtPorts` reassigns `this.crdt` on a vault change, and the
+		// port's own guard cannot catch it because both sides of that comparison
+		// (channel vault, settings vault) read LIVE at call time, so once the
+		// switch completes they agree again and vault A's Yjs bytes land in
+		// vault B's note of the same id. note_ids are unique only WITHIN a vault.
+		const crdt = this.crdt;
+		if (typeof crdt?.encodeStateAsUpdate !== "function") return false;
 
 		let frame: string;
 		try {
-			const state = await this.crdt.encodeStateAsUpdate(noteId);
+			const state = await crdt.encodeStateAsUpdate(noteId);
+			if (this.crdt !== crdt) return false;
 			// A doc's full state carries its history and tombstones, so it can
 			// dwarf the note's text. Same budget the genesis frame is held to
 			// rather than putting an unbounded frame on an 8 MB socket — an
 			// oversized note still delivers, it just pays for a room to do it.
-			if (state.byteLength > MAX_CRDT_NOTE_BYTES) return false;
-			// AN EMPTY DOC IS NOT A DELIVERY. `encodeStateAsUpdate` on a doc that
-			// never hydrated (destroyed, evicted, or an IndexedDB replay that has
-			// not finished) yields a no-op update the server acks happily — and
+			if (state.byteLength > MAX_CRDT_NOTE_BYTES) {
+				rlog().anomaly("crdt", "roomfree_state_over_cap");
+				return false;
+			}
+			// AN EMPTY DOC IS NOT A DELIVERY. A no-op update is acked happily, and
 			// the ack is what dequeues the entry, so the queued edit would be
 			// dropped as "delivered" having moved nothing. The handshake this
 			// replaces would additionally have PULLED the server's copy, so the
 			// fallback is strictly better here, not merely equivalent.
+			//
+			// The reachable cause is a note whose doc was never persisted:
+			// `ensureEntrySync` MINTS an empty `Y.Doc` on a cache miss, which is
+			// what a queue entry restored from `data.json` finds when IndexedDB
+			// does not have its doc (a second machine, a cleared cache, storage
+			// eviction). Not the other candidates — a destroyed doc throws out of
+			// `assertAlive` into the catch below, an evicted one rehydrates from
+			// IndexedDB, and `entry()` awaits `whenSynced`, so a half-finished
+			// replay is not observable from here.
+			//
+			// Counter, not a log line: the trigger is a whole restored queue at
+			// once, and one remote warn per note would flood the drain this
+			// feature exists to make cheap. Same call the sibling caps make.
 			if (state.byteLength <= EMPTY_YJS_UPDATE_BYTES) {
-				rlog().warn(
-					"queue",
-					`Room-free delivery skipped for ${noteRef(entry.path)} — the local doc encoded ` +
-						`empty (${state.byteLength}B); falling back to the room handshake`,
-				);
+				rlog().anomaly("crdt", "roomfree_state_empty");
 				return false;
 			}
 			frame = encodeUpdateFrame(state);
@@ -3311,16 +3348,16 @@ export class SyncEngine {
 
 		try {
 			await send(noteId, frame);
-			this.docUpdateTimeouts = 0;
-			// NOT `markSynced` here, however tempting. Despite the name it does
-			// NOT set the provider's `synced` flag (see `ProviderRegistry`: "the
-			// provider owns its own `synced` flag (set on syncStep2), so
-			// markSynced is a no-op kept for call-surface compatibility"). All it
-			// does is fire `onSynced` -> `commitCrdtConvergence`, which COMMITS a
-			// staged catch-up episode — recording the note converged at a
-			// serverHash whose content was never applied, after which every later
-			// catch-up compares equal hashes and skips it. That is the deaf-note
-			// class, and it turned two fan-out e2e tests red when tried.
+			this.frameStrikes.delete(DOC_UPDATE_FRAME);
+			// NOT `markSynced` here, however tempting. It does not set the
+			// provider's `synced` flag; it fires `onSynced` ->
+			// `commitCrdtConvergence`, which COMMITS a staged catch-up episode —
+			// recording the note converged at a serverHash whose content was
+			// never applied, after which every later catch-up compares equal
+			// hashes and skips it. That is the deaf-note class, and it turned two
+			// fan-out e2e tests red when tried. `convergeColdNoteRoomFree` may
+			// call it because it APPLIED the server's state first; this path only
+			// sent its own.
 			//
 			// The real gap is still open (engram#1493 follow-up): the server holds
 			// our state but nothing local records it, so `hasUndeliveredOps` stays
@@ -3334,36 +3371,21 @@ export class SyncEngine {
 		}
 	}
 
-	/** Strike accounting for `crdt_doc_update`, mirroring `readServerDocState`.
-	 *
-	 *  A backend that predates the frame never answers, so without a latch every
-	 *  queued note pays a full request timeout before falling back — a slower
-	 *  drain than not having the feature at all. A TIMEOUT is the only signal
-	 *  that looks like an old backend; a structured reject (rate limit, unknown
-	 *  note, refused write) is a real answer from a server that DOES implement
-	 *  it and must never latch. It takes repeated strikes because a crashing
-	 *  channel is indistinguishable from an old backend here. */
+	/** Log + strike accounting for a failed `crdt_doc_update`, mirroring the
+	 *  same two steps in `readServerDocState`. Which replies count toward the
+	 *  latch is `strikeFrame`'s call, not this function's — that is the point of
+	 *  the shared predicate. Without a latch, a backend predating the frame
+	 *  makes every queued note pay a round trip before falling back, a slower
+	 *  drain than not having the feature at all. */
 	private noteDocUpdateFailure(e: unknown, path: string): void {
 		const detail = errMsg(e, path);
 
-		// `bad_frame` is the OTHER shape an unsupporting backend answers with, and
-		// it is the likelier one: `CrdtChannel`'s catch-all `handle_in/3` replies
-		// to any unknown event INSTANTLY. Latching only on timeouts meant the
-		// latch never engaged against such a server — every queued note paid a
-		// wasted round trip, a remote warn line, and an extra :handshake rate
-		// token, on the very lane whose starvation the 2026-07-07 incident was
-		// about. Structured refusals that prove the frame IS implemented
-		// (rate_limited, note_not_found, doc_update_failed) still must not latch.
-		if (/timeout/i.test(detail) || /bad_frame/i.test(detail)) {
-			this.docUpdateTimeouts += 1;
-			if (this.docUpdateTimeouts >= SyncEngine.DOC_STATE_TIMEOUT_LATCH) {
-				this.unsupportedFrames.add(DOC_UPDATE_FRAME);
-				rlog().warn(
-					"crdt",
-					`crdt_doc_update unsupported ${this.docUpdateTimeouts}x — disabling room-free ` +
-						`queue delivery for this session and falling back to the room handshake.`,
-				);
-			}
+		if (this.strikeFrame(DOC_UPDATE_FRAME, detail)) {
+			rlog().warn(
+				"crdt",
+				`crdt_doc_update unsupported ${SyncEngine.FRAME_UNSUPPORTED_LATCH}x — disabling ` +
+					`room-free queue delivery for this session and falling back to the room handshake.`,
+			);
 		}
 
 		rlog().warn("queue", `Room-free delivery failed for ${noteRef(path)}: ${detail}`);
@@ -5662,18 +5684,20 @@ export class SyncEngine {
 	 *  self-host and SaaS are different servers at different versions. */
 	private unsupportedFrames = this.track(["vault", "destroy"], new Set<string>());
 
-	/** Consecutive unanswered `crdt_doc_state` frames. Reset by any success, and
-	 *  by a vault change (a different vault can mean a different backend) — see
-	 *  the explicit reset in `sweep()`, which `track()` cannot do for a scalar. */
-	private docStateTimeouts = 0;
+	/** Consecutive unsupported-looking replies, keyed BY FRAME. Per-frame on
+	 *  purpose: the two room-free frames shipped in different releases, so a
+	 *  backend can serve one and not the other, and a shared count would let the
+	 *  read's strikes latch off the write (or the reverse).
+	 *
+	 *  A Map rather than two scalars so it sweeps with `unsupportedFrames` on
+	 *  the SAME events. As scalars they survived the vault change that clears
+	 *  the latch Set, leaving a carried strike to latch a perfectly good backend
+	 *  off after one timeout on the new vault — and the fix for that was a
+	 *  hand-written `if (event === "vault")` list in `sweep()`, i.e. exactly the
+	 *  drift `track()` exists to abolish. */
+	private frameStrikes = this.track(["vault", "destroy"], new Map<string, number>());
 
 	private crdtDocUpdate: CrdtDocUpdateFn | null = null;
-
-	/** Consecutive unanswered `crdt_doc_update` frames. Counted SEPARATELY from
-	 *  the read's strikes: the two frames shipped in different releases, so a
-	 *  backend can serve one and not the other, and a shared counter would let
-	 *  the read's slow replies latch off the write (or the reverse). */
-	private docUpdateTimeouts = 0;
 
 	setCrdtCatchupSince(fn: CrdtCatchupSinceFn): void {
 		this.setCrdtPorts({ catchupSince: fn });
