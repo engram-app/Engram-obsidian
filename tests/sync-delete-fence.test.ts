@@ -553,6 +553,28 @@ describe("a rename carries the evidence with the note (#489)", () => {
 		expect(slots.length).toBe(1);
 	});
 
+	// e2e test_93 caught this and the unit suite did not: `hasServerNote` is
+	// PATH-keyed (`getCrdtHead(pathForId(id))`), so a carried `crdtHead` makes
+	// the engine believe the server already holds the note AT THE NEW PATH. It
+	// then takes the crdt_msg edit branch — which carries no path and cannot
+	// move the row — instead of the crdt_create genesis branch that IS the
+	// relocation. Symptom: "Note <new path> not on server after 120s".
+	test("the moved row must not claim the server holds the note at the NEW path", async () => {
+		const { e } = makeEngine();
+		(e as any).noteIdMap.set("a.md", "id-head");
+		recordConvergedEvidence(e, "a.md", "body");
+		(e as any).setCrdtHead("a.md", "head-abc");
+		expect(e.hasServerNote("id-head")).toBe(true);
+
+		await e.handleRename(makeNoteFile("b.md"), "a.md");
+
+		// Evidence survives the move (that is the point of #489)...
+		expect((e as any).syncState.has("b.md")).toBe(true);
+		// ...but the server-knows-it-here oracle must read FALSE, or the push
+		// takes the pathless edit branch and the rename never transmits.
+		expect(e.hasServerNote("id-head")).toBe(false);
+	});
+
 	test("a rename-over leaves the occupant's row alone", async () => {
 		// Review finding: an unconditional set at the destination hands whatever
 		// note already lives there a version belonging to a DIFFERENT note, so

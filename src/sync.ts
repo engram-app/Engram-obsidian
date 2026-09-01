@@ -2011,21 +2011,31 @@ export class SyncEngine {
 		// to a different note, so its next write CASes against the wrong one.
 		// The old `dropPath` left the occupant alone; keep that.
 		if (this.syncState.has(to)) return;
-		// `hash: 0`, NOT the carried content hash. The row is evidence that the
-		// NOTE has synced; it is not evidence that the SERVER holds these bytes
-		// at THIS path — after a rename it demonstrably does not, and the
-		// new-path `crdt_create` IS the relocation (genesis_relocate_live). A
-		// rename changes no content, so a carried hash equals the file's own and
-		// `pushFile`'s echo filter (which sits above the push slot) would skip
-		// the relocation entirely — silently, and with no old-leg delete to fall
-		// back on, leaving the note at its old path server-side forever.
-		// `hash: 0` is the established "content unknown here" marker
-		// (`clearPushedBaselineForId`), and fnv1a never returns it.
+		// PRESENCE ONLY. `{ hash: 0 }`, not `{ ...row }` — every other field on
+		// that row is a PATH-scoped claim about the server, and after a rename
+		// none of them is true at `to` yet:
 		//
-		// What the delete-push evidence rule (#416) actually reads is
-		// `syncState.has(path)` — presence, not the hash. So this carries
-		// exactly the fact that mattered and nothing that lies.
-		this.syncState.set(to, { ...row, hash: 0 });
+		//   - `hash` — a rename changes no content, so a carried hash equals the
+		//     file's own and `pushFile`'s echo filter (above the push slot)
+		//     skips the relocation outright. `hash: 0` is the established
+		//     "content unknown here" marker (`clearPushedBaselineForId`) and
+		//     fnv1a never returns it.
+		//   - `crdtHead` — this one is worse, and e2e test_93 is what caught it.
+		//     `hasServerNote` is PATH-keyed (`getCrdtHead(pathForId(id))`), so a
+		//     carried head makes the engine believe the server already holds the
+		//     note AT THE NEW PATH. `pushFile` then takes the `crdt_msg` edit
+		//     branch, which carries no path and cannot move the row, instead of
+		//     the `crdt_create` genesis branch that IS the relocation
+		//     (genesis_relocate_live). The rename never transmits, and the CRDT
+		//     leg issues no old-leg delete to fall back on: "Note <new path> not
+		//     on server after 120s".
+		//   - `version` / `serverHash` — same family, CAS facts about a row the
+		//     server holds at the OLD path.
+		//
+		// What the delete-push evidence rule (#416) reads is `syncState.has(path)`
+		// — presence, nothing else. So presence is exactly what moves, and the
+		// new-path push re-establishes the rest from the server's own answer.
+		this.syncState.set(to, { hash: 0 });
 	}
 
 	/** Seed the last-synced baseline from content that just entered the local
