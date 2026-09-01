@@ -375,8 +375,9 @@ export class Replica {
 
 		// The vault fires these explicitly (no fs watcher). Route file-vs-folder
 		// exactly as main.ts's registerEvent handlers do, using getAbstractFileByPath
-		// (resolvable at event time — onDelete fires before removal). See vault-fs
-		// VaultEvents docstring: main.ts:575-578 / 852-857 / 609-614 / 618-619.
+		// where the entity still resolves; `delete` fires after removal (as in real
+		// Obsidian) and carries its kind instead. See vault-fs VaultEvents
+		// docstring: main.ts:575-578 / 852-857 / 609-614 / 618-619.
 		const events: VaultEvents = {
 			onModify: (p) => {
 				const f = app.vault.getAbstractFileByPath(p);
@@ -388,8 +389,12 @@ export class Replica {
 					void engine.handleFolderCreate(f); // main.ts:853-854
 				else if (f instanceof TFile) engine.handleModify(f); // main.ts:856
 			},
-			onDelete: (p) => {
-				const f = app.vault.getAbstractFileByPath(p);
+			onDelete: (p, isFolder) => {
+				// The entity is already gone from the index (as in real Obsidian),
+				// so reconstruct it from the kind the shim passes rather than
+				// looking it up — a lookup here resolves to null and drops the
+				// event entirely.
+				const f: TFile | TFolder = isFolder ? new TFolder(p) : new TFile(p);
 				if (f instanceof TFolder)
 					void engine.handleFolderDelete(f); // main.ts:610-611
 				else if (f instanceof TFile) {

@@ -500,3 +500,45 @@ describe("a rename's old leg must not destroy the note's CRDT room", () => {
 		expect(removeDoc).toHaveBeenCalledWith("id-gone");
 	});
 });
+
+describe("a rename carries the evidence with the note (#489)", () => {
+	// The evidence rule is PATH-keyed; a note's identity is not. Both rename legs
+	// used to drop the sync-state row and let the following push re-establish it,
+	// which left a real, synced note with NO evidence for as long as that push
+	// took. A delete inside that window was refused, so the note never died
+	// server-side — and the next `crdt_create` at the freed old path was ADOPTED
+	// onto the orphan row instead of creating a note.
+
+	test("local rename: a delete right after it still pushes", async () => {
+		const { e, crdtDeletes } = makeEngine();
+		const oldPath = "Untitled.md";
+		const newPath = "Foo.md";
+		(e as any).noteIdMap.set(oldPath, "id-local-rename");
+		recordSyncEvidence(e, oldPath);
+
+		await e.handleRename(makeNoteFile(newPath), oldPath);
+		await e.handleDelete(makeNoteFile(newPath));
+
+		expect(crdtDeletes).toEqual([newPath]);
+		// The OLD key still goes away, or a later create there whose content
+		// hashes the same is echo-suppressed and never syncs.
+		expect((e as any).syncState.has(oldPath)).toBe(false);
+	});
+
+	test("remote relocation: a delete right after it still pushes", async () => {
+		const { e, crdtDeletes } = makeEngine();
+		const oldPath = "remote-rename.md";
+		const newPath = "remote-renamed.md";
+		(e as any).noteIdMap.set(oldPath, "id-remote-rename");
+		recordSyncEvidence(e, oldPath);
+		// Past the cross-wire guard: the manifest confirms the old path really
+		// is this id's. What the guard decides is out of scope here.
+		(e as any).manifestOwnerOf = async () => "id-remote-rename";
+
+		await (e as any).moveIfIdRelocated("id-remote-rename", newPath);
+		await e.handleDelete(makeNoteFile(newPath));
+
+		expect(crdtDeletes).toEqual([newPath]);
+		expect((e as any).syncState.has(oldPath)).toBe(false);
+	});
+});

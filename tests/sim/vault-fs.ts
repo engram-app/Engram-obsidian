@@ -21,11 +21,14 @@ import { TFile, TFolder } from "../__mocks__/obsidian";
  *    - rename        -> syncEngine.handleRename(file, oldPath)        (main.ts:618-619)
  *  `create`/`delete` fire for folders too in real Obsidian; the folder-vs-file
  *  branch lives with whoever wires these callbacks (they hold the SimApp and
- *  can check `vault.getAbstractFileByPath`), not in this dumb path-only shape. */
+ *  can check `vault.getAbstractFileByPath`), not in this dumb path-only shape.
+ *  `onDelete` is the exception: the entity is GONE by the time it fires (that is
+ *  what real Obsidian does, and `handleDelete`'s reoccupied-path guard depends
+ *  on it), so the kind is passed rather than looked up. */
 export interface VaultEvents {
 	onModify?(path: string): void;
 	onCreate?(path: string): void;
-	onDelete?(path: string): void;
+	onDelete?(path: string, isFolder: boolean): void;
 	onRename?(oldPath: string, newPath: string): void;
 }
 
@@ -257,12 +260,16 @@ export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
 	const fileManager: SimApp["fileManager"] = {
 		async trashFile(file) {
 			const p = file.path;
-			// Fire before removal: real Obsidian's delete listener still resolves
-			// the entity (type + path) at event time, and callers rely on that
-			// for TFile/TFolder disambiguation (see VaultEvents docstring above).
-			events.onDelete?.(p);
+			const isFolder = file instanceof TFolder;
+			// Remove BEFORE firing. Real Obsidian's delete event hands the listener
+			// the TFile it already evicted from the index, so `getFileByPath(path)`
+			// is null inside the handler — and `handleDelete`'s reoccupied-path
+			// guard reads exactly that to tell "this path was replaced" from "this
+			// note died". Firing first made that guard true on EVERY sim delete, so
+			// no sim run ever reached the delete push at all.
 			fs.rmSync(abs(p), { recursive: true, force: true });
 			rebuildIndex();
+			events.onDelete?.(p, isFolder);
 		},
 	};
 
