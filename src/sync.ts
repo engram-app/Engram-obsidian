@@ -341,6 +341,14 @@ const DOC_STATE_FRAME = "crdt_doc_state";
 /** Room-free full Yjs state for one note — see `CrdtChannel.crdtDocState`. */
 type CrdtDocStateFn = (docId: string) => Promise<{ b64: string; head: string }>;
 
+/** Socket frame name for the room-free doc WRITE, latched in
+ *  `unsupportedFrames` alongside the read. */
+const DOC_UPDATE_FRAME = "crdt_doc_update";
+
+/** Room-free delivery of this device's ops for one note — see
+ *  `CrdtChannel.crdtDocUpdate`. */
+type CrdtDocUpdateFn = (docId: string, b64: string) => Promise<{ head: string }>;
+
 /** Late-injection wiring for the CRDT stack (#376 prerequisite 2). main.ts
  *  wires these in stages — boot, channel join, teardown — each stage passing
  *  only its subset to `setCrdtPorts`. A key must be PRESENT in the patch to
@@ -376,6 +384,10 @@ export interface CrdtPorts {
 	 *  old to serve `crdt_doc_state`; callers fall back to the room
 	 *  handshake, so an unwired port costs rooms, never convergence. */
 	docState?: CrdtDocStateFn | null;
+	/** Room-FREE delivery of a queued edit for an IDLE note (#1493). Null on a
+	 *  backend too old to serve `crdt_doc_update`; the caller falls back to the
+	 *  room re-handshake, so an unwired port costs rooms, never delivery. */
+	docUpdate?: CrdtDocUpdateFn | null;
 	/** #1409: tell the server this device is done with a note's room, so its
 	 *  `auto_exit` can fire now instead of after the 5-minute idle drain. */
 	release?: ((docId: string) => void) | null;
@@ -657,6 +669,7 @@ export class SyncEngine {
 		if ("liveBound" in ports) this.isLiveBound = ports.liveBound ?? (() => false);
 		if ("catchupSince" in ports) this.crdtCatchupSince = ports.catchupSince ?? null;
 		if ("docState" in ports) this.crdtDocState = ports.docState ?? null;
+		if ("docUpdate" in ports) this.crdtDocUpdate = ports.docUpdate ?? null;
 		if ("release" in ports) this.crdtRelease = ports.release ?? null;
 	}
 
@@ -3127,6 +3140,96 @@ export class SyncEngine {
 		}
 	}
 
+	/** Deliver this device's pending ops for ONE queued note without allocating
+	 *  a server room (#1493) — the send-side twin of `convergeColdNoteRoomFree`.
+	 *
+	 *  The path it replaces is `socketConverge` -> `fireCrdtReHandshake`: reset +
+	 *  enroll fires a STEP1, the server answers `[STEP2, server-STEP1]`, and the
+	 *  client's reply to that second step carries the pending ops. That works,
+	 *  and every one of those STEP1s routes through the backend's `ensure_room`,
+	 *  so a durable-queue drain over a large vault asks for a room per note. Prod
+	 *  measured 314 resident against a cap of 64 on a 1.4k-note sync.
+	 *
+	 *  `crdt_doc_update` carries the same ops as a plain Yjs update and the
+	 *  server merges it into a doc owned by a short-lived applier, so no room is
+	 *  left behind. It sends the doc's FULL state rather than a delta: without a
+	 *  handshake we do not know the server's state vector, and a Yjs merge of
+	 *  full state is idempotent — larger on the wire, never wrong.
+	 *
+	 *  Unlike the READ twin this needs NO `hasUndeliveredOps` precondition. That
+	 *  gate exists because `crdt_doc_state` cannot carry anything upward; this
+	 *  frame is the upward direction, so holding local work is the reason to use
+	 *  it, not a reason to refuse.
+	 *
+	 *  Returns true only when the server ACKED the write — that ack is what
+	 *  licenses the dequeue, exactly as an inbound frame licenses it on the room
+	 *  path. ANY failure returns false and the caller re-handshakes; the room is
+	 *  always CORRECT, just more expensive. */
+	private async deliverQueuedOpsRoomFree(entry: {
+		path: string;
+		noteId?: string;
+	}): Promise<boolean> {
+		const noteId = entry.noteId;
+		const send = this.crdtDocUpdate;
+		if (!noteId || !send || this.unsupportedFrames.has(DOC_UPDATE_FRAME)) return false;
+		if (typeof this.crdt?.encodeStateAsUpdate !== "function") return false;
+
+		let frame: string;
+		try {
+			const state = await this.crdt.encodeStateAsUpdate(noteId);
+			// A doc's full state carries its history and tombstones, so it can
+			// dwarf the note's text. Same budget the genesis frame is held to
+			// rather than putting an unbounded frame on an 8 MB socket — an
+			// oversized note still delivers, it just pays for a room to do it.
+			if (state.byteLength > MAX_CRDT_NOTE_BYTES) return false;
+			frame = encodeUpdateFrame(state);
+		} catch (e) {
+			// Doc destroyed mid-encode, or an IndexedDB fault. The room path
+			// re-resolves the doc itself, so let it try.
+			devLog().log(
+				"crdt",
+				`room-free delivery: encode failed for ${entry.path} — ${errMsg(e)}`,
+			);
+			return false;
+		}
+
+		try {
+			await send(noteId, frame);
+			this.docUpdateTimeouts = 0;
+			return true;
+		} catch (e) {
+			this.noteDocUpdateFailure(e, entry.path);
+			return false;
+		}
+	}
+
+	/** Strike accounting for `crdt_doc_update`, mirroring `readServerDocState`.
+	 *
+	 *  A backend that predates the frame never answers, so without a latch every
+	 *  queued note pays a full request timeout before falling back — a slower
+	 *  drain than not having the feature at all. A TIMEOUT is the only signal
+	 *  that looks like an old backend; a structured reject (rate limit, unknown
+	 *  note, refused write) is a real answer from a server that DOES implement
+	 *  it and must never latch. It takes repeated strikes because a crashing
+	 *  channel is indistinguishable from an old backend here. */
+	private noteDocUpdateFailure(e: unknown, path: string): void {
+		const detail = errMsg(e, path);
+
+		if (/timeout/i.test(detail)) {
+			this.docUpdateTimeouts += 1;
+			if (this.docUpdateTimeouts >= SyncEngine.DOC_STATE_TIMEOUT_LATCH) {
+				this.unsupportedFrames.add(DOC_UPDATE_FRAME);
+				rlog().warn(
+					"crdt",
+					`crdt_doc_update went unanswered ${this.docUpdateTimeouts}x — disabling room-free ` +
+						`queue delivery for this session and falling back to the room handshake.`,
+				);
+			}
+		}
+
+		rlog().warn("queue", `Room-free delivery failed for ${noteRef(path)}: ${detail}`);
+	}
+
 	private async seedBodyAfterCreate(opts: {
 		effectiveId: string;
 		normalized: string;
@@ -5423,6 +5526,14 @@ export class SyncEngine {
 	/** Consecutive unanswered `crdt_doc_state` frames. Reset by any success, and
 	 *  by a vault change (a different vault can mean a different backend). */
 	private docStateTimeouts = 0;
+
+	private crdtDocUpdate: CrdtDocUpdateFn | null = null;
+
+	/** Consecutive unanswered `crdt_doc_update` frames. Counted SEPARATELY from
+	 *  the read's strikes: the two frames shipped in different releases, so a
+	 *  backend can serve one and not the other, and a shared counter would let
+	 *  the read's slow replies latch off the write (or the reverse). */
+	private docUpdateTimeouts = 0;
 
 	setCrdtCatchupSince(fn: CrdtCatchupSinceFn): void {
 		this.setCrdtPorts({ catchupSince: fn });
@@ -10434,6 +10545,27 @@ export class SyncEngine {
 						// it up. (A noteId-less crdt entry — ancient plugin versions —
 						// still falls through to the one-shot content replay below.)
 						if (this.crdt && (this.crdtLive?.() ?? false)) {
+							// Room-FREE first (#1493). This drain is what put 314 rooms
+							// resident against a cap of 64: one re-handshake per queued
+							// note, each allocating a server room for a note nobody has
+							// open. A LIVE-BOUND note keeps the handshake — it already
+							// has the room, so the round trip costs no extra residency,
+							// and its ops ride the live socket either way.
+							//
+							// The server's ack IS the delivery proof, so this leg
+							// dequeues inline rather than parking in
+							// `pendingQueueDeliveries` to wait for an inbound frame that
+							// a room-free write never produces.
+							if (
+								!this.isLiveBound(normalizePath(entry.path)) &&
+								(await this.deliverQueuedOpsRoomFree(entry))
+							) {
+								await this.queue.dequeue(entry.path, this.entryVaultId(entry));
+								this.issues.clear(entry.path);
+								flushed++;
+								continue;
+							}
+
 							this.pendingQueueDeliveries.set(entry.noteId, {
 								path: entry.path,
 								vaultId: this.entryVaultId(entry),

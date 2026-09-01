@@ -437,6 +437,22 @@ describe("privacy — no content retention for export", () => {
 		const crdtCreateWireStatement =
 			/^asynccrdtCreate\(docId:string,path:string,b64\?:string\):Promise<CrdtCreateResult>\{constres=\(awaitthis\.sendRequest\("",\{doc_id:docId,path,\.\.\.\(b64===undefined\?\{\}:\{b64\}\),\}\)\)asCrdtCreateReply;$/;
 
+		// The FOURTH legitimate wire send (#1493): `NoteChannel.crdtDocUpdate`'s
+		// room-free delivery of a queued edit. Like `crdtCreate` it is a plain
+		// `sendRequest`, so it gets its own exact form for the same reason —
+		// widening `crdtCreateWireStatement` to cover both would exempt any
+		// `sendRequest` carrying a `b64`, which is most of what this check is
+		// for. Same "whole statement, literal text" principle: a wrapper around
+		// the payload, an extra argument or a reordering all stop matching.
+		//
+		// It ends at `as{head:string;` rather than a closing brace because the
+		// extractor slices to the next `;`, and the first one here is INSIDE the
+		// return type literal. Same reason `crdtCreateWireStatement` swallows a
+		// whole method signature: the forms are transcriptions of what the
+		// extractor actually produces, not of what the source looks like.
+		const crdtDocUpdateWireStatement =
+			/^asynccrdtDocUpdate\(docId:string,b64:string\):Promise<\{head:string\}>\{return\(awaitthis\.sendRequest\("",\{doc_id:docId,b64\}\)\)as\{head:string;$/;
+
 		const findings: Finding[] = [];
 		for (const f of sources) {
 			const stripped = stripCommentsAndStrings(f.text);
@@ -457,7 +473,8 @@ describe("privacy — no content retention for export", () => {
 					if (
 						!wireStatement.test(statement) &&
 						!indexWireStatement.test(statement) &&
-						!crdtCreateWireStatement.test(statement)
+						!crdtCreateWireStatement.test(statement) &&
+						!crdtDocUpdateWireStatement.test(statement)
 					) {
 						findings.push({
 							file: f.rel,
