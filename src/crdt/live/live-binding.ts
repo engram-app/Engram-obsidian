@@ -23,7 +23,6 @@ import { Annotation } from "@codemirror/state";
 import { type EditorView, type PluginValue, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 import { editorInfoField } from "obsidian";
 import type * as Y from "yjs";
-import { isMarkdownPath } from "../../file-kind";
 import { noteRef } from "../../note-ref";
 import { rlog } from "../../remote-log";
 import {
@@ -36,9 +35,11 @@ import {
 import {
 	classifyEditSpan,
 	decideReconcile,
+	type EditorOwnerInfo,
 	fmCreationBodyDiff,
 	frontmatterPrefixLen,
 	needsReattach,
+	ownedMarkdownPath,
 } from "./live-binding-decisions";
 
 /** Interval for the drift backstop (Relay's DRIFT_CHECK_DELAY is 3000ms). */
@@ -77,11 +78,12 @@ export function setLiveBindingCoordinator(c: LiveBindingCoordinator | null): voi
 
 let viewSeq = 0;
 
-/** The markdown file path this editor currently shows, or null (non-md / no file). */
+/** The markdown file path this editor currently shows, or null when it is not the
+ *  leaf's own markdown editor (non-md, no file, or a nested editor such as the
+ *  Live Preview table cell — see ownedMarkdownPath). */
 function editorPath(editor: EditorView): string | null {
-	const info = editor.state.field(editorInfoField, false);
-	const path = info?.file?.path ?? null;
-	return path && isMarkdownPath(path) ? path : null;
+	const info = editor.state.field(editorInfoField, false) as EditorOwnerInfo | undefined;
+	return ownedMarkdownPath(editor, info);
 }
 
 class LiveBindingValue implements PluginValue {
