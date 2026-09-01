@@ -587,8 +587,15 @@ export class ProviderRegistry {
 	}
 
 	// --- Synced bookkeeping -----------------------------------------------------
-	// The provider owns its own `synced` flag (set on syncStep2), so markSynced is
-	// a no-op kept for call-surface compatibility; isSynced reads the provider.
+	// `markSynced` is NOT the setter for `isSynced` and never has been, whatever
+	// the pairing suggests: `synced` is the provider's own flag, set on syncStep2,
+	// and `isSynced` reads it. What `markSynced` does is fire `onSynced` ->
+	// `commitCrdtConvergence`, which COMMITS a staged catch-up episode. That makes
+	// it valid only for a caller that has already APPLIED the server's state
+	// (`convergeColdNoteRoomFree`), and wrong for one that merely delivered its
+	// own (see the note at the room-free write in `sync.ts`). Calling it "a no-op
+	// kept for call-surface compatibility" — as this comment used to — is what
+	// makes it look safe to call, or safe to delete.
 
 	markSynced(noteId: string): void {
 		this.opts.onSynced?.(noteId);

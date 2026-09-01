@@ -357,10 +357,12 @@ describe("room-free queue delivery (#1493)", () => {
 		docUpdate?: (docId: string, b64: string) => Promise<{ head: string }>;
 		liveBound?: (path: string) => boolean;
 		encode?: (noteId: string) => Promise<Uint8Array>;
+		markSynced?: (noteId: string) => void;
 	}) {
 		const crdt = {
 			applyLocalEdit: async () => true,
 			encodeStateAsUpdate: opts.encode ?? (async () => new Uint8Array([1, 2, 3])),
+			markSynced: opts.markSynced ?? (() => {}),
 		};
 		const enroll = mock();
 		const reset = mock();
@@ -392,9 +394,57 @@ describe("room-free queue delivery (#1493)", () => {
 		});
 	}
 
+	test("an EMPTY local doc is not reported as delivered", async () => {
+		// A no-op update the server acks would dequeue the entry as delivered
+		// while nothing moved — and the handshake it replaces would also have
+		// pulled the server's copy back.
+		const docUpdate = mock(async () => ({ head: "h1" }));
+		const { e, enroll, reset } = queuedEngine({
+			docUpdate,
+			encode: async () => new Uint8Array([0, 0]),
+		});
+		await enqueueOne(e);
+
+		const flushed = await e.flushQueue();
+
+		expect(docUpdate).not.toHaveBeenCalled();
+		expect(flushed).toBe(0);
+		expect(e.queue.size).toBe(1);
+		// Skipping is only half the contract: the edit still has to converge, so
+		// the room handshake must actually fire. Without this the entry could be
+		// stranded in the queue forever and the three assertions above would not
+		// notice.
+		expect(reset).toHaveBeenCalledWith("id-1");
+		expect(enroll).toHaveBeenCalledWith("id-1");
+	});
+
+	test("a VAULT SWITCH during the encode refuses the write instead of sending it to the new vault", async () => {
+		// note_ids are unique only WITHIN a vault, so vault A's Yjs bytes merged
+		// into vault B's note of the same id is a cross-vault write. The port's
+		// own guard cannot catch this: it compares the channel's vault to the
+		// settings vault, and BOTH read live, so once the switch completes they
+		// agree again and the stale payload sails through.
+		const docUpdate = mock(async () => ({ head: "h1" }));
+		const { e, enroll } = queuedEngine({
+			docUpdate,
+			encode: async () => {
+				e.setCrdtManager(null);
+				return new Uint8Array([1, 2, 3]);
+			},
+		});
+		await enqueueOne(e);
+
+		const flushed = await e.flushQueue();
+
+		expect(docUpdate).not.toHaveBeenCalled();
+		expect(flushed).toBe(0);
+		expect(enroll).toHaveBeenCalledWith("id-1");
+	});
+
 	test("an IDLE note delivers over crdt_doc_update, dequeues on the ack, and fires NO handshake", async () => {
 		const docUpdate = mock(async () => ({ head: "h1" }));
-		const { e, enroll, reset } = queuedEngine({ docUpdate });
+		const markSynced = mock();
+		const { e, enroll, reset } = queuedEngine({ docUpdate, markSynced });
 		await enqueueOne(e);
 
 		const flushed = await e.flushQueue();
@@ -408,6 +458,11 @@ describe("room-free queue delivery (#1493)", () => {
 		// THE assertion: no room was asked for.
 		expect(reset).not.toHaveBeenCalled();
 		expect(enroll).not.toHaveBeenCalled();
+		// And NOT markSynced. It reads like the missing "record the delivery"
+		// call and is not: it commits a staged catch-up episode at a serverHash
+		// whose content this path never applied, which is the deaf-note class.
+		// Adding it once cost two fan-out e2e tests and a revert.
+		expect(markSynced).not.toHaveBeenCalled();
 	});
 
 	test("a LIVE-BOUND note keeps the handshake — its room already exists", async () => {
@@ -466,6 +521,63 @@ describe("room-free queue delivery (#1493)", () => {
 		}
 
 		expect(docUpdate).toHaveBeenCalledTimes(2);
+	});
+
+	test("repeated bad_frame latches too — it is how the catch-all answers, and INSTANTLY", async () => {
+		// The likelier shape against an old backend: `handle_in/3`'s catch-all
+		// replies immediately rather than letting the request time out, so a
+		// timeout-only latch never engaged and every note kept paying.
+		const docUpdate = mock(async () => {
+			throw new Error('request failed: {"reason":"bad_frame"}');
+		});
+		const { e } = queuedEngine({ docUpdate });
+
+		for (const path of ["A.md", "B.md", "C.md", "D.md"]) {
+			await enqueueOne(e, path);
+			await e.flushQueue();
+		}
+
+		expect(docUpdate).toHaveBeenCalledTimes(2);
+	});
+
+	test("a STRUCTURED refusal never latches, however often it repeats", async () => {
+		// `rate_limited` is a real answer from a server that DOES implement the
+		// frame. Latching on it would disable room-free delivery against a
+		// healthy backend for the session — under load, which is exactly when
+		// the room saving matters most.
+		const docUpdate = mock(async () => {
+			throw new Error('request failed: {"reason":"rate_limited"}');
+		});
+		const { e } = queuedEngine({ docUpdate });
+		await enqueueOne(e);
+
+		// One entry, four flushes — a refused write leaves it queued, so each
+		// flush retries it. Four attempts means the latch (2) never engaged.
+		for (let i = 0; i < 4; i++) await e.flushQueue();
+
+		expect(docUpdate).toHaveBeenCalledTimes(4);
+	});
+
+	test("a SUCCESS clears partial strikes, so slow replies cannot accumulate across a session", async () => {
+		let fail = true;
+		const docUpdate = mock(async () => {
+			if (fail) throw new Error("sendRequest timeout: crdt_doc_update");
+			return { head: "h1" };
+		});
+		const { e } = queuedEngine({ docUpdate });
+
+		await enqueueOne(e, "A.md");
+		await e.flushQueue();
+		fail = false;
+		await e.flushQueue();
+		fail = true;
+		await enqueueOne(e, "B.md");
+		await e.flushQueue();
+		await enqueueOne(e, "C.md");
+		await e.flushQueue();
+
+		// 1 strike, cleared, then 2 more to latch — 4 attempts, not 3.
+		expect(docUpdate).toHaveBeenCalledTimes(4);
 	});
 
 	test("a rejected write must NOT dequeue — the edit is only durable while queued", async () => {
