@@ -14,6 +14,12 @@
  * 3. ensureNoteIdMapped must be intrinsically gate-safe: its reconcile can
  *    reach sweepPendingOrphans (trashFile), so relying on every CALLER to
  *    check isSyncBlocked is fragile — the check belongs inside.
+ * 4. Same reason, second trigger (#491): a note THIS device just deleted must
+ *    not start a reconcile. The server answering note_not_found for a
+ *    tombstoned id is CORRECT, not map drift, and reconciling on it runs a
+ *    whole-vault manifest sweep that moves files (onRelocate →
+ *    renameFollowingIdentity) and trashes them (sweepPendingOrphans) — the
+ *    "note flashes into existence then deletes itself" report.
  */
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { EngramApi } from "../src/api";
@@ -186,5 +192,88 @@ describe("ensureNoteIdMapped is intrinsically gate-safe", () => {
 
 		expect(mockApi.getManifest).not.toHaveBeenCalled();
 		expect(map.pathForId("x-1")).toBeNull();
+	});
+
+	// #491. The delete unmaps the id, so the `pathForId !== null` early return
+	// stops covering it, and the id is exactly the one a still-bound editor's
+	// in-flight crdt_msg gets note_not_found for. Without a tombstone check the
+	// reconcile fires on every fast delete. Guarded here rather than at the
+	// wiring.ts caller for the same reason as the gate check above: the
+	// destructive work is inside, so the guard must be too.
+	test("does nothing for an id this device just deleted (tombstoned)", async () => {
+		const engine = createEngine();
+		const map = new NoteIdMap();
+		engine.setNoteIdMap(map);
+		(mockApi.getManifest as ReturnType<typeof mock>).mockResolvedValue({
+			notes: [{ id: "dead-1", path: "Untitled.md", content_hash: "h" }],
+			attachments: [],
+			total_notes: 1,
+			total_attachments: 0,
+			change_seq: 1,
+		});
+		(mockApi.getManifest as ReturnType<typeof mock>).mockClear();
+
+		// The local delete: tombstone the id and drop its mapping, exactly as
+		// handleDelete does before the server round trip.
+		(engine as any).markRecentlyDeleted("dead-1", "Untitled.md");
+
+		// The server's note_not_found for the still-in-flight op lands here.
+		engine.ensureNoteIdMapped("dead-1");
+		await new Promise((r) => setTimeout(r, 50));
+
+		expect(mockApi.getManifest).not.toHaveBeenCalled();
+		expect(map.pathForId("dead-1")).toBeNull();
+	});
+
+	// Review finding: the guard above only saves a fetch. The reconcile has
+	// three OTHER callers (wiring's stranded-flush drain, main's cold-start and
+	// manual reconciles) that reach the manifest loop without passing it, so the
+	// skip that actually protects data has to live in the loop.
+	test("the reconcile itself refuses to re-map a tombstoned id, however it was reached", async () => {
+		const engine = createEngine();
+		const map = new NoteIdMap();
+		engine.setNoteIdMap(map);
+		// A manifest fetched inside the delete-wins window still lists the note.
+		(mockApi.getManifest as ReturnType<typeof mock>).mockResolvedValue({
+			notes: [
+				{ id: "dead-2", path: "Untitled.md", content_hash: "h" },
+				{ id: "live-2", path: "Other.md", content_hash: "h" },
+			],
+			attachments: [],
+			total_notes: 2,
+			total_attachments: 0,
+			change_seq: 1,
+		});
+		(engine as any).markRecentlyDeleted("dead-2", "Untitled.md");
+
+		// Called directly, as main.ts and wiring.ts do — bypassing
+		// ensureNoteIdMapped's tombstone skip entirely.
+		await engine.reconcileNoteIdMapFromManifest();
+
+		// The deleted note stays unmapped: re-setting it would undo
+		// handleDelete's release() and let a recreate adopt the buried id.
+		expect(map.pathForId("dead-2")).toBeNull();
+		// ...and the rest of the manifest still reconciles normally.
+		expect(map.pathForId("live-2")).toBe("Other.md");
+	});
+
+	test("still reconciles an id with no tombstone (the drift case it exists for)", async () => {
+		const engine = createEngine();
+		const map = new NoteIdMap();
+		engine.setNoteIdMap(map);
+		(mockApi.getManifest as ReturnType<typeof mock>).mockResolvedValue({
+			notes: [{ id: "live-1", path: "Live.md", content_hash: "h" }],
+			attachments: [],
+			total_notes: 1,
+			total_attachments: 0,
+			change_seq: 1,
+		});
+		(mockApi.getManifest as ReturnType<typeof mock>).mockClear();
+
+		engine.ensureNoteIdMapped("live-1");
+		await new Promise((r) => setTimeout(r, 50));
+
+		expect(mockApi.getManifest).toHaveBeenCalled();
+		expect(map.pathForId("live-1")).toBe("Live.md");
 	});
 });
