@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.26.0](https://github.com/engram-app/Engram-obsidian/compare/1.25.0...1.26.0) (2026-09-02)
+
+
+### Features
+
+* **crdt:** deliver queued edits for idle notes without a room ([#496](https://github.com/engram-app/Engram-obsidian/issues/496)) ([05d3223](https://github.com/engram-app/Engram-obsidian/commit/05d3223187f27d0702606691042b4820d4d9151e))
+
+
+### Bug Fixes
+
+* **crdt:** a tombstoned id must not start a reconcile ([#492](https://github.com/engram-app/Engram-obsidian/issues/492)) ([4d6eccc](https://github.com/engram-app/Engram-obsidian/commit/4d6eccc55bac5d09060a5da3172f1c1e86d26a7a))
+* **crdt:** re-drive the create for an orphaned index claim ([#497](https://github.com/engram-app/Engram-obsidian/issues/497)) ([421d4fd](https://github.com/engram-app/Engram-obsidian/commit/421d4fdc871665ffe39d85f13cf7b6f4eb84cf48))
+* **crdt:** review follow-ups on room-free queue delivery ([#498](https://github.com/engram-app/Engram-obsidian/issues/498)) ([570a7fb](https://github.com/engram-app/Engram-obsidian/commit/570a7fba612d412c28353d58b1d23a5ec2c47a06))
+* **crdt:** table-cell editor corruption + trim redundant sync status surfaces ([#487](https://github.com/engram-app/Engram-obsidian/issues/487)) ([296b08e](https://github.com/engram-app/Engram-obsidian/commit/296b08e18c0f86efc5fc3fe38d73a9964810ee93))
+* **sync:** a rename carries the note's sync evidence ([#490](https://github.com/engram-app/Engram-obsidian/issues/490)) ([43194b3](https://github.com/engram-app/Engram-obsidian/commit/43194b39456bfbaebd57ebed8e17d71372c9d6de))
+
 ## [1.25.0](https://github.com/engram-app/Engram-obsidian/compare/1.24.3...1.25.0) (2026-08-30)
 
 
