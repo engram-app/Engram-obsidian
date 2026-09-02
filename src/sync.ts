@@ -3302,9 +3302,10 @@ export class SyncEngine {
 		//   settings vault) read LIVE at call time, so once the switch completes
 		//   they agree again and vault A's Yjs bytes land in vault B's note of
 		//   the same id. note_ids are unique only WITHIN a vault.
-		// - A DOWNGRADE TO THE LEGACY PATH, when the server never confirmed CRDT
-		//   support: a disconnect before the `crdt:` join, or a refused join.
-		//   Both null the manager, and sending into one that is gone is not a
+		// - A DOWNGRADE TO THE LEGACY PATH: a disconnect BEFORE the `crdt:` join,
+		//   or a join the server refuses — including a REJOIN refused after an
+		//   earlier successful one, which force-resets `crdtEverJoined`. Both
+		//   null the manager, and sending into one that is gone is not a
 		//   delivery — the room handshake this falls back to re-resolves the doc.
 		//
 		// NOT a plain post-join socket drop. That deliberately RETAINS the
