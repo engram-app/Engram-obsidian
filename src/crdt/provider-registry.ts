@@ -34,6 +34,10 @@ export type DocKind = "note" | "canvas";
  *  uses this shared marker so the same listener fires. */
 const REMOTE = Symbol("remote");
 
+function eqBytes(a: Uint8Array, b: Uint8Array): boolean {
+	return a.length === b.length && a.every((byte, i) => byte === b[i]);
+}
+
 interface Entry {
 	doc: Y.Doc;
 	provider: NoteProvider;
@@ -47,6 +51,12 @@ interface Entry {
 	/** The frontmatter block as of the last flush, so the next one can say
 	 *  whether the frontmatter CHANGED. `null` means "no block". */
 	lastFlushedFm: string | null;
+	/** Snapshot (state vector + delete set) the server last ACKED over
+	 *  `crdt_doc_update` (#1493). The upward half of `synced`, which the
+	 *  room-free write earns and the handshake flag cannot express. A snapshot
+	 *  rather than a vector because a vector cannot see deletions. Undefined
+	 *  until a delivery is acked. */
+	deliveredReceipt?: Uint8Array;
 	/** In-flight disk-flush from the last remote merge; applyRemoteUpdate awaits
 	 *  it so a write failure can leave crdtHead unadvanced (#235). */
 	pendingFlush: Promise<void> | null;
@@ -491,8 +501,50 @@ export class ProviderRegistry {
 		return Y.encodeStateVector((await this.entry(noteId)).doc);
 	}
 
+	/** The receipt for a room-free delivery (`markDelivered`) — a SNAPSHOT, which
+	 *  is the state vector PLUS the delete set.
+	 *
+	 *  Not `encodeStateVector`, and this is the whole correctness argument. A
+	 *  state vector encodes `clientID -> clock` of structs a client CREATED;
+	 *  deletions advance no clock, so `Y.Text.delete` leaves it byte-identical
+	 *  (measured). That is why `encodeStateAsUpdate` ships the full delete set
+	 *  regardless of the vector handed to it. Using a vector as a completeness
+	 *  receipt inherits the blindness: a delete-only edit after a delivery reads
+	 *  as still-covered, the note takes the read-only converge path, and the
+	 *  deletion is stamped in-sync and never transmitted. A snapshot flips on a
+	 *  pure delete (also measured), so any local mutation invalidates it — which
+	 *  is also the receipt's expiry, since nothing else clears it.
+	 *
+	 *  Capture it BEFORE the state you send, never after: taken first, the update
+	 *  that follows is a superset, so an edit landing between the two makes the
+	 *  receipt UNDER-claim (one wasted room). Taken after, it would cover an op
+	 *  that was never sent, and strand it silently. */
+	async encodeDeliveryReceipt(noteId: string): Promise<Uint8Array> {
+		return Y.encodeSnapshot(Y.snapshot((await this.entry(noteId)).doc));
+	}
+
 	async encodeStateAsUpdate(noteId: string, sv?: Uint8Array): Promise<Uint8Array> {
 		return Y.encodeStateAsUpdate((await this.entry(noteId)).doc, sv);
+	}
+
+	/** Record that the server acknowledged everything `sv` describes.
+	 *
+	 *  This is the UPWARD half of what `synced` means, on its own. It must never
+	 *  touch `synced` or fire `onSynced`: those carry the DOWNWARD claim (we hold
+	 *  the server's state), which a room-free write never earns, and committing
+	 *  convergence on it is the deaf-note class.
+	 *
+	 *  `receipt` must come from `encodeDeliveryReceipt`, captured before the
+	 *  state was encoded. Any local mutation invalidates it, and a remote one
+	 *  does too (conservatively — an inbound edit needs no sending back, but it
+	 *  moves the snapshot, so the note pays one room). Eviction also drops it
+	 *  with the entry: a receipt-bearing note is an ordinary resident doc, and
+	 *  opening it in the editor enrolls it, so a syncStep2 can set `synced` and
+	 *  make it evictable. Every one of those is the safe direction. */
+	markDelivered(noteId: string, receipt: Uint8Array): void {
+		const e = this.entries.get(noteId);
+		if (!e?.lifetime.active) return;
+		e.deliveredReceipt = receipt;
 	}
 
 	/** Encode brand-new content as a standalone genesis update (throwaway doc, no
@@ -640,6 +692,28 @@ export class ProviderRegistry {
 		const e = this.entries.get(noteId);
 		if (!e?.lifetime.active) return false;
 		return e.provider.hasUndeliveredWork();
+	}
+
+	/** Whether a room-free delivery receipt still covers everything this doc
+	 *  holds (#1493) — the UPWARD half of `synced`, which a `crdt_doc_update`
+	 *  earns and the handshake flag cannot express.
+	 *
+	 *  SEPARATE from `hasUndeliveredOps` on purpose, rather than folded into it.
+	 *  That predicate has three callers and two are DESTRUCTIVE: it is what
+	 *  decides whether a drift teardown keeps a conflict copy, and whether an
+	 *  empty placeholder may be overwritten wholesale. For those "would tearing
+	 *  this down destroy something" is the question, and a receipt does not
+	 *  answer it — the doc still holds the only copy of state the room path
+	 *  would need to re-advertise. Only the room-free READ gate may consult
+	 *  this, so relaxing it can cost a wasted room and never a file.
+	 *
+	 *  A buffered frame vetoes the receipt: `buffer.length > 0` is a hard fact
+	 *  about frames that never reached the transport, not a handshake proxy. */
+	hasCurrentDeliveryReceipt(noteId: string): boolean {
+		const e = this.entries.get(noteId);
+		if (!e?.lifetime.active || !e.deliveredReceipt) return false;
+		if (e.provider.hasBufferedFrames()) return false;
+		return eqBytes(Y.encodeSnapshot(Y.snapshot(e.doc)), e.deliveredReceipt);
 	}
 
 	// --- Lifecycle no-ops the persistent doc doesn't need -----------------------

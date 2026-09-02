@@ -1250,10 +1250,60 @@ describe("convergeColdNoteRoomFree (#1409 — cold notes converge without a room
 			// The real registry always answers this; the room-free read is only
 			// legal when it is false (the frame cannot carry local ops upward).
 			hasUndeliveredOps: () => false,
+			hasCurrentDeliveryReceipt: () => false,
 		} as unknown as Partial<CrdtManager>);
 		engine.importSyncState({ "Notes/a.md": { hash: 1, serverHash: "H1" } });
 		return engine;
 	}
+
+	test("undelivered ops + a LIVE delivery receipt takes the READ — the room is what #1493 removes", async () => {
+		// The receipt is the one thing that lets a note past this gate while
+		// `hasUndeliveredOps` still says true: a room-free write already put
+		// those ops on the server, so the read is no longer lossy. Without it
+		// the frame saves a room going up and the note asks for one straight
+		// back, which is the whole bug #1493 describes.
+		const applied: Array<[string, Uint8Array]> = [];
+		const engine = coldEngine(applied);
+		const docState = mock().mockResolvedValue({ b64: "AQID", head: "h" });
+		engine.setCrdtPorts({ docState });
+		(engine as any).crdt.hasUndeliveredOps = () => true;
+		(engine as any).crdt.hasCurrentDeliveryReceipt = () => true;
+		const converge = spyOn(engine as any, "socketConverge").mockImplementation(() => {});
+
+		await (engine as any).convergeColdNoteRoomFree(
+			"id-a",
+			"Notes/a.md",
+			CHANGE,
+			"server body",
+			"H2",
+		);
+
+		expect(docState).toHaveBeenCalledWith("id-a");
+		expect(converge).not.toHaveBeenCalled();
+	});
+
+	test("undelivered ops + a STALE receipt still takes the room", async () => {
+		// A receipt voided by a later edit (or a buffered frame) must put the
+		// note straight back on the bidirectional path — the receipt is only ever
+		// permission to skip the room, never a claim about convergence.
+		const engine = coldEngine([]);
+		const docState = mock().mockResolvedValue({ b64: "AQID", head: "h" });
+		engine.setCrdtPorts({ docState });
+		(engine as any).crdt.hasUndeliveredOps = () => true;
+		(engine as any).crdt.hasCurrentDeliveryReceipt = () => false;
+		const converge = spyOn(engine as any, "socketConverge").mockImplementation(() => {});
+
+		await (engine as any).convergeColdNoteRoomFree(
+			"id-a",
+			"Notes/a.md",
+			CHANGE,
+			"server body",
+			"H2",
+		);
+
+		expect(docState).not.toHaveBeenCalled();
+		expect(converge).toHaveBeenCalledTimes(1);
+	});
 
 	test("a note with UNDELIVERED local ops takes the room, not the read", async () => {
 		// `crdt_doc_state` is a READ. The handshake it replaces is bidirectional

@@ -358,11 +358,26 @@ describe("room-free queue delivery (#1493)", () => {
 		liveBound?: (path: string) => boolean;
 		encode?: (noteId: string) => Promise<Uint8Array>;
 		markSynced?: (noteId: string) => void;
+		markDelivered?: (noteId: string, receipt: Uint8Array) => void;
 	}) {
+		let receiptSeq = 1;
 		const crdt = {
 			applyLocalEdit: async () => true,
-			encodeStateAsUpdate: opts.encode ?? (async () => new Uint8Array([1, 2, 3])),
+			encodeStateAsUpdate:
+				opts.encode ??
+				(async () => {
+					receiptSeq++;
+					return new Uint8Array([1, 2, 3]);
+				}),
+			// Every step advances the counter, so the RECORDED value says where the
+			// capture happened: 1 = before the encode (correct), 2 = after it,
+			// 3 = after the send. A counter that only advanced on
+			// encodeDeliveryReceipt could not tell those apart, because the flow
+			// calls it once — the assertion would hold wherever the capture sat,
+			// including the position that strands an unsent op.
+			encodeDeliveryReceipt: async () => new Uint8Array([receiptSeq++]),
 			markSynced: opts.markSynced ?? (() => {}),
+			markDelivered: opts.markDelivered ?? (() => {}),
 		};
 		const enroll = mock();
 		const reset = mock();
@@ -463,6 +478,39 @@ describe("room-free queue delivery (#1493)", () => {
 		// whose content this path never applied, which is the deaf-note class.
 		// Adding it once cost two fan-out e2e tests and a revert.
 		expect(markSynced).not.toHaveBeenCalled();
+	});
+
+	test("the ack RECORDS the delivery, so the note stops demanding a room (#1493)", async () => {
+		// Without this the frame saves a room going up and the note asks for one
+		// straight back: `synced` is only set by a handshake, so `hasUndeliveredOps`
+		// stays true and the next catch-up refuses the room-free read.
+		const docUpdate = mock(async () => ({ head: "h1" }));
+		const markDelivered = mock();
+		const { e } = queuedEngine({ docUpdate, markDelivered });
+		await enqueueOne(e);
+
+		await e.flushQueue();
+
+		expect(markDelivered).toHaveBeenCalledTimes(1);
+		expect(markDelivered.mock.calls[0]?.[0]).toBe("id-1");
+		// The FIRST receipt — the one captured before the state was encoded. A
+		// capture moved after the send would hand over a later value.
+		expect(markDelivered.mock.calls[0]?.[1]).toEqual(new Uint8Array([1]));
+	});
+
+	test("a REFUSED write records NO delivery", async () => {
+		// The receipt is the ack's meaning. Recording one on a failed send would
+		// mark ops delivered that never left, and they would never be retried.
+		const docUpdate = mock(async () => {
+			throw new Error("doc_update_failed");
+		});
+		const markDelivered = mock();
+		const { e } = queuedEngine({ docUpdate, markDelivered });
+		await enqueueOne(e);
+
+		await e.flushQueue();
+
+		expect(markDelivered).not.toHaveBeenCalled();
 	});
 
 	test("a LIVE-BOUND note keeps the handshake — its room already exists", async () => {
