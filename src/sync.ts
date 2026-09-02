@@ -3290,14 +3290,28 @@ export class SyncEngine {
 		const noteId = entry.noteId;
 		const send = this.crdtDocUpdate;
 		if (!noteId || !send || this.unsupportedFrames.has(DOC_UPDATE_FRAME)) return false;
-		// Capture the registry BEFORE the encode, and refuse if a vault change
-		// swapped it underneath — the same fence `adoptServerLineage` takes, and
-		// it matters MORE here for the reason `setCrdtPorts` gives: this is a
-		// WRITE. `setCrdtPorts` reassigns `this.crdt` on a vault change, and the
-		// port's own guard cannot catch it because both sides of that comparison
-		// (channel vault, settings vault) read LIVE at call time, so once the
-		// switch completes they agree again and vault A's Yjs bytes land in
-		// vault B's note of the same id. note_ids are unique only WITHIN a vault.
+		// Capture the registry BEFORE the encode and refuse if it was swapped
+		// underneath — the same fence `adoptServerLineage` takes, and it matters
+		// MORE here for the reason `setCrdtPorts` gives: this is a WRITE.
+		//
+		// Every reassignment routes through the single `setCrdtPorts` site, so
+		// one identity comparison covers all of them. What they are:
+		//
+		// - A VAULT / IDENTITY CHANGE, the dangerous one. The port's own guard
+		//   cannot catch it because both sides of its comparison (channel vault,
+		//   settings vault) read LIVE at call time, so once the switch completes
+		//   they agree again and vault A's Yjs bytes land in vault B's note of
+		//   the same id. note_ids are unique only WITHIN a vault.
+		// - A DOWNGRADE TO THE LEGACY PATH: a disconnect BEFORE the `crdt:` join,
+		//   or a join the server refuses — including a REJOIN refused after an
+		//   earlier successful one, which force-resets `crdtEverJoined`. Both
+		//   null the manager, and sending into one that is gone is not a
+		//   delivery — the room handshake this falls back to re-resolves the doc.
+		//
+		// NOT a plain post-join socket drop. That deliberately RETAINS the
+		// manager so edits keep accumulating in the Y.Doc and IndexedDB, and the
+		// reconnect handshake carries them up. The fence must not fire there,
+		// and does not, because `this.crdt` is untouched.
 		const crdt = this.crdt;
 		if (typeof crdt?.encodeStateAsUpdate !== "function") return false;
 
