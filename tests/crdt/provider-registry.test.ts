@@ -528,6 +528,38 @@ describe("room-free delivery receipt (#1493)", () => {
 		expect(reg.hasCurrentDeliveryReceipt("n1")).toBe(false);
 	});
 
+	test("a REMOTE update also voids the receipt", async () => {
+		// Conservative on purpose: an inbound edit needs no sending back, but it
+		// moves the snapshot, so the note pays one room. Pinned because the
+		// asymmetry is invisible — nothing fails if a later refactor makes remote
+		// updates skip the receipt, and the failure would be silent data loss in
+		// the one direction that matters.
+		const reg = unhandshookDevice("receipt-remote");
+		await reg.applyLocalEdit("n1", "hello");
+		reg.markDelivered("n1", await reg.encodeDeliveryReceipt("n1"));
+		expect(reg.hasCurrentDeliveryReceipt("n1")).toBe(true);
+
+		const peer = new YDoc.Doc();
+		peer.getText("content").insert(0, "from elsewhere");
+		await reg.applyRemoteUpdate("n1", YDoc.encodeStateAsUpdate(peer));
+
+		expect(reg.hasCurrentDeliveryReceipt("n1")).toBe(false);
+	});
+
+	test("a DISCONNECT does not void the receipt — it is the upward claim only", async () => {
+		// The server still holds what it acked. Voiding on disconnect would make
+		// every reconnect re-take a room for notes already delivered, which is
+		// the cost this exists to remove.
+		const reg = unhandshookDevice("receipt-disconnect");
+		await reg.applyLocalEdit("n1", "hello");
+		reg.markDelivered("n1", await reg.encodeDeliveryReceipt("n1"));
+
+		reg.setConnected(false);
+		reg.setConnected(true);
+
+		expect(reg.hasCurrentDeliveryReceipt("n1")).toBe(true);
+	});
+
 	test("a receipt for an unknown note is a no-op, not a throw", async () => {
 		const reg = unhandshookDevice("receipt-unknown");
 		await reg.applyLocalEdit("n1", "hello");

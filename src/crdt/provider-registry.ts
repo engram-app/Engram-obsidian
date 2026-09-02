@@ -535,9 +535,12 @@ export class ProviderRegistry {
 	 *  convergence on it is the deaf-note class.
 	 *
 	 *  `receipt` must come from `encodeDeliveryReceipt`, captured before the
-	 *  state was encoded. Any later local mutation invalidates it, which is the
-	 *  only thing that does: these docs have `synced === false` by construction,
-	 *  so `closeDoc` never evicts them and eviction is not an expiry here. */
+	 *  state was encoded. Any local mutation invalidates it, and a remote one
+	 *  does too (conservatively — an inbound edit needs no sending back, but it
+	 *  moves the snapshot, so the note pays one room). Eviction also drops it
+	 *  with the entry: a receipt-bearing note is an ordinary resident doc, and
+	 *  opening it in the editor enrolls it, so a syncStep2 can set `synced` and
+	 *  make it evictable. Every one of those is the safe direction. */
 	markDelivered(noteId: string, receipt: Uint8Array): void {
 		const e = this.entries.get(noteId);
 		if (!e?.lifetime.active) return;

@@ -363,11 +363,18 @@ describe("room-free queue delivery (#1493)", () => {
 		let receiptSeq = 1;
 		const crdt = {
 			applyLocalEdit: async () => true,
-			encodeStateAsUpdate: opts.encode ?? (async () => new Uint8Array([1, 2, 3])),
-			// Advances per call, so an assertion on the FIRST value distinguishes a
-			// receipt captured before the send from one taken after it. A constant
-			// could not tell those apart, which is the ordering the safety argument
-			// rests on.
+			encodeStateAsUpdate:
+				opts.encode ??
+				(async () => {
+					receiptSeq++;
+					return new Uint8Array([1, 2, 3]);
+				}),
+			// Every step advances the counter, so the RECORDED value says where the
+			// capture happened: 1 = before the encode (correct), 2 = after it,
+			// 3 = after the send. A counter that only advanced on
+			// encodeDeliveryReceipt could not tell those apart, because the flow
+			// calls it once — the assertion would hold wherever the capture sat,
+			// including the position that strands an unsent op.
 			encodeDeliveryReceipt: async () => new Uint8Array([receiptSeq++]),
 			markSynced: opts.markSynced ?? (() => {}),
 			markDelivered: opts.markDelivered ?? (() => {}),
