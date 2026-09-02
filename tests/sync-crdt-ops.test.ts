@@ -358,12 +358,17 @@ describe("room-free queue delivery (#1493)", () => {
 		liveBound?: (path: string) => boolean;
 		encode?: (noteId: string) => Promise<Uint8Array>;
 		markSynced?: (noteId: string) => void;
-		markDelivered?: (noteId: string, sv: Uint8Array) => void;
+		markDelivered?: (noteId: string, receipt: Uint8Array) => void;
 	}) {
+		let receiptSeq = 1;
 		const crdt = {
 			applyLocalEdit: async () => true,
 			encodeStateAsUpdate: opts.encode ?? (async () => new Uint8Array([1, 2, 3])),
-			encodeStateVector: async () => new Uint8Array([9, 9]),
+			// Advances per call, so an assertion on the FIRST value distinguishes a
+			// receipt captured before the send from one taken after it. A constant
+			// could not tell those apart, which is the ordering the safety argument
+			// rests on.
+			encodeDeliveryReceipt: async () => new Uint8Array([receiptSeq++]),
 			markSynced: opts.markSynced ?? (() => {}),
 			markDelivered: opts.markDelivered ?? (() => {}),
 		};
@@ -481,8 +486,9 @@ describe("room-free queue delivery (#1493)", () => {
 
 		expect(markDelivered).toHaveBeenCalledTimes(1);
 		expect(markDelivered.mock.calls[0]?.[0]).toBe("id-1");
-		// The state vector captured BEFORE the send, not a fresh one after it.
-		expect(markDelivered.mock.calls[0]?.[1]).toEqual(new Uint8Array([9, 9]));
+		// The FIRST receipt — the one captured before the state was encoded. A
+		// capture moved after the send would hand over a later value.
+		expect(markDelivered.mock.calls[0]?.[1]).toEqual(new Uint8Array([1]));
 	});
 
 	test("a REFUSED write records NO delivery", async () => {

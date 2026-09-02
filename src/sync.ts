@@ -3318,10 +3318,10 @@ export class SyncEngine {
 		let frame: string;
 		let sv: Uint8Array | undefined;
 		try {
-			// BEFORE the state, not after — see `encodeStateVector`. An edit
+			// BEFORE the state, not after — see `encodeDeliveryReceipt`. An edit
 			// landing between the two then makes the receipt under-claim (one
 			// wasted room) instead of covering an op that never went.
-			sv = await crdt.encodeStateVector?.(noteId);
+			sv = await crdt.encodeDeliveryReceipt?.(noteId);
 			const state = await crdt.encodeStateAsUpdate(noteId);
 			if (this.crdt !== crdt) return false;
 			// A doc's full state carries its history and tombstones, so it can
@@ -3745,7 +3745,14 @@ export class SyncEngine {
 		// reads as undelivered), which is the right bias here: the room is always
 		// CORRECT, just more expensive. Convergence is the invariant; saving the
 		// room is the optimization.
-		if (this.crdt && !this.crdt.hasUndeliveredOps(noteId)) {
+		// ...or a room-free delivery already put those ops on the server (#1493).
+		// Consulted ONLY here: `hasUndeliveredOps` also gates two DESTRUCTIVE
+		// paths (the drift keep-both copy, the empty-placeholder overwrite) where
+		// it means "would tearing this down destroy something", which a receipt
+		// does not answer. Relaxing it here can cost a wasted room; relaxing it
+		// there would cost a file.
+		const delivered = this.crdt?.hasCurrentDeliveryReceipt?.(noteId) === true;
+		if (this.crdt && (!this.crdt.hasUndeliveredOps(noteId) || delivered)) {
 			// Routed through the shared reader so this caller both CHECKS and
 			// FEEDS the capability latch. It used to do neither, so against an
 			// older backend every diverged cold note paid a full request timeout

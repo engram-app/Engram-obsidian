@@ -144,6 +144,13 @@ export class NoteProvider {
 		return !this.synced || this.buffer.length > 0;
 	}
 
+	/** Frames that never reached the transport. A hard fact, unlike `synced`,
+	 *  which is why a room-free delivery receipt cannot override it: those frames
+	 *  went nowhere no matter what the server acked for the doc's state. */
+	hasBufferedFrames(): boolean {
+		return this.buffer.length > 0;
+	}
+
 	/** Swap the transport (e.g. after a socket reconnect built a fresh channel).
 	 *  The doc + buffer are untouched. */
 	setSend(send: ProviderSend): void {

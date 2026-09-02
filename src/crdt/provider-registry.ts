@@ -34,6 +34,10 @@ export type DocKind = "note" | "canvas";
  *  uses this shared marker so the same listener fires. */
 const REMOTE = Symbol("remote");
 
+function eqBytes(a: Uint8Array, b: Uint8Array): boolean {
+	return a.length === b.length && a.every((byte, i) => byte === b[i]);
+}
+
 interface Entry {
 	doc: Y.Doc;
 	provider: NoteProvider;
@@ -47,10 +51,12 @@ interface Entry {
 	/** The frontmatter block as of the last flush, so the next one can say
 	 *  whether the frontmatter CHANGED. `null` means "no block". */
 	lastFlushedFm: string | null;
-	/** State vector the server last ACKED over `crdt_doc_update` (#1493). The
-	 *  upward half of `synced`, which the room-free write earns and the
-	 *  handshake flag cannot express. Undefined until a delivery is acked. */
-	deliveredSv?: Uint8Array;
+	/** Snapshot (state vector + delete set) the server last ACKED over
+	 *  `crdt_doc_update` (#1493). The upward half of `synced`, which the
+	 *  room-free write earns and the handshake flag cannot express. A snapshot
+	 *  rather than a vector because a vector cannot see deletions. Undefined
+	 *  until a delivery is acked. */
+	deliveredReceipt?: Uint8Array;
 	/** In-flight disk-flush from the last remote merge; applyRemoteUpdate awaits
 	 *  it so a write failure can leave crdtHead unadvanced (#235). */
 	pendingFlush: Promise<void> | null;
@@ -491,14 +497,30 @@ export class ProviderRegistry {
 
 	// --- Yjs encoding helpers (handshake / genesis) -----------------------------
 
-	/** Also the receipt for a room-free delivery (`markDelivered`). Capture it
-	 *  BEFORE the state you send, never after: taken first, the update that
-	 *  follows is a superset of it, so a local edit landing between the two makes
-	 *  the receipt UNDER-claim — the note reads as undelivered and pays for a
-	 *  room. Taken after, it would cover an op that was never sent, and strand
-	 *  it silently. */
 	async encodeStateVector(noteId: string): Promise<Uint8Array> {
 		return Y.encodeStateVector((await this.entry(noteId)).doc);
+	}
+
+	/** The receipt for a room-free delivery (`markDelivered`) — a SNAPSHOT, which
+	 *  is the state vector PLUS the delete set.
+	 *
+	 *  Not `encodeStateVector`, and this is the whole correctness argument. A
+	 *  state vector encodes `clientID -> clock` of structs a client CREATED;
+	 *  deletions advance no clock, so `Y.Text.delete` leaves it byte-identical
+	 *  (measured). That is why `encodeStateAsUpdate` ships the full delete set
+	 *  regardless of the vector handed to it. Using a vector as a completeness
+	 *  receipt inherits the blindness: a delete-only edit after a delivery reads
+	 *  as still-covered, the note takes the read-only converge path, and the
+	 *  deletion is stamped in-sync and never transmitted. A snapshot flips on a
+	 *  pure delete (also measured), so any local mutation invalidates it — which
+	 *  is also the receipt's expiry, since nothing else clears it.
+	 *
+	 *  Capture it BEFORE the state you send, never after: taken first, the update
+	 *  that follows is a superset, so an edit landing between the two makes the
+	 *  receipt UNDER-claim (one wasted room). Taken after, it would cover an op
+	 *  that was never sent, and strand it silently. */
+	async encodeDeliveryReceipt(noteId: string): Promise<Uint8Array> {
+		return Y.encodeSnapshot(Y.snapshot((await this.entry(noteId)).doc));
 	}
 
 	async encodeStateAsUpdate(noteId: string, sv?: Uint8Array): Promise<Uint8Array> {
@@ -512,12 +534,14 @@ export class ProviderRegistry {
 	 *  the server's state), which a room-free write never earns, and committing
 	 *  convergence on it is the deaf-note class.
 	 *
-	 *  Lost on eviction along with the rest of the entry, which is the safe
-	 *  direction: the note reads as undelivered again and takes one room. */
-	markDelivered(noteId: string, sv: Uint8Array): void {
+	 *  `receipt` must come from `encodeDeliveryReceipt`, captured before the
+	 *  state was encoded. Any later local mutation invalidates it, which is the
+	 *  only thing that does: these docs have `synced === false` by construction,
+	 *  so `closeDoc` never evicts them and eviction is not an expiry here. */
+	markDelivered(noteId: string, receipt: Uint8Array): void {
 		const e = this.entries.get(noteId);
 		if (!e?.lifetime.active) return;
-		e.deliveredSv = sv;
+		e.deliveredReceipt = receipt;
 	}
 
 	/** Encode brand-new content as a standalone genesis update (throwaway doc, no
@@ -664,27 +688,29 @@ export class ProviderRegistry {
 	hasUndeliveredOps(noteId: string): boolean {
 		const e = this.entries.get(noteId);
 		if (!e?.lifetime.active) return false;
-		if (!e.provider.hasUndeliveredWork()) return false;
-		// The provider only knows about the handshake, so it says "undelivered"
-		// for a doc whose ops went up over `crdt_doc_update` instead. A receipt
-		// still matching the doc's current state vector means the server has
-		// everything this doc holds.
-		return !this.deliveryReceiptCurrent(e);
+		return e.provider.hasUndeliveredWork();
 	}
 
-	/** Whether the recorded receipt still covers the doc. State-vector equality
-	 *  rather than a flag, because the next keystroke has to invalidate it.
+	/** Whether a room-free delivery receipt still covers everything this doc
+	 *  holds (#1493) — the UPWARD half of `synced`, which a `crdt_doc_update`
+	 *  earns and the handshake flag cannot express.
 	 *
-	 *  Deliberately conservative in one direction: a REMOTE update also advances
-	 *  the vector, so an inbound edit re-marks the note undelivered even though
-	 *  remote ops need no sending back. That costs one room and loses nothing.
-	 *  Narrowing it means tracking which client IDs are ours, which is more
-	 *  machinery than the saving justifies. */
-	private deliveryReceiptCurrent(e: Entry): boolean {
-		if (!e.deliveredSv) return false;
-		const now = Y.encodeStateVector(e.doc);
-		if (now.length !== e.deliveredSv.length) return false;
-		return now.every((byte, i) => byte === e.deliveredSv?.[i]);
+	 *  SEPARATE from `hasUndeliveredOps` on purpose, rather than folded into it.
+	 *  That predicate has three callers and two are DESTRUCTIVE: it is what
+	 *  decides whether a drift teardown keeps a conflict copy, and whether an
+	 *  empty placeholder may be overwritten wholesale. For those "would tearing
+	 *  this down destroy something" is the question, and a receipt does not
+	 *  answer it — the doc still holds the only copy of state the room path
+	 *  would need to re-advertise. Only the room-free READ gate may consult
+	 *  this, so relaxing it can cost a wasted room and never a file.
+	 *
+	 *  A buffered frame vetoes the receipt: `buffer.length > 0` is a hard fact
+	 *  about frames that never reached the transport, not a handshake proxy. */
+	hasCurrentDeliveryReceipt(noteId: string): boolean {
+		const e = this.entries.get(noteId);
+		if (!e?.lifetime.active || !e.deliveredReceipt) return false;
+		if (e.provider.hasBufferedFrames()) return false;
+		return eqBytes(Y.encodeSnapshot(Y.snapshot(e.doc)), e.deliveredReceipt);
 	}
 
 	// --- Lifecycle no-ops the persistent doc doesn't need -----------------------

@@ -418,39 +418,68 @@ describe("teardown projection includes frontmatter (#483)", () => {
 // half, and nothing else: it must never imply the second.
 // ---------------------------------------------------------------------------
 describe("room-free delivery receipt (#1493)", () => {
-	function offlineDevice(prefix: string) {
-		// send: () => false — nothing is ever handshook, so `synced` stays false
-		// and every note reads as undelivered. That is the state a room-free
-		// delivery starts from.
-		return new ProviderRegistry({
+	/** The exact state a room-free delivery starts from: the transport ACCEPTS
+	 *  frames (so nothing is stuck in the provider's offline buffer), but no
+	 *  syncStep2 ever comes back, so `synced` stays false and the note reads as
+	 *  undelivered. `send: () => false` would be wrong here — it buffers every
+	 *  frame, and a buffered frame correctly vetoes the receipt. */
+	function unhandshookDevice(prefix: string) {
+		const reg = new ProviderRegistry({
 			dbPrefix: prefix,
-			send: () => false,
+			send: () => true,
 			onFlushToDisk: () => {},
 		});
+		// CONNECTED, or the provider buffers instead of sending and a buffered
+		// frame correctly vetoes the receipt.
+		reg.setConnected(true);
+		return reg;
 	}
 
 	test("an acked delivery stops the note demanding a room", async () => {
-		const reg = offlineDevice("receipt-ack");
+		const reg = unhandshookDevice("receipt-ack");
 		await reg.applyLocalEdit("n1", "hello");
-		expect(reg.hasUndeliveredOps("n1")).toBe(true);
+		expect(reg.hasCurrentDeliveryReceipt("n1")).toBe(false);
 
-		reg.markDelivered("n1", await reg.encodeStateVector("n1"));
+		reg.markDelivered("n1", await reg.encodeDeliveryReceipt("n1"));
 
-		expect(reg.hasUndeliveredOps("n1")).toBe(false);
+		expect(reg.hasCurrentDeliveryReceipt("n1")).toBe(true);
 	});
 
-	test("an edit AFTER the delivery is undelivered again", async () => {
-		// THE reason the receipt cannot be a boolean: the next keystroke makes it
-		// false, and a stale `true` would strand that edit while reporting the
-		// server current.
-		const reg = offlineDevice("receipt-edit");
+	test("an INSERT after the delivery voids the receipt", async () => {
+		const reg = unhandshookDevice("receipt-insert");
 		await reg.applyLocalEdit("n1", "hello");
-		reg.markDelivered("n1", await reg.encodeStateVector("n1"));
-		expect(reg.hasUndeliveredOps("n1")).toBe(false);
+		reg.markDelivered("n1", await reg.encodeDeliveryReceipt("n1"));
 
 		await reg.applyLocalEdit("n1", "hello world");
 
-		expect(reg.hasUndeliveredOps("n1")).toBe(true);
+		expect(reg.hasCurrentDeliveryReceipt("n1")).toBe(false);
+	});
+
+	test("a DELETE after the delivery voids the receipt", async () => {
+		// THE case a state vector cannot see. `Y.encodeStateVector` encodes
+		// clientID -> clock of structs a client CREATED; a delete advances no
+		// clock, so the vector is byte-identical afterwards (measured). A receipt
+		// built on one would report this note delivered, the next catch-up would
+		// take the read-only converge path, and the DELETION would be stamped
+		// in-sync and never transmitted. Permanently. Hence a snapshot.
+		const reg = unhandshookDevice("receipt-delete");
+		await reg.applyLocalEdit("n1", "secret note");
+		reg.markDelivered("n1", await reg.encodeDeliveryReceipt("n1"));
+		expect(reg.hasCurrentDeliveryReceipt("n1")).toBe(true);
+
+		await reg.applyLocalEdit("n1", "");
+
+		expect(reg.hasCurrentDeliveryReceipt("n1")).toBe(false);
+	});
+
+	test("a PARTIAL delete voids the receipt", async () => {
+		const reg = unhandshookDevice("receipt-partial-delete");
+		await reg.applyLocalEdit("n1", "keep this, drop that");
+		reg.markDelivered("n1", await reg.encodeDeliveryReceipt("n1"));
+
+		await reg.applyLocalEdit("n1", "keep this");
+
+		expect(reg.hasCurrentDeliveryReceipt("n1")).toBe(false);
 	});
 
 	test("a receipt does NOT claim we hold the server's state", async () => {
@@ -458,20 +487,59 @@ describe("room-free delivery receipt (#1493)", () => {
 		// the server received us; it must not mark the doc synced, because that
 		// is what licenses committing convergence at a serverHash whose content
 		// was never applied — the deaf-note class.
-		const reg = offlineDevice("receipt-not-synced");
+		const reg = unhandshookDevice("receipt-not-synced");
 		await reg.applyLocalEdit("n1", "hello");
 
-		reg.markDelivered("n1", await reg.encodeStateVector("n1"));
+		reg.markDelivered("n1", await reg.encodeDeliveryReceipt("n1"));
 
 		expect(reg.isSynced("n1")).toBe(false);
 	});
 
-	test("a receipt for an unknown note is a no-op, not a throw", async () => {
-		const reg = offlineDevice("receipt-unknown");
+	test("a receipt does NOT relax hasUndeliveredOps — the destructive paths keep their answer", async () => {
+		// hasUndeliveredOps gates the drift keep-both copy and the empty-placeholder
+		// overwrite, where it means "would tearing this down destroy something".
+		// A receipt does not answer that: the doc still holds the only copy the
+		// room path would re-advertise. Folding the receipt into this predicate
+		// would trade a wasted room for a lost file.
+		const reg = unhandshookDevice("receipt-not-destructive");
 		await reg.applyLocalEdit("n1", "hello");
 
-		reg.markDelivered("gone", await reg.encodeStateVector("n1"));
+		reg.markDelivered("n1", await reg.encodeDeliveryReceipt("n1"));
 
-		expect(reg.hasUndeliveredOps("gone")).toBe(false);
+		expect(reg.hasUndeliveredOps("n1")).toBe(true);
+	});
+
+	test("a BUFFERED frame vetoes the receipt", async () => {
+		// `buffer.length > 0` is a hard fact about frames that never reached the
+		// transport — unlike `synced`, which is only a handshake proxy. No ack for
+		// the doc's state can speak for a frame that went nowhere, so the receipt
+		// must not override it.
+		const reg = new ProviderRegistry({
+			dbPrefix: "receipt-buffered",
+			send: () => true,
+			onFlushToDisk: () => {},
+		});
+		// NOT setConnected(true): the provider buffers instead of sending.
+		await reg.applyLocalEdit("n1", "hello");
+		expect(reg.docs.get("n1")?.provider.hasBufferedFrames()).toBe(true);
+
+		reg.markDelivered("n1", await reg.encodeDeliveryReceipt("n1"));
+
+		expect(reg.hasCurrentDeliveryReceipt("n1")).toBe(false);
+	});
+
+	test("a receipt for an unknown note is a no-op, not a throw", async () => {
+		const reg = unhandshookDevice("receipt-unknown");
+		await reg.applyLocalEdit("n1", "hello");
+		const receipt = await reg.encodeDeliveryReceipt("n1");
+		reg.markDelivered("n1", receipt);
+
+		reg.markDelivered("gone", receipt);
+
+		// Asserted on the RECEIPT query, not hasUndeliveredOps — the latter
+		// returns false for any unknown note whether or not markDelivered ran,
+		// so it could not tell a no-op from a recorded receipt.
+		expect(reg.hasCurrentDeliveryReceipt("gone")).toBe(false);
+		expect(reg.hasCurrentDeliveryReceipt("n1")).toBe(true);
 	});
 });
