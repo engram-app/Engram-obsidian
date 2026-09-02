@@ -35,7 +35,36 @@ INFO crdt  crdt_create ADOPT: remapped Untitled.md <fresh id> -> <dead id>
 `ADOPT` in a create you expected to be a create is always worth chasing — it
 means a stale live row owns that path.
 
-## The rule
+## The rule, and the half that is easy to miss
+**Carry PRESENCE, not the row.** `renamePath` sets `{ hash: 0 }` at the new
+path and nothing else. Every other field on a sync-state row is a PATH-SCOPED
+CLAIM ABOUT THE SERVER, and after a rename none of them is true at the
+destination yet:
+
+| field | what carrying it breaks |
+|---|---|
+| `hash` | a rename changes no content, so the carried hash equals the file's own and `pushFile`'s echo filter (which sits ABOVE the push slot) skips the relocation outright |
+| `crdtHead` | `hasServerNote` is PATH-keyed — `getCrdtHead(pathForId(id))` — so the engine believes the server already holds the note THERE and takes the `crdt_msg` edit branch, which carries no path and cannot move the row |
+| `version` / `serverHash` | CAS facts about a row the server holds at the OLD path |
+
+Both failures are SILENT and shaped alike: the rename's `crdt_create` at the
+new path IS the server-side move (`genesis_relocate_live`), and the CRDT leg
+issues no old-leg delete — so if that one push does not go out, the note stays
+at its old path server-side forever and nothing heals it but a forced
+`pushAll`.
+
+This cost two review rounds and three red e2e runs. The first fix zeroed
+`hash` and stopped there; `crdtHead` was the same mistake one field over. If
+you are tempted to carry "just one more field", the question to answer is
+whether it describes the NOTE or describes what the SERVER has AT THIS PATH.
+Only the first kind may move.
+
+The e2e that catches it is `test_93_remote_rename_moves_file`, failing as
+`TimeoutError: Note E2E/MoveNew-*.md not on server after 120.0s`. The unit
+suite could not: no test asserted the branch decision. `tests/sync-delete-fence.test.ts`
+now pins `hasServerNote(id) === false` after a rename, which is the actual seam.
+
+## Why it must move at all
 **The evidence rule is path-keyed; a note's identity is not.** Anything that
 moves a note's path must move its bookkeeping, not destroy it — the same
 reasoning already written for the merge base at both sites (a relocation moves
@@ -74,10 +103,18 @@ universally true does not fail — it goes green while testing nothing. When a
 guard exists to distinguish two cases, check that the harness can produce BOTH.
 
 ## Testing it
+- `tests/sync-delete-fence.test.ts` — the rename gates. Note the harness trap:
+  `recordSyncEvidence` stamps `{ hash: 1 }` while the vault reads back
+  `"body"`, so the moved row never matches the file's real hash and the echo
+  filter can never fire. That is a state the product cannot produce — a
+  CONVERGED note always has `row.hash === fnv1a(disk)`. Use
+  `recordConvergedEvidence`, or a rename test proves nothing.
 - `tests/sim/regressions.test.ts` — `#489 rename-then-delete`: the user's exact
   sequence, with the delete inside the rename's push window (no `drain()`
-  between the rename and the delete). Asserts the note is gone server-side AND
-  that the second note's id differs from the first's.
+  between the rename and the delete). Asserts by ID, not by the renamed path:
+  the model server keys notes by their ORIGINAL path and does not relocate on a
+  same-id create, so `notes.has(renamedPath)` is false whether or not the
+  rename ever transmitted — it reads like a check and proves nothing.
 - `tests/sync-delete-fence.test.ts` — one test per rename leg, driving
   `handleRename` / `moveIfIdRelocated` then `handleDelete`.
 
