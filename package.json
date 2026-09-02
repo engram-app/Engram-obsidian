@@ -60,6 +60,7 @@
     "yjs": "^13.6.32"
   },
   "overrides": {
+    "typescript": "^5.9.3",
     "brace-expansion": "^5.0.9",
     "minimatch": "^10.0.1",
     "picomatch": "^2.3.2",

@@ -23,7 +23,7 @@ export class ExplicitFolders {
 		try {
 			const raw = await this.adapter.read(this.path);
 			const parsed = JSON.parse(raw) as unknown;
-			if (Array.isArray(parsed) && parsed.every((x) => typeof x === "string")) {
+			if (Array.isArray(parsed) && parsed.every((x): x is string => typeof x === "string")) {
 				this.set = new Set(parsed);
 				return;
 			}
