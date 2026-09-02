@@ -408,3 +408,70 @@ describe("teardown projection includes frontmatter (#483)", () => {
 		expect(await reg.projectedText("plain.md")).toBe("just a body\n");
 	});
 });
+
+// ---------------------------------------------------------------------------
+// #1493: room-free delivery removed the room on the way UP and the note asked
+// for one straight back, because `synced` is one flag carrying two facts —
+// "the server has my ops" and "I hold the server's state". The room handshake
+// establishes both at once, so nothing ever had to separate them; a
+// `crdt_doc_update` establishes only the first. The receipt is that missing
+// half, and nothing else: it must never imply the second.
+// ---------------------------------------------------------------------------
+describe("room-free delivery receipt (#1493)", () => {
+	function offlineDevice(prefix: string) {
+		// send: () => false — nothing is ever handshook, so `synced` stays false
+		// and every note reads as undelivered. That is the state a room-free
+		// delivery starts from.
+		return new ProviderRegistry({
+			dbPrefix: prefix,
+			send: () => false,
+			onFlushToDisk: () => {},
+		});
+	}
+
+	test("an acked delivery stops the note demanding a room", async () => {
+		const reg = offlineDevice("receipt-ack");
+		await reg.applyLocalEdit("n1", "hello");
+		expect(reg.hasUndeliveredOps("n1")).toBe(true);
+
+		reg.markDelivered("n1", await reg.encodeStateVector("n1"));
+
+		expect(reg.hasUndeliveredOps("n1")).toBe(false);
+	});
+
+	test("an edit AFTER the delivery is undelivered again", async () => {
+		// THE reason the receipt cannot be a boolean: the next keystroke makes it
+		// false, and a stale `true` would strand that edit while reporting the
+		// server current.
+		const reg = offlineDevice("receipt-edit");
+		await reg.applyLocalEdit("n1", "hello");
+		reg.markDelivered("n1", await reg.encodeStateVector("n1"));
+		expect(reg.hasUndeliveredOps("n1")).toBe(false);
+
+		await reg.applyLocalEdit("n1", "hello world");
+
+		expect(reg.hasUndeliveredOps("n1")).toBe(true);
+	});
+
+	test("a receipt does NOT claim we hold the server's state", async () => {
+		// The whole reason `markSynced` was the wrong instrument. A receipt says
+		// the server received us; it must not mark the doc synced, because that
+		// is what licenses committing convergence at a serverHash whose content
+		// was never applied — the deaf-note class.
+		const reg = offlineDevice("receipt-not-synced");
+		await reg.applyLocalEdit("n1", "hello");
+
+		reg.markDelivered("n1", await reg.encodeStateVector("n1"));
+
+		expect(reg.isSynced("n1")).toBe(false);
+	});
+
+	test("a receipt for an unknown note is a no-op, not a throw", async () => {
+		const reg = offlineDevice("receipt-unknown");
+		await reg.applyLocalEdit("n1", "hello");
+
+		reg.markDelivered("gone", await reg.encodeStateVector("n1"));
+
+		expect(reg.hasUndeliveredOps("gone")).toBe(false);
+	});
+});

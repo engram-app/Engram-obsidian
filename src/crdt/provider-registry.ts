@@ -47,6 +47,10 @@ interface Entry {
 	/** The frontmatter block as of the last flush, so the next one can say
 	 *  whether the frontmatter CHANGED. `null` means "no block". */
 	lastFlushedFm: string | null;
+	/** State vector the server last ACKED over `crdt_doc_update` (#1493). The
+	 *  upward half of `synced`, which the room-free write earns and the
+	 *  handshake flag cannot express. Undefined until a delivery is acked. */
+	deliveredSv?: Uint8Array;
 	/** In-flight disk-flush from the last remote merge; applyRemoteUpdate awaits
 	 *  it so a write failure can leave crdtHead unadvanced (#235). */
 	pendingFlush: Promise<void> | null;
@@ -487,12 +491,33 @@ export class ProviderRegistry {
 
 	// --- Yjs encoding helpers (handshake / genesis) -----------------------------
 
+	/** Also the receipt for a room-free delivery (`markDelivered`). Capture it
+	 *  BEFORE the state you send, never after: taken first, the update that
+	 *  follows is a superset of it, so a local edit landing between the two makes
+	 *  the receipt UNDER-claim — the note reads as undelivered and pays for a
+	 *  room. Taken after, it would cover an op that was never sent, and strand
+	 *  it silently. */
 	async encodeStateVector(noteId: string): Promise<Uint8Array> {
 		return Y.encodeStateVector((await this.entry(noteId)).doc);
 	}
 
 	async encodeStateAsUpdate(noteId: string, sv?: Uint8Array): Promise<Uint8Array> {
 		return Y.encodeStateAsUpdate((await this.entry(noteId)).doc, sv);
+	}
+
+	/** Record that the server acknowledged everything `sv` describes.
+	 *
+	 *  This is the UPWARD half of what `synced` means, on its own. It must never
+	 *  touch `synced` or fire `onSynced`: those carry the DOWNWARD claim (we hold
+	 *  the server's state), which a room-free write never earns, and committing
+	 *  convergence on it is the deaf-note class.
+	 *
+	 *  Lost on eviction along with the rest of the entry, which is the safe
+	 *  direction: the note reads as undelivered again and takes one room. */
+	markDelivered(noteId: string, sv: Uint8Array): void {
+		const e = this.entries.get(noteId);
+		if (!e?.lifetime.active) return;
+		e.deliveredSv = sv;
 	}
 
 	/** Encode brand-new content as a standalone genesis update (throwaway doc, no
@@ -639,7 +664,27 @@ export class ProviderRegistry {
 	hasUndeliveredOps(noteId: string): boolean {
 		const e = this.entries.get(noteId);
 		if (!e?.lifetime.active) return false;
-		return e.provider.hasUndeliveredWork();
+		if (!e.provider.hasUndeliveredWork()) return false;
+		// The provider only knows about the handshake, so it says "undelivered"
+		// for a doc whose ops went up over `crdt_doc_update` instead. A receipt
+		// still matching the doc's current state vector means the server has
+		// everything this doc holds.
+		return !this.deliveryReceiptCurrent(e);
+	}
+
+	/** Whether the recorded receipt still covers the doc. State-vector equality
+	 *  rather than a flag, because the next keystroke has to invalidate it.
+	 *
+	 *  Deliberately conservative in one direction: a REMOTE update also advances
+	 *  the vector, so an inbound edit re-marks the note undelivered even though
+	 *  remote ops need no sending back. That costs one room and loses nothing.
+	 *  Narrowing it means tracking which client IDs are ours, which is more
+	 *  machinery than the saving justifies. */
+	private deliveryReceiptCurrent(e: Entry): boolean {
+		if (!e.deliveredSv) return false;
+		const now = Y.encodeStateVector(e.doc);
+		if (now.length !== e.deliveredSv.length) return false;
+		return now.every((byte, i) => byte === e.deliveredSv?.[i]);
 	}
 
 	// --- Lifecycle no-ops the persistent doc doesn't need -----------------------

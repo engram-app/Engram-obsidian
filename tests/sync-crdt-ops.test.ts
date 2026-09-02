@@ -358,11 +358,14 @@ describe("room-free queue delivery (#1493)", () => {
 		liveBound?: (path: string) => boolean;
 		encode?: (noteId: string) => Promise<Uint8Array>;
 		markSynced?: (noteId: string) => void;
+		markDelivered?: (noteId: string, sv: Uint8Array) => void;
 	}) {
 		const crdt = {
 			applyLocalEdit: async () => true,
 			encodeStateAsUpdate: opts.encode ?? (async () => new Uint8Array([1, 2, 3])),
+			encodeStateVector: async () => new Uint8Array([9, 9]),
 			markSynced: opts.markSynced ?? (() => {}),
+			markDelivered: opts.markDelivered ?? (() => {}),
 		};
 		const enroll = mock();
 		const reset = mock();
@@ -463,6 +466,38 @@ describe("room-free queue delivery (#1493)", () => {
 		// whose content this path never applied, which is the deaf-note class.
 		// Adding it once cost two fan-out e2e tests and a revert.
 		expect(markSynced).not.toHaveBeenCalled();
+	});
+
+	test("the ack RECORDS the delivery, so the note stops demanding a room (#1493)", async () => {
+		// Without this the frame saves a room going up and the note asks for one
+		// straight back: `synced` is only set by a handshake, so `hasUndeliveredOps`
+		// stays true and the next catch-up refuses the room-free read.
+		const docUpdate = mock(async () => ({ head: "h1" }));
+		const markDelivered = mock();
+		const { e } = queuedEngine({ docUpdate, markDelivered });
+		await enqueueOne(e);
+
+		await e.flushQueue();
+
+		expect(markDelivered).toHaveBeenCalledTimes(1);
+		expect(markDelivered.mock.calls[0]?.[0]).toBe("id-1");
+		// The state vector captured BEFORE the send, not a fresh one after it.
+		expect(markDelivered.mock.calls[0]?.[1]).toEqual(new Uint8Array([9, 9]));
+	});
+
+	test("a REFUSED write records NO delivery", async () => {
+		// The receipt is the ack's meaning. Recording one on a failed send would
+		// mark ops delivered that never left, and they would never be retried.
+		const docUpdate = mock(async () => {
+			throw new Error("doc_update_failed");
+		});
+		const markDelivered = mock();
+		const { e } = queuedEngine({ docUpdate, markDelivered });
+		await enqueueOne(e);
+
+		await e.flushQueue();
+
+		expect(markDelivered).not.toHaveBeenCalled();
 	});
 
 	test("a LIVE-BOUND note keeps the handshake — its room already exists", async () => {

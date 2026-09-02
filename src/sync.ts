@@ -3316,7 +3316,12 @@ export class SyncEngine {
 		if (typeof crdt?.encodeStateAsUpdate !== "function") return false;
 
 		let frame: string;
+		let sv: Uint8Array | undefined;
 		try {
+			// BEFORE the state, not after — see `encodeStateVector`. An edit
+			// landing between the two then makes the receipt under-claim (one
+			// wasted room) instead of covering an op that never went.
+			sv = await crdt.encodeStateVector?.(noteId);
 			const state = await crdt.encodeStateAsUpdate(noteId);
 			if (this.crdt !== crdt) return false;
 			// A doc's full state carries its history and tombstones, so it can
@@ -3363,6 +3368,13 @@ export class SyncEngine {
 		try {
 			await send(noteId, frame);
 			this.frameStrikes.delete(DOC_UPDATE_FRAME);
+			// THE receipt (#1493). The ack proves the server holds everything `sv`
+			// described, which is the one fact `synced` could not express for this
+			// path — so without it the note reads as undelivered forever, refuses
+			// the room-free READ on the next catch-up, and asks for the room this
+			// frame just avoided. A drain of 1.4k notes took 0 rooms going up and
+			// 1.4k coming back.
+			if (sv) crdt.markDelivered?.(noteId, sv);
 			// NOT `markSynced` here, however tempting. It does not set the
 			// provider's `synced` flag; it fires `onSynced` ->
 			// `commitCrdtConvergence`, which COMMITS a staged catch-up episode —
