@@ -1,45 +1,14 @@
 import { Setting } from "obsidian";
-import { EmailCaptureState, renderEmailCaptureForm } from "../email-capture-modal";
 import type { TabContext } from "./types";
 import {
 	ENGRAM_DISCORD_URL,
 	ENGRAM_DOCS_URL,
 	ENGRAM_ISSUES_URL,
-	ENGRAM_MARKETING_URL,
 	ENGRAM_MCP_URL,
 	ENGRAM_PRICING_URL,
 	ENGRAM_SELFHOST_URL,
+	ENGRAM_SIGN_UP_URL,
 } from "./urls";
-
-/** Inline waitlist signup for the Welcome tab — a permanent counterpart to the
- *  one-time first-run popup, for users who dismissed it but later change their
- *  mind. Reuses the same tested state machine and submit path as the modal. */
-function renderWaitlistSection(containerEl: HTMLElement): void {
-	const state = new EmailCaptureState();
-	const section = containerEl.createDiv({ cls: "engram-about-waitlist" });
-
-	const render = (): void => {
-		section.empty();
-
-		if (state.view === "success") {
-			section.createEl("p", {
-				cls: "engram-about-waitlist-success",
-				text: "You're on the list. Thanks for your patience!",
-			});
-			return;
-		}
-
-		section.createEl("p", {
-			text:
-				"Engram is still in active development. Leave your email for beta access, an " +
-				"early-supporter discount, and a say in what comes next.",
-		});
-
-		renderEmailCaptureForm({ parent: section, state, rerender: render });
-	};
-
-	render();
-}
 
 /** Append an external link (opens in the browser) to a parent element. */
 function externalLink(parent: HTMLElement, text: string, href: string): void {
@@ -63,16 +32,12 @@ export function renderAboutTab(ctx: TabContext): void {
 		"Engram vault sync keeps your Obsidian vault in sync with Engram and lets your AI assistants read and write the same notes. You edit on any device; your AI works from notes you actually wrote.",
 	);
 
-	// ── Stay in the loop ──
-	heading(containerEl, "Stay in the loop");
-	renderWaitlistSection(containerEl);
-
 	// ── Getting set up ──
 	heading(containerEl, "Getting set up");
 
 	const account = new Setting(containerEl).setName("1. Make an account");
 	account.descEl.appendText("Create a hosted account at ");
-	externalLink(account.descEl, "engram.page", ENGRAM_MARKETING_URL);
+	externalLink(account.descEl, "app.engram.page", ENGRAM_SIGN_UP_URL);
 	account.descEl.appendText(", or self-host the backend (");
 	externalLink(account.descEl, "setup guide", ENGRAM_SELFHOST_URL);
 	account.descEl.appendText(").");

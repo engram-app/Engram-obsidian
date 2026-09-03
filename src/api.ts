@@ -37,7 +37,7 @@ export class RequestTimeoutError extends Error {
 }
 
 /** Deadline-bound a promise. Exported for the direct `requestUrl` call sites
- *  outside EngramApi (token refresh, device flow, waitlist, update check,
+ *  outside EngramApi (token refresh, device flow, update check,
  *  probeHealth) — anything unbounded there can wedge its caller forever;
  *  the token-refresh case stalls EVERY request behind getToken(). */
 export async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {

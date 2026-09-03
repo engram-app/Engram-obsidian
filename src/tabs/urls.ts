@@ -54,7 +54,7 @@ export const ENGRAM_MCP_URL = "https://engram.page/docs/integrations";
 /** Self-hosted backend repo (setup instructions live here). */
 export const ENGRAM_SELFHOST_URL = "https://github.com/engram-app/engram";
 
-/** Main project GitHub repo (linked from the waitlist popup / general "our code"). */
+/** Main project GitHub repo (general "our code" link). */
 export const ENGRAM_GITHUB_URL = "https://github.com/engram-app/engram";
 
 /** Plugin issue tracker. */
@@ -68,3 +68,7 @@ export const ENGRAM_DISCORD_URL = "https://discord.gg/NKWcU2mm7N";
  *  `${engramWebUrl(apiUrl)}/settings/billing` so self-hosted users aren't sent
  *  to cloud billing. */
 export const DEFAULT_UPGRADE_URL = `${ENGRAM_APP_URL}/settings/billing`;
+
+/** Hosted sign-up. Registration is open, so the plugin sends new users
+ *  straight to the app rather than to a marketing page or a waitlist. */
+export const ENGRAM_SIGN_UP_URL = `${ENGRAM_APP_URL}/sign-up`;
