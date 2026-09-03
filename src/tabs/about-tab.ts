@@ -105,19 +105,33 @@ export function renderAboutTab(ctx: TabContext): void {
 		const list = card.createEl("ul", { cls: "engram-plan-features" });
 		for (const feature of features) list.createEl("li", { text: feature });
 	};
+	// Every line here must be checkable against `Engram.Billing.LimitKeys` in
+	// the backend. This block drifted badly once: it claimed 1 device (it is 2),
+	// read-only AI (MCP `create_note`/`write_note` have no tier gate at all),
+	// and "Full API" on Starter when API keys went Pro-only on 2026-08-24.
+	//
+	// The search lines deliberately name COVERAGE, not the retrieval mechanism.
+	// That is the pricing v3.1 positioning (ranking differences are single-digit
+	// and imperceptible; "found my note" vs "cannot find my note" is not), and
+	// it also keeps this copy true across the pending Free semantic-search flip.
 	plan("Free", [
-		"1 vault, 1 device",
-		"Auto sync",
-		"Read-only AI access",
-		"Semantic search + MCP",
+		"1 vault, 2 devices",
+		"Real-time sync",
+		"Search your 2,000 most recent notes",
+		"Connect any AI (MCP)",
 	]);
 	plan("Starter", [
-		"Multiple vaults, all devices",
-		"Real-time sync",
-		"Full API + MCP",
-		"Higher daily AI limit",
+		"10 vaults, unlimited devices",
+		"Search all your notes",
+		"10 GB attachments",
+		"Unlimited AI searches",
 	]);
-	plan("Pro", ["Unlimited notes", "Unlimited AI (fair use)", "Priority support"]);
+	plan("Pro", [
+		"Unlimited vaults",
+		"Search across all vaults at once",
+		"50 GB attachments",
+		"API access",
+	]);
 
 	const pricing = containerEl.createEl("p", { cls: "engram-about-link" });
 	externalLink(pricing, "See full pricing", ENGRAM_PRICING_URL);

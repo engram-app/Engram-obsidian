@@ -11,12 +11,44 @@ describe("limit-copy", () => {
 		expect(msg.toLowerCase()).toMatch(/note limit/);
 	});
 
-	test("maps attachments_disabled", () => {
-		expect(toastFor("attachments_disabled").toLowerCase()).toMatch(/attachment.*paid plan/);
+	// NEITHER of these is a tier gate any more. `attachments_enabled` and
+	// `attachments_all_types` are both `true` on Free, Starter and Pro as of
+	// 2026-08-24, so on SaaS these reasons cannot fire at all — they are
+	// self-host capability gates. These assertions used to pin "paid plan"
+	// wording, which sent a self-hoster to a pricing page for a setting on
+	// their own server, and told a Free user their own attachments needed an
+	// upgrade they already had.
+	test("maps attachments_disabled without naming a tier", () => {
+		const msg = toastFor("attachments_disabled").toLowerCase();
+		expect(msg).toMatch(/attachment sync is disabled/);
+		expect(msg).not.toMatch(/paid plan|upgrade/);
 	});
 
-	test("maps attachment_must_be_text (capability copy)", () => {
-		expect(toastFor("attachment_must_be_text").toLowerCase()).toMatch(/notes only.*paid plan/);
+	test("maps attachment_must_be_text as a capability, not a tier", () => {
+		const msg = toastFor("attachment_must_be_text").toLowerCase();
+		expect(msg).toMatch(/file type/);
+		expect(msg).not.toMatch(/paid plan|notes only/);
+	});
+
+	// The one AI cap a user can actually hit. Three predecessors
+	// (`ai_conversations_per_day`, `ai_queries_per_conversation`,
+	// `ai_queries_per_day`) were deleted backend-side when `ai_searches_per_day`
+	// consolidated six meters into one, leaving this reason with no copy and
+	// falling through to the generic fallback.
+	test("maps ai_searches_per_day_exceeded with the real number", () => {
+		const msg = toastFor("ai_searches_per_day_exceeded").toLowerCase();
+		expect(msg).toMatch(/20 per day/);
+		expect(msg).toMatch(/upgrade/);
+	});
+
+	test("dead AI reasons are gone from the table", () => {
+		for (const dead of [
+			"ai_conversations_per_day_exceeded",
+			"ai_queries_per_conversation_exceeded",
+			"ai_queries_per_day_exceeded",
+		]) {
+			expect(toastFor(dead)).toMatch(/Limit reached\. Upgrade to continue\./);
+		}
 	});
 
 	test("maps attachments_quota_exceeded (quota copy)", () => {
