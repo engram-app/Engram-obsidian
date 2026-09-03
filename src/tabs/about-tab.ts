@@ -117,7 +117,7 @@ export function renderAboutTab(ctx: TabContext): void {
 	plan("Free", [
 		"1 vault, 2 devices",
 		"Real-time sync",
-		"Search your 2,000 most recent notes",
+		"2,000 notes searchable",
 		"Connect any AI (MCP)",
 	]);
 	plan("Starter", [
