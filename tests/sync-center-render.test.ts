@@ -346,9 +346,15 @@ describe("renderSyncCenter — Needs attention cards", () => {
 	// line here the user's only signal is a search that cannot find something
 	// they know they wrote.
 
-	function withVault(noteCount: number, cap: number | null) {
+	function withVault(noteCount: number, cap: number | null, ignored = 0) {
 		const plugin = makeMockPlugin([], cap === null ? null : { indexedNotesCap: cap });
-		plugin.app.vault.getMarkdownFiles = () => new Array(noteCount).fill({});
+		plugin.app.vault.getMarkdownFiles = () =>
+			Array.from({ length: noteCount }, (_, i) => ({ path: `n${i}.md` }));
+		// First `ignored` files are excluded from sync by the user.
+		plugin.syncEngine.shouldIgnore = (path: string) => {
+			const i = Number(path.replace(/\D/gu, ""));
+			return i < ignored;
+		};
 		return plugin;
 	}
 
@@ -389,5 +395,36 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		expect(() =>
 			renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {}),
 		).not.toThrow();
+	});
+
+	test("excludes ignored files, which never reach the server to be indexed", () => {
+		// 4,312 on disk, 1,000 ignored -> 3,312 actually sync, 2,000 of those are
+		// indexed, so 1,312 are unsearchable. Counting the ignored ones would
+		// inflate this to 2,312 and blame the plan for files the user excluded,
+		// which upgrading would not fix.
+		const plugin = withVault(4312, 2000, 1000);
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		expect(allText(parent)).toContain("1,312 of your 3,312 notes are not searchable");
+	});
+
+	test("ignoring enough files drops it below the cap and silences the section", () => {
+		const plugin = withVault(2500, 2000, 600);
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		expect(findByCls(parent, "engram-sync-center-search-cap-section")).toBeNull();
+	});
+
+	test("offers an Upgrade button, not just prose telling you to upgrade", () => {
+		const plugin = withVault(4312, 2000);
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+
+		expect(findByCls(parent, "engram-sync-center-search-cap-section")).not.toBeNull();
+		// Asserted against `parent`, not the section: makeFakeEl's `factory`
+		// closes over the OUTER element, and `Object.assign(child, methods(child))`
+		// overwrites each child's own methods with ones that append to the
+		// parent. The fake tree is therefore flat, so no descendant is reachable
+		// from its real ancestor. Pre-existing, and every other test here works
+		// the same way.
+		const buttons = findAllByCls(parent, "mod-cta");
+		expect(buttons.some((b) => b.text === "Upgrade")).toBe(true);
 	});
 });

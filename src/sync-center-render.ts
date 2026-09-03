@@ -232,7 +232,7 @@ function renderPlanSkips(parent: HTMLElement, plugin: EngramSyncPlugin, refresh:
 function renderSearchCap(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 	const text = unsearchableNotesText(
 		plugin.syncEngine?.getPlanState()?.indexedNotesCap ?? null,
-		plugin.app.vault?.getMarkdownFiles?.().length ?? 0,
+		syncedNoteCount(plugin),
 	);
 	if (text === null) return;
 
@@ -246,6 +246,33 @@ function renderSearchCap(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 
 	const body = section.createDiv({ cls: "engram-sync-center-section-body" });
 	body.createEl("p", { cls: "engram-sync-center-card-hint", text });
+
+	// The copy says "Upgrade" and this is the moment the user is most likely to
+	// act on it, so give them the button. `renderPlanSkips` directly above ships
+	// one; prose telling someone to upgrade with no way to do it is the same
+	// dead end as the silent cap this section exists to fix.
+	const actions = body.createDiv({ cls: "engram-sync-center-card-actions" });
+	const upgrade = actions.createEl("button", { text: "Upgrade", cls: "mod-cta" });
+	upgrade.addEventListener("click", () => window.open(DEFAULT_UPGRADE_URL, "_blank"));
+}
+
+/** Notes this vault would sync, which is what the server's index cap counts.
+ *
+ *  NOT `getMarkdownFiles().length`. That is every markdown file on disk,
+ *  including ones the user has explicitly ignored — those never reach the
+ *  server, so counting them inflates the shortfall and blames the plan for
+ *  files the user chose to exclude, which upgrading would not fix.
+ *
+ *  Still an approximation of the server's per-USER count, because the cap is
+ *  account-wide while this sees one vault. That is sound wherever the cap is
+ *  live: `vaults_cap` is 1 on Free, and every tier with more vaults has an
+ *  uncapped index, so there is no plan on which a user has both a second vault
+ *  and a cap to exceed. */
+function syncedNoteCount(plugin: EngramSyncPlugin): number {
+	const files = plugin.app.vault?.getMarkdownFiles?.() ?? [];
+	const ignore = plugin.syncEngine?.shouldIgnore?.bind(plugin.syncEngine);
+	if (!ignore) return files.length;
+	return files.reduce((n, f) => (ignore(f.path) ? n : n + 1), 0);
 }
 
 /** Shared card chrome for the plan-skip and needs-attention sections: head
