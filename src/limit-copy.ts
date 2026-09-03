@@ -12,16 +12,34 @@ const TABLE: Record<string, string> = {
 	notes_cap_exceeded: "Note limit reached. Upgrade to keep adding notes.",
 	// CRDT channel variant of the note-cap reject (crdt_channel.ex): same copy.
 	notes_cap_reached: "Note limit reached. Upgrade to keep adding notes.",
-	vaults_cap_exceeded: "Free tier includes 1 vault. Upgrade for more.",
-	attachment_must_be_text: "Free syncs notes only — images & PDFs need a paid plan.",
-	attachments_disabled: "Attachment sync needs a paid plan.",
+	// Do NOT name a tier here. `vaults_cap` is per-tier (Free 1, Starter 10,
+	// Pro unlimited), so hardcoding "Free" told a Starter user at 10 vaults
+	// that their Free plan allowed 10. The web app hit the same bug and fixed
+	// it by naming the user's actual plan; the plugin has no plan label at this
+	// call site, so it says nothing about the tier instead of saying the wrong
+	// thing.
+	vaults_cap_exceeded: "Vault limit reached. Upgrade for more vaults.",
+	// A capability gate (self-host / storage config), NOT the Free-tier policy
+	// it used to be. `attachments_all_types` has been true on every tier since
+	// 2026-08-24, so the old "Free syncs notes only" copy named a rule that no
+	// longer exists.
+	attachment_must_be_text: "This file type isn't accepted by this server.",
+	attachments_disabled: "Attachment sync is disabled for this account.",
 	attachments_quota_exceeded: "Attachment storage is full — upgrade for more.",
 	file_too_large: "File too large for your plan.",
 	concurrent_devices_exceeded: "Already signed in on another device. Upgrade for multi-device.",
 	device_swap_cooldown: "Device swap cooldown active. Wait or upgrade.",
-	ai_conversations_per_day_exceeded: "Daily AI limit reached.",
-	ai_queries_per_conversation_exceeded: "Conversation length limit reached.",
-	ai_queries_per_day_exceeded: "Daily AI query limit reached.",
+	obsidian_connections_exceeded: "Too many connected Obsidian vaults. Disconnect one or upgrade.",
+	mcp_connections_exceeded: "Too many connected AI clients. Disconnect one or upgrade.",
+	// ONE key, replacing `ai_conversations_per_day_exceeded`,
+	// `ai_queries_per_conversation_exceeded` and `ai_queries_per_day_exceeded`.
+	// Those three were dead strings: the backend deleted the keys behind them
+	// when `ai_searches_per_day` consolidated six meters into one, so the only
+	// AI cap a user can now hit fell through to the generic fallback. Emitted
+	// by `search_controller.ex`. Copy tracks the web app's wording so the same
+	// limit does not read as two different products.
+	ai_searches_per_day_exceeded:
+		"Daily AI search limit reached. Free includes 20 per day across Obsidian, the web app and MCP. Upgrade for unlimited.",
 	// Server rejects an API-key-authed socket or REST call outright: Cloud
 	// gates API keys behind Pro. Point at sign-in, which works on every plan,
 	// rather than at a generic "upgrade".
