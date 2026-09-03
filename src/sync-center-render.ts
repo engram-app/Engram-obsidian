@@ -8,6 +8,7 @@ import { Notice, normalizePath, Setting } from "obsidian";
 import { type IssueDisposition, issueDisposition, remediation } from "./issue-store";
 import type EngramSyncPlugin from "./main";
 import type { QueuedReason } from "./offline-queue";
+import { unsearchableNotesText } from "./search-ui";
 import { ACTION_ICONS } from "./sync-log-modal";
 import { plural } from "./sync-plan-format";
 import { planLoadErrorMessage, SyncPreviewModal } from "./sync-preview-modal";
@@ -52,6 +53,7 @@ export function renderSyncCenter(
 	renderHeader(parent, plugin);
 	renderActions(parent, plugin, refresh);
 	renderPlanSkips(parent, plugin, refresh);
+	renderSearchCap(parent, plugin);
 	renderNeedsAttention(parent, plugin, refresh);
 	renderRetrying(parent, plugin, refresh);
 	renderIgnored(parent, plugin, refresh);
@@ -211,6 +213,39 @@ function renderPlanSkips(parent: HTMLElement, plugin: EngramSyncPlugin, refresh:
 	for (const [category, list] of groups) {
 		renderPlanCard(body, plugin, refresh, category, list);
 	}
+}
+
+/** "Not searchable on your plan" — notes that synced fine but fall outside
+ *  `indexed_notes_cap`.
+ *
+ *  Sibling of `renderPlanSkips` and deliberately separate from it: those files
+ *  did not sync, these did. Conflating them would tell a user their notes are
+ *  missing when they are on disk and syncing normally.
+ *
+ *  This is the ONE Free limit that refuses nothing. Notes past the cap sync,
+ *  open, and edit exactly as before, they are simply absent from search
+ *  results, so without a line like this the user's only signal is a search that
+ *  cannot find something they know they wrote. Same fact the search panel shows
+ *  inline; this is where someone who already suspects a problem comes looking.
+ *
+ *  Quiet at zero, like every other section here. */
+function renderSearchCap(parent: HTMLElement, plugin: EngramSyncPlugin): void {
+	const text = unsearchableNotesText(
+		plugin.syncEngine?.getPlanState()?.indexedNotesCap ?? null,
+		plugin.app.vault?.getMarkdownFiles?.().length ?? 0,
+	);
+	if (text === null) return;
+
+	// Own class, not `renderPlanSkips`'s: it shares the calm plan styling but
+	// must stay separately addressable, for CSS and so a test can tell the two
+	// sections apart.
+	const section = parent.createDiv({
+		cls: "engram-sync-center-section engram-sync-center-plan-section engram-sync-center-search-cap-section",
+	});
+	sectionHeading(section, "Not searchable on your plan");
+
+	const body = section.createDiv({ cls: "engram-sync-center-section-body" });
+	body.createEl("p", { cls: "engram-sync-center-card-hint", text });
 }
 
 /** Shared card chrome for the plan-skip and needs-attention sections: head

@@ -105,11 +105,20 @@ function makeIssue(overrides: Partial<SyncIssue> = {}): SyncIssue {
 	};
 }
 
-function makeMockPlugin(issues: SyncIssue[]): any {
+function makeMockPlugin(issues: SyncIssue[], planState?: unknown): any {
 	return {
-		app: { vault: { getFiles: () => [], getName: () => "Vault" } },
+		// `getMarkdownFiles` is what the search-cap section counts. The real
+		// vault has it; omitting it here meant the mock diverged from the
+		// interface rather than the code being wrong.
+		app: {
+			vault: { getFiles: () => [], getMarkdownFiles: () => [], getName: () => "Vault" },
+		},
 		settings: { vaultId: "1", remoteVaultName: "Vault" },
 		syncEngine: {
+			// Real engine has this (see main.ts, where it feeds the search panel's
+			// cap hint). Defaults to null, which is the genuine pre-join state:
+			// plan state arrives over the channel, so it IS absent for a moment.
+			getPlanState: () => planState ?? null,
 			getStatus: () => ({
 				state: "idle",
 				pending: 0,
@@ -330,5 +339,55 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		const text = allText(parent);
 		expect(text).toContain("1 retrying");
 		expect(text).toContain("Temporary errors");
+	});
+	// ── "Not searchable on your plan" ──────────────────────────────────────
+	// The one Free limit that refuses NOTHING: notes past `indexed_notes_cap`
+	// sync, open and edit normally, they are just absent from search. Without a
+	// line here the user's only signal is a search that cannot find something
+	// they know they wrote.
+
+	function withVault(noteCount: number, cap: number | null) {
+		const plugin = makeMockPlugin([], cap === null ? null : { indexedNotesCap: cap });
+		plugin.app.vault.getMarkdownFiles = () => new Array(noteCount).fill({});
+		return plugin;
+	}
+
+	test("names the shortfall and the direction when over the cap", () => {
+		const plugin = withVault(4312, 2000);
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+
+		// Assert on the section class + body, not the heading: headings go through
+		// Obsidian's `Setting`, whose text the fake-DOM harness does not capture.
+		expect(findByCls(parent, "engram-sync-center-search-cap-section")).not.toBeNull();
+		const text = allText(parent);
+		expect(text).toContain("2,312 of your 4,312 notes are not searchable");
+		// The direction is the whole point: the cap keeps the OLDEST notes, so
+		// what falls out is the user's newest work. Copy that implies otherwise
+		// promises the absence of the exact surprise they are about to hit.
+		expect(text).toContain("oldest first");
+	});
+
+	test("stays silent when every note is searchable", () => {
+		const plugin = withVault(812, 2000);
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		expect(findByCls(parent, "engram-sync-center-search-cap-section")).toBeNull();
+	});
+
+	test("stays silent on a paid plan, including the -1 unlimited sentinel", () => {
+		for (const cap of [null, -1]) {
+			parent = makeFakeEl("div");
+			const plugin = withVault(99999, cap);
+			renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+			expect(findByCls(parent, "engram-sync-center-search-cap-section")).toBeNull();
+		}
+	});
+
+	test("survives plan state not having arrived yet", () => {
+		// Plan state comes over the sync channel, so it IS null for a moment
+		// after load. Rendering must not throw in that window.
+		const plugin = makeMockPlugin([]);
+		expect(() =>
+			renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {}),
+		).not.toThrow();
 	});
 });

@@ -43,11 +43,42 @@ export interface SearchPanelOpts {
  * HTMLElement extensions, which the unit suite does not have.
  */
 export function capHintText(cap: number | null, total: number): string | null {
-	// null == uncapped plan. A negative value is the backend's "unlimited"
-	// sentinel, never a cap of -1.
-	if (cap === null || cap < 0) return null;
-	if (total <= cap) return null;
-	return `Searching ${cap.toLocaleString()} of ${total.toLocaleString()} notes. Upgrade to search everything.`;
+	if (unsearchableCount(cap, total) === 0) return null;
+	return `Searching ${(cap as number).toLocaleString()} of ${total.toLocaleString()} notes. Upgrade to search everything.`;
+}
+
+/**
+ * How many notes are synced but NOT searchable. Zero means say nothing.
+ *
+ * The single place the "is there anything to report" rule lives, so the search
+ * panel and the Sync Center cannot drift into disagreeing about whether the
+ * user is over their cap. `null` is an uncapped plan; a NEGATIVE cap is the
+ * backend's "unlimited" sentinel and must never be read as a literal cap of -1,
+ * which would claim every note is unsearchable on the most permissive plan.
+ */
+export function unsearchableCount(cap: number | null, total: number): number {
+	if (cap === null || cap < 0) return 0;
+	return Math.max(0, total - cap);
+}
+
+/**
+ * The Sync Center variant of the same fact.
+ *
+ * Deliberately not `capHintText`. That one reads as a status line about the
+ * search you just ran ("Searching 2,000 of 4,312"), which is meaningless in a
+ * settings pane where the user is not searching. Here the subject is the
+ * shortfall, and it names the direction, because the cap keeps the OLDEST
+ * notes and a user who assumes otherwise concludes the product is broken when
+ * yesterday's note cannot be found.
+ */
+export function unsearchableNotesText(cap: number | null, total: number): string | null {
+	const missing = unsearchableCount(cap, total);
+	if (missing === 0) return null;
+	return (
+		`${missing.toLocaleString()} of your ${total.toLocaleString()} notes are not searchable. ` +
+		`Your plan indexes ${(cap as number).toLocaleString()}, oldest first, so your newest notes are the ones left out. ` +
+		`Upgrade to search everything.`
+	);
 }
 
 export class SearchPanel {
