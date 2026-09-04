@@ -379,11 +379,16 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		expect(text).toContain("Notes searchable");
 	});
 
-	test("renders the panel for the tier by name", async () => {
+	test("uses the Stats grid rather than a format of its own", async () => {
 		const plugin = withPlan("free");
 		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
 		await settle();
-		expect(findByCls(parent, "engram-sync-center-plan-usage-section")).not.toBeNull();
+
+		// Rows land in a `stats-grid` as `stat-label` / `stat-value` pairs, which
+		// is what gives them the separator and spacing Stats already has.
+		const labels = findAllByCls(parent, "engram-sync-center-stat-label").map((e) => e.text);
+		expect(labels).toContain("Notes searchable");
+		expect(labels).toContain("Local notes");
 	});
 
 	test("says nothing at all before plan state arrives", () => {
@@ -391,7 +396,7 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		// load and forever when signed out. No tier, no panel, no fetch.
 		const plugin = withPlan(null);
 		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
-		expect(findByCls(parent, "engram-sync-center-plan-usage-section")).toBeNull();
+		expect(allText(parent)).not.toContain("Notes searchable");
 	});
 
 	test("offers Upgrade on Free", async () => {
@@ -418,11 +423,11 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
 		await settle();
 
-		const text = allText(parent);
-		expect(text).toContain("Plan usage is unavailable");
-		// Not asserting the loading line is GONE: `empty()` cannot clear it in
-		// this harness, because makeFakeEl's flat-tree bug appended it to the
-		// root rather than to `rowsEl`. Real Obsidian clears it correctly.
-		expect(text).not.toContain("Notes searchable");
+		// Reported as an ordinary stat row, not an error banner: an advisory
+		// read failing must not look like sync is broken.
+		const labels = findAllByCls(parent, "engram-sync-center-stat-label").map((e) => e.text);
+		expect(labels).toContain("Plan usage");
+		expect(labels).not.toContain("Notes searchable");
+		expect(allText(parent)).toContain("unavailable");
 	});
 });

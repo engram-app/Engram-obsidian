@@ -85,7 +85,7 @@ describe("planUsageRows", () => {
 
 	it("formats attachment bytes, not raw numbers", () => {
 		const row = planUsageRows(free).find((r) => r.label === "Attachments");
-		expect(row?.value).toBe("12.4 MB / 1.0 GB");
+		expect(row?.value).toBe("12.4 MB / 1.00 GB");
 	});
 
 	it("pairs searchable with stored so the gap is legible", () => {

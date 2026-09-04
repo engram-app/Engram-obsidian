@@ -45,14 +45,16 @@ function count(n: number): string {
 	return n.toLocaleString();
 }
 
-/** Bytes to a short human string. Mirrors the renderer's own `formatBytes`,
- *  duplicated rather than exported from it because that module cannot be
- *  imported into the unit suite (it pulls in Obsidian). */
+/** Bytes to a short human string. Must stay byte-identical to the renderer's
+ *  own `formatBytes`, since these rows sit in the same Stats grid as the local
+ *  counts and a GB shown to one decimal beside one shown to two reads as a
+ *  bug. Duplicated rather than imported because that module pulls in Obsidian
+ *  and cannot load in the unit suite. */
 export function formatBytesShort(bytes: number): string {
 	if (bytes < 1024) return `${bytes} B`;
 	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
 	if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-	return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+	return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
 /** Build one row, or null when there is nothing worth showing.

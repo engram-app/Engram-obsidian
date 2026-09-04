@@ -8,7 +8,7 @@ import { Notice, normalizePath, Setting } from "obsidian";
 import { type IssueDisposition, issueDisposition, remediation } from "./issue-store";
 import type EngramSyncPlugin from "./main";
 import type { QueuedReason } from "./offline-queue";
-import { planUsageRows, type UsageRow } from "./plan-usage";
+import { planUsageRows } from "./plan-usage";
 import { ACTION_ICONS } from "./sync-log-modal";
 import { plural } from "./sync-plan-format";
 import { planLoadErrorMessage, SyncPreviewModal } from "./sync-preview-modal";
@@ -52,13 +52,16 @@ export function renderSyncCenter(
 	parent.addClass("engram-sync-center");
 	renderHeader(parent, plugin);
 	renderActions(parent, plugin, refresh);
+	// Stats sits directly under the Sync / Refresh buttons: it now carries the
+	// plan rows, which are the thing a user opens this pane to check. The
+	// issue sections below are all empty on a healthy vault, so leaving Stats
+	// last buried the only always-present content behind a run of blank ones.
+	renderStats(parent, plugin);
 	renderPlanSkips(parent, plugin, refresh);
-	renderPlanUsage(parent, plugin);
 	renderNeedsAttention(parent, plugin, refresh);
 	renderRetrying(parent, plugin, refresh);
 	renderIgnored(parent, plugin, refresh);
 	renderActivity(parent, plugin, refresh);
-	renderStats(parent, plugin);
 }
 
 /** All current issues whose disposition is in `dispositions`, grouped by
@@ -212,81 +215,6 @@ function renderPlanSkips(parent: HTMLElement, plugin: EngramSyncPlugin, refresh:
 
 	for (const [category, list] of groups) {
 		renderPlanCard(body, plugin, refresh, category, list);
-	}
-}
-
-/** "Your plan" — caps and current usage, ALWAYS shown once we know the tier.
- *
- *  Replaces an earlier version that only appeared once the user was over the
- *  index cap. That was wrong for the same reason the cap itself is a problem:
- *  a Free user at 300 of 2,000 saw nothing at all, so the first thing they
- *  learned about the limit was a search quietly failing to find a note they
- *  had just written. Showing a healthy row is the whole point.
- *
- *  Caps come from the channel plan state, which the plugin already has.
- *  Usage needs `GET /api/billing/usage`, so the panel renders its rows
- *  synchronously and fills numbers in when the fetch lands. Advisory only:
- *  nothing here gates client behaviour, per the endpoint's own contract. */
-function renderPlanUsage(parent: HTMLElement, plugin: EngramSyncPlugin): void {
-	const tier = plugin.syncEngine?.getPlanState()?.tier;
-	// Plan state arrives on channel join, so it IS absent for a moment after
-	// load, and forever when signed out. No tier, no panel.
-	if (!tier) return;
-
-	const section = parent.createDiv({
-		cls: "engram-sync-center-section engram-sync-center-plan-usage-section",
-	});
-	sectionHeading(section, `Your plan: ${tier.charAt(0).toUpperCase()}${tier.slice(1)}`);
-	const body = section.createDiv({ cls: "engram-sync-center-section-body" });
-	const rowsEl = body.createDiv({ cls: "engram-sync-center-usage-rows" });
-	rowsEl.createEl("p", { cls: "engram-sync-center-card-hint", text: "Loading usage…" });
-
-	// `plugin.api`, not `syncEngine.api` — the latter is private to the engine.
-	const api = plugin.api;
-	if (!api?.getBillingUsage) {
-		rowsEl.empty();
-		return;
-	}
-
-	void api
-		.getBillingUsage()
-		.then((data) => {
-			rowsEl.empty();
-			const rows = planUsageRows(data);
-			if (rows.length === 0) return;
-			for (const row of rows) renderUsageRow(rowsEl, row);
-			if (tier === "free") {
-				const actions = rowsEl.createDiv({ cls: "engram-sync-center-card-actions" });
-				const upgrade = actions.createEl("button", { text: "Upgrade", cls: "mod-cta" });
-				upgrade.addEventListener("click", () => window.open(DEFAULT_UPGRADE_URL, "_blank"));
-			}
-		})
-		.catch(() => {
-			// Advisory panel: a failed usage read must never look like a sync
-			// problem. Say the numbers are unavailable and leave it at that.
-			rowsEl.empty();
-			rowsEl.createEl("p", {
-				cls: "engram-sync-center-card-hint",
-				text: "Plan usage is unavailable right now.",
-			});
-		});
-}
-
-function renderUsageRow(parent: HTMLElement, row: UsageRow): void {
-	const el = parent.createDiv({
-		cls: `engram-sync-center-usage-row${row.atLimit ? " is-at-limit" : ""}`,
-	});
-	const head = el.createDiv({ cls: "engram-sync-center-usage-head" });
-	head.createSpan({ cls: "engram-sync-center-usage-label", text: row.label });
-	head.createSpan({ cls: "engram-sync-center-usage-value", text: row.value });
-
-	if (row.fraction !== null) {
-		const track = el.createDiv({ cls: "engram-sync-center-usage-track" });
-		const fill = track.createDiv({ cls: "engram-sync-center-usage-fill" });
-		fill.setAttribute("style", `width: ${Math.round(row.fraction * 100)}%`);
-	}
-	if (row.hint) {
-		el.createEl("p", { cls: "engram-sync-center-card-hint", text: row.hint });
 	}
 }
 
@@ -641,6 +569,14 @@ function renderStats(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 	sectionHeading(section, "Stats");
 
 	const body = section.createDiv({ cls: "engram-sync-center-section-body" });
+
+	// Plan rows first, in their OWN grid so the async fill cannot reorder or
+	// reflow the local facts below. Same `stats-grid` class, so label/value
+	// spacing and column layout are whatever Stats already does — this panel
+	// deliberately owns no formatting of its own.
+	const planGrid = body.createDiv({ cls: "engram-sync-center-stats-grid" });
+	renderPlanStats(body, planGrid, plugin);
+
 	const grid = body.createDiv({ cls: "engram-sync-center-stats-grid" });
 
 	const allFiles = plugin.app.vault.getFiles();
@@ -661,6 +597,50 @@ function renderStats(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 	addStat(grid, "Local attachments", String(attCount));
 	addStat(grid, "Vault", plugin.app.vault.getName());
 	addStat(grid, "Vault ID", vaultId ? String(vaultId) : "—");
+}
+
+/** Plan caps + current usage, folded into Stats.
+ *
+ *  Shown whenever the tier is known, NOT only when a cap is exceeded. A Free
+ *  user at 300 of 2,000 otherwise sees nothing, and first learns the limit
+ *  exists when a search quietly fails to find a note they just wrote.
+ *
+ *  Caps already reach the plugin on the channel join; usage does not, and it
+ *  moves with every note written, so it is fetched here. Advisory only, per
+ *  the endpoint's contract: nothing on the client gates on it. */
+function renderPlanStats(body: HTMLElement, grid: HTMLElement, plugin: EngramSyncPlugin): void {
+	// Plan state arrives over the channel, so it IS absent briefly after load
+	// and permanently when signed out. No tier, no rows, no fetch.
+	const tier = plugin.syncEngine?.getPlanState()?.tier;
+	if (!tier) return;
+
+	const api = plugin.api;
+	if (!api?.getBillingUsage) return;
+
+	void api
+		.getBillingUsage()
+		.then((data) => {
+			const rows = planUsageRows(data);
+			if (rows.length === 0) return;
+			for (const row of rows) addStat(grid, row.label, row.value);
+
+			// The hint only earns its line when the limit actually bites. Showing
+			// it at 300/2,000 is noise; showing it at 2,000/2,000 is the one
+			// moment the user needs to know WHICH notes fell out.
+			const pinched = rows.find((r) => r.atLimit && r.hint);
+			if (pinched?.hint) {
+				body.createEl("p", { cls: "engram-sync-center-card-hint", text: pinched.hint });
+			}
+			if (tier === "free") {
+				const actions = body.createDiv({ cls: "engram-sync-center-card-actions" });
+				const upgrade = actions.createEl("button", { text: "Upgrade", cls: "mod-cta" });
+				upgrade.addEventListener("click", () => window.open(DEFAULT_UPGRADE_URL, "_blank"));
+			}
+		})
+		.catch(() => {
+			// An advisory read failing must never look like a sync fault.
+			addStat(grid, "Plan usage", "unavailable");
+		});
 }
 
 function addStat(parent: HTMLElement, label: string, value: string): void {
