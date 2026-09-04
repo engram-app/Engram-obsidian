@@ -196,3 +196,53 @@ describe("resolveRemoteVaultName", () => {
 		expect(await p.resolveRemoteVaultName()).toBeNull();
 	});
 });
+
+describe("resolveRemoteVaultName caching", () => {
+	function counting(vaultId: string, name: string) {
+		const plugin = Object.create(EngramSyncPlugin.prototype) as any;
+		let calls = 0;
+		plugin.settings = { vaultId, remoteVaultName: name };
+		plugin.syncEngine = { getLastSync: () => "", resetForVaultChange: async () => {} };
+		plugin.savePluginData = async () => {};
+		plugin.api = {
+			setVaultId: () => {},
+			listVaults: async () => {
+				calls += 1;
+				return [{ id: vaultId, name }];
+			},
+		};
+		return { plugin, calls: () => calls };
+	}
+
+	test("verifies once per vault, not once per render", async () => {
+		// Both callers run on every render of their surface. Without the marker,
+		// flipping settings tabs issued a round-trip per flip to re-confirm a
+		// string that had not moved.
+		const { plugin, calls } = counting("v1", "Vault");
+		await plugin.resolveRemoteVaultName();
+		await plugin.resolveRemoteVaultName();
+		await plugin.resolveRemoteVaultName();
+		expect(calls()).toBe(1);
+	});
+
+	test("re-verifies after the vault actually changes", async () => {
+		const { plugin, calls } = counting("v1", "Vault");
+		await plugin.resolveRemoteVaultName();
+		await plugin.discardVaultScopedState("v2");
+		plugin.api.listVaults = async () => [{ id: "v2", name: "Second" }];
+		expect(await plugin.resolveRemoteVaultName()).toBe("Second");
+		expect(calls()).toBe(1); // the replaced stub served the second read
+	});
+
+	test("does not cache a failure for the session", async () => {
+		// An offline render must retry on the next one rather than pinning the
+		// last known name until restart.
+		const { plugin } = counting("v1", "Vault");
+		plugin.api.listVaults = async () => {
+			throw new Error("offline");
+		};
+		expect(await plugin.resolveRemoteVaultName()).toBe("Vault");
+		plugin.api.listVaults = async () => [{ id: "v1", name: "Renamed" }];
+		expect(await plugin.resolveRemoteVaultName()).toBe("Renamed");
+	});
+});

@@ -196,6 +196,9 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  instead of having to be inferred from logs. Null in production. */
 	promiseTracker: PromiseTracker | null = null;
 
+	/** The vaultId whose display name has been confirmed against the server this
+	 *  session. Cleared on every real vault change. See resolveRemoteVaultName. */
+	private verifiedVaultNameFor: string | null = null;
 	authProvider: AuthProvider | null = null;
 	syncEngine: SyncEngine = null!;
 	/** Path -> note_id sidecar, hydrated from data.json on load. Used by later
@@ -1942,7 +1945,11 @@ export default class EngramSyncPlugin extends Plugin {
 		// name on those would trade one wrong display for another.
 		const vaultChanged = this.settings.vaultId !== vaultId;
 		this.settings.vaultId = vaultId;
-		if (vaultChanged) this.settings.remoteVaultName = remoteVaultName;
+		if (vaultChanged) {
+			this.settings.remoteVaultName = remoteVaultName;
+			// Whatever was confirmed belonged to the OUTGOING vault.
+			this.verifiedVaultNameFor = null;
+		}
 		// EngramApi keeps its OWN copy and stamps it on every request. Setting it
 		// here rather than leaving it to a later `saveSettings` closes the window
 		// where the awaited reset below runs while requests still carry the
@@ -1970,6 +1977,14 @@ export default class EngramSyncPlugin extends Plugin {
 	async resolveRemoteVaultName(): Promise<string | null> {
 		const id = this.settings.vaultId;
 		if (!id) return null;
+		// Verify once per vault per session. Both callers run on every render of
+		// their surface, so without this, flipping settings tabs issued a
+		// listVaults round-trip per flip to re-confirm a string that had not
+		// moved. The staleness this reintroduces is narrow: a rename performed
+		// elsewhere while the plugin runs. The bug being fixed is caused by the
+		// vault CHANGING, and `discardVaultScopedState` clears the marker for
+		// exactly that.
+		if (this.verifiedVaultNameFor === id) return this.settings.remoteVaultName ?? null;
 		try {
 			const current = (await this.api.listVaults()).find((v) => v.id === id);
 			// The vault can change while that request is in flight (a device link
@@ -1977,6 +1992,9 @@ export default class EngramSyncPlugin extends Plugin {
 			// OUTGOING vault's name onto the incoming id — the same stale-name bug
 			// this method exists to fix, just with a narrower window.
 			if (this.settings.vaultId !== id) return this.settings.remoteVaultName ?? null;
+			// Marked only on a SUCCESSFUL read, so an offline render retries on the
+			// next one instead of caching a failure for the session.
+			this.verifiedVaultNameFor = id;
 			// Not found means deleted, or owned by a different account after a
 			// sign-in swap. Leave the stale name rather than blanking the row: the
 			// Change button is the recovery, and the picker labels that case.

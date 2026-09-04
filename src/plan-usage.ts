@@ -45,12 +45,15 @@ function count(n: number): string {
 	return n.toLocaleString();
 }
 
-/** Bytes to a short human string. Must stay byte-identical to the renderer's
- *  own `formatBytes`, since these rows sit in the same Stats grid as the local
- *  counts and a GB shown to one decimal beside one shown to two reads as a
- *  bug. Duplicated rather than imported because that module pulls in Obsidian
- *  and cannot load in the unit suite. */
-export function formatBytesShort(bytes: number): string {
+/** Bytes to a short human string. THE one implementation.
+ *
+ *  This lived here and in sync-center-render as byte-identical twins, on the
+ *  reasoning that the renderer pulls in Obsidian and cannot load in the unit
+ *  suite. That had the dependency backwards: this module imports nothing, so
+ *  the renderer imports IT. The two must not drift regardless — their outputs
+ *  sit in the same Stats grid, and a GB shown to one decimal beside one shown
+ *  to two reads as a bug. */
+export function formatBytes(bytes: number): string {
 	if (bytes < 1024) return `${bytes} B`;
 	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
 	if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
@@ -147,7 +150,7 @@ export function planUsageRows(
 		// panel whose whole job is showing headroom. It reads as a warning about
 		// nothing. The cap still refuses a second vault server-side, with copy
 		// that explains itself at the moment it matters.
-		buildRow("Attachments", u.attachment_bytes, formatBytesShort, { prefix: attachPrefix }),
+		buildRow("Attachments", u.attachment_bytes, formatBytes, { prefix: attachPrefix }),
 		// "AI searches: 20 per day", not "AI searches / day: 20". This row is the
 		// one that shows a CEILING with no usage beside it (the token bucket has
 		// no read-without-spend API), so a bare number under a label ending in
