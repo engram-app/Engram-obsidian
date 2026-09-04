@@ -112,20 +112,26 @@ function fakeApp(files: { path: string; content: string; tags?: string[] }[]) {
 	} as any;
 }
 
-describe("searchEngram keyword", () => {
+// These exercise the LOCAL matcher, which is now the offline fallback rather
+// than what "keyword" mode runs. `api: {}` has no `search`, so the server leg
+// throws and the fallback answers — deliberate, and asserted via `degraded`
+// below so the file cannot silently drift back into claiming these test the
+// keyword MODE. Server-mode coverage is in "searchEngram server modes".
+describe("searchEngram local fallback", () => {
 	it("ranks by fuzzy score and builds a highlighted snippet", async () => {
 		const app = fakeApp([
 			{ path: "a.md", content: "nothing relevant here" },
 			{ path: "b.md", content: "the omega story begins" },
 			{ path: "c.md", content: "omega up front" },
 		]);
-		const { results } = await searchEngram(
+		const { results, degraded } = await searchEngram(
 			"keyword",
 			"omega",
 			{ api: {} as any, app },
 			{ limit: 10 },
 			{ fuzzy: fakeFuzzy },
 		);
+		expect(degraded).toBe(true);
 		expect(results.map((r) => r.source_path)).toEqual(["c.md", "b.md"]);
 		expect(results[0].matchType).toBe("keyword");
 		expect(results[0].text.toLowerCase()).toContain("omega");
@@ -159,6 +165,79 @@ describe("searchEngram keyword", () => {
 			{ fuzzy: fakeFuzzy },
 		);
 		expect(results.map((r) => r.source_path)).toEqual(["b.md"]);
+	});
+});
+
+describe("searchEngram server modes", () => {
+	const app = fakeApp([{ path: "a.md", content: "omega alpha" }]);
+
+	/** Captures the `mode` argument the engine puts on the wire. */
+	function spyApi() {
+		const seen: (string | undefined)[] = [];
+		return {
+			seen,
+			api: {
+				search: async (
+					_q: string,
+					_l?: number,
+					_t?: string[],
+					_f?: string,
+					mode?: string,
+				) => {
+					seen.push(mode);
+					return { query: "omega", results: [] };
+				},
+			} as any,
+		};
+	}
+
+	it("sends the server's word for each mode, not the plugin's", async () => {
+		// The backend reads "keyword" | "vector" | "hybrid" and silently falls
+		// back to hybrid for anything else, so sending our own word "semantic"
+		// would run the WRONG search and still return 200. Nothing downstream
+		// could notice, which is why this is asserted on the wire value.
+		for (const [mode, wire] of [
+			["keyword", "keyword"],
+			["semantic", "vector"],
+			["hybrid", "hybrid"],
+		] as const) {
+			const { seen, api } = spyApi();
+			await searchEngram(mode, "omega", { api, app }, {}, { fuzzy: fakeFuzzy });
+			expect(seen).toEqual([wire]);
+		}
+	});
+
+	it("does not report degraded when the server answers", async () => {
+		const { api } = spyApi();
+		const { degraded } = await searchEngram(
+			"keyword",
+			"omega",
+			{ api, app },
+			{},
+			{ fuzzy: fakeFuzzy },
+		);
+		expect(degraded).toBe(false);
+	});
+
+	it("falls back to the local matcher when the server fails, on every mode", async () => {
+		// Previously only hybrid degraded; keyword and semantic threw outright,
+		// so an offline semantic search surfaced as an error rather than results.
+		const api = {
+			search: async () => {
+				throw new Error("offline");
+			},
+		} as any;
+		for (const mode of ["keyword", "semantic", "hybrid"] as const) {
+			const { results, degraded } = await searchEngram(
+				mode,
+				"omega",
+				{ api, app },
+				{},
+				{ fuzzy: fakeFuzzy },
+			);
+			expect(degraded).toBe(true);
+			expect(results.map((r) => r.source_path)).toEqual(["a.md"]);
+		}
 	});
 });
 

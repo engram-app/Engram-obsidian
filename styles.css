@@ -43,24 +43,59 @@
 	font-style: italic;
 }
 
-/* Divider + results are one section (no inner gap) so results butt flush against
-   the divider and rows clip exactly at the line — without coupling to the panel's
-   inter-control gap. */
+/* Results own a section of their own so the list can scroll independently of
+   the panel's inter-control gap. The section used to lead with an <hr>; the
+   rows carry their own borders, so the rule drew a boundary twice. */
 .engram-search-results-section {
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
 }
 
-.engram-search-results-divider {
-	margin: 0;
-	border: none;
-	border-top: 1px solid var(--background-modifier-border);
-}
-
 .engram-search-results {
 	max-height: 400px;
 	overflow-y: auto;
+}
+
+/* ── Search mode: a three-position segmented control ──────────────
+   Keyword / Semantic / Both. Buttons rather than a dropdown so the current
+   mode is readable without opening anything, and `flex: 1` so the three
+   unequal labels split the row evenly (same reasoning as .engram-tab). */
+.engram-search-mode {
+	display: flex;
+	gap: 2px;
+	padding: 2px;
+	border-radius: var(--radius-s);
+	background: var(--background-modifier-form-field);
+}
+
+.engram-search-mode-btn {
+	flex: 1 1 0;
+	padding: 4px 8px;
+	border: none;
+	border-radius: var(--radius-s);
+	background: none;
+	box-shadow: none;
+	color: var(--text-muted);
+	cursor: pointer;
+	font-size: var(--font-ui-smaller);
+}
+
+.engram-search-mode-btn:hover {
+	color: var(--text-normal);
+}
+
+.engram-search-mode-btn.is-active {
+	background: var(--background-primary);
+	color: var(--text-normal);
+	font-weight: var(--font-semibold);
+}
+
+/* The selected mode's one-line explanation. These three differ in what they
+   MATCH, not just how they rank, and the labels alone cannot carry that. */
+.engram-search-mode-hint {
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
 }
 
 .engram-search-result-item {

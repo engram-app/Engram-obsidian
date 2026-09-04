@@ -565,17 +565,31 @@ export class EngramApi {
 		return resp.json as DeleteResponse;
 	}
 
-	/** Semantic search across indexed notes. */
+	/** Search indexed notes.
+	 *
+	 *  `mode` is the server's wire vocabulary, NOT the plugin's: the backend
+	 *  reads "keyword" | "vector" | "hybrid" and silently falls back to hybrid
+	 *  for anything else (`parse_mode/1`). The plugin's own mode is called
+	 *  "semantic"; sending that word verbatim would quietly get hybrid instead,
+	 *  so the translation happens at the one call site in search-engine.ts. */
 	async search(
 		query: string,
 		limit?: number,
 		tags?: string[],
 		folder?: string,
+		mode?: "keyword" | "vector" | "hybrid",
 	): Promise<SearchResponse> {
-		const body: { query: string; limit?: number; tags?: string[]; folder?: string } = { query };
+		const body: {
+			query: string;
+			limit?: number;
+			tags?: string[];
+			folder?: string;
+			mode?: string;
+		} = { query };
 		if (limit !== undefined) body.limit = limit;
 		if (tags?.length) body.tags = tags;
 		if (folder) body.folder = folder;
+		if (mode) body.mode = mode;
 		const resp = await this.request("POST", "/search", body);
 		return resp.json as SearchResponse;
 	}

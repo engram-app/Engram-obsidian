@@ -3,7 +3,7 @@
  * Owns input, mode toggle, filters, results list, keyboard nav, highlight,
  * and open / jump-to-heading. UI-only — search logic lives in search-engine.ts.
  */
-import { getAllTags, Notice, prepareSimpleSearch, Setting, setIcon, type TFile } from "obsidian";
+import { getAllTags, Notice, prepareSimpleSearch, setIcon, type TFile } from "obsidian";
 import { FolderInputSuggest } from "./folder-suggest";
 import { matchStrengths, type SearchContext, searchEngram } from "./search-engine";
 import { buildSegments, queryTokenRanges } from "./search-highlight";
@@ -12,11 +12,30 @@ import type { SearchMode, UnifiedSearchResult } from "./types";
 
 const SEARCH_DEBOUNCE_MS = 550;
 
-// Hybrid (default) blends meaning + exact words; Semantic is meaning-only. No
-// standalone "keyword" mode: Obsidian core Search does pure keyword better, and
-// the keyword engine still powers Hybrid's fusion internally. The choice is a
-// single boolean toggle (hybrid on / off → semantic) styled like native search.
-const SELECTABLE_MODES: SearchMode[] = ["hybrid", "semantic"];
+// All three modes are selectable now. Keyword was withheld because the only
+// keyword implementation was a local fuzzy scan, which Obsidian core Search
+// genuinely does better. That argument died when keyword moved to the server:
+// the backend stems and scores with BM25, so it answers a question core Search
+// cannot.
+//
+// Order is deliberate: most literal first, widest last.
+const SELECTABLE_MODES: SearchMode[] = ["keyword", "semantic", "hybrid"];
+
+// Named for what the user is asking FOR, not for the retrieval technique.
+const MODE_LABEL: Record<SearchMode, string> = {
+	keyword: "Keyword",
+	semantic: "Semantic",
+	hybrid: "Both",
+};
+
+// Each hint names the one thing that mode does which the others do not, in the
+// user's terms. "BM25", "vector" and "RRF" are the right words for the code and
+// the wrong ones for a person deciding which button to press.
+const MODE_HINT: Record<SearchMode, string> = {
+	keyword: "Matches your words, including their other forms — 'run' finds 'running'.",
+	semantic: "Matches meaning. Finds notes that never use the words you typed.",
+	hybrid: "Both, plus this device's own index. The default, and the widest.",
+};
 
 export interface SearchPanelOpts {
 	defaultMode: SearchMode;
@@ -72,6 +91,10 @@ export class SearchPanel {
 	private tagChipsEl!: HTMLElement;
 	private resultsEl!: HTMLElement;
 	private filtersEl!: HTMLElement;
+	/** The segmented mode buttons, so a change can move `is-active` without
+	 *  re-rendering the panel (which would drop the query and focus). */
+	private modeBtns = new Map<SearchMode, HTMLElement>();
+	private modeHintEl?: HTMLElement;
 	private filterToggleEl!: HTMLElement;
 	private clearEl!: HTMLElement;
 	private filtersOpen = false;
@@ -132,16 +155,22 @@ export class SearchPanel {
 		//    (mirrors native's .search-params hidden behind the settings icon). Holds
 		//    the search-type toggle and the folder / tag filters.
 		this.filtersEl = parent.createDiv({ cls: "engram-search-filters is-hidden" });
-		new Setting(this.filtersEl)
-			.setName("Blend keyword + meaning")
-			.setDesc(
-				"Rank results by both exact words and semantic meaning. Off uses meaning only.",
-			)
-			.addToggle((t) =>
-				t
-					.setValue(this.mode === "hybrid")
-					.onChange((v) => this.setMode(v ? "hybrid" : "semantic")),
-			);
+		// Segmented control, not a dropdown: three mutually exclusive options
+		// where the current one should be readable without opening anything, and
+		// switching between them is the point of the control.
+		const modeRow = this.filtersEl.createDiv({ cls: "engram-search-mode" });
+		for (const m of SELECTABLE_MODES) {
+			const btn = modeRow.createEl("button", {
+				cls: "engram-search-mode-btn",
+				text: MODE_LABEL[m],
+			});
+			btn.setAttribute("aria-label", MODE_HINT[m]);
+			if (m === this.mode) btn.addClass("is-active");
+			btn.addEventListener("click", () => this.setMode(m));
+			this.modeBtns.set(m, btn);
+		}
+		this.modeHintEl = this.filtersEl.createDiv({ cls: "engram-search-mode-hint" });
+		this.modeHintEl.setText(MODE_HINT[this.mode]);
 		this.folderEl = this.filtersEl.createEl("input", {
 			type: "text",
 			placeholder: "Filter by folder…",
@@ -172,11 +201,10 @@ export class SearchPanel {
 			(tag) => this.addTag(tag),
 		);
 
-		// Divider + results live in one section so the results butt flush against
-		// the divider (rows clip exactly at the line as they scroll), independent of
-		// the panel's inter-control gap.
+		// No divider rule. Each result row already carries its own border and the
+		// list scrolls as its own block, so the line drew a boundary the layout
+		// had made twice over.
 		const resultsSection = parent.createDiv({ cls: "engram-search-results-section" });
-		resultsSection.createEl("hr", { cls: "engram-search-results-divider" });
 		this.resultsEl = resultsSection.createDiv({ cls: "engram-search-results" });
 		this.renderEmpty();
 
@@ -240,6 +268,8 @@ export class SearchPanel {
 	private setMode(mode: SearchMode): void {
 		if (mode === this.mode) return;
 		this.mode = mode;
+		for (const [m, btn] of this.modeBtns) btn.toggleClass("is-active", m === mode);
+		this.modeHintEl?.setText(MODE_HINT[mode]);
 		this.opts.onModeChange?.(mode);
 		void this.run();
 	}

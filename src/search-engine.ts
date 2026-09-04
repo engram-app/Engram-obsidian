@@ -98,15 +98,50 @@ function mapSemantic(results: SearchResult[], query: string): UnifiedSearchResul
 	}));
 }
 
-async function searchSemantic(
+/** Plugin mode -> the server's wire vocabulary.
+ *
+ *  "semantic" is our word; the backend calls it "vector" and treats any
+ *  unrecognised value as hybrid (`parse_mode/1`), so sending our word verbatim
+ *  would silently run the wrong search rather than fail. */
+const WIRE_MODE: Record<SearchMode, "keyword" | "vector" | "hybrid"> = {
+	keyword: "keyword",
+	semantic: "vector",
+	hybrid: "hybrid",
+};
+
+/** One server leg, in the requested mode. */
+async function searchServer(
+	mode: SearchMode,
 	query: string,
 	ctx: SearchContext,
 	opts: SearchOpts,
 ): Promise<UnifiedSearchResult[]> {
-	const resp = await ctx.api.search(query, opts.limit ?? DEFAULT_LIMIT, opts.tags, opts.folder);
+	const resp = await ctx.api.search(
+		query,
+		opts.limit ?? DEFAULT_LIMIT,
+		opts.tags,
+		opts.folder,
+		WIRE_MODE[mode],
+	);
 	return mapSemantic(resp.results, query);
 }
 
+/**
+ * Keyword and Semantic are pure server calls; Both fuses the server with the
+ * local vault.
+ *
+ * Keyword used to be Obsidian's fuzzy matcher over `getMarkdownFiles()`. The
+ * backend's keyword path stems and scores with BM25, so "run" finds "running"
+ * and the plugin now agrees with the web app and MCP for the same query.
+ *
+ * The local matcher is NOT retired, because it is the only thing that can see
+ * notes past `indexed_notes_cap` — on Free that is 8,000 of 10,000 notes, which
+ * are synced and openable but absent from the server index. Keeping it fused
+ * into Both means the widest mode really is the widest. It is also what makes
+ * every mode return something offline, and the only reason a per-result
+ * provenance pill is derivable at all: the server sends no per-leg scores, so
+ * only the side that did the fusion knows where a hit came from.
+ */
 export async function searchEngram(
 	mode: SearchMode,
 	query: string,
@@ -116,13 +151,18 @@ export async function searchEngram(
 ): Promise<SearchOutcome> {
 	if (!query.trim()) return { results: [], degraded: false };
 	const fuzzy = deps.fuzzy ?? prepareSimpleSearch;
-	if (mode === "semantic") {
-		return { results: await searchSemantic(query, ctx, opts), degraded: false };
+	if (mode === "hybrid") return searchHybrid(query, ctx, opts, fuzzy);
+	try {
+		return { results: await searchServer(mode, query, ctx, opts), degraded: false };
+	} catch (e) {
+		// Previously these two modes just threw, so an offline semantic search
+		// surfaced as a failure while hybrid quietly degraded. Same fallback for
+		// all three now.
+		// biome-ignore lint/suspicious/noConsole: error boundary
+		console.error(`Engram ${mode} search: server failed, using local keyword`, e);
+		const local = await searchLocalKeyword(query, ctx, opts, fuzzy);
+		return { results: local.slice(0, opts.limit ?? DEFAULT_LIMIT), degraded: true };
 	}
-	if (mode === "keyword") {
-		return { results: await searchKeyword(query, ctx, opts, fuzzy), degraded: false };
-	}
-	return searchHybrid(query, ctx, opts, fuzzy);
 }
 
 function basename(path: string): string {
@@ -149,7 +189,7 @@ function matchesTags(app: App, file: TFile, tags?: string[]): boolean {
 	return tags.every((t) => have.has(t.replace(/^#/, "")));
 }
 
-async function searchKeyword(
+async function searchLocalKeyword(
 	query: string,
 	ctx: SearchContext,
 	opts: SearchOpts,
@@ -267,8 +307,11 @@ async function searchHybrid(
 	// semantic leg a network round-trip — independent, so total latency is the
 	// slower of the two rather than their sum. The semantic promise is started
 	// here and awaited inside the try so a backend failure degrades gracefully.
-	const keywordPromise = searchKeyword(query, ctx, opts, fuzzy);
-	const semanticPromise = ctx.api.search(query, limit, opts.tags, opts.folder);
+	const keywordPromise = searchLocalKeyword(query, ctx, opts, fuzzy);
+	// mode=hybrid, not the default: the server fuses keyword+vector itself, and
+	// asking for vector-only here would have thrown away its BM25 leg on the one
+	// mode that is supposed to be the widest.
+	const semanticPromise = ctx.api.search(query, limit, opts.tags, opts.folder, "hybrid");
 	// Attach a handler now so a rejection while the keyword leg is still running
 	// isn't flagged as an unhandled rejection; the real handling is in the try below.
 	semanticPromise.catch(() => undefined);
