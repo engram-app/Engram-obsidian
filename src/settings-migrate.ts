@@ -34,13 +34,17 @@ export const RETIRED_SETTING_KEYS = [
 	// a stored override object would linger in data.json reading like a live
 	// setting for something that no longer exists.
 	"featureFlags",
+	// The first-run waitlist popup is gone: registration is open, so new users
+	// go straight to app.engram.page/sign-up. The flag only ever gated that
+	// modal, and a stored `true` would read like a live preference.
+	"waitlistPromptSeen",
 ] as const;
 
 /** Compile-time proof that nothing in the list above is still a live setting.
  *
  *  A runtime test can only check keys present in DEFAULT_SETTINGS, and several
- *  live fields are deliberately absent from it (`backendMode`, `vaultId`,
- *  `waitlistPromptSeen` — each says so in its own docstring). So retiring
+ *  live fields are deliberately absent from it (`backendMode`,
+ *  `inactiveBackend` — each says so in its own docstring). So retiring
  *  "backendMode" by fat-finger would pass every test and silently wipe every
  *  install's backend selection on the next load. This fails `tsc` instead. */
 type RetiredKeyIsNotLive =
