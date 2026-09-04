@@ -5,28 +5,17 @@
 import { ItemView, type WorkspaceLeaf } from "obsidian";
 import type { EngramApi } from "./api";
 import { SearchPanel } from "./search-ui";
-import type { SearchMode } from "./types";
 
 export const SEARCH_VIEW_TYPE = "engram-search-view";
 
 export class SearchView extends ItemView {
 	private api: EngramApi;
-	private defaultMode: SearchMode;
-	private onModeChange: (mode: SearchMode) => void;
 	private indexedNotesCap?: () => number | null;
 	private panel: SearchPanel | null = null;
 
-	constructor(
-		leaf: WorkspaceLeaf,
-		api: EngramApi,
-		defaultMode: SearchMode,
-		onModeChange: (mode: SearchMode) => void,
-		indexedNotesCap?: () => number | null,
-	) {
+	constructor(leaf: WorkspaceLeaf, api: EngramApi, indexedNotesCap?: () => number | null) {
 		super(leaf);
 		this.api = api;
-		this.defaultMode = defaultMode;
-		this.onModeChange = onModeChange;
 		this.indexedNotesCap = indexedNotesCap;
 	}
 
@@ -49,8 +38,6 @@ export class SearchView extends ItemView {
 			this.contentEl,
 			{ api: this.api, app: this.app },
 			{
-				defaultMode: this.defaultMode,
-				onModeChange: this.onModeChange,
 				indexedNotesCap: this.indexedNotesCap,
 			},
 		);

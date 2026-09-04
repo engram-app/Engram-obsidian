@@ -80,8 +80,6 @@ export interface EngramSyncSettings {
 	/** Last-known plan/limit state pushed by the backend over the WebSocket.
 	 *  Null until the first plan event is received (or older backend). */
 	planState?: PlanState | null;
-	/** Default mode for the search panel's toggle. */
-	searchDefaultMode: SearchMode;
 	/** Which backend is active. Optional so `migrateBackendMode` can detect a
 	 *  pre-migration install. Deliberately absent from DEFAULT_SETTINGS for that
 	 *  reason; always present after first load. */
@@ -120,7 +118,6 @@ export const DEFAULT_SETTINGS: EngramSyncSettings = {
 	vaultId: null,
 	clientId: "",
 	planState: null,
-	searchDefaultMode: "hybrid",
 };
 
 /** Structured reason a note's frontmatter failed to parse cleanly. Mirrors the

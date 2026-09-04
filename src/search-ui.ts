@@ -22,9 +22,19 @@ const SEARCH_DEBOUNCE_MS = 550;
 // should stay on. Reading left to right the row is also a spectrum — literal
 // words, then words plus meaning, then meaning alone — so the middle position
 // is the honest one for the mode that spans both ends, not just the prominent
-// one. (The default itself lives in `searchDefaultMode`, not here; this array
-// only decides the order and which modes are offered.)
+// one.
 export const SELECTABLE_MODES: SearchMode[] = ["keyword", "hybrid", "semantic"];
+
+/** Every panel opens here, every time.
+ *
+ *  Mode changes used to persist to a `searchDefaultMode` setting, so the picker
+ *  reopened wherever it was last left. That reads as the panel having silently
+ *  changed its own default: a user who tried Keyword once got keyword-flavoured
+ *  results days later with no memory of having chosen it, and the widest mode
+ *  is the right place to start a search from. The switch is one click away and
+ *  lasts as long as the panel is open, which is the lifetime that matches how
+ *  the choice is actually made. */
+export const DEFAULT_SEARCH_MODE: SearchMode = "hybrid";
 
 // Named for what the user is asking FOR, not for the retrieval technique.
 const MODE_LABEL: Record<SearchMode, string> = {
@@ -52,9 +62,6 @@ function modeHintText(mode: SearchMode): string {
 }
 
 export interface SearchPanelOpts {
-	defaultMode: SearchMode;
-	/** Persist a mode change (e.g. write to plugin settings). */
-	onModeChange?: (mode: SearchMode) => void;
 	/** Called after a result is opened (e.g. so the modal can close itself). */
 	onResultOpened?: () => void;
 	/** Current `indexed_notes_cap` from plan state, or null when uncapped.
@@ -127,16 +134,8 @@ export class SearchPanel {
 	constructor(parent: HTMLElement, ctx: SearchContext, opts: SearchPanelOpts) {
 		this.ctx = ctx;
 		this.opts = opts;
-		// Coerce a persisted mode that is no longer offered back to the default,
-		// so the picker always has exactly one active button. Deliberately the
-		// literal default and NOT `SELECTABLE_MODES[0]`: the array is ordered for
-		// reading (keyword, both, semantic), and its first entry is not the mode
-		// anyone should land on.
-		//
-		// `opts.defaultMode` is the user's LAST CHOICE, not a constant — every
-		// mode change is persisted to `searchDefaultMode` — so the picker opens
-		// where they left it rather than on the default each time.
-		this.mode = SELECTABLE_MODES.includes(opts.defaultMode) ? opts.defaultMode : "hybrid";
+		// Always the default, never a remembered choice — see DEFAULT_SEARCH_MODE.
+		this.mode = DEFAULT_SEARCH_MODE;
 		this.build(parent);
 	}
 
@@ -295,7 +294,6 @@ export class SearchPanel {
 		this.mode = mode;
 		for (const [m, btn] of this.modeBtns) btn.toggleClass("is-active", m === mode);
 		this.modeHintEl?.setText(modeHintText(mode));
-		this.opts.onModeChange?.(mode);
 		void this.run();
 	}
 

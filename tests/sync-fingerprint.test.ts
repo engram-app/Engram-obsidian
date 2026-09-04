@@ -70,7 +70,7 @@ describe("channelConnectionKey", () => {
 
 	test("unrelated setting change → SAME key (no needless rebuild)", () => {
 		expect(channelConnectionKey(base)).toBe(
-			channelConnectionKey(makeSettings({ ...base, searchDefaultMode: "semantic" })),
+			channelConnectionKey(makeSettings({ ...base, debounceMs: 999 })),
 		);
 	});
 });

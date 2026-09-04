@@ -1,6 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { capHintText, SELECTABLE_MODES, unsearchableCount } from "../src/search-ui";
-import { DEFAULT_SETTINGS } from "../src/types";
+import {
+	capHintText,
+	DEFAULT_SEARCH_MODE,
+	SELECTABLE_MODES,
+	unsearchableCount,
+} from "../src/search-ui";
 
 describe("unsearchableCount", () => {
 	it("counts the notes past the cap", () => {
@@ -47,16 +51,17 @@ describe("capHintText", () => {
 
 describe("search mode picker", () => {
 	it("offers all three modes with Both in the middle", () => {
-		// Both is the default (DEFAULT_SETTINGS.searchDefaultMode), and the row
-		// reads as a spectrum: literal words, words plus meaning, meaning alone.
+		// Both is the default, and the row reads as a spectrum: literal words,
+		// words plus meaning, meaning alone.
 		// The mode that spans both ends belongs between them, not at an edge.
 		expect(SELECTABLE_MODES).toEqual(["keyword", "hybrid", "semantic"]);
 	});
 
-	it("offers the default, so the picker always has an active button", () => {
-		// The panel coerces an unoffered persisted mode back to hybrid. If the
-		// default itself were ever dropped from this list, that coercion would
-		// silently fight the user's saved preference on every open.
-		expect(SELECTABLE_MODES).toContain(DEFAULT_SETTINGS.searchDefaultMode);
+	it("opens on Both, and offers it, so exactly one button is ever active", () => {
+		// Every panel starts here; the mode is deliberately NOT remembered
+		// between openings. If the default ever left the list, the picker would
+		// render with no active button at all.
+		expect(DEFAULT_SEARCH_MODE).toBe("hybrid");
+		expect(SELECTABLE_MODES).toContain(DEFAULT_SEARCH_MODE);
 	});
 });

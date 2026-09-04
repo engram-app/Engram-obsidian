@@ -197,12 +197,6 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  instead of having to be inferred from logs. Null in production. */
 	promiseTracker: PromiseTracker | null = null;
 
-	/** Persist the user's chosen search mode as the new default. Passed to the
-	 *  search view + modal so a mode switch in either surface sticks. */
-	private persistSearchMode = (mode: SearchMode): void => {
-		this.settings.searchDefaultMode = mode;
-		void this.saveSettings();
-	};
 	authProvider: AuthProvider | null = null;
 	syncEngine: SyncEngine = null!;
 	/** Path -> note_id sidecar, hydrated from data.json on load. Used by later
@@ -957,8 +951,6 @@ export default class EngramSyncPlugin extends Plugin {
 				new SearchView(
 					leaf,
 					this.api,
-					this.settings.searchDefaultMode,
-					this.persistSearchMode,
 					() => this.syncEngine?.getPlanState()?.indexedNotesCap ?? null,
 				),
 		);
@@ -970,8 +962,6 @@ export default class EngramSyncPlugin extends Plugin {
 				new SearchModal(
 					this.app,
 					this.api,
-					this.settings.searchDefaultMode,
-					this.persistSearchMode,
 					() => this.syncEngine?.getPlanState()?.indexedNotesCap ?? null,
 				).open();
 			},

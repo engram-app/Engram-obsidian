@@ -4,8 +4,11 @@ import type { SearchResponse } from "../src/types";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 describe("search settings", () => {
-	it("defaults searchDefaultMode to hybrid", () => {
-		expect(DEFAULT_SETTINGS.searchDefaultMode).toBe("hybrid");
+	it("no longer carries a persisted search mode", () => {
+		// Removed, not defaulted. The picker opens on DEFAULT_SEARCH_MODE every
+		// time; keeping a settings key nothing reads would be a trap for the next
+		// person wiring up a preferences UI.
+		expect("searchDefaultMode" in DEFAULT_SETTINGS).toBe(false);
 	});
 });
 

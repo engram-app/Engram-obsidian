@@ -26,7 +26,6 @@ const fullSettings = (override: Partial<EngramSyncSettings> = {}): EngramSyncSet
 	debounceMs: 2000,
 	diagnosticsEnabled: false,
 	remoteLogLevel: "info",
-	searchDefaultMode: "hybrid",
 	...override,
 });
 
