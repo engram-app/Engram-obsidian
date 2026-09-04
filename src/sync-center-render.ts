@@ -9,6 +9,11 @@ import { type IssueDisposition, issueDisposition, remediation } from "./issue-st
 import type EngramSyncPlugin from "./main";
 import type { QueuedReason } from "./offline-queue";
 import { unsearchableNotesText } from "./search-ui";
+
+/** ⚠️ DEMO BUILD ONLY (branch demo/indexed-notes-notice). NEVER MERGE.
+ *  Fixed numbers so both surfaces can be seen without a 2,000-note vault. */
+const DEMO_CAP = 2000;
+const DEMO_TOTAL = 4312;
 import { ACTION_ICONS } from "./sync-log-modal";
 import { plural } from "./sync-plan-format";
 import { planLoadErrorMessage, SyncPreviewModal } from "./sync-preview-modal";
@@ -230,10 +235,13 @@ function renderPlanSkips(parent: HTMLElement, plugin: EngramSyncPlugin, refresh:
  *
  *  Quiet at zero, like every other section here. */
 function renderSearchCap(parent: HTMLElement, plugin: EngramSyncPlugin): void {
-	const text = unsearchableNotesText(
-		plugin.syncEngine?.getPlanState()?.indexedNotesCap ?? null,
-		syncedNoteCount(plugin),
-	);
+	// ⚠️ DEMO BUILD — branch demo/indexed-notes-notice ONLY. NEVER MERGE.
+	// Hardcoded so the section renders on any vault, on any plan, without
+	// needing 2,000+ real notes. Real logic (the two lines below the override)
+	// lives on feat/indexed-notes-notice.
+	const text = unsearchableNotesText(DEMO_CAP, DEMO_TOTAL);
+	void plugin;
+	void syncedNoteCount;
 	if (text === null) return;
 
 	// Own class, not `renderPlanSkips`'s: it shares the calm plan styling but

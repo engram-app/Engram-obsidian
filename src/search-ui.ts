@@ -399,10 +399,8 @@ export class SearchPanel {
 	}
 
 	private renderCapHint(): void {
-		const text = capHintText(
-			this.opts.indexedNotesCap?.() ?? null,
-			this.ctx.app.vault?.getMarkdownFiles?.().length ?? 0,
-		);
+		// ⚠️ DEMO BUILD — branch demo/indexed-notes-notice ONLY. NEVER MERGE.
+		const text = capHintText(2000, 4312);
 		if (text === null) return;
 		this.resultsEl.createEl("p", { text, cls: "engram-search-cap-hint" });
 	}
