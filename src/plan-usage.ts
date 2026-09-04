@@ -148,7 +148,15 @@ export function planUsageRows(
 		// nothing. The cap still refuses a second vault server-side, with copy
 		// that explains itself at the moment it matters.
 		buildRow("Attachments", u.attachment_bytes, formatBytesShort, { prefix: attachPrefix }),
-		buildRow("AI searches / day", u.ai_searches, count),
+		// "AI searches: 20 per day", not "AI searches / day: 20". This row is the
+		// one that shows a CEILING with no usage beside it (the token bucket has
+		// no read-without-spend API), so a bare number under a label ending in
+		// "/ day" read as "you have run 20 today" — the opposite of what it is.
+		// The unit rides on the value, where the reader is already looking.
+		//
+		// Carried by `fmt` rather than a suffix option: `used` is nil by
+		// contract here, so the formatter is only ever applied to the cap.
+		buildRow("AI searches", u.ai_searches, (n) => `${count(n)} per day`),
 	];
 	return rows.filter((r): r is UsageRow => r !== null);
 }

@@ -169,6 +169,15 @@ describe("planUsageRows", () => {
 		);
 	});
 
+	it("puts the unit on the AI-search ceiling, not in its label", () => {
+		// The one row with a cap and no usage beside it. Under a label ending in
+		// "/ day", a bare "20" read as "you have run 20 today" — the inverse of
+		// what it means. The unit belongs where the reader is already looking.
+		const row = planUsageRows(free).find((r) => r.label === "AI searches");
+		expect(row?.value).toBe("20 per day");
+		expect(planUsageRows(free).map((r) => r.label)).not.toContain("AI searches / day");
+	});
+
 	it("skips rows the backend omitted instead of rendering blanks", () => {
 		const rows = planUsageRows({ tier: "free", usage: { notes: { used: 5, limit: 100 } } });
 		expect(rows.map((r) => r.label)).toEqual(["Notes stored"]);
