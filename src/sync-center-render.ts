@@ -603,7 +603,7 @@ function renderStats(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 	// Vault ID is gone. It is an API header and log identifier, never anything
 	// a user acts on, and it is still available where you would actually want
 	// to copy it: as the tooltip on the vault name in the Connection tab
-	// (`self-hosted-tab.ts` renderVaultName).
+	// (`connection-sections.ts` renderVaultName).
 	addStat(grid, "Notes on this device", String(noteCount));
 	addStat(grid, "Attachments on this device", String(attCount));
 	addStat(grid, "Remote vault", plugin.settings.remoteVaultName || "not linked");

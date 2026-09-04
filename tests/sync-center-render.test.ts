@@ -440,7 +440,8 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
 		await settle();
 
-		expect(allText(parent)).toContain("1,240 / unlimited");
+		// Bare count on an unlimited plan, no "/ unlimited" suffix.
+		expect(allText(parent)).toContain("1,240");
 		expect(findAllByCls(parent, "mod-cta").some((b) => b.text === "Upgrade")).toBe(false);
 	});
 

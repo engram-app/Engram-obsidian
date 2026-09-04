@@ -29,11 +29,23 @@ describe("buildRow", () => {
 		expect(buildRow("x", { used: 9000, limit: 2000 }, String)?.fraction).toBe(1);
 	});
 
-	it("shows usage against unlimited on a paid plan, with no meter", () => {
+	it("shows a bare count on an unlimited plan, with no meter", () => {
+		// Not "1240 / unlimited": a paid user has no limit to read against, and
+		// the word only draws the eye to a constraint that does not exist.
 		const row = buildRow("Notes stored", { used: 1240, limit: null }, String);
-		expect(row?.value).toBe("1240 / unlimited");
+		expect(row?.value).toBe("1240");
 		expect(row?.fraction).toBeNull();
 		expect(row?.atLimit).toBe(false);
+	});
+
+	it("drops a hideWhenUnlimited row on an unlimited plan", () => {
+		const opts = { hideWhenUnlimited: true };
+		expect(buildRow("Notes searchable", { used: 1240, limit: null }, String, opts)).toBeNull();
+		expect(buildRow("Notes searchable", { used: 1240, limit: -1 }, String, opts)).toBeNull();
+		// Still shown when there IS a cap to report.
+		expect(buildRow("Notes searchable", { used: 300, limit: 2000 }, String, opts)?.value).toBe(
+			"300 / 2000",
+		);
 	});
 
 	it("drops the row entirely when both usage and limit are unknown", () => {
@@ -99,6 +111,28 @@ describe("planUsageRows", () => {
 		const hint = planUsageRows(free)[0]?.hint ?? "";
 		expect(hint).toContain("still sync");
 		expect(hint).toContain("oldest");
+	});
+
+	it("hides searchable on paid, where it would just repeat stored", () => {
+		const pro = {
+			tier: "pro",
+			usage: {
+				notes: { used: 1240, limit: null },
+				indexed_notes: { used: 1240, limit: null },
+				attachment_bytes: { used: 5_000_000, limit: 53_687_091_200 },
+			},
+		};
+		const labels = planUsageRows(pro).map((r) => r.label);
+		expect(labels).not.toContain("Notes searchable");
+		expect(labels).toContain("Notes stored");
+	});
+
+	it("keeps the note limit visible on Free, which is the point of the row", () => {
+		const labels = planUsageRows(free).map((r) => r.label);
+		expect(labels).toContain("Notes searchable");
+		expect(planUsageRows(free).find((r) => r.label === "Notes stored")?.value).toBe(
+			"300 / 10,000",
+		);
 	});
 
 	it("skips rows the backend omitted instead of rendering blanks", () => {

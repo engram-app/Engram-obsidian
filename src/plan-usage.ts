@@ -57,23 +57,35 @@ export function formatBytesShort(bytes: number): string {
 	return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-/** Build one row, or null when there is nothing worth showing.
- *
- *  An unlimited limit still produces a row when we know the usage, because
- *  "1,240 notes, unlimited" is useful reassurance on a paid plan. It produces
- *  NOTHING when usage is also unknown, since "unlimited / unknown" is noise. */
+/** Per-row policy for what an unlimited plan should do with this row. */
+export interface RowOpts {
+	hint?: string;
+	/** Drop the row entirely when the limit is unlimited.
+	 *
+	 *  For rows whose only content IS the limit. "Notes searchable" on a paid
+	 *  plan is every note the user has, which the row directly below already
+	 *  says, so it would be a duplicate dressed up as a constraint. */
+	hideWhenUnlimited?: boolean;
+}
+
+/** Build one row, or null when there is nothing worth showing. */
 export function buildRow(
 	label: string,
 	entry: UsageEntry | undefined,
 	fmt: (n: number) => string,
-	hint?: string,
+	opts: RowOpts = {},
 ): UsageRow | null {
 	if (!entry) return null;
 	const { used, limit } = entry;
+	const { hint, hideWhenUnlimited } = opts;
 
 	if (isUnlimited(limit)) {
+		if (hideWhenUnlimited) return null;
+		// Bare count, not "1,240 / unlimited". A paid user has no limit to read
+		// against, and the word only draws the eye to a constraint that does
+		// not exist.
 		if (used === null) return null;
-		return { label, value: `${fmt(used)} / unlimited`, fraction: null, atLimit: false, hint };
+		return { label, value: fmt(used), fraction: null, atLimit: false, hint };
 	}
 
 	const cap = limit as number;
@@ -106,12 +118,13 @@ export function buildRow(
 export function planUsageRows(data: BillingUsage): UsageRow[] {
 	const u = data.usage ?? {};
 	const rows = [
-		buildRow(
-			"Notes searchable",
-			u.indexed_notes,
-			count,
-			"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.",
-		),
+		// Hidden on paid: with no index cap, "searchable" equals "stored", and the
+		// row below already says that. Shown on Free because it is the limit that
+		// binds first and the only one that refuses nothing.
+		buildRow("Notes searchable", u.indexed_notes, count, {
+			hideWhenUnlimited: true,
+			hint: "Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.",
+		}),
 		buildRow("Notes stored", u.notes, count),
 		buildRow("Vaults", u.vaults, count),
 		buildRow("Attachments", u.attachment_bytes, formatBytesShort),
