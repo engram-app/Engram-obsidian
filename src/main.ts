@@ -1965,6 +1965,38 @@ export default class EngramSyncPlugin extends Plugin {
 		this.crdtWiring?.clearStrandHealAttempts();
 	}
 
+	/** Re-read the active vault's name from the server, correcting a stale one.
+	 *  Resolves to the name now on screen, or null if there is nothing to show.
+	 *
+	 *  `remoteVaultName` is a cache of server state with no invalidation. It is
+	 *  written by whichever caller happened to know the name, and the auth paths
+	 *  deliberately do not — they carry an id only — so the cache can only ever
+	 *  be wrong in the direction of "the vault you were on before". Two surfaces
+	 *  render it (the Connection tab row, the Sync Center stat) and both used to
+	 *  trust it forever. This is the invalidation, owned here because the
+	 *  settings are.
+	 *
+	 *  Silent on failure: a vault name is cosmetic, and keeping the last known
+	 *  one on an offline render beats putting an error where a name goes. */
+	async resolveRemoteVaultName(): Promise<string | null> {
+		const id = this.settings.vaultId;
+		if (!id) return null;
+		try {
+			const current = (await this.api.listVaults()).find((v) => v.id === id);
+			// Not found means deleted, or owned by a different account after a
+			// sign-in swap. Leave the stale name rather than blanking the row: the
+			// Change button is the recovery, and the picker labels that case.
+			if (!current || current.name === this.settings.remoteVaultName) {
+				return this.settings.remoteVaultName ?? null;
+			}
+			this.settings.remoteVaultName = current.name;
+			await this.saveSettings();
+			return current.name;
+		} catch {
+			return this.settings.remoteVaultName ?? null;
+		}
+	}
+
 	async saveOAuthTokens(refreshToken: string, vaultId: string, userEmail: string): Promise<void> {
 		// #283: mark the identity swap so an in-flight catch-up manifest fetch
 		// straddling this call refuses its destructive delete-reconcile (a stale

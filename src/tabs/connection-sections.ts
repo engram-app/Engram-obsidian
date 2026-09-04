@@ -365,10 +365,23 @@ export function renderVaultSection(ctx: TabContext): void {
 	const storedName = plugin.settings.remoteVaultName;
 
 	// Render locked-in UI immediately from saved state — avoids a "Loading
-	// vaults..." flicker every time the user opens settings. The Change
-	// button fetches a fresh list on demand.
+	// vaults..." flicker every time the user opens settings.
+	//
+	// Then verify it in the background. This used to `return` here, so a stored
+	// name was trusted forever: the self-heal further down lives in the fetch
+	// path, which this branch skipped entirely. Any vault change that did not
+	// carry a name (the auth paths pass an id only, by design) left the previous
+	// vault's name on screen permanently — "set once and never again", and the
+	// stale label then propagated to the Sync Center and the sync preview.
+	//
+	// Verify, do not gate: the saved name still paints first, so this costs a
+	// flicker-free correction rather than a loading state, and an offline render
+	// simply keeps showing the last known name.
 	if (currentId && storedName) {
 		renderLockedVaultRow(setting, plugin, currentId, storedName);
+		void plugin.resolveRemoteVaultName().then((name) => {
+			if (name && name !== storedName) redisplay();
+		});
 		return;
 	}
 

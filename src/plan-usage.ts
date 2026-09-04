@@ -126,7 +126,11 @@ export function planUsageRows(data: BillingUsage): UsageRow[] {
 			hint: "Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.",
 		}),
 		buildRow("Notes stored", u.notes, count),
-		buildRow("Vaults", u.vaults, count),
+		// No Vaults row. On Free it is permanently "1 / 1" — a meter pinned at
+		// full for a limit the user is not near and cannot act on, sitting in a
+		// panel whose whole job is showing headroom. It reads as a warning about
+		// nothing. The cap still refuses a second vault server-side, with copy
+		// that explains itself at the moment it matters.
 		buildRow("Attachments", u.attachment_bytes, formatBytesShort),
 		buildRow("AI searches / day", u.ai_searches, count),
 	];

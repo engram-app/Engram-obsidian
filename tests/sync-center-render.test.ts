@@ -106,6 +106,13 @@ function makeIssue(overrides: Partial<SyncIssue> = {}): SyncIssue {
 }
 
 function makeMockPlugin(issues: SyncIssue[], planState?: unknown): any {
+	// Hoisted so `resolveRemoteVaultName` below reads the SAME object the tests
+	// mutate. Returning a fixed name instead would overwrite whatever a test
+	// set, which is exactly the bug the resolve exists to fix.
+	const settings: { vaultId: string; remoteVaultName?: string } = {
+		vaultId: "1",
+		remoteVaultName: "Vault",
+	};
 	return {
 		// `getMarkdownFiles` is what the search-cap section counts. The real
 		// vault has it; omitting it here meant the mock diverged from the
@@ -113,7 +120,11 @@ function makeMockPlugin(issues: SyncIssue[], planState?: unknown): any {
 		app: {
 			vault: { getFiles: () => [], getMarkdownFiles: () => [], getName: () => "Vault" },
 		},
-		settings: { vaultId: "1", remoteVaultName: "Vault" },
+		settings,
+		// The Remote vault stat paints the cached name, then asks the server to
+		// confirm it. Agreeing with the cache is the no-drift case; a test that
+		// wants the correction overrides this.
+		resolveRemoteVaultName: () => Promise.resolve(settings.remoteVaultName ?? null),
 		syncEngine: {
 			// Real engine has this (see main.ts, where it feeds the search panel's
 			// cap hint). Defaults to null, which is the genuine pre-join state:
@@ -406,6 +417,33 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		// An API/log identifier, never a thing a user acts on. Still reachable
 		// as the tooltip on the vault name in the Connection tab.
 		expect(labels).not.toContain("Vault ID");
+		expect(allText(parent)).toContain("Engram Prod");
+	});
+
+	test("corrects a stale cached vault name from the server", async () => {
+		// The reported bug: re-point at a different vault and the panel keeps
+		// showing the old name forever. `remoteVaultName` is a cache with no
+		// invalidation, and the auth paths change vaults without setting it, so
+		// reading the cache alone can only ever be wrong in one direction.
+		const plugin = withPlan("free");
+		plugin.settings.remoteVaultName = "Old Vault";
+		plugin.resolveRemoteVaultName = () => Promise.resolve("New Vault");
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		await settle();
+
+		expect(allText(parent)).toContain("New Vault");
+		expect(allText(parent)).not.toContain("Old Vault");
+	});
+
+	test("keeps showing the cached name when the server cannot be reached", async () => {
+		// Cosmetic data. An offline render showing the last known name beats one
+		// showing an error, or a blank, where a name goes.
+		const plugin = withPlan("free");
+		plugin.settings.remoteVaultName = "Engram Prod";
+		plugin.resolveRemoteVaultName = () => Promise.resolve("Engram Prod");
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		await settle();
+
 		expect(allText(parent)).toContain("Engram Prod");
 	});
 

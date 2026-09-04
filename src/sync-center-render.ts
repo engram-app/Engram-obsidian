@@ -180,6 +180,18 @@ function renderActions(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: (
 	});
 
 	makeActionButton(strip, "Refresh", () => refresh());
+
+	// Free only, and read straight off the channel-supplied plan state rather
+	// than the usage fetch, so it renders with the strip instead of arriving
+	// later at the bottom of a card. `mod-cta` marks it as the one action here
+	// that is not a sync operation.
+	if (plugin.syncEngine?.getPlanState()?.tier === "free") {
+		const upgrade = strip.createEl("button", {
+			text: "Upgrade",
+			cls: "engram-sync-center-action-btn mod-cta",
+		});
+		upgrade.addEventListener("click", () => window.open(DEFAULT_UPGRADE_URL, "_blank"));
+	}
 }
 
 function makeActionButton(
@@ -606,7 +618,14 @@ function renderStats(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 	// (`connection-sections.ts` renderVaultName).
 	addStat(grid, "Notes on this device", String(noteCount));
 	addStat(grid, "Attachments on this device", String(attCount));
-	addStat(grid, "Remote vault", plugin.settings.remoteVaultName || "not linked");
+	// Paint the cached name, then let the server correct it. The cache has no
+	// invalidation of its own and the auth paths change vaults without ever
+	// setting it, so reading it alone showed the PREVIOUS vault's name after a
+	// re-point, indefinitely.
+	const vaultEl = addStat(grid, "Remote vault", plugin.settings.remoteVaultName || "not linked");
+	void plugin.resolveRemoteVaultName().then((name) => {
+		vaultEl.setText(name || "not linked");
+	});
 }
 
 /** Plan caps + current usage, folded into Stats.
@@ -641,11 +660,11 @@ function renderPlanStats(body: HTMLElement, grid: HTMLElement, plugin: EngramSyn
 			if (pinched?.hint) {
 				body.createEl("p", { cls: "engram-sync-center-card-hint", text: pinched.hint });
 			}
-			if (tier === "free") {
-				const actions = body.createDiv({ cls: "engram-sync-center-card-actions" });
-				const upgrade = actions.createEl("button", { text: "Upgrade", cls: "mod-cta" });
-				upgrade.addEventListener("click", () => window.open(DEFAULT_UPGRADE_URL, "_blank"));
-			}
+			// No Upgrade button here. It used to be appended to the bottom of this
+			// card, after an async fetch, so it arrived late and landed wherever
+			// the usage rows happened to end — a CTA that moved with the data it
+			// followed. It lives in the action strip now, beside Sync and
+			// Refresh: rendered synchronously, always in the same place.
 		})
 		.catch(() => {
 			// An advisory read failing must never look like a sync fault.
@@ -653,10 +672,12 @@ function renderPlanStats(body: HTMLElement, grid: HTMLElement, plugin: EngramSyn
 		});
 }
 
-function addStat(parent: HTMLElement, label: string, value: string): void {
+/** Returns the value element so a caller can correct it once a slower source
+ *  answers, rather than re-rendering the whole panel. */
+function addStat(parent: HTMLElement, label: string, value: string): HTMLElement {
 	const item = parent.createDiv({ cls: "engram-sync-center-stat" });
 	item.createDiv({ cls: "engram-sync-center-stat-label", text: label });
-	item.createDiv({ cls: "engram-sync-center-stat-value", text: value });
+	return item.createDiv({ cls: "engram-sync-center-stat-value", text: value });
 }
 
 function formatBytes(bytes: number): string {
