@@ -388,7 +388,33 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		// is what gives them the separator and spacing Stats already has.
 		const labels = findAllByCls(parent, "engram-sync-center-stat-label").map((e) => e.text);
 		expect(labels).toContain("Notes searchable");
-		expect(labels).toContain("Local notes");
+		expect(labels).toContain("Notes on this device");
+	});
+
+	test("says which system each number describes", async () => {
+		// The account rows and the device rows legitimately disagree (ignored
+		// files, anything not yet pushed). A bare "Vault" or "Local notes" left
+		// the user no way to tell that is expected rather than a sync fault.
+		const plugin = withPlan("free");
+		plugin.settings.remoteVaultName = "Engram Prod";
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		await settle();
+
+		const labels = findAllByCls(parent, "engram-sync-center-stat-label").map((e) => e.text);
+		expect(labels).toContain("Attachments on this device");
+		expect(labels).toContain("Remote vault");
+		// An API/log identifier, never a thing a user acts on. Still reachable
+		// as the tooltip on the vault name in the Connection tab.
+		expect(labels).not.toContain("Vault ID");
+		expect(allText(parent)).toContain("Engram Prod");
+	});
+
+	test("says 'not linked' rather than blank when there is no remote vault", async () => {
+		const plugin = withPlan("free");
+		plugin.settings.remoteVaultName = undefined;
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		await settle();
+		expect(allText(parent)).toContain("not linked");
 	});
 
 	test("says nothing at all before plan state arrives", () => {

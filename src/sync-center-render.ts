@@ -589,14 +589,24 @@ function renderStats(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 		else noteCount++;
 	}
 
-	const vaultId = plugin.settings.vaultId;
-
-	// Static facts only. Live counters (last sync, socket, queue, issues,
-	// ignored) are already on the status strip and in their own sections.
-	addStat(grid, "Local notes", String(noteCount));
-	addStat(grid, "Local attachments", String(attCount));
-	addStat(grid, "Vault", plugin.app.vault.getName());
-	addStat(grid, "Vault ID", vaultId ? String(vaultId) : "—");
+	// Every label says WHICH SYSTEM it describes. The plan rows above are the
+	// server's numbers; these are this device's. They legitimately disagree —
+	// ignored files, anything not yet pushed — and without saying so, a user
+	// seeing "300" above and "297" below has no way to tell that is expected.
+	//
+	// The remote vault NAME, not the local one. `app.vault.getName()` is the
+	// Obsidian folder on disk, which is the one fact here that has nothing to
+	// do with the account the rest of the panel describes. The two are often
+	// different and the remote name is what everything above is counted
+	// against.
+	//
+	// Vault ID is gone. It is an API header and log identifier, never anything
+	// a user acts on, and it is still available where you would actually want
+	// to copy it: as the tooltip on the vault name in the Connection tab
+	// (`self-hosted-tab.ts` renderVaultName).
+	addStat(grid, "Notes on this device", String(noteCount));
+	addStat(grid, "Attachments on this device", String(attCount));
+	addStat(grid, "Remote vault", plugin.settings.remoteVaultName || "not linked");
 }
 
 /** Plan caps + current usage, folded into Stats.

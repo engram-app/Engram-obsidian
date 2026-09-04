@@ -80,8 +80,10 @@ export function buildRow(
 	// `ai_searches.used` is deliberately null on the wire: the counter is a
 	// token bucket with no read-without-spend API, so asking how much is left
 	// would consume some. Show the cap alone rather than inventing a number.
+	// Bare, not "20 max": the label carries the unit, and "max" beside four
+	// "used / limit" rows reads as a different kind of number than it is.
 	if (used === null) {
-		return { label, value: `${fmt(cap)} max`, fraction: null, atLimit: false, hint };
+		return { label, value: fmt(cap), fraction: null, atLimit: false, hint };
 	}
 
 	return {
@@ -113,7 +115,7 @@ export function planUsageRows(data: BillingUsage): UsageRow[] {
 		buildRow("Notes stored", u.notes, count),
 		buildRow("Vaults", u.vaults, count),
 		buildRow("Attachments", u.attachment_bytes, formatBytesShort),
-		buildRow("AI searches per day", u.ai_searches, count),
+		buildRow("AI searches / day", u.ai_searches, count),
 	];
 	return rows.filter((r): r is UsageRow => r !== null);
 }

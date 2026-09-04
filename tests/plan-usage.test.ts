@@ -44,8 +44,10 @@ describe("buildRow", () => {
 	it("shows the cap alone when usage is unknowable", () => {
 		// `ai_searches.used` is null by design: the counter is a token bucket
 		// with no read-without-spend API, so reading it would consume budget.
-		const row = buildRow("AI searches per day", { used: null, limit: 20 }, String);
-		expect(row?.value).toBe("20 max");
+		// Bare, not "20 max": the label carries the unit, and "max" beside four
+		// "used / limit" rows reads as a different kind of number than it is.
+		const row = buildRow("AI searches / day", { used: null, limit: 20 }, String);
+		expect(row?.value).toBe("20");
 		expect(row?.fraction).toBeNull();
 	});
 
