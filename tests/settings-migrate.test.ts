@@ -69,6 +69,7 @@ describe("stripRetiredSettings", () => {
 			"tracingEnabled",
 			"enableCrdt",
 			"featureFlags",
+			"waitlistPromptSeen",
 		]);
 	});
 

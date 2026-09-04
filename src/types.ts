@@ -82,9 +82,6 @@ export interface EngramSyncSettings {
 	planState?: PlanState | null;
 	/** Default mode for the search panel's toggle. */
 	searchDefaultMode: SearchMode;
-	/** True once the first-run waitlist popup has been shown (submitted OR
-	 *  dismissed). Set once, never re-shown. */
-	waitlistPromptSeen?: boolean;
 	/** Which backend is active. Optional so `migrateBackendMode` can detect a
 	 *  pre-migration install. Deliberately absent from DEFAULT_SETTINGS for that
 	 *  reason; always present after first load. */
@@ -124,7 +121,6 @@ export const DEFAULT_SETTINGS: EngramSyncSettings = {
 	clientId: "",
 	planState: null,
 	searchDefaultMode: "hybrid",
-	waitlistPromptSeen: false,
 };
 
 /** Structured reason a note's frontmatter failed to parse cleanly. Mirrors the

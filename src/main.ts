@@ -48,7 +48,6 @@ declare const DEV_MODE: boolean;
 
 import { sha256Hex } from "./content-hash";
 import { registerDiagnostics } from "./diagnostics";
-import { EmailCaptureModal } from "./email-capture-modal";
 import { errMsg, isHttpStatus } from "./error-util";
 import { ExplicitFolders } from "./explicit-folders";
 import { isPlanJoinReason } from "./limit-copy";
@@ -84,7 +83,6 @@ import {
 	type SyncStatus,
 } from "./types";
 import { checkForPluginUpdate } from "./update-check";
-import { shouldShowWaitlistPrompt } from "./waitlist";
 
 /** Generate a stable client ID for vault registration.
  *  Uses SHA-256 of the vault's absolute path (desktop) or name (mobile fallback). */
@@ -490,20 +488,6 @@ export default class EngramSyncPlugin extends Plugin {
 		rlog().info("lifecycle", `onload start — v${this.manifest.version}`);
 		activeDocument.body.classList.add("engram-vault-sync-active");
 		await this.loadSettings();
-
-		// First-run waitlist popup. Engram is in active development; this sets
-		// honest expectations and captures an email for launch news. Shown once
-		// (submit OR dismiss → flag), then never again. onLayoutReady so the
-		// workspace exists before we open a modal. saveSettings persists the
-		// flag; on a first run with no auth it has no sync side effects.
-		if (shouldShowWaitlistPrompt(this.settings)) {
-			this.app.workspace.onLayoutReady(() => {
-				new EmailCaptureModal(this.app, () => {
-					this.settings.waitlistPromptSeen = true;
-					void this.saveSettings();
-				}).open();
-			});
-		}
 
 		// Store users get a silent "update available" badge in Settings; users who
 		// don't enable auto-update never see it. Nudge them once per launch with a

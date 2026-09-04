@@ -191,7 +191,7 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
  *  No marketing link on the heading any more. It hung there rather than on the
  *  sign-in row precisely because the two locked states return early, so the
  *  heading was the only place a SIGNED-IN user could still see it — and the
- *  Welcome tab's engram.page link is inside "1. Make an account" setup copy,
+ *  Welcome tab's sign-up link is inside "1. Make an account" setup copy,
  *  which is not a route to billing. The signed-in row carries its own
  *  "Manage account" button instead, which is both more specific and visible to
  *  the people who actually need it. */
