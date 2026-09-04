@@ -12,6 +12,7 @@ import { renderConnectionTab } from "./tabs/connection-tab";
 import { pickInitialTab } from "./tabs/start-tab";
 import { renderSyncCenterTab } from "./tabs/sync-center-tab";
 import type { TabContext } from "./tabs/types";
+import { DEFAULT_UPGRADE_URL } from "./tabs/urls";
 import type { SyncProgress } from "./types";
 
 /** Build the settings pane's progress-bar render callback. Extracted
@@ -125,7 +126,10 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 		return [
 			{
 				name: "Engram Sync",
-				desc: "Cloud and self-hosted sync, connection, and advanced settings.",
+				// No description. Obsidian renders the plugin name directly above
+				// our own tab bar, which names all four destinations; a sentence
+				// listing them again in between was pure restatement.
+				desc: "",
 				render: (setting: Setting) => {
 					// Host the full UI in the row element Obsidian hands us
 					// (setting.settingEl — a plain HTMLElement, no version gate).
@@ -340,6 +344,22 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 
 		statusEl.createSpan({ cls: `engram-status-dot ${dotState}` });
 		statusEl.createSpan({ text: label });
+
+		// Upgrade lives HERE, in the status strip, because this strip is the one
+		// piece of chrome that persists across all four tabs. It was previously
+		// inside the Sync Center's usage card, which meant the only route to it
+		// was to already be looking at the panel that reports your limits — the
+		// people who most need it are the ones who never opened that tab.
+		//
+		// Free only, off the channel-supplied plan state, which is also why it
+		// is absent for a beat after load and while signed out: no tier, no CTA.
+		if (this.plugin.syncEngine?.getPlanState()?.tier === "free") {
+			const upgrade = statusEl.createEl("button", {
+				cls: "engram-status-upgrade-btn mod-cta",
+				text: "Upgrade",
+			});
+			upgrade.addEventListener("click", () => window.open(DEFAULT_UPGRADE_URL, "_blank"));
+		}
 
 		if (dotState === "is-waiting") {
 			const openBtn = statusEl.createEl("button", {

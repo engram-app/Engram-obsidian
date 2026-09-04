@@ -15,6 +15,8 @@ interface FakeEl {
 	text: string;
 	attrs: Record<string, string>;
 	children: FakeEl[];
+	/** The element this node was actually appended to. See `factory` below. */
+	owner?: FakeEl;
 }
 
 function makeFakeEl(tag: string, opts?: { cls?: string; text?: string }): FakeEl {
@@ -28,8 +30,13 @@ function makeFakeEl(tag: string, opts?: { cls?: string; text?: string }): FakeEl
 	const factory = (childTag: string) => (childOpts?: { cls?: string; text?: string }) => {
 		const child = makeFakeEl(childTag, childOpts);
 		el.children.push(child);
-		// Attach the same chainable API for further nesting.
-		Object.assign(child, methods(child));
+		// `makeFakeEl` already bound the chainable API to the child. Re-assigning
+		// the PARENT's methods here (as this used to) rebound every descendant's
+		// factory to this `el`, so the whole tree rendered flat: a stat's label
+		// landed as a SIBLING of its row rather than inside it. Nothing asserted
+		// on structure, so it went unnoticed until a row had to be removed and
+		// its label stayed behind.
+		child.owner = el;
 		return child as unknown as HTMLElement;
 	};
 	const methods = (target: FakeEl) => ({
@@ -53,6 +60,12 @@ function makeFakeEl(tag: string, opts?: { cls?: string; text?: string }): FakeEl
 		},
 		empty: () => {
 			target.children.length = 0;
+		},
+		// The stats panel drops its local note row once the server confirms the
+		// same number, so the fake tree has to support detaching a node.
+		remove: () => {
+			const p = target.owner;
+			if (p) p.children.splice(p.children.indexOf(target), 1);
 		},
 	});
 	Object.assign(el, methods(el));
@@ -463,11 +476,42 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		expect(allText(parent)).not.toContain("Notes searchable");
 	});
 
-	test("offers Upgrade on Free", async () => {
+	test("leaves the Upgrade CTA to the settings status bar", async () => {
+		// Moved out of this panel deliberately. The status strip persists across
+		// all four tabs, so the CTA no longer requires already being on the tab
+		// that reports your limits. Coverage lives in settings-upgrade-cta.test.
 		const plugin = withPlan("free");
 		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
 		await settle();
-		expect(findAllByCls(parent, "mod-cta").some((b) => b.text === "Upgrade")).toBe(true);
+		expect(findAllByCls(parent, "mod-cta").some((b) => b.text === "Upgrade")).toBe(false);
+	});
+
+	test("drops the local note count once the server agrees with it", async () => {
+		// Was the third row reading the same number as "Notes searchable" and
+		// "Notes stored". It only carries information when it DISAGREES.
+		const plugin = withPlan("free", {
+			tier: "free",
+			usage: { notes: { used: 0, limit: 10000 }, indexed_notes: { used: 0, limit: 2000 } },
+		});
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		await settle();
+
+		const labels = findAllByCls(parent, "engram-sync-center-stat-label").map((e) => e.text);
+		expect(labels).not.toContain("Notes on this device");
+		expect(labels).toContain("Notes stored");
+	});
+
+	test("keeps the local note count when it disagrees with the server", async () => {
+		// The disagreement is the signal: something local is not yet pushed.
+		const plugin = withPlan("free", {
+			tier: "free",
+			usage: { notes: { used: 297, limit: 10000 } },
+		});
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		await settle();
+
+		const labels = findAllByCls(parent, "engram-sync-center-stat-label").map((e) => e.text);
+		expect(labels).toContain("Notes on this device");
 	});
 
 	test("does not push Upgrade at someone who already pays", async () => {
@@ -480,7 +524,6 @@ describe("renderSyncCenter — Needs attention cards", () => {
 
 		// Bare count on an unlimited plan, no "/ unlimited" suffix.
 		expect(allText(parent)).toContain("1,240");
-		expect(findAllByCls(parent, "mod-cta").some((b) => b.text === "Upgrade")).toBe(false);
 	});
 
 	test("a failed usage read does not masquerade as a sync problem", async () => {
