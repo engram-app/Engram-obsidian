@@ -8,7 +8,7 @@ import { Notice, normalizePath, Setting } from "obsidian";
 import { type IssueDisposition, issueDisposition, remediation } from "./issue-store";
 import type EngramSyncPlugin from "./main";
 import type { QueuedReason } from "./offline-queue";
-import { unsearchableNotesText } from "./search-ui";
+import { planUsageRows, type UsageRow } from "./plan-usage";
 import { ACTION_ICONS } from "./sync-log-modal";
 import { plural } from "./sync-plan-format";
 import { planLoadErrorMessage, SyncPreviewModal } from "./sync-preview-modal";
@@ -53,7 +53,7 @@ export function renderSyncCenter(
 	renderHeader(parent, plugin);
 	renderActions(parent, plugin, refresh);
 	renderPlanSkips(parent, plugin, refresh);
-	renderSearchCap(parent, plugin);
+	renderPlanUsage(parent, plugin);
 	renderNeedsAttention(parent, plugin, refresh);
 	renderRetrying(parent, plugin, refresh);
 	renderIgnored(parent, plugin, refresh);
@@ -215,64 +215,79 @@ function renderPlanSkips(parent: HTMLElement, plugin: EngramSyncPlugin, refresh:
 	}
 }
 
-/** "Not searchable on your plan" — notes that synced fine but fall outside
- *  `indexed_notes_cap`.
+/** "Your plan" — caps and current usage, ALWAYS shown once we know the tier.
  *
- *  Sibling of `renderPlanSkips` and deliberately separate from it: those files
- *  did not sync, these did. Conflating them would tell a user their notes are
- *  missing when they are on disk and syncing normally.
+ *  Replaces an earlier version that only appeared once the user was over the
+ *  index cap. That was wrong for the same reason the cap itself is a problem:
+ *  a Free user at 300 of 2,000 saw nothing at all, so the first thing they
+ *  learned about the limit was a search quietly failing to find a note they
+ *  had just written. Showing a healthy row is the whole point.
  *
- *  This is the ONE Free limit that refuses nothing. Notes past the cap sync,
- *  open, and edit exactly as before, they are simply absent from search
- *  results, so without a line like this the user's only signal is a search that
- *  cannot find something they know they wrote. Same fact the search panel shows
- *  inline; this is where someone who already suspects a problem comes looking.
- *
- *  Quiet at zero, like every other section here. */
-function renderSearchCap(parent: HTMLElement, plugin: EngramSyncPlugin): void {
-	const text = unsearchableNotesText(
-		plugin.syncEngine?.getPlanState()?.indexedNotesCap ?? null,
-		syncedNoteCount(plugin),
-	);
-	if (text === null) return;
+ *  Caps come from the channel plan state, which the plugin already has.
+ *  Usage needs `GET /api/billing/usage`, so the panel renders its rows
+ *  synchronously and fills numbers in when the fetch lands. Advisory only:
+ *  nothing here gates client behaviour, per the endpoint's own contract. */
+function renderPlanUsage(parent: HTMLElement, plugin: EngramSyncPlugin): void {
+	const tier = plugin.syncEngine?.getPlanState()?.tier;
+	// Plan state arrives on channel join, so it IS absent for a moment after
+	// load, and forever when signed out. No tier, no panel.
+	if (!tier) return;
 
-	// Own class, not `renderPlanSkips`'s: it shares the calm plan styling but
-	// must stay separately addressable, for CSS and so a test can tell the two
-	// sections apart.
 	const section = parent.createDiv({
-		cls: "engram-sync-center-section engram-sync-center-plan-section engram-sync-center-search-cap-section",
+		cls: "engram-sync-center-section engram-sync-center-plan-usage-section",
 	});
-	sectionHeading(section, "Not searchable on your plan");
-
+	sectionHeading(section, `Your plan: ${tier.charAt(0).toUpperCase()}${tier.slice(1)}`);
 	const body = section.createDiv({ cls: "engram-sync-center-section-body" });
-	body.createEl("p", { cls: "engram-sync-center-card-hint", text });
+	const rowsEl = body.createDiv({ cls: "engram-sync-center-usage-rows" });
+	rowsEl.createEl("p", { cls: "engram-sync-center-card-hint", text: "Loading usage…" });
 
-	// The copy says "Upgrade" and this is the moment the user is most likely to
-	// act on it, so give them the button. `renderPlanSkips` directly above ships
-	// one; prose telling someone to upgrade with no way to do it is the same
-	// dead end as the silent cap this section exists to fix.
-	const actions = body.createDiv({ cls: "engram-sync-center-card-actions" });
-	const upgrade = actions.createEl("button", { text: "Upgrade", cls: "mod-cta" });
-	upgrade.addEventListener("click", () => window.open(DEFAULT_UPGRADE_URL, "_blank"));
+	// `plugin.api`, not `syncEngine.api` — the latter is private to the engine.
+	const api = plugin.api;
+	if (!api?.getBillingUsage) {
+		rowsEl.empty();
+		return;
+	}
+
+	void api
+		.getBillingUsage()
+		.then((data) => {
+			rowsEl.empty();
+			const rows = planUsageRows(data);
+			if (rows.length === 0) return;
+			for (const row of rows) renderUsageRow(rowsEl, row);
+			if (tier === "free") {
+				const actions = rowsEl.createDiv({ cls: "engram-sync-center-card-actions" });
+				const upgrade = actions.createEl("button", { text: "Upgrade", cls: "mod-cta" });
+				upgrade.addEventListener("click", () => window.open(DEFAULT_UPGRADE_URL, "_blank"));
+			}
+		})
+		.catch(() => {
+			// Advisory panel: a failed usage read must never look like a sync
+			// problem. Say the numbers are unavailable and leave it at that.
+			rowsEl.empty();
+			rowsEl.createEl("p", {
+				cls: "engram-sync-center-card-hint",
+				text: "Plan usage is unavailable right now.",
+			});
+		});
 }
 
-/** Notes this vault would sync, which is what the server's index cap counts.
- *
- *  NOT `getMarkdownFiles().length`. That is every markdown file on disk,
- *  including ones the user has explicitly ignored — those never reach the
- *  server, so counting them inflates the shortfall and blames the plan for
- *  files the user chose to exclude, which upgrading would not fix.
- *
- *  Still an approximation of the server's per-USER count, because the cap is
- *  account-wide while this sees one vault. That is sound wherever the cap is
- *  live: `vaults_cap` is 1 on Free, and every tier with more vaults has an
- *  uncapped index, so there is no plan on which a user has both a second vault
- *  and a cap to exceed. */
-function syncedNoteCount(plugin: EngramSyncPlugin): number {
-	const files = plugin.app.vault?.getMarkdownFiles?.() ?? [];
-	const ignore = plugin.syncEngine?.shouldIgnore?.bind(plugin.syncEngine);
-	if (!ignore) return files.length;
-	return files.reduce((n, f) => (ignore(f.path) ? n : n + 1), 0);
+function renderUsageRow(parent: HTMLElement, row: UsageRow): void {
+	const el = parent.createDiv({
+		cls: `engram-sync-center-usage-row${row.atLimit ? " is-at-limit" : ""}`,
+	});
+	const head = el.createDiv({ cls: "engram-sync-center-usage-head" });
+	head.createSpan({ cls: "engram-sync-center-usage-label", text: row.label });
+	head.createSpan({ cls: "engram-sync-center-usage-value", text: row.value });
+
+	if (row.fraction !== null) {
+		const track = el.createDiv({ cls: "engram-sync-center-usage-track" });
+		const fill = track.createDiv({ cls: "engram-sync-center-usage-fill" });
+		fill.setAttribute("style", `width: ${Math.round(row.fraction * 100)}%`);
+	}
+	if (row.hint) {
+		el.createEl("p", { cls: "engram-sync-center-card-hint", text: row.hint });
+	}
 }
 
 /** Shared card chrome for the plan-skip and needs-attention sections: head

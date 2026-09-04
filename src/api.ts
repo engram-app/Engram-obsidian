@@ -10,6 +10,7 @@ import { isHttpStatus, statusOf } from "./error-util";
 import { LimitExceededError } from "./limit-error";
 import { BeaconBuffer } from "./observability/beacon";
 import { newTraceContext } from "./observability/traceGen";
+import type { BillingUsage } from "./plan-usage";
 import { type RemoteLogEntry, rlog } from "./remote-log";
 import type {
 	AttachmentDetail,
@@ -407,6 +408,24 @@ export class EngramApi {
 	}
 
 	/** Get the current authenticated user (id + email). Used to determine channel topic. */
+	/** Plan caps AND current usage, for the Sync Center plan panel.
+	 *
+	 *  Advisory only, per the endpoint's own docstring: `Billing.check_limit/3`
+	 *  and the plugs stay the authority, and a stale read here can never grant
+	 *  anything. Do NOT gate any client behaviour on it.
+	 *
+	 *  Separate from the plan state on the channel join, which carries the caps
+	 *  but no usage, and only refreshes on rejoin. Usage moves every time the
+	 *  user writes a note, so it is fetched when the panel renders. */
+	async getBillingUsage(): Promise<BillingUsage> {
+		const resp = await this.request("GET", "/billing/usage");
+		const body = resp.json as Partial<BillingUsage> | undefined;
+		if (!body || typeof body.usage !== "object" || body.usage === null) {
+			throw new Error("Malformed /billing/usage response: missing usage");
+		}
+		return { tier: String(body.tier ?? "free"), usage: body.usage };
+	}
+
 	async getMe(): Promise<{ id: string; email: string }> {
 		const resp = await this.request("GET", "/me");
 		const user = (resp.json as { user?: { id: string; email: string } }).user;

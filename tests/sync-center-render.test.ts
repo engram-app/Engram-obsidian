@@ -340,91 +340,89 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		expect(text).toContain("1 retrying");
 		expect(text).toContain("Temporary errors");
 	});
-	// ── "Not searchable on your plan" ──────────────────────────────────────
-	// The one Free limit that refuses NOTHING: notes past `indexed_notes_cap`
-	// sync, open and edit normally, they are just absent from search. Without a
-	// line here the user's only signal is a search that cannot find something
-	// they know they wrote.
+	// ── "Your plan" usage panel ────────────────────────────────────────────
+	// Always shown once the tier is known, NOT only when over a cap. A Free
+	// user at 300 of 2,000 previously saw nothing, so the first thing they
+	// learned about the limit was a search quietly failing on a note they had
+	// just written.
 
-	function withVault(noteCount: number, cap: number | null, ignored = 0) {
-		const plugin = makeMockPlugin([], cap === null ? null : { indexedNotesCap: cap });
-		plugin.app.vault.getMarkdownFiles = () =>
-			Array.from({ length: noteCount }, (_, i) => ({ path: `n${i}.md` }));
-		// First `ignored` files are excluded from sync by the user.
-		plugin.syncEngine.shouldIgnore = (path: string) => {
-			const i = Number(path.replace(/\D/gu, ""));
-			return i < ignored;
+	const FREE_USAGE = {
+		tier: "free",
+		usage: {
+			notes: { used: 300, limit: 10000 },
+			vaults: { used: 1, limit: 1 },
+			attachment_bytes: { used: 13_002_342, limit: 1_073_741_824 },
+			indexed_notes: { used: 300, limit: 2000 },
+			ai_searches: { used: null, limit: 20 },
+		},
+	};
+
+	function withPlan(tier: string | null, usage: unknown = FREE_USAGE, reject = false) {
+		const plugin = makeMockPlugin([], tier === null ? null : { tier, indexedNotesCap: 2000 });
+		plugin.api = {
+			getBillingUsage: () =>
+				reject ? Promise.reject(new Error("offline")) : Promise.resolve(usage),
 		};
 		return plugin;
 	}
 
-	test("names the shortfall and the direction when over the cap", () => {
-		const plugin = withVault(4312, 2000);
-		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+	/** Let the getBillingUsage promise and its .then settle. */
+	const settle = () => new Promise((r) => setTimeout(r, 0));
 
-		// Assert on the section class + body, not the heading: headings go through
-		// Obsidian's `Setting`, whose text the fake-DOM harness does not capture.
-		expect(findByCls(parent, "engram-sync-center-search-cap-section")).not.toBeNull();
+	test("shows a healthy Free vault instead of nothing", async () => {
+		const plugin = withPlan("free");
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		await settle();
+
 		const text = allText(parent);
-		expect(text).toContain("2,312 of your 4,312 notes are not searchable");
-		// The direction is the whole point: the cap keeps the OLDEST notes, so
-		// what falls out is the user's newest work. Copy that implies otherwise
-		// promises the absence of the exact surprise they are about to hit.
-		expect(text).toContain("oldest first");
+		expect(text).toContain("300 / 2,000");
+		expect(text).toContain("Notes searchable");
 	});
 
-	test("stays silent when every note is searchable", () => {
-		const plugin = withVault(812, 2000);
+	test("renders the panel for the tier by name", async () => {
+		const plugin = withPlan("free");
 		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
-		expect(findByCls(parent, "engram-sync-center-search-cap-section")).toBeNull();
+		await settle();
+		expect(findByCls(parent, "engram-sync-center-plan-usage-section")).not.toBeNull();
 	});
 
-	test("stays silent on a paid plan, including the -1 unlimited sentinel", () => {
-		for (const cap of [null, -1]) {
-			parent = makeFakeEl("div");
-			const plugin = withVault(99999, cap);
-			renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
-			expect(findByCls(parent, "engram-sync-center-search-cap-section")).toBeNull();
-		}
-	});
-
-	test("survives plan state not having arrived yet", () => {
-		// Plan state comes over the sync channel, so it IS null for a moment
-		// after load. Rendering must not throw in that window.
-		const plugin = makeMockPlugin([]);
-		expect(() =>
-			renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {}),
-		).not.toThrow();
-	});
-
-	test("excludes ignored files, which never reach the server to be indexed", () => {
-		// 4,312 on disk, 1,000 ignored -> 3,312 actually sync, 2,000 of those are
-		// indexed, so 1,312 are unsearchable. Counting the ignored ones would
-		// inflate this to 2,312 and blame the plan for files the user excluded,
-		// which upgrading would not fix.
-		const plugin = withVault(4312, 2000, 1000);
+	test("says nothing at all before plan state arrives", () => {
+		// Plan state comes over the channel, so it IS null for a moment after
+		// load and forever when signed out. No tier, no panel, no fetch.
+		const plugin = withPlan(null);
 		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
-		expect(allText(parent)).toContain("1,312 of your 3,312 notes are not searchable");
+		expect(findByCls(parent, "engram-sync-center-plan-usage-section")).toBeNull();
 	});
 
-	test("ignoring enough files drops it below the cap and silences the section", () => {
-		const plugin = withVault(2500, 2000, 600);
+	test("offers Upgrade on Free", async () => {
+		const plugin = withPlan("free");
 		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
-		expect(findByCls(parent, "engram-sync-center-search-cap-section")).toBeNull();
+		await settle();
+		expect(findAllByCls(parent, "mod-cta").some((b) => b.text === "Upgrade")).toBe(true);
 	});
 
-	test("offers an Upgrade button, not just prose telling you to upgrade", () => {
-		const plugin = withVault(4312, 2000);
+	test("does not push Upgrade at someone who already pays", async () => {
+		const plugin = withPlan("pro", {
+			tier: "pro",
+			usage: { notes: { used: 1240, limit: null } },
+		});
 		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		await settle();
 
-		expect(findByCls(parent, "engram-sync-center-search-cap-section")).not.toBeNull();
-		// Asserted against `parent`, not the section: makeFakeEl's `factory`
-		// closes over the OUTER element, and `Object.assign(child, methods(child))`
-		// overwrites each child's own methods with ones that append to the
-		// parent. The fake tree is therefore flat, so no descendant is reachable
-		// from its real ancestor. Pre-existing, and every other test here works
-		// the same way.
-		const buttons = findAllByCls(parent, "mod-cta");
-		expect(buttons.some((b) => b.text === "Upgrade")).toBe(true);
+		expect(allText(parent)).toContain("1,240 / unlimited");
+		expect(findAllByCls(parent, "mod-cta").some((b) => b.text === "Upgrade")).toBe(false);
+	});
+
+	test("a failed usage read does not masquerade as a sync problem", async () => {
+		const plugin = withPlan("free", FREE_USAGE, true);
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		await settle();
+
+		const text = allText(parent);
+		expect(text).toContain("Plan usage is unavailable");
+		// Not asserting the loading line is GONE: `empty()` cannot clear it in
+		// this harness, because makeFakeEl's flat-tree bug appended it to the
+		// root rather than to `rowsEl`. Real Obsidian clears it correctly.
+		expect(text).not.toContain("Notes searchable");
 	});
 });
