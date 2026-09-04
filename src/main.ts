@@ -280,8 +280,10 @@ export default class EngramSyncPlugin extends Plugin {
 	/** THE one place the active vault changes (#1409 consolidation).
 	 *
 	 *  There were two implementations: this one (reached from the sync-preview
-	 *  modal's picker) and `applyVaultSwitch` in the self-hosted tab, reached
-	 *  from the Connection page dropdown. They agreed on ONE of eight steps.
+	 *  modal's picker) and `applyVaultSwitch` in `connection-sections.ts`,
+	 *  reached from the Connection page dropdown. Neither was ever mode-specific
+	 *  — both run identically on Cloud and self-host — but they agreed on ONE of
+	 *  eight steps.
 	 *  The dropdown runs on a first pick AND when the stored vault no longer
 	 *  exists server-side — a real vault change carrying a full stale map — so
 	 *  the seven it skipped were live bugs, not dead code. Chief among them the
@@ -298,14 +300,13 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  vault — a no-op "switch" to the vault you are already on must not wipe
 	 *  anything. */
 	async switchVault(id: string, name?: string): Promise<void> {
-		if (name !== undefined) this.settings.remoteVaultName = name;
 		this.syncEngine.updateSettings(this.settings);
 		// Per-file hashes, lastSync, cursors, the note-id map, the accepted-gate
 		// fingerprint, the reconcile throttle and the strand-heal counts are ALL
 		// scoped to the outgoing vault. This method used to spell out its own
 		// copy of that list, which is how the auth paths and this one drifted
 		// apart in the first place — one list, one owner.
-		await this.discardVaultScopedState(id);
+		await this.discardVaultScopedState(id, name);
 		this.syncEngine.setSyncBlocked(true);
 	}
 
@@ -1619,7 +1620,6 @@ export default class EngramSyncPlugin extends Plugin {
 				this.app.vault.getName(),
 				this.settings.clientId,
 			);
-			this.settings.remoteVaultName = result.name;
 
 			// #1409 (root cause). Reaching here means `settings.vaultId` was
 			// FALSY, so this registration just bound the install to a vault it
@@ -1666,7 +1666,7 @@ export default class EngramSyncPlugin extends Plugin {
 			// The full transition, not just the map: the sync gate's accepted
 			// fingerprint, the reconcile throttle and the strand-heal counts are
 			// all keyed to the outgoing vault as well.
-			await this.discardVaultScopedState(result.id);
+			await this.discardVaultScopedState(result.id, result.name);
 
 			await this.saveSettings();
 			rlog().info("lifecycle", `Vault registered: id=${result.id} slug=${result.slug}`);
@@ -1954,8 +1954,22 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  and the index room, or the new vault inherits ids that mean nothing on it.
 	 *
 	 *  Six of nine vault-changing paths used to skip all of this. */
-	async discardVaultScopedState(vaultId: string | null): Promise<void> {
+	async discardVaultScopedState(vaultId: string | null, remoteVaultName?: string): Promise<void> {
+		// `remoteVaultName` is vault-scoped like everything else below, and it
+		// was the one piece this method did not own. Six of the callers here
+		// reach a vault change WITHOUT going through `switchVault` (the auth
+		// paths, by design, per the note above), and `switchVault` was the only
+		// place the name was ever written. So repointing an install through
+		// OAuth or device-link moved the id and left the previous vault's name
+		// behind, permanently: it looked like the name was set once and never
+		// again.
+		//
+		// Only on an ACTUAL change. Three callers pass the current id as a
+		// plain state reset (`settings.vaultId ?? null`), and wiping a correct
+		// name on those would trade one wrong display for another.
+		const vaultChanged = this.settings.vaultId !== vaultId;
 		this.settings.vaultId = vaultId;
+		if (vaultChanged) this.settings.remoteVaultName = remoteVaultName;
 		// EngramApi keeps its OWN copy and stamps it on every request. Setting it
 		// here rather than leaving it to a later `saveSettings` closes the window
 		// where the awaited reset below runs while requests still carry the
