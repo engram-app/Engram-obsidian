@@ -7,7 +7,7 @@ import {
 	renderAuthSection,
 	renderEngramUrlSetting,
 	type VaultSwitchTarget,
-} from "../src/tabs/self-hosted-tab";
+} from "../src/tabs/connection-sections";
 
 describe("renderEngramUrlSetting", () => {
 	function render(apiUrl: string) {

@@ -6,7 +6,7 @@ import {
 	renderEngramUrlSetting,
 	renderSupportSection,
 	renderVaultSection,
-} from "./self-hosted-tab";
+} from "./connection-sections";
 import type { TabContext } from "./types";
 
 const MODE_LABELS: Record<BackendMode, string> = {

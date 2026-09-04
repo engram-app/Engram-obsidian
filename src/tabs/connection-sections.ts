@@ -1,3 +1,16 @@
+/**
+ * connection-sections.ts — the sections `connection-tab.ts` renders.
+ *
+ * Was `self-hosted-tab.ts`, back when Cloud and Self-hosted were two tabs.
+ * They are one tab now, and this module has exactly one consumer, so the old
+ * name claimed a self-host code path that does not exist: every section here
+ * runs identically in both modes. The only thing that reads `backendMode` is
+ * one API-key description string, because Cloud gates keys behind Pro and
+ * self-host enforces no limits at all. Copy, not control flow.
+ *
+ * Vault switching in particular is NOT forked: the dropdown here and the
+ * sync-preview picker both funnel into `plugin.switchVault` (#1409).
+ */
 import { Notice, Setting, setIcon } from "obsidian";
 import { EngramApi } from "../api";
 import {
