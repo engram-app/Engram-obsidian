@@ -55,10 +55,11 @@ export function renderSyncCenter(
 ): void {
 	parent.empty();
 	parent.addClass("engram-sync-center");
+	// ⚠️ DEMO BUILD: first, so it cannot be missed or scrolled past.
+	renderSearchCap(parent, plugin);
 	renderHeader(parent, plugin);
 	renderActions(parent, plugin, refresh);
 	renderPlanSkips(parent, plugin, refresh);
-	renderSearchCap(parent, plugin);
 	renderNeedsAttention(parent, plugin, refresh);
 	renderRetrying(parent, plugin, refresh);
 	renderIgnored(parent, plugin, refresh);
@@ -251,6 +252,14 @@ function renderSearchCap(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 		cls: "engram-sync-center-section engram-sync-center-plan-section engram-sync-center-search-cap-section",
 	});
 	sectionHeading(section, "Not searchable on your plan");
+
+	// ⚠️ DEMO BUILD ONLY. Proves at a glance which build is installed: if this
+	// line is absent you are on stock 1.26.0, which BRAT installs by default
+	// because the demo is a PRERELEASE and 1.26.0 is flagged `latest`.
+	section.createEl("p", {
+		cls: "engram-sync-center-card-hint",
+		text: "\u26A0\uFE0F DEMO BUILD 1.26.1-pr.505 \u2014 numbers below are hardcoded, not from your vault.",
+	});
 
 	const body = section.createDiv({ cls: "engram-sync-center-section-body" });
 	body.createEl("p", { cls: "engram-sync-center-card-hint", text });

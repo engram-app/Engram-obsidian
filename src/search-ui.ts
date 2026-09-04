@@ -384,6 +384,10 @@ export class SearchPanel {
 			text: "Type to search your vault",
 			cls: "engram-search-empty",
 		});
+		// ⚠️ DEMO BUILD ONLY: also draw the cap hint on the idle state so it is
+		// visible without a backend connection. Real build draws it only
+		// alongside actual results.
+		this.renderCapHint();
 	}
 
 	private highlightInto(el: HTMLElement, result: UnifiedSearchResult, query: string): void {
