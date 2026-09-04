@@ -615,7 +615,7 @@ function renderStats(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 	// to copy it: as the tooltip on the vault name in the Connection tab
 	// (`connection-sections.ts` renderVaultName).
 	const localNotes = addStat(grid, "Notes on this device", String(noteCount));
-	addStat(grid, "Attachments on this device", String(attCount));
+	const localAtts = addStat(grid, "Attachments on this device", String(attCount));
 	// Paint the cached name, then let the server correct it. The cache has no
 	// invalidation of its own and the auth paths change vaults without ever
 	// setting it, so reading it alone showed the PREVIOUS vault's name after a
@@ -628,6 +628,8 @@ function renderStats(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 	renderPlanStats(body, planGrid, plugin, {
 		localNoteCount: noteCount,
 		localNotesRow: localNotes.row,
+		localAttachmentCount: attCount,
+		localAttachmentsRow: localAtts.row,
 	});
 }
 
@@ -644,7 +646,12 @@ function renderPlanStats(
 	body: HTMLElement,
 	grid: HTMLElement,
 	plugin: EngramSyncPlugin,
-	local: { localNoteCount: number; localNotesRow: HTMLElement },
+	local: {
+		localNoteCount: number;
+		localNotesRow: HTMLElement;
+		localAttachmentCount: number;
+		localAttachmentsRow: HTMLElement;
+	},
 ): void {
 	// Plan state arrives over the channel, so it IS absent briefly after load
 	// and permanently when signed out. No tier, no rows, no fetch.
@@ -657,7 +664,10 @@ function renderPlanStats(
 	void api
 		.getBillingUsage()
 		.then((data) => {
-			const rows = planUsageRows(data);
+			// The attachment file count is folded INTO the quota row rather than
+			// dropped: a count and a byte total are not comparable, so neither is
+			// redundant, but they answer one question and belong on one line.
+			const rows = planUsageRows(data, { localAttachmentCount: local.localAttachmentCount });
 			if (rows.length === 0) return;
 			for (const row of rows) addStat(grid, row.label, row.value);
 
@@ -666,6 +676,10 @@ function renderPlanStats(
 			// number is only worth a row when it DISAGREES with the server, which
 			// is the case that means something is not yet pushed.
 			if (data.usage?.notes?.used === local.localNoteCount) local.localNotesRow.remove();
+			// Unconditional: its number now lives in the merged Attachments row.
+			// Only reached when that row exists, since a failed fetch skips this
+			// whole block and leaves the local rows standing.
+			if (rows.some((r) => r.label === "Attachments")) local.localAttachmentsRow.remove();
 
 			// The hint only earns its line when the limit actually bites. Showing
 			// it at 300/2,000 is noise; showing it at 2,000/2,000 is the one

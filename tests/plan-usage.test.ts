@@ -102,6 +102,40 @@ describe("planUsageRows", () => {
 		expect(row?.value).toBe("12.4 MB / 1.00 GB");
 	});
 
+	it("folds the local file count into the attachments row", () => {
+		// Two rows before: a device file COUNT and an account BYTE quota. Not
+		// comparable, so neither could be dropped the way the duplicate note
+		// count was, but they answer one question and read better as one line.
+		const row = planUsageRows(free, { localAttachmentCount: 24 }).find(
+			(r) => r.label === "Attachments",
+		);
+		expect(row?.value).toBe("24 files · 12.4 MB / 1.00 GB");
+	});
+
+	it("says 'file', not 'files', for exactly one", () => {
+		const row = planUsageRows(free, { localAttachmentCount: 1 }).find(
+			(r) => r.label === "Attachments",
+		);
+		expect(row?.value).toBe("1 file · 12.4 MB / 1.00 GB");
+	});
+
+	it("still counts zero files rather than dropping the prefix", () => {
+		// An empty vault should read "0 files", not silently lose the count —
+		// `0` is falsy and an `if (count)` guard would have swallowed it.
+		const row = planUsageRows(free, { localAttachmentCount: 0 }).find(
+			(r) => r.label === "Attachments",
+		);
+		expect(row?.value).toBe("0 files · 12.4 MB / 1.00 GB");
+	});
+
+	it("keeps the count on an unlimited attachment quota", () => {
+		const row = planUsageRows(
+			{ tier: "pro", usage: { attachment_bytes: { used: 5_000_000, limit: null } } },
+			{ localAttachmentCount: 3 },
+		).find((r) => r.label === "Attachments");
+		expect(row?.value).toBe("3 files · 4.8 MB");
+	});
+
 	it("pairs searchable with stored so the gap is legible", () => {
 		const labels = planUsageRows(free).map((r) => r.label);
 		expect(labels.slice(0, 2)).toEqual(["Notes searchable", "Notes stored"]);

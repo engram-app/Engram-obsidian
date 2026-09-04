@@ -446,6 +446,24 @@
 	border: none;
 }
 
+/* Obsidian 1.13+ renders our plugin name through the settings render-hatch as
+   an ordinary setting label. At the default size it reads as a row label for
+   the status strip beneath it rather than as the title of the page, and it
+   sits flush against that strip with nothing between them. Size and space it
+   like the heading it actually is. */
+.engram-settings-host .setting-item-name {
+	font-size: var(--font-ui-larger);
+	font-weight: var(--font-semibold);
+	line-height: var(--line-height-tight);
+	margin-bottom: 12px;
+}
+
+/* The description is empty by design (the tab bar names all four
+   destinations), but the element still claims vertical space. */
+.engram-settings-host .setting-item-description:empty {
+	display: none;
+}
+
 .engram-tab-bar {
 	display: flex;
 	flex-wrap: wrap;

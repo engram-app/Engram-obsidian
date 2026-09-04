@@ -60,6 +60,10 @@ export function formatBytesShort(bytes: number): string {
 /** Per-row policy for what an unlimited plan should do with this row. */
 export interface RowOpts {
 	hint?: string;
+	/** Prepended to the value, before the used/limit pair. Lets one row carry a
+	 *  second measure of the same subject — "24 files · 12.4 MB / 1.00 GB" — so
+	 *  a count and a quota do not need two rows saying "attachments". */
+	prefix?: string;
 	/** Drop the row entirely when the limit is unlimited.
 	 *
 	 *  For rows whose only content IS the limit. "Notes searchable" on a paid
@@ -77,7 +81,7 @@ export function buildRow(
 ): UsageRow | null {
 	if (!entry) return null;
 	const { used, limit } = entry;
-	const { hint, hideWhenUnlimited } = opts;
+	const { hint, hideWhenUnlimited, prefix = "" } = opts;
 
 	if (isUnlimited(limit)) {
 		if (hideWhenUnlimited) return null;
@@ -85,7 +89,7 @@ export function buildRow(
 		// against, and the word only draws the eye to a constraint that does
 		// not exist.
 		if (used === null) return null;
-		return { label, value: fmt(used), fraction: null, atLimit: false, hint };
+		return { label, value: `${prefix}${fmt(used)}`, fraction: null, atLimit: false, hint };
 	}
 
 	const cap = limit as number;
@@ -95,12 +99,12 @@ export function buildRow(
 	// Bare, not "20 max": the label carries the unit, and "max" beside four
 	// "used / limit" rows reads as a different kind of number than it is.
 	if (used === null) {
-		return { label, value: fmt(cap), fraction: null, atLimit: false, hint };
+		return { label, value: `${prefix}${fmt(cap)}`, fraction: null, atLimit: false, hint };
 	}
 
 	return {
 		label,
-		value: `${fmt(used)} / ${fmt(cap)}`,
+		value: `${prefix}${fmt(used)} / ${fmt(cap)}`,
 		fraction: cap === 0 ? 1 : Math.min(1, used / cap),
 		atLimit: used >= cap,
 		hint,
@@ -115,8 +119,20 @@ export function buildRow(
  * "everything is synced, not all of it is searchable", which is the true and
  * non-alarming version of that fact.
  */
-export function planUsageRows(data: BillingUsage): UsageRow[] {
+export function planUsageRows(
+	data: BillingUsage,
+	opts: { localAttachmentCount?: number } = {},
+): UsageRow[] {
 	const u = data.usage ?? {};
+	// Attachments had two rows: a local file COUNT and a server BYTE quota. The
+	// two are never comparable, so neither could be dropped the way the
+	// duplicate note count was — but they answer one question ("how much of my
+	// attachment allowance am I using, and across how many files?"), so they
+	// belong on one line.
+	const attachPrefix =
+		opts.localAttachmentCount === undefined
+			? undefined
+			: `${count(opts.localAttachmentCount)} ${opts.localAttachmentCount === 1 ? "file" : "files"} · `;
 	const rows = [
 		// Hidden on paid: with no index cap, "searchable" equals "stored", and the
 		// row below already says that. Shown on Free because it is the limit that
@@ -131,7 +147,7 @@ export function planUsageRows(data: BillingUsage): UsageRow[] {
 		// panel whose whole job is showing headroom. It reads as a warning about
 		// nothing. The cap still refuses a second vault server-side, with copy
 		// that explains itself at the moment it matters.
-		buildRow("Attachments", u.attachment_bytes, formatBytesShort),
+		buildRow("Attachments", u.attachment_bytes, formatBytesShort, { prefix: attachPrefix }),
 		buildRow("AI searches / day", u.ai_searches, count),
 	];
 	return rows.filter((r): r is UsageRow => r !== null);

@@ -425,7 +425,10 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		await settle();
 
 		const labels = findAllByCls(parent, "engram-sync-center-stat-label").map((e) => e.text);
-		expect(labels).toContain("Attachments on this device");
+		// "Notes stored" is the account's number; "Remote vault" names WHICH
+		// account. Attachments no longer has a device row — its file count is
+		// folded into the quota row (see the merge test below).
+		expect(labels).toContain("Notes stored");
 		expect(labels).toContain("Remote vault");
 		// An API/log identifier, never a thing a user acts on. Still reachable
 		// as the tooltip on the vault name in the Connection tab.
