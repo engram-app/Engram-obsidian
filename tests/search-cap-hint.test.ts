@@ -26,18 +26,27 @@ describe("capHintText", () => {
 	it("names both numbers when the vault exceeds the cap", () => {
 		// The whole point is specificity: "some notes aren't indexed" would not
 		// tell the user which ones, or that paying fixes it.
-		expect(capHintText(2000, 4312)).toBe(
+		expect(capHintText(2000, 4312, false)).toBe(
 			"Searching 2,000 of 4,312 notes. Upgrade to search everything.",
 		);
 	});
 
+	it("does not claim the extra notes are unsearchable when local is fused in", () => {
+		// Keyword and Both search the local vault too, so every note IS reachable
+		// in those modes. "Searching 2,000 of 4,312" would be false there, and
+		// false in the direction of underselling what the plugin just did.
+		expect(capHintText(2000, 4312, true)).toBe(
+			"Engram indexes 2,000 of your 4,312 notes. The rest match on this device only. Upgrade to index everything.",
+		);
+	});
+
 	it("stays quiet when every note is indexed", () => {
-		expect(capHintText(2000, 2000)).toBeNull();
-		expect(capHintText(2000, 812)).toBeNull();
+		expect(capHintText(2000, 2000, true)).toBeNull();
+		expect(capHintText(2000, 812, false)).toBeNull();
 	});
 
 	it("stays quiet on an uncapped plan", () => {
-		expect(capHintText(null, 9999)).toBeNull();
+		expect(capHintText(null, 9999, true)).toBeNull();
 	});
 
 	it("treats a negative cap as unlimited, not as a cap of -1", () => {
@@ -45,7 +54,7 @@ describe("capHintText", () => {
 		// would claim every note is unsearchable on the most permissive plan —
 		// the same inversion that made `attachments_text_only` block self-host
 		// attachments.
-		expect(capHintText(-1, 9999)).toBeNull();
+		expect(capHintText(-1, 9999, false)).toBeNull();
 	});
 });
 

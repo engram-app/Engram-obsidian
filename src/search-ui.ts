@@ -82,9 +82,17 @@ export interface SearchPanelOpts {
  * Split out from the renderer because the panel only renders under Obsidian's
  * HTMLElement extensions, which the unit suite does not have.
  */
-export function capHintText(cap: number | null, total: number): string | null {
+export function capHintText(cap: number | null, total: number, localFused: boolean): string | null {
 	if (unsearchableCount(cap, total) === 0) return null;
-	return `Searching ${(cap as number).toLocaleString()} of ${total.toLocaleString()} notes. Upgrade to search everything.`;
+	const indexed = (cap as number).toLocaleString();
+	const all = total.toLocaleString();
+	// Keyword and Both fuse the local vault in, so the notes past the cap ARE
+	// reachable in those modes. Saying "Searching 2,000 of 4,312" there would be
+	// simply false, and false in the direction of underselling the product.
+	// Semantic is server-only, so there the original sentence is exactly right.
+	return localFused
+		? `Engram indexes ${indexed} of your ${all} notes. The rest match on this device only. Upgrade to index everything.`
+		: `Searching ${indexed} of ${all} notes. Upgrade to search everything.`;
 }
 
 /**
@@ -394,7 +402,10 @@ export class SearchPanel {
 			// A newer run() (or destroy) superseded us — discard this stale result.
 			if (gen !== this.runGeneration) return;
 			if (outcome.degraded) {
-				new Notice("Semantic offline — keyword results only");
+				// Not "Semantic offline": every mode degrades now, including
+				// Keyword, which has no semantic leg to lose. Names what the user
+				// actually has in front of them rather than which leg failed.
+				new Notice("Engram unreachable. Showing matches from this device only.");
 			}
 			this.results = outcome.results;
 			this.selectedIndex = this.results.length ? 0 : -1;
@@ -411,12 +422,16 @@ export class SearchPanel {
 		}
 	}
 
+	/** Clear the list. Deliberately renders NOTHING.
+	 *
+	 *  This used to print "Type to search your vault" under an empty, focused
+	 *  search box with that same instruction already in its placeholder — the
+	 *  sentence told the user what the cursor was already telling them, and it
+	 *  put a paragraph of italic text between the input and the results the
+	 *  moment they started typing. An empty results area reads as "no results
+	 *  yet" on its own. */
 	private renderEmpty(): void {
 		this.resultsEl.empty();
-		this.resultsEl.createEl("p", {
-			text: "Type to search your vault",
-			cls: "engram-search-empty",
-		});
 	}
 
 	private highlightInto(el: HTMLElement, result: UnifiedSearchResult, query: string): void {
@@ -435,6 +450,7 @@ export class SearchPanel {
 		const text = capHintText(
 			this.opts.indexedNotesCap?.() ?? null,
 			this.ctx.app.vault?.getMarkdownFiles?.().length ?? 0,
+			this.mode !== "semantic",
 		);
 		if (text === null) return;
 		this.resultsEl.createEl("p", { text, cls: "engram-search-cap-hint" });

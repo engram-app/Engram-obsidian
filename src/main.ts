@@ -78,7 +78,6 @@ import {
 	DEFAULT_SETTINGS,
 	type EngramSyncSettings,
 	type FileSyncState,
-	type SearchMode,
 	type SyncPreviewContext,
 	type SyncStatus,
 } from "./types";
@@ -1973,6 +1972,11 @@ export default class EngramSyncPlugin extends Plugin {
 		if (!id) return null;
 		try {
 			const current = (await this.api.listVaults()).find((v) => v.id === id);
+			// The vault can change while that request is in flight (a device link
+			// or account swap resolves mid-await), and writing then would stamp the
+			// OUTGOING vault's name onto the incoming id — the same stale-name bug
+			// this method exists to fix, just with a narrower window.
+			if (this.settings.vaultId !== id) return this.settings.remoteVaultName ?? null;
 			// Not found means deleted, or owned by a different account after a
 			// sign-in swap. Leave the stale name rather than blanking the row: the
 			// Change button is the recovery, and the picker labels that case.
@@ -1980,7 +1984,13 @@ export default class EngramSyncPlugin extends Plugin {
 				return this.settings.remoteVaultName ?? null;
 			}
 			this.settings.remoteVaultName = current.name;
-			await this.saveSettings();
+			// savePluginData, NOT saveSettings. saveSettings rebuilds the note
+			// channel (setupNoteStream) and re-runs the sync gate, which can fire
+			// doSyncWithFirstSyncCheck and put a modal on screen. This runs on
+			// every Sync Center and Connection tab render, and a vault's display
+			// name is cosmetic — correcting it must not drop the socket or
+			// interrupt the user. Same reasoning as the vault picker's write path.
+			await this.savePluginData(this.syncEngine.getLastSync());
 			return current.name;
 		} catch {
 			return this.settings.remoteVaultName ?? null;

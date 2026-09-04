@@ -345,22 +345,6 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 		statusEl.createSpan({ cls: `engram-status-dot ${dotState}` });
 		statusEl.createSpan({ text: label });
 
-		// Upgrade lives HERE, in the status strip, because this strip is the one
-		// piece of chrome that persists across all four tabs. It was previously
-		// inside the Sync Center's usage card, which meant the only route to it
-		// was to already be looking at the panel that reports your limits — the
-		// people who most need it are the ones who never opened that tab.
-		//
-		// Free only, off the channel-supplied plan state, which is also why it
-		// is absent for a beat after load and while signed out: no tier, no CTA.
-		if (this.plugin.syncEngine?.getPlanState()?.tier === "free") {
-			const upgrade = statusEl.createEl("button", {
-				cls: "engram-status-upgrade-btn mod-cta",
-				text: "Upgrade",
-			});
-			upgrade.addEventListener("click", () => window.open(DEFAULT_UPGRADE_URL, "_blank"));
-		}
-
 		if (dotState === "is-waiting") {
 			const openBtn = statusEl.createEl("button", {
 				cls: "engram-status-open-sync-btn mod-cta",
@@ -369,6 +353,26 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 			openBtn.addEventListener("click", () => {
 				void this.plugin.doSyncWithFirstSyncCheck();
 			});
+		}
+
+		// Upgrade lives HERE, in the status strip, because this strip is the one
+		// piece of chrome that persists across all four tabs. It was previously
+		// inside the Sync Center's usage card, which meant the only route to it
+		// was to already be looking at the panel that reports your limits — the
+		// people who most need it are the ones who never opened that tab.
+		//
+		// Free only, off the channel-supplied plan state, which is also why it
+		// is absent for a beat after load and while signed out: no tier, no CTA.
+		//
+		// Rendered LAST so `margin-left: auto` parks it at the far edge and any
+		// urgent action above (Open sync setup) keeps its place beside the status
+		// text. Emitted first, it pushed that button out to the edge instead.
+		if (this.plugin.syncEngine?.getPlanState()?.tier === "free") {
+			const upgrade = statusEl.createEl("button", {
+				cls: "engram-status-upgrade-btn mod-cta",
+				text: "Upgrade",
+			});
+			upgrade.addEventListener("click", () => window.open(DEFAULT_UPGRADE_URL, "_blank"));
 		}
 
 		if (status.lastSync) {

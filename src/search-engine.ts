@@ -28,7 +28,8 @@ export interface SearchDeps {
 
 export interface SearchOutcome {
 	results: UnifiedSearchResult[];
-	/** True when Hybrid fell back to keyword-only because the backend failed. */
+	/** True when the server leg failed and these results came from the local
+	 *  vault alone. Set by every mode, not just Both. */
 	degraded: boolean;
 }
 

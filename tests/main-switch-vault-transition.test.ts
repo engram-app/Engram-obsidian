@@ -132,3 +132,67 @@ describe("switchVault performs the whole vault transition", () => {
 		expect(order).toEqual(["wipe", "block"]);
 	});
 });
+
+describe("resolveRemoteVaultName", () => {
+	function makePlugin(vaultId: string, storedName: string | undefined, vaults: unknown[]) {
+		const plugin = Object.create(EngramSyncPlugin.prototype) as any;
+		plugin.settings = { vaultId, remoteVaultName: storedName };
+		plugin.syncEngine = { getLastSync: () => "" };
+		plugin.savePluginData = async () => {};
+		plugin.saveSettings = async () => {
+			throw new Error("saveSettings must not be called: it rebuilds the socket");
+		};
+		plugin.api = { listVaults: async () => vaults };
+		return plugin;
+	}
+
+	test("corrects a stale name from the server", async () => {
+		const p = makePlugin("v1", "Old", [{ id: "v1", name: "New" }]);
+		expect(await p.resolveRemoteVaultName()).toBe("New");
+		expect(p.settings.remoteVaultName).toBe("New");
+	});
+
+	test("persists without saveSettings, which would rebuild the channel", async () => {
+		// saveSettings calls setupNoteStream and re-runs the sync gate, which can
+		// fire doSyncWithFirstSyncCheck and put a modal on screen. This method
+		// runs on every Sync Center and Connection tab render, and a vault's
+		// display name is cosmetic. The mock throws if it is ever reached.
+		const p = makePlugin("v1", "Old", [{ id: "v1", name: "New" }]);
+		await expect(p.resolveRemoteVaultName()).resolves.toBe("New");
+	});
+
+	test("does not stamp a name onto a vault that changed mid-flight", async () => {
+		// The listVaults round-trip is long enough for a device link or account
+		// swap to land. Writing then would put the OUTGOING vault's name on the
+		// incoming id, which is the very bug this method exists to fix.
+		const p = makePlugin("v1", "Old", []);
+		p.api.listVaults = async () => {
+			p.settings.vaultId = "v2";
+			return [{ id: "v1", name: "New" }];
+		};
+		expect(await p.resolveRemoteVaultName()).toBe("Old");
+		expect(p.settings.remoteVaultName).toBe("Old");
+	});
+
+	test("keeps the stored name when the vault is gone from the account", async () => {
+		const p = makePlugin("v1", "Old", [{ id: "other", name: "Other" }]);
+		expect(await p.resolveRemoteVaultName()).toBe("Old");
+	});
+
+	test("returns null, not a throw, when the server is unreachable", async () => {
+		const p = makePlugin("v1", undefined, []);
+		p.api.listVaults = async () => {
+			throw new Error("offline");
+		};
+		expect(await p.resolveRemoteVaultName()).toBeNull();
+	});
+
+	test("returns null when no vault is linked, without calling the server", async () => {
+		const p = makePlugin("", undefined, []);
+		p.settings.vaultId = null;
+		p.api.listVaults = async () => {
+			throw new Error("must not be called");
+		};
+		expect(await p.resolveRemoteVaultName()).toBeNull();
+	});
+});
