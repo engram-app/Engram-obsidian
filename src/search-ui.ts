@@ -41,9 +41,9 @@ const MODE_LABEL: Record<SearchMode, string> = {
 // is unmistakably describing the selected button rather than the filters under
 // it. Without that prefix it read as a stray sentence in a settings panel.
 const MODE_HINT: Record<SearchMode, string> = {
-	keyword: "matches your words, including their other forms. 'run' finds 'running'.",
+	keyword: "matches your words and their other forms — 'run' finds 'running' — plus this device.",
 	semantic: "matches meaning. Finds notes that never use the words you typed.",
-	hybrid: "matches words and meaning together, plus this device's own index. Widest results.",
+	hybrid: "matches words and meaning together, plus this device. Widest results.",
 };
 
 /** The hint line for `mode`, labelled so it visibly belongs to the buttons. */
@@ -127,8 +127,15 @@ export class SearchPanel {
 	constructor(parent: HTMLElement, ctx: SearchContext, opts: SearchPanelOpts) {
 		this.ctx = ctx;
 		this.opts = opts;
-		// Coerce a persisted mode that's no longer offered (e.g. an old "keyword"
-		// default) to the first available mode so the toggle always has an active button.
+		// Coerce a persisted mode that is no longer offered back to the default,
+		// so the picker always has exactly one active button. Deliberately the
+		// literal default and NOT `SELECTABLE_MODES[0]`: the array is ordered for
+		// reading (keyword, both, semantic), and its first entry is not the mode
+		// anyone should land on.
+		//
+		// `opts.defaultMode` is the user's LAST CHOICE, not a constant — every
+		// mode change is persisted to `searchDefaultMode` — so the picker opens
+		// where they left it rather than on the default each time.
 		this.mode = SELECTABLE_MODES.includes(opts.defaultMode) ? opts.defaultMode : "hybrid";
 		this.build(parent);
 	}

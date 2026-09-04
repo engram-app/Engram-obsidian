@@ -207,6 +207,36 @@ describe("searchEngram server modes", () => {
 		}
 	});
 
+	it("fuses the local vault into keyword and Both, but never into semantic", async () => {
+		// Semantic is the one mode that must stay server-only: exact local hits
+		// would pollute the mode whose entire job is finding notes that do NOT
+		// contain the words you typed.
+		const local = fakeApp([{ path: "localonly.md", content: "omega alpha" }]);
+		const api = {
+			search: async () => ({ query: "omega", results: [] }),
+		} as any;
+
+		for (const mode of ["keyword", "hybrid"] as const) {
+			const { results } = await searchEngram(
+				mode,
+				"omega",
+				{ api, app: local },
+				{},
+				{ fuzzy: fakeFuzzy },
+			);
+			expect(results.map((r) => r.source_path)).toEqual(["localonly.md"]);
+		}
+
+		const { results } = await searchEngram(
+			"semantic",
+			"omega",
+			{ api, app: local },
+			{},
+			{ fuzzy: fakeFuzzy },
+		);
+		expect(results).toEqual([]);
+	});
+
 	it("does not report degraded when the server answers", async () => {
 		const { api } = spyApi();
 		const { degraded } = await searchEngram(
