@@ -18,8 +18,13 @@ const SEARCH_DEBOUNCE_MS = 550;
 // the backend stems and scores with BM25, so it answers a question core Search
 // cannot.
 //
-// Order is deliberate: most literal first, widest last.
-const SELECTABLE_MODES: SearchMode[] = ["keyword", "semantic", "hybrid"];
+// Both sits in the MIDDLE because it is the default and the one most people
+// should stay on. Reading left to right the row is also a spectrum — literal
+// words, then words plus meaning, then meaning alone — so the middle position
+// is the honest one for the mode that spans both ends, not just the prominent
+// one. (The default itself lives in `searchDefaultMode`, not here; this array
+// only decides the order and which modes are offered.)
+export const SELECTABLE_MODES: SearchMode[] = ["keyword", "hybrid", "semantic"];
 
 // Named for what the user is asking FOR, not for the retrieval technique.
 const MODE_LABEL: Record<SearchMode, string> = {
@@ -31,11 +36,20 @@ const MODE_LABEL: Record<SearchMode, string> = {
 // Each hint names the one thing that mode does which the others do not, in the
 // user's terms. "BM25", "vector" and "RRF" are the right words for the code and
 // the wrong ones for a person deciding which button to press.
+//
+// Phrased to complete "<Mode>: ..." — the hint is rendered with its label so it
+// is unmistakably describing the selected button rather than the filters under
+// it. Without that prefix it read as a stray sentence in a settings panel.
 const MODE_HINT: Record<SearchMode, string> = {
-	keyword: "Matches your words, including their other forms — 'run' finds 'running'.",
-	semantic: "Matches meaning. Finds notes that never use the words you typed.",
-	hybrid: "Both, plus this device's own index. The default, and the widest.",
+	keyword: "matches your words, including their other forms. 'run' finds 'running'.",
+	semantic: "matches meaning. Finds notes that never use the words you typed.",
+	hybrid: "matches words and meaning together, plus this device's own index. Widest results.",
 };
+
+/** The hint line for `mode`, labelled so it visibly belongs to the buttons. */
+function modeHintText(mode: SearchMode): string {
+	return `${MODE_LABEL[mode]} ${MODE_HINT[mode]}`;
+}
 
 export interface SearchPanelOpts {
 	defaultMode: SearchMode;
@@ -164,13 +178,17 @@ export class SearchPanel {
 				cls: "engram-search-mode-btn",
 				text: MODE_LABEL[m],
 			});
-			btn.setAttribute("aria-label", MODE_HINT[m]);
+			btn.setAttribute("aria-label", modeHintText(m));
 			if (m === this.mode) btn.addClass("is-active");
 			btn.addEventListener("click", () => this.setMode(m));
 			this.modeBtns.set(m, btn);
 		}
-		this.modeHintEl = this.filtersEl.createDiv({ cls: "engram-search-mode-hint" });
-		this.modeHintEl.setText(MODE_HINT[this.mode]);
+		const hintRow = this.filtersEl.createDiv({ cls: "engram-search-mode-hint" });
+		// A leading icon, so the line reads as an annotation on the control above
+		// rather than as another setting in the stack.
+		setIcon(hintRow.createSpan({ cls: "engram-search-mode-hint-icon" }), "info");
+		this.modeHintEl = hintRow.createSpan({ cls: "engram-search-mode-hint-text" });
+		this.modeHintEl.setText(modeHintText(this.mode));
 		this.folderEl = this.filtersEl.createEl("input", {
 			type: "text",
 			placeholder: "Filter by folder…",
@@ -269,7 +287,7 @@ export class SearchPanel {
 		if (mode === this.mode) return;
 		this.mode = mode;
 		for (const [m, btn] of this.modeBtns) btn.toggleClass("is-active", m === mode);
-		this.modeHintEl?.setText(MODE_HINT[mode]);
+		this.modeHintEl?.setText(modeHintText(mode));
 		this.opts.onModeChange?.(mode);
 		void this.run();
 	}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { capHintText, unsearchableCount } from "../src/search-ui";
+import { capHintText, SELECTABLE_MODES, unsearchableCount } from "../src/search-ui";
+import { DEFAULT_SETTINGS } from "../src/types";
 
 describe("unsearchableCount", () => {
 	it("counts the notes past the cap", () => {
@@ -41,5 +42,21 @@ describe("capHintText", () => {
 		// the same inversion that made `attachments_text_only` block self-host
 		// attachments.
 		expect(capHintText(-1, 9999)).toBeNull();
+	});
+});
+
+describe("search mode picker", () => {
+	it("offers all three modes with Both in the middle", () => {
+		// Both is the default (DEFAULT_SETTINGS.searchDefaultMode), and the row
+		// reads as a spectrum: literal words, words plus meaning, meaning alone.
+		// The mode that spans both ends belongs between them, not at an edge.
+		expect(SELECTABLE_MODES).toEqual(["keyword", "hybrid", "semantic"]);
+	});
+
+	it("offers the default, so the picker always has an active button", () => {
+		// The panel coerces an unoffered persisted mode back to hybrid. If the
+		// default itself were ever dropped from this list, that coercion would
+		// silently fight the user's saved preference on every open.
+		expect(SELECTABLE_MODES).toContain(DEFAULT_SETTINGS.searchDefaultMode);
 	});
 });

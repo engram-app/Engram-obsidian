@@ -85,17 +85,49 @@
 	color: var(--text-normal);
 }
 
+/* Accent fill, not a lighter grey. Three low-contrast buttons in a grey
+   trough left the active one readable only by comparison against its
+   neighbours — you had to look at all three to learn which was on. */
 .engram-search-mode-btn.is-active {
-	background: var(--background-primary);
-	color: var(--text-normal);
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
 	font-weight: var(--font-semibold);
 }
 
+.engram-search-mode-btn.is-active:hover {
+	background: var(--interactive-accent-hover);
+	color: var(--text-on-accent);
+}
+
 /* The selected mode's one-line explanation. These three differ in what they
-   MATCH, not just how they rank, and the labels alone cannot carry that. */
+   MATCH, not just how they rank, and the labels alone cannot carry that.
+   
+   Set apart deliberately: as plain muted text it read as another setting in
+   the stack rather than as a note about the buttons above it. The icon and
+   the rule on the left mark it as an annotation, and the text sits at normal
+   contrast so it is actually legible. */
 .engram-search-mode-hint {
-	color: var(--text-muted);
+	display: flex;
+	align-items: flex-start;
+	gap: 6px;
+	padding: 6px 8px;
+	border-left: 2px solid var(--interactive-accent);
+	border-radius: var(--radius-s);
+	background: var(--background-secondary);
+	color: var(--text-normal);
 	font-size: var(--font-ui-smaller);
+	line-height: var(--line-height-tight);
+}
+
+.engram-search-mode-hint-icon {
+	display: inline-flex;
+	flex-shrink: 0;
+	color: var(--text-accent);
+}
+
+.engram-search-mode-hint-icon svg {
+	width: 0.95em;
+	height: 0.95em;
 }
 
 .engram-search-result-item {
