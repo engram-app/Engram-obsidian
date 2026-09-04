@@ -39,9 +39,6 @@ export function engramWebUrl(apiUrl: string): string {
  *  hostname changed, so the stored apiUrl is rewritten WITHOUT wiping auth. */
 export const LEGACY_CLOUD_HOSTS = ["app.engram.page"];
 
-/** Marketing site (account creation, docs). Linked from the Account tab. */
-export const ENGRAM_MARKETING_URL = "https://engram.page";
-
 /** Documentation site. */
 export const ENGRAM_DOCS_URL = "https://engram.page/docs";
 
@@ -53,9 +50,6 @@ export const ENGRAM_MCP_URL = "https://engram.page/docs/integrations";
 
 /** Self-hosted backend repo (setup instructions live here). */
 export const ENGRAM_SELFHOST_URL = "https://github.com/engram-app/engram";
-
-/** Main project GitHub repo (general "our code" link). */
-export const ENGRAM_GITHUB_URL = "https://github.com/engram-app/engram";
 
 /** Plugin issue tracker. */
 export const ENGRAM_ISSUES_URL = "https://github.com/engram-app/Engram-obsidian/issues";

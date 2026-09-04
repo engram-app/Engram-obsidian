@@ -43,8 +43,8 @@ export const RETIRED_SETTING_KEYS = [
 /** Compile-time proof that nothing in the list above is still a live setting.
  *
  *  A runtime test can only check keys present in DEFAULT_SETTINGS, and several
- *  live fields are deliberately absent from it (`backendMode`, `vaultId` —
- *  each says so in its own docstring). So retiring
+ *  live fields are deliberately absent from it (`backendMode`,
+ *  `inactiveBackend` — each says so in its own docstring). So retiring
  *  "backendMode" by fat-finger would pass every test and silently wipe every
  *  install's backend selection on the next load. This fails `tsc` instead. */
 type RetiredKeyIsNotLive =
