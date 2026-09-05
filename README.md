@@ -2,11 +2,15 @@
 
 # Engram Vault Sync
 
-![Engram Vault Sync: your notes are your AI's memory, synced everywhere, read and written by your AI](assets/vault-banner.gif)
-
 **Sync your vault everywhere, and let any AI read and write it.** Your notes become memory your AI can search, cite, and build on.
 
+<a href="https://www.youtube.com/watch?v=rwnPeZ-8Lqo"><img src="assets/setup-video.jpg" alt="Watch the setup walkthrough: connect Obsidian to any AI" width="640"></a>
+
+### [▶ Watch the setup walkthrough](https://www.youtube.com/watch?v=rwnPeZ-8Lqo)
+
 **[Start free at engram.page →](https://engram.page)** · No credit card, ready in minutes.
+
+![Engram Vault Sync: your notes are your AI's memory, synced everywhere, read and written by your AI](assets/vault-banner.gif)
 
 [Setup](#setup) · [Connect your AI](#connect-your-ai) · [API](https://engram.page/docs/api) · [User guide](docs/user-guide.md) · [Self-host](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
 
@@ -42,7 +46,7 @@ Nothing is ever silently overwritten. Offline edits sync when you reconnect. You
 
 After that, syncing just happens as you work.
 
-**Prefer to watch?** [Setup walkthrough on YouTube](https://www.youtube.com/watch?v=rwnPeZ-8Lqo).
+**Prefer to watch?** The [setup walkthrough](https://www.youtube.com/watch?v=rwnPeZ-8Lqo) covers both steps end to end.
 
 ## Connect your AI
 
