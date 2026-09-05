@@ -108,6 +108,7 @@
    contrast so it is actually legible. */
 .engram-search-mode-hint {
 	display: flex;
+
 	/* Centred, not top-aligned: the hint wraps to two or three lines in a narrow
 	   sidebar, and an icon pinned to the first line then sits visibly high
 	   against the block it labels. */
