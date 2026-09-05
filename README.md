@@ -12,8 +12,6 @@
 
 <a href="https://www.youtube.com/watch?v=rwnPeZ-8Lqo"><img src="assets/setup-video.jpg" alt="Watch the setup walkthrough: connect Obsidian to any AI" width="640"></a>
 
-### [▶ Watch the setup walkthrough](https://www.youtube.com/watch?v=rwnPeZ-8Lqo)
-
 </div>
 
 ## What you get
