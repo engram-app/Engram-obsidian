@@ -8,6 +8,7 @@ import { Notice, normalizePath, Setting } from "obsidian";
 import { type IssueDisposition, issueDisposition, remediation } from "./issue-store";
 import type EngramSyncPlugin from "./main";
 import type { QueuedReason } from "./offline-queue";
+import { formatBytes, planUsageRows } from "./plan-usage";
 import { ACTION_ICONS } from "./sync-log-modal";
 import { plural } from "./sync-plan-format";
 import { planLoadErrorMessage, SyncPreviewModal } from "./sync-preview-modal";
@@ -51,12 +52,16 @@ export function renderSyncCenter(
 	parent.addClass("engram-sync-center");
 	renderHeader(parent, plugin);
 	renderActions(parent, plugin, refresh);
+	// Stats sits directly under the Sync / Refresh buttons: it now carries the
+	// plan rows, which are the thing a user opens this pane to check. The
+	// issue sections below are all empty on a healthy vault, so leaving Stats
+	// last buried the only always-present content behind a run of blank ones.
+	renderStats(parent, plugin);
 	renderPlanSkips(parent, plugin, refresh);
 	renderNeedsAttention(parent, plugin, refresh);
 	renderRetrying(parent, plugin, refresh);
 	renderIgnored(parent, plugin, refresh);
 	renderActivity(parent, plugin, refresh);
-	renderStats(parent, plugin);
 }
 
 /** All current issues whose disposition is in `dispositions`, grouped by
@@ -174,6 +179,9 @@ function renderActions(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: (
 		refresh();
 	});
 
+	// No Upgrade button in this strip. It sits in the settings status bar
+	// instead, which persists across all four tabs — reaching it should not
+	// require already being on the panel that reports your limits.
 	makeActionButton(strip, "Refresh", () => refresh());
 }
 
@@ -564,7 +572,16 @@ function renderStats(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 	sectionHeading(section, "Stats");
 
 	const body = section.createDiv({ cls: "engram-sync-center-section-body" });
-	const grid = body.createDiv({ cls: "engram-sync-center-stats-grid" });
+
+	// ONE grid, two groups. The groups exist so the async plan fill cannot
+	// reorder or reflow the local facts below it; `display: contents` keeps
+	// their rows in the single parent grid so every row-to-row gap is the same.
+	// Two sibling grids looked right until you counted: rows inside a grid were
+	// separated by the grid gap PLUS the stat padding, but the seam between the
+	// two grids had only the padding, so one gap in the middle was half-height.
+	const gridEl = body.createDiv({ cls: "engram-sync-center-stats-grid" });
+	const planGrid = gridEl.createDiv({ cls: "engram-sync-center-stats-group" });
+	const grid = gridEl.createDiv({ cls: "engram-sync-center-stats-group" });
 
 	const allFiles = plugin.app.vault.getFiles();
 	let noteCount = 0;
@@ -576,27 +593,118 @@ function renderStats(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 		else noteCount++;
 	}
 
-	const vaultId = plugin.settings.vaultId;
+	// "Notes on this device" is rendered now and REMOVED again by renderPlanStats
+	// if the server agrees with it. On a synced vault it was the third row
+	// showing the same number as "Notes searchable" and "Notes stored", which is
+	// two rows of restatement; the count only carries information when it
+	// DISAGREES, and a disagreement is exactly what a user needs to see. It is
+	// created up front rather than after the fetch so a signed-out vault, where
+	// no plan rows ever arrive, still gets its local count.
+	//
+	// Attachments stays in both places: the local row counts files, the plan row
+	// measures bytes against a quota. Same subject, different questions.
+	//
+	// The remote vault NAME, not the local one. `app.vault.getName()` is the
+	// Obsidian folder on disk, which is the one fact here that has nothing to
+	// do with the account the rest of the panel describes. The two are often
+	// different and the remote name is what everything above is counted
+	// against.
+	//
+	// Vault ID is gone. It is an API header and log identifier, never anything
+	// a user acts on, and it is still available where you would actually want
+	// to copy it: as the tooltip on the vault name in the Connection tab
+	// (`connection-sections.ts` renderVaultName).
+	const localNotes = addStat(grid, "Notes on this device", String(noteCount));
+	const localAtts = addStat(grid, "Attachments on this device", String(attCount));
+	// Paint the cached name, then let the server correct it. The cache has no
+	// invalidation of its own and the auth paths change vaults without ever
+	// setting it, so reading it alone showed the PREVIOUS vault's name after a
+	// re-point, indefinitely.
+	const vaultEl = addStat(grid, "Remote vault", plugin.settings.remoteVaultName || "not linked");
+	void plugin.resolveRemoteVaultName().then((name) => {
+		vaultEl.value.setText(name || "not linked");
+	});
 
-	// Static facts only. Live counters (last sync, socket, queue, issues,
-	// ignored) are already on the status strip and in their own sections.
-	addStat(grid, "Local notes", String(noteCount));
-	addStat(grid, "Local attachments", String(attCount));
-	addStat(grid, "Vault", plugin.app.vault.getName());
-	addStat(grid, "Vault ID", vaultId ? String(vaultId) : "—");
+	renderPlanStats(body, planGrid, plugin, {
+		localNoteCount: noteCount,
+		localNotesRow: localNotes.row,
+		localAttachmentCount: attCount,
+		localAttachmentsRow: localAtts.row,
+	});
 }
 
-function addStat(parent: HTMLElement, label: string, value: string): void {
-	const item = parent.createDiv({ cls: "engram-sync-center-stat" });
-	item.createDiv({ cls: "engram-sync-center-stat-label", text: label });
-	item.createDiv({ cls: "engram-sync-center-stat-value", text: value });
+/** Plan caps + current usage, folded into Stats.
+ *
+ *  Shown whenever the tier is known, NOT only when a cap is exceeded. A Free
+ *  user at 300 of 2,000 otherwise sees nothing, and first learns the limit
+ *  exists when a search quietly fails to find a note they just wrote.
+ *
+ *  Caps already reach the plugin on the channel join; usage does not, and it
+ *  moves with every note written, so it is fetched here. Advisory only, per
+ *  the endpoint's contract: nothing on the client gates on it. */
+function renderPlanStats(
+	body: HTMLElement,
+	grid: HTMLElement,
+	plugin: EngramSyncPlugin,
+	local: {
+		localNoteCount: number;
+		localNotesRow: HTMLElement;
+		localAttachmentCount: number;
+		localAttachmentsRow: HTMLElement;
+	},
+): void {
+	// Plan state arrives over the channel, so it IS absent briefly after load
+	// and permanently when signed out. No tier, no rows, no fetch.
+	const tier = plugin.syncEngine?.getPlanState()?.tier;
+	if (!tier) return;
+
+	const api = plugin.api;
+	if (!api?.getBillingUsage) return;
+
+	void api
+		.getBillingUsage()
+		.then((data) => {
+			// The attachment file count is folded INTO the quota row rather than
+			// dropped: a count and a byte total are not comparable, so neither is
+			// redundant, but they answer one question and belong on one line.
+			const rows = planUsageRows(data, { localAttachmentCount: local.localAttachmentCount });
+			if (rows.length === 0) return;
+			for (const row of rows) addStat(grid, row.label, row.value);
+
+			// Drop the local note count once the server confirms it. Three rows
+			// reading 311 taught the user nothing the first one had not; the local
+			// number is only worth a row when it DISAGREES with the server, which
+			// is the case that means something is not yet pushed.
+			if (data.usage?.notes?.used === local.localNoteCount) local.localNotesRow.remove();
+			// Unconditional: its number now lives in the merged Attachments row.
+			// Only reached when that row exists, since a failed fetch skips this
+			// whole block and leaves the local rows standing.
+			if (rows.some((r) => r.label === "Attachments")) local.localAttachmentsRow.remove();
+
+			// The hint only earns its line when the limit actually bites. Showing
+			// it at 300/2,000 is noise; showing it at 2,000/2,000 is the one
+			// moment the user needs to know WHICH notes fell out.
+			const pinched = rows.find((r) => r.atLimit && r.hint);
+			if (pinched?.hint) {
+				body.createEl("p", { cls: "engram-sync-center-card-hint", text: pinched.hint });
+			}
+		})
+		.catch(() => {
+			// An advisory read failing must never look like a sync fault.
+			addStat(grid, "Plan usage", "unavailable");
+		});
 }
 
-function formatBytes(bytes: number): string {
-	if (bytes < 1024) return `${bytes} B`;
-	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-	if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-	return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+/** Returns both elements so a caller can correct the value, or drop the whole
+ *  row, once a slower source answers — rather than re-rendering the panel. */
+function addStat(
+	parent: HTMLElement,
+	label: string,
+	value: string,
+): { row: HTMLElement; value: HTMLElement } {
+	const row = parent.createDiv({ cls: "engram-sync-center-stat" });
+	row.createDiv({ cls: "engram-sync-center-stat-label", text: label });
+	return { row, value: row.createDiv({ cls: "engram-sync-center-stat-value", text: value }) };
 }
 
 function formatRelative(timestamp: number): string {

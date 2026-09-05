@@ -70,6 +70,7 @@ describe("stripRetiredSettings", () => {
 			"enableCrdt",
 			"featureFlags",
 			"waitlistPromptSeen",
+			"searchDefaultMode",
 		]);
 	});
 
@@ -82,6 +83,7 @@ describe("stripRetiredSettings", () => {
 			tracingEnabled: true,
 			enableCrdt: true,
 			featureFlags: { crdtRecording: true },
+			searchDefaultMode: "semantic",
 		};
 
 		stripRetiredSettings(settings);

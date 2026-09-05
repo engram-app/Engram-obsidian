@@ -38,6 +38,10 @@ export const RETIRED_SETTING_KEYS = [
 	// go straight to app.engram.page/sign-up. The flag only ever gated that
 	// modal, and a stored `true` would read like a live preference.
 	"waitlistPromptSeen",
+	// The search panel no longer remembers the last mode: every panel opens on
+	// Both. A stored value would read like a live preference for a picker that
+	// stopped consulting it.
+	"searchDefaultMode",
 ] as const;
 
 /** Compile-time proof that nothing in the list above is still a live setting.

@@ -15,6 +15,8 @@ interface FakeEl {
 	text: string;
 	attrs: Record<string, string>;
 	children: FakeEl[];
+	/** The element this node was actually appended to. See `factory` below. */
+	owner?: FakeEl;
 }
 
 function makeFakeEl(tag: string, opts?: { cls?: string; text?: string }): FakeEl {
@@ -28,8 +30,13 @@ function makeFakeEl(tag: string, opts?: { cls?: string; text?: string }): FakeEl
 	const factory = (childTag: string) => (childOpts?: { cls?: string; text?: string }) => {
 		const child = makeFakeEl(childTag, childOpts);
 		el.children.push(child);
-		// Attach the same chainable API for further nesting.
-		Object.assign(child, methods(child));
+		// `makeFakeEl` already bound the chainable API to the child. Re-assigning
+		// the PARENT's methods here (as this used to) rebound every descendant's
+		// factory to this `el`, so the whole tree rendered flat: a stat's label
+		// landed as a SIBLING of its row rather than inside it. Nothing asserted
+		// on structure, so it went unnoticed until a row had to be removed and
+		// its label stayed behind.
+		child.owner = el;
 		return child as unknown as HTMLElement;
 	};
 	const methods = (target: FakeEl) => ({
@@ -53,6 +60,12 @@ function makeFakeEl(tag: string, opts?: { cls?: string; text?: string }): FakeEl
 		},
 		empty: () => {
 			target.children.length = 0;
+		},
+		// The stats panel drops its local note row once the server confirms the
+		// same number, so the fake tree has to support detaching a node.
+		remove: () => {
+			const p = target.owner;
+			if (p) p.children.splice(p.children.indexOf(target), 1);
 		},
 	});
 	Object.assign(el, methods(el));
@@ -105,11 +118,31 @@ function makeIssue(overrides: Partial<SyncIssue> = {}): SyncIssue {
 	};
 }
 
-function makeMockPlugin(issues: SyncIssue[]): any {
+function makeMockPlugin(issues: SyncIssue[], planState?: unknown): any {
+	// Hoisted so `resolveRemoteVaultName` below reads the SAME object the tests
+	// mutate. Returning a fixed name instead would overwrite whatever a test
+	// set, which is exactly the bug the resolve exists to fix.
+	const settings: { vaultId: string; remoteVaultName?: string } = {
+		vaultId: "1",
+		remoteVaultName: "Vault",
+	};
 	return {
-		app: { vault: { getFiles: () => [], getName: () => "Vault" } },
-		settings: { vaultId: "1", remoteVaultName: "Vault" },
+		// `getMarkdownFiles` is what the search-cap section counts. The real
+		// vault has it; omitting it here meant the mock diverged from the
+		// interface rather than the code being wrong.
+		app: {
+			vault: { getFiles: () => [], getMarkdownFiles: () => [], getName: () => "Vault" },
+		},
+		settings,
+		// The Remote vault stat paints the cached name, then asks the server to
+		// confirm it. Agreeing with the cache is the no-drift case; a test that
+		// wants the correction overrides this.
+		resolveRemoteVaultName: () => Promise.resolve(settings.remoteVaultName ?? null),
 		syncEngine: {
+			// Real engine has this (see main.ts, where it feeds the search panel's
+			// cap hint). Defaults to null, which is the genuine pre-join state:
+			// plan state arrives over the channel, so it IS absent for a moment.
+			getPlanState: () => planState ?? null,
 			getStatus: () => ({
 				state: "idle",
 				pending: 0,
@@ -330,5 +363,182 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		const text = allText(parent);
 		expect(text).toContain("1 retrying");
 		expect(text).toContain("Temporary errors");
+	});
+	// ── "Your plan" usage panel ────────────────────────────────────────────
+	// Always shown once the tier is known, NOT only when over a cap. A Free
+	// user at 300 of 2,000 previously saw nothing, so the first thing they
+	// learned about the limit was a search quietly failing on a note they had
+	// just written.
+
+	const FREE_USAGE = {
+		tier: "free",
+		usage: {
+			notes: { used: 300, limit: 10000 },
+			vaults: { used: 1, limit: 1 },
+			attachment_bytes: { used: 13_002_342, limit: 1_073_741_824 },
+			indexed_notes: { used: 300, limit: 2000 },
+			ai_searches: { used: null, limit: 20 },
+		},
+	};
+
+	function withPlan(tier: string | null, usage: unknown = FREE_USAGE, reject = false) {
+		const plugin = makeMockPlugin([], tier === null ? null : { tier, indexedNotesCap: 2000 });
+		plugin.api = {
+			getBillingUsage: () =>
+				reject ? Promise.reject(new Error("offline")) : Promise.resolve(usage),
+		};
+		return plugin;
+	}
+
+	/** Let the getBillingUsage promise and its .then settle. */
+	const settle = () => new Promise((r) => setTimeout(r, 0));
+
+	test("shows a healthy Free vault instead of nothing", async () => {
+		const plugin = withPlan("free");
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		await settle();
+
+		const text = allText(parent);
+		expect(text).toContain("300 / 2,000");
+		expect(text).toContain("Notes searchable");
+	});
+
+	test("uses the Stats grid rather than a format of its own", async () => {
+		const plugin = withPlan("free");
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		await settle();
+
+		// Rows land in a `stats-grid` as `stat-label` / `stat-value` pairs, which
+		// is what gives them the separator and spacing Stats already has.
+		const labels = findAllByCls(parent, "engram-sync-center-stat-label").map((e) => e.text);
+		expect(labels).toContain("Notes searchable");
+		expect(labels).toContain("Notes on this device");
+	});
+
+	test("says which system each number describes", async () => {
+		// The account rows and the device rows legitimately disagree (ignored
+		// files, anything not yet pushed). A bare "Vault" or "Local notes" left
+		// the user no way to tell that is expected rather than a sync fault.
+		const plugin = withPlan("free");
+		plugin.settings.remoteVaultName = "Engram Prod";
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		await settle();
+
+		const labels = findAllByCls(parent, "engram-sync-center-stat-label").map((e) => e.text);
+		// "Notes stored" is the account's number; "Remote vault" names WHICH
+		// account. Attachments no longer has a device row — its file count is
+		// folded into the quota row (see the merge test below).
+		expect(labels).toContain("Notes stored");
+		expect(labels).toContain("Remote vault");
+		// An API/log identifier, never a thing a user acts on. Still reachable
+		// as the tooltip on the vault name in the Connection tab.
+		expect(labels).not.toContain("Vault ID");
+		expect(allText(parent)).toContain("Engram Prod");
+	});
+
+	test("corrects a stale cached vault name from the server", async () => {
+		// The reported bug: re-point at a different vault and the panel keeps
+		// showing the old name forever. `remoteVaultName` is a cache with no
+		// invalidation, and the auth paths change vaults without setting it, so
+		// reading the cache alone can only ever be wrong in one direction.
+		const plugin = withPlan("free");
+		plugin.settings.remoteVaultName = "Old Vault";
+		plugin.resolveRemoteVaultName = () => Promise.resolve("New Vault");
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		await settle();
+
+		expect(allText(parent)).toContain("New Vault");
+		expect(allText(parent)).not.toContain("Old Vault");
+	});
+
+	test("keeps showing the cached name when the server cannot be reached", async () => {
+		// Cosmetic data. An offline render showing the last known name beats one
+		// showing an error, or a blank, where a name goes.
+		const plugin = withPlan("free");
+		plugin.settings.remoteVaultName = "Engram Prod";
+		plugin.resolveRemoteVaultName = () => Promise.resolve("Engram Prod");
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		await settle();
+
+		expect(allText(parent)).toContain("Engram Prod");
+	});
+
+	test("says 'not linked' rather than blank when there is no remote vault", async () => {
+		const plugin = withPlan("free");
+		plugin.settings.remoteVaultName = undefined;
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		await settle();
+		expect(allText(parent)).toContain("not linked");
+	});
+
+	test("says nothing at all before plan state arrives", () => {
+		// Plan state comes over the channel, so it IS null for a moment after
+		// load and forever when signed out. No tier, no panel, no fetch.
+		const plugin = withPlan(null);
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		expect(allText(parent)).not.toContain("Notes searchable");
+	});
+
+	test("leaves the Upgrade CTA to the settings status bar", async () => {
+		// Moved out of this panel deliberately. The status strip persists across
+		// all four tabs, so the CTA no longer requires already being on the tab
+		// that reports your limits. Coverage lives in settings-upgrade-cta.test.
+		const plugin = withPlan("free");
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		await settle();
+		expect(findAllByCls(parent, "mod-cta").some((b) => b.text === "Upgrade")).toBe(false);
+	});
+
+	test("drops the local note count once the server agrees with it", async () => {
+		// Was the third row reading the same number as "Notes searchable" and
+		// "Notes stored". It only carries information when it DISAGREES.
+		const plugin = withPlan("free", {
+			tier: "free",
+			usage: { notes: { used: 0, limit: 10000 }, indexed_notes: { used: 0, limit: 2000 } },
+		});
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		await settle();
+
+		const labels = findAllByCls(parent, "engram-sync-center-stat-label").map((e) => e.text);
+		expect(labels).not.toContain("Notes on this device");
+		expect(labels).toContain("Notes stored");
+	});
+
+	test("keeps the local note count when it disagrees with the server", async () => {
+		// The disagreement is the signal: something local is not yet pushed.
+		const plugin = withPlan("free", {
+			tier: "free",
+			usage: { notes: { used: 297, limit: 10000 } },
+		});
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		await settle();
+
+		const labels = findAllByCls(parent, "engram-sync-center-stat-label").map((e) => e.text);
+		expect(labels).toContain("Notes on this device");
+	});
+
+	test("does not push Upgrade at someone who already pays", async () => {
+		const plugin = withPlan("pro", {
+			tier: "pro",
+			usage: { notes: { used: 1240, limit: null } },
+		});
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		await settle();
+
+		// Bare count on an unlimited plan, no "/ unlimited" suffix.
+		expect(allText(parent)).toContain("1,240");
+	});
+
+	test("a failed usage read does not masquerade as a sync problem", async () => {
+		const plugin = withPlan("free", FREE_USAGE, true);
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		await settle();
+
+		// Reported as an ordinary stat row, not an error banner: an advisory
+		// read failing must not look like sync is broken.
+		const labels = findAllByCls(parent, "engram-sync-center-stat-label").map((e) => e.text);
+		expect(labels).toContain("Plan usage");
+		expect(labels).not.toContain("Notes searchable");
+		expect(allText(parent)).toContain("unavailable");
 	});
 });

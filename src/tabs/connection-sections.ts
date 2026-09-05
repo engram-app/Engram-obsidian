@@ -1,3 +1,16 @@
+/**
+ * connection-sections.ts — the sections `connection-tab.ts` renders.
+ *
+ * Was `self-hosted-tab.ts`, back when Cloud and Self-hosted were two tabs.
+ * They are one tab now, and this module has exactly one consumer, so the old
+ * name claimed a self-host code path that does not exist: every section here
+ * runs identically in both modes. The only thing that reads `backendMode` is
+ * one API-key description string, because Cloud gates keys behind Pro and
+ * self-host enforces no limits at all. Copy, not control flow.
+ *
+ * Vault switching in particular is NOT forked: the dropdown here and the
+ * sync-preview picker both funnel into `plugin.switchVault` (#1409).
+ */
 import { Notice, Setting, setIcon } from "obsidian";
 import { EngramApi } from "../api";
 import {
@@ -352,10 +365,23 @@ export function renderVaultSection(ctx: TabContext): void {
 	const storedName = plugin.settings.remoteVaultName;
 
 	// Render locked-in UI immediately from saved state — avoids a "Loading
-	// vaults..." flicker every time the user opens settings. The Change
-	// button fetches a fresh list on demand.
+	// vaults..." flicker every time the user opens settings.
+	//
+	// Then verify it in the background. This used to `return` here, so a stored
+	// name was trusted forever: the self-heal further down lives in the fetch
+	// path, which this branch skipped entirely. Any vault change that did not
+	// carry a name (the auth paths pass an id only, by design) left the previous
+	// vault's name on screen permanently — "set once and never again", and the
+	// stale label then propagated to the Sync Center and the sync preview.
+	//
+	// Verify, do not gate: the saved name still paints first, so this costs a
+	// flicker-free correction rather than a loading state, and an offline render
+	// simply keeps showing the last known name.
 	if (currentId && storedName) {
 		renderLockedVaultRow(setting, plugin, currentId, storedName);
+		void plugin.resolveRemoteVaultName().then((name) => {
+			if (name && name !== storedName) redisplay();
+		});
 		return;
 	}
 
