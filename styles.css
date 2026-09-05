@@ -617,10 +617,14 @@
 
 /* ── Welcome (about) tab ─────────────────────────────────────── */
 
-.engram-about-intro {
-	margin: 0 0 16px;
-	color: var(--text-muted);
-	line-height: 1.5;
+/* Leads the Welcome tab. Accent border + tint so it reads as an invitation
+   rather than one more row in a settings list. */
+.engram-about-video {
+	margin: 0 0 20px;
+	padding: 14px 16px;
+	border: 1px solid var(--interactive-accent);
+	border-radius: 8px;
+	background: var(--background-secondary);
 }
 
 .engram-about-heading .setting-item-name {

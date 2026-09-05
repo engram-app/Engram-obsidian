@@ -10,6 +10,8 @@
 
 [Setup](#setup) · [Connect your AI](#connect-your-ai) · [API](https://engram.page/docs/api) · [User guide](docs/user-guide.md) · [Self-host](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
 
+<a href="https://www.youtube.com/watch?v=rwnPeZ-8Lqo"><img src="assets/setup-video.jpg" alt="Watch the setup walkthrough: connect Obsidian to any AI" width="640"></a>
+
 </div>
 
 ## What you get
@@ -32,6 +34,8 @@ Claude   📝  created "Henderson: renewal risks"  ✓
          Linked it to the four source notes.
 ```
 
+<video src="assets/showcase-file-creation.webm" width="800" autoplay loop muted playsinline></video>
+
 Nothing is ever silently overwritten. Offline edits sync when you reconnect. Your notes go only to Engram, never a third party, no tracking.
 
 ## Setup
@@ -42,11 +46,15 @@ Nothing is ever silently overwritten. Offline edits sync when you reconnect. You
 
 After that, syncing just happens as you work.
 
+**Prefer to watch?** The [setup walkthrough](https://www.youtube.com/watch?v=rwnPeZ-8Lqo) covers both steps end to end.
+
 ## Connect your AI
 
 Engram speaks **MCP (Model Context Protocol)**: the open standard Claude, Cursor, ChatGPT, and other apps use to reach external tools. Plug in once and your AI can search your notes, write new ones, and update existing ones, straight from your own vault.
 
 Point your client at the Engram MCP server (`https://mcp.engram.page` on the hosted service); step-by-step guides for each app are in the **[integration docs](https://engram.page/docs/integrations)**.
+
+<video src="assets/showcase-mcp.webm" width="800" autoplay loop muted playsinline></video>
 
 ## Privacy
 
