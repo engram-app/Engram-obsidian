@@ -51,6 +51,9 @@ export const ENGRAM_MCP_URL = "https://engram.page/docs/integrations";
 /** Self-hosted backend repo (setup instructions live here). */
 export const ENGRAM_SELFHOST_URL = "https://github.com/engram-app/engram";
 
+/** Walkthrough video: account, connect, first sync. */
+export const ENGRAM_SETUP_VIDEO_URL = "https://www.youtube.com/watch?v=rwnPeZ-8Lqo";
+
 /** Plugin issue tracker. */
 export const ENGRAM_ISSUES_URL = "https://github.com/engram-app/Engram-obsidian/issues";
 

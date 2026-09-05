@@ -7,6 +7,7 @@ import {
 	ENGRAM_MCP_URL,
 	ENGRAM_PRICING_URL,
 	ENGRAM_SELFHOST_URL,
+	ENGRAM_SETUP_VIDEO_URL,
 	ENGRAM_SIGN_UP_URL,
 } from "./urls";
 
@@ -34,6 +35,10 @@ export function renderAboutTab(ctx: TabContext): void {
 
 	// ── Getting set up ──
 	heading(containerEl, "Getting set up");
+
+	const video = new Setting(containerEl).setName("Watch the setup video");
+	video.descEl.appendText("A short walkthrough of the steps below. ");
+	externalLink(video.descEl, "Watch on YouTube", ENGRAM_SETUP_VIDEO_URL);
 
 	const account = new Setting(containerEl).setName("1. Make an account");
 	account.descEl.appendText("Create a hosted account at ");

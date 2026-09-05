@@ -42,6 +42,8 @@ Nothing is ever silently overwritten. Offline edits sync when you reconnect. You
 
 After that, syncing just happens as you work.
 
+**Prefer to watch?** [Setup walkthrough on YouTube](https://www.youtube.com/watch?v=rwnPeZ-8Lqo).
+
 ## Connect your AI
 
 Engram speaks **MCP (Model Context Protocol)**: the open standard Claude, Cursor, ChatGPT, and other apps use to reach external tools. Plug in once and your AI can search your notes, write new ones, and update existing ones, straight from your own vault.
