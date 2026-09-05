@@ -28,17 +28,24 @@ function heading(containerEl: HTMLElement, name: string): void {
 export function renderAboutTab(ctx: TabContext): void {
 	const { containerEl, switchToTab } = ctx;
 
-	const intro = containerEl.createEl("p", { cls: "engram-about-intro" });
-	intro.setText(
-		"Engram vault sync keeps your Obsidian vault in sync with Engram and lets your AI assistants read and write the same notes. You edit on any device; your AI works from notes you actually wrote.",
-	);
+	// The video is the fastest path to a working setup, so it leads the tab
+	// as an accent button rather than an inline link — a text link in the
+	// description reads as one more sentence and gets skipped.
+	const video = new Setting(containerEl)
+		.setName("New here? Watch the setup video")
+		.setDesc("What Engram does, and how to connect your vault, start to finish.")
+		.addButton((btn) =>
+			btn
+				.setButtonText("▶ Watch on YouTube")
+				.setCta()
+				// Obsidian's Electron host treats window.open as an external
+				// browser open (same pattern as src/limit-toast.ts).
+				.onClick(() => window.open(ENGRAM_SETUP_VIDEO_URL, "_blank")),
+		);
+	video.settingEl.addClass("engram-about-video");
 
 	// ── Getting set up ──
 	heading(containerEl, "Getting set up");
-
-	const video = new Setting(containerEl).setName("Watch the setup video");
-	video.descEl.appendText("A short walkthrough of the steps below. ");
-	externalLink(video.descEl, "Watch on YouTube", ENGRAM_SETUP_VIDEO_URL);
 
 	const account = new Setting(containerEl).setName("1. Make an account");
 	account.descEl.appendText("Create a hosted account at ");

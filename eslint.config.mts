@@ -66,6 +66,7 @@ export default tseslint.config(
 						"Ollama",
 						"Qdrant",
 						"BRAT",
+						"YouTube",
 					],
 					ignoreRegex: [
 						String.raw`https?://\S+`,
