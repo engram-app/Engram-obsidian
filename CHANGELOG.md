@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.28.0](https://github.com/engram-app/Engram-obsidian/compare/1.27.0...1.28.0) (2026-09-05)
+
+
+### Features
+
+* **settings:** add the setup video to the Welcome tab and README ([#506](https://github.com/engram-app/Engram-obsidian/issues/506)) ([b3e95cb](https://github.com/engram-app/Engram-obsidian/commit/b3e95cb59ef6b4b34b7a726626a7e55967e5d584))
+
 ## [1.27.0](https://github.com/engram-app/Engram-obsidian/compare/1.26.0...1.27.0) (2026-09-05)
 
 
