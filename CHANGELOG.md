@@ -7,6 +7,7 @@
 
 * **crdt:** record a room-free delivery so it stops taking a room ([#500](https://github.com/engram-app/Engram-obsidian/issues/500)) ([7a62a21](https://github.com/engram-app/Engram-obsidian/commit/7a62a210dc824749c1b6c2a6aeb05cafc9171761))
 * drop the waitlist prompt, send new users to sign-up ([#504](https://github.com/engram-app/Engram-obsidian/issues/504)) ([17ab8a8](https://github.com/engram-app/Engram-obsidian/commit/17ab8a8eb81ec0e4dddd41b66f7d51534b6ed2a8))
+* **sync-center:** surface notes that synced but are not searchable ([#503](https://github.com/engram-app/Engram-obsidian/issues/503)) ([91e9c97](https://github.com/engram-app/Engram-obsidian/commit/91e9c975d07aedab62d939723b1d3ea9e8d21010))
 
 
 ### Bug Fixes
