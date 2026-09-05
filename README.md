@@ -34,7 +34,7 @@ Claude   📝  created "Henderson: renewal risks"  ✓
          Linked it to the four source notes.
 ```
 
-<video src="https://raw.githubusercontent.com/engram-app/Engram-obsidian/docs/setup-video/assets/showcase-file-creation.webm" width="800" autoplay loop muted playsinline></video>
+<video src="assets/showcase-file-creation.webm" width="800" autoplay loop muted playsinline></video>
 
 Nothing is ever silently overwritten. Offline edits sync when you reconnect. Your notes go only to Engram, never a third party, no tracking.
 
@@ -54,7 +54,7 @@ Engram speaks **MCP (Model Context Protocol)**: the open standard Claude, Cursor
 
 Point your client at the Engram MCP server (`https://mcp.engram.page` on the hosted service); step-by-step guides for each app are in the **[integration docs](https://engram.page/docs/integrations)**.
 
-<video src="https://raw.githubusercontent.com/engram-app/Engram-obsidian/docs/setup-video/assets/showcase-mcp.webm" width="800" autoplay loop muted playsinline></video>
+<video src="assets/showcase-mcp.webm" width="800" autoplay loop muted playsinline></video>
 
 ## Privacy
 
