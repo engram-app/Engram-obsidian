@@ -2,17 +2,17 @@
 
 # Engram Vault Sync
 
-![Engram Vault Sync: ваши заметки становятся памятью вашего ИИ, синхронизируются везде, ИИ их читает и пишет](assets/vault-banner.gif)
+![Engram Vault Sync: ваши заметки становятся памятью вашего ИИ, синхронизируются везде, ИИ их читает и пишет](../../assets/vault-banner.gif)
 
 **Синхронизируйте хранилище на всех устройствах и позвольте любому ИИ читать и писать в нём.** Ваши заметки становятся памятью, в которой ИИ может искать, на которую может ссылаться и которую может продолжать.
 
 **[Начать бесплатно на engram.page →](https://engram.page)** · Без банковской карты, готово за несколько минут.
 
-[Установка](#установка) · [Подключите свой ИИ](#подключите-свой-ии) · [API](https://engram.page/docs/api) · [Руководство](docs/user-guide.md) · [Своё размещение](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
+[Установка](#установка) · [Подключите свой ИИ](#подключите-свой-ии) · [API](https://engram.page/docs/api) · [Руководство](../user-guide.md) · [Своё размещение](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
 
-[English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português](README.pt-BR.md) · **Русский** · [Italiano](README.it.md)
+[English](../../README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português](README.pt-BR.md) · **Русский** · [Italiano](README.it.md)
 
-<a href="https://www.youtube.com/watch?v=rwnPeZ-8Lqo"><img src="assets/setup-video.jpg" alt="Видео об установке: подключить Obsidian к любому ИИ" width="640"></a>
+<a href="https://www.youtube.com/watch?v=rwnPeZ-8Lqo"><img src="../../assets/setup-video.jpg" alt="Видео об установке: подключить Obsidian к любому ИИ" width="640"></a>
 
 </div>
 
@@ -38,7 +38,7 @@ Claude   📝  создана «Henderson: риски продления»  ✓
          Связана с четырьмя исходными заметками.
 ```
 
-<video src="assets/showcase-file-creation.webm" width="800" autoplay loop muted playsinline></video>
+<video src="../../assets/showcase-file-creation.webm" width="800" autoplay loop muted playsinline></video>
 
 Ничто никогда не затирается молча. Правки, сделанные без сети, синхронизируются при подключении. Ваши заметки уходят только в Engram, никогда третьей стороне, и никакой слежки нет.
 
@@ -58,7 +58,7 @@ Engram говорит на **MCP (Model Context Protocol)**, открытом с
 
 Направьте клиент на MCP-сервер Engram (`https://mcp.engram.page` в размещённом сервисе). Пошаговые руководства для каждого приложения есть в **[документации по интеграциям](https://engram.page/docs/integrations)**.
 
-<video src="assets/showcase-mcp.webm" width="800" autoplay loop muted playsinline></video>
+<video src="../../assets/showcase-mcp.webm" width="800" autoplay loop muted playsinline></video>
 
 ## Конфиденциальность
 
@@ -70,12 +70,12 @@ Engram говорит на **MCP (Model Context Protocol)**, открытом с
 
 - **[Подключите свой ИИ](https://engram.page/docs/integrations)**: настройка MCP для Claude, Cursor, ChatGPT, Windsurf и других.
 - **[Справочник API](https://engram.page/docs/api)**: создавайте на основе REST и WebSocket API.
-- **[Руководство пользователя](docs/user-guide.md)**: ИИ-ассистенты, конфликты, Sync Center, разбор проблем.
-- **[Руководство разработчика](DEV.md)**: сборка из исходников, архитектура, выпуски.
+- **[Руководство пользователя](../user-guide.md)**: ИИ-ассистенты, конфликты, Sync Center, разбор проблем.
+- **[Руководство разработчика](../../DEV.md)**: сборка из исходников, архитектура, выпуски.
 - **Что-то не так?** [Создайте issue](https://github.com/engram-app/Engram-obsidian/issues).
 - **Присоединяйтесь к сообществу.** Общайтесь с пользователями и разработчиками в [Discord](https://discord.gg/NKWcU2mm7N).
 - **Понравилось?** Поддержите разработку через [GitHub Sponsors](https://github.com/sponsors/engram-app) или [Ko-fi](https://ko-fi.com/engrams_sync). Это по желанию, и это очень помогает.
 
 ## Лицензия
 
-[MIT](LICENSE)
+[MIT](../../LICENSE)

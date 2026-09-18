@@ -2,17 +2,17 @@
 
 # Engram Vault Sync
 
-![Engram Vault Sync: 당신의 노트가 AI의 기억이 되고, 모든 기기에 동기화되며, AI가 읽고 씁니다](assets/vault-banner.gif)
+![Engram Vault Sync: 당신의 노트가 AI의 기억이 되고, 모든 기기에 동기화되며, AI가 읽고 씁니다](../../assets/vault-banner.gif)
 
 **보관함을 모든 기기에 동기화하고, 어떤 AI든 읽고 쓸 수 있게 합니다.** 당신의 노트는 AI가 검색하고 인용하고 그 위에 생각을 쌓을 수 있는 기억이 됩니다.
 
 **[engram.page에서 무료로 시작 →](https://engram.page)** · 신용카드 없이, 몇 분이면 준비됩니다.
 
-[설치](#설치) · [AI 연결하기](#ai-연결하기) · [API](https://engram.page/docs/api) · [사용자 가이드](docs/user-guide.md) · [직접 호스팅](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
+[설치](#설치) · [AI 연결하기](#ai-연결하기) · [API](https://engram.page/docs/api) · [사용자 가이드](../user-guide.md) · [직접 호스팅](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
 
-[English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · **한국어** · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português](README.pt-BR.md) · [Русский](README.ru.md) · [Italiano](README.it.md)
+[English](../../README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · **한국어** · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português](README.pt-BR.md) · [Русский](README.ru.md) · [Italiano](README.it.md)
 
-<a href="https://www.youtube.com/watch?v=rwnPeZ-8Lqo"><img src="assets/setup-video.jpg" alt="설치 과정 영상: Obsidian을 어떤 AI에든 연결하기" width="640"></a>
+<a href="https://www.youtube.com/watch?v=rwnPeZ-8Lqo"><img src="../../assets/setup-video.jpg" alt="설치 과정 영상: Obsidian을 어떤 AI에든 연결하기" width="640"></a>
 
 </div>
 
@@ -38,7 +38,7 @@ Claude   📝  "Henderson: 갱신 리스크"를 만들었습니다  ✓
          출처가 된 노트 4건에 연결했습니다.
 ```
 
-<video src="assets/showcase-file-creation.webm" width="800" autoplay loop muted playsinline></video>
+<video src="../../assets/showcase-file-creation.webm" width="800" autoplay loop muted playsinline></video>
 
 어떤 내용도 조용히 덮어써지지 않습니다. 오프라인에서 한 편집은 다시 연결되면 동기화됩니다. 노트는 Engram으로만 전송되며, 제3자를 거치지 않고 추적도 없습니다.
 
@@ -58,7 +58,7 @@ Engram은 **MCP(Model Context Protocol)**를 사용합니다. Claude, Cursor, Ch
 
 클라이언트를 Engram MCP 서버(호스팅 버전은 `https://mcp.engram.page`)로 지정하세요. 앱별 단계별 안내는 **[연동 문서](https://engram.page/docs/integrations)**에 있습니다.
 
-<video src="assets/showcase-mcp.webm" width="800" autoplay loop muted playsinline></video>
+<video src="../../assets/showcase-mcp.webm" width="800" autoplay loop muted playsinline></video>
 
 ## 개인정보
 
@@ -70,12 +70,12 @@ Engram은 **MCP(Model Context Protocol)**를 사용합니다. Claude, Cursor, Ch
 
 - **[AI 연결하기](https://engram.page/docs/integrations)**: Claude, Cursor, ChatGPT, Windsurf 등의 MCP 설정.
 - **[API 참조](https://engram.page/docs/api)**: REST + WebSocket API 위에 만들기.
-- **[사용자 가이드](docs/user-guide.md)**: AI 어시스턴트, 충돌, Sync Center, 문제 해결.
-- **[개발자 가이드](DEV.md)**: 소스 빌드, 아키텍처, 릴리스.
+- **[사용자 가이드](../user-guide.md)**: AI 어시스턴트, 충돌, Sync Center, 문제 해결.
+- **[개발자 가이드](../../DEV.md)**: 소스 빌드, 아키텍처, 릴리스.
 - **문제가 있나요?** [이슈를 남겨주세요](https://github.com/engram-app/Engram-obsidian/issues).
 - **커뮤니티에 참여하세요.** [Discord](https://discord.gg/NKWcU2mm7N)에서 사용자와 개발자와 이야기할 수 있습니다.
 - **마음에 드나요?** [GitHub Sponsors](https://github.com/sponsors/engram-app) 또는 [Ko-fi](https://ko-fi.com/engrams_sync)로 개발을 후원할 수 있습니다. 선택 사항이며, 큰 도움이 됩니다.
 
 ## 라이선스
 
-[MIT](LICENSE)
+[MIT](../../LICENSE)

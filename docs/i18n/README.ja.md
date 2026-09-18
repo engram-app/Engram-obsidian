@@ -2,17 +2,17 @@
 
 # Engram Vault Sync
 
-![Engram Vault Sync: あなたのノートが AI の記憶になり、全デバイスで同期され、AI が読み書きします](assets/vault-banner.gif)
+![Engram Vault Sync: あなたのノートが AI の記憶になり、全デバイスで同期され、AI が読み書きします](../../assets/vault-banner.gif)
 
 **保管庫をすべてのデバイスで同期し、どの AI からでも読み書きできるようにします。** あなたのノートは、AI が検索し、引用し、その上で考えを積み上げられる記憶になります。
 
 **[engram.page で無料で始める →](https://engram.page)** · クレジットカード不要、数分で使えます。
 
-[セットアップ](#セットアップ) · [AI を接続する](#ai-を接続する) · [API](https://engram.page/docs/api) · [ユーザーガイド](docs/user-guide.md) · [セルフホスト](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
+[セットアップ](#セットアップ) · [AI を接続する](#ai-を接続する) · [API](https://engram.page/docs/api) · [ユーザーガイド](../user-guide.md) · [セルフホスト](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
 
-[English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · **日本語** · [한국어](README.ko.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português](README.pt-BR.md) · [Русский](README.ru.md) · [Italiano](README.it.md)
+[English](../../README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · **日本語** · [한국어](README.ko.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português](README.pt-BR.md) · [Русский](README.ru.md) · [Italiano](README.it.md)
 
-<a href="https://www.youtube.com/watch?v=rwnPeZ-8Lqo"><img src="assets/setup-video.jpg" alt="セットアップ手順の動画: Obsidian を任意の AI につなぐ" width="640"></a>
+<a href="https://www.youtube.com/watch?v=rwnPeZ-8Lqo"><img src="../../assets/setup-video.jpg" alt="セットアップ手順の動画: Obsidian を任意の AI につなぐ" width="640"></a>
 
 </div>
 
@@ -38,7 +38,7 @@ Claude   📝  「Henderson: 更新リスク」を作成しました  ✓
          出典となる 4 件のノートにリンクしました。
 ```
 
-<video src="assets/showcase-file-creation.webm" width="800" autoplay loop muted playsinline></video>
+<video src="../../assets/showcase-file-creation.webm" width="800" autoplay loop muted playsinline></video>
 
 内容が黙って上書きされることはありません。オフライン中の編集は再接続時に同期されます。ノートは Engram にのみ送られ、第三者を経由せず、トラッキングもありません。
 
@@ -58,7 +58,7 @@ Engram は **MCP (Model Context Protocol)** を話します。Claude、Cursor、
 
 クライアントを Engram の MCP サーバー (ホスト版では `https://mcp.engram.page`) に向けてください。アプリごとの手順は **[連携ドキュメント](https://engram.page/docs/integrations)** にあります。
 
-<video src="assets/showcase-mcp.webm" width="800" autoplay loop muted playsinline></video>
+<video src="../../assets/showcase-mcp.webm" width="800" autoplay loop muted playsinline></video>
 
 ## プライバシー
 
@@ -70,12 +70,12 @@ Engram は **MCP (Model Context Protocol)** を話します。Claude、Cursor、
 
 - **[AI を接続する](https://engram.page/docs/integrations)**: Claude、Cursor、ChatGPT、Windsurf などの MCP 設定。
 - **[API リファレンス](https://engram.page/docs/api)**: REST + WebSocket API の上に作る。
-- **[ユーザーガイド](docs/user-guide.md)**: AI アシスタント、競合、Sync Center、トラブルシューティング。
-- **[開発者ガイド](DEV.md)**: ソースからのビルド、アーキテクチャ、リリース。
+- **[ユーザーガイド](../user-guide.md)**: AI アシスタント、競合、Sync Center、トラブルシューティング。
+- **[開発者ガイド](../../DEV.md)**: ソースからのビルド、アーキテクチャ、リリース。
 - **問題がありますか?** [issue を作成してください](https://github.com/engram-app/Engram-obsidian/issues)。
 - **コミュニティへ。** [Discord](https://discord.gg/NKWcU2mm7N) でユーザーや開発者と話せます。
 - **気に入りましたか?** [GitHub Sponsors](https://github.com/sponsors/engram-app) または [Ko-fi](https://ko-fi.com/engrams_sync) で開発を支援できます。任意ですが、とても助かります。
 
 ## ライセンス
 
-[MIT](LICENSE)
+[MIT](../../LICENSE)

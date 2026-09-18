@@ -2,17 +2,17 @@
 
 # Engram Vault Sync
 
-![Engram Vault Sync：你的笔记就是 AI 的记忆，多设备同步，可被 AI 读写](assets/vault-banner.gif)
+![Engram Vault Sync：你的笔记就是 AI 的记忆，多设备同步，可被 AI 读写](../../assets/vault-banner.gif)
 
 **把你的知识库同步到每台设备，并让任意 AI 读写它。** 你的笔记会变成 AI 可以检索、引用、并在此基础上继续思考的记忆。
 
 **[在 engram.page 免费开始 →](https://engram.page)** · 无需信用卡，几分钟即可就绪。
 
-[安装配置](#安装配置) · [连接你的 AI](#连接你的-ai) · [API](https://engram.page/docs/api) · [使用手册](docs/user-guide.md) · [自托管](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
+[安装配置](#安装配置) · [连接你的 AI](#连接你的-ai) · [API](https://engram.page/docs/api) · [使用手册](../user-guide.md) · [自托管](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
 
-[English](README.md) · **简体中文** · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português](README.pt-BR.md) · [Русский](README.ru.md) · [Italiano](README.it.md)
+[English](../../README.md) · **简体中文** · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português](README.pt-BR.md) · [Русский](README.ru.md) · [Italiano](README.it.md)
 
-<a href="https://www.youtube.com/watch?v=rwnPeZ-8Lqo"><img src="assets/setup-video.jpg" alt="观看配置教程：把 Obsidian 连接到任意 AI" width="640"></a>
+<a href="https://www.youtube.com/watch?v=rwnPeZ-8Lqo"><img src="../../assets/setup-video.jpg" alt="观看配置教程：把 Obsidian 连接到任意 AI" width="640"></a>
 
 </div>
 
@@ -38,7 +38,7 @@ Claude   📝  已创建“Henderson：续约风险”  ✓
          并关联了那四条来源笔记。
 ```
 
-<video src="assets/showcase-file-creation.webm" width="800" autoplay loop muted playsinline></video>
+<video src="../../assets/showcase-file-creation.webm" width="800" autoplay loop muted playsinline></video>
 
 不会有任何内容被静默覆盖。离线期间的修改会在重新联网后同步。你的笔记只会发送到 Engram，不经过第三方，也没有任何追踪。
 
@@ -58,7 +58,7 @@ Engram 使用 **MCP（Model Context Protocol，模型上下文协议）**：这�
 
 把客户端指向 Engram 的 MCP 服务器（托管版为 `https://mcp.engram.page`）；各应用的分步指南见 **[集成文档](https://engram.page/docs/integrations)**。
 
-<video src="assets/showcase-mcp.webm" width="800" autoplay loop muted playsinline></video>
+<video src="../../assets/showcase-mcp.webm" width="800" autoplay loop muted playsinline></video>
 
 ## 隐私
 
@@ -70,12 +70,12 @@ Engram 使用 **MCP（Model Context Protocol，模型上下文协议）**：这�
 
 - **[连接你的 AI](https://engram.page/docs/integrations)**：Claude、Cursor、ChatGPT、Windsurf 等应用的 MCP 配置方法。
 - **[API 参考](https://engram.page/docs/api)**：基于 REST + WebSocket API 做开发。
-- **[使用手册](docs/user-guide.md)**：AI 助手、冲突处理、同步中心、问题排查。
-- **[开发者指南](DEV.md)**：从源码构建、架构说明、发布流程。
+- **[使用手册](../user-guide.md)**：AI 助手、冲突处理、同步中心、问题排查。
+- **[开发者指南](../../DEV.md)**：从源码构建、架构说明、发布流程。
 - **遇到问题？**[提交 issue](https://github.com/engram-app/Engram-obsidian/issues)。
 - **加入社区。** 在 [Discord](https://discord.gg/NKWcU2mm7N) 上与用户和开发者交流。
 - **觉得好用？** 可通过 [GitHub Sponsors](https://github.com/sponsors/engram-app) 或 [Ko-fi](https://ko-fi.com/engrams_sync) 支持开发。完全自愿，非常感谢。
 
 ## 许可协议
 
-[MIT](LICENSE)
+[MIT](../../LICENSE)
