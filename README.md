@@ -10,6 +10,8 @@
 
 [Setup](#setup) · [Connect your AI](#connect-your-ai) · [API](https://engram.page/docs/api) · [User guide](docs/user-guide.md) · [Self-host](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
 
+**English** · [简体中文](docs/i18n/README.zh-CN.md) · [繁體中文](docs/i18n/README.zh-TW.md) · [日本語](docs/i18n/README.ja.md) · [한국어](docs/i18n/README.ko.md) · [Deutsch](docs/i18n/README.de.md) · [Français](docs/i18n/README.fr.md) · [Español](docs/i18n/README.es.md) · [Português](docs/i18n/README.pt-BR.md) · [Русский](docs/i18n/README.ru.md) · [Italiano](docs/i18n/README.it.md)
+
 <a href="https://www.youtube.com/watch?v=rwnPeZ-8Lqo"><img src="assets/setup-video.jpg" alt="Watch the setup walkthrough: connect Obsidian to any AI" width="640"></a>
 
 </div>
@@ -75,3 +77,19 @@ Point your client at the Engram MCP server (`https://mcp.engram.page` on the hos
 ## License
 
 [MIT](LICENSE)
+
+---
+
+**中文:** Obsidian 笔记同步 + AI 记忆。多设备同步、语义搜索、关键词搜索、知识库、MCP、Claude / Cursor / ChatGPT 读写笔记、可自托管、开放 API。 [完整中文说明](docs/i18n/README.zh-CN.md) · [繁體中文](docs/i18n/README.zh-TW.md)
+
+---
+
+**日本語:** Obsidian ノート同期 + AI メモリ。全デバイス同期、セマンティック検索、キーワード検索、知識ベース、MCP、Claude / Cursor / ChatGPT がノートを読み書き、セルフホスト可能、オープン API。 [日本語の説明](docs/i18n/README.ja.md)
+
+---
+
+**한국어:** Obsidian 노트 동기화 + AI 기억. 모든 기기 동기화, 의미 검색, 키워드 검색, 지식 베이스, MCP, Claude / Cursor / ChatGPT가 노트를 읽고 쓰기, 직접 호스팅 가능, 공개 API. [한국어 설명](docs/i18n/README.ko.md)
+
+---
+
+**Русский:** синхронизация заметок Obsidian + память для ИИ. Синхронизация на всех устройствах, смысловой поиск, поиск по ключевым словам, база знаний, MCP, Claude / Cursor / ChatGPT читают и пишут заметки, своё размещение, открытый API. [Описание на русском](docs/i18n/README.ru.md)
