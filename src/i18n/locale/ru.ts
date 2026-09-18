@@ -81,6 +81,38 @@ const ru: Dict = {
 		many: "Engram: план обновлён, синхронизируем {count} вложений…",
 		other: "Engram: план обновлён, синхронизируем {count} вложений…",
 	},
+	// 402 limit reasons (limit-copy.ts). These gate payment, so they are the
+	// highest-value strings in the plugin to get right.
+	"Note limit reached. Upgrade to keep adding notes.":
+		"Достигнут предел числа заметок. После перехода на платный план можно добавлять ещё.",
+	"Vault limit reached. Upgrade for more vaults.":
+		"Достигнут предел числа хранилищ. На платном плане их больше.",
+	"This file type isn't accepted by this server.": "Этот сервер не принимает такой тип файлов.",
+	"Attachment sync is disabled for this account.":
+		"Для этой учётной записи синхронизация вложений отключена.",
+	"Attachment storage is full — upgrade for more.":
+		"Место для вложений закончилось. На платном плане его больше.",
+	"File too large for your plan.": "Файл слишком большой для вашего плана.",
+	"Already signed in on another device. Upgrade for multi-device.":
+		"Вы уже вошли на другом устройстве. На платном плане можно использовать несколько.",
+	"Device swap cooldown active. Wait or upgrade.":
+		"Смена устройства пока заблокирована. Подождите или перейдите на платный план.",
+	"Too many connected Obsidian vaults. Disconnect one or upgrade.":
+		"Подключено слишком много хранилищ Obsidian. Отключите одно или перейдите на платный план.",
+	"Too many connected AI clients. Disconnect one or upgrade.":
+		"Подключено слишком много ИИ-клиентов. Отключите один или перейдите на платный план.",
+	"Daily AI search limit reached. Free includes 20 per day across Obsidian, the web app and MCP. Upgrade for unlimited.":
+		"Достигнут дневной предел ИИ-поиска. На бесплатном плане это 20 запросов в день на Obsidian, веб-приложение и MCP вместе. На платном плане предела нет.",
+	"API keys need Pro. Sign in with your Engram account instead.":
+		"Ключи API доступны на плане Pro. Войдите через учётную запись Engram.",
+	"Account suspended. Contact support.": "Учётная запись заблокирована. Напишите в поддержку.",
+	"Account setup incomplete.": "Настройка учётной записи не завершена.",
+	"This account was deleted. Contact support if that is wrong.":
+		"Эта учётная запись удалена. Если это ошибка, напишите в поддержку.",
+	"Finish setting up your account at app.engram.page to start syncing.":
+		"Завершите настройку учётной записи на app.engram.page, чтобы начать синхронизацию.",
+	"Limit reached. Upgrade to continue.":
+		"Достигнут предел. Перейдите на платный план, чтобы продолжить.",
 };
 
 export default ru;

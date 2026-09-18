@@ -52,6 +52,39 @@ const ja: Dict = {
 		"Engram: {count} 件の添付ファイルをスキップしました。画像と PDF を同期するにはアップグレードしてください。",
 	"Engram: plan upgraded — syncing {count} attachments…":
 		"Engram: プランをアップグレードしました。{count} 件の添付ファイルを同期しています…",
+	// 402 limit reasons (limit-copy.ts). These gate payment, so they are the
+	// highest-value strings in the plugin to get right.
+	"Note limit reached. Upgrade to keep adding notes.":
+		"ノート数の上限に達しました。アップグレードすると追加を続けられます。",
+	"Vault limit reached. Upgrade for more vaults.":
+		"保管庫数の上限に達しました。アップグレードするとさらに作成できます。",
+	"This file type isn't accepted by this server.":
+		"このサーバーはこのファイル形式を受け付けていません。",
+	"Attachment sync is disabled for this account.":
+		"このアカウントでは添付ファイルの同期が無効です。",
+	"Attachment storage is full — upgrade for more.":
+		"添付ファイルの保存容量がいっぱいです。アップグレードで増やせます。",
+	"File too large for your plan.": "現在のプランではファイルが大きすぎます。",
+	"Already signed in on another device. Upgrade for multi-device.":
+		"別のデバイスでサインイン中です。アップグレードすると複数デバイスで使えます。",
+	"Device swap cooldown active. Wait or upgrade.":
+		"デバイス切り替えのクールダウン中です。しばらく待つか、アップグレードしてください。",
+	"Too many connected Obsidian vaults. Disconnect one or upgrade.":
+		"接続中の Obsidian 保管庫が多すぎます。ひとつ解除するか、アップグレードしてください。",
+	"Too many connected AI clients. Disconnect one or upgrade.":
+		"接続中の AI クライアントが多すぎます。ひとつ解除するか、アップグレードしてください。",
+	"Daily AI search limit reached. Free includes 20 per day across Obsidian, the web app and MCP. Upgrade for unlimited.":
+		"1 日の AI 検索上限に達しました。無料プランは Obsidian・ウェブアプリ・MCP 合わせて 1 日 20 回です。アップグレードで無制限になります。",
+	"API keys need Pro. Sign in with your Engram account instead.":
+		"API キーには Pro プランが必要です。代わりに Engram アカウントでサインインしてください。",
+	"Account suspended. Contact support.":
+		"アカウントが停止されています。サポートにご連絡ください。",
+	"Account setup incomplete.": "アカウントの設定が完了していません。",
+	"This account was deleted. Contact support if that is wrong.":
+		"このアカウントは削除されています。お心当たりがない場合はサポートにご連絡ください。",
+	"Finish setting up your account at app.engram.page to start syncing.":
+		"app.engram.page でアカウント設定を終えると同期を始められます。",
+	"Limit reached. Upgrade to continue.": "上限に達しました。アップグレードすると続けられます。",
 };
 
 export default ja;

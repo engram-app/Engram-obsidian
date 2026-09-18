@@ -66,6 +66,39 @@ const it: Dict = {
 		one: "Engram: piano aggiornato, sincronizzo {count} allegato…",
 		other: "Engram: piano aggiornato, sincronizzo {count} allegati…",
 	},
+	// 402 limit reasons (limit-copy.ts). These gate payment, so they are the
+	// highest-value strings in the plugin to get right.
+	"Note limit reached. Upgrade to keep adding notes.":
+		"Hai raggiunto il limite di note. Passa a un piano superiore per aggiungerne altre.",
+	"Vault limit reached. Upgrade for more vaults.":
+		"Hai raggiunto il limite di archivi. Un piano superiore ne consente di più.",
+	"This file type isn't accepted by this server.":
+		"Questo server non accetta questo tipo di file.",
+	"Attachment sync is disabled for this account.":
+		"Per questo account la sincronizzazione degli allegati è disattivata.",
+	"Attachment storage is full — upgrade for more.":
+		"Lo spazio per gli allegati è pieno. Un piano superiore ne offre di più.",
+	"File too large for your plan.": "Il file è troppo grande per il tuo piano.",
+	"Already signed in on another device. Upgrade for multi-device.":
+		"Hai già effettuato l'accesso su un altro dispositivo. Un piano superiore ne consente più di uno.",
+	"Device swap cooldown active. Wait or upgrade.":
+		"Il cambio di dispositivo è ancora in attesa. Aspetta un momento o passa a un piano superiore.",
+	"Too many connected Obsidian vaults. Disconnect one or upgrade.":
+		"Troppi archivi Obsidian collegati. Scollegane uno o passa a un piano superiore.",
+	"Too many connected AI clients. Disconnect one or upgrade.":
+		"Troppi client IA collegati. Scollegane uno o passa a un piano superiore.",
+	"Daily AI search limit reached. Free includes 20 per day across Obsidian, the web app and MCP. Upgrade for unlimited.":
+		"Hai raggiunto il limite giornaliero di ricerche IA. Il piano gratuito include 20 al giorno fra Obsidian, l'app web e MCP. Un piano superiore lo elimina.",
+	"API keys need Pro. Sign in with your Engram account instead.":
+		"Le chiavi API richiedono il piano Pro. Accedi invece con il tuo account Engram.",
+	"Account suspended. Contact support.": "Account sospeso. Contatta l'assistenza.",
+	"Account setup incomplete.": "La configurazione dell'account non è completa.",
+	"This account was deleted. Contact support if that is wrong.":
+		"Questo account è stato eliminato. Se non è corretto, contatta l'assistenza.",
+	"Finish setting up your account at app.engram.page to start syncing.":
+		"Completa la configurazione dell'account su app.engram.page per iniziare a sincronizzare.",
+	"Limit reached. Upgrade to continue.":
+		"Hai raggiunto il limite. Passa a un piano superiore per continuare.",
 };
 
 export default it;

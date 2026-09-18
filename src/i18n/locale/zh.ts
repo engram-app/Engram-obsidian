@@ -51,6 +51,32 @@ const zh: Dict = {
 		"Engram：已跳过 {count} 个附件，升级后可同步图片和 PDF。",
 	"Engram: plan upgraded — syncing {count} attachments…":
 		"Engram：套餐已升级，正在同步 {count} 个附件…",
+	// 402 limit reasons (limit-copy.ts). These gate payment, so they are the
+	// highest-value strings in the plugin to get right.
+	"Note limit reached. Upgrade to keep adding notes.": "已达笔记数量上限。升级后可继续添加笔记。",
+	"Vault limit reached. Upgrade for more vaults.": "已达知识库数量上限。升级可创建更多知识库。",
+	"This file type isn't accepted by this server.": "此服务器不接受该文件类型。",
+	"Attachment sync is disabled for this account.": "此账号已停用附件同步。",
+	"Attachment storage is full — upgrade for more.": "附件存储空间已满，升级可获得更多空间。",
+	"File too large for your plan.": "文件超出你当前套餐的大小限制。",
+	"Already signed in on another device. Upgrade for multi-device.":
+		"已在另一台设备上登录。升级可支持多设备。",
+	"Device swap cooldown active. Wait or upgrade.": "设备切换冷却中。请稍等或升级套餐。",
+	"Too many connected Obsidian vaults. Disconnect one or upgrade.":
+		"已连接的 Obsidian 知识库过多。请断开一个或升级套餐。",
+	"Too many connected AI clients. Disconnect one or upgrade.":
+		"已连接的 AI 客户端过多。请断开一个或升级套餐。",
+	"Daily AI search limit reached. Free includes 20 per day across Obsidian, the web app and MCP. Upgrade for unlimited.":
+		"已达每日 AI 搜索上限。免费版在 Obsidian、网页版和 MCP 之间每天共 20 次。升级后不限次数。",
+	"API keys need Pro. Sign in with your Engram account instead.":
+		"API 密钥需要 Pro 套餐。请改用 Engram 账号登录。",
+	"Account suspended. Contact support.": "账号已被停用。请联系客服。",
+	"Account setup incomplete.": "账号设置尚未完成。",
+	"This account was deleted. Contact support if that is wrong.":
+		"此账号已被删除。如有疑问请联系客服。",
+	"Finish setting up your account at app.engram.page to start syncing.":
+		"请前往 app.engram.page 完成账号设置后再开始同步。",
+	"Limit reached. Upgrade to continue.": "已达使用上限。升级后可继续。",
 };
 
 export default zh;
