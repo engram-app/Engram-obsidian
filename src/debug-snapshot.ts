@@ -1,8 +1,7 @@
 /**
  * One struct holding every copy of a note, side by side.
  *
- * Ported from Relay (`src/RelayDebugAPI.ts` `DocumentSnapshot`). Today, working
- * out why a note diverged means reading `remote-log` output in Loki backwards
+ * Today, working out why a note diverged means reading `remote-log` output in Loki backwards
  * and inferring state that was never recorded directly. Every CRDT incident in
  * our history opened with the same half hour of "which copy is wrong". This
  * answers that in one call.
@@ -22,6 +21,8 @@
  * IndexedDB, so a doc/idb split is only visible in the narrow window before
  * `entry.ready` resolves. Upgrade path if that window ever matters: open the
  * store, replay into a throwaway Y.Doc, and add an `idb` section beside `doc`.
+ *
+ * Derived from No-Instructions/Relay (MIT); see THIRD-PARTY-NOTICES.md.
  */
 
 import { fnv1a } from "./content-hash";

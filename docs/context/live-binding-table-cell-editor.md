@@ -46,9 +46,9 @@ Bind only when the `EditorView` **is** the owner's own editor:
 if (!info || info.editor?.cm !== view) return null;
 ```
 
-This is the guard Relay has always had (`LiveViews.ts findView`: `cm === cmEditor`),
-which is why Relay never had this bug. It covers every nested editor Obsidian
-builds off a parent owner, not just table cells.
+The identity check (`cm === cmEditor`) is what makes this class of bug
+impossible. It covers every nested editor Obsidian builds off a parent owner,
+not just table cells.
 
 ## Gotcha: construction-time null
 The `ViewPlugin` constructor runs **inside** `new EditorView(...)`, before

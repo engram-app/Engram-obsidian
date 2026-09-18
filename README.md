@@ -74,4 +74,5 @@ Point your client at the Engram MCP server (`https://mcp.engram.page` on the hos
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE). Portions are derived from third-party MIT-licensed work; see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

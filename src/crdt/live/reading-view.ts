@@ -1,5 +1,5 @@
 // src/crdt/live/reading-view.ts
-// Adapted from Relay src/plugins/PreviewRenderer.ts (No-Instructions/Relay).
+// Derived from No-Instructions/Relay (MIT); see THIRD-PARTY-NOTICES.md.
 import type * as Y from "yjs";
 import { noteRef } from "../../note-ref";
 import { rlog } from "../../remote-log";

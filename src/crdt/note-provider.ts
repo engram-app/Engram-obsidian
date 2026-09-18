@@ -1,6 +1,7 @@
-// A faithful port of Relay's YSweetProvider sync core (../relay/Relay/src/
-// client/provider.ts), adapted to a pluggable string-frame transport (our
-// Phoenix crdt: topic instead of Relay's raw WebSocket).
+// The note sync core: a y-protocols provider over a pluggable string-frame
+// transport (our Phoenix crdt: topic rather than a raw WebSocket).
+//
+// Derived from No-Instructions/Relay (MIT); see THIRD-PARTY-NOTICES.md.
 //
 // THE MODEL (why this replaces our bespoke CrdtManager/convergence machinery):
 //   - ONE persistent Y.Doc per note. The provider NEVER tears the doc down on a
@@ -13,7 +14,7 @@
 //     plugin instance that rehydrated the doc from IndexedDB) advertises a state
 //     vector, so the server sends back only the diff.
 //   - Local edits are buffered while the transport is down and flushed on
-//     reconnect (Relay's broadcastMessage buffer + onopen flush).
+//     reconnect (a broadcast buffer flushed on reopen).
 import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
 import * as syncProtocol from "y-protocols/sync";
@@ -43,13 +44,13 @@ export type FrameKind = "handshake" | "op";
 
 /** Transport: hand a base64 y-protocols frame to the wire. Returns false when
  *  the frame could NOT be delivered (socket not joined) so the provider holds it
- *  and flushes on reconnect — mirroring Relay's `wsconnected` buffer gate. */
+ *  and flushes on reconnect — a connected-gated buffer. */
 export type ProviderSend = (frame: string, kind: FrameKind) => boolean;
 
 export interface NoteProviderOpts {
 	send?: ProviderSend;
-	/** Fired the first time an inbound syncStep2 lands (Relay's `provider.synced`
-	 *  transition) — op-level proof the doc holds the peer's content. */
+	/** Fired the first time an inbound syncStep2 lands (the `synced` transition)
+	 *  — op-level proof the doc holds the peer's content. */
 	onSynced?: () => void;
 	/** Start MUTED: the doc's update handler ignores local updates until activate()
 	 *  is called. The registry sets this so the IndexedDB replay (y-indexeddb applies
@@ -63,7 +64,7 @@ export interface NoteProviderOpts {
 
 export class NoteProvider {
 	readonly doc: Y.Doc;
-	/** True once an inbound syncStep2 has been applied (Relay parity). */
+	/** True once an inbound syncStep2 has been applied (invariant). */
 	synced = false;
 	private connected = false;
 	/** True when this note has an OPEN room — it advertises syncStep1 (the
@@ -91,7 +92,7 @@ export class NoteProvider {
 		this.send = opts.send ?? (() => false);
 		this.onSynced = opts.onSynced;
 		this.active = !opts.deferActivation;
-		// Relay's _updateHandler: a LOCAL edit (origin !== this) becomes a sync
+		// Update handler: a LOCAL edit (origin !== this) becomes a sync
 		// UPDATE frame; a remote-applied op (origin === this, set by
 		// readSyncMessage below) is NOT re-sent — that's the echo guard. While
 		// inactive (IndexedDB still replaying), drop the update too: the replay is
@@ -157,8 +158,8 @@ export class NoteProvider {
 		this.send = send;
 	}
 
-	/** Relay's broadcastMessage: send now if connected, else buffer for the next
-	 *  onopen flush. A refused send (transport down mid-flight) also buffers. */
+	/** Broadcast a frame: send now if connected, else buffer for the next reopen
+	 *  flush. A refused send (transport down mid-flight) also buffers. */
 	private broadcast(frame: string, kind: FrameKind): void {
 		const sent = this.connected && this.send(frame, kind);
 		if (sent) return;
@@ -176,7 +177,7 @@ export class NoteProvider {
 		this.buffer.push({ frame, kind });
 	}
 
-	/** Relay's onopen: (re)connect the transport. */
+	/** (Re)connect the transport. */
 	connect(): void {
 		this.setConnected(true);
 	}
@@ -190,7 +191,7 @@ export class NoteProvider {
 	 *  note must NOT re-fire syncStep1. The server answers every inbound syncStep1
 	 *  with a fresh [syncStep2, syncStep1] pair, so a re-enroll on every
 	 *  `crdt_doc_ready` announce (which the server also sends to the sender) turned
-	 *  into an endless re-handshake storm. Relay sends syncStep1 once per
+	 *  into an endless re-handshake storm. syncStep1 goes out once per
 	 *  connection; a real re-handshake goes reset()->enroll() (advertised flips
 	 *  false then true, so this edge fires again). */
 	setAdvertised(advertised: boolean): void {
@@ -231,7 +232,7 @@ export class NoteProvider {
 		this.send(toB64(encoding.toUint8Array(encoder)), "handshake");
 	}
 
-	/** Relay's messageHandlers[messageSync]: apply an inbound frame and, for an
+	/** messageSync handler: apply an inbound frame and, for an
 	 *  inbound syncStep1, reply with syncStep2. The reply is sent ONLY when it
 	 *  carries a sub-message (length > 1) — a syncStep2/update yields an empty
 	 *  reply, so there's no STEP1 echo loop. `this` is the apply origin so the
@@ -256,7 +257,7 @@ export class NoteProvider {
 	}
 
 	/** Detach the update listener. Call ONLY when the note truly closes / on
-	 *  unload — NOT on a transport reconnect (Relay's provider.destroy). */
+	 *  unload — NOT on a transport reconnect. */
 	destroy(): void {
 		this.doc.off("update", this.updateHandler);
 	}

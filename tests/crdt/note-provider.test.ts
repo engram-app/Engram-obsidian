@@ -6,8 +6,7 @@ import { NoteProvider } from "../../src/crdt/note-provider";
 import { fromB64, MESSAGE_SYNC } from "../../src/crdt/wire";
 
 /**
- * Rebuild-copying-Relay tests. The provider is a faithful port of Relay's
- * YSweetProvider sync core (src/client/provider.ts): one persistent Y.Doc,
+ * Provider sync-core tests: one persistent Y.Doc,
  * `syncStep1` on every (re)connect, `readSyncMessage` applies convergence (NO
  * text-verify gate), local updates buffered while disconnected and flushed on
  * connect. The doc is NEVER torn down on reconnect — so a reconnect is a clean
@@ -40,7 +39,7 @@ function link(a: NoteProvider, b: NoteProvider) {
 
 const flush = () => new Promise<void>((r) => setTimeout(r, 5));
 
-describe("NoteProvider (Relay model)", () => {
+describe("NoteProvider (provider model)", () => {
 	test("syncStep1/syncStep2 converges two peers with NO text-verify gate", async () => {
 		const docA = new Y.Doc();
 		const docB = new Y.Doc();

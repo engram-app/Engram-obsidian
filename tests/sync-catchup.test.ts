@@ -228,7 +228,7 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		// from the Y.Doc's projection (via the remote-merge listener), never
 		// from the feed's content field.
 		expect(mockApp.vault.modify).not.toHaveBeenCalledWith(localFile, staleSnapshot);
-		// Relay model: convergence is the provider's syncStep2, not a text-verify —
+		// Provider model: convergence is the provider's syncStep2, not a text-verify —
 		// committing records the staged row unconditionally. The D2 guarantee under
 		// test is the DISK one above (the stale snapshot never lands); the Yjs merge
 		// is monotonic, so disk keeps the fresher content regardless of the commit.
@@ -915,7 +915,7 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 	});
 
 	// (Removed: "a DEFERRED commit does NOT release the in-flight heal" — the
-	// text-verify defer no longer exists in the Relay model. onSynced fires from
+	// text-verify defer no longer exists in the provider model. onSynced fires from
 	// the provider's syncStep2, so a commit is always for an already-converged
 	// doc; the idle-note release path is covered by the "verified commit for an
 	// IDLE note resets enrollment and hibernates the doc" test above.)
@@ -947,9 +947,9 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 	// went to an `editorRebind` port main.ts stopped wiring when the CM6
 	// ViewPlugin took over rebinding, so only these tests — which wired the port
 	// themselves — ever saw it do anything. The commit-records-the-stage behavior
-	// they also asserted is covered by the Relay test below.)
+	// they also asserted is covered by the provider test below.)
 
-	test("Relay: converged commit records the staged row on the first onSynced (no text-verify defer)", async () => {
+	test("provider: converged commit records the staged row on the first onSynced (no text-verify defer)", async () => {
 		const { engine, projectedText } = crdtEngine();
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
@@ -969,7 +969,7 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 			mtime: 50,
 		} as any);
 
-		// Relay model: onSynced fires from the provider's syncStep2 — the doc is
+		// Provider model: onSynced fires from the provider's syncStep2 — the doc is
 		// ALREADY converged with the server. The old `projectedText === staged.content`
 		// gate is gone (it wedged forever on a cosmetic byte diff), so the commit
 		// records the staged serverHash/version/seq on the first fire, no matter what
@@ -980,7 +980,7 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("new-hash");
 	});
 
-	test("Relay: converged commit records even if projectedText would throw (it is never read)", async () => {
+	test("provider: converged commit records even if projectedText would throw (it is never read)", async () => {
 		const { engine, projectedText } = crdtEngine();
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);

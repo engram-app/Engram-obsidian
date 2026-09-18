@@ -1,8 +1,7 @@
 /**
  * A base class that gives every subclass pre-tagged loggers.
  *
- * Ported from Relay (`src/debug.ts` `HasLogging`). The problem it solves in our
- * codebase is tag drift: today a log site is `rlog().info("channel", ...)`, so
+ * The problem it solves in our codebase is tag drift: today a log site is `rlog().info("channel", ...)`, so
  * the category is a string literal repeated at every call site. Rename the
  * concept and the tags rot silently — greps stop finding things, and Loki
  * queries keep matching a name that no longer exists.
@@ -15,6 +14,8 @@
  * Two reasons — this module stays dependency-free and therefore trivially
  * testable, and the plugin decides once (in main.ts) where lines go. Upgrade
  * path if a second destination is ever needed: make the sink a list.
+ *
+ * Derived from No-Instructions/Relay (MIT); see THIRD-PARTY-NOTICES.md.
  */
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
