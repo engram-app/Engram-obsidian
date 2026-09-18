@@ -14,6 +14,52 @@
 
 </div>
 
+<details>
+<summary><b>中文说明</b> · Chinese</summary>
+
+**你的笔记就是 AI 的记忆。** 多设备同步你的 Obsidian 库，让 Claude、Cursor、ChatGPT 等 AI 应用通过 MCP 直接读写笔记。
+
+- **AI 在你的库里工作。** 通过 [MCP](#connect-your-ai) 连接 Claude、Cursor 或 ChatGPT：读取笔记作为上下文，并把新笔记写回来。
+- **笔记同步到每台设备。** 在电脑上写，手机上就能看到，AI 做的修改也会同步过来。
+- **按语义或关键词搜索。** *语义*搜索能用「退款政策」找到通篇没出现「政策」二字的笔记；*关键词*在本地精确匹配（离线可用，不消耗额度）；*混合*模式两者兼顾。
+- **知识库可编程。** 完整的 [REST + WebSocket API](https://engram.page/docs/api) 覆盖每条笔记。
+
+**开始使用：**
+
+1. 在 **[engram.page](https://engram.page)** 注册（有免费额度，无需安装），或[自托管后端](https://github.com/engram-app/engram)，笔记就不会离开你自己的硬件。
+2. 打开 *Settings → Engram Vault Sync*。**云端：** 在 Cloud 标签页点击 **Sign in**。**自托管：** 在 Self-hosted 标签页填写服务器地址和密钥。首次同步前插件会先向你确认，不会擅自上传。
+
+不会有任何内容被静默覆盖。离线期间的修改会在重新联网后同步。笔记只会发送到 Engram，不经过第三方，也没有任何追踪。
+
+> 插件界面目前仅提供英文。
+
+[上手视频](https://www.youtube.com/watch?v=rwnPeZ-8Lqo) · [使用手册](docs/user-guide.md) · [API](https://engram.page/docs/api) · [Discord](https://discord.gg/NKWcU2mm7N)
+
+</details>
+
+<details>
+<summary><b>日本語の説明</b> · Japanese</summary>
+
+**あなたのノートが AI の記憶になります。** Obsidian の保管庫を全デバイスで同期し、Claude・Cursor・ChatGPT などの AI アプリが MCP 経由でノートを直接読み書きできるようにします。
+
+- **AI が保管庫の中で動く。** [MCP](#connect-your-ai) で Claude や Cursor、ChatGPT を接続。ノートを文脈として読み、新しいノートを書き戻します。
+- **すべてのデバイスにノートを同期。** ノートパソコンで書けばスマートフォンにも反映され、AI による変更も届きます。
+- **意味でも完全一致でも検索。** *セマンティック*検索は「返金のポリシー」から、「ポリシー」という語が一度も出てこないノートを見つけます。*キーワード*はローカルで完全一致（オフライン可・上限を消費しません）。*ハイブリッド*は両方を組み合わせます。
+- **保管庫をプログラマブルに。** すべてのノートを [REST + WebSocket API](https://engram.page/docs/api) から扱えます。
+
+**セットアップ:**
+
+1. **[engram.page](https://engram.page)** でアカウントを作成（無料プランあり、インストール不要）。または[セルフホスト版のバックエンド](https://github.com/engram-app/engram)を使えば、ノートは自分のハードウェアから出ません。
+2. *Settings → Engram Vault Sync* を開きます。**ホスト版:** Cloud タブで **Sign in**。**セルフホスト版:** Self-hosted タブにサーバー URL とキーを入力。どちらの場合も初回同期は確認してから始まり、勝手に送信されることはありません。
+
+内容が黙って上書きされることはありません。オフライン中の編集は再接続時に同期されます。ノートは Engram にのみ送られ、第三者を経由せず、トラッキングもありません。
+
+> プラグインの UI は現在英語のみです。
+
+[セットアップ動画](https://www.youtube.com/watch?v=rwnPeZ-8Lqo) · [ユーザーガイド](docs/user-guide.md) · [API](https://engram.page/docs/api) · [Discord](https://discord.gg/NKWcU2mm7N)
+
+</details>
+
 ## What you get
 
 - **Your AI works *inside* your vault.** Connect Claude, Cursor, or ChatGPT over [MCP](#connect-your-ai). It reads your notes for context and writes new ones back:
