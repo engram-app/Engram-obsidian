@@ -50,7 +50,7 @@ import { sha256Hex } from "./content-hash";
 import { registerDiagnostics } from "./diagnostics";
 import { errMsg, isHttpStatus } from "./error-util";
 import { ExplicitFolders } from "./explicit-folders";
-import { t } from "./i18n";
+import { t, tInto } from "./i18n";
 import { isPlanJoinReason } from "./limit-copy";
 import { LimitExceededError } from "./limit-error";
 import { notifyLimitExceeded } from "./limit-toast";
@@ -439,9 +439,16 @@ export default class EngramSyncPlugin extends Plugin {
 		// plain Window, so the call resolves to `any` and cascades a dozen
 		// no-unsafe-* errors. The bare global is declared in obsidian.d.ts.
 		const frag = createFragment();
-		frag.append(`Engram Vault Sync ${latest} is available. `);
-		const link = frag.createEl("a", { text: t("Update in settings"), href: "#" });
-		frag.append(".");
+		let link!: HTMLAnchorElement;
+		tInto(
+			frag as unknown as HTMLElement,
+			"Engram Vault Sync {version} is available. {link}.",
+			"link",
+			(parent) => {
+				link = parent.createEl("a", { text: t("Update in settings"), href: "#" });
+			},
+			{ vars: { version: latest } },
+		);
 		const notice = new Notice(frag, 15000);
 		link.addEventListener("click", (e) => {
 			e.preventDefault();

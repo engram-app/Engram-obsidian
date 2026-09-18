@@ -85,12 +85,17 @@ function groupedByCategory(
 
 /** User-facing wording for each queued reason. Kept beside the render so the
  *  copy is reviewable in one place rather than inlined into a template. */
-const QUEUED_REASON_TEXT: Record<QueuedReason, string> = {
-	offline: t("waiting for a connection"),
-	"sync-blocked": t("sync is paused"),
-	"in-progress": t("syncing now"),
-	waiting: t("waiting to retry"),
-};
+/** Resolved per call. As a module-scope literal these four `t()` calls would
+ *  run once at bundle evaluation and freeze to whatever language was active
+ *  then, which is the same bug `limit-copy.ts` documents. */
+function queuedReasonText(): Record<QueuedReason, string> {
+	return {
+		offline: t("waiting for a connection"),
+		"sync-blocked": t("sync is paused"),
+		"in-progress": t("syncing now"),
+		waiting: t("waiting to retry"),
+	};
+}
 
 function renderHeader(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 	const status = plugin.syncEngine.getStatus();
@@ -141,7 +146,7 @@ function renderHeader(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 		badge.setText(
 			t("{count} queued — {reason}", {
 				count: status.queued,
-				reason: QUEUED_REASON_TEXT[reason],
+				reason: queuedReasonText()[reason],
 			}),
 		);
 	}

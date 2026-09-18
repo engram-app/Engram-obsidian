@@ -242,54 +242,58 @@ export function remediation(
 	if (reason?.code === "note_processing_failed") {
 		return {
 			title: t("Note couldn't be processed"),
-			hint: "The server couldn't process this note. Check its contents, then edit and save to try again.",
+			hint: t(
+				"The server couldn't process this note. Check its contents, then edit and save to try again.",
+			),
 		};
 	}
 	switch (category) {
 		case "needs_pro":
 			return {
 				title: t("Attachments need a paid plan"),
-				hint: "The Free tier syncs notes only. Upgrade to sync images and PDFs.",
+				hint: t("The Free tier syncs notes only. Upgrade to sync images and PDFs."),
 			};
 		case "quota":
 			return {
 				title: t("Attachment storage full"),
-				hint: "You've used all the attachment storage on your plan. Upgrade for more.",
+				hint: t("You've used all the attachment storage on your plan. Upgrade for more."),
 			};
 		case "too_large":
 			return {
 				title: t("Too large for the server"),
-				hint: "The server limit is 5 MB. Compress or split the file, then it will sync.",
+				hint: t("The server limit is 5 MB. Compress or split the file, then it will sync."),
 			};
 		case "auth":
 			return {
 				title: t("Sign-in expired"),
-				hint: "Reconnect your account to resume syncing.",
+				hint: t("Reconnect your account to resume syncing."),
 			};
 		case "conflict":
 			return {
 				title: t("Unresolved conflict"),
-				hint: "Open the file to resolve the conflict, then sync again.",
+				hint: t("Open the file to resolve the conflict, then sync again."),
 			};
 		case "frontmatter":
 			return {
 				title: t("Frontmatter needs a fix"),
-				hint: "The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.",
+				hint: t(
+					"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.",
+				),
 			};
 		case "server":
 			return {
 				title: t("Server error"),
-				hint: "A temporary server problem — retrying automatically.",
+				hint: t("A temporary server problem — retrying automatically."),
 			};
 		case "network":
 			return {
 				title: t("Network unavailable"),
-				hint: "Can't reach the server — retrying automatically.",
+				hint: t("Can't reach the server — retrying automatically."),
 			};
 		default:
 			return {
 				title: t("Sync failed"),
-				hint: "An unexpected error — retrying automatically.",
+				hint: t("An unexpected error — retrying automatically."),
 			};
 	}
 }
