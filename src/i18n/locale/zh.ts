@@ -1,0 +1,548 @@
+import type { Dict } from "..";
+
+// 简体中文
+//
+// "Engram", "Sync Center" and "Engram settings" name UI surfaces that are still
+// English, so they stay English here. Translating a label the user cannot find
+// on screen is worse than leaving it.
+const zh: Dict = {
+	"Code copied!": "验证码已复制！",
+	"Engram sync: syncing...": "Engram 同步：正在同步…",
+	"Engram Sync: pulled {pulled}, pushed {pushed}":
+		"Engram 同步：拉取 {pulled} 项，推送 {pushed} 项",
+	"Engram: disconnected. Open Engram settings to reconnect.":
+		"Engram：连接已断开。打开 Engram settings 重新连接。",
+	"Engram sync: checking...": "Engram 同步：正在检查…",
+	"Engram sync: everything in sync": "Engram 同步：全部已同步",
+	"Engram sync: pulling all from server...": "Engram 同步：正在从服务器拉取全部内容…",
+	"Engram Sync: pushed {pushed}": "Engram 同步：已推送 {pushed} 项",
+	"Engram sync: sync failed": "Engram 同步：同步失败",
+	"Engram: your login expired — open Engram settings to reconnect.":
+		"Engram：登录已过期，请打开 Engram settings 重新连接。",
+	"Engram: This vault has been deleted on the server.": "Engram：该知识库已在服务器上被删除。",
+	"Engram Sync: pulled {pulled} (local extras deleted)":
+		"Engram 同步：已拉取 {pulled} 项（本地多余文件已删除）",
+	"Engram Sync: pulled {pulled}": "Engram 同步：已拉取 {pulled} 项",
+	"Engram Sync: replaced remote with local ({pushed} uploaded)":
+		"Engram 同步：已用本地内容替换服务器内容（上传 {pushed} 项）",
+	"Engram: sync failed. Open the sync log for details.":
+		"Engram：同步失败。打开同步日志查看详情。",
+	"Engram unreachable. Showing matches from this device only.":
+		"无法连接 Engram。仅显示本设备上的匹配结果。",
+	"No source path for this result": "该结果没有对应的源文件路径",
+	"Note not synced locally": "该笔记尚未同步到本地",
+	"Engram: settings tab failed to render ({error})": "Engram：设置页渲染失败（{error}）",
+	"File not found locally: {path}": "本地找不到该文件：{path}",
+	"Restored {path} — will sync on next push.": "已恢复 {path}，将在下次推送时同步。",
+	"Ignored {path} — won't sync until restored from Sync Center.":
+		"已忽略 {path}，在 Sync Center 中恢复后才会同步。",
+	"Added {pattern} to ignore patterns": "已将 {pattern} 加入忽略规则",
+	"Engram backend changed — sign in again to continue.": "Engram 后端已更改，请重新登录以继续。",
+	"Engram: sign-in failed ({error})": "Engram：登录失败（{error}）",
+	"Enter an API key first": "请先输入 API 密钥",
+	"Switched to {mode}.": "已切换到 {mode}。",
+
+	"Engram Sync: pushed {count} files": "Engram 同步：已推送 {count} 个文件",
+	"Engram Sync: pulled {count} files from server": "Engram 同步：已从服务器拉取 {count} 个文件",
+	"Engram Sync: pulled {count} changes": "Engram 同步：已拉取 {count} 项更改",
+	"Engram: {count} files failed to sync{detail} — open Sync Center":
+		"Engram：{count} 个文件同步失败{detail}，请打开 Sync Center",
+	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.":
+		"Engram：已跳过 {count} 个附件，升级后可同步图片和 PDF。",
+	"Engram: plan upgraded — syncing {count} attachments…":
+		"Engram：套餐已升级，正在同步 {count} 个附件…",
+	// 402 limit reasons (limit-copy.ts). These gate payment, so they are the
+	// highest-value strings in the plugin to get right.
+	"Note limit reached. Upgrade to keep adding notes.": "已达笔记数量上限。升级后可继续添加笔记。",
+	"Vault limit reached. Upgrade for more vaults.": "已达知识库数量上限。升级可创建更多知识库。",
+	"This file type isn't accepted by this server.": "此服务器不接受该文件类型。",
+	"Attachment sync is disabled for this account.": "此账号已停用附件同步。",
+	"Attachment storage is full — upgrade for more.": "附件存储空间已满，升级可获得更多空间。",
+	"File too large for your plan.": "文件超出你当前套餐的大小限制。",
+	"Already signed in on another device. Upgrade for multi-device.":
+		"已在另一台设备上登录。升级可支持多设备。",
+	"Device swap cooldown active. Wait or upgrade.": "设备切换冷却中。请稍等或升级套餐。",
+	"Too many connected Obsidian vaults. Disconnect one or upgrade.":
+		"已连接的 Obsidian 知识库过多。请断开一个或升级套餐。",
+	"Too many connected AI clients. Disconnect one or upgrade.":
+		"已连接的 AI 客户端过多。请断开一个或升级套餐。",
+	"Daily AI search limit reached. Free includes 20 per day across Obsidian, the web app and MCP. Upgrade for unlimited.":
+		"已达每日 AI 搜索上限。免费版在 Obsidian、网页版和 MCP 之间每天共 20 次。升级后不限次数。",
+	"API keys need Pro. Sign in with your Engram account instead.":
+		"API 密钥需要 Pro 套餐。请改用 Engram 账号登录。",
+	"Account suspended. Contact support.": "账号已被停用。请联系客服。",
+	"Account setup incomplete.": "账号设置尚未完成。",
+	"This account was deleted. Contact support if that is wrong.":
+		"此账号已被删除。如有疑问请联系客服。",
+	"Finish setting up your account at app.engram.page to start syncing.":
+		"请前往 app.engram.page 完成账号设置后再开始同步。",
+	"Limit reached. Upgrade to continue.": "已达使用上限。升级后可继续。",
+	// UI strings
+	"Link Obsidian to Engram": "将 Obsidian 连接到 Engram",
+	"Failed to start device flow. Check your Engram URL and try again.":
+		"设备授权启动失败。请检查 Engram 服务器地址后重试。",
+	"Your code:": "你的验证码：",
+	"A browser window has opened. Sign in and enter this code to link your vault.":
+		"已打开浏览器窗口。请登录并输入此验证码来关联你的知识库。",
+	Cancel: "取消",
+	"Code expired. Please try again.": "验证码已过期，请重试。",
+	"Try again": "重试",
+	Close: "关闭",
+	"Note couldn't be processed": "这条笔记无法处理",
+	"The server couldn't process this note. Check its contents, then edit and save to try again.":
+		"服务器无法处理这条笔记。请检查内容后编辑并保存以重试。",
+	"Attachments need a paid plan": "附件需要付费套餐",
+	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
+		"免费版仅同步笔记。升级后可同步图片和 PDF。",
+	"Attachment storage full": "附件存储已满",
+	"You've used all the attachment storage on your plan. Upgrade for more.":
+		"你已用完当前套餐的附件存储空间。升级可获得更多。",
+	"Too large for the server": "超出服务器大小限制",
+	"The server limit is 5 MB. Compress or split the file, then it will sync.":
+		"服务器上限为 5 MB。压缩或拆分该文件后即可同步。",
+	"Sign-in expired": "登录已过期",
+	"Reconnect your account to resume syncing.": "重新连接账号即可继续同步。",
+	"Unresolved conflict": "冲突尚未解决",
+	"Open the file to resolve the conflict, then sync again.": "打开文件解决冲突，然后重新同步。",
+	"Frontmatter needs a fix": "frontmatter 需要修正",
+	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
+		"笔记已同步，但其 frontmatter 未能完整解析。打开笔记修正高亮的那一行。",
+	"Server error": "服务器错误",
+	"A temporary server problem — retrying automatically.": "服务器临时故障，正在自动重试。",
+	"Network unavailable": "网络不可用",
+	"Can't reach the server — retrying automatically.": "无法连接服务器，正在自动重试。",
+	"Sync failed": "同步失败",
+	"An unexpected error — retrying automatically.": "出现意外错误，正在自动重试。",
+	Upgrade: "升级",
+	"Update in settings": "在设置中更新",
+	"Engram: ready": "Engram：就绪",
+	"Resume sync": "恢复同步",
+	"Engram Vault Sync {version} is available. {link}.":
+		"Engram Vault Sync {version} 已发布。{link}。",
+	"Search your vault…": "搜索你的知识库…",
+	"Filter by folder…": "按文件夹筛选…",
+	"Filter by tags…": "按标签筛选…",
+	"Search failed — check connection": "搜索失败，请检查网络连接",
+	"No results found": "没有找到结果",
+	"match strength: {pct}%": "匹配度：{pct}%",
+	"Open sync setup": "打开同步设置",
+	"Last sync: {when}": "上次同步：{when}",
+	"waiting for a connection": "等待网络连接",
+	"sync is paused": "同步已暂停",
+	"syncing now": "正在同步",
+	"waiting to retry": "等待重试",
+	"{count} not on your plan": "{count} 项不在你的套餐内",
+	"{count} retrying": "{count} 项正在重试",
+	"{count} ignored": "{count} 项已忽略",
+	"{count} queued — {reason}": "{count} 项排队中，{reason}",
+	"These files are fine. They just need a paid plan to sync.":
+		"这些文件本身没问题，只是需要付费套餐才能同步。",
+	"Show files ({count}) ▾": "显示文件（{count}）▾",
+	"Sync these now": "立即同步这些文件",
+	"Clear all": "全部清除",
+	"Nothing needs your attention. 🎉": "没有需要你处理的事项。🎉",
+	Dismiss: "忽略此提示",
+	"Retry all now": "立即全部重试",
+	"Temporary errors. These clear themselves once the server recovers.":
+		"临时性错误。服务器恢复后会自动清除。",
+	Open: "打开",
+	Ignore: "忽略",
+	"No files ignored. Use the ignore button on a failure row to stop syncing it.":
+		"没有被忽略的文件。在失败的条目上点击忽略按钮即可停止同步该文件。",
+	Restore: "恢复",
+	Clear: "清除",
+	"No activity yet. Push or pull to see entries here.": "暂无记录。推送或拉取后这里会显示条目。",
+	"Sync log": "同步日志",
+	"Could not compare with the cloud. Check your connection.":
+		"无法与服务器比对。请检查网络连接。",
+	"Your login expired. Sign in again in Engram settings to continue.":
+		"登录已过期。请在 Engram settings 中重新登录以继续。",
+	"Couldn't create vault — the name may be invalid or already in use.":
+		"无法创建知识库，名称可能无效或已被占用。",
+	"Could not create the vault — check your connection and try again.":
+		"无法创建知识库，请检查网络连接后重试。",
+	"Free syncs notes only — {count} attachments will be skipped.":
+		"免费版仅同步笔记，将跳过 {count} 个附件。",
+	"Comparing your vault with the cloud…": "正在比对你的知识库与服务器…",
+	"Until you choose, nothing in this vault will sync.":
+		"在你做出选择前，此知识库不会同步任何内容。",
+	"Change vault": "更换知识库",
+	"Advanced sync options": "高级同步选项",
+	"Everything is in sync": "全部已同步",
+	" conflicts need resolution": " 项冲突需要解决",
+	"Confirm destructive sync": "确认执行破坏性同步",
+	"You are about to:": "你即将：",
+	"Files that will be deleted:": "将被删除的文件：",
+	"This cannot be undone.": "此操作无法撤销。",
+	Back: "返回",
+	Confirm: "确认",
+	"Switch vault": "切换知识库",
+	"Pick a vault to sync with. We will recalculate the sync preview after you choose.":
+		"选择要同步的知识库。选定后我们会重新计算同步预览。",
+	"Loading vaults…": "正在加载知识库…",
+	"No other vaults available.": "没有其他可用的知识库。",
+	"Make new vault": "新建知识库",
+	"New vault": "新知识库",
+	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
+		"先在服务器上创建一个空知识库，然后把这个 Obsidian 知识库同步进去。",
+	Create: "创建",
+	"Your vault shares {percent} of its data with Engram":
+		"你的知识库与 Engram 有 {percent} 的数据相同",
+	"Type {keyword} to confirm:": "输入 {keyword} 以确认：",
+	"✓ {count} synced": "✓ 已同步 {count} 项",
+	"⤳ {count} skipped (Free plan)": "⤳ 已跳过 {count} 项（免费版）",
+	"✕ {count} failed": "✕ 失败 {count} 项",
+	"{count} attachments need a paid plan to sync. See Sync Center.":
+		"{count} 个附件需要付费套餐才能同步。请查看 Sync Center。",
+	"Syncing your vault": "正在同步你的知识库",
+	"Getting started…": "正在开始…",
+	"Open Engram to check your vault and confirm everything synced.":
+		"打开 Engram 查看你的知识库，确认全部已同步。",
+	"Open Engram": "打开 Engram",
+	"You can close this and the sync keeps running in the background.":
+		"你可以关闭此窗口，同步会在后台继续。",
+	"Run in background": "在后台运行",
+	"Syncing…": "正在同步…",
+	"Sync complete": "同步完成",
+	Done: "完成",
+	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
+		"Engram：{path} 发生同步冲突，你的本地修改已另存为 {copy}",
+	"Open note": "打开笔记",
+	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
+		"Engram：{count} 条笔记的 frontmatter 有问题。请打开 Sync Center 修正。",
+	"New here? Watch the setup video": "初次使用？观看设置视频",
+	"What Engram does, and how to connect your vault, start to finish.":
+		"Engram 能做什么，以及如何从头到尾连接你的知识库。",
+	"▶ Watch on YouTube": "▶ 在 YouTube 上观看",
+	"1. Make an account": "1. 注册账号",
+	"2. Connect your vault to Engram": "2. 将知识库连接到 Engram",
+	"Open connection tab": "打开连接标签页",
+	"3. Connect your AI": "3. 连接你的 AI",
+	"Node.js dependencies": "Node.js 依赖",
+	"Python virtual environment": "Python 虚拟环境",
+	"Python bytecode cache": "Python 字节码缓存",
+	"Vendored dependencies": "内置依赖（vendor）",
+	"Gradle build cache": "Gradle 构建缓存",
+	"Rust/Java build output": "Rust/Java 构建输出",
+	"Build output": "构建输出",
+	"Next.js build output": "Next.js 构建输出",
+	"Distribution build output": "发布构建输出",
+	"Cargo cache": "Cargo 缓存",
+	"CocoaPods dependencies": "CocoaPods 依赖",
+	"Dart tool cache": "Dart 工具缓存",
+	"Generic cache directory": "通用缓存目录",
+	"Ignore patterns": "忽略规则",
+	"Custom patterns": "自定义规则",
+	Diagnostics: "诊断信息",
+	"Diagnostics detail": "诊断详情",
+	About: "关于",
+	"License: {name}": "许可协议：{name}",
+	"⚠ Detected: {label}/ ({formatted} files)": "⚠ 检测到：{label}/（{formatted} 个文件）",
+	"{desc} — should not be synced": "{desc}，不应同步",
+	"Add to ignores": "加入忽略规则",
+	"Version: {version}": "版本：{version}",
+	"Source: {link}": "源码：{link}",
+	"Engram URL": "Engram 服务器地址",
+	"✓ Engram server reachable (v{version})": "✓ Engram 服务器可访问（v{version}）",
+	"✗ server responded but isn't an Engram backend": "✗ 服务器有响应，但不是 Engram 后端",
+	"✗ couldn't reach a server at this URL": "✗ 无法访问此地址的服务器",
+	"Checking server…": "正在检查服务器…",
+	Authentication: "身份验证",
+	"Authenticated via Engram account (OAuth).": "已通过 Engram 账号验证（OAuth）。",
+	"Manage account": "管理账号",
+	"Sign out": "退出登录",
+	"Using API key": "使用 API 密钥",
+	"Authenticated via manual API key.": "已通过手动填写的 API 密钥验证。",
+	"Clear key": "清除密钥",
+	"Switch to sign in": "改用账号登录",
+	"Sign in or create an account": "登录或注册账号",
+	"Sign in": "登录",
+	"API key": "API 密钥",
+	Token: "令牌",
+	"Bearer token from your Engram account.": "来自你的 Engram 账号的 Bearer 令牌。",
+	Save: "保存",
+	"That does not look like an Engram API key (expected {prefix}…).":
+		"这看起来不像 Engram 的 API 密钥（应以 {prefix} 开头）。",
+	Vault: "知识库",
+	"Vault selection": "知识库选择",
+	"Select which vault this plugin syncs with.": "选择此插件要同步的知识库。",
+	"No vaults found — first sync will create one": "未找到知识库，首次同步时会自动创建一个",
+	"Pick a vault": "选择一个知识库",
+	Change: "更改",
+	"Support development": "支持开发",
+	"GitHub Sponsors": "GitHub Sponsors",
+	Backend: "后端",
+	"Where this vault syncs to. Each backend keeps its own sign-in.":
+		"此知识库同步到哪里。每个后端各自保存登录状态。",
+	"Run your own Engram server": "自建 Engram 服务器",
+	"Engram is the backend that powers sync and semantic search.":
+		"Engram 是驱动同步与语义搜索的后端。",
+	"Finish sync setup": "完成同步设置",
+	"Nothing in this vault syncs until you choose how to merge it with the server.":
+		"在你选择如何与服务器合并之前，此知识库不会同步任何内容。",
+	"Choose sync direction": "选择同步方向",
+	"Engram: this plugin is too old to sync (needs {version} or newer). Update it to continue.":
+		"Engram：此插件版本过旧，无法同步（需要 {version} 或更新版本）。请更新后继续。",
+	"Engram: this plugin is too old to sync. Update it to continue.":
+		"Engram：此插件版本过旧，无法同步。请更新后继续。",
+	Update: "更新",
+	// UI strings (second pass)
+	"Invalid API key": "API 密钥无效",
+	"Connection failed": "连接失败",
+	"Sync now": "立即同步",
+	"Disconnect (clear login)": "断开连接（清除登录）",
+	"Push entire vault": "推送整个知识库",
+	"Check sync status": "检查同步状态",
+	"Engram sync: server does not support reconciliation (update backend)":
+		"Engram 同步：服务器不支持对账（请更新后端）",
+	"Pull all from server (force overwrite)": "从服务器拉取全部（强制覆盖）",
+	"Show sync log": "查看同步日志",
+	"Semantic search": "语义搜索",
+	"Open search sidebar": "打开搜索侧边栏",
+	"Engram search": "Engram 搜索",
+	"Open sync center": "打开 Sync Center",
+	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
+		"Engram：该知识库已不存在于服务器。请选择或新建一个知识库以继续。",
+	"Engram: recovered plugin settings from a backup after a corrupted save.":
+		"Engram：设置文件损坏，已从备份恢复。",
+	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
+		"Engram 同步：实时同步需要更新插件，请更新 Engram vault sync 插件。",
+	"Engram: sync is paused — this edit was not synced. Choose a sync direction to resume.":
+		"Engram：同步已暂停，这次修改未同步。请选择同步方向以恢复。",
+	"Engram: not connected": "Engram：未连接",
+	"Engram: signed out": "Engram：已退出登录",
+	"Not connected yet. Click to open settings and link this vault.":
+		"尚未连接。点击打开设置并关联此知识库。",
+	"Not signed in. Click to open settings and reconnect.": "尚未登录。点击打开设置并重新连接。",
+	"Engram: finish setup": "Engram：完成设置",
+	"Engram: sync paused": "Engram：同步已暂停",
+	"{label} ({count} queued)": "{label}（{count} 项排队）",
+	"Setup is not finished — nothing will sync until you choose a sync direction. Click to finish.":
+		"设置尚未完成，在你选择同步方向前不会同步任何内容。点击完成设置。",
+	"Sync paused — click to choose a sync direction": "同步已暂停，点击选择同步方向",
+	"Engram: offline ({count} queued)": "Engram：离线（{count} 项排队）",
+	"Engram: offline": "Engram：离线",
+	"Server unreachable — changes will sync when connected": "无法连接服务器，恢复连接后会自动同步",
+	"Engram: error": "Engram：错误",
+	"Unknown error": "未知错误",
+	"Engram: syncing ({count})": "Engram：正在同步（{count}）",
+	"Engram: syncing": "Engram：正在同步",
+	"Sync in progress...": "正在同步…",
+	"Engram: pending ({count})": "Engram：待处理（{count}）",
+	"{count} files queued": "{count} 个文件排队中",
+	"Engram: live": "Engram：实时",
+	"WebSocket connected — live sync active": "WebSocket 已连接，实时同步已启用",
+	"Click to sync": "点击同步",
+	Attachments: "附件",
+	Keyword: "关键词",
+	Semantic: "语义",
+	Both: "两者结合",
+	"matches your words and their other forms — 'run' finds 'running' — plus this device.":
+		"匹配你输入的词及其变形形式（输入 run 也能找到 running），并包含本设备的结果。",
+	"matches meaning. Finds notes that never use the words you typed.":
+		"按含义匹配。即使笔记中完全没有出现你输入的词也能找到。",
+	"matches words and meaning together, plus this device. Widest results.":
+		"同时匹配词语和含义，并包含本设备的结果。结果范围最广。",
+	"Clear search": "清除搜索",
+	"Search settings": "搜索设置",
+	Untitled: "无标题",
+	"meaning + exact": "含义 + 精确",
+	Disconnected: "已断开连接",
+	"Connected — waiting for first sync decision": "已连接，等待首次同步决定",
+	"Connected — live sync active": "已连接，实时同步已启用",
+	"Connected — polling": "已连接，轮询模式",
+	"Not configured": "尚未配置",
+	Refresh: "刷新",
+	"Not synced on your plan ({count})": "不在你的套餐内（{count}）",
+	"Needs attention ({count})": "需要你处理（{count}）",
+	"Retrying automatically ({count})": "正在自动重试（{count}）",
+	Stats: "统计",
+	"Notes on this device": "本设备上的笔记",
+	"Attachments on this device": "本设备上的附件",
+	"Remote vault": "服务器知识库",
+	"not linked": "未关联",
+	"Plan usage": "套餐用量",
+	"Safe choice: combines both sides, nothing is deleted.":
+		"稳妥的选择：合并两边内容，不删除任何东西。",
+	"Already in sync. Nothing is deleted.": "已经同步。不会删除任何东西。",
+	Sync: "同步",
+	"Upload local files without downloading the remote": "上传本地文件，不下载服务器内容",
+	"Delete all on remote, then upload local files": "删除服务器全部内容，然后上传本地文件",
+	"Download remote files without uploading the local": "下载服务器文件，不上传本地内容",
+	"Delete all local files, then download from remote": "删除本地全部文件，然后从服务器下载",
+	"Set up sync for this vault": "为此知识库设置同步",
+	"You are now pointing at a different cloud vault": "你现在指向的是另一个云端知识库",
+	"Sync preview": "同步预览",
+	"Start syncing": "开始同步",
+	"Upload everything": "全部上传",
+	"Nothing will be removed from this device.": "不会从本设备移除任何东西。",
+	"Download everything": "全部下载",
+	"Not now": "以后再说",
+	"This vault": "此知识库",
+	"Cloud server": "服务器知识库",
+	"Vault name": "知识库名称",
+	"Could not load vaults": "无法加载知识库列表",
+	"Enter a name for the new vault": "为新知识库输入一个名称",
+	"Failed to switch vault": "切换知识库失败",
+	"Finished with some errors. Open the sync log to see what failed.":
+		"已完成，但有一些错误。打开同步日志查看失败项。",
+	"Synced. Some attachments need a paid plan to sync (see below).":
+		"已同步。部分附件需要付费套餐才能同步（见下方）。",
+	"All synced. Your vault and the cloud now match.": "全部已同步。你的知识库与服务器现在一致。",
+	"Already up to date. Nothing needed syncing.": "已是最新。没有需要同步的内容。",
+	Deleting: "正在删除",
+	Downloading: "正在下载",
+	Uploading: "正在上传",
+	"Syncing attachments": "正在同步附件",
+	Complete: "已完成",
+	"Getting set up": "开始设置",
+	"setup guide": "设置指南",
+	"Sign in (or enter your server URL and key) on the connection tab, then run your first sync.":
+		"在连接标签页登录（或填写服务器地址和密钥），然后运行第一次同步。",
+	"See the AI setup guide": "查看 AI 设置指南",
+	Plans: "套餐",
+	Free: "免费",
+	"1 vault, 2 devices": "1 个知识库，2 台设备",
+	"Real-time sync": "实时同步",
+	"2,000 notes searchable": "可搜索 2,000 条笔记",
+	"Connect any AI (MCP)": "连接任意 AI（MCP）",
+	Starter: "入门版",
+	"10 vaults, unlimited devices": "10 个知识库，设备数不限",
+	"Search all your notes": "搜索你的全部笔记",
+	"10 GB attachments": "10 GB 附件",
+	"Unlimited AI searches": "AI 搜索不限次数",
+	Pro: "专业版",
+	"Unlimited vaults": "知识库数量不限",
+	"Search across all vaults at once": "一次搜索所有知识库",
+	"50 GB attachments": "50 GB 附件",
+	"API access": "API 访问",
+	"See full pricing": "查看完整价格",
+	"Learn more": "了解更多",
+	"Errors only": "仅错误",
+	"Warnings and errors": "警告和错误",
+	"Info (default)": "信息（默认）",
+	"Debug (verbose)": "调试（详细）",
+	"Or authenticate with a token instead of signing in.": "或者使用令牌验证，而不是登录账号。",
+	"If this plugin saves you time, consider supporting development.":
+		"如果这个插件为你节省了时间，欢迎支持开发。",
+	"Sign-in required to load vaults": "需要登录后才能加载知识库列表",
+	"Could not reach Engram — check connection": "无法连接 Engram，请检查网络",
+	// UI strings (sync error surfaces)
+	"Free syncs notes only — images & PDFs need a paid plan.":
+		"免费版仅同步笔记，图片和 PDF 需要付费套餐。",
+	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
+		"拉取全部（删除多余文件）已中止：无法获得服务器的独占快照（回放冲突）。未删除任何内容。",
+	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
+		"拉取全部已中止：另一个同步正在进行（回放冲突）。等它结束后再试。",
+	"Pull all failed: {error}": "拉取全部失败：{error}",
+	"Pull all failed": "拉取全部失败",
+	// UI strings (third pass)
+	"Click to copy": "点击复制",
+	"Waiting for authorization — connected, this will complete instantly.":
+		"正在等待授权：已连接，会立刻完成。",
+	"Waiting for authorization — no live connection, checking every 30s.":
+		"正在等待授权：没有实时连接，每 30 秒检查一次。",
+	'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.':
+		"Engram 同步：无法读取“{name}”的同步状态，将改用磁盘上的副本。",
+	"{formatted} files · ": "{formatted} 个文件 · ",
+	"Notes searchable": "可搜索的笔记",
+	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
+		"超出这个数量的笔记仍会正常同步和打开，只是不在搜索索引中。索引保留较早的笔记，因此落在索引外的是最新的笔记。",
+	"Notes stored": "已存储的笔记",
+	"AI searches": "AI 搜索",
+	"{formatted} per day": "每天 {formatted} 次",
+	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
+		"Engram 已索引你的 {all} 条笔记中的 {indexed} 条。其余只在本设备上匹配。升级后可索引全部。",
+	"Searching {indexed} of {all} notes. Upgrade to search everything.":
+		"正在搜索 {all} 条笔记中的 {indexed} 条。升级后可搜索全部。",
+	"Remove tag {tag}": "移除标签 {tag}",
+	"👋 Welcome": "👋 欢迎",
+	"🔌 Connection": "🔌 连接",
+	"🔄 Sync Center": "🔄 Sync Center",
+	"⚙️ Advanced": "⚙️ 高级",
+	"Error: {error}": "错误：{error}",
+	unknown: "未知",
+	"{count} need attention": "{count} 项需要处理",
+	"Uploads {up}, downloads {down}.": "上传 {up} 项，下载 {down} 项。",
+	"Uploads {count}.": "上传 {count} 项。",
+	"Downloads {count}.": "下载 {count} 项。",
+	"{count} conflicts to resolve.": "有 {count} 处冲突需要解决。",
+	"Nothing is deleted.": "不会删除任何东西。",
+	"Delete all {count} files currently on the server": "删除服务器上现有的全部 {count} 个文件",
+	"Upload {count} files from this vault": "从此知识库上传 {count} 个文件",
+	"Delete all {count} files in this vault": "删除此知识库中的全部 {count} 个文件",
+	"Download {count} files from the server": "从服务器下载 {count} 个文件",
+	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
+		"目前没有需要同步的内容，两边都是空的。开始同步后，你写的一切都会出现在其他设备上。",
+	"{count} notes": "{count} 条笔记",
+	"{count} attachments": "{count} 个附件",
+	"{first} and {second}": "{first} 和 {second}",
+	files: "文件",
+	"This vault is empty on the server. Upload your {what}?":
+		"服务器上的这个知识库是空的。要上传你的 {what} 吗？",
+	"This device's vault is empty. Download {what} from the server?":
+		"本设备上的知识库是空的。要从服务器下载 {what} 吗？",
+	notes: "笔记",
+	attachments: "附件",
+	folders: "文件夹",
+	"Uploading {count}.": "正在上传 {count} 项。",
+	"Downloading {count}.": "正在下载 {count} 项。",
+	"Deleting {count} local files.": "正在删除本地 {count} 个文件。",
+	"Deleting {count} on the cloud.": "正在删除服务器上 {count} 项。",
+	"First sync, this may take a moment.": "首次同步，可能需要一点时间。",
+	"Checking for changes.": "正在检查变更。",
+	"Nothing will be deleted.": "不会删除任何东西。",
+	'{count} failed. Run "{command}" for details.': "{count} 项失败。运行“{command}”查看详情。",
+	'Engram Sync: renamed "{name}" (unsupported characters)':
+		"Engram 同步：已将“{name}”重命名（包含不支持的字符）",
+	'Engram: frontmatter problem in "{name}"': "Engram：“{name}”的 frontmatter 有问题",
+	"Create a hosted account at ": "在 ",
+	", or self-host the backend (": "注册托管账号，或自行部署后端（",
+	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
+		"连接 Claude、Cursor、ChatGPT 或任何 MCP 应用，让它读写你的笔记。",
+	Documentation: "文档",
+	"AI / MCP setup guide": "AI / MCP 设置指南",
+	"Report an issue": "反馈问题",
+	"Join our Discord": "加入我们的 Discord",
+	"Paths to skip (one per line). Folder patterns end with /. Built-in: {configDir}/, .trash/, .git/":
+		"要跳过的路径（每行一个）。文件夹规则以 / 结尾。内置规则：{configDir}/、.trash/、.git/",
+	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use.":
+		"将详细的同步、知识库和连接活动发送到服务器以便排查问题，并对请求启用分布式追踪。只发送元数据，绝不发送笔记内容。日常使用请保持关闭。",
+	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
+		"诊断开启时发送的最低级别。级别越高，发送的行数越少。默认：信息。",
+	"Signed in as {email}": "已登录为 {email}",
+	"Pick a vault (previous: '{name}' not found)": "请选择一个知识库（此前的“{name}”已不存在）",
+	"Pick a vault (previous: id {id} not found)": "请选择一个知识库（此前的 id {id} 已不存在）",
+	"Server error ({status}) — check Engram logs": "服务器错误（{status}），请查看 Engram 日志",
+	"Request failed ({status})": "请求失败（{status}）",
+	"Engram Cloud": "Engram Cloud",
+	"Self-hosted": "自托管",
+	"{count} attempts": "{count} 次尝试",
+	// UI strings (fourth pass)
+	"{count} missing on server": "服务器上缺少 {count} 个",
+	"{count} diverged": "{count} 个有分歧",
+	"{count} only on server": "只在服务器上有 {count} 个",
+	"Engram Sync: {details}": "Engram 同步：{details}",
+	"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.":
+		"Engram：插件设置文件已损坏且无法恢复。你可能需要在设置中重新连接。",
+	"Engram: sync is not set up yet, so nothing in this vault will sync.":
+		"Engram：同步还没设置好，这个知识库里的内容都不会同步。",
+	"Click the Engram item in the status bar to pick up where you left off.":
+		"点击状态栏里的 Engram 项，从上次的地方继续。",
+	"Engram: ⚠ {count} sync errors": "Engram：⚠ {count} 个同步错误",
+	"sync failed": "同步失败",
+	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":
+		"这看起来不是完整的服务器地址。请带上协议，例如 http://127.0.0.1:4000",
+	"Opens your browser to sign in, or create an account if you don't have one yet, then links this vault.":
+		"会在浏览器中打开登录页面，没有账号也可以直接注册，然后关联这个知识库。",
+	"Or authenticate with a token instead of signing in. Engram Cloud API keys require the Pro plan; on Free and Starter, sign in above.":
+		"也可以用令牌代替登录。Engram Cloud 的 API 密钥需要 Pro 方案；免费版和 Starter 请在上面登录。",
+	"No sync activity this session.": "本次会话没有同步活动。",
+	"Showing {count} entries": "显示 {count} 条记录",
+	"({count} errors)": "（{count} 个错误）",
+	"Frontmatter could not be parsed": "无法解析 frontmatter",
+	"Not connected. Enter your Engram server URL below to start syncing.":
+		"未连接。在下面填写你的 Engram 服务器地址即可开始同步。",
+};
+
+export default zh;

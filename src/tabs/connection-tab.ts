@@ -1,5 +1,6 @@
 import { Notice, Setting } from "obsidian";
 import { connectionState } from "../backend-mode";
+import { t } from "../i18n";
 import type { BackendMode } from "../types";
 import {
 	renderAuthSection,
@@ -9,10 +10,13 @@ import {
 } from "./connection-sections";
 import type { TabContext } from "./types";
 
-const MODE_LABELS: Record<BackendMode, string> = {
-	cloud: "Engram Cloud",
-	selfhost: "Self-hosted",
-};
+/** Resolved per call rather than frozen at module load, like every other `t()`. */
+function modeLabels(): Record<BackendMode, string> {
+	return {
+		cloud: t("Engram Cloud"),
+		selfhost: t("Self-hosted"),
+	};
+}
 
 /** The single Connection tab. Replaces the former Cloud and Self-hosted tabs.
  *
@@ -28,11 +32,12 @@ export function renderConnectionTab(ctx: TabContext): void {
 	// semantics, standard Obsidian affordance, zero new CSS. Swap for segmented
 	// buttons only if the visual matters more than the maintenance.
 	new Setting(containerEl)
-		.setName("Backend")
-		.setDesc("Where this vault syncs to. Each backend keeps its own sign-in.")
+		.setName(t("Backend"))
+		.setDesc(t("Where this vault syncs to. Each backend keeps its own sign-in."))
 		.addDropdown((dd) => {
-			dd.addOption("cloud", MODE_LABELS.cloud);
-			dd.addOption("selfhost", MODE_LABELS.selfhost);
+			const labels = modeLabels();
+			dd.addOption("cloud", labels.cloud);
+			dd.addOption("selfhost", labels.selfhost);
 			dd.setValue(mode);
 			dd.onChange(async (value) => {
 				const target = value as BackendMode;
@@ -41,7 +46,7 @@ export function renderConnectionTab(ctx: TabContext): void {
 				// subset here previously nulled the auth provider without rebuilding
 				// it and skipped bumpAuthGeneration.
 				if (!(await plugin.switchBackendMode(target))) return;
-				new Notice(`Switched to ${MODE_LABELS[target]}.`);
+				new Notice(t("Switched to {mode}.", { mode: modeLabels()[target] ?? target }));
 				redisplay();
 			});
 		});
@@ -53,15 +58,15 @@ export function renderConnectionTab(ctx: TabContext): void {
 	// same sentence twice, the second time with the button attached.
 	if (state === "needs-url") {
 		const warning = new Setting(containerEl).setName(
-			"Not connected. Enter your Engram server URL below to start syncing.",
+			t("Not connected. Enter your Engram server URL below to start syncing."),
 		);
 		warning.settingEl.addClass("engram-connection-warning");
 	}
 
 	if (mode === "selfhost") {
 		const repo = new Setting(containerEl)
-			.setName("Run your own Engram server")
-			.setDesc("Engram is the backend that powers sync and semantic search.");
+			.setName(t("Run your own Engram server"))
+			.setDesc(t("Engram is the backend that powers sync and semantic search."));
 		repo.settingEl.addClass("engram-setup-cta");
 		repo.descEl.createEl("a", {
 			text: "github.com/engram-app/engram",
@@ -102,11 +107,11 @@ function renderFinishSetupRow(ctx: TabContext): void {
 	if (!plugin.syncEngine.isSyncBlocked()) return;
 
 	const row = new Setting(containerEl)
-		.setName("Finish sync setup")
-		.setDesc("Nothing in this vault syncs until you choose how to merge it with the server.")
+		.setName(t("Finish sync setup"))
+		.setDesc(t("Nothing in this vault syncs until you choose how to merge it with the server."))
 		.addButton((btn) =>
 			btn
-				.setButtonText("Choose sync direction")
+				.setButtonText(t("Choose sync direction"))
 				.setCta()
 				.onClick(() => {
 					void plugin.doSyncWithFirstSyncCheck();

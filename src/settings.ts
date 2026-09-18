@@ -4,6 +4,7 @@
 import { type App, Notice, PluginSettingTab, type Setting } from "obsidian";
 import { DeviceFlowModal } from "./device-flow-modal";
 import { errMsg } from "./error-util";
+import { t } from "./i18n";
 import type EngramSyncPlugin from "./main";
 import { PHASE_FALLBACK_LABEL, type PlannedPhase, settingsBarCounts } from "./sync-progress-modal";
 import { renderAboutTab } from "./tabs/about-tab";
@@ -192,10 +193,10 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 
 		// ── Tab bar ──
 		const tabs = [
-			{ id: "about" as const, label: "👋 Welcome", render: renderAboutTab },
-			{ id: "connection" as const, label: "🔌 Connection", render: renderConnectionTab },
-			{ id: "sync-center" as const, label: "🔄 Sync Center", render: renderSyncCenterTab },
-			{ id: "advanced" as const, label: "⚙️ Advanced", render: renderAdvancedTab },
+			{ id: "about" as const, label: t("👋 Welcome"), render: renderAboutTab },
+			{ id: "connection" as const, label: t("🔌 Connection"), render: renderConnectionTab },
+			{ id: "sync-center" as const, label: t("🔄 Sync Center"), render: renderSyncCenterTab },
+			{ id: "advanced" as const, label: t("⚙️ Advanced"), render: renderAdvancedTab },
 		];
 
 		const tabBar = containerEl.createEl("nav", { cls: "engram-tab-bar" });
@@ -215,7 +216,9 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 			// a rejection must surface, not vanish into `void`.
 			void Promise.resolve(tab.render({ ...ctx, containerEl: contentEl })).catch(
 				(e: unknown) => {
-					new Notice(`Engram: settings tab failed to render (${errMsg(e)})`);
+					new Notice(
+						t("Engram: settings tab failed to render ({error})", { error: errMsg(e) }),
+					);
 				},
 			);
 		};
@@ -317,29 +320,29 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 
 		if (status.state === "offline") {
 			dotState = "is-error";
-			label = "Disconnected";
+			label = t("Disconnected");
 		} else if (status.state === "error") {
 			dotState = "is-error";
-			label = `Error: ${status.error || "unknown"}`;
+			label = t("Error: {error}", { error: status.error || t("unknown") });
 		} else if (
 			blocked &&
 			this.plugin.settings.apiUrl &&
 			(this.plugin.settings.apiKey || this.plugin.settings.refreshToken)
 		) {
 			dotState = "is-waiting";
-			label = "Connected — waiting for first sync decision";
+			label = t("Connected — waiting for first sync decision");
 		} else if (live) {
 			dotState = "is-connected";
-			label = "Connected — live sync active";
+			label = t("Connected — live sync active");
 		} else if (
 			this.plugin.settings.apiUrl &&
 			(this.plugin.settings.apiKey || this.plugin.settings.refreshToken)
 		) {
 			dotState = "is-polling";
-			label = "Connected — polling";
+			label = t("Connected — polling");
 		} else {
 			dotState = "is-idle";
-			label = "Not configured";
+			label = t("Not configured");
 		}
 
 		statusEl.createSpan({ cls: `engram-status-dot ${dotState}` });
@@ -348,7 +351,7 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 		if (dotState === "is-waiting") {
 			const openBtn = statusEl.createEl("button", {
 				cls: "engram-status-open-sync-btn mod-cta",
-				text: "Open sync setup",
+				text: t("Open sync setup"),
 			});
 			openBtn.addEventListener("click", () => {
 				void this.plugin.doSyncWithFirstSyncCheck();
@@ -370,7 +373,7 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 		if (this.plugin.syncEngine?.getPlanState()?.tier === "free") {
 			const upgrade = statusEl.createEl("button", {
 				cls: "engram-status-upgrade-btn mod-cta",
-				text: "Upgrade",
+				text: t("Upgrade"),
 			});
 			upgrade.addEventListener("click", () => window.open(DEFAULT_UPGRADE_URL, "_blank"));
 		}
@@ -378,7 +381,7 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 		if (status.lastSync) {
 			const date = new Date(status.lastSync);
 			const timeEl = statusEl.createDiv({ cls: "engram-status-time" });
-			timeEl.setText(`Last sync: ${date.toLocaleString()}`);
+			timeEl.setText(t("Last sync: {when}", { when: date.toLocaleString() }));
 		}
 	}
 

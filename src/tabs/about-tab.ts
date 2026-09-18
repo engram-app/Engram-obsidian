@@ -1,4 +1,5 @@
 import { Setting } from "obsidian";
+import { t } from "../i18n";
 import type { TabContext } from "./types";
 import {
 	ENGRAM_DISCORD_URL,
@@ -32,11 +33,11 @@ export function renderAboutTab(ctx: TabContext): void {
 	// as an accent button rather than an inline link — a text link in the
 	// description reads as one more sentence and gets skipped.
 	const video = new Setting(containerEl)
-		.setName("New here? Watch the setup video")
-		.setDesc("What Engram does, and how to connect your vault, start to finish.")
+		.setName(t("New here? Watch the setup video"))
+		.setDesc(t("What Engram does, and how to connect your vault, start to finish."))
 		.addButton((btn) =>
 			btn
-				.setButtonText("▶ Watch on YouTube")
+				.setButtonText(t("▶ Watch on YouTube"))
 				.setCta()
 				// Obsidian's Electron host treats window.open as an external
 				// browser open (same pattern as src/limit-toast.ts).
@@ -45,35 +46,37 @@ export function renderAboutTab(ctx: TabContext): void {
 	video.settingEl.addClass("engram-about-video");
 
 	// ── Getting set up ──
-	heading(containerEl, "Getting set up");
+	heading(containerEl, t("Getting set up"));
 
-	const account = new Setting(containerEl).setName("1. Make an account");
-	account.descEl.appendText("Create a hosted account at ");
+	const account = new Setting(containerEl).setName(t("1. Make an account"));
+	account.descEl.appendText(t("Create a hosted account at "));
 	externalLink(account.descEl, "app.engram.page", ENGRAM_SIGN_UP_URL);
-	account.descEl.appendText(", or self-host the backend (");
-	externalLink(account.descEl, "setup guide", ENGRAM_SELFHOST_URL);
+	account.descEl.appendText(t(", or self-host the backend ("));
+	externalLink(account.descEl, t("setup guide"), ENGRAM_SELFHOST_URL);
 	account.descEl.appendText(").");
 
 	new Setting(containerEl)
-		.setName("2. Connect your vault to Engram")
+		.setName(t("2. Connect your vault to Engram"))
 		.setDesc(
-			"Sign in (or enter your server URL and key) on the connection tab, then run your first sync.",
+			t(
+				"Sign in (or enter your server URL and key) on the connection tab, then run your first sync.",
+			),
 		)
 		.addButton((btn) =>
 			btn
-				.setButtonText("Open connection tab")
+				.setButtonText(t("Open connection tab"))
 				.setCta()
 				.onClick(() => switchToTab("connection")),
 		);
 
-	const ai = new Setting(containerEl).setName("3. Connect your AI");
+	const ai = new Setting(containerEl).setName(t("3. Connect your AI"));
 	ai.descEl.appendText(
-		"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ",
+		t("Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. "),
 	);
-	externalLink(ai.descEl, "See the AI setup guide", ENGRAM_MCP_URL);
+	externalLink(ai.descEl, t("See the AI setup guide"), ENGRAM_MCP_URL);
 
 	// ── Plans ──
-	heading(containerEl, "Plans");
+	heading(containerEl, t("Plans"));
 
 	const plans = containerEl.createEl("ul", { cls: "engram-plans" });
 	const plan = (name: string, features: string[]): void => {
@@ -91,34 +94,34 @@ export function renderAboutTab(ctx: TabContext): void {
 	// That is the pricing v3.1 positioning (ranking differences are single-digit
 	// and imperceptible; "found my note" vs "cannot find my note" is not), and
 	// it also keeps this copy true across the pending Free semantic-search flip.
-	plan("Free", [
-		"1 vault, 2 devices",
-		"Real-time sync",
-		"2,000 notes searchable",
-		"Connect any AI (MCP)",
+	plan(t("Free"), [
+		t("1 vault, 2 devices"),
+		t("Real-time sync"),
+		t("2,000 notes searchable"),
+		t("Connect any AI (MCP)"),
 	]);
-	plan("Starter", [
-		"10 vaults, unlimited devices",
-		"Search all your notes",
-		"10 GB attachments",
-		"Unlimited AI searches",
+	plan(t("Starter"), [
+		t("10 vaults, unlimited devices"),
+		t("Search all your notes"),
+		t("10 GB attachments"),
+		t("Unlimited AI searches"),
 	]);
-	plan("Pro", [
-		"Unlimited vaults",
-		"Search across all vaults at once",
-		"50 GB attachments",
-		"API access",
+	plan(t("Pro"), [
+		t("Unlimited vaults"),
+		t("Search across all vaults at once"),
+		t("50 GB attachments"),
+		t("API access"),
 	]);
 
 	const pricing = containerEl.createEl("p", { cls: "engram-about-link" });
-	externalLink(pricing, "See full pricing", ENGRAM_PRICING_URL);
+	externalLink(pricing, t("See full pricing"), ENGRAM_PRICING_URL);
 
 	// ── Learn more ──
-	heading(containerEl, "Learn more");
+	heading(containerEl, t("Learn more"));
 
 	const links = containerEl.createEl("ul", { cls: "engram-about-links" });
-	externalLink(links.createEl("li"), "Documentation", ENGRAM_DOCS_URL);
-	externalLink(links.createEl("li"), "AI / MCP setup guide", ENGRAM_MCP_URL);
-	externalLink(links.createEl("li"), "Report an issue", ENGRAM_ISSUES_URL);
-	externalLink(links.createEl("li"), "Join our Discord", ENGRAM_DISCORD_URL);
+	externalLink(links.createEl("li"), t("Documentation"), ENGRAM_DOCS_URL);
+	externalLink(links.createEl("li"), t("AI / MCP setup guide"), ENGRAM_MCP_URL);
+	externalLink(links.createEl("li"), t("Report an issue"), ENGRAM_ISSUES_URL);
+	externalLink(links.createEl("li"), t("Join our Discord"), ENGRAM_DISCORD_URL);
 }

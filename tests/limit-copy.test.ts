@@ -1,8 +1,35 @@
 /**
  * Tests for limit-copy.ts — toast-friendly one-liners for 402 limit reasons.
  */
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { isPlanJoinReason, toastFor } from "../src/limit-copy";
+import { __setLanguage } from "./__mocks__/obsidian";
+
+describe("limit-copy localization", () => {
+	afterEach(() => __setLanguage("en"));
+
+	// Regression: the table used to be a module-scope object literal whose values
+	// were t() calls, so all 18 strings froze to whichever language was active
+	// when this module was first imported. A language set afterwards was ignored,
+	// and which language that was depended on test file import order.
+	test("a known reason follows a language set after import", () => {
+		__setLanguage("ja");
+		const ja = toastFor("api_access_not_available");
+		__setLanguage("en");
+		const en = toastFor("api_access_not_available");
+		expect(ja).not.toBe(en);
+		expect(en).toMatch(/API keys need Pro/);
+	});
+
+	// The fallback is the branch every reason code the backend adds after this
+	// build takes, so it must not stay English while known reasons translate.
+	test("an unknown reason is translated too, not just the known ones", () => {
+		__setLanguage("de");
+		const unknown = toastFor("some_reason_this_build_never_heard_of");
+		expect(unknown).toMatch(/^Engram: /);
+		expect(unknown).not.toMatch(/Limit reached\. Upgrade to continue\./);
+	});
+});
 
 describe("limit-copy", () => {
 	test("maps notes_cap_exceeded", () => {

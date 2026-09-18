@@ -1,17 +1,6 @@
 import type { SyncChoice, SyncPlan } from "./types";
 import { DESTRUCTIVE_CHOICES } from "./types";
 
-/** "N thing"/"N things". The one pluralizer — this ternary was hand-rolled at
- *  7 call sites across the sync UI. */
-export function plural(count: number, singular: string): string {
-	return `${count} ${pluralWord(count, singular)}`;
-}
-
-/** Just the (naively pluralized) word. */
-export function pluralWord(count: number, singular: string): string {
-	return count === 1 ? singular : `${singular}s`;
-}
-
 /** True when the plan has nothing for the engine to do. */
 export function isPlanEmpty(plan: SyncPlan): boolean {
 	return (

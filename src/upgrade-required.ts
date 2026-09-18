@@ -37,6 +37,7 @@
  * that flag today.
  */
 import { Notice } from "obsidian";
+import { t } from "./i18n";
 import { rlog } from "./remote-log";
 
 const NOTICE_MS = 15_000;
@@ -81,11 +82,17 @@ export function notifyUpgradeRequired(
 		`server requires plugin >= ${minVersion ?? "unknown"}${where} — sync refused until updated`,
 	);
 
-	const needs = minVersion ? ` (needs ${minVersion} or newer)` : "";
-	const notice = new Notice(
-		`Engram: this plugin is too old to sync${needs}. Update it to continue.`,
-		NOTICE_MS,
-	);
+	// Two whole sentences rather than one with an appended fragment: a clause
+	// spliced onto a translated sentence cannot be reordered by the translator.
+	const message = minVersion
+		? t(
+				"Engram: this plugin is too old to sync (needs {version} or newer). Update it to continue.",
+				{
+					version: minVersion,
+				},
+			)
+		: t("Engram: this plugin is too old to sync. Update it to continue.");
+	const notice = new Notice(message, NOTICE_MS);
 
 	// No action wired = no button. A button that does nothing is worse than
 	// prose telling the user to go update.
@@ -96,7 +103,7 @@ export function notifyUpgradeRequired(
 	// "Update", never "Upgrade" — the 402 toast next door uses "Upgrade" for
 	// paying more money, and these two must not read as the same action.
 	const btn = noticeEl.createEl("button", {
-		text: "Update",
+		text: t("Update"),
 		cls: "engram-limit-upgrade-btn",
 	});
 	btn.addEventListener("click", () => action());
