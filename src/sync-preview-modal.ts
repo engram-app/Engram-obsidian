@@ -166,8 +166,8 @@ export class SyncPreviewState {
  *  say "sign in", never "check your connection". Pure for testing. */
 export function planLoadErrorMessage(hasAuth: boolean): string {
 	return hasAuth
-		? "Could not compare with the cloud. Check your connection."
-		: "Your login expired. Sign in again in Engram settings to continue.";
+		? t("Could not compare with the cloud. Check your connection.")
+		: t("Your login expired. Sign in again in Engram settings to continue.");
 }
 
 /** Map a createVault rejection to a short human label. LimitExceededError =
@@ -177,8 +177,9 @@ export function planLoadErrorMessage(hasAuth: boolean): string {
 export function describeCreateVaultError(e: unknown): string {
 	if (e instanceof LimitExceededError) return toastFor(e.reason);
 	const status = statusOf(e);
-	if (status === 422) return "Couldn't create vault — the name may be invalid or already in use.";
-	return "Could not create the vault — check your connection and try again.";
+	if (status === 422)
+		return t("Couldn't create vault — the name may be invalid or already in use.");
+	return t("Could not create the vault — check your connection and try again.");
 }
 
 /** Lowercase file extension (no leading dot) of a path, or "" when none. */
@@ -201,8 +202,7 @@ export function countSkippedAttachments(plan: SyncPlan, attachmentsTextOnly: boo
  *  there is nothing to say (n === 0). Pure for testing. */
 export function skippedAttachmentsLine(n: number): string | null {
 	if (n <= 0) return null;
-	const noun = pluralWord(n, "attachment");
-	return `Free syncs notes only — ${n} ${noun} will be skipped.`;
+	return t("Free syncs notes only — {count} attachments will be skipped.", { count: n });
 }
 
 /** Plain-language outcome line for the smart-merge ("Sync") option, computed
@@ -829,7 +829,7 @@ export class SyncPreviewModal extends Modal {
 			});
 			conflictRow.createSpan({
 				cls: "engram-sync-preview-conflicts-label",
-				text: ` ${pluralWord(conflicts, "conflict")} need resolution`,
+				text: t(" {count} conflicts need resolution", { count: conflicts }),
 			});
 		}
 	}

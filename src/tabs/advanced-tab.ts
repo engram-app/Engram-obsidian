@@ -1,5 +1,5 @@
 import { Notice, Setting, TFolder } from "obsidian";
-import { t } from "../i18n";
+import { t, tInto } from "../i18n";
 import type { EngramSyncSettings } from "../types";
 import type { TabContext } from "./types";
 
@@ -87,18 +87,19 @@ export function renderAdvancedTab(ctx: TabContext): void {
 	const aboutList = containerEl.createEl("ul", { cls: "engram-about-list" });
 
 	const versionItem = aboutList.createEl("li");
-	versionItem.createSpan({ text: "Version: " });
-	versionItem.createSpan({ text: plugin.manifest.version });
+	tInto(versionItem, "Version: {version}", "version", (item) => {
+		item.createSpan({ text: plugin.manifest.version });
+	});
 
 	const repoItem = aboutList.createEl("li");
-	repoItem.createSpan({ text: "Source: " });
+	repoItem.createSpan({ text: t("Source: ") });
 	repoItem.createEl("a", {
 		text: "github.com/engram-app/Engram-obsidian",
 		href: "https://github.com/engram-app/Engram-obsidian",
 	});
 
 	const licenseItem = aboutList.createEl("li");
-	licenseItem.createSpan({ text: "License: MIT" });
+	licenseItem.createSpan({ text: t("License: {name}", { name: "MIT" }) });
 }
 
 /** Scan vault for problematic directories and render warnings with add-to-ignore buttons. */

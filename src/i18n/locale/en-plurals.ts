@@ -26,6 +26,18 @@ const enPlurals: Dict = {
 	"Engram: plan upgraded — syncing {count} attachments…": {
 		one: "Engram: plan upgraded — syncing {count} attachment…",
 	},
+	"Free syncs notes only — {count} attachments will be skipped.": {
+		one: "Free syncs notes only — {count} attachment will be skipped.",
+	},
+	" {count} conflicts need resolution": {
+		one: " {count} conflict needs resolution",
+	},
+	"deleting {count} local files": {
+		one: "deleting {count} local file",
+	},
+	"{count} attachments need a paid plan to sync. See Sync Center. ": {
+		one: "{count} attachment needs a paid plan to sync. See Sync Center. ",
+	},
 };
 
 export default enPlurals;
