@@ -1,6 +1,6 @@
 import { type App, Modal } from "obsidian";
 import { t } from "./i18n";
-import { optionBreakdown, pluralWord } from "./sync-plan-format";
+import { optionBreakdown } from "./sync-plan-format";
 import { DEFAULT_UPGRADE_URL } from "./tabs/urls";
 import type { SyncChoice, SyncPlan, SyncProgress } from "./types";
 
@@ -18,9 +18,7 @@ export function describePlannedWork(
 	if (b.pushCount > 0) parts.push(`uploading ${b.pushCount}`);
 	if (b.pullCount > 0) parts.push(`downloading ${b.pullCount}`);
 	if (b.deleteLocalCount > 0) {
-		parts.push(
-			`deleting ${b.deleteLocalCount} local ${pluralWord(b.deleteLocalCount, "file")}`,
-		);
+		parts.push(t("deleting {count} local files", { count: b.deleteLocalCount }));
 	}
 	if (b.deleteRemoteCount > 0) {
 		parts.push(`deleting ${b.deleteRemoteCount} on the cloud`);
@@ -82,9 +80,10 @@ export function renderCompletionSummary(
 
 	if (summary.skipped > 0) {
 		const note = parent.createDiv({ cls: "engram-progress-plan-note" });
-		const noun = pluralWord(summary.skipped, "attachment");
 		note.createSpan({
-			text: `${summary.skipped} ${noun} need a paid plan to sync. See Sync Center. `,
+			text: t("{count} attachments need a paid plan to sync. See Sync Center. ", {
+				count: summary.skipped,
+			}),
 		});
 		const upgrade = note.createEl("button", {
 			text: t("Upgrade"),
