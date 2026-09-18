@@ -2,17 +2,17 @@
 
 # Engram Vault Sync
 
-![Engram Vault Sync: Deine Notizen sind das Gedächtnis deiner KI, überall synchronisiert, von der KI gelesen und geschrieben](assets/vault-banner.gif)
+![Engram Vault Sync: Deine Notizen sind das Gedächtnis deiner KI, überall synchronisiert, von der KI gelesen und geschrieben](../../assets/vault-banner.gif)
 
 **Synchronisiere deinen Vault auf allen Geräten und lass jede KI darin lesen und schreiben.** Deine Notizen werden zu einem Gedächtnis, das deine KI durchsuchen, zitieren und weiterdenken kann.
 
 **[Kostenlos starten auf engram.page →](https://engram.page)** · Ohne Kreditkarte, in wenigen Minuten einsatzbereit.
 
-[Einrichtung](#einrichtung) · [KI verbinden](#ki-verbinden) · [API](https://engram.page/docs/api) · [Handbuch](docs/user-guide.md) · [Selbst hosten](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
+[Einrichtung](#einrichtung) · [KI verbinden](#ki-verbinden) · [API](https://engram.page/docs/api) · [Handbuch](../user-guide.md) · [Selbst hosten](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
 
-[English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · **Deutsch** · [Français](README.fr.md) · [Español](README.es.md) · [Português](README.pt-BR.md) · [Русский](README.ru.md) · [Italiano](README.it.md)
+[English](../../README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · **Deutsch** · [Français](README.fr.md) · [Español](README.es.md) · [Português](README.pt-BR.md) · [Русский](README.ru.md) · [Italiano](README.it.md)
 
-<a href="https://www.youtube.com/watch?v=rwnPeZ-8Lqo"><img src="assets/setup-video.jpg" alt="Video zur Einrichtung: Obsidian mit jeder KI verbinden" width="640"></a>
+<a href="https://www.youtube.com/watch?v=rwnPeZ-8Lqo"><img src="../../assets/setup-video.jpg" alt="Video zur Einrichtung: Obsidian mit jeder KI verbinden" width="640"></a>
 
 </div>
 
@@ -39,7 +39,7 @@ Claude   📝  „Henderson: Risiken der Verlängerung“ erstellt  ✓
          Mit den vier Quellnotizen verknüpft.
 ```
 
-<video src="assets/showcase-file-creation.webm" width="800" autoplay loop muted playsinline></video>
+<video src="../../assets/showcase-file-creation.webm" width="800" autoplay loop muted playsinline></video>
 
 Nichts wird jemals stillschweigend überschrieben. Offline vorgenommene Änderungen werden synchronisiert, sobald du wieder verbunden bist. Deine Notizen gehen ausschließlich an Engram, nie an Dritte, und es wird nichts getrackt.
 
@@ -59,7 +59,7 @@ Engram spricht **MCP (Model Context Protocol)**, den offenen Standard, über den
 
 Richte deinen Client auf den Engram-MCP-Server (`https://mcp.engram.page` im gehosteten Dienst). Schritt-für-Schritt-Anleitungen für jede Anwendung stehen in der **[Integrationsdokumentation](https://engram.page/docs/integrations)**.
 
-<video src="assets/showcase-mcp.webm" width="800" autoplay loop muted playsinline></video>
+<video src="../../assets/showcase-mcp.webm" width="800" autoplay loop muted playsinline></video>
 
 ## Datenschutz
 
@@ -71,12 +71,12 @@ Richte deinen Client auf den Engram-MCP-Server (`https://mcp.engram.page` im geh
 
 - **[KI verbinden](https://engram.page/docs/integrations)**: MCP-Einrichtung für Claude, Cursor, ChatGPT, Windsurf und weitere.
 - **[API-Referenz](https://engram.page/docs/api)**: auf der REST- und WebSocket-API aufbauen.
-- **[Handbuch](docs/user-guide.md)**: KI-Assistenten, Konflikte, das Sync Center, Fehlersuche.
-- **[Entwicklerhandbuch](DEV.md)**: aus dem Quellcode bauen, Architektur, Releases.
+- **[Handbuch](../user-guide.md)**: KI-Assistenten, Konflikte, das Sync Center, Fehlersuche.
+- **[Entwicklerhandbuch](../../DEV.md)**: aus dem Quellcode bauen, Architektur, Releases.
 - **Etwas kaputt?** [Eröffne ein Issue](https://github.com/engram-app/Engram-obsidian/issues).
 - **Komm in die Community.** Sprich mit Nutzern und Entwicklern auf [Discord](https://discord.gg/NKWcU2mm7N).
 - **Gefällt es dir?** Unterstütze die Entwicklung über [GitHub Sponsors](https://github.com/sponsors/engram-app) oder [Ko-fi](https://ko-fi.com/engrams_sync). Freiwillig und sehr willkommen.
 
 ## Lizenz
 
-[MIT](LICENSE)
+[MIT](../../LICENSE)

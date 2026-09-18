@@ -2,17 +2,17 @@
 
 # Engram Vault Sync
 
-![Engram Vault Sync: tus notas son la memoria de tu IA, sincronizadas en todas partes, leídas y escritas por tu IA](assets/vault-banner.gif)
+![Engram Vault Sync: tus notas son la memoria de tu IA, sincronizadas en todas partes, leídas y escritas por tu IA](../../assets/vault-banner.gif)
 
 **Sincroniza tu bóveda en todos tus dispositivos y deja que cualquier IA lea y escriba en ella.** Tus notas se convierten en una memoria que tu IA puede buscar, citar y ampliar.
 
 **[Empieza gratis en engram.page →](https://engram.page)** · Sin tarjeta de crédito, listo en minutos.
 
-[Instalación](#instalación) · [Conecta tu IA](#conecta-tu-ia) · [API](https://engram.page/docs/api) · [Guía de uso](docs/user-guide.md) · [Autoalojamiento](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
+[Instalación](#instalación) · [Conecta tu IA](#conecta-tu-ia) · [API](https://engram.page/docs/api) · [Guía de uso](../user-guide.md) · [Autoalojamiento](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
 
-[English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · **Español** · [Português](README.pt-BR.md) · [Русский](README.ru.md) · [Italiano](README.it.md)
+[English](../../README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · **Español** · [Português](README.pt-BR.md) · [Русский](README.ru.md) · [Italiano](README.it.md)
 
-<a href="https://www.youtube.com/watch?v=rwnPeZ-8Lqo"><img src="assets/setup-video.jpg" alt="Vídeo de instalación: conectar Obsidian a cualquier IA" width="640"></a>
+<a href="https://www.youtube.com/watch?v=rwnPeZ-8Lqo"><img src="../../assets/setup-video.jpg" alt="Vídeo de instalación: conectar Obsidian a cualquier IA" width="640"></a>
 
 </div>
 
@@ -39,7 +39,7 @@ Claude   📝  creada «Henderson: riesgos de la renovación»  ✓
          Enlazada a las cuatro notas de origen.
 ```
 
-<video src="assets/showcase-file-creation.webm" width="800" autoplay loop muted playsinline></video>
+<video src="../../assets/showcase-file-creation.webm" width="800" autoplay loop muted playsinline></video>
 
 Nunca se sobrescribe nada en silencio. Los cambios hechos sin conexión se sincronizan al volver a conectar. Tus notas van solo a Engram, nunca a un tercero, y no hay ningún rastreo.
 
@@ -59,7 +59,7 @@ Engram habla **MCP (Model Context Protocol)**, el estándar abierto con el que C
 
 Apunta tu cliente al servidor MCP de Engram (`https://mcp.engram.page` en el servicio alojado). Las guías paso a paso de cada aplicación están en la **[documentación de integraciones](https://engram.page/docs/integrations)**.
 
-<video src="assets/showcase-mcp.webm" width="800" autoplay loop muted playsinline></video>
+<video src="../../assets/showcase-mcp.webm" width="800" autoplay loop muted playsinline></video>
 
 ## Privacidad
 
@@ -71,12 +71,12 @@ Apunta tu cliente al servidor MCP de Engram (`https://mcp.engram.page` en el ser
 
 - **[Conecta tu IA](https://engram.page/docs/integrations)**: configuración de MCP para Claude, Cursor, ChatGPT, Windsurf y más.
 - **[Referencia de la API](https://engram.page/docs/api)**: construye sobre la API REST y WebSocket.
-- **[Guía de uso](docs/user-guide.md)**: asistentes de IA, conflictos, el Sync Center, resolución de problemas.
-- **[Guía para desarrolladores](DEV.md)**: compilar desde el código, arquitectura, lanzamientos.
+- **[Guía de uso](../user-guide.md)**: asistentes de IA, conflictos, el Sync Center, resolución de problemas.
+- **[Guía para desarrolladores](../../DEV.md)**: compilar desde el código, arquitectura, lanzamientos.
 - **¿Algo va mal?** [Abre una incidencia](https://github.com/engram-app/Engram-obsidian/issues).
 - **Únete a la comunidad.** Habla con usuarios y desarrolladores en [Discord](https://discord.gg/NKWcU2mm7N).
 - **¿Te gusta?** Apoya el desarrollo con [GitHub Sponsors](https://github.com/sponsors/engram-app) o [Ko-fi](https://ko-fi.com/engrams_sync). Es opcional y se agradece mucho.
 
 ## Licencia
 
-[MIT](LICENSE)
+[MIT](../../LICENSE)

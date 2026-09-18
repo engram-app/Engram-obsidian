@@ -2,17 +2,17 @@
 
 # Engram Vault Sync
 
-![Engram Vault Sync: suas notas são a memória da sua IA, sincronizadas em todo lugar, lidas e escritas pela sua IA](assets/vault-banner.gif)
+![Engram Vault Sync: suas notas são a memória da sua IA, sincronizadas em todo lugar, lidas e escritas pela sua IA](../../assets/vault-banner.gif)
 
 **Sincronize seu cofre em todos os aparelhos e deixe qualquer IA ler e escrever nele.** Suas notas se tornam uma memória que a sua IA pode pesquisar, citar e desenvolver.
 
 **[Comece de graça em engram.page →](https://engram.page)** · Sem cartão de crédito, pronto em minutos.
 
-[Instalação](#instalação) · [Conecte sua IA](#conecte-sua-ia) · [API](https://engram.page/docs/api) · [Guia do usuário](docs/user-guide.md) · [Hospedar por conta própria](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
+[Instalação](#instalação) · [Conecte sua IA](#conecte-sua-ia) · [API](https://engram.page/docs/api) · [Guia do usuário](../user-guide.md) · [Hospedar por conta própria](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
 
-[English](README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · **Português** · [Русский](README.ru.md) · [Italiano](README.it.md)
+[English](../../README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · **Português** · [Русский](README.ru.md) · [Italiano](README.it.md)
 
-<a href="https://www.youtube.com/watch?v=rwnPeZ-8Lqo"><img src="assets/setup-video.jpg" alt="Vídeo de instalação: conectar o Obsidian a qualquer IA" width="640"></a>
+<a href="https://www.youtube.com/watch?v=rwnPeZ-8Lqo"><img src="../../assets/setup-video.jpg" alt="Vídeo de instalação: conectar o Obsidian a qualquer IA" width="640"></a>
 
 </div>
 
@@ -38,7 +38,7 @@ Claude   📝  criada "Henderson: riscos da renovação"  ✓
          Vinculada às quatro notas de origem.
 ```
 
-<video src="assets/showcase-file-creation.webm" width="800" autoplay loop muted playsinline></video>
+<video src="../../assets/showcase-file-creation.webm" width="800" autoplay loop muted playsinline></video>
 
 Nada é sobrescrito em silêncio. As edições feitas sem conexão sincronizam quando você volta. Suas notas vão só para o Engram, nunca para terceiros, e não há rastreamento.
 
@@ -58,7 +58,7 @@ O Engram fala **MCP (Model Context Protocol)**, o padrão aberto que Claude, Cur
 
 Aponte seu cliente para o servidor MCP do Engram (`https://mcp.engram.page` no serviço hospedado). Os guias passo a passo de cada aplicativo estão na **[documentação de integrações](https://engram.page/docs/integrations)**.
 
-<video src="assets/showcase-mcp.webm" width="800" autoplay loop muted playsinline></video>
+<video src="../../assets/showcase-mcp.webm" width="800" autoplay loop muted playsinline></video>
 
 ## Privacidade
 
@@ -70,12 +70,12 @@ Aponte seu cliente para o servidor MCP do Engram (`https://mcp.engram.page` no s
 
 - **[Conecte sua IA](https://engram.page/docs/integrations)**: configuração de MCP para Claude, Cursor, ChatGPT, Windsurf e outros.
 - **[Referência da API](https://engram.page/docs/api)**: construa sobre a API REST e WebSocket.
-- **[Guia do usuário](docs/user-guide.md)**: assistentes de IA, conflitos, o Sync Center, solução de problemas.
-- **[Guia do desenvolvedor](DEV.md)**: compilar do código-fonte, arquitetura, lançamentos.
+- **[Guia do usuário](../user-guide.md)**: assistentes de IA, conflitos, o Sync Center, solução de problemas.
+- **[Guia do desenvolvedor](../../DEV.md)**: compilar do código-fonte, arquitetura, lançamentos.
 - **Algo errado?** [Abra uma issue](https://github.com/engram-app/Engram-obsidian/issues).
 - **Entre na comunidade.** Converse com usuários e desenvolvedores no [Discord](https://discord.gg/NKWcU2mm7N).
 - **Gostou?** Apoie o desenvolvimento pelo [GitHub Sponsors](https://github.com/sponsors/engram-app) ou pelo [Ko-fi](https://ko-fi.com/engrams_sync). É opcional e muito bem-vindo.
 
 ## Licença
 
-[MIT](LICENSE)
+[MIT](../../LICENSE)
