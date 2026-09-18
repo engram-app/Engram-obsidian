@@ -116,7 +116,12 @@ export function tInto(
 	const template = t(key, vars);
 	const at = template.indexOf(token);
 	if (at < 0) {
+		// A translation that lost the placeholder still has to show the value.
+		// Skipping `build` here would silently delete the data the sentence is
+		// about: the version number, the link, or the literal word the user is
+		// being told to type. Appending reads oddly; dropping it is a bug.
 		el.createSpan({ text: template, cls: textCls });
+		build(el);
 		return;
 	}
 	const head = template.slice(0, at);

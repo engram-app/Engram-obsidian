@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { currentLocale, t } from "../src/i18n";
+import { currentLocale, t, tInto } from "../src/i18n";
 import { __setLanguage } from "./__mocks__/obsidian";
 
 // The mock's language is module state shared with every other test file, so a
@@ -84,6 +84,41 @@ describe("interpolation", () => {
 
 	test("substitutes every occurrence of the same variable", () => {
 		expect(t("{n} of {n}", { n: 3 })).toBe("3 of 3");
+	});
+});
+
+describe("tInto", () => {
+	function fakeEl() {
+		const spans: Array<{ text?: string; cls?: string }> = [];
+		const el = {
+			spans,
+			createSpan(o: { text?: string; cls?: string }) {
+				spans.push(o);
+				return el;
+			},
+		};
+		return el;
+	}
+
+	test("splits the sentence around the slot", () => {
+		__setLanguage("en");
+		const el = fakeEl();
+		tInto(el as never, "Version: {version}", "version", (p) =>
+			(p as unknown as ReturnType<typeof fakeEl>).createSpan({ text: "1.30.0" }),
+		);
+		expect(el.spans.map((s) => s.text)).toEqual(["Version: ", "1.30.0"]);
+	});
+
+	// A translation that lost the placeholder must not lose the value with it:
+	// dropping `build` here deletes the version number, the link, or the word
+	// the user is being told to type.
+	test("still renders the built child when the translation drops the slot", () => {
+		__setLanguage("en");
+		const el = fakeEl();
+		tInto(el as never, "a key with no slot in it", "version", (p) =>
+			(p as unknown as ReturnType<typeof fakeEl>).createSpan({ text: "1.30.0" }),
+		);
+		expect(el.spans.map((s) => s.text)).toEqual(["a key with no slot in it", "1.30.0"]);
 	});
 });
 
