@@ -61,6 +61,18 @@ function makeFakeEl(tag: string, opts?: { cls?: string; text?: string }): FakeEl
 		empty: () => {
 			target.children.length = 0;
 		},
+		// The async plan rows are appended by `createDiv` and then moved above
+		// the first local row, so the fake tree has to support re-parenting a
+		// node at a position rather than only at the end.
+		insertBefore: (node: FakeEl, ref: FakeEl | null) => {
+			const from = node.owner;
+			if (from) from.children.splice(from.children.indexOf(node), 1);
+			const at = ref ? target.children.indexOf(ref) : -1;
+			if (at === -1) target.children.push(node);
+			else target.children.splice(at, 0, node);
+			node.owner = target;
+			return node;
+		},
 		// The stats panel drops its local note row once the server confirms the
 		// same number, so the fake tree has to support detaching a node.
 		remove: () => {
@@ -413,6 +425,29 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		const labels = findAllByCls(parent, "engram-sync-center-stat-label").map((e) => e.text);
 		expect(labels).toContain("Notes searchable");
 		expect(labels).toContain("Notes on this device");
+	});
+
+	test("every stat row is a direct child of the one grid, plan rows first", async () => {
+		// The gaps between rows are only even if every row is a grid ITEM of the
+		// same grid; a wrapper (or a second grid) puts one seam out of step. The
+		// async plan rows therefore have to land above the local rows without a
+		// container of their own.
+		const plugin = withPlan("free");
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		await settle();
+
+		const grid = findByCls(parent, "engram-sync-center-stats-grid");
+		expect(grid).not.toBeNull();
+		const rows = grid?.children ?? [];
+		expect(rows.length).toBeGreaterThan(1);
+		for (const row of rows) {
+			expect(row.cls.split(" ")).toContain("engram-sync-center-stat");
+		}
+
+		const labels = rows.map((r) => findByCls(r, "engram-sync-center-stat-label")?.text ?? "");
+		expect(labels.indexOf("Notes searchable")).toBeLessThan(
+			labels.indexOf("Notes on this device"),
+		);
 	});
 
 	test("says which system each number describes", async () => {

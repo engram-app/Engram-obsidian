@@ -1306,15 +1306,6 @@ body.is-mobile .engram-support-buttons > a {
 	gap: 8px 16px;
 }
 
-/* The plan rows and the local rows are separate containers so an async fill
-   cannot reorder the ones already on screen, but they must lay out as ONE
-   grid: as two nested grids, rows within each got the gap plus the stat
-   padding while the seam between them got only the padding, leaving a single
-   half-height gap in the middle of an otherwise even list. */
-.engram-sync-center-stats-group {
-	display: contents;
-}
-
 .engram-sync-center-stat {
 	padding: 4px 0;
 }

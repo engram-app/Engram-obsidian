@@ -573,15 +573,15 @@ function renderStats(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 
 	const body = section.createDiv({ cls: "engram-sync-center-section-body" });
 
-	// ONE grid, two groups. The groups exist so the async plan fill cannot
-	// reorder or reflow the local facts below it; `display: contents` keeps
-	// their rows in the single parent grid so every row-to-row gap is the same.
-	// Two sibling grids looked right until you counted: rows inside a grid were
-	// separated by the grid gap PLUS the stat padding, but the seam between the
-	// two grids had only the padding, so one gap in the middle was half-height.
-	const gridEl = body.createDiv({ cls: "engram-sync-center-stats-grid" });
-	const planGrid = gridEl.createDiv({ cls: "engram-sync-center-stats-group" });
-	const grid = gridEl.createDiv({ cls: "engram-sync-center-stats-group" });
+	// ONE grid, every stat row a direct child of it, so every row-to-row gap is
+	// the same. Two sibling grids looked right until you counted: rows inside a
+	// grid were separated by the grid gap PLUS the stat padding, but the seam
+	// between the two grids had only the padding, so one gap in the middle was
+	// half-height. Wrapper divs flattened with `display: contents` fixed that,
+	// but the Obsidian plugin scanner flags the property, so the async plan rows
+	// are instead inserted BEFORE the first local row, which holds their spot
+	// without any wrapper or placeholder node of its own.
+	const grid = body.createDiv({ cls: "engram-sync-center-stats-grid" });
 
 	const allFiles = plugin.app.vault.getFiles();
 	let noteCount = 0;
@@ -625,7 +625,7 @@ function renderStats(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 		vaultEl.value.setText(name || "not linked");
 	});
 
-	renderPlanStats(body, planGrid, plugin, {
+	renderPlanStats(body, grid, plugin, {
 		localNoteCount: noteCount,
 		localNotesRow: localNotes.row,
 		localAttachmentCount: attCount,
@@ -669,7 +669,7 @@ function renderPlanStats(
 			// redundant, but they answer one question and belong on one line.
 			const rows = planUsageRows(data, { localAttachmentCount: local.localAttachmentCount });
 			if (rows.length === 0) return;
-			for (const row of rows) addStat(grid, row.label, row.value);
+			for (const row of rows) addStat(grid, row.label, row.value, local.localNotesRow);
 
 			// Drop the local note count once the server confirms it. Three rows
 			// reading 311 taught the user nothing the first one had not; the local
@@ -691,7 +691,7 @@ function renderPlanStats(
 		})
 		.catch(() => {
 			// An advisory read failing must never look like a sync fault.
-			addStat(grid, "Plan usage", "unavailable");
+			addStat(grid, "Plan usage", "unavailable", local.localNotesRow);
 		});
 }
 
@@ -701,8 +701,10 @@ function addStat(
 	parent: HTMLElement,
 	label: string,
 	value: string,
+	before?: Node,
 ): { row: HTMLElement; value: HTMLElement } {
 	const row = parent.createDiv({ cls: "engram-sync-center-stat" });
+	if (before) parent.insertBefore(row, before);
 	row.createDiv({ cls: "engram-sync-center-stat-label", text: label });
 	return { row, value: row.createDiv({ cls: "engram-sync-center-stat-value", text: value }) };
 }
