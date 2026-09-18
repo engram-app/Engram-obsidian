@@ -1,11 +1,10 @@
 // The one home for the y-protocols wire frame codec. Shared by the transport
-// (CrdtChannel, being retired) and the Relay-model NoteProvider so the bytes on
+// (CrdtChannel, being retired) and NoteProvider so the bytes on
 // the wire are byte-identical and there is a single source of truth.
 import * as encoding from "lib0/encoding";
 import * as syncProtocol from "y-protocols/sync";
 
-/** Outer y-protocols message-type tag — we only speak messageSync (Relay's
- *  messageSync = 0). */
+/** Outer y-protocols message-type tag — we only speak messageSync (= 0). */
 export const MESSAGE_SYNC = 0;
 
 export function toB64(bytes: Uint8Array): string {

@@ -7,7 +7,7 @@
  * confirmed created; the default (`undefined` → always send) keeps every
  * pre-existing test unaffected.
  *
- * Ported to the Relay-model ProviderRegistry: the old `onUpdate` outbound seam
+ * Ported to the provider-model ProviderRegistry: the old `onUpdate` outbound seam
  * is the provider's `send` now, which only fires while connected — so every
  * test marks the registry connected. On create-ack the held state is delivered
  * by `flushHeldState` (a syncStep1 re-advertise + buffered frame flush), which

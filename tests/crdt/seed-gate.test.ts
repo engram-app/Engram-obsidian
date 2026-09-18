@@ -10,7 +10,7 @@
  * These tests now assert the surviving behaviour: seeding an empty doc proceeds,
  * populated docs diff, and the markSynced/isSynced lifecycle round-trips.
  *
- * Ported to the Relay-model ProviderRegistry. The provider owns `synced`, so
+ * Ported to the provider-model ProviderRegistry. The provider owns `synced`, so
  * markSynced/clearSynced are the mark API and closeDoc is a no-op (the doc is
  * persistent across reconnect — see ProviderRegistry).
  */
@@ -69,7 +69,7 @@ describe("seed lifecycle", () => {
 	});
 
 	it("isSynced reflects the provider's synced flag; clearSynced resets it", async () => {
-		// Relay model: the provider owns `synced` and sets it on the first inbound
+		// Provider model: the provider owns `synced` and sets it on the first inbound
 		// syncStep2. markSynced is a no-op trigger (fires onSynced), NOT the flag —
 		// so isSynced stays false until a real handshake. Drive the flag directly to
 		// stand in for that syncStep2, then verify clearSynced resets it.
@@ -87,14 +87,14 @@ describe("seed lifecycle", () => {
 	});
 
 	it("closeDoc is a no-op — the persistent doc keeps its content (re-reads on re-open)", async () => {
-		// Relay model: closeDoc NEVER tears the doc down (that was the re-mint/
+		// Provider model: closeDoc NEVER tears the doc down (that was the re-mint/
 		// re-push doubling). Content written before closeDoc must still be readable.
 		const m = makeManager(`seed-gate-close-persist-${Math.random().toString(36).slice(2)}`);
 		m.markSynced("cp.md");
 		await m.applyLocalEdit("cp.md", "durable content");
 		expect(await m.getText("cp.md")).toBe("durable content");
 
-		m.closeDoc("cp.md"); // no-op in the Relay model
+		m.closeDoc("cp.md"); // no-op in the provider model
 
 		expect(await m.getText("cp.md")).toBe("durable content");
 		await m.destroyAll();

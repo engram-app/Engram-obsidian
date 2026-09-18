@@ -5,10 +5,10 @@
  * Entries are flushed by priority, then oldest-first within a priority.
  * Persistence is debounced to avoid O(n²) serialization during rapid enqueues.
  *
- * ponytail (#359): this queue was NOT rewritten. Relay's BackgroundSync is 2450
- * lines of groups, progress snapshots and cancellation, but most of what it adds
- * we already had — dedup, a persisted retry cap (`attempts`), oldest-first
- * ordering. Only three things were genuinely missing, and they are here:
+ * ponytail (#359): this queue was NOT rewritten. A full background-sync engine
+ * — groups, progress snapshots, cancellation — runs to a few thousand lines, and
+ * most of what it buys we already had: dedup, a persisted retry cap
+ * (`attempts`), oldest-first ordering. Only three things were genuinely missing, and they are here:
  * priority, an explicit synchronous `cancel`, and `queuedReason`. Rewriting a
  * battle-tested persisted component to reach parity with a design we do not
  * need would have been the expensive way to get those.
@@ -47,13 +47,14 @@ export type QueuedReason = "offline" | "sync-blocked" | "in-progress" | "waiting
 /**
  * Why is this queue not draining?
  *
- * Ported from Relay's `queuedReasonForSnapshot`. Cheap, and it removes a whole
- * class of support ticket: today a held queue is an unexplained spinner, and
+ * Cheap, and it removes a whole class of support ticket: today a held queue is an unexplained spinner, and
  * "waiting" in particular names the case that currently looks like a hang —
  * online, unblocked, nothing in flight, work still sitting there.
  *
  * Offline outranks sync-blocked because it is the one the user can act on and
  * the one that resolves itself.
+ *
+ * Derived from No-Instructions/Relay (MIT); see THIRD-PARTY-NOTICES.md.
  */
 export function queuedReason(state: QueueGateState): QueuedReason | null {
 	if (state.queued === 0) return null;

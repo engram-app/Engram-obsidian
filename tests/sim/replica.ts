@@ -513,7 +513,7 @@ export class Replica {
 			}
 			if (!connected) {
 				manager.clearSynced(); // main.ts:1776
-				manager.setConnected(false); // Relay: buffer offline, don't send on a dead socket
+				manager.setConnected(false); // Provider model: buffer offline, don't send on a dead socket
 			}
 		};
 
@@ -593,7 +593,7 @@ export class Replica {
 		channel.onCrdtJoined = () => {
 			crdtEverJoined = true;
 			engine.setCrdtManager(manager);
-			// Relay: topic joined — re-advertise every resident doc via syncStep1 and
+			// Provider model: topic joined — re-advertise every resident doc via syncStep1 and
 			// flush frames buffered while offline (the reconnect convergence trigger).
 			manager.setConnected(true);
 			void (async () => {
@@ -605,7 +605,7 @@ export class Replica {
 			crdtEverJoined = false;
 			engine.setCrdtManager(null);
 			manager.clearSynced();
-			manager.setConnected(false); // Relay: no topic → providers offline
+			manager.setConnected(false); // Provider model: no topic → providers offline
 			wiring.enrollment.resetAll();
 		};
 

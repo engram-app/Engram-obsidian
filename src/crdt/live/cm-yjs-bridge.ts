@@ -1,5 +1,7 @@
-// CM6 <-> Y.Text offset transforms. Adapted from Relay's LiveNodePlugin.ts
-// (No-Instructions/Relay; MIT, y-codemirror.next by Kevin Jahns).
+// CM6 <-> Y.Text offset transforms.
+//
+// Derived from No-Instructions/Relay (MIT) and y-codemirror.next by Kevin
+// Jahns (MIT); see THIRD-PARTY-NOTICES.md.
 import { diff_match_patch } from "diff-match-patch";
 import type * as Y from "yjs";
 
@@ -65,8 +67,7 @@ export function applyCmChangesToYText(
  *  A replacement comes out of dmp as DELETE-then-INSERT (diff_cleanupSemantic
  *  ends in diff_cleanupMerge, which orders deletions first), which would emit two
  *  changes touching the same boundary. They are coalesced into ONE replacement:
- *  Relay hit CM6 silently dropping the split pair (ViewHookPlugin
- *  `incrementalBufferChange`), and a single replace is what both CM6 and
+ *  CM6 silently drops the split pair, and a single replace is what both CM6 and
  *  applyCmChangesToYText handle most predictably anyway. */
 export function textDiffToChangeSpec(before: string, after: string): CmChangeSpec[] {
 	if (before === after) return [];
