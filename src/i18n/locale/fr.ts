@@ -441,7 +441,6 @@ const fr: Dict = {
 	Deleting: "Suppression",
 	Downloading: "Téléchargement",
 	Uploading: "Envoi",
-	"Engram: Show sync log": "Engram : afficher le journal de synchronisation",
 	"Syncing attachments": "Synchronisation des pièces jointes",
 	Complete: "Terminé",
 	"Getting set up": "Mise en route",
@@ -486,6 +485,162 @@ const fr: Dict = {
 		"« Tout récupérer » interrompu : une autre synchronisation est en cours (conflit de relecture). Réessaie quand elle est finie.",
 	"Pull all failed: {error}": "« Tout récupérer » a échoué : {error}",
 	"Pull all failed": "« Tout récupérer » a échoué",
+	// UI strings (third pass)
+	"Click to copy": "Cliquer pour copier",
+	"Waiting for authorization — connected, this will complete instantly.":
+		"En attente de l'autorisation : connecté, ce sera immédiat.",
+	"Waiting for authorization — no live connection, checking every 30s.":
+		"En attente de l'autorisation : pas de connexion en direct, vérification toutes les 30 s.",
+	'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.':
+		"Engram Sync : l'état de synchronisation de « {name} » était illisible, la copie sur le disque est utilisée.",
+	"{formatted} files · ": {
+		one: "{formatted} fichier · ",
+		other: "{formatted} fichiers · ",
+	},
+	"Notes searchable": "Notes trouvables",
+	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
+		"Les notes au-delà continuent de se synchroniser et de s'ouvrir normalement, elles ne sont simplement pas dans l'index de recherche. L'index garde vos notes les plus anciennes, ce sont donc les plus récentes qui en sortent.",
+	"Notes stored": "Notes stockées",
+	"AI searches": "Recherches IA",
+	"{formatted} per day": "{formatted} par jour",
+	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
+		"Engram indexe {indexed} de vos {all} notes. Le reste ne correspond que sur cet appareil. Passez à une offre supérieure pour tout indexer.",
+	"Searching {indexed} of {all} notes. Upgrade to search everything.":
+		"Recherche dans {indexed} notes sur {all}. Passez à une offre supérieure pour tout chercher.",
+	"Remove tag {tag}": "Retirer l'étiquette {tag}",
+	"👋 Welcome": "👋 Bienvenue",
+	"🔌 Connection": "🔌 Connexion",
+	"🔄 Sync Center": "🔄 Sync Center",
+	"⚙️ Advanced": "⚙️ Avancé",
+	"Error: {error}": "Erreur : {error}",
+	unknown: "inconnu",
+	"{count} need attention": {
+		one: "{count} demande votre attention",
+		other: "{count} demandent votre attention",
+	},
+	"Uploads {up}, downloads {down}.": "Envoie {up}, récupère {down}.",
+	"Uploads {count}.": "Envoie {count}.",
+	"Downloads {count}.": "Récupère {count}.",
+	"{count} conflicts to resolve.": {
+		one: "{count} conflit à résoudre.",
+		other: "{count} conflits à résoudre.",
+	},
+	"Nothing is deleted.": "Rien n'est supprimé.",
+	"Delete all {count} files currently on the server": {
+		one: "Supprimer le {count} fichier présent sur le serveur",
+		other: "Supprimer les {count} fichiers présents sur le serveur",
+	},
+	"Upload {count} files from this vault": {
+		one: "Envoyer {count} fichier depuis ce coffre",
+		other: "Envoyer {count} fichiers depuis ce coffre",
+	},
+	"Delete all {count} files in this vault": {
+		one: "Supprimer le {count} fichier de ce coffre",
+		other: "Supprimer les {count} fichiers de ce coffre",
+	},
+	"Download {count} files from the server": {
+		one: "Récupérer {count} fichier depuis le serveur",
+		other: "Récupérer {count} fichiers depuis le serveur",
+	},
+	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
+		"Rien à synchroniser pour le moment, ce coffre est vide des deux côtés. Lancez la synchronisation et tout ce que vous écrivez apparaîtra sur vos autres appareils.",
+	"{count} notes": {
+		one: "{count} note",
+		other: "{count} notes",
+	},
+	"{count} attachments": {
+		one: "{count} pièce jointe",
+		other: "{count} pièces jointes",
+	},
+	"{first} and {second}": "{first} et {second}",
+	files: "fichiers",
+	"This vault is empty on the server. Upload your {what}?":
+		"Ce coffre est vide sur le serveur. Envoyer vos {what} ?",
+	"This device's vault is empty. Download {what} from the server?":
+		"Le coffre de cet appareil est vide. Récupérer {what} depuis le serveur ?",
+	notes: "notes",
+	attachments: "pièces jointes",
+	folders: "dossiers",
+	"Uploading {count}.": "Envoi de {count}.",
+	"Downloading {count}.": "Réception de {count}.",
+	"Deleting {count} local files.": "Suppression de {count} fichiers locaux.",
+	"Deleting {count} on the cloud.": "Suppression de {count} dans le cloud.",
+	"First sync, this may take a moment.": "Première synchronisation, cela peut prendre un moment.",
+	"Checking for changes.": "Vérification des changements.",
+	"Nothing will be deleted.": "Rien ne sera supprimé.",
+	'{count} failed. Run "{command}" for details.':
+		"{count} en échec. Lancez « {command} » pour les détails.",
+	'Engram Sync: renamed "{name}" (unsupported characters)':
+		"Engram Sync : « {name} » a été renommé (caractères non pris en charge)",
+	'Engram: frontmatter problem in "{name}"': "Engram : problème de frontmatter dans « {name} »",
+	"Create a hosted account at ": "Créez un compte hébergé sur ",
+	", or self-host the backend (": ", ou hébergez le backend vous-même (",
+	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
+		"Reliez Claude, Cursor, ChatGPT ou toute application MCP pour qu'elle puisse lire et écrire vos notes. ",
+	Documentation: "Documentation",
+	"AI / MCP setup guide": "Guide de configuration IA / MCP",
+	"Report an issue": "Signaler un problème",
+	"Join our Discord": "Rejoignez notre Discord",
+	"Paths to skip (one per line). Folder patterns end with /. Built-in: {configDir}/, .trash/, .git/":
+		"Chemins à ignorer (un par ligne). Les motifs de dossier finissent par /. Intégrés : {configDir}/, .trash/, .git/",
+	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use.":
+		"Envoie au serveur l'activité détaillée de synchronisation, de coffre et de connexion pour le dépannage, avec un traçage distribué des requêtes. Métadonnées uniquement, jamais le contenu des notes. Laissez désactivé pour un usage normal.",
+	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
+		"Gravité minimale envoyée quand le diagnostic est actif. Les niveaux plus élevés envoient moins de lignes. Par défaut : Info.",
+	"Signed in as {email}": "Connecté en tant que {email}",
+	"Pick a vault (previous: '{name}' not found)":
+		"Choisissez un coffre (précédent : « {name} » introuvable)",
+	"Pick a vault (previous: id {id} not found)":
+		"Choisissez un coffre (ancien id {id} introuvable)",
+	"Server error ({status}) — check Engram logs":
+		"Erreur du serveur ({status}), consultez les journaux Engram",
+	"Request failed ({status})": "Échec de la requête ({status})",
+	"Engram Cloud": "Engram Cloud",
+	"Self-hosted": "Auto-hébergé",
+	"{count} attempts": {
+		one: "{count} tentative",
+		other: "{count} tentatives",
+	},
+	// UI strings (fourth pass)
+	"{count} missing on server": {
+		one: "{count} manque sur le serveur",
+		other: "{count} manquent sur le serveur",
+	},
+	"{count} diverged": {
+		one: "{count} a divergé",
+		other: "{count} ont divergé",
+	},
+	"{count} only on server": "{count} seulement sur le serveur",
+	"Engram Sync: {details}": "Engram Sync : {details}",
+	"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.":
+		"Engram : le fichier de réglages du plugin était corrompu et n'a pas pu être récupéré. Vous devrez peut-être vous reconnecter dans les réglages.",
+	"Engram: sync is not set up yet, so nothing in this vault will sync.":
+		"Engram : la synchronisation n'est pas encore configurée, rien de ce coffre ne sera donc synchronisé.",
+	"Click the Engram item in the status bar to pick up where you left off.":
+		"Cliquez sur Engram dans la barre d'état pour reprendre où vous en étiez.",
+	"Engram: ⚠ {count} sync errors": {
+		one: "Engram : ⚠ {count} erreur de synchronisation",
+		other: "Engram : ⚠ {count} erreurs de synchronisation",
+	},
+	"sync failed": "la synchronisation a échoué",
+	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":
+		"Cela ne ressemble pas à une adresse de serveur complète. Indiquez le schéma, par exemple http://127.0.0.1:4000",
+	"Opens your browser to sign in, or create an account if you don't have one yet, then links this vault.":
+		"Ouvre votre navigateur pour vous connecter, ou créer un compte si vous n'en avez pas encore, puis relie ce coffre.",
+	"Or authenticate with a token instead of signing in. Engram Cloud API keys require the Pro plan; on Free and Starter, sign in above.":
+		"Ou authentifiez-vous avec un jeton au lieu de vous connecter. Les clés d'API Engram Cloud demandent l'offre Pro ; sur Free et Starter, connectez-vous ci-dessus.",
+	"No sync activity this session.": "Aucune activité de synchronisation dans cette session.",
+	"Showing {count} entries": {
+		one: "{count} entrée affichée",
+		other: "{count} entrées affichées",
+	},
+	"({count} errors)": {
+		one: "({count} erreur)",
+		other: "({count} erreurs)",
+	},
+	"Frontmatter could not be parsed": "Le frontmatter n'a pas pu être analysé",
+	"Not connected. Enter your Engram server URL below to start syncing.":
+		"Non connecté. Saisissez ci-dessous l'adresse de votre serveur Engram pour commencer à synchroniser.",
 };
 
 export default fr;

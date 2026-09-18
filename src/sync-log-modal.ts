@@ -35,10 +35,13 @@ export class SyncLogModal extends Modal {
 		const header = contentEl.createEl("p", {
 			cls: "engram-sync-log-header",
 		});
+		const shown = t("Showing {count} entries", { count: entries.length });
 		header.setText(
 			entries.length === 0
-				? "No sync activity this session."
-				: `Showing ${entries.length} entries${errorCount > 0 ? ` (${errorCount} errors)` : ""}`,
+				? t("No sync activity this session.")
+				: errorCount > 0
+					? `${shown} ${t("({count} errors)", { count: errorCount })}`
+					: shown,
 		);
 
 		if (entries.length === 0) return;

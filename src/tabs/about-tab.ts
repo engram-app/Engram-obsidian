@@ -49,9 +49,9 @@ export function renderAboutTab(ctx: TabContext): void {
 	heading(containerEl, t("Getting set up"));
 
 	const account = new Setting(containerEl).setName(t("1. Make an account"));
-	account.descEl.appendText("Create a hosted account at ");
+	account.descEl.appendText(t("Create a hosted account at "));
 	externalLink(account.descEl, "app.engram.page", ENGRAM_SIGN_UP_URL);
-	account.descEl.appendText(", or self-host the backend (");
+	account.descEl.appendText(t(", or self-host the backend ("));
 	externalLink(account.descEl, t("setup guide"), ENGRAM_SELFHOST_URL);
 	account.descEl.appendText(").");
 
@@ -71,7 +71,7 @@ export function renderAboutTab(ctx: TabContext): void {
 
 	const ai = new Setting(containerEl).setName(t("3. Connect your AI"));
 	ai.descEl.appendText(
-		"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ",
+		t("Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. "),
 	);
 	externalLink(ai.descEl, t("See the AI setup guide"), ENGRAM_MCP_URL);
 
@@ -120,8 +120,8 @@ export function renderAboutTab(ctx: TabContext): void {
 	heading(containerEl, t("Learn more"));
 
 	const links = containerEl.createEl("ul", { cls: "engram-about-links" });
-	externalLink(links.createEl("li"), "Documentation", ENGRAM_DOCS_URL);
-	externalLink(links.createEl("li"), "AI / MCP setup guide", ENGRAM_MCP_URL);
-	externalLink(links.createEl("li"), "Report an issue", ENGRAM_ISSUES_URL);
-	externalLink(links.createEl("li"), "Join our Discord", ENGRAM_DISCORD_URL);
+	externalLink(links.createEl("li"), t("Documentation"), ENGRAM_DOCS_URL);
+	externalLink(links.createEl("li"), t("AI / MCP setup guide"), ENGRAM_MCP_URL);
+	externalLink(links.createEl("li"), t("Report an issue"), ENGRAM_ISSUES_URL);
+	externalLink(links.createEl("li"), t("Join our Discord"), ENGRAM_DISCORD_URL);
 }

@@ -94,8 +94,11 @@ export function capHintText(cap: number | null, total: number, localFused: boole
 	// simply false, and false in the direction of underselling the product.
 	// Semantic is server-only, so there the original sentence is exactly right.
 	return localFused
-		? `Engram indexes ${indexed} of your ${all} notes. The rest match on this device only. Upgrade to index everything.`
-		: `Searching ${indexed} of ${all} notes. Upgrade to search everything.`;
+		? t(
+				"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.",
+				{ indexed, all },
+			)
+		: t("Searching {indexed} of {all} notes. Upgrade to search everything.", { indexed, all });
 }
 
 /**
@@ -352,7 +355,7 @@ export class SearchPanel {
 			const chip = this.tagChipsEl.createSpan({ cls: "engram-search-tag-chip" });
 			chip.createSpan({ text: `#${tag}`, cls: "engram-search-tag-chip-label" });
 			chip.createSpan({ cls: "engram-search-tag-chip-remove", text: "×" });
-			chip.setAttribute("aria-label", `Remove tag ${tag}`);
+			chip.setAttribute("aria-label", t("Remove tag {tag}", { tag }));
 			chip.addEventListener("click", () => this.removeTag(tag));
 		}
 	}

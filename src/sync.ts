@@ -5281,7 +5281,9 @@ export class SyncEngine {
 					if (localFile) {
 						await this.app.vault.rename(localFile, serverPath);
 						new Notice(
-							`Engram Sync: renamed "${pushedPath.split("/").pop()}" (unsupported characters)`,
+							t('Engram Sync: renamed "{name}" (unsupported characters)', {
+								name: pushedPath.split("/").pop() ?? pushedPath,
+							}),
 						);
 					}
 					// Move the merge base with the file. It was previously left
@@ -9663,7 +9665,9 @@ export class SyncEngine {
 		if (paths.length === 1) {
 			const [path] = paths as [string];
 			const notice = new Notice(
-				`Engram: frontmatter problem in "${path.split("/").pop()}"`,
+				t('Engram: frontmatter problem in "{name}"', {
+					name: path.split("/").pop() ?? path,
+				}),
 				DEGRADED_NOTICE_DURATION_MS,
 			);
 			const noticeEl = (notice as unknown as { noticeEl?: HTMLElement }).noticeEl;

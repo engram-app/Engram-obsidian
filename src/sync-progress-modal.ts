@@ -1,6 +1,6 @@
 import { type App, Modal } from "obsidian";
 import { t } from "./i18n";
-import { optionBreakdown, pluralWord } from "./sync-plan-format";
+import { optionBreakdown } from "./sync-plan-format";
 import { DEFAULT_UPGRADE_URL } from "./tabs/urls";
 import type { SyncChoice, SyncPlan, SyncProgress } from "./types";
 
@@ -14,29 +14,26 @@ export function describePlannedWork(
 	firstSync: boolean,
 ): string {
 	const b = optionBreakdown(plan, choice);
+	// Each clause is a whole translatable sentence. The previous form joined
+	// fragments with ", " and upper-cased the first letter by slicing, which
+	// assumes English word order and that casing is a string operation.
 	const parts: string[] = [];
-	if (b.pushCount > 0) parts.push(`uploading ${b.pushCount}`);
-	if (b.pullCount > 0) parts.push(`downloading ${b.pullCount}`);
+	if (b.pushCount > 0) parts.push(t("Uploading {count}.", { count: b.pushCount }));
+	if (b.pullCount > 0) parts.push(t("Downloading {count}.", { count: b.pullCount }));
 	if (b.deleteLocalCount > 0) {
-		// Deliberately English, like its five sibling fragments. This sentence is
-		// assembled with `join(", ")` and capitalized by slicing, so translating
-		// one part yields a mixed-language line. It moves when the whole sentence
-		// is restructured, together with the option breakdown.
-		parts.push(
-			`deleting ${b.deleteLocalCount} local ${pluralWord(b.deleteLocalCount, "file")}`,
-		);
+		parts.push(t("Deleting {count} local files.", { count: b.deleteLocalCount }));
 	}
 	if (b.deleteRemoteCount > 0) {
-		parts.push(`deleting ${b.deleteRemoteCount} on the cloud`);
+		parts.push(t("Deleting {count} on the cloud.", { count: b.deleteRemoteCount }));
 	}
 
-	const prefix = firstSync ? "First sync, this may take a moment. " : "";
-	if (parts.length === 0) return `${prefix}Checking for changes.`;
-
-	const sentence = parts.join(", ");
-	const capitalized = sentence.charAt(0).toUpperCase() + sentence.slice(1);
+	const prefix = firstSync ? t("First sync, this may take a moment.") : "";
+	if (parts.length === 0) {
+		return [prefix, t("Checking for changes.")].filter(Boolean).join(" ");
+	}
 	const noDeletes = b.deleteLocalCount === 0 && b.deleteRemoteCount === 0;
-	return `${prefix}${capitalized}.${noDeletes ? " Nothing will be deleted." : ""}`;
+	if (noDeletes) parts.push(t("Nothing will be deleted."));
+	return [prefix, ...parts].filter(Boolean).join(" ");
 }
 
 /** Final tally rendered when a sync settles. Plan-gated attachments land in
@@ -458,7 +455,12 @@ export class SyncProgressModal extends Modal {
 
 		if (summary.failed > 0) {
 			this.failedEl.setText(
-				`${summary.failed} failed. Run t("Engram: Show sync log") for details.`,
+				// The command name comes from the same `t()` the palette entry uses, so
+				// the sentence and the palette never disagree about what to run.
+				t('{count} failed. Run "{command}" for details.', {
+					count: summary.failed,
+					command: t("Show sync log"),
+				}),
 			);
 			this.failedEl.hidden = false;
 		} else {

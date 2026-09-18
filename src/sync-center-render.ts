@@ -11,7 +11,6 @@ import type EngramSyncPlugin from "./main";
 import type { QueuedReason } from "./offline-queue";
 import { formatBytes, planUsageRows } from "./plan-usage";
 import { ACTION_ICONS } from "./sync-log-modal";
-import { plural } from "./sync-plan-format";
 import { planLoadErrorMessage, SyncPreviewModal } from "./sync-preview-modal";
 import { DEFAULT_UPGRADE_URL } from "./tabs/urls";
 import type { SyncIssue, SyncIssueCategory, SyncLogEntry } from "./types";
@@ -130,7 +129,7 @@ function renderHeader(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 	}
 	if (attentionCount > 0) {
 		const badge = header.createSpan({ cls: "engram-sync-center-issue-badge" });
-		badge.setText(`${attentionCount} need${attentionCount === 1 ? "s" : ""} attention`);
+		badge.setText(t("{count} need attention", { count: attentionCount }));
 	}
 	if (retryingCount > 0) {
 		const badge = header.createSpan({ cls: "engram-sync-center-retrying-badge" });
@@ -185,7 +184,11 @@ function renderActions(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: (
 			}
 			await plugin.runSyncWithProgress(choice, { plan: modal.getPlan() });
 		} catch (e) {
-			new Notice(`Engram Sync: ${e instanceof Error ? e.message : "sync failed"}`);
+			new Notice(
+				t("Engram Sync: {details}", {
+					details: e instanceof Error ? e.message : t("sync failed"),
+				}),
+			);
 		}
 		refresh();
 	});
@@ -425,7 +428,7 @@ function renderFileRow(
 	const parts: string[] = [];
 	if (issue.sizeBytes !== undefined) parts.push(formatBytes(issue.sizeBytes));
 	if (issue.status !== undefined) parts.push(`HTTP ${issue.status}`);
-	parts.push(plural(issue.attempts, "attempt"));
+	parts.push(t("{count} attempts", { count: issue.attempts }));
 	parts.push(formatRelative(issue.lastFailedAt));
 	meta.setText(parts.join(" · "));
 

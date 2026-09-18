@@ -130,7 +130,9 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
 			// Deliberately no redisplay: the typed value stays in the box so the
 			// user can correct it instead of retyping from scratch.
 			new Notice(
-				"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000",
+				t(
+					"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000",
+				),
 			);
 			return;
 		}
@@ -208,7 +210,9 @@ export function renderAuthSection(ctx: TabContext): void {
 
 	if (isOAuth) {
 		new Setting(containerEl)
-			.setName(`Signed in as ${plugin.settings.userEmail ?? "unknown"}`)
+			.setName(
+				t("Signed in as {email}", { email: plugin.settings.userEmail ?? t("unknown") }),
+			)
 			.setDesc(t("Authenticated via Engram account (OAuth)."))
 			// engramWebUrl, not a hardcoded cloud host: a self-hosted backend
 			// serves its own SPA from the same origin, and sending that user to
@@ -271,7 +275,9 @@ export function renderAuthSection(ctx: TabContext): void {
 	new Setting(containerEl)
 		.setName(t("Sign in or create an account"))
 		.setDesc(
-			"Opens your browser to sign in, or create an account if you don't have one yet, then links this vault.",
+			t(
+				"Opens your browser to sign in, or create an account if you don't have one yet, then links this vault.",
+			),
 		)
 		.addButton((btn) =>
 			btn
@@ -296,7 +302,9 @@ export function renderAuthSection(ctx: TabContext): void {
 	// limits at all, so the plain description stands there.
 	const keyDesc =
 		plugin.settings.backendMode === "cloud"
-			? "Or authenticate with a token instead of signing in. Engram Cloud API keys require the Pro plan; on Free and Starter, sign in above."
+			? t(
+					"Or authenticate with a token instead of signing in. Engram Cloud API keys require the Pro plan; on Free and Starter, sign in above.",
+				)
 			: t("Or authenticate with a token instead of signing in.");
 
 	new Setting(containerEl).setName(t("API key")).setDesc(keyDesc).setHeading();
@@ -415,8 +423,12 @@ export function renderVaultSection(ctx: TabContext): void {
 						dropdown.addOption(
 							"",
 							storedName
-								? `Pick a vault (previous: '${storedName}' not found)`
-								: `Pick a vault (previous: id ${currentId} not found)`,
+								? t("Pick a vault (previous: '{name}' not found)", {
+										name: storedName,
+									})
+								: t("Pick a vault (previous: id {id} not found)", {
+										id: currentId,
+									}),
 						);
 					} else {
 						dropdown.addOption("", t("Pick a vault"));
@@ -516,8 +528,9 @@ export function describeListVaultsError(e: unknown): string {
 	const err = e as { status?: number; message?: string };
 	const status = err?.status;
 	if (status === 401 || status === 403) return t("Sign-in required to load vaults");
-	if (status && status >= 500) return `Server error (${status}) — check Engram logs`;
-	if (status && status >= 400) return `Request failed (${status})`;
+	if (status && status >= 500)
+		return t("Server error ({status}) — check Engram logs", { status });
+	if (status && status >= 400) return t("Request failed ({status})", { status });
 	return t("Could not reach Engram — check connection");
 }
 

@@ -11,8 +11,6 @@ import {
 	isPlanEmpty,
 	type OptionBreakdown,
 	optionBreakdown,
-	plural,
-	pluralWord,
 	simplifiedFirstSync,
 } from "./sync-plan-format";
 import type { SyncChoice, SyncPlan, SyncPreviewContext, VaultInfo } from "./types";
@@ -210,20 +208,27 @@ export function skippedAttachmentsLine(n: number): string | null {
  *  First-time and vault-switch lead with a safety clause for users who do not
  *  yet trust what the button does. Pure for testing. */
 export function mergeHelperText(b: OptionBreakdown, context: SyncPreviewContext): string {
-	const counts: string[] = [];
-	if (b.pushCount > 0) counts.push(`Uploads ${b.pushCount}`);
-	if (b.pullCount > 0) counts.push(`downloads ${b.pullCount}`);
-	let countLine = counts.join(", ");
-	if (countLine) countLine = `${countLine.charAt(0).toUpperCase()}${countLine.slice(1)}.`;
-	const conflict = b.conflictCount > 0 ? ` ${b.conflictCount} conflicts to resolve.` : "";
+	// Whole clauses, joined by a space. Building this from fragments ("Uploads 3"
+	// + ", downloads 2") and then upper-casing the first letter assumed English
+	// word order AND that capitalization is a string operation, which it is not
+	// in every script.
+	const countLine =
+		b.pushCount > 0 && b.pullCount > 0
+			? t("Uploads {up}, downloads {down}.", { up: b.pushCount, down: b.pullCount })
+			: b.pushCount > 0
+				? t("Uploads {count}.", { count: b.pushCount })
+				: b.pullCount > 0
+					? t("Downloads {count}.", { count: b.pullCount })
+					: "";
+	const conflict =
+		b.conflictCount > 0 ? t("{count} conflicts to resolve.", { count: b.conflictCount }) : "";
 
 	if (context === "first-time" || context === "vault-switch") {
 		const lead = t("Safe choice: combines both sides, nothing is deleted.");
-		const tail = countLine ? ` ${countLine}${conflict}`.trimEnd() : "";
-		return `${lead}${tail}`;
+		return [lead, countLine, conflict].filter(Boolean).join(" ");
 	}
 	return countLine
-		? `${countLine}${conflict} Nothing is deleted.`
+		? [countLine, conflict, t("Nothing is deleted.")].filter(Boolean).join(" ")
 		: t("Already in sync. Nothing is deleted.");
 }
 
@@ -233,18 +238,18 @@ export function mergeHelperText(b: OptionBreakdown, context: SyncPreviewContext)
  *  net extras — otherwise a destructive button could show no deletion at all
  *  when the two sides already overlap. Pure for testing. */
 export function confirmActions(choice: SyncChoice, plan: SyncPlan): string[] {
-	const files = (n: number) => pluralWord(n, "file");
 	const lines: string[] = [];
 	if (choice === "push-all-delete-remote") {
 		const del = plan.serverNoteCount + plan.serverAttachmentCount;
 		const up = plan.localNoteCount + plan.localAttachmentCount;
-		if (del > 0) lines.push(`Delete all ${del} ${files(del)} currently on the server`);
-		if (up > 0) lines.push(`Upload ${up} ${files(up)} from this vault`);
+		if (del > 0)
+			lines.push(t("Delete all {count} files currently on the server", { count: del }));
+		if (up > 0) lines.push(t("Upload {count} files from this vault", { count: up }));
 	} else if (choice === "pull-all-delete-local") {
 		const del = plan.localNoteCount + plan.localAttachmentCount;
 		const down = plan.serverNoteCount + plan.serverAttachmentCount;
-		if (del > 0) lines.push(`Delete all ${del} ${files(del)} in this vault`);
-		if (down > 0) lines.push(`Download ${down} ${files(down)} from the server`);
+		if (del > 0) lines.push(t("Delete all {count} files in this vault", { count: del }));
+		if (down > 0) lines.push(t("Download {count} files from the server", { count: down }));
 	}
 	return lines;
 }
@@ -293,11 +298,16 @@ const PULL_CARDS: OptionCard[] = [
 	},
 ];
 
-export const HEADER_BY_CONTEXT: Record<SyncPreviewContext, string> = {
-	"first-time": t("Set up sync for this vault"),
-	"vault-switch": t("You are now pointing at a different cloud vault"),
-	review: t("Sync preview"),
-};
+/** Resolved per call: as a module-scope literal these froze to whichever
+ *  language was active when the bundle was first evaluated. */
+export function headerFor(context: SyncPreviewContext): string {
+	const headers: Record<SyncPreviewContext, string> = {
+		"first-time": t("Set up sync for this vault"),
+		"vault-switch": t("You are now pointing at a different cloud vault"),
+		review: t("Sync preview"),
+	};
+	return headers[context];
+}
 
 export interface SyncPreviewOptions {
 	/** Server-side vault name. Falls back to "Cloud Server" when missing. */
@@ -351,24 +361,29 @@ export function simplifiedScreenCopy(simple: NonNullable<ReturnType<typeof simpl
 } {
 	if (simple.mode === "fresh") {
 		return {
-			body: "Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.",
+			body: t(
+				"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.",
+			),
 			action: t("Start syncing"),
 			note: null,
 		};
 	}
 	const parts: string[] = [];
-	if (simple.notes > 0) parts.push(plural(simple.notes, "note"));
-	if (simple.attachments > 0) parts.push(plural(simple.attachments, "attachment"));
-	const what = parts.join(" and ") || "files";
+	if (simple.notes > 0) parts.push(t("{count} notes", { count: simple.notes }));
+	if (simple.attachments > 0) parts.push(t("{count} attachments", { count: simple.attachments }));
+	const what =
+		parts.length === 2
+			? t("{first} and {second}", { first: parts[0] ?? "", second: parts[1] ?? "" })
+			: (parts[0] ?? t("files"));
 	if (simple.mode === "upload") {
 		return {
-			body: `This vault is empty on the server. Upload your ${what}?`,
+			body: t("This vault is empty on the server. Upload your {what}?", { what }),
 			action: t("Upload everything"),
 			note: t("Nothing will be removed from this device."),
 		};
 	}
 	return {
-		body: `This device's vault is empty. Download ${what} from the server?`,
+		body: t("This device's vault is empty. Download {what} from the server?", { what }),
 		action: t("Download everything"),
 		note: t("Nothing will be removed from this device."),
 	};
@@ -395,7 +410,7 @@ export function emptyPlanDismiss(gateClosed: boolean): {
 	label: string;
 	accept: boolean;
 } {
-	return gateClosed ? { label: "Done", accept: true } : { label: "Close", accept: false };
+	return gateClosed ? { label: t("Done"), accept: true } : { label: t("Close"), accept: false };
 }
 
 /** How long to hold the loaded plan back so the "Comparing…" line stays
@@ -779,7 +794,7 @@ export class SyncPreviewModal extends Modal {
 			return;
 		}
 		parent.createEl("h2", {
-			text: HEADER_BY_CONTEXT[context],
+			text: headerFor(context),
 			cls: "engram-sync-preview-header",
 		});
 	}
@@ -857,9 +872,9 @@ export class SyncPreviewModal extends Modal {
 		});
 		const cardEl = col.createDiv({ cls: "engram-sync-preview-compare-card" });
 		const body = cardEl.createDiv({ cls: "engram-sync-preview-compare-card-body" });
-		this.renderCompareRow(body, "📄", card.notes, "notes");
-		this.renderCompareRow(body, "📎", card.attachments, "attachments");
-		this.renderCompareRow(body, "📁", card.folders, "folders");
+		this.renderCompareRow(body, "📄", card.notes, t("notes"));
+		this.renderCompareRow(body, "📎", card.attachments, t("attachments"));
+		this.renderCompareRow(body, "📁", card.folders, t("folders"));
 	}
 
 	private renderCompareRow(

@@ -417,7 +417,6 @@ const ja: Dict = {
 	Deleting: "削除中",
 	Downloading: "ダウンロード中",
 	Uploading: "アップロード中",
-	"Engram: Show sync log": "Engram: 同期ログを表示",
 	"Syncing attachments": "添付ファイルを同期中",
 	Complete: "完了",
 	"Getting set up": "セットアップを始める",
@@ -462,6 +461,118 @@ const ja: Dict = {
 		"すべて取得を中止しました: 別の同期が実行中です (リプレイの競合)。終わってからもう一度お試しください。",
 	"Pull all failed: {error}": "すべて取得に失敗しました: {error}",
 	"Pull all failed": "すべて取得に失敗しました",
+	// UI strings (third pass)
+	"Click to copy": "クリックでコピー",
+	"Waiting for authorization — connected, this will complete instantly.":
+		"認可を待っています: 接続済みなので、すぐ完了します。",
+	"Waiting for authorization — no live connection, checking every 30s.":
+		"認可を待っています: ライブ接続がないため、30 秒ごとに確認します。",
+	'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.':
+		"Engram 同期: 「{name}」の同期状態を読み取れませんでした。ディスク上の内容を使います。",
+	"{formatted} files · ": "{formatted} 件のファイル · ",
+	"Notes searchable": "検索できるノート",
+	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
+		"これを超えたノートも同期も表示も普通にできます。検索インデックスに入らないだけです。インデックスは古いノートを保持するので、外れるのは新しいノートです。",
+	"Notes stored": "保存済みのノート",
+	"AI searches": "AI 検索",
+	"{formatted} per day": "1 日 {formatted} 回",
+	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
+		"Engram は {all} 件のうち {indexed} 件をインデックスしています。残りはこのデバイス上でのみ一致します。アップグレードすると全件インデックスされます。",
+	"Searching {indexed} of {all} notes. Upgrade to search everything.":
+		"{all} 件のうち {indexed} 件を検索しています。アップグレードすると全件検索できます。",
+	"Remove tag {tag}": "タグ {tag} を外す",
+	"👋 Welcome": "👋 ようこそ",
+	"🔌 Connection": "🔌 接続",
+	"🔄 Sync Center": "🔄 Sync Center",
+	"⚙️ Advanced": "⚙️ 詳細設定",
+	"Error: {error}": "エラー: {error}",
+	unknown: "不明",
+	"{count} need attention": "{count} 件が対応待ち",
+	"Uploads {up}, downloads {down}.": "{up} 件を送信、{down} 件を取得します。",
+	"Uploads {count}.": "{count} 件を送信します。",
+	"Downloads {count}.": "{count} 件を取得します。",
+	"{count} conflicts to resolve.": "{count} 件の競合を解決する必要があります。",
+	"Nothing is deleted.": "何も削除しません。",
+	"Delete all {count} files currently on the server":
+		"サーバー上にある {count} 件のファイルをすべて削除",
+	"Upload {count} files from this vault": "この保管庫から {count} 件のファイルを送信",
+	"Delete all {count} files in this vault": "この保管庫にある {count} 件のファイルをすべて削除",
+	"Download {count} files from the server": "サーバーから {count} 件のファイルを取得",
+	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
+		"まだ同期するものがありません。両側とも空です。同期を始めれば、書いたものが他のデバイスにも現れます。",
+	"{count} notes": "{count} 件のノート",
+	"{count} attachments": "{count} 件の添付ファイル",
+	"{first} and {second}": "{first} と {second}",
+	files: "ファイル",
+	"This vault is empty on the server. Upload your {what}?":
+		"サーバー側のこの保管庫は空です。{what} を送信しますか?",
+	"This device's vault is empty. Download {what} from the server?":
+		"このデバイスの保管庫は空です。サーバーから {what} を取得しますか?",
+	notes: "ノート",
+	attachments: "添付ファイル",
+	folders: "フォルダー",
+	"Uploading {count}.": "{count} 件を送信しています。",
+	"Downloading {count}.": "{count} 件を取得しています。",
+	"Deleting {count} local files.": "ローカルの {count} 件のファイルを削除しています。",
+	"Deleting {count} on the cloud.": "サーバー上の {count} 件を削除しています。",
+	"First sync, this may take a moment.": "初回の同期です。少し時間がかかることがあります。",
+	"Checking for changes.": "変更を確認しています。",
+	"Nothing will be deleted.": "何も削除されません。",
+	'{count} failed. Run "{command}" for details.':
+		"{count} 件が失敗しました。詳細は「{command}」を実行してください。",
+	'Engram Sync: renamed "{name}" (unsupported characters)':
+		"Engram 同期: 「{name}」の名前を変更しました (使えない文字が含まれていました)",
+	'Engram: frontmatter problem in "{name}"': "Engram: 「{name}」の frontmatter に問題があります",
+	"Create a hosted account at ": "ホスト型アカウントの登録は ",
+	", or self-host the backend (": "。または、バックエンドをセルフホストします (",
+	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
+		"Claude、Cursor、ChatGPT など MCP 対応アプリをつなぐと、ノートを読み書きできます。",
+	Documentation: "ドキュメント",
+	"AI / MCP setup guide": "AI / MCP セットアップガイド",
+	"Report an issue": "問題を報告",
+	"Join our Discord": "Discord に参加",
+	"Paths to skip (one per line). Folder patterns end with /. Built-in: {configDir}/, .trash/, .git/":
+		"除外するパス (1 行に 1 つ)。フォルダーは / で終わります。既定: {configDir}/、.trash/、.git/",
+	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use.":
+		"同期・保管庫・接続の詳しい動きをトラブルシューティング用にサーバーへ送り、リクエストを分散トレースします。送るのはメタデータだけで、ノートの内容は送りません。通常はオフのままにしてください。",
+	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
+		"診断が有効なあいだに送る最小のレベル。高いレベルほど行数は少なくなります。既定: 情報。",
+	"Signed in as {email}": "{email} でサインイン中",
+	"Pick a vault (previous: '{name}' not found)":
+		"保管庫を選んでください (以前の「{name}」は見つかりません)",
+	"Pick a vault (previous: id {id} not found)":
+		"保管庫を選んでください (以前の id {id} は見つかりません)",
+	"Server error ({status}) — check Engram logs":
+		"サーバーエラー ({status})。Engram のログを確認してください",
+	"Request failed ({status})": "リクエストに失敗しました ({status})",
+	"Engram Cloud": "Engram Cloud",
+	"Self-hosted": "セルフホスト",
+	"{count} attempts": "{count} 回試行",
+	// UI strings (fourth pass)
+	"{count} missing on server": "サーバーに {count} 件ありません",
+	"{count} diverged": "{count} 件が食い違っています",
+	"{count} only on server": "サーバーにだけ {count} 件あります",
+	"Engram Sync: {details}": "Engram 同期: {details}",
+	"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.":
+		"Engram: プラグインの設定ファイルが壊れていて復元できませんでした。設定から再接続が必要かもしれません。",
+	"Engram: sync is not set up yet, so nothing in this vault will sync.":
+		"Engram: 同期がまだ設定されていないので、この保管庫の内容は何も同期されません。",
+	"Click the Engram item in the status bar to pick up where you left off.":
+		"ステータスバーの Engram をクリックすると、続きから始められます。",
+	"Engram: ⚠ {count} sync errors": "Engram: ⚠ 同期エラー {count} 件",
+	"sync failed": "同期に失敗しました",
+	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":
+		"サーバーアドレスが完全ではないようです。http://127.0.0.1:4000 のようにスキームも入れてください",
+	"Opens your browser to sign in, or create an account if you don't have one yet, then links this vault.":
+		"ブラウザーを開いてサインインします。アカウントがなければその場で作成でき、そのあとこの保管庫が紐づきます。",
+	"Or authenticate with a token instead of signing in. Engram Cloud API keys require the Pro plan; on Free and Starter, sign in above.":
+		"サインインの代わりにトークンで認証することもできます。Engram Cloud の API キーは Pro プランが必要です。Free と Starter では上からサインインしてください。",
+	"No sync activity this session.": "このセッションでは同期の動きがありません。",
+	"Showing {count} entries": "{count} 件を表示しています",
+	"({count} errors)": "(エラー {count} 件)",
+	"Frontmatter could not be parsed": "frontmatter を解析できませんでした",
+	"Not connected. Enter your Engram server URL below to start syncing.":
+		"未接続です。下に Engram サーバーのアドレスを入れると同期を始められます。",
 };
 
 export default ja;

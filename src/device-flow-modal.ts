@@ -190,7 +190,7 @@ export class DeviceFlowModal extends Modal {
 			text: resp.user_code,
 			cls: "engram-device-code",
 		});
-		codeEl.title = "Click to copy";
+		codeEl.title = t("Click to copy");
 		codeEl.addEventListener("click", () => {
 			void navigator.clipboard.writeText(resp.user_code);
 			new Notice(t("Code copied!"));
@@ -226,8 +226,8 @@ export class DeviceFlowModal extends Modal {
 		if (!this.waitingEl) return;
 		this.waitingEl.setText(
 			live
-				? "Waiting for authorization — connected, this will complete instantly."
-				: "Waiting for authorization — no live connection, checking every 30s.",
+				? t("Waiting for authorization — connected, this will complete instantly.")
+				: t("Waiting for authorization — no live connection, checking every 30s."),
 		);
 	}
 

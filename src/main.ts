@@ -937,11 +937,15 @@ export default class EngramSyncPlugin extends Plugin {
 						new Notice(t("Engram sync: everything in sync"));
 					} else {
 						const parts: string[] = [];
-						if (missing.length > 0) parts.push(`${missing.length} missing on server`);
-						if (diverged.length > 0) parts.push(`${diverged.length} diverged`);
+						if (missing.length > 0)
+							parts.push(t("{count} missing on server", { count: missing.length }));
+						if (diverged.length > 0)
+							parts.push(t("{count} diverged", { count: diverged.length }));
 						if (extraOnServer.length > 0)
-							parts.push(`${extraOnServer.length} only on server`);
-						new Notice(`Engram Sync: ${parts.join(", ")}`);
+							parts.push(
+								t("{count} only on server", { count: extraOnServer.length }),
+							);
+						new Notice(t("Engram Sync: {details}", { details: parts.join(", ") }));
 					}
 				} catch (e) {
 					this.handleSyncError("Sync check", e, { notice: true });
@@ -1191,7 +1195,10 @@ export default class EngramSyncPlugin extends Plugin {
 										`reconcileColdStart: Y.Doc corrupted for ${noteRef(file.path)} — falling back to disk content`,
 									);
 									new Notice(
-										`Engram Sync: sync state for "${file.path.split("/").pop()}" was unreadable — using the on-disk copy.`,
+										t(
+											'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.',
+											{ name: file.path.split("/").pop() ?? file.path },
+										),
 										8000,
 									);
 								},
@@ -1761,7 +1768,9 @@ export default class EngramSyncPlugin extends Plugin {
 			if (!this.dataRecoveryNotified) {
 				this.dataRecoveryNotified = true;
 				new Notice(
-					"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.",
+					t(
+						"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.",
+					),
 				);
 			}
 		}
@@ -3200,8 +3209,9 @@ export default class EngramSyncPlugin extends Plugin {
 					// synced before sees "sync paused", and quoting the wrong words
 					// sends them looking for something that is not there.
 					new Notice(
-						"Engram: sync is not set up yet, so nothing in this vault will sync.\n" +
+						`${t("Engram: sync is not set up yet, so nothing in this vault will sync.")}\n${t(
 							"Click the Engram item in the status bar to pick up where you left off.",
+						)}`,
 						10_000,
 					);
 				}
@@ -3326,12 +3336,12 @@ export default class EngramSyncPlugin extends Plugin {
 		// without it the error badge overwrites "signed out" in exactly the
 		// forced-sign-out state the branch above exists for.
 		if (errorCount > 0 && status.state === "idle" && !blocked && this.hasAuthConfigured()) {
-			text = `Engram: ⚠ ${errorCount} sync errors`;
+			text = t("Engram: ⚠ {count} sync errors", { count: errorCount });
 		}
 
 		if (status.lastSync) {
 			const date = new Date(status.lastSync);
-			tooltip += `\nLast sync: ${date.toLocaleString()}`;
+			tooltip += `\n${t("Last sync: {when}", { when: date.toLocaleString() })}`;
 		}
 
 		this.statusBarEl.setText(text);
