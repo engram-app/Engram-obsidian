@@ -859,7 +859,9 @@ export class SyncPreviewModal extends Modal {
 			});
 			conflictRow.createSpan({
 				cls: "engram-sync-preview-conflicts-label",
-				text: t(" {count} conflicts need resolution", { count: conflicts }),
+				// The count lives in the sibling -value span above; this label is
+				// word-only, so it takes the plural category WITHOUT re-printing it.
+				text: t(" conflicts need resolution", { count: conflicts }),
 			});
 		}
 	}

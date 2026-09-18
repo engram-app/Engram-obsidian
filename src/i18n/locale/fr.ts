@@ -67,6 +67,38 @@ const fr: Dict = {
 		one: "Engram : offre mise à niveau, synchronisation de {count} pièce jointe …",
 		other: "Engram : offre mise à niveau, synchronisation de {count} pièces jointes …",
 	},
+	// 402 limit reasons (limit-copy.ts). These gate payment, so they are the
+	// highest-value strings in the plugin to get right.
+	"Note limit reached. Upgrade to keep adding notes.":
+		"Limite de notes atteinte. Passe à une offre payante pour en ajouter d'autres.",
+	"Vault limit reached. Upgrade for more vaults.":
+		"Limite de coffres atteinte. Une offre payante en autorise davantage.",
+	"This file type isn't accepted by this server.": "Ce serveur n'accepte pas ce type de fichier.",
+	"Attachment sync is disabled for this account.":
+		"La synchronisation des pièces jointes est désactivée pour ce compte.",
+	"Attachment storage is full — upgrade for more.":
+		"L'espace de stockage des pièces jointes est plein. Une offre payante en donne plus.",
+	"File too large for your plan.": "Fichier trop volumineux pour ton offre.",
+	"Already signed in on another device. Upgrade for multi-device.":
+		"Tu es déjà connecté sur un autre appareil. Une offre payante autorise plusieurs appareils.",
+	"Device swap cooldown active. Wait or upgrade.":
+		"Changement d'appareil encore bloqué. Attends un peu ou passe à une offre payante.",
+	"Too many connected Obsidian vaults. Disconnect one or upgrade.":
+		"Trop de coffres Obsidian connectés. Déconnectes-en un ou passe à une offre payante.",
+	"Too many connected AI clients. Disconnect one or upgrade.":
+		"Trop de clients IA connectés. Déconnectes-en un ou passe à une offre payante.",
+	"Daily AI search limit reached. Free includes 20 per day across Obsidian, the web app and MCP. Upgrade for unlimited.":
+		"Limite quotidienne de recherches IA atteinte. L'offre gratuite inclut 20 par jour au total entre Obsidian, l'application web et MCP. Une offre payante lève la limite.",
+	"API keys need Pro. Sign in with your Engram account instead.":
+		"Les clés d'API demandent l'offre Pro. Connecte-toi plutôt avec ton compte Engram.",
+	"Account suspended. Contact support.": "Compte suspendu. Contacte le support.",
+	"Account setup incomplete.": "La configuration du compte n'est pas terminée.",
+	"This account was deleted. Contact support if that is wrong.":
+		"Ce compte a été supprimé. Si c'est une erreur, contacte le support.",
+	"Finish setting up your account at app.engram.page to start syncing.":
+		"Termine la configuration de ton compte sur app.engram.page pour lancer la synchronisation.",
+	"Limit reached. Upgrade to continue.":
+		"Limite atteinte. Passe à une offre payante pour continuer.",
 };
 
 export default fr;

@@ -109,6 +109,16 @@ describe("plurals", () => {
 		expect(t(PULLED, { count: 7 })).toContain("7");
 	});
 
+	// Regression: this label sits beside a span that already prints the number
+	// (`⚡ 3`). It takes a count only to pick the plural category, so putting
+	// {count} in the key rendered "⚡ 3 3 conflicts need resolution".
+	test("a category-only plural does not print the count it was given", () => {
+		for (const lang of ["en", "ja", "de", "ru", "zh"]) {
+			__setLanguage(lang);
+			expect(t(" conflicts need resolution", { count: 3 })).not.toMatch(/\d/);
+		}
+	});
+
 	test("a plural string with no count behaves like the plural form", () => {
 		__setLanguage("en");
 		expect(t(PULLED)).toBe("Engram Sync: pulled {count} files from server");

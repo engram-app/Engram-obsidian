@@ -29,14 +29,11 @@ const enPlurals: Dict = {
 	"Free syncs notes only — {count} attachments will be skipped.": {
 		one: "Free syncs notes only — {count} attachment will be skipped.",
 	},
-	" {count} conflicts need resolution": {
-		one: " {count} conflict needs resolution",
+	" conflicts need resolution": {
+		one: " conflict needs resolution",
 	},
-	"deleting {count} local files": {
-		one: "deleting {count} local file",
-	},
-	"{count} attachments need a paid plan to sync. See Sync Center. ": {
-		one: "{count} attachment needs a paid plan to sync. See Sync Center. ",
+	"{count} attachments need a paid plan to sync. See Sync Center.": {
+		one: "{count} attachment needs a paid plan to sync. See Sync Center.",
 	},
 };
 

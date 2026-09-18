@@ -66,6 +66,38 @@ const de: Dict = {
 		one: "Engram: Tarif erweitert, {count} Anhang wird synchronisiert …",
 		other: "Engram: Tarif erweitert, {count} Anhänge werden synchronisiert …",
 	},
+	// 402 limit reasons (limit-copy.ts). These gate payment, so they are the
+	// highest-value strings in the plugin to get right.
+	"Note limit reached. Upgrade to keep adding notes.":
+		"Notizgrenze erreicht. Mit einem Upgrade kannst du weiter Notizen anlegen.",
+	"Vault limit reached. Upgrade for more vaults.":
+		"Vault-Grenze erreicht. Ein Upgrade bringt mehr Vaults.",
+	"This file type isn't accepted by this server.":
+		"Dieser Server nimmt diesen Dateityp nicht an.",
+	"Attachment sync is disabled for this account.":
+		"Für dieses Konto ist die Anhang-Synchronisierung deaktiviert.",
+	"Attachment storage is full — upgrade for more.":
+		"Der Speicher für Anhänge ist voll. Ein Upgrade bringt mehr Platz.",
+	"File too large for your plan.": "Die Datei ist für deinen Tarif zu groß.",
+	"Already signed in on another device. Upgrade for multi-device.":
+		"Du bist bereits auf einem anderen Gerät angemeldet. Ein Upgrade erlaubt mehrere Geräte.",
+	"Device swap cooldown active. Wait or upgrade.":
+		"Gerätewechsel ist noch gesperrt. Warte kurz oder mach ein Upgrade.",
+	"Too many connected Obsidian vaults. Disconnect one or upgrade.":
+		"Zu viele verbundene Obsidian-Vaults. Trenne eines oder mach ein Upgrade.",
+	"Too many connected AI clients. Disconnect one or upgrade.":
+		"Zu viele verbundene KI-Clients. Trenne einen oder mach ein Upgrade.",
+	"Daily AI search limit reached. Free includes 20 per day across Obsidian, the web app and MCP. Upgrade for unlimited.":
+		"Tagesgrenze für KI-Suchen erreicht. Kostenlos sind 20 pro Tag über Obsidian, Web-App und MCP zusammen. Ein Upgrade hebt die Grenze auf.",
+	"API keys need Pro. Sign in with your Engram account instead.":
+		"API-Schlüssel brauchen Pro. Melde dich stattdessen mit deinem Engram-Konto an.",
+	"Account suspended. Contact support.": "Konto gesperrt. Wende dich an den Support.",
+	"Account setup incomplete.": "Die Kontoeinrichtung ist noch nicht fertig.",
+	"This account was deleted. Contact support if that is wrong.":
+		"Dieses Konto wurde gelöscht. Wenn das nicht stimmt, wende dich an den Support.",
+	"Finish setting up your account at app.engram.page to start syncing.":
+		"Richte dein Konto auf app.engram.page fertig ein, um mit dem Synchronisieren zu beginnen.",
+	"Limit reached. Upgrade to continue.": "Grenze erreicht. Mit einem Upgrade geht es weiter.",
 };
 
 export default de;

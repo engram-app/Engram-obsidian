@@ -92,10 +92,11 @@ export function renderAdvancedTab(ctx: TabContext): void {
 	});
 
 	const repoItem = aboutList.createEl("li");
-	repoItem.createSpan({ text: t("Source: ") });
-	repoItem.createEl("a", {
-		text: "github.com/engram-app/Engram-obsidian",
-		href: "https://github.com/engram-app/Engram-obsidian",
+	tInto(repoItem, "Source: {link}", "link", (item) => {
+		item.createEl("a", {
+			text: "github.com/engram-app/Engram-obsidian",
+			href: "https://github.com/engram-app/Engram-obsidian",
+		});
 	});
 
 	const licenseItem = aboutList.createEl("li");

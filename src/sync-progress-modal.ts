@@ -1,6 +1,6 @@
 import { type App, Modal } from "obsidian";
 import { t } from "./i18n";
-import { optionBreakdown } from "./sync-plan-format";
+import { optionBreakdown, pluralWord } from "./sync-plan-format";
 import { DEFAULT_UPGRADE_URL } from "./tabs/urls";
 import type { SyncChoice, SyncPlan, SyncProgress } from "./types";
 
@@ -18,7 +18,13 @@ export function describePlannedWork(
 	if (b.pushCount > 0) parts.push(`uploading ${b.pushCount}`);
 	if (b.pullCount > 0) parts.push(`downloading ${b.pullCount}`);
 	if (b.deleteLocalCount > 0) {
-		parts.push(t("deleting {count} local files", { count: b.deleteLocalCount }));
+		// Deliberately English, like its five sibling fragments. This sentence is
+		// assembled with `join(", ")` and capitalized by slicing, so translating
+		// one part yields a mixed-language line. It moves when the whole sentence
+		// is restructured, together with the option breakdown.
+		parts.push(
+			`deleting ${b.deleteLocalCount} local ${pluralWord(b.deleteLocalCount, "file")}`,
+		);
 	}
 	if (b.deleteRemoteCount > 0) {
 		parts.push(`deleting ${b.deleteRemoteCount} on the cloud`);
@@ -81,10 +87,13 @@ export function renderCompletionSummary(
 	if (summary.skipped > 0) {
 		const note = parent.createDiv({ cls: "engram-progress-plan-note" });
 		note.createSpan({
-			text: t("{count} attachments need a paid plan to sync. See Sync Center. ", {
+			text: t("{count} attachments need a paid plan to sync. See Sync Center.", {
 				count: summary.skipped,
 			}),
 		});
+		// Gap before the button lives in the markup, not on the end of a
+		// translated key where trimming would silently close it.
+		note.createSpan({ text: " " });
 		const upgrade = note.createEl("button", {
 			text: t("Upgrade"),
 			cls: "engram-progress-upgrade mod-cta",
