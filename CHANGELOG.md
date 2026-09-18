@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.30.0](https://github.com/engram-app/Engram-obsidian/compare/1.29.0...1.30.0) (2026-09-18)
+
+
+### Features
+
+* **remote-log:** mark gate-bypassing entries as forced on the wire ([#514](https://github.com/engram-app/Engram-obsidian/issues/514)) ([8e572f5](https://github.com/engram-app/Engram-obsidian/commit/8e572f51bf1de6a8129ea854d1b12d1d642b502b))
+
+
+### Bug Fixes
+
+* drop display:contents from the Stats grid ([#518](https://github.com/engram-app/Engram-obsidian/issues/518)) ([62ce074](https://github.com/engram-app/Engram-obsidian/commit/62ce0745bf8b7965ee15a82d820141c4c63fc467))
+
 ## [1.29.0](https://github.com/engram-app/Engram-obsidian/compare/1.28.0...1.29.0) (2026-09-09)
 
 
