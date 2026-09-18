@@ -32,7 +32,10 @@ export function renderAdvancedTab(ctx: TabContext): void {
 	const ignoreSetting = new Setting(containerEl)
 		.setName(t("Custom patterns"))
 		.setDesc(
-			`Paths to skip (one per line). Folder patterns end with /. Built-in: ${app.vault.configDir}/, .trash/, .git/`,
+			t(
+				"Paths to skip (one per line). Folder patterns end with /. Built-in: {configDir}/, .trash/, .git/",
+				{ configDir: app.vault.configDir },
+			),
 		)
 		.addTextArea((text) => {
 			text.setPlaceholder("drafts/\nsecret.md")
@@ -52,7 +55,9 @@ export function renderAdvancedTab(ctx: TabContext): void {
 	new Setting(containerEl)
 		.setName(t("Diagnostics"))
 		.setDesc(
-			"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use.",
+			t(
+				"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use.",
+			),
 		)
 		.addToggle((toggle) =>
 			toggle.setValue(plugin.settings.diagnosticsEnabled).onChange(async (value) => {
@@ -64,7 +69,9 @@ export function renderAdvancedTab(ctx: TabContext): void {
 	new Setting(containerEl)
 		.setName(t("Diagnostics detail"))
 		.setDesc(
-			"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.",
+			t(
+				"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.",
+			),
 		)
 		.addDropdown((dropdown) =>
 			dropdown

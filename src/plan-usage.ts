@@ -136,16 +136,21 @@ export function planUsageRows(
 	const attachPrefix =
 		opts.localAttachmentCount === undefined
 			? undefined
-			: `${count(opts.localAttachmentCount)} ${opts.localAttachmentCount === 1 ? "file" : "files"} · `;
+			: t("{formatted} files · ", {
+					count: opts.localAttachmentCount,
+					formatted: count(opts.localAttachmentCount),
+				});
 	const rows = [
 		// Hidden on paid: with no index cap, "searchable" equals "stored", and the
 		// row below already says that. Shown on Free because it is the limit that
 		// binds first and the only one that refuses nothing.
-		buildRow("Notes searchable", u.indexed_notes, count, {
+		buildRow(t("Notes searchable"), u.indexed_notes, count, {
 			hideWhenUnlimited: true,
-			hint: "Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.",
+			hint: t(
+				"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.",
+			),
 		}),
-		buildRow("Notes stored", u.notes, count),
+		buildRow(t("Notes stored"), u.notes, count),
 		// No Vaults row. On Free it is permanently "1 / 1" — a meter pinned at
 		// full for a limit the user is not near and cannot act on, sitting in a
 		// panel whose whole job is showing headroom. It reads as a warning about
@@ -160,7 +165,9 @@ export function planUsageRows(
 		//
 		// Carried by `fmt` rather than a suffix option: `used` is nil by
 		// contract here, so the formatter is only ever applied to the cap.
-		buildRow("AI searches", u.ai_searches, (n) => `${count(n)} per day`),
+		buildRow(t("AI searches"), u.ai_searches, (n) =>
+			t("{formatted} per day", { formatted: count(n) }),
+		),
 	];
 	return rows.filter((r): r is UsageRow => r !== null);
 }

@@ -6,7 +6,7 @@ import {
 	countSkippedAttachments,
 	describeCreateVaultError,
 	emptyPlanDismiss,
-	HEADER_BY_CONTEXT,
+	headerFor,
 	loadingHoldMs,
 	mergeHelperText,
 	SyncPreviewState,
@@ -463,11 +463,9 @@ describe("mergeHelperText", () => {
 	});
 });
 
-describe("HEADER_BY_CONTEXT", () => {
+describe("headerFor", () => {
 	test("uses clearer vault-switch header copy", () => {
-		expect(HEADER_BY_CONTEXT["vault-switch"]).toBe(
-			"You are now pointing at a different cloud vault",
-		);
+		expect(headerFor("vault-switch")).toBe("You are now pointing at a different cloud vault");
 	});
 });
 

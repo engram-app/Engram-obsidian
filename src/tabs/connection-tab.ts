@@ -10,10 +10,13 @@ import {
 } from "./connection-sections";
 import type { TabContext } from "./types";
 
-const MODE_LABELS: Record<BackendMode, string> = {
-	cloud: "Engram Cloud",
-	selfhost: "Self-hosted",
-};
+/** Resolved per call rather than frozen at module load, like every other `t()`. */
+function modeLabels(): Record<BackendMode, string> {
+	return {
+		cloud: t("Engram Cloud"),
+		selfhost: t("Self-hosted"),
+	};
+}
 
 /** The single Connection tab. Replaces the former Cloud and Self-hosted tabs.
  *
@@ -32,8 +35,9 @@ export function renderConnectionTab(ctx: TabContext): void {
 		.setName(t("Backend"))
 		.setDesc(t("Where this vault syncs to. Each backend keeps its own sign-in."))
 		.addDropdown((dd) => {
-			dd.addOption("cloud", MODE_LABELS.cloud);
-			dd.addOption("selfhost", MODE_LABELS.selfhost);
+			const labels = modeLabels();
+			dd.addOption("cloud", labels.cloud);
+			dd.addOption("selfhost", labels.selfhost);
 			dd.setValue(mode);
 			dd.onChange(async (value) => {
 				const target = value as BackendMode;
@@ -42,7 +46,7 @@ export function renderConnectionTab(ctx: TabContext): void {
 				// subset here previously nulled the auth provider without rebuilding
 				// it and skipped bumpAuthGeneration.
 				if (!(await plugin.switchBackendMode(target))) return;
-				new Notice(t("Switched to {mode}.", { mode: MODE_LABELS[target] ?? target }));
+				new Notice(t("Switched to {mode}.", { mode: modeLabels()[target] ?? target }));
 				redisplay();
 			});
 		});
@@ -54,7 +58,7 @@ export function renderConnectionTab(ctx: TabContext): void {
 	// same sentence twice, the second time with the button attached.
 	if (state === "needs-url") {
 		const warning = new Setting(containerEl).setName(
-			"Not connected. Enter your Engram server URL below to start syncing.",
+			t("Not connected. Enter your Engram server URL below to start syncing."),
 		);
 		warning.settingEl.addClass("engram-connection-warning");
 	}

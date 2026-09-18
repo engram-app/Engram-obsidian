@@ -461,7 +461,6 @@ const ru: Dict = {
 	Deleting: "Удаление",
 	Downloading: "Загрузка",
 	Uploading: "Отправка",
-	"Engram: Show sync log": "Engram: показать журнал синхронизации",
 	"Syncing attachments": "Синхронизация вложений",
 	Complete: "Готово",
 	"Getting set up": "Начало работы",
@@ -506,6 +505,181 @@ const ru: Dict = {
 		"«Получить всё» прервано: выполняется другая синхронизация (конфликт воспроизведения). Повторите, когда она закончится.",
 	"Pull all failed: {error}": "«Получить всё» не удалось: {error}",
 	"Pull all failed": "«Получить всё» не удалось",
+	// UI strings (third pass)
+	"Click to copy": "Нажмите, чтобы скопировать",
+	"Waiting for authorization — connected, this will complete instantly.":
+		"Ожидание авторизации: связь есть, всё произойдёт сразу.",
+	"Waiting for authorization — no live connection, checking every 30s.":
+		"Ожидание авторизации: живого подключения нет, проверяем каждые 30 с.",
+	'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.':
+		"Engram Sync: не удалось прочитать состояние синхронизации для «{name}», берём копию с диска.",
+	"{formatted} files · ": {
+		one: "{formatted} файл · ",
+		few: "{formatted} файла · ",
+		many: "{formatted} файлов · ",
+		other: "{formatted} файла · ",
+	},
+	"Notes searchable": "Заметок доступно для поиска",
+	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
+		"Заметки сверх этого по-прежнему синхронизируются и открываются как обычно, их просто нет в поисковом индексе. Индекс хранит самые старые заметки, поэтому за его пределами оказываются самые новые.",
+	"Notes stored": "Заметок сохранено",
+	"AI searches": "ИИ-поиски",
+	"{formatted} per day": "{formatted} в день",
+	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
+		"Engram проиндексировал {indexed} из ваших {all} заметок. Остальные находятся только на этом устройстве. Обновите план, чтобы индексировать всё.",
+	"Searching {indexed} of {all} notes. Upgrade to search everything.":
+		"Поиск по {indexed} из {all} заметок. Обновите план, чтобы искать по всем.",
+	"Remove tag {tag}": "Убрать тег {tag}",
+	"👋 Welcome": "👋 Добро пожаловать",
+	"🔌 Connection": "🔌 Подключение",
+	"🔄 Sync Center": "🔄 Sync Center",
+	"⚙️ Advanced": "⚙️ Дополнительно",
+	"Error: {error}": "Ошибка: {error}",
+	unknown: "неизвестно",
+	"{count} need attention": {
+		one: "{count} требует внимания",
+		other: "{count} требуют внимания",
+	},
+	"Uploads {up}, downloads {down}.": "Отправит {up}, получит {down}.",
+	"Uploads {count}.": "Отправит {count}.",
+	"Downloads {count}.": "Получит {count}.",
+	"{count} conflicts to resolve.": {
+		one: "{count} конфликт нужно решить.",
+		few: "{count} конфликта нужно решить.",
+		many: "{count} конфликтов нужно решить.",
+		other: "{count} конфликта нужно решить.",
+	},
+	"Nothing is deleted.": "Ничего не удаляется.",
+	"Delete all {count} files currently on the server": {
+		one: "Удалить {count} файл, который сейчас на сервере",
+		few: "Удалить все {count} файла, которые сейчас на сервере",
+		many: "Удалить все {count} файлов, которые сейчас на сервере",
+		other: "Удалить все {count} файла, которые сейчас на сервере",
+	},
+	"Upload {count} files from this vault": {
+		one: "Отправить {count} файл из этого хранилища",
+		few: "Отправить {count} файла из этого хранилища",
+		many: "Отправить {count} файлов из этого хранилища",
+		other: "Отправить {count} файла из этого хранилища",
+	},
+	"Delete all {count} files in this vault": {
+		one: "Удалить {count} файл в этом хранилище",
+		few: "Удалить все {count} файла в этом хранилище",
+		many: "Удалить все {count} файлов в этом хранилище",
+		other: "Удалить все {count} файла в этом хранилище",
+	},
+	"Download {count} files from the server": {
+		one: "Получить {count} файл с сервера",
+		few: "Получить {count} файла с сервера",
+		many: "Получить {count} файлов с сервера",
+		other: "Получить {count} файла с сервера",
+	},
+	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
+		"Пока синхронизировать нечего, это хранилище пусто с обеих сторон. Начните синхронизацию, и всё, что вы напишете, появится на других устройствах.",
+	"{count} notes": {
+		one: "{count} заметка",
+		few: "{count} заметки",
+		many: "{count} заметок",
+		other: "{count} заметки",
+	},
+	"{count} attachments": {
+		one: "{count} вложение",
+		few: "{count} вложения",
+		many: "{count} вложений",
+		other: "{count} вложения",
+	},
+	"{first} and {second}": "{first} и {second}",
+	files: "файлы",
+	"This vault is empty on the server. Upload your {what}?":
+		"На сервере это хранилище пусто. Отправить ваши {what}?",
+	"This device's vault is empty. Download {what} from the server?":
+		"Хранилище на этом устройстве пусто. Получить {what} с сервера?",
+	notes: "заметки",
+	attachments: "вложения",
+	folders: "папки",
+	"Uploading {count}.": "Отправка {count}.",
+	"Downloading {count}.": "Загрузка {count}.",
+	"Deleting {count} local files.": "Удаление {count} локальных файлов.",
+	"Deleting {count} on the cloud.": "Удаление {count} в облаке.",
+	"First sync, this may take a moment.":
+		"Первая синхронизация, это может занять немного времени.",
+	"Checking for changes.": "Проверяем изменения.",
+	"Nothing will be deleted.": "Ничего не будет удалено.",
+	'{count} failed. Run "{command}" for details.':
+		"{count} не удалось. Выполните «{command}», чтобы увидеть подробности.",
+	'Engram Sync: renamed "{name}" (unsupported characters)':
+		"Engram Sync: «{name}» переименован (неподдерживаемые символы)",
+	'Engram: frontmatter problem in "{name}"': "Engram: проблема с frontmatter в «{name}»",
+	"Create a hosted account at ": "Создайте учётную запись на ",
+	", or self-host the backend (": " или разверните бэкенд сами (",
+	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
+		"Подключите Claude, Cursor, ChatGPT или любое MCP-приложение, чтобы оно могло читать и писать ваши заметки. ",
+	Documentation: "Документация",
+	"AI / MCP setup guide": "Руководство по настройке ИИ / MCP",
+	"Report an issue": "Сообщить о проблеме",
+	"Join our Discord": "Присоединяйтесь к нашему Discord",
+	"Paths to skip (one per line). Folder patterns end with /. Built-in: {configDir}/, .trash/, .git/":
+		"Пути, которые нужно пропускать (по одному в строке). Шаблоны папок заканчиваются на /. Встроенные: {configDir}/, .trash/, .git/",
+	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use.":
+		"Отправляет на сервер подробные данные о синхронизации, хранилище и подключении для диагностики, с распределённой трассировкой запросов. Только метаданные, никогда содержимое заметок. При обычной работе оставьте выключенным.",
+	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
+		"Минимальный уровень, который отправляется при включённой диагностике. Чем выше уровень, тем меньше строк. По умолчанию: информация.",
+	"Signed in as {email}": "Вход выполнен как {email}",
+	"Pick a vault (previous: '{name}' not found)":
+		"Выберите хранилище (предыдущее, «{name}», не найдено)",
+	"Pick a vault (previous: id {id} not found)":
+		"Выберите хранилище (предыдущий id {id} не найден)",
+	"Server error ({status}) — check Engram logs":
+		"Ошибка сервера ({status}), посмотрите журналы Engram",
+	"Request failed ({status})": "Запрос не выполнен ({status})",
+	"Engram Cloud": "Engram Cloud",
+	"Self-hosted": "Своя установка",
+	"{count} attempts": {
+		one: "{count} попытка",
+		few: "{count} попытки",
+		many: "{count} попыток",
+		other: "{count} попытки",
+	},
+	// UI strings (fourth pass)
+	"{count} missing on server": "{count} нет на сервере",
+	"{count} diverged": "{count} с расхождениями",
+	"{count} only on server": "{count} только на сервере",
+	"Engram Sync: {details}": "Engram Sync: {details}",
+	"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.":
+		"Engram: файл настроек плагина был повреждён и его не удалось восстановить. Возможно, придётся заново подключиться в настройках.",
+	"Engram: sync is not set up yet, so nothing in this vault will sync.":
+		"Engram: синхронизация ещё не настроена, поэтому ничего из этого хранилища синхронизироваться не будет.",
+	"Click the Engram item in the status bar to pick up where you left off.":
+		"Нажмите на Engram в строке состояния, чтобы продолжить с того места, где остановились.",
+	"Engram: ⚠ {count} sync errors": {
+		one: "Engram: ⚠ {count} ошибка синхронизации",
+		few: "Engram: ⚠ {count} ошибки синхронизации",
+		many: "Engram: ⚠ {count} ошибок синхронизации",
+		other: "Engram: ⚠ {count} ошибки синхронизации",
+	},
+	"sync failed": "синхронизация не удалась",
+	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":
+		"Это не похоже на полный адрес сервера. Укажите схему, например http://127.0.0.1:4000",
+	"Opens your browser to sign in, or create an account if you don't have one yet, then links this vault.":
+		"Откроет браузер для входа, а если учётной записи ещё нет, её можно создать, после чего это хранилище будет привязано.",
+	"Or authenticate with a token instead of signing in. Engram Cloud API keys require the Pro plan; on Free and Starter, sign in above.":
+		"Или пройдите проверку по токену вместо входа. Ключи API для Engram Cloud доступны на плане Pro; на Free и Starter войдите выше.",
+	"No sync activity this session.": "В этой сессии не было синхронизации.",
+	"Showing {count} entries": {
+		one: "Показана {count} запись",
+		few: "Показаны {count} записи",
+		many: "Показано {count} записей",
+		other: "Показаны {count} записи",
+	},
+	"({count} errors)": {
+		one: "({count} ошибка)",
+		few: "({count} ошибки)",
+		many: "({count} ошибок)",
+		other: "({count} ошибки)",
+	},
+	"Frontmatter could not be parsed": "Не удалось разобрать frontmatter",
+	"Not connected. Enter your Engram server URL below to start syncing.":
+		"Нет подключения. Укажите ниже адрес вашего сервера Engram, чтобы начать синхронизацию.",
 };
 
 export default ru;

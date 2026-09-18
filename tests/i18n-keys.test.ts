@@ -34,17 +34,26 @@ const repoRoot = join(import.meta.dir, "..");
  * scanner that only knows `t()` reports every `tInto` key as an orphan. That
  * fails the moment someone translates one, and the obvious fix looks like
  * deleting a perfectly good translation.
+ *
+ * Single quotes need their own pattern too: a key containing a double quote is
+ * written `t('... "{name}" ...')`, and a double-quote-only scan calls every one
+ * of those an orphan.
  */
 function keysUsedInSource(): Set<string> {
 	const keys = new Set<string>();
-	const patterns = [/\bt\(\s*"((?:[^"\\]|\\.)+)"/g, /\btInto\([^,]+,\s*"((?:[^"\\]|\\.)+)"/g];
+	const patterns = [
+		/\bt\(\s*"((?:[^"\\]|\\.)+)"/g,
+		/\bt\(\s*'((?:[^'\\]|\\.)+)'/g,
+		/\btInto\([^,]+,\s*"((?:[^"\\]|\\.)+)"/g,
+		/\btInto\([^,]+,\s*'((?:[^'\\]|\\.)+)'/g,
+	];
 	for (const rel of new Glob("src/**/*.ts").scanSync(repoRoot)) {
 		if (rel.includes("i18n/locale")) continue;
 		const src = readFileSync(join(repoRoot, rel), "utf8");
 		for (const pattern of patterns) {
 			for (const m of src.matchAll(pattern)) {
 				const key = m[1];
-				if (key) keys.add(key.replace(/\\"/g, '"'));
+				if (key) keys.add(key.replace(/\\(["'])/g, "$1"));
 			}
 		}
 	}

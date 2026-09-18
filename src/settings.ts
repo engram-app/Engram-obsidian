@@ -193,10 +193,10 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 
 		// ── Tab bar ──
 		const tabs = [
-			{ id: "about" as const, label: "👋 Welcome", render: renderAboutTab },
-			{ id: "connection" as const, label: "🔌 Connection", render: renderConnectionTab },
-			{ id: "sync-center" as const, label: "🔄 Sync Center", render: renderSyncCenterTab },
-			{ id: "advanced" as const, label: "⚙️ Advanced", render: renderAdvancedTab },
+			{ id: "about" as const, label: t("👋 Welcome"), render: renderAboutTab },
+			{ id: "connection" as const, label: t("🔌 Connection"), render: renderConnectionTab },
+			{ id: "sync-center" as const, label: t("🔄 Sync Center"), render: renderSyncCenterTab },
+			{ id: "advanced" as const, label: t("⚙️ Advanced"), render: renderAdvancedTab },
 		];
 
 		const tabBar = containerEl.createEl("nav", { cls: "engram-tab-bar" });
@@ -323,7 +323,7 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 			label = t("Disconnected");
 		} else if (status.state === "error") {
 			dotState = "is-error";
-			label = `Error: ${status.error || "unknown"}`;
+			label = t("Error: {error}", { error: status.error || t("unknown") });
 		} else if (
 			blocked &&
 			this.plugin.settings.apiUrl &&

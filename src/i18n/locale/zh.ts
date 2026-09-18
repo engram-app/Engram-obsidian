@@ -393,7 +393,6 @@ const zh: Dict = {
 	Deleting: "正在删除",
 	Downloading: "正在下载",
 	Uploading: "正在上传",
-	"Engram: Show sync log": "Engram：查看同步日志",
 	"Syncing attachments": "正在同步附件",
 	Complete: "已完成",
 	"Getting set up": "开始设置",
@@ -437,6 +436,113 @@ const zh: Dict = {
 		"拉取全部已中止：另一个同步正在进行（回放冲突）。等它结束后再试。",
 	"Pull all failed: {error}": "拉取全部失败：{error}",
 	"Pull all failed": "拉取全部失败",
+	// UI strings (third pass)
+	"Click to copy": "点击复制",
+	"Waiting for authorization — connected, this will complete instantly.":
+		"正在等待授权：已连接，会立刻完成。",
+	"Waiting for authorization — no live connection, checking every 30s.":
+		"正在等待授权：没有实时连接，每 30 秒检查一次。",
+	'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.':
+		"Engram 同步：无法读取“{name}”的同步状态，将改用磁盘上的副本。",
+	"{formatted} files · ": "{formatted} 个文件 · ",
+	"Notes searchable": "可搜索的笔记",
+	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
+		"超出这个数量的笔记仍会正常同步和打开，只是不在搜索索引中。索引保留较早的笔记，因此落在索引外的是最新的笔记。",
+	"Notes stored": "已存储的笔记",
+	"AI searches": "AI 搜索",
+	"{formatted} per day": "每天 {formatted} 次",
+	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
+		"Engram 已索引你的 {all} 条笔记中的 {indexed} 条。其余只在本设备上匹配。升级后可索引全部。",
+	"Searching {indexed} of {all} notes. Upgrade to search everything.":
+		"正在搜索 {all} 条笔记中的 {indexed} 条。升级后可搜索全部。",
+	"Remove tag {tag}": "移除标签 {tag}",
+	"👋 Welcome": "👋 欢迎",
+	"🔌 Connection": "🔌 连接",
+	"🔄 Sync Center": "🔄 Sync Center",
+	"⚙️ Advanced": "⚙️ 高级",
+	"Error: {error}": "错误：{error}",
+	unknown: "未知",
+	"{count} need attention": "{count} 项需要处理",
+	"Uploads {up}, downloads {down}.": "上传 {up} 项，下载 {down} 项。",
+	"Uploads {count}.": "上传 {count} 项。",
+	"Downloads {count}.": "下载 {count} 项。",
+	"{count} conflicts to resolve.": "有 {count} 处冲突需要解决。",
+	"Nothing is deleted.": "不会删除任何东西。",
+	"Delete all {count} files currently on the server": "删除服务器上现有的全部 {count} 个文件",
+	"Upload {count} files from this vault": "从此知识库上传 {count} 个文件",
+	"Delete all {count} files in this vault": "删除此知识库中的全部 {count} 个文件",
+	"Download {count} files from the server": "从服务器下载 {count} 个文件",
+	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
+		"目前没有需要同步的内容，两边都是空的。开始同步后，你写的一切都会出现在其他设备上。",
+	"{count} notes": "{count} 条笔记",
+	"{count} attachments": "{count} 个附件",
+	"{first} and {second}": "{first} 和 {second}",
+	files: "文件",
+	"This vault is empty on the server. Upload your {what}?":
+		"服务器上的这个知识库是空的。要上传你的 {what} 吗？",
+	"This device's vault is empty. Download {what} from the server?":
+		"本设备上的知识库是空的。要从服务器下载 {what} 吗？",
+	notes: "笔记",
+	attachments: "附件",
+	folders: "文件夹",
+	"Uploading {count}.": "正在上传 {count} 项。",
+	"Downloading {count}.": "正在下载 {count} 项。",
+	"Deleting {count} local files.": "正在删除本地 {count} 个文件。",
+	"Deleting {count} on the cloud.": "正在删除服务器上 {count} 项。",
+	"First sync, this may take a moment.": "首次同步，可能需要一点时间。",
+	"Checking for changes.": "正在检查变更。",
+	"Nothing will be deleted.": "不会删除任何东西。",
+	'{count} failed. Run "{command}" for details.': "{count} 项失败。运行“{command}”查看详情。",
+	'Engram Sync: renamed "{name}" (unsupported characters)':
+		"Engram 同步：已将“{name}”重命名（包含不支持的字符）",
+	'Engram: frontmatter problem in "{name}"': "Engram：“{name}”的 frontmatter 有问题",
+	"Create a hosted account at ": "在 ",
+	", or self-host the backend (": "注册托管账号，或自行部署后端（",
+	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
+		"连接 Claude、Cursor、ChatGPT 或任何 MCP 应用，让它读写你的笔记。",
+	Documentation: "文档",
+	"AI / MCP setup guide": "AI / MCP 设置指南",
+	"Report an issue": "反馈问题",
+	"Join our Discord": "加入我们的 Discord",
+	"Paths to skip (one per line). Folder patterns end with /. Built-in: {configDir}/, .trash/, .git/":
+		"要跳过的路径（每行一个）。文件夹规则以 / 结尾。内置规则：{configDir}/、.trash/、.git/",
+	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use.":
+		"将详细的同步、知识库和连接活动发送到服务器以便排查问题，并对请求启用分布式追踪。只发送元数据，绝不发送笔记内容。日常使用请保持关闭。",
+	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
+		"诊断开启时发送的最低级别。级别越高，发送的行数越少。默认：信息。",
+	"Signed in as {email}": "已登录为 {email}",
+	"Pick a vault (previous: '{name}' not found)": "请选择一个知识库（此前的“{name}”已不存在）",
+	"Pick a vault (previous: id {id} not found)": "请选择一个知识库（此前的 id {id} 已不存在）",
+	"Server error ({status}) — check Engram logs": "服务器错误（{status}），请查看 Engram 日志",
+	"Request failed ({status})": "请求失败（{status}）",
+	"Engram Cloud": "Engram Cloud",
+	"Self-hosted": "自托管",
+	"{count} attempts": "{count} 次尝试",
+	// UI strings (fourth pass)
+	"{count} missing on server": "服务器上缺少 {count} 个",
+	"{count} diverged": "{count} 个有分歧",
+	"{count} only on server": "只在服务器上有 {count} 个",
+	"Engram Sync: {details}": "Engram 同步：{details}",
+	"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.":
+		"Engram：插件设置文件已损坏且无法恢复。你可能需要在设置中重新连接。",
+	"Engram: sync is not set up yet, so nothing in this vault will sync.":
+		"Engram：同步还没设置好，这个知识库里的内容都不会同步。",
+	"Click the Engram item in the status bar to pick up where you left off.":
+		"点击状态栏里的 Engram 项，从上次的地方继续。",
+	"Engram: ⚠ {count} sync errors": "Engram：⚠ {count} 个同步错误",
+	"sync failed": "同步失败",
+	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":
+		"这看起来不是完整的服务器地址。请带上协议，例如 http://127.0.0.1:4000",
+	"Opens your browser to sign in, or create an account if you don't have one yet, then links this vault.":
+		"会在浏览器中打开登录页面，没有账号也可以直接注册，然后关联这个知识库。",
+	"Or authenticate with a token instead of signing in. Engram Cloud API keys require the Pro plan; on Free and Starter, sign in above.":
+		"也可以用令牌代替登录。Engram Cloud 的 API 密钥需要 Pro 方案；免费版和 Starter 请在上面登录。",
+	"No sync activity this session.": "本次会话没有同步活动。",
+	"Showing {count} entries": "显示 {count} 条记录",
+	"({count} errors)": "（{count} 个错误）",
+	"Frontmatter could not be parsed": "无法解析 frontmatter",
+	"Not connected. Enter your Engram server URL below to start syncing.":
+		"未连接。在下面填写你的 Engram 服务器地址即可开始同步。",
 };
 
 export default zh;

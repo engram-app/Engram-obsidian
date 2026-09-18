@@ -309,7 +309,10 @@ export function parseStatusToIssue(
 	if (parseStatus !== "degraded") return null;
 	const category: SyncIssueCategory =
 		parseReason?.code === "note_processing_failed" ? "other" : "frontmatter";
-	const message = parseReason?.message ?? "Frontmatter could not be parsed";
+	// Translated where the issue is created, not where it is rendered: the
+	// message is persisted with the issue, so a language switch leaves an
+	// already-recorded issue in its original language until it recurs.
+	const message = parseReason?.message ?? t("Frontmatter could not be parsed");
 	return parseReason ? { category, message, parseReason } : { category, message };
 }
 

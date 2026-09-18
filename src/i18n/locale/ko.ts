@@ -412,7 +412,6 @@ const ko: Dict = {
 	Deleting: "삭제 중",
 	Downloading: "내리는 중",
 	Uploading: "올리는 중",
-	"Engram: Show sync log": "Engram: 동기화 로그 보기",
 	"Syncing attachments": "첨부 파일 동기화 중",
 	Complete: "완료",
 	"Getting set up": "설정 시작",
@@ -457,6 +456,115 @@ const ko: Dict = {
 		"전체 내리기를 중단했습니다: 다른 동기화가 실행 중입니다(리플레이 충돌). 끝난 뒤 다시 시도하세요.",
 	"Pull all failed: {error}": "전체 내리기에 실패했습니다: {error}",
 	"Pull all failed": "전체 내리기에 실패했습니다",
+	// UI strings (third pass)
+	"Click to copy": "눌러서 복사",
+	"Waiting for authorization — connected, this will complete instantly.":
+		"승인을 기다리는 중: 연결되어 있어 바로 끝납니다.",
+	"Waiting for authorization — no live connection, checking every 30s.":
+		"승인을 기다리는 중: 실시간 연결이 없어 30초마다 확인합니다.",
+	'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.':
+		'Engram 동기화: "{name}"의 동기화 상태를 읽을 수 없어 디스크의 사본을 씁니다.',
+	"{formatted} files · ": "파일 {formatted}개 · ",
+	"Notes searchable": "검색되는 노트",
+	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
+		"이 수를 넘는 노트도 동기화와 열기는 정상입니다. 검색 색인에만 들어가지 않습니다. 색인은 오래된 노트를 유지하므로 빠지는 것은 최신 노트입니다.",
+	"Notes stored": "저장된 노트",
+	"AI searches": "AI 검색",
+	"{formatted} per day": "하루 {formatted}회",
+	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
+		"Engram이 노트 {all}개 중 {indexed}개를 색인했습니다. 나머지는 이 기기에서만 일치합니다. 업그레이드하면 전부 색인됩니다.",
+	"Searching {indexed} of {all} notes. Upgrade to search everything.":
+		"노트 {all}개 중 {indexed}개를 검색합니다. 업그레이드하면 전부 검색합니다.",
+	"Remove tag {tag}": "태그 {tag} 제거",
+	"👋 Welcome": "👋 환영합니다",
+	"🔌 Connection": "🔌 연결",
+	"🔄 Sync Center": "🔄 Sync Center",
+	"⚙️ Advanced": "⚙️ 고급",
+	"Error: {error}": "오류: {error}",
+	unknown: "알 수 없음",
+	"{count} need attention": "{count}건 처리 필요",
+	"Uploads {up}, downloads {down}.": "{up}건 올리고 {down}건 내립니다.",
+	"Uploads {count}.": "{count}건 올립니다.",
+	"Downloads {count}.": "{count}건 내립니다.",
+	"{count} conflicts to resolve.": "충돌 {count}건을 해결해야 합니다.",
+	"Nothing is deleted.": "아무것도 지우지 않습니다.",
+	"Delete all {count} files currently on the server": "서버에 있는 파일 {count}개 모두 삭제",
+	"Upload {count} files from this vault": "이 보관함에서 파일 {count}개 올리기",
+	"Delete all {count} files in this vault": "이 보관함의 파일 {count}개 모두 삭제",
+	"Download {count} files from the server": "서버에서 파일 {count}개 내리기",
+	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
+		"아직 동기화할 것이 없습니다. 양쪽이 모두 비어 있습니다. 동기화를 시작하면 쓰는 것이 다른 기기에도 나타납니다.",
+	"{count} notes": "노트 {count}개",
+	"{count} attachments": "첨부 파일 {count}개",
+	"{first} and {second}": "{first} 및 {second}",
+	files: "파일",
+	"This vault is empty on the server. Upload your {what}?":
+		"서버의 이 보관함이 비어 있습니다. {what}을(를) 올릴까요?",
+	"This device's vault is empty. Download {what} from the server?":
+		"이 기기의 보관함이 비어 있습니다. 서버에서 {what}을(를) 내릴까요?",
+	notes: "노트",
+	attachments: "첨부 파일",
+	folders: "폴더",
+	"Uploading {count}.": "{count}건 올리는 중입니다.",
+	"Downloading {count}.": "{count}건 내리는 중입니다.",
+	"Deleting {count} local files.": "로컬 파일 {count}개를 지우는 중입니다.",
+	"Deleting {count} on the cloud.": "서버의 {count}건을 지우는 중입니다.",
+	"First sync, this may take a moment.": "첫 동기화입니다. 조금 걸릴 수 있습니다.",
+	"Checking for changes.": "변경 사항을 확인하는 중입니다.",
+	"Nothing will be deleted.": "아무것도 지워지지 않습니다.",
+	'{count} failed. Run "{command}" for details.':
+		'{count}건이 실패했습니다. 자세한 내용은 "{command}"를 실행하세요.',
+	'Engram Sync: renamed "{name}" (unsupported characters)':
+		'Engram 동기화: "{name}"의 이름을 바꿨습니다(지원하지 않는 문자 포함)',
+	'Engram: frontmatter problem in "{name}"': 'Engram: "{name}"의 frontmatter에 문제가 있습니다',
+	"Create a hosted account at ": "호스팅 계정은 ",
+	", or self-host the backend (": "에서 만들거나, 백엔드를 직접 호스팅하세요(",
+	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
+		"Claude, Cursor, ChatGPT 같은 MCP 앱을 연결하면 노트를 읽고 쓸 수 있습니다.",
+	Documentation: "문서",
+	"AI / MCP setup guide": "AI / MCP 설정 안내",
+	"Report an issue": "문제 신고",
+	"Join our Discord": "Discord 참여",
+	"Paths to skip (one per line). Folder patterns end with /. Built-in: {configDir}/, .trash/, .git/":
+		"제외할 경로(한 줄에 하나). 폴더는 /로 끝냅니다. 기본: {configDir}/, .trash/, .git/",
+	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use.":
+		"동기화, 보관함, 연결 활동을 문제 해결용으로 서버에 자세히 보내고 요청에 분산 추적을 켭니다. 메타데이터만 보내며 노트 내용은 절대 보내지 않습니다. 평소에는 꺼 두세요.",
+	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
+		"진단이 켜져 있을 때 보내는 최소 심각도. 높을수록 보내는 줄이 적습니다. 기본값: 정보.",
+	"Signed in as {email}": "{email}(으)로 로그인됨",
+	"Pick a vault (previous: '{name}' not found)":
+		'보관함을 고르세요(이전 "{name}"을 찾을 수 없음)',
+	"Pick a vault (previous: id {id} not found)": "보관함을 고르세요(이전 id {id}을 찾을 수 없음)",
+	"Server error ({status}) — check Engram logs": "서버 오류({status}). Engram 로그를 확인하세요",
+	"Request failed ({status})": "요청이 실패했습니다({status})",
+	"Engram Cloud": "Engram Cloud",
+	"Self-hosted": "직접 호스팅",
+	"{count} attempts": "{count}회 시도",
+	// UI strings (fourth pass)
+	"{count} missing on server": "서버에 {count}개가 없습니다",
+	"{count} diverged": "{count}개가 어긋났습니다",
+	"{count} only on server": "서버에만 {count}개 있습니다",
+	"Engram Sync: {details}": "Engram 동기화: {details}",
+	"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.":
+		"Engram: 플러그인 설정 파일이 손상되어 복구할 수 없었습니다. 설정에서 다시 연결해야 할 수 있습니다.",
+	"Engram: sync is not set up yet, so nothing in this vault will sync.":
+		"Engram: 동기화가 아직 설정되지 않아 이 보관함의 내용은 동기화되지 않습니다.",
+	"Click the Engram item in the status bar to pick up where you left off.":
+		"상태 표시줄의 Engram 항목을 누르면 이어서 진행할 수 있습니다.",
+	"Engram: ⚠ {count} sync errors": "Engram: ⚠ 동기화 오류 {count}건",
+	"sync failed": "동기화 실패",
+	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":
+		"서버 주소가 완전하지 않은 것 같습니다. http://127.0.0.1:4000 처럼 스킴도 넣어 주세요",
+	"Opens your browser to sign in, or create an account if you don't have one yet, then links this vault.":
+		"브라우저를 열어 로그인합니다. 계정이 없으면 바로 만들 수 있고, 그다음 이 보관함이 연결됩니다.",
+	"Or authenticate with a token instead of signing in. Engram Cloud API keys require the Pro plan; on Free and Starter, sign in above.":
+		"로그인 대신 토큰으로 인증할 수도 있습니다. Engram Cloud의 API 키는 Pro 플랜이 필요합니다. Free와 Starter에서는 위에서 로그인하세요.",
+	"No sync activity this session.": "이번 세션에는 동기화 활동이 없습니다.",
+	"Showing {count} entries": "{count}건 표시 중",
+	"({count} errors)": "(오류 {count}건)",
+	"Frontmatter could not be parsed": "frontmatter를 해석할 수 없습니다",
+	"Not connected. Enter your Engram server URL below to start syncing.":
+		"연결되지 않았습니다. 아래에 Engram 서버 주소를 입력하면 동기화를 시작합니다.",
 };
 
 export default ko;

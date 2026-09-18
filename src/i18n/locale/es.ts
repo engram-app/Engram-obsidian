@@ -441,7 +441,6 @@ const es: Dict = {
 	Deleting: "Borrando",
 	Downloading: "Descargando",
 	Uploading: "Subiendo",
-	"Engram: Show sync log": "Engram: ver el registro de sincronización",
 	"Syncing attachments": "Sincronizando adjuntos",
 	Complete: "Completado",
 	"Getting set up": "Primeros pasos",
@@ -486,6 +485,162 @@ const es: Dict = {
 		"«Descargar todo» cancelado: hay otra sincronización en curso (conflicto de reproducción). Inténtalo cuando termine.",
 	"Pull all failed: {error}": "«Descargar todo» falló: {error}",
 	"Pull all failed": "«Descargar todo» falló",
+	// UI strings (third pass)
+	"Click to copy": "Haz clic para copiar",
+	"Waiting for authorization — connected, this will complete instantly.":
+		"Esperando la autorización: hay conexión, esto será inmediato.",
+	"Waiting for authorization — no live connection, checking every 30s.":
+		"Esperando la autorización: sin conexión en vivo, se comprueba cada 30 s.",
+	'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.':
+		"Engram Sync: no se pudo leer el estado de sincronización de «{name}», se usará la copia del disco.",
+	"{formatted} files · ": {
+		one: "{formatted} archivo · ",
+		other: "{formatted} archivos · ",
+	},
+	"Notes searchable": "Notas que se pueden buscar",
+	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
+		"Las notas que pasen de aquí se siguen sincronizando y abriendo con normalidad, solo que no están en el índice de búsqueda. El índice guarda tus notas más antiguas, así que las que quedan fuera son las más nuevas.",
+	"Notes stored": "Notas guardadas",
+	"AI searches": "Búsquedas con IA",
+	"{formatted} per day": "{formatted} al día",
+	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
+		"Engram indexa {indexed} de tus {all} notas. El resto solo coincide en este dispositivo. Mejora tu plan para indexarlo todo.",
+	"Searching {indexed} of {all} notes. Upgrade to search everything.":
+		"Se buscan {indexed} de {all} notas. Mejora tu plan para buscar en todo.",
+	"Remove tag {tag}": "Quitar la etiqueta {tag}",
+	"👋 Welcome": "👋 Bienvenida",
+	"🔌 Connection": "🔌 Conexión",
+	"🔄 Sync Center": "🔄 Sync Center",
+	"⚙️ Advanced": "⚙️ Avanzado",
+	"Error: {error}": "Error: {error}",
+	unknown: "desconocido",
+	"{count} need attention": {
+		one: "{count} necesita tu atención",
+		other: "{count} necesitan tu atención",
+	},
+	"Uploads {up}, downloads {down}.": "Sube {up} y descarga {down}.",
+	"Uploads {count}.": "Sube {count}.",
+	"Downloads {count}.": "Descarga {count}.",
+	"{count} conflicts to resolve.": {
+		one: "{count} conflicto por resolver.",
+		other: "{count} conflictos por resolver.",
+	},
+	"Nothing is deleted.": "No se borra nada.",
+	"Delete all {count} files currently on the server": {
+		one: "Borrar el {count} archivo que hay ahora en el servidor",
+		other: "Borrar los {count} archivos que hay ahora en el servidor",
+	},
+	"Upload {count} files from this vault": {
+		one: "Subir {count} archivo de esta bóveda",
+		other: "Subir {count} archivos de esta bóveda",
+	},
+	"Delete all {count} files in this vault": {
+		one: "Borrar el {count} archivo de esta bóveda",
+		other: "Borrar los {count} archivos de esta bóveda",
+	},
+	"Download {count} files from the server": {
+		one: "Descargar {count} archivo del servidor",
+		other: "Descargar {count} archivos del servidor",
+	},
+	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
+		"Todavía no hay nada que sincronizar, esta bóveda está vacía en los dos lados. Empieza a sincronizar y todo lo que escribas aparecerá en tus otros dispositivos.",
+	"{count} notes": {
+		one: "{count} nota",
+		other: "{count} notas",
+	},
+	"{count} attachments": {
+		one: "{count} adjunto",
+		other: "{count} adjuntos",
+	},
+	"{first} and {second}": "{first} y {second}",
+	files: "archivos",
+	"This vault is empty on the server. Upload your {what}?":
+		"Esta bóveda está vacía en el servidor. ¿Subir tus {what}?",
+	"This device's vault is empty. Download {what} from the server?":
+		"La bóveda de este dispositivo está vacía. ¿Descargar {what} del servidor?",
+	notes: "notas",
+	attachments: "adjuntos",
+	folders: "carpetas",
+	"Uploading {count}.": "Subiendo {count}.",
+	"Downloading {count}.": "Descargando {count}.",
+	"Deleting {count} local files.": "Borrando {count} archivos locales.",
+	"Deleting {count} on the cloud.": "Borrando {count} en la nube.",
+	"First sync, this may take a moment.": "Primera sincronización, puede tardar un momento.",
+	"Checking for changes.": "Buscando cambios.",
+	"Nothing will be deleted.": "No se borrará nada.",
+	'{count} failed. Run "{command}" for details.':
+		"{count} han fallado. Ejecuta «{command}» para ver los detalles.",
+	'Engram Sync: renamed "{name}" (unsupported characters)':
+		"Engram Sync: «{name}» se ha renombrado (caracteres no admitidos)",
+	'Engram: frontmatter problem in "{name}"': "Engram: problema de frontmatter en «{name}»",
+	"Create a hosted account at ": "Crea una cuenta alojada en ",
+	", or self-host the backend (": ", o aloja tú el backend (",
+	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
+		"Conecta Claude, Cursor, ChatGPT o cualquier app MCP para que pueda leer y escribir tus notas. ",
+	Documentation: "Documentación",
+	"AI / MCP setup guide": "Guía de configuración de IA / MCP",
+	"Report an issue": "Informar de un problema",
+	"Join our Discord": "Únete a nuestro Discord",
+	"Paths to skip (one per line). Folder patterns end with /. Built-in: {configDir}/, .trash/, .git/":
+		"Rutas que saltar (una por línea). Los patrones de carpeta terminan en /. Integrados: {configDir}/, .trash/, .git/",
+	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use.":
+		"Envía al servidor la actividad detallada de sincronización, bóveda y conexión para diagnóstico, con trazado distribuido de las peticiones. Solo metadatos, nunca el contenido de las notas. Déjalo apagado para el uso normal.",
+	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
+		"Gravedad mínima que se envía mientras el diagnóstico está activo. Los niveles más altos envían menos líneas. Predeterminado: Información.",
+	"Signed in as {email}": "Sesión iniciada como {email}",
+	"Pick a vault (previous: '{name}' not found)":
+		"Elige una bóveda (la anterior, «{name}», no se encuentra)",
+	"Pick a vault (previous: id {id} not found)":
+		"Elige una bóveda (el id anterior {id} no se encuentra)",
+	"Server error ({status}) — check Engram logs":
+		"Error del servidor ({status}), revisa los registros de Engram",
+	"Request failed ({status})": "La petición ha fallado ({status})",
+	"Engram Cloud": "Engram Cloud",
+	"Self-hosted": "Autoalojado",
+	"{count} attempts": {
+		one: "{count} intento",
+		other: "{count} intentos",
+	},
+	// UI strings (fourth pass)
+	"{count} missing on server": {
+		one: "falta {count} en el servidor",
+		other: "faltan {count} en el servidor",
+	},
+	"{count} diverged": {
+		one: "{count} ha divergido",
+		other: "{count} han divergido",
+	},
+	"{count} only on server": "{count} solo en el servidor",
+	"Engram Sync: {details}": "Engram Sync: {details}",
+	"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.":
+		"Engram: el archivo de ajustes del plugin estaba dañado y no se pudo recuperar. Puede que tengas que volver a conectar desde los ajustes.",
+	"Engram: sync is not set up yet, so nothing in this vault will sync.":
+		"Engram: la sincronización aún no está configurada, así que nada de esta bóveda se sincronizará.",
+	"Click the Engram item in the status bar to pick up where you left off.":
+		"Haz clic en Engram en la barra de estado para seguir donde lo dejaste.",
+	"Engram: ⚠ {count} sync errors": {
+		one: "Engram: ⚠ {count} error de sincronización",
+		other: "Engram: ⚠ {count} errores de sincronización",
+	},
+	"sync failed": "la sincronización ha fallado",
+	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":
+		"Esto no parece una dirección de servidor completa. Incluye el esquema, por ejemplo http://127.0.0.1:4000",
+	"Opens your browser to sign in, or create an account if you don't have one yet, then links this vault.":
+		"Abre tu navegador para iniciar sesión, o crear una cuenta si aún no tienes, y luego vincula esta bóveda.",
+	"Or authenticate with a token instead of signing in. Engram Cloud API keys require the Pro plan; on Free and Starter, sign in above.":
+		"O autentícate con un token en lugar de iniciar sesión. Las claves de API de Engram Cloud requieren el plan Pro; en Free y Starter, inicia sesión arriba.",
+	"No sync activity this session.": "No hay actividad de sincronización en esta sesión.",
+	"Showing {count} entries": {
+		one: "Mostrando {count} entrada",
+		other: "Mostrando {count} entradas",
+	},
+	"({count} errors)": {
+		one: "({count} error)",
+		other: "({count} errores)",
+	},
+	"Frontmatter could not be parsed": "No se pudo analizar el frontmatter",
+	"Not connected. Enter your Engram server URL below to start syncing.":
+		"Sin conexión. Escribe abajo la dirección de tu servidor Engram para empezar a sincronizar.",
 };
 
 export default es;
