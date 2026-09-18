@@ -65,11 +65,18 @@ function makeFakeEl(tag: string, opts?: { cls?: string; text?: string }): FakeEl
 		// the first local row, so the fake tree has to support re-parenting a
 		// node at a position rather than only at the end.
 		insertBefore: (node: FakeEl, ref: FakeEl | null) => {
-			const from = node.owner;
-			if (from) from.children.splice(from.children.indexOf(node), 1);
+			// Mirrors the real DOM, including its failure: a `ref` that is not a
+			// child throws NotFoundError. An earlier version appended instead,
+			// which would have hidden a detached-anchor bug in the source rather
+			// than surfacing it here.
 			const at = ref ? target.children.indexOf(ref) : -1;
-			if (at === -1) target.children.push(node);
-			else target.children.splice(at, 0, node);
+			if (ref && at === -1) throw new Error("NotFoundError: ref is not a child");
+			const from = node.owner;
+			const wasAt = from ? from.children.indexOf(node) : -1;
+			if (from && wasAt !== -1) from.children.splice(wasAt, 1);
+			const insertAt = ref ? target.children.indexOf(ref) : -1;
+			if (insertAt === -1) target.children.push(node);
+			else target.children.splice(insertAt, 0, node);
 			node.owner = target;
 			return node;
 		},
@@ -78,9 +85,16 @@ function makeFakeEl(tag: string, opts?: { cls?: string; text?: string }): FakeEl
 		remove: () => {
 			const p = target.owner;
 			if (p) p.children.splice(p.children.indexOf(target), 1);
+			// Clear the back-pointer too, so `parentNode` below reports the
+			// detachment. The source guards its insertion anchor on exactly that,
+			// and a stale owner would report a removed row as still attached.
+			target.owner = undefined;
 		},
 	});
 	Object.assign(el, methods(el));
+	// The source reads `parentNode` to check an insertion anchor is still
+	// attached; the fake tracks the same fact as `owner`.
+	Object.defineProperty(el, "parentNode", { get: () => el.owner ?? null });
 	return el;
 }
 
@@ -445,9 +459,36 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		}
 
 		const labels = rows.map((r) => findByCls(r, "engram-sync-center-stat-label")?.text ?? "");
+		// Assert both rows EXIST first. Without this, a plan fill that rendered
+		// nothing at all would still pass the ordering check on -1 < 0.
+		expect(labels).toContain("Notes searchable");
+		expect(labels).toContain("Notes on this device");
 		expect(labels.indexOf("Notes searchable")).toBeLessThan(
 			labels.indexOf("Notes on this device"),
 		);
+	});
+
+	test("plan rows survive and stay on top when the anchor row is dropped", async () => {
+		// The plan rows anchor on the local note row, and the same fill REMOVES
+		// that row once the server agrees with it. Insertion happens before the
+		// removal, so the rows must still be there, still above everything local.
+		// The default fixture never hits this: it reports 300 notes against a
+		// mock vault of 0, so the counts never agree and the anchor never goes.
+		const agreeing = {
+			...FREE_USAGE,
+			usage: { ...FREE_USAGE.usage, notes: { used: 0, limit: 10000 } },
+		};
+		const plugin = withPlan("free", agreeing);
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		await settle();
+
+		const grid = findByCls(parent, "engram-sync-center-stats-grid");
+		const labels = (grid?.children ?? []).map(
+			(r) => findByCls(r, "engram-sync-center-stat-label")?.text ?? "",
+		);
+		expect(labels).toContain("Notes searchable");
+		expect(labels).not.toContain("Notes on this device");
+		expect(labels.indexOf("Notes searchable")).toBeLessThan(labels.indexOf("Remote vault"));
 	});
 
 	test("says which system each number describes", async () => {

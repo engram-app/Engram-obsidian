@@ -704,7 +704,12 @@ function addStat(
 	before?: Node,
 ): { row: HTMLElement; value: HTMLElement } {
 	const row = parent.createDiv({ cls: "engram-sync-center-stat" });
-	if (before) parent.insertBefore(row, before);
+	// `insertBefore` THROWS when the reference node is no longer a child, and the
+	// anchor the plan rows use is a row the same fill later removes. The `.catch`
+	// arm runs after the `.then` arm, so a throw anywhere in that tail would
+	// reach it with a detached anchor and the advisory row would be lost to an
+	// unhandled rejection. Falling back to the end of the grid keeps it visible.
+	if (before?.parentNode === parent) parent.insertBefore(row, before);
 	row.createDiv({ cls: "engram-sync-center-stat-label", text: label });
 	return { row, value: row.createDiv({ cls: "engram-sync-center-stat-value", text: value }) };
 }
