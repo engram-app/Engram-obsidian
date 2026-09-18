@@ -84,6 +84,222 @@ const ko: Dict = {
 		"app.engram.page에서 계정 설정을 마치면 동기화를 시작할 수 있습니다.",
 	"Limit reached. Upgrade to continue.":
 		"한도에 도달했습니다. 업그레이드하면 계속할 수 있습니다.",
+	// UI strings
+	"Link Obsidian to Engram": "Obsidian을 Engram에 연결",
+	"Failed to start device flow. Check your Engram URL and try again.":
+		"기기 인증을 시작하지 못했습니다. Engram URL을 확인하고 다시 시도하세요.",
+	"Your code:": "코드:",
+	"A browser window has opened. Sign in and enter this code to link your vault.":
+		"브라우저 창이 열렸습니다. 로그인한 뒤 이 코드를 입력하면 보관함이 연결됩니다.",
+	Cancel: "취소",
+	"Code expired. Please try again.": "코드가 만료되었습니다. 다시 시도하세요.",
+	"Try again": "다시 시도",
+	Close: "닫기",
+	"Note couldn't be processed": "이 노트를 처리할 수 없습니다",
+	"The server couldn't process this note. Check its contents, then edit and save to try again.":
+		"서버가 이 노트를 처리하지 못했습니다. 내용을 확인한 뒤 편집하고 저장하면 다시 시도합니다.",
+	"Attachments need a paid plan": "첨부 파일에는 유료 요금제가 필요합니다",
+	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
+		"무료 요금제는 노트만 동기화합니다. 이미지와 PDF를 동기화하려면 업그레이드하세요.",
+	"Attachment storage full": "첨부 파일 저장 공간이 가득 찼습니다",
+	"You've used all the attachment storage on your plan. Upgrade for more.":
+		"요금제의 첨부 파일 공간을 모두 썼습니다. 업그레이드하면 늘릴 수 있습니다.",
+	"Too large for the server": "서버 크기 제한을 넘었습니다",
+	"The server limit is 5 MB. Compress or split the file, then it will sync.":
+		"서버 제한은 5 MB입니다. 압축하거나 나누면 동기화됩니다.",
+	"Sign-in expired": "로그인이 만료되었습니다",
+	"Reconnect your account to resume syncing.": "계정을 다시 연결하면 동기화를 이어갑니다.",
+	"Unresolved conflict": "해결되지 않은 충돌",
+	"Open the file to resolve the conflict, then sync again.":
+		"파일을 열어 충돌을 해결한 뒤 다시 동기화하세요.",
+	"Frontmatter needs a fix": "frontmatter를 고쳐야 합니다",
+	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
+		"노트는 동기화되었지만 frontmatter를 완전히 해석하지 못했습니다. 열어서 강조된 줄을 고치세요.",
+	"Server error": "서버 오류",
+	"A temporary server problem — retrying automatically.":
+		"일시적인 서버 문제입니다. 자동으로 다시 시도합니다.",
+	"Network unavailable": "네트워크를 사용할 수 없습니다",
+	"Can't reach the server — retrying automatically.":
+		"서버에 연결할 수 없습니다. 자동으로 다시 시도합니다.",
+	"Sync failed": "동기화 실패",
+	"An unexpected error — retrying automatically.":
+		"예상치 못한 오류입니다. 자동으로 다시 시도합니다.",
+	Upgrade: "업그레이드",
+	"Update in settings": "설정에서 업데이트",
+	"Engram: ready": "Engram: 준비됨",
+	"Resume sync": "동기화 다시 시작",
+	"Engram Vault Sync {version} is available. {link}.":
+		"Engram Vault Sync {version}이 나왔습니다. {link}.",
+	"Search your vault…": "보관함 검색…",
+	"Filter by folder…": "폴더로 필터…",
+	"Filter by tags…": "태그로 필터…",
+	"Search failed — check connection": "검색에 실패했습니다. 연결을 확인하세요",
+	"No results found": "결과가 없습니다",
+	"match strength: {pct}%": "일치도: {pct}%",
+	"Open sync setup": "동기화 설정 열기",
+	"Last sync: {when}": "마지막 동기화: {when}",
+	"waiting for a connection": "연결을 기다리는 중",
+	"sync is paused": "동기화가 일시 중지됨",
+	"syncing now": "지금 동기화 중",
+	"waiting to retry": "다시 시도를 기다리는 중",
+	"{count} not on your plan": "{count}개는 요금제에 포함되지 않음",
+	"{count} retrying": "{count}개 재시도 중",
+	"{count} ignored": "{count}개 무시됨",
+	"{count} queued — {reason}": "{count}개 대기 중: {reason}",
+	"These files are fine. They just need a paid plan to sync.":
+		"이 파일들에는 문제가 없습니다. 동기화하려면 유료 요금제가 필요할 뿐입니다.",
+	"Show files ({count}) ▾": "파일 보기 ({count}) ▾",
+	"Sync these now": "지금 이 파일들 동기화",
+	"Clear all": "모두 지우기",
+	"Nothing needs your attention. 🎉": "처리할 일이 없습니다. 🎉",
+	Dismiss: "닫기",
+	"Retry all now": "지금 모두 재시도",
+	"Temporary errors. These clear themselves once the server recovers.":
+		"일시적인 오류입니다. 서버가 복구되면 저절로 사라집니다.",
+	Open: "열기",
+	Ignore: "무시",
+	"No files ignored. Use the ignore button on a failure row to stop syncing it.":
+		"무시한 파일이 없습니다. 실패한 줄의 무시 버튼을 누르면 그 파일의 동기화를 멈춥니다.",
+	Restore: "복원",
+	Clear: "지우기",
+	"No activity yet. Push or pull to see entries here.":
+		"아직 기록이 없습니다. 올리거나 내리면 여기에 표시됩니다.",
+	"Sync log": "동기화 로그",
+	"Could not compare with the cloud. Check your connection.":
+		"서버와 비교할 수 없습니다. 연결을 확인하세요.",
+	"Your login expired. Sign in again in Engram settings to continue.":
+		"로그인이 만료되었습니다. 계속하려면 Engram settings에서 다시 로그인하세요.",
+	"Couldn't create vault — the name may be invalid or already in use.":
+		"보관함을 만들지 못했습니다. 이름이 잘못되었거나 이미 쓰이고 있을 수 있습니다.",
+	"Could not create the vault — check your connection and try again.":
+		"보관함을 만들지 못했습니다. 연결을 확인하고 다시 시도하세요.",
+	"Free syncs notes only — {count} attachments will be skipped.":
+		"무료 요금제는 노트만 동기화합니다. 첨부 파일 {count}개는 건너뜁니다.",
+	"Comparing your vault with the cloud…": "보관함을 서버와 비교하는 중…",
+	"Until you choose, nothing in this vault will sync.":
+		"선택하기 전까지 이 보관함은 아무것도 동기화하지 않습니다.",
+	"Change vault": "보관함 바꾸기",
+	"Advanced sync options": "고급 동기화 옵션",
+	"Everything is in sync": "모두 동기화되었습니다",
+	" conflicts need resolution": " 건의 충돌을 해결해야 합니다",
+	"Confirm destructive sync": "되돌릴 수 없는 동기화 확인",
+	"You are about to:": "다음을 실행합니다:",
+	"Files that will be deleted:": "삭제될 파일:",
+	"This cannot be undone.": "이 작업은 되돌릴 수 없습니다.",
+	Back: "뒤로",
+	Confirm: "확인",
+	"Switch vault": "보관함 전환",
+	"Pick a vault to sync with. We will recalculate the sync preview after you choose.":
+		"동기화할 보관함을 고르세요. 고른 뒤 동기화 미리보기를 다시 계산합니다.",
+	"Loading vaults…": "보관함을 불러오는 중…",
+	"No other vaults available.": "사용할 수 있는 다른 보관함이 없습니다.",
+	"Make new vault": "새 보관함 만들기",
+	"New vault": "새 보관함",
+	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
+		"서버에 빈 보관함을 만들고, 이 Obsidian 보관함을 그곳으로 동기화합니다.",
+	Create: "만들기",
+	"Your vault shares {percent} of its data with Engram":
+		"이 보관함은 Engram과 데이터의 {percent}를 공유합니다",
+	"Type {keyword} to confirm:": "확인을 위해 {keyword}를 입력하세요:",
+	"✓ {count} synced": "✓ {count}개 동기화",
+	"⤳ {count} skipped (Free plan)": "⤳ {count}개 건너뜀 (무료 요금제)",
+	"✕ {count} failed": "✕ {count}개 실패",
+	"{count} attachments need a paid plan to sync. See Sync Center.":
+		"첨부 파일 {count}개는 동기화에 유료 요금제가 필요합니다. Sync Center를 확인하세요.",
+	"Syncing your vault": "보관함을 동기화하는 중",
+	"Getting started…": "시작하는 중…",
+	"Open Engram to check your vault and confirm everything synced.":
+		"Engram을 열어 보관함을 확인하고 모두 동기화되었는지 살펴보세요.",
+	"Open Engram": "Engram 열기",
+	"You can close this and the sync keeps running in the background.":
+		"이 창을 닫아도 동기화는 백그라운드에서 계속됩니다.",
+	"Run in background": "백그라운드에서 실행",
+	"Syncing…": "동기화 중…",
+	"Sync complete": "동기화 완료",
+	Done: "완료",
+	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
+		"Engram: {path}에서 동기화 충돌이 생겼습니다. 로컬 편집은 {copy}로 저장했습니다",
+	"Open note": "노트 열기",
+	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
+		"Engram: 노트 {count}개의 frontmatter에 문제가 있습니다. Sync Center를 열어 고치세요.",
+	"New here? Watch the setup video": "처음이신가요? 설치 영상 보기",
+	"What Engram does, and how to connect your vault, start to finish.":
+		"Engram이 하는 일과 보관함을 연결하는 방법을 처음부터 끝까지.",
+	"▶ Watch on YouTube": "▶ YouTube에서 보기",
+	"1. Make an account": "1. 계정 만들기",
+	"2. Connect your vault to Engram": "2. 보관함을 Engram에 연결",
+	"Open connection tab": "연결 탭 열기",
+	"3. Connect your AI": "3. AI 연결",
+	"Node.js dependencies": "Node.js 의존성",
+	"Python virtual environment": "Python 가상 환경",
+	"Python bytecode cache": "Python 바이트코드 캐시",
+	"Vendored dependencies": "포함된 의존성",
+	"Gradle build cache": "Gradle 빌드 캐시",
+	"Rust/Java build output": "Rust/Java 빌드 출력",
+	"Build output": "빌드 출력",
+	"Next.js build output": "Next.js 빌드 출력",
+	"Distribution build output": "배포 빌드 출력",
+	"Cargo cache": "Cargo 캐시",
+	"CocoaPods dependencies": "CocoaPods 의존성",
+	"Dart tool cache": "Dart 도구 캐시",
+	"Generic cache directory": "일반 캐시 디렉터리",
+	"Ignore patterns": "제외 패턴",
+	"Custom patterns": "사용자 패턴",
+	Diagnostics: "진단",
+	"Diagnostics detail": "진단 상세",
+	About: "정보",
+	"License: {name}": "라이선스: {name}",
+	"⚠ Detected: {label}/ ({formatted} files)": "⚠ 발견: {label}/ (파일 {formatted}개)",
+	"{desc} — should not be synced": "{desc}. 동기화하면 안 됩니다",
+	"Add to ignores": "제외에 추가",
+	"Version: {version}": "버전: {version}",
+	"Source: {link}": "소스: {link}",
+	"Engram URL": "Engram URL",
+	"✓ Engram server reachable (v{version})": "✓ Engram 서버에 연결할 수 있습니다 (v{version})",
+	"✗ server responded but isn't an Engram backend":
+		"✗ 서버가 응답했지만 Engram 백엔드가 아닙니다",
+	"✗ couldn't reach a server at this URL": "✗ 이 URL의 서버에 연결할 수 없습니다",
+	"Checking server…": "서버를 확인하는 중…",
+	Authentication: "인증",
+	"Authenticated via Engram account (OAuth).": "Engram 계정(OAuth)으로 인증되었습니다.",
+	"Manage account": "계정 관리",
+	"Sign out": "로그아웃",
+	"Using API key": "API 키 사용 중",
+	"Authenticated via manual API key.": "직접 입력한 API 키로 인증되었습니다.",
+	"Clear key": "키 지우기",
+	"Switch to sign in": "로그인으로 바꾸기",
+	"Sign in or create an account": "로그인 또는 계정 만들기",
+	"Sign in": "로그인",
+	"API key": "API 키",
+	Token: "토큰",
+	"Bearer token from your Engram account.": "Engram 계정의 Bearer 토큰.",
+	Save: "저장",
+	"That does not look like an Engram API key (expected {prefix}…).":
+		"Engram API 키가 아닌 것 같습니다 ({prefix}로 시작해야 합니다).",
+	Vault: "보관함",
+	"Vault selection": "보관함 선택",
+	"Select which vault this plugin syncs with.": "이 플러그인이 동기화할 보관함을 고릅니다.",
+	"No vaults found — first sync will create one":
+		"보관함이 없습니다. 첫 동기화 때 하나 만들어집니다",
+	"Pick a vault": "보관함 고르기",
+	Change: "변경",
+	"Support development": "개발 후원",
+	"GitHub Sponsors": "GitHub Sponsors",
+	Backend: "백엔드",
+	"Where this vault syncs to. Each backend keeps its own sign-in.":
+		"이 보관함이 동기화되는 곳입니다. 백엔드마다 로그인이 따로입니다.",
+	"Run your own Engram server": "직접 운영하는 Engram 서버",
+	"Engram is the backend that powers sync and semantic search.":
+		"Engram은 동기화와 의미 검색을 담당하는 백엔드입니다.",
+	"Finish sync setup": "동기화 설정 마치기",
+	"Nothing in this vault syncs until you choose how to merge it with the server.":
+		"서버와 어떻게 합칠지 고르기 전까지 이 보관함은 아무것도 동기화하지 않습니다.",
+	"Choose sync direction": "동기화 방향 고르기",
+	"Engram: this plugin is too old to sync (needs {version} or newer). Update it to continue.":
+		"Engram: 이 플러그인이 너무 오래되어 동기화할 수 없습니다 ({version} 이상이 필요합니다). 업데이트한 뒤 계속하세요.",
+	"Engram: this plugin is too old to sync. Update it to continue.":
+		"Engram: 이 플러그인이 너무 오래되어 동기화할 수 없습니다. 업데이트한 뒤 계속하세요.",
+	Update: "업데이트",
 };
 
 export default ko;
