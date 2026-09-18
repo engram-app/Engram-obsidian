@@ -11,6 +11,7 @@
  * search — so a user who is never shown the number only discovers it as a
  * search that cannot find something they know they wrote.
  */
+import { t } from "./i18n";
 
 /** One `{used, limit}` pair off the wire. `limit: null` == unlimited. */
 export interface UsageEntry {
@@ -150,7 +151,7 @@ export function planUsageRows(
 		// panel whose whole job is showing headroom. It reads as a warning about
 		// nothing. The cap still refuses a second vault server-side, with copy
 		// that explains itself at the moment it matters.
-		buildRow("Attachments", u.attachment_bytes, formatBytes, { prefix: attachPrefix }),
+		buildRow(t("Attachments"), u.attachment_bytes, formatBytes, { prefix: attachPrefix }),
 		// "AI searches: 20 per day", not "AI searches / day: 20". This row is the
 		// one that shows a CEILING with no usage beside it (the token bucket has
 		// no read-without-spend API), so a bare number under a label ending in

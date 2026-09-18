@@ -111,15 +111,15 @@ export function renderCompletionSummary(
  *  at the sync log. Pure for testing. */
 export function describeCompletion(summary: CompletionSummary): string {
 	if (summary.failed > 0) {
-		return "Finished with some errors. Open the sync log to see what failed.";
+		return t("Finished with some errors. Open the sync log to see what failed.");
 	}
 	if (summary.skipped > 0) {
-		return "Synced. Some attachments need a paid plan to sync (see below).";
+		return t("Synced. Some attachments need a paid plan to sync (see below).");
 	}
 	if (summary.synced > 0) {
-		return "All synced. Your vault and the cloud now match.";
+		return t("All synced. Your vault and the cloud now match.");
 	}
-	return "Already up to date. Nothing needed syncing.";
+	return t("Already up to date. Nothing needed syncing.");
 }
 
 /** A phase that this sync will actually perform, in display order. Used to seed
@@ -139,9 +139,10 @@ export function plannedPhases(choice: SyncChoice, plan: SyncPlan): PlannedPhase[
 	const b = optionBreakdown(plan, choice);
 	const deleting = b.deleteLocalCount + b.deleteRemoteCount;
 	const out: PlannedPhase[] = [];
-	if (deleting > 0) out.push({ phase: "deleting", label: "Deleting", total: deleting });
-	if (b.pullCount > 0) out.push({ phase: "pulling", label: "Downloading", total: b.pullCount });
-	if (b.pushCount > 0) out.push({ phase: "pushing", label: "Uploading", total: b.pushCount });
+	if (deleting > 0) out.push({ phase: "deleting", label: t("Deleting"), total: deleting });
+	if (b.pullCount > 0)
+		out.push({ phase: "pulling", label: t("Downloading"), total: b.pullCount });
+	if (b.pushCount > 0) out.push({ phase: "pushing", label: t("Uploading"), total: b.pushCount });
 	return out;
 }
 
@@ -457,7 +458,7 @@ export class SyncProgressModal extends Modal {
 
 		if (summary.failed > 0) {
 			this.failedEl.setText(
-				`${summary.failed} failed. Run "Engram: Show sync log" for details.`,
+				`${summary.failed} failed. Run t("Engram: Show sync log") for details.`,
 			);
 			this.failedEl.hidden = false;
 		} else {
@@ -501,9 +502,9 @@ export class SyncProgressModal extends Modal {
  *  did not predict — the two surfaces deliberately share one map so they can
  *  never disagree on wording again. */
 export const PHASE_FALLBACK_LABEL: Record<SyncProgress["phase"], string> = {
-	deleting: "Deleting",
-	pushing: "Uploading",
-	pulling: "Downloading",
-	attachments: "Syncing attachments",
-	complete: "Complete",
+	deleting: t("Deleting"),
+	pushing: t("Uploading"),
+	pulling: t("Downloading"),
+	attachments: t("Syncing attachments"),
+	complete: t("Complete"),
 };

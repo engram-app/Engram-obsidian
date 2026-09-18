@@ -323,6 +323,169 @@ const es: Dict = {
 	"Engram: this plugin is too old to sync. Update it to continue.":
 		"Engram: este plugin es demasiado antiguo para sincronizar. Actualízalo para continuar.",
 	Update: "Actualizar",
+	// UI strings (second pass)
+	"Invalid API key": "Clave de API no válida",
+	"Connection failed": "Fallo de conexión",
+	"Sync now": "Sincronizar ahora",
+	"Disconnect (clear login)": "Desconectar (borrar sesión)",
+	"Push entire vault": "Subir toda la bóveda",
+	"Check sync status": "Comprobar el estado de la sincronización",
+	"Engram sync: server does not support reconciliation (update backend)":
+		"Engram Sync: el servidor no sabe reconciliar (actualiza el backend)",
+	"Pull all from server (force overwrite)": "Descargar todo del servidor (sobrescribe lo local)",
+	"Show sync log": "Ver el registro de sincronización",
+	"Semantic search": "Búsqueda semántica",
+	"Open search sidebar": "Abrir el panel de búsqueda",
+	"Engram search": "Búsqueda de Engram",
+	"Open sync center": "Abrir el Sync Center",
+	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
+		"Engram: esta bóveda ya no existe en el servidor. Elige o crea una bóveda para continuar.",
+	"Engram: recovered plugin settings from a backup after a corrupted save.":
+		"Engram: los ajustes estaban dañados y se han restaurado desde una copia.",
+	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
+		"Engram Sync: la sincronización en directo necesita actualizar el plugin. Actualiza Engram vault sync.",
+	"Engram: sync is paused — this edit was not synced. Choose a sync direction to resume.":
+		"Engram: la sincronización está en pausa y este cambio no se ha enviado. Elige un sentido para reanudar.",
+	"Engram: not connected": "Engram: sin conexión",
+	"Engram: signed out": "Engram: sesión cerrada",
+	"Not connected yet. Click to open settings and link this vault.":
+		"Aún sin conectar. Pulsa para abrir los ajustes y vincular esta bóveda.",
+	"Not signed in. Click to open settings and reconnect.":
+		"Sin iniciar sesión. Pulsa para abrir los ajustes y volver a conectar.",
+	"Engram: finish setup": "Engram: terminar la configuración",
+	"Engram: sync paused": "Engram: sincronización en pausa",
+	"{label} ({count} queued)": "{label} ({count} en cola)",
+	"Setup is not finished — nothing will sync until you choose a sync direction. Click to finish.":
+		"La configuración no está terminada. Nada se sincroniza hasta que elijas un sentido. Pulsa para terminarla.",
+	"Sync paused — click to choose a sync direction":
+		"Sincronización en pausa; pulsa para elegir un sentido",
+	"Engram: offline ({count} queued)": "Engram: sin red ({count} en cola)",
+	"Engram: offline": "Engram: sin red",
+	"Server unreachable — changes will sync when connected":
+		"No se llega al servidor; los cambios se enviarán al volver la conexión",
+	"Engram: error": "Engram: error",
+	"Unknown error": "Error desconocido",
+	"Engram: syncing ({count})": "Engram: sincronizando ({count})",
+	"Engram: syncing": "Engram: sincronizando",
+	"Sync in progress...": "Sincronizando…",
+	"Engram: pending ({count})": "Engram: pendiente ({count})",
+	"{count} files queued": "{count} archivos en cola",
+	"Engram: live": "Engram: en directo",
+	"WebSocket connected — live sync active":
+		"WebSocket conectado; la sincronización en directo está activa",
+	"Click to sync": "Pulsa para sincronizar",
+	Attachments: "Adjuntos",
+	Keyword: "Palabra clave",
+	Semantic: "Semántica",
+	Both: "Ambas",
+	"matches your words and their other forms — 'run' finds 'running' — plus this device.":
+		"Encuentra tus palabras y sus formas: «correr» también encuentra «corriendo», y además este dispositivo.",
+	"matches meaning. Finds notes that never use the words you typed.":
+		"Encuentra por significado, incluso notas donde tus palabras no aparecen nunca.",
+	"matches words and meaning together, plus this device. Widest results.":
+		"Encuentra palabras y significado a la vez, más este dispositivo. La búsqueda más amplia.",
+	"Clear search": "Limpiar la búsqueda",
+	"Search settings": "Ajustes de búsqueda",
+	Untitled: "Sin título",
+	"meaning + exact": "significado + exacto",
+	Disconnected: "Desconectado",
+	"Connected — waiting for first sync decision":
+		"Conectado; esperando la primera decisión de sincronización",
+	"Connected — live sync active": "Conectado; sincronización en directo activa",
+	"Connected — polling": "Conectado; consultando cada cierto tiempo",
+	"Not configured": "Sin configurar",
+	Refresh: "Recargar",
+	"Not synced on your plan ({count})": "Fuera de tu plan ({count})",
+	"Needs attention ({count})": "Requiere tu atención ({count})",
+	"Retrying automatically ({count})": "Reintentando automáticamente ({count})",
+	Stats: "Cifras",
+	"Notes on this device": "Notas en este dispositivo",
+	"Attachments on this device": "Adjuntos en este dispositivo",
+	"Remote vault": "Bóveda del servidor",
+	"not linked": "sin vincular",
+	"Plan usage": "Uso del plan",
+	"Safe choice: combines both sides, nothing is deleted.":
+		"Opción segura: combina los dos lados y no borra nada.",
+	"Already in sync. Nothing is deleted.": "Ya está sincronizado. No se borra nada.",
+	Sync: "Sincronizar",
+	"Upload local files without downloading the remote":
+		"Subir los archivos locales sin descargar del servidor",
+	"Delete all on remote, then upload local files":
+		"Borrar todo en el servidor y luego subir los archivos locales",
+	"Download remote files without uploading the local":
+		"Descargar los archivos del servidor sin subir los locales",
+	"Delete all local files, then download from remote":
+		"Borrar todos los archivos locales y luego descargar del servidor",
+	"Set up sync for this vault": "Configurar la sincronización de esta bóveda",
+	"You are now pointing at a different cloud vault": "Ahora apuntas a otra bóveda en la nube",
+	"Sync preview": "Vista previa de la sincronización",
+	"Start syncing": "Empezar a sincronizar",
+	"Upload everything": "Subir todo",
+	"Nothing will be removed from this device.": "No se quitará nada de este dispositivo.",
+	"Download everything": "Descargar todo",
+	"Not now": "Más tarde",
+	"This vault": "Esta bóveda",
+	"Cloud server": "Bóveda del servidor",
+	"Vault name": "Nombre de la bóveda",
+	"Could not load vaults": "No se pudieron cargar las bóvedas",
+	"Enter a name for the new vault": "Ponle un nombre a la bóveda nueva",
+	"Failed to switch vault": "No se pudo cambiar de bóveda",
+	"Finished with some errors. Open the sync log to see what failed.":
+		"Terminó con algunos errores. Mira el registro de sincronización para ver qué falló.",
+	"Synced. Some attachments need a paid plan to sync (see below).":
+		"Sincronizado. Algunos adjuntos necesitan un plan de pago (ver abajo).",
+	"All synced. Your vault and the cloud now match.":
+		"Todo sincronizado. Tu bóveda y la nube coinciden.",
+	"Already up to date. Nothing needed syncing.":
+		"Ya estaba al día. No había nada que sincronizar.",
+	Deleting: "Borrando",
+	Downloading: "Descargando",
+	Uploading: "Subiendo",
+	"Engram: Show sync log": "Engram: ver el registro de sincronización",
+	"Syncing attachments": "Sincronizando adjuntos",
+	Complete: "Completado",
+	"Getting set up": "Primeros pasos",
+	"setup guide": "guía de instalación",
+	"Sign in (or enter your server URL and key) on the connection tab, then run your first sync.":
+		"Inicia sesión en la pestaña de conexión (o introduce la dirección de tu servidor y tu clave) y lanza tu primera sincronización.",
+	"See the AI setup guide": "Ver la guía de configuración de IA",
+	Plans: "Planes",
+	Free: "Gratis",
+	"1 vault, 2 devices": "1 bóveda, 2 dispositivos",
+	"Real-time sync": "Sincronización en tiempo real",
+	"2,000 notes searchable": "2.000 notas consultables",
+	"Connect any AI (MCP)": "Conecta cualquier IA (MCP)",
+	Starter: "Starter",
+	"10 vaults, unlimited devices": "10 bóvedas, dispositivos ilimitados",
+	"Search all your notes": "Busca en todas tus notas",
+	"10 GB attachments": "10 GB de adjuntos",
+	"Unlimited AI searches": "Búsquedas con IA ilimitadas",
+	Pro: "Pro",
+	"Unlimited vaults": "Bóvedas ilimitadas",
+	"Search across all vaults at once": "Busca en todas las bóvedas a la vez",
+	"50 GB attachments": "50 GB de adjuntos",
+	"API access": "Acceso a la API",
+	"See full pricing": "Ver todos los precios",
+	"Learn more": "Saber más",
+	"Errors only": "Solo errores",
+	"Warnings and errors": "Avisos y errores",
+	"Info (default)": "Información (predeterminado)",
+	"Debug (verbose)": "Depuración (detallada)",
+	"Or authenticate with a token instead of signing in.":
+		"O autentícate con un token en lugar de iniciar sesión.",
+	"If this plugin saves you time, consider supporting development.":
+		"Si este plugin te ahorra tiempo, piensa en apoyar el desarrollo.",
+	"Sign-in required to load vaults": "Hay que iniciar sesión para cargar las bóvedas",
+	"Could not reach Engram — check connection": "No se llega a Engram; revisa la conexión",
+	// UI strings (sync error surfaces)
+	"Free syncs notes only — images & PDFs need a paid plan.":
+		"El plan gratuito solo sincroniza notas: las imágenes y los PDF necesitan un plan de pago.",
+	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
+		"«Descargar todo (borrar sobrantes)» cancelado: no se pudo obtener una instantánea exclusiva del servidor (conflicto de reproducción). No se ha enviado nada a la papelera.",
+	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
+		"«Descargar todo» cancelado: hay otra sincronización en curso (conflicto de reproducción). Inténtalo cuando termine.",
+	"Pull all failed: {error}": "«Descargar todo» falló: {error}",
+	"Pull all failed": "«Descargar todo» falló",
 };
 
 export default es;

@@ -46,19 +46,21 @@ export function renderAboutTab(ctx: TabContext): void {
 	video.settingEl.addClass("engram-about-video");
 
 	// ── Getting set up ──
-	heading(containerEl, "Getting set up");
+	heading(containerEl, t("Getting set up"));
 
 	const account = new Setting(containerEl).setName(t("1. Make an account"));
 	account.descEl.appendText("Create a hosted account at ");
 	externalLink(account.descEl, "app.engram.page", ENGRAM_SIGN_UP_URL);
 	account.descEl.appendText(", or self-host the backend (");
-	externalLink(account.descEl, "setup guide", ENGRAM_SELFHOST_URL);
+	externalLink(account.descEl, t("setup guide"), ENGRAM_SELFHOST_URL);
 	account.descEl.appendText(").");
 
 	new Setting(containerEl)
 		.setName(t("2. Connect your vault to Engram"))
 		.setDesc(
-			"Sign in (or enter your server URL and key) on the connection tab, then run your first sync.",
+			t(
+				"Sign in (or enter your server URL and key) on the connection tab, then run your first sync.",
+			),
 		)
 		.addButton((btn) =>
 			btn
@@ -71,10 +73,10 @@ export function renderAboutTab(ctx: TabContext): void {
 	ai.descEl.appendText(
 		"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ",
 	);
-	externalLink(ai.descEl, "See the AI setup guide", ENGRAM_MCP_URL);
+	externalLink(ai.descEl, t("See the AI setup guide"), ENGRAM_MCP_URL);
 
 	// ── Plans ──
-	heading(containerEl, "Plans");
+	heading(containerEl, t("Plans"));
 
 	const plans = containerEl.createEl("ul", { cls: "engram-plans" });
 	const plan = (name: string, features: string[]): void => {
@@ -92,30 +94,30 @@ export function renderAboutTab(ctx: TabContext): void {
 	// That is the pricing v3.1 positioning (ranking differences are single-digit
 	// and imperceptible; "found my note" vs "cannot find my note" is not), and
 	// it also keeps this copy true across the pending Free semantic-search flip.
-	plan("Free", [
-		"1 vault, 2 devices",
-		"Real-time sync",
-		"2,000 notes searchable",
-		"Connect any AI (MCP)",
+	plan(t("Free"), [
+		t("1 vault, 2 devices"),
+		t("Real-time sync"),
+		t("2,000 notes searchable"),
+		t("Connect any AI (MCP)"),
 	]);
-	plan("Starter", [
-		"10 vaults, unlimited devices",
-		"Search all your notes",
-		"10 GB attachments",
-		"Unlimited AI searches",
+	plan(t("Starter"), [
+		t("10 vaults, unlimited devices"),
+		t("Search all your notes"),
+		t("10 GB attachments"),
+		t("Unlimited AI searches"),
 	]);
-	plan("Pro", [
-		"Unlimited vaults",
-		"Search across all vaults at once",
-		"50 GB attachments",
-		"API access",
+	plan(t("Pro"), [
+		t("Unlimited vaults"),
+		t("Search across all vaults at once"),
+		t("50 GB attachments"),
+		t("API access"),
 	]);
 
 	const pricing = containerEl.createEl("p", { cls: "engram-about-link" });
-	externalLink(pricing, "See full pricing", ENGRAM_PRICING_URL);
+	externalLink(pricing, t("See full pricing"), ENGRAM_PRICING_URL);
 
 	// ── Learn more ──
-	heading(containerEl, "Learn more");
+	heading(containerEl, t("Learn more"));
 
 	const links = containerEl.createEl("ul", { cls: "engram-about-links" });
 	externalLink(links.createEl("li"), "Documentation", ENGRAM_DOCS_URL);

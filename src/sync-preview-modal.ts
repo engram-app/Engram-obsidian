@@ -218,13 +218,13 @@ export function mergeHelperText(b: OptionBreakdown, context: SyncPreviewContext)
 	const conflict = b.conflictCount > 0 ? ` ${b.conflictCount} conflicts to resolve.` : "";
 
 	if (context === "first-time" || context === "vault-switch") {
-		const lead = "Safe choice: combines both sides, nothing is deleted.";
+		const lead = t("Safe choice: combines both sides, nothing is deleted.");
 		const tail = countLine ? ` ${countLine}${conflict}`.trimEnd() : "";
 		return `${lead}${tail}`;
 	}
 	return countLine
 		? `${countLine}${conflict} Nothing is deleted.`
-		: "Already in sync. Nothing is deleted.";
+		: t("Already in sync. Nothing is deleted.");
 }
 
 /** The "You are about to:" lines for a destructive sync's confirm screen, built
@@ -259,7 +259,7 @@ interface OptionCard {
 const MERGE_CARD: OptionCard = {
 	choice: "smart-merge",
 	emoji: "✨",
-	label: "Sync",
+	label: t("Sync"),
 	cssClass: "engram-sync-preview-option mod-cta",
 };
 
@@ -267,13 +267,13 @@ const PUSH_CARDS: OptionCard[] = [
 	{
 		choice: "push-all-keep-remote",
 		emoji: "⬆️",
-		label: "Upload local files without downloading the remote",
+		label: t("Upload local files without downloading the remote"),
 		cssClass: "engram-sync-preview-option",
 	},
 	{
 		choice: "push-all-delete-remote",
 		emoji: "🗑️",
-		label: "Delete all on remote, then upload local files",
+		label: t("Delete all on remote, then upload local files"),
 		cssClass: "engram-sync-preview-option engram-sync-preview-destructive",
 	},
 ];
@@ -282,21 +282,21 @@ const PULL_CARDS: OptionCard[] = [
 	{
 		choice: "pull-all-keep-local",
 		emoji: "⬇️",
-		label: "Download remote files without uploading the local",
+		label: t("Download remote files without uploading the local"),
 		cssClass: "engram-sync-preview-option",
 	},
 	{
 		choice: "pull-all-delete-local",
 		emoji: "🗑️",
-		label: "Delete all local files, then download from remote",
+		label: t("Delete all local files, then download from remote"),
 		cssClass: "engram-sync-preview-option engram-sync-preview-destructive",
 	},
 ];
 
 export const HEADER_BY_CONTEXT: Record<SyncPreviewContext, string> = {
-	"first-time": "Set up sync for this vault",
-	"vault-switch": "You are now pointing at a different cloud vault",
-	review: "Sync preview",
+	"first-time": t("Set up sync for this vault"),
+	"vault-switch": t("You are now pointing at a different cloud vault"),
+	review: t("Sync preview"),
 };
 
 export interface SyncPreviewOptions {
@@ -352,7 +352,7 @@ export function simplifiedScreenCopy(simple: NonNullable<ReturnType<typeof simpl
 	if (simple.mode === "fresh") {
 		return {
 			body: "Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.",
-			action: "Start syncing",
+			action: t("Start syncing"),
 			note: null,
 		};
 	}
@@ -363,14 +363,14 @@ export function simplifiedScreenCopy(simple: NonNullable<ReturnType<typeof simpl
 	if (simple.mode === "upload") {
 		return {
 			body: `This vault is empty on the server. Upload your ${what}?`,
-			action: "Upload everything",
-			note: "Nothing will be removed from this device.",
+			action: t("Upload everything"),
+			note: t("Nothing will be removed from this device."),
 		};
 	}
 	return {
 		body: `This device's vault is empty. Download ${what} from the server?`,
-		action: "Download everything",
-		note: "Nothing will be removed from this device.",
+		action: t("Download everything"),
+		note: t("Nothing will be removed from this device."),
 	};
 }
 
@@ -616,7 +616,7 @@ export class SyncPreviewModal extends Modal {
 			);
 			return;
 		}
-		this.renderFooter(contentEl, "Cancel", false);
+		this.renderFooter(contentEl, t("Cancel"), false);
 	}
 
 	/** The one-click screen for an empty-side first sync. One primary action
@@ -649,7 +649,7 @@ export class SyncPreviewModal extends Modal {
 			this.state.pickOption("smart-merge");
 		});
 		this.renderSkippedAttachmentsNote(parent);
-		this.renderFooter(parent, "Cancel", false);
+		this.renderFooter(parent, t("Cancel"), false);
 	}
 
 	/** Instant-open loading state: the modal is on screen while computeSyncPlan
@@ -668,7 +668,7 @@ export class SyncPreviewModal extends Modal {
 			body.createSpan({ text: t("Comparing your vault with the cloud…") });
 		}
 
-		this.renderFooter(parent, "Cancel", false);
+		this.renderFooter(parent, t("Cancel"), false);
 	}
 
 	/** Dismiss + optional "Change vault" footer, shared by the loaded preview
@@ -700,7 +700,7 @@ export class SyncPreviewModal extends Modal {
 
 		const footer = parent.createDiv({ cls: "engram-sync-preview-footer" });
 		const dismissBtn = footer.createEl("button", {
-			text: gated ? "Not now" : dismissLabel,
+			text: gated ? t("Not now") : dismissLabel,
 			cls: dismissCta ? "mod-cta" : undefined,
 		});
 		dismissBtn.addEventListener("click", () => {
@@ -791,15 +791,15 @@ export class SyncPreviewModal extends Modal {
 		this.renderCompareCard(wrap, {
 			emoji: "💻",
 			name: plan.vaultName,
-			role: "This vault",
+			role: t("This vault"),
 			notes: plan.localNoteCount,
 			attachments: plan.localAttachmentCount,
 			folders: plan.localFolderCount,
 		});
 		this.renderCompareCard(wrap, {
 			emoji: "☁️",
-			name: this.remoteVaultName || "Cloud server",
-			role: "Cloud server",
+			name: this.remoteVaultName || t("Cloud server"),
+			role: t("Cloud server"),
 			notes: plan.serverNoteCount,
 			attachments: plan.serverAttachmentCount,
 			folders: plan.serverFolderCount,
@@ -1053,7 +1053,7 @@ export class SyncPreviewModal extends Modal {
 			cls: "engram-sync-preview-new-vault-input",
 		});
 		input.value = this.app.vault.getName();
-		input.placeholder = "Vault name";
+		input.placeholder = t("Vault name");
 
 		const footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
 		const backBtn = footer.createEl("button", { text: t("Back") });
@@ -1084,7 +1084,7 @@ export class SyncPreviewModal extends Modal {
 			const vaults = await this.opts.listVaults();
 			this.state.onVaultsLoaded(vaults);
 		} catch (e: unknown) {
-			const msg = e instanceof Error ? e.message : "Could not load vaults";
+			const msg = e instanceof Error ? e.message : t("Could not load vaults");
 			this.state.onVaultsError(msg);
 		}
 		this.render();
@@ -1140,7 +1140,7 @@ export class SyncPreviewModal extends Modal {
 		if (!this.opts.createVault) return;
 		const trimmed = name.trim();
 		if (!trimmed) {
-			this.state.onVaultsError("Enter a name for the new vault");
+			this.state.onVaultsError(t("Enter a name for the new vault"));
 			this.state.creatingVault = true; // onVaultsError doesn't touch this flag; stay on the form
 			this.render();
 			return;
@@ -1184,7 +1184,7 @@ export class SyncPreviewModal extends Modal {
 			this.remoteVaultName = v.name;
 			this.state.exitVaultPicker();
 		} catch (e: unknown) {
-			const msg = e instanceof Error ? e.message : "Failed to switch vault";
+			const msg = e instanceof Error ? e.message : t("Failed to switch vault");
 			this.state.onVaultsError(msg);
 		}
 		this.render();

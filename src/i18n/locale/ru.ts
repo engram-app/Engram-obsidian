@@ -344,6 +344,168 @@ const ru: Dict = {
 	"Engram: this plugin is too old to sync. Update it to continue.":
 		"Engram: этот плагин слишком старый для синхронизации. Обновите его, чтобы продолжить.",
 	Update: "Обновить",
+	// UI strings (second pass)
+	"Invalid API key": "Неверный ключ API",
+	"Connection failed": "Не удалось подключиться",
+	"Sync now": "Синхронизировать сейчас",
+	"Disconnect (clear login)": "Отключить (удалить вход)",
+	"Push entire vault": "Отправить всё хранилище",
+	"Check sync status": "Проверить состояние синхронизации",
+	"Engram sync: server does not support reconciliation (update backend)":
+		"Engram: сервер не умеет сверять данные (обновите бэкенд)",
+	"Pull all from server (force overwrite)": "Получить всё с сервера (перезапишет локальное)",
+	"Show sync log": "Показать журнал синхронизации",
+	"Semantic search": "Смысловой поиск",
+	"Open search sidebar": "Открыть панель поиска",
+	"Engram search": "Поиск Engram",
+	"Open sync center": "Открыть Sync Center",
+	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
+		"Engram: этого хранилища больше нет на сервере. Выберите или создайте хранилище, чтобы продолжить.",
+	"Engram: recovered plugin settings from a backup after a corrupted save.":
+		"Engram: настройки были повреждены и восстановлены из резервной копии.",
+	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
+		"Engram: для живой синхронизации нужно обновить плагин. Обновите Engram vault sync.",
+	"Engram: sync is paused — this edit was not synced. Choose a sync direction to resume.":
+		"Engram: синхронизация приостановлена, эта правка не отправлена. Выберите направление синхронизации, чтобы продолжить.",
+	"Engram: not connected": "Engram: нет подключения",
+	"Engram: signed out": "Engram: выполнен выход",
+	"Not connected yet. Click to open settings and link this vault.":
+		"Пока не подключено. Нажмите, чтобы открыть настройки и привязать это хранилище.",
+	"Not signed in. Click to open settings and reconnect.":
+		"Вход не выполнен. Нажмите, чтобы открыть настройки и подключиться заново.",
+	"Engram: finish setup": "Engram: завершите настройку",
+	"Engram: sync paused": "Engram: синхронизация приостановлена",
+	"{label} ({count} queued)": "{label} (в очереди: {count})",
+	"Setup is not finished — nothing will sync until you choose a sync direction. Click to finish.":
+		"Настройка не завершена. Пока вы не выберете направление синхронизации, ничего не синхронизируется. Нажмите, чтобы завершить.",
+	"Sync paused — click to choose a sync direction":
+		"Синхронизация приостановлена, нажмите, чтобы выбрать направление",
+	"Engram: offline ({count} queued)": "Engram: нет сети (в очереди: {count})",
+	"Engram: offline": "Engram: нет сети",
+	"Server unreachable — changes will sync when connected":
+		"Сервер недоступен, изменения уйдут, как только появится связь",
+	"Engram: error": "Engram: ошибка",
+	"Unknown error": "Неизвестная ошибка",
+	"Engram: syncing ({count})": "Engram: синхронизация ({count})",
+	"Engram: syncing": "Engram: синхронизация",
+	"Sync in progress...": "Идёт синхронизация…",
+	"Engram: pending ({count})": "Engram: в ожидании ({count})",
+	"{count} files queued": "{count} файлов в очереди",
+	"Engram: live": "Engram: на связи",
+	"WebSocket connected — live sync active": "WebSocket подключён, живая синхронизация работает",
+	"Click to sync": "Нажмите, чтобы синхронизировать",
+	Attachments: "Вложения",
+	Keyword: "Ключевые слова",
+	Semantic: "Смысл",
+	Both: "Оба способа",
+	"matches your words and their other forms — 'run' finds 'running' — plus this device.":
+		"Находит ваши слова и их формы: по «бежать» найдётся и «бежит», плюс результаты с этого устройства.",
+	"matches meaning. Finds notes that never use the words you typed.":
+		"Находит по смыслу, в том числе заметки, где ваших слов нет вовсе.",
+	"matches words and meaning together, plus this device. Widest results.":
+		"Находит и по словам, и по смыслу, плюс это устройство. Самый широкий поиск.",
+	"Clear search": "Очистить поиск",
+	"Search settings": "Настройки поиска",
+	Untitled: "Без названия",
+	"meaning + exact": "смысл + точное совпадение",
+	Disconnected: "Отключено",
+	"Connected — waiting for first sync decision":
+		"Подключено, ждём первого выбора направления синхронизации",
+	"Connected — live sync active": "Подключено, живая синхронизация работает",
+	"Connected — polling": "Подключено, периодические опросы",
+	"Not configured": "Не настроено",
+	Refresh: "Обновить",
+	"Not synced on your plan ({count})": "Вне вашего плана ({count})",
+	"Needs attention ({count})": "Требует внимания ({count})",
+	"Retrying automatically ({count})": "Автоматически повторяем ({count})",
+	Stats: "Статистика",
+	"Notes on this device": "Заметки на этом устройстве",
+	"Attachments on this device": "Вложения на этом устройстве",
+	"Remote vault": "Хранилище на сервере",
+	"not linked": "не привязано",
+	"Plan usage": "Использование плана",
+	"Safe choice: combines both sides, nothing is deleted.":
+		"Безопасный выбор: объединяет обе стороны, ничего не удаляет.",
+	"Already in sync. Nothing is deleted.": "Уже синхронизировано. Ничего не удаляется.",
+	Sync: "Синхронизировать",
+	"Upload local files without downloading the remote":
+		"Отправить локальные файлы, ничего не получая с сервера",
+	"Delete all on remote, then upload local files":
+		"Удалить всё на сервере, затем отправить локальные файлы",
+	"Download remote files without uploading the local":
+		"Получить файлы с сервера, не отправляя локальные",
+	"Delete all local files, then download from remote":
+		"Удалить все локальные файлы, затем получить с сервера",
+	"Set up sync for this vault": "Настроить синхронизацию этого хранилища",
+	"You are now pointing at a different cloud vault":
+		"Сейчас вы указываете на другое облачное хранилище",
+	"Sync preview": "Предпросмотр синхронизации",
+	"Start syncing": "Начать синхронизацию",
+	"Upload everything": "Отправить всё",
+	"Nothing will be removed from this device.": "С этого устройства ничего не будет удалено.",
+	"Download everything": "Получить всё",
+	"Not now": "Позже",
+	"This vault": "Это хранилище",
+	"Cloud server": "Хранилище на сервере",
+	"Vault name": "Название хранилища",
+	"Could not load vaults": "Не удалось загрузить хранилища",
+	"Enter a name for the new vault": "Введите название нового хранилища",
+	"Failed to switch vault": "Не удалось сменить хранилище",
+	"Finished with some errors. Open the sync log to see what failed.":
+		"Завершено, но были ошибки. Откройте журнал синхронизации, чтобы увидеть, что не удалось.",
+	"Synced. Some attachments need a paid plan to sync (see below).":
+		"Синхронизировано. Часть вложений требует платного плана (см. ниже).",
+	"All synced. Your vault and the cloud now match.":
+		"Всё синхронизировано. Хранилище и облако совпадают.",
+	"Already up to date. Nothing needed syncing.": "Уже актуально. Синхронизировать было нечего.",
+	Deleting: "Удаление",
+	Downloading: "Загрузка",
+	Uploading: "Отправка",
+	"Engram: Show sync log": "Engram: показать журнал синхронизации",
+	"Syncing attachments": "Синхронизация вложений",
+	Complete: "Готово",
+	"Getting set up": "Начало работы",
+	"setup guide": "руководство по настройке",
+	"Sign in (or enter your server URL and key) on the connection tab, then run your first sync.":
+		"Войдите на вкладке подключения (или укажите адрес сервера и ключ), затем выполните первую синхронизацию.",
+	"See the AI setup guide": "Открыть руководство по настройке ИИ",
+	Plans: "Планы",
+	Free: "Бесплатно",
+	"1 vault, 2 devices": "1 хранилище, 2 устройства",
+	"Real-time sync": "Синхронизация в реальном времени",
+	"2,000 notes searchable": "Поиск по 2 000 заметок",
+	"Connect any AI (MCP)": "Подключение любого ИИ (MCP)",
+	Starter: "Starter",
+	"10 vaults, unlimited devices": "10 хранилищ, устройства без ограничений",
+	"Search all your notes": "Поиск по всем заметкам",
+	"10 GB attachments": "10 ГБ вложений",
+	"Unlimited AI searches": "ИИ-поиск без ограничений",
+	Pro: "Pro",
+	"Unlimited vaults": "Хранилища без ограничений",
+	"Search across all vaults at once": "Поиск сразу по всем хранилищам",
+	"50 GB attachments": "50 ГБ вложений",
+	"API access": "Доступ к API",
+	"See full pricing": "Посмотреть все цены",
+	"Learn more": "Подробнее",
+	"Errors only": "Только ошибки",
+	"Warnings and errors": "Предупреждения и ошибки",
+	"Info (default)": "Информация (по умолчанию)",
+	"Debug (verbose)": "Отладка (подробно)",
+	"Or authenticate with a token instead of signing in.":
+		"Или пройдите проверку по токену вместо входа в учётную запись.",
+	"If this plugin saves you time, consider supporting development.":
+		"Если этот плагин экономит вам время, подумайте о поддержке разработки.",
+	"Sign-in required to load vaults": "Чтобы загрузить хранилища, нужно войти",
+	"Could not reach Engram — check connection": "Engram недоступен, проверьте соединение",
+	// UI strings (sync error surfaces)
+	"Free syncs notes only — images & PDFs need a paid plan.":
+		"Бесплатный план синхронизирует только заметки: для изображений и PDF нужен платный план.",
+	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
+		"«Получить всё (удалить лишнее)» прервано: не удалось получить исключительный снимок сервера (конфликт воспроизведения). Ничего не удалено.",
+	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
+		"«Получить всё» прервано: выполняется другая синхронизация (конфликт воспроизведения). Повторите, когда она закончится.",
+	"Pull all failed: {error}": "«Получить всё» не удалось: {error}",
+	"Pull all failed": "«Получить всё» не удалось",
 };
 
 export default ru;

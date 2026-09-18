@@ -69,10 +69,10 @@ export function renderAdvancedTab(ctx: TabContext): void {
 		.addDropdown((dropdown) =>
 			dropdown
 				.addOptions({
-					error: "Errors only",
-					warn: "Warnings and errors",
-					info: "Info (default)",
-					debug: "Debug (verbose)",
+					error: t("Errors only"),
+					warn: t("Warnings and errors"),
+					info: t("Info (default)"),
+					debug: t("Debug (verbose)"),
 				})
 				.setValue(plugin.settings.remoteLogLevel)
 				.onChange(async (value) => {

@@ -5449,7 +5449,7 @@ export class SyncEngine {
 		if (plan.attachmentsTextOnly && !isTextAttachment(file.extension)) {
 			return {
 				category: "needs_pro",
-				message: "Free syncs notes only — images & PDFs need a paid plan.",
+				message: t("Free syncs notes only — images & PDFs need a paid plan."),
 			};
 		}
 		return null;
@@ -7073,8 +7073,9 @@ export class SyncEngine {
 					onFileApplied,
 				});
 				if (!replay) {
-					this.lastError =
-						"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.";
+					this.lastError = t(
+						"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.",
+					);
 					devLog().log(
 						"error",
 						`${label} ABORTED — replay coalesced under contention; refusing to trash`,
@@ -7116,8 +7117,9 @@ export class SyncEngine {
 					await this.sleep(50);
 				}
 				if (!replay) {
-					this.lastError =
-						"Pull all aborted: another sync is running (replay contention). Try again when it finishes.";
+					this.lastError = t(
+						"Pull all aborted: another sync is running (replay contention). Try again when it finishes.",
+					);
 					rlog().warn("pull", `${label} ABORTED: replay never ran exclusively`);
 					return 0;
 				}
@@ -7210,7 +7212,9 @@ export class SyncEngine {
 				e instanceof Error ? e.stack : undefined,
 			);
 			this.lastError =
-				e instanceof Error ? `Pull all failed: ${e.message}` : "Pull all failed";
+				e instanceof Error
+					? t("Pull all failed: {error}", { error: e.message })
+					: t("Pull all failed");
 			return 0;
 		} finally {
 			this.pulling = false;
@@ -9527,7 +9531,7 @@ export class SyncEngine {
 		// Verify auth before syncing to give a clear error on bad API key
 		const { ok, error } = await this.api.ping();
 		if (!ok) {
-			this.lastError = error ?? "Connection failed";
+			this.lastError = error ?? t("Connection failed");
 			this.emitStatus();
 			devLog().log("error", `fullSync auth failed: ${this.lastError}`);
 			rlog().error("lifecycle", `Auth failed: ${this.lastError}`);
@@ -10096,7 +10100,7 @@ export class SyncEngine {
 		// Verify auth before pushing to give a clear error on bad API key
 		const { ok, error } = await this.api.ping();
 		if (!ok) {
-			this.lastError = error ?? "Connection failed";
+			this.lastError = error ?? t("Connection failed");
 			this.emitStatus();
 			throw new Error(this.lastError);
 		}

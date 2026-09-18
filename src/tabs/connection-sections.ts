@@ -297,7 +297,7 @@ export function renderAuthSection(ctx: TabContext): void {
 	const keyDesc =
 		plugin.settings.backendMode === "cloud"
 			? "Or authenticate with a token instead of signing in. Engram Cloud API keys require the Pro plan; on Free and Starter, sign in above."
-			: "Or authenticate with a token instead of signing in.";
+			: t("Or authenticate with a token instead of signing in.");
 
 	new Setting(containerEl).setName(t("API key")).setDesc(keyDesc).setHeading();
 
@@ -484,7 +484,7 @@ export function renderSupportSection(ctx: TabContext): void {
 	new Setting(containerEl).setName(t("Support development")).setHeading();
 
 	const supportSetting = new Setting(containerEl).setDesc(
-		"If this plugin saves you time, consider supporting development.",
+		t("If this plugin saves you time, consider supporting development."),
 	);
 	supportSetting.settingEl.addClass("engram-setting-support");
 
@@ -515,10 +515,10 @@ export function renderSupportSection(ctx: TabContext): void {
 export function describeListVaultsError(e: unknown): string {
 	const err = e as { status?: number; message?: string };
 	const status = err?.status;
-	if (status === 401 || status === 403) return "Sign-in required to load vaults";
+	if (status === 401 || status === 403) return t("Sign-in required to load vaults");
 	if (status && status >= 500) return `Server error (${status}) — check Engram logs`;
 	if (status && status >= 400) return `Request failed (${status})`;
-	return "Could not reach Engram — check connection";
+	return t("Could not reach Engram — check connection");
 }
 
 /** Subset of EngramSyncPlugin used by `applyVaultSwitch`. Defined here so the

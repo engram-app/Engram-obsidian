@@ -193,7 +193,7 @@ function renderActions(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: (
 	// No Upgrade button in this strip. It sits in the settings status bar
 	// instead, which persists across all four tabs — reaching it should not
 	// require already being on the panel that reports your limits.
-	makeActionButton(strip, "Refresh", () => refresh());
+	makeActionButton(strip, t("Refresh"), () => refresh());
 }
 
 function makeActionButton(
@@ -219,7 +219,7 @@ function renderPlanSkips(parent: HTMLElement, plugin: EngramSyncPlugin, refresh:
 	const section = parent.createDiv({
 		cls: "engram-sync-center-section engram-sync-center-plan-section",
 	});
-	sectionHeading(section, `Not synced on your plan (${total})`);
+	sectionHeading(section, t("Not synced on your plan ({count})", { count: total }));
 
 	const body = section.createDiv({ cls: "engram-sync-center-section-body" });
 	body.createEl("p", {
@@ -322,7 +322,7 @@ function renderNeedsAttention(
 	const section = parent.createDiv({
 		cls: "engram-sync-center-section engram-sync-center-attention-section",
 	});
-	const heading = sectionHeading(section, `Needs attention (${total})`);
+	const heading = sectionHeading(section, t("Needs attention ({count})", { count: total }));
 	if (total > 0) {
 		heading.addButton((btn) =>
 			btn.setButtonText(t("Clear all")).onClick(() => {
@@ -385,7 +385,10 @@ function renderRetrying(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: 
 	if (total === 0) return; // No section when nothing is retrying.
 
 	const section = parent.createDiv({ cls: "engram-sync-center-section" });
-	const heading = sectionHeading(section, `Retrying automatically (${total})`);
+	const heading = sectionHeading(
+		section,
+		t("Retrying automatically ({count})", { count: total }),
+	);
 	heading.addButton((btn) =>
 		btn
 			.setButtonText(t("Retry all now"))
@@ -580,7 +583,7 @@ function renderActivityRow(parent: HTMLElement, entry: SyncLogEntry): void {
 
 function renderStats(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 	const section = parent.createDiv({ cls: "engram-sync-center-section" });
-	sectionHeading(section, "Stats");
+	sectionHeading(section, t("Stats"));
 
 	const body = section.createDiv({ cls: "engram-sync-center-section-body" });
 
@@ -625,15 +628,19 @@ function renderStats(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 	// a user acts on, and it is still available where you would actually want
 	// to copy it: as the tooltip on the vault name in the Connection tab
 	// (`connection-sections.ts` renderVaultName).
-	const localNotes = addStat(grid, "Notes on this device", String(noteCount));
-	const localAtts = addStat(grid, "Attachments on this device", String(attCount));
+	const localNotes = addStat(grid, t("Notes on this device"), String(noteCount));
+	const localAtts = addStat(grid, t("Attachments on this device"), String(attCount));
 	// Paint the cached name, then let the server correct it. The cache has no
 	// invalidation of its own and the auth paths change vaults without ever
 	// setting it, so reading it alone showed the PREVIOUS vault's name after a
 	// re-point, indefinitely.
-	const vaultEl = addStat(grid, "Remote vault", plugin.settings.remoteVaultName || "not linked");
+	const vaultEl = addStat(
+		grid,
+		t("Remote vault"),
+		plugin.settings.remoteVaultName || t("not linked"),
+	);
 	void plugin.resolveRemoteVaultName().then((name) => {
-		vaultEl.value.setText(name || "not linked");
+		vaultEl.value.setText(name || t("not linked"));
 	});
 
 	renderPlanStats(body, grid, plugin, {
@@ -690,7 +697,7 @@ function renderPlanStats(
 			// Unconditional: its number now lives in the merged Attachments row.
 			// Only reached when that row exists, since a failed fetch skips this
 			// whole block and leaves the local rows standing.
-			if (rows.some((r) => r.label === "Attachments")) local.localAttachmentsRow.remove();
+			if (rows.some((r) => r.label === t("Attachments"))) local.localAttachmentsRow.remove();
 
 			// The hint only earns its line when the limit actually bites. Showing
 			// it at 300/2,000 is noise; showing it at 2,000/2,000 is the one
@@ -702,7 +709,7 @@ function renderPlanStats(
 		})
 		.catch(() => {
 			// An advisory read failing must never look like a sync fault.
-			addStat(grid, "Plan usage", "unavailable", local.localNotesRow);
+			addStat(grid, t("Plan usage"), "unavailable", local.localNotesRow);
 		});
 }
 

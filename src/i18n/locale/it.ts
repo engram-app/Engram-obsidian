@@ -324,6 +324,171 @@ const it: Dict = {
 	"Engram: this plugin is too old to sync. Update it to continue.":
 		"Engram: questo plugin è troppo vecchio per sincronizzare. Aggiornalo per continuare.",
 	Update: "Aggiorna",
+	// UI strings (second pass)
+	"Invalid API key": "Chiave API non valida",
+	"Connection failed": "Connessione non riuscita",
+	"Sync now": "Sincronizza adesso",
+	"Disconnect (clear login)": "Disconnetti (cancella l'accesso)",
+	"Push entire vault": "Invia tutto l'archivio",
+	"Check sync status": "Controlla lo stato della sincronizzazione",
+	"Engram sync: server does not support reconciliation (update backend)":
+		"Engram Sync: il server non sa riconciliare i dati (aggiorna il backend)",
+	"Pull all from server (force overwrite)": "Scarica tutto dal server (sovrascrive in locale)",
+	"Show sync log": "Mostra il registro di sincronizzazione",
+	"Semantic search": "Ricerca semantica",
+	"Open search sidebar": "Apri il pannello di ricerca",
+	"Engram search": "Ricerca Engram",
+	"Open sync center": "Apri il Sync Center",
+	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
+		"Engram: questo archivio non esiste più sul server. Scegli o crea un archivio per continuare.",
+	"Engram: recovered plugin settings from a backup after a corrupted save.":
+		"Engram: le impostazioni erano danneggiate e sono state ripristinate da una copia.",
+	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
+		"Engram Sync: la sincronizzazione dal vivo richiede un aggiornamento del plugin. Aggiorna Engram vault sync.",
+	"Engram: sync is paused — this edit was not synced. Choose a sync direction to resume.":
+		"Engram: la sincronizzazione è in pausa e questa modifica non è stata inviata. Scegli un verso per riprendere.",
+	"Engram: not connected": "Engram: non connesso",
+	"Engram: signed out": "Engram: disconnesso",
+	"Not connected yet. Click to open settings and link this vault.":
+		"Non ancora connesso. Fai clic per aprire le impostazioni e collegare questo archivio.",
+	"Not signed in. Click to open settings and reconnect.":
+		"Accesso non effettuato. Fai clic per aprire le impostazioni e ricollegarti.",
+	"Engram: finish setup": "Engram: concludi la configurazione",
+	"Engram: sync paused": "Engram: sincronizzazione in pausa",
+	"{label} ({count} queued)": "{label} ({count} in coda)",
+	"Setup is not finished — nothing will sync until you choose a sync direction. Click to finish.":
+		"La configurazione non è finita. Finché non scegli un verso non si sincronizza nulla. Fai clic per concluderla.",
+	"Sync paused — click to choose a sync direction":
+		"Sincronizzazione in pausa: fai clic per scegliere un verso",
+	"Engram: offline ({count} queued)": "Engram: offline ({count} in coda)",
+	"Engram: offline": "Engram: offline",
+	"Server unreachable — changes will sync when connected":
+		"Server non raggiungibile: le modifiche partiranno quando torna la connessione",
+	"Engram: error": "Engram: errore",
+	"Unknown error": "Errore sconosciuto",
+	"Engram: syncing ({count})": "Engram: sincronizzazione ({count})",
+	"Engram: syncing": "Engram: sincronizzazione",
+	"Sync in progress...": "Sincronizzazione in corso…",
+	"Engram: pending ({count})": "Engram: in attesa ({count})",
+	"{count} files queued": "{count} file in coda",
+	"Engram: live": "Engram: dal vivo",
+	"WebSocket connected — live sync active":
+		"WebSocket connesso: la sincronizzazione dal vivo è attiva",
+	"Click to sync": "Fai clic per sincronizzare",
+	Attachments: "Allegati",
+	Keyword: "Parola chiave",
+	Semantic: "Semantica",
+	Both: "Entrambe",
+	"matches your words and their other forms — 'run' finds 'running' — plus this device.":
+		"Trova le tue parole e le loro forme: «correre» trova anche «corre», più questo dispositivo.",
+	"matches meaning. Finds notes that never use the words you typed.":
+		"Trova per significato, comprese note in cui le tue parole non compaiono mai.",
+	"matches words and meaning together, plus this device. Widest results.":
+		"Trova parole e significato insieme, più questo dispositivo. La ricerca più ampia.",
+	"Clear search": "Cancella la ricerca",
+	"Search settings": "Impostazioni di ricerca",
+	Untitled: "Senza titolo",
+	"meaning + exact": "significato + esatto",
+	Disconnected: "Disconnesso",
+	"Connected — waiting for first sync decision":
+		"Connesso: in attesa della prima scelta di sincronizzazione",
+	"Connected — live sync active": "Connesso: sincronizzazione dal vivo attiva",
+	"Connected — polling": "Connesso: interrogazione periodica",
+	"Not configured": "Non configurato",
+	Refresh: "Ricarica",
+	"Not synced on your plan ({count})": "Fuori dal tuo piano ({count})",
+	"Needs attention ({count})": "Richiede la tua attenzione ({count})",
+	"Retrying automatically ({count})": "Nuovo tentativo automatico ({count})",
+	Stats: "Numeri",
+	"Notes on this device": "Note su questo dispositivo",
+	"Attachments on this device": "Allegati su questo dispositivo",
+	"Remote vault": "Archivio sul server",
+	"not linked": "non collegato",
+	"Plan usage": "Utilizzo del piano",
+	"Safe choice: combines both sides, nothing is deleted.":
+		"Scelta sicura: unisce i due lati e non elimina nulla.",
+	"Already in sync. Nothing is deleted.": "Già sincronizzato. Non viene eliminato nulla.",
+	Sync: "Sincronizza",
+	"Upload local files without downloading the remote":
+		"Invia i file locali senza scaricare dal server",
+	"Delete all on remote, then upload local files":
+		"Elimina tutto sul server, poi invia i file locali",
+	"Download remote files without uploading the local":
+		"Scarica i file dal server senza inviare quelli locali",
+	"Delete all local files, then download from remote":
+		"Elimina tutti i file locali, poi scarica dal server",
+	"Set up sync for this vault": "Configura la sincronizzazione di questo archivio",
+	"You are now pointing at a different cloud vault":
+		"Adesso stai puntando a un altro archivio nel cloud",
+	"Sync preview": "Anteprima della sincronizzazione",
+	"Start syncing": "Inizia a sincronizzare",
+	"Upload everything": "Invia tutto",
+	"Nothing will be removed from this device.": "Non verrà rimosso nulla da questo dispositivo.",
+	"Download everything": "Scarica tutto",
+	"Not now": "Più tardi",
+	"This vault": "Questo archivio",
+	"Cloud server": "Archivio sul server",
+	"Vault name": "Nome dell'archivio",
+	"Could not load vaults": "Non è stato possibile caricare gli archivi",
+	"Enter a name for the new vault": "Dai un nome al nuovo archivio",
+	"Failed to switch vault": "Cambio di archivio non riuscito",
+	"Finished with some errors. Open the sync log to see what failed.":
+		"Terminato con alcuni errori. Nel registro di sincronizzazione trovi cosa non è andato.",
+	"Synced. Some attachments need a paid plan to sync (see below).":
+		"Sincronizzato. Alcuni allegati richiedono un piano a pagamento (vedi sotto).",
+	"All synced. Your vault and the cloud now match.":
+		"Tutto sincronizzato. Il tuo archivio e il cloud corrispondono.",
+	"Already up to date. Nothing needed syncing.":
+		"Già aggiornato. Non c'era nulla da sincronizzare.",
+	Deleting: "Eliminazione",
+	Downloading: "Download",
+	Uploading: "Invio",
+	"Engram: Show sync log": "Engram: mostra il registro di sincronizzazione",
+	"Syncing attachments": "Sincronizzazione degli allegati",
+	Complete: "Completato",
+	"Getting set up": "Per iniziare",
+	"setup guide": "guida all'installazione",
+	"Sign in (or enter your server URL and key) on the connection tab, then run your first sync.":
+		"Accedi nella scheda di connessione (o inserisci l'indirizzo del tuo server e la chiave), poi avvia la prima sincronizzazione.",
+	"See the AI setup guide": "Vedi la guida alla configurazione dell'IA",
+	Plans: "Piani",
+	Free: "Gratuito",
+	"1 vault, 2 devices": "1 archivio, 2 dispositivi",
+	"Real-time sync": "Sincronizzazione in tempo reale",
+	"2,000 notes searchable": "2.000 note ricercabili",
+	"Connect any AI (MCP)": "Collega qualsiasi IA (MCP)",
+	Starter: "Starter",
+	"10 vaults, unlimited devices": "10 archivi, dispositivi illimitati",
+	"Search all your notes": "Cerca in tutte le tue note",
+	"10 GB attachments": "10 GB di allegati",
+	"Unlimited AI searches": "Ricerche IA illimitate",
+	Pro: "Pro",
+	"Unlimited vaults": "Archivi illimitati",
+	"Search across all vaults at once": "Cerca in tutti gli archivi insieme",
+	"50 GB attachments": "50 GB di allegati",
+	"API access": "Accesso alle API",
+	"See full pricing": "Vedi tutti i prezzi",
+	"Learn more": "Scopri di più",
+	"Errors only": "Solo errori",
+	"Warnings and errors": "Avvisi ed errori",
+	"Info (default)": "Informazioni (predefinito)",
+	"Debug (verbose)": "Debug (dettagliato)",
+	"Or authenticate with a token instead of signing in.":
+		"Oppure autenticati con un token invece di accedere.",
+	"If this plugin saves you time, consider supporting development.":
+		"Se questo plugin ti fa risparmiare tempo, considera di sostenere lo sviluppo.",
+	"Sign-in required to load vaults": "Per caricare gli archivi serve l'accesso",
+	"Could not reach Engram — check connection":
+		"Engram non raggiungibile: controlla la connessione",
+	// UI strings (sync error surfaces)
+	"Free syncs notes only — images & PDFs need a paid plan.":
+		"Il piano gratuito sincronizza solo le note: immagini e PDF richiedono un piano a pagamento.",
+	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
+		"«Scarica tutto (elimina gli extra)» interrotto: non è stato possibile ottenere uno snapshot esclusivo del server (conflitto di replay). Non è stato spostato nulla nel cestino.",
+	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
+		"«Scarica tutto» interrotto: è in corso un'altra sincronizzazione (conflitto di replay). Riprova quando finisce.",
+	"Pull all failed: {error}": "«Scarica tutto» non riuscito: {error}",
+	"Pull all failed": "«Scarica tutto» non riuscito",
 };
 
 export default it;

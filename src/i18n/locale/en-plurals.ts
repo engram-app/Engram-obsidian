@@ -35,6 +35,9 @@ const enPlurals: Dict = {
 	"{count} attachments need a paid plan to sync. See Sync Center.": {
 		one: "{count} attachment needs a paid plan to sync. See Sync Center.",
 	},
+	"{count} files queued": {
+		one: "{count} file queued",
+	},
 };
 
 export default enPlurals;
