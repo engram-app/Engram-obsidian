@@ -93,6 +93,39 @@ function fill(template: string, vars?: Vars): string {
  * `key` is the English sentence, with `{name}` where a value goes. Pass a
  * numeric `count` for any string whose wording depends on quantity.
  */
+/**
+ * Render a translated sentence into `el`, building one styled child where the
+ * `{slot}` placeholder sits.
+ *
+ * Without this, a sentence wrapped around a styled span has to be split into
+ * literal fragments ("Your vault shares " + span + " of its data"), and a
+ * fragment cannot be translated: the translator can neither see the whole
+ * sentence nor move the slot, which most languages need to do.
+ *
+ * A translation that drops the placeholder still renders, as plain text.
+ */
+export function tInto(
+	el: HTMLElement,
+	key: string,
+	slot: string,
+	build: (parent: HTMLElement) => void,
+	opts: { textCls?: string; vars?: Vars } = {},
+): void {
+	const { textCls, vars } = opts;
+	const token = `{${slot}}`;
+	const template = t(key, vars);
+	const at = template.indexOf(token);
+	if (at < 0) {
+		el.createSpan({ text: template, cls: textCls });
+		return;
+	}
+	const head = template.slice(0, at);
+	if (head) el.createSpan({ text: head, cls: textCls });
+	build(el);
+	const tail = template.slice(at + token.length);
+	if (tail) el.createSpan({ text: tail, cls: textCls });
+}
+
 export function t(key: string, vars?: Vars): string {
 	const code = currentLocale();
 	const entry = dictFor(code)?.[key] ?? enPlurals[key];

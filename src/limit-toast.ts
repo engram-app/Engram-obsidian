@@ -10,6 +10,7 @@
  * rather than scattering `status === 402` checks throughout main.ts.
  */
 import { Notice } from "obsidian";
+import { t } from "./i18n";
 import { toastFor } from "./limit-copy";
 import type { LimitExceededError } from "./limit-error";
 
@@ -27,7 +28,7 @@ export function notifyLimitExceeded(err: LimitExceededError): void {
 		const noticeEl = (notice as unknown as { noticeEl?: HTMLElement }).noticeEl;
 		if (!noticeEl) return;
 		const btn = noticeEl.createEl("button", {
-			text: "Upgrade",
+			text: t("Upgrade"),
 			cls: "engram-limit-upgrade-btn",
 		});
 		btn.addEventListener("click", () => {

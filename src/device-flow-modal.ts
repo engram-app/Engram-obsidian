@@ -73,7 +73,7 @@ export class DeviceFlowModal extends Modal {
 		// one task, so the window must not change shape between steps.
 		contentEl.addClass("engram-flow-modal");
 		contentEl.empty();
-		contentEl.createEl("h2", { text: "Link Obsidian to Engram" });
+		contentEl.createEl("h2", { text: t("Link Obsidian to Engram") });
 		const statusEl = contentEl.createEl("p", { text: "Starting..." });
 
 		void this.beginDeviceFlow(contentEl, statusEl);
@@ -92,7 +92,9 @@ export class DeviceFlowModal extends Modal {
 			// Last, deliberately — see openVerificationPage.
 			this.openVerificationPage(resp);
 		} catch {
-			statusEl.setText("Failed to start device flow. Check your Engram URL and try again.");
+			statusEl.setText(
+				t("Failed to start device flow. Check your Engram URL and try again."),
+			);
 		}
 	}
 
@@ -181,8 +183,8 @@ export class DeviceFlowModal extends Modal {
 		resp: { user_code: string; verification_url: string },
 	): void {
 		contentEl.empty();
-		contentEl.createEl("h2", { text: "Link Obsidian to Engram" });
-		contentEl.createEl("p", { text: "Your code:" });
+		contentEl.createEl("h2", { text: t("Link Obsidian to Engram") });
+		contentEl.createEl("p", { text: t("Your code:") });
 
 		const codeEl = contentEl.createEl("code", {
 			text: resp.user_code,
@@ -195,7 +197,7 @@ export class DeviceFlowModal extends Modal {
 		});
 
 		contentEl.createEl("p", {
-			text: "A browser window has opened. Sign in and enter this code to link your vault.",
+			text: t("A browser window has opened. Sign in and enter this code to link your vault."),
 		});
 
 		// Text is set by setWaitingStatus once the socket reports in. Starts
@@ -204,7 +206,7 @@ export class DeviceFlowModal extends Modal {
 		this.setWaitingStatus(false);
 
 		const btnContainer = contentEl.createDiv({ cls: "engram-device-buttons" });
-		const cancelBtn = btnContainer.createEl("button", { text: "Cancel" });
+		const cancelBtn = btnContainer.createEl("button", { text: t("Cancel") });
 		cancelBtn.addEventListener("click", () => this.close());
 	}
 
@@ -455,12 +457,12 @@ export class DeviceFlowModal extends Modal {
 		this.resetFlow();
 		const contentEl = this.contentEl;
 		contentEl.empty();
-		contentEl.createEl("h2", { text: "Link Obsidian to Engram" });
-		contentEl.createEl("p", { text: "Code expired. Please try again." });
+		contentEl.createEl("h2", { text: t("Link Obsidian to Engram") });
+		contentEl.createEl("p", { text: t("Code expired. Please try again.") });
 
 		const btnContainer = contentEl.createDiv({ cls: "engram-device-buttons" });
 
-		const retryBtn = btnContainer.createEl("button", { text: "Try again", cls: "mod-cta" });
+		const retryBtn = btnContainer.createEl("button", { text: t("Try again"), cls: "mod-cta" });
 		retryBtn.addEventListener("click", () => {
 			// Kill the expired attempt's socket and interval BEFORE onOpen()
 			// starts a fresh set — see resetFlow.
@@ -469,7 +471,7 @@ export class DeviceFlowModal extends Modal {
 			this.onOpen();
 		});
 
-		const closeBtn = btnContainer.createEl("button", { text: "Close" });
+		const closeBtn = btnContainer.createEl("button", { text: t("Close") });
 		closeBtn.addEventListener("click", () => this.close());
 	}
 }

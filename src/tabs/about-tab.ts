@@ -1,4 +1,5 @@
 import { Setting } from "obsidian";
+import { t } from "../i18n";
 import type { TabContext } from "./types";
 import {
 	ENGRAM_DISCORD_URL,
@@ -32,11 +33,11 @@ export function renderAboutTab(ctx: TabContext): void {
 	// as an accent button rather than an inline link — a text link in the
 	// description reads as one more sentence and gets skipped.
 	const video = new Setting(containerEl)
-		.setName("New here? Watch the setup video")
-		.setDesc("What Engram does, and how to connect your vault, start to finish.")
+		.setName(t("New here? Watch the setup video"))
+		.setDesc(t("What Engram does, and how to connect your vault, start to finish."))
 		.addButton((btn) =>
 			btn
-				.setButtonText("▶ Watch on YouTube")
+				.setButtonText(t("▶ Watch on YouTube"))
 				.setCta()
 				// Obsidian's Electron host treats window.open as an external
 				// browser open (same pattern as src/limit-toast.ts).
@@ -47,7 +48,7 @@ export function renderAboutTab(ctx: TabContext): void {
 	// ── Getting set up ──
 	heading(containerEl, "Getting set up");
 
-	const account = new Setting(containerEl).setName("1. Make an account");
+	const account = new Setting(containerEl).setName(t("1. Make an account"));
 	account.descEl.appendText("Create a hosted account at ");
 	externalLink(account.descEl, "app.engram.page", ENGRAM_SIGN_UP_URL);
 	account.descEl.appendText(", or self-host the backend (");
@@ -55,18 +56,18 @@ export function renderAboutTab(ctx: TabContext): void {
 	account.descEl.appendText(").");
 
 	new Setting(containerEl)
-		.setName("2. Connect your vault to Engram")
+		.setName(t("2. Connect your vault to Engram"))
 		.setDesc(
 			"Sign in (or enter your server URL and key) on the connection tab, then run your first sync.",
 		)
 		.addButton((btn) =>
 			btn
-				.setButtonText("Open connection tab")
+				.setButtonText(t("Open connection tab"))
 				.setCta()
 				.onClick(() => switchToTab("connection")),
 		);
 
-	const ai = new Setting(containerEl).setName("3. Connect your AI");
+	const ai = new Setting(containerEl).setName(t("3. Connect your AI"));
 	ai.descEl.appendText(
 		"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ",
 	);

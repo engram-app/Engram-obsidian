@@ -8963,7 +8963,13 @@ export class SyncEngine {
 								return false;
 							}
 							new Notice(
-								`Engram: sync conflict on ${normalized} — your local edit was saved as ${copy}`,
+								t(
+									"Engram: sync conflict on {path} — your local edit was saved as {copy}",
+									{
+										path: normalized,
+										copy,
+									},
+								),
 							);
 							if (noteId) {
 								this.stageAndConverge(
@@ -9657,11 +9663,13 @@ export class SyncEngine {
 				DEGRADED_NOTICE_DURATION_MS,
 			);
 			const noticeEl = (notice as unknown as { noticeEl?: HTMLElement }).noticeEl;
-			const link = noticeEl?.createEl("a", { text: "Open note" });
+			const link = noticeEl?.createEl("a", { text: t("Open note") });
 			link?.addEventListener("click", () => void this.app.workspace.openLinkText(path, ""));
 		} else {
 			new Notice(
-				`Engram: ${paths.length} notes have frontmatter problems. Open Sync Center to fix.`,
+				t("Engram: {count} notes have frontmatter problems. Open Sync Center to fix.", {
+					count: paths.length,
+				}),
 				DEGRADED_NOTICE_DURATION_MS,
 			);
 		}

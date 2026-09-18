@@ -351,7 +351,7 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 		if (dotState === "is-waiting") {
 			const openBtn = statusEl.createEl("button", {
 				cls: "engram-status-open-sync-btn mod-cta",
-				text: "Open sync setup",
+				text: t("Open sync setup"),
 			});
 			openBtn.addEventListener("click", () => {
 				void this.plugin.doSyncWithFirstSyncCheck();
@@ -373,7 +373,7 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 		if (this.plugin.syncEngine?.getPlanState()?.tier === "free") {
 			const upgrade = statusEl.createEl("button", {
 				cls: "engram-status-upgrade-btn mod-cta",
-				text: "Upgrade",
+				text: t("Upgrade"),
 			});
 			upgrade.addEventListener("click", () => window.open(DEFAULT_UPGRADE_URL, "_blank"));
 		}
@@ -381,7 +381,7 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 		if (status.lastSync) {
 			const date = new Date(status.lastSync);
 			const timeEl = statusEl.createDiv({ cls: "engram-status-time" });
-			timeEl.setText(`Last sync: ${date.toLocaleString()}`);
+			timeEl.setText(t("Last sync: {when}", { when: date.toLocaleString() }));
 		}
 	}
 

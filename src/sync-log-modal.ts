@@ -1,4 +1,5 @@
 import { type App, Modal } from "obsidian";
+import { t } from "./i18n";
 import type { SyncLog } from "./sync-log";
 import type { SyncLogEntry } from "./types";
 
@@ -26,7 +27,7 @@ export class SyncLogModal extends Modal {
 		contentEl.empty();
 		contentEl.addClass("engram-sync-log-modal");
 
-		contentEl.createEl("h2", { text: "Sync log" });
+		contentEl.createEl("h2", { text: t("Sync log") });
 
 		const entries = this.syncLog.entries();
 		const errorCount = this.syncLog.errorCount();

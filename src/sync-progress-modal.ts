@@ -1,4 +1,5 @@
 import { type App, Modal } from "obsidian";
+import { t } from "./i18n";
 import { optionBreakdown, pluralWord } from "./sync-plan-format";
 import { DEFAULT_UPGRADE_URL } from "./tabs/urls";
 import type { SyncChoice, SyncPlan, SyncProgress } from "./types";
@@ -63,19 +64,19 @@ export function renderCompletionSummary(
 	if (summary.synced > 0) {
 		line.createSpan({
 			cls: "engram-progress-tally-synced",
-			text: `✓ ${summary.synced} synced`,
+			text: t("✓ {count} synced", { count: summary.synced }),
 		});
 	}
 	if (summary.skipped > 0) {
 		line.createSpan({
 			cls: "engram-progress-tally-skipped",
-			text: `⤳ ${summary.skipped} skipped (Free plan)`,
+			text: t("⤳ {count} skipped (Free plan)", { count: summary.skipped }),
 		});
 	}
 	if (summary.failed > 0) {
 		line.createSpan({
 			cls: "engram-progress-tally-failed",
-			text: `✕ ${summary.failed} failed`,
+			text: t("✕ {count} failed", { count: summary.failed }),
 		});
 	}
 
@@ -86,7 +87,7 @@ export function renderCompletionSummary(
 			text: `${summary.skipped} ${noun} need a paid plan to sync. See Sync Center. `,
 		});
 		const upgrade = note.createEl("button", {
-			text: "Upgrade",
+			text: t("Upgrade"),
 			cls: "engram-progress-upgrade mod-cta",
 		});
 		// Prefer the backend's own web app (threaded in as webUrl) so a
@@ -268,14 +269,14 @@ export class SyncProgressModal extends Modal {
 		contentEl.addClass("engram-sync-progress-modal");
 		contentEl.addClass("engram-flow-modal");
 
-		contentEl.createEl("h2", { text: "Syncing your vault" });
+		contentEl.createEl("h2", { text: t("Syncing your vault") });
 
 		if (this.opts.intro) {
 			contentEl.createEl("p", { text: this.opts.intro, cls: "engram-progress-intro" });
 		}
 
 		this.statusEl = contentEl.createEl("p", {
-			text: "Getting started…",
+			text: t("Getting started…"),
 			cls: "engram-progress-status",
 		});
 
@@ -311,10 +312,10 @@ export class SyncProgressModal extends Modal {
 		if (this.opts.webUrl) {
 			const url = this.opts.webUrl;
 			this.verifyEl.createSpan({
-				text: "Open Engram to check your vault and confirm everything synced. ",
+				text: t("Open Engram to check your vault and confirm everything synced. "),
 			});
 			const link = this.verifyEl.createEl("a", {
-				text: "Open Engram",
+				text: t("Open Engram"),
 				cls: "engram-progress-verify-link",
 				href: url,
 			});
@@ -329,7 +330,7 @@ export class SyncProgressModal extends Modal {
 		}
 
 		this.hintEl = contentEl.createEl("p", {
-			text: "You can close this and the sync keeps running in the background.",
+			text: t("You can close this and the sync keeps running in the background."),
 			cls: "engram-progress-hint",
 		});
 
@@ -338,7 +339,7 @@ export class SyncProgressModal extends Modal {
 		// and Obsidian's theme styles button display, which defeats the [hidden]
 		// attribute the old show-one-hide-other swap relied on (both rendered).
 		const buttons = contentEl.createDiv({ cls: "engram-progress-buttons" });
-		this.actionBtn = buttons.createEl("button", { text: "Run in background" });
+		this.actionBtn = buttons.createEl("button", { text: t("Run in background") });
 		this.actionBtn.addEventListener("click", () => this.close());
 
 		this.renderRows();
@@ -412,7 +413,7 @@ export class SyncProgressModal extends Modal {
 			if (other !== row && other.seen) other.done = true;
 		}
 
-		this.statusEl.setText("Syncing…");
+		this.statusEl.setText(t("Syncing…"));
 		this.pathEl.setText(progress.currentPath ?? "");
 		this.renderRows();
 	}
@@ -435,7 +436,7 @@ export class SyncProgressModal extends Modal {
 			failed: progress.failed,
 		};
 
-		this.statusEl.setText("Sync complete");
+		this.statusEl.setText(t("Sync complete"));
 		this.pathEl.setText("");
 		this.recapEl.setText(describeCompletion(summary));
 		this.recapEl.hidden = false;
@@ -457,7 +458,7 @@ export class SyncProgressModal extends Modal {
 		this.verifyEl.hidden = !this.opts.webUrl;
 
 		this.hintEl.hidden = true;
-		this.actionBtn.setText("Done");
+		this.actionBtn.setText(t("Done"));
 		this.actionBtn.addClass("mod-cta");
 	}
 

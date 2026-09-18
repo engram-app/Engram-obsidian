@@ -440,7 +440,7 @@ export default class EngramSyncPlugin extends Plugin {
 		// no-unsafe-* errors. The bare global is declared in obsidian.d.ts.
 		const frag = createFragment();
 		frag.append(`Engram Vault Sync ${latest} is available. `);
-		const link = frag.createEl("a", { text: "Update in settings", href: "#" });
+		const link = frag.createEl("a", { text: t("Update in settings"), href: "#" });
 		frag.append(".");
 		const notice = new Notice(frag, 15000);
 		link.addEventListener("click", (e) => {
@@ -1010,7 +1010,7 @@ export default class EngramSyncPlugin extends Plugin {
 
 		// Status bar (click to sync)
 		this.statusBarEl = this.addStatusBarItem();
-		this.statusBarEl.setText("Engram: ready");
+		this.statusBarEl.setText(t("Engram: ready"));
 		this.statusBarEl.addClass("engram-status-bar-clickable");
 
 		this.registerDomEvent(this.statusBarEl, "click", () => {
@@ -3095,7 +3095,7 @@ export default class EngramSyncPlugin extends Plugin {
 		);
 		const noticeEl = (notice as unknown as { noticeEl?: HTMLElement }).noticeEl;
 		if (!noticeEl) return;
-		const btn = noticeEl.createEl("button", { text: "Resume sync" });
+		const btn = noticeEl.createEl("button", { text: t("Resume sync") });
 		btn.addEventListener("click", () => {
 			notice.hide();
 			void this.doSyncWithFirstSyncCheck();

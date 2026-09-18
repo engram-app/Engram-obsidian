@@ -6,10 +6,11 @@
  * The reference plugins in this ecosystem have exactly this defect in the wild
  * (an entry whose key and English value disagree), and nothing catches it there.
  */
+
+import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Glob } from "bun";
-import { describe, expect, test } from "bun:test";
 import type { Dict } from "../src/i18n";
 import de from "../src/i18n/locale/de";
 import enPlurals from "../src/i18n/locale/en-plurals";
