@@ -135,9 +135,12 @@ function renderIgnoreWarnings(
 	for (const item of detected) {
 		const warning = new Setting(containerEl)
 			.setName(
-				t("⚠ Detected: {label}/ ({count} files)", {
+				t("⚠ Detected: {label}/ ({formatted} files)", {
 					label: item.label,
-					count: item.count.toLocaleString(),
+					// `count` selects the plural category and must stay numeric;
+					// `formatted` is what the sentence prints.
+					count: item.count,
+					formatted: item.count.toLocaleString(),
 				}),
 			)
 			.setDesc(t("{desc} — should not be synced", { desc: item.desc }))

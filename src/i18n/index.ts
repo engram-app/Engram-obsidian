@@ -88,12 +88,6 @@ function fill(template: string, vars?: Vars): string {
 }
 
 /**
- * Translate `key` into the app's language.
- *
- * `key` is the English sentence, with `{name}` where a value goes. Pass a
- * numeric `count` for any string whose wording depends on quantity.
- */
-/**
  * Render a translated sentence into `el`, building one styled child where the
  * `{slot}` placeholder sits.
  *
@@ -102,7 +96,8 @@ function fill(template: string, vars?: Vars): string {
  * fragment cannot be translated: the translator can neither see the whole
  * sentence nor move the slot, which most languages need to do.
  *
- * A translation that drops the placeholder still renders, as plain text.
+ * A translation that drops the placeholder still renders: the sentence as plain
+ * text, with the built child appended so its value is never lost.
  */
 export function tInto(
 	el: HTMLElement,
@@ -131,6 +126,12 @@ export function tInto(
 	if (tail) el.createSpan({ text: tail, cls: textCls });
 }
 
+/**
+ * Translate `key` into the app's language.
+ *
+ * `key` is the English sentence, with `{name}` where a value goes. Pass a
+ * numeric `count` for any string whose wording depends on quantity.
+ */
 export function t(key: string, vars?: Vars): string {
 	const code = currentLocale();
 	const entry = dictFor(code)?.[key] ?? enPlurals[key];

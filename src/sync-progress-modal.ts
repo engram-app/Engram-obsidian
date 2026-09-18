@@ -320,8 +320,10 @@ export class SyncProgressModal extends Modal {
 		if (this.opts.webUrl) {
 			const url = this.opts.webUrl;
 			this.verifyEl.createSpan({
-				text: t("Open Engram to check your vault and confirm everything synced. "),
+				text: t("Open Engram to check your vault and confirm everything synced."),
 			});
+			// Gap before the link is markup, not the tail of a translated key.
+			this.verifyEl.createSpan({ text: " " });
 			const link = this.verifyEl.createEl("a", {
 				text: t("Open Engram"),
 				cls: "engram-progress-verify-link",
