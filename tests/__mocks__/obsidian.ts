@@ -309,6 +309,17 @@ export class ToggleComponent {
 	}
 }
 
+let __language = "en";
+
+/** Test hook: set what `getLanguage()` reports. */
+export function __setLanguage(code: string): void {
+	__language = code;
+}
+
+export function getLanguage(): string {
+	return __language;
+}
+
 export function normalizePath(path: string): string {
 	return path.replace(/\\/g, "/").replace(/\/+/g, "/");
 }

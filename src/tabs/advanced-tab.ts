@@ -1,4 +1,5 @@
 import { Notice, Setting, TFolder } from "obsidian";
+import { t } from "../i18n";
 import type { EngramSyncSettings } from "../types";
 import type { TabContext } from "./types";
 
@@ -143,7 +144,9 @@ function renderIgnoreWarnings(
 							? `${current}\n${item.pattern}`
 							: item.pattern;
 						await plugin.saveSettings();
-						new Notice(`Added ${item.pattern} to ignore patterns`);
+						new Notice(
+							t("Added {pattern} to ignore patterns", { pattern: item.pattern }),
+						);
 						redisplay();
 					}),
 			);

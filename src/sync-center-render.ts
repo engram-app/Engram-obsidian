@@ -5,6 +5,7 @@
  *  clicked from.
  */
 import { Notice, normalizePath, Setting } from "obsidian";
+import { t } from "./i18n";
 import { type IssueDisposition, issueDisposition, remediation } from "./issue-store";
 import type EngramSyncPlugin from "./main";
 import type { QueuedReason } from "./offline-queue";
@@ -481,7 +482,7 @@ function renderIgnoredRow(
 function openFile(plugin: EngramSyncPlugin, path: string): void {
 	const file = plugin.app.vault.getFileByPath(normalizePath(path));
 	if (!file) {
-		new Notice(`File not found locally: ${path}`);
+		new Notice(t("File not found locally: {path}", { path }));
 		return;
 	}
 	void plugin.app.workspace.openLinkText(path, "");
@@ -495,7 +496,7 @@ async function ignoreFilePermanently(
 	plugin.syncEngine.ignoredFiles.add(path);
 	plugin.syncEngine.issues.clear(path);
 	await plugin.persistEngineState();
-	new Notice(`Ignored ${path} — won't sync until restored from Sync Center.`);
+	new Notice(t("Ignored {path} — won't sync until restored from Sync Center.", { path }));
 	refresh();
 }
 
@@ -506,7 +507,7 @@ async function restoreFile(
 ): Promise<void> {
 	plugin.syncEngine.ignoredFiles.remove(path);
 	await plugin.persistEngineState();
-	new Notice(`Restored ${path} — will sync on next push.`);
+	new Notice(t("Restored {path} — will sync on next push.", { path }));
 	refresh();
 }
 

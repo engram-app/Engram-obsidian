@@ -21,6 +21,7 @@ import {
 } from "../auth-state";
 import { modeForUrl } from "../backend-mode";
 import { errMsg } from "../error-util";
+import { t } from "../i18n";
 import type { TabContext } from "./types";
 import { ENGRAM_CLOUD_URL, engramWebUrl } from "./urls";
 
@@ -138,7 +139,7 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
 		plugin.settings.backendMode = modeForUrl(plugin.settings.apiUrl, ENGRAM_CLOUD_URL);
 		await plugin.saveSettings();
 		if (cleared) {
-			new Notice("Engram backend changed — sign in again to continue.");
+			new Notice(t("Engram backend changed — sign in again to continue."));
 		}
 		redisplay();
 	};
@@ -253,7 +254,7 @@ export function renderAuthSection(ctx: TabContext): void {
 						plugin.settings.apiKey = "";
 						await plugin.saveSettings();
 						startDeviceFlow().catch((e) => {
-							new Notice(`Engram: sign-in failed (${errMsg(e)})`);
+							new Notice(t("Engram: sign-in failed ({error})", { error: errMsg(e) }));
 						});
 					}),
 			);
@@ -278,7 +279,7 @@ export function renderAuthSection(ctx: TabContext): void {
 				// vanishes into the button handler with nothing on screen.
 				.onClick(() =>
 					startDeviceFlow().catch((e) => {
-						new Notice(`Engram: sign-in failed (${errMsg(e)})`);
+						new Notice(t("Engram: sign-in failed ({error})", { error: errMsg(e) }));
 					}),
 				),
 		);
@@ -320,7 +321,7 @@ export function renderAuthSection(ctx: TabContext): void {
 				.onClick(async () => {
 					const trimmed = pendingKey.trim();
 					if (!trimmed) {
-						new Notice("Enter an API key first");
+						new Notice(t("Enter an API key first"));
 						return;
 					}
 					// Check the prefix rather than describing it in prose. The
