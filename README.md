@@ -16,6 +16,14 @@
 
 </div>
 
+**中文:** Obsidian 笔记同步 + AI 记忆。多设备同步、语义搜索、关键词搜索、知识库、MCP、Claude / Cursor / ChatGPT 读写笔记、可自托管、开放 API。 [完整中文说明](docs/i18n/README.zh-CN.md) · [繁體中文](docs/i18n/README.zh-TW.md)
+
+**日本語:** Obsidian ノート同期 + AI メモリ。全デバイス同期、セマンティック検索、キーワード検索、知識ベース、MCP、Claude / Cursor / ChatGPT がノートを読み書き、セルフホスト可能、オープン API。 [日本語の説明](docs/i18n/README.ja.md)
+
+**한국어:** Obsidian 노트 동기화 + AI 기억. 모든 기기 동기화, 의미 검색, 키워드 검색, 지식 베이스, MCP, Claude / Cursor / ChatGPT가 노트를 읽고 쓰기, 직접 호스팅 가능, 공개 API. [한국어 설명](docs/i18n/README.ko.md)
+
+**Русский:** синхронизация заметок Obsidian + память для ИИ. Синхронизация на всех устройствах, смысловой поиск, поиск по ключевым словам, база знаний, MCP, Claude / Cursor / ChatGPT читают и пишут заметки, своё размещение, открытый API. [Описание на русском](docs/i18n/README.ru.md)
+
 ## What you get
 
 - **Your AI works *inside* your vault.** Connect Claude, Cursor, or ChatGPT over [MCP](#connect-your-ai). It reads your notes for context and writes new ones back:
