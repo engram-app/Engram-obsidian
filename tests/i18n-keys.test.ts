@@ -26,15 +26,26 @@ import zhTW from "../src/i18n/locale/zh-TW";
 
 const repoRoot = join(import.meta.dir, "..");
 
-/** Every key passed to `t("...")` anywhere in src/, excluding the locale files. */
+/**
+ * Every key passed to `t("...")` or `tInto(el, "...")` anywhere in src/,
+ * excluding the locale files.
+ *
+ * `tInto` needs its own pattern: `\bt\(` does not match inside `tInto(`, so a
+ * scanner that only knows `t()` reports every `tInto` key as an orphan. That
+ * fails the moment someone translates one, and the obvious fix looks like
+ * deleting a perfectly good translation.
+ */
 function keysUsedInSource(): Set<string> {
 	const keys = new Set<string>();
+	const patterns = [/\bt\(\s*"((?:[^"\\]|\\.)+)"/g, /\btInto\([^,]+,\s*"((?:[^"\\]|\\.)+)"/g];
 	for (const rel of new Glob("src/**/*.ts").scanSync(repoRoot)) {
 		if (rel.includes("i18n/locale")) continue;
 		const src = readFileSync(join(repoRoot, rel), "utf8");
-		for (const m of src.matchAll(/\bt\(\s*"((?:[^"\\]|\\.)+)"/g)) {
-			const key = m[1];
-			if (key) keys.add(key.replace(/\\"/g, '"'));
+		for (const pattern of patterns) {
+			for (const m of src.matchAll(pattern)) {
+				const key = m[1];
+				if (key) keys.add(key.replace(/\\"/g, '"'));
+			}
 		}
 	}
 	return keys;
@@ -59,6 +70,11 @@ describe("locale keys track the source", () => {
 
 	test("the scan finds the wrapped call sites at all", () => {
 		expect(used.size).toBeGreaterThan(20);
+	});
+
+	test("the scan sees tInto keys, not just t() keys", () => {
+		expect(used.has("Version: {version}")).toBe(true);
+		expect(used.has("Your vault shares {percent} of its data with Engram")).toBe(true);
 	});
 
 	for (const [name, dict] of LOCALES) {
