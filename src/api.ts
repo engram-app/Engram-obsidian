@@ -7,6 +7,7 @@ import { type RequestUrlResponse, requestUrl } from "obsidian";
 import type { AuthProvider } from "./auth";
 import { interpretHealthProbe, type PreflightResult } from "./auth-state";
 import { isHttpStatus, statusOf } from "./error-util";
+import { t } from "./i18n";
 import { LimitExceededError } from "./limit-error";
 import { BeaconBuffer } from "./observability/beacon";
 import { newTraceContext } from "./observability/traceGen";
@@ -520,7 +521,7 @@ export class EngramApi {
 		} catch (e: unknown) {
 			const status = statusOf(e);
 			if (status === 401 || status === 403) {
-				return { ok: false, error: "Invalid API key" };
+				return { ok: false, error: t("Invalid API key") };
 			}
 			// Surface the real HTTP status (e.g. a 404 from a stale token at the
 			// wrong vault) instead of a blanket "Connection failed" — the status
@@ -528,7 +529,7 @@ export class EngramApi {
 			if (typeof status === "number") {
 				return { ok: false, error: `HTTP ${status} from /folders` };
 			}
-			return { ok: false, error: "Connection failed" };
+			return { ok: false, error: t("Connection failed") };
 		}
 	}
 

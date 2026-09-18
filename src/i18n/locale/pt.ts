@@ -327,6 +327,171 @@ const pt: Dict = {
 	"Engram: this plugin is too old to sync. Update it to continue.":
 		"Engram: este plugin é antigo demais para sincronizar. Atualize para continuar.",
 	Update: "Atualizar",
+	// UI strings (second pass)
+	"Invalid API key": "Chave de API inválida",
+	"Connection failed": "Falha de conexão",
+	"Sync now": "Sincronizar agora",
+	"Disconnect (clear login)": "Desconectar (apagar login)",
+	"Push entire vault": "Enviar o cofre inteiro",
+	"Check sync status": "Verificar o estado da sincronização",
+	"Engram sync: server does not support reconciliation (update backend)":
+		"Engram Sync: o servidor não sabe reconciliar (atualize o backend)",
+	"Pull all from server (force overwrite)": "Baixar tudo do servidor (sobrescreve o local)",
+	"Show sync log": "Ver o registro de sincronização",
+	"Semantic search": "Busca semântica",
+	"Open search sidebar": "Abrir o painel de busca",
+	"Engram search": "Busca do Engram",
+	"Open sync center": "Abrir o Sync Center",
+	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
+		"Engram: este cofre já não existe no servidor. Escolha ou crie um cofre para continuar.",
+	"Engram: recovered plugin settings from a backup after a corrupted save.":
+		"Engram: as configurações estavam corrompidas e foram restauradas de uma cópia.",
+	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
+		"Engram Sync: a sincronização ao vivo precisa de uma atualização do plugin. Atualize o Engram vault sync.",
+	"Engram: sync is paused — this edit was not synced. Choose a sync direction to resume.":
+		"Engram: a sincronização está pausada e esta alteração não foi enviada. Escolha um sentido para retomar.",
+	"Engram: not connected": "Engram: sem conexão",
+	"Engram: signed out": "Engram: sessão encerrada",
+	"Not connected yet. Click to open settings and link this vault.":
+		"Ainda sem conexão. Toque para abrir as configurações e vincular este cofre.",
+	"Not signed in. Click to open settings and reconnect.":
+		"Sem login. Toque para abrir as configurações e reconectar.",
+	"Engram: finish setup": "Engram: concluir a configuração",
+	"Engram: sync paused": "Engram: sincronização pausada",
+	"{label} ({count} queued)": "{label} ({count} na fila)",
+	"Setup is not finished — nothing will sync until you choose a sync direction. Click to finish.":
+		"A configuração não terminou. Nada sincroniza até você escolher um sentido. Toque para concluir.",
+	"Sync paused — click to choose a sync direction":
+		"Sincronização pausada; toque para escolher um sentido",
+	"Engram: offline ({count} queued)": "Engram: sem rede ({count} na fila)",
+	"Engram: offline": "Engram: sem rede",
+	"Server unreachable — changes will sync when connected":
+		"Servidor inacessível; as alterações vão quando a conexão voltar",
+	"Engram: error": "Engram: erro",
+	"Unknown error": "Erro desconhecido",
+	"Engram: syncing ({count})": "Engram: sincronizando ({count})",
+	"Engram: syncing": "Engram: sincronizando",
+	"Sync in progress...": "Sincronizando…",
+	"Engram: pending ({count})": "Engram: pendente ({count})",
+	"{count} files queued": "{count} arquivos na fila",
+	"Engram: live": "Engram: ao vivo",
+	"WebSocket connected — live sync active":
+		"WebSocket conectado; a sincronização ao vivo está ativa",
+	"Click to sync": "Toque para sincronizar",
+	Attachments: "Anexos",
+	Keyword: "Palavra-chave",
+	Semantic: "Semântica",
+	Both: "Ambas",
+	"matches your words and their other forms — 'run' finds 'running' — plus this device.":
+		"Acha suas palavras e as formas delas: “correr” também acha “correndo”, e mais este aparelho.",
+	"matches meaning. Finds notes that never use the words you typed.":
+		"Acha por significado, inclusive notas onde suas palavras nunca aparecem.",
+	"matches words and meaning together, plus this device. Widest results.":
+		"Acha palavras e significado juntos, mais este aparelho. A busca mais ampla.",
+	"Clear search": "Limpar a busca",
+	"Search settings": "Configurações de busca",
+	Untitled: "Sem título",
+	"meaning + exact": "significado + exato",
+	Disconnected: "Desconectado",
+	"Connected — waiting for first sync decision":
+		"Conectado; esperando a primeira decisão de sincronização",
+	"Connected — live sync active": "Conectado; sincronização ao vivo ativa",
+	"Connected — polling": "Conectado; consultando de tempo em tempo",
+	"Not configured": "Não configurado",
+	Refresh: "Recarregar",
+	"Not synced on your plan ({count})": "Fora do seu plano ({count})",
+	"Needs attention ({count})": "Precisa da sua atenção ({count})",
+	"Retrying automatically ({count})": "Tentando de novo automaticamente ({count})",
+	Stats: "Números",
+	"Notes on this device": "Notas neste aparelho",
+	"Attachments on this device": "Anexos neste aparelho",
+	"Remote vault": "Cofre do servidor",
+	"not linked": "não vinculado",
+	"Plan usage": "Uso do plano",
+	"Safe choice: combines both sides, nothing is deleted.":
+		"Escolha segura: junta os dois lados e não apaga nada.",
+	"Already in sync. Nothing is deleted.": "Já está sincronizado. Nada é apagado.",
+	Sync: "Sincronizar",
+	"Upload local files without downloading the remote":
+		"Enviar os arquivos locais sem baixar do servidor",
+	"Delete all on remote, then upload local files":
+		"Apagar tudo no servidor e depois enviar os arquivos locais",
+	"Download remote files without uploading the local":
+		"Baixar os arquivos do servidor sem enviar os locais",
+	"Delete all local files, then download from remote":
+		"Apagar todos os arquivos locais e depois baixar do servidor",
+	"Set up sync for this vault": "Configurar a sincronização deste cofre",
+	"You are now pointing at a different cloud vault":
+		"Agora você está apontando para outro cofre na nuvem",
+	"Sync preview": "Prévia da sincronização",
+	"Start syncing": "Começar a sincronizar",
+	"Upload everything": "Enviar tudo",
+	"Nothing will be removed from this device.": "Nada será removido deste aparelho.",
+	"Download everything": "Baixar tudo",
+	"Not now": "Mais tarde",
+	"This vault": "Este cofre",
+	"Cloud server": "Cofre do servidor",
+	"Vault name": "Nome do cofre",
+	"Could not load vaults": "Não foi possível carregar os cofres",
+	"Enter a name for the new vault": "Dê um nome ao novo cofre",
+	"Failed to switch vault": "Não foi possível trocar de cofre",
+	"Finished with some errors. Open the sync log to see what failed.":
+		"Terminou com alguns erros. Veja no registro de sincronização o que falhou.",
+	"Synced. Some attachments need a paid plan to sync (see below).":
+		"Sincronizado. Alguns anexos precisam de um plano pago (veja abaixo).",
+	"All synced. Your vault and the cloud now match.":
+		"Tudo sincronizado. Seu cofre e a nuvem estão iguais.",
+	"Already up to date. Nothing needed syncing.":
+		"Já estava em dia. Não havia nada para sincronizar.",
+	Deleting: "Apagando",
+	Downloading: "Baixando",
+	Uploading: "Enviando",
+	"Engram: Show sync log": "Engram: ver o registro de sincronização",
+	"Syncing attachments": "Sincronizando anexos",
+	Complete: "Concluído",
+	"Getting set up": "Primeiros passos",
+	"setup guide": "guia de instalação",
+	"Sign in (or enter your server URL and key) on the connection tab, then run your first sync.":
+		"Entre na aba de conexão (ou informe o endereço do seu servidor e a chave) e rode a primeira sincronização.",
+	"See the AI setup guide": "Ver o guia de configuração de IA",
+	Plans: "Planos",
+	Free: "Gratuito",
+	"1 vault, 2 devices": "1 cofre, 2 aparelhos",
+	"Real-time sync": "Sincronização em tempo real",
+	"2,000 notes searchable": "2.000 notas pesquisáveis",
+	"Connect any AI (MCP)": "Conecte qualquer IA (MCP)",
+	Starter: "Starter",
+	"10 vaults, unlimited devices": "10 cofres, aparelhos ilimitados",
+	"Search all your notes": "Pesquise em todas as suas notas",
+	"10 GB attachments": "10 GB de anexos",
+	"Unlimited AI searches": "Buscas com IA ilimitadas",
+	Pro: "Pro",
+	"Unlimited vaults": "Cofres ilimitados",
+	"Search across all vaults at once": "Pesquise em todos os cofres de uma vez",
+	"50 GB attachments": "50 GB de anexos",
+	"API access": "Acesso à API",
+	"See full pricing": "Ver todos os preços",
+	"Learn more": "Saber mais",
+	"Errors only": "Somente erros",
+	"Warnings and errors": "Avisos e erros",
+	"Info (default)": "Informação (padrão)",
+	"Debug (verbose)": "Depuração (detalhada)",
+	"Or authenticate with a token instead of signing in.":
+		"Ou autentique-se com um token em vez de entrar com a conta.",
+	"If this plugin saves you time, consider supporting development.":
+		"Se este plugin economiza seu tempo, pense em apoiar o desenvolvimento.",
+	"Sign-in required to load vaults": "É preciso entrar para carregar os cofres",
+	"Could not reach Engram — check connection":
+		"Não foi possível alcançar o Engram; confira a conexão",
+	// UI strings (sync error surfaces)
+	"Free syncs notes only — images & PDFs need a paid plan.":
+		"O plano gratuito sincroniza apenas notas: imagens e PDFs precisam de um plano pago.",
+	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
+		"“Baixar tudo (apagar sobras)” cancelado: não foi possível obter um instantâneo exclusivo do servidor (conflito de reprodução). Nada foi para a lixeira.",
+	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
+		"“Baixar tudo” cancelado: outra sincronização está em andamento (conflito de reprodução). Tente quando ela terminar.",
+	"Pull all failed: {error}": "“Baixar tudo” falhou: {error}",
+	"Pull all failed": "“Baixar tudo” falhou",
 };
 
 export default pt;

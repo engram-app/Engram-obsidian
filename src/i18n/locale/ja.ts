@@ -301,6 +301,167 @@ const ja: Dict = {
 	"Engram: this plugin is too old to sync. Update it to continue.":
 		"Engram: このプラグインは古すぎて同期できません。更新してから続けてください。",
 	Update: "更新",
+	// UI strings (second pass)
+	"Invalid API key": "API キーが無効です",
+	"Connection failed": "接続に失敗しました",
+	"Sync now": "今すぐ同期",
+	"Disconnect (clear login)": "接続を解除 (ログイン情報を消去)",
+	"Push entire vault": "保管庫をすべて送信",
+	"Check sync status": "同期の状態を確認",
+	"Engram sync: server does not support reconciliation (update backend)":
+		"Engram 同期: サーバーが照合に対応していません (バックエンドを更新してください)",
+	"Pull all from server (force overwrite)": "サーバーからすべて取得 (強制的に上書き)",
+	"Show sync log": "同期ログを表示",
+	"Semantic search": "セマンティック検索",
+	"Open search sidebar": "検索サイドバーを開く",
+	"Engram search": "Engram 検索",
+	"Open sync center": "Sync Center を開く",
+	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
+		"Engram: この保管庫はサーバー上に存在しません。続けるには保管庫を選ぶか作成してください。",
+	"Engram: recovered plugin settings from a backup after a corrupted save.":
+		"Engram: 設定ファイルが壊れていたため、バックアップから復元しました。",
+	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
+		"Engram 同期: ライブ同期にはプラグインの更新が必要です。Engram vault sync を更新してください。",
+	"Engram: sync is paused — this edit was not synced. Choose a sync direction to resume.":
+		"Engram: 同期は一時停止中です。この編集は同期されていません。同期の方向を選ぶと再開します。",
+	"Engram: not connected": "Engram: 未接続",
+	"Engram: signed out": "Engram: サインアウト済み",
+	"Not connected yet. Click to open settings and link this vault.":
+		"まだ接続されていません。クリックして設定を開き、この保管庫を接続してください。",
+	"Not signed in. Click to open settings and reconnect.":
+		"サインインしていません。クリックして設定を開き、再接続してください。",
+	"Engram: finish setup": "Engram: セットアップを完了",
+	"Engram: sync paused": "Engram: 同期を一時停止中",
+	"{label} ({count} queued)": "{label} ({count} 件待機)",
+	"Setup is not finished — nothing will sync until you choose a sync direction. Click to finish.":
+		"セットアップが終わっていません。同期の方向を選ぶまで何も同期されません。クリックして完了してください。",
+	"Sync paused — click to choose a sync direction":
+		"同期は一時停止中です。クリックして同期の方向を選んでください",
+	"Engram: offline ({count} queued)": "Engram: オフライン ({count} 件待機)",
+	"Engram: offline": "Engram: オフライン",
+	"Server unreachable — changes will sync when connected":
+		"サーバーに接続できません。接続が戻ると同期します",
+	"Engram: error": "Engram: エラー",
+	"Unknown error": "不明なエラー",
+	"Engram: syncing ({count})": "Engram: 同期中 ({count})",
+	"Engram: syncing": "Engram: 同期中",
+	"Sync in progress...": "同期しています…",
+	"Engram: pending ({count})": "Engram: 保留中 ({count})",
+	"{count} files queued": "{count} 件のファイルが待機中",
+	"Engram: live": "Engram: ライブ",
+	"WebSocket connected — live sync active": "WebSocket 接続済み。ライブ同期が有効です",
+	"Click to sync": "クリックして同期",
+	Attachments: "添付ファイル",
+	Keyword: "キーワード",
+	Semantic: "セマンティック",
+	Both: "両方",
+	"matches your words and their other forms — 'run' finds 'running' — plus this device.":
+		"入力した語とその変化形を照合します (run で running も見つかります)。このデバイスの結果も含みます。",
+	"matches meaning. Finds notes that never use the words you typed.":
+		"意味で照合します。入力した語が一度も出てこないノートも見つかります。",
+	"matches words and meaning together, plus this device. Widest results.":
+		"語と意味の両方を照合し、このデバイスの結果も含みます。もっとも広く探します。",
+	"Clear search": "検索をクリア",
+	"Search settings": "検索の設定",
+	Untitled: "無題",
+	"meaning + exact": "意味 + 完全一致",
+	Disconnected: "接続が切れています",
+	"Connected — waiting for first sync decision": "接続済み。最初の同期の選択を待っています",
+	"Connected — live sync active": "接続済み。ライブ同期が有効です",
+	"Connected — polling": "接続済み。ポーリング中",
+	"Not configured": "未設定",
+	Refresh: "再読み込み",
+	"Not synced on your plan ({count})": "プラン対象外 ({count})",
+	"Needs attention ({count})": "対応が必要 ({count})",
+	"Retrying automatically ({count})": "自動で再試行中 ({count})",
+	Stats: "統計",
+	"Notes on this device": "このデバイスのノート",
+	"Attachments on this device": "このデバイスの添付ファイル",
+	"Remote vault": "サーバーの保管庫",
+	"not linked": "未接続",
+	"Plan usage": "プランの使用状況",
+	"Safe choice: combines both sides, nothing is deleted.":
+		"安全な選択: 両方をまとめ、何も削除しません。",
+	"Already in sync. Nothing is deleted.": "すでに同期済みです。何も削除しません。",
+	Sync: "同期",
+	"Upload local files without downloading the remote":
+		"サーバーから取得せずにローカルのファイルを送信",
+	"Delete all on remote, then upload local files":
+		"サーバー側をすべて削除してからローカルのファイルを送信",
+	"Download remote files without uploading the local":
+		"ローカルを送信せずにサーバーのファイルを取得",
+	"Delete all local files, then download from remote":
+		"ローカルのファイルをすべて削除してからサーバーから取得",
+	"Set up sync for this vault": "この保管庫の同期を設定",
+	"You are now pointing at a different cloud vault": "いま別のクラウド保管庫を指しています",
+	"Sync preview": "同期プレビュー",
+	"Start syncing": "同期を始める",
+	"Upload everything": "すべて送信",
+	"Nothing will be removed from this device.": "このデバイスから何も削除されません。",
+	"Download everything": "すべて取得",
+	"Not now": "あとで",
+	"This vault": "この保管庫",
+	"Cloud server": "サーバーの保管庫",
+	"Vault name": "保管庫の名前",
+	"Could not load vaults": "保管庫を読み込めませんでした",
+	"Enter a name for the new vault": "新しい保管庫の名前を入力してください",
+	"Failed to switch vault": "保管庫の切り替えに失敗しました",
+	"Finished with some errors. Open the sync log to see what failed.":
+		"エラーがいくつかありました。同期ログで失敗した項目を確認してください。",
+	"Synced. Some attachments need a paid plan to sync (see below).":
+		"同期しました。一部の添付ファイルには有料プランが必要です (下記参照)。",
+	"All synced. Your vault and the cloud now match.":
+		"すべて同期しました。保管庫とサーバーが一致しています。",
+	"Already up to date. Nothing needed syncing.":
+		"すでに最新です。同期するものはありませんでした。",
+	Deleting: "削除中",
+	Downloading: "ダウンロード中",
+	Uploading: "アップロード中",
+	"Engram: Show sync log": "Engram: 同期ログを表示",
+	"Syncing attachments": "添付ファイルを同期中",
+	Complete: "完了",
+	"Getting set up": "セットアップを始める",
+	"setup guide": "セットアップガイド",
+	"Sign in (or enter your server URL and key) on the connection tab, then run your first sync.":
+		"接続タブでサインイン (またはサーバー URL とキーを入力) して、最初の同期を実行してください。",
+	"See the AI setup guide": "AI セットアップガイドを見る",
+	Plans: "プラン",
+	Free: "無料",
+	"1 vault, 2 devices": "保管庫 1 個、デバイス 2 台",
+	"Real-time sync": "リアルタイム同期",
+	"2,000 notes searchable": "2,000 件のノートを検索可能",
+	"Connect any AI (MCP)": "任意の AI と接続 (MCP)",
+	Starter: "スターター",
+	"10 vaults, unlimited devices": "保管庫 10 個、デバイス数は無制限",
+	"Search all your notes": "すべてのノートを検索",
+	"10 GB attachments": "添付ファイル 10 GB",
+	"Unlimited AI searches": "AI 検索は無制限",
+	Pro: "プロ",
+	"Unlimited vaults": "保管庫は無制限",
+	"Search across all vaults at once": "すべての保管庫を一度に検索",
+	"50 GB attachments": "添付ファイル 50 GB",
+	"API access": "API アクセス",
+	"See full pricing": "料金の詳細を見る",
+	"Learn more": "詳しく見る",
+	"Errors only": "エラーのみ",
+	"Warnings and errors": "警告とエラー",
+	"Info (default)": "情報 (既定)",
+	"Debug (verbose)": "デバッグ (詳細)",
+	"Or authenticate with a token instead of signing in.":
+		"サインインの代わりにトークンで認証することもできます。",
+	"If this plugin saves you time, consider supporting development.":
+		"このプラグインが役に立っているなら、開発の支援をご検討ください。",
+	"Sign-in required to load vaults": "保管庫の読み込みにはサインインが必要です",
+	"Could not reach Engram — check connection": "Engram に接続できません。接続を確認してください",
+	// UI strings (sync error surfaces)
+	"Free syncs notes only — images & PDFs need a paid plan.":
+		"無料プランはノートのみ同期します。画像と PDF には有料プランが必要です。",
+	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
+		"すべて取得 (余分なファイルを削除) を中止しました: サーバーの排他スナップショットを取得できませんでした (リプレイの競合)。何も削除していません。",
+	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
+		"すべて取得を中止しました: 別の同期が実行中です (リプレイの競合)。終わってからもう一度お試しください。",
+	"Pull all failed: {error}": "すべて取得に失敗しました: {error}",
+	"Pull all failed": "すべて取得に失敗しました",
 };
 
 export default ja;

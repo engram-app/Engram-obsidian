@@ -320,7 +320,7 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 
 		if (status.state === "offline") {
 			dotState = "is-error";
-			label = "Disconnected";
+			label = t("Disconnected");
 		} else if (status.state === "error") {
 			dotState = "is-error";
 			label = `Error: ${status.error || "unknown"}`;
@@ -330,19 +330,19 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 			(this.plugin.settings.apiKey || this.plugin.settings.refreshToken)
 		) {
 			dotState = "is-waiting";
-			label = "Connected — waiting for first sync decision";
+			label = t("Connected — waiting for first sync decision");
 		} else if (live) {
 			dotState = "is-connected";
-			label = "Connected — live sync active";
+			label = t("Connected — live sync active");
 		} else if (
 			this.plugin.settings.apiUrl &&
 			(this.plugin.settings.apiKey || this.plugin.settings.refreshToken)
 		) {
 			dotState = "is-polling";
-			label = "Connected — polling";
+			label = t("Connected — polling");
 		} else {
 			dotState = "is-idle";
-			label = "Not configured";
+			label = t("Not configured");
 		}
 
 		statusEl.createSpan({ cls: `engram-status-dot ${dotState}` });

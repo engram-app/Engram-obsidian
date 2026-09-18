@@ -39,9 +39,9 @@ export const DEFAULT_SEARCH_MODE: SearchMode = "hybrid";
 
 // Named for what the user is asking FOR, not for the retrieval technique.
 const MODE_LABEL: Record<SearchMode, string> = {
-	keyword: "Keyword",
-	semantic: "Semantic",
-	hybrid: "Both",
+	keyword: t("Keyword"),
+	semantic: t("Semantic"),
+	hybrid: t("Both"),
 };
 
 // Each hint names the one thing that mode does which the others do not, in the
@@ -52,9 +52,11 @@ const MODE_LABEL: Record<SearchMode, string> = {
 // is unmistakably describing the selected button rather than the filters under
 // it. Without that prefix it read as a stray sentence in a settings panel.
 const MODE_HINT: Record<SearchMode, string> = {
-	keyword: "matches your words and their other forms — 'run' finds 'running' — plus this device.",
-	semantic: "matches meaning. Finds notes that never use the words you typed.",
-	hybrid: "matches words and meaning together, plus this device. Widest results.",
+	keyword: t(
+		"matches your words and their other forms — 'run' finds 'running' — plus this device.",
+	),
+	semantic: t("matches meaning. Finds notes that never use the words you typed."),
+	hybrid: t("matches words and meaning together, plus this device. Widest results."),
 };
 
 /** The hint line for `mode`, labelled so it visibly belongs to the buttons. */
@@ -164,7 +166,7 @@ export class SearchPanel {
 		});
 		this.clearEl = inputWrap.createSpan({ cls: "engram-search-clear clickable-icon" });
 		setIcon(this.clearEl, "x");
-		this.clearEl.setAttribute("aria-label", "Clear search");
+		this.clearEl.setAttribute("aria-label", t("Clear search"));
 		this.clearHandler = () => {
 			this.inputEl.value = "";
 			this.inputEl.focus();
@@ -176,7 +178,7 @@ export class SearchPanel {
 			cls: "engram-search-filter-toggle clickable-icon",
 		});
 		setIcon(this.filterToggleEl, "sliders-horizontal");
-		this.filterToggleEl.setAttribute("aria-label", "Search settings");
+		this.filterToggleEl.setAttribute("aria-label", t("Search settings"));
 		this.filterToggleHandler = () => this.toggleFilters();
 		this.filterToggleEl.addEventListener("click", this.filterToggleHandler);
 
@@ -476,7 +478,7 @@ export class SearchPanel {
 			});
 			const header = item.createDiv({ cls: "engram-search-result-header" });
 			header.createSpan({
-				text: result.title || result.source_path || "Untitled",
+				text: result.title || result.source_path || t("Untitled"),
 				cls: "engram-search-result-title",
 			});
 			// Meta row (its own line): provenance pill (hybrid only) + match strength.
@@ -499,7 +501,7 @@ export class SearchPanel {
 						result.matchType === "keyword"
 							? "exact"
 							: result.matchType === "both"
-								? "meaning + exact"
+								? t("meaning + exact")
 								: "meaning",
 				});
 			}
