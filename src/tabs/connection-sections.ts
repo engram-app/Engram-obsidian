@@ -151,7 +151,7 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
 		// Pre-fill the saved URL so the configured backend is always visible
 		// (unlike the API-key field, the URL isn't a secret and the user needs
 		// to confirm it's correct).
-		text.setPlaceholder(t("https://engram.example.com"));
+		text.setPlaceholder("https://engram.example.com");
 		text.setValue(plugin.settings.apiUrl);
 		text.onChange((value) => {
 			pendingUrl = value;
@@ -390,7 +390,7 @@ export function renderVaultSection(ctx: TabContext): void {
 		return;
 	}
 
-	const placeholderEl = setting.controlEl.createSpan({ text: t("Loading vaults...") });
+	const placeholderEl = setting.controlEl.createSpan({ text: t("Loading vaults…") });
 
 	plugin.api
 		.listVaults()

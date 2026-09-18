@@ -98,6 +98,232 @@ const de: Dict = {
 	"Finish setting up your account at app.engram.page to start syncing.":
 		"Richte dein Konto auf app.engram.page fertig ein, um mit dem Synchronisieren zu beginnen.",
 	"Limit reached. Upgrade to continue.": "Grenze erreicht. Mit einem Upgrade geht es weiter.",
+	// UI strings
+	"Link Obsidian to Engram": "Obsidian mit Engram verbinden",
+	"Failed to start device flow. Check your Engram URL and try again.":
+		"Die Geräteanmeldung konnte nicht gestartet werden. Prüf deine Engram-Adresse und versuch es erneut.",
+	"Your code:": "Dein Code:",
+	"A browser window has opened. Sign in and enter this code to link your vault.":
+		"Ein Browserfenster ist offen. Melde dich an und gib diesen Code ein, um deinen Vault zu verbinden.",
+	Cancel: "Abbrechen",
+	"Code expired. Please try again.": "Der Code ist abgelaufen. Versuch es erneut.",
+	"Try again": "Erneut versuchen",
+	Close: "Schließen",
+	"Note couldn't be processed": "Diese Notiz konnte nicht verarbeitet werden",
+	"The server couldn't process this note. Check its contents, then edit and save to try again.":
+		"Der Server konnte diese Notiz nicht verarbeiten. Prüf den Inhalt, dann bearbeite und speichere sie für einen neuen Versuch.",
+	"Attachments need a paid plan": "Anhänge brauchen einen bezahlten Tarif",
+	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
+		"Der kostenlose Tarif synchronisiert nur Notizen. Für Bilder und PDFs brauchst du ein Upgrade.",
+	"Attachment storage full": "Speicher für Anhänge voll",
+	"You've used all the attachment storage on your plan. Upgrade for more.":
+		"Du hast den Anhang-Speicher deines Tarifs aufgebraucht. Ein Upgrade bringt mehr.",
+	"Too large for the server": "Zu groß für den Server",
+	"The server limit is 5 MB. Compress or split the file, then it will sync.":
+		"Das Serverlimit liegt bei 5 MB. Komprimiere oder teile die Datei, dann synchronisiert sie.",
+	"Sign-in expired": "Anmeldung abgelaufen",
+	"Reconnect your account to resume syncing.":
+		"Verbinde dein Konto neu, dann läuft die Synchronisierung weiter.",
+	"Unresolved conflict": "Ungelöster Konflikt",
+	"Open the file to resolve the conflict, then sync again.":
+		"Öffne die Datei, löse den Konflikt und synchronisiere erneut.",
+	"Frontmatter needs a fix": "Frontmatter braucht eine Korrektur",
+	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
+		"Die Notiz wurde synchronisiert, ihr Frontmatter ließ sich aber nicht vollständig lesen. Öffne sie und korrigier die markierte Zeile.",
+	"Server error": "Serverfehler",
+	"A temporary server problem — retrying automatically.":
+		"Ein vorübergehendes Serverproblem, es wird automatisch erneut versucht.",
+	"Network unavailable": "Kein Netzwerk",
+	"Can't reach the server — retrying automatically.":
+		"Der Server ist nicht erreichbar, es wird automatisch erneut versucht.",
+	"Sync failed": "Synchronisierung fehlgeschlagen",
+	"An unexpected error — retrying automatically.":
+		"Ein unerwarteter Fehler, es wird automatisch erneut versucht.",
+	Upgrade: "Upgrade",
+	"Update in settings": "In den Einstellungen aktualisieren",
+	"Engram: ready": "Engram: bereit",
+	"Resume sync": "Synchronisierung fortsetzen",
+	"Engram Vault Sync {version} is available. {link}.":
+		"Engram Vault Sync {version} ist verfügbar. {link}.",
+	"Search your vault…": "Vault durchsuchen…",
+	"Filter by folder…": "Nach Ordner filtern…",
+	"Filter by tags…": "Nach Tags filtern…",
+	"Search failed — check connection": "Suche fehlgeschlagen, prüf die Verbindung",
+	"No results found": "Keine Ergebnisse",
+	"match strength: {pct}%": "Trefferstärke: {pct}%",
+	"Open sync setup": "Sync-Einrichtung öffnen",
+	"Last sync: {when}": "Letzte Synchronisierung: {when}",
+	"waiting for a connection": "warte auf eine Verbindung",
+	"sync is paused": "Synchronisierung ist pausiert",
+	"syncing now": "synchronisiert gerade",
+	"waiting to retry": "warte auf den nächsten Versuch",
+	"{count} not on your plan": "{count} nicht in deinem Tarif",
+	"{count} retrying": "{count} werden erneut versucht",
+	"{count} ignored": "{count} ignoriert",
+	"{count} queued — {reason}": "{count} in der Warteschlange, {reason}",
+	"These files are fine. They just need a paid plan to sync.":
+		"Mit diesen Dateien ist alles in Ordnung. Sie brauchen nur einen bezahlten Tarif.",
+	"Show files ({count}) ▾": "Dateien anzeigen ({count}) ▾",
+	"Sync these now": "Diese jetzt synchronisieren",
+	"Clear all": "Alle entfernen",
+	"Nothing needs your attention. 🎉": "Nichts braucht deine Aufmerksamkeit. 🎉",
+	Dismiss: "Ausblenden",
+	"Retry all now": "Jetzt alle erneut versuchen",
+	"Temporary errors. These clear themselves once the server recovers.":
+		"Vorübergehende Fehler. Die verschwinden von selbst, sobald der Server wieder da ist.",
+	Open: "Öffnen",
+	Ignore: "Ignorieren",
+	"No files ignored. Use the ignore button on a failure row to stop syncing it.":
+		"Keine Dateien ignoriert. Nutz den Ignorieren-Knopf in einer Fehlerzeile, um eine Datei nicht mehr zu synchronisieren.",
+	Restore: "Wiederherstellen",
+	Clear: "Entfernen",
+	"No activity yet. Push or pull to see entries here.":
+		"Noch keine Aktivität. Sende oder lade, dann erscheinen hier Einträge.",
+	"Sync log": "Sync-Protokoll",
+	"Could not compare with the cloud. Check your connection.":
+		"Der Vergleich mit dem Server war nicht möglich. Prüf deine Verbindung.",
+	"Your login expired. Sign in again in Engram settings to continue.":
+		"Deine Anmeldung ist abgelaufen. Melde dich in Engram settings neu an, um weiterzumachen.",
+	"Couldn't create vault — the name may be invalid or already in use.":
+		"Vault konnte nicht erstellt werden, der Name ist vielleicht ungültig oder schon vergeben.",
+	"Could not create the vault — check your connection and try again.":
+		"Der Vault konnte nicht erstellt werden. Prüf deine Verbindung und versuch es erneut.",
+	"Free syncs notes only — {count} attachments will be skipped.": {
+		one: "Der kostenlose Tarif synchronisiert nur Notizen, {count} Anhang wird übersprungen.",
+		other: "Der kostenlose Tarif synchronisiert nur Notizen, {count} Anhänge werden übersprungen.",
+	},
+	"Comparing your vault with the cloud…": "Dein Vault wird mit dem Server verglichen…",
+	"Until you choose, nothing in this vault will sync.":
+		"Bis du dich entscheidest, synchronisiert dieser Vault nichts.",
+	"Change vault": "Vault wechseln",
+	"Advanced sync options": "Erweiterte Sync-Optionen",
+	"Everything is in sync": "Alles ist synchron",
+	" conflicts need resolution": {
+		one: " Konflikt muss gelöst werden",
+		other: " Konflikte müssen gelöst werden",
+	},
+	"Confirm destructive sync": "Zerstörende Synchronisierung bestätigen",
+	"You are about to:": "Folgendes passiert jetzt:",
+	"Files that will be deleted:": "Dateien, die gelöscht werden:",
+	"This cannot be undone.": "Das lässt sich nicht rückgängig machen.",
+	Back: "Zurück",
+	Confirm: "Bestätigen",
+	"Switch vault": "Vault wechseln",
+	"Pick a vault to sync with. We will recalculate the sync preview after you choose.":
+		"Wähl den Vault zum Synchronisieren. Danach berechnen wir die Vorschau neu.",
+	"Loading vaults…": "Vaults werden geladen…",
+	"No other vaults available.": "Keine weiteren Vaults verfügbar.",
+	"Make new vault": "Neuen Vault anlegen",
+	"New vault": "Neuer Vault",
+	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
+		"Erst einen leeren Vault auf dem Server anlegen, dann diesen Obsidian-Vault hineinsynchronisieren.",
+	Create: "Anlegen",
+	"Your vault shares {percent} of its data with Engram":
+		"Dein Vault teilt {percent} seiner Daten mit Engram",
+	"Type {keyword} to confirm:": "Tipp {keyword} zum Bestätigen:",
+	"✓ {count} synced": "✓ {count} synchronisiert",
+	"⤳ {count} skipped (Free plan)": "⤳ {count} übersprungen (kostenloser Tarif)",
+	"✕ {count} failed": "✕ {count} fehlgeschlagen",
+	"{count} attachments need a paid plan to sync. See Sync Center.": {
+		one: "{count} Anhang braucht einen bezahlten Tarif. Siehe Sync Center.",
+		other: "{count} Anhänge brauchen einen bezahlten Tarif. Siehe Sync Center.",
+	},
+	"Syncing your vault": "Dein Vault wird synchronisiert",
+	"Getting started…": "Es geht los…",
+	"Open Engram to check your vault and confirm everything synced.":
+		"Öffne Engram, sieh dir deinen Vault an und prüf, ob alles synchronisiert ist.",
+	"Open Engram": "Engram öffnen",
+	"You can close this and the sync keeps running in the background.":
+		"Du kannst das schließen, die Synchronisierung läuft im Hintergrund weiter.",
+	"Run in background": "Im Hintergrund laufen lassen",
+	"Syncing…": "Synchronisiert…",
+	"Sync complete": "Synchronisierung fertig",
+	Done: "Fertig",
+	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
+		"Engram: Sync-Konflikt bei {path}, deine lokale Änderung wurde als {copy} gesichert",
+	"Open note": "Notiz öffnen",
+	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
+		"Engram: Bei {count} Notizen stimmt etwas im Frontmatter nicht. Öffne das Sync Center, um es zu beheben.",
+	"New here? Watch the setup video": "Neu hier? Sieh dir das Einrichtungsvideo an",
+	"What Engram does, and how to connect your vault, start to finish.":
+		"Was Engram macht und wie du deinen Vault verbindest, von Anfang bis Ende.",
+	"▶ Watch on YouTube": "▶ Auf YouTube ansehen",
+	"1. Make an account": "1. Konto anlegen",
+	"2. Connect your vault to Engram": "2. Vault mit Engram verbinden",
+	"Open connection tab": "Verbindungs-Tab öffnen",
+	"3. Connect your AI": "3. KI verbinden",
+	"Node.js dependencies": "Node.js-Abhängigkeiten",
+	"Python virtual environment": "Python-Umgebung",
+	"Python bytecode cache": "Python-Bytecode-Cache",
+	"Vendored dependencies": "Mitgelieferte Abhängigkeiten",
+	"Gradle build cache": "Gradle-Build-Cache",
+	"Rust/Java build output": "Rust/Java-Build-Ausgabe",
+	"Build output": "Build-Ausgabe",
+	"Next.js build output": "Next.js-Build-Ausgabe",
+	"Distribution build output": "Build-Ausgabe für die Verteilung",
+	"Cargo cache": "Cargo-Cache",
+	"CocoaPods dependencies": "CocoaPods-Abhängigkeiten",
+	"Dart tool cache": "Dart-Werkzeug-Cache",
+	"Generic cache directory": "Allgemeines Cache-Verzeichnis",
+	"Ignore patterns": "Ignorier-Muster",
+	"Custom patterns": "Eigene Muster",
+	Diagnostics: "Diagnose",
+	"Diagnostics detail": "Diagnose im Detail",
+	About: "Über",
+	"License: {name}": "Lizenz: {name}",
+	"⚠ Detected: {label}/ ({formatted} files)": "⚠ Gefunden: {label}/ ({formatted} Dateien)",
+	"{desc} — should not be synced": "{desc}, sollte nicht synchronisiert werden",
+	"Add to ignores": "Zu den Ignorierten",
+	"Version: {version}": "Version: {version}",
+	"Source: {link}": "Quelle: {link}",
+	"Engram URL": "Engram-Adresse",
+	"✓ Engram server reachable (v{version})": "✓ Engram-Server erreichbar (v{version})",
+	"✗ server responded but isn't an Engram backend":
+		"✗ Der Server antwortet, ist aber kein Engram-Backend",
+	"✗ couldn't reach a server at this URL": "✗ Unter dieser Adresse war kein Server erreichbar",
+	"Checking server…": "Server wird geprüft…",
+	Authentication: "Anmeldung",
+	"Authenticated via Engram account (OAuth).": "Über Engram-Konto angemeldet (OAuth).",
+	"Manage account": "Konto verwalten",
+	"Sign out": "Abmelden",
+	"Using API key": "API-Schlüssel wird genutzt",
+	"Authenticated via manual API key.":
+		"Über einen manuell eingetragenen API-Schlüssel angemeldet.",
+	"Clear key": "Schlüssel löschen",
+	"Switch to sign in": "Zur Anmeldung wechseln",
+	"Sign in or create an account": "Anmelden oder Konto anlegen",
+	"Sign in": "Anmelden",
+	"API key": "API-Schlüssel",
+	Token: "Token",
+	"Bearer token from your Engram account.": "Bearer-Token aus deinem Engram-Konto.",
+	Save: "Speichern",
+	"That does not look like an Engram API key (expected {prefix}…).":
+		"Das sieht nicht wie ein Engram-API-Schlüssel aus (erwartet wird {prefix}…).",
+	Vault: "Vault",
+	"Vault selection": "Vault-Auswahl",
+	"Select which vault this plugin syncs with.":
+		"Wähl den Vault, mit dem dieses Plugin synchronisiert.",
+	"No vaults found — first sync will create one":
+		"Keine Vaults gefunden, die erste Synchronisierung legt einen an",
+	"Pick a vault": "Vault wählen",
+	Change: "Ändern",
+	"Support development": "Entwicklung unterstützen",
+	"GitHub Sponsors": "GitHub Sponsors",
+	Backend: "Backend",
+	"Where this vault syncs to. Each backend keeps its own sign-in.":
+		"Wohin dieser Vault synchronisiert. Jedes Backend hat seine eigene Anmeldung.",
+	"Run your own Engram server": "Eigenen Engram-Server betreiben",
+	"Engram is the backend that powers sync and semantic search.":
+		"Engram ist das Backend hinter Synchronisierung und semantischer Suche.",
+	"Finish sync setup": "Sync-Einrichtung abschließen",
+	"Nothing in this vault syncs until you choose how to merge it with the server.":
+		"Dieser Vault synchronisiert nichts, bis du entschieden hast, wie er mit dem Server zusammengeführt wird.",
+	"Choose sync direction": "Sync-Richtung wählen",
+	"Engram: this plugin is too old to sync (needs {version} or newer). Update it to continue.":
+		"Engram: Dieses Plugin ist zu alt zum Synchronisieren (nötig ist {version} oder neuer). Aktualisier es, um weiterzumachen.",
+	"Engram: this plugin is too old to sync. Update it to continue.":
+		"Engram: Dieses Plugin ist zu alt zum Synchronisieren. Aktualisier es, um weiterzumachen.",
+	Update: "Aktualisieren",
 };
 
 export default de;
