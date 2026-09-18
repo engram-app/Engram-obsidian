@@ -74,7 +74,7 @@ export interface CrdtLiveViewsDeps {
 	resolveId(path: string): string;
 	/** Resolve WITHOUT minting: the id this path already has, or null.
 	 *
-	 *  Relay parity (`SharedFolder.deleteFiles` / `syncStore.get(vpath)`): a path
+	 *  The rule: a path
 	 *  with no entry has no document, so there is nothing to persist. The
 	 *  minting `resolveId` must never be used on a teardown path — after a delete
 	 *  the map entry is gone, so minting hands back a BRAND-NEW id whose doc is
@@ -193,10 +193,10 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 	}
 
 	/** The last viewer of `path` left: persist the current Y.Text to disk. The doc
-	 *  stays resident (Relay persistent-doc model — closeDoc is a no-op), so the
+	 *  stays resident (persistent-doc model — closeDoc is a no-op), so the
 	 *  note keeps syncing and re-paints instantly on re-open. */
 	private async onLastViewerRelease(path: string): Promise<void> {
-		// Relay parity, three rules for a teardown flush:
+		// Three rules for a teardown flush:
 		//
 		// 1. NEVER mint. `syncStore.get(vpath)` returning nothing means the note is
 		//    not tracked — there is no document, so there is nothing to persist.
@@ -207,7 +207,7 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 		//    file is gone the note was deleted while open, and writing recreates it.
 		if (!(this.deps.app.vault.getAbstractFileByPath(path) instanceof TFile)) return;
 		// 3. A destroyed doc is expected here (delete races the view teardown) and
-		//    is swallowed — exactly and only this error, as Relay's LiveViews do.
+		//    is swallowed — exactly and only this error.
 		try {
 			// PROJECTION, never `getText` (#483). `getText` is the body Y.Text
 			// alone; frontmatter lives in separate shared types, so flushing it

@@ -3,7 +3,7 @@ import { NoteProvider } from "./note-provider";
 import { SyncStore } from "./sync-store";
 
 /** The name of the shared map. Must match the server (`CrdtIndexDoc.map_name/0`)
- *  and Relay (`SyncStore.ts:20`) exactly — it is the wire contract, so a typo
+ *  exactly — it is the wire contract, so a typo
  *  here syncs an empty doc forever without erroring. */
 export const FILEMETA_MAP = "filemeta_v0";
 

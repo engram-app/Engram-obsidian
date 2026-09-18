@@ -28,7 +28,7 @@ function deliver(to: () => ProviderRegistry, id: string, frame: string): void {
 
 // Two "devices", each its own ProviderRegistry with an isolated IndexedDB store
 // (dbPrefix). An in-memory relay routes every frame one device sends for a
-// note_id to the other device's `receive`, exercising the full Relay exchange
+// note_id to the other device's `receive`, exercising the full sync exchange
 // (syncStep1/2 + updates) with no server double.
 function twoDevices() {
 	const flushedA: Record<string, string> = {};
@@ -154,7 +154,7 @@ describe("ProviderRegistry destroyed-doc guard", () => {
 	});
 });
 
-describe("ProviderRegistry (Relay-model engine)", () => {
+describe("ProviderRegistry (provider-model engine)", () => {
 	test("genesis edit on A syncs to B and flushes B's disk (no text-verify)", async () => {
 		const { A, B, flushedB } = twoDevices();
 		A.setConnected(true);

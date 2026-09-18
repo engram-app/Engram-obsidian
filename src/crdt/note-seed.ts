@@ -1,9 +1,9 @@
-// The disk<->Y.Doc seed/diff codec, extracted from CrdtManager so the Relay-
+// The disk<->Y.Doc seed/diff codec, extracted from CrdtManager so the provider-
 // model ProviderRegistry reuses the EXACT same logic (byte-identical CRDT ops
 // for the same content — a divergent encoding corrupts a note when two lineages
 // merge). This is NOT bespoke cruft: it's the hard-won correctness for syncing
-// Obsidian's INDEPENDENT disk files across devices, which Relay itself never
-// needs (Relay docs are the source of truth; ours mirror files on disk). Pure,
+// Obsidian's INDEPENDENT disk files across devices — a design where the doc IS
+// the truth never needs it; ours mirror files on disk. Pure,
 // no Obsidian imports.
 import type * as Y from "yjs";
 import { diffIntoYText, seedOnce } from "./bridge";

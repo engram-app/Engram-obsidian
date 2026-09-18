@@ -1,8 +1,9 @@
 // src/crdt/live/obsidian-internals.ts
 // Isolated, feature-detected access to Obsidian internals. Every function here
 // returns null/false when the internal shape is absent so callers fall back to
-// the existing disk path (degraded to bursty, never broken). Patterns adapted
-// from Relay src/plugins/ViewHookPlugin.ts + PreviewRenderer.ts.
+// the existing disk path (degraded to bursty, never broken).
+//
+// Derived from No-Instructions/Relay (MIT); see THIRD-PARTY-NOTICES.md.
 import type { EditorView } from "@codemirror/view";
 
 export function getEditorViewForLeaf(view: unknown): EditorView | null {
@@ -24,7 +25,7 @@ export function setPreviewRendered(view: unknown, text: string): boolean {
 		// Only trigger onInternalDataChange when the CM6 editor is absent (preview-only
 		// mode). In live-preview mode editor.cm is present and Obsidian's own pipeline
 		// handles the refresh; calling onInternalDataChange there causes a double-update.
-		// Matches Relay PreviewRenderer.ts logic (guarded by !view.editor?.cm).
+		// Guarded by !view.editor?.cm.
 		const hasCm = !!(view as { editor?: { cm?: unknown } })?.editor?.cm;
 		if (!hasCm) {
 			(view as { onInternalDataChange?: () => void }).onInternalDataChange?.();
@@ -39,7 +40,7 @@ export function setPreviewRendered(view: unknown, text: string): boolean {
  *  embedded task — by calling `previewMode.edit(fullText)`, which writes the file
  *  directly. For a note that is ALSO open in an editor pane the disk write is then
  *  skipped as binding-owned, so the toggle never reaches the Y.Text and the next
- *  paint reverts it. Relay's ViewHookPlugin Hook 3 patches the same method.
+ *  paint reverts it.
  *
  *  `consume` receives the view's full new text and returns true when it took the
  *  edit (Obsidian's own write is then skipped) or false to fall through — which is

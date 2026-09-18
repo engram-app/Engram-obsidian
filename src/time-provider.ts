@@ -1,7 +1,7 @@
 /**
  * Injectable clock + timers.
  *
- * Ported from Relay (`src/TimeProvider.ts`). Our correctness depends on
+ * Our correctness depends on
  * wall-clock windows — the ~60s recentlyDeleted cooldown, the echo-suppression
  * window, heal cooldowns — and every one of them is driven by a raw
  * `window.setTimeout`. That makes them untestable except by waiting, which is
@@ -9,6 +9,8 @@
  * window expired" is to sleep through it.
  *
  * With the clock injected, a test advances time instead of spending it.
+ *
+ * Derived from No-Instructions/Relay (MIT); see THIRD-PARTY-NOTICES.md.
  */
 
 export interface TimeProvider {

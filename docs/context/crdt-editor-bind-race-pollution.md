@@ -18,8 +18,8 @@ Root-cause record of a cross-file content-pollution bug in the CRDT live-editor 
 ## Why the Old Code Looked Safe
 It deliberately deferred releasing the old binding until after `getYText` resolved, so a failed rebind left the old binding intact. That invariant WAS the bug: a stale-bound gap is data loss; an unbound gap is merely no-live-sync-until-next-refresh. PR #194 flips it.
 
-## Fix (PR #194, v1.11.21) — Relay's never-span-a-load semantics
-Reference implementation: relay/Relay/src/main.ts ~1355-1505 (`__relayLoading` critical section + `view.file` identity checks).
+## Fix (PR #194, v1.11.21) — never-span-a-load semantics
+The shape: a loading critical section plus `view.file` identity checks.
 
 1. `bindTo` detaches the old binding SYNCHRONOUSLY (compartment cleared + refcount released) before any await.
 2. `bindEpoch` monotonic counter: overlapping `bindTo` calls — latest wins; a slow stale bind aborts after its await.
@@ -37,4 +37,3 @@ Any binding between a reused editor surface and per-document state must be torn 
 - `tests/crdt-editor-controller.test.ts` — structural-invariant tests
 - Plugin PR #194 (fix, v1.11.21); PR #193 (round-1 wrong-mint class)
 - Workspace doc: `../engram-workspace/docs/context/crdt-wrong-mint-cross-file-overwrite.md`
-- Relay reference: relay/Relay/src/main.ts ~1355-1505

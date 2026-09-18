@@ -134,7 +134,7 @@ describe("deleted note must not re-materialize empty", () => {
 		await mgr.removeDoc("id-gone");
 		expect(mgr.docs.has("id-gone")).toBe(false);
 
-		// A late fan-out / handshake reply for the deleted note. Relay's contract:
+		// A late fan-out / handshake reply for the deleted note. The contract:
 		// touching a destroyed doc THROWS rather than get-or-creating it, so the
 		// caller decides explicitly instead of silently resurrecting the room.
 		await expect(mgr.receive("id-gone", emptyStep2())).rejects.toThrow(NoteDestroyedError);

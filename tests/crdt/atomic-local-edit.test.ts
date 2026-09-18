@@ -5,7 +5,7 @@
  * that predates a remote merge must never be diffed in (the diff would DELETE
  * the remote ops from the doc, and the deletion propagates everywhere).
  *
- * Ported to the Relay-model ProviderRegistry (the stale-snapshot guard lives in
+ * Ported to the provider-model ProviderRegistry (the stale-snapshot guard lives in
  * ProviderRegistry.applyLocalEdit now). The "room path" — a remote merge that
  * arrives over readSyncMessage and is NOT consumed by an applyRemoteUpdate
  * caller — is driven here via `receive(encodeUpdateFrame(update))`, the exact
@@ -28,7 +28,7 @@ function makeManager(opts?: {
 	const flushed: Record<string, string> = {};
 	const mgr = new ProviderRegistry({
 		dbPrefix: `vault-atomic-${Math.random().toString(36).slice(2)}`,
-		// Relay: the provider owns its own outbound send; the old onUpdate capture
+		// Provider model: the provider owns its own outbound send; the old onUpdate capture
 		// is replaced by a doc.on("update") listener per test where a count matters.
 		send: () => true,
 		onFlushToDisk:

@@ -109,9 +109,9 @@ describe("CrdtLiveViews doc lifecycle (onLastViewerRelease)", () => {
 	//
 	// Deleting a note with its tab open makes Obsidian close the view. The last
 	// viewer released, the teardown flushed the doc to disk, and because the file
-	// was already gone flushFromCrdt CREATED it — empty. Relay never reaches this
-	// state: its release resolves an existing guid (syncStore.get) instead of
-	// minting, and persists only a live document.
+	// was already gone flushFromCrdt CREATED it — empty. The fix is for release to
+	// resolve an existing id instead of minting, and to persist only a live
+	// document.
 
 	// --- Frontmatter stripped on close (#483, reported 2026-08-29) -----------
 	// The release flush read `manager.getText` — the body Y.Text alone. Closing
@@ -185,7 +185,7 @@ describe("CrdtLiveViews doc lifecycle (onLastViewerRelease)", () => {
 			lv as unknown as { onLastViewerRelease(p: string): Promise<void> }
 		).onLastViewerRelease("a.md");
 		expect(flushed).toEqual([{ path: "a.md", content: "text-of-id:a.md" }]);
-		// Relay persistent-doc model: the doc is NOT freed on last release (closeDoc
+		// persistent-doc model: the doc is NOT freed on last release (closeDoc
 		// is a no-op). It stays resident so the note keeps syncing and re-paints
 		// instantly on re-open — no re-hydrate/re-handshake churn.
 		expect(closed).toEqual([]);

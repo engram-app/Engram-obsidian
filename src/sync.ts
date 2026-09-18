@@ -794,8 +794,7 @@ export class SyncEngine {
 
 	/** note_id -> where THIS engine last put that note's file.
 	 *
-	 *  The registry Relay has as `files: Map<guid, IFile>`: an engine-owned
-	 *  id->file binding, separate from the shared identity map. It exists because
+	 *  An engine-owned id->file binding, separate from the shared identity map. It exists because
 	 *  the shared map cannot answer "where is this note's file" during a rename --
 	 *  a claim erases the old key by design, which is precisely what makes a
 	 *  rename indistinguishable from a note appearing from nowhere.
@@ -906,7 +905,7 @@ export class SyncEngine {
 			this.files.mark(src, "remotelyRenamed", ECHO_COOLDOWN_MS);
 			this.files.mark(dest, "remotelyRenamed", ECHO_COOLDOWN_MS);
 			await this.app.vault.rename(file, dest);
-			// Relay's `doc.move(path)` step: having moved the bytes, move the
+			// The move step: having moved the bytes, move the
 			// bookkeeping that was filed under the old path. Skipping it is not
 			// harmless — the rename echo guard below returns early precisely
 			// BECAUSE it assumes the mover already did this ("the id map, base and
@@ -1910,7 +1909,7 @@ export class SyncEngine {
 
 	/** True when a path currently has a live editor binding (an open, bound
 	 *  CodeMirror editor). While that holds, the editor binding is the sole CRDT
-	 *  writer for the note (Relay's "editor owns the file while open"): the disk
+	 *  writer for the note ("the editor owns the file while open"): the disk
 	 *  path must NOT also feed disk content into the Y.Text, or Obsidian's ~2s
 	 *  autosave re-diffs the whole file into the doc every cycle and fights the
 	 *  binding. Set from the plugin layer; defaults to "never bound" so non-CRDT
@@ -2010,8 +2009,8 @@ export class SyncEngine {
 		// REMOTE_ORIGIN update (manager.ts), so a self-echo fan-out landing during a
 		// genesis pre-seed window materializes the doc's transient EMPTY over the
 		// content the author just wrote — the e2e test_09 content loss (the author's
-		// own note is broadcast back to it). Mirrors Relay's rule that disk follows
-		// the authoritative doc, not a stale remote projection. Only blank when the
+		// own note is broadcast back to it). The rule is that disk follows the
+		// authoritative doc, not a stale remote projection. Only blank when the
 		// doc has GENUINELY converged empty (a real remote clear, e2e test_27): if
 		// the doc still projects content, this empty is transient — skip the write.
 		if (file instanceof TFile && content.trim() === "") {
@@ -3934,7 +3933,7 @@ export class SyncEngine {
 			return;
 		}
 
-		// Editor-owns-the-file gate (Relay's active-vs-idle model): if the note has
+		// Editor-owns-the-file gate (the active-vs-idle model): if the note has
 		// a live editor binding, that binding already streamed this edit into the
 		// Y.Text per keystroke. Obsidian's autosave disk write is just local
 		// persistence; re-feeding it through routeModify -> applyLocalEdit would
@@ -6535,7 +6534,7 @@ export class SyncEngine {
 	 *  bytes arrive directly in the event, not fetched separately). Skips a note
 	 *  the live editor's own room owns (isLiveBound) — that room already applies
 	 *  its own crdt_msg frames, so this would be a harmless-but-wasteful double
-	 *  apply; skipping it matches Relay's `if (isActive) return`. Skips a note
+	 *  apply; an active note is skipped outright. Skips a note
 	 *  not yet confirmed (no server row known) or one this device hasn't mapped
 	 *  to a path (first-discovery is pull()'s job, same as coldReceive). Frees
 	 *  the doc after a successful apply (hibernateIfIdle) — same reasoning as
@@ -6821,7 +6820,7 @@ export class SyncEngine {
 			if (queued) this.releaseHealRoom(noteId, queued.path);
 			return;
 		}
-		// Relay model: the provider fired onSynced from readSyncMessage — the doc is
+		// Provider model: the provider fired onSynced from readSyncMessage — the doc is
 		// ALREADY converged with the server (syncStep2 reconciled the full state
 		// vector), so there is NO text-verify defer here. The old
 		// `projectedText === staged.content` gate wedged permanently whenever the
@@ -9314,8 +9313,8 @@ export class SyncEngine {
 	 *
 	 *  `vault.rename`, not `fileManager.renameFile`: the server rewrote links for
 	 *  a rename it originated, and renameFile would rewrite them again (the
-	 *  exactly-one-rewriter invariant). Relay uses renameFile because its server
-	 *  does not rewrite at all. */
+	 *  exactly-one-rewriter invariant). renameFile would be correct only against
+	 *  a server that does not rewrite at all. */
 	private async createFileWithFolders(normalized: string, content: string): Promise<void> {
 		const folder = normalized.includes("/")
 			? normalized.substring(0, normalized.lastIndexOf("/"))
@@ -9673,7 +9672,7 @@ export class SyncEngine {
 	 *  attachments — rides ONE bounded per-file loop (Promise.all over
 	 *  PUSH_BATCH_SIZE slices). pushFile's socket-native genesis (crdt_create)
 	 *  owns brand-new notes; the retired crdt_create_batch RPC was a second,
-	 *  lesser copy of that path (Relay-pattern rewrite: per-file work units,
+	 *  lesser copy of that path (per-file rewrite: per-file work units,
 	 *  per-file progress, per-file failure isolation — a failure strands one
 	 *  file, not a 25-note chunk).
 	 *

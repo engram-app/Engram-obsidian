@@ -1,6 +1,8 @@
-// The live editor<->Y.Text binding, copied from Relay's LiveNodePlugin model
-// (../relay/Relay/src/y-codemirror.next/LiveNodePlugin.ts): a self-contained CM6
-// ViewPlugin that CodeMirror owns. One instance is created PER EditorView, so it
+// The live editor<->Y.Text binding: a self-contained CM6 ViewPlugin that
+// CodeMirror owns.
+//
+// Derived from No-Instructions/Relay (MIT); see THIRD-PARTY-NOTICES.md.
+// One instance is created PER EditorView, so it
 // is re-created automatically whenever Obsidian rebuilds a leaf's editor — no
 // Compartment to be wiped by setViewData, no poll, no re-bind race, no double
 // bind. That structurally erases the whole file-switch wedge class.
@@ -11,7 +13,7 @@
 // native-undo rerouting yCollab required is simply gone: a native undo is just
 // more editor changes the plugin forwards to Y.Text as ordinary deltas.
 //
-// Doc hydration is async (Relay's anti-lag design): the plugin binds immediately
+// Doc hydration is async (the anti-lag design): the plugin binds immediately
 // against the resident (possibly still-hydrating) Y.Text and does the initial
 // reconcile once `ready` resolves, so opening a note never blocks on the
 // IndexedDB replay.
@@ -42,7 +44,7 @@ import {
 	ownedMarkdownPath,
 } from "./live-binding-decisions";
 
-/** Interval for the drift backstop (Relay's DRIFT_CHECK_DELAY is 3000ms). */
+/** Interval for the drift backstop. */
 const DRIFT_CHECK_MS = 3000;
 
 /** Shift CM change offsets by `n` (0 leaves them untouched). Used to map body-Y.Text
@@ -406,7 +408,7 @@ class LiveBindingValue implements PluginValue {
 		this.scheduleDriftCheck();
 	}
 
-	/** Periodic backstop (Relay's checkAndCorrectDrift): while bound, compare the
+	/** Periodic drift backstop: while bound, compare the
 	 *  editor text to the Y.Text every DRIFT_CHECK_MS. If a delta/forward was silently
 	 *  dropped (a swallowed dispatch/transact error, a filtered transaction) they
 	 *  diverge; re-adopt the doc into the editor so the two never stay out of sync.

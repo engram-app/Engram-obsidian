@@ -1,8 +1,8 @@
 /**
  * Lifetime — an ownership window you can end, and guard async work against.
  *
- * Ported from Relay (`src/promiseUtils.ts`). Our version of this is four
- * hand-written `if (entry.destroyed) return;` checks in provider-registry,
+ * What this replaces: four hand-written `if (entry.destroyed) return;`
+ * checks in provider-registry,
  * each re-derived at a different call site, each added after a bug taught us it
  * was missing. Hand-written liveness is missed by construction — the
  * entry-creation path had none, which is how a deleted note's room got rebuilt
@@ -12,6 +12,8 @@
  * died AFTER the awaited work resolves. `guard` races the operation against the
  * end signal, so the continuation is abandoned the moment the lifetime ends —
  * it never resumes into dead state at all.
+ *
+ * Derived from No-Instructions/Relay (MIT); see THIRD-PARTY-NOTICES.md.
  */
 
 export type LifetimeOperation<T> = Promise<T> | ((signal: AbortSignal) => Promise<T>);

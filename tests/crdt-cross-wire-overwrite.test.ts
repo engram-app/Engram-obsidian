@@ -16,7 +16,7 @@
  *      pathForId(X). NOT guarded here: its only protection is the NoteIdMap
  *      bijection + reconcile cross-wire correction (commit 1), which prevent
  *      the wrong mapping from existing. A content-level guard would need
- *      Relay-style merge gating — tracked under the identity-as-CRDT work.
+ *      merge gating at the doc level — tracked under the identity-as-CRDT work.
  */
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { TFile } from "obsidian";

@@ -11,7 +11,7 @@ import { SyncStore } from "./sync-store";
  *
  * That is the whole point of engram-app/Engram#1146. Identity used to live in
  * three places that had to agree — this map, the REST manifest, and the seq
- * cursor — and `relay-pattern-audit.md` traces every drift incident we have had
+ * cursor — and `sync-pattern-audit.md` traces every drift incident we have had
  * to that split. One CRDT, synced through the same channel as content, has no
  * such class of bug because there is nothing to disagree with.
  *

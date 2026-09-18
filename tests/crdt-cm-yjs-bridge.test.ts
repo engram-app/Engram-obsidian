@@ -81,7 +81,7 @@ describe("textDiffToChangeSpec", () => {
 
 	it("emits a replacement as ONE change, not a split delete+insert pair", () => {
 		// CM6 can silently drop a delete and an insert that butt against the same
-		// boundary (Relay's incrementalBufferChange hit this), so a replaced region
+		// boundary, so a replaced region
 		// must come out coalesced.
 		const specs = textDiffToChangeSpec("- [ ] task", "- [x] task");
 		expect(specs.length).toBe(1);
