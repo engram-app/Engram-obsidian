@@ -159,7 +159,7 @@ export class SearchPanel {
 		setIcon(iconEl, "search");
 		this.inputEl = inputWrap.createEl("input", {
 			type: "search",
-			placeholder: "Search your vault…",
+			placeholder: t("Search your vault…"),
 			cls: "engram-search-input",
 		});
 		this.clearEl = inputWrap.createSpan({ cls: "engram-search-clear clickable-icon" });
@@ -206,7 +206,7 @@ export class SearchPanel {
 		this.modeHintEl.setText(modeHintText(this.mode));
 		this.folderEl = this.filtersEl.createEl("input", {
 			type: "text",
-			placeholder: "Filter by folder…",
+			placeholder: t("Filter by folder…"),
 			cls: "engram-search-input engram-search-folder-input",
 		});
 		new FolderInputSuggest(
@@ -223,7 +223,7 @@ export class SearchPanel {
 		this.renderTagChips();
 		this.tagEl = this.filtersEl.createEl("input", {
 			type: "text",
-			placeholder: "Filter by tags…",
+			placeholder: t("Filter by tags…"),
 			cls: "engram-search-input engram-search-tag-input",
 		});
 		new TagInputSuggest(
@@ -417,7 +417,7 @@ export class SearchPanel {
 			console.error("Engram search failed", e);
 			this.resultsEl.empty();
 			this.resultsEl.createEl("p", {
-				text: "Search failed — check connection",
+				text: t("Search failed — check connection"),
 				cls: "engram-search-empty",
 			});
 		}
@@ -460,7 +460,10 @@ export class SearchPanel {
 	private renderResults(query: string): void {
 		this.resultsEl.empty();
 		if (!this.results.length) {
-			this.resultsEl.createEl("p", { text: "No results found", cls: "engram-search-empty" });
+			this.resultsEl.createEl("p", {
+				text: t("No results found"),
+				cls: "engram-search-empty",
+			});
 			this.renderCapHint();
 			return;
 		}
@@ -506,7 +509,7 @@ export class SearchPanel {
 			bar.createSpan({ cls: "engram-search-strength-fill" }).style.width = `${pct}%`;
 			strength.createSpan({
 				cls: "engram-search-strength-label",
-				text: `match strength: ${pct}%`,
+				text: t("match strength: {pct}%", { pct }),
 			});
 			// Context line: folder · heading-trail (heading-trail drops the note title).
 			const parts: string[] = [];

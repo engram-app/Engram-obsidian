@@ -5,32 +5,32 @@ import type { TabContext } from "./types";
 
 /** Directories that should never be synced — detect and warn if found in vault. */
 const PROBLEMATIC_DIRS = [
-	{ pattern: "node_modules/", label: "node_modules", desc: "Node.js dependencies" },
-	{ pattern: ".venv/", label: ".venv", desc: "Python virtual environment" },
-	{ pattern: "venv/", label: "venv", desc: "Python virtual environment" },
-	{ pattern: "__pycache__/", label: "__pycache__", desc: "Python bytecode cache" },
-	{ pattern: "vendor/", label: "vendor", desc: "Vendored dependencies" },
-	{ pattern: ".gradle/", label: ".gradle", desc: "Gradle build cache" },
-	{ pattern: "target/", label: "target", desc: "Rust/Java build output" },
-	{ pattern: "build/", label: "build", desc: "Build output" },
-	{ pattern: ".next/", label: ".next", desc: "Next.js build output" },
-	{ pattern: "dist/", label: "dist", desc: "Distribution build output" },
-	{ pattern: ".cargo/", label: ".cargo", desc: "Cargo cache" },
-	{ pattern: "Pods/", label: "Pods", desc: "CocoaPods dependencies" },
-	{ pattern: ".dart_tool/", label: ".dart_tool", desc: "Dart tool cache" },
-	{ pattern: ".cache/", label: ".cache", desc: "Generic cache directory" },
+	{ pattern: "node_modules/", label: "node_modules", desc: t("Node.js dependencies") },
+	{ pattern: ".venv/", label: ".venv", desc: t("Python virtual environment") },
+	{ pattern: "venv/", label: "venv", desc: t("Python virtual environment") },
+	{ pattern: "__pycache__/", label: "__pycache__", desc: t("Python bytecode cache") },
+	{ pattern: "vendor/", label: "vendor", desc: t("Vendored dependencies") },
+	{ pattern: ".gradle/", label: ".gradle", desc: t("Gradle build cache") },
+	{ pattern: "target/", label: "target", desc: t("Rust/Java build output") },
+	{ pattern: "build/", label: "build", desc: t("Build output") },
+	{ pattern: ".next/", label: ".next", desc: t("Next.js build output") },
+	{ pattern: "dist/", label: "dist", desc: t("Distribution build output") },
+	{ pattern: ".cargo/", label: ".cargo", desc: t("Cargo cache") },
+	{ pattern: "Pods/", label: "Pods", desc: t("CocoaPods dependencies") },
+	{ pattern: ".dart_tool/", label: ".dart_tool", desc: t("Dart tool cache") },
+	{ pattern: ".cache/", label: ".cache", desc: t("Generic cache directory") },
 ];
 
 export function renderAdvancedTab(ctx: TabContext): void {
 	const { containerEl, app, plugin, redisplay } = ctx;
 
 	// ── Ignore patterns ──
-	new Setting(containerEl).setName("Ignore patterns").setHeading();
+	new Setting(containerEl).setName(t("Ignore patterns")).setHeading();
 
 	renderIgnoreWarnings(containerEl, app, plugin, redisplay);
 
 	const ignoreSetting = new Setting(containerEl)
-		.setName("Custom patterns")
+		.setName(t("Custom patterns"))
 		.setDesc(
 			`Paths to skip (one per line). Folder patterns end with /. Built-in: ${app.vault.configDir}/, .trash/, .git/`,
 		)
@@ -47,10 +47,10 @@ export function renderAdvancedTab(ctx: TabContext): void {
 	ignoreSetting.settingEl.addClass("engram-ignore-setting");
 
 	// ── Diagnostics ──
-	new Setting(containerEl).setName("Diagnostics").setHeading();
+	new Setting(containerEl).setName(t("Diagnostics")).setHeading();
 
 	new Setting(containerEl)
-		.setName("Diagnostics")
+		.setName(t("Diagnostics"))
 		.setDesc(
 			"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use.",
 		)
@@ -62,7 +62,7 @@ export function renderAdvancedTab(ctx: TabContext): void {
 		);
 
 	new Setting(containerEl)
-		.setName("Diagnostics detail")
+		.setName(t("Diagnostics detail"))
 		.setDesc(
 			"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.",
 		)
@@ -82,7 +82,7 @@ export function renderAdvancedTab(ctx: TabContext): void {
 		);
 
 	// ── About ──
-	new Setting(containerEl).setName("About").setHeading();
+	new Setting(containerEl).setName(t("About")).setHeading();
 
 	const aboutList = containerEl.createEl("ul", { cls: "engram-about-list" });
 
@@ -132,11 +132,16 @@ function renderIgnoreWarnings(
 
 	for (const item of detected) {
 		const warning = new Setting(containerEl)
-			.setName(`⚠ Detected: ${item.label}/ (${item.count.toLocaleString()} files)`)
-			.setDesc(`${item.desc} — should not be synced`)
+			.setName(
+				t("⚠ Detected: {label}/ ({count} files)", {
+					label: item.label,
+					count: item.count.toLocaleString(),
+				}),
+			)
+			.setDesc(t("{desc} — should not be synced", { desc: item.desc }))
 			.addButton((btn) =>
 				btn
-					.setButtonText("Add to ignores")
+					.setButtonText(t("Add to ignores"))
 					.setCta()
 					.onClick(async () => {
 						const current = plugin.settings.ignorePatterns.trim();

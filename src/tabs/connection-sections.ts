@@ -53,7 +53,7 @@ const API_KEY_PREFIX = "engram_";
 export function renderEngramUrlSetting(ctx: TabContext): void {
 	const { containerEl, plugin, redisplay } = ctx;
 
-	const setting = new Setting(containerEl).setName("Engram URL");
+	const setting = new Setting(containerEl).setName(t("Engram URL"));
 	setting.settingEl.addClass("engram-url-setting");
 
 	const status = setting.descEl.createDiv({ cls: "engram-url-preflight" });
@@ -72,15 +72,17 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
 		switch (result.kind) {
 			case "engram":
 				status.addClass("is-engram");
-				status.setText(`✓ Engram server reachable (v${result.version})`);
+				status.setText(
+					t("✓ Engram server reachable (v{version})", { version: result.version }),
+				);
 				break;
 			case "reachable":
 				status.addClass("is-reachable");
-				status.setText("✗ server responded but isn't an Engram backend");
+				status.setText(t("✗ server responded but isn't an Engram backend"));
 				break;
 			case "unreachable":
 				status.addClass("is-unreachable");
-				status.setText("✗ couldn't reach a server at this URL");
+				status.setText(t("✗ couldn't reach a server at this URL"));
 				break;
 		}
 	};
@@ -94,7 +96,7 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
 		const seq = ++probeSeq;
 		status.removeClasses(STATUS_CLASSES);
 		status.addClass("is-checking");
-		status.setText("Checking server…");
+		status.setText(t("Checking server…"));
 		void EngramApi.probeHealth(value).then((result) => {
 			if (seq !== probeSeq) return; // superseded by a newer probe
 			status.removeClass("is-checking");
@@ -149,7 +151,7 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
 		// Pre-fill the saved URL so the configured backend is always visible
 		// (unlike the API-key field, the URL isn't a secret and the user needs
 		// to confirm it's correct).
-		text.setPlaceholder("https://engram.example.com");
+		text.setPlaceholder(t("https://engram.example.com"));
 		text.setValue(plugin.settings.apiUrl);
 		text.onChange((value) => {
 			pendingUrl = value;
@@ -202,12 +204,12 @@ export function renderAuthSection(ctx: TabContext): void {
 	const isOAuth = !!plugin.settings.refreshToken;
 	const hasApiKey = !!plugin.settings.apiKey;
 
-	new Setting(containerEl).setName("Authentication").setHeading();
+	new Setting(containerEl).setName(t("Authentication")).setHeading();
 
 	if (isOAuth) {
 		new Setting(containerEl)
 			.setName(`Signed in as ${plugin.settings.userEmail ?? "unknown"}`)
-			.setDesc("Authenticated via Engram account (OAuth).")
+			.setDesc(t("Authenticated via Engram account (OAuth)."))
 			// engramWebUrl, not a hardcoded cloud host: a self-hosted backend
 			// serves its own SPA from the same origin, and sending that user to
 			// app.engram.page would be a billing page for an account they do not
@@ -219,12 +221,12 @@ export function renderAuthSection(ctx: TabContext): void {
 			// pointing new code at a deliberately-deprecated redirect means the
 			// day it is deleted this button breaks in every installed copy.
 			.addButton((btn) =>
-				btn.setButtonText("Manage account").onClick(() => {
+				btn.setButtonText(t("Manage account")).onClick(() => {
 					window.open(`${engramWebUrl(plugin.settings.apiUrl)}/#settings/account`);
 				}),
 			)
 			.addButton((btn) =>
-				btn.setButtonText("Sign out").onClick(async () => {
+				btn.setButtonText(t("Sign out")).onClick(async () => {
 					await plugin.clearOAuthTokens();
 					redisplay();
 				}),
@@ -234,11 +236,11 @@ export function renderAuthSection(ctx: TabContext): void {
 
 	if (hasApiKey) {
 		new Setting(containerEl)
-			.setName("Using API key")
-			.setDesc("Authenticated via manual API key.")
+			.setName(t("Using API key"))
+			.setDesc(t("Authenticated via manual API key."))
 			.addButton((btn) =>
 				btn
-					.setButtonText("Clear key")
+					.setButtonText(t("Clear key"))
 					.setWarning()
 					.onClick(async () => {
 						plugin.settings.apiKey = "";
@@ -248,7 +250,7 @@ export function renderAuthSection(ctx: TabContext): void {
 			)
 			.addButton((btn) =>
 				btn
-					.setButtonText("Switch to sign in")
+					.setButtonText(t("Switch to sign in"))
 					.setCta()
 					.onClick(async () => {
 						plugin.settings.apiKey = "";
@@ -267,13 +269,13 @@ export function renderAuthSection(ctx: TabContext): void {
 	// "make an account first" step, and advertising one implied a prerequisite
 	// that does not exist.
 	new Setting(containerEl)
-		.setName("Sign in or create an account")
+		.setName(t("Sign in or create an account"))
 		.setDesc(
 			"Opens your browser to sign in, or create an account if you don't have one yet, then links this vault.",
 		)
 		.addButton((btn) =>
 			btn
-				.setButtonText("Sign in")
+				.setButtonText(t("Sign in"))
 				.setCta()
 				// A rejected device flow (saveOAuthTokens throwing) otherwise
 				// vanishes into the button handler with nothing on screen.
@@ -297,16 +299,16 @@ export function renderAuthSection(ctx: TabContext): void {
 			? "Or authenticate with a token instead of signing in. Engram Cloud API keys require the Pro plan; on Free and Starter, sign in above."
 			: "Or authenticate with a token instead of signing in.";
 
-	new Setting(containerEl).setName("API key").setDesc(keyDesc).setHeading();
+	new Setting(containerEl).setName(t("API key")).setDesc(keyDesc).setHeading();
 
 	let pendingKey = "";
 	const apiKeySetting = new Setting(containerEl)
-		.setName("Token")
+		.setName(t("Token"))
 		// The key prefix is deliberately NOT named here. The obsidianmd
 		// sentence-case rule treats "engram" as a proper noun and rewrites it to
 		// "Engram_", which is wrong: real keys are lowercase. The input's
 		// placeholder shows the true format instead.
-		.setDesc("Bearer token from your Engram account.")
+		.setDesc(t("Bearer token from your Engram account."))
 		.addText((text) => {
 			text.setPlaceholder("engram_abc123...").onChange((value) => {
 				pendingKey = value;
@@ -316,7 +318,7 @@ export function renderAuthSection(ctx: TabContext): void {
 		})
 		.addButton((btn) =>
 			btn
-				.setButtonText("Save")
+				.setButtonText(t("Save"))
 				.setCta()
 				.onClick(async () => {
 					const trimmed = pendingKey.trim();
@@ -331,7 +333,9 @@ export function renderAuthSection(ctx: TabContext): void {
 					// surfaced later as opaque 401s.
 					if (!trimmed.startsWith(API_KEY_PREFIX)) {
 						new Notice(
-							`That does not look like an Engram API key (expected ${API_KEY_PREFIX}…).`,
+							t("That does not look like an Engram API key (expected {prefix}…).", {
+								prefix: API_KEY_PREFIX,
+							}),
 						);
 						return;
 					}
@@ -356,11 +360,11 @@ export function renderVaultSection(ctx: TabContext): void {
 
 	if (!plugin.settings.apiKey && !plugin.settings.refreshToken) return;
 
-	new Setting(containerEl).setName("Vault").setHeading();
+	new Setting(containerEl).setName(t("Vault")).setHeading();
 
 	const setting = new Setting(containerEl)
-		.setName("Vault selection")
-		.setDesc("Select which vault this plugin syncs with.");
+		.setName(t("Vault selection"))
+		.setDesc(t("Select which vault this plugin syncs with."));
 
 	const currentId = plugin.settings.vaultId;
 	const storedName = plugin.settings.remoteVaultName;
@@ -386,7 +390,7 @@ export function renderVaultSection(ctx: TabContext): void {
 		return;
 	}
 
-	const placeholderEl = setting.controlEl.createSpan({ text: "Loading vaults..." });
+	const placeholderEl = setting.controlEl.createSpan({ text: t("Loading vaults...") });
 
 	plugin.api
 		.listVaults()
@@ -395,7 +399,7 @@ export function renderVaultSection(ctx: TabContext): void {
 
 			if (vaults.length === 0) {
 				setting.controlEl.createSpan({
-					text: "No vaults found — first sync will create one",
+					text: t("No vaults found — first sync will create one"),
 				});
 				return;
 			}
@@ -415,7 +419,7 @@ export function renderVaultSection(ctx: TabContext): void {
 								: `Pick a vault (previous: id ${currentId} not found)`,
 						);
 					} else {
-						dropdown.addOption("", "Pick a vault");
+						dropdown.addOption("", t("Pick a vault"));
 					}
 					for (const v of vaults) {
 						const label = v.is_default ? `${v.name} (default)` : v.name;
@@ -467,7 +471,7 @@ function renderLockedVaultRow(
 	nameEl.setAttribute("title", `Vault id: ${vaultId}`);
 
 	setting.addButton((btn) =>
-		btn.setButtonText("Change").onClick(() => {
+		btn.setButtonText(t("Change")).onClick(() => {
 			void plugin.doSyncWithFirstSyncCheck({ startInVaultPicker: true });
 		}),
 	);
@@ -477,7 +481,7 @@ function renderLockedVaultRow(
 export function renderSupportSection(ctx: TabContext): void {
 	const { containerEl } = ctx;
 
-	new Setting(containerEl).setName("Support development").setHeading();
+	new Setting(containerEl).setName(t("Support development")).setHeading();
 
 	const supportSetting = new Setting(containerEl).setDesc(
 		"If this plugin saves you time, consider supporting development.",
@@ -493,7 +497,7 @@ export function renderSupportSection(ctx: TabContext): void {
 	});
 	const sponsorIcon = sponsorLink.createSpan({ cls: "engram-sponsor-icon" });
 	setIcon(sponsorIcon, "heart");
-	sponsorLink.createSpan({ text: "GitHub Sponsors" });
+	sponsorLink.createSpan({ text: t("GitHub Sponsors") });
 
 	const kofiLink = buttonRow.createEl("a", {
 		cls: "engram-kofi-button",

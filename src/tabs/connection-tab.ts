@@ -29,8 +29,8 @@ export function renderConnectionTab(ctx: TabContext): void {
 	// semantics, standard Obsidian affordance, zero new CSS. Swap for segmented
 	// buttons only if the visual matters more than the maintenance.
 	new Setting(containerEl)
-		.setName("Backend")
-		.setDesc("Where this vault syncs to. Each backend keeps its own sign-in.")
+		.setName(t("Backend"))
+		.setDesc(t("Where this vault syncs to. Each backend keeps its own sign-in."))
 		.addDropdown((dd) => {
 			dd.addOption("cloud", MODE_LABELS.cloud);
 			dd.addOption("selfhost", MODE_LABELS.selfhost);
@@ -61,8 +61,8 @@ export function renderConnectionTab(ctx: TabContext): void {
 
 	if (mode === "selfhost") {
 		const repo = new Setting(containerEl)
-			.setName("Run your own Engram server")
-			.setDesc("Engram is the backend that powers sync and semantic search.");
+			.setName(t("Run your own Engram server"))
+			.setDesc(t("Engram is the backend that powers sync and semantic search."));
 		repo.settingEl.addClass("engram-setup-cta");
 		repo.descEl.createEl("a", {
 			text: "github.com/engram-app/engram",
@@ -103,11 +103,11 @@ function renderFinishSetupRow(ctx: TabContext): void {
 	if (!plugin.syncEngine.isSyncBlocked()) return;
 
 	const row = new Setting(containerEl)
-		.setName("Finish sync setup")
-		.setDesc("Nothing in this vault syncs until you choose how to merge it with the server.")
+		.setName(t("Finish sync setup"))
+		.setDesc(t("Nothing in this vault syncs until you choose how to merge it with the server."))
 		.addButton((btn) =>
 			btn
-				.setButtonText("Choose sync direction")
+				.setButtonText(t("Choose sync direction"))
 				.setCta()
 				.onClick(() => {
 					void plugin.doSyncWithFirstSyncCheck();

@@ -1,5 +1,6 @@
 import { expBackoff } from "./backoff";
 import { statusOf } from "./error-util";
+import { t } from "./i18n";
 import { LimitExceededError } from "./limit-error";
 import type { ParseReason, SyncIssue, SyncIssueCategory } from "./types";
 
@@ -240,54 +241,54 @@ export function remediation(
 	// is "retrying automatically" (review minor #3).
 	if (reason?.code === "note_processing_failed") {
 		return {
-			title: "Note couldn't be processed",
+			title: t("Note couldn't be processed"),
 			hint: "The server couldn't process this note. Check its contents, then edit and save to try again.",
 		};
 	}
 	switch (category) {
 		case "needs_pro":
 			return {
-				title: "Attachments need a paid plan",
+				title: t("Attachments need a paid plan"),
 				hint: "The Free tier syncs notes only. Upgrade to sync images and PDFs.",
 			};
 		case "quota":
 			return {
-				title: "Attachment storage full",
+				title: t("Attachment storage full"),
 				hint: "You've used all the attachment storage on your plan. Upgrade for more.",
 			};
 		case "too_large":
 			return {
-				title: "Too large for the server",
+				title: t("Too large for the server"),
 				hint: "The server limit is 5 MB. Compress or split the file, then it will sync.",
 			};
 		case "auth":
 			return {
-				title: "Sign-in expired",
+				title: t("Sign-in expired"),
 				hint: "Reconnect your account to resume syncing.",
 			};
 		case "conflict":
 			return {
-				title: "Unresolved conflict",
+				title: t("Unresolved conflict"),
 				hint: "Open the file to resolve the conflict, then sync again.",
 			};
 		case "frontmatter":
 			return {
-				title: "Frontmatter needs a fix",
+				title: t("Frontmatter needs a fix"),
 				hint: "The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.",
 			};
 		case "server":
 			return {
-				title: "Server error",
+				title: t("Server error"),
 				hint: "A temporary server problem — retrying automatically.",
 			};
 		case "network":
 			return {
-				title: "Network unavailable",
+				title: t("Network unavailable"),
 				hint: "Can't reach the server — retrying automatically.",
 			};
 		default:
 			return {
-				title: "Sync failed",
+				title: t("Sync failed"),
 				hint: "An unexpected error — retrying automatically.",
 			};
 	}

@@ -1,5 +1,6 @@
 import { type App, Modal, setIcon } from "obsidian";
 import { statusOf } from "./error-util";
+import { t, tInto } from "./i18n";
 import { toastFor } from "./limit-copy";
 import { LimitExceededError } from "./limit-error";
 import { isTextAttachment } from "./mime";
@@ -664,7 +665,7 @@ export class SyncPreviewModal extends Modal {
 				text: this.state.planError,
 			});
 		} else if (this.loadingTextShownAt !== null) {
-			body.createSpan({ text: "Comparing your vault with the cloud…" });
+			body.createSpan({ text: t("Comparing your vault with the cloud…") });
 		}
 
 		this.renderFooter(parent, "Cancel", false);
@@ -693,7 +694,7 @@ export class SyncPreviewModal extends Modal {
 		if (gated) {
 			parent.createEl("p", {
 				cls: "engram-sync-preview-gate-note",
-				text: "Until you choose, nothing in this vault will sync.",
+				text: t("Until you choose, nothing in this vault will sync."),
 			});
 		}
 
@@ -710,7 +711,7 @@ export class SyncPreviewModal extends Modal {
 			this.state.cancel();
 		});
 		if (this.opts.showChangeVault) {
-			const changeBtn = footer.createEl("button", { text: "Change vault" });
+			const changeBtn = footer.createEl("button", { text: t("Change vault") });
 			changeBtn.addEventListener("click", () => {
 				void this.openVaultPicker();
 			});
@@ -736,7 +737,7 @@ export class SyncPreviewModal extends Modal {
 		const summary = details.createEl("summary", {
 			cls: "engram-sync-preview-advanced-summary",
 		});
-		summary.createSpan({ text: "Advanced sync options" });
+		summary.createSpan({ text: t("Advanced sync options") });
 		const chevron = summary.createSpan({ cls: "engram-sync-preview-advanced-chevron" });
 		setIcon(chevron, this.state.advancedOpen ? "chevron-down" : "chevron-right");
 
@@ -774,7 +775,7 @@ export class SyncPreviewModal extends Modal {
 				cls: "engram-sync-preview-header engram-sync-preview-header-success",
 			});
 			h.createSpan({ text: "✅ ", cls: "engram-sync-preview-header-emoji" });
-			h.createSpan({ text: "Everything is in sync" });
+			h.createSpan({ text: t("Everything is in sync") });
 			return;
 		}
 		parent.createEl("h2", {
@@ -807,19 +808,19 @@ export class SyncPreviewModal extends Modal {
 		const match = computeMatchPercent(plan);
 		const conflicts = plan.conflicts.length;
 		const matchRow = parent.createDiv({ cls: "engram-sync-preview-match" });
-		matchRow.createSpan({
-			cls: "engram-sync-preview-match-label",
-			text: "Your vault shares ",
-		});
-		const matchValue = matchRow.createSpan({
-			cls: "engram-sync-preview-match-value",
-			text: `${match}%`,
-		});
-		if (match === 100) matchValue.addClass("is-perfect");
-		matchRow.createSpan({
-			cls: "engram-sync-preview-match-label",
-			text: " of its data with Engram",
-		});
+		tInto(
+			matchRow,
+			"Your vault shares {percent} of its data with Engram",
+			"percent",
+			(row) => {
+				const value = row.createSpan({
+					cls: "engram-sync-preview-match-value",
+					text: `${match}%`,
+				});
+				if (match === 100) value.addClass("is-perfect");
+			},
+			{ textCls: "engram-sync-preview-match-label" },
+		);
 		if (conflicts > 0) {
 			const conflictRow = parent.createDiv({ cls: "engram-sync-preview-conflicts" });
 			conflictRow.createSpan({
@@ -894,12 +895,12 @@ export class SyncPreviewModal extends Modal {
 		if (choice == null) return;
 
 		contentEl.createEl("h2", {
-			text: "Confirm destructive sync",
+			text: t("Confirm destructive sync"),
 			cls: "engram-sync-preview-header",
 		});
 
 		const summary = contentEl.createDiv({ cls: "engram-sync-preview-confirm-summary" });
-		summary.createEl("p", { text: "You are about to:" });
+		summary.createEl("p", { text: t("You are about to:") });
 		const ul = summary.createEl("ul");
 		for (const action of confirmActions(choice, this.requirePlan())) {
 			ul.createEl("li", { text: action });
@@ -908,7 +909,7 @@ export class SyncPreviewModal extends Modal {
 		const deletePaths = this.deletePathsFor(choice);
 		if (deletePaths.length > 0) {
 			contentEl.createEl("p", {
-				text: "Files that will be deleted:",
+				text: t("Files that will be deleted:"),
 				cls: "engram-sync-preview-tree-caption",
 			});
 			this.renderDeletionTree(contentEl, deletePaths, this.keptPathsFor(choice, deletePaths));
@@ -916,12 +917,12 @@ export class SyncPreviewModal extends Modal {
 
 		contentEl.createEl("p", {
 			cls: "engram-sync-preview-warning",
-			text: "This cannot be undone.",
+			text: t("This cannot be undone."),
 		});
 		const typeLine = contentEl.createEl("p");
-		typeLine.createSpan({ text: "Type " });
-		typeLine.createSpan({ text: "delete", cls: "engram-sync-preview-confirm-keyword" });
-		typeLine.createSpan({ text: " to confirm:" });
+		tInto(typeLine, "Type {keyword} to confirm:", "keyword", (line) => {
+			line.createSpan({ text: "delete", cls: "engram-sync-preview-confirm-keyword" });
+		});
 
 		const input = contentEl.createEl("input", {
 			type: "text",
@@ -929,14 +930,14 @@ export class SyncPreviewModal extends Modal {
 		});
 
 		const footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
-		const backBtn = footer.createEl("button", { text: "Back" });
+		const backBtn = footer.createEl("button", { text: t("Back") });
 		backBtn.addEventListener("click", () => {
 			this.state.goBack();
 			this.render();
 		});
 
 		const confirmBtn = footer.createEl("button", {
-			text: "Confirm",
+			text: t("Confirm"),
 			cls: "engram-sync-preview-confirm-btn",
 		});
 		confirmBtn.disabled = true;
@@ -958,18 +959,20 @@ export class SyncPreviewModal extends Modal {
 
 		const { contentEl } = this;
 		contentEl.createEl("h2", {
-			text: "Switch vault",
+			text: t("Switch vault"),
 			cls: "engram-sync-preview-header",
 		});
 		contentEl.createEl("p", {
-			text: "Pick a vault to sync with. We will recalculate the sync preview after you choose.",
+			text: t(
+				"Pick a vault to sync with. We will recalculate the sync preview after you choose.",
+			),
 			cls: "engram-sync-preview-picker-help",
 		});
 
 		const body = contentEl.createDiv({ cls: "engram-sync-preview-picker-body" });
 
 		if (this.state.vaultsLoading) {
-			body.createEl("p", { text: "Loading vaults…" });
+			body.createEl("p", { text: t("Loading vaults…") });
 		} else if (this.state.vaultsError) {
 			body.createEl("p", {
 				text: this.state.vaultsError,
@@ -996,11 +999,11 @@ export class SyncPreviewModal extends Modal {
 				});
 			}
 		} else {
-			body.createEl("p", { text: "No other vaults available." });
+			body.createEl("p", { text: t("No other vaults available.") });
 		}
 
 		const footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
-		const backBtn = footer.createEl("button", { text: "Back" });
+		const backBtn = footer.createEl("button", { text: t("Back") });
 		backBtn.addEventListener("click", () => {
 			this.state.exitVaultPicker();
 			this.render();
@@ -1008,7 +1011,7 @@ export class SyncPreviewModal extends Modal {
 
 		if (this.opts.createVault) {
 			const newBtn = footer.createEl("button", {
-				text: "Make new vault",
+				text: t("Make new vault"),
 				cls: "mod-cta engram-sync-preview-new-vault-btn",
 			});
 			newBtn.addEventListener("click", () => {
@@ -1024,11 +1027,13 @@ export class SyncPreviewModal extends Modal {
 	private renderCreateVaultForm(): void {
 		const { contentEl } = this;
 		contentEl.createEl("h2", {
-			text: "New vault",
+			text: t("New vault"),
 			cls: "engram-sync-preview-header",
 		});
 		contentEl.createEl("p", {
-			text: "Create a new empty vault on the server, then sync this Obsidian vault into it.",
+			text: t(
+				"Create a new empty vault on the server, then sync this Obsidian vault into it.",
+			),
 			cls: "engram-sync-preview-picker-help",
 		});
 
@@ -1049,14 +1054,14 @@ export class SyncPreviewModal extends Modal {
 		input.placeholder = "Vault name";
 
 		const footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
-		const backBtn = footer.createEl("button", { text: "Back" });
+		const backBtn = footer.createEl("button", { text: t("Back") });
 		backBtn.addEventListener("click", () => {
 			this.state.exitCreateVault();
 			this.render();
 		});
 
 		const createBtn = footer.createEl("button", {
-			text: "Create",
+			text: t("Create"),
 			cls: "mod-cta",
 		});
 		const submit = () => {

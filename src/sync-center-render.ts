@@ -86,10 +86,10 @@ function groupedByCategory(
 /** User-facing wording for each queued reason. Kept beside the render so the
  *  copy is reviewable in one place rather than inlined into a template. */
 const QUEUED_REASON_TEXT: Record<QueuedReason, string> = {
-	offline: "waiting for a connection",
-	"sync-blocked": "sync is paused",
-	"in-progress": "syncing now",
-	waiting: "waiting to retry",
+	offline: t("waiting for a connection"),
+	"sync-blocked": t("sync is paused"),
+	"in-progress": t("syncing now"),
+	waiting: t("waiting to retry"),
 };
 
 function renderHeader(parent: HTMLElement, plugin: EngramSyncPlugin): void {
@@ -121,7 +121,7 @@ function renderHeader(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 
 	if (planSkipCount > 0) {
 		const badge = header.createSpan({ cls: "engram-sync-center-plan-badge" });
-		badge.setText(`${planSkipCount} not on your plan`);
+		badge.setText(t("{count} not on your plan", { count: planSkipCount }));
 	}
 	if (attentionCount > 0) {
 		const badge = header.createSpan({ cls: "engram-sync-center-issue-badge" });
@@ -129,16 +129,21 @@ function renderHeader(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 	}
 	if (retryingCount > 0) {
 		const badge = header.createSpan({ cls: "engram-sync-center-retrying-badge" });
-		badge.setText(`${retryingCount} retrying`);
+		badge.setText(t("{count} retrying", { count: retryingCount }));
 	}
 	if (ignoredCount > 0) {
 		const badge = header.createSpan({ cls: "engram-sync-center-ignored-badge" });
-		badge.setText(`${ignoredCount} ignored`);
+		badge.setText(t("{count} ignored", { count: ignoredCount }));
 	}
 
 	if (reason) {
 		const badge = header.createSpan({ cls: "engram-sync-center-queued-badge" });
-		badge.setText(`${status.queued} queued — ${QUEUED_REASON_TEXT[reason]}`);
+		badge.setText(
+			t("{count} queued — {reason}", {
+				count: status.queued,
+				reason: QUEUED_REASON_TEXT[reason],
+			}),
+		);
 	}
 }
 
@@ -214,7 +219,7 @@ function renderPlanSkips(parent: HTMLElement, plugin: EngramSyncPlugin, refresh:
 	const body = section.createDiv({ cls: "engram-sync-center-section-body" });
 	body.createEl("p", {
 		cls: "engram-sync-center-card-hint",
-		text: "These files are fine. They just need a paid plan to sync.",
+		text: t("These files are fine. They just need a paid plan to sync."),
 	});
 
 	for (const [category, list] of groups) {
@@ -254,7 +259,7 @@ function renderIssueCard(
 	opts.buttons(actions);
 
 	const toggle = actions.createEl("button", {
-		text: `Show files (${issues.length}) ▾`,
+		text: t("Show files ({count}) ▾", { count: issues.length }),
 		cls: "engram-sync-center-card-toggle",
 	});
 	const fileList = card.createDiv({ cls: "engram-sync-center-issue-list is-collapsed" });
@@ -283,12 +288,12 @@ function renderPlanCard(
 		hint,
 		buttons: (actions) => {
 			const url = issues.find((i) => i.upgradeUrl)?.upgradeUrl ?? DEFAULT_UPGRADE_URL;
-			const upgrade = actions.createEl("button", { text: "Upgrade", cls: "mod-cta" });
+			const upgrade = actions.createEl("button", { text: t("Upgrade"), cls: "mod-cta" });
 			upgrade.addEventListener("click", () => window.open(url, "_blank"));
 
 			// Manual re-attempt for users who upgraded out-of-band (e.g. the plan
 			// event hasn't landed yet, or they want to retry without waiting for it).
-			const resync = actions.createEl("button", { text: "Sync these now" });
+			const resync = actions.createEl("button", { text: t("Sync these now") });
 			resync.addEventListener("click", () => {
 				void plugin.syncEngine.resyncSkippedAttachments().then(refresh);
 			});
@@ -315,7 +320,7 @@ function renderNeedsAttention(
 	const heading = sectionHeading(section, `Needs attention (${total})`);
 	if (total > 0) {
 		heading.addButton((btn) =>
-			btn.setButtonText("Clear all").onClick(() => {
+			btn.setButtonText(t("Clear all")).onClick(() => {
 				for (const [, list] of groups) {
 					for (const issue of list) plugin.syncEngine.issues.clear(issue.path);
 				}
@@ -328,7 +333,7 @@ function renderNeedsAttention(
 	if (total === 0) {
 		body.createEl("p", {
 			cls: "engram-sync-center-empty",
-			text: "Nothing needs your attention. 🎉",
+			text: t("Nothing needs your attention. 🎉"),
 		});
 		return;
 	}
@@ -358,7 +363,7 @@ function renderAttentionCard(
 		buttons: (actions) => {
 			// Per-card dismiss — clears these errors without permanently ignoring
 			// the files (unlike "Ignore"). They reappear if they fail again.
-			const dismiss = actions.createEl("button", { text: "Dismiss" });
+			const dismiss = actions.createEl("button", { text: t("Dismiss") });
 			dismiss.addEventListener("click", () => {
 				for (const issue of issues) plugin.syncEngine.issues.clear(issue.path);
 				void plugin.persistEngineState().then(refresh);
@@ -378,7 +383,7 @@ function renderRetrying(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: 
 	const heading = sectionHeading(section, `Retrying automatically (${total})`);
 	heading.addButton((btn) =>
 		btn
-			.setButtonText("Retry all now")
+			.setButtonText(t("Retry all now"))
 			.setCta()
 			.onClick(async () => {
 				await plugin.syncEngine.retryFailedNow();
@@ -389,7 +394,7 @@ function renderRetrying(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: 
 	const body = section.createDiv({ cls: "engram-sync-center-section-body" });
 	body.createEl("p", {
 		cls: "engram-sync-center-card-hint",
-		text: "Temporary errors. These clear themselves once the server recovers.",
+		text: t("Temporary errors. These clear themselves once the server recovers."),
 	});
 	const list = body.createDiv({ cls: "engram-sync-center-issue-list" });
 	for (const [, issues] of groups) {
@@ -428,10 +433,10 @@ function renderFileRow(
 
 	const actions = row.createDiv({ cls: "engram-sync-center-issue-actions" });
 
-	const openBtn = actions.createEl("button", { text: "Open", cls: "mod-cta" });
+	const openBtn = actions.createEl("button", { text: t("Open"), cls: "mod-cta" });
 	openBtn.addEventListener("click", () => openFile(plugin, issue.path));
 
-	const ignoreBtn = actions.createEl("button", { text: "Ignore" });
+	const ignoreBtn = actions.createEl("button", { text: t("Ignore") });
 	ignoreBtn.addEventListener("click", () => {
 		void ignoreFilePermanently(plugin, issue.path, refresh);
 	});
@@ -446,7 +451,7 @@ function renderIgnored(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: (
 	if (ignored.length === 0) {
 		body.createEl("p", {
 			cls: "engram-sync-center-empty",
-			text: "No files ignored. Use the ignore button on a failure row to stop syncing it.",
+			text: t("No files ignored. Use the ignore button on a failure row to stop syncing it."),
 		});
 		return;
 	}
@@ -470,10 +475,10 @@ function renderIgnoredRow(
 
 	const actions = row.createDiv({ cls: "engram-sync-center-issue-actions" });
 
-	const openBtn = actions.createEl("button", { text: "Open" });
+	const openBtn = actions.createEl("button", { text: t("Open") });
 	openBtn.addEventListener("click", () => openFile(plugin, path));
 
-	const restoreBtn = actions.createEl("button", { text: "Restore", cls: "mod-cta" });
+	const restoreBtn = actions.createEl("button", { text: t("Restore"), cls: "mod-cta" });
 	restoreBtn.addEventListener("click", () => {
 		void restoreFile(plugin, path, refresh);
 	});
@@ -525,7 +530,7 @@ function renderActivity(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: 
 	const heading = sectionHeading(section, `Activity (${all.length})`);
 	if (all.length > 0) {
 		heading.addButton((btn) =>
-			btn.setButtonText("Clear").onClick(() => {
+			btn.setButtonText(t("Clear")).onClick(() => {
 				plugin.syncLog.clear();
 				refresh();
 			}),
@@ -536,7 +541,7 @@ function renderActivity(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: 
 	if (all.length === 0) {
 		body.createEl("p", {
 			cls: "engram-sync-center-empty",
-			text: "No activity yet. Push or pull to see entries here.",
+			text: t("No activity yet. Push or pull to see entries here."),
 		});
 		return;
 	}
