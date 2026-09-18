@@ -1,5 +1,6 @@
 import { Notice, Setting } from "obsidian";
 import { connectionState } from "../backend-mode";
+import { t } from "../i18n";
 import type { BackendMode } from "../types";
 import {
 	renderAuthSection,
@@ -41,7 +42,7 @@ export function renderConnectionTab(ctx: TabContext): void {
 				// subset here previously nulled the auth provider without rebuilding
 				// it and skipped bumpAuthGeneration.
 				if (!(await plugin.switchBackendMode(target))) return;
-				new Notice(`Switched to ${MODE_LABELS[target]}.`);
+				new Notice(t("Switched to {mode}.", { mode: MODE_LABELS[target] ?? target }));
 				redisplay();
 			});
 		});

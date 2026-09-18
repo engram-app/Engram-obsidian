@@ -24,6 +24,7 @@ import { devLog } from "./dev-log";
 import { errMsg, isHttpStatus } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
 import { isCanvasPath as canvasPath, isCrdtEligiblePath as crdtEligiblePath } from "./file-kind";
+import { t } from "./i18n";
 import { IgnoredFiles } from "./ignored-files";
 import {
 	categorizeError,
@@ -5475,7 +5476,10 @@ export class SyncEngine {
 		if (count <= 0) return;
 		const noun = count === 1 ? "file" : "files";
 		const detail = firstMessage ? ` (${firstMessage})` : "";
-		new Notice(`Engram: ${count} ${noun} failed to sync${detail} — open Sync Center`, 10_000);
+		new Notice(
+			t("Engram: {count} files failed to sync{detail} — open Sync Center", { count, detail }),
+			10_000,
+		);
 		rlog().warn("push", `${count} ${noun} failed to sync${detail}`);
 	}
 
@@ -5494,7 +5498,10 @@ export class SyncEngine {
 		if (this.attachmentLimitToastShown) return;
 		this.attachmentLimitToastShown = true;
 		const noun = count === 1 ? "attachment" : "attachments";
-		new Notice(`Engram: ${count} ${noun} skipped — upgrade to sync images & PDFs.`, 10_000);
+		new Notice(
+			t("Engram: {count} attachments skipped — upgrade to sync images & PDFs.", { count }),
+			10_000,
+		);
 		rlog().info(
 			"push",
 			`Skipped ${count} ${noun} (attachments_disabled) — batched toast emitted`,
@@ -5559,7 +5566,10 @@ export class SyncEngine {
 				await this.pushFile(file, /* force */ true, /* bypassPlanSkip */ true);
 			}
 		}
-		new Notice(`Engram: plan upgraded — syncing ${skipped.length} attachment(s)…`, 6_000);
+		new Notice(
+			t("Engram: plan upgraded — syncing {count} attachments…", { count: skipped.length }),
+			6_000,
+		);
 	}
 
 	/** Trash a file whose deletion was decided REMOTELY (WS delete event, pull

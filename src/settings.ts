@@ -4,6 +4,7 @@
 import { type App, Notice, PluginSettingTab, type Setting } from "obsidian";
 import { DeviceFlowModal } from "./device-flow-modal";
 import { errMsg } from "./error-util";
+import { t } from "./i18n";
 import type EngramSyncPlugin from "./main";
 import { PHASE_FALLBACK_LABEL, type PlannedPhase, settingsBarCounts } from "./sync-progress-modal";
 import { renderAboutTab } from "./tabs/about-tab";
@@ -215,7 +216,9 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 			// a rejection must surface, not vanish into `void`.
 			void Promise.resolve(tab.render({ ...ctx, containerEl: contentEl })).catch(
 				(e: unknown) => {
-					new Notice(`Engram: settings tab failed to render (${errMsg(e)})`);
+					new Notice(
+						t("Engram: settings tab failed to render ({error})", { error: errMsg(e) }),
+					);
 				},
 			);
 		};

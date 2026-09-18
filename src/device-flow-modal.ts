@@ -3,6 +3,7 @@ import { EngramApi, withTimeout } from "./api";
 import { devLog } from "./dev-log";
 import { waitForDeviceAuthorization } from "./device-flow-socket";
 import { errMsg } from "./error-util";
+import { t } from "./i18n";
 import type EngramSyncPlugin from "./main";
 
 /** How long a resume waits before probing when the socket claims to be live.
@@ -190,7 +191,7 @@ export class DeviceFlowModal extends Modal {
 		codeEl.title = "Click to copy";
 		codeEl.addEventListener("click", () => {
 			void navigator.clipboard.writeText(resp.user_code);
-			new Notice("Code copied!");
+			new Notice(t("Code copied!"));
 		});
 
 		contentEl.createEl("p", {

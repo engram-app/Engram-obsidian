@@ -5,6 +5,7 @@
  */
 import { getAllTags, Notice, prepareSimpleSearch, setIcon, type TFile } from "obsidian";
 import { FolderInputSuggest } from "./folder-suggest";
+import { t } from "./i18n";
 import { matchStrengths, type SearchContext, searchEngram } from "./search-engine";
 import { buildSegments, queryTokenRanges } from "./search-highlight";
 import { TagInputSuggest } from "./tag-suggest";
@@ -405,7 +406,7 @@ export class SearchPanel {
 				// Not "Semantic offline": every mode degrades now, including
 				// Keyword, which has no semantic leg to lose. Names what the user
 				// actually has in front of them rather than which leg failed.
-				new Notice("Engram unreachable. Showing matches from this device only.");
+				new Notice(t("Engram unreachable. Showing matches from this device only."));
 			}
 			this.results = outcome.results;
 			this.selectedIndex = this.results.length ? 0 : -1;
@@ -570,12 +571,12 @@ export class SearchPanel {
 
 	private async openResult(result: UnifiedSearchResult): Promise<void> {
 		if (!result.source_path) {
-			new Notice("No source path for this result");
+			new Notice(t("No source path for this result"));
 			return;
 		}
 		const file = this.ctx.app.vault.getFileByPath(result.source_path);
 		if (!file) {
-			new Notice("Note not synced locally");
+			new Notice(t("Note not synced locally"));
 			return;
 		}
 		// Lift Obsidian's own global-search behaviour: open the note with an

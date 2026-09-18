@@ -50,6 +50,7 @@ import { sha256Hex } from "./content-hash";
 import { registerDiagnostics } from "./diagnostics";
 import { errMsg, isHttpStatus } from "./error-util";
 import { ExplicitFolders } from "./explicit-folders";
+import { t } from "./i18n";
 import { isPlanJoinReason } from "./limit-copy";
 import { LimitExceededError } from "./limit-error";
 import { notifyLimitExceeded } from "./limit-toast";
@@ -872,9 +873,11 @@ export default class EngramSyncPlugin extends Plugin {
 			name: "Sync now",
 			callback: async () => {
 				try {
-					new Notice("Engram sync: syncing...");
+					new Notice(t("Engram sync: syncing..."));
 					const { pulled, pushed } = await this.syncEngine.fullSync();
-					new Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+					new Notice(
+						t("Engram Sync: pulled {pulled}, pushed {pushed}", { pulled, pushed }),
+					);
 				} catch (e) {
 					this.handleSyncError("Manual sync", e, { notice: true });
 				}
@@ -886,7 +889,7 @@ export default class EngramSyncPlugin extends Plugin {
 			name: "Disconnect (clear login)",
 			callback: async () => {
 				await this.clearAuthAndPromptRelink("manual disconnect command", false);
-				new Notice("Engram: disconnected. Open Engram settings to reconnect.");
+				new Notice(t("Engram: disconnected. Open Engram settings to reconnect."));
 			},
 		});
 
@@ -896,7 +899,7 @@ export default class EngramSyncPlugin extends Plugin {
 			callback: async () => {
 				try {
 					const count = await this.syncEngine.pushAll();
-					new Notice(`Engram Sync: pushed ${count} files`);
+					new Notice(t("Engram Sync: pushed {count} files", { count }));
 				} catch (e) {
 					this.handleSyncError("Push all", e, { notice: true });
 				}
@@ -908,7 +911,7 @@ export default class EngramSyncPlugin extends Plugin {
 			name: "Check sync status",
 			callback: async () => {
 				try {
-					new Notice("Engram sync: checking...");
+					new Notice(t("Engram sync: checking..."));
 					const result = await this.syncEngine.reconcile();
 					if (!result) {
 						new Notice(
@@ -922,7 +925,7 @@ export default class EngramSyncPlugin extends Plugin {
 						diverged.length === 0 &&
 						extraOnServer.length === 0
 					) {
-						new Notice("Engram sync: everything in sync");
+						new Notice(t("Engram sync: everything in sync"));
 					} else {
 						const parts: string[] = [];
 						if (missing.length > 0) parts.push(`${missing.length} missing on server`);
@@ -942,9 +945,9 @@ export default class EngramSyncPlugin extends Plugin {
 			name: "Pull all from server (force overwrite)",
 			callback: async () => {
 				try {
-					new Notice("Engram sync: pulling all from server...");
+					new Notice(t("Engram sync: pulling all from server..."));
 					const count = await this.syncEngine.pullAll();
-					new Notice(`Engram Sync: pulled ${count} files from server`);
+					new Notice(t("Engram Sync: pulled {count} files from server", { count }));
 				} catch (e) {
 					this.handleSyncError("Pull all", e, { notice: true });
 				}
@@ -1026,11 +1029,13 @@ export default class EngramSyncPlugin extends Plugin {
 				return;
 			}
 
-			new Notice("Engram sync: syncing...");
+			new Notice(t("Engram sync: syncing..."));
 			this.syncEngine
 				.fullSync()
 				.then(({ pulled, pushed }) => {
-					new Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+					new Notice(
+						t("Engram Sync: pulled {pulled}, pushed {pushed}", { pulled, pushed }),
+					);
 				})
 				.catch((e) => this.handleSyncError("Manual sync", e, { notice: true }));
 		});
@@ -1220,7 +1225,7 @@ export default class EngramSyncPlugin extends Plugin {
 					// joined = this call rode another surface's run (e.g. the modal
 					// sync); that surface reports the same numbers — don't double up.
 					if (res.pushed > 0 && !res.joined) {
-						new Notice(`Engram Sync: pushed ${res.pushed}`);
+						new Notice(t("Engram Sync: pushed {pushed}", { pushed: res.pushed }));
 					}
 				} catch (e) {
 					this.handleSyncError("Startup sync", e);
@@ -1260,7 +1265,7 @@ export default class EngramSyncPlugin extends Plugin {
 		// picker (same recovery the web SPA's reconcileActiveVault does).
 		void this.healDeadVault(e);
 		if (opts?.notice) {
-			new Notice("Engram sync: sync failed");
+			new Notice(t("Engram sync: sync failed"));
 		}
 	}
 
@@ -1587,7 +1592,12 @@ export default class EngramSyncPlugin extends Plugin {
 					try {
 						const { pulled, pushed } = await this.syncEngine.fullSync();
 						if (pulled > 0 || pushed > 0) {
-							new Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+							new Notice(
+								t("Engram Sync: pulled {pulled}, pushed {pushed}", {
+									pulled,
+									pushed,
+								}),
+							);
 						}
 					} catch (e) {
 						this.handleSyncError("Sync after settings change", e);
@@ -1823,7 +1833,7 @@ export default class EngramSyncPlugin extends Plugin {
 		await this.savePluginData(this.syncEngine.getLastSync());
 		this.updateStatusBar(this.syncEngine.getStatus());
 		if (notify) {
-			new Notice("Engram: your login expired — open Engram settings to reconnect.");
+			new Notice(t("Engram: your login expired — open Engram settings to reconnect."));
 		}
 	}
 
@@ -2505,7 +2515,7 @@ export default class EngramSyncPlugin extends Plugin {
 				};
 
 				channel.onVaultDeleted = () => {
-					new Notice("Engram: This vault has been deleted on the server.");
+					new Notice(t("Engram: This vault has been deleted on the server."));
 					rlog().info("lifecycle", "Vault deleted on server — clearing vaultId");
 					// Same reasoning as healDeadVault: the vault is gone, so its
 					// note-id map, cursors and index room address nothing. Nulling
@@ -2896,21 +2906,21 @@ export default class EngramSyncPlugin extends Plugin {
 			case "smart-merge": {
 				await this.markSyncGateAccepted();
 				const { pulled, pushed } = await this.syncEngine.fullSync();
-				new Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+				new Notice(t("Engram Sync: pulled {pulled}, pushed {pushed}", { pulled, pushed }));
 				return true;
 			}
 
 			case "pull-all-delete-local": {
 				await this.markSyncGateAccepted();
 				const pulled = await this.syncEngine.pullAll({ deleteLocalExtras: true });
-				new Notice(`Engram Sync: pulled ${pulled} (local extras deleted)`);
+				new Notice(t("Engram Sync: pulled {pulled} (local extras deleted)", { pulled }));
 				return true;
 			}
 
 			case "pull-all-keep-local": {
 				await this.markSyncGateAccepted();
 				const pulled = await this.syncEngine.pullAll({ deleteLocalExtras: false });
-				new Notice(`Engram Sync: pulled ${pulled}`);
+				new Notice(t("Engram Sync: pulled {pulled}", { pulled }));
 				return true;
 			}
 
@@ -2926,14 +2936,16 @@ export default class EngramSyncPlugin extends Plugin {
 					replaceRemote: true,
 					localSnapshot,
 				});
-				new Notice(`Engram Sync: replaced remote with local (${pushed} uploaded)`);
+				new Notice(
+					t("Engram Sync: replaced remote with local ({pushed} uploaded)", { pushed }),
+				);
 				return true;
 			}
 
 			case "push-all-keep-remote": {
 				await this.markSyncGateAccepted();
 				const pushed = await this.syncEngine.pushAll({ replaceRemote: false });
-				new Notice(`Engram Sync: pushed ${pushed}`);
+				new Notice(t("Engram Sync: pushed {pushed}", { pushed }));
 				return true;
 			}
 		}
@@ -3188,7 +3200,7 @@ export default class EngramSyncPlugin extends Plugin {
 				console.error("Engram Sync: sync failed", e);
 				// This boundary wraps BOTH the preview and the sync run it
 				// dispatches — "preview failed" here mislabeled real sync failures.
-				new Notice("Engram: sync failed. Open the sync log for details.");
+				new Notice(t("Engram: sync failed. Open the sync log for details."));
 				rlog().error("lifecycle", `Sync (preview or run) failed: ${errMsg(e)}`);
 			}
 		});
@@ -3323,7 +3335,9 @@ export default class EngramSyncPlugin extends Plugin {
 					// deletes counted separately (finding: a delete-only poll used to
 					// trash local files with NO user-visible indication).
 					if (pulled + deletes > 0) {
-						new Notice(`Engram Sync: pulled ${pulled + deletes} changes`);
+						new Notice(
+							t("Engram Sync: pulled {count} changes", { count: pulled + deletes }),
+						);
 					}
 				} catch (e) {
 					// biome-ignore lint/suspicious/noConsole: error boundary
