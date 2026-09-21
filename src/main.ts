@@ -1754,6 +1754,21 @@ export default class EngramSyncPlugin extends Plugin {
 		await atomicWriteJson(this.app.vault.adapter, this.pluginDataPath(), data);
 	}
 
+	/** Narrow diagnostics-only setter for the first-run modal's opt-in checkbox.
+	 *  Deliberately NOT the full saveSettings() (review finding on #528): that
+	 *  path re-registers the vault, re-evaluates the sync gate, and can re-fire
+	 *  doSyncWithFirstSyncCheck — fine for an actual settings-tab save, but this
+	 *  callback fires on every checkbox click WHILE that same modal is still
+	 *  open, and toggling diagnostics changes nothing the gate or vault
+	 *  registration cares about. applyVaultChange avoids saveSettings for the
+	 *  identical reason (main.ts ~3106). */
+	private async applyDiagnosticsToggle(enabled: boolean): Promise<void> {
+		this.settings.diagnosticsEnabled = enabled;
+		this.api.setTracingEnabled(enabled);
+		rlog().setEnabled(enabled);
+		await this.savePluginData(this.syncEngine.getLastSync());
+	}
+
 	private async savePluginData(lastSync: string, offlineQueue?: QueueEntry[]): Promise<void> {
 		await this.writePluginData({
 			settings: this.settings,
@@ -3145,10 +3160,7 @@ export default class EngramSyncPlugin extends Plugin {
 						this.setupNoteStream();
 						return this.syncEngine.computeSyncPlan("full");
 					},
-					onDiagnosticsToggle: (enabled) => {
-						this.settings.diagnosticsEnabled = enabled;
-						void this.saveSettings();
-					},
+					onDiagnosticsToggle: (enabled) => void this.applyDiagnosticsToggle(enabled),
 				});
 
 				// Compute the plan off the critical path and stream it into the

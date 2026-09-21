@@ -1640,6 +1640,15 @@ body.is-mobile .engram-support-buttons > a {
 	font-size: 0.9em;
 }
 
+.engram-sync-preview-diagnostics-optin {
+	display: flex;
+	align-items: center;
+	gap: 0.5em;
+	margin: 0.5em 0;
+	color: var(--text-muted);
+	font-size: 0.9em;
+}
+
 .engram-sync-preview-footer {
 	display: flex;
 	justify-content: flex-end;

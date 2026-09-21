@@ -682,7 +682,7 @@ export class SyncPreviewModal extends Modal {
 		const checkbox = row.createEl("input", { type: "checkbox" });
 		checkbox.checked = this.state.diagnosticsOptIn;
 		row.createSpan({
-			text: "Send anonymous diagnostics if sync runs into trouble (metadata only — never note content)",
+			text: "Send sync activity to help us troubleshoot problems (metadata only — never note content)",
 		});
 		checkbox.addEventListener("change", () => {
 			this.state.toggleDiagnosticsOptIn();
