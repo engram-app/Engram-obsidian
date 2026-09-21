@@ -10,6 +10,7 @@ import {
 	loadingHoldMs,
 	mergeHelperText,
 	SyncPreviewState,
+	shouldOfferDiagnosticsOptIn,
 	skippedAttachmentsLine,
 } from "../src/sync-preview-modal";
 import type { SyncChoice, SyncPlan } from "../src/types";
@@ -266,6 +267,28 @@ describe("SyncPreviewState — advanced options accordion", () => {
 	});
 });
 
+describe("SyncPreviewState — diagnostics opt-in", () => {
+	test("diagnosticsOptIn defaults to off", () => {
+		const { state } = newState();
+		expect(state.diagnosticsOptIn).toBe(false);
+	});
+
+	test("toggleDiagnosticsOptIn flips the flag on then off", () => {
+		const { state } = newState();
+		state.toggleDiagnosticsOptIn();
+		expect(state.diagnosticsOptIn).toBe(true);
+		state.toggleDiagnosticsOptIn();
+		expect(state.diagnosticsOptIn).toBe(false);
+	});
+
+	test("toggleDiagnosticsOptIn is a no-op once resolved", () => {
+		const { state } = newState();
+		state.pickOption("smart-merge");
+		state.toggleDiagnosticsOptIn();
+		expect(state.diagnosticsOptIn).toBe(false);
+	});
+});
+
 describe("SyncPreviewState — destructive choices route through confirm view", () => {
 	test("pull-all-delete-local swaps to confirm view, does not resolve", () => {
 		const { state, resolved } = newState();
@@ -445,6 +468,20 @@ describe("HEADER_BY_CONTEXT", () => {
 		expect(HEADER_BY_CONTEXT["vault-switch"]).toBe(
 			"You are now pointing at a different cloud vault",
 		);
+	});
+});
+
+describe("shouldOfferDiagnosticsOptIn — where the checkbox appears", () => {
+	test("offered on first-time setup", () => {
+		expect(shouldOfferDiagnosticsOptIn("first-time")).toBe(true);
+	});
+
+	test("not offered on a routine review", () => {
+		expect(shouldOfferDiagnosticsOptIn("review")).toBe(false);
+	});
+
+	test("not offered on a vault switch", () => {
+		expect(shouldOfferDiagnosticsOptIn("vault-switch")).toBe(false);
 	});
 });
 

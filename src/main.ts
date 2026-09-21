@@ -3145,6 +3145,10 @@ export default class EngramSyncPlugin extends Plugin {
 						this.setupNoteStream();
 						return this.syncEngine.computeSyncPlan("full");
 					},
+					onDiagnosticsToggle: (enabled) => {
+						this.settings.diagnosticsEnabled = enabled;
+						void this.saveSettings();
+					},
 				});
 
 				// Compute the plan off the critical path and stream it into the

@@ -45,6 +45,9 @@ export class SyncPreviewState {
 	/** Whether the "advanced sync options" accordion (push/pull grid) is
 	 *  expanded. Collapsed by default so the modal leads with the Sync action. */
 	advancedOpen = false;
+	/** First-run diagnostics opt-in checkbox (see shouldOfferDiagnosticsOptIn).
+	 *  Off by default — explicit consent, not an assumed default. */
+	diagnosticsOptIn = false;
 	private resolved = false;
 
 	constructor(
@@ -89,6 +92,11 @@ export class SyncPreviewState {
 	toggleAdvanced(): void {
 		if (this.resolved) return;
 		this.advancedOpen = !this.advancedOpen;
+	}
+
+	toggleDiagnosticsOptIn(): void {
+		if (this.resolved) return;
+		this.diagnosticsOptIn = !this.diagnosticsOptIn;
 	}
 
 	enterVaultPicker(): void {
@@ -157,6 +165,13 @@ export class SyncPreviewState {
 		this.view = "done";
 		this.onResolve(choice);
 	}
+}
+
+/** Whether the first-run diagnostics opt-in checkbox should render. Only the
+ *  brand-new-vault setup screen — a returning user picking a sync direction,
+ *  or a vault switch, is not the moment to ask for this. Pure for testing. */
+export function shouldOfferDiagnosticsOptIn(context: SyncPreviewContext): boolean {
+	return context === "first-time";
 }
 
 /** Plan-load failure copy for the preview modal. Auth state decides the
@@ -335,6 +350,10 @@ export interface SyncPreviewOptions {
 	 *  informational line saying they will be skipped. Omitted/undefined =
 	 *  unknown plan → no line. */
 	attachmentsTextOnly?: boolean;
+	/** Fires live on every checkbox change (not gated on the final sync choice —
+	 *  even Cancel should keep the preference). Only rendered/reachable when
+	 *  shouldOfferDiagnosticsOptIn(context) is true. */
+	onDiagnosticsToggle?: (enabled: boolean) => void;
 }
 
 /** The one-click screen's copy, pure for tests. Zero-count clauses are
@@ -607,6 +626,7 @@ export class SyncPreviewModal extends Modal {
 			// emptyPlanDismiss. smart-merge is a no-op transfer here (the sides
 			// match) that routes through markSyncGateAccepted.
 			const { label, accept } = emptyPlanDismiss(this.opts.gateClosed ?? false);
+			this.renderDiagnosticsOptIn(contentEl, context);
 			this.renderFooter(
 				contentEl,
 				label,
@@ -615,6 +635,7 @@ export class SyncPreviewModal extends Modal {
 			);
 			return;
 		}
+		this.renderDiagnosticsOptIn(contentEl, context);
 		this.renderFooter(contentEl, "Cancel", false);
 	}
 
@@ -648,7 +669,25 @@ export class SyncPreviewModal extends Modal {
 			this.state.pickOption("smart-merge");
 		});
 		this.renderSkippedAttachmentsNote(parent);
+		this.renderDiagnosticsOptIn(parent, context);
 		this.renderFooter(parent, "Cancel", false);
+	}
+
+	/** Opt-in checkbox for shipping anonymous sync diagnostics, offered once on
+	 *  first-run setup only (shouldOfferDiagnosticsOptIn). Fires live on every
+	 *  change, independent of which sync choice the user eventually makes. */
+	private renderDiagnosticsOptIn(parent: HTMLElement, context: SyncPreviewContext): void {
+		if (!shouldOfferDiagnosticsOptIn(context)) return;
+		const row = parent.createEl("label", { cls: "engram-sync-preview-diagnostics-optin" });
+		const checkbox = row.createEl("input", { type: "checkbox" });
+		checkbox.checked = this.state.diagnosticsOptIn;
+		row.createSpan({
+			text: "Send anonymous diagnostics if sync runs into trouble (metadata only — never note content)",
+		});
+		checkbox.addEventListener("change", () => {
+			this.state.toggleDiagnosticsOptIn();
+			this.opts.onDiagnosticsToggle?.(this.state.diagnosticsOptIn);
+		});
 	}
 
 	/** Instant-open loading state: the modal is on screen while computeSyncPlan
