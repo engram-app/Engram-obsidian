@@ -602,7 +602,6 @@ export class SyncPreviewModal extends Modal {
 		this.renderHeader(contentEl, empty ? "up-to-date" : context);
 		this.renderComparison(contentEl);
 		this.renderSkippedAttachmentsNote(contentEl);
-		this.renderDiagnosticsOptIn(contentEl, context);
 
 		const options = contentEl.createDiv({ cls: "engram-sync-preview-options" });
 		// The plain-language description of what Sync will do sits above the
@@ -617,6 +616,7 @@ export class SyncPreviewModal extends Modal {
 			});
 		}
 
+		this.renderDiagnosticsOptIn(options, context);
 		const mergeRow = options.createDiv({ cls: "engram-sync-preview-options-merge" });
 		this.renderOptionCard(mergeRow, MERGE_CARD);
 
