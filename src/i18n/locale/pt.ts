@@ -647,6 +647,10 @@ const pt: Dict = {
 	"Frontmatter could not be parsed": "Não foi possível interpretar o frontmatter",
 	"Not connected. Enter your Engram server URL below to start syncing.":
 		"Sem conexão. Escreva abaixo o endereço do seu servidor Engram para começar a sincronizar.",
+	// UI strings (fifth pass)
+	"Sync...": "Sincronizar...",
+	"Syncing...": "Sincronizando...",
+	" (default)": " (padrão)",
 };
 
 export default pt;

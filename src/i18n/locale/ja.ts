@@ -573,6 +573,10 @@ const ja: Dict = {
 	"Frontmatter could not be parsed": "frontmatter を解析できませんでした",
 	"Not connected. Enter your Engram server URL below to start syncing.":
 		"未接続です。下に Engram サーバーのアドレスを入れると同期を始められます。",
+	// UI strings (fifth pass)
+	"Sync...": "同期...",
+	"Syncing...": "同期しています...",
+	" (default)": " (既定)",
 };
 
 export default ja;

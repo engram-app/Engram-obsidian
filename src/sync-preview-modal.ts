@@ -1037,7 +1037,7 @@ export class SyncPreviewModal extends Modal {
 				});
 				if (v.is_default) {
 					item.createSpan({
-						text: " (default)",
+						text: t(" (default)"),
 						cls: "engram-sync-preview-picker-item-default",
 					});
 				}

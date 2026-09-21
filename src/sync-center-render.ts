@@ -154,7 +154,7 @@ function renderHeader(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 function renderActions(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: () => void): void {
 	const strip = parent.createDiv({ cls: "engram-sync-center-actions" });
 
-	makeActionButton(strip, "Sync...", async () => {
+	makeActionButton(strip, t("Sync..."), async () => {
 		try {
 			// Open instantly in a loading state, then stream the plan in (mirrors
 			// the first-sync path) so the modal never waits on the server to appear.

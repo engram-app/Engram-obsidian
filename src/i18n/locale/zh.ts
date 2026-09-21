@@ -543,6 +543,10 @@ const zh: Dict = {
 	"Frontmatter could not be parsed": "无法解析 frontmatter",
 	"Not connected. Enter your Engram server URL below to start syncing.":
 		"未连接。在下面填写你的 Engram 服务器地址即可开始同步。",
+	// UI strings (fifth pass)
+	"Sync...": "同步...",
+	"Syncing...": "同步中...",
+	" (default)": "（默认）",
 };
 
 export default zh;

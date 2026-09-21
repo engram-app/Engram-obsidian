@@ -680,6 +680,10 @@ const ru: Dict = {
 	"Frontmatter could not be parsed": "Не удалось разобрать frontmatter",
 	"Not connected. Enter your Engram server URL below to start syncing.":
 		"Нет подключения. Укажите ниже адрес вашего сервера Engram, чтобы начать синхронизацию.",
+	// UI strings (fifth pass)
+	"Sync...": "Синхронизация...",
+	"Syncing...": "Синхронизируем...",
+	" (default)": " (по умолчанию)",
 };
 
 export default ru;

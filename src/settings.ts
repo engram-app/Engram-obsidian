@@ -175,7 +175,7 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 		const progressContainer = containerEl.createDiv({ cls: "engram-sync-progress" });
 
 		const progressLabel = progressContainer.createEl("p", {
-			text: "Syncing...",
+			text: t("Syncing..."),
 			cls: "engram-progress-label",
 		});
 

@@ -539,6 +539,10 @@ const zhTW: Dict = {
 	"Frontmatter could not be parsed": "無法解析 frontmatter",
 	"Not connected. Enter your Engram server URL below to start syncing.":
 		"未連線。在下面填寫你的 Engram 伺服器位址即可開始同步。",
+	// UI strings (fifth pass)
+	"Sync...": "同步...",
+	"Syncing...": "同步中...",
+	" (default)": "（預設）",
 };
 
 export default zhTW;

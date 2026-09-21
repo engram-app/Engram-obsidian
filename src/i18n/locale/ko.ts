@@ -565,6 +565,10 @@ const ko: Dict = {
 	"Frontmatter could not be parsed": "frontmatter를 해석할 수 없습니다",
 	"Not connected. Enter your Engram server URL below to start syncing.":
 		"연결되지 않았습니다. 아래에 Engram 서버 주소를 입력하면 동기화를 시작합니다.",
+	// UI strings (fifth pass)
+	"Sync...": "동기화...",
+	"Syncing...": "동기화 중...",
+	" (default)": " (기본)",
 };
 
 export default ko;
