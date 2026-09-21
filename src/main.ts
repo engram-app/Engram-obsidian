@@ -1757,7 +1757,7 @@ export default class EngramSyncPlugin extends Plugin {
 	/** Narrow diagnostics-only setter for the first-run modal's opt-in checkbox.
 	 *  Deliberately NOT the full saveSettings() (review finding on #528): that
 	 *  path re-registers the vault, re-evaluates the sync gate, and can re-fire
-	 *  doSyncWithFirstSyncCheck — fine for an actual settings-tab save, but this
+	 *  doSyncWithFirstSyncCheck. Fine for an actual settings-tab save, but this
 	 *  callback fires on every checkbox click WHILE that same modal is still
 	 *  open, and toggling diagnostics changes nothing the gate or vault
 	 *  registration cares about. applyVaultChange avoids saveSettings for the
