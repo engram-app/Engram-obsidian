@@ -602,6 +602,7 @@ export class SyncPreviewModal extends Modal {
 		this.renderHeader(contentEl, empty ? "up-to-date" : context);
 		this.renderComparison(contentEl);
 		this.renderSkippedAttachmentsNote(contentEl);
+		this.renderDiagnosticsOptIn(contentEl, context);
 
 		const options = contentEl.createDiv({ cls: "engram-sync-preview-options" });
 		// The plain-language description of what Sync will do sits above the
@@ -626,7 +627,6 @@ export class SyncPreviewModal extends Modal {
 			// emptyPlanDismiss. smart-merge is a no-op transfer here (the sides
 			// match) that routes through markSyncGateAccepted.
 			const { label, accept } = emptyPlanDismiss(this.opts.gateClosed ?? false);
-			this.renderDiagnosticsOptIn(contentEl, context);
 			this.renderFooter(
 				contentEl,
 				label,
@@ -635,7 +635,6 @@ export class SyncPreviewModal extends Modal {
 			);
 			return;
 		}
-		this.renderDiagnosticsOptIn(contentEl, context);
 		this.renderFooter(contentEl, "Cancel", false);
 	}
 
@@ -657,6 +656,7 @@ export class SyncPreviewModal extends Modal {
 				cls: "engram-sync-preview-simple-note",
 			});
 		}
+		this.renderDiagnosticsOptIn(box, context);
 		const btn = box.createEl("button", {
 			text: copy.action,
 			cls: "engram-sync-preview-simple-action mod-cta",
@@ -669,7 +669,6 @@ export class SyncPreviewModal extends Modal {
 			this.state.pickOption("smart-merge");
 		});
 		this.renderSkippedAttachmentsNote(parent);
-		this.renderDiagnosticsOptIn(parent, context);
 		this.renderFooter(parent, "Cancel", false);
 	}
 
