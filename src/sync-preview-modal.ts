@@ -45,6 +45,9 @@ export class SyncPreviewState {
 	/** Whether the "advanced sync options" accordion (push/pull grid) is
 	 *  expanded. Collapsed by default so the modal leads with the Sync action. */
 	advancedOpen = false;
+	/** First-run diagnostics opt-in checkbox (see shouldOfferDiagnosticsOptIn).
+	 *  Off by default. Explicit consent, not an assumed default. */
+	diagnosticsOptIn = false;
 	private resolved = false;
 
 	constructor(
@@ -89,6 +92,11 @@ export class SyncPreviewState {
 	toggleAdvanced(): void {
 		if (this.resolved) return;
 		this.advancedOpen = !this.advancedOpen;
+	}
+
+	toggleDiagnosticsOptIn(): void {
+		if (this.resolved) return;
+		this.diagnosticsOptIn = !this.diagnosticsOptIn;
 	}
 
 	enterVaultPicker(): void {
@@ -157,6 +165,13 @@ export class SyncPreviewState {
 		this.view = "done";
 		this.onResolve(choice);
 	}
+}
+
+/** Whether the first-run diagnostics opt-in checkbox should render. Only the
+ *  brand-new-vault setup screen. A returning user picking a sync direction,
+ *  or a vault switch, is not the moment to ask for this. Pure for testing. */
+export function shouldOfferDiagnosticsOptIn(context: SyncPreviewContext): boolean {
+	return context === "first-time";
 }
 
 /** Plan-load failure copy for the preview modal. Auth state decides the
@@ -335,6 +350,10 @@ export interface SyncPreviewOptions {
 	 *  informational line saying they will be skipped. Omitted/undefined =
 	 *  unknown plan → no line. */
 	attachmentsTextOnly?: boolean;
+	/** Fires live on every checkbox change (not gated on the final sync choice,
+	 *  even Cancel should keep the preference). Only rendered/reachable when
+	 *  shouldOfferDiagnosticsOptIn(context) is true. */
+	onDiagnosticsToggle?: (enabled: boolean) => void;
 }
 
 /** The one-click screen's copy, pure for tests. Zero-count clauses are
@@ -597,6 +616,7 @@ export class SyncPreviewModal extends Modal {
 			});
 		}
 
+		this.renderDiagnosticsOptIn(options, context);
 		const mergeRow = options.createDiv({ cls: "engram-sync-preview-options-merge" });
 		this.renderOptionCard(mergeRow, MERGE_CARD);
 
@@ -636,6 +656,7 @@ export class SyncPreviewModal extends Modal {
 				cls: "engram-sync-preview-simple-note",
 			});
 		}
+		this.renderDiagnosticsOptIn(box, context);
 		const btn = box.createEl("button", {
 			text: copy.action,
 			cls: "engram-sync-preview-simple-action mod-cta",
@@ -649,6 +670,23 @@ export class SyncPreviewModal extends Modal {
 		});
 		this.renderSkippedAttachmentsNote(parent);
 		this.renderFooter(parent, "Cancel", false);
+	}
+
+	/** Opt-in checkbox for shipping anonymous sync diagnostics, offered once on
+	 *  first-run setup only (shouldOfferDiagnosticsOptIn). Fires live on every
+	 *  change, independent of which sync choice the user eventually makes. */
+	private renderDiagnosticsOptIn(parent: HTMLElement, context: SyncPreviewContext): void {
+		if (!shouldOfferDiagnosticsOptIn(context)) return;
+		const row = parent.createEl("label", { cls: "engram-sync-preview-diagnostics-optin" });
+		const checkbox = row.createEl("input", { type: "checkbox" });
+		checkbox.checked = this.state.diagnosticsOptIn;
+		row.createSpan({
+			text: "Send debug logs. Note content stays private.",
+		});
+		checkbox.addEventListener("change", () => {
+			this.state.toggleDiagnosticsOptIn();
+			this.opts.onDiagnosticsToggle?.(this.state.diagnosticsOptIn);
+		});
 	}
 
 	/** Instant-open loading state: the modal is on screen while computeSyncPlan
@@ -680,22 +718,14 @@ export class SyncPreviewModal extends Modal {
 	): void {
 		// "review" is a manual sync with the gate already open — walking away
 		// costs nothing. The other contexts are opened BY the closed gate, and
-		// that gate stops every sync path, not just this run: dismiss here and
-		// the vault silently syncs nothing at all, forever, until it is resolved.
+		// that gate stops every sync path, not just this run.
 		//
-		// So say that at the decision point rather than after it, and drop the
-		// word "Cancel" — there is no operation in flight to cancel, and the
-		// choice is genuinely deferrable.
+		// Drop the word "Cancel" — there is no operation in flight to cancel, and
+		// the choice is genuinely deferrable.
 		//
 		// Skipped when dismissCta: that is the nothing-to-sync screen, where the
 		// button is the primary action and there is no choice being deferred.
 		const gated = (this.opts.gateClosed ?? false) && !dismissCta;
-		if (gated) {
-			parent.createEl("p", {
-				cls: "engram-sync-preview-gate-note",
-				text: "Until you choose, nothing in this vault will sync.",
-			});
-		}
 
 		const footer = parent.createDiv({ cls: "engram-sync-preview-footer" });
 		const dismissBtn = footer.createEl("button", {
