@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.31.0](https://github.com/engram-app/Engram-obsidian/compare/1.30.0...1.31.0) (2026-09-23)
+
+
+### Features
+
+* **i18n:** localize the plugin UI into 10 languages ([#525](https://github.com/engram-app/Engram-obsidian/issues/525)) ([2ffb0ea](https://github.com/engram-app/Engram-obsidian/commit/2ffb0ea5cddbac1e65a903c67dbe7d908b9b4623))
+* **sync:** offer a diagnostics opt-in on first-run sync setup ([#528](https://github.com/engram-app/Engram-obsidian/issues/528)) ([83425cc](https://github.com/engram-app/Engram-obsidian/commit/83425cccdc01cc6d528d28e9b8cf56e0a39b0091))
+
 ## [1.30.0](https://github.com/engram-app/Engram-obsidian/compare/1.29.0...1.30.0) (2026-09-18)
 
 
