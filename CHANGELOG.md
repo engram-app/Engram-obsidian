@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.31.1](https://github.com/engram-app/Engram-obsidian/compare/1.31.0...1.31.1) (2026-09-23)
+
+
+### Bug Fixes
+
+* **i18n:** defer seven frozen t() maps, raise minAppVersion to 1.8.7 ([#532](https://github.com/engram-app/Engram-obsidian/issues/532)) ([724a6cb](https://github.com/engram-app/Engram-obsidian/commit/724a6cb9b0e98d3e40a54e8bfd5f9e0be25ca64d))
+
 ## [1.31.0](https://github.com/engram-app/Engram-obsidian/compare/1.30.0...1.31.0) (2026-09-23)
 
 
