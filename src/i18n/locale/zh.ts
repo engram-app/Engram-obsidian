@@ -164,8 +164,6 @@ const zh: Dict = {
 	"Free syncs notes only — {count} attachments will be skipped.":
 		"免费版仅同步笔记，将跳过 {count} 个附件。",
 	"Comparing your vault with the cloud…": "正在比对你的知识库与服务器…",
-	"Until you choose, nothing in this vault will sync.":
-		"在你做出选择前，此知识库不会同步任何内容。",
 	"Change vault": "更换知识库",
 	"Advanced sync options": "高级同步选项",
 	"Everything is in sync": "全部已同步",
@@ -547,6 +545,9 @@ const zh: Dict = {
 	"Sync...": "同步...",
 	"Syncing...": "同步中...",
 	" (default)": "（默认）",
+
+	// First-run diagnostics opt-in (#528)
+	"Send debug logs. Note content stays private.": "发送调试日志。笔记内容保持私密。",
 };
 
 export default zh;

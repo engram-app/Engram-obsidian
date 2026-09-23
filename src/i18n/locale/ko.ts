@@ -176,8 +176,6 @@ const ko: Dict = {
 	"Free syncs notes only — {count} attachments will be skipped.":
 		"무료 요금제는 노트만 동기화합니다. 첨부 파일 {count}개는 건너뜁니다.",
 	"Comparing your vault with the cloud…": "보관함을 서버와 비교하는 중…",
-	"Until you choose, nothing in this vault will sync.":
-		"선택하기 전까지 이 보관함은 아무것도 동기화하지 않습니다.",
 	"Change vault": "보관함 바꾸기",
 	"Advanced sync options": "고급 동기화 옵션",
 	"Everything is in sync": "모두 동기화되었습니다",
@@ -569,6 +567,10 @@ const ko: Dict = {
 	"Sync...": "동기화...",
 	"Syncing...": "동기화 중...",
 	" (default)": " (기본)",
+
+	// First-run diagnostics opt-in (#528)
+	"Send debug logs. Note content stays private.":
+		"디버그 로그를 보냅니다. 노트 내용은 비공개로 유지됩니다.",
 };
 
 export default ko;

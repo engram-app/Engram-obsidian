@@ -193,8 +193,6 @@ const de: Dict = {
 		other: "Der kostenlose Tarif synchronisiert nur Notizen, {count} Anhänge werden übersprungen.",
 	},
 	"Comparing your vault with the cloud…": "Dein Vault wird mit dem Server verglichen…",
-	"Until you choose, nothing in this vault will sync.":
-		"Bis du dich entscheidest, synchronisiert dieser Vault nichts.",
 	"Change vault": "Vault wechseln",
 	"Advanced sync options": "Erweiterte Sync-Optionen",
 	"Everything is in sync": "Alles ist synchron",
@@ -636,6 +634,10 @@ const de: Dict = {
 	"Sync...": "Synchronisieren...",
 	"Syncing...": "Wird synchronisiert...",
 	" (default)": " (Standard)",
+
+	// First-run diagnostics opt-in (#528)
+	"Send debug logs. Note content stays private.":
+		"Debug-Logs senden. Notizinhalte bleiben privat.",
 };
 
 export default de;

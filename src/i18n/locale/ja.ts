@@ -177,8 +177,6 @@ const ja: Dict = {
 	"Free syncs notes only — {count} attachments will be skipped.":
 		"無料プランはノートのみ同期します。{count} 件の添付ファイルはスキップされます。",
 	"Comparing your vault with the cloud…": "保管庫をサーバーと比較しています…",
-	"Until you choose, nothing in this vault will sync.":
-		"選択するまで、この保管庫は何も同期しません。",
 	"Change vault": "保管庫を変更",
 	"Advanced sync options": "詳細な同期オプション",
 	"Everything is in sync": "すべて同期済みです",
@@ -577,6 +575,10 @@ const ja: Dict = {
 	"Sync...": "同期...",
 	"Syncing...": "同期しています...",
 	" (default)": " (既定)",
+
+	// First-run diagnostics opt-in (#528)
+	"Send debug logs. Note content stays private.":
+		"デバッグログを送信します。ノートの内容は非公開のままです。",
 };
 
 export default ja;

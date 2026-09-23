@@ -160,8 +160,6 @@ const zhTW: Dict = {
 	"Free syncs notes only — {count} attachments will be skipped.":
 		"免費版僅同步筆記，將略過 {count} 個附件。",
 	"Comparing your vault with the cloud…": "正在比對你的知識庫與伺服器…",
-	"Until you choose, nothing in this vault will sync.":
-		"在你做出選擇前，此知識庫不會同步任何內容。",
 	"Change vault": "更換知識庫",
 	"Advanced sync options": "進階同步選項",
 	"Everything is in sync": "全部已同步",
@@ -543,6 +541,9 @@ const zhTW: Dict = {
 	"Sync...": "同步...",
 	"Syncing...": "同步中...",
 	" (default)": "（預設）",
+
+	// First-run diagnostics opt-in (#528)
+	"Send debug logs. Note content stays private.": "傳送除錯記錄。筆記內容保持私密。",
 };
 
 export default zhTW;

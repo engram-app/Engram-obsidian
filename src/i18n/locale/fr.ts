@@ -194,8 +194,6 @@ const fr: Dict = {
 		other: "L'offre gratuite ne synchronise que les notes, {count} pièces jointes seront ignorées.",
 	},
 	"Comparing your vault with the cloud…": "Comparaison de ton coffre avec le serveur…",
-	"Until you choose, nothing in this vault will sync.":
-		"Tant que tu n'as pas choisi, rien ne se synchronise dans ce coffre.",
 	"Change vault": "Changer de coffre",
 	"Advanced sync options": "Options de synchronisation avancées",
 	"Everything is in sync": "Tout est synchronisé",
@@ -645,6 +643,10 @@ const fr: Dict = {
 	"Sync...": "Synchroniser...",
 	"Syncing...": "Synchronisation...",
 	" (default)": " (par défaut)",
+
+	// First-run diagnostics opt-in (#528)
+	"Send debug logs. Note content stays private.":
+		"Envoyer les journaux de débogage. Le contenu des notes reste privé.",
 };
 
 export default fr;

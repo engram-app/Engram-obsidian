@@ -210,8 +210,6 @@ const ru: Dict = {
 		other: "Бесплатный план синхронизирует только заметки, {count} вложений будут пропущены.",
 	},
 	"Comparing your vault with the cloud…": "Сравниваем ваше хранилище с сервером…",
-	"Until you choose, nothing in this vault will sync.":
-		"Пока вы не выберете, в этом хранилище ничего не синхронизируется.",
 	"Change vault": "Сменить хранилище",
 	"Advanced sync options": "Расширенные параметры синхронизации",
 	"Everything is in sync": "Всё синхронизировано",
@@ -684,6 +682,10 @@ const ru: Dict = {
 	"Sync...": "Синхронизация...",
 	"Syncing...": "Синхронизируем...",
 	" (default)": " (по умолчанию)",
+
+	// First-run diagnostics opt-in (#528)
+	"Send debug logs. Note content stays private.":
+		"Отправлять журналы отладки. Содержимое заметок остаётся приватным.",
 };
 
 export default ru;

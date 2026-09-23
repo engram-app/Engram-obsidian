@@ -193,8 +193,6 @@ const es: Dict = {
 		other: "El plan gratuito solo sincroniza notas; se omitirán {count} adjuntos.",
 	},
 	"Comparing your vault with the cloud…": "Comparando tu bóveda con el servidor…",
-	"Until you choose, nothing in this vault will sync.":
-		"Hasta que elijas, nada de esta bóveda se sincroniza.",
 	"Change vault": "Cambiar de bóveda",
 	"Advanced sync options": "Opciones avanzadas de sincronización",
 	"Everything is in sync": "Todo está sincronizado",
@@ -645,6 +643,10 @@ const es: Dict = {
 	"Sync...": "Sincronizar...",
 	"Syncing...": "Sincronizando...",
 	" (default)": " (predeterminada)",
+
+	// First-run diagnostics opt-in (#528)
+	"Send debug logs. Note content stays private.":
+		"Enviar registros de depuración. El contenido de las notas queda privado.",
 };
 
 export default es;

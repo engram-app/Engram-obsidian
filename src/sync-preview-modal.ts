@@ -697,7 +697,7 @@ export class SyncPreviewModal extends Modal {
 		const checkbox = row.createEl("input", { type: "checkbox" });
 		checkbox.checked = this.state.diagnosticsOptIn;
 		row.createSpan({
-			text: "Send debug logs. Note content stays private.",
+			text: t("Send debug logs. Note content stays private."),
 		});
 		checkbox.addEventListener("change", () => {
 			this.state.toggleDiagnosticsOptIn();
