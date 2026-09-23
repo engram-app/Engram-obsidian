@@ -38,11 +38,16 @@ export const SELECTABLE_MODES: SearchMode[] = ["keyword", "hybrid", "semantic"];
 export const DEFAULT_SEARCH_MODE: SearchMode = "hybrid";
 
 // Named for what the user is asking FOR, not for the retrieval technique.
-const MODE_LABEL: Record<SearchMode, string> = {
-	keyword: t("Keyword"),
-	semantic: t("Semantic"),
-	hybrid: t("Both"),
-};
+/** Resolved per call, never as a module-scope literal: a literal is
+ *  evaluated once at bundle load and freezes to whichever language was active
+ *  then. */
+function modeLabel(): Record<SearchMode, string> {
+	return {
+		keyword: t("Keyword"),
+		semantic: t("Semantic"),
+		hybrid: t("Both"),
+	};
+}
 
 // Each hint names the one thing that mode does which the others do not, in the
 // user's terms. "BM25", "vector" and "RRF" are the right words for the code and
@@ -51,17 +56,19 @@ const MODE_LABEL: Record<SearchMode, string> = {
 // Phrased to complete "<Mode>: ..." — the hint is rendered with its label so it
 // is unmistakably describing the selected button rather than the filters under
 // it. Without that prefix it read as a stray sentence in a settings panel.
-const MODE_HINT: Record<SearchMode, string> = {
-	keyword: t(
-		"matches your words and their other forms — 'run' finds 'running' — plus this device.",
-	),
-	semantic: t("matches meaning. Finds notes that never use the words you typed."),
-	hybrid: t("matches words and meaning together, plus this device. Widest results."),
-};
+function modeHint(): Record<SearchMode, string> {
+	return {
+		keyword: t(
+			"matches your words and their other forms — 'run' finds 'running' — plus this device.",
+		),
+		semantic: t("matches meaning. Finds notes that never use the words you typed."),
+		hybrid: t("matches words and meaning together, plus this device. Widest results."),
+	};
+}
 
 /** The hint line for `mode`, labelled so it visibly belongs to the buttons. */
 function modeHintText(mode: SearchMode): string {
-	return `${MODE_LABEL[mode]} ${MODE_HINT[mode]}`;
+	return `${modeLabel()[mode]} ${modeHint()[mode]}`;
 }
 
 export interface SearchPanelOpts {
@@ -196,7 +203,7 @@ export class SearchPanel {
 		for (const m of SELECTABLE_MODES) {
 			const btn = modeRow.createEl("button", {
 				cls: "engram-search-mode-btn",
-				text: MODE_LABEL[m],
+				text: modeLabel()[m],
 			});
 			btn.setAttribute("aria-label", modeHintText(m));
 			if (m === this.mode) btn.addClass("is-active");

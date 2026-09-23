@@ -391,7 +391,7 @@ export class SyncProgressModal extends Modal {
 			// progress is still visible rather than silently dropped.
 			row = {
 				phase: progress.phase,
-				label: PHASE_FALLBACK_LABEL[progress.phase] ?? progress.phase,
+				label: phaseFallbackLabel()[progress.phase] ?? progress.phase,
 				plannedTotal: progress.total,
 				planned: false,
 				current: 0,
@@ -503,10 +503,12 @@ export class SyncProgressModal extends Modal {
  *  progress bar (every phase), and the modal's fallback for a phase the plan
  *  did not predict — the two surfaces deliberately share one map so they can
  *  never disagree on wording again. */
-export const PHASE_FALLBACK_LABEL: Record<SyncProgress["phase"], string> = {
-	deleting: t("Deleting"),
-	pushing: t("Uploading"),
-	pulling: t("Downloading"),
-	attachments: t("Syncing attachments"),
-	complete: t("Complete"),
-};
+export function phaseFallbackLabel(): Record<SyncProgress["phase"], string> {
+	return {
+		deleting: t("Deleting"),
+		pushing: t("Uploading"),
+		pulling: t("Downloading"),
+		attachments: t("Syncing attachments"),
+		complete: t("Complete"),
+	};
+}
