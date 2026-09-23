@@ -4,22 +4,27 @@ import type { EngramSyncSettings } from "../types";
 import type { TabContext } from "./types";
 
 /** Directories that should never be synced — detect and warn if found in vault. */
-const PROBLEMATIC_DIRS = [
-	{ pattern: "node_modules/", label: "node_modules", desc: t("Node.js dependencies") },
-	{ pattern: ".venv/", label: ".venv", desc: t("Python virtual environment") },
-	{ pattern: "venv/", label: "venv", desc: t("Python virtual environment") },
-	{ pattern: "__pycache__/", label: "__pycache__", desc: t("Python bytecode cache") },
-	{ pattern: "vendor/", label: "vendor", desc: t("Vendored dependencies") },
-	{ pattern: ".gradle/", label: ".gradle", desc: t("Gradle build cache") },
-	{ pattern: "target/", label: "target", desc: t("Rust/Java build output") },
-	{ pattern: "build/", label: "build", desc: t("Build output") },
-	{ pattern: ".next/", label: ".next", desc: t("Next.js build output") },
-	{ pattern: "dist/", label: "dist", desc: t("Distribution build output") },
-	{ pattern: ".cargo/", label: ".cargo", desc: t("Cargo cache") },
-	{ pattern: "Pods/", label: "Pods", desc: t("CocoaPods dependencies") },
-	{ pattern: ".dart_tool/", label: ".dart_tool", desc: t("Dart tool cache") },
-	{ pattern: ".cache/", label: ".cache", desc: t("Generic cache directory") },
-];
+/** Resolved per call, never as a module-scope literal: a literal is
+ *  evaluated once at bundle load and freezes to whichever language was active
+ *  then. */
+function problematicDirs() {
+	return [
+		{ pattern: "node_modules/", label: "node_modules", desc: t("Node.js dependencies") },
+		{ pattern: ".venv/", label: ".venv", desc: t("Python virtual environment") },
+		{ pattern: "venv/", label: "venv", desc: t("Python virtual environment") },
+		{ pattern: "__pycache__/", label: "__pycache__", desc: t("Python bytecode cache") },
+		{ pattern: "vendor/", label: "vendor", desc: t("Vendored dependencies") },
+		{ pattern: ".gradle/", label: ".gradle", desc: t("Gradle build cache") },
+		{ pattern: "target/", label: "target", desc: t("Rust/Java build output") },
+		{ pattern: "build/", label: "build", desc: t("Build output") },
+		{ pattern: ".next/", label: ".next", desc: t("Next.js build output") },
+		{ pattern: "dist/", label: "dist", desc: t("Distribution build output") },
+		{ pattern: ".cargo/", label: ".cargo", desc: t("Cargo cache") },
+		{ pattern: "Pods/", label: "Pods", desc: t("CocoaPods dependencies") },
+		{ pattern: ".dart_tool/", label: ".dart_tool", desc: t("Dart tool cache") },
+		{ pattern: ".cache/", label: ".cache", desc: t("Generic cache directory") },
+	];
+}
 
 export function renderAdvancedTab(ctx: TabContext): void {
 	const { containerEl, app, plugin, redisplay } = ctx;
@@ -120,7 +125,7 @@ function renderIgnoreWarnings(
 	const currentIgnores = plugin.settings.ignorePatterns;
 	const detected: { pattern: string; label: string; desc: string; count: number }[] = [];
 
-	for (const dir of PROBLEMATIC_DIRS) {
+	for (const dir of problematicDirs()) {
 		if (currentIgnores.includes(dir.pattern)) continue;
 
 		const folder = app.vault.getFolderByPath(dir.label);

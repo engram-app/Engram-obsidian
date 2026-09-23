@@ -6,7 +6,7 @@ import { DeviceFlowModal } from "./device-flow-modal";
 import { errMsg } from "./error-util";
 import { t } from "./i18n";
 import type EngramSyncPlugin from "./main";
-import { PHASE_FALLBACK_LABEL, type PlannedPhase, settingsBarCounts } from "./sync-progress-modal";
+import { type PlannedPhase, phaseFallbackLabel, settingsBarCounts } from "./sync-progress-modal";
 import { renderAboutTab } from "./tabs/about-tab";
 import { renderAdvancedTab } from "./tabs/advanced-tab";
 import { renderConnectionTab } from "./tabs/connection-tab";
@@ -54,7 +54,7 @@ export function makeProgressBarRender(
 			prevTotals.get(progress.phase) ?? 0,
 		);
 		prevTotals.set(progress.phase, total);
-		const phaseLabel = PHASE_FALLBACK_LABEL[progress.phase] ?? progress.phase;
+		const phaseLabel = phaseFallbackLabel()[progress.phase] ?? progress.phase;
 		const failedSuffix = progress.failed > 0 ? ` (${progress.failed} failed)` : "";
 		// total 0 = indeterminate (unknown-length incremental pull): show the
 		// running count as activity, no misleading "N / 0".

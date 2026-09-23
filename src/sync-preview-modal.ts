@@ -276,42 +276,51 @@ interface OptionCard {
 	cssClass: string;
 }
 
-const MERGE_CARD: OptionCard = {
-	choice: "smart-merge",
-	emoji: "✨",
-	label: t("Sync"),
-	cssClass: "engram-sync-preview-option mod-cta",
-};
+/** Resolved per call, never as a module-scope literal: a literal is
+ *  evaluated once at bundle load and freezes to whichever language was active
+ *  then. */
+function mergeCard(): OptionCard {
+	return {
+		choice: "smart-merge",
+		emoji: "✨",
+		label: t("Sync"),
+		cssClass: "engram-sync-preview-option mod-cta",
+	};
+}
 
-const PUSH_CARDS: OptionCard[] = [
-	{
-		choice: "push-all-keep-remote",
-		emoji: "⬆️",
-		label: t("Upload local files without downloading the remote"),
-		cssClass: "engram-sync-preview-option",
-	},
-	{
-		choice: "push-all-delete-remote",
-		emoji: "🗑️",
-		label: t("Delete all on remote, then upload local files"),
-		cssClass: "engram-sync-preview-option engram-sync-preview-destructive",
-	},
-];
+function pushCards(): OptionCard[] {
+	return [
+		{
+			choice: "push-all-keep-remote",
+			emoji: "⬆️",
+			label: t("Upload local files without downloading the remote"),
+			cssClass: "engram-sync-preview-option",
+		},
+		{
+			choice: "push-all-delete-remote",
+			emoji: "🗑️",
+			label: t("Delete all on remote, then upload local files"),
+			cssClass: "engram-sync-preview-option engram-sync-preview-destructive",
+		},
+	];
+}
 
-const PULL_CARDS: OptionCard[] = [
-	{
-		choice: "pull-all-keep-local",
-		emoji: "⬇️",
-		label: t("Download remote files without uploading the local"),
-		cssClass: "engram-sync-preview-option",
-	},
-	{
-		choice: "pull-all-delete-local",
-		emoji: "🗑️",
-		label: t("Delete all local files, then download from remote"),
-		cssClass: "engram-sync-preview-option engram-sync-preview-destructive",
-	},
-];
+function pullCards(): OptionCard[] {
+	return [
+		{
+			choice: "pull-all-keep-local",
+			emoji: "⬇️",
+			label: t("Download remote files without uploading the local"),
+			cssClass: "engram-sync-preview-option",
+		},
+		{
+			choice: "pull-all-delete-local",
+			emoji: "🗑️",
+			label: t("Delete all local files, then download from remote"),
+			cssClass: "engram-sync-preview-option engram-sync-preview-destructive",
+		},
+	];
+}
 
 /** Resolved per call: as a module-scope literal these froze to whichever
  *  language was active when the bundle was first evaluated. */
@@ -634,7 +643,7 @@ export class SyncPreviewModal extends Modal {
 
 		this.renderDiagnosticsOptIn(options, context);
 		const mergeRow = options.createDiv({ cls: "engram-sync-preview-options-merge" });
-		this.renderOptionCard(mergeRow, MERGE_CARD);
+		this.renderOptionCard(mergeRow, mergeCard());
 
 		this.renderAdvancedOptions(options);
 
@@ -794,7 +803,7 @@ export class SyncPreviewModal extends Modal {
 		});
 
 		const grid = details.createDiv({ cls: "engram-sync-preview-options-grid" });
-		for (const card of [...PUSH_CARDS, ...PULL_CARDS]) {
+		for (const card of [...pushCards(), ...pullCards()]) {
 			this.renderOptionCard(grid, card);
 		}
 	}

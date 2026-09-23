@@ -45,6 +45,17 @@ const versions = JSON.parse(readFileSync(join(repoRoot, "versions.json"), "utf8"
 	string
 >;
 
+/** Semver compare for x.y.z only; the suite already asserts that shape. */
+function cmpSemver(a: string, b: string): number {
+	const pa = a.split(".").map(Number);
+	const pb = b.split(".").map(Number);
+	for (let i = 0; i < 3; i++) {
+		const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+		if (d !== 0) return d < 0 ? -1 : 1;
+	}
+	return 0;
+}
+
 const REQUIRED_KEYS = {
 	author: "string",
 	minAppVersion: "string",
@@ -222,8 +233,33 @@ describe("manifest.json — cross-file consistency", () => {
 		expect(Object.keys(versions)).toContain(manifest.version);
 	});
 
-	test("versions.json[manifest.version] equals manifest.minAppVersion", () => {
-		expect(versions[manifest.version]).toBe(manifest.minAppVersion);
+	// Exact equality cannot hold on a feature branch that RAISES the floor:
+	// manifest.version still names the last release (release-please owns bumps),
+	// and its versions.json entry records the floor that release actually
+	// shipped with. Rewriting that entry would retroactively cut users off from
+	// an already-published version. release-please writes the new version's
+	// entry from manifest.minAppVersion at release time, making it exact again.
+	//
+	// So the invariant that holds at every point is directional: the recorded
+	// floor may lag a pending raise, but it must never be AHEAD of the declared
+	// one, which is what an accidental lowering would look like.
+	test("versions.json[manifest.version] is never ahead of manifest.minAppVersion", () => {
+		const recorded = versions[manifest.version];
+		expect(recorded).toBeDefined();
+		expect(cmpSemver(recorded as string, manifest.minAppVersion)).toBeLessThanOrEqual(0);
+	});
+
+	test("minAppVersion never decreases as plugin versions ascend", () => {
+		const ordered = Object.keys(versions).sort(cmpSemver);
+		let prev = "0.0.0";
+		for (const version of ordered) {
+			const floor = versions[version] as string;
+			expect(
+				cmpSemver(floor, prev),
+				`${version} lowers the floor to ${floor}`,
+			).toBeGreaterThanOrEqual(0);
+			prev = floor;
+		}
 	});
 
 	test("every versions.json key is valid x.y.z", () => {
