@@ -78,4 +78,4 @@ Engram 使用 **MCP（Model Context Protocol，模型上下文協定）**：這�
 
 ## 授權條款
 
-[MIT](../../LICENSE)
+[MIT](../../LICENSE). 部分內容衍生自第三方 MIT 授權作品，詳見 [THIRD-PARTY-NOTICES.md](../../THIRD-PARTY-NOTICES.md)。

@@ -78,4 +78,4 @@ Engram은 **MCP(Model Context Protocol)**를 사용합니다. Claude, Cursor, Ch
 
 ## 라이선스
 
-[MIT](../../LICENSE)
+[MIT](../../LICENSE). 일부는 서드파티 MIT 라이선스 저작물에서 파생되었습니다. 자세한 내용은 [THIRD-PARTY-NOTICES.md](../../THIRD-PARTY-NOTICES.md)를 참고하세요.

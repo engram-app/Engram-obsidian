@@ -79,4 +79,4 @@ Pointez votre client vers le serveur MCP d'Engram (`https://mcp.engram.page` sur
 
 ## Licence
 
-[MIT](../../LICENSE)
+[MIT](../../LICENSE). Certaines parties proviennent de travaux tiers sous licence MIT ; voir [THIRD-PARTY-NOTICES.md](../../THIRD-PARTY-NOTICES.md).

@@ -78,4 +78,4 @@ Engram は **MCP (Model Context Protocol)** を話します。Claude、Cursor、
 
 ## ライセンス
 
-[MIT](../../LICENSE)
+[MIT](../../LICENSE). 一部はサードパーティの MIT ライセンス成果物に由来します。詳細は [THIRD-PARTY-NOTICES.md](../../THIRD-PARTY-NOTICES.md) を参照してください。

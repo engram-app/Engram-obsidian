@@ -78,4 +78,4 @@ Engram говорит на **MCP (Model Context Protocol)**, открытом с
 
 ## Лицензия
 
-[MIT](../../LICENSE)
+[MIT](../../LICENSE). Часть кода основана на сторонних работах под лицензией MIT, см. [THIRD-PARTY-NOTICES.md](../../THIRD-PARTY-NOTICES.md).
