@@ -1,5 +1,6 @@
 import { type App, Modal } from "obsidian";
-import { optionBreakdown, pluralWord } from "./sync-plan-format";
+import { t } from "./i18n";
+import { optionBreakdown } from "./sync-plan-format";
 import { DEFAULT_UPGRADE_URL } from "./tabs/urls";
 import type { SyncChoice, SyncPlan, SyncProgress } from "./types";
 
@@ -13,25 +14,26 @@ export function describePlannedWork(
 	firstSync: boolean,
 ): string {
 	const b = optionBreakdown(plan, choice);
+	// Each clause is a whole translatable sentence. The previous form joined
+	// fragments with ", " and upper-cased the first letter by slicing, which
+	// assumes English word order and that casing is a string operation.
 	const parts: string[] = [];
-	if (b.pushCount > 0) parts.push(`uploading ${b.pushCount}`);
-	if (b.pullCount > 0) parts.push(`downloading ${b.pullCount}`);
+	if (b.pushCount > 0) parts.push(t("Uploading {count}.", { count: b.pushCount }));
+	if (b.pullCount > 0) parts.push(t("Downloading {count}.", { count: b.pullCount }));
 	if (b.deleteLocalCount > 0) {
-		parts.push(
-			`deleting ${b.deleteLocalCount} local ${pluralWord(b.deleteLocalCount, "file")}`,
-		);
+		parts.push(t("Deleting {count} local files.", { count: b.deleteLocalCount }));
 	}
 	if (b.deleteRemoteCount > 0) {
-		parts.push(`deleting ${b.deleteRemoteCount} on the cloud`);
+		parts.push(t("Deleting {count} on the cloud.", { count: b.deleteRemoteCount }));
 	}
 
-	const prefix = firstSync ? "First sync, this may take a moment. " : "";
-	if (parts.length === 0) return `${prefix}Checking for changes.`;
-
-	const sentence = parts.join(", ");
-	const capitalized = sentence.charAt(0).toUpperCase() + sentence.slice(1);
+	const prefix = firstSync ? t("First sync, this may take a moment.") : "";
+	if (parts.length === 0) {
+		return [prefix, t("Checking for changes.")].filter(Boolean).join(" ");
+	}
 	const noDeletes = b.deleteLocalCount === 0 && b.deleteRemoteCount === 0;
-	return `${prefix}${capitalized}.${noDeletes ? " Nothing will be deleted." : ""}`;
+	if (noDeletes) parts.push(t("Nothing will be deleted."));
+	return [prefix, ...parts].filter(Boolean).join(" ");
 }
 
 /** Final tally rendered when a sync settles. Plan-gated attachments land in
@@ -63,30 +65,34 @@ export function renderCompletionSummary(
 	if (summary.synced > 0) {
 		line.createSpan({
 			cls: "engram-progress-tally-synced",
-			text: `✓ ${summary.synced} synced`,
+			text: t("✓ {count} synced", { count: summary.synced }),
 		});
 	}
 	if (summary.skipped > 0) {
 		line.createSpan({
 			cls: "engram-progress-tally-skipped",
-			text: `⤳ ${summary.skipped} skipped (Free plan)`,
+			text: t("⤳ {count} skipped (Free plan)", { count: summary.skipped }),
 		});
 	}
 	if (summary.failed > 0) {
 		line.createSpan({
 			cls: "engram-progress-tally-failed",
-			text: `✕ ${summary.failed} failed`,
+			text: t("✕ {count} failed", { count: summary.failed }),
 		});
 	}
 
 	if (summary.skipped > 0) {
 		const note = parent.createDiv({ cls: "engram-progress-plan-note" });
-		const noun = pluralWord(summary.skipped, "attachment");
 		note.createSpan({
-			text: `${summary.skipped} ${noun} need a paid plan to sync. See Sync Center. `,
+			text: t("{count} attachments need a paid plan to sync. See Sync Center.", {
+				count: summary.skipped,
+			}),
 		});
+		// Gap before the button lives in the markup, not on the end of a
+		// translated key where trimming would silently close it.
+		note.createSpan({ text: " " });
 		const upgrade = note.createEl("button", {
-			text: "Upgrade",
+			text: t("Upgrade"),
 			cls: "engram-progress-upgrade mod-cta",
 		});
 		// Prefer the backend's own web app (threaded in as webUrl) so a
@@ -102,15 +108,15 @@ export function renderCompletionSummary(
  *  at the sync log. Pure for testing. */
 export function describeCompletion(summary: CompletionSummary): string {
 	if (summary.failed > 0) {
-		return "Finished with some errors. Open the sync log to see what failed.";
+		return t("Finished with some errors. Open the sync log to see what failed.");
 	}
 	if (summary.skipped > 0) {
-		return "Synced. Some attachments need a paid plan to sync (see below).";
+		return t("Synced. Some attachments need a paid plan to sync (see below).");
 	}
 	if (summary.synced > 0) {
-		return "All synced. Your vault and the cloud now match.";
+		return t("All synced. Your vault and the cloud now match.");
 	}
-	return "Already up to date. Nothing needed syncing.";
+	return t("Already up to date. Nothing needed syncing.");
 }
 
 /** A phase that this sync will actually perform, in display order. Used to seed
@@ -130,9 +136,10 @@ export function plannedPhases(choice: SyncChoice, plan: SyncPlan): PlannedPhase[
 	const b = optionBreakdown(plan, choice);
 	const deleting = b.deleteLocalCount + b.deleteRemoteCount;
 	const out: PlannedPhase[] = [];
-	if (deleting > 0) out.push({ phase: "deleting", label: "Deleting", total: deleting });
-	if (b.pullCount > 0) out.push({ phase: "pulling", label: "Downloading", total: b.pullCount });
-	if (b.pushCount > 0) out.push({ phase: "pushing", label: "Uploading", total: b.pushCount });
+	if (deleting > 0) out.push({ phase: "deleting", label: t("Deleting"), total: deleting });
+	if (b.pullCount > 0)
+		out.push({ phase: "pulling", label: t("Downloading"), total: b.pullCount });
+	if (b.pushCount > 0) out.push({ phase: "pushing", label: t("Uploading"), total: b.pushCount });
 	return out;
 }
 
@@ -268,14 +275,14 @@ export class SyncProgressModal extends Modal {
 		contentEl.addClass("engram-sync-progress-modal");
 		contentEl.addClass("engram-flow-modal");
 
-		contentEl.createEl("h2", { text: "Syncing your vault" });
+		contentEl.createEl("h2", { text: t("Syncing your vault") });
 
 		if (this.opts.intro) {
 			contentEl.createEl("p", { text: this.opts.intro, cls: "engram-progress-intro" });
 		}
 
 		this.statusEl = contentEl.createEl("p", {
-			text: "Getting started…",
+			text: t("Getting started…"),
 			cls: "engram-progress-status",
 		});
 
@@ -311,10 +318,12 @@ export class SyncProgressModal extends Modal {
 		if (this.opts.webUrl) {
 			const url = this.opts.webUrl;
 			this.verifyEl.createSpan({
-				text: "Open Engram to check your vault and confirm everything synced. ",
+				text: t("Open Engram to check your vault and confirm everything synced."),
 			});
+			// Gap before the link is markup, not the tail of a translated key.
+			this.verifyEl.createSpan({ text: " " });
 			const link = this.verifyEl.createEl("a", {
-				text: "Open Engram",
+				text: t("Open Engram"),
 				cls: "engram-progress-verify-link",
 				href: url,
 			});
@@ -329,7 +338,7 @@ export class SyncProgressModal extends Modal {
 		}
 
 		this.hintEl = contentEl.createEl("p", {
-			text: "You can close this and the sync keeps running in the background.",
+			text: t("You can close this and the sync keeps running in the background."),
 			cls: "engram-progress-hint",
 		});
 
@@ -338,7 +347,7 @@ export class SyncProgressModal extends Modal {
 		// and Obsidian's theme styles button display, which defeats the [hidden]
 		// attribute the old show-one-hide-other swap relied on (both rendered).
 		const buttons = contentEl.createDiv({ cls: "engram-progress-buttons" });
-		this.actionBtn = buttons.createEl("button", { text: "Run in background" });
+		this.actionBtn = buttons.createEl("button", { text: t("Run in background") });
 		this.actionBtn.addEventListener("click", () => this.close());
 
 		this.renderRows();
@@ -412,7 +421,7 @@ export class SyncProgressModal extends Modal {
 			if (other !== row && other.seen) other.done = true;
 		}
 
-		this.statusEl.setText("Syncing…");
+		this.statusEl.setText(t("Syncing…"));
 		this.pathEl.setText(progress.currentPath ?? "");
 		this.renderRows();
 	}
@@ -435,7 +444,7 @@ export class SyncProgressModal extends Modal {
 			failed: progress.failed,
 		};
 
-		this.statusEl.setText("Sync complete");
+		this.statusEl.setText(t("Sync complete"));
 		this.pathEl.setText("");
 		this.recapEl.setText(describeCompletion(summary));
 		this.recapEl.hidden = false;
@@ -446,7 +455,12 @@ export class SyncProgressModal extends Modal {
 
 		if (summary.failed > 0) {
 			this.failedEl.setText(
-				`${summary.failed} failed. Run "Engram: Show sync log" for details.`,
+				// The command name comes from the same `t()` the palette entry uses, so
+				// the sentence and the palette never disagree about what to run.
+				t('{count} failed. Run "{command}" for details.', {
+					count: summary.failed,
+					command: t("Show sync log"),
+				}),
 			);
 			this.failedEl.hidden = false;
 		} else {
@@ -457,7 +471,7 @@ export class SyncProgressModal extends Modal {
 		this.verifyEl.hidden = !this.opts.webUrl;
 
 		this.hintEl.hidden = true;
-		this.actionBtn.setText("Done");
+		this.actionBtn.setText(t("Done"));
 		this.actionBtn.addClass("mod-cta");
 	}
 
@@ -490,9 +504,9 @@ export class SyncProgressModal extends Modal {
  *  did not predict — the two surfaces deliberately share one map so they can
  *  never disagree on wording again. */
 export const PHASE_FALLBACK_LABEL: Record<SyncProgress["phase"], string> = {
-	deleting: "Deleting",
-	pushing: "Uploading",
-	pulling: "Downloading",
-	attachments: "Syncing attachments",
-	complete: "Complete",
+	deleting: t("Deleting"),
+	pushing: t("Uploading"),
+	pulling: t("Downloading"),
+	attachments: t("Syncing attachments"),
+	complete: t("Complete"),
 };

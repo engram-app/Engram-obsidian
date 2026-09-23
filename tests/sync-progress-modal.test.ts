@@ -181,7 +181,7 @@ describe("describePlannedWork", () => {
 			toPull: { notes: ["x"], attachments: [] },
 		});
 		expect(describePlannedWork("smart-merge", p, false)).toBe(
-			"Uploading 3, downloading 1. Nothing will be deleted.",
+			"Uploading 3. Downloading 1. Nothing will be deleted.",
 		);
 	});
 
@@ -198,7 +198,7 @@ describe("describePlannedWork", () => {
 			toPush: { notes: ["gone.md"], attachments: [] },
 		});
 		expect(describePlannedWork("pull-all-delete-local", p, false)).toBe(
-			"Downloading 2, deleting 1 local file.",
+			"Downloading 2. Deleting 1 local file.",
 		);
 	});
 

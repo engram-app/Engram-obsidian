@@ -1,5 +1,6 @@
 import { expBackoff } from "./backoff";
 import { statusOf } from "./error-util";
+import { t } from "./i18n";
 import { LimitExceededError } from "./limit-error";
 import type { ParseReason, SyncIssue, SyncIssueCategory } from "./types";
 
@@ -240,55 +241,59 @@ export function remediation(
 	// is "retrying automatically" (review minor #3).
 	if (reason?.code === "note_processing_failed") {
 		return {
-			title: "Note couldn't be processed",
-			hint: "The server couldn't process this note. Check its contents, then edit and save to try again.",
+			title: t("Note couldn't be processed"),
+			hint: t(
+				"The server couldn't process this note. Check its contents, then edit and save to try again.",
+			),
 		};
 	}
 	switch (category) {
 		case "needs_pro":
 			return {
-				title: "Attachments need a paid plan",
-				hint: "The Free tier syncs notes only. Upgrade to sync images and PDFs.",
+				title: t("Attachments need a paid plan"),
+				hint: t("The Free tier syncs notes only. Upgrade to sync images and PDFs."),
 			};
 		case "quota":
 			return {
-				title: "Attachment storage full",
-				hint: "You've used all the attachment storage on your plan. Upgrade for more.",
+				title: t("Attachment storage full"),
+				hint: t("You've used all the attachment storage on your plan. Upgrade for more."),
 			};
 		case "too_large":
 			return {
-				title: "Too large for the server",
-				hint: "The server limit is 5 MB. Compress or split the file, then it will sync.",
+				title: t("Too large for the server"),
+				hint: t("The server limit is 5 MB. Compress or split the file, then it will sync."),
 			};
 		case "auth":
 			return {
-				title: "Sign-in expired",
-				hint: "Reconnect your account to resume syncing.",
+				title: t("Sign-in expired"),
+				hint: t("Reconnect your account to resume syncing."),
 			};
 		case "conflict":
 			return {
-				title: "Unresolved conflict",
-				hint: "Open the file to resolve the conflict, then sync again.",
+				title: t("Unresolved conflict"),
+				hint: t("Open the file to resolve the conflict, then sync again."),
 			};
 		case "frontmatter":
 			return {
-				title: "Frontmatter needs a fix",
-				hint: "The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.",
+				title: t("Frontmatter needs a fix"),
+				hint: t(
+					"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.",
+				),
 			};
 		case "server":
 			return {
-				title: "Server error",
-				hint: "A temporary server problem — retrying automatically.",
+				title: t("Server error"),
+				hint: t("A temporary server problem — retrying automatically."),
 			};
 		case "network":
 			return {
-				title: "Network unavailable",
-				hint: "Can't reach the server — retrying automatically.",
+				title: t("Network unavailable"),
+				hint: t("Can't reach the server — retrying automatically."),
 			};
 		default:
 			return {
-				title: "Sync failed",
-				hint: "An unexpected error — retrying automatically.",
+				title: t("Sync failed"),
+				hint: t("An unexpected error — retrying automatically."),
 			};
 	}
 }
@@ -304,7 +309,10 @@ export function parseStatusToIssue(
 	if (parseStatus !== "degraded") return null;
 	const category: SyncIssueCategory =
 		parseReason?.code === "note_processing_failed" ? "other" : "frontmatter";
-	const message = parseReason?.message ?? "Frontmatter could not be parsed";
+	// Translated where the issue is created, not where it is rendered: the
+	// message is persisted with the issue, so a language switch leaves an
+	// already-recorded issue in its original language until it recurs.
+	const message = parseReason?.message ?? t("Frontmatter could not be parsed");
 	return parseReason ? { category, message, parseReason } : { category, message };
 }
 

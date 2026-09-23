@@ -1,4 +1,5 @@
 import { type App, Modal } from "obsidian";
+import { t } from "./i18n";
 import type { SyncLog } from "./sync-log";
 import type { SyncLogEntry } from "./types";
 
@@ -26,7 +27,7 @@ export class SyncLogModal extends Modal {
 		contentEl.empty();
 		contentEl.addClass("engram-sync-log-modal");
 
-		contentEl.createEl("h2", { text: "Sync log" });
+		contentEl.createEl("h2", { text: t("Sync log") });
 
 		const entries = this.syncLog.entries();
 		const errorCount = this.syncLog.errorCount();
@@ -34,10 +35,13 @@ export class SyncLogModal extends Modal {
 		const header = contentEl.createEl("p", {
 			cls: "engram-sync-log-header",
 		});
+		const shown = t("Showing {count} entries", { count: entries.length });
 		header.setText(
 			entries.length === 0
-				? "No sync activity this session."
-				: `Showing ${entries.length} entries${errorCount > 0 ? ` (${errorCount} errors)` : ""}`,
+				? t("No sync activity this session.")
+				: errorCount > 0
+					? `${shown} ${t("({count} errors)", { count: errorCount })}`
+					: shown,
 		);
 
 		if (entries.length === 0) return;

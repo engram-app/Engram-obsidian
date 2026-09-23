@@ -4,6 +4,7 @@
  */
 import { ItemView, type WorkspaceLeaf } from "obsidian";
 import type { EngramApi } from "./api";
+import { t } from "./i18n";
 import { SearchPanel } from "./search-ui";
 
 export const SEARCH_VIEW_TYPE = "engram-search-view";
@@ -24,7 +25,7 @@ export class SearchView extends ItemView {
 	}
 
 	getDisplayText(): string {
-		return "Engram search";
+		return t("Engram search");
 	}
 
 	getIcon(): string {

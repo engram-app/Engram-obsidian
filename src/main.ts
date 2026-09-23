@@ -50,6 +50,7 @@ import { sha256Hex } from "./content-hash";
 import { registerDiagnostics } from "./diagnostics";
 import { errMsg, isHttpStatus } from "./error-util";
 import { ExplicitFolders } from "./explicit-folders";
+import { t, tInto } from "./i18n";
 import { isPlanJoinReason } from "./limit-copy";
 import { LimitExceededError } from "./limit-error";
 import { notifyLimitExceeded } from "./limit-toast";
@@ -438,9 +439,16 @@ export default class EngramSyncPlugin extends Plugin {
 		// plain Window, so the call resolves to `any` and cascades a dozen
 		// no-unsafe-* errors. The bare global is declared in obsidian.d.ts.
 		const frag = createFragment();
-		frag.append(`Engram Vault Sync ${latest} is available. `);
-		const link = frag.createEl("a", { text: "Update in settings", href: "#" });
-		frag.append(".");
+		let link!: HTMLAnchorElement;
+		tInto(
+			frag as unknown as HTMLElement,
+			"Engram Vault Sync {version} is available. {link}.",
+			"link",
+			(parent) => {
+				link = parent.createEl("a", { text: t("Update in settings"), href: "#" });
+			},
+			{ vars: { version: latest } },
+		);
 		const notice = new Notice(frag, 15000);
 		link.addEventListener("click", (e) => {
 			e.preventDefault();
@@ -869,12 +877,14 @@ export default class EngramSyncPlugin extends Plugin {
 		// Add commands
 		this.addCommand({
 			id: "sync-now",
-			name: "Sync now",
+			name: t("Sync now"),
 			callback: async () => {
 				try {
-					new Notice("Engram sync: syncing...");
+					new Notice(t("Engram sync: syncing..."));
 					const { pulled, pushed } = await this.syncEngine.fullSync();
-					new Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+					new Notice(
+						t("Engram Sync: pulled {pulled}, pushed {pushed}", { pulled, pushed }),
+					);
 				} catch (e) {
 					this.handleSyncError("Manual sync", e, { notice: true });
 				}
@@ -883,20 +893,20 @@ export default class EngramSyncPlugin extends Plugin {
 
 		this.addCommand({
 			id: "disconnect",
-			name: "Disconnect (clear login)",
+			name: t("Disconnect (clear login)"),
 			callback: async () => {
 				await this.clearAuthAndPromptRelink("manual disconnect command", false);
-				new Notice("Engram: disconnected. Open Engram settings to reconnect.");
+				new Notice(t("Engram: disconnected. Open Engram settings to reconnect."));
 			},
 		});
 
 		this.addCommand({
 			id: "push-all",
-			name: "Push entire vault",
+			name: t("Push entire vault"),
 			callback: async () => {
 				try {
 					const count = await this.syncEngine.pushAll();
-					new Notice(`Engram Sync: pushed ${count} files`);
+					new Notice(t("Engram Sync: pushed {count} files", { count }));
 				} catch (e) {
 					this.handleSyncError("Push all", e, { notice: true });
 				}
@@ -905,14 +915,16 @@ export default class EngramSyncPlugin extends Plugin {
 
 		this.addCommand({
 			id: "check-sync",
-			name: "Check sync status",
+			name: t("Check sync status"),
 			callback: async () => {
 				try {
-					new Notice("Engram sync: checking...");
+					new Notice(t("Engram sync: checking..."));
 					const result = await this.syncEngine.reconcile();
 					if (!result) {
 						new Notice(
-							"Engram sync: server does not support reconciliation (update backend)",
+							t(
+								"Engram sync: server does not support reconciliation (update backend)",
+							),
 						);
 						return;
 					}
@@ -922,14 +934,18 @@ export default class EngramSyncPlugin extends Plugin {
 						diverged.length === 0 &&
 						extraOnServer.length === 0
 					) {
-						new Notice("Engram sync: everything in sync");
+						new Notice(t("Engram sync: everything in sync"));
 					} else {
 						const parts: string[] = [];
-						if (missing.length > 0) parts.push(`${missing.length} missing on server`);
-						if (diverged.length > 0) parts.push(`${diverged.length} diverged`);
+						if (missing.length > 0)
+							parts.push(t("{count} missing on server", { count: missing.length }));
+						if (diverged.length > 0)
+							parts.push(t("{count} diverged", { count: diverged.length }));
 						if (extraOnServer.length > 0)
-							parts.push(`${extraOnServer.length} only on server`);
-						new Notice(`Engram Sync: ${parts.join(", ")}`);
+							parts.push(
+								t("{count} only on server", { count: extraOnServer.length }),
+							);
+						new Notice(t("Engram Sync: {details}", { details: parts.join(", ") }));
 					}
 				} catch (e) {
 					this.handleSyncError("Sync check", e, { notice: true });
@@ -939,12 +955,12 @@ export default class EngramSyncPlugin extends Plugin {
 
 		this.addCommand({
 			id: "pull-all",
-			name: "Pull all from server (force overwrite)",
+			name: t("Pull all from server (force overwrite)"),
 			callback: async () => {
 				try {
-					new Notice("Engram sync: pulling all from server...");
+					new Notice(t("Engram sync: pulling all from server..."));
 					const count = await this.syncEngine.pullAll();
-					new Notice(`Engram Sync: pulled ${count} files from server`);
+					new Notice(t("Engram Sync: pulled {count} files from server", { count }));
 				} catch (e) {
 					this.handleSyncError("Pull all", e, { notice: true });
 				}
@@ -953,7 +969,7 @@ export default class EngramSyncPlugin extends Plugin {
 
 		this.addCommand({
 			id: "show-sync-log",
-			name: "Show sync log",
+			name: t("Show sync log"),
 			callback: () => {
 				new SyncLogModal(this.app, this.syncLog).open();
 			},
@@ -972,7 +988,7 @@ export default class EngramSyncPlugin extends Plugin {
 
 		this.addCommand({
 			id: "search",
-			name: "Semantic search",
+			name: t("Semantic search"),
 			callback: () => {
 				new SearchModal(
 					this.app,
@@ -984,19 +1000,19 @@ export default class EngramSyncPlugin extends Plugin {
 
 		this.addCommand({
 			id: "open-search-sidebar",
-			name: "Open search sidebar",
+			name: t("Open search sidebar"),
 			callback: async () => {
 				await this.revealSearchSidebar();
 			},
 		});
 
-		this.addRibbonIcon("brain-circuit", "Engram search", async () => {
+		this.addRibbonIcon("brain-circuit", t("Engram search"), async () => {
 			await this.revealSearchSidebar();
 		});
 
 		this.addCommand({
 			id: "open-sync-center",
-			name: "Open sync center",
+			name: t("Open sync center"),
 			callback: () => {
 				this.openSyncCenterSettings();
 			},
@@ -1007,7 +1023,7 @@ export default class EngramSyncPlugin extends Plugin {
 
 		// Status bar (click to sync)
 		this.statusBarEl = this.addStatusBarItem();
-		this.statusBarEl.setText("Engram: ready");
+		this.statusBarEl.setText(t("Engram: ready"));
 		this.statusBarEl.addClass("engram-status-bar-clickable");
 
 		this.registerDomEvent(this.statusBarEl, "click", () => {
@@ -1026,11 +1042,13 @@ export default class EngramSyncPlugin extends Plugin {
 				return;
 			}
 
-			new Notice("Engram sync: syncing...");
+			new Notice(t("Engram sync: syncing..."));
 			this.syncEngine
 				.fullSync()
 				.then(({ pulled, pushed }) => {
-					new Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+					new Notice(
+						t("Engram Sync: pulled {pulled}, pushed {pushed}", { pulled, pushed }),
+					);
 				})
 				.catch((e) => this.handleSyncError("Manual sync", e, { notice: true }));
 		});
@@ -1177,7 +1195,10 @@ export default class EngramSyncPlugin extends Plugin {
 										`reconcileColdStart: Y.Doc corrupted for ${noteRef(file.path)} — falling back to disk content`,
 									);
 									new Notice(
-										`Engram Sync: sync state for "${file.path.split("/").pop()}" was unreadable — using the on-disk copy.`,
+										t(
+											'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.',
+											{ name: file.path.split("/").pop() ?? file.path },
+										),
 										8000,
 									);
 								},
@@ -1220,7 +1241,7 @@ export default class EngramSyncPlugin extends Plugin {
 					// joined = this call rode another surface's run (e.g. the modal
 					// sync); that surface reports the same numbers — don't double up.
 					if (res.pushed > 0 && !res.joined) {
-						new Notice(`Engram Sync: pushed ${res.pushed}`);
+						new Notice(t("Engram Sync: pushed {pushed}", { pushed: res.pushed }));
 					}
 				} catch (e) {
 					this.handleSyncError("Startup sync", e);
@@ -1260,7 +1281,7 @@ export default class EngramSyncPlugin extends Plugin {
 		// picker (same recovery the web SPA's reconcileActiveVault does).
 		void this.healDeadVault(e);
 		if (opts?.notice) {
-			new Notice("Engram sync: sync failed");
+			new Notice(t("Engram sync: sync failed"));
 		}
 	}
 
@@ -1312,7 +1333,9 @@ export default class EngramSyncPlugin extends Plugin {
 			this.openPreviewModal = null;
 			await this.savePluginData(this.syncEngine.getLastSync());
 			new Notice(
-				"Engram: this vault no longer exists on the server. Pick or create a vault to continue.",
+				t(
+					"Engram: this vault no longer exists on the server. Pick or create a vault to continue.",
+				),
 			);
 			await this.doSyncWithFirstSyncCheck({ startInVaultPicker: true });
 		} catch (err) {
@@ -1587,7 +1610,12 @@ export default class EngramSyncPlugin extends Plugin {
 					try {
 						const { pulled, pushed } = await this.syncEngine.fullSync();
 						if (pulled > 0 || pushed > 0) {
-							new Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+							new Notice(
+								t("Engram Sync: pulled {pulled}, pushed {pushed}", {
+									pulled,
+									pushed,
+								}),
+							);
 						}
 					} catch (e) {
 						this.handleSyncError("Sync after settings change", e);
@@ -1729,7 +1757,7 @@ export default class EngramSyncPlugin extends Plugin {
 			if (!this.dataRecoveryNotified) {
 				this.dataRecoveryNotified = true;
 				new Notice(
-					"Engram: recovered plugin settings from a backup after a corrupted save.",
+					t("Engram: recovered plugin settings from a backup after a corrupted save."),
 				);
 			}
 		} else if (source === "corrupt") {
@@ -1740,7 +1768,9 @@ export default class EngramSyncPlugin extends Plugin {
 			if (!this.dataRecoveryNotified) {
 				this.dataRecoveryNotified = true;
 				new Notice(
-					"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.",
+					t(
+						"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.",
+					),
 				);
 			}
 		}
@@ -1838,7 +1868,7 @@ export default class EngramSyncPlugin extends Plugin {
 		await this.savePluginData(this.syncEngine.getLastSync());
 		this.updateStatusBar(this.syncEngine.getStatus());
 		if (notify) {
-			new Notice("Engram: your login expired — open Engram settings to reconnect.");
+			new Notice(t("Engram: your login expired — open Engram settings to reconnect."));
 		}
 	}
 
@@ -2520,7 +2550,7 @@ export default class EngramSyncPlugin extends Plugin {
 				};
 
 				channel.onVaultDeleted = () => {
-					new Notice("Engram: This vault has been deleted on the server.");
+					new Notice(t("Engram: This vault has been deleted on the server."));
 					rlog().info("lifecycle", "Vault deleted on server — clearing vaultId");
 					// Same reasoning as healDeadVault: the vault is gone, so its
 					// note-id map, cursors and index room address nothing. Nulling
@@ -2861,7 +2891,9 @@ export default class EngramSyncPlugin extends Plugin {
 							if (!this.crdtProtoTooOldNoticeShown) {
 								this.crdtProtoTooOldNoticeShown = true;
 								new Notice(
-									"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.",
+									t(
+										"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.",
+									),
 									10000,
 								);
 								rlog().warn(
@@ -2911,21 +2943,21 @@ export default class EngramSyncPlugin extends Plugin {
 			case "smart-merge": {
 				await this.markSyncGateAccepted();
 				const { pulled, pushed } = await this.syncEngine.fullSync();
-				new Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+				new Notice(t("Engram Sync: pulled {pulled}, pushed {pushed}", { pulled, pushed }));
 				return true;
 			}
 
 			case "pull-all-delete-local": {
 				await this.markSyncGateAccepted();
 				const pulled = await this.syncEngine.pullAll({ deleteLocalExtras: true });
-				new Notice(`Engram Sync: pulled ${pulled} (local extras deleted)`);
+				new Notice(t("Engram Sync: pulled {pulled} (local extras deleted)", { pulled }));
 				return true;
 			}
 
 			case "pull-all-keep-local": {
 				await this.markSyncGateAccepted();
 				const pulled = await this.syncEngine.pullAll({ deleteLocalExtras: false });
-				new Notice(`Engram Sync: pulled ${pulled}`);
+				new Notice(t("Engram Sync: pulled {pulled}", { pulled }));
 				return true;
 			}
 
@@ -2941,14 +2973,16 @@ export default class EngramSyncPlugin extends Plugin {
 					replaceRemote: true,
 					localSnapshot,
 				});
-				new Notice(`Engram Sync: replaced remote with local (${pushed} uploaded)`);
+				new Notice(
+					t("Engram Sync: replaced remote with local ({pushed} uploaded)", { pushed }),
+				);
 				return true;
 			}
 
 			case "push-all-keep-remote": {
 				await this.markSyncGateAccepted();
 				const pushed = await this.syncEngine.pushAll({ replaceRemote: false });
-				new Notice(`Engram Sync: pushed ${pushed}`);
+				new Notice(t("Engram Sync: pushed {pushed}", { pushed }));
 				return true;
 			}
 		}
@@ -3078,12 +3112,14 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  focus mid-sentence is its own bug report. */
 	private notifySyncGateClosed(): void {
 		const notice = new Notice(
-			"Engram: sync is paused — this edit was not synced. Choose a sync direction to resume.",
+			t(
+				"Engram: sync is paused — this edit was not synced. Choose a sync direction to resume.",
+			),
 			0,
 		);
 		const noticeEl = (notice as unknown as { noticeEl?: HTMLElement }).noticeEl;
 		if (!noticeEl) return;
-		const btn = noticeEl.createEl("button", { text: "Resume sync" });
+		const btn = noticeEl.createEl("button", { text: t("Resume sync") });
 		btn.addEventListener("click", () => {
 			notice.hide();
 			void this.doSyncWithFirstSyncCheck();
@@ -3189,8 +3225,9 @@ export default class EngramSyncPlugin extends Plugin {
 					// synced before sees "sync paused", and quoting the wrong words
 					// sends them looking for something that is not there.
 					new Notice(
-						"Engram: sync is not set up yet, so nothing in this vault will sync.\n" +
+						`${t("Engram: sync is not set up yet, so nothing in this vault will sync.")}\n${t(
 							"Click the Engram item in the status bar to pick up where you left off.",
+						)}`,
 						10_000,
 					);
 				}
@@ -3204,7 +3241,7 @@ export default class EngramSyncPlugin extends Plugin {
 				console.error("Engram Sync: sync failed", e);
 				// This boundary wraps BOTH the preview and the sync run it
 				// dispatches — "preview failed" here mislabeled real sync failures.
-				new Notice("Engram: sync failed. Open the sync log for details.");
+				new Notice(t("Engram: sync failed. Open the sync log for details."));
 				rlog().error("lifecycle", `Sync (preview or run) failed: ${errMsg(e)}`);
 			}
 		});
@@ -3267,37 +3304,47 @@ export default class EngramSyncPlugin extends Plugin {
 			// Signed out (or never linked): "ready" here was a lie the 2026-08-12
 			// incident shipped — after a forced sign-out the bar claimed ready
 			// while every sync path was dead.
-			text = neverSynced ? "Engram: not connected" : "Engram: signed out";
+			text = neverSynced ? t("Engram: not connected") : t("Engram: signed out");
 			tooltip = neverSynced
-				? "Not connected yet. Click to open settings and link this vault."
-				: "Not signed in. Click to open settings and reconnect.";
+				? t("Not connected yet. Click to open settings and link this vault.")
+				: t("Not signed in. Click to open settings and reconnect.");
 		} else if (blocked && status.state !== "syncing") {
 			// Sync gate closed — user has not picked a direction in SyncPreviewModal
 			// for the current auth+vault fingerprint. Show a click-to-resolve nag.
-			const label = neverSynced ? "Engram: finish setup" : "Engram: sync paused";
-			text = status.pending > 0 ? `${label} (${status.pending} queued)` : label;
+			const label = neverSynced ? t("Engram: finish setup") : t("Engram: sync paused");
+			text =
+				status.pending > 0
+					? t("{label} ({count} queued)", { label, count: status.pending })
+					: label;
 			tooltip = neverSynced
-				? "Setup is not finished — nothing will sync until you choose a sync direction. Click to finish."
-				: "Sync paused — click to choose a sync direction";
+				? t(
+						"Setup is not finished — nothing will sync until you choose a sync direction. Click to finish.",
+					)
+				: t("Sync paused — click to choose a sync direction");
 		} else if (status.state === "offline") {
 			text =
-				status.queued > 0 ? `Engram: offline (${status.queued} queued)` : "Engram: offline";
-			tooltip = "Server unreachable — changes will sync when connected";
+				status.queued > 0
+					? t("Engram: offline ({count} queued)", { count: status.queued })
+					: t("Engram: offline");
+			tooltip = t("Server unreachable — changes will sync when connected");
 		} else if (status.state === "error") {
-			text = "Engram: error";
-			tooltip = status.error || "Unknown error";
+			text = t("Engram: error");
+			tooltip = status.error || t("Unknown error");
 		} else if (status.state === "syncing") {
-			text = status.pending > 0 ? `Engram: syncing (${status.pending})` : "Engram: syncing";
-			tooltip = "Sync in progress...";
+			text =
+				status.pending > 0
+					? t("Engram: syncing ({count})", { count: status.pending })
+					: t("Engram: syncing");
+			tooltip = t("Sync in progress...");
 		} else if (status.pending > 0) {
-			text = `Engram: pending (${status.pending})`;
-			tooltip = `${status.pending} file(s) queued`;
+			text = t("Engram: pending ({count})", { count: status.pending });
+			tooltip = t("{count} files queued", { count: status.pending });
 		} else if (this.liveConnected) {
-			text = "Engram: live";
-			tooltip = "WebSocket connected — live sync active";
+			text = t("Engram: live");
+			tooltip = t("WebSocket connected — live sync active");
 		} else {
 			text = "Engram: ready";
-			tooltip = "Click to sync";
+			tooltip = t("Click to sync");
 		}
 
 		const errorCount = this.syncLog?.errorCount() ?? 0;
@@ -3305,12 +3352,12 @@ export default class EngramSyncPlugin extends Plugin {
 		// without it the error badge overwrites "signed out" in exactly the
 		// forced-sign-out state the branch above exists for.
 		if (errorCount > 0 && status.state === "idle" && !blocked && this.hasAuthConfigured()) {
-			text = `Engram: ⚠ ${errorCount} sync errors`;
+			text = t("Engram: ⚠ {count} sync errors", { count: errorCount });
 		}
 
 		if (status.lastSync) {
 			const date = new Date(status.lastSync);
-			tooltip += `\nLast sync: ${date.toLocaleString()}`;
+			tooltip += `\n${t("Last sync: {when}", { when: date.toLocaleString() })}`;
 		}
 
 		this.statusBarEl.setText(text);
@@ -3339,7 +3386,9 @@ export default class EngramSyncPlugin extends Plugin {
 					// deletes counted separately (finding: a delete-only poll used to
 					// trash local files with NO user-visible indication).
 					if (pulled + deletes > 0) {
-						new Notice(`Engram Sync: pulled ${pulled + deletes} changes`);
+						new Notice(
+							t("Engram Sync: pulled {count} changes", { count: pulled + deletes }),
+						);
 					}
 				} catch (e) {
 					// biome-ignore lint/suspicious/noConsole: error boundary

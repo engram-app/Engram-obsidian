@@ -3,6 +3,7 @@ import { EngramApi, withTimeout } from "./api";
 import { devLog } from "./dev-log";
 import { waitForDeviceAuthorization } from "./device-flow-socket";
 import { errMsg } from "./error-util";
+import { t } from "./i18n";
 import type EngramSyncPlugin from "./main";
 
 /** How long a resume waits before probing when the socket claims to be live.
@@ -72,7 +73,7 @@ export class DeviceFlowModal extends Modal {
 		// one task, so the window must not change shape between steps.
 		contentEl.addClass("engram-flow-modal");
 		contentEl.empty();
-		contentEl.createEl("h2", { text: "Link Obsidian to Engram" });
+		contentEl.createEl("h2", { text: t("Link Obsidian to Engram") });
 		const statusEl = contentEl.createEl("p", { text: "Starting..." });
 
 		void this.beginDeviceFlow(contentEl, statusEl);
@@ -91,7 +92,9 @@ export class DeviceFlowModal extends Modal {
 			// Last, deliberately — see openVerificationPage.
 			this.openVerificationPage(resp);
 		} catch {
-			statusEl.setText("Failed to start device flow. Check your Engram URL and try again.");
+			statusEl.setText(
+				t("Failed to start device flow. Check your Engram URL and try again."),
+			);
 		}
 	}
 
@@ -180,21 +183,21 @@ export class DeviceFlowModal extends Modal {
 		resp: { user_code: string; verification_url: string },
 	): void {
 		contentEl.empty();
-		contentEl.createEl("h2", { text: "Link Obsidian to Engram" });
-		contentEl.createEl("p", { text: "Your code:" });
+		contentEl.createEl("h2", { text: t("Link Obsidian to Engram") });
+		contentEl.createEl("p", { text: t("Your code:") });
 
 		const codeEl = contentEl.createEl("code", {
 			text: resp.user_code,
 			cls: "engram-device-code",
 		});
-		codeEl.title = "Click to copy";
+		codeEl.title = t("Click to copy");
 		codeEl.addEventListener("click", () => {
 			void navigator.clipboard.writeText(resp.user_code);
-			new Notice("Code copied!");
+			new Notice(t("Code copied!"));
 		});
 
 		contentEl.createEl("p", {
-			text: "A browser window has opened. Sign in and enter this code to link your vault.",
+			text: t("A browser window has opened. Sign in and enter this code to link your vault."),
 		});
 
 		// Text is set by setWaitingStatus once the socket reports in. Starts
@@ -203,7 +206,7 @@ export class DeviceFlowModal extends Modal {
 		this.setWaitingStatus(false);
 
 		const btnContainer = contentEl.createDiv({ cls: "engram-device-buttons" });
-		const cancelBtn = btnContainer.createEl("button", { text: "Cancel" });
+		const cancelBtn = btnContainer.createEl("button", { text: t("Cancel") });
 		cancelBtn.addEventListener("click", () => this.close());
 	}
 
@@ -223,8 +226,8 @@ export class DeviceFlowModal extends Modal {
 		if (!this.waitingEl) return;
 		this.waitingEl.setText(
 			live
-				? "Waiting for authorization — connected, this will complete instantly."
-				: "Waiting for authorization — no live connection, checking every 30s.",
+				? t("Waiting for authorization — connected, this will complete instantly.")
+				: t("Waiting for authorization — no live connection, checking every 30s."),
 		);
 	}
 
@@ -454,12 +457,12 @@ export class DeviceFlowModal extends Modal {
 		this.resetFlow();
 		const contentEl = this.contentEl;
 		contentEl.empty();
-		contentEl.createEl("h2", { text: "Link Obsidian to Engram" });
-		contentEl.createEl("p", { text: "Code expired. Please try again." });
+		contentEl.createEl("h2", { text: t("Link Obsidian to Engram") });
+		contentEl.createEl("p", { text: t("Code expired. Please try again.") });
 
 		const btnContainer = contentEl.createDiv({ cls: "engram-device-buttons" });
 
-		const retryBtn = btnContainer.createEl("button", { text: "Try again", cls: "mod-cta" });
+		const retryBtn = btnContainer.createEl("button", { text: t("Try again"), cls: "mod-cta" });
 		retryBtn.addEventListener("click", () => {
 			// Kill the expired attempt's socket and interval BEFORE onOpen()
 			// starts a fresh set — see resetFlow.
@@ -468,7 +471,7 @@ export class DeviceFlowModal extends Modal {
 			this.onOpen();
 		});
 
-		const closeBtn = btnContainer.createEl("button", { text: "Close" });
+		const closeBtn = btnContainer.createEl("button", { text: t("Close") });
 		closeBtn.addEventListener("click", () => this.close());
 	}
 }

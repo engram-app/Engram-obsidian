@@ -24,6 +24,7 @@ import { devLog } from "./dev-log";
 import { errMsg, isHttpStatus } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
 import { isCanvasPath as canvasPath, isCrdtEligiblePath as crdtEligiblePath } from "./file-kind";
+import { t } from "./i18n";
 import { IgnoredFiles } from "./ignored-files";
 import {
 	categorizeError,
@@ -5279,7 +5280,9 @@ export class SyncEngine {
 					if (localFile) {
 						await this.app.vault.rename(localFile, serverPath);
 						new Notice(
-							`Engram Sync: renamed "${pushedPath.split("/").pop()}" (unsupported characters)`,
+							t('Engram Sync: renamed "{name}" (unsupported characters)', {
+								name: pushedPath.split("/").pop() ?? pushedPath,
+							}),
 						);
 					}
 					// Move the merge base with the file. It was previously left
@@ -5447,7 +5450,7 @@ export class SyncEngine {
 		if (plan.attachmentsTextOnly && !isTextAttachment(file.extension)) {
 			return {
 				category: "needs_pro",
-				message: "Free syncs notes only — images & PDFs need a paid plan.",
+				message: t("Free syncs notes only — images & PDFs need a paid plan."),
 			};
 		}
 		return null;
@@ -5474,7 +5477,10 @@ export class SyncEngine {
 		if (count <= 0) return;
 		const noun = count === 1 ? "file" : "files";
 		const detail = firstMessage ? ` (${firstMessage})` : "";
-		new Notice(`Engram: ${count} ${noun} failed to sync${detail} — open Sync Center`, 10_000);
+		new Notice(
+			t("Engram: {count} files failed to sync{detail} — open Sync Center", { count, detail }),
+			10_000,
+		);
 		rlog().warn("push", `${count} ${noun} failed to sync${detail}`);
 	}
 
@@ -5493,7 +5499,10 @@ export class SyncEngine {
 		if (this.attachmentLimitToastShown) return;
 		this.attachmentLimitToastShown = true;
 		const noun = count === 1 ? "attachment" : "attachments";
-		new Notice(`Engram: ${count} ${noun} skipped — upgrade to sync images & PDFs.`, 10_000);
+		new Notice(
+			t("Engram: {count} attachments skipped — upgrade to sync images & PDFs.", { count }),
+			10_000,
+		);
 		rlog().info(
 			"push",
 			`Skipped ${count} ${noun} (attachments_disabled) — batched toast emitted`,
@@ -5558,7 +5567,10 @@ export class SyncEngine {
 				await this.pushFile(file, /* force */ true, /* bypassPlanSkip */ true);
 			}
 		}
-		new Notice(`Engram: plan upgraded — syncing ${skipped.length} attachment(s)…`, 6_000);
+		new Notice(
+			t("Engram: plan upgraded — syncing {count} attachments…", { count: skipped.length }),
+			6_000,
+		);
 	}
 
 	/** Trash a file whose deletion was decided REMOTELY (WS delete event, pull
@@ -7062,8 +7074,9 @@ export class SyncEngine {
 					onFileApplied,
 				});
 				if (!replay) {
-					this.lastError =
-						"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.";
+					this.lastError = t(
+						"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.",
+					);
 					devLog().log(
 						"error",
 						`${label} ABORTED — replay coalesced under contention; refusing to trash`,
@@ -7105,8 +7118,9 @@ export class SyncEngine {
 					await this.sleep(50);
 				}
 				if (!replay) {
-					this.lastError =
-						"Pull all aborted: another sync is running (replay contention). Try again when it finishes.";
+					this.lastError = t(
+						"Pull all aborted: another sync is running (replay contention). Try again when it finishes.",
+					);
 					rlog().warn("pull", `${label} ABORTED: replay never ran exclusively`);
 					return 0;
 				}
@@ -7199,7 +7213,9 @@ export class SyncEngine {
 				e instanceof Error ? e.stack : undefined,
 			);
 			this.lastError =
-				e instanceof Error ? `Pull all failed: ${e.message}` : "Pull all failed";
+				e instanceof Error
+					? t("Pull all failed: {error}", { error: e.message })
+					: t("Pull all failed");
 			return 0;
 		} finally {
 			this.pulling = false;
@@ -8952,7 +8968,13 @@ export class SyncEngine {
 								return false;
 							}
 							new Notice(
-								`Engram: sync conflict on ${normalized} — your local edit was saved as ${copy}`,
+								t(
+									"Engram: sync conflict on {path} — your local edit was saved as {copy}",
+									{
+										path: normalized,
+										copy,
+									},
+								),
 							);
 							if (noteId) {
 								this.stageAndConverge(
@@ -9510,7 +9532,7 @@ export class SyncEngine {
 		// Verify auth before syncing to give a clear error on bad API key
 		const { ok, error } = await this.api.ping();
 		if (!ok) {
-			this.lastError = error ?? "Connection failed";
+			this.lastError = error ?? t("Connection failed");
 			this.emitStatus();
 			devLog().log("error", `fullSync auth failed: ${this.lastError}`);
 			rlog().error("lifecycle", `Auth failed: ${this.lastError}`);
@@ -9642,15 +9664,19 @@ export class SyncEngine {
 		if (paths.length === 1) {
 			const [path] = paths as [string];
 			const notice = new Notice(
-				`Engram: frontmatter problem in "${path.split("/").pop()}"`,
+				t('Engram: frontmatter problem in "{name}"', {
+					name: path.split("/").pop() ?? path,
+				}),
 				DEGRADED_NOTICE_DURATION_MS,
 			);
 			const noticeEl = (notice as unknown as { noticeEl?: HTMLElement }).noticeEl;
-			const link = noticeEl?.createEl("a", { text: "Open note" });
+			const link = noticeEl?.createEl("a", { text: t("Open note") });
 			link?.addEventListener("click", () => void this.app.workspace.openLinkText(path, ""));
 		} else {
 			new Notice(
-				`Engram: ${paths.length} notes have frontmatter problems. Open Sync Center to fix.`,
+				t("Engram: {count} notes have frontmatter problems. Open Sync Center to fix.", {
+					count: paths.length,
+				}),
 				DEGRADED_NOTICE_DURATION_MS,
 			);
 		}
@@ -10077,7 +10103,7 @@ export class SyncEngine {
 		// Verify auth before pushing to give a clear error on bad API key
 		const { ok, error } = await this.api.ping();
 		if (!ok) {
-			this.lastError = error ?? "Connection failed";
+			this.lastError = error ?? t("Connection failed");
 			this.emitStatus();
 			throw new Error(this.lastError);
 		}

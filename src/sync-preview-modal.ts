@@ -1,5 +1,6 @@
 import { type App, Modal, setIcon } from "obsidian";
 import { statusOf } from "./error-util";
+import { t, tInto } from "./i18n";
 import { toastFor } from "./limit-copy";
 import { LimitExceededError } from "./limit-error";
 import { isTextAttachment } from "./mime";
@@ -10,8 +11,6 @@ import {
 	isPlanEmpty,
 	type OptionBreakdown,
 	optionBreakdown,
-	plural,
-	pluralWord,
 	simplifiedFirstSync,
 } from "./sync-plan-format";
 import type { SyncChoice, SyncPlan, SyncPreviewContext, VaultInfo } from "./types";
@@ -180,8 +179,8 @@ export function shouldOfferDiagnosticsOptIn(context: SyncPreviewContext): boolea
  *  say "sign in", never "check your connection". Pure for testing. */
 export function planLoadErrorMessage(hasAuth: boolean): string {
 	return hasAuth
-		? "Could not compare with the cloud. Check your connection."
-		: "Your login expired. Sign in again in Engram settings to continue.";
+		? t("Could not compare with the cloud. Check your connection.")
+		: t("Your login expired. Sign in again in Engram settings to continue.");
 }
 
 /** Map a createVault rejection to a short human label. LimitExceededError =
@@ -191,8 +190,9 @@ export function planLoadErrorMessage(hasAuth: boolean): string {
 export function describeCreateVaultError(e: unknown): string {
 	if (e instanceof LimitExceededError) return toastFor(e.reason);
 	const status = statusOf(e);
-	if (status === 422) return "Couldn't create vault — the name may be invalid or already in use.";
-	return "Could not create the vault — check your connection and try again.";
+	if (status === 422)
+		return t("Couldn't create vault — the name may be invalid or already in use.");
+	return t("Could not create the vault — check your connection and try again.");
 }
 
 /** Lowercase file extension (no leading dot) of a path, or "" when none. */
@@ -215,8 +215,7 @@ export function countSkippedAttachments(plan: SyncPlan, attachmentsTextOnly: boo
  *  there is nothing to say (n === 0). Pure for testing. */
 export function skippedAttachmentsLine(n: number): string | null {
 	if (n <= 0) return null;
-	const noun = pluralWord(n, "attachment");
-	return `Free syncs notes only — ${n} ${noun} will be skipped.`;
+	return t("Free syncs notes only — {count} attachments will be skipped.", { count: n });
 }
 
 /** Plain-language outcome line for the smart-merge ("Sync") option, computed
@@ -224,21 +223,28 @@ export function skippedAttachmentsLine(n: number): string | null {
  *  First-time and vault-switch lead with a safety clause for users who do not
  *  yet trust what the button does. Pure for testing. */
 export function mergeHelperText(b: OptionBreakdown, context: SyncPreviewContext): string {
-	const counts: string[] = [];
-	if (b.pushCount > 0) counts.push(`Uploads ${b.pushCount}`);
-	if (b.pullCount > 0) counts.push(`downloads ${b.pullCount}`);
-	let countLine = counts.join(", ");
-	if (countLine) countLine = `${countLine.charAt(0).toUpperCase()}${countLine.slice(1)}.`;
-	const conflict = b.conflictCount > 0 ? ` ${b.conflictCount} conflicts to resolve.` : "";
+	// Whole clauses, joined by a space. Building this from fragments ("Uploads 3"
+	// + ", downloads 2") and then upper-casing the first letter assumed English
+	// word order AND that capitalization is a string operation, which it is not
+	// in every script.
+	const countLine =
+		b.pushCount > 0 && b.pullCount > 0
+			? t("Uploads {up}, downloads {down}.", { up: b.pushCount, down: b.pullCount })
+			: b.pushCount > 0
+				? t("Uploads {count}.", { count: b.pushCount })
+				: b.pullCount > 0
+					? t("Downloads {count}.", { count: b.pullCount })
+					: "";
+	const conflict =
+		b.conflictCount > 0 ? t("{count} conflicts to resolve.", { count: b.conflictCount }) : "";
 
 	if (context === "first-time" || context === "vault-switch") {
-		const lead = "Safe choice: combines both sides, nothing is deleted.";
-		const tail = countLine ? ` ${countLine}${conflict}`.trimEnd() : "";
-		return `${lead}${tail}`;
+		const lead = t("Safe choice: combines both sides, nothing is deleted.");
+		return [lead, countLine, conflict].filter(Boolean).join(" ");
 	}
 	return countLine
-		? `${countLine}${conflict} Nothing is deleted.`
-		: "Already in sync. Nothing is deleted.";
+		? [countLine, conflict, t("Nothing is deleted.")].filter(Boolean).join(" ")
+		: t("Already in sync. Nothing is deleted.");
 }
 
 /** The "You are about to:" lines for a destructive sync's confirm screen, built
@@ -247,18 +253,18 @@ export function mergeHelperText(b: OptionBreakdown, context: SyncPreviewContext)
  *  net extras — otherwise a destructive button could show no deletion at all
  *  when the two sides already overlap. Pure for testing. */
 export function confirmActions(choice: SyncChoice, plan: SyncPlan): string[] {
-	const files = (n: number) => pluralWord(n, "file");
 	const lines: string[] = [];
 	if (choice === "push-all-delete-remote") {
 		const del = plan.serverNoteCount + plan.serverAttachmentCount;
 		const up = plan.localNoteCount + plan.localAttachmentCount;
-		if (del > 0) lines.push(`Delete all ${del} ${files(del)} currently on the server`);
-		if (up > 0) lines.push(`Upload ${up} ${files(up)} from this vault`);
+		if (del > 0)
+			lines.push(t("Delete all {count} files currently on the server", { count: del }));
+		if (up > 0) lines.push(t("Upload {count} files from this vault", { count: up }));
 	} else if (choice === "pull-all-delete-local") {
 		const del = plan.localNoteCount + plan.localAttachmentCount;
 		const down = plan.serverNoteCount + plan.serverAttachmentCount;
-		if (del > 0) lines.push(`Delete all ${del} ${files(del)} in this vault`);
-		if (down > 0) lines.push(`Download ${down} ${files(down)} from the server`);
+		if (del > 0) lines.push(t("Delete all {count} files in this vault", { count: del }));
+		if (down > 0) lines.push(t("Download {count} files from the server", { count: down }));
 	}
 	return lines;
 }
@@ -273,7 +279,7 @@ interface OptionCard {
 const MERGE_CARD: OptionCard = {
 	choice: "smart-merge",
 	emoji: "✨",
-	label: "Sync",
+	label: t("Sync"),
 	cssClass: "engram-sync-preview-option mod-cta",
 };
 
@@ -281,13 +287,13 @@ const PUSH_CARDS: OptionCard[] = [
 	{
 		choice: "push-all-keep-remote",
 		emoji: "⬆️",
-		label: "Upload local files without downloading the remote",
+		label: t("Upload local files without downloading the remote"),
 		cssClass: "engram-sync-preview-option",
 	},
 	{
 		choice: "push-all-delete-remote",
 		emoji: "🗑️",
-		label: "Delete all on remote, then upload local files",
+		label: t("Delete all on remote, then upload local files"),
 		cssClass: "engram-sync-preview-option engram-sync-preview-destructive",
 	},
 ];
@@ -296,22 +302,27 @@ const PULL_CARDS: OptionCard[] = [
 	{
 		choice: "pull-all-keep-local",
 		emoji: "⬇️",
-		label: "Download remote files without uploading the local",
+		label: t("Download remote files without uploading the local"),
 		cssClass: "engram-sync-preview-option",
 	},
 	{
 		choice: "pull-all-delete-local",
 		emoji: "🗑️",
-		label: "Delete all local files, then download from remote",
+		label: t("Delete all local files, then download from remote"),
 		cssClass: "engram-sync-preview-option engram-sync-preview-destructive",
 	},
 ];
 
-export const HEADER_BY_CONTEXT: Record<SyncPreviewContext, string> = {
-	"first-time": "Set up sync for this vault",
-	"vault-switch": "You are now pointing at a different cloud vault",
-	review: "Sync preview",
-};
+/** Resolved per call: as a module-scope literal these froze to whichever
+ *  language was active when the bundle was first evaluated. */
+export function headerFor(context: SyncPreviewContext): string {
+	const headers: Record<SyncPreviewContext, string> = {
+		"first-time": t("Set up sync for this vault"),
+		"vault-switch": t("You are now pointing at a different cloud vault"),
+		review: t("Sync preview"),
+	};
+	return headers[context];
+}
 
 export interface SyncPreviewOptions {
 	/** Server-side vault name. Falls back to "Cloud Server" when missing. */
@@ -369,26 +380,31 @@ export function simplifiedScreenCopy(simple: NonNullable<ReturnType<typeof simpl
 } {
 	if (simple.mode === "fresh") {
 		return {
-			body: "Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.",
-			action: "Start syncing",
+			body: t(
+				"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.",
+			),
+			action: t("Start syncing"),
 			note: null,
 		};
 	}
 	const parts: string[] = [];
-	if (simple.notes > 0) parts.push(plural(simple.notes, "note"));
-	if (simple.attachments > 0) parts.push(plural(simple.attachments, "attachment"));
-	const what = parts.join(" and ") || "files";
+	if (simple.notes > 0) parts.push(t("{count} notes", { count: simple.notes }));
+	if (simple.attachments > 0) parts.push(t("{count} attachments", { count: simple.attachments }));
+	const what =
+		parts.length === 2
+			? t("{first} and {second}", { first: parts[0] ?? "", second: parts[1] ?? "" })
+			: (parts[0] ?? t("files"));
 	if (simple.mode === "upload") {
 		return {
-			body: `This vault is empty on the server. Upload your ${what}?`,
-			action: "Upload everything",
-			note: "Nothing will be removed from this device.",
+			body: t("This vault is empty on the server. Upload your {what}?", { what }),
+			action: t("Upload everything"),
+			note: t("Nothing will be removed from this device."),
 		};
 	}
 	return {
-		body: `This device's vault is empty. Download ${what} from the server?`,
-		action: "Download everything",
-		note: "Nothing will be removed from this device.",
+		body: t("This device's vault is empty. Download {what} from the server?", { what }),
+		action: t("Download everything"),
+		note: t("Nothing will be removed from this device."),
 	};
 }
 
@@ -413,7 +429,7 @@ export function emptyPlanDismiss(gateClosed: boolean): {
 	label: string;
 	accept: boolean;
 } {
-	return gateClosed ? { label: "Done", accept: true } : { label: "Close", accept: false };
+	return gateClosed ? { label: t("Done"), accept: true } : { label: t("Close"), accept: false };
 }
 
 /** How long to hold the loaded plan back so the "Comparing…" line stays
@@ -635,7 +651,7 @@ export class SyncPreviewModal extends Modal {
 			);
 			return;
 		}
-		this.renderFooter(contentEl, "Cancel", false);
+		this.renderFooter(contentEl, t("Cancel"), false);
 	}
 
 	/** The one-click screen for an empty-side first sync. One primary action
@@ -669,7 +685,7 @@ export class SyncPreviewModal extends Modal {
 			this.state.pickOption("smart-merge");
 		});
 		this.renderSkippedAttachmentsNote(parent);
-		this.renderFooter(parent, "Cancel", false);
+		this.renderFooter(parent, t("Cancel"), false);
 	}
 
 	/** Opt-in checkbox for shipping anonymous sync diagnostics, offered once on
@@ -681,7 +697,7 @@ export class SyncPreviewModal extends Modal {
 		const checkbox = row.createEl("input", { type: "checkbox" });
 		checkbox.checked = this.state.diagnosticsOptIn;
 		row.createSpan({
-			text: "Send debug logs. Note content stays private.",
+			text: t("Send debug logs. Note content stays private."),
 		});
 		checkbox.addEventListener("change", () => {
 			this.state.toggleDiagnosticsOptIn();
@@ -702,10 +718,10 @@ export class SyncPreviewModal extends Modal {
 				text: this.state.planError,
 			});
 		} else if (this.loadingTextShownAt !== null) {
-			body.createSpan({ text: "Comparing your vault with the cloud…" });
+			body.createSpan({ text: t("Comparing your vault with the cloud…") });
 		}
 
-		this.renderFooter(parent, "Cancel", false);
+		this.renderFooter(parent, t("Cancel"), false);
 	}
 
 	/** Dismiss + optional "Change vault" footer, shared by the loaded preview
@@ -729,7 +745,7 @@ export class SyncPreviewModal extends Modal {
 
 		const footer = parent.createDiv({ cls: "engram-sync-preview-footer" });
 		const dismissBtn = footer.createEl("button", {
-			text: gated ? "Not now" : dismissLabel,
+			text: gated ? t("Not now") : dismissLabel,
 			cls: dismissCta ? "mod-cta" : undefined,
 		});
 		dismissBtn.addEventListener("click", () => {
@@ -740,7 +756,7 @@ export class SyncPreviewModal extends Modal {
 			this.state.cancel();
 		});
 		if (this.opts.showChangeVault) {
-			const changeBtn = footer.createEl("button", { text: "Change vault" });
+			const changeBtn = footer.createEl("button", { text: t("Change vault") });
 			changeBtn.addEventListener("click", () => {
 				void this.openVaultPicker();
 			});
@@ -766,7 +782,7 @@ export class SyncPreviewModal extends Modal {
 		const summary = details.createEl("summary", {
 			cls: "engram-sync-preview-advanced-summary",
 		});
-		summary.createSpan({ text: "Advanced sync options" });
+		summary.createSpan({ text: t("Advanced sync options") });
 		const chevron = summary.createSpan({ cls: "engram-sync-preview-advanced-chevron" });
 		setIcon(chevron, this.state.advancedOpen ? "chevron-down" : "chevron-right");
 
@@ -804,11 +820,11 @@ export class SyncPreviewModal extends Modal {
 				cls: "engram-sync-preview-header engram-sync-preview-header-success",
 			});
 			h.createSpan({ text: "✅ ", cls: "engram-sync-preview-header-emoji" });
-			h.createSpan({ text: "Everything is in sync" });
+			h.createSpan({ text: t("Everything is in sync") });
 			return;
 		}
 		parent.createEl("h2", {
-			text: HEADER_BY_CONTEXT[context],
+			text: headerFor(context),
 			cls: "engram-sync-preview-header",
 		});
 	}
@@ -820,15 +836,15 @@ export class SyncPreviewModal extends Modal {
 		this.renderCompareCard(wrap, {
 			emoji: "💻",
 			name: plan.vaultName,
-			role: "This vault",
+			role: t("This vault"),
 			notes: plan.localNoteCount,
 			attachments: plan.localAttachmentCount,
 			folders: plan.localFolderCount,
 		});
 		this.renderCompareCard(wrap, {
 			emoji: "☁️",
-			name: this.remoteVaultName || "Cloud server",
-			role: "Cloud server",
+			name: this.remoteVaultName || t("Cloud server"),
+			role: t("Cloud server"),
 			notes: plan.serverNoteCount,
 			attachments: plan.serverAttachmentCount,
 			folders: plan.serverFolderCount,
@@ -837,19 +853,19 @@ export class SyncPreviewModal extends Modal {
 		const match = computeMatchPercent(plan);
 		const conflicts = plan.conflicts.length;
 		const matchRow = parent.createDiv({ cls: "engram-sync-preview-match" });
-		matchRow.createSpan({
-			cls: "engram-sync-preview-match-label",
-			text: "Your vault shares ",
-		});
-		const matchValue = matchRow.createSpan({
-			cls: "engram-sync-preview-match-value",
-			text: `${match}%`,
-		});
-		if (match === 100) matchValue.addClass("is-perfect");
-		matchRow.createSpan({
-			cls: "engram-sync-preview-match-label",
-			text: " of its data with Engram",
-		});
+		tInto(
+			matchRow,
+			"Your vault shares {percent} of its data with Engram",
+			"percent",
+			(row) => {
+				const value = row.createSpan({
+					cls: "engram-sync-preview-match-value",
+					text: `${match}%`,
+				});
+				if (match === 100) value.addClass("is-perfect");
+			},
+			{ textCls: "engram-sync-preview-match-label" },
+		);
 		if (conflicts > 0) {
 			const conflictRow = parent.createDiv({ cls: "engram-sync-preview-conflicts" });
 			conflictRow.createSpan({
@@ -858,7 +874,9 @@ export class SyncPreviewModal extends Modal {
 			});
 			conflictRow.createSpan({
 				cls: "engram-sync-preview-conflicts-label",
-				text: ` ${pluralWord(conflicts, "conflict")} need resolution`,
+				// The count lives in the sibling -value span above; this label is
+				// word-only, so it takes the plural category WITHOUT re-printing it.
+				text: t(" conflicts need resolution", { count: conflicts }),
 			});
 		}
 	}
@@ -884,9 +902,9 @@ export class SyncPreviewModal extends Modal {
 		});
 		const cardEl = col.createDiv({ cls: "engram-sync-preview-compare-card" });
 		const body = cardEl.createDiv({ cls: "engram-sync-preview-compare-card-body" });
-		this.renderCompareRow(body, "📄", card.notes, "notes");
-		this.renderCompareRow(body, "📎", card.attachments, "attachments");
-		this.renderCompareRow(body, "📁", card.folders, "folders");
+		this.renderCompareRow(body, "📄", card.notes, t("notes"));
+		this.renderCompareRow(body, "📎", card.attachments, t("attachments"));
+		this.renderCompareRow(body, "📁", card.folders, t("folders"));
 	}
 
 	private renderCompareRow(
@@ -924,12 +942,12 @@ export class SyncPreviewModal extends Modal {
 		if (choice == null) return;
 
 		contentEl.createEl("h2", {
-			text: "Confirm destructive sync",
+			text: t("Confirm destructive sync"),
 			cls: "engram-sync-preview-header",
 		});
 
 		const summary = contentEl.createDiv({ cls: "engram-sync-preview-confirm-summary" });
-		summary.createEl("p", { text: "You are about to:" });
+		summary.createEl("p", { text: t("You are about to:") });
 		const ul = summary.createEl("ul");
 		for (const action of confirmActions(choice, this.requirePlan())) {
 			ul.createEl("li", { text: action });
@@ -938,7 +956,7 @@ export class SyncPreviewModal extends Modal {
 		const deletePaths = this.deletePathsFor(choice);
 		if (deletePaths.length > 0) {
 			contentEl.createEl("p", {
-				text: "Files that will be deleted:",
+				text: t("Files that will be deleted:"),
 				cls: "engram-sync-preview-tree-caption",
 			});
 			this.renderDeletionTree(contentEl, deletePaths, this.keptPathsFor(choice, deletePaths));
@@ -946,12 +964,12 @@ export class SyncPreviewModal extends Modal {
 
 		contentEl.createEl("p", {
 			cls: "engram-sync-preview-warning",
-			text: "This cannot be undone.",
+			text: t("This cannot be undone."),
 		});
 		const typeLine = contentEl.createEl("p");
-		typeLine.createSpan({ text: "Type " });
-		typeLine.createSpan({ text: "delete", cls: "engram-sync-preview-confirm-keyword" });
-		typeLine.createSpan({ text: " to confirm:" });
+		tInto(typeLine, "Type {keyword} to confirm:", "keyword", (line) => {
+			line.createSpan({ text: "delete", cls: "engram-sync-preview-confirm-keyword" });
+		});
 
 		const input = contentEl.createEl("input", {
 			type: "text",
@@ -959,14 +977,14 @@ export class SyncPreviewModal extends Modal {
 		});
 
 		const footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
-		const backBtn = footer.createEl("button", { text: "Back" });
+		const backBtn = footer.createEl("button", { text: t("Back") });
 		backBtn.addEventListener("click", () => {
 			this.state.goBack();
 			this.render();
 		});
 
 		const confirmBtn = footer.createEl("button", {
-			text: "Confirm",
+			text: t("Confirm"),
 			cls: "engram-sync-preview-confirm-btn",
 		});
 		confirmBtn.disabled = true;
@@ -988,18 +1006,20 @@ export class SyncPreviewModal extends Modal {
 
 		const { contentEl } = this;
 		contentEl.createEl("h2", {
-			text: "Switch vault",
+			text: t("Switch vault"),
 			cls: "engram-sync-preview-header",
 		});
 		contentEl.createEl("p", {
-			text: "Pick a vault to sync with. We will recalculate the sync preview after you choose.",
+			text: t(
+				"Pick a vault to sync with. We will recalculate the sync preview after you choose.",
+			),
 			cls: "engram-sync-preview-picker-help",
 		});
 
 		const body = contentEl.createDiv({ cls: "engram-sync-preview-picker-body" });
 
 		if (this.state.vaultsLoading) {
-			body.createEl("p", { text: "Loading vaults…" });
+			body.createEl("p", { text: t("Loading vaults…") });
 		} else if (this.state.vaultsError) {
 			body.createEl("p", {
 				text: this.state.vaultsError,
@@ -1017,7 +1037,7 @@ export class SyncPreviewModal extends Modal {
 				});
 				if (v.is_default) {
 					item.createSpan({
-						text: " (default)",
+						text: t(" (default)"),
 						cls: "engram-sync-preview-picker-item-default",
 					});
 				}
@@ -1026,11 +1046,11 @@ export class SyncPreviewModal extends Modal {
 				});
 			}
 		} else {
-			body.createEl("p", { text: "No other vaults available." });
+			body.createEl("p", { text: t("No other vaults available.") });
 		}
 
 		const footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
-		const backBtn = footer.createEl("button", { text: "Back" });
+		const backBtn = footer.createEl("button", { text: t("Back") });
 		backBtn.addEventListener("click", () => {
 			this.state.exitVaultPicker();
 			this.render();
@@ -1038,7 +1058,7 @@ export class SyncPreviewModal extends Modal {
 
 		if (this.opts.createVault) {
 			const newBtn = footer.createEl("button", {
-				text: "Make new vault",
+				text: t("Make new vault"),
 				cls: "mod-cta engram-sync-preview-new-vault-btn",
 			});
 			newBtn.addEventListener("click", () => {
@@ -1054,11 +1074,13 @@ export class SyncPreviewModal extends Modal {
 	private renderCreateVaultForm(): void {
 		const { contentEl } = this;
 		contentEl.createEl("h2", {
-			text: "New vault",
+			text: t("New vault"),
 			cls: "engram-sync-preview-header",
 		});
 		contentEl.createEl("p", {
-			text: "Create a new empty vault on the server, then sync this Obsidian vault into it.",
+			text: t(
+				"Create a new empty vault on the server, then sync this Obsidian vault into it.",
+			),
 			cls: "engram-sync-preview-picker-help",
 		});
 
@@ -1076,17 +1098,17 @@ export class SyncPreviewModal extends Modal {
 			cls: "engram-sync-preview-new-vault-input",
 		});
 		input.value = this.app.vault.getName();
-		input.placeholder = "Vault name";
+		input.placeholder = t("Vault name");
 
 		const footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
-		const backBtn = footer.createEl("button", { text: "Back" });
+		const backBtn = footer.createEl("button", { text: t("Back") });
 		backBtn.addEventListener("click", () => {
 			this.state.exitCreateVault();
 			this.render();
 		});
 
 		const createBtn = footer.createEl("button", {
-			text: "Create",
+			text: t("Create"),
 			cls: "mod-cta",
 		});
 		const submit = () => {
@@ -1107,7 +1129,7 @@ export class SyncPreviewModal extends Modal {
 			const vaults = await this.opts.listVaults();
 			this.state.onVaultsLoaded(vaults);
 		} catch (e: unknown) {
-			const msg = e instanceof Error ? e.message : "Could not load vaults";
+			const msg = e instanceof Error ? e.message : t("Could not load vaults");
 			this.state.onVaultsError(msg);
 		}
 		this.render();
@@ -1163,7 +1185,7 @@ export class SyncPreviewModal extends Modal {
 		if (!this.opts.createVault) return;
 		const trimmed = name.trim();
 		if (!trimmed) {
-			this.state.onVaultsError("Enter a name for the new vault");
+			this.state.onVaultsError(t("Enter a name for the new vault"));
 			this.state.creatingVault = true; // onVaultsError doesn't touch this flag; stay on the form
 			this.render();
 			return;
@@ -1207,7 +1229,7 @@ export class SyncPreviewModal extends Modal {
 			this.remoteVaultName = v.name;
 			this.state.exitVaultPicker();
 		} catch (e: unknown) {
-			const msg = e instanceof Error ? e.message : "Failed to switch vault";
+			const msg = e instanceof Error ? e.message : t("Failed to switch vault");
 			this.state.onVaultsError(msg);
 		}
 		this.render();
