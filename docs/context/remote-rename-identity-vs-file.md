@@ -79,18 +79,17 @@ moved past the layer being patched — in a different way each time.
   so a vault where it fired every single time looked identical to one where
   renames worked. The `rename-trace 1/3..3/3` lines exist to keep that visible.
 
-## Relay, for comparison
+## The design that avoids this
 
-Relay has no delete/upsert pair to reconcile. It diffs a shared index and emits
-one `rename` op when a guid exists on both sides (`SharedFolder.ts`), then
-`fileManager.renameFile` + `doc.move(path)`. Crucially it keeps
-`files: Map<guid, IFile>` — an **engine-owned id→file binding, separate from the
-shared identity map** — so "where is this note's file" is always answerable and
-none of the above can arise.
+The alternative has no delete/upsert pair to reconcile: diff a shared index and
+emit one `rename` op when an id exists on both sides, then move the file and the
+bookkeeping together. The load-bearing piece is an **engine-owned id→file
+binding, separate from the shared identity map** — so "where is this note's
+file" is always answerable and none of the above can arise.
 
 We use `vault.rename`, not `fileManager.renameFile`: our server rewrites links
-for renames it originates, and renameFile would rewrite them again. Relay's does
-not rewrite at all, so renameFile is right for them.
+for renames it originates, and renameFile would rewrite them again. renameFile
+is only right against a server that does not rewrite at all.
 
 **The durable id→file registry is the real cure** and we still do not have one.
 Everything above reconstructs it after the fact. See #1401 (index CRDT as the

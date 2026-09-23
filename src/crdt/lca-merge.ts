@@ -17,7 +17,7 @@
  * the doc and are untouched by that delta.
  *
  * ponytail: `diff-match-patch` is already a dependency and `patch_make` /
- * `patch_apply` is precisely this operation. No node-diff3 (what Relay uses), no
+ * `patch_apply` is precisely this operation. No node-diff3, no
  * hand-rolled merge.
  */
 

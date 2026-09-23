@@ -130,7 +130,7 @@ describe("offline behaviour", () => {
 
 describe("the map name is the wire contract", () => {
 	// A typo here syncs an empty doc forever without ever erroring, so it is
-	// asserted against the literal the server and Relay both use.
+	// asserted against the literal the server uses.
 	test("is filemeta_v0", () => {
 		const a = new IndexRoom({ send: () => true });
 		a.store.set("x.md", { note_id: "id-x" });

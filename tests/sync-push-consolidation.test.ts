@@ -1,7 +1,7 @@
 /**
  * Tests: single-write-path push pipeline. Genesis (never-server-known) notes
  * ride the same bounded per-file `pushFile` loop as everything else — the
- * crdt_create_batch RPC and its chunking were retired (Relay-pattern rewrite:
+ * crdt_create_batch RPC and its chunking were retired (per-file rewrite:
  * per-file work units, per-file progress, per-file failure isolation).
  *
  * Uses the real harness: a mock CrdtManager wired via `setCrdtManager`, the
@@ -447,7 +447,7 @@ describe("SyncEngine.pushAll — replace-remote via crdtDelete + attachment-dele
 });
 
 describe("pushPartitioned — per-file genesis (no batch RPC)", () => {
-	// Relay-pattern rewrite: genesis notes ride the same bounded per-file loop
+	// per-file rewrite: genesis notes ride the same bounded per-file loop
 	// as everything else. pushFile's socket-native genesis (crdt_create) already
 	// owns every edge case the batch mirrored (mint-refusal, ADOPT, delete-wins,
 	// oversized→REST); the batch was a second, lesser copy of that path and a

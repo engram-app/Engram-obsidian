@@ -1,4 +1,4 @@
-// The Relay-model engine: one persistent NoteProvider (+ IndexeddbPersistence)
+// The provider-model engine: one persistent NoteProvider (+ IndexeddbPersistence)
 // per note, keyed by the bare note_id. Replaces CrdtManager + CrdtChannel +
 // CrdtEnrollment. The registry OUTLIVES the socket — a reconnect calls
 // setConnected(true), which re-advertises every resident doc via syncStep1 (a
@@ -159,7 +159,7 @@ export class ProviderRegistry {
 		return projectNote(order, values, e.text.toJSON(), rawFrontmatterOf(e.doc));
 	}
 
-	/** Relay parity (`Document.isDocumentAlive`): a tombstoned note is dead for
+	/** Liveness: a tombstoned note is dead for
 	 *  good — a note_id is minted once and never reused, so this never rejects a
 	 *  legitimate access. Cleared only by destroyAll (stack teardown). */
 	private assertAlive(noteId: string): void {
@@ -197,7 +197,7 @@ export class ProviderRegistry {
 	private ensureEntrySync(noteId: string): Entry {
 		const cached = this.entries.get(noteId);
 		if (cached) return cached;
-		// Relay's contract (Document.commitDocumentState): a destroyed doc is not
+		// The contract: a destroyed doc is not
 		// re-creatable — touching it throws. This is the ONE choke point where a
 		// doc comes into existence, so refusing here makes "a deleted note's room
 		// silently rebuilt by a late frame" unrepresentable, rather than something
@@ -290,8 +290,8 @@ export class ProviderRegistry {
 
 	/** Sync handle for the live-editor ViewPlugin: the resident Y.Text now (empty
 	 *  until hydrated) + a ready promise that resolves after IndexedDB hydration.
-	 *  The editor binds immediately and the doc paints in as it loads — Relay's
-	 *  async model, where the open never blocks on the doc. */
+	 *  The editor binds immediately and the doc paints in as it loads — the async
+	 *  model, where the open never blocks on the doc. */
 	residentText(noteId: string): { text: Y.Text; ready: Promise<void> } {
 		const e = this.ensureEntrySync(noteId);
 		return { text: e.text, ready: e.ready };
@@ -484,7 +484,7 @@ export class ProviderRegistry {
 		// is NOT re-broadcast to the server. Applying it as a foreign origin (the old
 		// REMOTE symbol) made the handler re-send every received update -> the server
 		// fanned it back -> an infinite echo storm. The disk-flush listener fires for
-		// the provider origin too, so the merge still writes to disk. (Relay parity:
+		// the provider origin too, so the merge still writes to disk. (Invariant:
 		// everything the sync machinery applies uses the provider as origin.)
 		Y.applyUpdate(e.doc, update, e.provider);
 		const flush = e.pendingFlush;
@@ -585,7 +585,7 @@ export class ProviderRegistry {
 	 *  CrdtEnrollment.enroll collapse to this.) */
 	async startSync(noteId: string): Promise<void> {
 		// Liveness FIRST, before any state mutation: a deleted note must not even
-		// appear enrolled. Throws NoteDestroyedError (Relay contract) — enroll()
+		// appear enrolled. Throws NoteDestroyedError — enroll()
 		// below is the fire-and-forget wrapper that absorbs it.
 		this.assertAlive(noteId);
 		this.enrolledIds.add(noteId);
@@ -718,7 +718,7 @@ export class ProviderRegistry {
 
 	// --- Lifecycle no-ops the persistent doc doesn't need -----------------------
 
-	/** Relay: the doc is NEVER closed on a transport reconnect (that was the
+	/** The doc is NEVER closed on a transport reconnect (that was the
 	 *  re-mint/re-push doubling). */
 	/** Idle eviction: free the Y.Doc + provider + its open IndexedDB connection
 	 *  WITHOUT clearing the persisted data, so ensureEntrySync rehydrates the full
@@ -740,7 +740,7 @@ export class ProviderRegistry {
 	protect(_noteId: string): void {}
 	unprotect(_noteId: string): void {}
 
-	/** No structural flatten — Relay's syncStep1 diff keeps the wire bounded
+	/** No structural flatten — the syncStep1 diff keeps the wire bounded
 	 *  without re-pushing full state. */
 	async flattenIfBloated(_noteId: string): Promise<boolean> {
 		return false;

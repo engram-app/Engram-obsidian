@@ -2,8 +2,7 @@
  * Labelled registry of in-flight promises, plus a bounded ring of recent
  * completions.
  *
- * Ported from Relay (`src/trackPromise.ts`). It answers one question we
- * currently cannot answer at all: *what async work is still outstanding right
+ * It answers one question we currently cannot answer at all: *what async work is still outstanding right
  * now?* A wedged sync shows up as a pending entry with a large `ageMs`, which
  * is a far shorter path than reading the logs backwards trying to infer which
  * await never returned.
@@ -11,6 +10,8 @@
  * ponytail: gated on the existing `DEV_MODE` esbuild define rather than a new
  * `BUILD_TYPE` one. `trackPromise` compiles to an identity function in
  * production, so instrumenting a hot path costs nothing shipped.
+ *
+ * Derived from No-Instructions/Relay (MIT); see THIRD-PARTY-NOTICES.md.
  */
 
 declare const DEV_MODE: boolean;

@@ -7,7 +7,7 @@ import type * as Y from "yjs";
 
 // ---------------------------------------------------------------------------
 // Y.Doc shared-type keys + accessors — the single source of truth (was
-// duplicated across CrdtManager and the Relay-model registry). The keys must
+// duplicated across CrdtManager and the provider-model registry). The keys must
 // match the backend CrdtBridge exactly so IndexedDB stores and wire frames stay
 // compatible.
 // ---------------------------------------------------------------------------

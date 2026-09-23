@@ -101,7 +101,7 @@ function makeDevice(
 		dbPrefix: id, // isolate the two devices' IndexedDB stores in one process
 	});
 
-	// Relay model: a device is "online" — the provider only sends frames while
+	// Provider model: a device is "online" — the provider only sends frames while
 	// connected (production fires this on the crdt: topic join). The in-memory
 	// relay stands in for the fan-out below the WS layer, so both devices are
 	// always connected here.
@@ -486,7 +486,7 @@ test("forgetUnsent prunes a doc so reEnrollUnsent skips it (offline-delete clean
 		strandHealDebounceMs: 100_000,
 		dbPrefix: "forget-unsent",
 	});
-	// Relay model: connected, but every frame is REFUSED (topic not joined —
+	// Provider model: connected, but every frame is REFUSED (topic not joined —
 	// `joined` is false). A refused send while connected is exactly what populates
 	// the unsent set (the provider also buffers the frame internally).
 	wiring.manager.setConnected(true);

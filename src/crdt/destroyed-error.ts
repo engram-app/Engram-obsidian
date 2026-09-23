@@ -1,17 +1,16 @@
 /**
  * Liveness errors for torn-down CRDT docs.
  *
- * Ported from Relay (`src/DestroyedError.ts` + `src/DocumentDestroyedError.ts`),
- * whose contract we adopt wholesale: touching a destroyed doc is an ERROR, not
- * a get-or-create. Our registry previously answered "give me the doc for this
+ * The contract: touching a destroyed doc is an ERROR, not a get-or-create. Our registry previously answered "give me the doc for this
  * note" by silently constructing a fresh one, so a late frame for a DELETED
  * note rebuilt its room, completed an empty handshake, and materialized an
- * empty file at the deleted path. Relay makes that state unrepresentable: the
+ * empty file at the deleted path. This makes that state unrepresentable: the
  * doc is dead, the access throws, and the caller decides explicitly.
  *
- * Callers that legitimately race a delete catch it (see `isDestroyedError`) —
- * mirroring Relay's LiveViews/SharedFolder call sites, which swallow exactly
- * this error and nothing else.
+ * Callers that legitimately race a delete catch it (see `isDestroyedError`),
+ * swallowing exactly this error and nothing else.
+ *
+ * Derived from No-Instructions/Relay (MIT); see THIRD-PARTY-NOTICES.md.
  */
 
 export class DestroyedError extends Error {

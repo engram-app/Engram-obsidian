@@ -3,8 +3,7 @@ import { noteRef } from "../note-ref";
 /**
  * Runtime invariant checking.
  *
- * Ported from Relay (`src/merge-hsm/invariants/`). The gap this closes: we
- * already DETECT broken sync state — `drift on X (editor 7 vs doc 6)` is a log
+ * The gap this closes: we already DETECT broken sync state — `drift on X (editor 7 vs doc 6)` is a log
  * line we emit, silently repair, and move on from. That is an invariant
  * violation we tolerate instead of a contract we enforce, which is why the
  * live-bound baseline could rot for weeks before a delete turned it into a
@@ -14,6 +13,8 @@ import { noteRef } from "../note-ref";
  * than inferred from a symptom. All checks here are in-memory and cheap; the
  * signature is async-capable so a disk-reading invariant
  * (`synced-means-disk-matches-baseline`) can be added without redesign.
+ *
+ * Derived from No-Instructions/Relay (MIT); see THIRD-PARTY-NOTICES.md.
  */
 
 /**

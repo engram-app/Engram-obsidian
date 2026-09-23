@@ -5,8 +5,8 @@
  * `Map`/`Set` containers keyed by path or note_id. Every one is a per-file field
  * hoisted into a global side table, which means there is no single place to ask
  * "what is the state of this file", and cleanup has to remember to touch all of
- * them. Relay models the same domain as objects with lifetimes (`IFile`, 15
- * lines, implemented by Document / SyncFile / SyncFolder).
+ * them. The alternative is to model the domain as objects with lifetimes — one
+ * small interface implemented once per file kind.
  *
  * This is the first slice: the TTL marker family (`recentlyPushed`,
  * `recentlyFlushed`, `remotelyDeleted`). They all routed through one

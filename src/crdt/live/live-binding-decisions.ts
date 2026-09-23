@@ -22,7 +22,7 @@ export interface EditorOwnerInfo {
  *  Y.Text; the initial reconcile then saw "editor is stale disk, doc is
  *  authoritative", adopted the ENTIRE document into that one cell, and the table
  *  round-tripped it into the file and out to the server. Only the view that IS the
- *  owner's own editor is the note. (Relay guards the same way, via findView.)
+ *  owner's own editor is the note.
  *
  *  Null while `owner.editor.cm` is still unassigned: the ViewPlugin constructor
  *  runs inside `new EditorView(...)`, before Obsidian stores the reference. The

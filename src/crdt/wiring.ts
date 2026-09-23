@@ -93,7 +93,7 @@ export interface CrdtWiringDeps {
 }
 
 export interface CrdtWiring {
-	/** The Relay-model engine — plays the old manager/channel/enrollment roles. */
+	/** The provider-model engine — plays the old manager/channel/enrollment roles. */
 	manager: ProviderRegistry;
 	channel: ProviderRegistry;
 	enrollment: ProviderRegistry;
@@ -309,7 +309,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		unsentDocIds.add(docId);
 	};
 
-	// The Relay-model engine plays all three old roles (manager + channel +
+	// The provider-model engine plays all three old roles (manager + channel +
 	// enrollment) — see provider-registry.ts. Its `send` wraps deps.sendCrdt with
 	// the unsent-tracking + the create-ack gate; a refused frame buffers in the
 	// provider and flushes on rejoin. There is NO onUpdate/box indirection: the
@@ -414,9 +414,9 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	const onCrdtMessage = (docId: string, b64: string): void => {
 		channel.receive(docId, b64).catch((e) => {
 			// A frame for a DELETED note is expected, not a fault: the server can
-			// fan out or reply for a note this device just tore down. Relay's
-			// call sites (LiveViews) swallow exactly this error and nothing else —
-			// dropping it here is the whole point of the tombstone, so it must not
+			// fan out or reply for a note this device just tore down. Swallow
+			// exactly this error and nothing else — dropping it here is the whole
+			// point of the tombstone, so it must not
 			// masquerade as a malformed-frame warning.
 			if (isDestroyedError(e)) {
 				rlog().info("crdt", `frame dropped for deleted note_id=${docId}`);
@@ -517,7 +517,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	// own when the index room does not supply it.
 	noteIdMap.store?.setTombstoneCheck?.((noteId) => registry.removedIds.has(noteId));
 
-	// Runtime invariants (Relay parity). Violations report at WARN — the level
+	// Runtime invariants (invariant). Violations report at WARN — the level
 	// that actually reaches Loki — so structural drift surfaces in prod instead
 	// of being inferred from a downstream symptom weeks later.
 	const invariants = new InvariantChecker({

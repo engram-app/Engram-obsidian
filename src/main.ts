@@ -353,7 +353,7 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  reconnect that raced note reconciliation). */
 	private liveChannelKey: string | null = null;
 	/** Connection identity (backend|account|vault) the PERSISTENT CRDT stack
-	 *  (manager + wiring + liveViews + Y.Docs) was built for. Relay model: the
+	 *  (manager + wiring + liveViews + Y.Docs) was built for. Provider model: the
 	 *  doc layer outlives the socket. A socket reconnect swaps only the transport
 	 *  (a fresh NoteChannel, re-pointed at the surviving wiring via the box) — the
 	 *  Y.Docs are NEVER destroyed, so reconnect is a clean syncStep1 diff, not a
@@ -2240,7 +2240,7 @@ export default class EngramSyncPlugin extends Plugin {
 		// Without this, repeated calls (settings save / reconnect) leak Y.Doc and
 		// IndexeddbPersistence listeners — each overwrites the references but the
 		// old objects stay alive with their observers still firing.
-		// Relay model: tear the persistent CRDT stack down ONLY on a real identity
+		// Provider model: tear the persistent CRDT stack down ONLY on a real identity
 		// change (vault/account/backend switch). A plain transport reconnect (same
 		// identity) KEEPS the manager + Y.Docs — only the socket below is rebuilt.
 		// Destroying the stack on every reconnect was the wedge: it forced a full
@@ -2507,7 +2507,7 @@ export default class EngramSyncPlugin extends Plugin {
 						// and re-establishes marks when a non-empty STEP2 arrives
 						// after reconnect.
 						this.crdtManager?.clearSynced();
-						// Relay model: mark every resident provider offline so local edits
+						// Provider model: mark every resident provider offline so local edits
 						// buffer (flushed via syncStep1 on the next setConnected(true)) and
 						// no frame is written to a dead socket.
 						this.crdtManager?.setConnected(false);
@@ -2651,7 +2651,7 @@ export default class EngramSyncPlugin extends Plugin {
 					// createCrdtWiring — see src/crdt/wiring.ts. Everything below (the
 					// Obsidian-bound CrdtLiveViews and the onCrdtJoined/JoinError control-
 					// plane) stays here because it touches plugin lifecycle, not keying.
-					// Relay model: the persistent CRDT stack (manager + wiring +
+					// Provider model: the persistent CRDT stack (manager + wiring +
 					// liveViews + Y.Docs) is built ONCE per identity and OUTLIVES the
 					// socket. A reconnect rebuilds only the transport (a fresh
 					// NoteChannel, below) and re-points it at this surviving wiring — the
@@ -2716,8 +2716,8 @@ export default class EngramSyncPlugin extends Plugin {
 								),
 						});
 						// Point the editor ViewPlugin at this stack's coordinator. Set on the
-						// module singleton the plugin reads (Relay's getConnectionManager
-						// pattern); cleared to null on teardown so a stale stack can't be hit.
+						// module singleton the plugin reads; cleared to null on teardown so a
+						// stale stack can't be hit.
 						setLiveBindingCoordinator(this.crdtLiveViews);
 						// Tell the sync engine which paths have a live editor binding so its
 						// disk-modify handler skips re-feeding disk content into the Y.Text
@@ -2799,7 +2799,7 @@ export default class EngramSyncPlugin extends Plugin {
 						// handshake — the write-only bug, reintroduced by the fix.
 						this.indexRoom.connect();
 						this.syncEngine.setCrdtPorts({ manager: this.crdtManager });
-						// Relay model: the crdt: topic is now joined, so frames can go out.
+						// Provider model: the crdt: topic is now joined, so frames can go out.
 						// Mark every resident provider connected — this re-advertises each
 						// via syncStep1 (a state-vector diff, never a full re-push) AND
 						// flushes any frames buffered while offline. This is the reconnect
@@ -2849,7 +2849,7 @@ export default class EngramSyncPlugin extends Plugin {
 						this.syncEngine.setCrdtPorts({ manager: null });
 						// Invalidate any handshake marks so a future re-join starts clean.
 						this.crdtManager?.clearSynced();
-						// Relay model: no crdt: topic → providers offline (buffer, don't send).
+						// Provider model: no crdt: topic → providers offline (buffer, don't send).
 						this.crdtManager?.setConnected(false);
 						this.indexRoom.setConnected(false);
 						// A later same-socket rejoin must re-fire STEP1s; resetAll clears the once-per-session guard.

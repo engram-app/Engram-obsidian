@@ -3,9 +3,9 @@ import { uuid7 } from "./uuid7";
 
 /** One entry in `filemeta_v0`: what the vault knows about a path.
  *
- * Matches the server's shape (`Engram.Notes.CrdtIndexDoc`) and Relay's
- * (`SyncStore.ts:20`) on purpose — the map is the wire format, so a mismatch
- * here is a mismatch with every other client. */
+ * Matches the server's shape (`Engram.Notes.CrdtIndexDoc`) on purpose — the map
+ * is the wire format, so a mismatch here is a mismatch with every other
+ * client. */
 export interface FileMeta {
 	note_id: string;
 	type?: string;
@@ -17,8 +17,8 @@ export interface FileMeta {
  * `NoteIdMap` is a plain `Map<path, id>` plus a reverse index. That cannot
  * express the thing this replaces it for: **local state that is true now but
  * not yet agreed**. Writing it straight into the shared doc publishes a guess
- * to every device; keeping it outside means reads do not see it. Relay solves
- * this by layering, and so does this (`SyncStore.ts:20`):
+ * to every device; keeping it outside means reads do not see it. The fix is to
+ * layer:
  *
  * * `committed` — the Y.Map itself, the only layer other devices can see
  * * `overlay` — locally known meta not yet promoted
@@ -399,8 +399,8 @@ export class SyncStore {
 			// id and loses its file: open tabs, backlinks and creation date all
 			// reset.
 			//
-			// Emitting here follows Relay, which derives one `rename` op from the
-			// same observation rather than reconciling a delete against a create.
+			// Emit here: derive one `rename` op from the same observation rather
+			// than reconciling a delete against a create.
 			this.onRelocate?.(prior, resolved, meta.note_id);
 		}
 
