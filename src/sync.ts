@@ -2038,9 +2038,14 @@ export class SyncEngine {
 				if (refusal) {
 					rlog().warn(
 						"crdt",
-						`flushFromCrdt: refused empty over ${prev.length}B for ${noteRef(normalized)} — ${refusal}`,
+						`flushFromCrdt: refused empty over ${prev.length}B for ${noteRef(normalized)} — ${refusal.reason}`,
 					);
-					return true;
+					// A doc still holding content means disk already has the truth, so
+					// "handled" is honest. Every other refusal wrote nothing and disk
+					// no longer matches what the caller was told: report false, or a
+					// stamping caller records hash("") over the old body and the next
+					// scan pushes that body back over the clear (#265 class).
+					return refusal.docHasContent;
 				}
 			}
 		}
@@ -2079,22 +2084,29 @@ export class SyncEngine {
 
 	/** Why the doc behind `noteId` cannot authorize blanking a non-empty file,
 	 *  or null when it can (it converged empty). See flushFromCrdt's guard. */
-	private async emptyWriteRefusal(noteId: string | null): Promise<string | null> {
-		if (!noteId || !this.crdt) return "no CRDT doc for the path";
-		if (this.isUnackedMint(noteId)) return `note_id=${noteId} is an unacked local mint`;
+	private async emptyWriteRefusal(
+		noteId: string | null,
+	): Promise<{ reason: string; docHasContent: boolean } | null> {
+		const refuse = (reason: string) => ({ reason, docHasContent: false });
+		if (!noteId || !this.crdt) return refuse("no CRDT doc for the path");
+		if (this.isUnackedMint(noteId)) return refuse(`note_id=${noteId} is an unacked local mint`);
 		try {
 			if ((await this.crdt.projectedText(noteId)).trim() !== "") {
-				return "CRDT doc still holds content (stale remote projection)";
+				return {
+					reason: "CRDT doc still holds content (stale remote projection)",
+					docHasContent: true,
+				};
 			}
 			// Registry doubles without getDoc can't answer; the projection check
 			// above is then the whole guard, as before #538.
 			if (typeof this.crdt.getDoc === "function") {
 				const doc = await this.crdt.getDoc(noteId);
-				if (doc.store.clients.size === 0) return `note_id=${noteId} doc is unseeded`;
+				if (doc.store.clients.size === 0)
+					return refuse(`note_id=${noteId} doc is unseeded`);
 			}
 		} catch {
 			// Doc unreadable: it cannot vouch for the empty either.
-			return `note_id=${noteId} doc unreadable`;
+			return refuse(`note_id=${noteId} doc unreadable`);
 		}
 		return null;
 	}

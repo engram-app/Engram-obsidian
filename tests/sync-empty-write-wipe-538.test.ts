@@ -20,11 +20,12 @@ import { TFile } from "obsidian";
 import * as Y from "yjs";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
-import { SyncEngine } from "../src/sync";
+import { fnv1a, SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 const mockApi = {
 	getManifest: mock().mockResolvedValue(null),
+	pushNote: mock().mockResolvedValue({ note: { id: "sid" }, chunks_indexed: 1 }),
 } as unknown as EngramApi;
 
 let mockApp: any;
@@ -183,5 +184,89 @@ describe("#538 a fresh local mint is never server-known", () => {
 		confirm(engine, minted);
 
 		expect(engine.hasServerNote(minted)).toBe(true);
+	});
+});
+
+describe("#538 a refused empty write reports nothing written", () => {
+	test('legacy no-id catch-up of a remote clear leaves no hash("") stamp and pushes nothing', async () => {
+		// The legacy GET /notes/changes feed carries no id. The refusal keeps the
+		// old body on disk; if flushFromCrdt reported that as written, the caller
+		// stamped hash("") and the next scan read disk != stamp as a local edit,
+		// pushing the OLD body back over the clear (#265 class).
+		const file = new TFile("legacy.md");
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(file);
+		mockApp.vault.getFileByPath.mockReturnValue(file);
+		mockApp.vault.cachedRead.mockResolvedValue("old body");
+		const engine = createEngine(new NoteIdMap());
+		engine.setCrdtManager({
+			hasUndeliveredOps: () => false,
+			applyLocalEdit: mock(async (_id: string, c: string) => c),
+			applyRemoteUpdate: mock().mockResolvedValue(undefined),
+			encodeStateVector: mock().mockResolvedValue(new Uint8Array([0])),
+			hasPendingGap: mock().mockResolvedValue(false),
+			projectedText: mock().mockResolvedValue(""),
+		} as any);
+		engine.importSyncState({
+			"legacy.md": { hash: fnv1a("old body"), version: 1, serverHash: "old-hash" },
+		});
+
+		const wrote = await engine.applyChange({
+			path: "legacy.md",
+			action: "upsert",
+			content: "",
+			content_hash: "cleared-hash",
+			version: 2,
+			mtime: 50,
+		} as any);
+
+		expect(wrote).toBe(false);
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+		const row = engine.exportSyncState()["legacy.md"];
+		expect(row?.hash).not.toBe(fnv1a(""));
+		// Disk still matches the stamp, so no scan reads it as a local edit.
+		expect(engine.needsColdReconcile("legacy.md", "old body")).toBe(false);
+		expect(mockApi.pushNote).not.toHaveBeenCalled();
+	});
+
+	test("flushFromCrdt returns false for a refusal the doc cannot vouch for", async () => {
+		const map = new NoteIdMap();
+		map.getOrMint("n.md");
+		const engine = createEngine(map);
+		engine.setCrdtManager(registry({}) as any);
+
+		expect(await engine.flushFromCrdt("n.md", "")).toBe(false);
+	});
+});
+
+describe("#538 the real create-ack confirms the mint", () => {
+	function ackEngine() {
+		const map = new NoteIdMap();
+		const localId = map.getOrMint("n.md");
+		const engine = createEngine(map);
+		engine.setCrdtManager({
+			applyLocalEdit: mock(async (_id: string, c: string) => c),
+			projectedText: mock(async () => ""),
+			removeDoc: mock(async () => {}),
+			flushHeldState: mock(async () => {}),
+		} as any);
+		engine.setCrdtEnrollment({ enroll: mock(), reset: mock() } as any);
+		return { engine, localId };
+	}
+
+	test("same-id ack: the minted id becomes server-known", async () => {
+		const { engine, localId } = ackEngine();
+		expect(engine.hasServerNote(localId)).toBe(false);
+
+		await engine.applyCrdtCreateAck(localId, localId, "n.md");
+
+		expect(engine.hasServerNote(localId)).toBe(true);
+	});
+
+	test("adopt: the server's id becomes server-known at the path", async () => {
+		const { engine, localId } = ackEngine();
+
+		await engine.applyCrdtCreateAck(localId, "srv-id", "n.md");
+
+		expect(engine.hasServerNote("srv-id")).toBe(true);
 	});
 });
