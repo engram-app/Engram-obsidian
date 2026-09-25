@@ -460,15 +460,17 @@ test("inbound frame for an unknown id strands, then heals on reconcile", async (
 	await destroy(a, b);
 });
 
-// A note edited then DELETED while offline must be pruned from the unsent set,
-// so the reconnect re-enroll (reEnrollUnsent) does not fire a spurious STEP1 for
-// a dead doc. forgetUnsent (wired from the plugin's vault delete handler) is the
-// prune. reEnrollUnsent calls enrollment.enroll for each tracked id, so a spy on
-// enroll is the observable "would re-open a room" signal.
-test("forgetUnsent prunes a doc so reEnrollUnsent skips it (offline-delete cleanup)", async () => {
+// #516: a refused live frame hands the edit to the DURABLE queue instead of an
+// in-memory "re-enroll on rejoin" set. That set STEP1'd every tracked doc on each
+// rejoin — a server room per note, uncapped by the sync gate — and on 2026-09-14
+// put ~500 rooms/minute on one prod task. It was also lossy: memory-only and
+// capped at 500, so a restart or the 501st held note dropped the recovery.
+// The queue survives restarts, respects the sync gate, dedups by path, and
+// delivers an idle note room-free (`deliverQueuedOpsRoomFree`).
+test("a refused live frame records a durable delivery, not a rejoin enroll", async () => {
 	const map = new NoteIdMap();
-	const noteId = map.getOrMint("gone.md");
-	const joined = false; // crdt topic not joined → every frame is refused (offline)
+	const noteId = map.getOrMint("held.md");
+	const recorded: string[] = [];
 	const wiring = createCrdtWiring({
 		noteIdMap: map,
 		syncEngine: {
@@ -480,35 +482,54 @@ test("forgetUnsent prunes a doc so reEnrollUnsent skips it (offline-delete clean
 			ensureNoteIdMapped: () => {},
 			discoverAnnouncedNote: async () => {},
 			commitCrdtConvergence: async () => {},
+			recordUndeliveredCrdtEdit: (id: string) => recorded.push(id),
 		},
-		sendCrdt: () => joined,
+		sendCrdt: () => false, // topic not joined: every frame is refused
 		isBound: () => false,
 		strandHealDebounceMs: 100_000,
-		dbPrefix: "forget-unsent",
+		dbPrefix: "held-edit-durable",
 	});
-	// Provider model: connected, but every frame is REFUSED (topic not joined —
-	// `joined` is false). A refused send while connected is exactly what populates
-	// the unsent set (the provider also buffers the frame internally).
 	wiring.manager.setConnected(true);
 
-	// Offline edit: the update is produced but sendCrdt refuses it → id is tracked.
 	await wiring.manager.applyLocalEdit(noteId, "edited while offline\n");
 	await sleep(30);
 
-	// Deleted while offline → pruned. reEnrollUnsent must NOT re-enroll it.
-	const enrollAfterForget = spyOn(wiring.enrollment, "enroll");
-	wiring.forgetUnsent(noteId);
-	wiring.reEnrollUnsent();
-	expect(enrollAfterForget).not.toHaveBeenCalled();
-	enrollAfterForget.mockRestore();
+	expect(recorded).toContain(noteId);
+	expect("reEnrollUnsent" in wiring).toBe(false);
 
-	// Control: a still-tracked (not forgotten) id IS re-enrolled on rejoin.
-	await wiring.manager.applyLocalEdit(noteId, "edited offline again\n");
+	wiring.dispose();
+	await wiring.manager.destroyAll();
+});
+
+test("a create-gated op frame also records a durable delivery", async () => {
+	const map = new NoteIdMap();
+	const noteId = map.getOrMint("unacked.md");
+	const recorded: string[] = [];
+	const wiring = createCrdtWiring({
+		noteIdMap: map,
+		syncEngine: {
+			flushFromCrdt: async () => true,
+			isUnchangedSynced: () => false,
+			materializeEmptyDiscovered: async () => {},
+			reconcileNoteIdMapFromManifest: async () => 0,
+			isSyncBlocked: () => false,
+			ensureNoteIdMapped: () => {},
+			discoverAnnouncedNote: async () => {},
+			commitCrdtConvergence: async () => {},
+			recordUndeliveredCrdtEdit: (id: string) => recorded.push(id),
+		},
+		sendCrdt: () => true,
+		canSendLive: () => false, // server row not acked yet
+		isBound: () => false,
+		strandHealDebounceMs: 100_000,
+		dbPrefix: "held-edit-create-gate",
+	});
+	wiring.manager.setConnected(true);
+
+	await wiring.manager.applyLocalEdit(noteId, "typed before the create-ack\n");
 	await sleep(30);
-	const enrollControl = spyOn(wiring.enrollment, "enroll");
-	wiring.reEnrollUnsent();
-	expect(enrollControl).toHaveBeenCalledWith(noteId);
-	enrollControl.mockRestore();
+
+	expect(recorded).toContain(noteId);
 
 	wiring.dispose();
 	await wiring.manager.destroyAll();
@@ -537,6 +558,7 @@ test("wiring gate: syncStep1 reaches sendCrdt for a held doc, ops do not", async
 			ensureNoteIdMapped: () => {},
 			discoverAnnouncedNote: async () => {},
 			commitCrdtConvergence: async () => {},
+			recordUndeliveredCrdtEdit: () => {},
 		},
 		sendCrdt: (_docId, frame) => {
 			sent.push(frame);

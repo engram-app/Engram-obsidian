@@ -128,6 +128,11 @@ export class OfflineQueue {
 		await this.persistNow();
 	}
 
+	/** The queued change for a path, if any. */
+	get(path: string, vaultId?: string): QueueEntry | undefined {
+		return this.entries.get(dedupKey(path, vaultId));
+	}
+
 	/** True when a not-yet-synced DELETE is queued for this path. Catch-up uses
 	 *  this to avoid recreating a note the user deleted locally while offline. */
 	hasPendingDelete(path: string, vaultId?: string): boolean {

@@ -804,3 +804,60 @@ describe("runFlushQueue: durable crdt queue entry delivery over the socket", () 
 		expect(enroll).not.toHaveBeenCalled();
 	});
 });
+
+// ---------------------------------------------------------------------------
+// #516: a refused live frame's edit is recorded in the DURABLE queue (replacing
+// the wiring's in-memory "re-enroll every unsent doc on rejoin" set, which put a
+// server room per note on every rejoin and ignored the sync gate).
+// ---------------------------------------------------------------------------
+describe("recordUndeliveredCrdtEdit", () => {
+	function harness() {
+		const e = engine();
+		const noteIdMap = new NoteIdMap();
+		const noteId = noteIdMap.getOrMint("held.md");
+		e.setNoteIdMap(noteIdMap);
+		return { e, noteId, noteIdMap };
+	}
+
+	test("queues a content-free crdt delivery for the note's path", () => {
+		const { e, noteId } = harness();
+
+		e.recordUndeliveredCrdtEdit(noteId);
+
+		const queued = e.queue.all().find((q) => q.path === "held.md");
+		expect(queued?.crdt).toBe(true);
+		expect(queued?.noteId).toBe(noteId);
+		expect(queued?.action).toBe("upsert");
+		expect(queued?.content).toBeUndefined();
+	});
+
+	test("never overwrites a queued delete for the same path", async () => {
+		const { e, noteId } = harness();
+		await e.queue.enqueue({
+			path: "held.md",
+			action: "delete",
+			timestamp: 1,
+			evidenced: true,
+		});
+
+		e.recordUndeliveredCrdtEdit(noteId);
+
+		expect(e.queue.hasPendingDelete("held.md")).toBe(true);
+	});
+
+	test("an id with no path (deleted or foreign vault) is a no-op", () => {
+		const { e } = harness();
+
+		e.recordUndeliveredCrdtEdit("not-in-the-map");
+
+		expect(e.queue.size).toBe(0);
+	});
+
+	test("a burst of refused frames for one note stays ONE entry", () => {
+		const { e, noteId } = harness();
+
+		for (let i = 0; i < 50; i++) e.recordUndeliveredCrdtEdit(noteId);
+
+		expect(e.queue.size).toBe(1);
+	});
+});

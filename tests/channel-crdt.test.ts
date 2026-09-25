@@ -1277,7 +1277,7 @@ describe("NoteChannel index-room transport", () => {
 	});
 
 	// The note-frame half of the same contract. wiring.ts keys BOTH the provider
-	// buffer and `unsentDocIds` on this boolean, so a `true` here on a dead
+	// buffer and the durable held-edit record on this boolean, so a `true` here on a dead
 	// socket drops a note-content op with nothing left to re-offer it.
 	test("sendCrdt returns false when the socket is no longer OPEN", async () => {
 		const { channel, ws } = await joinedCrdtChannel();

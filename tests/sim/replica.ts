@@ -398,9 +398,6 @@ export class Replica {
 				if (f instanceof TFolder)
 					void engine.handleFolderDelete(f); // main.ts:610-611
 				else if (f instanceof TFile) {
-					// Mirror main.ts: drop the id from the unsent set before delete.
-					const nid = noteIdMap.get(p);
-					if (nid) wiring.forgetUnsent(nid);
 					void engine.handleDelete(f); // main.ts:613
 				}
 			},
@@ -625,14 +622,15 @@ export class Replica {
 			for (const p of boundPaths) {
 				wiring.enrollment.enroll(noteIdMap.getOrMint(p));
 			}
-			// Mirror main.ts: also re-enroll any doc whose live update was refused
-			// while unjoined, so an edit to a since-closed note still converges.
-			wiring.reEnrollUnsent();
 			try {
 				await engine.catchupViaSeqReplay();
 			} catch {
 				/* resumes from the persisted cursor on the next join */
 			}
+			// Mirror main.ts: kick the durable queue, which is where an edit
+			// refused while unjoined was recorded (#516) — this is what delivers
+			// an edit to a since-closed note.
+			await engine.flushQueue();
 		}
 
 		// The engine's event handlers are gated on setReady() (main.ts calls it after
