@@ -804,3 +804,124 @@ describe("runFlushQueue: durable crdt queue entry delivery over the socket", () 
 		expect(enroll).not.toHaveBeenCalled();
 	});
 });
+
+// ---------------------------------------------------------------------------
+// #516: a refused live frame's edit is recorded in the DURABLE queue (replacing
+// the wiring's in-memory "re-enroll every unsent doc on rejoin" set, which put a
+// server room per note on every rejoin and ignored the sync gate).
+// ---------------------------------------------------------------------------
+describe("recordUndeliveredCrdtEdit", () => {
+	function harness() {
+		const e = engine();
+		const noteIdMap = new NoteIdMap();
+		const noteId = noteIdMap.getOrMint("held.md");
+		e.setNoteIdMap(noteIdMap);
+		return { e, noteId, noteIdMap };
+	}
+
+	test("queues a content-free crdt delivery for the note's path", () => {
+		const { e, noteId } = harness();
+
+		e.recordUndeliveredCrdtEdit(noteId);
+
+		const queued = e.queue.all().find((q) => q.path === "held.md");
+		expect(queued?.crdt).toBe(true);
+		expect(queued?.noteId).toBe(noteId);
+		expect(queued?.action).toBe("upsert");
+		expect(queued?.content).toBeUndefined();
+	});
+
+	test("never overwrites a queued delete for the same path", async () => {
+		const { e, noteId } = harness();
+		await e.queue.enqueue({
+			path: "held.md",
+			action: "delete",
+			timestamp: 1,
+			evidenced: true,
+		});
+
+		e.recordUndeliveredCrdtEdit(noteId);
+
+		expect(e.queue.hasPendingDelete("held.md")).toBe(true);
+	});
+
+	test("an id with no path (deleted or foreign vault) is a no-op", () => {
+		const { e } = harness();
+
+		e.recordUndeliveredCrdtEdit("not-in-the-map");
+
+		expect(e.queue.size).toBe(0);
+	});
+
+	test("a burst of refused frames for one note stays ONE entry", () => {
+		const { e, noteId } = harness();
+
+		for (let i = 0; i < 50; i++) e.recordUndeliveredCrdtEdit(noteId);
+
+		expect(e.queue.size).toBe(1);
+	});
+});
+
+describe("recordUndeliveredCrdtEdit: review findings on #537", () => {
+	// A CRDT delete goes to the op queue (crdtEnqueue), never the offline queue,
+	// so nothing removes a held-edit entry for a note deleted while offline. Its
+	// doc is torn down, room-free delivery fails, the fallback enroll no-ops for
+	// a removed id, and no inbound frame ever settles it: stuck forever, and a
+	// STEP1 for a dead id on every flush after a restart.
+	test("the drain drops an entry whose note id no longer maps to a path", async () => {
+		const enroll = mock();
+		const reset = mock();
+		const e = engine({ crdt: { applyLocalEdit: async () => true } });
+		const noteIdMap = new NoteIdMap();
+		e.setNoteIdMap(noteIdMap);
+		e.setCrdtEnrollment({ enroll, reset } as any);
+		e.setCrdtLiveCheck(() => true);
+		await e.queue.enqueue({
+			path: "deleted.md",
+			action: "upsert",
+			noteId: "id-gone",
+			crdt: true,
+			timestamp: 1,
+		});
+
+		await e.flushQueue();
+
+		expect(e.queue.size).toBe(0);
+		expect(enroll).not.toHaveBeenCalled();
+	});
+
+	// The server can answer a create under a different id than the local mint.
+	// An entry left under the retired id must not block recording the live one.
+	test("an entry under a retired id is replaced by the note's current id", () => {
+		const e = engine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("p.md", "server-id");
+		e.setNoteIdMap(noteIdMap);
+		void e.queue.enqueue({
+			path: "p.md",
+			action: "upsert",
+			noteId: "local-id",
+			crdt: true,
+			timestamp: 1,
+		});
+
+		e.recordUndeliveredCrdtEdit("server-id");
+
+		expect(e.queue.all().find((q) => q.path === "p.md")?.noteId).toBe("server-id");
+	});
+
+	// A note still waiting on its create-ack is already covered: the ack flushes
+	// the doc's held state. Recording it too left one queue entry per note typed
+	// before its ack, lingering until the next reconnect.
+	test("a note with a pending CRDT op is not recorded", () => {
+		const e = engine();
+		const noteIdMap = new NoteIdMap();
+		const noteId = noteIdMap.getOrMint("new.md");
+		e.setNoteIdMap(noteIdMap);
+		e.setCrdtHasPendingOp((id) => id === noteId);
+
+		e.recordUndeliveredCrdtEdit(noteId);
+
+		expect(e.queue.size).toBe(0);
+	});
+});

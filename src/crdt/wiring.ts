@@ -25,6 +25,7 @@ type WiringSyncEngine = Pick<
 	| "discoverAnnouncedNote"
 	| "applyLiveOpWithSeq"
 	| "commitCrdtConvergence"
+	| "recordUndeliveredCrdtEdit"
 >;
 
 /** How often the structural invariants are swept. Cheap (set arithmetic over
@@ -124,30 +125,12 @@ export interface CrdtWiring {
 	 *  against the now-current map, not counters left over from before the drift
 	 *  was fixed (final review MINOR-6). */
 	clearStrandHealAttempts: () => void;
-	/** Re-enroll every doc whose live update was refused while the crdt: topic was
-	 *  unjoined (offline / mid-reconnect). Call on rejoin AFTER re-enrolling open
-	 *  notes so an edit made to a note that was then closed/switched-away-from
-	 *  still converges via the mutual STEP1 handshake (switch-away data-loss). */
-	reEnrollUnsent: () => void;
-	/** Drop a doc from the unsent-tracking set. Call when the note is deleted so a
-	 *  since-deleted note is never re-enrolled on the next rejoin (a spurious STEP1
-	 *  that could race delete-wins / resurrect the note). */
-	forgetUnsent: (docId: string) => void;
-	/** Drop the WHOLE unsent-tracking set. Call on a vault change: these are the
-	 *  PREVIOUS vault's note ids, and reEnrollUnsent would otherwise STEP1 every
-	 *  one of them against the new vault's topic, where they resolve to nothing.
-	 *  Per-vault state, dropped in lockstep with the note-id map (engram #1318). */
-	clearUnsent: () => void;
 	/** Clear the pending strand-heal timer (call from the plugin's onunload). */
 	dispose: () => void;
 }
 
 const DEFAULT_STRAND_HEAL_DEBOUNCE_MS = 750;
 const STRAND_HEAL_MAX_ATTEMPTS = 5;
-/** Cap on the unsent-doc tracking set. Mirrors CrdtOpQueue.MAX_QUEUE: bounds
- *  memory across a long outage; past the cap the oldest tracked doc is evicted
- *  (it reconverges via the normal reconnect catch-up either way). */
-const MAX_UNSENT_DOCS = 500;
 
 /** Pure retry/give-up decision for one strand-heal drain pass (e2e test_43
  *  burst mechanism, round 3 — see `drainStrandedFlushes`). Given the ids
@@ -290,29 +273,10 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		}, debounceMs);
 	}
 
-	// Docs whose live frame was refused (topic not joined, or create-ack held).
-	// Re-enrolled on rejoin so a note edited offline then switched-away-from still
-	// converges (the #299 switch-away recovery, widened past still-open notes).
-	const unsentDocIds = new Set<string>();
-
-	/** Track a refused doc under the documented 500-doc bound (evict oldest).
-	 *  Both refusal branches below must route through this — the create-gate
-	 *  branch once skipped the cap and grew the set unbounded over a long
-	 *  offline burst of gated new notes. */
-	const addUnsent = (docId: string): void => {
-		if (!unsentDocIds.has(docId) && unsentDocIds.size >= MAX_UNSENT_DOCS) {
-			for (const oldest of unsentDocIds) {
-				unsentDocIds.delete(oldest);
-				break;
-			}
-		}
-		unsentDocIds.add(docId);
-	};
-
 	// The provider-model engine plays all three old roles (manager + channel +
 	// enrollment) — see provider-registry.ts. Its `send` wraps deps.sendCrdt with
-	// the unsent-tracking + the create-ack gate; a refused frame buffers in the
-	// provider and flushes on rejoin. There is NO onUpdate/box indirection: the
+	// the create-ack gate and durable recording of refused ops; a refused frame
+	// also buffers in the provider and flushes on rejoin. There is NO onUpdate/box indirection: the
 	// provider sends its own local updates through this `send`.
 	const registry = new ProviderRegistry({
 		dbPrefix: deps.dbPrefix,
@@ -326,24 +290,18 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 			// note discovered via note_changed whose Yjs fan-out was missed (#1130,
 			// e2e test_48): hasServerNote stayed false forever, so the heal frame was
 			// dropped and the note never caught up.
+			//
+			// A refused frame's edit stays in the Y.Doc; the durable queue records
+			// that it still has to be delivered (#516 — see
+			// `SyncEngine.recordUndeliveredCrdtEdit`).
 			if (kind === "op" && deps.canSendLive && !deps.canSendLive(docId)) {
-				addUnsent(docId);
+				syncEngine.recordUndeliveredCrdtEdit(docId);
 				return false;
 			}
 			// sendCrdt's return is P1's delivered/dropped signal (unknown-typed on the
 			// dep); false === the socket refused the frame.
 			const ok = deps.sendCrdt(docId, frame) !== false;
-			if (!ok) {
-				addUnsent(docId);
-			} else {
-				// A delivered HANDSHAKE clears the flag for a doc whose ops may still
-				// be gate-held. Safe only because of call ordering: startSync sets
-				// advertised (which sends the step1) and then calls setConnected(true),
-				// whose buffer flush immediately re-refuses the held ops and re-adds
-				// the id. Reorder those two and a gated doc silently drops out of
-				// reEnrollUnsent tracking.
-				unsentDocIds.delete(docId);
-			}
+			if (!ok && kind === "op") syncEngine.recordUndeliveredCrdtEdit(docId);
 			return ok;
 		},
 		onFlushToDisk: async (noteId, content, fmChanged) => {
@@ -556,17 +514,6 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		/** On-demand invariant sweep (Sync Center / e2e probe). */
 		checkInvariants: () => invariants.checkAll(),
 		clearStrandHealAttempts: () => strandHealAttempts.clear(),
-		reEnrollUnsent: () => {
-			// Snapshot: enroll() → startSync succeeds → clears the id from the set;
-			// iterate a copy so that mutation can't skip entries mid-loop.
-			for (const id of [...unsentDocIds]) enrollment.enroll(id);
-		},
-		forgetUnsent: (docId) => {
-			unsentDocIds.delete(docId);
-		},
-		clearUnsent: () => {
-			unsentDocIds.clear();
-		},
 		dispose,
 	};
 }

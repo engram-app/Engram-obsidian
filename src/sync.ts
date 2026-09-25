@@ -382,10 +382,6 @@ export interface CrdtPorts {
 		| null;
 	delete?: ((docId: string) => Promise<{ doc_id: string }>) | null;
 	enqueue?: ((op: { kind: "create" | "delete"; docId: string; path: string }) => void) | null;
-	/** Drop every outbound CRDT op still pending delivery, plus the unsent-doc
-	 *  tracking set. Both key work by note_id with no vault attached, so both are
-	 *  per-vault state that a vault change must discard (engram #1318). */
-	resetOutbox?: (() => void) | null;
 	live?: (() => boolean) | null;
 	/** Nulling this restores the default never-bound check rather than leaving
 	 *  the port empty — `isLiveBound` is called unconditionally on the push
@@ -676,7 +672,6 @@ export class SyncEngine {
 		if ("create" in ports) this.crdtCreate = ports.create ?? null;
 		if ("delete" in ports) this.crdtDelete = ports.delete ?? null;
 		if ("enqueue" in ports) this.crdtEnqueue = ports.enqueue ?? null;
-		if ("resetOutbox" in ports) this.crdtResetOutbox = ports.resetOutbox ?? null;
 		if ("live" in ports) this.crdtLive = ports.live ?? null;
 		if ("liveBound" in ports) this.isLiveBound = ports.liveBound ?? (() => false);
 		if ("catchupSince" in ports) this.crdtCatchupSince = ports.catchupSince ?? null;
@@ -1200,9 +1195,10 @@ export class SyncEngine {
 	 *  TRIGGER REQUIREMENT worth knowing: this needs a `crdt_msg` to go out for
 	 *  the orphan, and `canSendLive` holds ordinary ops behind `hasServerNote`.
 	 *  What escapes is a handshake — so the note must be enrolled: open in an
-	 *  editor, or in `unsentDocIds` and re-STEP1'd by `reEnrollUnsent` on rejoin
-	 *  (which is what fired in the 2026-09-01 prod case, on every reconnect). An
-	 *  orphan that is never opened and never edited is not reached from here. */
+	 *  editor, or a queued held edit whose room-free delivery failed and fell
+	 *  back to `socketConverge` (in the 2026-09-01 prod case this was the
+	 *  since-removed `reEnrollUnsent`, on every reconnect). An orphan that is
+	 *  never opened and never edited is not reached from here. */
 	repairOrphanedClaim(noteId: string): boolean {
 		if (!this.crdtEnqueue || !this.crdt) return false;
 		if (this.repairedClaims.has(noteId)) return false;
@@ -1592,9 +1588,6 @@ export class SyncEngine {
 	private crdtEnqueue:
 		| ((op: { kind: "create" | "delete"; docId: string; path: string }) => void)
 		| null = null;
-
-	/** See CrdtPorts.resetOutbox. */
-	private crdtResetOutbox: (() => void) | null = null;
 
 	/** Wired by main.ts to the durable CrdtOpQueue: true when an op for this
 	 *  docId is still pending (unsent create/edit). Consulted by the evidence
@@ -2822,16 +2815,6 @@ export class SyncEngine {
 		// 2026-07-07 cross-wire class (plugin #200). Ids re-learn via the manifest
 		// reconcile + push adoption. (`confirmedNoteIds` rides the sweep above.)
 		this.noteIdMap?.clear();
-		// The durable op queue and the unsent-doc set are the two places a note_id
-		// outlives the vault it was minted in. A CrdtOp carries a bare docId and NO
-		// vault, so a create still pending when the user switches vaults is flushed
-		// blind on the NEW vault's topic under an id the OLD vault owns -- the
-		// server then cannot place it (engram #1318, the cross-vault collision the
-		// server now re-mints around). reEnrollUnsent has the same shape: it would
-		// STEP1 the previous vault's ids against the new topic. Dropping both is
-		// safe because lastSync is cleared above, so a later switch BACK re-derives
-		// and re-pushes anything they carried.
-		this.crdtResetOutbox?.();
 		// Folder markers are vault-scoped too: a stale set after a switch lets
 		// handleFolderDelete push marker deletes against the NEW vault (post-
 		// merge review finding 8 — data-safe but cross-vault noise).
@@ -9595,6 +9578,48 @@ export class SyncEngine {
 	 *  vault-change case where we cleared sync state — neither would
 	 *  otherwise touch the push path because lastSync is empty and the
 	 *  mtime comparison short-circuits. */
+	/** A live CRDT frame for `noteId` was refused — the crdt topic is down, or
+	 *  the note's create-ack has not arrived. The edit itself is durable in the
+	 *  Y.Doc; this records the durable delivery nudge, the same entry
+	 *  `enqueueCrdtEdit` writes for pushFile's channel-down seams, so the queue
+	 *  drain ships it once the socket AND the sync gate allow: room-free for an
+	 *  idle note, over the live room for an open one.
+	 *
+	 *  Replaced the wiring's in-memory "re-enroll every unsent doc on rejoin" set
+	 *  (#516). That set STEP1'd each tracked doc on every rejoin — one server
+	 *  room per note, ignoring the sync gate — and put ~500 rooms/minute on a
+	 *  prod task on 2026-09-14. It was also lossy: memory-only and capped at
+	 *  500, so a restart or the 501st held note silently dropped the recovery.
+	 *
+	 *  Not recorded when something else already delivers it:
+	 *  - a pending CRDT op (a create awaiting its ack) — the ack flushes the
+	 *    doc's held state, and recording it too left one entry per note typed
+	 *    before its ack, lingering until the next reconnect;
+	 *  - an existing entry for the path: a queued delete wins, a legacy upsert
+	 *    replays disk, and a crdt upsert for the same id is this same nudge.
+	 *    That also makes a burst of refused frames one entry, not one write
+	 *    per keystroke.
+	 *  The exception is a crdt entry under a RETIRED id (the server answered a
+	 *  create under a different id): it is replaced, or it would block every
+	 *  record for the note's live id. */
+	recordUndeliveredCrdtEdit(noteId: string): void {
+		const path = this.noteIdMap?.pathForId(noteId);
+		if (!path) return;
+		if (this.crdtHasPendingOp?.(noteId)) return;
+		const vaultId = this.settings.vaultId ?? undefined;
+		const existing = this.queue.get(path, vaultId);
+		if (existing && !(existing.crdt && existing.noteId !== noteId)) return;
+		void this.enqueueChange({
+			path,
+			action: "upsert",
+			noteId,
+			crdt: true,
+			timestamp: Date.now(),
+			kind: "note",
+			vaultId,
+		});
+	}
+
 	/** Persist a content-free, crdt-tagged upsert to the durable queue. Both of
 	 *  pushFile's channel-down seams must produce an IDENTICAL entry so
 	 *  runFlushQueue's socket-converge branch delivers them the same way —
@@ -10769,6 +10794,15 @@ export class SyncEngine {
 					// failure, no retry-count bump) until a later flush finds the
 					// channel up.
 					if (entry.crdt && entry.noteId) {
+						// The note was deleted (or its id retired) while this sat queued.
+						// A CRDT delete goes to the op queue, never here, so nothing else
+						// removes the entry: its doc is torn down, the room-free send
+						// fails, the fallback enroll no-ops for a removed id, and no
+						// inbound frame ever settles it. A rename keeps the id mapped.
+						if (this.noteIdMap && this.noteIdMap.pathForId(entry.noteId) === null) {
+							await this.queue.dequeue(entry.path, this.entryVaultId(entry));
+							continue;
+						}
 						// The socket is the ONLY delivery path for a crdt entry — the
 						// edit lives durably in the Y.Doc, so a whole-doc REST replay
 						// could only stomp newer server state. Channel live → converge

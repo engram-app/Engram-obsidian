@@ -768,20 +768,6 @@ export default class EngramSyncPlugin extends Plugin {
 					// switch cannot deliver it blind on another vault's topic.
 					vaultId: this.settings.vaultId ?? null,
 				}),
-			// Vault change: drop the unsent-doc tracking set, which holds the
-			// PREVIOUS vault's note ids and would otherwise be STEP1'd against the
-			// new topic by reEnrollUnsent.
-			//
-			// The op QUEUE is deliberately NOT wiped here. It used to be, and that
-			// was wrong twice over: this hook runs at the head of a sync, by which
-			// point the topic rejoin has already flushed the queue (so the leak
-			// stayed open on the OAuth-relogin route), and it discarded queued
-			// DELETES, which have no REST fallback and cannot be re-derived from
-			// disk -- the deleted note came back on the next catch-up. Ops now carry
-			// their vaultId and self-drop at send time instead.
-			resetOutbox: () => {
-				this.crdtWiring?.clearUnsent();
-			},
 		});
 
 		// Restore last sync timestamp, offline queue, and sync state
@@ -871,11 +857,6 @@ export default class EngramSyncPlugin extends Plugin {
 				if (file instanceof TFolder) {
 					void this.syncEngine.handleFolderDelete(file);
 				} else {
-					// Resolve the note_id BEFORE handleDelete clears the map, and drop
-					// it from the unsent-tracking set so a note deleted while offline is
-					// not re-enrolled (a spurious STEP1 racing delete-wins) on rejoin.
-					const noteId = this.noteIdMap.get(file.path);
-					if (noteId) this.crdtWiring?.forgetUnsent(noteId);
 					void this.syncEngine.handleDelete(file);
 				}
 			}),
@@ -2434,12 +2415,11 @@ export default class EngramSyncPlugin extends Plugin {
 		// counter left over from before the drift was fixed.
 		this.crdtWiring?.clearStrandHealAttempts();
 		this.reEnrollOpenCrdtNotes();
-		// reEnrollOpenCrdtNotes only re-enrolls notes still open in an editor. A
-		// note edited while the socket was down and then switched away from has no
-		// leaf, so its held offline edit would never be re-solicited. Re-enroll any
-		// doc whose live update was refused while unjoined so the mutual handshake
-		// recovers it (switch-away data-loss class).
-		this.crdtWiring?.reEnrollUnsent();
+		// A note edited while the socket was down and then switched away from has
+		// no leaf, so reEnrollOpenCrdtNotes does not reach it. Its refused edit was
+		// recorded in the durable queue (`recordUndeliveredCrdtEdit`), and the
+		// queue flush below delivers it — room-free, since nobody has it open.
+		// Re-enrolling it here instead cost a server room per held note (#516).
 		// Sole convergence path on (re)connect: replay the seq-ordered op-log from
 		// our persisted cursor. Every op missed while away is delivered IN ORDER
 		// with FULL content, so it can't pend the way the old state-vector delta
@@ -2750,8 +2730,8 @@ export default class EngramSyncPlugin extends Plugin {
 									`LCA merge left unapplied hunks for ${noteId} — fell back to the two-way path`,
 								),
 							// `?? false`: a null socket (mid-reconnect) must read as REFUSED so
-							// the frame is held in unsentDocIds and flushed on rejoin — never
-							// silently dropped as if sent.
+							// the edit is recorded in the durable queue and delivered on
+							// rejoin — never silently dropped as if sent.
 							sendCrdt: (docId, frame) =>
 								this.noteStream?.sendCrdt(docId, frame) ?? false,
 							// crdtLiveViews is constructed just below; read the field at call

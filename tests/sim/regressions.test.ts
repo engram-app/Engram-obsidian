@@ -118,7 +118,9 @@ test("#299 live-bound offline edit recovers on reconnect (mutual handshake)", as
 // Assert on SERVER CONTENT (not assertConverged): if reconnect instead reverted
 // A's edit, all replicas would land on "base" and a convergence check would
 // FALSELY pass. The server-content assertion fails whether the edit is dropped
-// OR reverted. Green ONLY with wiring.reEnrollUnsent() on the rejoin path.
+// OR reverted. In a running replica the edit rides the provider's send
+// buffer, which flushes on reconnect; the durable queue record (#516) is what
+// covers a RESTART, which this sim cannot model.
 test("#299b offline edit + switch-away reaches the server on reconnect", async () => {
 	const r = await offlineEditSwitchAwayRecovers();
 	try {

@@ -252,8 +252,8 @@ export class NoteChannel {
 	/** Per-doc throttle for the "sendCrdt refused" warn. An offline window refuses
 	 *  many frames per doc in a burst (STEP1 + each keystroke's update); logging
 	 *  each one buried the signal. Log once per doc per window. The refused frame
-	 *  is NOT lost — the doc is re-enrolled on rejoin (wiring reEnrollUnsent) and
-	 *  the mutual handshake re-solicits its state, so this is a transient. */
+	 *  is NOT lost — the edit stays in the Y.Doc and the durable queue delivers it
+	 *  after rejoin (wiring → `recordUndeliveredCrdtEdit`), so this is a transient. */
 	private lastRefusedWarnAt = new Map<string, number>();
 	private static readonly REFUSED_WARN_THROTTLE_MS = 3000;
 
@@ -471,9 +471,9 @@ export class NoteChannel {
 	sendCrdt(docId: string, b64: string): boolean {
 		const t = this.crdtTopic;
 		if (!t || !this.crdtJoined) {
-			// The frame is HELD, not lost: the doc is re-enrolled on rejoin and the
-			// mutual handshake re-solicits its state (wiring reEnrollUnsent). Throttle
-			// per doc so an offline burst logs once, not per refused frame.
+			// The frame is HELD, not lost: the edit stays in the Y.Doc and the durable
+			// queue delivers it after rejoin (wiring → recordUndeliveredCrdtEdit).
+			// Throttle per doc so an offline burst logs once, not per refused frame.
 			const now = Date.now();
 			if (
 				now - (this.lastRefusedWarnAt.get(docId) ?? 0) >=
@@ -494,7 +494,8 @@ export class NoteChannel {
 		// Same honesty contract as sendIndexCrdt below, and for the same reason:
 		// `send` no-ops unless readyState is OPEN while `crdtJoined` is only reset
 		// in `onclose`, so there is a real half-open window. wiring.ts keys BOTH
-		// the provider's offline buffer and `unsentDocIds` on this boolean, so
+		// the provider's offline buffer and the durable held-edit record on this
+		// boolean, so
 		// returning true here dropped a note-content op with nothing left to
 		// re-offer it. Fixing only the index path left the larger caller broken.
 		return this.send([

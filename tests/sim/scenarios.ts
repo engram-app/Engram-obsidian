@@ -240,10 +240,12 @@ export async function offlineBoundEditRecovers(seed = 299): Promise<Test299Resul
 // so the switched-away note is never re-solicited and its offline edit strands
 // on A's disk — the server row stays "base".
 //
-// DIFFERENTIAL PROOF (source overlay): remove the wiring.reEnrollUnsent() call
-// from the rejoin path (main.ts / replica.ts onCrdtTopicJoined) and the server
-// never receives A's edit — DIVERGES. With it, re-enrolling the refused doc
-// re-opens it from IndexedDB, fires STEP1, and the mutual handshake converges.
+// What delivers it here is the provider's send buffer: the refused frames stay
+// buffered and flush on reconnect. The original differential (#325) pinned a
+// rejoin re-enroll that is now gone (#516) — removing it no longer diverges,
+// because the buffer already covers a running replica. The durable queue
+// record added by #516 covers the case this sim cannot model: a restart, which
+// loses the buffer.
 // ---------------------------------------------------------------------------
 
 export interface SwitchAwayResult {
