@@ -48,6 +48,17 @@ export const RECONNECT_JITTER_MAX_MS = 60_000;
  *  straight to this floor instead of the generic 1s start. */
 export const RATE_LIMITED_JOIN_FLOOR_MS = 10_000;
 
+/** Join-rejection reasons the USER can clear by doing something, so a retry
+ *  will eventually succeed and the socket is worth cycling to arm one (#455).
+ *
+ *  This is deliberately NOT all of `PLAN_JOIN_REASONS` in `limit-copy.ts`:
+ *  that set is "reasons worth telling the user about", which includes the
+ *  terminal ones (`account_suspended`, `account_deleted`,
+ *  `api_access_not_available`). Telling someone their account is suspended is
+ *  useful; reconnecting at them until the backoff caps is not. Keep the two
+ *  sets separate — they answer different questions. */
+const USER_CLEARABLE_JOIN_REASONS = new Set(["onboarding_required"]);
+
 /** Delay before the next connectChannel() preflight retry: exponential from
  *  2s, capped at 60s, retried indefinitely. A finite attempt cap here left
  *  live sync permanently dead after any backend outage longer than ~30s
@@ -1345,6 +1356,27 @@ export class NoteChannel {
 						if (reason === "unauthorized") {
 							this.identityMaybeStale = true;
 							if (this.authProbe) this.ws?.close();
+						} else if (
+							reason !== undefined &&
+							USER_CLEARABLE_JOIN_REASONS.has(reason)
+						) {
+							// #455: the user CAN clear this one, and is told how to
+							// (main.ts toasts "Finish setting up your account at
+							// app.engram.page to start syncing"). They go and do it — and
+							// nothing happens, because a join rejection leaves the socket
+							// healthy and heartbeating, so onclose never runs and nothing
+							// ever rejoins. Degraded until Obsidian restarts.
+							//
+							// Cycle for the same reason "unauthorized" does, and reuse the
+							// same bound: onclose sees crdtJoinFailedReason set and backs
+							// off exponentially to maxReconnectMs, so a user who never
+							// finishes onboarding settles at one retry a minute rather
+							// than storming. The first retry after they finish succeeds.
+							//
+							// Terminal reasons (account_suspended, account_deleted,
+							// api_access_not_available) deliberately do NOT cycle: no
+							// amount of retrying clears them.
+							this.ws?.close();
 						}
 						// Fire onCrdtJoinError so main.ts can degrade to legacy if CRDT
 						// routing was previously active (the T4 folded finding: a REJOIN
