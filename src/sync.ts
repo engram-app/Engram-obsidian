@@ -46,7 +46,7 @@ import {
 	type QueuedReason,
 	QueuePriority,
 } from "./offline-queue";
-import { attachmentCapabilityGained, type PlanState } from "./plan-state";
+import { attachmentCapabilityGained, type PlanState, samePlanState } from "./plan-state";
 import { rlog } from "./remote-log";
 import type { SyncLog } from "./sync-log";
 import { SyncedFileTable } from "./synced-file";
@@ -5528,6 +5528,14 @@ export class SyncEngine {
 	 *  attachments), re-attempt the attachments parked as informational
 	 *  plan-skips. Persists via onPlanStatePersist so a reload keeps the state. */
 	applyPlanState(next: PlanState): void {
+		// Skip the persist when nothing but `updatedAt` moved: a persist rewrites
+		// data.json wholesale, and every `user:` join reply re-reads the plan, so
+		// without this a periodic reconnect rewrites the file forever (#535).
+		// Still assigned: `updatedAt` is the freshness stamp readers rely on.
+		if (samePlanState(this.planState, next)) {
+			this.planState = next;
+			return;
+		}
 		const gained = attachmentCapabilityGained(this.planState, next);
 		this.planState = next;
 		this.onPlanStatePersist?.(next);

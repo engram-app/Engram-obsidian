@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { attachmentCapabilityGained, type PlanState, parsePlanState } from "../src/plan-state";
+import {
+	attachmentCapabilityGained,
+	type PlanState,
+	parsePlanState,
+	samePlanState,
+} from "../src/plan-state";
 
 const free: PlanState = {
 	tier: "free",
@@ -128,5 +133,41 @@ describe("parsePlanState — indexed_notes_cap", () => {
 		// a stale plugin must not tell users their notes are unsearchable.
 		const p = parsePlanState({ tier: "starter" }, 1);
 		expect(p?.indexedNotesCap).toBeNull();
+	});
+});
+
+/**
+ * #535 review: applyPlanState persisted unconditionally, and parsePlanState
+ * stamps `updatedAt: now`, so every `user:` join reply looked like a change.
+ * That was harmless while reconnects were rare. Cycling the socket on a
+ * retryable join rejection makes them once-a-minute, and each persist rewrites
+ * data.json WHOLESALE — settings, offline queue, crdt op queue, every content
+ * hash and the whole noteIdMap. A user parked on `rotation_in_progress` has a
+ * fully synced vault, so those are the expensive ones.
+ */
+describe("samePlanState", () => {
+	const base: PlanState = {
+		tier: "starter",
+		attachmentsTextOnly: false,
+		maxFileBytes: 100,
+		attachmentBytesCap: null,
+		indexedNotesCap: 500,
+		updatedAt: 1000,
+	};
+
+	test("a re-read of an unchanged plan is not a change", () => {
+		expect(samePlanState(base, { ...base, updatedAt: 999_999 })).toBe(true);
+	});
+
+	test("a real plan change is still a change", () => {
+		expect(samePlanState(base, { ...base, tier: "pro" })).toBe(false);
+		expect(samePlanState(base, { ...base, indexedNotesCap: null })).toBe(false);
+		expect(samePlanState(base, { ...base, attachmentsTextOnly: true })).toBe(false);
+		expect(samePlanState(base, { ...base, maxFileBytes: 101 })).toBe(false);
+		expect(samePlanState(base, { ...base, attachmentBytesCap: 5 })).toBe(false);
+	});
+
+	test("the first plan state is always a change", () => {
+		expect(samePlanState(null, base)).toBe(false);
 	});
 });

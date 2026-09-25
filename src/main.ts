@@ -26,7 +26,12 @@ import {
 import { migrateCloudApiUrl, withClearedAuth } from "./auth-state";
 import { migrateBackendMode, switchMode } from "./backend-mode";
 import { BaseStore } from "./base-store";
-import { connectRetryDelayMs, makeCrdtCatchupSender, NoteChannel } from "./channel";
+import {
+	connectRetryDelayMs,
+	isRetryableJoinReason,
+	makeCrdtCatchupSender,
+	NoteChannel,
+} from "./channel";
 import { IndexRoom } from "./crdt/index-room";
 import { liveBindingPlugin, setLiveBindingCoordinator } from "./crdt/live/live-binding";
 import { CrdtLiveViews } from "./crdt/live/live-views";
@@ -190,6 +195,37 @@ export function channelIdentityMatches(
 ): boolean {
 	if (!expectedEmail || !authenticatedEmail) return true;
 	return expectedEmail.toLowerCase() === authenticatedEmail.toLowerCase();
+}
+
+/** Should this crdt: join rejection raise a user-facing toast?
+ *
+ *  Only plan reasons toast at all. Of those, only the ones we RETRY need a
+ *  latch: #455's fix cycles the socket on a retryable rejection so the
+ *  join-failure backoff can re-attempt it, and without a latch a user who
+ *  never finishes onboarding gets a fresh 10-second Notice on every retry,
+ *  forever. `unauthorized` was safe to cycle precisely because it never
+ *  toasted; `onboarding_required` is not.
+ *
+ *  A NON-retried plan reason (`account_suspended`, `account_deleted`,
+ *  `api_access_not_available`) deliberately stays unlatched. Those never cycle
+ *  the socket, so they never spammed — and latching them would make a lapsed
+ *  subscriber's toast a one-shot that Obsidian auto-dismisses after ten
+ *  seconds, silent on every later reconnect, with no way back: the latch clears
+ *  only on a SUCCESSFUL join, which a suspended account cannot achieve.
+ *
+ *  Pure: it decides, it does not record. The caller owns `alreadyNoticed`, so a
+ *  second call site (a log line, say) cannot silently consume the latch and
+ *  swallow the real toast.
+ *
+ *  Exported so the decision is unit-testable without a plugin instance,
+ *  matching channelIdentityMatches above. */
+export function shouldNoticeJoinRejection(
+	reason: string | undefined,
+	alreadyNoticed: ReadonlySet<string>,
+): reason is string {
+	if (!reason || !isPlanJoinReason(reason)) return false;
+	if (!isRetryableJoinReason(reason)) return true;
+	return !alreadyNoticed.has(reason);
 }
 
 export default class EngramSyncPlugin extends Plugin {
@@ -396,6 +432,9 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  session. A crdt_proto_too_old rejoin error can fire on every reconnect;
 	 *  showing repeated toasts would be noisy. */
 	private crdtProtoTooOldNoticeShown = false;
+	/** Plan-reason join rejections already toasted for this channel session.
+	 *  Cleared by onCrdtTopicJoined — see shouldNoticeJoinRejection. */
+	private readonly planJoinNoticeShown = new Set<string>();
 	private crdtLiveViews: CrdtLiveViews | null = null;
 
 	/** Saved fingerprint from prior session — null on first load or after
@@ -2357,6 +2396,10 @@ export default class EngramSyncPlugin extends Plugin {
 	 * converged. CRDT socket only, no REST fallback.
 	 */
 	private async onCrdtTopicJoined(): Promise<void> {
+		// A join finally succeeded, so the plan-reason toasts are re-armed: if the
+		// backend starts refusing us again later, that is new information and the
+		// user should hear about it (#455).
+		this.planJoinNoticeShown.clear();
 		// Repair a stale noteIdMap from the server manifest BEFORE re-enrolling and
 		// catch-up: live pull and catch-up resolve the disk path via
 		// noteIdMap.pathForId, and after the id-keying cutover a cursor-bearing
@@ -2869,7 +2912,11 @@ export default class EngramSyncPlugin extends Plugin {
 						// auth method is not entitled and no amount of retrying helps.
 						// Everything else keeps the log-only behaviour, since degrading
 						// to legacy is a real recovery and not worth a toast.
-						if (reason && isPlanJoinReason(reason)) {
+						// Latched: #455's fix cycles the socket on a recoverable reason so
+						// the backoff can retry the join, and an unlatched toast would
+						// then fire on every retry until the user quits Obsidian.
+						if (shouldNoticeJoinRejection(reason, this.planJoinNoticeShown)) {
+							this.planJoinNoticeShown.add(reason);
 							notifyLimitExceeded(
 								new LimitExceededError(reason, null, null, null, null),
 							);

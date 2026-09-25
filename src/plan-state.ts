@@ -50,3 +50,27 @@ export function attachmentCapabilityGained(prev: PlanState | null, next: PlanSta
 	const was = prev?.attachmentsTextOnly ?? true;
 	return was && !next.attachmentsTextOnly;
 }
+
+/** Is `next` the same plan as `prev`, ignoring `updatedAt`?
+ *
+ *  `parsePlanState` stamps `updatedAt: now`, so every re-read of an UNCHANGED
+ *  plan produces a structurally different object. `applyPlanState` persisted on
+ *  every one of those, and a persist rewrites `data.json` wholesale — settings,
+ *  offline queue, crdt op queue, every content hash, the whole noteIdMap.
+ *
+ *  That was cheap while reconnects were rare. #455's socket cycle makes them
+ *  periodic (each reconnect rejoins `user:`, whose join reply carries plan
+ *  state), so without this guard a plugin parked on a retryable join rejection
+ *  rewrites data.json once a minute forever — and the `rotation_in_progress`
+ *  case is the costly one, because that user has a fully synced vault to
+ *  serialize. */
+export function samePlanState(prev: PlanState | null, next: PlanState): boolean {
+	if (prev === null) return false;
+	return (
+		prev.tier === next.tier &&
+		prev.attachmentsTextOnly === next.attachmentsTextOnly &&
+		prev.maxFileBytes === next.maxFileBytes &&
+		prev.attachmentBytesCap === next.attachmentBytesCap &&
+		prev.indexedNotesCap === next.indexedNotesCap
+	);
+}
