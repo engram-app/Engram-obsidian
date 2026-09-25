@@ -9591,15 +9591,24 @@ export class SyncEngine {
 	 *  prod task on 2026-09-14. It was also lossy: memory-only and capped at
 	 *  500, so a restart or the 501st held note silently dropped the recovery.
 	 *
-	 *  Any existing entry for the path already covers delivery (a queued delete
-	 *  wins; a legacy upsert carries content; a crdt upsert is this same nudge),
-	 *  so it is left alone — which also makes a burst of refused frames one
-	 *  entry, not one write per keystroke. */
+	 *  Not recorded when something else already delivers it:
+	 *  - a pending CRDT op (a create awaiting its ack) — the ack flushes the
+	 *    doc's held state, and recording it too left one entry per note typed
+	 *    before its ack, lingering until the next reconnect;
+	 *  - an existing entry for the path: a queued delete wins, a legacy upsert
+	 *    replays disk, and a crdt upsert for the same id is this same nudge.
+	 *    That also makes a burst of refused frames one entry, not one write
+	 *    per keystroke.
+	 *  The exception is a crdt entry under a RETIRED id (the server answered a
+	 *  create under a different id): it is replaced, or it would block every
+	 *  record for the note's live id. */
 	recordUndeliveredCrdtEdit(noteId: string): void {
 		const path = this.noteIdMap?.pathForId(noteId);
 		if (!path) return;
+		if (this.crdtHasPendingOp?.(noteId)) return;
 		const vaultId = this.settings.vaultId ?? undefined;
-		if (this.queue.get(path, vaultId)) return;
+		const existing = this.queue.get(path, vaultId);
+		if (existing && !(existing.crdt && existing.noteId !== noteId)) return;
 		void this.enqueueChange({
 			path,
 			action: "upsert",
@@ -10785,6 +10794,15 @@ export class SyncEngine {
 					// failure, no retry-count bump) until a later flush finds the
 					// channel up.
 					if (entry.crdt && entry.noteId) {
+						// The note was deleted (or its id retired) while this sat queued.
+						// A CRDT delete goes to the op queue, never here, so nothing else
+						// removes the entry: its doc is torn down, the room-free send
+						// fails, the fallback enroll no-ops for a removed id, and no
+						// inbound frame ever settles it. A rename keeps the id mapped.
+						if (this.noteIdMap && this.noteIdMap.pathForId(entry.noteId) === null) {
+							await this.queue.dequeue(entry.path, this.entryVaultId(entry));
+							continue;
+						}
 						// The socket is the ONLY delivery path for a crdt entry — the
 						// edit lives durably in the Y.Doc, so a whole-doc REST replay
 						// could only stomp newer server state. Channel live → converge
