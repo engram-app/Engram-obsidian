@@ -192,6 +192,31 @@ export function channelIdentityMatches(
 	return expectedEmail.toLowerCase() === authenticatedEmail.toLowerCase();
 }
 
+/** Should this crdt: join rejection raise a user-facing toast?
+ *
+ *  Only plan reasons toast at all, and each toasts ONCE per channel session.
+ *  The latch matters because #455's fix cycles the socket on a recoverable
+ *  rejection so the join-failure backoff can retry it: without a latch, a user
+ *  who never finishes onboarding gets a fresh 10-second Notice on every retry,
+ *  forever. `unauthorized` was safe to cycle precisely because it never
+ *  toasted; `onboarding_required` is not.
+ *
+ *  Mutates `alreadyNoticed` on a true result. Cleared by onCrdtTopicJoined,
+ *  i.e. only once a join has actually SUCCEEDED — a later rejection after a
+ *  good join is new information and deserves to be surfaced again.
+ *
+ *  Exported pure so the decision is unit-testable without a plugin instance,
+ *  matching channelIdentityMatches above. */
+export function shouldNoticeJoinRejection(
+	reason: string | undefined,
+	alreadyNoticed: Set<string>,
+): boolean {
+	if (!reason || !isPlanJoinReason(reason)) return false;
+	if (alreadyNoticed.has(reason)) return false;
+	alreadyNoticed.add(reason);
+	return true;
+}
+
 export default class EngramSyncPlugin extends Plugin {
 	settings: EngramSyncSettings = DEFAULT_SETTINGS;
 	api: EngramApi = new EngramApi("", "");
@@ -396,6 +421,9 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  session. A crdt_proto_too_old rejoin error can fire on every reconnect;
 	 *  showing repeated toasts would be noisy. */
 	private crdtProtoTooOldNoticeShown = false;
+	/** Plan-reason join rejections already toasted for this channel session.
+	 *  Cleared by onCrdtTopicJoined — see shouldNoticeJoinRejection. */
+	private readonly planJoinNoticeShown = new Set<string>();
 	private crdtLiveViews: CrdtLiveViews | null = null;
 
 	/** Saved fingerprint from prior session — null on first load or after
@@ -2357,6 +2385,10 @@ export default class EngramSyncPlugin extends Plugin {
 	 * converged. CRDT socket only, no REST fallback.
 	 */
 	private async onCrdtTopicJoined(): Promise<void> {
+		// A join finally succeeded, so the plan-reason toasts are re-armed: if the
+		// backend starts refusing us again later, that is new information and the
+		// user should hear about it (#455).
+		this.planJoinNoticeShown.clear();
 		// Repair a stale noteIdMap from the server manifest BEFORE re-enrolling and
 		// catch-up: live pull and catch-up resolve the disk path via
 		// noteIdMap.pathForId, and after the id-keying cutover a cursor-bearing
@@ -2869,9 +2901,12 @@ export default class EngramSyncPlugin extends Plugin {
 						// auth method is not entitled and no amount of retrying helps.
 						// Everything else keeps the log-only behaviour, since degrading
 						// to legacy is a real recovery and not worth a toast.
-						if (reason && isPlanJoinReason(reason)) {
+						// Latched: #455's fix cycles the socket on a recoverable reason so
+						// the backoff can retry the join, and an unlatched toast would
+						// then fire on every retry until the user quits Obsidian.
+						if (shouldNoticeJoinRejection(reason, this.planJoinNoticeShown)) {
 							notifyLimitExceeded(
-								new LimitExceededError(reason, null, null, null, null),
+								new LimitExceededError(reason as string, null, null, null, null),
 							);
 						}
 						// Degrade to legacy: mirror the "never-joined disconnect" path.

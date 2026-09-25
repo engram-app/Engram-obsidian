@@ -66,6 +66,10 @@ type FakeOpts = {
 
 function makeFakeThis(catchup: () => Promise<void>, pull: () => Promise<number>, opts?: FakeOpts) {
 	const fake = Object.assign(Object.create(EngramSyncPlugin.prototype), {
+		// Object.create(prototype) gives us the prototype METHODS but none of the
+		// class FIELDS, so every field a prototype method touches has to be
+		// restated here. onCrdtTopicJoined clears this one (#455).
+		planJoinNoticeShown: new Set<string>(),
 		settings: {
 			apiUrl: "https://api.example.com",
 			apiKey: "key",

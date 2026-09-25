@@ -48,16 +48,29 @@ export const RECONNECT_JITTER_MAX_MS = 60_000;
  *  straight to this floor instead of the generic 1s start. */
 export const RATE_LIMITED_JOIN_FLOOR_MS = 10_000;
 
-/** Join-rejection reasons the USER can clear by doing something, so a retry
- *  will eventually succeed and the socket is worth cycling to arm one (#455).
+/** Join-rejection reasons a retry is expected to clear, so the socket is worth
+ *  cycling to arm one (#455). A join rejection leaves the socket healthy and
+ *  heartbeating, so without a cycle `onclose` never runs, the join-failure
+ *  backoff never arms, and NOTHING ever rejoins.
  *
- *  This is deliberately NOT all of `PLAN_JOIN_REASONS` in `limit-copy.ts`:
- *  that set is "reasons worth telling the user about", which includes the
- *  terminal ones (`account_suspended`, `account_deleted`,
- *  `api_access_not_available`). Telling someone their account is suspended is
- *  useful; reconnecting at them until the backoff caps is not. Keep the two
- *  sets separate — they answer different questions. */
-const USER_CLEARABLE_JOIN_REASONS = new Set(["onboarding_required"]);
+ *  - `onboarding_required` clears when the user finishes the wizard, which we
+ *    have just told them to go and do.
+ *  - `rotation_in_progress` clears on its own when an operator's DEK/master
+ *    rotation window ends. It is the strongest case in the set: zero user
+ *    action, and because `SyncChannel` and `CrdtChannel` share
+ *    `ChannelGate.check/3`, a rotation refuses `sync:` too — so live sync is
+ *    fully dead, not merely degraded, until something rejoins.
+ *
+ *  This is deliberately NOT `PLAN_JOIN_REASONS` from `limit-copy.ts`. That set
+ *  answers "is this worth telling the user about", which is a different
+ *  question: `rotation_in_progress` belongs here but not there (transient, not
+ *  worth a toast), and `account_suspended` belongs there but not here. A
+ *  suspended user CAN pay their way out — the backend allowlists `/api/billing/*`
+ *  for exactly that — so the reasons below are not "impossible to clear", they
+ *  are "worth reconnecting at". Retrying every minute at an account that is
+ *  suspended or deleted buys nothing; those users act elsewhere and reconnect
+ *  when they return. */
+const RETRYABLE_JOIN_REASONS = new Set(["onboarding_required", "rotation_in_progress"]);
 
 /** Delay before the next connectChannel() preflight retry: exponential from
  *  2s, capped at 60s, retried indefinitely. A finite attempt cap here left
@@ -1356,10 +1369,7 @@ export class NoteChannel {
 						if (reason === "unauthorized") {
 							this.identityMaybeStale = true;
 							if (this.authProbe) this.ws?.close();
-						} else if (
-							reason !== undefined &&
-							USER_CLEARABLE_JOIN_REASONS.has(reason)
-						) {
+						} else if (reason !== undefined && RETRYABLE_JOIN_REASONS.has(reason)) {
 							// #455: the user CAN clear this one, and is told how to
 							// (main.ts toasts "Finish setting up your account at
 							// app.engram.page to start syncing"). They go and do it — and
@@ -1373,9 +1383,19 @@ export class NoteChannel {
 							// finishes onboarding settles at one retry a minute rather
 							// than storming. The first retry after they finish succeeds.
 							//
-							// Terminal reasons (account_suspended, account_deleted,
-							// api_access_not_available) deliberately do NOT cycle: no
-							// amount of retrying clears them.
+							// account_suspended / account_deleted / api_access_not_available
+							// deliberately do NOT cycle — not because they cannot be
+							// cleared (a suspended user CAN pay their way out; the backend
+							// allowlists /api/billing/* for that) but because they are not
+							// cleared HERE. Those users act elsewhere and reconnect when
+							// they come back.
+							//
+							// The cycle also drops `user:`, which is NOT onboarding-gated
+							// (UserChannel checks check_not_deleted/1, not check/3) and was
+							// the one topic still live. Pushes arriving while the socket is
+							// closed are lost: plan state is re-read from the join reply so
+							// it self-heals, `vault_deleted` does not. Accepted — a topic
+							// that only informs is worth less than the sync that recovers.
 							this.ws?.close();
 						}
 						// Fire onCrdtJoinError so main.ts can degrade to legacy if CRDT

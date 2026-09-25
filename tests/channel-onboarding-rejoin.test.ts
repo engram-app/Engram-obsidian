@@ -130,10 +130,11 @@ describe("NoteChannel onboarding_required join recovery (#455)", () => {
 		channel.disconnect();
 	});
 
-	test("a reason the user cannot clear does NOT cycle the socket", async () => {
-		// account_suspended and account_deleted are terminal: retrying cannot fix
-		// them, and cycling would burn a reconnect loop against a wall until the
-		// backoff caps. Only reasons a user can resolve get the cycle.
+	test("a reason that is not cleared by retrying does NOT cycle the socket", async () => {
+		// account_suspended is not "impossible to clear" — the backend allowlists
+		// /api/billing/* so a suspended user can pay their way out — it is just
+		// not cleared HERE. Reconnecting at them every minute buys nothing; they
+		// act elsewhere and reconnect when they return.
 		const channel = new NoteChannel("http://localhost:4000", "key", "user-1", "v1");
 		await channel.connect();
 		lastWsInstance.onopen?.();
@@ -142,6 +143,22 @@ describe("NoteChannel onboarding_required join recovery (#455)", () => {
 		rejectCrdtJoin(ws, crdtJoinRef(ws), "account_suspended", "crdt:user-1:v1");
 
 		expect(ws.closed).toBe(false);
+		channel.disconnect();
+	});
+
+	// The strongest case in the set: it clears with ZERO user action, and
+	// because SyncChannel and CrdtChannel share ChannelGate.check/3 a rotation
+	// refuses `sync:` too — live sync is fully dead, not merely degraded, until
+	// something rejoins.
+	test("an operator key rotation cycles the socket so sync comes back on its own", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "user-1", "v1");
+		await channel.connect();
+		lastWsInstance.onopen?.();
+		const ws = lastWsInstance;
+
+		rejectCrdtJoin(ws, crdtJoinRef(ws), "rotation_in_progress", "crdt:user-1:v1");
+
+		expect(ws.closed).toBe(true);
 		channel.disconnect();
 	});
 });
