@@ -26,7 +26,12 @@ import {
 import { migrateCloudApiUrl, withClearedAuth } from "./auth-state";
 import { migrateBackendMode, switchMode } from "./backend-mode";
 import { BaseStore } from "./base-store";
-import { connectRetryDelayMs, makeCrdtCatchupSender, NoteChannel } from "./channel";
+import {
+	connectRetryDelayMs,
+	isRetryableJoinReason,
+	makeCrdtCatchupSender,
+	NoteChannel,
+} from "./channel";
 import { IndexRoom } from "./crdt/index-room";
 import { liveBindingPlugin, setLiveBindingCoordinator } from "./crdt/live/live-binding";
 import { CrdtLiveViews } from "./crdt/live/live-views";
@@ -194,27 +199,33 @@ export function channelIdentityMatches(
 
 /** Should this crdt: join rejection raise a user-facing toast?
  *
- *  Only plan reasons toast at all, and each toasts ONCE per channel session.
- *  The latch matters because #455's fix cycles the socket on a recoverable
- *  rejection so the join-failure backoff can retry it: without a latch, a user
- *  who never finishes onboarding gets a fresh 10-second Notice on every retry,
+ *  Only plan reasons toast at all. Of those, only the ones we RETRY need a
+ *  latch: #455's fix cycles the socket on a retryable rejection so the
+ *  join-failure backoff can re-attempt it, and without a latch a user who
+ *  never finishes onboarding gets a fresh 10-second Notice on every retry,
  *  forever. `unauthorized` was safe to cycle precisely because it never
  *  toasted; `onboarding_required` is not.
  *
- *  Mutates `alreadyNoticed` on a true result. Cleared by onCrdtTopicJoined,
- *  i.e. only once a join has actually SUCCEEDED — a later rejection after a
- *  good join is new information and deserves to be surfaced again.
+ *  A NON-retried plan reason (`account_suspended`, `account_deleted`,
+ *  `api_access_not_available`) deliberately stays unlatched. Those never cycle
+ *  the socket, so they never spammed — and latching them would make a lapsed
+ *  subscriber's toast a one-shot that Obsidian auto-dismisses after ten
+ *  seconds, silent on every later reconnect, with no way back: the latch clears
+ *  only on a SUCCESSFUL join, which a suspended account cannot achieve.
  *
- *  Exported pure so the decision is unit-testable without a plugin instance,
+ *  Pure: it decides, it does not record. The caller owns `alreadyNoticed`, so a
+ *  second call site (a log line, say) cannot silently consume the latch and
+ *  swallow the real toast.
+ *
+ *  Exported so the decision is unit-testable without a plugin instance,
  *  matching channelIdentityMatches above. */
 export function shouldNoticeJoinRejection(
 	reason: string | undefined,
-	alreadyNoticed: Set<string>,
-): boolean {
+	alreadyNoticed: ReadonlySet<string>,
+): reason is string {
 	if (!reason || !isPlanJoinReason(reason)) return false;
-	if (alreadyNoticed.has(reason)) return false;
-	alreadyNoticed.add(reason);
-	return true;
+	if (!isRetryableJoinReason(reason)) return true;
+	return !alreadyNoticed.has(reason);
 }
 
 export default class EngramSyncPlugin extends Plugin {
@@ -2905,8 +2916,9 @@ export default class EngramSyncPlugin extends Plugin {
 						// the backoff can retry the join, and an unlatched toast would
 						// then fire on every retry until the user quits Obsidian.
 						if (shouldNoticeJoinRejection(reason, this.planJoinNoticeShown)) {
+							this.planJoinNoticeShown.add(reason);
 							notifyLimitExceeded(
-								new LimitExceededError(reason as string, null, null, null, null),
+								new LimitExceededError(reason, null, null, null, null),
 							);
 						}
 						// Degrade to legacy: mirror the "never-joined disconnect" path.

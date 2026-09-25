@@ -72,6 +72,13 @@ export const RATE_LIMITED_JOIN_FLOOR_MS = 10_000;
  *  when they return. */
 const RETRYABLE_JOIN_REASONS = new Set(["onboarding_required", "rotation_in_progress"]);
 
+/** Do we cycle the socket and retry this join rejection? Exported because the
+ *  toast latch in main.ts has to agree: only a reason we RETRY can spam, so
+ *  only a reason we retry needs latching. */
+export function isRetryableJoinReason(reason: string): boolean {
+	return RETRYABLE_JOIN_REASONS.has(reason);
+}
+
 /** Delay before the next connectChannel() preflight retry: exponential from
  *  2s, capped at 60s, retried indefinitely. A finite attempt cap here left
  *  live sync permanently dead after any backend outage longer than ~30s
