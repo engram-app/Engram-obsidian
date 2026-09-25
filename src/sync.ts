@@ -1413,7 +1413,18 @@ export class SyncEngine {
 	}
 
 	private confirmNoteId(noteId: string | null | undefined): void {
-		if (noteId) this.confirmedNoteIds.add(noteId);
+		if (!noteId) return;
+		this.confirmedNoteIds.add(noteId);
+		// The server has acked this id, so a local mint is no longer provisional
+		// (#538). Durable across reconnects, unlike `confirmedNoteIds`.
+		this.noteIdMap?.store?.confirmUpload(noteId);
+	}
+
+	/** True for an id THIS device minted that the server has never acked (#538).
+	 *  No server state exists for it, so it can vouch for nothing: not an empty
+	 *  body, not a route. Ids learned from the server are never pending. */
+	private isUnackedMint(noteId: string): boolean {
+		return this.noteIdMap?.store?.isPendingUpload(noteId) === true;
 	}
 
 	/** The bookkeeping every "the server acked our `crdt_create`" path runs once
@@ -2007,6 +2018,13 @@ export class SyncEngine {
 		// authoritative doc, not a stale remote projection. Only blank when the
 		// doc has GENUINELY converged empty (a real remote clear, e2e test_27): if
 		// the doc still projects content, this empty is transient — skip the write.
+		//
+		// "Genuinely converged" also needs a doc that CAN vouch for the empty
+		// (#538): an id the server has acked, whose doc has integrated at least
+		// one struct. A cleared doc keeps its deleted items, so a real clear is
+		// always seeded. No id, a never-seeded doc, or a fresh local mint (the
+		// wrong-mint at file-open) projects "" because it knows nothing, and
+		// writing that wiped the note, which the next push then fanned out.
 		if (file instanceof TFile && content.trim() === "") {
 			let prev = "";
 			try {
@@ -2016,20 +2034,18 @@ export class SyncEngine {
 			}
 			if (prev.trim() !== "") {
 				const noteId = this.noteIdMap?.get(normalized) ?? null;
-				let docText = "";
-				if (noteId && this.crdt) {
-					try {
-						docText = await this.crdt.projectedText(noteId);
-					} catch {
-						// projection failed — leave docText empty; the write proceeds
-					}
-				}
-				if (docText.trim() !== "") {
+				const refusal = await this.emptyWriteRefusal(noteId);
+				if (refusal) {
 					rlog().warn(
 						"crdt",
-						`flushFromCrdt: refused empty over ${prev.length}B for ${noteRef(normalized)} — CRDT doc still holds content (stale remote projection)`,
+						`flushFromCrdt: refused empty over ${prev.length}B for ${noteRef(normalized)} — ${refusal.reason}`,
 					);
-					return true;
+					// A doc still holding content means disk already has the truth, so
+					// "handled" is honest. Every other refusal wrote nothing and disk
+					// no longer matches what the caller was told: report false, or a
+					// stamping caller records hash("") over the old body and the next
+					// scan pushes that body back over the clear (#265 class).
+					return refusal.docHasContent;
 				}
 			}
 		}
@@ -2064,6 +2080,35 @@ export class SyncEngine {
 			);
 			return false;
 		}
+	}
+
+	/** Why the doc behind `noteId` cannot authorize blanking a non-empty file,
+	 *  or null when it can (it converged empty). See flushFromCrdt's guard. */
+	private async emptyWriteRefusal(
+		noteId: string | null,
+	): Promise<{ reason: string; docHasContent: boolean } | null> {
+		const refuse = (reason: string) => ({ reason, docHasContent: false });
+		if (!noteId || !this.crdt) return refuse("no CRDT doc for the path");
+		if (this.isUnackedMint(noteId)) return refuse(`note_id=${noteId} is an unacked local mint`);
+		try {
+			if ((await this.crdt.projectedText(noteId)).trim() !== "") {
+				return {
+					reason: "CRDT doc still holds content (stale remote projection)",
+					docHasContent: true,
+				};
+			}
+			// Registry doubles without getDoc can't answer; the projection check
+			// above is then the whole guard, as before #538.
+			if (typeof this.crdt.getDoc === "function") {
+				const doc = await this.crdt.getDoc(noteId);
+				if (doc.store.clients.size === 0)
+					return refuse(`note_id=${noteId} doc is unseeded`);
+			}
+		} catch {
+			// Doc unreadable: it cannot vouch for the empty either.
+			return refuse(`note_id=${noteId} doc unreadable`);
+		}
+		return null;
 	}
 
 	// ── syncState mutators (#376 prerequisite) ──────────────────────────────
@@ -2935,6 +2980,11 @@ export class SyncEngine {
 	 *  the id map. The note's own CRDT state is the oracle, never a REST-era set. */
 	hasServerNote(noteId: string | null): boolean {
 		if (!noteId) return false;
+		// The head is recorded per PATH, so a duplicate id minted for a path the
+		// server already knows would inherit that path's verdict and route ops
+		// the server drops as note_not_found (#538). An unacked mint is never
+		// server-known; the genesis create adopts the server's id instead.
+		if (this.isUnackedMint(noteId)) return false;
 		const path = this.noteIdMap?.pathForId(noteId);
 		if (!path) return false;
 		return this.getCrdtHead(path) != null;
