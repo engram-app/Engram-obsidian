@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.31.2](https://github.com/engram-app/Engram-obsidian/compare/1.31.1...1.31.2) (2026-09-25)
+
+
+### Bug Fixes
+
+* **sync:** retry the crdt join after the user finishes onboarding ([#535](https://github.com/engram-app/Engram-obsidian/issues/535)) ([33d2a39](https://github.com/engram-app/Engram-obsidian/commit/33d2a3971276a1783738c09c89f32501d73ea607))
+
 ## [1.31.1](https://github.com/engram-app/Engram-obsidian/compare/1.31.0...1.31.1) (2026-09-23)
 
 
