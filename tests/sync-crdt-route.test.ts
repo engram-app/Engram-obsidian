@@ -1155,6 +1155,12 @@ describe("Task 3: new-note genesis routes through crdt_create", () => {
 			([id, text]) => id === "server-owns-this" && (text as string).trim() === "",
 		);
 		expect(blanked).toBe(false);
+		// Seeded from disk instead of the empty buffer.
+		expect(
+			applyLocalEdit.mock.calls.some(
+				([id, text]) => id === "server-owns-this" && text === "body",
+			),
+		).toBe(true);
 		// The editor still has to leave the mint doc for the server's.
 		expect(removeDoc).toHaveBeenCalledWith(mintId);
 	});

@@ -1208,11 +1208,13 @@ export class SyncEngine {
 		// An unacked mint on a path the server already owns is the #538 wrong-mint,
 		// not an orphan. hasServerNote says false for it by design (#539), so this
 		// used to re-create it here and the adopt copied its empty buffer over the
-		// real note. Leave it: ensureNoteIdMapped skips it too (the mint IS mapped),
-		// so the note waits for its next save, whose push re-creates it and takes
-		// the gated adopt (mintBufferMayReplace) that seeds the server note from
-		// disk. Remapping here instead, before a save, was tried and reverted: the
-		// editor re-attach then drops text typed since the note was opened.
+		// real note. Leave it. ensureNoteIdMapped skips it too (the mint IS mapped),
+		// and while the note is open its saves never reach pushFile (handleModify
+		// returns early for a live-bound note), so it stays off live sync until a
+		// forced push, a rename, an edit while closed, or the manifest reconcile
+		// remaps it. Any adopt it reaches is gated (mintBufferMayReplace) and seeds
+		// the server note from disk. An eager remap here was tried and reverted:
+		// the editor re-attach dropped text typed since the note was opened (#544).
 		if (this.isUnackedMint(noteId) && this.getCrdtHead(path) != null) return false;
 		if (!this.isCrdtEligiblePath(path)) return false;
 		const file = this.app.vault.getFileByPath(normalizePath(path));

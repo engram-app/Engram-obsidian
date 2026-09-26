@@ -273,8 +273,9 @@ describe("#538 the real create-ack confirms the mint", () => {
 
 // #539 review: hasServerNote() now says false for an unacked mint, which turned
 // two existing paths into a wipe. The #538 state (map entry lost, a fresh mint
-// X bound to an empty doc on a path the server owns under Y) must heal by
-// REMAPPING to Y, never by copying X's empty buffer over Y.
+// X bound to an empty doc on a path the server owns under Y) must never copy
+// X's empty buffer over Y. Nothing remaps it early (an eager remap was tried and
+// reverted, #544); when it is adopted, the server note is seeded from disk.
 describe("#539 follow-up: an unacked mint on a server-known path never overwrites the server note", () => {
 	/** A doc with real history holding `text`: what Y looks like on a device
 	 *  that has had the note open before. */
@@ -312,13 +313,16 @@ describe("#539 follow-up: an unacked mint on a server-known path never overwrite
 		expect(enqueue).toHaveBeenCalledWith({ kind: "create", docId: mint, path: "n.md" });
 	});
 
-	function adoptEngine(mintDoc: Y.Doc) {
+	function adoptEngine(
+		mintDoc: Y.Doc,
+		serverDoc = docWith("---\nstatus: draft\n---\n\nbase line.\n"),
+	) {
 		const map = new NoteIdMap();
 		const mint = map.getOrMint("n.md");
 		const engine = createEngine(map);
 		const docs: Record<string, Y.Doc> = {
 			[mint]: mintDoc,
-			"srv-id": docWith("---\nstatus: draft\n---\n\nbase line.\n"),
+			"srv-id": serverDoc,
 		};
 		const applyLocalEdit = mock(async (_id: string, c: string) => c);
 		const doc = (id: string) => {
@@ -357,6 +361,17 @@ describe("#539 follow-up: an unacked mint on a server-known path never overwrite
 		expect(wroteServer(applyLocalEdit.mock.calls, (t) => !t.includes("base line."))).toBe(
 			false,
 		);
+	});
+
+	// When this device has no local history for the server's note, the empty-body
+	// check does not apply; the "never typed into" check alone keeps the empty
+	// buffer from counting as a transfer, which would skip the disk seed.
+	test("queued ADOPT of a never-typed-into mint seeds from disk even without server history", async () => {
+		const { engine, mint, applyLocalEdit } = adoptEngine(new Y.Doc(), new Y.Doc());
+
+		await engine.applyCrdtCreateAck(mint, "srv-id", "n.md");
+
+		expect(wroteServer(applyLocalEdit.mock.calls, (t) => t.includes("base line."))).toBe(true);
 	});
 
 	test("queued ADOPT still transfers a live buffer the user typed into", async () => {
