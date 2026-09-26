@@ -5,6 +5,8 @@
  * Accepts a pushFn callback to avoid circular dependency with api.ts.
  */
 
+import { scrubLogText, scrubStack } from "./error-util";
+
 export interface RemoteLogEntry {
 	ts: string;
 	level: "error" | "warn" | "info";
@@ -239,7 +241,11 @@ export class RemoteLogger {
 			ts: new Date().toISOString(),
 			level,
 			category,
-			message,
+			// Egress chokepoint: every message and stack is path-scrubbed HERE, so
+			// a call site that forgets noteRef()/errMsg(e, path) — or passes a raw
+			// `e.stack`, whose header is the unscrubbed error message — still can't
+			// ship a path or OS username to client_logs / Loki.
+			message: scrubLogText(message),
 			plugin_version: this.pluginVersion,
 			platform: this.platform,
 			seq: this.seq++,
@@ -256,7 +262,7 @@ export class RemoteLogger {
 		if (this.levelThreshold === "debug" && LEVEL_SEVERITY[level] < LEVEL_SEVERITY.warn) {
 			entry.diagnostic = true;
 		}
-		if (stack) entry.stack = stack;
+		if (stack) entry.stack = scrubStack(stack);
 		if (this.connId) entry.conn_id = this.connId;
 		if (this.deviceId) entry.device_id = this.deviceId;
 		if (this.vaultId) entry.vault_id = this.vaultId;

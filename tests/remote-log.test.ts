@@ -66,7 +66,9 @@ describe("RemoteLogger basics", () => {
 		logger.error("crash", "oops", "Error: oops\n  at foo.ts:1");
 		logger.flush();
 		const entry = pushFn.mock.calls[0][0][0];
-		expect(entry.stack).toBe("Error: oops\n  at foo.ts:1");
+		// Frames ship; the header's message does not (it is the raw, unscrubbed
+		// error text — see remote-log-privacy.test.ts). The name is kept.
+		expect(entry.stack).toBe("Error\n  at foo.ts:1");
 		logger.destroy();
 	});
 

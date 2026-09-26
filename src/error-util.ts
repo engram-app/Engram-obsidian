@@ -133,6 +133,58 @@ function scrubPaths(message: string, knownPaths: string[]): string {
 	return exact.replace(QUOTED_PATH, "'<path>'");
 }
 
+/**
+ * A home-directory or Windows-drive path, unquoted. Either one names the OS
+ * user or sits outside anything a route could look like, so it is redacted up
+ * to the next ` | ` field separator or end of line — the remainder may contain
+ * spaces (`/Users/alice/My Vault/…`) and there is no safe place to stop sooner.
+ * One greedy negated class after a literal anchor: linear, no backtracking.
+ * `\b` before the drive letter keeps `https://` from reading as `s:/`.
+ */
+const HOME_OR_DRIVE_PATH = /(?:~|\/Users|\/home|\b[A-Za-z]:(?=[\\/]))[\\/][^\n|]*/gi;
+
+/** A whitespace-delimited token ending in a vault note/attachment extension
+ *  (optionally followed by punctuation). Tested per token, never as one regex
+ *  across the line, so it cannot backtrack across spaces (the BARE_PATH ReDoS)
+ *  and cannot merge `/api/notes … note.md` into one match. */
+const VAULT_FILE_TOKEN =
+	/\.(?:md|markdown|canvas|base|txt|pdf|png|jpe?g|gif|bmp|svg|webp|avif|heic|mp3|wav|ogg|m4a|flac|mp4|mov|webm|mkv|zip)[)'"`,.;:\]]*$/i;
+
+/**
+ * Last-line scrub for text LEAVING THE DEVICE (remote-log `message`/`stack`).
+ *
+ * The call-site rule is still `noteRef(path)` and `errMsg(e, path)`; this is the
+ * guarantee for the sites that forget. It is deliberately more aggressive than
+ * `errMsg`'s fallback (see "Why there is no unquoted-path heuristic" above): it
+ * only runs on egress, where losing a token is cheap and leaking one is not, and
+ * each rule is linear and token-bounded so neither the ReDoS nor the
+ * route-eating failure of the old heuristic applies.
+ *
+ * Still not complete: a vault-relative path with spaces and no extension on its
+ * last word (`Medical/Tom's notes`) leaks its first token. Only `knownPath`
+ * closes that.
+ */
+export function scrubLogText(text: string): string {
+	return text
+		.replace(QUOTED_PATH, "'<path>'")
+		.replace(HOME_OR_DRIVE_PATH, (m) => (m.endsWith(" ") ? "<path> " : "<path>"))
+		.replace(/\S+/g, (tok) => (VAULT_FILE_TOKEN.test(tok) ? "<path>" : tok));
+}
+
+/**
+ * Reduce a stack to its frames. A V8 stack's header is `Name: <message>` —
+ * the raw, unscrubbed error message, which is exactly where an fs error puts
+ * the absolute path. Keep only the error name, then the frames, then scrub the
+ * frames too. JSC (iOS) stacks have no header and pass through the scrub.
+ */
+export function scrubStack(stack: string): string {
+	const lines = stack.split("\n");
+	const firstFrame = lines.findIndex((l) => /^\s*at\s/.test(l));
+	if (firstFrame <= 0) return scrubLogText(stack);
+	const name = /^[\w$.]+(?=:|$)/.exec(lines[0] ?? "")?.[0] ?? "Error";
+	return scrubLogText([name, ...lines.slice(firstFrame)].join("\n"));
+}
+
 /** The HTTP status carried by a rejected Obsidian requestUrl() call, or
  *  undefined for non-HTTP failures (network loss, timeout). Null-safe: a
  *  nullish rejection yields undefined, never a TypeError. */
