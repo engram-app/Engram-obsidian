@@ -15,6 +15,7 @@ import { arrayBufferToBase64, base64ToArrayBuffer, type EngramApi } from "./api"
 import type { BaseStore } from "./base-store";
 import type { GenesisOutcome } from "./channel";
 import { fnv1a } from "./content-hash";
+import { splitFrontmatter } from "./crdt/frontmatter-codec";
 import type { NoteIdMap } from "./crdt/note-id-map";
 import type { ProviderRegistry } from "./crdt/provider-registry";
 import { uuid7 } from "./crdt/uuid7";
@@ -1204,6 +1205,12 @@ export class SyncEngine {
 		if (this.repairedClaims.has(noteId)) return false;
 		const path = this.noteIdMap?.pathForId(noteId);
 		if (!path || this.hasServerNote(noteId)) return false;
+		// An unacked mint on a path the server already owns is the #538 wrong-mint,
+		// not an orphan. hasServerNote says false for it by design (#539), but a
+		// re-create would be ADOPTed, and the adopt copies the mint's empty buffer
+		// over the real note. false hands it to ensureNoteIdMapped, which remaps
+		// the path to the server's id instead.
+		if (this.isUnackedMint(noteId) && this.getCrdtHead(path) != null) return false;
 		if (!this.isCrdtEligiblePath(path)) return false;
 		const file = this.app.vault.getFileByPath(normalizePath(path));
 		if (!file) return false;
@@ -1425,6 +1432,28 @@ export class SyncEngine {
 	 *  body, not a route. Ids learned from the server are never pending. */
 	private isUnackedMint(noteId: string): boolean {
 		return this.noteIdMap?.store?.isPendingUpload(noteId) === true;
+	}
+
+	/** Whether an ADOPT may copy the live mint buffer into the server's doc.
+	 *  The copy exists to keep keystrokes typed during the create round-trip,
+	 *  which disk can lag. A mint nobody typed into (unseeded), or one with no
+	 *  body, holds no such keystrokes: it is the #538 wrong-mint, and copying it
+	 *  over a server note with history deletes that note on every device. Such
+	 *  an adopt seeds from disk instead. Unreadable = do not copy. */
+	private async mintBufferMayReplace(mintId: string, serverId: string): Promise<boolean> {
+		const crdt = this.crdt;
+		if (!crdt) return false;
+		try {
+			if (typeof crdt.getDoc === "function") {
+				if ((await crdt.getDoc(mintId)).store.clients.size === 0) return false;
+			}
+			const serverHasHistory =
+				typeof crdt.hasHistory === "function" && (await crdt.hasHistory(serverId));
+			if (!serverHasHistory) return true;
+			return splitFrontmatter(await crdt.projectedText(mintId)).body.trim() !== "";
+		} catch {
+			return false;
+		}
 	}
 
 	/** The bookkeeping every "the server acked our `crdt_create`" path runs once
@@ -1684,7 +1713,11 @@ export class SyncEngine {
 			// (mirrors the live pushFile adopt) instead of seeding from disk below.
 			// The ViewPlugin re-resolves path -> serverId on its next update and
 			// re-attaches itself.
-			if (this.crdt && this.isLiveBound(normalized)) {
+			if (
+				this.crdt &&
+				this.isLiveBound(normalized) &&
+				(await this.mintBufferMayReplace(localId, serverId))
+			) {
 				try {
 					const mintText = await this.crdt.projectedText(localId);
 					consumed = await this.crdt.applyLocalEdit(serverId, mintText);
@@ -5100,11 +5133,11 @@ export class SyncEngine {
 							// by effectiveId), so there is nothing to re-key — we simply
 							// seed under the server id from the start.
 							let consumed: string | null;
-							if (
-								serverId &&
+							const liveAdopt =
+								!!serverId &&
 								serverId !== noteId &&
-								this.isLiveBound(normalizePath(pushedPath))
-							) {
+								this.isLiveBound(normalizePath(pushedPath));
+							if (liveAdopt && (await this.mintBufferMayReplace(noteId, serverId))) {
 								// ADOPT under a LIVE editor. The editor is bound to the MINT
 								// doc, so the user's live keystrokes (including any typed during
 								// the crdt_create round-trip, and any not yet flushed to disk)
@@ -5183,6 +5216,10 @@ export class SyncEngine {
 											hasHistory,
 										),
 								});
+								// A live editor was bound to the mint, whose buffer was not
+								// worth transferring (mintBufferMayReplace): still retire it so
+								// the editor re-attaches to the server's doc.
+								if (liveAdopt) await this.teardownCrdtDoc(noteId);
 							}
 							// Task 1's canSendLive gate held effectiveId's live update(s)
 							// (including the seed above) until this exact moment, so nothing

@@ -1118,6 +1118,47 @@ describe("Task 3: new-note genesis routes through crdt_create", () => {
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});
 
+	// #539 review: an unacked mint on a path the server already owns can reach
+	// this branch with an EMPTY, never-typed-into buffer (the #538 wrong-mint).
+	// Copying that into the server's doc deletes the real note everywhere.
+	test("ADOPT under a LIVE editor with an empty, unseeded mint: seeds from disk, never copies the empty buffer", async () => {
+		const noteIdMap = new NoteIdMap();
+		const engine = createEngine(noteIdMap);
+		const applyLocalEdit = mock(async (_id: string, c: string) => c);
+		const projectedText = mock(async (_id: string) => "");
+		const removeDoc = mock(async (_id: string) => {});
+		const hasHistory = mock(async (id: string) => id === "server-owns-this");
+		const unseeded = { store: { clients: new Map() } };
+		const getDoc = mock(async (_id: string) => unseeded);
+		engine.setCrdtManager({
+			applyLocalEdit,
+			projectedText,
+			removeDoc,
+			hasHistory,
+			getDoc,
+		} as any);
+		engine.setLiveBoundCheck(() => true);
+		engine.setCrdtEnrollment({ enroll: mock(), reset: mock() } as any);
+		let mintId = "";
+		engine.setCrdtCreate(async (id: string, _path: string) => {
+			mintId = id;
+			return { docId: "server-owns-this", seeded: false };
+		});
+
+		const file = new TFile("Notes/collision-empty-mint.md");
+		await (
+			engine as unknown as { pushFile: (f: TFile, force?: boolean) => Promise<boolean> }
+		).pushFile(file);
+
+		expect(noteIdMap.get("Notes/collision-empty-mint.md")).toBe("server-owns-this");
+		const blanked = applyLocalEdit.mock.calls.some(
+			([id, text]) => id === "server-owns-this" && (text as string).trim() === "",
+		);
+		expect(blanked).toBe(false);
+		// The editor still has to leave the mint doc for the server's.
+		expect(removeDoc).toHaveBeenCalledWith(mintId);
+	});
+
 	test("idle ADOPT (note NOT live-bound): uses the disk-seed path, no transfer/removeDoc", async () => {
 		// No live editor owns the note → nothing to preserve → the transfer branch
 		// must be skipped and the existing routeModify disk-seed runs unchanged.
