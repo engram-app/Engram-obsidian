@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.31.3](https://github.com/engram-app/Engram-obsidian/compare/1.31.2...1.31.3) (2026-09-26)
+
+
+### Bug Fixes
+
+* **sync:** deliver held CRDT edits via the durable queue ([#537](https://github.com/engram-app/Engram-obsidian/issues/537)) ([5dcd84b](https://github.com/engram-app/Engram-obsidian/commit/5dcd84b0fcfce5950fdfc05acfee831548b10933))
+* **sync:** never adopt an empty mint buffer over the server's note ([#543](https://github.com/engram-app/Engram-obsidian/issues/543)) ([c1f0320](https://github.com/engram-app/Engram-obsidian/commit/c1f032040258c39b310a440badf80d26137ce821))
+* **sync:** stop opening a note from wiping it to 0 bytes ([#539](https://github.com/engram-app/Engram-obsidian/issues/539)) ([769a928](https://github.com/engram-app/Engram-obsidian/commit/769a9282e2c5d53e085c35e88968a4581ccc18a0))
+
 ## [1.31.2](https://github.com/engram-app/Engram-obsidian/compare/1.31.1...1.31.2) (2026-09-25)
 
 
