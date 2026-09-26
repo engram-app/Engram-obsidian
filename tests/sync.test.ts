@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
 import "fake-indexeddb/auto";
 import { TFile } from "obsidian";
 import * as Y from "yjs";
@@ -7,6 +7,7 @@ import { CONTENT_KEY } from "../src/crdt/frontmatter-codec";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { ProviderRegistry } from "../src/crdt/provider-registry";
 import { LimitExceededError } from "../src/limit-error";
+import { rlog } from "../src/remote-log";
 import { fnv1a, SyncEngine } from "../src/sync";
 import type { SyncedFileTable } from "../src/synced-file";
 import { DEFAULT_SETTINGS } from "../src/types";
@@ -1433,6 +1434,57 @@ describe("SyncEngine.getStatus + onStatusChange", () => {
 		expect(summary.firstMessage).toBe("failed to upload to storage backend");
 		// Draining resets the tally.
 		expect(engine.drainFailureSummary().count).toBe(0);
+	});
+
+	test("push failure log + batch summary never carry the raw path (unquoted fs error)", async () => {
+		// Node-style error whose path is NOT quoted — errMsg's quoted rule misses
+		// it, so the call site must hand errMsg the path it already holds, and the
+		// batch summary must ship category+count, not the raw message.
+		(mockApi.pushNote as jest.Mock).mockRejectedValueOnce(
+			new Error("ENOENT: no such file or directory, open /Users/alice/Vault/Notes/Fail.md"),
+		);
+		const errSpy = spyOn(rlog(), "error");
+		const warnSpy = spyOn(rlog(), "warn");
+		try {
+			const engine = createEngine({ debounceMs: 10 });
+			(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(
+				"a".repeat(5 * 1024 * 1024),
+			);
+			engine.handleModify(new TFile("Notes/Fail.md", Date.now()));
+			await new Promise((r) => setTimeout(r, 100));
+
+			const pushLines = errSpy.mock.calls.filter((c) => c[0] === "push");
+			expect(pushLines.length).toBeGreaterThan(0);
+			for (const c of pushLines) expect(String(c[1])).not.toContain("Notes/Fail.md");
+
+			(engine as any).flushFailureSummaryToast();
+			const summary = warnSpy.mock.calls.find((c) => String(c[1]).includes("failed to sync"));
+			expect(summary).toBeDefined();
+			expect(String(summary?.[1])).not.toContain("Fail.md");
+			expect(String(summary?.[1])).not.toContain("alice");
+			expect(String(summary?.[1])).toContain("category=network");
+		} finally {
+			errSpy.mockRestore();
+			warnSpy.mockRestore();
+		}
+	});
+
+	test("live id-map reconcile failure goes through errMsg", async () => {
+		const warnSpy = spyOn(rlog(), "warn");
+		try {
+			const engine = createEngine();
+			engine.setNoteIdMap(new NoteIdMap());
+			engine.reconcileNoteIdMapFromManifest = mock().mockRejectedValue(
+				new Error("EACCES: permission denied, open '/Users/alice/Vault/Notes/Secret.md'"),
+			);
+			engine.ensureNoteIdMapped("unknown-id");
+			await new Promise((r) => setTimeout(r, 20));
+			const line = warnSpy.mock.calls.find((c) => String(c[1]).includes("id-map reconcile"));
+			expect(line).toBeDefined();
+			expect(String(line?.[1])).not.toContain("Secret.md");
+		} finally {
+			warnSpy.mockRestore();
+		}
 	});
 });
 

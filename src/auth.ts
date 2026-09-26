@@ -257,10 +257,7 @@ export class OAuthAuth implements AuthProvider {
 				try {
 					await this.onAuthInvalidated?.();
 				} catch (cbErr) {
-					rlog().error(
-						"auth",
-						`onAuthInvalidated callback threw: ${cbErr instanceof Error ? cbErr.message : String(cbErr)}`,
-					);
+					rlog().error("auth", `onAuthInvalidated callback threw: ${errMsg(cbErr)}`);
 				}
 			}
 			throw err;

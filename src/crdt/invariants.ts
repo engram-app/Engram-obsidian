@@ -1,3 +1,4 @@
+import { errMsg } from "../error-util";
 import { noteRef } from "../note-ref";
 
 /**
@@ -141,7 +142,7 @@ export class InvariantChecker {
 			try {
 				detail = await inv.check(ctx);
 			} catch (e) {
-				detail = `check threw: ${e instanceof Error ? e.message : String(e)}`;
+				detail = `check threw: ${errMsg(e)}`;
 			}
 			if (detail !== null) {
 				const violation = { id: inv.id, description: inv.description, detail };
