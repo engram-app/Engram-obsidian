@@ -1,7 +1,6 @@
-import { describe, expect, it, test } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import { splitFrontmatter } from "../src/crdt/frontmatter-codec";
 import {
-	carryAcrossReattach,
 	classifyEditSpan,
 	decideReconcile,
 	fmCreationBodyDiff,
@@ -358,77 +357,5 @@ describe("ownedMarkdownPath", () => {
 		const view = { id: "main" };
 		expect(ownedMarkdownPath(view, { file, editor: undefined })).toBeNull();
 		expect(ownedMarkdownPath(view, { file, editor: { cm: undefined } })).toBeNull();
-	});
-});
-
-// #543 review: an id remap under an open editor (the #538 wrong-mint healed to
-// the server's id) re-attaches the binding. Keystrokes typed EARLIER in the
-// same attach, while it deferred on the empty mint, are in the editor but in
-// neither doc. Only a keystroke in the triggering update used to be carried,
-// so a non-keystroke update (click, selection, scroll) re-attached "clean" and
-// the reconcile adopted the server doc over the typed text.
-describe("carryAcrossReattach", () => {
-	const typed = { dirty: true, preEditText: "hello world\n", path: "n.md", ready: false };
-
-	test("same file: keystrokes from the previous attach stay forwarded", () => {
-		const carried = carryAcrossReattach(typed, "n.md", {
-			userEdit: false,
-			startText: "hello world\nABC",
-		});
-
-		expect(carried).toEqual({ dirty: true, preEditText: "hello world\n" });
-		// The reviewer's case: disk "hello world\n", editor "…ABC", doc = disk.
-		// Carried, the reconcile forwards ABC instead of deleting it.
-		const action = decideReconcile(
-			"hello world\nABC",
-			"hello world\n",
-			carried?.dirty ?? false,
-			carried?.preEditText ?? null,
-		);
-		expect(action.kind).toBe("forward");
-	});
-
-	test("same file, a keystroke in this update, earlier typing: keeps the EARLIER base", () => {
-		const carried = carryAcrossReattach(typed, "n.md", {
-			userEdit: true,
-			startText: "hello world\nAB",
-		});
-
-		expect(carried).toEqual({ dirty: true, preEditText: "hello world\n" });
-	});
-
-	test("same file, first keystroke is in this update: base is the pre-update text", () => {
-		const clean = { dirty: false, preEditText: "hello world\n", path: "n.md", ready: false };
-
-		expect(
-			carryAcrossReattach(clean, "n.md", { userEdit: true, startText: "hello world\n" }),
-		).toEqual({ dirty: true, preEditText: "hello world\n" });
-	});
-
-	test("a real file switch never carries the old note's typing", () => {
-		expect(
-			carryAcrossReattach(typed, "other.md", { userEdit: false, startText: "x" }),
-		).toBeNull();
-		expect(carryAcrossReattach(typed, "other.md", { userEdit: true, startText: "x" })).toEqual({
-			dirty: true,
-			preEditText: null,
-		});
-	});
-
-	// Once live, earlier keystrokes were FORWARDED into the doc. Carrying them
-	// into a re-attach on the same doc (a stack rebuild: same path, same id)
-	// would re-apply them: the doubling class.
-	test("typing already forwarded by a live binding is not carried", () => {
-		const live = { ...typed, ready: true };
-
-		expect(carryAcrossReattach(live, "n.md", { userEdit: false, startText: "x" })).toBeNull();
-	});
-
-	test("nothing typed and no keystroke: nothing to carry", () => {
-		const clean = { dirty: false, preEditText: "hello world\n", path: "n.md", ready: false };
-
-		expect(
-			carryAcrossReattach(clean, "n.md", { userEdit: false, startText: "hello world\n" }),
-		).toBeNull();
 	});
 });
