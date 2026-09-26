@@ -270,3 +270,121 @@ describe("#538 the real create-ack confirms the mint", () => {
 		expect(engine.hasServerNote("srv-id")).toBe(true);
 	});
 });
+
+// #539 review: hasServerNote() now says false for an unacked mint, which turned
+// two existing paths into a wipe. The #538 state (map entry lost, a fresh mint
+// X bound to an empty doc on a path the server owns under Y) must never copy
+// X's empty buffer over Y. Nothing remaps it early (an eager remap was tried and
+// reverted, #544); when it is adopted, the server note is seeded from disk.
+describe("#539 follow-up: an unacked mint on a server-known path never overwrites the server note", () => {
+	/** A doc with real history holding `text`: what Y looks like on a device
+	 *  that has had the note open before. */
+	function docWith(text: string): Y.Doc {
+		const d = new Y.Doc();
+		d.getText("content").insert(0, text);
+		return d;
+	}
+
+	test("repairOrphanedClaim does not re-create a mint on a server-known path", () => {
+		const map = new NoteIdMap();
+		const mint = map.getOrMint("n.md");
+		const enqueue = mock();
+		mockApp.vault.getFileByPath = mock().mockReturnValue({ path: "n.md", stat: { size: 64 } });
+		const engine = createEngine(map);
+		engine.setCrdtPorts({ manager: {} as any, enqueue });
+		// The server has delivered a head for the PATH: it owns this note already.
+		(engine as any).setCrdtHead("n.md", "real-server-head");
+
+		// A re-create would be ADOPTed and, before the adopt gate, copy the
+		// mint's empty buffer over the server's note.
+		expect(engine.repairOrphanedClaim(mint)).toBe(false);
+		expect(enqueue).not.toHaveBeenCalled();
+	});
+
+	test("repairOrphanedClaim still re-drives a mint the server has never seen", () => {
+		const map = new NoteIdMap();
+		const mint = map.getOrMint("n.md");
+		const enqueue = mock();
+		mockApp.vault.getFileByPath = mock().mockReturnValue({ path: "n.md", stat: { size: 64 } });
+		const engine = createEngine(map);
+		engine.setCrdtPorts({ manager: {} as any, enqueue });
+
+		expect(engine.repairOrphanedClaim(mint)).toBe(true);
+		expect(enqueue).toHaveBeenCalledWith({ kind: "create", docId: mint, path: "n.md" });
+	});
+
+	function adoptEngine(
+		mintDoc: Y.Doc,
+		serverDoc = docWith("---\nstatus: draft\n---\n\nbase line.\n"),
+	) {
+		const map = new NoteIdMap();
+		const mint = map.getOrMint("n.md");
+		const engine = createEngine(map);
+		const docs: Record<string, Y.Doc> = {
+			[mint]: mintDoc,
+			"srv-id": serverDoc,
+		};
+		const applyLocalEdit = mock(async (_id: string, c: string) => c);
+		const doc = (id: string) => {
+			docs[id] ??= new Y.Doc();
+			return docs[id];
+		};
+		engine.setCrdtManager({
+			getDoc: mock(async (id: string) => doc(id)),
+			projectedText: mock(async (id: string) => doc(id).getText("content").toJSON()),
+			hasHistory: mock(async (id: string) => (docs[id]?.store.clients.size ?? 0) > 0),
+			applyLocalEdit,
+			removeDoc: mock(async () => {}),
+			flushHeldState: mock(async () => {}),
+		} as any);
+		engine.setCrdtEnrollment({ enroll: mock(), reset: mock() } as any);
+		engine.setLiveBoundCheck(() => true);
+		return { engine, mint, applyLocalEdit };
+	}
+
+	const wroteServer = (calls: unknown[][], text: (t: string) => boolean) =>
+		calls.some(([id, t]) => id === "srv-id" && text(t as string));
+
+	test("queued ADOPT under a live editor does not copy an unseeded, empty mint over the server note", async () => {
+		const { engine, mint, applyLocalEdit } = adoptEngine(new Y.Doc());
+
+		await engine.applyCrdtCreateAck(mint, "srv-id", "n.md");
+
+		expect(wroteServer(applyLocalEdit.mock.calls, (t) => t.trim() === "")).toBe(false);
+	});
+
+	test("queued ADOPT does not copy a frontmatter-only mint over a server note with a body", async () => {
+		const { engine, mint, applyLocalEdit } = adoptEngine(docWith("---\nstatus: draft\n---\n"));
+
+		await engine.applyCrdtCreateAck(mint, "srv-id", "n.md");
+
+		expect(wroteServer(applyLocalEdit.mock.calls, (t) => !t.includes("base line."))).toBe(
+			false,
+		);
+	});
+
+	// When this device has no local history for the server's note, the empty-body
+	// check does not apply; the "never typed into" check alone keeps the empty
+	// buffer from counting as a transfer, which would skip the disk seed.
+	test("queued ADOPT of a never-typed-into mint seeds from disk even without server history", async () => {
+		const { engine, mint, applyLocalEdit } = adoptEngine(new Y.Doc(), new Y.Doc());
+
+		await engine.applyCrdtCreateAck(mint, "srv-id", "n.md");
+
+		expect(wroteServer(applyLocalEdit.mock.calls, (t) => t.includes("base line."))).toBe(true);
+	});
+
+	test("queued ADOPT still transfers a live buffer the user typed into", async () => {
+		const { engine, mint, applyLocalEdit } = adoptEngine(
+			docWith("typed while the create was in flight\n"),
+		);
+
+		await engine.applyCrdtCreateAck(mint, "srv-id", "n.md");
+
+		expect(
+			wroteServer(applyLocalEdit.mock.calls, (t) =>
+				t.includes("typed while the create was in flight"),
+			),
+		).toBe(true);
+	});
+});
