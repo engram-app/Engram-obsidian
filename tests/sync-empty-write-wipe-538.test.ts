@@ -284,7 +284,7 @@ describe("#539 follow-up: an unacked mint on a server-known path never overwrite
 		return d;
 	}
 
-	test("repairOrphanedClaim leaves a mint on a server-known path to the id-map repair", () => {
+	test("repairOrphanedClaim does not re-create a mint on a server-known path", () => {
 		const map = new NoteIdMap();
 		const mint = map.getOrMint("n.md");
 		const enqueue = mock();
@@ -294,8 +294,8 @@ describe("#539 follow-up: an unacked mint on a server-known path never overwrite
 		// The server has delivered a head for the PATH: it owns this note already.
 		(engine as any).setCrdtHead("n.md", "real-server-head");
 
-		// false hands the note_not_found to ensureNoteIdMapped (wiring), which
-		// remaps n.md to the server's id. A re-create would be ADOPTed instead.
+		// A re-create would be ADOPTed and, before the adopt gate, copy the
+		// mint's empty buffer over the server's note.
 		expect(engine.repairOrphanedClaim(mint)).toBe(false);
 		expect(enqueue).not.toHaveBeenCalled();
 	});
