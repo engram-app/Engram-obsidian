@@ -1132,10 +1132,7 @@ export class SyncEngine {
 					await this.reconcileNoteIdMapFromManifest();
 				} while (this.idMapReconcileQueued);
 			} catch (e) {
-				rlog().warn(
-					"sync",
-					`live id-map reconcile failed: ${e instanceof Error ? e.message : String(e)}`,
-				);
+				rlog().warn("sync", `live id-map reconcile failed: ${errMsg(e)}`);
 			} finally {
 				this.idMapReconcileInflight = null;
 			}
@@ -2652,6 +2649,9 @@ export class SyncEngine {
 	 *  "N file(s) failed to sync — open Sync Center" Notice. */
 	private failuresThisBatch = 0;
 	private firstFailureMessageThisBatch: string | undefined;
+	/** Category of that first failure. The remote-log summary ships THIS, not
+	 *  the message: the message is server/raw text that can name the file. */
+	private firstFailureCategoryThisBatch: SyncIssueCategory | undefined;
 
 	/** Suppresses re-toasting once we've already shown the "N attachments
 	 *  skipped" notice in this plugin session. Re-armed only when the engine
@@ -4717,6 +4717,7 @@ export class SyncEngine {
 				} else {
 					this.failuresThisBatch += 1;
 					this.firstFailureMessageThisBatch ??= gate.message;
+					this.firstFailureCategoryThisBatch ??= gate.category;
 				}
 				devLog().log("push", `skip (pre-gate ${gate.category}): ${file.path}`);
 				return false;
@@ -5407,7 +5408,7 @@ export class SyncEngine {
 			);
 			this.goOnline();
 		} catch (e) {
-			const msg = errMsg(e);
+			const msg = errMsg(e, file.path);
 			const classified = categorizeError(e);
 			// Plan-limit 402s (needs_pro, quota) are expected Free-tier outcomes,
 			// not programming errors — don't pollute the dev console. Gate by
@@ -5442,6 +5443,7 @@ export class SyncEngine {
 				// Tally for the batched "N files failed to sync" Notice.
 				this.failuresThisBatch += 1;
 				this.firstFailureMessageThisBatch ??= classified.message;
+				this.firstFailureCategoryThisBatch ??= classified.category;
 			}
 			devLog().log("error", `push failed: ${file.path} — ${msg} (${classified.category})`);
 			rlog().error(
@@ -5535,12 +5537,18 @@ export class SyncEngine {
 	 *  the count of generic failures since the last drain plus the first server
 	 *  message seen, and resets the tally. Consumed by the in-class batch
 	 *  toast (flushFailureSummaryToast); public for tests. */
-	drainFailureSummary(): { count: number; firstMessage?: string } {
+	drainFailureSummary(): {
+		count: number;
+		firstMessage?: string;
+		firstCategory?: SyncIssueCategory;
+	} {
 		const count = this.failuresThisBatch;
 		const firstMessage = this.firstFailureMessageThisBatch;
+		const firstCategory = this.firstFailureCategoryThisBatch;
 		this.failuresThisBatch = 0;
 		this.firstFailureMessageThisBatch = undefined;
-		return { count, firstMessage };
+		this.firstFailureCategoryThisBatch = undefined;
+		return { count, firstMessage, firstCategory };
 	}
 
 	/** Emit a single aggregated, deduped Notice covering all generic push
@@ -5548,7 +5556,7 @@ export class SyncEngine {
 	 *  the first server message. Replaces silent per-file console errors with one
 	 *  actionable signal. Called once at the end of pushModifiedFiles / pushAll. */
 	private flushFailureSummaryToast(): void {
-		const { count, firstMessage } = this.drainFailureSummary();
+		const { count, firstMessage, firstCategory } = this.drainFailureSummary();
 		if (count <= 0) return;
 		const noun = count === 1 ? "file" : "files";
 		const detail = firstMessage ? ` (${firstMessage})` : "";
@@ -5556,7 +5564,12 @@ export class SyncEngine {
 			t("Engram: {count} files failed to sync{detail} — open Sync Center", { count, detail }),
 			10_000,
 		);
-		rlog().warn("push", `${count} ${noun} failed to sync${detail}`);
+		// The Notice stays on-device and may show the message; the remote line
+		// gets the category only — the message can be raw text naming the file.
+		rlog().warn(
+			"push",
+			`${count} ${noun} failed to sync | category=${firstCategory ?? "unknown"}`,
+		);
 	}
 
 	/** Emit a single batched toast covering all attachments skipped this batch
@@ -10580,6 +10593,7 @@ export class SyncEngine {
 		} else {
 			this.failuresThisBatch += 1;
 			this.firstFailureMessageThisBatch ??= classified.message;
+			this.firstFailureCategoryThisBatch ??= classified.category;
 		}
 		await this.queue.dequeue(entry.path, this.entryVaultId(entry));
 	}

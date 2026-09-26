@@ -2765,7 +2765,7 @@ export default class EngramSyncPlugin extends Plugin {
 							onReleaseError: (path, err) =>
 								rlog().warn(
 									"crdt",
-									`Last-release flush failed for ${noteRef(path)} (doc left resident): ${err instanceof Error ? err.message : String(err)}`,
+									`Last-release flush failed for ${noteRef(path)} (doc left resident): ${errMsg(err, path)}`,
 								),
 						});
 						// Point the editor ViewPlugin at this stack's coordinator. Set on the
