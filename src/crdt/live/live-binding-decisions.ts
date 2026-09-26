@@ -109,6 +109,31 @@ export function fmCreationBodyDiff(
 	return textDiffToChangeSpec(beforeDoc, afterDoc.slice(prefixAfter));
 }
 
+/** What "the user typed" state survives a re-attach, or null for none.
+ *
+ *  Keystrokes typed while the binding waited on a doc (not yet forwarded) live
+ *  only in the editor. A re-attach to the SAME file (an id remap: a genesis
+ *  adopt, or the #538 wrong-mint healed to the server's id) must keep them
+ *  marked, with the base from BEFORE the first of them, or the reconcile
+ *  adopts the new doc over them. Carrying only a keystroke in the triggering
+ *  update (the old rule) lost earlier typing whenever that update was a click,
+ *  selection or scroll. Across a real file switch the old note's typing and
+ *  base mean nothing here. */
+export function carryAcrossReattach(
+	prev: { dirty: boolean; preEditText: string | null; path: string | null; ready: boolean },
+	nextPath: string | null,
+	update: { userEdit: boolean; startText: string },
+): { dirty: boolean; preEditText: string | null } | null {
+	const sameFile = nextPath === prev.path;
+	// Only typing from BEFORE the binding went live: once live, it was forwarded
+	// into the doc, and carrying it into a re-attach on that same doc (a stack
+	// rebuild keeps path and id) would apply it twice.
+	if (sameFile && prev.dirty && !prev.ready)
+		return { dirty: true, preEditText: prev.preEditText };
+	if (update.userEdit) return { dirty: true, preEditText: sameFile ? update.startText : null };
+	return null;
+}
+
 /** True when the editor must detach from its current doc and re-attach. Catches
  *  THREE cases:
  *   - path changed  -> Obsidian reused this editor for a different file.

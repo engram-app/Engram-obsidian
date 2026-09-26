@@ -35,6 +35,7 @@ import {
 	yDeltaToChangeSpec,
 } from "./cm-yjs-bridge";
 import {
+	carryAcrossReattach,
 	classifyEditSpan,
 	decideReconcile,
 	type EditorOwnerInfo,
@@ -143,19 +144,31 @@ class LiveBindingValue implements PluginValue {
 			// doc after its content was transferred to serverId). Carry the dirty flag
 			// so the reconcile FORWARDS the editor into the new doc instead of reverting
 			// that keystroke. A programmatic file-load re-attach is not a user event.
-			const carriedUserEdit =
-				u.docChanged &&
-				u.transactions.some((tr) => tr.isUserEvent("input") || tr.isUserEvent("delete"));
+			// Captured BEFORE detach/attach reset them. attach() snapshots the base
+			// AFTER any keystroke in this update, which would make the merge see
+			// "nothing typed" and adopt the doc over it; see carryAcrossReattach.
+			const carried = carryAcrossReattach(
+				{
+					dirty: this.dirtySinceAttach,
+					preEditText: this.preEditText,
+					path: bound.path,
+					ready: this.ready,
+				},
+				path,
+				{
+					userEdit:
+						u.docChanged &&
+						u.transactions.some(
+							(tr) => tr.isUserEvent("input") || tr.isUserEvent("delete"),
+						),
+					startText: u.startState.doc.toString(),
+				},
+			);
 			this.detach();
 			this.attach();
-			if (carriedUserEdit) {
-				this.dirtySinceAttach = true;
-				// attach() snapshotted the base AFTER that keystroke, which would make
-				// the merge see "nothing typed" and adopt the doc over it. Rewind to the
-				// pre-update text. Only valid when the FILE is the same (a genesis-adopt
-				// remap); across a real file switch the old text is not this note's base,
-				// so drop it and let the two-way fallback handle it.
-				this.preEditText = path === bound.path ? u.startState.doc.toString() : null;
+			if (carried) {
+				this.dirtySinceAttach = carried.dirty;
+				this.preEditText = carried.preEditText;
 			}
 			return;
 		}
