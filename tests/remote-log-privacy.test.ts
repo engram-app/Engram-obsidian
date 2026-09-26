@@ -91,6 +91,82 @@ describe("scrubLogText", () => {
 		expect(scrubLogText(input)).toContain("<path>");
 	});
 
+	test("spaced vault-relative title is fully redacted", () => {
+		expect(scrubLogText("failed Medical/Divorce settlement draft.md now")).toBe(
+			"failed <path> now",
+		);
+	});
+
+	test("spaced Android absolute path is fully redacted", () => {
+		expect(scrubLogText("open /storage/emulated/0/My Vault/Medical/x y.md")).toBe(
+			"open <path>",
+		);
+	});
+
+	test("apostrophes inside words do not open a quoted path", () => {
+		const line = "can't push n3 | route=/api/notes | reason=won't retry";
+		expect(scrubLogText(line)).toBe(line);
+	});
+
+	test("a quoted API route is exempt", () => {
+		const json = '{"route":"/api/notes"}';
+		expect(scrubLogText(json)).toBe(json);
+	});
+
+	test("quoted path keeps its own quote character", () => {
+		expect(scrubLogText('open "Medical/x y.md", retry')).toBe('open "<path>", retry');
+	});
+
+	test("route before the prose survives a spaced path", () => {
+		expect(scrubLogText("POST /api/notes returned 500 for Medical/x y.md")).toBe(
+			"POST /api/notes returned 500 for <path>",
+		);
+	});
+
+	test.each([
+		"csv",
+		"docx",
+		"xlsx",
+		"pptx",
+		"json",
+		"html",
+		"epub",
+		"heif",
+		"rtf",
+		"odt",
+		"key",
+		"pages",
+		"numbers",
+	])("redacts Medical/lab-results.%s", (ext) => {
+		expect(scrubLogText(`Medical/lab-results.${ext}`)).toBe("<path>");
+	});
+
+	test("an 8+ token gap still redacts the extension token", () => {
+		const out = scrubLogText("Medical/a b c d e f g h i j.md");
+		expect(out).not.toContain("j.md");
+		expect(out).toContain("<path>");
+	});
+
+	test("a field token stops the backward walk", () => {
+		expect(scrubLogText("dir=Medical/a | b.md")).toBe("dir=Medical/a | <path>");
+	});
+
+	test("is linear on adversarial spaces, slashes and quotes", () => {
+		const inputs = [
+			" ".repeat(100_000),
+			"/".repeat(100_000),
+			" '/".repeat(30_000),
+			`${"a/b ".repeat(20_000)}x.md`,
+			`${".".repeat(50_000)}x`,
+			`${"x.md ".repeat(20_000)}`,
+		];
+		for (const input of inputs) {
+			const t0 = performance.now();
+			scrubLogText(input);
+			expect(performance.now() - t0).toBeLessThan(50);
+		}
+	});
+
 	test("home-dir anchor stops at the field separator", () => {
 		expect(scrubLogText(`open /Users/alice/My Vault/x.md | category=network`)).toBe(
 			"open <path> | category=network",
