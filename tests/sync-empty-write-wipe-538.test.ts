@@ -300,6 +300,39 @@ describe("#539 follow-up: an unacked mint on a server-known path never overwrite
 		expect(enqueue).not.toHaveBeenCalled();
 	});
 
+	// The other half of the handoff above: the note_not_found then reaches
+	// ensureNoteIdMapped, whose "already mapped" early return used to swallow
+	// this state (the wrong mint IS mapped to the path). That mapping is the
+	// drift, so it must reconcile and land on the server's id.
+	test("ensureNoteIdMapped remaps a server-known path away from an unacked mint", async () => {
+		const map = new NoteIdMap();
+		const mint = map.getOrMint("n.md");
+		const engine = createEngine(map);
+		(engine as any).setCrdtHead("n.md", "real-server-head");
+		(mockApi.getManifest as any).mockResolvedValueOnce({
+			notes: [{ id: "srv-id", path: "n.md" }],
+			folders: [],
+		});
+
+		engine.ensureNoteIdMapped(mint);
+		await (engine as any).idMapReconcileInflight;
+
+		expect(map.get("n.md")).toBe("srv-id");
+	});
+
+	test("ensureNoteIdMapped still skips an id that is mapped and acked", async () => {
+		const map = new NoteIdMap();
+		map.set("n.md", "srv-id");
+		const engine = createEngine(map);
+		confirm(engine, "srv-id");
+		(engine as any).setCrdtHead("n.md", "real-server-head");
+		(mockApi.getManifest as any).mockClear();
+
+		engine.ensureNoteIdMapped("srv-id");
+
+		expect(mockApi.getManifest).not.toHaveBeenCalled();
+	});
+
 	test("repairOrphanedClaim still re-drives a mint the server has never seen", () => {
 		const map = new NoteIdMap();
 		const mint = map.getOrMint("n.md");

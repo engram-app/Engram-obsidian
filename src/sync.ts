@@ -1120,7 +1120,16 @@ export class SyncEngine {
 		// and carries its own tombstone skip; see there.
 		if (this.recentlyDeleted.has(noteId)) return;
 
-		if (this.noteIdMap.pathForId(noteId) !== null) return; // already mapped
+		// Already mapped, UNLESS it is the #538 wrong-mint: an id this device
+		// minted and the server never acked, sitting on a path the server has
+		// delivered a head for. That mapping is itself the drift, so reconcile:
+		// the manifest names the server's id for the path.
+		const mappedPath = this.noteIdMap.pathForId(noteId);
+		if (
+			mappedPath !== null &&
+			!(this.isUnackedMint(noteId) && this.getCrdtHead(mappedPath) != null)
+		)
+			return;
 		if (this.idMapReconcileInflight) {
 			this.idMapReconcileQueued = true;
 			return;
@@ -1208,8 +1217,8 @@ export class SyncEngine {
 		// An unacked mint on a path the server already owns is the #538 wrong-mint,
 		// not an orphan. hasServerNote says false for it by design (#539), but a
 		// re-create would be ADOPTed, and the adopt copies the mint's empty buffer
-		// over the real note. false hands it to ensureNoteIdMapped, which remaps
-		// the path to the server's id instead.
+		// over the real note. false hands it to ensureNoteIdMapped, which
+		// reconciles this exact state and remaps the path to the server's id.
 		if (this.isUnackedMint(noteId) && this.getCrdtHead(path) != null) return false;
 		if (!this.isCrdtEligiblePath(path)) return false;
 		const file = this.app.vault.getFileByPath(normalizePath(path));
