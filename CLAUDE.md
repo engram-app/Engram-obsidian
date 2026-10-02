@@ -183,5 +183,6 @@ Required status checks on `main`: `build-and-test`, `version-check / version-che
 - About to treat a 0-byte file as "nothing to protect" (three ways an empty file lies: a converged clear, undelivered ops, a `cachedRead` that invented it) → `docs/context/crdt-empty-placeholder-cold-rooms.md`
 - Wondering why a catch-up leg records no `serverHash`/`seq`, or tempted to add one (a row can lag its own `content_hash`; recording it marks the note in sync at bytes you cannot verify and every later row compares equal and is skipped) → `docs/context/crdt-empty-placeholder-cold-rooms.md`
 - Closing a note strips its `---` block while the web app still shows the keys, or you are adding ANY path that writes a CRDT doc to disk (`ProviderRegistry.getText` is the body alone — teardown must use `projectedText`/`residentProjection`; #483) → `docs/context/crdt-teardown-flush-strips-frontmatter.md`
+- A note is 0 bytes on every device after being opened, a `flushFromCrdt` guard change, or a flush function returns `true` from a path that wrote nothing (callers stamp synced hashes on `true`; #538 wrong-mint + silent empty write) → `docs/context/empty-write-wipe-538.md`
 
 @/home/open-claw/documents/code-projects/ops-agent/docs/self-updating-docs.md
