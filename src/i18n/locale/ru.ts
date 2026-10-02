@@ -37,7 +37,7 @@ const ru: Dict = {
 	"Restored {path} — will sync on next push.":
 		"{path} восстановлен, синхронизируется при следующей отправке.",
 	"Ignored {path} — won't sync until restored from Sync Center.":
-		"{path} игнорируется и не будет синхронизирован, пока вы не восстановите его в Sync Center.",
+		"{path} игнорируется и не будет синхронизирован, пока вы не восстановите его в Центре синхронизации.",
 	"Added {pattern} to ignore patterns": "{pattern} добавлен в список исключений",
 	"Engram backend changed — sign in again to continue.":
 		"Сервер Engram изменился. Войдите снова, чтобы продолжить.",
@@ -64,10 +64,10 @@ const ru: Dict = {
 		other: "Engram Sync: получено {count} изменений",
 	},
 	"Engram: {count} files failed to sync{detail} — open Sync Center": {
-		one: "Engram: {count} файл не синхронизирован{detail}. Откройте Sync Center",
-		few: "Engram: {count} файла не синхронизированы{detail}. Откройте Sync Center",
-		many: "Engram: {count} файлов не синхронизированы{detail}. Откройте Sync Center",
-		other: "Engram: {count} файлов не синхронизированы{detail}. Откройте Sync Center",
+		one: "Engram: {count} файл не синхронизирован{detail}. Откройте Центр синхронизации",
+		few: "Engram: {count} файла не синхронизированы{detail}. Откройте Центр синхронизации",
+		many: "Engram: {count} файлов не синхронизированы{detail}. Откройте Центр синхронизации",
+		other: "Engram: {count} файлов не синхронизированы{detail}. Откройте Центр синхронизации",
 	},
 	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.": {
 		one: "Engram: пропущено {count} вложение. Для изображений и PDF нужен платный план.",
@@ -242,10 +242,10 @@ const ru: Dict = {
 	"⤳ {count} skipped (Free plan)": "⤳ пропущено {count} (бесплатный план)",
 	"✕ {count} failed": "✕ не удалось {count}",
 	"{count} attachments need a paid plan to sync. See Sync Center.": {
-		one: "{count} вложению нужен платный план. См. Sync Center.",
-		few: "{count} вложениям нужен платный план. См. Sync Center.",
-		many: "{count} вложениям нужен платный план. См. Sync Center.",
-		other: "{count} вложениям нужен платный план. См. Sync Center.",
+		one: "{count} вложению нужен платный план. См. Центр синхронизации.",
+		few: "{count} вложениям нужен платный план. См. Центр синхронизации.",
+		many: "{count} вложениям нужен платный план. См. Центр синхронизации.",
+		other: "{count} вложениям нужен платный план. См. Центр синхронизации.",
 	},
 	"Syncing your vault": "Синхронизируем ваше хранилище",
 	"Getting started…": "Начинаем…",
@@ -262,7 +262,7 @@ const ru: Dict = {
 		"Engram: конфликт синхронизации в {path}, ваша локальная правка сохранена как {copy}",
 	"Open note": "Открыть заметку",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
-		"Engram: у {count} заметок проблемы с frontmatter. Откройте Sync Center, чтобы исправить.",
+		"Engram: у {count} заметок проблемы с frontmatter. Откройте Центр синхронизации, чтобы исправить.",
 	"New here? Watch the setup video": "Впервые здесь? Посмотрите видео по настройке",
 	"What Engram does, and how to connect your vault, start to finish.":
 		"Что делает Engram и как подключить хранилище, от начала до конца.",
@@ -356,7 +356,7 @@ const ru: Dict = {
 	"Semantic search": "Смысловой поиск",
 	"Open search sidebar": "Открыть панель поиска",
 	"Engram search": "Поиск Engram",
-	"Open sync center": "Открыть Sync Center",
+	"Open sync center": "Открыть Центр синхронизации",
 	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
 		"Engram: этого хранилища больше нет на сервере. Выберите или создайте хранилище, чтобы продолжить.",
 	"Engram: recovered plugin settings from a backup after a corrupted save.":
@@ -530,7 +530,7 @@ const ru: Dict = {
 	"Remove tag {tag}": "Убрать тег {tag}",
 	"👋 Welcome": "👋 Добро пожаловать",
 	"🔌 Connection": "🔌 Подключение",
-	"🔄 Sync Center": "🔄 Sync Center",
+	"🔄 Sync Center": "🔄 Центр синхронизации",
 	"⚙️ Advanced": "⚙️ Дополнительно",
 	"Error: {error}": "Ошибка: {error}",
 	unknown: "неизвестно",

@@ -31,7 +31,7 @@ const zhTW: Dict = {
 	"File not found locally: {path}": "本機找不到此檔案：{path}",
 	"Restored {path} — will sync on next push.": "已還原 {path}，將於下次推送時同步。",
 	"Ignored {path} — won't sync until restored from Sync Center.":
-		"已忽略 {path}，在 Sync Center 中還原後才會同步。",
+		"已忽略 {path}，在同步中心中還原後才會同步。",
 	"Added {pattern} to ignore patterns": "已將 {pattern} 加入忽略規則",
 	"Engram backend changed — sign in again to continue.": "Engram 後端已變更，請重新登入以繼續。",
 	"Engram: sign-in failed ({error})": "Engram：登入失敗（{error}）",
@@ -42,7 +42,7 @@ const zhTW: Dict = {
 	"Engram Sync: pulled {count} files from server": "Engram 同步：已從伺服器拉取 {count} 個檔案",
 	"Engram Sync: pulled {count} changes": "Engram 同步：已拉取 {count} 項變更",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
-		"Engram：{count} 個檔案同步失敗{detail}，請開啟 Sync Center",
+		"Engram：{count} 個檔案同步失敗{detail}，請開啟同步中心",
 	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.":
 		"Engram：已略過 {count} 個附件，升級後可同步圖片與 PDF。",
 	"Engram: plan upgraded — syncing {count} attachments…":
@@ -187,7 +187,7 @@ const zhTW: Dict = {
 	"⤳ {count} skipped (Free plan)": "⤳ 已略過 {count} 項（免費版）",
 	"✕ {count} failed": "✕ 失敗 {count} 項",
 	"{count} attachments need a paid plan to sync. See Sync Center.":
-		"{count} 個附件需要付費方案才能同步。請查看 Sync Center。",
+		"{count} 個附件需要付費方案才能同步。請查看同步中心。",
 	"Syncing your vault": "正在同步你的知識庫",
 	"Getting started…": "正在開始…",
 	"Open Engram to check your vault and confirm everything synced.":
@@ -203,7 +203,7 @@ const zhTW: Dict = {
 		"Engram：{path} 發生同步衝突，你的本機修改已另存為 {copy}",
 	"Open note": "開啟筆記",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
-		"Engram：{count} 則筆記的 frontmatter 有問題。請開啟 Sync Center 修正。",
+		"Engram：{count} 則筆記的 frontmatter 有問題。請開啟同步中心修正。",
 	"New here? Watch the setup video": "初次使用？觀看設定影片",
 	"What Engram does, and how to connect your vault, start to finish.":
 		"Engram 能做什麼，以及如何從頭到尾連接你的知識庫。",
@@ -294,7 +294,7 @@ const zhTW: Dict = {
 	"Semantic search": "語意搜尋",
 	"Open search sidebar": "開啟搜尋側邊欄",
 	"Engram search": "Engram 搜尋",
-	"Open sync center": "開啟 Sync Center",
+	"Open sync center": "開啟同步中心",
 	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
 		"Engram：此知識庫已不存在於伺服器。請選擇或建立一個知識庫以繼續。",
 	"Engram: recovered plugin settings from a backup after a corrupted save.":
@@ -452,7 +452,7 @@ const zhTW: Dict = {
 	"Remove tag {tag}": "移除標籤 {tag}",
 	"👋 Welcome": "👋 歡迎",
 	"🔌 Connection": "🔌 連線",
-	"🔄 Sync Center": "🔄 Sync Center",
+	"🔄 Sync Center": "🔄 同步中心",
 	"⚙️ Advanced": "⚙️ 進階",
 	"Error: {error}": "錯誤：{error}",
 	unknown: "未知",

@@ -34,7 +34,7 @@ const ko: Dict = {
 	"Restored {path} — will sync on next push.":
 		"{path}을(를) 복원했습니다. 다음 전송 때 동기화됩니다.",
 	"Ignored {path} — won't sync until restored from Sync Center.":
-		"{path}을(를) 무시했습니다. Sync Center에서 복원할 때까지 동기화되지 않습니다.",
+		"{path}을(를) 무시했습니다. 동기화 센터에서 복원할 때까지 동기화되지 않습니다.",
 	"Added {pattern} to ignore patterns": "{pattern}을(를) 제외 패턴에 추가했습니다",
 	"Engram backend changed — sign in again to continue.":
 		"Engram 백엔드가 변경되었습니다. 계속하려면 다시 로그인하세요.",
@@ -47,7 +47,7 @@ const ko: Dict = {
 		"Engram 동기화: 서버에서 파일 {count}개를 받았습니다",
 	"Engram Sync: pulled {count} changes": "Engram 동기화: 변경 {count}건을 받았습니다",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
-		"Engram: 파일 {count}개를 동기화하지 못했습니다{detail}. Sync Center를 열어보세요",
+		"Engram: 파일 {count}개를 동기화하지 못했습니다{detail}. 동기화 센터를 열어보세요",
 	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.":
 		"Engram: 첨부 파일 {count}개를 건너뛰었습니다. 이미지와 PDF를 동기화하려면 업그레이드하세요.",
 	"Engram: plan upgraded — syncing {count} attachments…":
@@ -203,7 +203,7 @@ const ko: Dict = {
 	"⤳ {count} skipped (Free plan)": "⤳ {count}개 건너뜀 (무료 요금제)",
 	"✕ {count} failed": "✕ {count}개 실패",
 	"{count} attachments need a paid plan to sync. See Sync Center.":
-		"첨부 파일 {count}개는 동기화에 유료 요금제가 필요합니다. Sync Center를 확인하세요.",
+		"첨부 파일 {count}개는 동기화에 유료 요금제가 필요합니다. 동기화 센터를 확인하세요.",
 	"Syncing your vault": "보관함을 동기화하는 중",
 	"Getting started…": "시작하는 중…",
 	"Open Engram to check your vault and confirm everything synced.":
@@ -219,7 +219,7 @@ const ko: Dict = {
 		"Engram: {path}에서 동기화 충돌이 생겼습니다. 로컬 편집은 {copy}로 저장했습니다",
 	"Open note": "노트 열기",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
-		"Engram: 노트 {count}개의 frontmatter에 문제가 있습니다. Sync Center를 열어 고치세요.",
+		"Engram: 노트 {count}개의 frontmatter에 문제가 있습니다. 동기화 센터를 열어 고치세요.",
 	"New here? Watch the setup video": "처음이신가요? 설치 영상 보기",
 	"What Engram does, and how to connect your vault, start to finish.":
 		"Engram이 하는 일과 보관함을 연결하는 방법을 처음부터 끝까지.",
@@ -312,7 +312,7 @@ const ko: Dict = {
 	"Semantic search": "의미 검색",
 	"Open search sidebar": "검색 사이드바 열기",
 	"Engram search": "Engram 검색",
-	"Open sync center": "Sync Center 열기",
+	"Open sync center": "동기화 센터 열기",
 	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
 		"Engram: 이 보관함은 서버에 없습니다. 계속하려면 보관함을 고르거나 만드세요.",
 	"Engram: recovered plugin settings from a backup after a corrupted save.":
@@ -476,7 +476,7 @@ const ko: Dict = {
 	"Remove tag {tag}": "태그 {tag} 제거",
 	"👋 Welcome": "👋 환영합니다",
 	"🔌 Connection": "🔌 연결",
-	"🔄 Sync Center": "🔄 Sync Center",
+	"🔄 Sync Center": "🔄 동기화 센터",
 	"⚙️ Advanced": "⚙️ 고급",
 	"Error: {error}": "오류: {error}",
 	unknown: "알 수 없음",

@@ -34,7 +34,7 @@ const ja: Dict = {
 	"Restored {path} — will sync on next push.":
 		"{path} を復元しました。次回の送信時に同期されます。",
 	"Ignored {path} — won't sync until restored from Sync Center.":
-		"{path} を無視しました。Sync Center で復元するまで同期されません。",
+		"{path} を無視しました。同期センターで復元するまで同期されません。",
 	"Added {pattern} to ignore patterns": "{pattern} を除外パターンに追加しました",
 	"Engram backend changed — sign in again to continue.":
 		"Engram のバックエンドが変わりました。続けるにはもう一度サインインしてください。",
@@ -47,7 +47,7 @@ const ja: Dict = {
 		"Engram 同期: サーバーから {count} 件のファイルを取得しました",
 	"Engram Sync: pulled {count} changes": "Engram 同期: {count} 件の変更を取得しました",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
-		"Engram: {count} 件のファイルが同期できませんでした{detail}。Sync Center を開いてください",
+		"Engram: {count} 件のファイルが同期できませんでした{detail}。同期センターを開いてください",
 	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.":
 		"Engram: {count} 件の添付ファイルをスキップしました。画像と PDF を同期するにはアップグレードしてください。",
 	"Engram: plan upgraded — syncing {count} attachments…":
@@ -204,7 +204,7 @@ const ja: Dict = {
 	"⤳ {count} skipped (Free plan)": "⤳ {count} 件をスキップ (無料プラン)",
 	"✕ {count} failed": "✕ {count} 件が失敗",
 	"{count} attachments need a paid plan to sync. See Sync Center.":
-		"{count} 件の添付ファイルは同期に有料プランが必要です。Sync Center をご確認ください。",
+		"{count} 件の添付ファイルは同期に有料プランが必要です。同期センターをご確認ください。",
 	"Syncing your vault": "保管庫を同期しています",
 	"Getting started…": "準備しています…",
 	"Open Engram to check your vault and confirm everything synced.":
@@ -220,7 +220,7 @@ const ja: Dict = {
 		"Engram: {path} で同期の競合が発生しました。ローカルの編集は {copy} として保存しました",
 	"Open note": "ノートを開く",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
-		"Engram: {count} 件のノートの frontmatter に問題があります。Sync Center を開いて直してください。",
+		"Engram: {count} 件のノートの frontmatter に問題があります。同期センターを開いて直してください。",
 	"New here? Watch the setup video": "はじめての方へ: セットアップ動画を見る",
 	"What Engram does, and how to connect your vault, start to finish.":
 		"Engram でできること、そして保管庫の接続手順を最後まで。",
@@ -313,7 +313,7 @@ const ja: Dict = {
 	"Semantic search": "セマンティック検索",
 	"Open search sidebar": "検索サイドバーを開く",
 	"Engram search": "Engram 検索",
-	"Open sync center": "Sync Center を開く",
+	"Open sync center": "同期センターを開く",
 	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
 		"Engram: この保管庫はサーバー上に存在しません。続けるには保管庫を選ぶか作成してください。",
 	"Engram: recovered plugin settings from a backup after a corrupted save.":
@@ -481,7 +481,7 @@ const ja: Dict = {
 	"Remove tag {tag}": "タグ {tag} を外す",
 	"👋 Welcome": "👋 ようこそ",
 	"🔌 Connection": "🔌 接続",
-	"🔄 Sync Center": "🔄 Sync Center",
+	"🔄 Sync Center": "🔄 同期センター",
 	"⚙️ Advanced": "⚙️ 詳細設定",
 	"Error: {error}": "エラー: {error}",
 	unknown: "不明",
