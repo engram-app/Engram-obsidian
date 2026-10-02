@@ -35,7 +35,7 @@ const fr: Dict = {
 	"Restored {path} — will sync on next push.":
 		"{path} restauré, il sera synchronisé au prochain envoi.",
 	"Ignored {path} — won't sync until restored from Sync Center.":
-		"{path} ignoré, il ne sera pas synchronisé avant restauration depuis le Sync Center.",
+		"{path} ignoré, il ne sera pas synchronisé avant restauration depuis le Centre de synchronisation.",
 	"Added {pattern} to ignore patterns": "{pattern} ajouté aux motifs à ignorer",
 	"Engram backend changed — sign in again to continue.":
 		"Le serveur Engram a changé. Reconnecte-toi pour continuer.",
@@ -56,8 +56,8 @@ const fr: Dict = {
 		other: "Engram Sync : {count} modifications récupérées",
 	},
 	"Engram: {count} files failed to sync{detail} — open Sync Center": {
-		one: "Engram : {count} fichier n'a pas pu être synchronisé{detail}. Ouvre le Sync Center",
-		other: "Engram : {count} fichiers n'ont pas pu être synchronisés{detail}. Ouvre le Sync Center",
+		one: "Engram : {count} fichier n'a pas pu être synchronisé{detail}. Ouvre le Centre de synchronisation",
+		other: "Engram : {count} fichiers n'ont pas pu être synchronisés{detail}. Ouvre le Centre de synchronisation",
 	},
 	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.": {
 		one: "Engram : {count} pièce jointe ignorée. Passe à une offre payante pour les images et les PDF.",
@@ -224,8 +224,8 @@ const fr: Dict = {
 	"⤳ {count} skipped (Free plan)": "⤳ {count} ignorés (offre gratuite)",
 	"✕ {count} failed": "✕ {count} en échec",
 	"{count} attachments need a paid plan to sync. See Sync Center.": {
-		one: "{count} pièce jointe demande une offre payante. Voir le Sync Center.",
-		other: "{count} pièces jointes demandent une offre payante. Voir le Sync Center.",
+		one: "{count} pièce jointe demande une offre payante. Voir le Centre de synchronisation.",
+		other: "{count} pièces jointes demandent une offre payante. Voir le Centre de synchronisation.",
 	},
 	"Syncing your vault": "Synchronisation de ton coffre",
 	"Getting started…": "On démarre…",
@@ -242,7 +242,7 @@ const fr: Dict = {
 		"Engram : conflit de synchronisation sur {path}, ta modification locale a été enregistrée sous {copy}",
 	"Open note": "Ouvrir la note",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
-		"Engram : le frontmatter de {count} notes pose problème. Ouvre le Sync Center pour corriger.",
+		"Engram : le frontmatter de {count} notes pose problème. Ouvre le Centre de synchronisation pour corriger.",
 	"New here? Watch the setup video": "Nouveau ici ? Regarde la vidéo d'installation",
 	"What Engram does, and how to connect your vault, start to finish.":
 		"Ce que fait Engram, et comment relier ton coffre, de bout en bout.",
@@ -335,7 +335,7 @@ const fr: Dict = {
 	"Semantic search": "Recherche sémantique",
 	"Open search sidebar": "Ouvrir le panneau de recherche",
 	"Engram search": "Recherche Engram",
-	"Open sync center": "Ouvrir le Sync Center",
+	"Open sync center": "Ouvrir le Centre de synchronisation",
 	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
 		"Engram : ce coffre n'existe plus sur le serveur. Choisis ou crée un coffre pour continuer.",
 	"Engram: recovered plugin settings from a backup after a corrupted save.":
@@ -508,7 +508,7 @@ const fr: Dict = {
 	"Remove tag {tag}": "Retirer l'étiquette {tag}",
 	"👋 Welcome": "👋 Bienvenue",
 	"🔌 Connection": "🔌 Connexion",
-	"🔄 Sync Center": "🔄 Sync Center",
+	"🔄 Sync Center": "🔄 Centre de synchronisation",
 	"⚙️ Advanced": "⚙️ Avancé",
 	"Error: {error}": "Erreur : {error}",
 	unknown: "inconnu",

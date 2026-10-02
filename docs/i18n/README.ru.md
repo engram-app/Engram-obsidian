@@ -70,7 +70,7 @@ Engram говорит на **MCP (Model Context Protocol)**, открытом с
 
 - **[Подключите свой ИИ](https://engram.page/docs/integrations)**: настройка MCP для Claude, Cursor, ChatGPT, Windsurf и других.
 - **[Справочник API](https://engram.page/docs/api)**: создавайте на основе REST и WebSocket API.
-- **[Руководство пользователя](../user-guide.md)**: ИИ-ассистенты, конфликты, Sync Center, разбор проблем.
+- **[Руководство пользователя](../user-guide.md)**: ИИ-ассистенты, конфликты, Центр синхронизации, разбор проблем.
 - **[Руководство разработчика](../../DEV.md)**: сборка из исходников, архитектура, выпуски.
 - **Что-то не так?** [Создайте issue](https://github.com/engram-app/Engram-obsidian/issues).
 - **Присоединяйтесь к сообществу.** Общайтесь с пользователями и разработчиками в [Discord](https://discord.gg/NKWcU2mm7N).

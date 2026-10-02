@@ -30,4 +30,21 @@ Give a form per [CLDR plural category](https://cldr.unicode.org/index/cldr-spec/
 
 ## What not to translate
 
-Leave "Engram" alone, and leave the names of UI surfaces that are still English, such as "Sync Center" and "Engram settings". A translated label the user cannot find on screen is worse than an English one.
+Leave "Engram" alone.
+
+UI surfaces ARE translated, and each locale uses ONE term for a surface everywhere (the settings tab, the command palette entry, notices that point at it, and the docs). A name the user sees on screen must match the name in the notice that tells them to open it, so change a surface name in all of those places at once. `tests/i18n-sync-center.test.ts` guards the Sync Center.
+
+| Locale | "Sync Center" |
+|---|---|
+| de | Sync-Zentrale |
+| es | Centro de sincronización |
+| fr | Centre de synchronisation |
+| it | Centro di sincronizzazione |
+| ja | 同期センター |
+| ko | 동기화 센터 |
+| pt | Central de sincronização |
+| ru | Центр синхронизации |
+| zh | 同步中心 |
+| zh-TW | 同步中心 |
+
+The marketing site docs (`engram-marketing`, `src/content/docs/<locale>/`) quote these terms. Update them together.

@@ -70,7 +70,7 @@ Aponte seu cliente para o servidor MCP do Engram (`https://mcp.engram.page` no s
 
 - **[Conecte sua IA](https://engram.page/docs/integrations)**: configuração de MCP para Claude, Cursor, ChatGPT, Windsurf e outros.
 - **[Referência da API](https://engram.page/docs/api)**: construa sobre a API REST e WebSocket.
-- **[Guia do usuário](../user-guide.md)**: assistentes de IA, conflitos, o Sync Center, solução de problemas.
+- **[Guia do usuário](../user-guide.md)**: assistentes de IA, conflitos, a Central de sincronização, solução de problemas.
 - **[Guia do desenvolvedor](../../DEV.md)**: compilar do código-fonte, arquitetura, lançamentos.
 - **Algo errado?** [Abra uma issue](https://github.com/engram-app/Engram-obsidian/issues).
 - **Entre na comunidade.** Converse com usuários e desenvolvedores no [Discord](https://discord.gg/NKWcU2mm7N).

@@ -34,7 +34,7 @@ const es: Dict = {
 	"Restored {path} — will sync on next push.":
 		"{path} restaurado, se sincronizará en el próximo envío.",
 	"Ignored {path} — won't sync until restored from Sync Center.":
-		"{path} ignorado, no se sincronizará hasta que lo restaures desde el Sync Center.",
+		"{path} ignorado, no se sincronizará hasta que lo restaures desde el Centro de sincronización.",
 	"Added {pattern} to ignore patterns": "{pattern} añadido a los patrones ignorados",
 	"Engram backend changed — sign in again to continue.":
 		"El servidor de Engram ha cambiado. Vuelve a iniciar sesión para continuar.",
@@ -55,8 +55,8 @@ const es: Dict = {
 		other: "Engram Sync: {count} cambios descargados",
 	},
 	"Engram: {count} files failed to sync{detail} — open Sync Center": {
-		one: "Engram: {count} archivo no se pudo sincronizar{detail}. Abre el Sync Center",
-		other: "Engram: {count} archivos no se pudieron sincronizar{detail}. Abre el Sync Center",
+		one: "Engram: {count} archivo no se pudo sincronizar{detail}. Abre el Centro de sincronización",
+		other: "Engram: {count} archivos no se pudieron sincronizar{detail}. Abre el Centro de sincronización",
 	},
 	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.": {
 		one: "Engram: {count} adjunto omitido. Mejora tu plan para sincronizar imágenes y PDF.",
@@ -223,8 +223,8 @@ const es: Dict = {
 	"⤳ {count} skipped (Free plan)": "⤳ {count} omitidos (plan gratuito)",
 	"✕ {count} failed": "✕ {count} con error",
 	"{count} attachments need a paid plan to sync. See Sync Center.": {
-		one: "{count} adjunto necesita un plan de pago. Mira el Sync Center.",
-		other: "{count} adjuntos necesitan un plan de pago. Mira el Sync Center.",
+		one: "{count} adjunto necesita un plan de pago. Mira el Centro de sincronización.",
+		other: "{count} adjuntos necesitan un plan de pago. Mira el Centro de sincronización.",
 	},
 	"Syncing your vault": "Sincronizando tu bóveda",
 	"Getting started…": "Empezando…",
@@ -241,7 +241,7 @@ const es: Dict = {
 		"Engram: conflicto de sincronización en {path}; tu cambio local se guardó como {copy}",
 	"Open note": "Abrir la nota",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
-		"Engram: el frontmatter de {count} notas da problemas. Abre el Sync Center para arreglarlo.",
+		"Engram: el frontmatter de {count} notas da problemas. Abre el Centro de sincronización para arreglarlo.",
 	"New here? Watch the setup video": "¿Primera vez? Mira el vídeo de instalación",
 	"What Engram does, and how to connect your vault, start to finish.":
 		"Qué hace Engram y cómo conectar tu bóveda, de principio a fin.",
@@ -335,7 +335,7 @@ const es: Dict = {
 	"Semantic search": "Búsqueda semántica",
 	"Open search sidebar": "Abrir el panel de búsqueda",
 	"Engram search": "Búsqueda de Engram",
-	"Open sync center": "Abrir el Sync Center",
+	"Open sync center": "Abrir el Centro de sincronización",
 	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
 		"Engram: esta bóveda ya no existe en el servidor. Elige o crea una bóveda para continuar.",
 	"Engram: recovered plugin settings from a backup after a corrupted save.":
@@ -508,7 +508,7 @@ const es: Dict = {
 	"Remove tag {tag}": "Quitar la etiqueta {tag}",
 	"👋 Welcome": "👋 Bienvenida",
 	"🔌 Connection": "🔌 Conexión",
-	"🔄 Sync Center": "🔄 Sync Center",
+	"🔄 Sync Center": "🔄 Centro de sincronización",
 	"⚙️ Advanced": "⚙️ Avanzado",
 	"Error: {error}": "Error: {error}",
 	unknown: "desconocido",

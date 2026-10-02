@@ -71,7 +71,7 @@ Richte deinen Client auf den Engram-MCP-Server (`https://mcp.engram.page` im geh
 
 - **[KI verbinden](https://engram.page/docs/integrations)**: MCP-Einrichtung für Claude, Cursor, ChatGPT, Windsurf und weitere.
 - **[API-Referenz](https://engram.page/docs/api)**: auf der REST- und WebSocket-API aufbauen.
-- **[Handbuch](../user-guide.md)**: KI-Assistenten, Konflikte, das Sync Center, Fehlersuche.
+- **[Handbuch](../user-guide.md)**: KI-Assistenten, Konflikte, die Sync-Zentrale, Fehlersuche.
 - **[Entwicklerhandbuch](../../DEV.md)**: aus dem Quellcode bauen, Architektur, Releases.
 - **Etwas kaputt?** [Eröffne ein Issue](https://github.com/engram-app/Engram-obsidian/issues).
 - **Komm in die Community.** Sprich mit Nutzern und Entwicklern auf [Discord](https://discord.gg/NKWcU2mm7N).

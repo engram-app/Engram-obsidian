@@ -2,7 +2,7 @@ import type { Dict } from "..";
 
 // 简体中文
 //
-// "Engram", "Sync Center" and "Engram settings" name UI surfaces that are still
+// "Engram" and "Engram settings" name UI surfaces that are still
 // English, so they stay English here. Translating a label the user cannot find
 // on screen is worse than leaving it.
 const zh: Dict = {
@@ -35,7 +35,7 @@ const zh: Dict = {
 	"File not found locally: {path}": "本地找不到该文件：{path}",
 	"Restored {path} — will sync on next push.": "已恢复 {path}，将在下次推送时同步。",
 	"Ignored {path} — won't sync until restored from Sync Center.":
-		"已忽略 {path}，在 Sync Center 中恢复后才会同步。",
+		"已忽略 {path}，在同步中心中恢复后才会同步。",
 	"Added {pattern} to ignore patterns": "已将 {pattern} 加入忽略规则",
 	"Engram backend changed — sign in again to continue.": "Engram 后端已更改，请重新登录以继续。",
 	"Engram: sign-in failed ({error})": "Engram：登录失败（{error}）",
@@ -46,7 +46,7 @@ const zh: Dict = {
 	"Engram Sync: pulled {count} files from server": "Engram 同步：已从服务器拉取 {count} 个文件",
 	"Engram Sync: pulled {count} changes": "Engram 同步：已拉取 {count} 项更改",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
-		"Engram：{count} 个文件同步失败{detail}，请打开 Sync Center",
+		"Engram：{count} 个文件同步失败{detail}，请打开同步中心",
 	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.":
 		"Engram：已跳过 {count} 个附件，升级后可同步图片和 PDF。",
 	"Engram: plan upgraded — syncing {count} attachments…":
@@ -191,7 +191,7 @@ const zh: Dict = {
 	"⤳ {count} skipped (Free plan)": "⤳ 已跳过 {count} 项（免费版）",
 	"✕ {count} failed": "✕ 失败 {count} 项",
 	"{count} attachments need a paid plan to sync. See Sync Center.":
-		"{count} 个附件需要付费套餐才能同步。请查看 Sync Center。",
+		"{count} 个附件需要付费套餐才能同步。请查看同步中心。",
 	"Syncing your vault": "正在同步你的知识库",
 	"Getting started…": "正在开始…",
 	"Open Engram to check your vault and confirm everything synced.":
@@ -207,7 +207,7 @@ const zh: Dict = {
 		"Engram：{path} 发生同步冲突，你的本地修改已另存为 {copy}",
 	"Open note": "打开笔记",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
-		"Engram：{count} 条笔记的 frontmatter 有问题。请打开 Sync Center 修正。",
+		"Engram：{count} 条笔记的 frontmatter 有问题。请打开同步中心修正。",
 	"New here? Watch the setup video": "初次使用？观看设置视频",
 	"What Engram does, and how to connect your vault, start to finish.":
 		"Engram 能做什么，以及如何从头到尾连接你的知识库。",
@@ -298,7 +298,7 @@ const zh: Dict = {
 	"Semantic search": "语义搜索",
 	"Open search sidebar": "打开搜索侧边栏",
 	"Engram search": "Engram 搜索",
-	"Open sync center": "打开 Sync Center",
+	"Open sync center": "打开同步中心",
 	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
 		"Engram：该知识库已不存在于服务器。请选择或新建一个知识库以继续。",
 	"Engram: recovered plugin settings from a backup after a corrupted save.":
@@ -456,7 +456,7 @@ const zh: Dict = {
 	"Remove tag {tag}": "移除标签 {tag}",
 	"👋 Welcome": "👋 欢迎",
 	"🔌 Connection": "🔌 连接",
-	"🔄 Sync Center": "🔄 Sync Center",
+	"🔄 Sync Center": "🔄 同步中心",
 	"⚙️ Advanced": "⚙️ 高级",
 	"Error: {error}": "错误：{error}",
 	unknown: "未知",
