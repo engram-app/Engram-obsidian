@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.32.0](https://github.com/engram-app/Engram-obsidian/compare/1.31.3...1.32.0) (2026-10-02)
+
+
+### Features
+
+* **i18n:** translate the Sync Center name in all 10 locales ([#549](https://github.com/engram-app/Engram-obsidian/issues/549)) ([fb27177](https://github.com/engram-app/Engram-obsidian/commit/fb271771c5bd4bcb0ddf1a12f2f55474ffbf7fd6))
+
+
+### Bug Fixes
+
+* **deps:** clear the brace-expansion, fast-uri and moment advisories ([#550](https://github.com/engram-app/Engram-obsidian/issues/550)) ([ba60f2d](https://github.com/engram-app/Engram-obsidian/commit/ba60f2d416a49db881035499d31d1467d95ea378))
+* **privacy:** scrub paths from remote logs ([#546](https://github.com/engram-app/Engram-obsidian/issues/546)) ([eb5db5f](https://github.com/engram-app/Engram-obsidian/commit/eb5db5f27a93347119e0ef1fe4ea28edee60c8e4))
+
 ## [1.31.3](https://github.com/engram-app/Engram-obsidian/compare/1.31.2...1.31.3) (2026-09-26)
 
 
