@@ -20,6 +20,21 @@ import zhTW from "../src/i18n/locale/zh-TW";
 
 const LOCALES: Record<string, Dict> = { de, es, fr, it, ja, ko, pt, ru, zh, "zh-TW": zhTW };
 
+// The agreed term per locale (see src/i18n/locale/README.md). Russian declines it, so its
+// pattern allows the case ending ("в Центре синхронизации").
+const TERM: Record<string, RegExp> = {
+	de: /Sync-Zentrale/,
+	es: /Centro de sincronización/,
+	fr: /Centre de synchronisation/,
+	it: /Centro di sincronizzazione/,
+	ja: /同期センター/,
+	ko: /동기화 센터/,
+	pt: /Central de sincronização/,
+	ru: /Центр[а-я]* синхронизации/,
+	zh: /同步中心/,
+	"zh-TW": /同步中心/,
+};
+
 const TAB = "🔄 Sync Center";
 const COMMAND = "Open sync center";
 
@@ -46,9 +61,13 @@ for (const [code, dict] of Object.entries(LOCALES)) {
 			expect(leaks).toEqual([]);
 		});
 
-		test("the tab label and command use the same term", () => {
-			const term = (dict[TAB] as string).replace(/^🔄\s*/, "");
-			expect(strings(dict[COMMAND] as Entry).join(" ")).toContain(term);
+		test("every string about the Sync Center uses the agreed term", () => {
+			const wrong = Object.entries(dict)
+				.filter(([key]) => /sync center/i.test(key))
+				.flatMap(([key, entry]) => strings(entry).map((v) => [key, v] as const))
+				.filter(([, v]) => !(TERM[code] as RegExp).test(v))
+				.map(([key]) => key);
+			expect(wrong).toEqual([]);
 		});
 	});
 }

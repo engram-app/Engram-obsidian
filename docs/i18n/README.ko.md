@@ -70,7 +70,7 @@ Engram은 **MCP(Model Context Protocol)**를 사용합니다. Claude, Cursor, Ch
 
 - **[AI 연결하기](https://engram.page/docs/integrations)**: Claude, Cursor, ChatGPT, Windsurf 등의 MCP 설정.
 - **[API 참조](https://engram.page/docs/api)**: REST + WebSocket API 위에 만들기.
-- **[사용자 가이드](../user-guide.md)**: AI 어시스턴트, 충돌, Sync Center, 문제 해결.
+- **[사용자 가이드](../user-guide.md)**: AI 어시스턴트, 충돌, 동기화 센터, 문제 해결.
 - **[개발자 가이드](../../DEV.md)**: 소스 빌드, 아키텍처, 릴리스.
 - **문제가 있나요?** [이슈를 남겨주세요](https://github.com/engram-app/Engram-obsidian/issues).
 - **커뮤니티에 참여하세요.** [Discord](https://discord.gg/NKWcU2mm7N)에서 사용자와 개발자와 이야기할 수 있습니다.
