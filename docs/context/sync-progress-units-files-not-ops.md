@@ -1,5 +1,7 @@
 # Sync progress units: files, not op-log rows
 
+_Last verified: 2026-10-03_
+
 **Trigger:** the progress modal / recap shows a different number than the
 sync-options (preview) modal promised, a progress bar freezes at `0/N`
 during a pull, or "All synced" appears despite real failures.
@@ -40,12 +42,6 @@ delete history. PR #412 fixed three instances of this class:
   `undefined`/NaN counts.
 - The pinning tests live in `tests/sync-progress-firstsync.test.ts`.
 
-## Update (per-file genesis rewrite, follow-up PR)
+## Genesis notes are per-file work
 
-`crdt_create_batch` was retired client-side right after PR #412: genesis notes
-now ride the same bounded per-file `pushFile` loop as everything else
-(per-file work units, per-file progress events, per-file failure isolation,
-PUSH_BATCH_SIZE concurrent). The server handler
-stays for older plugin versions. The chunk-size/chunk-timeout notes above are
-historical context for why the batch kept failing; the batch no longer exists
-in the plugin.
+`crdt_create_batch` is retired client-side: genesis notes ride the same bounded per-file `pushFile` loop (`PUSH_BATCH_SIZE` concurrent) as everything else, so progress events and failure isolation are per file.

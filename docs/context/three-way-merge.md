@@ -1,6 +1,6 @@
-# 3-Way Merge — where an LCA still exists, and which one to use
+# Textual merge: where an LCA still exists, and which one to use
 
-_Last verified: 2026-07-26_
+_Last verified: 2026-10-03_
 
 **Read this before wiring `BaseStore` into anything.** Its content is stale for
 CRDT-synced notes, and the previous version of this doc said the opposite.
@@ -22,10 +22,8 @@ just be routed into the Y.Doc instead. Usually it can.
 `BaseStore` (`base-store.ts`) still exists and still stores last-synced content
 per path, but **only the REST paths refresh it**:
 
-- `baseStore.set(...)` is called from the pull/push paths only (`sync.ts` ~5762,
-  5782, 5810, 7335), and each call is gated on `change.version != null`.
-- CRDT-delivered content goes through `recordCrdtBaseline()` (`sync.ts:1217`),
-  which updates **`syncState.hash` alone** — never the base content.
+- `baseStore.set(...)` is called from the pull/push paths only, each gated on `change.version != null`.
+- CRDT-delivered content goes through `recordCrdtBaseline()`, which updates **`syncState.hash` alone**, never the base content.
 
 Consequence: for a note that is actively syncing over the CRDT socket, the stored
 base can be arbitrarily old. Building a patch from a stale base and applying it to
@@ -68,9 +66,13 @@ falls back, so it must reject early rather than guess.
 Fallback to the old two-way forward (user's keystrokes win) when there is no base,
 when the doc has not diverged from the base, or when **any** hunk fails to apply.
 
+## The other LCA consumer: `mergeDiskOntoDoc`
+
+`src/crdt/lca-merge.ts` (`mergeDiskOntoDoc(base, disk, current)`, #357) applies a disk edit's delta relative to a base onto the doc's current text so remote ops that landed mid-read survive. Its base IS `BaseStore`, wired in `main.ts` as `lcaFor`. That is the exact staleness hazard above; the guard is that a dirty merge (`clean: false`, a hunk failed to apply) must fall back to the two-way path rather than ship, which `onDirtyMerge` logs as `LCA merge left unapplied hunks`. Treat a stale `BaseStore` base here as a known risk, not a solved one.
+
 ## Gotchas
 
-- A "3-way merge" that reaches for `BaseStore` is almost certainly wrong now. Ask
+- A "3-way merge" that reaches for `BaseStore` is almost certainly wrong now (the one consumer, `lcaFor`, is described above). Ask
   what the true common ancestor is and whether it is fresh.
 - `dirty` (user typed during hydration) and "disk diverges from the baseline" are
   different questions. The reconcile only answers the first; the second is

@@ -8,8 +8,7 @@ structural convergence (disk + Y.Doc text + noteIdMap, all three surfaces).
 Runs in CI as the "Sim convergence tier" step (`.github/workflows/ci.yml`) —
 milliseconds, no wall clock, no flakiness.
 
-Design rationale + the full trap list (T1-T6) this tier was built to dodge:
-`docs/context/testing-architecture-migration.md` (workspace repo).
+Design rationale and the sim tier's blind spots: backend repo `docs/context/testing-architecture-migration.md`.
 
 ## Running it
 

@@ -1,5 +1,7 @@
 # CRDT convergence sim — tier-fidelity gaps
 
+_Last verified: 2026-10-03_
+
 The convergence sim tier (`tests/sim/`) boots N real headless `SyncEngine`
 replicas against a CRDT-only `ModelServer` + deterministic `Scheduler`, then
 `assertConverged` (`oracle.ts`) checks all three surfaces strictly: disk +
@@ -15,6 +17,8 @@ Two suites run in `bun test` today, both gating:
   nondeterminism: *which* seed to explore), deterministic under that seed,
   `SIM_SEED=n bun test tests/sim/random.test.ts` to replay. The seed and its
   replay command are printed for every iteration.
+
+> **Rule for any sim-reproduced bug:** a sim "repro" can be a model-server artifact, not a real defect. Two incidents were mis-filed that way: the model server was pull-only and never solicited a held struct (it mis-filed #299 as a backend bug), and an earlier #299b repro ran on a checkout nine commits behind `origin/main`. Reproduce on current `origin/main` in a worktree (the shared checkout is often parked behind) and confirm the real backend behaves as the model does before calling it a product bug.
 
 > **History.** The random suite used to be a de-tested tool
 > (`random-harness.ts`, `.ts` not `.test.ts`) because it could not converge in
@@ -56,26 +60,6 @@ the REAL backend.
 **Fix:** model `note_changed` fan-out, or route delete/rename to a tier backed by
 the real backend. Tracked in #406.
 
-## Finding #3 — suspected strand — **FILED as #295**
+## Finding #3: suspected strand, CLOSED (#295)
 
-Under drop/offline, some notes end **stranded on a replica whose catch-up cursor
-has advanced to that note's seq without materializing its content** → permanent
-strand. Witness: seed `3440604223`, `n22.md` server seq 262, replicas A/B report
-`getCatchupSeq() === 262` while missing the note; catch-up delivers only
-`seq > cursor`, so 262 never re-delivers. Iterated reconnect (5 rounds) does NOT
-heal it; zero `seq-replay: skipped` lines.
-
-Hypothesis: a catch-up `applySyncChange` that echo/hash-dedups a row still lets
-the walk advance the cursor past that row's seq, so a row not materialized
-locally is never revisited — the "silent-skip consumes a feed entry" hazard the
-code's own comment warns about (`applyLiveOpWithSeq`, `src/sync.ts`).
-
-The advance itself is deliberate and now lives in exactly one place —
-`walkOpLog` (#378) advances past every row SEEN, applied or skipped, so that a
-permanently-unappliable op cannot stall the feed. That is the trade this
-finding probes: *can't stall* was bought with *can strand*. One place to fix,
-if it is confirmed.
-
-> This was originally held from filing pending gaps #1 and #2. It has since been
-> filed as #295, and gap #1 has closed — so the faithful tier it was waiting for
-> now exists. Re-isolate from the witness seed above.
+Seed `3440604223` (note `n22.md`, server seq 262) once showed replicas whose catch-up cursor advanced to a note's seq without materializing it. #295 was closed 2026-09-25 as not reproducible: the client was rebuilt on Relay's model (#331), the adjacent seq-fence defect was fixed (#296), and neither sim tier could produce the witness. The trade it probed still stands: `walkOpLog` (#378) advances past every row SEEN, applied or skipped, so a permanently-unappliable op cannot stall the feed (*can't stall* was bought with *can strand*). If a stranded note ever resurfaces, that is the one place to look.

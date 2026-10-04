@@ -1,5 +1,7 @@
 # A remote rename: three bugs, one shape
 
+_Last verified: 2026-10-03_
+
 Renaming a note in the web app produced three distinct failures in Obsidian.
 They were fixed in this order, and only the third is really about renames — the
 first two were general defects a rename happened to expose.

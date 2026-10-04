@@ -1,10 +1,8 @@
 # Context Doc: a rename must carry the note's sync evidence
 
-_Last verified: 2026-08-31 (#489 / PR #490)_
+_Last verified: 2026-10-03_
 
-## Status
-Fixed. Both rename legs. The sim-tier blindness that hid it is fixed in the
-same PR.
+Fixed in #489 / PR #490, both rename legs. The sim-tier blindness that hid it was fixed in the same PR.
 
 ## Symptom that gets reported
 "I made a note, renamed it, deleted it, made another note — and the second one
@@ -103,23 +101,8 @@ universally true does not fail — it goes green while testing nothing. When a
 guard exists to distinguish two cases, check that the harness can produce BOTH.
 
 ## Testing it
-- `tests/sync-delete-fence.test.ts` — the rename gates. Note the harness trap:
-  `recordSyncEvidence` stamps `{ hash: 1 }` while the vault reads back
-  `"body"`, so the moved row never matches the file's real hash and the echo
-  filter can never fire. That is a state the product cannot produce — a
-  CONVERGED note always has `row.hash === fnv1a(disk)`. Use
-  `recordConvergedEvidence`, or a rename test proves nothing.
-- `tests/sim/regressions.test.ts` — `#489 rename-then-delete`: the user's exact
-  sequence, with the delete inside the rename's push window (no `drain()`
-  between the rename and the delete). Asserts by ID, not by the renamed path:
-  the model server keys notes by their ORIGINAL path and does not relocate on a
-  same-id create, so `notes.has(renamedPath)` is false whether or not the
-  rename ever transmitted — it reads like a check and proves nothing.
-- `tests/sync-delete-fence.test.ts` — one test per rename leg, driving
-  `handleRename` / `moveIfIdRelocated` then `handleDelete`.
-
-Mutation-proven: reverting either single `renamePath` line turns exactly one
-test red out of 3016.
+- `tests/sync-delete-fence.test.ts` has one test per rename leg (`handleRename` / `moveIfIdRelocated`, then `handleDelete`) and pins `hasServerNote(id) === false` after a rename. Harness trap: `recordSyncEvidence` stamps `{ hash: 1 }` while the vault reads back `"body"`, a state the product cannot produce (a CONVERGED note always has `row.hash === fnv1a(disk)`). Use `recordConvergedEvidence`, or a rename test proves nothing.
+- `tests/sim/regressions.test.ts` `#489 rename-then-delete` runs the user's exact sequence with the delete inside the rename's push window (no `drain()` between). Assert by ID, not by the renamed path: the model server keys notes by their ORIGINAL path and does not relocate on a same-id create, so `notes.has(renamedPath)` is false whether or not the rename transmitted.
 
 ## Related
 - `../../src/sync.ts` `renamePath` / `dropPath`
