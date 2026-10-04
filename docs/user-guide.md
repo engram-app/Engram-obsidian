@@ -37,14 +37,11 @@ You can also tell the plugin to skip specific files or folders: either with a pa
 
 ## Handling conflicts
 
-If you edit the same note in two places before they sync, the plugin tries to merge the changes automatically. Most of the time it just works. When it can't merge safely, you have two options (set in **Settings → Advanced**):
-
-- **Auto** (default): keep both versions. The plugin saves the other copy as `your-note (conflict 2026-06-18).md` (the date it was created) so nothing is ever lost.
-- **Modal**: a window pops up showing both versions side-by-side, and you pick what to keep, chunk by chunk.
+Notes sync as live collaborative documents, so edits made in two places merge automatically as they arrive; most of the time you will never notice. If a file changed on disk while the plugin could not see it (an external editor, or while Obsidian was closed) and that change can't be merged safely, the plugin keeps both: your local version is saved beside the note as `your-note (conflict 2026-06-18).md` (the date it was created) and the note itself converges to the server's version, so nothing is ever lost.
 
 ## The Sync Center
 
-The Sync Center is a dashboard for the plugin. Open it from the 🔄 ribbon icon or run *Engram: Open sync center*. It shows:
+The Sync Center is a dashboard for the plugin. Open it from the **Sync Center** tab in the plugin settings, or run *Engram: Open sync center*. It shows:
 
 - What's currently being synced
 - What's queued (waiting for a reconnect, for example)
@@ -57,14 +54,14 @@ The status bar at the bottom of Obsidian shows a quick indicator of sync state a
 
 - **Network use**: the plugin only talks to the Engram server URL you configure. Nothing else.
 - No telemetry, no analytics.
-- Optional "remote logging" (off by default) sends sync events to *your own* Engram server for debugging. It never goes to a third party.
+- Optional diagnostics (**Settings → Advanced**, off by default) send sync events and request-tracing headers to *your own* Engram server for debugging: metadata only, never note content or file names. It never goes to a third party.
 - Your account credentials live inside Obsidian's plugin data folder, alongside your other plugin settings.
 
 ## Troubleshooting
 
 | Something's wrong | What to check |
 |-------------------|---------------|
-| Can't connect to Engram | Is the URL correct (with `https://`)? Did you click *Test connection* in settings? |
+| Can't connect to Engram | Is the server URL on the Connection tab correct (with `https://`), and does it show you as signed in? |
 | Notes aren't syncing | Open *Engram: Show sync log* or the Sync Center. Make sure the file type is supported and isn't in the ignore list. |
 | Conflicts every time I save | Your device and the server probably disagree on the time. Check both system clocks. |
 | Mobile crashes / won't load | File an issue with your phone OS and Obsidian version; mobile is supported and we want to know. |
@@ -75,4 +72,4 @@ Still stuck? [Open an issue](https://github.com/engram-app/Engram-obsidian/issue
 
 ## Attribution
 
-Uses [diff-match-patch](https://github.com/google/diff-match-patch) by Google for 3-way merge conflict resolution, licensed under Apache 2.0.
+Uses [diff-match-patch](https://github.com/google/diff-match-patch) by Google to merge text edits, licensed under Apache 2.0.

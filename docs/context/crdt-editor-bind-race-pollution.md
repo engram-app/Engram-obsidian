@@ -1,39 +1,33 @@
-# Context Doc: CRDT editor-binding race — cross-file pollution with a CLEAN noteIdMap
+# Editor binding: stale-buffer pollution, unseeded-doc base loss, boundary inserts
 
-_Last verified: 2026-07-07_
+_Last verified: 2026-10-03_
 
-## Status
-Fixed (PR #194, v1.11.21)
+Three bug classes in the editor<->Y.Text binding. The client was rebuilt on Relay's model in July 2026 (#331): the old `editor-controller.ts` is gone and the binding is now a per-`EditorView` ViewPlugin, `src/crdt/live/live-binding.ts` + `live-binding-decisions.ts`. The classes still apply to any change there.
 
-## What This Is
-Root-cause record of a cross-file content-pollution bug in the CRDT live-editor binding (`src/crdt/live/editor-controller.ts`): switching files in Obsidian copied one note's full content into another, server-side, with a proven-clean noteIdMap (jq bijection check). Distinct from the round-1 wrong-mint/cross-wire map class (see the workspace doc `../engram-workspace/docs/context/crdt-wrong-mint-cross-file-overwrite.md`, PR #193).
+## 1. A reused editor surface must be detached synchronously at the switch boundary (#194)
 
-## Mechanism
-`EditorController.bindTo(view, newPath)` awaited `getYText(newPath)` with the OLD note's ySync binding still attached to the reused CM6 EditorView. Obsidian reuses editor views across note switches; during the await gap, Obsidian's `loadFileInternal`/`setViewData` replaces the entire editor document with the NEW file's content. The still-attached old ySync treats that as a local edit and applies it to the OLD note's Y.Text, which syncs up as that note's content.
+Obsidian reuses one CM6 `EditorView` across note switches. The old binder awaited the new note's Y.Text while the OLD binding was still attached; during the await Obsidian replaced the whole editor document with the new file, and the old binding forwarded that as a local edit into the OLD note. Result: one note's full content copied into another, server-side, with a clean noteIdMap. The 3s drift repair had the same hole (it never checked which file the view showed).
 
-- One file switch = one race window.
-- Content arrives as a clean full copy (it's a whole-doc replace).
-- The 3s drift-repair had the same hole: it dispatched repairs without verifying the view still displayed the bound path — a missed/late rebind repainted the old note's content into the visible file every 3s ("note keeps reverting" symptom).
+Rule: tear the binding down synchronously before any await, and never trust the buffer while a file load is in flight. A stale-bound gap is data loss; an unbound gap is only "no live sync until the next refresh".
 
-## Why the Old Code Looked Safe
-It deliberately deferred releasing the old binding until after `getYText` resolved, so a failed rebind left the old binding intact. That invariant WAS the bug: a stale-bound gap is data loss; an unbound gap is merely no-live-sync-until-next-refresh. PR #194 flips it.
+The nested-editor variant (Live Preview table cells build an `EditorView` with the PARENT's `owner`, so `editorInfoField` resolves to the same file) is closed by `ownedMarkdownPath`: bind only when `info.editor?.cm === view`. See `live-binding-table-cell-editor.md`.
 
-## Fix (PR #194, v1.11.21) — never-span-a-load semantics
-The shape: a loading critical section plus `view.file` identity checks.
+## 2. An unseeded doc plus a non-empty editor must DEFER, never reconcile (#257)
 
-1. `bindTo` detaches the old binding SYNCHRONOUSLY (compartment cleared + refcount released) before any await.
-2. `bindEpoch` monotonic counter: overlapping `bindTo` calls — latest wins; a slow stale bind aborts after its await.
-3. `runDriftCheck` view-identity guard: new optional `ControllerDeps.viewPath()` dep (live-views wires it as `() => getMarkdownFilePath(view)` — the MdView is stable per cm, the file it shows is not). If `viewPath() !== bound path`: detach (NOT release — release marks the controller permanently inert while it stays in live-views' controllers map, which would brick rebinding) and let `refresh()` re-bind.
+`flushFromCrdt` writes base to disk and deliberately leaves the Y.Doc empty (adopt-first: the server seeds the doc on its own lineage; a local seed forks a second lineage, the #846 doubling). If bind-time reconcile runs while `ytext.length === 0 && editor.length > 0`, it deletes base out of the editor and the binding pushes that delete as a local op: base lost on the server and every device. `decideReconcile` returns `defer` for exactly this case; never seed the doc locally to "fix" it. A genuine user delete-all is a live edit on an already-seeded doc.
 
-## Gotchas
-- **Testing**: the plugin test harness is fake-view + real Y.Doc, no DOM — real ySync integration can't run, so tests pin the structural invariants instead (sync-detach-before-await via deferred `getYText`, latest-wins via out-of-order resolution, drift guard via injectable `driftIntervalMs`). Tests in `tests/crdt-editor-controller.test.ts`.
-- **Detach vs release**: in the drift guard, `release` is wrong — it marks the controller permanently inert while it stays in live-views' controllers map, bricking rebinding. Detach and let `refresh()` re-bind.
+Related: a catch-up that fakes convergence (records a hash or seq for bytes it never applied, or serves a stale head) leaves a live-bound note deaf, because the editor owns the file and nothing re-solicits it. See `sync-catchup-convergence.md`.
 
-## General Lesson
-Any binding between a reused editor surface and per-document state must be torn down synchronously at the switch boundary; never trust the editor buffer while a file load is in flight.
+## 3. Zero-width edits at a region boundary (frontmatter guard)
 
-## References
-- `src/crdt/live/editor-controller.ts` — the fixed code
-- `tests/crdt-editor-controller.test.ts` — structural-invariant tests
-- Plugin PR #194 (fix, v1.11.21); PR #193 (round-1 wrong-mint class)
-- Workspace doc: `../engram-workspace/docs/context/crdt-wrong-mint-cross-file-overwrite.md`
+The binding forwards edits to the body-only Y.Text and drops edits inside the frontmatter block `[0, prefix)`. A guard written `toA <= prefix` swallows a pure insert at `prefix` (typing at the start of the first body line; with no frontmatter, prefix 0 and position 0), shifting every later keystroke's offsets and mangling the line until the 3s drift check snaps it. `classifyEditSpan` checks `fromA >= prefix` (body) BEFORE `toA <= prefix` (frontmatter); frontmatter is the half-open range `[0, prefix)`. Any "is this edit inside region X" guard must decide which side owns the boundary for zero-width edits; deletions spanning the boundary mask the bug, so only typing bites. A whole frontmatter block appearing in one transaction (paste, fence completion) is handled by `fmCreationBodyDiff`, which forwards a body-before to body-after diff, empty for a pure frontmatter paste.
+
+## Testing
+
+The test harness is fake-view + real Y.Doc with no DOM, so tests pin structural invariants: `tests/crdt-live-binding-decisions.test.ts` (`decideReconcile`, `classifyEditSpan`, `ownedMarkdownPath`) and `tests/crdt-live-views.test.ts`.
+
+## Related
+
+- `crdt-sync-store-hiding-layers.md`: the `pathForId` seam that turns a hidden path into a second minted id
+- `live-binding-table-cell-editor.md`
+- Mint-resurrection and handshake-lane background: `../engram/docs/context/crdt-room-lifetime-and-drain.md` (engram repo)

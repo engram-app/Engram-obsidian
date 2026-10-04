@@ -8,6 +8,8 @@ flush, no retry. The server log has no inbound frame for that note_id at all.
 Found via e2e `test_48_oauth_reconnect_catchup.py::test_oauth_reconnect_receives_update`
 (`engram#1130`), fixed in plugin #335.
 
+_Last verified: 2026-10-03_
+
 ## The mechanism
 
 `socketConverge` → `fireCrdtReHandshake` → `ProviderRegistry.reset` + `enroll`
@@ -39,59 +41,17 @@ the socket is down, this device holds the note with no head forever, and the one
 recovery path (re-handshake) is gated off. Permanently deaf.
 
 Blast radius is bounded: a later LOCAL edit unsticks it. `pushFile` sees
-`hasServerNote` false and takes the socket-native genesis branch
-(`sync.ts:2663-2678`) rather than the live-CRDT branch, so it sends a
-`crdt_create`; the server's idempotent same-path arm (`engram`
-`lib/engram/notes.ex:687-689`) returns the existing row, and the ack sets
-`CRDT_HEAD_CREATED` (`sync.ts:2770`). Head flipped, gate open. (There is NO REST
-route here any more — `sync.ts:2845-2851`, "CRDT-sole … the only REST note path
-kept is for notes OUTSIDE the CRDT domain". An earlier draft of this doc said
-REST; same conclusion, wrong path.) So the symptom is "this note stopped
+`hasServerNote` false and takes the socket-native genesis branch rather than the
+live-CRDT branch, so it sends a `crdt_create`; the server's idempotent same-path
+arm returns the existing row, and the ack sets `CRDT_HEAD_CREATED`. Head
+flipped, gate open. (There is no REST route for CRDT-domain notes.) So the symptom is "this note stopped
 receiving remote updates until I typed in it", not silent loss.
 
-## Reading the evidence (the trap that cost the first two sessions)
+## Reading client logs from CI artifacts
 
-`e2e-clerk` uploads `ci-debug-<head-sha>` (e2e-crdt uses `ci-crdt-debug-<sha>`).
-The plugin's own logs ship to the backend, so they live in `docker-compose.log`,
-not `pytest-e2e.log`:
+The plugin's own logs ship to the backend, so they live in the e2e job's `docker-compose.log` (artifact `ci-debug-<head-sha>`, or `ci-crdt-debug-<sha>` for e2e-crdt), not in `pytest-e2e.log`. Filter `"category":"client"` per user and order by FILE POSITION: the `time` field is the remote logger's batch-POST timestamp, so a whole batch shares one millisecond and sorting by it scrambles causality. Take real timing from the SERVER lines (`sync broadcast emit`, `crdt join`/`crdt leave`, `ws connect`); `conn_id` separates the pre-disconnect connection from the reconnect. Two earlier sessions misattributed cause from batch timestamps.
 
-```bash
-export GH_REPO=engram-app/engram
-gh run download <run-id> -n "ci-debug-<head-sha>"
-
-# client trail for one user, in file order
-grep '"category":"client"' docker-compose.log \
-  | grep '<hashed-user-id>' | sed 's/^engram-1 *| *//' \
-  | jq -r '"\(.time) \(.metadata.conn_id // "-" | .[0:8]) \(.message)"'
-
-# server-side truth for the same vault
-grep -v '"category":"client"' docker-compose.log | grep '<vault-id>' \
-  | sed 's/^engram-1 *| *//' | jq -r '"\(.time) \(.severity) \(.message)"'
-```
-
-**Do not order client lines by their `time` field.** It is the timestamp of the
-remote logger's batching POST, so a whole batch shares one millisecond and
-`sort` scrambles causality. Order by file position, and take real timing from
-the SERVER lines (`sync broadcast emit`, `crdt join` / `crdt leave`, `ws connect`).
-Two prior sessions on this bug misattributed cause from batch timestamps — one
-chased an auth flip that was actually teardown 92s later, one attributed a
-diverged-row line to the wrong version of the note.
-
-`conn_id` (in client metadata, and in the socket `Parameters` on the server
-side) is what separates the pre-disconnect connection from the reconnect.
-
-## Ruled out — do not re-walk
-
-- **`crdt_catchup_since` / cursor selection.** The feed served the diverged row
-  correctly; the `diverged cold note` line IS that row.
-- **Unadvertised-resident-doc reconnect.** Headless GREEN 6 covers it, passes.
-- **REST write vs live room split-brain.** `do_rewrite_note` → `maybe_merge_crdt`
-  persists the merged `crdt_state_ciphertext`, so a room hydrated after a REST
-  update projects the new content. Headless repro passes.
-- **`setAdvertised` transition guard.** `reset()` flips it false, `enroll()`
-  true — the edge fires.
-- **OAuth identity drift.** Verified intact at re-handshake time; the api-key
-  flip in the logs is the test's own `finally`.
+Already ruled out for this bug, do not re-walk: `crdt_catchup_since` cursor selection, unadvertised-resident-doc reconnect, REST-write vs live-room split-brain, the `setAdvertised` transition guard, OAuth identity drift.
 
 ## Invariant to keep
 
@@ -122,7 +82,7 @@ you are triaging a `sync` warn burst, this is a known contributor.
 
 ---
 
-# The write side of the same gate: `adoptCreateAck` (2026-08-03)
+# The write side of the same gate: `adoptCreateAck`
 
 Everything above is the PULL side — a handshake wrongly held by the gate. This
 section is the WRITE side: what opens the gate, and the ordering the create-ack
@@ -183,13 +143,12 @@ prose — including this doc.**
 "The server acked our `crdt_create`" bookkeeping existed three times, and one
 copy had already leaked a step historically (the queued path missed the
 mint-retire the live path did). They also disagreed on ordering. Merged into one
-`adoptCreateAck(effectiveId, path, consumed, opts?)` in PR #382 (closes #377):
+`adoptCreateAck(effectiveId, path, consumed)` in PR #382 (closes #377; the batch path has since been retired):
 
 | caller | context |
 |---|---|
-| `pushFile`'s genesis branch | live — may transfer an editor's mint buffer, retires the mint doc |
+| `pushFile`'s genesis branch | live (two call sites), may transfer an editor's mint buffer, retires the mint doc |
 | `applyCrdtCreateAck` | durable queued — seeds from disk |
-| `recordCrdtGenesisPushed` | batch — content shipped inline in the batch frame |
 
 The ADOPT half (mint-buffer transfer, mint retire) deliberately stays with each
 caller: it legitimately differs per path. Only the shared tail merged.
@@ -204,18 +163,11 @@ caller: it legitimately differs per path. Only the shared tail merged.
    queued path already had this order; the live path did not, and #382 aligned
    them. This is a behavior change, not just a refactor.
 
-`opts.flushHeld: false` is the batch path only — it seeds no local doc, so it
-has no gated updates to flush. That is the one honest difference of the three,
-and it is a named argument specifically so it cannot go missing silently again.
-
 A `null` `consumed` means nothing was transmitted, so no baseline is stamped —
 the seed-declined and post-create-throw exits. The post-create-throw exit leaves
 the echo-cooldown window closed conservatively; an unsuppressed self-echo there
 is absorbed by the hash-skip dedupe.
 
-## Line numbers above are pre-refactor
+## Every `enroll()` call site must be gated on `isLiveBound`
 
-The `sync.ts:NNNN` references earlier in this doc predate PR #380/#382, which
-inserted ~130 lines. Several were already stale before that. Grep for the symbol,
-not the line. (The same rot affects the `sync.ts:NNNN` self-references inside
-`src/sync.ts` — 4 of 5 pointed at blank or unrelated lines as of 2026-08-03.)
+`enroll()` opens a real CRDT room via a genuine STEP1 handshake. There are 12+ call sites across `sync.ts`, `wiring.ts`, `main.ts` and `live-views.ts`, and each must fire only when an editor is bound to the note. `flushHeldEditsOnCreateAck`'s catch-block self-heal was the one ungated site: on a thrown `flushHeldState` it reset and enrolled unconditionally, so a bulk first sync of N never-opened notes could open N rooms (#1409, handshake half; fixed by gating on `isLiveBound`). That is safe because `flushHeldState` is a PULL: held edits reach the server on the note's next local edit once the create-ack flips `hasServerNote`, not through the re-handshake. The self-heal only fires on a thrown error, so it is invisible on the happy path; when auditing a room-count regression, grep every `enroll(` and trace the `catch` blocks. `fireCrdtReHandshake` (the `socketConverge` funnel) has the same shape for a non-live-bound note losing connectivity mid-edit while durably queued; not verified. The room count was never a RAM proxy (#1409 closed: the cost was the embedding model, not rooms).

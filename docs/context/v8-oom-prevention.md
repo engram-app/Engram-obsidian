@@ -1,22 +1,12 @@
-# V8 OOM Prevention
+# V8 OOM prevention
 
-_Last verified: 2026-06-18_
+_Last verified: 2026-10-03_
 
-## Background
+In v0.3.5 Obsidian crashed with V8 out-of-memory errors when other plugins were enabled alongside Engram: their startup file modifications flooded the sync engine with push requests before it was ready. Heap stayed stable (~37MB) after these mitigations, all still in place:
 
-In v0.3.5, Obsidian crashed with V8 out-of-memory errors when multiple plugins were enabled alongside Engram Vault Sync. Root cause: other plugins' startup file modifications flooded the sync engine with push requests before it was ready.
+1. **Ready gate.** `handleModify`, `handleDelete` and `handleRename` return immediately until `setReady()` (called in `main.ts` after the initial sync in a `finally`, inside `onLayoutReady`).
+2. **Content-free offline queue.** Entries store path/action/kind/mtime only; content is re-read from the vault on flush (prevents O(n^2) serialization). Legacy entries with inline content are still honored on load.
+3. **Debounced persistence.** `OfflineQueue.schedulePersist()` coalesces writes (default 1s).
+4. **Push concurrency limiter.** A semaphore caps concurrent pushes at 5 (`maxConcurrentPushes`, `acquirePushSlot`/`releasePushSlot` in `src/sync.ts`).
 
-## Mitigations (all in place since v0.3.5)
-
-1. **Ready gate** — `handleModify`, `handleDelete`, `handleRename` return immediately until `setReady()` is called after initial sync completes.
-2. **Content-free offline queue** — queue entries store path/action/kind/mtime only, not file content. Content is re-read from vault on flush. Prevents O(n^2) serialization.
-3. **Debounced persistence** — `OfflineQueue.schedulePersist()` coalesces writes (default 1s debounce).
-4. **Push concurrency limiter** — semaphore caps concurrent pushes at 5 (`acquirePushSlot`/`releasePushSlot`).
-
-## Heap Profile
-
-After fixes, heap stable at ~37MB during normal operation (was unbounded before).
-
-## Discovery
-
-2026-03. Full investigation in memory entry `cdp-oom-investigation.md` (investigation was incomplete — the mitigations resolved the symptom but root cause in Electron's memory management was not fully traced).
+The mitigations resolved the symptom; the root cause in Electron's memory management was never fully traced.

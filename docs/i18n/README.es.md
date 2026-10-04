@@ -16,8 +16,6 @@
 
 </div>
 
-> La interfaz del plugin está por ahora solo en inglés. Que este documento esté traducido no significa que el programa en sí esté localizado.
-
 ## Qué obtienes
 
 - **Tu IA trabaja *dentro* de tu bóveda.** Conecta Claude, Cursor o ChatGPT mediante [MCP](#conecta-tu-ia). Lee tus notas como contexto y escribe otras nuevas:
@@ -47,7 +45,7 @@ Nunca se sobrescribe nada en silencio. Los cambios hechos sin conexión se sincr
 
 **1. Consigue una cuenta de Engram.** Alojada en **[engram.page](https://engram.page)** (plan gratuito, nada que instalar), o aloja tú mismo el [backend de código disponible](https://github.com/engram-app/engram) para que tus notas no salgan nunca de tu propio equipo.
 
-**2. Conéctate.** Abre *Settings → Engram Vault Sync*. **Alojado:** pulsa **Sign in** en la pestaña Cloud. **Autoalojado:** indica la dirección de tu servidor y tu clave en la pestaña Self-hosted. En ambos casos el plugin te guía por la primera sincronización; no se envía nada hasta que lo confirmas.
+**2. Conéctate.** Abre *Settings → Engram Vault Sync* y ve a la pestaña **Conexión**. **Alojado:** elige **Engram Cloud** y pulsa **Iniciar sesión**. **Autoalojado:** elige **Autoalojado** e indica la dirección de tu servidor y tu clave. En ambos casos el plugin te guía por la primera sincronización; no se envía nada hasta que lo confirmas.
 
 A partir de ahí, la sincronización ocurre sola mientras trabajas.
 

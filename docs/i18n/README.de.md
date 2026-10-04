@@ -16,8 +16,6 @@
 
 </div>
 
-> Die Oberfläche des Plugins ist derzeit nur auf Englisch verfügbar. Dass dieses Dokument übersetzt ist, bedeutet nicht, dass die Software selbst lokalisiert wäre.
-
 ## Was du bekommst
 
 - **Deine KI arbeitet *in* deinem Vault.** Verbinde Claude, Cursor oder ChatGPT über [MCP](#ki-verbinden). Sie liest deine Notizen als Kontext und schreibt neue zurück:
@@ -47,7 +45,7 @@ Nichts wird jemals stillschweigend überschrieben. Offline vorgenommene Änderun
 
 **1. Besorg dir ein Engram-Konto.** Gehostet auf **[engram.page](https://engram.page)** (kostenlose Stufe, nichts zu installieren), oder hoste das [quelloffen verfügbare Backend](https://github.com/engram-app/engram) selbst, damit deine Notizen deine eigene Hardware nie verlassen.
 
-**2. Verbinde dich.** Öffne *Settings → Engram Vault Sync*. **Gehostet:** klick im Tab Cloud auf **Sign in**. **Selbst gehostet:** trag im Tab Self-hosted die Adresse deines Servers und den Schlüssel ein. In beiden Fällen führt dich das Plugin durch die erste Synchronisierung; bis zu deiner Bestätigung wird nichts gesendet.
+**2. Verbinde dich.** Öffne *Settings → Engram Vault Sync* und wechsle zum Tab **Verbindung**. **Gehostet:** wähl **Engram Cloud** und klick auf **Anmelden**. **Selbst gehostet:** wähl **Selbst gehostet** und trag die Adresse deines Servers und den Schlüssel ein. In beiden Fällen führt dich das Plugin durch die erste Synchronisierung; bis zu deiner Bestätigung wird nichts gesendet.
 
 Danach läuft die Synchronisierung einfach mit, während du arbeitest.
 

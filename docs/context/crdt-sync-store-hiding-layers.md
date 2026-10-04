@@ -1,6 +1,6 @@
 # Context Doc: SyncStore hiding layers must expire
 
-_Last verified: 2026-08-16 (PR #431, review round 5)_
+_Last verified: 2026-10-03_
 
 ## Status
 Fixed. Three separate instances of one bug shape, found across rounds 3, 4 and 5
@@ -29,8 +29,10 @@ It always runs the same way, and the end of it is data loss:
 5. It publishes that id, overwriting the live claim. Inbound CRDT frames for the
    original id now have no path to resolve to.
 
-That is the duplicate-id / wrong-mint class documented in
-`crdt-wrong-mint-cross-file-overwrite.md`, reached from a different direction.
+That is the duplicate-id / wrong-mint class (a second id for a note that
+already has one, overwriting the live claim), reached from a different
+direction. Background on the handshake-lane trigger lives in the engram repo,
+`docs/context/crdt-room-lifetime-and-drain.md`.
 
 ## Why it shipped three times
 - **Round 3** added `evicted` with no clear at all.
@@ -88,7 +90,7 @@ goes red. `tests/index-crdt-regressions.test.ts` ("a forget is a bridge, not a
 verdict") is the worked example.
 
 ## Related
-- `crdt-wrong-mint-cross-file-overwrite.md` — the consequence class
+- `path-keyed-oracle-id-keyed-wire.md`: what the engine does once a second id is minted
 - `crdt-editor-bind-race-pollution.md` — same `pathForId` seam, different cause
 - Local-vs-published split: `forget()` is local-only and takes the LITERAL path;
   `delete()`/`release()` publish and resolve through the rename chain. A forget

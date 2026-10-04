@@ -1,10 +1,8 @@
 # Context Doc: a path-keyed oracle must not gate an id-keyed wire
 
-_Last verified: 2026-08-18 (release-v0.17.0 e2e-clerk, 2/2 attempts)_
+_Last verified: 2026-10-03_
 
-## Status
-Fixed. Found by e2e `test_27_empty_note_sync` blocking the prod deploy gate,
-not by a user report — but the same shape was already reaching users.
+Fixed. Found by e2e `test_27_empty_note_sync` blocking the prod deploy gate, but the same shape was already reaching users.
 
 ## The one-line rule
 
@@ -63,8 +61,8 @@ delivery is confirmed is not bookkeeping, it is a lie the guard then enforces.**
 
 ## The trigger
 
-The mint only happens because the id-map answered `null` for a claimed path —
-the hiding-layer class in [[crdt-sync-store-hiding-layers]]. That doc covers
+The mint only happens because the id-map answered `null` for a claimed path:
+the hiding-layer class in `crdt-sync-store-hiding-layers.md`. That doc covers
 why the entry goes missing. This one covers what the engine does next, which
 was wrong independently: even with a correct map, any future id divergence
 would have produced the same dropped frame.
@@ -81,18 +79,11 @@ Two guards, both mutation-proven:
 2. `clearPushedBaselineForId` — `onCrdtNoteNotFound` un-banks the echo baseline
    before healing the map, so the retry actually re-sends.
 
-## Testing traps hit while writing this
+## Testing traps
 
-- **A stub that echoes its input passes by construction.** The first
-  `setCrdtCreate` double was `async (id) => id`, which can never model ADOPT —
-  the test went green against the bug. Model the server (`Map<path, id>`),
-  don't stub it. Same lesson as `modelVaultFs` in #441.
-- **An assertion that loops over `mock.calls` is vacuous when the array is
-  empty.** The first version passed because the push never ran at all. Pair any
-  `for (const call of …)` with an explicit `.length` assertion.
-- **`shouldDeferMint` only covers engine-flushed files.** A locally authored
-  note (the field case, and test_27) is not flushed, so that guard does not
-  apply — a repro built on `applySyncChange` is caught by it and proves nothing.
+- A stub that echoes its input passes by construction: the first `setCrdtCreate` double was `async (id) => id`, which can never model ADOPT. Model the server (`Map<path, id>`).
+- An assertion that loops over `mock.calls` is vacuous when the array is empty; pair it with a `.length` assertion.
+- `shouldDeferMint` only covers engine-flushed files. A locally authored note (the field case, and test_27) is not flushed, so a repro built on `applySyncChange` is caught by that guard and proves nothing.
 
 ## Don't do this again
 

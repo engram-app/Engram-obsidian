@@ -1,103 +1,15 @@
-# Logging Architecture & Planned Refactor
+# Logging architecture
 
-_Last verified: 2026-04-09_
+_Last verified: 2026-10-03_
 
-## Current State
+## Layers
 
-Three-layer pattern in catch blocks (redundant):
+- **`devLog()`** (`src/dev-log.ts`): in-memory ring buffer, queryable over CDP as `__engramLog` (`dump(n)`, `filter(s)`, `stats()`, `clear()`). `DEV_MODE` is replaced with `false` by esbuild, so production builds carry no-ops. Uses `console.debug`, hidden by default in Obsidian's console (needs Verbose).
+- **`rlog()`** (`src/remote-log.ts`): ships to the backend `/logs` endpoint, batched (30s timer, 20-entry threshold). Levels error/warn/info (`debug` is reserved, no call sites). Shipping is gated by the single `diagnosticsEnabled` setting (default OFF; it also turns on the verbose `diagnostics.ts` firehose and tracing headers) and by `remoteLogLevel`, a volume dial below which entries are dropped before buffering.
+- **`rlog().anomaly(category, code, counts)`**: the one path that ships at warn EVEN WITH DIAGNOSTICS OFF and bypasses the level threshold. It exists because a user's first sync is the most likely thing to break and the least likely to have diagnostics on (prod 2026-08-13: a first sync dropped 316 of 316 notes and produced zero client log lines). Its contract is enforced, not conventional: `category` and `code` are slug-validated and `counts` holds numbers and booleans, so a path, title or note content cannot be expressed in any argument. The category slug matters because the backend interpolates it into a Logger message body (`[client:<category>]`) that the redaction filter does not touch and that ships to Loki at warn. Free text plus a redactor was rejected: a redactor splitting on whitespace leaves part of `Divorce settlement draft.md` intact, and a note title is prose.
+- **`noteRef(path)`** (`src/note-ref.ts`): opaque per-session counter used in log lines in place of any path. Never log a cleartext path or note content.
+- **`console.error`**: a handful of direct `console.*` calls remain at error boundaries (each carries a `biome-ignore lint/suspicious/noConsole`). New code should log through `rlog()`; a unified logger wrapper was proposed and never built.
 
-```ts
-console.error(`Engram Sync: failed to push ${file.path}`, e);  // layer 1
-devLog().log("error", `push failed: ...`);                       // layer 2 (dev only, CDP)
-rlog().error("push", `Push failed: ...`, e.stack);               // layer 3 (backend)
-```
+## Reading client logs
 
-### Layers
-
-- **`devLog()`** (`src/dev-log.ts`): In-memory ring buffer, CDP queryable via `__engramLog`, tree-shaken in production (DEV_MODE guard). Uses `console.debug` — hidden by default in Obsidian console (requires Verbose level).
-- **`rlog()`** (`src/remote-log.ts`): Ships to backend `POST /logs` endpoint. Batched (30s timer + 20-entry threshold). Leveled: error/warn/info. Always active in production when configured.
-- **`console.error`**: Direct browser console output — always visible. Added as a stopgap before rlog existed. Now redundant.
-
-## Ecosystem Comparison
-
-Most OSS Obsidian plugins (Templater, obsidian-git, Dataview) use raw `console.*` throughout with no abstraction. Engram's two-layer approach is already significantly more mature. No comparable plugin ships logs to a backend.
-
-## The Problem
-
-`console.error` is redundant now that rlog() covers production visibility. The only real gap: devLog() uses `console.debug` which requires Verbose mode in Obsidian DevTools to see. So errors aren't visible at normal console filter levels during local dev.
-
-## Planned Refactor: Unified Logger
-
-Replace three call sites with one. Create `src/logger.ts`:
-
-```ts
-import { devLog } from "./dev-log";
-import { rlog } from "./remote-log";
-
-class UnifiedLogger {
-    error(cat: string, msg: string, err?: Error): void {
-        devLog().error(cat, msg);   // DEV_MODE: console.error (always visible)
-        rlog().error(cat, msg, err?.stack);
-    }
-    warn(cat: string, msg: string): void {
-        devLog().warn(cat, msg);    // DEV_MODE: console.warn
-        rlog().warn(cat, msg);
-    }
-    info(cat: string, msg: string): void {
-        devLog().log(cat, msg);     // DEV_MODE: console.debug
-        rlog().info(cat, msg);
-    }
-}
-
-let _logger: UnifiedLogger | null = null;
-
-export function initLogger(): UnifiedLogger {
-    _logger = new UnifiedLogger();
-    return _logger;
-}
-
-export function log(): UnifiedLogger {
-    return _logger ?? new UnifiedLogger();
-}
-```
-
-Also extend `devLog()` to support error/warn levels (not just `console.debug`):
-- `devLog().error(cat, msg)` → writes to ring buffer + calls `console.error` in DEV_MODE
-- `devLog().warn(cat, msg)` → writes to ring buffer + calls `console.warn` in DEV_MODE
-
-### Call site change (everywhere in sync.ts, main.ts, etc.):
-
-Before:
-```ts
-} catch (e) {
-    // biome-ignore lint/suspicious/noConsole: error boundary
-    console.error(`Engram Sync: failed to push ${file.path}`, e);
-    devLog().log("error", `push failed: ${file.path} — ${e.message}`);
-    rlog().error("push", `Push failed: ${file.path} — ${e.message}`, e.stack);
-}
-```
-
-After:
-```ts
-} catch (e) {
-    log().error("push", `Failed to push ${file.path}`, e instanceof Error ? e : undefined);
-}
-```
-
-## Implementation Scope
-
-Files to change:
-- Create: `src/logger.ts`
-- Modify: `src/dev-log.ts` — add error/warn methods using `console.error/warn`
-- Modify: `src/main.ts` — replace ~7 triple-call patterns
-- Modify: `src/sync.ts` — replace ~11 triple-call patterns
-- Modify: `src/search-modal.ts`, `src/search-view.ts` — replace ~2 patterns
-- Remove: all `// biome-ignore lint/suspicious/noConsole: error boundary` suppressions (no longer needed)
-
-## Benefits
-
-- One call per event instead of three
-- `console.error` never appears in business logic
-- Error-level events visible in Obsidian console without Verbose mode
-- All biome-ignore suppressions for noConsole go away
-- Logging behavior fully encapsulated — easy to add future destinations (Sentry, etc.)
+Client entries land in the backend log as `[client:<category>]` (Loki `category="client"`). Only warn and above reach Loki from the client by default, so an info-level line you are looking for will not be there. Ordering and CI-artifact notes: `crdt-pull-gated-by-create-ack.md`.

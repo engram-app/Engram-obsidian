@@ -1,173 +1,49 @@
 # An empty file lies three ways (and the first-sync placeholder it hides)
 
-_Last verified: 2026-08-27 (UTC)_
+_Last verified: 2026-10-03_
 
-## Status
-Fixed on `fix/477-empty-placeholder-cold-rooms` (`Engram-obsidian#477`, PR #478).
-**Read "What this does NOT buy" before quoting any number off this.** Both
-benefits this started out claiming — fewer rooms, and a visible empty-note
-window — were measured and did not survive.
-
-## What This Is
-`#477` was filed as "cold-note catch-up opens a room per note", off a prod first
-sync that showed **833 rooms for ~1,000 notes**. Chasing it turned up a different,
-realer defect underneath, and killed the perf premise on the way.
+Plugin #477 / PR #478. Filed as "cold-note catch-up opens a room per note" off a prod first sync (833 rooms for ~1,000 notes). Chasing it found a real defect underneath and killed the perf premise.
 
 ## The chain
 
-1. Device A pushes. The op-log feed emits a `v=1` create row whose `content` is
-   EMPTY (its `content_hash` is the empty-content hash — every such row shares
-   one, which is how you spot them in a log).
-2. Device B's catch-up hits the **discovery** leg, which materializes the row's
-   body — so it writes a **0-byte file** and records that empty as its baseline.
-   Measured: **20 of 150 notes** on a bulk first sync.
-3. The real body lands server-side; a later row carries it with a fresh hash.
-4. Disk (0b) ≠ row (39b) → the quiet-record guard's `localNow === content`
-   condition fails → the note takes the cold-converge leg to fetch a body **this
-   very row already carries.**
-
-The room was a correct heal of a hole the client dug itself. What the fix is
-actually worth is narrower than that sounds — see "What this does NOT buy".
+1. Device A pushes. The op-log feed emits a `v=1` create row whose `content` is EMPTY (every such row shares the empty-content hash).
+2. Device B's catch-up discovery leg materializes the row's body: a **0-byte file**, with that empty recorded as its baseline (20 of 150 notes on a bulk first sync).
+3. The real body lands later in a row with a fresh hash.
+4. Disk (0b) differs from the row, so the quiet-record guard's `localNow === content` fails and the note takes the cold-converge leg to fetch a body the row already carries.
 
 ## An empty file is not a license to write
 
-The first fix was "disk is empty, so there's nothing a converge could protect —
-just write the row's body." Review killed it. `isUnconvergedEmptyPlaceholder`
-exists because an empty file lies in three different ways:
+`isUnconvergedEmptyPlaceholder` guards the shortcut "disk is empty, so just write the row's body". An empty file lies three ways:
 
-1. **The emptiness IS the converged state.** A remote clear applied through
-   `flushFromCrdt` calls `recordCrdtBaseline("")`, so `stored.hash === fnv1a("")`
-   and `localDiverged` reads FALSE — the drift-copy escape hatch never fires. A
-   later checkpoint-lagged row carrying the PRE-clear body would resurrect
-   deleted content. **`crdtHead` separates them:** a converged note carries a
-   REAL head; a discovery placeholder carries only the `CRDT_HEAD_CREATED`
-   sentinel ("the server has this note, we have never applied its ops").
-2. **The doc holds local work.** `hasUndeliveredOps` is the precondition
-   `convergeColdNoteRoomFree` already enforces, for the same reason: a snapshot
-   write, like a `crdt_doc_state` read, cannot carry anything upward.
-3. **The cache invented it.** `localNow` is a `cachedRead`, and a `cachedRead`
-   right after a create is exactly where Obsidian's cache lies — proving the 0
-   bytes took `adapter.read` during the investigation, so the overwrite demands
-   the same proof. A read failure answers false; the converge is always correct.
+1. **The emptiness IS the converged state.** A remote clear applied through `flushFromCrdt` calls `recordCrdtBaseline("")`, so `stored.hash === fnv1a("")` and the drift-copy escape hatch never fires; a later checkpoint-lagged row carrying the PRE-clear body would resurrect deleted content. `crdtHead` separates them: a converged note carries a REAL head; a discovery placeholder carries only the `CRDT_HEAD_CREATED` sentinel ("the server has this note, we have never applied its ops").
+2. **The doc holds local work.** `hasUndeliveredOps` is the precondition `convergeColdNoteRoomFree` enforces for the same reason: a snapshot write cannot carry anything upward.
+3. **The cache invented it.** `localNow` is a `cachedRead`, and right after a create is exactly where Obsidian's cache lies. Prove the 0 bytes with `adapter.read`; a read failure answers false and the converge always runs.
 
-## And never record what you cannot verify
+## Never record what you cannot verify
 
-The leg writes the body and then records **exactly what the discovery leg
-records** — `hash` via `recordCrdtBaseline`, plus `markServerKnown`. No
-`serverHash`, no `seq`. A row can lag its own `content_hash` (fresh hash, stale
-bytes — the test_82 "went deaf on the stale bytes" class), so recording that hash
-marks the note in sync at bytes we cannot verify, after which every later row
-carrying it compares equal and is skipped. Permanently.
+The leg writes the body and records exactly what the discovery leg records: `hash` via `recordCrdtBaseline`, plus `markServerKnown`. NO `serverHash`, NO `seq`. A row can lag its own `content_hash` (fresh hash, stale bytes: the test_82 "went deaf on the stale bytes" class), so recording it marks the note in sync at bytes you cannot verify, and every later row carrying it compares equal and is skipped, permanently. It also drops any staged `pendingConvergence` for the note: `commitCrdtConvergence` records unconditionally once a stage exists (no text-verify gate), so an in-flight room's STEP2 would otherwise commit an OLDER `serverHash`/`version`/`seq` over what this row just materialized and walk `seq` backward.
 
-It also drops any staged `pendingConvergence` episode for the note: an in-flight
-room's STEP2 would otherwise commit an OLDER `serverHash`/`version`/`seq` over
-what this row just materialized, walking `seq` backward and re-serving consumed
-rows. `commitCrdtConvergence` records unconditionally once a stage exists — there
-is no text-verify gate to save you.
+## What this did NOT buy (measured, do not quote the original numbers)
 
-## What this does NOT buy: room count, or a visible empty-note window
+- No visible empty-note window: an e2e asserting "B holds no 0-byte notes after catch-up" passed on plain `main` too (the cold converge fills the placeholder inside the same `trigger_full_sync()`). The test could not fail, so it was deleted; a test that cannot fail reads as coverage.
+- No room-count win: over a 150-note bulk first sync (n=3 each) `main` shows 1-3 rooms and the final fix 0-4. The consistent 0 of the first, unsafe fix came entirely from recording a hash it could not verify, i.e. from suppressing convergence. The real benefit is ~13% of first-sync notes skipping one `crdt_doc_state` round-trip.
+- The issue's 833/1,000 is pre-#474-shaped (`main` is ~1-3 per 150 since the room-free path), and room count was never a RAM proxy.
 
-**Tested and disproved.** A first-sync e2e asserting "B holds no 0-byte notes
-after its catch-up" passes on plain `main` too, twice — the cold converge fills
-the placeholder inside the same `trigger_full_sync()`. So the empty window is
-sub-pass, not a settled state a user sits looking at, and there is no e2e oracle
-at this granularity that can tell the two builds apart. The test was written,
-run against both, and deleted rather than shipped: a test that cannot fail is
-worse than no test, because it reads as coverage.
+## Method that worked
 
-What that leaves as the real benefit: **~13% of a first sync's notes stop paying
-a `crdt_doc_state` round-trip** for a body the row already carried. That is the
-whole of it.
+`enrollSites` buckets by stack frame so it can only name `fireCrdtReHandshake`, the funnel every caller collapses into. Two ~10-line instruments cracked it: an explicit label passed at each `socketConverge` call site (`convergeSites`, a `Map<string, number>` bumped in `fireCrdtReHandshake`), and a per-condition miss counter at the quiet-record guard (answer: `disk-differs`, 100%). Neither is in the tree; re-add rather than hunt for the deleted branch. Confirm a leg you added actually fires (probe log + `docker logs | grep -c`): "0 rooms" means nothing if it never ran. Room count needs n>=3; single runs range 0-4 on identical code.
 
-Room count, measured over a 150-note bulk first sync, n=3 each:
+## Repro
 
-| build | rooms |
-|---|---|
-| plain `main` | 1, 3, 1 |
-| first (unsafe) fix — recorded `serverHash` | 0, 0, 0 |
-| final fix — records nothing | 0, 3, 4, 3 |
-
-**The consistent 0 came entirely from recording a hash we could not verify** —
-i.e. from suppressing all future convergence for those notes, which was the
-defect. Once that stops, the room count is indistinguishable from `main`. The
-leg still fires (7-20 notes per 150, confirmed with a probe log); it just moves
-the body one pass earlier instead of removing the converge.
-
-Also do not quote the issue's 833/1,000: `main` allocates ~1-3 per 150 because
-#474's room-free path already removed the bulk. That figure is pre-#474-shaped.
-And room count was never a RAM proxy — a room is ~85 KB, 52 draining released
-4 MB (`project_1409_closed_premise_invalidated`).
-
-## How it was found (the method that worked)
-`enrollSites` buckets by **stack frame**, so it can only ever name
-`fireCrdtReHandshake`, the funnel every caller collapses into — weeks of it named
-nothing. Two cheap instruments cracked it in one session:
-
-1. **`convergeSites`** — an explicit label passed at each `socketConverge` call
-   site. That granularity names code to change; it identified
-   `catchup-diverged-cold`.
-2. **A per-condition miss counter** at the quiet-record guard, bucketing which of
-   its three conditions failed. Answer: **`disk-differs`, 100%**, killing the
-   standing hypothesis that a recorded `serverHash` was skipping the guard.
-
-Then `adapter.read` alongside `cachedRead` proved the 0 bytes were real.
-
-The branch that carried both instruments is **deleted** — do not go looking for
-it. They are ~10 lines each and faster to re-add than to find: a
-`Map<string, number>` on `SyncEngine` bumped in `fireCrdtReHandshake` from a
-`site` label threaded through `socketConverge`/`stageAndConverge`, and a second
-map bumped at the guard with a key naming which condition failed. The e2e reads
-them over CDP (`Object.fromEntries(...)` on the engine handle) — see
-`test_77_bulk_first_sync.py`'s site readout for the shape.
-
-**Confirm the leg you added actually fires.** A one-line probe log plus
-`docker logs | grep -c` is the difference between "0 rooms" meaning "it worked"
-and "0 rooms" meaning "it never ran."
-
-## Repro loop
-~90 s per iteration, reproduces every run — but **you have to build the device
-topology yourself.** `test_77_bulk_first_sync` on `main` is SINGLE-DEVICE
-(`vault_a, cdp_a, api_sync`): A pushes and nothing receives. The #477 chain only
-appears on a device that PULLS the create row, so the 3-device variant used for
-this whole investigation was part of the (now deleted) diag branch, not main.
-
-To reproduce: take test_77's bulk-seed shape (close the gate, write N notes,
-accept the gate, `trigger_full_sync`), add `cdp_b` and drive `await
-cdp_b.trigger_full_sync()`, then look at B. `E2E_BULK_NOTE_COUNT` (already on
-main) lowers the count for a local loop — CI runs the full 1,000 and the default
-must never be lowered; the room bounds are calibrated to that size.
-
-Stack + env per `../../docs/context/local-crdt-e2e-repro.md`:
-
-```bash
-cd backend/e2e && env ENGRAM_API_URL=http://localhost:8100/api \
-  ENGRAM_PLUGIN_SRC=<plugin checkout> AUTH_PROVIDER=local E2E_ENABLE_CRDT=true \
-  E2E_WORKERS=1 CI_POSTGRES_CONTAINER=engram-crdt-postgres-1 \
-  CI_MINIO_CONTAINER=engram-crdt-minio-1 CI_ENGRAM_CONTAINER=engram-crdt-engram-1 \
-  E2E_BULK_NOTE_COUNT=150 \
-  python3 -m pytest tests/test_77_bulk_first_sync.py -s --reruns 0
-```
-
-Client `rlog()` lines land in `docker logs engram-crdt-engram-1` as `[client:*]`;
-their timestamps are ship-time, so never order by them.
-
-**Room count needs n>=3.** Single runs range 0-4 on identical code; one run
-"proving" a win is noise.
+`test_77_bulk_first_sync` on `main` is single-device, and the #477 chain only appears on a device that PULLS the create row. Add a second device (`cdp_b`), drive `await cdp_b.trigger_full_sync()` and inspect B. `E2E_BULK_NOTE_COUNT` lowers the count locally (CI runs 1,000 and the default must never be lowered). Stack and env per `../engram-workspace/docs/context/local-crdt-e2e-repro.md`. Client `rlog()` lines land in the engram container log as `[client:*]` with ship-time timestamps, so never order by them.
 
 ## Gotchas
-- `stampSyncedRow` REPLACES the row by contract — `crdtHead` lives in that same
-  row, so a `markServerKnown` before it is erased by the very next line, and
-  `markServerKnown` afterwards writes the CREATED sentinel over a hole where a
-  real head used to be. Use `patchSyncedRow` when the row must survive.
-- **`test_34_folder_rename_propagation` fails whenever it runs after
-  `tests/crdt/`** — the 4 Playwright specs that always time out on this box leave
-  the state that starves it. Identical failure set with and without a sync-path
-  change; it passes solo in ~31 s. Control the batch, not just the test.
-- Local attachment tests (`test_33`, `test_79`, `test_80`) fail on a server-side
-  MinIO `403 SignatureDoesNotMatch`. Env drift, not code.
+
+- `stampSyncedRow` REPLACES the row by contract and `crdtHead` lives in that row: a `markServerKnown` before it is erased by the next line, and one after it writes the CREATED sentinel over a hole where a real head used to be. Use `patchSyncedRow` when the row must survive.
+- `test_34_folder_rename_propagation` fails whenever it runs after `tests/crdt/` on the dev box (leftover state from the Playwright specs that time out there); it passes solo. Control the batch, not just the test.
+- Local attachment tests (`test_33`, `test_79`, `test_80`) fail on a MinIO `403 SignatureDoesNotMatch`: env drift, not code.
 
 ## References
-- Issue `engram-app/Engram-obsidian#477`, PR #478
-- The other ungated site: `crdt-createack-selfheal-ungated-enroll.md` (`#1409`, plugin `#474`)
-- `backend/docs/context/crdt-room-lifetime-and-drain.md` — drain phases, idle exit
-- `docs/context/local-crdt-e2e-repro.md` — stack bring-up, env vars, dead ends
+
+- Plugin #477, PR #478; the other ungated-`enroll()` site is in `crdt-pull-gated-by-create-ack.md`
+- engram repo: `docs/context/crdt-room-lifetime-and-drain.md`
