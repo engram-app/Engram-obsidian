@@ -25,7 +25,8 @@ jobs:
       - run: bun install --frozen-lockfile
 
       - name: Security audit
-        run: bun audit
+        # braces GHSA-vfj7-8cjw-p6xm has no patched release (dev-only stylelint chain); see https://github.com/engram-app/Engram-obsidian/issues/552
+        run: bun audit --ignore=GHSA-vfj7-8cjw-p6xm
 
       - name: Lint (biome)
         run: bunx biome check src tests
