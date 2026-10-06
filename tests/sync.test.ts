@@ -1923,6 +1923,32 @@ describe("SyncEngine offline queue integration", () => {
 		);
 	});
 
+	// The raw upload can be refused before the server reads the body; without a
+	// buffering proxy that surfaces as a connection reset (network → retry
+	// forever). With the cap known, an over-cap file parks without uploading.
+	test("flushQueue parks an over-cap attachment as too_large without uploading", async () => {
+		const engine = createEngine();
+		const file = new TFile("Assets/huge.png", 100_000, 2_000);
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(file);
+		engine.applyPlanState({
+			tier: "free",
+			attachmentsTextOnly: false,
+			maxFileBytes: 1_000,
+			attachmentBytesCap: null,
+			updatedAt: 1,
+		});
+		engine.queue.load([
+			{ path: "Assets/huge.png", action: "upsert", kind: "attachment", timestamp: 1 },
+		]);
+
+		await engine.flushQueue();
+
+		expect(mockApi.pushAttachment).not.toHaveBeenCalled();
+		expect(mockApp.vault.readBinary).not.toHaveBeenCalled();
+		expect(engine.issues.get("Assets/huge.png")?.category).toBe("too_large");
+		expect(engine.queue.size).toBe(0);
+	});
+
 	test("flushQueue handles attachment entries", async () => {
 		const engine = createEngine();
 

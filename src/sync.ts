@@ -10879,6 +10879,15 @@ export class SyncEngine {
 							flushed++;
 							continue;
 						}
+						// Same plan pre-gate as the live push. Matters more for raw
+						// uploads: the server can refuse those before reading the body,
+						// which reaches us as a connection reset (retried forever as
+						// `network`) rather than the terminal 413/402.
+						const gate = this.preGateAttachment(file);
+						if (gate) {
+							await this.recordTerminalIssue(entry, { ...gate, terminal: true });
+							continue;
+						}
 						bytes = await this.app.vault.readBinary(file);
 						base64 = arrayBufferToBase64(bytes);
 						mimeType = this.getMimeType(file);
