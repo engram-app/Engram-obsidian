@@ -112,7 +112,6 @@ const zhTW: Dict = {
 	Upgrade: "升級",
 	"Update in settings": "在設定中更新",
 	"Engram: ready": "Engram：就緒",
-	"Resume sync": "恢復同步",
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} 已發布。{link}。",
 	"Search your vault…": "搜尋你的知識庫…",
@@ -301,8 +300,9 @@ const zhTW: Dict = {
 		"Engram：設定檔損毀，已從備份還原。",
 	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
 		"Engram 同步：即時同步需要更新外掛，請更新 Engram vault sync 外掛。",
-	"Engram: sync is paused — this edit was not synced. Choose a sync direction to resume.":
+	"Engram: sync is paused. This edit was not synced. Choose a sync direction to resume.":
 		"Engram：同步已暫停，這次修改未同步。請選擇同步方向以恢復。",
+	"Open Engram settings": "開啟 Engram settings",
 	"Engram: not connected": "Engram：未連線",
 	"Engram: signed out": "Engram：已登出",
 	"Not connected yet. Click to open settings and link this vault.":

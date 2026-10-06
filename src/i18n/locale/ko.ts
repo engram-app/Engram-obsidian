@@ -127,7 +127,6 @@ const ko: Dict = {
 	Upgrade: "업그레이드",
 	"Update in settings": "설정에서 업데이트",
 	"Engram: ready": "Engram: 준비됨",
-	"Resume sync": "동기화 다시 시작",
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version}이 나왔습니다. {link}.",
 	"Search your vault…": "보관함 검색…",
@@ -319,8 +318,9 @@ const ko: Dict = {
 		"Engram: 설정 파일이 손상되어 백업에서 복구했습니다.",
 	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
 		"Engram 동기화: 실시간 동기화에는 플러그인 업데이트가 필요합니다. Engram vault sync를 업데이트하세요.",
-	"Engram: sync is paused — this edit was not synced. Choose a sync direction to resume.":
+	"Engram: sync is paused. This edit was not synced. Choose a sync direction to resume.":
 		"Engram: 동기화가 일시 중지되었습니다. 이 편집은 동기화되지 않았습니다. 동기화 방향을 고르면 다시 시작합니다.",
+	"Open Engram settings": "Engram settings 열기",
 	"Engram: not connected": "Engram: 연결되지 않음",
 	"Engram: signed out": "Engram: 로그아웃됨",
 	"Not connected yet. Click to open settings and link this vault.":

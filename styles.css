@@ -376,6 +376,12 @@
 	margin-left: 8px;
 }
 
+/* Own line under the notice text, so it reads as a link, not a stray word. */
+.engram-notice-link {
+	display: block;
+	margin-top: 4px;
+}
+
 /* ── Sync log modal ──────────────────────────────────────────── */
 
 .engram-sync-log-list {

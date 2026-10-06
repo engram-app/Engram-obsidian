@@ -33,6 +33,8 @@ export class TFolder {
 }
 
 interface CapturedButton {
+	/** Element tag passed to createEl ("button", "a", ...). */
+	tag: string;
 	text: string;
 	style: Record<string, string>;
 	click: () => void;
@@ -42,6 +44,7 @@ interface CapturedNotice {
 	message: string;
 	duration?: number;
 	buttons: CapturedButton[];
+	hidden: boolean;
 }
 
 /** Records every Notice constructed during a test. Reset in beforeEach when
@@ -57,16 +60,19 @@ export class Notice {
 			opts?: { text?: string; cls?: string },
 		) => {
 			style: Record<string, string>;
-			addEventListener: (e: string, cb: () => void) => void;
+			addEventListener: (e: string, cb: (evt: { preventDefault(): void }) => void) => void;
 		};
 	};
+	private readonly entry: CapturedNotice;
 
 	constructor(message: string, timeout?: number) {
-		const entry: CapturedNotice = { message, duration: timeout, buttons: [] };
+		const entry: CapturedNotice = { message, duration: timeout, buttons: [], hidden: false };
 		__noticeCapture.notices.push(entry);
+		this.entry = entry;
 		this.noticeEl = {
-			createEl: (_tag, opts) => {
+			createEl: (tag, opts) => {
 				const btn: CapturedButton = {
+					tag,
 					text: opts?.text ?? "",
 					style: {},
 					click: () => {},
@@ -74,12 +80,19 @@ export class Notice {
 				entry.buttons.push(btn);
 				return {
 					style: btn.style,
-					addEventListener: (_evt: string, cb: () => void) => {
-						btn.click = cb;
+					addEventListener: (
+						_evt: string,
+						cb: (evt: { preventDefault(): void }) => void,
+					) => {
+						btn.click = () => cb({ preventDefault() {} });
 					},
 				};
 			},
 		};
+	}
+
+	hide(): void {
+		this.entry.hidden = true;
 	}
 }
 

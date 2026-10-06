@@ -128,7 +128,6 @@ const ja: Dict = {
 	Upgrade: "アップグレード",
 	"Update in settings": "設定から更新",
 	"Engram: ready": "Engram: 準備完了",
-	"Resume sync": "同期を再開",
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} が公開されています。{link}。",
 	"Search your vault…": "保管庫を検索…",
@@ -320,8 +319,9 @@ const ja: Dict = {
 		"Engram: 設定ファイルが壊れていたため、バックアップから復元しました。",
 	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
 		"Engram 同期: ライブ同期にはプラグインの更新が必要です。Engram vault sync を更新してください。",
-	"Engram: sync is paused — this edit was not synced. Choose a sync direction to resume.":
+	"Engram: sync is paused. This edit was not synced. Choose a sync direction to resume.":
 		"Engram: 同期は一時停止中です。この編集は同期されていません。同期の方向を選ぶと再開します。",
+	"Open Engram settings": "Engram settings を開く",
 	"Engram: not connected": "Engram: 未接続",
 	"Engram: signed out": "Engram: サインアウト済み",
 	"Not connected yet. Click to open settings and link this vault.":

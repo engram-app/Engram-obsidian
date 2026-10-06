@@ -3152,25 +3152,37 @@ export default class EngramSyncPlugin extends Plugin {
 		return "vault-switch";
 	}
 
-	/** Tell the user their edit went nowhere, and offer the one action that
-	 *  fixes it. Fired at most once per gate closure by the engine.
+	/** Tell the user their edit went nowhere, and point at where to fix it.
+	 *  Fired at most once per gate closure by the engine.
 	 *
-	 *  Deliberately a notice with a button rather than opening the modal
+	 *  Deliberately a notice with a link rather than opening the modal
 	 *  outright: the trigger is a keystroke in a note, and a modal stealing
-	 *  focus mid-sentence is its own bug report. */
+	 *  focus mid-sentence is its own bug report.
+	 *
+	 *  Silent while signed out: sign-out also closes the gate, and a user who
+	 *  signed out on purpose (say, to set up another vault) expects edits not
+	 *  to sync. Telling them so is noise, and the link would lead nowhere. */
 	private notifySyncGateClosed(): void {
+		if (!this.hasAuthConfigured()) return;
 		const notice = new Notice(
 			t(
-				"Engram: sync is paused — this edit was not synced. Choose a sync direction to resume.",
+				"Engram: sync is paused. This edit was not synced. Choose a sync direction to resume.",
 			),
 			0,
 		);
 		const noticeEl = (notice as unknown as { noticeEl?: HTMLElement }).noticeEl;
 		if (!noticeEl) return;
-		const btn = noticeEl.createEl("button", { text: t("Resume sync") });
-		btn.addEventListener("click", () => {
+		// A text link, not a button: a button sat awkwardly inside the notice.
+		// The Connection tab is where "Finish sync setup" resumes sync.
+		const link = noticeEl.createEl("a", {
+			text: t("Open Engram settings"),
+			href: "#",
+			cls: "engram-notice-link",
+		});
+		link.addEventListener("click", (evt) => {
+			evt.preventDefault();
 			notice.hide();
-			void this.doSyncWithFirstSyncCheck();
+			this.openConnectionSettings();
 		});
 	}
 
