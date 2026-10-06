@@ -741,26 +741,38 @@ describe("replay outcome summary (prod 2026-08-13 blindness)", () => {
 		const { engine } = makeEngine(threeRowFeed());
 		spyOn(engine, "applySyncChange").mockResolvedValue(false);
 
-		// First pass walks from seq 0 and persists the cursor. The second is the
-		// steady-state poll — the stub feeds the same rows again, all no-ops.
-		await engine.catchupViaSeqReplay();
-		await flush();
-		sent.length = 0;
+		// The steady-state poll: the stub feeds the same rows again, all no-ops.
+		await warmUp(engine, sent, flush);
 		await engine.catchupViaSeqReplay();
 		await flush();
 
 		expect(anomalyOf(sent)).toBeUndefined();
 	});
 
+	/** First pass walks from seq 0 and persists the cursor, so the NEXT replay is
+	 *  incremental. Without this a fresh engine's cursor is 0 and `fromGenesis`
+	 *  alone would make the check fire, hiding whether the failed/blocked
+	 *  clauses work. The warm-up's own (first-sync) anomaly is discarded. */
+	const warmUp = async (
+		engine: SyncEngine,
+		sent: Array<{ message: string }>,
+		flush: () => Promise<void>,
+	) => {
+		await engine.catchupViaSeqReplay();
+		await flush();
+		sent.length = 0;
+	};
+
 	test("an incremental poll with a failed row still reports", async () => {
 		const { sent, flush } = captureShipped();
 		const { engine } = makeEngine(threeRowFeed());
+		const apply = spyOn(engine, "applySyncChange").mockResolvedValue(false);
+		await warmUp(engine, sent, flush);
+
 		// One row applies (as a no-op), two throw: applied=1 failed=2 files=0.
 		// A failed row is NOT counted in `applied`, so an all-throw feed never
 		// reaches the check at all — the shape that matters is mixed.
-		spyOn(engine, "applySyncChange")
-			.mockResolvedValueOnce(false)
-			.mockRejectedValue(new Error("boom"));
+		apply.mockResolvedValueOnce(false).mockRejectedValue(new Error("boom"));
 
 		await engine.catchupViaSeqReplay();
 		await flush();
@@ -775,7 +787,10 @@ describe("replay outcome summary (prod 2026-08-13 blindness)", () => {
 		// dropped, which is the 2026-08-13 shape.
 		const { sent, flush } = captureShipped();
 		const { engine } = makeEngine(threeRowFeed());
-		spyOn(engine, "applySyncChange").mockImplementation(async () => {
+		const apply = spyOn(engine, "applySyncChange").mockResolvedValue(false);
+		await warmUp(engine, sent, flush);
+
+		apply.mockImplementation(async () => {
 			engine.setSyncBlocked(true);
 			return false;
 		});
