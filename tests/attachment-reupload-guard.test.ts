@@ -18,9 +18,10 @@
  * convergence the only way it can — by comparing the serverHash it RECORDED
  * at upload time against the server's CURRENT hash for that path.
  */
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 import "fake-indexeddb/auto";
 import { TFile } from "obsidian";
+import * as apiModule from "../src/api";
 import { arrayBufferToBase64, type EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { fnv1a, SyncEngine } from "../src/sync";
@@ -486,5 +487,88 @@ describe("a failed post-push reconcile must not fail the push", () => {
 		// what an old backend without a manifest returns), so every caller
 		// already handles it.
 		expect(await e.reconcile()).toBeNull();
+	});
+});
+
+// Push-side base64 is built only when the JSON body actually needs it (#555).
+// The raw upload path hashes straight from the bytes (fnv1aBase64, same value
+// as fnv1a over the base64) and never encodes; JSON encodes lazily via the
+// thunk handed to pushAttachment.
+describe("push: base64 is built lazily", () => {
+	const BYTES = new Uint8Array([0, 1, 2, 250, 251, 252, 253]).buffer;
+	const WANT = fnv1a(arrayBufferToBase64(BYTES));
+	let spy: ReturnType<typeof spyOn> | undefined;
+	afterEach(() => spy?.mockRestore());
+
+	function file(path: string): TFile {
+		const f = new TFile(path);
+		(f as any).stat = { mtime: 1000, size: 7 };
+		return f;
+	}
+
+	test("live push hands over a thunk and builds no base64 itself", async () => {
+		const { e, app, pushAttachment } = makeEngine();
+		app.vault.readBinary.mockResolvedValue(BYTES);
+		spy = spyOn(apiModule, "arrayBufferToBase64");
+
+		await (e as any).pushFile(file("a/p.png"), false, false);
+
+		expect(spy).not.toHaveBeenCalled();
+		const [, content, , , bytes] = pushAttachment.mock.calls[0];
+		expect(typeof content).toBe("function");
+		expect(bytes).toBe(BYTES);
+		// The thunk yields exactly the base64 the JSON path used to send.
+		expect(content()).toBe(arrayBufferToBase64(BYTES));
+		expect((e as any).syncState.get("a/p.png").hash).toBe(WANT);
+	});
+
+	test("live push still echo-skips bytes stamped by the old fnv1a(base64)", async () => {
+		const { e, app, pushAttachment } = makeEngine();
+		app.vault.readBinary.mockResolvedValue(BYTES);
+		(e as any).syncState.set("a/p.png", { hash: WANT });
+
+		await (e as any).pushFile(file("a/p.png"), false, false);
+
+		expect(pushAttachment).not.toHaveBeenCalled();
+	});
+
+	test("content-free queue entry reads bytes and builds no base64", async () => {
+		const { e, app, pushAttachment } = makeEngine();
+		app.vault.readBinary.mockResolvedValue(BYTES);
+		app.vault.getFileByPath.mockReturnValue(file("q/p.png"));
+		e.queue.load([
+			{ path: "q/p.png", action: "upsert", kind: "attachment", timestamp: 1 } as any,
+		]);
+		spy = spyOn(apiModule, "arrayBufferToBase64");
+
+		await e.flushQueue();
+
+		expect(spy).not.toHaveBeenCalled();
+		const [, content, , , bytes] = pushAttachment.mock.calls[0];
+		expect(typeof content).toBe("function");
+		expect(bytes).toBe(BYTES);
+		expect((e as any).syncState.get("q/p.png").hash).toBe(WANT);
+	});
+
+	test("legacy queue entry with inline base64 still uploads that base64", async () => {
+		const { e, pushAttachment } = makeEngine();
+		e.queue.load([
+			{
+				path: "q/old.png",
+				action: "upsert",
+				contentBase64: B64,
+				mimeType: "image/png",
+				mtime: 100,
+				kind: "attachment",
+				timestamp: 1,
+			},
+		]);
+
+		await e.flushQueue();
+
+		const [, content, mime, mtime, bytes] = pushAttachment.mock.calls[0];
+		expect(content).toBe(B64);
+		expect([mime, mtime, bytes]).toEqual(["image/png", 100, undefined]);
+		expect((e as any).syncState.get("q/old.png").hash).toBe(fnv1a(B64));
 	});
 });

@@ -834,6 +834,46 @@ describe("EngramApi", () => {
 			expect(mockRequestUrl).toHaveBeenCalledTimes(1);
 		});
 
+		// #555: the base64 is only built when the JSON body needs it.
+		describe("lazy base64 thunk", () => {
+			const bytes = new Uint8Array([104, 105]).buffer;
+
+			test("raw upload never calls it", async () => {
+				mockRequestUrl.mockResolvedValueOnce({ status: 200, json: {} } as any);
+				api.setRawAttachmentUpload(true);
+				const b64 = mock(() => "aGk=");
+				await api.pushAttachment("a.png", b64, "image/png", 5, bytes);
+				expect(b64).not.toHaveBeenCalled();
+				expect((mockRequestUrl.mock.calls[0][0] as any).body).toBe(bytes);
+			});
+
+			test("JSON upload calls it once and sends its result", async () => {
+				mockRequestUrl.mockResolvedValueOnce({ status: 200, json: {} } as any);
+				const b64 = mock(() => "aGk=");
+				await api.pushAttachment("a.png", b64, "image/png", 5, bytes);
+				expect(b64).toHaveBeenCalledTimes(1);
+				expect(
+					JSON.parse((mockRequestUrl.mock.calls[0][0] as any).body).content_base64,
+				).toBe("aGk=");
+			});
+
+			test("raw->JSON fallback calls it once, only after the refusal", async () => {
+				const b64 = mock(() => "aGk=");
+				mockRequestUrl
+					.mockImplementationOnce(async () => {
+						expect(b64).not.toHaveBeenCalled();
+						throw { status: 422, json: { error: "content_base64 is required" } };
+					})
+					.mockResolvedValueOnce({ status: 200, json: {} } as any);
+				api.setRawAttachmentUpload(true);
+				await api.pushAttachment("a.png", b64, "image/png", 5, bytes);
+				expect(b64).toHaveBeenCalledTimes(1);
+				expect(
+					JSON.parse((mockRequestUrl.mock.calls[1][0] as any).body).content_base64,
+				).toBe("aGk=");
+			});
+		});
+
 		test("an empty file goes raw as a zero-length body", async () => {
 			mockRequestUrl.mockResolvedValueOnce({ status: 200, json: {} } as any);
 			api.setRawAttachmentUpload(true);

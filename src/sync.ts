@@ -4796,11 +4796,12 @@ export class SyncEngine {
 			const mtime = file.stat.mtime / 1000; // Obsidian uses ms, Engram uses seconds
 			if (isBinary) {
 				const buffer = await this.app.vault.readBinary(file);
-				const base64 = arrayBufferToBase64(buffer);
 				// Track attachments in syncState the same way notes are. Without
 				// this, pushModifiedFiles sees every attachment as untracked and
 				// re-pushes it on every fullSync (the "pushed N every Merge" loop).
-				const hash = fnv1a(base64);
+				// fnv1aBase64 == fnv1a(arrayBufferToBase64(buffer)) without building
+				// the string; the base64 is built lazily, only if JSON is sent.
+				const hash = fnv1aBase64(buffer);
 				const np = normalizePath(file.path);
 				const existing = this.syncState.get(np);
 				const unchangedLocally = existing !== undefined && hash === existing.hash;
@@ -4831,7 +4832,7 @@ export class SyncEngine {
 				const mimeType = this.getMimeType(file);
 				const attResp = await this.api.pushAttachment(
 					file.path,
-					base64,
+					() => arrayBufferToBase64(buffer),
 					mimeType,
 					mtime,
 					buffer,
@@ -10895,12 +10896,14 @@ export class SyncEngine {
 						}
 					}
 				} else if (entry.kind === "attachment") {
-					// Legacy entries may have content inline; new entries are content-free
-					let base64 = entry.contentBase64;
+					// Legacy entries may have content inline (kept as-is, JSON only);
+					// new entries are content-free and re-read the bytes from disk.
+					let content: string | (() => string) | undefined = entry.contentBase64;
+					let queuedHash = entry.contentBase64 ? fnv1a(entry.contentBase64) : 0;
 					let mimeType = entry.mimeType;
 					let mtime = entry.mtime;
 					let bytes: ArrayBuffer | undefined;
-					if (!base64) {
+					if (!content) {
 						const file = this.app.vault.getFileByPath(entry.path);
 						if (!file) {
 							await this.queue.dequeue(entry.path, this.entryVaultId(entry));
@@ -10917,8 +10920,10 @@ export class SyncEngine {
 							await this.recordTerminalIssue(entry, { ...gate, terminal: true });
 							continue;
 						}
-						bytes = await this.app.vault.readBinary(file);
-						base64 = arrayBufferToBase64(bytes);
+						const read = await this.app.vault.readBinary(file);
+						bytes = read;
+						content = () => arrayBufferToBase64(read);
+						queuedHash = fnv1aBase64(read);
 						mimeType = this.getMimeType(file);
 						mtime = file.stat.mtime / 1000;
 					}
@@ -10927,7 +10932,6 @@ export class SyncEngine {
 					// one of the two paths behind the 2026-08-21 loop that held
 					// prod at ~30% CPU. Mirror the live path's echo skip.
 					const queuedNp = normalizePath(entry.path);
-					const queuedHash = fnv1a(base64);
 					const queuedRow = this.syncState.get(queuedNp);
 					if (queuedRow !== undefined && queuedHash === queuedRow.hash) {
 						// warn, not info: client `info` never reaches Loki, which is
@@ -10939,7 +10943,7 @@ export class SyncEngine {
 					} else {
 						const attResp = await this.api.pushAttachment(
 							entry.path,
-							base64,
+							content,
 							mimeType!,
 							mtime!,
 							bytes,

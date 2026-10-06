@@ -612,10 +612,11 @@ export class EngramApi {
 
 	/** Push a binary attachment. Sends the raw `bytes` when the server takes
 	 *  them, saving the base64 inflation on the wire and the decode on the
-	 *  server; otherwise base64 JSON. */
+	 *  server; otherwise base64 JSON. `contentBase64` may be a thunk so the
+	 *  ~65-125 ms/MB encode only runs when the JSON body is actually sent. */
 	async pushAttachment(
 		path: string,
-		contentBase64: string,
+		contentBase64: string | (() => string),
 		mimeType: string,
 		mtime: number,
 		bytes?: ArrayBuffer,
@@ -638,7 +639,7 @@ export class EngramApi {
 		// compat(server): raw_attachment_upload - remove when the backend floor has it (#1877)
 		const resp = await this.request("POST", "/attachments", {
 			path,
-			content_base64: contentBase64,
+			content_base64: typeof contentBase64 === "function" ? contentBase64() : contentBase64,
 			mime_type: mimeType,
 			mtime,
 		});

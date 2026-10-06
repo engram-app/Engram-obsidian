@@ -1916,11 +1916,13 @@ describe("SyncEngine offline queue integration", () => {
 
 		expect(mockApi.pushAttachment).toHaveBeenCalledWith(
 			"Assets/new.png",
-			"BwgJ",
+			expect.any(Function),
 			"image/png",
 			100,
 			bytes,
 		);
+		// Lazy base64: same body the JSON path always sent.
+		expect((mockApi.pushAttachment as jest.Mock).mock.calls[0][1]()).toBe("BwgJ");
 	});
 
 	// The raw upload can be refused before the server reads the body; without a
@@ -2045,11 +2047,12 @@ describe("SyncEngine binary push", () => {
 		expect(mockApp.vault.readBinary).toHaveBeenCalled();
 		expect(mockApi.pushAttachment).toHaveBeenCalledWith(
 			"Assets/photo.png",
-			expect.any(String),
+			expect.any(Function),
 			"image/png",
 			expect.any(Number),
 			mockBuffer,
 		);
+		expect((mockApi.pushAttachment as jest.Mock).mock.calls[0][1]()).toBe("AQID");
 		// Should NOT call pushNote for binary
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});
