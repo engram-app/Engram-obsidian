@@ -14,7 +14,7 @@ import {
 import { arrayBufferToBase64, base64ToArrayBuffer, type EngramApi } from "./api";
 import type { BaseStore } from "./base-store";
 import type { GenesisOutcome } from "./channel";
-import { fnv1a } from "./content-hash";
+import { fnv1a, fnv1aBase64 } from "./content-hash";
 import { splitFrontmatter } from "./crdt/frontmatter-codec";
 import type { NoteIdMap } from "./crdt/note-id-map";
 import type { ProviderRegistry } from "./crdt/provider-registry";
@@ -7760,6 +7760,7 @@ export class SyncEngine {
 							deleted: false,
 						},
 						attachment.content_base64,
+						attachment.bytes,
 					);
 				} else if (
 					this.crdt &&
@@ -9358,6 +9359,7 @@ export class SyncEngine {
 	async applyAttachmentChange(
 		change: AttachmentChange,
 		contentBase64?: string,
+		contentBytes?: ArrayBuffer,
 	): Promise<boolean> {
 		if (this.shouldIgnore(change.path)) return false;
 
@@ -9376,19 +9378,32 @@ export class SyncEngine {
 		// Fetch content if not provided
 		let serverHash = change.content_hash;
 		let resolvedBase64 = contentBase64;
-		if (resolvedBase64 === undefined) {
+		let resolvedBytes = contentBytes;
+		if (resolvedBase64 === undefined && resolvedBytes === undefined) {
 			const fetched = await this.api.getAttachment(change.path);
 			resolvedBase64 = fetched.content_base64;
+			resolvedBytes = fetched.bytes;
 			// Prefer the value that came WITH the bytes we are about to write:
 			// it describes exactly this payload, whereas `change.content_hash`
 			// describes whatever the event announced.
 			serverHash = fetched.content_hash ?? serverHash;
 		}
-		const buffer = base64ToArrayBuffer(resolvedBase64);
-		const existing = this.app.vault.getFileByPath(normalized);
 		// Track the synced bytes so a later push echo-suppresses instead of
-		// re-uploading this attachment (keyed identically to the push side).
-		const hash = fnv1a(resolvedBase64);
+		// re-uploading this attachment (keyed identically to the push side:
+		// fnv1a over the base64, which fnv1aBase64 computes from raw bytes
+		// without building the string). Only base64 needs decoding.
+		let buffer: ArrayBuffer;
+		let hash: number;
+		if (resolvedBytes !== undefined) {
+			buffer = resolvedBytes;
+			hash = fnv1aBase64(resolvedBytes);
+		} else if (resolvedBase64 !== undefined) {
+			buffer = base64ToArrayBuffer(resolvedBase64);
+			hash = fnv1a(resolvedBase64);
+		} else {
+			throw new Error(`Attachment download carried no content: ${noteRef(change.path)}`);
+		}
+		const existing = this.app.vault.getFileByPath(normalized);
 		// Recording the SERVER's hash is what lets the next broadcast for this
 		// path be answered without re-downloading the blob (Engram#961). Merge,
 		// never replace: a bare `set` would drop it again on the following

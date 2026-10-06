@@ -2605,8 +2605,9 @@ export default class EngramSyncPlugin extends Plugin {
 				// Epoch-guarded: a superseded channel's late join reply must not
 				// re-enable a feature the backend-switch reset turned off.
 				channel.onServerFeatures = (f) => {
-					if (epoch === this.channelEpoch)
-						this.api.setRawAttachmentUpload(f.rawAttachmentUpload);
+					if (epoch !== this.channelEpoch) return;
+					this.api.setRawAttachmentUpload(f.rawAttachmentUpload);
+					this.api.setRawAttachmentDownload(f.rawAttachmentDownload);
 				};
 
 				this.noteStream = channel;

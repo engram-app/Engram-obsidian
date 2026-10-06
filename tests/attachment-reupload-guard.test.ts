@@ -21,7 +21,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import "fake-indexeddb/auto";
 import { TFile } from "obsidian";
-import type { EngramApi } from "../src/api";
+import { arrayBufferToBase64, type EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { fnv1a, SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
@@ -392,6 +392,60 @@ describe("inbound attachment events: skip the blob fetch when we already hold th
 		});
 
 		expect((e as any).syncState.get("a/pic.png").serverHash).toBe("server-hash-9");
+	});
+});
+
+describe("raw attachment download (bytes, no base64 envelope)", () => {
+	const BYTES = new Uint8Array([0, 128, 255, 1, 2, 3, 4]).buffer;
+	const fetched = () => ({
+		path: "a/raw.png",
+		bytes: BYTES,
+		mime_type: "image/png",
+		size_bytes: BYTES.byteLength,
+		mtime: 1,
+		updated_at: "",
+		content_hash: "server-hash-raw",
+	});
+
+	test("writes the downloaded bytes as-is and stamps the push-side hash", async () => {
+		const getAttachment = mock().mockResolvedValue(fetched());
+		const { e, app } = makeEngine({ getAttachment });
+
+		await (e as any).applyAttachmentChange({
+			path: "a/raw.png",
+			mime_type: "image/png",
+			size_bytes: 7,
+			mtime: 1,
+			updated_at: "",
+			deleted: false,
+		});
+
+		// The same buffer, not a base64 round-trip of it.
+		expect(app.vault.createBinary.mock.calls[0][1]).toBe(BYTES);
+		const row = (e as any).syncState.get("a/raw.png");
+		expect(row.serverHash).toBe("server-hash-raw");
+		expect(row.hash).toBe(fnv1a(arrayBufferToBase64(BYTES)));
+	});
+
+	// The loop guard: a raw-downloaded file must echo-skip on the next push,
+	// exactly as a JSON-downloaded one does.
+	test("the next push of the downloaded bytes is an echo skip", async () => {
+		const getAttachment = mock().mockResolvedValue(fetched());
+		const { e, app, pushAttachment } = makeEngine({ getAttachment });
+		await (e as any).applyStreamEvent({
+			event_type: "upsert",
+			kind: "attachment",
+			path: "a/raw.png",
+			content_hash: "server-hash-raw",
+		});
+		expect(app.vault.createBinary).toHaveBeenCalledTimes(1);
+
+		app.vault.readBinary.mockResolvedValue(BYTES);
+		const file = new TFile("a/raw.png");
+		(file as any).stat = { mtime: 1000, size: 7 };
+		await (e as any).pushFile(file, false, false);
+
+		expect(pushAttachment).not.toHaveBeenCalled();
 	});
 });
 

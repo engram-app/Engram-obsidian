@@ -380,11 +380,14 @@ export interface AttachmentResponse {
 	};
 }
 
-/** Full attachment as returned by GET /attachments/{path} */
+/** Full attachment as returned by GET /attachments/{path}. Exactly one of
+ *  `content_base64` (JSON body) and `bytes` (raw `?raw=1` download, which also
+ *  carries no `id`/`created_at`) is set. */
 export interface AttachmentDetail {
-	id: string;
+	id?: string;
 	path: string;
-	content_base64: string;
+	content_base64?: string;
+	bytes?: ArrayBuffer;
 	mime_type: string;
 	size_bytes: number;
 	mtime: number;
@@ -392,7 +395,7 @@ export interface AttachmentDetail {
 	 *  on receive, so a later broadcast carrying the same hash can skip
 	 *  re-fetching these bytes. Optional: a pre-2026-08-23 backend omits it. */
 	content_hash?: string;
-	created_at: string;
+	created_at?: string;
 	updated_at: string;
 }
 

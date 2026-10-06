@@ -88,6 +88,9 @@ export class EngramApi {
 	 *  join reply. Off until it says so: a self-hosted backend can be older
 	 *  than this plugin. */
 	private rawAttachmentUpload = false;
+	/** Same, for `features.raw_attachment_download` (`GET ?raw=1` + metadata
+	 *  headers instead of a base64 JSON body). */
+	private rawAttachmentDownload = false;
 	// Cached from the most recent sendRequest call so the beacon transport
 	// thunk (invoked later, on the buffer's own flush timer) can post with a
 	// still-valid token without re-awaiting the auth provider.
@@ -123,6 +126,10 @@ export class EngramApi {
 
 	setRawAttachmentUpload(enabled: boolean): void {
 		this.rawAttachmentUpload = enabled;
+	}
+
+	setRawAttachmentDownload(enabled: boolean): void {
+		this.rawAttachmentDownload = enabled;
 	}
 
 	setVaultId(id: string | null): void {
@@ -210,6 +217,7 @@ export class EngramApi {
 		this.lastToken = "";
 		// The new backend has not said what it supports yet; its join reply will.
 		this.rawAttachmentUpload = false;
+		this.rawAttachmentDownload = false;
 	}
 
 	/** Surface a `426` — this plugin is below the backend's minimum version —
@@ -637,9 +645,38 @@ export class EngramApi {
 		return resp.json as AttachmentResponse;
 	}
 
-	/** Get attachment content (base64). */
+	/** Get an attachment. Downloads the raw bytes when the server offers them
+	 *  (no base64 envelope to parse and decode); otherwise base64 JSON. */
 	async getAttachment(path: string): Promise<AttachmentDetail> {
 		const encoded = encodePath(path);
+		if (this.rawAttachmentDownload) {
+			const resp = await this.request("GET", `/attachments/${encoded}?raw=1`);
+			const header = headerLookup(resp.headers);
+			const updatedAt = header("x-engram-updated-at");
+			if (updatedAt !== undefined) {
+				const bytes = resp.arrayBuffer;
+				const mtime = header("x-engram-mtime");
+				return {
+					path,
+					bytes,
+					content_hash: header("x-engram-content-hash"),
+					mime_type: header("x-engram-mime-type") ?? "",
+					size_bytes: bytes.byteLength,
+					mtime: mtime === undefined ? 0 : Number(mtime),
+					updated_at: updatedAt,
+				};
+			}
+			// The socket's advertisement can outlive the task that answers the
+			// GET (rolling deploy, rollback): an older backend serves ?raw=1
+			// bytes without the metadata headers. Stop asking for raw and fetch
+			// this one as JSON, once.
+			rlog().warn(
+				"api",
+				"Raw attachment download lacks metadata; falling back to base64 JSON",
+			);
+			this.rawAttachmentDownload = false;
+		}
+		// compat(server): raw_attachment_download - remove when the backend floor has it (#1877)
 		const resp = await this.request("GET", `/attachments/${encoded}`);
 		return resp.json as AttachmentDetail;
 	}
@@ -865,6 +902,14 @@ function sanitizeUpgradeUrl(v: unknown): string | null {
  *  encodeURIComponent over the whole path breaks any file in a subfolder. */
 function encodePath(path: string): string {
 	return path.split("/").map(encodeURIComponent).join("/");
+}
+
+/** Case-insensitive response-header reader: desktop requestUrl lower-cases
+ *  header names, other platforms may not. */
+function headerLookup(headers: Record<string, string> | undefined) {
+	const lower = new Map<string, string>();
+	for (const [k, v] of Object.entries(headers ?? {})) lower.set(k.toLowerCase(), v);
+	return (name: string): string | undefined => lower.get(name);
 }
 
 /** Convert an ArrayBuffer to a base64 string. Chunked fromCharCode instead of

@@ -325,24 +325,33 @@ describe("connectChannel server-features wiring", () => {
 			() => Promise.resolve(0),
 		);
 		const setRaw = mock((_on: boolean) => {});
-		(fakeThis.api as unknown as { setRawAttachmentUpload: unknown }).setRawAttachmentUpload =
-			setRaw;
+		const setRawDown = mock((_on: boolean) => {});
+		Object.assign(fakeThis.api as object, {
+			setRawAttachmentUpload: setRaw,
+			setRawAttachmentDownload: setRawDown,
+		});
 
 		runConnectChannel(fakeThis);
 		await flushMicrotasks();
 		await flushMicrotasks();
 		const stale = fakeThis.noteStream as unknown as {
-			onServerFeatures: (f: { rawAttachmentUpload: boolean }) => void;
+			onServerFeatures: (f: {
+				rawAttachmentUpload: boolean;
+				rawAttachmentDownload: boolean;
+			}) => void;
 		};
 
-		stale.onServerFeatures({ rawAttachmentUpload: true });
+		stale.onServerFeatures({ rawAttachmentUpload: true, rawAttachmentDownload: false });
 		expect(setRaw).toHaveBeenCalledWith(true);
+		expect(setRawDown).toHaveBeenCalledWith(false);
 
 		// A backend switch bumps the epoch (and the api reset turns raw off);
 		// the old channel's join reply landing afterwards must not re-enable it.
 		setRaw.mockClear();
+		setRawDown.mockClear();
 		fakeThis.channelEpoch++;
-		stale.onServerFeatures({ rawAttachmentUpload: true });
+		stale.onServerFeatures({ rawAttachmentUpload: true, rawAttachmentDownload: true });
 		expect(setRaw).not.toHaveBeenCalled();
+		expect(setRawDown).not.toHaveBeenCalled();
 	});
 });
