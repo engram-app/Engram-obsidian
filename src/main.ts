@@ -2602,8 +2602,12 @@ export default class EngramSyncPlugin extends Plugin {
 					if (parsed) queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
 				};
 
-				channel.onServerFeatures = (f) =>
-					this.api.setRawAttachmentUpload(f.rawAttachmentUpload);
+				// Epoch-guarded: a superseded channel's late join reply must not
+				// re-enable a feature the backend-switch reset turned off.
+				channel.onServerFeatures = (f) => {
+					if (epoch === this.channelEpoch)
+						this.api.setRawAttachmentUpload(f.rawAttachmentUpload);
+				};
 
 				this.noteStream = channel;
 				this.indexChannel = channel;

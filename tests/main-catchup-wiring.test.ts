@@ -317,3 +317,32 @@ describe("index room connect/disconnect wiring", () => {
 		expect(connected).toBe(1);
 	});
 });
+
+describe("connectChannel server-features wiring", () => {
+	test("join-reply features reach the api; a superseded channel's late reply does not", async () => {
+		const fakeThis = makeFakeThis(
+			() => Promise.resolve(),
+			() => Promise.resolve(0),
+		);
+		const setRaw = mock((_on: boolean) => {});
+		(fakeThis.api as unknown as { setRawAttachmentUpload: unknown }).setRawAttachmentUpload =
+			setRaw;
+
+		runConnectChannel(fakeThis);
+		await flushMicrotasks();
+		await flushMicrotasks();
+		const stale = fakeThis.noteStream as unknown as {
+			onServerFeatures: (f: { rawAttachmentUpload: boolean }) => void;
+		};
+
+		stale.onServerFeatures({ rawAttachmentUpload: true });
+		expect(setRaw).toHaveBeenCalledWith(true);
+
+		// A backend switch bumps the epoch (and the api reset turns raw off);
+		// the old channel's join reply landing afterwards must not re-enable it.
+		setRaw.mockClear();
+		fakeThis.channelEpoch++;
+		stale.onServerFeatures({ rawAttachmentUpload: true });
+		expect(setRaw).not.toHaveBeenCalled();
+	});
+});
