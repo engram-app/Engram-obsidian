@@ -844,16 +844,6 @@ export function beaconRoute(path: string): string {
  *  (parsed) or `.text` (raw) depending on platform, so try both; a malformed
  *  or missing body yields `{}` rather than a decode crash, because every
  *  caller here is already on an error path and must not fail twice. */
-/** A raw (octet-stream) attachment upload refused for its encoding, not its
- *  content: an older backend's "content_base64 is required" 422, or a 415
- *  that is not the MIME/extension whitelist (that one JSON would get too). */
-function rawRefused(e: unknown): boolean {
-	const status = statusOf(e);
-	const error = errorBody(e).error;
-	if (status === 422) return error === "content_base64 is required";
-	return status === 415 && error !== "mime_not_allowed" && error !== "extension_not_allowed";
-}
-
 function errorBody(e: unknown): Record<string, unknown> {
 	const err = e as { json?: unknown; text?: string };
 	if (err.json && typeof err.json === "object") {
@@ -869,6 +859,16 @@ function errorBody(e: unknown): Record<string, unknown> {
 		}
 	}
 	return {};
+}
+
+/** A raw (octet-stream) attachment upload refused for its encoding, not its
+ *  content: an older backend's "content_base64 is required" 422, or a 415
+ *  that is not the MIME/extension whitelist (that one JSON would get too). */
+function rawRefused(e: unknown): boolean {
+	const status = statusOf(e);
+	const error = errorBody(e).error;
+	if (status === 422) return error === "content_base64 is required";
+	return status === 415 && error !== "mime_not_allowed" && error !== "extension_not_allowed";
 }
 
 function parseLimitExceededError(e: unknown): LimitExceededError {
