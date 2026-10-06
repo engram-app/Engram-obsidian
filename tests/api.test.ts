@@ -995,6 +995,29 @@ describe("EngramApi", () => {
 			);
 		});
 
+		// A backend from before raw download ignores ?raw=1 and answers with the
+		// JSON body, which already holds everything: no second GET.
+		test("a JSON answer to ?raw=1 is used as-is and turns raw off", async () => {
+			const body = {
+				path: "a.png",
+				content_base64: B64,
+				content_hash: "h3",
+				mime_type: "image/png",
+			};
+			mockRequestUrl
+				.mockResolvedValueOnce({
+					status: 200,
+					headers: { "Content-Type": "application/json; charset=utf-8" },
+					json: body,
+				} as any)
+				.mockResolvedValueOnce({ status: 200, json: { path: "b.png" } } as any);
+			api.setRawAttachmentDownload(true);
+			expect(await api.getAttachment("a.png")).toEqual(body as any);
+			expect(mockRequestUrl).toHaveBeenCalledTimes(1);
+			await api.getAttachment("b.png");
+			expect((mockRequestUrl.mock.calls[1][0] as any).url).not.toContain("raw=1");
+		});
+
 		test("a raw-download error is not retried as JSON", async () => {
 			const err = { status: 404, json: { error: "attachment not found" } };
 			mockRequestUrl.mockRejectedValueOnce(err);

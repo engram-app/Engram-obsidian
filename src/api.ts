@@ -675,14 +675,18 @@ export class EngramApi {
 				};
 			}
 			// The socket's advertisement can outlive the task that answers the
-			// GET (rolling deploy, rollback): an older backend serves ?raw=1
-			// bytes without the metadata headers. Stop asking for raw and fetch
-			// this one as JSON, once.
+			// GET (rolling deploy, rollback). Stop asking for raw either way. An
+			// older backend ignores ?raw=1 and sends the JSON body, which is the
+			// answer already; one that serves bytes without the metadata headers
+			// gets this one fetched again as JSON.
 			rlog().warn(
 				"api",
 				"Raw attachment download lacks metadata; falling back to base64 JSON",
 			);
 			this.rawAttachmentDownload = false;
+			if (header("content-type")?.includes("application/json")) {
+				return resp.json as AttachmentDetail;
+			}
 		}
 		// compat(server): raw_attachment_download - remove when the backend floor has it (#1877)
 		const resp = await this.request("GET", `/attachments/${encoded}`);
