@@ -16,11 +16,13 @@ import type { LimitExceededError } from "./limit-error";
 
 const TOAST_DURATION_MS = 10_000;
 
-export function notifyLimitExceeded(err: LimitExceededError): void {
+/** `offerUpgrade`: false on a self-hosted server (see offersUpgrades), which
+ *  has no billing, so the toast must not send the user to one. */
+export function notifyLimitExceeded(err: LimitExceededError, offerUpgrade: boolean): void {
 	const msg = toastFor(err.reason);
 	const notice = new Notice(msg, TOAST_DURATION_MS);
 
-	if (err.upgradeUrl) {
+	if (offerUpgrade && err.upgradeUrl) {
 		const url = err.upgradeUrl;
 		// Append a compact Upgrade button to the existing notice element.
 		// Obsidian's Electron host treats window.open as an external browser

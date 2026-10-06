@@ -6,6 +6,7 @@ import {
 	connectionState,
 	migrateBackendMode,
 	modeForUrl,
+	offersUpgrades,
 	switchMode,
 } from "../src/backend-mode";
 import { BACKEND_SCOPED_FIELDS, type EngramSyncSettings } from "../src/types";
@@ -251,5 +252,16 @@ describe("switchMode carries planState", () => {
 		expect(settings.planState).toBeNull();
 		switchMode(settings, "cloud", CLOUD);
 		expect(settings.planState).toEqual({ tier: "pro" } as never);
+	});
+});
+
+describe("offersUpgrades", () => {
+	test("only the hosted service sells plans", () => {
+		expect(offersUpgrades({ backendMode: "cloud" })).toBe(true);
+		expect(offersUpgrades({ backendMode: "selfhost" })).toBe(false);
+	});
+
+	test("an unknown mode stays quiet rather than advertising billing", () => {
+		expect(offersUpgrades({})).toBe(false);
 	});
 });

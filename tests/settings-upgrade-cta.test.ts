@@ -46,14 +46,19 @@ function makeFakeEl(cls = ""): FakeEl {
 	return Object.assign(el, methods(el));
 }
 
-function renderWith(tier: string | undefined): FakeEl {
+/** `backendMode: null` = an install whose mode was never recorded. */
+function renderWith(tier: string | undefined, backendMode: string | null = "cloud"): FakeEl {
 	const tab = Object.create(EngramSyncSettingTab.prototype) as any;
 	const statusEl = makeFakeEl();
 	tab.statusContainerEl = statusEl;
 	tab.plugin = {
 		// Signed in and live, so the status strip takes its plainest branch and
 		// the only thing under test is the CTA.
-		settings: { apiUrl: "https://api.example.com", apiKey: "k" },
+		settings: {
+			apiUrl: "https://api.example.com",
+			apiKey: "k",
+			...(backendMode ? { backendMode } : {}),
+		},
 		isLiveConnected: () => true,
 		syncEngine: {
 			getStatus: () => ({ state: "idle", lastSync: "" }),
@@ -83,5 +88,12 @@ describe("settings status strip — Upgrade CTA", () => {
 		// after load and for the whole session when signed out. Guessing "free"
 		// there would flash an upgrade prompt at a paying user on every open.
 		expect(hasUpgrade(renderWith(undefined))).toBe(false);
+	});
+
+	test("never offers Upgrade on a self-hosted server", () => {
+		// Self-host reports tier "free" (no subscription row) but has no billing
+		// at all, so the CTA would open a page that 404s.
+		expect(hasUpgrade(renderWith("free", "selfhost"))).toBe(false);
+		expect(hasUpgrade(renderWith("free", null))).toBe(false);
 	});
 });

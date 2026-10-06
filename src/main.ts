@@ -24,7 +24,7 @@ import {
 	seededAccessToken,
 } from "./auth";
 import { migrateCloudApiUrl, withClearedAuth } from "./auth-state";
-import { migrateBackendMode, switchMode } from "./backend-mode";
+import { migrateBackendMode, offersUpgrades, switchMode } from "./backend-mode";
 import { BaseStore } from "./base-store";
 import {
 	connectRetryDelayMs,
@@ -719,6 +719,7 @@ export default class EngramSyncPlugin extends Plugin {
 					// upgrade. Route it to the same limit toast the edit flow uses.
 					notifyLimitExceeded(
 						new LimitExceededError(reason, null, "notes_cap", null, null),
+						offersUpgrades(this.settings),
 					);
 					rlog().info(
 						"crdt",
@@ -1291,7 +1292,7 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  every offline launch. */
 	private handleSyncError(context: string, e: unknown, opts?: { notice?: boolean }): void {
 		if (e instanceof LimitExceededError) {
-			notifyLimitExceeded(e);
+			notifyLimitExceeded(e, offersUpgrades(this.settings));
 			rlog().info("lifecycle", `${context} blocked — limit reached (${e.reason})`);
 			return;
 		}
@@ -1729,7 +1730,7 @@ export default class EngramSyncPlugin extends Plugin {
 			return true;
 		} catch (e: unknown) {
 			if (e instanceof LimitExceededError) {
-				notifyLimitExceeded(e);
+				notifyLimitExceeded(e, offersUpgrades(this.settings));
 				rlog().info(
 					"lifecycle",
 					`Vault registration blocked — limit reached (${e.reason})`,
@@ -2917,6 +2918,7 @@ export default class EngramSyncPlugin extends Plugin {
 							this.planJoinNoticeShown.add(reason);
 							notifyLimitExceeded(
 								new LimitExceededError(reason, null, null, null, null),
+								offersUpgrades(this.settings),
 							);
 						}
 						// Degrade to legacy: mirror the "never-joined disconnect" path.
@@ -3054,6 +3056,7 @@ export default class EngramSyncPlugin extends Plugin {
 			intro,
 			phases,
 			webUrl: engramWebUrl(this.settings.apiUrl),
+			offerUpgrade: offersUpgrades(this.settings),
 		});
 		const prev = this.syncEngine.onSyncProgress;
 		// Stash the plan so the settings-pane bar (prev callback) renders the same

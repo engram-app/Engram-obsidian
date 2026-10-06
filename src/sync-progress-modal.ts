@@ -58,6 +58,7 @@ export function renderCompletionSummary(
 	parent: HTMLElement,
 	summary: CompletionSummary,
 	webUrl?: string,
+	offerUpgrade = false,
 ): void {
 	const line = parent.createDiv({ cls: "engram-progress-summary-tally" });
 
@@ -90,6 +91,7 @@ export function renderCompletionSummary(
 		});
 		// Gap before the button lives in the markup, not on the end of a
 		// translated key where trimming would silently close it.
+		if (!offerUpgrade) return;
 		note.createSpan({ text: " " });
 		const upgrade = note.createEl("button", {
 			text: t("Upgrade"),
@@ -260,11 +262,17 @@ export class SyncProgressModal extends Modal {
 
 	/** `intro`: plan-derived summary (see describePlannedWork). `phases`: the
 	 *  rows to seed (see plannedPhases). `webUrl`: the Engram web app to link to
-	 *  on completion so the user can verify their vault. All optional so callers
+	 *  on completion so the user can verify their vault. `offerUpgrade`: show
+	 *  the Upgrade button (hosted service only). All optional so callers
 	 *  without a plan still get a usable modal. */
 	constructor(
 		app: App,
-		private readonly opts: { intro?: string; phases?: PlannedPhase[]; webUrl?: string } = {},
+		private readonly opts: {
+			intro?: string;
+			phases?: PlannedPhase[];
+			webUrl?: string;
+			offerUpgrade?: boolean;
+		} = {},
 	) {
 		super(app);
 	}
@@ -450,7 +458,7 @@ export class SyncProgressModal extends Modal {
 		this.recapEl.hidden = false;
 
 		this.summaryEl.empty();
-		renderCompletionSummary(this.summaryEl, summary, this.opts.webUrl);
+		renderCompletionSummary(this.summaryEl, summary, this.opts.webUrl, this.opts.offerUpgrade);
 		this.summaryEl.hidden = false;
 
 		if (summary.failed > 0) {

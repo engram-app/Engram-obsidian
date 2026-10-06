@@ -42,6 +42,15 @@ export function connectionState(
 	return "connected";
 }
 
+/** Should the plugin advertise paid plans (Upgrade buttons)? Only the hosted
+ *  service sells them. A self-hosted server runs with billing off, still
+ *  reports tier "free" (no subscription row), and 404s its billing routes, so
+ *  an Upgrade there is a dead end. Unknown mode counts as self-host: never
+ *  advertise billing until we know it exists. */
+export function offersUpgrades(settings: Pick<EngramSyncSettings, "backendMode">): boolean {
+	return settings.backendMode === "cloud";
+}
+
 /** A backend that has never been configured. */
 function emptySlot(apiUrl: string): BackendSlot {
 	return {

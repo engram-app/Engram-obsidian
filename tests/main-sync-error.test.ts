@@ -23,7 +23,10 @@ type WithBoundary = {
 };
 
 function plugin(): WithBoundary {
-	return Object.create(EngramSyncPlugin.prototype) as unknown as WithBoundary;
+	// `settings` because the toast reads backendMode to decide on Upgrade.
+	return Object.assign(Object.create(EngramSyncPlugin.prototype), {
+		settings: { backendMode: "cloud" },
+	}) as unknown as WithBoundary;
 }
 
 describe("handleSyncError", () => {

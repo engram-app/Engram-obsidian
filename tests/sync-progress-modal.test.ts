@@ -97,9 +97,9 @@ function findByCls(el: FakeEl, cls: string): FakeEl | null {
 	return null;
 }
 
-function render(summary: CompletionSummary): FakeEl {
+function render(summary: CompletionSummary, offerUpgrade = true): FakeEl {
 	const parent = makeFakeEl("div");
-	renderCompletionSummary(parent as unknown as HTMLElement, summary);
+	renderCompletionSummary(parent as unknown as HTMLElement, summary, undefined, offerUpgrade);
 	return parent;
 }
 
@@ -136,6 +136,12 @@ describe("renderCompletionSummary — three-way tally", () => {
 		expect(upgrade?.text).toBe("Upgrade");
 		// The affordance is wired to open the billing URL.
 		expect(upgrade?.clickHandlers.length ?? 0).toBeGreaterThan(0);
+	});
+
+	test("a self-hosted server gets the plan note but no Upgrade", () => {
+		const parent = render({ synced: 10, skipped: 3, failed: 0 }, false);
+		expect(findByCls(parent, "engram-progress-plan-note")).not.toBeNull();
+		expect(findByCls(parent, "engram-progress-upgrade")).toBeNull();
 	});
 
 	test("skipped is singular-aware in the plan note", () => {
