@@ -728,6 +728,63 @@ describe("replay outcome summary (prod 2026-08-13 blindness)", () => {
 
 		expect(sent.filter((e) => e.message.includes("produced no files")).length).toBe(0);
 	});
+
+	// Prod 2026-10: 663 of these shipped from 12 users in 30 days and none had
+	// blocked/failed/incomplete. Every one was a steady-state poll whose rows the
+	// vault already matched (own-push echoes, rows live delivery already wrote).
+	// "applied but wrote nothing" is only a defect on a first sync or a failure.
+	const anomalyOf = (sent: Array<{ message: string }>) =>
+		sent.find((e) => e.message.includes("replay_produced_no_files"));
+
+	test("an incremental poll whose rows all no-op stays silent", async () => {
+		const { sent, flush } = captureShipped();
+		const { engine } = makeEngine(threeRowFeed());
+		spyOn(engine, "applySyncChange").mockResolvedValue(false);
+
+		// First pass walks from seq 0 and persists the cursor. The second is the
+		// steady-state poll — the stub feeds the same rows again, all no-ops.
+		await engine.catchupViaSeqReplay();
+		await flush();
+		sent.length = 0;
+		await engine.catchupViaSeqReplay();
+		await flush();
+
+		expect(anomalyOf(sent)).toBeUndefined();
+	});
+
+	test("an incremental poll with a failed row still reports", async () => {
+		const { sent, flush } = captureShipped();
+		const { engine } = makeEngine(threeRowFeed());
+		// One row applies (as a no-op), two throw: applied=1 failed=2 files=0.
+		// A failed row is NOT counted in `applied`, so an all-throw feed never
+		// reaches the check at all — the shape that matters is mixed.
+		spyOn(engine, "applySyncChange")
+			.mockResolvedValueOnce(false)
+			.mockRejectedValue(new Error("boom"));
+
+		await engine.catchupViaSeqReplay();
+		await flush();
+
+		expect(anomalyOf(sent)?.message).toContain("failed=2");
+	});
+
+	test("an incremental poll that loses the sync gate mid-walk still reports", async () => {
+		// A gate already closed at entry walks NOTHING (applied=0, own warn
+		// `catch_up_skipped_sync_gate_closed`), so this check never sees it. The
+		// case left is the gate closing DURING the walk: rows after it are
+		// dropped, which is the 2026-08-13 shape.
+		const { sent, flush } = captureShipped();
+		const { engine } = makeEngine(threeRowFeed());
+		spyOn(engine, "applySyncChange").mockImplementation(async () => {
+			engine.setSyncBlocked(true);
+			return false;
+		});
+
+		await engine.catchupViaSeqReplay();
+		await flush();
+
+		expect(anomalyOf(sent)?.message).toContain("blocked=true");
+	});
 });
 
 describe("the sync gate must not fake success (prod 2026-08-13 root cause)", () => {

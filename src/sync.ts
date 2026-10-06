@@ -6197,6 +6197,7 @@ export class SyncEngine {
 			let failed = 0;
 			let deletes = 0;
 			let complete = true;
+			let fromGenesis = false;
 			// FILE-unit dedupe across every pass of this session: the op-log has
 			// one row per op, the plan counts folded files — a note with N ops
 			// must tick the progress feed once, or `current` outruns the plan's
@@ -6238,6 +6239,7 @@ export class SyncEngine {
 					// The sets accumulate across coalesced passes, so ONE short pass taints
 					// the whole result — never OR this back to true.
 					if (!pass.complete) complete = false;
+					if (pass.fromGenesis) fromGenesis = true;
 				} while (this.seqReplayAgain);
 				// Outcome check. `applied` counts every row the feed handed us;
 				// `files` and `deletes` count what actually reached disk. All three
@@ -6251,7 +6253,15 @@ export class SyncEngine {
 				// precisely because a fresh install has telemetry off, which is the
 				// same install most likely to hit a first-sync bug. Counts only —
 				// no paths — so the setting still protects what it is meant to.
-				if (applied > 0 && files === 0 && deletes === 0) {
+				//
+				// Only suspicious on a first/full replay (walk began at seq 0) or when
+				// something went wrong. A steady-state poll legitimately applies rows
+				// the vault already matches (own-push echoes, rows live delivery
+				// already wrote), which is applied > 0 with files === 0. That shape
+				// shipped 663 lines from 12 users in 30 days of prod and not one had
+				// a failure behind it.
+				const suspicious = fromGenesis || failed > 0 || !complete || this.syncBlocked;
+				if (applied > 0 && files === 0 && deletes === 0 && suspicious) {
 					// `blocked` is the first thing to look at: a closed first-sync
 					// gate silently no-ops every note write while folders (which
 					// bypass it) still land. That combination — folders arrive,
@@ -6460,11 +6470,21 @@ export class SyncEngine {
 		failed: number;
 		deletes: number;
 		complete: boolean;
+		/** The walk started at seq 0: a first sync, a fromZero replay, or a
+		 *  cross-vault reset. Only there is "applied rows, wrote nothing" suspicious. */
+		fromGenesis: boolean;
 	}> {
 		// Never walked at all — sets are empty, which must NOT read as "server is
 		// empty" to a destructive caller.
 		if (!this.crdtCatchupSince || !this.crdt)
-			return { applied: 0, files: 0, failed: 0, deletes: 0, complete: false };
+			return {
+				applied: 0,
+				files: 0,
+				failed: 0,
+				deletes: 0,
+				complete: false,
+				fromGenesis: false,
+			};
 		// The seq cursor is per-vault: `seq` is allocated per vault, so a cursor
 		// from one vault is meaningless in another. If our recorded per-vault
 		// state belongs to a DIFFERENT vault than the active one — an OAuth /
@@ -6493,6 +6513,7 @@ export class SyncEngine {
 			cursor = floored;
 		}
 		this.seqRewindFloor = null;
+		const startedAtZero = cursor === 0;
 		let applied = 0;
 		let files = 0;
 		let failed = 0;
@@ -6581,9 +6602,9 @@ export class SyncEngine {
 			// still real (and the cursor is persisted), so the pull itself succeeded —
 			// but a delete decision built on these sets would trash every file the
 			// walk never reached.
-			return { applied, files, failed, deletes, complete: false };
+			return { applied, files, failed, deletes, complete: false, fromGenesis: startedAtZero };
 		}
-		return { applied, files, failed, deletes, complete: true };
+		return { applied, files, failed, deletes, complete: true, fromGenesis: startedAtZero };
 	}
 
 	/** Per-note discovery from a room-open announce that carries a path
