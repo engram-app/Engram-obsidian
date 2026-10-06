@@ -9886,9 +9886,14 @@ export class SyncEngine {
 		// file (a large attachment, a crdt_create queued behind the server's
 		// serial channel process) idle the other nine slots, and every slice
 		// boundary drained the pipeline for a full round trip (#1877 item 7).
+		// A throw that escapes a file's own try (onVaultScopedError, emitPushing)
+		// aborts the sweep, as it did under slices; `stop` keeps the other
+		// workers from taking more files, and allSettled below waits out the
+		// in-flight ones before rejecting so nothing keeps running unawaited.
 		let next = 0;
+		let stop = false;
 		const worker = async (): Promise<void> => {
-			for (let f = toSync[next++]; f !== undefined; f = toSync[next++]) {
+			for (let f = toSync[next++]; f !== undefined && !stop; f = toSync[next++]) {
 				try {
 					const ok = await this.pushFile(
 						f,
@@ -9925,7 +9930,16 @@ export class SyncEngine {
 				);
 			}
 		};
-		await Promise.all(Array.from({ length: Math.min(PUSH_BATCH_SIZE, toSync.length) }, worker));
+		const settled = await Promise.allSettled(
+			Array.from({ length: Math.min(PUSH_BATCH_SIZE, toSync.length) }, () =>
+				worker().catch((e: unknown) => {
+					stop = true;
+					throw e;
+				}),
+			),
+		);
+		const aborted = settled.find((r): r is PromiseRejectedResult => r.status === "rejected");
+		if (aborted) throw aborted.reason;
 		// ONE line per sweep, at warn so it reaches Loki (client info does not).
 		// This is the loop's actual signature: the same sweep firing over and
 		// over with pushed=0 and everything skipped. Per-file logs cannot show

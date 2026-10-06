@@ -69,6 +69,37 @@ describe("pushPartitioned sliding window", () => {
 		expect(started).toEqual(files(37).map((f) => f.path));
 	});
 
+	// A throwing UI/heal callback aborts the sweep (as the slice code did), but
+	// the window must stop taking files and settle in-flight ones before it
+	// rejects, not leave workers draining the list unawaited.
+	test("a throwing callback stops the window and rejects after in-flight settle", async () => {
+		const engine = makeEngine();
+		const boom = new Error("callback boom");
+		engine.onVaultScopedError = () => {
+			throw boom;
+		};
+		let release!: () => void;
+		const gate = new Promise<void>((r) => (release = r));
+		const started: string[] = [];
+		spyOn(engine as any, "pushFile").mockImplementation((async (f: TFile) => {
+			started.push(f.path);
+			if (f.path === "n0.md") throw new Error("push failed");
+			await gate;
+			return true;
+		}) as any);
+
+		let settled = false;
+		const run = (engine as any).pushPartitioned(files(25), "incremental").finally(() => {
+			settled = true;
+		});
+		run.catch(() => {});
+		for (let i = 0; i < 10; i++) await tick();
+		expect(settled).toBe(false);
+		release();
+		await expect(run).rejects.toBe(boom);
+		expect(started.length).toBe(10);
+	});
+
 	test("a throwing file is counted, the rest still run; empty input is a no-op", async () => {
 		const engine = makeEngine();
 		spyOn(engine as any, "pushFile").mockImplementation((async (f: TFile) => {
