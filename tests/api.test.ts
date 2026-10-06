@@ -765,6 +765,75 @@ describe("EngramApi", () => {
 			expect(opts.headers["Content-Type"]).toBe("application/json");
 		});
 
+		// Rolling deploy / rollback: the socket advertised raw support but the
+		// POST hit an older task, whose Plug.Parsers passes octet-stream unread.
+		test("raw upload refused as missing content_base64 retries once as JSON and turns raw off", async () => {
+			mockRequestUrl
+				.mockRejectedValueOnce({
+					status: 422,
+					json: { error: "content_base64 is required" },
+				})
+				.mockResolvedValueOnce({
+					status: 200,
+					json: { attachment: { path: "a.png" } },
+				} as any)
+				.mockResolvedValueOnce({ status: 200, json: {} } as any);
+			api.setRawAttachmentUpload(true);
+			const bytes = new Uint8Array([104, 105]).buffer;
+			const result = await api.pushAttachment("a.png", "aGk=", "image/png", 5, bytes);
+			expect(result).toEqual({ attachment: { path: "a.png" } } as any);
+			expect(mockRequestUrl).toHaveBeenCalledTimes(2);
+			const retry = mockRequestUrl.mock.calls[1][0] as any;
+			expect(retry.url).toBe(`${TEST_API_BASE}/attachments`);
+			expect(retry.headers["Content-Type"]).toBe("application/json");
+			expect(JSON.parse(retry.body).content_base64).toBe("aGk=");
+			// The flag is cleared: the next upload goes straight to JSON.
+			await api.pushAttachment("b.png", "aGk=", "image/png", 5, bytes);
+			const next = mockRequestUrl.mock.calls[2][0] as any;
+			expect(next.headers["Content-Type"]).toBe("application/json");
+		});
+
+		test("raw upload answered by a generic 415 retries as JSON", async () => {
+			mockRequestUrl
+				.mockRejectedValueOnce({ status: 415, text: "Unsupported Media Type" })
+				.mockResolvedValueOnce({ status: 200, json: {} } as any);
+			api.setRawAttachmentUpload(true);
+			await api.pushAttachment("a.png", "aGk=", "image/png", 5, new ArrayBuffer(2));
+			expect(mockRequestUrl).toHaveBeenCalledTimes(2);
+			expect((mockRequestUrl.mock.calls[1][0] as any).headers["Content-Type"]).toBe(
+				"application/json",
+			);
+		});
+
+		test("a 415 refusing the MIME type is not retried", async () => {
+			const err = { status: 415, json: { error: "mime_not_allowed", mime_type: "x/y" } };
+			mockRequestUrl.mockRejectedValueOnce(err);
+			api.setRawAttachmentUpload(true);
+			await expect(
+				api.pushAttachment("a.png", "aGk=", "image/png", 5, new ArrayBuffer(2)),
+			).rejects.toBe(err);
+			expect(mockRequestUrl).toHaveBeenCalledTimes(1);
+		});
+
+		test("any other 422 on a raw upload is not retried", async () => {
+			const err = { status: 422, json: { error: "invalid path" } };
+			mockRequestUrl.mockRejectedValueOnce(err);
+			api.setRawAttachmentUpload(true);
+			await expect(
+				api.pushAttachment("../a.png", "aGk=", "image/png", 5, new ArrayBuffer(2)),
+			).rejects.toBe(err);
+			expect(mockRequestUrl).toHaveBeenCalledTimes(1);
+		});
+
+		test("a JSON upload's missing-content 422 is not retried", async () => {
+			const err = { status: 422, json: { error: "content_base64 is required" } };
+			mockRequestUrl.mockRejectedValueOnce(err);
+			await expect(
+				api.pushAttachment("a.png", "", "image/png", 5, new ArrayBuffer(0)),
+			).rejects.toBe(err);
+			expect(mockRequestUrl).toHaveBeenCalledTimes(1);
+		});
+
 		test("an empty file goes raw as a zero-length body", async () => {
 			mockRequestUrl.mockResolvedValueOnce({ status: 200, json: {} } as any);
 			api.setRawAttachmentUpload(true);

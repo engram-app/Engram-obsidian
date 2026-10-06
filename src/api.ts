@@ -614,8 +614,18 @@ export class EngramApi {
 	): Promise<AttachmentResponse> {
 		if (this.rawAttachmentUpload && bytes) {
 			const qs = new URLSearchParams({ path, mime_type: mimeType, mtime: String(mtime) });
-			const resp = await this.request("POST", `/attachments?${qs}`, bytes);
-			return resp.json as AttachmentResponse;
+			try {
+				const resp = await this.request("POST", `/attachments?${qs}`, bytes);
+				return resp.json as AttachmentResponse;
+			} catch (e) {
+				// The socket's advertisement can outlive the task that answers the
+				// POST (rolling deploy, rollback): an older backend reads no body
+				// from octet-stream and says content_base64 is missing. Stop sending
+				// raw and resend this upload as JSON, once.
+				if (!rawRefused(e)) throw e;
+				rlog().warn("api", "Raw attachment upload refused; falling back to base64 JSON");
+				this.rawAttachmentUpload = false;
+			}
 		}
 		// compat(server): raw_attachment_upload - remove when the backend floor has it (#1877)
 		const resp = await this.request("POST", "/attachments", {
@@ -789,6 +799,16 @@ export function beaconRoute(path: string): string {
  *  (parsed) or `.text` (raw) depending on platform, so try both; a malformed
  *  or missing body yields `{}` rather than a decode crash, because every
  *  caller here is already on an error path and must not fail twice. */
+/** A raw (octet-stream) attachment upload refused for its encoding, not its
+ *  content: an older backend's "content_base64 is required" 422, or a 415
+ *  that is not the MIME/extension whitelist (that one JSON would get too). */
+function rawRefused(e: unknown): boolean {
+	const status = statusOf(e);
+	const error = errorBody(e).error;
+	if (status === 422) return error === "content_base64 is required";
+	return status === 415 && error !== "mime_not_allowed" && error !== "extension_not_allowed";
+}
+
 function errorBody(e: unknown): Record<string, unknown> {
 	const err = e as { json?: unknown; text?: string };
 	if (err.json && typeof err.json === "object") {
