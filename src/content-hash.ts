@@ -1,3 +1,5 @@
+import { wasmCore } from "./wasm-core";
+
 /** Fast string hash (FNV-1a 32-bit). Not cryptographic — just for content
  *  change detection.
  *
@@ -22,11 +24,18 @@ const B64 = Uint8Array.from(
 );
 const PAD = 61; // "="
 
-/** `fnv1a(base64(bytes))` without building the base64 string. The attachment
+/** `fnv1a(base64(bytes))` without building the base64 string. Runs in the
+ *  Rust core when it has loaded (1.0-1.4x faster: FNV is one serial multiply
+ *  chain, so the JIT is already near the floor), else in JS. */
+export function fnv1aBase64(buffer: ArrayBuffer): number {
+	return wasmCore()?.fnv1aBase64(buffer) ?? fnv1aBase64Js(buffer);
+}
+
+/** JS implementation of `fnv1aBase64`. The attachment
  *  sync hash has always been fnv1a over the padded standard base64 (what the
  *  push side hashes), so a raw download must produce the same number; building
  *  the string first costs ~65 ms/MB in `arrayBufferToBase64` (bun), this ~3 ms/MB. */
-export function fnv1aBase64(buffer: ArrayBuffer): number {
+export function fnv1aBase64Js(buffer: ArrayBuffer): number {
 	const b = new Uint8Array(buffer);
 	const full = b.length - (b.length % 3);
 	let h = 0x811c9dc5;

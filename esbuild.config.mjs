@@ -37,6 +37,8 @@ const context = await esbuild.context({
 	treeShaking: true,
 	minifySyntax: prod,
 	outfile: "main.js",
+	// Obsidian ships only main.js, so the Rust core is inlined (see src/wasm-core.ts).
+	loader: { ".wasm": "binary" },
 	define: {
 		"DEV_MODE": prod ? "false" : "true",
 	},

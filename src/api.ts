@@ -26,6 +26,7 @@ import type {
 	VersionConflictResponse,
 } from "./types";
 import { notifyUpgradeRequired } from "./upgrade-required";
+import { wasmCore } from "./wasm-core";
 
 /** A request exceeded its deadline. requestUrl() cannot be aborted, so the
  *  underlying request is ABANDONED, not cancelled — a late server-side apply
@@ -913,11 +914,20 @@ function headerLookup(headers: Record<string, string> | undefined) {
 	return (name: string): string | undefined => lower.get(name);
 }
 
-/** Convert an ArrayBuffer to a base64 string. Chunked fromCharCode instead of
+/** Convert an ArrayBuffer to a base64 string: the engine's native encoder
+ *  where it exists (Chromium 140+/Electron 38+, Safari 18.2+), else the Rust
+ *  core, else JS. Measured per MB: native ~0.3-0.7 ms, wasm ~3-10 ms, JS
+ *  ~50-140 ms. */
+export function arrayBufferToBase64(buffer: ArrayBuffer): string {
+	const bytes = new Uint8Array(buffer) as Uint8Array & { toBase64?: () => string };
+	return bytes.toBase64?.() ?? wasmCore()?.base64(buffer) ?? arrayBufferToBase64Js(buffer);
+}
+
+/** JS fallback for `arrayBufferToBase64`. Chunked fromCharCode instead of
  *  per-byte string concatenation: attachments run to multi-MB on the main
  *  thread (mobile included), where the O(n) rope-churn loop was measurable.
  *  32k chunks stay safely under engine argument-count limits. */
-export function arrayBufferToBase64(buffer: ArrayBuffer): string {
+export function arrayBufferToBase64Js(buffer: ArrayBuffer): string {
 	const bytes = new Uint8Array(buffer);
 	const parts: string[] = [];
 	for (let i = 0; i < bytes.length; i += 0x8000) {

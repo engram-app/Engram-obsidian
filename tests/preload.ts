@@ -1,4 +1,6 @@
 import { mock } from "bun:test";
+// .wasm imports resolve to bytes, as in the esbuild bundle.
+import "../wasm/bun-plugin";
 import * as obsidianMock from "./__mocks__/obsidian";
 
 // Obsidian plugin code uses window.setInterval/setTimeout/clearInterval/clearTimeout
