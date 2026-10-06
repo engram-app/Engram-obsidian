@@ -1,0 +1,87 @@
+/**
+ * pushPartitioned runs a sliding window, not fixed slices with a barrier.
+ *
+ * Under slices, one slow file (a big attachment upload, a crdt_create stuck
+ * behind the server's serial channel queue) held back the next slice's files
+ * until it finished, and every slice boundary drained the pipeline for a full
+ * round trip. The window starts the next file as soon as ANY file finishes.
+ */
+import { describe, expect, mock, spyOn, test } from "bun:test";
+import { TFile } from "obsidian";
+import type { EngramApi } from "../src/api";
+import { SyncEngine } from "../src/sync";
+import { DEFAULT_SETTINGS } from "../src/types";
+
+function makeEngine(): SyncEngine {
+	const app = {
+		vault: { configDir: ".obsidian", getName: () => "T", getFiles: () => [] },
+		workspace: { getActiveViewOfType: () => null },
+	};
+	return new SyncEngine(
+		app as any,
+		{} as unknown as EngramApi,
+		{ ...DEFAULT_SETTINGS, debounceMs: 1 },
+		mock().mockResolvedValue(undefined),
+	);
+}
+
+const files = (n: number) => Array.from({ length: n }, (_, i) => new TFile(`n${i}.md`, 0));
+const tick = () => new Promise((r) => setTimeout(r, 0));
+
+describe("pushPartitioned sliding window", () => {
+	test("a slow file does not hold back files past the first 10", async () => {
+		const engine = makeEngine();
+		let releaseSlow!: (v: boolean) => void;
+		const started: string[] = [];
+		spyOn(engine as any, "pushFile").mockImplementation(((f: TFile) => {
+			started.push(f.path);
+			if (f.path === "n0.md") return new Promise<boolean>((r) => (releaseSlow = r));
+			return Promise.resolve(true);
+		}) as any);
+
+		const run = (engine as any).pushPartitioned(files(25), "incremental");
+		for (let i = 0; i < 20; i++) await tick();
+		// Everything but the slow file has been started and finished already.
+		expect(started.length).toBe(25);
+		releaseSlow(true);
+		expect(await run).toEqual({ pushed: 25, failed: 0 });
+	});
+
+	test("never more than 10 files in flight, starts in input order", async () => {
+		const engine = makeEngine();
+		let inFlight = 0;
+		let peak = 0;
+		const started: string[] = [];
+		spyOn(engine as any, "pushFile").mockImplementation((async (f: TFile) => {
+			started.push(f.path);
+			inFlight++;
+			peak = Math.max(peak, inFlight);
+			await tick();
+			inFlight--;
+			return true;
+		}) as any);
+
+		expect(await (engine as any).pushPartitioned(files(37), "incremental")).toEqual({
+			pushed: 37,
+			failed: 0,
+		});
+		expect(peak).toBe(10);
+		expect(started).toEqual(files(37).map((f) => f.path));
+	});
+
+	test("a throwing file is counted, the rest still run; empty input is a no-op", async () => {
+		const engine = makeEngine();
+		spyOn(engine as any, "pushFile").mockImplementation((async (f: TFile) => {
+			if (f.path === "n3.md") throw new Error("boom");
+			return true;
+		}) as any);
+		expect(await (engine as any).pushPartitioned(files(12), "incremental")).toEqual({
+			pushed: 11,
+			failed: 1,
+		});
+		expect(await (engine as any).pushPartitioned([], "incremental")).toEqual({
+			pushed: 0,
+			failed: 0,
+		});
+	});
+});

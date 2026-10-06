@@ -321,8 +321,8 @@ const MIME_TYPES: Record<string, string> = {
 	canvas: "application/json",
 };
 
-/** Per-batch concurrency for the per-file push loop (both the incremental and
- *  the force pipeline). Was a magic 10 in two places. */
+/** Window width of the per-file push loop (both the incremental and the
+ *  force pipeline): at most this many pushFile calls outstanding at once. */
 const PUSH_BATCH_SIZE = 10;
 
 type CrdtCatchupSinceFn = (
@@ -9860,8 +9860,8 @@ export class SyncEngine {
 	}
 
 	/** Shared push pipeline: every file — genesis notes, server-known notes,
-	 *  attachments — rides ONE bounded per-file loop (Promise.all over
-	 *  PUSH_BATCH_SIZE slices). pushFile's socket-native genesis (crdt_create)
+	 *  attachments — rides ONE bounded per-file loop (a PUSH_BATCH_SIZE-wide
+	 *  sliding window). pushFile's socket-native genesis (crdt_create)
 	 *  owns brand-new notes; the retired crdt_create_batch RPC was a second,
 	 *  lesser copy of that path (per-file rewrite: per-file work units,
 	 *  per-file progress, per-file failure isolation — a failure strands one
@@ -9881,47 +9881,51 @@ export class SyncEngine {
 		const total = toSync.length;
 		let pushed = 0;
 		let failed = 0;
-		for (let i = 0; i < toSync.length; i += PUSH_BATCH_SIZE) {
-			const batch = toSync.slice(i, i + PUSH_BATCH_SIZE);
-			await Promise.all(
-				batch.map(async (f: TFile) => {
-					try {
-						const ok = await this.pushFile(
-							f,
-							mode === "force",
-							false,
-							serverAttachmentHashes,
-						);
-						if (ok) {
-							pushed++;
-							if (mode === "force") this.logEntry("push", f.path, "ok");
-						} else if (mode === "force") {
-							this.logEntry("skip", f.path, "skipped", undefined, "unchanged");
-						}
-					} catch (e) {
-						failed++;
-						this.onVaultScopedError?.(e);
-						const msg = errMsg(e);
-						this.logEntry("push", f.path, "error", msg);
-						this.issues.record({
-							path: f.path,
-							kind: this.isBinaryFile(f) ? "attachment" : "note",
-							category: "other",
-							message: msg,
-							firstFailedAt: Date.now(),
-							lastFailedAt: Date.now(),
-							attempts: 1,
-						});
-					}
-					this.emitPushing(
-						base.pushed + pushed,
-						base.pushed + total,
-						base.failed + failed,
-						f.path,
+		// Sliding window, not slices: each worker takes the next file the moment
+		// its last one settles. Slices with a Promise.all barrier let one slow
+		// file (a large attachment, a crdt_create queued behind the server's
+		// serial channel process) idle the other nine slots, and every slice
+		// boundary drained the pipeline for a full round trip (#1877 item 7).
+		let next = 0;
+		const worker = async (): Promise<void> => {
+			for (let f = toSync[next++]; f !== undefined; f = toSync[next++]) {
+				try {
+					const ok = await this.pushFile(
+						f,
+						mode === "force",
+						false,
+						serverAttachmentHashes,
 					);
-				}),
-			);
-		}
+					if (ok) {
+						pushed++;
+						if (mode === "force") this.logEntry("push", f.path, "ok");
+					} else if (mode === "force") {
+						this.logEntry("skip", f.path, "skipped", undefined, "unchanged");
+					}
+				} catch (e) {
+					failed++;
+					this.onVaultScopedError?.(e);
+					const msg = errMsg(e);
+					this.logEntry("push", f.path, "error", msg);
+					this.issues.record({
+						path: f.path,
+						kind: this.isBinaryFile(f) ? "attachment" : "note",
+						category: "other",
+						message: msg,
+						firstFailedAt: Date.now(),
+						lastFailedAt: Date.now(),
+						attempts: 1,
+					});
+				}
+				this.emitPushing(
+					base.pushed + pushed,
+					base.pushed + total,
+					base.failed + failed,
+					f.path,
+				);
+			}
+		};
+		await Promise.all(Array.from({ length: Math.min(PUSH_BATCH_SIZE, toSync.length) }, worker));
 		// ONE line per sweep, at warn so it reaches Loki (client info does not).
 		// This is the loop's actual signature: the same sweep firing over and
 		// over with pushed=0 and everything skipped. Per-file logs cannot show
