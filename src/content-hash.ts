@@ -1,4 +1,4 @@
-import { wasmCore } from "./wasm-core";
+import { recordCoreUse, wasmCore } from "./wasm-core";
 
 /** Fast string hash (FNV-1a 32-bit). Not cryptographic — just for content
  *  change detection.
@@ -28,7 +28,9 @@ const PAD = 61; // "="
  *  Rust core when it has loaded (1.0-1.4x faster: FNV is one serial multiply
  *  chain, so the JIT is already near the floor), else in JS. */
 export function fnv1aBase64(buffer: ArrayBuffer): number {
-	return wasmCore()?.fnv1aBase64(buffer) ?? fnv1aBase64Js(buffer);
+	const core = wasmCore();
+	recordCoreUse("fnv1a", core ? "wasm" : "js", buffer.byteLength);
+	return core ? core.fnv1aBase64(buffer) : fnv1aBase64Js(buffer);
 }
 
 /** JS implementation of `fnv1aBase64`. The attachment

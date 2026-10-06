@@ -90,7 +90,7 @@ import {
 } from "./types";
 import { checkForPluginUpdate } from "./update-check";
 import { setUpgradeAction } from "./upgrade-required";
-import { loadWasmCore } from "./wasm-core";
+import { loadWasmCore, markWasmCoreUnavailable } from "./wasm-core";
 
 /** Generate a stable client ID for vault registration.
  *  Uses SHA-256 of the vault's absolute path (desktop) or name (mobile fallback). */
@@ -547,8 +547,10 @@ export default class EngramSyncPlugin extends Plugin {
 		// failure only means they stay on JS. Logged once either way.
 		loadWasmCore().then(
 			(ms) => rlog().info("lifecycle", `wasm core ready in ${ms.toFixed(1)} ms`),
-			(e: unknown) =>
-				rlog().warn("lifecycle", `wasm core unavailable, using JS: ${errMsg(e)}`),
+			(e: unknown) => {
+				markWasmCoreUnavailable(errMsg(e));
+				rlog().warn("lifecycle", `wasm core unavailable, using JS: ${errMsg(e)}`);
+			},
 		);
 		activeDocument.body.classList.add("engram-vault-sync-active");
 		await this.loadSettings();

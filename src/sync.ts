@@ -70,6 +70,7 @@ import type {
 	SyncProgress,
 	SyncStatus,
 } from "./types";
+import { takeCoreUsage, wasmCoreStatus } from "./wasm-core";
 
 /**
  * Pure routing helper: for a markdown note, apply the disk content into the
@@ -9668,6 +9669,7 @@ export class SyncEngine {
 		}
 		devLog().log("lifecycle", "fullSync start");
 		rlog().info("lifecycle", "FullSync started");
+		rlog().info("lifecycle", `wasm core: ${wasmCoreStatus()}`);
 		// Verify auth before syncing to give a clear error on bad API key
 		const { ok, error } = await this.api.ping();
 		if (!ok) {
@@ -9964,6 +9966,7 @@ export class SyncEngine {
 			"push",
 			`Sweep done (${mode}) — pushed=${pushed} skipped=${total - pushed - failed} failed=${failed} of ${total}`,
 		);
+		rlog().info("lifecycle", `wasm core usage: ${takeCoreUsage()}`);
 		return { pushed, failed };
 	}
 
