@@ -26,7 +26,7 @@ import type {
 	VersionConflictResponse,
 } from "./types";
 import { notifyUpgradeRequired } from "./upgrade-required";
-import { recordCoreUse, wasmCore } from "./wasm-core";
+import { wasmCore } from "./wasm-core";
 
 /** A request exceeded its deadline. requestUrl() cannot be aborted, so the
  *  underlying request is ABANDONED, not cancelled — a late server-side apply
@@ -930,13 +930,7 @@ function headerLookup(headers: Record<string, string> | undefined) {
  *  ~50-140 ms. */
 export function arrayBufferToBase64(buffer: ArrayBuffer): string {
 	const bytes = new Uint8Array(buffer) as Uint8Array & { toBase64?: () => string };
-	if (bytes.toBase64) {
-		recordCoreUse("base64", "native", buffer.byteLength);
-		return bytes.toBase64();
-	}
-	const core = wasmCore();
-	recordCoreUse("base64", core ? "wasm" : "js", buffer.byteLength);
-	return core ? core.base64(buffer) : arrayBufferToBase64Js(buffer);
+	return bytes.toBase64?.() ?? wasmCore()?.base64(buffer) ?? arrayBufferToBase64Js(buffer);
 }
 
 /** JS fallback for `arrayBufferToBase64`. Chunked fromCharCode instead of

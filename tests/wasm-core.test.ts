@@ -1,14 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { arrayBufferToBase64, arrayBufferToBase64Js } from "../src/api";
 import { fnv1a, fnv1aBase64, fnv1aBase64Js } from "../src/content-hash";
-import {
-	loadWasmCore,
-	markWasmCoreUnavailable,
-	resetWasmCore,
-	takeCoreStatusChange,
-	wasmCore,
-	wasmCoreStatus,
-} from "../src/wasm-core";
+import { loadWasmCore, resetWasmCore, wasmCore } from "../src/wasm-core";
 
 // Every implementation of the attachment hash and of base64 encode must agree
 // byte for byte with an independent oracle (node's Buffer): a hash that drifts
@@ -82,55 +75,5 @@ describe("fallback", () => {
 		expect(fnv1aBase64(b.buffer)).toBe(fnv1a(oracle(b)));
 		expect(arrayBufferToBase64(b.buffer)).toBe(oracle(b));
 		await loadWasmCore();
-	});
-});
-
-describe("wasmCoreStatus", () => {
-	test("reports loading, then ready, then unavailable", async () => {
-		resetWasmCore();
-		expect(wasmCoreStatus()).toBe("loading");
-		await loadWasmCore();
-		expect(wasmCoreStatus()).toMatch(/^ready in \d+(\.\d)? ms$/);
-		markWasmCoreUnavailable("no WebAssembly");
-		expect(wasmCoreStatus()).toBe("unavailable: no WebAssembly");
-		resetWasmCore();
-	});
-});
-
-describe("takeCoreStatusChange", () => {
-	test("returns the status only when it differs from the last one taken", async () => {
-		resetWasmCore();
-		takeCoreStatusChange();
-		expect(takeCoreStatusChange()).toBeUndefined();
-		await loadWasmCore();
-		expect(takeCoreStatusChange()).toMatch(/^ready in /);
-		expect(takeCoreStatusChange()).toBeUndefined();
-		markWasmCoreUnavailable("gone");
-		expect(takeCoreStatusChange()).toBe("unavailable: gone");
-		resetWasmCore();
-	});
-});
-
-describe("core usage counters", () => {
-	test("count the engine that actually ran, then reset", async () => {
-		const { recordCoreUse, takeCoreUsage } = await import("../src/wasm-core");
-		takeCoreUsage();
-		recordCoreUse("fnv1a", "wasm", 1048576);
-		recordCoreUse("fnv1a", "wasm", 1048576);
-		recordCoreUse("base64", "js", 0);
-		expect(takeCoreUsage()).toBe("base64:js 1 calls/0.0 MB, fnv1a:wasm 2 calls/2.0 MB");
-		expect(takeCoreUsage()).toBe("none");
-	});
-
-	test("fnv1aBase64 records wasm when the core is loaded, js when not", async () => {
-		const { takeCoreUsage } = await import("../src/wasm-core");
-		const buf = new Uint8Array([1, 2, 3]).buffer;
-		await loadWasmCore();
-		takeCoreUsage();
-		fnv1aBase64(buf);
-		expect(takeCoreUsage()).toBe("fnv1a:wasm 1 calls/0.0 MB");
-		resetWasmCore();
-		fnv1aBase64(buf);
-		expect(takeCoreUsage()).toBe("fnv1a:js 1 calls/0.0 MB");
 	});
 });

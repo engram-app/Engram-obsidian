@@ -70,7 +70,6 @@ import type {
 	SyncProgress,
 	SyncStatus,
 } from "./types";
-import { takeCoreStatusChange, takeCoreUsage } from "./wasm-core";
 
 /**
  * Pure routing helper: for a markdown note, apply the disk content into the
@@ -9669,8 +9668,6 @@ export class SyncEngine {
 		}
 		devLog().log("lifecycle", "fullSync start");
 		rlog().info("lifecycle", "FullSync started");
-		const coreStatus = takeCoreStatusChange();
-		if (coreStatus !== undefined) rlog().warn("lifecycle", `wasm core: ${coreStatus}`);
 		// Verify auth before syncing to give a clear error on bad API key
 		const { ok, error } = await this.api.ping();
 		if (!ok) {
@@ -9949,31 +9946,23 @@ export class SyncEngine {
 				);
 			}
 		};
-		let core: string;
-		try {
-			const settled = await Promise.allSettled(
-				Array.from({ length: Math.min(PUSH_BATCH_SIZE, toSync.length) }, () =>
-					worker().catch((e: unknown) => {
-						stop = true;
-						throw e;
-					}),
-				),
-			);
-			const aborted = settled.find(
-				(r): r is PromiseRejectedResult => r.status === "rejected",
-			);
-			if (aborted) throw aborted.reason;
-		} finally {
-			// Drained even on abort, so this sweep's counts never land on the next.
-			core = takeCoreUsage();
-		}
+		const settled = await Promise.allSettled(
+			Array.from({ length: Math.min(PUSH_BATCH_SIZE, toSync.length) }, () =>
+				worker().catch((e: unknown) => {
+					stop = true;
+					throw e;
+				}),
+			),
+		);
+		const aborted = settled.find((r): r is PromiseRejectedResult => r.status === "rejected");
+		if (aborted) throw aborted.reason;
 		// ONE line per sweep, at warn so it reaches Loki (client info does not).
 		// This is the loop's actual signature: the same sweep firing over and
 		// over with pushed=0 and everything skipped. Per-file logs cannot show
 		// that shape without emitting one entry per file.
 		rlog().warn(
 			"push",
-			`Sweep done (${mode}) — pushed=${pushed} skipped=${total - pushed - failed} failed=${failed} of ${total} | core: ${core}`,
+			`Sweep done (${mode}) — pushed=${pushed} skipped=${total - pushed - failed} failed=${failed} of ${total}`,
 		);
 		return { pushed, failed };
 	}

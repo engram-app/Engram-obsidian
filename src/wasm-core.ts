@@ -25,54 +25,6 @@ export interface WasmCore {
 const WIN = 3 * 16 * 1024;
 
 let core: WasmCore | undefined;
-// Why: the load outcome is logged at onload, before the remote logger is
-// configured, so it never reached anyone. Kept here and re-logged per sync.
-let status = "loading";
-
-/** "loading", "ready in N ms", or "unavailable: <reason>" (JS paths in use). */
-export function wasmCoreStatus(): string {
-	return status;
-}
-
-let loggedStatus: string | undefined;
-
-/** The status if it changed since the last call, else undefined: callers log
- *  it at warn (to reach Loki) about once per session instead of per sync. */
-export function takeCoreStatusChange(): string | undefined {
-	if (status === loggedStatus) return undefined;
-	loggedStatus = status;
-	return status;
-}
-
-type Engine = "wasm" | "native" | "js";
-type Op = "fnv1a" | "base64";
-const usage = new Map<string, { calls: number; bytes: number }>();
-
-/** Count one hash/encode by the engine that actually ran it. */
-export function recordCoreUse(op: Op, engine: Engine, bytes: number): void {
-	const key = `${op}:${engine}`;
-	const u = usage.get(key) ?? { calls: 0, bytes: 0 };
-	u.calls++;
-	u.bytes += bytes;
-	usage.set(key, u);
-}
-
-/** "fnv1a:wasm 12 calls/3.4 MB, base64:native 2 calls/0.1 MB" since the last
- *  call (then resets), or "none". */
-export function takeCoreUsage(): string {
-	if (usage.size === 0) return "none";
-	const out = [...usage.entries()]
-		.sort(([a], [b]) => a.localeCompare(b))
-		.map(([k, u]) => `${k} ${u.calls} calls/${(u.bytes / 1048576).toFixed(1)} MB`)
-		.join(", ");
-	usage.clear();
-	return out;
-}
-
-/** Records a failed load; the caller owns the error message. */
-export function markWasmCoreUnavailable(reason: string): void {
-	status = `unavailable: ${reason}`;
-}
 
 export function wasmCore(): WasmCore | undefined {
 	return core;
@@ -81,7 +33,6 @@ export function wasmCore(): WasmCore | undefined {
 /** Test seam: back to the JS paths. */
 export function resetWasmCore(): void {
 	core = undefined;
-	status = "loading";
 }
 
 /** Instantiate the core and return the time it took (ms). Async on purpose:
@@ -128,7 +79,5 @@ export async function loadWasmCore(bytes: Uint8Array = bundledWasm): Promise<num
 		throw new Error("wasm core failed its self-check");
 	}
 	core = candidate;
-	const ms = performance.now() - t0;
-	status = `ready in ${ms.toFixed(1)} ms`;
-	return ms;
+	return performance.now() - t0;
 }
