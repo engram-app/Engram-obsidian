@@ -34,6 +34,16 @@ export function wasmCoreStatus(): string {
 	return status;
 }
 
+let loggedStatus: string | undefined;
+
+/** The status if it changed since the last call, else undefined: callers log
+ *  it at warn (to reach Loki) about once per session instead of per sync. */
+export function takeCoreStatusChange(): string | undefined {
+	if (status === loggedStatus) return undefined;
+	loggedStatus = status;
+	return status;
+}
+
 type Engine = "wasm" | "native" | "js";
 type Op = "fnv1a" | "base64";
 const usage = new Map<string, { calls: number; bytes: number }>();

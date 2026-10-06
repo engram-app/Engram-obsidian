@@ -5,6 +5,7 @@ import {
 	loadWasmCore,
 	markWasmCoreUnavailable,
 	resetWasmCore,
+	takeCoreStatusChange,
 	wasmCore,
 	wasmCoreStatus,
 } from "../src/wasm-core";
@@ -92,6 +93,20 @@ describe("wasmCoreStatus", () => {
 		expect(wasmCoreStatus()).toMatch(/^ready in \d+(\.\d)? ms$/);
 		markWasmCoreUnavailable("no WebAssembly");
 		expect(wasmCoreStatus()).toBe("unavailable: no WebAssembly");
+		resetWasmCore();
+	});
+});
+
+describe("takeCoreStatusChange", () => {
+	test("returns the status only when it differs from the last one taken", async () => {
+		resetWasmCore();
+		takeCoreStatusChange();
+		expect(takeCoreStatusChange()).toBeUndefined();
+		await loadWasmCore();
+		expect(takeCoreStatusChange()).toMatch(/^ready in /);
+		expect(takeCoreStatusChange()).toBeUndefined();
+		markWasmCoreUnavailable("gone");
+		expect(takeCoreStatusChange()).toBe("unavailable: gone");
 		resetWasmCore();
 	});
 });

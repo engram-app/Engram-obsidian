@@ -9,8 +9,10 @@
 import { describe, expect, mock, spyOn, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
+import { rlog } from "../src/remote-log";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
+import { recordCoreUse, takeCoreUsage } from "../src/wasm-core";
 
 function makeEngine(): SyncEngine {
 	const app = {
@@ -114,5 +116,40 @@ describe("pushPartitioned sliding window", () => {
 			pushed: 0,
 			failed: 0,
 		});
+	});
+
+	// Client info never reaches Loki, so the per-sweep engine usage rides the
+	// warn-level sweep line, after its existing text.
+	test("the sweep line carries the core usage and drains it", async () => {
+		const engine = makeEngine();
+		spyOn(engine as any, "pushFile").mockImplementation((async () => {
+			recordCoreUse("fnv1a", "wasm", 1048576);
+			return true;
+		}) as any);
+		const warn = spyOn(rlog(), "warn");
+		takeCoreUsage();
+		await (engine as any).pushPartitioned(files(2), "incremental");
+		const line = warn.mock.calls.map((c) => c[1]).find((m) => m.startsWith("Sweep done"));
+		expect(line).toBe(
+			"Sweep done (incremental) — pushed=2 skipped=0 failed=0 of 2 | core: fnv1a:wasm 2 calls/2.0 MB",
+		);
+		expect(takeCoreUsage()).toBe("none");
+		warn.mockRestore();
+	});
+
+	test("an aborted sweep still drains its core usage", async () => {
+		const engine = makeEngine();
+		engine.onVaultScopedError = () => {
+			throw new Error("abort");
+		};
+		spyOn(engine as any, "pushFile").mockImplementation((async () => {
+			recordCoreUse("base64", "js", 10);
+			throw new Error("push failed");
+		}) as any);
+		takeCoreUsage();
+		await expect((engine as any).pushPartitioned(files(1), "incremental")).rejects.toThrow(
+			"abort",
+		);
+		expect(takeCoreUsage()).toBe("none");
 	});
 });
