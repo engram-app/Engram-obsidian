@@ -210,15 +210,21 @@ export class EngramApi {
 	}
 
 	updateConfig(baseUrl: string, apiKey: string): void {
-		this.baseUrl = EngramApi.normalizeBaseUrl(baseUrl);
+		const normalized = EngramApi.normalizeBaseUrl(baseUrl);
+		// A new backend has not said what it supports yet; its join reply will.
+		// Same backend: keep them. saveSettings lands here on every write (OAuth
+		// rotation included) while setupNoteStream reuses the live socket, so no
+		// join reply would come to turn them back on.
+		if (normalized !== this.baseUrl) {
+			this.rawAttachmentUpload = false;
+			this.rawAttachmentDownload = false;
+		}
+		this.baseUrl = normalized;
 		this.apiKey = apiKey;
 		// A backend switch wipes every persisted token (withClearedAuth) for
 		// exactly this reason: a pending beacon batch must never ship the old
 		// backend's JWT to the new origin.
 		this.lastToken = "";
-		// The new backend has not said what it supports yet; its join reply will.
-		this.rawAttachmentUpload = false;
-		this.rawAttachmentDownload = false;
 	}
 
 	/** Surface a `426` — this plugin is below the backend's minimum version —

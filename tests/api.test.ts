@@ -1013,6 +1013,21 @@ describe("EngramApi", () => {
 			await api.getAttachment("a.png");
 			expect((mockRequestUrl.mock.calls[0][0] as any).url).not.toContain("raw=1");
 		});
+
+		// saveSettings calls updateConfig on every write (e.g. an OAuth refresh-token
+		// rotation) but reuses the live socket, so no join reply re-enables raw.
+		test("a settings save on the same backend keeps raw transfers on", async () => {
+			mockRequestUrl
+				.mockResolvedValueOnce(rawResp({ "x-engram-updated-at": "2026-10-06T00:00:00Z" }))
+				.mockResolvedValueOnce({ status: 200, json: { path: "a.png" } } as any);
+			api.setRawAttachmentDownload(true);
+			api.setRawAttachmentUpload(true);
+			api.updateConfig(`${TEST_SERVER}/`, "rotated-key");
+			await api.getAttachment("a.png");
+			expect((mockRequestUrl.mock.calls[0][0] as any).url).toContain("raw=1");
+			await api.pushAttachment("a.png", B64, "image/png", 1, BYTES);
+			expect((mockRequestUrl.mock.calls[1][0] as any).url).toContain("/attachments?");
+		});
 	});
 
 	describe("deleteAttachment", () => {
