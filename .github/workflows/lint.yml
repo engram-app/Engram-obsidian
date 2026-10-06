@@ -78,6 +78,38 @@ jobs:
         # for us. See the script header for the two-month version of this.
         run: node scripts/check-lockfile-registry.mjs
 
+  wasm-core:
+    name: wasm core
+    runs-on: [self-hosted, linux, x64, isolated]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Rust toolchain (version pinned by wasm/rust-toolchain.toml)
+        # rustup reads the pin and installs that toolchain + wasm32 target on
+        # first cargo call. Only bootstrap rustup itself if the runner lacks it.
+        run: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+              | sh -s -- -y --profile minimal --default-toolchain none
+          fi
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: fmt, clippy (host + wasm32), test
+        working-directory: wasm
+        run: |
+          set -euo pipefail
+          cargo fmt --check
+          cargo clippy --all-targets --locked -- -D warnings
+          cargo clippy --release --target wasm32-unknown-unknown --locked -- -D warnings
+          cargo test --locked
+
+      - name: Committed wasm/engram_core.wasm matches a fresh build
+        # The artifact is committed so bun-only builders (backend e2e, release)
+        # need no Rust; this keeps it honest. Byte-identical across checkout
+        # paths with the pinned toolchain (no debug info, no panic strings).
+        run: ./scripts/build-wasm.sh && git diff --exit-code -- wasm/engram_core.wasm
+
   claude-md-staleness:
     name: CLAUDE.md staleness
     runs-on: [self-hosted, linux, x64, isolated]

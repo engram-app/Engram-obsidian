@@ -1,0 +1,5 @@
+[target.wasm32-unknown-unknown]
+# The code is leaf functions with no recursion; the 1 MiB default stack would
+# make every instance reserve 17 pages. 8 KiB of stack, the 48 KiB input window
+# + the 64 KiB output window fits in two 64 KiB pages.
+rustflags = ["-C", "link-arg=-zstack-size=8192"]
