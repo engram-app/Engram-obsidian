@@ -327,6 +327,10 @@ export class NoteChannel {
 	 *  `user:{userId}` topic (join reply `response.plan` + `subscription_activated`
 	 *  broadcasts). Never gates the plugin's connected state. */
 	onPlanState: ((plan: unknown) => void) | null = null;
+	/** Server features from the `user:{userId}` join reply. Fires on every
+	 *  join, including a reply with no `features` (an older backend), so a
+	 *  reconnect to a downgraded server turns them back off. */
+	onServerFeatures: ((features: { rawAttachmentUpload: boolean }) => void) | null = null;
 	/** Inbound CRDT frames from the server. `docId` is the note's bare note_id. */
 	onCrdtMessage: ((docId: string, b64: string) => void) | null = null;
 
@@ -1274,7 +1278,17 @@ export class NoteChannel {
 						rlog().info("channel", `Joined ${this.topic}`);
 					}
 				} else if (topic === this.userTopic) {
-					const response = (payload as { response?: { plan?: unknown } }).response;
+					const response = (
+						payload as {
+							response?: {
+								plan?: unknown;
+								features?: { raw_attachment_upload?: unknown };
+							};
+						}
+					).response;
+					this.onServerFeatures?.({
+						rawAttachmentUpload: response?.features?.raw_attachment_upload === true,
+					});
 					const plan = response?.plan;
 					if (plan !== undefined && plan !== null) {
 						rlog().info("channel", `Joined ${this.userTopic} — plan state received`);

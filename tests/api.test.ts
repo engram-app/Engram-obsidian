@@ -720,6 +720,60 @@ describe("EngramApi", () => {
 			expect(body.mtime).toBe(1234567890);
 			expect(result).toEqual({ path: "images/photo.png", status: "created" });
 		});
+
+		test("server without raw_attachment_upload gets base64 JSON even when bytes are given", async () => {
+			mockRequestUrl.mockResolvedValueOnce({ status: 200, json: {} } as any);
+			const bytes = new Uint8Array([104, 105]).buffer;
+			await api.pushAttachment("a.png", "aGk=", "image/png", 5, bytes);
+			const opts = mockRequestUrl.mock.calls[0][0] as any;
+			expect(opts.url).toBe(`${TEST_API_BASE}/attachments`);
+			expect(opts.headers["Content-Type"]).toBe("application/json");
+			expect(JSON.parse(opts.body).content_base64).toBe("aGk=");
+		});
+
+		test("server with raw_attachment_upload gets the raw bytes and query metadata", async () => {
+			mockRequestUrl.mockResolvedValueOnce({ status: 200, json: { attachment: {} } } as any);
+			api.setRawAttachmentUpload(true);
+			const bytes = new Uint8Array([0, 128, 255]).buffer;
+			await api.pushAttachment("写真/café 😀 #1.png", "AIDA/w==", "image/png", 12.5, bytes);
+			const opts = mockRequestUrl.mock.calls[0][0] as any;
+			expect(opts.method).toBe("POST");
+			expect(opts.headers["Content-Type"]).toBe("application/octet-stream");
+			expect(opts.body).toBe(bytes);
+			const url = new URL(opts.url);
+			expect(`${url.origin}${url.pathname}`).toBe(`${TEST_API_BASE}/attachments`);
+			expect(url.searchParams.get("path")).toBe("写真/café 😀 #1.png");
+			expect(url.searchParams.get("mime_type")).toBe("image/png");
+			expect(url.searchParams.get("mtime")).toBe("12.5");
+		});
+
+		test("raw-capable server still gets JSON when only base64 is at hand", async () => {
+			mockRequestUrl.mockResolvedValueOnce({ status: 200, json: {} } as any);
+			api.setRawAttachmentUpload(true);
+			await api.pushAttachment("a.png", "aGk=", "image/png", 5);
+			const opts = mockRequestUrl.mock.calls[0][0] as any;
+			expect(opts.url).toBe(`${TEST_API_BASE}/attachments`);
+			expect(JSON.parse(opts.body).content_base64).toBe("aGk=");
+		});
+
+		test("switching backends forgets raw support until the new one advertises it", async () => {
+			mockRequestUrl.mockResolvedValueOnce({ status: 200, json: {} } as any);
+			api.setRawAttachmentUpload(true);
+			api.updateConfig("http://other:4000", TEST_KEY);
+			await api.pushAttachment("a.png", "aGk=", "image/png", 5, new ArrayBuffer(2));
+			const opts = mockRequestUrl.mock.calls[0][0] as any;
+			expect(opts.headers["Content-Type"]).toBe("application/json");
+		});
+
+		test("an empty file goes raw as a zero-length body", async () => {
+			mockRequestUrl.mockResolvedValueOnce({ status: 200, json: {} } as any);
+			api.setRawAttachmentUpload(true);
+			const empty = new ArrayBuffer(0);
+			await api.pushAttachment("e.png", "", "image/png", 1, empty);
+			const opts = mockRequestUrl.mock.calls[0][0] as any;
+			expect(opts.headers["Content-Type"]).toBe("application/octet-stream");
+			expect(opts.body).toBe(empty);
+		});
 	});
 
 	describe("getAttachment", () => {

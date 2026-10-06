@@ -84,6 +84,10 @@ export class EngramApi {
 	// Dark-launch gate for distributed tracing. Disabled cost must stay a
 	// single boolean check, see sendRequest.
 	private tracingEnabled = false;
+	/** The server advertised `features.raw_attachment_upload` on its user-topic
+	 *  join reply. Off until it says so: a self-hosted backend can be older
+	 *  than this plugin. */
+	private rawAttachmentUpload = false;
 	// Cached from the most recent sendRequest call so the beacon transport
 	// thunk (invoked later, on the buffer's own flush timer) can post with a
 	// still-valid token without re-awaiting the auth provider.
@@ -115,6 +119,10 @@ export class EngramApi {
 	 *  and enqueues nothing: cost is exactly one boolean check. */
 	setTracingEnabled(enabled: boolean): void {
 		this.tracingEnabled = enabled;
+	}
+
+	setRawAttachmentUpload(enabled: boolean): void {
+		this.rawAttachmentUpload = enabled;
 	}
 
 	setVaultId(id: string | null): void {
@@ -200,6 +208,8 @@ export class EngramApi {
 		// exactly this reason: a pending beacon batch must never ship the old
 		// backend's JWT to the new origin.
 		this.lastToken = "";
+		// The new backend has not said what it supports yet; its join reply will.
+		this.rawAttachmentUpload = false;
 	}
 
 	/** Surface a `426` — this plugin is below the backend's minimum version —
@@ -338,8 +348,9 @@ export class EngramApi {
 		if (version) {
 			headers["X-Plugin-Version"] = version;
 		}
+		const raw = body instanceof ArrayBuffer;
 		if (body !== undefined) {
-			headers["Content-Type"] = "application/json";
+			headers["Content-Type"] = raw ? "application/octet-stream" : "application/json";
 		}
 		// Deadline classes. Only actual attachment byte transfers earn 120s:
 		// upload (POST /attachments) and download (GET /attachments/<path>).
@@ -349,11 +360,11 @@ export class EngramApi {
 		const attachmentTransfer =
 			path.startsWith("/attachments") && (method === "POST" || method === "GET");
 		const timeoutMs = attachmentTransfer ? this.attachmentTimeoutMs : this.requestTimeoutMs;
-		const raw = requestUrl({
+		const pending = requestUrl({
 			url: `${this.baseUrl}${path}`,
 			method,
 			headers,
-			body: body !== undefined ? JSON.stringify(body) : undefined,
+			body: raw ? body : body !== undefined ? JSON.stringify(body) : undefined,
 		});
 		let abandonReject: (e: Error) => void = () => {};
 		const abandoned = new Promise<never>((_, rej) => {
@@ -371,7 +382,7 @@ export class EngramApi {
 		};
 		this.inflight.add(entry);
 		try {
-			return await withTimeout(Promise.race([raw, abandoned]), timeoutMs);
+			return await withTimeout(Promise.race([pending, abandoned]), timeoutMs);
 		} finally {
 			this.inflight.delete(entry);
 			// Fire-and-forget: enqueue is O(1), touches no network on this path
@@ -591,13 +602,22 @@ export class EngramApi {
 
 	// --- Attachment methods ---
 
-	/** Push a binary attachment as base64. */
+	/** Push a binary attachment. Sends the raw `bytes` when the server takes
+	 *  them, saving the base64 inflation on the wire and the decode on the
+	 *  server; otherwise base64 JSON. */
 	async pushAttachment(
 		path: string,
 		contentBase64: string,
 		mimeType: string,
 		mtime: number,
+		bytes?: ArrayBuffer,
 	): Promise<AttachmentResponse> {
+		if (this.rawAttachmentUpload && bytes) {
+			const qs = new URLSearchParams({ path, mime_type: mimeType, mtime: String(mtime) });
+			const resp = await this.request("POST", `/attachments?${qs}`, bytes);
+			return resp.json as AttachmentResponse;
+		}
+		// compat(server): raw_attachment_upload - remove when the backend floor has it (#1877)
 		const resp = await this.request("POST", "/attachments", {
 			path,
 			content_base64: contentBase64,

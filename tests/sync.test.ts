@@ -1900,6 +1900,29 @@ describe("SyncEngine offline queue integration", () => {
 		expect(engine.getStatus().queued).toBe(1);
 	});
 
+	test("flushQueue offers re-read bytes for a content-free attachment entry", async () => {
+		const engine = createEngine();
+		const file = new TFile("Assets/new.png", 100_000);
+		const bytes = new Uint8Array([7, 8, 9]).buffer;
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(file);
+		(mockApp.vault.readBinary as jest.Mock).mockResolvedValueOnce(bytes);
+		(mockApi.pushAttachment as jest.Mock).mockResolvedValue({ attachment: {} });
+
+		engine.queue.load([
+			{ path: "Assets/new.png", action: "upsert", kind: "attachment", timestamp: 1 },
+		]);
+
+		await engine.flushQueue();
+
+		expect(mockApi.pushAttachment).toHaveBeenCalledWith(
+			"Assets/new.png",
+			"BwgJ",
+			"image/png",
+			100,
+			bytes,
+		);
+	});
+
 	test("flushQueue handles attachment entries", async () => {
 		const engine = createEngine();
 
@@ -1928,11 +1951,13 @@ describe("SyncEngine offline queue integration", () => {
 		const flushed = await engine.flushQueue();
 
 		expect(flushed).toBe(2);
+		// A legacy entry carries only base64, so no raw bytes are offered.
 		expect(mockApi.pushAttachment).toHaveBeenCalledWith(
 			"Assets/img.png",
 			"AQID",
 			"image/png",
 			100,
+			undefined,
 		);
 		expect(mockApi.deleteAttachment).toHaveBeenCalledWith("Assets/old.pdf");
 	});
@@ -1997,6 +2022,7 @@ describe("SyncEngine binary push", () => {
 			expect.any(String),
 			"image/png",
 			expect.any(Number),
+			mockBuffer,
 		);
 		// Should NOT call pushNote for binary
 		expect(mockApi.pushNote).not.toHaveBeenCalled();

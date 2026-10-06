@@ -4829,7 +4829,13 @@ export class SyncEngine {
 					return false;
 				}
 				const mimeType = this.getMimeType(file);
-				const attResp = await this.api.pushAttachment(file.path, base64, mimeType, mtime);
+				const attResp = await this.api.pushAttachment(
+					file.path,
+					base64,
+					mimeType,
+					mtime,
+					buffer,
+				);
 				// MERGE: a bare `set` here dropped the serverHash this path needs
 				// on the NEXT forced push, which is what kept force permanently
 				// unable to prove convergence.
@@ -10860,6 +10866,7 @@ export class SyncEngine {
 					let base64 = entry.contentBase64;
 					let mimeType = entry.mimeType;
 					let mtime = entry.mtime;
+					let bytes: ArrayBuffer | undefined;
 					if (!base64) {
 						const file = this.app.vault.getFileByPath(entry.path);
 						if (!file) {
@@ -10868,8 +10875,8 @@ export class SyncEngine {
 							flushed++;
 							continue;
 						}
-						const buffer = await this.app.vault.readBinary(file);
-						base64 = arrayBufferToBase64(buffer);
+						bytes = await this.app.vault.readBinary(file);
+						base64 = arrayBufferToBase64(bytes);
 						mimeType = this.getMimeType(file);
 						mtime = file.stat.mtime / 1000;
 					}
@@ -10893,6 +10900,7 @@ export class SyncEngine {
 							base64,
 							mimeType!,
 							mtime!,
+							bytes,
 						);
 						// MERGE, don't replace (review finding 6 wanted the evidence
 						// stamp; a bare `set` also wiped any serverHash already
