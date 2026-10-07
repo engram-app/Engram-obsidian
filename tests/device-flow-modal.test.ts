@@ -4,7 +4,7 @@
  * can pre-fill the "create new vault" field.
  */
 import { afterEach, beforeEach, describe, expect, type Mock, test } from "bun:test";
-import { requestUrl } from "obsidian";
+import { Platform, requestUrl } from "obsidian";
 import { DeviceFlowModal, verificationUrlWithCode } from "../src/device-flow-modal";
 
 const mockRequestUrl = requestUrl as unknown as Mock<() => Promise<any>>;
@@ -47,10 +47,36 @@ describe("DeviceFlowModal.startDeviceFlow", () => {
 		expect(call.url).toBe("https://example.test/api/auth/device");
 
 		const body = JSON.parse(call.body);
-		expect(body).toEqual({
+		expect(body).toMatchObject({
 			client_id: "cid-1",
 			vault_name: "My Local Notes",
 		});
+		// The device name is a best-effort hint; its value depends on the host.
+		expect(["string", "undefined"]).toContain(typeof body.device_name);
+	});
+
+	test("sends the suggested device name when there is one", async () => {
+		mockRequestUrl.mockResolvedValue({
+			status: 200,
+			json: {
+				device_code: "a",
+				user_code: "AAAA-BBBB",
+				verification_url: "https://example.test/link",
+				expires_in: 300,
+			},
+		});
+		Object.assign(Platform, { isDesktop: false, isIosApp: true });
+		try {
+			const modal = new DeviceFlowModal(
+				makeApp("V"),
+				makePlugin("https://example.test", "cid-1"),
+			);
+			await (modal as any).startDeviceFlow();
+			const call = mockRequestUrl.mock.calls[0][0] as { body: string };
+			expect(JSON.parse(call.body).device_name).toBe("iPhone");
+		} finally {
+			Object.assign(Platform, { isDesktop: true, isIosApp: false });
+		}
 	});
 
 	test("handles apiUrl that already ends with /api", async () => {
@@ -113,7 +139,7 @@ describe("DeviceFlowModal.startDeviceFlow", () => {
 
 		await (modal as any).startDeviceFlow();
 		const body = JSON.parse((mockRequestUrl.mock.calls[0][0] as { body: string }).body);
-		expect(body).toEqual({ client_id: "cid-4" });
+		expect(body).toMatchObject({ client_id: "cid-4" });
 		expect("vault_name" in body).toBe(false);
 	});
 

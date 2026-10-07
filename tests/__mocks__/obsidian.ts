@@ -423,6 +423,12 @@ export const Platform = {
 	isMobileApp: false,
 	isDesktop: true,
 	isDesktopApp: true,
+	isTablet: false,
+	isIosApp: false,
+	isAndroidApp: false,
+	isMacOS: false,
+	isWin: false,
+	isLinux: false,
 };
 
 export function setIcon(_el: unknown, _name: string): void {
