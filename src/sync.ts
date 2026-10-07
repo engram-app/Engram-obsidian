@@ -14,7 +14,7 @@ import {
 import { arrayBufferToBase64, base64ToArrayBuffer, type EngramApi } from "./api";
 import type { BaseStore } from "./base-store";
 import type { GenesisOutcome } from "./channel";
-import { fnv1a } from "./content-hash";
+import { fnv1a, fnv1aBase64 } from "./content-hash";
 import { splitFrontmatter } from "./crdt/frontmatter-codec";
 import type { NoteIdMap } from "./crdt/note-id-map";
 import type { ProviderRegistry } from "./crdt/provider-registry";
@@ -321,8 +321,8 @@ const MIME_TYPES: Record<string, string> = {
 	canvas: "application/json",
 };
 
-/** Per-batch concurrency for the per-file push loop (both the incremental and
- *  the force pipeline). Was a magic 10 in two places. */
+/** Window width of the per-file push loop (both the incremental and the
+ *  force pipeline): at most this many pushFile calls outstanding at once. */
 const PUSH_BATCH_SIZE = 10;
 
 type CrdtCatchupSinceFn = (
@@ -4796,11 +4796,12 @@ export class SyncEngine {
 			const mtime = file.stat.mtime / 1000; // Obsidian uses ms, Engram uses seconds
 			if (isBinary) {
 				const buffer = await this.app.vault.readBinary(file);
-				const base64 = arrayBufferToBase64(buffer);
 				// Track attachments in syncState the same way notes are. Without
 				// this, pushModifiedFiles sees every attachment as untracked and
 				// re-pushes it on every fullSync (the "pushed N every Merge" loop).
-				const hash = fnv1a(base64);
+				// fnv1aBase64 == fnv1a(arrayBufferToBase64(buffer)) without building
+				// the string; the base64 is built lazily, only if JSON is sent.
+				const hash = fnv1aBase64(buffer);
 				const np = normalizePath(file.path);
 				const existing = this.syncState.get(np);
 				const unchangedLocally = existing !== undefined && hash === existing.hash;
@@ -4829,7 +4830,13 @@ export class SyncEngine {
 					return false;
 				}
 				const mimeType = this.getMimeType(file);
-				const attResp = await this.api.pushAttachment(file.path, base64, mimeType, mtime);
+				const attResp = await this.api.pushAttachment(
+					file.path,
+					() => arrayBufferToBase64(buffer),
+					mimeType,
+					mtime,
+					buffer,
+				);
 				// MERGE: a bare `set` here dropped the serverHash this path needs
 				// on the NEXT forced push, which is what kept force permanently
 				// unable to prove convergence.
@@ -7754,6 +7761,7 @@ export class SyncEngine {
 							deleted: false,
 						},
 						attachment.content_base64,
+						attachment.bytes,
 					);
 				} else if (
 					this.crdt &&
@@ -9352,6 +9360,7 @@ export class SyncEngine {
 	async applyAttachmentChange(
 		change: AttachmentChange,
 		contentBase64?: string,
+		contentBytes?: ArrayBuffer,
 	): Promise<boolean> {
 		if (this.shouldIgnore(change.path)) return false;
 
@@ -9370,19 +9379,32 @@ export class SyncEngine {
 		// Fetch content if not provided
 		let serverHash = change.content_hash;
 		let resolvedBase64 = contentBase64;
-		if (resolvedBase64 === undefined) {
+		let resolvedBytes = contentBytes;
+		if (resolvedBase64 === undefined && resolvedBytes === undefined) {
 			const fetched = await this.api.getAttachment(change.path);
 			resolvedBase64 = fetched.content_base64;
+			resolvedBytes = fetched.bytes;
 			// Prefer the value that came WITH the bytes we are about to write:
 			// it describes exactly this payload, whereas `change.content_hash`
 			// describes whatever the event announced.
 			serverHash = fetched.content_hash ?? serverHash;
 		}
-		const buffer = base64ToArrayBuffer(resolvedBase64);
-		const existing = this.app.vault.getFileByPath(normalized);
 		// Track the synced bytes so a later push echo-suppresses instead of
-		// re-uploading this attachment (keyed identically to the push side).
-		const hash = fnv1a(resolvedBase64);
+		// re-uploading this attachment (keyed identically to the push side:
+		// fnv1a over the base64, which fnv1aBase64 computes from raw bytes
+		// without building the string). Only base64 needs decoding.
+		let buffer: ArrayBuffer;
+		let hash: number;
+		if (resolvedBytes !== undefined) {
+			buffer = resolvedBytes;
+			hash = fnv1aBase64(resolvedBytes);
+		} else if (resolvedBase64 !== undefined) {
+			buffer = base64ToArrayBuffer(resolvedBase64);
+			hash = fnv1a(resolvedBase64);
+		} else {
+			throw new Error(`Attachment download carried no content: ${noteRef(change.path)}`);
+		}
+		const existing = this.app.vault.getFileByPath(normalized);
 		// Recording the SERVER's hash is what lets the next broadcast for this
 		// path be answered without re-downloading the blob (Engram#961). Merge,
 		// never replace: a bare `set` would drop it again on the following
@@ -9854,8 +9876,8 @@ export class SyncEngine {
 	}
 
 	/** Shared push pipeline: every file — genesis notes, server-known notes,
-	 *  attachments — rides ONE bounded per-file loop (Promise.all over
-	 *  PUSH_BATCH_SIZE slices). pushFile's socket-native genesis (crdt_create)
+	 *  attachments — rides ONE bounded per-file loop (a PUSH_BATCH_SIZE-wide
+	 *  sliding window). pushFile's socket-native genesis (crdt_create)
 	 *  owns brand-new notes; the retired crdt_create_batch RPC was a second,
 	 *  lesser copy of that path (per-file rewrite: per-file work units,
 	 *  per-file progress, per-file failure isolation — a failure strands one
@@ -9875,47 +9897,65 @@ export class SyncEngine {
 		const total = toSync.length;
 		let pushed = 0;
 		let failed = 0;
-		for (let i = 0; i < toSync.length; i += PUSH_BATCH_SIZE) {
-			const batch = toSync.slice(i, i + PUSH_BATCH_SIZE);
-			await Promise.all(
-				batch.map(async (f: TFile) => {
-					try {
-						const ok = await this.pushFile(
-							f,
-							mode === "force",
-							false,
-							serverAttachmentHashes,
-						);
-						if (ok) {
-							pushed++;
-							if (mode === "force") this.logEntry("push", f.path, "ok");
-						} else if (mode === "force") {
-							this.logEntry("skip", f.path, "skipped", undefined, "unchanged");
-						}
-					} catch (e) {
-						failed++;
-						this.onVaultScopedError?.(e);
-						const msg = errMsg(e);
-						this.logEntry("push", f.path, "error", msg);
-						this.issues.record({
-							path: f.path,
-							kind: this.isBinaryFile(f) ? "attachment" : "note",
-							category: "other",
-							message: msg,
-							firstFailedAt: Date.now(),
-							lastFailedAt: Date.now(),
-							attempts: 1,
-						});
-					}
-					this.emitPushing(
-						base.pushed + pushed,
-						base.pushed + total,
-						base.failed + failed,
-						f.path,
+		// Sliding window, not slices: each worker takes the next file the moment
+		// its last one settles. Slices with a Promise.all barrier let one slow
+		// file (a large attachment, a crdt_create queued behind the server's
+		// serial channel process) idle the other nine slots, and every slice
+		// boundary drained the pipeline for a full round trip (#1877 item 7).
+		// A throw that escapes a file's own try (onVaultScopedError, emitPushing)
+		// aborts the sweep, as it did under slices; `stop` keeps the other
+		// workers from taking more files, and allSettled below waits out the
+		// in-flight ones before rejecting so nothing keeps running unawaited.
+		let next = 0;
+		let stop = false;
+		const worker = async (): Promise<void> => {
+			for (let f = toSync[next++]; f !== undefined && !stop; f = toSync[next++]) {
+				try {
+					const ok = await this.pushFile(
+						f,
+						mode === "force",
+						false,
+						serverAttachmentHashes,
 					);
+					if (ok) {
+						pushed++;
+						if (mode === "force") this.logEntry("push", f.path, "ok");
+					} else if (mode === "force") {
+						this.logEntry("skip", f.path, "skipped", undefined, "unchanged");
+					}
+				} catch (e) {
+					failed++;
+					this.onVaultScopedError?.(e);
+					const msg = errMsg(e);
+					this.logEntry("push", f.path, "error", msg);
+					this.issues.record({
+						path: f.path,
+						kind: this.isBinaryFile(f) ? "attachment" : "note",
+						category: "other",
+						message: msg,
+						firstFailedAt: Date.now(),
+						lastFailedAt: Date.now(),
+						attempts: 1,
+					});
+				}
+				this.emitPushing(
+					base.pushed + pushed,
+					base.pushed + total,
+					base.failed + failed,
+					f.path,
+				);
+			}
+		};
+		const settled = await Promise.allSettled(
+			Array.from({ length: Math.min(PUSH_BATCH_SIZE, toSync.length) }, () =>
+				worker().catch((e: unknown) => {
+					stop = true;
+					throw e;
 				}),
-			);
-		}
+			),
+		);
+		const aborted = settled.find((r): r is PromiseRejectedResult => r.status === "rejected");
+		if (aborted) throw aborted.reason;
 		// ONE line per sweep, at warn so it reaches Loki (client info does not).
 		// This is the loop's actual signature: the same sweep firing over and
 		// over with pushed=0 and everything skipped. Per-file logs cannot show
@@ -10856,11 +10896,14 @@ export class SyncEngine {
 						}
 					}
 				} else if (entry.kind === "attachment") {
-					// Legacy entries may have content inline; new entries are content-free
-					let base64 = entry.contentBase64;
+					// Legacy entries may have content inline (kept as-is, JSON only);
+					// new entries are content-free and re-read the bytes from disk.
+					let content: string | (() => string) | undefined = entry.contentBase64;
+					let queuedHash = entry.contentBase64 ? fnv1a(entry.contentBase64) : 0;
 					let mimeType = entry.mimeType;
 					let mtime = entry.mtime;
-					if (!base64) {
+					let bytes: ArrayBuffer | undefined;
+					if (!content) {
 						const file = this.app.vault.getFileByPath(entry.path);
 						if (!file) {
 							await this.queue.dequeue(entry.path, this.entryVaultId(entry));
@@ -10868,8 +10911,19 @@ export class SyncEngine {
 							flushed++;
 							continue;
 						}
-						const buffer = await this.app.vault.readBinary(file);
-						base64 = arrayBufferToBase64(buffer);
+						// Same plan pre-gate as the live push. Matters more for raw
+						// uploads: the server can refuse those before reading the body,
+						// which reaches us as a connection reset (retried forever as
+						// `network`) rather than the terminal 413/402.
+						const gate = this.preGateAttachment(file);
+						if (gate) {
+							await this.recordTerminalIssue(entry, { ...gate, terminal: true });
+							continue;
+						}
+						const read = await this.app.vault.readBinary(file);
+						bytes = read;
+						content = () => arrayBufferToBase64(read);
+						queuedHash = fnv1aBase64(read);
 						mimeType = this.getMimeType(file);
 						mtime = file.stat.mtime / 1000;
 					}
@@ -10878,7 +10932,6 @@ export class SyncEngine {
 					// one of the two paths behind the 2026-08-21 loop that held
 					// prod at ~30% CPU. Mirror the live path's echo skip.
 					const queuedNp = normalizePath(entry.path);
-					const queuedHash = fnv1a(base64);
 					const queuedRow = this.syncState.get(queuedNp);
 					if (queuedRow !== undefined && queuedHash === queuedRow.hash) {
 						// warn, not info: client `info` never reaches Loki, which is
@@ -10890,9 +10943,10 @@ export class SyncEngine {
 					} else {
 						const attResp = await this.api.pushAttachment(
 							entry.path,
-							base64,
+							content,
 							mimeType!,
 							mtime!,
+							bytes,
 						);
 						// MERGE, don't replace (review finding 6 wanted the evidence
 						// stamp; a bare `set` also wiped any serverHash already

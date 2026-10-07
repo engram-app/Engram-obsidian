@@ -218,6 +218,52 @@ describe("NoteChannel user topic + plan state", () => {
 		channel.disconnect();
 	});
 
+	test("user-topic join reply reports raw_attachment_upload", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", null);
+		const seen: unknown[] = [];
+		channel.onServerFeatures = (f) => seen.push(f);
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		simulateMessage(lastWsInstance, [
+			"2",
+			"9",
+			"user:u1",
+			"phx_reply",
+			{
+				status: "ok",
+				response: {
+					plan: { tier: "pro" },
+					features: { raw_attachment_upload: true, raw_attachment_download: true },
+				},
+			},
+		]);
+
+		expect(seen).toEqual([{ rawAttachmentUpload: true, rawAttachmentDownload: true }]);
+		channel.disconnect();
+	});
+
+	// An older self-hosted backend sends no `features`; a reconnect to one must
+	// turn raw uploads back OFF, so the absence is reported, not skipped.
+	test("user-topic join reply without features reports raw upload off", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", null);
+		const seen: unknown[] = [];
+		channel.onServerFeatures = (f) => seen.push(f);
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		simulateMessage(lastWsInstance, [
+			"2",
+			"9",
+			"user:u1",
+			"phx_reply",
+			{ status: "ok", response: { plan: { tier: "pro" } } },
+		]);
+
+		expect(seen).toEqual([{ rawAttachmentUpload: false, rawAttachmentDownload: false }]);
+		channel.disconnect();
+	});
+
 	test("user-topic reply without a plan does not call onPlanState", async () => {
 		const channel = new NoteChannel("http://localhost:4000", "key", "u1", null);
 		const seen: unknown[] = [];

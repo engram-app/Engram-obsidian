@@ -26,6 +26,7 @@ import type {
 	VersionConflictResponse,
 } from "./types";
 import { notifyUpgradeRequired } from "./upgrade-required";
+import { wasmCore } from "./wasm-core";
 
 /** A request exceeded its deadline. requestUrl() cannot be aborted, so the
  *  underlying request is ABANDONED, not cancelled — a late server-side apply
@@ -84,6 +85,13 @@ export class EngramApi {
 	// Dark-launch gate for distributed tracing. Disabled cost must stay a
 	// single boolean check, see sendRequest.
 	private tracingEnabled = false;
+	/** The server advertised `features.raw_attachment_upload` on its user-topic
+	 *  join reply. Off until it says so: a self-hosted backend can be older
+	 *  than this plugin. */
+	private rawAttachmentUpload = false;
+	/** Same, for `features.raw_attachment_download` (`GET ?raw=1` + metadata
+	 *  headers instead of a base64 JSON body). */
+	private rawAttachmentDownload = false;
 	// Cached from the most recent sendRequest call so the beacon transport
 	// thunk (invoked later, on the buffer's own flush timer) can post with a
 	// still-valid token without re-awaiting the auth provider.
@@ -115,6 +123,14 @@ export class EngramApi {
 	 *  and enqueues nothing: cost is exactly one boolean check. */
 	setTracingEnabled(enabled: boolean): void {
 		this.tracingEnabled = enabled;
+	}
+
+	setRawAttachmentUpload(enabled: boolean): void {
+		this.rawAttachmentUpload = enabled;
+	}
+
+	setRawAttachmentDownload(enabled: boolean): void {
+		this.rawAttachmentDownload = enabled;
 	}
 
 	setVaultId(id: string | null): void {
@@ -194,7 +210,16 @@ export class EngramApi {
 	}
 
 	updateConfig(baseUrl: string, apiKey: string): void {
-		this.baseUrl = EngramApi.normalizeBaseUrl(baseUrl);
+		const normalized = EngramApi.normalizeBaseUrl(baseUrl);
+		// A new backend has not said what it supports yet; its join reply will.
+		// Same backend: keep them. saveSettings lands here on every write (OAuth
+		// rotation included) while setupNoteStream reuses the live socket, so no
+		// join reply would come to turn them back on.
+		if (normalized !== this.baseUrl) {
+			this.rawAttachmentUpload = false;
+			this.rawAttachmentDownload = false;
+		}
+		this.baseUrl = normalized;
 		this.apiKey = apiKey;
 		// A backend switch wipes every persisted token (withClearedAuth) for
 		// exactly this reason: a pending beacon batch must never ship the old
@@ -338,8 +363,9 @@ export class EngramApi {
 		if (version) {
 			headers["X-Plugin-Version"] = version;
 		}
+		const raw = body instanceof ArrayBuffer;
 		if (body !== undefined) {
-			headers["Content-Type"] = "application/json";
+			headers["Content-Type"] = raw ? "application/octet-stream" : "application/json";
 		}
 		// Deadline classes. Only actual attachment byte transfers earn 120s:
 		// upload (POST /attachments) and download (GET /attachments/<path>).
@@ -349,11 +375,11 @@ export class EngramApi {
 		const attachmentTransfer =
 			path.startsWith("/attachments") && (method === "POST" || method === "GET");
 		const timeoutMs = attachmentTransfer ? this.attachmentTimeoutMs : this.requestTimeoutMs;
-		const raw = requestUrl({
+		const pending = requestUrl({
 			url: `${this.baseUrl}${path}`,
 			method,
 			headers,
-			body: body !== undefined ? JSON.stringify(body) : undefined,
+			body: raw ? body : body !== undefined ? JSON.stringify(body) : undefined,
 		});
 		let abandonReject: (e: Error) => void = () => {};
 		const abandoned = new Promise<never>((_, rej) => {
@@ -371,7 +397,7 @@ export class EngramApi {
 		};
 		this.inflight.add(entry);
 		try {
-			return await withTimeout(Promise.race([raw, abandoned]), timeoutMs);
+			return await withTimeout(Promise.race([pending, abandoned]), timeoutMs);
 		} finally {
 			this.inflight.delete(entry);
 			// Fire-and-forget: enqueue is O(1), touches no network on this path
@@ -591,25 +617,78 @@ export class EngramApi {
 
 	// --- Attachment methods ---
 
-	/** Push a binary attachment as base64. */
+	/** Push a binary attachment. Sends the raw `bytes` when the server takes
+	 *  them, saving the base64 inflation on the wire and the decode on the
+	 *  server; otherwise base64 JSON. `contentBase64` may be a thunk so the
+	 *  ~65-125 ms/MB encode only runs when the JSON body is actually sent. */
 	async pushAttachment(
 		path: string,
-		contentBase64: string,
+		contentBase64: string | (() => string),
 		mimeType: string,
 		mtime: number,
+		bytes?: ArrayBuffer,
 	): Promise<AttachmentResponse> {
+		if (this.rawAttachmentUpload && bytes) {
+			const qs = new URLSearchParams({ path, mime_type: mimeType, mtime: String(mtime) });
+			try {
+				const resp = await this.request("POST", `/attachments?${qs}`, bytes);
+				return resp.json as AttachmentResponse;
+			} catch (e) {
+				// The socket's advertisement can outlive the task that answers the
+				// POST (rolling deploy, rollback): an older backend reads no body
+				// from octet-stream and says content_base64 is missing. Stop sending
+				// raw and resend this upload as JSON, once.
+				if (!rawRefused(e)) throw e;
+				rlog().warn("api", "Raw attachment upload refused; falling back to base64 JSON");
+				this.rawAttachmentUpload = false;
+			}
+		}
+		// compat(server): raw_attachment_upload - remove when the backend floor has it (#1877)
 		const resp = await this.request("POST", "/attachments", {
 			path,
-			content_base64: contentBase64,
+			content_base64: typeof contentBase64 === "function" ? contentBase64() : contentBase64,
 			mime_type: mimeType,
 			mtime,
 		});
 		return resp.json as AttachmentResponse;
 	}
 
-	/** Get attachment content (base64). */
+	/** Get an attachment. Downloads the raw bytes when the server offers them
+	 *  (no base64 envelope to parse and decode); otherwise base64 JSON. */
 	async getAttachment(path: string): Promise<AttachmentDetail> {
 		const encoded = encodePath(path);
+		if (this.rawAttachmentDownload) {
+			const resp = await this.request("GET", `/attachments/${encoded}?raw=1`);
+			const header = headerLookup(resp.headers);
+			const updatedAt = header("x-engram-updated-at");
+			if (updatedAt !== undefined) {
+				const bytes = resp.arrayBuffer;
+				const mtime = header("x-engram-mtime");
+				return {
+					path,
+					bytes,
+					content_hash: header("x-engram-content-hash"),
+					mime_type: header("x-engram-mime-type") ?? "",
+					size_bytes: bytes.byteLength,
+					mtime: mtime === undefined ? 0 : Number(mtime),
+					updated_at: updatedAt,
+				};
+			}
+			// The socket's advertisement can outlive the task that answers the
+			// GET (rolling deploy, rollback). Stop asking for raw either way. An
+			// older backend ignores ?raw=1 and sends the JSON body, which is the
+			// answer already; one that serves bytes without the metadata headers
+			// gets this one fetched again as JSON.
+			rlog().warn(
+				"api",
+				"Raw attachment download lacks metadata; falling back to base64 JSON",
+			);
+			this.rawAttachmentDownload = false;
+			if (header("content-type")?.includes("application/json")) {
+				return resp.json as AttachmentDetail;
+			}
+		}
+		// compat(server): raw_attachment_download - remove when the backend floor has it (#1877)
 		const resp = await this.request("GET", `/attachments/${encoded}`);
 		return resp.json as AttachmentDetail;
 	}
@@ -786,6 +865,16 @@ function errorBody(e: unknown): Record<string, unknown> {
 	return {};
 }
 
+/** A raw (octet-stream) attachment upload refused for its encoding, not its
+ *  content: an older backend's "content_base64 is required" 422, or a 415
+ *  that is not the MIME/extension whitelist (that one JSON would get too). */
+function rawRefused(e: unknown): boolean {
+	const status = statusOf(e);
+	const error = errorBody(e).error;
+	if (status === 422) return error === "content_base64 is required";
+	return status === 415 && error !== "mime_not_allowed" && error !== "extension_not_allowed";
+}
+
 function parseLimitExceededError(e: unknown): LimitExceededError {
 	const body = errorBody(e);
 	const pick = <T>(key: string): T | null => (body[key] !== undefined ? (body[key] as T) : null);
@@ -827,11 +916,28 @@ function encodePath(path: string): string {
 	return path.split("/").map(encodeURIComponent).join("/");
 }
 
-/** Convert an ArrayBuffer to a base64 string. Chunked fromCharCode instead of
+/** Case-insensitive response-header reader: desktop requestUrl lower-cases
+ *  header names, other platforms may not. */
+function headerLookup(headers: Record<string, string> | undefined) {
+	const lower = new Map<string, string>();
+	for (const [k, v] of Object.entries(headers ?? {})) lower.set(k.toLowerCase(), v);
+	return (name: string): string | undefined => lower.get(name);
+}
+
+/** Convert an ArrayBuffer to a base64 string: the engine's native encoder
+ *  where it exists (Chromium 140+/Electron 38+, Safari 18.2+), else the Rust
+ *  core, else JS. Measured per MB: native ~0.3-0.7 ms, wasm ~3-10 ms, JS
+ *  ~50-140 ms. */
+export function arrayBufferToBase64(buffer: ArrayBuffer): string {
+	const bytes = new Uint8Array(buffer) as Uint8Array & { toBase64?: () => string };
+	return bytes.toBase64?.() ?? wasmCore()?.base64(buffer) ?? arrayBufferToBase64Js(buffer);
+}
+
+/** JS fallback for `arrayBufferToBase64`. Chunked fromCharCode instead of
  *  per-byte string concatenation: attachments run to multi-MB on the main
  *  thread (mobile included), where the O(n) rope-churn loop was measurable.
  *  32k chunks stay safely under engine argument-count limits. */
-export function arrayBufferToBase64(buffer: ArrayBuffer): string {
+export function arrayBufferToBase64Js(buffer: ArrayBuffer): string {
 	const bytes = new Uint8Array(buffer);
 	const parts: string[] = [];
 	for (let i = 0; i < bytes.length; i += 0x8000) {

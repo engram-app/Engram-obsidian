@@ -5,6 +5,7 @@
  *  clicked from.
  */
 import { Notice, normalizePath, Setting } from "obsidian";
+import { offersUpgrades } from "./backend-mode";
 import { t } from "./i18n";
 import { type IssueDisposition, issueDisposition, remediation } from "./issue-store";
 import type EngramSyncPlugin from "./main";
@@ -295,9 +296,12 @@ function renderPlanCard(
 		title,
 		hint,
 		buttons: (actions) => {
-			const url = issues.find((i) => i.upgradeUrl)?.upgradeUrl ?? DEFAULT_UPGRADE_URL;
-			const upgrade = actions.createEl("button", { text: t("Upgrade"), cls: "mod-cta" });
-			upgrade.addEventListener("click", () => window.open(url, "_blank"));
+			// Hosted service only: a self-hosted server has no billing page.
+			if (offersUpgrades(plugin.settings)) {
+				const url = issues.find((i) => i.upgradeUrl)?.upgradeUrl ?? DEFAULT_UPGRADE_URL;
+				const upgrade = actions.createEl("button", { text: t("Upgrade"), cls: "mod-cta" });
+				upgrade.addEventListener("click", () => window.open(url, "_blank"));
+			}
 
 			// Manual re-attempt for users who upgraded out-of-band (e.g. the plan
 			// event hasn't landed yet, or they want to retry without waiting for it).

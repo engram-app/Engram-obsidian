@@ -2,6 +2,7 @@
  * Settings tab for Engram Sync plugin.
  */
 import { type App, Notice, PluginSettingTab, type Setting } from "obsidian";
+import { offersUpgrades } from "./backend-mode";
 import { DeviceFlowModal } from "./device-flow-modal";
 import { errMsg } from "./error-util";
 import { t } from "./i18n";
@@ -370,7 +371,12 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 		// Rendered LAST so `margin-left: auto` parks it at the far edge and any
 		// urgent action above (Open sync setup) keeps its place beside the status
 		// text. Emitted first, it pushed that button out to the edge instead.
-		if (this.plugin.syncEngine?.getPlanState()?.tier === "free") {
+		// Hosted service only: a self-hosted server also reports "free" but has no
+		// billing to upgrade to.
+		if (
+			offersUpgrades(this.plugin.settings) &&
+			this.plugin.syncEngine?.getPlanState()?.tier === "free"
+		) {
 			const upgrade = statusEl.createEl("button", {
 				cls: "engram-status-upgrade-btn mod-cta",
 				text: t("Upgrade"),

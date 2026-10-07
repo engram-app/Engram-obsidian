@@ -148,9 +148,10 @@ function makeMockPlugin(issues: SyncIssue[], planState?: unknown): any {
 	// Hoisted so `resolveRemoteVaultName` below reads the SAME object the tests
 	// mutate. Returning a fixed name instead would overwrite whatever a test
 	// set, which is exactly the bug the resolve exists to fix.
-	const settings: { vaultId: string; remoteVaultName?: string } = {
+	const settings: { vaultId: string; remoteVaultName?: string; backendMode?: string } = {
 		vaultId: "1",
 		remoteVaultName: "Vault",
+		backendMode: "cloud",
 	};
 	return {
 		// `getMarkdownFiles` is what the search-cap section counts. The real
@@ -292,6 +293,15 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		expect(text).toContain("1 not on your plan");
 		expect(text).not.toContain("needs attention");
 		expect(text).not.toContain("1 retrying");
+	});
+
+	test("a self-hosted server gets the plan section without an Upgrade button", () => {
+		const plugin = makeMockPlugin([makeIssue({ category: "needs_pro" })]);
+		plugin.settings.backendMode = "selfhost";
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+
+		expect(findByCls(parent, "engram-sync-center-plan-section")).not.toBeNull();
+		expect(findAllByCls(parent, "mod-cta").some((b) => b.text === "Upgrade")).toBe(false);
 	});
 
 	test("the plan section offers an Upgrade button, not a Retry/Dismiss", () => {

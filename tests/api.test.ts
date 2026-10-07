@@ -720,6 +720,169 @@ describe("EngramApi", () => {
 			expect(body.mtime).toBe(1234567890);
 			expect(result).toEqual({ path: "images/photo.png", status: "created" });
 		});
+
+		test("server without raw_attachment_upload gets base64 JSON even when bytes are given", async () => {
+			mockRequestUrl.mockResolvedValueOnce({ status: 200, json: {} } as any);
+			const bytes = new Uint8Array([104, 105]).buffer;
+			await api.pushAttachment("a.png", "aGk=", "image/png", 5, bytes);
+			const opts = mockRequestUrl.mock.calls[0][0] as any;
+			expect(opts.url).toBe(`${TEST_API_BASE}/attachments`);
+			expect(opts.headers["Content-Type"]).toBe("application/json");
+			expect(JSON.parse(opts.body).content_base64).toBe("aGk=");
+		});
+
+		test("server with raw_attachment_upload gets the raw bytes and query metadata", async () => {
+			mockRequestUrl.mockResolvedValueOnce({ status: 200, json: { attachment: {} } } as any);
+			api.setRawAttachmentUpload(true);
+			const bytes = new Uint8Array([0, 128, 255]).buffer;
+			await api.pushAttachment("写真/café 😀 #1.png", "AIDA/w==", "image/png", 12.5, bytes);
+			const opts = mockRequestUrl.mock.calls[0][0] as any;
+			expect(opts.method).toBe("POST");
+			expect(opts.headers["Content-Type"]).toBe("application/octet-stream");
+			expect(opts.body).toBe(bytes);
+			const url = new URL(opts.url);
+			expect(`${url.origin}${url.pathname}`).toBe(`${TEST_API_BASE}/attachments`);
+			expect(url.searchParams.get("path")).toBe("写真/café 😀 #1.png");
+			expect(url.searchParams.get("mime_type")).toBe("image/png");
+			expect(url.searchParams.get("mtime")).toBe("12.5");
+		});
+
+		test("raw-capable server still gets JSON when only base64 is at hand", async () => {
+			mockRequestUrl.mockResolvedValueOnce({ status: 200, json: {} } as any);
+			api.setRawAttachmentUpload(true);
+			await api.pushAttachment("a.png", "aGk=", "image/png", 5);
+			const opts = mockRequestUrl.mock.calls[0][0] as any;
+			expect(opts.url).toBe(`${TEST_API_BASE}/attachments`);
+			expect(JSON.parse(opts.body).content_base64).toBe("aGk=");
+		});
+
+		test("switching backends forgets raw support until the new one advertises it", async () => {
+			mockRequestUrl.mockResolvedValueOnce({ status: 200, json: {} } as any);
+			api.setRawAttachmentUpload(true);
+			api.updateConfig("http://other:4000", TEST_KEY);
+			await api.pushAttachment("a.png", "aGk=", "image/png", 5, new ArrayBuffer(2));
+			const opts = mockRequestUrl.mock.calls[0][0] as any;
+			expect(opts.headers["Content-Type"]).toBe("application/json");
+		});
+
+		// Rolling deploy / rollback: the socket advertised raw support but the
+		// POST hit an older task, whose Plug.Parsers passes octet-stream unread.
+		test("raw upload refused as missing content_base64 retries once as JSON and turns raw off", async () => {
+			mockRequestUrl
+				.mockRejectedValueOnce({
+					status: 422,
+					json: { error: "content_base64 is required" },
+				})
+				.mockResolvedValueOnce({
+					status: 200,
+					json: { attachment: { path: "a.png" } },
+				} as any)
+				.mockResolvedValueOnce({ status: 200, json: {} } as any);
+			api.setRawAttachmentUpload(true);
+			const bytes = new Uint8Array([104, 105]).buffer;
+			const result = await api.pushAttachment("a.png", "aGk=", "image/png", 5, bytes);
+			expect(result).toEqual({ attachment: { path: "a.png" } } as any);
+			expect(mockRequestUrl).toHaveBeenCalledTimes(2);
+			const retry = mockRequestUrl.mock.calls[1][0] as any;
+			expect(retry.url).toBe(`${TEST_API_BASE}/attachments`);
+			expect(retry.headers["Content-Type"]).toBe("application/json");
+			expect(JSON.parse(retry.body).content_base64).toBe("aGk=");
+			// The flag is cleared: the next upload goes straight to JSON.
+			await api.pushAttachment("b.png", "aGk=", "image/png", 5, bytes);
+			const next = mockRequestUrl.mock.calls[2][0] as any;
+			expect(next.headers["Content-Type"]).toBe("application/json");
+		});
+
+		test("raw upload answered by a generic 415 retries as JSON", async () => {
+			mockRequestUrl
+				.mockRejectedValueOnce({ status: 415, text: "Unsupported Media Type" })
+				.mockResolvedValueOnce({ status: 200, json: {} } as any);
+			api.setRawAttachmentUpload(true);
+			await api.pushAttachment("a.png", "aGk=", "image/png", 5, new ArrayBuffer(2));
+			expect(mockRequestUrl).toHaveBeenCalledTimes(2);
+			expect((mockRequestUrl.mock.calls[1][0] as any).headers["Content-Type"]).toBe(
+				"application/json",
+			);
+		});
+
+		test("a 415 refusing the MIME type is not retried", async () => {
+			const err = { status: 415, json: { error: "mime_not_allowed", mime_type: "x/y" } };
+			mockRequestUrl.mockRejectedValueOnce(err);
+			api.setRawAttachmentUpload(true);
+			await expect(
+				api.pushAttachment("a.png", "aGk=", "image/png", 5, new ArrayBuffer(2)),
+			).rejects.toBe(err);
+			expect(mockRequestUrl).toHaveBeenCalledTimes(1);
+		});
+
+		test("any other 422 on a raw upload is not retried", async () => {
+			const err = { status: 422, json: { error: "invalid path" } };
+			mockRequestUrl.mockRejectedValueOnce(err);
+			api.setRawAttachmentUpload(true);
+			await expect(
+				api.pushAttachment("../a.png", "aGk=", "image/png", 5, new ArrayBuffer(2)),
+			).rejects.toBe(err);
+			expect(mockRequestUrl).toHaveBeenCalledTimes(1);
+		});
+
+		test("a JSON upload's missing-content 422 is not retried", async () => {
+			const err = { status: 422, json: { error: "content_base64 is required" } };
+			mockRequestUrl.mockRejectedValueOnce(err);
+			await expect(
+				api.pushAttachment("a.png", "", "image/png", 5, new ArrayBuffer(0)),
+			).rejects.toBe(err);
+			expect(mockRequestUrl).toHaveBeenCalledTimes(1);
+		});
+
+		// #555: the base64 is only built when the JSON body needs it.
+		describe("lazy base64 thunk", () => {
+			const bytes = new Uint8Array([104, 105]).buffer;
+
+			test("raw upload never calls it", async () => {
+				mockRequestUrl.mockResolvedValueOnce({ status: 200, json: {} } as any);
+				api.setRawAttachmentUpload(true);
+				const b64 = mock(() => "aGk=");
+				await api.pushAttachment("a.png", b64, "image/png", 5, bytes);
+				expect(b64).not.toHaveBeenCalled();
+				expect((mockRequestUrl.mock.calls[0][0] as any).body).toBe(bytes);
+			});
+
+			test("JSON upload calls it once and sends its result", async () => {
+				mockRequestUrl.mockResolvedValueOnce({ status: 200, json: {} } as any);
+				const b64 = mock(() => "aGk=");
+				await api.pushAttachment("a.png", b64, "image/png", 5, bytes);
+				expect(b64).toHaveBeenCalledTimes(1);
+				expect(
+					JSON.parse((mockRequestUrl.mock.calls[0][0] as any).body).content_base64,
+				).toBe("aGk=");
+			});
+
+			test("raw->JSON fallback calls it once, only after the refusal", async () => {
+				const b64 = mock(() => "aGk=");
+				mockRequestUrl
+					.mockImplementationOnce(async () => {
+						expect(b64).not.toHaveBeenCalled();
+						throw { status: 422, json: { error: "content_base64 is required" } };
+					})
+					.mockResolvedValueOnce({ status: 200, json: {} } as any);
+				api.setRawAttachmentUpload(true);
+				await api.pushAttachment("a.png", b64, "image/png", 5, bytes);
+				expect(b64).toHaveBeenCalledTimes(1);
+				expect(
+					JSON.parse((mockRequestUrl.mock.calls[1][0] as any).body).content_base64,
+				).toBe("aGk=");
+			});
+		});
+
+		test("an empty file goes raw as a zero-length body", async () => {
+			mockRequestUrl.mockResolvedValueOnce({ status: 200, json: {} } as any);
+			api.setRawAttachmentUpload(true);
+			const empty = new ArrayBuffer(0);
+			await api.pushAttachment("e.png", "", "image/png", 1, empty);
+			const opts = mockRequestUrl.mock.calls[0][0] as any;
+			expect(opts.headers["Content-Type"]).toBe("application/octet-stream");
+			expect(opts.body).toBe(empty);
+		});
 	});
 
 	describe("getAttachment", () => {
@@ -734,6 +897,159 @@ describe("EngramApi", () => {
 			expect(opts.url).toContain("images/my%20photo.png");
 			expect(opts.url).not.toContain("%2F");
 			expect(result).toEqual({ path: "images/my photo.png", content_base64: "aGVsbG8=" });
+		});
+	});
+
+	describe("getAttachment raw download", () => {
+		const BYTES = new Uint8Array([0, 1, 127, 128, 254, 255, 34, 92]).buffer;
+		const B64 = arrayBufferToBase64(BYTES);
+		function rawResp(headers: Record<string, string>, body = BYTES) {
+			return {
+				status: 200,
+				headers,
+				arrayBuffer: body,
+				get json(): never {
+					throw new Error("raw body is not JSON");
+				},
+			} as any;
+		}
+
+		test("server without raw_attachment_download gets the JSON request", async () => {
+			mockRequestUrl.mockResolvedValueOnce({
+				status: 200,
+				json: { path: "a.png", content_base64: B64 },
+			} as any);
+			const r = await api.getAttachment("a.png");
+			expect((mockRequestUrl.mock.calls[0][0] as any).url).toBe(
+				`${TEST_API_BASE}/attachments/a.png`,
+			);
+			expect(r.content_base64).toBe(B64);
+			expect(r.bytes).toBeUndefined();
+		});
+
+		test("raw download returns the bytes, the identical base64, and header metadata", async () => {
+			// Header-name case differs by platform (desktop lower-cases, mobile
+			// may not); the lookup must not care.
+			mockRequestUrl.mockResolvedValueOnce(
+				rawResp({
+					"X-Engram-Content-Hash": "h1",
+					"x-engram-mime-type": "image/png",
+					"X-Engram-Mtime": "1709234567.125",
+					"x-engram-updated-at": "2026-10-06T00:00:00Z",
+				}),
+			);
+			api.setRawAttachmentDownload(true);
+			const r = await api.getAttachment("写真/café #1.png");
+			const opts = mockRequestUrl.mock.calls[0][0] as any;
+			expect(opts.method).toBe("GET");
+			expect(opts.url).toBe(
+				`${TEST_API_BASE}/attachments/${encodeURIComponent("写真")}/${encodeURIComponent("café #1.png")}?raw=1`,
+			);
+			expect(r.bytes).toBe(BYTES);
+			// No base64 is materialised on the raw path; the caller hashes the
+			// bytes with fnv1aBase64 (pinned equal to fnv1a(base64) elsewhere).
+			expect(r.content_base64).toBeUndefined();
+			expect(arrayBufferToBase64(r.bytes as ArrayBuffer)).toBe(B64);
+			expect(r.content_hash).toBe("h1");
+			expect(r.mime_type).toBe("image/png");
+			expect(r.mtime).toBe(1709234567.125);
+			expect(r.updated_at).toBe("2026-10-06T00:00:00Z");
+			expect(r.path).toBe("写真/café #1.png");
+			expect(r.size_bytes).toBe(8);
+		});
+
+		test("an empty attachment downloads raw as zero bytes", async () => {
+			mockRequestUrl.mockResolvedValueOnce(
+				rawResp({ "x-engram-updated-at": "2026-10-06T00:00:00Z" }, new ArrayBuffer(0)),
+			);
+			api.setRawAttachmentDownload(true);
+			const r = await api.getAttachment("e.png");
+			expect(r.bytes?.byteLength).toBe(0);
+			expect(r.size_bytes).toBe(0);
+			expect(r.content_hash).toBeUndefined();
+		});
+
+		// Rolling deploy / rollback: the socket advertised raw download but the
+		// GET hit an older task, which serves ?raw=1 bytes without the metadata.
+		test("raw bytes without metadata headers fall back to JSON once and turn raw off", async () => {
+			mockRequestUrl
+				.mockResolvedValueOnce(rawResp({ "content-type": "image/png" }))
+				.mockResolvedValueOnce({
+					status: 200,
+					json: { path: "a.png", content_base64: B64, content_hash: "h2" },
+				} as any)
+				.mockResolvedValueOnce({
+					status: 200,
+					json: { path: "b.png", content_base64: B64 },
+				} as any);
+			api.setRawAttachmentDownload(true);
+			const r = await api.getAttachment("a.png");
+			expect(r).toEqual({ path: "a.png", content_base64: B64, content_hash: "h2" } as any);
+			expect(mockRequestUrl).toHaveBeenCalledTimes(2);
+			expect((mockRequestUrl.mock.calls[1][0] as any).url).toBe(
+				`${TEST_API_BASE}/attachments/a.png`,
+			);
+			await api.getAttachment("b.png");
+			expect((mockRequestUrl.mock.calls[2][0] as any).url).toBe(
+				`${TEST_API_BASE}/attachments/b.png`,
+			);
+		});
+
+		// A backend from before raw download ignores ?raw=1 and answers with the
+		// JSON body, which already holds everything: no second GET.
+		test("a JSON answer to ?raw=1 is used as-is and turns raw off", async () => {
+			const body = {
+				path: "a.png",
+				content_base64: B64,
+				content_hash: "h3",
+				mime_type: "image/png",
+			};
+			mockRequestUrl
+				.mockResolvedValueOnce({
+					status: 200,
+					headers: { "Content-Type": "application/json; charset=utf-8" },
+					json: body,
+				} as any)
+				.mockResolvedValueOnce({ status: 200, json: { path: "b.png" } } as any);
+			api.setRawAttachmentDownload(true);
+			expect(await api.getAttachment("a.png")).toEqual(body as any);
+			expect(mockRequestUrl).toHaveBeenCalledTimes(1);
+			await api.getAttachment("b.png");
+			expect((mockRequestUrl.mock.calls[1][0] as any).url).not.toContain("raw=1");
+		});
+
+		test("a raw-download error is not retried as JSON", async () => {
+			const err = { status: 404, json: { error: "attachment not found" } };
+			mockRequestUrl.mockRejectedValueOnce(err);
+			api.setRawAttachmentDownload(true);
+			await expect(api.getAttachment("gone.png")).rejects.toBe(err);
+			expect(mockRequestUrl).toHaveBeenCalledTimes(1);
+		});
+
+		test("switching backends forgets raw download until the new one advertises it", async () => {
+			mockRequestUrl.mockResolvedValueOnce({
+				status: 200,
+				json: { path: "a.png", content_base64: B64 },
+			} as any);
+			api.setRawAttachmentDownload(true);
+			api.updateConfig("http://other:4000", TEST_KEY);
+			await api.getAttachment("a.png");
+			expect((mockRequestUrl.mock.calls[0][0] as any).url).not.toContain("raw=1");
+		});
+
+		// saveSettings calls updateConfig on every write (e.g. an OAuth refresh-token
+		// rotation) but reuses the live socket, so no join reply re-enables raw.
+		test("a settings save on the same backend keeps raw transfers on", async () => {
+			mockRequestUrl
+				.mockResolvedValueOnce(rawResp({ "x-engram-updated-at": "2026-10-06T00:00:00Z" }))
+				.mockResolvedValueOnce({ status: 200, json: { path: "a.png" } } as any);
+			api.setRawAttachmentDownload(true);
+			api.setRawAttachmentUpload(true);
+			api.updateConfig(`${TEST_SERVER}/`, "rotated-key");
+			await api.getAttachment("a.png");
+			expect((mockRequestUrl.mock.calls[0][0] as any).url).toContain("raw=1");
+			await api.pushAttachment("a.png", B64, "image/png", 1, BYTES);
+			expect((mockRequestUrl.mock.calls[1][0] as any).url).toContain("/attachments?");
 		});
 	});
 

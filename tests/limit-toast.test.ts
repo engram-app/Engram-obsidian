@@ -22,7 +22,7 @@ describe("notifyLimitExceeded", () => {
 			10000,
 			10000,
 		);
-		notifyLimitExceeded(err);
+		notifyLimitExceeded(err, true);
 
 		expect(__noticeCapture.notices).toHaveLength(1);
 		const n = __noticeCapture.notices[0];
@@ -40,7 +40,7 @@ describe("notifyLimitExceeded", () => {
 			1,
 			1,
 		);
-		notifyLimitExceeded(err);
+		notifyLimitExceeded(err, true);
 
 		const n = __noticeCapture.notices[0];
 		expect(n.buttons).toHaveLength(1);
@@ -60,7 +60,7 @@ describe("notifyLimitExceeded", () => {
 		(window as unknown as { open: typeof window.open }).open =
 			opener as unknown as typeof window.open;
 
-		notifyLimitExceeded(err);
+		notifyLimitExceeded(err, true);
 		const n = __noticeCapture.notices[0];
 		n.buttons[0].click();
 
@@ -73,7 +73,7 @@ describe("notifyLimitExceeded", () => {
 
 	test("skips the Upgrade button when upgradeUrl is null", () => {
 		const err = new LimitExceededError("account_suspended", null, null, null, null);
-		notifyLimitExceeded(err);
+		notifyLimitExceeded(err, true);
 
 		const n = __noticeCapture.notices[0];
 		expect(n.buttons).toHaveLength(0);
@@ -82,7 +82,22 @@ describe("notifyLimitExceeded", () => {
 
 	test("falls back to the generic limit copy for an unknown reason", () => {
 		const err = new LimitExceededError("totally_made_up_reason", null, null, null, null);
-		notifyLimitExceeded(err);
+		notifyLimitExceeded(err, true);
 		expect(__noticeCapture.notices[0].message).toMatch(/Engram:.*[Ll]imit/);
+	});
+
+	test("never offers Upgrade on a self-hosted server, even with an upgradeUrl", () => {
+		const err = new LimitExceededError(
+			"notes_cap_exceeded",
+			"https://app.engram.page/settings/billing",
+			"notes_cap",
+			10000,
+			10000,
+		);
+		notifyLimitExceeded(err, false);
+
+		const n = __noticeCapture.notices[0];
+		expect(n.message).toMatch(/Engram:/);
+		expect(n.buttons).toHaveLength(0);
 	});
 });

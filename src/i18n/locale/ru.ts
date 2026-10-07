@@ -157,7 +157,6 @@ const ru: Dict = {
 	Upgrade: "Перейти на платный план",
 	"Update in settings": "Обновить в настройках",
 	"Engram: ready": "Engram: готово",
-	"Resume sync": "Продолжить синхронизацию",
 	"Engram Vault Sync {version} is available. {link}.":
 		"Вышла версия Engram Vault Sync {version}. {link}.",
 	"Search your vault…": "Поиск по хранилищу…",
@@ -363,8 +362,9 @@ const ru: Dict = {
 		"Engram: настройки были повреждены и восстановлены из резервной копии.",
 	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
 		"Engram: для живой синхронизации нужно обновить плагин. Обновите Engram vault sync.",
-	"Engram: sync is paused — this edit was not synced. Choose a sync direction to resume.":
+	"Engram: sync is paused. This edit was not synced. Choose a sync direction to resume.":
 		"Engram: синхронизация приостановлена, эта правка не отправлена. Выберите направление синхронизации, чтобы продолжить.",
+	"Open Engram settings": "Открыть Engram settings",
 	"Engram: not connected": "Engram: нет подключения",
 	"Engram: signed out": "Engram: выполнен выход",
 	"Not connected yet. Click to open settings and link this vault.":

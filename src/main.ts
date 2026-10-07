@@ -24,7 +24,7 @@ import {
 	seededAccessToken,
 } from "./auth";
 import { migrateCloudApiUrl, withClearedAuth } from "./auth-state";
-import { migrateBackendMode, switchMode } from "./backend-mode";
+import { migrateBackendMode, offersUpgrades, switchMode } from "./backend-mode";
 import { BaseStore } from "./base-store";
 import {
 	connectRetryDelayMs,
@@ -90,6 +90,7 @@ import {
 } from "./types";
 import { checkForPluginUpdate } from "./update-check";
 import { setUpgradeAction } from "./upgrade-required";
+import { loadWasmCore } from "./wasm-core";
 
 /** Generate a stable client ID for vault registration.
  *  Uses SHA-256 of the vault's absolute path (desktop) or name (mobile fallback). */
@@ -578,6 +579,12 @@ export default class EngramSyncPlugin extends Plugin {
 			"lifecycle",
 			`Plugin loading | v${this.manifest.version} | ${Platform.isMobile ? "mobile" : "desktop"}`,
 		);
+		// Not awaited: hashing/encoding use JS until the core is ready. Started
+		// after the remote logger exists so a failure (no WebAssembly, CSP) is
+		// not logged into the no-op logger and lost.
+		loadWasmCore().catch((e: unknown) =>
+			rlog().warn("lifecycle", `wasm core unavailable, using JS: ${errMsg(e)}`),
+		);
 
 		this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
 			// Merge whichever of {lastSync, catchupSeq, manifestSeq} the engine handed us into
@@ -709,6 +716,7 @@ export default class EngramSyncPlugin extends Plugin {
 					// upgrade. Route it to the same limit toast the edit flow uses.
 					notifyLimitExceeded(
 						new LimitExceededError(reason, null, "notes_cap", null, null),
+						offersUpgrades(this.settings),
 					);
 					rlog().info(
 						"crdt",
@@ -1281,7 +1289,7 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  every offline launch. */
 	private handleSyncError(context: string, e: unknown, opts?: { notice?: boolean }): void {
 		if (e instanceof LimitExceededError) {
-			notifyLimitExceeded(e);
+			notifyLimitExceeded(e, offersUpgrades(this.settings));
 			rlog().info("lifecycle", `${context} blocked — limit reached (${e.reason})`);
 			return;
 		}
@@ -1719,7 +1727,7 @@ export default class EngramSyncPlugin extends Plugin {
 			return true;
 		} catch (e: unknown) {
 			if (e instanceof LimitExceededError) {
-				notifyLimitExceeded(e);
+				notifyLimitExceeded(e, offersUpgrades(this.settings));
 				rlog().info(
 					"lifecycle",
 					`Vault registration blocked — limit reached (${e.reason})`,
@@ -2602,6 +2610,14 @@ export default class EngramSyncPlugin extends Plugin {
 					if (parsed) queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
 				};
 
+				// Epoch-guarded: a superseded channel's late join reply must not
+				// re-enable a feature the backend-switch reset turned off.
+				channel.onServerFeatures = (f) => {
+					if (epoch !== this.channelEpoch) return;
+					this.api.setRawAttachmentUpload(f.rawAttachmentUpload);
+					this.api.setRawAttachmentDownload(f.rawAttachmentDownload);
+				};
+
 				this.noteStream = channel;
 				this.indexChannel = channel;
 				if (this.authProvider) {
@@ -2899,6 +2915,7 @@ export default class EngramSyncPlugin extends Plugin {
 							this.planJoinNoticeShown.add(reason);
 							notifyLimitExceeded(
 								new LimitExceededError(reason, null, null, null, null),
+								offersUpgrades(this.settings),
 							);
 						}
 						// Degrade to legacy: mirror the "never-joined disconnect" path.
@@ -3036,6 +3053,7 @@ export default class EngramSyncPlugin extends Plugin {
 			intro,
 			phases,
 			webUrl: engramWebUrl(this.settings.apiUrl),
+			offerUpgrade: offersUpgrades(this.settings),
 		});
 		const prev = this.syncEngine.onSyncProgress;
 		// Stash the plan so the settings-pane bar (prev callback) renders the same
@@ -3131,25 +3149,37 @@ export default class EngramSyncPlugin extends Plugin {
 		return "vault-switch";
 	}
 
-	/** Tell the user their edit went nowhere, and offer the one action that
-	 *  fixes it. Fired at most once per gate closure by the engine.
+	/** Tell the user their edit went nowhere, and point at where to fix it.
+	 *  Fired at most once per gate closure by the engine.
 	 *
-	 *  Deliberately a notice with a button rather than opening the modal
+	 *  Deliberately a notice with a link rather than opening the modal
 	 *  outright: the trigger is a keystroke in a note, and a modal stealing
-	 *  focus mid-sentence is its own bug report. */
+	 *  focus mid-sentence is its own bug report.
+	 *
+	 *  Silent while signed out: sign-out also closes the gate, and a user who
+	 *  signed out on purpose (say, to set up another vault) expects edits not
+	 *  to sync. Telling them so is noise, and the link would lead nowhere. */
 	private notifySyncGateClosed(): void {
+		if (!this.hasAuthConfigured()) return;
 		const notice = new Notice(
 			t(
-				"Engram: sync is paused — this edit was not synced. Choose a sync direction to resume.",
+				"Engram: sync is paused. This edit was not synced. Choose a sync direction to resume.",
 			),
 			0,
 		);
 		const noticeEl = (notice as unknown as { noticeEl?: HTMLElement }).noticeEl;
 		if (!noticeEl) return;
-		const btn = noticeEl.createEl("button", { text: t("Resume sync") });
-		btn.addEventListener("click", () => {
+		// A text link, not a button: a button sat awkwardly inside the notice.
+		// The Connection tab is where "Finish sync setup" resumes sync.
+		const link = noticeEl.createEl("a", {
+			text: t("Open Engram settings"),
+			href: "#",
+			cls: "engram-notice-link",
+		});
+		link.addEventListener("click", (evt) => {
+			evt.preventDefault();
 			notice.hide();
-			void this.doSyncWithFirstSyncCheck();
+			this.openConnectionSettings();
 		});
 	}
 

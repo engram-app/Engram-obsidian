@@ -143,7 +143,6 @@ const it: Dict = {
 	Upgrade: "Passa a un piano superiore",
 	"Update in settings": "Aggiorna nelle impostazioni",
 	"Engram: ready": "Engram: pronto",
-	"Resume sync": "Riprendi la sincronizzazione",
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} è disponibile. {link}.",
 	"Search your vault…": "Cerca nel tuo archivio…",
@@ -343,8 +342,9 @@ const it: Dict = {
 		"Engram: le impostazioni erano danneggiate e sono state ripristinate da una copia.",
 	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
 		"Engram Sync: la sincronizzazione dal vivo richiede un aggiornamento del plugin. Aggiorna Engram vault sync.",
-	"Engram: sync is paused — this edit was not synced. Choose a sync direction to resume.":
+	"Engram: sync is paused. This edit was not synced. Choose a sync direction to resume.":
 		"Engram: la sincronizzazione è in pausa e questa modifica non è stata inviata. Scegli un verso per riprendere.",
+	"Open Engram settings": "Apri Engram settings",
 	"Engram: not connected": "Engram: non connesso",
 	"Engram: signed out": "Engram: disconnesso",
 	"Not connected yet. Click to open settings and link this vault.":

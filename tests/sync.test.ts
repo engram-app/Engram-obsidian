@@ -1900,6 +1900,57 @@ describe("SyncEngine offline queue integration", () => {
 		expect(engine.getStatus().queued).toBe(1);
 	});
 
+	test("flushQueue offers re-read bytes for a content-free attachment entry", async () => {
+		const engine = createEngine();
+		const file = new TFile("Assets/new.png", 100_000);
+		const bytes = new Uint8Array([7, 8, 9]).buffer;
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(file);
+		(mockApp.vault.readBinary as jest.Mock).mockResolvedValueOnce(bytes);
+		(mockApi.pushAttachment as jest.Mock).mockResolvedValue({ attachment: {} });
+
+		engine.queue.load([
+			{ path: "Assets/new.png", action: "upsert", kind: "attachment", timestamp: 1 },
+		]);
+
+		await engine.flushQueue();
+
+		expect(mockApi.pushAttachment).toHaveBeenCalledWith(
+			"Assets/new.png",
+			expect.any(Function),
+			"image/png",
+			100,
+			bytes,
+		);
+		// Lazy base64: same body the JSON path always sent.
+		expect((mockApi.pushAttachment as jest.Mock).mock.calls[0][1]()).toBe("BwgJ");
+	});
+
+	// The raw upload can be refused before the server reads the body; without a
+	// buffering proxy that surfaces as a connection reset (network → retry
+	// forever). With the cap known, an over-cap file parks without uploading.
+	test("flushQueue parks an over-cap attachment as too_large without uploading", async () => {
+		const engine = createEngine();
+		const file = new TFile("Assets/huge.png", 100_000, 2_000);
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(file);
+		engine.applyPlanState({
+			tier: "free",
+			attachmentsTextOnly: false,
+			maxFileBytes: 1_000,
+			attachmentBytesCap: null,
+			updatedAt: 1,
+		});
+		engine.queue.load([
+			{ path: "Assets/huge.png", action: "upsert", kind: "attachment", timestamp: 1 },
+		]);
+
+		await engine.flushQueue();
+
+		expect(mockApi.pushAttachment).not.toHaveBeenCalled();
+		expect(mockApp.vault.readBinary).not.toHaveBeenCalled();
+		expect(engine.issues.get("Assets/huge.png")?.category).toBe("too_large");
+		expect(engine.queue.size).toBe(0);
+	});
+
 	test("flushQueue handles attachment entries", async () => {
 		const engine = createEngine();
 
@@ -1928,11 +1979,13 @@ describe("SyncEngine offline queue integration", () => {
 		const flushed = await engine.flushQueue();
 
 		expect(flushed).toBe(2);
+		// A legacy entry carries only base64, so no raw bytes are offered.
 		expect(mockApi.pushAttachment).toHaveBeenCalledWith(
 			"Assets/img.png",
 			"AQID",
 			"image/png",
 			100,
+			undefined,
 		);
 		expect(mockApi.deleteAttachment).toHaveBeenCalledWith("Assets/old.pdf");
 	});
@@ -1994,10 +2047,12 @@ describe("SyncEngine binary push", () => {
 		expect(mockApp.vault.readBinary).toHaveBeenCalled();
 		expect(mockApi.pushAttachment).toHaveBeenCalledWith(
 			"Assets/photo.png",
-			expect.any(String),
+			expect.any(Function),
 			"image/png",
 			expect.any(Number),
+			mockBuffer,
 		);
+		expect((mockApi.pushAttachment as jest.Mock).mock.calls[0][1]()).toBe("AQID");
 		// Should NOT call pushNote for binary
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});
