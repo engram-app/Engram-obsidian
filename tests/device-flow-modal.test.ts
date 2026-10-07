@@ -20,9 +20,13 @@ const makePlugin = (apiUrl: string, clientId: string) =>
 	}) as any;
 
 describe("DeviceFlowModal.startDeviceFlow", () => {
+	const flags = { ...Platform };
 	beforeEach(() => {
 		mockRequestUrl.mockReset();
+		// Pin the platform so the suggested device name is deterministic.
+		Object.assign(Platform, { isDesktop: false, isIosApp: true });
 	});
+	afterEach(() => Object.assign(Platform, flags));
 
 	test("sends client_id and local vault_name", async () => {
 		mockRequestUrl.mockResolvedValue({
@@ -47,36 +51,11 @@ describe("DeviceFlowModal.startDeviceFlow", () => {
 		expect(call.url).toBe("https://example.test/api/auth/device");
 
 		const body = JSON.parse(call.body);
-		expect(body).toMatchObject({
+		expect(body).toEqual({
 			client_id: "cid-1",
 			vault_name: "My Local Notes",
+			device_name: "iPhone",
 		});
-		// The device name is a best-effort hint; its value depends on the host.
-		expect(["string", "undefined"]).toContain(typeof body.device_name);
-	});
-
-	test("sends the suggested device name when there is one", async () => {
-		mockRequestUrl.mockResolvedValue({
-			status: 200,
-			json: {
-				device_code: "a",
-				user_code: "AAAA-BBBB",
-				verification_url: "https://example.test/link",
-				expires_in: 300,
-			},
-		});
-		Object.assign(Platform, { isDesktop: false, isIosApp: true });
-		try {
-			const modal = new DeviceFlowModal(
-				makeApp("V"),
-				makePlugin("https://example.test", "cid-1"),
-			);
-			await (modal as any).startDeviceFlow();
-			const call = mockRequestUrl.mock.calls[0][0] as { body: string };
-			expect(JSON.parse(call.body).device_name).toBe("iPhone");
-		} finally {
-			Object.assign(Platform, { isDesktop: true, isIosApp: false });
-		}
 	});
 
 	test("handles apiUrl that already ends with /api", async () => {
@@ -139,7 +118,7 @@ describe("DeviceFlowModal.startDeviceFlow", () => {
 
 		await (modal as any).startDeviceFlow();
 		const body = JSON.parse((mockRequestUrl.mock.calls[0][0] as { body: string }).body);
-		expect(body).toMatchObject({ client_id: "cid-4" });
+		expect(body).toEqual({ client_id: "cid-4", device_name: "iPhone" });
 		expect("vault_name" in body).toBe(false);
 	});
 
