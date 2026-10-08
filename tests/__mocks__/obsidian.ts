@@ -1,3 +1,4 @@
+import { StateField } from "@codemirror/state";
 /** Minimal mock of Obsidian API for unit tests. */
 
 export class TFile {
@@ -412,11 +413,13 @@ export class MarkdownView {
 	file: TFile | null = null;
 }
 
-/** Stub of Obsidian's CM6 StateField carrying the active MarkdownFileInfo. The
- *  live-binding ViewPlugin reads it via `state.field(editorInfoField, false)`,
- *  but unit tests never mount that plugin against a real editor, so this only
- *  needs to exist so `import { editorInfoField } from "obsidian"` resolves. */
-export const editorInfoField = { __editorInfoField: true } as const;
+/** Obsidian's CM6 StateField carrying the active MarkdownFileInfo. A real field
+ *  so the live-binding tests can seed it with `editorInfoField.init(() => info)`;
+ *  it holds whatever it was initialised with (null otherwise). */
+export const editorInfoField = StateField.define<unknown>({
+	create: () => null,
+	update: (v) => v,
+});
 
 export const Platform = {
 	isMobile: false,

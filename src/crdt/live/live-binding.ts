@@ -93,7 +93,8 @@ function editorPath(editor: EditorView): string | null {
 	return ownedMarkdownPath(editor, info);
 }
 
-class LiveBindingValue implements PluginValue {
+/** Exported for the integration test only; Obsidian mounts it via liveBindingPlugin. */
+export class LiveBindingValue implements PluginValue {
 	private readonly viewId = `lb-${viewSeq++}`;
 	private editor: EditorView;
 	private path: string | null = null;
