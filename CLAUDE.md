@@ -151,6 +151,7 @@ Required status check on `main`: `build-and-test` (see the repo ruleset).
 ## Context Docs
 
 **Plugin internals & ops**
+- Probing real Obsidian editor behaviour in a throwaway instance (two panes on one file, external modify, when the `ViewPlugin` is constructed, Live Preview CM doc includes frontmatter; running the real live binding as a plugin) → `docs/context/obsidian-cdp-binding-probe.md`
 - Source map, CRDT layer, sync flows, file-type and ignore rules → `docs/internals.md`
 - CDP + Obsidian remote debugging (MCP devtools, evaluate_script) → `docs/engram-ops.md`
 - A `bun audit` high on `brace-expansion` that looks already patched (bun's merged advisory range; the fix is a PAIRED `brace-expansion` + `minimatch` override) → `docs/context/bun-audit-brace-expansion-false-positive.md`
@@ -170,6 +171,7 @@ Required status check on `main`: `build-and-test` (see the repo ruleset).
 **Sync / CRDT architecture & bug classes**
 - Adding a `Map`/`Set` field to `SyncEngine`, or state survived a vault switch and addressed the new vault with the old vault's ids → `docs/context/sync-engine-sweep-registry.md`
 - Tempted to build a textual 3-way merge or reach for `BaseStore` (the legacy merge is deleted; `BaseStore` is stale for CRDT notes; where a real LCA still exists) → `docs/context/three-way-merge.md`
+- #544 (TABLED): typing while a note loads doubles or reverts after an autosave; the live binding's merge base, the sync engine writing disk into an entering doc, Relay has the same bug, 8 failed approaches, the r6 design + prototype, the CRDT-snapshot open question. READ BEFORE touching the go-live reconcile → `docs/context/live-binding-544-investigation.md`
 - Logging layers (`devLog`, `rlog`, the always-on `anomaly()` path and its slug contract, no cleartext paths) → `docs/context/logging-architecture.md`
 - V8 OOM prevention on large-vault operations (ready gate, content-free queue, push semaphore) → `docs/context/v8-oom-prevention.md`
 - A first sync trashed freshly pulled files and pushed their deletions (the evidence rule, `engineTrashedPaths`, why the 5s echo TTL is not a safety boundary) → `docs/context/first-sync-delete-push-incident-2026-08-12.md`
