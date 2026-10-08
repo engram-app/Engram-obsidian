@@ -206,3 +206,36 @@ export function decideReconcile(
 	// authoritative (e.g. server-newer) content. Snap the editor to the doc.
 	return { kind: "adopt", changes: textDiffToChangeSpec(editorText, docText) };
 }
+
+/** The 3-way merge base for the initial reconcile. `preEditText` stops being the
+ *  common ancestor once Obsidian autosaves the typing: the doc is then seeded
+ *  from that saved disk, and merging P -> editor onto it replays the saved text
+ *  a second time (doubling), or rejects and forwards over a remote edit (#544).
+ *  Disk is what the doc was seeded from AND what the editor grew from, so a
+ *  dirty binding whose disk moved off `preEditText` merges against disk. */
+export function reconcileBase(
+	preEditText: string | null,
+	diskText: string | null,
+	dirty: boolean,
+): string | null {
+	if (dirty && diskText !== null && diskText !== preEditText) return diskText;
+	return preEditText;
+}
+
+/** The dirty state a re-attach must carry into the new doc, or null for a clean
+ *  attach. Typing in the defer window is in the editor but in NO doc yet, so a
+ *  same-file re-attach (a genesis-adopt id remap) keeps it whatever the trigger
+ *  was: a click or scroll must not adopt it away (#544). A LIVE binding already
+ *  forwarded its edits, so it carries only a keystroke in the triggering update.
+ *  Across a real file switch the old base is another note's text: dirty, no base. */
+export function reattachCarry(
+	prev: { dirty: boolean; ready: boolean; preEditText: string | null },
+	samePath: boolean,
+	keystrokeInUpdate: boolean,
+	preUpdateText: string,
+): { dirty: boolean; preEditText: string | null } | null {
+	if (!samePath) return keystrokeInUpdate ? { dirty: true, preEditText: null } : null;
+	if (prev.dirty && !prev.ready) return { dirty: true, preEditText: prev.preEditText };
+	if (keystrokeInUpdate) return { dirty: true, preEditText: preUpdateText };
+	return null;
+}

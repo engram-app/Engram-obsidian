@@ -7,6 +7,8 @@ import {
 	frontmatterPrefixLen,
 	needsReattach,
 	ownedMarkdownPath,
+	reattachCarry,
+	reconcileBase,
 } from "../src/crdt/live/live-binding-decisions";
 
 describe("frontmatterPrefixLen", () => {
@@ -299,6 +301,106 @@ describe("decideReconcile — base-aware 3-way merge (#3)", () => {
 		const docText = "one\ntwo\nthree\n";
 		// editorText === docText short-circuits to noop before the merge runs.
 		expect(decideReconcile(editorText, docText, true, base)).toEqual({ kind: "noop" });
+	});
+});
+
+describe("#544 stale merge base after an autosave", () => {
+	// P = what Obsidian loaded; the user typed T, Obsidian autosaved P+T to disk,
+	// and the doc was seeded from that disk. The common ancestor is now DISK, not P.
+	const P = "line one\nline two\n";
+	const T = "typed line\n";
+	const U = "more typing\n";
+
+	/** Run the reconcile the way the binding does and return the converged text. */
+	function converge(pre: string, disk: string | null, editor: string, doc: string): string {
+		const d = decideReconcile(editor, doc, true, reconcileBase(pre, disk, true));
+		switch (d.kind) {
+			case "noop":
+				return editor;
+			case "adopt":
+				return applyCm(editor, d.changes);
+			case "forward":
+				return applyCm(doc, d.changes);
+			case "merge": {
+				const out = applyCm(doc, d.toDoc);
+				expect(applyCm(editor, d.toEditor)).toBe(out);
+				return out;
+			}
+			default:
+				throw new Error(`unexpected ${d.kind}`);
+		}
+	}
+
+	it("does not double text the doc already holds from the autosave", () => {
+		// Both layouts doubled the saved text when merged against P.
+		const L = "alpha\nbravo\ncharlie\n";
+		const saved = "alpha\nbravo\nTYPED\ncharlie\n";
+		expect(converge(L, saved, `${saved}more\n`, saved)).toBe(`${saved}more\n`);
+		const word = "alpha X\nbravo\ncharlie\n";
+		expect(converge(L, word, "alpha X Y\nbravo\ncharlie\n", word)).toBe(
+			"alpha X Y\nbravo\ncharlie\n",
+		);
+		expect(converge(P, P + T, P + T + U, P + T)).toBe(P + T + U);
+	});
+
+	it("keeps a remote edit the doc gained on top of the autosave", () => {
+		const S = "line one REMOTE\nline two\n";
+		expect(converge(P, P + T, P + T, S + T)).toBe(S + T);
+	});
+
+	it("keeps the remote edit AND the typing done after the autosave", () => {
+		const S = "line one REMOTE\nline two\n";
+		expect(converge(P, P + T, P + T + U, S + T)).toBe(S + T + U);
+	});
+
+	it("still merges onto P when nothing was saved (disk === preEditText)", () => {
+		const R = "remote line\n";
+		expect(converge(P, P, P + T, R + P)).toBe(R + P + T);
+	});
+
+	it("reconcileBase: disk wins only for a dirty binding whose disk moved", () => {
+		expect(reconcileBase(P, P + T, true)).toBe(P + T);
+		expect(reconcileBase(P, P, true)).toBe(P);
+		expect(reconcileBase(P, null, true)).toBe(P);
+		expect(reconcileBase(null, P, true)).toBe(P);
+		expect(reconcileBase(P, P + T, false)).toBe(P);
+	});
+});
+
+describe("reattachCarry (#544 same-file re-attach)", () => {
+	const P = "loaded\n";
+	const typed = "loaded\ntyped earlier\n";
+
+	it("carries typing from the defer window when the trigger is NOT a keystroke", () => {
+		const prev = { dirty: true, ready: false, preEditText: P };
+		expect(reattachCarry(prev, true, false, typed)).toEqual({ dirty: true, preEditText: P });
+	});
+
+	it("keeps the ORIGINAL base when the trigger is also a keystroke", () => {
+		const prev = { dirty: true, ready: false, preEditText: P };
+		expect(reattachCarry(prev, true, true, typed)).toEqual({ dirty: true, preEditText: P });
+	});
+
+	it("rewinds to the pre-update text for a first keystroke in the trigger", () => {
+		const prev = { dirty: false, ready: false, preEditText: P };
+		expect(reattachCarry(prev, true, true, P)).toEqual({ dirty: true, preEditText: P });
+	});
+
+	it("carries nothing from a LIVE binding (its edits are already in a doc)", () => {
+		const prev = { dirty: false, ready: true, preEditText: null };
+		expect(reattachCarry(prev, true, false, typed)).toBeNull();
+		// A live re-attach to a doc that already holds the editor text is a noop.
+		expect(decideReconcile(typed, typed, false, null)).toEqual({ kind: "noop" });
+	});
+
+	it("carries nothing for a clean non-keystroke re-attach", () => {
+		expect(reattachCarry({ dirty: false, ready: false, preEditText: P }, true, false, P)).toBeNull();
+	});
+
+	it("across a file switch: a keystroke is dirty with no base, earlier typing is not carried", () => {
+		const prev = { dirty: true, ready: false, preEditText: P };
+		expect(reattachCarry(prev, false, true, typed)).toEqual({ dirty: true, preEditText: null });
+		expect(reattachCarry(prev, false, false, typed)).toBeNull();
 	});
 });
 
