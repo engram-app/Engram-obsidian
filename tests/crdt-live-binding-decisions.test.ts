@@ -367,6 +367,24 @@ describe("#544 stale merge base after an autosave", () => {
 		expect(converge(P, P + T, P + T + U, S)).toBe(S + T + U);
 	});
 
+	it("keeps a saved DELETION the server-seeded doc never received", () => {
+		const pre = "Title here\n\nKeep this paragraph.\n\nDelete me please.\n";
+		const saved = "Title here\n\nKeep this paragraph.\n";
+		const editor = "Title here!!\n\nKeep this paragraph.\n";
+		expect(converge(pre, saved, editor, pre)).toBe(editor);
+	});
+
+	it("keeps a saved deletion of one copy of a repeated line", () => {
+		expect(converge("- a\n- a\n- b\n", "- a\n- b\n", "- a\n- b\n", "- a\n- a\n- b\n")).toBe(
+			"- a\n- b\n",
+		);
+	});
+
+	it("a doc seeded from a saved deletion does not get the deleted text back", () => {
+		const pre = "keep\ndrop\n";
+		expect(converge(pre, "keep\n", "keep\nnew\n", "keep\n")).toBe("keep\nnew\n");
+	});
+
 	it("keeps a one-character save the doc never received", () => {
 		expect(converge(P, `${P}x`, `${P}xy`, P)).toBe(`${P}xy`);
 	});

@@ -288,12 +288,15 @@ export class LiveBindingValue implements PluginValue {
 		this.ytext = text;
 		coordinator.enroll(noteId);
 		coordinator.onBind(path, this.viewId);
-		void ready.then(() => this.onReady(noteId, text));
+		const seq = this.attachSeq;
+		void ready.then(() => this.onReady(seq, text));
 	}
 
-	private onReady(noteId: string, text: Y.Text): void {
-		// A newer attach (file switch / adopt) or destroy superseded this.
-		if (this.destroyed || this.noteId !== noteId || this.ytext !== text) return;
+	private onReady(seq: number, text: Y.Text): void {
+		// A newer attach (file switch / adopt) or destroy superseded this. Checked by
+		// attach seq, not noteId: switching away and back re-attaches the SAME note
+		// and Y.Text, and both attaches' ready would otherwise go live.
+		if (this.destroyed || this.attachSeq !== seq || this.ytext !== text) return;
 		this.reconcileWithDisk(text);
 	}
 

@@ -207,18 +207,9 @@ export function decideReconcile(
 	return { kind: "adopt", changes: textDiffToChangeSpec(editorText, docText) };
 }
 
-/** True when `docText` already contains what the autosave changed on top of
- *  `preEditText`: every saved hunk, with its context, appears verbatim in the
- *  doc. Verbatim, not fuzzy: a fuzzy match would call a save "present" in a doc
- *  that never got it, and merging against disk would then revert it. Located by
- *  search, not offset, so a remote edit that shifted the hunk still counts. */
-function docHoldsSave(preEditText: string, diskText: string, docText: string): boolean {
-	// @types/diff-match-patch types patch_make as returning the patch_obj
-	// CONSTRUCTOR; at runtime it returns instances.
-	const patches = merger.patch_make(preEditText, diskText) as unknown as Array<{
-		diffs: Array<[number, string]>;
-	}>;
-	return patches.every((patch) => docText.includes(merger.diff_text2(patch.diffs)));
+/** Edit distance between two texts, in characters. */
+function distance(a: string, b: string): number {
+	return merger.diff_levenshtein(merger.diff_main(a, b));
 }
 
 /** The 3-way merge base for the initial reconcile (all texts body-aligned).
@@ -226,8 +217,11 @@ function docHoldsSave(preEditText: string, diskText: string, docText: string): b
  *  typing AND the doc was seeded from that saved disk: merging P -> editor onto
  *  it replays the saved text a second time (doubling), or rejects and forwards
  *  over a remote edit (#544). A bound note's autosave never reaches the doc,
- *  though, so a doc seeded by the server lacks the save; merging against disk
- *  there reverts the saved typing. Disk is the base only when the doc holds it. */
+ *  though, so a doc the server seeded lacks the save, and merging against disk
+ *  there reverts it. So pick the candidate the doc descends from: the one
+ *  CLOSER to it. Any remote edit adds equally to both distances; only the save
+ *  differs, and it counts toward whichever side lacks it, insert or delete
+ *  alike. A tie keeps preEditText, the pre-#544 behaviour. */
 export function reconcileBase(
 	preEditText: string | null,
 	diskText: string | null,
@@ -239,7 +233,7 @@ export function reconcileBase(
 		preEditText !== null &&
 		diskText !== null &&
 		diskText !== preEditText &&
-		docHoldsSave(preEditText, diskText, docText)
+		distance(diskText, docText) < distance(preEditText, docText)
 	)
 		return diskText;
 	return preEditText;

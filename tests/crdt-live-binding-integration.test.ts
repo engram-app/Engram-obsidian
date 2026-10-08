@@ -242,4 +242,24 @@ describe("live binding #544: stale merge base after an autosave", () => {
 		x.text.doc?.transact(() => x.text.insert(0, "R"), "remote");
 		expect(view.text).toBe(`R${P}typed\n`);
 	});
+
+	it("switching away and back before the doc loads goes live once", async () => {
+		const P = "loaded\n";
+		const view = new FakeView(P);
+		const coord = new FakeCoordinator(P);
+		const x = room(P);
+		coord.rooms.set("X", x);
+		coord.rooms.set("Y", room(""));
+		bind(view, coord);
+
+		coord.id = "Y";
+		view.click(); // away
+		coord.id = "X";
+		view.click(); // back: both X attaches wait on the same ready
+		x.open();
+		await settle();
+
+		x.text.doc?.transact(() => x.text.insert(0, "R"), "remote");
+		expect(view.text).toBe(`R${P}`);
+	});
 });
