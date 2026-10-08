@@ -310,17 +310,31 @@ describe("opening the sync gate re-runs the catch-up (#425)", () => {
 		expect(lines).toContain("sync_gate_opened waited_s=125 context=first-time");
 	});
 
-	test("a vault switch is labelled as such, and a never-blocked gate logs waited_s=0", async () => {
+	test("a vault switch is labelled as such", async () => {
 		const lines = captureInfo();
 		const { fake } = fakePlugin();
 		fake.syncGateAcceptedFor = "old-fingerprint";
+		fake.syncEngine.blockedForMs = () => 3_000;
+		try {
+			await fake.markSyncGateAccepted();
+		} finally {
+			await destroyRemoteLog();
+		}
+		expect(lines).toContain("sync_gate_opened waited_s=3 context=vault-switch");
+	});
+
+	// markSyncGateAccepted also runs when the user re-picks a direction on an
+	// already-open gate; that is not an opening and must not look like one.
+	test("an already-open gate logs nothing", async () => {
+		const lines = captureInfo();
+		const { fake } = fakePlugin();
 		fake.syncEngine.blockedForMs = () => null;
 		try {
 			await fake.markSyncGateAccepted();
 		} finally {
 			await destroyRemoteLog();
 		}
-		expect(lines).toContain("sync_gate_opened waited_s=0 context=vault-switch");
+		expect(lines.filter((l) => l.startsWith("sync_gate_opened"))).toEqual([]);
 	});
 
 	test("an empty fingerprint neither unblocks nor pulls", async () => {

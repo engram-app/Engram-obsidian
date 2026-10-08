@@ -78,3 +78,25 @@ describe("a blocked edit announces the gate", () => {
 		expect(fired.length).toBe(0);
 	});
 });
+
+describe("blockedForMs", () => {
+	test("null while open, a non-negative duration while closed, null again once reopened", () => {
+		const { engine } = blockedEngine();
+		expect(engine.blockedForMs()).toBeNull();
+
+		engine.setSyncBlocked(true);
+		expect(engine.blockedForMs()).toBeGreaterThanOrEqual(0);
+
+		engine.setSyncBlocked(false);
+		expect(engine.blockedForMs()).toBeNull();
+	});
+
+	test("a repeat close keeps the original start", async () => {
+		const { engine } = blockedEngine();
+		engine.setSyncBlocked(true);
+		await new Promise((r) => setTimeout(r, 25));
+		engine.setSyncBlocked(true);
+
+		expect(engine.blockedForMs() ?? 0).toBeGreaterThanOrEqual(20);
+	});
+});
