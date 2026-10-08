@@ -42,6 +42,8 @@ import {
 	frontmatterPrefixLen,
 	needsReattach,
 	ownedMarkdownPath,
+	reattachCarry,
+	reconcileBase,
 } from "./live-binding-decisions";
 
 /** Interval for the drift backstop. */
@@ -71,6 +73,9 @@ export interface LiveBindingCoordinator {
 	 *  writing disk directly (the editor owns the file). */
 	onBind(path: string, viewId: string): void;
 	onRelease(path: string, viewId: string): void;
+	/** The note's current disk content, or null when it cannot be read. The merge
+	 *  base for a dirty reconcile once an autosave moved disk (#544). */
+	readDisk(path: string): Promise<string | null>;
 }
 
 let coordinator: LiveBindingCoordinator | null = null;
@@ -138,24 +143,30 @@ class LiveBindingValue implements PluginValue {
 		const noteId = path && coordinator ? coordinator.resolveId(path) : null;
 		const bound = { path: this.path, noteId: this.noteId, coordinator: this.boundCoordinator };
 		if (needsReattach(bound, path, noteId, coordinator)) {
-			// If this very update carried a user keystroke, it is in the editor but NOT
-			// in the new doc yet (e.g. a genesis ADOPT remap: the key landed in the mint
-			// doc after its content was transferred to serverId). Carry the dirty flag
-			// so the reconcile FORWARDS the editor into the new doc instead of reverting
-			// that keystroke. A programmatic file-load re-attach is not a user event.
-			const carriedUserEdit =
+			// Typing that is in the editor but in no doc yet (a keystroke in this very
+			// update, or earlier typing from the defer window) must carry into the new
+			// doc so the reconcile FORWARDS it instead of adopting it away. attach()
+			// snapshots the base AFTER that typing, so the carry also restores the base.
+			// A programmatic file-load re-attach is not a user event.
+			const keystroke =
 				u.docChanged &&
 				u.transactions.some((tr) => tr.isUserEvent("input") || tr.isUserEvent("delete"));
+			const prev = {
+				dirty: this.dirtySinceAttach,
+				ready: this.ready,
+				preEditText: this.preEditText,
+			};
 			this.detach();
 			this.attach();
-			if (carriedUserEdit) {
-				this.dirtySinceAttach = true;
-				// attach() snapshotted the base AFTER that keystroke, which would make
-				// the merge see "nothing typed" and adopt the doc over it. Rewind to the
-				// pre-update text. Only valid when the FILE is the same (a genesis-adopt
-				// remap); across a real file switch the old text is not this note's base,
-				// so drop it and let the two-way fallback handle it.
-				this.preEditText = path === bound.path ? u.startState.doc.toString() : null;
+			const carry = reattachCarry(
+				prev,
+				path === bound.path,
+				keystroke,
+				u.startState.doc.toString(),
+			);
+			if (carry) {
+				this.dirtySinceAttach = carry.dirty;
+				this.preEditText = carry.preEditText;
 			}
 			return;
 		}
@@ -278,14 +289,35 @@ class LiveBindingValue implements PluginValue {
 	private onReady(noteId: string, text: Y.Text): void {
 		// A newer attach (file switch / adopt) or destroy superseded this.
 		if (this.destroyed || this.noteId !== noteId || this.ytext !== text) return;
-		this.reconcileAndGoLive(text);
+		this.reconcileWithDisk(text);
+	}
+
+	/** Reconcile, reading disk first when the user typed: an autosave may have moved
+	 *  disk off preEditText, and disk is then the true merge base (#544). A clean
+	 *  binding reconciles synchronously, so the common open path never waits. */
+	private reconcileWithDisk(text: Y.Text): void {
+		const path = this.path;
+		const coord = this.boundCoordinator;
+		if (!this.dirtySinceAttach || !path || !coord) {
+			this.reconcileAndGoLive(text, null);
+			return;
+		}
+		// A read failure must still go live (null = preEditText base), never strand
+		// the binding un-ready.
+		void coord
+			.readDisk(path)
+			.catch(() => null)
+			.then((disk) => {
+				if (this.destroyed || this.ytext !== text) return;
+				this.reconcileAndGoLive(text, disk);
+			});
 	}
 
 	/** Initial reconcile then activate. Delegates the decision to decideReconcile
 	 *  (pure, unit-tested): adopt the doc into the editor when it is authoritative,
 	 *  FORWARD the editor's edits into the doc when the user typed during hydration
 	 *  (never revert them — the cold-open loss bug), or defer an unseeded doc. */
-	private reconcileAndGoLive(text: Y.Text): void {
+	private reconcileAndGoLive(text: Y.Text, diskText: string | null): void {
 		const fullText = this.editor.state.doc.toString();
 		// Compare/reconcile against the BODY only: in Source mode the CM document
 		// carries the raw frontmatter block, which the body-only Y.Text does not.
@@ -293,10 +325,8 @@ class LiveBindingValue implements PluginValue {
 		const editorText = prefix > 0 ? fullText.slice(prefix) : fullText;
 		const docText = text.toJSON();
 		// Body-align the base the same way (Source mode carries the frontmatter block).
-		const base =
-			this.preEditText === null
-				? null
-				: this.preEditText.slice(frontmatterPrefixLen(this.preEditText));
+		const rawBase = reconcileBase(this.preEditText, diskText, this.dirtySinceAttach);
+		const base = rawBase === null ? null : rawBase.slice(frontmatterPrefixLen(rawBase));
 		const action = decideReconcile(editorText, docText, this.dirtySinceAttach, base);
 		if (action.kind === "defer") {
 			this.deferSeed(text);
@@ -372,7 +402,7 @@ class LiveBindingValue implements PluginValue {
 			if (text.length === 0) return; // still unseeded — keep waiting
 			text.unobserve(onSeed);
 			this.deferObserver = null;
-			this.reconcileAndGoLive(text); // now non-empty -> adopt branch
+			this.reconcileWithDisk(text); // now non-empty -> adopt branch
 		};
 		this.deferObserver = onSeed;
 		text.observe(onSeed);

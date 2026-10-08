@@ -394,7 +394,9 @@ describe("reattachCarry (#544 same-file re-attach)", () => {
 	});
 
 	it("carries nothing for a clean non-keystroke re-attach", () => {
-		expect(reattachCarry({ dirty: false, ready: false, preEditText: P }, true, false, P)).toBeNull();
+		expect(
+			reattachCarry({ dirty: false, ready: false, preEditText: P }, true, false, P),
+		).toBeNull();
 	});
 
 	it("across a file switch: a keystroke is dirty with no base, earlier typing is not carried", () => {

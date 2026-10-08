@@ -145,6 +145,18 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 		this.refcount.release(path, viewId);
 	}
 
+	async readDisk(path: string): Promise<string | null> {
+		const file = this.deps.app.vault.getAbstractFileByPath(path);
+		if (!(file instanceof TFile)) return null;
+		try {
+			return await this.deps.app.vault.read(file);
+		} catch (e) {
+			// The base falls back to preEditText: the pre-#544 merge, never a lost edit.
+			devLog().log("crdt", `readDisk failed for ${path}: ${errMsg(e)}`);
+			return null;
+		}
+	}
+
 	isBound(path: string): boolean {
 		return this.refcount.isBound(path);
 	}
