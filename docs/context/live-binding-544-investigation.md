@@ -45,19 +45,19 @@ Proof, in real Obsidian 1.12.7 (method: `obsidian-cdp-binding-probe.md`; harness
 
 ### The disk-to-doc writers (the channel to close)
 
-Audit at plugin `d4c6409`. `isLiveBound(path)` = `CrdtLiveViews` viewer refcount (`main.ts` ~2795 -> `live-views.ts`), which is **true from `attach()`, before the binding is live**. Nothing exposes "live". It is keyed by path while writes are keyed by note id. Gates are per site and inconsistent:
+Audit taken at `d4c6409` (a branch commit, NOT on `main`); `sync.ts` line refs past ~2700 run about 10 lines LOW against `main` (`handleModify` gate is 4026 on `main` at 0203f4a, fan-out check 6729). Treat every line ref as approximate and grep the function name. `isLiveBound(path)` = `CrdtLiveViews` viewer refcount (`main.ts` ~2795 -> `live-views.ts`), which is **true from `attach()`, before the binding is live**. Nothing exposes "live". It is keyed by path while writes are keyed by note id. Gates are per site and inconsistent:
 
 | Path | Site (sync.ts unless noted) | Gate |
 |---|---|---|
-| `handleModify` (autosave) | ~4016 | `isLiveBound` body skip (correct) |
+| `handleModify` (autosave) | ~4026 | `isLiveBound` body skip (correct) |
 | `pushFile` CRDT op branch -> `routeModify` -> `applyLocalEdit` | ~4981, 146 | **none** (reached by post-pull drain ~7122, debounce ~4094, forced `pushAll` ~10381/10482, conflicted replay ~11101, resurrection ~8680, rename ~4544) |
-| `seedBodyAfterCreate` (create ack) | ~3566 drift merge, ~3570 `flushFromCrdt`, ~3666 `routeModify` | **none**; reached via `repairOrphanedClaim` -> `applyCrdtCreateAck` (~1200, ~1754); the main #544 seeder |
+| `seedBodyAfterCreate` (create ack) | ~3566 drift merge, ~3570 `flushFromCrdt`, ~3666 `routeModify` | **none**; reached via `repairOrphanedClaim` -> `applyCrdtCreateAck` (~1200, ~1754) AND directly from `pushFile`'s inline genesis branch (~5222, create-and-adopt); the main #544 seeder |
 | genesis frame | ~1786 `eligibleForGenesisFrame` | checked at BUILD, not at ack |
 | mint adopt | ~1717-1726, ~5149-5183 | refcount treats pending as live |
 | cold-start reconcile | 195-215 via `main.ts` ~1185-1231 | **none** |
-| vault fan-out drift capture | ~6719 check, ~6766 await, ~2357 write | check-then-await (TOCTOU) |
+| vault fan-out drift capture | ~6729 check, ~6776 await, ~2357 write | check-then-await (TOCTOU) |
 
-All disk-to-doc writes funnel through `ProviderRegistry.applyLocalEdit` (`provider-registry.ts` ~380). All doc-to-disk writes funnel through `flushFromCrdt` (~2018). Those are the two natural choke points. Doc-to-disk has the mirror problem: release/destroy flushes (`live-views.ts`), the bound frontmatter flush (`wiring.ts` ~321-337, `lastFlushedFm` starts null so the first remote update on any note with frontmatter writes), and `recordLiveBoundBaseline` stamps disk as synced while entering.
+Disk-to-doc writes enter the doc through **two** functions: `ProviderRegistry.applyLocalEdit` (`provider-registry.ts` ~380; every row above except the next one) and `applyRemoteUpdate` with the **genesis frame** in `seedBodyAfterCreate` (`sync.ts` ~3568), a Yjs update encoded from the note's disk text (`genesisContent`) when the create was built. A guard in `applyLocalEdit` alone leaves the genesis path open: a create-ack for an open, still-entering note writes disk into its doc. The guard must cover both (or sit below both). All doc-to-disk writes funnel through `flushFromCrdt` (~2018). Those are the two natural choke points. Doc-to-disk has the mirror problem: release/destroy flushes (`live-views.ts`), the bound frontmatter flush (`wiring.ts` ~321-337; `lastFlushedFm` lives in `provider-registry.ts` ~240-260 and starts null, so the first remote update on any note with frontmatter writes), and `recordLiveBoundBaseline` stamps disk as synced while entering.
 
 ## What Relay actually does (run, not read)
 
@@ -88,8 +88,8 @@ Details in `obsidian-cdp-binding-probe.md`.
 
 - **Pane mirror:** every change in one pane is mirrored to other panes on the same file asynchronously (under 300ms) as `userEvent: "set"`, a minimal diff to the source pane's **current** full text. No-op when equal. It reads the source's current text when applied, so it is never stale in practice.
 - **External modify** of an open file reloads the editor via `"set"`; with unsaved typing Obsidian merges and writes the merge back to disk. External edits reach an open note through the editor.
-- **The ViewPlugin is always constructed with the file already loaded** and `owner.editor.cm === view` (new tab, same-leaf switch, startup restore, deferred tab, late plugin load). Comments claiming otherwise are stale.
-- **Live Preview's CM doc includes the frontmatter block.** The comment at `live-binding.ts` 21-23 ("body-only") is stale; code is safe because it slices with `frontmatterPrefixLen`.
+- **The ViewPlugin is always constructed with the file already loaded** and `owner.editor.cm === view` (new tab, same-leaf switch, startup restore, deferred tab, late plugin load). Comments claiming otherwise are stale: `live-binding.ts` ~166-169 ("constructed against an empty editor"), the `ownedMarkdownPath` docstring in `live-binding-decisions.ts` ~27-29, and the body of `three-way-merge.md`.
+- **Live Preview's CM doc includes the frontmatter block.** The "Live Preview is body-only" claim is stale in `live-binding.ts` 21-23, `live-binding-decisions.ts` ~49-50, `wiring.ts` ~324-327 and `provider-registry.ts` ~250-255 (where it is the stated reason `fmChanged` does not consult the editor). The binding is safe because it slices with `frontmatterPrefixLen`; re-check the `fmChanged` reasoning before relying on it.
 
 ## Failed approaches (do NOT repeat)
 
@@ -110,7 +110,7 @@ Spec (vault): `50 Engineering/_Superpowers Specs/2026-10-08-live-binding-single-
 
 r6 = Relay's layering + one change:
 
-1. Close the disk-to-doc channel while a note is entering (guard in `applyLocalEdit`; guard doc-to-disk in `flushFromCrdt`). **This is the root fix.**
+1. Close the disk-to-doc channel while a note is entering (guard in `applyLocalEdit` AND the genesis `applyRemoteUpdate` in `seedBodyAfterCreate`; guard doc-to-disk in `flushFromCrdt`). **This is the root fix.**
 2. At go-live: `merged = diff3(LCA, doc, diskSide)` where `diskSide` = latest autosave while entering, else the text the editor loaded.
 3. Rebase unsaved typing: `diff3(diskSide, merged, editor)` (`diskSide` is an exact common ancestor by construction: autosave snapshots this editor; step 2 merged it into the doc). Same-line conflict: doc wins in the editor, editor text kept for a conflict copy.
 4. Record the LCA at every point doc and disk agree (#364; `BaseStore` is stale for CRDT notes today, see `three-way-merge.md`).

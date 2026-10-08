@@ -86,7 +86,9 @@ then kill the Xvfb.
 4. **Live Preview CM doc includes frontmatter.** The CM document length equals
    the full file, `---` block included. This contradicts the header comment at
    `src/crdt/live/live-binding.ts:21-23` ("in Live Preview the CM document is
-   body-only too").
+   body-only too"). The same stale claim is in `live-binding-decisions.ts`
+   ~49-50, `src/crdt/wiring.ts` ~324-327 and `src/crdt/provider-registry.ts`
+   ~250-255 (the stated reason `fmChanged` does not consult the editor).
 
 ## Gotchas
 - Forgetting `suppress_origin=True` looks like a CDP auth problem; it is only
