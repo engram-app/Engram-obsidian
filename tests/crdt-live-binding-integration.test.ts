@@ -1,4 +1,4 @@
-// Drives the real LiveBindingValue through the #544 stale-merge-base bugs. No DOM:
+// Drives the real LiveBindingValue through the #544 sequences (r6 go-live). No DOM:
 // a fake view applies real CM6 transactions and feeds each one back to the
 // binding as a ViewUpdate, the way CodeMirror does.
 import { afterEach, describe, expect, it } from "bun:test";
@@ -44,6 +44,14 @@ class FakeView {
 		this.dispatch({ changes: { from: pos, insert: text }, userEvent: "input.type" });
 	}
 
+	/** Obsidian's pane mirror / reload: a whole-buffer "set" (CDP-verified). */
+	set(text: string): void {
+		this.dispatch({
+			changes: { from: 0, to: this.state.doc.length, insert: text },
+			userEvent: "set",
+		});
+	}
+
 	/** A click: a selection-only update, no doc change. */
 	click(): void {
 		this.dispatch({ selection: { anchor: 0 }, userEvent: "select.pointer" });
@@ -72,11 +80,13 @@ function room(content: string): Room {
 
 class FakeCoordinator implements LiveBindingCoordinator {
 	id = "X";
-	disk: string;
+	lca: string | null;
+	readonly diskLog: Array<{ text: string; at: number }> = [];
+	readonly conflicts: string[] = [];
 	readonly rooms = new Map<string, Room>();
 
-	constructor(disk: string) {
-		this.disk = disk;
+	constructor(lca: string | null) {
+		this.lca = lca;
 	}
 	resolveId(): string {
 		return this.id;
@@ -89,16 +99,24 @@ class FakeCoordinator implements LiveBindingCoordinator {
 	enroll(): void {}
 	onBind(): void {}
 	onRelease(): void {}
-	/** When set, readDisk waits on it: holds the read in flight. */
-	gate: Promise<void> | null = null;
-	async readDisk(): Promise<string | null> {
-		if (this.gate) await this.gate;
-		return this.disk;
+	lcaFor(): string | null {
+		return this.lca;
+	}
+	latestDiskSince(_path: string, since: number): string | null {
+		const hits = this.diskLog.filter((d) => d.at >= since);
+		return hits.length > 0 ? (hits[hits.length - 1]?.text ?? null) : null;
+	}
+	onConflict(_path: string, editorText: string): void {
+		this.conflicts.push(editorText);
+	}
+	/** Obsidian autosaves the editor (the doc of an open note never takes it). */
+	autosave(view: FakeView): void {
+		this.diskLog.push({ text: view.text, at: Date.now() });
 	}
 }
 
-/** Let the ready / readDisk promise chains run. */
-const settle = () => new Promise((r) => setTimeout(r, 0));
+/** Let the ready promise chains and deferred repaints run. */
+const settle = () => new Promise((r) => setTimeout(r, 5));
 
 let live: LiveBindingValue | null = null;
 afterEach(() => {
@@ -113,49 +131,96 @@ function bind(view: FakeView, coord: FakeCoordinator): void {
 	view.binding = live;
 }
 
-describe("live binding #544: stale merge base after an autosave", () => {
-	it("does not double typing the doc already got from the autosave", async () => {
-		const P = "alpha\nbravo\ncharlie\n";
-		const saved = "alpha\nbravo\nTYPED\ncharlie\n";
+const P = "alpha\nbravo\ncharlie\n";
+const S = "ALPHA-S\nbravo\ncharlie\n";
+
+/** Type `s` one keystroke at a time at `pos`. */
+function typeAt(view: FakeView, pos: number, s: string): void {
+	for (const [i, ch] of [...s].entries()) view.type(ch, pos + i);
+}
+
+describe("live binding go-live (#544, r6)", () => {
+	it("autosave while entering, then more typing: once (Relay doubled this)", async () => {
 		const view = new FakeView(P);
 		const coord = new FakeCoordinator(P);
-		const x = room("");
+		const x = room(P);
 		coord.rooms.set("X", x);
 		bind(view, coord);
 
-		view.type("TYPED\n", "alpha\nbravo\n".length);
-		coord.disk = saved; // Obsidian autosaves
-		x.text.insert(0, saved); // the doc is seeded from that disk
-		view.type("more\n");
+		typeAt(view, "alpha\nbravo".length, "TTT");
+		coord.autosave(view);
+		typeAt(view, view.text.length - 1, "UUU");
 		x.open();
 		await settle();
 
-		expect(view.text).toBe(`${saved}more\n`);
-		expect(x.text.toJSON()).toBe(`${saved}more\n`);
+		const want = "alpha\nbravoTTT\ncharlieUUU\n";
+		expect(view.text).toBe(want);
+		expect(x.text.toJSON()).toBe(want);
 	});
 
-	it("keeps a remote edit the doc gained on top of the autosave", async () => {
-		const P = "line one\nline two\n";
-		const S = "line one REMOTE\nline two\n";
-		const T = "typed line\n";
+	it("same with a remote edit while entering: remote kept, typing once in place", async () => {
 		const view = new FakeView(P);
 		const coord = new FakeCoordinator(P);
-		const x = room("");
+		const x = room(P);
 		coord.rooms.set("X", x);
 		bind(view, coord);
 
-		view.type(T);
-		coord.disk = P + T;
-		x.text.insert(0, S + T); // server merged its edit with the saved disk
+		typeAt(view, "alpha\nbravo".length, "TTT");
+		coord.autosave(view);
+		typeAt(view, view.text.length - 1, "UUU");
+		x.text.delete(0, "alpha".length);
+		x.text.insert(0, "ALPHA-S");
 		x.open();
 		await settle();
 
-		expect(view.text).toBe(S + T);
-		expect(x.text.toJSON()).toBe(S + T);
+		const want = "ALPHA-S\nbravoTTT\ncharlieUUU\n";
+		expect(view.text).toBe(want);
+		expect(x.text.toJSON()).toBe(want);
 	});
 
-	it("keeps defer-window typing when a click triggers the re-attach", async () => {
-		const P = "loaded\n";
+	it("unsaved typing onto a doc that moved: rebased", async () => {
+		const view = new FakeView(P);
+		const coord = new FakeCoordinator(P);
+		const x = room(S);
+		coord.rooms.set("X", x);
+		bind(view, coord);
+
+		typeAt(view, P.length, "new\n");
+		x.open();
+		await settle();
+
+		expect(view.text).toBe(`${S}new\n`);
+		expect(x.text.toJSON()).toBe(`${S}new\n`);
+	});
+
+	it("no typing: the editor adopts the doc", async () => {
+		const view = new FakeView(P);
+		const coord = new FakeCoordinator(P);
+		const x = room(S);
+		coord.rooms.set("X", x);
+		bind(view, coord);
+		x.open();
+		await settle();
+		expect(view.text).toBe(S);
+	});
+
+	it("same-line conflict: doc wins in the editor, editor text goes to a conflict copy", async () => {
+		const view = new FakeView(P);
+		const coord = new FakeCoordinator(P);
+		const x = room("alpha\nbravo REMOTE\ncharlie\n");
+		coord.rooms.set("X", x);
+		bind(view, coord);
+
+		typeAt(view, "alpha\nbravo".length, " MINE");
+		const typed = view.text;
+		x.open();
+		await settle();
+
+		expect(view.text).toBe("alpha\nbravo REMOTE\ncharlie\n");
+		expect(coord.conflicts).toEqual([typed]);
+	});
+
+	it("click-triggered re-attach keeps typing from the entering window", async () => {
 		const view = new FakeView(P);
 		const coord = new FakeCoordinator(P);
 		coord.rooms.set("X", room("")); // wrong-mint doc, never opens
@@ -164,7 +229,7 @@ describe("live binding #544: stale merge base after an autosave", () => {
 		bind(view, coord);
 
 		view.type("typed\n");
-		coord.id = "Y"; // genesis adopt remaps the path under the open editor
+		coord.id = "Y";
 		view.click();
 		y.open();
 		await settle();
@@ -174,7 +239,6 @@ describe("live binding #544: stale merge base after an autosave", () => {
 	});
 
 	it("a LIVE binding re-attaching to a doc that already holds its text applies nothing twice", async () => {
-		const P = "loaded\n";
 		const view = new FakeView(P);
 		const coord = new FakeCoordinator(P);
 		const x = room(P);
@@ -183,9 +247,10 @@ describe("live binding #544: stale merge base after an autosave", () => {
 		x.open();
 		await settle();
 
-		view.type("typed\n"); // live: forwarded into X
+		view.type("typed\n");
 		expect(x.text.toJSON()).toBe(`${P}typed\n`);
-		const y = room(`${P}typed\n`); // the adopt transferred X's content
+		coord.lca = `${P}typed\n`; // saved and agreed
+		const y = room(`${P}typed\n`);
 		coord.rooms.set("Y", y);
 		coord.id = "Y";
 		view.click();
@@ -196,55 +261,7 @@ describe("live binding #544: stale merge base after an autosave", () => {
 		expect(y.text.toJSON()).toBe(`${P}typed\n`);
 	});
 
-	it("keeps typing saved before the server seed of an existing note", async () => {
-		const P = "line one\nline two\n";
-		const view = new FakeView(P);
-		const coord = new FakeCoordinator(P);
-		const x = room("");
-		coord.rooms.set("X", x);
-		bind(view, coord);
-
-		view.type("T\n");
-		coord.disk = `${P}T\n`; // autosave; a bound note's save never reaches the doc
-		view.type("U\n");
-		x.text.insert(0, P); // the server seeds the ORIGINAL content
-		x.open();
-		await settle();
-
-		expect(view.text).toBe(`${P}T\nU\n`);
-		expect(x.text.toJSON()).toBe(`${P}T\nU\n`);
-	});
-
-	it("a disk read outlived by a newer attach does not go live twice", async () => {
-		const P = "loaded\n";
-		const view = new FakeView(P);
-		const coord = new FakeCoordinator(P);
-		const x = room(P);
-		coord.rooms.set("X", x);
-		coord.rooms.set("Y", room(""));
-		let release = () => {};
-		coord.gate = new Promise<void>((r) => {
-			release = r;
-		});
-		bind(view, coord);
-
-		view.type("typed\n"); // dirty -> the reconcile reads disk first
-		x.open();
-		await settle(); // read #1 in flight
-		coord.id = "Y";
-		view.click(); // away
-		coord.id = "X";
-		view.click(); // back: same resident X, carried dirty -> read #2 in flight
-		await settle();
-		release();
-		await settle();
-
-		x.text.doc?.transact(() => x.text.insert(0, "R"), "remote");
-		expect(view.text).toBe(`R${P}typed\n`);
-	});
-
 	it("switching away and back before the doc loads goes live once", async () => {
-		const P = "loaded\n";
 		const view = new FakeView(P);
 		const coord = new FakeCoordinator(P);
 		const x = room(P);
@@ -253,13 +270,49 @@ describe("live binding #544: stale merge base after an autosave", () => {
 		bind(view, coord);
 
 		coord.id = "Y";
-		view.click(); // away
+		view.click();
 		coord.id = "X";
-		view.click(); // back: both X attaches wait on the same ready
+		view.click();
 		x.open();
 		await settle();
 
 		x.text.doc?.transact(() => x.text.insert(0, "R"), "remote");
+		expect(view.text).toBe(`R${P}`);
+	});
+});
+
+describe("live binding tracking: Obsidian set transactions", () => {
+	async function liveOn(content: string) {
+		const view = new FakeView(content);
+		const coord = new FakeCoordinator(content);
+		const x = room(content);
+		coord.rooms.set("X", x);
+		bind(view, coord);
+		x.open();
+		await settle();
+		return { view, x };
+	}
+
+	it("a set equal to the doc is a no-op (sibling echo)", async () => {
+		const { view, x } = await liveOn(P);
+		view.type("Q", 0);
+		view.set(`Q${P}`);
+		expect(x.text.toJSON()).toBe(`Q${P}`);
+	});
+
+	it("a set with new text (external modify reload) is forwarded as a diff", async () => {
+		const { view, x } = await liveOn(P);
+		view.set(`${P}EXT\n`);
+		expect(x.text.toJSON()).toBe(`${P}EXT\n`);
+	});
+
+	it("a stale set echo after a remote edit does not revert it (Relay reverted this)", async () => {
+		const { view, x } = await liveOn(P);
+		x.text.doc?.transact(() => x.text.insert(0, "R"), "remote"); // painted into the editor
+		expect(view.text).toBe(`R${P}`);
+		view.set(P); // a sibling pane's mirror of the pre-remote text arrives late
+		expect(x.text.toJSON()).toBe(`R${P}`);
+		await settle();
 		expect(view.text).toBe(`R${P}`);
 	});
 });

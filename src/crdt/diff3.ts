@@ -138,12 +138,12 @@ export function anchoredDiffHunks(o: string[], x: string[]): DiffHunk[] {
 	// prototype-colliding token values ("constructor", …) safe.
 	const oUnique = new Map<string, number>();
 	for (let i = prefix; i < oCoreEnd; i++) {
-		const token = o[i];
+		const token = o[i] as string;
 		oUnique.set(token, oUnique.has(token) ? -1 : i);
 	}
 	const xUnique = new Map<string, number>();
 	for (let j = prefix; j < xCoreEnd; j++) {
-		const token = x[j];
+		const token = x[j] as string;
 		xUnique.set(token, xUnique.has(token) ? -1 : j);
 	}
 	const pairs: Array<[number, number]> = [];

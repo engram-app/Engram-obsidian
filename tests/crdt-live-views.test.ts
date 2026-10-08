@@ -445,39 +445,3 @@ describe("destroy() teardown flush (repo-review 2026-08)", () => {
 		expect(flushed).toEqual([]);
 	});
 });
-
-describe("CrdtLiveViews.readDisk (#544 merge base)", () => {
-	function lv(vault: unknown): CrdtLiveViews {
-		return new CrdtLiveViews({
-			app: { vault } as never,
-			manager: {} as never,
-			enrollment: {} as never,
-			resolveId: (p: string) => `id:${p}`,
-			resolveExistingId: (p: string) => `id:${p}`,
-			flushToDisk: async () => {},
-		});
-	}
-
-	it("returns the file's current disk content", async () => {
-		const views = lv({
-			getAbstractFileByPath: (p: string) => new TFile(p),
-			read: async () => "saved text",
-		});
-		expect(await views.readDisk("a.md")).toBe("saved text");
-	});
-
-	it("is null for a missing file", async () => {
-		const views = lv({ getAbstractFileByPath: () => null, read: async () => "x" });
-		expect(await views.readDisk("gone.md")).toBeNull();
-	});
-
-	it("is null when the read throws (the binding falls back to preEditText)", async () => {
-		const views = lv({
-			getAbstractFileByPath: (p: string) => new TFile(p),
-			read: async () => {
-				throw new Error("EIO");
-			},
-		});
-		expect(await views.readDisk("a.md")).toBeNull();
-	});
-});

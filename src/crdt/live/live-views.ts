@@ -145,16 +145,19 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 		this.refcount.release(path, viewId);
 	}
 
-	async readDisk(path: string): Promise<string | null> {
-		const file = this.deps.app.vault.getAbstractFileByPath(path);
-		if (!(file instanceof TFile)) return null;
-		try {
-			return await this.deps.app.vault.read(file);
-		} catch (e) {
-			// The base falls back to preEditText: the pre-#544 merge, never a lost edit.
-			devLog().log("crdt", `readDisk failed for ${path}: ${errMsg(e)}`);
-			return null;
-		}
+	// PROTOTYPE (#544): the sync-engine wiring of these three is the next step
+	// (LCA recorded at every point doc and disk agree; latest disk text captured
+	// by handleModify while entering; conflict copy via writeDriftConflictCopy).
+	lcaFor(_noteId: string): string | null {
+		return null;
+	}
+
+	latestDiskSince(_path: string, _sinceMs: number): string | null {
+		return null;
+	}
+
+	onConflict(path: string, _editorText: string): void {
+		devLog().log("crdt", `go-live conflict for ${path} (prototype: no conflict copy yet)`);
 	}
 
 	isBound(path: string): boolean {

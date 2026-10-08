@@ -34,16 +34,14 @@ import {
 	type YDeltaEntry,
 	yDeltaToChangeSpec,
 } from "./cm-yjs-bridge";
+import { goLive as goLiveMerge } from "./go-live";
 import {
 	classifyEditSpan,
-	decideReconcile,
 	type EditorOwnerInfo,
 	fmCreationBodyDiff,
 	frontmatterPrefixLen,
 	needsReattach,
 	ownedMarkdownPath,
-	reattachCarry,
-	reconcileBase,
 } from "./live-binding-decisions";
 
 /** Interval for the drift backstop. */
@@ -73,10 +71,19 @@ export interface LiveBindingCoordinator {
 	 *  writing disk directly (the editor owns the file). */
 	onBind(path: string, viewId: string): void;
 	onRelease(path: string, viewId: string): void;
-	/** The note's current disk content, or null when it cannot be read. The merge
-	 *  base for a dirty reconcile once an autosave moved disk (#544). */
-	readDisk(path: string): Promise<string | null>;
+	/** Last full-file text the note's doc and disk provably agreed on, or null. */
+	lcaFor(noteId: string): string | null;
+	/** Latest full-file text Obsidian wrote to disk for `path` at or after `sinceMs`
+	 *  (an autosave while entering), or null if none. */
+	latestDiskSince(path: string, sinceMs: number): string | null;
+	/** Go-live conflict: the doc won in the editor; `editorText` (full file) must be
+	 *  kept as a conflict copy, never dropped. */
+	onConflict(path: string, editorText: string): void;
 }
+
+/** A `"set"` (Obsidian's pane mirror / reload) equal to a doc state this recent
+ *  but no longer current is a stale echo (mirror lands under 300ms, CDP 1.12.7). */
+const STALE_ECHO_MS = 1000;
 
 let coordinator: LiveBindingCoordinator | null = null;
 export function setLiveBindingCoordinator(c: LiveBindingCoordinator | null): void {
@@ -107,19 +114,12 @@ export class LiveBindingValue implements PluginValue {
 	private boundCoordinator: LiveBindingCoordinator | null = null;
 	/** Forwarding local edits + painting deltas is active (post-reconcile). */
 	private ready = false;
-	/** The user typed into the editor during the async hydration/defer window
-	 *  (edits are in the CM buffer but NOT yet in the doc). Drives the reconcile:
-	 *  such edits must be FORWARDED into the doc, never reverted. */
-	private dirtySinceAttach = false;
-	/** The editor's FULL text as it stood right before the user's first keystroke
-	 *  this attach — i.e. the plain on-disk content Obsidian loaded. It is the LCA
-	 *  the reconcile needs to forward ONLY the typed hunks into a doc that hydrated
-	 *  with remote content the editor never saw, instead of a whole-text diff that
-	 *  would delete it. Tracked here rather than read from the SyncEngine's
-	 *  BaseStore because that store is only refreshed on the REST push/pull paths
-	 *  (CRDT delivery advances the syncState hash alone), so it goes stale for
-	 *  live-synced notes. Null = unknown -> two-way fallback. */
-	private preEditText: string | null = null;
+	/** The editor's full text when this attach began (a disk version: Obsidian
+	 *  constructs the editor with the file loaded, CDP-verified) and when. */
+	private attachText = "";
+	private attachedAt = 0;
+	/** Recent doc body states, newest last, for the stale-echo guard. */
+	private recentDoc: Array<{ text: string; at: number }> = [];
 	private destroyed = false;
 	/** Bumped on every attach, so an async step started by an older attach (the
 	 *  disk read) can tell it was superseded even when the Y.Text is the same. */
@@ -147,49 +147,15 @@ export class LiveBindingValue implements PluginValue {
 		const noteId = path && coordinator ? coordinator.resolveId(path) : null;
 		const bound = { path: this.path, noteId: this.noteId, coordinator: this.boundCoordinator };
 		if (needsReattach(bound, path, noteId, coordinator)) {
-			// Typing that is in the editor but in no doc yet (a keystroke in this very
-			// update, or earlier typing from the defer window) must carry into the new
-			// doc so the reconcile FORWARDS it instead of adopting it away. attach()
-			// snapshots the base AFTER that typing, so the carry also restores the base.
-			// A programmatic file-load re-attach is not a user event.
-			const keystroke =
-				u.docChanged &&
-				u.transactions.some((tr) => tr.isUserEvent("input") || tr.isUserEvent("delete"));
-			const prev = {
-				dirty: this.dirtySinceAttach,
-				ready: this.ready,
-				preEditText: this.preEditText,
-			};
+			// Nothing to carry: unforwarded typing is in the editor text, which the new
+			// attach treats as its disk side; go-live merges it against the LCA.
 			this.detach();
 			this.attach();
-			const carry = reattachCarry(
-				prev,
-				path === bound.path,
-				keystroke,
-				u.startState.doc.toString(),
-			);
-			if (carry) {
-				this.dirtySinceAttach = carry.dirty;
-				this.preEditText = carry.preEditText;
-			}
 			return;
 		}
 		if (!u.docChanged) return;
-		if (!this.ready || !this.ytext) {
-			// Typed before the doc finished hydrating: remember it so the reconcile
-			// FORWARDS these edits into the doc instead of reverting them. Only real
-			// user edits count — Obsidian's programmatic file load is not a user event.
-			if (u.transactions.some((tr) => tr.isUserEvent("input") || tr.isUserEvent("delete"))) {
-				this.dirtySinceAttach = true;
-			} else if (!this.dirtySinceAttach) {
-				// Obsidian's programmatic file load lands here (it is not a user event),
-				// often AFTER the ViewPlugin was constructed against an empty editor.
-				// Keep the base tracking it until the user's first keystroke, so the
-				// merge diffs against what they actually saw.
-				this.preEditText = u.state.doc.toString();
-			}
-			return;
-		}
+		// Entering (Relay): typing stays in the editor; go-live merges it.
+		if (!this.ready || !this.ytext) return;
 		const doc = this.ytext.doc;
 		if (!doc) return;
 		const ytext = this.ytext;
@@ -202,6 +168,10 @@ export class LiveBindingValue implements PluginValue {
 		for (const tr of u.transactions) {
 			if (!tr.docChanged) continue;
 			if (tr.annotation(ySyncAnnotation) === this.editor) continue;
+			if (tr.isUserEvent("set")) {
+				this.forwardSet(ytext, tr.state.doc.toString());
+				continue;
+			}
 			// Map editor (full-doc) offsets to body-Y.Text offsets. In Source mode the
 			// frontmatter block occupies the first `prefix` chars of the CM document,
 			// which the body-only Y.Text does not have. Offsets are against the
@@ -278,8 +248,9 @@ export class LiveBindingValue implements PluginValue {
 		this.noteId = null;
 		this.ytext = null;
 		this.ready = false;
-		this.dirtySinceAttach = false;
-		this.preEditText = this.editor.state.doc.toString();
+		this.attachText = this.editor.state.doc.toString();
+		this.attachedAt = Date.now();
+		this.recentDoc = [];
 		this.boundCoordinator = coordinator;
 		if (!path || !coordinator) return;
 		const noteId = coordinator.resolveId(path);
@@ -297,90 +268,85 @@ export class LiveBindingValue implements PluginValue {
 		// attach seq, not noteId: switching away and back re-attaches the SAME note
 		// and Y.Text, and both attaches' ready would otherwise go live.
 		if (this.destroyed || this.attachSeq !== seq || this.ytext !== text) return;
-		this.reconcileWithDisk(text);
+		this.reconcileAndGoLive(text);
 	}
 
-	/** Reconcile, reading disk first when the user typed: an autosave may have moved
-	 *  disk off preEditText, and disk is then the true merge base (#544). A clean
-	 *  binding reconciles synchronously, so the common open path never waits. */
-	private reconcileWithDisk(text: Y.Text): void {
-		const path = this.path;
-		const coord = this.boundCoordinator;
-		const seq = this.attachSeq;
-		if (!this.dirtySinceAttach || !path || !coord) {
-			this.reconcileAndGoLive(text, null);
-			return;
-		}
-		// A read failure must still go live (null = preEditText base), never strand
-		// the binding un-ready.
-		void coord
-			.readDisk(path)
-			.catch(() => null)
-			.then((disk) => {
-				// A newer attach may hold the SAME resident Y.Text (switch away and
-				// back) and be live already; reconciling here would go live twice.
-				if (this.destroyed || this.attachSeq !== seq || this.ready) return;
-				this.reconcileAndGoLive(text, disk);
-			});
-	}
-
-	/** Initial reconcile then activate. Delegates the decision to decideReconcile
-	 *  (pure, unit-tested): adopt the doc into the editor when it is authoritative,
-	 *  FORWARD the editor's edits into the doc when the user typed during hydration
-	 *  (never revert them — the cold-open loss bug), or defer an unseeded doc. */
-	private reconcileAndGoLive(text: Y.Text, diskText: string | null): void {
+	/** Go-live (#544): Relay's 3-way merge of the disk side into the doc, then the
+	 *  unsaved typing rebased by a second 3-way merge (go-live.ts). One synchronous
+	 *  task, so the editor text read here is the text the paint diffs against. */
+	private reconcileAndGoLive(text: Y.Text): void {
 		const fullText = this.editor.state.doc.toString();
-		// Compare/reconcile against the BODY only: in Source mode the CM document
-		// carries the raw frontmatter block, which the body-only Y.Text does not.
 		const prefix = frontmatterPrefixLen(fullText);
-		const editorText = prefix > 0 ? fullText.slice(prefix) : fullText;
+		const edited = fullText.slice(prefix);
 		const docText = text.toJSON();
-		// Body-align the base the same way (Source mode carries the frontmatter block).
-		const body = (t: string | null) => (t === null ? null : t.slice(frontmatterPrefixLen(t)));
-		const base = reconcileBase(
-			body(this.preEditText),
-			body(diskText),
-			this.dirtySinceAttach,
-			docText,
-		);
-		const action = decideReconcile(editorText, docText, this.dirtySinceAttach, base);
-		if (action.kind === "defer") {
+		// Unseeded doc under a non-empty editor: the server owns the seed (unchanged).
+		if (docText.length === 0 && edited.length > 0) {
 			this.deferSeed(text);
 			return;
 		}
-		// NOTE: everything below runs BEFORE goLive(), so neither echo guard is live
-		// yet — the observer is unregistered and `ready` is still false, which is what
-		// actually stops these writes from being re-forwarded or re-painted. Keep
-		// goLive() last; moving observer registration earlier would silently turn
-		// these into double-applies.
+		const coord = this.boundCoordinator;
+		const body = (t: string | null) => (t === null ? null : t.slice(frontmatterPrefixLen(t)));
+		const lca = coord && this.noteId ? coord.lcaFor(this.noteId) : null;
+		const disk = coord && this.path ? coord.latestDiskSince(this.path, this.attachedAt) : null;
+		const result = goLiveMerge({
+			lca: body(lca),
+			doc: docText,
+			latestDisk: body(disk),
+			base: body(this.attachText) ?? "",
+			edited,
+		});
+		// Runs BEFORE goLive(): the observer is unregistered and `ready` is false,
+		// which is what stops these writes from being re-forwarded or re-painted.
 		try {
-			switch (action.kind) {
-				case "adopt":
-					this.paintEditor(action.changes, prefix);
-					break;
-				case "forward":
-					this.writeYText(text, action.changes);
-					break;
-				case "merge":
-					// Both sides diverged and merged cleanly: converge each onto the merge
-					// result. The doc write comes first so the editor paint is never the
-					// state that briefly wins if the second step throws.
-					this.writeYText(text, action.toDoc);
-					this.paintEditor(action.toEditor, prefix);
-					break;
-				case "noop":
-					break;
+			this.writeYText(text, textDiffToChangeSpec(docText, result.text));
+			this.paintEditor(textDiffToChangeSpec(edited, result.text), prefix);
+			if (result.kind === "conflict" && coord && this.path) {
+				coord.onConflict(this.path, fullText);
 			}
 		} catch (err) {
-			// A throw here must NOT skip goLive(): that would leave `ready` false
-			// forever, so the note silently stops syncing until the next attach. Log
-			// and go live anyway — the drift check goLive schedules re-converges it.
 			rlog().error(
 				"crdt-live-binding",
-				`reconcile ${action.kind} failed for ${noteRef(this.path)}: ${String(err)}`,
+				`go-live ${result.kind} failed for ${noteRef(this.path)}: ${String(err)}`,
 			);
 		}
 		this.goLive(text);
+	}
+
+	/** Forward an Obsidian `"set"` (pane mirror, external-modify reload) as a text
+	 *  diff against the Y.Text (Relay, MergeHSM.ts:3745). Equal to the doc: an echo,
+	 *  nothing to do (Relay, 3658). Equal to a recent but superseded doc state: a
+	 *  stale mirror that would revert a newer edit; repaint from the doc instead. */
+	private forwardSet(ytext: Y.Text, full: string): void {
+		const prefix = frontmatterPrefixLen(full);
+		const next = full.slice(prefix);
+		const current = ytext.toJSON();
+		if (next === current) return;
+		const now = Date.now();
+		if (this.recentDoc.some((s) => s.text === next && now - s.at < STALE_ECHO_MS)) {
+			this.repaintFromDoc();
+			return;
+		}
+		this.writeYText(ytext, textDiffToChangeSpec(current, next));
+	}
+
+	private repaintFromDoc(): void {
+		if (!this.ytext) return;
+		const fullText = this.editor.state.doc.toString();
+		const prefix = frontmatterPrefixLen(fullText);
+		const changes = textDiffToChangeSpec(fullText.slice(prefix), this.ytext.toJSON());
+		// Dispatching inside an update throws; defer to the next task.
+		window.setTimeout(() => {
+			if (this.destroyed || !this.ready) return;
+			this.paintEditor(changes, prefix);
+		}, 0);
+	}
+
+	private noteDocState(text: Y.Text): void {
+		const now = Date.now();
+		this.recentDoc = [
+			...this.recentDoc.filter((s) => now - s.at < STALE_ECHO_MS),
+			{ text: text.toJSON(), at: now },
+		].slice(-8);
 	}
 
 	/** Dispatch BODY-coordinate changes into the editor, shifted past any
@@ -418,15 +384,18 @@ export class LiveBindingValue implements PluginValue {
 			if (text.length === 0) return; // still unseeded — keep waiting
 			text.unobserve(onSeed);
 			this.deferObserver = null;
-			this.reconcileWithDisk(text); // now non-empty -> adopt branch
+			this.reconcileAndGoLive(text); // now seeded
 		};
 		this.deferObserver = onSeed;
 		text.observe(onSeed);
 	}
 
 	private goLive(text: Y.Text): void {
+		this.noteDocState(text);
 		this.observer = (event, tr) => {
-			if (this.destroyed || tr.origin === this) return;
+			if (this.destroyed) return;
+			this.noteDocState(text);
+			if (tr.origin === this) return;
 			// Y.Text (not Y.XmlText) deltas only ever carry string inserts; the shared
 			// yjs delta type widens `insert` to object, so narrow it here.
 			const changes = yDeltaToChangeSpec(event.delta as YDeltaEntry[]);
@@ -520,8 +489,7 @@ export class LiveBindingValue implements PluginValue {
 		this.ytext = null;
 		this.noteId = null;
 		this.ready = false;
-		this.dirtySinceAttach = false;
-		this.preEditText = null;
+		this.recentDoc = [];
 		this.boundCoordinator = null;
 		this.path = null;
 	}
