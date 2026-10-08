@@ -4,7 +4,7 @@
  * can pre-fill the "create new vault" field.
  */
 import { afterEach, beforeEach, describe, expect, type Mock, test } from "bun:test";
-import { requestUrl } from "obsidian";
+import { Platform, requestUrl } from "obsidian";
 import { DeviceFlowModal, verificationUrlWithCode } from "../src/device-flow-modal";
 
 const mockRequestUrl = requestUrl as unknown as Mock<() => Promise<any>>;
@@ -20,9 +20,13 @@ const makePlugin = (apiUrl: string, clientId: string) =>
 	}) as any;
 
 describe("DeviceFlowModal.startDeviceFlow", () => {
+	const flags = { ...Platform };
 	beforeEach(() => {
 		mockRequestUrl.mockReset();
+		// Pin the platform so the suggested device name is deterministic.
+		Object.assign(Platform, { isDesktop: false, isIosApp: true });
 	});
+	afterEach(() => Object.assign(Platform, flags));
 
 	test("sends client_id and local vault_name", async () => {
 		mockRequestUrl.mockResolvedValue({
@@ -50,6 +54,7 @@ describe("DeviceFlowModal.startDeviceFlow", () => {
 		expect(body).toEqual({
 			client_id: "cid-1",
 			vault_name: "My Local Notes",
+			device_name: "iPhone",
 		});
 	});
 
@@ -113,7 +118,7 @@ describe("DeviceFlowModal.startDeviceFlow", () => {
 
 		await (modal as any).startDeviceFlow();
 		const body = JSON.parse((mockRequestUrl.mock.calls[0][0] as { body: string }).body);
-		expect(body).toEqual({ client_id: "cid-4" });
+		expect(body).toEqual({ client_id: "cid-4", device_name: "iPhone" });
 		expect("vault_name" in body).toBe(false);
 	});
 

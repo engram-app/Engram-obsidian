@@ -2,6 +2,7 @@ import { type App, Modal, Notice, requestUrl } from "obsidian";
 import { EngramApi, withTimeout } from "./api";
 import { devLog } from "./dev-log";
 import { waitForDeviceAuthorization } from "./device-flow-socket";
+import { suggestDeviceName } from "./device-name";
 import { errMsg } from "./error-util";
 import { t } from "./i18n";
 import type EngramSyncPlugin from "./main";
@@ -153,10 +154,13 @@ export class DeviceFlowModal extends Modal {
 		// backend doesn't store a useless empty hint. (Backend also clamps the
 		// value, but normalizing client-side keeps logs and DB rows clean.)
 		const vaultName = this.app.vault.getName().trim();
-		const body: { client_id: string; vault_name?: string } = {
+		const body: { client_id: string; vault_name?: string; device_name?: string } = {
 			client_id: this.plugin.settings.clientId,
 		};
 		if (vaultName) body.vault_name = vaultName;
+		// Seeds the connection label on /link; the user can change it there.
+		const deviceName = await suggestDeviceName();
+		if (deviceName) body.device_name = deviceName;
 		const resp = await withTimeout(
 			requestUrl({
 				url: `${apiUrl}/auth/device`,
