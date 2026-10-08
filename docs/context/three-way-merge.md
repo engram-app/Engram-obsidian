@@ -34,6 +34,8 @@ last-synced baseline" is all you need.
 
 ## The one place a real LCA is still needed: the live-bind reconcile
 
+> **Superseded in part (2026-10-08):** the `preEditText` base described below is #544: it is only correct if the doc never received the typing, and the sync engine does write disk into an entering doc. Also stale below: the claim that the ViewPlugin is constructed against an empty editor (Obsidian 1.12.7 always constructs it with the file loaded, CDP-verified). Full investigation, failed approaches and the candidate fix: `live-binding-544-investigation.md`.
+
 `decideReconcile` (`src/crdt/live/live-binding-decisions.ts`) runs once when a
 note's editor binds to its resident Y.Doc. If the user typed during the async
 hydration window, those keystrokes are in the CM buffer but not in the doc, while
