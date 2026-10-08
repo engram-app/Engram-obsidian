@@ -7,8 +7,8 @@
  * said "sign in again". These pin the honest states.
  */
 import { describe, expect, test } from "bun:test";
-import { destroyRemoteLog, initRemoteLog } from "../src/remote-log";
 import EngramSyncPlugin from "../src/main";
+import { destroyRemoteLog, initRemoteLog } from "../src/remote-log";
 import { planLoadErrorMessage } from "../src/sync-preview-modal";
 import type { SyncStatus } from "../src/types";
 
