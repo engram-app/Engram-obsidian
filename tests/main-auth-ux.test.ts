@@ -8,6 +8,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import EngramSyncPlugin from "../src/main";
+import { destroyRemoteLog, initRemoteLog } from "../src/remote-log";
 import { planLoadErrorMessage } from "../src/sync-preview-modal";
 import type { SyncStatus } from "../src/types";
 
@@ -253,6 +254,7 @@ describe("opening the sync gate re-runs the catch-up (#425)", () => {
 				setSyncBlocked(v: boolean) {
 					calls.push(`setSyncBlocked(${v})`);
 				},
+				blockedForMs: () => 0 as number | null,
 				getLastSync: () => 0,
 				getStatus: () => ({ state: "idle", pending: 0, queued: 0 }),
 				catchupViaSeqReplay: async () => {
@@ -282,6 +284,57 @@ describe("opening the sync gate re-runs the catch-up (#425)", () => {
 		expect(calls.indexOf("setSyncBlocked(false)")).toBeLessThan(
 			calls.indexOf("catchupViaSeqReplay"),
 		);
+	});
+
+	// Without this line a stall at the first-sync modal is invisible: PostHog
+	// has no client events and the plugin only logged the gate being CLOSED
+	// (prod 2026-10-08: ~2 min between link and first replay, unattributable).
+	const captureInfo = () => {
+		const logger = initRemoteLog();
+		const lines: string[] = [];
+		(logger as unknown as { info: unknown }).info = (_c: string, m: string) => {
+			lines.push(m);
+		};
+		return lines;
+	};
+
+	test("opening the gate logs how long it was closed and why", async () => {
+		const lines = captureInfo();
+		const { fake } = fakePlugin();
+		fake.syncEngine.blockedForMs = () => 125_400;
+		try {
+			await fake.markSyncGateAccepted();
+		} finally {
+			await destroyRemoteLog();
+		}
+		expect(lines).toContain("sync_gate_opened waited_s=125 context=first-time");
+	});
+
+	test("a vault switch is labelled as such", async () => {
+		const lines = captureInfo();
+		const { fake } = fakePlugin();
+		fake.syncGateAcceptedFor = "old-fingerprint";
+		fake.syncEngine.blockedForMs = () => 3_000;
+		try {
+			await fake.markSyncGateAccepted();
+		} finally {
+			await destroyRemoteLog();
+		}
+		expect(lines).toContain("sync_gate_opened waited_s=3 context=vault-switch");
+	});
+
+	// markSyncGateAccepted also runs when the user re-picks a direction on an
+	// already-open gate; that is not an opening and must not look like one.
+	test("an already-open gate logs nothing", async () => {
+		const lines = captureInfo();
+		const { fake } = fakePlugin();
+		fake.syncEngine.blockedForMs = () => null;
+		try {
+			await fake.markSyncGateAccepted();
+		} finally {
+			await destroyRemoteLog();
+		}
+		expect(lines.filter((l) => l.startsWith("sync_gate_opened"))).toEqual([]);
 	});
 
 	test("an empty fingerprint neither unblocks nor pulls", async () => {

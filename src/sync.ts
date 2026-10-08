@@ -574,6 +574,10 @@ export class SyncEngine {
 	 *  whether the user has accepted a sync direction in SyncPreviewModal for
 	 *  the current auth+vault fingerprint. */
 	private syncBlocked = false;
+	/** performance.now() when the gate last closed (monotonic: a clock step
+	 *  or NTP jump can't make the wait negative); kept across repeat closes so the wait is the
+	 *  whole stall, not the time since the latest idempotent re-check. */
+	private blockedSince: number | null = null;
 	/** Whether THIS gate closure has already announced itself. One notice per
 	 *  closure: the gate stays shut until the user acts, and a nag on every
 	 *  keystroke is how a useful message becomes one people dismiss on sight. */
@@ -2696,11 +2700,17 @@ export class SyncEngine {
 
 	setSyncBlocked(blocked: boolean): void {
 		this.syncBlocked = blocked;
+		this.blockedSince = blocked ? (this.blockedSince ?? performance.now()) : null;
 		// Re-arm the announcement on every transition, so a LATER closure (a
 		// vault switch, a re-link) speaks up again instead of staying silent
 		// because some earlier closure already used up the one notice.
 		this.blockedEditReported = false;
 		devLog().log("lifecycle", `setSyncBlocked(${blocked})`);
+	}
+
+	/** Ms the gate has been closed, or null if it is open. Read BEFORE opening. */
+	blockedForMs(): number | null {
+		return this.blockedSince == null ? null : performance.now() - this.blockedSince;
 	}
 
 	isSyncBlocked(): boolean {

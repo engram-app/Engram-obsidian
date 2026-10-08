@@ -3112,8 +3112,20 @@ export default class EngramSyncPlugin extends Plugin {
 			);
 			return;
 		}
+		const context = this.derivePreviewContext();
+		const waitedMs = this.syncEngine.blockedForMs();
 		this.syncGateAcceptedFor = fp;
 		this.syncEngine.setSyncBlocked(false);
+		// Counts only, no paths. How long a user sat at the first-sync modal is
+		// otherwise unobservable (the gate-CLOSED warnings carry no duration).
+		// Only a real closed→open transition: re-picking a direction on an
+		// already-open gate also lands here and is not an opening.
+		if (waitedMs !== null) {
+			rlog().info(
+				"lifecycle",
+				`sync_gate_opened waited_s=${Math.round(waitedMs / 1000)} context=${context}`,
+			);
+		}
 		// Re-fire gated-away STEP1 handshakes now that writes are allowed.
 		// Active-leaf-change enrollment was skipped while the gate was closed;
 		// resetAll clears the once-per-session guards so the next enroll re-issues STEP1.
