@@ -121,6 +121,9 @@ export class LiveBindingValue implements PluginValue {
 	 *  live-synced notes. Null = unknown -> two-way fallback. */
 	private preEditText: string | null = null;
 	private destroyed = false;
+	/** Bumped on every attach, so an async step started by an older attach (the
+	 *  disk read) can tell it was superseded even when the Y.Text is the same. */
+	private attachSeq = 0;
 	/** The permanent delta->editor observer, once live. */
 	private observer: ((event: Y.YTextEvent, tr: Y.Transaction) => void) | null = null;
 	/** One-shot observer waiting for an unseeded doc to receive its server seed. */
@@ -270,6 +273,7 @@ export class LiveBindingValue implements PluginValue {
 
 	private attach(): void {
 		const path = editorPath(this.editor);
+		this.attachSeq++;
 		this.path = path;
 		this.noteId = null;
 		this.ytext = null;
@@ -299,6 +303,7 @@ export class LiveBindingValue implements PluginValue {
 	private reconcileWithDisk(text: Y.Text): void {
 		const path = this.path;
 		const coord = this.boundCoordinator;
+		const seq = this.attachSeq;
 		if (!this.dirtySinceAttach || !path || !coord) {
 			this.reconcileAndGoLive(text, null);
 			return;
@@ -309,7 +314,9 @@ export class LiveBindingValue implements PluginValue {
 			.readDisk(path)
 			.catch(() => null)
 			.then((disk) => {
-				if (this.destroyed || this.ytext !== text) return;
+				// A newer attach may hold the SAME resident Y.Text (switch away and
+				// back) and be live already; reconciling here would go live twice.
+				if (this.destroyed || this.attachSeq !== seq || this.ready) return;
 				this.reconcileAndGoLive(text, disk);
 			});
 	}
@@ -326,8 +333,13 @@ export class LiveBindingValue implements PluginValue {
 		const editorText = prefix > 0 ? fullText.slice(prefix) : fullText;
 		const docText = text.toJSON();
 		// Body-align the base the same way (Source mode carries the frontmatter block).
-		const rawBase = reconcileBase(this.preEditText, diskText, this.dirtySinceAttach);
-		const base = rawBase === null ? null : rawBase.slice(frontmatterPrefixLen(rawBase));
+		const body = (t: string | null) => (t === null ? null : t.slice(frontmatterPrefixLen(t)));
+		const base = reconcileBase(
+			body(this.preEditText),
+			body(diskText),
+			this.dirtySinceAttach,
+			docText,
+		);
 		const action = decideReconcile(editorText, docText, this.dirtySinceAttach, base);
 		if (action.kind === "defer") {
 			this.deferSeed(text);

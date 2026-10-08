@@ -89,7 +89,10 @@ class FakeCoordinator implements LiveBindingCoordinator {
 	enroll(): void {}
 	onBind(): void {}
 	onRelease(): void {}
+	/** When set, readDisk waits on it: holds the read in flight. */
+	gate: Promise<void> | null = null;
 	async readDisk(): Promise<string | null> {
+		if (this.gate) await this.gate;
 		return this.disk;
 	}
 }
@@ -191,5 +194,52 @@ describe("live binding #544: stale merge base after an autosave", () => {
 
 		expect(view.text).toBe(`${P}typed\n`);
 		expect(y.text.toJSON()).toBe(`${P}typed\n`);
+	});
+
+	it("keeps typing saved before the server seed of an existing note", async () => {
+		const P = "line one\nline two\n";
+		const view = new FakeView(P);
+		const coord = new FakeCoordinator(P);
+		const x = room("");
+		coord.rooms.set("X", x);
+		bind(view, coord);
+
+		view.type("T\n");
+		coord.disk = `${P}T\n`; // autosave; a bound note's save never reaches the doc
+		view.type("U\n");
+		x.text.insert(0, P); // the server seeds the ORIGINAL content
+		x.open();
+		await settle();
+
+		expect(view.text).toBe(`${P}T\nU\n`);
+		expect(x.text.toJSON()).toBe(`${P}T\nU\n`);
+	});
+
+	it("a disk read outlived by a newer attach does not go live twice", async () => {
+		const P = "loaded\n";
+		const view = new FakeView(P);
+		const coord = new FakeCoordinator(P);
+		const x = room(P);
+		coord.rooms.set("X", x);
+		coord.rooms.set("Y", room(""));
+		let release = () => {};
+		coord.gate = new Promise<void>((r) => {
+			release = r;
+		});
+		bind(view, coord);
+
+		view.type("typed\n"); // dirty -> the reconcile reads disk first
+		x.open();
+		await settle(); // read #1 in flight
+		coord.id = "Y";
+		view.click(); // away
+		coord.id = "X";
+		view.click(); // back: same resident X, carried dirty -> read #2 in flight
+		await settle();
+		release();
+		await settle();
+
+		x.text.doc?.transact(() => x.text.insert(0, "R"), "remote");
+		expect(view.text).toBe(`R${P}typed\n`);
 	});
 });

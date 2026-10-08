@@ -313,7 +313,7 @@ describe("#544 stale merge base after an autosave", () => {
 
 	/** Run the reconcile the way the binding does and return the converged text. */
 	function converge(pre: string, disk: string | null, editor: string, doc: string): string {
-		const d = decideReconcile(editor, doc, true, reconcileBase(pre, disk, true));
+		const d = decideReconcile(editor, doc, true, reconcileBase(pre, disk, true, doc));
 		switch (d.kind) {
 			case "noop":
 				return editor;
@@ -358,12 +358,26 @@ describe("#544 stale merge base after an autosave", () => {
 		expect(converge(P, P, P + T, R + P)).toBe(R + P + T);
 	});
 
-	it("reconcileBase: disk wins only for a dirty binding whose disk moved", () => {
-		expect(reconcileBase(P, P + T, true)).toBe(P + T);
-		expect(reconcileBase(P, P, true)).toBe(P);
-		expect(reconcileBase(P, null, true)).toBe(P);
-		expect(reconcileBase(null, P, true)).toBe(P);
-		expect(reconcileBase(P, P + T, false)).toBe(P);
+	it("keeps typing saved to disk when the doc was seeded from the server, not the save", () => {
+		// The autosave never reaches the doc of a bound note: the server seeds the
+		// original P. Merging against disk would revert the saved T.
+		expect(converge(P, P + T, P + T + U, P)).toBe(P + T + U);
+		expect(converge(P, P + T, P + T, P)).toBe(P + T);
+		const S = "line one REMOTE\nline two\n";
+		expect(converge(P, P + T, P + T + U, S)).toBe(S + T + U);
+	});
+
+	it("keeps a one-character save the doc never received", () => {
+		expect(converge(P, `${P}x`, `${P}xy`, P)).toBe(`${P}xy`);
+	});
+
+	it("reconcileBase: disk wins only when the doc already holds the save", () => {
+		expect(reconcileBase(P, P + T, true, P + T)).toBe(P + T);
+		expect(reconcileBase(P, P + T, true, P)).toBe(P);
+		expect(reconcileBase(P, P, true, P)).toBe(P);
+		expect(reconcileBase(P, null, true, P + T)).toBe(P);
+		expect(reconcileBase(null, P, true, P)).toBeNull();
+		expect(reconcileBase(P, P + T, false, P + T)).toBe(P);
 	});
 });
 

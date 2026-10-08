@@ -207,18 +207,41 @@ export function decideReconcile(
 	return { kind: "adopt", changes: textDiffToChangeSpec(editorText, docText) };
 }
 
-/** The 3-way merge base for the initial reconcile. `preEditText` stops being the
- *  common ancestor once Obsidian autosaves the typing: the doc is then seeded
- *  from that saved disk, and merging P -> editor onto it replays the saved text
- *  a second time (doubling), or rejects and forwards over a remote edit (#544).
- *  Disk is what the doc was seeded from AND what the editor grew from, so a
- *  dirty binding whose disk moved off `preEditText` merges against disk. */
+/** True when `docText` already contains what the autosave changed on top of
+ *  `preEditText`: every saved hunk, with its context, appears verbatim in the
+ *  doc. Verbatim, not fuzzy: a fuzzy match would call a save "present" in a doc
+ *  that never got it, and merging against disk would then revert it. Located by
+ *  search, not offset, so a remote edit that shifted the hunk still counts. */
+function docHoldsSave(preEditText: string, diskText: string, docText: string): boolean {
+	// @types/diff-match-patch types patch_make as returning the patch_obj
+	// CONSTRUCTOR; at runtime it returns instances.
+	const patches = merger.patch_make(preEditText, diskText) as unknown as Array<{
+		diffs: Array<[number, string]>;
+	}>;
+	return patches.every((patch) => docText.includes(merger.diff_text2(patch.diffs)));
+}
+
+/** The 3-way merge base for the initial reconcile (all texts body-aligned).
+ *  `preEditText` stops being the common ancestor once Obsidian autosaves the
+ *  typing AND the doc was seeded from that saved disk: merging P -> editor onto
+ *  it replays the saved text a second time (doubling), or rejects and forwards
+ *  over a remote edit (#544). A bound note's autosave never reaches the doc,
+ *  though, so a doc seeded by the server lacks the save; merging against disk
+ *  there reverts the saved typing. Disk is the base only when the doc holds it. */
 export function reconcileBase(
 	preEditText: string | null,
 	diskText: string | null,
 	dirty: boolean,
+	docText: string,
 ): string | null {
-	if (dirty && diskText !== null && diskText !== preEditText) return diskText;
+	if (
+		dirty &&
+		preEditText !== null &&
+		diskText !== null &&
+		diskText !== preEditText &&
+		docHoldsSave(preEditText, diskText, docText)
+	)
+		return diskText;
 	return preEditText;
 }
 
