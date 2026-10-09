@@ -2801,7 +2801,14 @@ export class SyncEngine {
 		this.gateModified.clear();
 		for (const path of edited) {
 			const file = this.app.vault.getAbstractFileByPath(path);
-			if (file) this.handleModify(file);
+			if (!file) continue;
+			try {
+				this.handleModify(file);
+			} catch (e) {
+				// Already off gateModified; the next pushModifiedFiles sweep (mtime)
+				// still picks the edit up.
+				rlog().error("vault", `Gate journal: deferred edit failed: ${errMsg(e, path)}`);
+			}
 		}
 	}
 
@@ -4355,7 +4362,9 @@ export class SyncEngine {
 
 		// Gated (#247): journal it. The echo guards above already ran, at event
 		// time, which is the only time they can tell an echo from a user delete.
-		if (this.gateHolds()) {
+		// A rename old-leg is decided now too: its `renamedAway` marker expires,
+		// and deleteSyncedPath only does local bookkeeping for it, never a send.
+		if (this.gateHolds() && !this.files.has(file.path, "renamedAway")) {
 			this.gateJournal.add({ op: "delete", path: file.path });
 			this.kickGateReplay();
 			return;

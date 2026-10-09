@@ -3126,7 +3126,9 @@ export default class EngramSyncPlugin extends Plugin {
 		this.syncGateAcceptedFor = fp;
 		// The direction the user just picked reconciles the vault on its own;
 		// replaying gate-window deletes on top would override that pick (#247).
-		this.syncEngine.discardGateJournal();
+		// Only when this call is what opens the gate: re-picking a direction on
+		// an open gate must not drop a backlog that is mid-drain.
+		if (this.syncEngine.isSyncBlocked()) this.syncEngine.discardGateJournal();
 		this.syncEngine.setSyncBlocked(false);
 		// Counts only, no paths. How long a user sat at the first-sync modal is
 		// otherwise unobservable (the gate-CLOSED warnings carry no duration).

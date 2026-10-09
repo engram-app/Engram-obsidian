@@ -4610,6 +4610,21 @@ describe("SyncEngine gate-window journal (#247)", () => {
 		expect(g.creates()).toEqual([]);
 	});
 
+	test("a gated rename old-leg delete is settled at event time (its marker expires)", async () => {
+		const g = gated();
+		g.synced("Notes/Old.md", "id-o");
+		const files = (g.engine as any).files;
+		files.mark("Notes/Old.md", "renamedAway", 60_000);
+		g.engine.setSyncBlocked(true);
+
+		await g.remove("Notes/Old.md");
+		files.clearMarker("Notes/Old.md", "renamedAway"); // expired before replay
+		g.engine.setSyncBlocked(false);
+		await g.engine.replayGateJournal();
+
+		expect(g.deletes()).toEqual([]);
+	});
+
 	test("a discard mid-drain stops the replay", async () => {
 		const g = gated();
 		g.synced("Notes/A.md", "id-a");

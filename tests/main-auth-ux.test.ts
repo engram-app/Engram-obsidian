@@ -262,6 +262,7 @@ describe("opening the sync gate re-runs the catch-up (#425)", () => {
 					calls.push("catchupViaSeqReplay");
 					return {};
 				},
+				isSyncBlocked: () => true,
 				discardGateJournal() {
 					calls.push("discardGateJournal");
 				},
@@ -356,6 +357,15 @@ describe("opening the sync gate re-runs the catch-up (#425)", () => {
 		expect(calls.indexOf("discardGateJournal")).toBeLessThan(
 			calls.indexOf("setSyncBlocked(false)"),
 		);
+	});
+
+	test("re-picking a direction on an already-open gate keeps the journal", async () => {
+		const { fake, calls } = fakePlugin();
+		fake.syncEngine.isSyncBlocked = () => false;
+
+		await fake.markSyncGateAccepted();
+
+		expect(calls).not.toContain("discardGateJournal");
 	});
 
 	test("applySyncGate replays the gate journal when it reopens for the accepted fingerprint", async () => {
