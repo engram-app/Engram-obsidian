@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.33.0](https://github.com/engram-app/Engram-obsidian/compare/1.32.0...1.33.0) (2026-10-09)
+
+
+### Features
+
+* **link:** send a device name when starting the link ([#559](https://github.com/engram-app/Engram-obsidian/issues/559)) ([369f863](https://github.com/engram-app/Engram-obsidian/commit/369f8639d8566babd600b8bf325f32a800b3b25b))
+* **sync:** log how long the sync gate was closed ([#560](https://github.com/engram-app/Engram-obsidian/issues/560)) ([0203f4a](https://github.com/engram-app/Engram-obsidian/commit/0203f4a883f678c3c77f495afa0bc67de2e26894))
+
+
+### Bug Fixes
+
+* replay renames/deletes made while sync is gated ([#563](https://github.com/engram-app/Engram-obsidian/issues/563)) ([7451286](https://github.com/engram-app/Engram-obsidian/commit/74512869a598c03d75867cd51003e415bf69c941))
+* **sync:** re-prompt users who close first-sync setup ([#564](https://github.com/engram-app/Engram-obsidian/issues/564)) ([fc0c215](https://github.com/engram-app/Engram-obsidian/commit/fc0c21551ac201cee9d36f470dc01fa7f6c990eb))
+* **sync:** stop replay_produced_no_files firing on steady-state polls ([#556](https://github.com/engram-app/Engram-obsidian/issues/556)) ([38b333a](https://github.com/engram-app/Engram-obsidian/commit/38b333a59bb1d7f0ef3c945b0c50cf95e6218f68))
+
+
+### Performance Improvements
+
+* raw attachments, push window, Rust WASM core ([#1877](https://github.com/engram-app/Engram-obsidian/issues/1877)) ([#555](https://github.com/engram-app/Engram-obsidian/issues/555)) ([a64ad11](https://github.com/engram-app/Engram-obsidian/commit/a64ad113c0f26df8bd07f93bed2b56e829822f78))
+
 ## [1.32.0](https://github.com/engram-app/Engram-obsidian/compare/1.31.3...1.32.0) (2026-10-02)
 
 
