@@ -123,7 +123,9 @@ describe("(c) a failing entry at the front does not block the rest", () => {
 
 	test("a network-class failure still stops the pass (the client is offline)", async () => {
 		const paths = [BAD, "Assets/b.png"];
-		const h = harness(paths, (p) => (p === BAD ? new Error("net::ERR_CONNECTION_RESET") : null));
+		const h = harness(paths, (p) =>
+			p === BAD ? new Error("net::ERR_CONNECTION_RESET") : null,
+		);
 		await enqueueAll(h.engine, paths);
 
 		await h.engine.flushQueue();

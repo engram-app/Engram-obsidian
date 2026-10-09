@@ -687,9 +687,18 @@ export default class EngramSyncPlugin extends Plugin {
 		// (onJoined flush, retry tick, enqueue hook) is set below/in connectChannel.
 		// Drops ship as anomalies (warn, even with diagnostics off), aggregated
 		// per reason and flushed on the retry tick below.
-		const dropReporter = makeDropReporter((code, counts) =>
-			rlog().anomaly("crdt", code, counts),
-		);
+		const dropReporter = makeDropReporter((reason, counts) => {
+			switch (reason) {
+				case "ttl":
+					return rlog().anomaly("crdt", "crdt_op_dropped_ttl", counts);
+				case "overflow":
+					return rlog().anomaly("crdt", "crdt_op_dropped_overflow", counts);
+				case "max-attempts":
+					return rlog().anomaly("crdt", "crdt_op_dropped_max_attempts", counts);
+				case "vault-changed":
+					return rlog().anomaly("crdt", "crdt_op_dropped_vault_changed", counts);
+			}
+		});
 		this.crdtOpQueue = new CrdtOpQueue({
 			send: makeCrdtOpSend({
 				channel: () => this.noteStream,

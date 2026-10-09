@@ -346,14 +346,14 @@ export class CrdtOpQueue {
 	}
 }
 
-/** Aggregates op drops into ONE anomaly per reason per flush, so a 150-op
+/** Aggregates op drops into ONE report per reason per flush, so a 150-op
  *  overflow ships as one line instead of 150 (the remote log buffer holds
  *  200). Drops used to be warn-only, invisible with diagnostics off, which is
  *  why the 2026-10-09 first sync lost ~600 creates without a single client
- *  log line. Counts only: the caller emits through `rlog().anomaly`, whose
- *  types cannot carry a path. Codes: `crdt_op_dropped_<reason>`. */
+ *  log line. Counts only; the caller maps each reason to a LITERAL anomaly
+ *  code (`crdt_op_dropped_<reason>`) so the codes stay greppable. */
 export function makeDropReporter(
-	emit: (code: string, counts: { count: number; creates: number }) => void,
+	emit: (reason: DropReason, counts: { count: number; creates: number }) => void,
 ): { onDrop: (op: CrdtOp, reason: DropReason) => void; flush: () => void } {
 	const tally = new Map<DropReason, { count: number; creates: number }>();
 	return {
@@ -364,9 +364,7 @@ export function makeDropReporter(
 			tally.set(reason, t);
 		},
 		flush: () => {
-			for (const [reason, counts] of tally) {
-				emit(`crdt_op_dropped_${reason.replace(/-/g, "_")}`, counts);
-			}
+			for (const [reason, counts] of tally) emit(reason, counts);
 			tally.clear();
 		},
 	};

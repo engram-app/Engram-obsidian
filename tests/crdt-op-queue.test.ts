@@ -584,9 +584,9 @@ describe("join state (flapping channel)", () => {
 // ---------------------------------------------------------------------------
 
 describe("drop reporter", () => {
-	test("aggregates drops per reason into one anomaly each, then resets", () => {
-		const lines: Array<{ code: string; counts: Record<string, number | boolean> }> = [];
-		const r = makeDropReporter((code, counts) => lines.push({ code, counts }));
+	test("aggregates drops per reason into one report each, then resets", () => {
+		const lines: Array<{ reason: DropReason; counts: { count: number; creates: number } }> = [];
+		const r = makeDropReporter((reason, counts) => lines.push({ reason, counts }));
 
 		for (let i = 0; i < 150; i++) r.onDrop(makeOp(`n${i}`, "create"), "overflow");
 		r.onDrop(makeOp("d", "delete"), "max-attempts");
@@ -594,21 +594,10 @@ describe("drop reporter", () => {
 		r.flush();
 
 		expect(lines).toEqual([
-			{ code: "crdt_op_dropped_overflow", counts: { count: 150, creates: 150 } },
-			{ code: "crdt_op_dropped_max_attempts", counts: { count: 2, creates: 1 } },
+			{ reason: "overflow", counts: { count: 150, creates: 150 } },
+			{ reason: "max-attempts", counts: { count: 2, creates: 1 } },
 		]);
 		r.flush();
 		expect(lines.length).toBe(2); // nothing new, nothing re-sent
-	});
-
-	test("every reason maps to a valid anomaly slug", () => {
-		const codes: string[] = [];
-		const r = makeDropReporter((code) => codes.push(code));
-		for (const reason of ["ttl", "overflow", "max-attempts", "vault-changed"] as DropReason[]) {
-			r.onDrop(makeOp(reason, "create"), reason);
-		}
-		r.flush();
-		for (const code of codes) expect(code).toMatch(/^[a-z0-9_]+$/);
-		expect(codes.length).toBe(4);
 	});
 });
