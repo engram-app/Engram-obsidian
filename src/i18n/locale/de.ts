@@ -611,8 +611,6 @@ const de: Dict = {
 		"Engram: Die Einstellungsdatei des Plugins war beschädigt und ließ sich nicht wiederherstellen. Du musst dich in den Einstellungen vielleicht neu verbinden.",
 	"Engram: sync is not set up yet, so nothing in this vault will sync.":
 		"Engram: Die Synchronisierung ist noch nicht eingerichtet, es wird also nichts aus diesem Vault synchronisiert.",
-	"Click the Engram item in the status bar to pick up where you left off.":
-		"Klicke in der Statusleiste auf Engram, um da weiterzumachen, wo du aufgehört hast.",
 	"Engram: ⚠ {count} sync errors": "Engram: ⚠ {count} Sync-Fehler",
 	"sync failed": "Synchronisierung fehlgeschlagen",
 	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":

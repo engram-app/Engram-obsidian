@@ -614,8 +614,6 @@ const fr: Dict = {
 		"Engram : le fichier de réglages du plugin était corrompu et n'a pas pu être récupéré. Vous devrez peut-être vous reconnecter dans les réglages.",
 	"Engram: sync is not set up yet, so nothing in this vault will sync.":
 		"Engram : la synchronisation n'est pas encore configurée, rien de ce coffre ne sera donc synchronisé.",
-	"Click the Engram item in the status bar to pick up where you left off.":
-		"Cliquez sur Engram dans la barre d'état pour reprendre où vous en étiez.",
 	"Engram: ⚠ {count} sync errors": {
 		one: "Engram : ⚠ {count} erreur de synchronisation",
 		other: "Engram : ⚠ {count} erreurs de synchronisation",

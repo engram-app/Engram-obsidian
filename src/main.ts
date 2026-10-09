@@ -450,6 +450,11 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  close a preview that sits on a just-nulled vault before reopening the
 	 *  picker (the syncPreviewGuard makes a reopen a no-op while it lives). */
 	private openPreviewModal: { close(): void; setPlanError(msg: string): void } | null = null;
+	/** The sticky "sync is not set up yet" notice, so a repeat replaces it
+	 *  and opening the gate clears it (#527). */
+	private setupNotice: Notice | null = null;
+	/** When the app-resume path last reopened the preview (#527 throttle). */
+	private lastSetupRepromptAt = Number.NEGATIVE_INFINITY;
 
 	/** Timestamp (ms) of the last noteIdMap manifest-reconcile attempt.
 	 *  Reconciling on EVERY reconnect (not just the first) is required so a
@@ -904,6 +909,7 @@ export default class EngramSyncPlugin extends Plugin {
 				});
 			} else if (activeDocument.visibilityState === "visible") {
 				this.noteStream?.onResume();
+				this.maybeRepromptSetupOnResume(Date.now());
 			}
 		});
 
@@ -3153,6 +3159,7 @@ export default class EngramSyncPlugin extends Plugin {
 			this.syncEngine.discardGateJournal();
 		}
 		this.syncEngine.setSyncBlocked(false);
+		this.dismissSetupNotice();
 		// Before the catch-up below: a pull over a rename still in the journal
 		// would write the note back at its old path.
 		if (replayGateJournal) await this.syncEngine.replayGateJournal();
@@ -3199,6 +3206,46 @@ export default class EngramSyncPlugin extends Plugin {
 	private derivePreviewContext(): SyncPreviewContext {
 		if (this.syncGateAcceptedFor == null) return "first-time";
 		return "vault-switch";
+	}
+
+	/** The modal was closed without a choice, so nothing will sync (#527).
+	 *  Sticky, with its own way back: the status bar used to be the only
+	 *  route, and Obsidian mobile does not render one. */
+	private notifySetupUnfinished(): void {
+		this.dismissSetupNotice();
+		const notice = new Notice(
+			t("Engram: sync is not set up yet, so nothing in this vault will sync."),
+			0,
+		);
+		this.setupNotice = notice;
+		const noticeEl = (notice as unknown as { noticeEl?: HTMLElement }).noticeEl;
+		if (!noticeEl) return;
+		const link = noticeEl.createEl("a", {
+			text: t("Finish sync setup"),
+			href: "#",
+			cls: "engram-notice-link",
+		});
+		link.addEventListener("click", (evt) => {
+			evt.preventDefault();
+			this.dismissSetupNotice();
+			void this.doSyncWithFirstSyncCheck();
+		});
+	}
+
+	private dismissSetupNotice(): void {
+		this.setupNotice?.hide();
+		this.setupNotice = null;
+	}
+
+	/** Coming back to the app with sync still not set up reopens the preview,
+	 *  at most once per 10 minutes. On mobile, resuming is not a restart, so
+	 *  the startup prompt never fires again (#527). Silent while signed out:
+	 *  sign-out closes the gate on purpose. */
+	private maybeRepromptSetupOnResume(now: number): void {
+		if (!this.hasAuthConfigured() || !this.syncEngine.isSyncBlocked()) return;
+		if (now - this.lastSetupRepromptAt < 10 * 60_000) return;
+		this.lastSetupRepromptAt = now;
+		void this.doSyncWithFirstSyncCheck();
 	}
 
 	/** Tell the user their edit went nowhere, and point at where to fix it.
@@ -3329,16 +3376,7 @@ export default class EngramSyncPlugin extends Plugin {
 				// once, here, instead of relying on the user noticing a small label
 				// change in the status bar they were not looking at.
 				if (choice === "cancel" && this.syncEngine.isSyncBlocked()) {
-					// Names the status bar ITEM, not a label. The bar says "finish
-					// setup" only when this vault has never synced; a user who has
-					// synced before sees "sync paused", and quoting the wrong words
-					// sends them looking for something that is not there.
-					new Notice(
-						`${t("Engram: sync is not set up yet, so nothing in this vault will sync.")}\n${t(
-							"Click the Engram item in the status bar to pick up where you left off.",
-						)}`,
-						10_000,
-					);
+					this.notifySetupUnfinished();
 				}
 
 				await this.runSyncWithProgress(choice, {

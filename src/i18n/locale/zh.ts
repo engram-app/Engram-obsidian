@@ -525,8 +525,6 @@ const zh: Dict = {
 		"Engram：插件设置文件已损坏且无法恢复。你可能需要在设置中重新连接。",
 	"Engram: sync is not set up yet, so nothing in this vault will sync.":
 		"Engram：同步还没设置好，这个知识库里的内容都不会同步。",
-	"Click the Engram item in the status bar to pick up where you left off.":
-		"点击状态栏里的 Engram 项，从上次的地方继续。",
 	"Engram: ⚠ {count} sync errors": "Engram：⚠ {count} 个同步错误",
 	"sync failed": "同步失败",
 	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":

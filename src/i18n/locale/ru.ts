@@ -647,8 +647,6 @@ const ru: Dict = {
 		"Engram: файл настроек плагина был повреждён и его не удалось восстановить. Возможно, придётся заново подключиться в настройках.",
 	"Engram: sync is not set up yet, so nothing in this vault will sync.":
 		"Engram: синхронизация ещё не настроена, поэтому ничего из этого хранилища синхронизироваться не будет.",
-	"Click the Engram item in the status bar to pick up where you left off.":
-		"Нажмите на Engram в строке состояния, чтобы продолжить с того места, где остановились.",
 	"Engram: ⚠ {count} sync errors": {
 		one: "Engram: ⚠ {count} ошибка синхронизации",
 		few: "Engram: ⚠ {count} ошибки синхронизации",

@@ -521,8 +521,6 @@ const zhTW: Dict = {
 		"Engram：外掛設定檔已損壞且無法復原。你可能需要在設定中重新連線。",
 	"Engram: sync is not set up yet, so nothing in this vault will sync.":
 		"Engram：同步還沒設定好，這個知識庫裡的內容都不會同步。",
-	"Click the Engram item in the status bar to pick up where you left off.":
-		"點擊狀態列裡的 Engram 項目，從上次的地方繼續。",
 	"Engram: ⚠ {count} sync errors": "Engram：⚠ {count} 個同步錯誤",
 	"sync failed": "同步失敗",
 	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":
