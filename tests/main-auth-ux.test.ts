@@ -9,6 +9,7 @@
 import { describe, expect, test } from "bun:test";
 import EngramSyncPlugin from "../src/main";
 import { destroyRemoteLog, initRemoteLog } from "../src/remote-log";
+import { computeSyncFingerprint } from "../src/sync-fingerprint";
 import { planLoadErrorMessage } from "../src/sync-preview-modal";
 import type { SyncStatus } from "../src/types";
 
@@ -261,6 +262,12 @@ describe("opening the sync gate re-runs the catch-up (#425)", () => {
 					calls.push("catchupViaSeqReplay");
 					return {};
 				},
+				discardGateJournal() {
+					calls.push("discardGateJournal");
+				},
+				replayGateJournal: async () => {
+					calls.push("replayGateJournal");
+				},
 			},
 			crdtEnrollment: {
 				resetAll() {
@@ -335,6 +342,38 @@ describe("opening the sync gate re-runs the catch-up (#425)", () => {
 			await destroyRemoteLog();
 		}
 		expect(lines.filter((l) => l.startsWith("sync_gate_opened"))).toEqual([]);
+	});
+
+	// #247: the modal's sync direction reconciles the vault itself. Replaying
+	// gate-window deletes on top would override the user's pick.
+	test("markSyncGateAccepted discards the gate journal before unblocking", async () => {
+		const { fake, calls } = fakePlugin();
+
+		await fake.markSyncGateAccepted();
+
+		expect(calls).not.toContain("replayGateJournal");
+		expect(calls.indexOf("discardGateJournal")).toBeGreaterThanOrEqual(0);
+		expect(calls.indexOf("discardGateJournal")).toBeLessThan(
+			calls.indexOf("setSyncBlocked(false)"),
+		);
+	});
+
+	test("applySyncGate replays the gate journal when it reopens for the accepted fingerprint", async () => {
+		const { fake, calls } = fakePlugin();
+		fake.syncGateAcceptedFor = await computeSyncFingerprint(fake.settings);
+
+		expect(await fake.applySyncGate()).toBe(true);
+
+		expect(calls).toEqual(["setSyncBlocked(false)", "replayGateJournal"]);
+	});
+
+	test("applySyncGate does not replay while the gate stays closed", async () => {
+		const { fake, calls } = fakePlugin();
+		fake.syncGateAcceptedFor = "some-other-fingerprint";
+
+		expect(await fake.applySyncGate()).toBe(false);
+
+		expect(calls).toEqual(["setSyncBlocked(true)"]);
 	});
 
 	test("an empty fingerprint neither unblocks nor pulls", async () => {

@@ -1167,6 +1167,11 @@ export default class EngramSyncPlugin extends Plugin {
 				} catch (e) {
 					rlog().warn("crdt", `cold-start map reconcile failed: ${errMsg(e)}`);
 				}
+				// Apply renames/deletes made before setReady (#247). After the map
+				// reconcile, so a stale map still resolves the renamed note's real id;
+				// before the cold-start loop and pushModifiedFiles, which would mint a
+				// fresh id for the renamed file and push it as a second note.
+				await this.syncEngine.replayGateJournal();
 			}
 
 			// Task 7C: Cold-start reconcile — diff on-disk content into the CRDT
@@ -3097,6 +3102,10 @@ export default class EngramSyncPlugin extends Plugin {
 		const accepted = fp !== "" && fp === this.syncGateAcceptedFor;
 		this.syncEngine.setSyncBlocked(!accepted);
 		this.updateStatusBar(this.syncEngine.getStatus());
+		// Reopened for the fingerprint the user already accepted: apply what the
+		// closed window journaled (#247) before any caller's push sweep runs.
+		// A no-op before setReady; startup replays right after setReady instead.
+		if (accepted) await this.syncEngine.replayGateJournal();
 		return accepted;
 	}
 
@@ -3115,6 +3124,9 @@ export default class EngramSyncPlugin extends Plugin {
 		const context = this.derivePreviewContext();
 		const waitedMs = this.syncEngine.blockedForMs();
 		this.syncGateAcceptedFor = fp;
+		// The direction the user just picked reconciles the vault on its own;
+		// replaying gate-window deletes on top would override that pick (#247).
+		this.syncEngine.discardGateJournal();
 		this.syncEngine.setSyncBlocked(false);
 		// Counts only, no paths. How long a user sat at the first-sync modal is
 		// otherwise unobservable (the gate-CLOSED warnings carry no duration).

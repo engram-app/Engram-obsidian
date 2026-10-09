@@ -434,6 +434,10 @@ type Sweepable = { clear(): void };
  */
 type SweepEvent = "vault" | "destroy";
 
+type GateEvent =
+	| { op: "delete" | "folder-create" | "folder-delete"; path: string }
+	| { op: "rename"; oldPath: string; path: string };
+
 export class SyncEngine {
 	/**
 	 * Every collection that a teardown has to sweep, declared WITH its scope so
@@ -598,6 +602,23 @@ export class SyncEngine {
 	 *  the last sync (Obsidian sets mtime to "now" on vault.modify(),
 	 *  making mtime-based detection unreliable). */
 	private syncState = this.track(["vault"], new Map<string, FileSyncState>());
+
+	/** Vault events that arrived while the gate was closed or before setReady
+	 *  (#247), in event order. Dropping them lost deletes and turned renames
+	 *  into duplicates. Replayed by replayGateJournal; vault-scoped, so a vault
+	 *  change never replays one vault's events into another.
+	 *  ponytail: in memory only, so events in a window that spans a restart are
+	 *  still lost; persist it if that window turns out to matter. */
+	private gateJournal = this.track(["vault", "destroy"], new Set<GateEvent>());
+	/** Paths edited while the gate was OPEN but a backlog was still draining.
+	 *  Order-free: they re-fire through handleModify once it has drained. */
+	private gateModified = this.track(["vault", "destroy"], new Set<string>());
+	private gateReplay: Promise<void> | null = null;
+	/** Bumped by every discard (incl. vault reset) so an in-flight drain stops. */
+	private gateEpoch = 0;
+	/** Event-driven replays stay off until an owner has run the first one, so
+	 *  startup's replay runs after its id-map reconcile, not before it. */
+	private gateKicksArmed = false;
 
 	/** The server vaultId that the current syncState belongs to. lastSync and
 	 *  per-file hashes are scoped to one server vault; if the active vault
@@ -2717,6 +2738,119 @@ export class SyncEngine {
 		return this.syncBlocked;
 	}
 
+	/** Forget the gate-window journal. For a gate opened by a user-chosen sync
+	 *  direction: that choice reconciles local and server state itself, and
+	 *  replaying deletes on top of it would override what the user picked. */
+	discardGateJournal(): void {
+		this.gateJournal.clear();
+		this.gateModified.clear();
+		this.gateEpoch++;
+	}
+
+	/** True while vault events must be journaled instead of applied: the gate
+	 *  is closed, the engine is not ready, or a backlog has not drained yet. A
+	 *  live event that overtook the backlog would act on bookkeeping that is
+	 *  still behind it (a rename's id not yet moved), so it queues behind. */
+	private gateHolds(): boolean {
+		return (
+			this.syncBlocked ||
+			!this.ready ||
+			this.gateReplay !== null ||
+			this.gateJournal.size > 0 ||
+			this.gateModified.size > 0
+		);
+	}
+
+	/** An event joined a backlog while the gate is open: drain it, so the
+	 *  backlog cannot hold events forever if no caller replays it. Push sweeps
+	 *  (fullSync, pushModifiedFiles) drain it too, before they start. */
+	private kickGateReplay(): void {
+		if (!this.gateKicksArmed || this.syncBlocked || !this.ready) return;
+		this.replayGateJournal().catch((e) => {
+			rlog().error("vault", `Gate journal replay failed: ${errMsg(e)}`);
+		});
+	}
+
+	/** Apply the vault events journaled while the gate was closed (#247).
+	 *  No-op until the engine is ready and the gate is open. Bookkeeping runs in
+	 *  event order (a collapsed path set gets delete-then-rename-onto and
+	 *  rename-then-recreate wrong), and renamed notes push once, at their final
+	 *  path, after every event has applied. Must finish before any
+	 *  pushModifiedFiles sweep, which would push a renamed file as a new note. */
+	replayGateJournal(): Promise<void> {
+		if (this.syncBlocked || !this.ready) return Promise.resolve();
+		this.gateKicksArmed = true;
+		this.gateReplay ??= this.runGateReplay();
+		return this.gateReplay;
+	}
+
+	private async runGateReplay(): Promise<void> {
+		try {
+			// Always suspends, even on an empty journal, so `gateReplay` is
+			// assigned before this clears it.
+			await this.drainGateJournal();
+		} finally {
+			this.gateReplay = null;
+		}
+		// Synchronous from here: no event can slip in between the backlog
+		// emptying and the edits re-firing live. A straggler that landed after
+		// the drain's last check gets its own pass, still inside this promise,
+		// so a caller awaiting the replay waits for it too.
+		if (this.gateJournal.size > 0) return this.replayGateJournal();
+		const edited = [...this.gateModified];
+		this.gateModified.clear();
+		for (const path of edited) {
+			const file = this.app.vault.getAbstractFileByPath(path);
+			if (file) this.handleModify(file);
+		}
+	}
+
+	private async drainGateJournal(): Promise<void> {
+		// A discard or vault reset mid-drain must stop it: the events in hand
+		// belong to state that no longer exists (another vault, or a vault the
+		// user just re-synced in a direction they chose).
+		const epoch = this.gateEpoch;
+		while (this.gateJournal.size > 0) {
+			const events = [...this.gateJournal];
+			this.gateJournal.clear();
+			rlog().info("vault", `Gate journal replay: ${events.length} events`);
+			const moved = new Set<string>();
+			for (const ev of events) {
+				if (epoch !== this.gateEpoch) return;
+				try {
+					if (ev.op === "delete") {
+						await this.deleteSyncedPath(ev.path);
+					} else if (ev.op === "rename") {
+						await this.renameSyncedPath(ev.oldPath, ev.path);
+						moved.add(ev.path);
+					} else if (ev.op === "folder-create") {
+						await this.createFolderNow(ev.path);
+					} else {
+						await this.deleteFolderNow(ev.path);
+					}
+				} catch (e) {
+					rlog().error(
+						"vault",
+						`Gate journal replay: ${ev.op} failed: ${errMsg(e, ev.path)}`,
+					);
+				}
+			}
+			// Intermediate paths of a rename chain (and renamed-then-deleted notes)
+			// are no longer on disk, so the lookup skips them.
+			for (const path of moved) {
+				if (epoch !== this.gateEpoch) return;
+				const file = this.app.vault.getAbstractFileByPath(path);
+				if (!file || !this.isSyncable(file) || this.shouldIgnore(path)) continue;
+				this.gateModified.delete(path); // pushed here; no second push via modify
+				try {
+					await this.pushFile(file);
+				} catch (e) {
+					rlog().error("vault", `Gate journal replay: push failed: ${errMsg(e, path)}`);
+				}
+			}
+		}
+	}
+
 	/** Fire `onSyncBlockedEdit` at most once per gate closure. */
 	private reportBlockedEdit(): void {
 		if (this.blockedEditReported) return;
@@ -2890,6 +3024,7 @@ export class SyncEngine {
 		// maps were missing from it (#1409); adding a field no longer requires
 		// remembering that this method exists.
 		this.sweep("vault");
+		this.gateEpoch++; // stop any in-flight gate replay (#247)
 		this.lastSync = "";
 		// The socket op-log replay cursor marks a position in the OLD vault's
 		// seq feed — reset to 0 so the next catch-up replays the new vault from
@@ -3964,6 +4099,13 @@ export class SyncEngine {
 		return BINARY_EXTENSIONS.has(file.extension);
 	}
 
+	/** Path variant of isBinaryFile, for paths with no live TFile behind them. */
+	private isBinaryPath(path: string): boolean {
+		const name = path.slice(path.lastIndexOf("/") + 1);
+		const dot = name.lastIndexOf(".");
+		return dot >= 0 && BINARY_EXTENSIONS.has(name.slice(dot + 1));
+	}
+
 	/** Get MIME type for a file. */
 	getMimeType(file: TFile): string {
 		return MIME_TYPES[file.extension] || "application/octet-stream";
@@ -3973,17 +4115,32 @@ export class SyncEngine {
 
 	/** Handle a vault modify/create event with debounce. */
 	handleModify(file: TAbstractFile): void {
-		if (this.syncBlocked) {
-			devLog().log("sync-blocked", "handleModify short-circuited — gate closed");
-			// A closed gate is silent everywhere except a status-bar label, and a
-			// user who does not happen to look there reads "my edits do nothing"
-			// as a dead sync engine. It cost hours on 2026-08-29. Announce it on
-			// the first EDIT — the moment the user's intent meets the gate — not
-			// on the close, which happens during setup when they are not editing.
-			this.reportBlockedEdit();
+		if (this.gateHolds()) {
+			if (this.syncBlocked) {
+				devLog().log("sync-blocked", "handleModify journaled — gate closed");
+				// A closed gate is silent everywhere except a status-bar label, and a
+				// user who does not happen to look there reads "my edits do nothing"
+				// as a dead sync engine. It cost hours on 2026-08-29. Announce it on
+				// the first EDIT — the moment the user's intent meets the gate — not
+				// on the close, which happens during setup when they are not editing.
+				this.reportBlockedEdit();
+			}
+			// An edit while gated needs no journal: every reopen path runs
+			// pushModifiedFiles, and re-firing a gated bulk import one note at a
+			// time is the request storm that sweep exists to avoid. Only an edit
+			// racing a draining backlog is deferred, so it cannot overtake a
+			// rename it depends on.
+			if (
+				!this.syncBlocked &&
+				this.ready &&
+				this.isSyncable(file) &&
+				!this.shouldIgnore(file.path)
+			) {
+				this.gateModified.add(file.path);
+			}
+			this.kickGateReplay();
 			return;
 		}
-		if (!this.ready) return;
 		if (!this.isSyncable(file)) return;
 		if (this.shouldIgnore(file.path)) return;
 		// During pull, vault events are usually echoes from sync writes.
@@ -4142,15 +4299,13 @@ export class SyncEngine {
 	/** Handle a vault delete event. */
 	async handleDelete(file: TAbstractFile): Promise<void> {
 		if (this.syncBlocked) {
-			devLog().log("sync-blocked", "handleDelete short-circuited — gate closed");
+			devLog().log("sync-blocked", "handleDelete deferred — gate closed");
 			// Same reasoning as handleModify: a delete the user believes synced
 			// and which never left the device is worse than a silent edit, not
 			// better. Shares the once-per-closure latch, so a modify+delete pair
 			// still produces one notice.
 			this.reportBlockedEdit();
-			return;
 		}
-		if (!this.ready) return;
 		// NOTE: no suppressDeletes early-return here (post-merge review finding
 		// 4): every wipe-pass trash is in engineTrashedPaths, and consuming the
 		// record DURING the suppression window keeps the counter matched 1:1
@@ -4158,8 +4313,6 @@ export class SyncEngine {
 		// swallowed genuine deletes at the same path.
 		if (!this.isSyncable(file)) return;
 		if (this.shouldIgnore(file.path)) return;
-
-		const isBinary = this.isBinaryFile(file);
 
 		// Cancel any pending push for this path FIRST — even for echo events.
 		// A timer armed for the trashed file must die with it; surviving the
@@ -4200,6 +4353,22 @@ export class SyncEngine {
 			return;
 		}
 
+		// Gated (#247): journal it. The echo guards above already ran, at event
+		// time, which is the only time they can tell an echo from a user delete.
+		if (this.gateHolds()) {
+			this.gateJournal.add({ op: "delete", path: file.path });
+			this.kickGateReplay();
+			return;
+		}
+		await this.deleteSyncedPath(file.path);
+	}
+
+	/** The server-facing half of a vault delete, keyed by path alone so the
+	 *  gate-window replay (#247) can run it for a file that no longer exists
+	 *  at any path. Callers own the gate, syncable and ignore checks. */
+	private async deleteSyncedPath(path: string): Promise<void> {
+		const isBinary = this.isBinaryPath(path);
+
 		// RENAME OLD LEG. The engine trashed this path to follow a remote rename;
 		// the note is alive at its new path. Everything below is keyed by note_id
 		// — releasing the claim, the delete-wins tombstone, the CRDT teardown —
@@ -4209,24 +4378,24 @@ export class SyncEngine {
 		// Placed above the id resolution deliberately: the map is mid-relocation
 		// here, so whether `get(oldPath)` still answers the id is a race, and a
 		// guard that depends on the answer is a guard that works some of the time.
-		if (this.files.has(file.path, "renamedAway")) {
-			this.files.clearMarker(file.path, "renamedAway");
-			this.files.clearMarker(file.path, "remotelyDeleted");
-			this.consumeEngineTrash(file.path);
+		if (this.files.has(path, "renamedAway")) {
+			this.files.clearMarker(path, "renamedAway");
+			this.files.clearMarker(path, "remotelyDeleted");
+			this.consumeEngineTrash(path);
 			// `dropBase: false` -- the base was carried to the note's new path by
 			// the old-leg branch above. Dropping it here would destroy it after the
 			// carry, which is worse than never carrying it at all.
-			this.dropPath(normalizePath(file.path), { dropBase: false });
+			this.dropPath(normalizePath(path), { dropBase: false });
 			rlog().info(
 				"vault",
-				`Delete is rename old-leg — id-keyed state preserved: ${noteRef(file.path)}`,
+				`Delete is rename old-leg — id-keyed state preserved: ${noteRef(path)}`,
 			);
 			return;
 		}
 
 		// Resolve the note_id BEFORE clearing the map (removeDoc/reset below need
 		// it to tear down the right CRDT doc, keyed by id not path).
-		const crdtNoteId = !isBinary ? (this.noteIdMap?.get(file.path) ?? null) : null;
+		const crdtNoteId = !isBinary ? (this.noteIdMap?.get(path) ?? null) : null;
 
 		// Clear the file's note_id mapping — the vault file is genuinely gone,
 		// so a note later recreated at this path must mint a fresh id rather
@@ -4239,7 +4408,7 @@ export class SyncEngine {
 		// other device, immediately) a file recreated at this path adopted the
 		// deleted note's id, resurrecting the lineage Task 5 exists to bury.
 		if (!isBinary) {
-			this.noteIdMap?.release(file.path);
+			this.noteIdMap?.release(path);
 		}
 
 		// Drop the deleted path's sync-state entry (notes AND attachments): its
@@ -4256,8 +4425,8 @@ export class SyncEngine {
 		// and a stale base is the same hazard with a copy of the content
 		// attached. A recreate at this path has no common ancestor to merge
 		// against anyway.
-		const hadSyncEvidence = this.syncState.has(normalizePath(file.path));
-		this.dropPath(normalizePath(file.path));
+		const hadSyncEvidence = this.syncState.has(normalizePath(path));
+		this.dropPath(normalizePath(path));
 
 		// This trash APPLIED a remote change (trashRemotelyDeleted marked it):
 		// the server already knows. Never push the DELETE back — path-keyed and
@@ -4268,9 +4437,9 @@ export class SyncEngine {
 		// Consume BEFORE the || — inside the 5s marker window the short-circuit
 		// would strand the counter entry, and a stranded entry later swallows a
 		// genuine delete at the path (the wipe-window leak, review finding 4).
-		const wasEngineTrash = this.consumeEngineTrash(file.path);
-		if (this.files.has(file.path, "remotelyDeleted") || wasEngineTrash) {
-			this.files.clearMarker(file.path, "remotelyDeleted");
+		const wasEngineTrash = this.consumeEngineTrash(path);
+		if (this.files.has(path, "remotelyDeleted") || wasEngineTrash) {
+			this.files.clearMarker(path, "remotelyDeleted");
 			// NO TOMBSTONE HERE. This branch fires for a delete the SERVER already
 			// applied and we are mirroring to disk. The id-keyed tombstone exists
 			// for the opposite case (below): a delete THIS device originated, whose
@@ -4296,8 +4465,8 @@ export class SyncEngine {
 			// The doc teardown stays: the file is gone from disk, so the room
 			// should not stay resident. Re-enrolment rebuilds it from the server,
 			// which is exactly what the tombstone used to prevent.
-			rlog().info("vault", `Delete echo skip (remote-applied): ${noteRef(file.path)}`);
-			if (this.isCrdtEligible(file) && crdtNoteId) {
+			rlog().info("vault", `Delete echo skip (remote-applied): ${noteRef(path)}`);
+			if (this.isCrdtEligiblePath(path) && crdtNoteId) {
 				await this.teardownCrdtDoc(crdtNoteId);
 			}
 			return;
@@ -4319,17 +4488,17 @@ export class SyncEngine {
 			// or terminally no-ops server-side. Without this, a create-then-delete
 			// note resurrects when the queued create fires (review finding 5).
 			if (crdtNoteId && this.crdtHasPendingOp?.(crdtNoteId)) {
-				this.markRecentlyDeleted(crdtNoteId, file.path);
-				this.crdtEnqueue?.({ kind: "delete", docId: crdtNoteId, path: file.path });
-				if (this.isCrdtEligible(file)) await this.teardownCrdtDoc(crdtNoteId);
-				rlog().info("push", `Delete superseded pending create: ${noteRef(file.path)}`);
+				this.markRecentlyDeleted(crdtNoteId, path);
+				this.crdtEnqueue?.({ kind: "delete", docId: crdtNoteId, path: path });
+				if (this.isCrdtEligiblePath(path)) await this.teardownCrdtDoc(crdtNoteId);
+				rlog().info("push", `Delete superseded pending create: ${noteRef(path)}`);
 				return;
 			}
 			// Pure refusal: deliberately NO markRecentlyDeleted — the documented
 			// remedy for a wrong refusal is next-pull resurrection, and the
 			// delete-wins tombstone would block exactly that for 60s (finding 7).
-			rlog().warn("push", `Delete push REFUSED (no sync evidence): ${noteRef(file.path)}`);
-			if (this.isCrdtEligible(file) && crdtNoteId) {
+			rlog().warn("push", `Delete push REFUSED (no sync evidence): ${noteRef(path)}`);
+			if (this.isCrdtEligiblePath(path) && crdtNoteId) {
 				await this.teardownCrdtDoc(crdtNoteId);
 			}
 			return;
@@ -4337,13 +4506,13 @@ export class SyncEngine {
 
 		// Tombstone the id BEFORE clearing the mapping and issuing the delete, so
 		// a racing catch-up head map or late fan-out cannot resurrect it.
-		if (crdtNoteId) this.markRecentlyDeleted(crdtNoteId, file.path);
+		if (crdtNoteId) this.markRecentlyDeleted(crdtNoteId, path);
 
 		try {
 			if (isBinary) {
-				await this.api.deleteAttachment(file.path); // attachments stay REST
+				await this.api.deleteAttachment(path); // attachments stay REST
 				this.goOnline();
-			} else if (this.isCrdtEligible(file)) {
+			} else if (this.isCrdtEligiblePath(path)) {
 				// CRDT-sole delete path (markdown AND canvas since #306; REST removed).
 				// With a resolvable note_id, enqueue a durable crdt_delete: the queue
 				// holds it until the crdt: topic is joined and retries transient
@@ -4353,14 +4522,14 @@ export class SyncEngine {
 				// remotely, so there is nothing to delete on the server: do nothing
 				// rather than fall back to REST.
 				if (crdtNoteId) {
-					this.crdtEnqueue?.({ kind: "delete", docId: crdtNoteId, path: file.path });
+					this.crdtEnqueue?.({ kind: "delete", docId: crdtNoteId, path: path });
 				}
 			} else {
 				// Defensive fallback: no non-binary syncable type is CRDT-ineligible
 				// today (md + canvas both ride CRDT), so this is unreachable for
 				// current syncable text — kept only so a future REST-only note type
 				// still deletes cleanly.
-				await this.api.deleteNote(file.path);
+				await this.api.deleteNote(path);
 				this.goOnline();
 			}
 			// Tear down the CRDT doc so a note recreated at the same path starts
@@ -4368,26 +4537,23 @@ export class SyncEngine {
 			// Gate on CRDT-eligibility (md OR canvas since #306, not !isBinary) so
 			// attachments never hit removeDoc. Also gate on a known id — nothing to
 			// tear down if this note never had a CRDT room.
-			if (this.isCrdtEligible(file) && crdtNoteId) {
+			if (this.isCrdtEligiblePath(path) && crdtNoteId) {
 				await this.teardownCrdtDoc(crdtNoteId);
 			}
 		} catch (e) {
 			// 404 means already deleted — treat as success; still tear down CRDT.
 			if (isHttpStatus(e, 404)) {
 				this.goOnline();
-				if (this.isCrdtEligible(file) && crdtNoteId) {
+				if (this.isCrdtEligiblePath(path) && crdtNoteId) {
 					await this.teardownCrdtDoc(crdtNoteId);
 				}
 				return;
 			}
 			// biome-ignore lint/suspicious/noConsole: error boundary
-			console.error("Engram Sync: failed to delete %s", file.path, e);
-			rlog().error(
-				"push",
-				`Delete failed (queued): ${noteRef(file.path)} | ${errMsg(e, file.path)}`,
-			);
+			console.error("Engram Sync: failed to delete %s", path, e);
+			rlog().error("push", `Delete failed (queued): ${noteRef(path)} | ${errMsg(e, path)}`);
 			await this.enqueueChange({
-				path: file.path,
+				path: path,
 				action: "delete",
 				kind: isBinary ? "attachment" : "note",
 				timestamp: Date.now(),
@@ -4404,10 +4570,9 @@ export class SyncEngine {
 	/** Handle a vault rename event. */
 	async handleRename(file: TAbstractFile, oldPath: string): Promise<void> {
 		if (this.syncBlocked) {
-			devLog().log("sync-blocked", "handleRename short-circuited — gate closed");
-			return;
+			devLog().log("sync-blocked", "handleRename deferred — gate closed");
+			this.reportBlockedEdit();
 		}
-		if (!this.ready) return;
 		if (!this.isSyncable(file)) return;
 
 		// ECHO GUARD: this rename is the engine's own, applied to follow a remote
@@ -4415,7 +4580,9 @@ export class SyncEngine {
 		// a user drag — it fires the same vault event — so without this the move
 		// is pushed back as a fresh rename, and the two devices trade renames.
 		// The id map, base and sync-state were all re-keyed by the mover before
-		// the rename was applied, so there is nothing left to do here.
+		// the rename was applied, so there is nothing left to do here. Checked at
+		// event time even when gated: the marker expires, so a replay could no
+		// longer tell.
 		if (this.files.has(normalizePath(oldPath), "remotelyRenamed")) {
 			this.files.clearMarker(normalizePath(oldPath), "remotelyRenamed");
 			this.files.clearMarker(normalizePath(file.path), "remotelyRenamed");
@@ -4426,14 +4593,32 @@ export class SyncEngine {
 			return;
 		}
 
-		const isBinary = this.isBinaryFile(file);
+		if (this.gateHolds()) {
+			this.gateJournal.add({ op: "rename", oldPath, path: file.path });
+			this.kickGateReplay();
+			return;
+		}
+		await this.renameSyncedPath(oldPath, file.path);
+
+		// Push new path if it isn't ignored
+		if (!this.shouldIgnore(file.path)) {
+			await this.pushFile(file);
+		}
+	}
+
+	/** The bookkeeping + old-leg half of a vault rename, keyed by path so the
+	 *  gate-window replay (#247) can apply renames in event order and push only
+	 *  the final paths. Callers own the gate, syncable and echo checks. */
+	private async renameSyncedPath(oldPath: string, newPath: string): Promise<void> {
+		const isBinary = this.isBinaryPath(newPath);
 
 		// Cancel any push still armed under the OLD path. Capturing armedPath at
 		// arm time stops it leaking the map entry, but a surviving timer is still
 		// wrong: handleDelete cancels by CURRENT path so it can no longer reach
 		// this one (rename-then-delete inside the window pushes a file the user
-		// just deleted), and it fires without the shouldIgnore(file.path) guard
-		// applied to the push below (renaming INTO an ignored folder still pushes).
+		// just deleted), and it fires without the shouldIgnore(newPath) guard
+		// the caller applies to its push (renaming INTO an ignored folder still
+		// pushes).
 		const armed = this.debounceTimers.get(oldPath);
 		if (armed) {
 			this.time.clearTimeout(armed);
@@ -4445,7 +4630,7 @@ export class SyncEngine {
 		// itself never changes on a rename, only the path key it's filed under.
 		// A no-op if oldPath has no entry (attachments, or a note never pushed).
 		if (!isBinary) {
-			this.noteIdMap?.rename(oldPath, file.path);
+			this.noteIdMap?.rename(oldPath, newPath);
 		}
 
 		// Delete old path if it wasn't ignored.
@@ -4471,7 +4656,7 @@ export class SyncEngine {
 							`Rename old-leg delete REFUSED (no sync evidence): ${noteRef(oldPath)}`,
 						);
 					}
-				} else if (this.isCrdtEligible(file)) {
+				} else if (this.isCrdtEligiblePath(newPath)) {
 					// Phase E2 (rename-as-move): NO tombstone (markdown AND canvas since
 					// #306 — a rename keeps the extension, so gating on the new file's
 					// eligibility is equivalent to the old path's). The pushFile below
@@ -4531,7 +4716,7 @@ export class SyncEngine {
 
 		// Move base content entry to new path before pushing
 		if (!isBinary) {
-			this.baseStore?.rename(normalizePath(oldPath), normalizePath(file.path));
+			this.baseStore?.rename(normalizePath(oldPath), normalizePath(newPath));
 			// Move the sync-state entry to the new path. The OLD key must go: its
 			// recorded content hash is stale there, and left behind it
 			// echo-suppresses a later create at the old path whose content happens
@@ -4541,17 +4726,12 @@ export class SyncEngine {
 			// with it, so a delete before the new-path push lands is not refused.
 			// (The base moved with the note via baseStore.rename above; deleting it
 			// here would erase the just-renamed entry.)
-			this.renamePath(normalizePath(oldPath), normalizePath(file.path));
+			this.renamePath(normalizePath(oldPath), normalizePath(newPath));
 			// Un-confirm the id so pushFile below takes the `crdt_create` genesis
 			// branch (not the crdt_msg edit branch, which carries no path and
 			// can't move the row): the create for a LIVE id at the new path IS
 			// the relocation server-side (Phase E2, genesis_relocate_live).
-			this.unconfirmNoteId(this.noteIdMap?.get(file.path) ?? null);
-		}
-
-		// Push new path if it isn't ignored
-		if (!this.shouldIgnore(file.path)) {
-			await this.pushFile(file);
+			this.unconfirmNoteId(this.noteIdMap?.get(newPath) ?? null);
 		}
 	}
 
@@ -4559,11 +4739,17 @@ export class SyncEngine {
 	 *  table. Idempotent client-side (skips folders already in the set) and
 	 *  best-effort on the wire (server errors are warn-logged but don't fail
 	 *  the user's vault op). */
-	async handleFolderCreate(folder: TFolder): Promise<void> {
-		if (this.syncBlocked) return;
-		if (!this.ready) return;
+	async handleFolderCreate(folder: { path: string }): Promise<void> {
+		if (this.gateHolds()) {
+			this.gateJournal.add({ op: "folder-create", path: folder.path });
+			this.kickGateReplay();
+			return;
+		}
+		await this.createFolderNow(folder.path);
+	}
+
+	private async createFolderNow(path: string): Promise<void> {
 		if (!this.explicitFolders) return;
-		const path = folder.path;
 		if (this.shouldIgnore(path)) return;
 		if (this.explicitFolders.has(path)) return;
 
@@ -4580,12 +4766,18 @@ export class SyncEngine {
 	 *  the server tracks (in the explicit set) — unknown folders are no-ops
 	 *  since the server has nothing to clean. Even on server error we drop the
 	 *  local marker; the next pull will reconcile. */
-	async handleFolderDelete(folder: TFolder): Promise<void> {
-		if (this.syncBlocked) return;
-		if (!this.ready) return;
+	async handleFolderDelete(folder: { path: string }): Promise<void> {
+		if (this.gateHolds()) {
+			this.gateJournal.add({ op: "folder-delete", path: folder.path });
+			this.kickGateReplay();
+			return;
+		}
+		await this.deleteFolderNow(folder.path);
+	}
+
+	private async deleteFolderNow(path: string): Promise<void> {
 		if (this.suppressDeletes) return;
 		if (!this.explicitFolders) return;
-		const path = folder.path;
 		if (!this.explicitFolders.has(path)) return;
 
 		try {
@@ -9692,6 +9884,11 @@ export class SyncEngine {
 		// syncState was recorded (must run before prePullSync is snapshotted).
 		await this.invalidateIfVaultChanged();
 
+		// Journaled renames/deletes go first (#247): a pull over a rename still
+		// in the journal writes the note back at its old path, and the push leg
+		// would upload the renamed file as a second note.
+		await this.replayGateJournal();
+
 		// Snapshot lastSync before pull — pull updates it to server_time,
 		// which would cause pushModifiedFiles to miss files modified between
 		// the old and new lastSync values.
@@ -10039,6 +10236,9 @@ export class SyncEngine {
 		sinceTimestamp?: string,
 		base: { pushed: number; failed: number } = { pushed: 0, failed: 0 },
 	): Promise<{ pushed: number; failed: number }> {
+		// A renamed file still in the gate journal (#247) has no sync-state at its
+		// new path, so the sweep below would upload it as a brand-new note.
+		await this.replayGateJournal();
 		// Use ?? not || so an empty-string prePullSync (first connect, never
 		// synced) is preserved and maps to epoch below — || would discard "" and
 		// fall back to this.lastSync, which pull() just advanced to server_time,
