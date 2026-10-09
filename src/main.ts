@@ -2360,6 +2360,7 @@ export default class EngramSyncPlugin extends Plugin {
 
 		// Disconnect existing channel + invalidate any in-flight connectChannel()
 		// (its async getMe() may still be pending) so it can't spawn a zombie.
+		this.crdtOpQueue?.onLeft();
 		this.noteStream?.disconnect();
 		this.noteStream = null;
 		this.channelEpoch++;
@@ -2609,6 +2610,9 @@ export default class EngramSyncPlugin extends Plugin {
 						// drop never re-handshakes on rejoin — the write-only bug,
 						// deferred to the first disconnect instead of fixed.
 						this.indexRoom.setConnected(false);
+						// Held ops must not spend their attempts or TTL against a dead
+						// socket (2026-10-09: a minute of outage dropped a first sync).
+						this.crdtOpQueue?.onLeft();
 					}
 				};
 
@@ -2958,6 +2962,7 @@ export default class EngramSyncPlugin extends Plugin {
 						// Provider model: no crdt: topic → providers offline (buffer, don't send).
 						this.crdtManager?.setConnected(false);
 						this.indexRoom.setConnected(false);
+						this.crdtOpQueue?.onLeft();
 						// A later same-socket rejoin must re-fire STEP1s; resetAll clears the once-per-session guard.
 						this.crdtEnrollment?.resetAll();
 						if (reason === "crdt_proto_too_old") {
