@@ -12,6 +12,7 @@ import {
 	type WorkspaceLeaf,
 } from "obsidian";
 import { arrayBufferToBase64, base64ToArrayBuffer, type EngramApi } from "./api";
+import { expBackoff } from "./backoff";
 import type { BaseStore } from "./base-store";
 import type { GenesisOutcome } from "./channel";
 import { fnv1a, fnv1aBase64 } from "./content-hash";
@@ -325,6 +326,12 @@ const MIME_TYPES: Record<string, string> = {
  *  force pipeline): at most this many pushFile calls outstanding at once. */
 const PUSH_BATCH_SIZE = 10;
 
+/** First OfflineQueue retry delay after a transient failure; doubles per
+ *  failure up to OFFLINE_RETRY_MAX_MS. A failing entry waits out its backoff
+ *  while the drain moves on to the entries behind it. */
+export const OFFLINE_RETRY_BASE_MS = 5_000;
+export const OFFLINE_RETRY_MAX_MS = 5 * 60_000;
+
 type CrdtCatchupSinceFn = (
 	cursorSeq: number,
 	limit?: number,
@@ -585,6 +592,9 @@ export class SyncEngine {
 	private healthCheckFailures = 0;
 	/** In-flight queue flush, for single-flight coalescing (see flushQueue). */
 	private flushInFlight: Promise<number> | null = null;
+	/** Fires the drain when the earliest backed-off queue entry comes due.
+	 *  Without it a backoff only ended when something unrelated flushed. */
+	private queueRetryTimer: number | null = null;
 	private ready = false;
 	/** When true, all sync actions (file events, stream events, bulk methods)
 	 *  short-circuit to a no-op. Controlled by the plugin layer based on
@@ -5762,6 +5772,14 @@ export class SyncEngine {
 					mtime: file.stat.mtime / 1000,
 					timestamp: Date.now(),
 					vaultId: this.settings.vaultId ?? undefined,
+				});
+			} else if (!classified.terminal) {
+				// Transient, but past RETRY_CAP: no queue entry is written. The file
+				// stays untracked for the self-heal sweep; report the give-up.
+				rlog().anomaly("push", "push_gave_up", {
+					attempts,
+					attachment: isBinary,
+					network: classified.category === "network",
 				});
 			}
 			// Only true connection loss (no HTTP response) takes the plugin
@@ -11050,9 +11068,25 @@ export class SyncEngine {
 			// Transient and under the cap: persist the bumped count (survives
 			// reload) and stop this pass. Deliberately records NO issue — a
 			// transient blip stays silent until it exhausts its retries.
-			await this.queue.enqueue({ ...entry, attempts });
+			await this.queue.enqueue({
+				...entry,
+				attempts,
+				nextAttemptAt:
+					this.time.now() +
+					expBackoff(OFFLINE_RETRY_BASE_MS, attempts - 1, OFFLINE_RETRY_MAX_MS),
+			});
 			this.maybeGoOffline(e);
 			return "retry";
+		}
+		// Retries exhausted on a TRANSIENT failure: the entry leaves the queue.
+		// The file stays untracked, so the self-heal sweep retries it later, but
+		// the give-up itself must be visible server-side. Counts only.
+		if (!classified.terminal) {
+			rlog().anomaly("queue", "offline_queue_gave_up", {
+				attempts,
+				attachment: entry.kind === "attachment",
+				network: classified.category === "network",
+			});
 		}
 		// Terminal, or transient past RETRY_CAP. A crdt entry's content lives in
 		// the durable Y.Doc (keyed by noteId, not in this content-free entry), so
@@ -11195,7 +11229,33 @@ export class SyncEngine {
 			// or once a push tripped maybeGoOffline — don't hammer the server.
 			if (flushed === 0 || this.offline) break;
 		}
+		this.scheduleQueueRetry();
 		return total;
+	}
+
+	/** Arm one timer for the earliest backed-off entry. Offline, the health
+	 *  check owns recovery (goOnline flushes); a closed gate reopens through
+	 *  its own flush. Re-armed after every drain, so it never stacks. */
+	private scheduleQueueRetry(): void {
+		if (this.queueRetryTimer !== null) {
+			this.time.clearTimeout(this.queueRetryTimer);
+			this.queueRetryTimer = null;
+		}
+		if (this.offline || this.syncBlocked) return;
+		let due = Number.POSITIVE_INFINITY;
+		for (const e of this.queue.all()) {
+			if (e.nextAttemptAt !== undefined && e.nextAttemptAt < due) due = e.nextAttemptAt;
+		}
+		if (due === Number.POSITIVE_INFINITY) return;
+		this.queueRetryTimer = this.time.setTimeout(
+			() => {
+				this.queueRetryTimer = null;
+				void this.flushQueue().catch((e: unknown) => {
+					rlog().warn("queue", `backoff retry flush failed: ${errMsg(e)}`);
+				});
+			},
+			Math.max(0, due - this.time.now()),
+		);
 	}
 
 	private async runFlushQueue(): Promise<number> {
@@ -11213,6 +11273,11 @@ export class SyncEngine {
 			// entries stay queued and drain when the gate reopens (re-auth →
 			// applySyncGate → fullSync → pushModifiedFiles → flushQueue).
 			if (this.syncBlocked) break;
+
+			// Backing off after a transient failure: skip it and keep draining
+			// the entries behind it (head-of-line blocking, 2026-10-09). The
+			// retry timer brings the drain back when it comes due.
+			if ((entry.nextAttemptAt ?? 0) > this.time.now()) continue;
 
 			// The entry was created under a DIFFERENT vault. `this.api` points at
 			// whichever vault is active now, so delivering it executes against the
@@ -11499,9 +11564,12 @@ export class SyncEngine {
 				this.issues.clear(entry.path);
 				flushed++;
 			} catch (e) {
-				// Terminal or retries-exhausted parks (issue + dequeue) and keeps
-				// flushing; a transient under RETRY_CAP re-queues and stops this pass.
-				if ((await this.handleFlushFailure(entry, e)) === "retry") break;
+				// Terminal or retries-exhausted parks (issue + dequeue); a transient
+				// under RETRY_CAP re-queues with a backoff. Either way the pass moves
+				// on to the next entry, unless the failure took us OFFLINE: then
+				// every remaining push would fail the same way.
+				await this.handleFlushFailure(entry, e);
+				if (this.offline) break;
 			}
 		}
 
@@ -11548,6 +11616,8 @@ export class SyncEngine {
 		if (this.degradedNoticeTimer) this.time.clearTimeout(this.degradedNoticeTimer);
 		this.degradedNoticeTimer = null;
 		this.stopHealthCheck();
+		if (this.queueRetryTimer !== null) this.time.clearTimeout(this.queueRetryTimer);
+		this.queueRetryTimer = null;
 		this.queue.destroy();
 	}
 }
