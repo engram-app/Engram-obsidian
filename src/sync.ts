@@ -2718,6 +2718,7 @@ export class SyncEngine {
 		private time: TimeProvider = new DefaultTimeProvider(),
 	) {
 		this.parseIgnorePatterns();
+		this.selfHealSince = this.time.now();
 	}
 
 	updateSettings(settings: EngramSyncSettings): void {
@@ -10320,6 +10321,87 @@ export class SyncEngine {
 		return this.pushModifiedInFlight;
 	}
 
+	/** Files a push sweep should visit: every never-synced (untracked) file,
+	 *  plus tracked files modified after `sinceMs`. An untracked note whose
+	 *  crdt_create is still pending in the op queue is left to the queue: the
+	 *  queue delivers it, and if it ever DROPS it the file is still untracked,
+	 *  so the next sweep picks it up. Pushing it here too would double every
+	 *  create on exactly the slow uplink that held them. */
+	private pushCandidates(sinceMs: number): TFile[] {
+		return this.app.vault.getFiles().filter((f: TFile) => {
+			if (!this.isSyncable(f) || this.shouldIgnore(f.path)) return false;
+			if (!this.syncState.has(f.path)) {
+				const id = this.noteIdMap?.get(f.path);
+				return !(id && this.crdtHasPendingOp?.(id));
+			}
+			return f.stat.mtime > sinceMs;
+		});
+	}
+
+	/** Files modified before this are the startup push's job (it runs
+	 *  `pushModifiedFiles` with the gate open, and `fullSync` does when the gate
+	 *  opens later), so the sweep only re-reads tracked files edited since. It
+	 *  advances after every clean sweep. Untracked files ignore it entirely. */
+	private selfHealSince = 0; // set to construction time in the constructor
+
+	/** Self-heal: push whatever the server is missing, without user action.
+	 *
+	 *  Runs after every crdt: topic (re)join and on the periodic poll. Reuses
+	 *  `pushModifiedFiles`, so a note goes through the same genesis
+	 *  crdt_create as any first push (room-free, #1409) and an attachment
+	 *  through the same upload. Picks up what nothing else would: a create the
+	 *  op queue dropped, an attachment parked past RETRY_CAP, a file whose push
+	 *  failed while no queue entry was written.
+	 *
+	 *  Never runs while the sync gate is closed (a first-run user who has not
+	 *  chosen a direction must not have their vault pushed), while offline, or
+	 *  while any pull/push/full sync is already running: those own the vault
+	 *  for their duration and a sweep that joined them would schedule a second
+	 *  pass for nothing. Cheap when converged: one `getFiles()` filter, no reads.
+	 */
+	async selfHealSweep(): Promise<{
+		ran: boolean;
+		candidates: number;
+		pushed: number;
+		failed: number;
+	}> {
+		const idle = { ran: false, candidates: 0, pushed: 0, failed: 0 };
+		if (
+			this.syncBlocked ||
+			this.offline ||
+			this.pulling ||
+			this.seqReplayRunning ||
+			this.pushModifiedInFlight ||
+			this.bulkDepth > 0
+		) {
+			return idle;
+		}
+		const startedAt = this.time.now();
+		const candidates = this.pushCandidates(this.selfHealSince);
+		if (candidates.length === 0) {
+			this.selfHealSince = startedAt;
+			return { ...idle, ran: true };
+		}
+		const untracked = candidates.filter((f) => !this.syncState.has(f.path)).length;
+		const { pushed, failed } = await this.pushModifiedFiles(
+			new Date(this.selfHealSince).toISOString(),
+		);
+		// A failed file keeps its old mtime; leave the window open so the next
+		// sweep re-reads it instead of stepping past it.
+		if (failed === 0) this.selfHealSince = startedAt;
+		// Only when the sweep actually healed or hit something: a converged
+		// vault re-reading its own edits is not news. Counts only, never a path.
+		if (pushed > 0 || failed > 0) {
+			rlog().anomaly("sync", "self_heal_sweep", {
+				candidates: candidates.length,
+				untracked,
+				pushed,
+				failed,
+			});
+		}
+		return { ran: true, candidates: candidates.length, pushed, failed };
+	}
+
 	private async pushModifiedFilesInner(
 		sinceTimestamp?: string,
 		base: { pushed: number; failed: number } = { pushed: 0, failed: 0 },
@@ -10333,14 +10415,9 @@ export class SyncEngine {
 		// gating every tracked file behind `mtime > now` and skipping them all.
 		const since = sinceTimestamp ?? this.lastSync;
 		const sinceMs = since ? new Date(since).getTime() : 0;
-		const files = this.app.vault.getFiles();
 		let pushed = 0;
 
-		const toSync = files.filter((f: TFile) => {
-			if (!this.isSyncable(f) || this.shouldIgnore(f.path)) return false;
-			if (!this.syncState.has(f.path)) return true;
-			return f.stat.mtime > sinceMs;
-		});
+		const toSync = this.pushCandidates(sinceMs);
 		devLog().log("push", `pushModifiedFiles: ${toSync.length} files modified since ${since}`);
 		// warn, not info: client `info` never reaches Loki. A bulk sweep firing
 		// repeatedly is the signature of a re-upload loop, and in 2026-08 that

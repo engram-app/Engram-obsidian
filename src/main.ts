@@ -2482,6 +2482,21 @@ export default class EngramSyncPlugin extends Plugin {
 		// The old REST /updates fallback delivered regardless of topic state,
 		// masking the missing kick.
 		void this.syncEngine.flushQueue();
+		// Self-heal: push anything the server still lacks (a create the op queue
+		// dropped, an attachment parked past its retry cap). Before this, only
+		// startup or a manual sync ever re-picked an untracked file, so a first
+		// sync that lost creates mid-flap stayed partial forever (2026-10-09).
+		// Gated inside on the sync gate and on any sync already running.
+		await this.runSelfHealSweep();
+	}
+
+	/** The one call site shape for the sweep: never throws into its trigger. */
+	private async runSelfHealSweep(): Promise<void> {
+		try {
+			await this.syncEngine.selfHealSweep();
+		} catch (e) {
+			rlog().warn("sync", `self-heal sweep failed: ${errMsg(e)}`);
+		}
 	}
 
 	/** Attempt to connect the WebSocket channel with retry on getMe() failure. */
@@ -2912,9 +2927,10 @@ export default class EngramSyncPlugin extends Plugin {
 						// reconcile + seq replay.
 						this.crdtManager?.setConnected(true);
 						// Deliver any HELD create/delete ops FIRST, then reconcile the
-						// id-map, re-enroll open notes, and run the socket catch-up.
-						// onCrdtTopicJoined re-creates NOTHING (it is catch-up/pull-only,
-						// no pushModifiedFiles), so this ordering is not a re-push guard.
+						// id-map, re-enroll open notes, run the socket catch-up, and
+						// finally the self-heal sweep. The sweep skips any note whose
+						// create is still pending here (pushCandidates), so flushing
+						// first is what lets it see only what the queue could NOT deliver.
 						// The double-crdt_create guard lives elsewhere: the queue coalesces
 						// to one create per docId, pushFile's genesis branch is gated on
 						// !hasServerNote (a later edit after the ack's head-flip routes as a
@@ -3576,6 +3592,10 @@ export default class EngramSyncPlugin extends Plugin {
 					// biome-ignore lint/suspicious/noConsole: error boundary
 					console.error("Engram Sync: periodic catch-up failed", e);
 				}
+				// Then push what the server still lacks, whether or not the pull
+				// leg worked. Gated inside on the sync gate, offline, and any sync
+				// already running.
+				await this.runSelfHealSweep();
 			})();
 		}, EngramSyncPlugin.FALLBACK_POLL_MS);
 		this.registerInterval(this.syncInterval);
