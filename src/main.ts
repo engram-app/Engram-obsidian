@@ -40,7 +40,7 @@ import type { ProviderRegistry } from "./crdt/provider-registry";
 import { ensureDocSchema } from "./crdt/schema";
 import { type CrdtWiring, createCrdtWiring } from "./crdt/wiring";
 import { makeCrdtOpSend } from "./crdt-op-dispatch";
-import { type CrdtOp, CrdtOpQueue } from "./crdt-op-queue";
+import { type CrdtOp, CrdtOpQueue, makeDropReporter } from "./crdt-op-queue";
 import { createDebugApi, installDebugApi, uninstallDebugApi } from "./debug-api";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
 import { isMarkdownPath } from "./file-kind";
@@ -685,6 +685,11 @@ export default class EngramSyncPlugin extends Plugin {
 		// Durable outbound CRDT op queue (create/delete). ONE plugin-lifetime
 		// instance whose `send` dispatches over the CURRENT noteStream; the wiring
 		// (onJoined flush, retry tick, enqueue hook) is set below/in connectChannel.
+		// Drops ship as anomalies (warn, even with diagnostics off), aggregated
+		// per reason and flushed on the retry tick below.
+		const dropReporter = makeDropReporter((code, counts) =>
+			rlog().anomaly("crdt", code, counts),
+		);
 		this.crdtOpQueue = new CrdtOpQueue({
 			send: makeCrdtOpSend({
 				channel: () => this.noteStream,
@@ -737,11 +742,13 @@ export default class EngramSyncPlugin extends Plugin {
 			// Read live, never captured: the queue re-checks each op against the
 			// vault we are syncing RIGHT NOW, at send time.
 			currentVaultId: () => this.settings.vaultId ?? null,
-			onDrop: (op, reason) =>
+			onDrop: (op, reason) => {
+				dropReporter.onDrop(op, reason);
 				rlog().warn(
 					"crdt",
 					`crdt_${op.kind} dropped (${reason}) without delivery: ${op.docId}`,
-				),
+				);
+			},
 		});
 		// Persist on every mutation (mirrors OfflineQueue); the flat op list is
 		// re-listed in savePluginData's wholesale blob via crdtOpQueue.all().
@@ -750,7 +757,11 @@ export default class EngramSyncPlugin extends Plugin {
 		});
 		// Drive retries: a due op past its backoff is re-sent on each tick (no-op
 		// until joined). registerInterval auto-clears on unload.
-		this.registerInterval(window.setInterval(() => void this.crdtOpQueue?.tick(), 5000));
+		this.registerInterval(
+			window.setInterval(() => {
+				void this.crdtOpQueue?.tick().finally(() => dropReporter.flush());
+			}, 5000),
+		);
 		// Wire the SyncEngine's durable create/delete enqueue hook to the queue.
 		// The pending-op probe feeds the evidence rule's supersede exception: a
 		// create-then-delete must coalesce in-queue, not resurrect (#416 review).

@@ -21,6 +21,7 @@ import {
 	type CrdtOpQueueOptions,
 	type DropReason,
 	MAX_BACKOFF_MS,
+	makeDropReporter,
 	type SendResult,
 } from "../src/crdt-op-queue";
 
@@ -575,5 +576,39 @@ describe("join state (flapping channel)", () => {
 				.map((o) => o.docId)
 				.sort(),
 		).toEqual(["del", "del2"]);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 10. Drops are reported server-side (counts and reasons, never a path)
+// ---------------------------------------------------------------------------
+
+describe("drop reporter", () => {
+	test("aggregates drops per reason into one anomaly each, then resets", () => {
+		const lines: Array<{ code: string; counts: Record<string, number | boolean> }> = [];
+		const r = makeDropReporter((code, counts) => lines.push({ code, counts }));
+
+		for (let i = 0; i < 150; i++) r.onDrop(makeOp(`n${i}`, "create"), "overflow");
+		r.onDrop(makeOp("d", "delete"), "max-attempts");
+		r.onDrop(makeOp("c", "create"), "max-attempts");
+		r.flush();
+
+		expect(lines).toEqual([
+			{ code: "crdt_op_dropped_overflow", counts: { count: 150, creates: 150 } },
+			{ code: "crdt_op_dropped_max_attempts", counts: { count: 2, creates: 1 } },
+		]);
+		r.flush();
+		expect(lines.length).toBe(2); // nothing new, nothing re-sent
+	});
+
+	test("every reason maps to a valid anomaly slug", () => {
+		const codes: string[] = [];
+		const r = makeDropReporter((code) => codes.push(code));
+		for (const reason of ["ttl", "overflow", "max-attempts", "vault-changed"] as DropReason[]) {
+			r.onDrop(makeOp(reason, "create"), reason);
+		}
+		r.flush();
+		for (const code of codes) expect(code).toMatch(/^[a-z0-9_]+$/);
+		expect(codes.length).toBe(4);
 	});
 });
