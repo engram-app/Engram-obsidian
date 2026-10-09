@@ -9,6 +9,7 @@
 import { describe, expect, test } from "bun:test";
 import EngramSyncPlugin from "../src/main";
 import { destroyRemoteLog, initRemoteLog } from "../src/remote-log";
+import { computeSyncFingerprint } from "../src/sync-fingerprint";
 import { planLoadErrorMessage } from "../src/sync-preview-modal";
 import type { SyncStatus } from "../src/types";
 
@@ -261,6 +262,13 @@ describe("opening the sync gate re-runs the catch-up (#425)", () => {
 					calls.push("catchupViaSeqReplay");
 					return {};
 				},
+				isSyncBlocked: () => true,
+				discardGateJournal() {
+					calls.push("discardGateJournal");
+				},
+				replayGateJournal: async () => {
+					calls.push("replayGateJournal");
+				},
 			},
 			crdtEnrollment: {
 				resetAll() {
@@ -335,6 +343,164 @@ describe("opening the sync gate re-runs the catch-up (#425)", () => {
 			await destroyRemoteLog();
 		}
 		expect(lines.filter((l) => l.startsWith("sync_gate_opened"))).toEqual([]);
+	});
+
+	// #247: the modal's sync direction reconciles the vault itself. Replaying
+	// gate-window deletes on top would override the user's pick.
+	test("markSyncGateAccepted discards the gate journal before unblocking", async () => {
+		const { fake, calls } = fakePlugin();
+
+		await fake.markSyncGateAccepted();
+
+		expect(calls).not.toContain("replayGateJournal");
+		expect(calls.indexOf("discardGateJournal")).toBeGreaterThanOrEqual(0);
+		expect(calls.indexOf("discardGateJournal")).toBeLessThan(
+			calls.indexOf("setSyncBlocked(false)"),
+		);
+	});
+
+	test("smart-merge keeps the journal and replays it before the catch-up", async () => {
+		const { fake, calls } = fakePlugin();
+
+		await fake.markSyncGateAccepted({ replayGateJournal: true });
+
+		expect(calls).not.toContain("discardGateJournal");
+		expect(calls.indexOf("setSyncBlocked(false)")).toBeLessThan(
+			calls.indexOf("replayGateJournal"),
+		);
+		expect(calls.indexOf("replayGateJournal")).toBeLessThan(
+			calls.indexOf("catchupViaSeqReplay"),
+		);
+	});
+
+	test("runSyncFromChoice: only smart-merge asks to replay the journal", async () => {
+		const seen: Record<string, unknown> = {};
+		for (const choice of [
+			"smart-merge",
+			"pull-all-delete-local",
+			"pull-all-keep-local",
+			"push-all-delete-remote",
+			"push-all-keep-remote",
+		] as const) {
+			const fake = Object.assign(Object.create(EngramSyncPlugin.prototype), {
+				async markSyncGateAccepted(opts?: { replayGateJournal?: boolean }) {
+					seen[choice] = opts?.replayGateJournal ?? false;
+				},
+				syncEngine: {
+					fullSync: async () => ({ pulled: 0, pushed: 0 }),
+					pullAll: async () => 0,
+					pushAll: async () => 0,
+					snapshotLocalPaths: () => new Set<string>(),
+				},
+			});
+			await fake.runSyncFromChoice(choice);
+		}
+		expect(seen).toEqual({
+			"smart-merge": true,
+			"pull-all-delete-local": false,
+			"pull-all-keep-local": false,
+			"push-all-delete-remote": false,
+			"push-all-keep-remote": false,
+		});
+	});
+
+	test("re-picking a direction on an already-open gate keeps the journal", async () => {
+		const { fake, calls } = fakePlugin();
+		fake.syncEngine.isSyncBlocked = () => false;
+
+		await fake.markSyncGateAccepted();
+
+		expect(calls).not.toContain("discardGateJournal");
+	});
+
+	test("applySyncGate replays the gate journal when it reopens for the accepted fingerprint", async () => {
+		const { fake, calls } = fakePlugin();
+		fake.syncGateAcceptedFor = await computeSyncFingerprint(fake.settings);
+
+		expect(await fake.applySyncGate()).toBe(true);
+
+		expect(calls).toEqual(["setSyncBlocked(false)", "replayGateJournal"]);
+	});
+
+	test("applySyncGate does not replay while the gate stays closed", async () => {
+		const { fake, calls } = fakePlugin();
+		fake.syncGateAcceptedFor = "some-other-fingerprint";
+
+		expect(await fake.applySyncGate()).toBe(false);
+
+		expect(calls).toEqual(["setSyncBlocked(true)"]);
+	});
+
+	test("startup replays the gate journal after the id-map reconcile, even if it fails", async () => {
+		for (const reconcileFails of [false, true]) {
+			const order: string[] = [];
+			const fake = Object.assign(Object.create(EngramSyncPlugin.prototype), {
+				syncEngine: {
+					reconcileNoteIdMapFromManifest: async () => {
+						order.push("reconcile");
+						if (reconcileFails) throw new Error("offline");
+						return 0;
+					},
+					replayGateJournal: async () => {
+						order.push("replay");
+					},
+				},
+			});
+
+			await fake.reconcileThenReplayGateJournal();
+
+			expect(order).toEqual(["reconcile", "replay"]);
+		}
+	});
+
+	test("savePluginData persists the gate journal with its vault", async () => {
+		let written: Record<string, unknown> = {};
+		const journal = [{ op: "delete", path: "a.md" }];
+		const fake = Object.assign(Object.create(EngramSyncPlugin.prototype), {
+			settings: { vaultId: "v1" },
+			deviceId: "d",
+			noteIdMap: { toJSON: () => ({}) },
+			noteIdsOwner: "v1",
+			crdtOpQueue: { all: () => [] },
+			syncGateAcceptedFor: null,
+			syncEngine: {
+				getCatchupSeq: () => 0,
+				getCatchupId: () => null,
+				getManifestSeq: () => 0,
+				queue: { persistable: () => [] },
+				exportSyncState: () => ({}),
+				getSyncStateVaultId: () => "v1",
+				exportHashes: () => ({}),
+				issues: { serialize: () => [] },
+				ignoredFiles: { serialize: () => [] },
+				exportGateJournal: () => journal,
+			},
+			async writePluginData(d: Record<string, unknown>) {
+				written = d;
+			},
+		});
+
+		await fake.savePluginData("");
+
+		expect(written.gateJournal).toEqual(journal);
+		expect(written.gateJournalVaultId).toBe("v1");
+	});
+
+	test("a persisted gate journal is restored only into the vault it was recorded for", () => {
+		const imported: unknown[] = [];
+		const fake = Object.assign(Object.create(EngramSyncPlugin.prototype), {
+			settings: { vaultId: "v1" },
+			syncEngine: { importGateJournal: (e: unknown) => imported.push(e) },
+		});
+		const journal = [{ op: "delete", path: "a.md" }];
+
+		fake.hydrateGateJournal({ gateJournal: journal, gateJournalVaultId: "v2" });
+		fake.hydrateGateJournal({ gateJournal: journal, gateJournalVaultId: null });
+		fake.hydrateGateJournal(null);
+		expect(imported).toEqual([]);
+
+		fake.hydrateGateJournal({ gateJournal: journal, gateJournalVaultId: "v1" });
+		expect(imported).toEqual([journal]);
 	});
 
 	test("an empty fingerprint neither unblocks nor pulls", async () => {

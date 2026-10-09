@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
 import "fake-indexeddb/auto";
-import { TFile } from "obsidian";
+import { TFile, TFolder } from "obsidian";
 import * as Y from "yjs";
 import type { EngramApi } from "../src/api";
 import { CONTENT_KEY } from "../src/crdt/frontmatter-codec";
@@ -10,6 +10,7 @@ import { LimitExceededError } from "../src/limit-error";
 import { rlog } from "../src/remote-log";
 import { fnv1a, SyncEngine } from "../src/sync";
 import type { SyncedFileTable } from "../src/synced-file";
+import { ManualTimeProvider } from "../src/time-provider";
 import { DEFAULT_SETTINGS } from "../src/types";
 import { __noticeCapture } from "./__mocks__/obsidian";
 
@@ -4185,6 +4186,649 @@ describe("SyncEngine sync-blocked gate", () => {
 		// debounces and may not flush within 50ms. The key assertion is that
 		// the early-return is gone (no exception, state changed).
 		expect(engine.isSyncBlocked()).toBe(false);
+	});
+});
+
+// #247: vault events during a gate window (syncBlocked / pre-ready) used to be
+// dropped. A delete never reached the server and a rename left both paths
+// live. They are now journaled in event order and replayed on reopen.
+describe("SyncEngine gate-window journal (#247)", () => {
+	function gated({ ready = true } = {}) {
+		const engine = createEngine({}, { ready });
+		const enqueued: Array<{ kind: string; docId: string; path?: string }> = [];
+		const crdtCreate = mock(async (docId: string) => ({ docId, seeded: false }));
+		engine.setCrdtManager({
+			applyLocalEdit: mock(async (_id: string, c: string) => c),
+			encodeGenesisUpdate: mock((c: string) => new TextEncoder().encode(c)),
+			removeDoc: mock(async () => undefined),
+		} as any);
+		engine.setCrdtCreate(crdtCreate);
+		engine.setCrdtLiveCheck(() => true);
+		engine.setCrdtEnqueue((op) => enqueued.push(op));
+		const ids = new NoteIdMap();
+		engine.setNoteIdMap(ids);
+		const disk = new Map<string, TFile>();
+		const lookup = (p: string) => disk.get(p) ?? null;
+		mockApp.vault.getFileByPath.mockImplementation(lookup);
+		mockApp.vault.getAbstractFileByPath.mockImplementation(lookup);
+		/** A note this device has synced: id mapped, evidence recorded, on disk. */
+		const synced = (path: string, id: string) => {
+			ids.set(path, id);
+			(engine as any).syncState.set(path, { hash: 1 });
+			(engine as unknown as { confirmNoteId(id: string): void }).confirmNoteId(id);
+			disk.set(path, new TFile(path, 1));
+		};
+		/** Apply a rename to the fake disk, then fire the vault event. */
+		const rename = async (from: string, to: string) => {
+			disk.delete(from);
+			const f = new TFile(to, 1);
+			disk.set(to, f);
+			await engine.handleRename(f, from);
+		};
+		const remove = async (path: string) => {
+			const f = disk.get(path) ?? new TFile(path, 1);
+			disk.delete(path);
+			await engine.handleDelete(f);
+		};
+		const deletes = () => enqueued.filter((op) => op.kind === "delete");
+		const creates = () => crdtCreate.mock.calls.map((c) => [c[0], c[1]]);
+		return { engine, ids, disk, synced, rename, remove, deletes, creates, enqueued };
+	}
+
+	test("a delete while blocked reaches the server once the gate reopens", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.engine.setSyncBlocked(true);
+
+		await g.remove("Notes/A.md");
+		expect(g.deletes()).toEqual([]);
+
+		g.engine.setSyncBlocked(false);
+		await g.engine.replayGateJournal();
+
+		expect(g.deletes()).toEqual([{ kind: "delete", docId: "id-a", path: "Notes/A.md" }]);
+	});
+
+	test("a rename while blocked relocates the SAME id on reopen, no delete", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.engine.setSyncBlocked(true);
+
+		await g.rename("Notes/A.md", "Notes/B.md");
+		expect(g.creates()).toEqual([]);
+
+		g.engine.setSyncBlocked(false);
+		await g.engine.replayGateJournal();
+
+		expect(g.creates()).toEqual([["id-a", "Notes/B.md"]]);
+		expect(g.deletes()).toEqual([]);
+		expect(g.ids.get("Notes/B.md")).toBe("id-a");
+		expect(g.ids.get("Notes/A.md")).toBeNull();
+	});
+
+	test("a rename chain a→b→c lands as one move to c", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.engine.setSyncBlocked(true);
+
+		await g.rename("Notes/A.md", "Notes/B.md");
+		await g.rename("Notes/B.md", "Notes/C.md");
+		g.engine.setSyncBlocked(false);
+		await g.engine.replayGateJournal();
+
+		expect(g.creates()).toEqual([["id-a", "Notes/C.md"]]);
+		expect(g.deletes()).toEqual([]);
+	});
+
+	test("rename then delete deletes the moved note's id, pushes nothing", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.engine.setSyncBlocked(true);
+
+		await g.rename("Notes/A.md", "Notes/B.md");
+		await g.remove("Notes/B.md");
+		g.engine.setSyncBlocked(false);
+		await g.engine.replayGateJournal();
+
+		expect(g.creates()).toEqual([]);
+		expect(g.deletes().map((d) => d.docId)).toEqual(["id-a"]);
+	});
+
+	test("rename a→b, then a new a is created and deleted: the moved note survives", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.engine.setSyncBlocked(true);
+
+		await g.rename("Notes/A.md", "Notes/B.md");
+		g.disk.set("Notes/A.md", new TFile("Notes/A.md", 2));
+		await g.remove("Notes/A.md");
+		g.engine.setSyncBlocked(false);
+		await g.engine.replayGateJournal();
+
+		expect(g.deletes()).toEqual([]);
+		expect(g.creates()).toEqual([["id-a", "Notes/B.md"]]);
+	});
+
+	test("delete x, then rename y→x: x's id is deleted and y's id moves to x", async () => {
+		const g = gated();
+		g.synced("Notes/X.md", "id-x");
+		g.synced("Notes/Y.md", "id-y");
+		g.engine.setSyncBlocked(true);
+
+		await g.remove("Notes/X.md");
+		await g.rename("Notes/Y.md", "Notes/X.md");
+		g.engine.setSyncBlocked(false);
+		await g.engine.replayGateJournal();
+
+		expect(g.deletes().map((d) => d.docId)).toEqual(["id-x"]);
+		expect(g.creates()).toEqual([["id-y", "Notes/X.md"]]);
+	});
+
+	test("a rename that returns to its origin pushes nothing", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.engine.setSyncBlocked(true);
+
+		await g.rename("Notes/A.md", "Notes/B.md");
+		await g.rename("Notes/B.md", "Notes/A.md");
+		g.engine.setSyncBlocked(false);
+		await g.engine.replayGateJournal();
+
+		expect(g.deletes()).toEqual([]);
+		expect(g.ids.get("Notes/A.md")).toBe("id-a");
+	});
+
+	test("a delete of a never-synced file still sends nothing (evidence rule holds)", async () => {
+		const g = gated();
+		g.engine.setSyncBlocked(true);
+		g.disk.set("Notes/Local.md", new TFile("Notes/Local.md", 1));
+
+		await g.remove("Notes/Local.md");
+		g.engine.setSyncBlocked(false);
+		await g.engine.replayGateJournal();
+
+		expect(g.deletes()).toEqual([]);
+		expect(mockApi.deleteNote).not.toHaveBeenCalled();
+	});
+
+	test("events before setReady replay once the engine is ready", async () => {
+		const g = gated({ ready: false });
+		g.synced("Notes/A.md", "id-a");
+
+		await g.remove("Notes/A.md");
+		await g.engine.replayGateJournal(); // still not ready: no-op, kept
+		expect(g.deletes()).toEqual([]);
+
+		g.engine.setReady();
+		await g.engine.replayGateJournal();
+
+		expect(g.deletes().map((d) => d.docId)).toEqual(["id-a"]);
+	});
+
+	test("replay while still blocked does nothing and keeps the journal", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.engine.setSyncBlocked(true);
+		await g.remove("Notes/A.md");
+
+		await g.engine.replayGateJournal();
+		expect(g.deletes()).toEqual([]);
+
+		g.engine.setSyncBlocked(false);
+		await g.engine.replayGateJournal();
+		expect(g.deletes().map((d) => d.docId)).toEqual(["id-a"]);
+	});
+
+	test("replay drains: a second replay sends nothing new", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.engine.setSyncBlocked(true);
+		await g.remove("Notes/A.md");
+		g.engine.setSyncBlocked(false);
+
+		await g.engine.replayGateJournal();
+		await g.engine.replayGateJournal();
+
+		expect(g.deletes()).toHaveLength(1);
+	});
+
+	test("discardGateJournal drops everything (a user-chosen sync direction supersedes it)", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.engine.setSyncBlocked(true);
+		await g.remove("Notes/A.md");
+
+		g.engine.discardGateJournal();
+		g.engine.setSyncBlocked(false);
+		await g.engine.replayGateJournal();
+
+		expect(g.deletes()).toEqual([]);
+	});
+
+	test("a vault change drops the journal: old-vault events never hit the new vault", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.engine.setSyncBlocked(true);
+		await g.remove("Notes/A.md");
+
+		await g.engine.resetForVaultChange();
+		g.engine.setSyncBlocked(false);
+		await g.engine.replayGateJournal();
+
+		expect(g.deletes()).toEqual([]);
+	});
+
+	test("a folder delete while blocked reaches the server on reopen", async () => {
+		const g = gated();
+		const deleteFolder = mock().mockResolvedValue(undefined);
+		(mockApi as any).deleteFolder = deleteFolder;
+		const folders = new Set(["Archive"]);
+		(g.engine as any).explicitFolders = {
+			has: (p: string) => folders.has(p),
+			delete: async (p: string) => folders.delete(p),
+			add: async (p: string) => folders.add(p),
+		};
+		g.engine.setSyncBlocked(true);
+
+		await g.engine.handleFolderDelete(new TFolder("Archive") as any);
+		expect(deleteFolder).not.toHaveBeenCalled();
+
+		g.engine.setSyncBlocked(false);
+		await g.engine.replayGateJournal();
+
+		expect(deleteFolder).toHaveBeenCalledWith("Archive");
+	});
+
+	test("a live rename that arrives before the backlog drains queues behind it", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.engine.setSyncBlocked(true);
+		await g.rename("Notes/A.md", "Notes/B.md");
+		g.engine.setSyncBlocked(false);
+
+		// No explicit replay yet: the gate is open but a→b is still journaled.
+		// Acting on b→c live would find no id at b and mint a second note.
+		await g.rename("Notes/B.md", "Notes/C.md");
+		await g.engine.replayGateJournal();
+
+		expect(g.creates()).toEqual([["id-a", "Notes/C.md"]]);
+		expect(g.ids.get("Notes/C.md")).toBe("id-a");
+	});
+
+	test("before the owner's first replay, events queue behind the backlog but do not drain it", async () => {
+		// Startup: setReady, then the id-map reconcile goes to the network, THEN
+		// main replays. An event in that gap must not start the replay early,
+		// against the not-yet-reconciled map.
+		const g = gated({ ready: false });
+		g.synced("Notes/A.md", "id-a");
+		g.synced("Notes/X.md", "id-x");
+		await g.remove("Notes/A.md");
+		g.engine.setReady();
+
+		await g.remove("Notes/X.md");
+		await new Promise((r) => setTimeout(r, 20));
+		expect(g.deletes()).toEqual([]);
+
+		await g.engine.replayGateJournal();
+		expect(g.deletes().map((d) => d.docId)).toEqual(["id-a", "id-x"]);
+	});
+
+	test("a backlog drains on its own when the next event kicks it", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.synced("Notes/X.md", "id-x");
+		await g.engine.replayGateJournal(); // the owner's first replay arms kicks
+		g.engine.setSyncBlocked(true);
+		await g.remove("Notes/A.md");
+		g.engine.setSyncBlocked(false);
+
+		await g.remove("Notes/X.md"); // kicks the replay; nobody calls it
+		await new Promise((r) => setTimeout(r, 20));
+
+		expect(g.deletes().map((d) => d.docId)).toEqual(["id-a", "id-x"]);
+	});
+
+	test("once drained, events go live again (the backlog never sticks)", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.synced("Notes/X.md", "id-x");
+		g.engine.setSyncBlocked(true);
+		await g.remove("Notes/A.md");
+		g.engine.setSyncBlocked(false);
+		await g.engine.replayGateJournal();
+
+		await g.remove("Notes/X.md");
+
+		expect(g.deletes().map((d) => d.docId)).toEqual(["id-a", "id-x"]);
+	});
+
+	test("an edit while blocked is left to pushModifiedFiles, never re-fired per note", async () => {
+		const g = gated();
+		g.synced("Notes/E.md", "id-e");
+		g.engine.setSyncBlocked(true);
+		g.engine.handleModify(g.disk.get("Notes/E.md") as TFile);
+		g.engine.setSyncBlocked(false);
+		const modify = spyOn(g.engine, "handleModify");
+
+		await g.engine.replayGateJournal();
+
+		expect(modify).not.toHaveBeenCalled();
+	});
+
+	test("an edit racing a draining backlog waits, then re-fires once", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.synced("Notes/E.md", "id-e");
+		g.engine.setSyncBlocked(true);
+		await g.rename("Notes/A.md", "Notes/B.md");
+		g.engine.setSyncBlocked(false);
+		const modify = spyOn(g.engine, "handleModify");
+
+		g.engine.handleModify(g.disk.get("Notes/E.md") as TFile); // backlog pending
+		await g.engine.replayGateJournal();
+
+		// Once by the test, once re-fired after the drain.
+		expect(modify).toHaveBeenCalledTimes(2);
+		expect((modify.mock.calls[1][0] as TFile).path).toBe("Notes/E.md");
+	});
+
+	test("an edited file that was also renamed pushes once, at its new path", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.engine.setSyncBlocked(true);
+		await g.rename("Notes/A.md", "Notes/B.md");
+		g.engine.setSyncBlocked(false);
+		const modify = spyOn(g.engine, "handleModify");
+
+		g.engine.handleModify(g.disk.get("Notes/B.md") as TFile); // backlog pending
+		await g.engine.replayGateJournal();
+
+		expect(g.creates()).toEqual([["id-a", "Notes/B.md"]]);
+		expect(modify).toHaveBeenCalledTimes(1); // the test's own call, no re-fire
+	});
+
+	test("pushModifiedFiles drains the journal first, so a renamed file is not uploaded as a new note", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.engine.setSyncBlocked(true);
+		await g.rename("Notes/A.md", "Notes/B.md");
+		g.engine.setSyncBlocked(false);
+		mockApp.vault.getFiles.mockReturnValue([...g.disk.values()]);
+
+		await g.engine.pushModifiedFiles();
+		mockApp.vault.getFiles.mockReturnValue([]);
+
+		expect(g.creates()).toContainEqual(["id-a", "Notes/B.md"]);
+		expect(g.creates().every(([id]) => id === "id-a")).toBe(true);
+	});
+
+	test("fullSync drains the journal before its pull leg", async () => {
+		const g = gated();
+		const order: string[] = [];
+		const replay = g.engine.replayGateJournal.bind(g.engine);
+		spyOn(g.engine, "replayGateJournal").mockImplementation(() => {
+			order.push("replay");
+			return replay();
+		});
+		spyOn(g.engine, "catchUp").mockImplementation(async () => {
+			order.push("catchUp");
+			return { files: 0, failed: 0 } as any;
+		});
+
+		await g.engine.fullSync();
+
+		expect(order.slice(0, 2)).toEqual(["replay", "catchUp"]);
+	});
+
+	test("a gated delete echo for a replaced path is judged at event time, not replayed", async () => {
+		// The engine trashed P, re-created it, and the late delete event lands
+		// while gated. Replaying it later would wipe the NEW note's id and evidence.
+		const g = gated();
+		g.synced("Notes/P.md", "id-p");
+		const stale = new TFile("Notes/P.md", 1); // the trashed file's handle
+		g.engine.setSyncBlocked(true);
+
+		await g.engine.handleDelete(stale); // P is still occupied on disk
+		g.engine.setSyncBlocked(false);
+		await g.engine.replayGateJournal();
+
+		expect(g.deletes()).toEqual([]);
+		expect(g.ids.get("Notes/P.md")).toBe("id-p");
+	});
+
+	test("a gated rename echo of a remote rename is judged at event time, not replayed", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		const files = (g.engine as any).files;
+		files.mark("Notes/A.md", "remotelyRenamed", 60_000);
+		g.engine.setSyncBlocked(true);
+
+		await g.rename("Notes/A.md", "Notes/B.md");
+		files.clearMarker("Notes/A.md", "remotelyRenamed"); // the marker expired
+		g.engine.setSyncBlocked(false);
+		await g.engine.replayGateJournal();
+
+		expect(g.creates()).toEqual([]);
+	});
+
+	test("a gated rename old-leg delete is settled at event time (its marker expires)", async () => {
+		const g = gated();
+		g.synced("Notes/Old.md", "id-o");
+		const files = (g.engine as any).files;
+		files.mark("Notes/Old.md", "renamedAway", 60_000);
+		g.engine.setSyncBlocked(true);
+
+		await g.remove("Notes/Old.md");
+		files.clearMarker("Notes/Old.md", "renamedAway"); // expired before replay
+		g.engine.setSyncBlocked(false);
+		await g.engine.replayGateJournal();
+
+		expect(g.deletes()).toEqual([]);
+	});
+
+	test("a discard mid-drain stops the replay", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.synced("Notes/X.md", "id-x");
+		g.engine.setSyncBlocked(true);
+		await g.remove("Notes/A.md");
+		await g.remove("Notes/X.md");
+		g.engine.setSyncBlocked(false);
+
+		const running = g.engine.replayGateJournal(); // A enqueues synchronously
+		g.engine.discardGateJournal();
+		await running;
+
+		expect(g.deletes().map((d) => d.docId)).toEqual(["id-a"]);
+	});
+
+	test("an engine-made delete while gated consumes its trash record now, so a discard cannot strand it", async () => {
+		const g = gated();
+		g.synced("Notes/X.md", "id-x");
+		(g.engine as any).engineTrashedPaths.set("Notes/X.md", 1); // engine trashed X
+		g.engine.setSyncBlocked(true);
+		await g.remove("Notes/X.md"); // its echo lands while gated
+		g.engine.discardGateJournal(); // the user picks a sync direction
+		g.engine.setSyncBlocked(false);
+
+		g.synced("Notes/X.md", "id-x2"); // X recreated and synced later
+		await g.remove("Notes/X.md"); // a REAL user delete
+
+		expect(g.deletes().map((d) => d.docId)).toEqual(["id-x2"]);
+	});
+
+	test("the gate closing mid-drain stops the replay; the rest waits for reopen", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.synced("Notes/X.md", "id-x");
+		g.engine.setSyncBlocked(true);
+		await g.remove("Notes/A.md");
+		await g.remove("Notes/X.md");
+		g.engine.setSyncBlocked(false);
+
+		const running = g.engine.replayGateJournal(); // A enqueues synchronously
+		g.engine.setSyncBlocked(true); // sign-out mid-drain
+		await running;
+		expect(g.deletes().map((d) => d.docId)).toEqual(["id-a"]);
+
+		g.engine.setSyncBlocked(false);
+		await g.engine.replayGateJournal();
+		expect(g.deletes().map((d) => d.docId)).toEqual(["id-a", "id-x"]);
+	});
+
+	test("a rename applied before the gate closed mid-drain still owes its push on reopen", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.synced("Notes/C.md", "id-c");
+		g.engine.setSyncBlocked(true);
+		await g.rename("Notes/A.md", "Notes/B.md");
+		await g.rename("Notes/C.md", "Notes/D.md");
+		g.engine.setSyncBlocked(false);
+
+		const running = g.engine.replayGateJournal(); // A→B bookkeeping applies
+		g.engine.setSyncBlocked(true);
+		await running;
+		expect(g.creates()).toEqual([]);
+
+		g.engine.setSyncBlocked(false);
+		await g.engine.replayGateJournal();
+		expect(g.creates()).toEqual([
+			["id-c", "Notes/D.md"],
+			["id-a", "Notes/B.md"],
+		]);
+	});
+
+	test("the gate closing during the rename pushes holds the remaining pushes", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.synced("Notes/C.md", "id-c");
+		g.engine.setSyncBlocked(true);
+		await g.rename("Notes/A.md", "Notes/B.md");
+		await g.rename("Notes/C.md", "Notes/D.md");
+		g.engine.setSyncBlocked(false);
+		const sent: string[][] = [];
+		g.engine.setCrdtCreate(async (docId: string, path: string) => {
+			sent.push([docId, path]);
+			g.engine.setSyncBlocked(true); // sign-out lands during the first push
+			return { docId, seeded: false };
+		});
+
+		await g.engine.replayGateJournal();
+		expect(sent).toEqual([["id-a", "Notes/B.md"]]);
+
+		g.engine.setSyncBlocked(false);
+		await g.engine.replayGateJournal();
+		expect(sent).toEqual([
+			["id-a", "Notes/B.md"],
+			["id-c", "Notes/D.md"],
+		]);
+	});
+
+	test("a live rename that lands mid-drain waits behind the events still in flight", async () => {
+		const g = gated();
+		g.synced("Notes/X.md", "id-x");
+		g.synced("Notes/A.md", "id-a");
+		g.engine.setSyncBlocked(true);
+		await g.remove("Notes/X.md");
+		await g.rename("Notes/A.md", "Notes/B.md");
+		g.engine.setSyncBlocked(false);
+
+		const running = g.engine.replayGateJournal(); // parks on X's teardown
+		const live = g.rename("Notes/B.md", "Notes/C.md"); // A→B not applied yet
+		await Promise.all([running, live]);
+		await g.engine.replayGateJournal();
+
+		expect(g.creates()).toEqual([["id-a", "Notes/C.md"]]);
+	});
+
+	test("a vault reset mid-drain stops the replay before it touches the new vault", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.synced("Notes/C.md", "id-c");
+		g.engine.setSyncBlocked(true);
+		await g.remove("Notes/A.md");
+		await g.rename("Notes/C.md", "Notes/D.md");
+		g.engine.setSyncBlocked(false);
+
+		const running = g.engine.replayGateJournal();
+		const reset = g.engine.resetForVaultChange();
+		await Promise.all([running, reset]);
+
+		expect(g.creates()).toEqual([]);
+	});
+
+	test("a journal survives a restart: exported, re-imported, then replayed", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.synced("Notes/X.md", "id-x");
+		g.engine.setSyncBlocked(true);
+		await g.rename("Notes/A.md", "Notes/B.md");
+		await g.remove("Notes/X.md");
+		const saved = JSON.parse(JSON.stringify(g.engine.exportGateJournal()));
+
+		const next = gated(); // same persisted ids/evidence, fresh engine
+		next.synced("Notes/A.md", "id-a");
+		next.synced("Notes/X.md", "id-x");
+		next.disk.delete("Notes/A.md");
+		next.disk.delete("Notes/X.md");
+		next.disk.set("Notes/B.md", new TFile("Notes/B.md", 1));
+		next.engine.importGateJournal(saved);
+		await next.engine.replayGateJournal();
+
+		expect(next.creates()).toEqual([["id-a", "Notes/B.md"]]);
+		expect(next.deletes().map((d) => d.docId)).toEqual(["id-x"]);
+	});
+
+	test("import ignores malformed journal entries", () => {
+		const g = gated();
+		g.engine.importGateJournal([
+			{ op: "delete", path: "Notes/ok.md" },
+			{ op: "rename", path: "Notes/no-old-path.md" },
+			{ op: "drop-table", path: "x" },
+			{ op: "delete", path: 42 },
+			null,
+			"delete",
+		]);
+		g.engine.importGateJournal({ not: "an array" });
+
+		expect(g.engine.exportGateJournal()).toEqual([{ op: "delete", path: "Notes/ok.md" }]);
+	});
+
+	test("journal writes are throttled, and the drained journal is persisted empty", async () => {
+		const clock = new ManualTimeProvider();
+		const saves: unknown[] = [];
+		const engine = new SyncEngine(
+			mockApp,
+			mockApi,
+			{ ...DEFAULT_SETTINGS },
+			async (d) => {
+				saves.push(d);
+			},
+			clock,
+		);
+		activeEngines.push(engine);
+		engine.setSyncBlocked(true);
+		for (let i = 0; i < 50; i++) {
+			await engine.handleDelete(new TFile(`Bulk/n${i}.md`, 1));
+		}
+		expect(saves).toHaveLength(0);
+		clock.advance(1000);
+		expect(saves).toHaveLength(1);
+		expect(engine.exportGateJournal()).toHaveLength(50);
+
+		engine.setSyncBlocked(false);
+		engine.setReady();
+		await engine.replayGateJournal();
+		clock.advance(1000);
+		expect(saves).toHaveLength(2);
+		expect(engine.exportGateJournal()).toEqual([]);
+	});
+
+	test("an empty journal replays to nothing", async () => {
+		const g = gated();
+		await g.engine.replayGateJournal();
+		expect(g.deletes()).toEqual([]);
+		expect(g.creates()).toEqual([]);
 	});
 });
 

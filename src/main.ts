@@ -68,7 +68,7 @@ import { SEARCH_VIEW_TYPE, SearchView } from "./search-view";
 import { EngramSyncSettingTab } from "./settings";
 import { migrateDiagnosticsEnabled, stripRetiredSettings } from "./settings-migrate";
 import { createSingleFlight } from "./single-flight";
-import { reconcileColdStart, SyncEngine } from "./sync";
+import { type GateEvent, reconcileColdStart, SyncEngine } from "./sync";
 import { channelConnectionKey, computeSyncFingerprint } from "./sync-fingerprint";
 import { SyncLog } from "./sync-log";
 import { SyncLogModal } from "./sync-log-modal";
@@ -144,6 +144,10 @@ interface PluginData {
 	 *  chain. `syncState` has carried the same guard (`syncStateVaultId`)
 	 *  since it was added; `noteIds` was the one that never got it. */
 	noteIdsVaultId?: string | null;
+	/** Renames/deletes made while sync was gated (#247), not yet replayed. */
+	gateJournal?: GateEvent[];
+	/** The vault `gateJournal` was recorded for; any other vault drops it. */
+	gateJournalVaultId?: string | null;
 }
 
 /** Whether setupNoteStream() may keep the existing stream instead of
@@ -809,6 +813,7 @@ export default class EngramSyncPlugin extends Plugin {
 			this.syncEngine.importHashes(saved.syncedHashes);
 			devLog().log("lifecycle", "Migrated legacy syncedHashes → syncState");
 		}
+		this.hydrateGateJournal(saved);
 		this.syncEngine.issues.hydrate(saved?.syncIssues);
 		this.syncEngine.ignoredFiles.hydrate(saved?.ignoredFiles);
 
@@ -1161,13 +1166,7 @@ export default class EngramSyncPlugin extends Plugin {
 			// existing notes resolve to their real server ids; a failed fetch
 			// (offline startup) degrades to the old behavior instead of blocking.
 			// Also warms the manifest snapshot the destructive-op guard uses.
-			if (gateOpen) {
-				try {
-					await this.syncEngine.reconcileNoteIdMapFromManifest();
-				} catch (e) {
-					rlog().warn("crdt", `cold-start map reconcile failed: ${errMsg(e)}`);
-				}
-			}
+			if (gateOpen) await this.reconcileThenReplayGateJournal();
 
 			// Task 7C: Cold-start reconcile — diff on-disk content into the CRDT
 			// doc for any markdown file that changed while the app was closed
@@ -1827,6 +1826,30 @@ export default class EngramSyncPlugin extends Plugin {
 		await this.savePluginData(this.syncEngine.getLastSync());
 	}
 
+	/** Startup, gate open: reconcile the id map from the manifest, THEN apply
+	 *  renames/deletes made before setReady or in an earlier session (#247).
+	 *  After the reconcile, so a stale map still resolves a renamed note's real
+	 *  id; and the caller runs it before the cold-start loop and
+	 *  pushModifiedFiles, which would mint a fresh id for the renamed file and
+	 *  push it as a second note. A failed reconcile (offline) still replays. */
+	async reconcileThenReplayGateJournal(): Promise<void> {
+		try {
+			await this.syncEngine.reconcileNoteIdMapFromManifest();
+		} catch (e) {
+			rlog().warn("crdt", `cold-start map reconcile failed: ${errMsg(e)}`);
+		}
+		await this.syncEngine.replayGateJournal();
+	}
+
+	/** Restore a gate journal (#247) persisted by an earlier session, but only
+	 *  into the vault it was recorded for: replaying one vault's renames and
+	 *  deletes into another would act on the wrong notes. */
+	hydrateGateJournal(saved: Pick<PluginData, "gateJournal" | "gateJournalVaultId"> | null): void {
+		if (!saved?.gateJournal) return;
+		if (saved.gateJournalVaultId !== (this.settings.vaultId ?? null)) return;
+		this.syncEngine.importGateJournal(saved.gateJournal);
+	}
+
 	private async savePluginData(lastSync: string, offlineQueue?: QueueEntry[]): Promise<void> {
 		await this.writePluginData({
 			settings: this.settings,
@@ -1862,6 +1885,8 @@ export default class EngramSyncPlugin extends Plugin {
 			// refuse it (#1409). Deliberately NOT `settings.vaultId` — see
 			// `noteIdsOwner`.
 			noteIdsVaultId: this.noteIdsOwner,
+			gateJournal: this.syncEngine.exportGateJournal(),
+			gateJournalVaultId: this.settings.vaultId ?? null,
 		});
 	}
 
@@ -2985,7 +3010,7 @@ export default class EngramSyncPlugin extends Plugin {
 				return false;
 
 			case "smart-merge": {
-				await this.markSyncGateAccepted();
+				await this.markSyncGateAccepted({ replayGateJournal: true });
 				const { pulled, pushed } = await this.syncEngine.fullSync();
 				new Notice(t("Engram Sync: pulled {pulled}, pushed {pushed}", { pulled, pushed }));
 				return true;
@@ -3097,13 +3122,20 @@ export default class EngramSyncPlugin extends Plugin {
 		const accepted = fp !== "" && fp === this.syncGateAcceptedFor;
 		this.syncEngine.setSyncBlocked(!accepted);
 		this.updateStatusBar(this.syncEngine.getStatus());
+		// Reopened for the fingerprint the user already accepted: apply what the
+		// closed window journaled (#247) before any caller's push sweep runs.
+		// A no-op before setReady; startup replays right after setReady instead.
+		if (accepted) await this.syncEngine.replayGateJournal();
 		return accepted;
 	}
 
 	/** Mark the current fingerprint as accepted (called after the user picks
 	 *  a real sync direction in the modal). Persists the fingerprint and
-	 *  unblocks the engine. */
-	async markSyncGateAccepted(): Promise<void> {
+	 *  unblocks the engine. `replayGateJournal` is for smart-merge only: it
+	 *  propagates local changes, so renames/deletes made while the gate was
+	 *  closed go with it (#247). Every other direction says which side wins on
+	 *  its own, and replaying local deletes on top would override that. */
+	async markSyncGateAccepted({ replayGateJournal = false } = {}): Promise<void> {
 		const fp = await computeSyncFingerprint(this.settings);
 		if (fp === "") {
 			rlog().warn(
@@ -3115,7 +3147,15 @@ export default class EngramSyncPlugin extends Plugin {
 		const context = this.derivePreviewContext();
 		const waitedMs = this.syncEngine.blockedForMs();
 		this.syncGateAcceptedFor = fp;
+		// Only when this call is what opens the gate: re-picking a direction on
+		// an open gate must not drop a backlog that is mid-drain.
+		if (this.syncEngine.isSyncBlocked() && !replayGateJournal) {
+			this.syncEngine.discardGateJournal();
+		}
 		this.syncEngine.setSyncBlocked(false);
+		// Before the catch-up below: a pull over a rename still in the journal
+		// would write the note back at its old path.
+		if (replayGateJournal) await this.syncEngine.replayGateJournal();
 		// Counts only, no paths. How long a user sat at the first-sync modal is
 		// otherwise unobservable (the gate-CLOSED warnings carry no duration).
 		// Only a real closed→open transition: re-picking a direction on an
