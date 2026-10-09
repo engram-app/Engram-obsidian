@@ -437,9 +437,19 @@ type SweepEvent = "vault" | "destroy";
 const pushEvents = (paths: Iterable<string>): GateEvent[] =>
 	[...paths].map((path) => ({ op: "push", path }));
 
-type GateEvent =
+export type GateEvent =
 	| { op: "delete" | "folder-create" | "folder-delete" | "push"; path: string }
 	| { op: "rename"; oldPath: string; path: string };
+
+const GATE_OPS = new Set(["delete", "folder-create", "folder-delete", "push", "rename"]);
+
+/** data.json is user-editable: accept only well-formed journal entries. */
+function isGateEvent(e: unknown): e is GateEvent {
+	if (typeof e !== "object" || e === null) return false;
+	const { op, path, oldPath } = e as Record<string, unknown>;
+	if (typeof op !== "string" || !GATE_OPS.has(op) || typeof path !== "string") return false;
+	return op !== "rename" || typeof oldPath === "string";
+}
 
 export class SyncEngine {
 	/**
@@ -622,6 +632,7 @@ export class SyncEngine {
 	/** Event-driven replays stay off until an owner has run the first one, so
 	 *  startup's replay runs after its id-map reconcile, not before it. */
 	private gateKicksArmed = false;
+	private gateSaveTimer: number | null = null;
 
 	/** The server vaultId that the current syncState belongs to. lastSync and
 	 *  per-file hashes are scoped to one server vault; if the active vault
@@ -2748,6 +2759,7 @@ export class SyncEngine {
 		this.gateJournal.clear();
 		this.gateModified.clear();
 		this.gateEpoch++;
+		this.persistGateJournalSoon();
 	}
 
 	/** True while vault events must be journaled instead of applied: the gate
@@ -2794,6 +2806,7 @@ export class SyncEngine {
 			await this.drainGateJournal();
 		} finally {
 			this.gateReplay = null;
+			this.persistGateJournalSoon(); // the drained journal must not replay again
 		}
 		// Synchronous from here: no event can slip in between the backlog
 		// emptying and the edits re-firing live. A straggler that landed after
@@ -2880,6 +2893,36 @@ export class SyncEngine {
 		const newer = [...this.gateJournal];
 		this.gateJournal.clear();
 		for (const ev of [...front, ...newer]) this.gateJournal.add(ev);
+		this.persistGateJournalSoon();
+	}
+
+	private journalGateEvent(ev: GateEvent): void {
+		this.gateJournal.add(ev);
+		this.persistGateJournalSoon();
+	}
+
+	/** Persist the journal, throttled to one write per second: a gated window
+	 *  can span a restart, and a gated rmtree must not write data.json once
+	 *  per file. */
+	private persistGateJournalSoon(): void {
+		if (this.gateSaveTimer !== null) return;
+		this.gateSaveTimer = this.time.setTimeout(() => {
+			this.gateSaveTimer = null;
+			this.saveData({}).catch((e) => {
+				rlog().warn("vault", `Gate journal save failed: ${errMsg(e)}`);
+			});
+		}, 1000);
+	}
+
+	exportGateJournal(): GateEvent[] {
+		return [...this.gateJournal];
+	}
+
+	/** Restore a journal persisted by an earlier session. The caller checks it
+	 *  was recorded for the active vault. */
+	importGateJournal(events: unknown): void {
+		if (!Array.isArray(events)) return;
+		for (const ev of events) if (isGateEvent(ev)) this.gateJournal.add(ev);
 	}
 
 	/** Fire `onSyncBlockedEdit` at most once per gate closure. */
@@ -4391,7 +4434,7 @@ export class SyncEngine {
 		// would strand it, and it would later swallow a real user delete). For
 		// these deleteSyncedPath only does local bookkeeping, never a send.
 		if (this.gateHolds() && !this.isEngineDeleteEcho(file.path)) {
-			this.gateJournal.add({ op: "delete", path: file.path });
+			this.journalGateEvent({ op: "delete", path: file.path });
 			this.kickGateReplay();
 			return;
 		}
@@ -4639,7 +4682,7 @@ export class SyncEngine {
 		}
 
 		if (this.gateHolds()) {
-			this.gateJournal.add({ op: "rename", oldPath, path: file.path });
+			this.journalGateEvent({ op: "rename", oldPath, path: file.path });
 			this.kickGateReplay();
 			return;
 		}
@@ -4786,7 +4829,7 @@ export class SyncEngine {
 	 *  the user's vault op). */
 	async handleFolderCreate(folder: { path: string }): Promise<void> {
 		if (this.gateHolds()) {
-			this.gateJournal.add({ op: "folder-create", path: folder.path });
+			this.journalGateEvent({ op: "folder-create", path: folder.path });
 			this.kickGateReplay();
 			return;
 		}
@@ -4813,7 +4856,7 @@ export class SyncEngine {
 	 *  local marker; the next pull will reconcile. */
 	async handleFolderDelete(folder: { path: string }): Promise<void> {
 		if (this.gateHolds()) {
-			this.gateJournal.add({ op: "folder-delete", path: folder.path });
+			this.journalGateEvent({ op: "folder-delete", path: folder.path });
 			this.kickGateReplay();
 			return;
 		}

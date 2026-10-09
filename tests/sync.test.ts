@@ -10,6 +10,7 @@ import { LimitExceededError } from "../src/limit-error";
 import { rlog } from "../src/remote-log";
 import { fnv1a, SyncEngine } from "../src/sync";
 import type { SyncedFileTable } from "../src/synced-file";
+import { ManualTimeProvider } from "../src/time-provider";
 import { DEFAULT_SETTINGS } from "../src/types";
 import { __noticeCapture } from "./__mocks__/obsidian";
 
@@ -4754,6 +4755,73 @@ describe("SyncEngine gate-window journal (#247)", () => {
 		await Promise.all([running, reset]);
 
 		expect(g.creates()).toEqual([]);
+	});
+
+	test("a journal survives a restart: exported, re-imported, then replayed", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.synced("Notes/X.md", "id-x");
+		g.engine.setSyncBlocked(true);
+		await g.rename("Notes/A.md", "Notes/B.md");
+		await g.remove("Notes/X.md");
+		const saved = JSON.parse(JSON.stringify(g.engine.exportGateJournal()));
+
+		const next = gated(); // same persisted ids/evidence, fresh engine
+		next.synced("Notes/A.md", "id-a");
+		next.synced("Notes/X.md", "id-x");
+		next.disk.delete("Notes/A.md");
+		next.disk.delete("Notes/X.md");
+		next.disk.set("Notes/B.md", new TFile("Notes/B.md", 1));
+		next.engine.importGateJournal(saved);
+		await next.engine.replayGateJournal();
+
+		expect(next.creates()).toEqual([["id-a", "Notes/B.md"]]);
+		expect(next.deletes().map((d) => d.docId)).toEqual(["id-x"]);
+	});
+
+	test("import ignores malformed journal entries", () => {
+		const g = gated();
+		g.engine.importGateJournal([
+			{ op: "delete", path: "Notes/ok.md" },
+			{ op: "rename", path: "Notes/no-old-path.md" },
+			{ op: "drop-table", path: "x" },
+			{ op: "delete", path: 42 },
+			null,
+			"delete",
+		]);
+		g.engine.importGateJournal({ not: "an array" });
+
+		expect(g.engine.exportGateJournal()).toEqual([{ op: "delete", path: "Notes/ok.md" }]);
+	});
+
+	test("journal writes are throttled, and the drained journal is persisted empty", async () => {
+		const clock = new ManualTimeProvider();
+		const saves: unknown[] = [];
+		const engine = new SyncEngine(
+			mockApp,
+			mockApi,
+			{ ...DEFAULT_SETTINGS },
+			async (d) => {
+				saves.push(d);
+			},
+			clock,
+		);
+		activeEngines.push(engine);
+		engine.setSyncBlocked(true);
+		for (let i = 0; i < 50; i++) {
+			await engine.handleDelete(new TFile(`Bulk/n${i}.md`, 1));
+		}
+		expect(saves).toHaveLength(0);
+		clock.advance(1000);
+		expect(saves).toHaveLength(1);
+		expect(engine.exportGateJournal()).toHaveLength(50);
+
+		engine.setSyncBlocked(false);
+		engine.setReady();
+		await engine.replayGateJournal();
+		clock.advance(1000);
+		expect(saves).toHaveLength(2);
+		expect(engine.exportGateJournal()).toEqual([]);
 	});
 
 	test("an empty journal replays to nothing", async () => {
