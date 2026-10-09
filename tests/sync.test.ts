@@ -4641,6 +4641,121 @@ describe("SyncEngine gate-window journal (#247)", () => {
 		expect(g.deletes().map((d) => d.docId)).toEqual(["id-a"]);
 	});
 
+	test("an engine-made delete while gated consumes its trash record now, so a discard cannot strand it", async () => {
+		const g = gated();
+		g.synced("Notes/X.md", "id-x");
+		(g.engine as any).engineTrashedPaths.set("Notes/X.md", 1); // engine trashed X
+		g.engine.setSyncBlocked(true);
+		await g.remove("Notes/X.md"); // its echo lands while gated
+		g.engine.discardGateJournal(); // the user picks a sync direction
+		g.engine.setSyncBlocked(false);
+
+		g.synced("Notes/X.md", "id-x2"); // X recreated and synced later
+		await g.remove("Notes/X.md"); // a REAL user delete
+
+		expect(g.deletes().map((d) => d.docId)).toEqual(["id-x2"]);
+	});
+
+	test("the gate closing mid-drain stops the replay; the rest waits for reopen", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.synced("Notes/X.md", "id-x");
+		g.engine.setSyncBlocked(true);
+		await g.remove("Notes/A.md");
+		await g.remove("Notes/X.md");
+		g.engine.setSyncBlocked(false);
+
+		const running = g.engine.replayGateJournal(); // A enqueues synchronously
+		g.engine.setSyncBlocked(true); // sign-out mid-drain
+		await running;
+		expect(g.deletes().map((d) => d.docId)).toEqual(["id-a"]);
+
+		g.engine.setSyncBlocked(false);
+		await g.engine.replayGateJournal();
+		expect(g.deletes().map((d) => d.docId)).toEqual(["id-a", "id-x"]);
+	});
+
+	test("a rename applied before the gate closed mid-drain still owes its push on reopen", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.synced("Notes/C.md", "id-c");
+		g.engine.setSyncBlocked(true);
+		await g.rename("Notes/A.md", "Notes/B.md");
+		await g.rename("Notes/C.md", "Notes/D.md");
+		g.engine.setSyncBlocked(false);
+
+		const running = g.engine.replayGateJournal(); // A→B bookkeeping applies
+		g.engine.setSyncBlocked(true);
+		await running;
+		expect(g.creates()).toEqual([]);
+
+		g.engine.setSyncBlocked(false);
+		await g.engine.replayGateJournal();
+		expect(g.creates()).toEqual([
+			["id-c", "Notes/D.md"],
+			["id-a", "Notes/B.md"],
+		]);
+	});
+
+	test("the gate closing during the rename pushes holds the remaining pushes", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.synced("Notes/C.md", "id-c");
+		g.engine.setSyncBlocked(true);
+		await g.rename("Notes/A.md", "Notes/B.md");
+		await g.rename("Notes/C.md", "Notes/D.md");
+		g.engine.setSyncBlocked(false);
+		const sent: string[][] = [];
+		g.engine.setCrdtCreate(async (docId: string, path: string) => {
+			sent.push([docId, path]);
+			g.engine.setSyncBlocked(true); // sign-out lands during the first push
+			return { docId, seeded: false };
+		});
+
+		await g.engine.replayGateJournal();
+		expect(sent).toEqual([["id-a", "Notes/B.md"]]);
+
+		g.engine.setSyncBlocked(false);
+		await g.engine.replayGateJournal();
+		expect(sent).toEqual([
+			["id-a", "Notes/B.md"],
+			["id-c", "Notes/D.md"],
+		]);
+	});
+
+	test("a live rename that lands mid-drain waits behind the events still in flight", async () => {
+		const g = gated();
+		g.synced("Notes/X.md", "id-x");
+		g.synced("Notes/A.md", "id-a");
+		g.engine.setSyncBlocked(true);
+		await g.remove("Notes/X.md");
+		await g.rename("Notes/A.md", "Notes/B.md");
+		g.engine.setSyncBlocked(false);
+
+		const running = g.engine.replayGateJournal(); // parks on X's teardown
+		const live = g.rename("Notes/B.md", "Notes/C.md"); // A→B not applied yet
+		await Promise.all([running, live]);
+		await g.engine.replayGateJournal();
+
+		expect(g.creates()).toEqual([["id-a", "Notes/C.md"]]);
+	});
+
+	test("a vault reset mid-drain stops the replay before it touches the new vault", async () => {
+		const g = gated();
+		g.synced("Notes/A.md", "id-a");
+		g.synced("Notes/C.md", "id-c");
+		g.engine.setSyncBlocked(true);
+		await g.remove("Notes/A.md");
+		await g.rename("Notes/C.md", "Notes/D.md");
+		g.engine.setSyncBlocked(false);
+
+		const running = g.engine.replayGateJournal();
+		const reset = g.engine.resetForVaultChange();
+		await Promise.all([running, reset]);
+
+		expect(g.creates()).toEqual([]);
+	});
+
 	test("an empty journal replays to nothing", async () => {
 		const g = gated();
 		await g.engine.replayGateJournal();

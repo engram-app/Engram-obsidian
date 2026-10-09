@@ -434,8 +434,11 @@ type Sweepable = { clear(): void };
  */
 type SweepEvent = "vault" | "destroy";
 
+const pushEvents = (paths: Iterable<string>): GateEvent[] =>
+	[...paths].map((path) => ({ op: "push", path }));
+
 type GateEvent =
-	| { op: "delete" | "folder-create" | "folder-delete"; path: string }
+	| { op: "delete" | "folder-create" | "folder-delete" | "push"; path: string }
 	| { op: "rename"; oldPath: string; path: string };
 
 export class SyncEngine {
@@ -2822,13 +2825,22 @@ export class SyncEngine {
 			this.gateJournal.clear();
 			rlog().info("vault", `Gate journal replay: ${events.length} events`);
 			const moved = new Set<string>();
-			for (const ev of events) {
+			for (const [i, ev] of events.entries()) {
 				if (epoch !== this.gateEpoch) return;
+				// The gate closed mid-drain (sign-out, account swap): a closed gate
+				// sends nothing. Put the rest back, ahead of anything newer, along
+				// with the pushes owed for renames already applied locally.
+				if (this.syncBlocked) {
+					this.requeueGateEvents([...events.slice(i), ...pushEvents(moved)]);
+					return;
+				}
 				try {
 					if (ev.op === "delete") {
 						await this.deleteSyncedPath(ev.path);
 					} else if (ev.op === "rename") {
 						await this.renameSyncedPath(ev.oldPath, ev.path);
+						moved.add(ev.path);
+					} else if (ev.op === "push") {
 						moved.add(ev.path);
 					} else if (ev.op === "folder-create") {
 						await this.createFolderNow(ev.path);
@@ -2844,8 +2856,13 @@ export class SyncEngine {
 			}
 			// Intermediate paths of a rename chain (and renamed-then-deleted notes)
 			// are no longer on disk, so the lookup skips them.
-			for (const path of moved) {
+			const pushes = [...moved];
+			for (const [i, path] of pushes.entries()) {
 				if (epoch !== this.gateEpoch) return;
+				if (this.syncBlocked) {
+					this.requeueGateEvents(pushEvents(pushes.slice(i)));
+					return;
+				}
 				const file = this.app.vault.getAbstractFileByPath(path);
 				if (!file || !this.isSyncable(file) || this.shouldIgnore(path)) continue;
 				this.gateModified.delete(path); // pushed here; no second push via modify
@@ -2856,6 +2873,13 @@ export class SyncEngine {
 				}
 			}
 		}
+	}
+
+	/** Put `front` back at the head of the journal, ahead of newer events. */
+	private requeueGateEvents(front: GateEvent[]): void {
+		const newer = [...this.gateJournal];
+		this.gateJournal.clear();
+		for (const ev of [...front, ...newer]) this.gateJournal.add(ev);
 	}
 
 	/** Fire `onSyncBlockedEdit` at most once per gate closure. */
@@ -4362,14 +4386,26 @@ export class SyncEngine {
 
 		// Gated (#247): journal it. The echo guards above already ran, at event
 		// time, which is the only time they can tell an echo from a user delete.
-		// A rename old-leg is decided now too: its `renamedAway` marker expires,
-		// and deleteSyncedPath only does local bookkeeping for it, never a send.
-		if (this.gateHolds() && !this.files.has(file.path, "renamedAway")) {
+		// An engine-made delete is settled now too: its markers expire and its
+		// trash counter must be consumed 1:1 with this event (a discarded journal
+		// would strand it, and it would later swallow a real user delete). For
+		// these deleteSyncedPath only does local bookkeeping, never a send.
+		if (this.gateHolds() && !this.isEngineDeleteEcho(file.path)) {
 			this.gateJournal.add({ op: "delete", path: file.path });
 			this.kickGateReplay();
 			return;
 		}
 		await this.deleteSyncedPath(file.path);
+	}
+
+	/** True when a delete event at `path` is the engine's own (a remote delete
+	 *  or a rename old-leg it applied), not the user's. */
+	private isEngineDeleteEcho(path: string): boolean {
+		return (
+			this.files.has(path, "renamedAway") ||
+			this.files.has(path, "remotelyDeleted") ||
+			(this.engineTrashedPaths.get(path) ?? 0) > 0
+		);
 	}
 
 	/** The server-facing half of a vault delete, keyed by path alone so the
