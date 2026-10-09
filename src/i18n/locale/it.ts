@@ -608,8 +608,6 @@ const it: Dict = {
 		"Engram: il file delle impostazioni del plugin era danneggiato e non è stato possibile recuperarlo. Potresti dover ricollegarti dalle impostazioni.",
 	"Engram: sync is not set up yet, so nothing in this vault will sync.":
 		"Engram: la sincronizzazione non è ancora configurata, quindi nulla di questo archivio verrà sincronizzato.",
-	"Click the Engram item in the status bar to pick up where you left off.":
-		"Fai clic su Engram nella barra di stato per riprendere da dove eri.",
 	"Engram: ⚠ {count} sync errors": {
 		one: "Engram: ⚠ {count} errore di sincronizzazione",
 		other: "Engram: ⚠ {count} errori di sincronizzazione",

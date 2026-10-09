@@ -555,8 +555,6 @@ const ja: Dict = {
 		"Engram: プラグインの設定ファイルが壊れていて復元できませんでした。設定から再接続が必要かもしれません。",
 	"Engram: sync is not set up yet, so nothing in this vault will sync.":
 		"Engram: 同期がまだ設定されていないので、この保管庫の内容は何も同期されません。",
-	"Click the Engram item in the status bar to pick up where you left off.":
-		"ステータスバーの Engram をクリックすると、続きから始められます。",
 	"Engram: ⚠ {count} sync errors": "Engram: ⚠ 同期エラー {count} 件",
 	"sync failed": "同期に失敗しました",
 	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":

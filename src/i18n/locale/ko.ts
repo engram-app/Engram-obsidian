@@ -547,8 +547,6 @@ const ko: Dict = {
 		"Engram: 플러그인 설정 파일이 손상되어 복구할 수 없었습니다. 설정에서 다시 연결해야 할 수 있습니다.",
 	"Engram: sync is not set up yet, so nothing in this vault will sync.":
 		"Engram: 동기화가 아직 설정되지 않아 이 보관함의 내용은 동기화되지 않습니다.",
-	"Click the Engram item in the status bar to pick up where you left off.":
-		"상태 표시줄의 Engram 항목을 누르면 이어서 진행할 수 있습니다.",
 	"Engram: ⚠ {count} sync errors": "Engram: ⚠ 동기화 오류 {count}건",
 	"sync failed": "동기화 실패",
 	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":
