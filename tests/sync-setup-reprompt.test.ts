@@ -3,12 +3,12 @@
  *
  * The gate stays closed until a direction is picked, and the only way back
  * was the status bar item, which Obsidian mobile does not render. Prod
- * 2026-10-09: a new user linked on mobile, closed the modal, and nothing in
- * their vault ever synced.
+ * 2026-10-09: a new user linked, closed the modal, and nothing in their
+ * vault ever synced.
  *
  * Object.create(prototype) pattern (see sync-gate-closed-notice.test.ts).
  */
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import de from "../src/i18n/locale/de";
 import es from "../src/i18n/locale/es";
 import fr from "../src/i18n/locale/fr";
@@ -20,33 +20,54 @@ import ru from "../src/i18n/locale/ru";
 import zh from "../src/i18n/locale/zh";
 import zhTW from "../src/i18n/locale/zh-TW";
 import EngramSyncPlugin from "../src/main";
-import { __noticeCapture } from "./__mocks__/obsidian";
+import { computeSyncFingerprint } from "../src/sync-fingerprint";
+import { __noticeCapture, Platform } from "./__mocks__/obsidian";
 
 type Reprompt = {
 	notifySetupUnfinished(): void;
 	maybeRepromptSetupOnResume(now: number): void;
-	dismissSetupNotice(): void;
+	applySyncGate(): Promise<boolean>;
+	onunload(): void;
+	syncGateAcceptedFor: string | null;
+	openPreviewModal: object | null;
 };
 
 const signedIn = { apiUrl: "https://engram.example.com", apiKey: "k", vaultId: "v1" };
 
-function plugin(opts: { settings?: Record<string, unknown>; blocked?: boolean } = {}) {
-	const opened: string[] = [];
+function plugin(
+	opts: {
+		settings?: Record<string, unknown>;
+		blocked?: boolean;
+		acceptedFor?: string | null;
+	} = {},
+) {
+	const opened: Array<{ startInVaultPicker?: boolean }> = [];
+	let blocked = opts.blocked ?? true;
 	const fake = Object.assign(Object.create(EngramSyncPlugin.prototype), {
 		settings: opts.settings ?? signedIn,
-		syncEngine: { isSyncBlocked: () => opts.blocked ?? true },
-		doSyncWithFirstSyncCheck: async () => {
-			opened.push("preview");
+		syncGateAcceptedFor: opts.acceptedFor ?? null,
+		openPreviewModal: null,
+		syncEngine: {
+			isSyncBlocked: () => blocked,
+			setSyncBlocked: (b: boolean) => {
+				blocked = b;
+			},
+			getStatus: () => ({}),
+			replayGateJournal: async () => {},
+		},
+		updateStatusBar: () => {},
+		doSyncWithFirstSyncCheck: async (o: { startInVaultPicker?: boolean } = {}) => {
+			opened.push(o);
 		},
 	}) as unknown as Reprompt;
 	return { fake, opened };
 }
 
-describe("notice after closing the modal without a choice", () => {
-	beforeEach(() => {
-		__noticeCapture.notices.length = 0;
-	});
+beforeEach(() => {
+	__noticeCapture.notices.length = 0;
+});
 
+describe("notice after closing the modal without a choice", () => {
 	test("stays up until dismissed", () => {
 		plugin().fake.notifySetupUnfinished();
 		expect(__noticeCapture.notices).toHaveLength(1);
@@ -65,8 +86,24 @@ describe("notice after closing the modal without a choice", () => {
 		expect(n.buttons).toHaveLength(1);
 		expect(n.buttons[0].text).toBe("Finish sync setup");
 		n.buttons[0].click();
-		expect(opened).toEqual(["preview"]);
+		expect(opened).toHaveLength(1);
 		expect(n.hidden).toBe(true);
+	});
+
+	test("its link opens the vault picker when no vault is selected", () => {
+		const { fake, opened } = plugin({ settings: { ...signedIn, vaultId: null } });
+		fake.notifySetupUnfinished();
+		__noticeCapture.notices[0].buttons[0].click();
+		expect(opened).toEqual([{ startInVaultPicker: true }]);
+	});
+
+	test("its link keeps the notice while a preview is already open", () => {
+		const { fake, opened } = plugin();
+		fake.notifySetupUnfinished();
+		fake.openPreviewModal = {};
+		__noticeCapture.notices[0].buttons[0].click();
+		expect(opened).toHaveLength(0);
+		expect(__noticeCapture.notices[0].hidden).toBe(false);
 	});
 
 	test("a second call replaces the first instead of stacking", () => {
@@ -77,10 +114,18 @@ describe("notice after closing the modal without a choice", () => {
 		expect(__noticeCapture.notices[1].hidden).toBe(false);
 	});
 
-	test("dismissSetupNotice hides it once sync is set up", () => {
-		const { fake } = plugin();
+	test("clears when the gate opens for an already-accepted vault", async () => {
+		const fp = await computeSyncFingerprint(signedIn as never);
+		const { fake } = plugin({ acceptedFor: fp });
 		fake.notifySetupUnfinished();
-		fake.dismissSetupNotice();
+		expect(await fake.applySyncGate()).toBe(true);
+		expect(__noticeCapture.notices[0].hidden).toBe(true);
+	});
+
+	test("clears on sign-out", async () => {
+		const { fake } = plugin({ settings: { apiUrl: "https://engram.example.com" } });
+		fake.notifySetupUnfinished();
+		await fake.applySyncGate();
 		expect(__noticeCapture.notices[0].hidden).toBe(true);
 	});
 
@@ -98,13 +143,19 @@ describe("notice after closing the modal without a choice", () => {
 	});
 });
 
-describe("reopen the preview when the app comes back", () => {
+describe("reopen the preview when the mobile app comes back", () => {
 	const MIN = 60_000;
+	beforeEach(() => {
+		Platform.isMobile = true;
+	});
+	afterEach(() => {
+		Platform.isMobile = false;
+	});
 
-	test("reopens while signed in and the gate is closed", () => {
+	test("reopens while signed in and setup was never finished", () => {
 		const { fake, opened } = plugin();
 		fake.maybeRepromptSetupOnResume(100 * MIN);
-		expect(opened).toEqual(["preview"]);
+		expect(opened).toHaveLength(1);
 	});
 
 	test("at most once per 10 minutes", () => {
@@ -117,14 +168,42 @@ describe("reopen the preview when the app comes back", () => {
 		expect(opened).toHaveLength(2);
 	});
 
+	test("a resume while a preview is open does not use up the window", () => {
+		const { fake, opened } = plugin();
+		fake.openPreviewModal = {};
+		fake.maybeRepromptSetupOnResume(100 * MIN);
+		fake.openPreviewModal = null;
+		fake.maybeRepromptSetupOnResume(102 * MIN);
+		expect(opened).toHaveLength(1);
+	});
+
+	test("opens the vault picker when no vault is selected", () => {
+		const { fake, opened } = plugin({ settings: { ...signedIn, vaultId: null } });
+		fake.maybeRepromptSetupOnResume(100 * MIN);
+		expect(opened).toEqual([{ startInVaultPicker: true }]);
+	});
+
 	test("stays quiet once sync is set up", () => {
 		const { fake, opened } = plugin({ blocked: false });
 		fake.maybeRepromptSetupOnResume(100 * MIN);
 		expect(opened).toHaveLength(0);
 	});
 
+	test("stays quiet for a vault that synced before (paused, not unfinished)", () => {
+		const { fake, opened } = plugin({ acceptedFor: "old-fingerprint" });
+		fake.maybeRepromptSetupOnResume(100 * MIN);
+		expect(opened).toHaveLength(0);
+	});
+
 	test("stays quiet after sign-out (sign-out closes the gate on purpose)", () => {
 		const { fake, opened } = plugin({ settings: { apiUrl: "https://engram.example.com" } });
+		fake.maybeRepromptSetupOnResume(100 * MIN);
+		expect(opened).toHaveLength(0);
+	});
+
+	test("stays quiet on desktop, where a modal would steal focus", () => {
+		Platform.isMobile = false;
+		const { fake, opened } = plugin();
 		fake.maybeRepromptSetupOnResume(100 * MIN);
 		expect(opened).toHaveLength(0);
 	});
