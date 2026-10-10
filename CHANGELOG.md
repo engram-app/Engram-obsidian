@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.33.2](https://github.com/engram-app/Engram-obsidian/compare/1.33.1...1.33.2) (2026-10-10)
+
+
+### Bug Fixes
+
+* stamp genesis baseline from the projection ([#567](https://github.com/engram-app/Engram-obsidian/issues/567)) ([d1f9713](https://github.com/engram-app/Engram-obsidian/commit/d1f97139bad1fd59f7aa914d7a544685fc752ca1))
+
 ## [1.33.1](https://github.com/engram-app/Engram-obsidian/compare/1.33.0...1.33.1) (2026-10-10)
 
 
