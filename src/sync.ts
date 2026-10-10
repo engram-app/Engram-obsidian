@@ -3786,7 +3786,13 @@ export class SyncEngine {
 					// unreadable — proceed without drift protection
 				}
 				await this.crdt.applyRemoteUpdate(effectiveId, opts.genesisUpdate);
-				let consumed: string | null = opts.genesisContent;
+				// The baseline is the doc's PROJECTION, not `genesisContent`: the
+				// apply above just flushed that projection over disk, and the codec
+				// canonicalizes frontmatter (`key:` -> `key: null`, flow lists,
+				// quotes, comments). Stamping the raw bytes left a baseline no file
+				// holds, so the next catch-up read every such note as locally edited
+				// and drift-copied it (#1928: 54 conflict copies on one first sync).
+				let consumed: string | null = await this.crdt.projectedText(effectiveId);
 				// M1: `genesisContent` was frozen before the create round-trip, and
 				// the apply above flushes it over disk. Anything that landed in that
 				// window survives only in `preApplyDisk`. Merged back as a minimal
