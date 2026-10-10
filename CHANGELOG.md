@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.33.1](https://github.com/engram-app/Engram-obsidian/compare/1.33.0...1.33.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* make first sync self-healing (no silent unsynced files) ([#565](https://github.com/engram-app/Engram-obsidian/issues/565)) ([e6e655c](https://github.com/engram-app/Engram-obsidian/commit/e6e655c90cbbbc5aa228dcc0ca3da84833a9a464))
+
 ## [1.33.0](https://github.com/engram-app/Engram-obsidian/compare/1.32.0...1.33.0) (2026-10-09)
 
 
