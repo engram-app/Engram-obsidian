@@ -40,7 +40,7 @@ import type { ProviderRegistry } from "./crdt/provider-registry";
 import { ensureDocSchema } from "./crdt/schema";
 import { type CrdtWiring, createCrdtWiring } from "./crdt/wiring";
 import { makeCrdtOpSend } from "./crdt-op-dispatch";
-import { type CrdtOp, CrdtOpQueue } from "./crdt-op-queue";
+import { type CrdtOp, CrdtOpQueue, makeDropReporter } from "./crdt-op-queue";
 import { createDebugApi, installDebugApi, uninstallDebugApi } from "./debug-api";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
 import { isMarkdownPath } from "./file-kind";
@@ -685,6 +685,20 @@ export default class EngramSyncPlugin extends Plugin {
 		// Durable outbound CRDT op queue (create/delete). ONE plugin-lifetime
 		// instance whose `send` dispatches over the CURRENT noteStream; the wiring
 		// (onJoined flush, retry tick, enqueue hook) is set below/in connectChannel.
+		// Drops ship as anomalies (warn, even with diagnostics off), aggregated
+		// per reason and flushed on the retry tick below.
+		const dropReporter = makeDropReporter((reason, counts) => {
+			switch (reason) {
+				case "ttl":
+					return rlog().anomaly("crdt", "crdt_op_dropped_ttl", counts);
+				case "overflow":
+					return rlog().anomaly("crdt", "crdt_op_dropped_overflow", counts);
+				case "max-attempts":
+					return rlog().anomaly("crdt", "crdt_op_dropped_max_attempts", counts);
+				case "vault-changed":
+					return rlog().anomaly("crdt", "crdt_op_dropped_vault_changed", counts);
+			}
+		});
 		this.crdtOpQueue = new CrdtOpQueue({
 			send: makeCrdtOpSend({
 				channel: () => this.noteStream,
@@ -737,11 +751,13 @@ export default class EngramSyncPlugin extends Plugin {
 			// Read live, never captured: the queue re-checks each op against the
 			// vault we are syncing RIGHT NOW, at send time.
 			currentVaultId: () => this.settings.vaultId ?? null,
-			onDrop: (op, reason) =>
+			onDrop: (op, reason) => {
+				dropReporter.onDrop(op, reason);
 				rlog().warn(
 					"crdt",
 					`crdt_${op.kind} dropped (${reason}) without delivery: ${op.docId}`,
-				),
+				);
+			},
 		});
 		// Persist on every mutation (mirrors OfflineQueue); the flat op list is
 		// re-listed in savePluginData's wholesale blob via crdtOpQueue.all().
@@ -750,7 +766,11 @@ export default class EngramSyncPlugin extends Plugin {
 		});
 		// Drive retries: a due op past its backoff is re-sent on each tick (no-op
 		// until joined). registerInterval auto-clears on unload.
-		this.registerInterval(window.setInterval(() => void this.crdtOpQueue?.tick(), 5000));
+		this.registerInterval(
+			window.setInterval(() => {
+				void this.crdtOpQueue?.tick().finally(() => dropReporter.flush());
+			}, 5000),
+		);
 		// Wire the SyncEngine's durable create/delete enqueue hook to the queue.
 		// The pending-op probe feeds the evidence rule's supersede exception: a
 		// create-then-delete must coalesce in-queue, not resurrect (#416 review).
@@ -2360,6 +2380,7 @@ export default class EngramSyncPlugin extends Plugin {
 
 		// Disconnect existing channel + invalidate any in-flight connectChannel()
 		// (its async getMe() may still be pending) so it can't spawn a zombie.
+		this.crdtOpQueue?.onLeft();
 		this.noteStream?.disconnect();
 		this.noteStream = null;
 		this.channelEpoch++;
@@ -2481,6 +2502,21 @@ export default class EngramSyncPlugin extends Plugin {
 		// The old REST /updates fallback delivered regardless of topic state,
 		// masking the missing kick.
 		void this.syncEngine.flushQueue();
+		// Self-heal: push anything the server still lacks (a create the op queue
+		// dropped, an attachment parked past its retry cap). Before this, only
+		// startup or a manual sync ever re-picked an untracked file, so a first
+		// sync that lost creates mid-flap stayed partial forever (2026-10-09).
+		// Gated inside on the sync gate and on any sync already running.
+		await this.runSelfHealSweep();
+	}
+
+	/** The one call site shape for the sweep: never throws into its trigger. */
+	private async runSelfHealSweep(): Promise<void> {
+		try {
+			await this.syncEngine.selfHealSweep();
+		} catch (e) {
+			rlog().warn("sync", `self-heal sweep failed: ${errMsg(e)}`);
+		}
 	}
 
 	/** Attempt to connect the WebSocket channel with retry on getMe() failure. */
@@ -2609,6 +2645,9 @@ export default class EngramSyncPlugin extends Plugin {
 						// drop never re-handshakes on rejoin — the write-only bug,
 						// deferred to the first disconnect instead of fixed.
 						this.indexRoom.setConnected(false);
+						// Held ops must not spend their attempts or TTL against a dead
+						// socket (2026-10-09: a minute of outage dropped a first sync).
+						this.crdtOpQueue?.onLeft();
 					}
 				};
 
@@ -2908,9 +2947,10 @@ export default class EngramSyncPlugin extends Plugin {
 						// reconcile + seq replay.
 						this.crdtManager?.setConnected(true);
 						// Deliver any HELD create/delete ops FIRST, then reconcile the
-						// id-map, re-enroll open notes, and run the socket catch-up.
-						// onCrdtTopicJoined re-creates NOTHING (it is catch-up/pull-only,
-						// no pushModifiedFiles), so this ordering is not a re-push guard.
+						// id-map, re-enroll open notes, run the socket catch-up, and
+						// finally the self-heal sweep. The sweep skips any note whose
+						// create is still pending here (pushCandidates), so flushing
+						// first is what lets it see only what the queue could NOT deliver.
 						// The double-crdt_create guard lives elsewhere: the queue coalesces
 						// to one create per docId, pushFile's genesis branch is gated on
 						// !hasServerNote (a later edit after the ack's head-flip routes as a
@@ -2958,6 +2998,7 @@ export default class EngramSyncPlugin extends Plugin {
 						// Provider model: no crdt: topic → providers offline (buffer, don't send).
 						this.crdtManager?.setConnected(false);
 						this.indexRoom.setConnected(false);
+						this.crdtOpQueue?.onLeft();
 						// A later same-socket rejoin must re-fire STEP1s; resetAll clears the once-per-session guard.
 						this.crdtEnrollment?.resetAll();
 						if (reason === "crdt_proto_too_old") {
@@ -3571,6 +3612,10 @@ export default class EngramSyncPlugin extends Plugin {
 					// biome-ignore lint/suspicious/noConsole: error boundary
 					console.error("Engram Sync: periodic catch-up failed", e);
 				}
+				// Then push what the server still lacks, whether or not the pull
+				// leg worked. Gated inside on the sync gate, offline, and any sync
+				// already running.
+				await this.runSelfHealSweep();
 			})();
 		}, EngramSyncPlugin.FALLBACK_POLL_MS);
 		this.registerInterval(this.syncInterval);

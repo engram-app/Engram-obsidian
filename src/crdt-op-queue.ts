@@ -45,8 +45,11 @@ export type SendResult = "ok" | "error" | "timeout";
 export const MAX_QUEUE = 500;
 
 /** Ops older than this (by `enqueuedAt`) are stale and dropped, never sent.
- *  A CRDT op held 5 min past creation is better dropped than delivered late,
- *  the peer reconverges via full sync, so a late op only causes churn. */
+ *  Age counts only time the channel was JOINED: `onJoined` credits held time
+ *  back, so an outage cannot expire the outbox. A dropped CREATE is not lost:
+ *  pushFile never stamps sync state for a queued create, so the file stays
+ *  untracked and the self-heal sweep (`SyncEngine.selfHealSweep`) re-pushes it
+ *  against current disk truth. */
 export const OP_TTL_MS = 5 * 60 * 1000;
 
 /** Give up (drop + notify) after this many failed send attempts. */
@@ -97,6 +100,11 @@ export class CrdtOpQueue {
 	/** Keyed by docId → at most one pending op per doc (newest supersedes). */
 	private entries: Map<string, Entry> = new Map();
 	private joined = false;
+	/** When the channel was last seen down (construction counts: nothing is
+	 *  joined yet). Neither the TTL nor the attempt budget may be spent while
+	 *  nothing can be delivered: on rejoin every held op's age is credited the
+	 *  time it spent held. Cleared by `onJoined`; set by `onLeft`. */
+	private heldSince: number | null;
 	/** Re-entrancy guard so overlapping flush/tick calls don't double-send. */
 	private flushing = false;
 
@@ -117,6 +125,7 @@ export class CrdtOpQueue {
 		this.currentVaultId = deps.currentVaultId;
 		this.opts = { ...DEFAULT_OPTIONS, ...deps.options };
 		this.persistDelayMs = deps.persistDelayMs ?? PERSIST_DELAY_MS;
+		this.heldSince = this.now();
 	}
 
 	/** Number of distinct pending ops (docIds). */
@@ -185,10 +194,33 @@ export class CrdtOpQueue {
 		this.schedulePersist();
 	}
 
-	/** Channel joined: flush all held ops FIFO, retrying failures via backoff. */
+	/** Channel joined: flush all held ops FIFO, retrying failures via backoff.
+	 *
+	 *  Time spent held (since construction or the last `onLeft`) is credited
+	 *  back to each op's age, so the TTL measures time the op COULD have been
+	 *  delivered, not wall time. Held ops are due immediately. */
 	async onJoined(): Promise<void> {
+		if (this.heldSince !== null) {
+			const now = this.now();
+			for (const entry of this.entries.values()) {
+				const heldFor = now - Math.max(this.heldSince, entry.op.enqueuedAt);
+				if (heldFor > 0) entry.op.enqueuedAt += heldFor;
+				entry.nextAttemptAt = 0;
+			}
+			this.heldSince = null;
+			this.schedulePersist();
+		}
 		this.joined = true;
 		await this.flush();
+	}
+
+	/** Channel left (disconnect, join error, teardown). Stops sending at once,
+	 *  including the rest of an in-flight pass, and pauses the TTL until the
+	 *  next `onJoined`. Idempotent. */
+	onLeft(): void {
+		if (!this.joined && this.heldSince !== null) return;
+		this.joined = false;
+		this.heldSince = this.now();
 	}
 
 	/**
@@ -199,11 +231,21 @@ export class CrdtOpQueue {
 		await this.flush();
 	}
 
+	/** Evict the oldest CREATE if there is one, else the oldest op. A dropped
+	 *  create is recoverable (its file stays untracked, so the self-heal sweep
+	 *  re-pushes it); a dropped delete has no fallback and resurrects the note. */
 	private evictOldest(): void {
-		const first = this.entries.keys().next();
-		if (first.done) return;
-		const entry = this.entries.get(first.value);
-		this.entries.delete(first.value);
+		let victim: string | undefined;
+		for (const [docId, e] of this.entries) {
+			if (e.op.kind === "create") {
+				victim = docId;
+				break;
+			}
+		}
+		victim ??= this.entries.keys().next().value;
+		if (victim === undefined) return;
+		const entry = this.entries.get(victim);
+		this.entries.delete(victim);
 		if (entry) this.onDrop?.(entry.op, "overflow");
 		this.schedulePersist();
 	}
@@ -264,6 +306,9 @@ export class CrdtOpQueue {
 		try {
 			// Snapshot keys so eviction/supersede during iteration is safe.
 			for (const docId of [...this.entries.keys()]) {
+				// The channel dropped mid-pass: every remaining send would fail
+				// instantly and burn an attempt against a dead socket.
+				if (!this.joined) break;
 				const entry = this.entries.get(docId);
 				if (!entry) continue;
 				if (this.dropIfExpired(docId, entry)) continue;
@@ -281,6 +326,9 @@ export class CrdtOpQueue {
 		// The op may have been superseded/evicted while send was in flight;
 		// only act on it if this exact entry is still the pending one.
 		if (this.entries.get(docId) !== entry) return;
+		// Left while the send was in flight: the failure says nothing about the
+		// op, only about the socket. Keep it, uncharged, for the next join.
+		if (!this.joined && result !== "ok") return;
 
 		if (result === "ok") {
 			this.entries.delete(docId);
@@ -296,4 +344,28 @@ export class CrdtOpQueue {
 		}
 		entry.nextAttemptAt = this.now() + this.backoffFor(entry.op.attempts);
 	}
+}
+
+/** Aggregates op drops into ONE report per reason per flush, so a 150-op
+ *  overflow ships as one line instead of 150 (the remote log buffer holds
+ *  200). Drops used to be warn-only, invisible with diagnostics off, which is
+ *  why the 2026-10-09 first sync lost ~600 creates without a single client
+ *  log line. Counts only; the caller maps each reason to a LITERAL anomaly
+ *  code (`crdt_op_dropped_<reason>`) so the codes stay greppable. */
+export function makeDropReporter(
+	emit: (reason: DropReason, counts: { count: number; creates: number }) => void,
+): { onDrop: (op: CrdtOp, reason: DropReason) => void; flush: () => void } {
+	const tally = new Map<DropReason, { count: number; creates: number }>();
+	return {
+		onDrop: (op, reason) => {
+			const t = tally.get(reason) ?? { count: 0, creates: 0 };
+			t.count += 1;
+			if (op.kind === "create") t.creates += 1;
+			tally.set(reason, t);
+		},
+		flush: () => {
+			for (const [reason, counts] of tally) emit(reason, counts);
+			tally.clear();
+		},
+	};
 }

@@ -21,6 +21,7 @@ import {
 	type CrdtOpQueueOptions,
 	type DropReason,
 	MAX_BACKOFF_MS,
+	makeDropReporter,
 	type SendResult,
 } from "../src/crdt-op-queue";
 
@@ -317,23 +318,28 @@ describe("bounded size", () => {
 // ---------------------------------------------------------------------------
 
 describe("strict TTL", () => {
-	test("op aged past TTL while held is dropped at flush, never sent", async () => {
+	// The TTL counts only time the channel was JOINED (see "join state"
+	// below): these used to age the op while never joined, which is exactly the
+	// window that silently dropped a first sync's creates (2026-10-09). The op
+	// now ages while joined but undeliverable (backing off), which is the case
+	// the TTL exists for.
+	test("op aged past TTL while joined-but-failing is dropped at flush, never resent", async () => {
 		const clock = fakeClock(0);
-		const { fn, calls } = scriptedSend();
+		const { fn, calls } = scriptedSend(["error"]);
 		const drops: Array<{ docId: string; reason: DropReason }> = [];
 		const q = makeQueue({
 			send: fn,
 			now: clock.now,
 			onDrop: (op, reason) => drops.push({ docId: op.docId, reason }),
-			options: { opTtlMs: 1000 },
+			options: { opTtlMs: 1000, baseBackoffMs: 10 },
 		});
 
 		q.enqueue(makeOp("a", "msg", { enqueuedAt: 0 }));
-		// Age past TTL while not joined
-		clock.set(1001);
-		await q.onJoined();
+		await q.onJoined(); // attempt 1 fails at t=0
+		clock.set(1001); // age past TTL while joined
+		await q.tick();
 
-		expect(calls.length).toBe(0); // never sent
+		expect(calls.length).toBe(1); // never resent
 		expect(q.size()).toBe(0);
 		expect(drops).toEqual([{ docId: "a", reason: "ttl" }]);
 	});
@@ -349,10 +355,11 @@ describe("strict TTL", () => {
 			options: { opTtlMs: 1000 },
 		});
 
+		await q.onJoined(); // joined at t=0, nothing held yet
 		q.enqueue(makeOp("old", "msg", { enqueuedAt: 0 }));
 		q.enqueue(makeOp("fresh", "msg", { enqueuedAt: 900 }));
 		clock.set(1001); // old is 1001ms (expired), fresh is 101ms (alive)
-		await q.onJoined();
+		await q.tick();
 
 		expect(calls.map((o) => o.docId)).toEqual(["fresh"]);
 		expect(drops).toEqual([{ docId: "old", reason: "ttl" }]);
@@ -440,5 +447,157 @@ describe("vault-stamped ops", () => {
 		await q.onJoined();
 
 		expect(calls.map((o) => o.docId)).toEqual(["doc-legacy"]);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 9. Join state is tracked for real (2026-10-09 first-sync incident)
+//
+// `joined` used to be set once and never reset, so during a disconnect every
+// tick failed instantly and burned an attempt, and the TTL kept running while
+// nothing could possibly be delivered: about a minute of outage could drop the
+// whole outbox. Neither budget may be spent while the channel is down.
+// ---------------------------------------------------------------------------
+
+describe("join state (flapping channel)", () => {
+	test("ticks while left send nothing, burn no attempts, and drop nothing", async () => {
+		const clock = fakeClock(0);
+		const { fn, calls } = scriptedSend(["error"]);
+		const drops: DropReason[] = [];
+		const q = makeQueue({
+			send: fn,
+			now: clock.now,
+			onDrop: (_op, r) => drops.push(r),
+			options: { maxAttempts: 3, baseBackoffMs: 10, maxBackoffMs: 10 },
+		});
+
+		q.enqueue(makeOp("a", "create"));
+		await q.onJoined(); // attempt 1 fails
+		q.onLeft();
+		for (let i = 0; i < 20; i++) {
+			clock.advance(1000);
+			await q.tick();
+		}
+		expect(calls.length).toBe(1);
+		expect(drops).toEqual([]);
+		expect(q.size()).toBe(1);
+
+		await q.onJoined();
+		expect(calls.length).toBe(2);
+		expect(q.size()).toBe(0);
+	});
+
+	test("TTL does not run while the channel is down", async () => {
+		const clock = fakeClock(0);
+		const { fn, calls } = scriptedSend(["error"]);
+		const drops: DropReason[] = [];
+		const q = makeQueue({
+			send: fn,
+			now: clock.now,
+			onDrop: (_op, r) => drops.push(r),
+			options: { opTtlMs: 1000, baseBackoffMs: 10 },
+		});
+
+		q.enqueue(makeOp("a", "create", { enqueuedAt: 0 }));
+		await q.onJoined(); // fails at t=0
+		clock.set(100);
+		q.onLeft();
+		clock.set(10 * 60_000); // ten minutes offline, far past the TTL
+		await q.onJoined();
+
+		expect(drops).toEqual([]);
+		expect(calls.length).toBe(2);
+		expect(q.size()).toBe(0);
+	});
+
+	test("time held before the FIRST join does not count against the TTL", async () => {
+		const clock = fakeClock(0);
+		const { fn, calls } = scriptedSend();
+		const drops: DropReason[] = [];
+		const q = makeQueue({
+			send: fn,
+			now: clock.now,
+			onDrop: (_op, r) => drops.push(r),
+			options: { opTtlMs: 1000 },
+		});
+
+		q.enqueue(makeOp("a", "create", { enqueuedAt: 0 }));
+		clock.set(5000);
+		await q.onJoined();
+
+		expect(drops).toEqual([]);
+		expect(calls.map((o) => o.docId)).toEqual(["a"]);
+	});
+
+	test("a leave mid-flush stops the pass; the failed in-flight send costs no attempt", async () => {
+		const clock = fakeClock(0);
+		let q!: CrdtOpQueue;
+		const sent: string[] = [];
+		const send = async (op: CrdtOp): Promise<SendResult> => {
+			sent.push(op.docId);
+			if (op.docId === "b" && sent.length === 2) {
+				q.onLeft(); // the socket drops while b's first send is in flight
+				return "error";
+			}
+			return "ok";
+		};
+		q = makeQueue({ send, now: clock.now, options: { maxAttempts: 1 } });
+		for (const id of ["a", "b", "c"]) q.enqueue(makeOp(id, "create"));
+
+		await q.onJoined();
+		expect(sent).toEqual(["a", "b"]); // c was not attempted against a dead socket
+		expect(q.size()).toBe(2);
+		expect(q.all().find((o) => o.docId === "b")?.attempts).toBe(0);
+
+		await q.onJoined();
+		expect(sent).toEqual(["a", "b", "b", "c"]);
+		expect(q.size()).toBe(0);
+	});
+
+	test("overflow evicts a create (the sweep re-pushes it) before a delete (no fallback)", async () => {
+		const clock = fakeClock();
+		const { fn } = scriptedSend();
+		const drops: Array<{ docId: string; reason: DropReason }> = [];
+		const q = makeQueue({
+			send: fn,
+			now: clock.now,
+			onDrop: (op, reason) => drops.push({ docId: op.docId, reason }),
+			options: { maxQueue: 2 },
+		});
+
+		q.enqueue(makeOp("del", "delete"));
+		q.enqueue(makeOp("new", "create"));
+		q.enqueue(makeOp("del2", "delete"));
+
+		expect(drops).toEqual([{ docId: "new", reason: "overflow" }]);
+		expect(
+			q
+				.all()
+				.map((o) => o.docId)
+				.sort(),
+		).toEqual(["del", "del2"]);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// 10. Drops are reported server-side (counts and reasons, never a path)
+// ---------------------------------------------------------------------------
+
+describe("drop reporter", () => {
+	test("aggregates drops per reason into one report each, then resets", () => {
+		const lines: Array<{ reason: DropReason; counts: { count: number; creates: number } }> = [];
+		const r = makeDropReporter((reason, counts) => lines.push({ reason, counts }));
+
+		for (let i = 0; i < 150; i++) r.onDrop(makeOp(`n${i}`, "create"), "overflow");
+		r.onDrop(makeOp("d", "delete"), "max-attempts");
+		r.onDrop(makeOp("c", "create"), "max-attempts");
+		r.flush();
+
+		expect(lines).toEqual([
+			{ reason: "overflow", counts: { count: 150, creates: 150 } },
+			{ reason: "max-attempts", counts: { count: 2, creates: 1 } },
+		]);
+		r.flush();
+		expect(lines.length).toBe(2); // nothing new, nothing re-sent
 	});
 });

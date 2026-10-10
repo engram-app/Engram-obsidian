@@ -316,6 +316,10 @@ export interface QueueEntry {
 	 *  existed reads as — so an upgrade never demotes pending work below a bulk
 	 *  import. */
 	priority?: number;
+	/** Epoch ms before which the drain skips this entry: exponential backoff
+	 *  after a transient failure, so one failing entry cannot block the rest.
+	 *  Absent = due now. */
+	nextAttemptAt?: number;
 }
 
 /** A single search result from Engram's `POST /api/search`.
