@@ -20,12 +20,12 @@ describe("partitionStrandedFlushes", () => {
 	test("flushes ids whose path resolves, clearing their attempt count", () => {
 		const attempts = new Map<string, number>([["id-a", 2]]);
 		const { toFlush, toRetry, toGiveUp } = partitionStrandedFlushes(
-			new Map([["id-a", "content-a"]]),
+			new Set(["id-a"]),
 			(id) => (id === "id-a" ? "Notes/A.md" : null),
 			attempts,
 			5,
 		);
-		expect(toFlush).toEqual([{ id: "id-a", path: "Notes/A.md", content: "content-a" }]);
+		expect(toFlush).toEqual([{ id: "id-a", path: "Notes/A.md" }]);
 		expect(toRetry).toEqual([]);
 		expect(toGiveUp).toEqual([]);
 		expect(attempts.has("id-a")).toBe(false);
@@ -38,13 +38,13 @@ describe("partitionStrandedFlushes", () => {
 		// re-queues it for another debounced heal cycle.
 		const attempts = new Map<string, number>();
 		const { toFlush, toRetry, toGiveUp } = partitionStrandedFlushes(
-			new Map([["id-fresh-burst", "content-b"]]),
+			new Set(["id-fresh-burst"]),
 			() => null, // manifest fetch raced the note's own commit — still unknown
 			attempts,
 			5,
 		);
 		expect(toFlush).toEqual([]);
-		expect(toRetry).toEqual([{ id: "id-fresh-burst", content: "content-b" }]);
+		expect(toRetry).toEqual(["id-fresh-burst"]);
 		expect(toGiveUp).toEqual([]);
 		expect(attempts.get("id-fresh-burst")).toBe(1);
 	});
@@ -52,7 +52,7 @@ describe("partitionStrandedFlushes", () => {
 	test("gives up only after maxAttempts consecutive misses, not on the first", () => {
 		const attempts = new Map<string, number>([["id-orphan", 3]]);
 		const { toRetry, toGiveUp } = partitionStrandedFlushes(
-			new Map([["id-orphan", "content-c"]]),
+			new Set(["id-orphan"]),
 			() => null,
 			attempts,
 			4, // this call is the 4th miss -> hits the cap
@@ -72,18 +72,13 @@ describe("partitionStrandedFlushes", () => {
 			["id-d", "Notes/Sub/Deep/Deeper/D.md"],
 		]);
 		const { toFlush, toRetry, toGiveUp } = partitionStrandedFlushes(
-			new Map([
-				["id-a", "content-a"],
-				["id-b", "content-b"],
-				["id-c", "content-c"],
-				["id-d", "content-d"],
-			]),
+			new Set(["id-a", "id-b", "id-c", "id-d"]),
 			(id) => resolved.get(id) ?? null,
 			attempts,
 			5,
 		);
 		expect(toFlush.map((f) => f.id).sort()).toEqual(["id-a", "id-c", "id-d"]);
-		expect(toRetry).toEqual([{ id: "id-b", content: "content-b" }]);
+		expect(toRetry).toEqual(["id-b"]);
 		expect(toGiveUp).toEqual([]);
 	});
 });

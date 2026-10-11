@@ -2036,6 +2036,20 @@ export class SyncEngine {
 		return state !== undefined && state.hash !== fnv1a(content);
 	}
 
+	/** Strand-heal drain (#569): fold an unpushed disk edit into the note's
+	 *  doc, then write the doc's CURRENT projection. The content captured when
+	 *  the id stranded can predate both a local edit and later doc updates, so
+	 *  writing it reverts whichever landed in between. */
+	async flushStrandedNote(path: string, noteId: string): Promise<boolean> {
+		if (!this.crdt) return false;
+		// captureDiskDriftBeforeRemote's precondition: a history-less doc would
+		// mint a second lineage (#234).
+		if (await this.crdt.hasHistory(noteId)) {
+			await this.captureDiskDriftBeforeRemote(path, noteId);
+		}
+		return this.flushFromCrdt(path, await this.crdt.projectedText(noteId));
+	}
+
 	/** Should an inbound delete preserve `disk` as a keep-both conflict copy
 	 *  before trashing the file and tearing the CRDT room down?
 	 *
