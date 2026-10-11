@@ -14,6 +14,7 @@ import { fromB64 } from "./wire";
 type WiringSyncEngine = Pick<
 	SyncEngine,
 	| "flushFromCrdt"
+	| "hasUnpushedDiskEdit"
 	| "isUnchangedSynced"
 	| "materializeEmptyDiscovered"
 	| "reconcileNoteIdMapFromManifest"
@@ -242,8 +243,22 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 			// The primary onFlushToDisk path throws on a refused write; this healed
 			// path can't await (fire-and-forget batch), so surface refusal/failure
 			// via rlog instead of discarding it — content stays safe in the Y.Doc.
+			// #569: `content` was captured when the id was stranded, possibly
+			// before the user edited the file. If disk holds an unpushed edit,
+			// writing the snapshot erases it and the push then echo-skips. Skip;
+			// that edit's push merges into the doc, which stays authoritative.
 			syncEngine
-				.flushFromCrdt(path, content)
+				.hasUnpushedDiskEdit(path)
+				.then((dirty) => {
+					if (dirty) {
+						rlog().warn(
+							"crdt",
+							`strand-heal flush skipped for ${noteRef(path)} — unpushed local edit on disk`,
+						);
+						return true;
+					}
+					return syncEngine.flushFromCrdt(path, content);
+				})
 				.then((ok) => {
 					if (!ok)
 						rlog().warn(

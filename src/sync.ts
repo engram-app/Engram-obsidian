@@ -2036,6 +2036,14 @@ export class SyncEngine {
 		return state !== undefined && state.hash !== fnv1a(content);
 	}
 
+	/** True when disk holds an edit this engine has not pushed yet: a baseline
+	 *  exists and disk no longer hashes to it (#569). */
+	async hasUnpushedDiskEdit(path: string): Promise<boolean> {
+		const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
+		if (!(file instanceof TFile)) return false;
+		return this.needsColdReconcile(path, await this.app.vault.cachedRead(file));
+	}
+
 	/** Should an inbound delete preserve `disk` as a keep-both conflict copy
 	 *  before trashing the file and tearing the CRDT room down?
 	 *

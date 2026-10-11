@@ -74,6 +74,7 @@ function makeDevice(
 				flushedPaths.push(path);
 				return true;
 			}),
+		hasUnpushedDiskEdit: async () => false,
 		isUnchangedSynced: () => false,
 		materializeEmptyDiscovered: async (path: string) => {
 			disk.set(path, "");
@@ -132,6 +133,7 @@ async function destroy(...devices: Device[]): Promise<void> {
 function fanoutStubEngine() {
 	return {
 		flushFromCrdt: async () => {},
+		hasUnpushedDiskEdit: async () => false,
 		isUnchangedSynced: () => false,
 		materializeEmptyDiscovered: async () => {},
 		reconcileNoteIdMapFromManifest: async () => 0,
