@@ -253,7 +253,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 					if (dirty) {
 						rlog().warn(
 							"crdt",
-							`strand-heal flush skipped for ${noteRef(path)} — unpushed local edit on disk`,
+							`strand-heal flush skipped for ${noteRef(path)}: unpushed local edit on disk`,
 						);
 						return true;
 					}
