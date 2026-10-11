@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.33.3](https://github.com/engram-app/Engram-obsidian/compare/1.33.2...1.33.3) (2026-10-11)
+
+
+### Bug Fixes
+
+* keep unpushed edit when strand-heal flushes ([#570](https://github.com/engram-app/Engram-obsidian/issues/570)) ([a54d685](https://github.com/engram-app/Engram-obsidian/commit/a54d685fd6fa42bfe8566a86d5b50a7bd00744bf))
+
 ## [1.33.2](https://github.com/engram-app/Engram-obsidian/compare/1.33.1...1.33.2) (2026-10-10)
 
 
