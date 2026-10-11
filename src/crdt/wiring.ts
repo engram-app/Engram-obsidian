@@ -14,7 +14,7 @@ import { fromB64 } from "./wire";
 type WiringSyncEngine = Pick<
 	SyncEngine,
 	| "flushFromCrdt"
-	| "hasUnpushedDiskEdit"
+	| "flushStrandedNote"
 	| "isUnchangedSynced"
 	| "materializeEmptyDiscovered"
 	| "reconcileNoteIdMapFromManifest"
@@ -135,7 +135,7 @@ const STRAND_HEAL_MAX_ATTEMPTS = 5;
 
 /** Pure retry/give-up decision for one strand-heal drain pass (e2e test_43
  *  burst mechanism, round 3 — see `drainStrandedFlushes`). Given the ids
- *  stranded since the last heal (id -> content) and a path resolver (called
+ *  stranded since the last heal and a path resolver (called
  *  AFTER the caller's manifest reconcile), partitions each id into: flush now
  *  (path resolved), retry (path still unknown, under the attempt cap), or
  *  give up (cap exceeded — content stays safe in the Y.Doc; no disk write, no
@@ -144,23 +144,23 @@ const STRAND_HEAL_MAX_ATTEMPTS = 5;
  *  standalone (no Obsidian API dependency) so the retry logic is unit-testable
  *  without standing up the full wiring. */
 export function partitionStrandedFlushes(
-	pending: Map<string, string>,
+	pending: Iterable<string>,
 	resolvePath: (id: string) => string | null,
 	attempts: Map<string, number>,
 	maxAttempts: number,
 ): {
-	toFlush: Array<{ id: string; path: string; content: string }>;
-	toRetry: Array<{ id: string; content: string }>;
+	toFlush: Array<{ id: string; path: string }>;
+	toRetry: string[];
 	toGiveUp: string[];
 } {
-	const toFlush: Array<{ id: string; path: string; content: string }> = [];
-	const toRetry: Array<{ id: string; content: string }> = [];
+	const toFlush: Array<{ id: string; path: string }> = [];
+	const toRetry: string[] = [];
 	const toGiveUp: string[] = [];
-	for (const [id, content] of pending) {
+	for (const id of pending) {
 		const path = resolvePath(id);
 		if (path) {
 			attempts.delete(id);
-			toFlush.push({ id, path, content });
+			toFlush.push({ id, path });
 			continue;
 		}
 		const attempt = (attempts.get(id) ?? 0) + 1;
@@ -168,7 +168,7 @@ export function partitionStrandedFlushes(
 		if (attempt >= maxAttempts) {
 			toGiveUp.push(id);
 		} else {
-			toRetry.push({ id, content });
+			toRetry.push(id);
 		}
 	}
 	return { toFlush, toRetry, toGiveUp };
@@ -193,9 +193,10 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	const { noteIdMap, syncEngine } = deps;
 	const debounceMs = deps.strandHealDebounceMs ?? DEFAULT_STRAND_HEAL_DEBOUNCE_MS;
 
-	// Latest content per stranded id (unknown id -> no disk path), coalesced so a
-	// burst of stranded flushes shares ONE reconcile.
-	const strandedFlushes = new Map<string, string>();
+	// Stranded ids (unknown id -> no disk path), coalesced so a burst of
+	// stranded flushes shares ONE reconcile. Ids only: the drain writes the doc's
+	// projection at drain time, never a snapshot from strand time (#569).
+	const strandedFlushes = new Set<string>();
 	let strandHealTimer: number | null = null;
 	// Per-id heal attempt count (e2e test_43 burst mechanism, round 3): a single
 	// manifest fetch can race a just-created note's own commit — the server
@@ -207,7 +208,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	const strandHealAttempts = new Map<string, number>();
 
 	async function drainStrandedFlushes(): Promise<void> {
-		const pending = new Map(strandedFlushes);
+		const pending = new Set(strandedFlushes);
 		strandedFlushes.clear();
 		try {
 			await syncEngine.reconcileNoteIdMapFromManifest();
@@ -231,34 +232,20 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		// dropping them after one manifest fetch — a just-created note (e.g. one
 		// of several in a rapid burst) can commit server-side moments after this
 		// device's first reconcile read the manifest.
-		for (const { id, content } of toRetry) {
+		for (const id of toRetry) {
 			rlog().warn(
 				"crdt",
 				`onFlushToDisk: still no path for note_id=${id} after heal — retrying`,
 			);
-			healUnknownNoteId(id, content);
+			healUnknownNoteId(id);
 		}
-		for (const { path, content } of toFlush) {
+		for (const { id, path } of toFlush) {
 			if (deps.isBound(path)) continue; // live editor owns disk
 			// The primary onFlushToDisk path throws on a refused write; this healed
 			// path can't await (fire-and-forget batch), so surface refusal/failure
 			// via rlog instead of discarding it — content stays safe in the Y.Doc.
-			// #569: `content` was captured when the id was stranded, possibly
-			// before the user edited the file. If disk holds an unpushed edit,
-			// writing the snapshot erases it and the push then echo-skips. Skip;
-			// that edit's push merges into the doc, which stays authoritative.
 			syncEngine
-				.hasUnpushedDiskEdit(path)
-				.then((dirty) => {
-					if (dirty) {
-						rlog().warn(
-							"crdt",
-							`strand-heal flush skipped for ${noteRef(path)}: unpushed local edit on disk`,
-						);
-						return true;
-					}
-					return syncEngine.flushFromCrdt(path, content);
-				})
+				.flushStrandedNote(path, id)
 				.then((ok) => {
 					if (!ok)
 						rlog().warn(
@@ -279,8 +266,8 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	 *  reconciling the noteIdMap from the server manifest, then retrying the
 	 *  flush. Debounced so a burst of stranded flushes shares ONE reconcile.
 	 *  Self-heals a mid-session map drift the once-per-connect reconcile misses. */
-	function healUnknownNoteId(noteId: string, content: string): void {
-		strandedFlushes.set(noteId, content); // keep the latest content per id
+	function healUnknownNoteId(noteId: string): void {
+		strandedFlushes.add(noteId);
 		if (strandHealTimer !== null) return;
 		strandHealTimer = window.setTimeout(() => {
 			strandHealTimer = null;
@@ -324,7 +311,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 			if (!path) {
 				// Unknown id: content is safe in the Y.Doc; heal the id from the
 				// manifest and retry so a drift self-heals instead of stranding.
-				healUnknownNoteId(noteId, content);
+				healUnknownNoteId(noteId);
 				return undefined;
 			}
 			// The editor owns disk for a bound path; a remote merge just painted in,

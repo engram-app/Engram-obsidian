@@ -2036,12 +2036,18 @@ export class SyncEngine {
 		return state !== undefined && state.hash !== fnv1a(content);
 	}
 
-	/** True when disk holds an edit this engine has not pushed yet: a baseline
-	 *  exists and disk no longer hashes to it (#569). */
-	async hasUnpushedDiskEdit(path: string): Promise<boolean> {
-		const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
-		if (!(file instanceof TFile)) return false;
-		return this.needsColdReconcile(path, await this.app.vault.cachedRead(file));
+	/** Strand-heal drain (#569): fold an unpushed disk edit into the note's
+	 *  doc, then write the doc's CURRENT projection. The content captured when
+	 *  the id stranded can predate both a local edit and later doc updates, so
+	 *  writing it reverts whichever landed in between. */
+	async flushStrandedNote(path: string, noteId: string): Promise<boolean> {
+		if (!this.crdt) return false;
+		// captureDiskDriftBeforeRemote's precondition: a history-less doc would
+		// mint a second lineage (#234).
+		if (await this.crdt.hasHistory(noteId)) {
+			await this.captureDiskDriftBeforeRemote(path, noteId);
+		}
+		return this.flushFromCrdt(path, await this.crdt.projectedText(noteId));
 	}
 
 	/** Should an inbound delete preserve `disk` as a keep-both conflict copy

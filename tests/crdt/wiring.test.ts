@@ -74,7 +74,9 @@ function makeDevice(
 				flushedPaths.push(path);
 				return true;
 			}),
-		hasUnpushedDiskEdit: async () => false,
+		// Real one folds disk drift in first; these scenarios have none.
+		flushStrandedNote: async (path: string, noteId: string) =>
+			syncEngine.flushFromCrdt(path, await wiring.manager.projectedText(noteId)),
 		isUnchangedSynced: () => false,
 		materializeEmptyDiscovered: async (path: string) => {
 			disk.set(path, "");
@@ -133,7 +135,7 @@ async function destroy(...devices: Device[]): Promise<void> {
 function fanoutStubEngine() {
 	return {
 		flushFromCrdt: async () => {},
-		hasUnpushedDiskEdit: async () => false,
+		flushStrandedNote: async () => true,
 		isUnchangedSynced: () => false,
 		materializeEmptyDiscovered: async () => {},
 		reconcileNoteIdMapFromManifest: async () => 0,
@@ -455,6 +457,7 @@ test("inbound frame for an unknown id strands, then heals on reconcile", async (
 
 	// Heal: reconcile teaches B the mapping, then the retry flush lands.
 	await b.wiring.drainStrandedFlushes();
+	await waitFor(async () => b.disk.has("B/discovered.md"), "the healed flush lands");
 
 	expect(b.disk.get("B/discovered.md")).toBe("stranded body");
 	expect(b.flushedPaths).toEqual(["B/discovered.md"]);

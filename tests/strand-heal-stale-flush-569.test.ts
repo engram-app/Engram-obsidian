@@ -43,7 +43,10 @@ afterEach(async () => {
 	wiring = null;
 });
 
-test("strand-heal drain does not write its stale snapshot over a newer local edit (#569)", async () => {
+const REMOTE_PLUS_BASE = "REMOTE\nshared base\n";
+
+/** Device whose genesis flush strands (id unmapped), then the create acks. */
+async function strandedDevice() {
 	const disk = new Map<string, string>([[PATH, BASE]]);
 	const app = {
 		vault: {
@@ -74,19 +77,28 @@ test("strand-heal drain does not write its stale snapshot over a newer local edi
 	// Step 1: the id does not resolve yet when the genesis apply flushes.
 	const map = new NoteIdMap();
 	engine.setNoteIdMap(map);
-	wiring = createCrdtWiring({
+	const w = createCrdtWiring({
 		noteIdMap: map,
 		syncEngine: engine,
 		sendCrdt: () => true,
 		isBound: () => false,
 		strandHealDebounceMs: HEAL_MS,
 		dbPrefix: `strand-569-${Math.random()}`,
+		// The last-synced body is the 3-way merge base, as in production.
+		lcaFor: () => BASE,
 	});
-	await wiring.manager.applyRemoteUpdate(ID, wiring.manager.encodeGenesisUpdate(BASE));
+	wiring = w;
+	engine.setCrdtManager(w.manager); // as main.ts does
+	await w.manager.applyRemoteUpdate(ID, w.manager.encodeGenesisUpdate(BASE));
 
 	// Step 2: create acked. The id resolves and the baseline is the genesis body.
 	map.set(PATH, ID);
 	engine.importSyncState({ [PATH]: { hash: fnv1a(BASE) } });
+	return { disk, engine, manager: w.manager };
+}
+
+test("strand-heal drain does not write its stale snapshot over a newer local edit (#569)", async () => {
+	const { disk } = await strandedDevice();
 
 	// Step 3: the user's edit lands on disk; its debounced push has not run.
 	disk.set(PATH, FROM_A);
@@ -94,6 +106,31 @@ test("strand-heal drain does not write its stale snapshot over a newer local edi
 	// Step 4: the strand-heal timer fires.
 	await sleep(HEAL_MS * 10);
 
-	// Fails today: disk === BASE, so FROM_A is gone and its push will echo-skip.
 	expect(disk.get(PATH)).toBe(FROM_A);
+});
+
+test("strand-heal drain does not revert an edit whose push already landed (#569)", async () => {
+	const { disk, engine, manager } = await strandedDevice();
+
+	// The push beat the drain: doc, disk and baseline all hold FROM_A.
+	await manager.applyLocalEdit(ID, FROM_A, false);
+	disk.set(PATH, FROM_A);
+	engine.importSyncState({ [PATH]: { hash: fnv1a(FROM_A) } });
+
+	await sleep(HEAL_MS * 10);
+
+	expect(disk.get(PATH)).toBe(FROM_A);
+});
+
+test("strand-heal drain keeps both the doc's newer content and an unpushed disk edit (#569)", async () => {
+	const { disk, manager } = await strandedDevice();
+
+	// The doc moved past the stranded snapshot while disk took a local edit.
+	await manager.applyLocalEdit(ID, REMOTE_PLUS_BASE, false);
+	disk.set(PATH, FROM_A);
+
+	await sleep(HEAL_MS * 10);
+
+	expect(disk.get(PATH)).toContain("REMOTE");
+	expect(disk.get(PATH)).toContain("FROM_A");
 });
