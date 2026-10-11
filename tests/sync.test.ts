@@ -718,6 +718,31 @@ describe("SyncEngine.applySyncChange (apply behavior)", () => {
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});
 
+	test("keep-both copy is NOT stamped synced, so it is pushed instead of trashed (#1931)", async () => {
+		const { engine } = makeCrdtDeleteEngine();
+		const path = "E2E/CrdtDelete/Kept.md";
+
+		const map = new NoteIdMap();
+		map.set(path, "id-kept");
+		engine.setNoteIdMap(map);
+
+		const syncState = (engine as unknown as { syncState: Map<string, { hash: number }> })
+			.syncState;
+		syncState.set(path, { hash: fnv1a("# Old baseline\n") });
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(new TFile(path));
+		mockApp.vault.cachedRead.mockResolvedValue("# Kept\nunsynced local edit\n");
+
+		await engine.applySyncChange(
+			syncNoteEntry({ id: "id-kept", seq: 9, path, deleted: true, version: 2 }),
+		);
+
+		const copyPath = (mockApp.vault.create as jest.Mock).mock.calls[0][0] as string;
+		expect(copyPath).toMatch(/\(conflict .*\)\.md$/);
+		// A synced row on a path the server never received makes pushFile
+		// echo-skip it and the manifest reconcile trash it as server-deleted.
+		expect(syncState.has(copyPath)).toBe(false);
+	});
+
 	test("md double-divergence (#306) writes a modal-free drift-conflict-copy of remote, keeps local", async () => {
 		// setCrdtManager makes crdtOwnsBody true so applyChange enters the CRDT
 		// catch-up block and reaches the localDiverged branch (drift-copy).

@@ -2550,7 +2550,10 @@ export class SyncEngine {
 	}
 
 	/** Write `localDisk` to a dated `<name> (conflict <date>).md` copy beside
-	 *  `normalized` and record its baseline so it isn't re-pushed as drift.
+	 *  `normalized`. The copy gets NO synced row: it is a new local file the
+	 *  server has never seen, so the vault create event pushes it like any
+	 *  other. Stamping it synced made pushFile echo-skip it and the manifest
+	 *  reconcile trash it as server-deleted (#1931).
 	 *  Throws on a GENUINE write failure — `createFileWithFolders` degrades a
 	 *  benign "already exists" race to a modify with the same content, so only
 	 *  real errors (disk full, permission, illegal path) propagate. Returns the
@@ -2567,7 +2570,6 @@ export class SyncEngine {
 		const base = normalized.replace(/\.(md|canvas)$/, "");
 		const conflictPath = `${base} (conflict ${stamp}).${ext}`;
 		await this.createFileWithFolders(conflictPath, localDisk);
-		this.stampSyncedRow(normalizePath(conflictPath), { hash: fnv1a(localDisk) });
 		return conflictPath;
 	}
 

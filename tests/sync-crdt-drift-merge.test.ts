@@ -263,7 +263,8 @@ describe("#234 (Phase E3 storm-safe): history-less note applies the delta direct
 		expect(disk.get("a.md")?.match(/BASE/g)?.length).toBe(1); // NOT doubled
 		expect(enroll).not.toHaveBeenCalled();
 		const state = (e as any).syncState as Map<string, { hash: number }>;
-		expect(state.get(conflictKey as string)?.hash).toBe(fnv1a("BASE local"));
+		// Unstamped, so the copy is pushed rather than trashed by reconcile (#1931).
+		expect(state.has(conflictKey as string)).toBe(false);
 		await mgr.destroyAll();
 	});
 });
