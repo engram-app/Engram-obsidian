@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.33.4](https://github.com/engram-app/Engram-obsidian/compare/1.33.3...1.33.4) (2026-10-11)
+
+
+### Bug Fixes
+
+* push conflict copies instead of trashing them ([#572](https://github.com/engram-app/Engram-obsidian/issues/572)) ([bea9e2a](https://github.com/engram-app/Engram-obsidian/commit/bea9e2aac17a2fd7300203251abbc23bf4c39134))
+
 ## [1.33.3](https://github.com/engram-app/Engram-obsidian/compare/1.33.2...1.33.3) (2026-10-11)
 
 
