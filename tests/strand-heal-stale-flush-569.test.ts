@@ -77,10 +77,14 @@ async function strandedDevice() {
 	// Step 1: the id does not resolve yet when the genesis apply flushes.
 	const map = new NoteIdMap();
 	engine.setNoteIdMap(map);
+	const sent: string[] = [];
 	const w = createCrdtWiring({
 		noteIdMap: map,
 		syncEngine: engine,
-		sendCrdt: () => true,
+		sendCrdt: (docId: string) => {
+			sent.push(docId);
+			return true;
+		},
 		isBound: () => false,
 		strandHealDebounceMs: HEAL_MS,
 		dbPrefix: `strand-569-${Math.random()}`,
@@ -94,11 +98,14 @@ async function strandedDevice() {
 	// Step 2: create acked. The id resolves and the baseline is the genesis body.
 	map.set(PATH, ID);
 	engine.importSyncState({ [PATH]: { hash: fnv1a(BASE) } });
-	return { disk, engine, manager: w.manager };
+	return { disk, engine, manager: w.manager, sent };
 }
 
 test("strand-heal drain does not write its stale snapshot over a newer local edit (#569)", async () => {
-	const { disk } = await strandedDevice();
+	const { disk, manager, sent } = await strandedDevice();
+	manager.setConnected(true);
+	manager.markSynced(ID);
+	sent.length = 0;
 
 	// Step 3: the user's edit lands on disk; its debounced push has not run.
 	disk.set(PATH, FROM_A);
@@ -107,6 +114,9 @@ test("strand-heal drain does not write its stale snapshot over a newer local edi
 	await sleep(HEAL_MS * 10);
 
 	expect(disk.get(PATH)).toBe(FROM_A);
+	// The edit reached the doc AND left the device (the push will echo-skip).
+	expect(await manager.projectedText(ID)).toBe(FROM_A);
+	expect(sent).toContain(ID);
 });
 
 test("strand-heal drain does not revert an edit whose push already landed (#569)", async () => {
