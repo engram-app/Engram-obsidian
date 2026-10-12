@@ -26,6 +26,7 @@ import ja from "./locale/ja";
 import ko from "./locale/ko";
 import ms from "./locale/ms";
 import pt from "./locale/pt";
+import ptBR from "./locale/pt-BR";
 import ru from "./locale/ru";
 import vi from "./locale/vi";
 import zh from "./locale/zh";
@@ -36,6 +37,17 @@ export type PluralForms = Partial<Record<Intl.LDMLPluralRule, string>>;
 export type Entry = string | PluralForms;
 export type Dict = Record<string, Entry>;
 export type Vars = Record<string, string | number>;
+/**
+ * Text a user may read: what `t()` returns. A render helper types its text
+ * parameter as this, so tsc rejects raw English handed to the helper, which the
+ * sink lint cannot see (it only inspects the call that reaches Obsidian).
+ */
+export type UIText = string & { readonly __uiText: never };
+
+/** Text shown as-is in every language: a URL or a brand name, never prose. */
+export function asIs(text: string): UIText {
+	return text as UIText;
+}
 
 const LOCALES: Record<string, Dict> = {
 	de,
@@ -46,6 +58,7 @@ const LOCALES: Record<string, Dict> = {
 	ko,
 	ms,
 	pt,
+	"pt-BR": ptBR,
 	ru,
 	vi,
 	zh,
@@ -188,8 +201,8 @@ export function tInto(
  * `key` is the English sentence, with `{name}` where a value goes. Pass a
  * numeric `count` for any string whose wording depends on quantity.
  */
-export function t(key: string, vars?: Vars): string {
-	return fill(lookup(key, vars), vars);
+export function t(key: string, vars?: Vars): UIText {
+	return fill(lookup(key, vars), vars) as UIText;
 }
 
 /** The translated, unfilled template for `key`, plural form chosen by `vars.count`. */

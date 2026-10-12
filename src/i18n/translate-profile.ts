@@ -5,7 +5,7 @@ import { type Profile, type Spec, translator } from "./core/core";
 
 const HAN = /\p{Script=Han}/u;
 
-// Keyed by Obsidian's own locale codes (`getLanguage()`): `pt` is Brazilian, `zh` Simplified.
+// Keyed by Obsidian's own locale codes (`getLanguage()`): `pt` is Portugal, `pt-BR` Brazil, `zh` Simplified.
 // `native` is each catalog file's header comment, in the language itself.
 const SPECS = {
 	de: {
@@ -47,6 +47,12 @@ const SPECS = {
 	},
 	ms: { name: "Malay", native: "Bahasa Melayu", tone: "Address the user as anda." },
 	pt: {
+		name: "European Portuguese",
+		native: "Português (Portugal)",
+		tone: "Write European Portuguese as used in Portugal (ficheiro, guardar, definições, ecrã), never Brazilian forms. Address the user formally in the third person (Escolha, Guarde), never tu.",
+		formal: /\b(?:tu|teu|tua|teus|tuas)\b/iu,
+	},
+	"pt-BR": {
 		name: "Brazilian Portuguese",
 		native: "Português (do Brasil)",
 		tone: "Address the user as você.",
@@ -88,6 +94,21 @@ const GLOSSARY_KEYS = [
 	"Semantic search",
 	"Reconnect your account to resume syncing.",
 ];
+// Hand overrides where the model's answer meant something else ("Dismiss" as
+// Cancel, or as the same word as Ignore beside it). Each value is Obsidian's own
+// translation or the "Close" most locales use. A pinned value must still pass the
+// catalog gate, or it sits in state.failed until the stuck limit fails the run.
+const PINNED: Partial<Record<Target, readonly string[]>> = {
+	de: ["Dismiss"],
+	fr: ["Uploading"],
+	it: ["Dismiss"],
+	ko: ["Back"],
+	// Dismiss sits next to Ignore in the Sync Center (tests/i18n-distinct-pairs.test.ts).
+	pt: ["Dismiss", "files"],
+	"pt-BR": ["Dismiss", "Upgrade"],
+	vi: ["Dismiss"],
+	zh: ["Dismiss"],
+};
 // "Engram Vault Sync" (the plugin's name) must survive whole. The "Engram Sync:" notice
 // prefix is not a name: the CJK catalogs translate its "Sync" on purpose.
 const BRANDS = [
@@ -110,6 +131,7 @@ const profile: Profile<Target> = {
 	specs: SPECS,
 	brands: BRANDS,
 	glossary: GLOSSARY_KEYS,
+	pinned: PINNED,
 };
 
 const tr = translator(profile);

@@ -22,6 +22,7 @@ import ja from "../src/i18n/locale/ja";
 import ko from "../src/i18n/locale/ko";
 import ms from "../src/i18n/locale/ms";
 import pt from "../src/i18n/locale/pt";
+import ptBR from "../src/i18n/locale/pt-BR";
 import ru from "../src/i18n/locale/ru";
 import vi from "../src/i18n/locale/vi";
 import zh from "../src/i18n/locale/zh";
@@ -47,6 +48,7 @@ const LOCALES: Array<[string, Dict]> = [
 	["ko", ko],
 	["ms", ms],
 	["pt", pt],
+	["pt-BR", ptBR],
 	["ru", ru],
 	["vi", vi],
 	["zh", zh],

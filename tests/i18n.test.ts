@@ -60,10 +60,10 @@ describe("t() fallback chain", () => {
 	});
 
 	test("a regional code falls back to its base language", () => {
-		__setLanguage("pt-BR");
-		const br = t(ENTER_KEY);
-		__setLanguage("pt");
-		expect(t(ENTER_KEY)).toBe(br);
+		__setLanguage("es-MX");
+		const mx = t(ENTER_KEY);
+		__setLanguage("es");
+		expect(t(ENTER_KEY)).toBe(mx);
 	});
 
 	test("en-GB resolves to English rather than to a missing dictionary", () => {

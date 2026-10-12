@@ -10,7 +10,7 @@ Every catalog entry comes from `translategemma:12b` on FastRaid's Ollama through
 - **A bad translation:** fix the profile in `../translate-profile.ts` (or a check in the shared core, canonical in engram-app/Engram). `state.json` fingerprints the prompt, profile and model digest, so the next run redoes the locale; there is no version to bump.
 - **A key the model cannot translate** is listed in `state.json` `failed` with the day it first failed. The tests tolerate it while listed; the script and nightly bot fail once it is stuck past 14 days. Reword the English string or fix the prompt.
 - **Gates (no model, every PR):** `tests/i18n-catalog-quality.test.ts` runs the same checks the model's answers must pass (placeholders, brand names, URLs, a label's emoji, length, register, script); `tests/i18n-keys.test.ts` fails on orphans and on a glossary entry that is not a real key. Never weaken them to go green.
-- **Registers:** de, es, fr and it address the user informally (du, tú, tu); ru formally (вы); pt as você; vi as bạn; ms as anda.
+- **Registers:** de, es, fr and it address the user informally (du, tú, tu); ru formally (вы); pt-BR as você; pt (Portugal) formally in the third person; vi as bạn; ms as anda.
 - **Glossary (`GLOSSARY_KEYS` in `../translate-profile.ts`):** core terms are pinned to each catalog's current value and never sent to the model, even on a redo. Editing a term redoes every sentence that uses it. For a new language, copy them from Obsidian's official translations first, so the words match the app users already know.
 
 ## Adding a language
@@ -20,7 +20,7 @@ Every catalog entry comes from `translategemma:12b` on FastRaid's Ollama through
 3. Create `<code>.ts` holding only the glossary terms copied from that repo's `translations/<code>.txt`, and register it in the `LOCALES` map in `../index.ts` and in `tests/i18n-keys.test.ts`.
 4. Run `bun run i18n:translate --locale <code>`, then `bun test`.
 
-A regional code falls back to its base language, so `en-GB` reaches `en` and `pt-BR` reaches `pt`. You only need a regional file when the wording genuinely differs.
+A regional code falls back to its base language, so `en-GB` reaches `en`. You only need a regional file when the wording genuinely differs, as it does for `pt` (Portugal) and `pt-BR` (Brazil): Obsidian ships both.
 
 ## A missing key shows English
 
@@ -54,7 +54,8 @@ UI surfaces ARE translated, and each locale uses ONE term for a surface everywhe
 | ja | 同期センター |
 | ko | 동기화 센터 |
 | ms | Pusat Sync |
-| pt | Central de sincronização |
+| pt | Centro de sincronização |
+| pt-BR | Central de sincronização |
 | ru | Центр синхронизации |
 | zh | 同步中心 |
 | zh-TW | 同步中心 |

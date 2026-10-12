@@ -1,5 +1,5 @@
 import { Setting } from "obsidian";
-import { t, tInto } from "../i18n";
+import { asIs, t, tInto, type UIText } from "../i18n";
 import type { TabContext } from "./types";
 import {
 	ENGRAM_DISCORD_URL,
@@ -13,12 +13,12 @@ import {
 } from "./urls";
 
 /** Append an external link (opens in the browser) to a parent element. */
-function externalLink(parent: HTMLElement, text: string, href: string): void {
+function externalLink(parent: HTMLElement, text: UIText, href: string): void {
 	parent.createEl("a", { text, href, attr: { target: "_blank", rel: "noopener" } });
 }
 
 /** A bold section heading for the Welcome tab. */
-function heading(containerEl: HTMLElement, name: string): void {
+function heading(containerEl: HTMLElement, name: UIText): void {
 	const setting = new Setting(containerEl).setName(name).setHeading();
 	setting.settingEl.addClass("engram-about-heading");
 }
@@ -53,7 +53,7 @@ export function renderAboutTab(ctx: TabContext): void {
 		account.descEl,
 		"Create a hosted account at {signup}, or self-host the backend ({guide}).",
 		{
-			signup: (p) => externalLink(p, "app.engram.page", ENGRAM_SIGN_UP_URL),
+			signup: (p) => externalLink(p, asIs("app.engram.page"), ENGRAM_SIGN_UP_URL),
 			guide: (p) => externalLink(p, t("setup guide"), ENGRAM_SELFHOST_URL),
 		},
 	);
