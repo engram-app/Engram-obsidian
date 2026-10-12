@@ -3493,6 +3493,12 @@ export default class EngramSyncPlugin extends Plugin {
 	}
 
 	openFeedback(): void {
+		// Sending needs an account; without one the form could only fail.
+		if (!this.hasAuthConfigured()) {
+			new Notice(t("Connect to Engram first to send feedback."));
+			this.openConnectionSettings();
+			return;
+		}
 		new FeedbackModal(this.app, this.api, this.manifest.version).open();
 	}
 

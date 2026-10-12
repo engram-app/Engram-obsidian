@@ -2,11 +2,12 @@ import { type App, Modal, Notice } from "obsidian";
 import type { EngramApi, FeedbackCategory, FeedbackFields } from "./api";
 import { t } from "./i18n";
 
-const CATEGORIES: { slug: FeedbackCategory; emoji: string; label: string }[] = [
-	{ slug: "bug", emoji: "🐛", label: "Bug" },
-	{ slug: "idea", emoji: "💡", label: "Idea" },
-	{ slug: "confusing", emoji: "😕", label: "Confusing" },
-	{ slug: "love", emoji: "❤️", label: "Love it" },
+// Labels are thunks over literal t() calls so the i18n key scanner sees them.
+const CATEGORIES: { slug: FeedbackCategory; emoji: string; label: () => string }[] = [
+	{ slug: "bug", emoji: "🐛", label: () => t("Bug") },
+	{ slug: "idea", emoji: "💡", label: () => t("Idea") },
+	{ slug: "confusing", emoji: "😕", label: () => t("Confusing") },
+	{ slug: "love", emoji: "❤️", label: () => t("Love it") },
 ];
 
 // Index + 1 is the mood score the backend stores (1-5).
@@ -50,8 +51,12 @@ export class FeedbackState {
 	}
 }
 
+/** Built once in onOpen and updated in place, so a chip or face keeps
+ *  keyboard focus when pressed. */
 export class FeedbackModal extends Modal {
 	private readonly state = new FeedbackState();
+	private sendBtn!: HTMLButtonElement;
+	private errorEl!: HTMLElement;
 
 	constructor(
 		app: App,
@@ -62,18 +67,9 @@ export class FeedbackModal extends Modal {
 	}
 
 	onOpen(): void {
+		const { contentEl, state } = this;
 		this.modalEl.addClass("engram-feedback-modal");
 		this.setTitle(t("Send feedback"));
-		this.render();
-	}
-
-	onClose(): void {
-		this.contentEl.empty();
-	}
-
-	private render(): void {
-		const { contentEl, state } = this;
-		contentEl.empty();
 
 		contentEl.createEl("p", {
 			text: t("What's working, what's frustrating, what do you wish Engram did?"),
@@ -87,17 +83,20 @@ export class FeedbackModal extends Modal {
 			cls: "engram-feedback-chips",
 			attr: { role: "group", "aria-label": t("What kind of feedback?") },
 		});
-		for (const c of CATEGORIES) {
+		const chipBtns = CATEGORIES.map((c) => {
 			const chip = chips.createEl("button", {
-				text: `${c.emoji} ${t(c.label)}`,
+				text: `${c.emoji} ${c.label()}`,
 				cls: "engram-feedback-chip",
-				attr: { "aria-pressed": String(state.category === c.slug) },
+				attr: { "aria-pressed": "false" },
 			});
 			chip.addEventListener("click", () => {
 				state.toggleCategory(c.slug);
-				this.render();
+				chipBtns.forEach((b, i) => {
+					b.setAttr("aria-pressed", String(state.category === CATEGORIES[i]?.slug));
+				});
 			});
-		}
+			return chip;
+		});
 
 		const textarea = composer.createEl("textarea", {
 			cls: "engram-feedback-input",
@@ -108,69 +107,73 @@ export class FeedbackModal extends Modal {
 				placeholder: t("Tell us anything"),
 			},
 		});
-		textarea.value = state.message;
+		textarea.addEventListener("input", () => {
+			state.message = textarea.value;
+			this.sync();
+		});
 
 		const moodRow = composer.createDiv({ cls: "engram-feedback-mood" });
 		moodRow.createSpan({ text: t("How do you feel about Engram?") });
 		const faces = moodRow.createDiv({
 			attr: { role: "group", "aria-label": t("How do you feel about Engram?") },
 		});
-		MOOD_FACES.forEach((face, i) => {
-			const label = t("{n} of 5", { n: i + 1 });
+		const faceBtns = MOOD_FACES.map((face, i) => {
 			const btn = faces.createEl("button", {
 				text: face,
 				cls: "engram-feedback-face clickable-icon",
-				attr: { "aria-label": label, "aria-pressed": String(state.mood === i + 1) },
+				attr: { "aria-label": t("{n} of 5", { n: i + 1 }), "aria-pressed": "false" },
 			});
 			btn.addEventListener("click", () => {
 				state.toggleMood(i + 1);
-				this.render();
+				faceBtns.forEach((b, j) => {
+					b.setAttr("aria-pressed", String(state.mood === j + 1));
+				});
 			});
+			return btn;
 		});
 
-		if (state.view === "error") {
-			contentEl.createEl("p", {
-				text: t("Couldn't send your feedback, please try again."),
-				cls: "mod-warning",
-				attr: { role: "alert" },
-			});
-		}
+		this.errorEl = contentEl.createEl("p", {
+			text: t("Couldn't send your feedback, please try again."),
+			cls: "mod-warning",
+			attr: { role: "alert" },
+		});
 
 		const footer = contentEl.createDiv({ cls: "engram-feedback-footer" });
 		const consent = footer.createEl("label", { cls: "engram-feedback-consent" });
 		const box = consent.createEl("input", { type: "checkbox" });
-		box.checked = state.contactOk;
 		box.addEventListener("change", () => {
 			state.contactOk = box.checked;
 		});
 		consent.appendText(t("It's OK to email me about this"));
 
-		const send = footer.createEl("button", {
-			text: state.view === "sending" ? t("Sending…") : t("Send"),
-			cls: "mod-cta",
-		});
-		const syncSend = () => {
-			send.disabled = !state.canSubmit();
-		};
-		textarea.addEventListener("input", () => {
-			state.message = textarea.value;
-			syncSend();
-		});
-		syncSend();
-		send.addEventListener("click", () => void this.send());
+		this.sendBtn = footer.createEl("button", { cls: "mod-cta" });
+		this.sendBtn.addEventListener("click", () => void this.send());
 
+		this.sync();
 		textarea.focus();
+	}
+
+	onClose(): void {
+		this.contentEl.empty();
+	}
+
+	/** Reflect the state in the Send button and the error line. */
+	private sync(): void {
+		const { state } = this;
+		this.sendBtn.setText(state.view === "sending" ? t("Sending…") : t("Send"));
+		this.sendBtn.disabled = !state.canSubmit();
+		this.errorEl.toggle(state.view === "error");
 	}
 
 	private async send(): Promise<void> {
 		const pending = this.state.submit((f) => this.api.sendFeedback(f, this.appVersion));
-		this.render(); // show "Sending…"
+		this.sync(); // show "Sending…"
 		await pending;
 		if (this.state.view === "sent") {
 			new Notice(t("Thanks, we read every message."));
 			this.close();
 		} else {
-			this.render();
+			this.sync();
 		}
 	}
 }

@@ -28,13 +28,6 @@ import type {
 import { notifyUpgradeRequired } from "./upgrade-required";
 import { wasmCore } from "./wasm-core";
 
-/** A request exceeded its deadline. requestUrl() cannot be aborted, so the
- *  underlying request is ABANDONED, not cancelled — a late server-side apply
- *  is possible and handled by the normal echo/conflict machinery. Carries no
- *  `status`, so existing callers classify it like connection loss (issue #244:
- *  a wedged half-open request hung forever, pinning `pulling` and stalling
- *  sync in both directions until plugin reload). */
-
 /** Slugs must match the backend's Engram.Feedback; it 422s anything else. */
 export type FeedbackCategory = "bug" | "idea" | "confusing" | "love";
 
@@ -45,6 +38,14 @@ export interface FeedbackFields {
 	mood: number | null;
 	contactOk: boolean;
 }
+
+/** A request exceeded its deadline. requestUrl() cannot be aborted, so the
+ *  underlying request is ABANDONED, not cancelled — a late server-side apply
+ *  is possible and handled by the normal echo/conflict machinery. Carries no
+ *  `status`, so existing callers classify it like connection loss (issue #244:
+ *  a wedged half-open request hung forever, pinning `pulling` and stalling
+ *  sync in both directions until plugin reload). */
+
 export class RequestTimeoutError extends Error {
 	constructor(ms: number) {
 		super(`Request timed out after ${ms}ms`);
