@@ -80,7 +80,10 @@ export class FeedbackModal extends Modal {
 			cls: "setting-item-description",
 		});
 
-		const chips = contentEl.createDiv({
+		// One composer: kind on top, text in the middle, mood along the bottom
+		// edge, so the form reads as a single message (mirrors the web dialog).
+		const composer = contentEl.createDiv({ cls: "engram-feedback-composer" });
+		const chips = composer.createDiv({
 			cls: "engram-feedback-chips",
 			attr: { role: "group", "aria-label": t("What kind of feedback?") },
 		});
@@ -96,13 +99,18 @@ export class FeedbackModal extends Modal {
 			});
 		}
 
-		const textarea = contentEl.createEl("textarea", {
+		const textarea = composer.createEl("textarea", {
 			cls: "engram-feedback-input",
-			attr: { rows: "5", maxlength: "2000", "aria-label": t("Your feedback") },
+			attr: {
+				rows: "8",
+				maxlength: "2000",
+				"aria-label": t("Your feedback"),
+				placeholder: t("Tell us anything"),
+			},
 		});
 		textarea.value = state.message;
 
-		const moodRow = contentEl.createDiv({ cls: "engram-feedback-mood" });
+		const moodRow = composer.createDiv({ cls: "engram-feedback-mood" });
 		moodRow.createSpan({ text: t("How do you feel about Engram?") });
 		const faces = moodRow.createDiv({
 			attr: { role: "group", "aria-label": t("How do you feel about Engram?") },
@@ -120,14 +128,6 @@ export class FeedbackModal extends Modal {
 			});
 		});
 
-		const consent = contentEl.createEl("label", { cls: "engram-feedback-consent" });
-		const box = consent.createEl("input", { type: "checkbox" });
-		box.checked = state.contactOk;
-		box.addEventListener("change", () => {
-			state.contactOk = box.checked;
-		});
-		consent.appendText(t("It's OK to email me about this"));
-
 		if (state.view === "error") {
 			contentEl.createEl("p", {
 				text: t("Couldn't send your feedback, please try again."),
@@ -136,7 +136,15 @@ export class FeedbackModal extends Modal {
 			});
 		}
 
-		const footer = contentEl.createDiv({ cls: "modal-button-container" });
+		const footer = contentEl.createDiv({ cls: "engram-feedback-footer" });
+		const consent = footer.createEl("label", { cls: "engram-feedback-consent" });
+		const box = consent.createEl("input", { type: "checkbox" });
+		box.checked = state.contactOk;
+		box.addEventListener("change", () => {
+			state.contactOk = box.checked;
+		});
+		consent.appendText(t("It's OK to email me about this"));
+
 		const send = footer.createEl("button", {
 			text: state.view === "sending" ? t("Sending…") : t("Send"),
 			cls: "mod-cta",
