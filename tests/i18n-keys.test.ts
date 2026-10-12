@@ -12,7 +12,6 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Glob } from "bun";
 import type { Dict } from "../src/i18n";
-import { GLOSSARY_KEYS } from "../src/i18n/auto-translate";
 import { usedKeys } from "../src/i18n/keys-scan";
 import de from "../src/i18n/locale/de";
 import enPlurals from "../src/i18n/locale/en-plurals";
@@ -27,6 +26,7 @@ import ru from "../src/i18n/locale/ru";
 import vi from "../src/i18n/locale/vi";
 import zh from "../src/i18n/locale/zh";
 import zhTW from "../src/i18n/locale/zh-TW";
+import { profile } from "../src/i18n/translate-profile";
 
 const repoRoot = join(import.meta.dir, "..");
 
@@ -64,7 +64,7 @@ describe("locale keys track the source", () => {
 	// A glossary term that is not a real key is never looked up, so its translation
 	// floats (the backend's "Notes" let ja render "note" two different ways).
 	test("pins only glossary terms that are real keys", () => {
-		expect(GLOSSARY_KEYS.filter((k) => !used.has(k))).toEqual([]);
+		expect(profile.glossary.filter((k) => !used.has(k))).toEqual([]);
 	});
 
 	test("the scan sees tInto keys, not just t() keys", () => {
