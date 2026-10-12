@@ -2070,9 +2070,16 @@ export class SyncEngine {
 		new Map<string, Map<number, number>>(),
 	);
 
-	/** Per-path count of flushes started while any is in flight; lets only the
-	 *  latest one record the baseline. Cleared with `flushingHash`. */
-	private readonly flushGen = this.track(["vault", "destroy"], new Map<string, number>());
+	/** Per path while any flush is in flight: how many have started, and the
+	 *  start order of the newest one that has recorded its baseline. Newest
+	 *  SUCCESSFUL write wins: an older flush finishing after a newer one must
+	 *  not record its stale text, but one whose newer sibling threw must
+	 *  (else disk holds its text against the old baseline). Cleared with
+	 *  `flushingHash`. */
+	private readonly flushGen = this.track(
+		["vault", "destroy"],
+		new Map<string, { started: number; recorded: number }>(),
+	);
 
 	/** Strand-heal drain (#569): fold an unpushed disk edit into the note's
 	 *  doc, then write the doc's CURRENT projection. The content captured when
@@ -2190,8 +2197,9 @@ export class SyncEngine {
 		const inFlight = this.flushingHash.get(normalized) ?? new Map<number, number>();
 		inFlight.set(writingHash, (inFlight.get(writingHash) ?? 0) + 1);
 		this.flushingHash.set(normalized, inFlight);
-		const gen = (this.flushGen.get(normalized) ?? 0) + 1;
-		this.flushGen.set(normalized, gen);
+		const order = this.flushGen.get(normalized) ?? { started: 0, recorded: 0 };
+		const gen = ++order.started;
+		this.flushGen.set(normalized, order);
 		try {
 			if (file instanceof TFile) {
 				await this.app.vault.modify(file, content);
@@ -2208,11 +2216,12 @@ export class SyncEngine {
 			// delete (folder-rename cleanup) trips the resurrection guard, which
 			// re-pushes the old path and resurrects it forever (e2e test_34/78).
 			//
-			// Only the LATEST flush to start on this path may record (#578). An
-			// overlapping one (a fan-out flush inside discovery's modify window)
-			// wrote disk after us; recording our older text over its baseline
-			// made the next fan-out read its write as drift.
-			if (this.flushGen.get(normalized) === gen) {
+			// Newest successful write wins (#578). An overlapping flush that
+			// started after us and already recorded (a fan-out flush inside
+			// discovery's modify window) wrote disk after us; recording our older
+			// text over its baseline made the next fan-out read its write as drift.
+			if (gen > order.recorded) {
+				order.recorded = gen;
 				this.recordCrdtBaseline(normalized, content);
 			}
 			return true;
@@ -9271,6 +9280,20 @@ export class SyncEngine {
 						: content;
 				const wrote = await this.flushFromCrdt(normalized, body);
 				if (!wrote) return false;
+				// The doc can trail the row (its fan-out was lost). This note is idle
+				// and never enrolled, and the feed cursor moves past the row, so
+				// nothing else would ever bring disk up to the server: re-handshake,
+				// the same converge the existing-file leg fires for a diverged row.
+				if (body !== content && noteId && change.content_hash) {
+					this.stageAndConverge(
+						noteId,
+						normalized,
+						change.content_hash,
+						null,
+						change.version,
+						change.seq,
+					);
+				}
 				// This row came off the server's own op-log feed, so the server
 				// demonstrably holds it (#339). Without a head `hasServerNote` says
 				// otherwise, and pushFile's write routing takes the genesis branch

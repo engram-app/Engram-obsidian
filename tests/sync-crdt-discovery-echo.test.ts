@@ -53,6 +53,8 @@ async function scenario(dbPrefix: string) {
 		onModify: async (_p: string) => {},
 		// A concurrent flush creates the file just before discovery's create.
 		createRace: null as string | null,
+		// A write of exactly this text rejects before touching disk.
+		modifyThrowsFor: null as string | null,
 	};
 	const sent: string[] = [];
 	const mgr = new ProviderRegistry({
@@ -75,6 +77,7 @@ async function scenario(dbPrefix: string) {
 			cachedRead: mock(async (f: TFile) => disk.get(f.path) ?? ""),
 			read: mock(async (f: TFile) => disk.get(f.path) ?? ""),
 			modify: mock(async (f: TFile, c: string) => {
+				if (c === hooks.modifyThrowsFor) throw new Error("EIO: simulated write failure");
 				disk.set(f.path, c);
 				await hooks.onModify(f.path);
 			}),
@@ -127,6 +130,7 @@ async function scenario(dbPrefix: string) {
 			updated_at: new Date().toISOString(),
 			deleted: false,
 			version: 3,
+			content_hash: "hash-row-3",
 		} as never);
 	return { e, mgr, disk, sent, hooks, updates, discover };
 }
@@ -169,6 +173,78 @@ test("#578: discovery over a doc with history writes the DOC's text, not the RES
 	await e.flushStrandedNote(PATH, ID);
 	expect(localEdit).toHaveBeenCalledTimes(1);
 	expect(await mgr.getText(ID)).toBe(`${body(2)}\nuser line`);
+});
+
+test("#578: discovery behind the REST row re-handshakes so disk catches up to the server", async () => {
+	const { e, disk, discover } = await scenario("disc-echo-behind");
+	const converge = spyOn(
+		e as unknown as { stageAndConverge: (...a: unknown[]) => void },
+		"stageAndConverge",
+	).mockImplementation(() => {});
+	await discover();
+
+	// Disk follows the doc (edit 2), but the row proved the server has edit 3
+	// and that fan-out never arrived: converge, or disk stays at 2 forever.
+	expect(disk.get(PATH)).toBe(body(2));
+	expect(converge).toHaveBeenCalledTimes(1);
+	expect(converge.mock.calls[0]).toEqual([ID, PATH, "hash-row-3", null, 3, undefined]);
+});
+
+test("#578: a doc that moved on while discovery's write is cached is not reverted by drift capture", async () => {
+	const { e, mgr, disk, hooks, updates, discover } = await scenario("disc-echo-revert");
+	hooks.createRace = body(2);
+	let releaseNested: () => void = () => {};
+	const nestedHeld = new Promise<void>((r) => {
+		releaseNested = r;
+	});
+	let fired = false;
+	hooks.onModify = async () => {
+		if (fired) return;
+		fired = true;
+		// Discovery's text (edit 2) is cached on disk. Edit 3 lands in the doc
+		// and its own flush is still writing when edit 4's fan-out reads disk.
+		hooks.onModify = async () => nestedHeld;
+		void mgr.applyRemoteUpdate(ID, updates[2]);
+		await new Promise((r) => setTimeout(r, 0));
+		expect(await mgr.getText(ID)).toBe(body(3));
+		disk.set(PATH, body(2));
+		setTimeout(releaseNested, 20);
+		await e.applyPushedNoteUpdate(ID, updates[3], "h4");
+	};
+	await discover();
+	hooks.onModify = async () => {};
+	await e.applyPushedNoteUpdate(ID, updates[4], "h5");
+
+	// Edit 2 was never diffed into the doc at edit 3 (that is a revert).
+	expect(await mgr.getText(ID)).toBe(body(5));
+	expect(disk.get(PATH)).toBe(body(5));
+});
+
+test("#578: an older flush finishing LAST does not overwrite the newer write's baseline", async () => {
+	const { e, disk, hooks } = await scenario("disc-echo-older-last");
+	disk.set(PATH, "old");
+	hooks.onModify = async () => {
+		hooks.onModify = async () => {};
+		// B starts after A and finishes first; A resolves last.
+		await e.flushFromCrdt(PATH, "B");
+	};
+	await e.flushFromCrdt(PATH, "A");
+	expect(disk.get(PATH)).toBe("B");
+	expect(e.needsColdReconcile(PATH, "B")).toBe(false);
+});
+
+test("#578: a newer flush that THROWS does not stop the older one recording its baseline", async () => {
+	const { e, disk, hooks } = await scenario("disc-echo-newer-throws");
+	disk.set(PATH, "old");
+	hooks.modifyThrowsFor = "B";
+	hooks.onModify = async () => {
+		hooks.onModify = async () => {};
+		expect(await e.flushFromCrdt(PATH, "B")).toBe(false);
+	};
+	expect(await e.flushFromCrdt(PATH, "A")).toBe(true);
+	// Disk holds A, and A is the recorded baseline: no phantom drift.
+	expect(disk.get(PATH)).toBe("A");
+	expect(e.needsColdReconcile(PATH, "A")).toBe(false);
 });
 
 test("#578: a real user edit after the discovery flush still reaches applyLocalEdit", async () => {
