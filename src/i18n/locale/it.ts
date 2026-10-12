@@ -2,643 +2,665 @@ import type { Dict } from "..";
 
 // Italiano
 const it: Dict = {
-	"Code copied!": "Codice copiato.",
-	"Engram sync: syncing...": "Engram Sync: sincronizzazione…",
-	"Engram Sync: pulled {pulled}, pushed {pushed}":
-		"Engram Sync: {pulled} scaricati, {pushed} inviati",
-	"Engram: disconnected. Open Engram settings to reconnect.":
-		"Engram: disconnesso. Apri Engram settings per riconnetterti.",
-	"Engram sync: checking...": "Engram Sync: controllo…",
-	"Engram sync: everything in sync": "Engram Sync: tutto sincronizzato",
-	"Engram sync: pulling all from server...": "Engram Sync: scarico tutto dal server…",
-	"Engram Sync: pushed {pushed}": "Engram Sync: {pushed} inviati",
-	"Engram sync: sync failed": "Engram Sync: sincronizzazione non riuscita",
-	"Engram: your login expired — open Engram settings to reconnect.":
-		"Engram: la sessione è scaduta. Apri Engram settings per riconnetterti.",
-	"Engram: This vault has been deleted on the server.":
-		"Engram: questo archivio è stato eliminato sul server.",
-	"Engram Sync: pulled {pulled} (local extras deleted)":
-		"Engram Sync: {pulled} scaricati (file locali in eccesso eliminati)",
-	"Engram Sync: pulled {pulled}": "Engram Sync: {pulled} scaricati",
-	"Engram Sync: replaced remote with local ({pushed} uploaded)":
-		"Engram Sync: il server è stato sostituito con la versione locale ({pushed} inviati)",
-	"Engram: sync failed. Open the sync log for details.":
-		"Engram: sincronizzazione non riuscita. I dettagli sono nel registro di sincronizzazione.",
-	"Engram unreachable. Showing matches from this device only.":
-		"Engram non raggiungibile. Vengono mostrati solo i risultati di questo dispositivo.",
-	"No source path for this result": "Questo risultato non ha un percorso di origine",
-	"Note not synced locally": "Questa nota non è ancora sincronizzata in locale",
-	"Engram: settings tab failed to render ({error})":
-		"Engram: non è stato possibile mostrare la scheda delle impostazioni ({error})",
-	"File not found locally: {path}": "File non trovato in locale: {path}",
-	"Restored {path} — will sync on next push.":
-		"{path} ripristinato, verrà sincronizzato al prossimo invio.",
-	"Ignored {path} — won't sync until restored from Sync Center.":
-		"{path} ignorato, non verrà sincronizzato finché non lo ripristini dal Centro di sincronizzazione.",
-	"Added {pattern} to ignore patterns": "{pattern} aggiunto ai modelli da ignorare",
-	"Engram backend changed — sign in again to continue.":
-		"Il server di Engram è cambiato. Accedi di nuovo per continuare.",
-	"Engram: sign-in failed ({error})": "Engram: accesso non riuscito ({error})",
-	"Enter an API key first": "Inserisci prima una chiave API",
-	"Switched to {mode}.": "Passato a {mode}.",
-
-	"Engram Sync: pushed {count} files": {
-		one: "Engram Sync: {count} file inviato",
-		other: "Engram Sync: {count} file inviati",
-	},
-	"Engram Sync: pulled {count} files from server": {
-		one: "Engram Sync: {count} file scaricato dal server",
-		other: "Engram Sync: {count} file scaricati dal server",
-	},
-	"Engram Sync: pulled {count} changes": {
-		one: "Engram Sync: {count} modifica scaricata",
-		other: "Engram Sync: {count} modifiche scaricate",
-	},
-	"Engram: {count} files failed to sync{detail} — open Sync Center": {
-		one: "Engram: {count} file non si è sincronizzato{detail}. Apri il Centro di sincronizzazione",
-		other: "Engram: {count} file non si sono sincronizzati{detail}. Apri il Centro di sincronizzazione",
-	},
-	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.": {
-		one: "Engram: {count} allegato ignorato. Passa a un piano superiore per immagini e PDF.",
-		other: "Engram: {count} allegati ignorati. Passa a un piano superiore per immagini e PDF.",
-	},
-	"Engram: plan upgraded — syncing {count} attachments…": {
-		one: "Engram: piano aggiornato, sincronizzo {count} allegato…",
-		other: "Engram: piano aggiornato, sincronizzo {count} allegati…",
-	},
-	// 402 limit reasons (limit-copy.ts). These gate payment, so they are the
-	// highest-value strings in the plugin to get right.
-	"Note limit reached. Upgrade to keep adding notes.":
-		"Hai raggiunto il limite di note. Passa a un piano superiore per aggiungerne altre.",
-	"Vault limit reached. Upgrade for more vaults.":
-		"Hai raggiunto il limite di archivi. Un piano superiore ne consente di più.",
-	"This file type isn't accepted by this server.":
-		"Questo server non accetta questo tipo di file.",
-	"Attachment sync is disabled for this account.":
-		"Per questo account la sincronizzazione degli allegati è disattivata.",
-	"Attachment storage is full — upgrade for more.":
-		"Lo spazio per gli allegati è pieno. Un piano superiore ne offre di più.",
-	"File too large for your plan.": "Il file è troppo grande per il tuo piano.",
-	"Already signed in on another device. Upgrade for multi-device.":
-		"Hai già effettuato l'accesso su un altro dispositivo. Un piano superiore ne consente più di uno.",
-	"Device swap cooldown active. Wait or upgrade.":
-		"Il cambio di dispositivo è ancora in attesa. Aspetta un momento o passa a un piano superiore.",
-	"Too many connected Obsidian vaults. Disconnect one or upgrade.":
-		"Troppi archivi Obsidian collegati. Scollegane uno o passa a un piano superiore.",
-	"Too many connected AI clients. Disconnect one or upgrade.":
-		"Troppi client IA collegati. Scollegane uno o passa a un piano superiore.",
-	"Daily AI search limit reached. Free includes 20 per day across Obsidian, the web app and MCP. Upgrade for unlimited.":
-		"Hai raggiunto il limite giornaliero di ricerche IA. Il piano gratuito include 20 al giorno fra Obsidian, l'app web e MCP. Un piano superiore lo elimina.",
-	"API keys need Pro. Sign in with your Engram account instead.":
-		"Le chiavi API richiedono il piano Pro. Accedi invece con il tuo account Engram.",
-	"Account suspended. Contact support.": "Account sospeso. Contatta l'assistenza.",
-	"Account setup incomplete.": "La configurazione dell'account non è completa.",
-	"This account was deleted. Contact support if that is wrong.":
-		"Questo account è stato eliminato. Se non è corretto, contatta l'assistenza.",
-	"Finish setting up your account at app.engram.page to start syncing.":
-		"Completa la configurazione dell'account su app.engram.page per iniziare a sincronizzare.",
-	"Limit reached. Upgrade to continue.":
-		"Hai raggiunto il limite. Passa a un piano superiore per continuare.",
-	// UI strings
+	"Invalid API key": "Chiave API non valida",
+	"Connection failed": "Connessione fallita",
 	"Link Obsidian to Engram": "Collega Obsidian a Engram",
 	"Failed to start device flow. Check your Engram URL and try again.":
-		"Non è stato possibile avviare l'abbinamento del dispositivo. Controlla l'indirizzo del tuo Engram e riprova.",
+		"Impossibile avviare il processo di autorizzazione. Controlla l'URL di Engram e riprova.",
 	"Your code:": "Il tuo codice:",
+	"Click to copy": "Clicca per copiare",
+	"Code copied!": "Codice copiato!",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
-		"Si è aperta una finestra del browser. Accedi e inserisci questo codice per collegare il tuo archivio.",
+		"È stata aperta una finestra del browser. Accedi e inserisci questo codice per collegare il tuo archivio.",
 	Cancel: "Annulla",
-	"Code expired. Please try again.": "Il codice è scaduto. Riprova.",
+	"Waiting for authorization — connected, this will complete instantly.":
+		"In attesa di autorizzazione — connesso, il processo si completerà immediatamente.",
+	"Waiting for authorization — no live connection, checking every 30s.":
+		"In attesa di autorizzazione — nessuna connessione attiva, controllo ogni 30 secondi.",
+	"Code expired. Please try again.": "Codice scaduto. Riprova.",
 	"Try again": "Riprova",
 	Close: "Chiudi",
-	"Note couldn't be processed": "Non è stato possibile elaborare questa nota",
+	"Note couldn't be processed": "Impossibile elaborare la nota",
 	"The server couldn't process this note. Check its contents, then edit and save to try again.":
-		"Il server non ha potuto elaborare questa nota. Controlla il contenuto, poi modificala e salvala per riprovare.",
+		"Il server non è riuscito a elaborare questa nota. Controlla il contenuto, poi modificala e salvala per riprovare.",
 	"Attachments need a paid plan": "Gli allegati richiedono un piano a pagamento",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
-		"Il piano gratuito sincronizza solo le note. Passa a un piano superiore per immagini e PDF.",
-	"Attachment storage full": "Spazio per gli allegati esaurito",
+		"Il piano gratuito sincronizza solo le note. Aggiorna per sincronizzare immagini e PDF.",
+	"Attachment storage full": "Spazio di archiviazione degli allegati esaurito",
 	"You've used all the attachment storage on your plan. Upgrade for more.":
-		"Hai usato tutto lo spazio per allegati del tuo piano. Passa a un piano superiore per averne di più.",
+		"Hai esaurito lo spazio di archiviazione degli allegati del tuo piano. Aggiorna per averne di più.",
 	"Too large for the server": "Troppo grande per il server",
 	"The server limit is 5 MB. Compress or split the file, then it will sync.":
-		"Il limite del server è 5 MB. Comprimi o dividi il file e si sincronizzerà.",
-	"Sign-in expired": "Accesso scaduto",
+		"Il limite del server è di 5 MB. Comprimi o dividi il file, poi verrà sincronizzato.",
+	"Sign-in expired": "Sessione scaduta",
 	"Reconnect your account to resume syncing.":
 		"Ricollega il tuo account per riprendere la sincronizzazione.",
 	"Unresolved conflict": "Conflitto non risolto",
 	"Open the file to resolve the conflict, then sync again.":
-		"Apri il file, risolvi il conflitto e sincronizza di nuovo.",
-	"Frontmatter needs a fix": "Il frontmatter va corretto",
+		"Apri il file per risolvere il conflitto, poi sincronizza di nuovo.",
+	"Frontmatter needs a fix": "Il frontmatter necessita di una correzione",
 	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
-		"La nota è stata sincronizzata, ma il suo frontmatter non è stato letto del tutto. Aprila e correggi la riga evidenziata.",
+		"La nota è stata sincronizzata, ma il suo frontmatter non è stato completamente analizzato. Aprila per correggere la riga evidenziata.",
 	"Server error": "Errore del server",
 	"A temporary server problem — retrying automatically.":
-		"Un problema temporaneo del server: nuovo tentativo automatico.",
+		"Un problema temporaneo del server — riprova automaticamente.",
 	"Network unavailable": "Rete non disponibile",
 	"Can't reach the server — retrying automatically.":
-		"Server non raggiungibile: nuovo tentativo automatico.",
-	"Sync failed": "Sincronizzazione non riuscita",
+		"Impossibile raggiungere il server — riprova automaticamente.",
+	"Sync failed": "Sincronizzazione fallita",
 	"An unexpected error — retrying automatically.":
-		"Un errore inatteso: nuovo tentativo automatico.",
-	Upgrade: "Passa a un piano superiore",
+		"Si è verificato un errore inatteso — riprova automaticamente.",
+	"Frontmatter could not be parsed": "Impossibile analizzare il frontmatter",
+	"Note limit reached. Upgrade to keep adding notes.":
+		"Numero massimo di note raggiunto. Aggiorna per continuare ad aggiungere note.",
+	"Vault limit reached. Upgrade for more vaults.":
+		"Numero massimo di archivi raggiunto. Aggiorna per avere più archivi.",
+	"This file type isn't accepted by this server.":
+		"Questo tipo di file non è accettato da questo server.",
+	"Attachment sync is disabled for this account.":
+		"La sincronizzazione degli allegati è disabilitata per questo account.",
+	"Attachment storage is full — upgrade for more.":
+		"Lo spazio di archiviazione degli allegati è pieno, effettua l'upgrade per averne di più.",
+	"File too large for your plan.": "File troppo grande per il tuo piano.",
+	"Already signed in on another device. Upgrade for multi-device.":
+		"Già effettuato l'accesso su un altro dispositivo. Effettua l'upgrade per l'uso su più dispositivi.",
+	"Device swap cooldown active. Wait or upgrade.":
+		"Periodo di attesa per il cambio dispositivo attivo. Attendi o effettua l'upgrade.",
+	"Too many connected Obsidian vaults. Disconnect one or upgrade.":
+		"Troppi archivi Obsidian collegati. Disconnetti uno o effettua l'upgrade.",
+	"Too many connected AI clients. Disconnect one or upgrade.":
+		"Troppi client AI collegati. Disconnetti uno o effettua l'upgrade.",
+	"Daily AI search limit reached. Free includes 20 per day across Obsidian, the web app and MCP. Upgrade for unlimited.":
+		"Raggiunto il limite giornaliero di ricerche AI. Il piano gratuito include 20 ricerche al giorno tra Obsidian, l'app web e MCP. Effettua l'upgrade per un uso illimitato.",
+	"API keys need Pro. Sign in with your Engram account instead.":
+		"Le chiavi API richiedono il piano Pro. Accedi con il tuo account Engram.",
+	"Account suspended. Contact support.": "Account sospeso. Contatta l'assistenza.",
+	"Account setup incomplete.": "Configurazione dell'account incompleta.",
+	"This account was deleted. Contact support if that is wrong.":
+		"Questo account è stato eliminato. Contatta l'assistenza se non è corretto.",
+	"Finish setting up your account at app.engram.page to start syncing.":
+		"Completa la configurazione del tuo account su app.engram.page per iniziare la sincronizzazione.",
+	"Limit reached. Upgrade to continue.": "Limite raggiunto. Aggiorna per continuare.",
+	Upgrade: "Aggiorna",
 	"Update in settings": "Aggiorna nelle impostazioni",
-	"Engram: ready": "Engram: pronto",
-	"Engram Vault Sync {version} is available. {link}.":
-		"Engram Vault Sync {version} è disponibile. {link}.",
-	"Search your vault…": "Cerca nel tuo archivio…",
-	"Filter by folder…": "Filtra per cartella…",
-	"Filter by tags…": "Filtra per tag…",
-	"Search failed — check connection": "Ricerca non riuscita, controlla la connessione",
-	"No results found": "Nessun risultato",
-	"match strength: {pct}%": "Corrispondenza: {pct}%",
-	"Open sync setup": "Apri la configurazione della sincronizzazione",
-	"Last sync: {when}": "Ultima sincronizzazione: {when}",
-	"waiting for a connection": "in attesa di una connessione",
-	"sync is paused": "la sincronizzazione è in pausa",
-	"syncing now": "sincronizzazione in corso",
-	"waiting to retry": "in attesa di riprovare",
-	"{count} not on your plan": "{count} fuori dal tuo piano",
-	"{count} retrying": "{count} in nuovo tentativo",
-	"{count} ignored": "{count} ignorati",
-	"{count} queued — {reason}": "{count} in coda, {reason}",
-	"These files are fine. They just need a paid plan to sync.":
-		"Questi file vanno bene. Serve solo un piano a pagamento per sincronizzarli.",
-	"Show files ({count}) ▾": "Mostra i file ({count}) ▾",
-	"Sync these now": "Sincronizza questi adesso",
-	"Clear all": "Cancella tutto",
-	"Nothing needs your attention. 🎉": "Non c'è nulla che richieda la tua attenzione. 🎉",
-	Dismiss: "Nascondi",
-	"Retry all now": "Riprova tutto adesso",
-	"Temporary errors. These clear themselves once the server recovers.":
-		"Errori temporanei. Si risolvono da soli quando il server torna disponibile.",
-	Open: "Apri",
-	Ignore: "Ignora",
-	"No files ignored. Use the ignore button on a failure row to stop syncing it.":
-		"Nessun file ignorato. Usa il pulsante di ignoramento su una riga con errore per non sincronizzarlo più.",
-	Restore: "Ripristina",
-	Clear: "Cancella",
-	"No activity yet. Push or pull to see entries here.":
-		"Ancora nessuna attività. Invia o scarica e qui compariranno le voci.",
-	"Sync log": "Registro di sincronizzazione",
-	"Could not compare with the cloud. Check your connection.":
-		"Non è stato possibile confrontare con il server. Controlla la connessione.",
-	"Your login expired. Sign in again in Engram settings to continue.":
-		"Il tuo accesso è scaduto. Accedi di nuovo in Engram settings per continuare.",
-	"Couldn't create vault — the name may be invalid or already in use.":
-		"Non è stato possibile creare l'archivio: il nome potrebbe non essere valido o già in uso.",
-	"Could not create the vault — check your connection and try again.":
-		"Non è stato possibile creare l'archivio: controlla la connessione e riprova.",
-	"Free syncs notes only — {count} attachments will be skipped.": {
-		one: "Il piano gratuito sincronizza solo le note: {count} allegato verrà ignorato.",
-		other: "Il piano gratuito sincronizza solo le note: {count} allegati verranno ignorati.",
-	},
-	"Comparing your vault with the cloud…": "Confronto del tuo archivio con il server…",
-	"Change vault": "Cambia archivio",
-	"Advanced sync options": "Opzioni avanzate di sincronizzazione",
-	"Everything is in sync": "Tutto è sincronizzato",
-	" conflicts need resolution": {
-		one: " conflitto da risolvere",
-		other: " conflitti da risolvere",
-	},
-	"Confirm destructive sync": "Conferma una sincronizzazione distruttiva",
-	"You are about to:": "Ecco cosa succederà:",
-	"Files that will be deleted:": "File che verranno eliminati:",
-	"This cannot be undone.": "Non si può annullare.",
-	Back: "Indietro",
-	Confirm: "Conferma",
-	"Switch vault": "Cambia archivio",
-	"Pick a vault to sync with. We will recalculate the sync preview after you choose.":
-		"Scegli l'archivio con cui sincronizzare. Poi ricalcoleremo l'anteprima.",
-	"Loading vaults…": "Caricamento archivi…",
-	"No other vaults available.": "Non ci sono altri archivi disponibili.",
-	"Make new vault": "Crea un archivio",
-	"New vault": "Nuovo archivio",
-	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
-		"Crea un archivio vuoto sul server, poi sincronizza questo archivio Obsidian al suo interno.",
-	Create: "Crea",
-	"Your vault shares {percent} of its data with Engram":
-		"Il tuo archivio condivide il {percent} dei dati con Engram",
-	"Type {keyword} to confirm:": "Digita {keyword} per confermare:",
-	"✓ {count} synced": "✓ {count} sincronizzati",
-	"⤳ {count} skipped (Free plan)": "⤳ {count} ignorati (piano gratuito)",
-	"✕ {count} failed": "✕ {count} non riusciti",
-	"{count} attachments need a paid plan to sync. See Sync Center.": {
-		one: "{count} allegato richiede un piano a pagamento. Vedi il Centro di sincronizzazione.",
-		other: "{count} allegati richiedono un piano a pagamento. Vedi il Centro di sincronizzazione.",
-	},
-	"Syncing your vault": "Sincronizzazione del tuo archivio",
-	"Getting started…": "Si comincia…",
-	"Open Engram to check your vault and confirm everything synced.":
-		"Apri Engram per controllare il tuo archivio e verificare che tutto sia sincronizzato.",
-	"Open Engram": "Apri Engram",
-	"You can close this and the sync keeps running in the background.":
-		"Puoi chiudere questa finestra, la sincronizzazione continua in background.",
-	"Run in background": "Lascia in background",
-	"Syncing…": "Sincronizzazione…",
-	"Sync complete": "Sincronizzazione completata",
-	Done: "Fatto",
-	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
-		"Engram: conflitto di sincronizzazione su {path}, la tua modifica locale è stata salvata come {copy}",
-	"Open note": "Apri la nota",
-	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
-		"Engram: il frontmatter di {count} note ha problemi. Apri il Centro di sincronizzazione per correggerlo.",
-	"New here? Watch the setup video": "Prima volta qui? Guarda il video di installazione",
-	"What Engram does, and how to connect your vault, start to finish.":
-		"Cosa fa Engram e come collegare il tuo archivio, dall'inizio alla fine.",
-	"▶ Watch on YouTube": "▶ Guarda su YouTube",
-	"1. Make an account": "1. Crea un account",
-	"2. Connect your vault to Engram": "2. Collega il tuo archivio a Engram",
-	"Open connection tab": "Apri la scheda di connessione",
-	"3. Connect your AI": "3. Collega la tua IA",
-	"Node.js dependencies": "Dipendenze Node.js",
-	"Python virtual environment": "Ambiente virtuale Python",
-	"Python bytecode cache": "Cache del bytecode Python",
-	"Vendored dependencies": "Dipendenze incluse",
-	"Gradle build cache": "Cache di build Gradle",
-	"Rust/Java build output": "Output di build Rust/Java",
-	"Build output": "Output di build",
-	"Next.js build output": "Output di build Next.js",
-	"Distribution build output": "Output di build per la distribuzione",
-	"Cargo cache": "Cache di Cargo",
-	"CocoaPods dependencies": "Dipendenze CocoaPods",
-	"Dart tool cache": "Cache degli strumenti Dart",
-	"Generic cache directory": "Cartella di cache generica",
-	"Ignore patterns": "Modelli da ignorare",
-	"Custom patterns": "Modelli personalizzati",
-	Diagnostics: "Diagnostica",
-	"Diagnostics detail": "Dettagli della diagnostica",
-	About: "Informazioni",
-	"License: {name}": "Licenza: {name}",
-	"⚠ Detected: {label}/ ({formatted} files)": "⚠ Rilevato: {label}/ ({formatted} file)",
-	"{desc} — should not be synced": "{desc}, non dovrebbe essere sincronizzato",
-	"Add to ignores": "Aggiungi agli ignorati",
-	"Version: {version}": "Versione: {version}",
-	"Source: {link}": "Sorgente: {link}",
-	"Engram URL": "Indirizzo di Engram",
-	"✓ Engram server reachable (v{version})": "✓ Server Engram raggiungibile (v{version})",
-	"✗ server responded but isn't an Engram backend":
-		"✗ Il server risponde, ma non è un backend Engram",
-	"✗ couldn't reach a server at this URL": "✗ Nessun server raggiungibile a questo indirizzo",
-	"Checking server…": "Controllo del server…",
-	Authentication: "Autenticazione",
-	"Authenticated via Engram account (OAuth).": "Autenticato con il tuo account Engram (OAuth).",
-	"Manage account": "Gestisci l'account",
-	"Sign out": "Esci",
-	"Using API key": "Chiave API in uso",
-	"Authenticated via manual API key.": "Autenticato con una chiave API inserita a mano.",
-	"Clear key": "Cancella la chiave",
-	"Switch to sign in": "Passa all'accesso",
-	"Sign in or create an account": "Accedi o crea un account",
-	"Sign in": "Accedi",
-	"API key": "Chiave API",
-	Token: "Token",
-	"Bearer token from your Engram account.": "Token Bearer del tuo account Engram.",
-	Save: "Salva",
-	"That does not look like an Engram API key (expected {prefix}…).":
-		"Questa non sembra una chiave API di Engram (attesa {prefix}…).",
-	Vault: "Archivio",
-	"Vault selection": "Scelta dell'archivio",
-	"Select which vault this plugin syncs with.":
-		"Scegli con quale archivio si sincronizza questo plugin.",
-	"No vaults found — first sync will create one":
-		"Nessun archivio trovato: la prima sincronizzazione ne creerà uno",
-	"Pick a vault": "Scegli un archivio",
-	Change: "Cambia",
-	"Support development": "Sostieni lo sviluppo",
-	"GitHub Sponsors": "GitHub Sponsors",
-	Backend: "Backend",
-	"Where this vault syncs to. Each backend keeps its own sign-in.":
-		"Dove si sincronizza questo archivio. Ogni backend conserva il proprio accesso.",
-	"Run your own Engram server": "Usa un tuo server Engram",
-	"Engram is the backend that powers sync and semantic search.":
-		"Engram è il backend che muove la sincronizzazione e la ricerca semantica.",
-	"Finish sync setup": "Concludi la configurazione",
-	"Nothing in this vault syncs until you choose how to merge it with the server.":
-		"Questo archivio non sincronizza nulla finché non scegli come unirlo al server.",
-	"Choose sync direction": "Scegli il verso della sincronizzazione",
-	"Engram: this plugin is too old to sync (needs {version} or newer). Update it to continue.":
-		"Engram: questo plugin è troppo vecchio per sincronizzare (serve la {version} o più recente). Aggiornalo per continuare.",
-	"Engram: this plugin is too old to sync. Update it to continue.":
-		"Engram: questo plugin è troppo vecchio per sincronizzare. Aggiornalo per continuare.",
-	Update: "Aggiorna",
-	// UI strings (second pass)
-	"Invalid API key": "Chiave API non valida",
-	"Connection failed": "Connessione non riuscita",
 	"Sync now": "Sincronizza adesso",
+	"Engram sync: syncing...": "Sincronizzazione Engram: in corso...",
+	"Engram Sync: pulled {pulled}, pushed {pushed}":
+		"Engram Sync: scaricati {pulled}, inviati {pushed}",
 	"Disconnect (clear login)": "Disconnetti (cancella l'accesso)",
-	"Push entire vault": "Invia tutto l'archivio",
+	"Engram: disconnected. Open Engram settings to reconnect.":
+		"Engram: disconnesso. Apri le impostazioni di Engram per riconnetterti.",
+	"Push entire vault": "Invia l'intero archivio",
+	"Engram Sync: pushed {count} files": {
+		one: "Engram Sync: inviato {count} file",
+		many: "Engram Sync: sincronizzati {count} file",
+		other: "Engram Sync: inviati {count} file",
+	},
 	"Check sync status": "Controlla lo stato della sincronizzazione",
+	"Engram sync: checking...": "Sincronizzazione Engram: in verifica...",
 	"Engram sync: server does not support reconciliation (update backend)":
-		"Engram Sync: il server non sa riconciliare i dati (aggiorna il backend)",
-	"Pull all from server (force overwrite)": "Scarica tutto dal server (sovrascrive in locale)",
+		"Sincronizzazione Engram: il server non supporta la riconciliazione (aggiorna il backend)",
+	"Engram sync: everything in sync": "Sincronizzazione Engram: tutto sincronizzato",
+	"{count} missing on server": "{count} mancante sul server",
+	"{count} diverged": "{count} divergente",
+	"{count} only on server": "{count} solo sul server",
+	"Engram Sync: {details}": "Sincronizzazione Engram: {details}",
+	"Pull all from server (force overwrite)": "Scarica tutto dal server (sovrascrivi forzatamente)",
+	"Engram sync: pulling all from server...":
+		"Sincronizzazione Engram: scaricamento di tutto dal server...",
+	"Engram Sync: pulled {count} files from server": {
+		one: "Engram Sync: scaricato {count} file dal server",
+		many: "Engram Sync: scaricati {count} file dal server",
+		other: "Engram Sync: scaricati {count} file dal server",
+	},
 	"Show sync log": "Mostra il registro di sincronizzazione",
 	"Semantic search": "Ricerca semantica",
-	"Open search sidebar": "Apri il pannello di ricerca",
+	"Open search sidebar": "Apri la barra laterale di ricerca",
 	"Engram search": "Ricerca Engram",
 	"Open sync center": "Apri il Centro di sincronizzazione",
+	"Engram: ready": "Engram: pronto",
+	"Engram Sync: pushed {pushed}": "Engram Sync: inviati {pushed}",
+	"Engram sync: sync failed": "Sincronizzazione Engram: errore",
 	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
-		"Engram: questo archivio non esiste più sul server. Scegli o crea un archivio per continuare.",
+		"Engram: questo archivio non esiste più sul server. Seleziona o crea un archivio per continuare.",
 	"Engram: recovered plugin settings from a backup after a corrupted save.":
-		"Engram: le impostazioni erano danneggiate e sono state ripristinate da una copia.",
+		"Engram: impostazioni del plugin ripristinate da un backup dopo un salvataggio corrotto.",
+	"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.":
+		"Engram: il file delle impostazioni del plugin è corrotto e non può essere ripristinato. Potrebbe essere necessario ricollegare l'account nelle impostazioni.",
+	"Engram: your login expired — open Engram settings to reconnect.":
+		"Engram: la tua sessione è scaduta: apri le impostazioni di Engram per ricollegarti.",
+	"Engram: This vault has been deleted on the server.":
+		"Engram: questo archivio è stato eliminato sul server.",
 	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
-		"Engram Sync: la sincronizzazione dal vivo richiede un aggiornamento del plugin. Aggiorna Engram vault sync.",
+		"Engram sync: la sincronizzazione in tempo reale richiede un aggiornamento del plugin: aggiorna il plugin Engram vault sync.",
+	"Engram Sync: pulled {pulled} (local extras deleted)":
+		"Engram Sync: scaricati {pulled} (file extra locali eliminati)",
+	"Engram Sync: pulled {pulled}": "Engram Sync: scaricati {pulled}",
+	"Engram Sync: replaced remote with local ({pushed} uploaded)":
+		"Engram Sync: sostituito il file remoto con quello locale ({pushed} caricati)",
+	"Engram: sync is not set up yet, so nothing in this vault will sync.":
+		"Engram: la sincronizzazione non è ancora configurata, quindi nulla in questo archivio verrà sincronizzato.",
+	"Finish sync setup": "Completa la configurazione della sincronizzazione",
 	"Engram: sync is paused. This edit was not synced. Choose a sync direction to resume.":
-		"Engram: la sincronizzazione è in pausa e questa modifica non è stata inviata. Scegli un verso per riprendere.",
-	"Open Engram settings": "Apri Engram settings",
+		"Engram: la sincronizzazione è in pausa. Questa modifica non è stata sincronizzata. Scegli una direzione di sincronizzazione per riprendere.",
+	"Open Engram settings": "Apri le impostazioni di Engram",
+	"Engram: sync failed. Open the sync log for details.":
+		"Engram: la sincronizzazione è fallita. Apri il registro di sincronizzazione per i dettagli.",
 	"Engram: not connected": "Engram: non connesso",
 	"Engram: signed out": "Engram: disconnesso",
 	"Not connected yet. Click to open settings and link this vault.":
-		"Non ancora connesso. Fai clic per aprire le impostazioni e collegare questo archivio.",
+		"Non ancora connesso. Clicca per aprire le impostazioni e collegare questo archivio.",
 	"Not signed in. Click to open settings and reconnect.":
-		"Accesso non effettuato. Fai clic per aprire le impostazioni e ricollegarti.",
-	"Engram: finish setup": "Engram: concludi la configurazione",
+		"Non ancora connesso. Clicca per aprire le impostazioni e riconnetterti.",
+	"Engram: finish setup": "Engram: completa la configurazione",
 	"Engram: sync paused": "Engram: sincronizzazione in pausa",
 	"{label} ({count} queued)": "{label} ({count} in coda)",
 	"Setup is not finished — nothing will sync until you choose a sync direction. Click to finish.":
-		"La configurazione non è finita. Finché non scegli un verso non si sincronizza nulla. Fai clic per concluderla.",
+		"La configurazione non è completa: nulla verrà sincronizzato finché non scegli una direzione di sincronizzazione. Clicca per completare.",
 	"Sync paused — click to choose a sync direction":
-		"Sincronizzazione in pausa: fai clic per scegliere un verso",
+		"Sincronizzazione in pausa — clicca per scegliere la direzione della sincronizzazione",
 	"Engram: offline ({count} queued)": "Engram: offline ({count} in coda)",
 	"Engram: offline": "Engram: offline",
 	"Server unreachable — changes will sync when connected":
-		"Server non raggiungibile: le modifiche partiranno quando torna la connessione",
+		"Server non raggiungibile — le modifiche verranno sincronizzate quando connesso",
 	"Engram: error": "Engram: errore",
 	"Unknown error": "Errore sconosciuto",
-	"Engram: syncing ({count})": "Engram: sincronizzazione ({count})",
-	"Engram: syncing": "Engram: sincronizzazione",
-	"Sync in progress...": "Sincronizzazione in corso…",
+	"Engram: syncing ({count})": "Engram: sincronizzando ({count})",
+	"Engram: syncing": "Engram: sincronizzando",
+	"Sync in progress...": "Sincronizzazione in corso...",
 	"Engram: pending ({count})": "Engram: in attesa ({count})",
-	"{count} files queued": "{count} file in coda",
-	"Engram: live": "Engram: dal vivo",
+	"{count} files queued": {
+		one: "{count} file in coda",
+		many: "{count} file in coda",
+		other: "{count} file in coda",
+	},
+	"Engram: live": "Engram: attivo",
 	"WebSocket connected — live sync active":
-		"WebSocket connesso: la sincronizzazione dal vivo è attiva",
-	"Click to sync": "Fai clic per sincronizzare",
+		"WebSocket connesso — sincronizzazione in tempo reale attiva",
+	"Click to sync": "Clicca per sincronizzare",
+	"Engram: ⚠ {count} sync errors": {
+		one: "Engram: ⚠ {count} errore di sincronizzazione",
+		many: "Engram: ⚠ {count} errori di sincronizzazione",
+		other: "Engram: ⚠ {count} errori di sincronizzazione",
+	},
+	"Last sync: {when}": "Ultima sincronizzazione: {when}",
+	"Engram Sync: pulled {count} changes": {
+		one: "Engram Sync: aggiornate {count} modifica",
+		many: "Engram Sync: aggiornate le modifiche {count}",
+		other: "Engram Sync: aggiornate {count} modifiche",
+	},
+	'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.':
+		'Engram Sync: lo stato di sincronizzazione di "{name}" non è leggibile, si sta usando la copia locale.',
+	"Engram Vault Sync {version} is available. {link}.":
+		"Engram Vault Sync {version} disponibile. {link}.",
+	"{formatted} files · ": {
+		one: "{formatted} file ·",
+		many: "{formatted} file ·",
+		other: "{formatted} file ·",
+	},
+	"Notes searchable": "Note indicizzabili",
+	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
+		"Le note successive a questa vengono comunque sincronizzate e aperte normalmente, ma non sono nell'indice di ricerca. L'indice conserva le tue note più vecchie, quindi sono quelle più recenti che non vengono incluse.",
+	"Notes stored": "Note salvate",
 	Attachments: "Allegati",
+	"AI searches": "Ricerche AI",
+	"{formatted} per day": "{formatted} al giorno",
 	Keyword: "Parola chiave",
 	Semantic: "Semantica",
 	Both: "Entrambe",
 	"matches your words and their other forms — 'run' finds 'running' — plus this device.":
-		"Trova le tue parole e le loro forme: «correre» trova anche «corre», più questo dispositivo.",
+		'corrisponde alle tue parole e alle loro altre forme – "run" trova "running" – più questo dispositivo.',
 	"matches meaning. Finds notes that never use the words you typed.":
-		"Trova per significato, comprese note in cui le tue parole non compaiono mai.",
+		"corrisponde al significato. Trova note che non usano le parole che hai digitato.",
 	"matches words and meaning together, plus this device. Widest results.":
-		"Trova parole e significato insieme, più questo dispositivo. La ricerca più ampia.",
+		"corrisponde a parole e significato insieme, più questo dispositivo. Risultati più ampi.",
+	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
+		"Engram indicizza {indexed} delle tue {all} note. Il resto corrisponde solo su questo dispositivo. Aggiorna per indicizzare tutto.",
+	"Searching {indexed} of {all} notes. Upgrade to search everything.":
+		"Ricerca in {indexed} di {all} note. Aggiorna per cercare tutto.",
+	"Search your vault…": "Cerca nel tuo archivio…",
 	"Clear search": "Cancella la ricerca",
 	"Search settings": "Impostazioni di ricerca",
+	"Filter by folder…": "Filtra per cartella…",
+	"Filter by tags…": "Filtra per tag…",
+	"Remove tag {tag}": "Rimuovi il tag {tag}",
+	"Engram unreachable. Showing matches from this device only.":
+		"Engram non raggiungibile. Mostra i risultati solo da questo dispositivo.",
+	"Search failed — check connection": "Ricerca fallita — controlla la connessione",
+	"No results found": "Nessun risultato trovato",
 	Untitled: "Senza titolo",
 	"meaning + exact": "significato + esatto",
-	Disconnected: "Disconnesso",
-	"Connected — waiting for first sync decision":
-		"Connesso: in attesa della prima scelta di sincronizzazione",
-	"Connected — live sync active": "Connesso: sincronizzazione dal vivo attiva",
-	"Connected — polling": "Connesso: interrogazione periodica",
-	"Not configured": "Non configurato",
-	Refresh: "Ricarica",
-	"Not synced on your plan ({count})": "Fuori dal tuo piano ({count})",
-	"Needs attention ({count})": "Richiede la tua attenzione ({count})",
-	"Retrying automatically ({count})": "Nuovo tentativo automatico ({count})",
-	Stats: "Numeri",
-	"Notes on this device": "Note su questo dispositivo",
-	"Attachments on this device": "Allegati su questo dispositivo",
-	"Remote vault": "Archivio sul server",
-	"not linked": "non collegato",
-	"Plan usage": "Utilizzo del piano",
-	"Safe choice: combines both sides, nothing is deleted.":
-		"Scelta sicura: unisce i due lati e non elimina nulla.",
-	"Already in sync. Nothing is deleted.": "Già sincronizzato. Non viene eliminato nulla.",
-	Sync: "Sincronizza",
-	"Upload local files without downloading the remote":
-		"Invia i file locali senza scaricare dal server",
-	"Delete all on remote, then upload local files":
-		"Elimina tutto sul server, poi invia i file locali",
-	"Download remote files without uploading the local":
-		"Scarica i file dal server senza inviare quelli locali",
-	"Delete all local files, then download from remote":
-		"Elimina tutti i file locali, poi scarica dal server",
-	"Set up sync for this vault": "Configura la sincronizzazione di questo archivio",
-	"You are now pointing at a different cloud vault":
-		"Adesso stai puntando a un altro archivio nel cloud",
-	"Sync preview": "Anteprima della sincronizzazione",
-	"Start syncing": "Inizia a sincronizzare",
-	"Upload everything": "Invia tutto",
-	"Nothing will be removed from this device.": "Non verrà rimosso nulla da questo dispositivo.",
-	"Download everything": "Scarica tutto",
-	"Not now": "Più tardi",
-	"This vault": "Questo archivio",
-	"Cloud server": "Archivio sul server",
-	"Vault name": "Nome dell'archivio",
-	"Could not load vaults": "Non è stato possibile caricare gli archivi",
-	"Enter a name for the new vault": "Dai un nome al nuovo archivio",
-	"Failed to switch vault": "Cambio di archivio non riuscito",
-	"Finished with some errors. Open the sync log to see what failed.":
-		"Terminato con alcuni errori. Nel registro di sincronizzazione trovi cosa non è andato.",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"Sincronizzato. Alcuni allegati richiedono un piano a pagamento (vedi sotto).",
-	"All synced. Your vault and the cloud now match.":
-		"Tutto sincronizzato. Il tuo archivio e il cloud corrispondono.",
-	"Already up to date. Nothing needed syncing.":
-		"Già aggiornato. Non c'era nulla da sincronizzare.",
-	Deleting: "Eliminazione",
-	Downloading: "Download",
-	Uploading: "Invio",
-	"Syncing attachments": "Sincronizzazione degli allegati",
-	Complete: "Completato",
-	"Getting set up": "Per iniziare",
-	"setup guide": "guida all'installazione",
-	"Sign in (or enter your server URL and key) on the connection tab, then run your first sync.":
-		"Accedi nella scheda di connessione (o inserisci l'indirizzo del tuo server e la chiave), poi avvia la prima sincronizzazione.",
-	"See the AI setup guide": "Vedi la guida alla configurazione dell'IA",
-	Plans: "Piani",
-	Free: "Gratuito",
-	"1 vault, 2 devices": "1 archivio, 2 dispositivi",
-	"Real-time sync": "Sincronizzazione in tempo reale",
-	"2,000 notes searchable": "2.000 note ricercabili",
-	"Connect any AI (MCP)": "Collega qualsiasi IA (MCP)",
-	Starter: "Starter",
-	"10 vaults, unlimited devices": "10 archivi, dispositivi illimitati",
-	"Search all your notes": "Cerca in tutte le tue note",
-	"10 GB attachments": "10 GB di allegati",
-	"Unlimited AI searches": "Ricerche IA illimitate",
-	Pro: "Pro",
-	"Unlimited vaults": "Archivi illimitati",
-	"Search across all vaults at once": "Cerca in tutti gli archivi insieme",
-	"50 GB attachments": "50 GB di allegati",
-	"API access": "Accesso alle API",
-	"See full pricing": "Vedi tutti i prezzi",
-	"Learn more": "Scopri di più",
-	"Errors only": "Solo errori",
-	"Warnings and errors": "Avvisi ed errori",
-	"Info (default)": "Informazioni (predefinito)",
-	"Debug (verbose)": "Debug (dettagliato)",
-	"Or authenticate with a token instead of signing in.":
-		"Oppure autenticati con un token invece di accedere.",
-	"If this plugin saves you time, consider supporting development.":
-		"Se questo plugin ti fa risparmiare tempo, considera di sostenere lo sviluppo.",
-	"Sign-in required to load vaults": "Per caricare gli archivi serve l'accesso",
-	"Could not reach Engram — check connection":
-		"Engram non raggiungibile: controlla la connessione",
-	// UI strings (sync error surfaces)
-	"Free syncs notes only — images & PDFs need a paid plan.":
-		"Il piano gratuito sincronizza solo le note: immagini e PDF richiedono un piano a pagamento.",
-	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
-		"«Scarica tutto (elimina gli extra)» interrotto: non è stato possibile ottenere uno snapshot esclusivo del server (conflitto di replay). Non è stato spostato nulla nel cestino.",
-	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
-		"«Scarica tutto» interrotto: è in corso un'altra sincronizzazione (conflitto di replay). Riprova quando finisce.",
-	"Pull all failed: {error}": "«Scarica tutto» non riuscito: {error}",
-	"Pull all failed": "«Scarica tutto» non riuscito",
-	// UI strings (third pass)
-	"Click to copy": "Fai clic per copiare",
-	"Waiting for authorization — connected, this will complete instantly.":
-		"In attesa dell'autorizzazione: c'è connessione, sarà immediato.",
-	"Waiting for authorization — no live connection, checking every 30s.":
-		"In attesa dell'autorizzazione: nessuna connessione dal vivo, controllo ogni 30 s.",
-	'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.':
-		"Engram Sync: lo stato di sincronizzazione di «{name}» non era leggibile, verrà usata la copia sul disco.",
-	"{formatted} files · ": "{formatted} file · ",
-	"Notes searchable": "Note ricercabili",
-	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
-		"Le note oltre questo limite continuano a sincronizzarsi e ad aprirsi normalmente, solo che non entrano nell'indice di ricerca. L'indice tiene le note più vecchie, quindi restano fuori quelle più recenti.",
-	"Notes stored": "Note archiviate",
-	"AI searches": "Ricerche IA",
-	"{formatted} per day": "{formatted} al giorno",
-	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
-		"Engram indicizza {indexed} delle tue {all} note. Il resto viene trovato solo su questo dispositivo. Passa a un piano superiore per indicizzare tutto.",
-	"Searching {indexed} of {all} notes. Upgrade to search everything.":
-		"Ricerca in {indexed} note su {all}. Passa a un piano superiore per cercare in tutto.",
-	"Remove tag {tag}": "Rimuovi il tag {tag}",
+	"match strength: {pct}%": "livello di corrispondenza: {pct}%",
+	"No source path for this result": "Nessun percorso di origine per questo risultato",
+	"Note not synced locally": "La nota non è sincronizzata localmente",
+	"Syncing...": "Sincronizzazione in corso...",
 	"👋 Welcome": "👋 Benvenuto",
 	"🔌 Connection": "🔌 Connessione",
 	"🔄 Sync Center": "🔄 Centro di sincronizzazione",
 	"⚙️ Advanced": "⚙️ Avanzate",
+	"Engram: settings tab failed to render ({error})":
+		"Engram: impossibile visualizzare la scheda delle impostazioni ({error})",
+	Disconnected: "Disconnesso",
 	"Error: {error}": "Errore: {error}",
 	unknown: "sconosciuto",
+	"Connected — waiting for first sync decision":
+		"Connesso — in attesa della prima decisione di sincronizzazione",
+	"Connected — live sync active": "Connesso — sincronizzazione attiva",
+	"Connected — polling": "Connesso — in attesa",
+	"Not configured": "Non configurato",
+	"Open sync setup": "Apri la configurazione di sincronizzazione",
+	"waiting for a connection": "in attesa di connessione",
+	"sync is paused": "la sincronizzazione è in pausa",
+	"syncing now": "sincronizzando",
+	"waiting to retry": "in attesa di riprovare",
+	"{count} not on your plan": "{count} non incluso nel tuo piano",
 	"{count} need attention": {
 		one: "{count} richiede attenzione",
+		many: "{count} richiede attenzione",
 		other: "{count} richiedono attenzione",
 	},
-	"Uploads {up}, downloads {down}.": "Invia {up}, scarica {down}.",
-	"Uploads {count}.": "Invia {count}.",
-	"Downloads {count}.": "Scarica {count}.",
+	"{count} retrying": "{count} tentativo in corso",
+	"{count} ignored": "{count} ignorato",
+	"{count} queued — {reason}": "{count} in coda — {reason}",
+	"Sync...": "Sincronizza...",
+	"sync failed": "sincronizzazione fallita",
+	Refresh: "Aggiorna",
+	"Not synced on your plan ({count})": "Non sincronizzato nel tuo piano ({count})",
+	"These files are fine. They just need a paid plan to sync.":
+		"Questi file sono ok. Hanno solo bisogno di un piano a pagamento per essere sincronizzati.",
+	"Show files ({count}) ▾": "Mostra file ({count}) ▾",
+	"Sync these now": "Sincronizza ora",
+	"Needs attention ({count})": "Richiede attenzione ({count})",
+	"Clear all": "Pulisci tutto",
+	"Nothing needs your attention. 🎉": "Non ci sono problemi da risolvere. 🎉",
+	Dismiss: "Annulla",
+	"Retrying automatically ({count})": "Tentativo automatico ({count})",
+	"Retry all now": "Riprova tutto adesso",
+	"Temporary errors. These clear themselves once the server recovers.":
+		"Errori temporanei. Spariranno quando il server si riprenderà.",
+	"{count} attempts": {
+		one: "{count} tentativo",
+		many: "{count} tentativi",
+		other: "{count} tentativi",
+	},
+	Open: "Apri",
+	Ignore: "Ignora",
+	"No files ignored. Use the ignore button on a failure row to stop syncing it.":
+		'Nessun file ignorato. Usa il pulsante "ignora" su una riga con errori per interrompere la sincronizzazione.',
+	Restore: "Ripristina",
+	"File not found locally: {path}": "File non trovato localmente: {path}",
+	"Ignored {path} — won't sync until restored from Sync Center.":
+		"Ignorato {path} — non verrà sincronizzato finché non verrà ripristinato dal Centro di sincronizzazione.",
+	"Restored {path} — will sync on next push.":
+		"Ripristinato {path} — verrà sincronizzato al prossimo aggiornamento.",
+	Clear: "Cancella",
+	"No activity yet. Push or pull to see entries here.":
+		"Nessuna attività ancora. Effettua una sincronizzazione per vedere le voci.",
+	Stats: "Statistiche",
+	"Notes on this device": "Note su questo dispositivo",
+	"Attachments on this device": "Allegati su questo dispositivo",
+	"Remote vault": "Archivio remoto",
+	"not linked": "non collegato",
+	"Plan usage": "Utilizzo del piano",
+	"Sync log": "Registro sincronizzazioni",
+	"Showing {count} entries": {
+		one: "Mostrando {count} elemento",
+		many: "Mostrando {count} elementi",
+		other: "Mostrando {count} elementi",
+	},
+	"No sync activity this session.": "Nessuna attività di sincronizzazione in questa sessione.",
+	"({count} errors)": {
+		one: "({count} errore)",
+		many: "({count} errori)",
+		other: "({count} errori)",
+	},
+	"Could not compare with the cloud. Check your connection.":
+		"Impossibile confrontare con il cloud. Controlla la connessione.",
+	"Your login expired. Sign in again in Engram settings to continue.":
+		"La tua sessione è scaduta. Accedi di nuovo nelle impostazioni di Engram per continuare.",
+	"Couldn't create vault — the name may be invalid or already in use.":
+		"Impossibile creare l'archivio: il nome potrebbe essere non valido o già in uso.",
+	"Could not create the vault — check your connection and try again.":
+		"Impossibile creare l'archivio: controlla la connessione e riprova.",
+	"Free syncs notes only — {count} attachments will be skipped.": {
+		one: "Sincronizza gratuitamente le note, ma salta {count} allegato.",
+		many: "Sincronizza gratuitamente solo le note; verranno saltati {count} allegati.",
+		other: "Sincronizza gratuitamente solo le note; verranno saltati {count} allegati.",
+	},
+	"Uploads {up}, downloads {down}.": "Upload {up}, download {down}.",
+	"Uploads {count}.": "Upload {count}.",
+	"Downloads {count}.": "Download {count}.",
 	"{count} conflicts to resolve.": {
 		one: "{count} conflitto da risolvere.",
+		many: "{count} conflitti da risolvere.",
 		other: "{count} conflitti da risolvere.",
 	},
-	"Nothing is deleted.": "Non viene eliminato nulla.",
+	"Safe choice: combines both sides, nothing is deleted.":
+		"Scelta sicura: combina entrambe le parti, niente viene eliminato.",
+	"Nothing is deleted.": "Niente viene eliminato.",
+	"Already in sync. Nothing is deleted.": "Già sincronizzato. Niente viene eliminato.",
 	"Delete all {count} files currently on the server": {
-		one: "Elimina {count} file ora sul server",
-		other: "Elimina tutti i {count} file ora sul server",
+		one: "Elimina tutti e {count} i file attualmente sul server",
+		many: "Elimina tutti i file {count} attualmente sul server",
+		other: "Elimina tutti e {count} i file attualmente sul server",
 	},
-	"Upload {count} files from this vault": "Invia {count} file da questo archivio",
+	"Upload {count} files from this vault": {
+		one: "Carica {count} file da questo archivio",
+		many: "Carica {count} file da questo archivio",
+		other: "Carica {count} file da questo archivio",
+	},
 	"Delete all {count} files in this vault": {
-		one: "Elimina {count} file in questo archivio",
+		one: "Elimina tutti i {count} file in questo archivio",
+		many: "Elimina tutti i file {count} in questo archivio",
 		other: "Elimina tutti i {count} file in questo archivio",
 	},
-	"Download {count} files from the server": "Scarica {count} file dal server",
-	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
-		"Non c'è ancora nulla da sincronizzare, questo archivio è vuoto su entrambi i lati. Avvia la sincronizzazione e tutto quello che scrivi comparirà sugli altri dispositivi.",
-	"{count} notes": {
-		one: "{count} nota",
-		other: "{count} note",
+	"Download {count} files from the server": {
+		one: "Scarica {count} file dal server",
+		many: "Scarica {count} file dal server",
+		other: "Scarica {count} file dal server",
 	},
+	Sync: "Sincronizza",
+	"Upload local files without downloading the remote":
+		"Carica i file locali senza scaricare quelli remoti",
+	"Delete all on remote, then upload local files":
+		"Elimina tutto sul server, poi carica i file locali",
+	"Download remote files without uploading the local":
+		"Scarica i file remoti senza caricare quelli locali",
+	"Delete all local files, then download from remote":
+		"Elimina tutti i file locali, poi scaricali dal server",
+	"Set up sync for this vault": "Configura la sincronizzazione per questo archivio",
+	"You are now pointing at a different cloud vault":
+		"Ora stai puntando a un archivio cloud diverso",
+	"Sync preview": "Anteprima della sincronizzazione",
+	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
+		"Al momento non c'è nulla da sincronizzare: questo archivio è vuoto su entrambi i lati. Inizia la sincronizzazione e tutto ciò che scrivi apparirà sui tuoi altri dispositivi.",
+	"Start syncing": "Inizia la sincronizzazione",
+	"{count} notes": { one: "{count} nota", many: "{count} note", other: "{count} note" },
 	"{count} attachments": {
 		one: "{count} allegato",
+		many: "{count} allegati",
 		other: "{count} allegati",
 	},
 	"{first} and {second}": "{first} e {second}",
 	files: "file",
 	"This vault is empty on the server. Upload your {what}?":
-		"Questo archivio è vuoto sul server. Vuoi inviare {what}?",
+		"Questo archivio è vuoto sul server. Vuoi caricare i tuoi {what}?",
+	"Upload everything": "Carica tutto",
+	"Nothing will be removed from this device.": "Nulla verrà eliminato da questo dispositivo.",
 	"This device's vault is empty. Download {what} from the server?":
 		"L'archivio di questo dispositivo è vuoto. Vuoi scaricare {what} dal server?",
+	"Download everything": "Scarica tutto",
+	Done: "Fatto",
+	"Send debug logs. Note content stays private.":
+		"Invia i log di debug. Il contenuto delle note rimane privato.",
+	"Comparing your vault with the cloud…": "Confronto del tuo archivio con il cloud…",
+	"Not now": "Non ora",
+	"Change vault": "Cambia archivio",
+	"Advanced sync options": "Opzioni di sincronizzazione avanzate",
+	"Everything is in sync": "Tutto è sincronizzato",
+	"This vault": "Questo archivio",
+	"Cloud server": "Server cloud",
+	" conflicts need resolution": {
+		one: "conflitto da risolvere",
+		many: "conflitti da risolvere",
+		other: "conflitti da risolvere",
+	},
 	notes: "note",
 	attachments: "allegati",
 	folders: "cartelle",
-	"Uploading {count}.": "Invio di {count}.",
+	"Confirm destructive sync": "Conferma sincronizzazione distruttiva",
+	"You are about to:": "Stai per:",
+	"Files that will be deleted:": "File che verranno eliminati:",
+	"This cannot be undone.": "Questa operazione non è annullabile.",
+	Back: "Indietro",
+	Confirm: "Conferma",
+	"Switch vault": "Cambia archivio",
+	"Pick a vault to sync with. We will recalculate the sync preview after you choose.":
+		"Scegli un archivio da sincronizzare. Ricalcoleremo l'anteprima della sincronizzazione dopo la tua scelta.",
+	"Loading vaults…": "Caricamento archivi…",
+	" (default)": "(predefinito)",
+	"No other vaults available.": "Nessun altro archivio disponibile.",
+	"Make new vault": "Crea un nuovo archivio",
+	"New vault": "Nuovo archivio",
+	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
+		"Crea un nuovo archivio vuoto sul server, quindi sincronizza questo archivio Obsidian con esso.",
+	"Vault name": "Nome dell'archivio",
+	Create: "Crea",
+	"Could not load vaults": "Impossibile caricare gli archivi",
+	"Enter a name for the new vault": "Inserisci un nome per il nuovo archivio",
+	"Failed to switch vault": "Impossibile passare a un altro archivio",
+	"Your vault shares {percent} of its data with Engram":
+		"Il tuo archivio condivide {percent} dei suoi dati con Engram",
+	"Type {keyword} to confirm:": "Digita {keyword} per confermare:",
+	"Uploading {count}.": "Caricamento di {count}.",
 	"Downloading {count}.": "Download di {count}.",
-	"Deleting {count} local files.": "Eliminazione di {count} file locali.",
+	"Deleting {count} local files.": {
+		one: "Eliminando {count} file locale.",
+		many: "Eliminando {count} file locali.",
+		other: "Eliminando {count} file locali.",
+	},
 	"Deleting {count} on the cloud.": "Eliminazione di {count} nel cloud.",
-	"First sync, this may take a moment.": "Prima sincronizzazione, può volerci un momento.",
+	"First sync, this may take a moment.":
+		"Prima sincronizzazione, potrebbe richiedere un momento.",
 	"Checking for changes.": "Controllo delle modifiche.",
-	"Nothing will be deleted.": "Non verrà eliminato nulla.",
+	"Nothing will be deleted.": "Nulla verrà eliminato.",
+	"✓ {count} synced": "✓ {count} sincronizzato",
+	"⤳ {count} skipped (Free plan)": "⤳ {count} saltato (piano gratuito)",
+	"✕ {count} failed": "✕ {count} fallito",
+	"{count} attachments need a paid plan to sync. See Sync Center.": {
+		one: "{count} allegato richiede un piano a pagamento per essere sincronizzato. Vedi il Centro di sincronizzazione.",
+		many: "{count} Gli allegati richiedono un piano a pagamento per la sincronizzazione. Vedi il Centro di sincronizzazione.",
+		other: "{count} allegati richiedono un piano a pagamento per essere sincronizzati. Vedi il Centro di sincronizzazione.",
+	},
+	"Finished with some errors. Open the sync log to see what failed.":
+		"Completata con alcuni errori. Apri il registro di sincronizzazione per vedere cosa è fallito.",
+	"Synced. Some attachments need a paid plan to sync (see below).":
+		"Sincronizzato. Alcuni allegati richiedono un piano a pagamento per essere sincronizzati (vedi sotto).",
+	"All synced. Your vault and the cloud now match.":
+		"Tutto sincronizzato. Il tuo archivio e il cloud ora corrispondono.",
+	"Already up to date. Nothing needed syncing.":
+		"Già aggiornato. Non è necessario sincronizzare nulla.",
+	Deleting: "Eliminando",
+	Downloading: "Scaricando",
+	Uploading: "Caricamento",
+	"Syncing your vault": "Sincronizzazione del tuo archivio",
+	"Getting started…": "Inizializzazione…",
+	"Open Engram to check your vault and confirm everything synced.":
+		"Apri Engram per controllare il tuo archivio e confermare che tutto sia stato sincronizzato.",
+	"Open Engram": "Apri Engram",
+	"You can close this and the sync keeps running in the background.":
+		"Puoi chiudere questa finestra e la sincronizzazione continuerà in background.",
+	"Run in background": "Esegui in background",
+	"Syncing…": "Sincronizzazione in corso…",
+	"Sync complete": "Sincronizzazione completata",
+	"Syncing attachments": "Sincronizzazione degli allegati",
+	Complete: "Completato",
 	'{count} failed. Run "{command}" for details.':
-		"{count} non riusciti. Esegui «{command}» per i dettagli.",
+		'{count} non riuscito. Esegui "{command}" per i dettagli.',
+	"Free syncs notes only — images & PDFs need a paid plan.":
+		"La sincronizzazione è gratuita solo per le note; immagini e PDF richiedono un piano a pagamento.",
+	"Engram: {count} files failed to sync{detail} — open Sync Center": {
+		one: "Engram: impossibile sincronizzare {count} file{detail} — apri il Centro di sincronizzazione",
+		many: "Engram: impossibile sincronizzare {count} file{detail} — apri il Centro di sincronizzazione",
+		other: "Engram: impossibile sincronizzare {count} file{detail} — apri il Centro di sincronizzazione",
+	},
+	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.": {
+		one: "Engram: {count} allegato saltato — aggiorna per sincronizzare immagini e PDF.",
+		many: "Engram: Saltati {count} allegati — aggiorna per sincronizzare immagini e PDF.",
+		other: "Engram: {count} allegati saltati — aggiorna per sincronizzare immagini e PDF.",
+	},
+	"Engram: plan upgraded — syncing {count} attachments…": {
+		one: "Engram: piano aggiornato — sincronizzando {count} allegato…",
+		many: "Engram: piano aggiornato — sincronizzando {count} allegati…",
+		other: "Engram: piano aggiornato — sincronizzando {count} allegati…",
+	},
+	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
+		"Pull di tutti i file interrotto: impossibile ottenere uno snapshot esclusivo del server (conflitto di replay). Nessun file è stato eliminato.",
+	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
+		"Pull di tutti i file interrotto: un'altra sincronizzazione è in corso (conflitto di replay). Riprova quando sarà terminata.",
+	"Pull all failed: {error}": "Pull di tutti i file fallito: {error}",
+	"Pull all failed": "Pull di tutti i file fallito",
+	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
+		"Engram: conflitto di sincronizzazione su {path} — la tua modifica locale è stata salvata come {copy}",
+	"Open note": "Apri la nota",
+	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
+		"Engram: {count} note hanno problemi con il frontmatter. Apri il Centro di sincronizzazione per risolverli.",
 	'Engram Sync: renamed "{name}" (unsupported characters)':
-		"Engram Sync: «{name}» è stato rinominato (caratteri non supportati)",
-	'Engram: frontmatter problem in "{name}"': "Engram: problema di frontmatter in «{name}»",
-	"Create a hosted account at ": "Crea un account ospitato su ",
-	", or self-host the backend (": ", oppure ospita il backend da te (",
+		'Engram Sync: rinominato "{name}" (caratteri non supportati)',
+	'Engram: frontmatter problem in "{name}"': 'Engram: problema con il frontmatter in "{name}"',
+	"Engram: this plugin is too old to sync (needs {version} or newer). Update it to continue.":
+		"Engram: questo plugin è troppo vecchio per sincronizzare (richiede {version} o versione successiva). Aggiornalo per continuare.",
+	"Engram: this plugin is too old to sync. Update it to continue.":
+		"Engram: questo plugin è troppo vecchio per sincronizzare. Aggiornalo per continuare.",
+	Update: "Aggiorna",
+	"New here? Watch the setup video": "Sei nuovo qui? Guarda il video di configurazione",
+	"What Engram does, and how to connect your vault, start to finish.":
+		"Cosa fa Engram e come collegare il tuo archivio, dalla A alla Z.",
+	"▶ Watch on YouTube": "▶ Guarda su YouTube",
+	"Getting set up": "Configurazione",
+	"1. Make an account": "1. Crea un account",
+	"Create a hosted account at ":
+		"Crea un account ospitato su [placeholder], oppure ospita tu stesso il backend (",
+	", or self-host the backend (": "guida alla configurazione",
+	"setup guide": "2. Collega il tuo archivio a Engram",
+	"2. Connect your vault to Engram": "2. Collega il tuo archivio a Engram",
+	"Sign in (or enter your server URL and key) on the connection tab, then run your first sync.":
+		"Apri la scheda connessione.",
+	"Open connection tab": "Apri la scheda connessione",
+	"3. Connect your AI": "3. Collega la tua AI",
 	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
-		"Collega Claude, Cursor, ChatGPT o qualsiasi app MCP così può leggere e scrivere le tue note. ",
+		"Collega Claude, Cursor, ChatGPT o qualsiasi app MCP per permettergli di leggere e scrivere le tue note",
+	"See the AI setup guide": "Consulta la guida per la configurazione dell'AI",
+	Plans: "Piani",
+	Free: "Gratuito",
+	"1 vault, 2 devices": "1 archivio, 2 dispositivi",
+	"Real-time sync": "Sincronizzazione in tempo reale",
+	"2,000 notes searchable": "2.000 note ricercabili",
+	"Connect any AI (MCP)": "Collega qualsiasi AI (MCP)",
+	Starter: "Base",
+	"10 vaults, unlimited devices": "10 archivi, dispositivi illimitati",
+	"Search all your notes": "Cerca tutte le tue note",
+	"10 GB attachments": "10 GB di allegati",
+	"Unlimited AI searches": "Ricerche AI illimitate",
+	Pro: "Pro",
+	"Unlimited vaults": "Archivi illimitati",
+	"Search across all vaults at once": "Cerca in tutti gli archivi contemporaneamente",
+	"50 GB attachments": "50 GB di allegati",
+	"API access": "Accesso all'API",
+	"See full pricing": "Vedi i prezzi completi",
+	"Learn more": "Scopri di più",
 	Documentation: "Documentazione",
-	"AI / MCP setup guide": "Guida alla configurazione IA / MCP",
+	"AI / MCP setup guide": "Guida all'installazione AI / MCP",
 	"Report an issue": "Segnala un problema",
-	"Join our Discord": "Entra nel nostro Discord",
+	"Join our Discord": "Unisciti al nostro Discord",
+	"Node.js dependencies": "Dipendenze Node.js",
+	"Python virtual environment": "Ambiente virtuale Python",
+	"Python bytecode cache": "Cache del bytecode Python",
+	"Vendored dependencies": "Dipendenze incluse",
+	"Gradle build cache": "Cache della build Gradle",
+	"Rust/Java build output": "Output della build Rust/Java",
+	"Build output": "Output della build",
+	"Next.js build output": "Output della build Next.js",
+	"Distribution build output": "Output della build di distribuzione",
+	"Cargo cache": "Cache di Cargo",
+	"CocoaPods dependencies": "Dipendenze CocoaPods",
+	"Dart tool cache": "Cache degli strumenti Dart",
+	"Generic cache directory": "Directory di cache generica",
+	"Ignore patterns": "Modelli da ignorare",
+	"Custom patterns": "Modelli personalizzati",
 	"Paths to skip (one per line). Folder patterns end with /. Built-in: {configDir}/, .trash/, .git/":
-		"Percorsi da saltare (uno per riga). I criteri per le cartelle finiscono con /. Integrati: {configDir}/, .trash/, .git/",
+		"Percorsi da escludere (uno per riga). I modelli di cartella terminano con /. Predefiniti: {configDir}/, .trash/, .git/",
+	Diagnostics: "Diagnostica",
 	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use.":
-		"Invia al server l'attività dettagliata di sincronizzazione, archivio e connessione per la diagnosi, con tracciamento distribuito delle richieste. Solo metadati, mai il contenuto delle note. Per l'uso normale lascia disattivato.",
+		"Invia attività dettagliate di sincronizzazione, archivio e connessione al server per la risoluzione dei problemi, con tracciamento distribuito delle richieste. Solo metadati, mai contenuto delle note. Disattiva per l'uso normale.",
+	"Diagnostics detail": "Dettagli diagnostica",
 	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
-		"Gravità minima inviata mentre la diagnostica è attiva. I livelli più alti inviano meno righe. Predefinito: Informazioni.",
-	"Signed in as {email}": "Accesso effettuato come {email}",
-	"Pick a vault (previous: '{name}' not found)":
-		"Scegli un archivio (il precedente, «{name}», non è stato trovato)",
-	"Pick a vault (previous: id {id} not found)":
-		"Scegli un archivio (l'id precedente {id} non è stato trovato)",
-	"Server error ({status}) — check Engram logs":
-		"Errore del server ({status}), controlla i registri di Engram",
-	"Request failed ({status})": "Richiesta non riuscita ({status})",
-	"Engram Cloud": "Engram Cloud",
-	"Self-hosted": "Self-hosted",
-	"{count} attempts": {
-		one: "{count} tentativo",
-		other: "{count} tentativi",
-	},
-	// UI strings (fourth pass)
-	"{count} missing on server": {
-		one: "{count} manca sul server",
-		other: "{count} mancano sul server",
-	},
-	"{count} diverged": {
-		one: "{count} è divergente",
-		other: "{count} sono divergenti",
-	},
-	"{count} only on server": "{count} solo sul server",
-	"Engram Sync: {details}": "Engram Sync: {details}",
-	"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.":
-		"Engram: il file delle impostazioni del plugin era danneggiato e non è stato possibile recuperarlo. Potresti dover ricollegarti dalle impostazioni.",
-	"Engram: sync is not set up yet, so nothing in this vault will sync.":
-		"Engram: la sincronizzazione non è ancora configurata, quindi nulla di questo archivio verrà sincronizzato.",
-	"Engram: ⚠ {count} sync errors": {
-		one: "Engram: ⚠ {count} errore di sincronizzazione",
-		other: "Engram: ⚠ {count} errori di sincronizzazione",
-	},
-	"sync failed": "sincronizzazione non riuscita",
+		"Livello minimo di gravità visualizzato quando la diagnostica è attiva. I livelli più alti inviano meno righe. Predefinito: Info.",
+	"Errors only": "Errori",
+	"Warnings and errors": "Avvisi ed errori",
+	"Info (default)": "Info (predefinito)",
+	"Debug (verbose)": "Debug (dettagliato)",
+	About: "Informazioni",
+	"License: {name}": "Licenza: {name}",
+	"⚠ Detected: {label}/ ({formatted} files)": "⚠ Rilevato: {label} ({formatted} file)",
+	"{desc} — should not be synced": "{desc} — non deve essere sincronizzato",
+	"Add to ignores": "Aggiungi agli ignorati",
+	"Added {pattern} to ignore patterns": "Aggiunto {pattern} ai modelli da ignorare",
+	"Version: {version}": "Versione: {version}",
+	"Source: {link}": "Sorgente: {link}",
+	"Engram URL": "URL di Engram",
+	"✓ Engram server reachable (v{version})": "✓ Server Engram raggiungibile (v{version})",
+	"✗ server responded but isn't an Engram backend":
+		"✗ Il server ha risposto, ma non è un backend di Engram",
+	"✗ couldn't reach a server at this URL": "✗ Impossibile raggiungere un server a questo URL",
+	"Checking server…": "Controllo del server…",
 	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":
-		"Non sembra un indirizzo del server completo. Includi lo schema, per esempio http://127.0.0.1:4000",
+		"Sembra che l'indirizzo del server sia incompleto. Includi lo schema, ad esempio http://127.0.0.1:4000",
+	"Engram backend changed — sign in again to continue.":
+		"Backend di Engram modificato: accedi di nuovo per continuare.",
+	Authentication: "Autenticazione",
+	"Signed in as {email}": "Accesso come {email}",
+	"Authenticated via Engram account (OAuth).": "Autenticato tramite account Engram (OAuth).",
+	"Manage account": "Gestisci l'account",
+	"Sign out": "Disconnetti",
+	"Using API key": "Utilizzo della chiave API",
+	"Authenticated via manual API key.": "Autenticato tramite chiave API manuale.",
+	"Clear key": "Cancella la chiave",
+	"Switch to sign in": "Passa all'accesso",
+	"Engram: sign-in failed ({error})": "Engram: impossibile accedere ({error})",
+	"Sign in or create an account": "Accedi o crea un account",
 	"Opens your browser to sign in, or create an account if you don't have one yet, then links this vault.":
-		"Apre il browser per accedere, o per creare un account se non ne hai ancora uno, poi collega questo archivio.",
+		"Apre il tuo browser per accedere, oppure crea un account se non ne hai ancora uno, quindi collega questo archivio.",
+	"Sign in": "Accedi",
 	"Or authenticate with a token instead of signing in. Engram Cloud API keys require the Pro plan; on Free and Starter, sign in above.":
-		"Oppure autenticati con un token invece di accedere. Le chiavi API di Engram Cloud richiedono il piano Pro; su Free e Starter accedi qui sopra.",
-	"No sync activity this session.": "Nessuna attività di sincronizzazione in questa sessione.",
-	"Showing {count} entries": {
-		one: "{count} voce mostrata",
-		other: "{count} voci mostrate",
-	},
-	"({count} errors)": {
-		one: "({count} errore)",
-		other: "({count} errori)",
-	},
-	"Frontmatter could not be parsed": "Non è stato possibile interpretare il frontmatter",
+		"Oppure autenticati con un token invece di accedere. Le chiavi API di Engram richiedono il piano Pro; nei piani Free e Starter, accedi qui sopra.",
+	"Or authenticate with a token instead of signing in.":
+		"Oppure autenticati con un token invece di accedere.",
+	"API key": "Chiave API",
+	Token: "Token",
+	"Bearer token from your Engram account.": "Token di accesso dal tuo account Engram.",
+	Save: "Salva",
+	"Enter an API key first": "Inserisci prima una chiave API",
+	"That does not look like an Engram API key (expected {prefix}…).":
+		"Non sembra una chiave API di Engram (previsto {prefix}…).",
+	Vault: "Archivio",
+	"Vault selection": "Selezione dell'archivio",
+	"Select which vault this plugin syncs with.":
+		"Seleziona l'archivio con cui questo plugin si sincronizza.",
+	"No vaults found — first sync will create one":
+		"Nessun archivio trovato — la prima sincronizzazione ne creerà uno",
+	"Pick a vault (previous: '{name}' not found)":
+		"Scegli un archivio (precedente: '{name}' non trovato)",
+	"Pick a vault (previous: id {id} not found)":
+		"Scegli un archivio (precedente: id {id} non trovato)",
+	"Pick a vault": "Scegli un archivio",
+	Change: "Cambia",
+	"Support development": "Supporta lo sviluppo",
+	"If this plugin saves you time, consider supporting development.":
+		"Se questo plugin ti fa risparmiare tempo, considera di supportare lo sviluppo.",
+	"GitHub Sponsors": "GitHub Sponsors",
+	"Sign-in required to load vaults": "Richiede l'accesso per caricare gli archivi",
+	"Server error ({status}) — check Engram logs":
+		"Errore del server ({status}) — controlla i log di Engram",
+	"Request failed ({status})": "Richiesta fallita ({status})",
+	"Could not reach Engram — check connection":
+		"Impossibile raggiungere Engram — controlla la connessione",
+	"Engram Cloud": "Cloud Engram",
+	"Self-hosted": "Autogestito",
+	Backend: "Backend",
+	"Where this vault syncs to. Each backend keeps its own sign-in.":
+		"Dove questo archivio viene sincronizzato. Ogni backend ha il suo sistema di accesso.",
+	"Switched to {mode}.": "Passato a {mode}.",
 	"Not connected. Enter your Engram server URL below to start syncing.":
-		"Non connesso. Inserisci qui sotto l'indirizzo del tuo server Engram per iniziare a sincronizzare.",
-	// UI strings (fifth pass)
-	"Sync...": "Sincronizza...",
-	"Syncing...": "Sincronizzazione...",
-	" (default)": " (predefinito)",
-
-	// First-run diagnostics opt-in (#528)
-	"Send debug logs. Note content stays private.":
-		"Invia i log di debug. Il contenuto delle note resta privato.",
+		"Non connesso. Inserisci l'URL del tuo server Engram qui sotto per iniziare la sincronizzazione.",
+	"Run your own Engram server": "Gestisci il tuo server Engram",
+	"Engram is the backend that powers sync and semantic search.":
+		"Engram è il backend che alimenta la sincronizzazione e la ricerca semantica.",
+	"Nothing in this vault syncs until you choose how to merge it with the server.":
+		"Nessuna nota in questo archivio viene sincronizzata finché non scegli come fonderla con il server.",
+	"Choose sync direction": "Scegli la direzione della sincronizzazione",
+	"...": "...",
+	'... "{name}" ...': '... "{name}" ...',
 };
 
 export default it;
