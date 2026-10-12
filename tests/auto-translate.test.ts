@@ -117,6 +117,15 @@ describe("batchText / parseBatch", () => {
 });
 
 describe("buildPrompt", () => {
+	it("states the placeholder rule only when there is one, and never spells out a token", () => {
+		// The model copied the rule's own "{placeholder}" into "2 days left" answers.
+		const none = buildPrompt("vi", {}, "2 days left in your trial.", false);
+		expect(none).not.toMatch(/\{[^}]*\}/u);
+		const some = buildPrompt("vi", {}, "Hi {0}", false);
+		expect(some).toContain("curly braces");
+		expect(some.replace("Hi {0}", "")).not.toMatch(/\{[^}]*\}/u);
+	});
+
 	it("carries glossary, tone and the newline rule only when needed", () => {
 		const p = buildPrompt("de", { Vaults: "Vaults" }, "[1] Sync", true);
 		expect(p).toContain("German");

@@ -153,7 +153,7 @@ function buildPrompt(
 		multi
 			? "Each numbered line is a separate UI string. Translate every line independently and return exactly the same numbered lines, one per line, in the same order."
 			: "",
-		`Rules: keep each string as short as its source. Copy every {placeholder} in curly braces exactly, untranslated. Do not add punctuation a source lacks. Keep brand names (${BRANDS.join(", ")}) unchanged. ${text.includes(NEWLINE) ? `Keep the ${NEWLINE} marker. ` : ""}${tone}`,
+		`Rules: keep each string as short as its source. ${placeholders(text).length > 0 ? "Copy every token in curly braces exactly, untranslated. " : ""}Do not add punctuation a source lacks. Keep brand names (${BRANDS.join(", ")}) unchanged. ${text.includes(NEWLINE) ? `Keep the ${NEWLINE} marker. ` : ""}${tone}`,
 		terms ? `Use this established terminology and tone:\n${terms}` : "",
 		`Produce only the ${name} translation, without any additional explanations or commentary. Please translate the following English text into ${name}:\n\n\n${text}`,
 	]
