@@ -104,8 +104,8 @@ const PINNED: Partial<Record<Target, readonly string[]>> = {
 	it: ["Dismiss"],
 	ko: ["Back"],
 	// Dismiss sits next to Ignore in the Sync Center (tests/i18n-distinct-pairs.test.ts).
-	pt: ["Dismiss"],
-	"pt-BR": ["Dismiss"],
+	pt: ["Dismiss", "files"],
+	"pt-BR": ["Dismiss", "Upgrade"],
 	vi: ["Dismiss"],
 	zh: ["Dismiss"],
 };

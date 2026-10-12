@@ -83,7 +83,7 @@ const ptBR: Dict = {
 	"Finish setting up your account at app.engram.page to start syncing.":
 		"Finalize a configuração da sua conta em app.engram.page para começar a sincronizar.",
 	"Limit reached. Upgrade to continue.": "Limite atingido. Faça um upgrade para continuar.",
-	Upgrade: "Fazer upgrade",
+	Upgrade: "Atualizar",
 	"Update in settings": "Atualizar nas configurações",
 	"Sync now": "Sincronizar agora",
 	"Engram sync: syncing...": "Engram Sincronização: sincronizando...",

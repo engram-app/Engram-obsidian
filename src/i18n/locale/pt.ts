@@ -361,7 +361,7 @@ const pt: Dict = {
 		other: "{count} anexos",
 	},
 	"{first} and {second}": "{first} e {second}",
-	files: "ficheros",
+	files: "ficheiros",
 	"This vault is empty on the server. Upload your {what}?":
 		"Este cofre está vazio no servidor. Deseja enviar {what}?",
 	"Upload everything": "Enviar tudo",
