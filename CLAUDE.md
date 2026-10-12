@@ -148,6 +148,10 @@ Restart Obsidian or disable/re-enable the plugin to pick up changes.
 
 Required status check on `main`: `build-and-test` (see the repo ruleset).
 
+## Translations: translategemma is the translator
+
+Catalogs in `src/i18n/locale/` come from `translategemma:12b` on FastRaid's Ollama via `bun run i18n:translate` (diff-only; `--all` for a full pass). Agents never write translations themselves. After wrapping a new string, run `I18N_OLLAMA_URL=http://10.0.20.214:11434 bun run i18n:translate` and commit the catalog diff, or let the `i18n-translate.yml` bot PR fill it after merge. A prompt, check, glossary or model change bumps `TRANSLATOR_VERSION` in `src/i18n/auto-translate.ts` (ported from the backend's `frontend/src/i18n/auto-translate.ts`; keep the two in step). Never suppress `tests/i18n-catalog-quality.test.ts` or `tests/i18n-keys.test.ts`. Full rules: `src/i18n/locale/README.md`.
+
 ## Context Docs
 
 **Plugin internals & ops**
