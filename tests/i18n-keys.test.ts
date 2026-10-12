@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Glob } from "bun";
 import type { Dict } from "../src/i18n";
+import { GLOSSARY_KEYS } from "../src/i18n/auto-translate";
 import { usedKeys } from "../src/i18n/keys-scan";
 import de from "../src/i18n/locale/de";
 import enPlurals from "../src/i18n/locale/en-plurals";
@@ -54,6 +55,12 @@ describe("locale keys track the source", () => {
 
 	test("the scan finds the wrapped call sites at all", () => {
 		expect(used.size).toBeGreaterThan(20);
+	});
+
+	// A glossary term that is not a real key is never looked up, so its translation
+	// floats (the backend's "Notes" let ja render "note" two different ways).
+	test("pins only glossary terms that are real keys", () => {
+		expect(GLOSSARY_KEYS.filter((k) => !used.has(k))).toEqual([]);
 	});
 
 	test("the scan sees tInto keys, not just t() keys", () => {
