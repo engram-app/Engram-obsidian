@@ -1875,9 +1875,10 @@ body.is-mobile .engram-support-buttons > a {
 	border-color: var(--interactive-accent);
 }
 
+/* Four equal columns, or 2x2 on a phone, so no chip wraps alone. */
 .engram-feedback-chips {
-	display: flex;
-	flex-wrap: wrap;
+	display: grid;
+	grid-template-columns: repeat(4, 1fr);
 	gap: var(--size-4-1);
 	padding: var(--size-4-2);
 	border-bottom: 1px solid var(--background-modifier-border);
@@ -1889,6 +1890,12 @@ body.is-mobile .engram-support-buttons > a {
 	padding: var(--size-4-1) var(--size-4-3);
 	border-radius: var(--radius-l);
 	font-size: var(--font-ui-small);
+}
+
+@media (max-width: 600px) {
+	.engram-feedback-chips {
+		grid-template-columns: repeat(2, 1fr);
+	}
 }
 
 .engram-feedback-chip[aria-pressed="true"] {
