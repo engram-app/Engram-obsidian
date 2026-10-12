@@ -2032,9 +2032,32 @@ export class SyncEngine {
 	 *  cold-start does NOT open a Y.Doc per note (the reconnect-storm amplifier).
 	 *  Inverse of isUnchangedSynced except it also requires a baseline to exist. */
 	needsColdReconcile(path: string, content: string): boolean {
-		const state = this.syncState.get(normalizePath(path));
-		return state !== undefined && state.hash !== fnv1a(content);
+		const normalized = normalizePath(path);
+		const state = this.syncState.get(normalized);
+		if (state === undefined) return false;
+		const hash = fnv1a(content);
+		// Disk holding exactly what an in-flight flushFromCrdt is writing is the
+		// engine's own write, not drift (#578). See `flushingHash`.
+		return state.hash !== hash && this.flushingHash.get(normalized) !== hash;
 	}
+
+	/** Hash of the body each in-flight `flushFromCrdt` is writing, per path.
+	 *
+	 *  `flushFromCrdt` records the baseline only AFTER the write resolves, but
+	 *  the file is readable before that. A fan-out landing in between ran
+	 *  `captureDiskDriftBeforeRemote`, compared the fresh disk against the OLD
+	 *  baseline, and diffed the engine's own write into the doc as a
+	 *  client-authored edit (#578: a discovery wrote the REST row, edit k, over
+	 *  a doc at edit j; the client copy of edit k then survived every later
+	 *  server edit, "Version 35 of 5" on every device). Relay's rule is that a
+	 *  disk change equal to what the doc already wrote is not an edit; this
+	 *  bridges the window where our baseline has not caught up yet.
+	 *
+	 *  Cleared by: the same flush's `finally`, success or failure (the
+	 *  baseline takes over on success). If that never fires (a write that
+	 *  hangs forever), the entry only hides byte-identical engine content, and
+	 *  the next flush to the path overwrites it. */
+	private readonly flushingHash = this.track(["vault", "destroy"], new Map<string, number>());
 
 	/** Strand-heal drain (#569): fold an unpushed disk edit into the note's
 	 *  doc, then write the doc's CURRENT projection. The content captured when
@@ -2148,6 +2171,8 @@ export class SyncEngine {
 			}
 		}
 		this.markRecentlyFlushed(normalized);
+		const writingHash = fnv1a(content);
+		this.flushingHash.set(normalized, writingHash);
 		try {
 			if (file instanceof TFile) {
 				await this.app.vault.modify(file, content);
@@ -2177,6 +2202,11 @@ export class SyncEngine {
 				`flushFromCrdt: write failed for ${noteRef(path)}: ${errMsg(e, path)}`,
 			);
 			return false;
+		} finally {
+			// Only our own entry: a nested flush to the same path may own it now.
+			if (this.flushingHash.get(normalized) === writingHash) {
+				this.flushingHash.delete(normalized);
+			}
 		}
 	}
 
