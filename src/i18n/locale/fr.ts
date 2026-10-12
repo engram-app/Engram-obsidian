@@ -467,7 +467,7 @@ const fr: Dict = {
 	"Already up to date. Nothing needed syncing.": "Déjà à jour. Rien à synchroniser.",
 	Deleting: "Suppression",
 	Downloading: "Téléchargement",
-	Uploading: "Téléchargement",
+	Uploading: "Envoi en cours",
 	"Syncing your vault": "Synchronisation de ton coffre",
 	"Getting started…": "Démarrage…",
 	"Open Engram to check your vault and confirm everything synced.":

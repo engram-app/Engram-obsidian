@@ -88,6 +88,15 @@ const GLOSSARY_KEYS = [
 	"Semantic search",
 	"Reconnect your account to resume syncing.",
 ];
+// Hand overrides, each copied from Obsidian's own translation of the same
+// string, where the model's answer meant something else ("Dismiss" as Cancel).
+const PINNED: Partial<Record<Target, readonly string[]>> = {
+	de: ["Dismiss"],
+	fr: ["Uploading"],
+	it: ["Dismiss"],
+	ko: ["Back"],
+	pt: ["Dismiss"],
+};
 // "Engram Vault Sync" (the plugin's name) must survive whole. The "Engram Sync:" notice
 // prefix is not a name: the CJK catalogs translate its "Sync" on purpose.
 const BRANDS = [
@@ -110,6 +119,7 @@ const profile: Profile<Target> = {
 	specs: SPECS,
 	brands: BRANDS,
 	glossary: GLOSSARY_KEYS,
+	pinned: PINNED,
 };
 
 const tr = translator(profile);

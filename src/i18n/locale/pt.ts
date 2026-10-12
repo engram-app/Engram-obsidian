@@ -562,7 +562,7 @@ const pt: Dict = {
 	"Needs attention ({count})": "Requer atenção ({count})",
 	"Clear all": "Limpar tudo",
 	"Nothing needs your attention. 🎉": "Nada precisa da sua atenção. 🎉",
-	Dismiss: "Cancelar",
+	Dismiss: "Ignorar",
 	"Retrying automatically ({count})": "Tentando novamente automaticamente ({count})",
 	"Retry all now": "Tentar novamente tudo agora",
 	"Temporary errors. These clear themselves once the server recovers.":

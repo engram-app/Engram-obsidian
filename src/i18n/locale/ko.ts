@@ -295,7 +295,7 @@ const ko: Dict = {
 	"You are about to:": "다음 작업을 수행합니다:",
 	"Files that will be deleted:": "삭제될 파일:",
 	"This cannot be undone.": "이 작업은 되돌릴 수 없습니다.",
-	Back: "되돌기",
+	Back: "뒤로",
 	Confirm: "확인",
 	"Switch vault": "보관함 변경",
 	"Pick a vault to sync with. We will recalculate the sync preview after you choose.":

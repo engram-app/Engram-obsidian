@@ -481,7 +481,7 @@ const de: Dict = {
 	"Needs attention ({count})": "Benötigt Aufmerksamkeit ({count})",
 	"Clear all": "Alles löschen",
 	"Nothing needs your attention. 🎉": "Nichts erfordert deine Aufmerksamkeit. 🎉",
-	Dismiss: "Abbrechen",
+	Dismiss: "Schließen",
 	"Retrying automatically ({count})": "Automatischer Wiederversuch ({count})",
 	"Retry all now": "Alle jetzt wiederholen",
 	"Temporary errors. These clear themselves once the server recovers.":
