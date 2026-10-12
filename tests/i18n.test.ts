@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { currentLocale, t, tInto } from "../src/i18n";
+import { SPECS } from "../src/i18n/auto-translate";
 import { __setLanguage } from "./__mocks__/obsidian";
 
 // The mock's language is module state shared with every other test file, so a
@@ -64,6 +65,17 @@ describe("t() fallback chain", () => {
 	test("en-GB resolves to English rather than to a missing dictionary", () => {
 		__setLanguage("en-GB");
 		expect(t(ENTER_KEY)).toBe(ENTER_KEY);
+	});
+});
+
+describe("shipped locales", () => {
+	afterAll(() => __setLanguage("en"));
+
+	// Every language the translator targets is wired into t(): a catalog the
+	// script writes but index.ts never imports would silently show English.
+	test.each(Object.keys(SPECS))("%s is wired into t()", (code) => {
+		__setLanguage(code);
+		expect(t("Attachments")).not.toBe("Attachments");
 	});
 });
 

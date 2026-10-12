@@ -21,8 +21,10 @@ import fr from "../src/i18n/locale/fr";
 import it from "../src/i18n/locale/it";
 import ja from "../src/i18n/locale/ja";
 import ko from "../src/i18n/locale/ko";
+import ms from "../src/i18n/locale/ms";
 import pt from "../src/i18n/locale/pt";
 import ru from "../src/i18n/locale/ru";
+import vi from "../src/i18n/locale/vi";
 import zh from "../src/i18n/locale/zh";
 import zhTW from "../src/i18n/locale/zh-TW";
 
@@ -43,8 +45,10 @@ const LOCALES: Array<[string, Dict]> = [
 	["it", it],
 	["ja", ja],
 	["ko", ko],
+	["ms", ms],
 	["pt", pt],
 	["ru", ru],
+	["vi", vi],
 	["zh", zh],
 	["zh-TW", zhTW],
 	["en-plurals", enPlurals],
