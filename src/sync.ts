@@ -27,6 +27,7 @@ import { errMsg, isHttpStatus } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
 import { isCanvasPath as canvasPath, isCrdtEligiblePath as crdtEligiblePath } from "./file-kind";
 import { t } from "./i18n";
+import { userErrorMessage } from "./i18n/user-error";
 import { IgnoredFiles } from "./ignored-files";
 import {
 	categorizeError,
@@ -49,6 +50,7 @@ import {
 	QueuePriority,
 } from "./offline-queue";
 import { attachmentCapabilityGained, type PlanState, samePlanState } from "./plan-state";
+import { formatBytes } from "./plan-usage";
 import { rlog } from "./remote-log";
 import type { SyncLog } from "./sync-log";
 import { SyncedFileTable } from "./synced-file";
@@ -5802,7 +5804,7 @@ export class SyncEngine {
 			} else {
 				// Tally for the batched "N files failed to sync" Notice.
 				this.failuresThisBatch += 1;
-				this.firstFailureMessageThisBatch ??= classified.message;
+				this.firstFailureMessageThisBatch ??= classified.userMessage;
 				this.firstFailureCategoryThisBatch ??= classified.category;
 			}
 			devLog().log("error", `push failed: ${file.path} — ${msg} (${classified.category})`);
@@ -5889,7 +5891,9 @@ export class SyncEngine {
 		if (plan.maxFileBytes > 0 && file.stat.size > plan.maxFileBytes) {
 			return {
 				category: "too_large",
-				message: `File exceeds the ${plan.maxFileBytes}-byte limit`,
+				message: t("File exceeds the {limit} limit", {
+					limit: formatBytes(plan.maxFileBytes),
+				}),
 			};
 		}
 		if (plan.attachmentsTextOnly && !isTextAttachment(file.extension)) {
@@ -7697,10 +7701,7 @@ export class SyncEngine {
 				`PullAll failed: ${errMsg(e)}`,
 				e instanceof Error ? e.stack : undefined,
 			);
-			this.lastError =
-				e instanceof Error
-					? t("Pull all failed: {error}", { error: e.message })
-					: t("Pull all failed");
+			this.lastError = t("Pull all failed: {error}", { error: userErrorMessage(e) });
 			return 0;
 		} finally {
 			this.pulling = false;
@@ -11098,7 +11099,7 @@ export class SyncEngine {
 			this.attachmentLimitedThisBatch += 1;
 		} else {
 			this.failuresThisBatch += 1;
-			this.firstFailureMessageThisBatch ??= classified.message;
+			this.firstFailureMessageThisBatch ??= classified.userMessage;
 			this.firstFailureCategoryThisBatch ??= classified.category;
 		}
 		await this.queue.dequeue(entry.path, this.entryVaultId(entry));
@@ -11409,7 +11410,11 @@ export class SyncEngine {
 						// `network`) rather than the terminal 413/402.
 						const gate = this.preGateAttachment(file);
 						if (gate) {
-							await this.recordTerminalIssue(entry, { ...gate, terminal: true });
+							await this.recordTerminalIssue(entry, {
+								...gate,
+								userMessage: gate.message,
+								terminal: true,
+							});
 							continue;
 						}
 						const read = await this.app.vault.readBinary(file);

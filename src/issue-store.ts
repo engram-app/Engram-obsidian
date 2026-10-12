@@ -1,6 +1,7 @@
 import { expBackoff } from "./backoff";
 import { statusOf } from "./error-util";
 import { t } from "./i18n";
+import { userErrorMessage } from "./i18n/user-error";
 import { LimitExceededError } from "./limit-error";
 import type { ParseReason, SyncIssue, SyncIssueCategory } from "./types";
 
@@ -85,7 +86,10 @@ export class IssueStore {
 interface CategorizedError {
 	category: SyncIssueCategory;
 	status?: number;
+	/** Raw diagnostic text (often the server's English). Logs only. */
 	message: string;
+	/** What the user may be shown: translated, never the raw message. */
+	userMessage: string;
 	/** If true, the offline queue should NOT retry this — user action required. */
 	terminal: boolean;
 	/** Billing/upgrade URL when the failure is a tier limit (needs_pro). */
@@ -128,6 +132,7 @@ export function categorizeError(err: unknown): CategorizedError {
 			category,
 			status: 402,
 			message: err.message,
+			userMessage: userErrorMessage(err),
 			terminal: true,
 			upgradeUrl: err.upgradeUrl ?? undefined,
 		};
@@ -138,17 +143,20 @@ export function categorizeError(err: unknown): CategorizedError {
 	// message is what makes a failure actionable in the Sync Center / a Notice.
 	const message = extractServerMessage(err) ?? (err instanceof Error ? err.message : String(err));
 
-	if (status === 413) return { category: "too_large", status, message, terminal: true };
+	const userMessage = userErrorMessage(err);
+
+	if (status === 413)
+		return { category: "too_large", status, message, userMessage, terminal: true };
 	// 401/403 are terminal: api.ts already does a single inline refresh-and-retry on
 	// 401, so a status reaching here means the credential is permanently invalid
 	// (revoked key, expired session that won't refresh, wrong vault). Re-enqueueing
 	// would loop forever — user must re-auth via Sync Center.
 	if (status === 401 || status === 403)
-		return { category: "auth", status, message, terminal: true };
+		return { category: "auth", status, message, userMessage, terminal: true };
 	if (status !== undefined && status >= 500)
-		return { category: "server", status, message, terminal: false };
-	if (status === undefined) return { category: "network", message, terminal: false };
-	return { category: "other", status, message, terminal: false };
+		return { category: "server", status, message, userMessage, terminal: false };
+	if (status === undefined) return { category: "network", message, userMessage, terminal: false };
+	return { category: "other", status, message, userMessage, terminal: false };
 }
 
 /** Pull the backend's `error` field out of an Obsidian requestUrl rejection.

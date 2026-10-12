@@ -6,11 +6,13 @@
 // repo must resolve `obsidian`'s types exactly the way the template does.
 //
 // Our only additions on top of the template: the `obsidianmd/ui/sentence-case`
-// brand allow-list for src files.
+// brand allow-list for src files, and the i18n sink gate
+// (scripts/eslint-i18n-sinks.ts) that rejects untranslated UI text.
 import { globalIgnores } from "eslint/config";
 import obsidianmd from "eslint-plugin-obsidianmd";
 import globals from "globals";
 import tseslint from "typescript-eslint";
+import { I18N_RESTRICTED_SYNTAX } from "./scripts/eslint-i18n-sinks";
 
 export default tseslint.config(
 	globalIgnores([
@@ -54,6 +56,7 @@ export default tseslint.config(
 			// Ceiling: indexed as one entry, not per-setting. Enforced now so a
 			// future settings tab can't regress the search registration.
 			"obsidianmd/settings-tab/prefer-setting-definitions": "error",
+			"no-restricted-syntax": ["error", ...I18N_RESTRICTED_SYNTAX],
 			"obsidianmd/ui/sentence-case": [
 				"error",
 				{

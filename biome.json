@@ -50,6 +50,10 @@
 					}
 				}
 			}
+		},
+		{
+			"includes": ["src/i18n/core/**"],
+			"formatter": { "indentWidth": 2 }
 		}
 	]
 }
