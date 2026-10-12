@@ -115,6 +115,7 @@ export class FeedbackModal extends Modal {
 		const moodRow = composer.createDiv({ cls: "engram-feedback-mood" });
 		moodRow.createSpan({ text: t("How do you feel about Engram?") });
 		const faces = moodRow.createDiv({
+			cls: "engram-feedback-faces",
 			attr: { role: "group", "aria-label": t("How do you feel about Engram?") },
 		});
 		const faceBtns = MOOD_FACES.map((face, i) => {

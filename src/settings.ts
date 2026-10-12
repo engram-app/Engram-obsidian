@@ -164,10 +164,15 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 		this.activeContainerEl = containerEl;
 		containerEl.empty();
 
-		// ── Status indicator (persists across tabs, live-updates via plugin hook) ──
-		this.statusContainerEl = containerEl.createDiv({ cls: "engram-status-bar" });
+		// ── Top row: status (persists across tabs, live-updates via plugin hook)
+		// and Feedback, which sits here because nothing lower is ever noticed.
+		const topRow = containerEl.createDiv({ cls: "engram-settings-top-row" });
+		this.statusContainerEl = topRow.createDiv({ cls: "engram-status-bar" });
 		this.statusContainerEl.addClasses(["engram-status-container"]);
 		this.renderStatus();
+		topRow
+			.createEl("button", { text: t("💬 Feedback"), cls: "engram-feedback-button" })
+			.addEventListener("click", () => this.plugin.openFeedback());
 
 		this.lastSyncBlocked = this.plugin.syncEngine?.isSyncBlocked() ?? false;
 		this.plugin.onStatusBarChange = () => this.handleStatusBarChange();

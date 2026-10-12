@@ -1886,8 +1886,12 @@ body.is-mobile .engram-support-buttons > a {
 	border-bottom: 1px solid var(--background-modifier-border);
 }
 
+/* Obsidian's mobile buttons are tall and wide; chips stay compact. */
 .engram-feedback-chip {
+	height: auto;
+	padding: var(--size-4-1) var(--size-4-3);
 	border-radius: var(--radius-l);
+	font-size: var(--font-ui-small);
 }
 
 .engram-feedback-chip[aria-pressed="true"] {
@@ -1917,7 +1921,16 @@ body.is-mobile .engram-support-buttons > a {
 	font-size: var(--font-ui-smaller);
 }
 
+.engram-feedback-faces {
+	display: flex;
+	flex-shrink: 0;
+	gap: var(--size-2-1);
+}
+
 .engram-feedback-face {
+	width: auto;
+	height: auto;
+	padding: var(--size-2-2);
 	font-size: var(--font-ui-medium);
 	opacity: 0.4;
 	filter: grayscale(1);
@@ -1942,4 +1955,20 @@ body.is-mobile .engram-support-buttons > a {
 	align-items: center;
 	gap: var(--size-4-2);
 	color: var(--text-muted);
+}
+
+/* ── Settings top row: status + Feedback ── */
+.engram-settings-top-row {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-3);
+}
+
+.engram-settings-top-row .engram-status-bar {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.engram-feedback-button {
+	flex-shrink: 0;
 }

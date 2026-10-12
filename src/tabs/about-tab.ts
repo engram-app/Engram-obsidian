@@ -27,7 +27,7 @@ function heading(containerEl: HTMLElement, name: string): void {
  *  plans, and where to learn more. Static content (no plugin state), shown
  *  first and defaulted to for new users (see `pickInitialTab`). */
 export function renderAboutTab(ctx: TabContext): void {
-	const { containerEl, switchToTab, plugin } = ctx;
+	const { containerEl, switchToTab } = ctx;
 
 	// The video is the fastest path to a working setup, so it leads the tab
 	// as an accent button rather than an inline link — a text link in the
@@ -124,11 +124,4 @@ export function renderAboutTab(ctx: TabContext): void {
 	externalLink(links.createEl("li"), t("AI / MCP setup guide"), ENGRAM_MCP_URL);
 	externalLink(links.createEl("li"), t("Report an issue"), ENGRAM_ISSUES_URL);
 	externalLink(links.createEl("li"), t("Join our Discord"), ENGRAM_DISCORD_URL);
-
-	new Setting(containerEl)
-		.setName(t("Send feedback"))
-		.setDesc(t("What's working, what's frustrating, what do you wish Engram did?"))
-		.addButton((btn) =>
-			btn.setButtonText(t("Send feedback")).onClick(() => plugin.openFeedback()),
-		);
 }
