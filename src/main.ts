@@ -55,7 +55,6 @@ import { sha256Hex } from "./content-hash";
 import { registerDiagnostics } from "./diagnostics";
 import { errMsg, isHttpStatus } from "./error-util";
 import { ExplicitFolders } from "./explicit-folders";
-import { FeedbackModal } from "./feedback-modal";
 import { t, tInto } from "./i18n";
 import { isPlanJoinReason } from "./limit-copy";
 import { LimitExceededError } from "./limit-error";
@@ -3493,13 +3492,12 @@ export default class EngramSyncPlugin extends Plugin {
 	}
 
 	openFeedback(): void {
-		// Sending needs an account; without one the form could only fail.
-		if (!this.hasAuthConfigured()) {
-			new Notice(t("Connect to Engram first to send feedback."));
-			this.openConnectionSettings();
-			return;
-		}
-		new FeedbackModal(this.app, this.api, this.manifest.version).open();
+		this.settingTab?.setInitialTab("feedback");
+		const setting = (
+			this.app as unknown as { setting: { open(): void; openTabById(id: string): void } }
+		).setting;
+		setting.open();
+		setting.openTabById(this.manifest.id);
 	}
 
 	openConnectionSettings(): void {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { FeedbackState } from "../src/feedback-modal";
+import { FeedbackState } from "../src/tabs/feedback-tab";
 
 describe("FeedbackState", () => {
 	test("cannot submit a blank message", () => {

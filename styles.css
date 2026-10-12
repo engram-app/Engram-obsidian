@@ -539,7 +539,7 @@
 	margin-bottom: 12px;
 }
 
-/* The description is empty by design (the tab bar names all four
+/* The description is empty by design (the tab bar names all five
    destinations), but the element still claims vertical space. */
 .engram-settings-host .setting-item-description:empty {
 	display: none;
@@ -568,14 +568,15 @@
 	font-size: var(--font-ui-small);
 }
 
-/* Phone-width breakpoint — 4 tabs fit comfortably above ~600px */
+/* Phone-width breakpoint — 5 tabs fit comfortably above ~600px */
 @media (max-width: 600px) {
 	.engram-tab-bar {
 		justify-content: center;
 	}
 
+	/* Five tabs: three on the first row, two on the second. */
 	.engram-tab {
-		flex: 1 1 calc(50% - 12px);
+		flex: 1 1 calc(33% - 12px);
 		padding: 8px 10px;
 		text-align: center;
 	}
@@ -1864,10 +1865,6 @@ body.is-mobile .engram-support-buttons > a {
 }
 
 /* ── Feedback modal ── */
-.engram-feedback-modal {
-	width: min(42rem, 92vw);
-}
-
 .engram-feedback-composer {
 	border: 1px solid var(--background-modifier-border);
 	border-radius: var(--radius-m);
@@ -1957,18 +1954,3 @@ body.is-mobile .engram-support-buttons > a {
 	color: var(--text-muted);
 }
 
-/* ── Settings top row: status + Feedback ── */
-.engram-settings-top-row {
-	display: flex;
-	align-items: center;
-	gap: var(--size-4-3);
-}
-
-.engram-settings-top-row .engram-status-bar {
-	flex: 1 1 auto;
-	min-width: 0;
-}
-
-.engram-feedback-button {
-	flex-shrink: 0;
-}
