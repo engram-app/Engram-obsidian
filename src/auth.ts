@@ -1,4 +1,4 @@
-import { errMsg, statusOf } from "./error-util";
+import { errMsg, NotAuthenticatedError, statusOf } from "./error-util";
 import { rlog } from "./remote-log";
 /**
  * Auth providers for Engram plugin — abstracts API key vs OAuth token management.
@@ -197,7 +197,7 @@ export class OAuthAuth implements AuthProvider {
 		// fast instead of replaying an empty/dead token against the server.
 		if (!this.refreshToken) {
 			this.authenticated = false;
-			throw new Error("Not authenticated: refresh token cleared");
+			throw new NotAuthenticatedError("Not authenticated: refresh token cleared");
 		}
 		try {
 			const result = await this.refreshFn(this.refreshToken);

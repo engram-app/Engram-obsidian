@@ -82,17 +82,34 @@ function pickPlural(forms: PluralForms, code: string, vars?: Vars): string | und
 	return forms[category] ?? forms.other;
 }
 
-/** Replace `{name}` from `vars`, leaving an unsupplied placeholder visible. */
-function fill(template: string, vars?: Vars): string {
+/** `1234` as the locale writes it ("1,234", "1.234"); the raw digits if Intl
+ *  rejects the code. */
+function formatCount(n: number, code: string): string {
+	try {
+		return new Intl.NumberFormat(code).format(n);
+	} catch {
+		return String(n);
+	}
+}
+
+/** Replace `{name}` from `vars`, leaving an unsupplied placeholder visible. A
+ *  numeric `{count}` is written in the locale's number format. */
+function fill(template: string, vars?: Vars, code = currentLocale()): string {
 	if (!vars) return template;
 	return template.replace(/\{(\w+)\}/g, (whole, name: string) => {
 		const value = vars[name];
-		return value === undefined ? whole : String(value);
+		if (value === undefined) return whole;
+		return name === "count" && typeof value === "number"
+			? formatCount(value, code)
+			: String(value);
 	});
 }
 
+type Build = (parent: HTMLElement) => void;
+type IntoOpts = { textCls?: string; vars?: Vars };
+
 /**
- * Render a translated sentence into `el`, building one styled child where the
+ * Render a translated sentence into `el`, building one styled child where each
  * `{slot}` placeholder sits.
  *
  * Without this, a sentence wrapped around a styled span has to be split into
@@ -100,34 +117,69 @@ function fill(template: string, vars?: Vars): string {
  * fragment cannot be translated: the translator can neither see the whole
  * sentence nor move the slot, which most languages need to do.
  *
- * A translation that drops the placeholder still renders: the sentence as plain
- * text, with the built child appended so its value is never lost.
+ * Pass one `slot` + `build`, or a `{ slot: build }` map for a sentence with
+ * several (two links, say).
+ *
+ * A translation that drops a placeholder still renders: the built child is
+ * appended at the end so its value is never lost.
  */
 export function tInto(
 	el: HTMLElement,
 	key: string,
 	slot: string,
-	build: (parent: HTMLElement) => void,
-	opts: { textCls?: string; vars?: Vars } = {},
+	build: Build,
+	opts?: IntoOpts,
+): void;
+export function tInto(
+	el: HTMLElement,
+	key: string,
+	slots: Record<string, Build>,
+	opts?: IntoOpts,
+): void;
+export function tInto(
+	el: HTMLElement,
+	key: string,
+	slotOrSlots: string | Record<string, Build>,
+	buildOrOpts?: Build | IntoOpts,
+	maybeOpts?: IntoOpts,
 ): void {
-	const { textCls, vars } = opts;
-	const token = `{${slot}}`;
-	const template = t(key, vars);
-	const at = template.indexOf(token);
-	if (at < 0) {
-		// A translation that lost the placeholder still has to show the value.
-		// Skipping `build` here would silently delete the data the sentence is
-		// about: the version number, the link, or the literal word the user is
-		// being told to type. Appending reads oddly; dropping it is a bug.
-		el.createSpan({ text: template, cls: textCls });
+	const single = typeof slotOrSlots === "string";
+	const builds: Record<string, Build> = single
+		? { [slotOrSlots]: buildOrOpts as Build }
+		: slotOrSlots;
+	const { textCls, vars } = (single ? maybeOpts : (buildOrOpts as IntoOpts | undefined)) ?? {};
+	// Select the plural form with every var, but fill only the non-slot ones so
+	// a `{count}` slot can be a styled span while the count still picks the form.
+	const fillVars =
+		vars && Object.fromEntries(Object.entries(vars).filter(([k]) => !(k in builds)));
+	const template = fill(lookup(key, vars), fillVars);
+	const pending = new Set(Object.keys(builds));
+	let text = "";
+	let last = 0;
+	const flush = () => {
+		if (text) el.createSpan({ text, cls: textCls });
+		text = "";
+	};
+	for (const m of template.matchAll(/\{(\w+)\}/g)) {
+		const name = m[1] ?? "";
+		const build = builds[name];
+		text += template.slice(last, m.index);
+		last = m.index + m[0].length;
+		if (!build || !pending.has(name)) {
+			text += m[0];
+			continue;
+		}
+		flush();
 		build(el);
-		return;
+		pending.delete(name);
 	}
-	const head = template.slice(0, at);
-	if (head) el.createSpan({ text: head, cls: textCls });
-	build(el);
-	const tail = template.slice(at + token.length);
-	if (tail) el.createSpan({ text: tail, cls: textCls });
+	text += template.slice(last);
+	flush();
+	// A translation that lost a placeholder still has to show the value.
+	// Skipping `build` here would silently delete the data the sentence is
+	// about: the version number, the link, or the literal word the user is
+	// being told to type. Appending reads oddly; dropping it is a bug.
+	for (const name of pending) builds[name]?.(el);
 }
 
 /**
@@ -137,15 +189,14 @@ export function tInto(
  * numeric `count` for any string whose wording depends on quantity.
  */
 export function t(key: string, vars?: Vars): string {
+	return fill(lookup(key, vars), vars);
+}
+
+/** The translated, unfilled template for `key`, plural form chosen by `vars.count`. */
+function lookup(key: string, vars?: Vars): string {
 	const code = currentLocale();
 	const entry = dictFor(code)?.[key] ?? enPlurals[key];
-
-	let template = key;
-	if (typeof entry === "string") {
-		template = entry;
-	} else if (entry) {
-		template = pickPlural(entry, code, vars) ?? key;
-	}
-
-	return fill(template, vars);
+	if (typeof entry === "string") return entry;
+	if (entry) return pickPlural(entry, code, vars) ?? key;
+	return key;
 }

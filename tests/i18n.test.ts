@@ -1,7 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import { currentLocale, t, tInto } from "../src/i18n";
-import { SPECS } from "../src/i18n/auto-translate";
 import ja from "../src/i18n/locale/ja";
+import { profile } from "../src/i18n/translate-profile";
 import { __setLanguage } from "./__mocks__/obsidian";
 
 // The mock's language is module state shared with every other test file, so a
@@ -77,7 +77,7 @@ describe("shipped locales", () => {
 
 	// Every language the translator targets is wired into t(): a catalog the
 	// script writes but index.ts never imports would silently show English.
-	test.each(Object.keys(SPECS))("%s is wired into t()", (code) => {
+	test.each(Object.keys(profile.specs))("%s is wired into t()", (code) => {
 		__setLanguage(code);
 		expect(t("Attachments")).not.toBe("Attachments");
 	});
@@ -158,16 +158,6 @@ describe("plurals", () => {
 		__setLanguage("zh");
 		expect(t(PULLED, { count: 1 })).toBe(t(PULLED, { count: 5 }).replace("5", "1"));
 		expect(t(PULLED, { count: 7 })).toContain("7");
-	});
-
-	// Regression: this label sits beside a span that already prints the number
-	// (`⚡ 3`). It takes a count only to pick the plural category, so putting
-	// {count} in the key rendered "⚡ 3 3 conflicts need resolution".
-	test("a category-only plural does not print the count it was given", () => {
-		for (const lang of ["en", "ja", "de", "ru", "zh"]) {
-			__setLanguage(lang);
-			expect(t(" conflicts need resolution", { count: 3 })).not.toMatch(/\d/);
-		}
 	});
 
 	test("a plural string with no count behaves like the plural form", () => {

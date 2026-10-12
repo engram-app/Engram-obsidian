@@ -3,8 +3,10 @@ import type { Dict } from "..";
 // 简体中文
 const zh: Dict = {
 	"Invalid API key": "API密钥无效",
+	"Request failed ({status})": "请求失败 ({status})",
 	"Connection failed": "连接失败",
 	"Link Obsidian to Engram": "将Obsidian链接到Engram",
+	"Starting...": "正在启动...",
 	"Failed to start device flow. Check your Engram URL and try again.":
 		"启动设备流程失败。检查您的Engram网址并重试。",
 	"Your code:": "您的代码：",
@@ -86,8 +88,8 @@ const zh: Dict = {
 	"Engram sync: server does not support reconciliation (update backend)":
 		"Engram 同步：服务器不支持同步",
 	"Engram sync: everything in sync": "Engram 同步：已全部同步",
-	"{count} missing on server": "{count} 在服务器上缺失",
-	"{count} diverged": "{count} 不同步",
+	"{count} missing on server": "服务器缺失{count}个",
+	"{count} diverged": "{count} 发生分歧",
 	"{count} only on server": "{count} 仅在服务器上",
 	"Engram Sync: {details}": "Engram 同步：{details}",
 	"Pull all from server (force overwrite)": "从服务器拉取所有内容（强制覆盖）",
@@ -132,11 +134,11 @@ const zh: Dict = {
 	"Not signed in. Click to open settings and reconnect.": "尚未登录。点击打开设置并重新连接。",
 	"Engram: finish setup": "Engram：完成设置",
 	"Engram: sync paused": "Engram：同步已暂停",
-	"{label} ({count} queued)": "{label} ({count} 待处理)",
+	"{label} ({count} queued)": "{label} (队列中{count}个)",
 	"Setup is not finished — nothing will sync until you choose a sync direction. Click to finish.":
 		"设置未完成，除非您选择同步方向，否则将不会同步任何内容。点击完成。",
 	"Sync paused — click to choose a sync direction": "同步已暂停 — 点击选择同步方向",
-	"Engram: offline ({count} queued)": "Engram：离线 ({count} 已排队)",
+	"Engram: offline ({count} queued)": "Engram: 离线 ({count}个待处理)",
 	"Engram: offline": "Engram：离线",
 	"Server unreachable — changes will sync when connected": "服务器无法访问 — 连接后将同步更改",
 	"Engram: error": "Engram：错误",
@@ -156,7 +158,7 @@ const zh: Dict = {
 		'Engram 同步：无法读取 "{name}" 的同步状态，正在使用本地副本。',
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} 可用。{link}.",
-	"{formatted} files · ": "{formatted} 个文件 ·",
+	"{count} files · ": "{count} 个文件 ·",
 	"Notes searchable": "笔记可搜索",
 	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
 		"此后的笔记仍然可以正常同步和打开，只是不在搜索索引中。索引保留您最旧的笔记，因此超出范围的是您最新的笔记。",
@@ -188,7 +190,9 @@ const zh: Dict = {
 	"Search failed — check connection": "搜索失败，请检查连接",
 	"No results found": "未找到结果",
 	Untitled: "未命名",
+	exact: "精确",
 	"meaning + exact": "含义 + 精确",
+	meaning: "含义",
 	"match strength: {pct}%": "匹配强度：{pct}%",
 	"No source path for this result": "此结果没有源路径",
 	"Note not synced locally": "笔记未本地同步",
@@ -210,13 +214,12 @@ const zh: Dict = {
 	"sync is paused": "同步已暂停",
 	"syncing now": "正在同步",
 	"waiting to retry": "正在等待重试",
-	"{count} not on your plan": "{count} 不在您的计划中",
+	"{count} not on your plan": "{count} 个不在您的计划中",
 	"{count} need attention": "{count} 个待处理事项",
-	"{count} retrying": "{count} 正在重试",
-	"{count} ignored": "{count} 已忽略",
-	"{count} queued — {reason}": "{count} 已排队 — {reason}",
+	"{count} retrying": "{count} 次重试",
+	"{count} ignored": "已忽略 {count} 个",
+	"{count} queued — {reason}": "{count} 个待处理 — {reason}",
 	"Sync...": "同步中...",
-	"sync failed": "同步失败",
 	Refresh: "刷新",
 	"Not synced on your plan ({count})": "您的计划不支持同步 ({count})",
 	"These files are fine. They just need a paid plan to sync.":
@@ -243,6 +246,12 @@ const zh: Dict = {
 	"Restored {path} — will sync on next push.": "恢复 {path} — 下次推送时同步。",
 	Clear: "清除",
 	"No activity yet. Push or pull to see entries here.": "暂无记录。推送或拉取以查看内容。",
+	Pushed: "已推送",
+	Pulled: "已拉取",
+	Deleted: "已删除",
+	Conflict: "冲突",
+	Skipped: "已跳过",
+	Error: "错误",
 	Stats: "统计",
 	"Notes on this device": "本设备上的笔记",
 	"Attachments on this device": "本设备上的附件",
@@ -263,8 +272,8 @@ const zh: Dict = {
 	"Free syncs notes only — {count} attachments will be skipped.":
 		"免费同步笔记，仅限{count}个附件。",
 	"Uploads {up}, downloads {down}.": "上传 {up}，下载 {down}。",
-	"Uploads {count}.": "上传 {count}。",
-	"Downloads {count}.": "下载 {count}。",
+	"Uploads {count}.": "上传 {count}.",
+	"Downloads {count}.": "下载 {count}.",
 	"{count} conflicts to resolve.": "{count}个冲突需要解决。",
 	"Safe choice: combines both sides, nothing is deleted.": "安全选项：合并两边，不删除任何内容。",
 	"Nothing is deleted.": "不会删除任何内容。",
@@ -304,7 +313,6 @@ const zh: Dict = {
 	"Everything is in sync": "已全部同步",
 	"This vault": "此知识库",
 	"Cloud server": "云服务器",
-	" conflicts need resolution": "冲突需要解决",
 	notes: "笔记",
 	attachments: "附件",
 	folders: "文件夹",
@@ -326,22 +334,23 @@ const zh: Dict = {
 		"在服务器上创建新的空知识库，然后将此Obsidian知识库同步到其中。",
 	"Vault name": "知识库名称",
 	Create: "创建",
-	"Could not load vaults": "无法加载知识库",
+	"Could not load vaults: {error}": "无法加载知识库: {error}",
 	"Enter a name for the new vault": "为新的知识库输入名称",
-	"Failed to switch vault": "切换知识库失败",
+	"Failed to switch vault: {error}": "切换知识库失败: {error}",
 	"Your vault shares {percent} of its data with Engram":
 		"您的知识库已与Engram同步了{percent}的数据",
+	"{count} conflicts need resolution": "{count}个冲突需要解决",
 	"Type {keyword} to confirm:": "输入{keyword}以确认：",
-	"Uploading {count}.": "正在上传{count}。",
-	"Downloading {count}.": "正在下载{count}。",
+	"Uploading {count}.": "上传中 {count}.",
+	"Downloading {count}.": "正在下载 {count}.",
 	"Deleting {count} local files.": "删除 {count} 个本地文件。",
-	"Deleting {count} on the cloud.": "正在从云端删除{count}。",
+	"Deleting {count} on the cloud.": "正在删除{count}个云端文件。",
 	"First sync, this may take a moment.": "首次同步，可能需要一些时间。",
 	"Checking for changes.": "正在检查更改。",
 	"Nothing will be deleted.": "不会删除任何内容。",
-	"✓ {count} synced": "✓ 已同步 {count}",
-	"⤳ {count} skipped (Free plan)": "⤳ 跳过 {count} (免费版)",
-	"✕ {count} failed": "✕ 同步失败 {count}",
+	"✓ {count} synced": "✓ 已同步 {count} 个",
+	"⤳ {count} skipped (Free plan)": "⤳ {count} 已跳过 (免费版)",
+	"✕ {count} failed": "✕ {count} 失败",
 	"{count} attachments need a paid plan to sync. See Sync Center.":
 		"{count}个附件需要付费计划才能同步。查看同步中心。",
 	"Finished with some errors. Open the sync log to see what failed.":
@@ -365,7 +374,8 @@ const zh: Dict = {
 	"Sync complete": "同步完成",
 	"Syncing attachments": "同步附件",
 	Complete: "完成",
-	'{count} failed. Run "{command}" for details.': '{count} 失败。运行 "{command}" 查看详情。',
+	'{count} failed. Run "{command}" for details.': '{count}次失败。详情请查看 "{command}"。',
+	"File exceeds the {limit} limit": "文件超过 {limit} 限制",
 	"Free syncs notes only — images & PDFs need a paid plan.":
 		"免费同步仅限笔记，图片和PDF需要付费计划。",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
@@ -379,12 +389,11 @@ const zh: Dict = {
 	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
 		"导入所有失败：另一个同步正在进行（冲突）。等待完成后再试。",
 	"Pull all failed: {error}": "导入所有失败：{error}",
-	"Pull all failed": "导入所有失败",
 	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
 		"Engram：{path}同步冲突，您的本地修改已保存为{copy}",
 	"Open note": "打开笔记",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
-		"Engram：{count}个笔记存在前置数据问题。打开同步中心进行修复。",
+		"Engram: {count}个笔记存在前置元数据问题。打开同步中心修复。",
 	'Engram Sync: renamed "{name}" (unsupported characters)':
 		'Engram 同步：重命名为 "{name}"（不支持的字符）',
 	'Engram: frontmatter problem in "{name}"': 'Engram："{name}" 存在前置数据问题',
@@ -399,8 +408,6 @@ const zh: Dict = {
 	"▶ Watch on YouTube": "▶ 在YouTube观看",
 	"Getting set up": "开始设置",
 	"1. Make an account": "1. 创建账号",
-	"Create a hosted account at ": "在 创建一个托管账号",
-	", or self-host the backend (": "，或自行搭建后端 (",
 	"setup guide": "设置指南",
 	"2. Connect your vault to Engram": "2. 将您的知识库连接到Engram",
 	"Sign in (or enter your server URL and key) on the connection tab, then run your first sync.":
@@ -432,6 +439,8 @@ const zh: Dict = {
 	"AI / MCP setup guide": "AI / MCP 设置指南",
 	"Report an issue": "报告问题",
 	"Join our Discord": "加入我们的 Discord",
+	"Create a hosted account at {signup}, or self-host the backend ({guide}).":
+		"在 {signup} 创建托管账号，或自行搭建后端 ({guide})。",
 	"Node.js dependencies": "Node.js 依赖",
 	"Python virtual environment": "Python 虚拟环境",
 	"Python bytecode cache": "Python 字节码缓存",
@@ -513,7 +522,6 @@ const zh: Dict = {
 	"GitHub Sponsors": "GitHub 赞助",
 	"Sign-in required to load vaults": "登录后才能加载知识库",
 	"Server error ({status}) — check Engram logs": "服务器错误 ({status}) — 请查看 Engram 日志",
-	"Request failed ({status})": "请求失败 ({status})",
 	"Could not reach Engram — check connection": "无法连接到 Engram，请检查连接",
 	"Engram Cloud": "Engram 云",
 	"Self-hosted": "自托管",
@@ -531,6 +539,15 @@ const zh: Dict = {
 	"Choose sync direction": "选择同步方向",
 	"...": "...",
 	'... "{name}" ...': '... "{name}" ...',
+	"The server took too long to respond. Try again.": "服务器响应时间过长。请重试。",
+	"Not signed in, or the session expired. Sign in again in Engram settings.":
+		"未登录，或会话已过期。请在 Engram 设置中重新登录。",
+	"The file is too large for the server.": "文件过大，服务器无法处理。",
+	"Too many requests. Wait a moment and try again.": "请求过多。请稍等片刻后重试。",
+	"Frontmatter isn't valid YAML.": "YAML 格式错误。",
+	"A frontmatter key could not be parsed as YAML.": "无法将 YAML 格式解析为键值对。",
+	"This note could not be processed and was skipped.": "无法处理此笔记，已跳过。",
+	'Frontmatter key "{key}" could not be parsed as YAML.': '无法将 YAML 格式解析为键 "{key}"。',
 };
 
 export default zh;

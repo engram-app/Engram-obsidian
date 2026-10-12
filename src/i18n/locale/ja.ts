@@ -3,8 +3,10 @@ import type { Dict } from "..";
 // 日本語
 const ja: Dict = {
 	"Invalid API key": "無効なAPIキー",
+	"Request failed ({status})": "リクエストに失敗しました ({status})",
 	"Connection failed": "接続エラー",
 	"Link Obsidian to Engram": "EngramへのObsidian連携",
+	"Starting...": "開始しています...",
 	"Failed to start device flow. Check your Engram URL and try again.":
 		"デバイスフローの開始に失敗しました。EngramのURLを確認し、再度お試しください。",
 	"Your code:": "コード：",
@@ -98,8 +100,8 @@ const ja: Dict = {
 	"Engram sync: server does not support reconciliation (update backend)":
 		"Engram 同期: サーバーがリコンシリエーションに対応していません (バックエンドを更新)",
 	"Engram sync: everything in sync": "Engram 同期: 全てが同期済み",
-	"{count} missing on server": "サーバーに {count} がありません",
-	"{count} diverged": "{count} が異なっています",
+	"{count} missing on server": "サーバー上で{count}つ見つかりませんでした",
+	"{count} diverged": "{count}つが異なる",
 	"{count} only on server": "{count} はサーバーにのみ存在します",
 	"Engram Sync: {details}": "Engram 同期: {details}",
 	"Pull all from server (force overwrite)": "サーバーから全てをダウンロード (強制上書き)",
@@ -147,12 +149,12 @@ const ja: Dict = {
 		"まだログインされていません。設定を開いて、再接続してください。",
 	"Engram: finish setup": "Engram: 設定を完了",
 	"Engram: sync paused": "Engram: 同期を一時停止",
-	"{label} ({count} queued)": "{label} ({count} キューに追加)",
+	"{label} ({count} queued)": "{label} ({count}件待ち)",
 	"Setup is not finished — nothing will sync until you choose a sync direction. Click to finish.":
 		"設定は完了していません。同期方向を選択するまで、何も同期されません。完了するにはクリックしてください。",
 	"Sync paused — click to choose a sync direction":
 		"同期を一時停止 — 同期方向を選択するにはクリック",
-	"Engram: offline ({count} queued)": "Engram: オフライン ({count} 件待ち)",
+	"Engram: offline ({count} queued)": "Engram: オフライン ({count}件キュー)",
 	"Engram: offline": "Engram: オフライン",
 	"Server unreachable — changes will sync when connected":
 		"サーバーに接続できません — 接続すると変更が同期されます",
@@ -173,7 +175,7 @@ const ja: Dict = {
 		'Engram 同期: "{name}" の同期状態が読み込めませんでした。ディスク上のコピーを使用しています。',
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} が利用可能です。{link}.",
-	"{formatted} files · ": "{formatted} 個のファイル ·",
+	"{count} files · ": "{count}ファイル",
 	"Notes searchable": "検索可能なノート",
 	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
 		"ここより後のノートは通常通り同期され、開くことができます。ただし、検索インデックスには含まれません。インデックスには古いノートが保持されるため、新しいノートが対象外になることがあります。",
@@ -205,7 +207,9 @@ const ja: Dict = {
 	"Search failed — check connection": "検索に失敗しました。接続を確認してください",
 	"No results found": "結果が見つかりませんでした",
 	Untitled: "タイトルなし",
+	exact: "完全一致",
 	"meaning + exact": "意味 + 完全一致",
+	meaning: "意味",
 	"match strength: {pct}%": "一致度: {pct}%",
 	"No source path for this result": "この結果にソースパスがありません",
 	"Note not synced locally": "ノートがローカルに同期されていません",
@@ -228,13 +232,12 @@ const ja: Dict = {
 	"sync is paused": "同期を一時停止",
 	"syncing now": "同期中",
 	"waiting to retry": "再試行待ち",
-	"{count} not on your plan": "{count} はプランに含まれていません",
+	"{count} not on your plan": "プランに含まれていないものが{count}件あります",
 	"{count} need attention": "{count}件、注意が必要です",
-	"{count} retrying": "{count} 再試行中",
-	"{count} ignored": "{count} 無視",
-	"{count} queued — {reason}": "{count} キューに追加 — {reason}",
+	"{count} retrying": "{count}回再試行中",
+	"{count} ignored": "{count}件を除外中",
+	"{count} queued — {reason}": "{count}件待ち — {reason}",
 	"Sync...": "同期中...",
-	"sync failed": "同期に失敗",
 	Refresh: "更新",
 	"Not synced on your plan ({count})": "プランでは同期できません ({count})",
 	"These files are fine. They just need a paid plan to sync.":
@@ -263,6 +266,12 @@ const ja: Dict = {
 	Clear: "クリア",
 	"No activity yet. Push or pull to see entries here.":
 		"まだ何もありません。プッシュまたはプルでエントリを表示します。",
+	Pushed: "推送",
+	Pulled: "取得",
+	Deleted: "削除",
+	Conflict: "競合",
+	Skipped: "スキップ",
+	Error: "エラー",
 	Stats: "統計",
 	"Notes on this device": "このデバイス上のノート",
 	"Attachments on this device": "このデバイス上の添付ファイル",
@@ -332,7 +341,6 @@ const ja: Dict = {
 	"Everything is in sync": "すべて同期済み",
 	"This vault": "この保管庫",
 	"Cloud server": "クラウドサーバー",
-	" conflicts need resolution": "解決が必要な競合があります",
 	notes: "ノート",
 	attachments: "添付ファイル",
 	folders: "フォルダ",
@@ -354,22 +362,23 @@ const ja: Dict = {
 		"サーバー上に新しい空の保管庫を作成し、このObsidian保管庫をそこに同期します。",
 	"Vault name": "保管庫名",
 	Create: "作成",
-	"Could not load vaults": "保管庫の読み込みに失敗しました",
+	"Could not load vaults: {error}": "保管庫の読み込みに失敗しました: {error}",
 	"Enter a name for the new vault": "新しい保管庫の名前を入力してください",
-	"Failed to switch vault": "保管庫の切り替えに失敗しました",
+	"Failed to switch vault: {error}": "保管庫の切り替えに失敗しました: {error}",
 	"Your vault shares {percent} of its data with Engram":
 		"あなたの保管庫のデータの一部({percent})がEngramと共有されています",
+	"{count} conflicts need resolution": "{count}つの競合を解決する必要があります",
 	"Type {keyword} to confirm:": "確認のため、{keyword}を入力してください:",
-	"Uploading {count}.": "{count}のアップロード中...",
-	"Downloading {count}.": "{count}のダウンロード中...",
+	"Uploading {count}.": "アップロード中 {count}.",
+	"Downloading {count}.": "ダウンロード中 {count}.",
 	"Deleting {count} local files.": "{count}つのローカルファイルを削除しています。",
-	"Deleting {count} on the cloud.": "クラウド上の{count}を削除しています。",
+	"Deleting {count} on the cloud.": "クラウドから{count}つを削除中。",
 	"First sync, this may take a moment.": "初回同期のため、しばらく時間がかかる場合があります。",
 	"Checking for changes.": "変更をチェックしています。",
 	"Nothing will be deleted.": "データは削除されません。",
-	"✓ {count} synced": "✓ {count} 同期済み",
-	"⤳ {count} skipped (Free plan)": "⤳ {count} 同期されませんでした (無料プラン)",
-	"✕ {count} failed": "✕ {count} 失敗",
+	"✓ {count} synced": "✓ {count}件 同期済み",
+	"⤳ {count} skipped (Free plan)": "⤳ 無料プランでは{count}件スキップされます",
+	"✕ {count} failed": "✕ {count}回失敗",
 	"{count} attachments need a paid plan to sync. See Sync Center.":
 		"{count}つの添付ファイルは、有料プランでのみ同期可能です。詳細はこちら: 同期センター。",
 	"Finished with some errors. Open the sync log to see what failed.":
@@ -396,7 +405,8 @@ const ja: Dict = {
 	"Syncing attachments": "添付ファイルの同期",
 	Complete: "完了",
 	'{count} failed. Run "{command}" for details.':
-		'{count} が失敗しました。詳細については "{command}" を参照してください。',
+		'{count}件失敗しました。詳細は "{command}" をご確認ください。',
+	"File exceeds the {limit} limit": "ファイルが{limit}の制限を超えています",
 	"Free syncs notes only — images & PDFs need a paid plan.":
 		"ノートのみ無料で同期。画像とPDFは有料プランが必要です。",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
@@ -410,12 +420,11 @@ const ja: Dict = {
 	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
 		"全件取得が中断されました：別の同期処理中です（競合）。完了後に再度お試しください。",
 	"Pull all failed: {error}": "全件取得に失敗しました：{error}",
-	"Pull all failed": "全件取得に失敗しました",
 	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
 		"Engram：{path} での同期競合が発生しました。ローカルの編集内容は {copy} として保存されました",
 	"Open note": "ノートを開く",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
-		"Engram：{count} 件のノートに、フロントマターの問題があります。同期センターを開いて修正してください。",
+		"Engram: {count}つのノートにフロントマターの問題があります。同期センターを開いて修正してください。",
 	'Engram Sync: renamed "{name}" (unsupported characters)':
 		'Engram Sync："{name}" という名前を変更しました（サポートされていない文字）',
 	'Engram: frontmatter problem in "{name}"': 'Engram："{name}" にフロントマターの問題があります',
@@ -430,9 +439,6 @@ const ja: Dict = {
 	"▶ Watch on YouTube": "▶ YouTubeで見る",
 	"Getting set up": "セットアップ",
 	"1. Make an account": "1. アカウントを作成",
-	"Create a hosted account at ":
-		"以下のURLでホストされたアカウントを作成するか、バックエンドを自己ホストします (",
-	", or self-host the backend (": "セットアップガイド",
 	"setup guide": "2. Engramに保管庫を接続",
 	"2. Connect your vault to Engram": "2. 保管庫をEngramに接続します",
 	"Sign in (or enter your server URL and key) on the connection tab, then run your first sync.":
@@ -464,6 +470,8 @@ const ja: Dict = {
 	"AI / MCP setup guide": "AI / MCP 設定ガイド",
 	"Report an issue": "問題を報告する",
 	"Join our Discord": "Discordに参加",
+	"Create a hosted account at {signup}, or self-host the backend ({guide}).":
+		"{signup} でホストされたアカウントを作成するか、バックエンドを自己ホストします ({guide})。",
 	"Node.js dependencies": "Node.jsの依存関係",
 	"Python virtual environment": "Python仮想環境",
 	"Python bytecode cache": "Pythonバイトコードキャッシュ",
@@ -550,7 +558,6 @@ const ja: Dict = {
 	"Sign-in required to load vaults": "保管庫を読み込むにはサインインが必要です",
 	"Server error ({status}) — check Engram logs":
 		"サーバーエラー ({status}) – Engram のログを確認してください",
-	"Request failed ({status})": "リクエストに失敗しました ({status})",
 	"Could not reach Engram — check connection": "Engramに接続できません。接続を確認してください",
 	"Engram Cloud": "Engram クラウド",
 	"Self-hosted": "ローカル環境",
@@ -568,6 +575,20 @@ const ja: Dict = {
 	"Choose sync direction": "同期方向を選択してください",
 	"...": "...",
 	'... "{name}" ...': '... "{name}" ...',
+	"The server took too long to respond. Try again.":
+		"サーバーの応答が遅すぎます。もう一度お試しください。",
+	"Not signed in, or the session expired. Sign in again in Engram settings.":
+		"ログインしていません、またはセッションが期限切れです。Engram の設定で再度ログインしてください。",
+	"The file is too large for the server.": "ファイルがサーバーの許容量を超えています。",
+	"Too many requests. Wait a moment and try again.":
+		"リクエストが多すぎます。しばらく待ってから、もう一度お試しください。",
+	"Frontmatter isn't valid YAML.": "YAML として無効な Frontmatter です。",
+	"A frontmatter key could not be parsed as YAML.":
+		"YAML として解析できない Frontmatter キーがあります。",
+	"This note could not be processed and was skipped.":
+		"このノートの処理に失敗し、スキップされました。",
+	'Frontmatter key "{key}" could not be parsed as YAML.':
+		'YAML として解析できない Frontmatter キー "{key}" があります。',
 };
 
 export default ja;

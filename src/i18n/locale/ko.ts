@@ -3,8 +3,10 @@ import type { Dict } from "..";
 // 한국어
 const ko: Dict = {
 	"Invalid API key": "잘못된 API 키입니다",
+	"Request failed ({status})": "요청 실패 ({status})",
 	"Connection failed": "연결에 실패했습니다",
 	"Link Obsidian to Engram": "Obsidian을 Engram에 연결합니다",
+	"Starting...": "시작 중...",
 	"Failed to start device flow. Check your Engram URL and try again.":
 		"장치 연결 시작에 실패했습니다. Engram URL을 확인하고 다시 시도하세요.",
 	"Your code:": "코드:",
@@ -95,8 +97,8 @@ const ko: Dict = {
 	"Engram sync: server does not support reconciliation (update backend)":
 		"Engram 동기화: 서버에서 조정 기능을 지원하지 않습니다 (백엔드 업데이트)",
 	"Engram sync: everything in sync": "Engram 동기화: 모든 내용이 동기화되었습니다",
-	"{count} missing on server": "서버에 {count}이 없습니다",
-	"{count} diverged": "{count}이(가) 다릅니다",
+	"{count} missing on server": "서버에 {count}개가 누락됨",
+	"{count} diverged": "{count}개 항목이 다름",
 	"{count} only on server": "{count}이(가) 서버에만 있습니다",
 	"Engram Sync: {details}": "Engram 동기화: {details}",
 	"Pull all from server (force overwrite)": "서버에서 모든 내용 가져오기 (강제 덮어쓰기)",
@@ -144,12 +146,12 @@ const ko: Dict = {
 		"아직 로그인하지 않았습니다. 설정을 클릭하여 다시 연결하세요.",
 	"Engram: finish setup": "Engram: 설정 완료",
 	"Engram: sync paused": "Engram: 동기화 일시 중지",
-	"{label} ({count} queued)": "{label} ({count} 대기 중)",
+	"{label} ({count} queued)": "{label} ({count}개 대기 중)",
 	"Setup is not finished — nothing will sync until you choose a sync direction. Click to finish.":
 		"설정이 완료되지 않았습니다. 동기화 방향을 선택할 때까지 아무 것도 동기화되지 않습니다. 완료하려면 클릭하세요.",
 	"Sync paused — click to choose a sync direction":
 		"동기화 중지됨 — 동기화 방향을 선택하려면 클릭하세요",
-	"Engram: offline ({count} queued)": "Engram: 오프라인 ({count} 대기 중)",
+	"Engram: offline ({count} queued)": "Engram: 오프라인 ({count}개 대기 중)",
 	"Engram: offline": "Engram: 오프라인",
 	"Server unreachable — changes will sync when connected":
 		"서버 연결 안됨 — 연결되면 변경 사항이 동기화됩니다",
@@ -170,7 +172,7 @@ const ko: Dict = {
 		'Engram 동기화: "{name}"의 동기화 상태를 읽을 수 없음 - 디스크 복사본 사용.',
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version}이 사용 가능합니다. {link}.",
-	"{formatted} files · ": "{formatted} 개의 파일 ·",
+	"{count} files · ": "{count}개의 파일 · ",
 	"Notes searchable": "검색 가능한 노트",
 	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
 		"이 이후의 노트는 정상적으로 동기화되고 열립니다. 단, 검색 인덱스에 포함되지 않습니다. 인덱스는 가장 오래된 노트를 유지하므로, 가장 최신의 노트는 인덱스에서 제외될 수 있습니다.",
@@ -202,7 +204,9 @@ const ko: Dict = {
 	"Search failed — check connection": "검색 실패 – 연결 상태 확인",
 	"No results found": "결과 없음",
 	Untitled: "제목 없음",
+	exact: "정확히",
 	"meaning + exact": "의미 + 정확히 일치",
+	meaning: "의미",
 	"match strength: {pct}%": "일치 강도: {pct}%",
 	"No source path for this result": "이 결과에 대한 원본 경로가 없습니다",
 	"Note not synced locally": "노트가 로컬에 동기화되지 않았습니다",
@@ -224,13 +228,12 @@ const ko: Dict = {
 	"sync is paused": "동기화 일시 중지됨",
 	"syncing now": "현재 동기화 중",
 	"waiting to retry": "재시도 대기 중",
-	"{count} not on your plan": "{count}은(는) 구독 플랜에 포함되지 않음",
+	"{count} not on your plan": "계획에 포함되지 않은 {count}개 항목",
 	"{count} need attention": "{count}건 확인 필요",
-	"{count} retrying": "{count} 재시도 중",
-	"{count} ignored": "{count} 무시됨",
-	"{count} queued — {reason}": "{count} 대기 중 — {reason}",
+	"{count} retrying": "{count}번 재시도 중",
+	"{count} ignored": "{count}개 제외됨",
+	"{count} queued — {reason}": "{count}개 대기 중 — {reason}",
 	"Sync...": "동기화 중...",
-	"sync failed": "동기화 실패",
 	Refresh: "새로 고침",
 	"Not synced on your plan ({count})": "구독 플랜에 포함되지 않아 동기화되지 않음 ({count})",
 	"These files are fine. They just need a paid plan to sync.":
@@ -258,6 +261,12 @@ const ko: Dict = {
 	Clear: "지우기",
 	"No activity yet. Push or pull to see entries here.":
 		"아직 활동 없음. 항목을 보려면 동기화 또는 업데이트를 진행하세요.",
+	Pushed: "푸시됨",
+	Pulled: "풀됨",
+	Deleted: "삭제됨",
+	Conflict: "충돌",
+	Skipped: "건너뜀",
+	Error: "오류",
 	Stats: "통계",
 	"Notes on this device": "이 기기의 노트",
 	"Attachments on this device": "이 기기의 첨부 파일",
@@ -326,7 +335,6 @@ const ko: Dict = {
 	"Everything is in sync": "모두 동기화 완료",
 	"This vault": "이 보관함",
 	"Cloud server": "클라우드 서버",
-	" conflicts need resolution": "충돌이 발생하여 해결이 필요합니다",
 	notes: "노트",
 	attachments: "첨부 파일",
 	folders: "폴더",
@@ -340,7 +348,7 @@ const ko: Dict = {
 	"Pick a vault to sync with. We will recalculate the sync preview after you choose.":
 		"동기화할 보관함을 선택하세요. 선택 후 동기화 미리보기를 다시 계산합니다.",
 	"Loading vaults…": "보관함 로딩 중…",
-	" (default)": "(기본값)",
+	" (default)": " (기본값)",
 	"No other vaults available.": "다른 보관함이 없습니다.",
 	"Make new vault": "새 보관함 만들기",
 	"New vault": "새 보관함",
@@ -348,22 +356,23 @@ const ko: Dict = {
 		"서버에 새 보관함을 만들고, 이 Obsidian 보관함을 동기화합니다.",
 	"Vault name": "보관함 이름",
 	Create: "만들기",
-	"Could not load vaults": "보관함 로드 실패",
+	"Could not load vaults: {error}": "보관함 로드 실패: {error}",
 	"Enter a name for the new vault": "새 보관함 이름을 입력하세요",
-	"Failed to switch vault": "보관함 전환 실패",
+	"Failed to switch vault: {error}": "보관함 전환 실패: {error}",
 	"Your vault shares {percent} of its data with Engram":
 		"귀하의 보관함 데이터 중 {percent}이 Engram과 동기화됩니다",
+	"{count} conflicts need resolution": "{count}개의 충돌이 해결되어야 합니다",
 	"Type {keyword} to confirm:": "확인을 위해 {keyword}을 입력하세요:",
-	"Uploading {count}.": "{count} 업로드 중.",
-	"Downloading {count}.": "{count} 다운로드 중.",
+	"Uploading {count}.": "업로드 중 {count}.",
+	"Downloading {count}.": "다운로드 중 {count}.",
 	"Deleting {count} local files.": "{count}개의 로컬 파일을 삭제합니다.",
-	"Deleting {count} on the cloud.": "클라우드에서 {count} 삭제 중.",
+	"Deleting {count} on the cloud.": "클라우드에서 {count}개를 삭제 중입니다.",
 	"First sync, this may take a moment.": "첫 번째 동기화, 잠시 시간이 걸릴 수 있습니다.",
 	"Checking for changes.": "변경 사항을 확인 중입니다.",
 	"Nothing will be deleted.": "삭제되는 항목은 없습니다.",
-	"✓ {count} synced": "✓ {count} 동기화됨",
-	"⤳ {count} skipped (Free plan)": "⤳ {count} 건 건너뜀 (무료 플랜)",
-	"✕ {count} failed": "✕ {count} 건 실패",
+	"✓ {count} synced": "✓ {count}개 동기화 완료",
+	"⤳ {count} skipped (Free plan)": "⤳ 무료 플랜으로 인해 {count}건 건너뜀",
+	"✕ {count} failed": "✕ {count} 실패",
 	"{count} attachments need a paid plan to sync. See Sync Center.":
 		"{count}개의 첨부 파일은 유료 플랜이 필요합니다. 동기화 센터에서 확인하세요.",
 	"Finished with some errors. Open the sync log to see what failed.":
@@ -390,7 +399,8 @@ const ko: Dict = {
 	"Syncing attachments": "첨부 파일 동기화 중",
 	Complete: "완료",
 	'{count} failed. Run "{command}" for details.':
-		'{count} 실패했습니다. 자세한 내용은 "{command}"을 실행하세요.',
+		'{count}건 실패했습니다. 자세한 내용은 "{command}"을 확인하세요.',
+	"File exceeds the {limit} limit": "파일 크기가 {limit} 제한을 초과합니다",
 	"Free syncs notes only — images & PDFs need a paid plan.":
 		"노트만 무료 동기화, 이미지 및 PDF는 유료 플랜이 필요합니다.",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
@@ -404,12 +414,11 @@ const ko: Dict = {
 	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
 		"모든 항목 가져오기 실패: 다른 동기화가 진행 중입니다 (충돌). 완료되면 다시 시도하세요.",
 	"Pull all failed: {error}": "모든 항목 가져오기 실패: {error}",
-	"Pull all failed": "모든 항목 가져오기 실패",
 	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
 		"Engram: {path}에서 동기화 충돌이 발생했습니다. 로컬 편집 내용은 {copy}으로 저장되었습니다",
 	"Open note": "노트 열기",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
-		"Engram: {count}개의 노트에 메타데이터 문제가 있습니다. 수정하려면 동기화 센터를 열어주세요.",
+		"Engram: {count}개의 노트에 메타데이터 문제가 있습니다. 동기화 센터에서 수정하세요.",
 	'Engram Sync: renamed "{name}" (unsupported characters)':
 		'Engram 동기화: "{name}" 이름 변경 (지원되지 않는 문자)',
 	'Engram: frontmatter problem in "{name}"': 'Engram: "{name}"에 메타데이터 문제가 있습니다',
@@ -424,8 +433,6 @@ const ko: Dict = {
 	"▶ Watch on YouTube": "▶ 유튜브에서 보기",
 	"Getting set up": "설정하기",
 	"1. Make an account": "1. 계정 만들기",
-	"Create a hosted account at ": "다음에서 계정을 만드세요:",
-	", or self-host the backend (": "설정 가이드",
 	"setup guide": "2. Engram에 보관함 연결하기",
 	"2. Connect your vault to Engram": "2. 보관함을 Engram에 연결하세요",
 	"Sign in (or enter your server URL and key) on the connection tab, then run your first sync.":
@@ -433,7 +440,7 @@ const ko: Dict = {
 	"Open connection tab": "연결 탭 열기",
 	"3. Connect your AI": "3. AI 연결",
 	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
-		"Claude, Cursor, ChatGPT 또는 다른 MCP 앱을 연결하여 노트 읽기 및 쓰기를 가능하게 합니다",
+		"Claude, Cursor, ChatGPT 또는 다른 MCP 앱을 연결하여 노트 읽기 및 쓰기를 가능하게 합니다 ",
 	"See the AI setup guide": "AI 설정 가이드 보기",
 	Plans: "요금제",
 	Free: "무료",
@@ -457,6 +464,8 @@ const ko: Dict = {
 	"AI / MCP setup guide": "AI / MCP 설정 가이드",
 	"Report an issue": "문제 신고",
 	"Join our Discord": "저희 Discord에 참여하세요",
+	"Create a hosted account at {signup}, or self-host the backend ({guide}).":
+		"{signup}에서 호스팅 계정을 생성하거나, 백엔드를 직접 호스팅합니다 ({guide}).",
 	"Node.js dependencies": "Node.js 종속성",
 	"Python virtual environment": "Python 가상 환경",
 	"Python bytecode cache": "Python 바이트코드 캐시",
@@ -542,7 +551,6 @@ const ko: Dict = {
 	"Sign-in required to load vaults": "보관함을 로드하려면 로그인 필요합니다",
 	"Server error ({status}) — check Engram logs":
 		"서버 오류 ({status}) — Engram 로그를 확인하세요",
-	"Request failed ({status})": "요청 실패 ({status})",
 	"Could not reach Engram — check connection": "Engram 연결 오류 - 연결 상태를 확인하세요",
 	"Engram Cloud": "Engram 클라우드",
 	"Self-hosted": "자체 호스팅",
@@ -560,6 +568,19 @@ const ko: Dict = {
 	"Choose sync direction": "동기화 방향 선택",
 	"...": "...",
 	'... "{name}" ...': '"{name}" ...',
+	"The server took too long to respond. Try again.":
+		"서버 응답 시간이 너무 오래 걸렸습니다. 다시 시도해 주세요.",
+	"Not signed in, or the session expired. Sign in again in Engram settings.":
+		"로그인하지 않았거나, 세션이 만료되었습니다. Engram 설정에서 다시 로그인하세요.",
+	"The file is too large for the server.": "파일 크기가 서버 용량을 초과합니다.",
+	"Too many requests. Wait a moment and try again.":
+		"요청이 너무 많습니다. 잠시 기다린 후 다시 시도해 주세요.",
+	"Frontmatter isn't valid YAML.": "Frontmatter가 유효한 YAML 형식이 아닙니다.",
+	"A frontmatter key could not be parsed as YAML.": "Frontmatter 키를 YAML로 파싱할 수 없습니다.",
+	"This note could not be processed and was skipped.":
+		"이 노트를 처리할 수 없었으며, 건너뜁니다.",
+	'Frontmatter key "{key}" could not be parsed as YAML.':
+		'Frontmatter 키 "{key}"을 YAML로 파싱할 수 없습니다.',
 };
 
 export default ko;

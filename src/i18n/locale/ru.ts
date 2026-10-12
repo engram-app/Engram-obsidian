@@ -3,8 +3,10 @@ import type { Dict } from "..";
 // Русский
 const ru: Dict = {
 	"Invalid API key": "Неверный ключ API",
+	"Request failed ({status})": "Запрос не удался ({status})",
 	"Connection failed": "Не удалось подключиться",
 	"Link Obsidian to Engram": "Свяжите Obsidian с Engram",
+	"Starting...": "Начало...",
 	"Failed to start device flow. Check your Engram URL and try again.":
 		"Не удалось запустить процесс аутентификации. Проверьте ваш URL Engram и попробуйте снова.",
 	"Your code:": "Ваш код:",
@@ -101,9 +103,24 @@ const ru: Dict = {
 	"Engram sync: server does not support reconciliation (update backend)":
 		"Синхронизация с Engram: сервер не поддерживает исправление (обновить бэкенд)",
 	"Engram sync: everything in sync": "Синхронизация с Engram: всё синхронизировано",
-	"{count} missing on server": "{count} отсутствует на сервере",
-	"{count} diverged": "{count} различается",
-	"{count} only on server": "{count} только на сервере",
+	"{count} missing on server": {
+		one: "{count} отсутствует на сервере",
+		few: "{count} не найдены на сервере",
+		many: "{count} не найдено на сервере",
+		other: "{count} отсутствует на сервере",
+	},
+	"{count} diverged": {
+		one: "{count}. отличается",
+		few: "{count} отличаются",
+		many: "{count} различий",
+		other: "{count} отличается",
+	},
+	"{count} only on server": {
+		one: "{count} только на сервере",
+		few: "{count} только на сервере",
+		many: "{count} только на сервере",
+		other: "{count} только на сервере",
+	},
 	"Engram Sync: {details}": "Синхронизация с Engram: {details}",
 	"Pull all from server (force overwrite)": "Загрузить всё с сервера (принудительная перезапись)",
 	"Engram sync: pulling all from server...":
@@ -155,12 +172,22 @@ const ru: Dict = {
 		"Не вошли в систему. Нажмите, чтобы открыть настройки и подключиться заново.",
 	"Engram: finish setup": "Engram: завершить настройку",
 	"Engram: sync paused": "Engram: синхронизация приостановлена",
-	"{label} ({count} queued)": "{label} ({count} в очереди)",
+	"{label} ({count} queued)": {
+		one: "{label} ({count} в очереди)",
+		few: "{label} ({count} в очереди)",
+		many: "{label} ({count} в очереди)",
+		other: "{label} ({count} в очереди)",
+	},
 	"Setup is not finished — nothing will sync until you choose a sync direction. Click to finish.":
 		"Настройка не завершена — синхронизация не будет происходить, пока вы не выберете направление синхронизации. Нажмите, чтобы завершить.",
 	"Sync paused — click to choose a sync direction":
 		"Синхронизация приостановлена — нажмите, чтобы выбрать направление синхронизации",
-	"Engram: offline ({count} queued)": "Engram: в автономном режиме ({count} в очереди)",
+	"Engram: offline ({count} queued)": {
+		one: "Engram: в автономном режиме ({count} в очереди)",
+		few: "Engram: в автономном режиме ({count} в очереди)",
+		many: "Engram: в автономном режиме (в очереди {count})",
+		other: "Engram: в автономном режиме ({count} в очереди)",
+	},
 	"Engram: offline": "Engram: в автономном режиме",
 	"Server unreachable — changes will sync when connected":
 		"Сервер недоступен — изменения будут синхронизированы при подключении",
@@ -197,11 +224,11 @@ const ru: Dict = {
 		'Engram Sync: состояние синхронизации для "{name}" не удалось прочитать — используется локальная копия.',
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} доступен. {link}.",
-	"{formatted} files · ": {
-		one: "{formatted} файл ·",
-		few: "{formatted} файлов ·",
-		many: "{formatted} файлов ·",
-		other: "{formatted} файлов ·",
+	"{count} files · ": {
+		one: "{count} файл ",
+		few: "{count} файла · ",
+		many: "{count} файлов · ",
+		other: "{count} файла · ",
 	},
 	"Notes searchable": "Заметки доступны для поиска",
 	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
@@ -234,7 +261,9 @@ const ru: Dict = {
 	"Search failed — check connection": "Поиск не удался — проверьте соединение",
 	"No results found": "Результаты не найдены",
 	Untitled: "Без названия",
+	exact: "точно",
 	"meaning + exact": "смысл + точное совпадение",
+	meaning: "значение",
 	"match strength: {pct}%": "степень соответствия: {pct}%",
 	"No source path for this result": "Нет пути к исходному файлу для этого результата",
 	"Note not synced locally": "Заметка не синхронизирована локально",
@@ -258,18 +287,37 @@ const ru: Dict = {
 	"sync is paused": "синхронизация приостановлена",
 	"syncing now": "синхронизация в процессе",
 	"waiting to retry": "ожидание повторной попытки",
-	"{count} not on your plan": "{count} не входит в ваш тарифный план",
+	"{count} not on your plan": {
+		one: "{count} не входит в ваш тариф",
+		few: "{count} не входят в ваш план",
+		many: "{count} не входит в ваш тариф",
+		other: "{count} не входит в ваш тариф",
+	},
 	"{count} need attention": {
 		one: "{count} требует внимания",
 		few: "{count} требует внимания",
 		many: "{count} требует внимания",
 		other: "{count} Требует внимания",
 	},
-	"{count} retrying": "{count} попытка повтора",
-	"{count} ignored": "{count} проигнорировано",
-	"{count} queued — {reason}": "{count} в очереди — {reason}",
+	"{count} retrying": {
+		one: "{count}. Повторная попытка",
+		few: "{count} попытка",
+		many: "{count} попыток повтора",
+		other: "{count}. Повторная попытка",
+	},
+	"{count} ignored": {
+		one: "{count} пропущено",
+		few: "{count} проигнорировано",
+		many: "{count} проигнорировано",
+		other: "{count} проигнорировано",
+	},
+	"{count} queued — {reason}": {
+		one: "{count} в очереди — {reason}",
+		few: "{count} в очереди — {reason}",
+		many: "{count} в очереди — {reason}",
+		other: "{count} в очереди — {reason}",
+	},
 	"Sync...": "Синхронизация...",
-	"sync failed": "Синхронизация не удалась",
 	Refresh: "Обновить",
 	"Not synced on your plan ({count})": "Не синхронизировано по вашему тарифному плану ({count})",
 	"These files are fine. They just need a paid plan to sync.":
@@ -303,6 +351,12 @@ const ru: Dict = {
 	Clear: "Очистить",
 	"No activity yet. Push or pull to see entries here.":
 		"Пока нет активности. Отправьте или получите данные, чтобы увидеть записи здесь.",
+	Pushed: "Отправлено",
+	Pulled: "Получено",
+	Deleted: "Удалено",
+	Conflict: "Конфликт",
+	Skipped: "Пропущено",
+	Error: "Ошибка",
 	Stats: "Статистика",
 	"Notes on this device": "Заметки на этом устройстве",
 	"Attachments on this device": "Вложения на этом устройстве",
@@ -338,8 +392,18 @@ const ru: Dict = {
 		other: "Бесплатный план синхронизирует только заметки, {count} вложений будут пропущены.",
 	},
 	"Uploads {up}, downloads {down}.": "Загружено {up}, скачано {down}.",
-	"Uploads {count}.": "Загружено {count}.",
-	"Downloads {count}.": "Скачано {count}.",
+	"Uploads {count}.": {
+		one: "Загрузки {count}.",
+		few: "Загрузки {count}.",
+		many: "Загрузки {count}.",
+		other: "Загрузки {count}.",
+	},
+	"Downloads {count}.": {
+		one: "Загрузки {count}.",
+		few: "Загрузки {count}.",
+		many: "Загрузки {count}.",
+		other: "Загрузки {count}.",
+	},
 	"{count} conflicts to resolve.": {
 		one: "{count} конфликт, требующий разрешения.",
 		few: "{count} конфликта, которые необходимо разрешить.",
@@ -421,12 +485,6 @@ const ru: Dict = {
 	"Everything is in sync": "Всё синхронизировано",
 	"This vault": "Это хранилище",
 	"Cloud server": "Облачный сервер",
-	" conflicts need resolution": {
-		one: "Конфликт требует разрешения",
-		few: "Конфликты требуют разрешения",
-		many: "Конфликты требуют разрешения",
-		other: "Конфликты требуют разрешения",
-	},
 	notes: "заметки",
 	attachments: "Вложения",
 	folders: "Папки",
@@ -440,7 +498,7 @@ const ru: Dict = {
 	"Pick a vault to sync with. We will recalculate the sync preview after you choose.":
 		"Выберите хранилище для синхронизации. Мы пересчитаем предварительный просмотр синхронизации после вашего выбора.",
 	"Loading vaults…": "Загрузка хранилищ…",
-	" (default)": "(по умолчанию)",
+	" (default)": " (по умолчанию)",
 	"No other vaults available.": "Другие хранилища недоступны.",
 	"Make new vault": "Создать новое хранилище",
 	"New vault": "Новое хранилище",
@@ -448,28 +506,64 @@ const ru: Dict = {
 		"Создать новое пустое хранилище на сервере, затем синхронизировать с ним ваше хранилище Obsidian.",
 	"Vault name": "Имя хранилища",
 	Create: "Создать",
-	"Could not load vaults": "Не удалось загрузить хранилища",
+	"Could not load vaults: {error}": "Не удалось загрузить хранилища: {error}",
 	"Enter a name for the new vault": "Введите имя для нового хранилища",
-	"Failed to switch vault": "Не удалось переключить хранилище",
+	"Failed to switch vault: {error}": "Не удалось переключить хранилище: {error}",
 	"Your vault shares {percent} of its data with Engram":
 		"Ваше хранилище передает {percent} своих данных в Engram",
+	"{count} conflicts need resolution": {
+		one: "{count} конфликт требует решения",
+		few: "Обнаружено {count} конфликта, требующих решения",
+		many: "{count} конфликтов требуют разрешения",
+		other: "{count} конфликтов требуют разрешения",
+	},
 	"Type {keyword} to confirm:": "Введите {keyword}, чтобы подтвердить:",
-	"Uploading {count}.": "Загрузка {count}.",
-	"Downloading {count}.": "Загрузка {count}.",
+	"Uploading {count}.": {
+		one: "Загрузка {count}.",
+		few: "Загрузка {count}.",
+		many: "Загрузка {count}.",
+		other: "Загрузка {count}.",
+	},
+	"Downloading {count}.": {
+		one: "Загрузка {count}.",
+		few: "Загрузка {count}.",
+		many: "Загрузка {count}.",
+		other: "Загрузка {count}.",
+	},
 	"Deleting {count} local files.": {
 		one: "Удаление {count} локального файла.",
 		few: "Удалено {count} локальных файла.",
 		many: "Удаление {count} локальных файлов.",
 		other: "Удаление {count} локальных файлов.",
 	},
-	"Deleting {count} on the cloud.": "Удаление {count} в облаке.",
+	"Deleting {count} on the cloud.": {
+		one: "Удаление {count} в облаке.",
+		few: "Удаление {count} в облаке.",
+		many: "Удаление {count} файлов из облака.",
+		other: "Удаление версии {count} из облака.",
+	},
 	"First sync, this may take a moment.":
 		"Первая синхронизация, это может занять некоторое время.",
 	"Checking for changes.": "Проверка на наличие изменений.",
 	"Nothing will be deleted.": "Ничего не будет удалено.",
-	"✓ {count} synced": "✓ {count} синхронизировано",
-	"⤳ {count} skipped (Free plan)": "⤳ {count} пропущено (бесплатный тариф)",
-	"✕ {count} failed": "✕ {count} ошибка",
+	"✓ {count} synced": {
+		one: "✓ {count} синхронизировано",
+		few: "✓ {count} синхронизировано",
+		many: "✓ {count} синхронизировано",
+		other: "✓ {count} синхронизировано",
+	},
+	"⤳ {count} skipped (Free plan)": {
+		one: "⤳ Пропущено {count} (бесплатный тариф)",
+		few: "⤳ Пропущено {count} (бесплатный тариф)",
+		many: "⤳ Пропущено {count} (бесплатный тариф)",
+		other: "⤳ {count} пропущено (Бесплатный план)",
+	},
+	"✕ {count} failed": {
+		one: "✕ {count} ошибка",
+		few: "✕ {count} ошибки",
+		many: "✕ {count} неудачных попыток",
+		other: "✕ {count} ошибка",
+	},
 	"{count} attachments need a paid plan to sync. See Sync Center.": {
 		one: "{count} вложению нужен платный план. См. Центр синхронизации.",
 		few: "{count} вложениям нужен платный план. См. Центр синхронизации.",
@@ -498,8 +592,13 @@ const ru: Dict = {
 	"Sync complete": "Синхронизация завершена",
 	"Syncing attachments": "Синхронизация вложений",
 	Complete: "Завершено",
-	'{count} failed. Run "{command}" for details.':
-		'{count} не удалась. Запустите "{command}", чтобы узнать подробности.',
+	'{count} failed. Run "{command}" for details.': {
+		one: '{count} ошибка. Запустите "{command}", чтобы узнать подробности.',
+		few: '{count} ошибки. Запустите "{command}", чтобы узнать подробности.',
+		many: '{count} ошибок. Запустите "{command}", чтобы узнать подробности.',
+		other: '{count} не удалось. Запустите "{command}", чтобы узнать подробности.',
+	},
+	"File exceeds the {limit} limit": "Файл превышает лимит в {limit}",
 	"Free syncs notes only — images & PDFs need a paid plan.":
 		"Бесплатная синхронизация только для заметок — для изображений и PDF требуется платная подписка.",
 	"Engram: {count} files failed to sync{detail} — open Sync Center": {
@@ -525,12 +624,15 @@ const ru: Dict = {
 	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
 		"Синхронизация всех прервана: другая синхронизация выполняется (конфликт доступа). Попробуйте снова, когда она завершится.",
 	"Pull all failed: {error}": "Синхронизация всех не удалась: {error}",
-	"Pull all failed": "Синхронизация всех не удалась",
 	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
 		"Engram: конфликт синхронизации для {path} — ваши локальные изменения сохранены как {copy}",
 	"Open note": "Открыть заметку",
-	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
-		"Engram: в {count} заметках проблемы с метаданными. Откройте Центр синхронизации для исправления.",
+	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.": {
+		one: "Engram: Обнаружена проблема с метаданными в {count} заметке. Откройте Центр синхронизации для исправления.",
+		few: "Engram: Обнаружены проблемы с метаданными у {count} заметок. Откройте Центр синхронизации для исправления.",
+		many: "Engram: Обнаружено {count} проблем с метаданными в заметках. Откройте Центр синхронизации для исправления.",
+		other: "Engram: Обнаружено {count} заметки с проблемами в метаданных. Откройте Центр синхронизации для исправления.",
+	},
 	'Engram Sync: renamed "{name}" (unsupported characters)':
 		'Engram Sync: переименовано "{name}" (неподдерживаемые символы)',
 	'Engram: frontmatter problem in "{name}"': 'Engram: проблема с метаданными в "{name}"',
@@ -545,8 +647,6 @@ const ru: Dict = {
 	"▶ Watch on YouTube": "▶ Смотреть на YouTube",
 	"Getting set up": "Начало работы",
 	"1. Make an account": "1. Создайте учётную запись",
-	"Create a hosted account at ": "Создайте учётную запись на сайте",
-	", or self-host the backend (": ", или настройте сервер самостоятельно (",
 	"setup guide": "руководство по настройке",
 	"2. Connect your vault to Engram": "2. Подключите ваше хранилище к Engram",
 	"Sign in (or enter your server URL and key) on the connection tab, then run your first sync.":
@@ -554,7 +654,7 @@ const ru: Dict = {
 	"Open connection tab": "Открыть вкладку подключения",
 	"3. Connect your AI": "3. Подключите ваш ИИ",
 	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
-		"Подключите Claude, Cursor, ChatGPT или любое приложение MCP, чтобы оно могло читать и записывать ваши заметки",
+		"Подключите Claude, Cursor, ChatGPT или любое приложение MCP, чтобы оно могло читать и записывать ваши заметки ",
 	"See the AI setup guide": "Смотрите руководство по настройке ИИ",
 	Plans: "Планы",
 	Free: "Бесплатно",
@@ -578,6 +678,8 @@ const ru: Dict = {
 	"AI / MCP setup guide": "Руководство по настройке ИИ / MCP",
 	"Report an issue": "Сообщить о проблеме",
 	"Join our Discord": "Присоединяйтесь к нашему Discord",
+	"Create a hosted account at {signup}, or self-host the backend ({guide}).":
+		"Создайте учётную запись на {signup} или настройте сервер самостоятельно ({guide}).",
 	"Node.js dependencies": "Зависимости Node.js",
 	"Python virtual environment": "Виртуальное окружение Python",
 	"Python bytecode cache": "Кэш байт-кода Python",
@@ -666,7 +768,6 @@ const ru: Dict = {
 	"Sign-in required to load vaults": "Для загрузки хранилищ требуется авторизация",
 	"Server error ({status}) — check Engram logs":
 		"Ошибка сервера ({status}) — проверьте логи Engram",
-	"Request failed ({status})": "Запрос не удался ({status})",
 	"Could not reach Engram — check connection":
 		"Не удалось связаться с Engram — проверьте соединение",
 	"Engram Cloud": "Облако Engram",
@@ -685,6 +786,20 @@ const ru: Dict = {
 	"Choose sync direction": "Выберите направление синхронизации",
 	"...": "...",
 	'... "{name}" ...': '... "{name}" ...',
+	"The server took too long to respond. Try again.":
+		"Сервер слишком долго отвечает. Попробуйте ещё раз.",
+	"Not signed in, or the session expired. Sign in again in Engram settings.":
+		"Вы не вошли в систему или сессия истекла. Войдите снова в настройках Engram.",
+	"The file is too large for the server.": "Файл слишком большой для сервера.",
+	"Too many requests. Wait a moment and try again.":
+		"Слишком много запросов. Подождите немного и попробуйте ещё раз.",
+	"Frontmatter isn't valid YAML.": "Заголовок не является допустимым YAML.",
+	"A frontmatter key could not be parsed as YAML.":
+		"Ключ в заголовке не удалось обработать как YAML.",
+	"This note could not be processed and was skipped.":
+		"Эта заметка не может быть обработана и была пропущена.",
+	'Frontmatter key "{key}" could not be parsed as YAML.':
+		'Ключ в заголовке "{key}" не удалось обработать как YAML.',
 };
 
 export default ru;

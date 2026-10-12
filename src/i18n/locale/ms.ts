@@ -3,8 +3,10 @@ import type { Dict } from "..";
 // Bahasa Melayu
 const ms: Dict = {
 	"Invalid API key": "Kunci API tidak sah",
+	"Request failed ({status})": "Permintaan gagal ({status})",
 	"Connection failed": "Sambungan gagal",
 	"Link Obsidian to Engram": "Sambungkan Obsidian ke Engram",
+	"Starting...": "Bermula...",
 	"Failed to start device flow. Check your Engram URL and try again.":
 		"Gagal memulakan proses. Semak URL Engram anda dan cuba lagi.",
 	"Your code:": "Kod anda:",
@@ -96,9 +98,9 @@ const ms: Dict = {
 	"Engram sync: server does not support reconciliation (update backend)":
 		"Engram Sync: pelayan tidak menyokong penyelarasan (kemas kini bahagian belakang)",
 	"Engram sync: everything in sync": "Engram Sync: semuanya sudah diselaraskan",
-	"{count} missing on server": "{count} hilang di pelayan",
+	"{count} missing on server": "{count} hilang di server",
 	"{count} diverged": "{count} berbeza",
-	"{count} only on server": "{count} hanya ada di pelayan",
+	"{count} only on server": "{count} sahaja pada pelayan",
 	"Engram Sync: {details}": "Sync Engram: {details}",
 	"Pull all from server (force overwrite)": "Tarik semua daripada pelayan (timpa paksa)",
 	"Engram sync: pulling all from server...":
@@ -172,7 +174,7 @@ const ms: Dict = {
 		'Engram Sync: keadaan sync untuk "{name}" tidak dapat dibaca — menggunakan salinan dalam cakera.',
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} tersedia. {link}.",
-	"{formatted} files · ": "{formatted} fail ·",
+	"{count} files · ": "{count} fail ",
 	"Notes searchable": "Nota boleh dicari",
 	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
 		"Nota selepas ini masih disink dan dibuka seperti biasa, tetapi tidak berada dalam indeks carian. Indeks menyimpan nota anda yang paling lama, jadi nota anda yang paling baru tidak disertakan.",
@@ -204,7 +206,9 @@ const ms: Dict = {
 	"Search failed — check connection": "Pencarian gagal — semak sambungan",
 	"No results found": "Tiada hasil ditemui",
 	Untitled: "Tanpa tajuk",
+	exact: "tepat",
 	"meaning + exact": "maksud + tepat",
+	meaning: "maksud",
 	"match strength: {pct}%": "kekuatan padanan: {pct}%",
 	"No source path for this result": "Tiada laluan sumber untuk hasil ini",
 	"Note not synced locally": "Nota belum disinkronkan secara tempatan",
@@ -227,13 +231,12 @@ const ms: Dict = {
 	"sync is paused": "sync ditangguhkan",
 	"syncing now": "sedang sync",
 	"waiting to retry": "menunggu untuk cuba semula",
-	"{count} not on your plan": "{count} tidak termasuk dalam pelan anda",
+	"{count} not on your plan": "{count} tidak dalam pelan anda",
 	"{count} need attention": "{count} memerlukan perhatian",
 	"{count} retrying": "{count} cuba semula",
-	"{count} ignored": "{count} dikabaikan",
+	"{count} ignored": "{count} pengecualian",
 	"{count} queued — {reason}": "{count} dalam senarai — {reason}",
 	"Sync...": "Sync...",
-	"sync failed": "sync gagal",
 	Refresh: "Segarkan",
 	"Not synced on your plan ({count})": "Tidak disinkronkan dalam pelan anda ({count})",
 	"These files are fine. They just need a paid plan to sync.":
@@ -262,6 +265,12 @@ const ms: Dict = {
 	Clear: "Kosongkan",
 	"No activity yet. Push or pull to see entries here.":
 		"Tiada aktiviti setakat ini. Tekan atau tarik untuk melihat entri di sini.",
+	Pushed: "Ditolak",
+	Pulled: "Ditarik",
+	Deleted: "Dipadam",
+	Conflict: "Konflik",
+	Skipped: "Dilewatkan",
+	Error: "Ralat",
 	Stats: "Statistik",
 	"Notes on this device": "Nota pada peranti ini",
 	"Attachments on this device": "Lampiran pada peranti ini",
@@ -333,7 +342,6 @@ const ms: Dict = {
 	"Everything is in sync": "Segala yang sudah disinkronkan",
 	"This vault": "Peti nota ini",
 	"Cloud server": "Pelayan awan",
-	" conflicts need resolution": "konflik perlu diselesaikan",
 	notes: "nota",
 	attachments: "lampiran",
 	folders: "folder",
@@ -347,7 +355,7 @@ const ms: Dict = {
 	"Pick a vault to sync with. We will recalculate the sync preview after you choose.":
 		"Pilih peti nota untuk disinkronkan. Kami akan mengira semula pratonton sync selepas anda memilih.",
 	"Loading vaults…": "Memuatkan peti nota…",
-	" (default)": "(lalai)",
+	" (default)": " (lalai)",
 	"No other vaults available.": "Tiada peti nota lain yang tersedia.",
 	"Make new vault": "Buat peti nota baharu",
 	"New vault": "Peti nota baharu",
@@ -355,21 +363,22 @@ const ms: Dict = {
 		"Buat peti nota baharu dalam sistem, kemudian sync peti nota Obsidian ini ke dalamnya.",
 	"Vault name": "Nama peti nota",
 	Create: "Buat",
-	"Could not load vaults": "Tidak dapat memuatkan peti nota",
+	"Could not load vaults: {error}": "Tidak dapat memuatkan peti nota: {error}",
 	"Enter a name for the new vault": "Masukkan nama untuk peti nota baharu",
-	"Failed to switch vault": "Gagal beralih peti nota",
+	"Failed to switch vault: {error}": "Gagal beralih peti nota: {error}",
 	"Your vault shares {percent} of its data with Engram":
 		"Peti nota anda berkongsi {percent} data dengan Engram",
+	"{count} conflicts need resolution": "{count} konflik perlu diselesaikan",
 	"Type {keyword} to confirm:": "Taip {keyword} untuk mengesahkan:",
 	"Uploading {count}.": "Memuat naik {count}.",
 	"Downloading {count}.": "Memukimkan {count}.",
 	"Deleting {count} local files.": "Memadam {count} fail tempatan.",
-	"Deleting {count} on the cloud.": "Memadam {count} di awan.",
+	"Deleting {count} on the cloud.": "Memadam {count} daripada awan.",
 	"First sync, this may take a moment.": "Sync pertama, ini mungkin memerlukan sedikit masa.",
 	"Checking for changes.": "Memeriksa perubahan.",
 	"Nothing will be deleted.": "Tiada apa yang akan dipadam.",
-	"✓ {count} synced": "✓ {count} telah disinkronkan",
-	"⤳ {count} skipped (Free plan)": "⤳ {count} dilewatkan (Pelan percuma)",
+	"✓ {count} synced": "✓ {count} disinkronkan",
+	"⤳ {count} skipped (Free plan)": "⤳ {count} dilangkau (Pelan percuma)",
 	"✕ {count} failed": "✕ {count} gagal",
 	"{count} attachments need a paid plan to sync. See Sync Center.":
 		"{count} lampiran memerlukan langganan berbayar untuk disinkronkan. Lihat Pusat Sync.",
@@ -398,6 +407,7 @@ const ms: Dict = {
 	Complete: "Selesai",
 	'{count} failed. Run "{command}" for details.':
 		'{count} gagal. Jalankan "{command}" untuk butiran.',
+	"File exceeds the {limit} limit": "Fail melebihi had {limit}",
 	"Free syncs notes only — images & PDFs need a paid plan.":
 		"Percuma untuk menyinkronkan nota sahaja – imej & fail PDF memerlukan langganan berbayar.",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
@@ -411,12 +421,11 @@ const ms: Dict = {
 	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
 		"Mengambil semua dibatalkan: proses sync lain sedang berjalan (persaingan). Cuba lagi apabila selesai.",
 	"Pull all failed: {error}": "Mengambil semua gagal: {error}",
-	"Pull all failed": "Mengambil semua gagal",
 	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
 		"Engram: konflik sync pada {path} — edit tempatan anda telah disimpan sebagai {copy}",
 	"Open note": "Buka nota",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
-		"Engram: {count} nota mempunyai masalah frontmatter. Buka Pusat Sync untuk memperbaiki.",
+		"Engram: {count} nota mempunyai masalah frontmatter. Buka Pusat Sync untuk membetulkan.",
 	'Engram Sync: renamed "{name}" (unsupported characters)':
 		'Engram Sync: nama fail telah ditukar menjadi "{name}" (aksara tidak disokong)',
 	'Engram: frontmatter problem in "{name}"': 'Engram: masalah frontmatter dalam "{name}"',
@@ -431,8 +440,6 @@ const ms: Dict = {
 	"▶ Watch on YouTube": "▶ Tonton di YouTube",
 	"Getting set up": "Memulakan",
 	"1. Make an account": "1. Buat akaun",
-	"Create a hosted account at ": "Buat akaun di",
-	", or self-host the backend (": ", atau hoskan sistem belakang sendiri (",
 	"setup guide": "panduan persediaan",
 	"2. Connect your vault to Engram": "2. Sambungkan peti nota anda ke Engram",
 	"Sign in (or enter your server URL and key) on the connection tab, then run your first sync.":
@@ -440,7 +447,7 @@ const ms: Dict = {
 	"Open connection tab": "Buka tab sambungan",
 	"3. Connect your AI": "3. Sambungkan AI anda",
 	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
-		"Hubungkan Claude, Cursor, ChatGPT, atau sebarang aplikasi MCP supaya ia boleh membaca dan menulis nota anda",
+		"Hubungkan Claude, Cursor, ChatGPT, atau sebarang aplikasi MCP supaya ia boleh membaca dan menulis nota anda ",
 	"See the AI setup guide": "Lihat panduan konfigurasi AI",
 	Plans: "Pakej",
 	Free: "Percuma",
@@ -464,6 +471,8 @@ const ms: Dict = {
 	"AI / MCP setup guide": "Panduan persediaan AI / MCP",
 	"Report an issue": "Laporkan masalah",
 	"Join our Discord": "Sertai Discord kami",
+	"Create a hosted account at {signup}, or self-host the backend ({guide}).":
+		"Buat akaun hos di {signup}, atau hoskan bahagian belakang sendiri ({guide}).",
 	"Node.js dependencies": "Ketergantungan Node.js",
 	"Python virtual environment": "Persekitaran maya Python",
 	"Python bytecode cache": "Cache bytecode Python",
@@ -552,7 +561,6 @@ const ms: Dict = {
 	"GitHub Sponsors": "GitHub Sponsors",
 	"Sign-in required to load vaults": "Sediakan log masuk untuk memuatkan peti nota",
 	"Server error ({status}) — check Engram logs": "Ralat pelayan ({status}) — semak log Engram",
-	"Request failed ({status})": "Permintaan gagal ({status})",
 	"Could not reach Engram — check connection": "Tidak dapat mencapai Engram — semak sambungan",
 	"Engram Cloud": "Awan Engram",
 	"Self-hosted": "Dihos sendiri",
@@ -570,6 +578,20 @@ const ms: Dict = {
 	"Choose sync direction": "Pilih arah sync",
 	"...": "...",
 	'... "{name}" ...': '... "{name}" ...',
+	"The server took too long to respond. Try again.":
+		"Pelayan mengambil masa terlalu lama untuk menjawab. Cuba lagi.",
+	"Not signed in, or the session expired. Sign in again in Engram settings.":
+		"Belum log masuk, atau sesi telah tamat. Log masuk semula dalam tetapan Engram.",
+	"The file is too large for the server.": "Fail ini terlalu besar untuk pelayan.",
+	"Too many requests. Wait a moment and try again.":
+		"Terlalu banyak permintaan. Tunggu sebentar dan cuba lagi.",
+	"Frontmatter isn't valid YAML.": "Frontmatter bukan YAML yang sah.",
+	"A frontmatter key could not be parsed as YAML.":
+		"Kunci frontmatter tidak dapat ditafsir sebagai YAML.",
+	"This note could not be processed and was skipped.":
+		"Nota ini tidak dapat diproses dan telah dilepaskan.",
+	'Frontmatter key "{key}" could not be parsed as YAML.':
+		'Kunci frontmatter "{key}" tidak dapat ditafsir sebagai YAML.',
 };
 
 export default ms;

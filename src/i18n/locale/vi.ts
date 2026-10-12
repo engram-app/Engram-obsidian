@@ -3,8 +3,10 @@ import type { Dict } from "..";
 // Tiếng Việt
 const vi: Dict = {
 	"Invalid API key": "Khóa API không hợp lệ",
+	"Request failed ({status})": "Yêu cầu thất bại ({status})",
 	"Connection failed": "Kết nối không thành công",
 	"Link Obsidian to Engram": "Liên kết Obsidian với Engram",
+	"Starting...": "Đang khởi động...",
 	"Failed to start device flow. Check your Engram URL and try again.":
 		"Không thể khởi động quá trình xác thực. Kiểm tra URL Engram của bạn và thử lại.",
 	"Your code:": "Mã của bạn:",
@@ -97,8 +99,8 @@ const vi: Dict = {
 	"Engram sync: server does not support reconciliation (update backend)":
 		"Đồng bộ hóa Engram: máy chủ không hỗ trợ đồng bộ hóa (cập nhật phần nền)",
 	"Engram sync: everything in sync": "Đồng bộ hóa Engram: mọi thứ đã đồng bộ",
-	"{count} missing on server": "{count} không có trên máy chủ",
-	"{count} diverged": "{count} khác biệt",
+	"{count} missing on server": "{count} mục chưa đồng bộ lên máy chủ",
+	"{count} diverged": "{count} khác nhau",
 	"{count} only on server": "{count} chỉ có trên máy chủ",
 	"Engram Sync: {details}": "Đồng bộ hóa Engram: {details}",
 	"Pull all from server (force overwrite)": "Tải tất cả từ máy chủ (ghi đè)",
@@ -172,7 +174,7 @@ const vi: Dict = {
 		'Engram Sync: trạng thái đồng bộ hóa của "{name}" không thể đọc được — đang sử dụng bản sao trên ổ đĩa.',
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} khả dụng. {link}.",
-	"{formatted} files · ": "{formatted} tệp ·",
+	"{count} files · ": "{count} tệp ",
 	"Notes searchable": "Ghi chú có thể tìm kiếm",
 	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
 		"Các ghi chú sau đây vẫn được đồng bộ hóa và mở bình thường, chúng chỉ không nằm trong chỉ mục tìm kiếm. Chỉ mục lưu trữ các ghi chú cũ nhất của bạn, vì vậy các ghi chú mới nhất của bạn sẽ không nằm trong đó.",
@@ -204,7 +206,9 @@ const vi: Dict = {
 	"Search failed — check connection": "Tìm kiếm thất bại — kiểm tra kết nối",
 	"No results found": "Không tìm thấy kết quả",
 	Untitled: "Không tiêu đề",
+	exact: "chính xác",
 	"meaning + exact": "nghĩa + chính xác",
+	meaning: "nghĩa",
 	"match strength: {pct}%": "độ chính xác: {pct}%",
 	"No source path for this result": "Không tìm thấy đường dẫn nguồn cho kết quả này",
 	"Note not synced locally": "Ghi chú chưa được đồng bộ hóa cục bộ",
@@ -230,11 +234,10 @@ const vi: Dict = {
 	"waiting to retry": "đang chờ thử lại",
 	"{count} not on your plan": "{count} không nằm trong gói của bạn",
 	"{count} need attention": "{count} cần chú ý",
-	"{count} retrying": "{count} đang thử lại",
+	"{count} retrying": "{count} lần thử lại",
 	"{count} ignored": "{count} bị bỏ qua",
-	"{count} queued — {reason}": "{count} đang chờ xử lý — {reason}",
+	"{count} queued — {reason}": "{count} đang chờ — {reason}",
 	"Sync...": "Đồng bộ hóa...",
-	"sync failed": "Đồng bộ hóa thất bại",
 	Refresh: "Làm mới",
 	"Not synced on your plan ({count})": "Chưa được đồng bộ hóa trong gói của bạn ({count})",
 	"These files are fine. They just need a paid plan to sync.":
@@ -263,6 +266,12 @@ const vi: Dict = {
 	Clear: "Xóa",
 	"No activity yet. Push or pull to see entries here.":
 		"Chưa có hoạt động nào. Nhấn nút đẩy hoặc kéo để xem các mục ở đây.",
+	Pushed: "Đã đẩy",
+	Pulled: "Đã kéo",
+	Deleted: "Đã xóa",
+	Conflict: "Xung đột",
+	Skipped: "Bỏ qua",
+	Error: "Lỗi",
 	Stats: "Thống kê",
 	"Notes on this device": "Ghi chú trên thiết bị này",
 	"Attachments on this device": "Tệp đính kèm trên thiết bị này",
@@ -333,7 +342,6 @@ const vi: Dict = {
 	"Everything is in sync": "Tất cả đã được đồng bộ hóa",
 	"This vault": "Kho lưu trữ này",
 	"Cloud server": "Máy chủ đám mây",
-	" conflicts need resolution": "xung đột cần giải quyết",
 	notes: "ghi chú",
 	attachments: "tệp đính kèm",
 	folders: "thư mục",
@@ -347,7 +355,7 @@ const vi: Dict = {
 	"Pick a vault to sync with. We will recalculate the sync preview after you choose.":
 		"Chọn một kho lưu trữ để đồng bộ hóa. Chúng tôi sẽ tính toán lại bản xem trước đồng bộ hóa sau khi bạn chọn.",
 	"Loading vaults…": "Đang tải kho lưu trữ…",
-	" (default)": "(mặc định)",
+	" (default)": " (mặc định)",
 	"No other vaults available.": "Không có kho lưu trữ nào khác.",
 	"Make new vault": "Tạo kho lưu trữ mới",
 	"New vault": "Kho lưu trữ mới",
@@ -355,22 +363,23 @@ const vi: Dict = {
 		"Tạo một kho lưu trữ trống trên máy chủ, sau đó đồng bộ hóa kho lưu trữ Obsidian này vào đó.",
 	"Vault name": "Tên kho lưu trữ",
 	Create: "Tạo",
-	"Could not load vaults": "Không thể tải kho lưu trữ",
+	"Could not load vaults: {error}": "Không thể tải kho lưu trữ: {error}",
 	"Enter a name for the new vault": "Nhập tên cho kho lưu trữ mới",
-	"Failed to switch vault": "Không thể chuyển đổi kho lưu trữ",
+	"Failed to switch vault: {error}": "Không thể chuyển đổi kho lưu trữ: {error}",
 	"Your vault shares {percent} of its data with Engram":
 		"Kho lưu trữ của bạn chia sẻ {percent} dữ liệu với Engram",
+	"{count} conflicts need resolution": "{count} xung đột cần giải quyết",
 	"Type {keyword} to confirm:": "Nhập {keyword} để xác nhận:",
 	"Uploading {count}.": "Đang tải lên {count}.",
 	"Downloading {count}.": "Đang tải xuống {count}.",
 	"Deleting {count} local files.": "Xóa {count} tệp cục bộ.",
-	"Deleting {count} on the cloud.": "Đang xóa {count} trên đám mây.",
+	"Deleting {count} on the cloud.": "Xóa {count} trên đám mây.",
 	"First sync, this may take a moment.":
 		"Lần đồng bộ hóa đầu tiên, có thể mất một chút thời gian.",
 	"Checking for changes.": "Đang kiểm tra thay đổi.",
 	"Nothing will be deleted.": "Không có gì sẽ bị xóa.",
 	"✓ {count} synced": "✓ {count} đã đồng bộ hóa",
-	"⤳ {count} skipped (Free plan)": "⤳ {count} bị bỏ qua (Gói miễn phí)",
+	"⤳ {count} skipped (Free plan)": "⤳ {count} bỏ qua (Gói miễn phí)",
 	"✕ {count} failed": "✕ {count} thất bại",
 	"{count} attachments need a paid plan to sync. See Sync Center.":
 		"{count} tệp đính kèm cần gói trả phí để đồng bộ hóa. Xem Trung tâm đồng bộ hóa.",
@@ -397,7 +406,8 @@ const vi: Dict = {
 	"Syncing attachments": "Đang đồng bộ hóa tệp đính kèm",
 	Complete: "Hoàn tất",
 	'{count} failed. Run "{command}" for details.':
-		'{count} thất bại. Chạy "{command}" để biết chi tiết.',
+		'{count} lần thất bại. Xem "{command}" để biết chi tiết.',
+	"File exceeds the {limit} limit": "Tệp vượt quá giới hạn {limit}",
 	"Free syncs notes only — images & PDFs need a paid plan.":
 		"Đồng bộ hóa miễn phí chỉ dành cho ghi chú — hình ảnh & PDF cần gói trả phí.",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
@@ -411,7 +421,6 @@ const vi: Dict = {
 	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
 		"Bỏ qua thao tác kéo tất cả: một thao tác đồng bộ khác đang chạy (xung đột). Thử lại khi nó hoàn thành.",
 	"Pull all failed: {error}": "Thao tác kéo tất cả thất bại: {error}",
-	"Pull all failed": "Thao tác kéo tất cả thất bại",
 	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
 		"Engram: xung đột đồng bộ trên {path} — chỉnh sửa cục bộ của bạn đã được lưu dưới dạng {copy}",
 	"Open note": "Mở ghi chú",
@@ -431,8 +440,6 @@ const vi: Dict = {
 	"▶ Watch on YouTube": "▶ Xem trên YouTube",
 	"Getting set up": "Thiết lập",
 	"1. Make an account": "1. Tạo tài khoản",
-	"Create a hosted account at ": "Tạo tài khoản trên",
-	", or self-host the backend (": ", hoặc tự thiết lập phần backend (",
 	"setup guide": "hướng dẫn thiết lập",
 	"2. Connect your vault to Engram": "2. Kết nối kho lưu trữ của bạn với Engram",
 	"Sign in (or enter your server URL and key) on the connection tab, then run your first sync.":
@@ -440,7 +447,7 @@ const vi: Dict = {
 	"Open connection tab": "Mở tab kết nối",
 	"3. Connect your AI": "3. Kết nối AI của bạn",
 	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
-		"Liên kết Claude, Cursor, ChatGPT, hoặc bất kỳ ứng dụng MCP nào để nó có thể đọc và ghi ghi chú của bạn",
+		"Liên kết Claude, Cursor, ChatGPT, hoặc bất kỳ ứng dụng MCP nào để nó có thể đọc và ghi ghi chú của bạn ",
 	"See the AI setup guide": "Xem hướng dẫn thiết lập AI",
 	Plans: "Các gói",
 	Free: "Miễn phí",
@@ -464,6 +471,8 @@ const vi: Dict = {
 	"AI / MCP setup guide": "Hướng dẫn thiết lập AI / MCP",
 	"Report an issue": "Báo cáo sự cố",
 	"Join our Discord": "Tham gia Discord của chúng tôi",
+	"Create a hosted account at {signup}, or self-host the backend ({guide}).":
+		"Tạo tài khoản trên {signup}, hoặc tự thiết lập máy chủ ({guide}).",
 	"Node.js dependencies": "Các thư viện Node.js",
 	"Python virtual environment": "Môi trường ảo Python",
 	"Python bytecode cache": "Bộ nhớ đệm bytecode Python",
@@ -552,7 +561,6 @@ const vi: Dict = {
 	"Sign-in required to load vaults": "Đăng nhập là cần thiết để tải kho lưu trữ",
 	"Server error ({status}) — check Engram logs":
 		"Lỗi máy chủ ({status}) — kiểm tra nhật ký Engram",
-	"Request failed ({status})": "Yêu cầu thất bại ({status})",
 	"Could not reach Engram — check connection": "Không thể kết nối với Engram — kiểm tra kết nối",
 	"Engram Cloud": "Engram Cloud",
 	"Self-hosted": "Tự lưu trữ",
@@ -570,6 +578,19 @@ const vi: Dict = {
 	"Choose sync direction": "Chọn chiều đồng bộ hóa",
 	"...": "...",
 	'... "{name}" ...': '... "{name}" ...',
+	"The server took too long to respond. Try again.": "Máy chủ phản hồi quá chậm. Thử lại.",
+	"Not signed in, or the session expired. Sign in again in Engram settings.":
+		"Chưa đăng nhập, hoặc phiên đã hết hạn. Đăng nhập lại trong phần cài đặt Engram.",
+	"The file is too large for the server.": "Tệp quá lớn đối với máy chủ.",
+	"Too many requests. Wait a moment and try again.":
+		"Quá nhiều yêu cầu. Chờ một lát rồi thử lại.",
+	"Frontmatter isn't valid YAML.": "Frontmatter không phải là định dạng YAML hợp lệ.",
+	"A frontmatter key could not be parsed as YAML.":
+		"Không thể phân tích một khóa frontmatter thành YAML.",
+	"This note could not be processed and was skipped.":
+		"Ghi chú này không thể xử lý và đã bị bỏ qua.",
+	'Frontmatter key "{key}" could not be parsed as YAML.':
+		'Không thể phân tích khóa frontmatter "{key}" thành YAML.',
 };
 
 export default vi;

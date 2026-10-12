@@ -3,8 +3,10 @@ import type { Dict } from "..";
 // 繁體中文
 const zhTW: Dict = {
 	"Invalid API key": "API 金鑰無效",
+	"Request failed ({status})": "請求失敗 ({status})",
 	"Connection failed": "連線失敗",
 	"Link Obsidian to Engram": "將 Obsidian 連結至 Engram",
+	"Starting...": "正在啟動...",
 	"Failed to start device flow. Check your Engram URL and try again.":
 		"啟動裝置流程失敗。請檢查您的 Engram 位址並重試。",
 	"Your code:": "您的驗證碼：",
@@ -86,8 +88,8 @@ const zhTW: Dict = {
 	"Engram sync: server does not support reconciliation (update backend)":
 		"Engram 同步：伺服器不支援資料比對 (更新後端)",
 	"Engram sync: everything in sync": "Engram 同步：所有內容已同步",
-	"{count} missing on server": "{count} 伺服器上遺漏",
-	"{count} diverged": "{count} 內容不同",
+	"{count} missing on server": "伺服器缺少 {count} 個",
+	"{count} diverged": "{count} 發生分歧",
 	"{count} only on server": "{count} 僅存在於伺服器上",
 	"Engram Sync: {details}": "Engram 同步：{details}",
 	"Pull all from server (force overwrite)": "從伺服器拉取所有內容 (強制覆蓋)",
@@ -132,11 +134,11 @@ const zhTW: Dict = {
 	"Not signed in. Click to open settings and reconnect.": "未登入。點擊開啟設定並重新連接。",
 	"Engram: finish setup": "Engram：完成設定",
 	"Engram: sync paused": "Engram：同步暫停",
-	"{label} ({count} queued)": "{label} ({count} 排隊中)",
+	"{label} ({count} queued)": "{label} (已排隊 {count} 項)",
 	"Setup is not finished — nothing will sync until you choose a sync direction. Click to finish.":
 		"設定尚未完成—在您選擇同步方向之前，不會進行任何同步。點擊以完成。",
 	"Sync paused — click to choose a sync direction": "同步已暫停 — 點擊選擇同步方向",
-	"Engram: offline ({count} queued)": "Engram：離線 ({count} 待處理)",
+	"Engram: offline ({count} queued)": "Engram: 離線 (已排隊 {count} 項)",
 	"Engram: offline": "Engram：離線",
 	"Server unreachable — changes will sync when connected": "伺服器無法連線 — 連線時會同步變更",
 	"Engram: error": "Engram：錯誤",
@@ -156,7 +158,7 @@ const zhTW: Dict = {
 		'Engram 同步：無法讀取 "{name}" 的同步狀態，正在使用本地副本。',
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} 可用。{link}.",
-	"{formatted} files · ": "{formatted} 個檔案 ·",
+	"{count} files · ": "{count} 個檔案",
 	"Notes searchable": "筆記可搜尋",
 	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
 		"此處之後的筆記仍可正常同步和開啟，只是不在搜尋索引中。索引保留您最舊的筆記，因此最新的筆記才會超出範圍。",
@@ -188,7 +190,9 @@ const zhTW: Dict = {
 	"Search failed — check connection": "搜尋失敗 — 檢查連線",
 	"No results found": "未找到結果",
 	Untitled: "尚未命名",
+	exact: "精確",
 	"meaning + exact": "意義 + 精確",
+	meaning: "意義",
 	"match strength: {pct}%": "匹配強度：{pct}%",
 	"No source path for this result": "此結果沒有來源路徑",
 	"Note not synced locally": "筆記尚未本地同步",
@@ -210,13 +214,12 @@ const zhTW: Dict = {
 	"sync is paused": "同步已暫停",
 	"syncing now": "正在同步",
 	"waiting to retry": "正在等待重試",
-	"{count} not on your plan": "{count} 不在您的方案中",
+	"{count} not on your plan": "{count} 個不在您的方案中",
 	"{count} need attention": "{count} 待處理事項",
-	"{count} retrying": "{count} 正在重試",
-	"{count} ignored": "{count} 已忽略",
-	"{count} queued — {reason}": "{count} 已排隊 — {reason}",
+	"{count} retrying": "{count} 次重試",
+	"{count} ignored": "已忽略 {count} 個",
+	"{count} queued — {reason}": "{count} 正在排隊 — {reason}",
 	"Sync...": "同步中...",
-	"sync failed": "同步失敗",
 	Refresh: "重新整理",
 	"Not synced on your plan ({count})": "您的方案未包含此同步 ({count})",
 	"These files are fine. They just need a paid plan to sync.":
@@ -244,6 +247,12 @@ const zhTW: Dict = {
 	Clear: "清除",
 	"No activity yet. Push or pull to see entries here.":
 		"尚未有任何活動。推送或拉取以查看這裡的記錄。",
+	Pushed: "已推送",
+	Pulled: "已拉取",
+	Deleted: "已刪除",
+	Conflict: "衝突",
+	Skipped: "已跳過",
+	Error: "錯誤",
 	Stats: "統計",
 	"Notes on this device": "此裝置上的筆記",
 	"Attachments on this device": "此裝置上的附件",
@@ -264,7 +273,7 @@ const zhTW: Dict = {
 	"Free syncs notes only — {count} attachments will be skipped.":
 		"免費同步筆記，僅限筆記。{count}個附件將被略過。",
 	"Uploads {up}, downloads {down}.": "上傳 {up}，下載 {down}。",
-	"Uploads {count}.": "上傳 {count}。",
+	"Uploads {count}.": "上傳 {count}.",
 	"Downloads {count}.": "下載 {count}。",
 	"{count} conflicts to resolve.": "有 {count} 個衝突需要解決。",
 	"Safe choice: combines both sides, nothing is deleted.":
@@ -306,7 +315,6 @@ const zhTW: Dict = {
 	"Everything is in sync": "所有內容已同步",
 	"This vault": "此知識庫",
 	"Cloud server": "雲端伺服器",
-	" conflicts need resolution": "衝突需要解決",
 	notes: "筆記",
 	attachments: "附件",
 	folders: "資料夾",
@@ -328,22 +336,23 @@ const zhTW: Dict = {
 		"在伺服器上建立新的空白知識庫，然後將此 Obsidian 知識庫同步到其中。",
 	"Vault name": "知識庫名稱",
 	Create: "建立",
-	"Could not load vaults": "無法載入知識庫",
+	"Could not load vaults: {error}": "無法載入知識庫：{error}",
 	"Enter a name for the new vault": "為新的知識庫輸入名稱",
-	"Failed to switch vault": "切換知識庫失敗",
+	"Failed to switch vault: {error}": "切換知識庫失敗：{error}",
 	"Your vault shares {percent} of its data with Engram":
 		"您的知識庫已將 {percent} 的資料同步到 Engram",
+	"{count} conflicts need resolution": "{count} 個衝突需要解決",
 	"Type {keyword} to confirm:": "輸入 {keyword} 以確認：",
 	"Uploading {count}.": "正在上傳 {count}。",
-	"Downloading {count}.": "正在下載 {count}。",
+	"Downloading {count}.": "下載中 {count}.",
 	"Deleting {count} local files.": "刪除 {count} 個本地檔案。",
-	"Deleting {count} on the cloud.": "正在從雲端刪除 {count}。",
+	"Deleting {count} on the cloud.": "正在從雲端刪除 {count} 個檔案。",
 	"First sync, this may take a moment.": "首次同步，可能需要一些時間。",
 	"Checking for changes.": "正在檢查變更。",
 	"Nothing will be deleted.": "不會刪除任何內容。",
-	"✓ {count} synced": "✓ 已同步 {count}",
-	"⤳ {count} skipped (Free plan)": "⤳ 跳過 {count} (免費方案)",
-	"✕ {count} failed": "✕ 同步失敗 {count}",
+	"✓ {count} synced": "✓ 已同步 {count} 個",
+	"⤳ {count} skipped (Free plan)": "⤳ {count} 已跳過 (免費方案)",
+	"✕ {count} failed": "✕ {count} 失敗",
 	"{count} attachments need a paid plan to sync. See Sync Center.":
 		"{count} 個附件需要付費方案才能同步。詳情請見同步中心。",
 	"Finished with some errors. Open the sync log to see what failed.":
@@ -367,8 +376,8 @@ const zhTW: Dict = {
 	"Sync complete": "同步完成",
 	"Syncing attachments": "同步附件",
 	Complete: "完成",
-	'{count} failed. Run "{command}" for details.':
-		'{count} 失敗。執行 "{command}" 以查看詳細資訊。',
+	'{count} failed. Run "{command}" for details.': '{count} 次失敗。詳情請查看 "{command}"。',
+	"File exceeds the {limit} limit": "檔案超過 {limit} 限制",
 	"Free syncs notes only — images & PDFs need a paid plan.":
 		"免費同步僅限筆記，圖片與 PDF 需要付費方案。",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
@@ -382,12 +391,11 @@ const zhTW: Dict = {
 	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
 		"全部同步已取消：另一個同步正在進行（重播衝突）。完成後再試。",
 	"Pull all failed: {error}": "全部同步失敗：{error}",
-	"Pull all failed": "全部同步失敗",
 	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
 		"Engram：{path} 同步衝突 — 您的本地修改已儲存為 {copy}",
 	"Open note": "開啟筆記",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
-		"Engram：{count} 筆記有前置資料問題。開啟同步中心以修正。",
+		"Engram: {count} 筆記存在前置元資料問題。開啟同步中心以修正。",
 	'Engram Sync: renamed "{name}" (unsupported characters)':
 		'Engram 同步：已將 "{name}" 重新命名（包含不受支援的字元）',
 	'Engram: frontmatter problem in "{name}"': 'Engram："{name}" 存在前置資料問題',
@@ -402,8 +410,6 @@ const zhTW: Dict = {
 	"▶ Watch on YouTube": "▶ 在 YouTube 觀看",
 	"Getting set up": "開始設定",
 	"1. Make an account": "1. 建立帳號",
-	"Create a hosted account at ": "在 [Engram Vault Sync] 建立帳號，或自行架設後端 (",
-	", or self-host the backend (": "，或自行部署後端",
 	"setup guide": "2. 將您的知識庫連接到 Engram",
 	"2. Connect your vault to Engram": "2. 將您的知識庫連接到 Engram",
 	"Sign in (or enter your server URL and key) on the connection tab, then run your first sync.":
@@ -435,6 +441,8 @@ const zhTW: Dict = {
 	"AI / MCP setup guide": "AI / MCP 設定指南",
 	"Report an issue": "回報問題",
 	"Join our Discord": "加入我們的 Discord",
+	"Create a hosted account at {signup}, or self-host the backend ({guide}).":
+		"在 {signup} 建立帳戶，或自行架設後端 ({guide})。",
 	"Node.js dependencies": "Node.js 依賴",
 	"Python virtual environment": "Python 虛擬環境",
 	"Python bytecode cache": "Python 位元組碼快取",
@@ -516,7 +524,6 @@ const zhTW: Dict = {
 	"GitHub Sponsors": "GitHub Sponsors",
 	"Sign-in required to load vaults": "登入後才能載入知識庫",
 	"Server error ({status}) — check Engram logs": "伺服器錯誤 ({status}) — 請檢查 Engram 日誌",
-	"Request failed ({status})": "請求失敗 ({status})",
 	"Could not reach Engram — check connection": "無法連線到 Engram，請檢查連線",
 	"Engram Cloud": "Engram 雲端",
 	"Self-hosted": "自行託管",
@@ -534,6 +541,16 @@ const zhTW: Dict = {
 	"Choose sync direction": "選擇同步方向",
 	"...": "...",
 	'... "{name}" ...': '... "{name}" ...',
+	"The server took too long to respond. Try again.": "伺服器回應時間過長。請重試。",
+	"Not signed in, or the session expired. Sign in again in Engram settings.":
+		"未登入，或會話已過期。請在 Engram 設定中重新登入。",
+	"The file is too large for the server.": "檔案太大，伺服器無法處理。",
+	"Too many requests. Wait a moment and try again.": "請求次數過多。請稍後再試。",
+	"Frontmatter isn't valid YAML.": "YAML 前置區塊格式無效。",
+	"A frontmatter key could not be parsed as YAML.": "無法將前置區塊中的鍵解析為 YAML。",
+	"This note could not be processed and was skipped.": "該筆記無法處理，已跳過。",
+	'Frontmatter key "{key}" could not be parsed as YAML.':
+		'無法將前置區塊中的鍵 "{key}" 解析為 YAML。',
 };
 
 export default zhTW;

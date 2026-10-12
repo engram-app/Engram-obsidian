@@ -6,7 +6,10 @@
  */
 import { Notice, normalizePath, Setting } from "obsidian";
 import { offersUpgrades } from "./backend-mode";
-import { t } from "./i18n";
+import { devLog } from "./dev-log";
+import { errMsg } from "./error-util";
+import { currentLocale, t } from "./i18n";
+import { parseReasonMessage, userErrorMessage } from "./i18n/user-error";
 import { type IssueDisposition, issueDisposition, remediation } from "./issue-store";
 import type EngramSyncPlugin from "./main";
 import type { QueuedReason } from "./offline-queue";
@@ -185,11 +188,8 @@ function renderActions(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: (
 			}
 			await plugin.runSyncWithProgress(choice, { plan: modal.getPlan() });
 		} catch (e) {
-			new Notice(
-				t("Engram Sync: {details}", {
-					details: e instanceof Error ? e.message : t("sync failed"),
-				}),
-			);
+			devLog().log("error", `sync center sync failed: ${errMsg(e)}`);
+			new Notice(t("Engram Sync: {details}", { details: userErrorMessage(e) }));
 		}
 		refresh();
 	});
@@ -438,7 +438,7 @@ function renderFileRow(
 
 	if (issue.parseReason) {
 		const reason = main.createDiv({ cls: "engram-sync-center-issue-reason" });
-		reason.createSpan({ text: issue.parseReason.message });
+		reason.createSpan({ text: parseReasonMessage(issue.parseReason) });
 		const snippet = issue.parseReason.detail?.snippet;
 		if (snippet) reason.createEl("code", { text: snippet });
 		// note_processing_failed now has its own accurate, non-retrying card in
@@ -569,22 +569,45 @@ function renderActivity(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: 
 }
 
 function renderActivityRow(parent: HTMLElement, entry: SyncLogEntry): void {
+	// data-action: the label below is translated, so tests read the raw action here.
 	const row = parent.createDiv({
 		cls: `engram-sync-center-activity-row ${RESULT_CLASS[entry.result]}`,
+		attr: { "data-action": entry.action },
 	});
 	row.createSpan({
 		cls: "engram-sync-center-activity-icon",
 		text: ACTION_ICONS[entry.action] ?? "?",
 	});
-	row.createSpan({ cls: "engram-sync-center-activity-action", text: entry.action });
+	row.createSpan({ cls: "engram-sync-center-activity-action", text: actionLabel(entry.action) });
 	row.createSpan({ cls: "engram-sync-center-activity-path", text: entry.path });
 	row.createSpan({
 		cls: "engram-sync-center-activity-time",
 		text: formatRelative(entry.timestamp.getTime()),
 	});
 	if (entry.error) {
-		const err = parent.createDiv({ cls: "engram-sync-center-activity-error" });
+		// Free-form diagnostic text from the sync log, kept verbatim and marked English.
+		const err = parent.createDiv({
+			cls: "engram-sync-center-activity-error",
+			attr: { lang: "en" },
+		});
 		err.setText(entry.error);
+	}
+}
+
+function actionLabel(action: SyncLogEntry["action"]): string {
+	switch (action) {
+		case "push":
+			return t("Pushed");
+		case "pull":
+			return t("Pulled");
+		case "delete":
+			return t("Deleted");
+		case "conflict":
+			return t("Conflict");
+		case "skip":
+			return t("Skipped");
+		case "error":
+			return t("Error");
 	}
 }
 
@@ -739,10 +762,19 @@ function addStat(
 	return { row, value: row.createDiv({ cls: "engram-sync-center-stat-value", text: value }) };
 }
 
-function formatRelative(timestamp: number): string {
+/** "3 min. ago" in the app's language. Intl owns the wording and the plural
+ *  forms, so no catalog key is needed. */
+export function formatRelative(timestamp: number): string {
 	const seconds = Math.floor((Date.now() - timestamp) / 1000);
-	if (seconds < 60) return `${seconds}s ago`;
-	if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-	if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-	return `${Math.floor(seconds / 86400)}d ago`;
+	let rtf: Intl.RelativeTimeFormat;
+	try {
+		rtf = new Intl.RelativeTimeFormat(currentLocale(), { style: "short" });
+	} catch {
+		// A code Intl does not know (it validates the tag) falls back to English.
+		rtf = new Intl.RelativeTimeFormat("en", { style: "short" });
+	}
+	if (seconds < 60) return rtf.format(-seconds, "second");
+	if (seconds < 3600) return rtf.format(-Math.floor(seconds / 60), "minute");
+	if (seconds < 86400) return rtf.format(-Math.floor(seconds / 3600), "hour");
+	return rtf.format(-Math.floor(seconds / 86400), "day");
 }

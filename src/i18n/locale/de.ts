@@ -3,8 +3,10 @@ import type { Dict } from "..";
 // Deutsch
 const de: Dict = {
 	"Invalid API key": "Ungültiger API-Schlüssel",
+	"Request failed ({status})": "Anfrage fehlgeschlagen ({status})",
 	"Connection failed": "Verbindung fehlgeschlagen",
 	"Link Obsidian to Engram": "Verbinde Obsidian mit Engram",
+	"Starting...": "Starte...",
 	"Failed to start device flow. Check your Engram URL and try again.":
 		"Fehler beim Start des Geräte-Flows. Überprüfe deine Engram-URL und versuche es erneut.",
 	"Your code:": "Dein Code:",
@@ -99,9 +101,15 @@ const de: Dict = {
 	"Engram sync: server does not support reconciliation (update backend)":
 		"Engram-Synchronisierung: Der Server unterstützt keine Synchronisation (Backend aktualisieren)",
 	"Engram sync: everything in sync": "Engram-Synchronisierung: Alles ist synchron",
-	"{count} missing on server": "{count} fehlt auf dem Server",
-	"{count} diverged": "{count} weichen ab",
-	"{count} only on server": "{count} nur auf dem Server",
+	"{count} missing on server": {
+		one: "{count} fehlt auf dem Server",
+		other: "{count} fehlen auf dem Server",
+	},
+	"{count} diverged": { one: "{count} abweichend", other: "{count} abweichend" },
+	"{count} only on server": {
+		one: "{count} nur auf dem Server",
+		other: "{count} nur auf dem Server",
+	},
 	"Engram Sync: {details}": "Engram-Synchronisierung: {details}",
 	"Pull all from server (force overwrite)":
 		"Alles vom Server herunterladen (erzwungene Überschreibung)",
@@ -152,12 +160,18 @@ const de: Dict = {
 		"Noch nicht angemeldet. Klicke, um die Einstellungen zu öffnen und dich erneut zu verbinden.",
 	"Engram: finish setup": "Engram: Einrichtung abschließen",
 	"Engram: sync paused": "Engram: Synchronisierung angehalten",
-	"{label} ({count} queued)": "{label} ({count} in der Warteschlange)",
+	"{label} ({count} queued)": {
+		one: "{label} ({count} in der Warteschlange)",
+		other: "{label} ({count} in der Warteschlange)",
+	},
 	"Setup is not finished — nothing will sync until you choose a sync direction. Click to finish.":
 		"Einrichtung nicht abgeschlossen — nichts wird synchronisiert, bis du eine Synchronisationsrichtung wählst. Klicke, um fortzufahren.",
 	"Sync paused — click to choose a sync direction":
 		"Synchronisierung angehalten – klicke, um eine Synchronisationsrichtung auszuwählen",
-	"Engram: offline ({count} queued)": "Engram: offline ({count} in der Warteschlange)",
+	"Engram: offline ({count} queued)": {
+		one: "Engram: offline ({count} in der Warteschlange)",
+		other: "Engram: offline ({count} in der Warteschlange)",
+	},
 	"Engram: offline": "Engram: offline",
 	"Server unreachable — changes will sync when connected":
 		"Server nicht erreichbar – Änderungen werden synchronisiert, sobald eine Verbindung besteht",
@@ -187,7 +201,7 @@ const de: Dict = {
 		'Engram Sync: Der Synchronisierungsstatus für "{name}" konnte nicht gelesen werden – es wird die lokale Kopie verwendet.',
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} verfügbar. {link}.",
-	"{formatted} files · ": { one: "{formatted} Datei ·", other: "{formatted} Dateien ·" },
+	"{count} files · ": { one: "{count} Datei · ", other: "{count} Dateien · " },
 	"Notes searchable": "Notizen durchsuchbar",
 	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
 		"Notizen nach diesem Punkt werden weiterhin synchronisiert und normal geöffnet, sie sind nur nicht im Suchindex enthalten. Der Index speichert deine ältesten Notizen, sodass die neuesten Notizen nicht enthalten sind.",
@@ -219,7 +233,9 @@ const de: Dict = {
 	"Search failed — check connection": "Suche fehlgeschlagen – Verbindung prüfen",
 	"No results found": "Keine Ergebnisse gefunden",
 	Untitled: "Ohne Titel",
+	exact: "exakt",
 	"meaning + exact": "Bedeutung + exakt",
+	meaning: "Bedeutung",
 	"match strength: {pct}%": "Übereinstimmungsstärke: {pct}%",
 	"No source path for this result": "Kein Quellpfad für dieses Ergebnis",
 	"Note not synced locally": "Notiz nicht lokal synchronisiert",
@@ -243,16 +259,21 @@ const de: Dict = {
 	"sync is paused": "Synchronisierung pausiert",
 	"syncing now": "Synchronisiert",
 	"waiting to retry": "wartet auf Wiederholung",
-	"{count} not on your plan": "{count} nicht in deinem Plan enthalten",
+	"{count} not on your plan": {
+		one: "{count} nicht in deinem Plan",
+		other: "{count} nicht in deinem Plan",
+	},
 	"{count} need attention": {
 		one: "{count} Benötigt Aufmerksamkeit",
 		other: "{count} erfordern deine Aufmerksamkeit",
 	},
-	"{count} retrying": "{count} wird erneut versucht",
-	"{count} ignored": "{count} ignoriert",
-	"{count} queued — {reason}": "{count} in der Warteschlange — {reason}",
+	"{count} retrying": { one: "{count}. Versuch erneut", other: "{count} Wiederholungsversuch" },
+	"{count} ignored": { one: "{count} ignoriert", other: "{count} ignoriert" },
+	"{count} queued — {reason}": {
+		one: "{count} in der Warteschlange — {reason}",
+		other: "{count} in der Warteschlange — {reason}",
+	},
 	"Sync...": "Synchronisieren...",
-	"sync failed": "Synchronisierung fehlgeschlagen",
 	Refresh: "Aktualisieren",
 	"Not synced on your plan ({count})": "Nicht im Rahmen deines Plans synchronisiert ({count})",
 	"These files are fine. They just need a paid plan to sync.":
@@ -281,6 +302,12 @@ const de: Dict = {
 	Clear: "Löschen",
 	"No activity yet. Push or pull to see entries here.":
 		'Noch keine Aktivitäten. Drücke "Push" oder "Pull", um Einträge anzuzeigen.',
+	Pushed: "Gesendet",
+	Pulled: "Empfangen",
+	Deleted: "Gelöscht",
+	Conflict: "Konflikt",
+	Skipped: "Übersprungen",
+	Error: "Fehler",
 	Stats: "Statistiken",
 	"Notes on this device": "Notizen auf diesem Gerät",
 	"Attachments on this device": "Anhänge auf diesem Gerät",
@@ -304,8 +331,8 @@ const de: Dict = {
 		other: "Kostenlose Synchronisierung gilt nur für Notizen – {count} Anhänge werden übersprungen.",
 	},
 	"Uploads {up}, downloads {down}.": "Hochgeladen: {up}, heruntergeladen: {down}.",
-	"Uploads {count}.": "Hochgeladen: {count}.",
-	"Downloads {count}.": "Heruntergeladen: {count}.",
+	"Uploads {count}.": { one: "Uploads {count}.", other: "Uploads {count}." },
+	"Downloads {count}.": { one: "Downloads {count}.", other: "Downloads {count}." },
 	"{count} conflicts to resolve.": {
 		one: "{count} Konflikt, der behoben werden muss.",
 		other: "{count} Konflikte müssen gelöst werden.",
@@ -367,10 +394,6 @@ const de: Dict = {
 	"Everything is in sync": "Alles ist synchronisiert",
 	"This vault": "Dieser Vault",
 	"Cloud server": "Cloud-Server",
-	" conflicts need resolution": {
-		one: "Konflikt muss gelöst werden",
-		other: "Konflikte müssen gelöst werden",
-	},
 	notes: "Notizen",
 	attachments: "Anhänge",
 	folders: "Ordner",
@@ -384,7 +407,7 @@ const de: Dict = {
 	"Pick a vault to sync with. We will recalculate the sync preview after you choose.":
 		"Wähle einen Vault aus, mit dem du synchronisieren möchtest. Wir berechnen dann die Synchronisierungs-Vorschau neu.",
 	"Loading vaults…": "Lade Vaults…",
-	" (default)": "(Standard)",
+	" (default)": " (Standard)",
 	"No other vaults available.": "Keine anderen Vaults verfügbar.",
 	"Make new vault": "Neuen Vault erstellen",
 	"New vault": "Neues Vault",
@@ -392,25 +415,35 @@ const de: Dict = {
 		"Erstelle ein neues, leeres Vault auf dem Server und synchronisiere dann dieses Obsidian-Vault damit.",
 	"Vault name": "Vault-Name",
 	Create: "Erstellen",
-	"Could not load vaults": "Vaults konnten nicht geladen werden",
+	"Could not load vaults: {error}": "Vaults konnten nicht geladen werden: {error}",
 	"Enter a name for the new vault": "Gib einen Namen für das neue Vault ein",
-	"Failed to switch vault": "Fehler beim Wechsel des Vaults",
+	"Failed to switch vault: {error}": "Fehler beim Wechsel des Vaults: {error}",
 	"Your vault shares {percent} of its data with Engram":
 		"Dein Vault teilt {percent} seiner Daten mit Engram",
+	"{count} conflicts need resolution": {
+		one: "{count} Konflikt muss gelöst werden",
+		other: "{count} Konflikte müssen gelöst werden",
+	},
 	"Type {keyword} to confirm:": "Gib {keyword} ein, um zu bestätigen:",
-	"Uploading {count}.": "Lade {count} hoch.",
-	"Downloading {count}.": "Lade {count} herunter.",
+	"Uploading {count}.": { one: "Hochladen {count}.", other: "Hochladen {count}." },
+	"Downloading {count}.": { one: "Herunterladen {count}.", other: "Herunterladen {count}." },
 	"Deleting {count} local files.": {
 		one: "{count} lokale Datei wird gelöscht.",
 		other: "{count} lokale Dateien werden gelöscht.",
 	},
-	"Deleting {count} on the cloud.": "Lösche {count} in der Cloud.",
+	"Deleting {count} on the cloud.": {
+		one: "{count} wird im Cloud-Speicher gelöscht.",
+		other: "{count} werden im Cloud-Speicher gelöscht.",
+	},
 	"First sync, this may take a moment.": "Erste Synchronisierung, das kann einen Moment dauern.",
 	"Checking for changes.": "Überprüfe auf Änderungen.",
 	"Nothing will be deleted.": "Nichts wird gelöscht.",
-	"✓ {count} synced": "✓ {count} synchronisiert",
-	"⤳ {count} skipped (Free plan)": "⤳ {count} übersprungen (kostenlose Version)",
-	"✕ {count} failed": "✕ {count} fehlgeschlagen",
+	"✓ {count} synced": { one: "✓ {count} synchronisiert", other: "✓ {count} synchronisiert" },
+	"⤳ {count} skipped (Free plan)": {
+		one: "⤳ {count} übersprungen (kostenlose Version)",
+		other: "⤳ {count} übersprungen (Kostenlose Version)",
+	},
+	"✕ {count} failed": { one: "✕ {count} fehlgeschlagen", other: "✕ {count} fehlgeschlagen" },
 	"{count} attachments need a paid plan to sync. See Sync Center.": {
 		one: "{count} Anhang benötigt ein kostenpflichtiges Abo, um synchronisiert zu werden. Siehe Sync-Zentrale.",
 		other: "{count} Anhänge benötigen ein kostenpflichtiges Abo, um synchronisiert zu werden. Siehe Sync-Zentrale.",
@@ -438,8 +471,11 @@ const de: Dict = {
 	"Sync complete": "Synchronisierung abgeschlossen",
 	"Syncing attachments": "Anhänge synchronisieren",
 	Complete: "Fertig",
-	'{count} failed. Run "{command}" for details.':
-		'{count} fehlgeschlagen. Führe "{command}" aus, um weitere Details zu sehen.',
+	'{count} failed. Run "{command}" for details.': {
+		one: '{count} fehlgeschlagen. Starte "{command}", um Details zu sehen.',
+		other: '{count} fehlgeschlagen. Starte "{command}", um Details zu sehen.',
+	},
+	"File exceeds the {limit} limit": "Datei überschreitet das Limit von {limit}",
 	"Free syncs notes only — images & PDFs need a paid plan.":
 		"Kostenlose Synchronisierung gilt nur für Notizen – Bilder und PDFs benötigen ein kostenpflichtiges Abonnement.",
 	"Engram: {count} files failed to sync{detail} — open Sync Center": {
@@ -459,12 +495,13 @@ const de: Dict = {
 	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
 		"Abbrechen: Alle Notizen herunterladen fehlgeschlagen: eine andere Synchronisierung läuft (Konflikt). Versuche es später erneut.",
 	"Pull all failed: {error}": "Fehler beim Herunterladen aller Notizen: {error}",
-	"Pull all failed": "Fehler beim Herunterladen aller Notizen",
 	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
 		"Engram: Synchronisierungskonflikt bei {path} – deine lokale Änderung wurde als {copy} gespeichert",
 	"Open note": "Notiz öffnen",
-	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
-		"Engram: {count} Notizen haben Probleme mit dem Frontmatter. Öffne die Sync-Zentrale, um sie zu beheben.",
+	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.": {
+		one: "Engram: {count} Notiz hat Probleme mit der Kopfzeile. Öffne die Sync-Zentrale, um das zu beheben.",
+		other: "Engram: {count} Notizen haben Probleme mit der Frontmatter. Öffne die Sync-Zentrale, um sie zu beheben.",
+	},
 	'Engram Sync: renamed "{name}" (unsupported characters)':
 		'Engram Sync: "{name}" umbenannt (nicht unterstützte Zeichen)',
 	'Engram: frontmatter problem in "{name}"': 'Engram: Problem mit dem Frontmatter in "{name}"',
@@ -479,8 +516,6 @@ const de: Dict = {
 	"▶ Watch on YouTube": "▶ Auf YouTube ansehen",
 	"Getting set up": "Einrichtung",
 	"1. Make an account": "1. Erstelle ein Konto",
-	"Create a hosted account at ": "Erstelle ein Konto bei",
-	", or self-host the backend (": "Einrichtungshilfe",
 	"setup guide": "2. Verbinde dein Vault mit Engram",
 	"2. Connect your vault to Engram": "2. Verbinde deinen Vault mit Engram",
 	"Sign in (or enter your server URL and key) on the connection tab, then run your first sync.":
@@ -488,7 +523,7 @@ const de: Dict = {
 	"Open connection tab": "Verbindungs-Tab öffnen",
 	"3. Connect your AI": "3. Verbinde deine KI",
 	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
-		"Verbinde Claude, Cursor, ChatGPT oder jede andere MCP-App, damit sie deine Notizen lesen und schreiben kann",
+		"Verbinde Claude, Cursor, ChatGPT oder jede andere MCP-App, damit sie deine Notizen lesen und schreiben kann ",
 	"See the AI setup guide": "Sieh dir die Anleitung zur KI-Einrichtung an",
 	Plans: "Pläne",
 	Free: "Kostenlos",
@@ -512,6 +547,8 @@ const de: Dict = {
 	"AI / MCP setup guide": "Anleitung zur AI / MCP-Einrichtung",
 	"Report an issue": "Problem melden",
 	"Join our Discord": "Tritt unserem Discord bei",
+	"Create a hosted account at {signup}, or self-host the backend ({guide}).":
+		"Erstelle ein Konto bei {signup} oder hoste den Backend selbst ({guide}).",
 	"Node.js dependencies": "Node.js-Abhängigkeiten",
 	"Python virtual environment": "Python-virtuelle Umgebung",
 	"Python bytecode cache": "Python-Bytecode-Cache",
@@ -601,7 +638,6 @@ const de: Dict = {
 	"Sign-in required to load vaults": "Anmeldung erforderlich, um Vaults zu laden",
 	"Server error ({status}) — check Engram logs":
 		"Serverfehler ({status}) – prüfe die Engram-Protokolle",
-	"Request failed ({status})": "Anfrage fehlgeschlagen ({status})",
 	"Could not reach Engram — check connection": "Engram nicht erreichbar – Verbindung prüfen",
 	"Engram Cloud": "Engram Cloud",
 	"Self-hosted": "Selbst gehostet",
@@ -619,6 +655,20 @@ const de: Dict = {
 	"Choose sync direction": "Synchronisationsrichtung wählen",
 	"...": "...",
 	'... "{name}" ...': '... "{name}" ...',
+	"The server took too long to respond. Try again.":
+		"Der Server hat zu lange zum Antworten gebraucht. Versuche es erneut.",
+	"Not signed in, or the session expired. Sign in again in Engram settings.":
+		"Nicht angemeldet oder die Sitzung ist abgelaufen. Melde dich erneut in den Engram-Einstellungen an.",
+	"The file is too large for the server.": "Die Datei ist zu groß für den Server.",
+	"Too many requests. Wait a moment and try again.":
+		"Zu viele Anfragen. Warte einen Moment und versuche es erneut.",
+	"Frontmatter isn't valid YAML.": "Das Frontmatter ist kein gültiges YAML.",
+	"A frontmatter key could not be parsed as YAML.":
+		"Ein Frontmatter-Schlüssel konnte nicht als YAML geparst werden.",
+	"This note could not be processed and was skipped.":
+		"Diese Notiz konnte nicht verarbeitet und wurde übersprungen.",
+	'Frontmatter key "{key}" could not be parsed as YAML.':
+		'Der Frontmatter-Schlüssel "{key}" konnte nicht als YAML geparst werden.',
 };
 
 export default de;

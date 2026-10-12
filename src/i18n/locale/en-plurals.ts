@@ -29,8 +29,8 @@ const enPlurals: Dict = {
 	"Free syncs notes only — {count} attachments will be skipped.": {
 		one: "Free syncs notes only — {count} attachment will be skipped.",
 	},
-	" conflicts need resolution": {
-		one: " conflict needs resolution",
+	"{count} conflicts need resolution": {
+		one: "{count} conflict needs resolution",
 	},
 	"{count} attachments need a paid plan to sync. See Sync Center.": {
 		one: "{count} attachment needs a paid plan to sync. See Sync Center.",
@@ -42,8 +42,8 @@ const enPlurals: Dict = {
 		one: "{count} attempt",
 	},
 	// UI strings (third pass)
-	"{formatted} files · ": {
-		one: "{formatted} file · ",
+	"{count} files · ": {
+		one: "{count} file · ",
 	},
 	"{count} need attention": {
 		one: "{count} needs attention",
@@ -81,6 +81,31 @@ const enPlurals: Dict = {
 	},
 	"({count} errors)": {
 		one: "({count} error)",
+	},
+	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.": {
+		one: "Engram: {count} note has frontmatter problems. Open Sync Center to fix.",
+	},
+	// English does not inflect these, but most locales do (ru: "1 повторяется",
+	// "5 повторяются"), so they are plurals: the translator gets every form.
+	"{count} missing on server": { one: "{count} missing on server" },
+	"{count} diverged": { one: "{count} diverged" },
+	"{count} only on server": { one: "{count} only on server" },
+	"{label} ({count} queued)": { one: "{label} ({count} queued)" },
+	"Engram: offline ({count} queued)": { one: "Engram: offline ({count} queued)" },
+	"{count} not on your plan": { one: "{count} not on your plan" },
+	"{count} retrying": { one: "{count} retrying" },
+	"{count} ignored": { one: "{count} ignored" },
+	"{count} queued — {reason}": { one: "{count} queued — {reason}" },
+	"Uploads {count}.": { one: "Uploads {count}." },
+	"Downloads {count}.": { one: "Downloads {count}." },
+	"Uploading {count}.": { one: "Uploading {count}." },
+	"Downloading {count}.": { one: "Downloading {count}." },
+	"Deleting {count} on the cloud.": { one: "Deleting {count} on the cloud." },
+	"✓ {count} synced": { one: "✓ {count} synced" },
+	"⤳ {count} skipped (Free plan)": { one: "⤳ {count} skipped (Free plan)" },
+	"✕ {count} failed": { one: "✕ {count} failed" },
+	'{count} failed. Run "{command}" for details.': {
+		one: '{count} failed. Run "{command}" for details.',
 	},
 };
 

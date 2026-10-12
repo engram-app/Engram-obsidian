@@ -1457,7 +1457,9 @@ describe("SyncEngine.getStatus + onStatusChange", () => {
 
 		const summary = engine.drainFailureSummary();
 		expect(summary.count).toBe(1);
-		expect(summary.firstMessage).toBe("failed to upload to storage backend");
+		// The toast shows the translated, status-classified message; the server's
+		// English text stays in the logs.
+		expect(summary.firstMessage).toBe("Server error (502) — check Engram logs");
 		// Draining resets the tally.
 		expect(engine.drainFailureSummary().count).toBe(0);
 	});

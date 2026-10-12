@@ -509,10 +509,10 @@ export class SearchPanel {
 				pill.createSpan({
 					text:
 						result.matchType === "keyword"
-							? "exact"
+							? t("exact")
 							: result.matchType === "both"
 								? t("meaning + exact")
-								: "meaning",
+								: t("meaning"),
 				});
 			}
 			const pct = strengths[i] ?? 100;

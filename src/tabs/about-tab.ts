@@ -1,5 +1,5 @@
 import { Setting } from "obsidian";
-import { t } from "../i18n";
+import { t, tInto } from "../i18n";
 import type { TabContext } from "./types";
 import {
 	ENGRAM_DISCORD_URL,
@@ -49,11 +49,14 @@ export function renderAboutTab(ctx: TabContext): void {
 	heading(containerEl, t("Getting set up"));
 
 	const account = new Setting(containerEl).setName(t("1. Make an account"));
-	account.descEl.appendText(t("Create a hosted account at "));
-	externalLink(account.descEl, "app.engram.page", ENGRAM_SIGN_UP_URL);
-	account.descEl.appendText(t(", or self-host the backend ("));
-	externalLink(account.descEl, t("setup guide"), ENGRAM_SELFHOST_URL);
-	account.descEl.appendText(").");
+	tInto(
+		account.descEl,
+		"Create a hosted account at {signup}, or self-host the backend ({guide}).",
+		{
+			signup: (p) => externalLink(p, "app.engram.page", ENGRAM_SIGN_UP_URL),
+			guide: (p) => externalLink(p, t("setup guide"), ENGRAM_SELFHOST_URL),
+		},
+	);
 
 	new Setting(containerEl)
 		.setName(t("2. Connect your vault to Engram"))
