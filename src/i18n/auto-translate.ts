@@ -6,6 +6,8 @@ import type { Entry } from "./keys-scan";
 
 interface Spec {
 	name: string;
+	// The catalog file's header comment, in the language itself.
+	native: string;
 	tone: string;
 	// Register the catalog avoids (the plugin and marketing copy pick one per language).
 	formal?: RegExp;
@@ -19,46 +21,63 @@ const HAN = /\p{Script=Han}/u;
 const SPECS = {
 	de: {
 		name: "German",
+		native: "Deutsch",
 		tone: "Address the user informally (du, dein), never Sie.",
 		formal: /\b(?:Ihr(?:e[nmrs]?)?|Ihnen)\b|[\p{Ll},] Sie\b/u,
 	},
 	es: {
 		name: "Spanish",
+		native: "Español",
 		tone: "Address the user informally (tú), never usted. Use neutral Spanish understood in Latin America and Spain.",
 		formal: /\busted(?:es)?\b/iu,
 	},
 	fr: {
 		name: "French",
+		native: "Français",
 		tone: "Address the user informally (tu, ton), never vous.",
 		formal: /\b(?:vous|votre|vos)\b/iu,
 	},
 	it: {
 		name: "Italian",
+		native: "Italiano",
 		tone: "Address the user informally (tu, tuo), never Lei.",
 		formal: /\b(?:Lei|Suo|Sua|Suoi|Sue)\b/u,
 	},
 	ja: {
 		name: "Japanese",
+		native: "日本語",
 		tone: "Use polite, concise UI Japanese.",
 		script: /[\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Han}]/u,
 	},
-	ko: { name: "Korean", tone: "Use polite, concise UI Korean.", script: /\p{Script=Hangul}/u },
-	ms: { name: "Malay", tone: "Address the user as anda." },
-	pt: { name: "Brazilian Portuguese", tone: "Address the user as você." },
+	ko: {
+		name: "Korean",
+		native: "한국어",
+		tone: "Use polite, concise UI Korean.",
+		script: /\p{Script=Hangul}/u,
+	},
+	ms: { name: "Malay", native: "Bahasa Melayu", tone: "Address the user as anda." },
+	pt: {
+		name: "Brazilian Portuguese",
+		native: "Português (do Brasil)",
+		tone: "Address the user as você.",
+	},
 	ru: {
 		name: "Russian",
+		native: "Русский",
 		tone: "Address the user formally (вы, ваш), never ты.",
 		formal: /(?:^|[^\p{L}])(?:ты|твой|твоя|твоё|твои|тебя|тебе)(?![\p{L}])/iu,
 		script: /\p{Script=Cyrillic}/u,
 	},
-	vi: { name: "Vietnamese", tone: "Address the user as bạn." },
+	vi: { name: "Vietnamese", native: "Tiếng Việt", tone: "Address the user as bạn." },
 	zh: {
 		name: "Simplified Chinese",
+		native: "简体中文",
 		tone: "Use concise Simplified Chinese UI wording.",
 		script: HAN,
 	},
 	"zh-TW": {
 		name: "Traditional Chinese",
+		native: "繁體中文",
 		tone: "Use concise Traditional Chinese (Taiwan) UI wording.",
 		script: HAN,
 	},
@@ -239,6 +258,15 @@ function fromSample(out: string, sample: string): string | null {
 	return hits.length === 1 ? out.replace(pattern, "$1{count}") : null;
 }
 
+// The plugin's catalog file shape (`const zhTW: Dict = {...}; export default zhTW;`).
+function renderCatalog(code: Target, catalog: Catalog): string {
+	const ident = code.replace(/-(?<c>\w)/gu, (_m, c: string) => c.toUpperCase());
+	const body = Object.entries(catalog)
+		.map(([k, v]) => `\t${JSON.stringify(k)}: ${JSON.stringify(v)},\n`)
+		.join("");
+	return `import type { Dict } from "..";\n\n// ${SPECS[code].native}\nconst ${ident}: Dict = {\n${body}};\n\nexport default ${ident};\n`;
+}
+
 // The hand-written catalogs store a single-form plural (ja, ko, zh) as a plain string.
 function collapsePlural(forms: PluralForms): string | PluralForms {
 	return Object.keys(forms).length === 1 && forms.other !== undefined ? forms.other : forms;
@@ -359,6 +387,7 @@ export {
 	parseBatch,
 	pluralSamples,
 	problems,
+	renderCatalog,
 	SPECS,
 	TRANSLATOR_VERSION,
 	todoKeys,

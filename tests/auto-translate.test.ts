@@ -13,6 +13,7 @@ import {
 	parseBatch,
 	pluralSamples,
 	problems,
+	renderCatalog,
 	SPECS,
 	TRANSLATOR_VERSION,
 	todoKeys,
@@ -346,5 +347,19 @@ describe("plugin specifics", () => {
 		expect(Object.keys(SPECS).sort()).toEqual(
 			["de", "es", "fr", "it", "ja", "ko", "ms", "pt", "ru", "vi", "zh", "zh-TW"].sort(),
 		);
+	});
+});
+
+describe("renderCatalog", () => {
+	it("writes the hand-written catalog shape: header, typed const, default export", () => {
+		expect(renderCatalog("zh-TW", { Sync: "同步", "{count} files": "{count} 個檔案" })).toBe(
+			'import type { Dict } from "..";\n\n// 繁體中文\nconst zhTW: Dict = {\n\t"Sync": "同步",\n\t"{count} files": "{count} 個檔案",\n};\n\nexport default zhTW;\n',
+		);
+	});
+
+	it("names each catalog after its code and its own language", () => {
+		expect(renderCatalog("pt", {})).toContain("// Português (do Brasil)\nconst pt: Dict");
+		expect(renderCatalog("vi", {})).toContain("// Tiếng Việt\nconst vi: Dict");
+		expect(renderCatalog("ms", {})).toContain("// Bahasa Melayu\nconst ms: Dict");
 	});
 });

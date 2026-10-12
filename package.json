@@ -9,6 +9,7 @@
     "build:wasm": "bash scripts/build-wasm.sh",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "test": "bun test",
+    "i18n:translate": "bun scripts/i18n-translate.ts",
     "test:coverage": "bun test --coverage",
     "lint": "biome check src tests",
     "lint:obsidian": "eslint --max-warnings 0 'src/**/*.ts'",
