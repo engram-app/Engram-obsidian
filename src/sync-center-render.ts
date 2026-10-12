@@ -8,7 +8,7 @@ import { Notice, normalizePath, Setting } from "obsidian";
 import { offersUpgrades } from "./backend-mode";
 import { devLog } from "./dev-log";
 import { errMsg } from "./error-util";
-import { currentLocale, t } from "./i18n";
+import { currentLocale, t, type UIText } from "./i18n";
 import { parseReasonMessage, userErrorMessage } from "./i18n/user-error";
 import { type IssueDisposition, issueDisposition, remediation } from "./issue-store";
 import type EngramSyncPlugin from "./main";
@@ -21,7 +21,7 @@ import type { SyncIssue, SyncIssueCategory, SyncLogEntry } from "./types";
 
 /** Build an Obsidian Setting heading inside `parent` so the section title
  *  matches the visual style of the Cloud / Self-hosted / Advanced tabs. */
-function sectionHeading(parent: HTMLElement, title: string): Setting {
+function sectionHeading(parent: HTMLElement, title: UIText): Setting {
 	return new Setting(parent).setName(title).setHeading();
 }
 
@@ -202,7 +202,7 @@ function renderActions(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: (
 
 function makeActionButton(
 	parent: HTMLElement,
-	text: string,
+	text: UIText,
 	handler: () => void | Promise<void>,
 ): void {
 	const btn = parent.createEl("button", { text, cls: "engram-sync-center-action-btn" });
@@ -460,7 +460,7 @@ function renderFileRow(
 function renderIgnored(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: () => void): void {
 	const ignored = plugin.syncEngine.ignoredFiles.all();
 	const section = parent.createDiv({ cls: "engram-sync-center-section" });
-	sectionHeading(section, `Ignored (${ignored.length})`);
+	sectionHeading(section, t("Ignored ({count})", { count: ignored.length }));
 
 	const body = section.createDiv({ cls: "engram-sync-center-section-body" });
 	if (ignored.length === 0) {
@@ -542,7 +542,7 @@ const RESULT_CLASS: Record<SyncLogEntry["result"], string> = {
 function renderActivity(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: () => void): void {
 	const section = parent.createDiv({ cls: "engram-sync-center-section" });
 	const all = plugin.syncLog.entries();
-	const heading = sectionHeading(section, `Activity (${all.length})`);
+	const heading = sectionHeading(section, t("Activity ({count})", { count: all.length }));
 	if (all.length > 0) {
 		heading.addButton((btn) =>
 			btn.setButtonText(t("Clear")).onClick(() => {

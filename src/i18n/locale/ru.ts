@@ -2,6 +2,9 @@ import type { Dict } from "..";
 
 // Русский
 const ru: Dict = {
+	"Invalid API key": "Неверный ключ API",
+	"Request failed ({status})": "Запрос не удался ({status})",
+	"Connection failed": "Не удалось подключиться",
 	"Link Obsidian to Engram": "Свяжите Obsidian с Engram",
 	"Starting...": "Начало...",
 	"Failed to start device flow. Check your Engram URL and try again.":
@@ -80,6 +83,148 @@ const ru: Dict = {
 		"Завершите настройку вашей учётной записи на app.engram.page, чтобы начать синхронизацию.",
 	"Limit reached. Upgrade to continue.": "Достигнут лимит. Обновите подписку, чтобы продолжить.",
 	Upgrade: "Обновить",
+	"Update in settings": "Обновить в настройках",
+	"Sync now": "Синхронизировать сейчас",
+	"Engram sync: syncing...": "Синхронизация Engram: синхронизация...",
+	"Engram Sync: pulled {pulled}, pushed {pushed}":
+		"Синхронизация Engram: получено {pulled}, отправлено {pushed}",
+	"Disconnect (clear login)": "Отключить (очистить данные для входа)",
+	"Engram: disconnected. Open Engram settings to reconnect.":
+		"Engram: отключено. Откройте настройки Engram, чтобы подключиться снова.",
+	"Push entire vault": "Отправить всё хранилище",
+	"Engram Sync: pushed {count} files": {
+		one: "Engram Sync: отправлено {count} файл",
+		few: "Engram Sync: отправлено {count} файла",
+		many: "Engram Sync: отправлено {count} файлов",
+		other: "Engram Sync: отправлено {count} файлов",
+	},
+	"Check sync status": "Проверить статус синхронизации",
+	"Engram sync: checking...": "Синхронизация Engram: проверка...",
+	"Engram sync: server does not support reconciliation (update backend)":
+		"Синхронизация с Engram: сервер не поддерживает исправление (обновить бэкенд)",
+	"Engram sync: everything in sync": "Синхронизация с Engram: всё синхронизировано",
+	"{count} missing on server": {
+		one: "{count} отсутствует на сервере",
+		few: "{count} не найдены на сервере",
+		many: "{count} не найдено на сервере",
+		other: "{count} отсутствует на сервере",
+	},
+	"{count} diverged": {
+		one: "{count}. отличается",
+		few: "{count} отличаются",
+		many: "{count} различий",
+		other: "{count} отличается",
+	},
+	"{count} only on server": {
+		one: "{count} только на сервере",
+		few: "{count} только на сервере",
+		many: "{count} только на сервере",
+		other: "{count} только на сервере",
+	},
+	"Engram Sync: {details}": "Синхронизация с Engram: {details}",
+	"Pull all from server (force overwrite)": "Загрузить всё с сервера (принудительная перезапись)",
+	"Engram sync: pulling all from server...":
+		"Синхронизация с Engram: загрузка всего с сервера...",
+	"Engram Sync: pulled {count} files from server": {
+		one: "Engram Sync: получено {count} файл с сервера",
+		few: "Engram Sync: получено {count} файла с сервера",
+		many: "Engram Vault Sync: получено {count} файлов с сервера",
+		other: "Engram Sync: получено {count} файлов с сервера",
+	},
+	"Show sync log": "Показать журнал синхронизации",
+	"Send feedback": "Отправить отзыв",
+	"Semantic search": "Смысловой поиск",
+	"Open search sidebar": "Открыть боковую панель поиска",
+	"Engram search": "Поиск по Engram",
+	"Open sync center": "Открыть Центр синхронизации",
+	"Engram: ready": "Engram: готов",
+	"Engram Sync: pushed {pushed}": "Engram Sync: отправлено {pushed}",
+	"Engram sync: sync failed": "Engram sync: синхронизация не удалась",
+	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
+		"Engram: это хранилище больше не существует на сервере. Выберите или создайте хранилище, чтобы продолжить.",
+	"Engram: recovered plugin settings from a backup after a corrupted save.":
+		"Engram: настройки плагина восстановлены из резервной копии после повреждения.",
+	"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.":
+		"Engram: файл настроек плагина был поврежден и не может быть восстановлен. Возможно, потребуется повторное подключение в настройках.",
+	"Engram: your login expired — open Engram settings to reconnect.":
+		"Engram: ваш сеанс завершен — откройте настройки Engram, чтобы подключиться заново.",
+	"Engram: This vault has been deleted on the server.":
+		"Engram: это хранилище было удалено на сервере.",
+	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
+		"Engram sync: для синхронизации в реальном времени требуется обновление плагина — пожалуйста, обновите плагин Engram Vault Sync.",
+	"Engram Sync: pulled {pulled} (local extras deleted)":
+		"Engram Sync: получено {pulled} (локальные дополнительные файлы удалены)",
+	"Engram Sync: pulled {pulled}": "Engram Sync: получено {pulled}",
+	"Engram Sync: replaced remote with local ({pushed} uploaded)":
+		"Engram Sync: удалённая версия заменена локальной ({pushed} загружено)",
+	"Engram: sync is not set up yet, so nothing in this vault will sync.":
+		"Engram: синхронизация ещё не настроена, поэтому ничего из этого хранилища не будет синхронизироваться.",
+	"Finish sync setup": "Завершить настройку синхронизации",
+	"Engram: sync is paused. This edit was not synced. Choose a sync direction to resume.":
+		"Engram: синхронизация приостановлена. Это изменение не было синхронизировано. Выберите направление синхронизации, чтобы продолжить.",
+	"Open Engram settings": "Открыть настройки Engram",
+	"Engram: sync failed. Open the sync log for details.":
+		"Engram: синхронизация не удалась. Откройте журнал синхронизации для получения подробностей.",
+	"Engram: not connected": "Engram: не подключено",
+	"Engram: signed out": "Engram: выход из системы",
+	"Not connected yet. Click to open settings and link this vault.":
+		"Пока не подключено. Нажмите, чтобы открыть настройки и связать это хранилище.",
+	"Not signed in. Click to open settings and reconnect.":
+		"Не вошли в систему. Нажмите, чтобы открыть настройки и подключиться заново.",
+	"Engram: finish setup": "Engram: завершить настройку",
+	"Engram: sync paused": "Engram: синхронизация приостановлена",
+	"{label} ({count} queued)": {
+		one: "{label} ({count} в очереди)",
+		few: "{label} ({count} в очереди)",
+		many: "{label} ({count} в очереди)",
+		other: "{label} ({count} в очереди)",
+	},
+	"Setup is not finished — nothing will sync until you choose a sync direction. Click to finish.":
+		"Настройка не завершена — синхронизация не будет происходить, пока вы не выберете направление синхронизации. Нажмите, чтобы завершить.",
+	"Sync paused — click to choose a sync direction":
+		"Синхронизация приостановлена — нажмите, чтобы выбрать направление синхронизации",
+	"Engram: offline ({count} queued)": {
+		one: "Engram: в автономном режиме ({count} в очереди)",
+		few: "Engram: в автономном режиме ({count} в очереди)",
+		many: "Engram: в автономном режиме (в очереди {count})",
+		other: "Engram: в автономном режиме ({count} в очереди)",
+	},
+	"Engram: offline": "Engram: в автономном режиме",
+	"Server unreachable — changes will sync when connected":
+		"Сервер недоступен — изменения будут синхронизированы при подключении",
+	"Engram: error": "Engram: ошибка",
+	"Unknown error": "Неизвестная ошибка",
+	"Engram: syncing ({count})": "Engram: синхронизация ({count})",
+	"Engram: syncing": "Engram: синхронизация",
+	"Sync in progress...": "Синхронизация в процессе...",
+	"Engram: pending ({count})": "Engram: в ожидании ({count})",
+	"{count} files queued": {
+		one: "{count} файл в очереди",
+		few: "{count} файла в очереди",
+		many: "{count} файлов в очереди",
+		other: "{count} файлов в очереди",
+	},
+	"Engram: live": "Engram: онлайн",
+	"WebSocket connected — live sync active":
+		"WebSocket подключен — активная синхронизация в реальном времени",
+	"Click to sync": "Нажмите для синхронизации",
+	"Engram: ⚠ {count} sync errors": {
+		one: "Engram: ⚠ {count} ошибка синхронизации",
+		few: "Engram: ⚠ {count} ошибки синхронизации",
+		many: "Engram: ⚠ {count} ошибок синхронизации",
+		other: "Engram: ⚠ {count} ошибок синхронизации",
+	},
+	"Last sync: {when}": "Последняя синхронизация: {when}",
+	"Engram Sync: pulled {count} changes": {
+		one: "Engram Sync: получено {count} изменение",
+		few: "Engram Sync: получено {count} изменения",
+		many: "Engram Sync: получено {count} изменений",
+		other: "Engram Sync: получено {count} обновлений",
+	},
+	'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.':
+		'Engram Sync: состояние синхронизации для "{name}" не удалось прочитать — используется локальная копия.',
+	"Engram Vault Sync {version} is available. {link}.":
+		"Engram Vault Sync {version} доступен. {link}.",
 	"{count} files": {
 		one: "{count} файл",
 		few: "{count} файла",
@@ -123,7 +268,23 @@ const ru: Dict = {
 	"match strength: {pct}%": "степень соответствия: {pct}%",
 	"No source path for this result": "Нет пути к исходному файлу для этого результата",
 	"Note not synced locally": "Заметка не синхронизирована локально",
-	"Engram search": "Поиск по Engram",
+	"Syncing...": "Синхронизация...",
+	"👋 Welcome": "👋 Добро пожаловать",
+	"🔌 Connection": "🔌 Соединение",
+	"🔄 Sync Center": "🔄 Центр синхронизации",
+	"⚙️ Advanced": "⚙️ Дополнительно",
+	"💬 Feedback": "💬 Отзыв",
+	"Engram: settings tab failed to render ({error})":
+		"Engram: произошла ошибка при отображении вкладки настроек ({error})",
+	Disconnected: "Отключено",
+	"Error: {error}": "Ошибка: {error}",
+	unknown: "неизвестно",
+	"Connected — waiting for first sync decision":
+		"Подключено — ожидается первое решение о синхронизации",
+	"Connected — live sync active": "Подключено — активная синхронизация в реальном времени",
+	"Connected — polling": "Подключено — опрос",
+	"Not configured": "Не настроено",
+	"Open sync setup": "Открыть настройку синхронизации",
 	"waiting for a connection": "ожидание подключения",
 	"sync is paused": "синхронизация приостановлена",
 	"syncing now": "синхронизация в процессе",
@@ -159,7 +320,6 @@ const ru: Dict = {
 		other: "{count} в очереди — {reason}",
 	},
 	"Sync...": "Синхронизация...",
-	"Engram Sync: {details}": "Синхронизация с Engram: {details}",
 	Refresh: "Обновить",
 	"Not synced on your plan ({count})": "Не синхронизировано по вашему тарифному плану ({count})",
 	"These files are fine. They just need a paid plan to sync.":
@@ -182,6 +342,7 @@ const ru: Dict = {
 	},
 	Open: "Открыть",
 	Ignore: "Игнорировать",
+	"Ignored ({count})": "Исключено ({count})",
 	"No files ignored. Use the ignore button on a failure row to stop syncing it.":
 		'Никаких файлов не игнорируется. Используйте кнопку "Игнорировать" в строке с ошибкой, чтобы прекратить синхронизацию.',
 	Restore: "Восстановить",
@@ -190,6 +351,7 @@ const ru: Dict = {
 		"Игнорировано {path} — синхронизация будет возобновлена после восстановления из Центра синхронизации.",
 	"Restored {path} — will sync on next push.":
 		"Восстановлено {path} — синхронизация будет выполнена при следующей отправке.",
+	"Activity ({count})": "Активность ({count})",
 	Clear: "Очистить",
 	"No activity yet. Push or pull to see entries here.":
 		"Пока нет активности. Отправьте или получите данные, чтобы увидеть записи здесь.",
@@ -432,7 +594,6 @@ const ru: Dict = {
 	"Run in background": "Работа в фоновом режиме",
 	"Syncing…": "Синхронизация…",
 	"Sync complete": "Синхронизация завершена",
-	"Show sync log": "Показать журнал синхронизации",
 	"Syncing attachments": "Синхронизация вложений",
 	Complete: "Завершено",
 	'{count} failed. Run "{command}" for details.': {
@@ -469,7 +630,6 @@ const ru: Dict = {
 	"Pull all failed: {error}": "Синхронизация всех не удалась: {error}",
 	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
 		"Engram: конфликт синхронизации для {path} — ваши локальные изменения сохранены как {copy}",
-	"Connection failed": "Не удалось подключиться",
 	"Open note": "Открыть заметку",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.": {
 		one: "Engram: Обнаружена проблема с метаданными в {count} заметке. Откройте Центр синхронизации для исправления.",
@@ -485,164 +645,6 @@ const ru: Dict = {
 	"Engram: this plugin is too old to sync. Update it to continue.":
 		"Engram: этот плагин слишком старый для синхронизации. Обновите его, чтобы продолжить.",
 	Update: "Обновить",
-	"Invalid API key": "Неверный ключ API",
-	"Request failed ({status})": "Запрос не удался ({status})",
-	"Update in settings": "Обновить в настройках",
-	"Sync now": "Синхронизировать сейчас",
-	"Engram sync: syncing...": "Синхронизация Engram: синхронизация...",
-	"Engram Sync: pulled {pulled}, pushed {pushed}":
-		"Синхронизация Engram: получено {pulled}, отправлено {pushed}",
-	"Disconnect (clear login)": "Отключить (очистить данные для входа)",
-	"Engram: disconnected. Open Engram settings to reconnect.":
-		"Engram: отключено. Откройте настройки Engram, чтобы подключиться снова.",
-	"Push entire vault": "Отправить всё хранилище",
-	"Engram Sync: pushed {count} files": {
-		one: "Engram Sync: отправлено {count} файл",
-		few: "Engram Sync: отправлено {count} файла",
-		many: "Engram Sync: отправлено {count} файлов",
-		other: "Engram Sync: отправлено {count} файлов",
-	},
-	"Check sync status": "Проверить статус синхронизации",
-	"Engram sync: checking...": "Синхронизация Engram: проверка...",
-	"Engram sync: server does not support reconciliation (update backend)":
-		"Синхронизация с Engram: сервер не поддерживает исправление (обновить бэкенд)",
-	"Engram sync: everything in sync": "Синхронизация с Engram: всё синхронизировано",
-	"{count} missing on server": {
-		one: "{count} отсутствует на сервере",
-		few: "{count} не найдены на сервере",
-		many: "{count} не найдено на сервере",
-		other: "{count} отсутствует на сервере",
-	},
-	"{count} diverged": {
-		one: "{count}. отличается",
-		few: "{count} отличаются",
-		many: "{count} различий",
-		other: "{count} отличается",
-	},
-	"{count} only on server": {
-		one: "{count} только на сервере",
-		few: "{count} только на сервере",
-		many: "{count} только на сервере",
-		other: "{count} только на сервере",
-	},
-	"Pull all from server (force overwrite)": "Загрузить всё с сервера (принудительная перезапись)",
-	"Engram sync: pulling all from server...":
-		"Синхронизация с Engram: загрузка всего с сервера...",
-	"Engram Sync: pulled {count} files from server": {
-		one: "Engram Sync: получено {count} файл с сервера",
-		few: "Engram Sync: получено {count} файла с сервера",
-		many: "Engram Vault Sync: получено {count} файлов с сервера",
-		other: "Engram Sync: получено {count} файлов с сервера",
-	},
-	"Send feedback": "Отправить отзыв",
-	"Semantic search": "Смысловой поиск",
-	"Open search sidebar": "Открыть боковую панель поиска",
-	"Open sync center": "Открыть Центр синхронизации",
-	"Engram: ready": "Engram: готов",
-	"Engram Sync: pushed {pushed}": "Engram Sync: отправлено {pushed}",
-	"Engram sync: sync failed": "Engram sync: синхронизация не удалась",
-	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
-		"Engram: это хранилище больше не существует на сервере. Выберите или создайте хранилище, чтобы продолжить.",
-	"Engram: recovered plugin settings from a backup after a corrupted save.":
-		"Engram: настройки плагина восстановлены из резервной копии после повреждения.",
-	"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.":
-		"Engram: файл настроек плагина был поврежден и не может быть восстановлен. Возможно, потребуется повторное подключение в настройках.",
-	"Engram: your login expired — open Engram settings to reconnect.":
-		"Engram: ваш сеанс завершен — откройте настройки Engram, чтобы подключиться заново.",
-	"Engram: This vault has been deleted on the server.":
-		"Engram: это хранилище было удалено на сервере.",
-	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
-		"Engram sync: для синхронизации в реальном времени требуется обновление плагина — пожалуйста, обновите плагин Engram Vault Sync.",
-	"Engram Sync: pulled {pulled} (local extras deleted)":
-		"Engram Sync: получено {pulled} (локальные дополнительные файлы удалены)",
-	"Engram Sync: pulled {pulled}": "Engram Sync: получено {pulled}",
-	"Engram Sync: replaced remote with local ({pushed} uploaded)":
-		"Engram Sync: удалённая версия заменена локальной ({pushed} загружено)",
-	"Engram: sync is not set up yet, so nothing in this vault will sync.":
-		"Engram: синхронизация ещё не настроена, поэтому ничего из этого хранилища не будет синхронизироваться.",
-	"Finish sync setup": "Завершить настройку синхронизации",
-	"Engram: sync is paused. This edit was not synced. Choose a sync direction to resume.":
-		"Engram: синхронизация приостановлена. Это изменение не было синхронизировано. Выберите направление синхронизации, чтобы продолжить.",
-	"Open Engram settings": "Открыть настройки Engram",
-	"Engram: sync failed. Open the sync log for details.":
-		"Engram: синхронизация не удалась. Откройте журнал синхронизации для получения подробностей.",
-	"Engram: not connected": "Engram: не подключено",
-	"Engram: signed out": "Engram: выход из системы",
-	"Not connected yet. Click to open settings and link this vault.":
-		"Пока не подключено. Нажмите, чтобы открыть настройки и связать это хранилище.",
-	"Not signed in. Click to open settings and reconnect.":
-		"Не вошли в систему. Нажмите, чтобы открыть настройки и подключиться заново.",
-	"Engram: finish setup": "Engram: завершить настройку",
-	"Engram: sync paused": "Engram: синхронизация приостановлена",
-	"{label} ({count} queued)": {
-		one: "{label} ({count} в очереди)",
-		few: "{label} ({count} в очереди)",
-		many: "{label} ({count} в очереди)",
-		other: "{label} ({count} в очереди)",
-	},
-	"Setup is not finished — nothing will sync until you choose a sync direction. Click to finish.":
-		"Настройка не завершена — синхронизация не будет происходить, пока вы не выберете направление синхронизации. Нажмите, чтобы завершить.",
-	"Sync paused — click to choose a sync direction":
-		"Синхронизация приостановлена — нажмите, чтобы выбрать направление синхронизации",
-	"Engram: offline ({count} queued)": {
-		one: "Engram: в автономном режиме ({count} в очереди)",
-		few: "Engram: в автономном режиме ({count} в очереди)",
-		many: "Engram: в автономном режиме (в очереди {count})",
-		other: "Engram: в автономном режиме ({count} в очереди)",
-	},
-	"Engram: offline": "Engram: в автономном режиме",
-	"Server unreachable — changes will sync when connected":
-		"Сервер недоступен — изменения будут синхронизированы при подключении",
-	"Engram: error": "Engram: ошибка",
-	"Unknown error": "Неизвестная ошибка",
-	"Engram: syncing ({count})": "Engram: синхронизация ({count})",
-	"Engram: syncing": "Engram: синхронизация",
-	"Sync in progress...": "Синхронизация в процессе...",
-	"Engram: pending ({count})": "Engram: в ожидании ({count})",
-	"{count} files queued": {
-		one: "{count} файл в очереди",
-		few: "{count} файла в очереди",
-		many: "{count} файлов в очереди",
-		other: "{count} файлов в очереди",
-	},
-	"Engram: live": "Engram: онлайн",
-	"WebSocket connected — live sync active":
-		"WebSocket подключен — активная синхронизация в реальном времени",
-	"Click to sync": "Нажмите для синхронизации",
-	"Engram: ⚠ {count} sync errors": {
-		one: "Engram: ⚠ {count} ошибка синхронизации",
-		few: "Engram: ⚠ {count} ошибки синхронизации",
-		many: "Engram: ⚠ {count} ошибок синхронизации",
-		other: "Engram: ⚠ {count} ошибок синхронизации",
-	},
-	"Last sync: {when}": "Последняя синхронизация: {when}",
-	"Engram Sync: pulled {count} changes": {
-		one: "Engram Sync: получено {count} изменение",
-		few: "Engram Sync: получено {count} изменения",
-		many: "Engram Sync: получено {count} изменений",
-		other: "Engram Sync: получено {count} обновлений",
-	},
-	'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.':
-		'Engram Sync: состояние синхронизации для "{name}" не удалось прочитать — используется локальная копия.',
-	"Engram Vault Sync {version} is available. {link}.":
-		"Engram Vault Sync {version} доступен. {link}.",
-	"Syncing...": "Синхронизация...",
-	"👋 Welcome": "👋 Добро пожаловать",
-	"🔌 Connection": "🔌 Соединение",
-	"🔄 Sync Center": "🔄 Центр синхронизации",
-	"⚙️ Advanced": "⚙️ Дополнительно",
-	"💬 Feedback": "💬 Отзыв",
-	"Engram: settings tab failed to render ({error})":
-		"Engram: произошла ошибка при отображении вкладки настроек ({error})",
-	Disconnected: "Отключено",
-	"Error: {error}": "Ошибка: {error}",
-	unknown: "неизвестно",
-	"Connected — waiting for first sync decision":
-		"Подключено — ожидается первое решение о синхронизации",
-	"Connected — live sync active": "Подключено — активная синхронизация в реальном времени",
-	"Connected — polling": "Подключено — опрос",
-	"Not configured": "Не настроено",
-	"Open sync setup": "Открыть настройку синхронизации",
 	"New here? Watch the setup video": "Вы здесь впервые? Посмотрите видеоинструкцию",
 	"What Engram does, and how to connect your vault, start to finish.":
 		"Что делает Engram и как подключить ваше хранилище, от начала до конца.",

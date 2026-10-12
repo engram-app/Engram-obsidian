@@ -2,6 +2,9 @@ import type { Dict } from "..";
 
 // Português (do Brasil)
 const pt: Dict = {
+	"Invalid API key": "Chave de API inválida",
+	"Request failed ({status})": "Solicitação falhou ({status})",
+	"Connection failed": "Falha na conexão",
 	"Link Obsidian to Engram": "Conectar o Obsidian ao Engram",
 	"Starting...": "Iniciando...",
 	"Failed to start device flow. Check your Engram URL and try again.":
@@ -81,6 +84,137 @@ const pt: Dict = {
 		"Finalize a configuração da sua conta em app.engram.page para começar a sincronizar.",
 	"Limit reached. Upgrade to continue.": "Limite atingido. Faça um upgrade para continuar.",
 	Upgrade: "Fazer upgrade",
+	"Update in settings": "Atualizar nas configurações",
+	"Sync now": "Sincronizar agora",
+	"Engram sync: syncing...": "Sincronização do Engram: sincronizando...",
+	"Engram Sync: pulled {pulled}, pushed {pushed}": "Engram: baixados {pulled}, enviados {pushed}",
+	"Disconnect (clear login)": "Desconectar (limpar login)",
+	"Engram: disconnected. Open Engram settings to reconnect.":
+		"Engram: desconectado. Abra as configurações do Engram para reconectar.",
+	"Push entire vault": "Enviar todo o cofre",
+	"Engram Sync: pushed {count} files": {
+		one: "Engram Sinc: enviou {count} arquivo",
+		many: "Engram Sinc: enviadas {count} notas",
+		other: "Engram Sinc: enviadas {count} arquivos",
+	},
+	"Check sync status": "Verificar o status da sincronização",
+	"Engram sync: checking...": "Sincronização do Engram: verificando...",
+	"Engram sync: server does not support reconciliation (update backend)":
+		"Sincronização com o Engram: o servidor não suporta a reconciliação (atualizar o backend)",
+	"Engram sync: everything in sync": "Sincronização com o Engram: tudo sincronizado",
+	"{count} missing on server": {
+		one: "{count} faltando no servidor",
+		many: "{count} não encontrado no servidor",
+		other: "{count} faltando no servidor",
+	},
+	"{count} diverged": {
+		one: "{count} divergente",
+		many: "{count} divergido",
+		other: "{count} divergentes",
+	},
+	"{count} only on server": {
+		one: "{count} apenas no servidor",
+		many: "{count} apenas no servidor",
+		other: "{count} apenas no servidor",
+	},
+	"Engram Sync: {details}": "Sincronização com o Engram: {details}",
+	"Pull all from server (force overwrite)": "Baixar tudo do servidor (sobrescrever)",
+	"Engram sync: pulling all from server...":
+		"Sincronização com o Engram: baixando tudo do servidor...",
+	"Engram Sync: pulled {count} files from server": {
+		one: "Engram Sinc: baixado {count} arquivo do servidor",
+		many: "Engram Sinc: transferidos {count} arquivos do servidor",
+		other: "Engram Sinc: transferidos {count} arquivos do servidor",
+	},
+	"Show sync log": "Mostrar o registro de sincronização",
+	"Send feedback": "Enviar feedback",
+	"Semantic search": "Busca semântica",
+	"Open search sidebar": "Abrir a barra lateral de busca",
+	"Engram search": "Busca no Engram",
+	"Open sync center": "Abrir a Central de sincronização",
+	"Engram: ready": "Engram: pronto",
+	"Engram Sync: pushed {pushed}": "Engram Sync: enviado {pushed}",
+	"Engram sync: sync failed": "Engram: sincronização falhou",
+	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
+		"Engram: este cofre não existe mais no servidor. Selecione ou crie um cofre para continuar.",
+	"Engram: recovered plugin settings from a backup after a corrupted save.":
+		"Engram: configurações do plugin restauradas de um backup após um salvamento corrompido.",
+	"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.":
+		"Engram: o arquivo de configurações do plugin foi corrompido e não pôde ser recuperado. Você pode precisar reconectar nas configurações.",
+	"Engram: your login expired — open Engram settings to reconnect.":
+		"Engram: sua sessão expirou — abra as configurações do Engram para reconectar.",
+	"Engram: This vault has been deleted on the server.":
+		"Engram: este cofre foi excluído no servidor.",
+	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
+		"Engram: a sincronização em tempo real requer uma atualização do plugin — atualize o plugin de sincronização do Engram.",
+	"Engram Sync: pulled {pulled} (local extras deleted)":
+		"Engram Sync: recebido {pulled} (extras locais excluídos)",
+	"Engram Sync: pulled {pulled}": "Engram Sync: recebido {pulled}",
+	"Engram Sync: replaced remote with local ({pushed} uploaded)":
+		"Engram Sync: substituiu a versão remota pela local ({pushed} enviados)",
+	"Engram: sync is not set up yet, so nothing in this vault will sync.":
+		"Engram: a sincronização ainda não está configurada, então nada neste cofre será sincronizado.",
+	"Finish sync setup": "Finalizar configuração de sincronização",
+	"Engram: sync is paused. This edit was not synced. Choose a sync direction to resume.":
+		"Engram: a sincronização está pausada. Esta edição não foi sincronizada. Escolha uma direção de sincronização para retomar.",
+	"Open Engram settings": "Abrir configurações do Engram",
+	"Engram: sync failed. Open the sync log for details.":
+		"Engram: a sincronização falhou. Abra o registro de sincronização para detalhes.",
+	"Engram: not connected": "Engram: não conectado",
+	"Engram: signed out": "Engram: desconectado",
+	"Not connected yet. Click to open settings and link this vault.":
+		"Ainda não conectado. Clique para abrir as configurações e vincular este cofre.",
+	"Not signed in. Click to open settings and reconnect.":
+		"Não conectado. Clique para abrir as configurações e reconectar.",
+	"Engram: finish setup": "Engram: finalizar configuração",
+	"Engram: sync paused": "Engram: sincronização pausada",
+	"{label} ({count} queued)": {
+		one: "{label} ({count} na fila)",
+		many: "{label} ({count} na fila)",
+		other: "{label} ({count} na fila)",
+	},
+	"Setup is not finished — nothing will sync until you choose a sync direction. Click to finish.":
+		"A configuração não foi finalizada — nada será sincronizado até que você escolha uma direção de sincronização. Clique para finalizar.",
+	"Sync paused — click to choose a sync direction":
+		"Sincronização pausada — clique para escolher a direção da sincronização",
+	"Engram: offline ({count} queued)": {
+		one: "Engram: offline ({count} na fila)",
+		many: "Engram: offline ({count} na fila)",
+		other: "Engram: offline ({count} na fila)",
+	},
+	"Engram: offline": "Engram: sem rede",
+	"Server unreachable — changes will sync when connected":
+		"Servidor inacessível — as alterações serão sincronizadas quando conectado",
+	"Engram: error": "Engram: erro",
+	"Unknown error": "Erro desconhecido",
+	"Engram: syncing ({count})": "Engram: sincronizando ({count})",
+	"Engram: syncing": "Engram: sincronizando",
+	"Sync in progress...": "Sincronização em andamento...",
+	"Engram: pending ({count})": "Engram: pendente ({count})",
+	"{count} files queued": {
+		one: "{count} arquivo na fila",
+		many: "{count} arquivos na fila",
+		other: "{count} arquivos na fila",
+	},
+	"Engram: live": "Engram: online",
+	"WebSocket connected — live sync active":
+		"WebSocket conectado — sincronização em tempo real ativa",
+	"Click to sync": "Clique para sincronizar",
+	"Engram: ⚠ {count} sync errors": {
+		one: "Engram: ⚠ {count} erro de sincronização",
+		many: "Engram: ⚠ {count} erros de sincronização",
+		other: "Engram: ⚠ {count} erros de sincronização",
+	},
+	"Last sync: {when}": "Última sincronização: {when}",
+	"Engram Sync: pulled {count} changes": {
+		one: "Engram Sinc: {count} alteração sincronizada",
+		many: "Engram Sinc: atualizadas {count} versões",
+		other: "Engram Sinc: {count} alterações sincronizadas",
+	},
+	'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.':
+		'Engram Sync: o estado de sincronização de "{name}" não pôde ser lido — usando a cópia no disco.',
+	"Engram Vault Sync {version} is available. {link}.":
+		"Engram Vault Sync {version} disponível. {link}.",
 	"{count} files": {
 		one: "{count} arquivo",
 		many: "{count} arquivos",
@@ -123,7 +257,23 @@ const pt: Dict = {
 	"match strength: {pct}%": "força da correspondência: {pct}%",
 	"No source path for this result": "Nenhum caminho de origem para este resultado",
 	"Note not synced locally": "Nota não sincronizada localmente",
-	"Engram search": "Busca no Engram",
+	"Syncing...": "Sincronizando...",
+	"👋 Welcome": "👋 Bem-vindo",
+	"🔌 Connection": "🔌 Conexão",
+	"🔄 Sync Center": "🔄 Central de sincronização",
+	"⚙️ Advanced": "⚙️ Avançado",
+	"💬 Feedback": "💬 Feedback",
+	"Engram: settings tab failed to render ({error})":
+		"Engram: a guia de configurações falhou ao carregar ({error})",
+	Disconnected: "Desconectado",
+	"Error: {error}": "Erro: {error}",
+	unknown: "desconhecido",
+	"Connected — waiting for first sync decision":
+		"Conectado — aguardando a primeira decisão de sincronização",
+	"Connected — live sync active": "Conectado — sincronização ativa",
+	"Connected — polling": "Conectado — verificando",
+	"Not configured": "Não configurado",
+	"Open sync setup": "Abrir configuração de sincronização",
 	"waiting for a connection": "aguardando conexão",
 	"sync is paused": "sincronização pausada",
 	"syncing now": "sincronizando agora",
@@ -154,7 +304,6 @@ const pt: Dict = {
 		other: "{count} na fila — {reason}",
 	},
 	"Sync...": "Sincronizando...",
-	"Engram Sync: {details}": "Sincronização com o Engram: {details}",
 	Refresh: "Atualizar",
 	"Not synced on your plan ({count})": "Não sincronizado no seu plano ({count})",
 	"These files are fine. They just need a paid plan to sync.":
@@ -176,6 +325,7 @@ const pt: Dict = {
 	},
 	Open: "Abrir",
 	Ignore: "Ignorar",
+	"Ignored ({count})": "Ignorado ({count})",
 	"No files ignored. Use the ignore button on a failure row to stop syncing it.":
 		'Nenhum arquivo ignorado. Use o botão "ignorar" em uma linha de erro para interromper a sincronização.',
 	Restore: "Restaurar",
@@ -184,6 +334,7 @@ const pt: Dict = {
 		"Ignorado {path} — não será sincronizado até ser restaurado na Central de sincronização.",
 	"Restored {path} — will sync on next push.":
 		"Restaurado {path} — será sincronizado no próximo envio.",
+	"Activity ({count})": "Atividade ({count})",
 	Clear: "Limpar",
 	"No activity yet. Push or pull to see entries here.":
 		"Ainda não há atividades. Envie ou receba para ver os registros aqui.",
@@ -402,7 +553,6 @@ const pt: Dict = {
 	"Run in background": "Executar em segundo plano",
 	"Syncing…": "Sincronizando…",
 	"Sync complete": "Sincronização completa",
-	"Show sync log": "Mostrar o registro de sincronização",
 	"Syncing attachments": "Sincronizando anexos",
 	Complete: "Completo",
 	'{count} failed. Run "{command}" for details.': {
@@ -435,7 +585,6 @@ const pt: Dict = {
 	"Pull all failed: {error}": "A sincronização de todos falhou: {error}",
 	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
 		"Engram: conflito de sincronização em {path} — sua edição local foi salva como {copy}",
-	"Connection failed": "Falha na conexão",
 	"Open note": "Abrir nota",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.": {
 		one: "Engram: {count} nota tem problemas no frontmatter. Abra a Central de sincronização para corrigir.",
@@ -450,153 +599,6 @@ const pt: Dict = {
 	"Engram: this plugin is too old to sync. Update it to continue.":
 		"Engram: este plugin está muito antigo para sincronizar. Atualize-o para continuar.",
 	Update: "Atualizar",
-	"Invalid API key": "Chave de API inválida",
-	"Request failed ({status})": "Solicitação falhou ({status})",
-	"Update in settings": "Atualizar nas configurações",
-	"Sync now": "Sincronizar agora",
-	"Engram sync: syncing...": "Sincronização do Engram: sincronizando...",
-	"Engram Sync: pulled {pulled}, pushed {pushed}": "Engram: baixados {pulled}, enviados {pushed}",
-	"Disconnect (clear login)": "Desconectar (limpar login)",
-	"Engram: disconnected. Open Engram settings to reconnect.":
-		"Engram: desconectado. Abra as configurações do Engram para reconectar.",
-	"Push entire vault": "Enviar todo o cofre",
-	"Engram Sync: pushed {count} files": {
-		one: "Engram Sinc: enviou {count} arquivo",
-		many: "Engram Sinc: enviadas {count} notas",
-		other: "Engram Sinc: enviadas {count} arquivos",
-	},
-	"Check sync status": "Verificar o status da sincronização",
-	"Engram sync: checking...": "Sincronização do Engram: verificando...",
-	"Engram sync: server does not support reconciliation (update backend)":
-		"Sincronização com o Engram: o servidor não suporta a reconciliação (atualizar o backend)",
-	"Engram sync: everything in sync": "Sincronização com o Engram: tudo sincronizado",
-	"{count} missing on server": {
-		one: "{count} faltando no servidor",
-		many: "{count} não encontrado no servidor",
-		other: "{count} faltando no servidor",
-	},
-	"{count} diverged": {
-		one: "{count} divergente",
-		many: "{count} divergido",
-		other: "{count} divergentes",
-	},
-	"{count} only on server": {
-		one: "{count} apenas no servidor",
-		many: "{count} apenas no servidor",
-		other: "{count} apenas no servidor",
-	},
-	"Pull all from server (force overwrite)": "Baixar tudo do servidor (sobrescrever)",
-	"Engram sync: pulling all from server...":
-		"Sincronização com o Engram: baixando tudo do servidor...",
-	"Engram Sync: pulled {count} files from server": {
-		one: "Engram Sinc: baixado {count} arquivo do servidor",
-		many: "Engram Sinc: transferidos {count} arquivos do servidor",
-		other: "Engram Sinc: transferidos {count} arquivos do servidor",
-	},
-	"Send feedback": "Enviar feedback",
-	"Semantic search": "Busca semântica",
-	"Open search sidebar": "Abrir a barra lateral de busca",
-	"Open sync center": "Abrir a Central de sincronização",
-	"Engram: ready": "Engram: pronto",
-	"Engram Sync: pushed {pushed}": "Engram Sync: enviado {pushed}",
-	"Engram sync: sync failed": "Engram: sincronização falhou",
-	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
-		"Engram: este cofre não existe mais no servidor. Selecione ou crie um cofre para continuar.",
-	"Engram: recovered plugin settings from a backup after a corrupted save.":
-		"Engram: configurações do plugin restauradas de um backup após um salvamento corrompido.",
-	"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.":
-		"Engram: o arquivo de configurações do plugin foi corrompido e não pôde ser recuperado. Você pode precisar reconectar nas configurações.",
-	"Engram: your login expired — open Engram settings to reconnect.":
-		"Engram: sua sessão expirou — abra as configurações do Engram para reconectar.",
-	"Engram: This vault has been deleted on the server.":
-		"Engram: este cofre foi excluído no servidor.",
-	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
-		"Engram: a sincronização em tempo real requer uma atualização do plugin — atualize o plugin de sincronização do Engram.",
-	"Engram Sync: pulled {pulled} (local extras deleted)":
-		"Engram Sync: recebido {pulled} (extras locais excluídos)",
-	"Engram Sync: pulled {pulled}": "Engram Sync: recebido {pulled}",
-	"Engram Sync: replaced remote with local ({pushed} uploaded)":
-		"Engram Sync: substituiu a versão remota pela local ({pushed} enviados)",
-	"Engram: sync is not set up yet, so nothing in this vault will sync.":
-		"Engram: a sincronização ainda não está configurada, então nada neste cofre será sincronizado.",
-	"Finish sync setup": "Finalizar configuração de sincronização",
-	"Engram: sync is paused. This edit was not synced. Choose a sync direction to resume.":
-		"Engram: a sincronização está pausada. Esta edição não foi sincronizada. Escolha uma direção de sincronização para retomar.",
-	"Open Engram settings": "Abrir configurações do Engram",
-	"Engram: sync failed. Open the sync log for details.":
-		"Engram: a sincronização falhou. Abra o registro de sincronização para detalhes.",
-	"Engram: not connected": "Engram: não conectado",
-	"Engram: signed out": "Engram: desconectado",
-	"Not connected yet. Click to open settings and link this vault.":
-		"Ainda não conectado. Clique para abrir as configurações e vincular este cofre.",
-	"Not signed in. Click to open settings and reconnect.":
-		"Não conectado. Clique para abrir as configurações e reconectar.",
-	"Engram: finish setup": "Engram: finalizar configuração",
-	"Engram: sync paused": "Engram: sincronização pausada",
-	"{label} ({count} queued)": {
-		one: "{label} ({count} na fila)",
-		many: "{label} ({count} na fila)",
-		other: "{label} ({count} na fila)",
-	},
-	"Setup is not finished — nothing will sync until you choose a sync direction. Click to finish.":
-		"A configuração não foi finalizada — nada será sincronizado até que você escolha uma direção de sincronização. Clique para finalizar.",
-	"Sync paused — click to choose a sync direction":
-		"Sincronização pausada — clique para escolher a direção da sincronização",
-	"Engram: offline ({count} queued)": {
-		one: "Engram: offline ({count} na fila)",
-		many: "Engram: offline ({count} na fila)",
-		other: "Engram: offline ({count} na fila)",
-	},
-	"Engram: offline": "Engram: sem rede",
-	"Server unreachable — changes will sync when connected":
-		"Servidor inacessível — as alterações serão sincronizadas quando conectado",
-	"Engram: error": "Engram: erro",
-	"Unknown error": "Erro desconhecido",
-	"Engram: syncing ({count})": "Engram: sincronizando ({count})",
-	"Engram: syncing": "Engram: sincronizando",
-	"Sync in progress...": "Sincronização em andamento...",
-	"Engram: pending ({count})": "Engram: pendente ({count})",
-	"{count} files queued": {
-		one: "{count} arquivo na fila",
-		many: "{count} arquivos na fila",
-		other: "{count} arquivos na fila",
-	},
-	"Engram: live": "Engram: online",
-	"WebSocket connected — live sync active":
-		"WebSocket conectado — sincronização em tempo real ativa",
-	"Click to sync": "Clique para sincronizar",
-	"Engram: ⚠ {count} sync errors": {
-		one: "Engram: ⚠ {count} erro de sincronização",
-		many: "Engram: ⚠ {count} erros de sincronização",
-		other: "Engram: ⚠ {count} erros de sincronização",
-	},
-	"Last sync: {when}": "Última sincronização: {when}",
-	"Engram Sync: pulled {count} changes": {
-		one: "Engram Sinc: {count} alteração sincronizada",
-		many: "Engram Sinc: atualizadas {count} versões",
-		other: "Engram Sinc: {count} alterações sincronizadas",
-	},
-	'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.':
-		'Engram Sync: o estado de sincronização de "{name}" não pôde ser lido — usando a cópia no disco.',
-	"Engram Vault Sync {version} is available. {link}.":
-		"Engram Vault Sync {version} disponível. {link}.",
-	"Syncing...": "Sincronizando...",
-	"👋 Welcome": "👋 Bem-vindo",
-	"🔌 Connection": "🔌 Conexão",
-	"🔄 Sync Center": "🔄 Central de sincronização",
-	"⚙️ Advanced": "⚙️ Avançado",
-	"💬 Feedback": "💬 Feedback",
-	"Engram: settings tab failed to render ({error})":
-		"Engram: a guia de configurações falhou ao carregar ({error})",
-	Disconnected: "Desconectado",
-	"Error: {error}": "Erro: {error}",
-	unknown: "desconhecido",
-	"Connected — waiting for first sync decision":
-		"Conectado — aguardando a primeira decisão de sincronização",
-	"Connected — live sync active": "Conectado — sincronização ativa",
-	"Connected — polling": "Conectado — verificando",
-	"Not configured": "Não configurado",
-	"Open sync setup": "Abrir configuração de sincronização",
 	"New here? Watch the setup video": "Novo por aqui? Assista ao vídeo de configuração",
 	"What Engram does, and how to connect your vault, start to finish.":
 		"O que o Engram faz e como conectar seu cofre, do início ao fim.",

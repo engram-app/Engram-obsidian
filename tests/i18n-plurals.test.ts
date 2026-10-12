@@ -26,6 +26,8 @@ const BARE_COUNTERS = new Set([
 	"Show files ({count}) ▾",
 	"Needs attention ({count})",
 	"Retrying automatically ({count})",
+	"Ignored ({count})",
+	"Activity ({count})",
 ]);
 
 function keysUsedInSource(): Set<string> {
