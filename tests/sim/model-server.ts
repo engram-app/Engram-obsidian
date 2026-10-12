@@ -741,7 +741,6 @@ export class ModelServer {
 
 // crdtTopicKey lives on the note object (attached in mint); declare it so TS is
 // happy about the call in handleCrdtMsg without widening the exported Note type.
-// biome-ignore lint/correctness/noUnusedVariables: declaration merging with Note above
 interface Note {
 	crdtTopicKey(): string;
 }
