@@ -26,6 +26,7 @@ import ja from "./locale/ja";
 import ko from "./locale/ko";
 import ms from "./locale/ms";
 import pt from "./locale/pt";
+import ptBR from "./locale/pt-BR";
 import ru from "./locale/ru";
 import vi from "./locale/vi";
 import zh from "./locale/zh";
@@ -57,6 +58,7 @@ const LOCALES: Record<string, Dict> = {
 	ko,
 	ms,
 	pt,
+	"pt-BR": ptBR,
 	ru,
 	vi,
 	zh,

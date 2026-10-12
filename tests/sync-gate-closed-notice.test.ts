@@ -17,6 +17,7 @@ import it from "../src/i18n/locale/it";
 import ja from "../src/i18n/locale/ja";
 import ko from "../src/i18n/locale/ko";
 import pt from "../src/i18n/locale/pt";
+import ptBR from "../src/i18n/locale/pt-BR";
 import ru from "../src/i18n/locale/ru";
 import zh from "../src/i18n/locale/zh";
 import zhTW from "../src/i18n/locale/zh-TW";
@@ -71,7 +72,7 @@ describe("sync-paused notice", () => {
 		plugin(signedIn).fake.notifySyncGateClosed();
 		const key = __noticeCapture.notices[0].message;
 		expect(key).not.toContain("—");
-		for (const dict of [de, es, fr, it, ja, ko, pt, ru, zh, zhTW]) {
+		for (const dict of [de, es, fr, it, ja, ko, pt, ptBR, ru, zh, zhTW]) {
 			const value = (dict as Record<string, unknown>)[key];
 			expect(typeof value).toBe("string");
 			expect(value as string).not.toContain("—");

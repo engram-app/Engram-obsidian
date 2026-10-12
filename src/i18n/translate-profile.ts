@@ -5,7 +5,7 @@ import { type Profile, type Spec, translator } from "./core/core";
 
 const HAN = /\p{Script=Han}/u;
 
-// Keyed by Obsidian's own locale codes (`getLanguage()`): `pt` is Brazilian, `zh` Simplified.
+// Keyed by Obsidian's own locale codes (`getLanguage()`): `pt` is Portugal, `pt-BR` Brazil, `zh` Simplified.
 // `native` is each catalog file's header comment, in the language itself.
 const SPECS = {
 	de: {
@@ -47,6 +47,12 @@ const SPECS = {
 	},
 	ms: { name: "Malay", native: "Bahasa Melayu", tone: "Address the user as anda." },
 	pt: {
+		name: "European Portuguese",
+		native: "Português (Portugal)",
+		tone: "Write European Portuguese as used in Portugal (ficheiro, guardar, definições, ecrã), never Brazilian forms. Address the user formally in the third person (Escolha, Guarde), never tu.",
+		formal: /\b(?:tu|teu|tua|teus|tuas)\b/iu,
+	},
+	"pt-BR": {
 		name: "Brazilian Portuguese",
 		native: "Português (do Brasil)",
 		tone: "Address the user as você.",
@@ -96,6 +102,7 @@ const PINNED: Partial<Record<Target, readonly string[]>> = {
 	it: ["Dismiss"],
 	ko: ["Back"],
 	pt: ["Dismiss"],
+	"pt-BR": ["Dismiss"],
 };
 // "Engram Vault Sync" (the plugin's name) must survive whole. The "Engram Sync:" notice
 // prefix is not a name: the CJK catalogs translate its "Sync" on purpose.

@@ -15,11 +15,25 @@ import ja from "../src/i18n/locale/ja";
 import ko from "../src/i18n/locale/ko";
 import ms from "../src/i18n/locale/ms";
 import pt from "../src/i18n/locale/pt";
+import ptBR from "../src/i18n/locale/pt-BR";
 import ru from "../src/i18n/locale/ru";
 import zh from "../src/i18n/locale/zh";
 import zhTW from "../src/i18n/locale/zh-TW";
 
-const LOCALES: Record<string, Dict> = { de, es, fr, it, ja, ko, ms, pt, ru, zh, "zh-TW": zhTW };
+const LOCALES: Record<string, Dict> = {
+	de,
+	es,
+	fr,
+	it,
+	ja,
+	ko,
+	ms,
+	pt,
+	"pt-BR": ptBR,
+	ru,
+	zh,
+	"zh-TW": zhTW,
+};
 
 // The agreed term per locale (see src/i18n/locale/README.md). Russian declines it, so its
 // pattern allows the case ending ("в Центре синхронизации").
@@ -31,7 +45,8 @@ const TERM: Record<string, RegExp> = {
 	ja: /同期センター/,
 	ko: /동기화 센터/,
 	ms: /Pusat Sync/,
-	pt: /Central de sincronização/,
+	pt: /Centro de sincronização/,
+	"pt-BR": /Central de sincronização/,
 	ru: /Центр[а-я]* синхронизации/,
 	zh: /同步中心/,
 	"zh-TW": /同步中心/,
