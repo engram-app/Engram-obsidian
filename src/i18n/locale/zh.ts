@@ -375,7 +375,7 @@ const zh: Dict = {
 	"Needs attention ({count})": "需要注意 ({count})",
 	"Clear all": "清空所有",
 	"Nothing needs your attention. 🎉": "无需您关注。🎉",
-	Dismiss: "忽略",
+	Dismiss: "关闭",
 	"Retrying automatically ({count})": "自动重试 ({count})",
 	"Retry all now": "立即重试所有",
 	"Temporary errors. These clear themselves once the server recovers.":

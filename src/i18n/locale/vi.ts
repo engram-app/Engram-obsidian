@@ -405,7 +405,7 @@ const vi: Dict = {
 	"Needs attention ({count})": "Cần xử lý ({count})",
 	"Clear all": "Xóa tất cả",
 	"Nothing needs your attention. 🎉": "Không có gì cần bạn quan tâm. 🎉",
-	Dismiss: "Bỏ qua",
+	Dismiss: "Đóng",
 	"Retrying automatically ({count})": "Thử lại tự động ({count})",
 	"Retry all now": "Thử lại tất cả ngay",
 	"Temporary errors. These clear themselves once the server recovers.":

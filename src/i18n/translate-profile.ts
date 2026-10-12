@@ -94,15 +94,20 @@ const GLOSSARY_KEYS = [
 	"Semantic search",
 	"Reconnect your account to resume syncing.",
 ];
-// Hand overrides, each copied from Obsidian's own translation of the same
-// string, where the model's answer meant something else ("Dismiss" as Cancel).
+// Hand overrides where the model's answer meant something else ("Dismiss" as
+// Cancel, or as the same word as Ignore beside it). Each value is Obsidian's own
+// translation or the "Close" most locales use. A pinned value must still pass the
+// catalog gate, or it sits in state.failed until the stuck limit fails the run.
 const PINNED: Partial<Record<Target, readonly string[]>> = {
 	de: ["Dismiss"],
 	fr: ["Uploading"],
 	it: ["Dismiss"],
 	ko: ["Back"],
+	// Dismiss sits next to Ignore in the Sync Center (tests/i18n-distinct-pairs.test.ts).
 	pt: ["Dismiss"],
 	"pt-BR": ["Dismiss"],
+	vi: ["Dismiss"],
+	zh: ["Dismiss"],
 };
 // "Engram Vault Sync" (the plugin's name) must survive whole. The "Engram Sync:" notice
 // prefix is not a name: the CJK catalogs translate its "Sync" on purpose.
