@@ -539,7 +539,7 @@
 	margin-bottom: 12px;
 }
 
-/* The description is empty by design (the tab bar names all four
+/* The description is empty by design (the tab bar names all five
    destinations), but the element still claims vertical space. */
 .engram-settings-host .setting-item-description:empty {
 	display: none;
@@ -568,14 +568,15 @@
 	font-size: var(--font-ui-small);
 }
 
-/* Phone-width breakpoint — 4 tabs fit comfortably above ~600px */
+/* Phone-width breakpoint — 5 tabs fit comfortably above ~600px */
 @media (max-width: 600px) {
 	.engram-tab-bar {
 		justify-content: center;
 	}
 
+	/* Five tabs: three on the first row, two on the second. */
 	.engram-tab {
-		flex: 1 1 calc(50% - 12px);
+		flex: 1 1 calc(33% - 12px);
 		padding: 8px 10px;
 		text-align: center;
 	}
@@ -1862,3 +1863,101 @@ body.is-mobile .engram-support-buttons > a {
 	width: 100%;
 	padding: 10px;
 }
+
+/* ── Feedback tab ── */
+.engram-feedback-composer {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	overflow: hidden;
+}
+
+.engram-feedback-composer:focus-within {
+	border-color: var(--interactive-accent);
+}
+
+/* Four equal columns, or 2x2 on a phone, so no chip wraps alone. */
+.engram-feedback-chips {
+	display: grid;
+	grid-template-columns: repeat(4, 1fr);
+	gap: var(--size-4-1);
+	padding: var(--size-4-2);
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+/* Obsidian's mobile buttons are tall and wide; chips stay compact. */
+.engram-feedback-chip {
+	height: auto;
+	padding: var(--size-4-1) var(--size-4-3);
+	border-radius: var(--radius-l);
+	font-size: var(--font-ui-small);
+}
+
+@media (max-width: 600px) {
+	.engram-feedback-chips {
+		grid-template-columns: repeat(2, 1fr);
+	}
+}
+
+.engram-feedback-chip[aria-pressed="true"] {
+	background-color: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+
+.engram-feedback-input {
+	display: block;
+	width: 100%;
+	min-height: 12rem;
+	resize: none;
+	border: none;
+	border-radius: 0;
+	background: transparent;
+	box-shadow: none;
+}
+
+.engram-feedback-mood {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--size-4-3);
+	padding: var(--size-4-1) var(--size-4-3);
+	border-top: 1px solid var(--background-modifier-border);
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+}
+
+.engram-feedback-faces {
+	display: flex;
+	flex-shrink: 0;
+	gap: var(--size-2-1);
+}
+
+.engram-feedback-face {
+	width: auto;
+	height: auto;
+	padding: var(--size-2-2);
+	font-size: var(--font-ui-medium);
+	opacity: 0.4;
+	filter: grayscale(1);
+}
+
+.engram-feedback-face[aria-pressed="true"],
+.engram-feedback-face:hover {
+	opacity: 1;
+	filter: none;
+}
+
+.engram-feedback-footer {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--size-4-3);
+	margin-top: var(--size-4-3);
+}
+
+.engram-feedback-consent {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-2);
+	color: var(--text-muted);
+}
+
