@@ -79,6 +79,40 @@ describe("EngramApi", () => {
 		api = new EngramApi(TEST_SERVER, TEST_KEY);
 	});
 
+	describe("sendFeedback", () => {
+		test("POSTs general feedback tagged as the plugin", async () => {
+			mockRequestUrl.mockResolvedValueOnce({ status: 200, json: { status: "ok" } } as any);
+			await api.sendFeedback(
+				{ message: "sync stalls", category: "bug", mood: 2, contactOk: true },
+				"1.33.4",
+			);
+			const call = (mockRequestUrl.mock.calls[0] as any[])[0];
+			expect(call.method).toBe("POST");
+			expect(call.url).toEndWith("/api/feedback");
+			expect(JSON.parse(call.body)).toEqual({
+				kind: "general",
+				message: "sync stalls",
+				category: "bug",
+				mood: 2,
+				contact_ok: true,
+				source: "plugin",
+				app_version: "1.33.4",
+			});
+		});
+
+		test("omits an unpicked category and mood", async () => {
+			mockRequestUrl.mockResolvedValueOnce({ status: 200, json: { status: "ok" } } as any);
+			await api.sendFeedback(
+				{ message: "hi", category: null, mood: null, contactOk: false },
+				"1.0.0",
+			);
+			const body = JSON.parse((mockRequestUrl.mock.calls[0] as any[])[0].body);
+			expect(body).not.toHaveProperty("category");
+			expect(body).not.toHaveProperty("mood");
+			expect(body.contact_ok).toBe(false);
+		});
+	});
+
 	describe("updateConfig", () => {
 		test("strips trailing slashes and appends /api", () => {
 			api.updateConfig("http://example.com///", "key2");

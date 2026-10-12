@@ -28,6 +28,17 @@ import type {
 import { notifyUpgradeRequired } from "./upgrade-required";
 import { wasmCore } from "./wasm-core";
 
+/** Slugs must match the backend's Engram.Feedback; it 422s anything else. */
+export type FeedbackCategory = "bug" | "idea" | "confusing" | "love";
+
+export interface FeedbackFields {
+	message: string;
+	category: FeedbackCategory | null;
+	/** 1 (very unhappy) to 5 (very happy). */
+	mood: number | null;
+	contactOk: boolean;
+}
+
 /** A request exceeded its deadline. requestUrl() cannot be aborted, so the
  *  underlying request is ABANDONED, not cancelled — a late server-side apply
  *  is possible and handled by the normal echo/conflict machinery. Carries no
@@ -258,6 +269,19 @@ export class EngramApi {
 			route: beaconRoute(path),
 		});
 		return true;
+	}
+
+	/** Send free-form feedback from the plugin's Feedback tab. */
+	async sendFeedback(feedback: FeedbackFields, appVersion: string): Promise<void> {
+		await this.request("POST", "/feedback", {
+			kind: "general",
+			message: feedback.message,
+			...(feedback.category ? { category: feedback.category } : {}),
+			...(feedback.mood ? { mood: feedback.mood } : {}),
+			contact_ok: feedback.contactOk,
+			source: "plugin",
+			app_version: appVersion,
+		});
 	}
 
 	private async request(

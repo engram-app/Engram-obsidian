@@ -1046,6 +1046,12 @@ export default class EngramSyncPlugin extends Plugin {
 		);
 
 		this.addCommand({
+			id: "send-feedback",
+			name: t("Send feedback"),
+			callback: () => this.openFeedback(),
+		});
+
+		this.addCommand({
 			id: "search",
 			name: t("Semantic search"),
 			callback: () => {
@@ -3483,6 +3489,15 @@ export default class EngramSyncPlugin extends Plugin {
 
 	untrackPreviewModal(modal: { close(): void; setPlanError(msg: string): void }): void {
 		if (this.openPreviewModal === modal) this.openPreviewModal = null;
+	}
+
+	openFeedback(): void {
+		this.settingTab?.setInitialTab("feedback");
+		const setting = (
+			this.app as unknown as { setting: { open(): void; openTabById(id: string): void } }
+		).setting;
+		setting.open();
+		setting.openTabById(this.manifest.id);
 	}
 
 	openConnectionSettings(): void {
