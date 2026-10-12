@@ -1,7 +1,9 @@
 import { Notice, Setting } from "obsidian";
 import type { FeedbackCategory, FeedbackFields } from "../api";
+import { offersUpgrades } from "../backend-mode";
 import { t } from "../i18n";
 import type { TabContext } from "./types";
+import { ENGRAM_ISSUES_URL } from "./urls";
 
 // Labels are thunks over literal t() calls so the i18n key scanner sees them.
 const CATEGORIES: { slug: FeedbackCategory; emoji: string; label: () => string }[] = [
@@ -14,13 +16,27 @@ const CATEGORIES: { slug: FeedbackCategory; emoji: string; label: () => string }
 // Index + 1 is the mood score the backend stores (1-5).
 const MOOD_FACES = ["😡", "🙁", "😐", "🙂", "😍"];
 
-/** The modal's state, kept free of the DOM so it can be tested. */
+/** The feedback form's state, kept free of the DOM so it can be tested. It
+ *  outlives a single render (see `drafts`), so the draft survives a tab
+ *  switch or a settings redraw. */
 export class FeedbackState {
 	message = "";
 	category: FeedbackCategory | null = null;
 	mood: number | null = null;
 	contactOk = false;
 	view: "editing" | "sending" | "sent" | "error" = "editing";
+	/** Refreshes whatever render is on screen now; a send can outlive the
+	 *  render that started it. */
+	onChange: (() => void) | null = null;
+
+	/** Clear the draft for the next message. The listener stays. */
+	reset(): void {
+		this.message = "";
+		this.category = null;
+		this.mood = null;
+		this.contactOk = false;
+		this.view = "editing";
+	}
 
 	canSubmit(): boolean {
 		return this.view !== "sending" && this.message.trim() !== "";
@@ -52,6 +68,9 @@ export class FeedbackState {
 	}
 }
 
+// One draft per plugin instance, so leaving the tab does not lose the text.
+const drafts = new WeakMap<object, FeedbackState>();
+
 /** Feedback settings tab. A settings page rather than a modal: it scrolls
  *  with the mobile keyboard instead of being covered by it. Built once and
  *  updated in place, so a pressed chip or face keeps keyboard focus. */
@@ -62,6 +81,19 @@ export function renderFeedbackTab(ctx: TabContext): void {
 		text: t("What's working, what's frustrating, what do you wish Engram did?"),
 		cls: "setting-item-description",
 	});
+
+	// Feedback reaches the hosted service's analytics. A self-hosted server
+	// has none, so the form would thank the user for nothing.
+	if (!offersUpgrades(plugin.settings)) {
+		const p = containerEl.createEl("p");
+		p.appendText(t("This server is self-hosted, so feedback is not collected here. "));
+		p.createEl("a", {
+			text: t("Report an issue on GitHub"),
+			href: ENGRAM_ISSUES_URL,
+			attr: { target: "_blank", rel: "noopener" },
+		});
+		return;
+	}
 
 	// Sending needs an account; without one the form could only fail.
 	if (!plugin.hasAuthConfigured()) {
@@ -76,7 +108,8 @@ export function renderFeedbackTab(ctx: TabContext): void {
 		return;
 	}
 
-	const state = new FeedbackState();
+	const state = drafts.get(plugin) ?? new FeedbackState();
+	drafts.set(plugin, state);
 
 	// One composer: kind on top, text in the middle, mood along the bottom
 	// edge, so the form reads as a single message (mirrors the web dialog).
@@ -158,24 +191,33 @@ export function renderFeedbackTab(ctx: TabContext): void {
 	function syncSend(): void {
 		sendBtn.setText(state.view === "sending" ? t("Sending…") : t("Send"));
 		sendBtn.disabled = !state.canSubmit();
+		// Typing during a send would be erased by the reset on success.
+		textarea.disabled = state.view === "sending";
 		errorEl.toggle(state.view === "error");
 	}
 
 	sendBtn.addEventListener("click", () => {
 		const pending = state.submit((f) => plugin.api.sendFeedback(f, plugin.manifest.version));
-		syncSend(); // show "Sending…"
+		state.onChange?.(); // show "Sending…"
 		void pending.then(() => {
 			if (state.view === "sent") {
 				new Notice(t("Thanks, we read every message."));
-				// Fresh form for the next one.
-				Object.assign(state, new FeedbackState());
-				textarea.value = "";
-				box.checked = false;
-				syncChoices();
+				state.reset();
+			} else if (state.view === "error" && !sendBtn.isConnected) {
+				// The user left the tab; the inline error would never be seen.
+				// The draft is kept for a retry.
+				new Notice(t("Couldn't send your feedback, please try again."));
 			}
-			syncSend();
+			state.onChange?.();
 		});
 	});
 
-	syncSend();
+	// This render is now the one on screen.
+	state.onChange = () => {
+		textarea.value = state.message;
+		box.checked = state.contactOk;
+		syncChoices();
+		syncSend();
+	};
+	state.onChange();
 }

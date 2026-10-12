@@ -66,4 +66,22 @@ describe("FeedbackState", () => {
 		state.toggleMood(4);
 		expect(state.mood).toBeNull();
 	});
+
+	test("reset clears the draft but keeps the on-screen listener", () => {
+		const state = new FeedbackState();
+		const listener = () => {};
+		state.onChange = listener;
+		state.message = "hi";
+		state.category = "bug";
+		state.mood = 2;
+		state.contactOk = true;
+		state.view = "sent";
+		state.reset();
+		expect(state.message).toBe("");
+		expect(state.category).toBeNull();
+		expect(state.mood).toBeNull();
+		expect(state.contactOk).toBe(false);
+		expect(state.view).toBe("editing");
+		expect(state.onChange).toBe(listener);
+	});
 });

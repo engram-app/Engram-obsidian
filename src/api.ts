@@ -45,7 +45,6 @@ export interface FeedbackFields {
  *  `status`, so existing callers classify it like connection loss (issue #244:
  *  a wedged half-open request hung forever, pinning `pulling` and stalling
  *  sync in both directions until plugin reload). */
-
 export class RequestTimeoutError extends Error {
 	constructor(ms: number) {
 		super(`Request timed out after ${ms}ms`);
@@ -272,7 +271,7 @@ export class EngramApi {
 		return true;
 	}
 
-	/** Send free-form feedback from the plugin's feedback modal. */
+	/** Send free-form feedback from the plugin's Feedback tab. */
 	async sendFeedback(feedback: FeedbackFields, appVersion: string): Promise<void> {
 		await this.request("POST", "/feedback", {
 			kind: "general",

@@ -1864,7 +1864,7 @@ body.is-mobile .engram-support-buttons > a {
 	padding: 10px;
 }
 
-/* ── Feedback modal ── */
+/* ── Feedback tab ── */
 .engram-feedback-composer {
 	border: 1px solid var(--background-modifier-border);
 	border-radius: var(--radius-m);
