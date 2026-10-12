@@ -12,6 +12,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Glob } from "bun";
 import type { Dict } from "../src/i18n";
+import { usedKeys } from "../src/i18n/keys-scan";
 import de from "../src/i18n/locale/de";
 import enPlurals from "../src/i18n/locale/en-plurals";
 import es from "../src/i18n/locale/es";
@@ -19,45 +20,22 @@ import fr from "../src/i18n/locale/fr";
 import it from "../src/i18n/locale/it";
 import ja from "../src/i18n/locale/ja";
 import ko from "../src/i18n/locale/ko";
+import ms from "../src/i18n/locale/ms";
 import pt from "../src/i18n/locale/pt";
 import ru from "../src/i18n/locale/ru";
+import vi from "../src/i18n/locale/vi";
 import zh from "../src/i18n/locale/zh";
 import zhTW from "../src/i18n/locale/zh-TW";
+import { profile } from "../src/i18n/translate-profile";
 
 const repoRoot = join(import.meta.dir, "..");
 
-/**
- * Every key passed to `t("...")` or `tInto(el, "...")` anywhere in src/,
- * excluding the locale files.
- *
- * `tInto` needs its own pattern: `\bt\(` does not match inside `tInto(`, so a
- * scanner that only knows `t()` reports every `tInto` key as an orphan. That
- * fails the moment someone translates one, and the obvious fix looks like
- * deleting a perfectly good translation.
- *
- * Single quotes need their own pattern too: a key containing a double quote is
- * written `t('... "{name}" ...')`, and a double-quote-only scan calls every one
- * of those an orphan.
- */
+/** Every key used in src/, excluding the locale files (see src/i18n/keys-scan.ts). */
 function keysUsedInSource(): Set<string> {
-	const keys = new Set<string>();
-	const patterns = [
-		/\bt\(\s*"((?:[^"\\]|\\.)+)"/g,
-		/\bt\(\s*'((?:[^'\\]|\\.)+)'/g,
-		/\btInto\([^,]+,\s*"((?:[^"\\]|\\.)+)"/g,
-		/\btInto\([^,]+,\s*'((?:[^'\\]|\\.)+)'/g,
-	];
-	for (const rel of new Glob("src/**/*.ts").scanSync(repoRoot)) {
-		if (rel.includes("i18n/locale")) continue;
-		const src = readFileSync(join(repoRoot, rel), "utf8");
-		for (const pattern of patterns) {
-			for (const m of src.matchAll(pattern)) {
-				const key = m[1];
-				if (key) keys.add(key.replace(/\\(["'])/g, "$1"));
-			}
-		}
-	}
-	return keys;
+	const sources = [...new Glob("src/**/*.ts").scanSync(repoRoot)]
+		.filter((rel) => !rel.includes("i18n/locale"))
+		.map((rel) => readFileSync(join(repoRoot, rel), "utf8"));
+	return usedKeys(sources);
 }
 
 const LOCALES: Array<[string, Dict]> = [
@@ -67,8 +45,10 @@ const LOCALES: Array<[string, Dict]> = [
 	["it", it],
 	["ja", ja],
 	["ko", ko],
+	["ms", ms],
 	["pt", pt],
 	["ru", ru],
+	["vi", vi],
 	["zh", zh],
 	["zh-TW", zhTW],
 	["en-plurals", enPlurals],
@@ -79,6 +59,12 @@ describe("locale keys track the source", () => {
 
 	test("the scan finds the wrapped call sites at all", () => {
 		expect(used.size).toBeGreaterThan(20);
+	});
+
+	// A glossary term that is not a real key is never looked up, so its translation
+	// floats (the backend's "Notes" let ja render "note" two different ways).
+	test("pins only glossary terms that are real keys", () => {
+		expect(profile.glossary.filter((k) => !used.has(k))).toEqual([]);
 	});
 
 	test("the scan sees tInto keys, not just t() keys", () => {

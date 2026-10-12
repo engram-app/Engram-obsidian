@@ -6,8 +6,9 @@
  * structure + emitted text without needing real DOM.
  */
 import { beforeEach, describe, expect, test } from "bun:test";
-import { renderSyncCenter } from "../src/sync-center-render";
+import { formatRelative, renderSyncCenter } from "../src/sync-center-render";
 import type { SyncIssue } from "../src/types";
+import { __setLanguage } from "./__mocks__/obsidian";
 
 interface FakeEl {
 	cls: string;
@@ -626,5 +627,23 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		expect(labels).toContain("Plan usage");
 		expect(labels).not.toContain("Notes searchable");
 		expect(allText(parent)).toContain("unavailable");
+	});
+});
+
+describe("formatRelative speaks the app's language", () => {
+	const ago = (s: number) => formatRelative(Date.now() - s * 1000);
+
+	test("English picks the unit by age", () => {
+		__setLanguage("en");
+		expect(ago(5)).toBe("5 sec. ago");
+		expect(ago(180)).toBe("3 min. ago");
+		expect(ago(7200)).toBe("2 hr. ago");
+		expect(ago(2 * 86400)).toBe("2 days ago");
+	});
+
+	test("another locale gets its own words, not English", () => {
+		__setLanguage("ru");
+		expect(ago(180)).toBe("3 мин. назад");
+		__setLanguage("en");
 	});
 });

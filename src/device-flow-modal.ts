@@ -75,7 +75,7 @@ export class DeviceFlowModal extends Modal {
 		contentEl.addClass("engram-flow-modal");
 		contentEl.empty();
 		contentEl.createEl("h2", { text: t("Link Obsidian to Engram") });
-		const statusEl = contentEl.createEl("p", { text: "Starting..." });
+		const statusEl = contentEl.createEl("p", { text: t("Starting...") });
 
 		void this.beginDeviceFlow(contentEl, statusEl);
 	}

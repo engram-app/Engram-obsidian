@@ -20,8 +20,10 @@ import {
 	pluginSwitchTarget,
 } from "../auth-state";
 import { modeForUrl } from "../backend-mode";
+import { devLog } from "../dev-log";
 import { errMsg } from "../error-util";
 import { t } from "../i18n";
+import { userErrorMessage } from "../i18n/user-error";
 import type { TabContext } from "./types";
 import { ENGRAM_CLOUD_URL, engramWebUrl } from "./urls";
 
@@ -260,7 +262,12 @@ export function renderAuthSection(ctx: TabContext): void {
 						plugin.settings.apiKey = "";
 						await plugin.saveSettings();
 						startDeviceFlow().catch((e) => {
-							new Notice(t("Engram: sign-in failed ({error})", { error: errMsg(e) }));
+							devLog().log("error", `sign-in failed: ${errMsg(e)}`);
+							new Notice(
+								t("Engram: sign-in failed ({error})", {
+									error: userErrorMessage(e),
+								}),
+							);
 						});
 					}),
 			);
@@ -287,7 +294,10 @@ export function renderAuthSection(ctx: TabContext): void {
 				// vanishes into the button handler with nothing on screen.
 				.onClick(() =>
 					startDeviceFlow().catch((e) => {
-						new Notice(t("Engram: sign-in failed ({error})", { error: errMsg(e) }));
+						devLog().log("error", `sign-in failed: ${errMsg(e)}`);
+						new Notice(
+							t("Engram: sign-in failed ({error})", { error: userErrorMessage(e) }),
+						);
 					}),
 				),
 		);
@@ -480,7 +490,7 @@ function renderLockedVaultRow(
 		cls: "engram-vault-current-name",
 		text: displayName,
 	});
-	nameEl.setAttribute("title", `Vault id: ${vaultId}`);
+	nameEl.setAttribute("title", t("Vault ID: {id}", { id: vaultId }));
 
 	setting.addButton((btn) =>
 		btn.setButtonText(t("Change")).onClick(() => {

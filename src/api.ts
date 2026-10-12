@@ -6,7 +6,7 @@
 import { type RequestUrlResponse, requestUrl } from "obsidian";
 import type { AuthProvider } from "./auth";
 import { interpretHealthProbe, type PreflightResult } from "./auth-state";
-import { isHttpStatus, statusOf } from "./error-util";
+import { isHttpStatus, NotAuthenticatedError, statusOf } from "./error-util";
 import { t } from "./i18n";
 import { LimitExceededError } from "./limit-error";
 import { BeaconBuffer } from "./observability/beacon";
@@ -182,7 +182,7 @@ export class EngramApi {
 	private async getAuthToken(): Promise<string> {
 		const token = this.authProvider ? await this.authProvider.getToken() : this.apiKey;
 		if (!token) {
-			throw new Error("Not authenticated: no API key or access token");
+			throw new NotAuthenticatedError("Not authenticated: no API key or access token");
 		}
 		return token;
 	}
@@ -577,7 +577,7 @@ export class EngramApi {
 			// wrong vault) instead of a blanket "Connection failed" — the status
 			// is the difference between "server down" and "auth/vault mismatch".
 			if (typeof status === "number") {
-				return { ok: false, error: `HTTP ${status} from /folders` };
+				return { ok: false, error: t("Request failed ({status})", { status }) };
 			}
 			return { ok: false, error: t("Connection failed") };
 		}

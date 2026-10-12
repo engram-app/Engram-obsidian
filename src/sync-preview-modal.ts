@@ -1,6 +1,8 @@
 import { type App, Modal, setIcon } from "obsidian";
-import { statusOf } from "./error-util";
+import { devLog } from "./dev-log";
+import { errMsg, statusOf } from "./error-util";
 import { t, tInto } from "./i18n";
+import { userErrorMessage } from "./i18n/user-error";
 import { toastFor } from "./limit-copy";
 import { LimitExceededError } from "./limit-error";
 import { isTextAttachment } from "./mime";
@@ -14,6 +16,10 @@ import {
 	simplifiedFirstSync,
 } from "./sync-plan-format";
 import type { SyncChoice, SyncPlan, SyncPreviewContext, VaultInfo } from "./types";
+
+/** The word a destructive sync makes the user type. Deliberately not
+ *  translated: it is an exact token checked below, not prose. */
+const CONFIRM_KEYWORD = "delete";
 
 /** Pure state machine for the SyncPreviewModal. Owns view + input state and
  *  the resolve callback. Tested directly; the Modal class is a thin DOM
@@ -73,7 +79,7 @@ export class SyncPreviewState {
 	}
 
 	canSubmitConfirm(): boolean {
-		return this.view === "confirm" && this.confirmInput === "delete";
+		return this.view === "confirm" && this.confirmInput === CONFIRM_KEYWORD;
 	}
 
 	submitConfirm(): void {
@@ -877,16 +883,20 @@ export class SyncPreviewModal extends Modal {
 		);
 		if (conflicts > 0) {
 			const conflictRow = parent.createDiv({ cls: "engram-sync-preview-conflicts" });
-			conflictRow.createSpan({
-				cls: "engram-sync-preview-conflicts-value",
-				text: `⚡ ${conflicts}`,
-			});
-			conflictRow.createSpan({
-				cls: "engram-sync-preview-conflicts-label",
-				// The count lives in the sibling -value span above; this label is
-				// word-only, so it takes the plural category WITHOUT re-printing it.
-				text: t(" conflicts need resolution", { count: conflicts }),
-			});
+			// {count} is a slot: the styled -value span prints it, and the count
+			// still reaches t() to pick the plural form.
+			tInto(
+				conflictRow,
+				"{count} conflicts need resolution",
+				"count",
+				(row) => {
+					row.createSpan({
+						cls: "engram-sync-preview-conflicts-value",
+						text: `⚡ ${conflicts}`,
+					});
+				},
+				{ vars: { count: conflicts }, textCls: "engram-sync-preview-conflicts-label" },
+			);
 		}
 	}
 
@@ -977,7 +987,7 @@ export class SyncPreviewModal extends Modal {
 		});
 		const typeLine = contentEl.createEl("p");
 		tInto(typeLine, "Type {keyword} to confirm:", "keyword", (line) => {
-			line.createSpan({ text: "delete", cls: "engram-sync-preview-confirm-keyword" });
+			line.createSpan({ text: CONFIRM_KEYWORD, cls: "engram-sync-preview-confirm-keyword" });
 		});
 
 		const input = contentEl.createEl("input", {
@@ -1138,7 +1148,8 @@ export class SyncPreviewModal extends Modal {
 			const vaults = await this.opts.listVaults();
 			this.state.onVaultsLoaded(vaults);
 		} catch (e: unknown) {
-			const msg = e instanceof Error ? e.message : t("Could not load vaults");
+			devLog().log("error", `listVaults failed: ${errMsg(e)}`);
+			const msg = t("Could not load vaults: {error}", { error: userErrorMessage(e) });
 			this.state.onVaultsError(msg);
 		}
 		this.render();
@@ -1238,7 +1249,8 @@ export class SyncPreviewModal extends Modal {
 			this.remoteVaultName = v.name;
 			this.state.exitVaultPicker();
 		} catch (e: unknown) {
-			const msg = e instanceof Error ? e.message : t("Failed to switch vault");
+			devLog().log("error", `vault switch failed: ${errMsg(e)}`);
+			const msg = t("Failed to switch vault: {error}", { error: userErrorMessage(e) });
 			this.state.onVaultsError(msg);
 		}
 		this.render();

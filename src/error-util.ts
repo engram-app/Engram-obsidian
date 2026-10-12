@@ -292,3 +292,13 @@ export function statusOf(e: unknown): number | undefined {
 export function isHttpStatus(e: unknown, status: number): boolean {
 	return statusOf(e) === status;
 }
+
+/** No credential to send: the vault is unlinked or its refresh token was
+ *  cleared. Its own class so the UI can tell "sign in again" apart from a
+ *  generic failure without matching on the English message. */
+export class NotAuthenticatedError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "NotAuthenticatedError";
+	}
+}
