@@ -172,7 +172,7 @@ const ko: Dict = {
 		'Engram 동기화: "{name}"의 동기화 상태를 읽을 수 없음 - 디스크 복사본 사용.',
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version}이 사용 가능합니다. {link}.",
-	"{count} files · ": "{count}개의 파일 · ",
+	"{count} files": "{count} 개의 파일",
 	"Notes searchable": "검색 가능한 노트",
 	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
 		"이 이후의 노트는 정상적으로 동기화되고 열립니다. 단, 검색 인덱스에 포함되지 않습니다. 인덱스는 가장 오래된 노트를 유지하므로, 가장 최신의 노트는 인덱스에서 제외될 수 있습니다.",
@@ -543,6 +543,7 @@ const ko: Dict = {
 	"Pick a vault (previous: '{name}' not found)": "보관함 선택 (이전: '{name}'을 찾을 수 없음)",
 	"Pick a vault (previous: id {id} not found)": "보관함 선택 (이전: ID {id}을 찾을 수 없음)",
 	"Pick a vault": "보관함 선택",
+	"Vault ID: {id}": "보관함 ID: {id}",
 	Change: "변경",
 	"Support development": "개발 지원",
 	"If this plugin saves you time, consider supporting development.":

@@ -215,11 +215,7 @@ const it: Dict = {
 		'Engram Sync: lo stato di sincronizzazione di "{name}" non è leggibile, si sta usando la copia locale.',
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} disponibile. {link}.",
-	"{count} files · ": {
-		one: "{count} file · ",
-		many: "{count} file · ",
-		other: "{count} file · ",
-	},
+	"{count} files": { one: "{count} file", many: "{count} file", other: "{count} file" },
 	"Notes searchable": "Note indicizzabili",
 	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
 		"Le note successive a questa vengono comunque sincronizzate e aperte normalmente, ma non sono nell'indice di ricerca. L'indice conserva le tue note più vecchie, quindi sono quelle più recenti che non vengono incluse.",
@@ -716,6 +712,7 @@ const it: Dict = {
 	"Pick a vault (previous: id {id} not found)":
 		"Scegli un archivio (precedente: id {id} non trovato)",
 	"Pick a vault": "Scegli un archivio",
+	"Vault ID: {id}": "ID dell'archivio: {id}",
 	Change: "Cambia",
 	"Support development": "Supporta lo sviluppo",
 	"If this plugin saves you time, consider supporting development.":

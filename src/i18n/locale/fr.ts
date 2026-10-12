@@ -217,10 +217,10 @@ const fr: Dict = {
 		"Engram Sync : l'état de synchronisation de \"{name}\" n'a pas pu être lu — copie utilisée depuis le disque.",
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} est disponible. {link}.",
-	"{count} files · ": {
-		one: "{count} fichier · ",
-		many: "{count} fichiers · ",
-		other: "{count} fichiers · ",
+	"{count} files": {
+		one: "{count} fichier",
+		many: "{count} fichiers",
+		other: "{count} fichiers",
 	},
 	"Notes searchable": "Notes indexées",
 	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
@@ -711,6 +711,7 @@ const fr: Dict = {
 	"Pick a vault (previous: id {id} not found)":
 		"Choisis un coffre (précédent : id {id} introuvable)",
 	"Pick a vault": "Choisis un coffre",
+	"Vault ID: {id}": "ID du coffre : {id}",
 	Change: "Modifier",
 	"Support development": "Soutenir le développement",
 	"If this plugin saves you time, consider supporting development.":

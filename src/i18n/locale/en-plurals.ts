@@ -42,8 +42,8 @@ const enPlurals: Dict = {
 		one: "{count} attempt",
 	},
 	// UI strings (third pass)
-	"{count} files · ": {
-		one: "{count} file · ",
+	"{count} files": {
+		one: "{count} file",
 	},
 	"{count} need attention": {
 		one: "{count} needs attention",

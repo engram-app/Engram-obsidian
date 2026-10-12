@@ -76,10 +76,10 @@ describe("{count} as a styled slot", () => {
 describe("t() formats {count} for the locale", () => {
 	test("thousands separators follow the app language", () => {
 		__setLanguage("en");
-		expect(t("{count} files · ", { count: 1234 })).toBe("1,234 files · ");
-		expect(t("{count} files · ", { count: 1 })).toBe("1 file · ");
+		expect(t("{count} files", { count: 1234 })).toBe("1,234 files");
+		expect(t("{count} files", { count: 1 })).toBe("1 file");
 		__setLanguage("de");
-		expect(t("{count} files · ", { count: 1234 })).toContain("1.234");
+		expect(t("{count} files", { count: 1234 })).toContain("1.234");
 		__setLanguage("en");
 	});
 });

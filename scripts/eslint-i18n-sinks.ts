@@ -37,6 +37,9 @@ const WRAPPERS = [
 	'BinaryExpression[operator="+"] > BinaryExpression[operator="+"] > ',
 ];
 
+/** Attributes a user reads (tooltip, screen reader, placeholder, alt text). */
+const PROSE_ATTRS = "title|aria-label|aria-description|placeholder|alt";
+
 const METHOD_SINKS =
 	"setName|setDesc|setButtonText|setTooltip|setPlaceholder|setTitle|setText|appendText|setMessage";
 
@@ -46,6 +49,8 @@ const SINKS = [
 	`CallExpression[callee.property.name=/^(${METHOD_SINKS})$/] > `,
 	`CallExpression:matches([callee.name=/^create(El|Div|Span)$/], [callee.property.name=/^create(El|Div|Span)$/]) > ObjectExpression > Property[key.name="text"] > `,
 	'CallExpression[callee.property.name="addCommand"] > ObjectExpression > Property[key.name="name"] > ',
+	// attr: { title, "aria-label", placeholder, alt } on createEl/createDiv/createSpan.
+	`Property[key.name="attr"] > ObjectExpression > Property:matches([key.name=/^(${PROSE_ATTRS})$/], [key.value=/^(${PROSE_ATTRS})$/]) > `,
 ];
 
 const LITERAL_MESSAGE =
@@ -64,6 +69,11 @@ export const I18N_RESTRICTED_SYNTAX: Array<{ selector: string; message: string }
 	...SINKS.map((sink) => ({
 		selector: `${sink.replace(/ > $/, " ")}${ERROR_TEXT}`,
 		message: ERROR_MESSAGE,
+	})),
+	// setAttribute/setAttr(name, value): the value, when the attribute is one a user reads.
+	...[LITERAL, TEMPLATE].map((value) => ({
+		selector: `CallExpression[callee.property.name=/^(setAttribute|setAttr)$/][arguments.0.value=/^(${PROSE_ATTRS})$/] > ${value}:nth-child(2)`,
+		message: LITERAL_MESSAGE,
 	})),
 	// addRibbonIcon(icon, title, cb): only the title is prose; the icon is an id.
 	{

@@ -136,7 +136,7 @@ export function planUsageRows(
 	const attachPrefix =
 		opts.localAttachmentCount === undefined
 			? undefined
-			: t("{count} files · ", { count: opts.localAttachmentCount });
+			: `${t("{count} files", { count: opts.localAttachmentCount })} · `;
 	const rows = [
 		// Hidden on paid: with no index cap, "searchable" equals "stored", and the
 		// row below already says that. Shown on Free because it is the limit that

@@ -174,7 +174,7 @@ const ms: Dict = {
 		'Engram Sync: keadaan sync untuk "{name}" tidak dapat dibaca — menggunakan salinan dalam cakera.',
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} tersedia. {link}.",
-	"{count} files · ": "{count} fail ",
+	"{count} files": "{count} fail",
 	"Notes searchable": "Nota boleh dicari",
 	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
 		"Nota selepas ini masih disink dan dibuka seperti biasa, tetapi tidak berada dalam indeks carian. Indeks menyimpan nota anda yang paling lama, jadi nota anda yang paling baru tidak disertakan.",
@@ -554,6 +554,7 @@ const ms: Dict = {
 	"Pick a vault (previous: id {id} not found)":
 		"Pilih peti nota (sebelum ini: ID {id} tidak ditemui)",
 	"Pick a vault": "Pilih peti nota",
+	"Vault ID: {id}": "ID Peti Nota: {id}",
 	Change: "Tukar",
 	"Support development": "Sokong pembangunan",
 	"If this plugin saves you time, consider supporting development.":

@@ -175,7 +175,7 @@ const ja: Dict = {
 		'Engram 同期: "{name}" の同期状態が読み込めませんでした。ディスク上のコピーを使用しています。',
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} が利用可能です。{link}.",
-	"{count} files · ": "{count}ファイル",
+	"{count} files": "{count} 個のファイル",
 	"Notes searchable": "検索可能なノート",
 	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
 		"ここより後のノートは通常通り同期され、開くことができます。ただし、検索インデックスには含まれません。インデックスには古いノートが保持されるため、新しいノートが対象外になることがあります。",
@@ -550,6 +550,7 @@ const ja: Dict = {
 	"Pick a vault (previous: '{name}' not found)": "保管庫を選択 (以前: '{name}' が見つかりません)",
 	"Pick a vault (previous: id {id} not found)": "保管庫を選択 (以前: ID {id} が見つかりません)",
 	"Pick a vault": "保管庫を選択",
+	"Vault ID: {id}": "保管庫ID: {id}",
 	Change: "変更",
 	"Support development": "開発を支援",
 	"If this plugin saves you time, consider supporting development.":

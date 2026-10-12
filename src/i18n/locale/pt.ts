@@ -214,10 +214,10 @@ const pt: Dict = {
 		'Engram Sync: o estado de sincronização de "{name}" não pôde ser lido — usando a cópia no disco.',
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} disponível. {link}.",
-	"{count} files · ": {
-		one: "{count} arquivo · ",
-		many: "{count} arquivos ",
-		other: "{count} arquivos ",
+	"{count} files": {
+		one: "{count} arquivo",
+		many: "{count} arquivos",
+		other: "{count} arquivos",
 	},
 	"Notes searchable": "Notas pesquisáveis",
 	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
@@ -372,7 +372,11 @@ const pt: Dict = {
 		other: "Sincroniza notas gratuitamente, mas apenas {count} anexos serão sincronizados.",
 	},
 	"Uploads {up}, downloads {down}.": "Envio {up}, download {down}.",
-	"Uploads {count}.": "Envio {count}.",
+	"Uploads {count}.": {
+		one: "Envios {count}.",
+		many: "Uploads: {count}.",
+		other: "Uploads {count}.",
+	},
 	"Downloads {count}.": {
 		one: "Downloads {count}.",
 		many: "Downloads {count}.",
@@ -711,6 +715,7 @@ const pt: Dict = {
 	"Pick a vault (previous: id {id} not found)":
 		"Escolha um cofre (anterior: id {id} não encontrado)",
 	"Pick a vault": "Escolha um cofre",
+	"Vault ID: {id}": "ID do Cofre: {id}",
 	Change: "Alterar",
 	"Support development": "Apoie o desenvolvimento",
 	"If this plugin saves you time, consider supporting development.":

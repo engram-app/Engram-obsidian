@@ -490,7 +490,7 @@ function renderLockedVaultRow(
 		cls: "engram-vault-current-name",
 		text: displayName,
 	});
-	nameEl.setAttribute("title", `Vault id: ${vaultId}`);
+	nameEl.setAttribute("title", t("Vault ID: {id}", { id: vaultId }));
 
 	setting.addButton((btn) =>
 		btn.setButtonText(t("Change")).onClick(() => {

@@ -48,6 +48,10 @@ describe("raw English literals in UI sinks are rejected", () => {
 		`el.setText(count + " files");`,
 		`el.setText(a + " of " + b);`,
 		`el.setText(\`\${n}s ago\`);`,
+		`el.setAttribute("title", \`Vault id: \${id}\`);`,
+		`el.setAttr("aria-label", "Close dialog");`,
+		`el.createDiv({ attr: { "aria-label": "Close dialog" } });`,
+		`el.createEl("input", { attr: { placeholder: "Search notes" } });`,
 	];
 	for (const code of bad) {
 		test(code, () => expect(violations(code)).toBeGreaterThan(0));

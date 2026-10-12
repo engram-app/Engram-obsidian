@@ -224,11 +224,11 @@ const ru: Dict = {
 		'Engram Sync: состояние синхронизации для "{name}" не удалось прочитать — используется локальная копия.',
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} доступен. {link}.",
-	"{count} files · ": {
-		one: "{count} файл ",
-		few: "{count} файла · ",
-		many: "{count} файлов · ",
-		other: "{count} файла · ",
+	"{count} files": {
+		one: "{count} файл",
+		few: "{count} файла",
+		many: "{count} файлов",
+		other: "{count} файла",
 	},
 	"Notes searchable": "Заметки доступны для поиска",
 	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
@@ -760,6 +760,7 @@ const ru: Dict = {
 	"Pick a vault (previous: id {id} not found)":
 		"Выберите хранилище (предыдущее: id {id} не найдено)",
 	"Pick a vault": "Выберите хранилище",
+	"Vault ID: {id}": "ID хранилища: {id}",
 	Change: "Изменить",
 	"Support development": "Поддержка разработки",
 	"If this plugin saves you time, consider supporting development.":

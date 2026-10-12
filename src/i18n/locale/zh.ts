@@ -158,7 +158,7 @@ const zh: Dict = {
 		'Engram 同步：无法读取 "{name}" 的同步状态，正在使用本地副本。',
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} 可用。{link}.",
-	"{count} files · ": "{count} 个文件 ·",
+	"{count} files": "{count} 个文件",
 	"Notes searchable": "笔记可搜索",
 	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
 		"此后的笔记仍然可以正常同步和打开，只是不在搜索索引中。索引保留您最旧的笔记，因此超出范围的是您最新的笔记。",
@@ -515,6 +515,7 @@ const zh: Dict = {
 	"Pick a vault (previous: '{name}' not found)": "选择知识库 (之前: 未找到 '{name}')",
 	"Pick a vault (previous: id {id} not found)": "选择知识库 (之前: 未找到 id {id})",
 	"Pick a vault": "选择知识库",
+	"Vault ID: {id}": "知识库ID: {id}",
 	Change: "更改",
 	"Support development": "赞助开发",
 	"If this plugin saves you time, consider supporting development.":

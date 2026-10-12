@@ -174,7 +174,7 @@ const vi: Dict = {
 		'Engram Sync: trạng thái đồng bộ hóa của "{name}" không thể đọc được — đang sử dụng bản sao trên ổ đĩa.',
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} khả dụng. {link}.",
-	"{count} files · ": "{count} tệp ",
+	"{count} files": "{count} tệp",
 	"Notes searchable": "Ghi chú có thể tìm kiếm",
 	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
 		"Các ghi chú sau đây vẫn được đồng bộ hóa và mở bình thường, chúng chỉ không nằm trong chỉ mục tìm kiếm. Chỉ mục lưu trữ các ghi chú cũ nhất của bạn, vì vậy các ghi chú mới nhất của bạn sẽ không nằm trong đó.",
@@ -553,6 +553,7 @@ const vi: Dict = {
 	"Pick a vault (previous: id {id} not found)":
 		"Chọn một kho lưu trữ (trước đó: id {id} không tìm thấy)",
 	"Pick a vault": "Chọn một kho lưu trữ",
+	"Vault ID: {id}": "ID kho lưu trữ: {id}",
 	Change: "Thay đổi",
 	"Support development": "Hỗ trợ phát triển",
 	"If this plugin saves you time, consider supporting development.":
