@@ -1862,3 +1862,52 @@ body.is-mobile .engram-support-buttons > a {
 	width: 100%;
 	padding: 10px;
 }
+
+/* ── Feedback modal ── */
+.engram-feedback-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--size-4-2);
+	margin-bottom: var(--size-4-3);
+}
+
+.engram-feedback-chip {
+	border-radius: var(--radius-l);
+}
+
+.engram-feedback-chip[aria-pressed="true"] {
+	background-color: var(--interactive-accent);
+	color: var(--text-on-accent);
+}
+
+.engram-feedback-input {
+	width: 100%;
+	resize: vertical;
+}
+
+.engram-feedback-mood {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--size-4-3);
+	margin: var(--size-4-3) 0;
+	color: var(--text-muted);
+}
+
+.engram-feedback-face {
+	font-size: var(--font-ui-large);
+	opacity: 0.5;
+	filter: grayscale(1);
+}
+
+.engram-feedback-face[aria-pressed="true"],
+.engram-feedback-face:hover {
+	opacity: 1;
+	filter: none;
+}
+
+.engram-feedback-consent {
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-2);
+}

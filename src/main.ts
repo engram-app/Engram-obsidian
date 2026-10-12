@@ -55,6 +55,7 @@ import { sha256Hex } from "./content-hash";
 import { registerDiagnostics } from "./diagnostics";
 import { errMsg, isHttpStatus } from "./error-util";
 import { ExplicitFolders } from "./explicit-folders";
+import { FeedbackModal } from "./feedback-modal";
 import { t, tInto } from "./i18n";
 import { isPlanJoinReason } from "./limit-copy";
 import { LimitExceededError } from "./limit-error";
@@ -1044,6 +1045,12 @@ export default class EngramSyncPlugin extends Plugin {
 					() => this.syncEngine?.getPlanState()?.indexedNotesCap ?? null,
 				),
 		);
+
+		this.addCommand({
+			id: "send-feedback",
+			name: t("Send feedback"),
+			callback: () => this.openFeedback(),
+		});
 
 		this.addCommand({
 			id: "search",
@@ -3483,6 +3490,10 @@ export default class EngramSyncPlugin extends Plugin {
 
 	untrackPreviewModal(modal: { close(): void; setPlanError(msg: string): void }): void {
 		if (this.openPreviewModal === modal) this.openPreviewModal = null;
+	}
+
+	openFeedback(): void {
+		new FeedbackModal(this.app, this.api, this.manifest.version).open();
 	}
 
 	openConnectionSettings(): void {

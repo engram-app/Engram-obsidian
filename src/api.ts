@@ -34,6 +34,17 @@ import { wasmCore } from "./wasm-core";
  *  `status`, so existing callers classify it like connection loss (issue #244:
  *  a wedged half-open request hung forever, pinning `pulling` and stalling
  *  sync in both directions until plugin reload). */
+
+/** Slugs must match the backend's Engram.Feedback; it 422s anything else. */
+export type FeedbackCategory = "bug" | "idea" | "confusing" | "love";
+
+export interface FeedbackFields {
+	message: string;
+	category: FeedbackCategory | null;
+	/** 1 (very unhappy) to 5 (very happy). */
+	mood: number | null;
+	contactOk: boolean;
+}
 export class RequestTimeoutError extends Error {
 	constructor(ms: number) {
 		super(`Request timed out after ${ms}ms`);
@@ -258,6 +269,19 @@ export class EngramApi {
 			route: beaconRoute(path),
 		});
 		return true;
+	}
+
+	/** Send free-form feedback from the plugin's feedback modal. */
+	async sendFeedback(feedback: FeedbackFields, appVersion: string): Promise<void> {
+		await this.request("POST", "/feedback", {
+			kind: "general",
+			message: feedback.message,
+			...(feedback.category ? { category: feedback.category } : {}),
+			...(feedback.mood ? { mood: feedback.mood } : {}),
+			contact_ok: feedback.contactOk,
+			source: "plugin",
+			app_version: appVersion,
+		});
 	}
 
 	private async request(
