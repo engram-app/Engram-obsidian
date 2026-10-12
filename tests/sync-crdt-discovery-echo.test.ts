@@ -2,15 +2,16 @@
  * #578: a CRDT discovery flush must never be re-read as a local edit.
  *
  * Shape (backend e2e test_49 rapid REST edits, "Version 35 of 5" on every
- * device): the note's local Y.Doc already holds server edits 1..2, but no file
- * exists yet. The discovery leg of applyChange writes the REST row's body
- * (edit 3) through flushFromCrdt. While that create is in flight the fan-out of
- * edit 3 lands; its drift capture reads the just-written disk against a
- * baseline that is only recorded AFTER the write, sees "drift", and diffs edit 3
- * into the doc as a CLIENT-authored copy. The server's own edit 3 then merges
- * next to it and later edits delete only the server's copy.
+ * device): the note's Y.Doc already holds server edits 1..2 (fan-outs applied
+ * while the id was unmapped) and a fan-out left a head-only `hash: 0` row. The
+ * discovery leg then wrote the REST row's body. When a fan-out's flush created
+ * the file first, `vault.create` rejects "already exists" and discovery falls
+ * back to `vault.modify`, which caches the new text before it resolves — and
+ * before `flushFromCrdt` records the baseline. A fan-out landing in that window
+ * captured the engine's own write as disk drift and diffed it into the doc as
+ * a CLIENT-authored edit.
  *
- * Real ProviderRegistry so the corruption is a genuine Yjs merge, not mocked.
+ * Real ProviderRegistry so a corruption is a genuine Yjs merge, not mocked.
  */
 import { expect, mock, spyOn, test } from "bun:test";
 import "fake-indexeddb/auto";
@@ -46,7 +47,13 @@ function serverEdits(): Uint8Array[] {
 async function scenario(dbPrefix: string) {
 	const disk = new Map<string, string>();
 	const map = new NoteIdMap();
-	const box = { e: null as unknown as SyncEngine, onCreate: async () => {} };
+	const hooks = {
+		e: null as unknown as SyncEngine,
+		// Runs inside vault.modify, after the text is cached, before it resolves.
+		onModify: async (_p: string) => {},
+		// A concurrent flush creates the file just before discovery's create.
+		createRace: null as string | null,
+	};
 	const sent: string[] = [];
 	const mgr = new ProviderRegistry({
 		dbPrefix,
@@ -57,7 +64,7 @@ async function scenario(dbPrefix: string) {
 		// Production wiring: an unmapped id is not flushed (content stays in the doc).
 		onFlushToDisk: async (id, content) => {
 			const p = map.pathForId(id);
-			if (p) await box.e.flushFromCrdt(p, content);
+			if (p) await hooks.e.flushFromCrdt(p, content);
 		},
 	});
 	const mockApp = {
@@ -69,12 +76,15 @@ async function scenario(dbPrefix: string) {
 			read: mock(async (f: TFile) => disk.get(f.path) ?? ""),
 			modify: mock(async (f: TFile, c: string) => {
 				disk.set(f.path, c);
+				await hooks.onModify(f.path);
 			}),
-			// The file is visible the moment it is written; the create promise
-			// resolves later, after whatever the event loop ran in between.
 			create: mock(async (p: string, c: string) => {
+				if (hooks.createRace !== null) {
+					disk.set(p, hooks.createRace);
+					hooks.createRace = null;
+				}
+				if (disk.has(p)) throw new Error("File already exists.");
 				disk.set(p, c);
-				await box.onCreate();
 			}),
 			createFolder: mock().mockResolvedValue(undefined),
 			getName: mock().mockReturnValue("Test Vault"),
@@ -88,7 +98,7 @@ async function scenario(dbPrefix: string) {
 		{ ...DEFAULT_SETTINGS, debounceMs: 1 },
 		mock().mockResolvedValue(undefined),
 	);
-	box.e = e;
+	hooks.e = e;
 	e.setCrdtManager(mgr as never);
 	e.setReady();
 	e.setNoteIdMap(map);
@@ -100,8 +110,8 @@ async function scenario(dbPrefix: string) {
 	await mgr.applyRemoteUpdate(ID, updates[0]);
 	await mgr.applyRemoteUpdate(ID, updates[1]);
 	expect(await mgr.getText(ID)).toBe(body(2));
-	// The upsert learns the id, and an earlier fan-out already left a
-	// head-only row for the path (hash 0: nothing recorded as synced yet).
+	// The upsert learns the id; a fan-out already left a head-only row
+	// (setCrdtHead -> patchSyncedRow: hash 0, nothing recorded as synced).
 	map.set(PATH, ID);
 	(e as unknown as { setCrdtHead(p: string, h: string): void }).setCrdtHead(PATH, "h2");
 
@@ -118,20 +128,24 @@ async function scenario(dbPrefix: string) {
 			deleted: false,
 			version: 3,
 		} as never);
-	return { e, mgr, disk, sent, box, updates, discover };
+	return { e, mgr, disk, sent, hooks, updates, discover };
 }
 
-test("#578: a fan-out landing during the discovery write does not re-ingest the flushed body", async () => {
-	const { e, mgr, disk, sent, box, updates, discover } = await scenario("disc-echo-1");
+test("#578: a fan-out landing in discovery's modify window (already-exists fallback) does not re-ingest the write", async () => {
+	const { e, mgr, disk, sent, hooks, updates, discover } = await scenario("disc-echo-modify");
 	const localEdit = spyOn(mgr, "applyLocalEdit");
-	// The fan-out of edit 3 lands inside the discovery write's await.
-	box.onCreate = async () => {
+	// A fan-out's flush created the file first; discovery falls back to modify.
+	hooks.createRace = body(2);
+	let fired = false;
+	hooks.onModify = async () => {
+		if (fired) return;
+		fired = true;
 		await e.applyPushedNoteUpdate(ID, updates[2], "h3");
 	};
 	await discover();
-	box.onCreate = async () => {};
+	hooks.onModify = async () => {};
 
-	// Disk held exactly what the engine wrote: nothing local to capture.
+	expect(fired).toBe(true);
 	expect(localEdit).not.toHaveBeenCalled();
 	expect(sent).toEqual([]);
 
@@ -142,26 +156,66 @@ test("#578: a fan-out landing during the discovery write does not re-ingest the 
 	expect(localEdit).not.toHaveBeenCalled();
 });
 
-test("#578: a real user edit after the discovery flush still reaches applyLocalEdit", async () => {
-	const { e, mgr, disk, box, updates, discover } = await scenario("disc-echo-2");
-	box.onCreate = async () => {
-		await e.applyPushedNoteUpdate(ID, updates[2], "h3");
-	};
+test("#578: discovery over a doc with history writes the DOC's text, not the REST row", async () => {
+	const { e, mgr, disk, discover } = await scenario("disc-echo-doctext");
+	const localEdit = spyOn(mgr, "applyLocalEdit");
 	await discover();
-	box.onCreate = async () => {};
+
+	// The row carried edit 3, the doc is at edit 2: disk follows the doc, so
+	// it never holds text the doc lacks.
+	expect(disk.get(PATH)).toBe(body(2));
+	// A later local edit therefore diffs only the user's change into the doc.
+	disk.set(PATH, `${body(2)}\nuser line`);
+	await e.flushStrandedNote(PATH, ID);
+	expect(localEdit).toHaveBeenCalledTimes(1);
+	expect(await mgr.getText(ID)).toBe(`${body(2)}\nuser line`);
+});
+
+test("#578: a real user edit after the discovery flush still reaches applyLocalEdit", async () => {
+	const { e, mgr, disk, discover, updates } = await scenario("disc-echo-user");
+	await discover();
 	const localEdit = spyOn(mgr, "applyLocalEdit");
 
-	// The user edits the freshly materialized note before its push fires.
 	const edited = `${disk.get(PATH)}\nuser line`;
 	disk.set(PATH, edited);
-	await e.applyPushedNoteUpdate(ID, updates[3], "h4");
+	await e.applyPushedNoteUpdate(ID, updates[2], "h3");
 
 	expect(localEdit).toHaveBeenCalledTimes(1);
 	expect(localEdit.mock.calls[0][1]).toBe(edited);
-	// Both survive the merge (where Yjs orders the concurrent inserts is not
-	// what this test is about).
+	// Both survive the merge (where Yjs orders concurrent inserts is not what
+	// this test is about).
 	const merged = await mgr.getText(ID);
-	expect(merged).toContain(body(4));
+	expect(merged).toContain(body(3));
 	expect(merged).toContain("user line");
-	expect(merged).not.toContain(body(3));
+});
+
+test("#578: overlapping flushes to one path each keep their own in-flight guard", async () => {
+	const { e, disk, hooks } = await scenario("disc-echo-overlap");
+	disk.set(PATH, "old");
+	let releaseInner: () => void = () => {};
+	const innerHeld = new Promise<void>((r) => {
+		releaseInner = r;
+	});
+	let innerDone: Promise<boolean> | null = null;
+	let checked: boolean | null = null;
+	hooks.onModify = async () => {
+		if (innerDone) return;
+		// The outer flush's text "A" is cached; an inner flush to the same path
+		// starts and is still writing "B" when drift capture reads disk.
+		hooks.onModify = async () => innerHeld;
+		innerDone = e.flushFromCrdt(PATH, "B");
+		await new Promise((r) => setTimeout(r, 0));
+		const restore = disk.get(PATH);
+		disk.set(PATH, "A");
+		checked = e.needsColdReconcile(PATH, "A");
+		disk.set(PATH, restore ?? "A");
+	};
+	const outer = e.flushFromCrdt(PATH, "A");
+	await outer;
+	expect(checked).toBe(false);
+	releaseInner();
+	await innerDone;
+	// Both writes finished: the guard is gone, the baseline governs again.
+	expect(e.needsColdReconcile(PATH, "A")).toBe(true);
+	expect(e.needsColdReconcile(PATH, "B")).toBe(false);
 });

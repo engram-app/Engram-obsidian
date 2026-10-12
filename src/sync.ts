@@ -2040,26 +2040,39 @@ export class SyncEngine {
 		const hash = fnv1a(content);
 		// Disk holding exactly what an in-flight flushFromCrdt is writing is the
 		// engine's own write, not drift (#578). See `flushingHash`.
-		return state.hash !== hash && this.flushingHash.get(normalized) !== hash;
+		return state.hash !== hash && !this.flushingHash.get(normalized)?.has(hash);
 	}
 
-	/** Hash of the body each in-flight `flushFromCrdt` is writing, per path.
+	/** Hashes of the bodies in-flight `flushFromCrdt` calls are writing, per
+	 *  path, with a count (the registry starts one unqueued flush per remote
+	 *  update, so several can overlap on one path).
 	 *
 	 *  `flushFromCrdt` records the baseline only AFTER the write resolves, but
-	 *  the file is readable before that. A fan-out landing in between ran
-	 *  `captureDiskDriftBeforeRemote`, compared the fresh disk against the OLD
-	 *  baseline, and diffed the engine's own write into the doc as a
-	 *  client-authored edit (#578: a discovery wrote the REST row, edit k, over
-	 *  a doc at edit j; the client copy of edit k then survived every later
-	 *  server edit, "Version 35 of 5" on every device). Relay's rule is that a
-	 *  disk change equal to what the doc already wrote is not an edit; this
-	 *  bridges the window where our baseline has not caught up yet.
+	 *  `vault.modify` caches the new text right after the write, before its
+	 *  stat — so `cachedRead` already returns it. A fan-out landing in that
+	 *  window ran `captureDiskDriftBeforeRemote`, compared the new disk against
+	 *  the OLD baseline (often the head-only `hash: 0` row `setCrdtHead`
+	 *  leaves), and diffed the engine's own write into the doc as a
+	 *  client-authored edit (#578). Discovery reaches `modify` through
+	 *  `createFileWithFolders`' "already exists" fallback when a fan-out's
+	 *  flush created the file first. Relay's rule is that a disk change equal
+	 *  to what the doc already wrote is not an edit; this bridges the window
+	 *  where our baseline has not caught up yet.
 	 *
-	 *  Cleared by: the same flush's `finally`, success or failure (the
-	 *  baseline takes over on success). If that never fires (a write that
-	 *  hangs forever), the entry only hides byte-identical engine content, and
-	 *  the next flush to the path overwrites it. */
-	private readonly flushingHash = this.track(["vault", "destroy"], new Map<string, number>());
+	 *  Cleared by: each flush's own `finally`, success or failure (the baseline
+	 *  takes over on success). If that never fires (a write that hangs
+	 *  forever), the entry only hides byte-identical engine content.
+	 *  ponytail: keyed by the path at flush start; a rename landing mid-write
+	 *  leaves the new path unguarded for that one write, the pre-#578
+	 *  behaviour. Re-key on rename if that window ever shows up in logs. */
+	private readonly flushingHash = this.track(
+		["vault", "destroy"],
+		new Map<string, Map<number, number>>(),
+	);
+
+	/** Per-path count of flushes started while any is in flight; lets only the
+	 *  latest one record the baseline. Cleared with `flushingHash`. */
+	private readonly flushGen = this.track(["vault", "destroy"], new Map<string, number>());
 
 	/** Strand-heal drain (#569): fold an unpushed disk edit into the note's
 	 *  doc, then write the doc's CURRENT projection. The content captured when
@@ -2174,7 +2187,11 @@ export class SyncEngine {
 		}
 		this.markRecentlyFlushed(normalized);
 		const writingHash = fnv1a(content);
-		this.flushingHash.set(normalized, writingHash);
+		const inFlight = this.flushingHash.get(normalized) ?? new Map<number, number>();
+		inFlight.set(writingHash, (inFlight.get(writingHash) ?? 0) + 1);
+		this.flushingHash.set(normalized, inFlight);
+		const gen = (this.flushGen.get(normalized) ?? 0) + 1;
+		this.flushGen.set(normalized, gen);
 		try {
 			if (file instanceof TFile) {
 				await this.app.vault.modify(file, content);
@@ -2190,7 +2207,14 @@ export class SyncEngine {
 			// CRDT-delivered note has syncedHash=none, and a legitimate server
 			// delete (folder-rename cleanup) trips the resurrection guard, which
 			// re-pushes the old path and resurrects it forever (e2e test_34/78).
-			this.recordCrdtBaseline(normalized, content);
+			//
+			// Only the LATEST flush to start on this path may record (#578). An
+			// overlapping one (a fan-out flush inside discovery's modify window)
+			// wrote disk after us; recording our older text over its baseline
+			// made the next fan-out read its write as drift.
+			if (this.flushGen.get(normalized) === gen) {
+				this.recordCrdtBaseline(normalized, content);
+			}
 			return true;
 		} catch (e) {
 			// Return false (do NOT swallow silently): the remote-apply path's
@@ -2205,9 +2229,13 @@ export class SyncEngine {
 			);
 			return false;
 		} finally {
-			// Only our own entry: a nested flush to the same path may own it now.
-			if (this.flushingHash.get(normalized) === writingHash) {
+			// Drop only our own count: overlapping flushes keep theirs.
+			const n = (inFlight.get(writingHash) ?? 1) - 1;
+			if (n > 0) inFlight.set(writingHash, n);
+			else inFlight.delete(writingHash);
+			if (inFlight.size === 0 && this.flushingHash.get(normalized) === inFlight) {
 				this.flushingHash.delete(normalized);
+				this.flushGen.delete(normalized);
 			}
 		}
 	}
@@ -4298,7 +4326,8 @@ export class SyncEngine {
 		// For CRDT-managed markdown this time-window guard is BOTH unnecessary and
 		// harmful: the echo of a flush is naturally a no-op (routeModify →
 		// applyLocalEdit re-applies identical content, diffIntoYText yields zero
-		// ops, nothing is re-transmitted), while a REAL edit made within the window
+		// ops, nothing is re-transmitted) — which holds only when the flush wrote
+		// the doc's own text (discovery does when the doc has history, #578), while a REAL edit made within the window
 		// — e.g. editing a note the moment after it was discovered/flushed — would
 		// be wrongly dropped here and never reach the CRDT path. So only apply the
 		// guard off the CRDT path (legacy writes, attachments).
@@ -9224,7 +9253,23 @@ export class SyncEngine {
 				// Propagate the write result instead of hardcoding `return true`.
 				// The old unconditional true meant a gate-blocked no-op still
 				// counted as a materialised file (2026-08-13).
-				const wrote = await this.flushFromCrdt(normalized, content);
+				// #570 strand-heal rule: when the doc already has history (a fan-out
+				// applied edits before this row arrived; the syncState row it left
+				// is the cheap tell, so a fresh first sync opens no extra Y.Doc),
+				// disk follows the DOC, not the REST row. Writing the row (edit k)
+				// over a doc at edit j left disk holding text the doc lacks: the
+				// next disk edit diffed k into j as a client copy (#578), and with
+				// no later fan-out disk stayed at k.
+				const crdt = this.crdt;
+				const body =
+					crdt &&
+					noteId &&
+					this.syncState.has(normalized) &&
+					typeof crdt.hasHistory === "function" &&
+					(await crdt.hasHistory(noteId))
+						? await crdt.projectedText(noteId)
+						: content;
+				const wrote = await this.flushFromCrdt(normalized, body);
 				if (!wrote) return false;
 				// This row came off the server's own op-log feed, so the server
 				// demonstrably holds it (#339). Without a head `hasServerNote` says
