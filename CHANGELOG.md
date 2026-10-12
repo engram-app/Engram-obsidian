@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.34.0](https://github.com/engram-app/Engram-obsidian/compare/1.33.4...1.34.0) (2026-10-12)
+
+
+### Features
+
+* **i18n:** translategemma pipeline, vi and ms ([#575](https://github.com/engram-app/Engram-obsidian/issues/575)) ([08afc7a](https://github.com/engram-app/Engram-obsidian/commit/08afc7ac66331836fbbb047c413384b55b485752))
+* send feedback from Obsidian ([#574](https://github.com/engram-app/Engram-obsidian/issues/574)) ([2338d6a](https://github.com/engram-app/Engram-obsidian/commit/2338d6a1ddd5b15a60e8b378c7d451645b3d5cc2))
+
+
+### Bug Fixes
+
+* **sync:** CRDT discovery flush re-read as a local edit ([#580](https://github.com/engram-app/Engram-obsidian/issues/580)) ([e82cc1a](https://github.com/engram-app/Engram-obsidian/commit/e82cc1a3e9b9e089255d84d82f266becb4428732))
+
 ## [1.33.4](https://github.com/engram-app/Engram-obsidian/compare/1.33.3...1.33.4) (2026-10-11)
 
 
