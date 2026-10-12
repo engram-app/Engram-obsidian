@@ -2150,6 +2150,10 @@ export class SyncEngine {
 			// missing (an earlier flush created the file before this fix). Record
 			// it so a later server tombstone isn't misread as a resurrection.
 			this.recordCrdtBaseline(normalized, content);
+			// This read is newer than every write in flight on the path: an older
+			// one finishing later must not record its text over it (#578).
+			const order = this.flushGen.get(normalized);
+			if (order) order.recorded = order.started;
 			return true;
 		}
 		// Content-loss guard: a CRDT flush must never blank a non-empty file with a
@@ -2220,6 +2224,10 @@ export class SyncEngine {
 			// started after us and already recorded (a fan-out flush inside
 			// discovery's modify window) wrote disk after us; recording our older
 			// text over its baseline made the next fan-out read its write as drift.
+			// Assumes concurrent vault.modify calls on one path land on disk in
+			// the order they started (Obsidian writes each through the adapter as
+			// it is issued). If that ever stops holding, record the hash read back
+			// after the write instead.
 			if (gen > order.recorded) {
 				order.recorded = gen;
 				this.recordCrdtBaseline(normalized, content);

@@ -106,7 +106,8 @@ async function scenario(dbPrefix: string) {
 	e.setReady();
 	e.setNoteIdMap(map);
 	e.setLiveBoundCheck(() => false);
-	e.setCrdtEnrollment({ enroll: mock(), reset: mock() } as never);
+	const enroll = mock();
+	e.setCrdtEnrollment({ enroll, reset: mock() } as never);
 
 	const updates = serverEdits();
 	// Edits 1..2 reach the doc while the id is still unmapped: no file yet.
@@ -132,7 +133,7 @@ async function scenario(dbPrefix: string) {
 			version: 3,
 			content_hash: "hash-row-3",
 		} as never);
-	return { e, mgr, disk, sent, hooks, updates, discover };
+	return { e, mgr, map, enroll, disk, sent, hooks, updates, discover };
 }
 
 test("#578: a fan-out landing in discovery's modify window (already-exists fallback) does not re-ingest the write", async () => {
@@ -294,4 +295,52 @@ test("#578: overlapping flushes to one path each keep their own in-flight guard"
 	// Both writes finished: the guard is gone, the baseline governs again.
 	expect(e.needsColdReconcile(PATH, "A")).toBe(true);
 	expect(e.needsColdReconcile(PATH, "B")).toBe(false);
+	const maps = e as unknown as {
+		flushingHash: Map<string, unknown>;
+		flushGen: Map<string, unknown>;
+	};
+	expect(maps.flushingHash.size).toBe(0);
+	expect(maps.flushGen.size).toBe(0);
+});
+
+test("#578: first-sync discovery with no syncState row opens no Y.Doc and enrolls nothing", async () => {
+	const { e, mgr, map, enroll, disk } = await scenario("disc-echo-firstsync");
+	const hasHistory = spyOn(mgr, "hasHistory");
+	const projected = spyOn(mgr, "projectedText");
+	for (let i = 0; i < 5; i++) {
+		const p = `Fresh/n${i}.md`;
+		map.set(p, `id-fresh-${i}`);
+		await e.applyChange({
+			id: `id-fresh-${i}`,
+			path: p,
+			title: `n${i}`,
+			content: `body ${i}`,
+			folder: "Fresh",
+			tags: [],
+			mtime: Date.now() / 1000,
+			updated_at: new Date().toISOString(),
+			deleted: false,
+			version: 1,
+			content_hash: `h${i}`,
+		} as never);
+		expect(disk.get(p)).toBe(`body ${i}`);
+	}
+	// A bulk first sync must not hydrate one IndexedDB doc per note.
+	expect(hasHistory).not.toHaveBeenCalled();
+	expect(projected).not.toHaveBeenCalled();
+	expect(enroll).not.toHaveBeenCalled();
+});
+
+test("#578: an already-matching flush is newer than an older in-flight write", async () => {
+	const { e, disk, hooks } = await scenario("disc-echo-early-return");
+	disk.set(PATH, "old");
+	hooks.onModify = async () => {
+		hooks.onModify = async () => {};
+		// While A is writing, disk moves to C and C's flush finds it already there.
+		disk.set(PATH, "C");
+		expect(await e.flushFromCrdt(PATH, "C")).toBe(true);
+	};
+	await e.flushFromCrdt(PATH, "A");
+	// A resolved after C's read: its older text must not become the baseline.
+	expect(e.needsColdReconcile(PATH, "C")).toBe(false);
 });
