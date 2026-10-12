@@ -2,9 +2,6 @@ import type { Dict } from "..";
 
 // Tiếng Việt
 const vi: Dict = {
-	"Invalid API key": "Khóa API không hợp lệ",
-	"Request failed ({status})": "Yêu cầu thất bại ({status})",
-	"Connection failed": "Kết nối không thành công",
 	"Link Obsidian to Engram": "Liên kết Obsidian với Engram",
 	"Starting...": "Đang khởi động...",
 	"Failed to start device flow. Check your Engram URL and try again.":
@@ -84,96 +81,6 @@ const vi: Dict = {
 		"Hoàn tất thiết lập tài khoản của bạn tại app.engram.page để bắt đầu đồng bộ hóa.",
 	"Limit reached. Upgrade to continue.": "Đạt giới hạn. Nâng cấp để tiếp tục.",
 	Upgrade: "Nâng cấp",
-	"Update in settings": "Cập nhật trong cài đặt",
-	"Sync now": "Đồng bộ hóa ngay",
-	"Engram sync: syncing...": "Đồng bộ hóa Engram: đang đồng bộ hóa...",
-	"Engram Sync: pulled {pulled}, pushed {pushed}":
-		"Đồng bộ hóa Engram: đã tải {pulled}, đã đẩy {pushed}",
-	"Disconnect (clear login)": "Ngắt kết nối (xóa thông tin đăng nhập)",
-	"Engram: disconnected. Open Engram settings to reconnect.":
-		"Engram: đã ngắt kết nối. Mở cài đặt Engram để kết nối lại.",
-	"Push entire vault": "Đẩy toàn bộ kho lưu trữ",
-	"Engram Sync: pushed {count} files": "Engram Sync: Đã đẩy {count} tệp",
-	"Check sync status": "Kiểm tra trạng thái đồng bộ hóa",
-	"Engram sync: checking...": "Đồng bộ hóa Engram: đang kiểm tra...",
-	"Engram sync: server does not support reconciliation (update backend)":
-		"Đồng bộ hóa Engram: máy chủ không hỗ trợ đồng bộ hóa (cập nhật phần nền)",
-	"Engram sync: everything in sync": "Đồng bộ hóa Engram: mọi thứ đã đồng bộ",
-	"{count} missing on server": "{count} mục chưa đồng bộ lên máy chủ",
-	"{count} diverged": "{count} khác nhau",
-	"{count} only on server": "{count} chỉ có trên máy chủ",
-	"Engram Sync: {details}": "Đồng bộ hóa Engram: {details}",
-	"Pull all from server (force overwrite)": "Tải tất cả từ máy chủ (ghi đè)",
-	"Engram sync: pulling all from server...": "Đồng bộ hóa Engram: đang tải tất cả từ máy chủ...",
-	"Engram Sync: pulled {count} files from server": "Engram Sync: đã tải {count} tệp từ máy chủ",
-	"Show sync log": "Hiển thị nhật ký đồng bộ",
-	"Semantic search": "Tìm kiếm ngữ nghĩa",
-	"Open search sidebar": "Mở thanh bên tìm kiếm",
-	"Engram search": "Tìm kiếm Engram",
-	"Open sync center": "Mở Trung tâm đồng bộ hóa",
-	"Engram: ready": "Engram: sẵn sàng",
-	"Engram Sync: pushed {pushed}": "Engram Sync: đã đẩy {pushed}",
-	"Engram sync: sync failed": "Engram sync: đồng bộ hóa thất bại",
-	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
-		"Engram: kho lưu trữ này không còn tồn tại trên máy chủ. Chọn hoặc tạo một kho lưu trữ để tiếp tục.",
-	"Engram: recovered plugin settings from a backup after a corrupted save.":
-		"Engram: đã khôi phục cài đặt plugin từ bản sao lưu sau khi lưu bị lỗi.",
-	"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.":
-		"Engram: tệp cài đặt plugin bị lỗi và không thể khôi phục. Bạn có thể cần kết nối lại trong phần cài đặt.",
-	"Engram: your login expired — open Engram settings to reconnect.":
-		"Engram: phiên đăng nhập của bạn đã hết hạn — mở cài đặt Engram để kết nối lại.",
-	"Engram: This vault has been deleted on the server.":
-		"Engram: kho lưu trữ này đã bị xóa trên máy chủ.",
-	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
-		"Engram sync: đồng bộ hóa trực tiếp yêu cầu cập nhật plugin — vui lòng cập nhật plugin Engram vault sync.",
-	"Engram Sync: pulled {pulled} (local extras deleted)":
-		"Engram Sync: đã tải {pulled} (các tệp bổ sung cục bộ đã bị xóa)",
-	"Engram Sync: pulled {pulled}": "Engram Sync: đã tải {pulled}",
-	"Engram Sync: replaced remote with local ({pushed} uploaded)":
-		"Engram Sync: đã thay thế phiên bản từ xa bằng phiên bản cục bộ ({pushed} đã được tải lên)",
-	"Engram: sync is not set up yet, so nothing in this vault will sync.":
-		"Engram: chưa được thiết lập đồng bộ hóa, vì vậy không có gì trong kho lưu trữ này sẽ được đồng bộ hóa.",
-	"Finish sync setup": "Hoàn tất thiết lập đồng bộ hóa",
-	"Engram: sync is paused. This edit was not synced. Choose a sync direction to resume.":
-		"Engram: Đã tạm dừng đồng bộ hóa. Chỉnh sửa này chưa được đồng bộ. Chọn chiều đồng bộ để tiếp tục.",
-	"Open Engram settings": "Mở cài đặt Engram",
-	"Engram: sync failed. Open the sync log for details.":
-		"Engram: Đồng bộ hóa thất bại. Mở nhật ký đồng bộ để biết chi tiết.",
-	"Engram: not connected": "Engram: Chưa kết nối",
-	"Engram: signed out": "Engram: Đã đăng xuất",
-	"Not connected yet. Click to open settings and link this vault.":
-		"Chưa kết nối. Nhấp để mở cài đặt và liên kết kho lưu trữ này.",
-	"Not signed in. Click to open settings and reconnect.":
-		"Chưa đăng nhập. Nhấp để mở cài đặt và kết nối lại.",
-	"Engram: finish setup": "Engram: Hoàn tất thiết lập",
-	"Engram: sync paused": "Engram: Đã tạm dừng đồng bộ hóa",
-	"{label} ({count} queued)": "{label} ({count} đang chờ)",
-	"Setup is not finished — nothing will sync until you choose a sync direction. Click to finish.":
-		"Thiết lập chưa hoàn thành — không có gì được đồng bộ hóa cho đến khi bạn chọn chiều đồng bộ. Nhấp để hoàn thành.",
-	"Sync paused — click to choose a sync direction":
-		"Đồng bộ hóa tạm dừng — nhấp để chọn chiều đồng bộ hóa",
-	"Engram: offline ({count} queued)": "Engram: ngoại tuyến ({count} đang chờ)",
-	"Engram: offline": "Engram: ngoại tuyến",
-	"Server unreachable — changes will sync when connected":
-		"Máy chủ không thể kết nối — thay đổi sẽ được đồng bộ hóa khi kết nối",
-	"Engram: error": "Engram: lỗi",
-	"Unknown error": "Lỗi không xác định",
-	"Engram: syncing ({count})": "Engram: đang đồng bộ hóa ({count})",
-	"Engram: syncing": "Engram: đang đồng bộ hóa",
-	"Sync in progress...": "Đang đồng bộ hóa...",
-	"Engram: pending ({count})": "Engram: đang xử lý ({count})",
-	"{count} files queued": "{count} tệp đang chờ xử lý",
-	"Engram: live": "Engram: hoạt động",
-	"WebSocket connected — live sync active":
-		"WebSocket đã kết nối — đồng bộ hóa trực tiếp đang hoạt động",
-	"Click to sync": "Nhấp để đồng bộ hóa",
-	"Engram: ⚠ {count} sync errors": "Engram: ⚠ {count} lỗi đồng bộ hóa",
-	"Last sync: {when}": "Lần đồng bộ hóa cuối: {when}",
-	"Engram Sync: pulled {count} changes": "Engram Sync: đã tải {count} thay đổi",
-	'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.':
-		'Engram Sync: trạng thái đồng bộ hóa của "{name}" không thể đọc được — đang sử dụng bản sao trên ổ đĩa.',
-	"Engram Vault Sync {version} is available. {link}.":
-		"Engram Vault Sync {version} khả dụng. {link}.",
 	"{count} files": "{count} tệp",
 	"Notes searchable": "Ghi chú có thể tìm kiếm",
 	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
@@ -212,22 +119,7 @@ const vi: Dict = {
 	"match strength: {pct}%": "độ chính xác: {pct}%",
 	"No source path for this result": "Không tìm thấy đường dẫn nguồn cho kết quả này",
 	"Note not synced locally": "Ghi chú chưa được đồng bộ hóa cục bộ",
-	"Syncing...": "Đang đồng bộ hóa...",
-	"👋 Welcome": "👋 Chào mừng",
-	"🔌 Connection": "🔌 Kết nối",
-	"🔄 Sync Center": "🔄 Trung tâm đồng bộ hóa",
-	"⚙️ Advanced": "⚙️ Nâng cao",
-	"Engram: settings tab failed to render ({error})":
-		"Engram: tab cài đặt không hiển thị ({error})",
-	Disconnected: "Đã ngắt kết nối",
-	"Error: {error}": "Lỗi: {error}",
-	unknown: "không xác định",
-	"Connected — waiting for first sync decision":
-		"Đã kết nối — đang chờ quyết định đồng bộ hóa đầu tiên",
-	"Connected — live sync active": "Đã kết nối — đồng bộ hóa trực tiếp đang hoạt động",
-	"Connected — polling": "Đã kết nối — đang kiểm tra",
-	"Not configured": "Chưa được cấu hình",
-	"Open sync setup": "Mở cài đặt đồng bộ hóa",
+	"Engram search": "Tìm kiếm Engram",
 	"waiting for a connection": "đang chờ kết nối",
 	"sync is paused": "Đã tạm dừng đồng bộ hóa",
 	"syncing now": "đang đồng bộ hóa",
@@ -238,6 +130,7 @@ const vi: Dict = {
 	"{count} ignored": "{count} bị bỏ qua",
 	"{count} queued — {reason}": "{count} đang chờ — {reason}",
 	"Sync...": "Đồng bộ hóa...",
+	"Engram Sync: {details}": "Đồng bộ hóa Engram: {details}",
 	Refresh: "Làm mới",
 	"Not synced on your plan ({count})": "Chưa được đồng bộ hóa trong gói của bạn ({count})",
 	"These files are fine. They just need a paid plan to sync.":
@@ -403,6 +296,7 @@ const vi: Dict = {
 	"Run in background": "Chạy trong nền",
 	"Syncing…": "Đang đồng bộ hóa…",
 	"Sync complete": "Đã hoàn thành đồng bộ hóa",
+	"Show sync log": "Hiển thị nhật ký đồng bộ",
 	"Syncing attachments": "Đang đồng bộ hóa tệp đính kèm",
 	Complete: "Hoàn tất",
 	'{count} failed. Run "{command}" for details.':
@@ -423,6 +317,7 @@ const vi: Dict = {
 	"Pull all failed: {error}": "Thao tác kéo tất cả thất bại: {error}",
 	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
 		"Engram: xung đột đồng bộ trên {path} — chỉnh sửa cục bộ của bạn đã được lưu dưới dạng {copy}",
+	"Connection failed": "Kết nối không thành công",
 	"Open note": "Mở ghi chú",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
 		"Engram: {count} ghi chú có vấn đề về frontmatter. Mở Trung tâm đồng bộ hóa để sửa.",
@@ -434,6 +329,113 @@ const vi: Dict = {
 	"Engram: this plugin is too old to sync. Update it to continue.":
 		"Engram: plugin này quá cũ để đồng bộ hóa. Cập nhật để tiếp tục.",
 	Update: "Cập nhật",
+	"Invalid API key": "Khóa API không hợp lệ",
+	"Request failed ({status})": "Yêu cầu thất bại ({status})",
+	"Update in settings": "Cập nhật trong cài đặt",
+	"Sync now": "Đồng bộ hóa ngay",
+	"Engram sync: syncing...": "Đồng bộ hóa Engram: đang đồng bộ hóa...",
+	"Engram Sync: pulled {pulled}, pushed {pushed}":
+		"Đồng bộ hóa Engram: đã tải {pulled}, đã đẩy {pushed}",
+	"Disconnect (clear login)": "Ngắt kết nối (xóa thông tin đăng nhập)",
+	"Engram: disconnected. Open Engram settings to reconnect.":
+		"Engram: đã ngắt kết nối. Mở cài đặt Engram để kết nối lại.",
+	"Push entire vault": "Đẩy toàn bộ kho lưu trữ",
+	"Engram Sync: pushed {count} files": "Engram Sync: Đã đẩy {count} tệp",
+	"Check sync status": "Kiểm tra trạng thái đồng bộ hóa",
+	"Engram sync: checking...": "Đồng bộ hóa Engram: đang kiểm tra...",
+	"Engram sync: server does not support reconciliation (update backend)":
+		"Đồng bộ hóa Engram: máy chủ không hỗ trợ đồng bộ hóa (cập nhật phần nền)",
+	"Engram sync: everything in sync": "Đồng bộ hóa Engram: mọi thứ đã đồng bộ",
+	"{count} missing on server": "{count} mục chưa đồng bộ lên máy chủ",
+	"{count} diverged": "{count} khác nhau",
+	"{count} only on server": "{count} chỉ có trên máy chủ",
+	"Pull all from server (force overwrite)": "Tải tất cả từ máy chủ (ghi đè)",
+	"Engram sync: pulling all from server...": "Đồng bộ hóa Engram: đang tải tất cả từ máy chủ...",
+	"Engram Sync: pulled {count} files from server": "Engram Sync: đã tải {count} tệp từ máy chủ",
+	"Send feedback": "Gửi phản hồi",
+	"Semantic search": "Tìm kiếm ngữ nghĩa",
+	"Open search sidebar": "Mở thanh bên tìm kiếm",
+	"Open sync center": "Mở Trung tâm đồng bộ hóa",
+	"Engram: ready": "Engram: sẵn sàng",
+	"Engram Sync: pushed {pushed}": "Engram Sync: đã đẩy {pushed}",
+	"Engram sync: sync failed": "Engram sync: đồng bộ hóa thất bại",
+	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
+		"Engram: kho lưu trữ này không còn tồn tại trên máy chủ. Chọn hoặc tạo một kho lưu trữ để tiếp tục.",
+	"Engram: recovered plugin settings from a backup after a corrupted save.":
+		"Engram: đã khôi phục cài đặt plugin từ bản sao lưu sau khi lưu bị lỗi.",
+	"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.":
+		"Engram: tệp cài đặt plugin bị lỗi và không thể khôi phục. Bạn có thể cần kết nối lại trong phần cài đặt.",
+	"Engram: your login expired — open Engram settings to reconnect.":
+		"Engram: phiên đăng nhập của bạn đã hết hạn — mở cài đặt Engram để kết nối lại.",
+	"Engram: This vault has been deleted on the server.":
+		"Engram: kho lưu trữ này đã bị xóa trên máy chủ.",
+	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
+		"Engram sync: đồng bộ hóa trực tiếp yêu cầu cập nhật plugin — vui lòng cập nhật plugin Engram vault sync.",
+	"Engram Sync: pulled {pulled} (local extras deleted)":
+		"Engram Sync: đã tải {pulled} (các tệp bổ sung cục bộ đã bị xóa)",
+	"Engram Sync: pulled {pulled}": "Engram Sync: đã tải {pulled}",
+	"Engram Sync: replaced remote with local ({pushed} uploaded)":
+		"Engram Sync: đã thay thế phiên bản từ xa bằng phiên bản cục bộ ({pushed} đã được tải lên)",
+	"Engram: sync is not set up yet, so nothing in this vault will sync.":
+		"Engram: chưa được thiết lập đồng bộ hóa, vì vậy không có gì trong kho lưu trữ này sẽ được đồng bộ hóa.",
+	"Finish sync setup": "Hoàn tất thiết lập đồng bộ hóa",
+	"Engram: sync is paused. This edit was not synced. Choose a sync direction to resume.":
+		"Engram: Đã tạm dừng đồng bộ hóa. Chỉnh sửa này chưa được đồng bộ. Chọn chiều đồng bộ để tiếp tục.",
+	"Open Engram settings": "Mở cài đặt Engram",
+	"Engram: sync failed. Open the sync log for details.":
+		"Engram: Đồng bộ hóa thất bại. Mở nhật ký đồng bộ để biết chi tiết.",
+	"Engram: not connected": "Engram: Chưa kết nối",
+	"Engram: signed out": "Engram: Đã đăng xuất",
+	"Not connected yet. Click to open settings and link this vault.":
+		"Chưa kết nối. Nhấp để mở cài đặt và liên kết kho lưu trữ này.",
+	"Not signed in. Click to open settings and reconnect.":
+		"Chưa đăng nhập. Nhấp để mở cài đặt và kết nối lại.",
+	"Engram: finish setup": "Engram: Hoàn tất thiết lập",
+	"Engram: sync paused": "Engram: Đã tạm dừng đồng bộ hóa",
+	"{label} ({count} queued)": "{label} ({count} đang chờ)",
+	"Setup is not finished — nothing will sync until you choose a sync direction. Click to finish.":
+		"Thiết lập chưa hoàn thành — không có gì được đồng bộ hóa cho đến khi bạn chọn chiều đồng bộ. Nhấp để hoàn thành.",
+	"Sync paused — click to choose a sync direction":
+		"Đồng bộ hóa tạm dừng — nhấp để chọn chiều đồng bộ hóa",
+	"Engram: offline ({count} queued)": "Engram: ngoại tuyến ({count} đang chờ)",
+	"Engram: offline": "Engram: ngoại tuyến",
+	"Server unreachable — changes will sync when connected":
+		"Máy chủ không thể kết nối — thay đổi sẽ được đồng bộ hóa khi kết nối",
+	"Engram: error": "Engram: lỗi",
+	"Unknown error": "Lỗi không xác định",
+	"Engram: syncing ({count})": "Engram: đang đồng bộ hóa ({count})",
+	"Engram: syncing": "Engram: đang đồng bộ hóa",
+	"Sync in progress...": "Đang đồng bộ hóa...",
+	"Engram: pending ({count})": "Engram: đang xử lý ({count})",
+	"{count} files queued": "{count} tệp đang chờ xử lý",
+	"Engram: live": "Engram: hoạt động",
+	"WebSocket connected — live sync active":
+		"WebSocket đã kết nối — đồng bộ hóa trực tiếp đang hoạt động",
+	"Click to sync": "Nhấp để đồng bộ hóa",
+	"Engram: ⚠ {count} sync errors": "Engram: ⚠ {count} lỗi đồng bộ hóa",
+	"Last sync: {when}": "Lần đồng bộ hóa cuối: {when}",
+	"Engram Sync: pulled {count} changes": "Engram Sync: đã tải {count} thay đổi",
+	'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.':
+		'Engram Sync: trạng thái đồng bộ hóa của "{name}" không thể đọc được — đang sử dụng bản sao trên ổ đĩa.',
+	"Engram Vault Sync {version} is available. {link}.":
+		"Engram Vault Sync {version} khả dụng. {link}.",
+	"Syncing...": "Đang đồng bộ hóa...",
+	"👋 Welcome": "👋 Chào mừng",
+	"🔌 Connection": "🔌 Kết nối",
+	"🔄 Sync Center": "🔄 Trung tâm đồng bộ hóa",
+	"⚙️ Advanced": "⚙️ Nâng cao",
+	"💬 Feedback": "💬 Phản hồi",
+	"Engram: settings tab failed to render ({error})":
+		"Engram: tab cài đặt không hiển thị ({error})",
+	Disconnected: "Đã ngắt kết nối",
+	"Error: {error}": "Lỗi: {error}",
+	unknown: "không xác định",
+	"Connected — waiting for first sync decision":
+		"Đã kết nối — đang chờ quyết định đồng bộ hóa đầu tiên",
+	"Connected — live sync active": "Đã kết nối — đồng bộ hóa trực tiếp đang hoạt động",
+	"Connected — polling": "Đã kết nối — đang kiểm tra",
+	"Not configured": "Chưa được cấu hình",
+	"Open sync setup": "Mở cài đặt đồng bộ hóa",
 	"New here? Watch the setup video": "Bạn mới bắt đầu? Xem video hướng dẫn",
 	"What Engram does, and how to connect your vault, start to finish.":
 		"Engram hoạt động như thế nào và cách kết nối kho lưu trữ của bạn, từ đầu đến cuối.",
@@ -577,6 +579,28 @@ const vi: Dict = {
 	"Nothing in this vault syncs until you choose how to merge it with the server.":
 		"Không có gì trong kho lưu trữ này được đồng bộ hóa cho đến khi bạn chọn cách hợp nhất nó với máy chủ.",
 	"Choose sync direction": "Chọn chiều đồng bộ hóa",
+	Bug: "Lỗi",
+	Idea: "Ý tưởng",
+	Confusing: "Khó hiểu",
+	"Love it": "Rất thích",
+	"What's working, what's frustrating, what do you wish Engram did?":
+		"Điều gì đang hoạt động, điều gì gây khó chịu, bạn mong muốn Engram làm gì?",
+	"This server is self-hosted, so feedback is not collected here. ":
+		"Máy chủ này được tự lưu trữ, vì vậy phản hồi không được thu thập ở đây. ",
+	"Report an issue on GitHub": "Báo cáo sự cố trên GitHub",
+	"Connect to Engram first to send feedback.": "Kết nối với Engram trước khi gửi phản hồi.",
+	"Open Connection": "Mở kết nối",
+	"What kind of feedback?": "Loại phản hồi nào?",
+	"Your feedback": "Phản hồi của bạn",
+	"Tell us anything": "Hãy cho chúng tôi biết",
+	"How do you feel about Engram?": "Bạn cảm thấy thế nào về Engram?",
+	"{n} of 5": "{n} trong 5",
+	"Couldn't send your feedback, please try again.":
+		"Không thể gửi phản hồi của bạn, vui lòng thử lại.",
+	"It's OK to email me about this": "Bạn có thể gửi email cho tôi về vấn đề này",
+	"Sending…": "Đang gửi…",
+	Send: "Gửi",
+	"Thanks, we read every message.": "Cảm ơn, chúng tôi đọc mọi tin nhắn.",
 	"...": "...",
 	'... "{name}" ...': '... "{name}" ...',
 	"The server took too long to respond. Try again.": "Máy chủ phản hồi quá chậm. Thử lại.",

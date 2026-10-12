@@ -49,9 +49,17 @@ const SINKS = [
 	`CallExpression[callee.property.name=/^(${METHOD_SINKS})$/] > `,
 	`CallExpression:matches([callee.name=/^create(El|Div|Span)$/], [callee.property.name=/^create(El|Div|Span)$/]) > ObjectExpression > Property[key.name="text"] > `,
 	'CallExpression[callee.property.name="addCommand"] > ObjectExpression > Property[key.name="name"] > ',
-	// attr: { title, "aria-label", placeholder, alt } on createEl/createDiv/createSpan.
-	`Property[key.name="attr"] > ObjectExpression > Property:matches([key.name=/^(${PROSE_ATTRS})$/], [key.value=/^(${PROSE_ATTRS})$/]) > `,
 ];
+
+// attr: { title, "aria-label", placeholder, alt } on createEl/createDiv/createSpan.
+// Only the property's VALUE: its key ("aria-label") is a wordy literal too.
+const ATTR_PROP = `Property[key.name="attr"] > ObjectExpression > Property:matches([key.name=/^(${PROSE_ATTRS})$/], [key.value=/^(${PROSE_ATTRS})$/])`;
+
+/** `wrap + value` as the attr property's value: its first node is put in the `value` field. */
+function attrValue(chain: string): string {
+	const [head = "", ...rest] = chain.split(" > ");
+	return [`${ATTR_PROP} > .value:matches(${head})`, ...rest].join(" > ");
+}
 
 const LITERAL_MESSAGE =
 	"User-visible text must go through t()/tInto() so it reaches the locale catalogs. Allowed literals (URLs, brand names) are listed in scripts/eslint-i18n-sinks.ts.";
@@ -65,6 +73,11 @@ export const I18N_RESTRICTED_SYNTAX: Array<{ selector: string; message: string }
 			{ selector: `${sink}${wrap}${TEMPLATE}`, message: LITERAL_MESSAGE },
 		]),
 	),
+	...WRAPPERS.flatMap((wrap) => [
+		{ selector: attrValue(`${wrap}${LITERAL}`), message: LITERAL_MESSAGE },
+		{ selector: attrValue(`${wrap}${TEMPLATE}`), message: LITERAL_MESSAGE },
+	]),
+	{ selector: `${ATTR_PROP} ${ERROR_TEXT}`, message: ERROR_MESSAGE },
 	// Error text anywhere inside a sink's argument, however deeply wrapped.
 	...SINKS.map((sink) => ({
 		selector: `${sink.replace(/ > $/, " ")}${ERROR_TEXT}`,

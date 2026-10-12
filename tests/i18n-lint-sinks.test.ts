@@ -78,6 +78,10 @@ describe("error text in UI sinks or t() vars is rejected", () => {
 describe("translated, data-only and allowed values pass", () => {
 	const good = [
 		`new Notice(t("Starting..."));`,
+		// The attribute NAME is a literal too; only the value is prose.
+		`el.createDiv({ attr: { role: "group", "aria-label": t("What kind of feedback?") } });`,
+		`el.createEl("textarea", { attr: { maxlength: "2000", placeholder: t("Tell us anything") } });`,
+		`el.setAttribute("aria-label", t("Close dialog"));`,
 		`el.setText(t("{count} files", { count }));`,
 		`el.setText("—");`,
 		`el.setText("5s");`,

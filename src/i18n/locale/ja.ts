@@ -2,9 +2,6 @@ import type { Dict } from "..";
 
 // 日本語
 const ja: Dict = {
-	"Invalid API key": "無効なAPIキー",
-	"Request failed ({status})": "リクエストに失敗しました ({status})",
-	"Connection failed": "接続エラー",
 	"Link Obsidian to Engram": "EngramへのObsidian連携",
 	"Starting...": "開始しています...",
 	"Failed to start device flow. Check your Engram URL and try again.":
@@ -85,96 +82,6 @@ const ja: Dict = {
 	"Limit reached. Upgrade to continue.":
 		"制限に達しました。継続するには、アップグレードが必要です。",
 	Upgrade: "アップグレード",
-	"Update in settings": "設定で更新",
-	"Sync now": "今すぐ同期",
-	"Engram sync: syncing...": "Engram 同期: 同期中...",
-	"Engram Sync: pulled {pulled}, pushed {pushed}":
-		"Engram 同期: {pulled} を取得、{pushed} を送信",
-	"Disconnect (clear login)": "接続解除 (ログイン情報を削除)",
-	"Engram: disconnected. Open Engram settings to reconnect.":
-		"Engram: 接続解除。再接続するには、Engram の設定を開いてください。",
-	"Push entire vault": "保管庫全体を送信",
-	"Engram Sync: pushed {count} files": "Engram 同期: {count}つのファイルを送信しました",
-	"Check sync status": "同期状況を確認",
-	"Engram sync: checking...": "Engram 同期: 確認中...",
-	"Engram sync: server does not support reconciliation (update backend)":
-		"Engram 同期: サーバーがリコンシリエーションに対応していません (バックエンドを更新)",
-	"Engram sync: everything in sync": "Engram 同期: 全てが同期済み",
-	"{count} missing on server": "サーバー上で{count}つ見つかりませんでした",
-	"{count} diverged": "{count}つが異なる",
-	"{count} only on server": "{count} はサーバーにのみ存在します",
-	"Engram Sync: {details}": "Engram 同期: {details}",
-	"Pull all from server (force overwrite)": "サーバーから全てをダウンロード (強制上書き)",
-	"Engram sync: pulling all from server...": "Engram 同期: サーバーから全てをダウンロード中...",
-	"Engram Sync: pulled {count} files from server":
-		"Engram 同期: サーバーから{count}つのファイルを取得しました",
-	"Show sync log": "同期ログを表示",
-	"Semantic search": "セマンティック検索",
-	"Open search sidebar": "検索サイドバーを開く",
-	"Engram search": "Engram 検索",
-	"Open sync center": "同期センターを開く",
-	"Engram: ready": "Engram: 準備完了",
-	"Engram Sync: pushed {pushed}": "Engram 同期: {pushed} をプッシュしました",
-	"Engram sync: sync failed": "Engram 同期: 同期に失敗しました",
-	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
-		"Engram: この保管庫はサーバー上に存在しません。利用可能な保管庫を選択するか、新規作成して続行してください。",
-	"Engram: recovered plugin settings from a backup after a corrupted save.":
-		"Engram: 破損した保存ファイルからのプラグイン設定を復元しました。",
-	"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.":
-		"Engram: プラグイン設定ファイルが破損し、復元できませんでした。設定で再接続が必要になる場合があります。",
-	"Engram: your login expired — open Engram settings to reconnect.":
-		"Engram: ログインが期限切れです。Engram の設定を開いて再接続してください。",
-	"Engram: This vault has been deleted on the server.":
-		"Engram: この保管庫はサーバーから削除されました。",
-	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
-		"Engram 同期: リアルタイム同期にはプラグインのアップデートが必要です。Engram vault sync プラグインをアップデートしてください。",
-	"Engram Sync: pulled {pulled} (local extras deleted)":
-		"Engram 同期: {pulled} を取得しました (ローカルの追加ファイルを削除)",
-	"Engram Sync: pulled {pulled}": "Engram 同期: {pulled} を取得しました",
-	"Engram Sync: replaced remote with local ({pushed} uploaded)":
-		"Engram 同期: リモートをローカルで置き換えました ({pushed} をアップロード)",
-	"Engram: sync is not set up yet, so nothing in this vault will sync.":
-		"Engram: まだ同期の設定が完了していません。この保管庫内のファイルは同期されません。",
-	"Finish sync setup": "同期設定を完了",
-	"Engram: sync is paused. This edit was not synced. Choose a sync direction to resume.":
-		"Engram: 同期が一時停止中です。この編集は同期されていません。同期方向を選択して再開してください。",
-	"Open Engram settings": "Engramの設定を開く",
-	"Engram: sync failed. Open the sync log for details.":
-		"Engram: 同期に失敗しました。詳細については、同期ログを開いてください。",
-	"Engram: not connected": "Engram: 接続されていません",
-	"Engram: signed out": "Engram: ログアウトされています",
-	"Not connected yet. Click to open settings and link this vault.":
-		"まだ接続されていません。設定を開いて、この保管庫をリンクしてください。",
-	"Not signed in. Click to open settings and reconnect.":
-		"まだログインされていません。設定を開いて、再接続してください。",
-	"Engram: finish setup": "Engram: 設定を完了",
-	"Engram: sync paused": "Engram: 同期を一時停止",
-	"{label} ({count} queued)": "{label} ({count}件待ち)",
-	"Setup is not finished — nothing will sync until you choose a sync direction. Click to finish.":
-		"設定は完了していません。同期方向を選択するまで、何も同期されません。完了するにはクリックしてください。",
-	"Sync paused — click to choose a sync direction":
-		"同期を一時停止 — 同期方向を選択するにはクリック",
-	"Engram: offline ({count} queued)": "Engram: オフライン ({count}件キュー)",
-	"Engram: offline": "Engram: オフライン",
-	"Server unreachable — changes will sync when connected":
-		"サーバーに接続できません — 接続すると変更が同期されます",
-	"Engram: error": "Engram: エラー",
-	"Unknown error": "不明なエラー",
-	"Engram: syncing ({count})": "Engram: 同期中 ({count})",
-	"Engram: syncing": "Engram: 同期中",
-	"Sync in progress...": "同期処理中...",
-	"Engram: pending ({count})": "Engram: 待機中 ({count})",
-	"{count} files queued": "{count}つのファイルが処理待ちです",
-	"Engram: live": "Engram: 接続中",
-	"WebSocket connected — live sync active": "WebSocket 接続済み — リアルタイム同期中",
-	"Click to sync": "同期を開始",
-	"Engram: ⚠ {count} sync errors": "Engram: ⚠ 同期エラー {count}件",
-	"Last sync: {when}": "最終同期: {when}",
-	"Engram Sync: pulled {count} changes": "Engram 同期: {count}つの変更を適用しました",
-	'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.':
-		'Engram 同期: "{name}" の同期状態が読み込めませんでした。ディスク上のコピーを使用しています。',
-	"Engram Vault Sync {version} is available. {link}.":
-		"Engram Vault Sync {version} が利用可能です。{link}.",
 	"{count} files": "{count} 個のファイル",
 	"Notes searchable": "検索可能なノート",
 	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
@@ -213,21 +120,7 @@ const ja: Dict = {
 	"match strength: {pct}%": "一致度: {pct}%",
 	"No source path for this result": "この結果にソースパスがありません",
 	"Note not synced locally": "ノートがローカルに同期されていません",
-	"Syncing...": "同期中...",
-	"👋 Welcome": "👋 ようこそ",
-	"🔌 Connection": "🔌 接続",
-	"🔄 Sync Center": "🔄 同期センター",
-	"⚙️ Advanced": "⚙️ 詳細設定",
-	"Engram: settings tab failed to render ({error})":
-		"Engram: 設定タブの表示に失敗しました ({error})",
-	Disconnected: "接続解除",
-	"Error: {error}": "エラー: {error}",
-	unknown: "不明",
-	"Connected — waiting for first sync decision": "接続済み - 最初の同期待ち",
-	"Connected — live sync active": "接続済み - ライブ同期中",
-	"Connected — polling": "接続済み - ポーリング中",
-	"Not configured": "設定されていません",
-	"Open sync setup": "同期設定を開く",
+	"Engram search": "Engram 検索",
 	"waiting for a connection": "接続待ち",
 	"sync is paused": "同期を一時停止",
 	"syncing now": "同期中",
@@ -238,6 +131,7 @@ const ja: Dict = {
 	"{count} ignored": "{count}件を除外中",
 	"{count} queued — {reason}": "{count}件待ち — {reason}",
 	"Sync...": "同期中...",
+	"Engram Sync: {details}": "Engram 同期: {details}",
 	Refresh: "更新",
 	"Not synced on your plan ({count})": "プランでは同期できません ({count})",
 	"These files are fine. They just need a paid plan to sync.":
@@ -402,6 +296,7 @@ const ja: Dict = {
 	"Run in background": "バックグラウンドで実行",
 	"Syncing…": "同期中…",
 	"Sync complete": "同期完了",
+	"Show sync log": "同期ログを表示",
 	"Syncing attachments": "添付ファイルの同期",
 	Complete: "完了",
 	'{count} failed. Run "{command}" for details.':
@@ -422,6 +317,7 @@ const ja: Dict = {
 	"Pull all failed: {error}": "全件取得に失敗しました：{error}",
 	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
 		"Engram：{path} での同期競合が発生しました。ローカルの編集内容は {copy} として保存されました",
+	"Connection failed": "接続エラー",
 	"Open note": "ノートを開く",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
 		"Engram: {count}つのノートにフロントマターの問題があります。同期センターを開いて修正してください。",
@@ -433,6 +329,112 @@ const ja: Dict = {
 	"Engram: this plugin is too old to sync. Update it to continue.":
 		"Engram：このプラグインは古く、同期できません。続行するには更新してください。",
 	Update: "更新",
+	"Invalid API key": "無効なAPIキー",
+	"Request failed ({status})": "リクエストに失敗しました ({status})",
+	"Update in settings": "設定で更新",
+	"Sync now": "今すぐ同期",
+	"Engram sync: syncing...": "Engram 同期: 同期中...",
+	"Engram Sync: pulled {pulled}, pushed {pushed}":
+		"Engram 同期: {pulled} を取得、{pushed} を送信",
+	"Disconnect (clear login)": "接続解除 (ログイン情報を削除)",
+	"Engram: disconnected. Open Engram settings to reconnect.":
+		"Engram: 接続解除。再接続するには、Engram の設定を開いてください。",
+	"Push entire vault": "保管庫全体を送信",
+	"Engram Sync: pushed {count} files": "Engram 同期: {count}つのファイルを送信しました",
+	"Check sync status": "同期状況を確認",
+	"Engram sync: checking...": "Engram 同期: 確認中...",
+	"Engram sync: server does not support reconciliation (update backend)":
+		"Engram 同期: サーバーがリコンシリエーションに対応していません (バックエンドを更新)",
+	"Engram sync: everything in sync": "Engram 同期: 全てが同期済み",
+	"{count} missing on server": "サーバー上で{count}つ見つかりませんでした",
+	"{count} diverged": "{count}つが異なる",
+	"{count} only on server": "{count} はサーバーにのみ存在します",
+	"Pull all from server (force overwrite)": "サーバーから全てをダウンロード (強制上書き)",
+	"Engram sync: pulling all from server...": "Engram 同期: サーバーから全てをダウンロード中...",
+	"Engram Sync: pulled {count} files from server":
+		"Engram 同期: サーバーから{count}つのファイルを取得しました",
+	"Send feedback": "フィードバックを送信",
+	"Semantic search": "セマンティック検索",
+	"Open search sidebar": "検索サイドバーを開く",
+	"Open sync center": "同期センターを開く",
+	"Engram: ready": "Engram: 準備完了",
+	"Engram Sync: pushed {pushed}": "Engram 同期: {pushed} をプッシュしました",
+	"Engram sync: sync failed": "Engram 同期: 同期に失敗しました",
+	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
+		"Engram: この保管庫はサーバー上に存在しません。利用可能な保管庫を選択するか、新規作成して続行してください。",
+	"Engram: recovered plugin settings from a backup after a corrupted save.":
+		"Engram: 破損した保存ファイルからのプラグイン設定を復元しました。",
+	"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.":
+		"Engram: プラグイン設定ファイルが破損し、復元できませんでした。設定で再接続が必要になる場合があります。",
+	"Engram: your login expired — open Engram settings to reconnect.":
+		"Engram: ログインが期限切れです。Engram の設定を開いて再接続してください。",
+	"Engram: This vault has been deleted on the server.":
+		"Engram: この保管庫はサーバーから削除されました。",
+	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
+		"Engram 同期: リアルタイム同期にはプラグインのアップデートが必要です。Engram vault sync プラグインをアップデートしてください。",
+	"Engram Sync: pulled {pulled} (local extras deleted)":
+		"Engram 同期: {pulled} を取得しました (ローカルの追加ファイルを削除)",
+	"Engram Sync: pulled {pulled}": "Engram 同期: {pulled} を取得しました",
+	"Engram Sync: replaced remote with local ({pushed} uploaded)":
+		"Engram 同期: リモートをローカルで置き換えました ({pushed} をアップロード)",
+	"Engram: sync is not set up yet, so nothing in this vault will sync.":
+		"Engram: まだ同期の設定が完了していません。この保管庫内のファイルは同期されません。",
+	"Finish sync setup": "同期設定を完了",
+	"Engram: sync is paused. This edit was not synced. Choose a sync direction to resume.":
+		"Engram: 同期が一時停止中です。この編集は同期されていません。同期方向を選択して再開してください。",
+	"Open Engram settings": "Engramの設定を開く",
+	"Engram: sync failed. Open the sync log for details.":
+		"Engram: 同期に失敗しました。詳細については、同期ログを開いてください。",
+	"Engram: not connected": "Engram: 接続されていません",
+	"Engram: signed out": "Engram: ログアウトされています",
+	"Not connected yet. Click to open settings and link this vault.":
+		"まだ接続されていません。設定を開いて、この保管庫をリンクしてください。",
+	"Not signed in. Click to open settings and reconnect.":
+		"まだログインされていません。設定を開いて、再接続してください。",
+	"Engram: finish setup": "Engram: 設定を完了",
+	"Engram: sync paused": "Engram: 同期を一時停止",
+	"{label} ({count} queued)": "{label} ({count}件待ち)",
+	"Setup is not finished — nothing will sync until you choose a sync direction. Click to finish.":
+		"設定は完了していません。同期方向を選択するまで、何も同期されません。完了するにはクリックしてください。",
+	"Sync paused — click to choose a sync direction":
+		"同期を一時停止 — 同期方向を選択するにはクリック",
+	"Engram: offline ({count} queued)": "Engram: オフライン ({count}件キュー)",
+	"Engram: offline": "Engram: オフライン",
+	"Server unreachable — changes will sync when connected":
+		"サーバーに接続できません — 接続すると変更が同期されます",
+	"Engram: error": "Engram: エラー",
+	"Unknown error": "不明なエラー",
+	"Engram: syncing ({count})": "Engram: 同期中 ({count})",
+	"Engram: syncing": "Engram: 同期中",
+	"Sync in progress...": "同期処理中...",
+	"Engram: pending ({count})": "Engram: 待機中 ({count})",
+	"{count} files queued": "{count}つのファイルが処理待ちです",
+	"Engram: live": "Engram: 接続中",
+	"WebSocket connected — live sync active": "WebSocket 接続済み — リアルタイム同期中",
+	"Click to sync": "同期を開始",
+	"Engram: ⚠ {count} sync errors": "Engram: ⚠ 同期エラー {count}件",
+	"Last sync: {when}": "最終同期: {when}",
+	"Engram Sync: pulled {count} changes": "Engram 同期: {count}つの変更を適用しました",
+	'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.':
+		'Engram 同期: "{name}" の同期状態が読み込めませんでした。ディスク上のコピーを使用しています。',
+	"Engram Vault Sync {version} is available. {link}.":
+		"Engram Vault Sync {version} が利用可能です。{link}.",
+	"Syncing...": "同期中...",
+	"👋 Welcome": "👋 ようこそ",
+	"🔌 Connection": "🔌 接続",
+	"🔄 Sync Center": "🔄 同期センター",
+	"⚙️ Advanced": "⚙️ 詳細設定",
+	"💬 Feedback": "💬 フィードバック",
+	"Engram: settings tab failed to render ({error})":
+		"Engram: 設定タブの表示に失敗しました ({error})",
+	Disconnected: "接続解除",
+	"Error: {error}": "エラー: {error}",
+	unknown: "不明",
+	"Connected — waiting for first sync decision": "接続済み - 最初の同期待ち",
+	"Connected — live sync active": "接続済み - ライブ同期中",
+	"Connected — polling": "接続済み - ポーリング中",
+	"Not configured": "設定されていません",
+	"Open sync setup": "同期設定を開く",
 	"New here? Watch the setup video": "初めての方はこちら。セットアップ動画をご覧ください",
 	"What Engram does, and how to connect your vault, start to finish.":
 		"Engramの機能と、保管庫の接続方法を最初から最後まで説明します。",
@@ -574,6 +576,29 @@ const ja: Dict = {
 	"Nothing in this vault syncs until you choose how to merge it with the server.":
 		"この保管庫の内容は、サーバーとの連携方法を選択するまで同期されません。",
 	"Choose sync direction": "同期方向を選択してください",
+	Bug: "バグ",
+	Idea: "アイデア",
+	Confusing: "わかりにくい",
+	"Love it": "素晴らしい",
+	"What's working, what's frustrating, what do you wish Engram did?":
+		"何がうまくいっていて、何がストレスで、Engramにはどのような機能が欲しいですか？",
+	"This server is self-hosted, so feedback is not collected here. ":
+		"このサーバーは自己ホスト型なので、フィードバックはここで収集されません。",
+	"Report an issue on GitHub": "GitHubで問題を報告",
+	"Connect to Engram first to send feedback.":
+		"フィードバックを送信するには、まずEngramに接続してください。",
+	"Open Connection": "接続を開く",
+	"What kind of feedback?": "どのようなフィードバックですか？",
+	"Your feedback": "お客様からのフィードバック",
+	"Tell us anything": "何でもお気軽にお知らせください",
+	"How do you feel about Engram?": "Engramについて、どう感じますか？",
+	"{n} of 5": "5つ中{n}",
+	"Couldn't send your feedback, please try again.":
+		"フィードバックの送信に失敗しました。再度お試しください。",
+	"It's OK to email me about this": "この件について、メールでご連絡いただいても構いません",
+	"Sending…": "送信中…",
+	Send: "送信する",
+	"Thanks, we read every message.": "ありがとうございます。すべてのメッセージを拝見します。",
 	"...": "...",
 	'... "{name}" ...': '... "{name}" ...',
 	"The server took too long to respond. Try again.":

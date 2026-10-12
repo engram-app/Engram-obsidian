@@ -2,9 +2,6 @@ import type { Dict } from "..";
 
 // Bahasa Melayu
 const ms: Dict = {
-	"Invalid API key": "Kunci API tidak sah",
-	"Request failed ({status})": "Permintaan gagal ({status})",
-	"Connection failed": "Sambungan gagal",
 	"Link Obsidian to Engram": "Sambungkan Obsidian ke Engram",
 	"Starting...": "Bermula...",
 	"Failed to start device flow. Check your Engram URL and try again.":
@@ -83,97 +80,6 @@ const ms: Dict = {
 		"Selesaikan persediaan akaun anda di app.engram.page untuk mula sync.",
 	"Limit reached. Upgrade to continue.": "Had telah dicapai. Tingkatkan untuk meneruskan.",
 	Upgrade: "Tingkatkan",
-	"Update in settings": "Kemas kini dalam tetapan",
-	"Sync now": "Sync sekarang",
-	"Engram sync: syncing...": "Engram sync: sedang sync...",
-	"Engram Sync: pulled {pulled}, pushed {pushed}":
-		"Engram Sync: telah diambil {pulled}, telah dihantar {pushed}",
-	"Disconnect (clear login)": "Putuskan sambungan (hapus log masuk)",
-	"Engram: disconnected. Open Engram settings to reconnect.":
-		"Engram: telah diputuskan sambungan. Buka tetapan Engram untuk menyambung semula.",
-	"Push entire vault": "Hantar keseluruhan peti nota",
-	"Engram Sync: pushed {count} files": "Engram Sync: telah menghantar {count} fail",
-	"Check sync status": "Semak status sync",
-	"Engram sync: checking...": "Engram sync: sedang menyemak...",
-	"Engram sync: server does not support reconciliation (update backend)":
-		"Engram Sync: pelayan tidak menyokong penyelarasan (kemas kini bahagian belakang)",
-	"Engram sync: everything in sync": "Engram Sync: semuanya sudah diselaraskan",
-	"{count} missing on server": "{count} hilang di server",
-	"{count} diverged": "{count} berbeza",
-	"{count} only on server": "{count} sahaja pada pelayan",
-	"Engram Sync: {details}": "Sync Engram: {details}",
-	"Pull all from server (force overwrite)": "Tarik semua daripada pelayan (timpa paksa)",
-	"Engram sync: pulling all from server...":
-		"Engram sync: sedang menarik semua daripada pelayan...",
-	"Engram Sync: pulled {count} files from server":
-		"Engram Sync: telah memuat turun {count} fail daripada pelayan",
-	"Show sync log": "Tunjukkan log sync",
-	"Semantic search": "Carian semantik",
-	"Open search sidebar": "Buka panel carian",
-	"Engram search": "Carian Engram",
-	"Open sync center": "Buka Pusat Sync",
-	"Engram: ready": "Engram: bersedia",
-	"Engram Sync: pushed {pushed}": "Engram Sync: telah dihantar {pushed}",
-	"Engram sync: sync failed": "Engram sync: gagal sync",
-	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
-		"Engram: peti nota ini tidak lagi wujud di server. Pilih atau cipta peti nota untuk meneruskan.",
-	"Engram: recovered plugin settings from a backup after a corrupted save.":
-		"Engram: tetapan plugin telah dipulihkan daripada sandaran selepas fail yang rosak.",
-	"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.":
-		"Engram: fail tetapan plugin rosak dan tidak dapat dipulihkan. Anda mungkin perlu menyambung semula dalam tetapan.",
-	"Engram: your login expired — open Engram settings to reconnect.":
-		"Engram: log masuk anda telah tamat tempoh — buka tetapan Engram untuk menyambung semula.",
-	"Engram: This vault has been deleted on the server.":
-		"Engram: Peti nota ini telah dipadamkan di server.",
-	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
-		"Engram sync: sync langsung memerlukan kemas kini plugin — sila kemas kini plugin Engram vault sync.",
-	"Engram Sync: pulled {pulled} (local extras deleted)":
-		"Engram Sync: telah diambil {pulled} (ekstra tempatan telah dipadam)",
-	"Engram Sync: pulled {pulled}": "Engram Sync: telah diambil {pulled}",
-	"Engram Sync: replaced remote with local ({pushed} uploaded)":
-		"Engram Sync: telah menggantikan fail jauh dengan fail tempatan ({pushed} telah dimuat naik)",
-	"Engram: sync is not set up yet, so nothing in this vault will sync.":
-		"Engram: sync belum ditetapkan, jadi tiada apa dalam peti nota ini yang akan disinkronkan.",
-	"Finish sync setup": "Selesaikan persediaan sync",
-	"Engram: sync is paused. This edit was not synced. Choose a sync direction to resume.":
-		"Engram: sync dihentikan. Pengeditan ini belum disinkronkan. Pilih arah sync untuk meneruskan.",
-	"Open Engram settings": "Buka tetapan Engram",
-	"Engram: sync failed. Open the sync log for details.":
-		"Engram: sync gagal. Buka log sync untuk maklumat lanjut.",
-	"Engram: not connected": "Engram: tidak disambungkan",
-	"Engram: signed out": "Engram: telah log keluar",
-	"Not connected yet. Click to open settings and link this vault.":
-		"Belum disambungkan. Klik untuk membuka tetapan dan pautkan peti nota ini.",
-	"Not signed in. Click to open settings and reconnect.":
-		"Belum log masuk. Klik untuk membuka tetapan dan sambungkan semula.",
-	"Engram: finish setup": "Engram: selesaikan persediaan",
-	"Engram: sync paused": "Engram: sync dihentikan",
-	"{label} ({count} queued)": "{label} ({count} dalam senarai)",
-	"Setup is not finished — nothing will sync until you choose a sync direction. Click to finish.":
-		"Persediaan belum selesai — tiada apa yang akan disinkronkan sehingga anda memilih arah sync. Klik untuk menyelesaikan.",
-	"Sync paused — click to choose a sync direction":
-		"Sync dihentikan — klik untuk memilih arah sync",
-	"Engram: offline ({count} queued)": "Engram: luar talian ({count} dalam senarai tunggu)",
-	"Engram: offline": "Engram: luar talian",
-	"Server unreachable — changes will sync when connected":
-		"Pelayan tidak dapat dihubungi — perubahan akan disinkronkan apabila disambungkan",
-	"Engram: error": "Engram: ralat",
-	"Unknown error": "Ralat tidak diketahui",
-	"Engram: syncing ({count})": "Engram: sedang disinkronkan ({count})",
-	"Engram: syncing": "Engram: sedang disinkronkan",
-	"Sync in progress...": "Proses sync sedang berjalan...",
-	"Engram: pending ({count})": "Engram: tertunda ({count})",
-	"{count} files queued": "{count} fail dalam senarai tunggu",
-	"Engram: live": "Engram: aktif",
-	"WebSocket connected — live sync active": "WebSocket disambungkan — sync langsung aktif",
-	"Click to sync": "Klik untuk sync",
-	"Engram: ⚠ {count} sync errors": "Engram: ⚠ {count} ralat sync",
-	"Last sync: {when}": "Sync terakhir: {when}",
-	"Engram Sync: pulled {count} changes": "Engram Sync: {count} perubahan telah diambil",
-	'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.':
-		'Engram Sync: keadaan sync untuk "{name}" tidak dapat dibaca — menggunakan salinan dalam cakera.',
-	"Engram Vault Sync {version} is available. {link}.":
-		"Engram Vault Sync {version} tersedia. {link}.",
 	"{count} files": "{count} fail",
 	"Notes searchable": "Nota boleh dicari",
 	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
@@ -212,21 +118,7 @@ const ms: Dict = {
 	"match strength: {pct}%": "kekuatan padanan: {pct}%",
 	"No source path for this result": "Tiada laluan sumber untuk hasil ini",
 	"Note not synced locally": "Nota belum disinkronkan secara tempatan",
-	"Syncing...": "Sedang menyinkronkan...",
-	"👋 Welcome": "👋 Selamat datang",
-	"🔌 Connection": "🔌 Sambungan",
-	"🔄 Sync Center": "🔄 Pusat Sync",
-	"⚙️ Advanced": "⚙️ Lanjutan",
-	"Engram: settings tab failed to render ({error})":
-		"Engram: tab tetapan gagal dipaparkan ({error})",
-	Disconnected: "Terputus",
-	"Error: {error}": "Ralat: {error}",
-	unknown: "tidak diketahui",
-	"Connected — waiting for first sync decision": "Sambung — menunggu keputusan sync pertama",
-	"Connected — live sync active": "Sambung — sync aktif",
-	"Connected — polling": "Sambung — sedang memeriksa",
-	"Not configured": "Belum dikonfigurasikan",
-	"Open sync setup": "Buka persediaan sync",
+	"Engram search": "Carian Engram",
 	"waiting for a connection": "menunggu sambungan",
 	"sync is paused": "sync ditangguhkan",
 	"syncing now": "sedang sync",
@@ -237,6 +129,7 @@ const ms: Dict = {
 	"{count} ignored": "{count} pengecualian",
 	"{count} queued — {reason}": "{count} dalam senarai — {reason}",
 	"Sync...": "Sync...",
+	"Engram Sync: {details}": "Sync Engram: {details}",
 	Refresh: "Segarkan",
 	"Not synced on your plan ({count})": "Tidak disinkronkan dalam pelan anda ({count})",
 	"These files are fine. They just need a paid plan to sync.":
@@ -403,6 +296,7 @@ const ms: Dict = {
 	"Run in background": "Jalankan di latar belakang",
 	"Syncing…": "Sedang mengsync…",
 	"Sync complete": "Sync selesai",
+	"Show sync log": "Tunjukkan log sync",
 	"Syncing attachments": "Mengsync lampiran",
 	Complete: "Selesai",
 	'{count} failed. Run "{command}" for details.':
@@ -423,6 +317,7 @@ const ms: Dict = {
 	"Pull all failed: {error}": "Mengambil semua gagal: {error}",
 	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
 		"Engram: konflik sync pada {path} — edit tempatan anda telah disimpan sebagai {copy}",
+	"Connection failed": "Sambungan gagal",
 	"Open note": "Buka nota",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
 		"Engram: {count} nota mempunyai masalah frontmatter. Buka Pusat Sync untuk membetulkan.",
@@ -434,6 +329,113 @@ const ms: Dict = {
 	"Engram: this plugin is too old to sync. Update it to continue.":
 		"Engram: plugin ini terlalu lama untuk disinkronkan. Kemas kini untuk meneruskan.",
 	Update: "Kemas kini",
+	"Invalid API key": "Kunci API tidak sah",
+	"Request failed ({status})": "Permintaan gagal ({status})",
+	"Update in settings": "Kemas kini dalam tetapan",
+	"Sync now": "Sync sekarang",
+	"Engram sync: syncing...": "Engram sync: sedang sync...",
+	"Engram Sync: pulled {pulled}, pushed {pushed}":
+		"Engram Sync: telah diambil {pulled}, telah dihantar {pushed}",
+	"Disconnect (clear login)": "Putuskan sambungan (hapus log masuk)",
+	"Engram: disconnected. Open Engram settings to reconnect.":
+		"Engram: telah diputuskan sambungan. Buka tetapan Engram untuk menyambung semula.",
+	"Push entire vault": "Hantar keseluruhan peti nota",
+	"Engram Sync: pushed {count} files": "Engram Sync: telah menghantar {count} fail",
+	"Check sync status": "Semak status sync",
+	"Engram sync: checking...": "Engram sync: sedang menyemak...",
+	"Engram sync: server does not support reconciliation (update backend)":
+		"Engram Sync: pelayan tidak menyokong penyelarasan (kemas kini bahagian belakang)",
+	"Engram sync: everything in sync": "Engram Sync: semuanya sudah diselaraskan",
+	"{count} missing on server": "{count} hilang di server",
+	"{count} diverged": "{count} berbeza",
+	"{count} only on server": "{count} sahaja pada pelayan",
+	"Pull all from server (force overwrite)": "Tarik semua daripada pelayan (timpa paksa)",
+	"Engram sync: pulling all from server...":
+		"Engram sync: sedang menarik semua daripada pelayan...",
+	"Engram Sync: pulled {count} files from server":
+		"Engram Sync: telah memuat turun {count} fail daripada pelayan",
+	"Send feedback": "Hantar maklum balas",
+	"Semantic search": "Carian semantik",
+	"Open search sidebar": "Buka panel carian",
+	"Open sync center": "Buka Pusat Sync",
+	"Engram: ready": "Engram: bersedia",
+	"Engram Sync: pushed {pushed}": "Engram Sync: telah dihantar {pushed}",
+	"Engram sync: sync failed": "Engram sync: gagal sync",
+	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
+		"Engram: peti nota ini tidak lagi wujud di server. Pilih atau cipta peti nota untuk meneruskan.",
+	"Engram: recovered plugin settings from a backup after a corrupted save.":
+		"Engram: tetapan plugin telah dipulihkan daripada sandaran selepas fail yang rosak.",
+	"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.":
+		"Engram: fail tetapan plugin rosak dan tidak dapat dipulihkan. Anda mungkin perlu menyambung semula dalam tetapan.",
+	"Engram: your login expired — open Engram settings to reconnect.":
+		"Engram: log masuk anda telah tamat tempoh — buka tetapan Engram untuk menyambung semula.",
+	"Engram: This vault has been deleted on the server.":
+		"Engram: Peti nota ini telah dipadamkan di server.",
+	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
+		"Engram sync: sync langsung memerlukan kemas kini plugin — sila kemas kini plugin Engram vault sync.",
+	"Engram Sync: pulled {pulled} (local extras deleted)":
+		"Engram Sync: telah diambil {pulled} (ekstra tempatan telah dipadam)",
+	"Engram Sync: pulled {pulled}": "Engram Sync: telah diambil {pulled}",
+	"Engram Sync: replaced remote with local ({pushed} uploaded)":
+		"Engram Sync: telah menggantikan fail jauh dengan fail tempatan ({pushed} telah dimuat naik)",
+	"Engram: sync is not set up yet, so nothing in this vault will sync.":
+		"Engram: sync belum ditetapkan, jadi tiada apa dalam peti nota ini yang akan disinkronkan.",
+	"Finish sync setup": "Selesaikan persediaan sync",
+	"Engram: sync is paused. This edit was not synced. Choose a sync direction to resume.":
+		"Engram: sync dihentikan. Pengeditan ini belum disinkronkan. Pilih arah sync untuk meneruskan.",
+	"Open Engram settings": "Buka tetapan Engram",
+	"Engram: sync failed. Open the sync log for details.":
+		"Engram: sync gagal. Buka log sync untuk maklumat lanjut.",
+	"Engram: not connected": "Engram: tidak disambungkan",
+	"Engram: signed out": "Engram: telah log keluar",
+	"Not connected yet. Click to open settings and link this vault.":
+		"Belum disambungkan. Klik untuk membuka tetapan dan pautkan peti nota ini.",
+	"Not signed in. Click to open settings and reconnect.":
+		"Belum log masuk. Klik untuk membuka tetapan dan sambungkan semula.",
+	"Engram: finish setup": "Engram: selesaikan persediaan",
+	"Engram: sync paused": "Engram: sync dihentikan",
+	"{label} ({count} queued)": "{label} ({count} dalam senarai)",
+	"Setup is not finished — nothing will sync until you choose a sync direction. Click to finish.":
+		"Persediaan belum selesai — tiada apa yang akan disinkronkan sehingga anda memilih arah sync. Klik untuk menyelesaikan.",
+	"Sync paused — click to choose a sync direction":
+		"Sync dihentikan — klik untuk memilih arah sync",
+	"Engram: offline ({count} queued)": "Engram: luar talian ({count} dalam senarai tunggu)",
+	"Engram: offline": "Engram: luar talian",
+	"Server unreachable — changes will sync when connected":
+		"Pelayan tidak dapat dihubungi — perubahan akan disinkronkan apabila disambungkan",
+	"Engram: error": "Engram: ralat",
+	"Unknown error": "Ralat tidak diketahui",
+	"Engram: syncing ({count})": "Engram: sedang disinkronkan ({count})",
+	"Engram: syncing": "Engram: sedang disinkronkan",
+	"Sync in progress...": "Proses sync sedang berjalan...",
+	"Engram: pending ({count})": "Engram: tertunda ({count})",
+	"{count} files queued": "{count} fail dalam senarai tunggu",
+	"Engram: live": "Engram: aktif",
+	"WebSocket connected — live sync active": "WebSocket disambungkan — sync langsung aktif",
+	"Click to sync": "Klik untuk sync",
+	"Engram: ⚠ {count} sync errors": "Engram: ⚠ {count} ralat sync",
+	"Last sync: {when}": "Sync terakhir: {when}",
+	"Engram Sync: pulled {count} changes": "Engram Sync: {count} perubahan telah diambil",
+	'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.':
+		'Engram Sync: keadaan sync untuk "{name}" tidak dapat dibaca — menggunakan salinan dalam cakera.',
+	"Engram Vault Sync {version} is available. {link}.":
+		"Engram Vault Sync {version} tersedia. {link}.",
+	"Syncing...": "Sedang menyinkronkan...",
+	"👋 Welcome": "👋 Selamat datang",
+	"🔌 Connection": "🔌 Sambungan",
+	"🔄 Sync Center": "🔄 Pusat Sync",
+	"⚙️ Advanced": "⚙️ Lanjutan",
+	"💬 Feedback": "💬 Maklum balas",
+	"Engram: settings tab failed to render ({error})":
+		"Engram: tab tetapan gagal dipaparkan ({error})",
+	Disconnected: "Terputus",
+	"Error: {error}": "Ralat: {error}",
+	unknown: "tidak diketahui",
+	"Connected — waiting for first sync decision": "Sambung — menunggu keputusan sync pertama",
+	"Connected — live sync active": "Sambung — sync aktif",
+	"Connected — polling": "Sambung — sedang memeriksa",
+	"Not configured": "Belum dikonfigurasikan",
+	"Open sync setup": "Buka persediaan sync",
 	"New here? Watch the setup video": "Baru di sini? Tonton video panduan",
 	"What Engram does, and how to connect your vault, start to finish.":
 		"Apa yang Engram lakukan, dan cara menyambungkan peti nota anda, dari awal hingga akhir.",
@@ -577,6 +579,29 @@ const ms: Dict = {
 	"Nothing in this vault syncs until you choose how to merge it with the server.":
 		"Tiada apa dalam peti nota ini yang disinkronkan sehingga anda memilih cara untuk menggabungkannya dengan pelayan.",
 	"Choose sync direction": "Pilih arah sync",
+	Bug: "Ralat",
+	Idea: "Idea",
+	Confusing: "Membingungkan",
+	"Love it": "Sangat suka",
+	"What's working, what's frustrating, what do you wish Engram did?":
+		"Apa yang berfungsi, apa yang mengecewakan, apa yang anda harapkan Engram lakukan?",
+	"This server is self-hosted, so feedback is not collected here. ":
+		"Pelayan ini dikendalikan sendiri, jadi maklum balas tidak dikumpul di sini. ",
+	"Report an issue on GitHub": "Laporkan masalah di GitHub",
+	"Connect to Engram first to send feedback.":
+		"Sambung ke Engram terlebih dahulu untuk menghantar maklum balas.",
+	"Open Connection": "Buka Sambungan",
+	"What kind of feedback?": "Jenis maklum balas apa?",
+	"Your feedback": "Maklum balas anda",
+	"Tell us anything": "Beritahu kami apa sahaja",
+	"How do you feel about Engram?": "Bagaimana pendapat anda tentang Engram?",
+	"{n} of 5": "{n} daripada 5",
+	"Couldn't send your feedback, please try again.":
+		"Tidak dapat menghantar maklum balas anda, sila cuba lagi.",
+	"It's OK to email me about this": "Anda boleh emel saya tentang ini",
+	"Sending…": "Mengirim…",
+	Send: "Hantar",
+	"Thanks, we read every message.": "Terima kasih, kami membaca setiap mesej.",
 	"...": "...",
 	'... "{name}" ...': '... "{name}" ...',
 	"The server took too long to respond. Try again.":

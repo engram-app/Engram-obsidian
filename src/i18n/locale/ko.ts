@@ -2,9 +2,6 @@ import type { Dict } from "..";
 
 // 한국어
 const ko: Dict = {
-	"Invalid API key": "잘못된 API 키입니다",
-	"Request failed ({status})": "요청 실패 ({status})",
-	"Connection failed": "연결에 실패했습니다",
 	"Link Obsidian to Engram": "Obsidian을 Engram에 연결합니다",
 	"Starting...": "시작 중...",
 	"Failed to start device flow. Check your Engram URL and try again.":
@@ -82,96 +79,6 @@ const ko: Dict = {
 	"Limit reached. Upgrade to continue.":
 		"제한에 도달했습니다. 업그레이드를 통해 계속 사용하세요.",
 	Upgrade: "업그레이드",
-	"Update in settings": "설정에서 업데이트",
-	"Sync now": "지금 동기화",
-	"Engram sync: syncing...": "Engram 동기화: 동기화 중...",
-	"Engram Sync: pulled {pulled}, pushed {pushed}":
-		"Engram 동기화: {pulled} 다운로드, {pushed} 업로드",
-	"Disconnect (clear login)": "연결 해제 (로그인 정보 삭제)",
-	"Engram: disconnected. Open Engram settings to reconnect.":
-		"Engram: 연결 해제됨. 다시 연결하려면 Engram 설정으로 이동하세요.",
-	"Push entire vault": "전체 보관함 동기화",
-	"Engram Sync: pushed {count} files": "Engram 동기화: {count}개의 파일 전송 완료",
-	"Check sync status": "동기화 상태 확인",
-	"Engram sync: checking...": "Engram 동기화: 확인 중...",
-	"Engram sync: server does not support reconciliation (update backend)":
-		"Engram 동기화: 서버에서 조정 기능을 지원하지 않습니다 (백엔드 업데이트)",
-	"Engram sync: everything in sync": "Engram 동기화: 모든 내용이 동기화되었습니다",
-	"{count} missing on server": "서버에 {count}개가 누락됨",
-	"{count} diverged": "{count}개 항목이 다름",
-	"{count} only on server": "{count}이(가) 서버에만 있습니다",
-	"Engram Sync: {details}": "Engram 동기화: {details}",
-	"Pull all from server (force overwrite)": "서버에서 모든 내용 가져오기 (강제 덮어쓰기)",
-	"Engram sync: pulling all from server...": "Engram 동기화: 서버에서 모든 내용 가져오는 중...",
-	"Engram Sync: pulled {count} files from server":
-		"Engram 동기화: 서버에서 {count}개의 파일을 가져왔습니다",
-	"Show sync log": "동기화 로그 보기",
-	"Semantic search": "의미 검색",
-	"Open search sidebar": "검색 사이드바 열기",
-	"Engram search": "Engram 검색",
-	"Open sync center": "동기화 센터 열기",
-	"Engram: ready": "Engram: 준비 완료",
-	"Engram Sync: pushed {pushed}": "Engram 동기화: {pushed} 푸시됨",
-	"Engram sync: sync failed": "Engram 동기화: 동기화 실패",
-	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
-		"Engram: 이 보관함은 더 이상 서버에 존재하지 않습니다. 계속하려면 보관함을 선택하거나 새로 만드세요.",
-	"Engram: recovered plugin settings from a backup after a corrupted save.":
-		"Engram: 손상된 저장 파일에서 플러그인 설정을 복구했습니다.",
-	"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.":
-		"Engram: 플러그인 설정 파일이 손상되어 복구할 수 없습니다. 설정에서 다시 연결해야 할 수 있습니다.",
-	"Engram: your login expired — open Engram settings to reconnect.":
-		"Engram: 로그인 만료되었습니다. 다시 연결하려면 Engram 설정으로 이동하세요.",
-	"Engram: This vault has been deleted on the server.":
-		"Engram: 이 보관함이 서버에서 삭제되었습니다.",
-	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
-		"Engram 동기화: 실시간 동기화를 사용하려면 플러그인 업데이트가 필요합니다. Engram 보관함 동기화 플러그인을 업데이트하세요.",
-	"Engram Sync: pulled {pulled} (local extras deleted)":
-		"Engram 동기화: {pulled} 가져오기 완료 (로컬 추가 파일 삭제)",
-	"Engram Sync: pulled {pulled}": "Engram 동기화: {pulled} 가져오기 완료",
-	"Engram Sync: replaced remote with local ({pushed} uploaded)":
-		"Engram 동기화: 원격 파일을 로컬 파일로 대체 ({pushed} 업로드됨)",
-	"Engram: sync is not set up yet, so nothing in this vault will sync.":
-		"Engram: 아직 동기화 설정이 완료되지 않았으므로 이 보관함의 내용은 동기화되지 않습니다.",
-	"Finish sync setup": "동기화 설정 완료",
-	"Engram: sync is paused. This edit was not synced. Choose a sync direction to resume.":
-		"Engram: 동기화가 일시 중지되었습니다. 이 변경 사항은 동기화되지 않았습니다. 동기화 방향을 선택하여 다시 시작하세요.",
-	"Open Engram settings": "Engram 설정 열기",
-	"Engram: sync failed. Open the sync log for details.":
-		"Engram: 동기화 실패. 자세한 내용은 동기화 로그를 확인하세요.",
-	"Engram: not connected": "Engram: 연결되지 않음",
-	"Engram: signed out": "Engram: 로그아웃됨",
-	"Not connected yet. Click to open settings and link this vault.":
-		"아직 연결되지 않았습니다. 설정을 클릭하여 연결하고 이 보관함을 링크하세요.",
-	"Not signed in. Click to open settings and reconnect.":
-		"아직 로그인하지 않았습니다. 설정을 클릭하여 다시 연결하세요.",
-	"Engram: finish setup": "Engram: 설정 완료",
-	"Engram: sync paused": "Engram: 동기화 일시 중지",
-	"{label} ({count} queued)": "{label} ({count}개 대기 중)",
-	"Setup is not finished — nothing will sync until you choose a sync direction. Click to finish.":
-		"설정이 완료되지 않았습니다. 동기화 방향을 선택할 때까지 아무 것도 동기화되지 않습니다. 완료하려면 클릭하세요.",
-	"Sync paused — click to choose a sync direction":
-		"동기화 중지됨 — 동기화 방향을 선택하려면 클릭하세요",
-	"Engram: offline ({count} queued)": "Engram: 오프라인 ({count}개 대기 중)",
-	"Engram: offline": "Engram: 오프라인",
-	"Server unreachable — changes will sync when connected":
-		"서버 연결 안됨 — 연결되면 변경 사항이 동기화됩니다",
-	"Engram: error": "Engram: 오류",
-	"Unknown error": "알 수 없는 오류",
-	"Engram: syncing ({count})": "Engram: 동기화 중 ({count})",
-	"Engram: syncing": "Engram: 동기화 중",
-	"Sync in progress...": "동기화 진행 중...",
-	"Engram: pending ({count})": "Engram: 대기 중 ({count})",
-	"{count} files queued": "{count}개의 파일 대기 중",
-	"Engram: live": "Engram: 연결됨",
-	"WebSocket connected — live sync active": "WebSocket 연결됨 — 실시간 동기화 활성화됨",
-	"Click to sync": "동기화하려면 클릭하세요",
-	"Engram: ⚠ {count} sync errors": "Engram: ⚠ {count}개의 동기화 오류",
-	"Last sync: {when}": "마지막 동기화: {when}",
-	"Engram Sync: pulled {count} changes": "Engram 동기화: {count}개의 변경 사항을 가져왔습니다",
-	'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.':
-		'Engram 동기화: "{name}"의 동기화 상태를 읽을 수 없음 - 디스크 복사본 사용.',
-	"Engram Vault Sync {version} is available. {link}.":
-		"Engram Vault Sync {version}이 사용 가능합니다. {link}.",
 	"{count} files": "{count} 개의 파일",
 	"Notes searchable": "검색 가능한 노트",
 	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
@@ -210,20 +117,7 @@ const ko: Dict = {
 	"match strength: {pct}%": "일치 강도: {pct}%",
 	"No source path for this result": "이 결과에 대한 원본 경로가 없습니다",
 	"Note not synced locally": "노트가 로컬에 동기화되지 않았습니다",
-	"Syncing...": "동기화 중...",
-	"👋 Welcome": "👋 안녕하세요",
-	"🔌 Connection": "🔌 연결",
-	"🔄 Sync Center": "🔄 동기화 센터",
-	"⚙️ Advanced": "⚙️ 고급 설정",
-	"Engram: settings tab failed to render ({error})": "Engram: 설정 탭 로딩 실패 ({error})",
-	Disconnected: "연결 해제됨",
-	"Error: {error}": "오류: {error}",
-	unknown: "알 수 없음",
-	"Connected — waiting for first sync decision": "연결됨 — 첫 번째 동기화 결정 대기 중",
-	"Connected — live sync active": "연결됨 — 실시간 동기화 활성",
-	"Connected — polling": "연결됨 — 폴링 중",
-	"Not configured": "설정되지 않음",
-	"Open sync setup": "동기화 설정 열기",
+	"Engram search": "Engram 검색",
 	"waiting for a connection": "연결 대기 중",
 	"sync is paused": "동기화 일시 중지됨",
 	"syncing now": "현재 동기화 중",
@@ -234,6 +128,7 @@ const ko: Dict = {
 	"{count} ignored": "{count}개 제외됨",
 	"{count} queued — {reason}": "{count}개 대기 중 — {reason}",
 	"Sync...": "동기화 중...",
+	"Engram Sync: {details}": "Engram 동기화: {details}",
 	Refresh: "새로 고침",
 	"Not synced on your plan ({count})": "구독 플랜에 포함되지 않아 동기화되지 않음 ({count})",
 	"These files are fine. They just need a paid plan to sync.":
@@ -396,6 +291,7 @@ const ko: Dict = {
 	"Run in background": "백그라운드에서 실행",
 	"Syncing…": "동기화 중…",
 	"Sync complete": "동기화 완료",
+	"Show sync log": "동기화 로그 보기",
 	"Syncing attachments": "첨부 파일 동기화 중",
 	Complete: "완료",
 	'{count} failed. Run "{command}" for details.':
@@ -416,6 +312,7 @@ const ko: Dict = {
 	"Pull all failed: {error}": "모든 항목 가져오기 실패: {error}",
 	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
 		"Engram: {path}에서 동기화 충돌이 발생했습니다. 로컬 편집 내용은 {copy}으로 저장되었습니다",
+	"Connection failed": "연결에 실패했습니다",
 	"Open note": "노트 열기",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
 		"Engram: {count}개의 노트에 메타데이터 문제가 있습니다. 동기화 센터에서 수정하세요.",
@@ -427,6 +324,111 @@ const ko: Dict = {
 	"Engram: this plugin is too old to sync. Update it to continue.":
 		"Engram: 이 플러그인은 너무 오래되어 동기화할 수 없습니다. 계속하려면 업데이트하세요.",
 	Update: "업데이트",
+	"Invalid API key": "잘못된 API 키입니다",
+	"Request failed ({status})": "요청 실패 ({status})",
+	"Update in settings": "설정에서 업데이트",
+	"Sync now": "지금 동기화",
+	"Engram sync: syncing...": "Engram 동기화: 동기화 중...",
+	"Engram Sync: pulled {pulled}, pushed {pushed}":
+		"Engram 동기화: {pulled} 다운로드, {pushed} 업로드",
+	"Disconnect (clear login)": "연결 해제 (로그인 정보 삭제)",
+	"Engram: disconnected. Open Engram settings to reconnect.":
+		"Engram: 연결 해제됨. 다시 연결하려면 Engram 설정으로 이동하세요.",
+	"Push entire vault": "전체 보관함 동기화",
+	"Engram Sync: pushed {count} files": "Engram 동기화: {count}개의 파일 전송 완료",
+	"Check sync status": "동기화 상태 확인",
+	"Engram sync: checking...": "Engram 동기화: 확인 중...",
+	"Engram sync: server does not support reconciliation (update backend)":
+		"Engram 동기화: 서버에서 조정 기능을 지원하지 않습니다 (백엔드 업데이트)",
+	"Engram sync: everything in sync": "Engram 동기화: 모든 내용이 동기화되었습니다",
+	"{count} missing on server": "서버에 {count}개가 누락됨",
+	"{count} diverged": "{count}개 항목이 다름",
+	"{count} only on server": "{count}이(가) 서버에만 있습니다",
+	"Pull all from server (force overwrite)": "서버에서 모든 내용 가져오기 (강제 덮어쓰기)",
+	"Engram sync: pulling all from server...": "Engram 동기화: 서버에서 모든 내용 가져오는 중...",
+	"Engram Sync: pulled {count} files from server":
+		"Engram 동기화: 서버에서 {count}개의 파일을 가져왔습니다",
+	"Send feedback": "피드백 보내기",
+	"Semantic search": "의미 검색",
+	"Open search sidebar": "검색 사이드바 열기",
+	"Open sync center": "동기화 센터 열기",
+	"Engram: ready": "Engram: 준비 완료",
+	"Engram Sync: pushed {pushed}": "Engram 동기화: {pushed} 푸시됨",
+	"Engram sync: sync failed": "Engram 동기화: 동기화 실패",
+	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
+		"Engram: 이 보관함은 더 이상 서버에 존재하지 않습니다. 계속하려면 보관함을 선택하거나 새로 만드세요.",
+	"Engram: recovered plugin settings from a backup after a corrupted save.":
+		"Engram: 손상된 저장 파일에서 플러그인 설정을 복구했습니다.",
+	"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.":
+		"Engram: 플러그인 설정 파일이 손상되어 복구할 수 없습니다. 설정에서 다시 연결해야 할 수 있습니다.",
+	"Engram: your login expired — open Engram settings to reconnect.":
+		"Engram: 로그인 만료되었습니다. 다시 연결하려면 Engram 설정으로 이동하세요.",
+	"Engram: This vault has been deleted on the server.":
+		"Engram: 이 보관함이 서버에서 삭제되었습니다.",
+	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
+		"Engram 동기화: 실시간 동기화를 사용하려면 플러그인 업데이트가 필요합니다. Engram 보관함 동기화 플러그인을 업데이트하세요.",
+	"Engram Sync: pulled {pulled} (local extras deleted)":
+		"Engram 동기화: {pulled} 가져오기 완료 (로컬 추가 파일 삭제)",
+	"Engram Sync: pulled {pulled}": "Engram 동기화: {pulled} 가져오기 완료",
+	"Engram Sync: replaced remote with local ({pushed} uploaded)":
+		"Engram 동기화: 원격 파일을 로컬 파일로 대체 ({pushed} 업로드됨)",
+	"Engram: sync is not set up yet, so nothing in this vault will sync.":
+		"Engram: 아직 동기화 설정이 완료되지 않았으므로 이 보관함의 내용은 동기화되지 않습니다.",
+	"Finish sync setup": "동기화 설정 완료",
+	"Engram: sync is paused. This edit was not synced. Choose a sync direction to resume.":
+		"Engram: 동기화가 일시 중지되었습니다. 이 변경 사항은 동기화되지 않았습니다. 동기화 방향을 선택하여 다시 시작하세요.",
+	"Open Engram settings": "Engram 설정 열기",
+	"Engram: sync failed. Open the sync log for details.":
+		"Engram: 동기화 실패. 자세한 내용은 동기화 로그를 확인하세요.",
+	"Engram: not connected": "Engram: 연결되지 않음",
+	"Engram: signed out": "Engram: 로그아웃됨",
+	"Not connected yet. Click to open settings and link this vault.":
+		"아직 연결되지 않았습니다. 설정을 클릭하여 연결하고 이 보관함을 링크하세요.",
+	"Not signed in. Click to open settings and reconnect.":
+		"아직 로그인하지 않았습니다. 설정을 클릭하여 다시 연결하세요.",
+	"Engram: finish setup": "Engram: 설정 완료",
+	"Engram: sync paused": "Engram: 동기화 일시 중지",
+	"{label} ({count} queued)": "{label} ({count}개 대기 중)",
+	"Setup is not finished — nothing will sync until you choose a sync direction. Click to finish.":
+		"설정이 완료되지 않았습니다. 동기화 방향을 선택할 때까지 아무 것도 동기화되지 않습니다. 완료하려면 클릭하세요.",
+	"Sync paused — click to choose a sync direction":
+		"동기화 중지됨 — 동기화 방향을 선택하려면 클릭하세요",
+	"Engram: offline ({count} queued)": "Engram: 오프라인 ({count}개 대기 중)",
+	"Engram: offline": "Engram: 오프라인",
+	"Server unreachable — changes will sync when connected":
+		"서버 연결 안됨 — 연결되면 변경 사항이 동기화됩니다",
+	"Engram: error": "Engram: 오류",
+	"Unknown error": "알 수 없는 오류",
+	"Engram: syncing ({count})": "Engram: 동기화 중 ({count})",
+	"Engram: syncing": "Engram: 동기화 중",
+	"Sync in progress...": "동기화 진행 중...",
+	"Engram: pending ({count})": "Engram: 대기 중 ({count})",
+	"{count} files queued": "{count}개의 파일 대기 중",
+	"Engram: live": "Engram: 연결됨",
+	"WebSocket connected — live sync active": "WebSocket 연결됨 — 실시간 동기화 활성화됨",
+	"Click to sync": "동기화하려면 클릭하세요",
+	"Engram: ⚠ {count} sync errors": "Engram: ⚠ {count}개의 동기화 오류",
+	"Last sync: {when}": "마지막 동기화: {when}",
+	"Engram Sync: pulled {count} changes": "Engram 동기화: {count}개의 변경 사항을 가져왔습니다",
+	'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.':
+		'Engram 동기화: "{name}"의 동기화 상태를 읽을 수 없음 - 디스크 복사본 사용.',
+	"Engram Vault Sync {version} is available. {link}.":
+		"Engram Vault Sync {version}이 사용 가능합니다. {link}.",
+	"Syncing...": "동기화 중...",
+	"👋 Welcome": "👋 안녕하세요",
+	"🔌 Connection": "🔌 연결",
+	"🔄 Sync Center": "🔄 동기화 센터",
+	"⚙️ Advanced": "⚙️ 고급 설정",
+	"💬 Feedback": "💬 피드백",
+	"Engram: settings tab failed to render ({error})": "Engram: 설정 탭 로딩 실패 ({error})",
+	Disconnected: "연결 해제됨",
+	"Error: {error}": "오류: {error}",
+	unknown: "알 수 없음",
+	"Connected — waiting for first sync decision": "연결됨 — 첫 번째 동기화 결정 대기 중",
+	"Connected — live sync active": "연결됨 — 실시간 동기화 활성",
+	"Connected — polling": "연결됨 — 폴링 중",
+	"Not configured": "설정되지 않음",
+	"Open sync setup": "동기화 설정 열기",
 	"New here? Watch the setup video": "처음이신가요? 설정 안내 영상을 보세요",
 	"What Engram does, and how to connect your vault, start to finish.":
 		"Engram이 무엇을 하는지, 그리고 보관함을 연결하는 방법을 처음부터 끝까지 알려드립니다.",
@@ -567,6 +569,28 @@ const ko: Dict = {
 	"Nothing in this vault syncs until you choose how to merge it with the server.":
 		"이 보관함의 내용은 서버와 병합하는 방법을 선택할 때까지 동기화되지 않습니다.",
 	"Choose sync direction": "동기화 방향 선택",
+	Bug: "버그",
+	Idea: "아이디어",
+	Confusing: "혼란스러움",
+	"Love it": "매우 만족",
+	"What's working, what's frustrating, what do you wish Engram did?":
+		"어떤 점이 잘 되고, 어떤 점이 답답하며, Engram가 무엇을 해주기를 바라시나요?",
+	"This server is self-hosted, so feedback is not collected here. ":
+		"이 서버는 자체 호스팅 서버이므로, 피드백은 이곳에서 수집되지 않습니다. ",
+	"Report an issue on GitHub": "GitHub에서 문제 보고",
+	"Connect to Engram first to send feedback.": "피드백을 보내려면 먼저 Engram에 연결하세요.",
+	"Open Connection": "연결 열기",
+	"What kind of feedback?": "어떤 종류의 피드백인가요?",
+	"Your feedback": "사용자 의견",
+	"Tell us anything": "자유롭게 의견을 말씀해주세요",
+	"How do you feel about Engram?": "Engram에 대해 어떻게 생각하시나요?",
+	"{n} of 5": "5개 중 {n}개",
+	"Couldn't send your feedback, please try again.":
+		"의견 전송에 실패했습니다. 다시 시도해주세요.",
+	"It's OK to email me about this": "이 문제에 대해 이메일로 문의하셔도 괜찮습니다",
+	"Sending…": "보내는 중…",
+	Send: "보내기",
+	"Thanks, we read every message.": "감사합니다. 모든 메시지를 확인합니다.",
 	"...": "...",
 	'... "{name}" ...': '"{name}" ...',
 	"The server took too long to respond. Try again.":
