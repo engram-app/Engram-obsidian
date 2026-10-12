@@ -338,6 +338,31 @@ describe("plugin specifics", () => {
 		expect(problems("🔄 Sync Center", "🔄 Sync-Zentrale", "de")).toEqual([]);
 	});
 
+	it("rejects an answer that adds a symbol its source lacks", () => {
+		expect(problems("Open sync center", "Buka 🔄 Pusat Sync", "ms")).toEqual(["symbols"]);
+	});
+
+	it("keeps the plugin's name whole", () => {
+		expect(
+			problems(
+				"Engram Vault Sync {version} is available.",
+				"Sync Peti Nota Engram {version} tersedia.",
+				"ms",
+			),
+		).toEqual(["brand"]);
+	});
+
+	it("pins glossary terms without their emoji, so the model does not paste it into sentences", () => {
+		const p = buildPrompt(
+			"ms",
+			{ "🔄 Sync Center": "🔄 Pusat Sync" },
+			"Open sync center",
+			false,
+		);
+		expect(p).toContain("Sync Center = Pusat Sync");
+		expect(p).not.toContain("🔄");
+	});
+
 	it("stores a single-form plural as a plain string, like the hand-written catalogs", () => {
 		expect(collapsePlural({ other: "{count} ファイル" })).toBe("{count} ファイル");
 		expect(collapsePlural({ one: "a", other: "b" })).toEqual({ one: "a", other: "b" });

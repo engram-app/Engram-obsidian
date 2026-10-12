@@ -1,0 +1,32 @@
+{
+	"ms": {
+		"version": 3,
+		"failed": ["Engram Sync: {details}"],
+		"one": {
+			"Engram Sync: pushed {count} files": "Engram Sync: pushed {count} file",
+			"Engram Sync: pulled {count} files from server": "Engram Sync: pulled {count} file from server",
+			"{count} files queued": "{count} file queued",
+			"Engram: ⚠ {count} sync errors": "Engram: ⚠ {count} sync error",
+			"Engram Sync: pulled {count} changes": "Engram Sync: pulled {count} change",
+			"{formatted} files · ": "{formatted} file · ",
+			"{count} need attention": "{count} needs attention",
+			"{count} attempts": "{count} attempt",
+			"Showing {count} entries": "Showing {count} entry",
+			"({count} errors)": "({count} error)",
+			"Free syncs notes only — {count} attachments will be skipped.": "Free syncs notes only — {count} attachment will be skipped.",
+			"{count} conflicts to resolve.": "{count} conflict to resolve.",
+			"Delete all {count} files currently on the server": "Delete all {count} file currently on the server",
+			"Upload {count} files from this vault": "Upload {count} file from this vault",
+			"Delete all {count} files in this vault": "Delete all {count} file in this vault",
+			"Download {count} files from the server": "Download {count} file from the server",
+			"{count} notes": "{count} note",
+			"{count} attachments": "{count} attachment",
+			" conflicts need resolution": " conflict needs resolution",
+			"Deleting {count} local files.": "Deleting {count} local file.",
+			"{count} attachments need a paid plan to sync. See Sync Center.": "{count} attachment needs a paid plan to sync. See Sync Center.",
+			"Engram: {count} files failed to sync{detail} — open Sync Center": "Engram: {count} file failed to sync{detail} — open Sync Center",
+			"Engram: {count} attachments skipped — upgrade to sync images & PDFs.": "Engram: {count} attachment skipped — upgrade to sync images & PDFs.",
+			"Engram: plan upgraded — syncing {count} attachments…": "Engram: plan upgraded — syncing {count} attachment…"
+		}
+	}
+}

@@ -52,6 +52,7 @@ UI surfaces ARE translated, and each locale uses ONE term for a surface everywhe
 | it | Centro di sincronizzazione |
 | ja | 同期センター |
 | ko | 동기화 센터 |
+| ms | Pusat Sync |
 | pt | Central de sincronização |
 | ru | Центр синхронизации |
 | zh | 同步中心 |

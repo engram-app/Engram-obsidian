@@ -98,7 +98,19 @@ const GLOSSARY_KEYS = [
 	"Semantic search",
 	"Reconnect your account to resume syncing.",
 ];
-const BRANDS = ["Engram", "Obsidian", "MCP", "Paddle", "Clerk", "GitHub", "Claude", "ChatGPT"];
+// "Engram Vault Sync" (the plugin's name) must survive whole. The "Engram Sync:" notice
+// prefix is not a name: the CJK catalogs translate its "Sync" on purpose.
+const BRANDS = [
+	"Engram Vault Sync",
+	"Engram",
+	"Obsidian",
+	"MCP",
+	"Paddle",
+	"Clerk",
+	"GitHub",
+	"Claude",
+	"ChatGPT",
+];
 const NEWLINE = "⏎";
 const PLACEHOLDER = /\{[^{}]+\}/gu;
 const LITERAL = /`[^`]+`|https?:\/\/\S+|[\w.+-]+@[\w-]+\.[\w.]+/gu;
@@ -114,6 +126,10 @@ function wordCount(s: string): number {
 		.filter((w) => /\p{L}/u.test(w)).length;
 }
 
+function symbols(s: string): string {
+	return [...new Set(s.match(SYMBOL) ?? [])].sort().join();
+}
+
 // A set, not a count: repeating {name} renders fine; dropping or inventing one does not.
 function placeholders(s: string): string[] {
 	return [...new Set(s.match(PLACEHOLDER) ?? [])].sort();
@@ -126,8 +142,11 @@ function buildPrompt(
 	multi: boolean,
 ): string {
 	const { name, tone }: Spec = SPECS[code];
+	// Without the emoji: "🔄 Sync Center = 🔄 ..." made the model paste 🔄 into every
+	// sentence that mentions the Sync Center.
+	const bare = (term: string): string => term.replace(SYMBOL, "").trim();
 	const terms = Object.entries(glossary)
-		.map(([en, tr]) => `${en} = ${tr}`)
+		.map(([en, tr]) => `${bare(en)} = ${bare(tr)}`)
 		.join("\n");
 	return [
 		`You are a professional English (en) to ${name} (${code}) translator localizing the Engram Obsidian plugin, which syncs an Obsidian vault with Engram, a notes app that exposes it to AI assistants.`,
@@ -179,7 +198,8 @@ function problems(src: string, out: string, code: Target, old?: string): string[
 		newlines: out.split("\n").length !== src.split("\n").length,
 		literal: !(src.match(LITERAL) ?? []).every((lit) => out.includes(lit)),
 		brand: !BRANDS.every((b) => !src.includes(b) || out.includes(b)),
-		symbols: !(src.match(SYMBOL) ?? []).every((sym) => out.includes(sym)),
+		// Both ways: a label keeps its emoji, and a sentence does not gain one.
+		symbols: symbols(src) !== symbols(out),
 		length: out.length > lengthCap,
 		register: Boolean(formal?.test(out) && !(old && formal.test(old))),
 		// Only sentences: "ID:", "A → Z" or a bare "{status}: {message}" may stay Latin.
@@ -278,7 +298,7 @@ function uniqueKeys(entries: readonly Entry[]): string[] {
 
 // Bump when the prompt, a check or the model changes: every catalog built by an
 // older translator is redone on the next run, so a fix reaches old entries too.
-const TRANSLATOR_VERSION = 2;
+const TRANSLATOR_VERSION = 3;
 
 // Per locale, in `src/i18n/locale/state.json`: the translator that built the catalog, the
 // keys whose answers failed every check (they keep the old entry, or stay English),
