@@ -163,7 +163,10 @@ describe("scrubLogText", () => {
 		for (const input of inputs) {
 			const t0 = performance.now();
 			scrubLogText(input);
-			expect(performance.now() - t0).toBeLessThan(50);
+			// Linear is ~1 ms here; catastrophic backtracking on 100k chars is
+			// seconds. 50 ms tripped on a loaded shared CI runner (71 ms), so the
+			// ceiling sits well clear of noise and far below the failure mode.
+			expect(performance.now() - t0).toBeLessThan(500);
 		}
 	});
 
