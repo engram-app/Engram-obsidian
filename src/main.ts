@@ -55,7 +55,7 @@ import { sha256Hex } from "./content-hash";
 import { registerDiagnostics } from "./diagnostics";
 import { errMsg, isHttpStatus } from "./error-util";
 import { ExplicitFolders } from "./explicit-folders";
-import { t, tInto } from "./i18n";
+import { currentLocale, t, tInto } from "./i18n";
 import { isPlanJoinReason } from "./limit-copy";
 import { LimitExceededError } from "./limit-error";
 import { notifyLimitExceeded } from "./limit-toast";
@@ -176,6 +176,13 @@ export function shouldReuseLiveStream(
 	liveChannelKey: string | null,
 ): boolean {
 	return hasStream && everConnected && connectionKey === liveChannelKey;
+}
+
+/** Whether to fill in the account's UI language from Obsidian's. Only when the
+ *  account has none (null): the web app's explicit choice wins, and an older
+ *  backend omits the field entirely (undefined), so it is left alone. */
+export function shouldReportLocale(locale: string | null | undefined): boolean {
+	return locale === null;
 }
 
 /** Whether a channel may be built for the identity `getMe()` just authenticated
@@ -2559,6 +2566,13 @@ export default class EngramSyncPlugin extends Plugin {
 						);
 					}
 					return;
+				}
+				if (shouldReportLocale(user.locale)) {
+					this.api
+						.setLocale(currentLocale())
+						.catch((e: unknown) =>
+							rlog().warn("channel", `locale report failed: ${errMsg(e)}`),
+						);
 				}
 				const channel = new NoteChannel(
 					this.settings.apiUrl,
