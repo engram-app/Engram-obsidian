@@ -1,4 +1,4 @@
-// i18n-core 3b154b58
+// i18n-core 35032c38
 // The translategemma run loop shared by every repo's `scripts/i18n-translate.ts`.
 // Diff-only: per locale it fills keys the catalog lacks, retries failed keys, heals
 // entries that fail a current check, and redoes everything when the fingerprint
@@ -20,6 +20,7 @@ import {
 	type PluralForms,
 	type Profile,
 	parseBatch,
+	pluralCategories,
 	pluralSamples,
 	richLines,
 	type StoredState,
@@ -228,8 +229,21 @@ async function run<T extends string>(opts: RunOptions<T>): Promise<LocaleResult[
 		fresh: Catalog,
 	): Promise<void> {
 		const forms: PluralForms = {};
+		// One form only (ja, zh, vi): no grammar to pick, so {count} stays a masked
+		// placeholder. A sample number next to other tokens got swapped for one.
+		if (pluralCategories(code).length === 1) {
+			const out = await translateOne(code, terms, entry.key);
+			if (out !== null) {
+				fresh[entry.key] = { other: out };
+			}
+			return;
+		}
 		for (const { category, sample } of pluralSamples(code)) {
-			const en = category === "one" ? (entry.plural?.one ?? entry.key) : entry.key;
+			// The English singular only where `one` means exactly 1. Where it also
+			// renders 21 (ru), "Copied wikilink" would read "one" for 21: translate
+			// the counted form with the sample instead.
+			const en =
+				category === "one" && exactOne(code) ? (entry.plural?.one ?? entry.key) : entry.key;
 			const withCount = en.includes("{count}");
 			const out = await translateOne(
 				code,
@@ -252,7 +266,10 @@ async function run<T extends string>(opts: RunOptions<T>): Promise<LocaleResult[
 			}
 			forms[category] = form;
 		}
-		fresh[entry.key] = forms;
+		// The whole entry must pass the gate, not only each form.
+		if (tr.entryProblems(entry, forms, code).length === 0) {
+			fresh[entry.key] = forms;
+		}
 	}
 
 	// Glossary terms are pinned in every prompt. A term already in the catalog is
@@ -361,9 +378,10 @@ async function run<T extends string>(opts: RunOptions<T>): Promise<LocaleResult[
 		io.writeState(state);
 		const result: LocaleResult = {
 			code,
-			translated: list.filter((k) => k in fresh).length,
+			// A pinned glossary term can be in fresh yet invalid: it counts as failed.
+			translated: list.filter((k) => k in fresh && !failed.includes(k)).length,
 			todo: list.length,
-			keptOld: list.length - list.filter((k) => k in fresh).length - failed.length,
+			keptOld: list.filter((k) => !(k in fresh || failed.includes(k))).length,
 			failed: failed.length,
 			orphans: Object.keys(old).filter((k) => !(k in merged)).length,
 			stuck: stuckKeys(next, opts.today, opts.stuckDays),

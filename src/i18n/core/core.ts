@@ -1,4 +1,4 @@
-// i18n-core 9bdbb7d7
+// i18n-core 3c0f8d50
 // The translategemma pipeline shared by the web app, the Obsidian plugin and the
 // marketing site: prompts, the checks an answer must pass, and catalog state.
 // Canonical copy: engram-app/Engram frontend/src/i18n/core/. The other repos
@@ -145,7 +145,7 @@ function pluralCategories(code: string): Intl.LDMLPluralRule[] {
 // spell the number out instead of keeping {count}.
 function exactOne(code: string): boolean {
 	const rules = new Intl.PluralRules(code);
-	if (!pluralCategories(code).includes("one")) {
+	if (!pluralCategories(code).includes("one") || rules.select(0) === "one") {
 		return false;
 	}
 	for (let n = 2; n <= 200; n++) {
@@ -320,7 +320,15 @@ function translator<T extends string>(profile: Profile<T>) {
 			...new Set(
 				want.flatMap((c) => {
 					const form = forms[c] ?? "";
-					return problems(formSource(entry.key, form), form, code);
+					// Only a `one` that means exactly 1 may spell the number out.
+					const dropped =
+						entry.key.includes("{count}") &&
+						!form.includes("{count}") &&
+						!(c === "one" && exactOne(code));
+					return [
+						...(dropped ? ["count"] : []),
+						...problems(formSource(entry.key, form), form, code),
+					];
 				}),
 			),
 		];
@@ -497,11 +505,15 @@ function parseBatch(response: string, n: number): (string | undefined)[] {
 function pluralSamples(code: string): { category: Intl.LDMLPluralRule; sample: string }[] {
 	const rules = new Intl.PluralRules(code);
 	return pluralCategories(code).map((category) => {
-		// `one` gets 1; anything else starts at 2, so "1 days" never reaches the model.
-		const candidates = category === "one" ? [1] : [];
+		// `one` gets 1 where it means only 1. Where it also covers 21 (ru) it gets 21,
+		// so the model keeps the digit instead of writing "Одна". Anything else
+		// starts at 2, so "1 days" never reaches the model.
+		const candidates = category === "one" && exactOne(code) ? [1] : [];
 		for (let n = 2; n <= 200; n++) {
 			candidates.push(n);
 		}
+		// `many` in pt/fr/es/it is for a million and up; `one` in pt is 0 and 1.
+		candidates.push(1_000_000, 1, 0);
 		const n = candidates.find((c) => rules.select(c) === category);
 		return { category, sample: n === undefined ? "1.5" : String(n) };
 	});
@@ -509,7 +521,11 @@ function pluralSamples(code: string): { category: Intl.LDMLPluralRule; sample: s
 
 function fromSample(out: string, sample: string): string | null {
 	// The leading group stands in for a lookbehind (not a digit, comma or dot).
-	const pattern = new RegExp(`(^|[^\\d.,])${sample.replace(".", "[.,]")}(?![\\d]|[.,]\\d)`, "gu");
+	// "1.5" may come back as "1,5" or "1. 5", and 1000000 as "1.000.000" or "1 000 000".
+	const digits = sample.includes(".")
+		? sample.replace(".", "\\s?[.,]\\s?")
+		: sample.replace(/\B(?=(?:\d{3})+$)/gu, "[.,\\u00a0\\u202f ]?");
+	const pattern = new RegExp(`(^|[^\\d.,])${digits}(?![\\d]|[.,]\\d)`, "gu");
 	const hits = out.match(pattern) ?? [];
 	return hits.length === 1 ? out.replace(pattern, "$1{count}") : null;
 }
