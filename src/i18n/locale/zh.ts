@@ -155,7 +155,7 @@ const zh: Dict = {
 	'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.':
 		'Engram 同步：无法读取 "{name}" 的同步状态，正在使用本地副本。',
 	"Engram Vault Sync {version} is available. {link}.":
-		"Engram Vault Sync {version} 已发布。{link}。",
+		"Engram Vault Sync {version} 可用。{link}.",
 	"{formatted} files · ": "{formatted} 个文件 ·",
 	"Notes searchable": "笔记可搜索",
 	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
@@ -416,12 +416,12 @@ const zh: Dict = {
 	"Real-time sync": "实时同步",
 	"2,000 notes searchable": "可搜索 2000 个笔记",
 	"Connect any AI (MCP)": "连接任何 AI (MCP)",
-	Starter: "基础版",
+	Starter: "Starter",
 	"10 vaults, unlimited devices": "10 个知识库，无限设备",
 	"Search all your notes": "搜索所有笔记",
 	"10 GB attachments": "10 GB 附件",
 	"Unlimited AI searches": "无限制的 AI 搜索",
-	Pro: "专业版",
+	Pro: "Pro",
 	"Unlimited vaults": "无限制的知识库",
 	"Search across all vaults at once": "一次搜索所有知识库",
 	"50 GB attachments": "50 GB 附件",
@@ -490,7 +490,7 @@ const zh: Dict = {
 		"打开浏览器进行登录，或创建账号（如果还没有），然后链接此知识库。",
 	"Sign in": "登录",
 	"Or authenticate with a token instead of signing in. Engram Cloud API keys require the Pro plan; on Free and Starter, sign in above.":
-		"或者使用令牌进行身份验证，而不是登录。Engram 云 API 密钥需要 Pro 计划；免费版和入门版请使用上面的登录方式。",
+		"或者使用令牌进行身份验证，而不是登录。Engram 云 API 密钥需要 Pro 计划；免费版和 Starter 版，请在上方登录。",
 	"Or authenticate with a token instead of signing in.": "或者使用令牌进行身份验证，而不是登录。",
 	"API key": "API 密钥",
 	Token: "令牌",

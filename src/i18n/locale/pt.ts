@@ -535,7 +535,7 @@ const pt: Dict = {
 	"Real-time sync": "Sincronização em tempo real",
 	"2,000 notes searchable": "2.000 notas pesquisáveis",
 	"Connect any AI (MCP)": "Conecte qualquer IA (MCP)",
-	Starter: "Básico",
+	Starter: "Starter",
 	"10 vaults, unlimited devices": "10 cofres, dispositivos ilimitados",
 	"Search all your notes": "Pesquise todas as suas notas",
 	"10 GB attachments": "10 GB de anexos",

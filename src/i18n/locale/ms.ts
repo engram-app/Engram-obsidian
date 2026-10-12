@@ -448,7 +448,7 @@ const ms: Dict = {
 	"Real-time sync": "Sync masa nyata",
 	"2,000 notes searchable": "2,000 nota boleh dicari",
 	"Connect any AI (MCP)": "Hubungkan sebarang AI (MCP)",
-	Starter: "Permulaan",
+	Starter: "Starter",
 	"10 vaults, unlimited devices": "10 peti nota, peranti tanpa had",
 	"Search all your notes": "Cari semua nota anda",
 	"10 GB attachments": "10 GB lampiran",

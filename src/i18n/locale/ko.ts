@@ -207,7 +207,7 @@ const ko: Dict = {
 	"No source path for this result": "이 결과에 대한 원본 경로가 없습니다",
 	"Note not synced locally": "노트가 로컬에 동기화되지 않았습니다",
 	"Syncing...": "동기화 중...",
-	"👋 Welcome": "👋 환영합니다",
+	"👋 Welcome": "👋 안녕하세요",
 	"🔌 Connection": "🔌 연결",
 	"🔄 Sync Center": "🔄 동기화 센터",
 	"⚙️ Advanced": "⚙️ 고급 설정",
@@ -394,7 +394,7 @@ const ko: Dict = {
 	"Free syncs notes only — images & PDFs need a paid plan.":
 		"노트만 무료 동기화, 이미지 및 PDF는 유료 플랜이 필요합니다.",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
-		"Engram: 파일 {count}개를 동기화하지 못했습니다{detail}. 동기화 센터를 열어보세요",
+		"Engram: {count}개의 파일 동기화 실패{detail} — 동기화 센터 열기",
 	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.":
 		"Engram: {count}개의 첨부 파일 동기화 건너�뎠습니다. 이미지 및 PDF 동기화를 위해 업그레이드하세요.",
 	"Engram: plan upgraded — syncing {count} attachments…":
@@ -441,12 +441,12 @@ const ko: Dict = {
 	"Real-time sync": "실시간 동기화",
 	"2,000 notes searchable": "2,000개의 노트 검색 가능",
 	"Connect any AI (MCP)": "모든 AI (MCP) 연결",
-	Starter: "스타터",
+	Starter: "Starter",
 	"10 vaults, unlimited devices": "10개의 보관함, 기기 수 제한 없음",
 	"Search all your notes": "모든 노트 검색",
 	"10 GB attachments": "10GB 첨부 파일",
 	"Unlimited AI searches": "AI 검색 제한 없음",
-	Pro: "프로",
+	Pro: "Pro",
 	"Unlimited vaults": "보관함 제한 없음",
 	"Search across all vaults at once": "모든 보관함에서 한 번에 검색",
 	"50 GB attachments": "50GB 첨부 파일",

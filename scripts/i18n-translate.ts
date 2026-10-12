@@ -21,6 +21,8 @@ import {
 	fromSample,
 	GLOSSARY_KEYS,
 	HttpError,
+	invalidKeys,
+	isBrandOnly,
 	isValid,
 	type LocaleState,
 	maskPlaceholders,
@@ -243,8 +245,18 @@ const state: Partial<Record<Target, LocaleState>> = existsSync(stateFile)
 for (const code of targets) {
 	const old = await loadCatalog(code);
 	const fresh: Catalog = {};
-	const todo = todoKeys(entries, old, all, state[code]);
+	const used = new Set(entries.map((e) => e.key));
+	const todo = [
+		...new Set([
+			...todoKeys(entries, old, all, state[code]),
+			...invalidKeys(old, code).filter((k) => used.has(k)),
+		]),
+	];
 	const glossary = await glossaryFor(code, old, fresh);
+	// Only brand/plan names ("Pro"): the source is the answer, no model call.
+	for (const k of todo.filter((key) => !isPlural(byKey.get(key)) && isBrandOnly(key))) {
+		fresh[k] = k;
+	}
 	const strings = todo.filter((k) => !(isPlural(byKey.get(k)) || k in fresh));
 	const plurals = todo.filter((k) => isPlural(byKey.get(k)));
 	const tasks: (() => Promise<void>)[] = [];

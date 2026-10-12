@@ -6,6 +6,8 @@ import {
 	collapsePlural,
 	fromSample,
 	HttpError,
+	invalidKeys,
+	isBrandOnly,
 	isValid,
 	maskPlaceholders,
 	mergeCatalog,
@@ -395,5 +397,47 @@ describe("renderCatalog", () => {
 		expect(renderCatalog("pt", {})).toContain("// Português (do Brasil)\nconst pt: Dict");
 		expect(renderCatalog("vi", {})).toContain("// Tiếng Việt\nconst vi: Dict");
 		expect(renderCatalog("ms", {})).toContain("// Bahasa Melayu\nconst ms: Dict");
+	});
+});
+
+describe("plan and brand names", () => {
+	it("are masked like placeholders, whole words only", () => {
+		expect(maskPlaceholders("API keys need Pro")).toEqual({
+			masked: "API keys need {0}",
+			names: ["Pro"],
+		});
+		expect(maskPlaceholders("Edit profile").masked).toBe("Edit profile");
+		expect(maskPlaceholders("Engram Vault Sync for Obsidian").names).toEqual([
+			"Engram Vault Sync",
+			"Obsidian",
+		]);
+	});
+
+	it("must survive translation, inflection allowed", () => {
+		expect(problems("API keys need Pro", "API-Schlüssel benötigen Profi", "de")).toEqual([
+			"brand",
+		]);
+		expect(problems("API keys need Pro", "API-Schlüssel benötigen Pro", "de")).toEqual([]);
+		expect(problems("Edit profile", "Profil bearbeiten", "de")).toEqual([]);
+		expect(problems("Obsidian's flavour", "Obsidians Stil", "de")).toEqual([]);
+	});
+
+	it("brand-only strings stay as-is, even over an old translation", () => {
+		expect(isBrandOnly("Pro")).toBe(true);
+		expect(isBrandOnly("Upgrade to Pro")).toBe(false);
+		expect(isValid("Pro", "Pro", "es", "Profesional")).toBe(true);
+	});
+});
+
+describe("invalidKeys", () => {
+	it("lists entries that fail a current check, so a new rule heals old violations", () => {
+		const dict = { "API keys need Pro": "API-Schlüssel benötigen Profi", Save: "Speichern" };
+		expect(invalidKeys(dict, "de")).toEqual(["API keys need Pro"]);
+	});
+
+	it("allows a plural one-form to drop {count}", () => {
+		expect(
+			invalidKeys({ "{count} files": { one: "eine Datei", other: "{count} Dateien" } }, "de"),
+		).toEqual([]);
 	});
 });

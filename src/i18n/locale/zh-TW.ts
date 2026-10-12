@@ -155,7 +155,7 @@ const zhTW: Dict = {
 	'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.':
 		'Engram 同步：無法讀取 "{name}" 的同步狀態，正在使用本地副本。',
 	"Engram Vault Sync {version} is available. {link}.":
-		"Engram Vault Sync {version} 已發布。{link}。",
+		"Engram Vault Sync {version} 可用。{link}.",
 	"{formatted} files · ": "{formatted} 個檔案 ·",
 	"Notes searchable": "筆記可搜尋",
 	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
@@ -419,7 +419,7 @@ const zhTW: Dict = {
 	"Real-time sync": "即時同步",
 	"2,000 notes searchable": "可搜尋 2,000 筆筆記",
 	"Connect any AI (MCP)": "連接任何 AI (MCP)",
-	Starter: "基礎版",
+	Starter: "Starter",
 	"10 vaults, unlimited devices": "10 個知識庫，無限部裝置",
 	"Search all your notes": "搜尋所有筆記",
 	"10 GB attachments": "10 GB 附件",

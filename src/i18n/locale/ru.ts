@@ -562,7 +562,7 @@ const ru: Dict = {
 	"Real-time sync": "Синхронизация в реальном времени",
 	"2,000 notes searchable": "2000 заметки для поиска",
 	"Connect any AI (MCP)": "Подключите любой ИИ (MCP)",
-	Starter: "Начальный",
+	Starter: "Starter",
 	"10 vaults, unlimited devices": "10 хранилищ, неограниченное количество устройств",
 	"Search all your notes": "Ищите все ваши заметки",
 	"10 GB attachments": "10 ГБ вложений",

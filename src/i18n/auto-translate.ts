@@ -110,7 +110,26 @@ const BRANDS = [
 	"GitHub",
 	"Claude",
 	"ChatGPT",
+	// Plan names: must match checkout and invoices. "Free" is translated.
+	"Starter",
+	"Pro",
 ];
+// Longest first, so "Engram Vault Sync" wins over "Engram". A capture group stands
+// in for lookbehind, which Obsidian's lint bans: group 1 is the preceding char.
+const BRAND_WORD = `(^|[^A-Za-z0-9])(${[...BRANDS].sort((a, b) => b.length - a.length).join("|")})(?![A-Za-z0-9])`;
+
+// Whole word on the Latin side, so "Pro" is not "Profile" yet "Pro版" counts.
+// `inflected` lets a translation add a possessive or plural s ("Obsidians Stil").
+function hasBrand(s: string, brand: string, inflected = false): boolean {
+	const suffix = inflected ? "(?:s|'s|’s)?" : "";
+	return new RegExp(`(?:^|[^A-Za-z0-9])${brand}${suffix}(?![A-Za-z0-9])`, "u").test(s);
+}
+
+// Nothing to translate: only brand names, placeholders and punctuation.
+function isBrandOnly(src: string): boolean {
+	const rest = src.replace(PLACEHOLDER, " ").replace(new RegExp(BRAND_WORD, "gu"), " ");
+	return !/\p{L}/u.test(rest);
+}
 const NEWLINE = "⏎";
 const PLACEHOLDER = /\{[^{}]+\}/gu;
 const LITERAL = /`[^`]+`|https?:\/\/\S+|[\w.+-]+@[\w-]+\.[\w.]+/gu;
@@ -197,7 +216,7 @@ function problems(src: string, out: string, code: Target, old?: string): string[
 		placeholders: placeholders(out).join() !== placeholders(src).join(),
 		newlines: out.split("\n").length !== src.split("\n").length,
 		literal: !(src.match(LITERAL) ?? []).every((lit) => out.includes(lit)),
-		brand: !BRANDS.every((b) => !src.includes(b) || out.includes(b)),
+		brand: !BRANDS.every((b) => !hasBrand(src, b) || hasBrand(out, b, true)),
 		// Both ways: a label keeps its emoji, and a sentence does not gain one.
 		symbols: symbols(src) !== symbols(out),
 		length: out.length > lengthCap,
@@ -209,9 +228,24 @@ function problems(src: string, out: string, code: Target, old?: string): string[
 				!script.test(out) &&
 				!(old !== undefined && !script.test(old)),
 		),
-		untranslated: out === src && old !== undefined && old !== src,
+		untranslated: out === src && old !== undefined && old !== src && !isBrandOnly(src),
 	};
 	return Object.keys(failed).filter((name) => failed[name]);
+}
+
+// Entries already in a catalog that fail a check as it stands today. The script
+// retranslates them, so a new rule (a brand, a register) heals old violations on
+// the next run with no TRANSLATOR_VERSION bump. A plural one-form may drop {count}.
+function invalidKeys(dict: Catalog, code: Target): string[] {
+	return Object.entries(dict)
+		.filter(([key, value]) =>
+			(typeof value === "string" ? [value] : Object.values(value)).some((form) => {
+				if (typeof form !== "string") return false;
+				const src = form.includes("{count}") ? key : key.replaceAll("{count}", "");
+				return problems(src, form, code).length > 0;
+			}),
+		)
+		.map(([key]) => key);
 }
 
 function isValid(src: string, out: string, code: Target, old?: string): boolean {
@@ -222,11 +256,16 @@ function isValid(src: string, out: string, code: Target, old?: string): boolean 
 // numbered tokens survive, so names are swapped out before sending.
 function maskPlaceholders(src: string): { masked: string; names: string[] } {
 	const names: string[] = [];
-	const masked = src.replace(PLACEHOLDER, (name) => {
+	const token = (name: string): string => {
 		const known = names.indexOf(name);
-		const index = known === -1 ? names.push(name) - 1 : known;
-		return `{${index}}`;
-	});
+		return `{${known === -1 ? names.push(name) - 1 : known}}`;
+	};
+	// Brand and plan names too: gemma translated "Starter" even when told not to.
+	const masked = src.replace(
+		new RegExp(`${PLACEHOLDER.source}|${BRAND_WORD}`, "gu"),
+		(match, pre?: string, brand?: string) =>
+			brand === undefined ? token(match) : `${pre ?? ""}${token(brand)}`,
+	);
 	return { masked, names };
 }
 
@@ -400,6 +439,8 @@ export {
 	fromSample,
 	GLOSSARY_KEYS,
 	HttpError,
+	invalidKeys,
+	isBrandOnly,
 	isValid,
 	maskPlaceholders,
 	mergeCatalog,

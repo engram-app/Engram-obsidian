@@ -448,7 +448,7 @@ const vi: Dict = {
 	"Real-time sync": "Đồng bộ hóa theo thời gian thực",
 	"2,000 notes searchable": "Có thể tìm kiếm 2.000 ghi chú",
 	"Connect any AI (MCP)": "Kết nối bất kỳ AI (MCP) nào",
-	Starter: "Gói cơ bản",
+	Starter: "Starter",
 	"10 vaults, unlimited devices": "10 kho lưu trữ, số lượng thiết bị không giới hạn",
 	"Search all your notes": "Tìm kiếm tất cả ghi chú của bạn",
 	"10 GB attachments": "10 GB tệp đính kèm",

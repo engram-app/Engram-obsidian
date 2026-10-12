@@ -151,7 +151,7 @@
 	},
 	"ja": {
 		"version": 3,
-		"failed": ["👋 Welcome"],
+		"failed": [],
 		"one": {
 			"Engram Sync: pushed {count} files": "Engram Sync: pushed {count} file",
 			"Engram Sync: pulled {count} files from server": "Engram Sync: pulled {count} file from server",
@@ -181,7 +181,7 @@
 	},
 	"ko": {
 		"version": 3,
-		"failed": ["Engram: {count} files failed to sync{detail} — open Sync Center", "👋 Welcome"],
+		"failed": [],
 		"one": {
 			"Engram Sync: pushed {count} files": "Engram Sync: pushed {count} file",
 			"Engram Sync: pulled {count} files from server": "Engram Sync: pulled {count} file from server",
@@ -204,6 +204,7 @@
 			" conflicts need resolution": " conflict needs resolution",
 			"Deleting {count} local files.": "Deleting {count} local file.",
 			"{count} attachments need a paid plan to sync. See Sync Center.": "{count} attachment needs a paid plan to sync. See Sync Center.",
+			"Engram: {count} files failed to sync{detail} — open Sync Center": "Engram: {count} file failed to sync{detail} — open Sync Center",
 			"Engram: {count} attachments skipped — upgrade to sync images & PDFs.": "Engram: {count} attachment skipped — upgrade to sync images & PDFs.",
 			"Engram: plan upgraded — syncing {count} attachments…": "Engram: plan upgraded — syncing {count} attachment…"
 		}
@@ -301,7 +302,7 @@
 	},
 	"zh": {
 		"version": 3,
-		"failed": ["Engram Vault Sync {version} is available. {link}."],
+		"failed": [],
 		"one": {
 			"Engram Sync: pushed {count} files": "Engram Sync: pushed {count} file",
 			"Engram Sync: pulled {count} files from server": "Engram Sync: pulled {count} file from server",
@@ -331,7 +332,7 @@
 	},
 	"zh-TW": {
 		"version": 3,
-		"failed": ["Engram Vault Sync {version} is available. {link}."],
+		"failed": [],
 		"one": {
 			"Engram Sync: pushed {count} files": "Engram Sync: pushed {count} file",
 			"Engram Sync: pulled {count} files from server": "Engram Sync: pulled {count} file from server",
