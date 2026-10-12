@@ -2,56 +2,55 @@ import type { Dict } from "..";
 
 // Русский
 const ru: Dict = {
-	"Invalid API key": "Неверный ключ API",
-	"Request failed ({status})": "Запрос не удался ({status})",
-	"Connection failed": "Не удалось подключиться",
-	"Link Obsidian to Engram": "Свяжите Obsidian с Engram",
-	"Starting...": "Начало...",
-	"Failed to start device flow. Check your Engram URL and try again.":
-		"Не удалось запустить процесс аутентификации. Проверьте ваш URL Engram и попробуйте снова.",
-	"Your code:": "Ваш код:",
-	"Click to copy": "Нажмите, чтобы скопировать",
-	"Code copied!": "Код скопирован!",
-	"A browser window has opened. Sign in and enter this code to link your vault.":
-		"Открыто окно браузера. Войдите и введите этот код, чтобы связать ваше хранилище.",
-	Cancel: "Отменить",
-	"Waiting for authorization — connected, this will complete instantly.":
-		"Ожидание авторизации — подключено, процесс завершится мгновенно.",
-	"Waiting for authorization — no live connection, checking every 30s.":
-		"Ожидание авторизации — нет активного соединения, проверка каждые 30 секунд.",
-	"Code expired. Please try again.": "Код устарел. Пожалуйста, попробуйте снова.",
-	"Try again": "Повторить попытку",
-	Close: "Закрыть",
-	"Note couldn't be processed": "Заметку не удалось обработать",
-	"The server couldn't process this note. Check its contents, then edit and save to try again.":
-		"Сервер не смог обработать эту заметку. Проверьте её содержимое, затем отредактируйте и сохраните, чтобы повторить попытку.",
-	"Attachments need a paid plan": "Вложения требуют платной подписки",
-	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
-		"Бесплатный тариф синхронизирует только заметки. Обновите подписку, чтобы синхронизировать изображения и PDF-файлы.",
-	"Attachment storage full": "Место для хранения вложений заполнено",
-	"You've used all the attachment storage on your plan. Upgrade for more.":
-		"Вы использовали весь объём хранилища для вложений в рамках вашего тарифного плана. Обновите подписку для получения большего объёма.",
-	"Too large for the server": "Слишком большой для сервера",
-	"The server limit is 5 MB. Compress or split the file, then it will sync.":
-		"Предел сервера составляет 5 МБ. Сжатие или разделение файла позволит выполнить синхронизацию.",
-	"Sign-in expired": "Сеанс работы завершён",
-	"Reconnect your account to resume syncing.":
-		"Подключите учётную запись заново, чтобы продолжить синхронизацию.",
-	"Unresolved conflict": "Неразрешенный конфликт",
-	"Open the file to resolve the conflict, then sync again.":
-		"Откройте файл для разрешения конфликта, затем синхронизируйте снова.",
-	"Frontmatter needs a fix": "Необходимо исправить метаданные",
-	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
-		"Заметка синхронизирована, но метаданные не были полностью обработаны. Откройте её, чтобы исправить выделенную строку.",
-	"Server error": "Ошибка сервера",
-	"A temporary server problem — retrying automatically.":
-		"Временная проблема с сервером — повторная попытка.",
-	"Network unavailable": "Сеть недоступна",
-	"Can't reach the server — retrying automatically.":
-		"Не удается связаться с сервером — повторная попытка.",
-	"Sync failed": "Синхронизация не удалась",
-	"An unexpected error — retrying automatically.": "Неожиданная ошибка — повторная попытка.",
-	"Frontmatter could not be parsed": "Не удалось обработать метаданные",
+	"Syncing...": "Синхронизация...",
+	"👋 Welcome": "👋 Добро пожаловать",
+	"🔌 Connection": "🔌 Соединение",
+	"🔄 Sync Center": "🔄 Центр синхронизации",
+	"⚙️ Advanced": "⚙️ Дополнительно",
+	"💬 Feedback": "💬 Отзыв",
+	"Engram: settings tab failed to render ({error})":
+		"Engram: произошла ошибка при отображении вкладки настроек ({error})",
+	Disconnected: "Отключено",
+	"Error: {error}": "Ошибка: {error}",
+	unknown: "неизвестно",
+	"Connected — waiting for first sync decision":
+		"Подключено — ожидается первое решение о синхронизации",
+	"Connected — live sync active": "Подключено — активная синхронизация в реальном времени",
+	"Connected — polling": "Подключено — опрос",
+	"Not configured": "Не настроено",
+	"Open sync setup": "Открыть настройку синхронизации",
+	Upgrade: "Обновить",
+	"Last sync: {when}": "Последняя синхронизация: {when}",
+	Keyword: "Ключевое слово",
+	Semantic: "Смысловой",
+	Both: "Оба",
+	"matches your words and their other forms — 'run' finds 'running' — plus this device.":
+		"Соответствует вашим словам и их другим формам — 'run' найдёт 'running' — плюс это устройство.",
+	"matches meaning. Finds notes that never use the words you typed.":
+		"Соответствует смыслу. Находит заметки, которые никогда не используют слова, которые вы ввели.",
+	"matches words and meaning together, plus this device. Widest results.":
+		"Соответствует словам и смыслу вместе, плюс это устройство. Наиболее полные результаты.",
+	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
+		"Engram индексирует {indexed} из ваших {all} заметок. Остальные соответствия находятся только на этом устройстве. Обновите, чтобы индексировать всё.",
+	"Searching {indexed} of {all} notes. Upgrade to search everything.":
+		"Поиск по {indexed} из {all} заметок. Обновите, чтобы искать всё.",
+	"Search your vault…": "Поиск по вашему хранилищу…",
+	"Clear search": "Очистить поиск",
+	"Search settings": "Настройки поиска",
+	"Filter by folder…": "Фильтр по папке…",
+	"Filter by tags…": "Фильтр по тегам…",
+	"Remove tag {tag}": "Удалить тег {tag}",
+	"Engram unreachable. Showing matches from this device only.":
+		"Engram недоступен. Отображаются соответствия только с этого устройства.",
+	"Search failed — check connection": "Поиск не удался — проверьте соединение",
+	"No results found": "Результаты не найдены",
+	Untitled: "Без названия",
+	exact: "точно",
+	"meaning + exact": "смысл + точное совпадение",
+	meaning: "значение",
+	"match strength: {pct}%": "степень соответствия: {pct}%",
+	"No source path for this result": "Нет пути к исходному файлу для этого результата",
+	"Note not synced locally": "Заметка не синхронизирована локально",
 	"Note limit reached. Upgrade to keep adding notes.":
 		"Достигнут лимит заметок. Обновите подписку, чтобы добавлять больше заметок.",
 	"Vault limit reached. Upgrade for more vaults.":
@@ -82,7 +81,174 @@ const ru: Dict = {
 	"Finish setting up your account at app.engram.page to start syncing.":
 		"Завершите настройку вашей учётной записи на app.engram.page, чтобы начать синхронизацию.",
 	"Limit reached. Upgrade to continue.": "Достигнут лимит. Обновите подписку, чтобы продолжить.",
-	Upgrade: "Обновить",
+	"Sync log": "Журнал синхронизации",
+	"Showing {count} entries": {
+		one: "Отображается {count} запись",
+		few: "Отображается {count} записи",
+		many: "Отображается {count} записей",
+		other: "Отображается {count} записей",
+	},
+	"No sync activity this session.": "Нет активности синхронизации в этом сеансе.",
+	"({count} errors)": {
+		one: "({count} ошибка)",
+		few: "({count} ошибки)",
+		many: "({count} ошибок)",
+		other: "({count} ошибок)",
+	},
+	"Engram search": "Поиск по Engram",
+	"File exceeds the {limit} limit": "Файл превышает лимит в {limit}",
+	"Free syncs notes only — images & PDFs need a paid plan.":
+		"Бесплатная синхронизация только для заметок — для изображений и PDF требуется платная подписка.",
+	"Engram: {count} files failed to sync{detail} — open Sync Center": {
+		one: "Engram: Не удалось синхронизировать {count} файл{detail} — откройте Центр синхронизации",
+		few: "Engram: Не удалось синхронизировать {count} файла{detail} — откройте Центр синхронизации",
+		many: "Engram: Не удалось синхронизировать {count} файлов{detail} — откройте Центр синхронизации",
+		other: "Engram: Не удалось синхронизировать {count} файла{detail} — откройте Центр синхронизации",
+	},
+	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.": {
+		one: "Engram: Пропущено {count} вложение — обновите подписку, чтобы синхронизировать изображения и PDF-файлы.",
+		few: "Engram: Пропущено {count} вложения — обновите подписку, чтобы синхронизировать изображения и PDF-файлы.",
+		many: "Engram: Пропущено {count} вложений — обновите подписку, чтобы синхронизировать изображения и PDF-файлы.",
+		other: "Engram: Пропущено {count} вложений — обновите подписку, чтобы синхронизировать изображения и PDF-файлы.",
+	},
+	"Engram: plan upgraded — syncing {count} attachments…": {
+		one: "Engram: план обновлён — синхронизируется {count} вложение…",
+		few: "Engram: план обновлён — синхронизация {count} вложений…",
+		many: "Engram: план обновлён — синхронизация {count} вложений…",
+		other: "Engram: план обновлён — синхронизация {count} вложений…",
+	},
+	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
+		"Синхронизация всех (удаление дубликатов) прервана: не удалось получить эксклюзивный снимок сервера (конфликт доступа). Ничего не было удалено.",
+	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
+		"Синхронизация всех прервана: другая синхронизация выполняется (конфликт доступа). Попробуйте снова, когда она завершится.",
+	"Pull all failed: {error}": "Синхронизация всех не удалась: {error}",
+	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
+		"Engram: конфликт синхронизации для {path} — ваши локальные изменения сохранены как {copy}",
+	"Connection failed": "Не удалось подключиться",
+	"Open note": "Открыть заметку",
+	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.": {
+		one: "Engram: Обнаружена проблема с метаданными в {count} заметке. Откройте Центр синхронизации для исправления.",
+		few: "Engram: Обнаружены проблемы с метаданными у {count} заметок. Откройте Центр синхронизации для исправления.",
+		many: "Engram: Обнаружено {count} проблем с метаданными в заметках. Откройте Центр синхронизации для исправления.",
+		other: "Engram: Обнаружено {count} заметки с проблемами в метаданных. Откройте Центр синхронизации для исправления.",
+	},
+	'Engram Sync: renamed "{name}" (unsupported characters)':
+		'Engram Sync: переименовано "{name}" (неподдерживаемые символы)',
+	'Engram: frontmatter problem in "{name}"': 'Engram: проблема с метаданными в "{name}"',
+	"Uploading {count}.": {
+		one: "Загрузка {count}.",
+		few: "Загрузка {count}.",
+		many: "Загрузка {count}.",
+		other: "Загрузка {count}.",
+	},
+	"Downloading {count}.": {
+		one: "Загрузка {count}.",
+		few: "Загрузка {count}.",
+		many: "Загрузка {count}.",
+		other: "Загрузка {count}.",
+	},
+	"Deleting {count} local files.": {
+		one: "Удаление {count} локального файла.",
+		few: "Удалено {count} локальных файла.",
+		many: "Удаление {count} локальных файлов.",
+		other: "Удаление {count} локальных файлов.",
+	},
+	"Deleting {count} on the cloud.": {
+		one: "Удаление {count} в облаке.",
+		few: "Удаление {count} в облаке.",
+		many: "Удаление {count} файлов из облака.",
+		other: "Удаление версии {count} из облака.",
+	},
+	"First sync, this may take a moment.":
+		"Первая синхронизация, это может занять некоторое время.",
+	"Checking for changes.": "Проверка на наличие изменений.",
+	"Nothing will be deleted.": "Ничего не будет удалено.",
+	"✓ {count} synced": {
+		one: "✓ {count} синхронизировано",
+		few: "✓ {count} синхронизировано",
+		many: "✓ {count} синхронизировано",
+		other: "✓ {count} синхронизировано",
+	},
+	"⤳ {count} skipped (Free plan)": {
+		one: "⤳ Пропущено {count} (бесплатный тариф)",
+		few: "⤳ Пропущено {count} (бесплатный тариф)",
+		many: "⤳ Пропущено {count} (бесплатный тариф)",
+		other: "⤳ {count} пропущено (Бесплатный план)",
+	},
+	"✕ {count} failed": {
+		one: "✕ {count} ошибка",
+		few: "✕ {count} ошибки",
+		many: "✕ {count} неудачных попыток",
+		other: "✕ {count} ошибка",
+	},
+	"{count} attachments need a paid plan to sync. See Sync Center.": {
+		one: "{count} вложению нужен платный план. См. Центр синхронизации.",
+		few: "{count} вложениям нужен платный план. См. Центр синхронизации.",
+		many: "{count} вложениям нужен платный план. См. Центр синхронизации.",
+		other: "{count} вложениям нужен платный план. См. Центр синхронизации.",
+	},
+	"Finished with some errors. Open the sync log to see what failed.":
+		"Завершено с ошибками. Откройте журнал синхронизации, чтобы узнать, что не удалось.",
+	"Synced. Some attachments need a paid plan to sync (see below).":
+		"Синхронизировано. Для синхронизации некоторых вложений требуется платная подписка (см. ниже).",
+	"All synced. Your vault and the cloud now match.":
+		"Всё синхронизировано. Ваше хранилище и облако теперь совпадают.",
+	"Already up to date. Nothing needed syncing.": "Уже актуально. Синхронизация не требуется.",
+	Deleting: "Удаление",
+	Downloading: "Загрузка",
+	Uploading: "Загрузка",
+	"Syncing your vault": "Синхронизация вашего хранилища",
+	"Getting started…": "Начало работы…",
+	"Open Engram to check your vault and confirm everything synced.":
+		"Откройте Engram, чтобы проверить ваше хранилище и убедиться, что всё синхронизировано.",
+	"Open Engram": "Открыть Engram",
+	"You can close this and the sync keeps running in the background.":
+		"Вы можете закрыть это окно, и синхронизация продолжит работу в фоновом режиме.",
+	"Run in background": "Работа в фоновом режиме",
+	"Syncing…": "Синхронизация…",
+	"Sync complete": "Синхронизация завершена",
+	"Show sync log": "Показать журнал синхронизации",
+	Done: "Готово",
+	"Syncing attachments": "Синхронизация вложений",
+	Complete: "Завершено",
+	'{count} failed. Run "{command}" for details.': {
+		one: '{count} ошибка. Запустите "{command}", чтобы узнать подробности.',
+		few: '{count} ошибки. Запустите "{command}", чтобы узнать подробности.',
+		many: '{count} ошибок. Запустите "{command}", чтобы узнать подробности.',
+		other: '{count} не удалось. Запустите "{command}", чтобы узнать подробности.',
+	},
+	"Invalid API key": "Неверный ключ API",
+	"Request failed ({status})": "Запрос не удался ({status})",
+	"{count} files": {
+		one: "{count} файл",
+		few: "{count} файла",
+		many: "{count} файлов",
+		other: "{count} файла",
+	},
+	"Notes searchable": "Заметки доступны для поиска",
+	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
+		"Заметки, расположенные после этой точки, синхронизируются и открываются нормально, но они не включены в индекс поиска. Индекс содержит ваши старые заметки, поэтому новые заметки не попадают в него.",
+	"Notes stored": "Заметки сохранены",
+	Attachments: "Вложения",
+	"AI searches": "Поиск по ИИ",
+	"{formatted} per day": "{formatted} в день",
+	"Link Obsidian to Engram": "Свяжите Obsidian с Engram",
+	"Starting...": "Начало...",
+	"Failed to start device flow. Check your Engram URL and try again.":
+		"Не удалось запустить процесс аутентификации. Проверьте ваш URL Engram и попробуйте снова.",
+	"Your code:": "Ваш код:",
+	"Click to copy": "Нажмите, чтобы скопировать",
+	"Code copied!": "Код скопирован!",
+	"A browser window has opened. Sign in and enter this code to link your vault.":
+		"Открыто окно браузера. Войдите и введите этот код, чтобы связать ваше хранилище.",
+	Cancel: "Отменить",
+	"Waiting for authorization — connected, this will complete instantly.":
+		"Ожидание авторизации — подключено, процесс завершится мгновенно.",
+	"Waiting for authorization — no live connection, checking every 30s.":
+		"Ожидание авторизации — нет активного соединения, проверка каждые 30 секунд.",
+	"Code expired. Please try again.": "Код устарел. Пожалуйста, попробуйте снова.",
+	"Try again": "Повторить попытку",
+	Close: "Закрыть",
 	"Update in settings": "Обновить в настройках",
 	"Sync now": "Синхронизировать сейчас",
 	"Engram sync: syncing...": "Синхронизация Engram: синхронизация...",
@@ -131,11 +297,9 @@ const ru: Dict = {
 		many: "Engram Vault Sync: получено {count} файлов с сервера",
 		other: "Engram Sync: получено {count} файлов с сервера",
 	},
-	"Show sync log": "Показать журнал синхронизации",
 	"Send feedback": "Отправить отзыв",
 	"Semantic search": "Смысловой поиск",
 	"Open search sidebar": "Открыть боковую панель поиска",
-	"Engram search": "Поиск по Engram",
 	"Open sync center": "Открыть Центр синхронизации",
 	"Engram: ready": "Engram: готов",
 	"Engram Sync: pushed {pushed}": "Engram Sync: отправлено {pushed}",
@@ -214,7 +378,6 @@ const ru: Dict = {
 		many: "Engram: ⚠ {count} ошибок синхронизации",
 		other: "Engram: ⚠ {count} ошибок синхронизации",
 	},
-	"Last sync: {when}": "Последняя синхронизация: {when}",
 	"Engram Sync: pulled {count} changes": {
 		one: "Engram Sync: получено {count} изменение",
 		few: "Engram Sync: получено {count} изменения",
@@ -225,80 +388,6 @@ const ru: Dict = {
 		'Engram Sync: состояние синхронизации для "{name}" не удалось прочитать — используется локальная копия.',
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} доступен. {link}.",
-	"{count} files": {
-		one: "{count} файл",
-		few: "{count} файла",
-		many: "{count} файлов",
-		other: "{count} файла",
-	},
-	"Notes searchable": "Заметки доступны для поиска",
-	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
-		"Заметки, расположенные после этой точки, синхронизируются и открываются нормально, но они не включены в индекс поиска. Индекс содержит ваши старые заметки, поэтому новые заметки не попадают в него.",
-	"Notes stored": "Заметки сохранены",
-	Attachments: "Вложения",
-	"AI searches": "Поиск по ИИ",
-	"{formatted} per day": "{formatted} в день",
-	Keyword: "Ключевое слово",
-	Semantic: "Смысловой",
-	Both: "Оба",
-	"matches your words and their other forms — 'run' finds 'running' — plus this device.":
-		"Соответствует вашим словам и их другим формам — 'run' найдёт 'running' — плюс это устройство.",
-	"matches meaning. Finds notes that never use the words you typed.":
-		"Соответствует смыслу. Находит заметки, которые никогда не используют слова, которые вы ввели.",
-	"matches words and meaning together, plus this device. Widest results.":
-		"Соответствует словам и смыслу вместе, плюс это устройство. Наиболее полные результаты.",
-	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
-		"Engram индексирует {indexed} из ваших {all} заметок. Остальные соответствия находятся только на этом устройстве. Обновите, чтобы индексировать всё.",
-	"Searching {indexed} of {all} notes. Upgrade to search everything.":
-		"Поиск по {indexed} из {all} заметок. Обновите, чтобы искать всё.",
-	"Search your vault…": "Поиск по вашему хранилищу…",
-	"Clear search": "Очистить поиск",
-	"Search settings": "Настройки поиска",
-	"Filter by folder…": "Фильтр по папке…",
-	"Filter by tags…": "Фильтр по тегам…",
-	"Remove tag {tag}": "Удалить тег {tag}",
-	"Engram unreachable. Showing matches from this device only.":
-		"Engram недоступен. Отображаются соответствия только с этого устройства.",
-	"Search failed — check connection": "Поиск не удался — проверьте соединение",
-	"No results found": "Результаты не найдены",
-	Untitled: "Без названия",
-	exact: "точно",
-	"meaning + exact": "смысл + точное совпадение",
-	meaning: "значение",
-	"match strength: {pct}%": "степень соответствия: {pct}%",
-	"No source path for this result": "Нет пути к исходному файлу для этого результата",
-	"Note not synced locally": "Заметка не синхронизирована локально",
-	"Syncing...": "Синхронизация...",
-	"👋 Welcome": "👋 Добро пожаловать",
-	"🔌 Connection": "🔌 Соединение",
-	"🔄 Sync Center": "🔄 Центр синхронизации",
-	"⚙️ Advanced": "⚙️ Дополнительно",
-	"💬 Feedback": "💬 Отзыв",
-	"Engram: settings tab failed to render ({error})":
-		"Engram: произошла ошибка при отображении вкладки настроек ({error})",
-	Disconnected: "Отключено",
-	"Error: {error}": "Ошибка: {error}",
-	unknown: "неизвестно",
-	"Connected — waiting for first sync decision":
-		"Подключено — ожидается первое решение о синхронизации",
-	"Connected — live sync active": "Подключено — активная синхронизация в реальном времени",
-	"Connected — polling": "Подключено — опрос",
-	"Not configured": "Не настроено",
-	"Open sync setup": "Открыть настройку синхронизации",
-	"Sync log": "Журнал синхронизации",
-	"Showing {count} entries": {
-		one: "Отображается {count} запись",
-		few: "Отображается {count} записи",
-		many: "Отображается {count} записей",
-		other: "Отображается {count} записей",
-	},
-	"No sync activity this session.": "Нет активности синхронизации в этом сеансе.",
-	"({count} errors)": {
-		one: "({count} ошибка)",
-		few: "({count} ошибки)",
-		many: "({count} ошибок)",
-		other: "({count} ошибок)",
-	},
 	"Could not compare with the cloud. Check your connection.":
 		"Не удалось сравнить с облаком. Проверьте ваше соединение.",
 	"Your login expired. Sign in again in Engram settings to continue.":
@@ -397,7 +486,6 @@ const ru: Dict = {
 	"This device's vault is empty. Download {what} from the server?":
 		"Хранилище на этом устройстве пустое. Загрузить {what} с сервера?",
 	"Download everything": "Скачать всё",
-	Done: "Готово",
 	"Send debug logs. Note content stays private.":
 		"Отправить отладочные журналы. Содержимое заметок остаётся конфиденциальным.",
 	"Comparing your vault with the cloud…": "Сравнение вашего хранилища с облаком…",
@@ -440,124 +528,36 @@ const ru: Dict = {
 		other: "{count} конфликтов требуют разрешения",
 	},
 	"Type {keyword} to confirm:": "Введите {keyword}, чтобы подтвердить:",
-	"Uploading {count}.": {
-		one: "Загрузка {count}.",
-		few: "Загрузка {count}.",
-		many: "Загрузка {count}.",
-		other: "Загрузка {count}.",
-	},
-	"Downloading {count}.": {
-		one: "Загрузка {count}.",
-		few: "Загрузка {count}.",
-		many: "Загрузка {count}.",
-		other: "Загрузка {count}.",
-	},
-	"Deleting {count} local files.": {
-		one: "Удаление {count} локального файла.",
-		few: "Удалено {count} локальных файла.",
-		many: "Удаление {count} локальных файлов.",
-		other: "Удаление {count} локальных файлов.",
-	},
-	"Deleting {count} on the cloud.": {
-		one: "Удаление {count} в облаке.",
-		few: "Удаление {count} в облаке.",
-		many: "Удаление {count} файлов из облака.",
-		other: "Удаление версии {count} из облака.",
-	},
-	"First sync, this may take a moment.":
-		"Первая синхронизация, это может занять некоторое время.",
-	"Checking for changes.": "Проверка на наличие изменений.",
-	"Nothing will be deleted.": "Ничего не будет удалено.",
-	"✓ {count} synced": {
-		one: "✓ {count} синхронизировано",
-		few: "✓ {count} синхронизировано",
-		many: "✓ {count} синхронизировано",
-		other: "✓ {count} синхронизировано",
-	},
-	"⤳ {count} skipped (Free plan)": {
-		one: "⤳ Пропущено {count} (бесплатный тариф)",
-		few: "⤳ Пропущено {count} (бесплатный тариф)",
-		many: "⤳ Пропущено {count} (бесплатный тариф)",
-		other: "⤳ {count} пропущено (Бесплатный план)",
-	},
-	"✕ {count} failed": {
-		one: "✕ {count} ошибка",
-		few: "✕ {count} ошибки",
-		many: "✕ {count} неудачных попыток",
-		other: "✕ {count} ошибка",
-	},
-	"{count} attachments need a paid plan to sync. See Sync Center.": {
-		one: "{count} вложению нужен платный план. См. Центр синхронизации.",
-		few: "{count} вложениям нужен платный план. См. Центр синхронизации.",
-		many: "{count} вложениям нужен платный план. См. Центр синхронизации.",
-		other: "{count} вложениям нужен платный план. См. Центр синхронизации.",
-	},
-	"Finished with some errors. Open the sync log to see what failed.":
-		"Завершено с ошибками. Откройте журнал синхронизации, чтобы узнать, что не удалось.",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"Синхронизировано. Для синхронизации некоторых вложений требуется платная подписка (см. ниже).",
-	"All synced. Your vault and the cloud now match.":
-		"Всё синхронизировано. Ваше хранилище и облако теперь совпадают.",
-	"Already up to date. Nothing needed syncing.": "Уже актуально. Синхронизация не требуется.",
-	Deleting: "Удаление",
-	Downloading: "Загрузка",
-	Uploading: "Загрузка",
-	"Syncing your vault": "Синхронизация вашего хранилища",
-	"Getting started…": "Начало работы…",
-	"Open Engram to check your vault and confirm everything synced.":
-		"Откройте Engram, чтобы проверить ваше хранилище и убедиться, что всё синхронизировано.",
-	"Open Engram": "Открыть Engram",
-	"You can close this and the sync keeps running in the background.":
-		"Вы можете закрыть это окно, и синхронизация продолжит работу в фоновом режиме.",
-	"Run in background": "Работа в фоновом режиме",
-	"Syncing…": "Синхронизация…",
-	"Sync complete": "Синхронизация завершена",
-	"Syncing attachments": "Синхронизация вложений",
-	Complete: "Завершено",
-	'{count} failed. Run "{command}" for details.': {
-		one: '{count} ошибка. Запустите "{command}", чтобы узнать подробности.',
-		few: '{count} ошибки. Запустите "{command}", чтобы узнать подробности.',
-		many: '{count} ошибок. Запустите "{command}", чтобы узнать подробности.',
-		other: '{count} не удалось. Запустите "{command}", чтобы узнать подробности.',
-	},
-	"File exceeds the {limit} limit": "Файл превышает лимит в {limit}",
-	"Free syncs notes only — images & PDFs need a paid plan.":
-		"Бесплатная синхронизация только для заметок — для изображений и PDF требуется платная подписка.",
-	"Engram: {count} files failed to sync{detail} — open Sync Center": {
-		one: "Engram: Не удалось синхронизировать {count} файл{detail} — откройте Центр синхронизации",
-		few: "Engram: Не удалось синхронизировать {count} файла{detail} — откройте Центр синхронизации",
-		many: "Engram: Не удалось синхронизировать {count} файлов{detail} — откройте Центр синхронизации",
-		other: "Engram: Не удалось синхронизировать {count} файла{detail} — откройте Центр синхронизации",
-	},
-	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.": {
-		one: "Engram: Пропущено {count} вложение — обновите подписку, чтобы синхронизировать изображения и PDF-файлы.",
-		few: "Engram: Пропущено {count} вложения — обновите подписку, чтобы синхронизировать изображения и PDF-файлы.",
-		many: "Engram: Пропущено {count} вложений — обновите подписку, чтобы синхронизировать изображения и PDF-файлы.",
-		other: "Engram: Пропущено {count} вложений — обновите подписку, чтобы синхронизировать изображения и PDF-файлы.",
-	},
-	"Engram: plan upgraded — syncing {count} attachments…": {
-		one: "Engram: план обновлён — синхронизируется {count} вложение…",
-		few: "Engram: план обновлён — синхронизация {count} вложений…",
-		many: "Engram: план обновлён — синхронизация {count} вложений…",
-		other: "Engram: план обновлён — синхронизация {count} вложений…",
-	},
-	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
-		"Синхронизация всех (удаление дубликатов) прервана: не удалось получить эксклюзивный снимок сервера (конфликт доступа). Ничего не было удалено.",
-	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
-		"Синхронизация всех прервана: другая синхронизация выполняется (конфликт доступа). Попробуйте снова, когда она завершится.",
-	"Pull all failed: {error}": "Синхронизация всех не удалась: {error}",
-	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
-		"Engram: конфликт синхронизации для {path} — ваши локальные изменения сохранены как {copy}",
-	"Open note": "Открыть заметку",
-	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.": {
-		one: "Engram: Обнаружена проблема с метаданными в {count} заметке. Откройте Центр синхронизации для исправления.",
-		few: "Engram: Обнаружены проблемы с метаданными у {count} заметок. Откройте Центр синхронизации для исправления.",
-		many: "Engram: Обнаружено {count} проблем с метаданными в заметках. Откройте Центр синхронизации для исправления.",
-		other: "Engram: Обнаружено {count} заметки с проблемами в метаданных. Откройте Центр синхронизации для исправления.",
-	},
-	'Engram Sync: renamed "{name}" (unsupported characters)':
-		'Engram Sync: переименовано "{name}" (неподдерживаемые символы)',
-	'Engram: frontmatter problem in "{name}"': 'Engram: проблема с метаданными в "{name}"',
+	"Note couldn't be processed": "Заметку не удалось обработать",
+	"The server couldn't process this note. Check its contents, then edit and save to try again.":
+		"Сервер не смог обработать эту заметку. Проверьте её содержимое, затем отредактируйте и сохраните, чтобы повторить попытку.",
+	"Attachments need a paid plan": "Вложения требуют платной подписки",
+	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
+		"Бесплатный тариф синхронизирует только заметки. Обновите подписку, чтобы синхронизировать изображения и PDF-файлы.",
+	"Attachment storage full": "Место для хранения вложений заполнено",
+	"You've used all the attachment storage on your plan. Upgrade for more.":
+		"Вы использовали весь объём хранилища для вложений в рамках вашего тарифного плана. Обновите подписку для получения большего объёма.",
+	"Too large for the server": "Слишком большой для сервера",
+	"The server limit is 5 MB. Compress or split the file, then it will sync.":
+		"Предел сервера составляет 5 МБ. Сжатие или разделение файла позволит выполнить синхронизацию.",
+	"Sign-in expired": "Сеанс работы завершён",
+	"Reconnect your account to resume syncing.":
+		"Подключите учётную запись заново, чтобы продолжить синхронизацию.",
+	"Unresolved conflict": "Неразрешенный конфликт",
+	"Open the file to resolve the conflict, then sync again.":
+		"Откройте файл для разрешения конфликта, затем синхронизируйте снова.",
+	"Frontmatter needs a fix": "Необходимо исправить метаданные",
+	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
+		"Заметка синхронизирована, но метаданные не были полностью обработаны. Откройте её, чтобы исправить выделенную строку.",
+	"Server error": "Ошибка сервера",
+	"A temporary server problem — retrying automatically.":
+		"Временная проблема с сервером — повторная попытка.",
+	"Network unavailable": "Сеть недоступна",
+	"Can't reach the server — retrying automatically.":
+		"Не удается связаться с сервером — повторная попытка.",
+	"Sync failed": "Синхронизация не удалась",
+	"An unexpected error — retrying automatically.": "Неожиданная ошибка — повторная попытка.",
+	"Frontmatter could not be parsed": "Не удалось обработать метаданные",
 	"Engram: this plugin is too old to sync (needs {version} or newer). Update it to continue.":
 		"Engram: этот плагин слишком старый для синхронизации (требуется {version} или новее). Обновите его, чтобы продолжить.",
 	"Engram: this plugin is too old to sync. Update it to continue.":
@@ -680,6 +680,20 @@ const ru: Dict = {
 	"Added {pattern} to ignore patterns": 'Добавлено "{pattern}" в правила исключения',
 	"Version: {version}": "Версия: {version}",
 	"Source: {link}": "Источник: {link}",
+	"Engram Cloud": "Облако Engram",
+	"Self-hosted": "Самостоятельно размещенный",
+	Backend: "Серверная часть",
+	"Where this vault syncs to. Each backend keeps its own sign-in.":
+		"Куда синхронизируется это хранилище. Каждый сервер требует отдельной авторизации.",
+	"Switched to {mode}.": "Переключено на {mode}.",
+	"Not connected. Enter your Engram server URL below to start syncing.":
+		"Не подключено. Введите URL вашего сервера Engram ниже, чтобы начать синхронизацию.",
+	"Run your own Engram server": "Запустите собственный сервер Engram",
+	"Engram is the backend that powers sync and semantic search.":
+		"Engram — это серверная часть, обеспечивающая синхронизацию и смысловой поиск.",
+	"Nothing in this vault syncs until you choose how to merge it with the server.":
+		"Ничего из этого хранилища не синхронизируется, пока вы не выберете, как объединить его с сервером.",
+	"Choose sync direction": "Выберите направление синхронизации",
 	"Engram URL": "URL Engram",
 	"✓ Engram server reachable (v{version})": "✓ Сервер Engram доступен (v{version})",
 	"✗ server responded but isn't an Engram backend": "✗ Сервер ответил, но это не сервер Engram",
@@ -736,20 +750,6 @@ const ru: Dict = {
 		"Ошибка сервера ({status}) — проверьте логи Engram",
 	"Could not reach Engram — check connection":
 		"Не удалось связаться с Engram — проверьте соединение",
-	"Engram Cloud": "Облако Engram",
-	"Self-hosted": "Самостоятельно размещенный",
-	Backend: "Серверная часть",
-	"Where this vault syncs to. Each backend keeps its own sign-in.":
-		"Куда синхронизируется это хранилище. Каждый сервер требует отдельной авторизации.",
-	"Switched to {mode}.": "Переключено на {mode}.",
-	"Not connected. Enter your Engram server URL below to start syncing.":
-		"Не подключено. Введите URL вашего сервера Engram ниже, чтобы начать синхронизацию.",
-	"Run your own Engram server": "Запустите собственный сервер Engram",
-	"Engram is the backend that powers sync and semantic search.":
-		"Engram — это серверная часть, обеспечивающая синхронизацию и смысловой поиск.",
-	"Nothing in this vault syncs until you choose how to merge it with the server.":
-		"Ничего из этого хранилища не синхронизируется, пока вы не выберете, как объединить его с сервером.",
-	"Choose sync direction": "Выберите направление синхронизации",
 	Bug: "Ошибка",
 	Idea: "Предложение",
 	Confusing: "Непонятно",

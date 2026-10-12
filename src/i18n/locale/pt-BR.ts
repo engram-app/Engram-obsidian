@@ -2,57 +2,55 @@ import type { Dict } from "..";
 
 // Português (do Brasil)
 const ptBR: Dict = {
-	"Invalid API key": "Chave de API inválida",
-	"Request failed ({status})": "Solicitação falhou ({status})",
-	"Connection failed": "Falha na conexão",
-	"Link Obsidian to Engram": "Link Obsidian para Engram",
-	"Starting...": "Iniciando...",
-	"Failed to start device flow. Check your Engram URL and try again.":
-		"Falha ao iniciar o fluxo do dispositivo. Verifique sua URL de Engram e tente novamente.",
-	"Your code:": "Seu código:",
-	"Click to copy": "Clique para copiar",
-	"Code copied!": "Código copiado!",
-	"A browser window has opened. Sign in and enter this code to link your vault.":
-		"Uma janela do navegador foi aberta. Faça login e insira este código para vincular seu cofre.",
-	Cancel: "Cancelar",
-	"Waiting for authorization — connected, this will complete instantly.":
-		"Aguardando autorização — conectado, isso será concluído instantaneamente.",
-	"Waiting for authorization — no live connection, checking every 30s.":
-		"Aguardando autorização — sem conexão ativa, verificando a cada 30 segundos.",
-	"Code expired. Please try again.": "Código expirado. Tente novamente.",
-	"Try again": "Tentar novamente",
-	Close: "Fechar",
-	"Note couldn't be processed": "A nota não pôde ser processada",
-	"The server couldn't process this note. Check its contents, then edit and save to try again.":
-		"O servidor não conseguiu processar esta nota. Verifique o conteúdo, edite e salve para tentar novamente.",
-	"Attachments need a paid plan": "Anexos requerem um plano pago",
-	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
-		"O plano gratuito sincroniza apenas notas. Faça um upgrade para sincronizar imagens e PDFs.",
-	"Attachment storage full": "Armazenamento de anexos cheio",
-	"You've used all the attachment storage on your plan. Upgrade for more.":
-		"Você usou todo o espaço de armazenamento de anexos do seu plano. Faça um upgrade para ter mais.",
-	"Too large for the server": "Muito grande para o servidor",
-	"The server limit is 5 MB. Compress or split the file, then it will sync.":
-		"O limite do servidor é de 5 MB. Comprima ou divida o arquivo, então ele será sincronizado.",
-	"Sign-in expired": "Sessão expirada",
-	"Reconnect your account to resume syncing.":
-		"Reconecte sua conta para retomar a sincronização.",
-	"Unresolved conflict": "Conflito não resolvido",
-	"Open the file to resolve the conflict, then sync again.":
-		"Abra o arquivo para resolver o conflito, e sincronize novamente.",
-	"Frontmatter needs a fix": "O cabeçalho precisa de correção",
-	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
-		"A nota foi sincronizada, mas o cabeçalho não pôde ser totalmente analisado. Abra-a para corrigir a linha destacada.",
-	"Server error": "Erro no servidor",
-	"A temporary server problem — retrying automatically.":
-		"Um problema temporário no servidor — tentando novamente automaticamente.",
-	"Network unavailable": "Rede indisponível",
-	"Can't reach the server — retrying automatically.":
-		"Não foi possível acessar o servidor — tentando novamente automaticamente.",
-	"Sync failed": "Sincronização falhou",
-	"An unexpected error — retrying automatically.":
-		"Um erro inesperado — tentando novamente automaticamente.",
-	"Frontmatter could not be parsed": "Não foi possível analisar o cabeçalho",
+	"Syncing...": "Sincronizando...",
+	"👋 Welcome": "👋 Bem-vindo",
+	"🔌 Connection": "🔌 Conexão",
+	"🔄 Sync Center": "🔄 Central de sincronização",
+	"⚙️ Advanced": "⚙️ Avançado",
+	"💬 Feedback": "💬 Feedback",
+	"Engram: settings tab failed to render ({error})":
+		"Engram: a aba de configurações não pôde ser exibida ({error})",
+	Disconnected: "Desconectado",
+	"Error: {error}": "Erro: {error}",
+	unknown: "desconhecido",
+	"Connected — waiting for first sync decision":
+		"Conectado — aguardando a primeira decisão de sincronização",
+	"Connected — live sync active": "Conectado — sincronização em tempo real ativa",
+	"Connected — polling": "Conectado — verificando",
+	"Not configured": "Não configurado",
+	"Open sync setup": "Abrir configuração de sincronização",
+	Upgrade: "Atualizar",
+	"Last sync: {when}": "Última sincronização: {when}",
+	Keyword: "Palavra-chave",
+	Semantic: "Semântica",
+	Both: "Ambos",
+	"matches your words and their other forms — 'run' finds 'running' — plus this device.":
+		'corresponde às suas palavras e a outras formas delas — "run" encontra "running" — além deste dispositivo.',
+	"matches meaning. Finds notes that never use the words you typed.":
+		"corresponde ao significado. Encontra notas que nunca usam as palavras que você digitou.",
+	"matches words and meaning together, plus this device. Widest results.":
+		"combina palavras e significado, além deste dispositivo. Resultados mais amplos.",
+	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
+		"Engram indexa {indexed} de suas {all} notas. O restante só corresponde neste dispositivo. Faça um upgrade para indexar tudo.",
+	"Searching {indexed} of {all} notes. Upgrade to search everything.":
+		"Pesquisando {indexed} de {all} notas. Faça um upgrade para pesquisar tudo.",
+	"Search your vault…": "Pesquise seu cofre…",
+	"Clear search": "Limpar pesquisa",
+	"Search settings": "Configurações de pesquisa",
+	"Filter by folder…": "Filtrar por pasta…",
+	"Filter by tags…": "Filtrar por tags…",
+	"Remove tag {tag}": "Remover tag {tag}",
+	"Engram unreachable. Showing matches from this device only.":
+		"Engram inacessível. Mostrando correspondências apenas deste dispositivo.",
+	"Search failed — check connection": "A pesquisa falhou — verifique a conexão",
+	"No results found": "Nenhum resultado encontrado",
+	Untitled: "Sem título",
+	exact: "exato",
+	"meaning + exact": "significado + exato",
+	meaning: "significado",
+	"match strength: {pct}%": "força da correspondência: {pct}%",
+	"No source path for this result": "Sem caminho de origem para este resultado",
+	"Note not synced locally": "Nota não sincronizada localmente",
 	"Note limit reached. Upgrade to keep adding notes.":
 		"Limite de notas atingido. Faça um upgrade para continuar adicionando notas.",
 	"Vault limit reached. Upgrade for more vaults.":
@@ -83,7 +81,158 @@ const ptBR: Dict = {
 	"Finish setting up your account at app.engram.page to start syncing.":
 		"Finalize a configuração da sua conta em app.engram.page para começar a sincronizar.",
 	"Limit reached. Upgrade to continue.": "Limite atingido. Faça um upgrade para continuar.",
-	Upgrade: "Atualizar",
+	"Sync log": "Log de sincronização",
+	"Showing {count} entries": {
+		one: "Exibindo {count} entrada",
+		many: "Exibindo {count} entradas",
+		other: "Exibindo {count} entradas",
+	},
+	"No sync activity this session.": "Nenhuma atividade de sincronização nesta sessão.",
+	"({count} errors)": {
+		one: "({count} erro)",
+		many: "({count} erros)",
+		other: "({count} erros)",
+	},
+	"Engram search": "Engram: pesquisa",
+	"File exceeds the {limit} limit": "Arquivo excede o limite de {limit}",
+	"Free syncs notes only — images & PDFs need a paid plan.":
+		"A sincronização gratuita sincroniza apenas notas — imagens e PDFs precisam de um plano pago.",
+	"Engram: {count} files failed to sync{detail} — open Sync Center": {
+		one: "Engram: {count} arquivo falhou na sincronização{detail} — abra a Central de sincronização",
+		many: "Engram: {count} arquivos falharam na sincronização{detail} — abra a Central de sincronização",
+		other: "Engram: {count} arquivos falharam na sincronização{detail} — abra a Central de sincronização",
+	},
+	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.": {
+		one: "Engram: {count} anexo ignorado — atualize para sincronizar imagens e PDFs.",
+		many: "Engram: {count} anexos ignorados — faça um upgrade para sincronizar imagens e PDFs.",
+		other: "Engram: {count} anexos ignorados — atualize para sincronizar imagens e PDFs.",
+	},
+	"Engram: plan upgraded — syncing {count} attachments…": {
+		one: "Engram: plano atualizado — sincronizando {count} anexo…",
+		many: "Engram: plano atualizado — sincronizando {count} anexos…",
+		other: "Engram: plano atualizado — sincronizando {count} anexos…",
+	},
+	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
+		'A operação "baixar tudo" (excluir duplicatas) foi interrompida: não foi possível obter um instantâneo exclusivo do servidor (conflito de replicação). Nada foi excluído.',
+	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
+		'A operação "baixar tudo" foi interrompida: outra sincronização está em andamento (conflito de replicação). Tente novamente quando ela terminar.',
+	"Pull all failed: {error}": 'A operação "baixar tudo" falhou: {error}',
+	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
+		"Engram: conflito de sincronização em {path} — sua edição local foi salva como {copy}",
+	"Connection failed": "Falha na conexão",
+	"Open note": "Abrir nota",
+	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.": {
+		one: "Engram: {count} nota tem problemas no frontmatter. Abra a Central de sincronização para corrigir.",
+		many: "Engram: {count} notas têm problemas no frontmatter. Abra a Central de sincronização para corrigir.",
+		other: "Engram: {count} notas têm problemas no frontmatter. Abra a Central de sincronização para corrigir.",
+	},
+	'Engram Sync: renamed "{name}" (unsupported characters)':
+		'Engram Sincronização: renomeado "{name}" (caracteres não suportados)',
+	'Engram: frontmatter problem in "{name}"': 'Engram: problema no frontmatter em "{name}"',
+	"Uploading {count}.": {
+		one: "Enviando {count}.",
+		many: "Carregando {count}.",
+		other: "Enviando {count}.",
+	},
+	"Downloading {count}.": {
+		one: "Baixando {count}.",
+		many: "Baixando {count}.",
+		other: "Baixando {count}.",
+	},
+	"Deleting {count} local files.": {
+		one: "Excluindo {count} arquivo local.",
+		many: "Excluindo {count} arquivos locais.",
+		other: "Excluindo {count} arquivos locais.",
+	},
+	"Deleting {count} on the cloud.": {
+		one: "Excluindo {count} na nuvem.",
+		many: "Excluindo {count} na nuvem.",
+		other: "Excluindo {count} na nuvem.",
+	},
+	"First sync, this may take a moment.": "Primeira sincronização, isso pode levar um momento.",
+	"Checking for changes.": "Verificando alterações.",
+	"Nothing will be deleted.": "Nada será excluído.",
+	"✓ {count} synced": {
+		one: "✓ {count} sincronizado",
+		many: "✓ {count} sincronizados",
+		other: "✓ {count} sincronizados",
+	},
+	"⤳ {count} skipped (Free plan)": {
+		one: "⤳ {count} ignorado (Plano gratuito)",
+		many: "⤳ {count} ignorados (Plano gratuito)",
+		other: "⤳ {count} ignorados (Plano gratuito)",
+	},
+	"✕ {count} failed": {
+		one: "✕ {count} falha",
+		many: "✕ {count} falhas",
+		other: "✕ {count} tentativas falhadas",
+	},
+	"{count} attachments need a paid plan to sync. See Sync Center.": {
+		one: "{count} anexo precisa de um plano pago para sincronizar. Veja a Central de sincronização.",
+		many: "{count} anexos precisam de um plano pago para sincronizar. Veja a Central de sincronização.",
+		other: "{count} anexos precisam de um plano pago para sincronizar. Veja a Central de sincronização.",
+	},
+	"Finished with some errors. Open the sync log to see what failed.":
+		"Finalizado com alguns erros. Abra o registro de sincronização para ver o que falhou.",
+	"Synced. Some attachments need a paid plan to sync (see below).":
+		"Sincronizado. Alguns anexos precisam de um plano pago para sincronizar (veja abaixo).",
+	"All synced. Your vault and the cloud now match.":
+		"Tudo sincronizado. Seu cofre e a nuvem agora estão idênticos.",
+	"Already up to date. Nothing needed syncing.":
+		"Já está atualizado. Não há nada para sincronizar.",
+	Deleting: "Excluindo",
+	Downloading: "Baixando",
+	Uploading: "Enviando",
+	"Syncing your vault": "Sincronizando seu cofre",
+	"Getting started…": "Iniciando…",
+	"Open Engram to check your vault and confirm everything synced.":
+		"Abra o Engram para verificar seu cofre e confirmar que tudo foi sincronizado.",
+	"Open Engram": "Abrir Engram",
+	"You can close this and the sync keeps running in the background.":
+		"Você pode fechar isso e a sincronização continua em segundo plano.",
+	"Run in background": "Executar em segundo plano",
+	"Syncing…": "Sincronizando…",
+	"Sync complete": "Sincronização completa",
+	"Show sync log": "Mostrar o registro de sincronização",
+	Done: "Concluído",
+	"Syncing attachments": "Sincronizando anexos",
+	Complete: "Completo",
+	'{count} failed. Run "{command}" for details.': {
+		one: '{count} falha. Execute "{command}" para detalhes.',
+		many: '{count} falhas. Execute "{command}" para detalhes.',
+		other: '{count} falhas. Execute "{command}" para detalhes.',
+	},
+	"Invalid API key": "Chave de API inválida",
+	"Request failed ({status})": "Solicitação falhou ({status})",
+	"{count} files": {
+		one: "{count} arquivo",
+		many: "{count} arquivos",
+		other: "{count} arquivos",
+	},
+	"Notes searchable": "Notas pesquisáveis",
+	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
+		"As notas após este ponto ainda são sincronizadas e abertas normalmente, elas apenas não estão no índice de pesquisa. O índice armazena suas notas mais antigas, então são as suas notas mais recentes que ficam fora.",
+	"Notes stored": "Notas armazenadas",
+	Attachments: "Anexos",
+	"AI searches": "Pesquisas de IA",
+	"{formatted} per day": "{formatted} por dia",
+	"Link Obsidian to Engram": "Link Obsidian para Engram",
+	"Starting...": "Iniciando...",
+	"Failed to start device flow. Check your Engram URL and try again.":
+		"Falha ao iniciar o fluxo do dispositivo. Verifique sua URL de Engram e tente novamente.",
+	"Your code:": "Seu código:",
+	"Click to copy": "Clique para copiar",
+	"Code copied!": "Código copiado!",
+	"A browser window has opened. Sign in and enter this code to link your vault.":
+		"Uma janela do navegador foi aberta. Faça login e insira este código para vincular seu cofre.",
+	Cancel: "Cancelar",
+	"Waiting for authorization — connected, this will complete instantly.":
+		"Aguardando autorização — conectado, isso será concluído instantaneamente.",
+	"Waiting for authorization — no live connection, checking every 30s.":
+		"Aguardando autorização — sem conexão ativa, verificando a cada 30 segundos.",
+	"Code expired. Please try again.": "Código expirado. Tente novamente.",
+	"Try again": "Tentar novamente",
+	Close: "Fechar",
 	"Update in settings": "Atualizar nas configurações",
 	"Sync now": "Sincronizar agora",
 	"Engram sync: syncing...": "Engram Sincronização: sincronizando...",
@@ -127,11 +276,9 @@ const ptBR: Dict = {
 		many: "Engram Sincronização: transferidos {count} arquivos do servidor",
 		other: "Engram Sincronização: baixados {count} arquivos do servidor",
 	},
-	"Show sync log": "Mostrar o registro de sincronização",
 	"Send feedback": "Enviar feedback",
 	"Semantic search": "Busca semântica",
 	"Open search sidebar": "Abrir a barra lateral de pesquisa",
-	"Engram search": "Engram: pesquisa",
 	"Open sync center": "Abrir a Central de sincronização",
 	"Engram: ready": "Engram: pronto",
 	"Engram Sync: pushed {pushed}": "Engram Sincronização: enviou {pushed}",
@@ -205,7 +352,6 @@ const ptBR: Dict = {
 		many: "Engram: ⚠ {count} erros de sincronização",
 		other: "Engram: ⚠ {count} erros de sincronização",
 	},
-	"Last sync: {when}": "Última sincronização: {when}",
 	"Engram Sync: pulled {count} changes": {
 		one: "Engram Sincronização: {count} alteração sincronizada",
 		many: "Engram Sincronização: transferidos {count} itens",
@@ -215,77 +361,6 @@ const ptBR: Dict = {
 		'Engram Sincronização: o estado de sincronização de "{name}" não pôde ser lido — usando a cópia no disco.',
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} está disponível. {link}.",
-	"{count} files": {
-		one: "{count} arquivo",
-		many: "{count} arquivos",
-		other: "{count} arquivos",
-	},
-	"Notes searchable": "Notas pesquisáveis",
-	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
-		"As notas após este ponto ainda são sincronizadas e abertas normalmente, elas apenas não estão no índice de pesquisa. O índice armazena suas notas mais antigas, então são as suas notas mais recentes que ficam fora.",
-	"Notes stored": "Notas armazenadas",
-	Attachments: "Anexos",
-	"AI searches": "Pesquisas de IA",
-	"{formatted} per day": "{formatted} por dia",
-	Keyword: "Palavra-chave",
-	Semantic: "Semântica",
-	Both: "Ambos",
-	"matches your words and their other forms — 'run' finds 'running' — plus this device.":
-		'corresponde às suas palavras e a outras formas delas — "run" encontra "running" — além deste dispositivo.',
-	"matches meaning. Finds notes that never use the words you typed.":
-		"corresponde ao significado. Encontra notas que nunca usam as palavras que você digitou.",
-	"matches words and meaning together, plus this device. Widest results.":
-		"combina palavras e significado, além deste dispositivo. Resultados mais amplos.",
-	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
-		"Engram indexa {indexed} de suas {all} notas. O restante só corresponde neste dispositivo. Faça um upgrade para indexar tudo.",
-	"Searching {indexed} of {all} notes. Upgrade to search everything.":
-		"Pesquisando {indexed} de {all} notas. Faça um upgrade para pesquisar tudo.",
-	"Search your vault…": "Pesquise seu cofre…",
-	"Clear search": "Limpar pesquisa",
-	"Search settings": "Configurações de pesquisa",
-	"Filter by folder…": "Filtrar por pasta…",
-	"Filter by tags…": "Filtrar por tags…",
-	"Remove tag {tag}": "Remover tag {tag}",
-	"Engram unreachable. Showing matches from this device only.":
-		"Engram inacessível. Mostrando correspondências apenas deste dispositivo.",
-	"Search failed — check connection": "A pesquisa falhou — verifique a conexão",
-	"No results found": "Nenhum resultado encontrado",
-	Untitled: "Sem título",
-	exact: "exato",
-	"meaning + exact": "significado + exato",
-	meaning: "significado",
-	"match strength: {pct}%": "força da correspondência: {pct}%",
-	"No source path for this result": "Sem caminho de origem para este resultado",
-	"Note not synced locally": "Nota não sincronizada localmente",
-	"Syncing...": "Sincronizando...",
-	"👋 Welcome": "👋 Bem-vindo",
-	"🔌 Connection": "🔌 Conexão",
-	"🔄 Sync Center": "🔄 Central de sincronização",
-	"⚙️ Advanced": "⚙️ Avançado",
-	"💬 Feedback": "💬 Feedback",
-	"Engram: settings tab failed to render ({error})":
-		"Engram: a aba de configurações não pôde ser exibida ({error})",
-	Disconnected: "Desconectado",
-	"Error: {error}": "Erro: {error}",
-	unknown: "desconhecido",
-	"Connected — waiting for first sync decision":
-		"Conectado — aguardando a primeira decisão de sincronização",
-	"Connected — live sync active": "Conectado — sincronização em tempo real ativa",
-	"Connected — polling": "Conectado — verificando",
-	"Not configured": "Não configurado",
-	"Open sync setup": "Abrir configuração de sincronização",
-	"Sync log": "Log de sincronização",
-	"Showing {count} entries": {
-		one: "Exibindo {count} entrada",
-		many: "Exibindo {count} entradas",
-		other: "Exibindo {count} entradas",
-	},
-	"No sync activity this session.": "Nenhuma atividade de sincronização nesta sessão.",
-	"({count} errors)": {
-		one: "({count} erro)",
-		many: "({count} erros)",
-		other: "({count} erros)",
-	},
 	"Could not compare with the cloud. Check your connection.":
 		"Não foi possível comparar com a nuvem. Verifique sua conexão.",
 	"Your login expired. Sign in again in Engram settings to continue.":
@@ -370,7 +445,6 @@ const ptBR: Dict = {
 	"This device's vault is empty. Download {what} from the server?":
 		"O cofre deste dispositivo está vazio. Deseja baixar {what} do servidor?",
 	"Download everything": "Baixar tudo",
-	Done: "Concluído",
 	"Send debug logs. Note content stays private.":
 		"Enviar logs de depuração. O conteúdo das notas permanece privado.",
 	"Comparing your vault with the cloud…": "Comparando seu cofre com a nuvem…",
@@ -412,111 +486,37 @@ const ptBR: Dict = {
 		other: "{count} conflitos precisam ser resolvidos",
 	},
 	"Type {keyword} to confirm:": "Digite {keyword} para confirmar:",
-	"Uploading {count}.": {
-		one: "Enviando {count}.",
-		many: "Carregando {count}.",
-		other: "Enviando {count}.",
-	},
-	"Downloading {count}.": {
-		one: "Baixando {count}.",
-		many: "Baixando {count}.",
-		other: "Baixando {count}.",
-	},
-	"Deleting {count} local files.": {
-		one: "Excluindo {count} arquivo local.",
-		many: "Excluindo {count} arquivos locais.",
-		other: "Excluindo {count} arquivos locais.",
-	},
-	"Deleting {count} on the cloud.": {
-		one: "Excluindo {count} na nuvem.",
-		many: "Excluindo {count} na nuvem.",
-		other: "Excluindo {count} na nuvem.",
-	},
-	"First sync, this may take a moment.": "Primeira sincronização, isso pode levar um momento.",
-	"Checking for changes.": "Verificando alterações.",
-	"Nothing will be deleted.": "Nada será excluído.",
-	"✓ {count} synced": {
-		one: "✓ {count} sincronizado",
-		many: "✓ {count} sincronizados",
-		other: "✓ {count} sincronizados",
-	},
-	"⤳ {count} skipped (Free plan)": {
-		one: "⤳ {count} ignorado (Plano gratuito)",
-		many: "⤳ {count} ignorados (Plano gratuito)",
-		other: "⤳ {count} ignorados (Plano gratuito)",
-	},
-	"✕ {count} failed": {
-		one: "✕ {count} falha",
-		many: "✕ {count} falhas",
-		other: "✕ {count} tentativas falhadas",
-	},
-	"{count} attachments need a paid plan to sync. See Sync Center.": {
-		one: "{count} anexo precisa de um plano pago para sincronizar. Veja a Central de sincronização.",
-		many: "{count} anexos precisam de um plano pago para sincronizar. Veja a Central de sincronização.",
-		other: "{count} anexos precisam de um plano pago para sincronizar. Veja a Central de sincronização.",
-	},
-	"Finished with some errors. Open the sync log to see what failed.":
-		"Finalizado com alguns erros. Abra o registro de sincronização para ver o que falhou.",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"Sincronizado. Alguns anexos precisam de um plano pago para sincronizar (veja abaixo).",
-	"All synced. Your vault and the cloud now match.":
-		"Tudo sincronizado. Seu cofre e a nuvem agora estão idênticos.",
-	"Already up to date. Nothing needed syncing.":
-		"Já está atualizado. Não há nada para sincronizar.",
-	Deleting: "Excluindo",
-	Downloading: "Baixando",
-	Uploading: "Enviando",
-	"Syncing your vault": "Sincronizando seu cofre",
-	"Getting started…": "Iniciando…",
-	"Open Engram to check your vault and confirm everything synced.":
-		"Abra o Engram para verificar seu cofre e confirmar que tudo foi sincronizado.",
-	"Open Engram": "Abrir Engram",
-	"You can close this and the sync keeps running in the background.":
-		"Você pode fechar isso e a sincronização continua em segundo plano.",
-	"Run in background": "Executar em segundo plano",
-	"Syncing…": "Sincronizando…",
-	"Sync complete": "Sincronização completa",
-	"Syncing attachments": "Sincronizando anexos",
-	Complete: "Completo",
-	'{count} failed. Run "{command}" for details.': {
-		one: '{count} falha. Execute "{command}" para detalhes.',
-		many: '{count} falhas. Execute "{command}" para detalhes.',
-		other: '{count} falhas. Execute "{command}" para detalhes.',
-	},
-	"File exceeds the {limit} limit": "Arquivo excede o limite de {limit}",
-	"Free syncs notes only — images & PDFs need a paid plan.":
-		"A sincronização gratuita sincroniza apenas notas — imagens e PDFs precisam de um plano pago.",
-	"Engram: {count} files failed to sync{detail} — open Sync Center": {
-		one: "Engram: {count} arquivo falhou na sincronização{detail} — abra a Central de sincronização",
-		many: "Engram: {count} arquivos falharam na sincronização{detail} — abra a Central de sincronização",
-		other: "Engram: {count} arquivos falharam na sincronização{detail} — abra a Central de sincronização",
-	},
-	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.": {
-		one: "Engram: {count} anexo ignorado — atualize para sincronizar imagens e PDFs.",
-		many: "Engram: {count} anexos ignorados — faça um upgrade para sincronizar imagens e PDFs.",
-		other: "Engram: {count} anexos ignorados — atualize para sincronizar imagens e PDFs.",
-	},
-	"Engram: plan upgraded — syncing {count} attachments…": {
-		one: "Engram: plano atualizado — sincronizando {count} anexo…",
-		many: "Engram: plano atualizado — sincronizando {count} anexos…",
-		other: "Engram: plano atualizado — sincronizando {count} anexos…",
-	},
-	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
-		'A operação "baixar tudo" (excluir duplicatas) foi interrompida: não foi possível obter um instantâneo exclusivo do servidor (conflito de replicação). Nada foi excluído.',
-	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
-		'A operação "baixar tudo" foi interrompida: outra sincronização está em andamento (conflito de replicação). Tente novamente quando ela terminar.',
-	"Pull all failed: {error}": 'A operação "baixar tudo" falhou: {error}',
-	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
-		"Engram: conflito de sincronização em {path} — sua edição local foi salva como {copy}",
-	"Open note": "Abrir nota",
-	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.": {
-		one: "Engram: {count} nota tem problemas no frontmatter. Abra a Central de sincronização para corrigir.",
-		many: "Engram: {count} notas têm problemas no frontmatter. Abra a Central de sincronização para corrigir.",
-		other: "Engram: {count} notas têm problemas no frontmatter. Abra a Central de sincronização para corrigir.",
-	},
-	'Engram Sync: renamed "{name}" (unsupported characters)':
-		'Engram Sincronização: renomeado "{name}" (caracteres não suportados)',
-	'Engram: frontmatter problem in "{name}"': 'Engram: problema no frontmatter em "{name}"',
+	"Note couldn't be processed": "A nota não pôde ser processada",
+	"The server couldn't process this note. Check its contents, then edit and save to try again.":
+		"O servidor não conseguiu processar esta nota. Verifique o conteúdo, edite e salve para tentar novamente.",
+	"Attachments need a paid plan": "Anexos requerem um plano pago",
+	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
+		"O plano gratuito sincroniza apenas notas. Faça um upgrade para sincronizar imagens e PDFs.",
+	"Attachment storage full": "Armazenamento de anexos cheio",
+	"You've used all the attachment storage on your plan. Upgrade for more.":
+		"Você usou todo o espaço de armazenamento de anexos do seu plano. Faça um upgrade para ter mais.",
+	"Too large for the server": "Muito grande para o servidor",
+	"The server limit is 5 MB. Compress or split the file, then it will sync.":
+		"O limite do servidor é de 5 MB. Comprima ou divida o arquivo, então ele será sincronizado.",
+	"Sign-in expired": "Sessão expirada",
+	"Reconnect your account to resume syncing.":
+		"Reconecte sua conta para retomar a sincronização.",
+	"Unresolved conflict": "Conflito não resolvido",
+	"Open the file to resolve the conflict, then sync again.":
+		"Abra o arquivo para resolver o conflito, e sincronize novamente.",
+	"Frontmatter needs a fix": "O cabeçalho precisa de correção",
+	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
+		"A nota foi sincronizada, mas o cabeçalho não pôde ser totalmente analisado. Abra-a para corrigir a linha destacada.",
+	"Server error": "Erro no servidor",
+	"A temporary server problem — retrying automatically.":
+		"Um problema temporário no servidor — tentando novamente automaticamente.",
+	"Network unavailable": "Rede indisponível",
+	"Can't reach the server — retrying automatically.":
+		"Não foi possível acessar o servidor — tentando novamente automaticamente.",
+	"Sync failed": "Sincronização falhou",
+	"An unexpected error — retrying automatically.":
+		"Um erro inesperado — tentando novamente automaticamente.",
+	"Frontmatter could not be parsed": "Não foi possível analisar o cabeçalho",
 	"Engram: this plugin is too old to sync (needs {version} or newer). Update it to continue.":
 		"Engram: este plugin é muito antigo para sincronizar (requer {version} ou mais recente). Atualize-o para continuar.",
 	"Engram: this plugin is too old to sync. Update it to continue.":
@@ -633,6 +633,20 @@ const ptBR: Dict = {
 	"Added {pattern} to ignore patterns": "Adicionado {pattern} aos padrões ignorados",
 	"Version: {version}": "Versão: {version}",
 	"Source: {link}": "Fonte: {link}",
+	"Engram Cloud": "Engram Nuvem",
+	"Self-hosted": "Hospedado por você",
+	Backend: "Backend",
+	"Where this vault syncs to. Each backend keeps its own sign-in.":
+		"Para onde este cofre é sincronizado. Cada backend tem seu próprio login.",
+	"Switched to {mode}.": "Alterado para {mode}.",
+	"Not connected. Enter your Engram server URL below to start syncing.":
+		"Não conectado. Insira o URL do seu servidor Engram abaixo para iniciar a sincronização.",
+	"Run your own Engram server": "Execute seu próprio servidor Engram",
+	"Engram is the backend that powers sync and semantic search.":
+		"Engram é o backend que alimenta a sincronização e a busca semântica.",
+	"Nothing in this vault syncs until you choose how to merge it with the server.":
+		"Nada neste cofre é sincronizado até que você escolha como combiná-lo com o servidor.",
+	"Choose sync direction": "Escolha a direção da sincronização",
 	"Engram URL": "URL do Engram",
 	"✓ Engram server reachable (v{version})": "✓ Servidor Engram acessível (v{version})",
 	"✗ server responded but isn't an Engram backend":
@@ -689,20 +703,6 @@ const ptBR: Dict = {
 		"Erro no servidor ({status}) — verifique os logs de Engram",
 	"Could not reach Engram — check connection":
 		"Não foi possível acessar Engram — verifique a conexão",
-	"Engram Cloud": "Engram Nuvem",
-	"Self-hosted": "Hospedado por você",
-	Backend: "Backend",
-	"Where this vault syncs to. Each backend keeps its own sign-in.":
-		"Para onde este cofre é sincronizado. Cada backend tem seu próprio login.",
-	"Switched to {mode}.": "Alterado para {mode}.",
-	"Not connected. Enter your Engram server URL below to start syncing.":
-		"Não conectado. Insira o URL do seu servidor Engram abaixo para iniciar a sincronização.",
-	"Run your own Engram server": "Execute seu próprio servidor Engram",
-	"Engram is the backend that powers sync and semantic search.":
-		"Engram é o backend que alimenta a sincronização e a busca semântica.",
-	"Nothing in this vault syncs until you choose how to merge it with the server.":
-		"Nada neste cofre é sincronizado até que você escolha como combiná-lo com o servidor.",
-	"Choose sync direction": "Escolha a direção da sincronização",
 	Bug: "Bug",
 	Idea: "Ideia",
 	Confusing: "Confuso",

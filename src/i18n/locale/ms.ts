@@ -2,57 +2,54 @@ import type { Dict } from "..";
 
 // Bahasa Melayu
 const ms: Dict = {
-	"Invalid API key": "Kunci API tidak sah",
-	"Request failed ({status})": "Permintaan gagal ({status})",
-	"Connection failed": "Sambungan gagal",
-	"Link Obsidian to Engram": "Sambungkan Obsidian ke Engram",
-	"Starting...": "Bermula...",
-	"Failed to start device flow. Check your Engram URL and try again.":
-		"Gagal memulakan proses. Semak URL Engram anda dan cuba lagi.",
-	"Your code:": "Kod anda:",
-	"Click to copy": "Klik untuk salin",
-	"Code copied!": "Kod telah disalin!",
-	"A browser window has opened. Sign in and enter this code to link your vault.":
-		"Tetingkap penyemak imbas telah dibuka. Log masuk dan masukkan kod ini untuk menyambungkan peti nota anda.",
-	Cancel: "Batalkan",
-	"Waiting for authorization — connected, this will complete instantly.":
-		"Menunggu pengesahan — disambungkan, ini akan selesai dengan serta-merta.",
-	"Waiting for authorization — no live connection, checking every 30s.":
-		"Menunggu pengesahan — tiada sambungan langsung, menyemak setiap 30 saat.",
-	"Code expired. Please try again.": "Kod tamat tempoh. Sila cuba lagi.",
-	"Try again": "Cuba lagi",
-	Close: "Tutup",
-	"Note couldn't be processed": "Nota tidak dapat diproses",
-	"The server couldn't process this note. Check its contents, then edit and save to try again.":
-		"Pelayan tidak dapat memproses nota ini. Semak kandungannya, kemudian edit dan simpan untuk cuba lagi.",
-	"Attachments need a paid plan": "Lampiran memerlukan langganan berbayar",
-	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
-		"Versi percuma hanya menyegerakkan nota. Tingkatkan untuk menyegerakkan imej dan fail PDF.",
-	"Attachment storage full": "Ruang simpan lampiran penuh",
-	"You've used all the attachment storage on your plan. Upgrade for more.":
-		"Anda telah menggunakan semua ruang simpan lampiran dalam langganan anda. Tingkatkan untuk lebih banyak ruang.",
-	"Too large for the server": "Terlalu besar untuk pelayan",
-	"The server limit is 5 MB. Compress or split the file, then it will sync.":
-		"Had saiz fail ialah 5 MB. Kompres atau bahagikan fail, kemudian ia akan disegerakkan.",
-	"Sign-in expired": "Sesi telah tamat",
-	"Reconnect your account to resume syncing.":
-		"Sambungkan semula akaun anda untuk meneruskan proses sync.",
-	"Unresolved conflict": "Konflik belum selesai",
-	"Open the file to resolve the conflict, then sync again.":
-		"Buka fail untuk menyelesaikan konflik, kemudian segerakkan semula.",
-	"Frontmatter needs a fix": "Frontmatter memerlukan pembetulan",
-	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
-		"Nota telah disink, tetapi frontmatternya tidak dapat diproses sepenuhnya. Buka untuk memperbaiki baris yang diserlahkan.",
-	"Server error": "Ralat pelayan",
-	"A temporary server problem — retrying automatically.":
-		"Masalah pelayan sementara — cuba semula secara automatik.",
-	"Network unavailable": "Rangkaian tidak tersedia",
-	"Can't reach the server — retrying automatically.":
-		"Tidak dapat mencapai pelayan — cuba semula secara automatik.",
-	"Sync failed": "Kegagalan penyegerakan",
-	"An unexpected error — retrying automatically.":
-		"Ralat yang tidak dijangka — cuba semula secara automatik.",
-	"Frontmatter could not be parsed": "Frontmatter tidak dapat diproses",
+	"Syncing...": "Sedang menyinkronkan...",
+	"👋 Welcome": "👋 Selamat datang",
+	"🔌 Connection": "🔌 Sambungan",
+	"🔄 Sync Center": "🔄 Pusat Sync",
+	"⚙️ Advanced": "⚙️ Lanjutan",
+	"💬 Feedback": "💬 Maklum balas",
+	"Engram: settings tab failed to render ({error})":
+		"Engram: tab tetapan gagal dipaparkan ({error})",
+	Disconnected: "Terputus",
+	"Error: {error}": "Ralat: {error}",
+	unknown: "tidak diketahui",
+	"Connected — waiting for first sync decision": "Disambungkan — menunggu keputusan sync pertama",
+	"Connected — live sync active": "Disambungkan — sync aktif",
+	"Connected — polling": "Sambung — sedang memeriksa",
+	"Not configured": "Belum dikonfigurasikan",
+	"Open sync setup": "Buka tetapan sync",
+	Upgrade: "Tingkatkan",
+	"Last sync: {when}": "Sync terakhir: {when}",
+	Keyword: "Kata kunci",
+	Semantic: "Semantik",
+	Both: "Kedua-duanya",
+	"matches your words and their other forms — 'run' finds 'running' — plus this device.":
+		"padan dengan perkataan anda dan bentuknya yang lain — 'run' mencari 'running' — ditambah peranti ini.",
+	"matches meaning. Finds notes that never use the words you typed.":
+		"padan dengan makna. Mencari nota yang tidak menggunakan perkataan yang anda taip.",
+	"matches words and meaning together, plus this device. Widest results.":
+		"padan dengan perkataan dan makna bersama, ditambah peranti ini. Hasil paling luas.",
+	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
+		"Engram mengindeks {indexed} daripada {all} nota anda. Nota yang lain hanya dipadankan pada peranti ini. Tingkatkan untuk mengindeks semuanya.",
+	"Searching {indexed} of {all} notes. Upgrade to search everything.":
+		"Mencari {indexed} daripada {all} nota. Tingkatkan untuk mencari semuanya.",
+	"Search your vault…": "Cari dalam peti nota anda…",
+	"Clear search": "Kosongkan carian",
+	"Search settings": "Tetapan carian",
+	"Filter by folder…": "Tukis ikut folder…",
+	"Filter by tags…": "Tukis ikut tag…",
+	"Remove tag {tag}": "Buang tag {tag}",
+	"Engram unreachable. Showing matches from this device only.":
+		"Engram tidak dapat dihubungi. Hanya menunjukkan padanan daripada peranti ini.",
+	"Search failed — check connection": "Pencarian gagal — semak sambungan",
+	"No results found": "Tiada hasil ditemui",
+	Untitled: "Tanpa tajuk",
+	exact: "tepat",
+	"meaning + exact": "maksud + tepat",
+	meaning: "maksud",
+	"match strength: {pct}%": "kekuatan padanan: {pct}%",
+	"No source path for this result": "Tiada laluan sumber untuk hasil ini",
+	"Note not synced locally": "Nota belum disinkronkan secara tempatan",
 	"Note limit reached. Upgrade to keep adding notes.":
 		"Had nota telah dicapai. Tingkatkan untuk terus menambah nota.",
 	"Vault limit reached. Upgrade for more vaults.":
@@ -83,7 +80,100 @@ const ms: Dict = {
 	"Finish setting up your account at app.engram.page to start syncing.":
 		"Selesaikan persediaan akaun anda di app.engram.page untuk mula sync.",
 	"Limit reached. Upgrade to continue.": "Had telah dicapai. Tingkatkan untuk meneruskan.",
-	Upgrade: "Tingkatkan",
+	"Sync log": "Log sync",
+	"Showing {count} entries": "Menunjukkan {count} entri",
+	"No sync activity this session.": "Tiada aktiviti sync pada sesi ini.",
+	"({count} errors)": "({count} ralat)",
+	"Engram search": "Carian Engram",
+	"File exceeds the {limit} limit": "Fail melebihi had {limit}",
+	"Free syncs notes only — images & PDFs need a paid plan.":
+		"Percuma untuk menyinkronkan nota sahaja – imej & fail PDF memerlukan langganan berbayar.",
+	"Engram: {count} files failed to sync{detail} — open Sync Center":
+		"Engram: {count} fail gagal disegerakkan{detail} — buka Pusat Sync",
+	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.":
+		"Engram: {count} lampiran dilepaskan — tingkatkan ke langganan untuk menyegerakkan imej & PDF.",
+	"Engram: plan upgraded — syncing {count} attachments…":
+		"Engram: Peningkatan pelan — sedang menyinkronkan {count} lampiran…",
+	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
+		"Mengambil semua (padamkan yang berlebihan) dibatalkan: tidak dapat mendapatkan salinan server eksklusif (persaingan). Tiada yang dipadam.",
+	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
+		"Semua proses tarik dibatalkan: proses sync lain sedang berjalan (konflik). Cuba lagi apabila selesai.",
+	"Pull all failed: {error}": "Mengambil semua gagal: {error}",
+	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
+		"Engram: konflik sync pada {path} — edit tempatan anda telah disimpan sebagai {copy}",
+	"Connection failed": "Sambungan gagal",
+	"Open note": "Buka nota",
+	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
+		"Engram: {count} nota mempunyai masalah frontmatter. Buka Pusat Sync untuk membetulkannya.",
+	'Engram Sync: renamed "{name}" (unsupported characters)':
+		'Engram Sync: nama fail ditukar "{name}" (karektor tidak disokong)',
+	'Engram: frontmatter problem in "{name}"': 'Engram: masalah frontmatter dalam "{name}"',
+	"Uploading {count}.": "Memuat naik {count}.",
+	"Downloading {count}.": "Memukimkan {count}.",
+	"Deleting {count} local files.": "Memadam {count} fail tempatan.",
+	"Deleting {count} on the cloud.": "Memadam {count} daripada awan.",
+	"First sync, this may take a moment.": "Sync pertama, ini mungkin mengambil masa.",
+	"Checking for changes.": "Memeriksa perubahan.",
+	"Nothing will be deleted.": "Tiada apa yang akan dipadam.",
+	"✓ {count} synced": "✓ {count} disinkronkan",
+	"⤳ {count} skipped (Free plan)": "⤳ {count} dilangkau (Pelan percuma)",
+	"✕ {count} failed": "✕ {count} gagal",
+	"{count} attachments need a paid plan to sync. See Sync Center.":
+		"{count} lampiran memerlukan langganan berbayar untuk disegerakkan. Lihat Pusat Sync.",
+	"Finished with some errors. Open the sync log to see what failed.":
+		"Selesai dengan beberapa ralat. Buka log sync untuk melihat apa yang gagal.",
+	"Synced. Some attachments need a paid plan to sync (see below).":
+		"Disegerakkan. Sesetengah lampiran memerlukan langganan berbayar untuk disegerakkan (lihat di bawah).",
+	"All synced. Your vault and the cloud now match.":
+		"Semuanya disinkronkan. Peti Nota anda dan awan kini sepadan.",
+	"Already up to date. Nothing needed syncing.":
+		"Sudah terkini. Tiada apa yang perlu disinkronkan.",
+	Deleting: "Memadam",
+	Downloading: "Memuat turun",
+	Uploading: "Sedang memuat naik",
+	"Syncing your vault": "Mengsync peti nota anda",
+	"Getting started…": "Memulakan…",
+	"Open Engram to check your vault and confirm everything synced.":
+		"Buka Engram untuk menyemak peti nota anda dan pastikan semuanya telah disink.",
+	"Open Engram": "Buka Engram",
+	"You can close this and the sync keeps running in the background.":
+		"Anda boleh menutup ini dan proses sync akan terus berjalan di latar belakang.",
+	"Run in background": "Jalankan di latar belakang",
+	"Syncing…": "Sedang mengsync…",
+	"Sync complete": "Sync selesai",
+	"Show sync log": "Tunjukkan log sync",
+	Done: "Selesai",
+	"Syncing attachments": "Mengsync lampiran",
+	Complete: "Selesai",
+	'{count} failed. Run "{command}" for details.':
+		'{count} gagal. Jalankan "{command}" untuk butiran.',
+	"Invalid API key": "Kunci API tidak sah",
+	"Request failed ({status})": "Permintaan gagal ({status})",
+	"{count} files": "{count} fail",
+	"Notes searchable": "Nota boleh dicari",
+	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
+		"Nota selepas ini masih disegerakkan dan dibuka seperti biasa, tetapi tidak berada dalam indeks carian. Indeks menyimpan nota anda yang paling lama, jadi nota terbaru anda yang tidak disertakan.",
+	"Notes stored": "Nota disimpan",
+	Attachments: "Lampiran",
+	"AI searches": "Carian AI",
+	"{formatted} per day": "{formatted} sehari",
+	"Link Obsidian to Engram": "Sambungkan Obsidian ke Engram",
+	"Starting...": "Bermula...",
+	"Failed to start device flow. Check your Engram URL and try again.":
+		"Gagal memulakan proses. Semak URL Engram anda dan cuba lagi.",
+	"Your code:": "Kod anda:",
+	"Click to copy": "Klik untuk salin",
+	"Code copied!": "Kod telah disalin!",
+	"A browser window has opened. Sign in and enter this code to link your vault.":
+		"Tetingkap penyemak imbas telah dibuka. Log masuk dan masukkan kod ini untuk menyambungkan peti nota anda.",
+	Cancel: "Batalkan",
+	"Waiting for authorization — connected, this will complete instantly.":
+		"Menunggu pengesahan — disambungkan, ini akan selesai dengan serta-merta.",
+	"Waiting for authorization — no live connection, checking every 30s.":
+		"Menunggu pengesahan — tiada sambungan langsung, menyemak setiap 30 saat.",
+	"Code expired. Please try again.": "Kod tamat tempoh. Sila cuba lagi.",
+	"Try again": "Cuba lagi",
+	Close: "Tutup",
 	"Update in settings": "Kemas kini dalam tetapan",
 	"Sync now": "Segerakkan sekarang",
 	"Engram sync: syncing...": "Engram sedang disegerakkan: proses...",
@@ -108,11 +198,9 @@ const ms: Dict = {
 		"Engram sync: sedang mengambil semua daripada pelayan...",
 	"Engram Sync: pulled {count} files from server":
 		"Engram Segerakkan: telah mengambil {count} fail daripada pelayan",
-	"Show sync log": "Tunjukkan log sync",
 	"Send feedback": "Hantar maklum balas",
 	"Semantic search": "Carian semantik",
 	"Open search sidebar": "Buka panel carian",
-	"Engram search": "Carian Engram",
 	"Open sync center": "Buka Pusat Sync",
 	"Engram: ready": "Engram: bersedia",
 	"Engram Sync: pushed {pushed}": "Engram Sync: telah menghantar {pushed}",
@@ -170,70 +258,11 @@ const ms: Dict = {
 	"WebSocket connected — live sync active": "WebSocket disambungkan — sync langsung aktif",
 	"Click to sync": "Klik untuk menyegerakkan",
 	"Engram: ⚠ {count} sync errors": "Engram: ⚠ {count} ralat sync",
-	"Last sync: {when}": "Sync terakhir: {when}",
 	"Engram Sync: pulled {count} changes": "Engram Segerakkan: telah mengambil {count} perubahan",
 	'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.':
 		'Engram Sync: keadaan sync untuk "{name}" tidak dapat dibaca — menggunakan salinan dalam cakera.',
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} tersedia. {link}.",
-	"{count} files": "{count} fail",
-	"Notes searchable": "Nota boleh dicari",
-	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
-		"Nota selepas ini masih disegerakkan dan dibuka seperti biasa, tetapi tidak berada dalam indeks carian. Indeks menyimpan nota anda yang paling lama, jadi nota terbaru anda yang tidak disertakan.",
-	"Notes stored": "Nota disimpan",
-	Attachments: "Lampiran",
-	"AI searches": "Carian AI",
-	"{formatted} per day": "{formatted} sehari",
-	Keyword: "Kata kunci",
-	Semantic: "Semantik",
-	Both: "Kedua-duanya",
-	"matches your words and their other forms — 'run' finds 'running' — plus this device.":
-		"padan dengan perkataan anda dan bentuknya yang lain — 'run' mencari 'running' — ditambah peranti ini.",
-	"matches meaning. Finds notes that never use the words you typed.":
-		"padan dengan makna. Mencari nota yang tidak menggunakan perkataan yang anda taip.",
-	"matches words and meaning together, plus this device. Widest results.":
-		"padan dengan perkataan dan makna bersama, ditambah peranti ini. Hasil paling luas.",
-	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
-		"Engram mengindeks {indexed} daripada {all} nota anda. Nota yang lain hanya dipadankan pada peranti ini. Tingkatkan untuk mengindeks semuanya.",
-	"Searching {indexed} of {all} notes. Upgrade to search everything.":
-		"Mencari {indexed} daripada {all} nota. Tingkatkan untuk mencari semuanya.",
-	"Search your vault…": "Cari dalam peti nota anda…",
-	"Clear search": "Kosongkan carian",
-	"Search settings": "Tetapan carian",
-	"Filter by folder…": "Tukis ikut folder…",
-	"Filter by tags…": "Tukis ikut tag…",
-	"Remove tag {tag}": "Buang tag {tag}",
-	"Engram unreachable. Showing matches from this device only.":
-		"Engram tidak dapat dihubungi. Hanya menunjukkan padanan daripada peranti ini.",
-	"Search failed — check connection": "Pencarian gagal — semak sambungan",
-	"No results found": "Tiada hasil ditemui",
-	Untitled: "Tanpa tajuk",
-	exact: "tepat",
-	"meaning + exact": "maksud + tepat",
-	meaning: "maksud",
-	"match strength: {pct}%": "kekuatan padanan: {pct}%",
-	"No source path for this result": "Tiada laluan sumber untuk hasil ini",
-	"Note not synced locally": "Nota belum disinkronkan secara tempatan",
-	"Syncing...": "Sedang menyinkronkan...",
-	"👋 Welcome": "👋 Selamat datang",
-	"🔌 Connection": "🔌 Sambungan",
-	"🔄 Sync Center": "🔄 Pusat Sync",
-	"⚙️ Advanced": "⚙️ Lanjutan",
-	"💬 Feedback": "💬 Maklum balas",
-	"Engram: settings tab failed to render ({error})":
-		"Engram: tab tetapan gagal dipaparkan ({error})",
-	Disconnected: "Terputus",
-	"Error: {error}": "Ralat: {error}",
-	unknown: "tidak diketahui",
-	"Connected — waiting for first sync decision": "Disambungkan — menunggu keputusan sync pertama",
-	"Connected — live sync active": "Disambungkan — sync aktif",
-	"Connected — polling": "Sambung — sedang memeriksa",
-	"Not configured": "Belum dikonfigurasikan",
-	"Open sync setup": "Buka tetapan sync",
-	"Sync log": "Log sync",
-	"Showing {count} entries": "Menunjukkan {count} entri",
-	"No sync activity this session.": "Tiada aktiviti sync pada sesi ini.",
-	"({count} errors)": "({count} ralat)",
 	"Could not compare with the cloud. Check your connection.":
 		"Tidak dapat dibandingkan dengan awan. Semak sambungan anda.",
 	"Your login expired. Sign in again in Engram settings to continue.":
@@ -285,7 +314,6 @@ const ms: Dict = {
 	"This device's vault is empty. Download {what} from the server?":
 		"Peti nota peranti ini kosong. Adakah anda ingin memuat turun {what} dari server?",
 	"Download everything": "Muat turun semua",
-	Done: "Selesai",
 	"Send debug logs. Note content stays private.":
 		"Hantar log ralat. Kandungan nota kekal peribadi.",
 	"Comparing your vault with the cloud…": "Membandingkan peti nota anda dengan awan…",
@@ -323,65 +351,37 @@ const ms: Dict = {
 		"Peti nota anda berkongsi {percent} data dengan Engram",
 	"{count} conflicts need resolution": "{count} konflik perlu diselesaikan",
 	"Type {keyword} to confirm:": "Taip {keyword} untuk mengesahkan:",
-	"Uploading {count}.": "Memuat naik {count}.",
-	"Downloading {count}.": "Memukimkan {count}.",
-	"Deleting {count} local files.": "Memadam {count} fail tempatan.",
-	"Deleting {count} on the cloud.": "Memadam {count} daripada awan.",
-	"First sync, this may take a moment.": "Sync pertama, ini mungkin mengambil masa.",
-	"Checking for changes.": "Memeriksa perubahan.",
-	"Nothing will be deleted.": "Tiada apa yang akan dipadam.",
-	"✓ {count} synced": "✓ {count} disinkronkan",
-	"⤳ {count} skipped (Free plan)": "⤳ {count} dilangkau (Pelan percuma)",
-	"✕ {count} failed": "✕ {count} gagal",
-	"{count} attachments need a paid plan to sync. See Sync Center.":
-		"{count} lampiran memerlukan langganan berbayar untuk disegerakkan. Lihat Pusat Sync.",
-	"Finished with some errors. Open the sync log to see what failed.":
-		"Selesai dengan beberapa ralat. Buka log sync untuk melihat apa yang gagal.",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"Disegerakkan. Sesetengah lampiran memerlukan langganan berbayar untuk disegerakkan (lihat di bawah).",
-	"All synced. Your vault and the cloud now match.":
-		"Semuanya disinkronkan. Peti Nota anda dan awan kini sepadan.",
-	"Already up to date. Nothing needed syncing.":
-		"Sudah terkini. Tiada apa yang perlu disinkronkan.",
-	Deleting: "Memadam",
-	Downloading: "Memuat turun",
-	Uploading: "Sedang memuat naik",
-	"Syncing your vault": "Mengsync peti nota anda",
-	"Getting started…": "Memulakan…",
-	"Open Engram to check your vault and confirm everything synced.":
-		"Buka Engram untuk menyemak peti nota anda dan pastikan semuanya telah disink.",
-	"Open Engram": "Buka Engram",
-	"You can close this and the sync keeps running in the background.":
-		"Anda boleh menutup ini dan proses sync akan terus berjalan di latar belakang.",
-	"Run in background": "Jalankan di latar belakang",
-	"Syncing…": "Sedang mengsync…",
-	"Sync complete": "Sync selesai",
-	"Syncing attachments": "Mengsync lampiran",
-	Complete: "Selesai",
-	'{count} failed. Run "{command}" for details.':
-		'{count} gagal. Jalankan "{command}" untuk butiran.',
-	"File exceeds the {limit} limit": "Fail melebihi had {limit}",
-	"Free syncs notes only — images & PDFs need a paid plan.":
-		"Percuma untuk menyinkronkan nota sahaja – imej & fail PDF memerlukan langganan berbayar.",
-	"Engram: {count} files failed to sync{detail} — open Sync Center":
-		"Engram: {count} fail gagal disegerakkan{detail} — buka Pusat Sync",
-	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.":
-		"Engram: {count} lampiran dilepaskan — tingkatkan ke langganan untuk menyegerakkan imej & PDF.",
-	"Engram: plan upgraded — syncing {count} attachments…":
-		"Engram: Peningkatan pelan — sedang menyinkronkan {count} lampiran…",
-	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
-		"Mengambil semua (padamkan yang berlebihan) dibatalkan: tidak dapat mendapatkan salinan server eksklusif (persaingan). Tiada yang dipadam.",
-	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
-		"Semua proses tarik dibatalkan: proses sync lain sedang berjalan (konflik). Cuba lagi apabila selesai.",
-	"Pull all failed: {error}": "Mengambil semua gagal: {error}",
-	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
-		"Engram: konflik sync pada {path} — edit tempatan anda telah disimpan sebagai {copy}",
-	"Open note": "Buka nota",
-	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
-		"Engram: {count} nota mempunyai masalah frontmatter. Buka Pusat Sync untuk membetulkannya.",
-	'Engram Sync: renamed "{name}" (unsupported characters)':
-		'Engram Sync: nama fail ditukar "{name}" (karektor tidak disokong)',
-	'Engram: frontmatter problem in "{name}"': 'Engram: masalah frontmatter dalam "{name}"',
+	"Note couldn't be processed": "Nota tidak dapat diproses",
+	"The server couldn't process this note. Check its contents, then edit and save to try again.":
+		"Pelayan tidak dapat memproses nota ini. Semak kandungannya, kemudian edit dan simpan untuk cuba lagi.",
+	"Attachments need a paid plan": "Lampiran memerlukan langganan berbayar",
+	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
+		"Versi percuma hanya menyegerakkan nota. Tingkatkan untuk menyegerakkan imej dan fail PDF.",
+	"Attachment storage full": "Ruang simpan lampiran penuh",
+	"You've used all the attachment storage on your plan. Upgrade for more.":
+		"Anda telah menggunakan semua ruang simpan lampiran dalam langganan anda. Tingkatkan untuk lebih banyak ruang.",
+	"Too large for the server": "Terlalu besar untuk pelayan",
+	"The server limit is 5 MB. Compress or split the file, then it will sync.":
+		"Had saiz fail ialah 5 MB. Kompres atau bahagikan fail, kemudian ia akan disegerakkan.",
+	"Sign-in expired": "Sesi telah tamat",
+	"Reconnect your account to resume syncing.":
+		"Sambungkan semula akaun anda untuk meneruskan proses sync.",
+	"Unresolved conflict": "Konflik belum selesai",
+	"Open the file to resolve the conflict, then sync again.":
+		"Buka fail untuk menyelesaikan konflik, kemudian segerakkan semula.",
+	"Frontmatter needs a fix": "Frontmatter memerlukan pembetulan",
+	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
+		"Nota telah disink, tetapi frontmatternya tidak dapat diproses sepenuhnya. Buka untuk memperbaiki baris yang diserlahkan.",
+	"Server error": "Ralat pelayan",
+	"A temporary server problem — retrying automatically.":
+		"Masalah pelayan sementara — cuba semula secara automatik.",
+	"Network unavailable": "Rangkaian tidak tersedia",
+	"Can't reach the server — retrying automatically.":
+		"Tidak dapat mencapai pelayan — cuba semula secara automatik.",
+	"Sync failed": "Kegagalan penyegerakan",
+	"An unexpected error — retrying automatically.":
+		"Ralat yang tidak dijangka — cuba semula secara automatik.",
+	"Frontmatter could not be parsed": "Frontmatter tidak dapat diproses",
 	"Engram: this plugin is too old to sync (needs {version} or newer). Update it to continue.":
 		"Engram: plugin ini terlalu lama untuk melakukan sync (perlu {version} atau lebih baru). Kemas kini untuk meneruskan.",
 	"Engram: this plugin is too old to sync. Update it to continue.":
@@ -474,6 +474,20 @@ const ms: Dict = {
 	"Added {pattern} to ignore patterns": "Telah ditambahkan {pattern} ke corak pengecualian",
 	"Version: {version}": "Versi: {version}",
 	"Source: {link}": "Sumber: {link}",
+	"Engram Cloud": "Awan Engram",
+	"Self-hosted": "Dihos sendiri",
+	Backend: "Sistem belakang",
+	"Where this vault syncs to. Each backend keeps its own sign-in.":
+		"Tempat peti nota ini disinkronkan. Setiap sistem belakang mempunyai log masuknya sendiri.",
+	"Switched to {mode}.": "Beralih ke {mode}.",
+	"Not connected. Enter your Engram server URL below to start syncing.":
+		"Tidak disambungkan. Masukkan URL pelayan Engram anda di bawah untuk memulakan sync.",
+	"Run your own Engram server": "Jalankan pelayan Engram anda sendiri",
+	"Engram is the backend that powers sync and semantic search.":
+		"Engram ialah sistem belakang yang menyokong sync dan carian semantik.",
+	"Nothing in this vault syncs until you choose how to merge it with the server.":
+		"Tiada apa dalam peti nota ini yang disinkronkan sehingga anda memilih cara untuk menggabungkannya dengan pelayan.",
+	"Choose sync direction": "Pilih arah sync",
 	"Engram URL": "URL Engram",
 	"✓ Engram server reachable (v{version})": "✓ Perantau Engram dapat diakses (v{version})",
 	"✗ server responded but isn't an Engram backend":
@@ -529,20 +543,6 @@ const ms: Dict = {
 	"Sign-in required to load vaults": "Sediakan log masuk untuk memuatkan peti nota",
 	"Server error ({status}) — check Engram logs": "Ralat pelayan ({status}) — semak log Engram",
 	"Could not reach Engram — check connection": "Tidak dapat mencapai Engram — semak sambungan",
-	"Engram Cloud": "Awan Engram",
-	"Self-hosted": "Dihos sendiri",
-	Backend: "Sistem belakang",
-	"Where this vault syncs to. Each backend keeps its own sign-in.":
-		"Tempat peti nota ini disinkronkan. Setiap sistem belakang mempunyai log masuknya sendiri.",
-	"Switched to {mode}.": "Beralih ke {mode}.",
-	"Not connected. Enter your Engram server URL below to start syncing.":
-		"Tidak disambungkan. Masukkan URL pelayan Engram anda di bawah untuk memulakan sync.",
-	"Run your own Engram server": "Jalankan pelayan Engram anda sendiri",
-	"Engram is the backend that powers sync and semantic search.":
-		"Engram ialah sistem belakang yang menyokong sync dan carian semantik.",
-	"Nothing in this vault syncs until you choose how to merge it with the server.":
-		"Tiada apa dalam peti nota ini yang disinkronkan sehingga anda memilih cara untuk menggabungkannya dengan pelayan.",
-	"Choose sync direction": "Pilih arah sync",
 	Bug: "Ralat",
 	Idea: "Idea",
 	Confusing: "Membingungkan",

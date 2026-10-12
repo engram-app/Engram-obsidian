@@ -2,56 +2,54 @@ import type { Dict } from "..";
 
 // 日本語
 const ja: Dict = {
-	"Invalid API key": "無効なAPIキー",
-	"Request failed ({status})": "リクエストに失敗しました ({status})",
-	"Connection failed": "接続エラー",
-	"Link Obsidian to Engram": "EngramへのObsidian連携",
-	"Starting...": "開始しています...",
-	"Failed to start device flow. Check your Engram URL and try again.":
-		"デバイスフローの開始に失敗しました。EngramのURLを確認し、再度お試しください。",
-	"Your code:": "コード：",
-	"Click to copy": "コピー",
-	"Code copied!": "コードをコピーしました！",
-	"A browser window has opened. Sign in and enter this code to link your vault.":
-		"ブラウザウィンドウが開きました。サインインし、このコードを入力して保管庫を連携してください。",
-	Cancel: "キャンセル",
-	"Waiting for authorization — connected, this will complete instantly.":
-		"認証待ち — 接続済み。すぐに完了します。",
-	"Waiting for authorization — no live connection, checking every 30s.":
-		"認証待ち — ライブ接続なし。30秒ごとに確認しています。",
-	"Code expired. Please try again.": "コードが期限切れです。再度お試しください。",
-	"Try again": "再試行",
-	Close: "閉じる",
-	"Note couldn't be processed": "ノートの処理に失敗しました",
-	"The server couldn't process this note. Check its contents, then edit and save to try again.":
-		"サーバーでこのノートの処理に失敗しました。内容を確認し、編集して保存してから再度お試しください。",
-	"Attachments need a paid plan": "添付ファイルには有料プランが必要です",
-	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
-		"無料プランではノートのみ同期されます。画像やPDFを同期するには、有料プランにアップグレードしてください。",
-	"Attachment storage full": "添付ファイルの保存容量上限",
-	"You've used all the attachment storage on your plan. Upgrade for more.":
-		"プランの添付ファイル保存容量上限に達しました。より多くの容量が必要な場合は、アップグレードしてください。",
-	"Too large for the server": "ファイルサイズが大きすぎます",
-	"The server limit is 5 MB. Compress or split the file, then it will sync.":
-		"サーバーの制限は5MBです。ファイルを圧縮するか分割し、再度同期してください。",
-	"Sign-in expired": "ログインセッションが切れました",
-	"Reconnect your account to resume syncing.": "アカウントを再接続すると同期を再開できます。",
-	"Unresolved conflict": "競合が解決されていません",
-	"Open the file to resolve the conflict, then sync again.":
-		"競合を解決するファイルを開き、再度同期します。",
-	"Frontmatter needs a fix": "フロントマターに修正が必要です",
-	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
-		"ノートは同期されましたが、フロントマターを完全に解析できませんでした。ハイライトされた行を修正するために開いてください。",
-	"Server error": "サーバーエラー",
-	"A temporary server problem — retrying automatically.":
-		"一時的なサーバーの問題です。自動的に再試行します。",
-	"Network unavailable": "ネットワークに接続できません",
-	"Can't reach the server — retrying automatically.":
-		"サーバーに接続できません。自動的に再試行します。",
-	"Sync failed": "同期に失敗しました",
-	"An unexpected error — retrying automatically.":
-		"予期しないエラーが発生しました。自動的に再試行します。",
-	"Frontmatter could not be parsed": "フロントマターを解析できませんでした",
+	"Syncing...": "同期中...",
+	"👋 Welcome": "👋 ようこそ",
+	"🔌 Connection": "🔌 接続",
+	"🔄 Sync Center": "🔄 同期センター",
+	"⚙️ Advanced": "⚙️ 詳細設定",
+	"💬 Feedback": "💬 フィードバック",
+	"Engram: settings tab failed to render ({error})":
+		"Engram: 設定タブの表示に失敗しました ({error})",
+	Disconnected: "接続解除",
+	"Error: {error}": "エラー: {error}",
+	unknown: "不明",
+	"Connected — waiting for first sync decision": "接続済み - 最初の同期待ち",
+	"Connected — live sync active": "接続済み - ライブ同期中",
+	"Connected — polling": "接続済み - ポーリング中",
+	"Not configured": "設定されていません",
+	"Open sync setup": "同期設定を開く",
+	Upgrade: "アップグレード",
+	"Last sync: {when}": "最終同期: {when}",
+	Keyword: "キーワード",
+	Semantic: "セマンティック",
+	Both: "両方",
+	"matches your words and their other forms — 'run' finds 'running' — plus this device.":
+		'入力された単語と、その関連語形に一致します。例: "run" で "running" もヒットします。また、このデバイスも検索対象です。',
+	"matches meaning. Finds notes that never use the words you typed.":
+		"意味に一致するものを検索します。入力した単語を使わないノートもヒットします。",
+	"matches words and meaning together, plus this device. Widest results.":
+		"単語と意味の両方に一致するものを検索します。このデバイスも検索対象です。最も広範囲な検索結果が得られます。",
+	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
+		"Engram は、あなたの {all} 個のノートのうち {indexed} 個をインデックス化しています。残りはこのデバイスでのみ検索可能です。すべてをインデックス化するにはアップグレードしてください。",
+	"Searching {indexed} of {all} notes. Upgrade to search everything.":
+		"{all} 個のノートのうち {indexed} 個を検索中です。すべてを検索するにはアップグレードしてください。",
+	"Search your vault…": "保管庫を検索…",
+	"Clear search": "検索をクリア",
+	"Search settings": "検索設定",
+	"Filter by folder…": "フォルダで絞り込み…",
+	"Filter by tags…": "タグで絞り込み…",
+	"Remove tag {tag}": "タグ {tag} を削除",
+	"Engram unreachable. Showing matches from this device only.":
+		"Engram に接続できません。このデバイスでのみ検索結果を表示しています。",
+	"Search failed — check connection": "検索に失敗しました。接続を確認してください",
+	"No results found": "結果が見つかりませんでした",
+	Untitled: "タイトルなし",
+	exact: "完全一致",
+	"meaning + exact": "意味 + 完全一致",
+	meaning: "意味",
+	"match strength: {pct}%": "一致度: {pct}%",
+	"No source path for this result": "この結果にソースパスがありません",
+	"Note not synced locally": "ノートがローカルに同期されていません",
 	"Note limit reached. Upgrade to keep adding notes.":
 		"ノートの制限に達しました。ノートを追加するには、アップグレードしてください。",
 	"Vault limit reached. Upgrade for more vaults.":
@@ -84,7 +82,100 @@ const ja: Dict = {
 		"同期を開始するには、app.engram.page でアカウントの設定を完了してください。",
 	"Limit reached. Upgrade to continue.":
 		"制限に達しました。継続するには、アップグレードが必要です。",
-	Upgrade: "アップグレード",
+	"Sync log": "同期ログ",
+	"Showing {count} entries": "{count}件を表示中",
+	"No sync activity this session.": "このセッションでは同期の履歴がありません。",
+	"({count} errors)": "({count}件のエラー)",
+	"Engram search": "Engram 検索",
+	"File exceeds the {limit} limit": "ファイルが{limit}の制限を超えています",
+	"Free syncs notes only — images & PDFs need a paid plan.":
+		"ノートのみ無料で同期。画像とPDFは有料プランが必要です。",
+	"Engram: {count} files failed to sync{detail} — open Sync Center":
+		"Engram: 同期に失敗したファイルが{count}件あります{detail} — 同期センターを開く",
+	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.":
+		"Engram: 添付ファイルが{count}件スキップされました。画像やPDFを同期するには、アップグレードしてください。",
+	"Engram: plan upgraded — syncing {count} attachments…":
+		"Engram: プランがアップグレードされました — {count}つの添付ファイルを同期中…",
+	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
+		"全件取得（重複削除）が中断されました：専用サーバーのスナップショットを取得できませんでした（競合）。データは削除されていません。",
+	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
+		"全件取得が中断されました：別の同期処理中です（競合）。完了後に再度お試しください。",
+	"Pull all failed: {error}": "全件取得に失敗しました：{error}",
+	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
+		"Engram：{path} での同期競合が発生しました。ローカルの編集内容は {copy} として保存されました",
+	"Connection failed": "接続エラー",
+	"Open note": "ノートを開く",
+	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
+		"Engram: {count}つのノートにフロントマターの問題があります。同期センターを開いて修正してください。",
+	'Engram Sync: renamed "{name}" (unsupported characters)':
+		'Engram Sync："{name}" という名前を変更しました（サポートされていない文字）',
+	'Engram: frontmatter problem in "{name}"': 'Engram："{name}" にフロントマターの問題があります',
+	"Uploading {count}.": "アップロード中 {count}.",
+	"Downloading {count}.": "ダウンロード中 {count}.",
+	"Deleting {count} local files.": "{count}つのローカルファイルを削除しています。",
+	"Deleting {count} on the cloud.": "クラウドから{count}つを削除中。",
+	"First sync, this may take a moment.": "初回同期のため、しばらく時間がかかる場合があります。",
+	"Checking for changes.": "変更をチェックしています。",
+	"Nothing will be deleted.": "データは削除されません。",
+	"✓ {count} synced": "✓ {count}件 同期済み",
+	"⤳ {count} skipped (Free plan)": "⤳ 無料プランでは{count}件スキップされます",
+	"✕ {count} failed": "✕ {count}回失敗",
+	"{count} attachments need a paid plan to sync. See Sync Center.":
+		"{count}つの添付ファイルは、有料プランでのみ同期可能です。詳細はこちら: 同期センター。",
+	"Finished with some errors. Open the sync log to see what failed.":
+		"一部のエラーで完了しました。エラーの詳細については、同期ログをご確認ください。",
+	"Synced. Some attachments need a paid plan to sync (see below).":
+		"同期完了。一部の添付ファイルは有料プランでのみ同期可能です (下記参照)。",
+	"All synced. Your vault and the cloud now match.":
+		"すべて同期されました。保管庫とクラウドが一致しました。",
+	"Already up to date. Nothing needed syncing.":
+		"すでに最新の状態です。同期する必要はありません。",
+	Deleting: "削除中",
+	Downloading: "ダウンロード中",
+	Uploading: "アップロード中",
+	"Syncing your vault": "保管庫の同期",
+	"Getting started…": "開始します…",
+	"Open Engram to check your vault and confirm everything synced.":
+		"Engramを開いて、保管庫の内容を確認し、すべてが同期されていることを確認してください。",
+	"Open Engram": "Engramを開く",
+	"You can close this and the sync keeps running in the background.":
+		"このウィンドウを閉じても、同期はバックグラウンドで続行されます。",
+	"Run in background": "バックグラウンドで実行",
+	"Syncing…": "同期中…",
+	"Sync complete": "同期完了",
+	"Show sync log": "同期ログを表示",
+	Done: "完了",
+	"Syncing attachments": "添付ファイルの同期",
+	Complete: "完了",
+	'{count} failed. Run "{command}" for details.':
+		'{count}件失敗しました。詳細は "{command}" をご確認ください。',
+	"Invalid API key": "無効なAPIキー",
+	"Request failed ({status})": "リクエストに失敗しました ({status})",
+	"{count} files": "{count} 個のファイル",
+	"Notes searchable": "検索可能なノート",
+	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
+		"ここより後のノートは通常通り同期され、開くことができます。ただし、検索インデックスには含まれません。インデックスには古いノートが保持されるため、新しいノートが対象外になることがあります。",
+	"Notes stored": "ノートを保存",
+	Attachments: "添付ファイル",
+	"AI searches": "AI検索",
+	"{formatted} per day": "{formatted} /日",
+	"Link Obsidian to Engram": "EngramへのObsidian連携",
+	"Starting...": "開始しています...",
+	"Failed to start device flow. Check your Engram URL and try again.":
+		"デバイスフローの開始に失敗しました。EngramのURLを確認し、再度お試しください。",
+	"Your code:": "コード：",
+	"Click to copy": "コピー",
+	"Code copied!": "コードをコピーしました！",
+	"A browser window has opened. Sign in and enter this code to link your vault.":
+		"ブラウザウィンドウが開きました。サインインし、このコードを入力して保管庫を連携してください。",
+	Cancel: "キャンセル",
+	"Waiting for authorization — connected, this will complete instantly.":
+		"認証待ち — 接続済み。すぐに完了します。",
+	"Waiting for authorization — no live connection, checking every 30s.":
+		"認証待ち — ライブ接続なし。30秒ごとに確認しています。",
+	"Code expired. Please try again.": "コードが期限切れです。再度お試しください。",
+	"Try again": "再試行",
+	Close: "閉じる",
 	"Update in settings": "設定で更新",
 	"Sync now": "今すぐ同期",
 	"Engram sync: syncing...": "Engram 同期: 同期中...",
@@ -108,11 +199,9 @@ const ja: Dict = {
 	"Engram sync: pulling all from server...": "Engram 同期: サーバーから全てをダウンロード中...",
 	"Engram Sync: pulled {count} files from server":
 		"Engram 同期: サーバーから{count}つのファイルを取得しました",
-	"Show sync log": "同期ログを表示",
 	"Send feedback": "フィードバックを送信",
 	"Semantic search": "セマンティック検索",
 	"Open search sidebar": "検索サイドバーを開く",
-	"Engram search": "Engram 検索",
 	"Open sync center": "同期センターを開く",
 	"Engram: ready": "Engram: 準備完了",
 	"Engram Sync: pushed {pushed}": "Engram 同期: {pushed} をプッシュしました",
@@ -170,70 +259,11 @@ const ja: Dict = {
 	"WebSocket connected — live sync active": "WebSocket 接続済み — リアルタイム同期中",
 	"Click to sync": "同期を開始",
 	"Engram: ⚠ {count} sync errors": "Engram: ⚠ 同期エラー {count}件",
-	"Last sync: {when}": "最終同期: {when}",
 	"Engram Sync: pulled {count} changes": "Engram 同期: {count}つの変更を適用しました",
 	'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.':
 		'Engram 同期: "{name}" の同期状態が読み込めませんでした。ディスク上のコピーを使用しています。',
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} が利用可能です。{link}.",
-	"{count} files": "{count} 個のファイル",
-	"Notes searchable": "検索可能なノート",
-	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
-		"ここより後のノートは通常通り同期され、開くことができます。ただし、検索インデックスには含まれません。インデックスには古いノートが保持されるため、新しいノートが対象外になることがあります。",
-	"Notes stored": "ノートを保存",
-	Attachments: "添付ファイル",
-	"AI searches": "AI検索",
-	"{formatted} per day": "{formatted} /日",
-	Keyword: "キーワード",
-	Semantic: "セマンティック",
-	Both: "両方",
-	"matches your words and their other forms — 'run' finds 'running' — plus this device.":
-		'入力された単語と、その関連語形に一致します。例: "run" で "running" もヒットします。また、このデバイスも検索対象です。',
-	"matches meaning. Finds notes that never use the words you typed.":
-		"意味に一致するものを検索します。入力した単語を使わないノートもヒットします。",
-	"matches words and meaning together, plus this device. Widest results.":
-		"単語と意味の両方に一致するものを検索します。このデバイスも検索対象です。最も広範囲な検索結果が得られます。",
-	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
-		"Engram は、あなたの {all} 個のノートのうち {indexed} 個をインデックス化しています。残りはこのデバイスでのみ検索可能です。すべてをインデックス化するにはアップグレードしてください。",
-	"Searching {indexed} of {all} notes. Upgrade to search everything.":
-		"{all} 個のノートのうち {indexed} 個を検索中です。すべてを検索するにはアップグレードしてください。",
-	"Search your vault…": "保管庫を検索…",
-	"Clear search": "検索をクリア",
-	"Search settings": "検索設定",
-	"Filter by folder…": "フォルダで絞り込み…",
-	"Filter by tags…": "タグで絞り込み…",
-	"Remove tag {tag}": "タグ {tag} を削除",
-	"Engram unreachable. Showing matches from this device only.":
-		"Engram に接続できません。このデバイスでのみ検索結果を表示しています。",
-	"Search failed — check connection": "検索に失敗しました。接続を確認してください",
-	"No results found": "結果が見つかりませんでした",
-	Untitled: "タイトルなし",
-	exact: "完全一致",
-	"meaning + exact": "意味 + 完全一致",
-	meaning: "意味",
-	"match strength: {pct}%": "一致度: {pct}%",
-	"No source path for this result": "この結果にソースパスがありません",
-	"Note not synced locally": "ノートがローカルに同期されていません",
-	"Syncing...": "同期中...",
-	"👋 Welcome": "👋 ようこそ",
-	"🔌 Connection": "🔌 接続",
-	"🔄 Sync Center": "🔄 同期センター",
-	"⚙️ Advanced": "⚙️ 詳細設定",
-	"💬 Feedback": "💬 フィードバック",
-	"Engram: settings tab failed to render ({error})":
-		"Engram: 設定タブの表示に失敗しました ({error})",
-	Disconnected: "接続解除",
-	"Error: {error}": "エラー: {error}",
-	unknown: "不明",
-	"Connected — waiting for first sync decision": "接続済み - 最初の同期待ち",
-	"Connected — live sync active": "接続済み - ライブ同期中",
-	"Connected — polling": "接続済み - ポーリング中",
-	"Not configured": "設定されていません",
-	"Open sync setup": "同期設定を開く",
-	"Sync log": "同期ログ",
-	"Showing {count} entries": "{count}件を表示中",
-	"No sync activity this session.": "このセッションでは同期の履歴がありません。",
-	"({count} errors)": "({count}件のエラー)",
 	"Could not compare with the cloud. Check your connection.":
 		"クラウドとの比較に失敗しました。接続を確認してください。",
 	"Your login expired. Sign in again in Engram settings to continue.":
@@ -283,7 +313,6 @@ const ja: Dict = {
 	"This device's vault is empty. Download {what} from the server?":
 		"このデバイスの保管庫が空です。サーバーから {what} をダウンロードしますか？",
 	"Download everything": "すべてをダウンロード",
-	Done: "完了",
 	"Send debug logs. Note content stays private.":
 		"デバッグログを送信します。ノートの内容は非公開です。",
 	"Comparing your vault with the cloud…": "保管庫とクラウドを比較しています…",
@@ -321,65 +350,36 @@ const ja: Dict = {
 		"あなたの保管庫のデータの一部({percent})がEngramと共有されています",
 	"{count} conflicts need resolution": "{count}つの競合を解決する必要があります",
 	"Type {keyword} to confirm:": "確認のため、{keyword}を入力してください:",
-	"Uploading {count}.": "アップロード中 {count}.",
-	"Downloading {count}.": "ダウンロード中 {count}.",
-	"Deleting {count} local files.": "{count}つのローカルファイルを削除しています。",
-	"Deleting {count} on the cloud.": "クラウドから{count}つを削除中。",
-	"First sync, this may take a moment.": "初回同期のため、しばらく時間がかかる場合があります。",
-	"Checking for changes.": "変更をチェックしています。",
-	"Nothing will be deleted.": "データは削除されません。",
-	"✓ {count} synced": "✓ {count}件 同期済み",
-	"⤳ {count} skipped (Free plan)": "⤳ 無料プランでは{count}件スキップされます",
-	"✕ {count} failed": "✕ {count}回失敗",
-	"{count} attachments need a paid plan to sync. See Sync Center.":
-		"{count}つの添付ファイルは、有料プランでのみ同期可能です。詳細はこちら: 同期センター。",
-	"Finished with some errors. Open the sync log to see what failed.":
-		"一部のエラーで完了しました。エラーの詳細については、同期ログをご確認ください。",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"同期完了。一部の添付ファイルは有料プランでのみ同期可能です (下記参照)。",
-	"All synced. Your vault and the cloud now match.":
-		"すべて同期されました。保管庫とクラウドが一致しました。",
-	"Already up to date. Nothing needed syncing.":
-		"すでに最新の状態です。同期する必要はありません。",
-	Deleting: "削除中",
-	Downloading: "ダウンロード中",
-	Uploading: "アップロード中",
-	"Syncing your vault": "保管庫の同期",
-	"Getting started…": "開始します…",
-	"Open Engram to check your vault and confirm everything synced.":
-		"Engramを開いて、保管庫の内容を確認し、すべてが同期されていることを確認してください。",
-	"Open Engram": "Engramを開く",
-	"You can close this and the sync keeps running in the background.":
-		"このウィンドウを閉じても、同期はバックグラウンドで続行されます。",
-	"Run in background": "バックグラウンドで実行",
-	"Syncing…": "同期中…",
-	"Sync complete": "同期完了",
-	"Syncing attachments": "添付ファイルの同期",
-	Complete: "完了",
-	'{count} failed. Run "{command}" for details.':
-		'{count}件失敗しました。詳細は "{command}" をご確認ください。',
-	"File exceeds the {limit} limit": "ファイルが{limit}の制限を超えています",
-	"Free syncs notes only — images & PDFs need a paid plan.":
-		"ノートのみ無料で同期。画像とPDFは有料プランが必要です。",
-	"Engram: {count} files failed to sync{detail} — open Sync Center":
-		"Engram: 同期に失敗したファイルが{count}件あります{detail} — 同期センターを開く",
-	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.":
-		"Engram: 添付ファイルが{count}件スキップされました。画像やPDFを同期するには、アップグレードしてください。",
-	"Engram: plan upgraded — syncing {count} attachments…":
-		"Engram: プランがアップグレードされました — {count}つの添付ファイルを同期中…",
-	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
-		"全件取得（重複削除）が中断されました：専用サーバーのスナップショットを取得できませんでした（競合）。データは削除されていません。",
-	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
-		"全件取得が中断されました：別の同期処理中です（競合）。完了後に再度お試しください。",
-	"Pull all failed: {error}": "全件取得に失敗しました：{error}",
-	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
-		"Engram：{path} での同期競合が発生しました。ローカルの編集内容は {copy} として保存されました",
-	"Open note": "ノートを開く",
-	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
-		"Engram: {count}つのノートにフロントマターの問題があります。同期センターを開いて修正してください。",
-	'Engram Sync: renamed "{name}" (unsupported characters)':
-		'Engram Sync："{name}" という名前を変更しました（サポートされていない文字）',
-	'Engram: frontmatter problem in "{name}"': 'Engram："{name}" にフロントマターの問題があります',
+	"Note couldn't be processed": "ノートの処理に失敗しました",
+	"The server couldn't process this note. Check its contents, then edit and save to try again.":
+		"サーバーでこのノートの処理に失敗しました。内容を確認し、編集して保存してから再度お試しください。",
+	"Attachments need a paid plan": "添付ファイルには有料プランが必要です",
+	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
+		"無料プランではノートのみ同期されます。画像やPDFを同期するには、有料プランにアップグレードしてください。",
+	"Attachment storage full": "添付ファイルの保存容量上限",
+	"You've used all the attachment storage on your plan. Upgrade for more.":
+		"プランの添付ファイル保存容量上限に達しました。より多くの容量が必要な場合は、アップグレードしてください。",
+	"Too large for the server": "ファイルサイズが大きすぎます",
+	"The server limit is 5 MB. Compress or split the file, then it will sync.":
+		"サーバーの制限は5MBです。ファイルを圧縮するか分割し、再度同期してください。",
+	"Sign-in expired": "ログインセッションが切れました",
+	"Reconnect your account to resume syncing.": "アカウントを再接続すると同期を再開できます。",
+	"Unresolved conflict": "競合が解決されていません",
+	"Open the file to resolve the conflict, then sync again.":
+		"競合を解決するファイルを開き、再度同期します。",
+	"Frontmatter needs a fix": "フロントマターに修正が必要です",
+	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
+		"ノートは同期されましたが、フロントマターを完全に解析できませんでした。ハイライトされた行を修正するために開いてください。",
+	"Server error": "サーバーエラー",
+	"A temporary server problem — retrying automatically.":
+		"一時的なサーバーの問題です。自動的に再試行します。",
+	"Network unavailable": "ネットワークに接続できません",
+	"Can't reach the server — retrying automatically.":
+		"サーバーに接続できません。自動的に再試行します。",
+	"Sync failed": "同期に失敗しました",
+	"An unexpected error — retrying automatically.":
+		"予期しないエラーが発生しました。自動的に再試行します。",
+	"Frontmatter could not be parsed": "フロントマターを解析できませんでした",
 	"Engram: this plugin is too old to sync (needs {version} or newer). Update it to continue.":
 		"Engram：このプラグインは古く、同期できません（{version} 以降が必要です）。続行するには更新してください。",
 	"Engram: this plugin is too old to sync. Update it to continue.":
@@ -472,6 +472,20 @@ const ja: Dict = {
 	"Added {pattern} to ignore patterns": "{pattern} を除外リストに追加しました",
 	"Version: {version}": "バージョン: {version}",
 	"Source: {link}": "情報源: {link}",
+	"Engram Cloud": "Engram クラウド",
+	"Self-hosted": "ローカル環境",
+	Backend: "バックエンド",
+	"Where this vault syncs to. Each backend keeps its own sign-in.":
+		"この保管庫が同期される場所。各バックエンドは個別のサインインが必要です。",
+	"Switched to {mode}.": "{mode} に切り替えました。",
+	"Not connected. Enter your Engram server URL below to start syncing.":
+		"接続されていません。同期を開始するには、EngramサーバーのURLを入力してください。",
+	"Run your own Engram server": "独自のEngramサーバーを構築",
+	"Engram is the backend that powers sync and semantic search.":
+		"Engramは、同期とセマンティック検索を支えるバックエンドです。",
+	"Nothing in this vault syncs until you choose how to merge it with the server.":
+		"この保管庫の内容は、サーバーとの連携方法を選択するまで同期されません。",
+	"Choose sync direction": "同期方向を選択してください",
 	"Engram URL": "EngramのURL",
 	"✓ Engram server reachable (v{version})": "✓ Engramサーバーに接続可能 (v{version})",
 	"✗ server responded but isn't an Engram backend":
@@ -525,20 +539,6 @@ const ja: Dict = {
 	"Server error ({status}) — check Engram logs":
 		"サーバーエラー ({status}) – Engram のログを確認してください",
 	"Could not reach Engram — check connection": "Engramに接続できません。接続を確認してください",
-	"Engram Cloud": "Engram クラウド",
-	"Self-hosted": "ローカル環境",
-	Backend: "バックエンド",
-	"Where this vault syncs to. Each backend keeps its own sign-in.":
-		"この保管庫が同期される場所。各バックエンドは個別のサインインが必要です。",
-	"Switched to {mode}.": "{mode} に切り替えました。",
-	"Not connected. Enter your Engram server URL below to start syncing.":
-		"接続されていません。同期を開始するには、EngramサーバーのURLを入力してください。",
-	"Run your own Engram server": "独自のEngramサーバーを構築",
-	"Engram is the backend that powers sync and semantic search.":
-		"Engramは、同期とセマンティック検索を支えるバックエンドです。",
-	"Nothing in this vault syncs until you choose how to merge it with the server.":
-		"この保管庫の内容は、サーバーとの連携方法を選択するまで同期されません。",
-	"Choose sync direction": "同期方向を選択してください",
 	Bug: "バグ",
 	Idea: "アイデア",
 	Confusing: "わかりにくい",

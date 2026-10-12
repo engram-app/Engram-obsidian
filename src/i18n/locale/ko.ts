@@ -2,55 +2,53 @@ import type { Dict } from "..";
 
 // 한국어
 const ko: Dict = {
-	"Invalid API key": "잘못된 API 키입니다",
-	"Request failed ({status})": "요청 실패 ({status})",
-	"Connection failed": "연결에 실패했습니다",
-	"Link Obsidian to Engram": "Obsidian을 Engram에 연결합니다",
-	"Starting...": "시작 중...",
-	"Failed to start device flow. Check your Engram URL and try again.":
-		"장치 연결 시작에 실패했습니다. Engram URL을 확인하고 다시 시도하세요.",
-	"Your code:": "코드:",
-	"Click to copy": "복사하기 클릭",
-	"Code copied!": "코드 복사 완료!",
-	"A browser window has opened. Sign in and enter this code to link your vault.":
-		"브라우저 창이 열렸습니다. 로그인 후 이 코드를 입력하여 보관함을 연결하세요.",
-	Cancel: "취소",
-	"Waiting for authorization — connected, this will complete instantly.":
-		"인증 대기 중 – 연결됨, 즉시 완료됩니다.",
-	"Waiting for authorization — no live connection, checking every 30s.":
-		"인증 대기 중 – 연결 없음, 30초마다 확인합니다.",
-	"Code expired. Please try again.": "코드가 만료되었습니다. 다시 시도하세요.",
-	"Try again": "다시 시도",
-	Close: "닫기",
-	"Note couldn't be processed": "노트 처리 실패",
-	"The server couldn't process this note. Check its contents, then edit and save to try again.":
-		"서버에서 이 노트를 처리할 수 없습니다. 내용을 확인한 후 편집하고 저장하여 다시 시도해 주세요.",
-	"Attachments need a paid plan": "첨부 파일은 유료 플랜 필요",
-	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
-		"무료 플랜은 노트만 동기화합니다. 이미지 및 PDF 동기화를 원하시면 유료 플랜으로 업그레이드하세요.",
-	"Attachment storage full": "첨부 파일 저장 공간 부족",
-	"You've used all the attachment storage on your plan. Upgrade for more.":
-		"플랜에서 제공하는 첨부 파일 저장 공간을 모두 사용하셨습니다. 더 많은 저장 공간을 원하시면 업그레이드하세요.",
-	"Too large for the server": "서버 용량 초과",
-	"The server limit is 5 MB. Compress or split the file, then it will sync.":
-		"서버 제한은 5MB입니다. 파일을 압축하거나 분할한 후 동기화를 시도해 주세요.",
-	"Sign-in expired": "로그인 만료",
-	"Reconnect your account to resume syncing.": "계정을 다시 연결하면 동기화를 이어갑니다.",
-	"Unresolved conflict": "충돌 해결 불가",
-	"Open the file to resolve the conflict, then sync again.":
-		"충돌을 해결할 파일을 열고 다시 동기화합니다.",
-	"Frontmatter needs a fix": "Frontmatter 수정 필요",
-	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
-		"노트는 동기화되었지만, frontmatter를 완전히 분석하지 못했습니다. 강조 표시된 줄을 수정하려면 파일을 엽니다.",
-	"Server error": "서버 오류",
-	"A temporary server problem — retrying automatically.":
-		"일시적인 서버 문제 - 자동으로 재시도 중입니다.",
-	"Network unavailable": "네트워크 연결 안됨",
-	"Can't reach the server — retrying automatically.":
-		"서버에 연결할 수 없음 - 자동으로 재시도 중입니다.",
-	"Sync failed": "동기화 실패",
-	"An unexpected error — retrying automatically.": "예상치 못한 오류 - 자동으로 재시도 중입니다.",
-	"Frontmatter could not be parsed": "frontmatter 분석 실패",
+	"Syncing...": "동기화 중...",
+	"👋 Welcome": "👋 안녕하세요",
+	"🔌 Connection": "🔌 연결",
+	"🔄 Sync Center": "🔄 동기화 센터",
+	"⚙️ Advanced": "⚙️ 고급 설정",
+	"💬 Feedback": "💬 피드백",
+	"Engram: settings tab failed to render ({error})": "Engram: 설정 탭 로딩 실패 ({error})",
+	Disconnected: "연결 해제됨",
+	"Error: {error}": "오류: {error}",
+	unknown: "알 수 없음",
+	"Connected — waiting for first sync decision": "연결됨 — 첫 번째 동기화 결정 대기 중",
+	"Connected — live sync active": "연결됨 — 실시간 동기화 활성",
+	"Connected — polling": "연결됨 — 폴링 중",
+	"Not configured": "설정되지 않음",
+	"Open sync setup": "동기화 설정 열기",
+	Upgrade: "업그레이드",
+	"Last sync: {when}": "마지막 동기화: {when}",
+	Keyword: "키워드",
+	Semantic: "의미 검색",
+	Both: "모두",
+	"matches your words and their other forms — 'run' finds 'running' — plus this device.":
+		"입력하신 단어와 관련된 다른 형태의 단어를 찾습니다. 예를 들어 'run'을 검색하면 'running'도 찾습니다. 또한 이 기기에서만 검색합니다.",
+	"matches meaning. Finds notes that never use the words you typed.":
+		"의미를 기반으로 검색합니다. 입력하신 단어를 사용하지 않는 노트도 찾습니다.",
+	"matches words and meaning together, plus this device. Widest results.":
+		"단어와 의미를 함께 검색하며, 이 기기에서만 검색합니다. 가장 광범위한 검색 결과를 제공합니다.",
+	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
+		"Engram은 {all}개의 노트 중 {indexed}개를 인덱싱합니다. 나머지는 이 기기에서만 검색 가능합니다. 모든 노트를 인덱싱하려면 업그레이드하세요.",
+	"Searching {indexed} of {all} notes. Upgrade to search everything.":
+		"{all}개의 노트 중 {indexed}개를 검색 중입니다. 모든 노트를 검색하려면 업그레이드하세요.",
+	"Search your vault…": "보관함에서 검색…",
+	"Clear search": "검색 결과 지우기",
+	"Search settings": "검색 설정",
+	"Filter by folder…": "폴더로 필터링…",
+	"Filter by tags…": "태그로 필터링…",
+	"Remove tag {tag}": "태그 {tag} 삭제",
+	"Engram unreachable. Showing matches from this device only.":
+		"Engram에 연결할 수 없습니다. 이 기기에서만 검색 결과를 보여줍니다.",
+	"Search failed — check connection": "검색 실패 – 연결 상태 확인",
+	"No results found": "결과 없음",
+	Untitled: "제목 없음",
+	exact: "정확히",
+	"meaning + exact": "의미 + 정확히 일치",
+	meaning: "의미",
+	"match strength: {pct}%": "일치 강도: {pct}%",
+	"No source path for this result": "이 결과에 대한 원본 경로가 없습니다",
+	"Note not synced locally": "노트가 로컬에 동기화되지 않았습니다",
 	"Note limit reached. Upgrade to keep adding notes.":
 		"노트 제한에 도달했습니다. 더 많은 노트를 추가하려면 업그레이드하세요.",
 	"Vault limit reached. Upgrade for more vaults.":
@@ -81,7 +79,100 @@ const ko: Dict = {
 		"동기화를 시작하려면 app.engram.page에서 계정 설정을 완료하세요.",
 	"Limit reached. Upgrade to continue.":
 		"제한에 도달했습니다. 업그레이드를 통해 계속 사용하세요.",
-	Upgrade: "업그레이드",
+	"Sync log": "동기화 기록",
+	"Showing {count} entries": "{count}개의 항목을 표시합니다",
+	"No sync activity this session.": "이번 세션 동안 동기화 활동이 없습니다.",
+	"({count} errors)": "({count}개의 오류)",
+	"Engram search": "Engram 검색",
+	"File exceeds the {limit} limit": "파일 크기가 {limit} 제한을 초과합니다",
+	"Free syncs notes only — images & PDFs need a paid plan.":
+		"노트만 무료 동기화, 이미지 및 PDF는 유료 플랜이 필요합니다.",
+	"Engram: {count} files failed to sync{detail} — open Sync Center":
+		"Engram: {count}개의 파일 동기화 실패{detail} — 동기화 센터 열기",
+	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.":
+		"Engram: {count}개의 첨부 파일 동기화 건너�뎠습니다. 이미지 및 PDF 동기화를 위해 업그레이드하세요.",
+	"Engram: plan upgraded — syncing {count} attachments…":
+		"Engram: 요금제 업그레이드 – {count}개의 첨부 파일을 동기화 중…",
+	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
+		"모든 항목 가져오기 실패: 서버 스냅샷을 확보하지 못했습니다 (충돌). 삭제된 항목은 없습니다.",
+	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
+		"모든 항목 가져오기 실패: 다른 동기화가 진행 중입니다 (충돌). 완료되면 다시 시도하세요.",
+	"Pull all failed: {error}": "모든 항목 가져오기 실패: {error}",
+	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
+		"Engram: {path}에서 동기화 충돌이 발생했습니다. 로컬 편집 내용은 {copy}으로 저장되었습니다",
+	"Connection failed": "연결에 실패했습니다",
+	"Open note": "노트 열기",
+	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
+		"Engram: {count}개의 노트에 메타데이터 문제가 있습니다. 동기화 센터에서 수정하세요.",
+	'Engram Sync: renamed "{name}" (unsupported characters)':
+		'Engram 동기화: "{name}" 이름 변경 (지원되지 않는 문자)',
+	'Engram: frontmatter problem in "{name}"': 'Engram: "{name}"에 메타데이터 문제가 있습니다',
+	"Uploading {count}.": "업로드 중 {count}.",
+	"Downloading {count}.": "다운로드 중 {count}.",
+	"Deleting {count} local files.": "{count}개의 로컬 파일을 삭제합니다.",
+	"Deleting {count} on the cloud.": "클라우드에서 {count}개를 삭제 중입니다.",
+	"First sync, this may take a moment.": "첫 번째 동기화, 잠시 시간이 걸릴 수 있습니다.",
+	"Checking for changes.": "변경 사항을 확인 중입니다.",
+	"Nothing will be deleted.": "삭제되는 항목은 없습니다.",
+	"✓ {count} synced": "✓ {count}개 동기화 완료",
+	"⤳ {count} skipped (Free plan)": "⤳ 무료 플랜으로 인해 {count}건 건너뜀",
+	"✕ {count} failed": "✕ {count} 실패",
+	"{count} attachments need a paid plan to sync. See Sync Center.":
+		"{count}개의 첨부 파일은 유료 플랜이 필요합니다. 동기화 센터에서 확인하세요.",
+	"Finished with some errors. Open the sync log to see what failed.":
+		"오류와 함께 완료되었습니다. 실패 원인을 보려면 동기화 로그를 확인하세요.",
+	"Synced. Some attachments need a paid plan to sync (see below).":
+		"동기화 완료. 일부 첨부 파일은 유료 플랜에서만 동기화 가능합니다 (아래 참조).",
+	"All synced. Your vault and the cloud now match.":
+		"모두 동기화되었습니다. 보관함과 클라우드가 이제 동일합니다.",
+	"Already up to date. Nothing needed syncing.":
+		"이미 최신 상태입니다. 동기화할 필요가 없습니다.",
+	Deleting: "삭제 중",
+	Downloading: "다운로드 중",
+	Uploading: "업로드 중",
+	"Syncing your vault": "보관함 동기화 중",
+	"Getting started…": "시작합니다…",
+	"Open Engram to check your vault and confirm everything synced.":
+		"Engram을 열어 보관함 상태를 확인하고 동기화가 완료되었는지 확인하세요.",
+	"Open Engram": "Engram 열기",
+	"You can close this and the sync keeps running in the background.":
+		"이 창을 닫아도 동기화는 백그라운드에서 계속됩니다.",
+	"Run in background": "백그라운드에서 실행",
+	"Syncing…": "동기화 중…",
+	"Sync complete": "동기화 완료",
+	"Show sync log": "동기화 로그 보기",
+	Done: "완료",
+	"Syncing attachments": "첨부 파일 동기화 중",
+	Complete: "완료",
+	'{count} failed. Run "{command}" for details.':
+		'{count}건 실패했습니다. 자세한 내용은 "{command}"을 확인하세요.',
+	"Invalid API key": "잘못된 API 키입니다",
+	"Request failed ({status})": "요청 실패 ({status})",
+	"{count} files": "{count} 개의 파일",
+	"Notes searchable": "검색 가능한 노트",
+	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
+		"이 이후의 노트는 정상적으로 동기화되고 열립니다. 단, 검색 인덱스에 포함되지 않습니다. 인덱스는 가장 오래된 노트를 유지하므로, 가장 최신의 노트는 인덱스에서 제외될 수 있습니다.",
+	"Notes stored": "저장된 노트",
+	Attachments: "첨부 파일",
+	"AI searches": "AI 검색",
+	"{formatted} per day": "{formatted}개/일",
+	"Link Obsidian to Engram": "Obsidian을 Engram에 연결합니다",
+	"Starting...": "시작 중...",
+	"Failed to start device flow. Check your Engram URL and try again.":
+		"장치 연결 시작에 실패했습니다. Engram URL을 확인하고 다시 시도하세요.",
+	"Your code:": "코드:",
+	"Click to copy": "복사하기 클릭",
+	"Code copied!": "코드 복사 완료!",
+	"A browser window has opened. Sign in and enter this code to link your vault.":
+		"브라우저 창이 열렸습니다. 로그인 후 이 코드를 입력하여 보관함을 연결하세요.",
+	Cancel: "취소",
+	"Waiting for authorization — connected, this will complete instantly.":
+		"인증 대기 중 – 연결됨, 즉시 완료됩니다.",
+	"Waiting for authorization — no live connection, checking every 30s.":
+		"인증 대기 중 – 연결 없음, 30초마다 확인합니다.",
+	"Code expired. Please try again.": "코드가 만료되었습니다. 다시 시도하세요.",
+	"Try again": "다시 시도",
+	Close: "닫기",
 	"Update in settings": "설정에서 업데이트",
 	"Sync now": "지금 동기화",
 	"Engram sync: syncing...": "Engram 동기화: 동기화 중...",
@@ -105,11 +196,9 @@ const ko: Dict = {
 	"Engram sync: pulling all from server...": "Engram 동기화: 서버에서 모든 내용 가져오는 중...",
 	"Engram Sync: pulled {count} files from server":
 		"Engram 동기화: 서버에서 {count}개의 파일을 가져왔습니다",
-	"Show sync log": "동기화 로그 보기",
 	"Send feedback": "피드백 보내기",
 	"Semantic search": "의미 검색",
 	"Open search sidebar": "검색 사이드바 열기",
-	"Engram search": "Engram 검색",
 	"Open sync center": "동기화 센터 열기",
 	"Engram: ready": "Engram: 준비 완료",
 	"Engram Sync: pushed {pushed}": "Engram 동기화: {pushed} 푸시됨",
@@ -167,69 +256,11 @@ const ko: Dict = {
 	"WebSocket connected — live sync active": "WebSocket 연결됨 — 실시간 동기화 활성화됨",
 	"Click to sync": "동기화하려면 클릭하세요",
 	"Engram: ⚠ {count} sync errors": "Engram: ⚠ {count}개의 동기화 오류",
-	"Last sync: {when}": "마지막 동기화: {when}",
 	"Engram Sync: pulled {count} changes": "Engram 동기화: {count}개의 변경 사항을 가져왔습니다",
 	'Engram Sync: sync state for "{name}" was unreadable — using the on-disk copy.':
 		'Engram 동기화: "{name}"의 동기화 상태를 읽을 수 없음 - 디스크 복사본 사용.',
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version}이 사용 가능합니다. {link}.",
-	"{count} files": "{count} 개의 파일",
-	"Notes searchable": "검색 가능한 노트",
-	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
-		"이 이후의 노트는 정상적으로 동기화되고 열립니다. 단, 검색 인덱스에 포함되지 않습니다. 인덱스는 가장 오래된 노트를 유지하므로, 가장 최신의 노트는 인덱스에서 제외될 수 있습니다.",
-	"Notes stored": "저장된 노트",
-	Attachments: "첨부 파일",
-	"AI searches": "AI 검색",
-	"{formatted} per day": "{formatted}개/일",
-	Keyword: "키워드",
-	Semantic: "의미 검색",
-	Both: "모두",
-	"matches your words and their other forms — 'run' finds 'running' — plus this device.":
-		"입력하신 단어와 관련된 다른 형태의 단어를 찾습니다. 예를 들어 'run'을 검색하면 'running'도 찾습니다. 또한 이 기기에서만 검색합니다.",
-	"matches meaning. Finds notes that never use the words you typed.":
-		"의미를 기반으로 검색합니다. 입력하신 단어를 사용하지 않는 노트도 찾습니다.",
-	"matches words and meaning together, plus this device. Widest results.":
-		"단어와 의미를 함께 검색하며, 이 기기에서만 검색합니다. 가장 광범위한 검색 결과를 제공합니다.",
-	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
-		"Engram은 {all}개의 노트 중 {indexed}개를 인덱싱합니다. 나머지는 이 기기에서만 검색 가능합니다. 모든 노트를 인덱싱하려면 업그레이드하세요.",
-	"Searching {indexed} of {all} notes. Upgrade to search everything.":
-		"{all}개의 노트 중 {indexed}개를 검색 중입니다. 모든 노트를 검색하려면 업그레이드하세요.",
-	"Search your vault…": "보관함에서 검색…",
-	"Clear search": "검색 결과 지우기",
-	"Search settings": "검색 설정",
-	"Filter by folder…": "폴더로 필터링…",
-	"Filter by tags…": "태그로 필터링…",
-	"Remove tag {tag}": "태그 {tag} 삭제",
-	"Engram unreachable. Showing matches from this device only.":
-		"Engram에 연결할 수 없습니다. 이 기기에서만 검색 결과를 보여줍니다.",
-	"Search failed — check connection": "검색 실패 – 연결 상태 확인",
-	"No results found": "결과 없음",
-	Untitled: "제목 없음",
-	exact: "정확히",
-	"meaning + exact": "의미 + 정확히 일치",
-	meaning: "의미",
-	"match strength: {pct}%": "일치 강도: {pct}%",
-	"No source path for this result": "이 결과에 대한 원본 경로가 없습니다",
-	"Note not synced locally": "노트가 로컬에 동기화되지 않았습니다",
-	"Syncing...": "동기화 중...",
-	"👋 Welcome": "👋 안녕하세요",
-	"🔌 Connection": "🔌 연결",
-	"🔄 Sync Center": "🔄 동기화 센터",
-	"⚙️ Advanced": "⚙️ 고급 설정",
-	"💬 Feedback": "💬 피드백",
-	"Engram: settings tab failed to render ({error})": "Engram: 설정 탭 로딩 실패 ({error})",
-	Disconnected: "연결 해제됨",
-	"Error: {error}": "오류: {error}",
-	unknown: "알 수 없음",
-	"Connected — waiting for first sync decision": "연결됨 — 첫 번째 동기화 결정 대기 중",
-	"Connected — live sync active": "연결됨 — 실시간 동기화 활성",
-	"Connected — polling": "연결됨 — 폴링 중",
-	"Not configured": "설정되지 않음",
-	"Open sync setup": "동기화 설정 열기",
-	"Sync log": "동기화 기록",
-	"Showing {count} entries": "{count}개의 항목을 표시합니다",
-	"No sync activity this session.": "이번 세션 동안 동기화 활동이 없습니다.",
-	"({count} errors)": "({count}개의 오류)",
 	"Could not compare with the cloud. Check your connection.":
 		"클라우드와 비교할 수 없습니다. 연결 상태를 확인하세요.",
 	"Your login expired. Sign in again in Engram settings to continue.":
@@ -279,7 +310,6 @@ const ko: Dict = {
 	"This device's vault is empty. Download {what} from the server?":
 		"이 기기의 보관함이 비어 있습니다. 서버에서 {what}을 다운로드하시겠습니까?",
 	"Download everything": "모두 다운로드",
-	Done: "완료",
 	"Send debug logs. Note content stays private.": "디버그 로그 전송. 노트 내용은 비공개입니다.",
 	"Comparing your vault with the cloud…": "보관함과 클라우드를 비교 중…",
 	"Not now": "지금은 안 함",
@@ -316,65 +346,35 @@ const ko: Dict = {
 		"귀하의 보관함 데이터 중 {percent}이 Engram과 동기화됩니다",
 	"{count} conflicts need resolution": "{count}개의 충돌이 해결되어야 합니다",
 	"Type {keyword} to confirm:": "확인을 위해 {keyword}을 입력하세요:",
-	"Uploading {count}.": "업로드 중 {count}.",
-	"Downloading {count}.": "다운로드 중 {count}.",
-	"Deleting {count} local files.": "{count}개의 로컬 파일을 삭제합니다.",
-	"Deleting {count} on the cloud.": "클라우드에서 {count}개를 삭제 중입니다.",
-	"First sync, this may take a moment.": "첫 번째 동기화, 잠시 시간이 걸릴 수 있습니다.",
-	"Checking for changes.": "변경 사항을 확인 중입니다.",
-	"Nothing will be deleted.": "삭제되는 항목은 없습니다.",
-	"✓ {count} synced": "✓ {count}개 동기화 완료",
-	"⤳ {count} skipped (Free plan)": "⤳ 무료 플랜으로 인해 {count}건 건너뜀",
-	"✕ {count} failed": "✕ {count} 실패",
-	"{count} attachments need a paid plan to sync. See Sync Center.":
-		"{count}개의 첨부 파일은 유료 플랜이 필요합니다. 동기화 센터에서 확인하세요.",
-	"Finished with some errors. Open the sync log to see what failed.":
-		"오류와 함께 완료되었습니다. 실패 원인을 보려면 동기화 로그를 확인하세요.",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"동기화 완료. 일부 첨부 파일은 유료 플랜에서만 동기화 가능합니다 (아래 참조).",
-	"All synced. Your vault and the cloud now match.":
-		"모두 동기화되었습니다. 보관함과 클라우드가 이제 동일합니다.",
-	"Already up to date. Nothing needed syncing.":
-		"이미 최신 상태입니다. 동기화할 필요가 없습니다.",
-	Deleting: "삭제 중",
-	Downloading: "다운로드 중",
-	Uploading: "업로드 중",
-	"Syncing your vault": "보관함 동기화 중",
-	"Getting started…": "시작합니다…",
-	"Open Engram to check your vault and confirm everything synced.":
-		"Engram을 열어 보관함 상태를 확인하고 동기화가 완료되었는지 확인하세요.",
-	"Open Engram": "Engram 열기",
-	"You can close this and the sync keeps running in the background.":
-		"이 창을 닫아도 동기화는 백그라운드에서 계속됩니다.",
-	"Run in background": "백그라운드에서 실행",
-	"Syncing…": "동기화 중…",
-	"Sync complete": "동기화 완료",
-	"Syncing attachments": "첨부 파일 동기화 중",
-	Complete: "완료",
-	'{count} failed. Run "{command}" for details.':
-		'{count}건 실패했습니다. 자세한 내용은 "{command}"을 확인하세요.',
-	"File exceeds the {limit} limit": "파일 크기가 {limit} 제한을 초과합니다",
-	"Free syncs notes only — images & PDFs need a paid plan.":
-		"노트만 무료 동기화, 이미지 및 PDF는 유료 플랜이 필요합니다.",
-	"Engram: {count} files failed to sync{detail} — open Sync Center":
-		"Engram: {count}개의 파일 동기화 실패{detail} — 동기화 센터 열기",
-	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.":
-		"Engram: {count}개의 첨부 파일 동기화 건너�뎠습니다. 이미지 및 PDF 동기화를 위해 업그레이드하세요.",
-	"Engram: plan upgraded — syncing {count} attachments…":
-		"Engram: 요금제 업그레이드 – {count}개의 첨부 파일을 동기화 중…",
-	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
-		"모든 항목 가져오기 실패: 서버 스냅샷을 확보하지 못했습니다 (충돌). 삭제된 항목은 없습니다.",
-	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
-		"모든 항목 가져오기 실패: 다른 동기화가 진행 중입니다 (충돌). 완료되면 다시 시도하세요.",
-	"Pull all failed: {error}": "모든 항목 가져오기 실패: {error}",
-	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
-		"Engram: {path}에서 동기화 충돌이 발생했습니다. 로컬 편집 내용은 {copy}으로 저장되었습니다",
-	"Open note": "노트 열기",
-	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
-		"Engram: {count}개의 노트에 메타데이터 문제가 있습니다. 동기화 센터에서 수정하세요.",
-	'Engram Sync: renamed "{name}" (unsupported characters)':
-		'Engram 동기화: "{name}" 이름 변경 (지원되지 않는 문자)',
-	'Engram: frontmatter problem in "{name}"': 'Engram: "{name}"에 메타데이터 문제가 있습니다',
+	"Note couldn't be processed": "노트 처리 실패",
+	"The server couldn't process this note. Check its contents, then edit and save to try again.":
+		"서버에서 이 노트를 처리할 수 없습니다. 내용을 확인한 후 편집하고 저장하여 다시 시도해 주세요.",
+	"Attachments need a paid plan": "첨부 파일은 유료 플랜 필요",
+	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
+		"무료 플랜은 노트만 동기화합니다. 이미지 및 PDF 동기화를 원하시면 유료 플랜으로 업그레이드하세요.",
+	"Attachment storage full": "첨부 파일 저장 공간 부족",
+	"You've used all the attachment storage on your plan. Upgrade for more.":
+		"플랜에서 제공하는 첨부 파일 저장 공간을 모두 사용하셨습니다. 더 많은 저장 공간을 원하시면 업그레이드하세요.",
+	"Too large for the server": "서버 용량 초과",
+	"The server limit is 5 MB. Compress or split the file, then it will sync.":
+		"서버 제한은 5MB입니다. 파일을 압축하거나 분할한 후 동기화를 시도해 주세요.",
+	"Sign-in expired": "로그인 만료",
+	"Reconnect your account to resume syncing.": "계정을 다시 연결하면 동기화를 이어갑니다.",
+	"Unresolved conflict": "충돌 해결 불가",
+	"Open the file to resolve the conflict, then sync again.":
+		"충돌을 해결할 파일을 열고 다시 동기화합니다.",
+	"Frontmatter needs a fix": "Frontmatter 수정 필요",
+	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
+		"노트는 동기화되었지만, frontmatter를 완전히 분석하지 못했습니다. 강조 표시된 줄을 수정하려면 파일을 엽니다.",
+	"Server error": "서버 오류",
+	"A temporary server problem — retrying automatically.":
+		"일시적인 서버 문제 - 자동으로 재시도 중입니다.",
+	"Network unavailable": "네트워크 연결 안됨",
+	"Can't reach the server — retrying automatically.":
+		"서버에 연결할 수 없음 - 자동으로 재시도 중입니다.",
+	"Sync failed": "동기화 실패",
+	"An unexpected error — retrying automatically.": "예상치 못한 오류 - 자동으로 재시도 중입니다.",
+	"Frontmatter could not be parsed": "frontmatter 분석 실패",
 	"Engram: this plugin is too old to sync (needs {version} or newer). Update it to continue.":
 		"Engram: 이 플러그인은 너무 오래되어 동기화할 수 없습니다 (최소 {version} 이상 필요). 계속하려면 업데이트하세요.",
 	"Engram: this plugin is too old to sync. Update it to continue.":
@@ -466,6 +466,20 @@ const ko: Dict = {
 	"Added {pattern} to ignore patterns": "{pattern}을 제외 목록에 추가했습니다",
 	"Version: {version}": "버전: {version}",
 	"Source: {link}": "출처: {link}",
+	"Engram Cloud": "Engram 클라우드",
+	"Self-hosted": "자체 호스팅",
+	Backend: "백엔드",
+	"Where this vault syncs to. Each backend keeps its own sign-in.":
+		"이 보관함이 동기화되는 위치입니다. 각 백엔드는 자체 로그인 정보를 사용합니다.",
+	"Switched to {mode}.": "{mode}으로 전환했습니다.",
+	"Not connected. Enter your Engram server URL below to start syncing.":
+		"연결되지 않았습니다. 동기화를 시작하려면 Engram 서버 URL을 아래에 입력하세요.",
+	"Run your own Engram server": "자체 Engram 서버 실행",
+	"Engram is the backend that powers sync and semantic search.":
+		"Engram은 동기화 및 의미 검색 기능을 제공하는 백엔드입니다.",
+	"Nothing in this vault syncs until you choose how to merge it with the server.":
+		"이 보관함의 내용은 서버와 병합하는 방법을 선택할 때까지 동기화되지 않습니다.",
+	"Choose sync direction": "동기화 방향 선택",
 	"Engram URL": "Engram URL",
 	"✓ Engram server reachable (v{version})": "✓ Engram 서버 연결됨 (v{version})",
 	"✗ server responded but isn't an Engram backend":
@@ -518,20 +532,6 @@ const ko: Dict = {
 	"Server error ({status}) — check Engram logs":
 		"서버 오류 ({status}) — Engram 로그를 확인하세요",
 	"Could not reach Engram — check connection": "Engram 연결 오류 - 연결 상태를 확인하세요",
-	"Engram Cloud": "Engram 클라우드",
-	"Self-hosted": "자체 호스팅",
-	Backend: "백엔드",
-	"Where this vault syncs to. Each backend keeps its own sign-in.":
-		"이 보관함이 동기화되는 위치입니다. 각 백엔드는 자체 로그인 정보를 사용합니다.",
-	"Switched to {mode}.": "{mode}으로 전환했습니다.",
-	"Not connected. Enter your Engram server URL below to start syncing.":
-		"연결되지 않았습니다. 동기화를 시작하려면 Engram 서버 URL을 아래에 입력하세요.",
-	"Run your own Engram server": "자체 Engram 서버 실행",
-	"Engram is the backend that powers sync and semantic search.":
-		"Engram은 동기화 및 의미 검색 기능을 제공하는 백엔드입니다.",
-	"Nothing in this vault syncs until you choose how to merge it with the server.":
-		"이 보관함의 내용은 서버와 병합하는 방법을 선택할 때까지 동기화되지 않습니다.",
-	"Choose sync direction": "동기화 방향 선택",
 	Bug: "버그",
 	Idea: "아이디어",
 	Confusing: "혼란스러움",
