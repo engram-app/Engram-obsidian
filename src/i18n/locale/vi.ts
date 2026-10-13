@@ -2,57 +2,123 @@ import type { Dict } from "..";
 
 // Tiếng Việt
 const vi: Dict = {
-	"Invalid API key": "Khóa API không hợp lệ",
-	"Request failed ({status})": "Yêu cầu thất bại ({status})",
+	"waiting for a connection": "đang chờ kết nối",
+	"sync is paused": "Đã tạm dừng đồng bộ hóa",
+	"syncing now": "đang đồng bộ hóa",
+	"waiting to retry": "đang chờ thử lại",
+	"{count} not on your plan": "{count} không nằm trong gói của bạn",
+	"{count} need attention": "{count} cần chú ý",
+	"{count} retrying": "{count} lần thử lại",
+	"{count} ignored": "{count} bị bỏ qua",
+	"{count} queued — {reason}": "{count} đang chờ — {reason}",
+	"Sync...": "Đồng bộ hóa...",
+	"Engram Sync: {details}": "Đồng bộ hóa Engram: {details}",
+	Refresh: "Làm mới",
+	"Not synced on your plan ({count})": "Chưa được đồng bộ hóa trong gói của bạn ({count})",
+	"These files are fine. They just need a paid plan to sync.":
+		"Các tệp này không có vấn đề. Chúng chỉ cần một gói trả phí để đồng bộ hóa.",
+	"Show files ({count}) ▾": "Hiển thị tệp ({count}) ▾",
+	Upgrade: "Nâng cấp",
+	"Sync these now": "Đồng bộ hóa các tệp này ngay bây giờ",
+	"Needs attention ({count})": "Cần xử lý ({count})",
+	"Clear all": "Xóa tất cả",
+	"Nothing needs your attention. 🎉": "Không có gì cần bạn quan tâm. 🎉",
+	Dismiss: "Đóng",
+	"Retrying automatically ({count})": "Thử lại tự động ({count})",
+	"Retry all now": "Thử lại tất cả ngay",
+	"Temporary errors. These clear themselves once the server recovers.":
+		"Lỗi tạm thời. Chúng sẽ tự động biến mất khi máy chủ hoạt động trở lại.",
+	"{count} attempts": "{count} lần thử",
+	Open: "Mở",
+	Ignore: "Bỏ qua",
+	"Ignored ({count})": "Bỏ qua ({count})",
+	"No files ignored. Use the ignore button on a failure row to stop syncing it.":
+		'Không có tệp nào bị bỏ qua. Sử dụng nút "bỏ qua" trên mỗi dòng lỗi để ngừng đồng bộ hóa tệp đó.',
+	Restore: "Khôi phục",
+	"File not found locally: {path}": "Không tìm thấy tệp cục bộ: {path}",
+	"Ignored {path} — won't sync until restored from Sync Center.":
+		"Đã bỏ qua {path} — sẽ không đồng bộ hóa cho đến khi được khôi phục từ Trung tâm đồng bộ hóa.",
+	"Restored {path} — will sync on next push.":
+		"Đã khôi phục {path} — sẽ đồng bộ hóa khi đẩy lần sau.",
+	"Activity ({count})": "Hoạt động ({count})",
+	Clear: "Xóa",
+	"No activity yet. Push or pull to see entries here.":
+		"Chưa có hoạt động nào. Nhấn nút đẩy hoặc kéo để xem các mục ở đây.",
+	Pushed: "Đã đẩy",
+	Pulled: "Đã kéo",
+	Deleted: "Đã xóa",
+	Conflict: "Xung đột",
+	Skipped: "Bỏ qua",
+	Error: "Lỗi",
+	Stats: "Thống kê",
+	"Notes on this device": "Ghi chú trên thiết bị này",
+	"Attachments on this device": "Tệp đính kèm trên thiết bị này",
+	"Remote vault": "Kho lưu trữ từ xa",
+	"not linked": "chưa liên kết",
+	Attachments: "Tệp đính kèm",
+	"Plan usage": "Sử dụng gói",
+	"File exceeds the {limit} limit": "Tệp vượt quá giới hạn {limit}",
+	"Free syncs notes only — images & PDFs need a paid plan.":
+		"Đồng bộ hóa miễn phí chỉ dành cho ghi chú — hình ảnh & PDF cần gói trả phí.",
+	"Engram: {count} files failed to sync{detail} — open Sync Center":
+		"Engram: {count} tệp không đồng bộ hóa{detail} — mở Trung tâm đồng bộ hóa",
+	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.":
+		"Engram: Bỏ qua {count} tệp đính kèm — nâng cấp để đồng bộ hóa ảnh & PDF.",
+	"Engram: plan upgraded — syncing {count} attachments…":
+		"Engram: Nâng cấp gói — đang đồng bộ hóa {count} tệp đính kèm…",
+	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
+		"Bỏ qua thao tác kéo tất cả (xóa dữ liệu thừa): không thể lấy bản chụp nhanh độc quyền của máy chủ (xung đột). Không có gì bị xóa.",
+	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
+		"Bỏ qua thao tác kéo tất cả: một thao tác đồng bộ khác đang chạy (xung đột). Thử lại khi nó hoàn thành.",
+	"Pull all failed: {error}": "Thao tác kéo tất cả thất bại: {error}",
+	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
+		"Engram: xung đột đồng bộ trên {path} — chỉnh sửa cục bộ của bạn đã được lưu dưới dạng {copy}",
 	"Connection failed": "Kết nối không thành công",
-	"Link Obsidian to Engram": "Liên kết Obsidian với Engram",
-	"Starting...": "Đang khởi động...",
-	"Failed to start device flow. Check your Engram URL and try again.":
-		"Không thể khởi động quá trình xác thực. Kiểm tra URL Engram của bạn và thử lại.",
-	"Your code:": "Mã của bạn:",
-	"Click to copy": "Nhấp để sao chép",
-	"Code copied!": "Đã sao chép mã!",
-	"A browser window has opened. Sign in and enter this code to link your vault.":
-		"Một cửa sổ trình duyệt đã mở. Đăng nhập và nhập mã này để liên kết kho lưu trữ của bạn.",
-	Cancel: "Hủy bỏ",
-	"Waiting for authorization — connected, this will complete instantly.":
-		"Đang chờ xác thực — đã kết nối, quá trình này sẽ hoàn tất ngay lập tức.",
-	"Waiting for authorization — no live connection, checking every 30s.":
-		"Đang chờ xác thực — không có kết nối trực tiếp, kiểm tra mỗi 30 giây.",
-	"Code expired. Please try again.": "Mã đã hết hạn. Vui lòng thử lại.",
-	"Try again": "Thử lại",
-	Close: "Đóng",
-	"Note couldn't be processed": "Không thể xử lý ghi chú",
-	"The server couldn't process this note. Check its contents, then edit and save to try again.":
-		"Máy chủ không thể xử lý ghi chú này. Kiểm tra nội dung, sau đó chỉnh sửa và lưu để thử lại.",
-	"Attachments need a paid plan": "Tệp đính kèm cần gói trả phí",
-	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
-		"Gói miễn phí chỉ đồng bộ hóa ghi chú. Nâng cấp để đồng bộ hóa hình ảnh và PDF.",
-	"Attachment storage full": "Bộ nhớ tệp đính kèm đã đầy",
-	"You've used all the attachment storage on your plan. Upgrade for more.":
-		"Bạn đã sử dụng hết dung lượng lưu trữ tệp đính kèm trong gói của bạn. Nâng cấp để có thêm dung lượng.",
-	"Too large for the server": "Quá lớn cho máy chủ",
-	"The server limit is 5 MB. Compress or split the file, then it will sync.":
-		"Giới hạn của máy chủ là 5 MB. Nén hoặc chia nhỏ tệp, sau đó nó sẽ được đồng bộ hóa.",
-	"Sign-in expired": "Phiên đăng nhập đã hết hạn",
-	"Reconnect your account to resume syncing.":
-		"Kết nối lại tài khoản của bạn để tiếp tục đồng bộ hóa.",
-	"Unresolved conflict": "Xung đột chưa được giải quyết",
-	"Open the file to resolve the conflict, then sync again.":
-		"Mở tệp để giải quyết xung đột, sau đó đồng bộ hóa lại.",
-	"Frontmatter needs a fix": "Cần sửa phần frontmatter",
-	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
-		"Ghi chú đã được đồng bộ hóa, nhưng phần frontmatter không thể phân tích đầy đủ. Mở nó để sửa dòng được đánh dấu.",
-	"Server error": "Lỗi máy chủ",
-	"A temporary server problem — retrying automatically.":
-		"Một vấn đề tạm thời với máy chủ — đang thử lại tự động.",
-	"Network unavailable": "Mạng không khả dụng",
-	"Can't reach the server — retrying automatically.":
-		"Không thể kết nối với máy chủ — đang thử lại tự động.",
-	"Sync failed": "Đồng bộ hóa thất bại",
-	"An unexpected error — retrying automatically.":
-		"Một lỗi không mong muốn — đang thử lại tự động.",
-	"Frontmatter could not be parsed": "Không thể phân tích frontmatter",
+	"Open note": "Mở ghi chú",
+	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
+		"Engram: {count} ghi chú có vấn đề về frontmatter. Mở Trung tâm đồng bộ hóa để sửa.",
+	'Engram Sync: renamed "{name}" (unsupported characters)':
+		'Engram Sync: đổi tên "{name}" (ký tự không được hỗ trợ)',
+	'Engram: frontmatter problem in "{name}"': 'Engram: vấn đề về frontmatter trong "{name}"',
+	"Uploading {count}.": "Đang tải lên {count}.",
+	"Downloading {count}.": "Đang tải xuống {count}.",
+	"Deleting {count} local files.": "Xóa {count} tệp cục bộ.",
+	"Deleting {count} on the cloud.": "Xóa {count} trên đám mây.",
+	"First sync, this may take a moment.":
+		"Lần đồng bộ hóa đầu tiên, có thể mất một chút thời gian.",
+	"Checking for changes.": "Đang kiểm tra thay đổi.",
+	"Nothing will be deleted.": "Không có gì sẽ bị xóa.",
+	"✓ {count} synced": "✓ {count} đã đồng bộ hóa",
+	"⤳ {count} skipped (Free plan)": "⤳ {count} bỏ qua (Gói miễn phí)",
+	"✕ {count} failed": "✕ {count} thất bại",
+	"{count} attachments need a paid plan to sync. See Sync Center.":
+		"{count} tệp đính kèm cần gói trả phí để đồng bộ hóa. Xem Trung tâm đồng bộ hóa.",
+	"Finished with some errors. Open the sync log to see what failed.":
+		"Hoàn thành với một số lỗi. Mở nhật ký đồng bộ hóa để xem những gì đã thất bại.",
+	"Synced. Some attachments need a paid plan to sync (see below).":
+		"Đã đồng bộ hóa. Một số tệp đính kèm cần gói trả phí để đồng bộ hóa (xem bên dưới).",
+	"All synced. Your vault and the cloud now match.":
+		"Tất cả đã đồng bộ hóa. Kho lưu trữ của bạn và trên đám mây hiện đã khớp.",
+	"Already up to date. Nothing needed syncing.": "Đã cập nhật. Không cần đồng bộ hóa gì.",
+	Deleting: "Đang xóa",
+	Downloading: "Đang tải xuống",
+	Uploading: "Đang tải lên",
+	"Syncing your vault": "Đang đồng bộ hóa kho lưu trữ của bạn",
+	"Getting started…": "Bắt đầu…",
+	"Open Engram to check your vault and confirm everything synced.":
+		"Mở Engram để kiểm tra kho lưu trữ của bạn và xác nhận mọi thứ đã được đồng bộ hóa.",
+	"Open Engram": "Mở Engram",
+	"You can close this and the sync keeps running in the background.":
+		"Bạn có thể đóng cửa và quá trình đồng bộ hóa vẫn tiếp tục chạy trong nền.",
+	"Run in background": "Chạy trong nền",
+	"Syncing…": "Đang đồng bộ hóa…",
+	"Sync complete": "Đã hoàn thành đồng bộ hóa",
+	"Show sync log": "Hiển thị nhật ký đồng bộ",
+	Done: "Hoàn thành",
+	"Syncing attachments": "Đang đồng bộ hóa tệp đính kèm",
+	Complete: "Hoàn tất",
+	'{count} failed. Run "{command}" for details.':
+		'{count} lần thất bại. Xem "{command}" để biết chi tiết.',
 	"Note limit reached. Upgrade to keep adding notes.":
 		"Đã đạt giới hạn ghi chú. Nâng cấp để thêm nhiều ghi chú hơn.",
 	"Vault limit reached. Upgrade for more vaults.":
@@ -83,7 +149,23 @@ const vi: Dict = {
 	"Finish setting up your account at app.engram.page to start syncing.":
 		"Hoàn tất thiết lập tài khoản của bạn tại app.engram.page để bắt đầu đồng bộ hóa.",
 	"Limit reached. Upgrade to continue.": "Đạt giới hạn. Nâng cấp để tiếp tục.",
-	Upgrade: "Nâng cấp",
+	"Link Obsidian to Engram": "Liên kết Obsidian với Engram",
+	"Starting...": "Đang khởi động...",
+	"Failed to start device flow. Check your Engram URL and try again.":
+		"Không thể khởi động quá trình xác thực. Kiểm tra URL Engram của bạn và thử lại.",
+	"Your code:": "Mã của bạn:",
+	"Click to copy": "Nhấp để sao chép",
+	"Code copied!": "Đã sao chép mã!",
+	"A browser window has opened. Sign in and enter this code to link your vault.":
+		"Một cửa sổ trình duyệt đã mở. Đăng nhập và nhập mã này để liên kết kho lưu trữ của bạn.",
+	Cancel: "Hủy bỏ",
+	"Waiting for authorization — connected, this will complete instantly.":
+		"Đang chờ xác thực — đã kết nối, quá trình này sẽ hoàn tất ngay lập tức.",
+	"Waiting for authorization — no live connection, checking every 30s.":
+		"Đang chờ xác thực — không có kết nối trực tiếp, kiểm tra mỗi 30 giây.",
+	"Code expired. Please try again.": "Mã đã hết hạn. Vui lòng thử lại.",
+	"Try again": "Thử lại",
+	Close: "Đóng",
 	"Update in settings": "Cập nhật trong cài đặt",
 	"Sync now": "Đồng bộ hóa ngay",
 	"Engram sync: syncing...": "Đồng bộ hóa Engram: đang đồng bộ hóa...",
@@ -102,11 +184,9 @@ const vi: Dict = {
 	"{count} missing on server": "{count} mục chưa đồng bộ lên máy chủ",
 	"{count} diverged": "{count} khác nhau",
 	"{count} only on server": "{count} chỉ có trên máy chủ",
-	"Engram Sync: {details}": "Đồng bộ hóa Engram: {details}",
 	"Pull all from server (force overwrite)": "Tải tất cả từ máy chủ (ghi đè)",
 	"Engram sync: pulling all from server...": "Đồng bộ hóa Engram: đang tải tất cả từ máy chủ...",
 	"Engram Sync: pulled {count} files from server": "Engram Sync: đã tải {count} tệp từ máy chủ",
-	"Show sync log": "Hiển thị nhật ký đồng bộ",
 	"Send feedback": "Gửi phản hồi",
 	"Semantic search": "Tìm kiếm ngữ nghĩa",
 	"Open search sidebar": "Mở thanh bên tìm kiếm",
@@ -175,65 +255,6 @@ const vi: Dict = {
 		'Engram Sync: trạng thái đồng bộ hóa của "{name}" không thể đọc được — đang sử dụng bản sao trên ổ đĩa.',
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} khả dụng. {link}.",
-	"{count} files": "{count} tệp",
-	"Notes searchable": "Ghi chú có thể tìm kiếm",
-	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
-		"Các ghi chú sau đây vẫn được đồng bộ hóa và mở bình thường, chúng chỉ không nằm trong chỉ mục tìm kiếm. Chỉ mục lưu trữ các ghi chú cũ nhất của bạn, vì vậy các ghi chú mới nhất của bạn sẽ không nằm trong đó.",
-	"Notes stored": "Ghi chú đã được lưu trữ",
-	Attachments: "Tệp đính kèm",
-	"AI searches": "Tìm kiếm AI",
-	"{formatted} per day": "{formatted} mỗi ngày",
-	Keyword: "Từ khóa",
-	Semantic: "Ngữ nghĩa",
-	Both: "Cả hai",
-	"matches your words and their other forms — 'run' finds 'running' — plus this device.":
-		"khớp với từ của bạn và các dạng khác — 'run' tìm 'running' — cộng với thiết bị này.",
-	"matches meaning. Finds notes that never use the words you typed.":
-		"khớp với ý nghĩa. Tìm ghi chú không sử dụng các từ bạn nhập.",
-	"matches words and meaning together, plus this device. Widest results.":
-		"khớp với cả từ và ý nghĩa, cộng với thiết bị này. Kết quả rộng nhất.",
-	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
-		"Engram lập chỉ mục {indexed} trong số {all} ghi chú của bạn. Phần còn lại chỉ khớp trên thiết bị này. Nâng cấp để lập chỉ mục mọi thứ.",
-	"Searching {indexed} of {all} notes. Upgrade to search everything.":
-		"Tìm kiếm {indexed} trong số {all} ghi chú. Nâng cấp để tìm kiếm mọi thứ.",
-	"Search your vault…": "Tìm kiếm trong kho lưu trữ của bạn…",
-	"Clear search": "Xóa tìm kiếm",
-	"Search settings": "Cài đặt tìm kiếm",
-	"Filter by folder…": "Lọc theo thư mục…",
-	"Filter by tags…": "Lọc theo thẻ…",
-	"Remove tag {tag}": "Xóa thẻ {tag}",
-	"Engram unreachable. Showing matches from this device only.":
-		"Engram không khả dụng. Chỉ hiển thị kết quả từ thiết bị này.",
-	"Search failed — check connection": "Tìm kiếm thất bại — kiểm tra kết nối",
-	"No results found": "Không tìm thấy kết quả",
-	Untitled: "Không tiêu đề",
-	exact: "chính xác",
-	"meaning + exact": "nghĩa + chính xác",
-	meaning: "nghĩa",
-	"match strength: {pct}%": "độ chính xác: {pct}%",
-	"No source path for this result": "Không tìm thấy đường dẫn nguồn cho kết quả này",
-	"Note not synced locally": "Ghi chú chưa được đồng bộ hóa cục bộ",
-	"Syncing...": "Đang đồng bộ hóa...",
-	"👋 Welcome": "👋 Chào mừng",
-	"🔌 Connection": "🔌 Kết nối",
-	"🔄 Sync Center": "🔄 Trung tâm đồng bộ hóa",
-	"⚙️ Advanced": "⚙️ Nâng cao",
-	"💬 Feedback": "💬 Phản hồi",
-	"Engram: settings tab failed to render ({error})":
-		"Engram: tab cài đặt không hiển thị ({error})",
-	Disconnected: "Đã ngắt kết nối",
-	"Error: {error}": "Lỗi: {error}",
-	unknown: "không xác định",
-	"Connected — waiting for first sync decision":
-		"Đã kết nối — đang chờ quyết định đồng bộ hóa đầu tiên",
-	"Connected — live sync active": "Đã kết nối — đồng bộ hóa trực tiếp đang hoạt động",
-	"Connected — polling": "Đã kết nối — đang kiểm tra",
-	"Not configured": "Chưa được cấu hình",
-	"Open sync setup": "Mở cài đặt đồng bộ hóa",
-	"Sync log": "Nhật ký đồng bộ hóa",
-	"Showing {count} entries": "Hiển thị {count} mục",
-	"No sync activity this session.": "Chưa có hoạt động đồng bộ hóa trong phiên này.",
-	"({count} errors)": "({count} lỗi)",
 	"Could not compare with the cloud. Check your connection.":
 		"Không thể so sánh với đám mây. Kiểm tra kết nối của bạn.",
 	"Your login expired. Sign in again in Engram settings to continue.":
@@ -284,7 +305,6 @@ const vi: Dict = {
 	"This device's vault is empty. Download {what} from the server?":
 		"Kho lưu trữ trên thiết bị này trống. Bạn muốn tải xuống {what} từ máy chủ?",
 	"Download everything": "Tải xuống tất cả",
-	Done: "Hoàn thành",
 	"Send debug logs. Note content stays private.":
 		"Gửi nhật ký gỡ lỗi. Nội dung ghi chú vẫn được bảo mật.",
 	"Comparing your vault with the cloud…": "Đang so sánh kho lưu trữ của bạn với đám mây…",
@@ -322,226 +342,120 @@ const vi: Dict = {
 		"Kho lưu trữ của bạn chia sẻ {percent} dữ liệu với Engram",
 	"{count} conflicts need resolution": "{count} xung đột cần giải quyết",
 	"Type {keyword} to confirm:": "Nhập {keyword} để xác nhận:",
-	"Uploading {count}.": "Đang tải lên {count}.",
-	"Downloading {count}.": "Đang tải xuống {count}.",
-	"Deleting {count} local files.": "Xóa {count} tệp cục bộ.",
-	"Deleting {count} on the cloud.": "Xóa {count} trên đám mây.",
-	"First sync, this may take a moment.":
-		"Lần đồng bộ hóa đầu tiên, có thể mất một chút thời gian.",
-	"Checking for changes.": "Đang kiểm tra thay đổi.",
-	"Nothing will be deleted.": "Không có gì sẽ bị xóa.",
-	"✓ {count} synced": "✓ {count} đã đồng bộ hóa",
-	"⤳ {count} skipped (Free plan)": "⤳ {count} bỏ qua (Gói miễn phí)",
-	"✕ {count} failed": "✕ {count} thất bại",
-	"{count} attachments need a paid plan to sync. See Sync Center.":
-		"{count} tệp đính kèm cần gói trả phí để đồng bộ hóa. Xem Trung tâm đồng bộ hóa.",
-	"Finished with some errors. Open the sync log to see what failed.":
-		"Hoàn thành với một số lỗi. Mở nhật ký đồng bộ hóa để xem những gì đã thất bại.",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"Đã đồng bộ hóa. Một số tệp đính kèm cần gói trả phí để đồng bộ hóa (xem bên dưới).",
-	"All synced. Your vault and the cloud now match.":
-		"Tất cả đã đồng bộ hóa. Kho lưu trữ của bạn và trên đám mây hiện đã khớp.",
-	"Already up to date. Nothing needed syncing.": "Đã cập nhật. Không cần đồng bộ hóa gì.",
-	Deleting: "Đang xóa",
-	Downloading: "Đang tải xuống",
-	Uploading: "Đang tải lên",
-	"Syncing your vault": "Đang đồng bộ hóa kho lưu trữ của bạn",
-	"Getting started…": "Bắt đầu…",
-	"Open Engram to check your vault and confirm everything synced.":
-		"Mở Engram để kiểm tra kho lưu trữ của bạn và xác nhận mọi thứ đã được đồng bộ hóa.",
-	"Open Engram": "Mở Engram",
-	"You can close this and the sync keeps running in the background.":
-		"Bạn có thể đóng cửa và quá trình đồng bộ hóa vẫn tiếp tục chạy trong nền.",
-	"Run in background": "Chạy trong nền",
-	"Syncing…": "Đang đồng bộ hóa…",
-	"Sync complete": "Đã hoàn thành đồng bộ hóa",
-	"Syncing attachments": "Đang đồng bộ hóa tệp đính kèm",
-	Complete: "Hoàn tất",
-	'{count} failed. Run "{command}" for details.':
-		'{count} lần thất bại. Xem "{command}" để biết chi tiết.',
-	"File exceeds the {limit} limit": "Tệp vượt quá giới hạn {limit}",
-	"Free syncs notes only — images & PDFs need a paid plan.":
-		"Đồng bộ hóa miễn phí chỉ dành cho ghi chú — hình ảnh & PDF cần gói trả phí.",
-	"Engram: {count} files failed to sync{detail} — open Sync Center":
-		"Engram: {count} tệp không đồng bộ hóa{detail} — mở Trung tâm đồng bộ hóa",
-	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.":
-		"Engram: Bỏ qua {count} tệp đính kèm — nâng cấp để đồng bộ hóa ảnh & PDF.",
-	"Engram: plan upgraded — syncing {count} attachments…":
-		"Engram: Nâng cấp gói — đang đồng bộ hóa {count} tệp đính kèm…",
-	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
-		"Bỏ qua thao tác kéo tất cả (xóa dữ liệu thừa): không thể lấy bản chụp nhanh độc quyền của máy chủ (xung đột). Không có gì bị xóa.",
-	"Pull all aborted: another sync is running (replay contention). Try again when it finishes.":
-		"Bỏ qua thao tác kéo tất cả: một thao tác đồng bộ khác đang chạy (xung đột). Thử lại khi nó hoàn thành.",
-	"Pull all failed: {error}": "Thao tác kéo tất cả thất bại: {error}",
-	"Engram: sync conflict on {path} — your local edit was saved as {copy}":
-		"Engram: xung đột đồng bộ trên {path} — chỉnh sửa cục bộ của bạn đã được lưu dưới dạng {copy}",
-	"Open note": "Mở ghi chú",
-	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
-		"Engram: {count} ghi chú có vấn đề về frontmatter. Mở Trung tâm đồng bộ hóa để sửa.",
-	'Engram Sync: renamed "{name}" (unsupported characters)':
-		'Engram Sync: đổi tên "{name}" (ký tự không được hỗ trợ)',
-	'Engram: frontmatter problem in "{name}"': 'Engram: vấn đề về frontmatter trong "{name}"',
+	Keyword: "Từ khóa",
+	Semantic: "Ngữ nghĩa",
+	Both: "Cả hai",
+	"matches your words and their other forms — 'run' finds 'running' — plus this device.":
+		"khớp với từ của bạn và các dạng khác — 'run' tìm 'running' — cộng với thiết bị này.",
+	"matches meaning. Finds notes that never use the words you typed.":
+		"khớp với ý nghĩa. Tìm ghi chú không sử dụng các từ bạn nhập.",
+	"matches words and meaning together, plus this device. Widest results.":
+		"khớp với cả từ và ý nghĩa, cộng với thiết bị này. Kết quả rộng nhất.",
+	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
+		"Engram lập chỉ mục {indexed} trong số {all} ghi chú của bạn. Phần còn lại chỉ khớp trên thiết bị này. Nâng cấp để lập chỉ mục mọi thứ.",
+	"Searching {indexed} of {all} notes. Upgrade to search everything.":
+		"Tìm kiếm {indexed} trong số {all} ghi chú. Nâng cấp để tìm kiếm mọi thứ.",
+	"Search your vault…": "Tìm kiếm trong kho lưu trữ của bạn…",
+	"Clear search": "Xóa tìm kiếm",
+	"Search settings": "Cài đặt tìm kiếm",
+	"Filter by folder…": "Lọc theo thư mục…",
+	"Filter by tags…": "Lọc theo thẻ…",
+	"Remove tag {tag}": "Xóa thẻ {tag}",
+	"Engram unreachable. Showing matches from this device only.":
+		"Engram không khả dụng. Chỉ hiển thị kết quả từ thiết bị này.",
+	"Search failed — check connection": "Tìm kiếm thất bại — kiểm tra kết nối",
+	"No results found": "Không tìm thấy kết quả",
+	Untitled: "Không tiêu đề",
+	exact: "chính xác",
+	"meaning + exact": "nghĩa + chính xác",
+	meaning: "nghĩa",
+	"match strength: {pct}%": "độ chính xác: {pct}%",
+	"No source path for this result": "Không tìm thấy đường dẫn nguồn cho kết quả này",
+	"Note not synced locally": "Ghi chú chưa được đồng bộ hóa cục bộ",
+	"{count} files": "{count} tệp",
+	"Notes searchable": "Ghi chú có thể tìm kiếm",
+	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
+		"Các ghi chú sau đây vẫn được đồng bộ hóa và mở bình thường, chúng chỉ không nằm trong chỉ mục tìm kiếm. Chỉ mục lưu trữ các ghi chú cũ nhất của bạn, vì vậy các ghi chú mới nhất của bạn sẽ không nằm trong đó.",
+	"Notes stored": "Ghi chú đã được lưu trữ",
+	"AI searches": "Tìm kiếm AI",
+	"{formatted} per day": "{formatted} mỗi ngày",
+	"Note couldn't be processed": "Không thể xử lý ghi chú",
+	"The server couldn't process this note. Check its contents, then edit and save to try again.":
+		"Máy chủ không thể xử lý ghi chú này. Kiểm tra nội dung, sau đó chỉnh sửa và lưu để thử lại.",
+	"Attachments need a paid plan": "Tệp đính kèm cần gói trả phí",
+	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
+		"Gói miễn phí chỉ đồng bộ hóa ghi chú. Nâng cấp để đồng bộ hóa hình ảnh và PDF.",
+	"Attachment storage full": "Bộ nhớ tệp đính kèm đã đầy",
+	"You've used all the attachment storage on your plan. Upgrade for more.":
+		"Bạn đã sử dụng hết dung lượng lưu trữ tệp đính kèm trong gói của bạn. Nâng cấp để có thêm dung lượng.",
+	"Too large for the server": "Quá lớn cho máy chủ",
+	"The server limit is 5 MB. Compress or split the file, then it will sync.":
+		"Giới hạn của máy chủ là 5 MB. Nén hoặc chia nhỏ tệp, sau đó nó sẽ được đồng bộ hóa.",
+	"Sign-in expired": "Phiên đăng nhập đã hết hạn",
+	"Reconnect your account to resume syncing.":
+		"Kết nối lại tài khoản của bạn để tiếp tục đồng bộ hóa.",
+	"Unresolved conflict": "Xung đột chưa được giải quyết",
+	"Open the file to resolve the conflict, then sync again.":
+		"Mở tệp để giải quyết xung đột, sau đó đồng bộ hóa lại.",
+	"Frontmatter needs a fix": "Cần sửa phần frontmatter",
+	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
+		"Ghi chú đã được đồng bộ hóa, nhưng phần frontmatter không thể phân tích đầy đủ. Mở nó để sửa dòng được đánh dấu.",
+	"Server error": "Lỗi máy chủ",
+	"A temporary server problem — retrying automatically.":
+		"Một vấn đề tạm thời với máy chủ — đang thử lại tự động.",
+	"Network unavailable": "Mạng không khả dụng",
+	"Can't reach the server — retrying automatically.":
+		"Không thể kết nối với máy chủ — đang thử lại tự động.",
+	"Sync failed": "Đồng bộ hóa thất bại",
+	"An unexpected error — retrying automatically.":
+		"Một lỗi không mong muốn — đang thử lại tự động.",
+	"Frontmatter could not be parsed": "Không thể phân tích frontmatter",
 	"Engram: this plugin is too old to sync (needs {version} or newer). Update it to continue.":
 		"Engram: plugin này quá cũ để đồng bộ hóa (cần {version} trở lên). Cập nhật để tiếp tục.",
 	"Engram: this plugin is too old to sync. Update it to continue.":
 		"Engram: plugin này quá cũ để đồng bộ hóa. Cập nhật để tiếp tục.",
 	Update: "Cập nhật",
-	"waiting for a connection": "đang chờ kết nối",
-	"sync is paused": "Đã tạm dừng đồng bộ hóa",
-	"syncing now": "đang đồng bộ hóa",
-	"waiting to retry": "đang chờ thử lại",
-	"{count} not on your plan": "{count} không nằm trong gói của bạn",
-	"{count} need attention": "{count} cần chú ý",
-	"{count} retrying": "{count} lần thử lại",
-	"{count} ignored": "{count} bị bỏ qua",
-	"{count} queued — {reason}": "{count} đang chờ — {reason}",
-	"Sync...": "Đồng bộ hóa...",
-	Refresh: "Làm mới",
-	"Not synced on your plan ({count})": "Chưa được đồng bộ hóa trong gói của bạn ({count})",
-	"These files are fine. They just need a paid plan to sync.":
-		"Các tệp này không có vấn đề. Chúng chỉ cần một gói trả phí để đồng bộ hóa.",
-	"Show files ({count}) ▾": "Hiển thị tệp ({count}) ▾",
-	"Sync these now": "Đồng bộ hóa các tệp này ngay bây giờ",
-	"Needs attention ({count})": "Cần xử lý ({count})",
-	"Clear all": "Xóa tất cả",
-	"Nothing needs your attention. 🎉": "Không có gì cần bạn quan tâm. 🎉",
-	Dismiss: "Đóng",
-	"Retrying automatically ({count})": "Thử lại tự động ({count})",
-	"Retry all now": "Thử lại tất cả ngay",
-	"Temporary errors. These clear themselves once the server recovers.":
-		"Lỗi tạm thời. Chúng sẽ tự động biến mất khi máy chủ hoạt động trở lại.",
-	"{count} attempts": "{count} lần thử",
-	Open: "Mở",
-	Ignore: "Bỏ qua",
-	"Ignored ({count})": "Bỏ qua ({count})",
-	"No files ignored. Use the ignore button on a failure row to stop syncing it.":
-		'Không có tệp nào bị bỏ qua. Sử dụng nút "bỏ qua" trên mỗi dòng lỗi để ngừng đồng bộ hóa tệp đó.',
-	Restore: "Khôi phục",
-	"File not found locally: {path}": "Không tìm thấy tệp cục bộ: {path}",
-	"Ignored {path} — won't sync until restored from Sync Center.":
-		"Đã bỏ qua {path} — sẽ không đồng bộ hóa cho đến khi được khôi phục từ Trung tâm đồng bộ hóa.",
-	"Restored {path} — will sync on next push.":
-		"Đã khôi phục {path} — sẽ đồng bộ hóa khi đẩy lần sau.",
-	"Activity ({count})": "Hoạt động ({count})",
-	Clear: "Xóa",
-	"No activity yet. Push or pull to see entries here.":
-		"Chưa có hoạt động nào. Nhấn nút đẩy hoặc kéo để xem các mục ở đây.",
-	Pushed: "Đã đẩy",
-	Pulled: "Đã kéo",
-	Deleted: "Đã xóa",
-	Conflict: "Xung đột",
-	Skipped: "Bỏ qua",
-	Error: "Lỗi",
-	Stats: "Thống kê",
-	"Notes on this device": "Ghi chú trên thiết bị này",
-	"Attachments on this device": "Tệp đính kèm trên thiết bị này",
-	"Remote vault": "Kho lưu trữ từ xa",
-	"not linked": "chưa liên kết",
-	"Plan usage": "Sử dụng gói",
-	"Node.js dependencies": "Các thư viện Node.js",
-	"Python virtual environment": "Môi trường ảo Python",
-	"Python bytecode cache": "Bộ nhớ đệm bytecode Python",
-	"Vendored dependencies": "Các thư viện đi kèm",
-	"Gradle build cache": "Bộ nhớ đệm Gradle",
-	"Rust/Java build output": "Đầu ra biên dịch Rust/Java",
-	"Build output": "Đầu ra biên dịch",
-	"Next.js build output": "Đầu ra biên dịch Next.js",
-	"Distribution build output": "Đầu ra biên dịch phân phối",
-	"Cargo cache": "Bộ nhớ đệm Cargo",
-	"CocoaPods dependencies": "Các thư viện CocoaPods",
-	"Dart tool cache": "Bộ nhớ đệm công cụ Dart",
-	"Generic cache directory": "Thư mục bộ nhớ đệm chung",
-	"Ignore patterns": "Bỏ qua mẫu",
-	"Custom patterns": "Mẫu tùy chỉnh",
-	"Paths to skip (one per line). Folder patterns end with /. Built-in: {configDir}/, .trash/, .git/":
-		"Các đường dẫn cần bỏ qua (mỗi dòng một). Mẫu thư mục kết thúc bằng /. Tích hợp sẵn: {configDir}/, .trash/, .git/",
-	Diagnostics: "Chẩn đoán",
-	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use.":
-		"Gửi chi tiết hoạt động đồng bộ hóa, kho lưu trữ và kết nối đến máy chủ để khắc phục sự cố, với theo dõi phân tán trên các yêu cầu. Chỉ gửi siêu dữ liệu, không bao giờ gửi nội dung ghi chú. Tắt nếu không cần.",
-	"Diagnostics detail": "Chi tiết chẩn đoán",
-	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
-		"Mức độ nghiêm trọng tối thiểu khi bật chẩn đoán. Mức độ cao hơn sẽ gửi ít dòng hơn. Mặc định: Thông tin.",
-	"Errors only": "Chỉ lỗi",
-	"Warnings and errors": "Cảnh báo và lỗi",
-	"Info (default)": "Thông tin (mặc định)",
-	"Debug (verbose)": "Gỡ lỗi (chi tiết)",
-	About: "Giới thiệu",
-	"License: {name}": "Giấy phép: {name}",
-	"⚠ Detected: {label}/ ({formatted} files)": "⚠ Phát hiện: {label} ({formatted} tệp)",
-	"{desc} — should not be synced": "{desc} — không nên đồng bộ hóa",
-	"Add to ignores": "Thêm vào danh sách bỏ qua",
-	"Added {pattern} to ignore patterns": "Đã thêm {pattern} vào danh sách bỏ qua",
-	"Version: {version}": "Phiên bản: {version}",
-	"Source: {link}": "Nguồn: {link}",
-	"Engram URL": "URL Engram",
-	"✓ Engram server reachable (v{version})": "✓ Máy chủ Engram có thể truy cập (v{version})",
-	"✗ server responded but isn't an Engram backend":
-		"✗ Máy chủ đã phản hồi nhưng không phải là máy chủ Engram",
-	"✗ couldn't reach a server at this URL": "✗ Không thể kết nối đến máy chủ tại URL này",
-	"Checking server…": "Đang kiểm tra máy chủ…",
-	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":
-		"Địa chỉ máy chủ này có vẻ không đầy đủ. Hãy bao gồm cả giao thức, ví dụ: http://127.0.0.1:4000",
-	"Engram backend changed — sign in again to continue.":
-		"Backend của Engram đã thay đổi — đăng nhập lại để tiếp tục.",
-	Authentication: "Xác thực",
-	"Signed in as {email}": "Đã đăng nhập với tư cách {email}",
-	"Authenticated via Engram account (OAuth).": "Xác thực qua tài khoản Engram (OAuth).",
-	"Manage account": "Quản lý tài khoản",
-	"Sign out": "Đăng xuất",
-	"Using API key": "Sử dụng khóa API",
-	"Authenticated via manual API key.": "Xác thực qua khóa API thủ công.",
-	"Clear key": "Xóa khóa",
-	"Switch to sign in": "Chuyển sang đăng nhập",
-	"Engram: sign-in failed ({error})": "Engram: đăng nhập thất bại ({error})",
-	"Sign in or create an account": "Đăng nhập hoặc tạo tài khoản",
-	"Opens your browser to sign in, or create an account if you don't have one yet, then links this vault.":
-		"Mở trình duyệt của bạn để đăng nhập, hoặc tạo tài khoản nếu bạn chưa có, sau đó liên kết kho lưu trữ này.",
-	"Sign in": "Đăng nhập",
-	"Or authenticate with a token instead of signing in. Engram Cloud API keys require the Pro plan; on Free and Starter, sign in above.":
-		"Hoặc xác thực bằng token thay vì đăng nhập. Các khóa API Engram Cloud yêu cầu gói Pro; trên các gói Free và Starter, hãy đăng nhập ở trên.",
-	"Or authenticate with a token instead of signing in.":
-		"Hoặc xác thực bằng token thay vì đăng nhập.",
-	"API key": "Khóa API",
-	Token: "Token",
-	"Bearer token from your Engram account.": "Token từ tài khoản Engram của bạn.",
-	Save: "Lưu",
-	"Enter an API key first": "Nhập khóa API trước",
-	"That does not look like an Engram API key (expected {prefix}…).":
-		"Đó không phải là khóa API Engram (mong đợi {prefix}…).",
-	Vault: "Kho lưu trữ",
-	"Vault selection": "Chọn kho lưu trữ",
-	"Select which vault this plugin syncs with.": "Chọn kho lưu trữ mà plugin này sẽ đồng bộ hóa.",
-	"No vaults found — first sync will create one":
-		"Không tìm thấy kho lưu trữ nào — lần đồng bộ hóa đầu tiên sẽ tạo một kho",
-	"Pick a vault (previous: '{name}' not found)":
-		"Chọn một kho lưu trữ (trước đó: '{name}' không tìm thấy)",
-	"Pick a vault (previous: id {id} not found)":
-		"Chọn một kho lưu trữ (trước đó: id {id} không tìm thấy)",
-	"Pick a vault": "Chọn một kho lưu trữ",
-	"Vault ID: {id}": "ID kho lưu trữ: {id}",
-	Change: "Thay đổi",
-	"Support development": "Hỗ trợ phát triển",
-	"If this plugin saves you time, consider supporting development.":
-		"Nếu plugin này giúp bạn tiết kiệm thời gian, hãy cân nhắc hỗ trợ phát triển.",
-	"GitHub Sponsors": "GitHub Sponsors",
-	"Sign-in required to load vaults": "Đăng nhập là cần thiết để tải kho lưu trữ",
+	"Invalid API key": "Khóa API không hợp lệ",
+	"Request failed ({status})": "Yêu cầu thất bại ({status})",
+	"Syncing...": "Đang đồng bộ hóa...",
+	"👋 Welcome": "👋 Chào mừng",
+	"🔌 Connection": "🔌 Kết nối",
+	"🔄 Sync Center": "🔄 Trung tâm đồng bộ hóa",
+	"⚙️ Advanced": "⚙️ Nâng cao",
+	"💬 Feedback": "💬 Phản hồi",
+	"Engram: settings tab failed to render ({error})":
+		"Engram: tab cài đặt không hiển thị ({error})",
+	Disconnected: "Đã ngắt kết nối",
+	"Error: {error}": "Lỗi: {error}",
+	unknown: "không xác định",
+	"Connected — waiting for first sync decision":
+		"Đã kết nối — đang chờ quyết định đồng bộ hóa đầu tiên",
+	"Connected — live sync active": "Đã kết nối — đồng bộ hóa trực tiếp đang hoạt động",
+	"Connected — polling": "Đã kết nối — đang kiểm tra",
+	"Not configured": "Chưa được cấu hình",
+	"Open sync setup": "Mở cài đặt đồng bộ hóa",
+	"Sync log": "Nhật ký đồng bộ hóa",
+	"Showing {count} entries": "Hiển thị {count} mục",
+	"No sync activity this session.": "Chưa có hoạt động đồng bộ hóa trong phiên này.",
+	"({count} errors)": "({count} lỗi)",
+	"...": "...",
+	'... "{name}" ...': '... "{name}" ...',
+	"The server took too long to respond. Try again.": "Máy chủ phản hồi quá chậm. Thử lại.",
+	"Not signed in, or the session expired. Sign in again in Engram settings.":
+		"Chưa đăng nhập, hoặc phiên đã hết hạn. Đăng nhập lại trong phần cài đặt Engram.",
+	"The file is too large for the server.": "Tệp quá lớn đối với máy chủ.",
+	"Too many requests. Wait a moment and try again.":
+		"Quá nhiều yêu cầu. Chờ một lát rồi thử lại.",
 	"Server error ({status}) — check Engram logs":
 		"Lỗi máy chủ ({status}) — kiểm tra nhật ký Engram",
 	"Could not reach Engram — check connection": "Không thể kết nối với Engram — kiểm tra kết nối",
-	"Engram Cloud": "Engram Cloud",
-	"Self-hosted": "Tự lưu trữ",
-	Backend: "Backend",
-	"Where this vault syncs to. Each backend keeps its own sign-in.":
-		"Nơi kho lưu trữ này được đồng bộ hóa. Mỗi backend có phương thức đăng nhập riêng.",
-	"Switched to {mode}.": "Đã chuyển sang {mode}.",
-	"Not connected. Enter your Engram server URL below to start syncing.":
-		"Chưa kết nối. Nhập URL máy chủ Engram của bạn bên dưới để bắt đầu đồng bộ hóa.",
-	"Run your own Engram server": "Chạy máy chủ Engram của riêng bạn",
-	"Engram is the backend that powers sync and semantic search.":
-		"Engram là backend cung cấp khả năng đồng bộ hóa và tìm kiếm ngữ nghĩa.",
-	"Nothing in this vault syncs until you choose how to merge it with the server.":
-		"Không có gì trong kho lưu trữ này được đồng bộ hóa cho đến khi bạn chọn cách hợp nhất nó với máy chủ.",
-	"Choose sync direction": "Chọn chiều đồng bộ hóa",
+	"Frontmatter isn't valid YAML.": "Frontmatter không phải là định dạng YAML hợp lệ.",
+	"A frontmatter key could not be parsed as YAML.":
+		"Không thể phân tích một khóa frontmatter thành YAML.",
+	"This note could not be processed and was skipped.":
+		"Ghi chú này không thể xử lý và đã bị bỏ qua.",
+	'Frontmatter key "{key}" could not be parsed as YAML.':
+		'Không thể phân tích khóa frontmatter "{key}" thành YAML.',
 	Bug: "Lỗi",
 	Idea: "Ý tưởng",
 	Confusing: "Khó hiểu",
@@ -603,21 +517,107 @@ const vi: Dict = {
 	"Join our Discord": "Tham gia Discord của chúng tôi",
 	"Create a hosted account at {signup}, or self-host the backend ({guide}).":
 		"Tạo tài khoản trên {signup}, hoặc tự thiết lập máy chủ ({guide}).",
-	"...": "...",
-	'... "{name}" ...': '... "{name}" ...',
-	"The server took too long to respond. Try again.": "Máy chủ phản hồi quá chậm. Thử lại.",
-	"Not signed in, or the session expired. Sign in again in Engram settings.":
-		"Chưa đăng nhập, hoặc phiên đã hết hạn. Đăng nhập lại trong phần cài đặt Engram.",
-	"The file is too large for the server.": "Tệp quá lớn đối với máy chủ.",
-	"Too many requests. Wait a moment and try again.":
-		"Quá nhiều yêu cầu. Chờ một lát rồi thử lại.",
-	"Frontmatter isn't valid YAML.": "Frontmatter không phải là định dạng YAML hợp lệ.",
-	"A frontmatter key could not be parsed as YAML.":
-		"Không thể phân tích một khóa frontmatter thành YAML.",
-	"This note could not be processed and was skipped.":
-		"Ghi chú này không thể xử lý và đã bị bỏ qua.",
-	'Frontmatter key "{key}" could not be parsed as YAML.':
-		'Không thể phân tích khóa frontmatter "{key}" thành YAML.',
+	"Engram URL": "URL Engram",
+	"✓ Engram server reachable (v{version})": "✓ Máy chủ Engram có thể truy cập (v{version})",
+	"✗ server responded but isn't an Engram backend":
+		"✗ Máy chủ đã phản hồi nhưng không phải là máy chủ Engram",
+	"✗ couldn't reach a server at this URL": "✗ Không thể kết nối đến máy chủ tại URL này",
+	"Checking server…": "Đang kiểm tra máy chủ…",
+	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":
+		"Địa chỉ máy chủ này có vẻ không đầy đủ. Hãy bao gồm cả giao thức, ví dụ: http://127.0.0.1:4000",
+	"Engram backend changed — sign in again to continue.":
+		"Backend của Engram đã thay đổi — đăng nhập lại để tiếp tục.",
+	Authentication: "Xác thực",
+	"Signed in as {email}": "Đã đăng nhập với tư cách {email}",
+	"Authenticated via Engram account (OAuth).": "Xác thực qua tài khoản Engram (OAuth).",
+	"Manage account": "Quản lý tài khoản",
+	"Sign out": "Đăng xuất",
+	"Using API key": "Sử dụng khóa API",
+	"Authenticated via manual API key.": "Xác thực qua khóa API thủ công.",
+	"Clear key": "Xóa khóa",
+	"Switch to sign in": "Chuyển sang đăng nhập",
+	"Engram: sign-in failed ({error})": "Engram: đăng nhập thất bại ({error})",
+	"Sign in or create an account": "Đăng nhập hoặc tạo tài khoản",
+	"Opens your browser to sign in, or create an account if you don't have one yet, then links this vault.":
+		"Mở trình duyệt của bạn để đăng nhập, hoặc tạo tài khoản nếu bạn chưa có, sau đó liên kết kho lưu trữ này.",
+	"Sign in": "Đăng nhập",
+	"Or authenticate with a token instead of signing in. Engram Cloud API keys require the Pro plan; on Free and Starter, sign in above.":
+		"Hoặc xác thực bằng token thay vì đăng nhập. Các khóa API Engram Cloud yêu cầu gói Pro; trên các gói Free và Starter, hãy đăng nhập ở trên.",
+	"Or authenticate with a token instead of signing in.":
+		"Hoặc xác thực bằng token thay vì đăng nhập.",
+	"API key": "Khóa API",
+	Token: "Token",
+	"Bearer token from your Engram account.": "Token từ tài khoản Engram của bạn.",
+	Save: "Lưu",
+	"Enter an API key first": "Nhập khóa API trước",
+	"That does not look like an Engram API key (expected {prefix}…).":
+		"Đó không phải là khóa API Engram (mong đợi {prefix}…).",
+	Vault: "Kho lưu trữ",
+	"Vault selection": "Chọn kho lưu trữ",
+	"Select which vault this plugin syncs with.": "Chọn kho lưu trữ mà plugin này sẽ đồng bộ hóa.",
+	"No vaults found — first sync will create one":
+		"Không tìm thấy kho lưu trữ nào — lần đồng bộ hóa đầu tiên sẽ tạo một kho",
+	"Pick a vault (previous: '{name}' not found)":
+		"Chọn một kho lưu trữ (trước đó: '{name}' không tìm thấy)",
+	"Pick a vault (previous: id {id} not found)":
+		"Chọn một kho lưu trữ (trước đó: id {id} không tìm thấy)",
+	"Pick a vault": "Chọn một kho lưu trữ",
+	"Vault ID: {id}": "ID kho lưu trữ: {id}",
+	Change: "Thay đổi",
+	"Support development": "Hỗ trợ phát triển",
+	"If this plugin saves you time, consider supporting development.":
+		"Nếu plugin này giúp bạn tiết kiệm thời gian, hãy cân nhắc hỗ trợ phát triển.",
+	"GitHub Sponsors": "GitHub Sponsors",
+	"Sign-in required to load vaults": "Đăng nhập là cần thiết để tải kho lưu trữ",
+	"Engram Cloud": "Engram Cloud",
+	"Self-hosted": "Tự lưu trữ",
+	Backend: "Backend",
+	"Where this vault syncs to. Each backend keeps its own sign-in.":
+		"Nơi kho lưu trữ này được đồng bộ hóa. Mỗi backend có phương thức đăng nhập riêng.",
+	"Switched to {mode}.": "Đã chuyển sang {mode}.",
+	"Not connected. Enter your Engram server URL below to start syncing.":
+		"Chưa kết nối. Nhập URL máy chủ Engram của bạn bên dưới để bắt đầu đồng bộ hóa.",
+	"Run your own Engram server": "Chạy máy chủ Engram của riêng bạn",
+	"Engram is the backend that powers sync and semantic search.":
+		"Engram là backend cung cấp khả năng đồng bộ hóa và tìm kiếm ngữ nghĩa.",
+	"Nothing in this vault syncs until you choose how to merge it with the server.":
+		"Không có gì trong kho lưu trữ này được đồng bộ hóa cho đến khi bạn chọn cách hợp nhất nó với máy chủ.",
+	"Choose sync direction": "Chọn chiều đồng bộ hóa",
+	"Node.js dependencies": "Các thư viện Node.js",
+	"Python virtual environment": "Môi trường ảo Python",
+	"Python bytecode cache": "Bộ nhớ đệm bytecode Python",
+	"Vendored dependencies": "Các thư viện đi kèm",
+	"Gradle build cache": "Bộ nhớ đệm Gradle",
+	"Rust/Java build output": "Đầu ra biên dịch Rust/Java",
+	"Build output": "Đầu ra biên dịch",
+	"Next.js build output": "Đầu ra biên dịch Next.js",
+	"Distribution build output": "Đầu ra biên dịch phân phối",
+	"Cargo cache": "Bộ nhớ đệm Cargo",
+	"CocoaPods dependencies": "Các thư viện CocoaPods",
+	"Dart tool cache": "Bộ nhớ đệm công cụ Dart",
+	"Generic cache directory": "Thư mục bộ nhớ đệm chung",
+	"Ignore patterns": "Bỏ qua mẫu",
+	"Custom patterns": "Mẫu tùy chỉnh",
+	"Paths to skip (one per line). Folder patterns end with /. Built-in: {configDir}/, .trash/, .git/":
+		"Các đường dẫn cần bỏ qua (mỗi dòng một). Mẫu thư mục kết thúc bằng /. Tích hợp sẵn: {configDir}/, .trash/, .git/",
+	Diagnostics: "Chẩn đoán",
+	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use.":
+		"Gửi chi tiết hoạt động đồng bộ hóa, kho lưu trữ và kết nối đến máy chủ để khắc phục sự cố, với theo dõi phân tán trên các yêu cầu. Chỉ gửi siêu dữ liệu, không bao giờ gửi nội dung ghi chú. Tắt nếu không cần.",
+	"Diagnostics detail": "Chi tiết chẩn đoán",
+	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
+		"Mức độ nghiêm trọng tối thiểu khi bật chẩn đoán. Mức độ cao hơn sẽ gửi ít dòng hơn. Mặc định: Thông tin.",
+	"Errors only": "Chỉ lỗi",
+	"Warnings and errors": "Cảnh báo và lỗi",
+	"Info (default)": "Thông tin (mặc định)",
+	"Debug (verbose)": "Gỡ lỗi (chi tiết)",
+	About: "Giới thiệu",
+	"License: {name}": "Giấy phép: {name}",
+	"⚠ Detected: {label}/ ({formatted} files)": "⚠ Phát hiện: {label} ({formatted} tệp)",
+	"{desc} — should not be synced": "{desc} — không nên đồng bộ hóa",
+	"Add to ignores": "Thêm vào danh sách bỏ qua",
+	"Added {pattern} to ignore patterns": "Đã thêm {pattern} vào danh sách bỏ qua",
+	"Version: {version}": "Phiên bản: {version}",
+	"Source: {link}": "Nguồn: {link}",
 };
 
 export default vi;
