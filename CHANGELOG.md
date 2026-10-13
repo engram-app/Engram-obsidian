@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.34.1](https://github.com/engram-app/Engram-obsidian/compare/1.34.0...1.34.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **i18n:** translate Sync Center headings, split pt/pt-BR ([#582](https://github.com/engram-app/Engram-obsidian/issues/582)) ([381b1ec](https://github.com/engram-app/Engram-obsidian/commit/381b1ec4e33f21367df49a0a0f4914837adec671))
+
 ## [1.34.0](https://github.com/engram-app/Engram-obsidian/compare/1.33.4...1.34.0) (2026-10-12)
 
 
