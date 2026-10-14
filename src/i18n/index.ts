@@ -56,8 +56,13 @@ const LOCALES: Record<string, Dict> = {
  * undefined import; such an app simply gets English.
  */
 export function currentLocale(): string {
-	if (typeof getLanguage !== "function") return "en";
-	return getLanguage() || "en";
+	return obsidianLocale() ?? "en";
+}
+
+/** Obsidian's language, or undefined when the app cannot say (too old, or empty). */
+export function obsidianLocale(): string | undefined {
+	if (typeof getLanguage !== "function") return undefined;
+	return getLanguage() || undefined;
 }
 
 /** Exact code first, then its base language, so `en-GB` reaches `en`. */
