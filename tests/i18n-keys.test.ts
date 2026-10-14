@@ -27,7 +27,7 @@ import ru from "../src/i18n/locale/ru";
 import vi from "../src/i18n/locale/vi";
 import zh from "../src/i18n/locale/zh";
 import zhTW from "../src/i18n/locale/zh-TW";
-import { profile } from "../src/i18n/translate-profile";
+import { compareKeys, profile } from "../src/i18n/translate-profile";
 
 const repoRoot = join(import.meta.dir, "..");
 
@@ -80,6 +80,30 @@ describe("locale keys track the source", () => {
 			expect(orphans).toEqual([]);
 		});
 	}
+
+	// renderCatalog sorts; a catalog out of order was written some other way.
+	// en-plurals is hand-written, so its order is free.
+	for (const [name, dict] of LOCALES.filter(([n]) => n !== "en-plurals")) {
+		test(`${name} lists its keys in sorted order`, () => {
+			const keys = Object.keys(dict);
+			expect(keys).toEqual(keys.toSorted(compareKeys));
+		});
+	}
+
+	test("state.json lists every map in sorted order", () => {
+		const unsorted: string[] = [];
+		const walk = (value: unknown, at: string): void => {
+			if (!value || typeof value !== "object" || Array.isArray(value)) return;
+			const keys = Object.keys(value);
+			if (keys.join("\0") !== keys.toSorted(compareKeys).join("\0")) unsorted.push(at);
+			for (const [k, v] of Object.entries(value)) walk(v, `${at}.${k}`);
+		};
+		walk(
+			JSON.parse(readFileSync(join(repoRoot, "src/i18n/locale/state.json"), "utf8")),
+			"state",
+		);
+		expect(unsorted).toEqual([]);
+	});
 
 	test("every plural entry supplies at least one form", () => {
 		for (const [name, dict] of LOCALES) {

@@ -146,10 +146,30 @@ function collapsePlural(value: string | PluralForms): string | PluralForms {
 		: value;
 }
 
+// Code-unit order. Catalogs and state.json are written sorted, not in source
+// order: source order depends on which file a key is first seen in (and on
+// readdir order), so every run reshuffled every catalog (Engram-obsidian#584).
+function compareKeys(a: string, b: string): number {
+	return a < b ? -1 : a > b ? 1 : 0;
+}
+
+// JSON with every object's keys sorted (state.json).
+function sortedJson(value: unknown): string {
+	return JSON.stringify(
+		value,
+		(_k, v: unknown) =>
+			v && typeof v === "object" && !Array.isArray(v)
+				? Object.fromEntries(Object.entries(v).sort(([a], [b]) => compareKeys(a, b)))
+				: v,
+		"\t",
+	);
+}
+
 // The catalog file shape (`const zhTW: Dict = {...}; export default zhTW;`).
 function renderCatalog(code: Target, catalog: Dict): string {
 	const ident = code.replace(/-(?<c>\w)/gu, (_m, c: string) => c.toUpperCase());
 	const body = Object.entries(catalog)
+		.sort(([a], [b]) => compareKeys(a, b))
 		.map(([k, v]) => `\t${JSON.stringify(k)}: ${JSON.stringify(collapsePlural(v))},\n`)
 		.join("");
 	return `import type { Dict } from "..";\n\n// ${SPECS[code].native}\nconst ${ident}: Dict = {\n${body}};\n\nexport default ${ident};\n`;
@@ -158,4 +178,4 @@ function renderCatalog(code: Target, catalog: Dict): string {
 type Target = keyof typeof SPECS;
 
 export type { Target };
-export { LEGACY_VERSION, profile, renderCatalog, tr };
+export { compareKeys, LEGACY_VERSION, profile, renderCatalog, sortedJson, tr };

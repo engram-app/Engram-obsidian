@@ -18,7 +18,13 @@ import type { StoredState } from "../src/i18n/core/core";
 import { run } from "../src/i18n/core/run";
 import { usedEntries } from "../src/i18n/keys-scan";
 import enPlurals from "../src/i18n/locale/en-plurals";
-import { LEGACY_VERSION, profile, renderCatalog, type Target } from "../src/i18n/translate-profile";
+import {
+	LEGACY_VERSION,
+	profile,
+	renderCatalog,
+	sortedJson,
+	type Target,
+} from "../src/i18n/translate-profile";
 
 const args = process.argv.slice(2);
 const flag = (name: string): string | undefined => {
@@ -85,7 +91,7 @@ const results = await run({
 		},
 		readState: () => readJson(stateFile),
 		writeState: (state) => {
-			writeFileSync(stateFile, `${JSON.stringify(state, null, "\t")}\n`);
+			writeFileSync(stateFile, `${sortedJson(state)}\n`);
 			format(stateFile);
 		},
 		resume: resumeDir
