@@ -55,7 +55,8 @@ import { sha256Hex } from "./content-hash";
 import { registerDiagnostics } from "./diagnostics";
 import { errMsg, isHttpStatus } from "./error-util";
 import { ExplicitFolders } from "./explicit-folders";
-import { obsidianLocale, t, tInto } from "./i18n";
+import { currentLocale, obsidianLocale, t, tInto } from "./i18n";
+import { type LegalNotice, noticeKey, noticesToShow, noticeText } from "./legal-notices";
 import { isPlanJoinReason } from "./limit-copy";
 import { LimitExceededError } from "./limit-error";
 import { notifyLimitExceeded } from "./limit-toast";
@@ -519,6 +520,51 @@ export default class EngramSyncPlugin extends Plugin {
 			this.openCommunityPluginsUpdate();
 			notice.hide();
 		});
+	}
+
+	/** One sticky Notice per pending legal change (see legal-notices.ts). Best
+	 *  effort: email and the web app also carry these, so a failed fetch only
+	 *  waits for the next check. */
+	private readonly legalNoticeToasts = new Map<string, Notice>();
+	/** Set first in onunload. A check still in flight then must not write
+	 *  data.json: it would overwrite the next instance's rotated token. */
+	private unloaded = false;
+
+	private async showLegalNotices(): Promise<void> {
+		if (!this.hasAuthConfigured()) return;
+		let notices: LegalNotice[];
+		try {
+			notices = await this.api.getLegalNotices();
+		} catch (err) {
+			rlog().warn("legal", `legal notice check failed: ${String(err)}`);
+			return;
+		}
+		if (this.unloaded) return;
+		const seen = this.settings.seenLegalNotices ?? [];
+		const show = noticesToShow(notices, seen);
+		if (show.length === 0) return;
+		for (const n of show) {
+			const frag = createFragment();
+			frag.appendText(`${noticeText(n, currentLocale())} `);
+			// A material change needs acceptance, so link where that happens.
+			if (n.material) {
+				frag.createEl("a", { text: t("Review and accept"), href: n.accept_url });
+			} else {
+				frag.createEl("a", { text: t("Read it"), href: n.url });
+			}
+			// Replace, never stack: a material notice repeats daily until accepted.
+			this.legalNoticeToasts.get(noticeKey(n))?.hide();
+			// 0 = stays until clicked: a legal change must not flash past.
+			this.legalNoticeToasts.set(noticeKey(n), new Notice(frag, 0));
+		}
+		// savePluginData, not saveSettings: the latter rebuilds the channel.
+		this.settings.seenLegalNotices = [...new Set([...seen, ...show.map(noticeKey)])];
+		await this.savePluginData(this.syncEngine.getLastSync());
+	}
+
+	private dismissLegalNotices(): void {
+		for (const n of this.legalNoticeToasts.values()) n.hide();
+		this.legalNoticeToasts.clear();
 	}
 
 	/** Take the user to the Community plugins settings tab and refresh Obsidian's
@@ -1153,6 +1199,14 @@ export default class EngramSyncPlugin extends Plugin {
 		this.setupNoteStream();
 
 		// Initial sync on startup (after workspace is ready)
+		// Pending legal changes: at launch, then daily for vaults left open.
+		// Registered here, after `api` and `syncEngine` exist: onLayoutReady runs
+		// the callback at once when the plugin is enabled mid-session.
+		this.app.workspace.onLayoutReady(() => void this.showLegalNotices());
+		this.registerInterval(
+			window.setInterval(() => void this.showLegalNotices(), 24 * 60 * 60 * 1000),
+		);
+
 		this.app.workspace.onLayoutReady(async () => {
 			devLog().log("lifecycle", "layout ready — starting initial sync");
 			rlog().info("lifecycle", "Layout ready — starting initial sync");
@@ -1426,8 +1480,10 @@ export default class EngramSyncPlugin extends Plugin {
 		// instance, and an in-flight refresh resolving post-unload would persist
 		// over the NEW instance's data.json and fork the rotating token chain
 		// (two live refreshers → server reuse detection revokes the family).
+		this.unloaded = true;
 		this.retireAuthProvider();
 		this.dismissSetupNotice();
+		this.dismissLegalNotices();
 		this.crdtWiring?.dispose();
 		devLog().log("lifecycle", "plugin unloading");
 		rlog().info("lifecycle", "Plugin unloading");

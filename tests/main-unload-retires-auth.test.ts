@@ -24,6 +24,8 @@ describe("onunload auth-provider retirement", () => {
 		order.length = 0;
 		const old = new OAuthAuth("engram_rt_old", "vault-1", "u@test.com", mock());
 		const disposeSpy = spyOn(old, "dispose");
+		let hidden = 0;
+		const toast = { hide: () => hidden++ };
 		const fake = Object.assign(Object.create(EngramSyncPlugin.prototype), {
 			authProvider: old,
 			crdtWiring: null,
@@ -47,11 +49,15 @@ describe("onunload auth-provider retirement", () => {
 			// optional in production — both fields always exist on a real plugin.
 			noteIdMap: { flushNow: () => order.push("flush") },
 			indexRoom: { destroy: () => {} },
+			legalNoticeToasts: new Map([["terms_of_service@2026-12-01", toast]]),
 		});
 
 		EngramSyncPlugin.prototype.onunload.call(fake as never);
 
 		expect(disposeSpy).toHaveBeenCalledTimes(1);
+		// A legal-notice check still in flight must not save, and its toasts go.
+		expect((fake as { unloaded: boolean }).unloaded).toBe(true);
+		expect(hidden).toBe(1);
 	});
 
 	// The index flush has to run BEFORE the socket goes, which is what its
@@ -83,6 +89,7 @@ describe("onunload auth-provider retirement", () => {
 			promiseTracker: null,
 			noteIdMap: { flushNow: () => order.push("flush") },
 			indexRoom: { destroy: () => order.push("destroy") },
+			legalNoticeToasts: new Map(),
 		});
 
 		EngramSyncPlugin.prototype.onunload.call(fake as never);

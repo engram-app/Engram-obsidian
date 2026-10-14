@@ -32,6 +32,7 @@ const ru: Dict = {
 	"API keys need Pro. Sign in with your Engram account instead.":
 		"Ключи API доступны только в тарифном плане Pro. Войдите с использованием вашей учётной записи Engram.",
 	About: "О программе",
+	"Accept it to keep syncing.": "Примите его, чтобы продолжить синхронизацию.",
 	"Account setup incomplete.": "Настройка учётной записи не завершена.",
 	"Account suspended. Contact support.":
 		"Учётная запись приостановлена. Обратитесь в службу поддержки.",
@@ -235,6 +236,8 @@ const ru: Dict = {
 	"Engram sync: syncing...": "Синхронизация Engram: синхронизация...",
 	"Engram unreachable. Showing matches from this device only.":
 		"Engram недоступен. Отображаются соответствия только с этого устройства.",
+	"Engram's {document} update, effective {date}.":
+		"Обновление Engram для {document}, вступает в силу {date}.",
 	"Engram: This vault has been deleted on the server.":
 		"Engram: это хранилище было удалено на сервере.",
 	"Engram: disconnected. Open Engram settings to reconnect.":
@@ -452,6 +455,7 @@ const ru: Dict = {
 		"Выберите хранилище для синхронизации. Мы пересчитаем предварительный просмотр синхронизации после вашего выбора.",
 	"Plan usage": "Использование по тарифному плану",
 	Plans: "Планы",
+	"Privacy Policy": "Политика конфиденциальности",
 	Pro: "Pro",
 	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
 		"Синхронизация всех (удаление дубликатов) прервана: не удалось получить эксклюзивный снимок сервера (конфликт доступа). Ничего не было удалено.",
@@ -464,6 +468,7 @@ const ru: Dict = {
 	Pushed: "Отправлено",
 	"Python bytecode cache": "Кэш байт-кода Python",
 	"Python virtual environment": "Виртуальное окружение Python",
+	"Read it": "Прочитать",
 	"Real-time sync": "Синхронизация в реальном времени",
 	"Reconnect your account to resume syncing.":
 		"Подключите учётную запись заново, чтобы продолжить синхронизацию.",
@@ -478,6 +483,7 @@ const ru: Dict = {
 		"Восстановлено {path} — синхронизация будет выполнена при следующей отправке.",
 	"Retry all now": "Повторить все сейчас",
 	"Retrying automatically ({count})": "Повторная попытка (автоматически, {count})",
+	"Review and accept": "Ознакомиться и принять",
 	"Run in background": "Работа в фоновом режиме",
 	"Run your own Engram server": "Запустите собственный сервер Engram",
 	"Rust/Java build output": "Результаты сборки Rust/Java",
@@ -559,6 +565,7 @@ const ru: Dict = {
 	"Tell us anything": "Расскажите нам о чём угодно",
 	"Temporary errors. These clear themselves once the server recovers.":
 		"Временные ошибки. Они исчезнут после восстановления сервера.",
+	"Terms of Service": "Условия использования",
 	"Thanks, we read every message.": "Спасибо, мы читаем каждое сообщение.",
 	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":
 		"Это не похоже на полный адрес сервера. Укажите схему, например http://127.0.0.1:4000",

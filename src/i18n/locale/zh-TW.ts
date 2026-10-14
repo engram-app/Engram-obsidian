@@ -25,6 +25,7 @@ const zhTW: Dict = {
 	"API keys need Pro. Sign in with your Engram account instead.":
 		"API 金鑰需要 Pro 方案。請使用您的 Engram 帳號登入。",
 	About: "關於",
+	"Accept it to keep syncing.": "同意以繼續同步。",
 	"Account setup incomplete.": "帳戶設定尚未完成。",
 	"Account suspended. Contact support.": "帳戶已停用。請聯絡客服。",
 	"Activity ({count})": "活動 ({count})",
@@ -162,6 +163,8 @@ const zhTW: Dict = {
 	"Engram sync: syncing...": "Engram 同步：正在同步...",
 	"Engram unreachable. Showing matches from this device only.":
 		"Engram 無法連線。僅顯示此設備上的匹配結果。",
+	"Engram's {document} update, effective {date}.":
+		"Engram 的 {document} 更新，自 {date} 起生效。",
 	"Engram: This vault has been deleted on the server.": "Engram: 此儲存庫已在伺服器上刪除。",
 	"Engram: disconnected. Open Engram settings to reconnect.":
 		"Engram：已斷線。前往 Engram 設定重新連接。",
@@ -339,6 +342,7 @@ const zhTW: Dict = {
 		"選擇一個要同步的儲存庫。您選擇後，我們會重新計算同步預覽。",
 	"Plan usage": "使用情況",
 	Plans: "方案",
+	"Privacy Policy": "隱私權政策",
 	Pro: "Pro 版",
 	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
 		"全部同步（刪除重複）已取消：無法取得獨佔伺服器快照（重播衝突）。沒有任何資料被刪除。",
@@ -351,6 +355,7 @@ const zhTW: Dict = {
 	Pushed: "已推送",
 	"Python bytecode cache": "Python 位元組碼快取",
 	"Python virtual environment": "Python 虛擬環境",
+	"Read it": "閱讀內容",
 	"Real-time sync": "即時同步",
 	"Reconnect your account to resume syncing.": "重新連接帳號即可繼續同步。",
 	Refresh: "重新整理",
@@ -363,6 +368,7 @@ const zhTW: Dict = {
 	"Restored {path} — will sync on next push.": "已還原 {path} — 下次推送時會同步。",
 	"Retry all now": "立即重試全部",
 	"Retrying automatically ({count})": "自動重試 ({count})",
+	"Review and accept": "檢閱並同意",
 	"Run in background": "在背景執行",
 	"Run your own Engram server": "運行您自己的 Engram 伺服器",
 	"Rust/Java build output": "Rust/Java 建置輸出",
@@ -434,6 +440,7 @@ const zhTW: Dict = {
 	"Tell us anything": "隨時告訴我們",
 	"Temporary errors. These clear themselves once the server recovers.":
 		"暫時性錯誤。伺服器恢復後，這些錯誤會自動消失。",
+	"Terms of Service": "服務條款",
 	"Thanks, we read every message.": "感謝您，我們會閱讀每一則訊息。",
 	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":
 		"這看起來不是完整的伺服器位址。請包含 schema，例如 http://127.0.0.1:4000",

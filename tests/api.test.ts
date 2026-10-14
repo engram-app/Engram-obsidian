@@ -756,6 +756,29 @@ describe("EngramApi", () => {
 		});
 	});
 
+	describe("getLegalNotices", () => {
+		test("reads legal_notices off GET /onboarding/status", async () => {
+			const notice = { document: "privacy_policy", version: "2026-10-12" };
+			mockRequestUrl.mockResolvedValueOnce({
+				status: 200,
+				json: { next_step: "done", legal_notices: [notice] },
+			} as any);
+			const result = await api.getLegalNotices();
+			const opts = mockRequestUrl.mock.calls[0][0] as any;
+			expect(opts.method).toBe("GET");
+			expect(opts.url).toBe(`${TEST_API_BASE}/onboarding/status`);
+			expect(result).toEqual([notice] as any);
+		});
+
+		test("an older backend without the field means no notices", async () => {
+			mockRequestUrl.mockResolvedValueOnce({
+				status: 200,
+				json: { next_step: "done" },
+			} as any);
+			expect(await api.getLegalNotices()).toEqual([]);
+		});
+	});
+
 	describe("pushAttachment", () => {
 		test("sends POST /attachments with path, content_base64, mime_type, mtime", async () => {
 			mockRequestUrl.mockResolvedValueOnce({

@@ -31,6 +31,7 @@ const es: Dict = {
 	"API keys need Pro. Sign in with your Engram account instead.":
 		"Las claves de API requieren la versión Pro. Inicia sesión con tu cuenta de Engram.",
 	About: "Acerca de",
+	"Accept it to keep syncing.": "Acepta para continuar sincronizando.",
 	"Account setup incomplete.": "Configuración de la cuenta incompleta.",
 	"Account suspended. Contact support.": "Cuenta suspendida. Contacta con soporte.",
 	"Activity ({count})": "Actividad ({count})",
@@ -226,6 +227,8 @@ const es: Dict = {
 	"Engram sync: syncing...": "Sincronización de Engram: sincronizando...",
 	"Engram unreachable. Showing matches from this device only.":
 		"Engram no está disponible. Mostrando coincidencias solo de este dispositivo.",
+	"Engram's {document} update, effective {date}.":
+		"Actualización de Engram {document}, vigente a partir del {date}.",
 	"Engram: This vault has been deleted on the server.":
 		"Engram: esta bóveda ha sido eliminada en el servidor.",
 	"Engram: disconnected. Open Engram settings to reconnect.":
@@ -435,6 +438,7 @@ const es: Dict = {
 		"Elige una bóveda para sincronizar. Recalcularemos la vista previa de la sincronización después de que la elijas.",
 	"Plan usage": "Uso del plan",
 	Plans: "Planes",
+	"Privacy Policy": "Política de privacidad",
 	Pro: "Pro",
 	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
 		"La descarga de todo (eliminando duplicados) se canceló: no se pudo obtener una instantánea exclusiva del servidor (conflicto de reescritura). Nada se eliminó.",
@@ -447,6 +451,7 @@ const es: Dict = {
 	Pushed: "Enviado",
 	"Python bytecode cache": "Caché de bytecode de Python",
 	"Python virtual environment": "Entorno virtual de Python",
+	"Read it": "Léelo",
 	"Real-time sync": "Sincronización en tiempo real",
 	"Reconnect your account to resume syncing.":
 		"Vuelve a conectar tu cuenta para reanudar la sincronización.",
@@ -461,6 +466,7 @@ const es: Dict = {
 		"Restaurado {path} — se sincronizará en el próximo envío.",
 	"Retry all now": "Reintentar todo ahora",
 	"Retrying automatically ({count})": "Reintentando automáticamente ({count})",
+	"Review and accept": "Revisar y aceptar",
 	"Run in background": "Ejecutar en segundo plano",
 	"Run your own Engram server": "Ejecuta tu propio servidor de Engram",
 	"Rust/Java build output": "Salida de compilación de Rust/Java",
@@ -541,6 +547,7 @@ const es: Dict = {
 	"Tell us anything": "Cuéntanos cualquier cosa",
 	"Temporary errors. These clear themselves once the server recovers.":
 		"Errores temporales. Se resolverán automáticamente cuando el servidor se recupere.",
+	"Terms of Service": "Términos del servicio",
 	"Thanks, we read every message.": "Gracias, leemos cada mensaje.",
 	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":
 		"Eso no parece una dirección de servidor completa. Incluye el esquema, por ejemplo http://127.0.0.1:4000",

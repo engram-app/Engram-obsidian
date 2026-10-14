@@ -26,6 +26,7 @@ const ko: Dict = {
 	"API keys need Pro. Sign in with your Engram account instead.":
 		"API 키는 Pro 버전에서만 사용할 수 있습니다. Engram 계정으로 로그인하세요.",
 	About: "정보",
+	"Accept it to keep syncing.": "동기화를 계속하려면 수락하세요.",
 	"Account setup incomplete.": "계정 설정이 완료되지 않았습니다.",
 	"Account suspended. Contact support.": "계정이 정지되었습니다. 지원팀에 문의하세요.",
 	"Activity ({count})": "활동 ({count})",
@@ -177,6 +178,8 @@ const ko: Dict = {
 	"Engram sync: syncing...": "Engram 동기화: 동기화 중...",
 	"Engram unreachable. Showing matches from this device only.":
 		"Engram에 연결할 수 없습니다. 이 기기에서만 검색 결과를 보여줍니다.",
+	"Engram's {document} update, effective {date}.":
+		"Engram의 {document} 업데이트, 적용일자: {date}.",
 	"Engram: This vault has been deleted on the server.":
 		"Engram: 이 보관함이 서버에서 삭제되었습니다.",
 	"Engram: disconnected. Open Engram settings to reconnect.":
@@ -360,6 +363,7 @@ const ko: Dict = {
 		"동기화할 보관함을 선택하세요. 선택 후 동기화 미리보기를 다시 계산합니다.",
 	"Plan usage": "사용량 확인",
 	Plans: "요금제",
+	"Privacy Policy": "개인정보 처리방침",
 	Pro: "Pro",
 	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
 		"모든 항목 가져오기 실패: 서버 스냅샷을 확보하지 못했습니다 (충돌). 삭제된 항목은 없습니다.",
@@ -372,6 +376,7 @@ const ko: Dict = {
 	Pushed: "푸시됨",
 	"Python bytecode cache": "Python 바이트코드 캐시",
 	"Python virtual environment": "Python 가상 환경",
+	"Read it": "확인해 보세요",
 	"Real-time sync": "실시간 동기화",
 	"Reconnect your account to resume syncing.": "계정을 다시 연결하면 동기화를 이어갑니다.",
 	Refresh: "새로 고침",
@@ -384,6 +389,7 @@ const ko: Dict = {
 	"Restored {path} — will sync on next push.": "{path} 복원 완료 – 다음 동기화 시 적용됩니다.",
 	"Retry all now": "지금 모두 다시 시도",
 	"Retrying automatically ({count})": "자동 재시도 ({count})",
+	"Review and accept": "확인 후 수락",
 	"Run in background": "백그라운드에서 실행",
 	"Run your own Engram server": "자체 Engram 서버 실행",
 	"Rust/Java build output": "Rust/Java 빌드 결과",
@@ -458,6 +464,7 @@ const ko: Dict = {
 	"Tell us anything": "자유롭게 의견을 말씀해주세요",
 	"Temporary errors. These clear themselves once the server recovers.":
 		"일시적인 오류입니다. 서버가 복구되면 자동으로 해결됩니다.",
+	"Terms of Service": "서비스 약관",
 	"Thanks, we read every message.": "감사합니다. 모든 메시지를 확인합니다.",
 	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":
 		"서버 주소가 올바르지 않습니다. 스키마를 포함해주세요. 예: http://127.0.0.1:4000",

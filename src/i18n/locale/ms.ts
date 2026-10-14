@@ -27,6 +27,7 @@ const ms: Dict = {
 	"API keys need Pro. Sign in with your Engram account instead.":
 		"Kunci API memerlukan langganan Pro. Log masuk dengan akaun Engram anda.",
 	About: "Mengenai",
+	"Accept it to keep syncing.": "Terima untuk terus menyegerakkan.",
 	"Account setup incomplete.": "Persediaan akaun belum lengkap.",
 	"Account suspended. Contact support.": "Akaun telah digantung. Hubungi sokongan.",
 	"Activity ({count})": "Aktiviti ({count})",
@@ -181,6 +182,8 @@ const ms: Dict = {
 	"Engram sync: syncing...": "Engram sedang disegerakkan: proses...",
 	"Engram unreachable. Showing matches from this device only.":
 		"Engram tidak dapat dihubungi. Hanya menunjukkan padanan daripada peranti ini.",
+	"Engram's {document} update, effective {date}.":
+		"Kemas kini Engram untuk {document}, berkuat kuasa {date}.",
 	"Engram: This vault has been deleted on the server.":
 		"Engram: Peti nota ini telah dipadamkan di server.",
 	"Engram: disconnected. Open Engram settings to reconnect.":
@@ -368,6 +371,7 @@ const ms: Dict = {
 		"Pilih peti nota untuk disegerakkan. Kami akan mengira semula pratonton sync selepas anda memilih.",
 	"Plan usage": "Penggunaan pelan",
 	Plans: "Pakej",
+	"Privacy Policy": "Dasar Privasi",
 	Pro: "Pro",
 	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
 		"Mengambil semua (padamkan yang berlebihan) dibatalkan: tidak dapat mendapatkan salinan server eksklusif (persaingan). Tiada yang dipadam.",
@@ -380,6 +384,7 @@ const ms: Dict = {
 	Pushed: "Ditolak",
 	"Python bytecode cache": "Cache bytecode Python",
 	"Python virtual environment": "Persekitaran maya Python",
+	"Read it": "Baca ia",
 	"Real-time sync": "Sync masa nyata",
 	"Reconnect your account to resume syncing.":
 		"Sambungkan semula akaun anda untuk meneruskan proses sync.",
@@ -394,6 +399,7 @@ const ms: Dict = {
 		"Dipulihkan {path} — akan disegerakkan pada push seterusnya.",
 	"Retry all now": "Cuba semula semua sekarang",
 	"Retrying automatically ({count})": "Mencuba semula secara automatik ({count})",
+	"Review and accept": "Semak dan terima",
 	"Run in background": "Jalankan di latar belakang",
 	"Run your own Engram server": "Jalankan pelayan Engram anda sendiri",
 	"Rust/Java build output": "Output binaan Rust/Java",
@@ -469,6 +475,7 @@ const ms: Dict = {
 	"Tell us anything": "Beritahu kami apa sahaja",
 	"Temporary errors. These clear themselves once the server recovers.":
 		"Kesilapan sementara. Ini akan hilang apabila server pulih.",
+	"Terms of Service": "Syarat Perkhidmatan",
 	"Thanks, we read every message.": "Terima kasih, kami membaca setiap mesej.",
 	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":
 		"Itu tidak seperti alamat pelayan yang lengkap. Sertakan skema, contohnya http://127.0.0.1:4000",
