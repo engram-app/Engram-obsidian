@@ -45,6 +45,14 @@ describe("renderCatalog", () => {
 			'import type { Dict } from "..";\n\n// 繁體中文\nconst zhTW: Dict = {\n\t"Sync": "同步",\n\t"{count} files": "{count} 個檔案",\n};\n\nexport default zhTW;\n',
 		);
 	});
+
+	// Source order made the layout depend on which file a key is first seen in (and
+	// on readdir order), so every bot run reshuffled every catalog: Engram-obsidian#584.
+	test("writes keys in sorted order, wherever they sit in the source", () => {
+		expect(renderCatalog("de", { b: "B", a: "A", Z: "Z" })).toContain(
+			'\t"Z": "Z",\n\t"a": "A",\n\t"b": "B",\n',
+		);
+	});
 });
 
 // The core is vendored from engram-app/Engram (frontend/src/i18n/core). A copy

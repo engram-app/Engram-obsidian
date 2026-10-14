@@ -18,7 +18,13 @@ import type { StoredState } from "../src/i18n/core/core";
 import { run } from "../src/i18n/core/run";
 import { usedEntries } from "../src/i18n/keys-scan";
 import enPlurals from "../src/i18n/locale/en-plurals";
-import { LEGACY_VERSION, profile, renderCatalog, type Target } from "../src/i18n/translate-profile";
+import {
+	LEGACY_VERSION,
+	profile,
+	renderCatalog,
+	sortedJson,
+	type Target,
+} from "../src/i18n/translate-profile";
 
 const args = process.argv.slice(2);
 const flag = (name: string): string | undefined => {
@@ -30,12 +36,9 @@ const targets = (Object.keys(profile.specs) as Target[]).filter((l) => !pick || 
 
 const root = join(import.meta.dir, "..");
 const localeDir = join(root, "src", "i18n", "locale");
-// Same file set and order as tests/i18n-keys.test.ts. Sorted: catalogs are
-// written in first-seen key order, and raw scan order is readdir order, which
-// differs per machine and made every run reorder every catalog.
+// Same file set as tests/i18n-keys.test.ts.
 const sources = [...new Glob("src/**/*.ts").scanSync(root)]
 	.filter((rel) => !rel.includes("i18n/locale"))
-	.sort()
 	.map((rel) => readFileSync(join(root, rel), "utf8"));
 
 async function loadFrom(dir: string, code: Target): Promise<Dict> {
@@ -88,7 +91,7 @@ const results = await run({
 		},
 		readState: () => readJson(stateFile),
 		writeState: (state) => {
-			writeFileSync(stateFile, `${JSON.stringify(state, null, "\t")}\n`);
+			writeFileSync(stateFile, `${sortedJson(state)}\n`);
 			format(stateFile);
 		},
 		resume: resumeDir
