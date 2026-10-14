@@ -37,12 +37,14 @@ Rename mid-write. `flushingHash` is keyed by the path at flush start. A rename l
 
 ## Testing lesson
 
-The first tests spied on calls and stayed green with the guards removed. They proved nothing. `tests/sync-crdt-discovery-echo.test.ts` now uses a real `ProviderRegistry` and asserts the final text (exactly `Version 5 of 5`) and that nothing is sent. Every guard has a test that fails when it is removed:
+The first tests spied on calls and stayed green with the guards removed. They proved nothing. `tests/sync-crdt-discovery-echo.test.ts` now uses a real `ProviderRegistry` and asserts the final text (exactly `Version 5 of 5`) and that nothing is sent. Every guard has a test that fails when it is removed (mutation-checked 2026-10-13; tests named by title, not by position):
 
-- removing the `flushingHash` check: tests 1, 3, 6
-- removing the gen gate: 1, 7
-- the old latest-started gate: 8
-- dropping the converge: 5
-- writing the REST body on discovery: 2, 5, 6
+- removing the `flushingHash` check: "a fan-out landing in discovery's modify window", "a doc that moved on while discovery's write is cached", "overlapping flushes to one path"
+- removing the gen gate (always record): "a fan-out landing in discovery's modify window", "an older flush finishing LAST", "an already-matching flush is newer"
+- recording only the latest-STARTED flush (an intermediate design that never shipped): "a newer flush that THROWS", "an already-matching flush is newer"
+- dropping the early-return `recorded` bump: "an already-matching flush is newer"
+- dropping the converge: "discovery behind the REST row re-handshakes"
+- writing the REST body on discovery: "discovery over a doc with history", "discovery behind the REST row re-handshakes", "a doc that moved on while discovery's write is cached"
+- dropping the `syncState.has` gate: "first-sync discovery with no syncState row"
 
 Rule: for any echo or guard fix, mutate the guard away and confirm a test goes red before calling it covered.
