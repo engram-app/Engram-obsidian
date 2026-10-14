@@ -27,6 +27,7 @@ const vi: Dict = {
 	"API keys need Pro. Sign in with your Engram account instead.":
 		"Cần gói Pro để sử dụng API keys. Đăng nhập bằng tài khoản Engram của bạn.",
 	About: "Giới thiệu",
+	"Accept it to keep syncing.": "Chấp nhận để tiếp tục đồng bộ hóa.",
 	"Account setup incomplete.": "Thiết lập tài khoản chưa hoàn tất.",
 	"Account suspended. Contact support.": "Tài khoản đã bị đình chỉ. Liên hệ với bộ phận hỗ trợ.",
 	"Activity ({count})": "Hoạt động ({count})",
@@ -178,6 +179,8 @@ const vi: Dict = {
 	"Engram sync: syncing...": "Đồng bộ hóa Engram: đang đồng bộ hóa...",
 	"Engram unreachable. Showing matches from this device only.":
 		"Engram không khả dụng. Chỉ hiển thị kết quả từ thiết bị này.",
+	"Engram's {document} update, effective {date}.":
+		"Bản cập nhật Engram của {document}, có hiệu lực từ {date}.",
 	"Engram: This vault has been deleted on the server.":
 		"Engram: kho lưu trữ này đã bị xóa trên máy chủ.",
 	"Engram: disconnected. Open Engram settings to reconnect.":
@@ -365,6 +368,7 @@ const vi: Dict = {
 		"Chọn một kho lưu trữ để đồng bộ hóa. Chúng tôi sẽ tính toán lại bản xem trước đồng bộ hóa sau khi bạn chọn.",
 	"Plan usage": "Sử dụng gói",
 	Plans: "Các gói",
+	"Privacy Policy": "Chính sách bảo mật",
 	Pro: "Phiên bản Pro",
 	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
 		"Bỏ qua thao tác kéo tất cả (xóa dữ liệu thừa): không thể lấy bản chụp nhanh độc quyền của máy chủ (xung đột). Không có gì bị xóa.",
@@ -377,6 +381,7 @@ const vi: Dict = {
 	Pushed: "Đã đẩy",
 	"Python bytecode cache": "Bộ nhớ đệm bytecode Python",
 	"Python virtual environment": "Môi trường ảo Python",
+	"Read it": "Đọc nó",
 	"Real-time sync": "Đồng bộ hóa theo thời gian thực",
 	"Reconnect your account to resume syncing.":
 		"Kết nối lại tài khoản của bạn để tiếp tục đồng bộ hóa.",
@@ -391,6 +396,7 @@ const vi: Dict = {
 		"Đã khôi phục {path} — sẽ đồng bộ hóa khi đẩy lần sau.",
 	"Retry all now": "Thử lại tất cả ngay",
 	"Retrying automatically ({count})": "Thử lại tự động ({count})",
+	"Review and accept": "Xem xét và chấp nhận",
 	"Run in background": "Chạy trong nền",
 	"Run your own Engram server": "Chạy máy chủ Engram của riêng bạn",
 	"Rust/Java build output": "Đầu ra biên dịch Rust/Java",
@@ -466,6 +472,7 @@ const vi: Dict = {
 	"Tell us anything": "Hãy cho chúng tôi biết",
 	"Temporary errors. These clear themselves once the server recovers.":
 		"Lỗi tạm thời. Chúng sẽ tự động biến mất khi máy chủ hoạt động trở lại.",
+	"Terms of Service": "Điều khoản dịch vụ",
 	"Thanks, we read every message.": "Cảm ơn, chúng tôi đọc mọi tin nhắn.",
 	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":
 		"Địa chỉ máy chủ này có vẻ không đầy đủ. Hãy bao gồm cả giao thức, ví dụ: http://127.0.0.1:4000",

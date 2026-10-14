@@ -34,7 +34,8 @@ export function noticeText(n: LegalNotice, locale: string): string {
 		new Date(`${n.effective_date}T00:00:00Z`),
 	);
 	const doc = n.document === "terms_of_service" ? t("Terms of Service") : t("Privacy Policy");
-	const lead = t("Engram's {document} changes on {date}.", { document: doc, date });
-	const action = n.material ? ` ${t("Accept it in the Engram web app to keep syncing.")}` : "";
+	// Neutral tense: a material notice is still shown after its date, until accepted.
+	const lead = t("Engram's {document} update, effective {date}.", { document: doc, date });
+	const action = n.material ? ` ${t("Accept it to keep syncing.")}` : "";
 	return `${lead} ${n.changelog ?? ""}${action}`.replace(/\s+/gu, " ").trim();
 }

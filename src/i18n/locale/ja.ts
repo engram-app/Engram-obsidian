@@ -27,6 +27,7 @@ const ja: Dict = {
 	"API keys need Pro. Sign in with your Engram account instead.":
 		"APIキーはProプランが必要です。代わりにEngramアカウントでサインインしてください。",
 	About: "概要",
+	"Accept it to keep syncing.": "同期を続ける場合は、同意してください。",
 	"Account setup incomplete.": "アカウントの設定が完了していません。",
 	"Account suspended. Contact support.":
 		"アカウントが停止されています。サポートにお問い合わせください。",
@@ -181,6 +182,8 @@ const ja: Dict = {
 	"Engram sync: syncing...": "Engram 同期: 同期中...",
 	"Engram unreachable. Showing matches from this device only.":
 		"Engram に接続できません。このデバイスでのみ検索結果を表示しています。",
+	"Engram's {document} update, effective {date}.":
+		"Engramの{document}アップデート、適用日{date}.",
 	"Engram: This vault has been deleted on the server.":
 		"Engram: この保管庫はサーバーから削除されました。",
 	"Engram: disconnected. Open Engram settings to reconnect.":
@@ -366,6 +369,7 @@ const ja: Dict = {
 		"同期する保管庫を選択してください。選択後、同期プレビューを再計算します。",
 	"Plan usage": "利用状況",
 	Plans: "料金プラン",
+	"Privacy Policy": "プライバシーポリシー",
 	Pro: "Pro",
 	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
 		"全件取得（重複削除）が中断されました：専用サーバーのスナップショットを取得できませんでした（競合）。データは削除されていません。",
@@ -378,6 +382,7 @@ const ja: Dict = {
 	Pushed: "推送",
 	"Python bytecode cache": "Pythonバイトコードキャッシュ",
 	"Python virtual environment": "Python仮想環境",
+	"Read it": "詳しくはこちら",
 	"Real-time sync": "リアルタイム同期",
 	"Reconnect your account to resume syncing.": "アカウントを再接続すると同期を再開できます。",
 	Refresh: "更新",
@@ -391,6 +396,7 @@ const ja: Dict = {
 		"{path} を復元しました。次回の同期で反映されます。",
 	"Retry all now": "今すぐすべてを再試行",
 	"Retrying automatically ({count})": "自動再試行 ({count})",
+	"Review and accept": "確認と同意",
 	"Run in background": "バックグラウンドで実行",
 	"Run your own Engram server": "独自のEngramサーバーを構築",
 	"Rust/Java build output": "Rust/Javaビルド出力",
@@ -466,6 +472,7 @@ const ja: Dict = {
 	"Tell us anything": "何でもお気軽にお知らせください",
 	"Temporary errors. These clear themselves once the server recovers.":
 		"一時的なエラーです。サーバーが復旧すると自動的に解消されます。",
+	"Terms of Service": "利用規約",
 	"Thanks, we read every message.": "ありがとうございます。すべてのメッセージを拝見します。",
 	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":
 		"これは完全なサーバーアドレスのように見えません。スキームを含めてください。例: http://127.0.0.1:4000",

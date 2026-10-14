@@ -30,11 +30,11 @@ describe("noticesToShow", () => {
 describe("noticeText", () => {
 	test("names the document, date and change", () => {
 		const text = noticeText(privacy, "en");
-		expect(text).toContain("Privacy Policy changes on November 11, 2026.");
+		expect(text).toContain("Privacy Policy update, effective November 11, 2026.");
 		expect(text).toContain("App analytics now linked to your account.");
 	});
 
 	test("a material change says it must be accepted", () => {
-		expect(noticeText(terms, "en")).toContain("Accept it in the Engram web app");
+		expect(noticeText(terms, "en")).toContain("Accept it to keep syncing.");
 	});
 });

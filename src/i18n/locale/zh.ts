@@ -25,6 +25,7 @@ const zh: Dict = {
 	"API keys need Pro. Sign in with your Engram account instead.":
 		"API 密钥需要 Pro 订阅。请使用您的 Engram 账号登录。",
 	About: "关于",
+	"Accept it to keep syncing.": "同意以继续同步。",
 	"Account setup incomplete.": "账号设置未完成。",
 	"Account suspended. Contact support.": "账号已暂停。请联系客服。",
 	"Activity ({count})": "活动 ({count})",
@@ -162,6 +163,8 @@ const zh: Dict = {
 	"Engram sync: syncing...": "Engram 同步：同步中...",
 	"Engram unreachable. Showing matches from this device only.":
 		"Engram 无法访问。仅显示此设备上的匹配结果。",
+	"Engram's {document} update, effective {date}.":
+		"Engram 的 {document} 更新，自 {date} 起生效。",
 	"Engram: This vault has been deleted on the server.": "Engram: 此仓库已在服务器上删除。",
 	"Engram: disconnected. Open Engram settings to reconnect.":
 		"Engram：已断开连接。在 Engram 设置中重新连接。",
@@ -337,6 +340,7 @@ const zh: Dict = {
 		"选择一个要同步的仓库。您选择后，我们会重新计算同步预览。",
 	"Plan usage": "使用计划",
 	Plans: "计划",
+	"Privacy Policy": "隐私政策",
 	Pro: "Pro",
 	"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.":
 		"导入所有（删除多余）失败：无法获取独占服务器快照（冲突）。没有删除任何内容。",
@@ -349,6 +353,7 @@ const zh: Dict = {
 	Pushed: "已推送",
 	"Python bytecode cache": "Python 字节码缓存",
 	"Python virtual environment": "Python 虚拟环境",
+	"Read it": "阅读它",
 	"Real-time sync": "实时同步",
 	"Reconnect your account to resume syncing.": "重新连接账号即可继续同步。",
 	Refresh: "刷新",
@@ -361,6 +366,7 @@ const zh: Dict = {
 	"Restored {path} — will sync on next push.": "恢复 {path} — 下次推送时同步。",
 	"Retry all now": "立即重试所有",
 	"Retrying automatically ({count})": "自动重试 ({count})",
+	"Review and accept": "审查并同意",
 	"Run in background": "后台运行",
 	"Run your own Engram server": "运行您自己的 Engram 服务器",
 	"Rust/Java build output": "Rust/Java 构建输出",
@@ -431,6 +437,7 @@ const zh: Dict = {
 	"Tell us anything": "告诉我们任何事",
 	"Temporary errors. These clear themselves once the server recovers.":
 		"临时错误。服务器恢复后会自动解决。",
+	"Terms of Service": "服务条款",
 	"Thanks, we read every message.": "感谢，我们会阅读每条消息。",
 	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":
 		"这看起来不是完整的服务器地址。请包含协议，例如 http://127.0.0.1:4000",

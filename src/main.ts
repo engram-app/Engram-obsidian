@@ -525,6 +525,8 @@ export default class EngramSyncPlugin extends Plugin {
 	/** One sticky Notice per pending legal change (see legal-notices.ts). Best
 	 *  effort: email and the web app also carry these, so a failed fetch only
 	 *  waits for the next check. */
+	private readonly legalNoticeToasts = new Map<string, Notice>();
+
 	private async showLegalNotices(): Promise<void> {
 		if (!this.hasAuthConfigured()) return;
 		let notices: LegalNotice[];
@@ -540,9 +542,16 @@ export default class EngramSyncPlugin extends Plugin {
 		for (const n of show) {
 			const frag = createFragment();
 			frag.appendText(`${noticeText(n, currentLocale())} `);
-			frag.createEl("a", { text: t("Read it"), href: n.url });
+			// A material change needs acceptance, so link where that happens.
+			if (n.material) {
+				frag.createEl("a", { text: t("Review and accept"), href: n.accept_url });
+			} else {
+				frag.createEl("a", { text: t("Read it"), href: n.url });
+			}
+			// Replace, never stack: a material notice repeats daily until accepted.
+			this.legalNoticeToasts.get(noticeKey(n))?.hide();
 			// 0 = stays until clicked: a legal change must not flash past.
-			new Notice(frag, 0);
+			this.legalNoticeToasts.set(noticeKey(n), new Notice(frag, 0));
 		}
 		// savePluginData, not saveSettings: the latter rebuilds the channel.
 		this.settings.seenLegalNotices = [...new Set([...seen, ...show.map(noticeKey)])];
@@ -602,12 +611,6 @@ export default class EngramSyncPlugin extends Plugin {
 		// don't enable auto-update never see it. Nudge them once per launch with a
 		// notify-only Notice (no self-install — Obsidian policy owns that path).
 		this.app.workspace.onLayoutReady(() => void this.nudgeIfUpdateAvailable());
-
-		// Pending legal changes: at launch, then daily for vaults left open.
-		this.app.workspace.onLayoutReady(() => void this.showLegalNotices());
-		this.registerInterval(
-			window.setInterval(() => void this.showLegalNotices(), 24 * 60 * 60 * 1000),
-		);
 
 		this.api = new EngramApi(this.settings.apiUrl, this.settings.apiKey);
 		if (this.settings.vaultId) {
@@ -1187,6 +1190,14 @@ export default class EngramSyncPlugin extends Plugin {
 		this.setupNoteStream();
 
 		// Initial sync on startup (after workspace is ready)
+		// Pending legal changes: at launch, then daily for vaults left open.
+		// Registered here, after `api` and `syncEngine` exist: onLayoutReady runs
+		// the callback at once when the plugin is enabled mid-session.
+		this.app.workspace.onLayoutReady(() => void this.showLegalNotices());
+		this.registerInterval(
+			window.setInterval(() => void this.showLegalNotices(), 24 * 60 * 60 * 1000),
+		);
+
 		this.app.workspace.onLayoutReady(async () => {
 			devLog().log("lifecycle", "layout ready — starting initial sync");
 			rlog().info("lifecycle", "Layout ready — starting initial sync");
