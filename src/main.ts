@@ -55,7 +55,7 @@ import { sha256Hex } from "./content-hash";
 import { registerDiagnostics } from "./diagnostics";
 import { errMsg, isHttpStatus } from "./error-util";
 import { ExplicitFolders } from "./explicit-folders";
-import { t, tInto } from "./i18n";
+import { obsidianLocale, t, tInto } from "./i18n";
 import { isPlanJoinReason } from "./limit-copy";
 import { LimitExceededError } from "./limit-error";
 import { notifyLimitExceeded } from "./limit-toast";
@@ -176,6 +176,19 @@ export function shouldReuseLiveStream(
 	liveChannelKey: string | null,
 ): boolean {
 	return hasStream && everConnected && connectionKey === liveChannelKey;
+}
+
+/** The language to fill in on the account from Obsidian's, if any. Only when the
+ *  account has none (null): the web app's explicit choice wins, and an older
+ *  backend omits the field entirely (undefined), so it is left alone. Never when
+ *  Obsidian cannot say (storing the "en" fallback would read as a choice), and
+ *  once per session, so a rejected value is not re-sent on every reconnect. */
+export function localeToReport(
+	account: string | null | undefined,
+	obsidian: string | undefined,
+	attempted: boolean,
+): string | undefined {
+	return account === null && !attempted ? obsidian : undefined;
 }
 
 /** Whether a channel may be built for the identity `getMe()` just authenticated
@@ -433,6 +446,8 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  them). Reset to false in setupNoteStream() so a genuine backend/vault
 	 *  switch degrades back to legacy until the new server confirms crdt: join. */
 	private crdtEverJoined = false;
+	/** localeToReport: the account language is reported at most once per session. */
+	private localeReported = false;
 	/** Guards the "plugin needs update" Notice from firing more than once per
 	 *  session. A crdt_proto_too_old rejoin error can fire on every reconnect;
 	 *  showing repeated toasts would be noisy. */
@@ -2565,6 +2580,15 @@ export default class EngramSyncPlugin extends Plugin {
 						);
 					}
 					return;
+				}
+				const locale = localeToReport(user.locale, obsidianLocale(), this.localeReported);
+				if (locale) {
+					this.localeReported = true;
+					this.api
+						.setLocale(locale)
+						.catch((e: unknown) =>
+							rlog().warn("channel", `locale report failed: ${errMsg(e)}`),
+						);
 				}
 				const channel = new NoteChannel(
 					this.settings.apiUrl,

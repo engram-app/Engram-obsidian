@@ -532,13 +532,21 @@ export class EngramApi {
 		return { tier: String(body.tier ?? "free"), usage: body.usage };
 	}
 
-	async getMe(): Promise<{ id: string; email: string }> {
+	/** `locale` is the account's UI language: null when none is stored, absent
+	 *  (undefined) on a backend older than the field. */
+	async getMe(): Promise<{ id: string; email: string; locale?: string | null }> {
 		const resp = await this.request("GET", "/me");
-		const user = (resp.json as { user?: { id: string; email: string } }).user;
+		const user = (resp.json as { user?: { id: string; email: string; locale?: string | null } })
+			.user;
 		// A shape mismatch (proxy error page, wrong server) must be a legible
 		// error, not an opaque TypeError on a nested dereference.
 		if (!user) throw new Error("Malformed /me response: missing user");
 		return user;
+	}
+
+	/** Store the account's UI language (`PATCH /me`). */
+	async setLocale(locale: string): Promise<void> {
+		await this.request("PATCH", "/me", { locale });
 	}
 
 	/** Register this vault with the backend. Returns existing vault if client_id matches.

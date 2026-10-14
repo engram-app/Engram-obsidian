@@ -732,6 +732,30 @@ describe("EngramApi", () => {
 		});
 	});
 
+	describe("setLocale", () => {
+		test("sends PATCH /me with the locale", async () => {
+			mockRequestUrl.mockResolvedValueOnce({
+				status: 200,
+				json: { user: { id: "u", email: "e" } },
+			} as any);
+			await api.setLocale("zh-TW");
+			const opts = mockRequestUrl.mock.calls[0][0] as any;
+			expect(opts.method).toBe("PATCH");
+			expect(opts.url).toBe(`${TEST_API_BASE}/me`);
+			expect(JSON.parse(opts.body)).toEqual({ locale: "zh-TW" });
+		});
+	});
+
+	describe("getMe locale", () => {
+		test("passes the account locale through, null included", async () => {
+			mockRequestUrl.mockResolvedValueOnce({
+				status: 200,
+				json: { user: { id: "u", email: "e", locale: null } },
+			} as any);
+			expect((await api.getMe()).locale).toBeNull();
+		});
+	});
+
 	describe("pushAttachment", () => {
 		test("sends POST /attachments with path, content_base64, mime_type, mtime", async () => {
 			mockRequestUrl.mockResolvedValueOnce({
