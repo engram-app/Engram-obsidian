@@ -31,10 +31,13 @@ import { profile } from "../src/i18n/translate-profile";
 
 const repoRoot = join(import.meta.dir, "..");
 
-/** Every key used in src/, excluding the locale files (see src/i18n/keys-scan.ts). */
+/** Every key used in src/, excluding the locale files (see src/i18n/keys-scan.ts),
+ *  in first-seen order over path-sorted files: the order scripts/i18n-translate.ts
+ *  writes catalogs in. */
 function keysUsedInSource(): Set<string> {
 	const sources = [...new Glob("src/**/*.ts").scanSync(repoRoot)]
 		.filter((rel) => !rel.includes("i18n/locale"))
+		.sort()
 		.map((rel) => readFileSync(join(repoRoot, rel), "utf8"));
 	return usedKeys(sources);
 }
@@ -78,6 +81,17 @@ describe("locale keys track the source", () => {
 		test(`${name} has no key that no longer exists in src/`, () => {
 			const orphans = Object.keys(dict).filter((key) => !used.has(key));
 			expect(orphans).toEqual([]);
+		});
+	}
+
+	// The translator writes catalogs in source order. Scan order is readdir order,
+	// which differs per machine, so an unsorted scan made every bot run reorder
+	// every catalog (a 5k-line no-op PR, Engram-obsidian#584). en-plurals is
+	// hand-written, so its order is free.
+	for (const [name, dict] of LOCALES.filter(([n]) => n !== "en-plurals")) {
+		test(`${name} lists its keys in sorted source order`, () => {
+			const order = [...used].filter((key) => key in dict);
+			expect(Object.keys(dict)).toEqual(order);
 		});
 	}
 

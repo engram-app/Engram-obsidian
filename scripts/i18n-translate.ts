@@ -30,9 +30,12 @@ const targets = (Object.keys(profile.specs) as Target[]).filter((l) => !pick || 
 
 const root = join(import.meta.dir, "..");
 const localeDir = join(root, "src", "i18n", "locale");
-// Same file set as tests/i18n-keys.test.ts.
+// Same file set and order as tests/i18n-keys.test.ts. Sorted: catalogs are
+// written in first-seen key order, and raw scan order is readdir order, which
+// differs per machine and made every run reorder every catalog.
 const sources = [...new Glob("src/**/*.ts").scanSync(root)]
 	.filter((rel) => !rel.includes("i18n/locale"))
+	.sort()
 	.map((rel) => readFileSync(join(root, rel), "utf8"));
 
 async function loadFrom(dir: string, code: Target): Promise<Dict> {

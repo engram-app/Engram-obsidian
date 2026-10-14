@@ -22,6 +22,28 @@ const es: Dict = {
 	"Code expired. Please try again.": "Código expirado. Por favor, inténtalo de nuevo.",
 	"Try again": "Intentar de nuevo",
 	Close: "Cerrar",
+	"...": "...",
+	'... "{name}" ...': '... "{name}" ...',
+	"The server took too long to respond. Try again.":
+		"El servidor tardó demasiado en responder. Inténtalo de nuevo.",
+	"Not signed in, or the session expired. Sign in again in Engram settings.":
+		"No has iniciado sesión, o la sesión ha expirado. Inicia sesión de nuevo en la configuración de Engram.",
+	"The file is too large for the server.": "El archivo es demasiado grande para el servidor.",
+	"Too many requests. Wait a moment and try again.":
+		"Demasiadas solicitudes. Espera un momento e inténtalo de nuevo.",
+	"Server error ({status}) — check Engram logs":
+		"Error del servidor ({status}) — revisa los registros de Engram",
+	"Could not reach Engram — check connection":
+		"No se pudo conectar con Engram. Verifica la conexión",
+	"Unknown error": "Error desconocido",
+	"Frontmatter isn't valid YAML.": "El frontmatter no es un YAML válido.",
+	"A frontmatter key could not be parsed as YAML.":
+		"No se pudo analizar una clave del frontmatter como YAML.",
+	"This note could not be processed and was skipped.":
+		"Esta nota no se pudo procesar y se omitió.",
+	"Frontmatter could not be parsed": "No se pudo analizar el frontmatter",
+	'Frontmatter key "{key}" could not be parsed as YAML.':
+		'No se pudo analizar la clave del frontmatter "{key}" como YAML.',
 	"Note couldn't be processed": "No se pudo procesar la nota",
 	"The server couldn't process this note. Check its contents, then edit and save to try again.":
 		"El servidor no pudo procesar esta nota. Revisa su contenido, luego edita y guarda para intentarlo de nuevo.",
@@ -52,7 +74,6 @@ const es: Dict = {
 	"Sync failed": "Sincronización fallida",
 	"An unexpected error — retrying automatically.":
 		"Un error inesperado, se está reintentando automáticamente.",
-	"Frontmatter could not be parsed": "No se pudo analizar el frontmatter",
 	"Note limit reached. Upgrade to keep adding notes.":
 		"Se ha alcanzado el límite de notas. Actualiza para seguir añadiendo notas.",
 	"Vault limit reached. Upgrade for more vaults.":
@@ -187,7 +208,6 @@ const es: Dict = {
 	"Server unreachable — changes will sync when connected":
 		"Servidor inaccesible — los cambios se sincronizarán al conectarse",
 	"Engram: error": "Engram: error",
-	"Unknown error": "Error desconocido",
 	"Engram: syncing ({count})": "Engram: sincronizando ({count})",
 	"Engram: syncing": "Engram: sincronizando",
 	"Sync in progress...": "Sincronización en curso...",
@@ -274,6 +294,82 @@ const es: Dict = {
 	"Connected — polling": "Conectado — verificando",
 	"Not configured": "No configurado",
 	"Open sync setup": "Abrir configuración de sincronización",
+	"waiting for a connection": "esperando conexión",
+	"sync is paused": "la sincronización está pausada",
+	"syncing now": "sincronizando ahora",
+	"waiting to retry": "esperando reintentar",
+	"{count} not on your plan": {
+		one: "{count} no incluido en tu plan",
+		many: "{count} no está en tu plan",
+		other: "{count} no incluidos en tu plan",
+	},
+	"{count} need attention": {
+		one: "{count} necesita atención",
+		many: "{count} necesita atención",
+		other: "{count} requieren atención",
+	},
+	"{count} retrying": {
+		one: "{count} reintentando",
+		many: "{count} reintentando",
+		other: "{count} reintentando",
+	},
+	"{count} ignored": {
+		one: "{count} ignorado",
+		many: "{count} ignorados",
+		other: "{count} patrones ignorados",
+	},
+	"{count} queued — {reason}": {
+		one: "{count} en cola — {reason}",
+		many: "{count} en cola — {reason}",
+		other: "{count} en cola — {reason}",
+	},
+	"Sync...": "Sincronizando...",
+	Refresh: "Actualizar",
+	"Not synced on your plan ({count})": "No se sincroniza en tu plan ({count})",
+	"These files are fine. They just need a paid plan to sync.":
+		"Estos archivos están bien. Solo necesitan un plan de pago para sincronizarse.",
+	"Show files ({count}) ▾": "Mostrar archivos ({count}) ▾",
+	"Sync these now": "Sincronizar ahora",
+	"Needs attention ({count})": "Requiere atención ({count})",
+	"Clear all": "Borrar todo",
+	"Nothing needs your attention. 🎉": "No hay nada que requiera tu atención. 🎉",
+	Dismiss: "Descartar",
+	"Retrying automatically ({count})": "Reintentando automáticamente ({count})",
+	"Retry all now": "Reintentar todo ahora",
+	"Temporary errors. These clear themselves once the server recovers.":
+		"Errores temporales. Se resolverán automáticamente cuando el servidor se recupere.",
+	"{count} attempts": {
+		one: "{count} intento",
+		many: "{count} intentos",
+		other: "{count} intentos",
+	},
+	Open: "Abrir",
+	Ignore: "Ignorar",
+	"Ignored ({count})": "Ignorados ({count})",
+	"No files ignored. Use the ignore button on a failure row to stop syncing it.":
+		"No hay archivos ignorados. Usa el botón de ignorar en una fila de error para detener su sincronización.",
+	Restore: "Restaurar",
+	"File not found locally: {path}": "Archivo no encontrado localmente: {path}",
+	"Ignored {path} — won't sync until restored from Sync Center.":
+		"Ignorado {path} — no se sincronizará hasta que se restaure desde el Centro de sincronización.",
+	"Restored {path} — will sync on next push.":
+		"Restaurado {path} — se sincronizará en el próximo envío.",
+	"Activity ({count})": "Actividad ({count})",
+	Clear: "Borrar",
+	"No activity yet. Push or pull to see entries here.":
+		"Aún no hay actividad. Envía o recibe para ver las entradas aquí.",
+	Pushed: "Enviado",
+	Pulled: "Recibido",
+	Deleted: "Eliminado",
+	Conflict: "Conflicto",
+	Skipped: "Omitido",
+	Error: "Error",
+	Stats: "Estadísticas",
+	"Notes on this device": "Notas en este dispositivo",
+	"Attachments on this device": "Adjuntos en este dispositivo",
+	"Remote vault": "Bóveda remota",
+	"not linked": "no enlazada",
+	"Plan usage": "Uso del plan",
 	"Sync log": "Registro de sincronización",
 	"Showing {count} entries": {
 		one: "Mostrando {count} entrada",
@@ -517,87 +613,45 @@ const es: Dict = {
 	'Engram Sync: renamed "{name}" (unsupported characters)':
 		'Engram Sync: se renombró "{name}" (caracteres no admitidos)',
 	'Engram: frontmatter problem in "{name}"': 'Engram: problema en el frontmatter de "{name}"',
-	"Engram: this plugin is too old to sync (needs {version} or newer). Update it to continue.":
-		"Engram: este plugin es demasiado antiguo para sincronizar (necesita {version} o superior). Actualízalo para continuar.",
-	"Engram: this plugin is too old to sync. Update it to continue.":
-		"Engram: este plugin es demasiado antiguo para sincronizar. Actualízalo para continuar.",
-	Update: "Actualizar",
-	"waiting for a connection": "esperando conexión",
-	"sync is paused": "la sincronización está pausada",
-	"syncing now": "sincronizando ahora",
-	"waiting to retry": "esperando reintentar",
-	"{count} not on your plan": {
-		one: "{count} no incluido en tu plan",
-		many: "{count} no está en tu plan",
-		other: "{count} no incluidos en tu plan",
-	},
-	"{count} need attention": {
-		one: "{count} necesita atención",
-		many: "{count} necesita atención",
-		other: "{count} requieren atención",
-	},
-	"{count} retrying": {
-		one: "{count} reintentando",
-		many: "{count} reintentando",
-		other: "{count} reintentando",
-	},
-	"{count} ignored": {
-		one: "{count} ignorado",
-		many: "{count} ignorados",
-		other: "{count} patrones ignorados",
-	},
-	"{count} queued — {reason}": {
-		one: "{count} en cola — {reason}",
-		many: "{count} en cola — {reason}",
-		other: "{count} en cola — {reason}",
-	},
-	"Sync...": "Sincronizando...",
-	Refresh: "Actualizar",
-	"Not synced on your plan ({count})": "No se sincroniza en tu plan ({count})",
-	"These files are fine. They just need a paid plan to sync.":
-		"Estos archivos están bien. Solo necesitan un plan de pago para sincronizarse.",
-	"Show files ({count}) ▾": "Mostrar archivos ({count}) ▾",
-	"Sync these now": "Sincronizar ahora",
-	"Needs attention ({count})": "Requiere atención ({count})",
-	"Clear all": "Borrar todo",
-	"Nothing needs your attention. 🎉": "No hay nada que requiera tu atención. 🎉",
-	Dismiss: "Descartar",
-	"Retrying automatically ({count})": "Reintentando automáticamente ({count})",
-	"Retry all now": "Reintentar todo ahora",
-	"Temporary errors. These clear themselves once the server recovers.":
-		"Errores temporales. Se resolverán automáticamente cuando el servidor se recupere.",
-	"{count} attempts": {
-		one: "{count} intento",
-		many: "{count} intentos",
-		other: "{count} intentos",
-	},
-	Open: "Abrir",
-	Ignore: "Ignorar",
-	"Ignored ({count})": "Ignorados ({count})",
-	"No files ignored. Use the ignore button on a failure row to stop syncing it.":
-		"No hay archivos ignorados. Usa el botón de ignorar en una fila de error para detener su sincronización.",
-	Restore: "Restaurar",
-	"File not found locally: {path}": "Archivo no encontrado localmente: {path}",
-	"Ignored {path} — won't sync until restored from Sync Center.":
-		"Ignorado {path} — no se sincronizará hasta que se restaure desde el Centro de sincronización.",
-	"Restored {path} — will sync on next push.":
-		"Restaurado {path} — se sincronizará en el próximo envío.",
-	"Activity ({count})": "Actividad ({count})",
-	Clear: "Borrar",
-	"No activity yet. Push or pull to see entries here.":
-		"Aún no hay actividad. Envía o recibe para ver las entradas aquí.",
-	Pushed: "Enviado",
-	Pulled: "Recibido",
-	Deleted: "Eliminado",
-	Conflict: "Conflicto",
-	Skipped: "Omitido",
-	Error: "Error",
-	Stats: "Estadísticas",
-	"Notes on this device": "Notas en este dispositivo",
-	"Attachments on this device": "Adjuntos en este dispositivo",
-	"Remote vault": "Bóveda remota",
-	"not linked": "no enlazada",
-	"Plan usage": "Uso del plan",
+	"New here? Watch the setup video": "¿Eres nuevo aquí? Mira el video de configuración",
+	"What Engram does, and how to connect your vault, start to finish.":
+		"¿Qué hace Engram y cómo conectar tu bóveda, de principio a fin.",
+	"▶ Watch on YouTube": "▶ Ver en YouTube",
+	"Getting set up": "Configuración",
+	"1. Make an account": "1. Crea una cuenta",
+	"setup guide": "guía de configuración",
+	"2. Connect your vault to Engram": "2. Conecta tu bóveda a Engram",
+	"Sign in (or enter your server URL and key) on the connection tab, then run your first sync.":
+		"Inicia sesión (o introduce la URL de tu servidor y la clave) en la pestaña de conexión, y luego realiza tu primera sincronización.",
+	"Open connection tab": "Abrir pestaña de conexión",
+	"3. Connect your AI": "3. Conecta tu IA",
+	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
+		"Vincula Claude, Cursor, ChatGPT o cualquier aplicación MCP para que pueda leer y escribir tus notas ",
+	"See the AI setup guide": "Consulta la guía de configuración de la IA",
+	Plans: "Planes",
+	Free: "Gratuito",
+	"1 vault, 2 devices": "1 bóveda, 2 dispositivos",
+	"Real-time sync": "Sincronización en tiempo real",
+	"2,000 notes searchable": "2000 notas buscables",
+	"Connect any AI (MCP)": "Conecta cualquier IA (MCP)",
+	Starter: "Starter",
+	"10 vaults, unlimited devices": "10 bóvedas, dispositivos ilimitados",
+	"Search all your notes": "Busca todas tus notas",
+	"10 GB attachments": "10 GB de adjuntos",
+	"Unlimited AI searches": "Búsquedas ilimitadas con IA",
+	Pro: "Pro",
+	"Unlimited vaults": "Bóvedas ilimitadas",
+	"Search across all vaults at once": "Busca en todas las bóvedas a la vez",
+	"50 GB attachments": "50 GB de adjuntos",
+	"API access": "Acceso a la API",
+	"See full pricing": "Ver precios completos",
+	"Learn more": "Más información",
+	Documentation: "Documentación",
+	"AI / MCP setup guide": "Guía de configuración de IA / MCP",
+	"Report an issue": "Reportar un problema",
+	"Join our Discord": "Únete a nuestro Discord",
+	"Create a hosted account at {signup}, or self-host the backend ({guide}).":
+		"Crea una cuenta alojada en {signup}, o aloja el backend tú mismo ({guide}).",
 	"Node.js dependencies": "Dependencias de Node.js",
 	"Python virtual environment": "Entorno virtual de Python",
 	"Python bytecode cache": "Caché de bytecode de Python",
@@ -687,10 +741,6 @@ const es: Dict = {
 		"Si este plugin te ahorra tiempo, considera apoyar el desarrollo.",
 	"GitHub Sponsors": "GitHub Sponsors",
 	"Sign-in required to load vaults": "Inicio de sesión requerido para cargar las bóvedas",
-	"Server error ({status}) — check Engram logs":
-		"Error del servidor ({status}) — revisa los registros de Engram",
-	"Could not reach Engram — check connection":
-		"No se pudo conectar con Engram. Verifica la conexión",
 	"Engram Cloud": "Nube de Engram",
 	"Self-hosted": "Autohospedado",
 	Backend: "Servidor",
@@ -728,61 +778,11 @@ const es: Dict = {
 	"Sending…": "Enviando…",
 	Send: "Enviar",
 	"Thanks, we read every message.": "Gracias, leemos cada mensaje.",
-	"New here? Watch the setup video": "¿Eres nuevo aquí? Mira el video de configuración",
-	"What Engram does, and how to connect your vault, start to finish.":
-		"¿Qué hace Engram y cómo conectar tu bóveda, de principio a fin.",
-	"▶ Watch on YouTube": "▶ Ver en YouTube",
-	"Getting set up": "Configuración",
-	"1. Make an account": "1. Crea una cuenta",
-	"setup guide": "guía de configuración",
-	"2. Connect your vault to Engram": "2. Conecta tu bóveda a Engram",
-	"Sign in (or enter your server URL and key) on the connection tab, then run your first sync.":
-		"Inicia sesión (o introduce la URL de tu servidor y la clave) en la pestaña de conexión, y luego realiza tu primera sincronización.",
-	"Open connection tab": "Abrir pestaña de conexión",
-	"3. Connect your AI": "3. Conecta tu IA",
-	"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ":
-		"Vincula Claude, Cursor, ChatGPT o cualquier aplicación MCP para que pueda leer y escribir tus notas ",
-	"See the AI setup guide": "Consulta la guía de configuración de la IA",
-	Plans: "Planes",
-	Free: "Gratuito",
-	"1 vault, 2 devices": "1 bóveda, 2 dispositivos",
-	"Real-time sync": "Sincronización en tiempo real",
-	"2,000 notes searchable": "2000 notas buscables",
-	"Connect any AI (MCP)": "Conecta cualquier IA (MCP)",
-	Starter: "Starter",
-	"10 vaults, unlimited devices": "10 bóvedas, dispositivos ilimitados",
-	"Search all your notes": "Busca todas tus notas",
-	"10 GB attachments": "10 GB de adjuntos",
-	"Unlimited AI searches": "Búsquedas ilimitadas con IA",
-	Pro: "Pro",
-	"Unlimited vaults": "Bóvedas ilimitadas",
-	"Search across all vaults at once": "Busca en todas las bóvedas a la vez",
-	"50 GB attachments": "50 GB de adjuntos",
-	"API access": "Acceso a la API",
-	"See full pricing": "Ver precios completos",
-	"Learn more": "Más información",
-	Documentation: "Documentación",
-	"AI / MCP setup guide": "Guía de configuración de IA / MCP",
-	"Report an issue": "Reportar un problema",
-	"Join our Discord": "Únete a nuestro Discord",
-	"Create a hosted account at {signup}, or self-host the backend ({guide}).":
-		"Crea una cuenta alojada en {signup}, o aloja el backend tú mismo ({guide}).",
-	"...": "...",
-	'... "{name}" ...': '... "{name}" ...',
-	"The server took too long to respond. Try again.":
-		"El servidor tardó demasiado en responder. Inténtalo de nuevo.",
-	"Not signed in, or the session expired. Sign in again in Engram settings.":
-		"No has iniciado sesión, o la sesión ha expirado. Inicia sesión de nuevo en la configuración de Engram.",
-	"The file is too large for the server.": "El archivo es demasiado grande para el servidor.",
-	"Too many requests. Wait a moment and try again.":
-		"Demasiadas solicitudes. Espera un momento e inténtalo de nuevo.",
-	"Frontmatter isn't valid YAML.": "El frontmatter no es un YAML válido.",
-	"A frontmatter key could not be parsed as YAML.":
-		"No se pudo analizar una clave del frontmatter como YAML.",
-	"This note could not be processed and was skipped.":
-		"Esta nota no se pudo procesar y se omitió.",
-	'Frontmatter key "{key}" could not be parsed as YAML.':
-		'No se pudo analizar la clave del frontmatter "{key}" como YAML.',
+	"Engram: this plugin is too old to sync (needs {version} or newer). Update it to continue.":
+		"Engram: este plugin es demasiado antiguo para sincronizar (necesita {version} o superior). Actualízalo para continuar.",
+	"Engram: this plugin is too old to sync. Update it to continue.":
+		"Engram: este plugin es demasiado antiguo para sincronizar. Actualízalo para continuar.",
+	Update: "Actualizar",
 };
 
 export default es;
