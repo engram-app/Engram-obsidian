@@ -8,6 +8,7 @@ import type { AuthProvider } from "./auth";
 import { interpretHealthProbe, type PreflightResult } from "./auth-state";
 import { isHttpStatus, NotAuthenticatedError, statusOf } from "./error-util";
 import { t } from "./i18n";
+import type { LegalNotice } from "./legal-notices";
 import { LimitExceededError } from "./limit-error";
 import { BeaconBuffer } from "./observability/beacon";
 import { newTraceContext } from "./observability/traceGen";
@@ -530,6 +531,14 @@ export class EngramApi {
 			throw new Error("Malformed /billing/usage response: missing usage");
 		}
 		return { tier: String(body.tier ?? "free"), usage: body.usage };
+	}
+
+	/** Pending legal changes (see legal-notices.ts). `[]` from a backend that
+	 *  predates the field, or self-host, where there are none. */
+	async getLegalNotices(): Promise<LegalNotice[]> {
+		const resp = await this.request("GET", "/onboarding/status");
+		const notices = (resp.json as { legal_notices?: unknown } | undefined)?.legal_notices;
+		return Array.isArray(notices) ? (notices as LegalNotice[]) : [];
 	}
 
 	/** `locale` is the account's UI language: null when none is stored, absent

@@ -80,6 +80,9 @@ export interface EngramSyncSettings {
 	/** Last-known plan/limit state pushed by the backend over the WebSocket.
 	 *  Null until the first plan event is received (or older backend). */
 	planState?: PlanState | null;
+	/** `document@version` keys of notice-only legal changes already shown
+	 *  (legal-notices.ts), so each appears once. */
+	seenLegalNotices?: string[];
 	/** Which backend is active. Optional so `migrateBackendMode` can detect a
 	 *  pre-migration install. Deliberately absent from DEFAULT_SETTINGS for that
 	 *  reason; always present after first load. */

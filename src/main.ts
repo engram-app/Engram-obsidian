@@ -55,7 +55,8 @@ import { sha256Hex } from "./content-hash";
 import { registerDiagnostics } from "./diagnostics";
 import { errMsg, isHttpStatus } from "./error-util";
 import { ExplicitFolders } from "./explicit-folders";
-import { obsidianLocale, t, tInto } from "./i18n";
+import { currentLocale, obsidianLocale, t, tInto } from "./i18n";
+import { type LegalNotice, noticeKey, noticesToShow, noticeText } from "./legal-notices";
 import { isPlanJoinReason } from "./limit-copy";
 import { LimitExceededError } from "./limit-error";
 import { notifyLimitExceeded } from "./limit-toast";
@@ -521,6 +522,33 @@ export default class EngramSyncPlugin extends Plugin {
 		});
 	}
 
+	/** One sticky Notice per pending legal change (see legal-notices.ts). Best
+	 *  effort: email and the web app also carry these, so a failed fetch only
+	 *  waits for the next check. */
+	private async showLegalNotices(): Promise<void> {
+		if (!this.hasAuthConfigured()) return;
+		let notices: LegalNotice[];
+		try {
+			notices = await this.api.getLegalNotices();
+		} catch (err) {
+			rlog().warn("legal", `legal notice check failed: ${String(err)}`);
+			return;
+		}
+		const seen = this.settings.seenLegalNotices ?? [];
+		const show = noticesToShow(notices, seen);
+		if (show.length === 0) return;
+		for (const n of show) {
+			const frag = createFragment();
+			frag.appendText(`${noticeText(n, currentLocale())} `);
+			frag.createEl("a", { text: t("Read it"), href: n.url });
+			// 0 = stays until clicked: a legal change must not flash past.
+			new Notice(frag, 0);
+		}
+		// savePluginData, not saveSettings: the latter rebuilds the channel.
+		this.settings.seenLegalNotices = [...new Set([...seen, ...show.map(noticeKey)])];
+		await this.savePluginData(this.syncEngine.getLastSync());
+	}
+
 	/** Take the user to the Community plugins settings tab and refresh Obsidian's
 	 *  update check so its own Update button is populated on arrival. All internal
 	 *  APIs are feature-detected; a shape change degrades to a no-op, never a throw. */
@@ -574,6 +602,12 @@ export default class EngramSyncPlugin extends Plugin {
 		// don't enable auto-update never see it. Nudge them once per launch with a
 		// notify-only Notice (no self-install — Obsidian policy owns that path).
 		this.app.workspace.onLayoutReady(() => void this.nudgeIfUpdateAvailable());
+
+		// Pending legal changes: at launch, then daily for vaults left open.
+		this.app.workspace.onLayoutReady(() => void this.showLegalNotices());
+		this.registerInterval(
+			window.setInterval(() => void this.showLegalNotices(), 24 * 60 * 60 * 1000),
+		);
 
 		this.api = new EngramApi(this.settings.apiUrl, this.settings.apiKey);
 		if (this.settings.vaultId) {
