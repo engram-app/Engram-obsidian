@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.35.0](https://github.com/engram-app/Engram-obsidian/compare/1.34.1...1.35.0) (2026-10-14)
+
+
+### Features
+
+* **i18n:** fill in the account language from Obsidian's ([#576](https://github.com/engram-app/Engram-obsidian/issues/576)) ([3b6935a](https://github.com/engram-app/Engram-obsidian/commit/3b6935a90ced73dfb1ed2dc12f4c284c1aad3362))
+* **legal:** show pending legal changes in Obsidian ([#587](https://github.com/engram-app/Engram-obsidian/issues/587)) ([217ca9c](https://github.com/engram-app/Engram-obsidian/commit/217ca9c786b4d85187ecc0473236e279a0e12dee))
+
+
+### Bug Fixes
+
+* **i18n:** write catalogs in a stable key order ([#585](https://github.com/engram-app/Engram-obsidian/issues/585)) ([45e1b6d](https://github.com/engram-app/Engram-obsidian/commit/45e1b6d183082888110e8656a26b19001b007a69))
+
 ## [1.34.1](https://github.com/engram-app/Engram-obsidian/compare/1.34.0...1.34.1) (2026-10-12)
 
 
