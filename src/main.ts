@@ -526,6 +526,9 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  effort: email and the web app also carry these, so a failed fetch only
 	 *  waits for the next check. */
 	private readonly legalNoticeToasts = new Map<string, Notice>();
+	/** Set first in onunload. A check still in flight then must not write
+	 *  data.json: it would overwrite the next instance's rotated token. */
+	private unloaded = false;
 
 	private async showLegalNotices(): Promise<void> {
 		if (!this.hasAuthConfigured()) return;
@@ -536,6 +539,7 @@ export default class EngramSyncPlugin extends Plugin {
 			rlog().warn("legal", `legal notice check failed: ${String(err)}`);
 			return;
 		}
+		if (this.unloaded) return;
 		const seen = this.settings.seenLegalNotices ?? [];
 		const show = noticesToShow(notices, seen);
 		if (show.length === 0) return;
@@ -556,6 +560,11 @@ export default class EngramSyncPlugin extends Plugin {
 		// savePluginData, not saveSettings: the latter rebuilds the channel.
 		this.settings.seenLegalNotices = [...new Set([...seen, ...show.map(noticeKey)])];
 		await this.savePluginData(this.syncEngine.getLastSync());
+	}
+
+	private dismissLegalNotices(): void {
+		for (const n of this.legalNoticeToasts.values()) n.hide();
+		this.legalNoticeToasts.clear();
 	}
 
 	/** Take the user to the Community plugins settings tab and refresh Obsidian's
@@ -1471,8 +1480,10 @@ export default class EngramSyncPlugin extends Plugin {
 		// instance, and an in-flight refresh resolving post-unload would persist
 		// over the NEW instance's data.json and fork the rotating token chain
 		// (two live refreshers → server reuse detection revokes the family).
+		this.unloaded = true;
 		this.retireAuthProvider();
 		this.dismissSetupNotice();
+		this.dismissLegalNotices();
 		this.crdtWiring?.dispose();
 		devLog().log("lifecycle", "plugin unloading");
 		rlog().info("lifecycle", "Plugin unloading");

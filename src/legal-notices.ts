@@ -13,7 +13,7 @@ import { t } from "./i18n";
 export interface LegalNotice {
 	document: "terms_of_service" | "privacy_policy";
 	version: string;
-	/** ISO date (YYYY-MM-DD), always in the future while the notice exists. */
+	/** ISO date (YYYY-MM-DD). Future for notice-only; a material notice stays listed after it. */
 	effective_date: string;
 	material: boolean;
 	changelog: string | null;

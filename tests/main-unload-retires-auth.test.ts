@@ -47,6 +47,7 @@ describe("onunload auth-provider retirement", () => {
 			// optional in production — both fields always exist on a real plugin.
 			noteIdMap: { flushNow: () => order.push("flush") },
 			indexRoom: { destroy: () => {} },
+			legalNoticeToasts: new Map(),
 		});
 
 		EngramSyncPlugin.prototype.onunload.call(fake as never);
@@ -83,6 +84,7 @@ describe("onunload auth-provider retirement", () => {
 			promiseTracker: null,
 			noteIdMap: { flushNow: () => order.push("flush") },
 			indexRoom: { destroy: () => order.push("destroy") },
+			legalNoticeToasts: new Map(),
 		});
 
 		EngramSyncPlugin.prototype.onunload.call(fake as never);
