@@ -21,13 +21,16 @@ import de from "./locale/de";
 import enPlurals from "./locale/en-plurals";
 import es from "./locale/es";
 import fr from "./locale/fr";
+import id from "./locale/id";
 import it from "./locale/it";
 import ja from "./locale/ja";
 import ko from "./locale/ko";
 import ms from "./locale/ms";
+import pl from "./locale/pl";
 import pt from "./locale/pt";
 import ptBR from "./locale/pt-BR";
 import ru from "./locale/ru";
+import tr from "./locale/tr";
 import vi from "./locale/vi";
 import zh from "./locale/zh";
 import zhTW from "./locale/zh-TW";
@@ -53,13 +56,16 @@ const LOCALES: Record<string, Dict> = {
 	de,
 	es,
 	fr,
+	id,
 	it,
 	ja,
 	ko,
 	ms,
+	pl,
 	pt,
 	"pt-BR": ptBR,
 	ru,
+	tr,
 	vi,
 	zh,
 	"zh-TW": zhTW,

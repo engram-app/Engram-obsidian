@@ -26,6 +26,12 @@ const SPECS = {
 		tone: "Address the user informally (tu, ton), never vous.",
 		formal: /\b(?:vous|votre|vos)\b/iu,
 	},
+	id: {
+		name: "Indonesian",
+		native: "Bahasa Indonesia",
+		tone: "Address the user as Anda, never kamu.",
+		formal: /\bkamu\b/iu,
+	},
 	it: {
 		name: "Italian",
 		native: "Italiano",
@@ -46,6 +52,12 @@ const SPECS = {
 		script: /\p{Script=Hangul}/u,
 	},
 	ms: { name: "Malay", native: "Bahasa Melayu", tone: "Address the user as anda." },
+	pl: {
+		name: "Polish",
+		native: "Polski",
+		tone: "Address the user informally (ty, twój), never Pan or Pani.",
+		formal: /\b(?:Pan|Pani|Pana|Panu|Państwo)\b/u,
+	},
 	pt: {
 		name: "European Portuguese",
 		native: "Português (Portugal)",
@@ -63,6 +75,13 @@ const SPECS = {
 		tone: "Address the user formally (вы, ваш), never ты.",
 		formal: /(?:^|[^\p{L}])(?:ты|твой|твоя|твоё|твои|тебя|тебе)(?![\p{L}])/iu,
 		script: /\p{Script=Cyrillic}/u,
+	},
+	tr: {
+		name: "Turkish",
+		native: "Türkçe",
+		// Naming the pronouns made gemma paste "{siz}" in as a placeholder (web app, 2026-10-16).
+		tone: "Use polite, concise UI Turkish.",
+		formal: /(?<![\p{L}])(?:sen|senin|sana|seni)(?![\p{L}])/iu,
 	},
 	vi: { name: "Vietnamese", native: "Tiếng Việt", tone: "Address the user as bạn." },
 	zh: {
