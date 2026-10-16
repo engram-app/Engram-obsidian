@@ -30,7 +30,7 @@ const SPECS = {
 		name: "Indonesian",
 		native: "Bahasa Indonesia",
 		tone: "Address the user as Anda, never kamu.",
-		formal: /\bkamu\b/iu,
+		formal: /(?:^|[^\p{L}])(?:kamu|kau|engkau|dikau)(?![\p{L}])/iu,
 	},
 	it: {
 		name: "Italian",
@@ -56,7 +56,8 @@ const SPECS = {
 		name: "Polish",
 		native: "Polski",
 		tone: "Address the user informally (ty, twój), never Pan or Pani.",
-		formal: /\b(?:Pan|Pani|Pana|Panu|Państwo)\b/u,
+		// \b is ASCII-only even with u: letter guards as ru (no lookbehind: Obsidian lint), every case form.
+		formal: /(?:^|[^\p{L}])(?:pan|pani|pana|panu|panem|panie|panią|państwo|państwa|państwu|państwem|pańsk\p{L}*)(?![\p{L}])/iu,
 	},
 	pt: {
 		name: "European Portuguese",
@@ -81,7 +82,7 @@ const SPECS = {
 		native: "Türkçe",
 		// Naming the pronouns made gemma paste "{siz}" in as a placeholder (web app, 2026-10-16).
 		tone: "Use polite, concise UI Turkish.",
-		formal: /(?<![\p{L}])(?:sen|senin|sana|seni)(?![\p{L}])/iu,
+		formal: /(?:^|[^\p{L}])(?:sen|senin|sana|seni|sende|senden|seninle)(?![\p{L}])/iu,
 	},
 	vi: { name: "Vietnamese", native: "Tiếng Việt", tone: "Address the user as bạn." },
 	zh: {
@@ -120,6 +121,8 @@ const GLOSSARY_KEYS = [
 const PINNED: Partial<Record<Target, readonly string[]>> = {
 	de: ["Dismiss"],
 	fr: ["Uploading"],
+	// The model gave "Abaikan", the same word as Ignore beside it.
+	id: ["Dismiss"],
 	it: ["Dismiss"],
 	ko: ["Back"],
 	// Dismiss sits next to Ignore in the Sync Center (tests/i18n-distinct-pairs.test.ts).
@@ -144,6 +147,18 @@ const BRANDS = [
 	"Starter",
 	"Pro",
 ];
+// What a bare or terse string means where it shows. Sent with that string only;
+// changing one redoes it in every locale.
+const DESCRIPTIONS: Record<string, string> = {
+	"{count} retrying": "Sync Center badge: how many files are being retried after an error.",
+	"{count} need attention": "Sync Center badge: how many files need the user to act.",
+	"{count} missing on server":
+		"Sync Center badge: how many files exist locally but not on the server.",
+	"Temporary errors. These clear themselves once the server recovers.":
+		"Recovers means the server starts working normally again.",
+	"Engram: recovered plugin settings from a backup after a corrupted save.":
+		"The settings file broke while saving, and the plugin restored it from a backup copy.",
+};
 const profile: Profile<Target> = {
 	subject:
 		"the Engram Obsidian plugin, which syncs an Obsidian vault with Engram, a notes app that exposes it to AI assistants",
@@ -151,6 +166,7 @@ const profile: Profile<Target> = {
 	brands: BRANDS,
 	glossary: GLOSSARY_KEYS,
 	pinned: PINNED,
+	descriptions: DESCRIPTIONS,
 };
 
 const tr = translator(profile);
