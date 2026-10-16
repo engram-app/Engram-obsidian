@@ -22,10 +22,11 @@ const zh: Dict = {
 	"AI searches": "AI 搜索",
 	"API access": "API 访问",
 	"API key": "API 密钥",
-	"API keys need Pro. Sign in with your Engram account instead.":
-		"API 密钥需要 Pro 订阅。请使用您的 Engram 账号登录。",
+	"API keys need a Pro plan. Sign in with your Engram account instead.":
+		"API 密钥需要 Pro 计划。请使用您的 Engram 账号登录。",
 	About: "关于",
 	"Accept it to keep syncing.": "同意以继续同步。",
+	"Access token": "访问令牌",
 	"Account setup incomplete.": "账号设置未完成。",
 	"Account suspended. Contact support.": "账号已暂停。请联系客服。",
 	"Activity ({count})": "活动 ({count})",
@@ -48,7 +49,6 @@ const zh: Dict = {
 	"Authenticated via manual API key.": "通过手动 API 密钥验证。",
 	Authentication: "身份验证",
 	Back: "返回",
-	Backend: "后端",
 	"Bearer token from your Engram account.": "来自您 Engram 账号的 Bearer 令牌。",
 	Both: "均可",
 	Bug: "Bug",
@@ -94,8 +94,8 @@ const zh: Dict = {
 		"无法创建仓库 — 可能是名称无效或已被使用。",
 	"Couldn't send your feedback, please try again.": "无法发送您的反馈，请重试。",
 	Create: "创建",
-	"Create a hosted account at {signup}, or self-host the backend ({guide}).":
-		"在 {signup} 创建托管账号，或自行搭建后端 ({guide})。",
+	"Create a hosted account at {signup}, or self-host the server ({guide}).":
+		"在 {signup} 创建托管账号，或自行搭建服务器 ({guide})。",
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"在服务器上创建一个新的空仓库，然后将此 Obsidian 仓库同步到其中。",
 	"Custom patterns": "自定义规则",
@@ -125,7 +125,6 @@ const zh: Dict = {
 	"Download {count} files from the server": "从服务器下载{count}个文件",
 	Downloading: "下载中",
 	"Downloading {count}.": "正在下载 {count}.",
-	"Downloads {count}.": "下载 {count}.",
 	"Engram Cloud": "Engram 云",
 	"Engram Sync: pulled {count} changes": "Engram 同步：已同步 {count} 个更改",
 	"Engram Sync: pulled {count} files from server": "Engram 同步：已从服务器拉取 {count} 个文件",
@@ -146,12 +145,12 @@ const zh: Dict = {
 	"Engram URL": "Engram 地址",
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} 可用。{link}。",
-	"Engram backend changed — sign in again to continue.": "Engram 后端已更改 — 重新登录以继续。",
 	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
 		"Engram 索引了您 {all} 个笔记中的 {indexed} 个。其余的仅在此设备上匹配。升级以索引所有内容。",
 	"Engram is the backend that powers sync and semantic search.":
 		"Engram 是提供同步和语义搜索的后端。",
 	"Engram search": "Engram 搜索",
+	"Engram server changed — sign in again to continue.": "Engram 服务器已更改，请重新登录以继续。",
 	"Engram sync: checking...": "Engram 同步：正在检查...",
 	"Engram sync: everything in sync": "Engram 同步：已全部同步",
 	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
@@ -182,7 +181,7 @@ const zh: Dict = {
 		"Engram：插件设置文件已损坏，无法恢复。您可能需要在设置中重新连接。",
 	"Engram: ready": "Engram：已就绪",
 	"Engram: recovered plugin settings from a backup after a corrupted save.":
-		"Engram：从备份恢复了插件设置，因为保存文件已损坏。",
+		"Engram: 从备份恢复了插件设置，因为保存时出现错误。",
 	"Engram: settings tab failed to render ({error})": "Engram：设置选项卡加载失败 ({error})",
 	"Engram: sign-in failed ({error})": "Engram: 登录失败 ({error})",
 	"Engram: signed out": "Engram：已注销",
@@ -205,8 +204,8 @@ const zh: Dict = {
 		"Engram: 此仓库不再存在于服务器上。选择或创建仓库以继续。",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram：您的登录已过期，请在 Engram 设置中重新连接。",
-	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.":
-		"Engram：跳过 {count} 个附件 — 升级以同步图片和 PDF。",
+	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.":
+		"Engram: 忽略了 {count} 个附件 — 升级您的套餐以同步图片和PDF。",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
 		"Engram：{count}个文件同步失败{detail} — 打开同步中心",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
@@ -426,6 +425,7 @@ const zh: Dict = {
 	"Sync now": "立即同步",
 	"Sync paused — click to choose a sync direction": "同步已暂停 — 点击选择同步方向",
 	"Sync preview": "同步预览",
+	"Sync server": "同步服务器",
 	"Sync these now": "立即同步这些",
 	"Sync...": "同步中...",
 	"Synced. Some attachments need a paid plan to sync (see below).":
@@ -436,7 +436,7 @@ const zh: Dict = {
 	"Syncing…": "同步中…",
 	"Tell us anything": "告诉我们任何事",
 	"Temporary errors. These clear themselves once the server recovers.":
-		"临时错误。服务器恢复后会自动解决。",
+		"临时错误。服务器恢复后会自动消失。",
 	"Terms of Service": "服务条款",
 	"Thanks, we read every message.": "感谢，我们会阅读每条消息。",
 	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":
@@ -467,7 +467,6 @@ const zh: Dict = {
 	"This vault": "此仓库",
 	"This vault is empty on the server. Upload your {what}?":
 		"此仓库在服务器上为空。上传 {what} 吗？",
-	Token: "令牌",
 	"Too large for the server": "文件过大",
 	"Too many connected AI clients. Disconnect one or upgrade.":
 		"已连接过多个 AI 客户端。断开一个或升级。",
@@ -489,7 +488,6 @@ const zh: Dict = {
 	"Upload {count} files from this vault": "上传此仓库的 {count} 个文件",
 	Uploading: "上传中",
 	"Uploading {count}.": "上传中 {count}.",
-	"Uploads {count}.": "上传 {count}.",
 	"Uploads {up}, downloads {down}.": "上传 {up}，下载 {down}。",
 	"Using API key": "使用 API 密钥",
 	Vault: "仓库",
@@ -512,6 +510,8 @@ const zh: Dict = {
 		"哪些功能好用，哪些令人沮丧，你希望 Engram 具备什么功能？",
 	"Where this vault syncs to. Each backend keeps its own sign-in.":
 		"此仓库同步到的位置。每个后端有独立的登录。",
+	"Will download {count} files.": "将下载 {count} 个文件。",
+	"Will upload {count} files.": "将上传 {count} 个文件。",
 	"You are about to:": "您将要：",
 	"You are now pointing at a different cloud vault": "您当前指向的是另一个云端仓库",
 	"You can close this and the sync keeps running in the background.":
@@ -554,15 +554,15 @@ const zh: Dict = {
 	"{count} diverged": "{count} 发生分歧",
 	'{count} failed. Run "{command}" for details.': '{count}次失败。详情请查看 "{command}"。',
 	"{count} files": "{count} 个文件",
+	"{count} files not included in your plan": "{count} 文件未包含在您的计划中",
 	"{count} files queued": "{count}个文件排队中",
 	"{count} ignored": "已忽略 {count} 个",
-	"{count} missing on server": "服务器缺失{count}个",
-	"{count} need attention": "{count} 个待处理事项",
-	"{count} not on your plan": "{count} 个不在您的计划中",
+	"{count} missing on server": "{count} 未在服务器上",
+	"{count} need attention": "{count} 待处理",
 	"{count} notes": "{count} 笔记",
 	"{count} only on server": "{count} 仅在服务器上",
 	"{count} queued — {reason}": "{count} 个待处理 — {reason}",
-	"{count} retrying": "{count} 次重试",
+	"{count} retrying": "{count} 正在重试",
 	"{desc} — should not be synced": "{desc} — 不应同步",
 	"{first} and {second}": "{first} 和 {second}",
 	"{formatted} per day": "{formatted} 条/天",
@@ -575,7 +575,7 @@ const zh: Dict = {
 	"✓ {count} synced": "✓ 已同步 {count} 个",
 	"✕ {count} failed": "✕ {count} 失败",
 	"✗ couldn't reach a server at this URL": "✗ 无法访问该 URL 的服务器",
-	"✗ server responded but isn't an Engram backend": "✗ 服务器已响应，但不是 Engram 后端",
+	"✗ server responded but isn't an Engram server": "✗ 服务器响应，但不是 Engram 服务器",
 	"⤳ {count} skipped (Free plan)": "⤳ {count} 已跳过 (免费版)",
 	"👋 Welcome": "👋 欢迎",
 	"💬 Feedback": "💬 反馈",

@@ -29,10 +29,11 @@ const ru: Dict = {
 	"AI searches": "Поиск по ИИ",
 	"API access": "Доступ к API",
 	"API key": "Ключ API",
-	"API keys need Pro. Sign in with your Engram account instead.":
-		"Ключи API доступны только в тарифном плане Pro. Войдите с использованием вашей учётной записи Engram.",
+	"API keys need a Pro plan. Sign in with your Engram account instead.":
+		"Для использования API-ключей требуется тарифный план Pro. Войдите в систему, используя свою учётную запись Engram.",
 	About: "О программе",
 	"Accept it to keep syncing.": "Примите его, чтобы продолжить синхронизацию.",
+	"Access token": "Токен доступа",
 	"Account setup incomplete.": "Настройка учётной записи не завершена.",
 	"Account suspended. Contact support.":
 		"Учётная запись приостановлена. Обратитесь в службу поддержки.",
@@ -59,7 +60,6 @@ const ru: Dict = {
 	"Authenticated via manual API key.": "Аутентификация через ручной API-ключ.",
 	Authentication: "Аутентификация",
 	Back: "Назад",
-	Backend: "Серверная часть",
 	"Bearer token from your Engram account.": "Токен от вашей учётной записи Engram.",
 	Both: "Оба",
 	Bug: "Ошибка",
@@ -111,7 +111,7 @@ const ru: Dict = {
 	"Couldn't send your feedback, please try again.":
 		"Не удалось отправить ваш отзыв, попробуйте ещё раз.",
 	Create: "Создать",
-	"Create a hosted account at {signup}, or self-host the backend ({guide}).":
+	"Create a hosted account at {signup}, or self-host the server ({guide}).":
 		"Создайте учётную запись на {signup} или настройте сервер самостоятельно ({guide}).",
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"Создать новое пустое хранилище на сервере, затем синхронизировать с ним ваше хранилище Obsidian.",
@@ -176,12 +176,6 @@ const ru: Dict = {
 		many: "Загрузка {count}.",
 		other: "Загрузка {count}.",
 	},
-	"Downloads {count}.": {
-		one: "Загрузки {count}.",
-		few: "Загрузки {count}.",
-		many: "Загрузки {count}.",
-		other: "Загрузки {count}.",
-	},
 	"Engram Cloud": "Облако Engram",
 	"Engram Sync: pulled {count} changes": {
 		one: "Engram Sync: получено {count} изменение",
@@ -217,13 +211,13 @@ const ru: Dict = {
 	"Engram URL": "URL Engram",
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} доступен. {link}.",
-	"Engram backend changed — sign in again to continue.":
-		"Сервер Engram был обновлён — войдите снова, чтобы продолжить.",
 	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
 		"Engram индексирует {indexed} из ваших {all} заметок. Остальные соответствия находятся только на этом устройстве. Обновите, чтобы индексировать всё.",
 	"Engram is the backend that powers sync and semantic search.":
 		"Engram — это серверная часть, обеспечивающая синхронизацию и смысловой поиск.",
 	"Engram search": "Поиск по Engram",
+	"Engram server changed — sign in again to continue.":
+		"Сервер Engram изменён — войдите снова, чтобы продолжить.",
 	"Engram sync: checking...": "Синхронизация Engram: проверка...",
 	"Engram sync: everything in sync": "Синхронизация с Engram: всё синхронизировано",
 	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
@@ -265,7 +259,7 @@ const ru: Dict = {
 		"Engram: файл настроек плагина был поврежден и не может быть восстановлен. Возможно, потребуется повторное подключение в настройках.",
 	"Engram: ready": "Engram: готов",
 	"Engram: recovered plugin settings from a backup after a corrupted save.":
-		"Engram: настройки плагина восстановлены из резервной копии после повреждения.",
+		"Engram: восстановлены настройки плагина из резервной копии после повреждения при сохранении.",
 	"Engram: settings tab failed to render ({error})":
 		"Engram: произошла ошибка при отображении вкладки настроек ({error})",
 	"Engram: sign-in failed ({error})": "Engram: ошибка при входе ({error})",
@@ -289,11 +283,11 @@ const ru: Dict = {
 		"Engram: это хранилище больше не существует на сервере. Выберите или создайте хранилище, чтобы продолжить.",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: ваш сеанс завершен — откройте настройки Engram, чтобы подключиться заново.",
-	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.": {
-		one: "Engram: Пропущено {count} вложение — обновите подписку, чтобы синхронизировать изображения и PDF-файлы.",
-		few: "Engram: Пропущено {count} вложения — обновите подписку, чтобы синхронизировать изображения и PDF-файлы.",
-		many: "Engram: Пропущено {count} вложений — обновите подписку, чтобы синхронизировать изображения и PDF-файлы.",
-		other: "Engram: Пропущено {count} вложений — обновите подписку, чтобы синхронизировать изображения и PDF-файлы.",
+	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.": {
+		one: "Engram: Пропущено {count} вложение — обновите свой тариф, чтобы синхронизировать изображения и PDF-файлы.",
+		few: "Engram: Пропущено {count} вложения — обновите свой тариф, чтобы синхронизировать изображения и PDF-файлы.",
+		many: "Engram: Пропущено {count} вложений — обновите свой тариф, чтобы синхронизировать изображения и PDF-файлы.",
+		other: "Engram: Пропущено {count} вложений — обновите свой тариф, чтобы синхронизировать изображения и PDF-файлы.",
 	},
 	"Engram: {count} files failed to sync{detail} — open Sync Center": {
 		one: "Engram: Не удалось синхронизировать {count} файл{detail} — откройте Центр синхронизации",
@@ -554,6 +548,7 @@ const ru: Dict = {
 	"Sync paused — click to choose a sync direction":
 		"Синхронизация приостановлена — нажмите, чтобы выбрать направление синхронизации",
 	"Sync preview": "Предварительный просмотр синхронизации",
+	"Sync server": "Сервер синхронизации",
 	"Sync these now": "Синхронизировать сейчас",
 	"Sync...": "Синхронизация...",
 	"Synced. Some attachments need a paid plan to sync (see below).":
@@ -564,7 +559,7 @@ const ru: Dict = {
 	"Syncing…": "Синхронизация…",
 	"Tell us anything": "Расскажите нам о чём угодно",
 	"Temporary errors. These clear themselves once the server recovers.":
-		"Временные ошибки. Они исчезнут после восстановления сервера.",
+		"Временные ошибки. Они исчезнут после восстановления работы сервера.",
 	"Terms of Service": "Условия использования",
 	"Thanks, we read every message.": "Спасибо, мы читаем каждое сообщение.",
 	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":
@@ -597,7 +592,6 @@ const ru: Dict = {
 	"This vault": "Это хранилище",
 	"This vault is empty on the server. Upload your {what}?":
 		"Это хранилище пустое на сервере. Загрузить ваши {what}?",
-	Token: "Токен",
 	"Too large for the server": "Слишком большой для сервера",
 	"Too many connected AI clients. Disconnect one or upgrade.":
 		"Подключено слишком много клиентов ИИ. Отключите одного или обновите тариф.",
@@ -631,12 +625,6 @@ const ru: Dict = {
 		many: "Загрузка {count}.",
 		other: "Загрузка {count}.",
 	},
-	"Uploads {count}.": {
-		one: "Загрузки {count}.",
-		few: "Загрузки {count}.",
-		many: "Загрузки {count}.",
-		other: "Загрузки {count}.",
-	},
 	"Uploads {up}, downloads {down}.": "Загружено {up}, скачано {down}.",
 	"Using API key": "Используется API-ключ",
 	Vault: "Хранилище",
@@ -661,6 +649,18 @@ const ru: Dict = {
 		"Что работает, что вызывает затруднения, что вы хотели бы, чтобы Engram делал?",
 	"Where this vault syncs to. Each backend keeps its own sign-in.":
 		"Куда синхронизируется это хранилище. Каждый сервер требует отдельной авторизации.",
+	"Will download {count} files.": {
+		one: "Загрузит {count} файл.",
+		few: "Загрузит {count} файла.",
+		many: "Загрузит {count} файлов.",
+		other: "Загрузит {count} файлов.",
+	},
+	"Will upload {count} files.": {
+		one: "Загрузка {count} файла.",
+		few: "Загрузит {count} файла.",
+		many: "Загрузка {count} файлов.",
+		other: "Загрузка {count} файлов.",
+	},
 	"You are about to:": "Вы собираетесь:",
 	"You are now pointing at a different cloud vault":
 		"Сейчас вы используете другое облачное хранилище",
@@ -743,6 +743,12 @@ const ru: Dict = {
 		many: "{count} файлов",
 		other: "{count} файла",
 	},
+	"{count} files not included in your plan": {
+		one: "{count} файл не входят в ваш план",
+		few: "{count} файла не входят в ваш план",
+		many: "{count} файлов не входят в ваш план",
+		other: "{count} файлов не входят в ваш план",
+	},
 	"{count} files queued": {
 		one: "{count} файл в очереди",
 		few: "{count} файла в очереди",
@@ -757,21 +763,15 @@ const ru: Dict = {
 	},
 	"{count} missing on server": {
 		one: "{count} отсутствует на сервере",
-		few: "{count} не найдены на сервере",
-		many: "{count} не найдено на сервере",
+		few: "{count} отсутствуют на сервере",
+		many: "{count} файлов отсутствуют на сервере",
 		other: "{count} отсутствует на сервере",
 	},
 	"{count} need attention": {
 		one: "{count} требует внимания",
 		few: "{count} требует внимания",
 		many: "{count} требует внимания",
-		other: "{count} Требует внимания",
-	},
-	"{count} not on your plan": {
-		one: "{count} не входит в ваш тариф",
-		few: "{count} не входят в ваш план",
-		many: "{count} не входит в ваш тариф",
-		other: "{count} не входит в ваш тариф",
+		other: "{count} требует внимания",
 	},
 	"{count} notes": {
 		one: "{count} заметка",
@@ -792,10 +792,10 @@ const ru: Dict = {
 		other: "{count} в очереди — {reason}",
 	},
 	"{count} retrying": {
-		one: "{count}. Повторная попытка",
-		few: "{count} попытка",
-		many: "{count} попыток повтора",
-		other: "{count}. Повторная попытка",
+		one: "{count} повторная попытка",
+		few: "{count} повторные попытки",
+		many: "{count} повторных попыток",
+		other: "{count} повторных попыток",
 	},
 	"{desc} — should not be synced": "{desc} — не должно синхронизироваться",
 	"{first} and {second}": "{first} и {second}",
@@ -824,7 +824,7 @@ const ru: Dict = {
 		other: "✕ {count} ошибка",
 	},
 	"✗ couldn't reach a server at this URL": "✗ Не удалось подключиться к серверу по этому адресу",
-	"✗ server responded but isn't an Engram backend": "✗ Сервер ответил, но это не сервер Engram",
+	"✗ server responded but isn't an Engram server": "✗ Сервер ответил, но это не сервер Engram",
 	"⤳ {count} skipped (Free plan)": {
 		one: "⤳ Пропущено {count} (бесплатный тариф)",
 		few: "⤳ Пропущено {count} (бесплатный тариф)",

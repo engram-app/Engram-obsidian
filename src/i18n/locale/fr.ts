@@ -28,10 +28,11 @@ const fr: Dict = {
 	"AI searches": "Recherches IA",
 	"API access": "Accès à l'API",
 	"API key": "Clé API",
-	"API keys need Pro. Sign in with your Engram account instead.":
+	"API keys need a Pro plan. Sign in with your Engram account instead.":
 		"Les clés API nécessitent un abonnement Pro. Connecte-toi avec ton compte Engram à la place.",
 	About: "À propos",
 	"Accept it to keep syncing.": "Accepte-la pour continuer la synchronisation.",
+	"Access token": "Jeton d'accès",
 	"Account setup incomplete.": "Configuration du compte incomplète.",
 	"Account suspended. Contact support.": "Compte suspendu. Contacte le support.",
 	"Activity ({count})": "Activité ({count})",
@@ -58,7 +59,6 @@ const fr: Dict = {
 	"Authenticated via manual API key.": "Authentifié via une clé API manuelle.",
 	Authentication: "Authentification",
 	Back: "Retour",
-	Backend: "Serveur",
 	"Bearer token from your Engram account.": "Token d'accès de ton compte Engram.",
 	Both: "Les deux",
 	Bug: "Bogue",
@@ -109,8 +109,8 @@ const fr: Dict = {
 	"Couldn't send your feedback, please try again.":
 		"Impossible d'envoyer ton feedback, essaie à nouveau.",
 	Create: "Créer",
-	"Create a hosted account at {signup}, or self-host the backend ({guide}).":
-		"Crée un compte chez {signup}, ou héberge toi-même le serveur ({guide}).",
+	"Create a hosted account at {signup}, or self-host the server ({guide}).":
+		"Crée un compte chez {signup}, ou héberge le serveur toi-même ({guide}).",
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"Crée un nouveau coffre vide sur le serveur, puis synchronise ce coffre Obsidian avec lui.",
 	"Custom patterns": "Motifs personnalisés",
@@ -168,11 +168,6 @@ const fr: Dict = {
 		many: "Téléchargement {count}.",
 		other: "Téléchargement {count}.",
 	},
-	"Downloads {count}.": {
-		one: "Téléchargements {count}.",
-		many: "Téléchargements {count}.",
-		other: "Téléchargements {count}.",
-	},
 	"Engram Cloud": "Serveur Engram",
 	"Engram Sync: pulled {count} changes": {
 		one: "Engram Sync : {count} modification synchronisée",
@@ -205,13 +200,13 @@ const fr: Dict = {
 	"Engram URL": "URL Engram",
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} est disponible. {link}.",
-	"Engram backend changed — sign in again to continue.":
-		"Le serveur Engram a changé — reconnecte-toi pour continuer.",
 	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
 		"Engram indexe {indexed} de tes {all} notes. Le reste correspond uniquement sur ce périphérique. Passe à une version supérieure pour indexer tout.",
 	"Engram is the backend that powers sync and semantic search.":
 		"Engram est le serveur qui gère la synchronisation et la recherche sémantique.",
 	"Engram search": "Recherche Engram",
+	"Engram server changed — sign in again to continue.":
+		"Le serveur Engram a changé — reconnecte-toi pour continuer.",
 	"Engram sync: checking...": "Synchronisation Engram : vérification en cours...",
 	"Engram sync: everything in sync": "Synchronisation Engram : tout est synchronisé",
 	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
@@ -251,7 +246,7 @@ const fr: Dict = {
 		"Engram : le fichier de paramètres du plugin est corrompu et ne peut pas être restauré. Tu devras peut-être te reconnecter dans les paramètres.",
 	"Engram: ready": "Engram : prêt",
 	"Engram: recovered plugin settings from a backup after a corrupted save.":
-		"Engram : les paramètres du plugin ont été restaurés à partir d'une sauvegarde après une corruption.",
+		"Engram: paramètres du plugin restaurés à partir d'une sauvegarde après une sauvegarde corrompue.",
 	"Engram: settings tab failed to render ({error})":
 		"Engram : l'onglet des paramètres n'a pas pu être affiché ({error})",
 	"Engram: sign-in failed ({error})": "Engram : échec de la connexion ({error})",
@@ -275,10 +270,10 @@ const fr: Dict = {
 		"Engram : ce coffre n'existe plus sur le serveur. Choisis ou crée un coffre pour continuer.",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram : ton identifiant a expiré — ouvre les paramètres Engram pour te reconnecter.",
-	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.": {
-		one: "Engram : {count} pièce jointe ignorée — passe à une version supérieure pour synchroniser les images et les PDF.",
-		many: "Engram : {count} pièces jointes ignorées — passe à une version supérieure pour synchroniser les images et les PDF.",
-		other: "Engram : {count} pièces jointes ignorées — passe à une version supérieure pour synchroniser les images et les PDF.",
+	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.": {
+		one: "Engram: {count} pièce jointe ignorée — améliore ton abonnement pour synchroniser les images et les PDF.",
+		many: "Engram: {count} pièces jointes ignorées — améliore ton abonnement pour synchroniser les images et les PDF.",
+		other: "Engram: {count} pièces jointes ignorées — améliore ton abonnement pour synchroniser les images et les PDF.",
 	},
 	"Engram: {count} files failed to sync{detail} — open Sync Center": {
 		one: "Engram : {count} fichier n'a pas pu être synchronisé{detail} — ouvre le Centre de synchronisation",
@@ -534,6 +529,7 @@ const fr: Dict = {
 	"Sync paused — click to choose a sync direction":
 		"Synchronisation interrompue — clique pour choisir le sens de la synchronisation",
 	"Sync preview": "Aperçu de la synchronisation",
+	"Sync server": "Serveur de synchronisation",
 	"Sync these now": "Synchroniser maintenant",
 	"Sync...": "Synchronisation...",
 	"Synced. Some attachments need a paid plan to sync (see below).":
@@ -544,7 +540,7 @@ const fr: Dict = {
 	"Syncing…": "Synchronisation…",
 	"Tell us anything": "Dis-nous tout",
 	"Temporary errors. These clear themselves once the server recovers.":
-		"Erreurs temporaires. Elles disparaissent lorsque le serveur se rétablit.",
+		"Erreurs temporaires. Elles disparaissent quand le serveur est remis en état.",
 	"Terms of Service": "Conditions d'utilisation",
 	"Thanks, we read every message.": "Merci, nous lisons chaque message.",
 	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":
@@ -578,7 +574,6 @@ const fr: Dict = {
 	"This vault": "Ce coffre",
 	"This vault is empty on the server. Upload your {what}?":
 		"Ce coffre est vide sur le serveur. Souhaites-tu télécharger tes {what}?",
-	Token: "Jeton",
 	"Too large for the server": "Trop volumineux pour le serveur",
 	"Too many connected AI clients. Disconnect one or upgrade.":
 		"Trop de clients IA connectés. Déconnecte-en un ou passe à un abonnement supérieur.",
@@ -610,11 +605,6 @@ const fr: Dict = {
 		many: "Téléchargement {count}.",
 		other: "Téléchargement {count}.",
 	},
-	"Uploads {count}.": {
-		one: "Téléchargements {count}.",
-		many: "Téléchargements {count}.",
-		other: "Téléchargements {count}.",
-	},
 	"Uploads {up}, downloads {down}.": "Téléchargements {up}, téléchargements {down}.",
 	"Using API key": "Utilisation d'une clé API",
 	Vault: "Coffre",
@@ -639,6 +629,16 @@ const fr: Dict = {
 		"Qu'est-ce qui fonctionne, qu'est-ce qui est frustrant, qu'est-ce que tu aimerais que Engram fasse ?",
 	"Where this vault syncs to. Each backend keeps its own sign-in.":
 		"L'emplacement de la synchronisation de ce coffre. Chaque serveur possède sa propre connexion.",
+	"Will download {count} files.": {
+		one: "Téléchargera {count} fichier.",
+		many: "Téléchargera {count} de fichiers.",
+		other: "Téléchargera {count} fichiers.",
+	},
+	"Will upload {count} files.": {
+		one: "Téléchargement de {count} fichier.",
+		many: "Téléchargement de {count} fichiers.",
+		other: "Téléchargera {count} fichiers.",
+	},
 	"You are about to:": "Tu vas :",
 	"You are now pointing at a different cloud vault":
 		"Tu utilises maintenant un autre coffre en ligne",
@@ -713,6 +713,11 @@ const fr: Dict = {
 		many: "{count} fichiers",
 		other: "{count} fichiers",
 	},
+	"{count} files not included in your plan": {
+		one: "{count} fichier non inclus dans ton abonnement",
+		many: "{count} fichiers non inclus dans ton abonnement",
+		other: "{count} fichiers non inclus dans ton abonnement",
+	},
 	"{count} files queued": {
 		one: "{count} fichier en attente",
 		many: "{count} fichiers en attente",
@@ -721,18 +726,13 @@ const fr: Dict = {
 	"{count} ignored": { one: "{count} ignoré", many: "{count} ignorés", other: "{count} ignorés" },
 	"{count} missing on server": {
 		one: "{count} manquant sur le serveur",
-		many: "{count} manquant sur le serveur",
+		many: "{count} manquants sur le serveur",
 		other: "{count} manquants sur le serveur",
 	},
 	"{count} need attention": {
-		one: "{count} nécessite ton attention",
-		many: "{count} nécessite une attention particulière",
+		one: "{count} demande ton attention",
+		many: "{count} nécessitent ton attention",
 		other: "{count} nécessitent ton attention",
-	},
-	"{count} not on your plan": {
-		one: "{count} non inclus dans ton abonnement",
-		many: "{count} pas dans ton abonnement",
-		other: "{count} non inclus dans ton abonnement",
 	},
 	"{count} notes": { one: "{count} note", many: "{count} notes", other: "{count} notes" },
 	"{count} only on server": {
@@ -746,9 +746,9 @@ const fr: Dict = {
 		other: "{count} en file d'attente — {reason}",
 	},
 	"{count} retrying": {
-		one: "{count} tentative",
-		many: "{count} Tentative de synchronisation",
-		other: "{count} tentatives",
+		one: "{count} tentative de synchronisation",
+		many: "{count} en cours de relecture",
+		other: "{count} en cours de relecture",
 	},
 	"{desc} — should not be synced": "{desc} — ne doit pas être synchronisé",
 	"{first} and {second}": "{first} et {second}",
@@ -774,7 +774,7 @@ const fr: Dict = {
 		other: "✕ {count} échecs",
 	},
 	"✗ couldn't reach a server at this URL": "✗ Impossible de contacter un serveur à cette URL",
-	"✗ server responded but isn't an Engram backend":
+	"✗ server responded but isn't an Engram server":
 		"✗ Le serveur a répondu, mais ce n'est pas un serveur Engram",
 	"⤳ {count} skipped (Free plan)": {
 		one: "⤳ {count} ignoré (plan gratuit)",
