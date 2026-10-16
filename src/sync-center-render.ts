@@ -129,7 +129,7 @@ function renderHeader(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 
 	if (planSkipCount > 0) {
 		const badge = header.createSpan({ cls: "engram-sync-center-plan-badge" });
-		badge.setText(t("{count} not on your plan", { count: planSkipCount }));
+		badge.setText(t("{count} files not included in your plan", { count: planSkipCount }));
 	}
 	if (attentionCount > 0) {
 		const badge = header.createSpan({ cls: "engram-sync-center-issue-badge" });

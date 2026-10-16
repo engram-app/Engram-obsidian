@@ -63,8 +63,12 @@ function table(): Record<string, string> {
 		// Server rejects an API-key-authed socket or REST call outright: Cloud
 		// gates API keys behind Pro. Point at sign-in, which works on every plan,
 		// rather than at a generic "upgrade".
-		api_access_not_available: t("API keys need Pro. Sign in with your Engram account instead."),
-		api_write_not_available: t("API keys need Pro. Sign in with your Engram account instead."),
+		api_access_not_available: t(
+			"API keys need a Pro plan. Sign in with your Engram account instead.",
+		),
+		api_write_not_available: t(
+			"API keys need a Pro plan. Sign in with your Engram account instead.",
+		),
 		account_suspended: t("Account suspended. Contact support."),
 		no_tier: t("Account setup incomplete."),
 		account_deleted: t("This account was deleted. Contact support if that is wrong."),

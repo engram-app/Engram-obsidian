@@ -6006,7 +6006,9 @@ export class SyncEngine {
 		this.attachmentLimitToastShown = true;
 		const noun = count === 1 ? "attachment" : "attachments";
 		new Notice(
-			t("Engram: {count} attachments skipped — upgrade to sync images & PDFs.", { count }),
+			t("Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.", {
+				count,
+			}),
 			10_000,
 		);
 		rlog().info(

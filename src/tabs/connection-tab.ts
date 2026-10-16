@@ -32,7 +32,7 @@ export function renderConnectionTab(ctx: TabContext): void {
 	// semantics, standard Obsidian affordance, zero new CSS. Swap for segmented
 	// buttons only if the visual matters more than the maintenance.
 	new Setting(containerEl)
-		.setName(t("Backend"))
+		.setName(t("Sync server"))
 		.setDesc(t("Where this vault syncs to. Each backend keeps its own sign-in."))
 		.addDropdown((dd) => {
 			const labels = modeLabels();

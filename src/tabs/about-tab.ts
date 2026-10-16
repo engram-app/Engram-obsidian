@@ -51,7 +51,7 @@ export function renderAboutTab(ctx: TabContext): void {
 	const account = new Setting(containerEl).setName(t("1. Make an account"));
 	tInto(
 		account.descEl,
-		"Create a hosted account at {signup}, or self-host the backend ({guide}).",
+		"Create a hosted account at {signup}, or self-host the server ({guide}).",
 		{
 			signup: (p) => externalLink(p, asIs("app.engram.page"), ENGRAM_SIGN_UP_URL),
 			guide: (p) => externalLink(p, t("setup guide"), ENGRAM_SELFHOST_URL),
