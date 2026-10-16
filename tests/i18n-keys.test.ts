@@ -17,13 +17,16 @@ import de from "../src/i18n/locale/de";
 import enPlurals from "../src/i18n/locale/en-plurals";
 import es from "../src/i18n/locale/es";
 import fr from "../src/i18n/locale/fr";
+import id from "../src/i18n/locale/id";
 import it from "../src/i18n/locale/it";
 import ja from "../src/i18n/locale/ja";
 import ko from "../src/i18n/locale/ko";
 import ms from "../src/i18n/locale/ms";
+import pl from "../src/i18n/locale/pl";
 import pt from "../src/i18n/locale/pt";
 import ptBR from "../src/i18n/locale/pt-BR";
 import ru from "../src/i18n/locale/ru";
+import tr from "../src/i18n/locale/tr";
 import vi from "../src/i18n/locale/vi";
 import zh from "../src/i18n/locale/zh";
 import zhTW from "../src/i18n/locale/zh-TW";
@@ -43,13 +46,16 @@ const LOCALES: Array<[string, Dict]> = [
 	["de", de],
 	["es", es],
 	["fr", fr],
+	["id", id],
 	["it", it],
 	["ja", ja],
 	["ko", ko],
 	["ms", ms],
+	["pl", pl],
 	["pt", pt],
 	["pt-BR", ptBR],
 	["ru", ru],
+	["tr", tr],
 	["vi", vi],
 	["zh", zh],
 	["zh-TW", zhTW],
