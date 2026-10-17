@@ -796,6 +796,8 @@ export class SyncEngine {
 	private noteIdMap: NoteIdMap | null = null;
 
 	setNoteIdMap(map: NoteIdMap | null): void {
+		// The previous map outlives this binding (main owns it): stop it calling in.
+		if (this.noteIdMap !== map) this.noteIdMap?.setChangeHandler?.(null);
 		this.setCrdtPorts({ noteIdMap: map });
 		// Follow identity with the bytes. The store reports a claim MOVING; this
 		// engine owns the vault, so it performs the corresponding file move.
