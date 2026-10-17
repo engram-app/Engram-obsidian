@@ -141,16 +141,18 @@ export class SyncStore {
 			// `keysChanged` is `Set<any>` in yjs's types, so the key is narrowed
 			// rather than asserted. A Y.Map key is always a string; the guard costs
 			// one typeof per changed key and keeps the boundary honest.
+			const onChange = this.onChange;
 			const claimed: string[] = [];
 			for (const key of event.keysChanged) {
 				if (typeof key !== "string") continue;
 				this.forgotten.delete(key);
+				if (!onChange) continue; // nobody listening: skip the id lookups
 				const id = this.map.get(key)?.note_id;
 				if (id) claimed.push(id);
 			}
 			this.reverse = null;
 			this.cacheById = null;
-			if (claimed.length > 0) this.onChange?.(claimed);
+			if (onChange && claimed.length > 0) onChange(claimed);
 		});
 	}
 

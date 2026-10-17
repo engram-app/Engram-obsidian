@@ -29,6 +29,7 @@ import { NoteIdMap } from "../../src/crdt/note-id-map";
 import { type CrdtWiring, createCrdtWiring } from "../../src/crdt/wiring";
 import { noteRef } from "../../src/note-ref";
 import { rlog } from "../../src/remote-log";
+import { ManualTimeProvider, type TimeProvider } from "../../src/time-provider";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -69,6 +70,8 @@ function makeDevice(
 		duringWait?: () => void | Promise<void>;
 		/** The auto drain's debounce (default: parked far out). */
 		debounceMs?: number;
+		/** The wiring's clock (default: the real one). */
+		time?: TimeProvider;
 		/** Holds one id's settle until the returned promise resolves. */
 		holdSettle?: (id: string) => Promise<void> | undefined;
 		idMapEra?: () => number;
@@ -131,6 +134,7 @@ function makeDevice(
 		// Park the auto heal-timer far out; scenario 3 drives drainStrandedFlushes
 		// directly so the heal is deterministic, not clock-dependent.
 		strandHealDebounceMs: opts?.debounceMs ?? 100_000,
+		time: opts?.time,
 		dbPrefix: id, // isolate the two devices' IndexedDB stores in one process
 	});
 
@@ -764,6 +768,22 @@ test("r14#6 dispose releases a parked strand heal", async () => {
 	expect(drained).toBe(true);
 	await a.wiring.manager.destroyAll();
 	await b.wiring.manager.destroyAll();
+});
+
+test("r15#6 the give-up line measures the heal on the wiring's clock", async () => {
+	const time = new ManualTimeProvider(0);
+	const a = makeDevice("TC1", () => 0);
+	const b = makeDevice("TC2", () => 0, { time, duringWait: () => time.advance(42_000) });
+	await strandOn(b, a, "note-clock", "clock body");
+	const warn = spyOn(rlog(), "warn");
+	try {
+		await b.wiring.drainStrandedFlushes();
+		const msgs = (warn.mock.calls as unknown as Array<[string, string]>).map(([, m]) => m);
+		expect(msgs.some((m) => m.includes("note_id=note-clock after 42s"))).toBe(true);
+	} finally {
+		warn.mockRestore();
+		await destroy(a, b);
+	}
 });
 
 test("a vault switch during the strand-heal wait aborts the drain", async () => {

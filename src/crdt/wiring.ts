@@ -4,6 +4,7 @@ import { docKindFor } from "../file-kind";
 import { noteRef } from "../note-ref";
 import { rlog } from "../remote-log";
 import type { SyncEngine } from "../sync";
+import { DefaultTimeProvider, type TimeProvider } from "../time-provider";
 import { isDestroyedError } from "./destroyed-error";
 import { InvariantChecker, type InvariantViolation } from "./invariants";
 import type { NoteIdMap } from "./note-id-map";
@@ -85,6 +86,8 @@ export interface CrdtWiringDeps {
 	canSendLive?: (noteId: string) => boolean;
 	/** Debounce before a stranded-flush batch reconciles + retries. */
 	strandHealDebounceMs?: number;
+	/** Clock for the strand heal's give-up span (tests pass a manual one). */
+	time?: TimeProvider;
 	/** IndexedDB store namespace (CrdtManagerOptions.dbPrefix). Production omits
 	 *  it — each real device has its own browser origin. Set only by tests that
 	 *  run two "devices" against one shared fake-indexeddb process. */
@@ -147,6 +150,7 @@ const DEFAULT_STRAND_HEAL_DEBOUNCE_MS = 750;
 export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	const { noteIdMap, syncEngine } = deps;
 	const debounceMs = deps.strandHealDebounceMs ?? DEFAULT_STRAND_HEAL_DEBOUNCE_MS;
+	const time = deps.time ?? new DefaultTimeProvider();
 
 	// Stranded ids (unknown id -> no disk path), coalesced so a burst of
 	// stranded flushes shares ONE reconcile. Ids only: the drain writes the doc's
@@ -176,7 +180,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		healing.add(id);
 		try {
 			const era = syncEngine.idMapEra();
-			const startedAt = Date.now();
+			const startedAt = time.now();
 			const how = await Promise.race([
 				syncEngine.awaitNoteIdSettled(id),
 				disposal.promise.then(() => "declined" as const),
@@ -196,7 +200,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 			// A deliberate decline (refused path, deleted here, parked as never
 			// listed) is not a failure: only a real give-up warns.
 			if (!gaveUp) return;
-			const secs = Math.round((Date.now() - startedAt) / 1000);
+			const secs = Math.round((time.now() - startedAt) / 1000);
 			rlog().warn(
 				"crdt",
 				`onFlushToDisk: giving up on note_id=${id} after ${secs}s: the id-map heal ` +

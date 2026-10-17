@@ -1158,7 +1158,10 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 				{ id: "z", path: "p.md" },
 			]);
 			await engine.reconcileNoteIdMapFromManifest();
-			expect(map.pathForId("x")).toBeNull();
+			// The stale cross-wired entry is gone. (Since round 15 #3 the wholesale
+			// reconcile maps an ignored note at its own path; mapping is not syncing.)
+			expect(map.pathForId("x")).not.toBe("p.md");
+			expect(map.get("p.md")).not.toBe("x");
 		});
 
 		test("#4 the failure give-up does not settle an id requested during the failing fetch", async () => {
@@ -1595,7 +1598,7 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			expect(map.pathForId("x")).toBe("x.md");
 		});
 
-		test("#6 an id already mapped to a path that is now refused loses the mapping", async () => {
+		test("#6/r15#4 a pending delete keeps the mapping, and a fan-out does not write the note back", async () => {
 			const { engine, map } = throttledEngine();
 			map.set("p.md", "x");
 			engine.queue.load([
@@ -1603,7 +1606,20 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			]);
 			manifestWith([{ id: "x", path: "p.md" }]);
 			await engine.reconcileNoteIdMapFromManifest();
-			expect(map.pathForId("x")).toBeNull();
+			// Not forgotten: if the delete is dropped, the id is still there.
+			expect(map.pathForId("x")).toBe("p.md");
+			// ...and the fan-out apply path refuses to resurrect it meanwhile.
+			const e = engine as any;
+			let applied = false;
+			e.crdt = {
+				applyRemoteUpdate: async () => {
+					applied = true;
+					return true;
+				},
+				hasHistory: async () => true,
+			};
+			expect(await engine.applyPushedNoteUpdate("x", new Uint8Array(), "h")).toBe("deferred");
+			expect(applied).toBe(false);
 		});
 	});
 
@@ -2015,6 +2031,86 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			} finally {
 				spy.mockRestore();
 			}
+		});
+	});
+
+	describe("round 15", () => {
+		test("#1 an announce for a cross-wired id is verified against the manifest and repaired", async () => {
+			const { engine, map, time } = throttledEngine();
+			const e = engine as any;
+			e.crdt = {};
+			e.crdtCatchupSince = async () => null;
+			e.catchupViaSeqReplay = async () => {};
+			map.set("q.md", "x"); // cross-wired: q.md is y's note
+			(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation(
+				(p: string) => (p === "q.md" ? new TFile("q.md") : null),
+			);
+			try {
+				liveManifest([
+					{ id: "x", path: "p.md" },
+					{ id: "y", path: "q.md" },
+				]);
+				await engine.discoverAnnouncedNote("x", "p.md");
+				time.advance(60_000);
+				await flush();
+				expect(map.pathForId("x")).toBe("p.md");
+			} finally {
+				(mockApp.vault.getFileByPath as ReturnType<typeof mock>)
+					.mockReset()
+					.mockReturnValue(null);
+			}
+		});
+
+		test("#2 a fan-out landing during every fetch still reaches give-up", async () => {
+			const { engine, time } = throttledEngine();
+			liveManifest([]);
+			engine.ensureNoteIdMapped("storm");
+			for (let i = 0; i < 25; i++) {
+				time.advance(GAP); // a fetch starts...
+				engine.ensureNoteIdMapped("storm", "fanout"); // ...and a fan-out lands mid-fetch
+				void engine.awaitNoteIdMapped("storm");
+				await flush();
+			}
+			// 25 x 2s = 50s, one TTL: at most two rounds of MAX_ATTEMPTS (+ the
+			// first fetch, which the first fan-out's evidence does not count).
+			expect(fetches()).toBeLessThanOrEqual(2 * 3 + 2);
+		});
+
+		test("#3 the wholesale reconcile maps an ignored note, so un-ignoring mints no second id", async () => {
+			const { engine, map } = throttledEngine();
+			engine.updateSettings({
+				...DEFAULT_SETTINGS,
+				debounceMs: 1,
+				ignorePatterns: "Private/",
+			});
+			manifestWith([{ id: "x", path: "Private/x.md" }]);
+			await engine.reconcileNoteIdMapFromManifest(); // connect
+			engine.updateSettings({ ...DEFAULT_SETTINGS, debounceMs: 1, ignorePatterns: "" });
+			expect(map.getOrMint("Private/x.md")).toBe("x");
+		});
+
+		test("#5 a strand for a parked id waits out the TTL, retries, and reports the real give-up", async () => {
+			const { engine, time } = throttledEngine();
+			liveManifest([]);
+			engine.ensureNoteIdMapped("ghost");
+			for (let i = 0; i < 6; i++) {
+				await flush();
+				time.advance(GAP);
+			}
+			await flush();
+			expect(fetches()).toBe(3); // parked as never listed
+			let how: string | null = null;
+			void engine.awaitNoteIdSettled("ghost").then((h) => {
+				how = h;
+			});
+			await flush();
+			expect(how).toBeNull(); // parked is retryable, not a decline
+			for (let i = 0; i < 40; i++) {
+				time.advance(GAP);
+				await flush();
+			}
+			expect(fetches()).toBeGreaterThan(3); // asked again after the TTL
+			expect(how).toBe("gave-up");
 		});
 	});
 });

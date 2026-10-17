@@ -474,10 +474,19 @@ function isGateEvent(e: unknown): e is GateEvent {
 /** A note_id waiting on the throttled manifest heal (`ensureNoteIdMapped`). */
 type IdMapEntry = {
 	/** Answered fetches that did not list it, counted only for fetches that
-	 *  started after its latest request. */
+	 *  started after `askedGen`. */
 	attempts: number;
-	/** `idMapFetchGen` at its latest request. */
+	/** `idMapFetchGen` the attempt count starts after: set at creation, and
+	 *  moved once more at most by later outside evidence, so a stream of asks
+	 *  landing mid-fetch cannot keep every fetch from counting (I2/I4). */
 	askedGen: number;
+	askedMoved: boolean;
+	/** `idMapFetchGen` at the latest outside ask: a waiter needs a fetch that
+	 *  started after it (I1). Moves on every announce / fan-out. */
+	waitGen: number;
+	/** A check of an id that IS mapped (a possible cross-wire): it settles on
+	 *  the first answered fetch, not on being mapped. */
+	verify: boolean;
 	/** An announce already restored the budget once for this entry. */
 	resetUsed: boolean;
 	/** Resolves with how the entry settled. */
@@ -493,7 +502,7 @@ type IdMapSettle = "mapped" | "declined" | "gave-up";
 /** Who asks for an id heal. An announce is fresh evidence (may restore the
  *  retry budget once); a fan-out proves the server row exists (may clear the
  *  negative cache once per TTL); internal re-heals may do neither. */
-type IdMapSource = "announce" | "fanout" | "internal";
+type IdMapSource = "announce" | "fanout" | "internal" | "verify";
 
 export class SyncEngine {
 	/**
@@ -1140,7 +1149,7 @@ export class SyncEngine {
 		this.idMapMissing.clear();
 		// Authoritative and complete: an id it evicts is not on the server, so
 		// no re-heal (that would only buy more whole-vault GETs).
-		return this.applyManifestToNoteIdMap(map, manifest, () => true, false);
+		return this.applyManifestToNoteIdMap(map, manifest, () => true, true);
 	}
 
 	/** The apply half of `reconcileNoteIdMapFromManifest`, split out so the
@@ -1150,7 +1159,7 @@ export class SyncEngine {
 		map: NoteIdMap,
 		manifest: ManifestResponse | null,
 		live: () => boolean = () => true,
-		rehealEvicted = true,
+		wholesale = false,
 	): Promise<number> {
 		if (!manifest) return 0; // pre-B1 backend: no manifest endpoint, nothing to reconcile
 		this.cacheManifestOwners(manifest); // keep the destructive-op guard's snapshot fresh
@@ -1179,24 +1188,19 @@ export class SyncEngine {
 			// the engine believing stale news over a fact it authored (#491).
 			if (this.recentlyDeleted.has(note.id)) continue;
 			const localPath = map.pathForId(note.id);
-			if (localPath === path) {
-				// Already where the manifest says (cheap check first: no glob per
-				// note). Only a pending offline delete changes that: the mapping is
-				// what lets the next fan-out cold-apply the note back to disk, so it
-				// is forgotten (local only, `delete` publishes nothing). An ignored
-				// note keeps its id, so un-ignoring it later mints no second one.
-				if (
-					this.queue.hasPendingEvidencedDelete(path, this.settings.vaultId ?? undefined)
-				) {
-					map.delete(localPath);
-					applied++;
-				}
-				continue;
-			}
-			// Same refusals as discovery: an ignored path or one with a pending
-			// offline delete must not get a mapping. A cross-wired local entry
-			// (another note's path) is wrong either way and is forgotten.
-			if (this.isRefusedPath(path)) {
+			if (localPath === path) continue; // already right (cheap check first, no glob)
+			// Mapping is not syncing: shouldIgnore still keeps an ignored note's
+			// content off disk, so the wholesale reconcile maps it (un-ignoring then
+			// reuses its id). Only the live heal refuses ignored paths, to stop a
+			// fan-out storm. A pending offline delete is skipped by both, never
+			// forgotten: the delete may still be dropped, and the fan-out apply
+			// refuses to write a note while its delete is queued.
+			const pendingDelete = this.queue.hasPendingEvidencedDelete(
+				path,
+				this.settings.vaultId ?? undefined,
+			);
+			if (pendingDelete || (!wholesale && this.shouldIgnore(path))) {
+				// A cross-wired local entry (another note's path) is wrong either way.
 				if (localPath !== null && manifestPaths.has(localPath)) {
 					map.delete(localPath);
 					applied++;
@@ -1230,7 +1234,9 @@ export class SyncEngine {
 		// this snapshot predates its row) must be re-healed, or it stays deaf.
 		// Internal (fresh=false): it must not restore the retry budget, or two ids
 		// that keep evicting each other would never give up.
-		if (rehealEvicted)
+		// The wholesale reconcile is authoritative and complete: an id it evicts
+		// is not on the server, so no re-heal (only more whole-vault GETs).
+		if (!wholesale)
 			for (const id of evicted)
 				if (map.pathForId(id) === null) this.ensureNoteIdMapped(id, "internal");
 		if (applied > 0) {
@@ -1290,7 +1296,9 @@ export class SyncEngine {
 		// and carries its own tombstone skip; see there.
 		if (this.recentlyDeleted.has(noteId)) return false;
 
-		if (this.noteIdMap.pathForId(noteId) !== null) return false; // already mapped
+		// Already mapped. Only a verify asks anyway: the manifest decides whether
+		// that mapping is right (a cross-wire it is not).
+		if (source !== "verify" && this.noteIdMap.pathForId(noteId) !== null) return false;
 		// The manifest already answered for this id, at a path we refuse to map:
 		// another fetch would only say it again (a storm per fan-out). Re-checked
 		// here, so the entry clears itself once the reason is gone.
@@ -1317,14 +1325,21 @@ export class SyncEngine {
 			this.idMapPending.set(noteId, {
 				attempts: 0,
 				askedGen: this.idMapFetchGen,
+				askedMoved: false,
+				waitGen: this.idMapFetchGen,
+				verify: source === "verify",
 				resetUsed: false,
 				done,
 				release,
 			});
-		} else {
-			// Only outside evidence moves the line: an internal re-ask during every
-			// fetch would otherwise keep any fetch from ever counting.
-			if (source !== "internal") entry.askedGen = this.idMapFetchGen;
+		} else if (source === "announce" || source === "fanout") {
+			entry.waitGen = this.idMapFetchGen;
+			// Outside evidence may move the counting line once; an internal
+			// re-ask never does.
+			if (!entry.askedMoved) {
+				entry.askedGen = this.idMapFetchGen;
+				entry.askedMoved = true;
+			}
 			if (source === "announce" && !entry.resetUsed && entry.attempts > 0) {
 				entry.attempts = 0;
 				entry.resetUsed = true;
@@ -1348,7 +1363,7 @@ export class SyncEngine {
 	awaitNoteIdMapped(noteId: string): Promise<void> {
 		const entry = this.idMapPending.get(noteId);
 		if (!entry) return Promise.resolve();
-		const gen = entry.askedGen + 1;
+		const gen = entry.waitGen + 1;
 		if (this.idMapFetchGen < gen) this.pokeIdMapUrgent();
 		return Promise.race([entry.done, this.fetchDone(gen)]).then(() => {});
 	}
@@ -1366,9 +1381,26 @@ export class SyncEngine {
 			await this.whenGateOpens();
 			if (epoch !== this.idMapEpoch) return "declined"; // the vault (or engine) is gone
 		}
-		if (!this.ensureNoteIdMapped(noteId, "internal"))
-			return this.noteIdMap?.pathForId(noteId) != null ? "mapped" : "declined";
-		return (await this.idMapPending.get(noteId)?.done) ?? "declined";
+		let waitedOutPark = false;
+		for (;;) {
+			if (this.ensureNoteIdMapped(noteId, "internal"))
+				return (await this.idMapPending.get(noteId)?.done) ?? "declined";
+			if (this.noteIdMap?.pathForId(noteId) != null) return "mapped";
+			// Parked as never listed is not a decline: wait out the TTL once and
+			// ask again; a second give-up is the real one.
+			const parked = this.idMapMissing.get(noteId);
+			if (!parked) return "declined";
+			if (waitedOutPark) return "gave-up";
+			waitedOutPark = true;
+			await new Promise<void>((r) => {
+				this.time.setTimeout(r, Math.max(0, parked.until - this.time.now()));
+			});
+			if (epoch !== this.idMapEpoch) return "declined";
+			while (this.syncBlocked) {
+				await this.whenGateOpens();
+				if (epoch !== this.idMapEpoch) return "declined";
+			}
+		}
 	}
 
 	/** One shared promise per fetch generation: resolves when fetch `gen` (or
@@ -1450,16 +1482,12 @@ export class SyncEngine {
 		if (!live()) return true;
 		const failuresBefore = this.idMapFailures;
 		if (ok) this.idMapFetchSucceeded();
-		else if (!probing) {
-			// A failed probe proves nothing new, so it counts toward neither.
-			this.idMapFailures++;
-			this.idMapFailuresToGiveUp++;
-		}
+		else if (!probing) this.idMapFailures++; // a failed probe proves nothing new
 		if (this.idMapFailures !== failuresBefore) this.idMapProbeUsed = false; // a new window
-		if (this.idMapFailuresToGiveUp >= SyncEngine.ID_MAP_RECONCILE_MAX_FAILURES) {
+		if (this.idMapFailures - this.idMapGaveUpAt >= SyncEngine.ID_MAP_RECONCILE_MAX_FAILURES) {
 			// The backoff count is kept (capped until a fetch succeeds), but the
-			// give-up count restarts: a later request gets its own five tries.
-			this.idMapFailuresToGiveUp = 0;
+			// give-up count restarts from here: a later request gets its own tries.
+			this.idMapGaveUpAt = this.idMapFailures;
 			rlog().warn(
 				"sync",
 				`live id-map reconcile: ${this.idMapFailures} failed fetches in a row, giving up on ${this.idMapPending.size} pending note(s)`,
@@ -1475,6 +1503,14 @@ export class SyncEngine {
 		if (ok) {
 			for (const [id, entry] of [...this.idMapPending]) {
 				if (entry.askedGen >= gen) continue; // asked again after it started
+				if (entry.verify) {
+					// Checked against an authoritative manifest: done either way.
+					this.settleIdMapPending(
+						id,
+						this.noteIdMap?.pathForId(id) != null ? "mapped" : "declined",
+					);
+					continue;
+				}
 				if (++entry.attempts < SyncEngine.ID_MAP_RECONCILE_MAX_ATTEMPTS) continue;
 				rlog().info("sync", `live id-map reconcile gave up on unmapped note=${id}`);
 				this.idMapMissing.set(id, {
@@ -1506,7 +1542,8 @@ export class SyncEngine {
 		for (const id of [...this.idMapPending.keys()]) {
 			if (drop || this.recentlyDeleted.has(id) || this.idMapRefused.has(id))
 				this.settleIdMapPending(id, "declined");
-			else if (this.noteIdMap?.pathForId(id) != null) this.settleIdMapPending(id, "mapped");
+			else if (!this.idMapPending.get(id)?.verify && this.noteIdMap?.pathForId(id) != null)
+				this.settleIdMapPending(id, "mapped");
 		}
 	}
 
@@ -1527,7 +1564,8 @@ export class SyncEngine {
 			const ids = [...this.idMapClaimed];
 			this.idMapClaimed.clear();
 			for (const id of ids)
-				if (this.noteIdMap?.pathForId(id) != null) this.settleIdMapPending(id, "mapped");
+				if (!this.idMapPending.get(id)?.verify && this.noteIdMap?.pathForId(id) != null)
+					this.settleIdMapPending(id, "mapped");
 		});
 	}
 
@@ -1656,8 +1694,8 @@ export class SyncEngine {
 	);
 	/** Consecutive failed fetches, for the backoff (reset on success). */
 	private idMapFailures = 0;
-	/** Failed fetches since the last success or give-up, for the give-up. */
-	private idMapFailuresToGiveUp = 0;
+	/** `idMapFailures` at the last give-up: the give-up counts from here. */
+	private idMapGaveUpAt = 0;
 	/** This backoff window's one fan-out probe is spent; the next run is it. */
 	private idMapProbeUsed = false;
 	private idMapProbeNext = false;
@@ -1700,7 +1738,7 @@ export class SyncEngine {
 		this.noteIdSaveThrottle.reset();
 		this.idMapEpoch++;
 		this.idMapFailures = 0;
-		this.idMapFailuresToGiveUp = 0;
+		this.idMapGaveUpAt = 0;
 		this.idMapProbeUsed = this.idMapProbeNext = false;
 		// Release anyone parked on the gate (the strand heal): the vault they
 		// waited in is gone, or the engine is.
@@ -1711,7 +1749,7 @@ export class SyncEngine {
 	 *  the server is reachable, so both failure counts start over. */
 	private idMapFetchSucceeded(): void {
 		this.idMapFailures = 0;
-		this.idMapFailuresToGiveUp = 0;
+		this.idMapGaveUpAt = 0;
 		this.idMapProbeUsed = false;
 	}
 
@@ -7632,6 +7670,9 @@ export class SyncEngine {
 				mappedAt !== null &&
 				mappedAt !== normalized &&
 				this.app.vault.getFileByPath(mappedAt) instanceof TFile;
+			// ...but it may be a cross-wire, which the manifest repairs: one
+			// throttled check, settled by the first answered fetch.
+			if (keptElsewhere) this.ensureNoteIdMapped(noteId, "verify");
 			if (this.noteIdMap && mappedAt !== normalized && !keptElsewhere) {
 				const displaced = this.noteIdMap.get(normalized);
 				this.noteIdMap.set(normalized, noteId);
@@ -7699,6 +7740,17 @@ export class SyncEngine {
 				return "deferred"; // genuinely unknown — first-discovery is pull()'s job
 			}
 			rlog().info("crdt", `fan-out for unmapped id healed via manifest: ${noteRef(path)}`);
+		}
+		// The mapping survives a queued offline delete (it may still be dropped),
+		// so the fan-out must not write the note back while the delete waits.
+		if (
+			this.queue.hasPendingEvidencedDelete(
+				normalizePath(path),
+				this.settings.vaultId ?? undefined,
+			)
+		) {
+			rlog().info("crdt", `fan-out skip (delete queued): ${noteRef(path)}`);
+			return "deferred";
 		}
 		// A fan-out for a mapped note is the server pushing that note's bytes —
 		// authoritative proof it has a row. So confirm it here rather than dropping
