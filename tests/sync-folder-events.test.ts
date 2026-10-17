@@ -19,6 +19,9 @@ import { DEFAULT_SETTINGS } from "../src/types";
 // --- Minimal API mock (only folder methods are exercised) ---
 const mockApi = {
 	createFolder: mock().mockResolvedValue({ folder: { name: "", count: 0 } }),
+	// null = 404, i.e. a backend without POST /folders/batch. The per-folder
+	// seed tests below run against that fallback; the batch tests override it.
+	createFolders: mock().mockResolvedValue(null),
 	deleteFolder: mock().mockResolvedValue(undefined),
 	listExplicitFolders: mock().mockResolvedValue([]),
 	pushNote: mock().mockResolvedValue({ note: {}, chunks_indexed: 1 }),
@@ -76,6 +79,7 @@ beforeEach(() => {
 	(mockApi.createFolder as jest.Mock)
 		.mockReset()
 		.mockResolvedValue({ folder: { name: "", count: 0 } });
+	(mockApi.createFolders as jest.Mock).mockReset().mockResolvedValue(null);
 	(mockApi.deleteFolder as jest.Mock).mockReset().mockResolvedValue(undefined);
 	(mockApi.listExplicitFolders as jest.Mock).mockReset().mockResolvedValue([]);
 });
@@ -397,6 +401,124 @@ describe("SyncEngine.seedEmptyFolders", () => {
 		await engine.seedEmptyFolders();
 
 		expect(mockApi.createFolder).toHaveBeenCalledWith("Foo");
+	});
+});
+
+describe("SyncEngine.seedEmptyFolders via POST /folders/batch", () => {
+	function setVaultFolders(folders: TFolder[]) {
+		mockApp.vault.getAllLoadedFiles = mock().mockReturnValue(folders);
+	}
+	const echo = (folders: string[]) => Promise.resolve(folders);
+
+	test("sends every empty folder in one batch, never the single endpoint", async () => {
+		const { engine, explicit } = await createEngine();
+		(mockApi.createFolders as jest.Mock).mockImplementation(echo);
+		setVaultFolders([new TFolder("A", []), new TFolder("B", [])]);
+
+		await engine.seedEmptyFolders();
+
+		expect(mockApi.createFolders).toHaveBeenCalledTimes(1);
+		expect(mockApi.createFolders).toHaveBeenCalledWith(["A", "B"]);
+		expect(mockApi.createFolder).not.toHaveBeenCalled();
+		expect(explicit.has("A")).toBe(true);
+		expect(explicit.has("B")).toBe(true);
+	});
+
+	test("makes no request when nothing needs seeding", async () => {
+		const { engine } = await createEngine();
+		setVaultFolders([]);
+		await engine.seedEmptyFolders();
+		expect(mockApi.createFolders).not.toHaveBeenCalled();
+	});
+
+	test("chunks at 500 folders per request", async () => {
+		const { engine, explicit } = await createEngine();
+		(mockApi.createFolders as jest.Mock).mockImplementation(echo);
+		setVaultFolders(Array.from({ length: 1001 }, (_, i) => new TFolder(`F${i}`, [])));
+
+		await engine.seedEmptyFolders();
+
+		const sizes = (mockApi.createFolders as jest.Mock).mock.calls.map(
+			(c) => (c[0] as string[]).length,
+		);
+		expect(sizes).toEqual([500, 500, 1]);
+		expect(explicit.has("F1000")).toBe(true);
+	});
+
+	test("on 429 waits Retry-After then retries the same chunk", async () => {
+		const { engine, explicit } = await createEngine();
+		const sleep = jest
+			.spyOn(engine as unknown as { sleep: (ms: number) => Promise<void> }, "sleep")
+			.mockResolvedValue(undefined);
+		(mockApi.createFolders as jest.Mock)
+			.mockRejectedValueOnce({ status: 429, headers: { "retry-after": "3" } })
+			.mockImplementation(echo);
+		setVaultFolders([new TFolder("A", [])]);
+
+		await engine.seedEmptyFolders();
+
+		expect(sleep).toHaveBeenCalledWith(3000);
+		expect(mockApi.createFolders).toHaveBeenCalledTimes(2);
+		expect(explicit.has("A")).toBe(true);
+	});
+
+	test("gives up the pass after repeated 429s instead of hammering", async () => {
+		const { engine, explicit } = await createEngine();
+		const sleep = jest
+			.spyOn(engine as unknown as { sleep: (ms: number) => Promise<void> }, "sleep")
+			.mockResolvedValue(undefined);
+		(mockApi.createFolders as jest.Mock).mockRejectedValue({ status: 429 });
+		setVaultFolders(Array.from({ length: 600 }, (_, i) => new TFolder(`F${i}`, [])));
+
+		await expect(engine.seedEmptyFolders()).resolves.toBeUndefined();
+
+		// 3 attempts on the first chunk, then the second chunk is never sent.
+		expect(mockApi.createFolders).toHaveBeenCalledTimes(3);
+		expect(sleep).toHaveBeenCalledTimes(2);
+		expect(explicit.has("F0")).toBe(false);
+		expect(mockApi.createFolder).not.toHaveBeenCalled();
+	});
+
+	test("falls back to per-folder POSTs on 404 (old backend)", async () => {
+		const { engine, explicit } = await createEngine();
+		setVaultFolders([new TFolder("A", []), new TFolder("B", [])]);
+
+		await engine.seedEmptyFolders();
+
+		expect(mockApi.createFolders).toHaveBeenCalledTimes(1);
+		expect(mockApi.createFolder).toHaveBeenCalledWith("A");
+		expect(mockApi.createFolder).toHaveBeenCalledWith("B");
+		expect(explicit.has("A")).toBe(true);
+	});
+
+	test("per-folder fallback stops on 429 instead of hammering", async () => {
+		const { engine } = await createEngine();
+		jest.spyOn(
+			engine as unknown as { sleep: (ms: number) => Promise<void> },
+			"sleep",
+		).mockResolvedValue(undefined);
+		(mockApi.createFolder as jest.Mock).mockRejectedValue({ status: 429 });
+		setVaultFolders([new TFolder("A", []), new TFolder("B", []), new TFolder("C", [])]);
+
+		await engine.seedEmptyFolders();
+
+		// "A" gets its 3 attempts; B and C are never sent.
+		const sent = (mockApi.createFolder as jest.Mock).mock.calls.map((c) => c[0]);
+		expect(sent).toEqual(["A", "A", "A"]);
+	});
+
+	test("a non-429 chunk failure is logged and the next chunk still goes", async () => {
+		const { engine, explicit } = await createEngine();
+		(mockApi.createFolders as jest.Mock)
+			.mockRejectedValueOnce({ status: 500 })
+			.mockImplementation(echo);
+		setVaultFolders(Array.from({ length: 501 }, (_, i) => new TFolder(`F${i}`, [])));
+
+		await engine.seedEmptyFolders();
+
+		expect(mockApi.createFolders).toHaveBeenCalledTimes(2);
+		expect(explicit.has("F0")).toBe(false);
+		expect(explicit.has("F500")).toBe(true);
 	});
 });
 

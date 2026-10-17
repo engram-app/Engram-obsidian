@@ -328,6 +328,19 @@ const MIME_TYPES: Record<string, string> = {
  *  force pipeline): at most this many pushFile calls outstanding at once. */
 const PUSH_BATCH_SIZE = 10;
 
+/** Folders per POST /folders/batch. Matches the server's 500 cap. */
+const SEED_FOLDER_CHUNK = 500;
+/** Tries per seed request before a 429 ends the seed pass. */
+const SEED_429_ATTEMPTS = 3;
+
+/** Retry-After (delta-seconds form) off a rejected requestUrl, in ms. */
+function retryAfterMs(e: unknown): number | undefined {
+	const headers = (e as { headers?: Record<string, string> } | null)?.headers;
+	const raw = headers?.["retry-after"] ?? headers?.["Retry-After"];
+	const secs = raw === undefined ? Number.NaN : Number(raw);
+	return Number.isFinite(secs) && secs >= 0 ? Math.min(secs, 60) * 1000 : undefined;
+}
+
 /** First OfflineQueue retry delay after a transient failure; doubles per
  *  failure up to OFFLINE_RETRY_MAX_MS. A failing entry waits out its backoff
  *  while the drain moves on to the entries behind it. */
@@ -4995,31 +5008,78 @@ export class SyncEngine {
 	 *  only non-syncable types (.txt, .excalidraw, …) — would otherwise never
 	 *  appear in the web UI after a first sync. Folders with a syncable note
 	 *  anywhere beneath them are skipped: they surface via that note, and the
-	 *  web app synthesizes their ancestors. Best-effort — a per-folder server
-	 *  error is warn-logged and seeding continues (matches handleFolderCreate). */
+	 *  web app synthesizes their ancestors. Best-effort: a failed chunk is
+	 *  warn-logged and stays unrecorded, so the next catchUp retries it.
+	 *
+	 *  Sent through POST /folders/batch in chunks of SEED_FOLDER_CHUNK. A 429
+	 *  is waited out (Retry-After, else exponential) and, if it persists, ends
+	 *  the pass: one-folder-per-request with no backoff is what burned the
+	 *  user's API budget (1,342 of 3,136 prod calls were 429). A 404 means an
+	 *  old self-hosted backend, served by the per-folder endpoint. */
 	async seedEmptyFolders(): Promise<void> {
-		if (!this.explicitFolders) return;
+		const explicit = this.explicitFolders;
+		if (!explicit) return;
 
-		const loaded = this.app.vault.getAllLoadedFiles?.() ?? [];
-		for (const f of loaded) {
+		const pending: string[] = [];
+		for (const f of this.app.vault.getAllLoadedFiles?.() ?? []) {
 			if (!(f instanceof TFolder)) continue;
 			const path = normalizePath(f.path);
 			if (!path || path === "/") continue; // vault root
 			if (this.shouldIgnore(path)) continue;
-			if (this.explicitFolders.has(path)) continue; // already tracked
+			if (explicit.has(path)) continue; // already tracked
 			if (this.subtreeHasSyncableFile(f)) continue; // appears via its notes
+			pending.push(path);
+		}
 
+		for (let i = 0; i < pending.length; i += SEED_FOLDER_CHUNK) {
+			const chunk = pending.slice(i, i + SEED_FOLDER_CHUNK);
+			let created: string[] | null;
 			try {
-				await this.api.createFolder(path);
-				await this.explicitFolders.add(path);
+				created = await this.withRateLimitRetry(() => this.api.createFolders(chunk));
 			} catch (e) {
-				devLog().log("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`);
-				rlog().warn(
-					"push",
-					`seedEmptyFolders("${noteRef(path)}") failed: ${errMsg(e, path)}`,
-				);
+				this.warnSeedFailure(`${chunk.length} folders`, e);
+				if (isHttpStatus(e, 429)) return;
+				continue;
+			}
+			if (created === null) {
+				await this.seedFoldersOneByOne(pending.slice(i));
+				return;
+			}
+			// Record the LOCAL paths: the server may have sanitized the name,
+			// and the set is keyed on what this vault holds.
+			await explicit.addAll(chunk);
+		}
+	}
+
+	/** Fallback for a backend without POST /folders/batch. */
+	private async seedFoldersOneByOne(paths: string[]): Promise<void> {
+		for (const path of paths) {
+			try {
+				await this.withRateLimitRetry(() => this.api.createFolder(path));
+				await this.explicitFolders?.add(path);
+			} catch (e) {
+				this.warnSeedFailure(path, e);
+				if (isHttpStatus(e, 429)) return;
 			}
 		}
+	}
+
+	/** Runs `fn`, waiting out up to SEED_429_ATTEMPTS - 1 rate-limit refusals.
+	 *  The last 429 is rethrown for the caller to stop on. */
+	private async withRateLimitRetry<T>(fn: () => Promise<T>): Promise<T> {
+		for (let attempt = 1; ; attempt++) {
+			try {
+				return await fn();
+			} catch (e) {
+				if (!isHttpStatus(e, 429) || attempt >= SEED_429_ATTEMPTS) throw e;
+				await this.sleep(retryAfterMs(e) ?? 1000 * 2 ** (attempt - 1));
+			}
+		}
+	}
+
+	private warnSeedFailure(what: string, e: unknown): void {
+		devLog().log("push", `seedEmptyFolders(${what}) failed: ${errMsg(e)}`);
+		rlog().warn("push", `seedEmptyFolders(${noteRef(what)}) failed: ${errMsg(e, what)}`);
 	}
 
 	/** True if any descendant file (at any depth) is syncable and not ignored. */

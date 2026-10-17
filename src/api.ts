@@ -804,6 +804,21 @@ export class EngramApi {
 		return resp.json as { folder: { name: string; count: number } };
 	}
 
+	/** Create many explicit folder markers in one request (server caps it at
+	 *  500). Idempotent like createFolder. Returns the server-side names, or
+	 *  null on 404: a backend that predates POST /folders/batch, so the caller
+	 *  falls back to createFolder per folder. */
+	async createFolders(folders: string[]): Promise<string[] | null> {
+		try {
+			const resp = await this.request("POST", "/folders/batch", { folders });
+			const body = resp.json as { folders?: { name: string }[] };
+			return (body.folders ?? []).map((f) => f.name);
+		} catch (e) {
+			if (isHttpStatus(e, 404)) return null;
+			throw e;
+		}
+	}
+
 	/** Delete an explicit empty folder marker. Server always 204 — idempotent.
 	 *  Slashes are preserved as path separators; each segment is URL-encoded so
 	 *  spaces and other reserved characters survive routing. */

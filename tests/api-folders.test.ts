@@ -47,6 +47,39 @@ describe("EngramApi.createFolder", () => {
 	});
 });
 
+describe("EngramApi.createFolders", () => {
+	test("POSTs /folders/batch and returns the created names", async () => {
+		mockRequestUrl.mockResolvedValueOnce({
+			status: 201,
+			json: {
+				folders: [
+					{ name: "A", count: 0 },
+					{ name: "B/C", count: 0 },
+				],
+			},
+		} as any);
+		const api = new EngramApi(TEST_SERVER, TEST_KEY);
+		const result = await api.createFolders(["A", "B/C"]);
+		const opts = mockRequestUrl.mock.calls[0][0] as any;
+		expect(opts.method).toBe("POST");
+		expect(opts.url).toBe(`${TEST_API_BASE}/folders/batch`);
+		expect(JSON.parse(opts.body)).toEqual({ folders: ["A", "B/C"] });
+		expect(result).toEqual(["A", "B/C"]);
+	});
+
+	test("returns null on 404 (backend predates the batch endpoint)", async () => {
+		mockRequestUrl.mockRejectedValueOnce({ status: 404 });
+		const api = new EngramApi(TEST_SERVER, TEST_KEY);
+		await expect(api.createFolders(["A"])).resolves.toBeNull();
+	});
+
+	test("rethrows other errors (429 stays visible to the caller)", async () => {
+		mockRequestUrl.mockRejectedValueOnce({ status: 429 });
+		const api = new EngramApi(TEST_SERVER, TEST_KEY);
+		await expect(api.createFolders(["A"])).rejects.toMatchObject({ status: 429 });
+	});
+});
+
 describe("EngramApi.deleteFolder", () => {
 	test("sends DELETE /folders/<path>", async () => {
 		mockRequestUrl.mockResolvedValueOnce({ status: 204, json: null } as any);

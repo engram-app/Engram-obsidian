@@ -46,6 +46,12 @@ export class ExplicitFolders {
 		await this.persist();
 	}
 
+	/** add() for many paths with a single persist. */
+	async addAll(paths: readonly string[]): Promise<void> {
+		for (const p of paths) this.set.add(p);
+		await this.persist();
+	}
+
 	async delete(path: string): Promise<void> {
 		this.set.delete(path);
 		await this.persist();
