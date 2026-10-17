@@ -390,6 +390,20 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			wiring.dispose();
 		});
 
+		test("a burst of announces persists the id map once per gap, not once per note", async () => {
+			const { idSaves, map, time, wiring } = announceRig();
+			for (let i = 0; i < 50; i++) {
+				wiring.onCrdtDocReady(`b-${i}`, `b${i}.md`);
+				await flush(); // back-to-back: each after the last settled
+			}
+			time.advance(60_000);
+			await flush();
+			for (let i = 0; i < 50; i++) expect(map.pathForId(`b-${i}`)).toBe(`b${i}.md`);
+			// Leading save + one trailing save for the rest of the burst.
+			expect(idSaves()).toBe(2);
+			wiring.dispose();
+		});
+
 		test("discovery throwing before its own try still runs the manifest fallback", async () => {
 			const { engine, map, wiring } = announceRig();
 			(engine as any).isLiveBound = () => {

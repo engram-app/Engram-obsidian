@@ -1433,6 +1433,10 @@ export class SyncEngine {
 	private idMapPruneQueued = false;
 	/** Assigned in the constructor: it needs `this.time`. */
 	private readonly idMapThrottle: TrailingThrottle;
+	/** Discovery's id-map persist: leading save, then at most one per gap. The
+	 *  tail of a burst is also covered by onunload's wholesale save. */
+	private readonly noteIdSaveThrottle: TrailingThrottle;
+	private static readonly NOTE_ID_SAVE_GAP_MS = 1_000;
 	private static readonly ID_MAP_RECONCILE_COOLDOWN_MS = 2_000;
 	/** Spacing between back-to-back fan-out (urgent) fetches. ponytail: a stream
 	 *  of fan-outs for an id the server never lists costs 2 GETs/s; raise it if
@@ -3027,6 +3031,18 @@ export class SyncEngine {
 					? SyncEngine.ID_MAP_URGENT_GAP_MS
 					: SyncEngine.ID_MAP_RECONCILE_COOLDOWN_MS * 2 ** Math.min(this.idMapFailures, 4),
 			() => this.runIdMapReconcile(),
+		);
+		this.noteIdSaveThrottle = new TrailingThrottle(
+			this.time,
+			() => SyncEngine.NOTE_ID_SAVE_GAP_MS,
+			async () => {
+				if (!this.noteIdMap) return;
+				try {
+					await this.saveData({ noteIds: this.noteIdMap.toJSON() });
+				} catch (e) {
+					rlog().warn("sync", `id-map save failed: ${errMsg(e)}`);
+				}
+			},
 		);
 	}
 
@@ -7321,7 +7337,7 @@ export class SyncEngine {
 			// Learn + persist the id->path mapping (discovery source, like catchup).
 			if (this.noteIdMap && this.noteIdMap.pathForId(noteId) !== normalized) {
 				this.noteIdMap.set(normalized, noteId);
-				await this.saveData({ noteIds: this.noteIdMap.toJSON() });
+				this.noteIdSaveThrottle.poke(); // 1,000 announces must not be 1,000 data.json rewrites
 			}
 			this.confirmNoteId(noteId);
 			// Converge via the single seq-ordered op-log path — the op carries full
@@ -12016,6 +12032,7 @@ export class SyncEngine {
 		// sync baseline, not transient state.
 		this.sweep("destroy");
 		this.resetIdMapReconcile();
+		this.noteIdSaveThrottle.cancel();
 		this.files.destroy();
 		// Standalone timer handles — not collections, so they stay explicit.
 		if (this.seqHealTimer !== null) {
