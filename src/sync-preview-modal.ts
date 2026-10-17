@@ -143,14 +143,11 @@ export class SyncPreviewState {
 		return [...this.newNotePaths(), ...revived];
 	}
 
-	/** Net notes `choice` adds against the limit: what it creates, less the
-	 *  live server notes push-all-delete-remote deletes. */
+	/** Notes `choice` adds against the limit. No credit for the server notes
+	 *  push-all-delete-remote deletes: pushAll deletes them only after the
+	 *  uploads, so the cap is reached first. */
 	addedBy(choice: SyncChoice | null): number {
-		const created = this.createdPaths(choice).length;
-		if (choice !== "push-all-delete-remote" || !this.plan) return created;
-		const local = new Set(this.localNotePaths());
-		const serverNotes = this.plan.serverPaths.slice(0, this.plan.serverNoteCount);
-		return Math.max(0, created - serverNotes.filter((p) => !local.has(p)).length);
+		return this.createdPaths(choice).length;
 	}
 
 	/** Notes an uploading option would create on the server, as computeSyncPlan

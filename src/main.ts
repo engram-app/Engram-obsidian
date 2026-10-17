@@ -12,6 +12,7 @@ import {
 	Platform,
 	Plugin,
 	requestUrl,
+	type TAbstractFile,
 	TFile,
 	TFolder,
 } from "obsidian";
@@ -995,18 +996,7 @@ export default class EngramSyncPlugin extends Plugin {
 			}),
 		);
 		this.registerEvent(
-			this.app.vault.on("rename", (file, oldPath) => {
-				// First: the engine must see an excluded folder's new name before it
-				// handles this event or its children's.
-				this.followExcludedFolderRename(file.path, oldPath);
-				void this.syncEngine.handleRename(file, oldPath);
-				// Task 6: no CrdtManager.renameDoc call — the CRDT doc is keyed by
-				// the note's stable note_id (SyncEngine.handleRename already moved
-				// that mapping via noteIdMap.rename), so a rename never touches the
-				// doc/IndexedDB entry at all. Closing/reopening it here would
-				// destroy the live history the id-keying was built to preserve.
-				this.crdtLiveViews?.refresh();
-			}),
+			this.app.vault.on("rename", (file, oldPath) => this.onVaultRename(file, oldPath)),
 		);
 
 		registerDiagnostics(this);
@@ -2224,14 +2214,7 @@ export default class EngramSyncPlugin extends Plugin {
 			this.settings.remoteVaultName = remoteVaultName;
 			// Whatever was confirmed belonged to the OUTGOING vault.
 			this.verifiedVaultNameFor = null;
-			// Folder exclusions name folders of the outgoing vault: never carry
-			// them silently into another one. Queued, so a change still in flight
-			// (and its rollback) settles first and cannot bring them back.
 			this.pendingReinclude?.clear();
-			void this.serializeExcluded(async () => {
-				this.settings.excludedFolders = [];
-				this.syncEngine.updateSettings(this.settings);
-			});
 		}
 		// EngramApi keeps its OWN copy and stamps it on every request. Setting it
 		// here rather than leaving it to a later `saveSettings` closes the window
@@ -2242,6 +2225,16 @@ export default class EngramSyncPlugin extends Plugin {
 		this.syncGateAcceptedFor = null;
 		this.lastMapReconcileAt = 0;
 		this.crdtWiring?.clearStrandHealAttempts();
+		if (vaultChanged) {
+			// Folder exclusions name folders of the outgoing vault: never carry
+			// them silently into another one. Queued, so a change still in flight
+			// (and its rollback) settles first and cannot bring them back. Awaited,
+			// so the caller's next plan and its save both see the empty list.
+			await this.serializeExcluded(async () => {
+				this.settings.excludedFolders = [];
+				this.syncEngine.updateSettings(this.settings);
+			});
+		}
 	}
 
 	/** Re-read the active vault's name from the server, correcting a stale one.
@@ -3726,6 +3719,20 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  rollback undoes only its own entries, so it cannot bring the old name
 	 *  back. Saved through the queue. A move under another folder stores the
 	 *  nested path, which inExcludedFolder matches as a prefix from the root. */
+	/** A vault rename event. */
+	onVaultRename(file: TAbstractFile, oldPath: string): void {
+		// First: the engine must see an excluded folder's new name before it
+		// handles this event or its children's.
+		this.followExcludedFolderRename(file.path, oldPath);
+		void this.syncEngine.handleRename(file, oldPath);
+		// Task 6: no CrdtManager.renameDoc call — the CRDT doc is keyed by
+		// the note's stable note_id (SyncEngine.handleRename already moved
+		// that mapping via noteIdMap.rename), so a rename never touches the
+		// doc/IndexedDB entry at all. Closing/reopening it here would
+		// destroy the live history the id-keying was built to preserve.
+		this.crdtLiveViews?.refresh();
+	}
+
 	followExcludedFolderRename(path: string, oldPath: string): void {
 		const from = this.settings.excludedFolders.find(
 			(f) => oldPath === f || oldPath.startsWith(`${f}/`),
@@ -3738,6 +3745,7 @@ export default class EngramSyncPlugin extends Plugin {
 		this.settings.excludedFolders = this.settings.excludedFolders.map((f) =>
 			f === from ? to : f,
 		);
+		this.syncEngine.noteExcludedFolderMove(from, to);
 		void this.serializeExcluded(() => this.savePluginData(this.syncEngine.getLastSync())).catch(
 			(e: unknown) =>
 				rlog().error("lifecycle", `excluded folder rename save failed: ${errMsg(e)}`),

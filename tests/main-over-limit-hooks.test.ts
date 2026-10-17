@@ -398,3 +398,18 @@ describe("a rollback never brings back a renamed or cleared list", () => {
 		expect(fake.settings.excludedFolders).toEqual(["Old"]);
 	});
 });
+
+describe("a vault change while an exclusions change is in flight", () => {
+	test("the clear is done when the vault change returns, so the next plan and save see it", async () => {
+		const { fake } = makeFakePlugin(async () => PLAN);
+		fake.settings.vaultId = "v1";
+		Object.assign(fake.syncEngine, { resetForVaultChange: async () => {} });
+		fake.api.setVaultId = mock();
+		// An exclusions op still running when the vault changes.
+		fake.excludedQueue = new Promise<void>((r) => setTimeout(r, 5));
+
+		await fake.discardVaultScopedState("v2", "Other");
+
+		expect(fake.settings.excludedFolders).toEqual([]);
+	});
+});

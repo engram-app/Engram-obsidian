@@ -2539,7 +2539,7 @@ describe("SyncEngine auth validation", () => {
 
 		// Access private method via any cast
 		const result = await (engine as any).pushFile(file);
-		expect(result).toBe(false);
+		expect(result).toEqual({ ok: false, reason: "skipped" });
 	});
 });
 
@@ -3387,7 +3387,7 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 		jest.clearAllMocks();
 		const pushed = await (engine as any).pushFile(file);
 
-		expect(pushed).toBe(false);
+		expect(pushed).toEqual({ ok: false, reason: "unchanged" });
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 		// The no-op must NOT have opened the suppression window.
 		expect((engine as any).isRecentlyPushed(path)).toBe(false);
@@ -3990,7 +3990,7 @@ describe("SyncEngine attachment pre-gate (client-side plan limits)", () => {
 
 		const ok = await (engine as any).pushFile(file, true);
 
-		expect(ok).toBe(false);
+		expect(ok).toEqual({ ok: false, reason: "skipped" });
 		expect(mockApi.pushAttachment).not.toHaveBeenCalled();
 		expect(engine.issues.get("photo.png")?.category).toBe("needs_pro");
 		// Informational skip is tallied for the batched toast.
@@ -4046,7 +4046,7 @@ describe("SyncEngine attachment pre-gate (client-side plan limits)", () => {
 
 		const ok = await (engine as any).pushFile(file, true);
 
-		expect(ok).toBe(false);
+		expect(ok).toEqual({ ok: false, reason: "skipped" });
 		expect(mockApi.pushAttachment).not.toHaveBeenCalled();
 		const issue = engine.issues.get("big.png");
 		expect(issue?.category).toBe("too_large");

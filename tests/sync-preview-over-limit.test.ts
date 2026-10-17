@@ -990,14 +990,15 @@ describe("the over-limit step counts what each option really adds", () => {
 		expect(state.needsOverLimitStep("push-all-keep-remote")).toBe(true); // 6 > 4
 	});
 
-	test("push-all-delete-remote nets out the server notes it deletes", () => {
-		// 6 new local notes; 5 live server notes are not local and get deleted.
+	test("push-all-delete-remote gets no credit for its deletes: pushAll deletes after uploading", () => {
+		// 6 new local notes; 5 live server notes are not local and get deleted,
+		// but only once the uploads are done, so the cap is hit before that.
 		const server = ["S1.md", "S2.md", "S3.md", "S4.md", "S5.md"];
 		const plan = planWith(["Root.md", ...PATHS], server);
 		plan.newNotePaths = ["Root.md", ...PATHS];
 		const state = new SyncPreviewState(plan, () => {});
 		state.setNotesQuota({ limit: 10, room: 2, used: 8 });
-		expect(state.needsOverLimitStep("push-all-delete-remote")).toBe(false); // 6 - 5 = 1
+		expect(state.needsOverLimitStep("push-all-delete-remote")).toBe(true); // 6 > 2
 		expect(state.needsOverLimitStep("push-all-keep-remote")).toBe(true);
 	});
 });

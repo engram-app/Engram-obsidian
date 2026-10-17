@@ -284,7 +284,7 @@ describe("review findings — genesis rejection semantics", () => {
 
 		const ok = await (engine as any).pushFile(file, true);
 
-		expect(ok).toBe(false);
+		expect(ok).toEqual({ ok: false, reason: "skipped" });
 		expect(trashed).toEqual(["Notes/Deleted.md"]);
 		expect(enqueued).toHaveLength(0);
 	});
@@ -298,7 +298,7 @@ describe("review findings — genesis rejection semantics", () => {
 
 		const ok = await (engine as any).pushFile(file, true);
 
-		expect(ok).toBe(false); // queued is not synced — the recap must not count it
+		expect(ok).toEqual({ ok: false, reason: "queued" }); // queued is not synced — the recap must not count it
 		expect(enqueued).toHaveLength(1);
 		expect(trashed).toHaveLength(0);
 	});

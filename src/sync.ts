@@ -258,6 +258,10 @@ export interface FolderAction {
 	creates: boolean;
 	/** The server renamed this note: its local file is still at `from`. */
 	from?: string;
+	/** The server renamed this note onto `occupied`, which a different local
+	 *  file holds. This local copy is removed (its text kept as a conflict copy
+	 *  when edited here); `occupied`'s own step settles the server version. */
+	occupied?: string;
 }
 
 export interface FolderPlan {
@@ -267,8 +271,31 @@ export interface FolderPlan {
 	cursor: { seq: number; id: string | null };
 }
 
-/** How many local files Sync again hashes at once. */
+/** Why pushFile did not push. `capped`: the plan's note cap refused (or
+ *  would refuse) the create. `queued`: handed to the durable op queue. */
+export type PushSkipReason = "busy" | "skipped" | "unchanged" | "queued" | "capped" | "failed";
+export type PushOutcome = true | { ok: false; reason: PushSkipReason };
+
+function skipPush(reason: PushSkipReason): PushOutcome {
+	return { ok: false, reason };
+}
+
+/** How many paths Sync again plans (hashes) or applies at once. */
 const PLAN_HASH_CONCURRENCY = 8;
+
+/** Run `fn` over `items`, at most `limit` at a time, each worker taking the
+ *  next item as soon as its last one settles. */
+async function forEachBounded<T>(
+	items: readonly T[],
+	limit: number,
+	fn: (item: T, index: number) => Promise<void>,
+): Promise<void> {
+	let next = 0;
+	const worker = async (): Promise<void> => {
+		for (let i = next++; i < items.length; i = next++) await fn(items[i] as T, i);
+	};
+	await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+}
 
 /** One key per server object: a note by id (it may move), an attachment by path. */
 function rowKey(c: SyncChange): string {
@@ -3507,6 +3534,31 @@ export class SyncEngine {
 	}
 
 	/** `except`: an excluded folder to treat as included (Sync again's preview). */
+	/** Excluded folders renamed this session, new name -> old name. A child's
+	 *  rename event can arrive after the list already holds the new name, when
+	 *  its old path no longer reads as excluded: without this its old leg would
+	 *  delete the server copy (attachments). Cleared on a vault change. */
+	private excludedFolderMoves = this.track(["vault"], new Map<string, string>());
+
+	/** main's followExcludedFolderRename moved excluded folder `from` to `to`. */
+	noteExcludedFolderMove(from: string, to: string): void {
+		this.excludedFolderMoves.set(to, from);
+	}
+
+	/** Was `oldPath` inside an excluded folder that was renamed to hold `newPath`? */
+	private movedWithExcludedFolder(oldPath: string, newPath: string): boolean {
+		for (const [to, from] of this.excludedFolderMoves) {
+			if (
+				oldPath.startsWith(`${from}/`) &&
+				newPath === `${to}${oldPath.slice(from.length)}` &&
+				inExcludedFolder(newPath, this.settings.excludedFolders ?? [])
+			) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	shouldIgnore(path: string, except?: string): boolean {
 		// Hardcoded ignores — always enforced, cannot be overridden
 		const configDir = `${this.app.vault.configDir}/`;
@@ -4936,7 +4988,7 @@ export class SyncEngine {
 		// existed have no row, so their first rename leaves the old server path
 		// behind until a pull reconciles it — safe-direction, self-healing.
 		const hadOldEvidence = this.syncState.has(normalizePath(oldPath));
-		if (!this.shouldIgnore(oldPath)) {
+		if (!this.shouldIgnore(oldPath) && !this.movedWithExcludedFolder(oldPath, newPath)) {
 			try {
 				if (isBinary) {
 					if (hadOldEvidence) {
@@ -5288,8 +5340,8 @@ export class SyncEngine {
 		force = false,
 		bypassPlanSkip = false,
 		serverAttachmentHashes?: Map<string, string>,
-	): Promise<boolean> {
-		if (this.pushing.has(file.path)) return false;
+	): Promise<PushOutcome> {
+		if (this.pushing.has(file.path)) return skipPush("busy");
 
 		// Persistence shortcut: if this attachment was already parked under an
 		// informational plan-skip (Free-tier 402 attachments-disabled, or a
@@ -5299,7 +5351,7 @@ export class SyncEngine {
 		// sync — there's nothing left to fail, so the count is 0.
 		if (!bypassPlanSkip && this.isBinaryFile(file) && this.hasInformationalIssue(file.path)) {
 			devLog().log("push", `skip (plan-informational): ${file.path}`);
-			return false;
+			return skipPush("skipped");
 		}
 
 		// Plan-limit pre-gate: with known limits, don't even attempt an upload the
@@ -5331,7 +5383,7 @@ export class SyncEngine {
 					this.firstFailureCategoryThisBatch ??= gate.category;
 				}
 				devLog().log("push", `skip (pre-gate ${gate.category}): ${file.path}`);
-				return false;
+				return skipPush("skipped");
 			}
 		}
 
@@ -5359,7 +5411,7 @@ export class SyncEngine {
 			if (!force && existing !== undefined && echoHash === existing.hash) {
 				devLog().log("push", `skip (echo): ${file.path}`);
 				rlog().info("push", `Echo skip: ${noteRef(file.path)} | hash=${echoHash}`);
-				return false;
+				return skipPush("unchanged");
 			}
 		}
 
@@ -5381,7 +5433,7 @@ export class SyncEngine {
 		if (this.pushing.has(pushedPath)) {
 			this.releasePushSlot();
 			devLog().log("push", `skip (already pushing, lost the race): ${pushedPath}`);
-			return false;
+			return skipPush("busy");
 		}
 		this.pushing.add(pushedPath);
 		this.lastError = "";
@@ -5438,7 +5490,7 @@ export class SyncEngine {
 						"push",
 						`Echo skip (attachment): ${noteRef(file.path)} | hash=${hash} | forced=${force}`,
 					);
-					return false;
+					return skipPush("unchanged");
 				}
 				const mimeType = this.getMimeType(file);
 				const attResp = await this.api.pushAttachment(
@@ -5524,13 +5576,13 @@ export class SyncEngine {
 								timestamp: Date.now(),
 								vaultId: this.settings.vaultId ?? undefined,
 							});
-							return false;
+							return skipPush("queued");
 						}
 						rlog().info(
 							"push",
 							`Mint refused (engine-flushed file, id relocated away): ${noteRef(file.path)}`,
 						);
-						return false;
+						return skipPush("skipped");
 					}
 					noteId = uuid7();
 					this.noteIdMap.set(file.path, noteId);
@@ -5920,14 +5972,14 @@ export class SyncEngine {
 							);
 							await this.trashRemotelyDeleted(file);
 							this.logEntry("push", pushedPath, "skipped", "recently_deleted");
-							return false;
+							return skipPush("skipped");
 						}
 						// Plan note cap: close the shared gate so no other create is
 						// sent, and do NOT enqueue a retry. Each queued retry used to
 						// rediscover the cap on its own (prod 2026-10-17 retry storm).
 						if (createReason && LIMIT_REASONS.has(createReason)) {
 							this.notesCapGate?.trip(createReason);
-							return false;
+							return skipPush("capped");
 						}
 						// Anything else (rate-limit, transport): enqueue a durable
 						// crdt_create so the genesis is HELD and retried (transient) or
@@ -5939,7 +5991,7 @@ export class SyncEngine {
 							`crdt_create failed, enqueued for durable retry: ${noteRef(pushedPath)} | ${String(err)}`,
 						);
 						this.crdtEnqueue?.({ kind: "create", docId: noteId, path: pushedPath });
-						return false;
+						return skipPush("queued");
 					}
 				}
 
@@ -5961,21 +6013,17 @@ export class SyncEngine {
 					// before join is HELD and delivered on join (test_27) rather than
 					// deferred to a best-effort reconnect re-push that can drop it.
 					// Coalesced by docId; the head is set only on the queue's ack.
-					if (
-						this.crdtEnqueue &&
-						this.crdt &&
-						noteId &&
-						!this.hasServerNote(noteId) &&
-						!this.capBlocksCreate(pushedPath)
-					) {
+					if (this.capBlocksCreate(pushedPath)) return skipPush("capped");
+					if (this.crdtEnqueue && this.crdt && noteId && !this.hasServerNote(noteId)) {
 						this.crdtEnqueue({ kind: "create", docId: noteId, path: pushedPath });
+						return skipPush("queued");
 					}
-					return false;
+					return skipPush("skipped");
 				}
 				// REST covers notes outside the CRDT domain (canvas, oversized md).
 				// Same cap, same gate: skip row-adding pushes while closed, and let a
 				// REST refusal close it for every path.
-				if (this.capBlocksCreate(pushedPath)) return false;
+				if (this.capBlocksCreate(pushedPath)) return skipPush("capped");
 				let resp: Awaited<ReturnType<EngramApi["pushNote"]>>;
 				try {
 					resp = await this.api.pushNote(pushedPath, content, mtime);
@@ -5988,7 +6036,7 @@ export class SyncEngine {
 				if ("conflict" in resp) {
 					// Unconditional push (no version) never conflicts server-side; guard
 					// for the type union only.
-					return false;
+					return skipPush("skipped");
 				}
 				const serverPath = resp.note.path;
 				if (file.path !== pushedPath) {
@@ -6148,7 +6196,8 @@ export class SyncEngine {
 			if (success) this.markRecentlyPushed(pushedPath);
 			this.emitStatus();
 		}
-		return success;
+		// A failure handled above (logged, recorded, maybe queued).
+		return success ? true : skipPush("failed");
 	}
 
 	/** True iff the issue store already has a parked *informational* entry for this
@@ -10672,32 +10721,31 @@ export class SyncEngine {
 						false,
 						serverAttachmentHashes,
 					);
-					if (ok) {
+					if (ok === true) {
 						pushed++;
 						if (mode === "force") this.logEntry("push", f.path, "ok");
-					} else if (this.capBlocksCreate(f.path)) {
+					} else if (ok && ok.reason === "capped") {
 						capped++;
 					} else if (mode === "force") {
 						this.logEntry("skip", f.path, "skipped", undefined, "unchanged");
 					}
 				} catch (e) {
-					if (e instanceof LimitExceededError && LIMIT_REASONS.has(e.reason)) {
-						capped++;
-					} else {
-						failed++;
-						this.onVaultScopedError?.(e);
-						const msg = errMsg(e);
-						this.logEntry("push", f.path, "error", msg);
-						this.issues.record({
-							path: f.path,
-							kind: this.isBinaryFile(f) ? "attachment" : "note",
-							category: "other",
-							message: msg,
-							firstFailedAt: Date.now(),
-							lastFailedAt: Date.now(),
-							attempts: 1,
-						});
-					}
+					// A cap refusal is the outcome the user was shown, so it counts as
+					// capped, not failed; it is still logged and recorded like any error.
+					if (e instanceof LimitExceededError && LIMIT_REASONS.has(e.reason)) capped++;
+					else failed++;
+					this.onVaultScopedError?.(e);
+					const msg = errMsg(e);
+					this.logEntry("push", f.path, "error", msg);
+					this.issues.record({
+						path: f.path,
+						kind: this.isBinaryFile(f) ? "attachment" : "note",
+						category: "other",
+						message: msg,
+						firstFailedAt: Date.now(),
+						lastFailedAt: Date.now(),
+						attempts: 1,
+					});
 				}
 				this.emitPushing(
 					base.pushed + pushed,
@@ -10933,12 +10981,16 @@ export class SyncEngine {
 		// Renamed on the server while excluded: the local file's id lives at a
 		// new path. Planned once, at the new path, from the old local file.
 		const moves = new Map<string, string>();
+		const occupied = new Map<string, string>();
 		for (const path of [...paths]) {
 			const id = this.noteIdMap?.get(path);
 			const row = id ? server.noteById.get(id) : undefined;
 			if (!row || row.deleted || row.path === path) continue;
-			if (!this.app.vault.getFileByPath(path)) continue;
-			if (this.app.vault.getFileByPath(row.path) || this.shouldIgnore(row.path, folder)) {
+			if (!this.app.vault.getFileByPath(path) || this.shouldIgnore(row.path, folder)) {
+				continue;
+			}
+			if (this.app.vault.getFileByPath(row.path)) {
+				occupied.set(path, row.path);
 				continue;
 			}
 			moves.set(row.path, path);
@@ -10950,21 +11002,19 @@ export class SyncEngine {
 			? await this.fetchServerAttachmentHashes()
 			: undefined;
 		const planned: (FolderAction | null)[] = [];
-		let next = 0;
-		const worker = async (): Promise<void> => {
-			for (let i = next++; i < list.length; i = next++) {
-				const path = list[i] as string;
-				planned[i] = await this.planPath(
-					path,
-					server.rows.get(path),
-					attachmentHashes?.get(path),
-					moves.get(path),
-				);
+		await forEachBounded(list, PLAN_HASH_CONCURRENCY, async (path, i) => {
+			const target = occupied.get(path);
+			if (target) {
+				planned[i] = await this.planOccupiedMove(path, target);
+				return;
 			}
-		};
-		await Promise.all(
-			Array.from({ length: Math.min(PLAN_HASH_CONCURRENCY, list.length) }, worker),
-		);
+			planned[i] = await this.planPath(
+				path,
+				server.rows.get(path),
+				attachmentHashes?.get(path),
+				moves.get(path),
+			);
+		});
 		const actions = planned.filter((a): a is FolderAction => !!a);
 		return { folder, actions, cursor: server.cursor };
 	}
@@ -11034,6 +11084,24 @@ export class SyncEngine {
 		return null;
 	}
 
+	/** A note the server renamed onto `target` while a different local file
+	 *  sits there. Never a new-note upload: this stale local copy goes, its
+	 *  text kept as a conflict copy when edited here. */
+	private async planOccupiedMove(path: string, target: string): Promise<FolderAction | null> {
+		const file = this.app.vault.getFileByPath(path);
+		if (!file) return null;
+		const localHash = await this.localHashOf(file);
+		const edited = this.syncState.get(path)?.hash !== localHash;
+		return {
+			kind: edited ? "conflict" : "download",
+			path,
+			localHash,
+			stat: { mtime: file.stat.mtime, size: file.stat.size },
+			creates: false,
+			occupied: target,
+		};
+	}
+
 	/** Has the file at `path` stayed as `action` saw it? mtime and size first,
 	 *  the hash only when those moved. */
 	private async unchangedSincePlan(path: string, action: FolderAction): Promise<boolean> {
@@ -11082,14 +11150,48 @@ export class SyncEngine {
 				rlog().error("sync", `Sync again: ${noteRef(path)} | ${errMsg(e, path)}`);
 			}
 		};
+		// The plan belongs to one vault: a switch meanwhile stops it before the
+		// next step, so nothing lands in the other vault.
+		const vaultId = this.settings.vaultId;
+		const vaultChanged = () => this.settings.vaultId !== vaultId;
+		const stopIfVaultChanged = () => {
+			if (vaultChanged()) throw new Error("Sync again stopped: the vault changed");
+		};
+		// Stale copies of renamed notes first, before any step (the target's own
+		// download) can trash them unread. No server call: the note lives on at
+		// its target; its id and sync state here are dropped with the copy.
 		for (const action of plan.actions) {
+			const target = action.occupied;
+			if (!target) continue;
+			if (!(await this.unchangedSincePlan(action.path, action))) {
+				skipped += 1;
+				continue;
+			}
+			stopIfVaultChanged();
+			await attempt(action.path, async () => {
+				const file = this.app.vault.getFileByPath(action.path);
+				if (!file) return;
+				if (action.kind === "conflict") {
+					await this.writeDriftConflictCopy(
+						target,
+						await this.app.vault.cachedRead(file),
+					);
+				}
+				this.noteIdMap?.delete(action.path);
+				this.dropPath(action.path);
+				await this.trashRemotelyDeleted(file);
+			});
+		}
+		const steps = plan.actions.filter((a) => !a.occupied);
+		await forEachBounded(steps, PLAN_HASH_CONCURRENCY, async (action) => {
 			const key = action.row ? rowKey(action.row) : null;
 			const fresh = key ? newer.get(key) : undefined;
 			if (key) newer.delete(key);
 			if (!(await this.unchangedSincePlan(action.from ?? action.path, action))) {
 				skipped += 1;
-				continue;
+				return;
 			}
+			if (vaultChanged()) return;
 			const row = fresh ?? action.row;
 			await attempt(action.path, async () => {
 				if (action.kind === "upload") {
@@ -11117,12 +11219,15 @@ export class SyncEngine {
 					await this.applySyncChange(row);
 				}
 			});
-		}
-		// Ops for this folder the plan never saw.
+		});
+		stopIfVaultChanged();
+		// Ops for this folder the plan never saw, in feed order.
 		for (const row of newer.values()) {
 			if (!inExcludedFolder(row.path, [plan.folder])) continue;
+			stopIfVaultChanged();
 			await attempt(row.path, () => this.applySyncChange(row));
 		}
+		stopIfVaultChanged();
 		let capped = 0;
 		if (uploads.length > 0) {
 			const pushed = await this.pushPartitioned(uploads, "incremental");

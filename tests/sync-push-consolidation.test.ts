@@ -13,7 +13,7 @@ import { describe, expect, mock, spyOn, test } from "bun:test";
 import "fake-indexeddb/auto";
 import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
-import { TFile } from "obsidian";
+import { TFile, TFolder } from "obsidian";
 import * as syncProtocol from "y-protocols/sync";
 import * as Y from "yjs";
 import type { EngramApi } from "../src/api";
@@ -692,7 +692,28 @@ describe("pushPartitioned — per-file genesis (no batch RPC)", () => {
 		const out = await (engine as any).pushPartitioned(files, "incremental");
 
 		expect(out).toEqual({ pushed: 1, failed: 0, capped: 1 });
-		expect((engine as any).issues.get("Notes/c1.canvas")).toBeUndefined();
+		// Still recorded and logged, like any refused push.
+		expect((engine as any).issues.get("Notes/c1.canvas")?.message).toContain("notes_cap");
+	});
+
+	test("capped is counted from pushFile's own reason, never guessed from the gate", async () => {
+		const files = [0, 1, 2].map((i) => new TFile(`Notes/q${i}.md`, Date.now()));
+		const { engine } = makeEngine(files, Object.fromEntries(files.map((f) => [f.path, "# q"])));
+		// The cap is closed, but q1 was queued and q2 unchanged: neither is capped.
+		(engine as any).notesCapGate = { isClosed: () => true, trip() {}, reset() {}, open() {} };
+		(engine as any).pushFile = mock().mockImplementation((f: TFile) =>
+			Promise.resolve(
+				f.path === "Notes/q0.md"
+					? { ok: false, reason: "capped" }
+					: f.path === "Notes/q1.md"
+						? { ok: false, reason: "queued" }
+						: { ok: false, reason: "unchanged" },
+			),
+		);
+
+		const out = await (engine as any).pushPartitioned(files, "incremental");
+
+		expect(out).toEqual({ pushed: 0, failed: 0, capped: 1 });
 	});
 });
 
@@ -712,7 +733,7 @@ describe("pushFile — echo suppression runs before the push slot (#426)", () =>
 			new Promise((r) => setTimeout(() => r("HUNG"), 50)),
 		]);
 
-		expect(result).toBe(false);
+		expect(result).toEqual({ ok: false, reason: "unchanged" });
 	});
 
 	test("a genuinely changed note still waits for a slot", async () => {
@@ -732,7 +753,7 @@ describe("pushFile — echo suppression runs before the push slot (#426)", () =>
 
 describe("renaming an excluded folder keeps it excluded", () => {
 	function setup(existing: string[] = []) {
-		const { engine, app } = makeEngine([]);
+		const { engine, app, api } = makeEngine([]);
 		app.vault.getAbstractFileByPath.mockImplementation((p: string) =>
 			existing.includes(p) ? ({ path: p } as any) : null,
 		);
@@ -745,7 +766,7 @@ describe("renaming an excluded folder keeps it excluded", () => {
 			noteIdMap: new NoteIdMap(),
 			writePluginData: mock(async () => {}),
 		});
-		return { engine, plugin, settings };
+		return { engine, plugin, settings, api };
 	}
 
 	test("Archive renamed to Old: Old's files are still ignored", () => {
@@ -766,6 +787,25 @@ describe("renaming an excluded folder keeps it excluded", () => {
 		plugin.followExcludedFolderRename("Projects/Archive", "Archive");
 		expect(engine.shouldIgnore("Projects/Archive/x.md")).toBe(true);
 		expect(engine.shouldIgnore("Projects/y.md")).toBe(false);
+	});
+
+	test("renaming the folder sends no server delete and no push for files synced before", async () => {
+		const { engine, plugin, api } = setup();
+		engine.importSyncState({
+			"Archive/img.png": { hash: 1, serverHash: "A" },
+			"Archive/note.md": { hash: 2, serverHash: "B" },
+		});
+		const pushFile = mock().mockResolvedValue(true);
+		(engine as any).pushFile = pushFile;
+		// Obsidian's order: the folder, then each child, all after the move.
+		plugin.onVaultRename(new TFolder("Old"), "Archive");
+		for (const name of ["img.png", "note.md"]) {
+			plugin.onVaultRename(new TFile(`Old/${name}`), `Archive/${name}`);
+		}
+		await Bun.sleep(0);
+		expect(api.deleteAttachment).not.toHaveBeenCalled();
+		expect(api.deleteNote).not.toHaveBeenCalled();
+		expect(pushFile).not.toHaveBeenCalled();
 	});
 
 	test("one file moved out of the folder leaves the exclusion alone", () => {
@@ -1174,6 +1214,45 @@ describe("Sync again: planFolder then applyFolderPlan settle a folder that was e
 		expect(pushFile.mock.calls.map((c: any[]) => c[0].path)).toEqual(["Archive/b.md"]);
 	});
 
+	test("a server rename onto a path a different local file holds: a conflict, never a new note", async () => {
+		const files = [new TFile("Archive/a.md", OLD), new TFile("Archive/b.md", OLD)];
+		const { engine, app } = setup(
+			files,
+			{ "Archive/a.md": "# a edited", "Archive/b.md": "# f" },
+			[
+				noteRow({
+					id: "a",
+					seq: 9,
+					path: "Archive/b.md",
+					content: "# synced",
+					content_hash: "H1",
+				}),
+			],
+		);
+		engine.importSyncState({
+			"Archive/a.md": { hash: fnv1a("# synced"), serverHash: "H1", seq: 5 },
+		});
+		(engine as any).noteIdMap.set("Archive/a.md", "a");
+		const pushFile = mock().mockResolvedValue(true);
+		(engine as any).pushFile = pushFile;
+		(engine as any).applySyncChange = mock(async () => true);
+
+		const plan = await engine.planFolder("Archive");
+		expect(plan.actions.some((a) => a.kind === "upload")).toBe(false);
+		expect(plan.actions.filter((a) => a.creates)).toEqual([]);
+		await engine.applyFolderPlan(plan);
+
+		expect(pushFile).not.toHaveBeenCalled();
+		// Both texts survive: the renamed note's local edit and the file at the target.
+		const created = app.vault.create.mock.calls.map((c: any[]) => [c[0], c[1]]);
+		expect(
+			created.some(([p, t]: string[]) => p.includes("(conflict") && t === "# a edited"),
+		).toBe(true);
+		expect(created.some(([p, t]: string[]) => p.includes("(conflict") && t === "# f")).toBe(
+			true,
+		);
+	});
+
 	test("a server delete with a local edit made while excluded keeps the edit", async () => {
 		const file = new TFile("Archive/a.md", OLD);
 		const { engine, app } = setup([file], { "Archive/a.md": "# edited" }, [
@@ -1280,6 +1359,47 @@ describe("Sync again: planFolder then applyFolderPlan settle a folder that was e
 		app.vault.cachedRead.mockClear();
 		await engine.applyFolderPlan(plan);
 		expect(app.vault.cachedRead).not.toHaveBeenCalled();
+	});
+
+	test("server-side steps run a few at a time too", async () => {
+		const rows = Array.from({ length: 12 }, (_, i) =>
+			noteRow({
+				id: `d${i}`,
+				seq: i + 1,
+				path: `Archive/d${i}.md`,
+				content: "# d",
+				content_hash: "H",
+			}),
+		);
+		const { engine } = setup([], {}, rows);
+		let inFlight = 0;
+		let most = 0;
+		(engine as any).applySyncChange = async () => {
+			most = Math.max(most, ++inFlight);
+			await new Promise((r) => setTimeout(r, 1));
+			inFlight--;
+			return true;
+		};
+		await engine.applyFolderPlan(await engine.planFolder("Archive"));
+		expect(most).toBeGreaterThan(1);
+		expect(most).toBeLessThanOrEqual(16);
+	});
+
+	test("a vault change during apply stops it before the next action", async () => {
+		const { engine } = setup([], {}, [
+			noteRow({ id: "x", seq: 1, path: "Archive/x.md", content: "# x", content_hash: "H" }),
+			noteRow({ id: "y", seq: 2, path: "Archive/y.md", content: "# y", content_hash: "H" }),
+		]);
+		const settings = (engine as any).settings;
+		settings.vaultId = "v1";
+		const applied: string[] = [];
+		(engine as any).applySyncChange = async (c: any) => {
+			applied.push(c.path);
+			settings.vaultId = "v2"; // switched while the first action ran
+			return true;
+		};
+		await expect(engine.applyFolderPlan(await engine.planFolder("Archive"))).rejects.toThrow();
+		expect(applied).toHaveLength(1);
 	});
 
 	test("a create refused by the notes cap is counted as capped, not failed", async () => {

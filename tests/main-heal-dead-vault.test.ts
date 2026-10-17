@@ -27,6 +27,7 @@ function makeFakePlugin(over: Record<string, unknown> = {}) {
 		syncEngine: {
 			setSyncBlocked: mock(),
 			getLastSync: mock().mockReturnValue(""),
+			updateSettings: () => {},
 			resetForVaultChange: mock().mockResolvedValue(undefined),
 		},
 		savePluginData: mock().mockResolvedValue(undefined),
@@ -82,6 +83,7 @@ describe("healDeadVault", () => {
 			syncEngine: {
 				setSyncBlocked: mock(),
 				getLastSync: mock().mockReturnValue(""),
+				updateSettings: () => {},
 				resetForVaultChange: mock().mockRejectedValue(new Error("indexeddb gone")),
 			},
 		});

@@ -39,7 +39,10 @@ function makeFakePlugin(noteIds: Record<string, string>, over: Record<string, un
 			setVaultId: mock(),
 		},
 		noteIdMap: { toJSON: () => noteIds },
-		syncEngine: { resetForVaultChange: mock().mockResolvedValue(undefined) },
+		syncEngine: {
+			resetForVaultChange: mock().mockResolvedValue(undefined),
+			updateSettings: () => {},
+		},
 		saveSettings: mock().mockResolvedValue(undefined),
 		...over,
 	});
@@ -109,6 +112,7 @@ describe("registerVault identity wipe (#1409)", () => {
 			{ "Notes/a.md": "id-from-old-vault" },
 			{
 				syncEngine: {
+					updateSettings: () => {},
 					resetForVaultChange: mock(async () => {
 						order.push("wipe");
 					}),

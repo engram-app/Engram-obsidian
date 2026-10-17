@@ -202,7 +202,11 @@ describe("resolveRemoteVaultName caching", () => {
 		const plugin = Object.create(EngramSyncPlugin.prototype) as any;
 		let calls = 0;
 		plugin.settings = { vaultId, remoteVaultName: name };
-		plugin.syncEngine = { getLastSync: () => "", resetForVaultChange: async () => {} };
+		plugin.syncEngine = {
+			getLastSync: () => "",
+			resetForVaultChange: async () => {},
+			updateSettings: () => {},
+		};
 		plugin.savePluginData = async () => {};
 		plugin.api = {
 			setVaultId: () => {},

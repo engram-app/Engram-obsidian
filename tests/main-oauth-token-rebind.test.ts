@@ -51,6 +51,7 @@ describe("saveOAuthTokens auth-provider ordering", () => {
 				order.push("saveSettings");
 			},
 			syncEngine: {
+				updateSettings() {},
 				async resetForVaultChange() {
 					order.push("resetForVaultChange");
 				},
@@ -123,6 +124,7 @@ describe("saveOAuthTokens auth-provider ordering", () => {
 				order.push("saveSettings");
 			},
 			syncEngine: {
+				updateSettings() {},
 				async resetForVaultChange() {
 					order.push("resetForVaultChange");
 				},
@@ -183,6 +185,7 @@ describe("provider swaps dispose the outgoing OAuthAuth (#420)", () => {
 			async saveSettings() {},
 			syncEngine: {
 				bumpAuthGeneration() {},
+				updateSettings() {},
 				async resetForVaultChange() {},
 				getLastSync() {
 					return 0;
