@@ -505,6 +505,43 @@ describe("SyncEngine.pushAll: replace-remote never deletes ignored server paths"
 		expect(deleted).toEqual(["extra-id"]);
 		expect(delAttach).toEqual(["extra.png"]);
 	});
+
+	test("a note renamed INTO an ignored folder is judged by its latest path", async () => {
+		const { engine } = makeEngine([]);
+		(engine as any).ignorePatterns = ["Archive/"];
+		const deleted: string[] = [];
+		(engine as any).crdtDelete = async (id: string) => {
+			deleted.push(id);
+			return { doc_id: id };
+		};
+		(engine as any).pushFile = mock().mockResolvedValue(true);
+		const note = (id: string, seq: number, path: string) => ({
+			type: "note",
+			id,
+			seq,
+			path,
+			title: path,
+			content: "x",
+			folder: "",
+			tags: [],
+			mtime: seq,
+			updated_at: "2026-01-01T00:00:00Z",
+			deleted: false,
+		});
+		engine.setCrdtCatchupSince(async () => ({
+			changes: [
+				note("moved-id", 1, "Notes/x.md"),
+				note("extra-id", 2, "Extra.md"),
+				note("moved-id", 3, "Archive/x.md"),
+			],
+			has_more: false,
+			next_seq: null,
+		}));
+
+		await engine.pushAll({ replaceRemote: true, localSnapshot: new Set<string>() });
+
+		expect(deleted).toEqual(["extra-id"]);
+	});
 });
 
 describe("pushPartitioned — per-file genesis (no batch RPC)", () => {

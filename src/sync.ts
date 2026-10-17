@@ -6854,6 +6854,9 @@ export class SyncEngine {
 			// must tick the progress feed once, or `current` outruns the plan's
 			// denominator and the bar pins at 100% while files keep arriving.
 			const tickedKeys = new Set<string>();
+			// Latest path per note id across every pass, so ignore filtering below
+			// judges a note by where it ended up, not by each op along the way.
+			const notePaths = new Map<string, string>();
 			// This session owns the tick fan-out: its own caller's callback and
 			// every coalescer that registers while it runs see the same stream.
 			if (opts.onFileApplied) this.seqReplayFileListeners.add(opts.onFileApplied);
@@ -6882,6 +6885,7 @@ export class SyncEngine {
 						tickedKeys,
 						opts.enumerateOnly ?? false,
 						emitFileApplied,
+						notePaths,
 					);
 					applied += pass.applied;
 					files += pass.files;
@@ -6892,6 +6896,13 @@ export class SyncEngine {
 					if (!pass.complete) complete = false;
 					if (pass.fromGenesis) fromGenesis = true;
 				} while (this.seqReplayAgain);
+				// Ignored notes are intentionally unsynced, never local: left in, a
+				// push-all-delete would treat them as server-only extras and delete
+				// them. Judged on the LATEST path, so a note renamed into an ignored
+				// folder is ignored even though an earlier op put its id in the set.
+				for (const [id, path] of notePaths) {
+					if (this.shouldIgnore(normalizePath(path))) serverIds.delete(id);
+				}
 				// Outcome check. `applied` counts every row the feed handed us;
 				// `files` and `deletes` count what actually reached disk. All three
 				// passes done and applied > 0 with NOTHING materialised or trashed
@@ -7111,6 +7122,8 @@ export class SyncEngine {
 		tickedKeys: Set<string>,
 		enumerateOnly = false,
 		onFileApplied?: (path: string) => void,
+		/** Filled with each note id's latest path, for the caller's ignore filter. */
+		notePaths?: Map<string, string>,
 		/** `complete` is false when the walk did NOT reach the end of the feed, so
 		 *  `serverIds`/`serverAttachmentPaths` are a PARTIAL view of the server. Any
 		 *  caller making a delete decision must refuse them: a partial set is
@@ -7215,14 +7228,15 @@ export class SyncEngine {
 					// Every non-deleted id/path SEEN (applied or skipped) — the
 					// pull-all-delete / push-all-delete choices (Tasks 5/5b/6) need the
 					// full server id-set and attachment-path-set, not just the
-					// successfully-applied subset. Ignored paths are left out: they are
-					// intentionally unsynced, never local, so counting them would make
-					// push-all-delete treat them as server-only extras and delete them.
-					if (c.path && this.shouldIgnore(normalizePath(c.path))) return;
+					// successfully-applied subset. Ignored attachments (keyed by path)
+					// are left out here; ignored notes are dropped by the caller on
+					// their latest path (see catchupViaSeqReplay).
 					if (c.type === "attachment") {
-						if (!c.deleted) serverAttachmentPaths.add(c.path);
-					} else if (c.id && !c.deleted) {
-						serverIds.add(c.id);
+						if (!c.deleted && !(c.path && this.shouldIgnore(normalizePath(c.path))))
+							serverAttachmentPaths.add(c.path);
+					} else if (c.id) {
+						if (c.path) notePaths?.set(c.id, c.path);
+						if (!c.deleted) serverIds.add(c.id);
 					}
 				},
 				onPage: async (seq, id) => {
