@@ -940,3 +940,24 @@ describe("SyncEngine.holdReinclude", () => {
 		expect(engine.getSeqRewindFloor()).toBeNull();
 	});
 });
+
+describe("Sync again's re-check and the note cap", () => {
+	test("a cap-gated new note in the folder is still pushed once the cap lifts", async () => {
+		const fresh = new TFile("Archive/new.md", new Date("2026-09-01T00:00:00Z").getTime());
+		const { engine, app } = makeEngine([fresh], { "Archive/new.md": "# new" });
+		app.vault.getAbstractFileByPath.mockImplementation((p: string) =>
+			p === fresh.path ? fresh : null,
+		);
+		let capClosed = true;
+		(engine as any).notesCapGate = { isClosed: () => capClosed };
+		const pushFile = mock().mockResolvedValue(true);
+		(engine as any).pushFile = pushFile;
+
+		await engine.reincludeFolder("Archive");
+		await engine.pushModifiedFiles("2026-10-01T00:00:00.000Z"); // cap closed: skipped
+		expect(pushFile).not.toHaveBeenCalled();
+		capClosed = false;
+		await engine.pushModifiedFiles("2026-10-01T00:00:00.000Z");
+		expect(pushFile.mock.calls.map((c: any[]) => c[0].path)).toEqual(["Archive/new.md"]);
+	});
+});
