@@ -9226,8 +9226,8 @@ export class SyncEngine {
 	/** Folders just taken out of excludedFolders. The next push sweep visits
 	 *  every tracked file under them and lets pushFile's hash check decide:
 	 *  an edit made while excluded predates lastSync, so the mtime filter would
-	 *  skip it. Cleared by a sweep with no failures. */
-	private reincludedFolders = new Set<string>();
+	 *  skip it. Cleared by a sweep with no failures, and by a vault change. */
+	private reincludedFolders = this.track(["vault"], new Set<string>());
 
 	/** "Sync again" for a folder the caller has ALREADY taken out of
 	 *  excludedFolders. While excluded, its vault events were ignored, so:

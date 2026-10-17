@@ -766,6 +766,7 @@ describe("SyncEngine.reincludeFolder: Sync again for an excluded folder", () => 
 		const { engine, app } = makeEngine([]);
 		engine.importSyncState({ "Archive/gone.md": { hash: fnv1a("# gone") } });
 		(engine as any).noteIdMap.set("Archive/gone.md", "gone-id");
+		(engine as any).crdt.removeDoc = async () => {};
 		const enqueued: any[] = [];
 		(engine as any).crdtEnqueue = (op: any) => enqueued.push(op);
 		engine.setCrdtCatchupSince(async () => ({
