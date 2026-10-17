@@ -338,6 +338,8 @@ const ja: Dict = {
 	"Nothing needs your attention. 🎉": "問題ありません。🎉",
 	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
 		"まだ同期するものがありません。この保管庫は両方で空です。同期を開始すると、書いたものが他のデバイスにも表示されます。",
+	"Nothing to sync yet: every file here is on your ignore list. Start syncing and everything you write appears on your other devices.":
+		"まだ同期するものがありません：ここに表示されているファイルはすべて除外リストに含まれています。同期を開始すると、書いたものが他のデバイスにも表示されます。",
 	"Nothing will be deleted.": "データは削除されません。",
 	"Nothing will be removed from this device.": "このデバイスからファイルは削除されません。",
 	Open: "開く",

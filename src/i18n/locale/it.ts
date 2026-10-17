@@ -401,6 +401,8 @@ const it: Dict = {
 	"Nothing needs your attention. 🎉": "Non ci sono problemi da risolvere. 🎉",
 	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
 		"Al momento non c'è nulla da sincronizzare: questo Vault è vuoto su entrambi i lati. Inizia la sincronizzazione e tutto ciò che scrivi apparirà sui tuoi altri dispositivi.",
+	"Nothing to sync yet: every file here is on your ignore list. Start syncing and everything you write appears on your other devices.":
+		"Nessun file da sincronizzare: ogni file qui è nella tua lista di esclusione. Inizia la sincronizzazione e tutto ciò che scrivi apparirà sui tuoi altri dispositivi.",
 	"Nothing will be deleted.": "Nulla verrà eliminato.",
 	"Nothing will be removed from this device.": "Nulla verrà eliminato da questo dispositivo.",
 	Open: "Apri",

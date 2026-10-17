@@ -338,6 +338,8 @@ const id: Dict = {
 	"Nothing needs your attention. 🎉": "Tidak ada yang membutuhkan perhatian Anda. 🎉",
 	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
 		"Belum ada yang perlu disinkronkan — Vault ini kosong di kedua sisi. Mulai sinkronisasi dan semua yang Anda tulis akan muncul di perangkat lain Anda.",
+	"Nothing to sync yet: every file here is on your ignore list. Start syncing and everything you write appears on your other devices.":
+		"Belum ada yang perlu disinkronkan: setiap file di sini ada dalam daftar abaikan Anda. Mulai sinkronisasi dan semua yang Anda tulis akan muncul di perangkat lain Anda.",
 	"Nothing will be deleted.": "Tidak ada yang akan dihapus.",
 	"Nothing will be removed from this device.": "Tidak ada yang akan dihapus dari perangkat ini.",
 	Open: "Buka",

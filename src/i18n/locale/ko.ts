@@ -333,6 +333,8 @@ const ko: Dict = {
 	"Nothing needs your attention. 🎉": "특별한 조치가 필요 없습니다. 🎉",
 	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
 		"아직 동기화할 내용이 없습니다. 이 보관함은 양쪽 모두 비어 있습니다. 동기화를 시작하면 작성하는 모든 내용이 다른 기기에 표시됩니다.",
+	"Nothing to sync yet: every file here is on your ignore list. Start syncing and everything you write appears on your other devices.":
+		"아직 동기화할 내용이 없습니다: 여기의 모든 파일은 제외 목록에 있습니다. 동기화를 시작하면 작성하신 모든 내용이 다른 기기에 표시됩니다.",
 	"Nothing will be deleted.": "삭제되는 항목은 없습니다.",
 	"Nothing will be removed from this device.": "이 기기에서 파일은 삭제되지 않습니다.",
 	Open: "열기",

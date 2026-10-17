@@ -416,6 +416,8 @@ const pl: Dict = {
 	"Nothing needs your attention. 🎉": "Nic nie wymaga twojej uwagi. 🎉",
 	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
 		"Nie ma nic do zsynchronizowania – ten sejf jest pusty po obu stronach. Rozpocznij synchronizację, a wszystko, co napiszesz, pojawi się na twoich innych urządzeniach.",
+	"Nothing to sync yet: every file here is on your ignore list. Start syncing and everything you write appears on your other devices.":
+		"Nie ma nic do synchronizacji: każdy plik tutaj znajduje się na twojej liście ignorowanych. Rozpocznij synchronizację, a wszystko, co napiszesz, pojawi się na twoich innych urządzeniach.",
 	"Nothing will be deleted.": "Nic nie zostanie usunięte.",
 	"Nothing will be removed from this device.": "Nic nie zostanie usunięte z tego urządzenia.",
 	Open: "Otwórz",
