@@ -806,7 +806,7 @@ export class SyncEngine {
 		// (a bare `{ tag: "map" }`, a stub with only the two methods under test),
 		// and wiring a diagnostic-adjacent hook must not be what breaks them. In
 		// production this is always a real NoteIdMap, so the method is always there.
-		map?.setChangeHandler?.(() => this.scheduleIdMapPrune());
+		map?.setChangeHandler?.((ids) => this.scheduleIdMapPrune(ids));
 		map?.setRelocateHandler?.((from, to) => {
 			// RECORD FIRST, move second. The move can lose: a concurrent flush or
 			// the discovery create may reach the new path first, and then this
@@ -1393,15 +1393,20 @@ export class SyncEngine {
 		}
 	}
 
-	/** Id-map change hook: coalesced to one prune per microtask, so a burst of
-	 *  N changes costs one scan of the pending ids, not N. A waiter is still
-	 *  released in the same tick its id lands. */
-	private scheduleIdMapPrune(): void {
-		if (this.idMapPruneQueued || this.idMapPending.size === 0) return;
+	/** Id-map change hook: settles pending ids among those just claimed,
+	 *  coalesced to one pass per microtask. Only the claimed ids are looked up,
+	 *  so a 10k import with one stuck id is not 10k reverse-index rebuilds. A
+	 *  waiter is still released in the same tick its id lands. */
+	private scheduleIdMapPrune(claimed: string[]): void {
+		if (this.idMapPending.size === 0) return;
+		for (const id of claimed) if (this.idMapPending.has(id)) this.idMapClaimed.add(id);
+		if (this.idMapPruneQueued || this.idMapClaimed.size === 0) return;
 		this.idMapPruneQueued = true;
 		queueMicrotask(() => {
 			this.idMapPruneQueued = false;
-			this.pruneIdMapPending();
+			const ids = [...this.idMapClaimed];
+			this.idMapClaimed.clear();
+			for (const id of ids) if (this.noteIdMap?.pathForId(id) != null) this.settleIdMapPending(id);
 		});
 	}
 
@@ -1533,6 +1538,7 @@ export class SyncEngine {
 	/** Live fetches started (never reset: entries compare against it). */
 	private idMapFetchGen = 0;
 	private idMapPruneQueued = false;
+	private idMapClaimed = new Set<string>();
 	/** Assigned in the constructor: it needs `this.time`. */
 	private readonly idMapThrottle: TrailingThrottle;
 	/** Discovery's id-map persist: leading save, then at most one per gap. The

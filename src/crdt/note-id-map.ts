@@ -94,6 +94,9 @@ export class NoteIdMap {
 	 *  sync engine and the live views, so it must be re-pointed in place rather
 	 *  than swapped out from under them. */
 	rebind(store: SyncStore): void {
+		// The old store may outlive us (a live view, a late remote update): stop
+		// it calling the engine.
+		this.store.onChange = undefined;
 		this.store = store;
 		this.flushScheduled = false;
 		// Re-attach: the handler lives on the STORE, and a vault switch hands us a
@@ -138,12 +141,12 @@ export class NoteIdMap {
 	/** Called after any change to what this map answers, local or remote — so
 	 *  the engine can release work waiting for an id to become mapped. Same
 	 *  rebind contract as the relocate handler. */
-	setChangeHandler(fn: (() => void) | null): void {
+	setChangeHandler(fn: ((claimedIds: string[]) => void) | null): void {
 		this.changeHandler = fn;
 		this.store.onChange = fn ?? undefined;
 	}
 
-	private changeHandler: (() => void) | null = null;
+	private changeHandler: ((claimedIds: string[]) => void) | null = null;
 
 	/** Where this note used to live. See `SyncStore.priorPathsForId`. */
 	priorPathsForId(id: string): string[] {

@@ -110,8 +110,9 @@ export class SyncStore {
 	/** Fired when an id may have become resolvable: a local `set`, a remote
 	 *  update, or a `seed`. Deliberately not `rename`/`getOrMint`/`clear`: those
 	 *  only move an id already resolvable, mint a fresh one, or remove, so none
-	 *  can satisfy a wait for an unmapped id. */
-	onChange?: () => void;
+	 *  can satisfy a wait for an unmapped id. Passes the ids just claimed, so a
+	 *  listener checks only those instead of rescanning (O(N) rebuilds). */
+	onChange?: (claimedIds: string[]) => void;
 
 	/** Has this note_id been permanently tombstoned by the CRDT manager?
 	 *  Injected because the store must not depend on the registry; see the
@@ -140,12 +141,16 @@ export class SyncStore {
 			// `keysChanged` is `Set<any>` in yjs's types, so the key is narrowed
 			// rather than asserted. A Y.Map key is always a string; the guard costs
 			// one typeof per changed key and keeps the boundary honest.
+			const claimed: string[] = [];
 			for (const key of event.keysChanged) {
-				if (typeof key === "string") this.forgotten.delete(key);
+				if (typeof key !== "string") continue;
+				this.forgotten.delete(key);
+				const id = this.map.get(key)?.note_id;
+				if (id) claimed.push(id);
 			}
 			this.reverse = null;
 			this.cacheById = null;
-			this.onChange?.();
+			if (claimed.length > 0) this.onChange?.(claimed);
 		});
 	}
 
@@ -221,7 +226,7 @@ export class SyncStore {
 		this.cache.set(path, meta);
 		this.reverse = null;
 		this.cacheById = null;
-		this.onChange?.();
+		this.onChange?.([meta.note_id]);
 	}
 
 	/** Every path this store has ever associated with `note_id`, newest source
@@ -445,7 +450,7 @@ export class SyncStore {
 		// promoting delete-then-set would otherwise depend on commit order.
 		this.deleteSet.delete(resolved);
 		this.reverse = null;
-		this.onChange?.();
+		this.onChange?.([meta.note_id]);
 	}
 
 	/** The shared doc already holds exactly this claim and nothing staged or
