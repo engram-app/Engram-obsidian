@@ -3600,26 +3600,27 @@ export default class EngramSyncPlugin extends Plugin {
 	/** Over-limit step: the unticked top-level folders join
 	 *  `settings.excludedFolders` (the user's ignore text is never touched).
 	 *  The candidate plan is computed with the candidate list WITHOUT touching
-	 *  the live engine; settings are saved next, and only then does the engine
-	 *  switch. Any failure, or `signal` aborting (the modal was closed), leaves
+	 *  the live engine; the list is saved next, and only then is the engine
+	 *  told. Any failure, or `signal` aborting (the modal was closed), leaves
 	 *  settings and engine as they were. Persisted without saveSettings, which
 	 *  would re-fire the first-sync flow and stack a second modal. */
 	private async applyOverLimitExclusions(
 		folders: string[],
 		signal?: AbortSignal,
 	): Promise<SyncPlan> {
-		const previous = this.settings;
-		const excludedFolders = [...new Set([...previous.excludedFolders, ...folders])];
+		const previous = this.settings.excludedFolders;
+		const excludedFolders = [...new Set([...previous, ...folders])];
 		const plan = await this.syncEngine.computeSyncPlan("full", { excludedFolders });
 		signal?.throwIfAborted();
-		// A fresh object: the engine holds `previous` and keeps its old exclusions
-		// until the save below succeeds.
-		this.settings = { ...previous, excludedFolders };
+		// In place, and only this field: the API client and engine hold this
+		// object, and an OAuth rotation during the save writes its single-use
+		// refresh token here. Reverting the whole object would drop it.
+		this.settings.excludedFolders = excludedFolders;
 		try {
 			await this.savePluginData(this.syncEngine.getLastSync());
 			signal?.throwIfAborted();
 		} catch (e: unknown) {
-			this.settings = previous;
+			this.settings.excludedFolders = previous;
 			// Best effort: the aborted case already wrote the candidate list.
 			if (signal?.aborted) await this.savePluginData(this.syncEngine.getLastSync());
 			throw e;

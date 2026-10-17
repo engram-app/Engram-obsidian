@@ -141,6 +141,46 @@ describe("applyExclusions persists only after the plan recomputes", () => {
 	});
 });
 
+describe("applyExclusions keeps token rotation", () => {
+	function rotateDuringSave(fake: any, fail: () => void) {
+		fake.settings.refreshToken = "rt-old";
+		let calls = 0;
+		fake.savePluginData = mock(async function (this: any) {
+			if (++calls > 1) return; // the rollback's own save
+			// OAuth rotation lands while the save is in flight.
+			this.settings.refreshToken = "rt-rotated";
+			fail();
+		});
+	}
+
+	test("a failed save keeps a refresh token rotated during it", async () => {
+		const { fake } = makeFakePlugin(async () => PLAN);
+		rotateDuringSave(fake, () => {
+			throw new Error("disk full");
+		});
+		await expect(hooksOf(fake).applyExclusions(["Archive"])).rejects.toThrow("disk full");
+		expect(fake.settings.refreshToken).toBe("rt-rotated");
+		expect(fake.settings.excludedFolders).toEqual(["Old"]);
+	});
+
+	test("a modal closed during the save keeps a rotated refresh token", async () => {
+		const ctrl = new AbortController();
+		const { fake } = makeFakePlugin(async () => PLAN);
+		rotateDuringSave(fake, () => ctrl.abort());
+		await expect(hooksOf(fake).applyExclusions(["Archive"], ctrl.signal)).rejects.toThrow();
+		expect(fake.settings.refreshToken).toBe("rt-rotated");
+		expect(fake.settings.excludedFolders).toEqual(["Old"]);
+	});
+
+	test("settings are changed in place: holders of the object see the result", async () => {
+		const { fake } = makeFakePlugin(async () => PLAN);
+		const held = fake.settings; // the API client and engine hold this object
+		await hooksOf(fake).applyExclusions(["Archive"]);
+		expect(fake.settings).toBe(held);
+		expect(held.excludedFolders).toEqual(["Old", "Archive"]);
+	});
+});
+
 describe("loadSettings defaults excludedFolders", () => {
 	async function load(settings: Record<string, unknown>) {
 		const fake: any = {
