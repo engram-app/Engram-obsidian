@@ -3631,9 +3631,18 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  sync runs in the background; the returned promise settles once the change
 	 *  is saved. */
 	async syncFolderAgain(folder: string): Promise<void> {
-		this.settings.excludedFolders = this.settings.excludedFolders.filter((f) => f !== folder);
+		const previous = this.settings.excludedFolders;
+		// In place, only this field, rolled back if the save fails: same
+		// discipline as applyOverLimitExclusions (a token rotation during the
+		// save must survive). The engine is told only once it is saved.
+		this.settings.excludedFolders = previous.filter((f) => f !== folder);
+		try {
+			await this.savePluginData(this.syncEngine.getLastSync());
+		} catch (e: unknown) {
+			this.settings.excludedFolders = previous;
+			throw e;
+		}
 		this.syncEngine.updateSettings(this.settings);
-		await this.savePluginData(this.syncEngine.getLastSync());
 		await this.syncEngine.reincludeFolder(folder);
 		void this.syncEngine
 			.fullSync()

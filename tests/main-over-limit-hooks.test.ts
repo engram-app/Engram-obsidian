@@ -203,6 +203,26 @@ describe("syncFolderAgain", () => {
 		await Bun.sleep(0);
 
 		expect(fake.settings.excludedFolders).toEqual(["Old"]);
-		expect(order).toEqual(["engine", "save", "reinclude:Archive", "sync"]);
+		expect(order).toEqual(["save", "engine", "reinclude:Archive", "sync"]);
+	});
+
+	test("a failed save changes nothing and touches no engine state", async () => {
+		const { fake } = makeFakePlugin(async () => PLAN);
+		fake.settings.excludedFolders = ["Archive", "Old"];
+		fake.settings.refreshToken = "rt-old";
+		fake.savePluginData = mock(async function (this: any) {
+			this.settings.refreshToken = "rt-rotated"; // rotation during the save
+			throw new Error("disk full");
+		});
+		fake.syncEngine.reincludeFolder = mock(async () => {});
+		fake.syncEngine.fullSync = mock(async () => ({ pulled: 0, pushed: 0 }));
+
+		await expect(fake.syncFolderAgain("Archive")).rejects.toThrow("disk full");
+
+		expect(fake.settings.excludedFolders).toEqual(["Archive", "Old"]);
+		expect(fake.settings.refreshToken).toBe("rt-rotated");
+		expect(fake.syncEngine.updateSettings).not.toHaveBeenCalled();
+		expect(fake.syncEngine.reincludeFolder).not.toHaveBeenCalled();
+		expect(fake.syncEngine.fullSync).not.toHaveBeenCalled();
 	});
 });

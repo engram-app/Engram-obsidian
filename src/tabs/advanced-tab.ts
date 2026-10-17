@@ -195,8 +195,15 @@ export function renderExcludedFolders(
 	for (const folder of folders) {
 		new Setting(containerEl).setName(folder).addButton((btn) =>
 			btn.setButtonText(t("Sync again")).onClick(async () => {
-				await plugin.syncFolderAgain(folder);
-				redisplay();
+				try {
+					await plugin.syncFolderAgain(folder);
+				} catch (e: unknown) {
+					// biome-ignore lint/suspicious/noConsole: error boundary
+					console.error("Engram Sync: sync folder again failed", e);
+					new Notice(t("Could not save your folder choice. Try again."));
+				} finally {
+					redisplay();
+				}
 			}),
 		);
 	}
