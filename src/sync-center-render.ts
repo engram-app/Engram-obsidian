@@ -5,7 +5,7 @@
  *  clicked from.
  */
 import { Notice, normalizePath, Setting } from "obsidian";
-import { offersUpgrades } from "./backend-mode";
+import { upgradeUrlFor } from "./backend-mode";
 import { devLog } from "./dev-log";
 import { errMsg } from "./error-util";
 import { currentLocale, t, type UIText } from "./i18n";
@@ -16,7 +16,6 @@ import type { QueuedReason } from "./offline-queue";
 import { formatBytes, planUsageRows } from "./plan-usage";
 import { ACTION_ICONS } from "./sync-log-modal";
 import { planLoadErrorMessage } from "./sync-preview-modal";
-import { DEFAULT_UPGRADE_URL } from "./tabs/urls";
 import type { SyncIssue, SyncIssueCategory, SyncLogEntry } from "./types";
 
 /** Build an Obsidian Setting heading inside `parent` so the section title
@@ -297,8 +296,9 @@ function renderPlanCard(
 		hint,
 		buttons: (actions) => {
 			// Hosted service only: a self-hosted server has no billing page.
-			if (offersUpgrades(plugin.settings)) {
-				const url = issues.find((i) => i.upgradeUrl)?.upgradeUrl ?? DEFAULT_UPGRADE_URL;
+			const billing = upgradeUrlFor(plugin.settings);
+			if (billing) {
+				const url = issues.find((i) => i.upgradeUrl)?.upgradeUrl ?? billing;
 				const upgrade = actions.createEl("button", { text: t("Upgrade"), cls: "mod-cta" });
 				upgrade.addEventListener("click", () => window.open(url, "_blank"));
 			}

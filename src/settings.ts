@@ -2,7 +2,7 @@
  * Settings tab for Engram Sync plugin.
  */
 import { type App, Notice, PluginSettingTab, type Setting } from "obsidian";
-import { offersUpgrades } from "./backend-mode";
+import { upgradeUrlFor } from "./backend-mode";
 import { devLog } from "./dev-log";
 import { DeviceFlowModal } from "./device-flow-modal";
 import { errMsg } from "./error-util";
@@ -17,7 +17,6 @@ import { renderFeedbackTab } from "./tabs/feedback-tab";
 import { pickInitialTab } from "./tabs/start-tab";
 import { renderSyncCenterTab } from "./tabs/sync-center-tab";
 import type { TabContext } from "./tabs/types";
-import { DEFAULT_UPGRADE_URL } from "./tabs/urls";
 import type { SyncProgress } from "./types";
 
 /** Build the settings pane's progress-bar render callback. Extracted
@@ -380,15 +379,13 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 		// text. Emitted first, it pushed that button out to the edge instead.
 		// Hosted service only: a self-hosted server also reports "free" but has no
 		// billing to upgrade to.
-		if (
-			offersUpgrades(this.plugin.settings) &&
-			this.plugin.syncEngine?.getPlanState()?.tier === "free"
-		) {
+		const billing = upgradeUrlFor(this.plugin.settings);
+		if (billing && this.plugin.syncEngine?.getPlanState()?.tier === "free") {
 			const upgrade = statusEl.createEl("button", {
 				cls: "engram-status-upgrade-btn mod-cta",
 				text: t("Upgrade"),
 			});
-			upgrade.addEventListener("click", () => window.open(DEFAULT_UPGRADE_URL, "_blank"));
+			upgrade.addEventListener("click", () => window.open(billing, "_blank"));
 		}
 
 		if (status.lastSync) {

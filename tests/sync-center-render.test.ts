@@ -152,10 +152,16 @@ function makeMockPlugin(issues: SyncIssue[], planState?: unknown): any {
 	// Hoisted so `resolveRemoteVaultName` below reads the SAME object the tests
 	// mutate. Returning a fixed name instead would overwrite whatever a test
 	// set, which is exactly the bug the resolve exists to fix.
-	const settings: { vaultId: string; remoteVaultName?: string; backendMode?: string } = {
+	const settings: {
+		vaultId: string;
+		remoteVaultName?: string;
+		backendMode?: string;
+		apiUrl: string;
+	} = {
 		vaultId: "1",
 		remoteVaultName: "Vault",
 		backendMode: "cloud",
+		apiUrl: "https://api.engram.page",
 	};
 	return {
 		// `getMarkdownFiles` is what the search-cap section counts. The real
@@ -306,6 +312,22 @@ describe("renderSyncCenter — Needs attention cards", () => {
 
 		expect(findByCls(parent, "engram-sync-center-plan-section")).not.toBeNull();
 		expect(findAllByCls(parent, "mod-cta").some((b) => b.text === "Upgrade")).toBe(false);
+	});
+
+	test("Upgrade opens the active backend's billing page", () => {
+		const plugin = makeMockPlugin([makeIssue({ category: "needs_pro" })]);
+		plugin.settings.apiUrl = "https://staging.engram.page";
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+		const btn = findAllByCls(parent, "mod-cta").find((b) => b.text === "Upgrade");
+		const open = mock((_url: string) => null);
+		const real = window.open;
+		window.open = open as any;
+		try {
+			btn?.listeners.click?.();
+		} finally {
+			window.open = real;
+		}
+		expect(open.mock.calls[0]?.[0]).toBe("https://staging.engram.page/settings/billing");
 	});
 
 	test("the plan section offers an Upgrade button, not a Retry/Dismiss", () => {

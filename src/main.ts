@@ -3585,7 +3585,10 @@ export default class EngramSyncPlugin extends Plugin {
 	): SyncPreviewModal {
 		return new SyncPreviewModal(this.app, null, {
 			...opts,
-			fetchUsage: () => this.api.getBillingUsage(),
+			// No plans to sell, no quota to ask about: self-host never calls billing.
+			fetchUsage: offersUpgrades(this.settings)
+				? () => this.api.getBillingUsage()
+				: undefined,
 			upgradeUrl: upgradeUrlFor(this.settings),
 			applyExclusions: (folders) => this.applyOverLimitExclusions(folders),
 		});

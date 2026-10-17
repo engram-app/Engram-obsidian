@@ -11,7 +11,7 @@
  * Object.create(prototype) pattern (see settings-gate-rerender.test.ts) so the
  * real renderStatus runs against a bare fake plugin, no Obsidian DOM.
  */
-import { describe, expect, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import { EngramSyncSettingTab } from "../src/settings";
 
 interface FakeEl {
@@ -19,10 +19,11 @@ interface FakeEl {
 	text: string;
 	children: FakeEl[];
 	isConnected: boolean;
+	listeners: Record<string, () => void>;
 }
 
 function makeFakeEl(cls = ""): FakeEl {
-	const el: FakeEl = { cls, text: "", children: [], isConnected: true };
+	const el: FakeEl = { cls, text: "", children: [], isConnected: true, listeners: {} };
 	const add = (o?: { cls?: string; text?: string }) => {
 		const child = makeFakeEl(o?.cls ?? "");
 		child.text = o?.text ?? "";
@@ -38,7 +39,9 @@ function makeFakeEl(cls = ""): FakeEl {
 		},
 		addClass: () => t,
 		addClasses: () => t,
-		addEventListener: () => {},
+		addEventListener: (type: string, cb: () => void) => {
+			t.listeners[type] = cb;
+		},
 		empty: () => {
 			t.children.length = 0;
 		},
@@ -47,7 +50,11 @@ function makeFakeEl(cls = ""): FakeEl {
 }
 
 /** `backendMode: null` = an install whose mode was never recorded. */
-function renderWith(tier: string | undefined, backendMode: string | null = "cloud"): FakeEl {
+function renderWith(
+	tier: string | undefined,
+	backendMode: string | null = "cloud",
+	apiUrl = "https://api.example.com",
+): FakeEl {
 	const tab = Object.create(EngramSyncSettingTab.prototype) as any;
 	const statusEl = makeFakeEl();
 	tab.statusContainerEl = statusEl;
@@ -55,7 +62,7 @@ function renderWith(tier: string | undefined, backendMode: string | null = "clou
 		// Signed in and live, so the status strip takes its plainest branch and
 		// the only thing under test is the CTA.
 		settings: {
-			apiUrl: "https://api.example.com",
+			apiUrl,
 			apiKey: "k",
 			...(backendMode ? { backendMode } : {}),
 		},
@@ -88,6 +95,20 @@ describe("settings status strip — Upgrade CTA", () => {
 		// after load and for the whole session when signed out. Guessing "free"
 		// there would flash an upgrade prompt at a paying user on every open.
 		expect(hasUpgrade(renderWith(undefined))).toBe(false);
+	});
+
+	test("Upgrade opens the active backend's billing page", () => {
+		const el = renderWith("free", "cloud", "https://staging.engram.page");
+		const btn = el.children.find((c) => c.cls.includes("engram-status-upgrade-btn"));
+		const open = mock((_url: string) => null);
+		const real = window.open;
+		window.open = open as any;
+		try {
+			btn?.listeners.click?.();
+		} finally {
+			window.open = real;
+		}
+		expect(open.mock.calls[0]?.[0]).toBe("https://staging.engram.page/settings/billing");
 	});
 
 	test("never offers Upgrade on a self-hosted server", () => {

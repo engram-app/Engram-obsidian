@@ -54,6 +54,16 @@ describe("newSyncPreviewModal supplies the over-limit hooks", () => {
 	});
 });
 
+describe("self-host makes no billing lookups", () => {
+	test("no fetchUsage and no Upgrade URL when the server sells no plans", () => {
+		const { fake } = makeFakePlugin(async () => PLAN);
+		fake.settings.backendMode = "selfhost";
+		const opts = hooksOf(fake);
+		expect(opts.fetchUsage).toBeUndefined();
+		expect(opts.upgradeUrl).toBeNull();
+	});
+});
+
 describe("applyExclusions persists only after the plan recomputes", () => {
 	test("a failed recompute leaves settings and engine patterns unchanged", async () => {
 		const { fake, seenByEngine } = makeFakePlugin(() => Promise.reject(new Error("offline")));
