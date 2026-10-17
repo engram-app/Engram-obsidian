@@ -892,7 +892,10 @@ describe("computeSyncPlan respects the ignore list on the SERVER side", () => {
 		expect(plan.toPull.notes).toEqual(["keep.md"]);
 		expect(plan.toPull.attachments).toEqual(["img/keep.png"]);
 		for (const p of everyPlanPath(plan)) expect(engine.shouldIgnore(p)).toBe(false);
-		expect(plan.ignoredCount).toBe(7);
+		// USER ignores only: drafts/a.md, deep/drafts/b.md, notes/secret.md,
+		// drafts/pic.png. The built-ins (.trash/, .git/, configDir) are hidden
+		// but never counted.
+		expect(plan.ignoredCount).toBe(4);
 	});
 
 	test("tombstones at ignored paths do not produce local deletes", async () => {
@@ -957,24 +960,35 @@ describe("computeSyncPlan respects the ignore list on the SERVER side", () => {
 
 		expect(plan.toPull.notes).toEqual(["drafts/b.md"]);
 		expect(plan.serverNoteCount).toBe(1);
-		expect(plan.ignoredCount).toBe(1);
+		expect(plan.ignoredCount).toBe(0); // .trash/ is a built-in, not counted
 	});
 
-	test("a leading-slash pattern anchors at the vault root, the same on both sides", async () => {
-		const engine = createEngine({ ignorePatterns: "/drafts/\n/top.md" });
-		mockApp.vault.getFiles.mockReturnValue([
-			makeTFile("drafts/l.md"),
-			makeTFile("sub/drafts/l2.md"),
-			makeTFile("top.md"),
-			makeTFile("sub/top.md"),
-		]);
-		wireFeed(engine, [[noteRow("drafts/s.md"), noteRow("sub/drafts/s2.md")]]);
+	test('leading-slash patterns keep main\'s semantics: "/" and "/x/" match nothing', async () => {
+		const engine = createEngine({ ignorePatterns: "/\n/x/\n/top.md" });
+		for (const p of ["a.md", "x/a.md", "sub/x/b.md", "top.md", "sub/top.md"]) {
+			expect(engine.shouldIgnore(p)).toBe(false);
+		}
+		mockApp.vault.getFiles.mockReturnValue([makeTFile("x/l.md")]);
+		wireFeed(engine, [[noteRow("x/s.md")]]);
 
 		const plan = await engine.computeSyncPlan("full");
 
-		expect(plan.toPush.notes.sort()).toEqual(["sub/drafts/l2.md", "sub/top.md"]);
-		expect(plan.toPull.notes).toEqual(["sub/drafts/s2.md"]);
-		expect(plan.ignoredCount).toBe(3); // drafts/l.md, top.md, drafts/s.md
+		expect(plan.toPush.notes).toEqual(["x/l.md"]);
+		expect(plan.toPull.notes).toEqual(["x/s.md"]);
+		expect(plan.ignoredCount).toBe(0);
+	});
+
+	test("a path both built-in and user-ignored is not counted, on either side", async () => {
+		const engine = createEngine({ ignorePatterns: ".trash/\nlocal-trash/" });
+		mockApp.vault.getFiles.mockReturnValue([
+			makeTFile(".trash/l.md"),
+			makeTFile("local-trash/l.md"),
+		]);
+		wireFeed(engine, [[noteRow(".trash/s.md"), noteRow("local-trash/s.md")]]);
+
+		const plan = await engine.computeSyncPlan("full");
+
+		expect(plan.ignoredCount).toBe(2); // local-trash/l.md + local-trash/s.md
 	});
 
 	test("per-file ignores from Sync Center apply to server rows too", async () => {
@@ -1033,5 +1047,54 @@ describe("pushAll({ replaceRemote }) never deletes server rows at ignored paths"
 		expect((mockApi.deleteAttachment as jest.Mock).mock.calls.map((c) => c[0])).toEqual([
 			"extra.png",
 		]);
+	});
+});
+
+describe("seq replay server sets: the LAST row decides, tombstones included", () => {
+	test("replace-remote does not re-delete a note the server already tombstoned", async () => {
+		const engine = createEngine();
+		mockApp.vault.getFiles.mockReturnValue([]);
+		const crdtDelete = mock().mockResolvedValue(undefined);
+		engine.setCrdtDelete(crdtDelete);
+		wireFeed(engine, [
+			[
+				noteRow("dead.md", { id: "n-dead" }),
+				noteRow("dead.md", { id: "n-dead", deleted: true }),
+				attRow("dead.png"),
+				attRow("dead.png", true),
+				noteRow("extra.md", { id: "n-extra" }),
+			],
+		]);
+
+		await engine.pushAll({ replaceRemote: true });
+
+		expect(crdtDelete.mock.calls.map((c) => c[0])).toEqual(["n-extra"]);
+		expect(mockApi.deleteAttachment as jest.Mock).not.toHaveBeenCalled();
+	});
+
+	test("pull-all-delete trashes a local note whose id the server tombstoned", async () => {
+		const engine = createEngine();
+		const { NoteIdMap } = await import("../src/crdt/note-id-map");
+		const map = new NoteIdMap();
+		map.set("dead.md", "n-dead");
+		map.set("live.md", "n-live");
+		engine.setNoteIdMap(map);
+		mockApp.vault.getFiles.mockReturnValue([makeTFile("dead.md"), makeTFile("live.md")]);
+		// Isolate the set decision from the replay's own apply of the tombstone.
+		(engine as any).applySyncChange = async () => false;
+		wireFeed(engine, [
+			[
+				noteRow("dead.md", { id: "n-dead" }),
+				noteRow("dead.md", { id: "n-dead", deleted: true }),
+				noteRow("live.md", { id: "n-live" }),
+			],
+		]);
+
+		await engine.pullAll({ deleteLocalExtras: true });
+
+		const trashed = (mockApp.fileManager.trashFile as jest.Mock).mock.calls.map(
+			(c) => (c[0] as TFile).path,
+		);
+		expect(trashed).toEqual(["dead.md"]);
 	});
 });

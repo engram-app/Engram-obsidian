@@ -95,9 +95,10 @@ test("every planned action runs and nothing unplanned happens, with an ignore pa
 		expect(done?.current).toBe(plan.toPull.notes.length + plan.toPush.notes.length);
 
 		// Server side: the planned push landed and the ignored notes are still
-		// there (a sync must never delete what it cannot see).
+		// there (a sync must never delete what it cannot see). Read through A,
+		// which ignores nothing: B's own view hides the drafts by design.
 		const serverP = (
-			b.engine as unknown as {
+			a.engine as unknown as {
 				enumerateServerState: () => Promise<{ notes: Map<string, { deleted: boolean }> }>;
 			}
 		).enumerateServerState();
