@@ -1,3 +1,5 @@
+import { errMsg } from "./error-util";
+import { rlog } from "./remote-log";
 import type { TimeProvider } from "./time-provider";
 
 /** Single-flight runner with a minimum gap between runs and ONE trailing run.
@@ -11,6 +13,8 @@ import type { TimeProvider } from "./time-provider";
  *  `poke(true)` is urgent: it skips the gap, except right after another early
  *  (urgent) run, when it waits `gapMs(true)` instead. Callers pass a short
  *  urgent gap, so a stream of urgent pokes costs one run per urgent gap.
+ *  `floorMs` is never skipped, urgent or not: callers put their failure
+ *  backoff there, so urgency skips only the success cooldown.
  *
  *  A run that resolves `false` did nothing (no work was pending): it stamps
  *  no cooldown, so the next poke is not throttled by a run that never happened.
@@ -36,6 +40,7 @@ export class TrailingThrottle {
 		private readonly time: TimeProvider,
 		private readonly gapMs: (urgent: boolean) => number,
 		private readonly run: () => Promise<boolean | void>,
+		private readonly floorMs: () => number = () => 0,
 	) {}
 
 	poke(urgent = false): void {
@@ -45,7 +50,10 @@ export class TrailingThrottle {
 			return;
 		}
 		const now = this.time.now();
-		const due = urgent && !this.lastWasUrgent ? now : this.lastDoneAt + this.gapMs(urgent);
+		const due = Math.max(
+			urgent && !this.lastWasUrgent ? now : this.lastDoneAt + this.gapMs(urgent),
+			this.lastDoneAt + this.floorMs(),
+		);
 		if (this.timer !== null) {
 			if (due >= this.timerDue) return;
 			this.time.clearTimeout(this.timer);
@@ -83,13 +91,16 @@ export class TrailingThrottle {
 		this.againUrgent = false;
 		// Urgent = earlier than the regular gap allows.
 		const urgent = this.time.now() < this.lastDoneAt + this.gapMs(false);
-		// `run` must handle its own errors; a rejection here is a bug and is left
-		// unhandled so it surfaces. `finally` still keeps the throttle unwedged.
 		let didWork = true;
 		void this.run()
-			.then((r) => {
-				didWork = r !== false;
-			})
+			.then(
+				(r) => {
+					didWork = r !== false;
+				},
+				// `run` should handle its own errors; one that escapes is logged
+				// (a throw counts as work done) and the bookkeeping still runs.
+				(e) => rlog().warn("sync", `throttled run failed: ${errMsg(e)}`),
+			)
 			.finally(() => {
 				this.running = false;
 				// A reset mid-run: the old run's completion is not the new era's cooldown.

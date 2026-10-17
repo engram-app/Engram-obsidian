@@ -3085,6 +3085,12 @@ export class SyncEngine {
 					: SyncEngine.ID_MAP_RECONCILE_COOLDOWN_MS *
 						2 ** Math.min(this.idMapFailures, 4),
 			() => this.runIdMapReconcile(),
+			// Two failures in a row: the server is down, so even an urgent fan-out
+			// waits the backoff. One blip still gets its urgent retry.
+			() =>
+				this.idMapFailures >= 2
+					? SyncEngine.ID_MAP_RECONCILE_COOLDOWN_MS * 2 ** Math.min(this.idMapFailures, 4)
+					: 0,
 		);
 		this.noteIdSaveThrottle = new TrailingThrottle(
 			this.time,
