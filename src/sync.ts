@@ -1218,6 +1218,12 @@ export class SyncEngine {
 		this.idMapThrottle.poke();
 	}
 
+	/** Changes on every vault switch / destroy: lets a caller holding an id
+	 *  across an await tell it no longer belongs to the current vault. */
+	idMapEra(): number {
+		return this.idMapEpoch;
+	}
+
 	/** Resolves once `noteId` is mapped, or the next manifest fetch covering it
 	 *  has completed (mapped or not), or it is dropped (deleted here, gate
 	 *  closed, vault switched). Immediately when it is not waiting on a fetch. */

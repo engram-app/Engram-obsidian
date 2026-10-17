@@ -438,7 +438,11 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		// The heal runs after discovery's whole seq replay. That delays only the
 		// background mapping of an id the replay re-keyed away; a fan-out for it
 		// never waits, since applyPushedNoteUpdate heals its own id urgently.
+		// A vault switch during discovery's replay: this id belongs to the old
+		// vault, so do not heal it against the new one's manifest.
+		const era = syncEngine.idMapEra?.();
 		const heal = (): void => {
+			if (syncEngine.idMapEra?.() !== era) return;
 			if (noteIdMap.pathForId(docId) === null) syncEngine.ensureNoteIdMapped(docId);
 		};
 		if (announcedPath === undefined) heal();
