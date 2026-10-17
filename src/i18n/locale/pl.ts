@@ -621,6 +621,8 @@ const pl: Dict = {
 	"Unlimited AI searches": "Nieograniczone wyszukiwania AI",
 	"Unlimited vaults": "Nieograniczona liczba sejfów",
 	"Unresolved conflict": "Nierozwiązany konflikt",
+	"Unticked folders stop syncing, including notes already uploaded.":
+		"Nie zaznaczone foldery przestają być synchronizowane, w tym notatki, które już zostały przesłane.",
 	Untitled: "Bez tytułu",
 	Update: "Aktualizacja",
 	"Update in settings": "Zaktualizuj w ustawieniach",
@@ -814,6 +816,12 @@ const pl: Dict = {
 	},
 	"{desc} — should not be synced": "{desc} — nie będzie synchronizowany",
 	"{first} and {second}": "{first} i {second}",
+	"{folder} {count} notes ({newCount} new)": {
+		one: "{folder} {count} notatka ({newCount} nowa)",
+		few: "{folder} {count} notatki ({newCount} nowe)",
+		many: "{folder} {count} notatek ({newCount} nowych)",
+		other: "{folder} {count} notatek ({newCount} nowych)",
+	},
 	"{formatted} per day": "{formatted} dziennie",
 	"{label} ({count} queued)": {
 		one: "{label} ({count} w kolejce)",

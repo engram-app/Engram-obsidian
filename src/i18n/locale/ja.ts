@@ -526,6 +526,8 @@ const ja: Dict = {
 	"Unlimited AI searches": "AI検索 無制限",
 	"Unlimited vaults": "保管庫 無制限",
 	"Unresolved conflict": "競合が解決されていません",
+	"Unticked folders stop syncing, including notes already uploaded.":
+		"チェックを外したフォルダは同期対象から除外され、すでにアップロードされたノートも影響を受けます。",
 	Untitled: "タイトルなし",
 	Update: "更新",
 	"Update in settings": "設定で更新",
@@ -616,6 +618,7 @@ const ja: Dict = {
 	"{count} retrying": "{count} 再試行中",
 	"{desc} — should not be synced": "{desc} — 同期対象外",
 	"{first} and {second}": "{first} と {second}",
+	"{folder} {count} notes ({newCount} new)": "{folder} {count} ノート ({newCount} 新規)",
 	"{formatted} per day": "{formatted} /日",
 	"{label} ({count} queued)": "{label} ({count}件待ち)",
 	"{n} of 5": "5つ中{n}",

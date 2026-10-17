@@ -15,7 +15,7 @@ import type EngramSyncPlugin from "./main";
 import type { QueuedReason } from "./offline-queue";
 import { formatBytes, planUsageRows } from "./plan-usage";
 import { ACTION_ICONS } from "./sync-log-modal";
-import { planLoadErrorMessage, SyncPreviewModal } from "./sync-preview-modal";
+import { planLoadErrorMessage } from "./sync-preview-modal";
 import { DEFAULT_UPGRADE_URL } from "./tabs/urls";
 import type { SyncIssue, SyncIssueCategory, SyncLogEntry } from "./types";
 
@@ -162,7 +162,7 @@ function renderActions(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: (
 		try {
 			// Open instantly in a loading state, then stream the plan in (mirrors
 			// the first-sync path) so the modal never waits on the server to appear.
-			const modal = new SyncPreviewModal(plugin.app, null, {
+			const modal = plugin.newSyncPreviewModal({
 				remoteVaultName: plugin.settings.remoteVaultName,
 				showChangeVault: false,
 				context: "review",

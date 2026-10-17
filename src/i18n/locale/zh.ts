@@ -486,6 +486,8 @@ const zh: Dict = {
 	"Unlimited AI searches": "无限制的 AI 搜索",
 	"Unlimited vaults": "无限制的知识库",
 	"Unresolved conflict": "冲突未解决",
+	"Unticked folders stop syncing, including notes already uploaded.":
+		"取消勾选的文件夹将停止同步，包括已上传的笔记。",
 	Untitled: "未命名",
 	Update: "更新",
 	"Update in settings": "在设置中更新",
@@ -573,6 +575,7 @@ const zh: Dict = {
 	"{count} retrying": "{count} 正在重试",
 	"{desc} — should not be synced": "{desc} — 不应同步",
 	"{first} and {second}": "{first} 和 {second}",
+	"{folder} {count} notes ({newCount} new)": "{folder} {count} 笔记 ({newCount} 新增)",
 	"{formatted} per day": "{formatted} 条/天",
 	"{label} ({count} queued)": "{label} (队列中{count}个)",
 	"{n} of 5": "5 中的 {n}",

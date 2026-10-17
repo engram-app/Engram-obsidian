@@ -529,6 +529,8 @@ const ms: Dict = {
 	"Unlimited AI searches": "Carian AI tanpa had",
 	"Unlimited vaults": "Peti nota tanpa had",
 	"Unresolved conflict": "Konflik belum selesai",
+	"Unticked folders stop syncing, including notes already uploaded.":
+		"Folder yang tidak ditanda tidak akan disegerakkan, termasuk nota yang sudah dimuat naik.",
 	Untitled: "Tanpa tajuk",
 	Update: "Kemas kini",
 	"Update in settings": "Kemas kini dalam tetapan",
@@ -620,6 +622,7 @@ const ms: Dict = {
 	"{count} retrying": "{count} cuba semula",
 	"{desc} — should not be synced": "{desc} — tidak perlu disinkronkan",
 	"{first} and {second}": "{first} dan {second}",
+	"{folder} {count} notes ({newCount} new)": "{folder} {count} nota ({newCount} baharu)",
 	"{formatted} per day": "{formatted} sehari",
 	"{label} ({count} queued)": "{label} ({count} dalam senarai)",
 	"{n} of 5": "{n} daripada 5",

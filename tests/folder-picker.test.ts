@@ -145,7 +145,7 @@ describe("FolderPicker", () => {
 
 	test("unticking a folder updates the running total and reports the exclusion", () => {
 		const parent = makeEl();
-		const onChange = mock((_ex: string[]) => {});
+		const onChange = mock((_ex: string[], _selected: number) => {});
 		new FolderPicker(parent, { notePaths: PATHS, excluded: [], limit: 6, onChange });
 		expect(parent.__find("Selected: 8 / 6")).not.toBeNull();
 
@@ -153,13 +153,13 @@ describe("FolderPicker", () => {
 		box.checked = false;
 		box.listeners.change();
 
-		expect(onChange).toHaveBeenLastCalledWith(["Archive"]);
+		expect(onChange).toHaveBeenLastCalledWith(["Archive"], 5);
 		expect(parent.__find("Selected: 5 / 6")).not.toBeNull();
 	});
 
 	test("the top-level row shows its count but is locked on", () => {
 		const parent = makeEl();
-		const onChange = mock((_ex: string[]) => {});
+		const onChange = mock((_ex: string[], _selected: number) => {});
 		new FolderPicker(parent, {
 			notePaths: PATHS,
 			excluded: [ROOT_FOLDER],

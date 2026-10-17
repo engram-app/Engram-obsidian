@@ -602,6 +602,8 @@ const ptBR: Dict = {
 	"Unlimited AI searches": "Pesquisas de IA ilimitadas",
 	"Unlimited vaults": "Cofres ilimitados",
 	"Unresolved conflict": "Conflito não resolvido",
+	"Unticked folders stop syncing, including notes already uploaded.":
+		"Pastas não marcadas interrompem a sincronização, incluindo notas já enviadas.",
 	Untitled: "Sem título",
 	Update: "Atualizar",
 	"Update in settings": "Atualizar nas configurações",
@@ -771,6 +773,11 @@ const ptBR: Dict = {
 	},
 	"{desc} — should not be synced": "{desc} — não deve ser sincronizado",
 	"{first} and {second}": "{first} e {second}",
+	"{folder} {count} notes ({newCount} new)": {
+		one: "{folder} {count} nota(s) ({newCount} nova(s))",
+		many: "{folder} {count} notas ({newCount} novas)",
+		other: "{folder} {count} notas ({newCount} novas)",
+	},
 	"{formatted} per day": "{formatted} por dia",
 	"{label} ({count} queued)": {
 		one: "{label} ({count} na fila)",

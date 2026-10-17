@@ -571,6 +571,8 @@ const tr: Dict = {
 	"Unlimited AI searches": "Sınırsız yapay zeka araması",
 	"Unlimited vaults": "Sınırsız kasa",
 	"Unresolved conflict": "Çözülemeyen çakışma",
+	"Unticked folders stop syncing, including notes already uploaded.":
+		"İşaretlenmemiş klasörler senkronizasyonu durdurur, yüklenmiş notlar dahil.",
 	Untitled: "Başlık yok",
 	Update: "Güncelle",
 	"Update in settings": "Ayarlardan güncelleyin",
@@ -696,6 +698,10 @@ const tr: Dict = {
 	"{count} retrying": { one: "{count} tekrar deneniyor", other: "{count} tekrar deneniyor" },
 	"{desc} — should not be synced": "{desc} — senkronize edilmemeli",
 	"{first} and {second}": "{first} ve {second}",
+	"{folder} {count} notes ({newCount} new)": {
+		one: "{folder} {count} not ({newCount} yeni)",
+		other: "{folder} {count} not ({newCount} yeni)",
+	},
 	"{formatted} per day": "{formatted} günde",
 	"{label} ({count} queued)": {
 		one: "{label} ({count} sırada)",

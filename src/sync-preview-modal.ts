@@ -65,8 +65,13 @@ export class SyncPreviewState {
 	overLimitAck = false;
 	/** The exclusions are being saved and the plan recomputed. */
 	overLimitSaving = false;
-	/** Set once the user got through the step, so it is asked once per modal. */
+	/** Set once the user got through the step, so it is asked once per plan. */
 	private overLimitDone = false;
+	/** newNotePaths() memo, keyed on the plan it was computed from. */
+	private newPathsPlan: SyncPlan | null = null;
+	private newPaths: string[] = [];
+	/** overLimitAdded() memo for the current selection. */
+	private added: number | null = null;
 	private resolved = false;
 
 	constructor(
@@ -107,7 +112,15 @@ export class SyncPreviewState {
 	}
 
 	setNotesQuota(quota: NotesQuota | null): void {
+		const over = this.overLimitOver();
 		this.notesQuota = quota;
+		if (this.overLimitOver() !== over) this.overLimitAck = false;
+	}
+
+	/** The over-limit step may only offer the folder picker when ignoring a
+	 *  folder cannot delete anything: see deletesRemote. */
+	overLimitOffersPicker(): boolean {
+		return this.pendingChoice != null && !deletesRemote(this.pendingChoice);
 	}
 
 	needsOverLimitStep(choice: SyncChoice): boolean {
@@ -123,13 +136,30 @@ export class SyncPreviewState {
 	 *  minus edits to notes the server already has. Attachments do not count. */
 	newNotePaths(): string[] {
 		if (!this.plan) return [];
-		const onServer = new Set(this.plan.serverPaths);
-		return this.plan.toPush.notes.filter((p) => !onServer.has(p));
+		if (this.newPathsPlan !== this.plan) {
+			// The filter is needed: computeSyncPlan pushes a local edit to a note
+			// the server already holds (server unchanged, local changed).
+			const onServer = new Set(this.plan.serverPaths);
+			this.newPaths = this.plan.toPush.notes.filter((p) => !onServer.has(p));
+			this.newPathsPlan = this.plan;
+		}
+		return this.newPaths;
 	}
 
-	setOverLimitExcluded(excluded: string[]): void {
+	/** Every syncable note on this device, uploaded or not. computeSyncPlan
+	 *  builds localPaths as notes first, then attachments. */
+	localNotePaths(): string[] {
+		return this.plan ? this.plan.localPaths.slice(0, this.plan.localNoteCount) : [];
+	}
+
+	/** `added` is the picker's own count for this selection, when it has one. */
+	setOverLimitExcluded(
+		excluded: string[],
+		added = selectedNoteCount(this.newNotePaths(), excluded),
+	): void {
 		const over = this.overLimitOver();
 		this.overLimitExcluded = excluded;
+		this.added = added;
 		if (this.overLimitOver() !== over) this.overLimitAck = false;
 	}
 
@@ -139,7 +169,10 @@ export class SyncPreviewState {
 
 	/** New notes the current folder selection would still add. */
 	overLimitAdded(): number {
-		return selectedNoteCount(this.newNotePaths(), this.overLimitExcluded);
+		// Without a picker no folder can be excluded, whatever was selected before.
+		if (!this.overLimitOffersPicker()) return this.newNotePaths().length;
+		this.added ??= selectedNoteCount(this.newNotePaths(), this.overLimitExcluded);
+		return this.added;
 	}
 
 	overLimitRoom(): number {
@@ -177,6 +210,7 @@ export class SyncPreviewState {
 	 *  `plan` is the recomputed plan after the exclusions were saved, if any. */
 	finishOverLimit(plan: SyncPlan | null): void {
 		if (this.resolved || this.view !== "over-limit") return;
+		// replacePlan clears overLimitDone, so it is set after.
 		if (plan) this.replacePlan(plan);
 		this.overLimitSaving = false;
 		this.overLimitDone = true;
@@ -254,9 +288,15 @@ export class SyncPreviewState {
 	/** Swap in the SyncPlan that came back from applyVaultChange, or the deferred
 	 *  initial plan once it resolves. Clears any prior plan-load error. Caller is
 	 *  responsible for re-rendering. */
+	/** A new plan (vault switch, recompute) has new notes, so any over-limit
+	 *  answer given for the old one no longer holds. */
 	replacePlan(plan: SyncPlan): void {
 		this.plan = plan;
 		this.planError = null;
+		this.overLimitDone = false;
+		this.overLimitExcluded = [];
+		this.overLimitAck = false;
+		this.added = null;
 	}
 
 	cancel(): void {
@@ -298,6 +338,15 @@ const UPLOADING_CHOICES = new Set<SyncChoice>([
 
 export function uploadsNotes(choice: SyncChoice): boolean {
 	return UPLOADING_CHOICES.has(choice);
+}
+
+/** Options that delete server notes missing from the local snapshot. The
+ *  snapshot omits ignored paths, so an ignore pattern written for one of these
+ *  would delete the folder's already-uploaded notes: the over-limit step offers
+ *  no folder picker for them. pushAll({replaceRemote}) is the only such path
+ *  (see optionBreakdown's deleteRemoteCount). */
+export function deletesRemote(choice: SyncChoice): boolean {
+	return choice === "push-all-delete-remote";
 }
 
 /** The notes limit and the room left under it (never negative). */
@@ -528,6 +577,10 @@ export interface SyncPreviewOptions {
 	/** Saves the over-limit step's ignore patterns and returns the recomputed
 	 *  plan. Only called when the user unticked at least one folder. */
 	applyExclusions?: (patterns: string[]) => Promise<SyncPlan>;
+	/** `/billing/usage`, for the notes quota. Fetched on open, again on
+	 *  entering the over-limit step and on window focus while it is open (the
+	 *  user may have just upgraded in the browser). */
+	fetchUsage?: () => Promise<BillingUsage>;
 }
 
 /** The one-click screen's copy, pure for tests. Zero-count clauses are
@@ -636,6 +689,11 @@ export class SyncPreviewModal extends Modal {
 	private loadingTextShownAt: number | null = null;
 
 	onOpen(): void {
+		const fetchUsage = this.opts.fetchUsage;
+		if (fetchUsage) {
+			void fetchNotesQuota(fetchUsage).then((q) => this.state.setNotesQuota(q));
+			window.addEventListener("focus", this.onWindowFocus);
+		}
 		this.contentEl.addClass("engram-sync-preview-modal");
 		this.contentEl.addClass("engram-flow-modal");
 		this.startLoadingTextTimer();
@@ -647,6 +705,7 @@ export class SyncPreviewModal extends Modal {
 	}
 
 	onClose(): void {
+		window.removeEventListener("focus", this.onWindowFocus);
 		this.clearLoadingTimers();
 		// Defensive: if the user dismisses via Esc/backdrop before picking,
 		// treat that as a cancel.
@@ -743,6 +802,29 @@ export class SyncPreviewModal extends Modal {
 	 *  re-render: the over-limit step is only entered when an option is picked. */
 	setNotesQuota(quota: NotesQuota | null): void {
 		this.state.setNotesQuota(quota);
+	}
+
+	private readonly onWindowFocus = (): void => {
+		if (this.state.view === "over-limit") void this.refreshOverLimitQuota();
+	};
+
+	/** Re-read the quota while the over-limit step is open. A failed lookup
+	 *  keeps the numbers on screen; a plan that is now unlimited has nothing to
+	 *  ask, so the user goes back to the options. */
+	private async refreshOverLimitQuota(): Promise<void> {
+		const fetchUsage = this.opts.fetchUsage;
+		if (!fetchUsage) return;
+		let quota: NotesQuota | null;
+		try {
+			quota = notesQuotaFromUsage(await fetchUsage());
+		} catch (e: unknown) {
+			devLog().log("error", `billing usage re-check failed: ${errMsg(e)}`);
+			return;
+		}
+		if (this.state.view !== "over-limit" || this.state.overLimitSaving) return;
+		if (quota == null) this.state.goBack();
+		else this.state.setNotesQuota(quota);
+		this.render();
 	}
 
 	private render(): void {
@@ -1110,6 +1192,7 @@ export class SyncPreviewModal extends Modal {
 	 *  the over-limit or confirm view, which only shows once re-rendered. */
 	private pick(choice: SyncChoice): void {
 		this.state.pickOption(choice);
+		if (this.state.view === "over-limit") void this.refreshOverLimitQuota();
 		if (this.state.view !== "done") this.render();
 	}
 
@@ -1200,15 +1283,24 @@ export class SyncPreviewModal extends Modal {
 			upgrade.addEventListener("click", () => window.open(upgradeUrl, "_blank"));
 		}
 
-		new FolderPicker(contentEl, {
-			notePaths: this.state.newNotePaths(),
-			excluded: this.state.overLimitExcluded,
-			limit: quota.room,
-			onChange: (excluded) => {
-				this.state.setOverLimitExcluded(excluded);
-				refresh();
-			},
-		});
+		// No picker for a choice that deletes on the server: ignoring a folder
+		// there deletes its uploaded notes (see deletesRemote).
+		if (this.state.overLimitOffersPicker()) {
+			new FolderPicker(contentEl, {
+				notePaths: this.state.localNotePaths(),
+				newPaths: this.state.newNotePaths(),
+				excluded: this.state.overLimitExcluded,
+				limit: quota.room,
+				onChange: (excluded, selected) => {
+					this.state.setOverLimitExcluded(excluded, selected);
+					refresh();
+				},
+			});
+			contentEl.createEl("p", {
+				text: t("Unticked folders stop syncing, including notes already uploaded."),
+				cls: "engram-sync-preview-over-limit-hint",
+			});
+		}
 
 		const ackRow = contentEl.createEl("label", { cls: "engram-sync-preview-over-limit-ack" });
 		const ack = ackRow.createEl("input", { type: "checkbox" });
@@ -1220,7 +1312,7 @@ export class SyncPreviewModal extends Modal {
 
 		const error = contentEl.createEl("p", { cls: "engram-sync-preview-picker-error" });
 
-		const footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
+		const footer = contentEl.createEl("footer", { cls: "engram-sync-preview-footer" });
 		const backBtn = footer.createEl("button", { text: t("Back") });
 		backBtn.addEventListener("click", () => {
 			if (this.state.overLimitSaving) return;
@@ -1245,7 +1337,9 @@ export class SyncPreviewModal extends Modal {
 
 	private async continueOverLimit(refresh: () => void, error: HTMLElement): Promise<void> {
 		if (!this.state.canContinueOverLimit()) return;
-		const patterns = excludedToIgnorePatterns(this.state.overLimitExcluded);
+		const patterns = this.state.overLimitOffersPicker()
+			? excludedToIgnorePatterns(this.state.overLimitExcluded)
+			: [];
 		let plan: SyncPlan | null = null;
 		if (patterns.length > 0 && this.opts.applyExclusions) {
 			this.state.beginOverLimitSave();

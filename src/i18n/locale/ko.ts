@@ -518,6 +518,8 @@ const ko: Dict = {
 	"Unlimited AI searches": "AI 검색 제한 없음",
 	"Unlimited vaults": "보관함 제한 없음",
 	"Unresolved conflict": "충돌 해결 불가",
+	"Unticked folders stop syncing, including notes already uploaded.":
+		"체크 해제된 폴더는 동기화가 중단되며, 이미 업로드된 노트도 영향을 받습니다.",
 	Untitled: "제목 없음",
 	Update: "업데이트",
 	"Update in settings": "설정에서 업데이트",
@@ -608,6 +610,7 @@ const ko: Dict = {
 	"{count} retrying": "{count} 재시도 중",
 	"{desc} — should not be synced": "{desc} — 동기화 대상이 아닙니다",
 	"{first} and {second}": "{first} 및 {second}",
+	"{folder} {count} notes ({newCount} new)": "{folder} {count} 노트 ({newCount} 새 노트)",
 	"{formatted} per day": "{formatted}개/일",
 	"{label} ({count} queued)": "{label} ({count}개 대기 중)",
 	"{n} of 5": "5개 중 {n}개",

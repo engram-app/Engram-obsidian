@@ -1,7 +1,6 @@
 import { type App, Modal } from "obsidian";
 import { t } from "./i18n";
 import { optionBreakdown } from "./sync-plan-format";
-import { DEFAULT_UPGRADE_URL } from "./tabs/urls";
 import type { SyncChoice, SyncPlan, SyncProgress } from "./types";
 
 /** Plain-language intro shown the instant the progress modal opens, before the
@@ -57,8 +56,7 @@ export interface CompletionSummary {
 export function renderCompletionSummary(
 	parent: HTMLElement,
 	summary: CompletionSummary,
-	webUrl?: string,
-	offerUpgrade = false,
+	upgradeUrl: string | null = null,
 ): void {
 	const line = parent.createDiv({ cls: "engram-progress-summary-tally" });
 
@@ -91,15 +89,12 @@ export function renderCompletionSummary(
 		});
 		// Gap before the button lives in the markup, not on the end of a
 		// translated key where trimming would silently close it.
-		if (!offerUpgrade) return;
+		if (!upgradeUrl) return;
 		note.createSpan({ text: " " });
 		const upgrade = note.createEl("button", {
 			text: t("Upgrade"),
 			cls: "engram-progress-upgrade mod-cta",
 		});
-		// Prefer the backend's own web app (threaded in as webUrl) so a
-		// self-hosted user is not sent to cloud billing.
-		const upgradeUrl = webUrl ? `${webUrl}/settings/billing` : DEFAULT_UPGRADE_URL;
 		upgrade.addEventListener("click", () => window.open(upgradeUrl, "_blank"));
 	}
 }
@@ -262,8 +257,9 @@ export class SyncProgressModal extends Modal {
 
 	/** `intro`: plan-derived summary (see describePlannedWork). `phases`: the
 	 *  rows to seed (see plannedPhases). `webUrl`: the Engram web app to link to
-	 *  on completion so the user can verify their vault. `offerUpgrade`: show
-	 *  the Upgrade button (hosted service only). All optional so callers
+	 *  on completion so the user can verify their vault. `upgradeUrl`: the
+	 *  Upgrade button's target from upgradeUrlFor, null where there is nothing
+	 *  to buy (no button). All optional so callers
 	 *  without a plan still get a usable modal. */
 	constructor(
 		app: App,
@@ -271,7 +267,7 @@ export class SyncProgressModal extends Modal {
 			intro?: string;
 			phases?: PlannedPhase[];
 			webUrl?: string;
-			offerUpgrade?: boolean;
+			upgradeUrl?: string | null;
 		} = {},
 	) {
 		super(app);
@@ -458,7 +454,7 @@ export class SyncProgressModal extends Modal {
 		this.recapEl.hidden = false;
 
 		this.summaryEl.empty();
-		renderCompletionSummary(this.summaryEl, summary, this.opts.webUrl, this.opts.offerUpgrade);
+		renderCompletionSummary(this.summaryEl, summary, this.opts.upgradeUrl);
 		this.summaryEl.hidden = false;
 
 		if (summary.failed > 0) {

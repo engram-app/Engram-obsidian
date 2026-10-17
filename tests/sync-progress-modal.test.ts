@@ -97,9 +97,12 @@ function findByCls(el: FakeEl, cls: string): FakeEl | null {
 	return null;
 }
 
-function render(summary: CompletionSummary, offerUpgrade = true): FakeEl {
+const UPGRADE_URL = "https://app.example.test/settings/billing";
+
+/** `upgradeUrl` comes from upgradeUrlFor: null on a server that sells nothing. */
+function render(summary: CompletionSummary, upgradeUrl: string | null = UPGRADE_URL): FakeEl {
 	const parent = makeFakeEl("div");
-	renderCompletionSummary(parent as unknown as HTMLElement, summary, undefined, offerUpgrade);
+	renderCompletionSummary(parent as unknown as HTMLElement, summary, upgradeUrl);
 	return parent;
 }
 
@@ -134,12 +137,24 @@ describe("renderCompletionSummary — three-way tally", () => {
 		const upgrade = findByCls(parent, "engram-progress-upgrade");
 		expect(upgrade).not.toBeNull();
 		expect(upgrade?.text).toBe("Upgrade");
-		// The affordance is wired to open the billing URL.
-		expect(upgrade?.clickHandlers.length ?? 0).toBeGreaterThan(0);
+		// The affordance opens exactly the URL upgradeUrlFor built, no second
+		// builder of its own.
+		const opened: string[] = [];
+		const realOpen = window.open;
+		window.open = ((u: string) => {
+			opened.push(u);
+			return null;
+		}) as typeof window.open;
+		try {
+			for (const h of upgrade?.clickHandlers ?? []) h();
+		} finally {
+			window.open = realOpen;
+		}
+		expect(opened).toEqual([UPGRADE_URL]);
 	});
 
 	test("a self-hosted server gets the plan note but no Upgrade", () => {
-		const parent = render({ synced: 10, skipped: 3, failed: 0 }, false);
+		const parent = render({ synced: 10, skipped: 3, failed: 0 }, null);
 		expect(findByCls(parent, "engram-progress-plan-note")).not.toBeNull();
 		expect(findByCls(parent, "engram-progress-upgrade")).toBeNull();
 	});

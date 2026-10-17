@@ -74,7 +74,11 @@ import { type GateEvent, reconcileColdStart, SyncEngine } from "./sync";
 import { channelConnectionKey, computeSyncFingerprint } from "./sync-fingerprint";
 import { SyncLog } from "./sync-log";
 import { SyncLogModal } from "./sync-log-modal";
-import { fetchNotesQuota, planLoadErrorMessage, SyncPreviewModal } from "./sync-preview-modal";
+import {
+	planLoadErrorMessage,
+	SyncPreviewModal,
+	type SyncPreviewOptions,
+} from "./sync-preview-modal";
 import {
 	describePlannedWork,
 	type PlannedPhase,
@@ -3230,7 +3234,7 @@ export default class EngramSyncPlugin extends Plugin {
 			intro,
 			phases,
 			webUrl: engramWebUrl(this.settings.apiUrl),
-			offerUpgrade: offersUpgrades(this.settings),
+			upgradeUrl: upgradeUrlFor(this.settings),
 		});
 		const prev = this.syncEngine.onSyncProgress;
 		// Stash the plan so the settings-pane bar (prev callback) renders the same
@@ -3467,16 +3471,12 @@ export default class EngramSyncPlugin extends Plugin {
 		await this.syncPreviewGuard(async () => {
 			try {
 				const context = this.derivePreviewContext();
-				// The notes quota decides whether the over-limit step shows. Fetched
-				// in parallel with the plan so it is usually in by the time the user
-				// picks. Never awaited: a slow or failed lookup just means no step.
-				const notesQuota = fetchNotesQuota(() => this.api.getBillingUsage());
 
 				// Open the modal immediately in a loading state, then stream the
 				// plan in when computeSyncPlan resolves. Previously we awaited the
 				// full server round-trip (manifest + changes) BEFORE opening, so
 				// the modal appeared to hang on slow connections.
-				const modal = new SyncPreviewModal(this.app, null, {
+				const modal = this.newSyncPreviewModal({
 					remoteVaultName: this.settings.remoteVaultName,
 					showChangeVault: true,
 					context,
@@ -3533,23 +3533,7 @@ export default class EngramSyncPlugin extends Plugin {
 						return this.syncEngine.computeSyncPlan("full");
 					},
 					onDiagnosticsToggle: (enabled) => void this.applyDiagnosticsToggle(enabled),
-					upgradeUrl: upgradeUrlFor(this.settings),
-					// Over-limit step: the unticked folders become ignore patterns.
-					// Persisted without saveSettings, which would re-fire this flow
-					// for the closed gate and stack a second modal.
-					applyExclusions: async (patterns) => {
-						this.settings.ignorePatterns = mergeIgnorePatterns(
-							this.settings.ignorePatterns,
-							patterns,
-						);
-						this.syncEngine.updateSettings(this.settings);
-						await this.savePluginData(this.syncEngine.getLastSync());
-						this.settingTab?.rerender();
-						return this.syncEngine.computeSyncPlan("full");
-					},
 				});
-
-				void notesQuota.then((quota) => modal.setNotesQuota(quota));
 
 				// Compute the plan off the critical path and stream it into the
 				// already-open modal. A failure surfaces in the modal's loading
@@ -3588,6 +3572,44 @@ export default class EngramSyncPlugin extends Plugin {
 				rlog().error("lifecycle", `Sync (preview or run) failed: ${errMsg(e)}`);
 			}
 		});
+	}
+
+	/** The one way to build a SyncPreviewModal (first-sync flow and Sync
+	 *  Center), so every entry point gets the over-limit step's hooks: the
+	 *  notes quota lookup, the Upgrade URL, and the folder exclusions. Opens in
+	 *  the loading state; the caller streams the plan in with setPlan. */
+	newSyncPreviewModal(
+		opts: Omit<SyncPreviewOptions, "fetchUsage" | "upgradeUrl" | "applyExclusions">,
+	): SyncPreviewModal {
+		return new SyncPreviewModal(this.app, null, {
+			...opts,
+			fetchUsage: () => this.api.getBillingUsage(),
+			upgradeUrl: upgradeUrlFor(this.settings),
+			applyExclusions: (patterns) => this.applyOverLimitExclusions(patterns),
+		});
+	}
+
+	/** Over-limit step: the unticked folders become ignore patterns. The plan
+	 *  is recomputed with the candidate patterns FIRST and they are persisted
+	 *  only once it succeeds; a failure restores the previous patterns, so a
+	 *  retry or Back never leaves saved patterns behind a stale plan.
+	 *  Persisted without saveSettings, which would re-fire the first-sync flow
+	 *  for the closed gate and stack a second modal. */
+	private async applyOverLimitExclusions(patterns: string[]): Promise<SyncPlan> {
+		const previous = this.settings.ignorePatterns;
+		this.settings.ignorePatterns = mergeIgnorePatterns(previous, patterns);
+		this.syncEngine.updateSettings(this.settings);
+		let plan: SyncPlan;
+		try {
+			plan = await this.syncEngine.computeSyncPlan("full");
+		} catch (e: unknown) {
+			this.settings.ignorePatterns = previous;
+			this.syncEngine.updateSettings(this.settings);
+			throw e;
+		}
+		await this.savePluginData(this.syncEngine.getLastSync());
+		this.settingTab?.rerender();
+		return plan;
 	}
 
 	/** Persist current sync engine state (issues, ignored files, etc.) to plugin

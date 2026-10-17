@@ -145,6 +145,7 @@ export function makeEl(): any {
 		removeClass: () => el,
 		removeClasses: () => el,
 		toggleClass: () => el,
+		focus: () => {},
 		setText: (t: string) => {
 			el.textContent = t;
 			return el;

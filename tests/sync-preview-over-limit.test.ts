@@ -310,7 +310,7 @@ describe("SyncPreviewModal over-limit view", () => {
 
 	test("re-ticking a folder that grows the shortfall unticks the acknowledgment", () => {
 		const { modal } = openOverLimit({}, { limit: 10, room: 1 }); // adds 6, over 5
-		const archive = checkboxFor(modal.contentEl, "Archive (3)");
+		const archive = checkboxFor(modal.contentEl, "Archive 3 notes (3 new)");
 		archive.checked = false;
 		archive.listeners.change(); // adds 3, over 2
 		const ack = checkboxFor(modal.contentEl, "I understand 2 notes will not sync.");
@@ -327,7 +327,7 @@ describe("SyncPreviewModal over-limit view", () => {
 
 	test("the top-level row is locked on", () => {
 		const { modal } = openOverLimit();
-		const root = checkboxFor(modal.contentEl, "(top level) (1)");
+		const root = checkboxFor(modal.contentEl, "(top level) 1 note (1 new)");
 		expect(root.disabled).toBe(true);
 		expect(root.checked).toBe(true);
 	});
@@ -340,7 +340,7 @@ describe("SyncPreviewModal over-limit view", () => {
 				return planWith(["Root.md", "Notes/d.md", "Notes/e.md"]);
 			},
 		});
-		const archive = checkboxFor(modal.contentEl, "Archive (3)");
+		const archive = checkboxFor(modal.contentEl, "Archive 3 notes (3 new)");
 		archive.checked = false;
 		archive.listeners.change();
 
@@ -365,7 +365,7 @@ describe("SyncPreviewModal over-limit view", () => {
 					release = r;
 				}),
 		});
-		const archive = checkboxFor(modal.contentEl, "Archive (3)");
+		const archive = checkboxFor(modal.contentEl, "Archive 3 notes (3 new)");
 		archive.checked = false;
 		archive.listeners.change();
 		const cont = button(modal, "Continue");
@@ -393,5 +393,148 @@ describe("SyncPreviewModal over-limit view", () => {
 	test("Upgrade is hidden when the server offers no upgrades (self-host)", () => {
 		const { modal } = openOverLimit();
 		expect(button(modal, "Upgrade")).toBeUndefined();
+	});
+});
+
+describe("over-limit step never ignores notes for a choice that deletes on the server", () => {
+	// push-all-delete-remote treats every server note missing from the local
+	// snapshot as an extra and deletes it, and snapshotLocalPaths omits ignored
+	// paths. An unticked folder would delete its already-uploaded notes.
+	test("push-all-delete-remote renders no folder picker and Continue writes no patterns", async () => {
+		const applyExclusions = mock(async (_p: string[]) => planWith(PATHS));
+		const { modal } = openModal(planWith(["Root.md", ...PATHS]), { applyExclusions });
+		modal.setNotesQuota({ limit: 10, room: 4 });
+		// Even a selection left over from elsewhere must not be written.
+		modal.state.setOverLimitExcluded(["Archive"]);
+		modal.state.pickOption("push-all-delete-remote");
+		modal.render();
+
+		expect(modal.state.view).toBe("over-limit");
+		expect(nodes(modal.contentEl).some((n) => n.tag === "ul")).toBe(false);
+		expect(
+			modal.contentEl.__find(
+				"Unticked folders stop syncing, including notes already uploaded.",
+			),
+		).toBeNull();
+
+		const ack = checkboxFor(modal.contentEl, "I understand 2 notes will not sync.");
+		ack.checked = true;
+		ack.listeners.change();
+		button(modal, "Continue").listeners.click();
+		await Bun.sleep(0);
+
+		expect(applyExclusions).not.toHaveBeenCalled();
+		expect(modal.state.view).toBe("confirm");
+	});
+});
+
+describe("over-limit picker shows total and new notes per folder", () => {
+	test("rows read 'Folder N notes (M new)' and a note says unticking stops syncing uploaded notes", () => {
+		// Archive: 3 new + 1 already on the server.
+		const local = ["Root.md", ...PATHS, "Archive/old.md"];
+		const { modal } = openModal(planWith(local, ["Archive/old.md"]));
+		modal.setNotesQuota({ limit: 10, room: 4 });
+		modal.state.pickOption("smart-merge");
+		modal.render();
+
+		expect(checkboxFor(modal.contentEl, "Archive 4 notes (3 new)")).toBeDefined();
+		expect(checkboxFor(modal.contentEl, "Notes 2 notes (2 new)")).toBeDefined();
+		expect(
+			modal.contentEl.__find(
+				"Unticked folders stop syncing, including notes already uploaded.",
+			),
+		).not.toBeNull();
+		// Room math still counts new notes only: 6 new, room 4.
+		expect(modal.state.overLimitOver()).toBe(2);
+	});
+});
+
+describe("over-limit save failure leaves the step usable", () => {
+	test("a rejected save shows the error and keeps the old plan", async () => {
+		const { modal } = openOverLimit({
+			applyExclusions: () => Promise.reject(new Error("plan failed")),
+		});
+		const before = modal.getPlan();
+		const archive = checkboxFor(modal.contentEl, "Archive 3 notes (3 new)");
+		archive.checked = false;
+		archive.listeners.change();
+		button(modal, "Continue").listeners.click();
+		await Bun.sleep(0);
+
+		expect(
+			modal.contentEl.__find("Could not save your folder choice. Try again."),
+		).not.toBeNull();
+		expect(modal.getPlan()).toBe(before);
+		expect(modal.state.view).toBe("over-limit");
+		expect(button(modal, "Continue").disabled).toBe(false);
+	});
+});
+
+describe("over-limit state resets when the plan is replaced", () => {
+	test("a replaced plan asks again with no stale exclusions", () => {
+		const state = new SyncPreviewState(planWith(PATHS), () => {});
+		state.setNotesQuota({ limit: 4, room: 4 });
+		state.pickOption("push-all-delete-remote");
+		state.setOverLimitExcluded(["Archive"]);
+		state.toggleOverLimitAck();
+		state.finishOverLimit(null);
+		expect(state.view).toBe("confirm");
+		state.goBack();
+
+		// A vault switch hands in a larger plan.
+		state.replacePlan(planWith([...PATHS, "Notes/f.md", "Notes/g.md"]));
+		state.pickOption("smart-merge");
+		expect(state.view).toBe("over-limit");
+		expect(state.overLimitExcluded).toEqual([]);
+		expect(state.overLimitAck).toBe(false);
+		expect(state.overLimitAdded()).toBe(7);
+	});
+});
+
+describe("over-limit quota is re-fetched", () => {
+	test("entering the step re-fetches usage and shows the fresh room", async () => {
+		let room = 4;
+		const fetchUsage = mock(async () => usage(10, 10 - room));
+		const { modal } = openModal(planWith(["Root.md", ...PATHS]), { fetchUsage });
+		await Bun.sleep(0);
+		expect(fetchUsage).toHaveBeenCalledTimes(1);
+
+		// The user upgraded in the browser before picking.
+		room = 5;
+		// pick() is what every option button calls.
+		(modal as any).pick("smart-merge");
+		await Bun.sleep(0);
+
+		expect(fetchUsage.mock.calls.length).toBeGreaterThanOrEqual(2);
+		expect(
+			modal.contentEl.__find("This sync adds 6 notes. Your plan has room for 5."),
+		).not.toBeNull();
+	});
+});
+
+describe("over-limit numbers are grouped", () => {
+	test("heading, checkbox and rows use locale-grouped numbers", () => {
+		const many = Array.from({ length: 2500 }, (_, i) => `Archive/n${i}.md`);
+		const { modal } = openModal(planWith(many));
+		modal.setNotesQuota({ limit: 1000, room: 1000 });
+		modal.state.pickOption("smart-merge");
+		modal.render();
+
+		expect(
+			modal.contentEl.__find("This sync adds 2,500 notes. Your plan has room for 1,000."),
+		).not.toBeNull();
+		expect(modal.contentEl.__find("Your plan syncs 1,000 notes.")).not.toBeNull();
+		expect(
+			checkboxFor(modal.contentEl, "I understand 1,500 notes will not sync."),
+		).toBeDefined();
+		expect(checkboxFor(modal.contentEl, "Archive 2,500 notes (2,500 new)")).toBeDefined();
+	});
+});
+
+describe("over-limit footer", () => {
+	test("is a semantic footer element", () => {
+		const { modal } = openOverLimit();
+		const footers = nodes(modal.contentEl).filter((n) => n.tag === "footer");
+		expect(footers.length).toBeGreaterThan(0);
 	});
 });

@@ -1985,3 +1985,8 @@ body.is-mobile .engram-support-buttons > a {
 	color: var(--text-muted);
 	font-size: 0.9em;
 }
+
+.engram-sync-preview-over-limit-hint {
+	color: var(--text-muted);
+	font-size: 0.9em;
+}

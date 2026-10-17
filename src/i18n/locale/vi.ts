@@ -526,6 +526,8 @@ const vi: Dict = {
 	"Unlimited AI searches": "Tìm kiếm AI không giới hạn",
 	"Unlimited vaults": "Kho lưu trữ không giới hạn",
 	"Unresolved conflict": "Xung đột chưa được giải quyết",
+	"Unticked folders stop syncing, including notes already uploaded.":
+		"Các thư mục không được chọn sẽ ngừng đồng bộ hóa, bao gồm cả ghi chú đã tải lên.",
 	Untitled: "Không tiêu đề",
 	Update: "Cập nhật",
 	"Update in settings": "Cập nhật trong cài đặt",
@@ -618,6 +620,7 @@ const vi: Dict = {
 	"{count} retrying": "{count} đang thử lại",
 	"{desc} — should not be synced": "{desc} — không nên đồng bộ hóa",
 	"{first} and {second}": "{first} và {second}",
+	"{folder} {count} notes ({newCount} new)": "{folder} {count} ghi chú ({newCount} mới)",
 	"{formatted} per day": "{formatted} mỗi ngày",
 	"{label} ({count} queued)": "{label} ({count} đang chờ)",
 	"{n} of 5": "{n} trong 5",

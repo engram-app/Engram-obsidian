@@ -531,6 +531,8 @@ const id: Dict = {
 	"Unlimited AI searches": "Pencarian AI tanpa batas",
 	"Unlimited vaults": "Vault tanpa batas",
 	"Unresolved conflict": "Konflik belum terselesaikan",
+	"Unticked folders stop syncing, including notes already uploaded.":
+		"Folder yang tidak dicentang akan berhenti disinkronkan, termasuk catatan yang sudah diunggah.",
 	Untitled: "Tanpa judul",
 	Update: "Perbarui",
 	"Update in settings": "Perbarui di pengaturan",
@@ -622,6 +624,7 @@ const id: Dict = {
 	"{count} retrying": "{count} mencoba lagi",
 	"{desc} — should not be synced": "{desc} — tidak boleh disinkronkan",
 	"{first} and {second}": "{first} dan {second}",
+	"{folder} {count} notes ({newCount} new)": "{folder} {count} catatan ({newCount} baru)",
 	"{formatted} per day": "{formatted} per hari",
 	"{label} ({count} queued)": "{label} ({count} dalam antrean)",
 	"{n} of 5": "{n} dari 5",

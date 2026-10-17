@@ -573,6 +573,8 @@ const de: Dict = {
 	"Unlimited AI searches": "Unbegrenzte KI-Suchen",
 	"Unlimited vaults": "Unbegrenzte Vaults",
 	"Unresolved conflict": "Konflikt konnte nicht gelöst werden",
+	"Unticked folders stop syncing, including notes already uploaded.":
+		"Nicht angekreuzte Ordner werden nicht synchronisiert, auch keine bereits hochgeladenen Notizen.",
 	Untitled: "Ohne Titel",
 	Update: "Aktualisieren",
 	"Update in settings": "In den Einstellungen aktualisieren",
@@ -701,6 +703,10 @@ const de: Dict = {
 	"{count} retrying": { one: "{count} Wiederholung", other: "{count} Wiederholungsversuche" },
 	"{desc} — should not be synced": "{desc} — soll nicht synchronisiert werden",
 	"{first} and {second}": "{first} und {second}",
+	"{folder} {count} notes ({newCount} new)": {
+		one: "{folder} {count} Notiz ({newCount} neu)",
+		other: "{folder} {count} Notizen ({newCount} neu)",
+	},
 	"{formatted} per day": "{formatted} pro Tag",
 	"{label} ({count} queued)": {
 		one: "{label} ({count} in der Warteschlange)",

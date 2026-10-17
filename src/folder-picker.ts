@@ -90,13 +90,18 @@ export function mergeIgnorePatterns(existing: string, add: string[]): string {
 export interface FolderPickerProps {
 	/** Every syncable note path the choice applies to. */
 	notePaths: string[];
+	/** The subset of notePaths not yet uploaded. When set, rows read "Archive
+	 *  2,300 notes (2,000 new)", only folders with new notes are listed, and
+	 *  the total and `limit` count new notes only. */
+	newPaths?: string[];
 	/** Top-level folders that start unticked. ROOT_FOLDER is ignored: the
 	 *  root row is locked on. */
 	excluded: string[];
 	/** When set, shows "Selected: N / limit" and an over-limit state. */
 	limit?: number | null;
-	/** Fires with the full excluded list on every toggle. */
-	onChange: (excluded: string[]) => void;
+	/** Fires with the full excluded list and the counted notes still selected
+	 *  on every toggle. */
+	onChange: (excluded: string[], selected: number) => void;
 }
 
 export class FolderPicker {
@@ -109,12 +114,24 @@ export class FolderPicker {
 	) {
 		this.excluded = new Set(props.excluded.filter((f) => f !== ROOT_FOLDER));
 		const list = parent.createEl("ul", { cls: "engram-folder-picker" });
-		for (const { folder, count } of countNotesByFolder(props.notePaths)) {
+		const totals = new Map(countNotesByFolder(props.notePaths).map((c) => [c.folder, c.count]));
+		const rows = props.newPaths ? countNotesByFolder(props.newPaths) : null;
+		for (const { folder, count } of rows ?? countNotesByFolder(props.notePaths)) {
 			const label = list.createEl("li").createEl("label");
 			const box = label.createEl("input", { type: "checkbox" });
 			box.checked = !this.excluded.has(folder);
 			const name = folder === ROOT_FOLDER ? t("(top level)") : folder;
-			label.createSpan({ text: `${name} (${count.toLocaleString(currentLocale())})` });
+			const fmt = (n: number) => n.toLocaleString(currentLocale());
+			const total = totals.get(folder) ?? count;
+			label.createSpan({
+				text: rows
+					? t("{folder} {count} notes ({newCount} new)", {
+							folder: name,
+							count: total,
+							newCount: fmt(count),
+						})
+					: `${name} (${fmt(count)})`,
+			});
 			// Root notes always sync: nothing else in the vault anchors them.
 			if (folder === ROOT_FOLDER) {
 				box.disabled = true;
@@ -123,20 +140,25 @@ export class FolderPicker {
 			box.addEventListener("change", () => {
 				if (box.checked) this.excluded.delete(folder);
 				else this.excluded.add(folder);
-				this.updateTotal();
-				props.onChange([...this.excluded]);
+				const selected = this.selected();
+				this.updateTotal(selected);
+				props.onChange([...this.excluded], selected);
 			});
 		}
 		if (props.limit != null) {
 			this.total = parent.createEl("p", { cls: "engram-folder-picker-total" });
-			this.updateTotal();
+			this.updateTotal(this.selected());
 		}
 	}
 
-	private updateTotal(): void {
+	/** Counted notes (new ones, when newPaths is set) the selection keeps. */
+	private selected(): number {
+		return selectedNoteCount(this.props.newPaths ?? this.props.notePaths, this.excluded);
+	}
+
+	private updateTotal(selected: number): void {
 		const limit = this.props.limit;
 		if (!this.total || limit == null) return;
-		const selected = selectedNoteCount(this.props.notePaths, this.excluded);
 		const fmt = (n: number) => n.toLocaleString(currentLocale());
 		this.total.setText(
 			t("Selected: {selected} / {limit}", { selected: fmt(selected), limit: fmt(limit) }),

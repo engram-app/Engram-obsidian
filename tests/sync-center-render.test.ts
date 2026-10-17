@@ -5,7 +5,7 @@
  * we wrap them locally with a tree-tracking adapter so we can assert
  * structure + emitted text without needing real DOM.
  */
-import { beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { formatRelative, renderSyncCenter } from "../src/sync-center-render";
 import type { SyncIssue } from "../src/types";
 import { __setLanguage } from "./__mocks__/obsidian";
@@ -16,6 +16,7 @@ interface FakeEl {
 	text: string;
 	attrs: Record<string, string>;
 	children: FakeEl[];
+	listeners: Record<string, () => unknown>;
 	/** The element this node was actually appended to. See `factory` below. */
 	owner?: FakeEl;
 }
@@ -27,6 +28,7 @@ function makeFakeEl(tag: string, opts?: { cls?: string; text?: string }): FakeEl
 		text: opts?.text ?? "",
 		attrs: {},
 		children: [],
+		listeners: {},
 	};
 	const factory = (childTag: string) => (childOpts?: { cls?: string; text?: string }) => {
 		const child = makeFakeEl(childTag, childOpts);
@@ -56,8 +58,9 @@ function makeFakeEl(tag: string, opts?: { cls?: string; text?: string }): FakeEl
 			target.cls = target.cls ? `${target.cls} ${c}` : c;
 			return target;
 		},
-		addEventListener: () => {
-			/* noop in tests */
+		// Kept so a test can click a button; nothing else reads them.
+		addEventListener: (type: string, cb: () => unknown) => {
+			target.listeners[type] = cb;
 		},
 		empty: () => {
 			target.children.length = 0;
@@ -645,5 +648,36 @@ describe("formatRelative speaks the app's language", () => {
 		__setLanguage("ru");
 		expect(ago(180)).toBe("3 мин. назад");
 		__setLanguage("en");
+	});
+});
+
+describe("Sync Center's Sync... button", () => {
+	test("opens the preview through the plugin's shared factory, so it gets the over-limit hooks", async () => {
+		const plugin = makeMockPlugin([]);
+		const modal = {
+			setPlan: () => {},
+			setPlanError: () => {},
+			awaitChoice: async () => "cancel",
+			getPlan: () => null,
+		};
+		plugin.newSyncPreviewModal = mock(() => modal);
+		plugin.syncEngine.computeSyncPlan = async () => ({});
+		plugin.syncEngine.isSyncBlocked = () => false;
+		plugin.hasAuthConfigured = () => true;
+		plugin.trackPreviewModal = () => {};
+		plugin.untrackPreviewModal = () => {};
+		plugin.runSyncWithProgress = mock(async () => true);
+		const parent = makeFakeEl("div");
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+
+		const find = (n: FakeEl): FakeEl | null =>
+			n.tag === "button" && n.text === "Sync..."
+				? n
+				: (n.children.map(find).find(Boolean) ?? null);
+		await find(parent)?.listeners.click?.();
+		await new Promise((r) => setTimeout(r, 0));
+
+		expect(plugin.newSyncPreviewModal).toHaveBeenCalledTimes(1);
+		expect(plugin.runSyncWithProgress).toHaveBeenCalledWith("cancel", { plan: null });
 	});
 });

@@ -622,6 +622,8 @@ const ru: Dict = {
 	"Unlimited AI searches": "Неограниченное количество поисков с использованием ИИ",
 	"Unlimited vaults": "Неограниченное количество хранилищ",
 	"Unresolved conflict": "Неразрешенный конфликт",
+	"Unticked folders stop syncing, including notes already uploaded.":
+		"Папки, для которых снята галочка, перестают синхронизироваться, включая уже загруженные заметки.",
 	Untitled: "Без названия",
 	Update: "Обновить",
 	"Update in settings": "Обновить в настройках",
@@ -817,6 +819,12 @@ const ru: Dict = {
 	},
 	"{desc} — should not be synced": "{desc} — не должно синхронизироваться",
 	"{first} and {second}": "{first} и {second}",
+	"{folder} {count} notes ({newCount} new)": {
+		one: "{folder} {count} заметки ({newCount} новых)",
+		few: "{folder} {count} заметки ({newCount} новых)",
+		many: "{folder} {count} заметок ({newCount} новых)",
+		other: "{folder} {count} заметки ({newCount} новых)",
+	},
 	"{formatted} per day": "{formatted} в день",
 	"{label} ({count} queued)": {
 		one: "{label} ({count} в очереди)",
