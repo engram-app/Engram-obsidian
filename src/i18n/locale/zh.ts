@@ -469,9 +469,9 @@ const zh: Dict = {
 	"This note could not be processed and was skipped.": "无法处理此笔记，已跳过。",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"此服务器为自托管，因此不收集反馈。",
+	"This sync adds {count} notes. Your plan has room for {room}.":
+		"本次同步添加 {count} 笔记。您的计划剩余 {room} 个名额。",
 	"This vault": "此仓库",
-	"This vault has {count} notes. Your plan syncs {limit}.":
-		"此仓库有 {count} 笔记。您的套餐同步 {limit}。",
 	"This vault is empty on the server. Upload your {what}?":
 		"此仓库在服务器上为空。上传 {what} 吗？",
 	"Too large for the server": "文件过大",
@@ -529,6 +529,7 @@ const zh: Dict = {
 	"Your feedback": "您的反馈",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"您的登录已过期。请在 Engram 设置中重新登录以继续。",
+	"Your plan syncs {limit} notes.": "您的计划同步 {limit} 笔记。",
 	"Your vault shares {percent} of its data with Engram":
 		"您的仓库已与 Engram 共享 {percent} 的数据",
 	attachments: "附件",

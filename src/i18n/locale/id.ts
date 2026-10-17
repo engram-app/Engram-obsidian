@@ -513,9 +513,9 @@ const id: Dict = {
 		"Catatan ini tidak dapat diproses dan dilewati.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Server ini dihosting sendiri, jadi umpan balik tidak dikumpulkan di sini. ",
+	"This sync adds {count} notes. Your plan has room for {room}.":
+		"Sinkronisasi ini menambahkan {count} catatan. Paket Anda memiliki ruang untuk {room}.",
 	"This vault": "Vault ini",
-	"This vault has {count} notes. Your plan syncs {limit}.":
-		"Vault ini memiliki {count} catatan. Paket Anda menyinkronkan {limit}.",
 	"This vault is empty on the server. Upload your {what}?":
 		"Vault ini kosong di server. Apakah Anda ingin mengunggah {what}?",
 	"Too large for the server": "Terlalu besar untuk server",
@@ -577,6 +577,7 @@ const id: Dict = {
 	"Your feedback": "Umpan balik Anda",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Login Anda telah kedaluwarsa. Masuk kembali di pengaturan Engram untuk melanjutkan.",
+	"Your plan syncs {limit} notes.": "Paket Anda menyinkronkan {limit} catatan.",
 	"Your vault shares {percent} of its data with Engram":
 		"Vault Anda berbagi {percent} dari datanya dengan Engram",
 	attachments: "lampiran",

@@ -500,9 +500,9 @@ const ko: Dict = {
 		"이 노트를 처리할 수 없었으며, 건너뜁니다.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"이 서버는 자체 호스팅 서버이므로, 피드백은 이곳에서 수집되지 않습니다. ",
+	"This sync adds {count} notes. Your plan has room for {room}.":
+		"이 동기화는 {count}개의 노트를 추가합니다. 현재 {room}개의 공간이 남아 있습니다.",
 	"This vault": "이 보관함",
-	"This vault has {count} notes. Your plan syncs {limit}.":
-		"이 보관함에는 {count}개의 노트가 있습니다. 현재 구독 상태로 {limit}개의 노트를 동기화합니다.",
 	"This vault is empty on the server. Upload your {what}?":
 		"이 보관함은 서버에 비어 있습니다. {what}을 업로드하시겠습니까?",
 	"Too large for the server": "서버 용량 초과",
@@ -563,6 +563,7 @@ const ko: Dict = {
 	"Your feedback": "사용자 의견",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"로그인 세션이 만료되었습니다. Engram 설정에서 다시 로그인하여 계속하세요.",
+	"Your plan syncs {limit} notes.": "귀하의 플랜은 {limit}개의 노트를 동기화합니다.",
 	"Your vault shares {percent} of its data with Engram":
 		"귀하의 보관함 데이터 중 {percent}이 Engram과 동기화됩니다",
 	attachments: "첨부 파일",

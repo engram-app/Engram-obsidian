@@ -599,13 +599,13 @@ const pl: Dict = {
 		"Nie można było przetworzyć tej notatki i pominięto ją.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Ten serwer jest hostowany samodzielnie, więc tutaj nie są zbierane żadne dane. ",
-	"This vault": "Ten sejf",
-	"This vault has {count} notes. Your plan syncs {limit}.": {
-		one: "Ten sejf zawiera {count} notatkę. Twój plan synchronizuje {limit}.",
-		few: "Ten sejf zawiera {count} notatki. Twój plan synchronizuje {limit}.",
-		many: "Ten sejf zawiera {count} notatek. Twój plan synchronizuje {limit}.",
-		other: "Ten sejf zawiera {count} notatek. Twój plan synchronizuje {limit}.",
+	"This sync adds {count} notes. Your plan has room for {room}.": {
+		one: "Ta synchronizacja dodaje {count} notatkę. Twój plan pozwala na {room}.",
+		few: "Ta synchronizacja dodaje {count} notatki. Twój plan pozwala na {room}.",
+		many: "Ta synchronizacja dodaje {count} notatek. Twój plan pozwala na {room}.",
+		other: "Ta synchronizacja dodaje {count} notatek. Twój plan pozwala na {room}.",
 	},
+	"This vault": "Ten sejf",
 	"This vault is empty on the server. Upload your {what}?":
 		"Ten sejf jest pusty na serwerze. Czy chcesz przesłać swoje {what}?",
 	"Too large for the server": "Zbyt duży dla serwera",
@@ -686,6 +686,7 @@ const pl: Dict = {
 	"Your feedback": "Twoja opinia",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Twoje logowanie wygasło. Zaloguj się ponownie w ustawieniach Engram, aby kontynuować.",
+	"Your plan syncs {limit} notes.": "Twój plan synchronizuje {limit} notatek.",
 	"Your vault shares {percent} of its data with Engram":
 		"Twój sejf udostępnia {percent} swoich danych do Engram",
 	attachments: "załączniki",

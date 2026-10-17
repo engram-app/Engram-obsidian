@@ -600,13 +600,13 @@ const ru: Dict = {
 		"Эта заметка не может быть обработана и была пропущена.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Этот сервер работает локально, поэтому отзывы здесь не собираются. ",
-	"This vault": "Это хранилище",
-	"This vault has {count} notes. Your plan syncs {limit}.": {
-		one: "В этом хранилище {count} заметка. Ваш тарифный план позволяет синхронизировать {limit}.",
-		few: "В этом хранилище {count} заметки. Ваш тарифный план позволяет синхронизировать {limit}.",
-		many: "В этом хранилище {count} заметок. Ваш тарифный план позволяет синхронизировать {limit}.",
-		other: "В этом хранилище {count} заметки. Ваш тарифный план позволяет синхронизировать {limit}.",
+	"This sync adds {count} notes. Your plan has room for {room}.": {
+		one: "Эта синхронизация добавит {count} заметку. В вашем плане доступно {room}.",
+		few: "Эта синхронизация добавит {count} заметки. У вашего плана есть место для {room}.",
+		many: "Эта синхронизация добавит {count} заметок. В вашем плане доступно {room}.",
+		other: "Эта синхронизация добавит {count} заметки. У вашего плана есть место для {room}.",
 	},
+	"This vault": "Это хранилище",
 	"This vault is empty on the server. Upload your {what}?":
 		"Это хранилище пустое на сервере. Загрузить ваши {what}?",
 	"Too large for the server": "Слишком большой для сервера",
@@ -689,6 +689,7 @@ const ru: Dict = {
 	"Your feedback": "Ваши отзывы",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Ваш сеанс завершён. Войдите снова в настройках Engram, чтобы продолжить.",
+	"Your plan syncs {limit} notes.": "Ваш план синхронизирует {limit} заметок.",
 	"Your vault shares {percent} of its data with Engram":
 		"Ваше хранилище передает {percent} своих данных в Engram",
 	attachments: "Вложения",

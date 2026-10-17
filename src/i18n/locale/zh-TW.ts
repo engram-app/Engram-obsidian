@@ -473,9 +473,9 @@ const zhTW: Dict = {
 	"This note could not be processed and was skipped.": "該筆記無法處理，已跳過。",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"此伺服器為自行託管，因此不在此處收集回饋。",
+	"This sync adds {count} notes. Your plan has room for {room}.":
+		"此次同步新增 {count} 筆記。您的方案尚有 {room} 個名額。",
 	"This vault": "此儲存庫",
-	"This vault has {count} notes. Your plan syncs {limit}.":
-		"此儲存庫有 {count} 筆記。您的方案同步 {limit}。",
 	"This vault is empty on the server. Upload your {what}?":
 		"此儲存庫在伺服器上是空的。要上傳 {what} 嗎？",
 	"Too large for the server": "檔案過大",
@@ -533,6 +533,7 @@ const zhTW: Dict = {
 	"Your feedback": "您的回饋",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"您的登入已過期。請在 Engram 設定中重新登入以繼續。",
+	"Your plan syncs {limit} notes.": "您的方案同步 {limit} 筆記。",
 	"Your vault shares {percent} of its data with Engram":
 		"您的儲存庫已將 {percent} 的資料同步到 Engram",
 	attachments: "附件",

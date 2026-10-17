@@ -551,11 +551,11 @@ const tr: Dict = {
 	"This note could not be processed and was skipped.": "Bu not işlenemedi ve atlandı.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Bu sunucu kendi kendine barındırıldığı için geri bildirim burada toplanmaz. ",
-	"This vault": "Bu kasa",
-	"This vault has {count} notes. Your plan syncs {limit}.": {
-		one: "Bu kasa {count} nota içeriyor. Aboneliğiniz {limit} nota senkronize ediyor.",
-		other: "Bu kasa {count} notaya sahip. Aboneliğiniz {limit} notu senkronize ediyor.",
+	"This sync adds {count} notes. Your plan has room for {room}.": {
+		one: "Bu senkronizasyon {count} not ekler. Planınızda {room} kadar alan mevcut.",
+		other: "Bu senkronizasyon {count} not ekler. Planınızda {room} kadar alan mevcut.",
 	},
+	"This vault": "Bu kasa",
 	"This vault is empty on the server. Upload your {what}?":
 		"Bu kasa sunucuda boş. {what} dosyanızı yüklemek ister misiniz?",
 	"Too large for the server": "Sunucu için çok büyük",
@@ -626,6 +626,7 @@ const tr: Dict = {
 	"Your feedback": "Geri bildiriminiz",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Girişiniz sona erdi. Devam etmek için Engram ayarlarından tekrar giriş yapın.",
+	"Your plan syncs {limit} notes.": "Aboneliğiniz {limit} notu senkronize ediyor.",
 	"Your vault shares {percent} of its data with Engram":
 		"Kasanızın verilerinin {percent} kısmı Engram ile paylaşılıyor",
 	attachments: "Ekler",

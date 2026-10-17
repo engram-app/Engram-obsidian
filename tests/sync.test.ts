@@ -212,18 +212,28 @@ describe("SyncEngine.shouldIgnore", () => {
 	});
 
 	test("patterns written by the folder picker exclude exactly the unticked folders", () => {
-		const paths = ["Root.md", "Arch/a.md", "Archive/b.md", "Notes/c.md"];
-		const patterns = excludedToIgnorePatterns(["Arch", ROOT_FOLDER], paths);
+		const patterns = excludedToIgnorePatterns(["Arch", ROOT_FOLDER]);
 		const pickerEngine = createEngine({
 			ignorePatterns: mergeIgnorePatterns("drafts/", patterns),
 		});
 		expect(pickerEngine.shouldIgnore("Arch/a.md")).toBe(true);
-		expect(pickerEngine.shouldIgnore("Root.md")).toBe(true);
-		// Shared prefix, different folder: must still sync.
+		// Root notes always sync; the root cannot be unticked.
+		expect(pickerEngine.shouldIgnore("Root.md")).toBe(false);
+		// Shared prefix, or the same name nested elsewhere: must still sync.
 		expect(pickerEngine.shouldIgnore("Archive/b.md")).toBe(false);
+		expect(pickerEngine.shouldIgnore("Projects/Arch/c.md")).toBe(false);
 		expect(pickerEngine.shouldIgnore("Notes/c.md")).toBe(false);
-		// The pre-existing pattern survives the merge.
+		// The pre-existing pattern survives the merge, still unanchored.
 		expect(pickerEngine.shouldIgnore("drafts/x.md")).toBe(true);
+		expect(pickerEngine.shouldIgnore("Projects/drafts/x.md")).toBe(true);
+	});
+
+	test("user-written unanchored patterns match at any depth, as before", () => {
+		const e = createEngine({ ignorePatterns: "Archive/\nREADME.md" });
+		expect(e.shouldIgnore("Archive/a.md")).toBe(true);
+		expect(e.shouldIgnore("Projects/Archive/a.md")).toBe(true);
+		expect(e.shouldIgnore("README.md")).toBe(true);
+		expect(e.shouldIgnore("docs/README.md")).toBe(true);
 	});
 });
 

@@ -74,7 +74,7 @@ import { type GateEvent, reconcileColdStart, SyncEngine } from "./sync";
 import { channelConnectionKey, computeSyncFingerprint } from "./sync-fingerprint";
 import { SyncLog } from "./sync-log";
 import { SyncLogModal } from "./sync-log-modal";
-import { fetchNotesCap, planLoadErrorMessage, SyncPreviewModal } from "./sync-preview-modal";
+import { fetchNotesQuota, planLoadErrorMessage, SyncPreviewModal } from "./sync-preview-modal";
 import {
 	describePlannedWork,
 	type PlannedPhase,
@@ -3467,6 +3467,11 @@ export default class EngramSyncPlugin extends Plugin {
 		await this.syncPreviewGuard(async () => {
 			try {
 				const context = this.derivePreviewContext();
+				// The notes quota decides whether the over-limit step shows. Fetched
+				// in parallel with the plan so it is usually in by the time the user
+				// picks. Never awaited: a slow or failed lookup just means no step.
+				const notesQuota = fetchNotesQuota(() => this.api.getBillingUsage());
+
 				// Open the modal immediately in a loading state, then stream the
 				// plan in when computeSyncPlan resolves. Previously we awaited the
 				// full server round-trip (manifest + changes) BEFORE opening, so
@@ -3544,11 +3549,7 @@ export default class EngramSyncPlugin extends Plugin {
 					},
 				});
 
-				// The notes cap decides whether the over-limit step shows. Never
-				// awaited: a slow or failed lookup just means no step.
-				void fetchNotesCap(() => this.api.getBillingUsage()).then((cap) =>
-					modal.setNotesCap(cap),
-				);
+				void notesQuota.then((quota) => modal.setNotesQuota(quota));
 
 				// Compute the plan off the critical path and stream it into the
 				// already-open modal. A failure surfaces in the modal's loading

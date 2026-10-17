@@ -511,9 +511,9 @@ const ms: Dict = {
 		"Nota ini tidak dapat diproses dan telah dilepaskan.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Pelayan ini dikendalikan sendiri, jadi maklum balas tidak dikumpul di sini. ",
+	"This sync adds {count} notes. Your plan has room for {room}.":
+		"Sync ini menambah {count} nota. Pelan anda mempunyai ruang untuk {room}.",
 	"This vault": "Peti nota ini",
-	"This vault has {count} notes. Your plan syncs {limit}.":
-		"Peti nota ini mempunyai {count} nota. Pelan anda menyegerakkan {limit}.",
 	"This vault is empty on the server. Upload your {what}?":
 		"Peti nota ini kosong di server. Adakah anda ingin memuat naik {what}?",
 	"Too large for the server": "Terlalu besar untuk pelayan",
@@ -575,6 +575,7 @@ const ms: Dict = {
 	"Your feedback": "Maklum balas anda",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Log masuk anda telah tamat tempoh. Log masuk semula dalam tetapan Engram untuk meneruskan.",
+	"Your plan syncs {limit} notes.": "Pelan anda menyegerakkan {limit} nota.",
 	"Your vault shares {percent} of its data with Engram":
 		"Peti nota anda berkongsi {percent} data dengan Engram",
 	attachments: "lampiran",

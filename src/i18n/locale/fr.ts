@@ -581,12 +581,12 @@ const fr: Dict = {
 		"Cette note n'a pas pu être traitée et a été ignorée.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Ce serveur est auto-hébergé, donc les retours ne sont pas collectés ici. ",
-	"This vault": "Ce coffre",
-	"This vault has {count} notes. Your plan syncs {limit}.": {
-		one: "Ce coffre contient {count} note. Ton abonnement synchronise {limit}.",
-		many: "Ce coffre contient {count} de notes. Ton abonnement synchronise {limit}.",
-		other: "Ce coffre contient {count} notes. Ton abonnement synchronise {limit}.",
+	"This sync adds {count} notes. Your plan has room for {room}.": {
+		one: "Cette synchronisation ajoute {count} note. Ton abonnement te permet d'ajouter {room}.",
+		many: "Cette synchronisation ajoute {count} de notes. Ton abonnement autorise {room}.",
+		other: "Cette synchronisation ajoute {count} notes. Ton abonnement te permet d'en avoir {room}.",
 	},
+	"This vault": "Ce coffre",
 	"This vault is empty on the server. Upload your {what}?":
 		"Ce coffre est vide sur le serveur. Souhaites-tu télécharger tes {what}?",
 	"Too large for the server": "Trop volumineux pour le serveur",
@@ -665,6 +665,7 @@ const fr: Dict = {
 	"Your feedback": "Ton feedback",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Ton identifiant a expiré. Connecte-toi à nouveau dans les paramètres d'Engram pour continuer.",
+	"Your plan syncs {limit} notes.": "Ton abonnement synchronise {limit} notes.",
 	"Your vault shares {percent} of its data with Engram":
 		"Ton coffre partage {percent} de ses données avec Engram",
 	attachments: "pièces jointes",

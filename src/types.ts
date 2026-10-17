@@ -524,9 +524,6 @@ export interface SyncPlan {
 	 *  preview tree to decide whether a folder is fully going away or just
 	 *  losing some leaves. */
 	localPaths: string[];
-	/** The note (non-attachment) subset of localPaths. What the plan's notes
-	 *  cap counts, and what the over-limit folder picker chooses from. */
-	localNotePaths: string[];
 	/** Every path the server has in this vault. Same role as localPaths, for
 	 *  the push-all-delete-remote preview. */
 	serverPaths: string[];

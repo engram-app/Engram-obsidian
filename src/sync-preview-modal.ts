@@ -55,14 +55,16 @@ export class SyncPreviewState {
 	/** First-run diagnostics opt-in checkbox (see shouldOfferDiagnosticsOptIn).
 	 *  Off by default. Explicit consent, not an assumed default. */
 	diagnosticsOptIn = false;
-	/** The plan's notes cap, or null when unlimited or unknown (the usage call
-	 *  failed or has not answered yet). Null never shows the over-limit step:
-	 *  that step must not be able to block a sync. */
-	notesCap: number | null = null;
+	/** The plan's notes limit and the room left under it, or null when
+	 *  unlimited or unknown (the usage call failed or has not answered yet).
+	 *  Null never shows the over-limit step: it must not be able to block a sync. */
+	notesQuota: NotesQuota | null = null;
 	/** Top-level folders unticked in the over-limit step's folder picker. */
 	overLimitExcluded: string[] = [];
-	/** "I understand N notes will not sync." */
+	/** "I understand N notes will not sync." Reset whenever N changes. */
 	overLimitAck = false;
+	/** The exclusions are being saved and the plan recomputed. */
+	overLimitSaving = false;
 	/** Set once the user got through the step, so it is asked once per modal. */
 	private overLimitDone = false;
 	private resolved = false;
@@ -76,7 +78,7 @@ export class SyncPreviewState {
 
 	pickOption(choice: SyncChoice): void {
 		if (this.resolved) return;
-		if (this.needsOverLimitStep()) {
+		if (this.needsOverLimitStep(choice)) {
 			this.pendingChoice = choice;
 			this.view = "over-limit";
 			return;
@@ -104,39 +106,70 @@ export class SyncPreviewState {
 		this.resolve(this.pendingChoice);
 	}
 
-	setNotesCap(cap: number | null): void {
-		this.notesCap = cap;
+	setNotesQuota(quota: NotesQuota | null): void {
+		this.notesQuota = quota;
 	}
 
-	needsOverLimitStep(): boolean {
+	needsOverLimitStep(choice: SyncChoice): boolean {
 		return (
 			!this.overLimitDone &&
-			this.plan != null &&
-			this.notesCap != null &&
-			this.plan.localNotePaths.length > this.notesCap
+			uploadsNotes(choice) &&
+			this.notesQuota != null &&
+			this.newNotePaths().length > this.notesQuota.room
 		);
 	}
 
+	/** Notes this sync would create on the server: the plan's note uploads
+	 *  minus edits to notes the server already has. Attachments do not count. */
+	newNotePaths(): string[] {
+		if (!this.plan) return [];
+		const onServer = new Set(this.plan.serverPaths);
+		return this.plan.toPush.notes.filter((p) => !onServer.has(p));
+	}
+
 	setOverLimitExcluded(excluded: string[]): void {
+		const over = this.overLimitOver();
 		this.overLimitExcluded = excluded;
+		if (this.overLimitOver() !== over) this.overLimitAck = false;
 	}
 
 	toggleOverLimitAck(): void {
 		this.overLimitAck = !this.overLimitAck;
 	}
 
-	/** Notes the current folder selection would still sync. */
-	overLimitSelected(): number {
-		return selectedNoteCount(this.plan?.localNotePaths ?? [], this.overLimitExcluded);
+	/** New notes the current folder selection would still add. */
+	overLimitAdded(): number {
+		return selectedNoteCount(this.newNotePaths(), this.overLimitExcluded);
 	}
 
-	/** Notes past the cap under the current selection; 0 when it fits. */
+	overLimitRoom(): number {
+		return this.notesQuota?.room ?? 0;
+	}
+
+	/** Notes past the room under the current selection; 0 when it fits. */
 	overLimitOver(): number {
-		return this.notesCap == null ? 0 : Math.max(0, this.overLimitSelected() - this.notesCap);
+		return this.notesQuota == null
+			? 0
+			: Math.max(0, this.overLimitAdded() - this.notesQuota.room);
 	}
 
 	canContinueOverLimit(): boolean {
-		return this.view === "over-limit" && (this.overLimitOver() === 0 || this.overLimitAck);
+		return (
+			this.view === "over-limit" &&
+			!this.overLimitSaving &&
+			(this.overLimitOver() === 0 || this.overLimitAck)
+		);
+	}
+
+	/** Back and Continue are inert until endOverLimitSave/finishOverLimit, so
+	 *  Back cannot leave saved patterns behind a stale plan. */
+	beginOverLimitSave(): void {
+		this.overLimitSaving = true;
+	}
+
+	/** The save failed: the step is usable again. */
+	endOverLimitSave(): void {
+		this.overLimitSaving = false;
 	}
 
 	/** Leave the step and carry on with the option the user picked, exactly as
@@ -145,6 +178,7 @@ export class SyncPreviewState {
 	finishOverLimit(plan: SyncPlan | null): void {
 		if (this.resolved || this.view !== "over-limit") return;
 		if (plan) this.replacePlan(plan);
+		this.overLimitSaving = false;
 		this.overLimitDone = true;
 		this.view = "preview";
 		const choice = this.pendingChoice;
@@ -153,7 +187,7 @@ export class SyncPreviewState {
 	}
 
 	goBack(): void {
-		if (this.resolved) return;
+		if (this.resolved || this.overLimitSaving) return;
 		this.view = "preview";
 		this.pendingChoice = null;
 		this.confirmInput = "";
@@ -254,22 +288,40 @@ export function planLoadErrorMessage(hasAuth: boolean): string {
 		: t("Your login expired. Sign in again in Engram settings to continue.");
 }
 
-/** Map a createVault rejection to a short human label. LimitExceededError =
- *  402 from the standardized backend body (spec §4.6), 422 = validation
- *  (e.g. duplicate/empty name), else a generic connection message. Pure
- *  for testing. */
-/** The notes cap from a `/billing/usage` body, or null when unlimited or
- *  absent. Pure for testing. */
-export function notesCapFromUsage(data: BillingUsage): number | null {
-	const limit = data.usage?.notes?.limit ?? null;
-	return isUnlimited(limit) ? null : limit;
+/** Options that create notes on the server, and so can run past the plan's
+ *  notes limit. Pull-only options upload nothing and skip the over-limit step. */
+const UPLOADING_CHOICES = new Set<SyncChoice>([
+	"smart-merge",
+	"push-all-keep-remote",
+	"push-all-delete-remote",
+]);
+
+export function uploadsNotes(choice: SyncChoice): boolean {
+	return UPLOADING_CHOICES.has(choice);
 }
 
-/** The notes cap, or null when the usage call fails: the over-limit step is
+/** The notes limit and the room left under it (never negative). */
+export interface NotesQuota {
+	limit: number;
+	room: number;
+}
+
+/** The notes quota from a `/billing/usage` body, or null when unlimited or
+ *  absent. Pure for testing. */
+export function notesQuotaFromUsage(data: BillingUsage): NotesQuota | null {
+	const notes = data.usage?.notes;
+	const limit = notes?.limit ?? null;
+	if (limit === null || isUnlimited(limit)) return null;
+	return { limit, room: Math.max(0, limit - (notes?.used ?? 0)) };
+}
+
+/** The notes quota, or null when the usage call fails: the over-limit step is
  *  advice, and a failed lookup must never block or delay a sync. */
-export async function fetchNotesCap(getUsage: () => Promise<BillingUsage>): Promise<number | null> {
+export async function fetchNotesQuota(
+	getUsage: () => Promise<BillingUsage>,
+): Promise<NotesQuota | null> {
 	try {
-		return notesCapFromUsage(await getUsage());
+		return notesQuotaFromUsage(await getUsage());
 	} catch (e: unknown) {
 		devLog().log(
 			"error",
@@ -279,6 +331,10 @@ export async function fetchNotesCap(getUsage: () => Promise<BillingUsage>): Prom
 	}
 }
 
+/** Map a createVault rejection to a short human label. LimitExceededError =
+ *  402 from the standardized backend body (spec §4.6), 422 = validation
+ *  (e.g. duplicate/empty name), else a generic connection message. Pure
+ *  for testing. */
 export function describeCreateVaultError(e: unknown): string {
 	if (e instanceof LimitExceededError) return toastFor(e.reason);
 	const status = statusOf(e);
@@ -683,10 +739,10 @@ export class SyncPreviewModal extends Modal {
 		return this.state.plan;
 	}
 
-	/** The plan's notes cap, once the usage lookup answers (null = no cap). No
+	/** The notes quota, once the usage lookup answers (null = no limit). No
 	 *  re-render: the over-limit step is only entered when an option is picked. */
-	setNotesCap(cap: number | null): void {
-		this.state.setNotesCap(cap);
+	setNotesQuota(quota: NotesQuota | null): void {
+		this.state.setNotesQuota(quota);
 	}
 
 	private render(): void {
@@ -762,7 +818,7 @@ export class SyncPreviewModal extends Modal {
 				contentEl,
 				label,
 				true,
-				accept ? () => this.state.pickOption("smart-merge") : undefined,
+				accept ? () => this.pick("smart-merge") : undefined,
 			);
 			return;
 		}
@@ -795,9 +851,7 @@ export class SyncPreviewModal extends Modal {
 		btn.addEventListener("click", () => {
 			// Always the non-destructive merge: on an empty remote it uploads
 			// everything, on an empty device it downloads everything.
-			// pickOption("smart-merge") starts the sync and closes this modal —
-			// no re-render needed (smart-merge never hits the confirm view).
-			this.state.pickOption("smart-merge");
+			this.pick("smart-merge");
 		});
 		this.renderSkippedAttachmentsNote(parent);
 		this.renderFooter(parent, t("Cancel"), false);
@@ -1049,10 +1103,14 @@ export class SyncPreviewModal extends Modal {
 		const btn = wrap.createEl("button", { cls: card.cssClass });
 		btn.createSpan({ text: card.emoji, cls: "engram-sync-preview-option-emoji" });
 		btn.createSpan({ text: card.label, cls: "engram-sync-preview-option-label" });
-		btn.addEventListener("click", () => {
-			this.state.pickOption(card.choice);
-			this.render();
-		});
+		btn.addEventListener("click", () => this.pick(card.choice));
+	}
+
+	/** Every option click goes through here: picking can resolve, or move to
+	 *  the over-limit or confirm view, which only shows once re-rendered. */
+	private pick(choice: SyncChoice): void {
+		this.state.pickOption(choice);
+		if (this.state.view !== "done") this.render();
 	}
 
 	private renderConfirm(): void {
@@ -1117,19 +1175,23 @@ export class SyncPreviewModal extends Modal {
 		input.focus();
 	}
 
-	/** The vault holds more notes than the plan stores. Say so plainly, offer
-	 *  the upgrade, and let the user pick folders to fit or accept that the
-	 *  rest will not sync. Continue stays disabled until one of those holds. */
+	/** This sync would add more notes than the plan has room left for. Say so
+	 *  plainly, offer the upgrade, and let the user untick top-level folders to
+	 *  fit or accept that the rest will not sync. Continue stays disabled until
+	 *  one of those holds. */
 	private renderOverLimit(): void {
 		const { contentEl } = this;
-		const notePaths = this.requirePlan().localNotePaths;
-		const cap = this.state.notesCap ?? 0;
+		const quota = this.state.notesQuota ?? { limit: 0, room: 0 };
+		const fmt = (n: number) => n.toLocaleString(currentLocale());
 		contentEl.createEl("h2", {
-			text: t("This vault has {count} notes. Your plan syncs {limit}.", {
-				count: notePaths.length,
-				limit: cap.toLocaleString(currentLocale()),
+			text: t("This sync adds {count} notes. Your plan has room for {room}.", {
+				count: this.state.newNotePaths().length,
+				room: fmt(quota.room),
 			}),
 			cls: "engram-sync-preview-header",
+		});
+		contentEl.createEl("p", {
+			text: t("Your plan syncs {limit} notes.", { limit: fmt(quota.limit) }),
 		});
 
 		const upgradeUrl = this.opts.upgradeUrl;
@@ -1139,9 +1201,9 @@ export class SyncPreviewModal extends Modal {
 		}
 
 		new FolderPicker(contentEl, {
-			notePaths,
+			notePaths: this.state.newNotePaths(),
 			excluded: this.state.overLimitExcluded,
-			limit: cap,
+			limit: quota.room,
 			onChange: (excluded) => {
 				this.state.setOverLimitExcluded(excluded);
 				refresh();
@@ -1150,7 +1212,6 @@ export class SyncPreviewModal extends Modal {
 
 		const ackRow = contentEl.createEl("label", { cls: "engram-sync-preview-over-limit-ack" });
 		const ack = ackRow.createEl("input", { type: "checkbox" });
-		ack.checked = this.state.overLimitAck;
 		const ackText = ackRow.createSpan();
 		ack.addEventListener("change", () => {
 			this.state.toggleOverLimitAck();
@@ -1162,38 +1223,40 @@ export class SyncPreviewModal extends Modal {
 		const footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
 		const backBtn = footer.createEl("button", { text: t("Back") });
 		backBtn.addEventListener("click", () => {
+			if (this.state.overLimitSaving) return;
 			this.state.goBack();
 			this.render();
 		});
 		const continueBtn = footer.createEl("button", { text: t("Continue") });
 		continueBtn.addEventListener("click", () => {
-			void this.continueOverLimit(continueBtn, error);
+			void this.continueOverLimit(refresh, error);
 		});
 
 		const refresh = () => {
 			const over = this.state.overLimitOver();
 			ackRow.hidden = over === 0;
+			ack.checked = this.state.overLimitAck;
 			ackText.setText(t("I understand {count} notes will not sync.", { count: over }));
+			backBtn.disabled = this.state.overLimitSaving;
 			continueBtn.disabled = !this.state.canContinueOverLimit();
 		};
 		refresh();
 	}
 
-	private async continueOverLimit(btn: HTMLButtonElement, error: HTMLElement): Promise<void> {
+	private async continueOverLimit(refresh: () => void, error: HTMLElement): Promise<void> {
 		if (!this.state.canContinueOverLimit()) return;
-		const patterns = excludedToIgnorePatterns(
-			this.state.overLimitExcluded,
-			this.requirePlan().localNotePaths,
-		);
+		const patterns = excludedToIgnorePatterns(this.state.overLimitExcluded);
 		let plan: SyncPlan | null = null;
 		if (patterns.length > 0 && this.opts.applyExclusions) {
-			btn.disabled = true;
+			this.state.beginOverLimitSave();
+			refresh();
 			try {
 				plan = await this.opts.applyExclusions(patterns);
 			} catch (e: unknown) {
 				devLog().log("error", `saving over-limit exclusions failed: ${errMsg(e)}`);
 				error.setText(t("Could not save your folder choice. Try again."));
-				btn.disabled = false;
+				this.state.endOverLimitSave();
+				refresh();
 				return;
 			}
 		}

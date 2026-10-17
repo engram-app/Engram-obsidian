@@ -41,16 +41,16 @@ describe("countNotesByFolder", () => {
 });
 
 describe("excludedToIgnorePatterns", () => {
-	test("a folder becomes a trailing-slash prefix pattern", () => {
-		expect(excludedToIgnorePatterns(["Archive"], PATHS)).toEqual(["Archive/"]);
+	test("a folder becomes a root-anchored folder pattern", () => {
+		expect(excludedToIgnorePatterns(["Archive"])).toEqual(["/Archive/"]);
 	});
 
-	test("the top-level pseudo-folder becomes one exact pattern per root note", () => {
-		expect(excludedToIgnorePatterns([ROOT_FOLDER], PATHS)).toEqual(["Inbox.md", "Todo.md"]);
+	test("the top-level pseudo-folder writes nothing: root notes always sync", () => {
+		expect(excludedToIgnorePatterns([ROOT_FOLDER])).toEqual([]);
 	});
 
 	test("nothing excluded gives no patterns", () => {
-		expect(excludedToIgnorePatterns([], PATHS)).toEqual([]);
+		expect(excludedToIgnorePatterns([])).toEqual([]);
 	});
 });
 
@@ -64,6 +64,27 @@ describe("matchesIgnorePattern", () => {
 		expect(matchesIgnorePattern("Inbox.md", "Inbox.md")).toBe(true);
 		expect(matchesIgnorePattern("Inbox.md.bak", "Inbox.md")).toBe(false);
 	});
+
+	test("a leading / anchors a folder pattern to the vault root", () => {
+		expect(matchesIgnorePattern("Archive/a.md", "/Archive/")).toBe(true);
+		expect(matchesIgnorePattern("Archive/2023/a.md", "/Archive/")).toBe(true);
+		expect(matchesIgnorePattern("Projects/Archive/a.md", "/Archive/")).toBe(false);
+		expect(matchesIgnorePattern("Archived/a.md", "/Archive/")).toBe(false);
+	});
+
+	test("a leading / anchors a file pattern to the vault root", () => {
+		expect(matchesIgnorePattern("README.md", "/README.md")).toBe(true);
+		expect(matchesIgnorePattern("docs/README.md", "/README.md")).toBe(false);
+	});
+
+	test("unanchored patterns keep their origin/main meaning: match at any depth", () => {
+		// Regression: these are the pre-anchor semantics users already rely on.
+		expect(matchesIgnorePattern("Archive/a.md", "Archive/")).toBe(true);
+		expect(matchesIgnorePattern("Projects/Archive/a.md", "Archive/")).toBe(true);
+		expect(matchesIgnorePattern("README.md", "README.md")).toBe(true);
+		expect(matchesIgnorePattern("docs/README.md", "README.md")).toBe(true);
+		expect(matchesIgnorePattern("docs/README.md.bak", "README.md")).toBe(false);
+	});
 });
 
 describe("selectedNoteCount", () => {
@@ -73,13 +94,12 @@ describe("selectedNoteCount", () => {
 
 	test("excluding a folder drops exactly what the ignore patterns would drop", () => {
 		expect(selectedNoteCount(PATHS, ["Archive"])).toBe(5);
-		// "Arch/" also matches the nested Projects/Arch/ folder (shouldIgnore
-		// semantics), and the count must say so rather than promise 7.
-		expect(selectedNoteCount(PATHS, ["Arch"])).toBe(6);
+		// Anchored: the nested Projects/Arch/ folder is not the one unticked.
+		expect(selectedNoteCount(PATHS, ["Arch"])).toBe(7);
 	});
 
-	test("excluding the top level drops the root notes", () => {
-		expect(selectedNoteCount(PATHS, [ROOT_FOLDER])).toBe(6);
+	test("the top level cannot be excluded", () => {
+		expect(selectedNoteCount(PATHS, [ROOT_FOLDER])).toBe(8);
 	});
 });
 
@@ -135,6 +155,22 @@ describe("FolderPicker", () => {
 
 		expect(onChange).toHaveBeenLastCalledWith(["Archive"]);
 		expect(parent.__find("Selected: 5 / 6")).not.toBeNull();
+	});
+
+	test("the top-level row shows its count but is locked on", () => {
+		const parent = makeEl();
+		const onChange = mock((_ex: string[]) => {});
+		new FolderPicker(parent, {
+			notePaths: PATHS,
+			excluded: [ROOT_FOLDER],
+			limit: 6,
+			onChange,
+		});
+		const root = checkboxFor(parent, "(top level) (2)");
+		expect(root.checked).toBe(true);
+		expect(root.disabled).toBe(true);
+		expect(root.listeners.change).toBeUndefined();
+		expect(parent.__find("Selected: 8 / 6")).not.toBeNull();
 	});
 
 	test("without a limit it shows no running total", () => {

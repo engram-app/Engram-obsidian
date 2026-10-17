@@ -508,9 +508,9 @@ const ja: Dict = {
 		"このノートの処理に失敗し、スキップされました。",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"このサーバーは自己ホスト型なので、フィードバックはここで収集されません。",
+	"This sync adds {count} notes. Your plan has room for {room}.":
+		"この同期で {count} 個のノートが追加されます。プランでは {room} 個まで可能です。",
 	"This vault": "この保管庫",
-	"This vault has {count} notes. Your plan syncs {limit}.":
-		"この保管庫には{count}個のノートがあります。あなたのプランでは{limit}個のノートを同期します。",
 	"This vault is empty on the server. Upload your {what}?":
 		"この保管庫はサーバー上で空です。{what} をアップロードしますか？",
 	"Too large for the server": "ファイルサイズが大きすぎます",
@@ -571,6 +571,7 @@ const ja: Dict = {
 	"Your feedback": "お客様からのフィードバック",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"ログインが期限切れです。Engramの設定で再度ログインしてください。",
+	"Your plan syncs {limit} notes.": "プランでは{limit}個のノートを同期します。",
 	"Your vault shares {percent} of its data with Engram":
 		"あなたの保管庫のデータの一部({percent})がEngramと共有されています",
 	attachments: "添付ファイル",

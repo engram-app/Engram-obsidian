@@ -508,9 +508,9 @@ const vi: Dict = {
 		"Ghi chú này không thể xử lý và đã bị bỏ qua.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Máy chủ này được tự lưu trữ, vì vậy phản hồi không được thu thập ở đây. ",
+	"This sync adds {count} notes. Your plan has room for {room}.":
+		"Lượt đồng bộ hóa này thêm {count} ghi chú. Gói của bạn còn chỗ cho {room}.",
 	"This vault": "Kho lưu trữ này",
-	"This vault has {count} notes. Your plan syncs {limit}.":
-		"Kho lưu trữ này có {count} ghi chú. Gói của bạn đồng bộ hóa {limit}.",
 	"This vault is empty on the server. Upload your {what}?":
 		"Kho lưu trữ này trống trên máy chủ. Bạn muốn tải lên {what}?",
 	"Too large for the server": "Quá lớn cho máy chủ",
@@ -573,6 +573,7 @@ const vi: Dict = {
 	"Your feedback": "Phản hồi của bạn",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Phiên đăng nhập của bạn đã hết hạn. Đăng nhập lại trong phần cài đặt Engram để tiếp tục.",
+	"Your plan syncs {limit} notes.": "Gói của bạn đồng bộ hóa {limit} ghi chú.",
 	"Your vault shares {percent} of its data with Engram":
 		"Kho lưu trữ của bạn chia sẻ {percent} dữ liệu với Engram",
 	attachments: "tệp đính kèm",

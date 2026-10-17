@@ -581,12 +581,12 @@ const ptBR: Dict = {
 		"Esta nota não pôde ser processada e foi ignorada.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Este servidor é auto-hospedado, portanto, os comentários não são coletados aqui. ",
-	"This vault": "Este cofre",
-	"This vault has {count} notes. Your plan syncs {limit}.": {
-		one: "Este cofre tem {count} nota. Seu plano sincroniza {limit}.",
-		many: "Este cofre tem {count} de notas. Seu plano sincroniza {limit}.",
-		other: "Este cofre tem {count} notas. Seu plano sincroniza {limit}.",
+	"This sync adds {count} notes. Your plan has room for {room}.": {
+		one: "Esta sincronização adiciona {count} nota. Seu plano tem espaço para {room}.",
+		many: "Esta sincronização adiciona {count} de notas. Seu plano tem espaço para {room}.",
+		other: "Esta sincronização adiciona {count} notas. Seu plano tem espaço para {room}.",
 	},
+	"This vault": "Este cofre",
 	"This vault is empty on the server. Upload your {what}?":
 		"Este cofre está vazio no servidor. Deseja enviar seus {what}?",
 	"Too large for the server": "Muito grande para o servidor",
@@ -664,6 +664,7 @@ const ptBR: Dict = {
 	"Your feedback": "Seu feedback",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Sua sessão expirou. Faça login novamente nas configurações de Engram para continuar.",
+	"Your plan syncs {limit} notes.": "Seu plano sincroniza {limit} notas.",
 	"Your vault shares {percent} of its data with Engram":
 		"Seu cofre compartilha {percent} de seus dados com Engram",
 	attachments: "anexos",

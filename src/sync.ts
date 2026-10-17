@@ -10992,7 +10992,6 @@ export class SyncEngine {
 			serverAttachmentCount: liveAttachPaths.length,
 			serverFolderCount,
 			localNoteCount: localNotes.length,
-			localNotePaths: localNotes,
 			localAttachmentCount: localAttachments.length,
 			localFolderCount,
 			localPaths: [...localNotes, ...localAttachments],

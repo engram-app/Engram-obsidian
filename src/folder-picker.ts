@@ -17,9 +17,16 @@ import { currentLocale, t } from "./i18n";
 export const ROOT_FOLDER = "";
 
 /** Does one `ignorePatterns` line match `path`? A trailing "/" is a folder
- *  prefix (matched at the root or nested), anything else an exact file name
- *  (at the root or nested). Neither glob nor regex. */
+ *  prefix, anything else an exact file name. Unanchored, both match at the root
+ *  or nested. A leading "/" anchors to the vault root ("/Archive/" is only the
+ *  top-level Archive). Vault paths never start with "/", so before anchoring a
+ *  leading-"/" line matched nothing; no existing pattern changes meaning.
+ *  Neither glob nor regex. */
 export function matchesIgnorePattern(path: string, pattern: string): boolean {
+	if (pattern.startsWith("/")) {
+		const anchored = pattern.slice(1);
+		return anchored.endsWith("/") ? path.startsWith(anchored) : path === anchored;
+	}
 	if (pattern.endsWith("/")) {
 		return path.startsWith(pattern) || path.includes(`/${pattern}`);
 	}
@@ -54,28 +61,18 @@ export function countNotesByFolder(paths: string[]): FolderCount[] {
 		);
 }
 
-/** The `ignorePatterns` lines that exclude `excluded`. A folder is one prefix
- *  line; the root pseudo-folder has no prefix, so it is one line per root note. */
-export function excludedToIgnorePatterns(excluded: Iterable<string>, paths: string[]): string[] {
-	const out: string[] = [];
-	for (const folder of excluded) {
-		if (folder === ROOT_FOLDER) {
-			out.push(...paths.filter((p) => !p.includes("/")).sort());
-		} else {
-			out.push(`${folder}/`);
-		}
-	}
-	return out;
+/** The `ignorePatterns` lines that exclude `excluded`: one root-anchored
+ *  folder line each. The root pseudo-folder writes nothing, root notes always
+ *  sync. */
+export function excludedToIgnorePatterns(excluded: Iterable<string>): string[] {
+	return [...excluded].filter((f) => f !== ROOT_FOLDER).map((f) => `/${f}/`);
 }
 
 /** How many of `paths` still sync once `excluded` is written as patterns.
- *  Uses the real matcher, so a folder name that also appears nested
- *  ("Arch/" catches "Projects/Arch/") is counted the way it will behave. */
+ *  Uses the real matcher, so the count is exactly what shouldIgnore will do. */
 export function selectedNoteCount(paths: string[], excluded: Iterable<string>): number {
-	const patterns = excludedToIgnorePatterns(excluded, paths);
+	const patterns = excludedToIgnorePatterns(excluded);
 	if (patterns.length === 0) return paths.length;
-	// ponytail: O(notes x patterns) per toggle; fine for a few thousand notes,
-	// index patterns by kind if a huge root ever makes toggling lag.
 	return paths.filter((p) => !patterns.some((pt) => matchesIgnorePattern(p, pt))).length;
 }
 
@@ -93,7 +90,8 @@ export function mergeIgnorePatterns(existing: string, add: string[]): string {
 export interface FolderPickerProps {
 	/** Every syncable note path the choice applies to. */
 	notePaths: string[];
-	/** Top-level folders that start unticked (ROOT_FOLDER for the root). */
+	/** Top-level folders that start unticked. ROOT_FOLDER is ignored: the
+	 *  root row is locked on. */
 	excluded: string[];
 	/** When set, shows "Selected: N / limit" and an over-limit state. */
 	limit?: number | null;
@@ -109,7 +107,7 @@ export class FolderPicker {
 		parent: HTMLElement,
 		private readonly props: FolderPickerProps,
 	) {
-		this.excluded = new Set(props.excluded);
+		this.excluded = new Set(props.excluded.filter((f) => f !== ROOT_FOLDER));
 		const list = parent.createEl("ul", { cls: "engram-folder-picker" });
 		for (const { folder, count } of countNotesByFolder(props.notePaths)) {
 			const label = list.createEl("li").createEl("label");
@@ -117,6 +115,11 @@ export class FolderPicker {
 			box.checked = !this.excluded.has(folder);
 			const name = folder === ROOT_FOLDER ? t("(top level)") : folder;
 			label.createSpan({ text: `${name} (${count.toLocaleString(currentLocale())})` });
+			// Root notes always sync: nothing else in the vault anchors them.
+			if (folder === ROOT_FOLDER) {
+				box.disabled = true;
+				continue;
+			}
 			box.addEventListener("change", () => {
 				if (box.checked) this.excluded.delete(folder);
 				else this.excluded.add(folder);
