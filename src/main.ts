@@ -3591,8 +3591,8 @@ export default class EngramSyncPlugin extends Plugin {
 
 	/** Over-limit step: the unticked folders become ignore patterns. The plan
 	 *  is recomputed with the candidate patterns FIRST and they are persisted
-	 *  only once it succeeds; a failure restores the previous patterns, so a
-	 *  retry or Back never leaves saved patterns behind a stale plan.
+	 *  only once it succeeds; a failure of either step restores the previous
+	 *  patterns, so a retry or Back never leaves patterns behind a stale plan.
 	 *  Persisted without saveSettings, which would re-fire the first-sync flow
 	 *  for the closed gate and stack a second modal. */
 	private async applyOverLimitExclusions(patterns: string[]): Promise<SyncPlan> {
@@ -3602,12 +3602,12 @@ export default class EngramSyncPlugin extends Plugin {
 		let plan: SyncPlan;
 		try {
 			plan = await this.syncEngine.computeSyncPlan("full");
+			await this.savePluginData(this.syncEngine.getLastSync());
 		} catch (e: unknown) {
 			this.settings.ignorePatterns = previous;
 			this.syncEngine.updateSettings(this.settings);
 			throw e;
 		}
-		await this.savePluginData(this.syncEngine.getLastSync());
 		this.settingTab?.rerender();
 		return plan;
 	}

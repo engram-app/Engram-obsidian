@@ -446,6 +446,67 @@ describe("SyncEngine.pushAll — replace-remote via crdtDelete + attachment-dele
 	});
 });
 
+describe("SyncEngine.pushAll: replace-remote never deletes ignored server paths", () => {
+	// Ignored paths are omitted from the local snapshot, so before the fix every
+	// server note in an ignored folder looked like a server-only extra and was
+	// deleted. They are intentionally unsynced, not extras.
+	test("server notes/attachments under an ignore pattern survive; a non-ignored extra is still deleted", async () => {
+		const { engine, api } = makeEngine([]);
+		(engine as any).ignorePatterns = ["/Archive/"];
+		const deleted: string[] = [];
+		const delAttach: string[] = [];
+		(engine as any).crdtDelete = async (id: string) => {
+			deleted.push(id);
+			return { doc_id: id };
+		};
+		(api.deleteAttachment as any) = mock(async (p: string) => {
+			delAttach.push(p);
+			return { deleted: true, path: p };
+		});
+		(engine as any).applySyncChange = mock(async () => true);
+		(engine as any).pushFile = mock().mockResolvedValue(true);
+		const note = (id: string, seq: number, path: string) => ({
+			type: "note",
+			id,
+			seq,
+			path,
+			title: path,
+			content: "x",
+			folder: "",
+			tags: [],
+			mtime: seq,
+			updated_at: "2026-01-01T00:00:00Z",
+			deleted: false,
+		});
+		const att = (id: string, seq: number, path: string) => ({
+			type: "attachment",
+			id,
+			seq,
+			path,
+			mime_type: "image/png",
+			size_bytes: 10,
+			mtime: seq,
+			updated_at: "2026-01-01T00:00:00Z",
+			deleted: false,
+		});
+		engine.setCrdtCatchupSince(async () => ({
+			changes: [
+				note("archived-id", 1, "Archive/Old.md"),
+				note("extra-id", 2, "Extra.md"),
+				att("a1", 3, "Archive/img.png"),
+				att("a2", 4, "extra.png"),
+			],
+			has_more: false,
+			next_seq: null,
+		}));
+
+		await engine.pushAll({ replaceRemote: true, localSnapshot: new Set<string>() });
+
+		expect(deleted).toEqual(["extra-id"]);
+		expect(delAttach).toEqual(["extra.png"]);
+	});
+});
+
 describe("pushPartitioned — per-file genesis (no batch RPC)", () => {
 	// per-file rewrite: genesis notes ride the same bounded per-file loop
 	// as everything else. pushFile's socket-native genesis (crdt_create) already

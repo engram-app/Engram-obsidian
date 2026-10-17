@@ -7215,7 +7215,10 @@ export class SyncEngine {
 					// Every non-deleted id/path SEEN (applied or skipped) — the
 					// pull-all-delete / push-all-delete choices (Tasks 5/5b/6) need the
 					// full server id-set and attachment-path-set, not just the
-					// successfully-applied subset.
+					// successfully-applied subset. Ignored paths are left out: they are
+					// intentionally unsynced, never local, so counting them would make
+					// push-all-delete treat them as server-only extras and delete them.
+					if (c.path && this.shouldIgnore(normalizePath(c.path))) return;
 					if (c.type === "attachment") {
 						if (!c.deleted) serverAttachmentPaths.add(c.path);
 					} else if (c.id && !c.deleted) {
@@ -10870,8 +10873,12 @@ export class SyncEngine {
 	 */
 	async computeSyncPlan(mode: "push-all" | "pull-all" | "full"): Promise<SyncPlan> {
 		const server = await this.enumerateServerState();
-		const serverNotes = server.notes;
-		const serverAttachments = server.attachments;
+		// Ignored paths are out of the sync on BOTH sides: the local list below
+		// drops them, so a server row there must not read as a pull either.
+		const unignored = <V>(m: Map<string, V>) =>
+			new Map([...m].filter(([path]) => !this.shouldIgnore(path)));
+		const serverNotes = unignored(server.notes);
+		const serverAttachments = unignored(server.attachments);
 
 		// Enumerate local files
 		const allFiles = this.app.vault.getFiles();

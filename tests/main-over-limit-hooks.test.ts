@@ -63,6 +63,15 @@ describe("applyExclusions persists only after the plan recomputes", () => {
 		expect(fake.savePluginData).not.toHaveBeenCalled();
 	});
 
+	test("a failed save leaves settings and engine patterns unchanged", async () => {
+		const { fake, seenByEngine } = makeFakePlugin(async () => PLAN);
+		fake.savePluginData = mock(() => Promise.reject(new Error("disk full")));
+		await expect(hooksOf(fake).applyExclusions(["/Archive/"])).rejects.toThrow("disk full");
+
+		expect(fake.settings.ignorePatterns).toBe("Templates/");
+		expect(seenByEngine.at(-1)).toBe("Templates/");
+	});
+
 	test("a successful recompute saves the merged patterns after the plan", async () => {
 		const { fake, seenByEngine, order } = makeFakePlugin(async () => PLAN);
 		expect(await hooksOf(fake).applyExclusions(["/Archive/"])).toBe(PLAN);

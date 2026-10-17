@@ -731,6 +731,25 @@ describe("SyncEngine.computeSyncPlan", () => {
 		expect(allPaths).not.toContain(".obsidian/plugins/some-plugin/main.js");
 		expect(plan.toPush.notes).toContain("Notes/legit.md");
 	});
+
+	test("server rows under an ignore pattern are not pulled or counted", async () => {
+		const engine = createEngine({ ignorePatterns: "/Archive/" });
+		mockApp.vault.getFiles.mockReturnValue([]);
+		wireFeed(engine, [
+			[
+				row({ id: "n1", seq: 1, path: "Archive/old.md", content: "# a" }),
+				row({ id: "n2", seq: 2, path: "Notes/kept.md", content: "# k" }),
+				{ type: "attachment", seq: 3, path: "Archive/img.png", deleted: false },
+			],
+		]);
+
+		const plan = await engine.computeSyncPlan("full");
+
+		expect(plan.toPull.notes).toEqual(["Notes/kept.md"]);
+		expect(plan.toPull.attachments).toEqual([]);
+		expect(plan.serverPaths).toEqual(["Notes/kept.md"]);
+		expect(plan.serverNoteCount).toBe(1);
+	});
 });
 
 describe("SyncEngine.pushAll with progress", () => {
