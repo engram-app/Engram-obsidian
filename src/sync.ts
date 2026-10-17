@@ -1173,7 +1173,8 @@ export class SyncEngine {
 		}
 		// An id this pass pushed off a path (say an announce mapped it there and
 		// this snapshot predates its row) must be re-healed, or it stays deaf.
-		for (const id of evicted) if (this.noteIdMap.pathForId(id) === null) this.ensureNoteIdMapped(id);
+		for (const id of evicted)
+			if (this.noteIdMap.pathForId(id) === null) this.ensureNoteIdMapped(id);
 		if (applied > 0) {
 			await this.saveData({ noteIds: this.noteIdMap.toJSON() });
 		}
@@ -1245,7 +1246,13 @@ export class SyncEngine {
 			entry.need = need;
 			entry.attempts = 0;
 		} else
-			this.idMapPending.set(noteId, { since: need, need, attempts: 0, answered: 0, waiters: [] });
+			this.idMapPending.set(noteId, {
+				since: need,
+				need,
+				attempts: 0,
+				answered: 0,
+				waiters: [],
+			});
 		this.idMapThrottle.poke();
 	}
 
@@ -1406,7 +1413,8 @@ export class SyncEngine {
 			this.idMapPruneQueued = false;
 			const ids = [...this.idMapClaimed];
 			this.idMapClaimed.clear();
-			for (const id of ids) if (this.noteIdMap?.pathForId(id) != null) this.settleIdMapPending(id);
+			for (const id of ids)
+				if (this.noteIdMap?.pathForId(id) != null) this.settleIdMapPending(id);
 		});
 	}
 
