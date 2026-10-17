@@ -1098,6 +1098,10 @@ export class SyncEngine {
 		return this.manifestOwners.owners.get(path) ?? null;
 	}
 
+	/** Deliberately UNFILTERED by the ignore list. This answers "does a live
+	 *  server note own this path?" for destructive-op guards (the id-keyed-move
+	 *  trash and the orphan sweep below). Hiding an owner at an ignored path
+	 *  would read as "path absent", which is exactly what authorizes a trash. */
 	private cacheManifestOwners(manifest: ManifestResponse): void {
 		this.manifestOwners.owners = new Map(
 			manifest.notes.filter((n) => n.id).map((n) => [normalizePath(n.path), n.id as string]),
@@ -3692,7 +3696,11 @@ export class SyncEngine {
 	}
 
 	shouldIgnore(path: string): boolean {
-		// Hardcoded ignores — always enforced, cannot be overridden
+		return this.isBuiltinIgnored(path) || this.isUserIgnored(path);
+	}
+
+	/** Hardcoded ignores — always enforced, cannot be overridden. */
+	private isBuiltinIgnored(path: string): boolean {
 		const configDir = `${this.app.vault.configDir}/`;
 		if (path.startsWith(configDir) || path.includes(`/${configDir}`)) {
 			return true;
@@ -3702,21 +3710,25 @@ export class SyncEngine {
 				return true;
 			}
 		}
-		// User-explicit per-file ignores (from Sync Center)
+		return false;
+	}
+
+	/** The user's own ignores: per-file (Sync Center) and the pattern list. */
+	private isUserIgnored(path: string): boolean {
 		if (this.ignoredFiles.has(path)) return true;
 		return this.ignorePatterns.some((pattern) => {
-			// A leading slash anchors the pattern at the vault root ("/drafts/"
-			// skips drafts/ but not notes/drafts/). Vault paths never start with
-			// "/", so before this such a pattern silently matched nothing.
-			if (pattern.startsWith("/")) {
-				const rooted = pattern.slice(1);
-				return pattern.endsWith("/") ? path.startsWith(rooted) : path === rooted;
-			}
 			if (pattern.endsWith("/")) {
 				return path.startsWith(pattern) || path.includes(`/${pattern}`);
 			}
 			return path === pattern || path.endsWith(`/${pattern}`);
 		});
+	}
+
+	/** A path the plan reports in `ignoredCount`: hidden by the USER's ignores.
+	 *  Built-ins are hidden too but never counted (they are not the user's
+	 *  choice, and configDir alone would dwarf every other number). */
+	private isCountedIgnore(path: string): boolean {
+		return !this.isBuiltinIgnored(path) && this.isUserIgnored(path);
 	}
 
 	isMarkdown(file: TAbstractFile): boolean {
@@ -6689,7 +6701,7 @@ export class SyncEngine {
 
 	/** Returns the number of ops applied across this replay (incl. any coalesced
 	 *  re-run) plus the sets of server note-ids and attachment paths seen
-	 *  (non-deleted only) — used by the pull-all-delete / push-all-delete
+	 *  (live at their last row, ignored paths excluded) — used by the pull-all-delete / push-all-delete
 	 *  choices. A coalesced call that folds into an in-flight replay returns
 	 *  applied:0/empty sets — the running call reports the total. `fromZero`
 	 *  forces the replay to start at cursor 0 regardless of the persisted
@@ -6798,9 +6810,15 @@ export class SyncEngine {
 		}
 	}
 
+	/** Server rows at ignored paths are filtered HERE, once, by their FINAL
+	 *  folded path (a note renamed into an ignored folder leaves the view), so
+	 *  every reader sees the same server the sync will act on. `ignored` holds
+	 *  the live final paths hidden by the user's own ignores, for the plan's
+	 *  `ignoredCount`. */
 	private async enumerateServerState(): Promise<{
 		notes: Map<string, { deleted: boolean; content?: string; contentHash?: string }>;
 		attachments: Map<string, { deleted: boolean }>;
+		ignored: Set<string>;
 	}> {
 		// The preview reads server state off the live op-log socket. On startup
 		// the plan is computed the moment the user channel joins — often before
@@ -6838,18 +6856,28 @@ export class SyncEngine {
 				}
 			},
 		});
+		const ignored = new Set<string>();
+		const hidden = (path: string, deleted: boolean): boolean => {
+			if (!this.shouldIgnore(path)) return false;
+			if (!deleted && this.isCountedIgnore(path)) ignored.add(path);
+			return true;
+		};
 		const notes = new Map<
 			string,
 			{ deleted: boolean; content?: string; contentHash?: string }
 		>();
 		for (const c of byId.values()) {
+			if (hidden(c.path, c.deleted)) continue;
 			notes.set(c.path, {
 				deleted: c.deleted,
 				content: c.content,
 				contentHash: c.content_hash,
 			});
 		}
-		return { notes, attachments };
+		for (const [path, row] of attachments) {
+			if (hidden(path, row.deleted)) attachments.delete(path);
+		}
+		return { notes, attachments, ignored };
 	}
 
 	async catchupViaSeqReplay(
@@ -7358,22 +7386,24 @@ export class SyncEngine {
 							);
 						}
 					}
-					// Every non-deleted id/path SEEN (applied or skipped) — the
+					// Every id/path SEEN (applied or skipped) — the
 					// pull-all-delete / push-all-delete choices (Tasks 5/5b/6) need the
 					// full server id-set and attachment-path-set, not just the
 					// successfully-applied subset.
 					//
-					// Rows at ignored paths are left out: these sets drive the
-					// replace-remote delete pass, and a sync must never delete what
-					// it cannot see. A note renamed INTO an ignored path leaves too
-					// (rows arrive in seq order, so its last path decides).
-					// (`c.path` can be null on a leaked folder-marker row despite its type.)
-					if (c.path && this.shouldIgnore(c.path)) {
-						if (c.type !== "attachment" && c.id) serverIds.delete(c.id);
-					} else if (c.type === "attachment") {
-						if (!c.deleted) serverAttachmentPaths.add(c.path);
-					} else if (c.id && !c.deleted) {
-						serverIds.add(c.id);
+					// The LAST row per id (notes) or path (attachments) decides, so
+					// a later tombstone removes an earlier live row. Rows at ignored
+					// paths leave the sets too: they drive the replace-remote and
+					// pull-all-delete passes, and a sync must never act on what it
+					// cannot see. (`c.path` can be null on a leaked folder-marker
+					// row despite its type.)
+					const live = !c.deleted && !(c.path && this.shouldIgnore(c.path));
+					if (c.type === "attachment") {
+						if (live) serverAttachmentPaths.add(c.path);
+						else serverAttachmentPaths.delete(c.path);
+					} else if (c.id) {
+						if (live) serverIds.add(c.id);
+						else serverIds.delete(c.id);
 					}
 				},
 				onPage: async (seq, id) => {
@@ -11049,32 +11079,21 @@ export class SyncEngine {
 	 *  - server changed: local unchanged → toPull · both changed → conflict
 	 */
 	async computeSyncPlan(mode: "push-all" | "pull-all" | "full"): Promise<SyncPlan> {
+		// Both sides read ONE ignore-filtered view: enumerateServerState filters
+		// the server rows, the loop below the local files. Before, only the local
+		// side was filtered, so a server note at an ignored path read as "server
+		// has it, local missing": a pull the sync then skipped.
 		const server = await this.enumerateServerState();
-
-		// ONE ignore-filtered view of both sides: every count and list below reads
-		// it. The local side was always filtered; the server side was not, so a
-		// server note at an ignored path read as "server has it, local missing", a
-		// pull the sync then skipped, and a server count nothing could ever match.
-		// Live files ignored on either side are counted (by path) so the totals
-		// stay explainable; a tombstone is not a file and is just dropped.
-		const ignored = new Set<string>();
-		const visible = <V extends { deleted: boolean }>(rows: Map<string, V>): Map<string, V> => {
-			const out = new Map<string, V>();
-			for (const [path, row] of rows) {
-				if (!this.shouldIgnore(path)) out.set(path, row);
-				else if (!row.deleted) ignored.add(path);
-			}
-			return out;
-		};
-		const serverNotes = visible(server.notes);
-		const serverAttachments = visible(server.attachments);
+		const serverNotes = server.notes;
+		const serverAttachments = server.attachments;
+		const ignored = new Set(server.ignored);
 
 		// Enumerate local files
 		const syncable: TFile[] = [];
 		for (const f of this.app.vault.getFiles()) {
 			if (!this.isSyncable(f)) continue;
-			if (this.shouldIgnore(f.path)) ignored.add(f.path);
-			else syncable.push(f);
+			if (!this.shouldIgnore(f.path)) syncable.push(f);
+			else if (this.isCountedIgnore(f.path)) ignored.add(f.path);
 		}
 
 		const localNotes: string[] = [];
@@ -11248,7 +11267,11 @@ export class SyncEngine {
 	 *  server had BEFORE the push; reconcile asks what it has after), so they
 	 *  cannot be collapsed. Deliberate trade: ~240KB of manifest on the
 	 *  incident vault against ~478MB of re-uploaded attachments. Only manual
-	 *  full pushes pay it — the incremental path never calls this. */
+	 *  full pushes pay it — the incremental path never calls this.
+	 *
+	 *  Not ignore-filtered, and it need not be: the map is only ever looked up
+	 *  by the paths of local files being pushed, which already passed
+	 *  shouldIgnore, so a row at an ignored path is never read. */
 	private async fetchServerAttachmentHashes(): Promise<Map<string, string> | undefined> {
 		try {
 			const manifest = await this.api.getManifest();
@@ -11541,6 +11564,9 @@ export class SyncEngine {
 		}
 
 		// Remaining server entries are files not in the local vault
+		// The manifest is a separate REST source with no shared enumeration site;
+		// this report is its one user-facing count ("N only on server"), so it is
+		// filtered here, through the same shouldIgnore as everything else.
 		const extraOnServer = [...serverNotes.keys()].filter((p) => !this.shouldIgnore(p));
 
 		devLog().log(
