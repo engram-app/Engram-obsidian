@@ -124,38 +124,55 @@ describe("applyExclusions only persists", () => {
 	});
 });
 
-describe("the live settings change only after the save", () => {
-	// shouldIgnore reads the live object: changing it first drops vault events
-	// for the folder during the save window.
-	test("applyExclusions saves a copy first", async () => {
-		const { fake } = makeFakePlugin(async () => PLAN);
-		let liveDuringSave: string[] = [];
-		let savedList: string[] = [];
-		fake.savePluginData = mock(async function (this: any, _l: string, _q: unknown, next?: any) {
-			liveDuringSave = [...this.settings.excludedFolders];
-			savedList = [...(next ?? this.settings).excludedFolders];
+describe("a save landing during an excludedFolders change writes the new list", () => {
+	// Any other save (a catch-up cursor persist, a token rotation) writes the
+	// live settings. It must not put the old list back on disk. Replaces the
+	// round-8 "saves a copy first" tests: see changeExcludedFolders for the
+	// trade-off.
+	function withConcurrentSave(fake: any) {
+		const concurrent: string[][] = [];
+		fake.savePluginData = mock(async function (this: any) {
+			concurrent.push([...this.settings.excludedFolders]);
 		});
+		return concurrent;
+	}
+
+	test("applyExclusions", async () => {
+		const { fake } = makeFakePlugin(async () => PLAN);
+		const written = withConcurrentSave(fake);
 		await hooksOf(fake).applyExclusions(["Archive"]);
-		expect(liveDuringSave).toEqual(["Old"]);
-		expect(savedList).toEqual(["Old", "Archive"]);
-		expect(fake.settings.excludedFolders).toEqual(["Old", "Archive"]);
+		expect(written).toEqual([["Old", "Archive"]]);
 	});
 
-	test("syncFolderAgain saves a copy first", async () => {
+	test("syncFolderAgain", async () => {
 		const { fake } = makeFakePlugin(async () => PLAN);
 		fake.settings.excludedFolders = ["Archive", "Old"];
 		fake.syncEngine.reincludeFolder = mock(async () => {});
 		fake.syncEngine.fullSync = mock(async () => ({ pulled: 0, pushed: 0 }));
-		const seen: { live: string[]; saved: string[] }[] = [];
-		fake.savePluginData = mock(async function (this: any, _l: string, _q: unknown, next?: any) {
-			seen.push({
-				live: [...this.settings.excludedFolders],
-				saved: [...(next ?? this.settings).excludedFolders],
-			});
-		});
+		const written = withConcurrentSave(fake);
 		await fake.syncFolderAgain("Archive");
-		expect(seen[0]).toEqual({ live: ["Archive", "Old"], saved: ["Old"] });
-		expect(fake.settings.excludedFolders).toEqual(["Old"]);
+		expect(written).toEqual([["Old"]]);
+	});
+});
+
+describe("the over-limit step and Sync again do not undo each other", () => {
+	test("interleaved, both changes survive", async () => {
+		const { fake } = makeFakePlugin(async () => PLAN);
+		fake.settings.excludedFolders = ["Old"];
+		fake.syncEngine.reincludeFolder = mock(async () => {});
+		fake.syncEngine.fullSync = mock(async () => ({ pulled: 0, pushed: 0 }));
+		const releases: (() => void)[] = [];
+		fake.savePluginData = mock(() => new Promise<void>((r) => releases.push(r)));
+
+		const again = fake.syncFolderAgain("Old");
+		const apply = hooksOf(fake).applyExclusions(["Archive"]);
+		for (let i = 0; i < 20; i++) {
+			await Bun.sleep(0);
+			releases.shift()?.();
+		}
+		await Promise.all([again, apply]);
+
+		expect(fake.settings.excludedFolders).toEqual(["Archive"]);
 	});
 });
 
@@ -355,8 +372,8 @@ describe("Sync again on two folders at once", () => {
 		fake.syncEngine.fullSync = mock(async () => ({ pulled: 0, pushed: 0 }));
 		const saved: string[][] = [];
 		const releases: (() => void)[] = [];
-		fake.savePluginData = mock(function (this: any, _l: string, _q: unknown, next?: any) {
-			saved.push([...(next ?? this.settings).excludedFolders]);
+		fake.savePluginData = mock(function (this: any) {
+			saved.push([...this.settings.excludedFolders]);
 			return new Promise<void>((r) => releases.push(r));
 		});
 

@@ -2012,14 +2012,9 @@ export default class EngramSyncPlugin extends Plugin {
 		this.syncEngine.importGateJournal(saved.gateJournal);
 	}
 
-	private async savePluginData(
-		lastSync: string,
-		offlineQueue?: QueueEntry[],
-		/** Settings to write instead of the live object (see saveExcludedFolders). */
-		settings: EngramSyncSettings = this.settings,
-	): Promise<void> {
+	private async savePluginData(lastSync: string, offlineQueue?: QueueEntry[]): Promise<void> {
 		await this.writePluginData({
-			settings,
+			settings: this.settings,
 			lastSync,
 			// Top-level, device-local; saveData() overwrites data.json wholesale,
 			// so every field must be re-listed here or it's wiped on the next save.
@@ -3647,64 +3642,68 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  (the modal was closed), leaves the list as it was. Persisted without
 	 *  saveSettings, which would re-fire the first-sync flow and stack a
 	 *  second modal. */
-	private async applyOverLimitExclusions(folders: string[], signal?: AbortSignal): Promise<void> {
+	private applyOverLimitExclusions(folders: string[], signal?: AbortSignal): Promise<void> {
+		return this.serializeExcluded(async () => {
+			await this.changeExcludedFolders((live) => [...new Set([...live, ...folders])], signal);
+			this.settingTab?.rerender();
+		});
+	}
+
+	/** "Sync again" for a folder in excludedFolders. Queued with every other
+	 *  excludedFolders change (serializeExcluded), so two clicks, or a click
+	 *  and the over-limit step, never undo each other's change. */
+	syncFolderAgain(folder: string): Promise<void> {
+		return this.serializeExcluded(() => this.syncFolderAgainNow(folder));
+	}
+
+	/** Run `fn` after every excludedFolders change queued before it. */
+	private serializeExcluded(fn: () => Promise<void>): Promise<void> {
+		const run = (this.excludedQueue ?? Promise.resolve()).then(fn);
+		this.excludedQueue = run.catch(() => {});
+		return run;
+	}
+
+	private excludedQueue?: Promise<void>;
+	/** QUOTA_WAIT_MS unless a test shortens it. */
+	private quotaWaitMs?: number;
+
+	/** The one way excludedFolders changes; callers hold serializeExcluded.
+	 *  Builds from the LIVE list, applies it to the live settings first and then
+	 *  saves, so any save landing meanwhile (a catch-up cursor persist, a token
+	 *  rotation) writes the new list too. On a failed save or an abort it puts
+	 *  back exactly this field (an OAuth rotation during the save writes its
+	 *  single-use refresh token to the same object, so the object is never
+	 *  swapped). `undo` reverts what the caller told the engine beforehand.
+	 *  Lesser evil: during the save, shouldIgnore already follows the new list,
+	 *  so an edit made in a newly excluded folder in that window is not pushed
+	 *  if the change then rolls back; the next sync's mtime sweep still pushes
+	 *  it. The alternative let a concurrent save leave the old list on disk. */
+	private async changeExcludedFolders(
+		edit: (live: string[]) => string[],
+		signal?: AbortSignal,
+		undo?: () => void,
+	): Promise<void> {
 		signal?.throwIfAborted();
-		const excludedFolders = [...new Set([...this.settings.excludedFolders, ...folders])];
+		const previous = this.settings.excludedFolders;
+		this.settings.excludedFolders = edit(previous);
 		try {
-			await this.saveExcludedFolders(excludedFolders, signal);
+			await this.savePluginData(this.syncEngine.getLastSync());
+			signal?.throwIfAborted();
 		} catch (e: unknown) {
-			// Closed after the candidate list was written: write the live (old)
-			// list back. The abort stays the error the caller sees. If this write
-			// fails too, live settings still hold the old list, so the next save
-			// of plugin data (any sync's first cursor save) puts it back on disk.
+			this.settings.excludedFolders = previous;
+			undo?.();
+			// Closed after the new list was written: write the old one back. The
+			// abort stays the error the caller sees. If this write fails too, the
+			// live settings hold the old list and the next save restores it.
 			if (signal?.aborted) {
 				await this.savePluginData(this.syncEngine.getLastSync()).catch((r: unknown) =>
-					rlog().error(
-						"lifecycle",
-						`over-limit exclusions rollback failed: ${errMsg(r)}`,
-					),
+					rlog().error("lifecycle", `excluded folders rollback failed: ${errMsg(r)}`),
 				);
 			}
 			throw e;
 		}
-		this.settingTab?.rerender();
-	}
-
-	/** Save `excludedFolders` as a COPY, then apply
-	 *  it to the live settings and engine. Live last: shouldIgnore reads the live
-	 *  object, so changing it first dropped the folder's vault events during the
-	 *  save, and a failed save would need a rollback. Only this field is touched,
-	 *  in place: the API client and engine hold the object, and an OAuth rotation
-	 *  during the save writes its single-use refresh token there.
-	 *  ponytail: a rotation save that races this one persists the live (old)
-	 *  list; the sync that follows rewrites data.json on its first cursor save. */
-	private async saveExcludedFolders(
-		excludedFolders: string[],
-		signal?: AbortSignal,
-	): Promise<void> {
-		await this.savePluginData(this.syncEngine.getLastSync(), undefined, {
-			...this.settings,
-			excludedFolders,
-		});
-		signal?.throwIfAborted();
-		this.settings.excludedFolders = excludedFolders;
 		this.syncEngine.updateSettings(this.settings);
 	}
-
-	/** "Sync again" for a folder in excludedFolders. One at a time: two clicks
-	 *  on different folders each build the list from the live settings inside
-	 *  this queue, so neither save re-excludes the other's folder. */
-	syncFolderAgain(folder: string): Promise<void> {
-		const run = (this.folderAgainQueue ?? Promise.resolve()).then(() =>
-			this.syncFolderAgainNow(folder),
-		);
-		this.folderAgainQueue = run.catch(() => {});
-		return run;
-	}
-
-	private folderAgainQueue?: Promise<void>;
-	/** QUOTA_WAIT_MS unless a test shortens it. */
-	private quotaWaitMs?: number;
 
 	/** Tell the engine first (holdReinclude), so every save from here on,
 	 *  this one or any landing during the deletes, carries the folder's content
@@ -3714,15 +3713,11 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  and then nothing changed. The sync runs in the background. */
 	private async syncFolderAgainNow(folder: string): Promise<void> {
 		if (!(await this.folderFitsOrAcknowledged(folder))) return;
-		const undo = this.syncEngine.holdReinclude(folder);
-		try {
-			await this.saveExcludedFolders(
-				this.settings.excludedFolders.filter((f) => f !== folder),
-			);
-		} catch (e: unknown) {
-			undo();
-			throw e;
-		}
+		await this.changeExcludedFolders(
+			(live) => live.filter((f) => f !== folder),
+			undefined,
+			this.syncEngine.holdReinclude(folder),
+		);
 		await this.syncEngine.reincludeFolder(folder);
 		void this.syncEngine
 			.fullSync()
