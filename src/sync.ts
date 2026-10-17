@@ -1279,7 +1279,10 @@ export class SyncEngine {
 				`live id-map reconcile: ${this.idMapFailures} failed fetches in a row, giving up on ${this.idMapPending.size} pending note(s)`,
 			);
 			this.idMapFailures = 0;
-			for (const id of [...this.idMapPending.keys()]) this.settleIdMapPending(id);
+			// Only what the failing fetches covered; a mid-fetch request starts fresh.
+			for (const [id, entry] of [...this.idMapPending])
+				if (entry.reqGen < gen) this.settleIdMapPending(id);
+			if (this.idMapPending.size > 0) this.idMapThrottle.poke();
 			return;
 		}
 		for (const [id, entry] of [...this.idMapPending]) {
