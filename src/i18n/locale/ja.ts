@@ -274,7 +274,7 @@ const ja: Dict = {
 	"GitHub Sponsors": "GitHub Sponsors",
 	"Gradle build cache": "Gradleビルドキャッシュ",
 	"How do you feel about Engram?": "Engramについて、どう感じますか？",
-	"I understand {count} notes will not sync.": "{count}のノートは同期されません。",
+	"I understand {count} notes will not sync.": "{count}個のノートは同期されません。",
 	Idea: "アイデア",
 	"If this plugin saves you time, consider supporting development.":
 		"このプラグインが時間を節約できた場合、開発を支援をご検討ください。",
@@ -510,8 +510,7 @@ const ja: Dict = {
 		"このノートの処理に失敗し、スキップされました。",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"このサーバーは自己ホスト型なので、フィードバックはここで収集されません。",
-	"This sync adds {count} notes. Your plan has room for {room}.":
-		"この同期で {count} 個のノートが追加されます。プランでは {room} 個まで可能です。",
+	"This sync adds {count} notes.": "この同期で {count} 個のノートが追加されます。",
 	"This vault": "この保管庫",
 	"This vault is empty on the server. Upload your {what}?":
 		"この保管庫はサーバー上で空です。{what} をアップロードしますか？",
@@ -576,6 +575,7 @@ const ja: Dict = {
 	"Your feedback": "お客様からのフィードバック",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"ログインが期限切れです。Engramの設定で再度ログインしてください。",
+	"Your plan has room for {count}.": "プランには{count}の容量があります。",
 	"Your plan syncs {limit} notes.": "プランでは{limit}個のノートを同期します。",
 	"Your vault shares {percent} of its data with Engram":
 		"あなたの保管庫のデータの一部({percent})がEngramと共有されています",
@@ -615,13 +615,13 @@ const ja: Dict = {
 	"{count} ignored": "{count}件を除外中",
 	"{count} missing on server": "サーバーに{count}がありません",
 	"{count} need attention": "{count} の注意が必要です",
+	"{count} new": "{count} 新規",
 	"{count} notes": "{count} ノート",
 	"{count} only on server": "{count} はサーバーにのみ存在します",
 	"{count} queued — {reason}": "{count}件待ち — {reason}",
 	"{count} retrying": "{count} 再試行中",
 	"{desc} — should not be synced": "{desc} — 同期対象外",
 	"{first} and {second}": "{first} と {second}",
-	"{folder} {count} notes ({newCount} new)": "{folder} {count} ノート ({newCount} 新規)",
 	"{formatted} per day": "{formatted} /日",
 	"{label} ({count} queued)": "{label} ({count}件待ち)",
 	"{n} of 5": "5つ中{n}",

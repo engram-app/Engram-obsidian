@@ -313,7 +313,7 @@ const tr: Dict = {
 	"How do you feel about Engram?": "Engram hakkında ne düşünüyorsunuz?",
 	"I understand {count} notes will not sync.": {
 		one: "{count} notun senkronize olmadığını anlıyorum.",
-		other: "{count} notun senkronize olmadığını anlıyorum.",
+		other: "{count} notun senkronize edilmeyeceği anlaşıldı.",
 	},
 	Idea: "Öneri",
 	"If this plugin saves you time, consider supporting development.":
@@ -553,9 +553,9 @@ const tr: Dict = {
 	"This note could not be processed and was skipped.": "Bu not işlenemedi ve atlandı.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Bu sunucu kendi kendine barındırıldığı için geri bildirim burada toplanmaz. ",
-	"This sync adds {count} notes. Your plan has room for {room}.": {
-		one: "Bu senkronizasyon {count} not ekler. Planınızda {room} kadar alan mevcut.",
-		other: "Bu senkronizasyon {count} not ekler. Planınızda {room} kadar alan mevcut.",
+	"This sync adds {count} notes.": {
+		one: "Bu senkronizasyon {count} not ekleyecek.",
+		other: "Bu senkronizasyon {count} not ekleyecek.",
 	},
 	"This vault": "Bu kasa",
 	"This vault is empty on the server. Upload your {what}?":
@@ -632,6 +632,10 @@ const tr: Dict = {
 	"Your feedback": "Geri bildiriminiz",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Girişiniz sona erdi. Devam etmek için Engram ayarlarından tekrar giriş yapın.",
+	"Your plan has room for {count}.": {
+		one: "Planınızda {count} adet daha var.",
+		other: "Planınızda {count} adet daha var.",
+	},
 	"Your plan syncs {limit} notes.": "Aboneliğiniz {limit} notu senkronize ediyor.",
 	"Your vault shares {percent} of its data with Engram":
 		"Kasanızın verilerinin {percent} kısmı Engram ile paylaşılıyor",
@@ -693,6 +697,7 @@ const tr: Dict = {
 		one: "{count} tane işlem gerekiyor",
 		other: "{count} işlem gerektiriyor",
 	},
+	"{count} new": { one: "{count} yeni", other: "{count} yeni" },
 	"{count} notes": { one: "{count} not", other: "{count} not" },
 	"{count} only on server": { one: "{count}. Sadece sunucuda", other: "{count} sadece sunucuda" },
 	"{count} queued — {reason}": {
@@ -702,10 +707,6 @@ const tr: Dict = {
 	"{count} retrying": { one: "{count} tekrar deneniyor", other: "{count} tekrar deneniyor" },
 	"{desc} — should not be synced": "{desc} — senkronize edilmemeli",
 	"{first} and {second}": "{first} ve {second}",
-	"{folder} {count} notes ({newCount} new)": {
-		one: "{folder} {count} not ({newCount} yeni)",
-		other: "{folder} {count} not ({newCount} yeni)",
-	},
 	"{formatted} per day": "{formatted} günde",
 	"{label} ({count} queued)": {
 		one: "{label} ({count} sırada)",

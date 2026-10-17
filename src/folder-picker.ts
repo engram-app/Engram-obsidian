@@ -88,12 +88,10 @@ export class FolderPicker {
 			const name = folder === ROOT_FOLDER ? t("(top level)") : folder;
 			const total = totals.get(folder) ?? count;
 			label.createSpan({
+				// Two strings, each pluralized by its own count: one form picked from
+				// the total read wrong for the new count in pl/ru.
 				text: rows
-					? t("{folder} {count} notes ({newCount} new)", {
-							folder: name,
-							count: total,
-							newCount: formatNumber(count),
-						})
+					? `${name} ${t("{count} notes", { count: total })} (${t("{count} new", { count })})`
 					: `${name} (${formatNumber(count)})`,
 			});
 			// Root notes always sync: nothing else in the vault anchors them.

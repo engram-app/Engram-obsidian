@@ -583,10 +583,10 @@ const pt: Dict = {
 		"Esta nota não pôde ser processada e foi ignorada.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Este servidor é alojado localmente, portanto, não são recolhidos dados aqui. ",
-	"This sync adds {count} notes. Your plan has room for {room}.": {
-		one: "Esta sincronização adiciona {count} nota. O plano de {room} tem espaço para {room}.",
-		many: "Esta sincronização adiciona {count} de notas. O plano de {room} tem espaço para {room}.",
-		other: "Esta sincronização adiciona {count} notas. O seu plano tem espaço para {room}.",
+	"This sync adds {count} notes.": {
+		one: "Esta sincronização adiciona {count} nota.",
+		many: "Esta sincronização adiciona {count} de notas.",
+		other: "Esta sincronização adiciona {count} notas.",
 	},
 	"This vault": "Este cofre",
 	"This vault is empty on the server. Upload your {what}?":
@@ -670,6 +670,11 @@ const pt: Dict = {
 	"Your feedback": "O seu feedback",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"A sua sessão expirou. Inicie sessão novamente nas Engram definições para continuar.",
+	"Your plan has room for {count}.": {
+		one: "O seu plano tem espaço para {count}.",
+		many: "O seu plano tem espaço para {count}.",
+		other: "O seu plano tem espaço para {count}.",
+	},
 	"Your plan syncs {limit} notes.": "O seu plano sincroniza {limit} notas.",
 	"Your vault shares {percent} of its data with Engram":
 		"O seu cofre partilha {percent} dos seus dados com Engram",
@@ -759,6 +764,7 @@ const pt: Dict = {
 		many: "{count} requerem atenção",
 		other: "{count} requerem atenção",
 	},
+	"{count} new": { one: "{count} nova", many: "{count} novas", other: "{count} novas" },
 	"{count} notes": { one: "{count} notas", many: "{count} notas", other: "{count} notas" },
 	"{count} only on server": {
 		one: "{count} apenas no servidor",
@@ -777,11 +783,6 @@ const pt: Dict = {
 	},
 	"{desc} — should not be synced": "{desc} — não deve ser sincronizado",
 	"{first} and {second}": "{first} e {second}",
-	"{folder} {count} notes ({newCount} new)": {
-		one: "{folder} {count} nota(s) ({newCount} nova(s))",
-		many: "{folder} {count} notas ({newCount} novas)",
-		other: "{folder} {count} notas ({newCount} novas)",
-	},
 	"{formatted} per day": "{formatted} por dia",
 	"{label} ({count} queued)": {
 		one: "{label} ({count} na fila)",

@@ -251,7 +251,7 @@ const zh: Dict = {
 	"GitHub Sponsors": "GitHub 赞助",
 	"Gradle build cache": "Gradle 构建缓存",
 	"How do you feel about Engram?": "您对 Engram 感觉如何？",
-	"I understand {count} notes will not sync.": "我理解 {count} 笔记不会同步。",
+	"I understand {count} notes will not sync.": "我理解 {count} 个笔记不会同步。",
 	Idea: "建议",
 	"If this plugin saves you time, consider supporting development.":
 		"如果此插件节省了您的时间，请考虑赞助开发。",
@@ -471,8 +471,7 @@ const zh: Dict = {
 	"This note could not be processed and was skipped.": "无法处理此笔记，已跳过。",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"此服务器为自托管，因此不收集反馈。",
-	"This sync adds {count} notes. Your plan has room for {room}.":
-		"本次同步添加 {count} 笔记。您的计划剩余 {room} 个名额。",
+	"This sync adds {count} notes.": "本次同步添加 {count} 笔记。",
 	"This vault": "此仓库",
 	"This vault is empty on the server. Upload your {what}?":
 		"此仓库在服务器上为空。上传 {what} 吗？",
@@ -534,6 +533,7 @@ const zh: Dict = {
 	"Your feedback": "您的反馈",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"您的登录已过期。请在 Engram 设置中重新登录以继续。",
+	"Your plan has room for {count}.": "您的计划还可容纳 {count}。",
 	"Your plan syncs {limit} notes.": "您的计划同步 {limit} 笔记。",
 	"Your vault shares {percent} of its data with Engram":
 		"您的仓库已与 Engram 共享 {percent} 的数据",
@@ -572,13 +572,13 @@ const zh: Dict = {
 	"{count} ignored": "已忽略 {count} 个",
 	"{count} missing on server": "{count} 未在服务器上",
 	"{count} need attention": "{count} 待处理",
+	"{count} new": "{count} 个新笔记",
 	"{count} notes": "{count} 笔记",
 	"{count} only on server": "{count} 仅在服务器上",
 	"{count} queued — {reason}": "{count} 个待处理 — {reason}",
 	"{count} retrying": "{count} 正在重试",
 	"{desc} — should not be synced": "{desc} — 不应同步",
 	"{first} and {second}": "{first} 和 {second}",
-	"{folder} {count} notes ({newCount} new)": "{folder} {count} 笔记 ({newCount} 新增)",
 	"{formatted} per day": "{formatted} 条/天",
 	"{label} ({count} queued)": "{label} (队列中{count}个)",
 	"{n} of 5": "5 中的 {n}",

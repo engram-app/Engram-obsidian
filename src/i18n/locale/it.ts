@@ -585,6 +585,11 @@ const it: Dict = {
 		"Questa nota non può essere elaborata ed è stata saltata.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Questo server è ospitato privatamente, quindi il feedback non viene raccolto qui. ",
+	"This sync adds {count} notes.": {
+		one: "Questa sincronizzazione aggiunge {count} nota.",
+		many: "Questa sincronizzazione aggiunge {count} di note.",
+		other: "Questa sincronizzazione aggiunge {count} note.",
+	},
 	"This vault": "Questo Vault",
 	"This vault is empty on the server. Upload your {what}?":
 		"Questo Vault è vuoto sul server. Vuoi caricare {what}?",
@@ -668,6 +673,11 @@ const it: Dict = {
 	"Your feedback": "Il tuo feedback",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"La tua sessione è scaduta. Accedi di nuovo nelle impostazioni di Engram per continuare.",
+	"Your plan has room for {count}.": {
+		one: "Il tuo piano ha spazio per {count}.",
+		many: "Il tuo piano ha spazio per {count}.",
+		other: "Il tuo piano ha spazio per {count}.",
+	},
 	"Your plan syncs {limit} notes.": "Il tuo piano sincronizza {limit} note.",
 	"Your vault shares {percent} of its data with Engram":
 		"Il tuo vault condivide {percent} dei suoi dati con Engram",
@@ -753,6 +763,7 @@ const it: Dict = {
 		many: "{count} richiedono attenzione",
 		other: "{count} richiedono attenzione",
 	},
+	"{count} new": { one: "{count} nuova", many: "{count} nuove", other: "{count} nuove" },
 	"{count} notes": { one: "{count} nota", many: "{count} note", other: "{count} note" },
 	"{count} only on server": {
 		one: "{count} solo sul server",
@@ -771,11 +782,6 @@ const it: Dict = {
 	},
 	"{desc} — should not be synced": "{desc} — non deve essere sincronizzato",
 	"{first} and {second}": "{first} e {second}",
-	"{folder} {count} notes ({newCount} new)": {
-		one: "{folder} {count} nota ({newCount} nuova)",
-		many: "{folder} {count} note ({newCount} nuove)",
-		other: "{folder} {count} note ({newCount} nuove)",
-	},
 	"{formatted} per day": "{formatted} al giorno",
 	"{label} ({count} queued)": {
 		one: "{label} ({count} in coda)",

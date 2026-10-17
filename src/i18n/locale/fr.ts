@@ -337,7 +337,7 @@ const fr: Dict = {
 	"How do you feel about Engram?": "Qu'est-ce que tu penses de Engram ?",
 	"I understand {count} notes will not sync.": {
 		one: "Je comprends que {count} note ne sera pas synchronisée.",
-		many: "Je comprends que {count} de notes ne seront pas synchronisées.",
+		many: "Je comprends que {count} notes ne seront pas synchronisées.",
 		other: "Je comprends que {count} notes ne seront pas synchronisées.",
 	},
 	Idea: "Idée",
@@ -583,10 +583,10 @@ const fr: Dict = {
 		"Cette note n'a pas pu être traitée et a été ignorée.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Ce serveur est auto-hébergé, donc les retours ne sont pas collectés ici. ",
-	"This sync adds {count} notes. Your plan has room for {room}.": {
-		one: "Cette synchronisation ajoute {count} note. Ton abonnement te permet d'ajouter {room}.",
-		many: "Cette synchronisation ajoute {count} de notes. Ton abonnement autorise {room}.",
-		other: "Cette synchronisation ajoute {count} notes. Ton abonnement te permet d'en avoir {room}.",
+	"This sync adds {count} notes.": {
+		one: "Cette synchronisation ajoute {count} note.",
+		many: "Cette synchronisation ajoute {count} de notes.",
+		other: "Cette synchronisation ajoute {count} notes.",
 	},
 	"This vault": "Ce coffre",
 	"This vault is empty on the server. Upload your {what}?":
@@ -671,6 +671,11 @@ const fr: Dict = {
 	"Your feedback": "Ton feedback",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Ton identifiant a expiré. Connecte-toi à nouveau dans les paramètres d'Engram pour continuer.",
+	"Your plan has room for {count}.": {
+		one: "Ton abonnement a de la place pour {count}.",
+		many: "Ton abonnement autorise {count}.",
+		other: "Ton abonnement a de la place pour {count}.",
+	},
 	"Your plan syncs {limit} notes.": "Ton abonnement synchronise {limit} notes.",
 	"Your vault shares {percent} of its data with Engram":
 		"Ton coffre partage {percent} de ses données avec Engram",
@@ -756,6 +761,11 @@ const fr: Dict = {
 		many: "{count} nécessitent ton attention",
 		other: "{count} nécessitent ton attention",
 	},
+	"{count} new": {
+		one: "{count} nouvelle",
+		many: "{count} nouvelles",
+		other: "{count} nouvelles",
+	},
 	"{count} notes": { one: "{count} note", many: "{count} notes", other: "{count} notes" },
 	"{count} only on server": {
 		one: "{count} uniquement sur serveur",
@@ -774,11 +784,6 @@ const fr: Dict = {
 	},
 	"{desc} — should not be synced": "{desc} — ne doit pas être synchronisé",
 	"{first} and {second}": "{first} et {second}",
-	"{folder} {count} notes ({newCount} new)": {
-		one: "{folder} {count} note(s) ({newCount} nouvelle(s))",
-		many: "{folder} {count} notes ({newCount} nouvelles)",
-		other: "{folder} {count} notes ({newCount} nouvelles)",
-	},
 	"{formatted} per day": "{formatted} par jour",
 	"{label} ({count} queued)": {
 		one: "{label} ({count} en attente)",

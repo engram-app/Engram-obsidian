@@ -510,8 +510,7 @@ const vi: Dict = {
 		"Ghi chú này không thể xử lý và đã bị bỏ qua.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Máy chủ này được tự lưu trữ, vì vậy phản hồi không được thu thập ở đây. ",
-	"This sync adds {count} notes. Your plan has room for {room}.":
-		"Lượt đồng bộ hóa này thêm {count} ghi chú. Gói của bạn còn chỗ cho {room}.",
+	"This sync adds {count} notes.": "Lượt đồng bộ hóa này thêm {count} ghi chú.",
 	"This vault": "Kho lưu trữ này",
 	"This vault is empty on the server. Upload your {what}?":
 		"Kho lưu trữ này trống trên máy chủ. Bạn muốn tải lên {what}?",
@@ -579,6 +578,7 @@ const vi: Dict = {
 	"Your feedback": "Phản hồi của bạn",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Phiên đăng nhập của bạn đã hết hạn. Đăng nhập lại trong phần cài đặt Engram để tiếp tục.",
+	"Your plan has room for {count}.": "Gói của bạn còn {count} dung lượng.",
 	"Your plan syncs {limit} notes.": "Gói của bạn đồng bộ hóa {limit} ghi chú.",
 	"Your vault shares {percent} of its data with Engram":
 		"Kho lưu trữ của bạn chia sẻ {percent} dữ liệu với Engram",
@@ -618,13 +618,13 @@ const vi: Dict = {
 	"{count} ignored": "{count} bị bỏ qua",
 	"{count} missing on server": "{count} bị thiếu trên máy chủ",
 	"{count} need attention": "{count} cần xử lý",
+	"{count} new": "{count} mới",
 	"{count} notes": "{count} ghi chú",
 	"{count} only on server": "{count} chỉ có trên máy chủ",
 	"{count} queued — {reason}": "{count} đang chờ — {reason}",
 	"{count} retrying": "{count} đang thử lại",
 	"{desc} — should not be synced": "{desc} — không nên đồng bộ hóa",
 	"{first} and {second}": "{first} và {second}",
-	"{folder} {count} notes ({newCount} new)": "{folder} {count} ghi chú ({newCount} mới)",
 	"{formatted} per day": "{formatted} mỗi ngày",
 	"{label} ({count} queued)": "{label} ({count} đang chờ)",
 	"{n} of 5": "{n} trong 5",

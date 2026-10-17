@@ -8,11 +8,14 @@ import type { Dict } from "..";
  * Only `one` differs from the key, so only `one` is listed.
  */
 const enPlurals: Dict = {
-	"This sync adds {count} notes. Your plan has room for {room}.": {
-		one: "This sync adds {count} note. Your plan has room for {room}.",
+	"This sync adds {count} notes.": {
+		one: "This sync adds {count} note.",
 	},
-	"{folder} {count} notes ({newCount} new)": {
-		one: "{folder} {count} note ({newCount} new)",
+	"Your plan has room for {count}.": {
+		one: "Your plan has room for {count}.",
+	},
+	"{count} new": {
+		one: "{count} new",
 	},
 	"I understand {count} notes will not sync.": {
 		one: "I understand {count} note will not sync.",

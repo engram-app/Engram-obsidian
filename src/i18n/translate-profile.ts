@@ -158,6 +158,14 @@ const DESCRIPTIONS: Record<string, string> = {
 		"Recovers means the server starts working normally again.",
 	"Engram: recovered plugin settings from a backup after a corrupted save.":
 		"The settings file broke while saving, and the plugin restored it from a backup copy.",
+	"This sync adds {count} notes.":
+		"Over-limit warning: how many notes this sync would upload. First of two sentences.",
+	"Your plan has room for {count}.":
+		"Over-limit warning: {count} is how many more notes the user's subscription plan can hold. Follows 'This sync adds N notes.'",
+	"I understand {count} notes will not sync.":
+		"{count} is a number of notes that will be left out of syncing. Nothing here is about versions.",
+	"{count} new":
+		"Folder picker: how many of the folder's notes are new, that is not yet uploaded. Follows a count of notes.",
 };
 const profile: Profile<Target> = {
 	subject:

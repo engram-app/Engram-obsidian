@@ -513,8 +513,7 @@ const ms: Dict = {
 		"Nota ini tidak dapat diproses dan telah dilepaskan.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Pelayan ini dikendalikan sendiri, jadi maklum balas tidak dikumpul di sini. ",
-	"This sync adds {count} notes. Your plan has room for {room}.":
-		"Sync ini menambah {count} nota. Pelan anda mempunyai ruang untuk {room}.",
+	"This sync adds {count} notes.": "Segerakan ini menambah {count} nota.",
 	"This vault": "Peti nota ini",
 	"This vault is empty on the server. Upload your {what}?":
 		"Peti nota ini kosong di server. Adakah anda ingin memuat naik {what}?",
@@ -581,6 +580,7 @@ const ms: Dict = {
 	"Your feedback": "Maklum balas anda",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Log masuk anda telah tamat tempoh. Log masuk semula dalam tetapan Engram untuk meneruskan.",
+	"Your plan has room for {count}.": "Pelan anda mempunyai ruang untuk {count}.",
 	"Your plan syncs {limit} notes.": "Pelan anda menyegerakkan {limit} nota.",
 	"Your vault shares {percent} of its data with Engram":
 		"Peti nota anda berkongsi {percent} data dengan Engram",
@@ -620,13 +620,13 @@ const ms: Dict = {
 	"{count} ignored": "{count} pengecualian",
 	"{count} missing on server": "{count} hilang di server",
 	"{count} need attention": "{count} memerlukan perhatian",
+	"{count} new": "{count} baru",
 	"{count} notes": "{count} nota",
 	"{count} only on server": "{count} sahaja pada pelayan",
 	"{count} queued — {reason}": "{count} dalam senarai — {reason}",
 	"{count} retrying": "{count} cuba semula",
 	"{desc} — should not be synced": "{desc} — tidak perlu disinkronkan",
 	"{first} and {second}": "{first} dan {second}",
-	"{folder} {count} notes ({newCount} new)": "{folder} {count} nota ({newCount} baharu)",
 	"{formatted} per day": "{formatted} sehari",
 	"{label} ({count} queued)": "{label} ({count} dalam senarai)",
 	"{n} of 5": "{n} daripada 5",

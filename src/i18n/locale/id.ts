@@ -515,8 +515,7 @@ const id: Dict = {
 		"Catatan ini tidak dapat diproses dan dilewati.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Server ini dihosting sendiri, jadi umpan balik tidak dikumpulkan di sini. ",
-	"This sync adds {count} notes. Your plan has room for {room}.":
-		"Sinkronisasi ini menambahkan {count} catatan. Paket Anda memiliki ruang untuk {room}.",
+	"This sync adds {count} notes.": "Sinkronisasi ini menambahkan {count} catatan.",
 	"This vault": "Vault ini",
 	"This vault is empty on the server. Upload your {what}?":
 		"Vault ini kosong di server. Apakah Anda ingin mengunggah {what}?",
@@ -583,6 +582,7 @@ const id: Dict = {
 	"Your feedback": "Umpan balik Anda",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Login Anda telah kedaluwarsa. Masuk kembali di pengaturan Engram untuk melanjutkan.",
+	"Your plan has room for {count}.": "Paket Anda memiliki ruang untuk {count}.",
 	"Your plan syncs {limit} notes.": "Paket Anda menyinkronkan {limit} catatan.",
 	"Your vault shares {percent} of its data with Engram":
 		"Vault Anda berbagi {percent} dari datanya dengan Engram",
@@ -622,13 +622,13 @@ const id: Dict = {
 	"{count} ignored": "{count} diabaikan",
 	"{count} missing on server": "{count} tidak ada di server",
 	"{count} need attention": "{count} memerlukan perhatian",
+	"{count} new": "{count} baru",
 	"{count} notes": "{count} catatan",
 	"{count} only on server": "{count} hanya di server",
 	"{count} queued — {reason}": "{count} dalam antrean — {reason}",
 	"{count} retrying": "{count} mencoba lagi",
 	"{desc} — should not be synced": "{desc} — tidak boleh disinkronkan",
 	"{first} and {second}": "{first} dan {second}",
-	"{folder} {count} notes ({newCount} new)": "{folder} {count} catatan ({newCount} baru)",
 	"{formatted} per day": "{formatted} per hari",
 	"{label} ({count} queued)": "{label} ({count} dalam antrean)",
 	"{n} of 5": "{n} dari 5",

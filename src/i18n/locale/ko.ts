@@ -269,8 +269,7 @@ const ko: Dict = {
 	"GitHub Sponsors": "GitHub Sponsors",
 	"Gradle build cache": "Gradle 빌드 캐시",
 	"How do you feel about Engram?": "Engram에 대해 어떻게 생각하시나요?",
-	"I understand {count} notes will not sync.":
-		'"{count} 노트는 동기화되지 않습니다." 이해했습니다.',
+	"I understand {count} notes will not sync.": "{count}개의 노트는 동기화되지 않습니다.",
 	Idea: "아이디어",
 	"If this plugin saves you time, consider supporting development.":
 		"이 플러그인이 시간을 절약해 준다면, 개발을 지원해주세요.",
@@ -502,8 +501,7 @@ const ko: Dict = {
 		"이 노트를 처리할 수 없었으며, 건너뜁니다.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"이 서버는 자체 호스팅 서버이므로, 피드백은 이곳에서 수집되지 않습니다. ",
-	"This sync adds {count} notes. Your plan has room for {room}.":
-		"이 동기화는 {count}개의 노트를 추가합니다. 현재 {room}개의 공간이 남아 있습니다.",
+	"This sync adds {count} notes.": "이 동기화는 {count}개의 노트를 추가합니다.",
 	"This vault": "이 보관함",
 	"This vault is empty on the server. Upload your {what}?":
 		"이 보관함은 서버에 비어 있습니다. {what}을 업로드하시겠습니까?",
@@ -568,6 +566,7 @@ const ko: Dict = {
 	"Your feedback": "사용자 의견",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"로그인 세션이 만료되었습니다. Engram 설정에서 다시 로그인하여 계속하세요.",
+	"Your plan has room for {count}.": "귀하의 플랜에는 {count}개의 공간이 남아 있습니다.",
 	"Your plan syncs {limit} notes.": "귀하의 플랜은 {limit}개의 노트를 동기화합니다.",
 	"Your vault shares {percent} of its data with Engram":
 		"귀하의 보관함 데이터 중 {percent}이 Engram과 동기화됩니다",
@@ -607,13 +606,13 @@ const ko: Dict = {
 	"{count} ignored": "{count}개 제외됨",
 	"{count} missing on server": "서버에 {count}이 없습니다",
 	"{count} need attention": "{count} 건 확인이 필요합니다",
+	"{count} new": "{count} 개 새 항목",
 	"{count} notes": "{count}개의 노트",
 	"{count} only on server": "{count}이(가) 서버에만 있습니다",
 	"{count} queued — {reason}": "{count}개 대기 중 — {reason}",
 	"{count} retrying": "{count} 재시도 중",
 	"{desc} — should not be synced": "{desc} — 동기화 대상이 아닙니다",
 	"{first} and {second}": "{first} 및 {second}",
-	"{folder} {count} notes ({newCount} new)": "{folder} {count} 노트 ({newCount} 새 노트)",
 	"{formatted} per day": "{formatted}개/일",
 	"{label} ({count} queued)": "{label} ({count}개 대기 중)",
 	"{n} of 5": "5개 중 {n}개",

@@ -339,7 +339,7 @@ const ptBR: Dict = {
 	"How do you feel about Engram?": "O que você acha do Engram?",
 	"I understand {count} notes will not sync.": {
 		one: "Entendo que {count} nota não será sincronizada.",
-		many: "Entendo que {count} de notas não serão sincronizadas.",
+		many: "Entendo que {count} notas não serão sincronizadas.",
 		other: "Entendo que {count} notas não serão sincronizadas.",
 	},
 	Idea: "Ideia",
@@ -583,10 +583,10 @@ const ptBR: Dict = {
 		"Esta nota não pôde ser processada e foi ignorada.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Este servidor é auto-hospedado, portanto, os comentários não são coletados aqui. ",
-	"This sync adds {count} notes. Your plan has room for {room}.": {
-		one: "Esta sincronização adiciona {count} nota. Seu plano tem espaço para {room}.",
-		many: "Esta sincronização adiciona {count} de notas. Seu plano tem espaço para {room}.",
-		other: "Esta sincronização adiciona {count} notas. Seu plano tem espaço para {room}.",
+	"This sync adds {count} notes.": {
+		one: "Esta sincronização adiciona {count} nota.",
+		many: "Esta sincronização adiciona {count} de notas.",
+		other: "Esta sincronização adiciona {count} notas.",
 	},
 	"This vault": "Este cofre",
 	"This vault is empty on the server. Upload your {what}?":
@@ -670,6 +670,11 @@ const ptBR: Dict = {
 	"Your feedback": "Seu feedback",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Sua sessão expirou. Faça login novamente nas configurações de Engram para continuar.",
+	"Your plan has room for {count}.": {
+		one: "Seu plano tem espaço para {count}.",
+		many: "Seu plano tem espaço para {count}.",
+		other: "Seu plano tem espaço para {count}.",
+	},
 	"Your plan syncs {limit} notes.": "Seu plano sincroniza {limit} notas.",
 	"Your vault shares {percent} of its data with Engram":
 		"Seu cofre compartilha {percent} de seus dados com Engram",
@@ -759,6 +764,7 @@ const ptBR: Dict = {
 		many: "{count} precisam de atenção",
 		other: "{count} precisam de atenção",
 	},
+	"{count} new": { one: "{count} novo", many: "{count} novas", other: "{count} novas" },
 	"{count} notes": { one: "{count} nota", many: "{count} notas", other: "{count} notas" },
 	"{count} only on server": {
 		one: "{count} apenas no servidor",
@@ -777,11 +783,6 @@ const ptBR: Dict = {
 	},
 	"{desc} — should not be synced": "{desc} — não deve ser sincronizado",
 	"{first} and {second}": "{first} e {second}",
-	"{folder} {count} notes ({newCount} new)": {
-		one: "{folder} {count} nota(s) ({newCount} nova(s))",
-		many: "{folder} {count} notas ({newCount} novas)",
-		other: "{folder} {count} notas ({newCount} novas)",
-	},
 	"{formatted} per day": "{formatted} por dia",
 	"{label} ({count} queued)": {
 		one: "{label} ({count} na fila)",

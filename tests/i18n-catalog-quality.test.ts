@@ -37,6 +37,36 @@ describe("committed catalogs", () => {
 	});
 });
 
+describe("placeholders survive translation once each", () => {
+	// The core gate checks which placeholders appear, not how often: pt once
+	// rendered "O plano de {room} tem espaço para {room}".
+	// A `one` form may spell the number out ("jeden"), so it may drop {count}.
+	const slots = (text: string, dropCount = false) =>
+		(text.match(/\{\w+\}/g) ?? [])
+			.filter((p) => !(dropCount && p === "{count}"))
+			.sort()
+			.join(" ");
+	test.each(catalogs)("%s repeats no placeholder", (_code, catalog) => {
+		const bad: string[] = [];
+		for (const [key, value] of Object.entries(catalog)) {
+			const forms: [string, string][] =
+				typeof value === "string" ? [["other", value]] : Object.entries(value);
+			for (const [cat, form] of forms) {
+				const one = cat === "one";
+				if (slots(form, one) !== slots(key, one)) bad.push(`${key} => ${form}`);
+			}
+		}
+		expect(bad).toEqual([]);
+	});
+
+	test("pl: 'I understand {count} notes will not sync.' says notes, not versions", () => {
+		const pl =
+			Object.fromEntries(catalogs)["pl"]?.["I understand {count} notes will not sync."];
+		const forms = typeof pl === "object" ? Object.values(pl) : [pl ?? ""];
+		expect(forms.filter((f) => /wersj/.test(f))).toEqual([]);
+	});
+});
+
 describe("renderCatalog", () => {
 	test("writes the catalog file shape, single-form plurals as plain strings", () => {
 		expect(

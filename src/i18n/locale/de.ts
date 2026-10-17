@@ -555,9 +555,9 @@ const de: Dict = {
 		"Diese Notiz konnte nicht verarbeitet und wurde übersprungen.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Dieser Server ist selbst gehostet, daher werden hier keine Daten gesammelt. ",
-	"This sync adds {count} notes. Your plan has room for {room}.": {
-		one: "Diese Synchronisierung fügt {count} Notiz hinzu. Dein Plan hat noch Platz für {room}.",
-		other: "Diese Synchronisierung fügt {count} Notizen hinzu. Dein Plan hat noch Platz für {room}.",
+	"This sync adds {count} notes.": {
+		one: "Diese Synchronisierung fügt {count} Notiz hinzu.",
+		other: "Diese Synchronisierung fügt {count} Notizen hinzu.",
 	},
 	"This vault": "Dieser Vault",
 	"This vault is empty on the server. Upload your {what}?":
@@ -633,6 +633,10 @@ const de: Dict = {
 	"Your feedback": "Dein Feedback",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Dein Login ist abgelaufen. Melde dich erneut in den Engram-Einstellungen an, um fortzufahren.",
+	"Your plan has room for {count}.": {
+		one: "Dein Plan hat noch Kapazität für {count}.",
+		other: "Dein Plan hat noch Platz für {count}.",
+	},
 	"Your plan syncs {limit} notes.": "Dein Plan synchronisiert {limit} Notizen.",
 	"Your vault shares {percent} of its data with Engram":
 		"Dein Vault teilt {percent} seiner Daten mit Engram",
@@ -694,6 +698,7 @@ const de: Dict = {
 		one: "{count} erfordert deine Aufmerksamkeit",
 		other: "{count} erfordern deine Aufmerksamkeit",
 	},
+	"{count} new": { one: "{count} neu", other: "{count} neu" },
 	"{count} notes": { one: "{count} Notiz", other: "{count} Notizen" },
 	"{count} only on server": {
 		one: "{count} nur auf dem Server",
@@ -706,10 +711,6 @@ const de: Dict = {
 	"{count} retrying": { one: "{count} Wiederholung", other: "{count} Wiederholungsversuche" },
 	"{desc} — should not be synced": "{desc} — soll nicht synchronisiert werden",
 	"{first} and {second}": "{first} und {second}",
-	"{folder} {count} notes ({newCount} new)": {
-		one: "{folder} {count} Notiz ({newCount} neu)",
-		other: "{folder} {count} Notizen ({newCount} neu)",
-	},
 	"{formatted} per day": "{formatted} pro Tag",
 	"{label} ({count} queued)": {
 		one: "{label} ({count} in der Warteschlange)",

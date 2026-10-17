@@ -357,7 +357,7 @@ const pl: Dict = {
 		one: "Rozumiem, że {count} notatka nie zostanie zsynchronizowana.",
 		few: "Rozumiem, że {count} notatki nie zostaną zsynchronizowane.",
 		many: "Rozumiem, że {count} notatek nie zostanie zsynchronizowanych.",
-		other: "Rozumiem, że notatki w wersji {count} nie zostaną zsynchronizowane.",
+		other: "Rozumiem, że {count} notatek nie zostanie zsynchronizowanych.",
 	},
 	Idea: "Pomysł",
 	"If this plugin saves you time, consider supporting development.":
@@ -601,11 +601,11 @@ const pl: Dict = {
 		"Nie można było przetworzyć tej notatki i pominięto ją.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Ten serwer jest hostowany samodzielnie, więc tutaj nie są zbierane żadne dane. ",
-	"This sync adds {count} notes. Your plan has room for {room}.": {
-		one: "Ta synchronizacja dodaje {count} notatkę. Twój plan pozwala na {room}.",
-		few: "Ta synchronizacja dodaje {count} notatki. Twój plan pozwala na {room}.",
-		many: "Ta synchronizacja dodaje {count} notatek. Twój plan pozwala na {room}.",
-		other: "Ta synchronizacja dodaje {count} notatek. Twój plan pozwala na {room}.",
+	"This sync adds {count} notes.": {
+		one: "Ta synchronizacja dodaje {count} notatkę.",
+		few: "Ta synchronizacja doda {count} notatki.",
+		many: "Ta synchronizacja doda {count} notatek.",
+		other: "Ta synchronizacja doda {count} notatek.",
 	},
 	"This vault": "Ten sejf",
 	"This vault is empty on the server. Upload your {what}?":
@@ -692,6 +692,12 @@ const pl: Dict = {
 	"Your feedback": "Twoja opinia",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Twoje logowanie wygasło. Zaloguj się ponownie w ustawieniach Engram, aby kontynuować.",
+	"Your plan has room for {count}.": {
+		one: "Twój plan ma miejsce na {count}.",
+		few: "Twój plan ma miejsce na {count}.",
+		many: "Twój plan ma miejsce na {count}.",
+		other: "Twój plan ma miejsce na {count}.",
+	},
 	"Your plan syncs {limit} notes.": "Twój plan synchronizuje {limit} notatek.",
 	"Your vault shares {percent} of its data with Engram":
 		"Twój sejf udostępnia {percent} swoich danych do Engram",
@@ -794,6 +800,12 @@ const pl: Dict = {
 		many: "{count} wymaga uwagi",
 		other: "{count} wymaga uwagi",
 	},
+	"{count} new": {
+		one: "{count} nowy",
+		few: "{count} nowe",
+		many: "{count} nowych",
+		other: "{count} nowych",
+	},
 	"{count} notes": {
 		one: "{count} notatka",
 		few: "{count} notatki",
@@ -820,12 +832,6 @@ const pl: Dict = {
 	},
 	"{desc} — should not be synced": "{desc} — nie będzie synchronizowany",
 	"{first} and {second}": "{first} i {second}",
-	"{folder} {count} notes ({newCount} new)": {
-		one: "{folder} {count} notatka ({newCount} nowa)",
-		few: "{folder} {count} notatki ({newCount} nowe)",
-		many: "{folder} {count} notatek ({newCount} nowych)",
-		other: "{folder} {count} notatek ({newCount} nowych)",
-	},
 	"{formatted} per day": "{formatted} dziennie",
 	"{label} ({count} queued)": {
 		one: "{label} ({count} w kolejce)",

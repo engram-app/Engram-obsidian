@@ -340,7 +340,7 @@ const es: Dict = {
 	"How do you feel about Engram?": "¿Qué te parece Engram?",
 	"I understand {count} notes will not sync.": {
 		one: "Entiendo que {count} nota no se sincronizará.",
-		many: "Entiendo que no se sincronizarán {count} de notas.",
+		many: "Entiendo que {count} notas no se sincronizarán.",
 		other: "Entiendo que {count} notas no se sincronizarán.",
 	},
 	Idea: "Idea",
@@ -585,10 +585,10 @@ const es: Dict = {
 		"Esta nota no se pudo procesar y se omitió.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Este servidor es autohospedado, por lo que los comentarios no se recopilan aquí. ",
-	"This sync adds {count} notes. Your plan has room for {room}.": {
-		one: "Esta sincronización añade {count} nota. Tu plan tiene espacio para {room}.",
-		many: "Esta sincronización añade {count} de notas. Tu plan tiene espacio para {room}.",
-		other: "Esta sincronización añade {count} notas. Tu plan tiene espacio para {room}.",
+	"This sync adds {count} notes.": {
+		one: "Esta sincronización añade {count} nota.",
+		many: "Esta sincronización añade {count} de notas.",
+		other: "Esta sincronización añade {count} notas.",
 	},
 	"This vault": "Esta bóveda",
 	"This vault is empty on the server. Upload your {what}?":
@@ -671,6 +671,11 @@ const es: Dict = {
 	"Your feedback": "Tu opinión",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Tu sesión ha expirado. Inicia sesión de nuevo en la configuración de Engram para continuar.",
+	"Your plan has room for {count}.": {
+		one: "Tu plan tiene espacio para {count}.",
+		many: "Tu plan tiene espacio para {count}.",
+		other: "Tu plan tiene espacio para {count}.",
+	},
 	"Your plan syncs {limit} notes.": "Tu plan sincroniza {limit} notas.",
 	"Your vault shares {percent} of its data with Engram":
 		"Tu bóveda comparte {percent} de sus datos con Engram",
@@ -760,6 +765,7 @@ const es: Dict = {
 		many: "{count} requieren atención",
 		other: "{count} requieren atención",
 	},
+	"{count} new": { one: "{count} nueva", many: "{count} nuevas", other: "{count} nuevas" },
 	"{count} notes": { one: "{count} nota", many: "{count} notas", other: "{count} notas" },
 	"{count} only on server": {
 		one: "{count} solo en el servidor",
@@ -778,11 +784,6 @@ const es: Dict = {
 	},
 	"{desc} — should not be synced": "{desc} — no debe sincronizarse",
 	"{first} and {second}": "{first} y {second}",
-	"{folder} {count} notes ({newCount} new)": {
-		one: "{folder} {count} nota ({newCount} nueva)",
-		many: "{folder} {count} notas ({newCount} nuevas)",
-		other: "{folder} {count} notas ({newCount} nuevas)",
-	},
 	"{formatted} per day": "{formatted} por día",
 	"{label} ({count} queued)": {
 		one: "{label} ({count} en cola)",

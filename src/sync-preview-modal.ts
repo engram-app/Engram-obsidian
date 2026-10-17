@@ -338,6 +338,13 @@ export function deletesRemote(choice: SyncChoice): boolean {
 	return choice === "push-all-delete-remote";
 }
 
+/** "This sync adds N notes. Your plan has room for M." as two sentences, each
+ *  pluralized by its own count. One string carrying both numbers translated
+ *  badly: pt repeated {room}, and its plural form followed {count} alone. */
+export function overLimitHeading(count: number, room: number): string {
+	return `${t("This sync adds {count} notes.", { count })} ${t("Your plan has room for {count}.", { count: room })}`;
+}
+
 /** The notes limit and the room left under it (never negative). */
 export interface NotesQuota {
 	limit: number;
@@ -1312,10 +1319,7 @@ export class SyncPreviewModal extends Modal {
 		// and only a verified-unlimited re-check clears it, which leaves the step.
 		if (!quota) throw new Error("over-limit view rendered without a notes quota");
 		contentEl.createEl("h2", {
-			text: t("This sync adds {count} notes. Your plan has room for {room}.", {
-				count: this.state.newNotePaths().length,
-				room: formatNumber(quota.room),
-			}),
+			text: overLimitHeading(this.state.newNotePaths().length, quota.room),
 			cls: "engram-sync-preview-header",
 		});
 		contentEl.createEl("p", {
@@ -1679,10 +1683,7 @@ export class FolderOverLimitModal extends Modal {
 		const { count, quota, upgradeUrl } = this;
 		contentEl.addClass("engram-sync-preview-modal");
 		contentEl.createEl("h2", {
-			text: t("This sync adds {count} notes. Your plan has room for {room}.", {
-				count,
-				room: formatNumber(quota.room),
-			}),
+			text: overLimitHeading(count, quota.room),
 			cls: "engram-sync-preview-header",
 		});
 		contentEl.createEl("p", {

@@ -358,7 +358,7 @@ const ru: Dict = {
 		one: "Я понимаю, что {count} заметка не будет синхронизирована.",
 		few: "Я понимаю, что {count} заметки не будут синхронизированы.",
 		many: "Я понимаю, что {count} заметок не будут синхронизированы.",
-		other: "Я понимаю, что заметки версии {count} не будут синхронизироваться.",
+		other: "Я понимаю, что {count} заметки не будут синхронизированы.",
 	},
 	Idea: "Предложение",
 	"If this plugin saves you time, consider supporting development.":
@@ -602,11 +602,11 @@ const ru: Dict = {
 		"Эта заметка не может быть обработана и была пропущена.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Этот сервер работает локально, поэтому отзывы здесь не собираются. ",
-	"This sync adds {count} notes. Your plan has room for {room}.": {
-		one: "Эта синхронизация добавит {count} заметку. В вашем плане доступно {room}.",
-		few: "Эта синхронизация добавит {count} заметки. У вашего плана есть место для {room}.",
-		many: "Эта синхронизация добавит {count} заметок. В вашем плане доступно {room}.",
-		other: "Эта синхронизация добавит {count} заметки. У вашего плана есть место для {room}.",
+	"This sync adds {count} notes.": {
+		one: "Эта синхронизация добавит {count} заметку.",
+		few: "Эта синхронизация добавит {count} заметки.",
+		many: "Эта синхронизация добавит {count} заметок.",
+		other: "Эта синхронизация добавит {count} заметки.",
 	},
 	"This vault": "Это хранилище",
 	"This vault is empty on the server. Upload your {what}?":
@@ -695,6 +695,12 @@ const ru: Dict = {
 	"Your feedback": "Ваши отзывы",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Ваш сеанс завершён. Войдите снова в настройках Engram, чтобы продолжить.",
+	"Your plan has room for {count}.": {
+		one: "Ваш тарифный план позволяет хранить {count} заметку.",
+		few: "Ваш тарифный план позволяет хранить {count} заметки.",
+		many: "Ваш тарифный план позволяет хранить {count}.",
+		other: "Ваш тарифный план позволяет хранить {count}.",
+	},
 	"Your plan syncs {limit} notes.": "Ваш план синхронизирует {limit} заметок.",
 	"Your vault shares {percent} of its data with Engram":
 		"Ваше хранилище передает {percent} своих данных в Engram",
@@ -797,6 +803,12 @@ const ru: Dict = {
 		many: "{count} требует внимания",
 		other: "{count} требует внимания",
 	},
+	"{count} new": {
+		one: "{count} новая",
+		few: "{count} новых",
+		many: "{count} новых",
+		other: "{count} новых",
+	},
 	"{count} notes": {
 		one: "{count} заметка",
 		few: "{count} заметки",
@@ -823,12 +835,6 @@ const ru: Dict = {
 	},
 	"{desc} — should not be synced": "{desc} — не должно синхронизироваться",
 	"{first} and {second}": "{first} и {second}",
-	"{folder} {count} notes ({newCount} new)": {
-		one: "{folder} {count} заметки ({newCount} новых)",
-		few: "{folder} {count} заметки ({newCount} новых)",
-		many: "{folder} {count} заметок ({newCount} новых)",
-		other: "{folder} {count} заметки ({newCount} новых)",
-	},
 	"{formatted} per day": "{formatted} в день",
 	"{label} ({count} queued)": {
 		one: "{label} ({count} в очереди)",

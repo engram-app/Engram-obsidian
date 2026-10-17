@@ -1,12 +1,13 @@
-import { describe, expect, mock, test } from "bun:test";
+import { afterAll, describe, expect, mock, test } from "bun:test";
 import {
 	countNotesByFolder,
 	FolderPicker,
 	ROOT_FOLDER,
 	selectedNoteCount,
 } from "../src/folder-picker";
+import { t } from "../src/i18n";
 import { inExcludedFolder, matchesIgnorePattern } from "../src/ignore-match";
-import { makeEl } from "./__mocks__/obsidian";
+import { __setLanguage, makeEl } from "./__mocks__/obsidian";
 
 const PATHS = [
 	"Inbox.md",
@@ -162,5 +163,23 @@ describe("FolderPicker", () => {
 			for (const c of el.children) walk(c);
 		})(parent);
 		expect(texts.some((x) => x.startsWith("Selected"))).toBe(false);
+	});
+});
+
+describe("FolderPicker pluralizes total and new counts separately", () => {
+	afterAll(() => __setLanguage("en"));
+
+	test("5 notes with 1 new picks each count's own plural form", () => {
+		__setLanguage("pl");
+		const parent = makeEl();
+		const notes = ["A/1.md", "A/2.md", "A/3.md", "A/4.md", "A/5.md"];
+		new FolderPicker(parent, {
+			notePaths: notes,
+			newPaths: ["A/1.md"],
+			excluded: [],
+			onChange: () => {},
+		});
+		const expected = `A ${t("{count} notes", { count: 5 })} (${t("{count} new", { count: 1 })})`;
+		expect(parent.__find(expected)).not.toBeNull();
 	});
 });
