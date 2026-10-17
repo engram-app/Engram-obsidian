@@ -329,6 +329,15 @@ describe("Sync again checks the notes quota first", () => {
 		expect(fake.settings.excludedFolders).toEqual([]);
 	});
 
+	test("a lookup that never answers proceeds after the cap, as unknown", async () => {
+		const fake = setup(room(10, 9), false);
+		fake.api.getBillingUsage = mock(() => new Promise(() => {}));
+		fake.quotaWaitMs = 5;
+		await fake.syncFolderAgain("Archive");
+		expect(fake.confirmFolderOverLimit).not.toHaveBeenCalled();
+		expect(fake.settings.excludedFolders).toEqual([]);
+	});
+
 	test("self-host makes no billing lookup", async () => {
 		const fake = setup(room(10, 9), false);
 		fake.settings.backendMode = "selfhost";

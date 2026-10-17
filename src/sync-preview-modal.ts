@@ -625,7 +625,18 @@ export function simplifiedScreenCopy(simple: NonNullable<ReturnType<typeof simpl
 
 /** How long an option click waits for the open-time quota lookup before it
  *  proceeds as if the quota were unknown. */
-const QUOTA_WAIT_MS = 3000;
+export const QUOTA_WAIT_MS = 3000;
+
+/** `p`, or `fallback` once `ms` has passed without an answer. */
+export function within<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
+	let timer: number | undefined;
+	return Promise.race([
+		p,
+		new Promise<T>((r) => {
+			timer = window.setTimeout(() => r(fallback), ms);
+		}),
+	]).finally(() => window.clearTimeout(timer));
+}
 
 /** Wait this long before the "Comparing…" line appears. Plans that resolve
  *  faster show no loading copy at all. */
@@ -1225,16 +1236,9 @@ export class SyncPreviewModal extends Modal {
 				from.disabled = true;
 				from.setAttribute("aria-busy", "true");
 			}
-			let timer: number | undefined;
 			try {
-				await Promise.race([
-					this.quotaPending,
-					new Promise<void>((r) => {
-						timer = window.setTimeout(r, this.quotaWaitMs);
-					}),
-				]);
+				await within(this.quotaPending, this.quotaWaitMs, undefined);
 			} finally {
-				window.clearTimeout(timer);
 				this.picking = false;
 				if (from) {
 					from.disabled = false;

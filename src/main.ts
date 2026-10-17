@@ -84,8 +84,10 @@ import {
 	fetchNotesQuota,
 	type NotesQuota,
 	planLoadErrorMessage,
+	QUOTA_WAIT_MS,
 	SyncPreviewModal,
 	type SyncPreviewOptions,
+	within,
 } from "./sync-preview-modal";
 import {
 	describePlannedWork,
@@ -3701,6 +3703,8 @@ export default class EngramSyncPlugin extends Plugin {
 	}
 
 	private folderAgainQueue?: Promise<void>;
+	/** QUOTA_WAIT_MS unless a test shortens it. */
+	private quotaWaitMs?: number;
 
 	/** Tell the engine first (holdReinclude), so every save from here on,
 	 *  this one or any landing during the deletes, carries the folder's content
@@ -3731,7 +3735,12 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  quota proceed, exactly as the first-sync step treats them. */
 	private async folderFitsOrAcknowledged(folder: string): Promise<boolean> {
 		if (!offersUpgrades(this.settings)) return true;
-		const quota = await fetchNotesQuota(() => this.api.getBillingUsage());
+		// Capped like the first-sync pick: past it the quota counts as unknown.
+		const quota = await within(
+			fetchNotesQuota(() => this.api.getBillingUsage()),
+			this.quotaWaitMs ?? QUOTA_WAIT_MS,
+			null,
+		);
 		if (quota === null || quota === "unlimited") return true;
 		const count = this.syncEngine.untrackedNotePaths(folder).length;
 		return count <= quota.room || this.confirmFolderOverLimit(count, quota);
