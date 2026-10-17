@@ -1,5 +1,49 @@
+import { inExcludedFolder } from "./ignore-match";
 import type { SyncChoice, SyncPlan } from "./types";
 import { DESTRUCTIVE_CHOICES } from "./types";
+
+/** Count distinct parent folders across the given file paths. Files at the
+ *  root contribute nothing; "a/b/c.md" contributes "a/b". Used by the sync
+ *  preview to surface "how many folders contain files" per side. */
+export function countFolders(paths: Iterable<string>): number {
+	const set = new Set<string>();
+	for (const p of paths) {
+		const idx = p.lastIndexOf("/");
+		if (idx > 0) set.add(p.substring(0, idx));
+	}
+	return set.size;
+}
+
+/** `plan` as computeSyncPlan would build it with `folders` also excluded.
+ *  Sound because computeSyncPlan classifies each path on its own: excluding a
+ *  folder only removes its paths, so filtering every list (and recounting) is
+ *  the candidate plan without a second whole-server enumeration. */
+export function planWithoutFolders(plan: SyncPlan, folders: string[]): SyncPlan {
+	const keep = (paths: string[]) => paths.filter((p) => !inExcludedFolder(p, folders));
+	const localPaths = keep(plan.localPaths);
+	const localNotePaths = keep(plan.localNotePaths);
+	const serverPaths = keep(plan.serverPaths);
+	// computeSyncPlan lists the live server notes first, then attachments.
+	const serverNoteCount = keep(plan.serverPaths.slice(0, plan.serverNoteCount)).length;
+	return {
+		...plan,
+		serverNoteCount,
+		serverAttachmentCount: serverPaths.length - serverNoteCount,
+		serverFolderCount: countFolders(serverPaths),
+		localNoteCount: localNotePaths.length,
+		localAttachmentCount: localPaths.length - localNotePaths.length,
+		localFolderCount: countFolders(localPaths),
+		localPaths,
+		localNotePaths,
+		newNotePaths: keep(plan.newNotePaths),
+		serverPaths,
+		toPush: { notes: keep(plan.toPush.notes), attachments: keep(plan.toPush.attachments) },
+		toPull: { notes: keep(plan.toPull.notes), attachments: keep(plan.toPull.attachments) },
+		conflicts: keep(plan.conflicts),
+		toDeleteLocal: keep(plan.toDeleteLocal),
+		toDeleteRemote: keep(plan.toDeleteRemote),
+	};
+}
 
 /** True when the plan has nothing for the engine to do. */
 export function isPlanEmpty(plan: SyncPlan): boolean {

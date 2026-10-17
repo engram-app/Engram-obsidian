@@ -65,17 +65,7 @@ describe("self-host makes no billing lookups", () => {
 	});
 });
 
-describe("applyExclusions persists only after the plan recomputes", () => {
-	test("a failed recompute leaves settings and engine patterns unchanged", async () => {
-		const { fake, seenByEngine } = makeFakePlugin(() => Promise.reject(new Error("offline")));
-		await expect(hooksOf(fake).applyExclusions(["Archive"])).rejects.toThrow("offline");
-
-		expect(fake.settings.excludedFolders).toEqual(["Old"]);
-		// The live engine never saw the candidate exclusions.
-		expect(seenByEngine).toEqual([]);
-		expect(fake.savePluginData).not.toHaveBeenCalled();
-	});
-
+describe("applyExclusions persists the merged list", () => {
 	test("a failed save leaves settings and engine patterns unchanged", async () => {
 		const { fake, seenByEngine } = makeFakePlugin(async () => PLAN);
 		fake.savePluginData = mock(() => Promise.reject(new Error("disk full")));
@@ -86,38 +76,21 @@ describe("applyExclusions persists only after the plan recomputes", () => {
 		expect(seenByEngine).toEqual([]);
 	});
 
-	test("a successful recompute saves the merged patterns after the plan", async () => {
+	test("a successful save stores the merged list, then tells the engine", async () => {
 		const { fake, seenByEngine, order } = makeFakePlugin(async () => PLAN);
-		expect(await hooksOf(fake).applyExclusions(["Archive"])).toBe(PLAN);
+		await hooksOf(fake).applyExclusions(["Archive"]);
 
 		expect(fake.settings.excludedFolders).toEqual(["Old", "Archive"]);
 		expect(seenByEngine.at(-1)).toEqual(["Old", "Archive"]);
 		// The user's own ignore text is never touched.
 		expect(fake.settings.ignorePatterns).toBe("Templates/");
-		expect(order).toEqual(["plan", "save", "engine"]);
+		expect(order).toEqual(["save", "engine"]);
 	});
 
-	test("the candidate plan is computed without touching the live engine", async () => {
-		let engineDuringPlan: string[] | undefined;
-		let planOpts: unknown;
-		const { fake } = makeFakePlugin(async (opts) => {
-			planOpts = opts;
-			engineDuringPlan = [...fake.syncEngine.settings.excludedFolders];
-			return PLAN;
-		});
-		fake.syncEngine.settings = fake.settings; // the engine shares the object
-		await hooksOf(fake).applyExclusions(["Archive"]);
-
-		expect(planOpts).toEqual({ excludedFolders: ["Old", "Archive"] });
-		expect(engineDuringPlan).toEqual(["Old"]);
-	});
-
-	test("a modal closed during the recompute commits nothing", async () => {
+	test("a modal closed before the save commits nothing", async () => {
 		const ctrl = new AbortController();
-		const { fake, seenByEngine } = makeFakePlugin(async () => {
-			ctrl.abort(); // Esc while the plan is computing
-			return PLAN;
-		});
+		ctrl.abort();
+		const { fake, seenByEngine } = makeFakePlugin(async () => PLAN);
 		await expect(hooksOf(fake).applyExclusions(["Archive"], ctrl.signal)).rejects.toThrow();
 
 		expect(fake.settings.excludedFolders).toEqual(["Old"]);
@@ -138,6 +111,14 @@ describe("applyExclusions persists only after the plan recomputes", () => {
 		expect(fake.settings.excludedFolders).toEqual(["Old"]);
 		expect(saved.at(-1)).toEqual(["Old"]);
 		expect(seenByEngine).toEqual([]);
+	});
+});
+
+describe("applyExclusions only persists", () => {
+	test("never re-enumerates the server: the modal filters the plan it holds", async () => {
+		const { fake } = makeFakePlugin(async () => PLAN);
+		await hooksOf(fake).applyExclusions(["Archive"]);
+		expect(fake.syncEngine.computeSyncPlan).not.toHaveBeenCalled();
 	});
 });
 

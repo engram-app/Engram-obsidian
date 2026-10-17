@@ -15,6 +15,7 @@ import {
 	isPlanEmpty,
 	type OptionBreakdown,
 	optionBreakdown,
+	planWithoutFolders,
 	simplifiedFirstSync,
 } from "./sync-plan-format";
 import type { SyncChoice, SyncPlan, SyncPreviewContext, VaultInfo } from "./types";
@@ -63,7 +64,7 @@ export class SyncPreviewState {
 	overLimitExcluded: string[] = [];
 	/** "I understand N notes will not sync." Reset whenever N changes. */
 	overLimitAck = false;
-	/** The exclusions are being saved and the plan recomputed. */
+	/** The exclusions are being saved. */
 	overLimitSaving = false;
 	/** The last save failure, kept here so a re-render still shows it. */
 	overLimitError: string | null = null;
@@ -188,7 +189,7 @@ export class SyncPreviewState {
 
 	/** Leave the step and carry on with the option the user picked, exactly as
 	 *  if the step had not been there (destructive options still confirm).
-	 *  `plan` is the recomputed plan after the exclusions were saved, if any. */
+	 *  `plan` is the plan minus the folders just excluded, if any. */
 	finishOverLimit(plan: SyncPlan | null): void {
 		if (this.resolved || this.view !== "over-limit") return;
 		// replacePlan clears overLimitDone, so it is set after.
@@ -272,7 +273,7 @@ export class SyncPreviewState {
 	/** Swap in the SyncPlan that came back from applyVaultChange, or the deferred
 	 *  initial plan once it resolves. Clears any prior plan-load error. Caller is
 	 *  responsible for re-rendering. */
-	/** A new plan (vault switch, recompute) has new notes, so any over-limit
+	/** A new plan (vault switch, exclusions) has new notes, so any over-limit
 	 *  answer given for the old one no longer holds. */
 	replacePlan(plan: SyncPlan): void {
 		this.plan = plan;
@@ -563,10 +564,11 @@ export interface SyncPreviewOptions {
 	/** Billing page for the over-limit step's Upgrade button. Null/omitted on a
 	 *  server that sells no plans (see upgradeUrlFor), which hides the button. */
 	upgradeUrl?: string | null;
-	/** Saves the over-limit step's unticked top-level folders and returns the
-	 *  recomputed plan. Only called when the user unticked at least one.
-	 *  `signal` aborts when the modal closes first: nothing may be committed. */
-	applyExclusions?: (folders: string[], signal: AbortSignal) => Promise<SyncPlan>;
+	/** Saves the over-limit step's unticked top-level folders. Only called
+	 *  when the user unticked at least one; the modal then filters its own
+	 *  plan (planWithoutFolders). `signal` aborts when the modal closes first:
+	 *  nothing may be committed. */
+	applyExclusions?: (folders: string[], signal: AbortSignal) => Promise<void>;
 	/** `/billing/usage`, for the notes quota. Fetched on open, again on
 	 *  entering the over-limit step and on window focus while it is open (the
 	 *  user may have just upgraded in the browser). */
@@ -1349,7 +1351,9 @@ export class SyncPreviewModal extends Modal {
 			const saving = new AbortController();
 			this.saving = saving;
 			try {
-				plan = await this.opts.applyExclusions(folders, saving.signal);
+				await this.opts.applyExclusions(folders, saving.signal);
+				const held = this.state.plan;
+				plan = held && planWithoutFolders(held, folders);
 			} catch (e: unknown) {
 				if (saving.signal.aborted) return; // closed mid-save; nothing to show
 				devLog().log("error", `saving over-limit exclusions failed: ${errMsg(e)}`);

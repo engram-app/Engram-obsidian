@@ -3599,23 +3599,19 @@ export default class EngramSyncPlugin extends Plugin {
 
 	/** Over-limit step: the unticked top-level folders join
 	 *  `settings.excludedFolders` (the user's ignore text is never touched).
-	 *  The candidate plan is computed with the candidate list WITHOUT touching
-	 *  the live engine; the list is saved next, and only then is the engine
-	 *  told. Any failure, or `signal` aborting (the modal was closed), leaves
-	 *  settings and engine as they were. Persisted without saveSettings, which
-	 *  would re-fire the first-sync flow and stack a second modal. */
-	private async applyOverLimitExclusions(
-		folders: string[],
-		signal?: AbortSignal,
-	): Promise<SyncPlan> {
-		const previous = this.settings.excludedFolders;
-		const excludedFolders = [...new Set([...previous, ...folders])];
-		const plan = await this.syncEngine.computeSyncPlan("full", { excludedFolders });
+	 *  Only persists: the modal filters the plan it already holds
+	 *  (planWithoutFolders) rather than re-enumerating the server. The engine
+	 *  is told only after the save succeeds. Any failure, or `signal` aborting
+	 *  (the modal was closed), leaves the list as it was. Persisted without
+	 *  saveSettings, which would re-fire the first-sync flow and stack a
+	 *  second modal. */
+	private async applyOverLimitExclusions(folders: string[], signal?: AbortSignal): Promise<void> {
 		signal?.throwIfAborted();
+		const previous = this.settings.excludedFolders;
 		// In place, and only this field: the API client and engine hold this
 		// object, and an OAuth rotation during the save writes its single-use
 		// refresh token here. Reverting the whole object would drop it.
-		this.settings.excludedFolders = excludedFolders;
+		this.settings.excludedFolders = [...new Set([...previous, ...folders])];
 		try {
 			await this.savePluginData(this.syncEngine.getLastSync());
 			signal?.throwIfAborted();
@@ -3627,7 +3623,6 @@ export default class EngramSyncPlugin extends Plugin {
 		}
 		this.syncEngine.updateSettings(this.settings);
 		this.settingTab?.rerender();
-		return plan;
 	}
 
 	/** "Sync again" for a folder in excludedFolders: drop it, save, then run a

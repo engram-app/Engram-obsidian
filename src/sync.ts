@@ -65,6 +65,7 @@ import { attachmentCapabilityGained, type PlanState, samePlanState } from "./pla
 import { formatBytes } from "./plan-usage";
 import { rlog } from "./remote-log";
 import type { SyncLog } from "./sync-log";
+import { countFolders } from "./sync-plan-format";
 import { SyncedFileTable } from "./synced-file";
 import { DefaultTimeProvider, type TimeProvider } from "./time-provider";
 import type {
@@ -242,18 +243,6 @@ export async function reconcileColdStart(
 	// live sync until the user opens it. Enrollment is idempotent (once per
 	// session), so seeding paths pay nothing extra.
 	crdt.enroll?.(file.noteId);
-}
-
-/** Count distinct parent folders across the given file paths. Files at the
- *  root contribute nothing; "a/b/c.md" contributes "a/b". Used by the sync
- *  preview to surface "how many folders contain files" per side. */
-function countFolders(paths: Iterable<string>): number {
-	const set = new Set<string>();
-	for (const p of paths) {
-		const idx = p.lastIndexOf("/");
-		if (idx > 0) set.add(p.substring(0, idx));
-	}
-	return set.size;
 }
 
 /** How long (ms) after a push completes to suppress WebSocket echoes for that path. */

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { CRDT_HEAD_CREATED, fnv1a, SyncEngine } from "../src/sync";
+import { planWithoutFolders } from "../src/sync-plan-format";
 import type { SyncProgress } from "../src/types";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -789,6 +790,90 @@ describe("SyncEngine.computeSyncPlan", () => {
 		expect(plan.toPull.attachments).toEqual([]);
 		expect(plan.serverPaths).toEqual(["Notes/kept.md"]);
 		expect(plan.serverNoteCount).toBe(1);
+	});
+
+	describe("planWithoutFolders", () => {
+		// The over-limit step filters the plan it holds instead of re-enumerating
+		// the server. Only sound if the result is exactly the candidate plan.
+		test("equals computeSyncPlan with the folders as candidate exclusions", async () => {
+			const engine = createEngine({ excludedFolders: ["Old"] });
+			const contents: Record<string, string> = {
+				"Archive/new.md": "# new",
+				"Archive/sub/conflict.md": "# local edit",
+				"Archive/pull.md": "# same",
+				"Archive/gone.md": "# gone",
+				"Notes/new.md": "# n",
+				"Notes/conflict.md": "# local edit",
+				"Root.md": "# r",
+				"Old/x.md": "# x",
+			};
+			const files = [
+				...Object.keys(contents),
+				"Archive/img.png",
+				"Notes/img.png",
+				"Archive/server-deleted.png",
+			].map(makeTFile);
+			mockApp.vault.getFiles.mockReturnValue(files);
+			mockApp.vault.getFileByPath.mockImplementation(
+				(p: string) => files.find((f) => f.path === p) ?? null,
+			);
+			mockApp.vault.cachedRead.mockImplementation(async (f: TFile) => contents[f.path] ?? "");
+			engine.importSyncState({
+				"Archive/sub/conflict.md": { hash: fnv1a("# orig"), serverHash: "OLD" },
+				"Notes/conflict.md": { hash: fnv1a("# orig"), serverHash: "OLD" },
+				"Archive/pull.md": { hash: fnv1a("# same"), serverHash: "OLD" },
+			});
+			const feed = () => [
+				[
+					row({
+						id: "1",
+						seq: 1,
+						path: "Archive/sub/conflict.md",
+						content: "# s",
+						content_hash: "NEW",
+					}),
+					row({
+						id: "2",
+						seq: 2,
+						path: "Notes/conflict.md",
+						content: "# s",
+						content_hash: "NEW",
+					}),
+					row({
+						id: "3",
+						seq: 3,
+						path: "Archive/pull.md",
+						content: "# srv",
+						content_hash: "NEW",
+					}),
+					row({ id: "4", seq: 4, path: "Archive/gone.md", deleted: true }),
+					row({ id: "5", seq: 5, path: "Archive/remote.md", content: "# r" }),
+					row({ id: "6", seq: 6, path: "Notes/remote.md", content: "# r" }),
+					row({ id: "7", seq: 7, path: "Old/y.md", content: "# y" }),
+					{ type: "attachment", seq: 8, path: "Archive/remote.png", deleted: false },
+					{ type: "attachment", seq: 9, path: "Notes/remote.png", deleted: false },
+					{
+						type: "attachment",
+						seq: 10,
+						path: "Archive/server-deleted.png",
+						deleted: true,
+					},
+				],
+			];
+
+			wireFeed(engine, feed());
+			const held = await engine.computeSyncPlan("full");
+			wireFeed(engine, feed());
+			const candidate = await engine.computeSyncPlan("full", {
+				excludedFolders: ["Old", "Archive"],
+			});
+
+			// The fixture really exercises every list, on both sides of the cut.
+			expect(held.conflicts.length).toBe(2);
+			expect(held.toDeleteLocal.length).toBe(2);
+			expect(held.serverAttachmentCount).toBe(2);
+			expect(planWithoutFolders(held, ["Archive"])).toEqual(candidate);
+		});
 	});
 });
 

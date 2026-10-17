@@ -350,7 +350,6 @@ describe("SyncPreviewModal over-limit view", () => {
 		const { modal, choice } = openOverLimit({
 			applyExclusions: async (folders: string[]) => {
 				applied.push(folders);
-				return planWith(["Root.md", "Notes/d.md", "Notes/e.md"]);
 			},
 		});
 		const archive = checkboxFor(modal.contentEl, "Archive 3 notes (3 new)");
@@ -364,17 +363,16 @@ describe("SyncPreviewModal over-limit view", () => {
 		await Bun.sleep(0);
 
 		expect(applied).toEqual([["Archive"]]);
-		expect(modal.getPlan().toPush.notes).toHaveLength(3);
+		expect(modal.getPlan().toPush.notes).toEqual(["Root.md", "Notes/d.md", "Notes/e.md"]);
 		modal.onClose();
 		expect(await choice).toBe("smart-merge");
 	});
 
 	test("Back cannot strand saved patterns with a stale plan", async () => {
-		let release!: (p: SyncPlan) => void;
-		const fresh = planWith(["Root.md", "Notes/d.md", "Notes/e.md"]);
+		let release!: () => void;
 		const { modal, choice } = openOverLimit({
 			applyExclusions: () =>
-				new Promise<SyncPlan>((r) => {
+				new Promise<void>((r) => {
 					release = r;
 				}),
 		});
@@ -391,9 +389,12 @@ describe("SyncPreviewModal over-limit view", () => {
 		cont.listeners.click(); // a re-click must not save twice
 		expect(modal.state.view).toBe("over-limit");
 
-		release(fresh);
+		release();
 		await Bun.sleep(0);
-		expect(modal.getPlan()).toBe(fresh);
+		// The held plan, minus the excluded folder.
+		const kept = ["Root.md", "Notes/d.md", "Notes/e.md"];
+		expect(modal.getPlan().localNotePaths).toEqual(kept);
+		expect(modal.getPlan().toPush.notes).toEqual(kept);
 		modal.onClose();
 		expect(await choice).toBe("smart-merge");
 	});
@@ -414,7 +415,7 @@ describe("over-limit step never ignores notes for a choice that deletes on the s
 	// snapshot as an extra and deletes it, and snapshotLocalPaths omits ignored
 	// paths. An unticked folder would delete its already-uploaded notes.
 	test("push-all-delete-remote renders no folder picker and Continue writes no patterns", async () => {
-		const applyExclusions = mock(async (_p: string[]) => planWith(PATHS));
+		const applyExclusions = mock(async (_p: string[]) => {});
 		const { modal } = openModal(planWith(["Root.md", ...PATHS]), { applyExclusions });
 		modal.state.setNotesQuota({ limit: 10, room: 4 });
 		// Even a selection left over from elsewhere must not be written.
