@@ -69,6 +69,8 @@ function makeDevice(
 		duringWait?: () => void | Promise<void>;
 		/** The auto drain's debounce (default: parked far out). */
 		debounceMs?: number;
+		/** Holds one id's settle until the returned promise resolves. */
+		holdSettle?: (id: string) => Promise<void> | undefined;
 		idMapEra?: () => number;
 		isSyncBlocked?: () => boolean;
 		whenGateOpens?: () => Promise<void>;
@@ -104,6 +106,8 @@ function makeDevice(
 		// for the gate, then asks); refused / no-fetch ids settle at once;
 		// otherwise one manifest pass, after which the id is mapped or given up.
 		awaitNoteIdSettled: async (id: string) => {
+			if (map.pathForId(id) !== null) return; // already mapped: settled, gate or not
+			await opts?.holdSettle?.(id);
 			while (opts?.isSyncBlocked?.()) await (opts?.whenGateOpens?.() ?? Promise.resolve());
 			if (opts?.refuses?.(id)) return;
 			if (!(opts?.ensure?.(id) ?? true)) return;
@@ -701,6 +705,42 @@ test("r12#4 a drain asked for mid-drain runs right after it, not on the timer", 
 	await second;
 	await sleep(20);
 	expect(b.disk.has("QB/two.md")).toBe(true);
+	await destroy(a, b);
+});
+
+test("r13#1 a burst of stranded ids resolves independently: one slow id holds back no sibling", async () => {
+	// e2e test_43 shape: 4 notes strand together; 3 map on the first heal, one
+	// (B) is still waiting. The other three flush without waiting for it, and a
+	// later strand is not queued behind it either.
+	let releaseB: () => void = () => {};
+	const holdB = new Promise<void>((r) => {
+		releaseB = r;
+	});
+	const a = makeDevice("XA", () => 0);
+	let b: Device | null = null;
+	b = makeDevice(
+		"XB",
+		() => {
+			for (const n of ["a", "b", "c", "d", "e"]) b?.map.set(`XB/${n}.md`, `note-x${n}`);
+			return 5;
+		},
+		{ holdSettle: (id) => (id === "note-xb" ? holdB : undefined) },
+	);
+	for (const n of ["a", "b", "c", "d"]) await strandOn(b, a, `note-x${n}`, `${n} body`);
+	void b.wiring.drainStrandedFlushes();
+	await waitFor(
+		async () => ["a", "c", "d"].every((n) => b?.disk.has(`XB/${n}.md`)),
+		"the three siblings flush while B waits",
+	);
+	expect(b.disk.has("XB/b.md")).toBe(false);
+	await strandOn(b, a, "note-xe", "e body");
+	void b.wiring.drainStrandedFlushes();
+	await waitFor(
+		async () => b?.disk.has("XB/e.md") ?? false,
+		"a later strand is not queued behind B",
+	);
+	releaseB();
+	await waitFor(async () => b?.disk.has("XB/b.md") ?? false, "B flushes once it settles");
 	await destroy(a, b);
 });
 

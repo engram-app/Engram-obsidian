@@ -153,63 +153,70 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	const strandedFlushes = new Set<string>();
 	let strandHealTimer: number | null = null;
 	let disposed = false;
-	/** Single-flight: each drain runs after the one before it finishes. */
-	let drainChain: Promise<void> = Promise.resolve();
+	/** Ids whose heal is in flight: single-flight per id, not per drain. */
+	const healing = new Set<string>();
 
-	/** Heal every stranded id through the engine and flush the ones it maps.
-	 *  The engine owns retry, backoff, the gate and give-up: `awaitNoteIdSettled`
-	 *  resolves when the id is mapped, refused or given up, and parks (no
-	 *  timer) while the gate is closed. A drain asked for mid-drain waits for
-	 *  it, then runs its own pass. */
+	/** Heal every stranded id through the engine and flush each one as soon as
+	 *  its own heal settles, so one slow id holds back no sibling and no later
+	 *  drain. The engine owns retry, backoff, the gate and give-up:
+	 *  `awaitNoteIdSettled` resolves when the id is mapped, refused or given
+	 *  up, and parks (no timer) while the gate is closed. An id already being
+	 *  healed is left stranded for its own heal's end. */
 	function drainStrandedFlushes(): Promise<void> {
-		const next = drainChain.then(drainStrandedOnce);
-		drainChain = next.catch(() => {});
-		return next;
+		if (disposed) return Promise.resolve();
+		const ids = [...strandedFlushes].filter((id) => !healing.has(id));
+		for (const id of ids) strandedFlushes.delete(id);
+		return Promise.all(ids.map(healStranded)).then(() => {});
 	}
 
-	async function drainStrandedOnce(): Promise<void> {
-		if (disposed) return;
-		const ids = [...strandedFlushes];
-		strandedFlushes.clear();
-		if (ids.length === 0) return;
-		const era = syncEngine.idMapEra();
-		const startedAt = Date.now();
-		await Promise.all(ids.map((id) => syncEngine.awaitNoteIdSettled(id)));
-		if (disposed || syncEngine.idMapEra() !== era) return; // ids of a gone vault
-		for (const id of ids) {
-			const path = noteIdMap.pathForId(id);
-			if (path === null) {
-				const secs = Math.round((Date.now() - startedAt) / 1000);
-				rlog().warn(
-					"crdt",
-					`onFlushToDisk: giving up on note_id=${id} after ${secs}s: the id-map heal ` +
-						"could not map it — retained in Y.Doc",
-				);
-				continue;
-			}
-			// The flush writes the doc's projection now, which covers a re-strand
-			// of the same id while this drain waited: drop that too.
-			strandedFlushes.delete(id);
-			if (deps.isBound(path)) continue; // live editor owns disk
-			// The primary onFlushToDisk path throws on a refused write; this healed
-			// path can't await (fire-and-forget batch), so surface refusal/failure
-			// via rlog instead of discarding it — content stays safe in the Y.Doc.
-			syncEngine
-				.flushStrandedNote(path, id)
-				.then((ok) => {
-					if (!ok)
-						rlog().warn(
-							"crdt",
-							`strand-heal flush refused for ${noteRef(path)} — retained in Y.Doc`,
-						);
-				})
-				.catch((e) =>
+	async function healStranded(id: string): Promise<void> {
+		healing.add(id);
+		try {
+			const era = syncEngine.idMapEra();
+			const startedAt = Date.now();
+			await syncEngine.awaitNoteIdSettled(id);
+			if (disposed || syncEngine.idMapEra() !== era) return; // an id of a gone vault
+			flushHealed(id, startedAt);
+		} finally {
+			healing.delete(id);
+			// Re-stranded while healing and not covered by its flush: drain again.
+			if (strandedFlushes.has(id)) healUnknownNoteId(id);
+		}
+	}
+
+	function flushHealed(id: string, startedAt: number): void {
+		const path = noteIdMap.pathForId(id);
+		if (path === null) {
+			const secs = Math.round((Date.now() - startedAt) / 1000);
+			rlog().warn(
+				"crdt",
+				`onFlushToDisk: giving up on note_id=${id} after ${secs}s: the id-map heal ` +
+					"could not map it — retained in Y.Doc",
+			);
+			return;
+		}
+		// The flush writes the doc's projection now, which covers a re-strand
+		// of the same id while it healed: drop that too.
+		strandedFlushes.delete(id);
+		if (deps.isBound(path)) return; // live editor owns disk
+		// The primary onFlushToDisk path throws on a refused write; this healed
+		// path can't await (fire-and-forget batch), so surface refusal/failure
+		// via rlog instead of discarding it — content stays safe in the Y.Doc.
+		syncEngine
+			.flushStrandedNote(path, id)
+			.then((ok) => {
+				if (!ok)
 					rlog().warn(
 						"crdt",
-						`strand-heal flush failed for ${noteRef(path)}: ${errMsg(e, path)} — retained in Y.Doc`,
-					),
-				);
-		}
+						`strand-heal flush refused for ${noteRef(path)} — retained in Y.Doc`,
+					);
+			})
+			.catch((e) =>
+				rlog().warn(
+					"crdt",
+					`strand-heal flush failed for ${noteRef(path)}: ${errMsg(e, path)} — retained in Y.Doc`,
+				),
+			);
 	}
 
 	/** Re-resolve a stranded inbound CRDT note (unknown id -> no disk path)

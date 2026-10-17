@@ -27,6 +27,7 @@ import {
 	LIMIT_REASONS,
 	type NotesCapGate,
 } from "./crdt-op-dispatch";
+import { deferred } from "./deferred";
 import { devLog } from "./dev-log";
 import { errMsg, isHttpStatus } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
@@ -1118,9 +1119,11 @@ export class SyncEngine {
 	async reconcileNoteIdMapFromManifest(): Promise<number> {
 		const map = this.noteIdMap;
 		if (!map) return 0;
+		const manifest = await this.api.getManifest();
+		this.idMapFetchSucceeded();
 		// Authoritative and complete: an id it evicts is not on the server, so
 		// no re-heal (that would only buy more whole-vault GETs).
-		return this.applyManifestToNoteIdMap(map, await this.api.getManifest(), () => true, false);
+		return this.applyManifestToNoteIdMap(map, manifest, () => true, false);
 	}
 
 	/** The apply half of `reconcileNoteIdMapFromManifest`, split out so the
@@ -1166,7 +1169,16 @@ export class SyncEngine {
 			// only, `delete` publishes nothing), unless it is an in-flight rename's
 			// newer path, which this snapshot has not caught up to.
 			if (this.isRefusedPath(path)) {
-				if (localPath !== null && (localPath === path || manifestPaths.has(localPath))) {
+				// A cross-wired entry (another note's path) is always wrong. An entry
+				// at the refused path itself is forgotten only for a pending delete:
+				// an ignored note keeps its id, so un-ignoring it later does not mint
+				// a second one.
+				const crossWired =
+					localPath !== null && localPath !== path && manifestPaths.has(localPath);
+				const deleting =
+					localPath === path &&
+					this.queue.hasPendingEvidencedDelete(path, this.settings.vaultId ?? undefined);
+				if (localPath !== null && (crossWired || deleting)) {
 					map.delete(localPath);
 					applied++;
 				}
@@ -1283,10 +1295,7 @@ export class SyncEngine {
 		}
 		const entry = this.idMapPending.get(noteId);
 		if (!entry) {
-			let release: () => void = () => {};
-			const done = new Promise<void>((r) => {
-				release = r;
-			});
+			const { promise: done, resolve: release } = deferred();
 			this.idMapPending.set(noteId, {
 				attempts: 0,
 				askedGen: this.idMapFetchGen,
@@ -1332,6 +1341,8 @@ export class SyncEngine {
 	 *  a vault switch / destroy. A closed gate is not a settle: it waits for
 	 *  the gate to open, without a timer, then asks. */
 	async awaitNoteIdSettled(noteId: string): Promise<void> {
+		// Already mapped is settled, gate or not: only an unmapped id waits.
+		if (this.noteIdMap?.pathForId(noteId) != null) return;
 		const epoch = this.idMapEpoch;
 		while (this.syncBlocked) {
 			await this.whenGateOpens();
@@ -1347,10 +1358,7 @@ export class SyncEngine {
 		if (gen <= this.idMapDoneGen) return Promise.resolve();
 		const existing = this.idMapFetchWaits.get(gen);
 		if (existing) return existing.promise;
-		let resolve: () => void = () => {};
-		const promise = new Promise<void>((r) => {
-			resolve = r;
-		});
+		const { promise, resolve } = deferred();
 		const release = (): void => {
 			this.time.clearTimeout(timer);
 			this.idMapFetchWaits.delete(gen);
@@ -1422,10 +1430,17 @@ export class SyncEngine {
 		this.releaseFetchWaits(gen); // I1
 		if (!live()) return true;
 		const failuresBefore = this.idMapFailures;
-		if (ok) this.idMapFailures = 0;
-		else if (!probing) this.idMapFailures++; // a failed probe proves nothing new
+		if (ok) this.idMapFetchSucceeded();
+		else if (!probing) {
+			// A failed probe proves nothing new, so it counts toward neither.
+			this.idMapFailures++;
+			this.idMapFailuresToGiveUp++;
+		}
 		if (this.idMapFailures !== failuresBefore) this.idMapProbeUsed = false; // a new window
-		if (this.idMapFailures >= SyncEngine.ID_MAP_RECONCILE_MAX_FAILURES) {
+		if (this.idMapFailuresToGiveUp >= SyncEngine.ID_MAP_RECONCILE_MAX_FAILURES) {
+			// The backoff count is kept (capped until a fetch succeeds), but the
+			// give-up count restarts: a later request gets its own five tries.
+			this.idMapFailuresToGiveUp = 0;
 			rlog().warn(
 				"sync",
 				`live id-map reconcile: ${this.idMapFailures} failed fetches in a row, giving up on ${this.idMapPending.size} pending note(s)`,
@@ -1624,7 +1639,10 @@ export class SyncEngine {
 		new Map<number, { promise: Promise<void>; release: () => void }>(),
 		(wait) => wait.release(),
 	);
+	/** Consecutive failed fetches, for the backoff (reset on success). */
 	private idMapFailures = 0;
+	/** Failed fetches since the last success or give-up, for the give-up. */
+	private idMapFailuresToGiveUp = 0;
 	/** This backoff window's one fan-out probe is spent; the next run is it. */
 	private idMapProbeUsed = false;
 	private idMapProbeNext = false;
@@ -1667,10 +1685,19 @@ export class SyncEngine {
 		this.noteIdSaveThrottle.reset();
 		this.idMapEpoch++;
 		this.idMapFailures = 0;
+		this.idMapFailuresToGiveUp = 0;
 		this.idMapProbeUsed = this.idMapProbeNext = false;
 		// Release anyone parked on the gate (the strand heal): the vault they
 		// waited in is gone, or the engine is.
 		this.openGateWaiters();
+	}
+
+	/** Any manifest fetch that succeeded, the wholesale reconcile included:
+	 *  the server is reachable, so both failure counts start over. */
+	private idMapFetchSucceeded(): void {
+		this.idMapFailures = 0;
+		this.idMapFailuresToGiveUp = 0;
+		this.idMapProbeUsed = false;
 	}
 
 	/** The success cooldown, doubled per consecutive failure, capped at 16x. */
@@ -3318,13 +3345,7 @@ export class SyncEngine {
 	 *  a vault switch or destroy ends the wait. */
 	whenGateOpens(): Promise<void> {
 		if (!this.syncBlocked) return Promise.resolve();
-		if (!this.gateOpened) {
-			let resolve: () => void = () => {};
-			const promise = new Promise<void>((r) => {
-				resolve = r;
-			});
-			this.gateOpened = { promise, resolve };
-		}
+		this.gateOpened ??= deferred();
 		return this.gateOpened.promise;
 	}
 

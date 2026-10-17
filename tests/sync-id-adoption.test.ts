@@ -1824,4 +1824,73 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			expect(map.pathForId("ghost")).toBeNull();
 		});
 	});
+
+	describe("round 13", () => {
+		test("#2 after a failure give-up, a new request gets a full failure budget", async () => {
+			const { engine, time } = throttledEngine();
+			(mockApi.getManifest as ReturnType<typeof mock>).mockRejectedValue(new Error("503"));
+			engine.ensureNoteIdMapped("a");
+			for (let i = 0; i < 10 && fetches() < 5; i++) {
+				await flush();
+				time.advance(60_000);
+			}
+			await flush();
+			expect(fetches()).toBe(5); // gave up on a
+			let settled = false;
+			void engine.awaitNoteIdSettled("b").then(() => {
+				settled = true;
+			});
+			await flush();
+			const before = fetches();
+			time.advance(60_000);
+			await flush();
+			expect(settled).toBe(false); // one more failure is not a give-up
+			expect(fetches()).toBeGreaterThan(before);
+		});
+
+		test("#2 a successful wholesale reconcile resets the failure backoff", async () => {
+			const { engine, time } = throttledEngine();
+			const get = mockApi.getManifest as ReturnType<typeof mock>;
+			get.mockRejectedValueOnce(new Error("503")).mockRejectedValueOnce(new Error("503"));
+			engine.ensureNoteIdMapped("x");
+			await flush();
+			time.advance(2 * GAP);
+			await flush(); // f=2: backoff 8s
+			liveManifest([]);
+			await engine.reconcileNoteIdMapFromManifest(); // the reconnect reconcile succeeds
+			const after = fetches();
+			liveManifest([{ id: "y", path: "y.md" }]);
+			engine.ensureNoteIdMapped("y");
+			time.advance(GAP);
+			await flush();
+			expect(fetches()).toBe(after + 1); // the 2s cooldown, not the 8s backoff
+		});
+
+		test("#3 awaitNoteIdSettled resolves at once for a mapped id, even behind a closed gate", async () => {
+			const { engine, map } = throttledEngine();
+			map.set("m.md", "m");
+			engine.setSyncBlocked(true);
+			let settled = false;
+			void engine.awaitNoteIdSettled("m").then(() => {
+				settled = true;
+			});
+			await flush();
+			expect(settled).toBe(true);
+		});
+
+		test("#4 a reconcile keeps a mapping at a now-ignored path, so un-ignoring mints no second id", async () => {
+			const { engine, map } = throttledEngine();
+			// Cold start: known from data.json only, before the index room syncs.
+			map.seed({ "Private/x.md": "x" });
+			engine.updateSettings({
+				...DEFAULT_SETTINGS,
+				debounceMs: 1,
+				ignorePatterns: "Private/",
+			});
+			manifestWith([{ id: "x", path: "Private/x.md" }]);
+			await engine.reconcileNoteIdMapFromManifest(); // reconnect
+			engine.updateSettings({ ...DEFAULT_SETTINGS, debounceMs: 1, ignorePatterns: "" });
+			expect(map.getOrMint("Private/x.md")).toBe("x");
+		});
+	});
 });
