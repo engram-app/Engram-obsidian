@@ -24,10 +24,11 @@ const vi: Dict = {
 	"AI searches": "Tìm kiếm AI",
 	"API access": "Truy cập API",
 	"API key": "Khóa API",
-	"API keys need Pro. Sign in with your Engram account instead.":
-		"Cần gói Pro để sử dụng API keys. Đăng nhập bằng tài khoản Engram của bạn.",
+	"API keys need a Pro plan. Sign in with your Engram account instead.":
+		"Các khóa API cần gói Pro. Đăng nhập bằng tài khoản Engram của bạn.",
 	About: "Giới thiệu",
 	"Accept it to keep syncing.": "Chấp nhận để tiếp tục đồng bộ hóa.",
+	"Access token": "Token truy cập",
 	"Account setup incomplete.": "Thiết lập tài khoản chưa hoàn tất.",
 	"Account suspended. Contact support.": "Tài khoản đã bị đình chỉ. Liên hệ với bộ phận hỗ trợ.",
 	"Activity ({count})": "Hoạt động ({count})",
@@ -54,7 +55,6 @@ const vi: Dict = {
 	"Authenticated via manual API key.": "Xác thực qua khóa API thủ công.",
 	Authentication: "Xác thực",
 	Back: "Quay lại",
-	Backend: "Backend",
 	"Bearer token from your Engram account.": "Token từ tài khoản Engram của bạn.",
 	Both: "Cả hai",
 	Bug: "Lỗi",
@@ -104,8 +104,8 @@ const vi: Dict = {
 	"Couldn't send your feedback, please try again.":
 		"Không thể gửi phản hồi của bạn, vui lòng thử lại.",
 	Create: "Tạo",
-	"Create a hosted account at {signup}, or self-host the backend ({guide}).":
-		"Tạo tài khoản trên {signup}, hoặc tự thiết lập máy chủ ({guide}).",
+	"Create a hosted account at {signup}, or self-host the server ({guide}).":
+		"Tạo tài khoản trên {signup}, hoặc tự cài đặt máy chủ ({guide}).",
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"Tạo một kho lưu trữ trống trên máy chủ, sau đó đồng bộ hóa kho lưu trữ Obsidian này vào đó.",
 	"Custom patterns": "Mẫu tùy chỉnh",
@@ -140,7 +140,6 @@ const vi: Dict = {
 	"Download {count} files from the server": "Tải xuống {count} tệp từ máy chủ",
 	Downloading: "Đang tải xuống",
 	"Downloading {count}.": "Đang tải xuống {count}.",
-	"Downloads {count}.": "Tải xuống {count}.",
 	"Engram Cloud": "Engram Cloud",
 	"Engram Sync: pulled {count} changes": "Engram Sync: đã tải {count} thay đổi",
 	"Engram Sync: pulled {count} files from server": "Engram Sync: đã tải {count} tệp từ máy chủ",
@@ -161,13 +160,13 @@ const vi: Dict = {
 	"Engram URL": "URL Engram",
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} khả dụng. {link}.",
-	"Engram backend changed — sign in again to continue.":
-		"Backend của Engram đã thay đổi — đăng nhập lại để tiếp tục.",
 	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
 		"Engram lập chỉ mục {indexed} trong số {all} ghi chú của bạn. Phần còn lại chỉ khớp trên thiết bị này. Nâng cấp để lập chỉ mục mọi thứ.",
 	"Engram is the backend that powers sync and semantic search.":
 		"Engram là backend cung cấp khả năng đồng bộ hóa và tìm kiếm ngữ nghĩa.",
 	"Engram search": "Tìm kiếm Engram",
+	"Engram server changed — sign in again to continue.":
+		"Máy chủ Engram đã thay đổi — đăng nhập lại để tiếp tục.",
 	"Engram sync: checking...": "Đồng bộ hóa Engram: đang kiểm tra...",
 	"Engram sync: everything in sync": "Đồng bộ hóa Engram: mọi thứ đã đồng bộ",
 	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
@@ -199,7 +198,7 @@ const vi: Dict = {
 		"Engram: tệp cài đặt plugin bị lỗi và không thể khôi phục. Bạn có thể cần kết nối lại trong phần cài đặt.",
 	"Engram: ready": "Engram: sẵn sàng",
 	"Engram: recovered plugin settings from a backup after a corrupted save.":
-		"Engram: đã khôi phục cài đặt plugin từ bản sao lưu sau khi lưu bị lỗi.",
+		"Engram: Đã khôi phục cài đặt plugin từ bản sao lưu sau khi lưu bị lỗi.",
 	"Engram: settings tab failed to render ({error})":
 		"Engram: tab cài đặt không hiển thị ({error})",
 	"Engram: sign-in failed ({error})": "Engram: đăng nhập thất bại ({error})",
@@ -223,8 +222,8 @@ const vi: Dict = {
 		"Engram: kho lưu trữ này không còn tồn tại trên máy chủ. Chọn hoặc tạo một kho lưu trữ để tiếp tục.",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: phiên đăng nhập của bạn đã hết hạn — mở cài đặt Engram để kết nối lại.",
-	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.":
-		"Engram: Bỏ qua {count} tệp đính kèm — nâng cấp để đồng bộ hóa ảnh & PDF.",
+	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.":
+		"Engram: {count} tệp đính kèm bị bỏ qua — nâng cấp gói của bạn để đồng bộ hóa ảnh & PDF.",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
 		"Engram: {count} tệp không đồng bộ hóa{detail} — mở Trung tâm đồng bộ hóa",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
@@ -461,6 +460,7 @@ const vi: Dict = {
 	"Sync paused — click to choose a sync direction":
 		"Đồng bộ hóa tạm dừng — nhấp để chọn chiều đồng bộ hóa",
 	"Sync preview": "Xem trước đồng bộ hóa",
+	"Sync server": "Máy chủ đồng bộ hóa",
 	"Sync these now": "Đồng bộ hóa các tệp này ngay bây giờ",
 	"Sync...": "Đồng bộ hóa...",
 	"Synced. Some attachments need a paid plan to sync (see below).":
@@ -504,7 +504,6 @@ const vi: Dict = {
 	"This vault": "Kho lưu trữ này",
 	"This vault is empty on the server. Upload your {what}?":
 		"Kho lưu trữ này trống trên máy chủ. Bạn muốn tải lên {what}?",
-	Token: "Token",
 	"Too large for the server": "Quá lớn cho máy chủ",
 	"Too many connected AI clients. Disconnect one or upgrade.":
 		"Quá nhiều ứng dụng AI được kết nối. Ngắt kết nối một ứng dụng hoặc nâng cấp.",
@@ -528,7 +527,6 @@ const vi: Dict = {
 	"Upload {count} files from this vault": "Tải lên {count} tệp từ kho lưu trữ này",
 	Uploading: "Đang tải lên",
 	"Uploading {count}.": "Đang tải lên {count}.",
-	"Uploads {count}.": "Tải lên {count}.",
 	"Uploads {up}, downloads {down}.": "Tải lên {up}, tải xuống {down}.",
 	"Using API key": "Sử dụng khóa API",
 	Vault: "Kho lưu trữ",
@@ -553,6 +551,8 @@ const vi: Dict = {
 		"Điều gì đang hoạt động, điều gì gây khó chịu, bạn mong muốn Engram làm gì?",
 	"Where this vault syncs to. Each backend keeps its own sign-in.":
 		"Nơi kho lưu trữ này được đồng bộ hóa. Mỗi backend có phương thức đăng nhập riêng.",
+	"Will download {count} files.": "Sẽ tải xuống {count} tệp.",
+	"Will upload {count} files.": "Sẽ tải lên {count} tệp.",
 	"You are about to:": "Bạn sắp:",
 	"You are now pointing at a different cloud vault":
 		"Bạn đang trỏ đến một kho lưu trữ đám mây khác",
@@ -597,15 +597,15 @@ const vi: Dict = {
 	'{count} failed. Run "{command}" for details.':
 		'{count} lần thất bại. Xem "{command}" để biết chi tiết.',
 	"{count} files": "{count} tệp",
+	"{count} files not included in your plan": "{count} tệp không nằm trong gói của bạn",
 	"{count} files queued": "{count} tệp đang chờ xử lý",
 	"{count} ignored": "{count} bị bỏ qua",
-	"{count} missing on server": "{count} mục chưa đồng bộ lên máy chủ",
-	"{count} need attention": "{count} cần chú ý",
-	"{count} not on your plan": "{count} không nằm trong gói của bạn",
+	"{count} missing on server": "{count} bị thiếu trên máy chủ",
+	"{count} need attention": "{count} cần xử lý",
 	"{count} notes": "{count} ghi chú",
 	"{count} only on server": "{count} chỉ có trên máy chủ",
 	"{count} queued — {reason}": "{count} đang chờ — {reason}",
-	"{count} retrying": "{count} lần thử lại",
+	"{count} retrying": "{count} đang thử lại",
 	"{desc} — should not be synced": "{desc} — không nên đồng bộ hóa",
 	"{first} and {second}": "{first} và {second}",
 	"{formatted} per day": "{formatted} mỗi ngày",
@@ -618,8 +618,8 @@ const vi: Dict = {
 	"✓ {count} synced": "✓ {count} đã đồng bộ hóa",
 	"✕ {count} failed": "✕ {count} thất bại",
 	"✗ couldn't reach a server at this URL": "✗ Không thể kết nối đến máy chủ tại URL này",
-	"✗ server responded but isn't an Engram backend":
-		"✗ Máy chủ đã phản hồi nhưng không phải là máy chủ Engram",
+	"✗ server responded but isn't an Engram server":
+		"✗ Máy chủ phản hồi nhưng không phải là máy chủ Engram",
 	"⤳ {count} skipped (Free plan)": "⤳ {count} bỏ qua (Gói miễn phí)",
 	"👋 Welcome": "👋 Chào mừng",
 	"💬 Feedback": "💬 Phản hồi",

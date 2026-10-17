@@ -291,7 +291,7 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		const text = allText(parent);
 		expect(text).not.toContain("Temporary errors");
 		// Header counts it as a plan-skip, not "retrying" / "needs attention".
-		expect(text).toContain("1 not on your plan");
+		expect(text).toContain("1 file not included in your plan");
 		expect(text).not.toContain("needs attention");
 		expect(text).not.toContain("1 retrying");
 	});

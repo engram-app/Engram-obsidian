@@ -18,7 +18,7 @@ describe("limit-copy localization", () => {
 		__setLanguage("en");
 		const en = toastFor("api_access_not_available");
 		expect(ja).not.toBe(en);
-		expect(en).toMatch(/API keys need Pro/);
+		expect(en).toMatch(/API keys need a Pro plan/);
 	});
 
 	// The fallback is the branch every reason code the backend adds after this
@@ -93,7 +93,7 @@ describe("API-key plan reasons", () => {
 	// through to the generic "Limit reached" copy.
 	test("api_access_not_available names the cause and the way out", () => {
 		const msg = toastFor("api_access_not_available").toLowerCase();
-		expect(msg).toMatch(/api keys? need pro/);
+		expect(msg).toMatch(/api keys? need a pro plan/);
 		expect(msg).toMatch(/sign in/);
 	});
 

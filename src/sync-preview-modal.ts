@@ -237,9 +237,9 @@ export function mergeHelperText(b: OptionBreakdown, context: SyncPreviewContext)
 		b.pushCount > 0 && b.pullCount > 0
 			? t("Uploads {up}, downloads {down}.", { up: b.pushCount, down: b.pullCount })
 			: b.pushCount > 0
-				? t("Uploads {count}.", { count: b.pushCount })
+				? t("Will upload {count} files.", { count: b.pushCount })
 				: b.pullCount > 0
-					? t("Downloads {count}.", { count: b.pullCount })
+					? t("Will download {count} files.", { count: b.pullCount })
 					: "";
 	const conflict =
 		b.conflictCount > 0 ? t("{count} conflicts to resolve.", { count: b.conflictCount }) : "";

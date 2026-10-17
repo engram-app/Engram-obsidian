@@ -23,10 +23,11 @@ const ko: Dict = {
 	"AI searches": "AI 검색",
 	"API access": "API 접근",
 	"API key": "API 키",
-	"API keys need Pro. Sign in with your Engram account instead.":
-		"API 키는 Pro 버전에서만 사용할 수 있습니다. Engram 계정으로 로그인하세요.",
+	"API keys need a Pro plan. Sign in with your Engram account instead.":
+		"API 키는 Pro 플랜이 필요합니다. Engram 계정으로 로그인하세요.",
 	About: "정보",
 	"Accept it to keep syncing.": "동기화를 계속하려면 수락하세요.",
+	"Access token": "접근 토큰",
 	"Account setup incomplete.": "계정 설정이 완료되지 않았습니다.",
 	"Account suspended. Contact support.": "계정이 정지되었습니다. 지원팀에 문의하세요.",
 	"Activity ({count})": "활동 ({count})",
@@ -53,7 +54,6 @@ const ko: Dict = {
 	"Authenticated via manual API key.": "수동 API 키를 통해 인증됨.",
 	Authentication: "인증",
 	Back: "뒤로",
-	Backend: "백엔드",
 	"Bearer token from your Engram account.": "Engram 계정의 Bearer 토큰입니다.",
 	Both: "모두",
 	Bug: "버그",
@@ -102,8 +102,8 @@ const ko: Dict = {
 	"Couldn't send your feedback, please try again.":
 		"의견 전송에 실패했습니다. 다시 시도해주세요.",
 	Create: "만들기",
-	"Create a hosted account at {signup}, or self-host the backend ({guide}).":
-		"{signup}에서 호스팅 계정을 생성하거나, 백엔드를 직접 호스팅합니다 ({guide}).",
+	"Create a hosted account at {signup}, or self-host the server ({guide}).":
+		"{signup}에서 호스팅 계정을 만들거나, 서버를 직접 호스팅합니다 ({guide}).",
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"서버에 새 보관함을 만들고, 이 Obsidian 보관함을 동기화합니다.",
 	"Custom patterns": "사용자 정의 패턴",
@@ -138,7 +138,6 @@ const ko: Dict = {
 	"Download {count} files from the server": "서버에서 {count}개의 파일을 다운로드합니다",
 	Downloading: "다운로드 중",
 	"Downloading {count}.": "다운로드 중 {count}.",
-	"Downloads {count}.": "다운로드 {count}.",
 	"Engram Cloud": "Engram 클라우드",
 	"Engram Sync: pulled {count} changes": "Engram 동기화: {count}개의 변경 사항을 가져왔습니다",
 	"Engram Sync: pulled {count} files from server":
@@ -160,13 +159,13 @@ const ko: Dict = {
 	"Engram URL": "Engram URL",
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version}이 사용 가능합니다. {link}.",
-	"Engram backend changed — sign in again to continue.":
-		"Engram 백엔드 변경됨 – 동기화를 계속하려면 다시 로그인하세요.",
 	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
 		"Engram은 {all}개의 노트 중 {indexed}개를 인덱싱합니다. 나머지는 이 기기에서만 검색 가능합니다. 모든 노트를 인덱싱하려면 업그레이드하세요.",
 	"Engram is the backend that powers sync and semantic search.":
 		"Engram은 동기화 및 의미 검색 기능을 제공하는 백엔드입니다.",
 	"Engram search": "Engram 검색",
+	"Engram server changed — sign in again to continue.":
+		"Engram 서버가 변경되었습니다. 계속하려면 다시 로그인하세요.",
 	"Engram sync: checking...": "Engram 동기화: 확인 중...",
 	"Engram sync: everything in sync": "Engram 동기화: 모든 내용이 동기화되었습니다",
 	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
@@ -198,7 +197,7 @@ const ko: Dict = {
 		"Engram: 플러그인 설정 파일이 손상되어 복구할 수 없습니다. 설정에서 다시 연결해야 할 수 있습니다.",
 	"Engram: ready": "Engram: 준비 완료",
 	"Engram: recovered plugin settings from a backup after a corrupted save.":
-		"Engram: 손상된 저장 파일에서 플러그인 설정을 복구했습니다.",
+		"Engram: 저장 오류로 인해 설정 파일이 손상되었지만, 백업 파일에서 복구되었습니다.",
 	"Engram: settings tab failed to render ({error})": "Engram: 설정 탭 로딩 실패 ({error})",
 	"Engram: sign-in failed ({error})": "Engram: 로그인 실패 ({error})",
 	"Engram: signed out": "Engram: 로그아웃됨",
@@ -221,8 +220,8 @@ const ko: Dict = {
 		"Engram: 이 보관함은 더 이상 서버에 존재하지 않습니다. 계속하려면 보관함을 선택하거나 새로 만드세요.",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: 로그인 만료되었습니다. 다시 연결하려면 Engram 설정으로 이동하세요.",
-	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.":
-		"Engram: {count}개의 첨부 파일 동기화 건너�뎠습니다. 이미지 및 PDF 동기화를 위해 업그레이드하세요.",
+	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.":
+		"Engram: {count}개의 첨부 파일 건너�뎠습니다. 이미지 및 PDF 동기화를 위해 요금제를 업그레이드하세요.",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
 		"Engram: {count}개의 파일 동기화 실패{detail} — 동기화 센터 열기",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
@@ -453,6 +452,7 @@ const ko: Dict = {
 	"Sync paused — click to choose a sync direction":
 		"동기화 중지됨 — 동기화 방향을 선택하려면 클릭하세요",
 	"Sync preview": "동기화 미리보기",
+	"Sync server": "동기화 서버",
 	"Sync these now": "지금 동기화",
 	"Sync...": "동기화 중...",
 	"Synced. Some attachments need a paid plan to sync (see below).":
@@ -463,7 +463,7 @@ const ko: Dict = {
 	"Syncing…": "동기화 중…",
 	"Tell us anything": "자유롭게 의견을 말씀해주세요",
 	"Temporary errors. These clear themselves once the server recovers.":
-		"일시적인 오류입니다. 서버가 복구되면 자동으로 해결됩니다.",
+		"일시적인 오류입니다. 서버가 정상화되면 자동으로 해결됩니다.",
 	"Terms of Service": "서비스 약관",
 	"Thanks, we read every message.": "감사합니다. 모든 메시지를 확인합니다.",
 	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":
@@ -496,7 +496,6 @@ const ko: Dict = {
 	"This vault": "이 보관함",
 	"This vault is empty on the server. Upload your {what}?":
 		"이 보관함은 서버에 비어 있습니다. {what}을 업로드하시겠습니까?",
-	Token: "토큰",
 	"Too large for the server": "서버 용량 초과",
 	"Too many connected AI clients. Disconnect one or upgrade.":
 		"연결된 AI 클라이언트가 너무 많습니다. 하나를 연결 해제하거나 업그레이드하세요.",
@@ -520,7 +519,6 @@ const ko: Dict = {
 	"Upload {count} files from this vault": "이 보관함에서 {count}개의 파일을 업로드합니다",
 	Uploading: "업로드 중",
 	"Uploading {count}.": "업로드 중 {count}.",
-	"Uploads {count}.": "업로드 {count}.",
 	"Uploads {up}, downloads {down}.": "업로드 {up}, 다운로드 {down}.",
 	"Using API key": "API 키 사용 중",
 	Vault: "보관함",
@@ -544,6 +542,8 @@ const ko: Dict = {
 		"어떤 점이 잘 되고, 어떤 점이 답답하며, Engram가 무엇을 해주기를 바라시나요?",
 	"Where this vault syncs to. Each backend keeps its own sign-in.":
 		"이 보관함이 동기화되는 위치입니다. 각 백엔드는 자체 로그인 정보를 사용합니다.",
+	"Will download {count} files.": "{count}개의 파일을 다운로드합니다.",
+	"Will upload {count} files.": "{count}개의 파일을 업로드합니다.",
 	"You are about to:": "다음 작업을 수행합니다:",
 	"You are now pointing at a different cloud vault": "현재 다른 클라우드 보관함을 사용 중입니다",
 	"You can close this and the sync keeps running in the background.":
@@ -587,15 +587,15 @@ const ko: Dict = {
 	'{count} failed. Run "{command}" for details.':
 		'{count}건 실패했습니다. 자세한 내용은 "{command}"을 확인하세요.',
 	"{count} files": "{count} 개의 파일",
+	"{count} files not included in your plan": "{count} 파일은 구독 플랜에 포함되지 않습니다",
 	"{count} files queued": "{count}개의 파일 대기 중",
 	"{count} ignored": "{count}개 제외됨",
-	"{count} missing on server": "서버에 {count}개가 누락됨",
-	"{count} need attention": "{count}건 확인 필요",
-	"{count} not on your plan": "계획에 포함되지 않은 {count}개 항목",
+	"{count} missing on server": "서버에 {count}이 없습니다",
+	"{count} need attention": "{count} 건 확인이 필요합니다",
 	"{count} notes": "{count}개의 노트",
 	"{count} only on server": "{count}이(가) 서버에만 있습니다",
 	"{count} queued — {reason}": "{count}개 대기 중 — {reason}",
-	"{count} retrying": "{count}번 재시도 중",
+	"{count} retrying": "{count} 재시도 중",
 	"{desc} — should not be synced": "{desc} — 동기화 대상이 아닙니다",
 	"{first} and {second}": "{first} 및 {second}",
 	"{formatted} per day": "{formatted}개/일",
@@ -608,8 +608,8 @@ const ko: Dict = {
 	"✓ {count} synced": "✓ {count}개 동기화 완료",
 	"✕ {count} failed": "✕ {count} 실패",
 	"✗ couldn't reach a server at this URL": "✗ 해당 URL의 서버에 연결할 수 없습니다",
-	"✗ server responded but isn't an Engram backend":
-		"✗ 서버 응답은 받았지만, Engram 백엔드 서버가 아닙니다",
+	"✗ server responded but isn't an Engram server":
+		"✗ 서버 응답은 받았지만, Engram 서버가 아닙니다",
 	"⤳ {count} skipped (Free plan)": "⤳ 무료 플랜으로 인해 {count}건 건너뜀",
 	"👋 Welcome": "👋 안녕하세요",
 	"💬 Feedback": "💬 피드백",

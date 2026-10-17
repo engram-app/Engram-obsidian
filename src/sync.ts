@@ -11,7 +11,12 @@ import {
 	TFolder,
 	type WorkspaceLeaf,
 } from "obsidian";
-import { arrayBufferToBase64, base64ToArrayBuffer, type EngramApi } from "./api";
+import {
+	arrayBufferToBase64,
+	base64ToArrayBuffer,
+	type CreateFoldersResult,
+	type EngramApi,
+} from "./api";
 import { expBackoff } from "./backoff";
 import type { BaseStore } from "./base-store";
 import type { GenesisOutcome } from "./channel";
@@ -333,6 +338,19 @@ const MIME_TYPES: Record<string, string> = {
 /** Window width of the per-file push loop (both the incremental and the
  *  force pipeline): at most this many pushFile calls outstanding at once. */
 const PUSH_BATCH_SIZE = 10;
+
+/** Folders per POST /folders/batch. Matches the server's 500 cap. */
+const SEED_FOLDER_CHUNK = 500;
+/** Tries per seed request before a 429 ends the seed pass. */
+const SEED_429_ATTEMPTS = 3;
+
+/** Retry-After (delta-seconds form) off a rejected requestUrl, in ms. */
+function retryAfterMs(e: unknown): number | undefined {
+	const headers = (e as { headers?: Record<string, string> } | null)?.headers;
+	const raw = headers?.["retry-after"] ?? headers?.["Retry-After"];
+	const secs = raw === undefined ? Number.NaN : Number(raw);
+	return Number.isFinite(secs) && secs >= 0 ? Math.min(secs, 60) * 1000 : undefined;
+}
 
 /** First OfflineQueue retry delay after a transient failure; doubles per
  *  failure up to OFFLINE_RETRY_MAX_MS. A failing entry waits out its backoff
@@ -690,6 +708,15 @@ export class SyncEngine {
 	 *  the plugin layer (main.ts) and assigned after construction, matching the
 	 *  baseStore pattern. */
 	explicitFolders: ExplicitFolders | null = null;
+
+	/** Local folder paths whose create POST has not answered yet. Until it
+	 *  does, the name the server stored them under is unknown, so a
+	 *  folders.batch self-echo cannot be reconciled: syncExplicitFolders defers
+	 *  (resyncAfterFolderPosts) until the last one lands. */
+	private folderPostsInFlight = this.track(["vault", "destroy"], new Set<string>());
+	/** In-flight paths the user deleted locally before the POST answered. */
+	private folderDeletedInFlight = this.track(["vault", "destroy"], new Set<string>());
+	private resyncAfterFolderPosts = false;
 
 	/** Called whenever sync status changes (for status bar updates). */
 	onStatusChange: ((status: SyncStatus) => void) | null = null;
@@ -5002,12 +5029,58 @@ export class SyncEngine {
 		if (this.explicitFolders.has(path)) return;
 
 		try {
-			await this.api.createFolder(path);
-			await this.explicitFolders.add(path);
+			await this.withFolderPosts([path], async () => {
+				const resp = await this.api.createFolder(path);
+				await this.recordFolderPosts([{ input: path, name: resp?.folder?.name || path }]);
+			});
 		} catch (e) {
 			devLog().log("push", `createFolder("${path}") failed: ${errMsg(e)}`);
 			rlog().warn("push", `createFolder("${noteRef(path)}") failed: ${errMsg(e, path)}`);
 		}
+	}
+
+	/** Runs folder-create POSTs for `paths`, marking them in flight so a
+	 *  self-echo resync waits for the server names, then runs the deferred
+	 *  resync once the last in-flight POST settles. */
+	private async withFolderPosts<T>(paths: readonly string[], fn: () => Promise<T>): Promise<T> {
+		for (const p of paths) this.folderPostsInFlight.add(p);
+		try {
+			return await fn();
+		} finally {
+			for (const p of paths) {
+				this.folderPostsInFlight.delete(p);
+				this.folderDeletedInFlight.delete(p);
+			}
+			if (this.folderPostsInFlight.size === 0 && this.resyncAfterFolderPosts) {
+				this.resyncAfterFolderPosts = false;
+				await this.syncExplicitFolders();
+			}
+		}
+	}
+
+	/** Record what the server stored for each POSTed folder (name "" = refused).
+	 *  A folder the user deleted while its POST was in flight is deleted on the
+	 *  server instead, so the self-echo cannot bring it back. */
+	private async recordFolderPosts(
+		created: readonly { input: string; name: string }[],
+	): Promise<void> {
+		const keep: [string, string][] = [];
+		for (const { input, name } of created) {
+			if (!this.folderDeletedInFlight.has(input)) {
+				keep.push([input, name]);
+			} else if (name !== "") {
+				try {
+					await this.api.deleteFolder(name);
+				} catch (e) {
+					devLog().log("push", `deleteFolder("${name}") failed: ${errMsg(e)}`);
+					rlog().warn(
+						"push",
+						`deleteFolder("${noteRef(name)}") failed: ${errMsg(e, name)}`,
+					);
+				}
+			}
+		}
+		await this.explicitFolders?.record(keep);
 	}
 
 	/** Push a folder-delete to the server. Only fires for folders we believe
@@ -5026,10 +5099,16 @@ export class SyncEngine {
 	private async deleteFolderNow(path: string): Promise<void> {
 		if (this.suppressDeletes) return;
 		if (!this.explicitFolders) return;
-		if (!this.explicitFolders.has(path)) return;
+		if (!this.explicitFolders.has(path)) {
+			// Its create POST has not answered: delete it once it does.
+			if (this.folderPostsInFlight.has(path)) this.folderDeletedInFlight.add(path);
+			return;
+		}
 
+		// The server knows it by the name it stored ("" = it refused it).
+		const serverName = this.explicitFolders.serverName(path);
 		try {
-			await this.api.deleteFolder(path);
+			if (serverName !== "") await this.api.deleteFolder(serverName);
 		} catch (e) {
 			devLog().log("push", `deleteFolder("${path}") failed: ${errMsg(e)}`);
 			rlog().warn("push", `deleteFolder("${noteRef(path)}") failed: ${errMsg(e, path)}`);
@@ -5044,31 +5123,96 @@ export class SyncEngine {
 	 *  only non-syncable types (.txt, .excalidraw, …) — would otherwise never
 	 *  appear in the web UI after a first sync. Folders with a syncable note
 	 *  anywhere beneath them are skipped: they surface via that note, and the
-	 *  web app synthesizes their ancestors. Best-effort — a per-folder server
-	 *  error is warn-logged and seeding continues (matches handleFolderCreate). */
+	 *  web app synthesizes their ancestors. Best-effort: a failed chunk is
+	 *  warn-logged and stays unrecorded, so the next catchUp retries it.
+	 *
+	 *  Sent through POST /folders/batch in chunks of SEED_FOLDER_CHUNK. A 429
+	 *  is waited out (Retry-After, else exponential) and, if it persists, ends
+	 *  the pass: one-folder-per-request with no backoff is what burned the
+	 *  user's API budget (1,342 of 3,136 prod calls were 429). A 404 means an
+	 *  old self-hosted backend, served by the per-folder endpoint. */
 	async seedEmptyFolders(): Promise<void> {
-		if (!this.explicitFolders) return;
+		const explicit = this.explicitFolders;
+		if (!explicit) return;
 
-		const loaded = this.app.vault.getAllLoadedFiles?.() ?? [];
-		for (const f of loaded) {
+		const pending: string[] = [];
+		for (const f of this.app.vault.getAllLoadedFiles?.() ?? []) {
 			if (!(f instanceof TFolder)) continue;
 			const path = normalizePath(f.path);
 			if (!path || path === "/") continue; // vault root
 			if (this.shouldIgnore(path)) continue;
-			if (this.explicitFolders.has(path)) continue; // already tracked
+			if (explicit.has(path)) continue; // already tracked
 			if (this.subtreeHasSyncableFile(f)) continue; // appears via its notes
+			pending.push(path);
+		}
 
-			try {
-				await this.api.createFolder(path);
-				await this.explicitFolders.add(path);
-			} catch (e) {
-				devLog().log("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`);
-				rlog().warn(
-					"push",
-					`seedEmptyFolders("${noteRef(path)}") failed: ${errMsg(e, path)}`,
-				);
+		for (let i = 0; i < pending.length; i += SEED_FOLDER_CHUNK) {
+			const chunk = pending.slice(i, i + SEED_FOLDER_CHUNK);
+			const outcome = await this.withFolderPosts(chunk, async () => {
+				let result: CreateFoldersResult | null;
+				try {
+					result = await this.withRateLimitRetry(() => this.api.createFolders(chunk));
+				} catch (e) {
+					this.warnSeedFailure(`${chunk.length} folders`, e);
+					return isHttpStatus(e, 429) ? "stop" : "skip";
+				}
+				if (result === null) return "fallback";
+				// Keyed on the LOCAL path, mapped to the name the server stored:
+				// it may have sanitized it. A refusal is recorded too ("") so it
+				// is not resent on every pass.
+				await this.recordFolderPosts([
+					...result.folders,
+					...result.rejected.map((input) => ({ input, name: "" })),
+				]);
+				return "ok";
+			});
+			if (outcome === "stop") return;
+			if (outcome === "fallback") {
+				await this.seedFoldersOneByOne(pending.slice(i));
+				return;
 			}
 		}
+	}
+
+	/** Fallback for a backend without POST /folders/batch. */
+	private async seedFoldersOneByOne(paths: string[]): Promise<void> {
+		for (const path of paths) {
+			const stop = await this.withFolderPosts([path], async () => {
+				try {
+					const resp = await this.withRateLimitRetry(() => this.api.createFolder(path));
+					await this.recordFolderPosts([
+						{ input: path, name: resp?.folder?.name || path },
+					]);
+					return false;
+				} catch (e) {
+					this.warnSeedFailure(path, e);
+					// 422 = the server refuses this name for good (it sanitizes to
+					// the root): record the refusal so it is not resent forever.
+					if (isHttpStatus(e, 422))
+						await this.recordFolderPosts([{ input: path, name: "" }]);
+					return isHttpStatus(e, 429);
+				}
+			});
+			if (stop) return;
+		}
+	}
+
+	/** Runs `fn`, waiting out up to SEED_429_ATTEMPTS - 1 rate-limit refusals.
+	 *  The last 429 is rethrown for the caller to stop on. */
+	private async withRateLimitRetry<T>(fn: () => Promise<T>): Promise<T> {
+		for (let attempt = 1; ; attempt++) {
+			try {
+				return await fn();
+			} catch (e) {
+				if (!isHttpStatus(e, 429) || attempt >= SEED_429_ATTEMPTS) throw e;
+				await this.sleep(retryAfterMs(e) ?? 1000 * 2 ** (attempt - 1));
+			}
+		}
+	}
+
+	private warnSeedFailure(what: string, e: unknown): void {
+		devLog().log("push", `seedEmptyFolders(${what}) failed: ${errMsg(e)}`);
+		rlog().warn("push", `seedEmptyFolders(${noteRef(what)}) failed: ${errMsg(e, what)}`);
 	}
 
 	/** True if any descendant file (at any depth) is syncable and not ignored. */
@@ -6083,7 +6227,9 @@ export class SyncEngine {
 		this.attachmentLimitToastShown = true;
 		const noun = count === 1 ? "attachment" : "attachments";
 		new Notice(
-			t("Engram: {count} attachments skipped — upgrade to sync images & PDFs.", { count }),
+			t("Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.", {
+				count,
+			}),
 			10_000,
 		);
 		rlog().info(
@@ -10126,6 +10272,10 @@ export class SyncEngine {
 	 *  the broader pull. */
 	private async syncExplicitFolders(): Promise<void> {
 		if (!this.explicitFolders) return;
+		if (this.folderPostsInFlight.size > 0) {
+			this.resyncAfterFolderPosts = true;
+			return;
+		}
 		let names: string[];
 		try {
 			names = await this.api.listExplicitFolders();
@@ -10140,10 +10290,13 @@ export class SyncEngine {
 		// propagates. Guarded — only an EMPTY folder still on disk (a note may
 		// have since landed inside it) and never an ignored path
 		// (.obsidian/, .trash/, …).
+		// Compared by SERVER name: a local folder the server renamed is kept
+		// as long as its server name is listed.
 		const kept = new Set(names);
 		const removed = this.explicitFolders
-			.all()
-			.filter((prev) => !kept.has(prev) && !this.shouldIgnore(prev));
+			.localEntries()
+			.filter(([local, server]) => !kept.has(server) && !this.shouldIgnore(local))
+			.map(([local]) => local);
 
 		// Drop the tracked set to the server's list BEFORE trashing any folder.
 		// trashFile dispatches Obsidian's vault "delete" event, which routes to
@@ -10165,8 +10318,11 @@ export class SyncEngine {
 			}
 		}
 
+		// A server name a renamed local folder already stands for is not
+		// materialized a second time.
+		const aliased = this.explicitFolders.aliasedServerNames();
 		for (const name of names) {
-			if (this.shouldIgnore(name)) continue;
+			if (this.shouldIgnore(name) || aliased.has(name)) continue;
 			try {
 				await this.ensureFolder(name);
 			} catch (e) {
