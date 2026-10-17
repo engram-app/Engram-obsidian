@@ -97,6 +97,7 @@ export class NoteIdMap {
 		// The old store may outlive us (a live view, a late remote update): stop
 		// it calling the engine.
 		this.store.onChange = undefined;
+		this.store.onRelocate = undefined;
 		this.store = store;
 		this.flushScheduled = false;
 		// Re-attach: the handler lives on the STORE, and a vault switch hands us a

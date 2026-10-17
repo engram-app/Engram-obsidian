@@ -1401,6 +1401,14 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			expect(spy.mock.calls.length).toBeLessThanOrEqual(2);
 		});
 
+		test("rebind detaches the relocate handler from the old store", () => {
+			const map = new NoteIdMap();
+			const old = (map as any).store as SyncStore;
+			map.setRelocateHandler(() => {});
+			map.rebind(new SyncStore(new Y.Doc().getMap("filemeta_v0")));
+			expect(old.onRelocate).toBeUndefined();
+		});
+
 		test("#10 rebind detaches the change handler from the old store", () => {
 			const map = new NoteIdMap();
 			const old = (map as any).store as SyncStore;
