@@ -1217,7 +1217,9 @@ export class SyncPreviewModal extends Modal {
 	 *  never blocks a sync. Other clicks are ignored while it waits. */
 	private async pick(choice: SyncChoice, from?: HTMLButtonElement): Promise<void> {
 		if (this.picking) return;
-		if (this.quotaPending) {
+		// Only a pick that creates notes can hit the limit; nothing else waits.
+		const canHitLimit = uploadsNotes(choice) && this.state.newNotePaths().length > 0;
+		if (this.quotaPending && canHitLimit) {
 			this.picking = true;
 			if (from) {
 				from.disabled = true;

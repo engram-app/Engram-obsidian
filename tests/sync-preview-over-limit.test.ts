@@ -866,3 +866,21 @@ describe("FolderOverLimitModal (Sync again on a full plan)", () => {
 		expect(await answer).toBe(false);
 	});
 });
+
+describe("only a pick that can hit the limit waits for the quota", () => {
+	const never = () => new Promise<BillingUsage>(() => {});
+
+	test("nothing new to upload: no wait", async () => {
+		const { modal } = openModal(planWith(PATHS, PATHS), { fetchUsage: never });
+		(modal as any).pick("smart-merge");
+		await Bun.sleep(0);
+		expect(modal.state.view).toBe("done");
+	});
+
+	test("a download-only option: no wait", async () => {
+		const { modal } = openModal(planWith(["Root.md", ...PATHS]), { fetchUsage: never });
+		(modal as any).pick("pull-all-keep-local");
+		await Bun.sleep(0);
+		expect(modal.state.view).toBe("done");
+	});
+});
