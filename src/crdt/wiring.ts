@@ -20,6 +20,7 @@ type WiringSyncEngine = Pick<
 	| "reconcileNoteIdMapFromManifest"
 	| "isSyncBlocked"
 	| "ensureNoteIdMapped"
+	| "idMapEra"
 	| "repairOrphanedClaim"
 	| "clearPushedBaselineForId"
 	| "applyPushedNoteUpdate"
