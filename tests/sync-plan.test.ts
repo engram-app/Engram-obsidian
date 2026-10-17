@@ -822,3 +822,216 @@ describe("SyncEngine.pushAll with progress", () => {
 		expect(errors[0].error).toContain("500");
 	});
 });
+
+// ---------------------------------------------------------------------------
+// The plan reads ONE ignore-filtered view of both sides. Local files were
+// always filtered through shouldIgnore; server rows were not, so a server note
+// at an ignored path read as "server has it, local is missing" — a planned
+// pull the sync then skipped, and a server count no local count could match.
+// ---------------------------------------------------------------------------
+
+let seqCounter = 0;
+function noteRow(path: string, opts: { id?: string; deleted?: boolean } = {}) {
+	seqCounter++;
+	return opts.deleted
+		? { type: "note", id: opts.id ?? `id-${path}`, seq: seqCounter, path, deleted: true }
+		: {
+				type: "note",
+				id: opts.id ?? `id-${path}`,
+				seq: seqCounter,
+				path,
+				content: `body of ${path}`,
+				content_hash: `H-${path}`,
+				deleted: false,
+			};
+}
+function attRow(path: string, deleted = false) {
+	seqCounter++;
+	return { type: "attachment", seq: seqCounter, path, deleted };
+}
+
+/** Every path the plan names anywhere — counts are checked separately. */
+function everyPlanPath(plan: Awaited<ReturnType<SyncEngine["computeSyncPlan"]>>): string[] {
+	return [
+		...plan.localPaths,
+		...plan.serverPaths,
+		...plan.toPush.notes,
+		...plan.toPush.attachments,
+		...plan.toPull.notes,
+		...plan.toPull.attachments,
+		...plan.conflicts,
+		...plan.toDeleteLocal,
+		...plan.toDeleteRemote,
+	];
+}
+
+describe("computeSyncPlan respects the ignore list on the SERVER side", () => {
+	test("server notes and attachments at ignored paths are absent from every count and list", async () => {
+		const engine = createEngine({ ignorePatterns: "drafts/\nsecret.md" });
+		mockApp.vault.getFiles.mockReturnValue([makeTFile("local.md")]);
+		wireFeed(engine, [
+			[
+				noteRow("keep.md"),
+				noteRow("drafts/a.md"),
+				noteRow("deep/drafts/b.md"),
+				noteRow("notes/secret.md"),
+				noteRow(".trash/old.md"),
+				noteRow(".git/HEAD.md"),
+				noteRow(".obsidian/workspace.md"),
+				attRow("img/keep.png"),
+				attRow("drafts/pic.png"),
+			],
+		]);
+
+		const plan = await engine.computeSyncPlan("full");
+
+		expect(plan.serverNoteCount).toBe(1);
+		expect(plan.serverAttachmentCount).toBe(1);
+		expect(plan.serverFolderCount).toBe(1); // "img" only
+		expect(plan.serverPaths.sort()).toEqual(["img/keep.png", "keep.md"]);
+		expect(plan.toPull.notes).toEqual(["keep.md"]);
+		expect(plan.toPull.attachments).toEqual(["img/keep.png"]);
+		for (const p of everyPlanPath(plan)) expect(engine.shouldIgnore(p)).toBe(false);
+		expect(plan.ignoredCount).toBe(7);
+	});
+
+	test("tombstones at ignored paths do not produce local deletes", async () => {
+		const engine = createEngine({ ignorePatterns: "drafts/" });
+		mockApp.vault.getFiles.mockReturnValue([
+			makeTFile("drafts/gone.md"),
+			makeTFile("drafts/gone.png"),
+			makeTFile("real-gone.md"),
+		]);
+		wireFeed(engine, [
+			[
+				noteRow("drafts/gone.md", { deleted: true }),
+				attRow("drafts/gone.png", true),
+				noteRow("real-gone.md", { deleted: true }),
+			],
+		]);
+
+		const plan = await engine.computeSyncPlan("full");
+
+		expect(plan.toDeleteLocal).toEqual(["real-gone.md"]);
+		// A tombstone is not a file: only the two ignored LOCAL files count.
+		expect(plan.ignoredCount).toBe(2);
+	});
+
+	test("a path ignored on both sides counts once", async () => {
+		const engine = createEngine({ ignorePatterns: "drafts/" });
+		mockApp.vault.getFiles.mockReturnValue([makeTFile("drafts/both.md")]);
+		wireFeed(engine, [[noteRow("drafts/both.md")]]);
+
+		const plan = await engine.computeSyncPlan("full");
+
+		expect(plan.ignoredCount).toBe(1);
+		expect(plan.localNoteCount).toBe(0);
+		expect(plan.serverNoteCount).toBe(0);
+	});
+
+	test("local and server counts agree when the only differences are ignored", async () => {
+		const engine = createEngine({ ignorePatterns: "private/" });
+		const shared = makeTFile("shared.md");
+		mockApp.vault.getFiles.mockReturnValue([shared, makeTFile("private/local-only.md")]);
+		mockApp.vault.getFileByPath.mockImplementation((p: string) =>
+			p === "shared.md" ? shared : null,
+		);
+		mockApp.vault.cachedRead.mockResolvedValue("body of shared.md");
+		wireFeed(engine, [[noteRow("shared.md"), noteRow("private/server-only.md")]]);
+
+		const plan = await engine.computeSyncPlan("full");
+
+		expect(plan.localNoteCount).toBe(plan.serverNoteCount);
+		expect(plan.toPull.notes).toEqual([]);
+		expect(plan.toPush.notes).toEqual([]);
+		expect(plan.ignoredCount).toBe(2);
+		mockApp.vault.getFileByPath.mockReset().mockReturnValue(null);
+	});
+
+	test("an empty ignore list ignores only the built-ins", async () => {
+		const engine = createEngine({ ignorePatterns: "" });
+		mockApp.vault.getFiles.mockReturnValue([makeTFile("a.md")]);
+		wireFeed(engine, [[noteRow("drafts/b.md"), noteRow(".trash/c.md")]]);
+
+		const plan = await engine.computeSyncPlan("full");
+
+		expect(plan.toPull.notes).toEqual(["drafts/b.md"]);
+		expect(plan.serverNoteCount).toBe(1);
+		expect(plan.ignoredCount).toBe(1);
+	});
+
+	test("a leading-slash pattern anchors at the vault root, the same on both sides", async () => {
+		const engine = createEngine({ ignorePatterns: "/drafts/\n/top.md" });
+		mockApp.vault.getFiles.mockReturnValue([
+			makeTFile("drafts/l.md"),
+			makeTFile("sub/drafts/l2.md"),
+			makeTFile("top.md"),
+			makeTFile("sub/top.md"),
+		]);
+		wireFeed(engine, [[noteRow("drafts/s.md"), noteRow("sub/drafts/s2.md")]]);
+
+		const plan = await engine.computeSyncPlan("full");
+
+		expect(plan.toPush.notes.sort()).toEqual(["sub/drafts/l2.md", "sub/top.md"]);
+		expect(plan.toPull.notes).toEqual(["sub/drafts/s2.md"]);
+		expect(plan.ignoredCount).toBe(3); // drafts/l.md, top.md, drafts/s.md
+	});
+
+	test("per-file ignores from Sync Center apply to server rows too", async () => {
+		const engine = createEngine();
+		engine.ignoredFiles.add("remote/odd.md");
+		wireFeed(engine, [[noteRow("remote/odd.md")]]);
+
+		const plan = await engine.computeSyncPlan("full");
+
+		expect(plan.toPull.notes).toEqual([]);
+		expect(plan.serverNoteCount).toBe(0);
+		expect(plan.ignoredCount).toBe(1);
+	});
+});
+
+describe("reconcile respects the ignore list on the server side", () => {
+	test("server notes at ignored paths are not reported as extraOnServer", async () => {
+		const engine = createEngine({ ignorePatterns: "drafts/" });
+		(mockApi.getManifest as jest.Mock).mockResolvedValue({
+			notes: [
+				{ path: "drafts/x.md", content_hash: "h1" },
+				{ path: "real.md", content_hash: "h2" },
+			],
+			attachments: [],
+			total_notes: 2,
+			total_attachments: 0,
+		});
+
+		const result = await engine.reconcile();
+
+		expect(result?.extraOnServer).toEqual(["real.md"]);
+	});
+});
+
+describe("pushAll({ replaceRemote }) never deletes server rows at ignored paths", () => {
+	test("server-only notes and attachments at ignored paths survive the replace", async () => {
+		const engine = createEngine({ ignorePatterns: "drafts/" });
+		mockApp.vault.getFiles.mockReturnValue([]);
+		const crdtDelete = mock().mockResolvedValue(undefined);
+		engine.setCrdtDelete(crdtDelete);
+		wireFeed(engine, [
+			[
+				noteRow("extra.md", { id: "n-extra" }),
+				noteRow("drafts/keep.md", { id: "n-ignored" }),
+				// Renamed INTO an ignored folder: its final path is what counts.
+				noteRow("moved.md", { id: "n-moved" }),
+				noteRow("drafts/moved.md", { id: "n-moved" }),
+				attRow("drafts/pic.png"),
+				attRow("extra.png"),
+			],
+		]);
+
+		await engine.pushAll({ replaceRemote: true });
+
+		expect(crdtDelete.mock.calls.map((c) => c[0])).toEqual(["n-extra"]);
+		expect((mockApi.deleteAttachment as jest.Mock).mock.calls.map((c) => c[0])).toEqual([
+			"extra.png",
+		]);
+	});
+});

@@ -536,6 +536,10 @@ export interface SyncPlan {
 	conflicts: string[];
 	toDeleteLocal: string[];
 	toDeleteRemote: string[];
+	/** Files (notes + attachments) present on either side but skipped by the
+	 *  ignore list, counted once per path. Every other count and list above
+	 *  already excludes them; this keeps the totals explainable. */
+	ignoredCount: number;
 }
 
 export interface SyncProgress {
