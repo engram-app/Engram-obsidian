@@ -440,6 +440,13 @@ describe("catchupViaSeqReplay", () => {
 		expect(cursorsSeen).toEqual([0, 0]);
 	});
 
+	test("a pending rewind belongs to its vault: a vault switch drops it", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.requestFullReplay();
+		await (engine as any).wipePerVaultState();
+		expect(engine.getSeqRewindFloor()).toBeNull();
+	});
+
 	test("the rewind survives a restart before the catch-up", async () => {
 		const first = makeEngineWithCrdt({ closeDoc: () => {} });
 		first.requestFullReplay();

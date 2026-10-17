@@ -3298,6 +3298,9 @@ export class SyncEngine {
 		// and wrongly short-circuit the first reconcile after a swap.
 		this.manifestSeq = 0;
 		this.lastValidatorRewind = null;
+		// A pending rewind is a position in the old vault's feed too.
+		this.seqRewindFloor = null;
+		this.rewindGen++;
 		// The note-id map is per-vault identity state but is NOT a tracked
 		// collection: the instance is shared with main.ts + live views, so it is
 		// cleared in place rather than swept. Carrying it across vaults keys CRDT
