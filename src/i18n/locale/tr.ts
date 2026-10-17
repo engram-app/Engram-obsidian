@@ -12,7 +12,6 @@ const tr: Dict = {
 	"10 GB attachments": "10 GB ek",
 	"10 vaults, unlimited devices": "10 kasa, sınırsız cihaz",
 	"2. Connect your vault to Engram": "2. Kasanızı Engram ile bağlayın",
-	"3,000 notes, all searchable": "3.000 not, hepsi aranabilir",
 	"3. Connect your AI": "3. Yapay zekanızı bağlayın",
 	"50 GB attachments": "50 GB ek",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
@@ -377,6 +376,7 @@ const tr: Dict = {
 		"Buradan sonraki notlar hala normal şekilde senkronize olur ve açılır, sadece arama indeksinde yer almazlar. İndeks en eski notlarınızı saklar, bu yüzden en yeni notlarınız indeksin dışında kalır.",
 	"Notes searchable": "Notlar aranabilir",
 	"Notes stored": "Notlar kaydedildi",
+	"Notes up to the Free limit": "Ücretsiz kullanım limitiyle notlar",
 	"Nothing in this vault syncs until you choose how to merge it with the server.":
 		"Bu kasadaki hiçbir şey, sunucuyla nasıl birleştirileceğine karar vermediğiniz sürece senkronize olmaz.",
 	"Nothing is deleted.": "Hiçbir şey silinmez.",

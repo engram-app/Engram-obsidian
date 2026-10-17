@@ -17,7 +17,6 @@ const ru: Dict = {
 	"10 GB attachments": "10 ГБ вложений",
 	"10 vaults, unlimited devices": "10 хранилищ, неограниченное количество устройств",
 	"2. Connect your vault to Engram": "2. Подключите ваше хранилище к Engram",
-	"3,000 notes, all searchable": "3000 заметок, все доступны для поиска",
 	"3. Connect your AI": "3. Подключите ваш ИИ",
 	"50 GB attachments": "50 ГБ вложений",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
@@ -422,6 +421,7 @@ const ru: Dict = {
 		"Заметки, расположенные после этой точки, синхронизируются и открываются нормально, но они не включены в индекс поиска. Индекс содержит ваши старые заметки, поэтому новые заметки не попадают в него.",
 	"Notes searchable": "Заметки доступны для поиска",
 	"Notes stored": "Заметки сохранены",
+	"Notes up to the Free limit": "Заметки в пределах бесплатного лимита",
 	"Nothing in this vault syncs until you choose how to merge it with the server.":
 		"Ничего из этого хранилища не синхронизируется, пока вы не выберете, как объединить его с сервером.",
 	"Nothing is deleted.": "Ничего не будет удалено.",

@@ -16,7 +16,6 @@ const pt: Dict = {
 	"10 GB attachments": "10 GB de anexos",
 	"10 vaults, unlimited devices": "10 Cofres, dispositivos ilimitados",
 	"2. Connect your vault to Engram": "2. Conecte o seu cofre ao Engram",
-	"3,000 notes, all searchable": "3.000 notas, todas pesquisáveis",
 	"3. Connect your AI": "3. Conecte a sua IA",
 	"50 GB attachments": "50 GB de anexos",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
@@ -404,6 +403,7 @@ const pt: Dict = {
 		"As notas após este ponto continuam a sincronizar e a abrir normalmente, apenas não estão no índice de pesquisa. O índice guarda as suas notas mais antigas, por isso são as mais recentes que ficam de fora.",
 	"Notes searchable": "Notas pesquisáveis",
 	"Notes stored": "Notas armazenadas",
+	"Notes up to the Free limit": "Notas até ao limite da versão gratuita",
 	"Nothing in this vault syncs until you choose how to merge it with the server.":
 		"Nada neste cofre é sincronizado até que escolha como o combinar com o servidor.",
 	"Nothing is deleted.": "Nada é apagado.",

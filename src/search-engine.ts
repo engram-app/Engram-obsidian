@@ -138,8 +138,7 @@ async function searchServer(
  *
  * The local matcher stays because it is the only thing that can see notes past
  * `indexed_notes_cap` on a plan that has one (synced and openable but absent
- * from the server index; Free no longer caps the index separately from the
- * notes cap). It is also what makes every mode
+ * from the server index). It is also what makes every mode
  * return something offline, and the only reason a per-result provenance pill is
  * derivable: the server sends no per-leg scores, so only the side that did the
  * fusion knows where a hit came from.

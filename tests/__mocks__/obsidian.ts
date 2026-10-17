@@ -152,6 +152,9 @@ export function makeEl(): any {
 		},
 		setAttribute: () => el,
 		removeAttribute: () => el,
+		appendText: (t: string) => {
+			el.__child("#text", { text: t });
+		},
 		textContent: "",
 		// Keep the tree. Tests need to reach the button a modal rendered three
 		// levels down, and a mock that returns orphans makes that impossible.

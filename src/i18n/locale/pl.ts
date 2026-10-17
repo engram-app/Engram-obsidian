@@ -17,7 +17,6 @@ const pl: Dict = {
 	"10 GB attachments": "10 GB załączników",
 	"10 vaults, unlimited devices": "10 sejfów, nieograniczona liczba urządzeń",
 	"2. Connect your vault to Engram": "2. Połącz swój sejf z Engram",
-	"3,000 notes, all searchable": "3000 notatek, wszystkie przeszukiwalne",
 	"3. Connect your AI": "3. Połącz swoje AI",
 	"50 GB attachments": "50 GB załączników",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
@@ -421,6 +420,7 @@ const pl: Dict = {
 		"Notatki znajdujące się dalej są nadal synchronizowane i otwierane normalnie, ale nie znajdują się w indeksie wyszukiwania. Indeks przechowuje twoje najstarsze notatki, więc to najnowsze notatki nie są w nim uwzględnione.",
 	"Notes searchable": "Notatki są przeszukiwalne",
 	"Notes stored": "Notatki zapisane",
+	"Notes up to the Free limit": "Notatki do limitu wersji darmowej",
 	"Nothing in this vault syncs until you choose how to merge it with the server.":
 		"Nic z tego sejfu nie jest synchronizowane, dopóki nie wybierzesz, jak go połączyć z serwerem.",
 	"Nothing is deleted.": "Nic nie jest usuwane.",

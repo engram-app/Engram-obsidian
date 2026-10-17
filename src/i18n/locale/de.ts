@@ -12,7 +12,6 @@ const de: Dict = {
 	"10 GB attachments": "10 GB Anhänge",
 	"10 vaults, unlimited devices": "10 Vaults, unbegrenzte Geräte",
 	"2. Connect your vault to Engram": "2. Verbinde deinen Vault mit Engram",
-	"3,000 notes, all searchable": "3.000 Notizen, alle durchsuchbar",
 	"3. Connect your AI": "3. Verbinde deine KI",
 	"50 GB attachments": "50 GB Anhänge",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
@@ -378,6 +377,7 @@ const de: Dict = {
 		"Notizen nach diesem Punkt werden weiterhin synchronisiert und normal geöffnet, sie sind nur nicht im Suchindex enthalten. Der Index speichert deine ältesten Notizen, sodass die neuesten Notizen nicht enthalten sind.",
 	"Notes searchable": "Notizen durchsuchbar",
 	"Notes stored": "Notizen gespeichert",
+	"Notes up to the Free limit": "Notizen bis zum Limit der kostenlosen Version",
 	"Nothing in this vault syncs until you choose how to merge it with the server.":
 		"Nichts in diesem Vault wird synchronisiert, bis du entscheidest, wie es mit dem Server zusammengeführt werden soll.",
 	"Nothing is deleted.": "Nichts wird gelöscht.",

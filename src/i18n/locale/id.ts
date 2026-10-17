@@ -12,7 +12,6 @@ const id: Dict = {
 	"10 GB attachments": "10 GB lampiran",
 	"10 vaults, unlimited devices": "10 Vault, perangkat tanpa batas",
 	"2. Connect your vault to Engram": "2. Hubungkan Vault Anda ke Engram",
-	"3,000 notes, all searchable": "3.000 catatan, semuanya dapat dicari",
 	"3. Connect your AI": "3. Hubungkan AI Anda",
 	"50 GB attachments": "50 GB lampiran",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
@@ -339,6 +338,7 @@ const id: Dict = {
 		"Catatan setelah ini masih disinkronkan dan dibuka seperti biasa, hanya saja tidak ada dalam indeks pencarian. Indeks menyimpan catatan Anda yang paling lama, sehingga catatan terbaru Anda yang tidak masuk ke dalam indeks.",
 	"Notes searchable": "Catatan dapat dicari",
 	"Notes stored": "Catatan disimpan",
+	"Notes up to the Free limit": "Catatan hingga batas Gratis",
 	"Nothing in this vault syncs until you choose how to merge it with the server.":
 		"Tidak ada yang disinkronkan di Vault ini sampai Anda memilih cara menggabungkannya dengan server.",
 	"Nothing is deleted.": "Tidak ada yang dihapus.",

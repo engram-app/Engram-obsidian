@@ -100,7 +100,9 @@ export function renderAboutTab(ctx: TabContext): void {
 	plan(t("Free"), [
 		t("1 vault, 2 devices"),
 		t("Real-time sync"),
-		t("3,000 notes, all searchable"),
+		// No number: this text ships in plugin releases that outlive a limit
+		// change on the server. The pricing link below has the current figures.
+		t("Notes up to the Free limit"),
 		t("Connect any AI (MCP)"),
 	]);
 	plan(t("Starter"), [

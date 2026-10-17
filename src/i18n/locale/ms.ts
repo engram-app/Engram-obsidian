@@ -12,7 +12,6 @@ const ms: Dict = {
 	"10 GB attachments": "10 GB lampiran",
 	"10 vaults, unlimited devices": "10 peti nota, peranti tanpa had",
 	"2. Connect your vault to Engram": "2. Sambungkan peti nota anda ke Engram",
-	"3,000 notes, all searchable": "3,000 nota, semua boleh dicari",
 	"3. Connect your AI": "3. Sambungkan AI anda",
 	"50 GB attachments": "50 GB lampiran",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
@@ -337,6 +336,7 @@ const ms: Dict = {
 		"Nota selepas ini masih disegerakkan dan dibuka seperti biasa, tetapi tidak berada dalam indeks carian. Indeks menyimpan nota anda yang paling lama, jadi nota terbaru anda yang tidak disertakan.",
 	"Notes searchable": "Nota boleh dicari",
 	"Notes stored": "Nota disimpan",
+	"Notes up to the Free limit": "Nota sehingga had percuma",
 	"Nothing in this vault syncs until you choose how to merge it with the server.":
 		"Tiada apa dalam peti nota ini yang disinkronkan sehingga anda memilih cara untuk menggabungkannya dengan pelayan.",
 	"Nothing is deleted.": "Tiada yang dipadam.",

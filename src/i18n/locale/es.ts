@@ -16,7 +16,6 @@ const es: Dict = {
 	"10 GB attachments": "10 GB de adjuntos",
 	"10 vaults, unlimited devices": "10 bóvedas, dispositivos ilimitados",
 	"2. Connect your vault to Engram": "2. Conecta tu bóveda a Engram",
-	"3,000 notes, all searchable": "3000 notas, todas buscables",
 	"3. Connect your AI": "3. Conecta tu IA",
 	"50 GB attachments": "50 GB de adjuntos",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
@@ -405,6 +404,7 @@ const es: Dict = {
 		"Las notas posteriores a esta fecha se sincronizan y se abren normalmente, pero no están en el índice de búsqueda. El índice guarda tus notas más antiguas, por lo que las más recientes quedan fuera.",
 	"Notes searchable": "Notas indexadas para búsqueda",
 	"Notes stored": "Notas almacenadas",
+	"Notes up to the Free limit": "Notas hasta el límite gratuito",
 	"Nothing in this vault syncs until you choose how to merge it with the server.":
 		"Nada de esta bóveda se sincroniza hasta que elijas cómo fusionarla con el servidor.",
 	"Nothing is deleted.": "Nada se elimina.",

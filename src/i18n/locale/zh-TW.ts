@@ -12,7 +12,6 @@ const zhTW: Dict = {
 	"10 GB attachments": "10 GB 附件",
 	"10 vaults, unlimited devices": "10 個知識庫，無限部裝置",
 	"2. Connect your vault to Engram": "2. 將您的儲存庫連接到 Engram",
-	"3,000 notes, all searchable": "3000 筆筆記，全部可搜尋",
 	"3. Connect your AI": "3. 連接您的 AI",
 	"50 GB attachments": "50 GB 附件",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
@@ -313,6 +312,7 @@ const zhTW: Dict = {
 		"此處之後的筆記仍可正常同步和開啟，只是不在搜尋索引中。索引保留您最舊的筆記，因此最新的筆記才會超出範圍。",
 	"Notes searchable": "筆記可搜尋",
 	"Notes stored": "筆記已儲存",
+	"Notes up to the Free limit": "筆記數量，免費方案限制",
 	"Nothing in this vault syncs until you choose how to merge it with the server.":
 		"在您選擇如何將此儲存庫與伺服器合併之前，不會進行任何同步。",
 	"Nothing is deleted.": "不會刪除任何內容。",

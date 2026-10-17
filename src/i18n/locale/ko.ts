@@ -12,7 +12,6 @@ const ko: Dict = {
 	"10 GB attachments": "10GB 첨부 파일",
 	"10 vaults, unlimited devices": "10개의 보관함, 기기 수 제한 없음",
 	"2. Connect your vault to Engram": "2. 보관함을 Engram에 연결하세요",
-	"3,000 notes, all searchable": "3,000개의 노트, 모두 검색 가능",
 	"3. Connect your AI": "3. AI 연결",
 	"50 GB attachments": "50GB 첨부 파일",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
@@ -333,6 +332,7 @@ const ko: Dict = {
 		"이 이후의 노트는 정상적으로 동기화되고 열립니다. 단, 검색 인덱스에 포함되지 않습니다. 인덱스는 가장 오래된 노트를 유지하므로, 가장 최신의 노트는 인덱스에서 제외될 수 있습니다.",
 	"Notes searchable": "검색 가능한 노트",
 	"Notes stored": "저장된 노트",
+	"Notes up to the Free limit": "무료 사용 제한까지의 노트",
 	"Nothing in this vault syncs until you choose how to merge it with the server.":
 		"이 보관함의 내용은 서버와 병합하는 방법을 선택할 때까지 동기화되지 않습니다.",
 	"Nothing is deleted.": "삭제되는 항목은 없습니다.",

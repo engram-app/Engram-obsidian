@@ -12,7 +12,6 @@ const vi: Dict = {
 	"10 GB attachments": "10 GB tệp đính kèm",
 	"10 vaults, unlimited devices": "10 kho lưu trữ, số lượng thiết bị không giới hạn",
 	"2. Connect your vault to Engram": "2. Kết nối kho lưu trữ của bạn với Engram",
-	"3,000 notes, all searchable": "3.000 ghi chú, tất cả đều có thể tìm kiếm",
 	"3. Connect your AI": "3. Kết nối AI của bạn",
 	"50 GB attachments": "50 GB tệp đính kèm",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
@@ -336,6 +335,7 @@ const vi: Dict = {
 		"Các ghi chú sau đây vẫn được đồng bộ hóa và mở bình thường, chúng chỉ không nằm trong chỉ mục tìm kiếm. Chỉ mục lưu trữ các ghi chú cũ nhất của bạn, vì vậy các ghi chú mới nhất của bạn sẽ không nằm trong đó.",
 	"Notes searchable": "Ghi chú có thể tìm kiếm",
 	"Notes stored": "Ghi chú đã được lưu trữ",
+	"Notes up to the Free limit": "Ghi chú tối đa theo giới hạn miễn phí",
 	"Nothing in this vault syncs until you choose how to merge it with the server.":
 		"Không có gì trong kho lưu trữ này được đồng bộ hóa cho đến khi bạn chọn cách hợp nhất nó với máy chủ.",
 	"Nothing is deleted.": "Không có gì bị xóa.",

@@ -12,7 +12,6 @@ const ja: Dict = {
 	"10 GB attachments": "10 GB 添付ファイル",
 	"10 vaults, unlimited devices": "10個の保管庫、デバイス数無制限",
 	"2. Connect your vault to Engram": "2. 保管庫をEngramに接続します",
-	"3,000 notes, all searchable": "3000件のノート、すべて検索可能",
 	"3. Connect your AI": "3. AIとの接続",
 	"50 GB attachments": "50 GB 添付ファイル",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
@@ -338,6 +337,7 @@ const ja: Dict = {
 		"ここより後のノートは通常通り同期され、開くことができます。ただし、検索インデックスには含まれません。インデックスには古いノートが保持されるため、新しいノートが対象外になることがあります。",
 	"Notes searchable": "検索可能なノート",
 	"Notes stored": "ノートを保存",
+	"Notes up to the Free limit": "無料版の制限まで",
 	"Nothing in this vault syncs until you choose how to merge it with the server.":
 		"この保管庫の内容は、サーバーとの連携方法を選択するまで同期されません。",
 	"Nothing is deleted.": "何も削除しません。",
