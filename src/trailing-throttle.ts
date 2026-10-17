@@ -13,8 +13,9 @@ import type { TimeProvider } from "./time-provider";
  *  `poke(true)` is urgent: it skips the gap, except right after another early
  *  (urgent) run, when it waits `gapMs(true)` instead. Callers pass a short
  *  urgent gap, so a stream of urgent pokes costs one run per urgent gap.
- *  `floorMs` is never skipped, urgent or not: callers put their failure
- *  backoff there, so urgency skips only the success cooldown.
+ *  `floorMs` is skipped only by `poke(_, true)`: callers put their failure
+ *  backoff there, so urgency alone skips only the success cooldown. Both flags
+ *  ride a poke made mid-run into the trailing run.
  *
  *  A run that resolves `false` did nothing (no work was pending): it stamps
  *  no cooldown, so the next poke is not throttled by a run that never happened.
@@ -32,6 +33,7 @@ export class TrailingThrottle {
 	private running = false;
 	private again = false;
 	private againUrgent = false;
+	private againSkipFloor = false;
 	private lastWasUrgent = false;
 	private lastDoneAt = Number.NEGATIVE_INFINITY;
 	private gen = 0;
@@ -43,16 +45,17 @@ export class TrailingThrottle {
 		private readonly floorMs: () => number = () => 0,
 	) {}
 
-	poke(urgent = false): void {
+	poke(urgent = false, skipFloor = false): void {
 		if (this.running) {
 			this.again = true;
 			this.againUrgent ||= urgent;
+			this.againSkipFloor ||= skipFloor;
 			return;
 		}
 		const now = this.time.now();
 		const due = Math.max(
 			urgent && !this.lastWasUrgent ? now : this.lastDoneAt + this.gapMs(urgent),
-			this.lastDoneAt + this.floorMs(),
+			skipFloor ? Number.NEGATIVE_INFINITY : this.lastDoneAt + this.floorMs(),
 		);
 		if (this.timer !== null) {
 			if (due >= this.timerDue) return;
@@ -75,6 +78,7 @@ export class TrailingThrottle {
 		this.timer = null;
 		this.again = false;
 		this.againUrgent = false;
+		this.againSkipFloor = false;
 	}
 
 	reset(): void {
@@ -89,6 +93,7 @@ export class TrailingThrottle {
 		this.running = true;
 		this.again = false;
 		this.againUrgent = false;
+		this.againSkipFloor = false;
 		// Urgent = earlier than the regular gap allows.
 		const urgent = this.time.now() < this.lastDoneAt + this.gapMs(false);
 		let didWork = true;
@@ -108,7 +113,7 @@ export class TrailingThrottle {
 					this.lastDoneAt = this.time.now();
 					this.lastWasUrgent = urgent;
 				}
-				if (this.again) this.poke(this.againUrgent);
+				if (this.again) this.poke(this.againUrgent, this.againSkipFloor);
 			});
 	}
 }

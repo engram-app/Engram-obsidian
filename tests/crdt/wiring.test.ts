@@ -64,6 +64,12 @@ function makeDevice(
 		/** Whether the engine's heal enqueued a fetch (false = a no-op ensure). */
 		ensure?: () => boolean;
 		idMapEra?: () => number;
+		isSyncBlocked?: () => boolean;
+		whenGateOpens?: () => Promise<void>;
+		/** Whether the heal's wait saw a fetch answer (false = timed out). */
+		answered?: () => boolean;
+		/** Records each awaitNoteIdMapped call's options. */
+		waitOpts?: unknown[];
 	},
 ): Device {
 	const map = new NoteIdMap();
@@ -86,13 +92,16 @@ function makeDevice(
 		materializeEmptyDiscovered: async (path: string) => {
 			disk.set(path, "");
 		},
-		isSyncBlocked: () => false,
+		isSyncBlocked: () => opts?.isSyncBlocked?.() ?? false,
+		whenGateOpens: () => opts?.whenGateOpens?.() ?? Promise.resolve(),
 		// Live id-map heal (announce/#955 note_not_found). The scenarios drive
 		// the manifest explicitly: the trigger is a no-op, and the strand-heal's
 		// wait is where `reconcile` (the manifest) teaches the map.
 		ensureNoteIdMapped: () => opts?.ensure?.() ?? true,
-		awaitNoteIdMapped: async () => {
+		awaitNoteIdMapped: async (_id: string, waitOpts?: unknown) => {
+			opts?.waitOpts?.push(waitOpts);
 			reconcile();
+			return opts?.answered?.() ?? true;
 		},
 		idMapEra: () => opts?.idMapEra?.() ?? 0,
 		discoverAnnouncedNote: async () => {},
@@ -489,7 +498,11 @@ test("a no-op heal (gate closed) does not burn the strand-heal attempts", async 
 			b.map.set("GB/gated.md", noteId);
 			return 1;
 		},
-		{ ensure: () => gateOpen },
+		{
+			ensure: () => gateOpen,
+			isSyncBlocked: () => !gateOpen,
+			whenGateOpens: () => new Promise<void>(() => {}), // the test drains by hand
+		},
 	);
 	connect(a, b);
 	a.map.set("GA/new.md", noteId);
@@ -505,6 +518,102 @@ test("a no-op heal (gate closed) does not burn the strand-heal attempts", async 
 	gateOpen = true;
 	await b.wiring.drainStrandedFlushes();
 	await waitFor(async () => b.disk.has("GB/gated.md"), "the flush lands once the gate opens");
+	await destroy(a, b);
+});
+
+async function strandOn(b: Device, a: Device, noteId: string, body: string): Promise<void> {
+	connect(a, b);
+	a.map.set(`${a.id}/new.md`, noteId);
+	a.wiring.manager.markSynced(noteId);
+	await a.wiring.manager.applyLocalEdit(noteId, body, false);
+	b.wiring.onCrdtDocReady(noteId);
+	await waitFor(
+		async () => (await b.wiring.manager.getText(noteId)) === body,
+		"B integrates the body into the Y.Doc",
+	);
+}
+
+test("r9#1 a strand id the heal refuses (gate open) is given up at once, not retried", async () => {
+	const a = makeDevice("RA", () => 0);
+	const b = makeDevice("RB", () => 0, { ensure: () => false }); // refused / recently deleted
+	await strandOn(b, a, "note-refused", "refused body");
+	const warn = spyOn(rlog(), "warn");
+	try {
+		await b.wiring.drainStrandedFlushes();
+		await b.wiring.drainStrandedFlushes();
+		const msgs = (warn.mock.calls as unknown as Array<[string, string]>).map(([, m]) => m);
+		expect(msgs.filter((m) => m.includes("retrying"))).toEqual([]);
+		expect(msgs.filter((m) => m.includes("giving up on note_id=note-refused")).length).toBe(1);
+	} finally {
+		warn.mockRestore();
+		await destroy(a, b);
+	}
+});
+
+test("r9#1 a closed gate pauses the strand heal quietly and resumes it when the gate opens", async () => {
+	let blocked = true;
+	let open: () => void = () => {};
+	const gate = new Promise<void>((r) => {
+		open = r;
+	});
+	const a = makeDevice("PA", () => 0);
+	const b = makeDevice(
+		"PB",
+		() => {
+			if (blocked) return 0;
+			b.map.set("PB/paused.md", "note-paused");
+			return 1;
+		},
+		{ ensure: () => !blocked, isSyncBlocked: () => blocked, whenGateOpens: () => gate },
+	);
+	await strandOn(b, a, "note-paused", "paused body");
+	const warn = spyOn(rlog(), "warn");
+	try {
+		for (let i = 0; i < 7; i++) await b.wiring.drainStrandedFlushes();
+		expect(warn.mock.calls.length).toBe(0);
+		blocked = false;
+		open();
+		await waitFor(async () => b.disk.has("PB/paused.md"), "the heal resumes on gate open");
+	} finally {
+		warn.mockRestore();
+		await destroy(a, b);
+	}
+});
+
+test("r9#4 the strand heal waits on the non-urgent path (no fan-out probe)", async () => {
+	const waitOpts: unknown[] = [];
+	const a = makeDevice("UA", () => 0);
+	const b = makeDevice(
+		"UB",
+		() => {
+			b.map.set("UB/u.md", "note-u");
+			return 1;
+		},
+		{ waitOpts },
+	);
+	await strandOn(b, a, "note-u", "u body");
+	await b.wiring.drainStrandedFlushes();
+	expect(waitOpts).toEqual([{ urgent: false }]);
+	await destroy(a, b);
+});
+
+test("r9#5 a strand wait no fetch answered does not burn an attempt", async () => {
+	let up = false;
+	const a = makeDevice("TA", () => 0);
+	const b = makeDevice(
+		"TB",
+		() => {
+			if (!up) return 0;
+			b.map.set("TB/t.md", "note-t");
+			return 1;
+		},
+		{ answered: () => up },
+	);
+	await strandOn(b, a, "note-t", "t body");
+	for (let i = 0; i < 7; i++) await b.wiring.drainStrandedFlushes(); // an outage
+	up = true;
+	await b.wiring.drainStrandedFlushes();
+	await waitFor(async () => b.disk.has("TB/t.md"), "the flush lands after the outage");
 	await destroy(a, b);
 });
 

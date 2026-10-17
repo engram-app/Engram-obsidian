@@ -1388,7 +1388,7 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			liveManifest([{ id: "x", path: "x.md" }]);
 			time.advance(60_000);
 			await flush();
-			expect(engine.awaitNoteIdMapped("x")).resolves.toBeUndefined();
+			await expect(engine.awaitNoteIdMapped("x")).resolves.toBe(false); // settled: nothing to wait on
 			expect((engine as any).noteIdMap.pathForId("x")).toBe("x.md");
 		});
 
@@ -1446,7 +1446,9 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 	describe("round 8", () => {
 		const WAIT = 3_000; // SyncEngine.FANOUT_ID_WAIT_MS
 
-		test("I4 N fan-outs for an id the manifest never lists cost at most MAX_ATTEMPTS GETs per TTL", async () => {
+		test("I4 N fan-outs for an id the manifest never lists cost at most 2x MAX_ATTEMPTS GETs per TTL", async () => {
+			// Round 9 #2: a fan-out proves the row exists, so it may clear the
+			// negative cache and heal once per TTL window: one extra round.
 			const { engine, time } = throttledEngine();
 			(engine as any).crdt = {}; // applyPushedNoteUpdate needs a CRDT stack
 			liveManifest([]);
@@ -1456,7 +1458,7 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 				time.advance(GAP); // 25 x 2s = 50s, inside one TTL
 				await flush();
 			}
-			expect(fetches()).toBeLessThanOrEqual(3);
+			expect(fetches()).toBeLessThanOrEqual(2 * 3);
 		});
 
 		test("#5 after two failures a fan-out probes once, and is delivered when the server is back", async () => {
@@ -1529,6 +1531,81 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			rig.time.advance(60_000);
 			await flush();
 			for (let i = 0; i < 20; i++) expect(saved.has(`m-${i}`)).toBe(true);
+		});
+	});
+
+	describe("round 9", () => {
+		test("#2 a fan-out for an id in the negative cache clears it and heals once", async () => {
+			const { engine, map, time } = throttledEngine();
+			(engine as any).crdt = {};
+			liveManifest([]);
+			engine.ensureNoteIdMapped("late-row"); // announce: 3 answered fetches, then parked
+			for (let i = 0; i < 5; i++) {
+				time.advance(GAP);
+				await flush();
+			}
+			expect(fetches()).toBe(3);
+			liveManifest([{ id: "late-row", path: "late.md" }]); // the row lands
+			engine.ensureNoteIdMapped("late-row"); // an announce is still parked
+			await flush();
+			expect(fetches()).toBe(3);
+			void engine.applyPushedNoteUpdate("late-row", new Uint8Array(), "h");
+			await flush();
+			expect(fetches()).toBe(4);
+			expect(map.pathForId("late-row")).toBe("late.md");
+		});
+
+		test("#3 a fan-out arriving mid-fetch with failures >= 2 still gets its probe", async () => {
+			const { engine, map, time } = throttledEngine();
+			const get = mockApi.getManifest as ReturnType<typeof mock>;
+			get.mockRejectedValueOnce(new Error("503")).mockRejectedValueOnce(new Error("503"));
+			engine.ensureNoteIdMapped("x");
+			await flush();
+			time.advance(2 * GAP);
+			await flush(); // f=2: backoff 8s
+			let fail3: (e: Error) => void = () => {};
+			get.mockImplementationOnce(
+				() =>
+					new Promise((_, rej) => {
+						fail3 = rej;
+					}),
+			);
+			time.advance(4 * GAP);
+			await flush(); // the scheduled fetch 3 is in flight
+			expect(fetches()).toBe(3);
+			liveManifest([{ id: "x", path: "x.md" }]);
+			engine.ensureNoteIdMapped("x"); // a fan-out, mid-fetch
+			void engine.awaitNoteIdMapped("x");
+			fail3(new Error("503"));
+			await flush();
+			expect(fetches()).toBe(4); // the probe ran right after, not after 16s
+			expect(map.pathForId("x")).toBe("x.md");
+		});
+
+		test("#4 a non-urgent wait keeps the success cooldown", async () => {
+			const { engine, time } = throttledEngine();
+			liveManifest([{ id: "a", path: "a.md" }]);
+			engine.ensureNoteIdMapped("a");
+			await flush();
+			expect(fetches()).toBe(1);
+			engine.ensureNoteIdMapped("s");
+			void engine.awaitNoteIdMapped("s", { urgent: false });
+			await flush();
+			expect(fetches()).toBe(1);
+			time.advance(GAP);
+			await flush();
+			expect(fetches()).toBe(2);
+		});
+
+		test("#6 an id already mapped to a path that is now refused loses the mapping", async () => {
+			const { engine, map } = throttledEngine();
+			map.set("p.md", "x");
+			engine.queue.load([
+				{ path: "p.md", action: "delete", evidenced: true, mtime: 1, timestamp: 1 } as any,
+			]);
+			manifestWith([{ id: "x", path: "p.md" }]);
+			await engine.reconcileNoteIdMapFromManifest();
+			expect(map.pathForId("x")).toBeNull();
 		});
 	});
 });
