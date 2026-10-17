@@ -81,11 +81,15 @@ function makeDevice(
 		materializeEmptyDiscovered: async (path: string) => {
 			disk.set(path, "");
 		},
-		reconcileNoteIdMapFromManifest: async () => reconcile(),
 		isSyncBlocked: () => false,
 		// Live id-map heal (announce/#955 note_not_found). The scenarios drive
-		// the manifest reconcile explicitly, so the coalesced trigger is a no-op.
+		// the manifest explicitly: the trigger is a no-op, and the strand-heal's
+		// wait is where `reconcile` (the manifest) teaches the map.
 		ensureNoteIdMapped: () => {},
+		awaitNoteIdMapped: async () => {
+			reconcile();
+		},
+		idMapEra: () => 0,
 		discoverAnnouncedNote: async () => {},
 		// Fix wave 1: CrdtManager's onSynced fires this on every non-empty
 		// inbound frame. These device-pair scenarios don't exercise the D3
@@ -141,6 +145,8 @@ function fanoutStubEngine() {
 		reconcileNoteIdMapFromManifest: async () => 0,
 		isSyncBlocked: () => false,
 		ensureNoteIdMapped: () => {},
+		awaitNoteIdMapped: async () => {},
+		idMapEra: () => 0,
 		applyPushedNoteUpdate: async () => {},
 		discoverAnnouncedNote: async () => {},
 	};
@@ -262,6 +268,8 @@ test("#235: a flushFromCrdt write failure rejects applyRemoteUpdate (head stays 
 		reconcileNoteIdMapFromManifest: async () => 0,
 		isSyncBlocked: () => false,
 		ensureNoteIdMapped: () => {},
+		awaitNoteIdMapped: async () => {},
+		idMapEra: () => 0,
 	};
 	const wiring = createCrdtWiring({
 		noteIdMap: map,
@@ -485,6 +493,8 @@ test("a refused live frame records a durable delivery, not a rejoin enroll", asy
 			reconcileNoteIdMapFromManifest: async () => 0,
 			isSyncBlocked: () => false,
 			ensureNoteIdMapped: () => {},
+			awaitNoteIdMapped: async () => {},
+			idMapEra: () => 0,
 			discoverAnnouncedNote: async () => {},
 			commitCrdtConvergence: async () => {},
 			recordUndeliveredCrdtEdit: (id: string) => recorded.push(id),
@@ -519,6 +529,8 @@ test("a create-gated op frame also records a durable delivery", async () => {
 			reconcileNoteIdMapFromManifest: async () => 0,
 			isSyncBlocked: () => false,
 			ensureNoteIdMapped: () => {},
+			awaitNoteIdMapped: async () => {},
+			idMapEra: () => 0,
 			discoverAnnouncedNote: async () => {},
 			commitCrdtConvergence: async () => {},
 			recordUndeliveredCrdtEdit: (id: string) => recorded.push(id),
@@ -561,6 +573,8 @@ test("wiring gate: syncStep1 reaches sendCrdt for a held doc, ops do not", async
 			reconcileNoteIdMapFromManifest: async () => 0,
 			isSyncBlocked: () => false,
 			ensureNoteIdMapped: () => {},
+			awaitNoteIdMapped: async () => {},
+			idMapEra: () => 0,
 			discoverAnnouncedNote: async () => {},
 			commitCrdtConvergence: async () => {},
 			recordUndeliveredCrdtEdit: () => {},
@@ -618,6 +632,8 @@ test("#1550: a note_not_found reply drives the orphaned-claim repair, ahead of t
 			return true; // handled — the server said it has no row for this id
 		},
 		ensureNoteIdMapped: (id: string) => calls.push(`reconcile:${id}`),
+		awaitNoteIdMapped: async () => {},
+		idMapEra: () => 0,
 	};
 	const wiring = createCrdtWiring({
 		noteIdMap: map,
@@ -656,6 +672,8 @@ test("crdt_doc_ready runs discovery before the id-map heal, and only falls back"
 			if (id === "mapped-by-discovery") map.set(path, id);
 		},
 		ensureNoteIdMapped: (...args: unknown[]) => calls.push(`heal:${args.join(":")}`),
+		awaitNoteIdMapped: async () => {},
+		idMapEra: () => 0,
 	};
 	const wiring = createCrdtWiring({
 		noteIdMap: map,

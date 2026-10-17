@@ -17,9 +17,9 @@ type WiringSyncEngine = Pick<
 	| "flushStrandedNote"
 	| "isUnchangedSynced"
 	| "materializeEmptyDiscovered"
-	| "reconcileNoteIdMapFromManifest"
 	| "isSyncBlocked"
 	| "ensureNoteIdMapped"
+	| "awaitNoteIdMapped"
 	| "idMapEra"
 	| "repairOrphanedClaim"
 	| "clearPushedBaselineForId"
@@ -211,11 +211,11 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	async function drainStrandedFlushes(): Promise<void> {
 		const pending = new Set(strandedFlushes);
 		strandedFlushes.clear();
-		try {
-			await syncEngine.reconcileNoteIdMapFromManifest();
-		} catch (e) {
-			rlog().warn("crdt", `strand-heal reconcile failed: ${errMsg(e)}`);
-		}
+		// Through the engine's heal, not a raw reconcile: that one is gated,
+		// throttled and vault-epoch guarded, and coalesces with announce and
+		// fan-out heals into the same manifest GET. It never throws.
+		for (const id of pending) syncEngine.ensureNoteIdMapped(id);
+		await Promise.all([...pending].map((id) => syncEngine.awaitNoteIdMapped(id)));
 		const { toFlush, toRetry, toGiveUp } = partitionStrandedFlushes(
 			pending,
 			(id) => noteIdMap.pathForId(id),
@@ -441,9 +441,9 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		// never waits, since applyPushedNoteUpdate heals its own id urgently.
 		// A vault switch during discovery's replay: this id belongs to the old
 		// vault, so do not heal it against the new one's manifest.
-		const era = syncEngine.idMapEra?.();
+		const era = syncEngine.idMapEra();
 		const heal = (): void => {
-			if (syncEngine.idMapEra?.() !== era) return;
+			if (syncEngine.idMapEra() !== era) return;
 			if (noteIdMap.pathForId(docId) === null) syncEngine.ensureNoteIdMapped(docId);
 		};
 		if (announcedPath === undefined) heal();
