@@ -434,6 +434,10 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		// falls back to the whole-vault manifest reconcile, which is throttled: on
 		// a 1,000-note import (e2e test_77) running it first cost ~970 manifest
 		// GETs for notes discovery maps for free.
+		//
+		// The heal runs after discovery's whole seq replay. That delays only the
+		// background mapping of an id the replay re-keyed away; a fan-out for it
+		// never waits, since applyPushedNoteUpdate heals its own id urgently.
 		const heal = (): void => {
 			if (noteIdMap.pathForId(docId) === null) syncEngine.ensureNoteIdMapped(docId);
 		};

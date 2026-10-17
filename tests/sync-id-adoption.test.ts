@@ -404,6 +404,32 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			wiring.dispose();
 		});
 
+		test("a fan-out for an id the replay re-keyed away is not held until the replay ends", async () => {
+			// The wiring heal runs after discovery's whole replay, but fan-out
+			// delivery never waits on it: applyPushedNoteUpdate heals its own id.
+			const { engine, map, wiring } = announceRig();
+			let endReplay: () => void = () => {};
+			(engine as any).catchupViaSeqReplay = () =>
+				new Promise<void>((r) => {
+					endReplay = r;
+				});
+			wiring.onCrdtDocReady("x", "p.md");
+			await flush();
+			expect(map.pathForId("x")).toBe("p.md");
+			map.set("p.md", "y"); // the replay re-keys p.md to its real owner
+			liveManifest([
+				{ id: "y", path: "p.md" },
+				{ id: "x", path: "q.md" },
+			]);
+			void engine.applyPushedNoteUpdate("x", new Uint8Array(), "h").catch(() => {});
+			await flush();
+			expect(fetches()).toBe(1);
+			expect(map.pathForId("x")).toBe("q.md");
+			endReplay();
+			await flush();
+			wiring.dispose();
+		});
+
 		test("discovery throwing before its own try still runs the manifest fallback", async () => {
 			const { engine, map, wiring } = announceRig();
 			(engine as any).isLiveBound = () => {
