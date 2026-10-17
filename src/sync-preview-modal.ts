@@ -1320,59 +1320,44 @@ export class SyncPreviewModal extends Modal {
 		// Invariant: the step is only entered with a quota (needsOverLimitStep),
 		// and only a verified-unlimited re-check clears it, which leaves the step.
 		if (!quota) throw new Error("over-limit view rendered without a notes quota");
-		contentEl.createEl("h2", {
-			text: overLimitHeading(this.state.newNotePaths().length, quota.room),
-			cls: "engram-sync-preview-header",
+		const view = renderOverLimitView(contentEl, {
+			count: this.state.newNotePaths().length,
+			quota,
+			upgradeUrl: this.opts.upgradeUrl ?? null,
+			// No picker for a choice that deletes on the server: ignoring a folder
+			// there deletes its uploaded notes (see deletesRemote).
+			middle: this.state.overLimitOffersPicker()
+				? (el) => {
+						new FolderPicker(el, {
+							notePaths: this.state.localNotePaths(),
+							newPaths: this.state.newNotePaths(),
+							excluded: this.state.overLimitExcluded,
+							limit: quota.room,
+							onChange: (excluded) => {
+								this.state.setOverLimitExcluded(excluded);
+								refresh();
+							},
+						});
+						el.createEl("p", {
+							text: t(
+								"Unticked folders stop syncing, including notes already uploaded.",
+							),
+							cls: "engram-sync-preview-over-limit-hint",
+						});
+					}
+				: undefined,
+			error: this.state.overLimitError ?? "",
 		});
-		contentEl.createEl("p", {
-			text: t("Your plan syncs {limit} notes.", { limit: formatNumber(quota.limit) }),
-		});
-
-		const upgradeUrl = this.opts.upgradeUrl;
-		if (upgradeUrl) {
-			const upgrade = contentEl.createEl("button", { text: t("Upgrade"), cls: "mod-cta" });
-			upgrade.addEventListener("click", () => window.open(upgradeUrl, "_blank"));
-		}
-
-		// No picker for a choice that deletes on the server: ignoring a folder
-		// there deletes its uploaded notes (see deletesRemote).
-		if (this.state.overLimitOffersPicker()) {
-			new FolderPicker(contentEl, {
-				notePaths: this.state.localNotePaths(),
-				newPaths: this.state.newNotePaths(),
-				excluded: this.state.overLimitExcluded,
-				limit: quota.room,
-				onChange: (excluded) => {
-					this.state.setOverLimitExcluded(excluded);
-					refresh();
-				},
-			});
-			contentEl.createEl("p", {
-				text: t("Unticked folders stop syncing, including notes already uploaded."),
-				cls: "engram-sync-preview-over-limit-hint",
-			});
-		}
-
-		const ackRow = contentEl.createEl("label", { cls: "engram-sync-preview-over-limit-ack" });
-		const ack = ackRow.createEl("input", { type: "checkbox" });
-		const ackText = ackRow.createSpan();
+		const { ackRow, ack, ackText, back: backBtn, cont: continueBtn } = view;
+		const error = view.error as HTMLElement;
 		ack.addEventListener("change", () => {
 			this.state.toggleOverLimitAck();
 			refresh();
 		});
-
-		const error = contentEl.createEl("p", {
-			cls: "engram-sync-preview-picker-error",
-			text: this.state.overLimitError ?? "",
-		});
-
-		const footer = contentEl.createEl("footer", { cls: "engram-sync-preview-footer" });
-		const backBtn = footer.createEl("button", { text: t("Back") });
 		backBtn.addEventListener("click", () => {
 			this.state.goBack();
 			this.render();
 		});
-		const continueBtn = footer.createEl("button", { text: t("Continue") });
 		continueBtn.addEventListener("click", () => {
 			void this.continueOverLimit(refresh, error);
 		});
@@ -1658,6 +1643,53 @@ export class SyncPreviewModal extends Modal {
 	}
 }
 
+/** The over-limit message both the first-sync step and Sync again show:
+ *  heading, plan size, Upgrade, an optional middle (the folder picker), the
+ *  acknowledgement row, an optional error line, and Back / Continue. Callers
+ *  wire the behaviour. */
+function renderOverLimitView(
+	el: HTMLElement,
+	opts: {
+		count: number;
+		quota: NotesQuota;
+		upgradeUrl: string | null;
+		middle?: (el: HTMLElement) => void;
+		error?: string;
+	},
+): {
+	ackRow: HTMLElement;
+	ack: HTMLInputElement;
+	ackText: HTMLElement;
+	error: HTMLElement | null;
+	back: HTMLButtonElement;
+	cont: HTMLButtonElement;
+} {
+	const { count, quota, upgradeUrl } = opts;
+	el.createEl("h2", {
+		text: overLimitHeading(count, quota.room),
+		cls: "engram-sync-preview-header",
+	});
+	el.createEl("p", {
+		text: t("Your plan syncs {limit} notes.", { limit: formatNumber(quota.limit) }),
+	});
+	if (upgradeUrl) {
+		const upgrade = el.createEl("button", { text: t("Upgrade"), cls: "mod-cta" });
+		upgrade.addEventListener("click", () => window.open(upgradeUrl, "_blank"));
+	}
+	opts.middle?.(el);
+	const ackRow = el.createEl("label", { cls: "engram-sync-preview-over-limit-ack" });
+	const ack = ackRow.createEl("input", { type: "checkbox" });
+	const ackText = ackRow.createSpan();
+	const error =
+		opts.error === undefined
+			? null
+			: el.createEl("p", { cls: "engram-sync-preview-picker-error", text: opts.error });
+	const footer = el.createEl("footer", { cls: "engram-sync-preview-footer" });
+	const back = footer.createEl("button", { text: t("Back") });
+	const cont = footer.createEl("button", { text: t("Continue") });
+	return { ackRow, ack, ackText, error, back, cont };
+}
+
 /** "Sync again" on a folder that does not fit the plan: the over-limit step's
  *  message, Upgrade and acknowledgement, without its folder picker (the user
  *  just chose this folder). Resolves true on Continue, false on Back or close. */
@@ -1684,29 +1716,17 @@ export class FolderOverLimitModal extends Modal {
 		const { contentEl } = this;
 		const { count, quota, upgradeUrl } = this;
 		contentEl.addClass("engram-sync-preview-modal");
-		contentEl.createEl("h2", {
-			text: overLimitHeading(count, quota.room),
-			cls: "engram-sync-preview-header",
+		const { ack, ackText, back, cont } = renderOverLimitView(contentEl, {
+			count,
+			quota,
+			upgradeUrl,
 		});
-		contentEl.createEl("p", {
-			text: t("Your plan syncs {limit} notes.", { limit: formatNumber(quota.limit) }),
-		});
-		if (upgradeUrl) {
-			const upgrade = contentEl.createEl("button", { text: t("Upgrade"), cls: "mod-cta" });
-			upgrade.addEventListener("click", () => window.open(upgradeUrl, "_blank"));
-		}
-		const ackRow = contentEl.createEl("label", { cls: "engram-sync-preview-over-limit-ack" });
-		const ack = ackRow.createEl("input", { type: "checkbox" });
-		ackRow.createSpan({
-			text: t("I understand {count} notes will not sync.", {
+		ackText.setText(
+			t("I understand {count} notes will not sync.", {
 				count: Math.max(0, count - quota.room),
 			}),
-		});
-		const footer = contentEl.createEl("footer", { cls: "engram-sync-preview-footer" });
-		footer
-			.createEl("button", { text: t("Back") })
-			.addEventListener("click", () => this.finish(false));
-		const cont = footer.createEl("button", { text: t("Continue") });
+		);
+		back.addEventListener("click", () => this.finish(false));
 		cont.disabled = true;
 		ack.addEventListener("change", () => {
 			cont.disabled = !ack.checked;
