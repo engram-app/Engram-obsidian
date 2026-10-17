@@ -798,6 +798,19 @@ describe("SyncEngine.reincludeFolder: Sync again for an excluded folder", () => 
 	});
 });
 
+describe("reincludeFolder always completes the re-include", () => {
+	test("a local delete that throws still re-includes the folder and rewinds", async () => {
+		const { engine } = makeEngine([]);
+		engine.importSyncState({ "Archive/gone.md": { hash: fnv1a("# gone") } });
+		(engine as any).deleteSyncedPath = mock(() => Promise.reject(new Error("offline")));
+
+		await engine.reincludeFolder("Archive");
+
+		expect(engine.exportReincludedFolders()).toEqual(["Archive"]);
+		expect(engine.getSeqRewindFloor()).toBe(0);
+	});
+});
+
 describe("Sync again survives a restart before the push pass", () => {
 	test("an edit made while excluded is still pushed after the engine is rebuilt from saved data", async () => {
 		const edited = new TFile("Archive/a.md", new Date("2026-09-01T00:00:00Z").getTime());
@@ -835,6 +848,8 @@ describe("Sync again survives a restart before the push pass", () => {
 		second.importSyncState(saved.syncState);
 		const p2 = pluginOn(second, saved.settings, []);
 		p2.hydrateReincludedFolders(saved);
+		// The genesis replay is still owed too.
+		expect(second.getSeqRewindFloor()).toBe(0);
 		const pushFile = mock().mockResolvedValue(true);
 		(second as any).pushFile = pushFile;
 		await second.pushModifiedFiles("2026-10-01T00:00:00.000Z");

@@ -475,6 +475,7 @@ describe("opening the sync gate re-runs the catch-up (#425)", () => {
 				ignoredFiles: { serialize: () => [] },
 				exportGateJournal: () => journal,
 				exportReincludedFolders: () => [],
+				getSeqRewindFloor: () => null,
 			},
 			async writePluginData(d: Record<string, unknown>) {
 				written = d;

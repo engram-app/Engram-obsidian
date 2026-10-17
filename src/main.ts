@@ -156,9 +156,16 @@ interface PluginData {
 	/** Folders re-included by "Sync again" whose files still await the push
 	 *  pass's content re-check (SyncEngine.markReincluded). */
 	reincludedFolders?: string[];
-	/** The vault `reincludedFolders` was recorded for; any other vault drops it. */
+	/** A catch-up rewind still owed ("Sync again" asks for a genesis replay);
+	 *  cleared once a replay that moves the real cursor completes. */
+	seqRewindFloor?: number | null;
+	/** The vault `reincludedFolders` and `seqRewindFloor` were recorded for;
+	 *  any other vault drops them. */
 	reincludedFoldersVaultId?: string | null;
 }
+
+/** Engine state saved ahead of applying it (see saveExcludedFolders). */
+type PendingSave = Pick<PluginData, "reincludedFolders" | "seqRewindFloor">;
 
 /** Whether setupNoteStream() may keep the existing stream instead of
  *  rebuilding it. The short-circuit exists to protect a HEALTHY socket from
@@ -1975,14 +1982,18 @@ export default class EngramSyncPlugin extends Plugin {
 		await this.syncEngine.replayGateJournal();
 	}
 
-	/** Restore the folders "Sync again" left awaiting their content re-check,
-	 *  only into the vault they were recorded for. */
+	/** Restore what "Sync again" still owes (the folders' content re-check and
+	 *  the genesis replay), only into the vault it was recorded for. */
 	hydrateReincludedFolders(
-		saved: Pick<PluginData, "reincludedFolders" | "reincludedFoldersVaultId"> | null,
+		saved: Pick<
+			PluginData,
+			"reincludedFolders" | "seqRewindFloor" | "reincludedFoldersVaultId"
+		> | null,
 	): void {
-		if (!saved?.reincludedFolders) return;
+		if (!saved) return;
 		if (saved.reincludedFoldersVaultId !== (this.settings.vaultId ?? null)) return;
 		this.syncEngine.importReincludedFolders(saved.reincludedFolders);
+		this.syncEngine.setSeqRewindFloor(saved.seqRewindFloor);
 	}
 
 	/** Restore a gate journal (#247) persisted by an earlier session, but only
@@ -1994,9 +2005,14 @@ export default class EngramSyncPlugin extends Plugin {
 		this.syncEngine.importGateJournal(saved.gateJournal);
 	}
 
-	private async savePluginData(lastSync: string, offlineQueue?: QueueEntry[]): Promise<void> {
+	private async savePluginData(
+		lastSync: string,
+		offlineQueue?: QueueEntry[],
+		/** Values to write instead of the live ones (see saveExcludedFolders). */
+		pending: PendingSave & { settings?: EngramSyncSettings } = {},
+	): Promise<void> {
 		await this.writePluginData({
-			settings: this.settings,
+			settings: pending.settings ?? this.settings,
 			lastSync,
 			// Top-level, device-local; saveData() overwrites data.json wholesale,
 			// so every field must be re-listed here or it's wiped on the next save.
@@ -2031,7 +2047,12 @@ export default class EngramSyncPlugin extends Plugin {
 			noteIdsVaultId: this.noteIdsOwner,
 			gateJournal: this.syncEngine.exportGateJournal(),
 			gateJournalVaultId: this.settings.vaultId ?? null,
-			reincludedFolders: this.syncEngine.exportReincludedFolders(),
+			reincludedFolders:
+				pending.reincludedFolders ?? this.syncEngine.exportReincludedFolders(),
+			seqRewindFloor:
+				pending.seqRewindFloor !== undefined
+					? pending.seqRewindFloor
+					: this.syncEngine.getSeqRewindFloor(),
 			reincludedFoldersVaultId: this.settings.vaultId ?? null,
 		});
 	}
@@ -3625,45 +3646,51 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  second modal. */
 	private async applyOverLimitExclusions(folders: string[], signal?: AbortSignal): Promise<void> {
 		signal?.throwIfAborted();
-		const previous = this.settings.excludedFolders;
-		// In place, and only this field: the API client and engine hold this
-		// object, and an OAuth rotation during the save writes its single-use
-		// refresh token here. Reverting the whole object would drop it.
-		this.settings.excludedFolders = [...new Set([...previous, ...folders])];
+		const excludedFolders = [...new Set([...this.settings.excludedFolders, ...folders])];
 		try {
-			await this.savePluginData(this.syncEngine.getLastSync());
-			signal?.throwIfAborted();
+			await this.saveExcludedFolders(excludedFolders, {}, signal);
 		} catch (e: unknown) {
-			this.settings.excludedFolders = previous;
 			// Best effort: the aborted case already wrote the candidate list.
 			if (signal?.aborted) await this.savePluginData(this.syncEngine.getLastSync());
 			throw e;
 		}
-		this.syncEngine.updateSettings(this.settings);
 		this.settingTab?.rerender();
 	}
 
-	/** "Sync again" for a folder in excludedFolders: drop it, save, catch the
-	 *  engine up on what happened there while excluded (reincludeFolder: local
-	 *  deletes and edits, then a replay from genesis), and run a full sync. The
-	 *  sync runs in the background; the returned promise settles once the change
-	 *  is saved. */
-	async syncFolderAgain(folder: string): Promise<void> {
-		const previous = this.settings.excludedFolders;
-		// In place, only this field, rolled back if the save fails: same
-		// discipline as applyOverLimitExclusions (a token rotation during the
-		// save must survive). The engine is told only once it is saved.
-		this.settings.excludedFolders = previous.filter((f) => f !== folder);
-		// Into the same save, so a restart cannot lose the content re-check. Not
-		// undone on failure: the folder stays excluded, so it has no effect.
-		this.syncEngine.markReincluded(folder);
-		try {
-			await this.savePluginData(this.syncEngine.getLastSync());
-		} catch (e: unknown) {
-			this.settings.excludedFolders = previous;
-			throw e;
-		}
+	/** Save `excludedFolders` (plus `pending` engine state) as a COPY, then apply
+	 *  it to the live settings and engine. Live last: shouldIgnore reads the live
+	 *  object, so changing it first dropped the folder's vault events during the
+	 *  save, and a failed save would need a rollback. Only this field is touched,
+	 *  in place: the API client and engine hold the object, and an OAuth rotation
+	 *  during the save writes its single-use refresh token there.
+	 *  ponytail: a rotation save that races this one persists the live (old)
+	 *  list; the sync that follows rewrites data.json on its first cursor save. */
+	private async saveExcludedFolders(
+		excludedFolders: string[],
+		pending: PendingSave,
+		signal?: AbortSignal,
+	): Promise<void> {
+		await this.savePluginData(this.syncEngine.getLastSync(), undefined, {
+			...pending,
+			settings: { ...this.settings, excludedFolders },
+		});
+		signal?.throwIfAborted();
+		this.settings.excludedFolders = excludedFolders;
 		this.syncEngine.updateSettings(this.settings);
+	}
+
+	/** "Sync again" for a folder in excludedFolders: save it re-included,
+	 *  together with its pending content re-check and genesis replay, so a
+	 *  restart cannot drop either; then catch the engine up on what happened
+	 *  there while excluded (reincludeFolder, which never throws) and run a full
+	 *  sync. Only a failed save rejects, and then nothing changed. The sync runs
+	 *  in the background; the returned promise settles once the change is saved. */
+	async syncFolderAgain(folder: string): Promise<void> {
+		const excludedFolders = this.settings.excludedFolders.filter((f) => f !== folder);
+		await this.saveExcludedFolders(excludedFolders, {
+			reincludedFolders: [...new Set([...this.syncEngine.exportReincludedFolders(), folder])],
+			seqRewindFloor: 0,
+		});
 		await this.syncEngine.reincludeFolder(folder);
 		void this.syncEngine
 			.fullSync()

@@ -420,6 +420,47 @@ describe("catchupViaSeqReplay", () => {
 		expect(cursorsSeen).toEqual([0]);
 	});
 
+	test("an enumerate-only walk in between does not use up the rewind", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		(engine as any).applySyncChange = mock(async () => true);
+		engine.setCatchupSeq(42);
+		(engine as any).syncStateVaultId = "vault-x";
+		(engine as any).settings.vaultId = "vault-x";
+		const cursorsSeen: number[] = [];
+		engine.setCrdtCatchupSince(async (cursor: number) => {
+			cursorsSeen.push(cursor);
+			return { changes: [], has_more: false, next_seq: null };
+		});
+
+		engine.requestFullReplay();
+		// A replace-remote enumeration walks from 0 without moving the cursor.
+		await (engine as any).catchupViaSeqReplayExclusive({ fromZero: true, enumerateOnly: true });
+		await engine.catchupViaSeqReplay();
+
+		expect(cursorsSeen).toEqual([0, 0]);
+	});
+
+	test("the rewind survives a restart before the catch-up", async () => {
+		const first = makeEngineWithCrdt({ closeDoc: () => {} });
+		first.requestFullReplay();
+		const saved = first.getSeqRewindFloor();
+
+		const second = makeEngineWithCrdt({ closeDoc: () => {} });
+		(second as any).applySyncChange = mock(async () => true);
+		second.setCatchupSeq(42);
+		(second as any).syncStateVaultId = "vault-x";
+		(second as any).settings.vaultId = "vault-x";
+		second.setSeqRewindFloor(saved);
+		const cursorsSeen: number[] = [];
+		second.setCrdtCatchupSince(async (cursor: number) => {
+			cursorsSeen.push(cursor);
+			return { changes: [], has_more: false, next_seq: null };
+		});
+		await second.catchupViaSeqReplay();
+
+		expect(cursorsSeen).toEqual([0]);
+	});
+
 	test("single-flights concurrent calls and re-runs once for a mid-flight trigger", async () => {
 		// A folder rename fires the per-relocation trigger N times; they must
 		// coalesce into one in-flight replay, plus exactly one re-run to pick up

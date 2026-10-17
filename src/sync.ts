@@ -3156,6 +3156,26 @@ export class SyncEngine {
 	 *  a direct `setCatchupSeq` here would race an in-flight replay's per-page
 	 *  cursor persist and be silently clobbered). */
 	private seqRewindFloor: number | null = null;
+	/** Bumped on every new floor, so a run clears only the floor it consumed. */
+	private rewindGen = 0;
+
+	private setRewind(floor: number): void {
+		this.seqRewindFloor = floor;
+		this.rewindGen++;
+	}
+
+	/** The pending rewind, persisted with the re-included folders so a restart
+	 *  before the catch-up does not drop it. */
+	getSeqRewindFloor(): number | null {
+		return this.seqRewindFloor;
+	}
+
+	/** Restore a persisted rewind (the lower floor wins). */
+	setSeqRewindFloor(floor: unknown): void {
+		if (typeof floor !== "number" || !Number.isFinite(floor)) return;
+		const f = Math.max(0, floor);
+		this.setRewind(this.seqRewindFloor === null ? f : Math.min(this.seqRewindFloor, f));
+	}
 
 	getManifestSeq(): number {
 		return this.manifestSeq;
@@ -7158,14 +7178,17 @@ export class SyncEngine {
 		// silently clobber a direct rewind (catchupViaSeqReplay stays the sole
 		// cursor writer). The single-flight loop re-enters here, so a floor set
 		// mid-run is picked up by the coalesced re-run.
-		if (this.seqRewindFloor !== null && !fromZero) {
+		// Consumed only by a run that applies and moves the real cursor, and
+		// cleared only once that run completes (below): an enumerate-only walk
+		// or a failed one must not use up a "Sync again" rewind.
+		const rewindGen = this.rewindGen;
+		if (this.seqRewindFloor !== null && !fromZero && !enumerateOnly) {
 			const floored = Math.min(cursor, this.seqRewindFloor);
 			// A rewind to a lower seq invalidates the paired id (it belonged to the
 			// higher cursor) — resume seq-only from the floor.
 			if (floored !== cursor) cursorId = null;
 			cursor = floored;
 		}
-		this.seqRewindFloor = null;
 		const startedAtZero = cursor === 0;
 		let applied = 0;
 		let files = 0;
@@ -7258,6 +7281,10 @@ export class SyncEngine {
 			// but a delete decision built on these sets would trash every file the
 			// walk never reached.
 			return { applied, files, failed, deletes, complete: false, fromGenesis: startedAtZero };
+		}
+		if (!enumerateOnly && this.seqRewindFloor !== null && this.rewindGen === rewindGen) {
+			this.seqRewindFloor = null;
+			await this.saveData({});
 		}
 		return { applied, files, failed, deletes, complete: true, fromGenesis: startedAtZero };
 	}
@@ -9211,7 +9238,7 @@ export class SyncEngine {
 		// written directly — a direct setCatchupSeq would race an in-flight
 		// replay's per-page cursor persist and be silently clobbered. Clamped:
 		// a seq-0 row yields target -1, which means replay-from-genesis.
-		this.seqRewindFloor = Math.max(0, target);
+		this.setRewind(Math.max(0, target));
 		return behind;
 	}
 
@@ -9220,7 +9247,7 @@ export class SyncEngine {
 	 *  made there while it was ignored. Routed through the validator's floor,
 	 *  so catch-up stays the sole cursor writer; applies are idempotent. */
 	requestFullReplay(): void {
-		this.seqRewindFloor = 0;
+		this.setRewind(0);
 	}
 
 	/** Folders just taken out of excludedFolders. The next push sweep visits
@@ -9230,13 +9257,9 @@ export class SyncEngine {
 	 *  and by a vault change. */
 	private reincludedFolders = this.track(["vault"], new Set<string>());
 
-	/** Queue `folder` for the content re-check. Persisted (exportReincludedFolders)
-	 *  in the same save that takes it out of excludedFolders, so a restart before
-	 *  the next push pass cannot drop the edits made while it was excluded. */
-	markReincluded(folder: string): void {
-		this.reincludedFolders.add(folder);
-	}
-
+	/** Persisted with the save that takes a folder out of excludedFolders, so
+	 *  a restart before the next push pass cannot drop the edits made while it
+	 *  was excluded. */
 	exportReincludedFolders(): string[] {
 		return [...this.reincludedFolders];
 	}
@@ -9256,6 +9279,7 @@ export class SyncEngine {
 	 *  - a tracked file edited meanwhile is re-checked by content in the next
 	 *    push sweep (reincludedFolders);
 	 *  - server ops made there are re-served by a replay from genesis.
+	 *  Never throws, so the caller's sync always follows.
 	 *  ponytail: the replay is vault-wide. The server has no per-folder feed, so
 	 *  a scoped pull would walk the same op log; applies outside the folder are
 	 *  idempotent no-ops. */
@@ -9263,8 +9287,18 @@ export class SyncEngine {
 		for (const path of [...this.syncState.keys()]) {
 			if (!inExcludedFolder(path, [folder])) continue;
 			if (this.app.vault.getAbstractFileByPath(path)) continue;
-			if (this.gateHolds()) this.journalGateEvent({ op: "delete", path });
-			else await this.deleteSyncedPath(path);
+			// Never throws: one failed delete must not skip the re-include below.
+			// A delete that failed this way can come back on the replay, which
+			// undoes a delete rather than losing an edit (the safe direction).
+			try {
+				if (this.gateHolds()) this.journalGateEvent({ op: "delete", path });
+				else await this.deleteSyncedPath(path);
+			} catch (e) {
+				rlog().error(
+					"push",
+					`Sync again: delete failed ${noteRef(path)} | ${errMsg(e, path)}`,
+				);
+			}
 		}
 		this.reincludedFolders.add(folder);
 		this.requestFullReplay();

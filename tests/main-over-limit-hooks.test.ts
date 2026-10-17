@@ -30,7 +30,7 @@ function makeFakePlugin(computeSyncPlan: (opts?: unknown) => Promise<unknown>) {
 				return computeSyncPlan(opts);
 			}),
 			getLastSync: () => "",
-			markReincluded: mock(),
+			exportReincludedFolders: () => [],
 		},
 		savePluginData: mock(async () => {
 			order.push("save");
@@ -120,6 +120,41 @@ describe("applyExclusions only persists", () => {
 		const { fake } = makeFakePlugin(async () => PLAN);
 		await hooksOf(fake).applyExclusions(["Archive"]);
 		expect(fake.syncEngine.computeSyncPlan).not.toHaveBeenCalled();
+	});
+});
+
+describe("the live settings change only after the save", () => {
+	// shouldIgnore reads the live object: changing it first drops vault events
+	// for the folder during the save window.
+	test("applyExclusions saves a copy first", async () => {
+		const { fake } = makeFakePlugin(async () => PLAN);
+		let liveDuringSave: string[] = [];
+		let savedList: string[] = [];
+		fake.savePluginData = mock(async function (this: any, _l: string, _q: unknown, next?: any) {
+			liveDuringSave = [...this.settings.excludedFolders];
+			savedList = [...(next?.settings ?? this.settings).excludedFolders];
+		});
+		await hooksOf(fake).applyExclusions(["Archive"]);
+		expect(liveDuringSave).toEqual(["Old"]);
+		expect(savedList).toEqual(["Old", "Archive"]);
+		expect(fake.settings.excludedFolders).toEqual(["Old", "Archive"]);
+	});
+
+	test("syncFolderAgain saves a copy first", async () => {
+		const { fake } = makeFakePlugin(async () => PLAN);
+		fake.settings.excludedFolders = ["Archive", "Old"];
+		fake.syncEngine.reincludeFolder = mock(async () => {});
+		fake.syncEngine.fullSync = mock(async () => ({ pulled: 0, pushed: 0 }));
+		const seen: { live: string[]; saved: string[] }[] = [];
+		fake.savePluginData = mock(async function (this: any, _l: string, _q: unknown, next?: any) {
+			seen.push({
+				live: [...this.settings.excludedFolders],
+				saved: [...(next?.settings ?? this.settings).excludedFolders],
+			});
+		});
+		await fake.syncFolderAgain("Archive");
+		expect(seen[0]).toEqual({ live: ["Archive", "Old"], saved: ["Old"] });
+		expect(fake.settings.excludedFolders).toEqual(["Old"]);
 	});
 });
 
