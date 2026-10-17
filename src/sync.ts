@@ -12054,6 +12054,8 @@ export class SyncEngine {
 		// sync baseline, not transient state.
 		this.sweep("destroy");
 		this.resetIdMapReconcile();
+		// The map outlives this engine (main owns it): stop it calling back in.
+		this.noteIdMap?.setChangeHandler?.(null);
 		this.files.destroy();
 		// Standalone timer handles — not collections, so they stay explicit.
 		if (this.seqHealTimer !== null) {

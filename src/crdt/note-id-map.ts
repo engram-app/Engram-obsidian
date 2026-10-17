@@ -138,9 +138,9 @@ export class NoteIdMap {
 	/** Called after any change to what this map answers, local or remote — so
 	 *  the engine can release work waiting for an id to become mapped. Same
 	 *  rebind contract as the relocate handler. */
-	setChangeHandler(fn: () => void): void {
+	setChangeHandler(fn: (() => void) | null): void {
 		this.changeHandler = fn;
-		this.store.onChange = fn;
+		this.store.onChange = fn ?? undefined;
 	}
 
 	private changeHandler: (() => void) | null = null;
