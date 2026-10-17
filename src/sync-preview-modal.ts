@@ -2,7 +2,7 @@ import { type App, Modal, setIcon } from "obsidian";
 import { devLog } from "./dev-log";
 import { errMsg, statusOf } from "./error-util";
 import { FolderPicker, ROOT_FOLDER, selectedNoteCount } from "./folder-picker";
-import { formatNumber, t, tInto } from "./i18n";
+import { t, tInto } from "./i18n";
 import { userErrorMessage } from "./i18n/user-error";
 import { toastFor } from "./limit-copy";
 import { LimitExceededError } from "./limit-error";
