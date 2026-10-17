@@ -24,7 +24,13 @@ import {
 	seededAccessToken,
 } from "./auth";
 import { migrateCloudApiUrl, withClearedAuth } from "./auth-state";
-import { migrateBackendMode, offersUpgrades, switchMode, upgradeUrlFor } from "./backend-mode";
+import {
+	migrateBackendMode,
+	offersUpgrades,
+	ownFolderList,
+	switchMode,
+	upgradeUrlFor,
+} from "./backend-mode";
 import { BaseStore } from "./base-store";
 import {
 	connectRetryDelayMs,
@@ -1599,8 +1605,7 @@ export default class EngramSyncPlugin extends Plugin {
 		const data = await this.loadPluginData();
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, data?.settings);
 		// Own copy: Object.assign would share DEFAULT_SETTINGS' array.
-		const excluded = this.settings.excludedFolders;
-		this.settings.excludedFolders = Array.isArray(excluded) ? [...excluded] : [];
+		this.settings.excludedFolders = ownFolderList(this.settings.excludedFolders);
 		// Collapse the legacy remoteLoggingEnabled / diagnosticMode / tracingEnabled
 		// toggles into the single diagnosticsEnabled (on if any legacy one was on),
 		// then drop the stale keys so the next save persists only the new shape.

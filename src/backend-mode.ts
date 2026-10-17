@@ -23,11 +23,16 @@ export function captureSlot(settings: EngramSyncSettings): BackendSlot {
 export function applySlot(settings: EngramSyncSettings, slot: BackendSlot): void {
 	const target = settings as unknown as Record<string, unknown>;
 	for (const key of BACKEND_SCOPED_FIELDS) {
-		target[key] = slot[key];
+		if (key !== "excludedFolders") target[key] = slot[key];
 	}
-	// A slot stashed by a version before excludedFolders existed lacks it.
-	const excluded = slot.excludedFolders;
-	settings.excludedFolders = Array.isArray(excluded) ? [...excluded] : [];
+	settings.excludedFolders = ownFolderList(slot.excludedFolders);
+}
+
+/** An owned excludedFolders array from whatever was stored: data written
+ *  before the field existed has none, and a shared default must never be
+ *  mutated through settings. Used by applySlot and loadSettings. */
+export function ownFolderList(value: unknown): string[] {
+	return Array.isArray(value) ? value.filter((f): f is string => typeof f === "string") : [];
 }
 
 export type ConnectionState = "connected" | "needs-url" | "needs-auth";
