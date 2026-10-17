@@ -3159,15 +3159,25 @@ export class SyncEngine {
 	/** Bumped on every new floor, so a run clears only the floor it consumed. */
 	private rewindGen = 0;
 
+	/** A genesis replay "Sync again" has promised but not armed yet (see
+	 *  holdReinclude). Saved as a floor of 0; never consumed by a run. */
+	private rewindOwed = false;
+
 	private setRewind(floor: number): void {
 		this.seqRewindFloor = floor;
+		this.rewindGen++;
+	}
+
+	private clearRewind(): void {
+		this.seqRewindFloor = null;
+		this.rewindOwed = false;
 		this.rewindGen++;
 	}
 
 	/** The pending rewind, persisted with the re-included folders so a restart
 	 *  before the catch-up does not drop it. */
 	getSeqRewindFloor(): number | null {
-		return this.seqRewindFloor;
+		return this.seqRewindFloor ?? (this.rewindOwed ? 0 : null);
 	}
 
 	/** Restore a persisted rewind (the lower floor wins). */
@@ -3299,8 +3309,7 @@ export class SyncEngine {
 		this.manifestSeq = 0;
 		this.lastValidatorRewind = null;
 		// A pending rewind is a position in the old vault's feed too.
-		this.seqRewindFloor = null;
-		this.rewindGen++;
+		this.clearRewind();
 		// The note-id map is per-vault identity state but is NOT a tracked
 		// collection: the instance is shared with main.ts + live views, so it is
 		// cleared in place rather than swept. Carrying it across vaults keys CRDT
@@ -9276,9 +9285,11 @@ export class SyncEngine {
 	 *  and by a vault change. */
 	private reincludedFolders = this.track(["vault"], new Set<string>());
 
-	/** Local notes under `folder` this device never synced and would sync:
-	 *  the ones a re-include would create on the server (Sync again's quota
-	 *  check). Same ignore rules as computeSyncPlan's newNotePaths. */
+	/** Local notes under `folder` a re-include would create on the server
+	 *  (Sync again's quota check): syncable under the plan's ignore rules, never
+	 *  synced here, and unknown to the vault index (which maps every path the
+	 *  server holds, even in a folder this device ignores). No server
+	 *  enumeration, so a path the index has not learned yet still counts. */
 	untrackedNotePaths(folder: string): string[] {
 		// The plan's own ignore predicate, minus the folder's exclusion.
 		const others = (this.settings.excludedFolders ?? []).filter((f) => f !== folder);
@@ -9289,11 +9300,30 @@ export class SyncEngine {
 					inExcludedFolder(f.path, [folder]) &&
 					this.isSyncable(f) &&
 					!this.shouldIgnore(f.path, others) &&
+					// The vault index already maps it: another device uploaded it.
+					!this.noteIdMap?.get(f.path) &&
 					!this.isBinaryFile(f) &&
 					this.getCrdtHead(f.path) == null &&
 					!this.syncState.has(f.path),
 			)
 			.map((f: TFile) => f.path);
+	}
+
+	/** Record that `folder` is being re-included BEFORE anything is saved, so
+	 *  every save from here on (the caller's, or any other landing during the
+	 *  re-include) carries its content re-check and the owed genesis replay.
+	 *  The replay is only armed by reincludeFolder: until the caller applies the
+	 *  settings the folder is still ignored, and a replay run now would walk
+	 *  past its ops and spend the rewind. Returns an undo for a failed save. */
+	holdReinclude(folder: string): () => void {
+		const had = this.reincludedFolders.has(folder);
+		const owed = this.rewindOwed;
+		this.reincludedFolders.add(folder);
+		this.rewindOwed = true;
+		return () => {
+			if (!had) this.reincludedFolders.delete(folder);
+			this.rewindOwed = owed;
+		};
 	}
 
 	/** Persisted with the save that takes a folder out of excludedFolders, so
@@ -9341,6 +9371,7 @@ export class SyncEngine {
 		}
 		this.reincludedFolders.add(folder);
 		this.requestFullReplay();
+		this.rewindOwed = false;
 	}
 
 	private async healDivergedLiveBoundNotes(manifest: ManifestResponse | null): Promise<number> {

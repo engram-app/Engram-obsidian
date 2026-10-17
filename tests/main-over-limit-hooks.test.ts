@@ -31,6 +31,7 @@ function makeFakePlugin(computeSyncPlan: (opts?: unknown) => Promise<unknown>) {
 			}),
 			getLastSync: () => "",
 			exportReincludedFolders: () => [],
+			holdReinclude: mock(() => () => {}),
 		},
 		savePluginData: mock(async () => {
 			order.push("save");
@@ -132,7 +133,7 @@ describe("the live settings change only after the save", () => {
 		let savedList: string[] = [];
 		fake.savePluginData = mock(async function (this: any, _l: string, _q: unknown, next?: any) {
 			liveDuringSave = [...this.settings.excludedFolders];
-			savedList = [...(next?.settings ?? this.settings).excludedFolders];
+			savedList = [...(next ?? this.settings).excludedFolders];
 		});
 		await hooksOf(fake).applyExclusions(["Archive"]);
 		expect(liveDuringSave).toEqual(["Old"]);
@@ -149,7 +150,7 @@ describe("the live settings change only after the save", () => {
 		fake.savePluginData = mock(async function (this: any, _l: string, _q: unknown, next?: any) {
 			seen.push({
 				live: [...this.settings.excludedFolders],
-				saved: [...(next?.settings ?? this.settings).excludedFolders],
+				saved: [...(next ?? this.settings).excludedFolders],
 			});
 		});
 		await fake.syncFolderAgain("Archive");
@@ -334,5 +335,51 @@ describe("Sync again checks the notes quota first", () => {
 		await fake.syncFolderAgain("Archive");
 		expect(fake.api.getBillingUsage).not.toHaveBeenCalled();
 		expect(fake.settings.excludedFolders).toEqual([]);
+	});
+});
+
+describe("Sync again on two folders at once", () => {
+	test("interleaved re-includes leave both folders included", async () => {
+		const { fake } = makeFakePlugin(async () => PLAN);
+		fake.settings.excludedFolders = ["Archive", "Old"];
+		fake.syncEngine.reincludeFolder = mock(async () => {});
+		fake.syncEngine.fullSync = mock(async () => ({ pulled: 0, pushed: 0 }));
+		const saved: string[][] = [];
+		const releases: (() => void)[] = [];
+		fake.savePluginData = mock(function (this: any, _l: string, _q: unknown, next?: any) {
+			saved.push([...(next ?? this.settings).excludedFolders]);
+			return new Promise<void>((r) => releases.push(r));
+		});
+
+		const a = fake.syncFolderAgain("Archive");
+		const b = fake.syncFolderAgain("Old");
+		for (let i = 0; i < 10 && releases.length < 2; i++) {
+			await Bun.sleep(0);
+			releases.shift()?.();
+		}
+		releases.shift()?.();
+		await Promise.all([a, b]);
+
+		expect(fake.settings.excludedFolders).toEqual([]);
+		expect(saved.at(-1)).toEqual([]);
+	});
+});
+
+describe("Sync again tells the engine before saving", () => {
+	test("held before the save, undone when the save fails", async () => {
+		const { fake } = makeFakePlugin(async () => PLAN);
+		fake.settings.excludedFolders = ["Archive"];
+		const order: string[] = [];
+		const undo = mock(() => order.push("undo"));
+		fake.syncEngine.holdReinclude = mock(() => {
+			order.push("hold");
+			return undo;
+		});
+		fake.savePluginData = mock(async () => {
+			order.push("save");
+			throw new Error("disk full");
+		});
+		await expect(fake.syncFolderAgain("Archive")).rejects.toThrow("disk full");
+		expect(order).toEqual(["hold", "save", "undo"]);
 	});
 });

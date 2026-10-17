@@ -818,6 +818,40 @@ describe("reincludeFolder always completes the re-include", () => {
 });
 
 describe("Sync again survives a restart before the push pass", () => {
+	test("a save landing inside the delete loop still carries what is owed", async () => {
+		const files: TFile[] = [];
+		const { engine: first } = makeEngine(files);
+		first.importSyncState({ "Archive/gone.md": { hash: fnv1a("# gone") } });
+		first.fullSync = mock(() => new Promise<never>(() => {}));
+		const written: any[] = [];
+		const p1 = Object.assign(Object.create(EngramSyncPlugin.prototype), {
+			settings: { ...DEFAULT_SETTINGS, excludedFolders: ["Archive"] },
+			syncEngine: first,
+			noteIdMap: new NoteIdMap(),
+			writePluginData: mock(async (d: any) => {
+				written.push(structuredClone(d));
+			}),
+			handleSyncError: mock(),
+		});
+		// Any other save (a cursor persist, a token rotation) during the deletes.
+		(first as any).deleteSyncedPath = async () => {
+			await p1.persistEngineState();
+		};
+
+		await p1.syncFolderAgain("Archive");
+		const saved = written.at(-1);
+
+		const { engine: second } = makeEngine(files);
+		const p2 = Object.assign(Object.create(EngramSyncPlugin.prototype), {
+			settings: saved.settings,
+			syncEngine: second,
+		});
+		p2.hydrateReincludedFolders(saved);
+		expect(saved.settings.excludedFolders).toEqual([]);
+		expect(second.exportReincludedFolders()).toEqual(["Archive"]);
+		expect(second.getSeqRewindFloor()).toBe(0);
+	});
+
 	test("an edit made while excluded is still pushed after the engine is rebuilt from saved data", async () => {
 		const edited = new TFile("Archive/a.md", new Date("2026-09-01T00:00:00Z").getTime());
 		const files = [edited];
@@ -865,6 +899,13 @@ describe("Sync again survives a restart before the push pass", () => {
 });
 
 describe("SyncEngine.untrackedNotePaths", () => {
+	test("a note another device already uploaded is not new", () => {
+		const files = ["Archive/mine.md", "Archive/theirs.md"].map((p) => new TFile(p, 1));
+		const { engine } = makeEngine(files);
+		// The vault index knows the server holds this path.
+		(engine as any).noteIdMap.set("Archive/theirs.md", "server-id");
+		expect(engine.untrackedNotePaths("Archive")).toEqual(["Archive/mine.md"]);
+	});
 	test("applies the plan's ignore rules, but not the folder's own exclusion", () => {
 		const files = ["Archive/new.md", "Archive/drafts/d.md", "Archive/skip.md"].map(
 			(p) => new TFile(p, 1),
@@ -885,5 +926,17 @@ describe("SyncEngine.untrackedNotePaths", () => {
 		const { engine } = makeEngine(files);
 		engine.importSyncState({ "Archive/old.md": { hash: 1 } });
 		expect(engine.untrackedNotePaths("Archive")).toEqual(["Archive/new.md"]);
+	});
+});
+
+describe("SyncEngine.holdReinclude", () => {
+	test("saves carry the folder and an owed replay; no run spends it; undo restores", async () => {
+		const { engine } = makeEngine([]);
+		const undo = engine.holdReinclude("Archive");
+		expect(engine.exportReincludedFolders()).toEqual(["Archive"]);
+		expect(engine.getSeqRewindFloor()).toBe(0);
+		undo();
+		expect(engine.exportReincludedFolders()).toEqual([]);
+		expect(engine.getSeqRewindFloor()).toBeNull();
 	});
 });

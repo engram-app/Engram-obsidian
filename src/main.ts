@@ -173,9 +173,6 @@ interface PluginData {
 	reincludedFoldersVaultId?: string | null;
 }
 
-/** Engine state saved ahead of applying it (see saveExcludedFolders). */
-type PendingSave = Pick<PluginData, "reincludedFolders" | "seqRewindFloor">;
-
 /** Whether setupNoteStream() may keep the existing stream instead of
  *  rebuilding it. The short-circuit exists to protect a HEALTHY socket from
  *  unrelated saveSettings() churn (#169) — so beyond the connection-identity
@@ -2016,11 +2013,11 @@ export default class EngramSyncPlugin extends Plugin {
 	private async savePluginData(
 		lastSync: string,
 		offlineQueue?: QueueEntry[],
-		/** Values to write instead of the live ones (see saveExcludedFolders). */
-		pending: PendingSave & { settings?: EngramSyncSettings } = {},
+		/** Settings to write instead of the live object (see saveExcludedFolders). */
+		settings: EngramSyncSettings = this.settings,
 	): Promise<void> {
 		await this.writePluginData({
-			settings: pending.settings ?? this.settings,
+			settings,
 			lastSync,
 			// Top-level, device-local; saveData() overwrites data.json wholesale,
 			// so every field must be re-listed here or it's wiped on the next save.
@@ -2055,12 +2052,8 @@ export default class EngramSyncPlugin extends Plugin {
 			noteIdsVaultId: this.noteIdsOwner,
 			gateJournal: this.syncEngine.exportGateJournal(),
 			gateJournalVaultId: this.settings.vaultId ?? null,
-			reincludedFolders:
-				pending.reincludedFolders ?? this.syncEngine.exportReincludedFolders(),
-			seqRewindFloor:
-				pending.seqRewindFloor !== undefined
-					? pending.seqRewindFloor
-					: this.syncEngine.getSeqRewindFloor(),
+			reincludedFolders: this.syncEngine.exportReincludedFolders(),
+			seqRewindFloor: this.syncEngine.getSeqRewindFloor(),
 			reincludedFoldersVaultId: this.settings.vaultId ?? null,
 		});
 	}
@@ -3656,7 +3649,7 @@ export default class EngramSyncPlugin extends Plugin {
 		signal?.throwIfAborted();
 		const excludedFolders = [...new Set([...this.settings.excludedFolders, ...folders])];
 		try {
-			await this.saveExcludedFolders(excludedFolders, {}, signal);
+			await this.saveExcludedFolders(excludedFolders, signal);
 		} catch (e: unknown) {
 			// Closed after the candidate list was written: write the live (old)
 			// list back. The abort stays the error the caller sees. If this write
@@ -3675,7 +3668,7 @@ export default class EngramSyncPlugin extends Plugin {
 		this.settingTab?.rerender();
 	}
 
-	/** Save `excludedFolders` (plus `pending` engine state) as a COPY, then apply
+	/** Save `excludedFolders` as a COPY, then apply
 	 *  it to the live settings and engine. Live last: shouldIgnore reads the live
 	 *  object, so changing it first dropped the folder's vault events during the
 	 *  save, and a failed save would need a rollback. Only this field is touched,
@@ -3685,31 +3678,47 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  list; the sync that follows rewrites data.json on its first cursor save. */
 	private async saveExcludedFolders(
 		excludedFolders: string[],
-		pending: PendingSave,
 		signal?: AbortSignal,
 	): Promise<void> {
 		await this.savePluginData(this.syncEngine.getLastSync(), undefined, {
-			...pending,
-			settings: { ...this.settings, excludedFolders },
+			...this.settings,
+			excludedFolders,
 		});
 		signal?.throwIfAborted();
 		this.settings.excludedFolders = excludedFolders;
 		this.syncEngine.updateSettings(this.settings);
 	}
 
-	/** "Sync again" for a folder in excludedFolders: save it re-included,
-	 *  together with its pending content re-check and genesis replay, so a
-	 *  restart cannot drop either; then catch the engine up on what happened
-	 *  there while excluded (reincludeFolder, which never throws) and run a full
-	 *  sync. Only a failed save rejects, and then nothing changed. The sync runs
-	 *  in the background; the returned promise settles once the change is saved. */
-	async syncFolderAgain(folder: string): Promise<void> {
+	/** "Sync again" for a folder in excludedFolders. One at a time: two clicks
+	 *  on different folders each build the list from the live settings inside
+	 *  this queue, so neither save re-excludes the other's folder. */
+	syncFolderAgain(folder: string): Promise<void> {
+		const run = (this.folderAgainQueue ?? Promise.resolve()).then(() =>
+			this.syncFolderAgainNow(folder),
+		);
+		this.folderAgainQueue = run.catch(() => {});
+		return run;
+	}
+
+	private folderAgainQueue?: Promise<void>;
+
+	/** Tell the engine first (holdReinclude), so every save from here on,
+	 *  this one or any landing during the deletes, carries the folder's content
+	 *  re-check and its owed replay; then save the folder re-included, catch
+	 *  the engine up on what happened there while excluded (reincludeFolder,
+	 *  which never throws) and run a full sync. Only a failed save rejects,
+	 *  and then nothing changed. The sync runs in the background. */
+	private async syncFolderAgainNow(folder: string): Promise<void> {
 		if (!(await this.folderFitsOrAcknowledged(folder))) return;
-		const excludedFolders = this.settings.excludedFolders.filter((f) => f !== folder);
-		await this.saveExcludedFolders(excludedFolders, {
-			reincludedFolders: [...new Set([...this.syncEngine.exportReincludedFolders(), folder])],
-			seqRewindFloor: 0,
-		});
+		const undo = this.syncEngine.holdReinclude(folder);
+		try {
+			await this.saveExcludedFolders(
+				this.settings.excludedFolders.filter((f) => f !== folder),
+			);
+		} catch (e: unknown) {
+			undo();
+			throw e;
+		}
 		await this.syncEngine.reincludeFolder(folder);
 		void this.syncEngine
 			.fullSync()
