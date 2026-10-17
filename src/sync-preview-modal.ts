@@ -616,6 +616,10 @@ export function simplifiedScreenCopy(simple: NonNullable<ReturnType<typeof simpl
 	};
 }
 
+/** How long an option click waits for the open-time quota lookup before it
+ *  proceeds as if the quota were unknown. */
+const QUOTA_WAIT_MS = 3000;
+
 /** Wait this long before the "Comparing…" line appears. Plans that resolve
  *  faster show no loading copy at all. */
 const LOADING_TEXT_DELAY_MS = 400;
@@ -936,7 +940,7 @@ export class SyncPreviewModal extends Modal {
 		btn.addEventListener("click", () => {
 			// Always the non-destructive merge: on an empty remote it uploads
 			// everything, on an empty device it downloads everything.
-			void this.pick("smart-merge");
+			void this.pick("smart-merge", btn);
 		});
 		this.renderSkippedAttachmentsNote(parent);
 		this.renderFooter(parent, t("Cancel"), false);
@@ -1188,27 +1192,45 @@ export class SyncPreviewModal extends Modal {
 		const btn = wrap.createEl("button", { cls: card.cssClass });
 		btn.createSpan({ text: card.emoji, cls: "engram-sync-preview-option-emoji" });
 		btn.createSpan({ text: card.label, cls: "engram-sync-preview-option-label" });
-		btn.addEventListener("click", () => void this.pick(card.choice));
+		btn.addEventListener("click", () => void this.pick(card.choice, btn));
 	}
 
 	/** The open-time quota lookup while it is in flight. */
 	private quotaPending: Promise<void> | null = null;
 	private closed = false;
 	private picking = false;
+	/** QUOTA_WAIT_MS; a field so tests can shorten it. */
+	private quotaWaitMs = QUOTA_WAIT_MS;
 
 	/** Every option click goes through here: picking can resolve, or move to
 	 *  the over-limit or confirm view, which only shows once re-rendered.
 	 *  A null quota means "no step", so a pick made before the open-time lookup
-	 *  answers waits for it; the lookup never throws and the API request has its
-	 *  own timeout, so the wait is bounded. */
-	private async pick(choice: SyncChoice): Promise<void> {
+	 *  answers waits for it, at most quotaWaitMs, with the clicked button
+	 *  (`from`) shown busy. Past the cap it proceeds as an unknown quota, which
+	 *  never blocks a sync. Other clicks are ignored while it waits. */
+	private async pick(choice: SyncChoice, from?: HTMLButtonElement): Promise<void> {
 		if (this.picking) return;
 		if (this.quotaPending) {
 			this.picking = true;
+			if (from) {
+				from.disabled = true;
+				from.setAttribute("aria-busy", "true");
+			}
+			let timer: number | undefined;
 			try {
-				await this.quotaPending;
+				await Promise.race([
+					this.quotaPending,
+					new Promise<void>((r) => {
+						timer = window.setTimeout(r, this.quotaWaitMs);
+					}),
+				]);
 			} finally {
+				window.clearTimeout(timer);
 				this.picking = false;
+				if (from) {
+					from.disabled = false;
+					from.removeAttribute("aria-busy");
+				}
 			}
 			if (this.closed) return;
 		}

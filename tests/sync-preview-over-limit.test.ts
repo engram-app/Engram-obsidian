@@ -812,3 +812,26 @@ describe("no exclusions hook fails closed", () => {
 		).not.toBeNull();
 	});
 });
+
+describe("a click waiting on the quota shows it and is capped", () => {
+	const never = () => new Promise<BillingUsage>(() => {});
+
+	test("the clicked card shows a pending state", () => {
+		const plan = planWith(["Root.md", ...PATHS]);
+		const { modal } = openModal(plan, { fetchUsage: never });
+		const action = simplifiedScreenCopy(simplifiedFirstSync(plan)!).action;
+		const btn = button(modal, action);
+		btn.listeners.click();
+		expect(btn.disabled).toBe(true);
+	});
+
+	test("after the cap the pick proceeds as an unknown quota", async () => {
+		const { modal, choice } = openModal(planWith(["Root.md"]), { fetchUsage: never });
+		(modal as any).quotaWaitMs = 5;
+		(modal as any).pick("smart-merge");
+		await Bun.sleep(30);
+		expect(modal.state.view).toBe("done");
+		modal.onClose();
+		expect(await choice).toBe("smart-merge");
+	});
+});
