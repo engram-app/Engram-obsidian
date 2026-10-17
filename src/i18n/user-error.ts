@@ -15,7 +15,11 @@ import { LimitExceededError } from "../limit-error";
 import type { ParseReason } from "../types";
 import { t } from ".";
 
+/** An error whose message is already translated text for the user. */
+export class UserFacingError extends Error {}
+
 export function userErrorMessage(e: unknown): string {
+	if (e instanceof UserFacingError) return e.message;
 	if (e instanceof LimitExceededError) return toastFor(e.reason);
 	if (e instanceof RequestTimeoutError)
 		return t("The server took too long to respond. Try again.");

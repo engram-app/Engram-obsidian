@@ -4,6 +4,7 @@
  * them. The Sync Center used to build its own modal without any of them.
  */
 import { describe, expect, mock, test } from "bun:test";
+import { __noticeCapture } from "obsidian";
 import EngramSyncPlugin from "../src/main";
 import { createSingleFlight } from "../src/single-flight";
 
@@ -336,6 +337,23 @@ describe("Sync again: plan, confirm, carry out exactly that plan", () => {
 		fake.syncEngine.applyFolderPlan = mock(async () => ({ failed: 2, skipped: 0 }));
 		await expect(fake.syncFolderAgain("Archive")).rejects.toThrow();
 		expect(fake.settings.excludedFolders).toContain("Archive");
+	});
+
+	test("notes refused by the plan limit are the outcome the user accepted: no rollback", async () => {
+		const { fake } = againSetup(true);
+		__noticeCapture.notices.length = 0;
+		fake.syncEngine.applyFolderPlan = mock(async () => ({ failed: 0, skipped: 0, capped: 2 }));
+		await fake.syncFolderAgain("Archive");
+		expect(fake.settings.excludedFolders).toEqual(["Old"]);
+		expect(__noticeCapture.notices.map((n) => n.message)).toEqual([
+			"2 notes did not sync (plan limit).",
+		]);
+	});
+
+	test("a real failure says how many files did not sync", async () => {
+		const { fake } = againSetup(true);
+		fake.syncEngine.applyFolderPlan = mock(async () => ({ failed: 2, skipped: 0, capped: 0 }));
+		await expect(fake.syncFolderAgain("Archive")).rejects.toThrow("2 files could not sync.");
 	});
 
 	test("a failed apply does not put the folder into a vault switched to meanwhile", async () => {

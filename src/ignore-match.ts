@@ -19,7 +19,14 @@ export function matchesIgnorePattern(path: string, pattern: string): boolean {
 /** Is `path` inside one of the excluded top-level folders? Anchored at the
  *  vault root: "Archive" is not "Projects/Archive" nor "Archived". The root
  *  pseudo-folder excludes nothing, root notes always sync. */
-export function inExcludedFolder(path: string, excluded: Iterable<string>): boolean {
-	for (const f of excluded) if (f !== ROOT_FOLDER && path.startsWith(`${f}/`)) return true;
+export function inExcludedFolder(
+	path: string,
+	excluded: Iterable<string>,
+	/** One folder to treat as not excluded. */
+	except?: string,
+): boolean {
+	for (const f of excluded) {
+		if (f !== ROOT_FOLDER && f !== except && path.startsWith(`${f}/`)) return true;
+	}
 	return false;
 }

@@ -62,6 +62,7 @@ import { registerDiagnostics } from "./diagnostics";
 import { errMsg, isHttpStatus } from "./error-util";
 import { ExplicitFolders } from "./explicit-folders";
 import { currentLocale, obsidianLocale, t, tInto } from "./i18n";
+import { UserFacingError } from "./i18n/user-error";
 import { type LegalNotice, noticeKey, noticesToShow, noticeText } from "./legal-notices";
 import { isPlanJoinReason } from "./limit-copy";
 import { LimitExceededError } from "./limit-error";
@@ -3783,11 +3784,22 @@ export default class EngramSyncPlugin extends Plugin {
 			this.syncEngine.updateSettings(this.settings);
 		});
 		let failure: Error | null = null;
+		let capped = 0;
 		try {
-			const { failed } = await this.syncEngine.applyFolderPlan(plan);
-			if (failed > 0) failure = new Error(`${failed} file(s) could not be synced again`);
+			const result = await this.syncEngine.applyFolderPlan(plan);
+			capped = result.capped;
+			if (result.failed > 0) {
+				failure = new UserFacingError(
+					t("{count} files could not sync.", { count: result.failed }),
+				);
+			}
 		} catch (e: unknown) {
 			failure = e instanceof Error ? e : new Error(String(e));
+		}
+		// Notes past the plan limit are what the user acknowledged in the
+		// confirm: reported, never rolled back.
+		if (capped > 0) {
+			new Notice(t("{count} notes did not sync (plan limit).", { count: capped }));
 		}
 		await this.serializeExcluded(async () => {
 			this.pendingReinclude?.delete(folder);

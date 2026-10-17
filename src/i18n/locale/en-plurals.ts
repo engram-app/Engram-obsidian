@@ -116,6 +116,10 @@ const enPlurals: Dict = {
 	"Will delete {count} files on the server.": {
 		one: "Will delete {count} file on the server.",
 	},
+	"{count} files could not sync.": { one: "{count} file could not sync." },
+	"{count} notes did not sync (plan limit).": {
+		one: "{count} note did not sync (plan limit).",
+	},
 	"Uploading {count}.": { one: "Uploading {count}." },
 	"Downloading {count}.": { one: "Downloading {count}." },
 	"Deleting {count} on the cloud.": { one: "Deleting {count} on the cloud." },

@@ -252,13 +252,27 @@ export interface FolderAction {
 	kind: "upload" | "download" | "deleteOnServer" | "conflict";
 	path: string;
 	localHash: number | null;
+	/** The local file's mtime and size when planned: unchanged means no re-hash. */
+	stat: { mtime: number; size: number } | null;
 	row?: SyncChange;
 	creates: boolean;
+	/** The server renamed this note: its local file is still at `from`. */
+	from?: string;
 }
 
 export interface FolderPlan {
 	folder: string;
 	actions: FolderAction[];
+	/** Where the plan's server walk ended: apply reads the ops after it. */
+	cursor: { seq: number; id: string | null };
+}
+
+/** How many local files Sync again hashes at once. */
+const PLAN_HASH_CONCURRENCY = 8;
+
+/** One key per server object: a note by id (it may move), an attachment by path. */
+function rowKey(c: SyncChange): string {
+	return c.type === "note" ? `n:${c.id}` : `a:${c.path}`;
 }
 
 /** How long (ms) after a push completes to suppress WebSocket echoes for that path. */
@@ -3506,8 +3520,7 @@ export class SyncEngine {
 		}
 		// User-explicit per-file ignores (from Sync Center)
 		if (this.ignoredFiles.has(path)) return true;
-		const excluded = (this.settings.excludedFolders ?? []).filter((f) => f !== except);
-		if (inExcludedFolder(path, excluded)) return true;
+		if (inExcludedFolder(path, this.settings.excludedFolders ?? [], except)) return true;
 		return this.ignorePatterns.some((pattern) => matchesIgnorePattern(path, pattern));
 	}
 
@@ -6665,6 +6678,10 @@ export class SyncEngine {
 		attachments: Map<string, { deleted: boolean }>;
 		/** The latest row per path (notes and attachments), for an apply. */
 		rows: Map<string, SyncChange>;
+		/** The latest row per note id. */
+		noteById: Map<string, SyncChange>;
+		/** Where the walk ended. */
+		cursor: { seq: number; id: string | null };
 	}> {
 		// The preview reads server state off the live op-log socket. On startup
 		// the plan is computed the moment the user channel joins — often before
@@ -6686,12 +6703,17 @@ export class SyncEngine {
 		const byId = new Map<string, Extract<SyncChange, { type: "note" }>>();
 		const attachments = new Map<string, { deleted: boolean }>();
 		const rows = new Map<string, SyncChange>();
-		// A pure read: no `onPage`, so the real catch-up cursor is never touched.
-		// Fetch errors propagate — the preview must fail visibly, never render a
-		// wrong (short) plan.
+		const cursor: { seq: number; id: string | null } = { seq: 0, id: null };
+		// A pure read: `onPage` only records where the walk ended, the real
+		// catch-up cursor is never touched. Fetch errors propagate — the preview
+		// must fail visibly, never render a wrong (short) plan.
 		await this.walkOpLog({
 			seq: 0,
 			id: null,
+			onPage: (seq, id) => {
+				cursor.seq = seq;
+				cursor.id = id;
+			},
 			onRow: (c) => {
 				if (c.type === "attachment") {
 					if (c.path) {
@@ -6718,7 +6740,7 @@ export class SyncEngine {
 			});
 			rows.set(c.path, c);
 		}
-		return { notes, attachments, rows };
+		return { notes, attachments, rows, noteById: byId, cursor };
 	}
 
 	async catchupViaSeqReplay(
@@ -10623,10 +10645,13 @@ export class SyncEngine {
 		mode: "incremental" | "force",
 		base: { pushed: number; failed: number } = { pushed: 0, failed: 0 },
 		serverAttachmentHashes?: Map<string, string>,
-	): Promise<{ pushed: number; failed: number }> {
+	): Promise<{ pushed: number; failed: number; capped: number }> {
 		const total = toSync.length;
 		let pushed = 0;
 		let failed = 0;
+		// Creates the plan's note cap refused: an expected outcome (the user was
+		// shown the limit), so never counted as failures.
+		let capped = 0;
 		// Sliding window, not slices: each worker takes the next file the moment
 		// its last one settles. Slices with a Promise.all barrier let one slow
 		// file (a large attachment, a crdt_create queued behind the server's
@@ -10650,23 +10675,29 @@ export class SyncEngine {
 					if (ok) {
 						pushed++;
 						if (mode === "force") this.logEntry("push", f.path, "ok");
+					} else if (this.capBlocksCreate(f.path)) {
+						capped++;
 					} else if (mode === "force") {
 						this.logEntry("skip", f.path, "skipped", undefined, "unchanged");
 					}
 				} catch (e) {
-					failed++;
-					this.onVaultScopedError?.(e);
-					const msg = errMsg(e);
-					this.logEntry("push", f.path, "error", msg);
-					this.issues.record({
-						path: f.path,
-						kind: this.isBinaryFile(f) ? "attachment" : "note",
-						category: "other",
-						message: msg,
-						firstFailedAt: Date.now(),
-						lastFailedAt: Date.now(),
-						attempts: 1,
-					});
+					if (e instanceof LimitExceededError && LIMIT_REASONS.has(e.reason)) {
+						capped++;
+					} else {
+						failed++;
+						this.onVaultScopedError?.(e);
+						const msg = errMsg(e);
+						this.logEntry("push", f.path, "error", msg);
+						this.issues.record({
+							path: f.path,
+							kind: this.isBinaryFile(f) ? "attachment" : "note",
+							category: "other",
+							message: msg,
+							firstFailedAt: Date.now(),
+							lastFailedAt: Date.now(),
+							attempts: 1,
+						});
+					}
 				}
 				this.emitPushing(
 					base.pushed + pushed,
@@ -10692,9 +10723,9 @@ export class SyncEngine {
 		// that shape without emitting one entry per file.
 		rlog().warn(
 			"push",
-			`Sweep done (${mode}) — pushed=${pushed} skipped=${total - pushed - failed} failed=${failed} of ${total}`,
+			`Sweep done (${mode}) — pushed=${pushed} skipped=${total - pushed - failed - capped} capped=${capped} failed=${failed} of ${total}`,
 		);
-		return { pushed, failed };
+		return { pushed, failed, capped };
 	}
 
 	/** Push files modified since `sinceTimestamp` (default: `lastSync`) — both
@@ -10884,14 +10915,10 @@ export class SyncEngine {
 	 *  changed. While the folder was excluded nothing in it synced and the
 	 *  catch-up cursor walked past its server ops, so a normal sync would
 	 *  neither upload edits made in it (their mtime predates lastSync) nor pull
-	 *  its server changes. Each path is settled by content, against what this
-	 *  device last synced:
-	 *  - edited here only, or not on the server: upload;
-	 *  - changed on the server only, new there, or deleted there: download;
-	 *  - changed on both, or never synced here but different on the server:
-	 *    conflict (the local text is kept as a conflict copy, the server's wins);
-	 *  - synced here, deleted here while excluded: delete on the server.
-	 *  The folder may still be excluded; its own exclusion is ignored here. */
+	 *  its server changes. Each path is settled against what this device last
+	 *  synced (see planPath). A note the server renamed meanwhile is matched by
+	 *  its id and planned at its new path. The folder may still be excluded;
+	 *  its own exclusion is ignored here. */
 	async planFolder(folder: string): Promise<FolderPlan> {
 		const server = await this.enumerateServerState();
 		const inFolder = (p: string) =>
@@ -10903,83 +10930,179 @@ export class SyncEngine {
 		for (const p of [...server.rows.keys(), ...this.syncState.keys()]) {
 			if (inFolder(p)) paths.add(p);
 		}
-		const actions: FolderAction[] = [];
-		for (const path of paths) {
-			const action = await this.planPath(
-				path,
-				server.rows.get(path),
-				server.notes.get(path)?.contentHash,
-			);
-			if (action) actions.push(action);
+		// Renamed on the server while excluded: the local file's id lives at a
+		// new path. Planned once, at the new path, from the old local file.
+		const moves = new Map<string, string>();
+		for (const path of [...paths]) {
+			const id = this.noteIdMap?.get(path);
+			const row = id ? server.noteById.get(id) : undefined;
+			if (!row || row.deleted || row.path === path) continue;
+			if (!this.app.vault.getFileByPath(path)) continue;
+			if (this.app.vault.getFileByPath(row.path) || this.shouldIgnore(row.path, folder)) {
+				continue;
+			}
+			moves.set(row.path, path);
+			paths.delete(path);
+			paths.add(row.path);
 		}
-		return { folder, actions };
+		const list = [...paths];
+		const attachmentHashes = list.some((p) => this.isBinaryPath(p) && this.syncState.has(p))
+			? await this.fetchServerAttachmentHashes()
+			: undefined;
+		const planned: (FolderAction | null)[] = [];
+		let next = 0;
+		const worker = async (): Promise<void> => {
+			for (let i = next++; i < list.length; i = next++) {
+				const path = list[i] as string;
+				planned[i] = await this.planPath(
+					path,
+					server.rows.get(path),
+					attachmentHashes?.get(path),
+					moves.get(path),
+				);
+			}
+		};
+		await Promise.all(
+			Array.from({ length: Math.min(PLAN_HASH_CONCURRENCY, list.length) }, worker),
+		);
+		const actions = planned.filter((a): a is FolderAction => !!a);
+		return { folder, actions, cursor: server.cursor };
 	}
 
 	/** Local content hash as the engine records it (notes: text, attachments:
-	 *  bytes), or null when there is no local file. */
-	private async localHashOf(path: string): Promise<number | null> {
-		const file = this.app.vault.getFileByPath(path);
-		if (!file) return null;
+	 *  bytes). */
+	private async localHashOf(file: TFile): Promise<number> {
 		return this.isBinaryFile(file)
 			? fnv1aBase64(await this.app.vault.readBinary(file))
 			: fnv1a(await this.app.vault.cachedRead(file));
 	}
 
+	/** One path's step, against this device's last-synced state:
+	 *  - edited here only, or not on the server: upload;
+	 *  - changed on the server only, new there, renamed there: download;
+	 *  - changed on both, or never synced here but different on the server:
+	 *    conflict (the local text is kept as a conflict copy, the server's wins);
+	 *  - deleted on the server: download (the delete), but a conflict when edited
+	 *    here, so the shared apply keeps the edit; an edited attachment is
+	 *    uploaded again;
+	 *  - deleted here: delete on the server, unless the server changed it since,
+	 *    then its version is restored (download).
+	 *  `from`: the note's local file, when the server renamed it. */
 	private async planPath(
 		path: string,
 		row: SyncChange | undefined,
-		contentHash: string | undefined,
+		attachmentServerHash: string | undefined,
+		from?: string,
 	): Promise<FolderAction | null> {
-		const synced = this.syncState.get(path);
-		const localHash = await this.localHashOf(path);
+		const local = from ?? path;
+		const file = this.app.vault.getFileByPath(local);
+		const synced = this.syncState.get(local);
+		const localHash = file ? await this.localHashOf(file) : null;
+		const stat = file ? { mtime: file.stat.mtime, size: file.stat.size } : null;
 		const isNote = !this.isBinaryPath(path);
+		const base = { path, localHash, stat, creates: false, ...(from ? { from } : {}) };
+		// Notes: an unknown server hash counts as changed. Attachment rows carry
+		// no hash; the manifest's is used, and unknown counts as unchanged.
+		const serverHash = row?.type === "note" ? row.content_hash : attachmentServerHash;
+		const serverChanged = isNote
+			? serverHash === undefined || serverHash !== synced?.serverHash
+			: serverHash !== undefined && serverHash !== synced?.serverHash;
 		if (localHash === null) {
 			if (!row || row.deleted) return null;
-			return synced
-				? { kind: "deleteOnServer", path, localHash, creates: false }
-				: { kind: "download", path, localHash, row, creates: false };
+			return synced && !serverChanged
+				? { ...base, kind: "deleteOnServer", row }
+				: { ...base, kind: "download", row };
 		}
-		if (!row) return { kind: "upload", path, localHash, creates: isNote };
-		if (row.deleted) return { kind: "download", path, localHash, row, creates: false };
+		if (!row) return { ...base, kind: "upload", creates: isNote };
+		const localChanged = synced?.hash !== localHash;
+		if (row.deleted) {
+			if (!localChanged) return { ...base, kind: "download", row };
+			return isNote
+				? { ...base, kind: "conflict", row }
+				: { ...base, kind: "upload", creates: false };
+		}
 		if (!isNote) {
-			return synced?.hash === localHash
-				? null
-				: { kind: "upload", path, localHash, creates: false };
+			if (localChanged) return { ...base, kind: "upload" };
+			return serverChanged ? { ...base, kind: "download", row } : null;
 		}
 		const content = row.type === "note" ? row.content : undefined;
-		if (content !== undefined && fnv1a(content) === localHash) return null;
-		if (!synced) return { kind: "conflict", path, localHash, row, creates: false };
-		const localChanged = synced.hash !== localHash;
-		const serverChanged = contentHash === undefined || contentHash !== synced.serverHash;
-		if (localChanged && serverChanged)
-			return { kind: "conflict", path, localHash, row, creates: false };
-		if (localChanged) return { kind: "upload", path, localHash, creates: false };
-		if (serverChanged) return { kind: "download", path, localHash, row, creates: false };
+		if (!from && content !== undefined && fnv1a(content) === localHash) return null;
+		if (!synced) return { ...base, kind: "conflict", row };
+		if (localChanged && serverChanged) return { ...base, kind: "conflict", row };
+		if (localChanged) return { ...base, kind: "upload", row };
+		if (serverChanged || from) return { ...base, kind: "download", row };
 		return null;
 	}
 
-	/** "Sync again", step 2: carry out exactly `plan`, which the user confirmed.
-	 *  No second server walk: each path is re-checked against the local hash the
-	 *  plan saw, and one that changed since is skipped (the next sync settles
-	 *  it). Uploads go through the bulk push loop; server deletes through the
-	 *  durable delete queue. Per-path failures are counted, never thrown. The
-	 *  caller must already have taken the folder out of excludedFolders. */
-	async applyFolderPlan(plan: FolderPlan): Promise<{ failed: number; skipped: number }> {
+	/** Has the file at `path` stayed as `action` saw it? mtime and size first,
+	 *  the hash only when those moved. */
+	private async unchangedSincePlan(path: string, action: FolderAction): Promise<boolean> {
+		const file = this.app.vault.getFileByPath(path);
+		if (!file) return action.localHash === null;
+		const { stat } = action;
+		if (stat && file.stat.mtime === stat.mtime && file.stat.size === stat.size) return true;
+		return (await this.localHashOf(file)) === action.localHash;
+	}
+
+	/** "Sync again", step 2: carry out `plan`, which the user confirmed. Each
+	 *  path is re-checked against what the plan saw, and one that changed since
+	 *  is skipped (the next sync settles it). Server rows come from the ops
+	 *  after the plan's walk when there are newer ones: the folder was still
+	 *  ignored while the confirm was open, so the live cursor walked past them
+	 *  (and a folder op the plan never saw is applied as catch-up would). Uploads
+	 *  go through the bulk push loop; server deletes through the durable delete
+	 *  queue. Per-path failures are counted, never thrown; creates the plan's
+	 *  note cap refused are `capped`, not failed. The caller must already have
+	 *  taken the folder out of excludedFolders. */
+	async applyFolderPlan(
+		plan: FolderPlan,
+	): Promise<{ failed: number; skipped: number; capped: number }> {
+		const newer = new Map<string, SyncChange>();
+		await this.walkOpLog({
+			seq: plan.cursor.seq,
+			id: plan.cursor.id,
+			onRow: (c) => {
+				const after = this.cursorAdvances(
+					c.seq,
+					c.id ?? null,
+					plan.cursor.seq,
+					plan.cursor.id,
+				);
+				if (after && c.path && (c.type !== "note" || c.id)) newer.set(rowKey(c), c);
+			},
+		});
 		let failed = 0;
 		let skipped = 0;
 		const uploads: TFile[] = [];
+		const attempt = async (path: string, step: () => Promise<unknown>) => {
+			try {
+				await step();
+			} catch (e) {
+				failed += 1;
+				rlog().error("sync", `Sync again: ${noteRef(path)} | ${errMsg(e, path)}`);
+			}
+		};
 		for (const action of plan.actions) {
-			if ((await this.localHashOf(action.path)) !== action.localHash) {
+			const key = action.row ? rowKey(action.row) : null;
+			const fresh = key ? newer.get(key) : undefined;
+			if (key) newer.delete(key);
+			if (!(await this.unchangedSincePlan(action.from ?? action.path, action))) {
 				skipped += 1;
 				continue;
 			}
-			try {
+			const row = fresh ?? action.row;
+			await attempt(action.path, async () => {
 				if (action.kind === "upload") {
+					if (action.from && action.row?.type === "note") {
+						await this.moveIfIdRelocated(action.row.id, action.path);
+					}
 					const file = this.app.vault.getFileByPath(action.path);
 					if (file) uploads.push(file);
 				} else if (action.kind === "deleteOnServer") {
-					await this.deleteSyncedPath(action.path);
-				} else if (action.row) {
+					// A server edit that landed meanwhile wins over the local delete.
+					if (fresh && !fresh.deleted) await this.applySyncChange(fresh);
+					else await this.deleteSyncedPath(action.path);
+				} else if (row) {
 					if (action.kind === "conflict" && !this.syncState.has(action.path)) {
 						// Never synced here: the shared apply has no baseline to tell
 						// the local text is an edit, so keep it explicitly first.
@@ -10991,19 +11114,22 @@ export class SyncEngine {
 							);
 						}
 					}
-					await this.applySyncChange(action.row);
+					await this.applySyncChange(row);
 				}
-			} catch (e) {
-				failed += 1;
-				rlog().error(
-					"sync",
-					`Sync again: ${noteRef(action.path)} | ${errMsg(e, action.path)}`,
-				);
-			}
+			});
 		}
-		if (uploads.length > 0)
-			failed += (await this.pushPartitioned(uploads, "incremental")).failed;
-		return { failed, skipped };
+		// Ops for this folder the plan never saw.
+		for (const row of newer.values()) {
+			if (!inExcludedFolder(row.path, [plan.folder])) continue;
+			await attempt(row.path, () => this.applySyncChange(row));
+		}
+		let capped = 0;
+		if (uploads.length > 0) {
+			const pushed = await this.pushPartitioned(uploads, "incremental");
+			failed += pushed.failed;
+			capped = pushed.capped;
+		}
+		return { failed, skipped, capped };
 	}
 
 	/** Compute what a sync would do without executing it (dry-run preview).

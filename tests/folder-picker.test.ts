@@ -40,6 +40,11 @@ describe("countNotesByFolder", () => {
 });
 
 describe("inExcludedFolder", () => {
+	test("`except` skips that one folder without copying the list", () => {
+		expect(inExcludedFolder("Archive/a.md", ["Old", "Archive"], "Archive")).toBe(false);
+		expect(inExcludedFolder("Old/a.md", ["Old", "Archive"], "Archive")).toBe(true);
+	});
+
 	test("matches only the top-level folder itself, anchored at the root", () => {
 		expect(inExcludedFolder("Archive/a.md", ["Archive"])).toBe(true);
 		expect(inExcludedFolder("Archive/2023/a.md", ["Archive"])).toBe(true);

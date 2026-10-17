@@ -1,6 +1,7 @@
 import { Notice, Setting, TFolder } from "obsidian";
 import { errMsg } from "../error-util";
 import { t, tInto } from "../i18n";
+import { userErrorMessage } from "../i18n/user-error";
 import { rlog } from "../remote-log";
 import type { EngramSyncSettings } from "../types";
 import type { TabContext } from "./types";
@@ -207,7 +208,7 @@ export function renderExcludedFolders(
 					await plugin.syncFolderAgain(folder);
 				} catch (e: unknown) {
 					rlog().error("settings", `Sync again failed for a folder: ${errMsg(e)}`);
-					new Notice(t("Could not save your folder choice. Try again."));
+					new Notice(t("Sync again failed: {error}", { error: userErrorMessage(e) }));
 				} finally {
 					busy = false;
 					btn.setDisabled(false);

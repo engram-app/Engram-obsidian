@@ -17,7 +17,7 @@ import { TFile } from "obsidian";
 import * as syncProtocol from "y-protocols/sync";
 import * as Y from "yjs";
 import type { EngramApi } from "../src/api";
-import { fnv1a } from "../src/content-hash";
+import { fnv1a, fnv1aBase64 } from "../src/content-hash";
 import {
 	CONTENT_KEY,
 	frontmatterOf,
@@ -28,6 +28,7 @@ import { NoteIdMap } from "../src/crdt/note-id-map";
 import type { ProviderRegistry as CrdtManagerType } from "../src/crdt/provider-registry";
 import { ProviderRegistry } from "../src/crdt/provider-registry";
 import { encodeUpdateFrame, fromB64 } from "../src/crdt/wire";
+import { LimitExceededError } from "../src/limit-error";
 import EngramSyncPlugin from "../src/main";
 import { rlog } from "../src/remote-log";
 import { SyncEngine } from "../src/sync";
@@ -645,7 +646,7 @@ describe("pushPartitioned — per-file genesis (no batch RPC)", () => {
 		const out = await (engine as any).pushPartitioned(files, "incremental");
 
 		expect(pushFile).toHaveBeenCalledTimes(3);
-		expect(out).toEqual({ pushed: 3, failed: 0 });
+		expect(out).toEqual({ pushed: 3, failed: 0, capped: 0 });
 	});
 
 	test("emits pushing progress per completed file, not per chunk", async () => {
@@ -675,8 +676,23 @@ describe("pushPartitioned — per-file genesis (no batch RPC)", () => {
 
 		const out = await (engine as any).pushPartitioned(files, "incremental");
 
-		expect(out).toEqual({ pushed: 2, failed: 1 });
+		expect(out).toEqual({ pushed: 2, failed: 1, capped: 0 });
 		expect((engine as any).issues.get("Notes/f1.md")?.message).toContain("timeout");
+	});
+
+	test("a create the notes cap refused is capped, not a failure (first sync too)", async () => {
+		const files = [0, 1].map((i) => new TFile(`Notes/c${i}.canvas`, Date.now()));
+		const { engine } = makeEngine(files, Object.fromEntries(files.map((f) => [f.path, "{}"])));
+		(engine as any).pushFile = mock().mockImplementation((f: TFile) =>
+			f.path === "Notes/c1.canvas"
+				? Promise.reject(new LimitExceededError("notes_cap_reached", null, "notes", 3, 3))
+				: Promise.resolve(true),
+		);
+
+		const out = await (engine as any).pushPartitioned(files, "incremental");
+
+		expect(out).toEqual({ pushed: 1, failed: 0, capped: 1 });
+		expect((engine as any).issues.get("Notes/c1.canvas")).toBeUndefined();
 	});
 });
 
@@ -810,6 +826,7 @@ describe("Sync again: planFolder then applyFolderPlan settle a folder that was e
 		expect(await engine.applyFolderPlan(await engine.planFolder("Archive"))).toEqual({
 			failed: 0,
 			skipped: 0,
+			capped: 0,
 		});
 		expect(pushFile.mock.calls.map((c: any[]) => c[0].path)).toEqual(["Archive/a.md"]);
 	});
@@ -1002,7 +1019,8 @@ describe("Sync again: planFolder then applyFolderPlan settle a folder that was e
 
 		const plan = await engine.planFolder("Archive");
 		content["Archive/a.md"] = "# edited again"; // after the confirm was shown
-		expect(await engine.applyFolderPlan(plan)).toEqual({ failed: 0, skipped: 1 });
+		file.stat.mtime += 1000; // an edit moves the mtime
+		expect(await engine.applyFolderPlan(plan)).toEqual({ failed: 0, skipped: 1, capped: 0 });
 		expect(pushFile).not.toHaveBeenCalled();
 	});
 
@@ -1018,7 +1036,7 @@ describe("Sync again: planFolder then applyFolderPlan settle a folder that was e
 			}),
 		]);
 		engine.importSyncState({ "Archive/a.md": { hash: fnv1a("# synced"), serverHash: "H1" } });
-		let walks = 0;
+		const walks: number[] = [];
 		const rows = [
 			noteRow({
 				id: "a",
@@ -1028,8 +1046,8 @@ describe("Sync again: planFolder then applyFolderPlan settle a folder that was e
 				content_hash: "H1",
 			}),
 		];
-		engine.setCrdtCatchupSince(async () => {
-			walks += 1;
+		engine.setCrdtCatchupSince(async (since: number) => {
+			walks.push(since);
 			return { changes: rows as any, has_more: false, next_seq: null };
 		});
 		const pushFile = mock().mockResolvedValue(true);
@@ -1040,6 +1058,240 @@ describe("Sync again: planFolder then applyFolderPlan settle a folder that was e
 		expect(pushFile).not.toHaveBeenCalled();
 		expect(app.vault.create).not.toHaveBeenCalled();
 		await engine.applyFolderPlan(plan);
-		expect(walks).toBe(1);
+		// One full walk; apply only reads the ops after where it ended.
+		expect(walks).toEqual([0, 5]);
+	});
+
+	const kinds = (plan: { actions: { kind: string; path: string }[] }) =>
+		plan.actions.map((a) => [a.kind, a.path]);
+
+	test("a server edit that lands while the confirm is open: the newest content wins", async () => {
+		const file = new TFile("Archive/s.md", OLD);
+		const rows: any[] = [
+			noteRow({
+				id: "s",
+				seq: 9,
+				path: "Archive/s.md",
+				content: "# server 1",
+				content_hash: "H2",
+			}),
+		];
+		const { engine } = setup([file], { "Archive/s.md": "# synced" }, []);
+		engine.setCrdtCatchupSince(async (since: number) => ({
+			changes: rows.filter((r) => r.seq > since),
+			has_more: false,
+			next_seq: null,
+		}));
+		engine.importSyncState({
+			"Archive/s.md": { hash: fnv1a("# synced"), serverHash: "H1", seq: 5 },
+		});
+		(engine as any).noteIdMap.set("Archive/s.md", "s");
+		const applied: string[] = [];
+		(engine as any).applySyncChange = async (c: any) => {
+			applied.push(c.content);
+			return true;
+		};
+
+		const plan = await engine.planFolder("Archive");
+		// While the confirm is open the folder is still ignored, so live sync
+		// walks past these.
+		rows.push(
+			noteRow({
+				id: "s",
+				seq: 12,
+				path: "Archive/s.md",
+				content: "# server 2",
+				content_hash: "H3",
+			}),
+			noteRow({
+				id: "n",
+				seq: 13,
+				path: "Archive/new.md",
+				content: "# new",
+				content_hash: "H4",
+			}),
+		);
+		await engine.applyFolderPlan(plan);
+
+		expect(applied).toEqual(["# server 2", "# new"]);
+	});
+
+	test("a server rename made while excluded moves the note instead of duplicating it", async () => {
+		const file = new TFile("Archive/a.md", OLD);
+		const { engine } = setup([file], { "Archive/a.md": "# same" }, [
+			noteRow({
+				id: "a",
+				seq: 9,
+				path: "Archive/b.md",
+				content: "# same",
+				content_hash: "H1",
+			}),
+		]);
+		engine.importSyncState({
+			"Archive/a.md": { hash: fnv1a("# same"), serverHash: "H1", seq: 5 },
+		});
+		(engine as any).noteIdMap.set("Archive/a.md", "a");
+		(engine as any).manifestOwnerOf = async () => "a";
+		const pushFile = mock().mockResolvedValue(true);
+		(engine as any).pushFile = pushFile;
+
+		const plan = await engine.planFolder("Archive");
+		expect(kinds(plan)).toEqual([["download", "Archive/b.md"]]);
+		await engine.applyFolderPlan(plan);
+
+		expect(pushFile).not.toHaveBeenCalled();
+		expect((engine as any).noteIdMap.pathForId("a")).toBe("Archive/b.md");
+	});
+
+	test("a server rename plus a local edit: the edit is pushed at the new path", async () => {
+		const files = [new TFile("Archive/a.md", OLD)];
+		const content: Record<string, string> = { "Archive/a.md": "# edited" };
+		const { engine, app } = setup(files, content, [
+			noteRow({
+				id: "a",
+				seq: 9,
+				path: "Archive/b.md",
+				content: "# synced",
+				content_hash: "H1",
+			}),
+		]);
+		app.vault.rename.mockImplementation(async (f: TFile, to: string) => {
+			content[to] = content[f.path] ?? "";
+			f.path = to;
+		});
+		engine.importSyncState({
+			"Archive/a.md": { hash: fnv1a("# synced"), serverHash: "H1", seq: 5 },
+		});
+		(engine as any).noteIdMap.set("Archive/a.md", "a");
+		(engine as any).manifestOwnerOf = async () => "a";
+		const pushFile = mock().mockResolvedValue(true);
+		(engine as any).pushFile = pushFile;
+
+		const plan = await engine.planFolder("Archive");
+		expect(kinds(plan)).toEqual([["upload", "Archive/b.md"]]);
+		await engine.applyFolderPlan(plan);
+
+		expect(pushFile.mock.calls.map((c: any[]) => c[0].path)).toEqual(["Archive/b.md"]);
+	});
+
+	test("a server delete with a local edit made while excluded keeps the edit", async () => {
+		const file = new TFile("Archive/a.md", OLD);
+		const { engine, app } = setup([file], { "Archive/a.md": "# edited" }, [
+			noteRow({ id: "a", seq: 9, path: "Archive/a.md", deleted: true }),
+		]);
+		engine.importSyncState({
+			"Archive/a.md": { hash: fnv1a("# synced"), serverHash: "H1", seq: 5 },
+		});
+		(engine as any).noteIdMap.set("Archive/a.md", "a");
+		(engine as any).crdt.removeDoc = async () => {};
+
+		const plan = await engine.planFolder("Archive");
+		expect(kinds(plan)).toEqual([["conflict", "Archive/a.md"]]);
+		await engine.applyFolderPlan(plan);
+
+		const trashed = [
+			...app.vault.trash.mock.calls,
+			...app.fileManager.trashFile.mock.calls,
+		].some((c: any[]) => c[0] === file);
+		const copied = app.vault.create.mock.calls.some((c: any[]) => c[1] === "# edited");
+		expect(!trashed || copied).toBe(true);
+	});
+
+	test("a local delete with a newer server edit restores the server version", async () => {
+		const { engine } = setup([], {}, [
+			noteRow({
+				id: "g",
+				seq: 9,
+				path: "Archive/g.md",
+				content: "# newer",
+				content_hash: "H2",
+			}),
+		]);
+		engine.importSyncState({ "Archive/g.md": { hash: fnv1a("# old"), serverHash: "H1" } });
+		(engine as any).noteIdMap.set("Archive/g.md", "g");
+		const enqueued: any[] = [];
+		(engine as any).crdtEnqueue = (op: any) => enqueued.push(op);
+		(engine as any).applySyncChange = mock(async () => true);
+
+		const plan = await engine.planFolder("Archive");
+		expect(kinds(plan)).toEqual([["download", "Archive/g.md"]]);
+		await engine.applyFolderPlan(plan);
+		expect(enqueued).toEqual([]);
+	});
+
+	test("an attachment changed only on the server is downloaded", async () => {
+		const img = new TFile("Archive/img.png", OLD);
+		const { engine, api } = setup([img], {}, [
+			{
+				type: "attachment",
+				id: "i",
+				seq: 9,
+				path: "Archive/img.png",
+				mime_type: "image/png",
+				size_bytes: 3,
+				mtime: 1,
+				updated_at: "2026-01-01T00:00:00Z",
+				deleted: false,
+			},
+		]);
+		(api.getManifest as any).mockResolvedValue({
+			notes: [],
+			attachments: [{ path: "Archive/img.png", content_hash: "A2" }],
+		});
+		engine.importSyncState({
+			"Archive/img.png": { hash: fnv1aBase64(new ArrayBuffer(3)), serverHash: "A1" },
+		});
+
+		expect(kinds(await engine.planFolder("Archive"))).toEqual([
+			["download", "Archive/img.png"],
+		]);
+	});
+
+	test("local files are hashed a few at a time, not one by one", async () => {
+		const files = Array.from({ length: 12 }, (_, i) => new TFile(`Archive/n${i}.md`, OLD));
+		const { engine, app } = setup(files, {}, []);
+		let inFlight = 0;
+		let most = 0;
+		app.vault.cachedRead.mockImplementation(async () => {
+			most = Math.max(most, ++inFlight);
+			await new Promise((r) => setTimeout(r, 1));
+			inFlight--;
+			return "# x";
+		});
+		await engine.planFolder("Archive");
+		expect(most).toBeGreaterThan(1);
+		expect(most).toBeLessThanOrEqual(16);
+	});
+
+	test("apply does not re-read a file whose mtime and size are unchanged", async () => {
+		const file = new TFile("Archive/a.md", OLD);
+		const { engine, app } = setup([file], { "Archive/a.md": "# edited" }, [
+			noteRow({
+				id: "a",
+				seq: 5,
+				path: "Archive/a.md",
+				content: "# synced",
+				content_hash: "H1",
+			}),
+		]);
+		engine.importSyncState({ "Archive/a.md": { hash: fnv1a("# synced"), serverHash: "H1" } });
+		(engine as any).pushFile = mock().mockResolvedValue(true);
+		const plan = await engine.planFolder("Archive");
+		app.vault.cachedRead.mockClear();
+		await engine.applyFolderPlan(plan);
+		expect(app.vault.cachedRead).not.toHaveBeenCalled();
+	});
+
+	test("a create refused by the notes cap is counted as capped, not failed", async () => {
+		const file = new TFile("Archive/new.md", OLD);
+		const { engine } = setup([file], { "Archive/new.md": "# n" }, []);
+		(engine as any).pushFile = mock(async () => {
+			throw new LimitExceededError("notes_cap_reached", null, "notes", 3000, 3000);
+		});
+		expect(await engine.applyFolderPlan(await engine.planFolder("Archive"))).toEqual({
+			failed: 0,
+			skipped: 0,
+			capped: 1,
+		});
 	});
 });

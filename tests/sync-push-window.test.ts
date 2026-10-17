@@ -44,7 +44,7 @@ describe("pushPartitioned sliding window", () => {
 		// Everything but the slow file has been started and finished already.
 		expect(started.length).toBe(25);
 		releaseSlow(true);
-		expect(await run).toEqual({ pushed: 25, failed: 0 });
+		expect(await run).toEqual({ pushed: 25, failed: 0, capped: 0 });
 	});
 
 	test("never more than 10 files in flight, starts in input order", async () => {
@@ -64,6 +64,7 @@ describe("pushPartitioned sliding window", () => {
 		expect(await (engine as any).pushPartitioned(files(37), "incremental")).toEqual({
 			pushed: 37,
 			failed: 0,
+			capped: 0,
 		});
 		expect(peak).toBe(10);
 		expect(started).toEqual(files(37).map((f) => f.path));
@@ -109,10 +110,12 @@ describe("pushPartitioned sliding window", () => {
 		expect(await (engine as any).pushPartitioned(files(12), "incremental")).toEqual({
 			pushed: 11,
 			failed: 1,
+			capped: 0,
 		});
 		expect(await (engine as any).pushPartitioned([], "incremental")).toEqual({
 			pushed: 0,
 			failed: 0,
+			capped: 0,
 		});
 	});
 });

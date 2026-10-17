@@ -5,6 +5,7 @@
  */
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { __noticeCapture, __settingCapture } from "obsidian";
+import { UserFacingError } from "../src/i18n/user-error";
 import { rlog } from "../src/remote-log";
 import { renderExcludedFolders } from "../src/tabs/advanced-tab";
 
@@ -56,10 +57,24 @@ describe("renderExcludedFolders", () => {
 		await btn?.clickCb?.();
 		const lines = logged.mock.calls.map((c) => String(c[1]));
 		logged.mockRestore();
-		expect(__noticeCapture.notices.length).toBe(1);
+		expect(__noticeCapture.notices.map((n) => n.message)).toEqual([
+			"Sync again failed: Unknown error",
+		]);
 		expect(redisplay).toHaveBeenCalled();
 		// Through the plugin's log, not the console.
 		expect(lines.some((l) => l.includes("disk full"))).toBe(true);
+	});
+
+	test("a Sync again failure with its own message shows that message", async () => {
+		const { plugin } = render(["Archive"]);
+		plugin.syncFolderAgain = mock(() =>
+			Promise.reject(new UserFacingError("2 files could not sync.")),
+		);
+		const btn = __settingCapture.buttons.find((b) => b.text === "Sync again");
+		await btn?.clickCb?.();
+		expect(__noticeCapture.notices.map((n) => n.message)).toEqual([
+			"Sync again failed: 2 files could not sync.",
+		]);
 	});
 
 	test("Sync again is disabled while it runs, so a double click runs it once", async () => {
