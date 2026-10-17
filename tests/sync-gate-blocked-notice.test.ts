@@ -27,6 +27,7 @@ function blockedEngine() {
 		onSyncBlockedEdit: () => fired.push(1),
 		idMapThrottle: { cancel: () => {} },
 		idMapPending: new Map(),
+		idMapFetchWaits: new Map(),
 	});
 	return { engine, fired };
 }

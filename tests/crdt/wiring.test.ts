@@ -59,7 +59,12 @@ interface Device {
 function makeDevice(
 	id: string,
 	reconcile: () => number,
-	opts?: { flushFromCrdt?: (path: string, content: string) => Promise<boolean> },
+	opts?: {
+		flushFromCrdt?: (path: string, content: string) => Promise<boolean>;
+		/** Whether the engine's heal enqueued a fetch (false = a no-op ensure). */
+		ensure?: () => boolean;
+		idMapEra?: () => number;
+	},
 ): Device {
 	const map = new NoteIdMap();
 	const disk = new Map<string, string>();
@@ -85,11 +90,11 @@ function makeDevice(
 		// Live id-map heal (announce/#955 note_not_found). The scenarios drive
 		// the manifest explicitly: the trigger is a no-op, and the strand-heal's
 		// wait is where `reconcile` (the manifest) teaches the map.
-		ensureNoteIdMapped: () => {},
+		ensureNoteIdMapped: () => opts?.ensure?.() ?? true,
 		awaitNoteIdMapped: async () => {
 			reconcile();
 		},
-		idMapEra: () => 0,
+		idMapEra: () => opts?.idMapEra?.() ?? 0,
 		discoverAnnouncedNote: async () => {},
 		// Fix wave 1: CrdtManager's onSynced fires this on every non-empty
 		// inbound frame. These device-pair scenarios don't exercise the D3
@@ -473,6 +478,64 @@ test("inbound frame for an unknown id strands, then heals on reconcile", async (
 	await destroy(a, b);
 });
 
+test("a no-op heal (gate closed) does not burn the strand-heal attempts", async () => {
+	const noteId = "note-gated";
+	let gateOpen = false;
+	const a = makeDevice("GA", () => 0);
+	const b = makeDevice(
+		"GB",
+		() => {
+			if (!gateOpen) return 0; // no fetch behind a closed gate
+			b.map.set("GB/gated.md", noteId);
+			return 1;
+		},
+		{ ensure: () => gateOpen },
+	);
+	connect(a, b);
+	a.map.set("GA/new.md", noteId);
+	a.wiring.manager.markSynced(noteId);
+	await a.wiring.manager.applyLocalEdit(noteId, "gated body", false);
+	b.wiring.onCrdtDocReady(noteId);
+	await waitFor(
+		async () => (await b.wiring.manager.getText(noteId)) === "gated body",
+		"B integrates the body into the Y.Doc",
+	);
+	// More drains than STRAND_HEAL_MAX_ATTEMPTS (5) while every ensure is a no-op.
+	for (let i = 0; i < 7; i++) await b.wiring.drainStrandedFlushes();
+	gateOpen = true;
+	await b.wiring.drainStrandedFlushes();
+	await waitFor(async () => b.disk.has("GB/gated.md"), "the flush lands once the gate opens");
+	await destroy(a, b);
+});
+
+test("a vault switch during the strand-heal wait aborts the drain", async () => {
+	const noteId = "note-switch";
+	let era = 0;
+	const a = makeDevice("SA", () => 0);
+	const b = makeDevice(
+		"SB",
+		() => {
+			b.map.set("SB/switch.md", noteId); // the wait returns, but in a new vault
+			era++;
+			return 1;
+		},
+		{ idMapEra: () => era },
+	);
+	connect(a, b);
+	a.map.set("SA/new.md", noteId);
+	a.wiring.manager.markSynced(noteId);
+	await a.wiring.manager.applyLocalEdit(noteId, "old vault body", false);
+	b.wiring.onCrdtDocReady(noteId);
+	await waitFor(
+		async () => (await b.wiring.manager.getText(noteId)) === "old vault body",
+		"B integrates the body into the Y.Doc",
+	);
+	await b.wiring.drainStrandedFlushes();
+	await sleep(20);
+	expect(b.disk.size).toBe(0);
+	await destroy(a, b);
+});
+
 // #516: a refused live frame hands the edit to the DURABLE queue instead of an
 // in-memory "re-enroll on rejoin" set. That set STEP1'd every tracked doc on each
 // rejoin — a server room per note, uncapped by the sync gate — and on 2026-09-14
@@ -671,7 +734,12 @@ test("crdt_doc_ready runs discovery before the id-map heal, and only falls back"
 			calls.push(`discover:${id}:${path}`);
 			if (id === "mapped-by-discovery") map.set(path, id);
 		},
-		ensureNoteIdMapped: (...args: unknown[]) => calls.push(`heal:${args.join(":")}`),
+		// Like the real engine: a no-op (no fetch) for an id already mapped.
+		ensureNoteIdMapped: (...args: unknown[]) => {
+			if (map.pathForId(String(args[0])) !== null) return false;
+			calls.push(`heal:${args.join(":")}`);
+			return true;
+		},
 		awaitNoteIdMapped: async () => {},
 		idMapEra: () => 0,
 	};

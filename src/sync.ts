@@ -470,6 +470,20 @@ function isGateEvent(e: unknown): e is GateEvent {
 	return op !== "rename" || typeof oldPath === "string";
 }
 
+/** A note_id waiting on the throttled manifest heal (`ensureNoteIdMapped`). */
+type IdMapEntry = {
+	/** Answered fetches that did not list it, counted only for fetches that
+	 *  started after its latest request. */
+	attempts: number;
+	/** `idMapFetchGen` at its latest request. */
+	askedGen: number;
+	/** An announce already restored the budget once for this entry. */
+	resetUsed: boolean;
+	/** Resolves when the entry settles: mapped, refused, given up or dropped. */
+	done: Promise<void>;
+	release: () => void;
+};
+
 export class SyncEngine {
 	/**
 	 * Every collection that a teardown has to sweep, declared WITH its scope so
@@ -1097,18 +1111,19 @@ export class SyncEngine {
 	}
 
 	async reconcileNoteIdMapFromManifest(): Promise<number> {
-		if (!this.noteIdMap) return 0;
-		return this.applyManifestToNoteIdMap(await this.api.getManifest());
+		const map = this.noteIdMap;
+		if (!map) return 0;
+		return this.applyManifestToNoteIdMap(map, await this.api.getManifest());
 	}
 
 	/** The apply half of `reconcileNoteIdMapFromManifest`, split out so the
 	 *  throttled live reconcile can refuse a manifest that was fetched for a
 	 *  vault (or an open gate) that no longer holds. */
 	private async applyManifestToNoteIdMap(
+		map: NoteIdMap,
 		manifest: ManifestResponse | null,
 		live: () => boolean = () => true,
 	): Promise<number> {
-		if (!this.noteIdMap) return 0;
 		if (!manifest) return 0; // pre-B1 backend: no manifest endpoint, nothing to reconcile
 		this.cacheManifestOwners(manifest); // keep the destructive-op guard's snapshot fresh
 		let applied = 0;
@@ -1135,7 +1150,7 @@ export class SyncEngine {
 			// Reconciling ANY id against a snapshot older than our own delete is
 			// the engine believing stale news over a fact it authored (#491).
 			if (this.recentlyDeleted.has(note.id)) continue;
-			const localPath = this.noteIdMap.pathForId(note.id);
+			const localPath = map.pathForId(note.id);
 			if (localPath === path) continue; // already correct — nothing to do
 			if (localPath !== null && !manifestPaths.has(localPath)) {
 				// The id maps to a path the server does NOT list. That's an
@@ -1152,7 +1167,7 @@ export class SyncEngine {
 			// only, `delete` publishes nothing) so it stops routing frames.
 			if (this.isRefusedPath(path)) {
 				if (localPath !== null) {
-					this.noteIdMap.delete(localPath);
+					map.delete(localPath);
 					applied++;
 				}
 				this.idMapRefused.set(note.id, path); // so its fan-outs cost no GET
@@ -1166,17 +1181,19 @@ export class SyncEngine {
 			// a stale/cross-wired pathForId sends inbound CRDT content to the wrong
 			// file. Rebind to the authoritative path (set() evicts the stale
 			// forward + reverse entries so the map stays a clean bijection).
-			const holder = this.noteIdMap.get(path);
+			const holder = map.get(path);
 			if (holder && holder !== note.id) evicted.push(holder);
-			this.noteIdMap.set(path, note.id);
+			map.set(path, note.id);
 			applied++;
 		}
 		// An id this pass pushed off a path (say an announce mapped it there and
 		// this snapshot predates its row) must be re-healed, or it stays deaf.
+		// Internal (fresh=false): it must not restore the retry budget, or two ids
+		// that keep evicting each other would never give up.
 		for (const id of evicted)
-			if (this.noteIdMap.pathForId(id) === null) this.ensureNoteIdMapped(id);
+			if (map.pathForId(id) === null) this.ensureNoteIdMapped(id, false);
 		if (applied > 0) {
-			await this.saveData({ noteIds: this.noteIdMap.toJSON() });
+			await this.saveData({ noteIds: map.toJSON() });
 		}
 		if (!live()) return applied; // vault switched / gate closed during the save
 		// The manifest in hand is as fresh as it gets — resolve any trashes the
@@ -1197,15 +1214,21 @@ export class SyncEngine {
 	 *  fetch immediate, then at most one per ID_MAP_RECONCILE_COOLDOWN_MS after
 	 *  the previous fetch COMPLETED, doubling after failures. Only an answered
 	 *  fetch counts toward an id's ID_MAP_RECONCILE_MAX_ATTEMPTS (a row can lag
-	 *  its claim); ID_MAP_RECONCILE_MAX_FAILURES failures in a row give up on
-	 *  everything pending. Waiters (`awaitNoteIdMapped`) are released per id. */
-	ensureNoteIdMapped(noteId: string): void {
-		if (!this.noteIdMap || !noteId) return;
+	 *  its claim); at ID_MAP_RECONCILE_MAX_ATTEMPTS the id is given up and
+	 *  parked in `idMapMissing` for ID_MAP_MISSING_TTL_MS, so a never-listed id
+	 *  costs at most that many GETs per TTL. ID_MAP_RECONCILE_MAX_FAILURES
+	 *  failures in a row give up on everything pending.
+	 *
+	 *  `fresh`: outside evidence (an announce) may restore an entry's budget,
+	 *  once. Fan-outs and our own re-heals pass false. Returns whether the id is
+	 *  now waiting on a fetch (false: a no-op, nothing will be fetched). */
+	ensureNoteIdMapped(noteId: string, fresh = true): boolean {
+		if (!this.noteIdMap || !noteId) return false;
 		// Intrinsic gate check (not caller-dependent): the reconcile this
 		// triggers ends with sweepPendingOrphans, which can trashFile — never
 		// run that while the sync gate is closed. Callers may also gate for
 		// their own reasons, but safety must not depend on them remembering.
-		if (this.syncBlocked) return;
+		if (this.syncBlocked) return false;
 		// Same rule, second trigger (#491): a note THIS device just deleted is
 		// not map drift. `note_not_found` for a tombstoned id is the server
 		// answering CORRECTLY — the row is gone because we removed it — and the
@@ -1225,35 +1248,46 @@ export class SyncEngine {
 		// This one saves the pointless manifest FETCH. It is not the safety
 		// boundary — `reconcileNoteIdMapFromManifest` has three other callers
 		// and carries its own tombstone skip; see there.
-		if (this.recentlyDeleted.has(noteId)) return;
+		if (this.recentlyDeleted.has(noteId)) return false;
 
-		if (this.noteIdMap.pathForId(noteId) !== null) return; // already mapped
+		if (this.noteIdMap.pathForId(noteId) !== null) return false; // already mapped
 		// The manifest already answered for this id, at a path we refuse to map:
 		// another fetch would only say it again (a storm per fan-out). Re-checked
 		// here, so the entry clears itself once the reason is gone.
 		const refused = this.idMapRefused.get(noteId);
 		if (refused !== undefined) {
-			if (this.isRefusedPath(refused)) return;
+			if (this.isRefusedPath(refused)) return false;
 			this.idMapRefused.delete(noteId);
 		}
-		// Every call is a new external event (announce, fan-out); our own retries
-		// never come through here. So it owes a fetch that starts after now, and
-		// resets the retry budget (fresh evidence earns a full one). `answered`
-		// is never reset: it caps the entry's lifetime (I2).
-		const need = this.idMapFetchGen + 1;
+		// Answered MAX_ATTEMPTS times without being listed: no GET until the TTL
+		// passes or something maps it (see scheduleIdMapPrune).
+		const missingUntil = this.idMapMissing.get(noteId);
+		if (missingUntil !== undefined) {
+			if (this.time.now() < missingUntil) return false;
+			this.idMapMissing.delete(noteId);
+		}
 		const entry = this.idMapPending.get(noteId);
-		if (entry) {
-			entry.need = need;
-			entry.attempts = 0;
-		} else
-			this.idMapPending.set(noteId, {
-				since: need,
-				need,
-				attempts: 0,
-				answered: 0,
-				waiters: [],
+		if (!entry) {
+			let release: () => void = () => {};
+			const done = new Promise<void>((r) => {
+				release = r;
 			});
+			this.idMapPending.set(noteId, {
+				attempts: 0,
+				askedGen: this.idMapFetchGen,
+				resetUsed: false,
+				done,
+				release,
+			});
+		} else {
+			entry.askedGen = this.idMapFetchGen;
+			if (fresh && !entry.resetUsed && entry.attempts > 0) {
+				entry.attempts = 0;
+				entry.resetUsed = true;
+			}
+		}
 		this.idMapThrottle.poke();
+		return true;
 	}
 
 	/** Changes on every vault switch / destroy: lets a caller holding an id
@@ -1262,43 +1296,61 @@ export class SyncEngine {
 		return this.idMapEpoch;
 	}
 
-	/** Resolves once `noteId` is mapped, or the next manifest fetch covering it
-	 *  has completed (mapped or not), or it is dropped (deleted here, gate
-	 *  closed, vault switched). Immediately when it is not waiting on a fetch. */
+	/** Resolves when `noteId` settles (mapped, refused, given up, dropped), when
+	 *  the first fetch that STARTS after its latest ensureNoteIdMapped completes
+	 *  (I1), or after FANOUT_ID_WAIT_MS (I3), whichever is first. Callers ensure,
+	 *  then await (a fetch already in flight may predate the row a fan-out
+	 *  proves exists; test_82: the fan-out can be the only delivery). */
 	awaitNoteIdMapped(noteId: string): Promise<void> {
 		const entry = this.idMapPending.get(noteId);
 		if (!entry) return Promise.resolve();
-		// I1: callers ensure, then await, so `entry.need` is the first fetch that
-		// starts after this fan-out arrived (one already in flight may predate the
-		// row the fan-out proves exists; test_82: it can be the only delivery).
-		// The waiter keeps its own copy: a later fan-out must not move it.
-		return new Promise<void>((resolve) => {
-			let timer = 0;
-			const w = {
-				need: entry.need,
-				release: () => {
-					this.time.clearTimeout(timer);
-					resolve();
-				},
-			};
-			// I3: a fan-out never sits out the failure backoff. Past this it is
-			// released unmapped; the background heal carries on.
-			timer = this.time.setTimeout(() => {
-				entry.waiters = entry.waiters.filter((x) => x !== w);
-				resolve();
-			}, SyncEngine.FANOUT_ID_WAIT_MS);
-			entry.waiters.push(w);
-			// Its fetch has not started yet: run it urgently, right after any in
-			// flight, skipping the success cooldown (not the failure backoff).
-			if (this.idMapFetchGen < entry.need) this.idMapThrottle.poke(true);
+		const gen = entry.askedGen + 1;
+		if (this.idMapFetchGen < gen) this.pokeIdMapUrgent();
+		return Promise.race([entry.done, this.fetchDone(gen)]);
+	}
+
+	/** One shared promise per fetch generation: resolves when fetch `gen` (or
+	 *  a later one) completes, or after FANOUT_ID_WAIT_MS. */
+	private fetchDone(gen: number): Promise<void> {
+		if (gen <= this.idMapDoneGen) return Promise.resolve();
+		const existing = this.idMapFetchWaits.get(gen);
+		if (existing) return existing.promise;
+		let resolve: () => void = () => {};
+		const promise = new Promise<void>((r) => {
+			resolve = r;
 		});
+		const release = (): void => {
+			this.time.clearTimeout(timer);
+			this.idMapFetchWaits.delete(gen);
+			resolve();
+		};
+		const timer = this.time.setTimeout(release, SyncEngine.FANOUT_ID_WAIT_MS);
+		this.idMapFetchWaits.set(gen, { promise, release });
+		return promise;
+	}
+
+	private releaseFetchWaits(upTo = Number.POSITIVE_INFINITY): void {
+		for (const [gen, wait] of [...this.idMapFetchWaits]) if (gen <= upTo) wait.release();
+	}
+
+	/** A fan-out wants its fetch now. Its frame is evidence the server is up,
+	 *  so once per backoff window it may skip the failure floor as a probe: a
+	 *  success resets the failures. The probe's own failure does not open a new
+	 *  window (it is stamped in advance); the next scheduled failure does.
+	 *  Otherwise urgency skips only the success cooldown. */
+	private pokeIdMapUrgent(): void {
+		const probe = this.idMapFailures >= 2 && this.idMapProbedAt !== this.idMapFailures;
+		if (probe) this.idMapProbedAt = this.idMapFailures + 1;
+		this.idMapProbing = probe;
+		this.idMapThrottle.poke(true);
+		this.idMapProbing = false;
 	}
 
 	private settleIdMapPending(noteId: string): void {
 		const entry = this.idMapPending.get(noteId);
 		if (!entry) return;
 		this.idMapPending.delete(noteId);
-		for (const w of entry.waiters) w.release();
+		entry.release();
 	}
 
 	/** One throttled manifest pass for every id pending right now. */
@@ -1309,8 +1361,7 @@ export class SyncEngine {
 		const live = () => epoch === this.idMapEpoch && !this.syncBlocked;
 		this.pruneIdMapPending();
 		if (this.idMapPending.size === 0) return false; // no GET: no cooldown either
-		// Releases every waiter with need <= gen, and counts for every entry that
-		// existed before it started (since <= gen).
+		// Counts for, and releases, everything asked before it started.
 		const gen = ++this.idMapFetchGen;
 		let manifest: ManifestResponse | null = null;
 		let ok = false;
@@ -1321,25 +1372,19 @@ export class SyncEngine {
 			if (epoch !== this.idMapEpoch) return true;
 			rlog().warn("sync", `live id-map reconcile failed: ${errMsg(e)}`);
 		}
-		if (ok && live()) {
+		const map = this.noteIdMap;
+		if (ok && map && live()) {
 			// An apply failure (saveData, relocate, orphan trash) is not the
 			// server's: logged, but it never drives fetch backoff or the give-up.
 			try {
-				await this.applyManifestToNoteIdMap(manifest, live);
+				await this.applyManifestToNoteIdMap(map, manifest, live);
 			} catch (e) {
 				rlog().warn("sync", `live id-map apply failed: ${errMsg(e)}`);
 			}
 		}
+		this.idMapDoneGen = gen;
+		this.releaseFetchWaits(gen); // I1
 		if (!live()) return true;
-		// I1: every waiter whose fetch has now completed is released, mapped or
-		// not, ok or failed. Ones that arrived mid-fetch wait for the next.
-		for (const entry of this.idMapPending.values()) {
-			entry.waiters = entry.waiters.filter((w) => {
-				if (w.need > gen) return true;
-				w.release();
-				return false;
-			});
-		}
 		this.idMapFailures = ok ? 0 : this.idMapFailures + 1;
 		if (this.idMapFailures >= SyncEngine.ID_MAP_RECONCILE_MAX_FAILURES) {
 			rlog().warn(
@@ -1349,27 +1394,20 @@ export class SyncEngine {
 			// The count is kept, so the backoff stays at its cap until a fetch
 			// succeeds; an outage must not restart it at 2s.
 			for (const [id, entry] of [...this.idMapPending])
-				if (entry.since <= gen) this.settleIdMapPending(id);
+				if (entry.askedGen < gen) this.settleIdMapPending(id);
 			if (this.idMapPending.size > 0) this.idMapThrottle.poke();
 			return true;
 		}
+		this.pruneIdMapPending(); // listed ones are mapped or refused now
 		if (ok) {
 			for (const [id, entry] of [...this.idMapPending]) {
-				if (entry.since > gen) continue; // created mid-fetch: not counted
-				entry.answered++;
-				// I2: `attempts` resets on fresh evidence, `answered` never does, so
-				// an endless fan-out stream still ends at 2x the budget.
-				if (
-					++entry.attempts >= SyncEngine.ID_MAP_RECONCILE_MAX_ATTEMPTS ||
-					entry.answered >= 2 * SyncEngine.ID_MAP_RECONCILE_MAX_ATTEMPTS
-				) {
-					if (this.noteIdMap?.pathForId(id) == null)
-						rlog().info("sync", `live id-map reconcile gave up on unmapped note=${id}`);
-					this.settleIdMapPending(id);
-				}
+				if (entry.askedGen >= gen) continue; // asked again after it started
+				if (++entry.attempts < SyncEngine.ID_MAP_RECONCILE_MAX_ATTEMPTS) continue;
+				rlog().info("sync", `live id-map reconcile gave up on unmapped note=${id}`);
+				this.idMapMissing.set(id, this.time.now() + SyncEngine.ID_MAP_MISSING_TTL_MS);
+				this.settleIdMapPending(id);
 			}
 		}
-		this.pruneIdMapPending();
 		if (this.idMapPending.size > 0) this.idMapThrottle.poke();
 		return true;
 	}
@@ -1400,13 +1438,15 @@ export class SyncEngine {
 		}
 	}
 
-	/** Id-map change hook: settles pending ids among those just claimed,
-	 *  coalesced to one pass per microtask. Only the claimed ids are looked up,
-	 *  so a 10k import with one stuck id is not 10k reverse-index rebuilds. A
-	 *  waiter is still released in the same tick its id lands. */
+	/** Id-map change hook: an id just claimed (index room, announce, manifest)
+	 *  leaves the negative cache, and a pending one settles. Coalesced to one
+	 *  pass per microtask over the claimed ids only, so a 10k import with one
+	 *  stuck id is not 10k reverse-index rebuilds. */
 	private scheduleIdMapPrune(claimed: string[]): void {
-		if (this.idMapPending.size === 0) return;
-		for (const id of claimed) if (this.idMapPending.has(id)) this.idMapClaimed.add(id);
+		for (const id of claimed) {
+			this.idMapMissing.delete(id);
+			if (this.idMapPending.has(id)) this.idMapClaimed.add(id);
+		}
 		if (this.idMapPruneQueued || this.idMapClaimed.size === 0) return;
 		this.idMapPruneQueued = true;
 		queueMicrotask(() => {
@@ -1514,26 +1554,12 @@ export class SyncEngine {
 	 *  fresh question. */
 	private repairedClaims = this.track(["vault", "destroy"], new Set<string>());
 
-	/** Unmapped ids waiting on a throttled manifest fetch, with their waiters.
-	 *  A sweep releases the waiters; `resetIdMapReconcile` drops the timer. */
+	/** Unmapped ids waiting on a throttled manifest fetch (see IdMapEntry).
+	 *  A sweep releases their waiters; `resetIdMapReconcile` drops the timer. */
 	private idMapPending = this.track(
 		["vault", "destroy"],
-		// since: the first fetch generation that counts for this entry.
-		// need: the generation the latest ensureNoteIdMapped is owed (a fetch is
-		// owed while idMapFetchGen < need). Each waiter keeps its own need.
-		new Map<
-			string,
-			{
-				since: number;
-				need: number;
-				attempts: number;
-				answered: number;
-				waiters: Array<{ need: number; release: () => void }>;
-			}
-		>(),
-		(entry) => {
-			for (const w of entry.waiters) w.release();
-		},
+		new Map<string, IdMapEntry>(),
+		(entry) => entry.release(),
 	);
 	/** id -> the path the manifest lists it at, which `isRefusedPath` refuses.
 	 *  A hiding layer, so every entry has named clearing events: re-validated
@@ -1541,10 +1567,25 @@ export class SyncEngine {
 	 *  the ignore settings change), dropped when a later manifest lists the id
 	 *  at a mappable path, and swept on vault switch / destroy. */
 	private idMapRefused = this.track(["vault", "destroy"], new Map<string, string>());
+	/** id -> until (ms): the manifest answered MAX_ATTEMPTS times without
+	 *  listing it. Clearing events: the TTL (checked per request), anything
+	 *  mapping the id (scheduleIdMapPrune), vault switch / destroy (swept). */
+	private idMapMissing = this.track(["vault", "destroy"], new Map<string, number>());
+	/** Fan-out waits, one shared per fetch generation (see fetchDone). */
+	private idMapFetchWaits = this.track(
+		["vault", "destroy"],
+		new Map<number, { promise: Promise<void>; release: () => void }>(),
+		(wait) => wait.release(),
+	);
 	private idMapFailures = 0;
+	/** The failure count at which a fan-out may not probe (its window's probe
+	 *  was spent). */
+	private idMapProbedAt = -1;
+	private idMapProbing = false;
 	private idMapEpoch = 0;
-	/** Live fetches started (never reset: entries compare against it). */
+	/** Live fetches started, and the last one completed (never reset). */
 	private idMapFetchGen = 0;
+	private idMapDoneGen = 0;
 	private idMapPruneQueued = false;
 	private idMapClaimed = this.track(["vault", "destroy"], new Set<string>());
 	/** Assigned in the constructor: it needs `this.time`. */
@@ -1554,14 +1595,14 @@ export class SyncEngine {
 	private readonly noteIdSaveThrottle: TrailingThrottle;
 	private static readonly NOTE_ID_SAVE_GAP_MS = 1_000;
 	private static readonly ID_MAP_RECONCILE_COOLDOWN_MS = 2_000;
-	/** Spacing between back-to-back fan-out (urgent) fetches. ponytail: a stream
-	 *  of fan-outs for an id the server never lists costs 2 GETs/s; raise it if
-	 *  that ever shows up in prod. */
+	/** Spacing between back-to-back fan-out (urgent) fetches. */
 	private static readonly ID_MAP_URGENT_GAP_MS = 500;
 	/** The longest a fan-out waits for its id to map (I3). */
 	private static readonly FANOUT_ID_WAIT_MS = 3_000;
 	private static readonly ID_MAP_RECONCILE_MAX_ATTEMPTS = 3;
 	private static readonly ID_MAP_RECONCILE_MAX_FAILURES = 5;
+	/** How long a given-up id stays in `idMapMissing` (I4). */
+	private static readonly ID_MAP_MISSING_TTL_MS = 60_000;
 
 	/** Detach the throttled reconcile from the vault it was serving: cancel
 	 *  the armed fetch and forget the cooldown, so neither reaches the next. */
@@ -1571,6 +1612,7 @@ export class SyncEngine {
 		this.noteIdSaveThrottle.reset();
 		this.idMapEpoch++;
 		this.idMapFailures = 0;
+		this.idMapProbedAt = -1;
 	}
 
 	/** note_ids the SERVER is known to already have a note row for — learned
@@ -3152,9 +3194,10 @@ export class SyncEngine {
 						2 ** Math.min(this.idMapFailures, 4),
 			() => this.runIdMapReconcile(),
 			// Two failures in a row: the server is down, so even an urgent fan-out
-			// waits the backoff. One blip still gets its urgent retry.
+			// waits the backoff, bar one probe per window (pokeIdMapUrgent). One
+			// blip still gets its urgent retry.
 			() =>
-				this.idMapFailures >= 2
+				this.idMapFailures >= 2 && !this.idMapProbing
 					? SyncEngine.ID_MAP_RECONCILE_COOLDOWN_MS * 2 ** Math.min(this.idMapFailures, 4)
 					: 0,
 		);
@@ -3192,6 +3235,7 @@ export class SyncEngine {
 			// the armed fetch never fires behind the closed gate.
 			this.idMapThrottle.cancel();
 			this.pruneIdMapPending();
+			this.releaseFetchWaits();
 		}
 		this.blockedSince = blocked ? (this.blockedSince ?? performance.now()) : null;
 		// Re-arm the announcement on every transition, so a LATER closure (a
@@ -7466,7 +7510,7 @@ export class SyncEngine {
 				this.noteIdMap.set(normalized, noteId);
 				// The announce path evicted another id: the path may be stale (rename
 				// race), so let the throttled manifest decide where that id lives.
-				if (displaced && displaced !== noteId) this.ensureNoteIdMapped(displaced);
+				if (displaced && displaced !== noteId) this.ensureNoteIdMapped(displaced, false);
 				// 1,000 announces must not be 1,000 data.json rewrites. A kill inside the
 				// 1s gap (mobile) loses at most these mappings, and the cold-start
 				// manifest reconcile re-learns them, so no flush-on-kill is needed.
@@ -7520,8 +7564,8 @@ export class SyncEngine {
 			// delivery. Heal the map (single-flight manifest reconcile, the same
 			// primitive the crdt_doc_ready announce path uses) and retry the
 			// lookup once (e2e test_82, local repro 2026-07-22).
-			this.ensureNoteIdMapped(noteId);
-			await this.awaitNoteIdMapped(noteId);
+			// fresh=false: a fan-out stream must not keep restoring the budget (I4).
+			if (this.ensureNoteIdMapped(noteId, false)) await this.awaitNoteIdMapped(noteId);
 			path = this.noteIdMap?.pathForId(noteId) ?? null;
 			if (!path) {
 				rlog().info("crdt", `fan-out drop: id unmapped after reconcile note=${noteId}`);

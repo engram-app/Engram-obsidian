@@ -1018,11 +1018,13 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			expect(map.pathForId("x")).toBe("x.md");
 		});
 
-		test("consecutive fetch failures: an urgent fan-out respects the backoff", async () => {
-			// One blip still gets an urgent retry (see "a fan-out's first wait..."),
-			// but a second failure in a row means the server is down: back off.
+		test("consecutive fetch failures: after one failed probe, fan-outs respect the backoff", async () => {
+			// One blip still gets an urgent retry (see "a fan-out's first wait...").
+			// After two failures in a row a fan-out may probe once per backoff
+			// window; when that probe fails too, fan-outs wait the backoff.
 			const { engine, map, time } = throttledEngine();
 			(mockApi.getManifest as ReturnType<typeof mock>)
+				.mockRejectedValueOnce(new Error("503"))
 				.mockRejectedValueOnce(new Error("503"))
 				.mockRejectedValueOnce(new Error("503"));
 			engine.ensureNoteIdMapped("x");
@@ -1031,6 +1033,11 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			void engine.awaitNoteIdMapped("x");
 			await flush(); // urgent retry failed too: backoff is now 8s
 			expect(fetches()).toBe(2);
+			time.advance(1_000);
+			engine.ensureNoteIdMapped("x");
+			void engine.awaitNoteIdMapped("x");
+			await flush(); // the window's one probe, failed: backoff now 16s
+			expect(fetches()).toBe(3);
 
 			liveManifest([{ id: "x", path: "x.md" }]);
 			time.advance(1_000);
@@ -1039,10 +1046,10 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			await flush();
 			time.advance(GAP / 2);
 			await flush();
-			expect(fetches()).toBe(2); // still inside the 8s backoff
+			expect(fetches()).toBe(3); // no second probe in this window
 			time.advance(8 * GAP);
 			await flush();
-			expect(fetches()).toBe(3);
+			expect(fetches()).toBe(4);
 			expect(map.pathForId("x")).toBe("x.md");
 		});
 
@@ -1080,12 +1087,18 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			// Three answered fetches at the base cooldown, then the attempt give-up;
 			// fetch-failure backoff would have spaced them 4s, 8s apart.
 			expect(fetches()).toBe(3);
-			expect((engine as any).idMapPending.has("a")).toBe(false);
-			expect((engine as any).idMapFailures).toBe(0);
+			// Given up: no more fetches for it...
+			time.advance(10 * GAP);
+			await flush();
+			expect(fetches()).toBe(3);
+			// ...and no failure backoff either: a new id is fetched right away.
+			engine.ensureNoteIdMapped("b");
+			await flush();
+			expect(fetches()).toBe(4);
 		});
 
 		test("a fetch does not credit an id that was settled and re-requested while it was in flight", async () => {
-			const { engine, map } = throttledEngine();
+			const { engine, map, time } = throttledEngine();
 			const release = heldManifest([]);
 			heldManifest([]); // the trailing fetch never answers in this test
 			engine.ensureNoteIdMapped("z");
@@ -1102,7 +1115,11 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			await flush();
 
 			expect(released).toBe(false);
-			expect((engine as any).idMapPending.get("z").attempts).toBe(0);
+			// Not credited: z still has its full budget of 3 answered fetches.
+			liveManifest([]);
+			time.advance(60_000);
+			await flush(); // the trailing fetch (held above) never answers
+			expect(released).toBe(true); // released by the wait bound, not credit
 		});
 
 		test("the manifest maps the same normalized path discovery would", async () => {
@@ -1145,7 +1162,7 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 		});
 
 		test("#4 the failure give-up does not settle an id requested during the failing fetch", async () => {
-			const { engine, time } = throttledEngine();
+			const { engine, map, time } = throttledEngine();
 			const get = mockApi.getManifest as ReturnType<typeof mock>;
 			for (let i = 0; i < 4; i++) get.mockRejectedValueOnce(new Error("503"));
 			let fail5: (e: Error) => void = () => {};
@@ -1165,9 +1182,12 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			engine.ensureNoteIdMapped("late");
 			fail5(new Error("503"));
 			await flush();
-			const pending = (engine as any).idMapPending;
-			expect(pending.has("a")).toBe(false);
-			expect(pending.has("late")).toBe(true);
+			// `late` was not given up with `a`: a fetch still comes for it.
+			liveManifest([{ id: "late", path: "late.md" }]);
+			time.advance(10 * 60_000);
+			await flush();
+			expect(fetches()).toBe(6);
+			expect(map.pathForId("late")).toBe("late.md");
 		});
 
 		test("#8 a seeded mapping releases a waiting fan-out", async () => {
@@ -1364,7 +1384,12 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			time.advance(WAIT);
 			await flush();
 			expect(released).toBe(true);
-			expect((engine as any).idMapPending.has("x")).toBe(true); // background heal goes on
+			// The background heal goes on: once the backoff passes, x maps.
+			liveManifest([{ id: "x", path: "x.md" }]);
+			time.advance(60_000);
+			await flush();
+			expect(engine.awaitNoteIdMapped("x")).resolves.toBeUndefined();
+			expect((engine as any).noteIdMap.pathForId("x")).toBe("x.md");
 		});
 
 		test("#5 the failure give-up keeps the backoff at its cap", async () => {
@@ -1415,6 +1440,95 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			map.setChangeHandler(() => {});
 			map.rebind(new SyncStore(new Y.Doc().getMap("filemeta_v0")));
 			expect(old.onChange).toBeUndefined();
+		});
+	});
+
+	describe("round 8", () => {
+		const WAIT = 3_000; // SyncEngine.FANOUT_ID_WAIT_MS
+
+		test("I4 N fan-outs for an id the manifest never lists cost at most MAX_ATTEMPTS GETs per TTL", async () => {
+			const { engine, time } = throttledEngine();
+			(engine as any).crdt = {}; // applyPushedNoteUpdate needs a CRDT stack
+			liveManifest([]);
+			for (let i = 0; i < 25; i++) {
+				void engine.applyPushedNoteUpdate("ghost", new Uint8Array(), "h");
+				await flush();
+				time.advance(GAP); // 25 x 2s = 50s, inside one TTL
+				await flush();
+			}
+			expect(fetches()).toBeLessThanOrEqual(3);
+		});
+
+		test("#5 after two failures a fan-out probes once, and is delivered when the server is back", async () => {
+			const { engine, map, time } = throttledEngine();
+			(mockApi.getManifest as ReturnType<typeof mock>)
+				.mockRejectedValueOnce(new Error("503"))
+				.mockRejectedValueOnce(new Error("503"));
+			engine.ensureNoteIdMapped("x");
+			await flush();
+			time.advance(2 * GAP);
+			await flush(); // second failure: backoff 8s
+			expect(fetches()).toBe(2);
+			liveManifest([{ id: "x", path: "x.md" }]); // the server recovers
+			let pathAtRelease: string | null = "unreleased";
+			engine.ensureNoteIdMapped("x");
+			void engine.awaitNoteIdMapped("x").then(() => {
+				pathAtRelease = map.pathForId("x");
+			});
+			await flush();
+			time.advance(WAIT - 1);
+			await flush();
+			expect(pathAtRelease).toBe("x.md");
+		});
+
+		test("#7 an on-disk announce heals right away, not after discovery's replay", async () => {
+			const rig = throttledEngine();
+			const e = rig.engine as any;
+			e.crdt = {};
+			e.crdtCatchupSince = async () => null;
+			e.catchupViaSeqReplay = () => new Promise<void>(() => {}); // a replay that never ends
+			const wiring = createCrdtWiring({
+				noteIdMap: rig.map,
+				syncEngine: rig.engine,
+				sendCrdt: () => {},
+				isBound: () => false,
+				strandHealDebounceMs: 100_000,
+				dbPrefix: `r8-7-${Math.random()}`,
+			});
+			(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockImplementation(
+				(p: string) => (p === "disk.md" ? new TFile("disk.md") : null),
+			);
+			try {
+				liveManifest([{ id: "disk-id", path: "disk.md" }]);
+				wiring.onCrdtDocReady("disk-id", "disk.md");
+				await flush();
+				expect(fetches()).toBe(1);
+				expect(rig.map.pathForId("disk-id")).toBe("disk.md");
+			} finally {
+				(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>)
+					.mockReset()
+					.mockReturnValue(null);
+				wiring.dispose();
+			}
+		});
+
+		test("#8 every mapping discovery learns reaches saveData", async () => {
+			const rig = throttledEngine();
+			const e = rig.engine as any;
+			e.crdt = {};
+			e.crdtCatchupSince = async () => null;
+			e.catchupViaSeqReplay = async () => {}; // a replay that walks no page (saves nothing)
+			const saved = new Set<string>();
+			rig.saveData.mockImplementation(async (d: { noteIds?: Record<string, string> }) => {
+				for (const id of Object.values(d.noteIds ?? {})) saved.add(id);
+			});
+			for (let i = 0; i < 20; i++) {
+				await rig.engine.discoverAnnouncedNote(`m-${i}`, `m${i}.md`);
+				rig.time.advance(100);
+			}
+			rig.time.advance(60_000);
+			await flush();
+			for (let i = 0; i < 20; i++) expect(saved.has(`m-${i}`)).toBe(true);
 		});
 	});
 });
