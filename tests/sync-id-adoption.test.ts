@@ -14,6 +14,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncEngine } from "../src/sync";
+import { ManualTimeProvider } from "../src/time-provider";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -264,5 +265,164 @@ describe("ensureNoteIdMapped — live reconcile on an unmappable announce id", (
 		expect(map.pathForId("id-1")).toBe("a.md");
 		expect(map.pathForId("id-2")).toBe("b.md");
 		expect(map.pathForId("id-3")).toBe("c.md");
+	});
+});
+
+// Receiver manifest storm (local A/B of e2e test_77, 1,000-note bulk first
+// sync): device B's first crdt_doc_ready for nearly every new note names an
+// unmapped id. The old coalescing only merged calls that overlapped an
+// IN-FLIGHT fetch, so announces arriving back-to-back (each after the previous
+// fetch settled) cost one whole-vault manifest GET apiece: ~970 per run, O(N^2)
+// bytes, landing on the server exactly when it is busiest.
+describe("ensureNoteIdMapped — manifest fetches are throttled across a burst", () => {
+	const flush = () => new Promise((r) => setTimeout(r, 0));
+	const fetches = () => (mockApi.getManifest as ReturnType<typeof mock>).mock.calls.length;
+
+	function throttledEngine() {
+		const time = new ManualTimeProvider(1_000_000);
+		const engine = new SyncEngine(
+			mockApp,
+			mockApi,
+			{ ...DEFAULT_SETTINGS, debounceMs: 1 },
+			mock().mockResolvedValue(undefined),
+			time,
+		);
+		engine.setReady();
+		const map = new NoteIdMap();
+		engine.setNoteIdMap(map);
+		return { engine, map, time };
+	}
+
+	/** Manifest that lists whatever the server holds at the moment of the GET. */
+	function liveManifest(created: Array<{ id: string; path: string }>) {
+		(mockApi.getManifest as ReturnType<typeof mock>).mockImplementation(async () => ({
+			notes: created.map((n) => ({ ...n, content_hash: "h" })),
+			attachments: [],
+			total_notes: created.length,
+			total_attachments: 0,
+			change_seq: created.length,
+		}));
+	}
+
+	test("N concurrent unmapped announces cost exactly one fetch", async () => {
+		const { engine, map, time } = throttledEngine();
+		const notes = Array.from({ length: 50 }, (_, i) => ({ id: `id-${i}`, path: `n${i}.md` }));
+		liveManifest(notes);
+
+		for (const n of notes) engine.ensureNoteIdMapped(n.id);
+		await flush();
+		time.advance(60_000);
+		await flush();
+
+		// Every id was covered by the one snapshot: no trailing rerun is owed.
+		expect(fetches()).toBe(1);
+		for (const n of notes) expect(map.pathForId(n.id)).toBe(n.path);
+	});
+
+	test("back-to-back announces (each after the last fetch settled) share a trailing fetch", async () => {
+		const { engine, map, time } = throttledEngine();
+		const created: Array<{ id: string; path: string }> = [];
+		liveManifest(created);
+
+		// The server learns one note at a time and announces it; B's previous
+		// fetch has already returned when the next announce lands.
+		for (let i = 0; i < 20; i++) {
+			created.push({ id: `id-${i}`, path: `n${i}.md` });
+			engine.ensureNoteIdMapped(`id-${i}`);
+			await flush();
+		}
+		// Leading fetch only, so far: the rest wait out the window.
+		expect(fetches()).toBe(1);
+
+		time.advance(60_000);
+		await flush();
+		await flush();
+
+		expect(fetches()).toBe(2);
+		for (const n of created) expect(map.pathForId(n.id)).toBe(n.path);
+	});
+
+	test("a note missing from an in-flight fetch is picked up by the trailing fetch", async () => {
+		const { engine, map, time } = throttledEngine();
+		const created = [{ id: "early", path: "early.md" }];
+		let release: () => void = () => {};
+		const gate = new Promise<void>((r) => {
+			release = r;
+		});
+		// First GET snapshots BEFORE "late" exists, and is still in flight when
+		// "late" is announced.
+		const snapshot = created.map((n) => ({ ...n, content_hash: "h" }));
+		(mockApi.getManifest as ReturnType<typeof mock>).mockImplementationOnce(async () => {
+			await gate;
+			return {
+				notes: snapshot,
+				attachments: [],
+				total_notes: 1,
+				total_attachments: 0,
+				change_seq: 1,
+			};
+		});
+		engine.ensureNoteIdMapped("early");
+		await flush();
+		created.push({ id: "late", path: "late.md" });
+		liveManifest(created);
+		engine.ensureNoteIdMapped("late");
+		release();
+		await flush();
+		await flush();
+
+		expect(map.pathForId("early")).toBe("early.md");
+		expect(map.pathForId("late")).toBeNull(); // not dropped, just waiting
+
+		time.advance(60_000);
+		await flush();
+		await flush();
+
+		expect(fetches()).toBe(2);
+		expect(map.pathForId("late")).toBe("late.md");
+	});
+
+	test("an id absent from a fetch that started after it was seen is not refetched forever", async () => {
+		const { engine, time } = throttledEngine();
+		liveManifest([]);
+
+		engine.ensureNoteIdMapped("ghost");
+		await flush();
+		time.advance(60_000);
+		await flush();
+		time.advance(60_000);
+		await flush();
+
+		expect(fetches()).toBe(1);
+	});
+
+	test("an announce whose id gets mapped elsewhere during the window costs no fetch", async () => {
+		const { engine, map, time } = throttledEngine();
+		liveManifest([{ id: "a", path: "a.md" }]);
+		engine.ensureNoteIdMapped("a");
+		await flush();
+
+		engine.ensureNoteIdMapped("b"); // inside the window: waits
+		map.set("b.md", "b"); // the pull feed maps it first
+		time.advance(60_000);
+		await flush();
+
+		expect(fetches()).toBe(1);
+	});
+
+	test("a gate that closes during the window cancels the trailing fetch", async () => {
+		const { engine, time } = throttledEngine();
+		liveManifest([{ id: "a", path: "a.md" }]);
+		engine.ensureNoteIdMapped("a");
+		await flush();
+
+		engine.ensureNoteIdMapped("b");
+		(engine as any).syncBlocked = true;
+		time.advance(60_000);
+		await flush();
+
+		// The reconcile can trash files (sweepPendingOrphans): never behind a
+		// closed gate, even when it was armed while the gate was open.
+		expect(fetches()).toBe(1);
 	});
 });
