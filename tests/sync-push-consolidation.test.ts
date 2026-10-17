@@ -857,3 +857,14 @@ describe("Sync again survives a restart before the push pass", () => {
 		expect(pushFile.mock.calls.map((c: any[]) => c[0].path)).toEqual(["Archive/a.md"]);
 	});
 });
+
+describe("SyncEngine.untrackedNotePaths", () => {
+	test("counts only never-synced notes under the folder", () => {
+		const files = ["Archive/new.md", "Archive/old.md", "Archive/img.png", "Notes/new.md"].map(
+			(p) => new TFile(p, 1),
+		);
+		const { engine } = makeEngine(files);
+		engine.importSyncState({ "Archive/old.md": { hash: 1 } });
+		expect(engine.untrackedNotePaths("Archive")).toEqual(["Archive/new.md"]);
+	});
+});

@@ -262,3 +262,58 @@ describe("syncFolderAgain", () => {
 		expect(fake.syncEngine.fullSync).not.toHaveBeenCalled();
 	});
 });
+
+describe("Sync again checks the notes quota first", () => {
+	function setup(usageBody: unknown, confirm: boolean) {
+		const { fake } = makeFakePlugin(async () => PLAN);
+		fake.settings.excludedFolders = ["Archive"];
+		fake.api.getBillingUsage = mock(async () => usageBody);
+		fake.syncEngine.untrackedNotePaths = mock(() => ["Archive/a.md", "Archive/b.md"]);
+		fake.syncEngine.reincludeFolder = mock(async () => {});
+		fake.syncEngine.fullSync = mock(async () => ({ pulled: 0, pushed: 0 }));
+		fake.confirmFolderOverLimit = mock(async () => confirm);
+		return fake;
+	}
+	const room = (limit: number, used: number) => ({
+		tier: "free",
+		usage: { notes: { limit, used } },
+	});
+
+	test("a folder that does not fit asks first; declining changes nothing", async () => {
+		const fake = setup(room(10, 9), false);
+		await fake.syncFolderAgain("Archive");
+		expect(fake.confirmFolderOverLimit).toHaveBeenCalledWith(2, { limit: 10, room: 1 });
+		expect(fake.settings.excludedFolders).toEqual(["Archive"]);
+		expect(fake.savePluginData).not.toHaveBeenCalled();
+		expect(fake.syncEngine.fullSync).not.toHaveBeenCalled();
+	});
+
+	test("acknowledging the over-limit step re-includes and syncs", async () => {
+		const fake = setup(room(10, 9), true);
+		await fake.syncFolderAgain("Archive");
+		expect(fake.settings.excludedFolders).toEqual([]);
+		expect(fake.syncEngine.fullSync).toHaveBeenCalled();
+	});
+
+	test("a folder that fits asks nothing", async () => {
+		const fake = setup(room(10, 0), false);
+		await fake.syncFolderAgain("Archive");
+		expect(fake.confirmFolderOverLimit).not.toHaveBeenCalled();
+		expect(fake.settings.excludedFolders).toEqual([]);
+	});
+
+	test("an unknown quota proceeds as before", async () => {
+		const fake = setup({ tier: "free", usage: {} }, false);
+		await fake.syncFolderAgain("Archive");
+		expect(fake.confirmFolderOverLimit).not.toHaveBeenCalled();
+		expect(fake.settings.excludedFolders).toEqual([]);
+	});
+
+	test("self-host makes no billing lookup", async () => {
+		const fake = setup(room(10, 9), false);
+		fake.settings.backendMode = "selfhost";
+		await fake.syncFolderAgain("Archive");
+		expect(fake.api.getBillingUsage).not.toHaveBeenCalled();
+		expect(fake.settings.excludedFolders).toEqual([]);
+	});
+});

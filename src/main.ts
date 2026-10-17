@@ -74,6 +74,9 @@ import { channelConnectionKey, computeSyncFingerprint } from "./sync-fingerprint
 import { SyncLog } from "./sync-log";
 import { SyncLogModal } from "./sync-log-modal";
 import {
+	FolderOverLimitModal,
+	fetchNotesQuota,
+	type NotesQuota,
 	planLoadErrorMessage,
 	SyncPreviewModal,
 	type SyncPreviewOptions,
@@ -3686,6 +3689,7 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  sync. Only a failed save rejects, and then nothing changed. The sync runs
 	 *  in the background; the returned promise settles once the change is saved. */
 	async syncFolderAgain(folder: string): Promise<void> {
+		if (!(await this.folderFitsOrAcknowledged(folder))) return;
 		const excludedFolders = this.settings.excludedFolders.filter((f) => f !== folder);
 		await this.saveExcludedFolders(excludedFolders, {
 			reincludedFolders: [...new Set([...this.syncEngine.exportReincludedFolders(), folder])],
@@ -3695,6 +3699,28 @@ export default class EngramSyncPlugin extends Plugin {
 		void this.syncEngine
 			.fullSync()
 			.catch((e) => this.handleSyncError("Sync folder again", e, { notice: true }));
+	}
+
+	/** Sync again must not bring back the silent half-sync the first-sync
+	 *  over-limit step exists to prevent: when the folder's new notes do not fit
+	 *  the plan, ask first. Self-host (no plans) and an unknown or unlimited
+	 *  quota proceed, exactly as the first-sync step treats them. */
+	private async folderFitsOrAcknowledged(folder: string): Promise<boolean> {
+		if (!offersUpgrades(this.settings)) return true;
+		const quota = await fetchNotesQuota(() => this.api.getBillingUsage());
+		if (quota === null || quota === "unlimited") return true;
+		const count = this.syncEngine.untrackedNotePaths(folder).length;
+		return count <= quota.room || this.confirmFolderOverLimit(count, quota);
+	}
+
+	/** Seam for tests: the over-limit acknowledgement for Sync again. */
+	confirmFolderOverLimit(count: number, quota: NotesQuota): Promise<boolean> {
+		return new FolderOverLimitModal(
+			this.app,
+			count,
+			quota,
+			upgradeUrlFor(this.settings),
+		).awaitAnswer();
 	}
 
 	/** Persist current sync engine state (issues, ignored files, etc.) to plugin

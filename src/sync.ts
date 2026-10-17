@@ -9257,6 +9257,22 @@ export class SyncEngine {
 	 *  and by a vault change. */
 	private reincludedFolders = this.track(["vault"], new Set<string>());
 
+	/** Local notes under `folder` this device never synced: the ones a
+	 *  re-include would create on the server (Sync again's quota check). */
+	untrackedNotePaths(folder: string): string[] {
+		return this.app.vault
+			.getFiles()
+			.filter(
+				(f: TFile) =>
+					inExcludedFolder(f.path, [folder]) &&
+					this.isSyncable(f) &&
+					!this.isBinaryFile(f) &&
+					this.getCrdtHead(f.path) == null &&
+					!this.syncState.has(f.path),
+			)
+			.map((f: TFile) => f.path);
+	}
+
 	/** Persisted with the save that takes a folder out of excludedFolders, so
 	 *  a restart before the next push pass cannot drop the edits made while it
 	 *  was excluded. */

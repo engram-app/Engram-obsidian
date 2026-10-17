@@ -1651,3 +1651,82 @@ export class SyncPreviewModal extends Modal {
 		this.render();
 	}
 }
+
+/** "Sync again" on a folder that does not fit the plan: the over-limit step's
+ *  message, Upgrade and acknowledgement, without its folder picker (the user
+ *  just chose this folder). Resolves true on Continue, false on Back or close. */
+export class FolderOverLimitModal extends Modal {
+	private answer: ((ok: boolean) => void) | null = null;
+
+	constructor(
+		app: App,
+		private readonly count: number,
+		private readonly quota: NotesQuota,
+		private readonly upgradeUrl: string | null,
+	) {
+		super(app);
+	}
+
+	awaitAnswer(): Promise<boolean> {
+		return new Promise((resolve) => {
+			this.answer = resolve;
+			this.open();
+		});
+	}
+
+	onOpen(): void {
+		const { contentEl } = this;
+		const { count, quota, upgradeUrl } = this;
+		contentEl.addClass("engram-sync-preview-modal");
+		contentEl.createEl("h2", {
+			text: t("This sync adds {count} notes. Your plan has room for {room}.", {
+				count,
+				room: formatNumber(quota.room),
+			}),
+			cls: "engram-sync-preview-header",
+		});
+		contentEl.createEl("p", {
+			text: t("Your plan syncs {limit} notes.", { limit: formatNumber(quota.limit) }),
+		});
+		if (upgradeUrl) {
+			const upgrade = contentEl.createEl("button", { text: t("Upgrade"), cls: "mod-cta" });
+			upgrade.addEventListener("click", () => window.open(upgradeUrl, "_blank"));
+		}
+		const ackRow = contentEl.createEl("label", { cls: "engram-sync-preview-over-limit-ack" });
+		const ack = ackRow.createEl("input", { type: "checkbox" });
+		ackRow.createSpan({
+			text: t("I understand {count} notes will not sync.", {
+				count: Math.max(0, count - quota.room),
+			}),
+		});
+		const footer = contentEl.createEl("footer", { cls: "engram-sync-preview-footer" });
+		footer
+			.createEl("button", { text: t("Back") })
+			.addEventListener("click", () => this.finish(false));
+		const cont = footer.createEl("button", { text: t("Continue") });
+		cont.disabled = true;
+		ack.addEventListener("change", () => {
+			cont.disabled = !ack.checked;
+		});
+		cont.addEventListener("click", () => {
+			if (!cont.disabled) this.finish(true);
+		});
+	}
+
+	private finish(ok: boolean): void {
+		this.settle(ok);
+		this.close();
+	}
+
+	private settle(ok: boolean): void {
+		const answer = this.answer;
+		this.answer = null;
+		answer?.(ok);
+	}
+
+	/** Esc / backdrop declines (a no-op after Back or Continue settled it). */
+	onClose(): void {
+		this.contentEl.empty();
+		this.settle(false);
+	}
+}

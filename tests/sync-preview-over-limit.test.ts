@@ -7,6 +7,7 @@ import { describe, expect, mock, test } from "bun:test";
 import type { BillingUsage } from "../src/plan-usage";
 import { simplifiedFirstSync } from "../src/sync-plan-format";
 import {
+	FolderOverLimitModal,
 	fetchNotesQuota,
 	notesQuotaFromUsage,
 	SyncPreviewModal,
@@ -833,5 +834,35 @@ describe("a click waiting on the quota shows it and is capped", () => {
 		expect(modal.state.view).toBe("done");
 		modal.onClose();
 		expect(await choice).toBe("smart-merge");
+	});
+});
+
+describe("FolderOverLimitModal (Sync again on a full plan)", () => {
+	function open(count = 5, quota = { limit: 10, room: 2 }) {
+		const modal: any = new FolderOverLimitModal({} as any, count, quota, null);
+		const answer = modal.awaitAnswer() as Promise<boolean>;
+		modal.onOpen();
+		return { modal, answer };
+	}
+
+	test("reuses the step's copy; Continue waits for the acknowledgement", async () => {
+		const { modal, answer } = open();
+		expect(
+			modal.contentEl.__find("This sync adds 5 notes. Your plan has room for 2."),
+		).not.toBeNull();
+		const cont = button(modal, "Continue");
+		expect(cont.disabled).toBe(true);
+		const ack = checkboxFor(modal.contentEl, "I understand 3 notes will not sync.");
+		ack.checked = true;
+		ack.listeners.change();
+		expect(cont.disabled).toBe(false);
+		cont.listeners.click();
+		expect(await answer).toBe(true);
+	});
+
+	test("Back or closing declines", async () => {
+		const { modal, answer } = open();
+		button(modal, "Back").listeners.click();
+		expect(await answer).toBe(false);
 	});
 });
