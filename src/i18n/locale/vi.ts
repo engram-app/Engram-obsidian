@@ -335,6 +335,8 @@ const vi: Dict = {
 	"Nothing needs your attention. 🎉": "Không có gì cần bạn quan tâm. 🎉",
 	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
 		"Hiện tại chưa có gì để đồng bộ hóa — kho lưu trữ này trống ở cả hai phía. Bắt đầu đồng bộ hóa và mọi thứ bạn viết sẽ xuất hiện trên các thiết bị khác của bạn.",
+	"Nothing to sync yet: every file here is on your ignore list. Start syncing and everything you write appears on your other devices.":
+		"Chưa có gì để đồng bộ hóa: mọi tệp ở đây đều nằm trong danh sách bỏ qua của bạn. Bắt đầu đồng bộ hóa và mọi thứ bạn viết sẽ hiển thị trên các thiết bị khác.",
 	"Nothing will be deleted.": "Không có gì sẽ bị xóa.",
 	"Nothing will be removed from this device.": "Không có gì sẽ bị xóa khỏi thiết bị này.",
 	Open: "Mở",
@@ -597,7 +599,6 @@ const vi: Dict = {
 	'{count} failed. Run "{command}" for details.':
 		'{count} lần thất bại. Xem "{command}" để biết chi tiết.',
 	"{count} files": "{count} tệp",
-	"{count} files ignored": "{count} tệp bị bỏ qua",
 	"{count} files not included in your plan": "{count} tệp không nằm trong gói của bạn",
 	"{count} files queued": "{count} tệp đang chờ xử lý",
 	"{count} ignored": "{count} bị bỏ qua",

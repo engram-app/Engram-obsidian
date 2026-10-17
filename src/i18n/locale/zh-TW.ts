@@ -314,6 +314,8 @@ const zhTW: Dict = {
 	"Nothing needs your attention. 🎉": "目前沒有需要您關注的項目。🎉",
 	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
 		"目前沒有任何內容需要同步 — 此儲存庫在兩端都是空的。開始同步，您寫下的所有內容都會顯示在其他裝置上。",
+	"Nothing to sync yet: every file here is on your ignore list. Start syncing and everything you write appears on your other devices.":
+		"尚未有任何內容可同步：這裡的所有檔案都在您的忽略列表中。開始同步，您寫下的所有內容都會顯示在其他裝置上。",
 	"Nothing will be deleted.": "不會刪除任何內容。",
 	"Nothing will be removed from this device.": "此裝置上的內容不會被刪除。",
 	Open: "開啟",
@@ -558,7 +560,6 @@ const zhTW: Dict = {
 	"{count} diverged": "{count} 發生分歧",
 	'{count} failed. Run "{command}" for details.': '{count} 次失敗。詳情請查看 "{command}"。',
 	"{count} files": "{count} 個檔案",
-	"{count} files ignored": "{count} 個檔案已忽略",
 	"{count} files not included in your plan": "{count} 個檔案未包含在您的方案中",
 	"{count} files queued": "{count} 個檔案排隊中",
 	"{count} ignored": "已忽略 {count} 個",

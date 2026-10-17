@@ -400,6 +400,8 @@ const pt: Dict = {
 	"Nothing needs your attention. 🎉": "Nada requer a sua atenção. 🎉",
 	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
 		"Ainda não há nada para sincronizar — este cofre está vazio em ambos os lados. Inicie a sincronização e tudo o que escreve aparece nos seus outros dispositivos.",
+	"Nothing to sync yet: every file here is on your ignore list. Start syncing and everything you write appears on your other devices.":
+		"Ainda não há nada para sincronizar: todos os ficheiros aqui estão na sua lista de ignorados. Comece a sincronizar e tudo o que escreve aparece nos seus outros dispositivos.",
 	"Nothing will be deleted.": "Nada será eliminado.",
 	"Nothing will be removed from this device.": "Nada será removido deste dispositivo.",
 	Open: "Abrir",
@@ -711,11 +713,6 @@ const pt: Dict = {
 		one: "{count} ficheiro",
 		many: "{count} ficheiros",
 		other: "{count} ficheiros",
-	},
-	"{count} files ignored": {
-		one: "{count} ficheiro ignorado",
-		many: "{count} ficheiros ignorados",
-		other: "{count} ficheiros ignorados",
 	},
 	"{count} files not included in your plan": {
 		one: "{count} ficheiro não incluído no plano",

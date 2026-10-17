@@ -417,6 +417,8 @@ const ru: Dict = {
 	"Nothing needs your attention. 🎉": "Ничего не требует вашего внимания. 🎉",
 	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
 		"Пока нет данных для синхронизации — это хранилище пустое с обеих сторон. Начните синхронизацию, и всё, что вы напишете, появится на ваших других устройствах.",
+	"Nothing to sync yet: every file here is on your ignore list. Start syncing and everything you write appears on your other devices.":
+		"Пока ничего не синхронизируется: все файлы здесь находятся в вашем списке исключений. Начните синхронизацию, и всё, что вы пишете, появится на ваших других устройствах.",
 	"Nothing will be deleted.": "Ничего не будет удалено.",
 	"Nothing will be removed from this device.": "Ничего не будет удалено с этого устройства.",
 	Open: "Открыть",
@@ -742,12 +744,6 @@ const ru: Dict = {
 		few: "{count} файла",
 		many: "{count} файлов",
 		other: "{count} файла",
-	},
-	"{count} files ignored": {
-		one: "{count} файл проигнорировано",
-		few: "{count} файла проигнорированы",
-		many: "{count} файлов проигнорировано",
-		other: "{count} файла проигнорированы",
 	},
 	"{count} files not included in your plan": {
 		one: "{count} файл не входят в ваш план",

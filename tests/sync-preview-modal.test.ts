@@ -12,6 +12,7 @@ import {
 	mergeHelperText,
 	SyncPreviewState,
 	shouldOfferDiagnosticsOptIn,
+	simplifiedScreenCopy,
 	skippedAttachmentsLine,
 } from "../src/sync-preview-modal";
 import type { SyncChoice, SyncPlan } from "../src/types";
@@ -571,14 +572,39 @@ describe("SyncPreviewState — duplicate-vault guard (2026-08-20)", () => {
 
 describe("ignoredLine — the preview's one quiet ignored-files line", () => {
 	test("names the count when files are ignored", () => {
-		expect(ignoredLine(4)).toBe("4 files ignored");
-	});
-
-	test("singular wording for exactly one", () => {
-		expect(ignoredLine(1)).toBe("1 file ignored");
+		expect(ignoredLine(4)).toBe("4 ignored");
 	});
 
 	test("nothing ignored → no line", () => {
 		expect(ignoredLine(0)).toBeNull();
+	});
+
+	test("undefined or NaN (a plan from an older caller) → no line", () => {
+		expect(ignoredLine(undefined)).toBeNull();
+		expect(ignoredLine(Number.NaN)).toBeNull();
+	});
+});
+
+describe("simplifiedScreenCopy — one-click screens show the ignored count", () => {
+	test("upload and download screens carry the ignored line", () => {
+		expect(simplifiedScreenCopy({ mode: "upload", notes: 2, attachments: 0 }, 3).ignored).toBe(
+			"3 ignored",
+		);
+		expect(
+			simplifiedScreenCopy({ mode: "download", notes: 2, attachments: 0 }, 1).ignored,
+		).toBe("1 ignored");
+	});
+
+	test("no ignored files → no line, unchanged copy", () => {
+		const copy = simplifiedScreenCopy({ mode: "fresh" }, 0);
+		expect(copy.ignored).toBeNull();
+		expect(copy.body).toContain("empty on both sides");
+	});
+
+	test("a fresh vault holding only ignored files says so instead of claiming it is empty", () => {
+		const copy = simplifiedScreenCopy({ mode: "fresh" }, 5);
+		expect(copy.ignored).toBe("5 ignored");
+		expect(copy.body).not.toContain("empty on both sides");
+		expect(copy.body).toContain("ignore list");
 	});
 });
