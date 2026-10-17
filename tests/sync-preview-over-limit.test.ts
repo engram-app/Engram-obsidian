@@ -693,3 +693,49 @@ describe("closing the modal while exclusions save", () => {
 		expect(await choice).toBe("cancel");
 	});
 });
+
+describe("an option picked before the quota answers waits for it", () => {
+	function slowUsage() {
+		let settle!: (u: Promise<BillingUsage>) => void;
+		const first = new Promise<BillingUsage>((r) => {
+			settle = (u) => u.then(r, () => r(Promise.reject(new Error("offline"))));
+		});
+		let calls = 0;
+		const fetchUsage = () => (++calls === 1 ? first : Promise.resolve(usage(10, 6)));
+		return { fetchUsage, settle };
+	}
+
+	test("an over-limit plan still gets the step", async () => {
+		const { fetchUsage, settle } = slowUsage();
+		const { modal } = openModal(planWith(["Root.md", ...PATHS]), { fetchUsage });
+		(modal as any).pick("smart-merge"); // before /billing/usage answers
+		expect(modal.state.view).not.toBe("done");
+		settle(Promise.resolve(usage(10, 6))); // room 4, 6 new
+		await Bun.sleep(0);
+		await Bun.sleep(0);
+		expect(modal.state.view).toBe("over-limit");
+	});
+
+	test("a failed lookup still proceeds (unknown never blocks a sync)", async () => {
+		const { fetchUsage, settle } = slowUsage();
+		const { modal, choice } = openModal(planWith(["Root.md", ...PATHS]), { fetchUsage });
+		(modal as any).pick("smart-merge");
+		settle(Promise.reject(new Error("offline")));
+		await Bun.sleep(0);
+		await Bun.sleep(0);
+		expect(modal.state.view).toBe("done");
+		modal.onClose();
+		expect(await choice).toBe("smart-merge");
+	});
+
+	test("closing the modal while waiting picks nothing", async () => {
+		const { fetchUsage, settle } = slowUsage();
+		const { modal, choice } = openModal(planWith(["Root.md"]), { fetchUsage });
+		(modal as any).pick("smart-merge");
+		modal.onClose();
+		settle(Promise.resolve(usage(10, 0)));
+		await Bun.sleep(0);
+		expect(await choice).toBe("cancel");
+		expect(modal.state.view).not.toBe("done");
+	});
+});

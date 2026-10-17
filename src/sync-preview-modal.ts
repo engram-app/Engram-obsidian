@@ -684,8 +684,10 @@ export class SyncPreviewModal extends Modal {
 		const fetchUsage = this.opts.fetchUsage;
 		if (fetchUsage) {
 			const seq = ++this.quotaSeq;
-			// On open, unlimited and unknown alike mean no step.
-			void fetchNotesQuota(fetchUsage).then((q) => {
+			// On open, unlimited and unknown alike mean no step. A pick made
+			// before this answers waits for it (see pick).
+			this.quotaPending = fetchNotesQuota(fetchUsage).then((q) => {
+				this.quotaPending = null;
 				if (seq === this.quotaSeq) this.state.setNotesQuota(q === "unlimited" ? null : q);
 			});
 			window.addEventListener("focus", this.onWindowFocus);
@@ -701,6 +703,7 @@ export class SyncPreviewModal extends Modal {
 	}
 
 	onClose(): void {
+		this.closed = true;
 		this.saving?.abort();
 		window.removeEventListener("focus", this.onWindowFocus);
 		this.clearLoadingTimers();
@@ -900,7 +903,7 @@ export class SyncPreviewModal extends Modal {
 				contentEl,
 				label,
 				true,
-				accept ? () => this.pick("smart-merge") : undefined,
+				accept ? () => void this.pick("smart-merge") : undefined,
 			);
 			return;
 		}
@@ -933,7 +936,7 @@ export class SyncPreviewModal extends Modal {
 		btn.addEventListener("click", () => {
 			// Always the non-destructive merge: on an empty remote it uploads
 			// everything, on an empty device it downloads everything.
-			this.pick("smart-merge");
+			void this.pick("smart-merge");
 		});
 		this.renderSkippedAttachmentsNote(parent);
 		this.renderFooter(parent, t("Cancel"), false);
@@ -1185,12 +1188,30 @@ export class SyncPreviewModal extends Modal {
 		const btn = wrap.createEl("button", { cls: card.cssClass });
 		btn.createSpan({ text: card.emoji, cls: "engram-sync-preview-option-emoji" });
 		btn.createSpan({ text: card.label, cls: "engram-sync-preview-option-label" });
-		btn.addEventListener("click", () => this.pick(card.choice));
+		btn.addEventListener("click", () => void this.pick(card.choice));
 	}
 
+	/** The open-time quota lookup while it is in flight. */
+	private quotaPending: Promise<void> | null = null;
+	private closed = false;
+	private picking = false;
+
 	/** Every option click goes through here: picking can resolve, or move to
-	 *  the over-limit or confirm view, which only shows once re-rendered. */
-	private pick(choice: SyncChoice): void {
+	 *  the over-limit or confirm view, which only shows once re-rendered.
+	 *  A null quota means "no step", so a pick made before the open-time lookup
+	 *  answers waits for it; the lookup never throws and the API request has its
+	 *  own timeout, so the wait is bounded. */
+	private async pick(choice: SyncChoice): Promise<void> {
+		if (this.picking) return;
+		if (this.quotaPending) {
+			this.picking = true;
+			try {
+				await this.quotaPending;
+			} finally {
+				this.picking = false;
+			}
+			if (this.closed) return;
+		}
 		this.state.pickOption(choice);
 		if (this.state.view === "over-limit") void this.refreshOverLimitQuota();
 		if (this.state.view !== "done") this.render();
