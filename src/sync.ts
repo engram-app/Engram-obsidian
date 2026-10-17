@@ -1226,7 +1226,8 @@ export class SyncEngine {
 		// A live fan-out is waiting: unless the fetch in flight already covers it,
 		// fetch without the cooldown or failure backoff (a blip must not hold live
 		// edits for seconds). Announce-only ids and retries keep the cooldown.
-		if (!(this.idMapInflight && entry.reqGen < this.idMapFetchGen)) this.idMapThrottle.poke(true);
+		if (!(this.idMapInflight && entry.reqGen < this.idMapFetchGen))
+			this.idMapThrottle.poke(true);
 		return p;
 	}
 
@@ -3029,7 +3030,8 @@ export class SyncEngine {
 			(urgent) =>
 				urgent
 					? SyncEngine.ID_MAP_URGENT_GAP_MS
-					: SyncEngine.ID_MAP_RECONCILE_COOLDOWN_MS * 2 ** Math.min(this.idMapFailures, 4),
+					: SyncEngine.ID_MAP_RECONCILE_COOLDOWN_MS *
+						2 ** Math.min(this.idMapFailures, 4),
 			() => this.runIdMapReconcile(),
 		);
 		this.noteIdSaveThrottle = new TrailingThrottle(

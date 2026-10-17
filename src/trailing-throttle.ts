@@ -42,8 +42,7 @@ export class TrailingThrottle {
 			return;
 		}
 		const now = this.time.now();
-		const due =
-			urgent && !this.lastWasUrgent ? now : this.lastDoneAt + this.gapMs(urgent);
+		const due = urgent && !this.lastWasUrgent ? now : this.lastDoneAt + this.gapMs(urgent);
 		if (this.timer !== null) {
 			if (due >= this.timerDue) return;
 			this.time.clearTimeout(this.timer);
