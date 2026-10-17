@@ -10,11 +10,14 @@
  * keyed by the server id the plugin never learned). The announce path also
  * only healed at cold start.
  */
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { TFile } from "obsidian";
+import * as Y from "yjs";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
+import { SyncStore } from "../src/crdt/sync-store";
 import { createCrdtWiring } from "../src/crdt/wiring";
+import { rlog } from "../src/remote-log";
 import { SyncEngine } from "../src/sync";
 import { ManualTimeProvider } from "../src/time-provider";
 import { DEFAULT_SETTINGS } from "../src/types";
@@ -438,6 +441,34 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			time.advance(60_000);
 			await flush();
 			expect(idSaves()).toBe(before);
+			wiring.dispose();
+		});
+
+		test("r7#4: an id the displaced-id verify evicts is re-healed", async () => {
+			const { map, time, wiring } = announceRig();
+			map.set("p.md", "d");
+			const release = heldManifest([{ id: "d", path: "p.md" }]); // n not listed yet
+			wiring.onCrdtDocReady("n", "p.md"); // maps n at p.md, evicting d
+			await flush(); // discovery + its heal done: n is mapped, nothing pending for n
+			release(); // d's verify maps p.md back to d, evicting n
+			await flush();
+			expect(map.pathForId("d")).toBe("p.md");
+			expect(map.pathForId("n")).toBeNull();
+			liveManifest([
+				{ id: "d", path: "p.md" },
+				{ id: "n", path: "q.md" },
+			]);
+			time.advance(60_000);
+			await flush();
+			expect(map.pathForId("n")).toBe("q.md");
+			wiring.dispose();
+		});
+
+		test("r7#3: strand-heal goes through the gated, throttled heal", async () => {
+			const { engine, wiring } = announceRig();
+			engine.setSyncBlocked(true);
+			await wiring.drainStrandedFlushes();
+			expect(fetches()).toBe(0);
 			wiring.dispose();
 		});
 
@@ -1267,6 +1298,115 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			engine.setNoteIdMap(null);
 			second.set("p.md", "p");
 			expect(spy).not.toHaveBeenCalled();
+		});
+	});
+
+	describe("round 7", () => {
+		const WAIT = 3_000; // SyncEngine.FANOUT_ID_WAIT_MS
+
+		test("I1 every waiter is released by the first fetch that started after it registered", async () => {
+			const { engine } = throttledEngine();
+			const release1 = heldManifest([]);
+			engine.ensureNoteIdMapped("x"); // fan-out 1: fetch 1 starts for it
+			const order: string[] = [];
+			void engine.awaitNoteIdMapped("x").then(() => order.push("w1"));
+			await flush();
+			const release2 = heldManifest([]);
+			engine.ensureNoteIdMapped("x"); // fan-out 2 arrives mid-fetch
+			void engine.awaitNoteIdMapped("x").then(() => order.push("w2"));
+			release1();
+			await flush();
+			expect(order).toEqual(["w1"]); // fetch 1 started after w1, not after w2
+			release2();
+			await flush();
+			expect(order).toEqual(["w1", "w2"]);
+		});
+
+		test("I2 an endless fan-out stream for an id the manifest never lists reaches give-up", async () => {
+			const { engine, time } = throttledEngine();
+			const info = spyOn(rlog(), "info");
+			try {
+				liveManifest([]);
+				let fetchesAtGiveUp = -1;
+				for (let i = 0; i < 40 && fetchesAtGiveUp < 0; i++) {
+					engine.ensureNoteIdMapped("ghost");
+					void engine.awaitNoteIdMapped("ghost");
+					await flush();
+					time.advance(GAP);
+					await flush();
+					const gaveUp = (info.mock.calls as unknown as Array<[string, string]>).some(
+						([, m]) => m.includes("gave up on unmapped note=ghost"),
+					);
+					if (gaveUp) fetchesAtGiveUp = fetches();
+				}
+				expect(fetchesAtGiveUp).toBeGreaterThan(0);
+				expect(fetchesAtGiveUp).toBeLessThanOrEqual(2 * 3); // 2x MAX_ATTEMPTS
+			} finally {
+				info.mockRestore();
+			}
+		});
+
+		test("I3 a fan-out wait is bounded by FANOUT_ID_WAIT_MS even in failure backoff", async () => {
+			const { engine } = throttledEngine();
+			const { time } = { time: (engine as any).time as ManualTimeProvider };
+			(mockApi.getManifest as ReturnType<typeof mock>).mockRejectedValue(new Error("503"));
+			engine.ensureNoteIdMapped("x");
+			await flush();
+			engine.ensureNoteIdMapped("x");
+			void engine.awaitNoteIdMapped("x");
+			await flush(); // two failures: backoff 8s
+			let released = false;
+			engine.ensureNoteIdMapped("x");
+			void engine.awaitNoteIdMapped("x").then(() => {
+				released = true;
+			});
+			await flush();
+			time.advance(WAIT);
+			await flush();
+			expect(released).toBe(true);
+			expect((engine as any).idMapPending.has("x")).toBe(true); // background heal goes on
+		});
+
+		test("#5 the failure give-up keeps the backoff at its cap", async () => {
+			const { engine, time } = throttledEngine();
+			(mockApi.getManifest as ReturnType<typeof mock>).mockRejectedValue(new Error("503"));
+			engine.ensureNoteIdMapped("a");
+			for (let i = 0; i < 20 && fetches() < 5; i++) {
+				await flush();
+				time.advance(60_000);
+			}
+			await flush();
+			expect(fetches()).toBe(5); // gave up
+			engine.ensureNoteIdMapped("b");
+			await flush();
+			const after = fetches();
+			time.advance(3 * GAP);
+			await flush();
+			expect(fetches()).toBe(after); // still the 32s backoff, not 2s
+		});
+
+		test("#8 a stuck pending id costs no pathForId scan per id-map change", async () => {
+			const { engine, map } = throttledEngine();
+			heldManifest([]);
+			engine.ensureNoteIdMapped("stuck");
+			await flush();
+			const spy = mock(map.pathForId.bind(map));
+			map.pathForId = spy;
+			for (let i = 0; i < 100; i++) {
+				map.set(`imp-${i}.md`, `imp-${i}`);
+				await Promise.resolve();
+				await Promise.resolve();
+			}
+			await flush();
+			expect(spy.mock.calls.length).toBeLessThanOrEqual(2);
+		});
+
+		test("#10 rebind detaches the change handler from the old store", () => {
+			const map = new NoteIdMap();
+			const old = (map as any).store as SyncStore;
+			map.setChangeHandler(() => {});
+			map.rebind(new SyncStore(new Y.Doc().getMap("filemeta_v0")));
+			expect(old.onChange).toBeUndefined();
 		});
 	});
 });
