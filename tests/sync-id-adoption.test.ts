@@ -390,6 +390,57 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			wiring.dispose();
 		});
 
+		test("r5#2: an announce path that evicts another id gets that id re-verified", async () => {
+			const { map, time, wiring } = announceRig();
+			map.set("a.md", "y"); // y owns a.md (not on disk yet)
+			liveManifest([
+				{ id: "y", path: "a.md" },
+				{ id: "x", path: "x.md" },
+			]);
+			wiring.onCrdtDocReady("x", "a.md"); // stale announce path
+			await flush();
+			time.advance(60_000);
+			await flush();
+			expect(map.pathForId("y")).toBe("a.md");
+			expect(map.pathForId("x")).toBe("x.md");
+			wiring.dispose();
+		});
+
+		test("r5#6: no manifest heal after discovery if the vault switched mid-replay", async () => {
+			const { engine, wiring } = announceRig();
+			let endReplay: () => void = () => {};
+			(engine as any).catchupViaSeqReplay = () =>
+				new Promise<void>((r) => {
+					endReplay = r;
+				});
+			(engine as any).crdtCatchupSince = async () => null;
+			(engine as any).noteIdMap.set = () => {}; // discovery maps nothing
+			liveManifest([]);
+			wiring.onCrdtDocReady("old", "old.md");
+			await flush();
+			await engine.resetForVaultChange();
+			engine.setNoteIdMap(new NoteIdMap());
+			(engine as any).crdt = {};
+			endReplay();
+			await flush();
+			expect(fetches()).toBe(0);
+			wiring.dispose();
+		});
+
+		test("r5#7: a vault switch drops a pending trailing id-map save", async () => {
+			const { engine, idSaves, time, wiring } = announceRig();
+			wiring.onCrdtDocReady("s1", "s1.md");
+			await flush();
+			wiring.onCrdtDocReady("s2", "s2.md"); // trailing save armed
+			await flush();
+			const before = idSaves();
+			await engine.resetForVaultChange();
+			time.advance(60_000);
+			await flush();
+			expect(idSaves()).toBe(before);
+			wiring.dispose();
+		});
+
 		test("a burst of announces persists the id map once per gap, not once per note", async () => {
 			const { idSaves, map, time, wiring } = announceRig();
 			for (let i = 0; i < 50; i++) {
@@ -1010,6 +1061,86 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			engine.ensureNoteIdMapped("n");
 			await flush();
 			expect(map.pathForId("n")).toBe("Folder/note.md");
+		});
+	});
+
+	describe("round 5", () => {
+		test("#1 a fan-out arriving mid-fetch is released only by a fetch started after it", async () => {
+			const { engine, map } = throttledEngine();
+			const release = heldManifest([]); // started before x's row existed
+			engine.ensureNoteIdMapped("x");
+			await flush();
+			liveManifest([{ id: "x", path: "x.md" }]);
+			let pathAtRelease: string | null = "unreleased";
+			engine.ensureNoteIdMapped("x"); // the fan-out arrives (applyPushedNoteUpdate)
+			void engine.awaitNoteIdMapped("x").then(() => {
+				pathAtRelease = map.pathForId("x");
+			});
+			release();
+			await flush();
+			expect(fetches()).toBe(2);
+			expect(pathAtRelease).toBe("x.md");
+		});
+
+		test("#3 an id cross-wired to a path, listed at an ignored path, loses the stale entry", async () => {
+			const { engine, map } = throttledEngine();
+			map.set("p.md", "x");
+			(engine as any).markRecentlyDeleted("z", "p.md"); // p.md's real owner is not re-applied
+			manifestWith([
+				{ id: "x", path: ".obsidian/x.md" },
+				{ id: "z", path: "p.md" },
+			]);
+			await engine.reconcileNoteIdMapFromManifest();
+			expect(map.pathForId("x")).toBeNull();
+		});
+
+		test("#4 the failure give-up does not settle an id requested during the failing fetch", async () => {
+			const { engine, time } = throttledEngine();
+			const get = mockApi.getManifest as ReturnType<typeof mock>;
+			for (let i = 0; i < 4; i++) get.mockRejectedValueOnce(new Error("503"));
+			let fail5: (e: Error) => void = () => {};
+			get.mockImplementationOnce(
+				() =>
+					new Promise((_, rej) => {
+						fail5 = rej;
+					}),
+			);
+			engine.ensureNoteIdMapped("a");
+			for (let i = 0; i < 4; i++) {
+				await flush();
+				time.advance(60_000);
+			}
+			await flush();
+			expect(fetches()).toBe(5);
+			engine.ensureNoteIdMapped("late");
+			fail5(new Error("503"));
+			await flush();
+			const pending = (engine as any).idMapPending;
+			expect(pending.has("a")).toBe(false);
+			expect(pending.has("late")).toBe(true);
+		});
+
+		test("#8 a seeded mapping releases a waiting fan-out", async () => {
+			const { engine, map } = throttledEngine();
+			heldManifest([]);
+			engine.ensureNoteIdMapped("s");
+			let released = false;
+			void engine.awaitNoteIdMapped("s").then(() => {
+				released = true;
+			});
+			await flush();
+			map.seed({ "s.md": "s" });
+			await flush();
+			expect(released).toBe(true);
+		});
+
+		test("#9 destroy detaches the engine's change handler from the shared map", async () => {
+			const { engine, map } = throttledEngine();
+			const spy = mock();
+			(engine as any).scheduleIdMapPrune = spy;
+			engine.destroy();
+			map.set("d.md", "d");
+			expect(spy).not.toHaveBeenCalled();
 		});
 	});
 });

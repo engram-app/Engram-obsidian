@@ -61,4 +61,24 @@ describe("TrailingThrottle", () => {
 		await flush();
 		expect(runs).toBe(3);
 	});
+
+	test("a run that reports it did nothing stamps no cooldown", async () => {
+		const time = new ManualTimeProvider(0);
+		let runs = 0;
+		let noop = true;
+		const t = new TrailingThrottle(
+			time,
+			() => 1_000,
+			async () => {
+				runs++;
+				return !noop;
+			},
+		);
+		t.poke();
+		await flush();
+		noop = false;
+		t.poke();
+		await flush();
+		expect(runs).toBe(2);
+	});
 });

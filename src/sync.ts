@@ -1211,8 +1211,10 @@ export class SyncEngine {
 		if (this.recentlyDeleted.has(noteId)) return;
 
 		if (this.noteIdMap.pathForId(noteId) !== null) return; // already mapped
-		if (!this.idMapPending.has(noteId))
-			this.idMapPending.set(noteId, { reqGen: this.idMapFetchGen, attempts: 0, waiters: [] });
+		const gen = this.idMapFetchGen;
+		const entry = this.idMapPending.get(noteId);
+		if (entry) entry.askedGen = gen;
+		else this.idMapPending.set(noteId, { reqGen: gen, askedGen: gen, attempts: 0, waiters: [] });
 		this.idMapThrottle.poke();
 	}
 
@@ -1222,12 +1224,15 @@ export class SyncEngine {
 	awaitNoteIdMapped(noteId: string): Promise<void> {
 		const entry = this.idMapPending.get(noteId);
 		if (!entry) return Promise.resolve();
-		const p = new Promise<void>((resolve) => entry.waiters.push(resolve));
-		// A live fan-out is waiting: unless the fetch in flight already covers it,
-		// fetch without the cooldown or failure backoff (a blip must not hold live
-		// edits for seconds). Announce-only ids and retries keep the cooldown.
-		if (!(this.idMapInflight && entry.reqGen < this.idMapFetchGen))
-			this.idMapThrottle.poke(true);
+		// Released only by a fetch that STARTED after the latest ensureNoteIdMapped
+		// for this id (the fan-out's arrival; callers ensure, then await): one
+		// already in flight may predate the row this fan-out proves exists
+		// (test_82: the fan-out can be the only delivery).
+		const gen = entry.askedGen;
+		const p = new Promise<void>((resolve) => entry.waiters.push({ gen, resolve }));
+		// No such fetch started yet: run one urgently, right after any in flight,
+		// skipping the cooldown and failure backoff.
+		if (this.idMapFetchGen === gen) this.idMapThrottle.poke(true);
 		return p;
 	}
 
@@ -1235,7 +1240,7 @@ export class SyncEngine {
 		const entry = this.idMapPending.get(noteId);
 		if (!entry) return;
 		this.idMapPending.delete(noteId);
-		for (const resolve of entry.waiters) resolve();
+		for (const w of entry.waiters) w.resolve();
 	}
 
 	/** One throttled manifest pass for every id pending right now. */
@@ -1250,15 +1255,12 @@ export class SyncEngine {
 		const gen = ++this.idMapFetchGen;
 		let manifest: ManifestResponse | null = null;
 		let ok = false;
-		this.idMapInflight = true;
 		try {
 			manifest = await this.api.getManifest();
 			ok = true;
 		} catch (e) {
 			if (epoch !== this.idMapEpoch) return;
 			rlog().warn("sync", `live id-map reconcile failed: ${errMsg(e)}`);
-		} finally {
-			if (epoch === this.idMapEpoch) this.idMapInflight = false;
 		}
 		if (ok && live()) {
 			// An apply failure (saveData, relocate, orphan trash) is not the
@@ -1285,7 +1287,11 @@ export class SyncEngine {
 			// A waiter is released by the first fetch that covered its id, mapped
 			// or not: a live fan-out must not sit out the retry schedule (or a
 			// failure backoff). Retries continue in the background for later ones.
-			for (const resolve of entry.waiters.splice(0)) resolve();
+			entry.waiters = entry.waiters.filter((w) => {
+				if (w.gen >= gen) return true; // registered after this fetch started
+				w.resolve();
+				return false;
+			});
 			if (ok && ++entry.attempts >= SyncEngine.ID_MAP_RECONCILE_MAX_ATTEMPTS) {
 				if (this.noteIdMap?.pathForId(id) == null)
 					rlog().info("sync", `live id-map reconcile gave up on unmapped note=${id}`);
@@ -1421,16 +1427,25 @@ export class SyncEngine {
 		["vault", "destroy"],
 		// reqGen: fetches started before the request; a fetch covers the entry
 		// iff it started after (its gen > reqGen). A re-request is a new entry.
-		new Map<string, { reqGen: number; attempts: number; waiters: Array<() => void> }>(),
+		// Waiters carry the same stamp: only a fetch with gen > w.gen releases one.
+		new Map<
+			string,
+			{
+				reqGen: number;
+				/** idMapFetchGen at the latest ensureNoteIdMapped for this id. */
+				askedGen: number;
+				attempts: number;
+				waiters: Array<{ gen: number; resolve: () => void }>;
+			}
+		>(),
 		(entry) => {
-			for (const resolve of entry.waiters) resolve();
+			for (const w of entry.waiters) w.resolve();
 		},
 	);
 	private idMapFailures = 0;
 	private idMapEpoch = 0;
 	/** Live fetches started (never reset: entries compare against it). */
 	private idMapFetchGen = 0;
-	private idMapInflight = false;
 	private idMapPruneQueued = false;
 	/** Assigned in the constructor: it needs `this.time`. */
 	private readonly idMapThrottle: TrailingThrottle;
@@ -1452,7 +1467,6 @@ export class SyncEngine {
 		this.idMapThrottle.reset();
 		this.idMapEpoch++;
 		this.idMapFailures = 0;
-		this.idMapInflight = false;
 	}
 
 	/** note_ids the SERVER is known to already have a note row for — learned
