@@ -9226,7 +9226,8 @@ export class SyncEngine {
 	/** Folders just taken out of excludedFolders. The next push sweep visits
 	 *  every tracked file under them and lets pushFile's hash check decide:
 	 *  an edit made while excluded predates lastSync, so the mtime filter would
-	 *  skip it. Cleared by a sweep with no failures, and by a vault change. */
+	 *  skip it. Persisted in plugin data; cleared by a sweep with no failures,
+	 *  and by a vault change. */
 	private reincludedFolders = this.track(["vault"], new Set<string>());
 
 	/** "Sync again" for a folder the caller has ALREADY taken out of
@@ -9240,6 +9241,24 @@ export class SyncEngine {
 	 *  ponytail: the replay is vault-wide. The server has no per-folder feed, so
 	 *  a scoped pull would walk the same op log; applies outside the folder are
 	 *  idempotent no-ops. */
+	/** Queue `folder` for the content re-check. Persisted (exportReincludedFolders)
+	 *  in the same save that takes it out of excludedFolders, so a restart before
+	 *  the next push pass cannot drop the edits made while it was excluded. */
+	markReincluded(folder: string): void {
+		this.reincludedFolders.add(folder);
+	}
+
+	exportReincludedFolders(): string[] {
+		return [...this.reincludedFolders];
+	}
+
+	/** Restore the list saved by an earlier session. The caller checks it was
+	 *  recorded for the active vault. */
+	importReincludedFolders(folders: unknown): void {
+		if (!Array.isArray(folders)) return;
+		for (const f of folders) if (typeof f === "string") this.reincludedFolders.add(f);
+	}
+
 	async reincludeFolder(folder: string): Promise<void> {
 		for (const path of [...this.syncState.keys()]) {
 			if (!inExcludedFolder(path, [folder])) continue;
@@ -10883,7 +10902,11 @@ export class SyncEngine {
 		const outcome = await this.pushPartitioned(toSync, "incremental", base);
 		pushed += outcome.pushed;
 		// A failed file keeps its folder in the set, so the next sweep retries it.
-		if (outcome.failed === 0) for (const f of reincluded) this.reincludedFolders.delete(f);
+		// Persist the clear, or the next launch re-checks the folder needlessly.
+		if (outcome.failed === 0 && reincluded.length > 0) {
+			for (const f of reincluded) this.reincludedFolders.delete(f);
+			await this.saveData({});
+		}
 
 		this.flushAttachmentLimitedToast();
 		this.flushFailureSummaryToast();

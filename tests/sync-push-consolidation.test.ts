@@ -28,6 +28,7 @@ import { NoteIdMap } from "../src/crdt/note-id-map";
 import type { ProviderRegistry as CrdtManagerType } from "../src/crdt/provider-registry";
 import { ProviderRegistry } from "../src/crdt/provider-registry";
 import { encodeUpdateFrame, fromB64 } from "../src/crdt/wire";
+import EngramSyncPlugin from "../src/main";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -794,5 +795,50 @@ describe("SyncEngine.reincludeFolder: Sync again for an excluded folder", () => 
 
 		expect(app.vault.create).not.toHaveBeenCalled();
 		expect(enqueued).toEqual([{ kind: "delete", docId: "gone-id", path: "Archive/gone.md" }]);
+	});
+});
+
+describe("Sync again survives a restart before the push pass", () => {
+	test("an edit made while excluded is still pushed after the engine is rebuilt from saved data", async () => {
+		const edited = new TFile("Archive/a.md", new Date("2026-09-01T00:00:00Z").getTime());
+		const files = [edited];
+		const content = { "Archive/a.md": "# edited while excluded" };
+		const boot = () => {
+			const built = makeEngine(files, content);
+			built.app.vault.getAbstractFileByPath.mockImplementation(
+				(p: string) => files.find((f) => f.path === p) ?? null,
+			);
+			return built.engine;
+		};
+		const pluginOn = (engine: SyncEngine, settings: any, written: any[]) =>
+			Object.assign(Object.create(EngramSyncPlugin.prototype), {
+				settings,
+				syncEngine: engine,
+				noteIdMap: new NoteIdMap(),
+				writePluginData: mock(async (d: any) => {
+					written.push(structuredClone(d));
+				}),
+				handleSyncError: mock(),
+			});
+
+		// Session 1: Sync again, then Obsidian quits before any push pass runs.
+		const first = boot();
+		first.importSyncState({ "Archive/a.md": { hash: fnv1a("# as last synced") } });
+		first.fullSync = mock(() => new Promise<never>(() => {}));
+		const written: any[] = [];
+		const p1 = pluginOn(first, { ...DEFAULT_SETTINGS, excludedFolders: ["Archive"] }, written);
+		await p1.syncFolderAgain("Archive");
+		const saved = written.at(-1);
+
+		// Session 2: a fresh engine hydrated from data.json.
+		const second = boot();
+		second.importSyncState(saved.syncState);
+		const p2 = pluginOn(second, saved.settings, []);
+		p2.hydrateReincludedFolders(saved);
+		const pushFile = mock().mockResolvedValue(true);
+		(second as any).pushFile = pushFile;
+		await second.pushModifiedFiles("2026-10-01T00:00:00.000Z");
+
+		expect(pushFile.mock.calls.map((c: any[]) => c[0].path)).toEqual(["Archive/a.md"]);
 	});
 });

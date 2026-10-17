@@ -30,6 +30,7 @@ function makeFakePlugin(computeSyncPlan: (opts?: unknown) => Promise<unknown>) {
 				return computeSyncPlan(opts);
 			}),
 			getLastSync: () => "",
+			markReincluded: mock(),
 		},
 		savePluginData: mock(async () => {
 			order.push("save");

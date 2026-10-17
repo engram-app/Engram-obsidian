@@ -153,6 +153,11 @@ interface PluginData {
 	gateJournal?: GateEvent[];
 	/** The vault `gateJournal` was recorded for; any other vault drops it. */
 	gateJournalVaultId?: string | null;
+	/** Folders re-included by "Sync again" whose files still await the push
+	 *  pass's content re-check (SyncEngine.markReincluded). */
+	reincludedFolders?: string[];
+	/** The vault `reincludedFolders` was recorded for; any other vault drops it. */
+	reincludedFoldersVaultId?: string | null;
 }
 
 /** Whether setupNoteStream() may keep the existing stream instead of
@@ -921,6 +926,7 @@ export default class EngramSyncPlugin extends Plugin {
 			devLog().log("lifecycle", "Migrated legacy syncedHashes → syncState");
 		}
 		this.hydrateGateJournal(saved);
+		this.hydrateReincludedFolders(saved);
 		this.syncEngine.issues.hydrate(saved?.syncIssues);
 		this.syncEngine.ignoredFiles.hydrate(saved?.ignoredFiles);
 
@@ -1972,6 +1978,14 @@ export default class EngramSyncPlugin extends Plugin {
 	/** Restore a gate journal (#247) persisted by an earlier session, but only
 	 *  into the vault it was recorded for: replaying one vault's renames and
 	 *  deletes into another would act on the wrong notes. */
+	hydrateReincludedFolders(
+		saved: Pick<PluginData, "reincludedFolders" | "reincludedFoldersVaultId"> | null,
+	): void {
+		if (!saved?.reincludedFolders) return;
+		if (saved.reincludedFoldersVaultId !== (this.settings.vaultId ?? null)) return;
+		this.syncEngine.importReincludedFolders(saved.reincludedFolders);
+	}
+
 	hydrateGateJournal(saved: Pick<PluginData, "gateJournal" | "gateJournalVaultId"> | null): void {
 		if (!saved?.gateJournal) return;
 		if (saved.gateJournalVaultId !== (this.settings.vaultId ?? null)) return;
@@ -2015,6 +2029,8 @@ export default class EngramSyncPlugin extends Plugin {
 			noteIdsVaultId: this.noteIdsOwner,
 			gateJournal: this.syncEngine.exportGateJournal(),
 			gateJournalVaultId: this.settings.vaultId ?? null,
+			reincludedFolders: this.syncEngine.exportReincludedFolders(),
+			reincludedFoldersVaultId: this.settings.vaultId ?? null,
 		});
 	}
 
@@ -3636,6 +3652,9 @@ export default class EngramSyncPlugin extends Plugin {
 		// discipline as applyOverLimitExclusions (a token rotation during the
 		// save must survive). The engine is told only once it is saved.
 		this.settings.excludedFolders = previous.filter((f) => f !== folder);
+		// Into the same save, so a restart cannot lose the content re-check. Not
+		// undone on failure: the folder stays excluded, so it has no effect.
+		this.syncEngine.markReincluded(folder);
 		try {
 			await this.savePluginData(this.syncEngine.getLastSync());
 		} catch (e: unknown) {
