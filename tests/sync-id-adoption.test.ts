@@ -373,7 +373,8 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 					timestamp: 1,
 				} as any,
 			]);
-			liveManifest([]);
+			// The server still lists it: the manifest fallback must not map it either.
+			liveManifest([{ id: "gone-id", path: "gone.md" }]);
 			wiring.onCrdtDocReady("gone-id", "gone.md");
 			await flush();
 			expect(map.pathForId("gone-id")).toBeNull();
@@ -382,7 +383,7 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 
 		test("an ignored path is not mapped from the announce", async () => {
 			const { map, wiring } = announceRig();
-			liveManifest([]);
+			liveManifest([{ id: "cfg-id", path: ".obsidian/x.md" }]);
 			wiring.onCrdtDocReady("cfg-id", ".obsidian/x.md");
 			await flush();
 			expect(map.pathForId("cfg-id")).toBeNull();

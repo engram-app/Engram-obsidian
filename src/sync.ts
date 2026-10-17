@@ -1132,6 +1132,12 @@ export class SyncEngine {
 			// Reconciling ANY id against a snapshot older than our own delete is
 			// the engine believing stale news over a fact it authored (#491).
 			if (this.recentlyDeleted.has(note.id)) continue;
+			// Same refusals as discovery: a mapping is what lets the next fan-out
+			// cold-apply the note to disk, so an ignored path or one with a pending
+			// offline delete must stay unmapped (else the deleted note comes back).
+			if (this.shouldIgnore(path)) continue;
+			if (this.queue.hasPendingEvidencedDelete(path, this.settings.vaultId ?? undefined))
+				continue;
 			const localPath = this.noteIdMap.pathForId(note.id);
 			if (localPath === path) continue; // already correct — nothing to do
 			if (localPath !== null && !manifestPaths.has(localPath)) {
