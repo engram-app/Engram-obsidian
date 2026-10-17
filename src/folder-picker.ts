@@ -7,24 +7,14 @@
  * without a DOM; the class only walks their results.
  *
  * Exclusions are stored as top-level folder names in `settings.excludedFolders`
- * (never in the user's ignore text), and `SyncEngine.shouldIgnore` checks them
- * with `inExcludedFolder`: one matcher, so the picker's "Selected" total is
- * exactly what will sync.
+ * (never in the user's ignore text). The picker counts with the same
+ * `inExcludedFolder` (ignore-match.ts) that `SyncEngine.shouldIgnore` uses, so
+ * its "Selected" total is exactly what will sync.
  */
 import { formatNumber, t } from "./i18n";
+import { inExcludedFolder, ROOT_FOLDER } from "./ignore-match";
 
-/** Key of the "(top level)" pseudo-folder holding notes at the vault root. */
-export const ROOT_FOLDER = "";
-
-/** Does one `ignorePatterns` line match `path`? A trailing "/" is a folder
- *  prefix, anything else an exact file name; both match at the root or nested.
- *  Neither glob nor regex. */
-export function matchesIgnorePattern(path: string, pattern: string): boolean {
-	if (pattern.endsWith("/")) {
-		return path.startsWith(pattern) || path.includes(`/${pattern}`);
-	}
-	return path === pattern || path.endsWith(`/${pattern}`);
-}
+export { ROOT_FOLDER };
 
 function topFolder(path: string): string {
 	const slash = path.indexOf("/");
@@ -52,14 +42,6 @@ export function countNotesByFolder(paths: string[]): FolderCount[] {
 					? 1
 					: a.folder.localeCompare(b.folder),
 		);
-}
-
-/** Is `path` inside one of the excluded top-level folders? Anchored at the
- *  vault root: "Archive" is not "Projects/Archive" nor "Archived". The root
- *  pseudo-folder excludes nothing, root notes always sync. */
-export function inExcludedFolder(path: string, excluded: Iterable<string>): boolean {
-	for (const f of excluded) if (f !== ROOT_FOLDER && path.startsWith(`${f}/`)) return true;
-	return false;
 }
 
 /** How many of `paths` still sync with `excluded` left out. Uses the engine's
@@ -96,9 +78,10 @@ export class FolderPicker {
 	) {
 		this.excluded = new Set(props.excluded.filter((f) => f !== ROOT_FOLDER));
 		const list = parent.createEl("ul", { cls: "engram-folder-picker" });
-		const totals = new Map(countNotesByFolder(props.notePaths).map((c) => [c.folder, c.count]));
+		const all = countNotesByFolder(props.notePaths);
+		const totals = new Map(all.map((c) => [c.folder, c.count]));
 		const rows = props.newPaths ? countNotesByFolder(props.newPaths) : null;
-		for (const { folder, count } of rows ?? countNotesByFolder(props.notePaths)) {
+		for (const { folder, count } of rows ?? all) {
 			const label = list.createEl("li").createEl("label");
 			const box = label.createEl("input", { type: "checkbox" });
 			box.checked = !this.excluded.has(folder);

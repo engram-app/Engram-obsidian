@@ -36,9 +36,9 @@ import { devLog } from "./dev-log";
 import { errMsg, isHttpStatus } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
 import { isCanvasPath as canvasPath, isCrdtEligiblePath as crdtEligiblePath } from "./file-kind";
-import { inExcludedFolder, matchesIgnorePattern } from "./folder-picker";
 import { t } from "./i18n";
 import { userErrorMessage } from "./i18n/user-error";
+import { inExcludedFolder, matchesIgnorePattern } from "./ignore-match";
 import { IgnoredFiles } from "./ignored-files";
 import {
 	categorizeError,

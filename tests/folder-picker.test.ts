@@ -2,11 +2,10 @@ import { describe, expect, mock, test } from "bun:test";
 import {
 	countNotesByFolder,
 	FolderPicker,
-	inExcludedFolder,
-	matchesIgnorePattern,
 	ROOT_FOLDER,
 	selectedNoteCount,
 } from "../src/folder-picker";
+import { inExcludedFolder, matchesIgnorePattern } from "../src/ignore-match";
 import { makeEl } from "./__mocks__/obsidian";
 
 const PATHS = [
