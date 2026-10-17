@@ -884,3 +884,12 @@ describe("only a pick that can hit the limit waits for the quota", () => {
 		expect(modal.state.view).toBe("done");
 	});
 });
+
+describe("the plan-size line is pluralized", () => {
+	test("a 1-note plan reads 'note', not 'notes'", () => {
+		const modal: any = new FolderOverLimitModal({} as any, 3, { limit: 1, room: 0 }, null);
+		void modal.awaitAnswer();
+		modal.onOpen();
+		expect(modal.contentEl.__find("Your plan syncs 1 note.")).not.toBeNull();
+	});
+});

@@ -637,7 +637,10 @@ const de: Dict = {
 		one: "Dein Plan hat noch Kapazität für {count}.",
 		other: "Dein Plan hat noch Platz für {count}.",
 	},
-	"Your plan syncs {limit} notes.": "Dein Plan synchronisiert {limit} Notizen.",
+	"Your plan syncs {count} notes.": {
+		one: "Dein Plan synchronisiert {count} Notiz.",
+		other: "Dein Plan synchronisiert {count} Notizen.",
+	},
 	"Your vault shares {percent} of its data with Engram":
 		"Dein Vault teilt {percent} seiner Daten mit Engram",
 	attachments: "Anhänge",

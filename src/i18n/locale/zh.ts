@@ -534,7 +534,7 @@ const zh: Dict = {
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"您的登录已过期。请在 Engram 设置中重新登录以继续。",
 	"Your plan has room for {count}.": "您的计划还可容纳 {count}。",
-	"Your plan syncs {limit} notes.": "您的计划同步 {limit} 笔记。",
+	"Your plan syncs {count} notes.": "您的计划同步 {count} 笔记。",
 	"Your vault shares {percent} of its data with Engram":
 		"您的仓库已与 Engram 共享 {percent} 的数据",
 	attachments: "附件",

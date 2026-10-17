@@ -576,7 +576,7 @@ const ja: Dict = {
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"ログインが期限切れです。Engramの設定で再度ログインしてください。",
 	"Your plan has room for {count}.": "プランには{count}の容量があります。",
-	"Your plan syncs {limit} notes.": "プランでは{limit}個のノートを同期します。",
+	"Your plan syncs {count} notes.": "あなたのプランでは {count} 個のノートが同期されます。",
 	"Your vault shares {percent} of its data with Engram":
 		"あなたの保管庫のデータの一部({percent})がEngramと共有されています",
 	attachments: "添付ファイル",

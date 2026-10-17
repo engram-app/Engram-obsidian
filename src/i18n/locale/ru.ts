@@ -701,7 +701,12 @@ const ru: Dict = {
 		many: "Ваш тарифный план позволяет хранить {count}.",
 		other: "Ваш тарифный план позволяет хранить {count}.",
 	},
-	"Your plan syncs {limit} notes.": "Ваш план синхронизирует {limit} заметок.",
+	"Your plan syncs {count} notes.": {
+		one: "Ваш план синхронизирует {count} заметку.",
+		few: "Ваш план синхронизирует {count} заметки.",
+		many: "Ваш план синхронизирует {count} заметок.",
+		other: "Ваш план синхронизирует {count} заметки.",
+	},
 	"Your vault shares {percent} of its data with Engram":
 		"Ваше хранилище передает {percent} своих данных в Engram",
 	attachments: "Вложения",

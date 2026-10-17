@@ -636,7 +636,10 @@ const tr: Dict = {
 		one: "Planınızda {count} adet daha var.",
 		other: "Planınızda {count} adet daha var.",
 	},
-	"Your plan syncs {limit} notes.": "Aboneliğiniz {limit} notu senkronize ediyor.",
+	"Your plan syncs {count} notes.": {
+		one: "Planınız {count} notu senkronize ediyor.",
+		other: "Planınız {count} notu senkronize ediyor.",
+	},
 	"Your vault shares {percent} of its data with Engram":
 		"Kasanızın verilerinin {percent} kısmı Engram ile paylaşılıyor",
 	attachments: "Ekler",

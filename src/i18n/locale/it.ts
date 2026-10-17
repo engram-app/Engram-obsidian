@@ -678,7 +678,11 @@ const it: Dict = {
 		many: "Il tuo piano ha spazio per {count}.",
 		other: "Il tuo piano ha spazio per {count}.",
 	},
-	"Your plan syncs {limit} notes.": "Il tuo piano sincronizza {limit} note.",
+	"Your plan syncs {count} notes.": {
+		one: "Il tuo piano sincronizza {count} nota.",
+		many: "Il tuo piano sincronizza {count} di note.",
+		other: "Il tuo piano sincronizza {count} note.",
+	},
 	"Your vault shares {percent} of its data with Engram":
 		"Il tuo vault condivide {percent} dei suoi dati con Engram",
 	attachments: "allegati",

@@ -676,7 +676,11 @@ const fr: Dict = {
 		many: "Ton abonnement autorise {count}.",
 		other: "Ton abonnement a de la place pour {count}.",
 	},
-	"Your plan syncs {limit} notes.": "Ton abonnement synchronise {limit} notes.",
+	"Your plan syncs {count} notes.": {
+		one: "Ton abonnement synchronise {count} note.",
+		many: "Ton abonnement synchronise {count} de notes.",
+		other: "Ton abonnement synchronise {count} notes.",
+	},
 	"Your vault shares {percent} of its data with Engram":
 		"Ton coffre partage {percent} de ses données avec Engram",
 	attachments: "pièces jointes",

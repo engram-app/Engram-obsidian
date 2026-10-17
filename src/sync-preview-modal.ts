@@ -1674,7 +1674,7 @@ function renderOverLimitView(
 		cls: "engram-sync-preview-header",
 	});
 	el.createEl("p", {
-		text: t("Your plan syncs {limit} notes.", { limit: formatNumber(quota.limit) }),
+		text: t("Your plan syncs {count} notes.", { count: quota.limit }),
 	});
 	if (upgradeUrl) {
 		const upgrade = el.createEl("button", { text: t("Upgrade"), cls: "mod-cta" });

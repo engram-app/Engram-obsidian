@@ -581,7 +581,7 @@ const ms: Dict = {
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Log masuk anda telah tamat tempoh. Log masuk semula dalam tetapan Engram untuk meneruskan.",
 	"Your plan has room for {count}.": "Pelan anda mempunyai ruang untuk {count}.",
-	"Your plan syncs {limit} notes.": "Pelan anda menyegerakkan {limit} nota.",
+	"Your plan syncs {count} notes.": "Pelan anda menyegerakkan {count} nota.",
 	"Your vault shares {percent} of its data with Engram":
 		"Peti nota anda berkongsi {percent} data dengan Engram",
 	attachments: "lampiran",

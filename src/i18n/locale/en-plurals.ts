@@ -11,6 +11,9 @@ const enPlurals: Dict = {
 	"This sync adds {count} notes.": {
 		one: "This sync adds {count} note.",
 	},
+	"Your plan syncs {count} notes.": {
+		one: "Your plan syncs {count} note.",
+	},
 	"Your plan has room for {count}.": {
 		one: "Your plan has room for {count}.",
 	},

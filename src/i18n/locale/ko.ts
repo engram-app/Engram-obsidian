@@ -567,7 +567,7 @@ const ko: Dict = {
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"로그인 세션이 만료되었습니다. Engram 설정에서 다시 로그인하여 계속하세요.",
 	"Your plan has room for {count}.": "귀하의 플랜에는 {count}개의 공간이 남아 있습니다.",
-	"Your plan syncs {limit} notes.": "귀하의 플랜은 {limit}개의 노트를 동기화합니다.",
+	"Your plan syncs {count} notes.": "귀하의 플랜은 {count}개의 노트를 동기화합니다.",
 	"Your vault shares {percent} of its data with Engram":
 		"귀하의 보관함 데이터 중 {percent}이 Engram과 동기화됩니다",
 	attachments: "첨부 파일",

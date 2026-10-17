@@ -579,7 +579,7 @@ const vi: Dict = {
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Phiên đăng nhập của bạn đã hết hạn. Đăng nhập lại trong phần cài đặt Engram để tiếp tục.",
 	"Your plan has room for {count}.": "Gói của bạn còn {count} dung lượng.",
-	"Your plan syncs {limit} notes.": "Gói của bạn đồng bộ hóa {limit} ghi chú.",
+	"Your plan syncs {count} notes.": "Gói của bạn đồng bộ hóa {count} ghi chú.",
 	"Your vault shares {percent} of its data with Engram":
 		"Kho lưu trữ của bạn chia sẻ {percent} dữ liệu với Engram",
 	attachments: "tệp đính kèm",

@@ -583,7 +583,7 @@ const id: Dict = {
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Login Anda telah kedaluwarsa. Masuk kembali di pengaturan Engram untuk melanjutkan.",
 	"Your plan has room for {count}.": "Paket Anda memiliki ruang untuk {count}.",
-	"Your plan syncs {limit} notes.": "Paket Anda menyinkronkan {limit} catatan.",
+	"Your plan syncs {count} notes.": "Paket Anda menyinkronkan {count} catatan.",
 	"Your vault shares {percent} of its data with Engram":
 		"Vault Anda berbagi {percent} dari datanya dengan Engram",
 	attachments: "lampiran",

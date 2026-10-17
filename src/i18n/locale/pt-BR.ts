@@ -675,7 +675,11 @@ const ptBR: Dict = {
 		many: "Seu plano tem espaço para {count}.",
 		other: "Seu plano tem espaço para {count}.",
 	},
-	"Your plan syncs {limit} notes.": "Seu plano sincroniza {limit} notas.",
+	"Your plan syncs {count} notes.": {
+		one: "Seu plano sincroniza {count} nota.",
+		many: "Seu plano sincroniza {count} de notas.",
+		other: "Seu plano sincroniza {count} notas.",
+	},
 	"Your vault shares {percent} of its data with Engram":
 		"Seu cofre compartilha {percent} de seus dados com Engram",
 	attachments: "anexos",
