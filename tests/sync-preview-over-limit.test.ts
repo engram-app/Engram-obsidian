@@ -612,12 +612,16 @@ describe("over-limit quota re-check", () => {
 		expect(modal.state.notesQuota).toEqual({ limit: 10, room: 5 });
 	});
 
-	test("a plan found unlimited on re-check proceeds with the chosen option", async () => {
+	test("a plan found unlimited on re-check drops the step; the next click proceeds", async () => {
 		let limit: number | null = 10;
 		const fetchUsage = async () => usage(limit, 6);
 		const { modal, choice } = openModal(planWith(["Root.md", ...PATHS]), { fetchUsage });
 		await Bun.sleep(0);
 		limit = null; // upgraded in the browser
+		(modal as any).pick("smart-merge");
+		await Bun.sleep(0);
+		// The step had opened, so the re-check alone must not start the sync.
+		expect(modal.state.view).toBe("preview");
 		(modal as any).pick("smart-merge");
 		await Bun.sleep(0);
 		expect(modal.state.view).toBe("done");
@@ -758,6 +762,34 @@ describe("an unlimited quota found on focus waits for the user", () => {
 
 		// The user's own click is what starts the sync, with no step now.
 		(modal as any).pick("smart-merge");
+		await Bun.sleep(0);
+		expect(modal.state.view).toBe("done");
+		modal.onClose();
+		expect(await choice).toBe("smart-merge");
+	});
+});
+
+describe("a slow re-check after the step opened never starts a sync", () => {
+	test("unlimited arriving once the step is showing waits for the user", async () => {
+		let release!: (u: BillingUsage) => void;
+		let calls = 0;
+		const fetchUsage = () =>
+			++calls === 1
+				? Promise.resolve(usage(10, 6))
+				: new Promise<BillingUsage>((r) => {
+						release = r;
+					});
+		const { modal, choice } = openModal(planWith(["Root.md", ...PATHS]), { fetchUsage });
+		await Bun.sleep(0);
+		(modal as any).pick("smart-merge"); // the step opens; its re-check is slow
+		await Bun.sleep(0);
+		expect(modal.state.view).toBe("over-limit");
+
+		release(usage(null)); // upgraded meanwhile
+		await Bun.sleep(0);
+		expect(modal.state.view).not.toBe("done");
+
+		(modal as any).pick("smart-merge"); // the user's own click
 		await Bun.sleep(0);
 		expect(modal.state.view).toBe("done");
 		modal.onClose();
