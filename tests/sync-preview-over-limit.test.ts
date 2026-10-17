@@ -248,7 +248,7 @@ describe("SyncPreviewModal routes every option click through a re-render", () =>
 	function uploadScreen(quota: { limit: number; room: number }) {
 		const plan = planWith(["Root.md", ...PATHS]);
 		const { modal, choice } = openModal(plan);
-		modal.setNotesQuota(quota);
+		modal.state.setNotesQuota(quota);
 		const action = simplifiedScreenCopy(simplifiedFirstSync(plan)!).action;
 		return { modal, choice, action };
 	}
@@ -272,7 +272,7 @@ describe("SyncPreviewModal routes every option click through a re-render", () =>
 		const plan = planWith(PATHS, PATHS);
 		plan.toPush.attachments = [];
 		const { modal, choice } = openModal(plan, { gateClosed: true, context: "review" });
-		modal.setNotesQuota({ limit: 5, room: 0 });
+		modal.state.setNotesQuota({ limit: 5, room: 0 });
 		button(modal, "Done").listeners.click();
 		expect(modal.state.view).not.toBe("over-limit");
 		modal.onClose();
@@ -282,7 +282,7 @@ describe("SyncPreviewModal routes every option click through a re-render", () =>
 
 function openOverLimit(opts: Record<string, unknown> = {}, quota = { limit: 10, room: 4 }) {
 	const { modal, choice } = openModal(planWith(["Root.md", ...PATHS]), opts);
-	modal.setNotesQuota(quota);
+	modal.state.setNotesQuota(quota);
 	modal.state.pickOption("smart-merge");
 	modal.render();
 	return { modal, choice };
@@ -403,7 +403,7 @@ describe("over-limit step never ignores notes for a choice that deletes on the s
 	test("push-all-delete-remote renders no folder picker and Continue writes no patterns", async () => {
 		const applyExclusions = mock(async (_p: string[]) => planWith(PATHS));
 		const { modal } = openModal(planWith(["Root.md", ...PATHS]), { applyExclusions });
-		modal.setNotesQuota({ limit: 10, room: 4 });
+		modal.state.setNotesQuota({ limit: 10, room: 4 });
 		// Even a selection left over from elsewhere must not be written.
 		modal.state.setOverLimitExcluded(["Archive"]);
 		modal.state.pickOption("push-all-delete-remote");
@@ -433,7 +433,7 @@ describe("over-limit picker shows total and new notes per folder", () => {
 		// Archive: 3 new + 1 already on the server.
 		const local = ["Root.md", ...PATHS, "Archive/old.md"];
 		const { modal } = openModal(planWith(local, ["Archive/old.md"]));
-		modal.setNotesQuota({ limit: 10, room: 4 });
+		modal.state.setNotesQuota({ limit: 10, room: 4 });
 		modal.state.pickOption("smart-merge");
 		modal.render();
 
@@ -516,7 +516,7 @@ describe("over-limit numbers are grouped", () => {
 	test("heading, checkbox and rows use locale-grouped numbers", () => {
 		const many = Array.from({ length: 2500 }, (_, i) => `Archive/n${i}.md`);
 		const { modal } = openModal(planWith(many));
-		modal.setNotesQuota({ limit: 1000, room: 1000 });
+		modal.state.setNotesQuota({ limit: 1000, room: 1000 });
 		modal.state.pickOption("smart-merge");
 		modal.render();
 
@@ -536,5 +536,110 @@ describe("over-limit footer", () => {
 		const { modal } = openOverLimit();
 		const footers = nodes(modal.contentEl).filter((n) => n.tag === "footer");
 		expect(footers.length).toBeGreaterThan(0);
+	});
+});
+
+describe("new-note count follows the chosen option", () => {
+	// Root.md is local and on the server, but the plan's smart-merge push list
+	// skips it (crdtHead known); Notes/f.md is local, server-tombstoned, and
+	// left out of toPush. A push-all re-sends every local note, so f.md is new.
+	function plan() {
+		const p = planWith(["Root.md", ...PATHS, "Notes/f.md"], ["Root.md"]);
+		p.toPush.notes = p.toPush.notes.filter((n) => n !== "Notes/f.md");
+		return p;
+	}
+
+	test("smart-merge counts the plan's push list", () => {
+		const state = new SyncPreviewState(plan(), () => {});
+		state.setNotesQuota({ limit: 1, room: 1 });
+		state.pickOption("smart-merge");
+		expect(state.overLimitAdded()).toBe(5);
+	});
+
+	for (const choice of ["push-all-keep-remote", "push-all-delete-remote"] as const) {
+		test(`${choice} counts every local note not on the server`, () => {
+			const state = new SyncPreviewState(plan(), () => {});
+			state.setNotesQuota({ limit: 1, room: 1 });
+			state.pickOption(choice);
+			expect(state.overLimitAdded()).toBe(6);
+		});
+	}
+
+	test("push-all is asked even when the push list alone fits", () => {
+		const state = new SyncPreviewState(plan(), () => {});
+		state.setNotesQuota({ limit: 5, room: 5 });
+		state.pickOption("push-all-keep-remote");
+		expect(state.view).toBe("over-limit");
+	});
+});
+
+describe("Back resets the over-limit answers", () => {
+	test("an ack given for one option does not carry to another", () => {
+		const state = new SyncPreviewState(planWith(PATHS), () => {});
+		state.setNotesQuota({ limit: 4, room: 4 });
+		state.pickOption("smart-merge");
+		state.setOverLimitExcluded(["Notes"]);
+		state.toggleOverLimitAck();
+		state.goBack();
+
+		state.pickOption("push-all-delete-remote");
+		expect(state.view).toBe("over-limit");
+		expect(state.overLimitAck).toBe(false);
+		expect(state.overLimitExcluded).toEqual([]);
+		expect(state.canContinueOverLimit()).toBe(false);
+	});
+});
+
+describe("over-limit quota re-check", () => {
+	test("an older slow response does not overwrite a newer one", async () => {
+		const resolvers: ((u: BillingUsage) => void)[] = [];
+		const fetchUsage = () => new Promise<BillingUsage>((r) => resolvers.push(r));
+		const { modal } = openModal(planWith(["Root.md", ...PATHS]), { fetchUsage });
+		resolvers.shift()?.(usage(10, 6)); // the open-time lookup: room 4
+		await Bun.sleep(0);
+		(modal as any).pick("smart-merge"); // re-check #1 (slow)
+		(modal as any).onWindowFocus(); // re-check #2
+		const [older, newer] = resolvers;
+		newer?.(usage(10, 5)); // room 5
+		await Bun.sleep(0);
+		older?.(usage(10, 7)); // room 3, stale
+		await Bun.sleep(0);
+		expect(modal.state.notesQuota).toEqual({ limit: 10, room: 5 });
+	});
+
+	test("a plan found unlimited on re-check proceeds with the chosen option", async () => {
+		let limit: number | null = 10;
+		const fetchUsage = async () => usage(limit, 6);
+		const { modal, choice } = openModal(planWith(["Root.md", ...PATHS]), { fetchUsage });
+		await Bun.sleep(0);
+		limit = null; // upgraded in the browser
+		(modal as any).pick("smart-merge");
+		await Bun.sleep(0);
+		expect(modal.state.view).toBe("done");
+		modal.onClose();
+		expect(await choice).toBe("smart-merge");
+	});
+});
+
+describe("over-limit save error survives a re-render", () => {
+	test("a focus re-check keeps the error on screen", async () => {
+		const ERR = "Could not save your folder choice. Try again.";
+		const { modal } = openOverLimit({
+			applyExclusions: () => Promise.reject(new Error("disk full")),
+			fetchUsage: async () => usage(10, 6),
+		});
+		const archive = checkboxFor(modal.contentEl, "Archive 3 notes (3 new)");
+		archive.checked = false;
+		archive.listeners.change();
+		button(modal, "Continue").listeners.click();
+		await Bun.sleep(0);
+		const shown = () => nodes(modal.contentEl).filter((n) => n.textContent === ERR).length;
+		const before = shown();
+		expect(before).toBeGreaterThan(0);
+
+		(modal as any).onWindowFocus();
+		await Bun.sleep(0);
+		// The mock keeps old children, so the fresh render adds one more.
+		expect(shown()).toBe(before + 1);
 	});
 });
