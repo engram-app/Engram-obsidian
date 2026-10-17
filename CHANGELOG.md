@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.36.0](https://github.com/engram-app/Engram-obsidian/compare/1.35.0...1.36.0) (2026-10-17)
+
+
+### Features
+
+* **i18n:** add Turkish, Polish and Indonesian ([#589](https://github.com/engram-app/Engram-obsidian/issues/589)) ([18abfb6](https://github.com/engram-app/Engram-obsidian/commit/18abfb667ca84fbbfe3d8ee2f7dd15f7500e8126))
+
+
+### Bug Fixes
+
+* batch empty-folder seeding, back off on 429 ([#593](https://github.com/engram-app/Engram-obsidian/issues/593)) ([d10200a](https://github.com/engram-app/Engram-obsidian/commit/d10200aa6368023a41045a529a0fe3de51179036))
+* **sync:** first-sync cap storm, mid-sync trashing, echo flood ([#591](https://github.com/engram-app/Engram-obsidian/issues/591)) ([1b8a9c8](https://github.com/engram-app/Engram-obsidian/commit/1b8a9c8c4f54757309fd0680871e0e968b867d9d))
+
+
+### Reverts
+
+* batch empty-folder seeding ([#593](https://github.com/engram-app/Engram-obsidian/issues/593)) ([#594](https://github.com/engram-app/Engram-obsidian/issues/594)) ([56d5f8e](https://github.com/engram-app/Engram-obsidian/commit/56d5f8e49c98e69be4afbae290859b34c122afaa))
+
 ## [1.35.0](https://github.com/engram-app/Engram-obsidian/compare/1.34.1...1.35.0) (2026-10-14)
 
 
