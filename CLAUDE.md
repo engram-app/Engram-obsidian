@@ -179,6 +179,7 @@ Catalogs in `src/i18n/locale/` come from `translategemma:12b` on FastRaid's Olla
 - Logging layers (`devLog`, `rlog`, the always-on `anomaly()` path and its slug contract, no cleartext paths) → `docs/context/logging-architecture.md`
 - V8 OOM prevention on large-vault operations (ready gate, content-free queue, push semaphore) → `docs/context/v8-oom-prevention.md`
 - A first sync trashed freshly pulled files and pushed their deletions (the evidence rule, `engineTrashedPaths`, why the 5s echo TTL is not a safety boundary) → `docs/context/first-sync-delete-push-incident-2026-08-12.md`
+- A capped user first-syncs past `notes_cap` (retry storm, `NotesCapGate`, held ops), or a first sync trashed freshly uploaded notes as "server-deleted" 300 s apart (manifest race, `rowWriteSeq`) → `docs/context/first-sync-cap-storm-and-manifest-race.md`
 - A path-keyed oracle (`hasServerNote`) gating an id-keyed wire, a frame the server drops with `note_not_found`, or `Echo skip` repeating forever → `docs/context/path-keyed-oracle-id-keyed-wire.md`
 - A web-app rename recreates the file in Obsidian instead of moving it, or live sync dies after a remote rename → `docs/context/remote-rename-identity-vs-file.md`
 - The progress modal or recap shows a different number than the preview promised (file units vs op-log rows) → `docs/context/sync-progress-units-files-not-ops.md`
