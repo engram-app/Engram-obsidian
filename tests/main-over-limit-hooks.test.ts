@@ -165,7 +165,8 @@ describe("a failed rollback after Esc keeps the abort error", () => {
 		let calls = 0;
 		fake.savePluginData = mock(async () => {
 			calls += 1;
-			if (calls === 1) ctrl.abort(); // Esc while writing the candidate list
+			if (calls === 1)
+				ctrl.abort(); // Esc while writing the candidate list
 			else throw new Error("disk full"); // the rollback write
 		});
 		const err = await hooksOf(fake)

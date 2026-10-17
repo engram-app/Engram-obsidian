@@ -3664,7 +3664,10 @@ export default class EngramSyncPlugin extends Plugin {
 			// of plugin data (any sync's first cursor save) puts it back on disk.
 			if (signal?.aborted) {
 				await this.savePluginData(this.syncEngine.getLastSync()).catch((r: unknown) =>
-					rlog().error("lifecycle", `over-limit exclusions rollback failed: ${errMsg(r)}`),
+					rlog().error(
+						"lifecycle",
+						`over-limit exclusions rollback failed: ${errMsg(r)}`,
+					),
 				);
 			}
 			throw e;
