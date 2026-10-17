@@ -401,6 +401,8 @@ const ptBR: Dict = {
 	"Nothing needs your attention. 🎉": "Nada precisa da sua atenção. 🎉",
 	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
 		"Ainda não há nada para sincronizar — este cofre está vazio em ambos os lados. Comece a sincronizar e tudo o que você escreve aparecerá em seus outros dispositivos.",
+	"Nothing to sync yet: every file here is on your ignore list. Start syncing and everything you write appears on your other devices.":
+		"Ainda não há nada para sincronizar: todos os arquivos aqui estão na sua lista de ignorados. Comece a sincronizar e tudo o que você escreve aparecerá em seus outros dispositivos.",
 	"Nothing will be deleted.": "Nada será excluído.",
 	"Nothing will be removed from this device.": "Nada será removido deste dispositivo.",
 	Open: "Abrir",
@@ -717,11 +719,6 @@ const ptBR: Dict = {
 		one: "{count} arquivo",
 		many: "{count} arquivos",
 		other: "{count} arquivos",
-	},
-	"{count} files ignored": {
-		one: "{count} arquivo ignorado",
-		many: "{count} arquivos ignorados",
-		other: "{count} arquivos ignorados",
 	},
 	"{count} files not included in your plan": {
 		one: "{count} arquivo não incluso no seu plano",

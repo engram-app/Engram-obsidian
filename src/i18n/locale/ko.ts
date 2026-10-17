@@ -334,6 +334,8 @@ const ko: Dict = {
 	"Nothing needs your attention. 🎉": "특별한 조치가 필요 없습니다. 🎉",
 	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
 		"아직 동기화할 내용이 없습니다. 이 보관함은 양쪽 모두 비어 있습니다. 동기화를 시작하면 작성하는 모든 내용이 다른 기기에 표시됩니다.",
+	"Nothing to sync yet: every file here is on your ignore list. Start syncing and everything you write appears on your other devices.":
+		"아직 동기화할 내용이 없습니다: 여기의 모든 파일은 제외 목록에 있습니다. 동기화를 시작하면 작성하신 모든 내용이 다른 기기에 표시됩니다.",
 	"Nothing will be deleted.": "삭제되는 항목은 없습니다.",
 	"Nothing will be removed from this device.": "이 기기에서 파일은 삭제되지 않습니다.",
 	Open: "열기",
@@ -593,7 +595,6 @@ const ko: Dict = {
 	'{count} failed. Run "{command}" for details.':
 		'{count}건 실패했습니다. 자세한 내용은 "{command}"을 확인하세요.',
 	"{count} files": "{count} 개의 파일",
-	"{count} files ignored": "{count}개의 파일이 제외되었습니다",
 	"{count} files not included in your plan": "{count} 파일은 구독 플랜에 포함되지 않습니다",
 	"{count} files queued": "{count}개의 파일 대기 중",
 	"{count} ignored": "{count}개 제외됨",

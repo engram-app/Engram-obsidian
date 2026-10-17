@@ -312,6 +312,8 @@ const zh: Dict = {
 	"Nothing needs your attention. 🎉": "无需您关注。🎉",
 	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
 		"暂无内容可同步 — 此仓库在两端都为空。开始同步，您所写的内容将出现在您的其他设备上。",
+	"Nothing to sync yet: every file here is on your ignore list. Start syncing and everything you write appears on your other devices.":
+		"暂无内容同步：这里的文件都在忽略列表中。开始同步，您的所有笔记都将出现在其他设备上。",
 	"Nothing will be deleted.": "不会删除任何内容。",
 	"Nothing will be removed from this device.": "此设备上的内容不会被删除。",
 	Open: "打开",
@@ -560,7 +562,6 @@ const zh: Dict = {
 	"{count} diverged": "{count} 发生分歧",
 	'{count} failed. Run "{command}" for details.': '{count}次失败。详情请查看 "{command}"。',
 	"{count} files": "{count} 个文件",
-	"{count} files ignored": "忽略了 {count} 个文件",
 	"{count} files not included in your plan": "{count} 文件未包含在您的计划中",
 	"{count} files queued": "{count}个文件排队中",
 	"{count} ignored": "已忽略 {count} 个",

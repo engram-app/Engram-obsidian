@@ -226,9 +226,11 @@ export function skippedAttachmentsLine(n: number): string | null {
 
 /** The preview's quiet "N files ignored" line, so totals that skip the ignore
  *  list stay explainable. Null when nothing is ignored. Pure for testing. */
-export function ignoredLine(n: number): string | null {
-	if (n <= 0) return null;
-	return t("{count} files ignored", { count: n });
+export function ignoredLine(n: number | undefined): string | null {
+	const count = n ?? 0;
+	// `> 0` is false for NaN too, so a malformed count never renders.
+	if (!(count > 0)) return null;
+	return t("{count} ignored", { count });
 }
 
 /** Plain-language outcome line for the smart-merge ("Sync") option, computed
@@ -395,18 +397,29 @@ export interface SyncPreviewOptions {
  *  guard in simplifiedFirstSync excludes pending local deletions), while the
  *  old absolute "Nothing will be deleted" could be falsified by queued
  *  offline deletes tombstoning the server after the promise. */
-export function simplifiedScreenCopy(simple: NonNullable<ReturnType<typeof simplifiedFirstSync>>): {
+export function simplifiedScreenCopy(
+	simple: NonNullable<ReturnType<typeof simplifiedFirstSync>>,
+	ignoredCount?: number,
+): {
 	body: string;
 	action: string;
 	note: string | null;
+	ignored: string | null;
 } {
+	const ignored = ignoredLine(ignoredCount);
 	if (simple.mode === "fresh") {
 		return {
-			body: t(
-				"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.",
-			),
+			// "Empty on both sides" is false when the ignore list hides files.
+			body: ignored
+				? t(
+						"Nothing to sync yet: every file here is on your ignore list. Start syncing and everything you write appears on your other devices.",
+					)
+				: t(
+						"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.",
+					),
 			action: t("Start syncing"),
 			note: null,
+			ignored,
 		};
 	}
 	const parts: string[] = [];
@@ -421,12 +434,14 @@ export function simplifiedScreenCopy(simple: NonNullable<ReturnType<typeof simpl
 			body: t("This vault is empty on the server. Upload your {what}?", { what }),
 			action: t("Upload everything"),
 			note: t("Nothing will be removed from this device."),
+			ignored,
 		};
 	}
 	return {
 		body: t("This device's vault is empty. Download {what} from the server?", { what }),
 		action: t("Download everything"),
 		note: t("Nothing will be removed from this device."),
+		ignored,
 	};
 }
 
@@ -686,13 +701,16 @@ export class SyncPreviewModal extends Modal {
 	): void {
 		this.renderHeader(parent, context);
 		const box = parent.createDiv({ cls: "engram-sync-preview-simple" });
-		const copy = simplifiedScreenCopy(simple);
+		const copy = simplifiedScreenCopy(simple, this.requirePlan().ignoredCount);
 		box.createEl("p", { text: copy.body, cls: "engram-sync-preview-simple-body" });
 		if (copy.note) {
 			box.createEl("p", {
 				text: copy.note,
 				cls: "engram-sync-preview-simple-note",
 			});
+		}
+		if (copy.ignored) {
+			box.createEl("p", { text: copy.ignored, cls: "engram-sync-preview-ignored" });
 		}
 		this.renderDiagnosticsOptIn(box, context);
 		const btn = box.createEl("button", {

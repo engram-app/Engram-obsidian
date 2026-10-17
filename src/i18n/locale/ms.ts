@@ -338,6 +338,8 @@ const ms: Dict = {
 	"Nothing needs your attention. 🎉": "Tiada perkara yang memerlukan perhatian anda. 🎉",
 	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
 		"Tiada apa yang perlu disegerakkan setakat ini — peti nota ini kosong di kedua-dua bahagian. Mulakan sync dan semua yang anda tulis akan muncul pada peranti anda yang lain.",
+	"Nothing to sync yet: every file here is on your ignore list. Start syncing and everything you write appears on your other devices.":
+		"Tiada apa untuk disegerakkan: setiap fail di sini ada dalam senarai pengecualian anda. Mulakan proses sync dan semua yang anda tulis akan muncul pada peranti anda yang lain.",
 	"Nothing will be deleted.": "Tiada apa yang akan dipadam.",
 	"Nothing will be removed from this device.":
 		"Tiada apa yang akan dipadam daripada peranti ini.",
@@ -606,7 +608,6 @@ const ms: Dict = {
 	'{count} failed. Run "{command}" for details.':
 		'{count} gagal. Jalankan "{command}" untuk butiran.',
 	"{count} files": "{count} fail",
-	"{count} files ignored": "{count} fail dikabaikan",
 	"{count} files not included in your plan": "{count} fail tidak termasuk dalam pelan anda",
 	"{count} files queued": "{count} fail dalam senarai tunggu",
 	"{count} ignored": "{count} pengecualian",
