@@ -3669,7 +3669,7 @@ export default class EngramSyncPlugin extends Plugin {
 				(live) => [...live, ...added],
 				signal,
 				// Where each folder left the sync, so Sync again replays from there.
-				this.syncEngine.noteExcluded(added),
+				() => this.syncEngine.noteExcluded(added),
 			);
 			this.settingTab?.rerender();
 		});
@@ -3699,7 +3699,7 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  rotation) writes the new list too. On a failed save or an abort it puts
 	 *  back exactly this field (an OAuth rotation during the save writes its
 	 *  single-use refresh token to the same object, so the object is never
-	 *  swapped). `undo` reverts what the caller told the engine beforehand.
+	 *  swapped). `prepare`'s undo reverts what it told the engine.
 	 *  Lesser evil: during the save, shouldIgnore already follows the new list,
 	 *  so an edit made in a newly excluded folder in that window is not pushed
 	 *  if the change then rolls back; the next sync's mtime sweep still pushes
@@ -3707,12 +3707,16 @@ export default class EngramSyncPlugin extends Plugin {
 	private async changeExcludedFolders(
 		edit: (live: string[]) => string[],
 		signal?: AbortSignal,
-		undo?: () => void,
+		/** Engine state to record with the change; returns its undo. Runs after
+		 *  the abort check, so an aborted change records nothing. */
+		prepare?: () => () => void,
 	): Promise<void> {
 		signal?.throwIfAborted();
 		const previous = this.settings.excludedFolders;
-		this.settings.excludedFolders = edit(previous);
+		let undo: (() => void) | undefined;
 		try {
+			undo = prepare?.();
+			this.settings.excludedFolders = edit(previous);
 			await this.savePluginData(this.syncEngine.getLastSync());
 			signal?.throwIfAborted();
 		} catch (e: unknown) {
@@ -3742,7 +3746,7 @@ export default class EngramSyncPlugin extends Plugin {
 		await this.changeExcludedFolders(
 			(live) => live.filter((f) => f !== folder),
 			undefined,
-			this.syncEngine.holdReinclude(folder),
+			() => this.syncEngine.holdReinclude(folder),
 		);
 		await this.syncEngine.reincludeFolder(folder);
 		void this.syncEngine

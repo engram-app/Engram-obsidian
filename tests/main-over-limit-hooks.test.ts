@@ -428,3 +428,20 @@ describe("the over-limit step records where each folder left the sync", () => {
 		expect(order).toEqual(["note:Archive", "save", "undo"]);
 	});
 });
+
+describe("an abort before the change leaks no exclusion record", () => {
+	test("noteExcluded is never left applied", async () => {
+		const { fake } = makeFakePlugin(async () => PLAN);
+		let net = 0;
+		fake.syncEngine.noteExcluded = mock(() => {
+			net += 1;
+			return () => {
+				net -= 1;
+			};
+		});
+		const ctrl = new AbortController();
+		ctrl.abort();
+		await expect(hooksOf(fake).applyExclusions(["Archive"], ctrl.signal)).rejects.toThrow();
+		expect(net).toBe(0);
+	});
+});
