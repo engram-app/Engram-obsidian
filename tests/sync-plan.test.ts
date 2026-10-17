@@ -432,21 +432,6 @@ describe("SyncEngine.computeSyncPlan", () => {
 		expect(plan.newNotePaths).not.toContain("Notes/pulled.md");
 	});
 
-	test("candidate excludedFolders shape the plan without touching live settings", async () => {
-		const engine = createEngine();
-		mockApp.vault.getFiles.mockReturnValue([
-			makeTFile("Archive/a.md"),
-			makeTFile("Notes/b.md"),
-		]);
-		wireFeed(engine, [[row({ id: "s", seq: 1, path: "Archive/s.md", content: "# s" })]]);
-
-		const plan = await engine.computeSyncPlan("full", { excludedFolders: ["Archive"] });
-
-		expect(plan.newNotePaths).toEqual(["Notes/b.md"]);
-		expect(plan.toPull.notes).toEqual([]);
-		expect(engine.shouldIgnore("Archive/a.md")).toBe(false);
-	});
-
 	test("newNotePaths: local notes with no server row and no recorded head", async () => {
 		const engine = createEngine();
 		mockApp.vault.getFiles.mockReturnValue([
@@ -794,8 +779,9 @@ describe("SyncEngine.computeSyncPlan", () => {
 
 	describe("planWithoutFolders", () => {
 		// The over-limit step filters the plan it holds instead of re-enumerating
-		// the server. Only sound if the result is exactly the candidate plan.
-		test("equals computeSyncPlan with the folders as candidate exclusions", async () => {
+		// the server. Only sound if the result is exactly the plan computed with
+		// the folders excluded.
+		test("equals computeSyncPlan with the folders excluded", async () => {
 			const engine = createEngine({ excludedFolders: ["Old"] });
 			const contents: Record<string, string> = {
 				"Archive/new.md": "# new",
@@ -863,10 +849,10 @@ describe("SyncEngine.computeSyncPlan", () => {
 
 			wireFeed(engine, feed());
 			const held = await engine.computeSyncPlan("full");
+			// The same vault with Archive excluded for real.
+			(engine as any).settings.excludedFolders = ["Old", "Archive"];
 			wireFeed(engine, feed());
-			const candidate = await engine.computeSyncPlan("full", {
-				excludedFolders: ["Old", "Archive"],
-			});
+			const candidate = await engine.computeSyncPlan("full");
 
 			// The fixture really exercises every list, on both sides of the cut.
 			expect(held.conflicts.length).toBe(2);

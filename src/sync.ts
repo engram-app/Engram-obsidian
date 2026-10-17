@@ -9230,17 +9230,6 @@ export class SyncEngine {
 	 *  and by a vault change. */
 	private reincludedFolders = this.track(["vault"], new Set<string>());
 
-	/** "Sync again" for a folder the caller has ALREADY taken out of
-	 *  excludedFolders. While excluded, its vault events were ignored, so:
-	 *  - a tracked file deleted meanwhile is deleted now, through the same path
-	 *    a vault delete event takes (the gate journal, or deleteSyncedPath,
-	 *    whose recently-deleted fence stops the replay below resurrecting it);
-	 *  - a tracked file edited meanwhile is re-checked by content in the next
-	 *    push sweep (reincludedFolders);
-	 *  - server ops made there are re-served by a replay from genesis.
-	 *  ponytail: the replay is vault-wide. The server has no per-folder feed, so
-	 *  a scoped pull would walk the same op log; applies outside the folder are
-	 *  idempotent no-ops. */
 	/** Queue `folder` for the content re-check. Persisted (exportReincludedFolders)
 	 *  in the same save that takes it out of excludedFolders, so a restart before
 	 *  the next push pass cannot drop the edits made while it was excluded. */
@@ -9259,6 +9248,17 @@ export class SyncEngine {
 		for (const f of folders) if (typeof f === "string") this.reincludedFolders.add(f);
 	}
 
+	/** "Sync again" for a folder the caller has ALREADY taken out of
+	 *  excludedFolders. While excluded, its vault events were ignored, so:
+	 *  - a tracked file deleted meanwhile is deleted now, through the same path
+	 *    a vault delete event takes (the gate journal, or deleteSyncedPath,
+	 *    whose recently-deleted fence stops the replay below resurrecting it);
+	 *  - a tracked file edited meanwhile is re-checked by content in the next
+	 *    push sweep (reincludedFolders);
+	 *  - server ops made there are re-served by a replay from genesis.
+	 *  ponytail: the replay is vault-wide. The server has no per-folder feed, so
+	 *  a scoped pull would walk the same op log; applies outside the folder are
+	 *  idempotent no-ops. */
 	async reincludeFolder(folder: string): Promise<void> {
 		for (const path of [...this.syncState.keys()]) {
 			if (!inExcludedFolder(path, [folder])) continue;
@@ -10933,17 +10933,9 @@ export class SyncEngine {
 	 *      local unchanged → clean · local changed → toPush
 	 *  - server changed: local unchanged → toPull · both changed → conflict
 	 */
-	async computeSyncPlan(
-		mode: "push-all" | "pull-all" | "full",
-		/** `excludedFolders`: plan as if these were the excluded folders, without
-		 *  touching the live settings (the over-limit step's candidate plan). */
-		opts: { excludedFolders?: string[] } = {},
-	): Promise<SyncPlan> {
+	async computeSyncPlan(mode: "push-all" | "pull-all" | "full"): Promise<SyncPlan> {
 		const server = await this.enumerateServerState();
-		const candidate = opts.excludedFolders;
-		const ignore = (path: string) =>
-			this.shouldIgnore(path) ||
-			(candidate !== undefined && inExcludedFolder(path, candidate));
+		const ignore = (path: string) => this.shouldIgnore(path);
 		// Ignored paths are out of the sync on BOTH sides: the local list below
 		// drops them, so a server row there must not read as a pull either.
 		const unignored = <V>(m: Map<string, V>) =>
