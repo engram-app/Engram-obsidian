@@ -893,3 +893,59 @@ describe("the plan-size line is pluralized", () => {
 		expect(modal.contentEl.__find("Your plan syncs 1 note.")).not.toBeNull();
 	});
 });
+
+describe("a quota answer arriving after the cap", () => {
+	function late() {
+		let answer!: (u: BillingUsage) => void;
+		const fetchUsage = () =>
+			new Promise<BillingUsage>((r) => {
+				answer = r;
+			});
+		return { fetchUsage, answer: (u: BillingUsage) => answer(u) };
+	}
+
+	test("over limit after the sync started: the caller is told, so it can say so", async () => {
+		const { fetchUsage, answer } = late();
+		const onLateOverLimit = mock((_q: unknown) => {});
+		const { modal, choice } = openModal(planWith(["Root.md", ...PATHS]), {
+			fetchUsage,
+			onLateOverLimit,
+		});
+		(modal as any).quotaWaitMs = 5;
+		(modal as any).pick("smart-merge");
+		await Bun.sleep(20); // past the cap: proceeded as unknown
+		expect(modal.state.view).toBe("done");
+		answer(usage(10, 6)); // room 4, 6 new: over
+		await Bun.sleep(0);
+		expect(onLateOverLimit).toHaveBeenCalledWith({ limit: 10, room: 4 });
+		modal.onClose();
+		expect(await choice).toBe("smart-merge");
+	});
+
+	test("over limit while the delete confirm is still open: the step is shown", async () => {
+		const { fetchUsage, answer } = late();
+		const { modal } = openModal(planWith(["Root.md", ...PATHS]), { fetchUsage });
+		(modal as any).quotaWaitMs = 5;
+		(modal as any).pick("push-all-delete-remote");
+		await Bun.sleep(20);
+		expect(modal.state.view).toBe("confirm");
+		answer(usage(10, 6));
+		await Bun.sleep(0);
+		expect(modal.state.view).toBe("over-limit");
+	});
+
+	test("a late answer that fits changes nothing", async () => {
+		const { fetchUsage, answer } = late();
+		const onLateOverLimit = mock((_q: unknown) => {});
+		const { modal } = openModal(planWith(["Root.md", ...PATHS]), {
+			fetchUsage,
+			onLateOverLimit,
+		});
+		(modal as any).quotaWaitMs = 5;
+		(modal as any).pick("smart-merge");
+		await Bun.sleep(20);
+		answer(usage(100, 0));
+		await Bun.sleep(0);
+		expect(onLateOverLimit).not.toHaveBeenCalled();
+	});
+});

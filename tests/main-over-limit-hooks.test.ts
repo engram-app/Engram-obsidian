@@ -52,6 +52,7 @@ describe("newSyncPreviewModal supplies the over-limit hooks", () => {
 		const opts = hooksOf(fake);
 		expect(opts.upgradeUrl).toContain("/settings/billing");
 		expect(typeof opts.applyExclusions).toBe("function");
+		expect(typeof opts.onLateOverLimit).toBe("function");
 		await opts.fetchUsage();
 		expect(fake.api.getBillingUsage).toHaveBeenCalled();
 	});

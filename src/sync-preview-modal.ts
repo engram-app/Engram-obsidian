@@ -580,6 +580,9 @@ export interface SyncPreviewOptions {
 	 *  entering the over-limit step and on window focus while it is open (the
 	 *  user may have just upgraded in the browser). */
 	fetchUsage?: () => Promise<BillingUsage>;
+	/** The quota answered after an uploading pick stopped waiting for it, and
+	 *  the sync it started adds more notes than the plan has room for. */
+	onLateOverLimit?: (quota: NotesQuota) => void;
 }
 
 /** The one-click screen's copy, pure for tests. Zero-count clauses are
@@ -711,6 +714,7 @@ export class SyncPreviewModal extends Modal {
 			this.quotaPending = fetchNotesQuota(fetchUsage).then((q) => {
 				this.quotaPending = null;
 				if (seq === this.quotaSeq) this.state.setNotesQuota(q === "unlimited" ? null : q);
+				if (q && q !== "unlimited") this.onLateQuota(q);
 			});
 			window.addEventListener("focus", this.onWindowFocus);
 		}
@@ -1217,6 +1221,27 @@ export class SyncPreviewModal extends Modal {
 	private quotaPending: Promise<void> | null = null;
 	private closed = false;
 	private picking = false;
+	/** The option picked once the wait for the quota gave up; see onLateQuota. */
+	private pickedPastCap: SyncChoice | null = null;
+
+	/** The open-time quota answered after a pick stopped waiting for it. Over
+	 *  the limit: while the delete confirm is still open, swap it for the
+	 *  over-limit step; once the sync has started, tell the caller
+	 *  (onLateOverLimit) so it can say so. */
+	private onLateQuota(quota: NotesQuota): void {
+		const choice = this.pickedPastCap;
+		this.pickedPastCap = null;
+		if (!choice || !uploadsNotes(choice)) return;
+		if (this.state.newNotePaths().length <= quota.room) return;
+		if (this.state.view === "confirm" && !this.closed) {
+			this.state.goBack();
+			this.state.pickOption(choice);
+			this.render();
+		} else if (this.state.view === "done") {
+			this.opts.onLateOverLimit?.(quota);
+		}
+	}
+
 	/** QUOTA_WAIT_MS; a field so tests can shorten it. */
 	private quotaWaitMs = QUOTA_WAIT_MS;
 
@@ -1236,8 +1261,17 @@ export class SyncPreviewModal extends Modal {
 				from.disabled = true;
 				from.setAttribute("aria-busy", "true");
 			}
+			let answered = false;
 			try {
-				await within(this.quotaPending, this.quotaWaitMs, undefined);
+				await within(
+					this.quotaPending.then(() => {
+						answered = true;
+					}),
+					this.quotaWaitMs,
+					undefined,
+				);
+				// Still unanswered: proceeding as unknown, so a late answer is owed.
+				if (!answered) this.pickedPastCap = choice;
 			} finally {
 				this.picking = false;
 				if (from) {

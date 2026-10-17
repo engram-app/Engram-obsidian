@@ -3621,7 +3621,10 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  notes quota lookup, the Upgrade URL, and the folder exclusions. Opens in
 	 *  the loading state; the caller streams the plan in with setPlan. */
 	newSyncPreviewModal(
-		opts: Omit<SyncPreviewOptions, "fetchUsage" | "upgradeUrl" | "applyExclusions">,
+		opts: Omit<
+			SyncPreviewOptions,
+			"fetchUsage" | "upgradeUrl" | "applyExclusions" | "onLateOverLimit"
+		>,
 	): SyncPreviewModal {
 		return new SyncPreviewModal(this.app, null, {
 			...opts,
@@ -3631,15 +3634,28 @@ export default class EngramSyncPlugin extends Plugin {
 				: undefined,
 			upgradeUrl: upgradeUrlFor(this.settings),
 			applyExclusions: (folders, signal) => this.applyOverLimitExclusions(folders, signal),
+			// The quota answered only after the sync started: say so with the
+			// note-limit toast the server's own cap rejection shows.
+			onLateOverLimit: (q) =>
+				notifyLimitExceeded(
+					new LimitExceededError(
+						"notes_cap_exceeded",
+						upgradeUrlFor(this.settings),
+						"notes_cap",
+						q.limit,
+						q.limit - q.room,
+					),
+					offersUpgrades(this.settings),
+				),
 		});
 	}
 
 	/** Over-limit step: the unticked top-level folders join
 	 *  `settings.excludedFolders` (the user's ignore text is never touched).
-	 *  Only persists: the modal filters the plan it already holds
-	 *  (planWithoutFolders) rather than re-enumerating the server. The engine
-	 *  is told only after the save succeeds. Any failure, or `signal` aborting
-	 *  (the modal was closed), leaves the list as it was. Persisted without
+	 *  Only persists (changeExcludedFolders): the modal filters the plan it
+	 *  already holds (planWithoutFolders) rather than re-enumerating the server.
+	 *  Any failure, or `signal` aborting (the modal was closed), puts the list
+	 *  back as it was. Persisted without
 	 *  saveSettings, which would re-fire the first-sync flow and stack a
 	 *  second modal. */
 	private applyOverLimitExclusions(folders: string[], signal?: AbortSignal): Promise<void> {
