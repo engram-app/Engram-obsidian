@@ -390,6 +390,19 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			wiring.dispose();
 		});
 
+		test("discovery throwing before its own try still runs the manifest fallback", async () => {
+			const { engine, map, wiring } = announceRig();
+			(engine as any).isLiveBound = () => {
+				throw new Error("boom");
+			};
+			liveManifest([{ id: "t-id", path: "t.md" }]);
+			wiring.onCrdtDocReady("t-id", "t.md");
+			await flush();
+			expect(fetches()).toBe(1);
+			expect(map.pathForId("t-id")).toBe("t.md");
+			wiring.dispose();
+		});
+
 		test("a file already on disk but unmapped falls back to one throttled fetch", async () => {
 			const { map, wiring } = announceRig();
 			(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockImplementation(

@@ -438,7 +438,18 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 			if (noteIdMap.pathForId(docId) === null) syncEngine.ensureNoteIdMapped(docId);
 		};
 		if (announcedPath === undefined) heal();
-		else void syncEngine.discoverAnnouncedNote(docId, announcedPath).then(heal);
+		// finally-style: a discovery throw (one escaping its own try) must
+		// not skip the fallback or surface as an unhandled rejection.
+		else
+			void syncEngine
+				.discoverAnnouncedNote(docId, announcedPath)
+				.catch((e) =>
+					rlog().warn(
+						"crdt",
+						`announce discovery failed for ${noteRef(announcedPath)}: ${errMsg(e, announcedPath)}`,
+					),
+				)
+				.then(heal);
 		// Vault-channel fan-out: an IDLE note (not open in an editor) converges over
 		// the note_yjs_update broadcast (applyPushedNoteUpdate) — it must NOT open a
 		// dedicated room. This announce-driven enroll was the primary connect-storm
