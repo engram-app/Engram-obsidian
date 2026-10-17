@@ -1469,6 +1469,8 @@ export class SyncEngine {
 	 *  the armed fetch and forget the cooldown, so neither reaches the next. */
 	private resetIdMapReconcile(): void {
 		this.idMapThrottle.reset();
+		// A trailing save armed for the old vault must not land in the new one.
+		this.noteIdSaveThrottle.reset();
 		this.idMapEpoch++;
 		this.idMapFailures = 0;
 	}
@@ -12052,7 +12054,6 @@ export class SyncEngine {
 		// sync baseline, not transient state.
 		this.sweep("destroy");
 		this.resetIdMapReconcile();
-		this.noteIdSaveThrottle.cancel();
 		this.files.destroy();
 		// Standalone timer handles — not collections, so they stay explicit.
 		if (this.seqHealTimer !== null) {
