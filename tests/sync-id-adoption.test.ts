@@ -1036,7 +1036,7 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			time.advance(1_000);
 			engine.ensureNoteIdMapped("x");
 			void engine.awaitNoteIdMapped("x");
-			await flush(); // the window's one probe, failed: backoff now 16s
+			await flush(); // the window's one probe, failed: it does not escalate the backoff
 			expect(fetches()).toBe(3);
 
 			liveManifest([{ id: "x", path: "x.md" }]);
@@ -1388,7 +1388,7 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			liveManifest([{ id: "x", path: "x.md" }]);
 			time.advance(60_000);
 			await flush();
-			await expect(engine.awaitNoteIdMapped("x")).resolves.toBe(false); // settled: nothing to wait on
+			await expect(engine.awaitNoteIdMapped("x")).resolves.toBeUndefined(); // settled: nothing to wait on
 			expect((engine as any).noteIdMap.pathForId("x")).toBe("x.md");
 		});
 
@@ -1606,6 +1606,55 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			manifestWith([{ id: "x", path: "p.md" }]);
 			await engine.reconcileNoteIdMapFromManifest();
 			expect(map.pathForId("x")).toBeNull();
+		});
+	});
+
+	describe("round 10", () => {
+		test("#6 a parked gate wait is released by a vault switch and by destroy", async () => {
+			const { engine } = throttledEngine();
+			engine.setSyncBlocked(true);
+			let released = 0;
+			void engine.whenGateOpens().then(() => released++);
+			await engine.resetForVaultChange();
+			await flush();
+			expect(released).toBe(1);
+			void engine.whenGateOpens().then(() => released++);
+			engine.destroy();
+			await flush();
+			expect(released).toBe(2);
+		});
+
+		test("#7 an on-disk announce heals right away even while another discovery's replay runs", async () => {
+			const rig = throttledEngine();
+			const e = rig.engine as any;
+			e.crdt = {};
+			e.crdtCatchupSince = async () => null;
+			e.catchupViaSeqReplay = () => new Promise<void>(() => {}); // the coalesced replay never ends
+			const wiring = createCrdtWiring({
+				noteIdMap: rig.map,
+				syncEngine: rig.engine,
+				sendCrdt: () => {},
+				isBound: () => false,
+				strandHealDebounceMs: 100_000,
+				dbPrefix: `r10-7-${Math.random()}`,
+			});
+			(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockImplementation(
+				(p: string) => (p === "disk.md" ? new TFile("disk.md") : null),
+			);
+			try {
+				liveManifest([{ id: "disk-id", path: "disk.md" }]);
+				wiring.onCrdtDocReady("fresh-id", "fresh.md"); // starts the replay
+				await flush();
+				wiring.onCrdtDocReady("disk-id", "disk.md"); // on disk: returns early
+				await flush();
+				expect(fetches()).toBe(1);
+				expect(rig.map.pathForId("disk-id")).toBe("disk.md");
+			} finally {
+				(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>)
+					.mockReset()
+					.mockReturnValue(null);
+				wiring.dispose();
+			}
 		});
 	});
 });

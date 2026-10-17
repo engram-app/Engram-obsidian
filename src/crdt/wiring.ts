@@ -19,6 +19,7 @@ type WiringSyncEngine = Pick<
 	| "materializeEmptyDiscovered"
 	| "isSyncBlocked"
 	| "whenGateOpens"
+	| "idMapRefuses"
 	| "ensureNoteIdMapped"
 	| "awaitNoteIdMapped"
 	| "idMapEra"
@@ -133,7 +134,10 @@ export interface CrdtWiring {
 }
 
 const DEFAULT_STRAND_HEAL_DEBOUNCE_MS = 750;
-const STRAND_HEAL_MAX_ATTEMPTS = 5;
+/** Drain cycles per stranded id before it is given up (each cycle counts,
+ *  answered or not; the delay doubles from the debounce, capped below). */
+const STRAND_HEAL_MAX_ATTEMPTS = 8;
+const STRAND_HEAL_MAX_DELAY_MS = 30_000;
 
 /** Pure retry/give-up decision for one strand-heal drain pass (e2e test_43
  *  burst mechanism, round 3 — see `drainStrandedFlushes`). Given the ids
@@ -150,9 +154,6 @@ export function partitionStrandedFlushes(
 	resolvePath: (id: string) => string | null,
 	attempts: Map<string, number>,
 	maxAttempts: number,
-	/** Ids a fetch answered for; the rest retry without burning an attempt
-	 *  (an unanswered wait, e.g. an outage). All, if omitted. */
-	counted?: ReadonlySet<string>,
 ): {
 	toFlush: Array<{ id: string; path: string }>;
 	toRetry: string[];
@@ -166,10 +167,6 @@ export function partitionStrandedFlushes(
 		if (path) {
 			attempts.delete(id);
 			toFlush.push({ id, path });
-			continue;
-		}
-		if (counted && !counted.has(id)) {
-			toRetry.push(id);
 			continue;
 		}
 		const attempt = (attempts.get(id) ?? 0) + 1;
@@ -217,12 +214,29 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	const strandHealAttempts = new Map<string, number>();
 	let parkedForGate = false;
 	let disposed = false;
+	let strandHealDue = 0;
+
+	/** (Re)arm the drain timer; a shorter delay wins. Never once disposed. */
+	function armStrandHeal(delayMs: number): void {
+		if (disposed) return;
+		const due = Date.now() + delayMs;
+		if (strandHealTimer !== null) {
+			if (due >= strandHealDue) return;
+			window.clearTimeout(strandHealTimer);
+		}
+		strandHealDue = due;
+		strandHealTimer = window.setTimeout(() => {
+			strandHealTimer = null;
+			void drainStrandedFlushes();
+		}, delayMs);
+	}
 
 	/** A closed gate pauses the strand heal (no fetch, no attempt, no warn):
-	 *  the ids wait in `strandedFlushes` and drain once it opens. */
+	 *  the ids wait in `strandedFlushes` and drain once it opens (or the engine
+	 *  ends the wait on a vault switch / destroy). */
 	function parkUntilGateOpens(ids: Iterable<string>): void {
 		for (const id of ids) strandedFlushes.add(id);
-		if (parkedForGate) return;
+		if (parkedForGate || disposed) return;
 		parkedForGate = true;
 		void syncEngine.whenGateOpens().then(() => {
 			parkedForGate = false;
@@ -230,36 +244,31 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		});
 	}
 
+	/** One bounded retry cycle. Every still-unmapped id costs one attempt per
+	 *  cycle (answered or not), the next cycle waits debounce x 2^attempts
+	 *  (capped), and after STRAND_HEAL_MAX_ATTEMPTS it is given up with one
+	 *  warning. Only ids the engine refuses (deleted here, refused path) are
+	 *  terminal at once; one parked as never listed is just retried. */
 	async function drainStrandedFlushes(): Promise<void> {
+		if (disposed) return;
 		const pending = new Set(strandedFlushes);
 		strandedFlushes.clear();
 		if (pending.size === 0) return;
 		if (syncEngine.isSyncBlocked()) return parkUntilGateOpens(pending);
 		// Through the engine's heal, not a raw reconcile: that one is gated,
 		// throttled and vault-epoch guarded, and coalesces with announce and
-		// fan-out heals into the same manifest GET. It never throws. Our own
-		// retry loop: "internal" never restores the engine's budget, and the
-		// non-urgent wait keeps the cooldown and never spends the fan-out probe.
+		// fan-out heals into the same manifest GET. "internal" never restores
+		// the engine's budget; the non-urgent wait keeps the cooldown and never
+		// spends the fan-out probe.
 		const era = syncEngine.idMapEra();
 		const asked: string[] = [];
-		const refused: string[] = [];
+		for (const id of pending) if (syncEngine.ensureNoteIdMapped(id, "internal")) asked.push(id);
+		await Promise.all(asked.map((id) => syncEngine.awaitNoteIdMapped(id, { urgent: false })));
+		if (disposed || syncEngine.idMapEra() !== era) return; // ids of a gone vault
+		// Nothing below ran yet: every id taken this cycle goes back.
+		if (syncEngine.isSyncBlocked()) return parkUntilGateOpens(pending);
 		for (const id of pending) {
-			if (syncEngine.ensureNoteIdMapped(id, "internal")) asked.push(id);
-			// Gate open and not mapped, yet no fetch: refused, recently deleted
-			// here, or parked as never listed. Terminal, not retryable.
-			else if (noteIdMap.pathForId(id) === null) refused.push(id);
-		}
-		// Only a wait some fetch answered burns an attempt; an outage does not.
-		const answered = new Set<string>();
-		await Promise.all(
-			asked.map(async (id) => {
-				if (await syncEngine.awaitNoteIdMapped(id, { urgent: false })) answered.add(id);
-			}),
-		);
-		// The vault changed during the wait: these ids belong to the old one.
-		if (syncEngine.idMapEra() !== era) return;
-		if (syncEngine.isSyncBlocked()) return parkUntilGateOpens(asked);
-		for (const id of refused) {
+			if (noteIdMap.pathForId(id) !== null || !syncEngine.idMapRefuses(id)) continue;
 			pending.delete(id);
 			strandHealAttempts.delete(id);
 			rlog().warn(
@@ -272,7 +281,6 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 			(id) => noteIdMap.pathForId(id),
 			strandHealAttempts,
 			STRAND_HEAL_MAX_ATTEMPTS,
-			answered,
 		);
 		for (const id of toGiveUp) {
 			rlog().warn(
@@ -281,18 +289,10 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 					`${STRAND_HEAL_MAX_ATTEMPTS} heal attempts — retained in Y.Doc`,
 			);
 		}
-		// Re-queue unresolved ids for another debounced heal cycle instead of
-		// dropping them after one manifest fetch — a just-created note (e.g. one
-		// of several in a rapid burst) can commit server-side moments after this
-		// device's first reconcile read the manifest.
-		for (const id of toRetry) {
-			// Quiet for an unanswered wait (an outage): it retries without a warn.
-			if (answered.has(id))
-				rlog().warn(
-					"crdt",
-					`onFlushToDisk: still no path for note_id=${id} after heal — retrying`,
-				);
-			healUnknownNoteId(id);
+		if (toRetry.length > 0) {
+			for (const id of toRetry) strandedFlushes.add(id);
+			const n = Math.min(...toRetry.map((id) => strandHealAttempts.get(id) ?? 1));
+			armStrandHeal(Math.min(debounceMs * 2 ** n, STRAND_HEAL_MAX_DELAY_MS));
 		}
 		for (const { id, path } of toFlush) {
 			if (deps.isBound(path)) continue; // live editor owns disk
@@ -323,11 +323,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	 *  Self-heals a mid-session map drift the once-per-connect reconcile misses. */
 	function healUnknownNoteId(noteId: string): void {
 		strandedFlushes.add(noteId);
-		if (strandHealTimer !== null) return;
-		strandHealTimer = window.setTimeout(() => {
-			strandHealTimer = null;
-			void drainStrandedFlushes();
-		}, debounceMs);
+		armStrandHeal(debounceMs);
 	}
 
 	// The provider-model engine plays all three old roles (manager + channel +

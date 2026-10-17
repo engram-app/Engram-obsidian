@@ -479,10 +479,9 @@ type IdMapEntry = {
 	askedGen: number;
 	/** An announce already restored the budget once for this entry. */
 	resetUsed: boolean;
-	/** Resolves when the entry settles: true once a fetch answered for it
-	 *  (mapped, refused, given up), false when dropped unanswered. */
-	done: Promise<boolean>;
-	release: (answered: boolean) => void;
+	/** Resolves when the entry settles: mapped, refused, given up or dropped. */
+	done: Promise<void>;
+	release: () => void;
 };
 
 /** Who asks for an id heal. An announce is fresh evidence (may restore the
@@ -1279,8 +1278,8 @@ export class SyncEngine {
 		}
 		const entry = this.idMapPending.get(noteId);
 		if (!entry) {
-			let release: (answered: boolean) => void = () => {};
-			const done = new Promise<boolean>((r) => {
+			let release: () => void = () => {};
+			const done = new Promise<void>((r) => {
 				release = r;
 			});
 			this.idMapPending.set(noteId, {
@@ -1311,59 +1310,56 @@ export class SyncEngine {
 	 *  the first fetch that STARTS after its latest ensureNoteIdMapped completes
 	 *  (I1), or after FANOUT_ID_WAIT_MS (I3), whichever is first. Callers ensure,
 	 *  then await (a fetch already in flight may predate the row a fan-out
-	 *  proves exists; test_82: the fan-out can be the only delivery). Resolves
-	 *  true when a fetch answered for it. `urgent: false` (strand heal) keeps
-	 *  the success cooldown and never spends the fan-out probe. */
-	awaitNoteIdMapped(noteId: string, opts: { urgent?: boolean } = {}): Promise<boolean> {
+	 *  proves exists; test_82: the fan-out can be the only delivery).
+	 *  `urgent: false` (strand heal) keeps the success cooldown and never
+	 *  spends the fan-out probe. */
+	awaitNoteIdMapped(noteId: string, opts: { urgent?: boolean } = {}): Promise<void> {
 		const entry = this.idMapPending.get(noteId);
-		if (!entry) return Promise.resolve(false);
+		if (!entry) return Promise.resolve();
 		const gen = entry.askedGen + 1;
 		if (this.idMapFetchGen < gen && opts.urgent !== false) this.pokeIdMapUrgent();
 		return Promise.race([entry.done, this.fetchDone(gen)]);
 	}
 
 	/** One shared promise per fetch generation: resolves when fetch `gen` (or
-	 *  a later one) completes (with whether it answered), or false after
-	 *  FANOUT_ID_WAIT_MS. */
-	private fetchDone(gen: number): Promise<boolean> {
-		if (gen <= this.idMapDoneGen) return Promise.resolve(this.idMapDoneOk);
+	 *  a later one) completes, or after FANOUT_ID_WAIT_MS. */
+	private fetchDone(gen: number): Promise<void> {
+		if (gen <= this.idMapDoneGen) return Promise.resolve();
 		const existing = this.idMapFetchWaits.get(gen);
 		if (existing) return existing.promise;
-		let resolve: (answered: boolean) => void = () => {};
-		const promise = new Promise<boolean>((r) => {
+		let resolve: () => void = () => {};
+		const promise = new Promise<void>((r) => {
 			resolve = r;
 		});
-		const release = (answered = false): void => {
+		const release = (): void => {
 			this.time.clearTimeout(timer);
 			this.idMapFetchWaits.delete(gen);
-			resolve(answered);
+			resolve();
 		};
-		const timer = this.time.setTimeout(() => release(false), SyncEngine.FANOUT_ID_WAIT_MS);
+		const timer = this.time.setTimeout(release, SyncEngine.FANOUT_ID_WAIT_MS);
 		this.idMapFetchWaits.set(gen, { promise, release });
 		return promise;
 	}
 
-	private releaseFetchWaits(upTo = Number.POSITIVE_INFINITY, answered = false): void {
-		for (const [gen, wait] of [...this.idMapFetchWaits])
-			if (gen <= upTo) wait.release(answered);
+	private releaseFetchWaits(upTo = Number.POSITIVE_INFINITY): void {
+		for (const [gen, wait] of [...this.idMapFetchWaits]) if (gen <= upTo) wait.release();
 	}
 
 	/** A fan-out wants its fetch now. Its frame is evidence the server is up,
 	 *  so once per backoff window it may skip the failure floor as a probe: a
-	 *  success resets the failures. The probe's own failure does not open a new
-	 *  window (it is stamped in advance); the next scheduled failure does.
+	 *  success resets the failures, a failed probe does not escalate them.
 	 *  Otherwise urgency skips only the success cooldown. */
 	private pokeIdMapUrgent(): void {
-		const probe = this.idMapFailures >= 2 && this.idMapProbedAt !== this.idMapFailures;
-		if (probe) this.idMapProbedAt = this.idMapFailures + 1;
+		const probe = this.idMapFailures >= 2 && !this.idMapProbeUsed;
+		if (probe) this.idMapProbeUsed = this.idMapProbeNext = true;
 		this.idMapThrottle.poke(true, probe); // carried into the trailing run if mid-fetch
 	}
 
-	private settleIdMapPending(noteId: string, answered: boolean): void {
+	private settleIdMapPending(noteId: string): void {
 		const entry = this.idMapPending.get(noteId);
 		if (!entry) return;
 		this.idMapPending.delete(noteId);
-		entry.release(answered);
+		entry.release();
 	}
 
 	/** One throttled manifest pass for every id pending right now. */
@@ -1376,6 +1372,8 @@ export class SyncEngine {
 		if (this.idMapPending.size === 0) return false; // no GET: no cooldown either
 		// Counts for, and releases, everything asked before it started.
 		const gen = ++this.idMapFetchGen;
+		const probing = this.idMapProbeNext;
+		this.idMapProbeNext = false;
 		let manifest: ManifestResponse | null = null;
 		let ok = false;
 		try {
@@ -1396,10 +1394,12 @@ export class SyncEngine {
 			}
 		}
 		this.idMapDoneGen = gen;
-		this.idMapDoneOk = ok;
-		this.releaseFetchWaits(gen, ok); // I1
+		this.releaseFetchWaits(gen); // I1
 		if (!live()) return true;
-		this.idMapFailures = ok ? 0 : this.idMapFailures + 1;
+		const failuresBefore = this.idMapFailures;
+		if (ok) this.idMapFailures = 0;
+		else if (!probing) this.idMapFailures++; // a failed probe proves nothing new
+		if (this.idMapFailures !== failuresBefore) this.idMapProbeUsed = false; // a new window
 		if (this.idMapFailures >= SyncEngine.ID_MAP_RECONCILE_MAX_FAILURES) {
 			rlog().warn(
 				"sync",
@@ -1408,7 +1408,7 @@ export class SyncEngine {
 			// The count is kept, so the backoff stays at its cap until a fetch
 			// succeeds; an outage must not restart it at 2s.
 			for (const [id, entry] of [...this.idMapPending])
-				if (entry.askedGen < gen) this.settleIdMapPending(id, false);
+				if (entry.askedGen < gen) this.settleIdMapPending(id);
 			if (this.idMapPending.size > 0) this.idMapThrottle.poke();
 			return true;
 		}
@@ -1422,7 +1422,7 @@ export class SyncEngine {
 					until: this.time.now() + SyncEngine.ID_MAP_MISSING_TTL_MS,
 					fanoutUntil: this.idMapMissing.get(id)?.fanoutUntil ?? 0,
 				});
-				this.settleIdMapPending(id, true);
+				this.settleIdMapPending(id);
 			}
 		}
 		if (this.idMapPending.size > 0) this.idMapThrottle.poke();
@@ -1445,9 +1445,13 @@ export class SyncEngine {
 		if (this.idMapPending.size === 0) return;
 		const drop = this.syncBlocked || !this.noteIdMap;
 		for (const id of [...this.idMapPending.keys()]) {
-			if (drop || this.recentlyDeleted.has(id)) this.settleIdMapPending(id, false);
-			else if (this.idMapRefused.has(id) || this.noteIdMap?.pathForId(id) != null)
-				this.settleIdMapPending(id, true);
+			if (
+				drop ||
+				this.recentlyDeleted.has(id) ||
+				this.idMapRefused.has(id) ||
+				this.noteIdMap?.pathForId(id) != null
+			)
+				this.settleIdMapPending(id);
 		}
 	}
 
@@ -1467,7 +1471,7 @@ export class SyncEngine {
 			const ids = [...this.idMapClaimed];
 			this.idMapClaimed.clear();
 			for (const id of ids)
-				if (this.noteIdMap?.pathForId(id) != null) this.settleIdMapPending(id, true);
+				if (this.noteIdMap?.pathForId(id) != null) this.settleIdMapPending(id);
 		});
 	}
 
@@ -1572,7 +1576,7 @@ export class SyncEngine {
 	private idMapPending = this.track(
 		["vault", "destroy"],
 		new Map<string, IdMapEntry>(),
-		(entry) => entry.release(false),
+		(entry) => entry.release(),
 	);
 	/** id -> the path the manifest lists it at, which `isRefusedPath` refuses.
 	 *  A hiding layer, so every entry has named clearing events: re-validated
@@ -1591,18 +1595,17 @@ export class SyncEngine {
 	/** Fan-out waits, one shared per fetch generation (see fetchDone). */
 	private idMapFetchWaits = this.track(
 		["vault", "destroy"],
-		new Map<number, { promise: Promise<boolean>; release: (answered?: boolean) => void }>(),
-		(wait) => wait.release(false),
+		new Map<number, { promise: Promise<void>; release: () => void }>(),
+		(wait) => wait.release(),
 	);
 	private idMapFailures = 0;
-	/** The failure count at which a fan-out may not probe (its window's probe
-	 *  was spent). */
-	private idMapProbedAt = -1;
+	/** This backoff window's one fan-out probe is spent; the next run is it. */
+	private idMapProbeUsed = false;
+	private idMapProbeNext = false;
 	private idMapEpoch = 0;
 	/** Live fetches started, and the last one completed (never reset). */
 	private idMapFetchGen = 0;
 	private idMapDoneGen = 0;
-	private idMapDoneOk = false;
 	/** Resolved by the next gate opening (see whenGateOpens). */
 	private gateOpened: { promise: Promise<void>; resolve: () => void } | null = null;
 	private idMapPruneQueued = false;
@@ -1631,7 +1634,18 @@ export class SyncEngine {
 		this.noteIdSaveThrottle.reset();
 		this.idMapEpoch++;
 		this.idMapFailures = 0;
-		this.idMapProbedAt = -1;
+		this.idMapProbeUsed = this.idMapProbeNext = false;
+		// Release anyone parked on the gate (the strand heal): the vault they
+		// waited in is gone, or the engine is.
+		this.openGateWaiters();
+	}
+
+	/** The strand heal's terminal check: this id will never be fetched for
+	 *  (deleted here, or the manifest lists it at a path we refuse to map). */
+	idMapRefuses(noteId: string): boolean {
+		if (this.recentlyDeleted.has(noteId)) return true;
+		const path = this.idMapRefused.get(noteId);
+		return path !== undefined && this.isRefusedPath(path);
 	}
 
 	/** note_ids the SERVER is known to already have a note row for — learned
@@ -3255,11 +3269,7 @@ export class SyncEngine {
 			this.idMapThrottle.cancel();
 			this.pruneIdMapPending();
 			this.releaseFetchWaits();
-		} else if (this.gateOpened) {
-			const opened = this.gateOpened;
-			this.gateOpened = null;
-			opened.resolve();
-		}
+		} else this.openGateWaiters();
 		this.blockedSince = blocked ? (this.blockedSince ?? performance.now()) : null;
 		// Re-arm the announcement on every transition, so a LATER closure (a
 		// vault switch, a re-link) speaks up again instead of staying silent
@@ -3268,7 +3278,14 @@ export class SyncEngine {
 		devLog().log("lifecycle", `setSyncBlocked(${blocked})`);
 	}
 
-	/** Resolves when the sync gate next opens (now, if it is open). */
+	private openGateWaiters(): void {
+		const opened = this.gateOpened;
+		this.gateOpened = null;
+		opened?.resolve();
+	}
+
+	/** Resolves when the sync gate next opens (now, if it is open), or when
+	 *  a vault switch or destroy ends the wait. */
 	whenGateOpens(): Promise<void> {
 		if (!this.syncBlocked) return Promise.resolve();
 		if (!this.gateOpened) {
