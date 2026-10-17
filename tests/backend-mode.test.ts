@@ -101,6 +101,18 @@ describe("connectionState", () => {
 	});
 });
 
+describe("slots own their arrays", () => {
+	test("captureSlot and applySlot copy array values, so stash and live never share one", () => {
+		const settings = fullSettings({ excludedFolders: ["Archive"] });
+		const slot = captureSlot(settings);
+		settings.excludedFolders.push("Live");
+		expect(slot.excludedFolders).toEqual(["Archive"]);
+		applySlot(settings, slot);
+		slot.excludedFolders.push("Stash");
+		expect(settings.excludedFolders).toEqual(["Archive"]);
+	});
+});
+
 describe("excludedFolders are backend-scoped", () => {
 	test("a fresh backend starts with none; switching back restores them", () => {
 		const settings = fullSettings({ backendMode: "selfhost", excludedFolders: ["Archive"] });

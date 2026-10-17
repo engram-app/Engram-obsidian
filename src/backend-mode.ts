@@ -4,6 +4,7 @@ import {
 	BACKEND_SCOPED_FIELDS,
 	type BackendMode,
 	type BackendSlot,
+	DEFAULT_SETTINGS,
 	type EngramSyncSettings,
 } from "./types";
 
@@ -11,9 +12,14 @@ import {
 export function captureSlot(settings: EngramSyncSettings): BackendSlot {
 	const slot = {} as Record<string, unknown>;
 	for (const key of BACKEND_SCOPED_FIELDS) {
-		slot[key] = settings[key];
+		slot[key] = ownCopy(settings[key]);
 	}
 	return slot as BackendSlot;
+}
+
+/** Arrays are copied so a stash and the live settings never share one. */
+function ownCopy(value: unknown): unknown {
+	return Array.isArray(value) ? [...(value as unknown[])] : value;
 }
 
 /** Write a slot back onto settings IN PLACE. In-place is required, not
@@ -23,14 +29,16 @@ export function captureSlot(settings: EngramSyncSettings): BackendSlot {
 export function applySlot(settings: EngramSyncSettings, slot: BackendSlot): void {
 	const target = settings as unknown as Record<string, unknown>;
 	for (const key of BACKEND_SCOPED_FIELDS) {
-		if (key !== "excludedFolders") target[key] = slot[key];
+		// A list the slot lacks (stashed by an older version) starts empty,
+		// never undefined. Other fields round-trip exactly.
+		const missingList = slot[key] === undefined && Array.isArray(DEFAULT_SETTINGS[key]);
+		target[key] = missingList ? [] : ownCopy(slot[key]);
 	}
-	settings.excludedFolders = ownFolderList(slot.excludedFolders);
 }
 
 /** An owned excludedFolders array from whatever was stored: data written
  *  before the field existed has none, and a shared default must never be
- *  mutated through settings. Used by applySlot and loadSettings. */
+ *  mutated through settings. Used by loadSettings. */
 export function ownFolderList(value: unknown): string[] {
 	return Array.isArray(value) ? value.filter((f): f is string => typeof f === "string") : [];
 }
