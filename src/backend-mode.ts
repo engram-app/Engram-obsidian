@@ -1,5 +1,5 @@
 import { completeOrigin } from "./auth-state";
-import { engramWebUrl } from "./tabs/urls";
+import { ENGRAM_APP_URL, engramWebUrl } from "./tabs/urls";
 import {
 	BACKEND_SCOPED_FIELDS,
 	type BackendMode,
@@ -65,7 +65,9 @@ export function offersUpgrades(settings: Pick<EngramSyncSettings, "backendMode">
 export function upgradeUrlFor(
 	settings: Pick<EngramSyncSettings, "backendMode" | "apiUrl">,
 ): string | null {
-	return offersUpgrades(settings) ? `${engramWebUrl(settings.apiUrl)}/settings/billing` : null;
+	if (!offersUpgrades(settings)) return null;
+	// An unset apiUrl would give a relative "/settings/billing".
+	return `${engramWebUrl(settings.apiUrl) || ENGRAM_APP_URL}/settings/billing`;
 }
 
 /** A backend that has never been configured. */

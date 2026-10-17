@@ -294,6 +294,12 @@ describe("upgradeUrlFor", () => {
 		);
 	});
 
+	test("hosted service with no stored URL still links the hosted billing page", () => {
+		expect(upgradeUrlFor({ backendMode: "cloud", apiUrl: "" })).toBe(
+			"https://app.engram.page/settings/billing",
+		);
+	});
+
 	test("self-host offers no upgrade at all", () => {
 		expect(
 			upgradeUrlFor({ backendMode: "selfhost", apiUrl: "https://notes.example" }),
