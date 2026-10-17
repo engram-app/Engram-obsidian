@@ -440,6 +440,78 @@ describe("catchupViaSeqReplay", () => {
 		expect(cursorsSeen).toEqual([0, 0]);
 	});
 
+	function rewindEngine() {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		(engine as any).applySyncChange = mock(async () => true);
+		(engine as any).syncStateVaultId = "vault-x";
+		(engine as any).settings.vaultId = "vault-x";
+		return engine;
+	}
+	const feedRow = (seq: number) => ({
+		type: "note",
+		id: `n${seq}`,
+		seq,
+		path: `Notes/n${seq}.md`,
+		title: "t",
+		content: "x",
+		folder: "Notes",
+		tags: [],
+		mtime: 1,
+		updated_at: "2026-01-01T00:00:00Z",
+		deleted: false,
+	});
+
+	test("a replay that fails part-way resumes from its progress, not the rewind", async () => {
+		const engine = rewindEngine();
+		engine.setCatchupSeq(100);
+		engine.requestFullReplay();
+		const cursorsSeen: number[] = [];
+		let call = 0;
+		engine.setCrdtCatchupSince(async (cursor: number) => {
+			cursorsSeen.push(cursor);
+			call += 1;
+			// First run: one page reaching seq 40 of 100, then the network drops.
+			if (call === 1) return { changes: [feedRow(40)], has_more: true, next_seq: 40 };
+			if (call === 2) throw new Error("offline");
+			return { changes: [], has_more: false, next_seq: null };
+		});
+
+		await engine.catchupViaSeqReplay(); // fails at 40%
+		await engine.catchupViaSeqReplay(); // the retry
+
+		expect(cursorsSeen).toEqual([0, 40, 40]);
+	});
+
+	test("a restart before the first page still replays from the rewind", async () => {
+		const engine = rewindEngine();
+		engine.setCatchupSeq(100);
+		engine.requestFullReplay();
+		engine.setCrdtCatchupSince(async () => {
+			throw new Error("offline");
+		});
+		await engine.catchupViaSeqReplay();
+		expect(engine.getSeqRewindFloor()).toBe(0);
+	});
+
+	test("#1065 validator floor: one re-serve from the floor, then normal resumption", async () => {
+		const engine = rewindEngine();
+		engine.setCatchupSeq(42);
+		engine.setSeqRewindFloor(10); // a validator rewind
+		const cursorsSeen: number[] = [];
+		engine.setCrdtCatchupSince(async (cursor: number) => {
+			cursorsSeen.push(cursor);
+			return cursor === 10
+				? { changes: [feedRow(42)], has_more: false, next_seq: 42 }
+				: { changes: [], has_more: false, next_seq: null };
+		});
+
+		await engine.catchupViaSeqReplay();
+		await engine.catchupViaSeqReplay();
+
+		expect(cursorsSeen).toEqual([10, 42]);
+		expect(engine.getSeqRewindFloor()).toBeNull();
+	});
+
 	test("a pending rewind belongs to its vault: a vault switch drops it", async () => {
 		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
 		engine.requestFullReplay();

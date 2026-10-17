@@ -7272,6 +7272,17 @@ export class SyncEngine {
 					// idempotent, so persisting per page is at-least-once safe.
 					this.setCatchupSeq(seq);
 					this.setCatchupId(id);
+					// The rewind is spent as the replay applies: raise it with the
+					// cursor so a retry after a fetch failure resumes here rather than
+					// from the floor. Before the first page it stays put, so a restart
+					// then still replays from it.
+					if (
+						!enumerateOnly &&
+						this.seqRewindFloor !== null &&
+						this.rewindGen === rewindGen
+					) {
+						this.seqRewindFloor = Math.max(this.seqRewindFloor, seq);
+					}
 					await this.saveData({
 						catchupSeq: this.getCatchupSeq(),
 						catchupId: this.getCatchupId(),
