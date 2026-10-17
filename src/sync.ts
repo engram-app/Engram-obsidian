@@ -6734,6 +6734,8 @@ export class SyncEngine {
 		deletes: number;
 		serverIds: Set<string>;
 		serverAttachmentPaths: Set<string>;
+		/** Latest path per note id. Only on an exclusive `enumerateOnly` run. */
+		serverNotePaths?: Map<string, string>;
 		/** `true` when THIS call executed the replay loop exclusively (so
 		 *  `serverIds`/`serverAttachmentPaths` are real + complete); `false` when it
 		 *  COALESCED behind an in-flight replay and returned EMPTY sets. Destructive
@@ -6855,9 +6857,10 @@ export class SyncEngine {
 			// must tick the progress feed once, or `current` outruns the plan's
 			// denominator and the bar pins at 100% while files keep arriving.
 			const tickedKeys = new Set<string>();
-			// Latest path per note id across every pass, so ignore filtering below
-			// judges a note by where it ended up, not by each op along the way.
-			const notePaths = new Map<string, string>();
+			// Latest path per note id, for push-all-delete-remote's ignore filter
+			// (see pushAllInner). Built only for that enumeration, never on the
+			// applying replays every poll runs.
+			const notePaths = opts.enumerateOnly ? new Map<string, string>() : undefined;
 			// This session owns the tick fan-out: its own caller's callback and
 			// every coalescer that registers while it runs see the same stream.
 			if (opts.onFileApplied) this.seqReplayFileListeners.add(opts.onFileApplied);
@@ -6897,13 +6900,6 @@ export class SyncEngine {
 					if (!pass.complete) complete = false;
 					if (pass.fromGenesis) fromGenesis = true;
 				} while (this.seqReplayAgain);
-				// Ignored notes are intentionally unsynced, never local: left in, a
-				// push-all-delete would treat them as server-only extras and delete
-				// them. Judged on the LATEST path, so a note renamed into an ignored
-				// folder is ignored even though an earlier op put its id in the set.
-				for (const [id, path] of notePaths) {
-					if (this.shouldIgnore(normalizePath(path))) serverIds.delete(id);
-				}
 				// Outcome check. `applied` counts every row the feed handed us;
 				// `files` and `deletes` count what actually reached disk. All three
 				// passes done and applied > 0 with NOTHING materialised or trashed
@@ -6949,6 +6945,7 @@ export class SyncEngine {
 				deletes,
 				serverIds,
 				serverAttachmentPaths,
+				serverNotePaths: notePaths,
 				ran: true,
 				complete,
 			};
@@ -6984,6 +6981,7 @@ export class SyncEngine {
 		failed: number;
 		serverIds: Set<string>;
 		serverAttachmentPaths: Set<string>;
+		serverNotePaths?: Map<string, string>;
 	} | null> {
 		for (let attempt = 0; attempt < 10; attempt++) {
 			const res = await this.catchupViaSeqReplay(opts);
@@ -7229,12 +7227,10 @@ export class SyncEngine {
 					// Every non-deleted id/path SEEN (applied or skipped) — the
 					// pull-all-delete / push-all-delete choices (Tasks 5/5b/6) need the
 					// full server id-set and attachment-path-set, not just the
-					// successfully-applied subset. Ignored attachments (keyed by path)
-					// are left out here; ignored notes are dropped by the caller on
-					// their latest path (see catchupViaSeqReplay).
+					// successfully-applied subset. Unfiltered: a caller that must skip
+					// ignored paths does so itself (see pushAllInner).
 					if (c.type === "attachment") {
-						if (!c.deleted && !(c.path && this.shouldIgnore(normalizePath(c.path))))
-							serverAttachmentPaths.add(c.path);
+						if (!c.deleted) serverAttachmentPaths.add(c.path);
 					} else if (c.id) {
 						if (c.path) notePaths?.set(c.id, c.path);
 						if (!c.deleted) serverIds.add(c.id);
@@ -11147,17 +11143,25 @@ export class SyncEngine {
 					"replace-remote extras enumeration never ran exclusively (persistent replay contention); skipping server-extra deletes — the push still ran",
 				);
 			} else {
-				const { serverIds, serverAttachmentPaths } = replay;
+				const { serverIds, serverAttachmentPaths, serverNotePaths } = replay;
 				const snap = opts.localSnapshot ?? this.snapshotLocalPaths();
 				const localIds = new Set<string>();
 				for (const path of snap) {
 					const id = this.noteIdMap?.get(path);
 					if (id) localIds.add(id);
 				}
+				// Ignored paths are intentionally unsynced, never in the snapshot:
+				// left in, they would read as server-only extras and be deleted.
+				// Notes are judged on their LATEST path, so one renamed into an
+				// ignored folder is spared even though an earlier op listed its id.
+				const ignored = (p: string | undefined) =>
+					p !== undefined && this.shouldIgnore(normalizePath(p));
 				replaceExtras = {
-					ids: [...serverIds].filter((id) => !localIds.has(id)),
+					ids: [...serverIds].filter(
+						(id) => !localIds.has(id) && !ignored(serverNotePaths?.get(id)),
+					),
 					attachments: [...serverAttachmentPaths].filter(
-						(p) => !snap.has(normalizePath(p)),
+						(p) => !snap.has(normalizePath(p)) && !ignored(p),
 					),
 				};
 			}

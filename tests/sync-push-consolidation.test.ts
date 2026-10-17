@@ -544,6 +544,41 @@ describe("SyncEngine.pushAll: replace-remote never deletes ignored server paths"
 	});
 });
 
+describe("SyncEngine.pullAll: a rename into an ignored folder is not a local extra", () => {
+	// Another device moved Notes/x.md into an excluded folder. This device still
+	// maps its old local path to that id; the wipe must not trash it as an extra
+	// just because the note's latest server path is ignored here.
+	test("the still-mapped local file survives pull-all-delete-local", async () => {
+		const local = new TFile("Notes/x.md", Date.now());
+		const { engine, app } = makeEngine([local], { "Notes/x.md": "# x" });
+		(engine as any).settings.excludedFolders = ["Archive"];
+		(engine as any).noteIdMap.set("Notes/x.md", "moved-id");
+		(engine as any).applySyncChange = mock(async () => false);
+		const note = (seq: number, path: string) => ({
+			type: "note",
+			id: "moved-id",
+			seq,
+			path,
+			title: path,
+			content: "x",
+			folder: "",
+			tags: [],
+			mtime: seq,
+			updated_at: "2026-01-01T00:00:00Z",
+			deleted: false,
+		});
+		engine.setCrdtCatchupSince(async () => ({
+			changes: [note(1, "Notes/x.md"), note(2, "Archive/x.md")],
+			has_more: false,
+			next_seq: null,
+		}));
+
+		await engine.pullAll({ deleteLocalExtras: true });
+
+		expect(app.fileManager.trashFile).not.toHaveBeenCalled();
+	});
+});
+
 describe("pushPartitioned — per-file genesis (no batch RPC)", () => {
 	// per-file rewrite: genesis notes ride the same bounded per-file loop
 	// as everything else. pushFile's socket-native genesis (crdt_create) already
