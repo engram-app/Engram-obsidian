@@ -899,6 +899,21 @@ describe("Sync again survives a restart before the push pass", () => {
 });
 
 describe("SyncEngine.untrackedNotePaths", () => {
+	test("a synced note the server deleted while excluded counts as new", () => {
+		const files = ["Archive/kept.md", "Archive/deleted-on-server.md"].map(
+			(p) => new TFile(p, 1),
+		);
+		const { engine } = makeEngine(files);
+		engine.importSyncState({
+			"Archive/kept.md": { hash: 1 },
+			"Archive/deleted-on-server.md": { hash: 2 },
+		});
+		// The tombstone's apply unmapped it (applyOp drops the id even for an
+		// ignored path); the still-live note stays mapped.
+		(engine as any).noteIdMap.set("Archive/kept.md", "kept-id");
+		expect(engine.untrackedNotePaths("Archive")).toEqual(["Archive/deleted-on-server.md"]);
+	});
+
 	test("a note another device already uploaded is not new", () => {
 		const files = ["Archive/mine.md", "Archive/theirs.md"].map((p) => new TFile(p, 1));
 		const { engine } = makeEngine(files);
@@ -925,6 +940,8 @@ describe("SyncEngine.untrackedNotePaths", () => {
 		);
 		const { engine } = makeEngine(files);
 		engine.importSyncState({ "Archive/old.md": { hash: 1 } });
+		// A synced note is in the vault index, as in a real vault.
+		(engine as any).noteIdMap.set("Archive/old.md", "old-id");
 		expect(engine.untrackedNotePaths("Archive")).toEqual(["Archive/new.md"]);
 	});
 });

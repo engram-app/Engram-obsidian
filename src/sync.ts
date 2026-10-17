@@ -9316,10 +9316,21 @@ export class SyncEngine {
 	private reincludedFolders = this.track(["vault"], new Set<string>());
 
 	/** Local notes under `folder` a re-include would create on the server
-	 *  (Sync again's quota check): syncable under the plan's ignore rules, never
-	 *  synced here, and unknown to the vault index (which maps every path the
-	 *  server holds, even in a folder this device ignores). No server
-	 *  enumeration, so a path the index has not learned yet still counts. */
+	 *  (Sync again's quota check): syncable under the plan's ignore rules, and
+	 *  not held by the server per serverHolds (so a note the server deleted
+	 *  while the folder was excluded counts again). No server enumeration, so a
+	 *  path the index has not learned yet still counts. */
+	/** Does the server still hold a note at `path`, as far as this device can
+	 *  tell without asking? The vault index maps every live server path, even
+	 *  in a folder this device ignores, and a server tombstone unmaps it
+	 *  (applyOp drops the id for an ignored path too). So a note synced here
+	 *  but deleted on the server meanwhile reads as not held. Without an index
+	 *  (never wired), fall back to this device's own sync record. */
+	private serverHolds(path: string): boolean {
+		if (!this.noteIdMap) return this.syncState.has(path) || this.getCrdtHead(path) != null;
+		return !!this.noteIdMap.get(path);
+	}
+
 	untrackedNotePaths(folder: string): string[] {
 		// The plan's own ignore predicate, minus the folder's exclusion.
 		const others = (this.settings.excludedFolders ?? []).filter((f) => f !== folder);
@@ -9330,11 +9341,8 @@ export class SyncEngine {
 					inExcludedFolder(f.path, [folder]) &&
 					this.isSyncable(f) &&
 					!this.shouldIgnore(f.path, others) &&
-					// The vault index already maps it: another device uploaded it.
-					!this.noteIdMap?.get(f.path) &&
 					!this.isBinaryFile(f) &&
-					this.getCrdtHead(f.path) == null &&
-					!this.syncState.has(f.path),
+					!this.serverHolds(f.path),
 			)
 			.map((f: TFile) => f.path);
 	}
