@@ -8,6 +8,7 @@ import {
 	modeForUrl,
 	offersUpgrades,
 	switchMode,
+	upgradeUrlFor,
 } from "../src/backend-mode";
 import { BACKEND_SCOPED_FIELDS, type EngramSyncSettings } from "../src/types";
 
@@ -263,5 +264,19 @@ describe("offersUpgrades", () => {
 
 	test("an unknown mode stays quiet rather than advertising billing", () => {
 		expect(offersUpgrades({})).toBe(false);
+	});
+});
+
+describe("upgradeUrlFor", () => {
+	test("hosted service: the backend's own web app billing page", () => {
+		expect(upgradeUrlFor({ backendMode: "cloud", apiUrl: "https://api.engram.page" })).toBe(
+			"https://app.engram.page/settings/billing",
+		);
+	});
+
+	test("self-host offers no upgrade at all", () => {
+		expect(
+			upgradeUrlFor({ backendMode: "selfhost", apiUrl: "https://notes.example" }),
+		).toBeNull();
 	});
 });

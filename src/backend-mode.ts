@@ -1,4 +1,5 @@
 import { completeOrigin } from "./auth-state";
+import { engramWebUrl } from "./tabs/urls";
 import {
 	BACKEND_SCOPED_FIELDS,
 	type BackendMode,
@@ -49,6 +50,14 @@ export function connectionState(
  *  advertise billing until we know it exists. */
 export function offersUpgrades(settings: Pick<EngramSyncSettings, "backendMode">): boolean {
 	return settings.backendMode === "cloud";
+}
+
+/** Billing page for an Upgrade button, or null where there is nothing to buy
+ *  (see offersUpgrades). Uses the backend's own web app, not a hardcoded host. */
+export function upgradeUrlFor(
+	settings: Pick<EngramSyncSettings, "backendMode" | "apiUrl">,
+): string | null {
+	return offersUpgrades(settings) ? `${engramWebUrl(settings.apiUrl)}/settings/billing` : null;
 }
 
 /** A backend that has never been configured. */

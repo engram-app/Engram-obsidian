@@ -6,6 +6,7 @@ import type { EngramApi } from "../src/api";
 import { CONTENT_KEY } from "../src/crdt/frontmatter-codec";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { ProviderRegistry } from "../src/crdt/provider-registry";
+import { excludedToIgnorePatterns, mergeIgnorePatterns, ROOT_FOLDER } from "../src/folder-picker";
 import { LimitExceededError } from "../src/limit-error";
 import { rlog } from "../src/remote-log";
 import { fnv1a, SyncEngine } from "../src/sync";
@@ -208,6 +209,21 @@ describe("SyncEngine.shouldIgnore", () => {
 		expect(customEngine.shouldIgnore("secret.md")).toBe(true);
 		// Normal files still pass
 		expect(customEngine.shouldIgnore("Notes/Hello.md")).toBe(false);
+	});
+
+	test("patterns written by the folder picker exclude exactly the unticked folders", () => {
+		const paths = ["Root.md", "Arch/a.md", "Archive/b.md", "Notes/c.md"];
+		const patterns = excludedToIgnorePatterns(["Arch", ROOT_FOLDER], paths);
+		const pickerEngine = createEngine({
+			ignorePatterns: mergeIgnorePatterns("drafts/", patterns),
+		});
+		expect(pickerEngine.shouldIgnore("Arch/a.md")).toBe(true);
+		expect(pickerEngine.shouldIgnore("Root.md")).toBe(true);
+		// Shared prefix, different folder: must still sync.
+		expect(pickerEngine.shouldIgnore("Archive/b.md")).toBe(false);
+		expect(pickerEngine.shouldIgnore("Notes/c.md")).toBe(false);
+		// The pre-existing pattern survives the merge.
+		expect(pickerEngine.shouldIgnore("drafts/x.md")).toBe(true);
 	});
 });
 

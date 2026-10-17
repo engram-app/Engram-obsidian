@@ -1961,3 +1961,27 @@ body.is-mobile .engram-support-buttons > a {
 	color: var(--text-muted);
 }
 
+
+/* Folder picker (folder-picker.ts): one checkbox row per top-level folder. */
+.engram-folder-picker {
+	list-style: none;
+	margin: 0.5em 0;
+	padding: 0;
+	max-height: 16em;
+	overflow-y: auto;
+}
+
+.engram-folder-picker-total {
+	color: var(--text-muted);
+}
+
+.engram-folder-picker-total.is-over {
+	color: var(--text-error);
+}
+
+/* No display rule here: the row is toggled with the hidden attribute, which a
+   display value would override. */
+.engram-sync-preview-over-limit-ack {
+	color: var(--text-muted);
+	font-size: 0.9em;
+}

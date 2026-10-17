@@ -3,6 +3,7 @@ import type { Dict } from "..";
 // 简体中文
 const zh: Dict = {
 	" (default)": "(默认)",
+	"(top level)": "(顶层)",
 	"({count} errors)": "({count}个错误)",
 	"...": "...",
 	'... "{name}" ...': '... "{name}" ...',
@@ -10,8 +11,8 @@ const zh: Dict = {
 	"1. Make an account": "1. 创建账号",
 	"10 GB attachments": "10 GB 附件",
 	"10 vaults, unlimited devices": "10 个知识库，无限设备",
-	"2,000 notes searchable": "可搜索 2000 个笔记",
 	"2. Connect your vault to Engram": "2. 将您的仓库连接到 Engram",
+	"3,000 notes, all searchable": "3000 篇笔记，全部可搜索",
 	"3. Connect your AI": "3. 连接您的 AI",
 	"50 GB attachments": "50 GB 附件",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
@@ -85,11 +86,13 @@ const zh: Dict = {
 	"Connected — polling": "已连接 — 正在轮询",
 	"Connected — waiting for first sync decision": "已连接 — 正在等待首次同步决策",
 	"Connection failed": "连接失败",
+	Continue: "继续",
 	"Could not compare with the cloud. Check your connection.": "无法与云端比较。检查您的连接。",
 	"Could not create the vault — check your connection and try again.":
 		"无法创建仓库 — 请检查您的连接并重试。",
 	"Could not load vaults: {error}": "无法加载知识库: {error}",
 	"Could not reach Engram — check connection": "无法连接到 Engram，请检查连接",
+	"Could not save your folder choice. Try again.": "无法保存文件夹选择。请重试。",
 	"Couldn't create vault — the name may be invalid or already in use.":
 		"无法创建仓库 — 可能是名称无效或已被使用。",
 	"Couldn't send your feedback, please try again.": "无法发送您的反馈，请重试。",
@@ -247,6 +250,7 @@ const zh: Dict = {
 	"GitHub Sponsors": "GitHub 赞助",
 	"Gradle build cache": "Gradle 构建缓存",
 	"How do you feel about Engram?": "您对 Engram 感觉如何？",
+	"I understand {count} notes will not sync.": "我理解 {count} 笔记不会同步。",
 	Idea: "建议",
 	"If this plugin saves you time, consider supporting development.":
 		"如果此插件节省了您的时间，请考虑赞助开发。",
@@ -381,6 +385,7 @@ const zh: Dict = {
 	"See full pricing": "查看完整定价",
 	"See the AI setup guide": "查看 AI 设置指南",
 	"Select which vault this plugin syncs with.": "选择此插件要同步的仓库。",
+	"Selected: {selected} / {limit}": "已选: {selected} / {limit}",
 	"Self-hosted": "自托管",
 	Semantic: "语义",
 	"Semantic search": "语义搜索",
@@ -465,6 +470,8 @@ const zh: Dict = {
 	"This server is self-hosted, so feedback is not collected here. ":
 		"此服务器为自托管，因此不收集反馈。",
 	"This vault": "此仓库",
+	"This vault has {count} notes. Your plan syncs {limit}.":
+		"此仓库有 {count} 笔记。您的套餐同步 {limit}。",
 	"This vault is empty on the server. Upload your {what}?":
 		"此仓库在服务器上为空。上传 {what} 吗？",
 	"Too large for the server": "文件过大",

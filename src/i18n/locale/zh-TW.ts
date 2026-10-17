@@ -3,6 +3,7 @@ import type { Dict } from "..";
 // 繁體中文
 const zhTW: Dict = {
 	" (default)": "(預設)",
+	"(top level)": "(頂層)",
 	"({count} errors)": "({count} 錯誤)",
 	"...": "...",
 	'... "{name}" ...': '... "{name}" ...',
@@ -10,8 +11,8 @@ const zhTW: Dict = {
 	"1. Make an account": "1. 建立帳號",
 	"10 GB attachments": "10 GB 附件",
 	"10 vaults, unlimited devices": "10 個知識庫，無限部裝置",
-	"2,000 notes searchable": "可搜尋 2,000 筆筆記",
 	"2. Connect your vault to Engram": "2. 將您的儲存庫連接到 Engram",
+	"3,000 notes, all searchable": "3000 筆筆記，全部可搜尋",
 	"3. Connect your AI": "3. 連接您的 AI",
 	"50 GB attachments": "50 GB 附件",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
@@ -85,11 +86,13 @@ const zhTW: Dict = {
 	"Connected — polling": "已連接 — 正在輪詢",
 	"Connected — waiting for first sync decision": "已連接 — 正在等待首次同步決定",
 	"Connection failed": "連線失敗",
+	Continue: "繼續",
 	"Could not compare with the cloud. Check your connection.": "無法與雲端比較。請檢查您的連線。",
 	"Could not create the vault — check your connection and try again.":
 		"無法建立儲存庫 — 請檢查您的連線並重試。",
 	"Could not load vaults: {error}": "無法載入知識庫：{error}",
 	"Could not reach Engram — check connection": "無法連線到 Engram，請檢查連線",
+	"Could not save your folder choice. Try again.": "儲存資料夾選擇失敗。請重試。",
 	"Couldn't create vault — the name may be invalid or already in use.":
 		"無法建立儲存庫 — 名稱可能無效或已被使用。",
 	"Couldn't send your feedback, please try again.": "回饋傳送失敗，請再試一次。",
@@ -249,6 +252,7 @@ const zhTW: Dict = {
 	"GitHub Sponsors": "GitHub Sponsors",
 	"Gradle build cache": "Gradle 建置快取",
 	"How do you feel about Engram?": "您對 Engram 的感受如何？",
+	"I understand {count} notes will not sync.": "我理解 {count} 筆記不會同步。",
 	Idea: "建議",
 	"If this plugin saves you time, consider supporting development.":
 		"如果此插件能節省您的時間，請考慮贊助開發。",
@@ -385,6 +389,7 @@ const zhTW: Dict = {
 	"See full pricing": "詳閱價格",
 	"See the AI setup guide": "參閱 AI 設定指南",
 	"Select which vault this plugin syncs with.": "選擇此插件要同步的儲存庫。",
+	"Selected: {selected} / {limit}": "已選取：{selected} / {limit}",
 	"Self-hosted": "自行託管",
 	Semantic: "語意",
 	"Semantic search": "語意搜尋",
@@ -469,6 +474,8 @@ const zhTW: Dict = {
 	"This server is self-hosted, so feedback is not collected here. ":
 		"此伺服器為自行託管，因此不在此處收集回饋。",
 	"This vault": "此儲存庫",
+	"This vault has {count} notes. Your plan syncs {limit}.":
+		"此儲存庫有 {count} 筆記。您的方案同步 {limit}。",
 	"This vault is empty on the server. Upload your {what}?":
 		"此儲存庫在伺服器上是空的。要上傳 {what} 嗎？",
 	"Too large for the server": "檔案過大",

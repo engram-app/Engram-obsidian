@@ -24,7 +24,7 @@ import {
 	seededAccessToken,
 } from "./auth";
 import { migrateCloudApiUrl, withClearedAuth } from "./auth-state";
-import { migrateBackendMode, offersUpgrades, switchMode } from "./backend-mode";
+import { migrateBackendMode, offersUpgrades, switchMode, upgradeUrlFor } from "./backend-mode";
 import { BaseStore } from "./base-store";
 import {
 	connectRetryDelayMs,
@@ -44,6 +44,7 @@ import { type CrdtOp, CrdtOpQueue, makeDropReporter } from "./crdt-op-queue";
 import { createDebugApi, installDebugApi, uninstallDebugApi } from "./debug-api";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
 import { isMarkdownPath } from "./file-kind";
+import { mergeIgnorePatterns } from "./folder-picker";
 import { setLogSink } from "./has-logging";
 import { noteRef } from "./note-ref";
 import { PromiseTracker, setActiveTracker } from "./track-promise";
@@ -73,7 +74,7 @@ import { type GateEvent, reconcileColdStart, SyncEngine } from "./sync";
 import { channelConnectionKey, computeSyncFingerprint } from "./sync-fingerprint";
 import { SyncLog } from "./sync-log";
 import { SyncLogModal } from "./sync-log-modal";
-import { planLoadErrorMessage, SyncPreviewModal } from "./sync-preview-modal";
+import { fetchNotesCap, planLoadErrorMessage, SyncPreviewModal } from "./sync-preview-modal";
 import {
 	describePlannedWork,
 	type PlannedPhase,
@@ -3527,7 +3528,27 @@ export default class EngramSyncPlugin extends Plugin {
 						return this.syncEngine.computeSyncPlan("full");
 					},
 					onDiagnosticsToggle: (enabled) => void this.applyDiagnosticsToggle(enabled),
+					upgradeUrl: upgradeUrlFor(this.settings),
+					// Over-limit step: the unticked folders become ignore patterns.
+					// Persisted without saveSettings, which would re-fire this flow
+					// for the closed gate and stack a second modal.
+					applyExclusions: async (patterns) => {
+						this.settings.ignorePatterns = mergeIgnorePatterns(
+							this.settings.ignorePatterns,
+							patterns,
+						);
+						this.syncEngine.updateSettings(this.settings);
+						await this.savePluginData(this.syncEngine.getLastSync());
+						this.settingTab?.rerender();
+						return this.syncEngine.computeSyncPlan("full");
+					},
 				});
+
+				// The notes cap decides whether the over-limit step shows. Never
+				// awaited: a slow or failed lookup just means no step.
+				void fetchNotesCap(() => this.api.getBillingUsage()).then((cap) =>
+					modal.setNotesCap(cap),
+				);
 
 				// Compute the plan off the critical path and stream it into the
 				// already-open modal. A failure surfaces in the modal's loading

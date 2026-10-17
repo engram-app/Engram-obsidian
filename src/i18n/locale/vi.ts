@@ -3,6 +3,7 @@ import type { Dict } from "..";
 // Tiếng Việt
 const vi: Dict = {
 	" (default)": " (mặc định)",
+	"(top level)": "(cấp cao nhất)",
 	"({count} errors)": "({count} lỗi)",
 	"...": "...",
 	'... "{name}" ...': '... "{name}" ...',
@@ -10,8 +11,8 @@ const vi: Dict = {
 	"1. Make an account": "1. Tạo tài khoản",
 	"10 GB attachments": "10 GB tệp đính kèm",
 	"10 vaults, unlimited devices": "10 kho lưu trữ, số lượng thiết bị không giới hạn",
-	"2,000 notes searchable": "Có thể tìm kiếm 2.000 ghi chú",
 	"2. Connect your vault to Engram": "2. Kết nối kho lưu trữ của bạn với Engram",
+	"3,000 notes, all searchable": "3.000 ghi chú, tất cả đều có thể tìm kiếm",
 	"3. Connect your AI": "3. Kết nối AI của bạn",
 	"50 GB attachments": "50 GB tệp đính kèm",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
@@ -93,12 +94,15 @@ const vi: Dict = {
 	"Connected — waiting for first sync decision":
 		"Đã kết nối — đang chờ quyết định đồng bộ hóa đầu tiên",
 	"Connection failed": "Kết nối không thành công",
+	Continue: "Tiếp tục",
 	"Could not compare with the cloud. Check your connection.":
 		"Không thể so sánh với đám mây. Kiểm tra kết nối của bạn.",
 	"Could not create the vault — check your connection and try again.":
 		"Không thể tạo kho lưu trữ — hãy kiểm tra kết nối của bạn và thử lại.",
 	"Could not load vaults: {error}": "Không thể tải kho lưu trữ: {error}",
 	"Could not reach Engram — check connection": "Không thể kết nối với Engram — kiểm tra kết nối",
+	"Could not save your folder choice. Try again.":
+		"Không thể lưu lựa chọn thư mục của bạn. Thử lại.",
 	"Couldn't create vault — the name may be invalid or already in use.":
 		"Không thể tạo kho lưu trữ — tên có thể không hợp lệ hoặc đã được sử dụng.",
 	"Couldn't send your feedback, please try again.":
@@ -267,6 +271,8 @@ const vi: Dict = {
 	"GitHub Sponsors": "GitHub Sponsors",
 	"Gradle build cache": "Bộ nhớ đệm Gradle",
 	"How do you feel about Engram?": "Bạn cảm thấy thế nào về Engram?",
+	"I understand {count} notes will not sync.":
+		"Tôi hiểu rằng {count} ghi chú sẽ không được đồng bộ hóa.",
 	Idea: "Ý tưởng",
 	"If this plugin saves you time, consider supporting development.":
 		"Nếu plugin này giúp bạn tiết kiệm thời gian, hãy cân nhắc hỗ trợ phát triển.",
@@ -412,6 +418,7 @@ const vi: Dict = {
 	"See full pricing": "Xem chi tiết giá",
 	"See the AI setup guide": "Xem hướng dẫn thiết lập AI",
 	"Select which vault this plugin syncs with.": "Chọn kho lưu trữ mà plugin này sẽ đồng bộ hóa.",
+	"Selected: {selected} / {limit}": "Đã chọn: {selected} / {limit}",
 	"Self-hosted": "Tự lưu trữ",
 	Semantic: "Ngữ nghĩa",
 	"Semantic search": "Tìm kiếm ngữ nghĩa",
@@ -502,6 +509,8 @@ const vi: Dict = {
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Máy chủ này được tự lưu trữ, vì vậy phản hồi không được thu thập ở đây. ",
 	"This vault": "Kho lưu trữ này",
+	"This vault has {count} notes. Your plan syncs {limit}.":
+		"Kho lưu trữ này có {count} ghi chú. Gói của bạn đồng bộ hóa {limit}.",
 	"This vault is empty on the server. Upload your {what}?":
 		"Kho lưu trữ này trống trên máy chủ. Bạn muốn tải lên {what}?",
 	"Too large for the server": "Quá lớn cho máy chủ",

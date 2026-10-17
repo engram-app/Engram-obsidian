@@ -3,6 +3,7 @@ import type { Dict } from "..";
 // Bahasa Indonesia
 const id: Dict = {
 	" (default)": " (bawaan)",
+	"(top level)": "(tingkat atas)",
 	"({count} errors)": "({count} kesalahan)",
 	"...": "...",
 	'... "{name}" ...': '... "{name}" ...',
@@ -10,8 +11,8 @@ const id: Dict = {
 	"1. Make an account": "1. Buat akun",
 	"10 GB attachments": "10 GB lampiran",
 	"10 vaults, unlimited devices": "10 Vault, perangkat tanpa batas",
-	"2,000 notes searchable": "2.000 catatan dapat dicari",
 	"2. Connect your vault to Engram": "2. Hubungkan Vault Anda ke Engram",
+	"3,000 notes, all searchable": "3.000 catatan, semuanya dapat dicari",
 	"3. Connect your AI": "3. Hubungkan AI Anda",
 	"50 GB attachments": "50 GB lampiran",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
@@ -95,6 +96,7 @@ const id: Dict = {
 	"Connected — waiting for first sync decision":
 		"Terhubung — menunggu keputusan sinkronisasi pertama",
 	"Connection failed": "Koneksi gagal",
+	Continue: "Lanjutkan",
 	"Could not compare with the cloud. Check your connection.":
 		"Tidak dapat membandingkan dengan cloud. Periksa koneksi Anda.",
 	"Could not create the vault — check your connection and try again.":
@@ -102,6 +104,8 @@ const id: Dict = {
 	"Could not load vaults: {error}": "Tidak dapat memuat Vault: {error}",
 	"Could not reach Engram — check connection":
 		"Tidak dapat terhubung ke Engram — periksa koneksi",
+	"Could not save your folder choice. Try again.":
+		"Tidak dapat menyimpan pilihan folder Anda. Coba lagi.",
 	"Couldn't create vault — the name may be invalid or already in use.":
 		"Tidak dapat membuat vault — nama mungkin tidak valid atau sudah digunakan.",
 	"Couldn't send your feedback, please try again.":
@@ -270,6 +274,8 @@ const id: Dict = {
 	"GitHub Sponsors": "GitHub Sponsor",
 	"Gradle build cache": "Cache build Gradle",
 	"How do you feel about Engram?": "Bagaimana pendapat Anda tentang Engram?",
+	"I understand {count} notes will not sync.":
+		"Saya mengerti {count} catatan tidak akan disinkronkan.",
 	Idea: "Ide",
 	"If this plugin saves you time, consider supporting development.":
 		"Jika plugin ini menghemat waktu Anda, pertimbangkan untuk mendukung pengembangan.",
@@ -416,6 +422,7 @@ const id: Dict = {
 	"See the AI setup guide": "Lihat panduan pengaturan AI",
 	"Select which vault this plugin syncs with.":
 		"Pilih Vault yang akan disinkronkan oleh plugin ini.",
+	"Selected: {selected} / {limit}": "Dipilih: {selected} / {limit}",
 	"Self-hosted": "Dijalankan sendiri",
 	Semantic: "Semantik",
 	"Semantic search": "Pencarian semantik",
@@ -507,6 +514,8 @@ const id: Dict = {
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Server ini dihosting sendiri, jadi umpan balik tidak dikumpulkan di sini. ",
 	"This vault": "Vault ini",
+	"This vault has {count} notes. Your plan syncs {limit}.":
+		"Vault ini memiliki {count} catatan. Paket Anda menyinkronkan {limit}.",
 	"This vault is empty on the server. Upload your {what}?":
 		"Vault ini kosong di server. Apakah Anda ingin mengunggah {what}?",
 	"Too large for the server": "Terlalu besar untuk server",

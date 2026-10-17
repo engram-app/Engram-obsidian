@@ -3,6 +3,7 @@ import type { Dict } from "..";
 // Bahasa Melayu
 const ms: Dict = {
 	" (default)": " (lalai)",
+	"(top level)": "(tingkat atas)",
 	"({count} errors)": "({count} ralat)",
 	"...": "...",
 	'... "{name}" ...': '... "{name}" ...',
@@ -10,8 +11,8 @@ const ms: Dict = {
 	"1. Make an account": "1. Buat akaun",
 	"10 GB attachments": "10 GB lampiran",
 	"10 vaults, unlimited devices": "10 peti nota, peranti tanpa had",
-	"2,000 notes searchable": "2,000 nota boleh dicari",
 	"2. Connect your vault to Engram": "2. Sambungkan peti nota anda ke Engram",
+	"3,000 notes, all searchable": "3,000 nota, semua boleh dicari",
 	"3. Connect your AI": "3. Sambungkan AI anda",
 	"50 GB attachments": "50 GB lampiran",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
@@ -94,12 +95,15 @@ const ms: Dict = {
 	"Connected — polling": "Sambung — sedang memeriksa",
 	"Connected — waiting for first sync decision": "Disambungkan — menunggu keputusan sync pertama",
 	"Connection failed": "Sambungan gagal",
+	Continue: "Teruskan",
 	"Could not compare with the cloud. Check your connection.":
 		"Tidak dapat dibandingkan dengan awan. Semak sambungan anda.",
 	"Could not create the vault — check your connection and try again.":
 		"Tidak dapat mencipta peti nota — semak sambungan anda dan cuba lagi.",
 	"Could not load vaults: {error}": "Tidak dapat memuatkan peti nota: {error}",
 	"Could not reach Engram — check connection": "Tidak dapat mencapai Engram — semak sambungan",
+	"Could not save your folder choice. Try again.":
+		"Tidak dapat menyimpan pilihan folder anda. Cuba lagi.",
 	"Couldn't create vault — the name may be invalid or already in use.":
 		"Tidak dapat mencipta peti nota — nama tersebut mungkin tidak sah atau sudah digunakan.",
 	"Couldn't send your feedback, please try again.":
@@ -269,6 +273,7 @@ const ms: Dict = {
 	"GitHub Sponsors": "GitHub Sponsors",
 	"Gradle build cache": "Cache binaan Gradle",
 	"How do you feel about Engram?": "Bagaimana pendapat anda tentang Engram?",
+	"I understand {count} notes will not sync.": "Saya faham {count} nota tidak akan disegerakkan.",
 	Idea: "Idea",
 	"If this plugin saves you time, consider supporting development.":
 		"Jika plugin ini menjimatkan masa anda, pertimbangkan untuk menyokong pembangunan.",
@@ -416,6 +421,7 @@ const ms: Dict = {
 	"See the AI setup guide": "Lihat panduan konfigurasi AI",
 	"Select which vault this plugin syncs with.":
 		"Pilih peti nota yang ingin disinkronkan oleh plugin ini.",
+	"Selected: {selected} / {limit}": "Dipilih: {selected} / {limit}",
 	"Self-hosted": "Dihos sendiri",
 	Semantic: "Semantik",
 	"Semantic search": "Carian semantik",
@@ -506,6 +512,8 @@ const ms: Dict = {
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Pelayan ini dikendalikan sendiri, jadi maklum balas tidak dikumpul di sini. ",
 	"This vault": "Peti nota ini",
+	"This vault has {count} notes. Your plan syncs {limit}.":
+		"Peti nota ini mempunyai {count} nota. Pelan anda menyegerakkan {limit}.",
 	"This vault is empty on the server. Upload your {what}?":
 		"Peti nota ini kosong di server. Adakah anda ingin memuat naik {what}?",
 	"Too large for the server": "Terlalu besar untuk pelayan",

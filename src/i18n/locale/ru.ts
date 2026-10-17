@@ -3,6 +3,7 @@ import type { Dict } from "..";
 // Русский
 const ru: Dict = {
 	" (default)": " (по умолчанию)",
+	"(top level)": "(верхний уровень)",
 	"({count} errors)": {
 		one: "({count} ошибка)",
 		few: "({count} ошибки)",
@@ -15,8 +16,8 @@ const ru: Dict = {
 	"1. Make an account": "1. Создайте учётную запись",
 	"10 GB attachments": "10 ГБ вложений",
 	"10 vaults, unlimited devices": "10 хранилищ, неограниченное количество устройств",
-	"2,000 notes searchable": "2000 заметки для поиска",
 	"2. Connect your vault to Engram": "2. Подключите ваше хранилище к Engram",
+	"3,000 notes, all searchable": "3000 заметок, все доступны для поиска",
 	"3. Connect your AI": "3. Подключите ваш ИИ",
 	"50 GB attachments": "50 ГБ вложений",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
@@ -99,6 +100,7 @@ const ru: Dict = {
 	"Connected — waiting for first sync decision":
 		"Подключено — ожидается первое решение о синхронизации",
 	"Connection failed": "Не удалось подключиться",
+	Continue: "Продолжить",
 	"Could not compare with the cloud. Check your connection.":
 		"Не удалось сравнить с облаком. Проверьте ваше соединение.",
 	"Could not create the vault — check your connection and try again.":
@@ -106,6 +108,8 @@ const ru: Dict = {
 	"Could not load vaults: {error}": "Не удалось загрузить хранилища: {error}",
 	"Could not reach Engram — check connection":
 		"Не удалось связаться с Engram — проверьте соединение",
+	"Could not save your folder choice. Try again.":
+		"Не удалось сохранить выбранную вами папку. Попробуйте ещё раз.",
 	"Couldn't create vault — the name may be invalid or already in use.":
 		"Не удалось создать хранилище — имя может быть недействительным или уже используется.",
 	"Couldn't send your feedback, please try again.":
@@ -349,6 +353,12 @@ const ru: Dict = {
 	"GitHub Sponsors": "GitHub Sponsors",
 	"Gradle build cache": "Кэш сборки Gradle",
 	"How do you feel about Engram?": "Что вы думаете о Engram?",
+	"I understand {count} notes will not sync.": {
+		one: "Я понимаю, что {count} заметка не будет синхронизирована.",
+		few: "Я понимаю, что {count} заметки не будут синхронизированы.",
+		many: "Я понимаю, что {count} заметок не будут синхронизированы.",
+		other: "Я понимаю, что заметки версии {count} не будут синхронизироваться.",
+	},
 	Idea: "Предложение",
 	"If this plugin saves you time, consider supporting development.":
 		"Если этот плагин экономит ваше время, рассмотрите возможность поддержки разработки.",
@@ -495,6 +505,7 @@ const ru: Dict = {
 	"See the AI setup guide": "Смотрите руководство по настройке ИИ",
 	"Select which vault this plugin syncs with.":
 		"Выберите хранилище, с которым будет осуществляться синхронизация.",
+	"Selected: {selected} / {limit}": "Выбрано: {selected} / {limit}",
 	"Self-hosted": "Самостоятельно размещенный",
 	Semantic: "Смысловой",
 	"Semantic search": "Смысловой поиск",
@@ -590,6 +601,12 @@ const ru: Dict = {
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Этот сервер работает локально, поэтому отзывы здесь не собираются. ",
 	"This vault": "Это хранилище",
+	"This vault has {count} notes. Your plan syncs {limit}.": {
+		one: "В этом хранилище {count} заметка. Ваш тарифный план позволяет синхронизировать {limit}.",
+		few: "В этом хранилище {count} заметки. Ваш тарифный план позволяет синхронизировать {limit}.",
+		many: "В этом хранилище {count} заметок. Ваш тарифный план позволяет синхронизировать {limit}.",
+		other: "В этом хранилище {count} заметки. Ваш тарифный план позволяет синхронизировать {limit}.",
+	},
 	"This vault is empty on the server. Upload your {what}?":
 		"Это хранилище пустое на сервере. Загрузить ваши {what}?",
 	"Too large for the server": "Слишком большой для сервера",

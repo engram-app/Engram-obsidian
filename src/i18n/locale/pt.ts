@@ -3,6 +3,7 @@ import type { Dict } from "..";
 // Português (Portugal)
 const pt: Dict = {
 	" (default)": " (padrão)",
+	"(top level)": "(nível superior)",
 	"({count} errors)": {
 		one: "({count} erro)",
 		many: "({count} erros)",
@@ -14,8 +15,8 @@ const pt: Dict = {
 	"1. Make an account": "1. Crie uma conta",
 	"10 GB attachments": "10 GB de anexos",
 	"10 vaults, unlimited devices": "10 Cofres, dispositivos ilimitados",
-	"2,000 notes searchable": "2.000 notas pesquisáveis",
 	"2. Connect your vault to Engram": "2. Conecte o seu cofre ao Engram",
+	"3,000 notes, all searchable": "3.000 notas, todas pesquisáveis",
 	"3. Connect your AI": "3. Conecte a sua IA",
 	"50 GB attachments": "50 GB de anexos",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
@@ -99,6 +100,7 @@ const pt: Dict = {
 	"Connected — waiting for first sync decision":
 		"Conectado — aguardando a primeira decisão de sincronização",
 	"Connection failed": "Falha na ligação",
+	Continue: "Continuar",
 	"Could not compare with the cloud. Check your connection.":
 		"Não foi possível comparar com a nuvem. Verifique a ligação.",
 	"Could not create the vault — check your connection and try again.":
@@ -106,6 +108,8 @@ const pt: Dict = {
 	"Could not load vaults: {error}": "Não foi possível carregar os cofres: {error}",
 	"Could not reach Engram — check connection":
 		"Não foi possível aceder a Engram — verifique a ligação",
+	"Could not save your folder choice. Try again.":
+		"Não foi possível guardar a sua escolha de pasta. Tente novamente.",
 	"Couldn't create vault — the name may be invalid or already in use.":
 		"Não foi possível criar o cofre — o nome pode ser inválido ou já estar em uso.",
 	"Couldn't send your feedback, please try again.":
@@ -332,6 +336,11 @@ const pt: Dict = {
 	"GitHub Sponsors": "GitHub Patrocinadores",
 	"Gradle build cache": "Cache de construção Gradle",
 	"How do you feel about Engram?": "O que pensa de Engram?",
+	"I understand {count} notes will not sync.": {
+		one: "Compreendo que {count} nota não será sincronizada.",
+		many: "Compreendo que {count} notas não serão sincronizadas.",
+		other: "Compreendo que {count} notas não serão sincronizadas.",
+	},
 	Idea: "Ideia",
 	"If this plugin saves you time, consider supporting development.":
 		"Se este plugin lhe poupa tempo, considere apoiar o desenvolvimento.",
@@ -477,6 +486,7 @@ const pt: Dict = {
 	"See the AI setup guide": "Consulte o guia de configuração da IA",
 	"Select which vault this plugin syncs with.":
 		"Selecione o cofre com o qual este plugin sincroniza.",
+	"Selected: {selected} / {limit}": "Selecionado: {selected} / {limit}",
 	"Self-hosted": "Servidor próprio",
 	Semantic: "Semântica",
 	"Semantic search": "Pesquisa semântica",
@@ -572,6 +582,11 @@ const pt: Dict = {
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Este servidor é alojado localmente, portanto, não são recolhidos dados aqui. ",
 	"This vault": "Este cofre",
+	"This vault has {count} notes. Your plan syncs {limit}.": {
+		one: "Este cofre tem {count} nota. O seu plano sincroniza {limit}.",
+		many: "Este cofre tem {count} de notas. O seu plano sincroniza {limit}.",
+		other: "Este cofre tem {count} notas. O seu plano sincroniza {limit}.",
+	},
 	"This vault is empty on the server. Upload your {what}?":
 		"Este cofre está vazio no servidor. Deseja enviar {what}?",
 	"Too large for the server": "Demasiado grande para o servidor",

@@ -3,6 +3,7 @@ import type { Dict } from "..";
 // Polski
 const pl: Dict = {
 	" (default)": " (domyślny)",
+	"(top level)": "(poziom najwyższy)",
 	"({count} errors)": {
 		one: "({count} błąd)",
 		few: "({count} błędy)",
@@ -15,8 +16,8 @@ const pl: Dict = {
 	"1. Make an account": "1. Załóż konto",
 	"10 GB attachments": "10 GB załączników",
 	"10 vaults, unlimited devices": "10 sejfów, nieograniczona liczba urządzeń",
-	"2,000 notes searchable": "2000 notatek do wyszukiwania",
 	"2. Connect your vault to Engram": "2. Połącz swój sejf z Engram",
+	"3,000 notes, all searchable": "3000 notatek, wszystkie przeszukiwalne",
 	"3. Connect your AI": "3. Połącz swoje AI",
 	"50 GB attachments": "50 GB załączników",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
@@ -100,12 +101,15 @@ const pl: Dict = {
 	"Connected — waiting for first sync decision":
 		"Połączono — oczekuje na pierwszą decyzję synchronizacji",
 	"Connection failed": "Nie udało się połączyć",
+	Continue: "Dalej",
 	"Could not compare with the cloud. Check your connection.":
 		"Nie można porównać z chmurą. Sprawdź połączenie.",
 	"Could not create the vault — check your connection and try again.":
 		"Nie udało się utworzyć sejfu — sprawdź połączenie i spróbuj ponownie.",
 	"Could not load vaults: {error}": "Nie udało się załadować sejfów: {error}",
 	"Could not reach Engram — check connection": "Nie można połączyć z Engram — sprawdź połączenie",
+	"Could not save your folder choice. Try again.":
+		"Nie można zapisać wybranego folderu. Spróbuj ponownie.",
 	"Couldn't create vault — the name may be invalid or already in use.":
 		"Nie można utworzyć sejfu – nazwa może być nieprawidłowa lub już w użyciu.",
 	"Couldn't send your feedback, please try again.":
@@ -348,6 +352,12 @@ const pl: Dict = {
 	"GitHub Sponsors": "GitHub Sponsoring",
 	"Gradle build cache": "Pamięć podręczna kompilacji Gradle",
 	"How do you feel about Engram?": "Jakie masz odczucia dotyczące Engram?",
+	"I understand {count} notes will not sync.": {
+		one: "Rozumiem, że {count} notatka nie zostanie zsynchronizowana.",
+		few: "Rozumiem, że {count} notatki nie zostaną zsynchronizowane.",
+		many: "Rozumiem, że {count} notatek nie zostanie zsynchronizowanych.",
+		other: "Rozumiem, że notatki w wersji {count} nie zostaną zsynchronizowane.",
+	},
 	Idea: "Pomysł",
 	"If this plugin saves you time, consider supporting development.":
 		"Jeśli ten plugin oszczędza ci czas, rozważ wsparcie rozwoju.",
@@ -494,6 +504,7 @@ const pl: Dict = {
 	"See the AI setup guide": "Sprawdź przewodnik konfiguracji AI",
 	"Select which vault this plugin syncs with.":
 		"Wybierz, z którym sejfem plugin ma synchronizować.",
+	"Selected: {selected} / {limit}": "Wybrane: {selected} / {limit}",
 	"Self-hosted": "Samodzielnie hostowane",
 	Semantic: "Semantyczne",
 	"Semantic search": "Wyszukiwanie semantyczne",
@@ -589,6 +600,12 @@ const pl: Dict = {
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Ten serwer jest hostowany samodzielnie, więc tutaj nie są zbierane żadne dane. ",
 	"This vault": "Ten sejf",
+	"This vault has {count} notes. Your plan syncs {limit}.": {
+		one: "Ten sejf zawiera {count} notatkę. Twój plan synchronizuje {limit}.",
+		few: "Ten sejf zawiera {count} notatki. Twój plan synchronizuje {limit}.",
+		many: "Ten sejf zawiera {count} notatek. Twój plan synchronizuje {limit}.",
+		other: "Ten sejf zawiera {count} notatek. Twój plan synchronizuje {limit}.",
+	},
 	"This vault is empty on the server. Upload your {what}?":
 		"Ten sejf jest pusty na serwerze. Czy chcesz przesłać swoje {what}?",
 	"Too large for the server": "Zbyt duży dla serwera",

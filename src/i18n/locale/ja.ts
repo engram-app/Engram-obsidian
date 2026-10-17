@@ -3,6 +3,7 @@ import type { Dict } from "..";
 // 日本語
 const ja: Dict = {
 	" (default)": "(デフォルト)",
+	"(top level)": "(最上位)",
 	"({count} errors)": "({count}件のエラー)",
 	"...": "...",
 	'... "{name}" ...': '... "{name}" ...',
@@ -10,8 +11,8 @@ const ja: Dict = {
 	"1. Make an account": "1. アカウントを作成",
 	"10 GB attachments": "10 GB 添付ファイル",
 	"10 vaults, unlimited devices": "10個の保管庫、デバイス数無制限",
-	"2,000 notes searchable": "2,000件までのノートを検索可能",
 	"2. Connect your vault to Engram": "2. 保管庫をEngramに接続します",
+	"3,000 notes, all searchable": "3000件のノート、すべて検索可能",
 	"3. Connect your AI": "3. AIとの接続",
 	"50 GB attachments": "50 GB 添付ファイル",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
@@ -95,12 +96,15 @@ const ja: Dict = {
 	"Connected — polling": "接続済み - ポーリング中",
 	"Connected — waiting for first sync decision": "接続済み - 最初の同期待ち",
 	"Connection failed": "接続エラー",
+	Continue: "続ける",
 	"Could not compare with the cloud. Check your connection.":
 		"クラウドとの比較に失敗しました。接続を確認してください。",
 	"Could not create the vault — check your connection and try again.":
 		"保管庫の作成に失敗しました。接続を確認し、再度お試しください。",
 	"Could not load vaults: {error}": "保管庫の読み込みに失敗しました: {error}",
 	"Could not reach Engram — check connection": "Engramに接続できません。接続を確認してください",
+	"Could not save your folder choice. Try again.":
+		"フォルダの選択を保存できませんでした。もう一度お試しください。",
 	"Couldn't create vault — the name may be invalid or already in use.":
 		"保管庫の作成に失敗しました。名前が無効であるか、すでに使用されている可能性があります。",
 	"Couldn't send your feedback, please try again.":
@@ -269,6 +273,7 @@ const ja: Dict = {
 	"GitHub Sponsors": "GitHub Sponsors",
 	"Gradle build cache": "Gradleビルドキャッシュ",
 	"How do you feel about Engram?": "Engramについて、どう感じますか？",
+	"I understand {count} notes will not sync.": "{count}のノートは同期されません。",
 	Idea: "アイデア",
 	"If this plugin saves you time, consider supporting development.":
 		"このプラグインが時間を節約できた場合、開発を支援をご検討ください。",
@@ -412,6 +417,7 @@ const ja: Dict = {
 	"See full pricing": "詳細な料金を見る",
 	"See the AI setup guide": "AIの設定ガイドを見る",
 	"Select which vault this plugin syncs with.": "このプラグインで同期する保管庫を選択します。",
+	"Selected: {selected} / {limit}": "選択済み: {selected} / {limit}",
 	"Self-hosted": "ローカル環境",
 	Semantic: "セマンティック",
 	"Semantic search": "セマンティック検索",
@@ -503,6 +509,8 @@ const ja: Dict = {
 	"This server is self-hosted, so feedback is not collected here. ":
 		"このサーバーは自己ホスト型なので、フィードバックはここで収集されません。",
 	"This vault": "この保管庫",
+	"This vault has {count} notes. Your plan syncs {limit}.":
+		"この保管庫には{count}個のノートがあります。あなたのプランでは{limit}個のノートを同期します。",
 	"This vault is empty on the server. Upload your {what}?":
 		"この保管庫はサーバー上で空です。{what} をアップロードしますか？",
 	"Too large for the server": "ファイルサイズが大きすぎます",

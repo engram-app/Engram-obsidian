@@ -100,7 +100,7 @@ export function renderAboutTab(ctx: TabContext): void {
 	plan(t("Free"), [
 		t("1 vault, 2 devices"),
 		t("Real-time sync"),
-		t("2,000 notes searchable"),
+		t("3,000 notes, all searchable"),
 		t("Connect any AI (MCP)"),
 	]);
 	plan(t("Starter"), [

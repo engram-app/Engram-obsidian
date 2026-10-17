@@ -1,11 +1,13 @@
 import { type App, Modal, setIcon } from "obsidian";
 import { devLog } from "./dev-log";
 import { errMsg, statusOf } from "./error-util";
-import { t, tInto } from "./i18n";
+import { excludedToIgnorePatterns, FolderPicker, selectedNoteCount } from "./folder-picker";
+import { currentLocale, t, tInto } from "./i18n";
 import { userErrorMessage } from "./i18n/user-error";
 import { toastFor } from "./limit-copy";
 import { LimitExceededError } from "./limit-error";
 import { isTextAttachment } from "./mime";
+import { type BillingUsage, isUnlimited } from "./plan-usage";
 import {
 	buildDeletionTree,
 	computeMatchPercent,
@@ -25,7 +27,7 @@ const CONFIRM_KEYWORD = "delete";
  *  the resolve callback. Tested directly; the Modal class is a thin DOM
  *  wrapper that delegates to it. */
 export class SyncPreviewState {
-	view: "preview" | "confirm" | "vault-picker" | "done" = "preview";
+	view: "preview" | "confirm" | "vault-picker" | "over-limit" | "done" = "preview";
 	pendingChoice: SyncChoice | null = null;
 	confirmInput = "";
 	/** Mutable so the modal can swap in a fresh plan after applyVaultChange.
@@ -53,6 +55,16 @@ export class SyncPreviewState {
 	/** First-run diagnostics opt-in checkbox (see shouldOfferDiagnosticsOptIn).
 	 *  Off by default. Explicit consent, not an assumed default. */
 	diagnosticsOptIn = false;
+	/** The plan's notes cap, or null when unlimited or unknown (the usage call
+	 *  failed or has not answered yet). Null never shows the over-limit step:
+	 *  that step must not be able to block a sync. */
+	notesCap: number | null = null;
+	/** Top-level folders unticked in the over-limit step's folder picker. */
+	overLimitExcluded: string[] = [];
+	/** "I understand N notes will not sync." */
+	overLimitAck = false;
+	/** Set once the user got through the step, so it is asked once per modal. */
+	private overLimitDone = false;
 	private resolved = false;
 
 	constructor(
@@ -64,6 +76,11 @@ export class SyncPreviewState {
 
 	pickOption(choice: SyncChoice): void {
 		if (this.resolved) return;
+		if (this.needsOverLimitStep()) {
+			this.pendingChoice = choice;
+			this.view = "over-limit";
+			return;
+		}
 		if (isDestructiveChoice(choice)) {
 			this.pendingChoice = choice;
 			this.view = "confirm";
@@ -85,6 +102,54 @@ export class SyncPreviewState {
 	submitConfirm(): void {
 		if (!this.canSubmitConfirm() || this.pendingChoice == null) return;
 		this.resolve(this.pendingChoice);
+	}
+
+	setNotesCap(cap: number | null): void {
+		this.notesCap = cap;
+	}
+
+	needsOverLimitStep(): boolean {
+		return (
+			!this.overLimitDone &&
+			this.plan != null &&
+			this.notesCap != null &&
+			this.plan.localNotePaths.length > this.notesCap
+		);
+	}
+
+	setOverLimitExcluded(excluded: string[]): void {
+		this.overLimitExcluded = excluded;
+	}
+
+	toggleOverLimitAck(): void {
+		this.overLimitAck = !this.overLimitAck;
+	}
+
+	/** Notes the current folder selection would still sync. */
+	overLimitSelected(): number {
+		return selectedNoteCount(this.plan?.localNotePaths ?? [], this.overLimitExcluded);
+	}
+
+	/** Notes past the cap under the current selection; 0 when it fits. */
+	overLimitOver(): number {
+		return this.notesCap == null ? 0 : Math.max(0, this.overLimitSelected() - this.notesCap);
+	}
+
+	canContinueOverLimit(): boolean {
+		return this.view === "over-limit" && (this.overLimitOver() === 0 || this.overLimitAck);
+	}
+
+	/** Leave the step and carry on with the option the user picked, exactly as
+	 *  if the step had not been there (destructive options still confirm).
+	 *  `plan` is the recomputed plan after the exclusions were saved, if any. */
+	finishOverLimit(plan: SyncPlan | null): void {
+		if (this.resolved || this.view !== "over-limit") return;
+		if (plan) this.replacePlan(plan);
+		this.overLimitDone = true;
+		this.view = "preview";
+		const choice = this.pendingChoice;
+		this.pendingChoice = null;
+		if (choice) this.pickOption(choice);
 	}
 
 	goBack(): void {
@@ -193,6 +258,27 @@ export function planLoadErrorMessage(hasAuth: boolean): string {
  *  402 from the standardized backend body (spec §4.6), 422 = validation
  *  (e.g. duplicate/empty name), else a generic connection message. Pure
  *  for testing. */
+/** The notes cap from a `/billing/usage` body, or null when unlimited or
+ *  absent. Pure for testing. */
+export function notesCapFromUsage(data: BillingUsage): number | null {
+	const limit = data.usage?.notes?.limit ?? null;
+	return isUnlimited(limit) ? null : limit;
+}
+
+/** The notes cap, or null when the usage call fails: the over-limit step is
+ *  advice, and a failed lookup must never block or delay a sync. */
+export async function fetchNotesCap(getUsage: () => Promise<BillingUsage>): Promise<number | null> {
+	try {
+		return notesCapFromUsage(await getUsage());
+	} catch (e: unknown) {
+		devLog().log(
+			"error",
+			`billing usage lookup failed, skipping over-limit step: ${errMsg(e)}`,
+		);
+		return null;
+	}
+}
+
 export function describeCreateVaultError(e: unknown): string {
 	if (e instanceof LimitExceededError) return toastFor(e.reason);
 	const status = statusOf(e);
@@ -380,6 +466,12 @@ export interface SyncPreviewOptions {
 	 *  even Cancel should keep the preference). Only rendered/reachable when
 	 *  shouldOfferDiagnosticsOptIn(context) is true. */
 	onDiagnosticsToggle?: (enabled: boolean) => void;
+	/** Billing page for the over-limit step's Upgrade button. Null/omitted on a
+	 *  server that sells no plans (see upgradeUrlFor), which hides the button. */
+	upgradeUrl?: string | null;
+	/** Saves the over-limit step's ignore patterns and returns the recomputed
+	 *  plan. Only called when the user unticked at least one folder. */
+	applyExclusions?: (patterns: string[]) => Promise<SyncPlan>;
 }
 
 /** The one-click screen's copy, pure for tests. Zero-count clauses are
@@ -591,6 +683,12 @@ export class SyncPreviewModal extends Modal {
 		return this.state.plan;
 	}
 
+	/** The plan's notes cap, once the usage lookup answers (null = no cap). No
+	 *  re-render: the over-limit step is only entered when an option is picked. */
+	setNotesCap(cap: number | null): void {
+		this.state.setNotesCap(cap);
+	}
+
 	private render(): void {
 		const { contentEl } = this;
 		contentEl.empty();
@@ -599,6 +697,8 @@ export class SyncPreviewModal extends Modal {
 			this.renderPreview();
 		} else if (this.state.view === "vault-picker") {
 			this.renderVaultPicker();
+		} else if (this.state.view === "over-limit") {
+			this.renderOverLimit();
 		} else {
 			this.renderConfirm();
 		}
@@ -1015,6 +1115,90 @@ export class SyncPreviewModal extends Modal {
 		});
 
 		input.focus();
+	}
+
+	/** The vault holds more notes than the plan stores. Say so plainly, offer
+	 *  the upgrade, and let the user pick folders to fit or accept that the
+	 *  rest will not sync. Continue stays disabled until one of those holds. */
+	private renderOverLimit(): void {
+		const { contentEl } = this;
+		const notePaths = this.requirePlan().localNotePaths;
+		const cap = this.state.notesCap ?? 0;
+		contentEl.createEl("h2", {
+			text: t("This vault has {count} notes. Your plan syncs {limit}.", {
+				count: notePaths.length,
+				limit: cap.toLocaleString(currentLocale()),
+			}),
+			cls: "engram-sync-preview-header",
+		});
+
+		const upgradeUrl = this.opts.upgradeUrl;
+		if (upgradeUrl) {
+			const upgrade = contentEl.createEl("button", { text: t("Upgrade"), cls: "mod-cta" });
+			upgrade.addEventListener("click", () => window.open(upgradeUrl, "_blank"));
+		}
+
+		new FolderPicker(contentEl, {
+			notePaths,
+			excluded: this.state.overLimitExcluded,
+			limit: cap,
+			onChange: (excluded) => {
+				this.state.setOverLimitExcluded(excluded);
+				refresh();
+			},
+		});
+
+		const ackRow = contentEl.createEl("label", { cls: "engram-sync-preview-over-limit-ack" });
+		const ack = ackRow.createEl("input", { type: "checkbox" });
+		ack.checked = this.state.overLimitAck;
+		const ackText = ackRow.createSpan();
+		ack.addEventListener("change", () => {
+			this.state.toggleOverLimitAck();
+			refresh();
+		});
+
+		const error = contentEl.createEl("p", { cls: "engram-sync-preview-picker-error" });
+
+		const footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
+		const backBtn = footer.createEl("button", { text: t("Back") });
+		backBtn.addEventListener("click", () => {
+			this.state.goBack();
+			this.render();
+		});
+		const continueBtn = footer.createEl("button", { text: t("Continue") });
+		continueBtn.addEventListener("click", () => {
+			void this.continueOverLimit(continueBtn, error);
+		});
+
+		const refresh = () => {
+			const over = this.state.overLimitOver();
+			ackRow.hidden = over === 0;
+			ackText.setText(t("I understand {count} notes will not sync.", { count: over }));
+			continueBtn.disabled = !this.state.canContinueOverLimit();
+		};
+		refresh();
+	}
+
+	private async continueOverLimit(btn: HTMLButtonElement, error: HTMLElement): Promise<void> {
+		if (!this.state.canContinueOverLimit()) return;
+		const patterns = excludedToIgnorePatterns(
+			this.state.overLimitExcluded,
+			this.requirePlan().localNotePaths,
+		);
+		let plan: SyncPlan | null = null;
+		if (patterns.length > 0 && this.opts.applyExclusions) {
+			btn.disabled = true;
+			try {
+				plan = await this.opts.applyExclusions(patterns);
+			} catch (e: unknown) {
+				devLog().log("error", `saving over-limit exclusions failed: ${errMsg(e)}`);
+				error.setText(t("Could not save your folder choice. Try again."));
+				btn.disabled = false;
+				return;
+			}
+		}
+		this.state.finishOverLimit(plan);
+		this.render();
 	}
 
 	private renderVaultPicker(): void {

@@ -3,6 +3,7 @@ import type { Dict } from "..";
 // 한국어
 const ko: Dict = {
 	" (default)": " (기본값)",
+	"(top level)": "(최상위)",
 	"({count} errors)": "({count}개의 오류)",
 	"...": "...",
 	'... "{name}" ...': '"{name}" ...',
@@ -10,8 +11,8 @@ const ko: Dict = {
 	"1. Make an account": "1. 계정 만들기",
 	"10 GB attachments": "10GB 첨부 파일",
 	"10 vaults, unlimited devices": "10개의 보관함, 기기 수 제한 없음",
-	"2,000 notes searchable": "2,000개의 노트 검색 가능",
 	"2. Connect your vault to Engram": "2. 보관함을 Engram에 연결하세요",
+	"3,000 notes, all searchable": "3,000개의 노트, 모두 검색 가능",
 	"3. Connect your AI": "3. AI 연결",
 	"50 GB attachments": "50GB 첨부 파일",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
@@ -91,12 +92,15 @@ const ko: Dict = {
 	"Connected — polling": "연결됨 — 폴링 중",
 	"Connected — waiting for first sync decision": "연결됨 — 첫 번째 동기화 결정 대기 중",
 	"Connection failed": "연결에 실패했습니다",
+	Continue: "계속",
 	"Could not compare with the cloud. Check your connection.":
 		"클라우드와 비교할 수 없습니다. 연결 상태를 확인하세요.",
 	"Could not create the vault — check your connection and try again.":
 		"보관함 생성에 실패했습니다. 연결 상태를 확인하고 다시 시도하세요.",
 	"Could not load vaults: {error}": "보관함 로드 실패: {error}",
 	"Could not reach Engram — check connection": "Engram 연결 오류 - 연결 상태를 확인하세요",
+	"Could not save your folder choice. Try again.":
+		"폴더 선택을 저장하지 못했습니다. 다시 시도해 주세요.",
 	"Couldn't create vault — the name may be invalid or already in use.":
 		"보관함 생성에 실패했습니다. 이름이 유효하지 않거나 이미 사용 중일 수 있습니다.",
 	"Couldn't send your feedback, please try again.":
@@ -264,6 +268,8 @@ const ko: Dict = {
 	"GitHub Sponsors": "GitHub Sponsors",
 	"Gradle build cache": "Gradle 빌드 캐시",
 	"How do you feel about Engram?": "Engram에 대해 어떻게 생각하시나요?",
+	"I understand {count} notes will not sync.":
+		'"{count} 노트는 동기화되지 않습니다." 이해했습니다.',
 	Idea: "아이디어",
 	"If this plugin saves you time, consider supporting development.":
 		"이 플러그인이 시간을 절약해 준다면, 개발을 지원해주세요.",
@@ -405,6 +411,7 @@ const ko: Dict = {
 	"See full pricing": "가격 정보 보기",
 	"See the AI setup guide": "AI 설정 가이드 보기",
 	"Select which vault this plugin syncs with.": "이 플러그인이 동기화할 보관함을 선택하세요.",
+	"Selected: {selected} / {limit}": "선택됨: {selected} / {limit}",
 	"Self-hosted": "자체 호스팅",
 	Semantic: "의미 검색",
 	"Semantic search": "의미 검색",
@@ -494,6 +501,8 @@ const ko: Dict = {
 	"This server is self-hosted, so feedback is not collected here. ":
 		"이 서버는 자체 호스팅 서버이므로, 피드백은 이곳에서 수집되지 않습니다. ",
 	"This vault": "이 보관함",
+	"This vault has {count} notes. Your plan syncs {limit}.":
+		"이 보관함에는 {count}개의 노트가 있습니다. 현재 구독 상태로 {limit}개의 노트를 동기화합니다.",
 	"This vault is empty on the server. Upload your {what}?":
 		"이 보관함은 서버에 비어 있습니다. {what}을 업로드하시겠습니까?",
 	"Too large for the server": "서버 용량 초과",

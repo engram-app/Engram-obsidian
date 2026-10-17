@@ -3,6 +3,7 @@ import type { Dict } from "..";
 // Türkçe
 const tr: Dict = {
 	" (default)": " (varsayılan)",
+	"(top level)": "(en üst seviye)",
 	"({count} errors)": { one: "({count} hata)", other: "({count} hata)" },
 	"...": "...",
 	'... "{name}" ...': '... "{name}" ...',
@@ -10,8 +11,8 @@ const tr: Dict = {
 	"1. Make an account": "1. Bir hesap oluşturun",
 	"10 GB attachments": "10 GB ek",
 	"10 vaults, unlimited devices": "10 kasa, sınırsız cihaz",
-	"2,000 notes searchable": "2.000 not aranabilir",
 	"2. Connect your vault to Engram": "2. Kasanızı Engram ile bağlayın",
+	"3,000 notes, all searchable": "3.000 not, hepsi aranabilir",
 	"3. Connect your AI": "3. Yapay zekanızı bağlayın",
 	"50 GB attachments": "50 GB ek",
 	"A browser window has opened. Sign in and enter this code to link your vault.":
@@ -93,6 +94,7 @@ const tr: Dict = {
 	"Connected — polling": "Bağlı – sorgulama yapılıyor",
 	"Connected — waiting for first sync decision": "Bağlı - ilk senkronizasyon kararı bekleniyor",
 	"Connection failed": "Bağlantı hatası",
+	Continue: "Devam",
 	"Could not compare with the cloud. Check your connection.":
 		"Bulut ile karşılaştırılamadı. Bağlantınızı kontrol edin.",
 	"Could not create the vault — check your connection and try again.":
@@ -100,6 +102,8 @@ const tr: Dict = {
 	"Could not load vaults: {error}": "Kasaları yükleyemedi: {error}",
 	"Could not reach Engram — check connection":
 		"Engram adresine ulaşılamadı — bağlantıyı kontrol edin",
+	"Could not save your folder choice. Try again.":
+		"Klasör seçiminizi kaydedemedik. Lütfen tekrar deneyin.",
 	"Couldn't create vault — the name may be invalid or already in use.":
 		"Kasa oluşturulamadı - isim geçersiz olabilir veya zaten kullanımda olabilir.",
 	"Couldn't send your feedback, please try again.":
@@ -306,6 +310,10 @@ const tr: Dict = {
 	"GitHub Sponsors": "GitHub Sponsorlar",
 	"Gradle build cache": "Gradle derleme önbelleği",
 	"How do you feel about Engram?": "Engram hakkında ne düşünüyorsunuz?",
+	"I understand {count} notes will not sync.": {
+		one: "{count} notun senkronize olmadığını anlıyorum.",
+		other: "{count} notun senkronize olmadığını anlıyorum.",
+	},
 	Idea: "Öneri",
 	"If this plugin saves you time, consider supporting development.":
 		"Bu eklenti size zaman kazandırıyorsa, lütfen geliştirmeye destek verin.",
@@ -450,6 +458,7 @@ const tr: Dict = {
 	"See the AI setup guide": "Yapay zeka kurulum kılavuzuna bakın",
 	"Select which vault this plugin syncs with.":
 		"Bu eklentinin hangi kasa ile senkronize olacağını seçin.",
+	"Selected: {selected} / {limit}": "Seçili: {selected} / {limit}",
 	"Self-hosted": "Kendi sunucunuzda barındırılan",
 	Semantic: "Anlamsal",
 	"Semantic search": "Anlamsal arama",
@@ -543,6 +552,10 @@ const tr: Dict = {
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Bu sunucu kendi kendine barındırıldığı için geri bildirim burada toplanmaz. ",
 	"This vault": "Bu kasa",
+	"This vault has {count} notes. Your plan syncs {limit}.": {
+		one: "Bu kasa {count} nota içeriyor. Aboneliğiniz {limit} nota senkronize ediyor.",
+		other: "Bu kasa {count} notaya sahip. Aboneliğiniz {limit} notu senkronize ediyor.",
+	},
 	"This vault is empty on the server. Upload your {what}?":
 		"Bu kasa sunucuda boş. {what} dosyanızı yüklemek ister misiniz?",
 	"Too large for the server": "Sunucu için çok büyük",
