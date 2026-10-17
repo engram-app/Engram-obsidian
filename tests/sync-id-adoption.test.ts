@@ -481,6 +481,20 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			wiring.dispose();
 		});
 
+		test("r6#7: a throwing heal after discovery is caught, not an unhandled rejection", async () => {
+			const { engine, wiring } = announceRig();
+			let threw = false;
+			(engine as any).ensureNoteIdMapped = () => {
+				threw = true;
+				throw new Error("heal boom");
+			};
+			(engine as any).noteIdMap.set = () => {}; // discovery maps nothing
+			wiring.onCrdtDocReady("h", "h.md");
+			await flush();
+			expect(threw).toBe(true);
+			wiring.dispose();
+		});
+
 		test("discovery throwing before its own try still runs the manifest fallback", async () => {
 			const { engine, map, wiring } = announceRig();
 			(engine as any).isLiveBound = () => {
@@ -973,7 +987,9 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			expect(map.pathForId("x")).toBe("x.md");
 		});
 
-		test("a later fan-out after a failed urgent fetch is not held through the backoff", async () => {
+		test("consecutive fetch failures: an urgent fan-out respects the backoff", async () => {
+			// One blip still gets an urgent retry (see "a fan-out's first wait..."),
+			// but a second failure in a row means the server is down: back off.
 			const { engine, map, time } = throttledEngine();
 			(mockApi.getManifest as ReturnType<typeof mock>)
 				.mockRejectedValueOnce(new Error("503"))
@@ -991,6 +1007,9 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			void engine.awaitNoteIdMapped("x");
 			await flush();
 			time.advance(GAP / 2);
+			await flush();
+			expect(fetches()).toBe(2); // still inside the 8s backoff
+			time.advance(8 * GAP);
 			await flush();
 			expect(fetches()).toBe(3);
 			expect(map.pathForId("x")).toBe("x.md");
@@ -1140,6 +1159,87 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			(engine as any).scheduleIdMapPrune = spy;
 			engine.destroy();
 			map.set("d.md", "d");
+			expect(spy).not.toHaveBeenCalled();
+		});
+	});
+
+	describe("round 6", () => {
+		test("#1 a fan-out arriving while the last-attempt fetch is in flight is still delivered", async () => {
+			const { engine, map, time } = throttledEngine();
+			liveManifest([]);
+			engine.ensureNoteIdMapped("x"); // announce-only: fetch 1
+			await flush();
+			time.advance(GAP);
+			await flush(); // fetch 2
+			const release = heldManifest([]); // fetch 3: attempt 3, row not there yet
+			time.advance(GAP);
+			await flush();
+			expect(fetches()).toBe(3);
+			liveManifest([{ id: "x", path: "x.md" }]); // the row lands
+			let pathAtRelease: string | null = "unreleased";
+			engine.ensureNoteIdMapped("x"); // the fan-out arrives mid-fetch
+			void engine.awaitNoteIdMapped("x").then(() => {
+				pathAtRelease = map.pathForId("x");
+			});
+			release();
+			await flush();
+			time.advance(GAP);
+			await flush();
+			expect(pathAtRelease).toBe("x.md");
+		});
+
+		test("#2 N fan-outs for an id the server lists at an ignored path cost one GET", async () => {
+			const { engine, time } = throttledEngine();
+			liveManifest([{ id: "cfg", path: ".obsidian/x.md" }]);
+			for (let i = 0; i < 10; i++) {
+				engine.ensureNoteIdMapped("cfg");
+				void engine.awaitNoteIdMapped("cfg");
+				await flush();
+				time.advance(GAP);
+				await flush();
+			}
+			expect(fetches()).toBe(1);
+		});
+
+		test("#2 a refused id is fetched again once its path stops being ignored", async () => {
+			const { engine, map } = throttledEngine();
+			liveManifest([{ id: "cfg", path: "Drafts/x.md" }]);
+			engine.updateSettings({ ...DEFAULT_SETTINGS, debounceMs: 1, ignorePatterns: "Drafts/" });
+			engine.ensureNoteIdMapped("cfg");
+			await flush();
+			expect(map.pathForId("cfg")).toBeNull();
+			engine.updateSettings({ ...DEFAULT_SETTINGS, debounceMs: 1, ignorePatterns: "" });
+			engine.ensureNoteIdMapped("cfg");
+			await engine.awaitNoteIdMapped("cfg");
+			expect(map.pathForId("cfg")).toBe("Drafts/x.md");
+		});
+
+		test("#4 a fresh request resets the retry budget", async () => {
+			const { engine, time } = throttledEngine();
+			liveManifest([]);
+			engine.ensureNoteIdMapped("a");
+			await flush();
+			time.advance(GAP);
+			await flush();
+			expect(fetches()).toBe(2); // attempts 2 of 3
+			engine.ensureNoteIdMapped("a"); // a new announce: fresh evidence
+			for (let i = 0; i < 10; i++) {
+				time.advance(GAP);
+				await flush();
+			}
+			expect(fetches()).toBe(5); // 2 + a full budget of 3, then it stops
+		});
+
+		test("#8 swapping or clearing the map detaches the old map's change handler", async () => {
+			const { engine, map } = throttledEngine();
+			const spy = mock();
+			(engine as any).scheduleIdMapPrune = spy;
+			engine.setNoteIdMap(new NoteIdMap());
+			map.set("o.md", "o");
+			expect(spy).not.toHaveBeenCalled();
+			const second = (engine as any).noteIdMap as NoteIdMap;
+			engine.setNoteIdMap(null);
+			second.set("p.md", "p");
 			expect(spy).not.toHaveBeenCalled();
 		});
 	});

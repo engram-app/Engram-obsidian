@@ -81,4 +81,23 @@ describe("TrailingThrottle", () => {
 		await flush();
 		expect(runs).toBe(2);
 	});
+
+	test("a throwing run is caught and the throttle keeps working", async () => {
+		const time = new ManualTimeProvider(0);
+		let runs = 0;
+		const t = new TrailingThrottle(
+			time,
+			() => 1_000,
+			async () => {
+				runs++;
+				if (runs === 1) throw new Error("run boom");
+			},
+		);
+		t.poke();
+		await flush();
+		time.advance(1_000);
+		t.poke();
+		await flush();
+		expect(runs).toBe(2);
+	});
 });
