@@ -100,6 +100,16 @@ describe("connectionState", () => {
 	});
 });
 
+describe("excludedFolders are backend-scoped", () => {
+	test("a fresh backend starts with none; switching back restores them", () => {
+		const settings = fullSettings({ backendMode: "selfhost", excludedFolders: ["Archive"] });
+		switchMode(settings, "cloud", CLOUD);
+		expect(settings.excludedFolders).toEqual([]);
+		switchMode(settings, "selfhost", CLOUD);
+		expect(settings.excludedFolders).toEqual(["Archive"]);
+	});
+});
+
 describe("switchMode", () => {
 	test("no-op when already in the target mode", () => {
 		const settings = fullSettings({ backendMode: "selfhost" });

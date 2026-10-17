@@ -22,6 +22,8 @@ export const BACKEND_SCOPED_FIELDS = [
 	// belong to whichever backend sent them. Leaving this out kept a Cloud paid
 	// tier in force after switching to a self-hosted server.
 	"planState",
+	// Folder exclusions name folders of one vault on one backend.
+	"excludedFolders",
 ] as const;
 
 export type BackendScopedField = (typeof BACKEND_SCOPED_FIELDS)[number];

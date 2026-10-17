@@ -74,6 +74,7 @@ function emptySlot(apiUrl: string): BackendSlot {
 		accessTokenExpiresAt: undefined,
 		accessTokenVaultId: undefined,
 		planState: null,
+		excludedFolders: [],
 	};
 }
 

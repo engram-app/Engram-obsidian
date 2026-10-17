@@ -2197,6 +2197,9 @@ export default class EngramSyncPlugin extends Plugin {
 			this.settings.remoteVaultName = remoteVaultName;
 			// Whatever was confirmed belonged to the OUTGOING vault.
 			this.verifiedVaultNameFor = null;
+			// Folder exclusions name folders of the outgoing vault: never carry
+			// them silently into another one.
+			this.settings.excludedFolders = [];
 		}
 		// EngramApi keeps its OWN copy and stamps it on every request. Setting it
 		// here rather than leaving it to a later `saveSettings` closes the window

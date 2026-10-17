@@ -246,3 +246,21 @@ describe("resolveRemoteVaultName caching", () => {
 		expect(await plugin.resolveRemoteVaultName()).toBe("Renamed");
 	});
 });
+
+describe("excludedFolders are vault-scoped", () => {
+	test("a vault change drops the previous vault's exclusions", async () => {
+		const fake = makeFakePlugin({
+			settings: { vaultId: "old-vault", remoteVaultName: "Old", excludedFolders: ["Archive"] },
+		});
+		await fake.switchVault("new-vault", "New");
+		expect(fake.settings.excludedFolders).toEqual([]);
+	});
+
+	test("a plain reset to the same vault keeps them", async () => {
+		const fake = makeFakePlugin({
+			settings: { vaultId: "old-vault", remoteVaultName: "Old", excludedFolders: ["Archive"] },
+		});
+		await fake.discardVaultScopedState("old-vault");
+		expect(fake.settings.excludedFolders).toEqual(["Archive"]);
+	});
+});
