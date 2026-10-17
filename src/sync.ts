@@ -9226,6 +9226,14 @@ export class SyncEngine {
 		return behind;
 	}
 
+	/** Make the next catch-up replay the op log from genesis. For a folder
+	 *  taken out of excludedFolders: the cursor already walked past every op
+	 *  made there while it was ignored. Routed through the validator's floor,
+	 *  so catch-up stays the sole cursor writer; applies are idempotent. */
+	requestFullReplay(): void {
+		this.seqRewindFloor = 0;
+	}
+
 	private async healDivergedLiveBoundNotes(manifest: ManifestResponse | null): Promise<number> {
 		if (!manifest || !this.crdt) return 0;
 		let poked = 0;

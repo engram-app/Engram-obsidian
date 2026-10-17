@@ -183,7 +183,7 @@ function renderIgnoreWarnings(
  *  to sync it again. Nothing renders when none are excluded. */
 export function renderExcludedFolders(
 	containerEl: HTMLElement,
-	plugin: Pick<TabContext["plugin"], "settings" | "saveSettings">,
+	plugin: Pick<TabContext["plugin"], "settings" | "syncFolderAgain">,
 	redisplay: () => void,
 ): void {
 	const folders = plugin.settings.excludedFolders;
@@ -195,10 +195,7 @@ export function renderExcludedFolders(
 	for (const folder of folders) {
 		new Setting(containerEl).setName(folder).addButton((btn) =>
 			btn.setButtonText(t("Sync again")).onClick(async () => {
-				plugin.settings.excludedFolders = plugin.settings.excludedFolders.filter(
-					(f) => f !== folder,
-				);
-				await plugin.saveSettings();
+				await plugin.syncFolderAgain(folder);
 				redisplay();
 			}),
 		);

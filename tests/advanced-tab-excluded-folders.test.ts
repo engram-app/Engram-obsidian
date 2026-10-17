@@ -10,7 +10,11 @@ import { renderExcludedFolders } from "../src/tabs/advanced-tab";
 function render(excludedFolders: string[]) {
 	const plugin: any = {
 		settings: { excludedFolders },
-		saveSettings: mock(async () => {}),
+		syncFolderAgain: mock(async (folder: string) => {
+			plugin.settings.excludedFolders = plugin.settings.excludedFolders.filter(
+				(f: string) => f !== folder,
+			);
+		}),
 	};
 	const redisplay = mock(() => {});
 	renderExcludedFolders({} as any, plugin, redisplay);
@@ -34,12 +38,11 @@ describe("renderExcludedFolders", () => {
 		expect(__settingCapture.names).toEqual([]);
 	});
 
-	test("Sync again removes the folder, saves and redraws", async () => {
+	test("Sync again hands the folder to the plugin and redraws", async () => {
 		const { plugin, redisplay } = render(["Archive", "Old"]);
 		const btn = __settingCapture.buttons.find((b) => b.text === "Sync again");
 		await btn?.clickCb?.();
-		expect(plugin.settings.excludedFolders).toEqual(["Old"]);
-		expect(plugin.saveSettings).toHaveBeenCalled();
+		expect(plugin.syncFolderAgain).toHaveBeenCalledWith("Archive");
 		expect(redisplay).toHaveBeenCalled();
 	});
 });

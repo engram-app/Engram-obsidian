@@ -162,3 +162,26 @@ describe("loadSettings defaults excludedFolders", () => {
 		expect((await load({ excludedFolders: ["Archive"] })).excludedFolders).toEqual(["Archive"]);
 	});
 });
+
+describe("syncFolderAgain", () => {
+	test("drops the folder, saves, then re-syncs from genesis", async () => {
+		const order: string[] = [];
+		const { fake } = makeFakePlugin(async () => PLAN);
+		fake.settings.excludedFolders = ["Archive", "Old"];
+		fake.savePluginData = mock(async () => {
+			order.push("save");
+		});
+		fake.syncEngine.requestFullReplay = mock(() => order.push("rewind"));
+		fake.syncEngine.fullSync = mock(async () => {
+			order.push("sync");
+			return { pulled: 0, pushed: 0 };
+		});
+		fake.syncEngine.updateSettings = mock(() => order.push("engine"));
+
+		await fake.syncFolderAgain("Archive");
+		await Bun.sleep(0);
+
+		expect(fake.settings.excludedFolders).toEqual(["Old"]);
+		expect(order).toEqual(["engine", "save", "rewind", "sync"]);
+	});
+});

@@ -250,7 +250,11 @@ describe("resolveRemoteVaultName caching", () => {
 describe("excludedFolders are vault-scoped", () => {
 	test("a vault change drops the previous vault's exclusions", async () => {
 		const fake = makeFakePlugin({
-			settings: { vaultId: "old-vault", remoteVaultName: "Old", excludedFolders: ["Archive"] },
+			settings: {
+				vaultId: "old-vault",
+				remoteVaultName: "Old",
+				excludedFolders: ["Archive"],
+			},
 		});
 		await fake.switchVault("new-vault", "New");
 		expect(fake.settings.excludedFolders).toEqual([]);
@@ -258,7 +262,11 @@ describe("excludedFolders are vault-scoped", () => {
 
 	test("a plain reset to the same vault keeps them", async () => {
 		const fake = makeFakePlugin({
-			settings: { vaultId: "old-vault", remoteVaultName: "Old", excludedFolders: ["Archive"] },
+			settings: {
+				vaultId: "old-vault",
+				remoteVaultName: "Old",
+				excludedFolders: ["Archive"],
+			},
 		});
 		await fake.discardVaultScopedState("old-vault");
 		expect(fake.settings.excludedFolders).toEqual(["Archive"]);

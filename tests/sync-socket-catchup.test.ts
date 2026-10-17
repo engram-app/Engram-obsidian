@@ -399,6 +399,27 @@ describe("catchupViaSeqReplay", () => {
 		expect(cursorsSeen).toEqual([42]);
 	});
 
+	test("requestFullReplay makes the next catch-up start from genesis", async () => {
+		// A folder taken out of excludedFolders: the cursor already walked past
+		// every op made there while it was excluded, so only a replay from 0
+		// re-serves them.
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		(engine as any).applySyncChange = mock(async () => true);
+		engine.setCatchupSeq(42);
+		(engine as any).syncStateVaultId = "vault-x";
+		(engine as any).settings.vaultId = "vault-x";
+		const cursorsSeen: number[] = [];
+		engine.setCrdtCatchupSince(async (cursor: number) => {
+			cursorsSeen.push(cursor);
+			return { changes: [], has_more: false, next_seq: null };
+		});
+
+		engine.requestFullReplay();
+		await engine.catchupViaSeqReplay();
+
+		expect(cursorsSeen).toEqual([0]);
+	});
+
 	test("single-flights concurrent calls and re-runs once for a mid-flight trigger", async () => {
 		// A folder rename fires the per-relocation trigger N times; they must
 		// coalesce into one in-flight replay, plus exactly one re-run to pick up
