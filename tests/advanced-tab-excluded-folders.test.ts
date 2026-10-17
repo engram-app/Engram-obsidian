@@ -55,4 +55,22 @@ describe("renderExcludedFolders", () => {
 		expect(__noticeCapture.notices.length).toBe(1);
 		expect(redisplay).toHaveBeenCalled();
 	});
+
+	test("Sync again is disabled while it runs, so a double click runs it once", async () => {
+		const { plugin } = render(["Archive"]);
+		let release!: () => void;
+		plugin.syncFolderAgain = mock(
+			() =>
+				new Promise<void>((r) => {
+					release = r;
+				}),
+		);
+		const btn = __settingCapture.buttons.find((b) => b.text === "Sync again");
+		const first = btn?.clickCb?.();
+		expect(btn?.disabled).toBe(true);
+		void btn?.clickCb?.(); // the double click
+		release();
+		await first;
+		expect(plugin.syncFolderAgain).toHaveBeenCalledTimes(1);
+	});
 });

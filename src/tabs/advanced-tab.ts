@@ -193,8 +193,14 @@ export function renderExcludedFolders(
 		.setDesc(t("Top-level folders you chose not to sync."))
 		.setHeading();
 	for (const folder of folders) {
+		let busy = false;
 		new Setting(containerEl).setName(folder).addButton((btn) =>
 			btn.setButtonText(t("Sync again")).onClick(async () => {
+				// Busy while it runs (the quota check can wait on the network), and
+				// a second click must not start a second re-include.
+				if (busy) return;
+				busy = true;
+				btn.setDisabled(true);
 				try {
 					await plugin.syncFolderAgain(folder);
 				} catch (e: unknown) {
@@ -202,6 +208,8 @@ export function renderExcludedFolders(
 					console.error("Engram Sync: sync folder again failed", e);
 					new Notice(t("Could not save your folder choice. Try again."));
 				} finally {
+					busy = false;
+					btn.setDisabled(false);
 					redisplay();
 				}
 			}),

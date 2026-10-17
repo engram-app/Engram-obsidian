@@ -233,6 +233,11 @@ class ButtonComponent {
 	setWarning(): this {
 		return this;
 	}
+	disabled = false;
+	setDisabled(disabled: boolean): this {
+		this.disabled = disabled;
+		return this;
+	}
 	onClick(cb: () => void): this {
 		this.clickCb = cb;
 		return this;
