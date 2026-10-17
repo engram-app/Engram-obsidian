@@ -80,7 +80,13 @@ import { channelConnectionKey, computeSyncFingerprint } from "./sync-fingerprint
 import { SyncLog } from "./sync-log";
 import { SyncLogModal } from "./sync-log-modal";
 import {
+	countFolderPlan,
+	type FolderPlanCounts,
+	fetchNotesQuota,
+	type NotesQuota,
 	planLoadErrorMessage,
+	QUOTA_WAIT_MS,
+	SyncAgainModal,
 	SyncPreviewModal,
 	type SyncPreviewOptions,
 } from "./sync-preview-modal";
@@ -3613,8 +3619,6 @@ export default class EngramSyncPlugin extends Plugin {
 			SyncPreviewOptions,
 			"fetchUsage" | "upgradeUrl" | "applyExclusions" | "onLateOverLimit"
 		>,
-		/** `onExcluded`: told which folders the over-limit step left out. */
-		hooks: { onExcluded?: (folders: string[]) => void } = {},
 	): SyncPreviewModal {
 		return new SyncPreviewModal(this.app, null, {
 			...opts,
@@ -3623,10 +3627,7 @@ export default class EngramSyncPlugin extends Plugin {
 				? () => this.api.getBillingUsage()
 				: undefined,
 			upgradeUrl: upgradeUrlFor(this.settings),
-			applyExclusions: async (folders, signal) => {
-				await this.applyOverLimitExclusions(folders, signal);
-				hooks.onExcluded?.(folders);
-			},
+			applyExclusions: (folders, signal) => this.applyOverLimitExclusions(folders, signal),
 			// The quota answered only after the sync started: say so with the
 			// note-limit toast the server's own cap rejection shows.
 			onLateOverLimit: (q) =>
@@ -3743,43 +3744,36 @@ export default class EngramSyncPlugin extends Plugin {
 		this.settingTab?.rerender();
 	}
 
-	/** "Sync again" for a folder in excludedFolders: the normal sync preview,
-	 *  planned as if the folder were included (its edits, deletes, server
-	 *  changes and the over-limit step all show there). Until the user picks a
-	 *  sync, nothing changes: the folder stays excluded, so Cancel needs no
-	 *  undo and live sync never acts on it early. Then the folder leaves
-	 *  excludedFolders (still excluded on disk, see pendingReinclude),
-	 *  reconcileFolder settles it against the server, and the chosen sync runs.
-	 *  Rejects, with the folder still excluded, if the reconcile cannot finish. */
-	async syncFolderAgain(folder: string): Promise<void> {
-		let keptOut = false;
-		const modal = this.newSyncPreviewModal(
-			{
-				remoteVaultName: this.settings.remoteVaultName,
-				showChangeVault: false,
-				context: "review",
-				gateClosed: this.syncEngine.isSyncBlocked(),
-			},
-			// The over-limit step's picker can leave this very folder out.
-			{
-				onExcluded: (folders) => {
-					if (folders.includes(folder)) keptOut = true;
-				},
-			},
-		);
-		void this.syncEngine
-			.computeSyncPlan("full", { reincluding: folder })
-			.then((plan) => modal.setPlan(plan))
-			.catch(() => modal.setPlanError(planLoadErrorMessage(this.hasAuthConfigured())));
-		this.trackPreviewModal(modal);
-		let choice: SyncChoice;
-		try {
-			choice = await modal.awaitChoice();
-		} finally {
-			this.untrackPreviewModal(modal);
-		}
-		if (choice === "cancel" || choice === "change-vault" || keptOut) return;
+	/** "Sync again" for a folder in excludedFolders: plan it (one server walk,
+	 *  nothing changed), show the user exactly what it will do (with the
+	 *  over-limit step when its new notes do not fit), and on Continue carry out
+	 *  exactly that plan. Until Continue the folder stays excluded, so Cancel
+	 *  needs no undo. Held by syncPreviewGuard, so it never stacks on another
+	 *  preview (a second call while one is open is a no-op). Afterwards normal
+	 *  live sync carries on; no extra full sync is run. Rejects, with the folder
+	 *  excluded again, if the plan cannot be carried out. */
+	syncFolderAgain(folder: string): Promise<void> {
+		return this.syncPreviewGuard(() => this.syncFolderAgainNow(folder));
+	}
 
+	private async syncFolderAgainNow(folder: string): Promise<void> {
+		const [plan, quota] = await Promise.all([
+			this.syncEngine.planFolder(folder),
+			offersUpgrades(this.settings)
+				? withTimeout(
+						fetchNotesQuota(() => this.api.getBillingUsage()),
+						QUOTA_WAIT_MS,
+					).catch(() => null)
+				: Promise.resolve(null),
+		]);
+		const ok = await this.confirmSyncAgain(
+			folder,
+			countFolderPlan(plan),
+			quota === "unlimited" ? null : quota,
+		);
+		if (!ok) return;
+
+		const vaultId = this.settings.vaultId;
 		await this.serializeExcluded(async () => {
 			this.pendingReinclude ??= new Set();
 			this.pendingReinclude.add(folder);
@@ -3788,24 +3782,41 @@ export default class EngramSyncPlugin extends Plugin {
 			);
 			this.syncEngine.updateSettings(this.settings);
 		});
+		let failure: Error | null = null;
 		try {
-			const { failed } = await this.syncEngine.reconcileFolder(folder);
-			if (failed > 0) throw new Error(`${failed} file(s) could not be synced again`);
+			const { failed } = await this.syncEngine.applyFolderPlan(plan);
+			if (failed > 0) failure = new Error(`${failed} file(s) could not be synced again`);
 		} catch (e: unknown) {
-			await this.serializeExcluded(async () => {
-				this.pendingReinclude?.delete(folder);
+			failure = e instanceof Error ? e : new Error(String(e));
+		}
+		await this.serializeExcluded(async () => {
+			this.pendingReinclude?.delete(folder);
+			// A vault switch meanwhile cleared the list for another vault: the
+			// folder must not come back into it.
+			if (failure && this.settings.vaultId === vaultId) {
 				if (!this.settings.excludedFolders.includes(folder)) {
 					this.settings.excludedFolders = [...this.settings.excludedFolders, folder];
 				}
 				this.syncEngine.updateSettings(this.settings);
-			});
-			throw e;
-		}
-		this.pendingReinclude?.delete(folder);
-		await this.serializeExcluded(() => this.savePluginData(this.syncEngine.getLastSync()));
-		void this.runSyncWithProgress(choice, { plan: modal.getPlan() }).catch((e) =>
-			this.handleSyncError("Sync folder again", e, { notice: true }),
-		);
+			}
+			await this.savePluginData(this.syncEngine.getLastSync());
+		});
+		if (failure) throw failure;
+	}
+
+	/** Seam for tests: the Sync again confirm. */
+	confirmSyncAgain(
+		folder: string,
+		counts: FolderPlanCounts,
+		quota: NotesQuota | null,
+	): Promise<boolean> {
+		return new SyncAgainModal(
+			this.app,
+			folder,
+			counts,
+			quota,
+			upgradeUrlFor(this.settings),
+		).awaitAnswer();
 	}
 
 	/** Persist current sync engine state (issues, ignored files, etc.) to plugin

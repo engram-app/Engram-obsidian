@@ -9,6 +9,7 @@ import { simplifiedFirstSync } from "../src/sync-plan-format";
 import {
 	fetchNotesQuota,
 	notesQuotaFromUsage,
+	SyncAgainModal,
 	SyncPreviewModal,
 	SyncPreviewState,
 	simplifiedScreenCopy,
@@ -519,8 +520,9 @@ describe("over-limit quota is re-fetched", () => {
 		await Bun.sleep(0);
 		expect(fetchUsage).toHaveBeenCalledTimes(1);
 
-		// The user upgraded in the browser before picking.
+		// The user upgraded in the browser before picking, a while later.
 		room = 5;
+		(modal as any).quotaAnsweredAt = 0;
 		// pick() is what every option button calls.
 		(modal as any).pick("smart-merge");
 		await Bun.sleep(0);
@@ -608,6 +610,7 @@ describe("over-limit quota re-check", () => {
 		const { modal } = openModal(planWith(["Root.md", ...PATHS]), { fetchUsage });
 		resolvers.shift()?.(usage(10, 6)); // the open-time lookup: room 4
 		await Bun.sleep(0);
+		(modal as any).quotaAnsweredAt = 0; // the open-time answer is old
 		(modal as any).pick("smart-merge"); // re-check #1 (slow)
 		(modal as any).onWindowFocus(); // re-check #2
 		const [older, newer] = resolvers;
@@ -624,6 +627,7 @@ describe("over-limit quota re-check", () => {
 		const { modal, choice } = openModal(planWith(["Root.md", ...PATHS]), { fetchUsage });
 		await Bun.sleep(0);
 		limit = null; // upgraded in the browser
+		(modal as any).quotaAnsweredAt = 0; // the open-time answer is old
 		(modal as any).pick("smart-merge");
 		await Bun.sleep(0);
 		// The step had opened, so the re-check alone must not start the sync.
@@ -787,6 +791,7 @@ describe("a slow re-check after the step opened never starts a sync", () => {
 					});
 		const { modal, choice } = openModal(planWith(["Root.md", ...PATHS]), { fetchUsage });
 		await Bun.sleep(0);
+		(modal as any).quotaAnsweredAt = 0; // the open-time answer is old
 		(modal as any).pick("smart-merge"); // the step opens; its re-check is slow
 		await Bun.sleep(0);
 		expect(modal.state.view).toBe("over-limit");
@@ -920,5 +925,124 @@ describe("a quota answer arriving after the cap", () => {
 		answer(usage(100, 0));
 		await Bun.sleep(0);
 		expect(onLateOverLimit).not.toHaveBeenCalled();
+	});
+});
+
+describe("a late quota answer acts only on a choice still in effect", () => {
+	function late() {
+		let answer!: (u: BillingUsage) => void;
+		const fetchUsage = () =>
+			new Promise<BillingUsage>((r) => {
+				answer = r;
+			});
+		return { fetchUsage, answer: (u: BillingUsage) => answer(u) };
+	}
+
+	test("cancelled from the delete confirm: nothing is announced or reopened", async () => {
+		const { fetchUsage, answer } = late();
+		const onLateOverLimit = mock((_q: unknown) => {});
+		const { modal, choice } = openModal(planWith(["Root.md", ...PATHS]), {
+			fetchUsage,
+			onLateOverLimit,
+		});
+		(modal as any).quotaWaitMs = 5;
+		(modal as any).pick("push-all-delete-remote");
+		await Bun.sleep(20);
+		expect(modal.state.view).toBe("confirm");
+		modal.state.cancel();
+		modal.onClose();
+		answer(usage(10, 6));
+		await Bun.sleep(0);
+		expect(onLateOverLimit).not.toHaveBeenCalled();
+		expect(await choice).toBe("cancel");
+	});
+
+	test("after a vault switch replaced the plan, the old pick is forgotten", async () => {
+		const { fetchUsage, answer } = late();
+		const { modal } = openModal(planWith(["Root.md", ...PATHS]), {
+			fetchUsage,
+			applyVaultChange: async () => planWith(["Root.md", ...PATHS]),
+		});
+		(modal as any).quotaWaitMs = 5;
+		(modal as any).pick("push-all-delete-remote");
+		await Bun.sleep(20);
+		expect(modal.state.view).toBe("confirm");
+		// The user went back and switched vault: a new plan, then picked again.
+		modal.state.goBack();
+		await (modal as any).applyPickedVault({ id: "v2", name: "V2" });
+		modal.state.pickOption("push-all-delete-remote");
+		answer(usage(10, 6));
+		await Bun.sleep(0);
+		expect(modal.state.view).toBe("confirm");
+	});
+});
+
+describe("the over-limit step counts what each option really adds", () => {
+	test("push-all-keep-remote also re-creates notes the server deleted", () => {
+		// 6 local notes; the server tombstoned 3 of them, so only 3 are "new".
+		const plan = planWith(["Root.md", ...PATHS], []);
+		const revived = ["Archive/a.md", "Archive/b.md", "Archive/c.md"];
+		plan.newNotePaths = plan.newNotePaths.filter((p) => !revived.includes(p));
+		plan.toDeleteLocal = revived;
+		const state = new SyncPreviewState(plan, () => {});
+		state.setNotesQuota({ limit: 10, room: 4, used: 6 });
+		expect(state.needsOverLimitStep("smart-merge")).toBe(false); // tombstones win there
+		expect(state.needsOverLimitStep("push-all-keep-remote")).toBe(true); // 6 > 4
+	});
+
+	test("push-all-delete-remote nets out the server notes it deletes", () => {
+		// 6 new local notes; 5 live server notes are not local and get deleted.
+		const server = ["S1.md", "S2.md", "S3.md", "S4.md", "S5.md"];
+		const plan = planWith(["Root.md", ...PATHS], server);
+		plan.newNotePaths = ["Root.md", ...PATHS];
+		const state = new SyncPreviewState(plan, () => {});
+		state.setNotesQuota({ limit: 10, room: 2, used: 8 });
+		expect(state.needsOverLimitStep("push-all-delete-remote")).toBe(false); // 6 - 5 = 1
+		expect(state.needsOverLimitStep("push-all-keep-remote")).toBe(true);
+	});
+});
+
+describe("a fresh open-time quota answer is reused", () => {
+	test("picking right after the answer does not ask again", async () => {
+		const fetchUsage = mock(async () => usage(10, 6));
+		const { modal } = openModal(planWith(["Root.md", ...PATHS]), { fetchUsage });
+		await Bun.sleep(0);
+		(modal as any).pick("smart-merge");
+		await Bun.sleep(0);
+		expect(modal.state.view).toBe("over-limit");
+		expect(fetchUsage).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("Sync again's confirm", () => {
+	const counts = { upload: 1, download: 0, deleteOnServer: 2, conflicts: 0, newNotes: 4 };
+	function confirm(quota: { limit: number; room: number; used: number } | null) {
+		const modal: any = new SyncAgainModal({} as any, "Archive", counts, quota, null);
+		const ok = modal.awaitAnswer() as Promise<boolean>;
+		modal.onOpen();
+		return { modal, ok };
+	}
+
+	test("shows the planned server deletes", () => {
+		const { modal } = confirm(null);
+		const texts = nodes(modal.contentEl).map((n) => n.textContent);
+		expect(texts).toContain("Will delete 2 files on the server.");
+	});
+
+	test("new notes past the room show the over-limit step; Continue needs the ack", async () => {
+		const { modal, ok } = confirm({ limit: 10, room: 1, used: 9 });
+		const cont = button(modal, "Continue");
+		expect(cont.disabled).toBe(true);
+		const ack = checkboxFor(modal.contentEl, "I understand 3 notes will not sync.");
+		ack.checked = true;
+		ack.listeners.change();
+		cont.listeners.click();
+		expect(await ok).toBe(true);
+	});
+
+	test("closing without an answer declines", async () => {
+		const { modal, ok } = confirm(null);
+		modal.onClose();
+		expect(await ok).toBe(false);
 	});
 });

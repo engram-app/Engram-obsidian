@@ -245,6 +245,22 @@ export async function reconcileColdStart(
 	crdt.enroll?.(file.noteId);
 }
 
+/** One step of "Sync again" (SyncEngine.planFolder). `localHash` is the local
+ *  file's hash when planned (null: no local file); the step runs only if it
+ *  still matches. `creates`: an upload that adds a new note on the server. */
+export interface FolderAction {
+	kind: "upload" | "download" | "deleteOnServer" | "conflict";
+	path: string;
+	localHash: number | null;
+	row?: SyncChange;
+	creates: boolean;
+}
+
+export interface FolderPlan {
+	folder: string;
+	actions: FolderAction[];
+}
+
 /** How long (ms) after a push completes to suppress WebSocket echoes for that path. */
 const ECHO_COOLDOWN_MS = 5000;
 
@@ -10863,89 +10879,131 @@ export class SyncEngine {
 		return { pushed, failed: outcome.failed };
 	}
 
-	/** "Sync again": bring a folder that was excluded level with the server.
-	 *  The caller has already taken it out of excludedFolders. While it was
-	 *  excluded nothing here was synced, and the catch-up cursor walked past
-	 *  its server ops, so a normal sync would neither upload edits made in it
-	 *  (their mtime predates lastSync) nor pull its server changes. This walks
-	 *  the server's current state once and settles each path in the folder by
-	 *  content, against what this device last synced:
-	 *  - edited here only: pushed;
-	 *  - changed on the server only, or new there: pulled;
-	 *  - changed on both: the shared apply keeps the local text as a conflict
-	 *    copy and takes the server's (never overwritten);
-	 *  - deleted here: deleted on the server, the same delete a vault event sends;
-	 *  - deleted on the server: the shared tombstone apply;
-	 *  - never synced here but present on the server with other content: the
-	 *    local text is kept as a conflict copy, then the server's is pulled.
-	 *  Idempotent, so an interrupted run is simply run again. Per-path failures
-	 *  are counted, never thrown; only the server walk itself can throw. */
-	async reconcileFolder(folder: string): Promise<{ failed: number }> {
+	/** "Sync again", step 1: what bringing an excluded folder level with the
+	 *  server would do, from ONE walk of the server's current state. Nothing is
+	 *  changed. While the folder was excluded nothing in it synced and the
+	 *  catch-up cursor walked past its server ops, so a normal sync would
+	 *  neither upload edits made in it (their mtime predates lastSync) nor pull
+	 *  its server changes. Each path is settled by content, against what this
+	 *  device last synced:
+	 *  - edited here only, or not on the server: upload;
+	 *  - changed on the server only, new there, or deleted there: download;
+	 *  - changed on both, or never synced here but different on the server:
+	 *    conflict (the local text is kept as a conflict copy, the server's wins);
+	 *  - synced here, deleted here while excluded: delete on the server.
+	 *  The folder may still be excluded; its own exclusion is ignored here. */
+	async planFolder(folder: string): Promise<FolderPlan> {
 		const server = await this.enumerateServerState();
-		const inFolder = (p: string) => inExcludedFolder(p, [folder]) && !this.shouldIgnore(p);
+		const inFolder = (p: string) =>
+			inExcludedFolder(p, [folder]) && !this.shouldIgnore(p, folder);
 		const paths = new Set<string>();
 		for (const f of this.app.vault.getFiles()) {
 			if (this.isSyncable(f) && inFolder(f.path)) paths.add(f.path);
 		}
-		for (const p of [
-			...server.notes.keys(),
-			...server.attachments.keys(),
-			...this.syncState.keys(),
-		]) {
+		for (const p of [...server.rows.keys(), ...this.syncState.keys()]) {
 			if (inFolder(p)) paths.add(p);
 		}
-		let failed = 0;
+		const actions: FolderAction[] = [];
 		for (const path of paths) {
-			try {
-				const row = server.rows.get(path);
-				const state = server.notes.get(path) ?? server.attachments.get(path);
-				await this.reconcilePath(path, row && state ? { ...state, row } : undefined);
-			} catch (e) {
-				failed += 1;
-				rlog().error("sync", `Sync again: ${noteRef(path)} | ${errMsg(e, path)}`);
-			}
+			const action = await this.planPath(
+				path,
+				server.rows.get(path),
+				server.notes.get(path)?.contentHash,
+			);
+			if (action) actions.push(action);
 		}
-		return { failed };
+		return { folder, actions };
 	}
 
-	private async reconcilePath(
-		path: string,
-		server:
-			| { deleted: boolean; content?: string; contentHash?: string; row: SyncChange }
-			| undefined,
-	): Promise<void> {
+	/** Local content hash as the engine records it (notes: text, attachments:
+	 *  bytes), or null when there is no local file. */
+	private async localHashOf(path: string): Promise<number | null> {
 		const file = this.app.vault.getFileByPath(path);
+		if (!file) return null;
+		return this.isBinaryFile(file)
+			? fnv1aBase64(await this.app.vault.readBinary(file))
+			: fnv1a(await this.app.vault.cachedRead(file));
+	}
+
+	private async planPath(
+		path: string,
+		row: SyncChange | undefined,
+		contentHash: string | undefined,
+	): Promise<FolderAction | null> {
 		const synced = this.syncState.get(path);
-		if (!file) {
-			if (!server || server.deleted) return;
-			if (synced) await this.deleteSyncedPath(path);
-			else await this.applySyncChange(server.row);
-			return;
+		const localHash = await this.localHashOf(path);
+		const isNote = !this.isBinaryPath(path);
+		if (localHash === null) {
+			if (!row || row.deleted) return null;
+			return synced
+				? { kind: "deleteOnServer", path, localHash, creates: false }
+				: { kind: "download", path, localHash, row, creates: false };
 		}
-		if (!server) {
-			await this.pushFile(file);
-			return;
+		if (!row) return { kind: "upload", path, localHash, creates: isNote };
+		if (row.deleted) return { kind: "download", path, localHash, row, creates: false };
+		if (!isNote) {
+			return synced?.hash === localHash
+				? null
+				: { kind: "upload", path, localHash, creates: false };
 		}
-		if (server.deleted || this.isBinaryFile(file)) {
-			// Attachments: pushFile compares bytes itself; a tombstone or a server
-			// copy we lack goes through the shared apply.
-			if (server.deleted) await this.applySyncChange(server.row);
-			else await this.pushFile(file);
-			return;
-		}
-		const local = await this.app.vault.cachedRead(file);
-		const localHash = fnv1a(local);
-		if (server.content !== undefined && fnv1a(server.content) === localHash) return;
-		if (!synced) {
-			await this.writeDriftConflictCopy(path, local);
-			await this.applySyncChange(server.row);
-			return;
-		}
+		const content = row.type === "note" ? row.content : undefined;
+		if (content !== undefined && fnv1a(content) === localHash) return null;
+		if (!synced) return { kind: "conflict", path, localHash, row, creates: false };
 		const localChanged = synced.hash !== localHash;
-		const serverChanged =
-			server.contentHash === undefined || server.contentHash !== synced.serverHash;
-		if (localChanged && !serverChanged) await this.pushFile(file);
-		else if (serverChanged) await this.applySyncChange(server.row);
+		const serverChanged = contentHash === undefined || contentHash !== synced.serverHash;
+		if (localChanged && serverChanged)
+			return { kind: "conflict", path, localHash, row, creates: false };
+		if (localChanged) return { kind: "upload", path, localHash, creates: false };
+		if (serverChanged) return { kind: "download", path, localHash, row, creates: false };
+		return null;
+	}
+
+	/** "Sync again", step 2: carry out exactly `plan`, which the user confirmed.
+	 *  No second server walk: each path is re-checked against the local hash the
+	 *  plan saw, and one that changed since is skipped (the next sync settles
+	 *  it). Uploads go through the bulk push loop; server deletes through the
+	 *  durable delete queue. Per-path failures are counted, never thrown. The
+	 *  caller must already have taken the folder out of excludedFolders. */
+	async applyFolderPlan(plan: FolderPlan): Promise<{ failed: number; skipped: number }> {
+		let failed = 0;
+		let skipped = 0;
+		const uploads: TFile[] = [];
+		for (const action of plan.actions) {
+			if ((await this.localHashOf(action.path)) !== action.localHash) {
+				skipped += 1;
+				continue;
+			}
+			try {
+				if (action.kind === "upload") {
+					const file = this.app.vault.getFileByPath(action.path);
+					if (file) uploads.push(file);
+				} else if (action.kind === "deleteOnServer") {
+					await this.deleteSyncedPath(action.path);
+				} else if (action.row) {
+					if (action.kind === "conflict" && !this.syncState.has(action.path)) {
+						// Never synced here: the shared apply has no baseline to tell
+						// the local text is an edit, so keep it explicitly first.
+						const file = this.app.vault.getFileByPath(action.path);
+						if (file) {
+							await this.writeDriftConflictCopy(
+								action.path,
+								await this.app.vault.cachedRead(file),
+							);
+						}
+					}
+					await this.applySyncChange(action.row);
+				}
+			} catch (e) {
+				failed += 1;
+				rlog().error(
+					"sync",
+					`Sync again: ${noteRef(action.path)} | ${errMsg(e, action.path)}`,
+				);
+			}
+		}
+		if (uploads.length > 0)
+			failed += (await this.pushPartitioned(uploads, "incremental")).failed;
+		return { failed, skipped };
 	}
 
 	/** Compute what a sync would do without executing it (dry-run preview).
@@ -10965,19 +11023,9 @@ export class SyncEngine {
 	 *      local unchanged → clean · local changed → toPush
 	 *  - server changed: local unchanged → toPull · both changed → conflict
 	 */
-	async computeSyncPlan(
-		mode: "push-all" | "pull-all" | "full",
-		/** Sync again's preview: plan as if `reincluding` were no longer
-		 *  excluded, without touching the live settings (which would let live
-		 *  sync act on the folder before the user chose). In that folder a file
-		 *  synced here but now missing was deleted while excluded, so it shows
-		 *  as a remote delete, which is what reconcileFolder does with it. */
-		opts: { reincluding?: string } = {},
-	): Promise<SyncPlan> {
+	async computeSyncPlan(mode: "push-all" | "pull-all" | "full"): Promise<SyncPlan> {
 		const server = await this.enumerateServerState();
-		const back = opts.reincluding;
-		const ignore = (path: string) => this.shouldIgnore(path, back);
-		const toDeleteRemote: string[] = [];
+		const ignore = (path: string) => this.shouldIgnore(path);
 		// Ignored paths are out of the sync on BOTH sides: the local list below
 		// drops them, so a server row there must not read as a pull either.
 		const unignored = <V>(m: Map<string, V>) =>
@@ -11016,15 +11064,7 @@ export class SyncEngine {
 				continue;
 			}
 			if (!localNoteSet.has(path)) {
-				if (
-					back !== undefined &&
-					inExcludedFolder(path, [back]) &&
-					this.syncState.has(path)
-				) {
-					toDeleteRemote.push(path);
-				} else {
-					toPullNotes.push(path);
-				}
+				toPullNotes.push(path);
 				continue;
 			}
 			const file = this.app.vault.getFileByPath(path);
@@ -11131,8 +11171,7 @@ export class SyncEngine {
 			},
 			conflicts: mode === "push-all" || mode === "pull-all" ? [] : conflictNotes,
 			toDeleteLocal: [...toDeleteLocal, ...toDeleteLocalAttach],
-			// Otherwise computed during execution (local deletes since last sync).
-			toDeleteRemote,
+			toDeleteRemote: [], // computed during execution (local deletes since last sync)
 		};
 	}
 

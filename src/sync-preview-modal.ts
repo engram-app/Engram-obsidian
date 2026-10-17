@@ -3,12 +3,13 @@ import { withTimeout } from "./api";
 import { devLog } from "./dev-log";
 import { errMsg, statusOf } from "./error-util";
 import { FolderPicker, ROOT_FOLDER, selectedNoteCount } from "./folder-picker";
-import { t, tInto } from "./i18n";
+import { asIs, t, tInto } from "./i18n";
 import { userErrorMessage } from "./i18n/user-error";
 import { toastFor } from "./limit-copy";
 import { LimitExceededError } from "./limit-error";
 import { isTextAttachment } from "./mime";
 import { type BillingUsage, isUnlimited } from "./plan-usage";
+import type { FolderAction, FolderPlan } from "./sync";
 import {
 	buildDeletionTree,
 	computeMatchPercent,
@@ -127,8 +128,29 @@ export class SyncPreviewState {
 			!this.overLimitDone &&
 			uploadsNotes(choice) &&
 			this.notesQuota != null &&
-			this.newNotePaths().length > this.notesQuota.room
+			this.addedBy(choice) > this.notesQuota.room
 		);
+	}
+
+	/** Note paths `choice` would create on the server. push-all re-uploads a
+	 *  local note the server tombstoned too (smart-merge lets the delete win). */
+	createdPaths(choice: SyncChoice | null): string[] {
+		if (choice !== "push-all-keep-remote" && choice !== "push-all-delete-remote") {
+			return this.newNotePaths();
+		}
+		const local = new Set(this.localNotePaths());
+		const revived = (this.plan?.toDeleteLocal ?? []).filter((p) => local.has(p));
+		return [...this.newNotePaths(), ...revived];
+	}
+
+	/** Net notes `choice` adds against the limit: what it creates, less the
+	 *  live server notes push-all-delete-remote deletes. */
+	addedBy(choice: SyncChoice | null): number {
+		const created = this.createdPaths(choice).length;
+		if (choice !== "push-all-delete-remote" || !this.plan) return created;
+		const local = new Set(this.localNotePaths());
+		const serverNotes = this.plan.serverPaths.slice(0, this.plan.serverNoteCount);
+		return Math.max(0, created - serverNotes.filter((p) => !local.has(p)).length);
 	}
 
 	/** Notes an uploading option would create on the server, as computeSyncPlan
@@ -156,8 +178,8 @@ export class SyncPreviewState {
 	/** New notes the current folder selection would still add. */
 	overLimitAdded(): number {
 		// Without a picker no folder can be excluded, whatever was selected before.
-		if (!this.overLimitOffersPicker()) return this.newNotePaths().length;
-		return selectedNoteCount(this.newNotePaths(), this.overLimitExcluded);
+		if (!this.overLimitOffersPicker()) return this.addedBy(this.pendingChoice);
+		return selectedNoteCount(this.createdPaths(this.pendingChoice), this.overLimitExcluded);
 	}
 
 	/** Notes past the room under the current selection; 0 when it fits. */
@@ -632,7 +654,11 @@ export function simplifiedScreenCopy(simple: NonNullable<ReturnType<typeof simpl
 
 /** How long an option click waits for the open-time quota lookup before it
  *  proceeds as if the quota were unknown. */
-const QUOTA_WAIT_MS = 3000;
+export const QUOTA_WAIT_MS = 3000;
+
+/** An open-time quota answer younger than this is used as is when the step
+ *  opens, instead of asking the server again. */
+const QUOTA_FRESH_MS = 5000;
 
 /** Wait this long before the "Comparing…" line appears. Plans that resolve
  *  faster show no loading copy at all. */
@@ -706,6 +732,7 @@ export class SyncPreviewModal extends Modal {
 			// before this answers waits for it (see pick).
 			this.quotaPending = fetchNotesQuota(fetchUsage).then((q) => {
 				this.quotaPending = null;
+				this.quotaAnsweredAt = Date.now();
 				if (seq === this.quotaSeq) this.state.setNotesQuota(q === "unlimited" ? null : q);
 				if (q && q !== "unlimited") this.onLateQuota(q);
 			});
@@ -1225,15 +1252,20 @@ export class SyncPreviewModal extends Modal {
 		const choice = this.pickedPastCap;
 		this.pickedPastCap = null;
 		if (!choice || !uploadsNotes(choice)) return;
-		if (this.state.newNotePaths().length <= quota.room) return;
-		if (this.state.view === "confirm" && !this.closed) {
+		if (this.state.addedBy(choice) <= quota.room) return;
+		// Only a choice still in effect: not cancelled, not backed out of, not
+		// swapped for another option, not from before a plan change.
+		if (this.state.view === "confirm" && !this.closed && this.state.pendingChoice === choice) {
 			this.state.goBack();
 			this.state.pickOption(choice);
 			this.render();
-		} else if (this.state.view === "done") {
+		} else if (this.state.view === "done" && this.resolvedChoice === choice) {
 			this.opts.onLateOverLimit?.(quota);
 		}
 	}
+
+	/** When the open-time quota answer arrived (0: not yet). */
+	private quotaAnsweredAt = 0;
 
 	/** QUOTA_WAIT_MS; a field so tests can shorten it. */
 	private quotaWaitMs = QUOTA_WAIT_MS;
@@ -1247,7 +1279,7 @@ export class SyncPreviewModal extends Modal {
 	private async pick(choice: SyncChoice, from?: HTMLButtonElement): Promise<void> {
 		if (this.picking) return;
 		// Only a pick that creates notes can hit the limit; nothing else waits.
-		const canHitLimit = uploadsNotes(choice) && this.state.newNotePaths().length > 0;
+		const canHitLimit = uploadsNotes(choice) && this.state.addedBy(choice) > 0;
 		if (this.quotaPending && canHitLimit) {
 			this.picking = true;
 			if (from) {
@@ -1275,7 +1307,8 @@ export class SyncPreviewModal extends Modal {
 			if (this.closed) return;
 		}
 		this.state.pickOption(choice);
-		if (this.state.view === "over-limit") void this.refreshOverLimitQuota();
+		const fresh = Date.now() - this.quotaAnsweredAt < QUOTA_FRESH_MS;
+		if (this.state.view === "over-limit" && !fresh) void this.refreshOverLimitQuota();
 		if (this.state.view !== "done") this.render();
 	}
 
@@ -1352,7 +1385,7 @@ export class SyncPreviewModal extends Modal {
 		// and only a verified-unlimited re-check clears it, which leaves the step.
 		if (!quota) throw new Error("over-limit view rendered without a notes quota");
 		const view = renderOverLimitView(contentEl, {
-			count: this.state.newNotePaths().length,
+			count: this.state.addedBy(this.state.pendingChoice),
 			quota,
 			upgradeUrl: this.opts.upgradeUrl ?? null,
 			// No picker for a choice that deletes on the server: ignoring a folder
@@ -1361,7 +1394,7 @@ export class SyncPreviewModal extends Modal {
 				? (el) => {
 						new FolderPicker(el, {
 							notePaths: this.state.localNotePaths(),
-							newPaths: this.state.newNotePaths(),
+							newPaths: this.state.createdPaths(this.state.pendingChoice),
 							excluded: this.state.overLimitExcluded,
 							limit: quota.room,
 							onChange: (excluded) => {
@@ -1663,6 +1696,7 @@ export class SyncPreviewModal extends Modal {
 		try {
 			const newPlan = await this.opts.applyVaultChange(v.id, v.name);
 			this.state.replacePlan(newPlan);
+			this.pickedPastCap = null; // a pick made for the old plan
 			this.remoteVaultName = v.name;
 			this.state.exitVaultPicker();
 		} catch (e: unknown) {
@@ -1718,4 +1752,127 @@ function renderOverLimitView(
 	const back = footer.createEl("button", { text: t("Back") });
 	const cont = footer.createEl("button", { text: t("Continue") });
 	return { ackRow, ack, ackText, error, back, cont };
+}
+
+/** A "Sync again" plan's actions, counted for the confirm. */
+export function countFolderPlan(plan: FolderPlan): FolderPlanCounts {
+	const of = (kind: FolderAction["kind"]) => plan.actions.filter((a) => a.kind === kind).length;
+	return {
+		upload: of("upload"),
+		download: of("download"),
+		deleteOnServer: of("deleteOnServer"),
+		conflicts: of("conflict"),
+		newNotes: plan.actions.filter((a) => a.creates).length,
+	};
+}
+
+/** What a "Sync again" plan will do, in numbers. */
+export interface FolderPlanCounts {
+	upload: number;
+	download: number;
+	deleteOnServer: number;
+	conflicts: number;
+	/** Uploads that add a new note on the server: what the plan limit counts. */
+	newNotes: number;
+}
+
+/** The one confirm for "Sync again": the folder, what the plan will do, and,
+ *  when its new notes do not fit the room left on the plan, the over-limit
+ *  step's message and acknowledgement (no folder picker: it is one folder).
+ *  Resolves true on Continue, false on Cancel / Back / close. */
+export class SyncAgainModal extends Modal {
+	private answer: ((ok: boolean) => void) | null = null;
+
+	constructor(
+		app: App,
+		private readonly folder: string,
+		private readonly counts: FolderPlanCounts,
+		/** Known quota, or null (self-host, unknown, unlimited): no step. */
+		private readonly quota: NotesQuota | null,
+		private readonly upgradeUrl: string | null,
+	) {
+		super(app);
+	}
+
+	awaitAnswer(): Promise<boolean> {
+		return new Promise((resolve) => {
+			this.answer = resolve;
+			this.open();
+		});
+	}
+
+	/** True when the plan's new notes do not fit the room left. */
+	overLimit(): boolean {
+		return this.quota !== null && this.counts.newNotes > this.quota.room;
+	}
+
+	onOpen(): void {
+		const { contentEl, counts, quota } = this;
+		contentEl.addClass("engram-sync-preview-modal");
+		const summary = (el: HTMLElement) => {
+			el.createEl("p", { text: asIs(this.folder), cls: "engram-sync-preview-folder" });
+			const lines: string[] = [];
+			if (counts.upload)
+				lines.push(t("Will upload {count} files.", { count: counts.upload }));
+			if (counts.download)
+				lines.push(t("Will download {count} files.", { count: counts.download }));
+			if (counts.deleteOnServer)
+				lines.push(
+					t("Will delete {count} files on the server.", { count: counts.deleteOnServer }),
+				);
+			if (counts.conflicts)
+				lines.push(t("{count} conflicts to resolve.", { count: counts.conflicts }));
+			if (lines.length === 0) lines.push(t("Already in sync. Nothing is deleted."));
+			const list = el.createEl("ul", { cls: "engram-sync-again-summary" });
+			for (const line of lines) list.createEl("li", { text: line });
+		};
+
+		let back: HTMLButtonElement;
+		let cont: HTMLButtonElement;
+		if (quota && this.overLimit()) {
+			const view = renderOverLimitView(contentEl, {
+				count: counts.newNotes,
+				quota,
+				upgradeUrl: this.upgradeUrl,
+				middle: summary,
+			});
+			view.ackText.setText(
+				t("I understand {count} notes will not sync.", {
+					count: counts.newNotes - quota.room,
+				}),
+			);
+			({ back, cont } = view);
+			cont.disabled = true;
+			view.ack.addEventListener("change", () => {
+				cont.disabled = !view.ack.checked;
+			});
+		} else {
+			contentEl.createEl("h2", { text: t("Sync again"), cls: "engram-sync-preview-header" });
+			summary(contentEl);
+			const footer = contentEl.createEl("footer", { cls: "engram-sync-preview-footer" });
+			back = footer.createEl("button", { text: t("Cancel") });
+			cont = footer.createEl("button", { text: t("Continue"), cls: "mod-cta" });
+		}
+		back.addEventListener("click", () => this.finish(false));
+		cont.addEventListener("click", () => {
+			if (!cont.disabled) this.finish(true);
+		});
+	}
+
+	private finish(ok: boolean): void {
+		this.settle(ok);
+		this.close();
+	}
+
+	private settle(ok: boolean): void {
+		const answer = this.answer;
+		this.answer = null;
+		answer?.(ok);
+	}
+
+	/** Esc / backdrop declines (a no-op once Cancel or Continue settled it). */
+	onClose(): void {
+		this.contentEl.empty();
+		this.settle(false);
+	}
 }

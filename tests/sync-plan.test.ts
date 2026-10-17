@@ -3,7 +3,6 @@ import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { CRDT_HEAD_CREATED, fnv1a, SyncEngine } from "../src/sync";
 import { planWithoutFolders } from "../src/sync-plan-format";
-import { SyncPreviewState } from "../src/sync-preview-modal";
 import type { SyncProgress } from "../src/types";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -776,39 +775,6 @@ describe("SyncEngine.computeSyncPlan", () => {
 		expect(plan.toPull.attachments).toEqual([]);
 		expect(plan.serverPaths).toEqual(["Notes/kept.md"]);
 		expect(plan.serverNoteCount).toBe(1);
-	});
-
-	describe("Sync again's preview (reincluding)", () => {
-		test("(d) the re-included folder's new notes count, so a full plan shows the over-limit step", async () => {
-			const engine = createEngine({ excludedFolders: ["Archive"] });
-			mockApp.vault.getFiles.mockReturnValue(
-				["Archive/a.md", "Archive/b.md", "Archive/c.md", "Notes/n.md"].map(makeTFile),
-			);
-			wireFeed(engine, [[]]);
-
-			const plan = await engine.computeSyncPlan("full", { reincluding: "Archive" });
-			expect(plan.newNotePaths.sort()).toEqual(
-				["Archive/a.md", "Archive/b.md", "Archive/c.md", "Notes/n.md"].sort(),
-			);
-			// Live settings untouched: the folder is still excluded until a pick.
-			expect(engine.shouldIgnore("Archive/a.md")).toBe(true);
-
-			const state = new SyncPreviewState(plan, () => {});
-			state.setNotesQuota({ limit: 10, room: 2, used: 8 });
-			state.pickOption("smart-merge");
-			expect(state.view).toBe("over-limit");
-		});
-
-		test("a note synced here but deleted while excluded previews as a remote delete", async () => {
-			const engine = createEngine({ excludedFolders: ["Archive"] });
-			engine.importSyncState({ "Archive/gone.md": { hash: 1 } });
-			mockApp.vault.getFiles.mockReturnValue([]);
-			wireFeed(engine, [[row({ id: "g", seq: 1, path: "Archive/gone.md", content: "# g" })]]);
-
-			const plan = await engine.computeSyncPlan("full", { reincluding: "Archive" });
-			expect(plan.toDeleteRemote).toEqual(["Archive/gone.md"]);
-			expect(plan.toPull.notes).toEqual([]);
-		});
 	});
 
 	describe("planWithoutFolders", () => {

@@ -113,6 +113,9 @@ const enPlurals: Dict = {
 	"{count} queued — {reason}": { one: "{count} queued — {reason}" },
 	"Will upload {count} files.": { one: "Will upload {count} file." },
 	"Will download {count} files.": { one: "Will download {count} file." },
+	"Will delete {count} files on the server.": {
+		one: "Will delete {count} file on the server.",
+	},
 	"Uploading {count}.": { one: "Uploading {count}." },
 	"Downloading {count}.": { one: "Downloading {count}." },
 	"Deleting {count} on the cloud.": { one: "Deleting {count} on the cloud." },

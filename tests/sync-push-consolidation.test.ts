@@ -759,7 +759,7 @@ describe("renaming an excluded folder keeps it excluded", () => {
 	});
 });
 
-describe("Sync again: reconcileFolder settles a folder that was excluded", () => {
+describe("Sync again: planFolder then applyFolderPlan settle a folder that was excluded", () => {
 	const OLD = new Date("2026-09-01T00:00:00Z").getTime();
 	const noteRow = (o: Record<string, unknown>) => ({
 		type: "note",
@@ -807,7 +807,10 @@ describe("Sync again: reconcileFolder settles a folder that was excluded", () =>
 		const pushFile = mock().mockResolvedValue(true);
 		(engine as any).pushFile = pushFile;
 
-		expect(await engine.reconcileFolder("Archive")).toEqual({ failed: 0 });
+		expect(await engine.applyFolderPlan(await engine.planFolder("Archive"))).toEqual({
+			failed: 0,
+			skipped: 0,
+		});
 		expect(pushFile.mock.calls.map((c: any[]) => c[0].path)).toEqual(["Archive/a.md"]);
 	});
 
@@ -828,7 +831,7 @@ describe("Sync again: reconcileFolder settles a folder that was excluded", () =>
 		(engine as any).noteIdMap.set("Archive/a.md", "a");
 		(engine as any).pushFile = mock().mockResolvedValue(true);
 
-		await engine.reconcileFolder("Archive");
+		await engine.applyFolderPlan(await engine.planFolder("Archive"));
 
 		const written = app.vault.create.mock.calls.map((c: any[]) => c[1]);
 		expect(written).toContain("# local edit");
@@ -850,7 +853,7 @@ describe("Sync again: reconcileFolder settles a folder that was excluded", () =>
 		const enqueued: any[] = [];
 		(engine as any).crdtEnqueue = (op: any) => enqueued.push(op);
 
-		await engine.reconcileFolder("Archive");
+		await engine.applyFolderPlan(await engine.planFolder("Archive"));
 
 		expect(app.vault.create).not.toHaveBeenCalled();
 		expect(enqueued).toEqual([{ kind: "delete", docId: "g", path: "Archive/gone.md" }]);
@@ -883,7 +886,7 @@ describe("Sync again: reconcileFolder settles a folder that was excluded", () =>
 		const converge = mock(async () => {});
 		(engine as any).convergeColdNoteRoomFree = converge;
 
-		await engine.reconcileFolder("Archive");
+		await engine.applyFolderPlan(await engine.planFolder("Archive"));
 
 		expect(applied.map((c) => [c.path, c.content])).toEqual([
 			["Archive/s.md", "# server edit"],
@@ -909,7 +912,7 @@ describe("Sync again: reconcileFolder settles a folder that was excluded", () =>
 			applied.push(c.path);
 			return true;
 		};
-		await engine.reconcileFolder("Archive");
+		await engine.applyFolderPlan(await engine.planFolder("Archive"));
 		expect(applied).toEqual(["Archive/new.md"]);
 	});
 
@@ -921,7 +924,122 @@ describe("Sync again: reconcileFolder settles a folder that was excluded", () =>
 		engine.importSyncState({ "Notes/x.md": { hash: fnv1a("# old"), serverHash: "H1" } });
 		const pushFile = mock().mockResolvedValue(true);
 		(engine as any).pushFile = pushFile;
-		await engine.reconcileFolder("Archive");
+		await engine.applyFolderPlan(await engine.planFolder("Archive"));
 		expect(pushFile).not.toHaveBeenCalled();
+	});
+
+	test("the deletes shown are exactly the deletes done", async () => {
+		const kept = new TFile("Archive/kept.md", OLD);
+		const { engine } = setup([kept], { "Archive/kept.md": "# k" }, [
+			noteRow({
+				id: "g1",
+				seq: 1,
+				path: "Archive/gone1.md",
+				content: "# 1",
+				content_hash: "A",
+			}),
+			noteRow({
+				id: "g2",
+				seq: 2,
+				path: "Archive/gone2.md",
+				content: "# 2",
+				content_hash: "B",
+			}),
+			noteRow({
+				id: "k",
+				seq: 3,
+				path: "Archive/kept.md",
+				content: "# k",
+				content_hash: "C",
+			}),
+			noteRow({
+				id: "s",
+				seq: 4,
+				path: "Archive/server-only.md",
+				content: "# s",
+				content_hash: "D",
+			}),
+		]);
+		engine.importSyncState({
+			"Archive/gone1.md": { hash: 1, serverHash: "A" },
+			"Archive/gone2.md": { hash: 2, serverHash: "B" },
+			"Archive/kept.md": { hash: fnv1a("# k"), serverHash: "C" },
+		});
+		for (const [p, id] of [
+			["Archive/gone1.md", "g1"],
+			["Archive/gone2.md", "g2"],
+		]) {
+			(engine as any).noteIdMap.set(p, id);
+		}
+		(engine as any).crdt.removeDoc = async () => {};
+		const deleted: string[] = [];
+		(engine as any).crdtEnqueue = (op: any) => deleted.push(op.path);
+		(engine as any).applySyncChange = mock(async () => true);
+
+		const plan = await engine.planFolder("Archive");
+		const shown = plan.actions.filter((a) => a.kind === "deleteOnServer").map((a) => a.path);
+		await engine.applyFolderPlan(plan);
+
+		expect(shown.sort()).toEqual(["Archive/gone1.md", "Archive/gone2.md"]);
+		expect(deleted.sort()).toEqual(shown.sort());
+	});
+
+	test("a path that changed after the plan is skipped, not acted on blind", async () => {
+		const file = new TFile("Archive/a.md", OLD);
+		const content = { "Archive/a.md": "# edited" };
+		const { engine } = setup([file], content, [
+			noteRow({
+				id: "a",
+				seq: 5,
+				path: "Archive/a.md",
+				content: "# synced",
+				content_hash: "H1",
+			}),
+		]);
+		engine.importSyncState({ "Archive/a.md": { hash: fnv1a("# synced"), serverHash: "H1" } });
+		const pushFile = mock().mockResolvedValue(true);
+		(engine as any).pushFile = pushFile;
+
+		const plan = await engine.planFolder("Archive");
+		content["Archive/a.md"] = "# edited again"; // after the confirm was shown
+		expect(await engine.applyFolderPlan(plan)).toEqual({ failed: 0, skipped: 1 });
+		expect(pushFile).not.toHaveBeenCalled();
+	});
+
+	test("planning changes nothing and walks the server once", async () => {
+		const file = new TFile("Archive/a.md", OLD);
+		const { engine, app } = setup([file], { "Archive/a.md": "# edited" }, [
+			noteRow({
+				id: "a",
+				seq: 5,
+				path: "Archive/a.md",
+				content: "# synced",
+				content_hash: "H1",
+			}),
+		]);
+		engine.importSyncState({ "Archive/a.md": { hash: fnv1a("# synced"), serverHash: "H1" } });
+		let walks = 0;
+		const rows = [
+			noteRow({
+				id: "a",
+				seq: 5,
+				path: "Archive/a.md",
+				content: "# synced",
+				content_hash: "H1",
+			}),
+		];
+		engine.setCrdtCatchupSince(async () => {
+			walks += 1;
+			return { changes: rows as any, has_more: false, next_seq: null };
+		});
+		const pushFile = mock().mockResolvedValue(true);
+		(engine as any).pushFile = pushFile;
+
+		const plan = await engine.planFolder("Archive");
+		expect(plan.actions.map((a) => [a.kind, a.path])).toEqual([["upload", "Archive/a.md"]]);
+		expect(pushFile).not.toHaveBeenCalled();
+		expect(app.vault.create).not.toHaveBeenCalled();
+		await engine.applyFolderPlan(plan);
+		expect(walks).toBe(1);
 	});
 });
