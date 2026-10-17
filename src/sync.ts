@@ -7459,7 +7459,10 @@ export class SyncEngine {
 				// The announce path evicted another id: the path may be stale (rename
 				// race), so let the throttled manifest decide where that id lives.
 				if (displaced && displaced !== noteId) this.ensureNoteIdMapped(displaced);
-				this.noteIdSaveThrottle.poke(); // 1,000 announces must not be 1,000 data.json rewrites
+				// 1,000 announces must not be 1,000 data.json rewrites. A kill inside the
+				// 1s gap (mobile) loses at most these mappings, and the cold-start
+				// manifest reconcile re-learns them, so no flush-on-kill is needed.
+				this.noteIdSaveThrottle.poke();
 			}
 			this.confirmNoteId(noteId);
 			// Converge via the single seq-ordered op-log path — the op carries full
