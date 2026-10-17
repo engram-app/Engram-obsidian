@@ -1975,9 +1975,8 @@ export default class EngramSyncPlugin extends Plugin {
 		await this.syncEngine.replayGateJournal();
 	}
 
-	/** Restore a gate journal (#247) persisted by an earlier session, but only
-	 *  into the vault it was recorded for: replaying one vault's renames and
-	 *  deletes into another would act on the wrong notes. */
+	/** Restore the folders "Sync again" left awaiting their content re-check,
+	 *  only into the vault they were recorded for. */
 	hydrateReincludedFolders(
 		saved: Pick<PluginData, "reincludedFolders" | "reincludedFoldersVaultId"> | null,
 	): void {
@@ -1986,6 +1985,9 @@ export default class EngramSyncPlugin extends Plugin {
 		this.syncEngine.importReincludedFolders(saved.reincludedFolders);
 	}
 
+	/** Restore a gate journal (#247) persisted by an earlier session, but only
+	 *  into the vault it was recorded for: replaying one vault's renames and
+	 *  deletes into another would act on the wrong notes. */
 	hydrateGateJournal(saved: Pick<PluginData, "gateJournal" | "gateJournalVaultId"> | null): void {
 		if (!saved?.gateJournal) return;
 		if (saved.gateJournalVaultId !== (this.settings.vaultId ?? null)) return;
