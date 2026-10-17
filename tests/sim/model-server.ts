@@ -514,6 +514,9 @@ export class ModelServer {
 			return ok({ user: { id: "sim-user", email: "sim@example.com" } });
 		}
 		if (method === "POST" && path === "/logs") return ok({ ok: true });
+		// `api.ping()` (fullSync / pushAll's auth check) is a GET /folders. The
+		// model holds no folder rows; an empty list is all ping reads.
+		if (method === "GET" && path === "/folders") return ok({ folders: [] });
 
 		if (method === "POST" && path === "/notes") return this.restPushNote(body);
 		if (method === "GET" && path === "/sync/manifest") return this.restManifest();
