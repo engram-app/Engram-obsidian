@@ -1244,13 +1244,13 @@ export class SyncEngine {
 	}
 
 	/** One throttled manifest pass for every id pending right now. */
-	private async runIdMapReconcile(): Promise<void> {
+	private async runIdMapReconcile(): Promise<boolean> {
 		const epoch = this.idMapEpoch;
 		// Fetched for a vault (or an open gate) that no longer holds: apply
 		// NOTHING more. The apply moves and trashes files (sweepPendingOrphans).
 		const live = () => epoch === this.idMapEpoch && !this.syncBlocked;
 		this.pruneIdMapPending();
-		if (this.idMapPending.size === 0) return;
+		if (this.idMapPending.size === 0) return false; // no GET: no cooldown either
 		// Covers the entries that exist now: one made mid-fetch has reqGen === gen.
 		const gen = ++this.idMapFetchGen;
 		let manifest: ManifestResponse | null = null;
@@ -1259,7 +1259,7 @@ export class SyncEngine {
 			manifest = await this.api.getManifest();
 			ok = true;
 		} catch (e) {
-			if (epoch !== this.idMapEpoch) return;
+			if (epoch !== this.idMapEpoch) return true;
 			rlog().warn("sync", `live id-map reconcile failed: ${errMsg(e)}`);
 		}
 		if (ok && live()) {
@@ -1271,7 +1271,7 @@ export class SyncEngine {
 				rlog().warn("sync", `live id-map apply failed: ${errMsg(e)}`);
 			}
 		}
-		if (!live()) return;
+		if (!live()) return true;
 		this.idMapFailures = ok ? 0 : this.idMapFailures + 1;
 		if (this.idMapFailures >= SyncEngine.ID_MAP_RECONCILE_MAX_FAILURES) {
 			rlog().warn(
@@ -1283,7 +1283,7 @@ export class SyncEngine {
 			for (const [id, entry] of [...this.idMapPending])
 				if (entry.reqGen < gen) this.settleIdMapPending(id);
 			if (this.idMapPending.size > 0) this.idMapThrottle.poke();
-			return;
+			return true;
 		}
 		for (const [id, entry] of [...this.idMapPending]) {
 			if (entry.reqGen >= gen) continue; // requested mid-fetch: not covered
@@ -1303,6 +1303,7 @@ export class SyncEngine {
 		}
 		this.pruneIdMapPending();
 		if (this.idMapPending.size > 0) this.idMapThrottle.poke();
+		return true;
 	}
 
 	/** Settle every pending id that no longer needs a fetch: mapped by any path,

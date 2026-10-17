@@ -12,6 +12,9 @@ import type { TimeProvider } from "./time-provider";
  *  (urgent) run, when it waits `gapMs(true)` instead. Callers pass a short
  *  urgent gap, so a stream of urgent pokes costs one run per urgent gap.
  *
+ *  A run that resolves `false` did nothing (no work was pending): it stamps
+ *  no cooldown, so the next poke is not throttled by a run that never happened.
+ *
  *  `cancel()` drops the armed run and any queued trailing one. `reset()` also
  *  forgets the previous run's cooldown. Neither breaks single-flight: a run
  *  still in flight finishes first, and a poke made meanwhile runs after it.
@@ -32,7 +35,7 @@ export class TrailingThrottle {
 	constructor(
 		private readonly time: TimeProvider,
 		private readonly gapMs: (urgent: boolean) => number,
-		private readonly run: () => Promise<void>,
+		private readonly run: () => Promise<boolean | void>,
 	) {}
 
 	poke(urgent = false): void {
@@ -79,14 +82,22 @@ export class TrailingThrottle {
 		this.again = false;
 		this.againUrgent = false;
 		// Urgent = earlier than the regular gap allows.
-		this.lastWasUrgent = this.time.now() < this.lastDoneAt + this.gapMs(false);
+		const urgent = this.time.now() < this.lastDoneAt + this.gapMs(false);
 		// `run` must handle its own errors; a rejection here is a bug and is left
 		// unhandled so it surfaces. `finally` still keeps the throttle unwedged.
-		void this.run().finally(() => {
-			this.running = false;
-			// A reset mid-run: the old run's completion is not the new era's cooldown.
-			if (gen === this.gen) this.lastDoneAt = this.time.now();
-			if (this.again) this.poke(this.againUrgent);
-		});
+		let didWork = true;
+		void this.run()
+			.then((r) => {
+				didWork = r !== false;
+			})
+			.finally(() => {
+				this.running = false;
+				// A reset mid-run: the old run's completion is not the new era's cooldown.
+				if (gen === this.gen && didWork) {
+					this.lastDoneAt = this.time.now();
+					this.lastWasUrgent = urgent;
+				}
+				if (this.again) this.poke(this.againUrgent);
+			});
 	}
 }
