@@ -11259,15 +11259,24 @@ export class SyncEngine {
 				// A note whose path is unknown cannot be placed outside an ignored
 				// folder, so it is spared too: never delete what we cannot place.
 				const ignored = (p: string) => this.shouldIgnore(normalizePath(p));
+				let unplaced = 0;
 				replaceExtras = {
 					ids: [...serverIds].filter((id) => {
+						if (localIds.has(id)) return false;
 						const path = serverNotePaths?.get(id);
-						return !localIds.has(id) && path !== undefined && !ignored(path);
+						if (path === undefined) unplaced += 1;
+						return path !== undefined && !ignored(path);
 					}),
 					attachments: [...serverAttachmentPaths].filter(
 						(p) => !snap.has(normalizePath(p)) && !ignored(p),
 					),
 				};
+				if (unplaced > 0) {
+					rlog().warn(
+						"push",
+						`replace-remote kept ${unplaced} server note(s) with no known path (not deleted)`,
+					);
+				}
 			}
 		}
 

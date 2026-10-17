@@ -9,7 +9,7 @@
  * server-known (the `hasServerNote` oracle) — mirroring
  * tests/sync-socket-catchup.test.ts.
  */
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, mock, spyOn, test } from "bun:test";
 import "fake-indexeddb/auto";
 import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
@@ -29,6 +29,7 @@ import type { ProviderRegistry as CrdtManagerType } from "../src/crdt/provider-r
 import { ProviderRegistry } from "../src/crdt/provider-registry";
 import { encodeUpdateFrame, fromB64 } from "../src/crdt/wire";
 import EngramSyncPlugin from "../src/main";
+import { rlog } from "../src/remote-log";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -582,9 +583,14 @@ describe("SyncEngine.pushAll: replace-remote spares a note it cannot place", () 
 			next_seq: null,
 		}));
 
+		const warn = spyOn(rlog(), "warn");
 		await engine.pushAll({ replaceRemote: true, localSnapshot: new Set<string>() });
+		const lines = warn.mock.calls.map((c) => String(c[1]));
+		warn.mockRestore();
 
 		expect(deleted).toEqual(["extra-id"]);
+		// Mirror mode says it kept them: a count, never a path.
+		expect(lines.some((l) => /1 server note\(s\) with no known path/.test(l))).toBe(true);
 	});
 });
 
