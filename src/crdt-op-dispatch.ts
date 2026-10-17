@@ -14,7 +14,8 @@
  *      onLimit so the user is TOLD via the limit toast: notes_cap_reached is a
  *      plan cap that is TRANSIENT (freeing a note / upgrading clears it), so it
  *      must retry (bounded) and self-deliver once cleared, not drop after one
- *      attempt. Surfaced once per op (the queue retries on backoff).
+ *      attempt. It also closes the shared NotesCapGate, so no other create is
+ *      sent until a note is freed or the hold expires.
  *      recently_deleted moved from RETRYABLE to TERMINAL (finding 1): a
  *      delete-wins reject retried past its window resurrects the note.
  *  - TERMINAL reject                 → "ok" to REMOVE it (retrying cannot help)
@@ -46,6 +47,44 @@ export const TERMINAL_REASONS: ReadonlySet<string> = new Set([
  *  a note, upgrade). Retry (bounded) AND surface to the user, never drop after
  *  one attempt like a terminal reason. */
 export const LIMIT_REASONS: ReadonlySet<string> = new Set(["notes_cap_reached"]);
+
+/** How long one notes_cap_reached reject pauses EVERY create. */
+export const NOTES_CAP_HOLD_MS = 10 * 60 * 1000;
+
+/**
+ * Vault-wide breaker for the plan note cap. The cap belongs to the ACCOUNT, not
+ * the op: once one create is refused, every create will be until a note is freed
+ * or the plan changes. Without a shared gate each create rediscovered the cap on
+ * its own and retried it, so a vault over the cap hammered the server for as long
+ * as Obsidian stayed open (prod 2026-10-17: a 10k+ note first sync pinned web).
+ *
+ * Closes on a cap reject. Reopens on a delete ack (a note was freed) or after
+ * `holdMs`, which covers an upgrade or a delete on another device: the next
+ * create is the probe, and a fresh reject closes it again.
+ */
+export class NotesCapGate {
+	private closedUntil = 0;
+
+	constructor(
+		private readonly now: () => number,
+		private readonly onTrip?: (reason: string) => void,
+		private readonly holdMs = NOTES_CAP_HOLD_MS,
+	) {}
+
+	isClosed(): boolean {
+		return this.now() < this.closedUntil;
+	}
+
+	trip(reason: string): void {
+		const wasClosed = this.isClosed();
+		this.closedUntil = this.now() + this.holdMs;
+		if (!wasClosed) this.onTrip?.(reason);
+	}
+
+	open(): void {
+		this.closedUntil = 0;
+	}
+}
 
 /**
  * Extract the server `reason` from a sendRequest rejection. sendRequest rejects
@@ -139,6 +178,9 @@ export type CrdtSendHooks = {
 	 *  (limit toast) so they know the op is blocked; the op is still RETRIED
 	 *  (bounded) so it delivers once they free a note / upgrade. */
 	onLimit?: (op: CrdtOp, reason: string) => void;
+	/** Shared with the push path. While closed, a create fails locally without a
+	 *  network call; a cap reject closes it and a delete ack reopens it. */
+	capGate?: NotesCapGate;
 };
 
 /** Build the queue's `send`. */
@@ -149,6 +191,8 @@ export function makeCrdtOpSend(hooks: CrdtSendHooks): (op: CrdtOp) => Promise<Se
 	return async (op) => {
 		const ch = hooks.channel();
 		if (!ch) return "error"; // no socket yet. hold and retry on the next tick
+		// The account is at its note cap: the server would refuse this create too.
+		if (op.kind === "create" && hooks.capGate?.isClosed()) return "error";
 		try {
 			if (op.kind === "create") {
 				const path = (op.payload as { path?: string })?.path ?? "";
@@ -184,6 +228,7 @@ export function makeCrdtOpSend(hooks: CrdtSendHooks): (op: CrdtOp) => Promise<Se
 				}
 			} else if (op.kind === "delete") {
 				await ch.crdtDeleteAcked(op.docId);
+				hooks.capGate?.open(); // a note was freed, so a create may fit again
 			} else {
 				// crdt_msg is a separate task; this queue never enqueues it. Drop
 				// defensively rather than retry an op kind we don't dispatch.
@@ -195,6 +240,7 @@ export function makeCrdtOpSend(hooks: CrdtSendHooks): (op: CrdtOp) => Promise<Se
 		} catch (err) {
 			const reason = crdtOpFailureReason(err);
 			if (reason && LIMIT_REASONS.has(reason)) {
+				hooks.capGate?.trip(reason);
 				if (!limitSurfaced.has(op.id)) {
 					limitSurfaced.add(op.id);
 					hooks.onLimit?.(op, reason); // tell the user, once

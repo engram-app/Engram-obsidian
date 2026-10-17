@@ -21,7 +21,12 @@ import type { NoteIdMap } from "./crdt/note-id-map";
 import type { ProviderRegistry } from "./crdt/provider-registry";
 import { uuid7 } from "./crdt/uuid7";
 import { encodeUpdateFrame, fromB64 } from "./crdt/wire";
-import { crdtOpFailureReason, type GenesisFrame } from "./crdt-op-dispatch";
+import {
+	crdtOpFailureReason,
+	type GenesisFrame,
+	LIMIT_REASONS,
+	type NotesCapGate,
+} from "./crdt-op-dispatch";
 import { devLog } from "./dev-log";
 import { errMsg, isHttpStatus } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
@@ -392,6 +397,9 @@ export interface CrdtPorts {
 		| null;
 	delete?: ((docId: string) => Promise<{ doc_id: string }>) | null;
 	enqueue?: ((op: { kind: "create" | "delete"; docId: string; path: string }) => void) | null;
+	/** Shared with the durable queue: while closed, the account is at its note
+	 *  cap and no create (direct or queued) is sent. */
+	capGate?: NotesCapGate | null;
 	live?: (() => boolean) | null;
 	/** Nulling this restores the default never-bound check rather than leaving
 	 *  the port empty — `isLiveBound` is called unconditionally on the push
@@ -724,6 +732,7 @@ export class SyncEngine {
 		if ("create" in ports) this.crdtCreate = ports.create ?? null;
 		if ("delete" in ports) this.crdtDelete = ports.delete ?? null;
 		if ("enqueue" in ports) this.crdtEnqueue = ports.enqueue ?? null;
+		if ("capGate" in ports) this.notesCapGate = ports.capGate ?? null;
 		if ("live" in ports) this.crdtLive = ports.live ?? null;
 		if ("liveBound" in ports) this.isLiveBound = ports.liveBound ?? (() => false);
 		if ("catchupSince" in ports) this.crdtCatchupSince = ports.catchupSince ?? null;
@@ -1635,6 +1644,9 @@ export class SyncEngine {
 	 *  loss). Rejects on delete-wins / rate-limit / bad-path; the caller logs and
 	 *  falls through to the REST create (still functional in this additive phase,
 	 *  removed in Plan B2). Unset → genesis stays on the REST-first path. */
+	/** See CrdtPorts.capGate. */
+	private notesCapGate: NotesCapGate | null = null;
+
 	private crdtCreate:
 		| ((
 				docId: string,
@@ -5502,7 +5514,11 @@ export class SyncEngine {
 					// left the note with no route at all.
 					(mintedNow || !this.hasServerNote(noteId)) &&
 					(this.crdtLive?.() ?? true) &&
-					!exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES)
+					!exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES) &&
+					// At the plan note cap: the server would refuse this create too.
+					// The file stays untracked, so a sweep re-pushes it once the
+					// gate reopens.
+					!this.notesCapGate?.isClosed()
 				) {
 					try {
 						// Only the crdtCreate call itself is covered by this catch — once
@@ -5709,6 +5725,13 @@ export class SyncEngine {
 							this.logEntry("push", pushedPath, "skipped", "recently_deleted");
 							return false;
 						}
+						// Plan note cap: close the shared gate so no other create is
+						// sent, and do NOT enqueue a retry. Each queued retry used to
+						// rediscover the cap on its own (prod 2026-10-17 retry storm).
+						if (createReason && LIMIT_REASONS.has(createReason)) {
+							this.notesCapGate?.trip(createReason);
+							return false;
+						}
 						// Anything else (rate-limit, transport): enqueue a durable
 						// crdt_create so the genesis is HELD and retried (transient) or
 						// surfaced (terminal) by the CrdtOpQueue. Return FALSE — a queued
@@ -5741,7 +5764,13 @@ export class SyncEngine {
 					// before join is HELD and delivered on join (test_27) rather than
 					// deferred to a best-effort reconnect re-push that can drop it.
 					// Coalesced by docId; the head is set only on the queue's ack.
-					if (this.crdtEnqueue && this.crdt && noteId && !this.hasServerNote(noteId)) {
+					if (
+						this.crdtEnqueue &&
+						this.crdt &&
+						noteId &&
+						!this.hasServerNote(noteId) &&
+						!this.notesCapGate?.isClosed()
+					) {
 						this.crdtEnqueue({ kind: "create", docId: noteId, path: pushedPath });
 					}
 					return false;

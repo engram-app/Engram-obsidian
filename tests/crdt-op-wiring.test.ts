@@ -9,7 +9,12 @@
  * real socket, deterministic under the injected clock.
  */
 import { describe, expect, mock, test } from "bun:test";
-import { type CrdtOpChannel, crdtOpFailureReason, makeCrdtOpSend } from "../src/crdt-op-dispatch";
+import {
+	type CrdtOpChannel,
+	crdtOpFailureReason,
+	makeCrdtOpSend,
+	NotesCapGate,
+} from "../src/crdt-op-dispatch";
 import { type CrdtOp, CrdtOpQueue, type DropReason } from "../src/crdt-op-queue";
 
 /** A sendRequest-style rejection carrying a structured server reason. */
@@ -231,6 +236,71 @@ describe("makeCrdtOpSend dispatch + taxonomy", () => {
 		await expect(send(capOp)).resolves.toBe("error");
 		await expect(send(capOp)).resolves.toBe("error"); // retried on the next tick
 		expect(onLimit).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("NotesCapGate — one cap reject pauses every create (prod 2026-10-17 retry storm)", () => {
+	function fakeChannel(overrides: Partial<CrdtOpChannel> = {}): CrdtOpChannel {
+		return {
+			crdtCreate: mock(async () => Promise.reject(serverError("notes_cap_reached"))),
+			crdtDeleteAcked: mock(async (docId: string) => ({ doc_id: docId })),
+			...overrides,
+		};
+	}
+
+	test("after one notes_cap_reached, a create for a DIFFERENT note never reaches the server", async () => {
+		const now = 0;
+		const gate = new NotesCapGate(() => now);
+		const ch = fakeChannel();
+		const send = makeCrdtOpSend({
+			channel: () => ch,
+			onCreated: () => {},
+			onTerminal: () => {},
+			capGate: gate,
+		});
+		await expect(send(op("create", "d1"))).resolves.toBe("error");
+		await expect(send(op("create", "d2"))).resolves.toBe("error");
+		await expect(send(op("create", "d3"))).resolves.toBe("error");
+		expect(ch.crdtCreate).toHaveBeenCalledTimes(1);
+		expect(gate.isClosed()).toBe(true);
+	});
+
+	test("deletes still flow while closed, and a delete ack reopens the gate (a note was freed)", async () => {
+		const gate = new NotesCapGate(() => 0);
+		const ch = fakeChannel();
+		const send = makeCrdtOpSend({
+			channel: () => ch,
+			onCreated: () => {},
+			onTerminal: () => {},
+			capGate: gate,
+		});
+		await send(op("create", "d1"));
+		await expect(send(op("delete", "x1"))).resolves.toBe("ok");
+		expect(gate.isClosed()).toBe(false);
+		await send(op("create", "d2"));
+		expect(ch.crdtCreate).toHaveBeenCalledTimes(2);
+	});
+
+	test("the gate reopens on its own after the hold (upgrade / delete on another device)", () => {
+		let now = 0;
+		const gate = new NotesCapGate(() => now, undefined, 1000);
+		gate.trip("notes_cap_reached");
+		now = 999;
+		expect(gate.isClosed()).toBe(true);
+		now = 1000;
+		expect(gate.isClosed()).toBe(false);
+	});
+
+	test("onTrip fires once per closure, not once per rejected op", () => {
+		let now = 0;
+		const onTrip = mock(() => {});
+		const gate = new NotesCapGate(() => now, onTrip, 1000);
+		gate.trip("notes_cap_reached");
+		gate.trip("notes_cap_reached");
+		expect(onTrip).toHaveBeenCalledTimes(1);
+		now = 2000; // reopened by time, then hit again
+		gate.trip("notes_cap_reached");
+		expect(onTrip).toHaveBeenCalledTimes(2);
 	});
 });
 

@@ -17,7 +17,7 @@ import type { EngramApi } from "../src/api";
 import type { GenesisOutcome } from "../src/channel";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import type { ProviderRegistry as CrdtManager } from "../src/crdt/provider-registry";
-import { makeCrdtOpSend } from "../src/crdt-op-dispatch";
+import { makeCrdtOpSend, NotesCapGate } from "../src/crdt-op-dispatch";
 import { type CrdtOp, CrdtOpQueue, type DropReason } from "../src/crdt-op-queue";
 import { destroyRemoteLog, initRemoteLog } from "../src/remote-log";
 import { SyncEngine } from "../src/sync";
@@ -25,7 +25,7 @@ import { ManualTimeProvider } from "../src/time-provider";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 /** A fake server behind a flapping socket. */
-function fakeServer() {
+function fakeServer(notesCap = Number.POSITIVE_INFINITY) {
 	const created = new Map<string, string>(); // docId -> path
 	const state = { up: false, createCalls: 0 };
 	const channel = {
@@ -36,6 +36,11 @@ function fakeServer() {
 		): Promise<{ docId: string; seeded: boolean; genesisOutcome: GenesisOutcome }> => {
 			state.createCalls++;
 			if (!state.up) throw new Error("crdt topic not joined");
+			if (created.size >= notesCap) {
+				throw new Error(
+					`request failed: ${JSON.stringify({ reason: "notes_cap_reached", limit: notesCap })}`,
+				);
+			}
 			created.set(docId, path);
 			return { docId, seeded: false, genesisOutcome: null };
 		},
@@ -99,8 +104,11 @@ const crdtStub = (): Partial<CrdtManager> => ({
 });
 
 /** Engine + queue wired exactly the way main.ts wires them. */
-function harness(paths: string[], opts: { mtime?: number; api?: EngramApi } = {}) {
-	const server = fakeServer();
+function harness(
+	paths: string[],
+	opts: { mtime?: number; api?: EngramApi; notesCap?: number; capGate?: NotesCapGate } = {},
+) {
+	const server = fakeServer(opts.notesCap);
 	const { app, files } = makeVault(paths, opts.mtime);
 	const time = new ManualTimeProvider(5000);
 	const engine = new SyncEngine(
@@ -123,6 +131,7 @@ function harness(paths: string[], opts: { mtime?: number; api?: EngramApi } = {}
 			onCreated: (localId, serverId, path, seeded, genesis, outcome) =>
 				engine.applyCrdtCreateAck(localId, serverId, path, seeded, genesis, outcome),
 			onTerminal: () => {},
+			capGate: opts.capGate,
 		}),
 		now: () => clock,
 		currentVaultId: () => "v1",
@@ -134,6 +143,7 @@ function harness(paths: string[], opts: { mtime?: number; api?: EngramApi } = {}
 	let joined = false;
 	engine.setCrdtPorts({
 		create: (id, path, b64) => server.channel.crdtCreate(id, path, b64),
+		capGate: opts.capGate,
 		live: () => joined && server.state.up,
 		enqueue: (op) =>
 			queue.enqueue({
@@ -350,5 +360,29 @@ describe("(e) self-heal telemetry carries counts, never paths", () => {
 			expect(e.message).not.toContain("Secret");
 			expect(e.message).not.toContain("Divorce");
 		}
+	});
+});
+
+describe("vault over the plan note cap (prod 2026-10-17 retry storm)", () => {
+	test("creates past the cap stop after the first refusal instead of retrying per note", async () => {
+		const gate = new NotesCapGate(() => 0);
+		const h = harness(notes(300), { notesCap: 10, capGate: gate });
+		await h.join();
+
+		// First sync, then the queue's retry ticks and two more self-heal sweeps:
+		// the shape that kept a real 10k+ vault hammering the server.
+		await h.engine.pushModifiedFiles();
+		for (let i = 0; i < 10; i++) {
+			h.advance(30_000);
+			await h.queue.tick();
+		}
+		await h.engine.pushModifiedFiles();
+		await h.engine.pushModifiedFiles();
+
+		expect(h.server.created.size).toBe(10);
+		expect(gate.isClosed()).toBe(true);
+		// 10 accepted + the one refusal that closed the gate. Anything near 290
+		// means each note is rediscovering the cap on its own.
+		expect(h.server.state.createCalls).toBeLessThanOrEqual(20);
 	});
 });
