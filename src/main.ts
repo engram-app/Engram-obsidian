@@ -822,10 +822,16 @@ export default class EngramSyncPlugin extends Plugin {
 			currentVaultId: () => this.settings.vaultId ?? null,
 			onDrop: (op, reason) => {
 				dropReporter.onDrop(op, reason);
-				rlog().warn(
-					"crdt",
-					`crdt_${op.kind} dropped (${reason}) without delivery: ${op.docId}`,
-				);
+				// Creates are counted by dropReporter alone: a dropped create is
+				// recoverable (self-heal re-pushes the untracked file), and one line
+				// per op was 815 lines from a single prod first sync. A dropped
+				// DELETE has no fallback and resurrects the note, so it keeps its id.
+				if (op.kind !== "create") {
+					rlog().warn(
+						"crdt",
+						`crdt_${op.kind} dropped (${reason}) without delivery: ${op.docId}`,
+					);
+				}
 			},
 		});
 		// Persist on every mutation (mirrors OfflineQueue); the flat op list is

@@ -8486,6 +8486,11 @@ export class SyncEngine {
 			const sourceOnDisk = priorPath
 				? !!this.app.vault.getAbstractFileByPath?.(normalizePath(priorPath))
 				: false;
+			// Map at target AND file at target is the converged case: the pull feed
+			// echoing this device's own create back. It is every note on a first
+			// sync (9,848 lines from one prod upload, 2026-10-17), so only the
+			// cases that can mean a stranded rename are traced.
+			if (priorPath && targetOnDisk) return;
 			rlog().diag(
 				"pull",
 				`rename-trace 2/3 SKIPPED (${why}) id=${id} from=${noteRef(priorPath)} ` +
