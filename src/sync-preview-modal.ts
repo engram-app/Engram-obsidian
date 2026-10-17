@@ -805,14 +805,16 @@ export class SyncPreviewModal extends Modal {
 	private quotaSeq = 0;
 
 	private readonly onWindowFocus = (): void => {
-		if (this.state.view === "over-limit") void this.refreshOverLimitQuota();
+		if (this.state.view === "over-limit") void this.refreshOverLimitQuota(false);
 	};
 
 	/** Re-read the quota while the over-limit step is open. A failed or
 	 *  unreadable lookup keeps the step exactly as it is; only a plan the server
-	 *  says is unlimited has nothing to ask, so the sync carries on with the
-	 *  option the user picked. */
-	private async refreshOverLimitQuota(): Promise<void> {
+	 *  says is unlimited has nothing to ask. Right after the pick
+	 *  (`fromPick`) the sync carries on with the option just clicked; on a later
+	 *  focus the step only steps aside, back to the options, and the sync waits
+	 *  for the user's click. */
+	private async refreshOverLimitQuota(fromPick: boolean): Promise<void> {
 		const fetchUsage = this.opts.fetchUsage;
 		if (!fetchUsage) return;
 		const seq = ++this.quotaSeq;
@@ -821,7 +823,8 @@ export class SyncPreviewModal extends Modal {
 		if (this.state.view !== "over-limit" || this.state.overLimitSaving) return;
 		if (quota === "unlimited") {
 			this.state.setNotesQuota(null);
-			this.state.finishOverLimit(null);
+			if (fromPick) this.state.finishOverLimit(null);
+			else this.state.goBack();
 		} else {
 			this.state.setNotesQuota(quota);
 		}
@@ -1213,7 +1216,7 @@ export class SyncPreviewModal extends Modal {
 			if (this.closed) return;
 		}
 		this.state.pickOption(choice);
-		if (this.state.view === "over-limit") void this.refreshOverLimitQuota();
+		if (this.state.view === "over-limit") void this.refreshOverLimitQuota(true);
 		if (this.state.view !== "done") this.render();
 	}
 

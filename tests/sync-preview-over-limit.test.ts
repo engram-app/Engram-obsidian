@@ -739,3 +739,28 @@ describe("an option picked before the quota answers waits for it", () => {
 		expect(modal.state.view).not.toBe("done");
 	});
 });
+
+describe("an unlimited quota found on focus waits for the user", () => {
+	test("drops the step back to the options without starting a sync", async () => {
+		let limit: number | null = 10;
+		const fetchUsage = async () => usage(limit, 6);
+		const { modal, choice } = openModal(planWith(["Root.md", ...PATHS]), { fetchUsage });
+		await Bun.sleep(0);
+		(modal as any).pick("smart-merge");
+		await Bun.sleep(0);
+		expect(modal.state.view).toBe("over-limit");
+
+		limit = null; // upgraded in the browser, then came back
+		(modal as any).onWindowFocus();
+		await Bun.sleep(0);
+		expect(modal.state.view).toBe("preview");
+		expect(modal.state.notesQuota).toBeNull();
+
+		// The user's own click is what starts the sync, with no step now.
+		(modal as any).pick("smart-merge");
+		await Bun.sleep(0);
+		expect(modal.state.view).toBe("done");
+		modal.onClose();
+		expect(await choice).toBe("smart-merge");
+	});
+});
