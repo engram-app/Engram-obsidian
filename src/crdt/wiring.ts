@@ -421,9 +421,9 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		// Live heal for the create-race: an announce naming an id the map cannot
 		// resolve means another writer owns this note under an identity we never
 		// learned — enrollment alone would sync a doc we can't flush (no path).
-		// Kick the coalesced manifest reconcile so the mapping lands now, not at
-		// the next cold start.
-		syncEngine.ensureNoteIdMapped(docId);
+		// Map it now, not at the next cold start: from the announce's server path
+		// when it carries one, else via the throttled manifest reconcile.
+		syncEngine.ensureNoteIdMapped(docId, announcedPath);
 		// Empty-note discovery (e2e test_27): an empty note's genesis emits ZERO
 		// Y.Doc ops, so no note_yjs_update ever fans out — the announce carries only
 		// the id and (now) the path. Without this the note is found ~30s later via

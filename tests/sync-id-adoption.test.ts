@@ -274,8 +274,11 @@ describe("ensureNoteIdMapped — live reconcile on an unmappable announce id", (
 // IN-FLIGHT fetch, so announces arriving back-to-back (each after the previous
 // fetch settled) cost one whole-vault manifest GET apiece: ~970 per run, O(N^2)
 // bytes, landing on the server exactly when it is busiest.
-describe("ensureNoteIdMapped — manifest fetches are throttled across a burst", () => {
-	const flush = () => new Promise((r) => setTimeout(r, 0));
+describe("ensureNoteIdMapped — announce path + throttled manifest fallback", () => {
+	const GAP = 2_000; // SyncEngine.ID_MAP_RECONCILE_COOLDOWN_MS
+	const flush = async () => {
+		for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+	};
 	const fetches = () => (mockApi.getManifest as ReturnType<typeof mock>).mock.calls.length;
 
 	function throttledEngine() {
@@ -293,18 +296,65 @@ describe("ensureNoteIdMapped — manifest fetches are throttled across a burst",
 		return { engine, map, time };
 	}
 
-	/** Manifest that lists whatever the server holds at the moment of the GET. */
-	function liveManifest(created: Array<{ id: string; path: string }>) {
-		(mockApi.getManifest as ReturnType<typeof mock>).mockImplementation(async () => ({
-			notes: created.map((n) => ({ ...n, content_hash: "h" })),
+	function manifestOf(notes: Array<{ id: string; path: string }>) {
+		return {
+			notes: notes.map((n) => ({ ...n, content_hash: "h" })),
 			attachments: [],
-			total_notes: created.length,
+			total_notes: notes.length,
 			total_attachments: 0,
-			change_seq: created.length,
-		}));
+			change_seq: notes.length,
+		};
 	}
 
-	test("N concurrent unmapped announces cost exactly one fetch", async () => {
+	/** Manifest that lists whatever the server holds at the moment of the GET. */
+	function liveManifest(created: Array<{ id: string; path: string }>) {
+		(mockApi.getManifest as ReturnType<typeof mock>).mockImplementation(async () =>
+			manifestOf(created),
+		);
+	}
+
+	/** Next GET blocks until the returned release() is called. */
+	function heldManifest(notes: Array<{ id: string; path: string }>) {
+		let release: () => void = () => {};
+		const gate = new Promise<void>((r) => {
+			release = r;
+		});
+		const snapshot = manifestOf(notes);
+		(mockApi.getManifest as ReturnType<typeof mock>).mockImplementationOnce(async () => {
+			await gate;
+			return snapshot;
+		});
+		return () => release();
+	}
+
+	describe("announced path (primary)", () => {
+		test("maps straight from the announce's server path: zero manifest fetches", async () => {
+			const { engine, map } = throttledEngine();
+			liveManifest([]);
+
+			for (let i = 0; i < 50; i++) engine.ensureNoteIdMapped(`id-${i}`, `n${i}.md`);
+			await flush();
+
+			expect(fetches()).toBe(0);
+			for (let i = 0; i < 50; i++) expect(map.pathForId(`id-${i}`)).toBe(`n${i}.md`);
+		});
+
+		test("a path this device maps to ANOTHER id falls back to the manifest", async () => {
+			// Locally-minted id vs server id for one path (create race), or a stale
+			// announce racing a rename: only the full snapshot can arbitrate.
+			const { engine, map } = throttledEngine();
+			map.set("taken.md", "local-id");
+			liveManifest([{ id: "server-id", path: "taken.md" }]);
+
+			engine.ensureNoteIdMapped("server-id", "taken.md");
+			await flush();
+
+			expect(fetches()).toBe(1);
+			expect(map.pathForId("server-id")).toBe("taken.md");
+		});
+	});
+
+	test("N concurrent unmapped ids without a path cost exactly one fetch", async () => {
 		const { engine, map, time } = throttledEngine();
 		const notes = Array.from({ length: 50 }, (_, i) => ({ id: `id-${i}`, path: `n${i}.md` }));
 		liveManifest(notes);
@@ -314,28 +364,23 @@ describe("ensureNoteIdMapped — manifest fetches are throttled across a burst",
 		time.advance(60_000);
 		await flush();
 
-		// Every id was covered by the one snapshot: no trailing rerun is owed.
 		expect(fetches()).toBe(1);
 		for (const n of notes) expect(map.pathForId(n.id)).toBe(n.path);
 	});
 
-	test("back-to-back announces (each after the last fetch settled) share a trailing fetch", async () => {
+	test("back-to-back ids (each after the last fetch settled) share a trailing fetch", async () => {
 		const { engine, map, time } = throttledEngine();
 		const created: Array<{ id: string; path: string }> = [];
 		liveManifest(created);
 
-		// The server learns one note at a time and announces it; B's previous
-		// fetch has already returned when the next announce lands.
 		for (let i = 0; i < 20; i++) {
 			created.push({ id: `id-${i}`, path: `n${i}.md` });
 			engine.ensureNoteIdMapped(`id-${i}`);
 			await flush();
 		}
-		// Leading fetch only, so far: the rest wait out the window.
 		expect(fetches()).toBe(1);
 
 		time.advance(60_000);
-		await flush();
 		await flush();
 
 		expect(fetches()).toBe(2);
@@ -345,23 +390,7 @@ describe("ensureNoteIdMapped — manifest fetches are throttled across a burst",
 	test("a note missing from an in-flight fetch is picked up by the trailing fetch", async () => {
 		const { engine, map, time } = throttledEngine();
 		const created = [{ id: "early", path: "early.md" }];
-		let release: () => void = () => {};
-		const gate = new Promise<void>((r) => {
-			release = r;
-		});
-		// First GET snapshots BEFORE "late" exists, and is still in flight when
-		// "late" is announced.
-		const snapshot = created.map((n) => ({ ...n, content_hash: "h" }));
-		(mockApi.getManifest as ReturnType<typeof mock>).mockImplementationOnce(async () => {
-			await gate;
-			return {
-				notes: snapshot,
-				attachments: [],
-				total_notes: 1,
-				total_attachments: 0,
-				change_seq: 1,
-			};
-		});
+		const release = heldManifest(created);
 		engine.ensureNoteIdMapped("early");
 		await flush();
 		created.push({ id: "late", path: "late.md" });
@@ -369,40 +398,142 @@ describe("ensureNoteIdMapped — manifest fetches are throttled across a burst",
 		engine.ensureNoteIdMapped("late");
 		release();
 		await flush();
-		await flush();
 
 		expect(map.pathForId("early")).toBe("early.md");
 		expect(map.pathForId("late")).toBeNull(); // not dropped, just waiting
 
-		time.advance(60_000);
-		await flush();
+		time.advance(GAP);
 		await flush();
 
 		expect(fetches()).toBe(2);
 		expect(map.pathForId("late")).toBe("late.md");
 	});
 
-	test("an id absent from a fetch that started after it was seen is not refetched forever", async () => {
+	test("the gap is measured from fetch COMPLETION, not start", async () => {
+		// A GET slower than the window must not turn the throttle off: that is
+		// exactly the contended-server case the throttle exists for.
 		const { engine, time } = throttledEngine();
-		liveManifest([]);
-
-		engine.ensureNoteIdMapped("ghost");
+		const release = heldManifest([{ id: "a", path: "a.md" }]);
+		engine.ensureNoteIdMapped("a");
 		await flush();
-		time.advance(60_000);
+		time.advance(5_000); // the GET takes 5s
+		liveManifest([{ id: "b", path: "b.md" }]);
+		release();
 		await flush();
-		time.advance(60_000);
-		await flush();
-
 		expect(fetches()).toBe(1);
+
+		engine.ensureNoteIdMapped("b");
+		await flush();
+		time.advance(GAP - 1);
+		await flush();
+		expect(fetches()).toBe(1);
+
+		time.advance(1);
+		await flush();
+		expect(fetches()).toBe(2);
 	});
 
-	test("an announce whose id gets mapped elsewhere during the window costs no fetch", async () => {
+	test("a row not visible yet gets bounded retries, then is given up", async () => {
+		const { engine, map, time } = throttledEngine();
+		liveManifest([]);
+		engine.ensureNoteIdMapped("slow");
+		await flush();
+		expect(fetches()).toBe(1);
+
+		// Visible to the second fetch: picked up.
+		liveManifest([{ id: "slow", path: "slow.md" }]);
+		time.advance(GAP);
+		await flush();
+		expect(fetches()).toBe(2);
+		expect(map.pathForId("slow")).toBe("slow.md");
+
+		// A ghost that never appears costs a bounded number of fetches.
+		liveManifest([]);
+		engine.ensureNoteIdMapped("ghost");
+		for (let i = 0; i < 10; i++) {
+			time.advance(60_000);
+			await flush();
+		}
+		expect(fetches()).toBe(2 + 3);
+	});
+
+	test("a failed fetch keeps pending ids and retries once after a backoff", async () => {
+		const { engine, map, time } = throttledEngine();
+		(mockApi.getManifest as ReturnType<typeof mock>).mockRejectedValueOnce(new Error("503"));
+		engine.ensureNoteIdMapped("a");
+		await flush();
+		expect(fetches()).toBe(1);
+
+		liveManifest([{ id: "a", path: "a.md" }]);
+		time.advance(2 * GAP - 1); // backoff doubles the gap after a failure
+		await flush();
+		expect(fetches()).toBe(1);
+
+		time.advance(1);
+		await flush();
+		expect(fetches()).toBe(2);
+		expect(map.pathForId("a")).toBe("a.md");
+	});
+
+	test("an awaiting caller is released by the fetch that maps ITS id, while others keep arriving", async () => {
+		const { engine, map, time } = throttledEngine();
+		const created = [{ id: "first", path: "first.md" }];
+		liveManifest(created);
+		engine.ensureNoteIdMapped("first");
+		await flush();
+
+		created.push({ id: "mine", path: "mine.md" });
+		engine.ensureNoteIdMapped("mine"); // inside the window: waits
+		let released = false;
+		void engine.awaitNoteIdMapped("mine").then(() => {
+			released = true;
+		});
+
+		// Other ids keep arriving for the rest of the import and are never
+		// visible, so the pending set never drains.
+		for (let i = 0; i < 3; i++) {
+			engine.ensureNoteIdMapped(`other-${i}`);
+			time.advance(GAP);
+			await flush();
+			if (i === 0) {
+				expect(map.pathForId("mine")).toBe("mine.md");
+				expect(released).toBe(true);
+			}
+		}
+	});
+
+	test("a waiter is released by the first fetch covering its id even if it stays unmapped", async () => {
+		// The retry schedule (and any failure backoff) is for the MAP; a live
+		// fan-out awaiting it must not be held for seconds per unknown id.
+		const { engine } = throttledEngine();
+		(mockApi.getManifest as ReturnType<typeof mock>).mockRejectedValueOnce(new Error("503"));
+		engine.ensureNoteIdMapped("ghost");
+		let released = false;
+		void engine.awaitNoteIdMapped("ghost").then(() => {
+			released = true;
+		});
+		await flush();
+		expect(fetches()).toBe(1);
+		expect(released).toBe(true);
+	});
+
+	test("awaitNoteIdMapped resolves immediately for an id that is not pending", async () => {
+		const { engine } = throttledEngine();
+		let released = false;
+		void engine.awaitNoteIdMapped("nobody").then(() => {
+			released = true;
+		});
+		await flush();
+		expect(released).toBe(true);
+	});
+
+	test("an id mapped elsewhere during the window costs no fetch", async () => {
 		const { engine, map, time } = throttledEngine();
 		liveManifest([{ id: "a", path: "a.md" }]);
 		engine.ensureNoteIdMapped("a");
 		await flush();
 
-		engine.ensureNoteIdMapped("b"); // inside the window: waits
+		engine.ensureNoteIdMapped("b");
 		map.set("b.md", "b"); // the pull feed maps it first
 		time.advance(60_000);
 		await flush();
@@ -417,12 +548,43 @@ describe("ensureNoteIdMapped — manifest fetches are throttled across a burst",
 		await flush();
 
 		engine.ensureNoteIdMapped("b");
-		(engine as any).syncBlocked = true;
+		let released = false;
+		void engine.awaitNoteIdMapped("b").then(() => {
+			released = true;
+		});
+		engine.setSyncBlocked(true);
 		time.advance(60_000);
 		await flush();
 
 		// The reconcile can trash files (sweepPendingOrphans): never behind a
 		// closed gate, even when it was armed while the gate was open.
 		expect(fetches()).toBe(1);
+		expect(released).toBe(true);
+	});
+
+	test("a vault switch cancels the old vault's cooldown and pending ids", async () => {
+		const { engine, time } = throttledEngine();
+		liveManifest([{ id: "a", path: "a.md" }]);
+		engine.ensureNoteIdMapped("a");
+		await flush();
+		engine.ensureNoteIdMapped("old-vault-id"); // armed for the old vault
+		let released = false;
+		void engine.awaitNoteIdMapped("old-vault-id").then(() => {
+			released = true;
+		});
+
+		await engine.resetForVaultChange();
+		await flush();
+		expect(released).toBe(true);
+
+		// The new vault's first unmapped id is not held by the old cooldown...
+		liveManifest([{ id: "new", path: "new.md" }]);
+		engine.ensureNoteIdMapped("new");
+		await flush();
+		expect(fetches()).toBe(2);
+		// ...and the old timer never fires a fetch of its own.
+		time.advance(60_000);
+		await flush();
+		expect(fetches()).toBe(2);
 	});
 });

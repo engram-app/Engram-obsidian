@@ -638,3 +638,35 @@ test("#1550: a note_not_found reply drives the orphaned-claim repair, ahead of t
 	wiring.dispose();
 	await wiring.manager.destroyAll();
 });
+
+// Receiver manifest storm (e2e test_77): the announce's server path is what
+// lets the engine map a new id without a whole-vault manifest fetch, so the
+// wiring must hand it through rather than drop it.
+test("crdt_doc_ready forwards the announced path to the id-map heal", async () => {
+	const map = new NoteIdMap();
+	const calls: Array<[string, string | undefined]> = [];
+	const syncEngine = {
+		flushFromCrdt: async () => true,
+		isUnchangedSynced: () => false,
+		materializeEmptyDiscovered: async () => {},
+		reconcileNoteIdMapFromManifest: async () => 0,
+		isSyncBlocked: () => false,
+		discoverAnnouncedNote: async () => {},
+		ensureNoteIdMapped: (id: string, path?: string) => calls.push([id, path]),
+	};
+	const wiring = createCrdtWiring({
+		noteIdMap: map,
+		syncEngine,
+		sendCrdt: () => {},
+		isBound: () => false,
+		strandHealDebounceMs: 100_000,
+		dbPrefix: "announcepath",
+	});
+
+	wiring.onCrdtDocReady("new-id", "From/elsewhere.md");
+
+	expect(calls).toEqual([["new-id", "From/elsewhere.md"]]);
+
+	wiring.dispose();
+	await wiring.manager.destroyAll();
+});
