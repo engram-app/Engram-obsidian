@@ -10,7 +10,7 @@ import {
 	switchMode,
 	upgradeUrlFor,
 } from "../src/backend-mode";
-import { BACKEND_SCOPED_FIELDS, type EngramSyncSettings } from "../src/types";
+import { BACKEND_SCOPED_FIELDS, type BackendSlot, type EngramSyncSettings } from "../src/types";
 
 const fullSettings = (override: Partial<EngramSyncSettings> = {}): EngramSyncSettings => ({
 	apiUrl: "https://engram.example.com",
@@ -28,6 +28,7 @@ const fullSettings = (override: Partial<EngramSyncSettings> = {}): EngramSyncSet
 	debounceMs: 2000,
 	diagnosticsEnabled: false,
 	remoteLogLevel: "info",
+	excludedFolders: ["Projects"],
 	...override,
 });
 
@@ -107,6 +108,15 @@ describe("excludedFolders are backend-scoped", () => {
 		expect(settings.excludedFolders).toEqual([]);
 		switchMode(settings, "selfhost", CLOUD);
 		expect(settings.excludedFolders).toEqual(["Archive"]);
+	});
+
+	test("a stash written before excludedFolders existed restores as []", () => {
+		const settings = fullSettings({ backendMode: "cloud", excludedFolders: ["Archive"] });
+		const legacy = captureSlot(settings) as Partial<BackendSlot>;
+		delete legacy.excludedFolders;
+		settings.inactiveBackend = legacy as BackendSlot;
+		switchMode(settings, "selfhost", CLOUD);
+		expect(settings.excludedFolders).toEqual([]);
 	});
 });
 

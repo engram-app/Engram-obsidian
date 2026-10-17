@@ -25,6 +25,9 @@ export function applySlot(settings: EngramSyncSettings, slot: BackendSlot): void
 	for (const key of BACKEND_SCOPED_FIELDS) {
 		target[key] = slot[key];
 	}
+	// A slot stashed by a version before excludedFolders existed lacks it.
+	const excluded = slot.excludedFolders;
+	settings.excludedFolders = Array.isArray(excluded) ? [...excluded] : [];
 }
 
 export type ConnectionState = "connected" | "needs-url" | "needs-auth";
