@@ -370,6 +370,11 @@ describe("SyncEngine.pushAll — replace-remote via crdtDelete + attachment-dele
 			applied: 0,
 			serverIds: new Set(["local-keep-id", "remote-extra-id"]),
 			serverAttachmentPaths: new Set(["Keep.png", "remote-extra.png"]),
+			// The real enumerateOnly replay always reports each note's latest path.
+			serverNotePaths: new Map([
+				["local-keep-id", "Keep.md"],
+				["remote-extra-id", "remote-extra.md"],
+			]),
 			ran: true,
 			complete: true,
 		});
@@ -534,6 +539,44 @@ describe("SyncEngine.pushAll: replace-remote never deletes ignored server paths"
 				note("extra-id", 2, "Extra.md"),
 				note("moved-id", 3, "Archive/x.md"),
 			],
+			has_more: false,
+			next_seq: null,
+		}));
+
+		await engine.pushAll({ replaceRemote: true, localSnapshot: new Set<string>() });
+
+		expect(deleted).toEqual(["extra-id"]);
+	});
+});
+
+describe("SyncEngine.pushAll: replace-remote spares a note it cannot place", () => {
+	// An op with an id but no path leaves the note's latest path unknown, so
+	// nothing proves it is outside an excluded folder. Fail safe: keep it.
+	test("a live note id with no known path is not deleted", async () => {
+		const { engine } = makeEngine([]);
+		(engine as any).settings.excludedFolders = ["Archive"];
+		const deleted: string[] = [];
+		(engine as any).crdtDelete = async (id: string) => {
+			deleted.push(id);
+			return { doc_id: id };
+		};
+		(engine as any).pushFile = mock().mockResolvedValue(true);
+		(engine as any).applySyncChange = mock(async () => true);
+		const note = (id: string, seq: number, path: string | null) => ({
+			type: "note",
+			id,
+			seq,
+			path,
+			title: "t",
+			content: "x",
+			folder: "",
+			tags: [],
+			mtime: seq,
+			updated_at: "2026-01-01T00:00:00Z",
+			deleted: false,
+		});
+		engine.setCrdtCatchupSince(async () => ({
+			changes: [note("unplaced-id", 1, null), note("extra-id", 2, "Extra.md")],
 			has_more: false,
 			next_seq: null,
 		}));

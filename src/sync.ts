@@ -11160,12 +11160,14 @@ export class SyncEngine {
 				// left in, they would read as server-only extras and be deleted.
 				// Notes are judged on their LATEST path, so one renamed into an
 				// ignored folder is spared even though an earlier op listed its id.
-				const ignored = (p: string | undefined) =>
-					p !== undefined && this.shouldIgnore(normalizePath(p));
+				// A note whose path is unknown cannot be placed outside an ignored
+				// folder, so it is spared too: never delete what we cannot place.
+				const ignored = (p: string) => this.shouldIgnore(normalizePath(p));
 				replaceExtras = {
-					ids: [...serverIds].filter(
-						(id) => !localIds.has(id) && !ignored(serverNotePaths?.get(id)),
-					),
+					ids: [...serverIds].filter((id) => {
+						const path = serverNotePaths?.get(id);
+						return !localIds.has(id) && path !== undefined && !ignored(path);
+					}),
 					attachments: [...serverAttachmentPaths].filter(
 						(p) => !snap.has(normalizePath(p)) && !ignored(p),
 					),
