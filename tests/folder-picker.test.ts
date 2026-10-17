@@ -110,27 +110,37 @@ function checkboxFor(root: any, text: string): any {
 }
 
 describe("FolderPicker", () => {
-	test("renders one checkbox row per folder with its note count, root labelled", () => {
+	// Every note new: the step's usual first-sync case.
+	const pick = (excluded: string[], onChange = (_e: string[], _s: number) => {}) => {
 		const parent = makeEl();
-		new FolderPicker(parent, { notePaths: PATHS, excluded: [], onChange: () => {} });
-		expect(parent.__find("(top level) (2)")).not.toBeNull();
-		expect(parent.__find("Archive (3)")).not.toBeNull();
+		new FolderPicker(parent, {
+			notePaths: PATHS,
+			newPaths: PATHS,
+			excluded,
+			limit: 6,
+			onChange,
+		});
+		return parent;
+	};
+
+	test("renders one checkbox row per folder with its note count, root labelled", () => {
+		const parent = pick([]);
+		expect(parent.__find("(top level) 2 notes (2 new)")).not.toBeNull();
+		expect(parent.__find("Archive 3 notes (3 new)")).not.toBeNull();
 	});
 
 	test("initial exclusions render unticked", () => {
-		const parent = makeEl();
-		new FolderPicker(parent, { notePaths: PATHS, excluded: ["Archive"], onChange: () => {} });
-		expect(checkboxFor(parent, "Archive (3)").checked).toBe(false);
-		expect(checkboxFor(parent, "Projects (2)").checked).toBe(true);
+		const parent = pick(["Archive"]);
+		expect(checkboxFor(parent, "Archive 3 notes (3 new)").checked).toBe(false);
+		expect(checkboxFor(parent, "Projects 2 notes (2 new)").checked).toBe(true);
 	});
 
 	test("unticking a folder updates the running total and reports the exclusion", () => {
-		const parent = makeEl();
 		const onChange = mock((_ex: string[], _selected: number) => {});
-		new FolderPicker(parent, { notePaths: PATHS, excluded: [], limit: 6, onChange });
+		const parent = pick([], onChange);
 		expect(parent.__find("Selected: 8 / 6")).not.toBeNull();
 
-		const box = checkboxFor(parent, "Archive (3)");
+		const box = checkboxFor(parent, "Archive 3 notes (3 new)");
 		box.checked = false;
 		box.listeners.change();
 
@@ -139,30 +149,12 @@ describe("FolderPicker", () => {
 	});
 
 	test("the top-level row shows its count but is locked on", () => {
-		const parent = makeEl();
-		const onChange = mock((_ex: string[], _selected: number) => {});
-		new FolderPicker(parent, {
-			notePaths: PATHS,
-			excluded: [ROOT_FOLDER],
-			limit: 6,
-			onChange,
-		});
-		const root = checkboxFor(parent, "(top level) (2)");
+		const parent = pick([ROOT_FOLDER]);
+		const root = checkboxFor(parent, "(top level) 2 notes (2 new)");
 		expect(root.checked).toBe(true);
 		expect(root.disabled).toBe(true);
 		expect(root.listeners.change).toBeUndefined();
 		expect(parent.__find("Selected: 8 / 6")).not.toBeNull();
-	});
-
-	test("without a limit it shows no running total", () => {
-		const parent = makeEl();
-		new FolderPicker(parent, { notePaths: PATHS, excluded: [], onChange: () => {} });
-		const texts: string[] = [];
-		(function walk(el: any) {
-			texts.push(el.textContent);
-			for (const c of el.children) walk(c);
-		})(parent);
-		expect(texts.some((x) => x.startsWith("Selected"))).toBe(false);
 	});
 });
 
@@ -177,6 +169,7 @@ describe("FolderPicker pluralizes total and new counts separately", () => {
 			notePaths: notes,
 			newPaths: ["A/1.md"],
 			excluded: [],
+			limit: 10,
 			onChange: () => {},
 		});
 		const expected = `A ${t("{count} notes", { count: 5 })} (${t("{count} new", { count: 1 })})`;

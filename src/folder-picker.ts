@@ -54,15 +54,15 @@ export function selectedNoteCount(paths: string[], excluded: Iterable<string>): 
 export interface FolderPickerProps {
 	/** Every syncable note path the choice applies to. */
 	notePaths: string[];
-	/** The subset of notePaths not yet uploaded. When set, rows read "Archive
-	 *  2,300 notes (2,000 new)", only folders with new notes are listed, and
-	 *  the total and `limit` count new notes only. */
-	newPaths?: string[];
+	/** The subset of notePaths not yet uploaded. Rows read "Archive 2,300 notes
+	 *  (2,000 new)", only folders with new notes are listed, and the total and
+	 *  `limit` count new notes only. */
+	newPaths: string[];
 	/** Top-level folders that start unticked. ROOT_FOLDER is ignored: the
 	 *  root row is locked on. */
 	excluded: string[];
-	/** When set, shows "Selected: N / limit" and an over-limit state. */
-	limit?: number | null;
+	/** Room left on the plan: shows "Selected: N / limit" and an over-limit state. */
+	limit: number;
 	/** Fires with the full excluded list and the counted notes still selected
 	 *  on every toggle. */
 	onChange: (excluded: string[], selected: number) => void;
@@ -70,7 +70,7 @@ export interface FolderPickerProps {
 
 export class FolderPicker {
 	private readonly excluded: Set<string>;
-	private total: HTMLElement | null = null;
+	private readonly total: HTMLElement;
 
 	constructor(
 		parent: HTMLElement,
@@ -80,8 +80,7 @@ export class FolderPicker {
 		const list = parent.createEl("ul", { cls: "engram-folder-picker" });
 		const all = countNotesByFolder(props.notePaths);
 		const totals = new Map(all.map((c) => [c.folder, c.count]));
-		const rows = props.newPaths ? countNotesByFolder(props.newPaths) : null;
-		for (const { folder, count } of rows ?? all) {
+		for (const { folder, count } of countNotesByFolder(props.newPaths)) {
 			const label = list.createEl("li").createEl("label");
 			const box = label.createEl("input", { type: "checkbox" });
 			box.checked = !this.excluded.has(folder);
@@ -90,9 +89,7 @@ export class FolderPicker {
 			label.createSpan({
 				// Two strings, each pluralized by its own count: one form picked from
 				// the total read wrong for the new count in pl/ru.
-				text: rows
-					? `${name} ${t("{count} notes", { count: total })} (${t("{count} new", { count })})`
-					: `${name} (${formatNumber(count)})`,
+				text: `${name} ${t("{count} notes", { count: total })} (${t("{count} new", { count })})`,
 			});
 			// Root notes always sync: nothing else in the vault anchors them.
 			if (folder === ROOT_FOLDER) {
@@ -107,20 +104,17 @@ export class FolderPicker {
 				props.onChange([...this.excluded], selected);
 			});
 		}
-		if (props.limit != null) {
-			this.total = parent.createEl("p", { cls: "engram-folder-picker-total" });
-			this.updateTotal(this.selected());
-		}
+		this.total = parent.createEl("p", { cls: "engram-folder-picker-total" });
+		this.updateTotal(this.selected());
 	}
 
-	/** Counted notes (new ones, when newPaths is set) the selection keeps. */
+	/** New notes the selection keeps. */
 	private selected(): number {
-		return selectedNoteCount(this.props.newPaths ?? this.props.notePaths, this.excluded);
+		return selectedNoteCount(this.props.newPaths, this.excluded);
 	}
 
 	private updateTotal(selected: number): void {
 		const limit = this.props.limit;
-		if (!this.total || limit == null) return;
 		this.total.setText(
 			t("Selected: {selected} / {limit}", {
 				selected: formatNumber(selected),
