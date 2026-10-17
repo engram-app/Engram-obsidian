@@ -1112,6 +1112,7 @@ export class SyncEngine {
 		if (!manifest) return 0; // pre-B1 backend: no manifest endpoint, nothing to reconcile
 		this.cacheManifestOwners(manifest); // keep the destructive-op guard's snapshot fresh
 		let applied = 0;
+		const evicted: string[] = [];
 		// Every path the server currently holds a note at. Lets us tell a
 		// CROSS-WIRE from an IN-FLIGHT RENAME below.
 		// Normalized exactly as discovery (`discoverAnnouncedNote`) and the
@@ -1165,9 +1166,14 @@ export class SyncEngine {
 			// a stale/cross-wired pathForId sends inbound CRDT content to the wrong
 			// file. Rebind to the authoritative path (set() evicts the stale
 			// forward + reverse entries so the map stays a clean bijection).
+			const holder = this.noteIdMap.get(path);
+			if (holder && holder !== note.id) evicted.push(holder);
 			this.noteIdMap.set(path, note.id);
 			applied++;
 		}
+		// An id this pass pushed off a path (say an announce mapped it there and
+		// this snapshot predates its row) must be re-healed, or it stays deaf.
+		for (const id of evicted) if (this.noteIdMap.pathForId(id) === null) this.ensureNoteIdMapped(id);
 		if (applied > 0) {
 			await this.saveData({ noteIds: this.noteIdMap.toJSON() });
 		}
