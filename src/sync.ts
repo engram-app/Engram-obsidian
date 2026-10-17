@@ -755,7 +755,8 @@ export class SyncEngine {
 		if ("manager" in ports) this.crdt = ports.manager ?? null;
 		if ("deviceId" in ports) this.deviceId = ports.deviceId ?? null;
 		// Through the binder, not a bare assignment: main.ts hands the map in
-		// here, so this is where its change + relocate handlers must attach.
+		// here, so this is where its change handler must attach (the relocate
+		// handler stays setNoteIdMap-only, as before: out of scope here).
 		if ("noteIdMap" in ports) this.bindNoteIdMap(ports.noteIdMap ?? null);
 		if ("enrollment" in ports) this.crdtEnrollment = ports.enrollment ?? null;
 		if ("create" in ports) this.crdtCreate = ports.create ?? null;
@@ -824,12 +825,6 @@ export class SyncEngine {
 
 	setNoteIdMap(map: NoteIdMap | null): void {
 		this.setCrdtPorts({ noteIdMap: map });
-	}
-
-	private bindNoteIdMap(map: NoteIdMap | null): void {
-		// The previous map outlives this binding (main owns it): stop it calling in.
-		if (this.noteIdMap !== map) this.noteIdMap?.setChangeHandler?.(null);
-		this.noteIdMap = map;
 		// Follow identity with the bytes. The store reports a claim MOVING; this
 		// engine owns the vault, so it performs the corresponding file move.
 		//
@@ -837,7 +832,6 @@ export class SyncEngine {
 		// (a bare `{ tag: "map" }`, a stub with only the two methods under test),
 		// and wiring a diagnostic-adjacent hook must not be what breaks them. In
 		// production this is always a real NoteIdMap, so the method is always there.
-		map?.setChangeHandler?.((ids) => this.scheduleIdMapPrune(ids));
 		map?.setRelocateHandler?.((from, to) => {
 			// RECORD FIRST, move second. The move can lose: a concurrent flush or
 			// the discovery create may reach the new path first, and then this
@@ -848,6 +842,15 @@ export class SyncEngine {
 			this.rememberRelocation(normalizePath(from), normalizePath(to));
 			void this.renameFollowingIdentity(from, to);
 		});
+	}
+
+	/** Bind the map and attach its change handler (releases id-map waiters
+	 *  when any path maps an id). Every caller, production included. */
+	private bindNoteIdMap(map: NoteIdMap | null): void {
+		// The previous map outlives this binding (main owns it): stop it calling in.
+		if (this.noteIdMap !== map) this.noteIdMap?.setChangeHandler?.(null);
+		this.noteIdMap = map;
+		map?.setChangeHandler?.((ids) => this.scheduleIdMapPrune(ids));
 	}
 
 	/** Move a note's file to follow a relocation of its identity.
@@ -7621,7 +7624,15 @@ export class SyncEngine {
 			return;
 		try {
 			// Learn + persist the id->path mapping (discovery source, like catchup).
-			if (this.noteIdMap && this.noteIdMap.pathForId(noteId) !== normalized) {
+			const mappedAt = this.noteIdMap?.pathForId(noteId) ?? null;
+			// Mapped elsewhere with its file on disk: do not re-key from the
+			// announce (that would orphan the file into a duplicate). A real rename
+			// arrives through the manifest / catch-up path.
+			const keptElsewhere =
+				mappedAt !== null &&
+				mappedAt !== normalized &&
+				this.app.vault.getFileByPath(mappedAt) instanceof TFile;
+			if (this.noteIdMap && mappedAt !== normalized && !keptElsewhere) {
 				const displaced = this.noteIdMap.get(normalized);
 				this.noteIdMap.set(normalized, noteId);
 				// The announce path evicted another id: the path may be stale (rename

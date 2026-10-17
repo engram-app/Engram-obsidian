@@ -1926,7 +1926,7 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			expect(released).toBe(true);
 		});
 
-		test("#7 an announce for a mapped id whose file is on disk moves the file, no duplicate", async () => {
+		test("#7 an announce for a mapped id whose file is on disk leaves the mapping: no move, no duplicate", async () => {
 			const { engine, map } = portsEngine();
 			const e = engine as any;
 			e.crdt = {};
@@ -1942,10 +1942,41 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			vault.rename = mock(async (f: TFile, to: string) => {
 				renames.push(`${f.path}->${to}`);
 			});
+			(vault.create as ReturnType<typeof mock>).mockClear();
 			try {
 				await engine.discoverAnnouncedNote("x", "new/x.md");
 				await flush();
-				expect(renames).toEqual(["old/x.md->new/x.md"]);
+				// No duplicate: nothing created at the announced path, nothing moved.
+				const created = (vault.create as ReturnType<typeof mock>).mock.calls.map(
+					(c: unknown[]) => c[0],
+				);
+				expect(created).not.toContain("new/x.md");
+				expect(renames).toEqual([]);
+				// The mapping stays where the file is; a real rename comes through
+				// the manifest / catch-up path.
+				expect(map.pathForId("x")).toBe("old/x.md");
+			} finally {
+				vault.rename = prevRename;
+				(vault.getFileByPath as ReturnType<typeof mock>).mockReset().mockReturnValue(null);
+			}
+		});
+
+		test("the production wiring path (setCrdtPorts) does not attach the relocate handler", async () => {
+			const { map } = portsEngine();
+			const vault = mockApp.vault;
+			const renames: string[] = [];
+			(vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
+				p === "a.md" ? new TFile("a.md") : null,
+			);
+			const prevRename = vault.rename;
+			vault.rename = mock(async (f: TFile, to: string) => {
+				renames.push(`${f.path}->${to}`);
+			});
+			try {
+				map.set("a.md", "r");
+				map.set("b.md", "r"); // the id's claim moves: a relocation
+				await flush();
+				expect(renames).toEqual([]);
 			} finally {
 				vault.rename = prevRename;
 				(vault.getFileByPath as ReturnType<typeof mock>).mockReset().mockReturnValue(null);
