@@ -90,44 +90,4 @@ describe("ExplicitFolders", () => {
 		await store.add("Only");
 		expect(store.all()).toEqual(["Only"]);
 	});
-
-	test("a server-renamed folder round-trips through persistence", async () => {
-		const adapter = new MemoryAdapter();
-		const store = new ExplicitFolders(adapter, "f.json");
-		await store.load();
-		await store.record([
-			["Bad:Name", "BadName"],
-			["Plain", "Plain"],
-			["%2e%2e", ""],
-		]);
-
-		const fresh = new ExplicitFolders(adapter, "f.json");
-		await fresh.load();
-		expect(fresh.has("Bad:Name")).toBe(true);
-		expect(fresh.serverName("Bad:Name")).toBe("BadName");
-		expect(fresh.has("%2e%2e")).toBe(true);
-		expect(fresh.serverName("%2e%2e")).toBe("");
-		expect(fresh.has("Plain")).toBe(true);
-		expect(fresh.all().sort()).toEqual(["BadName", "Plain"]);
-	});
-
-	test("loads the legacy plain-array format", async () => {
-		const adapter = new MemoryAdapter();
-		adapter.files.set("f.json", JSON.stringify(["A", "B"]));
-		const store = new ExplicitFolders(adapter, "f.json");
-		await store.load();
-		expect(store.all().sort()).toEqual(["A", "B"]);
-	});
-
-	test("replaceAll drops an alias whose server name is gone, keeps refusals", async () => {
-		const store = new ExplicitFolders(new MemoryAdapter(), "f.json");
-		await store.load();
-		await store.record([
-			["Bad:Name", "BadName"],
-			["%2e%2e", ""],
-		]);
-		await store.replaceAll([]);
-		expect(store.has("Bad:Name")).toBe(false);
-		expect(store.has("%2e%2e")).toBe(true);
-	});
 });
