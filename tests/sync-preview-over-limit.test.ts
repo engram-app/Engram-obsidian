@@ -54,13 +54,20 @@ describe("notesQuotaFromUsage / fetchNotesQuota", () => {
 		expect(notesQuotaFromUsage(usage(100, 150))).toEqual({ limit: 100, room: 0 });
 	});
 
-	test("null and negative limits are unlimited (no quota)", () => {
-		expect(notesQuotaFromUsage(usage(null))).toBeNull();
-		expect(notesQuotaFromUsage(usage(-1))).toBeNull();
+	test("null and negative limits are verifiably unlimited", () => {
+		expect(notesQuotaFromUsage(usage(null))).toBe("unlimited");
+		expect(notesQuotaFromUsage(usage(-1))).toBe("unlimited");
 	});
 
-	test("a missing notes entry means no quota", () => {
+	test("a missing or malformed notes entry is unknown, not unlimited", () => {
 		expect(notesQuotaFromUsage({ tier: "free", usage: {} })).toBeNull();
+		const malformed = { tier: "free", usage: { notes: { used: 1 } } } as any;
+		expect(notesQuotaFromUsage(malformed)).toBeNull();
+	});
+
+	test("fetchNotesQuota: unlimited and unknown both mean no step", async () => {
+		expect(await fetchNotesQuota(async () => usage(null))).toBeNull();
+		expect(await fetchNotesQuota(async () => ({ tier: "free", usage: {} }))).toBeNull();
 	});
 
 	test("a failed usage call yields no quota instead of throwing", async () => {
@@ -79,7 +86,10 @@ describe("SyncPreviewState over-limit step visibility", () => {
 	function stateWith(u: BillingUsage | undefined, plan = planWith(PATHS)) {
 		const onResolve = mock((_c: SyncChoice) => {});
 		const state = new SyncPreviewState(plan, onResolve);
-		if (u !== undefined) state.setNotesQuota(notesQuotaFromUsage(u));
+		if (u !== undefined) {
+			const q = notesQuotaFromUsage(u);
+			state.setNotesQuota(q === "unlimited" ? null : q);
+		}
 		return { state, onResolve };
 	}
 
@@ -618,6 +628,29 @@ describe("over-limit quota re-check", () => {
 		expect(modal.state.view).toBe("done");
 		modal.onClose();
 		expect(await choice).toBe("smart-merge");
+	});
+});
+
+describe("an unknown quota on re-check keeps the step", () => {
+	test("a malformed usage body neither proceeds nor drops the user's choices", async () => {
+		let body: BillingUsage = usage(10, 6);
+		const { modal } = openModal(planWith(["Root.md", ...PATHS]), {
+			fetchUsage: async () => body,
+		});
+		await Bun.sleep(0);
+		(modal as any).pick("smart-merge");
+		await Bun.sleep(0);
+		modal.state.setOverLimitExcluded(["Archive"]);
+		modal.state.toggleOverLimitAck();
+
+		body = { tier: "free", usage: {} };
+		(modal as any).onWindowFocus();
+		await Bun.sleep(0);
+
+		expect(modal.state.view).toBe("over-limit");
+		expect(modal.state.overLimitExcluded).toEqual(["Archive"]);
+		expect(modal.state.overLimitAck).toBe(true);
+		expect(modal.state.notesQuota).toEqual({ limit: 10, room: 4 });
 	});
 });
 

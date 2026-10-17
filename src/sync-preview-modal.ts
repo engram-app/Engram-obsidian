@@ -373,12 +373,15 @@ export interface NotesQuota {
 	room: number;
 }
 
-/** The notes quota from a `/billing/usage` body, or null when unlimited or
- *  absent. Pure for testing. */
-export function notesQuotaFromUsage(data: BillingUsage): NotesQuota | null {
+/** The notes quota from a `/billing/usage` body: "unlimited" only when the
+ *  body says so (limit null or negative), null when it is UNKNOWN (no notes
+ *  entry, or a limit that is not a number). Pure for testing. */
+export function notesQuotaFromUsage(data: BillingUsage): NotesQuota | "unlimited" | null {
 	const notes = data.usage?.notes;
-	const limit = notes?.limit ?? null;
-	if (limit === null || isUnlimited(limit)) return null;
+	const limit = notes?.limit;
+	if (limit === null) return "unlimited";
+	if (typeof limit !== "number") return null;
+	if (isUnlimited(limit)) return "unlimited";
 	return { limit, room: Math.max(0, limit - (notes?.used ?? 0)) };
 }
 
@@ -388,7 +391,8 @@ export async function fetchNotesQuota(
 	getUsage: () => Promise<BillingUsage>,
 ): Promise<NotesQuota | null> {
 	try {
-		return notesQuotaFromUsage(await getUsage());
+		const quota = notesQuotaFromUsage(await getUsage());
+		return quota === "unlimited" ? null : quota;
 	} catch (e: unknown) {
 		devLog().log(
 			"error",
@@ -826,24 +830,29 @@ export class SyncPreviewModal extends Modal {
 		if (this.state.view === "over-limit") void this.refreshOverLimitQuota();
 	};
 
-	/** Re-read the quota while the over-limit step is open. A failed lookup
-	 *  keeps the numbers on screen; a plan that is now unlimited has nothing to
-	 *  ask, so the sync carries on with the option the user picked. */
+	/** Re-read the quota while the over-limit step is open. A failed or
+	 *  unreadable lookup keeps the step exactly as it is; only a plan the server
+	 *  says is unlimited has nothing to ask, so the sync carries on with the
+	 *  option the user picked. */
 	private async refreshOverLimitQuota(): Promise<void> {
 		const fetchUsage = this.opts.fetchUsage;
 		if (!fetchUsage) return;
 		const seq = ++this.quotaSeq;
-		let quota: NotesQuota | null;
+		let quota: NotesQuota | "unlimited" | null;
 		try {
 			quota = notesQuotaFromUsage(await fetchUsage());
 		} catch (e: unknown) {
 			devLog().log("error", `billing usage re-check failed: ${errMsg(e)}`);
 			return;
 		}
-		if (seq !== this.quotaSeq) return;
+		if (quota == null || seq !== this.quotaSeq) return;
 		if (this.state.view !== "over-limit" || this.state.overLimitSaving) return;
-		this.state.setNotesQuota(quota);
-		if (quota == null) this.state.finishOverLimit(null);
+		if (quota === "unlimited") {
+			this.state.setNotesQuota(null);
+			this.state.finishOverLimit(null);
+		} else {
+			this.state.setNotesQuota(quota);
+		}
 		this.render();
 	}
 
