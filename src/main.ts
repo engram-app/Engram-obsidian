@@ -80,11 +80,7 @@ import { channelConnectionKey, computeSyncFingerprint } from "./sync-fingerprint
 import { SyncLog } from "./sync-log";
 import { SyncLogModal } from "./sync-log-modal";
 import {
-	FolderOverLimitModal,
-	fetchNotesQuota,
-	type NotesQuota,
 	planLoadErrorMessage,
-	QUOTA_WAIT_MS,
 	SyncPreviewModal,
 	type SyncPreviewOptions,
 } from "./sync-preview-modal";
@@ -163,18 +159,6 @@ interface PluginData {
 	gateJournal?: GateEvent[];
 	/** The vault `gateJournal` was recorded for; any other vault drops it. */
 	gateJournalVaultId?: string | null;
-	/** Folders re-included by "Sync again" whose files still await the push
-	 *  pass's content re-check (SyncEngine.holdReinclude). */
-	reincludedFolders?: string[];
-	/** A catch-up rewind still owed ("Sync again" asks for a genesis replay);
-	 *  cleared once a replay that moves the real cursor completes. */
-	seqRewindFloor?: number | null;
-	/** The catch-up cursor when each excluded folder left the sync
-	 *  (SyncEngine.noteExcluded). */
-	excludedSince?: Record<string, number>;
-	/** The vault `reincludedFolders`, `seqRewindFloor` and `excludedSince` were
-	 *  recorded for; any other vault drops them. */
-	reincludedFoldersVaultId?: string | null;
 }
 
 /** Whether setupNoteStream() may keep the existing stream instead of
@@ -943,7 +927,6 @@ export default class EngramSyncPlugin extends Plugin {
 			devLog().log("lifecycle", "Migrated legacy syncedHashes → syncState");
 		}
 		this.hydrateGateJournal(saved);
-		this.hydrateReincludedFolders(saved);
 		this.syncEngine.issues.hydrate(saved?.syncIssues);
 		this.syncEngine.ignoredFiles.hydrate(saved?.ignoredFiles);
 
@@ -1994,21 +1977,6 @@ export default class EngramSyncPlugin extends Plugin {
 		await this.syncEngine.replayGateJournal();
 	}
 
-	/** Restore what "Sync again" still owes (the folders' content re-check and
-	 *  the genesis replay), only into the vault it was recorded for. */
-	hydrateReincludedFolders(
-		saved: Pick<
-			PluginData,
-			"reincludedFolders" | "seqRewindFloor" | "excludedSince" | "reincludedFoldersVaultId"
-		> | null,
-	): void {
-		if (!saved) return;
-		if (saved.reincludedFoldersVaultId !== (this.settings.vaultId ?? null)) return;
-		this.syncEngine.importReincludedFolders(saved.reincludedFolders);
-		this.syncEngine.setSeqRewindFloor(saved.seqRewindFloor);
-		this.syncEngine.importExcludedSince(saved.excludedSince);
-	}
-
 	/** Restore a gate journal (#247) persisted by an earlier session, but only
 	 *  into the vault it was recorded for: replaying one vault's renames and
 	 *  deletes into another would act on the wrong notes. */
@@ -2020,7 +1988,19 @@ export default class EngramSyncPlugin extends Plugin {
 
 	private async savePluginData(lastSync: string, offlineQueue?: QueueEntry[]): Promise<void> {
 		await this.writePluginData({
-			settings: this.settings,
+			// A folder Sync again is still reconciling stays excluded on disk, so
+			// a restart before it finishes leaves it excluded rather than half done.
+			settings: this.pendingReinclude?.size
+				? {
+						...this.settings,
+						excludedFolders: [
+							...this.settings.excludedFolders,
+							...[...this.pendingReinclude].filter(
+								(f) => !this.settings.excludedFolders.includes(f),
+							),
+						],
+					}
+				: this.settings,
 			lastSync,
 			// Top-level, device-local; saveData() overwrites data.json wholesale,
 			// so every field must be re-listed here or it's wiped on the next save.
@@ -2055,10 +2035,6 @@ export default class EngramSyncPlugin extends Plugin {
 			noteIdsVaultId: this.noteIdsOwner,
 			gateJournal: this.syncEngine.exportGateJournal(),
 			gateJournalVaultId: this.settings.vaultId ?? null,
-			reincludedFolders: this.syncEngine.exportReincludedFolders(),
-			seqRewindFloor: this.syncEngine.getSeqRewindFloor(),
-			excludedSince: this.syncEngine.exportExcludedSince(),
-			reincludedFoldersVaultId: this.settings.vaultId ?? null,
 		});
 	}
 
@@ -2242,8 +2218,13 @@ export default class EngramSyncPlugin extends Plugin {
 			// Whatever was confirmed belonged to the OUTGOING vault.
 			this.verifiedVaultNameFor = null;
 			// Folder exclusions name folders of the outgoing vault: never carry
-			// them silently into another one.
-			this.settings.excludedFolders = [];
+			// them silently into another one. Queued, so a change still in flight
+			// (and its rollback) settles first and cannot bring them back.
+			this.pendingReinclude?.clear();
+			void this.serializeExcluded(async () => {
+				this.settings.excludedFolders = [];
+				this.syncEngine.updateSettings(this.settings);
+			});
 		}
 		// EngramApi keeps its OWN copy and stamps it on every request. Setting it
 		// here rather than leaving it to a later `saveSettings` closes the window
@@ -3632,6 +3613,8 @@ export default class EngramSyncPlugin extends Plugin {
 			SyncPreviewOptions,
 			"fetchUsage" | "upgradeUrl" | "applyExclusions" | "onLateOverLimit"
 		>,
+		/** `onExcluded`: told which folders the over-limit step left out. */
+		hooks: { onExcluded?: (folders: string[]) => void } = {},
 	): SyncPreviewModal {
 		return new SyncPreviewModal(this.app, null, {
 			...opts,
@@ -3640,7 +3623,10 @@ export default class EngramSyncPlugin extends Plugin {
 				? () => this.api.getBillingUsage()
 				: undefined,
 			upgradeUrl: upgradeUrlFor(this.settings),
-			applyExclusions: (folders, signal) => this.applyOverLimitExclusions(folders, signal),
+			applyExclusions: async (folders, signal) => {
+				await this.applyOverLimitExclusions(folders, signal);
+				hooks.onExcluded?.(folders);
+			},
 			// The quota answered only after the sync started: say so with the
 			// note-limit toast the server's own cap rejection shows.
 			onLateOverLimit: (q) =>
@@ -3650,7 +3636,7 @@ export default class EngramSyncPlugin extends Plugin {
 						upgradeUrlFor(this.settings),
 						"notes_cap",
 						q.limit,
-						q.limit - q.room,
+						q.used,
 					),
 					offersUpgrades(this.settings),
 				),
@@ -3667,25 +3653,13 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  second modal. */
 	private applyOverLimitExclusions(folders: string[], signal?: AbortSignal): Promise<void> {
 		return this.serializeExcluded(async () => {
-			const added = folders.filter((f) => !this.settings.excludedFolders.includes(f));
-			await this.changeExcludedFolders(
-				(live) => [...live, ...added],
-				signal,
-				// Where each folder left the sync, so Sync again replays from there.
-				() => this.syncEngine.noteExcluded(added),
-			);
+			await this.changeExcludedFolders((live) => [...new Set([...live, ...folders])], signal);
 			this.settingTab?.rerender();
 		});
 	}
 
-	/** "Sync again" for a folder in excludedFolders. Queued with every other
-	 *  excludedFolders change (serializeExcluded), so two clicks, or a click
-	 *  and the over-limit step, never undo each other's change. */
-	syncFolderAgain(folder: string): Promise<void> {
-		return this.serializeExcluded(() => this.syncFolderAgainNow(folder));
-	}
-
-	/** Run `fn` after every excludedFolders change queued before it. */
+	/** Run `fn` after every excludedFolders change queued before it. Never held
+	 *  while a modal waits for the user: callers queue only the write. */
 	private serializeExcluded(fn: () => Promise<void>): Promise<void> {
 		const run = (this.excludedQueue ?? Promise.resolve()).then(fn);
 		this.excludedQueue = run.catch(() => {});
@@ -3693,16 +3667,20 @@ export default class EngramSyncPlugin extends Plugin {
 	}
 
 	private excludedQueue?: Promise<void>;
-	/** QUOTA_WAIT_MS unless a test shortens it. */
-	private quotaWaitMs?: number;
 
-	/** The one way excludedFolders changes; callers hold serializeExcluded.
-	 *  Builds from the LIVE list, applies it to the live settings first and then
-	 *  saves, so any save landing meanwhile (a catch-up cursor persist, a token
-	 *  rotation) writes the new list too. On a failed save or an abort it puts
-	 *  back exactly this field (an OAuth rotation during the save writes its
-	 *  single-use refresh token to the same object, so the object is never
-	 *  swapped). `prepare`'s undo reverts what it told the engine.
+	/** Folders Sync again has taken out of excludedFolders but not finished
+	 *  reconciling. savePluginData still writes them as excluded, so a restart
+	 *  part way leaves the folder excluded (and Sync again simply runs again)
+	 *  instead of included with its edits unsent. */
+	private pendingReinclude?: Set<string>;
+
+	/** The one way the over-limit step changes excludedFolders; callers hold
+	 *  serializeExcluded. Builds from the LIVE list, applies it to the live
+	 *  settings first and then saves, so any save landing meanwhile (a catch-up
+	 *  cursor persist, a token rotation) writes the new list too. On a failed
+	 *  save or an abort it undoes exactly what it added or removed, against the
+	 *  list as it is THEN (a rename or a vault switch since must survive), and
+	 *  never swaps the object (an OAuth rotation writes its refresh token there).
 	 *  Lesser evil: during the save, shouldIgnore already follows the new list,
 	 *  so an edit made in a newly excluded folder in that window is not pushed
 	 *  if the change then rolls back; the next sync's mtime sweep still pushes
@@ -3710,21 +3688,19 @@ export default class EngramSyncPlugin extends Plugin {
 	private async changeExcludedFolders(
 		edit: (live: string[]) => string[],
 		signal?: AbortSignal,
-		/** Engine state to record with the change; returns its undo. Runs after
-		 *  the abort check, so an aborted change records nothing. */
-		prepare?: () => () => void,
 	): Promise<void> {
 		signal?.throwIfAborted();
 		const previous = this.settings.excludedFolders;
-		let undo: (() => void) | undefined;
+		const next = edit(previous);
+		const added = next.filter((f) => !previous.includes(f));
+		const removed = previous.filter((f) => !next.includes(f));
+		this.settings.excludedFolders = next;
 		try {
-			undo = prepare?.();
-			this.settings.excludedFolders = edit(previous);
 			await this.savePluginData(this.syncEngine.getLastSync());
 			signal?.throwIfAborted();
 		} catch (e: unknown) {
-			this.settings.excludedFolders = previous;
-			undo?.();
+			const now = this.settings.excludedFolders.filter((f) => !added.includes(f));
+			this.settings.excludedFolders = [...now, ...removed.filter((f) => !now.includes(f))];
 			// Closed after the new list was written: write the old one back. The
 			// abort stays the error the caller sees. If this write fails too, the
 			// live settings hold the old list and the next save restores it.
@@ -3739,14 +3715,15 @@ export default class EngramSyncPlugin extends Plugin {
 	}
 
 	/** An excluded folder renamed or moved in Obsidian keeps its exclusion:
-	 *  the entry (and its excludedSince seq) follows the new path. Works from
-	 *  the folder's own rename event or any child's, whichever comes first: the
-	 *  excluded folder is the prefix that changed, and its old path is gone
-	 *  (one file moved out leaves the folder where it was). Applied to the live
-	 *  settings synchronously, since the children's rename events follow at
-	 *  once, then saved through the excludedFolders queue. A move under another
-	 *  folder stores the nested path, which inExcludedFolder matches as a prefix
-	 *  from the vault root. */
+	 *  the entry follows the new path. Works from the folder's own rename event
+	 *  or any child's, whichever comes first: the excluded folder is the prefix
+	 *  that changed, and its old path is gone (one file moved out leaves the
+	 *  folder where it was). Applied to the live settings synchronously, NOT
+	 *  through serializeExcluded: the children's rename events follow at once,
+	 *  and a queued change would let them upload. An in-flight change's
+	 *  rollback undoes only its own entries, so it cannot bring the old name
+	 *  back. Saved through the queue. A move under another folder stores the
+	 *  nested path, which inExcludedFolder matches as a prefix from the root. */
 	followExcludedFolderRename(path: string, oldPath: string): void {
 		const from = this.settings.excludedFolders.find(
 			(f) => oldPath === f || oldPath.startsWith(`${f}/`),
@@ -3759,7 +3736,6 @@ export default class EngramSyncPlugin extends Plugin {
 		this.settings.excludedFolders = this.settings.excludedFolders.map((f) =>
 			f === from ? to : f,
 		);
-		this.syncEngine.renameExcluded(from, to);
 		void this.serializeExcluded(() => this.savePluginData(this.syncEngine.getLastSync())).catch(
 			(e: unknown) =>
 				rlog().error("lifecycle", `excluded folder rename save failed: ${errMsg(e)}`),
@@ -3767,49 +3743,69 @@ export default class EngramSyncPlugin extends Plugin {
 		this.settingTab?.rerender();
 	}
 
-	/** Tell the engine first (holdReinclude), so every save from here on,
-	 *  this one or any landing during the deletes, carries the folder's content
-	 *  re-check and its owed replay; then save the folder re-included, catch
-	 *  the engine up on what happened there while excluded (reincludeFolder,
-	 *  which never throws) and run a full sync. Only a failed save rejects,
-	 *  and then nothing changed. The sync runs in the background. */
-	private async syncFolderAgainNow(folder: string): Promise<void> {
-		if (!(await this.folderFitsOrAcknowledged(folder))) return;
-		await this.changeExcludedFolders(
-			(live) => live.filter((f) => f !== folder),
-			undefined,
-			() => this.syncEngine.holdReinclude(folder),
+	/** "Sync again" for a folder in excludedFolders: the normal sync preview,
+	 *  planned as if the folder were included (its edits, deletes, server
+	 *  changes and the over-limit step all show there). Until the user picks a
+	 *  sync, nothing changes: the folder stays excluded, so Cancel needs no
+	 *  undo and live sync never acts on it early. Then the folder leaves
+	 *  excludedFolders (still excluded on disk, see pendingReinclude),
+	 *  reconcileFolder settles it against the server, and the chosen sync runs.
+	 *  Rejects, with the folder still excluded, if the reconcile cannot finish. */
+	async syncFolderAgain(folder: string): Promise<void> {
+		let keptOut = false;
+		const modal = this.newSyncPreviewModal(
+			{
+				remoteVaultName: this.settings.remoteVaultName,
+				showChangeVault: false,
+				context: "review",
+				gateClosed: this.syncEngine.isSyncBlocked(),
+			},
+			// The over-limit step's picker can leave this very folder out.
+			{
+				onExcluded: (folders) => {
+					if (folders.includes(folder)) keptOut = true;
+				},
+			},
 		);
-		await this.syncEngine.reincludeFolder(folder);
 		void this.syncEngine
-			.fullSync()
-			.catch((e) => this.handleSyncError("Sync folder again", e, { notice: true }));
-	}
+			.computeSyncPlan("full", { reincluding: folder })
+			.then((plan) => modal.setPlan(plan))
+			.catch(() => modal.setPlanError(planLoadErrorMessage(this.hasAuthConfigured())));
+		this.trackPreviewModal(modal);
+		let choice: SyncChoice;
+		try {
+			choice = await modal.awaitChoice();
+		} finally {
+			this.untrackPreviewModal(modal);
+		}
+		if (choice === "cancel" || choice === "change-vault" || keptOut) return;
 
-	/** Sync again must not bring back the silent half-sync the first-sync
-	 *  over-limit step exists to prevent: when the folder's new notes do not fit
-	 *  the plan, ask first. Self-host (no plans) and an unknown or unlimited
-	 *  quota proceed, exactly as the first-sync step treats them. */
-	private async folderFitsOrAcknowledged(folder: string): Promise<boolean> {
-		if (!offersUpgrades(this.settings)) return true;
-		// Capped like the first-sync pick: past it the quota counts as unknown.
-		const quota = await withTimeout(
-			fetchNotesQuota(() => this.api.getBillingUsage()),
-			this.quotaWaitMs ?? QUOTA_WAIT_MS,
-		).catch(() => null);
-		if (quota === null || quota === "unlimited") return true;
-		const count = this.syncEngine.untrackedNotePaths(folder).length;
-		return count <= quota.room || this.confirmFolderOverLimit(count, quota);
-	}
-
-	/** Seam for tests: the over-limit acknowledgement for Sync again. */
-	confirmFolderOverLimit(count: number, quota: NotesQuota): Promise<boolean> {
-		return new FolderOverLimitModal(
-			this.app,
-			count,
-			quota,
-			upgradeUrlFor(this.settings),
-		).awaitAnswer();
+		await this.serializeExcluded(async () => {
+			this.pendingReinclude ??= new Set();
+			this.pendingReinclude.add(folder);
+			this.settings.excludedFolders = this.settings.excludedFolders.filter(
+				(f) => f !== folder,
+			);
+			this.syncEngine.updateSettings(this.settings);
+		});
+		try {
+			const { failed } = await this.syncEngine.reconcileFolder(folder);
+			if (failed > 0) throw new Error(`${failed} file(s) could not be synced again`);
+		} catch (e: unknown) {
+			await this.serializeExcluded(async () => {
+				this.pendingReinclude?.delete(folder);
+				if (!this.settings.excludedFolders.includes(folder)) {
+					this.settings.excludedFolders = [...this.settings.excludedFolders, folder];
+				}
+				this.syncEngine.updateSettings(this.settings);
+			});
+			throw e;
+		}
+		this.pendingReinclude?.delete(folder);
+		await this.serializeExcluded(() => this.savePluginData(this.syncEngine.getLastSync()));
+		void this.runSyncWithProgress(choice, { plan: modal.getPlan() }).catch((e) =>
+			this.handleSyncError("Sync folder again", e, { notice: true }),
+		);
 	}
 
 	/** Persist current sync engine state (issues, ignored files, etc.) to plugin
@@ -3819,7 +3815,6 @@ export default class EngramSyncPlugin extends Plugin {
 		await this.savePluginData(this.syncEngine.getLastSync());
 	}
 
-	/** Open the plugin settings on the Sync Center tab. */
 	/** Register/unregister the preview modal that auth invalidation should poke
 	 *  with the sign-in error. Public so BOTH entry points (first-sync command
 	 *  and Sync Center) share the seam — the Sync Center modal missing it left

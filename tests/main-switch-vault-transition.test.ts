@@ -260,6 +260,32 @@ describe("excludedFolders are vault-scoped", () => {
 		expect(fake.settings.excludedFolders).toEqual([]);
 	});
 
+	test("a failing exclusion save in flight cannot bring them back", async () => {
+		const fake = makeFakePlugin({
+			settings: {
+				vaultId: "old-vault",
+				remoteVaultName: "Old",
+				excludedFolders: ["Archive"],
+			},
+		});
+		fake.syncEngine.getLastSync = () => "";
+		let fail!: () => void;
+		fake.savePluginData = mock(
+			() =>
+				new Promise<void>((_, reject) => {
+					fail = () => reject(new Error("disk full"));
+				}),
+		);
+		const apply = fake.applyOverLimitExclusions(["Projects"]);
+		await Bun.sleep(0);
+		const switched = fake.switchVault("new-vault", "New");
+		fail();
+		await expect(apply).rejects.toThrow();
+		await switched;
+		await Bun.sleep(0);
+		expect(fake.settings.excludedFolders).toEqual([]);
+	});
+
 	test("a plain reset to the same vault keeps them", async () => {
 		const fake = makeFakePlugin({
 			settings: {

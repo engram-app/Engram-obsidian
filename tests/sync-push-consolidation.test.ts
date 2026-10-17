@@ -714,271 +714,6 @@ describe("pushFile — echo suppression runs before the push slot (#426)", () =>
 	});
 });
 
-describe("SyncEngine.reincludeFolder: Sync again for an excluded folder", () => {
-	const LAST_SYNC = "2026-10-01T00:00:00.000Z";
-	const EDITED_BEFORE = new Date("2026-09-01T00:00:00Z").getTime();
-	/** The vault holds exactly `files`. */
-	function present(app: any, files: TFile[]) {
-		app.vault.getAbstractFileByPath.mockImplementation(
-			(p: string) => files.find((f) => f.path === p) ?? null,
-		);
-	}
-
-	test("a tracked note edited while excluded is pushed, though its mtime predates lastSync", async () => {
-		const edited = new TFile("Archive/a.md", EDITED_BEFORE);
-		const { engine, app } = makeEngine([edited], { "Archive/a.md": "# edited while excluded" });
-		present(app, [edited]);
-		engine.importSyncState({ "Archive/a.md": { hash: fnv1a("# as last synced") } });
-		const pushFile = mock().mockResolvedValue(true);
-		(engine as any).pushFile = pushFile;
-
-		await engine.reincludeFolder("Archive");
-		await engine.pushModifiedFiles(LAST_SYNC);
-
-		expect(pushFile.mock.calls.map((c: any[]) => c[0].path)).toEqual(["Archive/a.md"]);
-		// Pushed as an edit of the tracked note, not as a re-created one.
-		expect((engine as any).syncState.has("Archive/a.md")).toBe(true);
-	});
-
-	test("the content re-check is one-shot: a clean sweep clears it", async () => {
-		const edited = new TFile("Archive/a.md", EDITED_BEFORE);
-		const { engine, app } = makeEngine([edited], { "Archive/a.md": "# x" });
-		present(app, [edited]);
-		engine.importSyncState({ "Archive/a.md": { hash: fnv1a("# old") } });
-		const pushFile = mock().mockResolvedValue(true);
-		(engine as any).pushFile = pushFile;
-
-		await engine.reincludeFolder("Archive");
-		await engine.pushModifiedFiles(LAST_SYNC);
-		await engine.pushModifiedFiles(LAST_SYNC);
-
-		expect(pushFile).toHaveBeenCalledTimes(1);
-	});
-
-	test("other folders keep the mtime filter", async () => {
-		const other = new TFile("Notes/b.md", EDITED_BEFORE);
-		const { engine, app } = makeEngine([other], { "Notes/b.md": "# b" });
-		present(app, [other]);
-		engine.importSyncState({ "Notes/b.md": { hash: fnv1a("# old") } });
-		const pushFile = mock().mockResolvedValue(true);
-		(engine as any).pushFile = pushFile;
-
-		await engine.reincludeFolder("Archive");
-		await engine.pushModifiedFiles(LAST_SYNC);
-
-		expect(pushFile).not.toHaveBeenCalled();
-	});
-
-	test("a tracked note deleted while excluded is deleted on the server, not resurrected", async () => {
-		const { engine, app } = makeEngine([]);
-		engine.importSyncState({ "Archive/gone.md": { hash: fnv1a("# gone") } });
-		(engine as any).noteIdMap.set("Archive/gone.md", "gone-id");
-		(engine as any).crdt.removeDoc = async () => {};
-		const enqueued: any[] = [];
-		(engine as any).crdtEnqueue = (op: any) => enqueued.push(op);
-		engine.setCrdtCatchupSince(async () => ({
-			changes: [
-				{
-					type: "note",
-					id: "gone-id",
-					seq: 1,
-					path: "Archive/gone.md",
-					title: "gone",
-					content: "# gone",
-					folder: "Archive",
-					tags: [],
-					mtime: 1,
-					updated_at: "2026-01-01T00:00:00Z",
-					deleted: false,
-				},
-			],
-			has_more: false,
-			next_seq: null,
-		}));
-
-		await engine.reincludeFolder("Archive");
-		await engine.catchupViaSeqReplay();
-
-		expect(app.vault.create).not.toHaveBeenCalled();
-		expect(enqueued).toEqual([{ kind: "delete", docId: "gone-id", path: "Archive/gone.md" }]);
-	});
-});
-
-describe("reincludeFolder always completes the re-include", () => {
-	test("a local delete that throws still re-includes the folder and rewinds", async () => {
-		const { engine } = makeEngine([]);
-		engine.importSyncState({ "Archive/gone.md": { hash: fnv1a("# gone") } });
-		(engine as any).deleteSyncedPath = mock(() => Promise.reject(new Error("offline")));
-
-		await engine.reincludeFolder("Archive");
-
-		expect(engine.exportReincludedFolders()).toEqual(["Archive"]);
-		expect(engine.getSeqRewindFloor()).toBe(0);
-	});
-});
-
-describe("Sync again survives a restart before the push pass", () => {
-	test("a save landing inside the delete loop still carries what is owed", async () => {
-		const files: TFile[] = [];
-		const { engine: first } = makeEngine(files);
-		first.importSyncState({ "Archive/gone.md": { hash: fnv1a("# gone") } });
-		first.fullSync = mock(() => new Promise<never>(() => {}));
-		const written: any[] = [];
-		const p1 = Object.assign(Object.create(EngramSyncPlugin.prototype), {
-			settings: { ...DEFAULT_SETTINGS, excludedFolders: ["Archive"] },
-			syncEngine: first,
-			noteIdMap: new NoteIdMap(),
-			writePluginData: mock(async (d: any) => {
-				written.push(structuredClone(d));
-			}),
-			handleSyncError: mock(),
-		});
-		// Any other save (a cursor persist, a token rotation) during the deletes.
-		(first as any).deleteSyncedPath = async () => {
-			await p1.persistEngineState();
-		};
-
-		await p1.syncFolderAgain("Archive");
-		const saved = written.at(-1);
-
-		const { engine: second } = makeEngine(files);
-		const p2 = Object.assign(Object.create(EngramSyncPlugin.prototype), {
-			settings: saved.settings,
-			syncEngine: second,
-		});
-		p2.hydrateReincludedFolders(saved);
-		expect(saved.settings.excludedFolders).toEqual([]);
-		expect(second.exportReincludedFolders()).toEqual(["Archive"]);
-		expect(second.getSeqRewindFloor()).toBe(0);
-	});
-
-	test("an edit made while excluded is still pushed after the engine is rebuilt from saved data", async () => {
-		const edited = new TFile("Archive/a.md", new Date("2026-09-01T00:00:00Z").getTime());
-		const files = [edited];
-		const content = { "Archive/a.md": "# edited while excluded" };
-		const boot = () => {
-			const built = makeEngine(files, content);
-			built.app.vault.getAbstractFileByPath.mockImplementation(
-				(p: string) => files.find((f) => f.path === p) ?? null,
-			);
-			return built.engine;
-		};
-		const pluginOn = (engine: SyncEngine, settings: any, written: any[]) =>
-			Object.assign(Object.create(EngramSyncPlugin.prototype), {
-				settings,
-				syncEngine: engine,
-				noteIdMap: new NoteIdMap(),
-				writePluginData: mock(async (d: any) => {
-					written.push(structuredClone(d));
-				}),
-				handleSyncError: mock(),
-			});
-
-		// Session 1: Sync again, then Obsidian quits before any push pass runs.
-		const first = boot();
-		first.importSyncState({ "Archive/a.md": { hash: fnv1a("# as last synced") } });
-		first.fullSync = mock(() => new Promise<never>(() => {}));
-		const written: any[] = [];
-		const p1 = pluginOn(first, { ...DEFAULT_SETTINGS, excludedFolders: ["Archive"] }, written);
-		await p1.syncFolderAgain("Archive");
-		const saved = written.at(-1);
-
-		// Session 2: a fresh engine hydrated from data.json.
-		const second = boot();
-		second.importSyncState(saved.syncState);
-		const p2 = pluginOn(second, saved.settings, []);
-		p2.hydrateReincludedFolders(saved);
-		// The genesis replay is still owed too.
-		expect(second.getSeqRewindFloor()).toBe(0);
-		const pushFile = mock().mockResolvedValue(true);
-		(second as any).pushFile = pushFile;
-		await second.pushModifiedFiles("2026-10-01T00:00:00.000Z");
-
-		expect(pushFile.mock.calls.map((c: any[]) => c[0].path)).toEqual(["Archive/a.md"]);
-	});
-});
-
-describe("SyncEngine.untrackedNotePaths", () => {
-	test("a synced note the server deleted while excluded counts as new", () => {
-		const files = ["Archive/kept.md", "Archive/deleted-on-server.md"].map(
-			(p) => new TFile(p, 1),
-		);
-		const { engine } = makeEngine(files);
-		engine.importSyncState({
-			"Archive/kept.md": { hash: 1 },
-			"Archive/deleted-on-server.md": { hash: 2 },
-		});
-		// The tombstone's apply unmapped it (applyOp drops the id even for an
-		// ignored path); the still-live note stays mapped.
-		(engine as any).noteIdMap.set("Archive/kept.md", "kept-id");
-		expect(engine.untrackedNotePaths("Archive")).toEqual(["Archive/deleted-on-server.md"]);
-	});
-
-	test("a note another device already uploaded is not new", () => {
-		const files = ["Archive/mine.md", "Archive/theirs.md"].map((p) => new TFile(p, 1));
-		const { engine } = makeEngine(files);
-		// The vault index knows the server holds this path.
-		(engine as any).noteIdMap.set("Archive/theirs.md", "server-id");
-		expect(engine.untrackedNotePaths("Archive")).toEqual(["Archive/mine.md"]);
-	});
-	test("applies the plan's ignore rules, but not the folder's own exclusion", () => {
-		const files = ["Archive/new.md", "Archive/drafts/d.md", "Archive/skip.md"].map(
-			(p) => new TFile(p, 1),
-		);
-		const { engine } = makeEngine(files);
-		const settings = (engine as any).settings;
-		settings.excludedFolders = ["Archive"]; // still excluded when Sync again asks
-		settings.ignorePatterns = "drafts/";
-		engine.updateSettings(settings);
-		engine.ignoredFiles.add("Archive/skip.md");
-		expect(engine.untrackedNotePaths("Archive")).toEqual(["Archive/new.md"]);
-	});
-
-	test("counts only never-synced notes under the folder", () => {
-		const files = ["Archive/new.md", "Archive/old.md", "Archive/img.png", "Notes/new.md"].map(
-			(p) => new TFile(p, 1),
-		);
-		const { engine } = makeEngine(files);
-		engine.importSyncState({ "Archive/old.md": { hash: 1 } });
-		// A synced note is in the vault index, as in a real vault.
-		(engine as any).noteIdMap.set("Archive/old.md", "old-id");
-		expect(engine.untrackedNotePaths("Archive")).toEqual(["Archive/new.md"]);
-	});
-});
-
-describe("SyncEngine.holdReinclude", () => {
-	test("saves carry the folder and an owed replay; no run spends it; undo restores", async () => {
-		const { engine } = makeEngine([]);
-		const undo = engine.holdReinclude("Archive");
-		expect(engine.exportReincludedFolders()).toEqual(["Archive"]);
-		expect(engine.getSeqRewindFloor()).toBe(0);
-		undo();
-		expect(engine.exportReincludedFolders()).toEqual([]);
-		expect(engine.getSeqRewindFloor()).toBeNull();
-	});
-});
-
-describe("Sync again's re-check and the note cap", () => {
-	test("a cap-gated new note in the folder is still pushed once the cap lifts", async () => {
-		const fresh = new TFile("Archive/new.md", new Date("2026-09-01T00:00:00Z").getTime());
-		const { engine, app } = makeEngine([fresh], { "Archive/new.md": "# new" });
-		app.vault.getAbstractFileByPath.mockImplementation((p: string) =>
-			p === fresh.path ? fresh : null,
-		);
-		let capClosed = true;
-		(engine as any).notesCapGate = { isClosed: () => capClosed };
-		const pushFile = mock().mockResolvedValue(true);
-		(engine as any).pushFile = pushFile;
-
-		await engine.reincludeFolder("Archive");
-		await engine.pushModifiedFiles("2026-10-01T00:00:00.000Z"); // cap closed: skipped
-		expect(pushFile).not.toHaveBeenCalled();
-		capClosed = false;
-		await engine.pushModifiedFiles("2026-10-01T00:00:00.000Z");
-		expect(pushFile.mock.calls.map((c: any[]) => c[0].path)).toEqual(["Archive/new.md"]);
-	});
-});
-
 describe("renaming an excluded folder keeps it excluded", () => {
 	function setup(existing: string[] = []) {
 		const { engine, app } = makeEngine([]);
@@ -987,8 +722,6 @@ describe("renaming an excluded folder keeps it excluded", () => {
 		);
 		const settings = (engine as any).settings;
 		settings.excludedFolders = ["Archive"];
-		engine.setCatchupSeq(500);
-		engine.noteExcluded(["Archive"]);
 		const plugin = Object.assign(Object.create(EngramSyncPlugin.prototype), {
 			app,
 			settings,
@@ -1004,7 +737,6 @@ describe("renaming an excluded folder keeps it excluded", () => {
 		plugin.followExcludedFolderRename("Old", "Archive");
 		expect(settings.excludedFolders).toEqual(["Old"]);
 		expect(engine.shouldIgnore("Old/x.md")).toBe(true);
-		expect(engine.exportExcludedSince()).toEqual({ Old: 500 });
 	});
 
 	test("a child's rename event arriving first does the same", () => {
@@ -1024,5 +756,172 @@ describe("renaming an excluded folder keeps it excluded", () => {
 		const { plugin, settings } = setup(["Archive"]); // the folder still exists
 		plugin.followExcludedFolderRename("Notes/x.md", "Archive/x.md");
 		expect(settings.excludedFolders).toEqual(["Archive"]);
+	});
+});
+
+describe("Sync again: reconcileFolder settles a folder that was excluded", () => {
+	const OLD = new Date("2026-09-01T00:00:00Z").getTime();
+	const noteRow = (o: Record<string, unknown>) => ({
+		type: "note",
+		title: "t",
+		folder: "Archive",
+		tags: [],
+		mtime: 1,
+		updated_at: "2026-01-01T00:00:00Z",
+		deleted: false,
+		...o,
+	});
+	function setup(files: TFile[], content: Record<string, string>, rows: unknown[]) {
+		const built = makeEngine(files, content);
+		const { engine, app } = built;
+		app.vault.getFileByPath.mockImplementation(
+			(p: string) => files.find((f) => f.path === p) ?? null,
+		);
+		app.vault.getAbstractFileByPath.mockImplementation(
+			(p: string) => files.find((f) => f.path === p) ?? null,
+		);
+		engine.setCrdtLiveCheck(() => true);
+		engine.setCrdtCatchupSince(async () => ({
+			changes: rows as any,
+			has_more: false,
+			next_seq: null,
+		}));
+		return built;
+	}
+
+	test("(a) a local edit made while excluded is uploaded", async () => {
+		const file = new TFile("Archive/a.md", OLD);
+		const { engine } = setup([file], { "Archive/a.md": "# edited" }, [
+			noteRow({
+				id: "a",
+				seq: 5,
+				path: "Archive/a.md",
+				content: "# synced",
+				content_hash: "H1",
+			}),
+		]);
+		engine.importSyncState({
+			"Archive/a.md": { hash: fnv1a("# synced"), serverHash: "H1", seq: 5 },
+		});
+		(engine as any).noteIdMap.set("Archive/a.md", "a");
+		const pushFile = mock().mockResolvedValue(true);
+		(engine as any).pushFile = pushFile;
+
+		expect(await engine.reconcileFolder("Archive")).toEqual({ failed: 0 });
+		expect(pushFile.mock.calls.map((c: any[]) => c[0].path)).toEqual(["Archive/a.md"]);
+	});
+
+	test("(a) edited on both sides: the local text is kept as a conflict copy", async () => {
+		const file = new TFile("Archive/a.md", OLD);
+		const { engine, app } = setup([file], { "Archive/a.md": "# local edit" }, [
+			noteRow({
+				id: "a",
+				seq: 9,
+				path: "Archive/a.md",
+				content: "# server edit",
+				content_hash: "H2",
+			}),
+		]);
+		engine.importSyncState({
+			"Archive/a.md": { hash: fnv1a("# synced"), serverHash: "H1", seq: 5 },
+		});
+		(engine as any).noteIdMap.set("Archive/a.md", "a");
+		(engine as any).pushFile = mock().mockResolvedValue(true);
+
+		await engine.reconcileFolder("Archive");
+
+		const written = app.vault.create.mock.calls.map((c: any[]) => c[1]);
+		expect(written).toContain("# local edit");
+	});
+
+	test("(b) a local delete made while excluded does not come back", async () => {
+		const { engine, app } = setup([], {}, [
+			noteRow({
+				id: "g",
+				seq: 5,
+				path: "Archive/gone.md",
+				content: "# gone",
+				content_hash: "H1",
+			}),
+		]);
+		engine.importSyncState({ "Archive/gone.md": { hash: fnv1a("# gone"), serverHash: "H1" } });
+		(engine as any).noteIdMap.set("Archive/gone.md", "g");
+		(engine as any).crdt.removeDoc = async () => {};
+		const enqueued: any[] = [];
+		(engine as any).crdtEnqueue = (op: any) => enqueued.push(op);
+
+		await engine.reconcileFolder("Archive");
+
+		expect(app.vault.create).not.toHaveBeenCalled();
+		expect(enqueued).toEqual([{ kind: "delete", docId: "g", path: "Archive/gone.md" }]);
+	});
+
+	test("(c) a server edit made while excluded arrives", async () => {
+		const file = new TFile("Archive/s.md", OLD);
+		const { engine } = setup([file], { "Archive/s.md": "# synced" }, [
+			noteRow({
+				id: "s",
+				seq: 9,
+				path: "Archive/s.md",
+				content: "# server edit",
+				content_hash: "H2",
+			}),
+		]);
+		engine.importSyncState({
+			"Archive/s.md": { hash: fnv1a("# synced"), serverHash: "H1", seq: 5 },
+		});
+		(engine as any).noteIdMap.set("Archive/s.md", "s");
+		const applied: any[] = [];
+		const real = engine.applySyncChange.bind(engine);
+		(engine as any).applySyncChange = async (c: any) => {
+			applied.push(c);
+			return real(c);
+		};
+		const pushFile = mock().mockResolvedValue(true);
+		(engine as any).pushFile = pushFile;
+		// The clean-note converge every catch-up uses (crdt_doc_state, no room).
+		const converge = mock(async () => {});
+		(engine as any).convergeColdNoteRoomFree = converge;
+
+		await engine.reconcileFolder("Archive");
+
+		expect(applied.map((c) => [c.path, c.content])).toEqual([
+			["Archive/s.md", "# server edit"],
+		]);
+		expect(converge.mock.calls.map((c: any[]) => [c[0], c[1]])).toEqual([
+			["s", "Archive/s.md"],
+		]);
+		expect(pushFile).not.toHaveBeenCalled();
+	});
+
+	test("(c) a note created on the server while excluded is pulled", async () => {
+		const { engine } = setup([], {}, [
+			noteRow({
+				id: "n",
+				seq: 9,
+				path: "Archive/new.md",
+				content: "# new",
+				content_hash: "H",
+			}),
+		]);
+		const applied: string[] = [];
+		(engine as any).applySyncChange = async (c: any) => {
+			applied.push(c.path);
+			return true;
+		};
+		await engine.reconcileFolder("Archive");
+		expect(applied).toEqual(["Archive/new.md"]);
+	});
+
+	test("other folders are not touched", async () => {
+		const other = new TFile("Notes/x.md", OLD);
+		const { engine } = setup([other], { "Notes/x.md": "# edited" }, [
+			noteRow({ id: "x", seq: 1, path: "Notes/x.md", content: "# old", content_hash: "H1" }),
+		]);
+		engine.importSyncState({ "Notes/x.md": { hash: fnv1a("# old"), serverHash: "H1" } });
+		const pushFile = mock().mockResolvedValue(true);
+		(engine as any).pushFile = pushFile;
+		await engine.reconcileFolder("Archive");
+		expect(pushFile).not.toHaveBeenCalled();
 	});
 });

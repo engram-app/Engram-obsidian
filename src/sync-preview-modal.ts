@@ -271,11 +271,11 @@ export class SyncPreviewState {
 		this.creatingVault = false;
 	}
 
-	/** Swap in the SyncPlan that came back from applyVaultChange, or the deferred
-	 *  initial plan once it resolves. Clears any prior plan-load error. Caller is
+	/** Swap in the SyncPlan that came back from applyVaultChange, the deferred
+	 *  initial plan once it resolves, or the plan minus excluded folders. Clears
+	 *  any prior plan-load error and the over-limit answers (a new plan has new
+	 *  notes, so an answer given for the old one no longer holds). Caller is
 	 *  responsible for re-rendering. */
-	/** A new plan (vault switch, exclusions) has new notes, so any over-limit
-	 *  answer given for the old one no longer holds. */
 	replacePlan(plan: SyncPlan): void {
 		this.plan = plan;
 		this.planError = null;
@@ -346,10 +346,12 @@ export function overLimitHeading(count: number, room: number): string {
 	return `${t("This sync adds {count} notes.", { count })} ${t("Your plan has room for {count}.", { count: room })}`;
 }
 
-/** The notes limit and the room left under it (never negative). */
+/** The notes limit, the room left under it (never negative), and the
+ *  server-reported usage (which can exceed the limit). */
 export interface NotesQuota {
 	limit: number;
 	room: number;
+	used: number;
 }
 
 /** The notes quota from a `/billing/usage` body: "unlimited" only when the
@@ -361,7 +363,8 @@ export function notesQuotaFromUsage(data: BillingUsage): NotesQuota | "unlimited
 	if (limit === null) return "unlimited";
 	if (typeof limit !== "number") return null;
 	if (isUnlimited(limit)) return "unlimited";
-	return { limit, room: Math.max(0, limit - (notes?.used ?? 0)) };
+	const used = notes?.used ?? 0;
+	return { limit, room: Math.max(0, limit - used), used };
 }
 
 /** The one usage lookup: the quota, "unlimited", or null when unknown (the
@@ -629,7 +632,7 @@ export function simplifiedScreenCopy(simple: NonNullable<ReturnType<typeof simpl
 
 /** How long an option click waits for the open-time quota lookup before it
  *  proceeds as if the quota were unknown. */
-export const QUOTA_WAIT_MS = 3000;
+const QUOTA_WAIT_MS = 3000;
 
 /** Wait this long before the "Comparing…" line appears. Plans that resolve
  *  faster show no loading copy at all. */
@@ -1671,10 +1674,9 @@ export class SyncPreviewModal extends Modal {
 	}
 }
 
-/** The over-limit message both the first-sync step and Sync again show:
- *  heading, plan size, Upgrade, an optional middle (the folder picker), the
- *  acknowledgement row, an optional error line, and Back / Continue. Callers
- *  wire the behaviour. */
+/** The over-limit step's markup: heading, plan size, Upgrade, an optional
+ *  middle (the folder picker), the acknowledgement row, an optional error
+ *  line, and Back / Continue. The caller wires the behaviour. */
 function renderOverLimitView(
 	el: HTMLElement,
 	opts: {
@@ -1716,68 +1718,4 @@ function renderOverLimitView(
 	const back = footer.createEl("button", { text: t("Back") });
 	const cont = footer.createEl("button", { text: t("Continue") });
 	return { ackRow, ack, ackText, error, back, cont };
-}
-
-/** "Sync again" on a folder that does not fit the plan: the over-limit step's
- *  message, Upgrade and acknowledgement, without its folder picker (the user
- *  just chose this folder). Resolves true on Continue, false on Back or close. */
-export class FolderOverLimitModal extends Modal {
-	private answer: ((ok: boolean) => void) | null = null;
-
-	constructor(
-		app: App,
-		private readonly count: number,
-		private readonly quota: NotesQuota,
-		private readonly upgradeUrl: string | null,
-	) {
-		super(app);
-	}
-
-	awaitAnswer(): Promise<boolean> {
-		return new Promise((resolve) => {
-			this.answer = resolve;
-			this.open();
-		});
-	}
-
-	onOpen(): void {
-		const { contentEl } = this;
-		const { count, quota, upgradeUrl } = this;
-		contentEl.addClass("engram-sync-preview-modal");
-		const { ack, ackText, back, cont } = renderOverLimitView(contentEl, {
-			count,
-			quota,
-			upgradeUrl,
-		});
-		ackText.setText(
-			t("I understand {count} notes will not sync.", {
-				count: Math.max(0, count - quota.room),
-			}),
-		);
-		back.addEventListener("click", () => this.finish(false));
-		cont.disabled = true;
-		ack.addEventListener("change", () => {
-			cont.disabled = !ack.checked;
-		});
-		cont.addEventListener("click", () => {
-			if (!cont.disabled) this.finish(true);
-		});
-	}
-
-	private finish(ok: boolean): void {
-		this.settle(ok);
-		this.close();
-	}
-
-	private settle(ok: boolean): void {
-		const answer = this.answer;
-		this.answer = null;
-		answer?.(ok);
-	}
-
-	/** Esc / backdrop declines (a no-op after Back or Continue settled it). */
-	onClose(): void {
-		this.contentEl.empty();
-		this.settle(false);
-	}
 }

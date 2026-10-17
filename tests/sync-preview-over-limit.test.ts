@@ -7,7 +7,6 @@ import { describe, expect, mock, test } from "bun:test";
 import type { BillingUsage } from "../src/plan-usage";
 import { simplifiedFirstSync } from "../src/sync-plan-format";
 import {
-	FolderOverLimitModal,
 	fetchNotesQuota,
 	notesQuotaFromUsage,
 	SyncPreviewModal,
@@ -51,11 +50,16 @@ function usage(limit: number | null, used = 0): BillingUsage {
 
 describe("notesQuotaFromUsage / fetchNotesQuota", () => {
 	test("room is the limit minus what is already used", () => {
-		expect(notesQuotaFromUsage(usage(3000, 1200))).toEqual({ limit: 3000, room: 1800 });
+		expect(notesQuotaFromUsage(usage(3000, 1200))).toEqual({
+			limit: 3000,
+			room: 1800,
+			used: 1200,
+		});
 	});
 
 	test("room floors at 0 when the account is already over", () => {
-		expect(notesQuotaFromUsage(usage(100, 150))).toEqual({ limit: 100, room: 0 });
+		// The real usage rides along: limit - room would say 100, not 150.
+		expect(notesQuotaFromUsage(usage(100, 150))).toEqual({ limit: 100, room: 0, used: 150 });
 	});
 
 	test("null and negative limits are verifiably unlimited", () => {
@@ -82,6 +86,7 @@ describe("notesQuotaFromUsage / fetchNotesQuota", () => {
 		expect(await fetchNotesQuota(() => Promise.resolve(usage(4, 1)))).toEqual({
 			limit: 4,
 			room: 3,
+			used: 1,
 		});
 	});
 });
@@ -610,7 +615,7 @@ describe("over-limit quota re-check", () => {
 		await Bun.sleep(0);
 		older?.(usage(10, 7)); // room 3, stale
 		await Bun.sleep(0);
-		expect(modal.state.notesQuota).toEqual({ limit: 10, room: 5 });
+		expect(modal.state.notesQuota).toEqual({ limit: 10, room: 5, used: 5 });
 	});
 
 	test("a plan found unlimited on re-check drops the step; the next click proceeds", async () => {
@@ -650,7 +655,7 @@ describe("an unknown quota on re-check keeps the step", () => {
 		expect(modal.state.view).toBe("over-limit");
 		expect(modal.state.overLimitExcluded).toEqual(["Archive"]);
 		expect(modal.state.overLimitAck).toBe(true);
-		expect(modal.state.notesQuota).toEqual({ limit: 10, room: 4 });
+		expect(modal.state.notesQuota).toEqual({ limit: 10, room: 4, used: 6 });
 	});
 });
 
@@ -837,36 +842,6 @@ describe("a click waiting on the quota shows it and is capped", () => {
 	});
 });
 
-describe("FolderOverLimitModal (Sync again on a full plan)", () => {
-	function open(count = 5, quota = { limit: 10, room: 2 }) {
-		const modal: any = new FolderOverLimitModal({} as any, count, quota, null);
-		const answer = modal.awaitAnswer() as Promise<boolean>;
-		modal.onOpen();
-		return { modal, answer };
-	}
-
-	test("reuses the step's copy; Continue waits for the acknowledgement", async () => {
-		const { modal, answer } = open();
-		expect(
-			modal.contentEl.__find("This sync adds 5 notes. Your plan has room for 2."),
-		).not.toBeNull();
-		const cont = button(modal, "Continue");
-		expect(cont.disabled).toBe(true);
-		const ack = checkboxFor(modal.contentEl, "I understand 3 notes will not sync.");
-		ack.checked = true;
-		ack.listeners.change();
-		expect(cont.disabled).toBe(false);
-		cont.listeners.click();
-		expect(await answer).toBe(true);
-	});
-
-	test("Back or closing declines", async () => {
-		const { modal, answer } = open();
-		button(modal, "Back").listeners.click();
-		expect(await answer).toBe(false);
-	});
-});
-
 describe("only a pick that can hit the limit waits for the quota", () => {
 	const never = () => new Promise<BillingUsage>(() => {});
 
@@ -887,9 +862,7 @@ describe("only a pick that can hit the limit waits for the quota", () => {
 
 describe("the plan-size line is pluralized", () => {
 	test("a 1-note plan reads 'note', not 'notes'", () => {
-		const modal: any = new FolderOverLimitModal({} as any, 3, { limit: 1, room: 0 }, null);
-		void modal.awaitAnswer();
-		modal.onOpen();
+		const { modal } = openOverLimit({}, { limit: 1, room: 0 });
 		expect(modal.contentEl.__find("Your plan syncs 1 note.")).not.toBeNull();
 	});
 });
@@ -917,7 +890,7 @@ describe("a quota answer arriving after the cap", () => {
 		expect(modal.state.view).toBe("done");
 		answer(usage(10, 6)); // room 4, 6 new: over
 		await Bun.sleep(0);
-		expect(onLateOverLimit).toHaveBeenCalledWith({ limit: 10, room: 4 });
+		expect(onLateOverLimit).toHaveBeenCalledWith({ limit: 10, room: 4, used: 6 });
 		modal.onClose();
 		expect(await choice).toBe("smart-merge");
 	});

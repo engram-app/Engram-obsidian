@@ -3156,37 +3156,6 @@ export class SyncEngine {
 	 *  a direct `setCatchupSeq` here would race an in-flight replay's per-page
 	 *  cursor persist and be silently clobbered). */
 	private seqRewindFloor: number | null = null;
-	/** Bumped on every new floor, so a run clears only the floor it consumed. */
-	private rewindGen = 0;
-
-	/** The replay floor "Sync again" has promised but not armed yet (see
-	 *  holdReinclude). Saved like a floor; never consumed by a run. */
-	private rewindOwed: number | null = null;
-
-	private setRewind(floor: number): void {
-		this.seqRewindFloor = floor;
-		this.rewindGen++;
-	}
-
-	private clearRewind(): void {
-		this.seqRewindFloor = null;
-		this.rewindOwed = null;
-		this.rewindGen++;
-	}
-
-	/** The pending rewind, persisted with the re-included folders so a restart
-	 *  before the catch-up does not drop it. */
-	getSeqRewindFloor(): number | null {
-		const floors = [this.seqRewindFloor, this.rewindOwed].filter((f) => f !== null);
-		return floors.length ? Math.min(...floors) : null;
-	}
-
-	/** Restore a persisted rewind (the lower floor wins). */
-	setSeqRewindFloor(floor: unknown): void {
-		if (typeof floor !== "number" || !Number.isFinite(floor)) return;
-		const f = Math.max(0, floor);
-		this.setRewind(this.seqRewindFloor === null ? f : Math.min(this.seqRewindFloor, f));
-	}
 
 	getManifestSeq(): number {
 		return this.manifestSeq;
@@ -3309,8 +3278,6 @@ export class SyncEngine {
 		// and wrongly short-circuit the first reconcile after a swap.
 		this.manifestSeq = 0;
 		this.lastValidatorRewind = null;
-		// A pending rewind is a position in the old vault's feed too.
-		this.clearRewind();
 		// The note-id map is per-vault identity state but is NOT a tracked
 		// collection: the instance is shared with main.ts + live views, so it is
 		// cleared in place rather than swept. Carrying it across vaults keys CRDT
@@ -3509,12 +3476,8 @@ export class SyncEngine {
 			.filter((p) => p.length > 0);
 	}
 
-	/** `excluded`: the excludedFolders to apply; Sync again's quota check
-	 *  passes the list without the folder it is about to re-include. */
-	shouldIgnore(
-		path: string,
-		excluded: readonly string[] = this.settings.excludedFolders ?? [],
-	): boolean {
+	/** `except`: an excluded folder to treat as included (Sync again's preview). */
+	shouldIgnore(path: string, except?: string): boolean {
 		// Hardcoded ignores — always enforced, cannot be overridden
 		const configDir = `${this.app.vault.configDir}/`;
 		if (path.startsWith(configDir) || path.includes(`/${configDir}`)) {
@@ -3527,6 +3490,7 @@ export class SyncEngine {
 		}
 		// User-explicit per-file ignores (from Sync Center)
 		if (this.ignoredFiles.has(path)) return true;
+		const excluded = (this.settings.excludedFolders ?? []).filter((f) => f !== except);
 		if (inExcludedFolder(path, excluded)) return true;
 		return this.ignorePatterns.some((pattern) => matchesIgnorePattern(path, pattern));
 	}
@@ -6683,6 +6647,8 @@ export class SyncEngine {
 	private async enumerateServerState(): Promise<{
 		notes: Map<string, { deleted: boolean; content?: string; contentHash?: string }>;
 		attachments: Map<string, { deleted: boolean }>;
+		/** The latest row per path (notes and attachments), for an apply. */
+		rows: Map<string, SyncChange>;
 	}> {
 		// The preview reads server state off the live op-log socket. On startup
 		// the plan is computed the moment the user channel joins — often before
@@ -6703,6 +6669,7 @@ export class SyncEngine {
 		}
 		const byId = new Map<string, Extract<SyncChange, { type: "note" }>>();
 		const attachments = new Map<string, { deleted: boolean }>();
+		const rows = new Map<string, SyncChange>();
 		// A pure read: no `onPage`, so the real catch-up cursor is never touched.
 		// Fetch errors propagate — the preview must fail visibly, never render a
 		// wrong (short) plan.
@@ -6711,7 +6678,10 @@ export class SyncEngine {
 			id: null,
 			onRow: (c) => {
 				if (c.type === "attachment") {
-					if (c.path) attachments.set(c.path, { deleted: c.deleted });
+					if (c.path) {
+						attachments.set(c.path, { deleted: c.deleted });
+						rows.set(c.path, c);
+					}
 				} else if (c.id && c.path) {
 					// Both guards: an id-less or path-less row (a folder-marker op
 					// leaking into the note feed, mirrored from applyOp) would key
@@ -6730,8 +6700,9 @@ export class SyncEngine {
 				content: c.content,
 				contentHash: c.content_hash,
 			});
+			rows.set(c.path, c);
 		}
-		return { notes, attachments };
+		return { notes, attachments, rows };
 	}
 
 	async catchupViaSeqReplay(
@@ -7196,17 +7167,14 @@ export class SyncEngine {
 		// silently clobber a direct rewind (catchupViaSeqReplay stays the sole
 		// cursor writer). The single-flight loop re-enters here, so a floor set
 		// mid-run is picked up by the coalesced re-run.
-		// Consumed only by a run that applies and moves the real cursor, and
-		// cleared only once that run completes (below): an enumerate-only walk
-		// or a failed one must not use up a "Sync again" rewind.
-		const rewindGen = this.rewindGen;
-		if (this.seqRewindFloor !== null && !fromZero && !enumerateOnly) {
+		if (this.seqRewindFloor !== null && !fromZero) {
 			const floored = Math.min(cursor, this.seqRewindFloor);
 			// A rewind to a lower seq invalidates the paired id (it belonged to the
 			// higher cursor) — resume seq-only from the floor.
 			if (floored !== cursor) cursorId = null;
 			cursor = floored;
 		}
+		this.seqRewindFloor = null;
 		const startedAtZero = cursor === 0;
 		let applied = 0;
 		let files = 0;
@@ -7282,17 +7250,6 @@ export class SyncEngine {
 					// idempotent, so persisting per page is at-least-once safe.
 					this.setCatchupSeq(seq);
 					this.setCatchupId(id);
-					// The rewind is spent as the replay applies: raise it with the
-					// cursor so a retry after a fetch failure resumes here rather than
-					// from the floor. Before the first page it stays put, so a restart
-					// then still replays from it.
-					if (
-						!enumerateOnly &&
-						this.seqRewindFloor !== null &&
-						this.rewindGen === rewindGen
-					) {
-						this.seqRewindFloor = Math.max(this.seqRewindFloor, seq);
-					}
 					await this.saveData({
 						catchupSeq: this.getCatchupSeq(),
 						catchupId: this.getCatchupId(),
@@ -7310,10 +7267,6 @@ export class SyncEngine {
 			// but a delete decision built on these sets would trash every file the
 			// walk never reached.
 			return { applied, files, failed, deletes, complete: false, fromGenesis: startedAtZero };
-		}
-		if (!enumerateOnly && this.seqRewindFloor !== null && this.rewindGen === rewindGen) {
-			this.seqRewindFloor = null;
-			await this.saveData({});
 		}
 		return { applied, files, failed, deletes, complete: true, fromGenesis: startedAtZero };
 	}
@@ -9267,160 +9220,8 @@ export class SyncEngine {
 		// written directly — a direct setCatchupSeq would race an in-flight
 		// replay's per-page cursor persist and be silently clobbered. Clamped:
 		// a seq-0 row yields target -1, which means replay-from-genesis.
-		this.setRewind(Math.max(0, target));
+		this.seqRewindFloor = Math.max(0, target);
 		return behind;
-	}
-
-	/** Make the next catch-up replay the op log from genesis. For a folder
-	 *  taken out of excludedFolders: the cursor already walked past every op
-	 *  made there while it was ignored. Routed through the validator's floor,
-	 *  so catch-up stays the sole cursor writer; applies are idempotent. */
-	requestFullReplay(floor = 0): void {
-		this.setRewind(this.seqRewindFloor === null ? floor : Math.min(this.seqRewindFloor, floor));
-	}
-
-	/** The catch-up cursor when each folder was excluded: ops at or below it
-	 *  were applied while the folder still synced, so "Sync again" replays from
-	 *  there instead of from 0. No entry (excluded by an older version) means
-	 *  0. Persisted; per vault. */
-	private excludedSince = this.track(["vault"], new Map<string, number>());
-
-	/** Record the cursor for folders just added to excludedFolders. Call before
-	 *  the save so it is persisted with the change. Returns an undo. */
-	noteExcluded(folders: string[]): () => void {
-		const added = folders.filter((f) => !this.excludedSince.has(f));
-		const seq = this.getCatchupSeq();
-		for (const f of added) this.excludedSince.set(f, seq);
-		return () => {
-			for (const f of added) this.excludedSince.delete(f);
-		};
-	}
-
-	/** An excluded folder was renamed or moved: its record follows it. */
-	renameExcluded(from: string, to: string): void {
-		const seq = this.excludedSince.get(from);
-		if (seq === undefined) return;
-		this.excludedSince.delete(from);
-		this.excludedSince.set(to, seq);
-	}
-
-	exportExcludedSince(): Record<string, number> {
-		return Object.fromEntries(this.excludedSince);
-	}
-
-	/** Restore the map saved by an earlier session (caller checks the vault). */
-	importExcludedSince(saved: unknown): void {
-		if (!saved || typeof saved !== "object") return;
-		for (const [f, seq] of Object.entries(saved)) {
-			if (typeof seq === "number" && Number.isFinite(seq)) this.excludedSince.set(f, seq);
-		}
-	}
-
-	/** Folders just taken out of excludedFolders. The next push sweep visits
-	 *  every tracked file under them and lets pushFile's hash check decide:
-	 *  an edit made while excluded predates lastSync, so the mtime filter would
-	 *  skip it. Persisted in plugin data; cleared by a sweep with no failures,
-	 *  and by a vault change. */
-	private reincludedFolders = this.track(["vault"], new Set<string>());
-
-	/** Local notes under `folder` a re-include would create on the server
-	 *  (Sync again's quota check): syncable under the plan's ignore rules, and
-	 *  not held by the server per serverHolds (so a note the server deleted
-	 *  while the folder was excluded counts again). No server enumeration, so a
-	 *  path the index has not learned yet still counts. */
-	/** Does the server still hold a note at `path`, as far as this device can
-	 *  tell without asking? The vault index maps every live server path, even
-	 *  in a folder this device ignores, and a server tombstone unmaps it
-	 *  (applyOp drops the id for an ignored path too). So a note synced here
-	 *  but deleted on the server meanwhile reads as not held. Without an index
-	 *  (never wired), fall back to this device's own sync record. */
-	private serverHolds(path: string): boolean {
-		if (!this.noteIdMap) return this.syncState.has(path) || this.getCrdtHead(path) != null;
-		return !!this.noteIdMap.get(path);
-	}
-
-	untrackedNotePaths(folder: string): string[] {
-		// The plan's own ignore predicate, minus the folder's exclusion.
-		const others = (this.settings.excludedFolders ?? []).filter((f) => f !== folder);
-		return this.app.vault
-			.getFiles()
-			.filter(
-				(f: TFile) =>
-					inExcludedFolder(f.path, [folder]) &&
-					this.isSyncable(f) &&
-					!this.shouldIgnore(f.path, others) &&
-					!this.isBinaryFile(f) &&
-					!this.serverHolds(f.path),
-			)
-			.map((f: TFile) => f.path);
-	}
-
-	/** Record that `folder` is being re-included BEFORE anything is saved, so
-	 *  every save from here on (the caller's, or any other landing during the
-	 *  re-include) carries its content re-check and the owed genesis replay.
-	 *  The replay is only armed by reincludeFolder: until the caller applies the
-	 *  settings the folder is still ignored, and a replay run now would walk
-	 *  past its ops and spend the rewind. Returns an undo for a failed save. */
-	holdReinclude(folder: string): () => void {
-		const had = this.reincludedFolders.has(folder);
-		const owed = this.rewindOwed;
-		const floor = this.excludedSince.get(folder) ?? 0;
-		this.reincludedFolders.add(folder);
-		this.rewindOwed = owed === null ? floor : Math.min(owed, floor);
-		return () => {
-			if (!had) this.reincludedFolders.delete(folder);
-			this.rewindOwed = owed;
-		};
-	}
-
-	/** Persisted with the save that takes a folder out of excludedFolders, so
-	 *  a restart before the next push pass cannot drop the edits made while it
-	 *  was excluded. */
-	exportReincludedFolders(): string[] {
-		return [...this.reincludedFolders];
-	}
-
-	/** Restore the list saved by an earlier session. The caller checks it was
-	 *  recorded for the active vault. */
-	importReincludedFolders(folders: unknown): void {
-		if (!Array.isArray(folders)) return;
-		for (const f of folders) if (typeof f === "string") this.reincludedFolders.add(f);
-	}
-
-	/** "Sync again" for a folder the caller has ALREADY taken out of
-	 *  excludedFolders. While excluded, its vault events were ignored, so:
-	 *  - a tracked file deleted meanwhile is deleted now, through the same path
-	 *    a vault delete event takes (the gate journal, or deleteSyncedPath,
-	 *    whose recently-deleted fence stops the replay below resurrecting it);
-	 *  - a tracked file edited meanwhile is re-checked by content in the next
-	 *    push sweep (reincludedFolders);
-	 *  - server ops made there are re-served by a replay from the cursor at
-	 *    which it was excluded (noteExcluded), or from 0 if none was recorded.
-	 *  Never throws, so the caller's sync always follows.
-	 *  ponytail: the replay is vault-wide. The server has no per-folder feed, so
-	 *  a scoped pull would walk the same op log; applies outside the folder are
-	 *  idempotent no-ops. */
-	async reincludeFolder(folder: string): Promise<void> {
-		for (const path of [...this.syncState.keys()]) {
-			if (!inExcludedFolder(path, [folder])) continue;
-			if (this.app.vault.getAbstractFileByPath(path)) continue;
-			// Never throws: one failed delete must not skip the re-include below.
-			// A delete that failed this way can come back on the replay, which
-			// undoes a delete rather than losing an edit (the safe direction).
-			try {
-				if (this.gateHolds()) this.journalGateEvent({ op: "delete", path });
-				else await this.deleteSyncedPath(path);
-			} catch (e) {
-				rlog().error(
-					"push",
-					`Sync again: delete failed ${noteRef(path)} | ${errMsg(e, path)}`,
-				);
-			}
-		}
-		this.reincludedFolders.add(folder);
-		this.requestFullReplay(this.excludedSince.get(folder) ?? 0);
-		this.excludedSince.delete(folder);
-		this.rewindOwed = null;
 	}
 
 	private async healDivergedLiveBoundNotes(manifest: ManifestResponse | null): Promise<number> {
@@ -10954,7 +10755,7 @@ export class SyncEngine {
 				const id = this.noteIdMap?.get(f.path);
 				return !(id && this.crdtHasPendingOp?.(id));
 			}
-			return f.stat.mtime > sinceMs || inExcludedFolder(f.path, this.reincludedFolders);
+			return f.stat.mtime > sinceMs;
 		});
 	}
 
@@ -11037,7 +10838,6 @@ export class SyncEngine {
 		const sinceMs = since ? new Date(since).getTime() : 0;
 		let pushed = 0;
 
-		const reincluded = [...this.reincludedFolders];
 		const toSync = this.pushCandidates(sinceMs);
 		devLog().log("push", `pushModifiedFiles: ${toSync.length} files modified since ${since}`);
 		// warn, not info: client `info` never reaches Loki. A bulk sweep firing
@@ -11054,12 +10854,6 @@ export class SyncEngine {
 
 		const outcome = await this.pushPartitioned(toSync, "incremental", base);
 		pushed += outcome.pushed;
-		// A failed file keeps its folder in the set, so the next sweep retries it.
-		// Persist the clear, or the next launch re-checks the folder needlessly.
-		if (outcome.failed === 0 && reincluded.length > 0) {
-			for (const f of reincluded) this.reincludedFolders.delete(f);
-			await this.saveData({});
-		}
 
 		this.flushAttachmentLimitedToast();
 		this.flushFailureSummaryToast();
@@ -11067,6 +10861,91 @@ export class SyncEngine {
 		// pushPartitioned). It used to be silently dropped here, letting
 		// fullSync's recap claim "All synced" over real failures.
 		return { pushed, failed: outcome.failed };
+	}
+
+	/** "Sync again": bring a folder that was excluded level with the server.
+	 *  The caller has already taken it out of excludedFolders. While it was
+	 *  excluded nothing here was synced, and the catch-up cursor walked past
+	 *  its server ops, so a normal sync would neither upload edits made in it
+	 *  (their mtime predates lastSync) nor pull its server changes. This walks
+	 *  the server's current state once and settles each path in the folder by
+	 *  content, against what this device last synced:
+	 *  - edited here only: pushed;
+	 *  - changed on the server only, or new there: pulled;
+	 *  - changed on both: the shared apply keeps the local text as a conflict
+	 *    copy and takes the server's (never overwritten);
+	 *  - deleted here: deleted on the server, the same delete a vault event sends;
+	 *  - deleted on the server: the shared tombstone apply;
+	 *  - never synced here but present on the server with other content: the
+	 *    local text is kept as a conflict copy, then the server's is pulled.
+	 *  Idempotent, so an interrupted run is simply run again. Per-path failures
+	 *  are counted, never thrown; only the server walk itself can throw. */
+	async reconcileFolder(folder: string): Promise<{ failed: number }> {
+		const server = await this.enumerateServerState();
+		const inFolder = (p: string) => inExcludedFolder(p, [folder]) && !this.shouldIgnore(p);
+		const paths = new Set<string>();
+		for (const f of this.app.vault.getFiles()) {
+			if (this.isSyncable(f) && inFolder(f.path)) paths.add(f.path);
+		}
+		for (const p of [
+			...server.notes.keys(),
+			...server.attachments.keys(),
+			...this.syncState.keys(),
+		]) {
+			if (inFolder(p)) paths.add(p);
+		}
+		let failed = 0;
+		for (const path of paths) {
+			try {
+				const row = server.rows.get(path);
+				const state = server.notes.get(path) ?? server.attachments.get(path);
+				await this.reconcilePath(path, row && state ? { ...state, row } : undefined);
+			} catch (e) {
+				failed += 1;
+				rlog().error("sync", `Sync again: ${noteRef(path)} | ${errMsg(e, path)}`);
+			}
+		}
+		return { failed };
+	}
+
+	private async reconcilePath(
+		path: string,
+		server:
+			| { deleted: boolean; content?: string; contentHash?: string; row: SyncChange }
+			| undefined,
+	): Promise<void> {
+		const file = this.app.vault.getFileByPath(path);
+		const synced = this.syncState.get(path);
+		if (!file) {
+			if (!server || server.deleted) return;
+			if (synced) await this.deleteSyncedPath(path);
+			else await this.applySyncChange(server.row);
+			return;
+		}
+		if (!server) {
+			await this.pushFile(file);
+			return;
+		}
+		if (server.deleted || this.isBinaryFile(file)) {
+			// Attachments: pushFile compares bytes itself; a tombstone or a server
+			// copy we lack goes through the shared apply.
+			if (server.deleted) await this.applySyncChange(server.row);
+			else await this.pushFile(file);
+			return;
+		}
+		const local = await this.app.vault.cachedRead(file);
+		const localHash = fnv1a(local);
+		if (server.content !== undefined && fnv1a(server.content) === localHash) return;
+		if (!synced) {
+			await this.writeDriftConflictCopy(path, local);
+			await this.applySyncChange(server.row);
+			return;
+		}
+		const localChanged = synced.hash !== localHash;
+		const serverChanged =
+			server.contentHash === undefined || server.contentHash !== synced.serverHash;
+		if (localChanged && !serverChanged) await this.pushFile(file);
+		else if (serverChanged) await this.applySyncChange(server.row);
 	}
 
 	/** Compute what a sync would do without executing it (dry-run preview).
@@ -11086,9 +10965,19 @@ export class SyncEngine {
 	 *      local unchanged → clean · local changed → toPush
 	 *  - server changed: local unchanged → toPull · both changed → conflict
 	 */
-	async computeSyncPlan(mode: "push-all" | "pull-all" | "full"): Promise<SyncPlan> {
+	async computeSyncPlan(
+		mode: "push-all" | "pull-all" | "full",
+		/** Sync again's preview: plan as if `reincluding` were no longer
+		 *  excluded, without touching the live settings (which would let live
+		 *  sync act on the folder before the user chose). In that folder a file
+		 *  synced here but now missing was deleted while excluded, so it shows
+		 *  as a remote delete, which is what reconcileFolder does with it. */
+		opts: { reincluding?: string } = {},
+	): Promise<SyncPlan> {
 		const server = await this.enumerateServerState();
-		const ignore = (path: string) => this.shouldIgnore(path);
+		const back = opts.reincluding;
+		const ignore = (path: string) => this.shouldIgnore(path, back);
+		const toDeleteRemote: string[] = [];
 		// Ignored paths are out of the sync on BOTH sides: the local list below
 		// drops them, so a server row there must not read as a pull either.
 		const unignored = <V>(m: Map<string, V>) =>
@@ -11127,7 +11016,15 @@ export class SyncEngine {
 				continue;
 			}
 			if (!localNoteSet.has(path)) {
-				toPullNotes.push(path);
+				if (
+					back !== undefined &&
+					inExcludedFolder(path, [back]) &&
+					this.syncState.has(path)
+				) {
+					toDeleteRemote.push(path);
+				} else {
+					toPullNotes.push(path);
+				}
 				continue;
 			}
 			const file = this.app.vault.getFileByPath(path);
@@ -11234,7 +11131,8 @@ export class SyncEngine {
 			},
 			conflicts: mode === "push-all" || mode === "pull-all" ? [] : conflictNotes,
 			toDeleteLocal: [...toDeleteLocal, ...toDeleteLocalAttach],
-			toDeleteRemote: [], // computed during execution (local deletes since last sync)
+			// Otherwise computed during execution (local deletes since last sync).
+			toDeleteRemote,
 		};
 	}
 

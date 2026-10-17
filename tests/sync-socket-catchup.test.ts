@@ -399,47 +399,6 @@ describe("catchupViaSeqReplay", () => {
 		expect(cursorsSeen).toEqual([42]);
 	});
 
-	test("requestFullReplay makes the next catch-up start from genesis", async () => {
-		// A folder taken out of excludedFolders: the cursor already walked past
-		// every op made there while it was excluded, so only a replay from 0
-		// re-serves them.
-		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
-		(engine as any).applySyncChange = mock(async () => true);
-		engine.setCatchupSeq(42);
-		(engine as any).syncStateVaultId = "vault-x";
-		(engine as any).settings.vaultId = "vault-x";
-		const cursorsSeen: number[] = [];
-		engine.setCrdtCatchupSince(async (cursor: number) => {
-			cursorsSeen.push(cursor);
-			return { changes: [], has_more: false, next_seq: null };
-		});
-
-		engine.requestFullReplay();
-		await engine.catchupViaSeqReplay();
-
-		expect(cursorsSeen).toEqual([0]);
-	});
-
-	test("an enumerate-only walk in between does not use up the rewind", async () => {
-		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
-		(engine as any).applySyncChange = mock(async () => true);
-		engine.setCatchupSeq(42);
-		(engine as any).syncStateVaultId = "vault-x";
-		(engine as any).settings.vaultId = "vault-x";
-		const cursorsSeen: number[] = [];
-		engine.setCrdtCatchupSince(async (cursor: number) => {
-			cursorsSeen.push(cursor);
-			return { changes: [], has_more: false, next_seq: null };
-		});
-
-		engine.requestFullReplay();
-		// A replace-remote enumeration walks from 0 without moving the cursor.
-		await (engine as any).catchupViaSeqReplayExclusive({ fromZero: true, enumerateOnly: true });
-		await engine.catchupViaSeqReplay();
-
-		expect(cursorsSeen).toEqual([0, 0]);
-	});
-
 	function rewindEngine() {
 		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
 		(engine as any).applySyncChange = mock(async () => true);
@@ -461,42 +420,10 @@ describe("catchupViaSeqReplay", () => {
 		deleted: false,
 	});
 
-	test("a replay that fails part-way resumes from its progress, not the rewind", async () => {
-		const engine = rewindEngine();
-		engine.setCatchupSeq(100);
-		engine.requestFullReplay();
-		const cursorsSeen: number[] = [];
-		let call = 0;
-		engine.setCrdtCatchupSince(async (cursor: number) => {
-			cursorsSeen.push(cursor);
-			call += 1;
-			// First run: one page reaching seq 40 of 100, then the network drops.
-			if (call === 1) return { changes: [feedRow(40)], has_more: true, next_seq: 40 };
-			if (call === 2) throw new Error("offline");
-			return { changes: [], has_more: false, next_seq: null };
-		});
-
-		await engine.catchupViaSeqReplay(); // fails at 40%
-		await engine.catchupViaSeqReplay(); // the retry
-
-		expect(cursorsSeen).toEqual([0, 40, 40]);
-	});
-
-	test("a restart before the first page still replays from the rewind", async () => {
-		const engine = rewindEngine();
-		engine.setCatchupSeq(100);
-		engine.requestFullReplay();
-		engine.setCrdtCatchupSince(async () => {
-			throw new Error("offline");
-		});
-		await engine.catchupViaSeqReplay();
-		expect(engine.getSeqRewindFloor()).toBe(0);
-	});
-
 	test("#1065 validator floor: one re-serve from the floor, then normal resumption", async () => {
 		const engine = rewindEngine();
 		engine.setCatchupSeq(42);
-		engine.setSeqRewindFloor(10); // a validator rewind
+		(engine as any).seqRewindFloor = 10; // a validator rewind
 		const cursorsSeen: number[] = [];
 		engine.setCrdtCatchupSince(async (cursor: number) => {
 			cursorsSeen.push(cursor);
@@ -509,80 +436,7 @@ describe("catchupViaSeqReplay", () => {
 		await engine.catchupViaSeqReplay();
 
 		expect(cursorsSeen).toEqual([10, 42]);
-		expect(engine.getSeqRewindFloor()).toBeNull();
-	});
-
-	test("Sync again replays from where the folder was excluded, not from 0", async () => {
-		const engine = rewindEngine();
-		engine.setCatchupSeq(500);
-		engine.noteExcluded(["Archive"]); // excluded at cursor 500
-		engine.setCatchupSeq(900);
-		const cursorsSeen: number[] = [];
-		engine.setCrdtCatchupSince(async (cursor: number) => {
-			cursorsSeen.push(cursor);
-			return { changes: [], has_more: false, next_seq: null };
-		});
-
-		await engine.reincludeFolder("Archive");
-		await engine.catchupViaSeqReplay();
-
-		expect(cursorsSeen).toEqual([500]);
-	});
-
-	test("a folder with no recorded exclusion (older install) replays from 0", async () => {
-		const engine = rewindEngine();
-		engine.setCatchupSeq(900);
-		const cursorsSeen: number[] = [];
-		engine.setCrdtCatchupSince(async (cursor: number) => {
-			cursorsSeen.push(cursor);
-			return { changes: [], has_more: false, next_seq: null };
-		});
-
-		await engine.reincludeFolder("Archive");
-		await engine.catchupViaSeqReplay();
-
-		expect(cursorsSeen).toEqual([0]);
-	});
-
-	test("the exclusion seq survives a restart", async () => {
-		const first = rewindEngine();
-		first.setCatchupSeq(500);
-		first.noteExcluded(["Archive"]);
-		const second = rewindEngine();
-		second.importExcludedSince(first.exportExcludedSince());
-		second.setCatchupSeq(900);
-		const undo = second.holdReinclude("Archive");
-		expect(second.getSeqRewindFloor()).toBe(500);
-		undo();
-		expect(second.exportExcludedSince()).toEqual({ Archive: 500 });
-	});
-
-	test("a pending rewind belongs to its vault: a vault switch drops it", async () => {
-		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
-		engine.requestFullReplay();
-		await (engine as any).wipePerVaultState();
-		expect(engine.getSeqRewindFloor()).toBeNull();
-	});
-
-	test("the rewind survives a restart before the catch-up", async () => {
-		const first = makeEngineWithCrdt({ closeDoc: () => {} });
-		first.requestFullReplay();
-		const saved = first.getSeqRewindFloor();
-
-		const second = makeEngineWithCrdt({ closeDoc: () => {} });
-		(second as any).applySyncChange = mock(async () => true);
-		second.setCatchupSeq(42);
-		(second as any).syncStateVaultId = "vault-x";
-		(second as any).settings.vaultId = "vault-x";
-		second.setSeqRewindFloor(saved);
-		const cursorsSeen: number[] = [];
-		second.setCrdtCatchupSince(async (cursor: number) => {
-			cursorsSeen.push(cursor);
-			return { changes: [], has_more: false, next_seq: null };
-		});
-		await second.catchupViaSeqReplay();
-
-		expect(cursorsSeen).toEqual([0]);
+		expect((engine as any).seqRewindFloor).toBeNull();
 	});
 
 	test("single-flights concurrent calls and re-runs once for a mid-flight trigger", async () => {

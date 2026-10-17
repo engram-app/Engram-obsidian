@@ -30,9 +30,6 @@ function makeFakePlugin(computeSyncPlan: (opts?: unknown) => Promise<unknown>) {
 				return computeSyncPlan(opts);
 			}),
 			getLastSync: () => "",
-			exportReincludedFolders: () => [],
-			holdReinclude: mock(() => () => {}),
-			noteExcluded: mock(() => () => {}),
 		},
 		savePluginData: mock(async () => {
 			order.push("save");
@@ -145,37 +142,6 @@ describe("a save landing during an excludedFolders change writes the new list", 
 		await hooksOf(fake).applyExclusions(["Archive"]);
 		expect(written).toEqual([["Old", "Archive"]]);
 	});
-
-	test("syncFolderAgain", async () => {
-		const { fake } = makeFakePlugin(async () => PLAN);
-		fake.settings.excludedFolders = ["Archive", "Old"];
-		fake.syncEngine.reincludeFolder = mock(async () => {});
-		fake.syncEngine.fullSync = mock(async () => ({ pulled: 0, pushed: 0 }));
-		const written = withConcurrentSave(fake);
-		await fake.syncFolderAgain("Archive");
-		expect(written).toEqual([["Old"]]);
-	});
-});
-
-describe("the over-limit step and Sync again do not undo each other", () => {
-	test("interleaved, both changes survive", async () => {
-		const { fake } = makeFakePlugin(async () => PLAN);
-		fake.settings.excludedFolders = ["Old"];
-		fake.syncEngine.reincludeFolder = mock(async () => {});
-		fake.syncEngine.fullSync = mock(async () => ({ pulled: 0, pushed: 0 }));
-		const releases: (() => void)[] = [];
-		fake.savePluginData = mock(() => new Promise<void>((r) => releases.push(r)));
-
-		const again = fake.syncFolderAgain("Old");
-		const apply = hooksOf(fake).applyExclusions(["Archive"]);
-		for (let i = 0; i < 20; i++) {
-			await Bun.sleep(0);
-			releases.shift()?.();
-		}
-		await Promise.all([again, apply]);
-
-		expect(fake.settings.excludedFolders).toEqual(["Archive"]);
-	});
 });
 
 describe("a failed rollback after Esc keeps the abort error", () => {
@@ -259,189 +225,147 @@ describe("loadSettings defaults excludedFolders", () => {
 	});
 });
 
-describe("syncFolderAgain", () => {
-	test("drops the folder, saves, re-includes it in the engine, then syncs", async () => {
-		const order: string[] = [];
-		const { fake } = makeFakePlugin(async () => PLAN);
-		fake.settings.excludedFolders = ["Archive", "Old"];
-		fake.savePluginData = mock(async () => {
-			order.push("save");
-		});
-		fake.syncEngine.reincludeFolder = mock(async (f: string) => order.push(`reinclude:${f}`));
-		fake.syncEngine.fullSync = mock(async () => {
-			order.push("sync");
-			return { pulled: 0, pushed: 0 };
-		});
-		fake.syncEngine.updateSettings = mock(() => order.push("engine"));
+/** Sync again through the normal preview: a scripted modal answers `choice`. */
+function againSetup(choice: string, excluded = ["Archive", "Old"]) {
+	const { fake } = makeFakePlugin(async () => PLAN);
+	fake.settings.excludedFolders = [...excluded];
+	const written: string[][] = [];
+	fake.writePluginData = mock(async (d: any) => {
+		written.push([...d.settings.excludedFolders]);
+	});
+	fake.savePluginData = (EngramSyncPlugin.prototype as any).savePluginData;
+	Object.assign(fake.syncEngine, {
+		getCatchupSeq: () => 0,
+		getCatchupId: () => null,
+		getManifestSeq: () => 0,
+		queue: { persistable: () => [] },
+		exportSyncState: () => ({}),
+		getSyncStateVaultId: () => null,
+		exportHashes: () => ({}),
+		issues: { serialize: () => [] },
+		ignoredFiles: { serialize: () => [] },
+		exportGateJournal: () => [],
+		isSyncBlocked: () => false,
+		reconcileFolder: mock(async () => ({ failed: 0 })),
+	});
+	fake.noteIdMap = { toJSON: () => ({}) };
+	fake.runSyncWithProgress = mock(async () => true);
+	let hooks: any = {};
+	const modal = {
+		setPlan: mock(),
+		setPlanError: mock(),
+		getPlan: () => PLAN,
+		awaitChoice: mock(async () => choice),
+	};
+	fake.newSyncPreviewModal = mock((_opts: unknown, h: unknown) => {
+		hooks = h ?? {};
+		return modal;
+	});
+	return { fake, written, modal, hooks: () => hooks };
+}
 
+describe("Sync again goes through the sync preview", () => {
+	test("the preview is planned with the folder included", async () => {
+		const { fake } = againSetup("smart-merge");
 		await fake.syncFolderAgain("Archive");
-		await Bun.sleep(0);
-
-		expect(fake.settings.excludedFolders).toEqual(["Old"]);
-		expect(order).toEqual(["save", "engine", "reinclude:Archive", "sync"]);
+		expect(fake.syncEngine.computeSyncPlan).toHaveBeenCalledWith("full", {
+			reincluding: "Archive",
+		});
 	});
 
-	test("a failed save changes nothing and touches no engine state", async () => {
-		const { fake } = makeFakePlugin(async () => PLAN);
-		fake.settings.excludedFolders = ["Archive", "Old"];
-		fake.settings.refreshToken = "rt-old";
-		fake.savePluginData = mock(async function (this: any) {
-			this.settings.refreshToken = "rt-rotated"; // rotation during the save
-			throw new Error("disk full");
-		});
-		fake.syncEngine.reincludeFolder = mock(async () => {});
-		fake.syncEngine.fullSync = mock(async () => ({ pulled: 0, pushed: 0 }));
-
-		await expect(fake.syncFolderAgain("Archive")).rejects.toThrow("disk full");
-
+	test("(e) Cancel leaves the folder excluded and reconciles nothing", async () => {
+		const { fake, written } = againSetup("cancel");
+		await fake.syncFolderAgain("Archive");
 		expect(fake.settings.excludedFolders).toEqual(["Archive", "Old"]);
-		expect(fake.settings.refreshToken).toBe("rt-rotated");
-		expect(fake.syncEngine.updateSettings).not.toHaveBeenCalled();
-		expect(fake.syncEngine.reincludeFolder).not.toHaveBeenCalled();
-		expect(fake.syncEngine.fullSync).not.toHaveBeenCalled();
+		expect(written.every((w) => w.includes("Archive"))).toBe(true);
+		expect(fake.syncEngine.reconcileFolder).not.toHaveBeenCalled();
+		expect(fake.runSyncWithProgress).not.toHaveBeenCalled();
+	});
+
+	test("a picked sync re-includes the folder, reconciles it, then runs the sync", async () => {
+		const { fake, written } = againSetup("smart-merge");
+		await fake.syncFolderAgain("Archive");
+		expect(fake.settings.excludedFolders).toEqual(["Old"]);
+		expect(fake.syncEngine.reconcileFolder).toHaveBeenCalledWith("Archive");
+		expect(written.at(-1)).toEqual(["Old"]);
+		expect(fake.runSyncWithProgress).toHaveBeenCalledWith("smart-merge", { plan: PLAN });
+	});
+
+	test("(f) a restart mid-reconcile finds the folder still excluded on disk", async () => {
+		const { fake, written } = againSetup("smart-merge");
+		let finish!: () => void;
+		fake.syncEngine.reconcileFolder = mock(async () => {
+			// Any save during the reconcile: a cursor persist, a token rotation.
+			await fake.persistEngineState();
+			await new Promise<void>((r) => {
+				finish = r;
+			});
+			return { failed: 0 };
+		});
+		const run = fake.syncFolderAgain("Archive");
+		await Bun.sleep(0);
+		await Bun.sleep(0);
+		// Quit here: data.json still says Archive is excluded, so nothing is half done.
+		expect(written.at(-1)).toContain("Archive");
+		expect(fake.settings.excludedFolders).toEqual(["Old"]);
+		finish();
+		await run;
+		expect(written.at(-1)).toEqual(["Old"]);
+	});
+
+	test("a reconcile that fails puts the exclusion back", async () => {
+		const { fake } = againSetup("smart-merge");
+		fake.syncEngine.reconcileFolder = mock(async () => ({ failed: 2 }));
+		await expect(fake.syncFolderAgain("Archive")).rejects.toThrow();
+		expect(fake.settings.excludedFolders).toContain("Archive");
+		expect(fake.runSyncWithProgress).not.toHaveBeenCalled();
+	});
+
+	test("the over-limit step's picker can keep the folder out", async () => {
+		const { fake, modal, hooks } = againSetup("smart-merge");
+		modal.awaitChoice = mock(async () => {
+			hooks().onExcluded?.(["Archive"]);
+			return "smart-merge";
+		});
+		await fake.syncFolderAgain("Archive");
+		expect(fake.settings.excludedFolders).toContain("Archive");
+		expect(fake.syncEngine.reconcileFolder).not.toHaveBeenCalled();
+	});
+
+	test("the excludedFolders queue is not held while the preview waits", async () => {
+		const { fake, modal } = againSetup("smart-merge");
+		let answer!: (c: string) => void;
+		modal.awaitChoice = mock(() => new Promise<string>((r) => (answer = r)));
+		const again = fake.syncFolderAgain("Archive");
+		await Bun.sleep(0);
+		// The over-limit step (another modal, another flow) can still save.
+		await fake.applyOverLimitExclusions(["Projects"]);
+		expect(fake.settings.excludedFolders).toContain("Projects");
+		answer("smart-merge");
+		await again;
+		expect(fake.settings.excludedFolders).toEqual(["Old", "Projects"]);
+	});
+
+	test("two Sync again runs on different folders keep both re-included", async () => {
+		const { fake } = againSetup("smart-merge");
+		await Promise.all([fake.syncFolderAgain("Archive"), fake.syncFolderAgain("Old")]);
+		expect(fake.settings.excludedFolders).toEqual([]);
 	});
 });
 
-describe("Sync again checks the notes quota first", () => {
-	function setup(usageBody: unknown, confirm: boolean) {
+describe("a rollback never brings back a renamed or cleared list", () => {
+	test("a rename during a failing save survives the rollback", async () => {
 		const { fake } = makeFakePlugin(async () => PLAN);
 		fake.settings.excludedFolders = ["Archive"];
-		fake.api.getBillingUsage = mock(async () => usageBody);
-		fake.syncEngine.untrackedNotePaths = mock(() => ["Archive/a.md", "Archive/b.md"]);
-		fake.syncEngine.reincludeFolder = mock(async () => {});
-		fake.syncEngine.fullSync = mock(async () => ({ pulled: 0, pushed: 0 }));
-		fake.confirmFolderOverLimit = mock(async () => confirm);
-		return fake;
-	}
-	const room = (limit: number, used: number) => ({
-		tier: "free",
-		usage: { notes: { limit, used } },
-	});
-
-	test("a folder that does not fit asks first; declining changes nothing", async () => {
-		const fake = setup(room(10, 9), false);
-		await fake.syncFolderAgain("Archive");
-		expect(fake.confirmFolderOverLimit).toHaveBeenCalledWith(2, { limit: 10, room: 1 });
-		expect(fake.settings.excludedFolders).toEqual(["Archive"]);
-		expect(fake.savePluginData).not.toHaveBeenCalled();
-		expect(fake.syncEngine.fullSync).not.toHaveBeenCalled();
-	});
-
-	test("acknowledging the over-limit step re-includes and syncs", async () => {
-		const fake = setup(room(10, 9), true);
-		await fake.syncFolderAgain("Archive");
-		expect(fake.settings.excludedFolders).toEqual([]);
-		expect(fake.syncEngine.fullSync).toHaveBeenCalled();
-	});
-
-	test("a folder that fits asks nothing", async () => {
-		const fake = setup(room(10, 0), false);
-		await fake.syncFolderAgain("Archive");
-		expect(fake.confirmFolderOverLimit).not.toHaveBeenCalled();
-		expect(fake.settings.excludedFolders).toEqual([]);
-	});
-
-	test("an unknown quota proceeds as before", async () => {
-		const fake = setup({ tier: "free", usage: {} }, false);
-		await fake.syncFolderAgain("Archive");
-		expect(fake.confirmFolderOverLimit).not.toHaveBeenCalled();
-		expect(fake.settings.excludedFolders).toEqual([]);
-	});
-
-	test("a lookup that never answers proceeds after the cap, as unknown", async () => {
-		const fake = setup(room(10, 9), false);
-		fake.api.getBillingUsage = mock(() => new Promise(() => {}));
-		fake.quotaWaitMs = 5;
-		await fake.syncFolderAgain("Archive");
-		expect(fake.confirmFolderOverLimit).not.toHaveBeenCalled();
-		expect(fake.settings.excludedFolders).toEqual([]);
-	});
-
-	test("self-host makes no billing lookup", async () => {
-		const fake = setup(room(10, 9), false);
-		fake.settings.backendMode = "selfhost";
-		await fake.syncFolderAgain("Archive");
-		expect(fake.api.getBillingUsage).not.toHaveBeenCalled();
-		expect(fake.settings.excludedFolders).toEqual([]);
-	});
-});
-
-describe("Sync again on two folders at once", () => {
-	test("interleaved re-includes leave both folders included", async () => {
-		const { fake } = makeFakePlugin(async () => PLAN);
-		fake.settings.excludedFolders = ["Archive", "Old"];
-		fake.syncEngine.reincludeFolder = mock(async () => {});
-		fake.syncEngine.fullSync = mock(async () => ({ pulled: 0, pushed: 0 }));
-		const saved: string[][] = [];
-		const releases: (() => void)[] = [];
-		fake.savePluginData = mock(function (this: any) {
-			saved.push([...this.settings.excludedFolders]);
-			return new Promise<void>((r) => releases.push(r));
-		});
-
-		const a = fake.syncFolderAgain("Archive");
-		const b = fake.syncFolderAgain("Old");
-		for (let i = 0; i < 10 && releases.length < 2; i++) {
-			await Bun.sleep(0);
-			releases.shift()?.();
-		}
-		releases.shift()?.();
-		await Promise.all([a, b]);
-
-		expect(fake.settings.excludedFolders).toEqual([]);
-		expect(saved.at(-1)).toEqual([]);
-	});
-});
-
-describe("Sync again tells the engine before saving", () => {
-	test("held before the save, undone when the save fails", async () => {
-		const { fake } = makeFakePlugin(async () => PLAN);
-		fake.settings.excludedFolders = ["Archive"];
-		const order: string[] = [];
-		const undo = mock(() => order.push("undo"));
-		fake.syncEngine.holdReinclude = mock(() => {
-			order.push("hold");
-			return undo;
-		});
-		fake.savePluginData = mock(async () => {
-			order.push("save");
+		fake.app = { vault: { getAbstractFileByPath: () => null } };
+		let calls = 0;
+		fake.savePluginData = mock(async function (this: any) {
+			if (++calls > 1) return; // the rename's own queued save
+			// The user renames the excluded folder while the over-limit save runs.
+			this.followExcludedFolderRename("Old", "Archive");
 			throw new Error("disk full");
 		});
-		await expect(fake.syncFolderAgain("Archive")).rejects.toThrow("disk full");
-		expect(order).toEqual(["hold", "save", "undo"]);
-	});
-});
-
-describe("the over-limit step records where each folder left the sync", () => {
-	test("only newly excluded folders, before the save; undone if it fails", async () => {
-		const { fake } = makeFakePlugin(async () => PLAN);
-		const order: string[] = [];
-		fake.syncEngine.noteExcluded = mock((folders: string[]) => {
-			order.push(`note:${folders.join(",")}`);
-			return () => order.push("undo");
-		});
-		fake.savePluginData = mock(async () => {
-			order.push("save");
-			throw new Error("disk full");
-		});
-		await expect(hooksOf(fake).applyExclusions(["Old", "Archive"])).rejects.toThrow();
-		expect(order).toEqual(["note:Archive", "save", "undo"]);
-	});
-});
-
-describe("an abort before the change leaks no exclusion record", () => {
-	test("noteExcluded is never left applied", async () => {
-		const { fake } = makeFakePlugin(async () => PLAN);
-		let net = 0;
-		fake.syncEngine.noteExcluded = mock(() => {
-			net += 1;
-			return () => {
-				net -= 1;
-			};
-		});
-		const ctrl = new AbortController();
-		ctrl.abort();
-		await expect(hooksOf(fake).applyExclusions(["Archive"], ctrl.signal)).rejects.toThrow();
-		expect(net).toBe(0);
+		await expect(hooksOf(fake).applyExclusions(["Projects"])).rejects.toThrow();
+		expect(fake.settings.excludedFolders).toEqual(["Old"]);
 	});
 });
