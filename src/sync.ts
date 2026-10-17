@@ -1223,7 +1223,8 @@ export class SyncEngine {
 		const gen = this.idMapFetchGen;
 		const entry = this.idMapPending.get(noteId);
 		if (entry) entry.askedGen = gen;
-		else this.idMapPending.set(noteId, { reqGen: gen, askedGen: gen, attempts: 0, waiters: [] });
+		else
+			this.idMapPending.set(noteId, { reqGen: gen, askedGen: gen, attempts: 0, waiters: [] });
 		this.idMapThrottle.poke();
 	}
 
