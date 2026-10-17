@@ -480,10 +480,15 @@ type IdMapEntry = {
 	askedGen: number;
 	/** An announce already restored the budget once for this entry. */
 	resetUsed: boolean;
-	/** Resolves when the entry settles: mapped, refused, given up or dropped. */
-	done: Promise<void>;
-	release: () => void;
+	/** Resolves with how the entry settled. */
+	done: Promise<IdMapSettle>;
+	release: (how: IdMapSettle) => void;
 };
+
+/** How an id-map heal ended: mapped; declined on purpose (refused path,
+ *  deleted here, parked as never listed, no map, vault gone); or given up
+ *  after its retries. Only the last is a failure worth a warning. */
+type IdMapSettle = "mapped" | "declined" | "gave-up";
 
 /** Who asks for an id heal. An announce is fresh evidence (may restore the
  *  retry budget once); a fan-out proves the server row exists (may clear the
@@ -749,7 +754,9 @@ export class SyncEngine {
 	setCrdtPorts(ports: CrdtPorts): void {
 		if ("manager" in ports) this.crdt = ports.manager ?? null;
 		if ("deviceId" in ports) this.deviceId = ports.deviceId ?? null;
-		if ("noteIdMap" in ports) this.noteIdMap = ports.noteIdMap ?? null;
+		// Through the binder, not a bare assignment: main.ts hands the map in
+		// here, so this is where its change + relocate handlers must attach.
+		if ("noteIdMap" in ports) this.bindNoteIdMap(ports.noteIdMap ?? null);
 		if ("enrollment" in ports) this.crdtEnrollment = ports.enrollment ?? null;
 		if ("create" in ports) this.crdtCreate = ports.create ?? null;
 		if ("delete" in ports) this.crdtDelete = ports.delete ?? null;
@@ -816,9 +823,13 @@ export class SyncEngine {
 	private noteIdMap: NoteIdMap | null = null;
 
 	setNoteIdMap(map: NoteIdMap | null): void {
+		this.setCrdtPorts({ noteIdMap: map });
+	}
+
+	private bindNoteIdMap(map: NoteIdMap | null): void {
 		// The previous map outlives this binding (main owns it): stop it calling in.
 		if (this.noteIdMap !== map) this.noteIdMap?.setChangeHandler?.(null);
-		this.setCrdtPorts({ noteIdMap: map });
+		this.noteIdMap = map;
 		// Follow identity with the bytes. The store reports a claim MOVING; this
 		// engine owns the vault, so it performs the corresponding file move.
 		//
@@ -1121,6 +1132,9 @@ export class SyncEngine {
 		if (!map) return 0;
 		const manifest = await this.api.getManifest();
 		this.idMapFetchSucceeded();
+		// Authoritative: every parked never-listed id gets asked again (one still
+		// unlisted simply re-parks).
+		this.idMapMissing.clear();
 		// Authoritative and complete: an id it evicts is not on the server, so
 		// no re-heal (that would only buy more whole-vault GETs).
 		return this.applyManifestToNoteIdMap(map, manifest, () => true, false);
@@ -1162,23 +1176,25 @@ export class SyncEngine {
 			// the engine believing stale news over a fact it authored (#491).
 			if (this.recentlyDeleted.has(note.id)) continue;
 			const localPath = map.pathForId(note.id);
-			// Same refusals as discovery, checked FIRST: a mapping is what lets the
-			// next fan-out cold-apply the note to disk, so an ignored path or one
-			// with a pending offline delete must stay unmapped (else the deleted
-			// note comes back). An existing local entry for it is forgotten (local
-			// only, `delete` publishes nothing), unless it is an in-flight rename's
-			// newer path, which this snapshot has not caught up to.
+			if (localPath === path) {
+				// Already where the manifest says (cheap check first: no glob per
+				// note). Only a pending offline delete changes that: the mapping is
+				// what lets the next fan-out cold-apply the note back to disk, so it
+				// is forgotten (local only, `delete` publishes nothing). An ignored
+				// note keeps its id, so un-ignoring it later mints no second one.
+				if (
+					this.queue.hasPendingEvidencedDelete(path, this.settings.vaultId ?? undefined)
+				) {
+					map.delete(localPath);
+					applied++;
+				}
+				continue;
+			}
+			// Same refusals as discovery: an ignored path or one with a pending
+			// offline delete must not get a mapping. A cross-wired local entry
+			// (another note's path) is wrong either way and is forgotten.
 			if (this.isRefusedPath(path)) {
-				// A cross-wired entry (another note's path) is always wrong. An entry
-				// at the refused path itself is forgotten only for a pending delete:
-				// an ignored note keeps its id, so un-ignoring it later does not mint
-				// a second one.
-				const crossWired =
-					localPath !== null && localPath !== path && manifestPaths.has(localPath);
-				const deleting =
-					localPath === path &&
-					this.queue.hasPendingEvidencedDelete(path, this.settings.vaultId ?? undefined);
-				if (localPath !== null && (crossWired || deleting)) {
+				if (localPath !== null && manifestPaths.has(localPath)) {
 					map.delete(localPath);
 					applied++;
 				}
@@ -1186,7 +1202,6 @@ export class SyncEngine {
 				if (this.idMapPending.has(note.id)) this.idMapRefused.set(note.id, path);
 				continue;
 			}
-			if (localPath === path) continue; // already correct — nothing to do
 			if (localPath !== null && !manifestPaths.has(localPath)) {
 				// The id maps to a path the server does NOT list. That's an
 				// in-flight rename (or a local-only note) whose new path this
@@ -1295,7 +1310,7 @@ export class SyncEngine {
 		}
 		const entry = this.idMapPending.get(noteId);
 		if (!entry) {
-			const { promise: done, resolve: release } = deferred();
+			const { promise: done, resolve: release } = deferred<IdMapSettle>();
 			this.idMapPending.set(noteId, {
 				attempts: 0,
 				askedGen: this.idMapFetchGen,
@@ -1332,7 +1347,7 @@ export class SyncEngine {
 		if (!entry) return Promise.resolve();
 		const gen = entry.askedGen + 1;
 		if (this.idMapFetchGen < gen) this.pokeIdMapUrgent();
-		return Promise.race([entry.done, this.fetchDone(gen)]);
+		return Promise.race([entry.done, this.fetchDone(gen)]).then(() => {});
 	}
 
 	/** The strand heal's wait: asks for `noteId` (an internal re-ask, so no
@@ -1340,16 +1355,17 @@ export class SyncEngine {
 	 *  mapped, refused, given up (incl. parked as never listed), or dropped by
 	 *  a vault switch / destroy. A closed gate is not a settle: it waits for
 	 *  the gate to open, without a timer, then asks. */
-	async awaitNoteIdSettled(noteId: string): Promise<void> {
+	async awaitNoteIdSettled(noteId: string): Promise<IdMapSettle> {
 		// Already mapped is settled, gate or not: only an unmapped id waits.
-		if (this.noteIdMap?.pathForId(noteId) != null) return;
+		if (this.noteIdMap?.pathForId(noteId) != null) return "mapped";
 		const epoch = this.idMapEpoch;
 		while (this.syncBlocked) {
 			await this.whenGateOpens();
-			if (epoch !== this.idMapEpoch) return; // the vault (or engine) is gone
+			if (epoch !== this.idMapEpoch) return "declined"; // the vault (or engine) is gone
 		}
-		if (!this.ensureNoteIdMapped(noteId, "internal")) return;
-		await this.idMapPending.get(noteId)?.done;
+		if (!this.ensureNoteIdMapped(noteId, "internal"))
+			return this.noteIdMap?.pathForId(noteId) != null ? "mapped" : "declined";
+		return (await this.idMapPending.get(noteId)?.done) ?? "declined";
 	}
 
 	/** One shared promise per fetch generation: resolves when fetch `gen` (or
@@ -1383,11 +1399,11 @@ export class SyncEngine {
 		this.idMapThrottle.poke(true, probe); // carried into the trailing run if mid-fetch
 	}
 
-	private settleIdMapPending(noteId: string): void {
+	private settleIdMapPending(noteId: string, how: IdMapSettle): void {
 		const entry = this.idMapPending.get(noteId);
 		if (!entry) return;
 		this.idMapPending.delete(noteId);
-		entry.release();
+		entry.release(how);
 	}
 
 	/** One throttled manifest pass for every id pending right now. */
@@ -1448,7 +1464,7 @@ export class SyncEngine {
 			// The count is kept, so the backoff stays at its cap until a fetch
 			// succeeds; an outage must not restart it at 2s.
 			for (const [id, entry] of [...this.idMapPending])
-				if (entry.askedGen < gen) this.settleIdMapPending(id);
+				if (entry.askedGen < gen) this.settleIdMapPending(id, "gave-up");
 			if (this.idMapPending.size > 0) this.idMapThrottle.poke();
 			return true;
 		}
@@ -1462,7 +1478,7 @@ export class SyncEngine {
 					until: this.time.now() + SyncEngine.ID_MAP_MISSING_TTL_MS,
 					fanoutUntil: this.idMapMissing.get(id)?.fanoutUntil ?? 0,
 				});
-				this.settleIdMapPending(id);
+				this.settleIdMapPending(id, "gave-up");
 			}
 		}
 		if (this.idMapPending.size > 0) this.idMapThrottle.poke();
@@ -1485,13 +1501,9 @@ export class SyncEngine {
 		if (this.idMapPending.size === 0) return;
 		const drop = !this.noteIdMap;
 		for (const id of [...this.idMapPending.keys()]) {
-			if (
-				drop ||
-				this.recentlyDeleted.has(id) ||
-				this.idMapRefused.has(id) ||
-				this.noteIdMap?.pathForId(id) != null
-			)
-				this.settleIdMapPending(id);
+			if (drop || this.recentlyDeleted.has(id) || this.idMapRefused.has(id))
+				this.settleIdMapPending(id, "declined");
+			else if (this.noteIdMap?.pathForId(id) != null) this.settleIdMapPending(id, "mapped");
 		}
 	}
 
@@ -1512,7 +1524,7 @@ export class SyncEngine {
 			const ids = [...this.idMapClaimed];
 			this.idMapClaimed.clear();
 			for (const id of ids)
-				if (this.noteIdMap?.pathForId(id) != null) this.settleIdMapPending(id);
+				if (this.noteIdMap?.pathForId(id) != null) this.settleIdMapPending(id, "mapped");
 		});
 	}
 
@@ -1617,7 +1629,7 @@ export class SyncEngine {
 	private idMapPending = this.track(
 		["vault", "destroy"],
 		new Map<string, IdMapEntry>(),
-		(entry) => entry.release(),
+		(entry) => entry.release("declined"),
 	);
 	/** id -> the path the manifest lists it at, which `isRefusedPath` refuses.
 	 *  A hiding layer, so every entry has named clearing events: re-validated

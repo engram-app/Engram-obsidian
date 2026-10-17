@@ -1893,4 +1893,97 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			expect(map.getOrMint("Private/x.md")).toBe("x");
 		});
 	});
+
+	describe("round 14", () => {
+		/** The engine as main.ts builds it: the map comes in through setCrdtPorts. */
+		function portsEngine() {
+			const time = new ManualTimeProvider(1_000_000);
+			const saveData = mock().mockResolvedValue(undefined);
+			const engine = new SyncEngine(
+				mockApp,
+				mockApi,
+				{ ...DEFAULT_SETTINGS, debounceMs: 1 },
+				saveData,
+				time,
+			);
+			engine.setReady();
+			const map = new NoteIdMap();
+			engine.setCrdtPorts({ noteIdMap: map });
+			return { engine, map, time };
+		}
+
+		test("#1 wired through setCrdtPorts, a mapping by another path releases a waiter", async () => {
+			const { engine, map } = portsEngine();
+			heldManifest([]); // the fetch never answers
+			engine.ensureNoteIdMapped("y");
+			let released = false;
+			void engine.awaitNoteIdMapped("y").then(() => {
+				released = true;
+			});
+			await flush();
+			map.set("y.md", "y"); // the index room learns it
+			await flush();
+			expect(released).toBe(true);
+		});
+
+		test("#7 an announce for a mapped id whose file is on disk moves the file, no duplicate", async () => {
+			const { engine, map } = portsEngine();
+			const e = engine as any;
+			e.crdt = {};
+			e.crdtCatchupSince = async () => null;
+			e.catchupViaSeqReplay = async () => {};
+			map.set("old/x.md", "x");
+			const vault = mockApp.vault;
+			const renames: string[] = [];
+			(vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
+				p === "old/x.md" ? new TFile("old/x.md") : null,
+			);
+			const prevRename = vault.rename;
+			vault.rename = mock(async (f: TFile, to: string) => {
+				renames.push(`${f.path}->${to}`);
+			});
+			try {
+				await engine.discoverAnnouncedNote("x", "new/x.md");
+				await flush();
+				expect(renames).toEqual(["old/x.md->new/x.md"]);
+			} finally {
+				vault.rename = prevRename;
+				(vault.getFileByPath as ReturnType<typeof mock>).mockReset().mockReturnValue(null);
+			}
+		});
+
+		test("#3 a successful wholesale reconcile lets a parked id be asked again", async () => {
+			const { engine, time } = throttledEngine();
+			liveManifest([]);
+			engine.ensureNoteIdMapped("ghost");
+			for (let i = 0; i < 6; i++) {
+				await flush();
+				time.advance(GAP);
+			}
+			await flush();
+			expect(fetches()).toBe(3); // parked as never listed
+			await engine.reconcileNoteIdMapFromManifest(); // reconnect: fetch 4
+			engine.ensureNoteIdMapped("ghost");
+			time.advance(GAP);
+			await flush();
+			expect(fetches()).toBe(5);
+		});
+
+		test("#4 a reconcile does not glob-check notes already mapped where the manifest says", async () => {
+			const { engine, map } = throttledEngine();
+			const notes = Array.from({ length: 200 }, (_, i) => ({
+				id: `n-${i}`,
+				path: `n${i}.md`,
+			}));
+			for (const n of notes) map.set(n.path, n.id);
+			manifestWith(notes);
+			const spy = spyOn(engine, "shouldIgnore");
+			try {
+				await engine.reconcileNoteIdMapFromManifest();
+				expect(spy.mock.calls.length).toBe(0);
+			} finally {
+				spy.mockRestore();
+			}
+		});
+	});
 });

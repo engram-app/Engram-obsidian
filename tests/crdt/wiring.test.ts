@@ -106,13 +106,14 @@ function makeDevice(
 		// for the gate, then asks); refused / no-fetch ids settle at once;
 		// otherwise one manifest pass, after which the id is mapped or given up.
 		awaitNoteIdSettled: async (id: string) => {
-			if (map.pathForId(id) !== null) return; // already mapped: settled, gate or not
+			if (map.pathForId(id) !== null) return "mapped"; // settled, gate or not
 			await opts?.holdSettle?.(id);
 			while (opts?.isSyncBlocked?.()) await (opts?.whenGateOpens?.() ?? Promise.resolve());
-			if (opts?.refuses?.(id)) return;
-			if (!(opts?.ensure?.(id) ?? true)) return;
+			if (opts?.refuses?.(id)) return "declined";
+			if (!(opts?.ensure?.(id) ?? true)) return "declined";
 			await opts?.duringWait?.();
 			reconcile();
+			return map.pathForId(id) !== null ? "mapped" : "gave-up";
 		},
 		idMapEra: () => opts?.idMapEra?.() ?? 0,
 		discoverAnnouncedNote: async () => {},
@@ -510,7 +511,7 @@ async function strandOn(b: Device, a: Device, noteId: string, body: string): Pro
 	);
 }
 
-test("r9#1 a strand id the heal refuses (gate open) is given up at once, not retried", async () => {
+test("r9#1/r14#2 a strand id the heal declines is dropped at once, quietly, not retried", async () => {
 	const a = makeDevice("RA", () => 0);
 	const b = makeDevice("RB", () => 0, { ensure: () => false, refuses: () => true }); // refused / recently deleted
 	await strandOn(b, a, "note-refused", "refused body");
@@ -520,7 +521,8 @@ test("r9#1 a strand id the heal refuses (gate open) is given up at once, not ret
 		await b.wiring.drainStrandedFlushes();
 		const msgs = (warn.mock.calls as unknown as Array<[string, string]>).map(([, m]) => m);
 		expect(msgs.filter((m) => m.includes("retrying"))).toEqual([]);
-		expect(msgs.filter((m) => m.includes("giving up on note_id=note-refused")).length).toBe(1);
+		// A deliberate decline (refused / deleted here) is not a give-up: no warn.
+		expect(msgs.filter((m) => m.includes("note-refused"))).toEqual([]);
 	} finally {
 		warn.mockRestore();
 		await destroy(a, b);
@@ -742,6 +744,26 @@ test("r13#1 a burst of stranded ids resolves independently: one slow id holds ba
 	releaseB();
 	await waitFor(async () => b?.disk.has("XB/b.md") ?? false, "B flushes once it settles");
 	await destroy(a, b);
+});
+
+test("r14#6 dispose releases a parked strand heal", async () => {
+	const a = makeDevice("WA", () => 0);
+	const b = makeDevice("WB", () => 0, {
+		isSyncBlocked: () => true,
+		whenGateOpens: () => new Promise<void>(() => {}), // the gate never opens
+	});
+	await strandOn(b, a, "note-w", "w body");
+	let drained = false;
+	void b.wiring.drainStrandedFlushes().then(() => {
+		drained = true;
+	});
+	await sleep(20);
+	expect(drained).toBe(false); // parked behind the closed gate
+	b.wiring.dispose();
+	await sleep(20);
+	expect(drained).toBe(true);
+	await a.wiring.manager.destroyAll();
+	await b.wiring.manager.destroyAll();
 });
 
 test("a vault switch during the strand-heal wait aborts the drain", async () => {

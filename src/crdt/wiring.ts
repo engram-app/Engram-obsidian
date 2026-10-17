@@ -1,3 +1,4 @@
+import { deferred } from "../deferred";
 import { errMsg } from "../error-util";
 import { docKindFor } from "../file-kind";
 import { noteRef } from "../note-ref";
@@ -153,6 +154,8 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	const strandedFlushes = new Set<string>();
 	let strandHealTimer: number | null = null;
 	let disposed = false;
+	/** Resolved by dispose: releases heals still parked in the engine. */
+	const disposal = deferred();
 	/** Ids whose heal is in flight: single-flight per id, not per drain. */
 	const healing = new Set<string>();
 
@@ -174,9 +177,12 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		try {
 			const era = syncEngine.idMapEra();
 			const startedAt = Date.now();
-			await syncEngine.awaitNoteIdSettled(id);
+			const how = await Promise.race([
+				syncEngine.awaitNoteIdSettled(id),
+				disposal.promise.then(() => "declined" as const),
+			]);
 			if (disposed || syncEngine.idMapEra() !== era) return; // an id of a gone vault
-			flushHealed(id, startedAt);
+			flushHealed(id, startedAt, how === "gave-up");
 		} finally {
 			healing.delete(id);
 			// Re-stranded while healing and not covered by its flush: drain again.
@@ -184,9 +190,12 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		}
 	}
 
-	function flushHealed(id: string, startedAt: number): void {
+	function flushHealed(id: string, startedAt: number, gaveUp: boolean): void {
 		const path = noteIdMap.pathForId(id);
 		if (path === null) {
+			// A deliberate decline (refused path, deleted here, parked as never
+			// listed) is not a failure: only a real give-up warns.
+			if (!gaveUp) return;
 			const secs = Math.round((Date.now() - startedAt) / 1000);
 			rlog().warn(
 				"crdt",
@@ -482,6 +491,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 
 	function dispose(): void {
 		disposed = true;
+		disposal.resolve();
 		invariants.stop();
 		if (strandHealTimer !== null) {
 			window.clearTimeout(strandHealTimer);
