@@ -662,6 +662,7 @@ const tr: Dict = {
 		other: '{count} başarısız. Detaylar için "{command}"\'ı çalıştırın.',
 	},
 	"{count} files": { one: "{count} dosya", other: "{count} dosya" },
+	"{count} files ignored": { one: "{count} dosya yoksayıldı", other: "{count} dosya yoksayıldı" },
 	"{count} files not included in your plan": {
 		one: "Planınızda olmayan {count} dosya",
 		other: "Planınızda yer almayan {count} dosya",

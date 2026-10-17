@@ -606,6 +606,7 @@ const ms: Dict = {
 	'{count} failed. Run "{command}" for details.':
 		'{count} gagal. Jalankan "{command}" untuk butiran.',
 	"{count} files": "{count} fail",
+	"{count} files ignored": "{count} fail dikabaikan",
 	"{count} files not included in your plan": "{count} fail tidak termasuk dalam pelan anda",
 	"{count} files queued": "{count} fail dalam senarai tunggu",
 	"{count} ignored": "{count} pengecualian",

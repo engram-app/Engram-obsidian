@@ -607,6 +607,7 @@ const id: Dict = {
 	'{count} failed. Run "{command}" for details.':
 		'{count} gagal. Jalankan "{command}" untuk detailnya.',
 	"{count} files": "{count} berkas",
+	"{count} files ignored": "{count} berkas diabaikan",
 	"{count} files not included in your plan": "{count} berkas tidak termasuk dalam paket Anda",
 	"{count} files queued": "{count} berkas dalam antrean",
 	"{count} ignored": "{count} diabaikan",

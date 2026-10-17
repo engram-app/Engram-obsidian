@@ -664,6 +664,7 @@ const de: Dict = {
 		other: '{count} fehlgeschlagen. Starte "{command}", um Details zu sehen.',
 	},
 	"{count} files": { one: "{count} Datei", other: "{count} Dateien" },
+	"{count} files ignored": { one: "{count} Datei ignoriert", other: "{count} Dateien ignoriert" },
 	"{count} files not included in your plan": {
 		one: "{count} Datei nicht in deinem Plan enthalten",
 		other: "{count} Dateien nicht in deinem Plan enthalten",

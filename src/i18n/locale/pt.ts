@@ -718,6 +718,11 @@ const pt: Dict = {
 		many: "{count} ficheiros",
 		other: "{count} ficheiros",
 	},
+	"{count} files ignored": {
+		one: "{count} ficheiro ignorado",
+		many: "{count} ficheiros ignorados",
+		other: "{count} ficheiros ignorados",
+	},
 	"{count} files not included in your plan": {
 		one: "{count} ficheiro não incluído no plano",
 		many: "{count} ficheiros não incluídos no seu plano",

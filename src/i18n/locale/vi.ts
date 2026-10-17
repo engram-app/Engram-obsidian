@@ -603,6 +603,7 @@ const vi: Dict = {
 	'{count} failed. Run "{command}" for details.':
 		'{count} lần thất bại. Xem "{command}" để biết chi tiết.',
 	"{count} files": "{count} tệp",
+	"{count} files ignored": "{count} tệp bị bỏ qua",
 	"{count} files not included in your plan": "{count} tệp không nằm trong gói của bạn",
 	"{count} files queued": "{count} tệp đang chờ xử lý",
 	"{count} ignored": "{count} bị bỏ qua",

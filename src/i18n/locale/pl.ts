@@ -746,6 +746,12 @@ const pl: Dict = {
 		many: "{count} plików",
 		other: "{count} plików",
 	},
+	"{count} files ignored": {
+		one: "{count} plik zignorowano",
+		few: "{count} pliki zignorowano",
+		many: "{count} plików pominięto",
+		other: "{count} plików pominięto",
+	},
 	"{count} files not included in your plan": {
 		one: "{count} plik nie jest uwzględniony w twoim planie",
 		few: "{count} pliki nie wchodzą w zakres twojej subskrypcji",
