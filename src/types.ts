@@ -529,6 +529,12 @@ export interface SyncPlan {
 	 *  preview tree to decide whether a folder is fully going away or just
 	 *  losing some leaves. */
 	localPaths: string[];
+	/** The syncable notes among localPaths. */
+	localNotePaths: string[];
+	/** Local notes the server does not hold: no server row at all (a tombstone
+	 *  counts as held, delete-wins) and no recorded CRDT head. The notes any
+	 *  uploading option would CREATE, so the one count the over-limit step uses. */
+	newNotePaths: string[];
 	/** Every path the server has in this vault. Same role as localPaths, for
 	 *  the push-all-delete-remote preview. */
 	serverPaths: string[];

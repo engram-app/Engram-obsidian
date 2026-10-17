@@ -2,7 +2,7 @@ import { type App, Modal, setIcon } from "obsidian";
 import { devLog } from "./dev-log";
 import { errMsg, statusOf } from "./error-util";
 import { FolderPicker, ROOT_FOLDER, selectedNoteCount } from "./folder-picker";
-import { currentLocale, t, tInto } from "./i18n";
+import { formatNumber, t, tInto } from "./i18n";
 import { userErrorMessage } from "./i18n/user-error";
 import { toastFor } from "./limit-copy";
 import { LimitExceededError } from "./limit-error";
@@ -69,12 +69,6 @@ export class SyncPreviewState {
 	overLimitError: string | null = null;
 	/** Set once the user got through the step, so it is asked once per plan. */
 	private overLimitDone = false;
-	/** newNotePaths() memo, keyed on the plan and choice family. */
-	private newPathsPlan: SyncPlan | null = null;
-	private newPathsPushAll = false;
-	private newPaths: string[] = [];
-	/** overLimitAdded() memo for the current selection. */
-	private added: number | null = null;
 	private resolved = false;
 
 	constructor(
@@ -131,43 +125,25 @@ export class SyncPreviewState {
 			!this.overLimitDone &&
 			uploadsNotes(choice) &&
 			this.notesQuota != null &&
-			this.newNotePaths(choice).length > this.notesQuota.room
+			this.newNotePaths().length > this.notesQuota.room
 		);
 	}
 
-	/** Notes `choice` would create on the server. Smart-merge uploads the
-	 *  plan's push list; a push-all re-sends every local note, so it creates
-	 *  each one the server does not hold. Either way, edits to notes already on
-	 *  the server and attachments do not count. */
-	newNotePaths(choice: SyncChoice | null = this.pendingChoice): string[] {
-		if (!this.plan) return [];
-		const pushAll = choice === "push-all-keep-remote" || choice === "push-all-delete-remote";
-		if (this.newPathsPlan !== this.plan || this.newPathsPushAll !== pushAll) {
-			// The filter is needed: computeSyncPlan pushes a local edit to a note
-			// the server already holds (server unchanged, local changed).
-			const onServer = new Set(this.plan.serverPaths);
-			const source = pushAll ? this.localNotePaths() : this.plan.toPush.notes;
-			this.newPaths = source.filter((p) => !onServer.has(p));
-			this.newPathsPlan = this.plan;
-			this.newPathsPushAll = pushAll;
-		}
-		return this.newPaths;
+	/** Notes an uploading option would create on the server, as computeSyncPlan
+	 *  decides it (one oracle for every option). Edits and attachments do not
+	 *  count. */
+	newNotePaths(): string[] {
+		return this.plan?.newNotePaths ?? [];
 	}
 
-	/** Every syncable note on this device, uploaded or not. computeSyncPlan
-	 *  builds localPaths as notes first, then attachments. */
+	/** Every syncable note on this device, uploaded or not. */
 	localNotePaths(): string[] {
-		return this.plan ? this.plan.localPaths.slice(0, this.plan.localNoteCount) : [];
+		return this.plan?.localNotePaths ?? [];
 	}
 
-	/** `added` is the picker's own count for this selection, when it has one. */
-	setOverLimitExcluded(
-		excluded: string[],
-		added = selectedNoteCount(this.newNotePaths(), excluded),
-	): void {
+	setOverLimitExcluded(excluded: string[]): void {
 		const over = this.overLimitOver();
 		this.overLimitExcluded = excluded;
-		this.added = added;
 		if (this.overLimitOver() !== over) this.overLimitAck = false;
 	}
 
@@ -179,12 +155,7 @@ export class SyncPreviewState {
 	overLimitAdded(): number {
 		// Without a picker no folder can be excluded, whatever was selected before.
 		if (!this.overLimitOffersPicker()) return this.newNotePaths().length;
-		this.added ??= selectedNoteCount(this.newNotePaths(), this.overLimitExcluded);
-		return this.added;
-	}
-
-	overLimitRoom(): number {
-		return this.notesQuota?.room ?? 0;
+		return selectedNoteCount(this.newNotePaths(), this.overLimitExcluded);
 	}
 
 	/** Notes past the room under the current selection; 0 when it fits. */
@@ -314,7 +285,6 @@ export class SyncPreviewState {
 		this.overLimitExcluded = [];
 		this.overLimitAck = false;
 		this.overLimitError = null;
-		this.added = null;
 	}
 
 	cancel(): void {
@@ -1295,17 +1265,19 @@ export class SyncPreviewModal extends Modal {
 	 *  one of those holds. */
 	private renderOverLimit(): void {
 		const { contentEl } = this;
-		const quota = this.state.notesQuota ?? { limit: 0, room: 0 };
-		const fmt = (n: number) => n.toLocaleString(currentLocale());
+		const quota = this.state.notesQuota;
+		// Invariant: the step is only entered with a quota (needsOverLimitStep),
+		// and only a verified-unlimited re-check clears it, which leaves the step.
+		if (!quota) throw new Error("over-limit view rendered without a notes quota");
 		contentEl.createEl("h2", {
 			text: t("This sync adds {count} notes. Your plan has room for {room}.", {
 				count: this.state.newNotePaths().length,
-				room: fmt(quota.room),
+				room: formatNumber(quota.room),
 			}),
 			cls: "engram-sync-preview-header",
 		});
 		contentEl.createEl("p", {
-			text: t("Your plan syncs {limit} notes.", { limit: fmt(quota.limit) }),
+			text: t("Your plan syncs {limit} notes.", { limit: formatNumber(quota.limit) }),
 		});
 
 		const upgradeUrl = this.opts.upgradeUrl;
@@ -1322,8 +1294,8 @@ export class SyncPreviewModal extends Modal {
 				newPaths: this.state.newNotePaths(),
 				excluded: this.state.overLimitExcluded,
 				limit: quota.room,
-				onChange: (excluded, selected) => {
-					this.state.setOverLimitExcluded(excluded, selected);
+				onChange: (excluded) => {
+					this.state.setOverLimitExcluded(excluded);
 					refresh();
 				},
 			});

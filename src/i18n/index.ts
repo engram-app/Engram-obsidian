@@ -116,6 +116,12 @@ function formatCount(n: number, code: string): string {
 	}
 }
 
+/** `1234` in the app language's number format. The one formatter for counts
+ *  shown outside a `{count}` placeholder. */
+export function formatNumber(n: number): string {
+	return formatCount(n, currentLocale());
+}
+
 /** Replace `{name}` from `vars`, leaving an unsupplied placeholder visible. A
  *  numeric `{count}` is written in the locale's number format. */
 function fill(template: string, vars?: Vars, code = currentLocale()): string {

@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { currentLocale, t, tInto } from "../src/i18n";
+import { currentLocale, formatNumber, t, tInto } from "../src/i18n";
 import ja from "../src/i18n/locale/ja";
 import { profile } from "../src/i18n/translate-profile";
 import { __setLanguage } from "./__mocks__/obsidian";
@@ -163,5 +163,11 @@ describe("plurals", () => {
 	test("a plural string with no count behaves like the plural form", () => {
 		__setLanguage("en");
 		expect(t(PULLED)).toBe("Engram Sync: pulled {count} files from server");
+	});
+});
+
+describe("formatNumber", () => {
+	test("groups digits in the app language's format", () => {
+		expect(formatNumber(4500)).toBe("4,500");
 	});
 });

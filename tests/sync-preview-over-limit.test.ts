@@ -20,7 +20,10 @@ import type { SyncChoice, SyncPlan } from "../src/types";
  *  local-only set, as computeSyncPlan builds it. */
 function planWith(local: string[], server: string[] = []): SyncPlan {
 	const onServer = new Set(server);
+	const fresh = local.filter((p) => !onServer.has(p));
 	return {
+		localNotePaths: [...local],
+		newNotePaths: fresh,
 		vaultName: "V",
 		serverNoteCount: server.length,
 		serverAttachmentCount: 0,
@@ -30,7 +33,7 @@ function planWith(local: string[], server: string[] = []): SyncPlan {
 		localFolderCount: 0,
 		localPaths: [...local],
 		serverPaths: [...server],
-		toPush: { notes: local.filter((p) => !onServer.has(p)), attachments: ["img.png"] },
+		toPush: { notes: [...fresh], attachments: ["img.png"] },
 		toPull: { notes: [], attachments: [] },
 		conflicts: [],
 		toDeleteLocal: [],
@@ -98,7 +101,7 @@ describe("SyncPreviewState over-limit step visibility", () => {
 		state.pickOption("smart-merge");
 		expect(state.view).toBe("over-limit");
 		expect(state.overLimitAdded()).toBe(5);
-		expect(state.overLimitRoom()).toBe(4);
+		expect(state.notesQuota?.room).toBe(4);
 		expect(onResolve).not.toHaveBeenCalled();
 	});
 
@@ -549,38 +552,29 @@ describe("over-limit footer", () => {
 	});
 });
 
-describe("new-note count follows the chosen option", () => {
-	// Root.md is local and on the server, but the plan's smart-merge push list
-	// skips it (crdtHead known); Notes/f.md is local, server-tombstoned, and
-	// left out of toPush. A push-all re-sends every local note, so f.md is new.
+describe("every uploading option counts the plan's new notes", () => {
+	// Root.md is on the server; Notes/f.md is local but server-tombstoned (or
+	// known to the server by a recorded head while the snapshot lags), so
+	// computeSyncPlan leaves it out of newNotePaths. No option may count it.
 	function plan() {
 		const p = planWith(["Root.md", ...PATHS, "Notes/f.md"], ["Root.md"]);
-		p.toPush.notes = p.toPush.notes.filter((n) => n !== "Notes/f.md");
+		p.newNotePaths = p.newNotePaths.filter((n) => n !== "Notes/f.md");
+		p.toPush.notes = [...p.newNotePaths, "Root.md"]; // plus an edit to Root.md
 		return p;
 	}
 
-	test("smart-merge counts the plan's push list", () => {
-		const state = new SyncPreviewState(plan(), () => {});
-		state.setNotesQuota({ limit: 1, room: 1 });
-		state.pickOption("smart-merge");
-		expect(state.overLimitAdded()).toBe(5);
-	});
-
-	for (const choice of ["push-all-keep-remote", "push-all-delete-remote"] as const) {
-		test(`${choice} counts every local note not on the server`, () => {
+	for (const choice of [
+		"smart-merge",
+		"push-all-keep-remote",
+		"push-all-delete-remote",
+	] as const) {
+		test(`${choice} counts plan.newNotePaths`, () => {
 			const state = new SyncPreviewState(plan(), () => {});
 			state.setNotesQuota({ limit: 1, room: 1 });
 			state.pickOption(choice);
-			expect(state.overLimitAdded()).toBe(6);
+			expect(state.overLimitAdded()).toBe(5);
 		});
 	}
-
-	test("push-all is asked even when the push list alone fits", () => {
-		const state = new SyncPreviewState(plan(), () => {});
-		state.setNotesQuota({ limit: 5, room: 5 });
-		state.pickOption("push-all-keep-remote");
-		expect(state.view).toBe("over-limit");
-	});
 });
 
 describe("Back resets the over-limit answers", () => {

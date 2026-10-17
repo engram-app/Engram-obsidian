@@ -1,5 +1,5 @@
 /**
- * folder-picker.ts — choose which top-level folders sync, with a per-folder
+ * folder-picker.ts: choose which top-level folders sync, with a per-folder
  * note count and an optional running total against a limit.
  *
  * UI-agnostic of the first-sync flow on purpose: it is meant to back the
@@ -11,7 +11,7 @@
  * with `inExcludedFolder`: one matcher, so the picker's "Selected" total is
  * exactly what will sync.
  */
-import { currentLocale, t } from "./i18n";
+import { formatNumber, t } from "./i18n";
 
 /** Key of the "(top level)" pseudo-folder holding notes at the vault root. */
 export const ROOT_FOLDER = "";
@@ -103,16 +103,15 @@ export class FolderPicker {
 			const box = label.createEl("input", { type: "checkbox" });
 			box.checked = !this.excluded.has(folder);
 			const name = folder === ROOT_FOLDER ? t("(top level)") : folder;
-			const fmt = (n: number) => n.toLocaleString(currentLocale());
 			const total = totals.get(folder) ?? count;
 			label.createSpan({
 				text: rows
 					? t("{folder} {count} notes ({newCount} new)", {
 							folder: name,
 							count: total,
-							newCount: fmt(count),
+							newCount: formatNumber(count),
 						})
-					: `${name} (${fmt(count)})`,
+					: `${name} (${formatNumber(count)})`,
 			});
 			// Root notes always sync: nothing else in the vault anchors them.
 			if (folder === ROOT_FOLDER) {
@@ -141,9 +140,11 @@ export class FolderPicker {
 	private updateTotal(selected: number): void {
 		const limit = this.props.limit;
 		if (!this.total || limit == null) return;
-		const fmt = (n: number) => n.toLocaleString(currentLocale());
 		this.total.setText(
-			t("Selected: {selected} / {limit}", { selected: fmt(selected), limit: fmt(limit) }),
+			t("Selected: {selected} / {limit}", {
+				selected: formatNumber(selected),
+				limit: formatNumber(limit),
+			}),
 		);
 		this.total.toggleClass("is-over", selected > limit);
 	}

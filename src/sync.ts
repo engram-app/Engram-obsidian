@@ -10917,6 +10917,7 @@ export class SyncEngine {
 		const conflictNotes: string[] = [];
 		const toDeleteLocal: string[] = [];
 		const toPushNotes: string[] = [];
+		const newNotes: string[] = [];
 
 		for (const [path, row] of serverNotes) {
 			if (row.deleted) {
@@ -10956,9 +10957,10 @@ export class SyncEngine {
 			}
 		}
 
-		// Local-only notes → push. A path with ANY server row (even a tombstone)
-		// is not "new" — the tombstone branch owns it (delete-wins; pushing would
-		// fight the <60s recreate refusal).
+		// Local-only notes → push; they are also the plan's NEW notes. A path
+		// with ANY server row (even a tombstone) is not "new": the tombstone
+		// branch owns it (delete-wins; pushing would fight the <60s recreate
+		// refusal).
 		for (const path of localNotes) {
 			if (serverNotes.has(path)) continue;
 			// ...nor is a path the server DEMONSTRABLY holds, however stale the
@@ -10980,6 +10982,7 @@ export class SyncEngine {
 			// wrong. Keep these two reading the same oracle.
 			if (this.getCrdtHead(path) != null) continue;
 			toPushNotes.push(path);
+			newNotes.push(path);
 		}
 
 		// Categorise server attachment rows
@@ -11017,6 +11020,8 @@ export class SyncEngine {
 			localAttachmentCount: localAttachments.length,
 			localFolderCount,
 			localPaths: [...localNotes, ...localAttachments],
+			localNotePaths: localNotes,
+			newNotePaths: newNotes,
 			serverPaths,
 			toPush: {
 				notes: mode === "pull-all" ? [] : toPushNotes,

@@ -427,6 +427,31 @@ describe("SyncEngine.computeSyncPlan", () => {
 		const plan = await engine.computeSyncPlan("full");
 
 		expect(plan.toPush.notes).not.toContain("Notes/pulled.md");
+		// The over-limit step's count reads the same oracle.
+		expect(plan.newNotePaths).not.toContain("Notes/pulled.md");
+	});
+
+	test("newNotePaths: local notes with no server row and no recorded head", async () => {
+		const engine = createEngine();
+		mockApp.vault.getFiles.mockReturnValue([
+			makeTFile("Notes/new.md"),
+			makeTFile("Notes/edited.md"),
+			makeTFile("Notes/gone.md"),
+			makeTFile("img.png"),
+		]);
+		wireFeed(engine, [
+			[
+				row({ id: "e", seq: 1, path: "Notes/edited.md", content: "server" }),
+				row({ id: "g", seq: 2, path: "Notes/gone.md", deleted: true }),
+			],
+		]);
+
+		const plan = await engine.computeSyncPlan("full");
+
+		expect(plan.newNotePaths).toEqual(["Notes/new.md"]);
+		expect(plan.localNotePaths.sort()).toEqual(
+			["Notes/edited.md", "Notes/gone.md", "Notes/new.md"].sort(),
+		);
 	});
 
 	// The fence above must not swallow genuinely local-only notes: absent a
