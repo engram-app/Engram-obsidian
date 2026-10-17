@@ -1322,7 +1322,7 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 	});
 
 	describe("round 7", () => {
-		const WAIT = 3_000; // SyncEngine.FANOUT_ID_WAIT_MS
+		const WAIT = 10_000; // SyncEngine.FANOUT_ID_WAIT_MS
 
 		test("I1 every waiter is released by the first fetch that started after it registered", async () => {
 			const { engine } = throttledEngine();
@@ -1375,15 +1375,28 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			engine.ensureNoteIdMapped("x");
 			void engine.awaitNoteIdMapped("x");
 			await flush(); // two failures: backoff 8s
+			// The next GET hangs (the probe's): only the wait bound can release it.
+			let failHung: () => void = () => {};
+			(mockApi.getManifest as ReturnType<typeof mock>).mockImplementationOnce(
+				() =>
+					new Promise((_, rej) => {
+						failHung = () => rej(new Error("503"));
+					}),
+			);
 			let released = false;
 			engine.ensureNoteIdMapped("x");
 			void engine.awaitNoteIdMapped("x").then(() => {
 				released = true;
 			});
 			await flush();
-			time.advance(WAIT);
+			time.advance(WAIT - 1);
+			await flush();
+			expect(released).toBe(false);
+			time.advance(1);
 			await flush();
 			expect(released).toBe(true);
+			failHung();
+			await flush();
 			// The background heal goes on: once the backoff passes, x maps.
 			liveManifest([{ id: "x", path: "x.md" }]);
 			time.advance(60_000);
@@ -1444,7 +1457,7 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 	});
 
 	describe("round 8", () => {
-		const WAIT = 3_000; // SyncEngine.FANOUT_ID_WAIT_MS
+		const WAIT = 10_000; // SyncEngine.FANOUT_ID_WAIT_MS
 
 		test("I4 N fan-outs for an id the manifest never lists cost at most 2x MAX_ATTEMPTS GETs per TTL", async () => {
 			// Round 9 #2: a fan-out proves the row exists, so it may clear the
@@ -1582,21 +1595,6 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			expect(map.pathForId("x")).toBe("x.md");
 		});
 
-		test("#4 a non-urgent wait keeps the success cooldown", async () => {
-			const { engine, time } = throttledEngine();
-			liveManifest([{ id: "a", path: "a.md" }]);
-			engine.ensureNoteIdMapped("a");
-			await flush();
-			expect(fetches()).toBe(1);
-			engine.ensureNoteIdMapped("s");
-			void engine.awaitNoteIdMapped("s", { urgent: false });
-			await flush();
-			expect(fetches()).toBe(1);
-			time.advance(GAP);
-			await flush();
-			expect(fetches()).toBe(2);
-		});
-
 		test("#6 an id already mapped to a path that is now refused loses the mapping", async () => {
 			const { engine, map } = throttledEngine();
 			map.set("p.md", "x");
@@ -1722,6 +1720,108 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			);
 			await engine.reconcileNoteIdMapFromManifest();
 			expect((engine as any).idMapRefused.size).toBe(0);
+		});
+	});
+
+	describe("round 12", () => {
+		test("#2 a fan-out survives a 5s manifest GET", async () => {
+			const { engine, map, time } = throttledEngine();
+			const release = heldManifest([{ id: "x", path: "x.md" }]);
+			let pathAtRelease: string | null = "unreleased";
+			engine.ensureNoteIdMapped("x");
+			void engine.awaitNoteIdMapped("x").then(() => {
+				pathAtRelease = map.pathForId("x");
+			});
+			await flush();
+			time.advance(5_000); // a big vault, a slow phone
+			release();
+			await flush();
+			expect(pathAtRelease).toBe("x.md");
+		});
+
+		test("#5 an id pending when the gate closes is healed once it reopens", async () => {
+			const { engine, map, time } = throttledEngine();
+			liveManifest([{ id: "a", path: "a.md" }]);
+			engine.ensureNoteIdMapped("a");
+			await flush();
+			liveManifest([
+				{ id: "a", path: "a.md" },
+				{ id: "b", path: "b.md" },
+			]);
+			engine.ensureNoteIdMapped("b"); // armed for the cooldown
+			engine.setSyncBlocked(true);
+			time.advance(60_000);
+			await flush();
+			expect(fetches()).toBe(1); // nothing behind the closed gate
+			engine.setSyncBlocked(false);
+			time.advance(60_000);
+			await flush();
+			expect(map.pathForId("b")).toBe("b.md");
+		});
+
+		test("#7 a cold-start reconcile does not re-heal the ids it evicts", async () => {
+			const { engine, map, time } = throttledEngine();
+			map.set("p.md", "d");
+			manifestWith([{ id: "n", path: "p.md" }]); // d is gone server-side
+			await engine.reconcileNoteIdMapFromManifest();
+			time.advance(60_000);
+			await flush();
+			expect(fetches()).toBe(1);
+		});
+
+		test("awaitNoteIdSettled resolves once the id maps", async () => {
+			const { engine, map } = throttledEngine();
+			liveManifest([{ id: "s", path: "s.md" }]);
+			await engine.awaitNoteIdSettled("s");
+			expect(map.pathForId("s")).toBe("s.md");
+		});
+
+		test("awaitNoteIdSettled waits out a closed gate, then heals", async () => {
+			const { engine, map, time } = throttledEngine();
+			engine.setSyncBlocked(true);
+			liveManifest([{ id: "g", path: "g.md" }]);
+			let settled = false;
+			void engine.awaitNoteIdSettled("g").then(() => {
+				settled = true;
+			});
+			time.advance(60_000);
+			await flush();
+			expect(settled).toBe(false); // a closed gate is not a settle
+			expect(fetches()).toBe(0);
+			engine.setSyncBlocked(false);
+			await flush();
+			expect(settled).toBe(true);
+			expect(map.pathForId("g")).toBe("g.md");
+		});
+
+		test("awaitNoteIdSettled keeps the success cooldown (strand heals never probe)", async () => {
+			const { engine, time } = throttledEngine();
+			liveManifest([{ id: "a", path: "a.md" }]);
+			engine.ensureNoteIdMapped("a");
+			await flush();
+			expect(fetches()).toBe(1);
+			void engine.awaitNoteIdSettled("s");
+			await flush();
+			expect(fetches()).toBe(1);
+			time.advance(GAP);
+			await flush();
+			expect(fetches()).toBe(2);
+		});
+
+		test("awaitNoteIdSettled resolves when the engine gives up", async () => {
+			const { engine, map, time } = throttledEngine();
+			liveManifest([]);
+			let settled = false;
+			void engine.awaitNoteIdSettled("ghost").then(() => {
+				settled = true;
+			});
+			for (let i = 0; i < 6; i++) {
+				await flush();
+				time.advance(GAP);
+			}
+			await flush();
+			expect(settled).toBe(true);
+			expect(map.pathForId("ghost")).toBeNull();
 		});
 	});
 });

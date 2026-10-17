@@ -107,10 +107,10 @@ export class SyncStore {
 	 *  decide what to do about the bytes on disk. Optional so the store stays
 	 *  usable headless (tests, the index room before the engine exists). */
 	onRelocate?: (from: string, to: string, note_id: string) => void;
-	/** Fired when an id may have become resolvable: a local `set`, a remote
-	 *  update, or a `seed`. Deliberately not `rename`/`getOrMint`/`clear`: those
-	 *  only move an id already resolvable, mint a fresh one, or remove, so none
-	 *  can satisfy a wait for an unmapped id. Passes the ids just claimed, so a
+	/** Fired with the ids claimed by every local `set`, every key a committed
+	 *  or remote update writes, and every `seed`. Not by `rename`/`getOrMint`/
+	 *  `clear` (they move an id already resolvable, mint a fresh one, or remove,
+	 *  so none can satisfy a wait for an unmapped id). Passes the ids, so a
 	 *  listener checks only those instead of rescanning (O(N) rebuilds). */
 	onChange?: (claimedIds: string[]) => void;
 

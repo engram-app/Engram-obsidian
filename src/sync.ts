@@ -1118,7 +1118,9 @@ export class SyncEngine {
 	async reconcileNoteIdMapFromManifest(): Promise<number> {
 		const map = this.noteIdMap;
 		if (!map) return 0;
-		return this.applyManifestToNoteIdMap(map, await this.api.getManifest());
+		// Authoritative and complete: an id it evicts is not on the server, so
+		// no re-heal (that would only buy more whole-vault GETs).
+		return this.applyManifestToNoteIdMap(map, await this.api.getManifest(), () => true, false);
 	}
 
 	/** The apply half of `reconcileNoteIdMapFromManifest`, split out so the
@@ -1128,6 +1130,7 @@ export class SyncEngine {
 		map: NoteIdMap,
 		manifest: ManifestResponse | null,
 		live: () => boolean = () => true,
+		rehealEvicted = true,
 	): Promise<number> {
 		if (!manifest) return 0; // pre-B1 backend: no manifest endpoint, nothing to reconcile
 		this.cacheManifestOwners(manifest); // keep the destructive-op guard's snapshot fresh
@@ -1197,8 +1200,9 @@ export class SyncEngine {
 		// this snapshot predates its row) must be re-healed, or it stays deaf.
 		// Internal (fresh=false): it must not restore the retry budget, or two ids
 		// that keep evicting each other would never give up.
-		for (const id of evicted)
-			if (map.pathForId(id) === null) this.ensureNoteIdMapped(id, "internal");
+		if (rehealEvicted)
+			for (const id of evicted)
+				if (map.pathForId(id) === null) this.ensureNoteIdMapped(id, "internal");
 		if (applied > 0) {
 			await this.saveData({ noteIds: map.toJSON() });
 		}
@@ -1313,15 +1317,28 @@ export class SyncEngine {
 	 *  the first fetch that STARTS after its latest ensureNoteIdMapped completes
 	 *  (I1), or after FANOUT_ID_WAIT_MS (I3), whichever is first. Callers ensure,
 	 *  then await (a fetch already in flight may predate the row a fan-out
-	 *  proves exists; test_82: the fan-out can be the only delivery).
-	 *  `urgent: false` (strand heal) keeps the success cooldown and never
-	 *  spends the fan-out probe. */
-	awaitNoteIdMapped(noteId: string, opts: { urgent?: boolean } = {}): Promise<void> {
+	 *  proves exists; test_82: the fan-out can be the only delivery). */
+	awaitNoteIdMapped(noteId: string): Promise<void> {
 		const entry = this.idMapPending.get(noteId);
 		if (!entry) return Promise.resolve();
 		const gen = entry.askedGen + 1;
-		if (this.idMapFetchGen < gen && opts.urgent !== false) this.pokeIdMapUrgent();
+		if (this.idMapFetchGen < gen) this.pokeIdMapUrgent();
 		return Promise.race([entry.done, this.fetchDone(gen)]);
+	}
+
+	/** The strand heal's wait: asks for `noteId` (an internal re-ask, so no
+	 *  budget reset, no urgency, no probe) and resolves once it settles:
+	 *  mapped, refused, given up (incl. parked as never listed), or dropped by
+	 *  a vault switch / destroy. A closed gate is not a settle: it waits for
+	 *  the gate to open, without a timer, then asks. */
+	async awaitNoteIdSettled(noteId: string): Promise<void> {
+		const epoch = this.idMapEpoch;
+		while (this.syncBlocked) {
+			await this.whenGateOpens();
+			if (epoch !== this.idMapEpoch) return; // the vault (or engine) is gone
+		}
+		if (!this.ensureNoteIdMapped(noteId, "internal")) return;
+		await this.idMapPending.get(noteId)?.done;
 	}
 
 	/** One shared promise per fetch generation: resolves when fetch `gen` (or
@@ -1370,6 +1387,7 @@ export class SyncEngine {
 		// The probe belongs to this run, done or not: read it before any return.
 		const probing = this.idMapProbeNext;
 		this.idMapProbeNext = false;
+		if (this.syncBlocked) return false; // paused: the reopen re-pokes
 		const epoch = this.idMapEpoch;
 		const gate = this.idMapGateCloses;
 		// Fetched for a vault (or a gate) that no longer holds, even if the gate
@@ -1446,11 +1464,11 @@ export class SyncEngine {
 	}
 
 	/** Settle every pending id that no longer needs a fetch: mapped by any path,
-	 *  refused by the manifest, deleted here, or (gate closed / no map) not ours
-	 *  to heal right now. */
+	 *  refused by the manifest, deleted here, or (no map) not ours to heal. A
+	 *  closed gate settles nothing: it only pauses the fetch. */
 	private pruneIdMapPending(): void {
 		if (this.idMapPending.size === 0) return;
-		const drop = this.syncBlocked || !this.noteIdMap;
+		const drop = !this.noteIdMap;
 		for (const id of [...this.idMapPending.keys()]) {
 			if (
 				drop ||
@@ -1467,6 +1485,7 @@ export class SyncEngine {
 	 *  pass per microtask over the claimed ids only, so a 10k import with one
 	 *  stuck id is not 10k reverse-index rebuilds. */
 	private scheduleIdMapPrune(claimed: string[]): void {
+		if (this.idMapPending.size === 0 && this.idMapMissing.size === 0) return;
 		for (const id of claimed) {
 			this.idMapMissing.delete(id);
 			if (this.idMapPending.has(id)) this.idMapClaimed.add(id);
@@ -1629,8 +1648,10 @@ export class SyncEngine {
 	private static readonly ID_MAP_RECONCILE_COOLDOWN_MS = 2_000;
 	/** Spacing between back-to-back fan-out (urgent) fetches. */
 	private static readonly ID_MAP_URGENT_GAP_MS = 500;
-	/** The longest a fan-out waits for its id to map (I3). */
-	private static readonly FANOUT_ID_WAIT_MS = 3_000;
+	/** The longest a fan-out waits for its id to map (I3). Above a slow
+	 *  whole-vault manifest GET (big vault, mobile radio): at 3s those fan-outs
+	 *  were released unmapped and dropped. */
+	private static readonly FANOUT_ID_WAIT_MS = 10_000;
 	private static readonly ID_MAP_RECONCILE_MAX_ATTEMPTS = 3;
 	private static readonly ID_MAP_RECONCILE_MAX_FAILURES = 5;
 	/** How long a given-up id stays in `idMapMissing` (I4). */
@@ -1640,7 +1661,9 @@ export class SyncEngine {
 	 *  the armed fetch and forget the cooldown, so neither reaches the next. */
 	private resetIdMapReconcile(): void {
 		this.idMapThrottle.reset();
-		// A trailing save armed for the old vault must not land in the new one.
+		// Dropped, not flushed: data.json is per local vault, and the switch's
+		// own wipe clears the map and persists it empty in the same call, so a
+		// flushed save of the old vault's ids would be overwritten at once.
 		this.noteIdSaveThrottle.reset();
 		this.idMapEpoch++;
 		this.idMapFailures = 0;
@@ -1654,14 +1677,6 @@ export class SyncEngine {
 	private idMapBackoffMs(): number {
 		const base = SyncEngine.ID_MAP_RECONCILE_COOLDOWN_MS;
 		return expBackoff(base, this.idMapFailures, base * 16);
-	}
-
-	/** The strand heal's terminal check: this id will never be fetched for
-	 *  (deleted here, or the manifest lists it at a path we refuse to map). */
-	idMapRefuses(noteId: string): boolean {
-		if (this.recentlyDeleted.has(noteId)) return true;
-		const path = this.idMapRefused.get(noteId);
-		return path !== undefined && this.isRefusedPath(path);
 	}
 
 	/** note_ids the SERVER is known to already have a note row for — learned
@@ -3278,9 +3293,13 @@ export class SyncEngine {
 			this.idMapThrottle.cancel();
 			this.idMapProbeNext = false; // its run is cancelled
 			this.idMapGateCloses++; // a fetch started under the open gate is stale
-			this.pruneIdMapPending();
+			// Pending ids are kept: the gate pauses their fetch, it does not settle
+			// them. Fan-out waits are released now (they are bounded anyway).
 			this.releaseFetchWaits();
-		} else this.openGateWaiters();
+		} else {
+			this.openGateWaiters();
+			if (this.idMapPending.size > 0) this.idMapThrottle.poke();
+		}
 		this.blockedSince = blocked ? (this.blockedSince ?? performance.now()) : null;
 		// Re-arm the announcement on every transition, so a LATER closure (a
 		// vault switch, a re-link) speaks up again instead of staying silent

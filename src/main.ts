@@ -2199,7 +2199,6 @@ export default class EngramSyncPlugin extends Plugin {
 		await this.syncEngine.resetForVaultChange();
 		this.syncGateAcceptedFor = null;
 		this.lastMapReconcileAt = 0;
-		this.crdtWiring?.clearStrandHealAttempts();
 	}
 
 	/** Re-read the active vault's name from the server, correcting a stale one.
@@ -2565,10 +2564,6 @@ export default class EngramSyncPlugin extends Plugin {
 		// only fires on a tab switch). Mirrors the web client's reconnect resync; on
 		// the initial join it is a near no-op (already enrolled).
 		this.crdtEnrollment?.resetAll();
-		// A reconnect just reconciled the noteIdMap above, so any note_id stranded by
-		// map drift deserves fresh retry attempts against the now-current map, not a
-		// counter left over from before the drift was fixed.
-		this.crdtWiring?.clearStrandHealAttempts();
 		this.reEnrollOpenCrdtNotes();
 		// A note edited while the socket was down and then switched away from has
 		// no leaf, so reEnrollOpenCrdtNotes does not reach it. Its refused edit was

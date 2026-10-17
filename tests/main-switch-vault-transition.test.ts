@@ -29,7 +29,6 @@ function makeFakePlugin(over: Record<string, unknown> = {}) {
 			resetForVaultChange: mock().mockResolvedValue(undefined),
 			setSyncBlocked: mock(),
 		},
-		crdtWiring: { clearStrandHealAttempts: mock() },
 		...over,
 	});
 }
@@ -56,8 +55,6 @@ describe("switchVault performs the whole vault transition", () => {
 		expect(fake.syncGateAcceptedFor).toBeNull();
 		// Re-reconcile on next connect; this is a real swap, not a storm.
 		expect(fake.lastMapReconcileAt).toBe(0);
-		// Strand-heal retry counts are keyed by the PREVIOUS vault's note_ids.
-		expect(fake.crdtWiring.clearStrandHealAttempts).toHaveBeenCalled();
 		expect(fake.syncEngine.setSyncBlocked).toHaveBeenCalledWith(true);
 	});
 

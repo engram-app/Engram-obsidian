@@ -618,7 +618,6 @@ export class Replica {
 				/* logged in prod; a stale map self-heals via strand-heal */
 			}
 			wiring.enrollment.resetAll();
-			wiring.clearStrandHealAttempts();
 			for (const p of boundPaths) {
 				wiring.enrollment.enroll(noteIdMap.getOrMint(p));
 			}
