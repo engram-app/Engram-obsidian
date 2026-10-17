@@ -3,8 +3,9 @@
  * not in the user's ignore text. The Advanced tab lists them so they stay
  * visible and can be synced again.
  */
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { __noticeCapture, __settingCapture } from "obsidian";
+import { rlog } from "../src/remote-log";
 import { renderExcludedFolders } from "../src/tabs/advanced-tab";
 
 function render(excludedFolders: string[]) {
@@ -51,9 +52,14 @@ describe("renderExcludedFolders", () => {
 		const { plugin, redisplay } = render(["Archive"]);
 		plugin.syncFolderAgain = mock(() => Promise.reject(new Error("disk full")));
 		const btn = __settingCapture.buttons.find((b) => b.text === "Sync again");
+		const logged = spyOn(rlog(), "error");
 		await btn?.clickCb?.();
+		const lines = logged.mock.calls.map((c) => String(c[1]));
+		logged.mockRestore();
 		expect(__noticeCapture.notices.length).toBe(1);
 		expect(redisplay).toHaveBeenCalled();
+		// Through the plugin's log, not the console.
+		expect(lines.some((l) => l.includes("disk full"))).toBe(true);
 	});
 
 	test("Sync again is disabled while it runs, so a double click runs it once", async () => {

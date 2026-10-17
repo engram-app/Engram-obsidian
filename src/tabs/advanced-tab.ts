@@ -1,5 +1,7 @@
 import { Notice, Setting, TFolder } from "obsidian";
+import { errMsg } from "../error-util";
 import { t, tInto } from "../i18n";
+import { rlog } from "../remote-log";
 import type { EngramSyncSettings } from "../types";
 import type { TabContext } from "./types";
 
@@ -204,8 +206,7 @@ export function renderExcludedFolders(
 				try {
 					await plugin.syncFolderAgain(folder);
 				} catch (e: unknown) {
-					// biome-ignore lint/suspicious/noConsole: error boundary
-					console.error("Engram Sync: sync folder again failed", e);
+					rlog().error("settings", `Sync again failed for a folder: ${errMsg(e)}`);
 					new Notice(t("Could not save your folder choice. Try again."));
 				} finally {
 					busy = false;
