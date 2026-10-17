@@ -3590,30 +3590,38 @@ export default class EngramSyncPlugin extends Plugin {
 				? () => this.api.getBillingUsage()
 				: undefined,
 			upgradeUrl: upgradeUrlFor(this.settings),
-			applyExclusions: (folders) => this.applyOverLimitExclusions(folders),
+			applyExclusions: (folders, signal) => this.applyOverLimitExclusions(folders, signal),
 		});
 	}
 
 	/** Over-limit step: the unticked top-level folders join
-	 *  `settings.excludedFolders` (the user's ignore text is never touched). The
-	 *  plan is recomputed with them FIRST and they are persisted only once it
-	 *  succeeds; a failure of either step restores the previous list, so a retry
-	 *  or Back never leaves exclusions behind a stale plan. Persisted without
-	 *  saveSettings, which would re-fire the first-sync flow for the closed gate
-	 *  and stack a second modal. */
-	private async applyOverLimitExclusions(folders: string[]): Promise<SyncPlan> {
-		const previous = this.settings.excludedFolders;
-		this.settings.excludedFolders = [...new Set([...previous, ...folders])];
-		this.syncEngine.updateSettings(this.settings);
-		let plan: SyncPlan;
+	 *  `settings.excludedFolders` (the user's ignore text is never touched).
+	 *  The candidate plan is computed with the candidate list WITHOUT touching
+	 *  the live engine; settings are saved next, and only then does the engine
+	 *  switch. Any failure, or `signal` aborting (the modal was closed), leaves
+	 *  settings and engine as they were. Persisted without saveSettings, which
+	 *  would re-fire the first-sync flow and stack a second modal. */
+	private async applyOverLimitExclusions(
+		folders: string[],
+		signal?: AbortSignal,
+	): Promise<SyncPlan> {
+		const previous = this.settings;
+		const excludedFolders = [...new Set([...previous.excludedFolders, ...folders])];
+		const plan = await this.syncEngine.computeSyncPlan("full", { excludedFolders });
+		signal?.throwIfAborted();
+		// A fresh object: the engine holds `previous` and keeps its old exclusions
+		// until the save below succeeds.
+		this.settings = { ...previous, excludedFolders };
 		try {
-			plan = await this.syncEngine.computeSyncPlan("full");
 			await this.savePluginData(this.syncEngine.getLastSync());
+			signal?.throwIfAborted();
 		} catch (e: unknown) {
-			this.settings.excludedFolders = previous;
-			this.syncEngine.updateSettings(this.settings);
+			this.settings = previous;
+			// Best effort: the aborted case already wrote the candidate list.
+			if (signal?.aborted) await this.savePluginData(this.syncEngine.getLastSync());
 			throw e;
 		}
+		this.syncEngine.updateSettings(this.settings);
 		this.settingTab?.rerender();
 		return plan;
 	}

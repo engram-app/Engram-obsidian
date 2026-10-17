@@ -10882,18 +10882,27 @@ export class SyncEngine {
 	 *      local unchanged → clean · local changed → toPush
 	 *  - server changed: local unchanged → toPull · both changed → conflict
 	 */
-	async computeSyncPlan(mode: "push-all" | "pull-all" | "full"): Promise<SyncPlan> {
+	async computeSyncPlan(
+		mode: "push-all" | "pull-all" | "full",
+		/** `excludedFolders`: plan as if these were the excluded folders, without
+		 *  touching the live settings (the over-limit step's candidate plan). */
+		opts: { excludedFolders?: string[] } = {},
+	): Promise<SyncPlan> {
 		const server = await this.enumerateServerState();
+		const candidate = opts.excludedFolders;
+		const ignore = (path: string) =>
+			this.shouldIgnore(path) ||
+			(candidate !== undefined && inExcludedFolder(path, candidate));
 		// Ignored paths are out of the sync on BOTH sides: the local list below
 		// drops them, so a server row there must not read as a pull either.
 		const unignored = <V>(m: Map<string, V>) =>
-			new Map([...m].filter(([path]) => !this.shouldIgnore(path)));
+			new Map([...m].filter(([path]) => !ignore(path)));
 		const serverNotes = unignored(server.notes);
 		const serverAttachments = unignored(server.attachments);
 
 		// Enumerate local files
 		const allFiles = this.app.vault.getFiles();
-		const syncable = allFiles.filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path));
+		const syncable = allFiles.filter((f) => this.isSyncable(f) && !ignore(f.path));
 
 		const localNotes: string[] = [];
 		const localAttachments: string[] = [];

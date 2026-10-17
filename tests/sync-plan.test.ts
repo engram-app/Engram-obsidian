@@ -431,6 +431,21 @@ describe("SyncEngine.computeSyncPlan", () => {
 		expect(plan.newNotePaths).not.toContain("Notes/pulled.md");
 	});
 
+	test("candidate excludedFolders shape the plan without touching live settings", async () => {
+		const engine = createEngine();
+		mockApp.vault.getFiles.mockReturnValue([
+			makeTFile("Archive/a.md"),
+			makeTFile("Notes/b.md"),
+		]);
+		wireFeed(engine, [[row({ id: "s", seq: 1, path: "Archive/s.md", content: "# s" })]]);
+
+		const plan = await engine.computeSyncPlan("full", { excludedFolders: ["Archive"] });
+
+		expect(plan.newNotePaths).toEqual(["Notes/b.md"]);
+		expect(plan.toPull.notes).toEqual([]);
+		expect(engine.shouldIgnore("Archive/a.md")).toBe(false);
+	});
+
 	test("newNotePaths: local notes with no server row and no recorded head", async () => {
 		const engine = createEngine();
 		mockApp.vault.getFiles.mockReturnValue([

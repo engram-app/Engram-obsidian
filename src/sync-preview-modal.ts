@@ -567,8 +567,9 @@ export interface SyncPreviewOptions {
 	 *  server that sells no plans (see upgradeUrlFor), which hides the button. */
 	upgradeUrl?: string | null;
 	/** Saves the over-limit step's unticked top-level folders and returns the
-	 *  recomputed plan. Only called when the user unticked at least one. */
-	applyExclusions?: (folders: string[]) => Promise<SyncPlan>;
+	 *  recomputed plan. Only called when the user unticked at least one.
+	 *  `signal` aborts when the modal closes first: nothing may be committed. */
+	applyExclusions?: (folders: string[], signal: AbortSignal) => Promise<SyncPlan>;
 	/** `/billing/usage`, for the notes quota. Fetched on open, again on
 	 *  entering the over-limit step and on window focus while it is open (the
 	 *  user may have just upgraded in the browser). */
@@ -700,6 +701,7 @@ export class SyncPreviewModal extends Modal {
 	}
 
 	onClose(): void {
+		this.saving?.abort();
 		window.removeEventListener("focus", this.onWindowFocus);
 		this.clearLoadingTimers();
 		// Defensive: if the user dismisses via Esc/backdrop before picking,
@@ -792,6 +794,9 @@ export class SyncPreviewModal extends Modal {
 	getPlan(): SyncPlan | null {
 		return this.state.plan;
 	}
+
+	/** The in-flight exclusions save, aborted if the modal closes first. */
+	private saving: AbortController | null = null;
 
 	/** Bumped per usage lookup; only the latest lookup's answer applies. */
 	private quotaSeq = 0;
@@ -1349,14 +1354,19 @@ export class SyncPreviewModal extends Modal {
 		if (folders.length > 0 && this.opts.applyExclusions) {
 			this.state.beginOverLimitSave();
 			refresh();
+			const saving = new AbortController();
+			this.saving = saving;
 			try {
-				plan = await this.opts.applyExclusions(folders);
+				plan = await this.opts.applyExclusions(folders, saving.signal);
 			} catch (e: unknown) {
+				if (saving.signal.aborted) return; // closed mid-save; nothing to show
 				devLog().log("error", `saving over-limit exclusions failed: ${errMsg(e)}`);
 				this.state.endOverLimitSave(t("Could not save your folder choice. Try again."));
 				error.setText(this.state.overLimitError ?? "");
 				refresh();
 				return;
+			} finally {
+				this.saving = null;
 			}
 		}
 		this.state.finishOverLimit(plan);

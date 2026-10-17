@@ -670,3 +670,25 @@ describe("over-limit save error survives a re-render", () => {
 		expect(shown()).toBe(before + 1);
 	});
 });
+
+describe("closing the modal while exclusions save", () => {
+	test("aborts the pending save so nothing is committed", async () => {
+		let signal: AbortSignal | undefined;
+		const { modal, choice } = openOverLimit({
+			applyExclusions: (_folders: string[], s: AbortSignal) => {
+				signal = s;
+				return new Promise<SyncPlan>(() => {});
+			},
+		});
+		const archive = checkboxFor(modal.contentEl, "Archive 3 notes (3 new)");
+		archive.checked = false;
+		archive.listeners.change();
+		button(modal, "Continue").listeners.click();
+		await Bun.sleep(0);
+		expect(signal?.aborted).toBe(false);
+
+		modal.onClose(); // Esc / backdrop
+		expect(signal?.aborted).toBe(true);
+		expect(await choice).toBe("cancel");
+	});
+});
