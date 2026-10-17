@@ -1167,7 +1167,8 @@ export class SyncEngine {
 					map.delete(localPath);
 					applied++;
 				}
-				this.idMapRefused.set(note.id, path); // so its fan-outs cost no GET
+				// Only for an id someone asked about: so its fan-outs cost no GET.
+				if (this.idMapPending.has(note.id)) this.idMapRefused.set(note.id, path);
 				continue;
 			}
 			if (localPath === path) continue; // already correct — nothing to do
@@ -1290,7 +1291,9 @@ export class SyncEngine {
 				release,
 			});
 		} else {
-			entry.askedGen = this.idMapFetchGen;
+			// Only outside evidence moves the line: an internal re-ask during every
+			// fetch would otherwise keep any fetch from ever counting.
+			if (source !== "internal") entry.askedGen = this.idMapFetchGen;
 			if (source === "announce" && !entry.resetUsed && entry.attempts > 0) {
 				entry.attempts = 0;
 				entry.resetUsed = true;
@@ -1364,16 +1367,20 @@ export class SyncEngine {
 
 	/** One throttled manifest pass for every id pending right now. */
 	private async runIdMapReconcile(): Promise<boolean> {
+		// The probe belongs to this run, done or not: read it before any return.
+		const probing = this.idMapProbeNext;
+		this.idMapProbeNext = false;
 		const epoch = this.idMapEpoch;
-		// Fetched for a vault (or an open gate) that no longer holds: apply
-		// NOTHING more. The apply moves and trashes files (sweepPendingOrphans).
-		const live = () => epoch === this.idMapEpoch && !this.syncBlocked;
+		const gate = this.idMapGateCloses;
+		// Fetched for a vault (or a gate) that no longer holds, even if the gate
+		// has closed and reopened since: apply NOTHING more. The apply moves and
+		// trashes files (sweepPendingOrphans).
+		const live = () =>
+			epoch === this.idMapEpoch && gate === this.idMapGateCloses && !this.syncBlocked;
 		this.pruneIdMapPending();
 		if (this.idMapPending.size === 0) return false; // no GET: no cooldown either
 		// Counts for, and releases, everything asked before it started.
 		const gen = ++this.idMapFetchGen;
-		const probing = this.idMapProbeNext;
-		this.idMapProbeNext = false;
 		let manifest: ManifestResponse | null = null;
 		let ok = false;
 		try {
@@ -1603,6 +1610,9 @@ export class SyncEngine {
 	private idMapProbeUsed = false;
 	private idMapProbeNext = false;
 	private idMapEpoch = 0;
+	/** Bumped on every gate close. Not `gateEpoch`: that one also aborts the
+	 *  gate-journal replay, which must survive a close (#247). */
+	private idMapGateCloses = 0;
 	/** Live fetches started, and the last one completed (never reset). */
 	private idMapFetchGen = 0;
 	private idMapDoneGen = 0;
@@ -1638,6 +1648,12 @@ export class SyncEngine {
 		// Release anyone parked on the gate (the strand heal): the vault they
 		// waited in is gone, or the engine is.
 		this.openGateWaiters();
+	}
+
+	/** The success cooldown, doubled per consecutive failure, capped at 16x. */
+	private idMapBackoffMs(): number {
+		const base = SyncEngine.ID_MAP_RECONCILE_COOLDOWN_MS;
+		return expBackoff(base, this.idMapFailures, base * 16);
 	}
 
 	/** The strand heal's terminal check: this id will never be fetched for
@@ -3220,19 +3236,12 @@ export class SyncEngine {
 		this.selfHealSince = this.time.now();
 		this.idMapThrottle = new TrailingThrottle(
 			this.time,
-			(urgent) =>
-				urgent
-					? SyncEngine.ID_MAP_URGENT_GAP_MS
-					: SyncEngine.ID_MAP_RECONCILE_COOLDOWN_MS *
-						2 ** Math.min(this.idMapFailures, 4),
+			(urgent) => (urgent ? SyncEngine.ID_MAP_URGENT_GAP_MS : this.idMapBackoffMs()),
 			() => this.runIdMapReconcile(),
 			// Two failures in a row: the server is down, so even an urgent fan-out
 			// waits the backoff, bar one probe per window (pokeIdMapUrgent). One
 			// blip still gets its urgent retry.
-			() =>
-				this.idMapFailures >= 2
-					? SyncEngine.ID_MAP_RECONCILE_COOLDOWN_MS * 2 ** Math.min(this.idMapFailures, 4)
-					: 0,
+			() => (this.idMapFailures >= 2 ? this.idMapBackoffMs() : 0),
 		);
 		this.noteIdSaveThrottle = new TrailingThrottle(
 			this.time,
@@ -3267,6 +3276,8 @@ export class SyncEngine {
 			// Not lazily at the next timer: a waiting fan-out is released now, and
 			// the armed fetch never fires behind the closed gate.
 			this.idMapThrottle.cancel();
+			this.idMapProbeNext = false; // its run is cancelled
+			this.idMapGateCloses++; // a fetch started under the open gate is stale
 			this.pruneIdMapPending();
 			this.releaseFetchWaits();
 		} else this.openGateWaiters();

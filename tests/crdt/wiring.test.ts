@@ -66,7 +66,9 @@ function makeDevice(
 		/** The engine will never fetch for this id (refused / deleted here). */
 		refuses?: (id: string) => boolean;
 		/** Runs inside each heal wait, before the manifest step. */
-		duringWait?: () => void;
+		duringWait?: () => void | Promise<void>;
+		/** The auto drain's debounce (default: parked far out). */
+		debounceMs?: number;
 		idMapEra?: () => number;
 		isSyncBlocked?: () => boolean;
 		whenGateOpens?: () => Promise<void>;
@@ -105,7 +107,7 @@ function makeDevice(
 		idMapRefuses: (id: string) => opts?.refuses?.(id) ?? false,
 		awaitNoteIdMapped: async (_id: string, waitOpts?: unknown) => {
 			opts?.waitOpts?.push(waitOpts);
-			opts?.duringWait?.();
+			await opts?.duringWait?.();
 			reconcile();
 			return opts?.answered?.() ?? true;
 		},
@@ -124,7 +126,7 @@ function makeDevice(
 		isBound: () => false,
 		// Park the auto heal-timer far out; scenario 3 drives drainStrandedFlushes
 		// directly so the heal is deterministic, not clock-dependent.
-		strandHealDebounceMs: 100_000,
+		strandHealDebounceMs: opts?.debounceMs ?? 100_000,
 		dbPrefix: id, // isolate the two devices' IndexedDB stores in one process
 	});
 
@@ -721,6 +723,79 @@ test("r10#4 a wiring disposed during the heal wait does nothing after it", async
 	await b.wiring.manager.destroyAll();
 });
 
+test("r11#1 under a stream of new strands, an old id keeps its own backoff schedule", async () => {
+	const D = 20;
+	const asks = new Map<string, number>();
+	const a = makeDevice("BA", () => 0);
+	const b = makeDevice("BB", () => 0, {
+		debounceMs: D,
+		ensure: (id) => {
+			asks.set(id, (asks.get(id) ?? 0) + 1);
+			return true;
+		},
+	});
+	const start = Date.now();
+	await strandOn(b, a, "note-old", "old body");
+	for (let i = 0; i < 10; i++) {
+		await strandOn(b, a, `note-new-${i}`, `new body ${i}`);
+		await sleep(15);
+	}
+	const elapsed = Date.now() - start;
+	// Its own schedule drains it at D, 3D, 7D, 15D, ... (delay D x 2^attempts).
+	let allowed = 1; // slack for timer jitter
+	while (D * (2 ** allowed - 1) <= elapsed) allowed++;
+	expect(asks.get("note-old") ?? 0).toBeLessThanOrEqual(allowed);
+	await destroy(a, b);
+});
+
+test("r11#2 an overlapping drain neither double-counts nor double-flushes", async () => {
+	let first = true;
+	const a = makeDevice("SA2", () => 0);
+	let b: Device | null = null;
+	b = makeDevice(
+		"SB2",
+		() => {
+			b?.map.set("SB2/s.md", "note-s");
+			return 1;
+		},
+		{
+			duringWait: async () => {
+				if (!first || !b) return;
+				first = false;
+				// The note strands again mid-wait, and a second drain fires.
+				await a.wiring.manager.applyLocalEdit("note-s", "second", false);
+				await waitFor(
+					async () =>
+						(await b?.wiring.manager.getText("note-s"))?.includes("second") ?? false,
+					"B integrates the second edit",
+				);
+				await sleep(20);
+				await b.wiring.drainStrandedFlushes();
+			},
+		},
+	);
+	await strandOn(b, a, "note-s", "first");
+	await b.wiring.drainStrandedFlushes();
+	await sleep(30);
+	expect(b.flushedPaths).toEqual(["SB2/s.md"]);
+	await destroy(a, b);
+});
+
+test("r11#10 the strand give-up line carries the attempt count and span", async () => {
+	const a = makeDevice("GA2", () => 0);
+	const b = makeDevice("GB2", () => 0);
+	await strandOn(b, a, "note-span", "span body");
+	const warn = spyOn(rlog(), "warn");
+	try {
+		for (let i = 0; i < 10; i++) await b.wiring.drainStrandedFlushes();
+		const msgs = (warn.mock.calls as unknown as Array<[string, string]>).map(([, m]) => m);
+		expect(msgs.some((m) => /note_id=note-span after 8 attempts over \d+s/.test(m))).toBe(true);
+	} finally {
+		warn.mockRestore();
+		await destroy(a, b);
+	}
+});
+
 test("a vault switch during the strand-heal wait aborts the drain", async () => {
 	const noteId = "note-switch";
 	let era = 0;
@@ -927,6 +1002,34 @@ test("#1550: a note_not_found reply drives the orphaned-claim repair, ahead of t
 	// SERVER lists, so an id the server has never had appears in none of them.
 	expect(calls).toEqual(["clearBaseline", `repair:${noteId}`]);
 
+	wiring.dispose();
+	await wiring.manager.destroyAll();
+});
+
+test("r11#6 a note_not_found reply heals the id as an internal re-ask, not fresh evidence", async () => {
+	const map = new NoteIdMap();
+	const calls: string[] = [];
+	const syncEngine = {
+		flushFromCrdt: async () => true,
+		isUnchangedSynced: () => false,
+		materializeEmptyDiscovered: async () => {},
+		isSyncBlocked: () => false,
+		clearPushedBaselineForId: () => {},
+		repairOrphanedClaim: () => false, // not an orphan: fall through to the heal
+		ensureNoteIdMapped: (...args: unknown[]) => calls.push(args.join(":")),
+		awaitNoteIdMapped: async () => {},
+		idMapEra: () => 0,
+	};
+	const wiring = createCrdtWiring({
+		noteIdMap: map,
+		syncEngine,
+		sendCrdt: () => {},
+		isBound: () => false,
+		strandHealDebounceMs: 100_000,
+		dbPrefix: "notfoundsource",
+	});
+	wiring.onCrdtNoteNotFound("nf-id");
+	expect(calls).toEqual(["nf-id:internal"]);
 	wiring.dispose();
 	await wiring.manager.destroyAll();
 });

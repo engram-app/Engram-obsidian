@@ -1,3 +1,4 @@
+import { expBackoff } from "../backoff";
 import { errMsg } from "../error-util";
 import { docKindFor } from "../file-kind";
 import { noteRef } from "../note-ref";
@@ -212,47 +213,84 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	// healUnknownNoteId again this session). Capped so a genuinely orphaned id
 	// (never resolves) stops retrying.
 	const strandHealAttempts = new Map<string, number>();
+	/** Per stranded id: when its next cycle is due, and when it first stranded
+	 *  (for the give-up line). Each id keeps its own backoff schedule. */
+	const strandSchedule = new Map<string, { nextAt: number; since: number }>();
 	let parkedForGate = false;
 	let disposed = false;
+	let draining = false;
 	let strandHealDue = 0;
 
-	/** (Re)arm the drain timer; a shorter delay wins. Never once disposed. */
-	function armStrandHeal(delayMs: number): void {
-		if (disposed) return;
-		const due = Date.now() + delayMs;
+	function forgetStrand(id: string): void {
+		strandHealAttempts.delete(id);
+		strandSchedule.delete(id);
+	}
+
+	/** Arm the drain timer for the earliest due stranded id (a shorter delay
+	 *  re-arms). Never once disposed, never mid-drain (the drain re-arms). */
+	function armStrandHeal(): void {
+		if (disposed || draining || strandedFlushes.size === 0) return;
+		const now = Date.now();
+		let due = Number.POSITIVE_INFINITY;
+		for (const id of strandedFlushes)
+			due = Math.min(due, strandSchedule.get(id)?.nextAt ?? now);
 		if (strandHealTimer !== null) {
 			if (due >= strandHealDue) return;
 			window.clearTimeout(strandHealTimer);
 		}
 		strandHealDue = due;
-		strandHealTimer = window.setTimeout(() => {
-			strandHealTimer = null;
-			void drainStrandedFlushes();
-		}, delayMs);
+		strandHealTimer = window.setTimeout(
+			() => {
+				strandHealTimer = null;
+				void drainStrandedFlushes(false);
+			},
+			Math.max(0, due - now),
+		);
 	}
 
 	/** A closed gate pauses the strand heal (no fetch, no attempt, no warn):
-	 *  the ids wait in `strandedFlushes` and drain once it opens (or the engine
-	 *  ends the wait on a vault switch / destroy). */
+	 *  the ids wait in `strandedFlushes`, due at once, and drain when it opens
+	 *  (or the engine ends the wait on a vault switch / destroy). */
 	function parkUntilGateOpens(ids: Iterable<string>): void {
-		for (const id of ids) strandedFlushes.add(id);
+		for (const id of ids) {
+			strandedFlushes.add(id);
+			const entry = strandSchedule.get(id);
+			if (entry) entry.nextAt = 0;
+		}
 		if (parkedForGate || disposed) return;
 		parkedForGate = true;
 		void syncEngine.whenGateOpens().then(() => {
 			parkedForGate = false;
-			if (!disposed && strandedFlushes.size > 0) void drainStrandedFlushes();
+			if (!disposed && strandedFlushes.size > 0) void drainStrandedFlushes(false);
 		});
 	}
 
+	/** Single-flight: a drain asked for mid-drain runs (re-arms) after it.
+	 *  `force` takes every stranded id, due or not (tests / e2e drive it); the
+	 *  timer takes only the due ones. */
+	async function drainStrandedFlushes(force = true): Promise<void> {
+		if (disposed) return;
+		if (draining) return; // its finally re-arms for whatever this one wanted
+		draining = true;
+		try {
+			await drainStrandedOnce(force);
+		} finally {
+			draining = false;
+			armStrandHeal();
+		}
+	}
+
 	/** One bounded retry cycle. Every still-unmapped id costs one attempt per
-	 *  cycle (answered or not), the next cycle waits debounce x 2^attempts
+	 *  cycle (answered or not), its next cycle waits debounce x 2^attempts
 	 *  (capped), and after STRAND_HEAL_MAX_ATTEMPTS it is given up with one
 	 *  warning. Only ids the engine refuses (deleted here, refused path) are
 	 *  terminal at once; one parked as never listed is just retried. */
-	async function drainStrandedFlushes(): Promise<void> {
-		if (disposed) return;
-		const pending = new Set(strandedFlushes);
-		strandedFlushes.clear();
+	async function drainStrandedOnce(force: boolean): Promise<void> {
+		const now = Date.now();
+		const pending = new Set<string>();
+		for (const id of strandedFlushes)
+			if (force || (strandSchedule.get(id)?.nextAt ?? 0) <= now) pending.add(id);
+		for (const id of pending) strandedFlushes.delete(id);
 		if (pending.size === 0) return;
 		if (syncEngine.isSyncBlocked()) return parkUntilGateOpens(pending);
 		// Through the engine's heal, not a raw reconcile: that one is gated,
@@ -270,7 +308,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		for (const id of pending) {
 			if (noteIdMap.pathForId(id) !== null || !syncEngine.idMapRefuses(id)) continue;
 			pending.delete(id);
-			strandHealAttempts.delete(id);
+			forgetStrand(id);
 			rlog().warn(
 				"crdt",
 				`onFlushToDisk: giving up on note_id=${id}: the heal refuses it — retained in Y.Doc`,
@@ -282,17 +320,31 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 			strandHealAttempts,
 			STRAND_HEAL_MAX_ATTEMPTS,
 		);
+		const after = Date.now();
 		for (const id of toGiveUp) {
+			const secs = Math.round((after - (strandSchedule.get(id)?.since ?? after)) / 1000);
+			forgetStrand(id);
+			// The one line per stranded id: the count and span stand in for the
+			// per-retry warns this loop no longer emits.
 			rlog().warn(
 				"crdt",
-				`onFlushToDisk: giving up on note_id=${id} after ` +
-					`${STRAND_HEAL_MAX_ATTEMPTS} heal attempts — retained in Y.Doc`,
+				`onFlushToDisk: giving up on note_id=${id} after ${STRAND_HEAL_MAX_ATTEMPTS} ` +
+					`attempts over ${secs}s — retained in Y.Doc`,
 			);
 		}
-		if (toRetry.length > 0) {
-			for (const id of toRetry) strandedFlushes.add(id);
-			const n = Math.min(...toRetry.map((id) => strandHealAttempts.get(id) ?? 1));
-			armStrandHeal(Math.min(debounceMs * 2 ** n, STRAND_HEAL_MAX_DELAY_MS));
+		for (const id of toRetry) {
+			strandedFlushes.add(id);
+			const entry = strandSchedule.get(id) ?? { nextAt: 0, since: after };
+			entry.nextAt =
+				after +
+				expBackoff(debounceMs, strandHealAttempts.get(id) ?? 1, STRAND_HEAL_MAX_DELAY_MS);
+			strandSchedule.set(id, entry);
+		}
+		// The flush writes the doc's projection now, which covers a re-strand of
+		// the same id while this cycle waited: drop that too, or it flushes twice.
+		for (const { id } of toFlush) {
+			strandSchedule.delete(id);
+			strandedFlushes.delete(id);
 		}
 		for (const { id, path } of toFlush) {
 			if (deps.isBound(path)) continue; // live editor owns disk
@@ -319,11 +371,15 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 
 	/** Re-resolve a stranded inbound CRDT note (unknown id -> no disk path) by
 	 *  reconciling the noteIdMap from the server manifest, then retrying the
-	 *  flush. Debounced so a burst of stranded flushes shares ONE reconcile.
-	 *  Self-heals a mid-session map drift the once-per-connect reconcile misses. */
+	 *  flush. Debounced so a burst of stranded flushes shares ONE reconcile;
+	 *  an id already on its backoff schedule keeps it. */
 	function healUnknownNoteId(noteId: string): void {
 		strandedFlushes.add(noteId);
-		armStrandHeal(debounceMs);
+		if (!strandSchedule.has(noteId)) {
+			const now = Date.now();
+			strandSchedule.set(noteId, { nextAt: now + debounceMs, since: now });
+		}
+		armStrandHeal();
 	}
 
 	// The provider-model engine plays all three old roles (manager + channel +
@@ -541,7 +597,9 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		// it iterates the notes the server LISTS, and an id the server has never
 		// had appears in none of them.
 		if (syncEngine.repairOrphanedClaim(docId)) return;
-		syncEngine.ensureNoteIdMapped(docId);
+		// Not fresh evidence (a reply to our own frame): it must not restore the
+		// heal's retry budget.
+		syncEngine.ensureNoteIdMapped(docId, "internal");
 	};
 
 	// The mint guard must be able to tell a live claim from a headstone. Wired
@@ -593,7 +651,10 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		drainStrandedFlushes,
 		/** On-demand invariant sweep (Sync Center / e2e probe). */
 		checkInvariants: () => invariants.checkAll(),
-		clearStrandHealAttempts: () => strandHealAttempts.clear(),
+		clearStrandHealAttempts: () => {
+			strandHealAttempts.clear();
+			strandSchedule.clear();
+		},
 		dispose,
 	};
 }

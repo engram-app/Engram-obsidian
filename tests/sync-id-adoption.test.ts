@@ -1657,4 +1657,71 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			}
 		});
 	});
+
+	describe("round 11", () => {
+		test("#3 a probe cancelled by a gate close does not swallow the next real failure", async () => {
+			const { engine, time } = throttledEngine();
+			(mockApi.getManifest as ReturnType<typeof mock>).mockRejectedValue(new Error("503"));
+			engine.ensureNoteIdMapped("x");
+			await flush(); // f=1
+			engine.ensureNoteIdMapped("x");
+			void engine.awaitNoteIdMapped("x");
+			await flush(); // urgent retry failed: f=2, and the last run was urgent
+			time.advance(100);
+			engine.ensureNoteIdMapped("x");
+			void engine.awaitNoteIdMapped("x"); // the probe: armed for the urgent gap
+			engine.setSyncBlocked(true); // ...and cancelled before it runs
+			engine.setSyncBlocked(false);
+			engine.ensureNoteIdMapped("x");
+			time.advance((8 * GAP) / 2); // f=2: an ordinary fetch after the 8s backoff
+			await flush();
+			const after = fetches();
+			// That failure counts (f=3): the next is 16s out, not 8s.
+			time.advance(9_000);
+			await flush();
+			expect(fetches()).toBe(after);
+		});
+
+		test("#4 a gate that closes and reopens mid-GET applies nothing from that GET", async () => {
+			const { engine, map } = throttledEngine();
+			const e = engine as any;
+			const swept: string[] = [];
+			e.trashRemotelyDeleted = async (f: { path: string }) => swept.push(f.path);
+			const release = heldManifest([{ id: "a", path: "a.md" }]);
+			engine.ensureNoteIdMapped("a");
+			await flush();
+			e.pendingOrphanSweep.add("orphan.md");
+			engine.setSyncBlocked(true);
+			engine.setSyncBlocked(false);
+			release();
+			await flush();
+			expect(map.pathForId("a")).toBeNull();
+			expect(swept).toEqual([]);
+		});
+
+		test("#5 an internal re-ask during every fetch still reaches give-up", async () => {
+			const { engine, time } = throttledEngine();
+			liveManifest([]);
+			engine.ensureNoteIdMapped("churn", "internal");
+			for (let i = 0; i < 12; i++) {
+				engine.ensureNoteIdMapped("churn", "internal"); // mid-fetch, every time
+				time.advance(GAP);
+				engine.ensureNoteIdMapped("churn", "internal");
+				await flush();
+			}
+			expect(fetches()).toBeLessThanOrEqual(3);
+		});
+
+		test("#9 a manifest records refusals only for ids someone asked about", async () => {
+			const { engine } = throttledEngine();
+			manifestWith(
+				Array.from({ length: 50 }, (_, i) => ({
+					id: `cfg-${i}`,
+					path: `.obsidian/c${i}.md`,
+				})),
+			);
+			await engine.reconcileNoteIdMapFromManifest();
+			expect((engine as any).idMapRefused.size).toBe(0);
+		});
+	});
 });
