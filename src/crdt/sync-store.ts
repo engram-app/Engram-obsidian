@@ -107,7 +107,10 @@ export class SyncStore {
 	 *  decide what to do about the bytes on disk. Optional so the store stays
 	 *  usable headless (tests, the index room before the engine exists). */
 	onRelocate?: (from: string, to: string, note_id: string) => void;
-	/** Fired after a local `set` or a remote update changes what reads answer. */
+	/** Fired when an id may have become resolvable: a local `set`, a remote
+	 *  update, or a `seed`. Deliberately not `rename`/`getOrMint`/`clear`: those
+	 *  only move an id already resolvable, mint a fresh one, or remove, so none
+	 *  can satisfy a wait for an unmapped id. */
 	onChange?: () => void;
 
 	/** Has this note_id been permanently tombstoned by the CRDT manager?
@@ -218,6 +221,7 @@ export class SyncStore {
 		this.cache.set(path, meta);
 		this.reverse = null;
 		this.cacheById = null;
+		this.onChange?.();
 	}
 
 	/** Every path this store has ever associated with `note_id`, newest source
