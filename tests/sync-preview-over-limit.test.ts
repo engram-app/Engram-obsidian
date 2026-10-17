@@ -332,11 +332,11 @@ describe("SyncPreviewModal over-limit view", () => {
 		expect(root.checked).toBe(true);
 	});
 
-	test("Continue writes the unticked folders as anchored ignore patterns and proceeds", async () => {
+	test("Continue hands over the unticked folders and proceeds", async () => {
 		const applied: string[][] = [];
 		const { modal, choice } = openOverLimit({
-			applyExclusions: async (patterns: string[]) => {
-				applied.push(patterns);
+			applyExclusions: async (folders: string[]) => {
+				applied.push(folders);
 				return planWith(["Root.md", "Notes/d.md", "Notes/e.md"]);
 			},
 		});
@@ -350,7 +350,7 @@ describe("SyncPreviewModal over-limit view", () => {
 		// The handler fires the async save and returns; let it settle.
 		await Bun.sleep(0);
 
-		expect(applied).toEqual([["/Archive/"]]);
+		expect(applied).toEqual([["Archive"]]);
 		expect(modal.getPlan().toPush.notes).toHaveLength(3);
 		modal.onClose();
 		expect(await choice).toBe("smart-merge");

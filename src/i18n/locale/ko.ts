@@ -237,6 +237,7 @@ const ko: Dict = {
 	"Error: {error}": "오류: {error}",
 	"Errors only": "오류만",
 	"Everything is in sync": "모두 동기화 완료",
+	"Excluded folders": "제외된 폴더",
 	"Failed to start device flow. Check your Engram URL and try again.":
 		"장치 연결 시작에 실패했습니다. Engram URL을 확인하고 다시 시도하세요.",
 	"Failed to switch vault: {error}": "보관함 전환 실패: {error}",
@@ -451,6 +452,7 @@ const ko: Dict = {
 	"Switch vault": "보관함 변경",
 	"Switched to {mode}.": "{mode}으로 전환했습니다.",
 	Sync: "동기화",
+	"Sync again": "다시 동기화",
 	"Sync complete": "동기화 완료",
 	"Sync failed": "동기화 실패",
 	"Sync in progress...": "동기화 진행 중...",
@@ -512,6 +514,7 @@ const ko: Dict = {
 		"연결된 Obsidian 보관함이 너무 많습니다. 하나를 연결 해제하거나 업그레이드하세요.",
 	"Too many requests. Wait a moment and try again.":
 		"요청이 너무 많습니다. 잠시 기다린 후 다시 시도해 주세요.",
+	"Top-level folders you chose not to sync.": "동기화하지 않기로 선택한 최상위 폴더.",
 	"Try again": "다시 시도",
 	"Type {keyword} to confirm:": "확인을 위해 {keyword}을 입력하세요:",
 	"Unknown error": "알 수 없는 오류",

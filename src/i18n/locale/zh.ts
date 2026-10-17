@@ -220,6 +220,7 @@ const zh: Dict = {
 	"Error: {error}": "错误：{error}",
 	"Errors only": "仅错误",
 	"Everything is in sync": "已全部同步",
+	"Excluded folders": "排除的文件夹",
 	"Failed to start device flow. Check your Engram URL and try again.":
 		"启动设备流程失败。检查您的Engram网址并重试。",
 	"Failed to switch vault: {error}": "切换仓库失败：{error}",
@@ -423,6 +424,7 @@ const zh: Dict = {
 	"Switch vault": "切换仓库",
 	"Switched to {mode}.": "已切换到 {mode}。",
 	Sync: "同步",
+	"Sync again": "重新同步",
 	"Sync complete": "同步完成",
 	"Sync failed": "同步失败",
 	"Sync in progress...": "正在同步...",
@@ -480,6 +482,7 @@ const zh: Dict = {
 	"Too many connected Obsidian vaults. Disconnect one or upgrade.":
 		"已连接过多个 Obsidian 知识库。断开一个或升级。",
 	"Too many requests. Wait a moment and try again.": "请求过多。请稍等片刻后重试。",
+	"Top-level folders you chose not to sync.": "您选择不同步的顶级文件夹。",
 	"Try again": "再次尝试",
 	"Type {keyword} to confirm:": "输入{keyword}以确认：",
 	"Unknown error": "未知错误",

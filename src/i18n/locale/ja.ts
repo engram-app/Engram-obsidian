@@ -242,6 +242,7 @@ const ja: Dict = {
 	"Error: {error}": "エラー: {error}",
 	"Errors only": "エラーのみ",
 	"Everything is in sync": "すべて同期済み",
+	"Excluded folders": "除外フォルダ",
 	"Failed to start device flow. Check your Engram URL and try again.":
 		"デバイスフローの開始に失敗しました。EngramのURLを確認し、再度お試しください。",
 	"Failed to switch vault: {error}": "保管庫の切り替えに失敗しました: {error}",
@@ -458,6 +459,7 @@ const ja: Dict = {
 	"Switch vault": "保管庫を切り替え",
 	"Switched to {mode}.": "{mode} に切り替えました。",
 	Sync: "同期",
+	"Sync again": "再度同期",
 	"Sync complete": "同期完了",
 	"Sync failed": "同期に失敗しました",
 	"Sync in progress...": "同期処理中...",
@@ -520,6 +522,7 @@ const ja: Dict = {
 		"接続されているObsidianの保管庫が多すぎます。いずれかを解除するか、アップグレードしてください。",
 	"Too many requests. Wait a moment and try again.":
 		"リクエストが多すぎます。しばらく待ってから、もう一度お試しください。",
+	"Top-level folders you chose not to sync.": "同期しないフォルダ",
 	"Try again": "再試行",
 	"Type {keyword} to confirm:": "確認のため、{keyword}を入力してください:",
 	"Unknown error": "不明なエラー",

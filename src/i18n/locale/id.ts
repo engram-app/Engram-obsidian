@@ -243,6 +243,7 @@ const id: Dict = {
 	"Error: {error}": "Kesalahan: {error}",
 	"Errors only": "Hanya kesalahan",
 	"Everything is in sync": "Semuanya sudah tersinkronisasi",
+	"Excluded folders": "Folder yang dikecualikan",
 	"Failed to start device flow. Check your Engram URL and try again.":
 		"Gagal memulai alur perangkat. Periksa URL Engram Anda dan coba lagi.",
 	"Failed to switch vault: {error}": "Gagal berpindah Vault: {error}",
@@ -463,6 +464,7 @@ const id: Dict = {
 	"Switch vault": "Ganti Vault",
 	"Switched to {mode}.": "Beralih ke {mode}.",
 	Sync: "Sinkronisasi",
+	"Sync again": "Sinkronisasi ulang",
 	"Sync complete": "Sinkronisasi selesai",
 	"Sync failed": "Sinkronisasi gagal",
 	"Sync in progress...": "Sinkronisasi sedang berlangsung...",
@@ -525,6 +527,8 @@ const id: Dict = {
 		"Terlalu banyak Vault Obsidian yang terhubung. Putuskan sambungan satu atau tingkatkan.",
 	"Too many requests. Wait a moment and try again.":
 		"Terlalu banyak permintaan. Tunggu sebentar dan coba lagi.",
+	"Top-level folders you chose not to sync.":
+		"Folder tingkat atas yang Anda pilih untuk tidak disinkronkan.",
 	"Try again": "Coba lagi",
 	"Type {keyword} to confirm:": "Ketik {keyword} untuk konfirmasi:",
 	"Unknown error": "Kesalahan tidak diketahui",

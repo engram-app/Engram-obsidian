@@ -54,6 +54,8 @@ export function renderAdvancedTab(ctx: TabContext): void {
 		});
 	ignoreSetting.settingEl.addClass("engram-ignore-setting");
 
+	renderExcludedFolders(containerEl, plugin, redisplay);
+
 	// ── Diagnostics ──
 	new Setting(containerEl).setName(t("Diagnostics")).setHeading();
 
@@ -173,5 +175,32 @@ function renderIgnoreWarnings(
 					}),
 			);
 		warning.settingEl.addClass("engram-status-warning");
+	}
+}
+
+/** Folders unticked in the first-sync folder picker (settings.excludedFolders).
+ *  Listed under the ignore patterns so they are not invisible, each with a way
+ *  to sync it again. Nothing renders when none are excluded. */
+export function renderExcludedFolders(
+	containerEl: HTMLElement,
+	plugin: Pick<TabContext["plugin"], "settings" | "saveSettings">,
+	redisplay: () => void,
+): void {
+	const folders = plugin.settings.excludedFolders;
+	if (folders.length === 0) return;
+	new Setting(containerEl)
+		.setName(t("Excluded folders"))
+		.setDesc(t("Top-level folders you chose not to sync."))
+		.setHeading();
+	for (const folder of folders) {
+		new Setting(containerEl).setName(folder).addButton((btn) =>
+			btn.setButtonText(t("Sync again")).onClick(async () => {
+				plugin.settings.excludedFolders = plugin.settings.excludedFolders.filter(
+					(f) => f !== folder,
+				);
+				await plugin.saveSettings();
+				redisplay();
+			}),
+		);
 	}
 }

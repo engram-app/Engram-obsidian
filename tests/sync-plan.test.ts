@@ -733,7 +733,7 @@ describe("SyncEngine.computeSyncPlan", () => {
 	});
 
 	test("server rows under an ignore pattern are not pulled or counted", async () => {
-		const engine = createEngine({ ignorePatterns: "/Archive/" });
+		const engine = createEngine({ excludedFolders: ["Archive"] });
 		mockApp.vault.getFiles.mockReturnValue([]);
 		wireFeed(engine, [
 			[

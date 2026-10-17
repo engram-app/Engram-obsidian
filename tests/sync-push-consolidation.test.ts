@@ -452,7 +452,7 @@ describe("SyncEngine.pushAll: replace-remote never deletes ignored server paths"
 	// deleted. They are intentionally unsynced, not extras.
 	test("server notes/attachments under an ignore pattern survive; a non-ignored extra is still deleted", async () => {
 		const { engine, api } = makeEngine([]);
-		(engine as any).ignorePatterns = ["/Archive/"];
+		(engine as any).settings.excludedFolders = ["Archive"];
 		const deleted: string[] = [];
 		const delAttach: string[] = [];
 		(engine as any).crdtDelete = async (id: string) => {

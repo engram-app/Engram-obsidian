@@ -300,6 +300,7 @@ const fr: Dict = {
 	"Error: {error}": "Erreur : {error}",
 	"Errors only": "Erreurs uniquement",
 	"Everything is in sync": "Tout est synchronisé",
+	"Excluded folders": "Dossiers exclus",
 	"Failed to start device flow. Check your Engram URL and try again.":
 		"Impossible de démarrer le processus. Vérifie ton URL Engram et réessaie.",
 	"Failed to switch vault: {error}": "Échec du changement de coffre : {error}",
@@ -531,6 +532,7 @@ const fr: Dict = {
 	"Switch vault": "Changer de coffre",
 	"Switched to {mode}.": "Passé à {mode}.",
 	Sync: "Synchroniser",
+	"Sync again": "Synchroniser à nouveau",
 	"Sync complete": "Synchronisation terminée",
 	"Sync failed": "Synchronisation échouée",
 	"Sync in progress...": "Synchronisation en cours...",
@@ -596,6 +598,8 @@ const fr: Dict = {
 		"Trop de coffres Obsidian connectés. Déconnecte-en un ou passe à un abonnement supérieur.",
 	"Too many requests. Wait a moment and try again.":
 		"Trop de requêtes. Attends un moment et réessaie.",
+	"Top-level folders you chose not to sync.":
+		"Dossiers principaux que tu n'as pas choisis de synchroniser.",
 	"Try again": "Réessayer",
 	"Type {keyword} to confirm:": "Tape {keyword} pour confirmer :",
 	"Unknown error": "Erreur inconnue",

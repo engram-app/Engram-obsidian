@@ -1,10 +1,9 @@
 import { describe, expect, mock, test } from "bun:test";
 import {
 	countNotesByFolder,
-	excludedToIgnorePatterns,
 	FolderPicker,
+	inExcludedFolder,
 	matchesIgnorePattern,
-	mergeIgnorePatterns,
 	ROOT_FOLDER,
 	selectedNoteCount,
 } from "../src/folder-picker";
@@ -40,17 +39,20 @@ describe("countNotesByFolder", () => {
 	});
 });
 
-describe("excludedToIgnorePatterns", () => {
-	test("a folder becomes a root-anchored folder pattern", () => {
-		expect(excludedToIgnorePatterns(["Archive"])).toEqual(["/Archive/"]);
+describe("inExcludedFolder", () => {
+	test("matches only the top-level folder itself, anchored at the root", () => {
+		expect(inExcludedFolder("Archive/a.md", ["Archive"])).toBe(true);
+		expect(inExcludedFolder("Archive/2023/a.md", ["Archive"])).toBe(true);
+		expect(inExcludedFolder("Projects/Archive/a.md", ["Archive"])).toBe(false);
+		expect(inExcludedFolder("Archived/a.md", ["Archive"])).toBe(false);
 	});
 
-	test("the top-level pseudo-folder writes nothing: root notes always sync", () => {
-		expect(excludedToIgnorePatterns([ROOT_FOLDER])).toEqual([]);
+	test("the top-level pseudo-folder excludes nothing: root notes always sync", () => {
+		expect(inExcludedFolder("Root.md", [ROOT_FOLDER])).toBe(false);
 	});
 
-	test("nothing excluded gives no patterns", () => {
-		expect(excludedToIgnorePatterns([])).toEqual([]);
+	test("nothing excluded matches nothing", () => {
+		expect(inExcludedFolder("Archive/a.md", [])).toBe(false);
 	});
 });
 
@@ -65,16 +67,11 @@ describe("matchesIgnorePattern", () => {
 		expect(matchesIgnorePattern("Inbox.md.bak", "Inbox.md")).toBe(false);
 	});
 
-	test("a leading / anchors a folder pattern to the vault root", () => {
-		expect(matchesIgnorePattern("Archive/a.md", "/Archive/")).toBe(true);
-		expect(matchesIgnorePattern("Archive/2023/a.md", "/Archive/")).toBe(true);
-		expect(matchesIgnorePattern("Projects/Archive/a.md", "/Archive/")).toBe(false);
-		expect(matchesIgnorePattern("Archived/a.md", "/Archive/")).toBe(false);
-	});
-
-	test("a leading / anchors a file pattern to the vault root", () => {
-		expect(matchesIgnorePattern("README.md", "/README.md")).toBe(true);
-		expect(matchesIgnorePattern("docs/README.md", "/README.md")).toBe(false);
+	test("a leading / keeps its origin/main meaning: a no-op line", () => {
+		// Regression: vault paths never start with "/", so these lines matched
+		// nothing on origin/main and must keep matching nothing.
+		expect(matchesIgnorePattern("Projects/a.md", "/Projects/")).toBe(false);
+		expect(matchesIgnorePattern("README.md", "/README.md")).toBe(false);
 	});
 
 	test("unanchored patterns keep their origin/main meaning: match at any depth", () => {
@@ -100,22 +97,6 @@ describe("selectedNoteCount", () => {
 
 	test("the top level cannot be excluded", () => {
 		expect(selectedNoteCount(PATHS, [ROOT_FOLDER])).toBe(8);
-	});
-});
-
-describe("mergeIgnorePatterns", () => {
-	test("appends new patterns one per line after the existing ones", () => {
-		expect(mergeIgnorePatterns("drafts/", ["Archive/"])).toBe("drafts/\nArchive/");
-	});
-
-	test("skips duplicates and blank lines", () => {
-		expect(mergeIgnorePatterns("drafts/\n\nArchive/\n", ["Archive/", "Old/"])).toBe(
-			"drafts/\nArchive/\nOld/",
-		);
-	});
-
-	test("empty existing setting", () => {
-		expect(mergeIgnorePatterns("", ["A/"])).toBe("A/");
 	});
 });
 

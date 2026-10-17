@@ -277,6 +277,7 @@ const tr: Dict = {
 	"Error: {error}": "Hata: {error}",
 	"Errors only": "Sadece hatalar",
 	"Everything is in sync": "Her şey senkronize",
+	"Excluded folders": "Hariç tutulan klasörler",
 	"Failed to start device flow. Check your Engram URL and try again.":
 		"Cihaz bağlantısı başlatılamadı. Engram URL'nizi kontrol edin ve tekrar deneyin.",
 	"Failed to switch vault: {error}": "Kasa değiştirme işlemi başarısız oldu: {error}",
@@ -502,6 +503,7 @@ const tr: Dict = {
 	"Switch vault": "Kasa değiştir",
 	"Switched to {mode}.": "{mode} konumuna geçildi.",
 	Sync: "Senkronizasyon",
+	"Sync again": "Tekrar senkronize et",
 	"Sync complete": "Senkronizasyon tamamlandı",
 	"Sync failed": "Senkronizasyon başarısız oldu",
 	"Sync in progress...": "Senkronizasyon devam ediyor...",
@@ -565,6 +567,8 @@ const tr: Dict = {
 		"Bağlı çok fazla Obsidian kasa var. Birini ayırın veya yükseltin.",
 	"Too many requests. Wait a moment and try again.":
 		"Çok fazla istek. Bir süre bekleyin ve tekrar deneyin.",
+	"Top-level folders you chose not to sync.":
+		"Senkronize etmek istemediğiniz üst düzey klasörler.",
 	"Try again": "Tekrar dene",
 	"Type {keyword} to confirm:": "Onaylamak için {keyword} yazın:",
 	"Unknown error": "Bilinmeyen hata",

@@ -6,7 +6,7 @@ import type { EngramApi } from "../src/api";
 import { CONTENT_KEY } from "../src/crdt/frontmatter-codec";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { ProviderRegistry } from "../src/crdt/provider-registry";
-import { excludedToIgnorePatterns, mergeIgnorePatterns, ROOT_FOLDER } from "../src/folder-picker";
+import { ROOT_FOLDER } from "../src/folder-picker";
 import { LimitExceededError } from "../src/limit-error";
 import { rlog } from "../src/remote-log";
 import { fnv1a, SyncEngine } from "../src/sync";
@@ -211,10 +211,10 @@ describe("SyncEngine.shouldIgnore", () => {
 		expect(customEngine.shouldIgnore("Notes/Hello.md")).toBe(false);
 	});
 
-	test("patterns written by the folder picker exclude exactly the unticked folders", () => {
-		const patterns = excludedToIgnorePatterns(["Arch", ROOT_FOLDER]);
+	test("excludedFolders ignore exactly the unticked top-level folders", () => {
 		const pickerEngine = createEngine({
-			ignorePatterns: mergeIgnorePatterns("drafts/", patterns),
+			ignorePatterns: "drafts/",
+			excludedFolders: ["Arch", ROOT_FOLDER],
 		});
 		expect(pickerEngine.shouldIgnore("Arch/a.md")).toBe(true);
 		// Root notes always sync; the root cannot be unticked.
@@ -223,9 +223,14 @@ describe("SyncEngine.shouldIgnore", () => {
 		expect(pickerEngine.shouldIgnore("Archive/b.md")).toBe(false);
 		expect(pickerEngine.shouldIgnore("Projects/Arch/c.md")).toBe(false);
 		expect(pickerEngine.shouldIgnore("Notes/c.md")).toBe(false);
-		// The pre-existing pattern survives the merge, still unanchored.
+		// The user's own pattern is untouched and still unanchored.
 		expect(pickerEngine.shouldIgnore("drafts/x.md")).toBe(true);
 		expect(pickerEngine.shouldIgnore("Projects/drafts/x.md")).toBe(true);
+	});
+
+	test("a user's leading-/ line stays a no-op, as on origin/main", () => {
+		const e = createEngine({ ignorePatterns: "/Projects/" });
+		expect(e.shouldIgnore("Projects/a.md")).toBe(false);
 	});
 
 	test("user-written unanchored patterns match at any depth, as before", () => {

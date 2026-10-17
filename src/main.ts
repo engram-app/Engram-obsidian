@@ -44,7 +44,6 @@ import { type CrdtOp, CrdtOpQueue, makeDropReporter } from "./crdt-op-queue";
 import { createDebugApi, installDebugApi, uninstallDebugApi } from "./debug-api";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
 import { isMarkdownPath } from "./file-kind";
-import { mergeIgnorePatterns } from "./folder-picker";
 import { setLogSink } from "./has-logging";
 import { noteRef } from "./note-ref";
 import { PromiseTracker, setActiveTracker } from "./track-promise";
@@ -1583,6 +1582,9 @@ export default class EngramSyncPlugin extends Plugin {
 	async loadSettings(): Promise<void> {
 		const data = await this.loadPluginData();
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, data?.settings);
+		// Own copy: Object.assign would share DEFAULT_SETTINGS' array.
+		const excluded = this.settings.excludedFolders;
+		this.settings.excludedFolders = Array.isArray(excluded) ? [...excluded] : [];
 		// Collapse the legacy remoteLoggingEnabled / diagnosticMode / tracingEnabled
 		// toggles into the single diagnosticsEnabled (on if any legacy one was on),
 		// then drop the stale keys so the next save persists only the new shape.
@@ -3585,26 +3587,27 @@ export default class EngramSyncPlugin extends Plugin {
 			...opts,
 			fetchUsage: () => this.api.getBillingUsage(),
 			upgradeUrl: upgradeUrlFor(this.settings),
-			applyExclusions: (patterns) => this.applyOverLimitExclusions(patterns),
+			applyExclusions: (folders) => this.applyOverLimitExclusions(folders),
 		});
 	}
 
-	/** Over-limit step: the unticked folders become ignore patterns. The plan
-	 *  is recomputed with the candidate patterns FIRST and they are persisted
-	 *  only once it succeeds; a failure of either step restores the previous
-	 *  patterns, so a retry or Back never leaves patterns behind a stale plan.
-	 *  Persisted without saveSettings, which would re-fire the first-sync flow
-	 *  for the closed gate and stack a second modal. */
-	private async applyOverLimitExclusions(patterns: string[]): Promise<SyncPlan> {
-		const previous = this.settings.ignorePatterns;
-		this.settings.ignorePatterns = mergeIgnorePatterns(previous, patterns);
+	/** Over-limit step: the unticked top-level folders join
+	 *  `settings.excludedFolders` (the user's ignore text is never touched). The
+	 *  plan is recomputed with them FIRST and they are persisted only once it
+	 *  succeeds; a failure of either step restores the previous list, so a retry
+	 *  or Back never leaves exclusions behind a stale plan. Persisted without
+	 *  saveSettings, which would re-fire the first-sync flow for the closed gate
+	 *  and stack a second modal. */
+	private async applyOverLimitExclusions(folders: string[]): Promise<SyncPlan> {
+		const previous = this.settings.excludedFolders;
+		this.settings.excludedFolders = [...new Set([...previous, ...folders])];
 		this.syncEngine.updateSettings(this.settings);
 		let plan: SyncPlan;
 		try {
 			plan = await this.syncEngine.computeSyncPlan("full");
 			await this.savePluginData(this.syncEngine.getLastSync());
 		} catch (e: unknown) {
-			this.settings.ignorePatterns = previous;
+			this.settings.excludedFolders = previous;
 			this.syncEngine.updateSettings(this.settings);
 			throw e;
 		}

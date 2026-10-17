@@ -302,6 +302,7 @@ const ptBR: Dict = {
 	"Error: {error}": "Erro: {error}",
 	"Errors only": "Erros apenas",
 	"Everything is in sync": "Tudo está sincronizado",
+	"Excluded folders": "Pastas excluídas",
 	"Failed to start device flow. Check your Engram URL and try again.":
 		"Falha ao iniciar o fluxo do dispositivo. Verifique sua URL de Engram e tente novamente.",
 	"Failed to switch vault: {error}": "Falha ao alternar de cofre: {error}",
@@ -531,6 +532,7 @@ const ptBR: Dict = {
 	"Switch vault": "Trocar de cofre",
 	"Switched to {mode}.": "Alterado para {mode}.",
 	Sync: "Sincronizar",
+	"Sync again": "Sincronizar novamente",
 	"Sync complete": "Sincronização completa",
 	"Sync failed": "Sincronização falhou",
 	"Sync in progress...": "Sincronização em andamento...",
@@ -596,6 +598,8 @@ const ptBR: Dict = {
 		"Muitos cofres Obsidian conectados. Desconecte um ou faça um upgrade.",
 	"Too many requests. Wait a moment and try again.":
 		"Muitos pedidos. Aguarde um momento e tente novamente.",
+	"Top-level folders you chose not to sync.":
+		"Pastas principais que você escolheu não sincronizar.",
 	"Try again": "Tentar novamente",
 	"Type {keyword} to confirm:": "Digite {keyword} para confirmar:",
 	"Unknown error": "Erro desconhecido",

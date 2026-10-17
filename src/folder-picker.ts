@@ -6,10 +6,10 @@
  * ignore-path setting later. The logic lives in pure functions so it is tested
  * without a DOM; the class only walks their results.
  *
- * Exclusions become lines in `settings.ignorePatterns`, so the semantics here
- * MUST be the ones `SyncEngine.shouldIgnore` applies. That is why
- * `matchesIgnorePattern` lives here and the engine calls it: one matcher, so
- * the picker's "Selected" total is exactly what will sync.
+ * Exclusions are stored as top-level folder names in `settings.excludedFolders`
+ * (never in the user's ignore text), and `SyncEngine.shouldIgnore` checks them
+ * with `inExcludedFolder`: one matcher, so the picker's "Selected" total is
+ * exactly what will sync.
  */
 import { currentLocale, t } from "./i18n";
 
@@ -17,16 +17,9 @@ import { currentLocale, t } from "./i18n";
 export const ROOT_FOLDER = "";
 
 /** Does one `ignorePatterns` line match `path`? A trailing "/" is a folder
- *  prefix, anything else an exact file name. Unanchored, both match at the root
- *  or nested. A leading "/" anchors to the vault root ("/Archive/" is only the
- *  top-level Archive). Vault paths never start with "/", so before anchoring a
- *  leading-"/" line matched nothing; no existing pattern changes meaning.
+ *  prefix, anything else an exact file name; both match at the root or nested.
  *  Neither glob nor regex. */
 export function matchesIgnorePattern(path: string, pattern: string): boolean {
-	if (pattern.startsWith("/")) {
-		const anchored = pattern.slice(1);
-		return anchored.endsWith("/") ? path.startsWith(anchored) : path === anchored;
-	}
 	if (pattern.endsWith("/")) {
 		return path.startsWith(pattern) || path.includes(`/${pattern}`);
 	}
@@ -61,30 +54,19 @@ export function countNotesByFolder(paths: string[]): FolderCount[] {
 		);
 }
 
-/** The `ignorePatterns` lines that exclude `excluded`: one root-anchored
- *  folder line each. The root pseudo-folder writes nothing, root notes always
- *  sync. */
-export function excludedToIgnorePatterns(excluded: Iterable<string>): string[] {
-	return [...excluded].filter((f) => f !== ROOT_FOLDER).map((f) => `/${f}/`);
+/** Is `path` inside one of the excluded top-level folders? Anchored at the
+ *  vault root: "Archive" is not "Projects/Archive" nor "Archived". The root
+ *  pseudo-folder excludes nothing, root notes always sync. */
+export function inExcludedFolder(path: string, excluded: Iterable<string>): boolean {
+	for (const f of excluded) if (f !== ROOT_FOLDER && path.startsWith(`${f}/`)) return true;
+	return false;
 }
 
-/** How many of `paths` still sync once `excluded` is written as patterns.
- *  Uses the real matcher, so the count is exactly what shouldIgnore will do. */
+/** How many of `paths` still sync with `excluded` left out. Uses the engine's
+ *  matcher, so the count is exactly what shouldIgnore will do. */
 export function selectedNoteCount(paths: string[], excluded: Iterable<string>): number {
-	const patterns = excludedToIgnorePatterns(excluded);
-	if (patterns.length === 0) return paths.length;
-	return paths.filter((p) => !patterns.some((pt) => matchesIgnorePattern(p, pt))).length;
-}
-
-/** Append `add` to the newline-separated `ignorePatterns` setting, dropping
- *  blanks and duplicates. Existing lines keep their order. */
-export function mergeIgnorePatterns(existing: string, add: string[]): string {
-	const lines = existing
-		.split("\n")
-		.map((l) => l.trim())
-		.filter((l) => l.length > 0);
-	for (const p of add) if (!lines.includes(p)) lines.push(p);
-	return lines.join("\n");
+	const ex = [...excluded];
+	return paths.filter((p) => !inExcludedFolder(p, ex)).length;
 }
 
 export interface FolderPickerProps {

@@ -239,6 +239,7 @@ const vi: Dict = {
 	"Error: {error}": "Lỗi: {error}",
 	"Errors only": "Chỉ lỗi",
 	"Everything is in sync": "Tất cả đã được đồng bộ hóa",
+	"Excluded folders": "Thư mục bị loại trừ",
 	"Failed to start device flow. Check your Engram URL and try again.":
 		"Không thể khởi động quá trình xác thực. Kiểm tra URL Engram của bạn và thử lại.",
 	"Failed to switch vault: {error}": "Không thể chuyển đổi kho lưu trữ: {error}",
@@ -459,6 +460,7 @@ const vi: Dict = {
 	"Switch vault": "Chuyển đổi kho lưu trữ",
 	"Switched to {mode}.": "Đã chuyển sang {mode}.",
 	Sync: "Đồng bộ hóa",
+	"Sync again": "Đồng bộ hóa lại",
 	"Sync complete": "Đã hoàn thành đồng bộ hóa",
 	"Sync failed": "Đồng bộ hóa thất bại",
 	"Sync in progress...": "Đang đồng bộ hóa...",
@@ -520,6 +522,8 @@ const vi: Dict = {
 		"Quá nhiều kho lưu trữ Obsidian được kết nối. Ngắt kết nối một kho hoặc nâng cấp.",
 	"Too many requests. Wait a moment and try again.":
 		"Quá nhiều yêu cầu. Chờ một lát rồi thử lại.",
+	"Top-level folders you chose not to sync.":
+		"Các thư mục cấp cao mà bạn không chọn đồng bộ hóa.",
 	"Try again": "Thử lại",
 	"Type {keyword} to confirm:": "Nhập {keyword} để xác nhận:",
 	"Unknown error": "Lỗi không xác định",

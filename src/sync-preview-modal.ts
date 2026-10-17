@@ -1,7 +1,7 @@
 import { type App, Modal, setIcon } from "obsidian";
 import { devLog } from "./dev-log";
 import { errMsg, statusOf } from "./error-util";
-import { excludedToIgnorePatterns, FolderPicker, selectedNoteCount } from "./folder-picker";
+import { FolderPicker, ROOT_FOLDER, selectedNoteCount } from "./folder-picker";
 import { currentLocale, t, tInto } from "./i18n";
 import { userErrorMessage } from "./i18n/user-error";
 import { toastFor } from "./limit-copy";
@@ -592,9 +592,9 @@ export interface SyncPreviewOptions {
 	/** Billing page for the over-limit step's Upgrade button. Null/omitted on a
 	 *  server that sells no plans (see upgradeUrlFor), which hides the button. */
 	upgradeUrl?: string | null;
-	/** Saves the over-limit step's ignore patterns and returns the recomputed
-	 *  plan. Only called when the user unticked at least one folder. */
-	applyExclusions?: (patterns: string[]) => Promise<SyncPlan>;
+	/** Saves the over-limit step's unticked top-level folders and returns the
+	 *  recomputed plan. Only called when the user unticked at least one. */
+	applyExclusions?: (folders: string[]) => Promise<SyncPlan>;
 	/** `/billing/usage`, for the notes quota. Fetched on open, again on
 	 *  entering the over-limit step and on window focus while it is open (the
 	 *  user may have just upgraded in the browser). */
@@ -1361,15 +1361,15 @@ export class SyncPreviewModal extends Modal {
 
 	private async continueOverLimit(refresh: () => void, error: HTMLElement): Promise<void> {
 		if (!this.state.canContinueOverLimit()) return;
-		const patterns = this.state.overLimitOffersPicker()
-			? excludedToIgnorePatterns(this.state.overLimitExcluded)
+		const folders = this.state.overLimitOffersPicker()
+			? this.state.overLimitExcluded.filter((f) => f !== ROOT_FOLDER)
 			: [];
 		let plan: SyncPlan | null = null;
-		if (patterns.length > 0 && this.opts.applyExclusions) {
+		if (folders.length > 0 && this.opts.applyExclusions) {
 			this.state.beginOverLimitSave();
 			refresh();
 			try {
-				plan = await this.opts.applyExclusions(patterns);
+				plan = await this.opts.applyExclusions(folders);
 			} catch (e: unknown) {
 				devLog().log("error", `saving over-limit exclusions failed: ${errMsg(e)}`);
 				this.state.endOverLimitSave(t("Could not save your folder choice. Try again."));

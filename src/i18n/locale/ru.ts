@@ -317,6 +317,7 @@ const ru: Dict = {
 	"Error: {error}": "Ошибка: {error}",
 	"Errors only": "Только ошибки",
 	"Everything is in sync": "Всё синхронизировано",
+	"Excluded folders": "Исключенные папки",
 	"Failed to start device flow. Check your Engram URL and try again.":
 		"Не удалось запустить процесс аутентификации. Проверьте ваш URL Engram и попробуйте снова.",
 	"Failed to switch vault: {error}": "Не удалось переключить хранилище: {error}",
@@ -551,6 +552,7 @@ const ru: Dict = {
 	"Switch vault": "Переключить хранилище",
 	"Switched to {mode}.": "Переключено на {mode}.",
 	Sync: "Синхронизировать",
+	"Sync again": "Синхронизировать снова",
 	"Sync complete": "Синхронизация завершена",
 	"Sync failed": "Синхронизация не удалась",
 	"Sync in progress...": "Синхронизация в процессе...",
@@ -616,6 +618,8 @@ const ru: Dict = {
 		"Подключено слишком много хранилищ Obsidian. Отключите одно или обновите тариф.",
 	"Too many requests. Wait a moment and try again.":
 		"Слишком много запросов. Подождите немного и попробуйте ещё раз.",
+	"Top-level folders you chose not to sync.":
+		"Папки верхнего уровня, которые вы решили не синхронизировать.",
 	"Try again": "Повторить попытку",
 	"Type {keyword} to confirm:": "Введите {keyword}, чтобы подтвердить:",
 	"Unknown error": "Неизвестная ошибка",

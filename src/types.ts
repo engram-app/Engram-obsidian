@@ -36,6 +36,10 @@ export interface EngramSyncSettings {
 	 *  suffixes (".pdf"); neither glob nor regex (see SyncEngine.shouldIgnore).
 	 *  Defaults: .obsidian/, .trash/, .git/ */
 	ignorePatterns: string;
+	/** Top-level folders unticked in the first-sync folder picker. Kept apart
+	 *  from `ignorePatterns` so the user's own text is never rewritten; matched
+	 *  root-anchored (see `inExcludedFolder`). */
+	excludedFolders: string[];
 	/** Debounce delay in ms for modify events */
 	debounceMs: number;
 	/** Single diagnostics switch. When on: ship sync/error events AND verbose
@@ -115,6 +119,7 @@ export const DEFAULT_SETTINGS: EngramSyncSettings = {
 	apiUrl: "",
 	apiKey: "",
 	ignorePatterns: "",
+	excludedFolders: [],
 	debounceMs: 2000,
 	diagnosticsEnabled: false,
 	remoteLogLevel: "info",

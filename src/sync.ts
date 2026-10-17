@@ -36,7 +36,7 @@ import { devLog } from "./dev-log";
 import { errMsg, isHttpStatus } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
 import { isCanvasPath as canvasPath, isCrdtEligiblePath as crdtEligiblePath } from "./file-kind";
-import { matchesIgnorePattern } from "./folder-picker";
+import { inExcludedFolder, matchesIgnorePattern } from "./folder-picker";
 import { t } from "./i18n";
 import { userErrorMessage } from "./i18n/user-error";
 import { IgnoredFiles } from "./ignored-files";
@@ -3500,6 +3500,7 @@ export class SyncEngine {
 		}
 		// User-explicit per-file ignores (from Sync Center)
 		if (this.ignoredFiles.has(path)) return true;
+		if (inExcludedFolder(path, this.settings.excludedFolders ?? [])) return true;
 		return this.ignorePatterns.some((pattern) => matchesIgnorePattern(path, pattern));
 	}
 

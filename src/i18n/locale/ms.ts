@@ -242,6 +242,7 @@ const ms: Dict = {
 	"Error: {error}": "Ralat: {error}",
 	"Errors only": "Ralat sahaja",
 	"Everything is in sync": "Segalanya sudah disegerakkan",
+	"Excluded folders": "Folder yang dikecualikan",
 	"Failed to start device flow. Check your Engram URL and try again.":
 		"Gagal memulakan proses. Semak URL Engram anda dan cuba lagi.",
 	"Failed to switch vault: {error}": "Gagal beralih peti nota: {error}",
@@ -461,6 +462,7 @@ const ms: Dict = {
 	"Switch vault": "Tukar peti nota",
 	"Switched to {mode}.": "Beralih ke {mode}.",
 	Sync: "Segerakkan",
+	"Sync again": "Segerakkan semula",
 	"Sync complete": "Sync selesai",
 	"Sync failed": "Kegagalan penyegerakan",
 	"Sync in progress...": "Proses sync sedang berjalan...",
@@ -523,6 +525,8 @@ const ms: Dict = {
 		"Terlalu banyak Peti Nota Obsidian yang disambungkan. Putuskan sambungan satu atau tingkatkan.",
 	"Too many requests. Wait a moment and try again.":
 		"Terlalu banyak permintaan. Tunggu sebentar dan cuba lagi.",
+	"Top-level folders you chose not to sync.":
+		"Folder utama yang anda pilih untuk tidak disegerakkan.",
 	"Try again": "Cuba lagi",
 	"Type {keyword} to confirm:": "Taip {keyword} untuk mengesahkan:",
 	"Unknown error": "Ralat tidak diketahui",
