@@ -1147,16 +1147,15 @@ export class SyncEngine {
 			// offline delete must stay unmapped (else the deleted note comes back).
 			// A cross-wired local entry is still wrong, though: forget it (local
 			// only, `delete` publishes nothing) so it stops routing frames.
-			if (
-				this.shouldIgnore(path) ||
-				this.queue.hasPendingEvidencedDelete(path, this.settings.vaultId ?? undefined)
-			) {
+			if (this.isRefusedPath(path)) {
 				if (localPath !== null) {
 					this.noteIdMap.delete(localPath);
 					applied++;
 				}
+				this.idMapRefused.set(note.id, path); // so its fan-outs cost no GET
 				continue;
 			}
+			this.idMapRefused.delete(note.id); // listed at a path we may map now
 			// Otherwise the manifest wins. Either the id is unknown locally
 			// (drifted/empty map, or a wrong id minted by getOrMint), OR it is
 			// cross-wired onto another note's real path (localPath is itself a
@@ -1220,6 +1219,14 @@ export class SyncEngine {
 		if (this.recentlyDeleted.has(noteId)) return;
 
 		if (this.noteIdMap.pathForId(noteId) !== null) return; // already mapped
+		// The manifest already answered for this id, at a path we refuse to map:
+		// another fetch would only say it again (a storm per fan-out). Re-checked
+		// here, so the entry clears itself once the reason is gone.
+		const refused = this.idMapRefused.get(noteId);
+		if (refused !== undefined) {
+			if (this.isRefusedPath(refused)) return;
+			this.idMapRefused.delete(noteId);
+		}
 		// Every call is a new external event (announce, fan-out); our own retries
 		// never come through here. So it may demand a fetch that starts after now,
 		// and reset the retry budget: fresh evidence earns a full one.
@@ -1320,13 +1327,28 @@ export class SyncEngine {
 		return true;
 	}
 
+	/** A path the id map must not hold: ignored, or with a pending offline
+	 *  delete (mapping it would let the next fan-out resurrect the note). */
+	private isRefusedPath(path: string): boolean {
+		return (
+			this.shouldIgnore(path) ||
+			this.queue.hasPendingEvidencedDelete(path, this.settings.vaultId ?? undefined)
+		);
+	}
+
 	/** Settle every pending id that no longer needs a fetch: mapped by any path,
-	 *  deleted here, or (gate closed / no map) not ours to heal right now. */
+	 *  refused by the manifest, deleted here, or (gate closed / no map) not ours
+	 *  to heal right now. */
 	private pruneIdMapPending(): void {
 		if (this.idMapPending.size === 0) return;
 		const drop = this.syncBlocked || !this.noteIdMap;
 		for (const id of [...this.idMapPending.keys()]) {
-			if (drop || this.recentlyDeleted.has(id) || this.noteIdMap?.pathForId(id) != null)
+			if (
+				drop ||
+				this.recentlyDeleted.has(id) ||
+				this.idMapRefused.has(id) ||
+				this.noteIdMap?.pathForId(id) != null
+			)
 				this.settleIdMapPending(id);
 		}
 	}
@@ -1450,6 +1472,12 @@ export class SyncEngine {
 			for (const resolve of entry.waiters) resolve();
 		},
 	);
+	/** id -> the path the manifest lists it at, which `isRefusedPath` refuses.
+	 *  A hiding layer, so every entry has named clearing events: re-validated
+	 *  on each `ensureNoteIdMapped` (clears when the pending delete resolves or
+	 *  the ignore settings change), dropped when a later manifest lists the id
+	 *  at a mappable path, and swept on vault switch / destroy. */
+	private idMapRefused = this.track(["vault", "destroy"], new Map<string, string>());
 	private idMapFailures = 0;
 	private idMapEpoch = 0;
 	/** Live fetches started (never reset: entries compare against it). */

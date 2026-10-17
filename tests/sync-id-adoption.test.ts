@@ -1214,6 +1214,22 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			expect(map.pathForId("cfg")).toBe("Drafts/x.md");
 		});
 
+		test("#2 a refused id is fetched again once its pending delete resolves", async () => {
+			const { engine, map } = throttledEngine();
+			engine.queue.load([
+				{ path: "gone.md", action: "delete", evidenced: true, mtime: 1, timestamp: 1 } as any,
+			]);
+			liveManifest([{ id: "g", path: "gone.md" }]);
+			engine.ensureNoteIdMapped("g");
+			await flush();
+			expect(map.pathForId("g")).toBeNull();
+			engine.queue.cancel("gone.md");
+			engine.ensureNoteIdMapped("g");
+			void engine.awaitNoteIdMapped("g");
+			await flush();
+			expect(map.pathForId("g")).toBe("gone.md");
+		});
+
 		test("#4 a fresh request resets the retry budget", async () => {
 			const { engine, time } = throttledEngine();
 			liveManifest([]);
