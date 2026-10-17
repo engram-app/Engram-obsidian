@@ -4452,7 +4452,6 @@ describe("SyncEngine gate-window journal (#247)", () => {
 		const folders = new Set(["Archive"]);
 		(g.engine as any).explicitFolders = {
 			has: (p: string) => folders.has(p),
-			serverName: (p: string) => p,
 			delete: async (p: string) => folders.delete(p),
 			add: async (p: string) => folders.add(p),
 		};
