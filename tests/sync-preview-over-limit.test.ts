@@ -796,3 +796,19 @@ describe("a slow re-check after the step opened never starts a sync", () => {
 		expect(await choice).toBe("smart-merge");
 	});
 });
+
+describe("no exclusions hook fails closed", () => {
+	test("unticked folders without a way to save them never upload everything", async () => {
+		const { modal } = openOverLimit(); // no applyExclusions
+		const archive = checkboxFor(modal.contentEl, "Archive 3 notes (3 new)");
+		archive.checked = false;
+		archive.listeners.change();
+		button(modal, "Continue").listeners.click();
+		await Bun.sleep(0);
+
+		expect(modal.state.view).toBe("over-limit");
+		expect(
+			modal.contentEl.__find("Could not save your folder choice. Try again."),
+		).not.toBeNull();
+	});
+});

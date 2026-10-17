@@ -568,7 +568,7 @@ export interface SyncPreviewOptions {
 	 *  when the user unticked at least one; the modal then filters its own
 	 *  plan (planWithoutFolders). `signal` aborts when the modal closes first:
 	 *  nothing may be committed. */
-	applyExclusions?: (folders: string[], signal: AbortSignal) => Promise<void>;
+	applyExclusions: (folders: string[], signal: AbortSignal) => Promise<void>;
 	/** `/billing/usage`, for the notes quota. Fetched on open, again on
 	 *  entering the over-limit step and on window focus while it is open (the
 	 *  user may have just upgraded in the browser). */
@@ -1366,7 +1366,7 @@ export class SyncPreviewModal extends Modal {
 			? this.state.overLimitExcluded.filter((f) => f !== ROOT_FOLDER)
 			: [];
 		let plan: SyncPlan | null = null;
-		if (folders.length > 0 && this.opts.applyExclusions) {
+		if (folders.length > 0) {
 			this.state.beginOverLimitSave();
 			refresh();
 			const saving = new AbortController();
