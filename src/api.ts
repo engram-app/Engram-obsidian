@@ -73,6 +73,12 @@ export async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 	}
 }
 
+/** POST /folders/batch result: what each input was stored as, and refusals. */
+export interface CreateFoldersResult {
+	folders: { input: string; name: string }[];
+	rejected: string[];
+}
+
 export class EngramApi {
 	/** Deadline for note/metadata requests. Instance fields (not consts) so
 	 *  tests can shrink them; attachments get a longer one — a large upload on
@@ -805,14 +811,22 @@ export class EngramApi {
 	}
 
 	/** Create many explicit folder markers in one request (server caps it at
-	 *  500). Idempotent like createFolder. Returns the server-side names, or
-	 *  null on 404: a backend that predates POST /folders/batch, so the caller
-	 *  falls back to createFolder per folder. */
-	async createFolders(folders: string[]): Promise<string[] | null> {
+	 *  500). Idempotent like createFolder. Returns each input paired with the
+	 *  name the server stored it under (its sanitizer may rewrite it), plus the
+	 *  inputs it refused (they sanitize to the vault root). null on 404: a
+	 *  backend that predates POST /folders/batch, so the caller falls back to
+	 *  createFolder per folder. */
+	async createFolders(folders: string[]): Promise<CreateFoldersResult | null> {
 		try {
 			const resp = await this.request("POST", "/folders/batch", { folders });
-			const body = resp.json as { folders?: { name: string }[] };
-			return (body.folders ?? []).map((f) => f.name);
+			const body = resp.json as {
+				folders?: { input: string; name: string }[];
+				rejected?: string[];
+			};
+			return {
+				folders: (body.folders ?? []).map((f) => ({ input: f.input, name: f.name })),
+				rejected: body.rejected ?? [],
+			};
 		} catch (e) {
 			if (isHttpStatus(e, 404)) return null;
 			throw e;

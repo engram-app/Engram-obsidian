@@ -408,7 +408,8 @@ describe("SyncEngine.seedEmptyFolders via POST /folders/batch", () => {
 	function setVaultFolders(folders: TFolder[]) {
 		mockApp.vault.getAllLoadedFiles = mock().mockReturnValue(folders);
 	}
-	const echo = (folders: string[]) => Promise.resolve(folders);
+	const echo = (folders: string[]) =>
+		Promise.resolve({ folders: folders.map((f) => ({ input: f, name: f })), rejected: [] });
 
 	test("sends every empty folder in one batch, never the single endpoint", async () => {
 		const { engine, explicit } = await createEngine();
@@ -519,6 +520,135 @@ describe("SyncEngine.seedEmptyFolders via POST /folders/batch", () => {
 		expect(mockApi.createFolders).toHaveBeenCalledTimes(2);
 		expect(explicit.has("F0")).toBe(false);
 		expect(explicit.has("F500")).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Server-rewritten names, refusals, and deletes racing an in-flight seed
+// ---------------------------------------------------------------------------
+//
+// The server sanitizes folder names (`Bad:Name` is stored as `BadName`). If the
+// plugin records only its LOCAL name, the self-echo folders.batch makes
+// resyncFolders see `BadName`, decide `Bad:Name` was deleted elsewhere, trash
+// it, and materialize `BadName`; the next seed then resends `Bad:Name` forever.
+
+describe("SyncEngine folder seeding: server names, refusals, in-flight deletes", () => {
+	function setVaultFolders(folders: TFolder[]) {
+		mockApp.vault.getAllLoadedFiles = mock().mockReturnValue(folders);
+	}
+	function onDisk(folders: TFolder[]) {
+		mockApp.vault.getAbstractFileByPath.mockImplementation(
+			(p: string) => folders.find((f) => f.path === p) ?? null,
+		);
+	}
+	const createdOnDisk = () =>
+		(mockApp.vault.createFolder as jest.Mock).mock.calls.map((c) => c[0] as string);
+
+	test("a sanitized name survives the self-echo resync and later resyncs", async () => {
+		const { engine, explicit } = await createEngine();
+		(mockApp.vault.createFolder as jest.Mock).mockClear();
+		const local = new TFolder("Bad:Name", []);
+		setVaultFolders([local]);
+		onDisk([local]);
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValue(["BadName"]);
+		// The folders.batch self-echo lands BEFORE the POST response does.
+		(mockApi.createFolders as jest.Mock).mockImplementation(async () => {
+			await engine.resyncFolders();
+			return { folders: [{ input: "Bad:Name", name: "BadName" }], rejected: [] };
+		});
+
+		await engine.seedEmptyFolders();
+		await engine.resyncFolders();
+		await engine.seedEmptyFolders();
+
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
+		expect(createdOnDisk()).not.toContain("BadName");
+		expect(explicit.has("Bad:Name")).toBe(true);
+		expect(mockApi.createFolders).toHaveBeenCalledTimes(1);
+	});
+
+	test("deleting the local folder deletes the SERVER name", async () => {
+		const { engine } = await createEngine();
+		const local = new TFolder("Bad:Name", []);
+		setVaultFolders([local]);
+		(mockApi.createFolders as jest.Mock).mockResolvedValue({
+			folders: [{ input: "Bad:Name", name: "BadName" }],
+			rejected: [],
+		});
+		await engine.seedEmptyFolders();
+
+		await engine.handleFolderDelete({ path: "Bad:Name" });
+
+		expect(mockApi.deleteFolder).toHaveBeenCalledWith("BadName");
+	});
+
+	test("a folder the server rewrote and another device deleted is trashed", async () => {
+		const { engine } = await createEngine();
+		const local = new TFolder("Bad:Name", []);
+		setVaultFolders([local]);
+		onDisk([local]);
+		(mockApi.createFolders as jest.Mock).mockResolvedValue({
+			folders: [{ input: "Bad:Name", name: "BadName" }],
+			rejected: [],
+		});
+		await engine.seedEmptyFolders();
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValue([]);
+
+		await engine.resyncFolders();
+
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(local);
+	});
+
+	test("a folder the batch rejects is not resent on the next pass", async () => {
+		const { engine } = await createEngine();
+		setVaultFolders([new TFolder("%2e%2e", [])]);
+		(mockApi.createFolders as jest.Mock).mockResolvedValue({
+			folders: [],
+			rejected: ["%2e%2e"],
+		});
+
+		await engine.seedEmptyFolders();
+		await engine.seedEmptyFolders();
+
+		expect(mockApi.createFolders).toHaveBeenCalledTimes(1);
+	});
+
+	test("a permanent 422 on the per-folder fallback is not resent", async () => {
+		const { engine } = await createEngine();
+		setVaultFolders([new TFolder("%2e%2e", [])]);
+		(mockApi.createFolder as jest.Mock).mockRejectedValue({ status: 422 });
+
+		await engine.seedEmptyFolders();
+		await engine.seedEmptyFolders();
+
+		expect(mockApi.createFolder).toHaveBeenCalledTimes(1);
+	});
+
+	test("a folder deleted locally while its chunk is in flight is not recreated", async () => {
+		const { engine, explicit } = await createEngine();
+		(mockApp.vault.createFolder as jest.Mock).mockClear();
+		const local = new TFolder("A", []);
+		setVaultFolders([local]);
+		onDisk([local]);
+		// A tiny server: the POST creates "A", a DELETE removes it.
+		const server = new Set<string>();
+		(mockApi.listExplicitFolders as jest.Mock).mockImplementation(async () => [...server]);
+		(mockApi.deleteFolder as jest.Mock).mockImplementation(async (p: string) => {
+			server.delete(p);
+		});
+		(mockApi.createFolders as jest.Mock).mockImplementation(async () => {
+			server.add("A");
+			onDisk([]);
+			await engine.handleFolderDelete({ path: "A" });
+			await engine.resyncFolders(); // the self-echo
+			return { folders: [{ input: "A", name: "A" }], rejected: [] };
+		});
+
+		await engine.seedEmptyFolders();
+
+		expect(createdOnDisk()).not.toContain("A");
+		expect(mockApi.deleteFolder).toHaveBeenCalledWith("A");
+		expect(explicit.has("A")).toBe(false);
 	});
 });
 

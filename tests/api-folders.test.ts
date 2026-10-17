@@ -48,23 +48,30 @@ describe("EngramApi.createFolder", () => {
 });
 
 describe("EngramApi.createFolders", () => {
-	test("POSTs /folders/batch and returns the created names", async () => {
+	test("POSTs /folders/batch and returns input/name pairs and refusals", async () => {
 		mockRequestUrl.mockResolvedValueOnce({
 			status: 201,
 			json: {
 				folders: [
-					{ name: "A", count: 0 },
-					{ name: "B/C", count: 0 },
+					{ input: "A", name: "A", count: 0 },
+					{ input: "B:C", name: "BC", count: 0 },
 				],
+				rejected: [".."],
 			},
 		} as any);
 		const api = new EngramApi(TEST_SERVER, TEST_KEY);
-		const result = await api.createFolders(["A", "B/C"]);
+		const result = await api.createFolders(["A", "B:C", ".."]);
 		const opts = mockRequestUrl.mock.calls[0][0] as any;
 		expect(opts.method).toBe("POST");
 		expect(opts.url).toBe(`${TEST_API_BASE}/folders/batch`);
-		expect(JSON.parse(opts.body)).toEqual({ folders: ["A", "B/C"] });
-		expect(result).toEqual(["A", "B/C"]);
+		expect(JSON.parse(opts.body)).toEqual({ folders: ["A", "B:C", ".."] });
+		expect(result).toEqual({
+			folders: [
+				{ input: "A", name: "A" },
+				{ input: "B:C", name: "BC" },
+			],
+			rejected: [".."],
+		});
 	});
 
 	test("returns null on 404 (backend predates the batch endpoint)", async () => {
