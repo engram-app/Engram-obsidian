@@ -80,7 +80,7 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
 				break;
 			case "reachable":
 				status.addClass("is-reachable");
-				status.setText(t("✗ server responded but isn't an Engram backend"));
+				status.setText(t("✗ server responded but isn't an Engram server"));
 				break;
 			case "unreachable":
 				status.addClass("is-unreachable");
@@ -145,7 +145,7 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
 		plugin.settings.backendMode = modeForUrl(plugin.settings.apiUrl, ENGRAM_CLOUD_URL);
 		await plugin.saveSettings();
 		if (cleared) {
-			new Notice(t("Engram backend changed — sign in again to continue."));
+			new Notice(t("Engram server changed — sign in again to continue."));
 		}
 		redisplay();
 	};
@@ -324,7 +324,7 @@ export function renderAuthSection(ctx: TabContext): void {
 
 	let pendingKey = "";
 	const apiKeySetting = new Setting(containerEl)
-		.setName(t("Token"))
+		.setName(t("Access token"))
 		// The key prefix is deliberately NOT named here. The obsidianmd
 		// sentence-case rule treats "engram" as a proper noun and rewrites it to
 		// "Engram_", which is wrong: real keys are lowercase. The input's

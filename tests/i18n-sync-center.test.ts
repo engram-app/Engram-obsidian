@@ -10,13 +10,16 @@ import type { Dict, Entry } from "../src/i18n";
 import de from "../src/i18n/locale/de";
 import es from "../src/i18n/locale/es";
 import fr from "../src/i18n/locale/fr";
+import id from "../src/i18n/locale/id";
 import it from "../src/i18n/locale/it";
 import ja from "../src/i18n/locale/ja";
 import ko from "../src/i18n/locale/ko";
 import ms from "../src/i18n/locale/ms";
+import pl from "../src/i18n/locale/pl";
 import pt from "../src/i18n/locale/pt";
 import ptBR from "../src/i18n/locale/pt-BR";
 import ru from "../src/i18n/locale/ru";
+import tr from "../src/i18n/locale/tr";
 import zh from "../src/i18n/locale/zh";
 import zhTW from "../src/i18n/locale/zh-TW";
 
@@ -24,30 +27,37 @@ const LOCALES: Record<string, Dict> = {
 	de,
 	es,
 	fr,
+	id,
 	it,
 	ja,
 	ko,
 	ms,
+	pl,
 	pt,
 	"pt-BR": ptBR,
 	ru,
+	tr,
 	zh,
 	"zh-TW": zhTW,
 };
 
 // The agreed term per locale (see src/i18n/locale/README.md). Russian declines it, so its
-// pattern allows the case ending ("в Центре синхронизации").
+// pattern allows the case ending ("в Центре синхронизации"); pl and tr lowercase it
+// mid-sentence ("Otwórz centrum synchronizacji").
 const TERM: Record<string, RegExp> = {
 	de: /Sync-Zentrale/,
 	es: /Centro de sincronización/,
 	fr: /Centre de synchronisation/,
+	id: /Pusat Sinkronisasi/,
 	it: /Centro di sincronizzazione/,
 	ja: /同期センター/,
 	ko: /동기화 센터/,
 	ms: /Pusat Sync/,
+	pl: /[Cc]entrum synchronizacji/,
 	pt: /Centro de sincronização/,
 	"pt-BR": /Central de sincronização/,
 	ru: /Центр[а-я]* синхронизации/,
+	tr: /Senkronizasyon [Mm]erkez/,
 	zh: /同步中心/,
 	"zh-TW": /同步中心/,
 };

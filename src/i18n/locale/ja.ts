@@ -24,10 +24,11 @@ const ja: Dict = {
 	"AI searches": "AI検索",
 	"API access": "APIアクセス",
 	"API key": "APIキー",
-	"API keys need Pro. Sign in with your Engram account instead.":
-		"APIキーはProプランが必要です。代わりにEngramアカウントでサインインしてください。",
+	"API keys need a Pro plan. Sign in with your Engram account instead.":
+		"APIキーにはProプランが必要です。代わりにEngramアカウントでサインインしてください。",
 	About: "概要",
 	"Accept it to keep syncing.": "同期を続ける場合は、同意してください。",
+	"Access token": "アクセストークン",
 	"Account setup incomplete.": "アカウントの設定が完了していません。",
 	"Account suspended. Contact support.":
 		"アカウントが停止されています。サポートにお問い合わせください。",
@@ -56,7 +57,6 @@ const ja: Dict = {
 	"Authenticated via manual API key.": "手動で入力したAPIキーで認証済み",
 	Authentication: "認証",
 	Back: "戻る",
-	Backend: "バックエンド",
 	"Bearer token from your Engram account.": "Engramアカウントのベアラートークン。",
 	Both: "両方",
 	Bug: "バグ",
@@ -106,8 +106,8 @@ const ja: Dict = {
 	"Couldn't send your feedback, please try again.":
 		"フィードバックの送信に失敗しました。再度お試しください。",
 	Create: "作成",
-	"Create a hosted account at {signup}, or self-host the backend ({guide}).":
-		"{signup} でホストされたアカウントを作成するか、バックエンドを自己ホストします ({guide})。",
+	"Create a hosted account at {signup}, or self-host the server ({guide}).":
+		"{signup} でホストされたアカウントを作成するか、サーバーを自社でホストします ({guide})。",
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"サーバー上に新しい空の保管庫を作成し、このObsidian保管庫をそこに同期します。",
 	"Custom patterns": "カスタムパターン",
@@ -142,7 +142,6 @@ const ja: Dict = {
 	"Download {count} files from the server": "サーバーから{count}つのファイルをダウンロードします",
 	Downloading: "ダウンロード中",
 	"Downloading {count}.": "ダウンロード中 {count}.",
-	"Downloads {count}.": "ダウンロード {count}.",
 	"Engram Cloud": "Engram クラウド",
 	"Engram Sync: pulled {count} changes": "Engram 同期: {count}つの変更を適用しました",
 	"Engram Sync: pulled {count} files from server":
@@ -164,13 +163,13 @@ const ja: Dict = {
 	"Engram URL": "EngramのURL",
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} が利用可能です。{link}.",
-	"Engram backend changed — sign in again to continue.":
-		"Engramのバックエンドが変更されました。続行するには、再度サインインしてください。",
 	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
 		"Engram は、あなたの {all} 個のノートのうち {indexed} 個をインデックス化しています。残りはこのデバイスでのみ検索可能です。すべてをインデックス化するにはアップグレードしてください。",
 	"Engram is the backend that powers sync and semantic search.":
 		"Engramは、同期とセマンティック検索を支えるバックエンドです。",
 	"Engram search": "Engram 検索",
+	"Engram server changed — sign in again to continue.":
+		"Engram サーバーに変更がありました。続行するには、再度サインインしてください。",
 	"Engram sync: checking...": "Engram 同期: 確認中...",
 	"Engram sync: everything in sync": "Engram 同期: 全てが同期済み",
 	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
@@ -202,7 +201,7 @@ const ja: Dict = {
 		"Engram: プラグイン設定ファイルが破損し、復元できませんでした。設定で再接続が必要になる場合があります。",
 	"Engram: ready": "Engram: 準備完了",
 	"Engram: recovered plugin settings from a backup after a corrupted save.":
-		"Engram: 破損した保存ファイルからのプラグイン設定を復元しました。",
+		"Engram: 保存中にエラーが発生したため、バックアップから設定を復元しました。",
 	"Engram: settings tab failed to render ({error})":
 		"Engram: 設定タブの表示に失敗しました ({error})",
 	"Engram: sign-in failed ({error})": "Engram: ログインに失敗しました ({error})",
@@ -226,8 +225,8 @@ const ja: Dict = {
 		"Engram: この保管庫はサーバー上に存在しません。利用可能な保管庫を選択するか、新規作成して続行してください。",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: ログインが期限切れです。Engram の設定を開いて再接続してください。",
-	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.":
-		"Engram: 添付ファイルが{count}件スキップされました。画像やPDFを同期するには、アップグレードしてください。",
+	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.":
+		"Engram: {count}個の添付ファイルをスキップしました。画像やPDFを同期するには、プランをアップグレードしてください。",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
 		"Engram: 同期に失敗したファイルが{count}件あります{detail} — 同期センターを開く",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
@@ -461,6 +460,7 @@ const ja: Dict = {
 	"Sync paused — click to choose a sync direction":
 		"同期を一時停止 — 同期方向を選択するにはクリック",
 	"Sync preview": "同期プレビュー",
+	"Sync server": "同期サーバー",
 	"Sync these now": "今すぐ同期",
 	"Sync...": "同期中...",
 	"Synced. Some attachments need a paid plan to sync (see below).":
@@ -471,7 +471,7 @@ const ja: Dict = {
 	"Syncing…": "同期中…",
 	"Tell us anything": "何でもお気軽にお知らせください",
 	"Temporary errors. These clear themselves once the server recovers.":
-		"一時的なエラーです。サーバーが復旧すると自動的に解消されます。",
+		"一時的なエラーです。サーバーが復旧すると解消されます。",
 	"Terms of Service": "利用規約",
 	"Thanks, we read every message.": "ありがとうございます。すべてのメッセージを拝見します。",
 	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":
@@ -505,7 +505,6 @@ const ja: Dict = {
 	"This vault": "この保管庫",
 	"This vault is empty on the server. Upload your {what}?":
 		"この保管庫はサーバー上で空です。{what} をアップロードしますか？",
-	Token: "トークン",
 	"Too large for the server": "ファイルサイズが大きすぎます",
 	"Too many connected AI clients. Disconnect one or upgrade.":
 		"接続されているAIクライアントが多すぎます。いずれかを解除するか、アップグレードしてください。",
@@ -529,7 +528,6 @@ const ja: Dict = {
 	"Upload {count} files from this vault": "この保管庫から{count}つのファイルをアップロードします",
 	Uploading: "アップロード中",
 	"Uploading {count}.": "アップロード中 {count}.",
-	"Uploads {count}.": "アップロード {count}.",
 	"Uploads {up}, downloads {down}.": "アップロード {up}、ダウンロード {down}.",
 	"Using API key": "APIキーを使用中",
 	Vault: "保管庫",
@@ -553,6 +551,8 @@ const ja: Dict = {
 		"何がうまくいっていて、何がストレスで、Engramにはどのような機能が欲しいですか？",
 	"Where this vault syncs to. Each backend keeps its own sign-in.":
 		"この保管庫が同期される場所。各バックエンドは個別のサインインが必要です。",
+	"Will download {count} files.": "{count} 個のファイルをダウンロードします。",
+	"Will upload {count} files.": "{count} 個のファイルをアップロードします。",
 	"You are about to:": "以下の操作を行います:",
 	"You are now pointing at a different cloud vault": "現在、別のクラウド保管庫を参照しています",
 	"You can close this and the sync keeps running in the background.":
@@ -596,15 +596,15 @@ const ja: Dict = {
 	'{count} failed. Run "{command}" for details.':
 		'{count}件失敗しました。詳細は "{command}" をご確認ください。',
 	"{count} files": "{count} 個のファイル",
+	"{count} files not included in your plan": "{count} 個のファイルはプランに含まれていません",
 	"{count} files queued": "{count}つのファイルが処理待ちです",
 	"{count} ignored": "{count}件を除外中",
-	"{count} missing on server": "サーバー上で{count}つ見つかりませんでした",
-	"{count} need attention": "{count}件、注意が必要です",
-	"{count} not on your plan": "プランに含まれていないものが{count}件あります",
+	"{count} missing on server": "サーバーに{count}がありません",
+	"{count} need attention": "{count} の注意が必要です",
 	"{count} notes": "{count} ノート",
 	"{count} only on server": "{count} はサーバーにのみ存在します",
 	"{count} queued — {reason}": "{count}件待ち — {reason}",
-	"{count} retrying": "{count}回再試行中",
+	"{count} retrying": "{count} 再試行中",
 	"{desc} — should not be synced": "{desc} — 同期対象外",
 	"{first} and {second}": "{first} と {second}",
 	"{formatted} per day": "{formatted} /日",
@@ -617,8 +617,8 @@ const ja: Dict = {
 	"✓ {count} synced": "✓ {count}件 同期済み",
 	"✕ {count} failed": "✕ {count}回失敗",
 	"✗ couldn't reach a server at this URL": "✗ このURLのサーバーに接続できませんでした",
-	"✗ server responded but isn't an Engram backend":
-		"✗ サーバーからの応答ありましたが、Engramのサーバーではありません",
+	"✗ server responded but isn't an Engram server":
+		"✗ サーバーからの応答ありましたが、Engram サーバーではありません",
 	"⤳ {count} skipped (Free plan)": "⤳ 無料プランでは{count}件スキップされます",
 	"👋 Welcome": "👋 ようこそ",
 	"💬 Feedback": "💬 フィードバック",

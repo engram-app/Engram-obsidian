@@ -9,13 +9,16 @@ import type { Dict, Entry } from "../src/i18n";
 import de from "../src/i18n/locale/de";
 import es from "../src/i18n/locale/es";
 import fr from "../src/i18n/locale/fr";
+import id from "../src/i18n/locale/id";
 import it from "../src/i18n/locale/it";
 import ja from "../src/i18n/locale/ja";
 import ko from "../src/i18n/locale/ko";
 import ms from "../src/i18n/locale/ms";
+import pl from "../src/i18n/locale/pl";
 import pt from "../src/i18n/locale/pt";
 import ptBR from "../src/i18n/locale/pt-BR";
 import ru from "../src/i18n/locale/ru";
+import tr from "../src/i18n/locale/tr";
 import vi from "../src/i18n/locale/vi";
 import zh from "../src/i18n/locale/zh";
 import zhTW from "../src/i18n/locale/zh-TW";
@@ -24,13 +27,16 @@ const LOCALES: Record<string, Dict> = {
 	de,
 	es,
 	fr,
+	id,
 	it,
 	ja,
 	ko,
 	ms,
+	pl,
 	pt,
 	"pt-BR": ptBR,
 	ru,
+	tr,
 	vi,
 	zh,
 	"zh-TW": zhTW,

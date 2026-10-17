@@ -24,10 +24,11 @@ const ms: Dict = {
 	"AI searches": "Carian AI",
 	"API access": "Akses API",
 	"API key": "Kunci API",
-	"API keys need Pro. Sign in with your Engram account instead.":
+	"API keys need a Pro plan. Sign in with your Engram account instead.":
 		"Kunci API memerlukan langganan Pro. Log masuk dengan akaun Engram anda.",
 	About: "Mengenai",
 	"Accept it to keep syncing.": "Terima untuk terus menyegerakkan.",
+	"Access token": "Token akses",
 	"Account setup incomplete.": "Persediaan akaun belum lengkap.",
 	"Account suspended. Contact support.": "Akaun telah digantung. Hubungi sokongan.",
 	"Activity ({count})": "Aktiviti ({count})",
@@ -55,7 +56,6 @@ const ms: Dict = {
 	"Authenticated via manual API key.": "Disahkan melalui kunci API manual.",
 	Authentication: "Pengesahan",
 	Back: "Kembali",
-	Backend: "Sistem belakang",
 	"Bearer token from your Engram account.": "Token bawaan dari akaun Engram anda.",
 	Both: "Kedua-duanya",
 	Bug: "Ralat",
@@ -105,8 +105,8 @@ const ms: Dict = {
 	"Couldn't send your feedback, please try again.":
 		"Tidak dapat menghantar maklum balas anda, sila cuba lagi.",
 	Create: "Buat",
-	"Create a hosted account at {signup}, or self-host the backend ({guide}).":
-		"Buat akaun hos di {signup}, atau hoskan bahagian belakang sendiri ({guide}).",
+	"Create a hosted account at {signup}, or self-host the server ({guide}).":
+		"Buat akaun hos di {signup}, atau hoskan sendiri pelayan ({guide}).",
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"Buat peti nota kosong baharu di server, kemudian segerakkan peti nota Obsidian ini ke dalamnya.",
 	"Custom patterns": "Corak khusus",
@@ -141,7 +141,6 @@ const ms: Dict = {
 	"Download {count} files from the server": "Muat turun {count} fail daripada pelayan",
 	Downloading: "Memuat turun",
 	"Downloading {count}.": "Memukimkan {count}.",
-	"Downloads {count}.": "Muat turun {count}.",
 	"Engram Cloud": "Awan Engram",
 	"Engram Sync: pulled {count} changes": "Engram Segerakkan: telah mengambil {count} perubahan",
 	"Engram Sync: pulled {count} files from server":
@@ -163,13 +162,13 @@ const ms: Dict = {
 	"Engram URL": "URL Engram",
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} tersedia. {link}.",
-	"Engram backend changed — sign in again to continue.":
-		"Backend Engram telah berubah — log masuk semula untuk meneruskan.",
 	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
 		"Engram mengindeks {indexed} daripada {all} nota anda. Nota yang lain hanya dipadankan pada peranti ini. Tingkatkan untuk mengindeks semuanya.",
 	"Engram is the backend that powers sync and semantic search.":
 		"Engram ialah sistem belakang yang menyokong sync dan carian semantik.",
 	"Engram search": "Carian Engram",
+	"Engram server changed — sign in again to continue.":
+		"Pelayan Engram telah berubah — log masuk semula untuk meneruskan.",
 	"Engram sync: checking...": "Engram sedang disegerakkan: sedang memeriksa...",
 	"Engram sync: everything in sync": "Engram sync: semuanya sudah diselaraskan",
 	"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.":
@@ -202,7 +201,7 @@ const ms: Dict = {
 		"Engram: fail tetapan plugin rosak dan tidak dapat dipulihkan. Anda mungkin perlu menyambung semula dalam tetapan.",
 	"Engram: ready": "Engram: bersedia",
 	"Engram: recovered plugin settings from a backup after a corrupted save.":
-		"Engram: tetapan plugin telah dipulihkan daripada sandaran selepas fail yang rosak.",
+		"Engram: Tetapan plugin telah dipulihkan daripada salinan sandaran selepas simpanan yang rosak.",
 	"Engram: settings tab failed to render ({error})":
 		"Engram: tab tetapan gagal dipaparkan ({error})",
 	"Engram: sign-in failed ({error})": "Engram: log masuk gagal ({error})",
@@ -226,8 +225,8 @@ const ms: Dict = {
 		"Engram: peti nota ini tidak lagi wujud di server. Pilih atau cipta peti nota untuk meneruskan.",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: log masuk anda telah tamat tempoh — buka tetapan Engram untuk menyambung semula.",
-	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.":
-		"Engram: {count} lampiran dilepaskan — tingkatkan ke langganan untuk menyegerakkan imej & PDF.",
+	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.":
+		"Engram: {count} lampiran dilepaskan — tingkatkan langganan anda untuk menyegerakkan imej & fail PDF.",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
 		"Engram: {count} fail gagal disegerakkan{detail} — buka Pusat Sync",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
@@ -464,6 +463,7 @@ const ms: Dict = {
 	"Sync paused — click to choose a sync direction":
 		"Sync ditangguhkan — klik untuk memilih arah sync",
 	"Sync preview": "Pratonton sync",
+	"Sync server": "Pelayan sync",
 	"Sync these now": "Segerakkan ini sekarang",
 	"Sync...": "Segerakkan...",
 	"Synced. Some attachments need a paid plan to sync (see below).":
@@ -474,7 +474,7 @@ const ms: Dict = {
 	"Syncing…": "Sedang mengsync…",
 	"Tell us anything": "Beritahu kami apa sahaja",
 	"Temporary errors. These clear themselves once the server recovers.":
-		"Kesilapan sementara. Ini akan hilang apabila server pulih.",
+		"Kesilapan sementara. Ini akan hilang selepas server pulih.",
 	"Terms of Service": "Syarat Perkhidmatan",
 	"Thanks, we read every message.": "Terima kasih, kami membaca setiap mesej.",
 	"That does not look like a complete server address. Include the scheme, for example http://127.0.0.1:4000":
@@ -508,7 +508,6 @@ const ms: Dict = {
 	"This vault": "Peti nota ini",
 	"This vault is empty on the server. Upload your {what}?":
 		"Peti nota ini kosong di server. Adakah anda ingin memuat naik {what}?",
-	Token: "Token",
 	"Too large for the server": "Terlalu besar untuk pelayan",
 	"Too many connected AI clients. Disconnect one or upgrade.":
 		"Terlalu banyak klien AI yang disambungkan. Putuskan sambungan satu atau tingkatkan.",
@@ -532,7 +531,6 @@ const ms: Dict = {
 	"Upload {count} files from this vault": "Muat naik {count} fail daripada peti nota ini",
 	Uploading: "Sedang memuat naik",
 	"Uploading {count}.": "Memuat naik {count}.",
-	"Uploads {count}.": "Muat naik {count}.",
 	"Uploads {up}, downloads {down}.": "Muat naik {up}, muat turun {down}.",
 	"Using API key": "Menggunakan kunci API",
 	Vault: "Peti Nota",
@@ -556,6 +554,8 @@ const ms: Dict = {
 		"Apa yang berfungsi, apa yang mengecewakan, apa yang anda harapkan Engram lakukan?",
 	"Where this vault syncs to. Each backend keeps its own sign-in.":
 		"Tempat peti nota ini disinkronkan. Setiap sistem belakang mempunyai log masuknya sendiri.",
+	"Will download {count} files.": "Akan memuat turun {count} fail.",
+	"Will upload {count} files.": "Akan memuat naik {count} fail.",
 	"You are about to:": "Anda akan:",
 	"You are now pointing at a different cloud vault":
 		"Anda kini mengakses peti nota awan yang berbeza",
@@ -600,11 +600,11 @@ const ms: Dict = {
 	'{count} failed. Run "{command}" for details.':
 		'{count} gagal. Jalankan "{command}" untuk butiran.',
 	"{count} files": "{count} fail",
+	"{count} files not included in your plan": "{count} fail tidak termasuk dalam pelan anda",
 	"{count} files queued": "{count} fail dalam senarai tunggu",
 	"{count} ignored": "{count} pengecualian",
 	"{count} missing on server": "{count} hilang di server",
 	"{count} need attention": "{count} memerlukan perhatian",
-	"{count} not on your plan": "{count} tidak dalam pelan anda",
 	"{count} notes": "{count} nota",
 	"{count} only on server": "{count} sahaja pada pelayan",
 	"{count} queued — {reason}": "{count} dalam senarai — {reason}",
@@ -621,8 +621,8 @@ const ms: Dict = {
 	"✓ {count} synced": "✓ {count} disinkronkan",
 	"✕ {count} failed": "✕ {count} gagal",
 	"✗ couldn't reach a server at this URL": "✗ Tidak dapat mengakses perantau di URL ini",
-	"✗ server responded but isn't an Engram backend":
-		"✗ Perantau menjawab tetapi bukan perantau Engram",
+	"✗ server responded but isn't an Engram server":
+		"✗ Pelayan bertindak balas tetapi bukan pelayan Engram",
 	"⤳ {count} skipped (Free plan)": "⤳ {count} dilangkau (Pelan percuma)",
 	"👋 Welcome": "👋 Selamat datang",
 	"💬 Feedback": "💬 Maklum balas",

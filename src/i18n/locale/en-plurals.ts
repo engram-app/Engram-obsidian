@@ -20,8 +20,8 @@ const enPlurals: Dict = {
 	"Engram: {count} files failed to sync{detail} — open Sync Center": {
 		one: "Engram: {count} file failed to sync{detail} — open Sync Center",
 	},
-	"Engram: {count} attachments skipped — upgrade to sync images & PDFs.": {
-		one: "Engram: {count} attachment skipped — upgrade to sync images & PDFs.",
+	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.": {
+		one: "Engram: {count} attachment skipped — upgrade your plan to sync images & PDFs.",
 	},
 	"Engram: plan upgraded — syncing {count} attachments…": {
 		one: "Engram: plan upgraded — syncing {count} attachment…",
@@ -92,12 +92,12 @@ const enPlurals: Dict = {
 	"{count} only on server": { one: "{count} only on server" },
 	"{label} ({count} queued)": { one: "{label} ({count} queued)" },
 	"Engram: offline ({count} queued)": { one: "Engram: offline ({count} queued)" },
-	"{count} not on your plan": { one: "{count} not on your plan" },
+	"{count} files not included in your plan": { one: "{count} file not included in your plan" },
 	"{count} retrying": { one: "{count} retrying" },
 	"{count} ignored": { one: "{count} ignored" },
 	"{count} queued — {reason}": { one: "{count} queued — {reason}" },
-	"Uploads {count}.": { one: "Uploads {count}." },
-	"Downloads {count}.": { one: "Downloads {count}." },
+	"Will upload {count} files.": { one: "Will upload {count} file." },
+	"Will download {count} files.": { one: "Will download {count} file." },
 	"Uploading {count}.": { one: "Uploading {count}." },
 	"Downloading {count}.": { one: "Downloading {count}." },
 	"Deleting {count} on the cloud.": { one: "Deleting {count} on the cloud." },

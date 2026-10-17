@@ -1,7 +1,7 @@
 /**
  * tInto with several slots: a sentence holding two links stays ONE key, so the
  * translator sees it whole and may reorder the links, instead of translating
- * fragments ("Create a hosted account at ", ", or self-host the backend (").
+ * fragments ("Create a hosted account at ", ", or self-host the server (").
  */
 import { afterAll, describe, expect, test } from "bun:test";
 import { t, tInto } from "../src/i18n";

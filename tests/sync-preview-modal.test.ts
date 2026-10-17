@@ -446,13 +446,13 @@ describe("mergeHelperText", () => {
 
 	test("appends conflicts when present", () => {
 		expect(mergeHelperText(b({ pushCount: 1, pullCount: 0, conflictCount: 2 }), "review")).toBe(
-			"Uploads 1. 2 conflicts to resolve. Nothing is deleted.",
+			"Will upload 1 file. 2 conflicts to resolve. Nothing is deleted.",
 		);
 	});
 
 	test("leads with reassurance on first-time", () => {
 		expect(mergeHelperText(b({ pushCount: 5 }), "first-time")).toBe(
-			"Safe choice: combines both sides, nothing is deleted. Uploads 5.",
+			"Safe choice: combines both sides, nothing is deleted. Will upload 5 files.",
 		);
 	});
 
