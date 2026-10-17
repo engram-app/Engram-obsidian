@@ -1546,7 +1546,7 @@ export class SyncEngine {
 	/** Live fetches started (never reset: entries compare against it). */
 	private idMapFetchGen = 0;
 	private idMapPruneQueued = false;
-	private idMapClaimed = new Set<string>();
+	private idMapClaimed = this.track(["vault", "destroy"], new Set<string>());
 	/** Assigned in the constructor: it needs `this.time`. */
 	private readonly idMapThrottle: TrailingThrottle;
 	/** Discovery's id-map persist: leading save, then at most one per gap. The
