@@ -210,6 +210,7 @@ describe("noteIdsVaultId records provenance, not the active vault", () => {
 				exportGateJournal: () => [],
 				exportReincludedFolders: () => [],
 				getSeqRewindFloor: () => null,
+				exportExcludedSince: () => ({}),
 				getCatchupSeq: () => 0,
 				getCatchupId: () => null,
 				getManifestSeq: () => 0,

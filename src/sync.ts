@@ -3159,9 +3159,9 @@ export class SyncEngine {
 	/** Bumped on every new floor, so a run clears only the floor it consumed. */
 	private rewindGen = 0;
 
-	/** A genesis replay "Sync again" has promised but not armed yet (see
-	 *  holdReinclude). Saved as a floor of 0; never consumed by a run. */
-	private rewindOwed = false;
+	/** The replay floor "Sync again" has promised but not armed yet (see
+	 *  holdReinclude). Saved like a floor; never consumed by a run. */
+	private rewindOwed: number | null = null;
 
 	private setRewind(floor: number): void {
 		this.seqRewindFloor = floor;
@@ -3170,14 +3170,15 @@ export class SyncEngine {
 
 	private clearRewind(): void {
 		this.seqRewindFloor = null;
-		this.rewindOwed = false;
+		this.rewindOwed = null;
 		this.rewindGen++;
 	}
 
 	/** The pending rewind, persisted with the re-included folders so a restart
 	 *  before the catch-up does not drop it. */
 	getSeqRewindFloor(): number | null {
-		return this.seqRewindFloor ?? (this.rewindOwed ? 0 : null);
+		const floors = [this.seqRewindFloor, this.rewindOwed].filter((f) => f !== null);
+		return floors.length ? Math.min(...floors) : null;
 	}
 
 	/** Restore a persisted rewind (the lower floor wins). */
@@ -9274,8 +9275,37 @@ export class SyncEngine {
 	 *  taken out of excludedFolders: the cursor already walked past every op
 	 *  made there while it was ignored. Routed through the validator's floor,
 	 *  so catch-up stays the sole cursor writer; applies are idempotent. */
-	requestFullReplay(): void {
-		this.setRewind(0);
+	requestFullReplay(floor = 0): void {
+		this.setRewind(this.seqRewindFloor === null ? floor : Math.min(this.seqRewindFloor, floor));
+	}
+
+	/** The catch-up cursor when each folder was excluded: ops at or below it
+	 *  were applied while the folder still synced, so "Sync again" replays from
+	 *  there instead of from 0. No entry (excluded by an older version) means
+	 *  0. Persisted; per vault. */
+	private excludedSince = this.track(["vault"], new Map<string, number>());
+
+	/** Record the cursor for folders just added to excludedFolders. Call before
+	 *  the save so it is persisted with the change. Returns an undo. */
+	noteExcluded(folders: string[]): () => void {
+		const added = folders.filter((f) => !this.excludedSince.has(f));
+		const seq = this.getCatchupSeq();
+		for (const f of added) this.excludedSince.set(f, seq);
+		return () => {
+			for (const f of added) this.excludedSince.delete(f);
+		};
+	}
+
+	exportExcludedSince(): Record<string, number> {
+		return Object.fromEntries(this.excludedSince);
+	}
+
+	/** Restore the map saved by an earlier session (caller checks the vault). */
+	importExcludedSince(saved: unknown): void {
+		if (!saved || typeof saved !== "object") return;
+		for (const [f, seq] of Object.entries(saved)) {
+			if (typeof seq === "number" && Number.isFinite(seq)) this.excludedSince.set(f, seq);
+		}
 	}
 
 	/** Folders just taken out of excludedFolders. The next push sweep visits
@@ -9318,8 +9348,9 @@ export class SyncEngine {
 	holdReinclude(folder: string): () => void {
 		const had = this.reincludedFolders.has(folder);
 		const owed = this.rewindOwed;
+		const floor = this.excludedSince.get(folder) ?? 0;
 		this.reincludedFolders.add(folder);
-		this.rewindOwed = true;
+		this.rewindOwed = owed === null ? floor : Math.min(owed, floor);
 		return () => {
 			if (!had) this.reincludedFolders.delete(folder);
 			this.rewindOwed = owed;
@@ -9347,7 +9378,8 @@ export class SyncEngine {
 	 *    whose recently-deleted fence stops the replay below resurrecting it);
 	 *  - a tracked file edited meanwhile is re-checked by content in the next
 	 *    push sweep (reincludedFolders);
-	 *  - server ops made there are re-served by a replay from genesis.
+	 *  - server ops made there are re-served by a replay from the cursor at
+	 *    which it was excluded (noteExcluded), or from 0 if none was recorded.
 	 *  Never throws, so the caller's sync always follows.
 	 *  ponytail: the replay is vault-wide. The server has no per-folder feed, so
 	 *  a scoped pull would walk the same op log; applies outside the folder are
@@ -9370,8 +9402,9 @@ export class SyncEngine {
 			}
 		}
 		this.reincludedFolders.add(folder);
-		this.requestFullReplay();
-		this.rewindOwed = false;
+		this.requestFullReplay(this.excludedSince.get(folder) ?? 0);
+		this.excludedSince.delete(folder);
+		this.rewindOwed = null;
 	}
 
 	private async healDivergedLiveBoundNotes(manifest: ManifestResponse | null): Promise<number> {

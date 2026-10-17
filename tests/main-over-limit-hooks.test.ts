@@ -32,6 +32,7 @@ function makeFakePlugin(computeSyncPlan: (opts?: unknown) => Promise<unknown>) {
 			getLastSync: () => "",
 			exportReincludedFolders: () => [],
 			holdReinclude: mock(() => () => {}),
+			noteExcluded: mock(() => () => {}),
 		},
 		savePluginData: mock(async () => {
 			order.push("save");
@@ -408,5 +409,22 @@ describe("Sync again tells the engine before saving", () => {
 		});
 		await expect(fake.syncFolderAgain("Archive")).rejects.toThrow("disk full");
 		expect(order).toEqual(["hold", "save", "undo"]);
+	});
+});
+
+describe("the over-limit step records where each folder left the sync", () => {
+	test("only newly excluded folders, before the save; undone if it fails", async () => {
+		const { fake } = makeFakePlugin(async () => PLAN);
+		const order: string[] = [];
+		fake.syncEngine.noteExcluded = mock((folders: string[]) => {
+			order.push(`note:${folders.join(",")}`);
+			return () => order.push("undo");
+		});
+		fake.savePluginData = mock(async () => {
+			order.push("save");
+			throw new Error("disk full");
+		});
+		await expect(hooksOf(fake).applyExclusions(["Old", "Archive"])).rejects.toThrow();
+		expect(order).toEqual(["note:Archive", "save", "undo"]);
 	});
 });

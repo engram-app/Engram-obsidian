@@ -512,6 +512,51 @@ describe("catchupViaSeqReplay", () => {
 		expect(engine.getSeqRewindFloor()).toBeNull();
 	});
 
+	test("Sync again replays from where the folder was excluded, not from 0", async () => {
+		const engine = rewindEngine();
+		engine.setCatchupSeq(500);
+		engine.noteExcluded(["Archive"]); // excluded at cursor 500
+		engine.setCatchupSeq(900);
+		const cursorsSeen: number[] = [];
+		engine.setCrdtCatchupSince(async (cursor: number) => {
+			cursorsSeen.push(cursor);
+			return { changes: [], has_more: false, next_seq: null };
+		});
+
+		await engine.reincludeFolder("Archive");
+		await engine.catchupViaSeqReplay();
+
+		expect(cursorsSeen).toEqual([500]);
+	});
+
+	test("a folder with no recorded exclusion (older install) replays from 0", async () => {
+		const engine = rewindEngine();
+		engine.setCatchupSeq(900);
+		const cursorsSeen: number[] = [];
+		engine.setCrdtCatchupSince(async (cursor: number) => {
+			cursorsSeen.push(cursor);
+			return { changes: [], has_more: false, next_seq: null };
+		});
+
+		await engine.reincludeFolder("Archive");
+		await engine.catchupViaSeqReplay();
+
+		expect(cursorsSeen).toEqual([0]);
+	});
+
+	test("the exclusion seq survives a restart", async () => {
+		const first = rewindEngine();
+		first.setCatchupSeq(500);
+		first.noteExcluded(["Archive"]);
+		const second = rewindEngine();
+		second.importExcludedSince(first.exportExcludedSince());
+		second.setCatchupSeq(900);
+		const undo = second.holdReinclude("Archive");
+		expect(second.getSeqRewindFloor()).toBe(500);
+		undo();
+		expect(second.exportExcludedSince()).toEqual({ Archive: 500 });
+	});
+
 	test("a pending rewind belongs to its vault: a vault switch drops it", async () => {
 		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
 		engine.requestFullReplay();

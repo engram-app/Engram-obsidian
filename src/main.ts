@@ -170,8 +170,11 @@ interface PluginData {
 	/** A catch-up rewind still owed ("Sync again" asks for a genesis replay);
 	 *  cleared once a replay that moves the real cursor completes. */
 	seqRewindFloor?: number | null;
-	/** The vault `reincludedFolders` and `seqRewindFloor` were recorded for;
-	 *  any other vault drops them. */
+	/** The catch-up cursor when each excluded folder left the sync
+	 *  (SyncEngine.noteExcluded). */
+	excludedSince?: Record<string, number>;
+	/** The vault `reincludedFolders`, `seqRewindFloor` and `excludedSince` were
+	 *  recorded for; any other vault drops them. */
 	reincludedFoldersVaultId?: string | null;
 }
 
@@ -1994,13 +1997,14 @@ export default class EngramSyncPlugin extends Plugin {
 	hydrateReincludedFolders(
 		saved: Pick<
 			PluginData,
-			"reincludedFolders" | "seqRewindFloor" | "reincludedFoldersVaultId"
+			"reincludedFolders" | "seqRewindFloor" | "excludedSince" | "reincludedFoldersVaultId"
 		> | null,
 	): void {
 		if (!saved) return;
 		if (saved.reincludedFoldersVaultId !== (this.settings.vaultId ?? null)) return;
 		this.syncEngine.importReincludedFolders(saved.reincludedFolders);
 		this.syncEngine.setSeqRewindFloor(saved.seqRewindFloor);
+		this.syncEngine.importExcludedSince(saved.excludedSince);
 	}
 
 	/** Restore a gate journal (#247) persisted by an earlier session, but only
@@ -2051,6 +2055,7 @@ export default class EngramSyncPlugin extends Plugin {
 			gateJournalVaultId: this.settings.vaultId ?? null,
 			reincludedFolders: this.syncEngine.exportReincludedFolders(),
 			seqRewindFloor: this.syncEngine.getSeqRewindFloor(),
+			excludedSince: this.syncEngine.exportExcludedSince(),
 			reincludedFoldersVaultId: this.settings.vaultId ?? null,
 		});
 	}
@@ -3660,7 +3665,13 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  second modal. */
 	private applyOverLimitExclusions(folders: string[], signal?: AbortSignal): Promise<void> {
 		return this.serializeExcluded(async () => {
-			await this.changeExcludedFolders((live) => [...new Set([...live, ...folders])], signal);
+			const added = folders.filter((f) => !this.settings.excludedFolders.includes(f));
+			await this.changeExcludedFolders(
+				(live) => [...live, ...added],
+				signal,
+				// Where each folder left the sync, so Sync again replays from there.
+				this.syncEngine.noteExcluded(added),
+			);
 			this.settingTab?.rerender();
 		});
 	}
