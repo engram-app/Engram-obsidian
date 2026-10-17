@@ -61,9 +61,11 @@ export const NOTES_CAP_HOLD_MS = 10 * 60 * 1000;
  * Closes on a cap reject. Reopens on a delete ack (a note was freed) or after
  * `holdMs`, which covers a delete on another device: the next create is the
  * probe, and a fresh reject closes it again. `reset()` (plan change, vault
- * switch) reopens it at once. The user is told once per reset, not on every
- * probe: the self-heal sweep probes every few minutes for as long as the vault
- * stays over the cap.
+ * switch, auth swap) reopens it at once.
+ *
+ * The user is told when the cap is first hit and again after notes were freed
+ * (`open`/`reset`), but not on the expiry probe: the self-heal sweep probes
+ * every few minutes for as long as the vault stays over the cap.
  */
 export class NotesCapGate {
 	private closedUntil = 0;
@@ -88,6 +90,7 @@ export class NotesCapGate {
 
 	open(): void {
 		this.closedUntil = 0;
+		this.notified = false;
 	}
 
 	reset(): void {
@@ -189,11 +192,11 @@ export type CrdtSendHooks = {
 	 *  (bounded) so it delivers once they free a note / upgrade. */
 	onLimit?: (op: CrdtOp, reason: string) => void;
 	/** Shared with the push path. A cap reject closes it and a delete ack
-	 *  reopens it. */
+	 *  reopens it. Blocking is decided by `capBlocksCreate`, not here. */
 	capGate?: NotesCapGate;
 	/** Whether the cap blocks a create for this path. Only a row-adding create
 	 *  is blocked: a queued RENAME of a synced note relocates its row and must
-	 *  still go out. Defaults to "gate closed" when unwired. */
+	 *  still go out. Production wires `SyncEngine.capBlocksCreate`. */
 	capBlocksCreate?: (path: string) => boolean;
 };
 
@@ -207,12 +210,7 @@ export function makeCrdtOpSend(hooks: CrdtSendHooks): (op: CrdtOp) => Promise<Se
 		if (!ch) return "error"; // no socket yet. hold and retry on the next tick
 		const path = (op.payload as { path?: string })?.path ?? "";
 		// The account is at its note cap: the server would refuse this create too.
-		if (
-			op.kind === "create" &&
-			(hooks.capBlocksCreate?.(path) ?? hooks.capGate?.isClosed() ?? false)
-		) {
-			return "held";
-		}
+		if (op.kind === "create" && hooks.capBlocksCreate?.(path)) return "held";
 		try {
 			if (op.kind === "create") {
 				const genesis = await hooks.buildGenesisFrame?.(path, op.docId);

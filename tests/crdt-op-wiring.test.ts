@@ -8,7 +8,7 @@
  * Uses a fake channel whose acked calls resolve/reject scripted outcomes. no
  * real socket, deterministic under the injected clock.
  */
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, jest, mock, test } from "bun:test";
 import {
 	type CrdtOpChannel,
 	crdtOpFailureReason,
@@ -257,6 +257,7 @@ describe("NotesCapGate — one cap reject pauses every create (prod 2026-10-17 r
 			onCreated: () => {},
 			onTerminal: () => {},
 			capGate: gate,
+			capBlocksCreate: () => gate.isClosed(),
 		});
 		await expect(send(op("create", "d1"))).resolves.toBe("error");
 		await expect(send(op("create", "d2"))).resolves.toBe("held");
@@ -273,6 +274,7 @@ describe("NotesCapGate — one cap reject pauses every create (prod 2026-10-17 r
 			onCreated: () => {},
 			onTerminal: () => {},
 			capGate: gate,
+			capBlocksCreate: () => gate.isClosed(),
 		});
 		await send(op("create", "d1"));
 		await expect(send(op("delete", "x1"))).resolves.toBe("ok");
@@ -291,7 +293,7 @@ describe("NotesCapGate — one cap reject pauses every create (prod 2026-10-17 r
 		expect(gate.isClosed()).toBe(false);
 	});
 
-	test("onTrip fires once per session: the periodic reopen probe must not re-nag", () => {
+	test("the periodic reopen probe does not re-nag", () => {
 		let now = 0;
 		const onTrip = mock(() => {});
 		const gate = new NotesCapGate(() => now, onTrip, 1000);
@@ -299,9 +301,16 @@ describe("NotesCapGate — one cap reject pauses every create (prod 2026-10-17 r
 		gate.trip("notes_cap_reached");
 		now = 2000; // reopened by time, the probe is refused again
 		gate.trip("notes_cap_reached");
-		gate.open(); // a delete freed a slot, then the next create refilled it
-		gate.trip("notes_cap_reached");
 		expect(onTrip).toHaveBeenCalledTimes(1);
+	});
+
+	test("refilling the cap after freeing notes tells the user again", () => {
+		const onTrip = mock(() => {});
+		const gate = new NotesCapGate(() => 0, onTrip);
+		gate.trip("notes_cap_reached");
+		gate.open(); // a delete freed a slot
+		gate.trip("notes_cap_reached"); // later the vault fills up again
+		expect(onTrip).toHaveBeenCalledTimes(2);
 	});
 
 	test("reset() (plan change / vault switch) opens the gate and re-arms the notice", () => {
@@ -348,6 +357,7 @@ describe("NotesCapGate — one cap reject pauses every create (prod 2026-10-17 r
 				onCreated: () => {},
 				onTerminal: () => {},
 				capGate: gate,
+				capBlocksCreate: () => gate.isClosed(),
 			}),
 			now: () => now,
 			onDrop: (_o, reason) => dropped.push(reason),
@@ -361,6 +371,46 @@ describe("NotesCapGate — one cap reject pauses every create (prod 2026-10-17 r
 		expect(dropped).toEqual([]);
 		expect(queue.all().map((o) => o.docId)).toEqual(["held-1"]);
 		expect(ch.crdtCreate).not.toHaveBeenCalled();
+	});
+
+	test("a held op's refreshed age is persisted, so a reload does not TTL-drop it", async () => {
+		jest.useFakeTimers();
+		try {
+			let now = 1000;
+			const gate = new NotesCapGate(() => now, undefined, 60 * 60 * 1000);
+			gate.trip("notes_cap_reached");
+			const persisted: CrdtOp[][] = [];
+			const queue = new CrdtOpQueue({
+				send: makeCrdtOpSend({
+					channel: () => fakeChannel(),
+					onCreated: () => {},
+					onTerminal: () => {},
+					capGate: gate,
+					capBlocksCreate: () => gate.isClosed(),
+				}),
+				now: () => now,
+				persistDelayMs: 10,
+			});
+			queue.setPersist(async (ops) => {
+				persisted.push(ops.map((o) => ({ ...o })));
+			});
+			queue.enqueue(op("create", "held-1"));
+			await queue.onJoined();
+			jest.advanceTimersByTime(20);
+			// 8 min held, ticking like the plugin's interval: past the 5 min TTL
+			// by the op's ORIGINAL age.
+			for (let i = 0; i < 96; i++) {
+				now += 5_000;
+				await queue.tick();
+				jest.advanceTimersByTime(20);
+			}
+			const saved = persisted.at(-1)?.[0];
+			expect(saved?.docId).toBe("held-1");
+			// What a reload would read back is young, not 8 minutes old.
+			expect(now - (saved?.enqueuedAt ?? 0)).toBeLessThanOrEqual(30_000);
+		} finally {
+			jest.useRealTimers();
+		}
 	});
 });
 

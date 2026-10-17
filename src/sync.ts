@@ -43,6 +43,7 @@ import {
 	shouldGoOffline,
 	shouldRetryAfterFailure,
 } from "./issue-store";
+import { LimitExceededError } from "./limit-error";
 import { isTextAttachment } from "./mime";
 import { noteRef } from "./note-ref";
 import {
@@ -2381,6 +2382,7 @@ export class SyncEngine {
 	 *  manage the base separately, e.g. baseStore.rename). */
 	private dropPath(path: string, opts?: { dropBase?: boolean }): void {
 		this.syncState.delete(path);
+		this.rowWrittenAt.delete(path);
 		if (opts?.dropBase !== false) this.baseStore?.delete(path);
 	}
 
@@ -2401,6 +2403,7 @@ export class SyncEngine {
 	private renamePath(from: string, to: string): void {
 		const row = this.syncState.get(from);
 		this.syncState.delete(from);
+		this.rowWrittenAt.delete(from);
 		if (!row) return;
 		// Do not clobber a row already at the destination. A rename-over means
 		// SOME note's bookkeeping at `to` is stale, but we cannot tell "the same
@@ -3276,6 +3279,7 @@ export class SyncEngine {
 	 *  active server vault inside the SyncPreviewModal so the next sync starts
 	 *  from a clean slate (lastSync empty, no stale per-file hashes). */
 	async resetForVaultChange(): Promise<void> {
+		this.notesCapGate?.reset(); // the cap belonged to the old vault's account
 		this.syncStateVaultId = this.settings.vaultId ?? null;
 		await this.wipePerVaultState();
 		devLog().log(
@@ -3297,6 +3301,7 @@ export class SyncEngine {
 	 *  swap can be detected and its destructive reconcile refused. */
 	bumpAuthGeneration(): void {
 		this.authGeneration++;
+		this.notesCapGate?.reset(); // a different identity has its own cap
 	}
 
 	/** Invalidate stale per-vault bookkeeping if the active server vault no
@@ -5547,7 +5552,9 @@ export class SyncEngine {
 					(mintedNow || !this.hasServerNote(noteId)) &&
 					(this.crdtLive?.() ?? true) &&
 					!exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES) &&
-					!this.capBlocksCreate(file.path)
+					// pushedPath, not file.path: a rename mid-push stamps file.path,
+					// which would let a row-adding create for pushedPath through.
+					!this.capBlocksCreate(pushedPath)
 				) {
 					try {
 						// Only the crdtCreate call itself is covered by this catch — once
@@ -5798,13 +5805,25 @@ export class SyncEngine {
 						this.crdt &&
 						noteId &&
 						!this.hasServerNote(noteId) &&
-						!this.capBlocksCreate(file.path)
+						!this.capBlocksCreate(pushedPath)
 					) {
 						this.crdtEnqueue({ kind: "create", docId: noteId, path: pushedPath });
 					}
 					return false;
 				}
-				const resp = await this.api.pushNote(pushedPath, content, mtime);
+				// REST covers notes outside the CRDT domain (canvas, oversized md).
+				// Same cap, same gate: skip row-adding pushes while closed, and let a
+				// REST refusal close it for every path.
+				if (this.capBlocksCreate(pushedPath)) return false;
+				let resp: Awaited<ReturnType<EngramApi["pushNote"]>>;
+				try {
+					resp = await this.api.pushNote(pushedPath, content, mtime);
+				} catch (e) {
+					if (e instanceof LimitExceededError && LIMIT_REASONS.has(e.reason)) {
+						this.notesCapGate?.trip(e.reason);
+					}
+					throw e;
+				}
 				if ("conflict" in resp) {
 					// Unconditional push (no version) never conflicts server-side; guard
 					// for the type union only.
@@ -6107,12 +6126,15 @@ export class SyncEngine {
 		if (tierChanged && this.notesCapGate) {
 			// The note cap moved with the tier. Upload what the gate held now,
 			// not after the 10 min hold plus the next sweep tick.
+			const held = this.notesCapGate.isClosed();
 			this.notesCapGate.reset();
 			// Skipped (idle) if a push is mid-flight: the periodic sweep then
 			// picks the held files up, since the gate is already open.
-			this.capResync = this.selfHealSweep().catch((e) => {
-				rlog().warn("push", `plan-change resync failed: ${errMsg(e)}`);
-			});
+			if (held) {
+				this.capResync = this.selfHealSweep().catch((e) => {
+					rlog().warn("push", `plan-change resync failed: ${errMsg(e)}`);
+				});
+			}
 		}
 		if (gained) {
 			devLog().log("push", "plan capability gained — re-syncing skipped attachments");
@@ -10563,6 +10585,9 @@ export class SyncEngine {
 		return this.app.vault.getFiles().filter((f: TFile) => {
 			if (!this.isSyncable(f) || this.shouldIgnore(f.path)) return false;
 			if (!this.syncState.has(f.path)) {
+				// At the note cap every untracked file is a row-adding create the
+				// server refuses: skip it here, before pushFile reads it.
+				if (this.notesCapGate?.isClosed()) return false;
 				const id = this.noteIdMap?.get(f.path);
 				return !(id && this.crdtHasPendingOp?.(id));
 			}
@@ -11010,6 +11035,7 @@ export class SyncEngine {
 			for (const id of replaceExtras.ids) {
 				try {
 					await this.crdtDelete?.(id);
+					this.notesCapGate?.open(); // a note was freed
 					this.logEntry("delete", id, "ok", undefined, "replace-remote");
 				} catch (e) {
 					this.logEntry("delete", id, "error", errMsg(e));

@@ -19,6 +19,7 @@ import { NoteIdMap } from "../src/crdt/note-id-map";
 import type { ProviderRegistry as CrdtManager } from "../src/crdt/provider-registry";
 import { makeCrdtOpSend, NotesCapGate } from "../src/crdt-op-dispatch";
 import { type CrdtOp, CrdtOpQueue, type DropReason } from "../src/crdt-op-queue";
+import { LimitExceededError } from "../src/limit-error";
 import { destroyRemoteLog, initRemoteLog } from "../src/remote-log";
 import { SyncEngine } from "../src/sync";
 import { ManualTimeProvider } from "../src/time-provider";
@@ -508,5 +509,66 @@ describe("catch-up during an upload (prod 2026-10-17: 15 just-uploaded notes tra
 		await h.engine.catchUp();
 
 		expect(h.app.fileManager.trashFile).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("note cap gate: lifecycle and every create path (round-3 review)", () => {
+	test("a closed gate keeps over-cap untracked files out of sweeps entirely (no per-file reads)", async () => {
+		const gate = new NotesCapGate(() => 0);
+		const h = harness(notes(200), { notesCap: 5, capGate: gate });
+		await h.join();
+		await h.engine.pushModifiedFiles();
+		expect(gate.isClosed()).toBe(true);
+		// Reads of files the server does NOT hold (the over-cap ones). Synced
+		// notes may still be re-checked; that is normal sweep work.
+		const overCapReads = () =>
+			[...h.app.vault.read.mock.calls, ...h.app.vault.cachedRead.mock.calls].filter(
+				([f]: [TFile]) => !h.server.paths().has(f.path),
+			).length;
+		const readsBefore = overCapReads();
+
+		await h.engine.pushModifiedFiles();
+		await h.engine.selfHealSweep();
+
+		expect(overCapReads()).toBe(readsBefore);
+	});
+
+	test("a vault change or an auth swap resets the gate (it belongs to the old account)", async () => {
+		const gate = new NotesCapGate(() => 0);
+		const h = harness(notes(3), { notesCap: 1, capGate: gate });
+		await h.join();
+		await h.engine.pushModifiedFiles();
+		expect(gate.isClosed()).toBe(true);
+		h.engine.bumpAuthGeneration();
+		expect(gate.isClosed()).toBe(false);
+
+		gate.trip("notes_cap_reached");
+		await h.engine.resetForVaultChange();
+		expect(gate.isClosed()).toBe(false);
+	});
+
+	test("a REST cap refusal (markdown over the CRDT size cap) trips the shared gate too", async () => {
+		const gate = new NotesCapGate(() => 0);
+		const pushNote = mock(async () => {
+			throw new LimitExceededError("notes_cap_reached", null, "notes_cap", 1, 1);
+		});
+		const h = harness(["Big/a.md", "Big/b.md", "Big/c.md"], {
+			api: makeApi({ pushNote }),
+			capGate: gate,
+		});
+		// Over MAX_CRDT_NOTE_BYTES (4 MB): these take the REST pushNote path.
+		const huge = "x".repeat(4 * 1024 * 1024 + 1);
+		h.app.vault.read.mockImplementation(async () => huge);
+		h.app.vault.cachedRead.mockImplementation(async () => huge);
+		await h.join();
+
+		await h.engine.pushModifiedFiles();
+		const calls = pushNote.mock.calls.length;
+		await h.engine.pushModifiedFiles();
+
+		expect(gate.isClosed()).toBe(true);
+		// At most the concurrent first wave; the second sweep sends nothing.
+		expect(pushNote.mock.calls.length).toBe(calls);
+		expect(calls).toBeLessThanOrEqual(3);
 	});
 });

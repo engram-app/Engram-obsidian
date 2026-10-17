@@ -342,6 +342,8 @@ export class CrdtOpQueue {
 			// TTL here would drop every queued create during a 10 min cap hold.
 			entry.op.enqueuedAt = this.now();
 			entry.nextAttemptAt = this.now() + this.opts.maxBackoffMs;
+			// Persist the refreshed age, or a reload TTL-drops it by the old one.
+			this.schedulePersist();
 			return;
 		}
 		entry.op.attempts += 1;
