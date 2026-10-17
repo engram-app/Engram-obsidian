@@ -558,6 +558,7 @@ const zhTW: Dict = {
 	"{count} diverged": "{count} 發生分歧",
 	'{count} failed. Run "{command}" for details.': '{count} 次失敗。詳情請查看 "{command}"。',
 	"{count} files": "{count} 個檔案",
+	"{count} files ignored": "{count} 個檔案已忽略",
 	"{count} files not included in your plan": "{count} 個檔案未包含在您的方案中",
 	"{count} files queued": "{count} 個檔案排隊中",
 	"{count} ignored": "已忽略 {count} 個",

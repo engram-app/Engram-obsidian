@@ -554,6 +554,7 @@ const zh: Dict = {
 	"{count} diverged": "{count} 发生分歧",
 	'{count} failed. Run "{command}" for details.': '{count}次失败。详情请查看 "{command}"。',
 	"{count} files": "{count} 个文件",
+	"{count} files ignored": "忽略了 {count} 个文件",
 	"{count} files not included in your plan": "{count} 文件未包含在您的计划中",
 	"{count} files queued": "{count}个文件排队中",
 	"{count} ignored": "已忽略 {count} 个",

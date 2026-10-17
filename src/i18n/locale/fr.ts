@@ -713,6 +713,11 @@ const fr: Dict = {
 		many: "{count} fichiers",
 		other: "{count} fichiers",
 	},
+	"{count} files ignored": {
+		one: "{count} fichier ignoré",
+		many: "{count} fichiers ignorés",
+		other: "{count} fichiers ignorés",
+	},
 	"{count} files not included in your plan": {
 		one: "{count} fichier non inclus dans ton abonnement",
 		many: "{count} fichiers non inclus dans ton abonnement",

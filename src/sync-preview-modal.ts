@@ -224,6 +224,13 @@ export function skippedAttachmentsLine(n: number): string | null {
 	return t("Free syncs notes only — {count} attachments will be skipped.", { count: n });
 }
 
+/** The preview's quiet "N files ignored" line, so totals that skip the ignore
+ *  list stay explainable. Null when nothing is ignored. Pure for testing. */
+export function ignoredLine(n: number): string | null {
+	if (n <= 0) return null;
+	return t("{count} files ignored", { count: n });
+}
+
 /** Plain-language outcome line for the smart-merge ("Sync") option, computed
  *  from the plan. Smart-merge never deletes, so the line always reassures.
  *  First-time and vault-switch lead with a safety clause for users who do not
@@ -898,6 +905,8 @@ export class SyncPreviewModal extends Modal {
 				{ vars: { count: conflicts }, textCls: "engram-sync-preview-conflicts-label" },
 			);
 		}
+		const ignored = ignoredLine(plan.ignoredCount);
+		if (ignored) parent.createEl("p", { cls: "engram-sync-preview-ignored", text: ignored });
 	}
 
 	private renderCompareCard(

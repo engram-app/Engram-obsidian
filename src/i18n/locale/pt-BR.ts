@@ -712,6 +712,11 @@ const ptBR: Dict = {
 		many: "{count} arquivos",
 		other: "{count} arquivos",
 	},
+	"{count} files ignored": {
+		one: "{count} arquivo ignorado",
+		many: "{count} arquivos ignorados",
+		other: "{count} arquivos ignorados",
+	},
 	"{count} files not included in your plan": {
 		one: "{count} arquivo não incluso no seu plano",
 		many: "{count} arquivos não incluídos no seu plano",

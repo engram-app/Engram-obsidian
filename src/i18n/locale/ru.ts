@@ -743,6 +743,12 @@ const ru: Dict = {
 		many: "{count} файлов",
 		other: "{count} файла",
 	},
+	"{count} files ignored": {
+		one: "{count} файл проигнорировано",
+		few: "{count} файла проигнорированы",
+		many: "{count} файлов проигнорировано",
+		other: "{count} файла проигнорированы",
+	},
 	"{count} files not included in your plan": {
 		one: "{count} файл не входят в ваш план",
 		few: "{count} файла не входят в ваш план",

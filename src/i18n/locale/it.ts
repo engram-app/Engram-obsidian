@@ -711,6 +711,11 @@ const it: Dict = {
 		other: '{count} falliti. Consulta "{command}" per i dettagli.',
 	},
 	"{count} files": { one: "{count} file", many: "{count} file", other: "{count} file" },
+	"{count} files ignored": {
+		one: "{count} file ignorato",
+		many: "{count} file ignorati",
+		other: "{count} file ignorati",
+	},
 	"{count} files not included in your plan": {
 		one: "{count} file non incluso nel tuo piano",
 		many: "{count} file non inclusi nel tuo piano",

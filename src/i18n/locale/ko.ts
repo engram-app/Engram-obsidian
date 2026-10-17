@@ -587,6 +587,7 @@ const ko: Dict = {
 	'{count} failed. Run "{command}" for details.':
 		'{count}건 실패했습니다. 자세한 내용은 "{command}"을 확인하세요.',
 	"{count} files": "{count} 개의 파일",
+	"{count} files ignored": "{count}개의 파일이 제외되었습니다",
 	"{count} files not included in your plan": "{count} 파일은 구독 플랜에 포함되지 않습니다",
 	"{count} files queued": "{count}개의 파일 대기 중",
 	"{count} ignored": "{count}개 제외됨",

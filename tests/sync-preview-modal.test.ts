@@ -7,6 +7,7 @@ import {
 	describeCreateVaultError,
 	emptyPlanDismiss,
 	headerFor,
+	ignoredLine,
 	loadingHoldMs,
 	mergeHelperText,
 	SyncPreviewState,
@@ -565,5 +566,19 @@ describe("SyncPreviewState — duplicate-vault guard (2026-08-20)", () => {
 		expect(s.createVaultInFlight).toBe(true);
 		s.exitCreateVault();
 		expect(s.createVaultInFlight).toBe(false);
+	});
+});
+
+describe("ignoredLine — the preview's one quiet ignored-files line", () => {
+	test("names the count when files are ignored", () => {
+		expect(ignoredLine(4)).toBe("4 files ignored");
+	});
+
+	test("singular wording for exactly one", () => {
+		expect(ignoredLine(1)).toBe("1 file ignored");
+	});
+
+	test("nothing ignored → no line", () => {
+		expect(ignoredLine(0)).toBeNull();
 	});
 });

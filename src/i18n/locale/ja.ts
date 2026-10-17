@@ -596,6 +596,7 @@ const ja: Dict = {
 	'{count} failed. Run "{command}" for details.':
 		'{count}件失敗しました。詳細は "{command}" をご確認ください。',
 	"{count} files": "{count} 個のファイル",
+	"{count} files ignored": "{count} 個のファイルは無視されました",
 	"{count} files not included in your plan": "{count} 個のファイルはプランに含まれていません",
 	"{count} files queued": "{count}つのファイルが処理待ちです",
 	"{count} ignored": "{count}件を除外中",
