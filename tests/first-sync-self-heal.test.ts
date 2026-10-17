@@ -25,7 +25,8 @@ import { ManualTimeProvider } from "../src/time-provider";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 /** A fake server behind a flapping socket. */
-function fakeServer(notesCap = Number.POSITIVE_INFINITY) {
+function fakeServer(initialCap = Number.POSITIVE_INFINITY) {
+	let notesCap = initialCap;
 	const created = new Map<string, string>(); // docId -> path
 	const state = { up: false, createCalls: 0 };
 	const channel = {
@@ -36,6 +37,12 @@ function fakeServer(notesCap = Number.POSITIVE_INFINITY) {
 		): Promise<{ docId: string; seeded: boolean; genesisOutcome: GenesisOutcome }> => {
 			state.createCalls++;
 			if (!state.up) throw new Error("crdt topic not joined");
+			// A live id at a new path is a relocation: the backend moves the row
+			// before any cap check (genesis_relocate_live), so no new row counts.
+			if (created.has(docId)) {
+				created.set(docId, path);
+				return { docId, seeded: false, genesisOutcome: null };
+			}
 			if (created.size >= notesCap) {
 				throw new Error(
 					`request failed: ${JSON.stringify({ reason: "notes_cap_reached", limit: notesCap })}`,
@@ -46,7 +53,15 @@ function fakeServer(notesCap = Number.POSITIVE_INFINITY) {
 		},
 		crdtDeleteAcked: async (docId: string) => ({ doc_id: docId }),
 	};
-	return { created, state, channel, paths: () => new Set(created.values()) };
+	return {
+		created,
+		state,
+		channel,
+		paths: () => new Set(created.values()),
+		raiseCap: (n: number) => {
+			notesCap = n;
+		},
+	};
 }
 
 function makeVault(paths: string[], mtime = 1000) {
@@ -383,6 +398,58 @@ describe("vault over the plan note cap (prod 2026-10-17 retry storm)", () => {
 		expect(gate.isClosed()).toBe(true);
 		// 10 accepted + the one refusal that closed the gate. Anything near 290
 		// means each note is rediscovering the cap on its own.
-		expect(h.server.state.createCalls).toBeLessThanOrEqual(20);
+		// 10 accepted + at most maxConcurrentPushes (5) in-flight refusals.
+		expect(h.server.state.createCalls).toBeLessThanOrEqual(15);
+	});
+
+	test("renaming an already-synced note still syncs while the gate is closed (relocation, not a new row)", async () => {
+		const gate = new NotesCapGate(() => 0);
+		const h = harness(["Notes/a.md", "Notes/b.md"], { notesCap: 1, capGate: gate });
+		await h.join();
+		await h.engine.pushModifiedFiles();
+		expect(gate.isClosed()).toBe(true);
+		const [aId] = [...h.server.created.keys()];
+		const synced = h.server.created.get(aId as string) as string;
+		const renamedFrom = synced;
+		const renamedTo = synced.replace(/\.md$/, "-renamed.md");
+		const file = h.files.get(renamedFrom) as TFile;
+		h.files.delete(renamedFrom);
+		file.path = renamedTo;
+		h.files.set(renamedTo, file);
+
+		await h.engine.handleRename(file, renamedFrom);
+
+		expect(h.server.created.get(aId as string)).toBe(renamedTo);
+	});
+
+	test("an upgrade (tier change) reopens the gate and uploads what was held", async () => {
+		const gate = new NotesCapGate(() => 0);
+		const h = harness(notes(5), { notesCap: 2, capGate: gate });
+		await h.join();
+		h.engine.hydratePlanState({
+			tier: "free",
+			attachmentsTextOnly: false,
+			maxFileBytes: 1,
+			attachmentBytesCap: null,
+			indexedNotesCap: 2000,
+			updatedAt: 0,
+		});
+		await h.engine.pushModifiedFiles();
+		expect(h.server.created.size).toBe(2);
+		expect(gate.isClosed()).toBe(true);
+
+		h.server.raiseCap(Number.POSITIVE_INFINITY);
+		h.engine.applyPlanState({
+			tier: "pro",
+			attachmentsTextOnly: false,
+			maxFileBytes: 1,
+			attachmentBytesCap: null,
+			indexedNotesCap: null,
+			updatedAt: 1,
+		});
+		await h.engine.waitForCapResync();
+
+		expect(gate.isClosed()).toBe(false);
+		expect(h.server.created.size).toBe(5);
 	});
 });

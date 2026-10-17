@@ -59,11 +59,15 @@ export const NOTES_CAP_HOLD_MS = 10 * 60 * 1000;
  * as Obsidian stayed open (prod 2026-10-17: a 10k+ note first sync pinned web).
  *
  * Closes on a cap reject. Reopens on a delete ack (a note was freed) or after
- * `holdMs`, which covers an upgrade or a delete on another device: the next
- * create is the probe, and a fresh reject closes it again.
+ * `holdMs`, which covers a delete on another device: the next create is the
+ * probe, and a fresh reject closes it again. `reset()` (plan change, vault
+ * switch) reopens it at once. The user is told once per reset, not on every
+ * probe: the self-heal sweep probes every few minutes for as long as the vault
+ * stays over the cap.
  */
 export class NotesCapGate {
 	private closedUntil = 0;
+	private notified = false;
 
 	constructor(
 		private readonly now: () => number,
@@ -76,13 +80,19 @@ export class NotesCapGate {
 	}
 
 	trip(reason: string): void {
-		const wasClosed = this.isClosed();
 		this.closedUntil = this.now() + this.holdMs;
-		if (!wasClosed) this.onTrip?.(reason);
+		if (this.notified) return;
+		this.notified = true;
+		this.onTrip?.(reason);
 	}
 
 	open(): void {
 		this.closedUntil = 0;
+	}
+
+	reset(): void {
+		this.closedUntil = 0;
+		this.notified = false;
 	}
 }
 
@@ -192,7 +202,7 @@ export function makeCrdtOpSend(hooks: CrdtSendHooks): (op: CrdtOp) => Promise<Se
 		const ch = hooks.channel();
 		if (!ch) return "error"; // no socket yet. hold and retry on the next tick
 		// The account is at its note cap: the server would refuse this create too.
-		if (op.kind === "create" && hooks.capGate?.isClosed()) return "error";
+		if (op.kind === "create" && hooks.capGate?.isClosed()) return "held";
 		try {
 			if (op.kind === "create") {
 				const path = (op.payload as { path?: string })?.path ?? "";

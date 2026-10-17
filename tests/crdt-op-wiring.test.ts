@@ -259,8 +259,8 @@ describe("NotesCapGate — one cap reject pauses every create (prod 2026-10-17 r
 			capGate: gate,
 		});
 		await expect(send(op("create", "d1"))).resolves.toBe("error");
-		await expect(send(op("create", "d2"))).resolves.toBe("error");
-		await expect(send(op("create", "d3"))).resolves.toBe("error");
+		await expect(send(op("create", "d2"))).resolves.toBe("held");
+		await expect(send(op("create", "d3"))).resolves.toBe("held");
 		expect(ch.crdtCreate).toHaveBeenCalledTimes(1);
 		expect(gate.isClosed()).toBe(true);
 	});
@@ -291,16 +291,54 @@ describe("NotesCapGate — one cap reject pauses every create (prod 2026-10-17 r
 		expect(gate.isClosed()).toBe(false);
 	});
 
-	test("onTrip fires once per closure, not once per rejected op", () => {
+	test("onTrip fires once per session: the periodic reopen probe must not re-nag", () => {
 		let now = 0;
 		const onTrip = mock(() => {});
 		const gate = new NotesCapGate(() => now, onTrip, 1000);
 		gate.trip("notes_cap_reached");
 		gate.trip("notes_cap_reached");
+		now = 2000; // reopened by time, the probe is refused again
+		gate.trip("notes_cap_reached");
+		gate.open(); // a delete freed a slot, then the next create refilled it
+		gate.trip("notes_cap_reached");
 		expect(onTrip).toHaveBeenCalledTimes(1);
-		now = 2000; // reopened by time, then hit again
+	});
+
+	test("reset() (plan change / vault switch) opens the gate and re-arms the notice", () => {
+		const onTrip = mock(() => {});
+		const gate = new NotesCapGate(() => 0, onTrip);
+		gate.trip("notes_cap_reached");
+		gate.reset();
+		expect(gate.isClosed()).toBe(false);
 		gate.trip("notes_cap_reached");
 		expect(onTrip).toHaveBeenCalledTimes(2);
+	});
+
+	test("a create held by the closed gate is neither charged an attempt nor dropped", async () => {
+		let now = 1000;
+		const gate = new NotesCapGate(() => now, undefined, 60 * 60 * 1000);
+		gate.trip("notes_cap_reached");
+		const ch = fakeChannel();
+		const dropped: DropReason[] = [];
+		const queue = new CrdtOpQueue({
+			send: makeCrdtOpSend({
+				channel: () => ch,
+				onCreated: () => {},
+				onTerminal: () => {},
+				capGate: gate,
+			}),
+			now: () => now,
+			onDrop: (_o, reason) => dropped.push(reason),
+		});
+		queue.enqueue(op("create", "held-1"));
+		await queue.onJoined();
+		for (let i = 0; i < 40; i++) {
+			now += 30_000; // 20 minutes: past MAX_ATTEMPTS and the 5 min TTL
+			await queue.tick();
+		}
+		expect(dropped).toEqual([]);
+		expect(queue.all().map((o) => o.docId)).toEqual(["held-1"]);
+		expect(ch.crdtCreate).not.toHaveBeenCalled();
 	});
 });
 

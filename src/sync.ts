@@ -1647,6 +1647,24 @@ export class SyncEngine {
 	/** See CrdtPorts.capGate. */
 	private notesCapGate: NotesCapGate | null = null;
 
+	/** At the plan note cap, block only creates that would add a ROW: a file
+	 *  never synced from here. A tracked file reaching crdt_create is a rename
+	 *  (handleRename un-confirms the id to relocate it), which moves an existing
+	 *  row and is never cap-checked server-side. Blocking it would drop the
+	 *  rename: the sync-state row already moved, so no sweep would retry it.
+	 *  A blocked untracked file stays untracked, so a sweep re-pushes it once
+	 *  the gate reopens. */
+	private capBlocksCreate(path: string): boolean {
+		return !!this.notesCapGate?.isClosed() && !this.syncState.has(path);
+	}
+
+	/** In-flight re-sweep started by a plan change (test hook). */
+	private capResync: Promise<unknown> | null = null;
+
+	waitForCapResync(): Promise<unknown> {
+		return this.capResync ?? Promise.resolve();
+	}
+
 	private crdtCreate:
 		| ((
 				docId: string,
@@ -5515,10 +5533,7 @@ export class SyncEngine {
 					(mintedNow || !this.hasServerNote(noteId)) &&
 					(this.crdtLive?.() ?? true) &&
 					!exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES) &&
-					// At the plan note cap: the server would refuse this create too.
-					// The file stays untracked, so a sweep re-pushes it once the
-					// gate reopens.
-					!this.notesCapGate?.isClosed()
+					!this.capBlocksCreate(file.path)
 				) {
 					try {
 						// Only the crdtCreate call itself is covered by this catch — once
@@ -5769,7 +5784,7 @@ export class SyncEngine {
 						this.crdt &&
 						noteId &&
 						!this.hasServerNote(noteId) &&
-						!this.notesCapGate?.isClosed()
+						!this.capBlocksCreate(file.path)
 					) {
 						this.crdtEnqueue({ kind: "create", docId: noteId, path: pushedPath });
 					}
@@ -6072,8 +6087,15 @@ export class SyncEngine {
 			return;
 		}
 		const gained = attachmentCapabilityGained(this.planState, next);
+		const tierChanged = this.planState !== null && this.planState.tier !== next.tier;
 		this.planState = next;
 		this.onPlanStatePersist?.(next);
+		if (tierChanged && this.notesCapGate) {
+			// The note cap moved with the tier. Upload what the gate held now,
+			// not after the 10 min hold plus the next sweep tick.
+			this.notesCapGate.reset();
+			this.capResync = this.selfHealSweep();
+		}
 		if (gained) {
 			devLog().log("push", "plan capability gained — re-syncing skipped attachments");
 			rlog().info("push", "Plan capability gained — re-syncing skipped attachments");

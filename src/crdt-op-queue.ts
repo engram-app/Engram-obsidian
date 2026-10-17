@@ -37,8 +37,10 @@ export type CrdtOp = {
 /** Why an op was dropped without being acked. */
 export type DropReason = "ttl" | "overflow" | "max-attempts" | "vault-changed";
 
-/** Result of an outbound send attempt. */
-export type SendResult = "ok" | "error" | "timeout";
+/** Result of an outbound send attempt. `held`: not sent because a known,
+ *  account-wide condition would refuse it (the plan note cap). The op is kept,
+ *  uncharged and un-aged, and re-checked after the max backoff. */
+export type SendResult = "ok" | "error" | "timeout" | "held";
 
 /** Max distinct pending docId ops. Bounds memory across long offline spells;
  *  overflow drops the oldest pending op rather than growing unbounded. */
@@ -333,6 +335,13 @@ export class CrdtOpQueue {
 		if (result === "ok") {
 			this.entries.delete(docId);
 			this.schedulePersist();
+			return;
+		}
+		if (result === "held") {
+			// Not a failure of this op: nothing was sent. Spending its attempts or
+			// TTL here would drop every queued create during a 10 min cap hold.
+			entry.op.enqueuedAt = this.now();
+			entry.nextAttemptAt = this.now() + this.opts.maxBackoffMs;
 			return;
 		}
 		entry.op.attempts += 1;
