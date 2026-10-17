@@ -882,6 +882,67 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			expect(map.pathForId("x")).toBe("x.md");
 		});
 
+		test("a later fan-out after a failed urgent fetch is not held through the backoff", async () => {
+			const { engine, map, time } = throttledEngine();
+			(mockApi.getManifest as ReturnType<typeof mock>)
+				.mockRejectedValueOnce(new Error("503"))
+				.mockRejectedValueOnce(new Error("503"));
+			engine.ensureNoteIdMapped("x");
+			await flush(); // leading fetch failed
+			engine.ensureNoteIdMapped("x");
+			void engine.awaitNoteIdMapped("x");
+			await flush(); // urgent retry failed too: backoff is now 8s
+			expect(fetches()).toBe(2);
+
+			liveManifest([{ id: "x", path: "x.md" }]);
+			time.advance(1_000);
+			engine.ensureNoteIdMapped("x");
+			void engine.awaitNoteIdMapped("x");
+			await flush();
+			time.advance(GAP / 2);
+			await flush();
+			expect(fetches()).toBe(3);
+			expect(map.pathForId("x")).toBe("x.md");
+		});
+
+		test("a later fan-out after an answered-but-unmapped fetch is not held the cooldown", async () => {
+			const { engine, map, time } = throttledEngine();
+			liveManifest([]);
+			engine.ensureNoteIdMapped("x");
+			void engine.awaitNoteIdMapped("x");
+			await flush(); // answered, x not listed yet
+			expect(fetches()).toBe(1);
+
+			liveManifest([{ id: "x", path: "x.md" }]);
+			time.advance(100);
+			engine.ensureNoteIdMapped("x");
+			void engine.awaitNoteIdMapped("x");
+			await flush();
+			time.advance(GAP / 2);
+			await flush();
+			expect(fetches()).toBe(2);
+			expect(map.pathForId("x")).toBe("x.md");
+		});
+
+		test("an apply failure is not a fetch failure: no backoff, no failure give-up", async () => {
+			const { engine, time } = throttledEngine();
+			(engine as any).applyManifestToNoteIdMap = async () => {
+				throw new Error("disk full");
+			};
+			liveManifest([{ id: "a", path: "a.md" }]);
+			engine.ensureNoteIdMapped("a");
+			await flush();
+			for (let i = 0; i < 4; i++) {
+				time.advance(GAP);
+				await flush();
+			}
+			// Three answered fetches at the base cooldown, then the attempt give-up;
+			// fetch-failure backoff would have spaced them 4s, 8s apart.
+			expect(fetches()).toBe(3);
+			expect((engine as any).idMapPending.has("a")).toBe(false);
+			expect((engine as any).idMapFailures).toBe(0);
+		});
+
 		test("a fetch does not credit an id that was settled and re-requested while it was in flight", async () => {
 			const { engine, map } = throttledEngine();
 			const release = heldManifest([]);
