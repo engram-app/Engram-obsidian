@@ -7373,7 +7373,11 @@ export class SyncEngine {
 		try {
 			// Learn + persist the id->path mapping (discovery source, like catchup).
 			if (this.noteIdMap && this.noteIdMap.pathForId(noteId) !== normalized) {
+				const displaced = this.noteIdMap.get(normalized);
 				this.noteIdMap.set(normalized, noteId);
+				// The announce path evicted another id: the path may be stale (rename
+				// race), so let the throttled manifest decide where that id lives.
+				if (displaced && displaced !== noteId) this.ensureNoteIdMapped(displaced);
 				this.noteIdSaveThrottle.poke(); // 1,000 announces must not be 1,000 data.json rewrites
 			}
 			this.confirmNoteId(noteId);
