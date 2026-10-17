@@ -39,7 +39,7 @@ import { NoteIdMap } from "./crdt/note-id-map";
 import type { ProviderRegistry } from "./crdt/provider-registry";
 import { ensureDocSchema } from "./crdt/schema";
 import { type CrdtWiring, createCrdtWiring } from "./crdt/wiring";
-import { makeCrdtOpSend } from "./crdt-op-dispatch";
+import { makeCrdtOpSend, NotesCapGate } from "./crdt-op-dispatch";
 import { type CrdtOp, CrdtOpQueue, makeDropReporter } from "./crdt-op-queue";
 import { createDebugApi, installDebugApi, uninstallDebugApi } from "./debug-api";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
@@ -760,8 +760,23 @@ export default class EngramSyncPlugin extends Plugin {
 					return rlog().anomaly("crdt", "crdt_op_dropped_vault_changed", counts);
 			}
 		});
+		// One gate for the whole plugin: a single notes_cap_reached pauses every
+		// row-adding create, direct and queued. The user is told once per reset
+		// (plan change), not on each 10 min probe.
+		const notesCapGate = new NotesCapGate(
+			() => Date.now(),
+			(reason) => {
+				notifyLimitExceeded(
+					new LimitExceededError(reason, null, "notes_cap", null, null),
+					offersUpgrades(this.settings),
+				);
+				rlog().warn("crdt", `plan note cap reached (${reason}), creates paused`);
+			},
+		);
 		this.crdtOpQueue = new CrdtOpQueue({
 			send: makeCrdtOpSend({
+				capGate: notesCapGate,
+				capBlocksCreate: (path) => this.syncEngine.capBlocksCreate(path),
 				channel: () => this.noteStream,
 				// #1409 (review H4): re-read disk and build the genesis body at SEND
 				// time so a replayed create (rate-limit backoff, pre-join hold, a
@@ -795,13 +810,8 @@ export default class EngramSyncPlugin extends Plugin {
 						`crdt_${op.kind} terminally failed (${reason}), dropping op for ${op.docId}`,
 					),
 				onLimit: (op, reason) => {
-					// A TRANSIENT plan cap (notes_cap_reached): the op is retried, but the
-					// user must be TOLD (not just a silent log) so they can free a note /
-					// upgrade. Route it to the same limit toast the edit flow uses.
-					notifyLimitExceeded(
-						new LimitExceededError(reason, null, "notes_cap", null, null),
-						offersUpgrades(this.settings),
-					);
+					// The user toast lives on notesCapGate's onTrip (once per closure,
+					// not once per op).
 					rlog().info(
 						"crdt",
 						`crdt_${op.kind} blocked by plan cap (${reason}), surfaced, retrying: ${op.docId}`,
@@ -814,10 +824,16 @@ export default class EngramSyncPlugin extends Plugin {
 			currentVaultId: () => this.settings.vaultId ?? null,
 			onDrop: (op, reason) => {
 				dropReporter.onDrop(op, reason);
-				rlog().warn(
-					"crdt",
-					`crdt_${op.kind} dropped (${reason}) without delivery: ${op.docId}`,
-				);
+				// Creates are counted by dropReporter alone: a dropped create is
+				// recoverable (self-heal re-pushes the untracked file), and one line
+				// per op was 815 lines from a single prod first sync. A dropped
+				// DELETE has no fallback and resurrects the note, so it keeps its id.
+				if (op.kind !== "create") {
+					rlog().warn(
+						"crdt",
+						`crdt_${op.kind} dropped (${reason}) without delivery: ${op.docId}`,
+					);
+				}
 			},
 		});
 		// Persist on every mutation (mirrors OfflineQueue); the flat op list is
@@ -854,6 +870,7 @@ export default class EngramSyncPlugin extends Plugin {
 				}) ?? false,
 		);
 		this.syncEngine.setCrdtPorts({
+			capGate: notesCapGate,
 			enqueue: (op) =>
 				this.crdtOpQueue?.enqueue({
 					id: crypto.randomUUID(),

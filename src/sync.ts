@@ -26,7 +26,12 @@ import type { NoteIdMap } from "./crdt/note-id-map";
 import type { ProviderRegistry } from "./crdt/provider-registry";
 import { uuid7 } from "./crdt/uuid7";
 import { encodeUpdateFrame, fromB64 } from "./crdt/wire";
-import { crdtOpFailureReason, type GenesisFrame } from "./crdt-op-dispatch";
+import {
+	crdtOpFailureReason,
+	type GenesisFrame,
+	LIMIT_REASONS,
+	type NotesCapGate,
+} from "./crdt-op-dispatch";
 import { devLog } from "./dev-log";
 import { errMsg, isHttpStatus } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
@@ -43,6 +48,7 @@ import {
 	shouldGoOffline,
 	shouldRetryAfterFailure,
 } from "./issue-store";
+import { LimitExceededError } from "./limit-error";
 import { isTextAttachment } from "./mime";
 import { noteRef } from "./note-ref";
 import {
@@ -410,6 +416,9 @@ export interface CrdtPorts {
 		| null;
 	delete?: ((docId: string) => Promise<{ doc_id: string }>) | null;
 	enqueue?: ((op: { kind: "create" | "delete"; docId: string; path: string }) => void) | null;
+	/** Shared with the durable queue: while closed, the account is at its note
+	 *  cap and no create (direct or queued) is sent. */
+	capGate?: NotesCapGate | null;
 	live?: (() => boolean) | null;
 	/** Nulling this restores the default never-bound check rather than leaving
 	 *  the port empty — `isLiveBound` is called unconditionally on the push
@@ -751,6 +760,7 @@ export class SyncEngine {
 		if ("create" in ports) this.crdtCreate = ports.create ?? null;
 		if ("delete" in ports) this.crdtDelete = ports.delete ?? null;
 		if ("enqueue" in ports) this.crdtEnqueue = ports.enqueue ?? null;
+		if ("capGate" in ports) this.notesCapGate = ports.capGate ?? null;
 		if ("live" in ports) this.crdtLive = ports.live ?? null;
 		if ("liveBound" in ports) this.isLiveBound = ports.liveBound ?? (() => false);
 		if ("catchupSince" in ports) this.crdtCatchupSince = ports.catchupSince ?? null;
@@ -1662,6 +1672,27 @@ export class SyncEngine {
 	 *  loss). Rejects on delete-wins / rate-limit / bad-path; the caller logs and
 	 *  falls through to the REST create (still functional in this additive phase,
 	 *  removed in Plan B2). Unset → genesis stays on the REST-first path. */
+	/** See CrdtPorts.capGate. */
+	private notesCapGate: NotesCapGate | null = null;
+
+	/** At the plan note cap, block only creates that would add a ROW: a file
+	 *  never synced from here. A tracked file reaching crdt_create is a rename
+	 *  (handleRename un-confirms the id to relocate it), which moves an existing
+	 *  row and is never cap-checked server-side. Blocking it would drop the
+	 *  rename: the sync-state row already moved, so no sweep would retry it.
+	 *  A blocked untracked file stays untracked, so a sweep re-pushes it once
+	 *  the gate reopens. */
+	capBlocksCreate(path: string): boolean {
+		return !!this.notesCapGate?.isClosed() && !this.syncState.has(path);
+	}
+
+	/** In-flight re-sweep started by a plan change (test hook). */
+	private capResync: Promise<unknown> | null = null;
+
+	waitForCapResync(): Promise<unknown> {
+		return this.capResync ?? Promise.resolve();
+	}
+
 	private crdtCreate:
 		| ((
 				docId: string,
@@ -2325,6 +2356,18 @@ export class SyncEngine {
 	 *  track (already-normalized paths stay untouched here). */
 	private stampSyncedRow(path: string, state: FileSyncState): void {
 		this.syncState.set(path, state);
+		this.noteRowWrite(path);
+	}
+
+	/** Monotonic count of syncState row writes, and the count at each path's
+	 *  last write. The manifest delete pass reads these to tell "synced before
+	 *  the manifest was built" from "synced while it was in flight": the second
+	 *  is absent from the manifest only because it is newer, not deleted. */
+	private rowWriteSeq = 0;
+	private rowWrittenAt = this.track(["vault"], new Map<string, number>());
+
+	private noteRowWrite(path: string): void {
+		this.rowWrittenAt.set(path, ++this.rowWriteSeq);
 	}
 
 	/** Can the server PROVE it still holds the bytes we last uploaded for
@@ -2358,6 +2401,7 @@ export class SyncEngine {
 	 *  `hash: 0` (the historical `?? { hash: 0 }` default). */
 	private patchSyncedRow(path: string, patch: Partial<FileSyncState>): void {
 		this.syncState.set(path, { hash: 0, ...this.syncState.get(path), ...patch });
+		this.noteRowWrite(path);
 	}
 
 	/** Drop `path`'s sync bookkeeping — and its CAS merge base unless
@@ -2365,6 +2409,7 @@ export class SyncEngine {
 	 *  manage the base separately, e.g. baseStore.rename). */
 	private dropPath(path: string, opts?: { dropBase?: boolean }): void {
 		this.syncState.delete(path);
+		this.rowWrittenAt.delete(path);
 		if (opts?.dropBase !== false) this.baseStore?.delete(path);
 	}
 
@@ -2385,6 +2430,7 @@ export class SyncEngine {
 	private renamePath(from: string, to: string): void {
 		const row = this.syncState.get(from);
 		this.syncState.delete(from);
+		this.rowWrittenAt.delete(from);
 		if (!row) return;
 		// Do not clobber a row already at the destination. A rename-over means
 		// SOME note's bookkeeping at `to` is stale, but we cannot tell "the same
@@ -2418,6 +2464,7 @@ export class SyncEngine {
 		// — presence, nothing else. So presence is exactly what moves, and the
 		// new-path push re-establishes the rest from the server's own answer.
 		this.syncState.set(to, { hash: 0 });
+		this.noteRowWrite(to);
 	}
 
 	/** Seed the last-synced baseline from content that just entered the local
@@ -3259,6 +3306,7 @@ export class SyncEngine {
 	 *  active server vault inside the SyncPreviewModal so the next sync starts
 	 *  from a clean slate (lastSync empty, no stale per-file hashes). */
 	async resetForVaultChange(): Promise<void> {
+		this.notesCapGate?.reset(); // the cap belonged to the old vault's account
 		this.syncStateVaultId = this.settings.vaultId ?? null;
 		await this.wipePerVaultState();
 		devLog().log(
@@ -3280,6 +3328,7 @@ export class SyncEngine {
 	 *  swap can be detected and its destructive reconcile refused. */
 	bumpAuthGeneration(): void {
 		this.authGeneration++;
+		this.notesCapGate?.reset(); // a different identity has its own cap
 	}
 
 	/** Invalidate stale per-vault bookkeeping if the active server vault no
@@ -5646,7 +5695,10 @@ export class SyncEngine {
 					// left the note with no route at all.
 					(mintedNow || !this.hasServerNote(noteId)) &&
 					(this.crdtLive?.() ?? true) &&
-					!exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES)
+					!exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES) &&
+					// pushedPath, not file.path: a rename mid-push stamps file.path,
+					// which would let a row-adding create for pushedPath through.
+					!this.capBlocksCreate(pushedPath)
 				) {
 					try {
 						// Only the crdtCreate call itself is covered by this catch — once
@@ -5853,6 +5905,13 @@ export class SyncEngine {
 							this.logEntry("push", pushedPath, "skipped", "recently_deleted");
 							return false;
 						}
+						// Plan note cap: close the shared gate so no other create is
+						// sent, and do NOT enqueue a retry. Each queued retry used to
+						// rediscover the cap on its own (prod 2026-10-17 retry storm).
+						if (createReason && LIMIT_REASONS.has(createReason)) {
+							this.notesCapGate?.trip(createReason);
+							return false;
+						}
 						// Anything else (rate-limit, transport): enqueue a durable
 						// crdt_create so the genesis is HELD and retried (transient) or
 						// surfaced (terminal) by the CrdtOpQueue. Return FALSE — a queued
@@ -5885,12 +5944,30 @@ export class SyncEngine {
 					// before join is HELD and delivered on join (test_27) rather than
 					// deferred to a best-effort reconnect re-push that can drop it.
 					// Coalesced by docId; the head is set only on the queue's ack.
-					if (this.crdtEnqueue && this.crdt && noteId && !this.hasServerNote(noteId)) {
+					if (
+						this.crdtEnqueue &&
+						this.crdt &&
+						noteId &&
+						!this.hasServerNote(noteId) &&
+						!this.capBlocksCreate(pushedPath)
+					) {
 						this.crdtEnqueue({ kind: "create", docId: noteId, path: pushedPath });
 					}
 					return false;
 				}
-				const resp = await this.api.pushNote(pushedPath, content, mtime);
+				// REST covers notes outside the CRDT domain (canvas, oversized md).
+				// Same cap, same gate: skip row-adding pushes while closed, and let a
+				// REST refusal close it for every path.
+				if (this.capBlocksCreate(pushedPath)) return false;
+				let resp: Awaited<ReturnType<EngramApi["pushNote"]>>;
+				try {
+					resp = await this.api.pushNote(pushedPath, content, mtime);
+				} catch (e) {
+					if (e instanceof LimitExceededError && LIMIT_REASONS.has(e.reason)) {
+						this.notesCapGate?.trip(e.reason);
+					}
+					throw e;
+				}
 				if ("conflict" in resp) {
 					// Unconditional push (no version) never conflicts server-side; guard
 					// for the type union only.
@@ -6189,8 +6266,22 @@ export class SyncEngine {
 			return;
 		}
 		const gained = attachmentCapabilityGained(this.planState, next);
+		const tierChanged = this.planState !== null && this.planState.tier !== next.tier;
 		this.planState = next;
 		this.onPlanStatePersist?.(next);
+		if (tierChanged && this.notesCapGate) {
+			// The note cap moved with the tier. Upload what the gate held now,
+			// not after the 10 min hold plus the next sweep tick.
+			const held = this.notesCapGate.isClosed();
+			this.notesCapGate.reset();
+			// Skipped (idle) if a push is mid-flight: the periodic sweep then
+			// picks the held files up, since the gate is already open.
+			if (held) {
+				this.capResync = this.selfHealSweep().catch((e) => {
+					rlog().warn("push", `plan-change resync failed: ${errMsg(e)}`);
+				});
+			}
+		}
 		if (gained) {
 			devLog().log("push", "plan capability gained — re-syncing skipped attachments");
 			rlog().info("push", "Plan capability gained — re-syncing skipped attachments");
@@ -6953,6 +7044,7 @@ export class SyncEngine {
 			// #283: capture before the fetch so reconcileFromManifest can refuse its
 			// destructive pass if an OAuth swap lands while the manifest is in flight.
 			const authGenAtFetch = this.authGeneration;
+			const rowSeqAtFetch = this.rowWriteSeq;
 			const manifest = await this.api.getManifest(
 				this.manifestSeq > 0 ? this.manifestSeq : undefined,
 			);
@@ -6974,7 +7066,7 @@ export class SyncEngine {
 				});
 				return { files, failed, deletes };
 			}
-			await this.reconcileFromManifest(manifest, authGenAtFetch);
+			await this.reconcileFromManifest(manifest, authGenAtFetch, rowSeqAtFetch);
 			const behind = this.validateFromManifest(manifest);
 			const { files, failed, deletes } = await this.catchupViaSeqReplay({
 				onFileApplied,
@@ -7397,7 +7489,9 @@ export class SyncEngine {
 	private socketConverge(path: string, noteId: string): void {
 		if (!this.crdtEnrollment) return;
 		const last = this.crdtHealCooldown.get(noteId);
-		const now = Date.now();
+		// The injected clock, like the trailing timer below: mixing it with
+		// Date.now() made the window real-time even under a manual clock.
+		const now = this.time.now();
 		if (last === undefined || now - last >= this.healCooldownMs) {
 			this.fireCrdtReHandshake(path, noteId);
 			return;
@@ -7432,7 +7526,7 @@ export class SyncEngine {
 	 *  client enroll caller — so if these rooms need to go, the fix is to give
 	 *  the queue a room-free delivery path, NOT to gate this call. */
 	private fireCrdtReHandshake(path: string, noteId: string): void {
-		this.crdtHealCooldown.set(noteId, Date.now());
+		this.crdtHealCooldown.set(noteId, this.time.now());
 		this.crdtEnrollment?.reset(noteId);
 		this.crdtEnrollment?.enroll(noteId);
 		rlog().info(
@@ -8566,6 +8660,11 @@ export class SyncEngine {
 			const sourceOnDisk = priorPath
 				? !!this.app.vault.getAbstractFileByPath?.(normalizePath(priorPath))
 				: false;
+			// Map at target AND file at target is the converged case: the pull feed
+			// echoing this device's own create back. It is every note on a first
+			// sync (9,848 lines from one prod upload, 2026-10-17), so only the
+			// cases that can mean a stranded rename are traced.
+			if (priorPath && targetOnDisk) return;
 			rlog().diag(
 				"pull",
 				`rename-trace 2/3 SKIPPED (${why}) id=${id} from=${noteRef(priorPath)} ` +
@@ -8961,12 +9060,14 @@ export class SyncEngine {
 	private async reconcileFromManifest(
 		manifest?: ManifestResponse | null,
 		authGenAtFetch?: number,
+		rowSeqAtFetch?: number,
 	): Promise<void> {
 		// #283: capture the identity-swap counter BEFORE the manifest is read so a
 		// swap racing the fetch is detectable. When catchUp supplies a pre-fetched
 		// manifest it passes the gen it captured before ITS OWN fetch; the
 		// self-fetch path below captures it here.
 		const authGen = authGenAtFetch ?? this.authGeneration;
+		const rowSeq = rowSeqAtFetch ?? this.rowWriteSeq;
 		const m = manifest === undefined ? await this.api.getManifest() : manifest;
 		if (!m) return;
 
@@ -8992,6 +9093,12 @@ export class SyncEngine {
 				const np = normalizePath(file.path);
 				if (serverPaths.has(np)) continue; // in manifest → content handled by catch-up
 				if (!this.syncState.has(np)) continue; // never synced → pushModifiedFiles handles it
+				// Synced AFTER the manifest fetch began (an upload acked while it was
+				// in flight): absent because it is newer than the snapshot, not
+				// because the server deleted it. Trashing it here deleted 15
+				// just-uploaded notes during a prod first sync (2026-10-17). A real
+				// delete is caught by the op-log tombstone or the next catch-up.
+				if ((this.rowWrittenAt.get(np) ?? 0) > rowSeq) continue;
 
 				// In baseline but gone from the server → server-deleted while away.
 				try {
@@ -10634,6 +10741,9 @@ export class SyncEngine {
 		return this.app.vault.getFiles().filter((f: TFile) => {
 			if (!this.isSyncable(f) || this.shouldIgnore(f.path)) return false;
 			if (!this.syncState.has(f.path)) {
+				// At the note cap every untracked file is a row-adding create the
+				// server refuses: skip it here, before pushFile reads it.
+				if (this.notesCapGate?.isClosed()) return false;
 				const id = this.noteIdMap?.get(f.path);
 				return !(id && this.crdtHasPendingOp?.(id));
 			}
@@ -11081,6 +11191,7 @@ export class SyncEngine {
 			for (const id of replaceExtras.ids) {
 				try {
 					await this.crdtDelete?.(id);
+					this.notesCapGate?.open(); // a note was freed
 					this.logEntry("delete", id, "ok", undefined, "replace-remote");
 				} catch (e) {
 					this.logEntry("delete", id, "error", errMsg(e));

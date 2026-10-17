@@ -8,8 +8,13 @@
  * Uses a fake channel whose acked calls resolve/reject scripted outcomes. no
  * real socket, deterministic under the injected clock.
  */
-import { describe, expect, mock, test } from "bun:test";
-import { type CrdtOpChannel, crdtOpFailureReason, makeCrdtOpSend } from "../src/crdt-op-dispatch";
+import { describe, expect, jest, mock, test } from "bun:test";
+import {
+	type CrdtOpChannel,
+	crdtOpFailureReason,
+	makeCrdtOpSend,
+	NotesCapGate,
+} from "../src/crdt-op-dispatch";
 import { type CrdtOp, CrdtOpQueue, type DropReason } from "../src/crdt-op-queue";
 
 /** A sendRequest-style rejection carrying a structured server reason. */
@@ -231,6 +236,181 @@ describe("makeCrdtOpSend dispatch + taxonomy", () => {
 		await expect(send(capOp)).resolves.toBe("error");
 		await expect(send(capOp)).resolves.toBe("error"); // retried on the next tick
 		expect(onLimit).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("NotesCapGate — one cap reject pauses every create (prod 2026-10-17 retry storm)", () => {
+	function fakeChannel(overrides: Partial<CrdtOpChannel> = {}): CrdtOpChannel {
+		return {
+			crdtCreate: mock(async () => Promise.reject(serverError("notes_cap_reached"))),
+			crdtDeleteAcked: mock(async (docId: string) => ({ doc_id: docId })),
+			...overrides,
+		};
+	}
+
+	test("after one notes_cap_reached, a create for a DIFFERENT note never reaches the server", async () => {
+		const now = 0;
+		const gate = new NotesCapGate(() => now);
+		const ch = fakeChannel();
+		const send = makeCrdtOpSend({
+			channel: () => ch,
+			onCreated: () => {},
+			onTerminal: () => {},
+			capGate: gate,
+			capBlocksCreate: () => gate.isClosed(),
+		});
+		await expect(send(op("create", "d1"))).resolves.toBe("error");
+		await expect(send(op("create", "d2"))).resolves.toBe("held");
+		await expect(send(op("create", "d3"))).resolves.toBe("held");
+		expect(ch.crdtCreate).toHaveBeenCalledTimes(1);
+		expect(gate.isClosed()).toBe(true);
+	});
+
+	test("deletes still flow while closed, and a delete ack reopens the gate (a note was freed)", async () => {
+		const gate = new NotesCapGate(() => 0);
+		const ch = fakeChannel();
+		const send = makeCrdtOpSend({
+			channel: () => ch,
+			onCreated: () => {},
+			onTerminal: () => {},
+			capGate: gate,
+			capBlocksCreate: () => gate.isClosed(),
+		});
+		await send(op("create", "d1"));
+		await expect(send(op("delete", "x1"))).resolves.toBe("ok");
+		expect(gate.isClosed()).toBe(false);
+		await send(op("create", "d2"));
+		expect(ch.crdtCreate).toHaveBeenCalledTimes(2);
+	});
+
+	test("the gate reopens on its own after the hold (upgrade / delete on another device)", () => {
+		let now = 0;
+		const gate = new NotesCapGate(() => now, undefined, 1000);
+		gate.trip("notes_cap_reached");
+		now = 999;
+		expect(gate.isClosed()).toBe(true);
+		now = 1000;
+		expect(gate.isClosed()).toBe(false);
+	});
+
+	test("the periodic reopen probe does not re-nag", () => {
+		let now = 0;
+		const onTrip = mock(() => {});
+		const gate = new NotesCapGate(() => now, onTrip, 1000);
+		gate.trip("notes_cap_reached");
+		gate.trip("notes_cap_reached");
+		now = 2000; // reopened by time, the probe is refused again
+		gate.trip("notes_cap_reached");
+		expect(onTrip).toHaveBeenCalledTimes(1);
+	});
+
+	test("refilling the cap after freeing notes tells the user again", () => {
+		const onTrip = mock(() => {});
+		const gate = new NotesCapGate(() => 0, onTrip);
+		gate.trip("notes_cap_reached");
+		gate.open(); // a delete freed a slot
+		gate.trip("notes_cap_reached"); // later the vault fills up again
+		expect(onTrip).toHaveBeenCalledTimes(2);
+	});
+
+	test("reset() (plan change / vault switch) opens the gate and re-arms the notice", () => {
+		const onTrip = mock(() => {});
+		const gate = new NotesCapGate(() => 0, onTrip);
+		gate.trip("notes_cap_reached");
+		gate.reset();
+		expect(gate.isClosed()).toBe(false);
+		gate.trip("notes_cap_reached");
+		expect(onTrip).toHaveBeenCalledTimes(2);
+	});
+
+	test("a queued RENAME (tracked path) is sent while the gate is closed: it adds no row", async () => {
+		const gate = new NotesCapGate(() => 0);
+		gate.trip("notes_cap_reached");
+		const ch = fakeChannel({
+			crdtCreate: mock(async (docId: string) => ({
+				docId,
+				seeded: false,
+				genesisOutcome: "absent" as const,
+			})),
+		});
+		const send = makeCrdtOpSend({
+			channel: () => ch,
+			onCreated: () => {},
+			onTerminal: () => {},
+			capGate: gate,
+			capBlocksCreate: (path) => path !== "Notes/renamed.md",
+		});
+		await expect(send(op("create", "r1", "Notes/renamed.md"))).resolves.toBe("ok");
+		await expect(send(op("create", "n1", "Notes/new.md"))).resolves.toBe("held");
+		expect(ch.crdtCreate).toHaveBeenCalledTimes(1);
+	});
+
+	test("a create held by the closed gate is neither charged an attempt nor dropped", async () => {
+		let now = 1000;
+		const gate = new NotesCapGate(() => now, undefined, 60 * 60 * 1000);
+		gate.trip("notes_cap_reached");
+		const ch = fakeChannel();
+		const dropped: DropReason[] = [];
+		const queue = new CrdtOpQueue({
+			send: makeCrdtOpSend({
+				channel: () => ch,
+				onCreated: () => {},
+				onTerminal: () => {},
+				capGate: gate,
+				capBlocksCreate: () => gate.isClosed(),
+			}),
+			now: () => now,
+			onDrop: (_o, reason) => dropped.push(reason),
+		});
+		queue.enqueue(op("create", "held-1"));
+		await queue.onJoined();
+		for (let i = 0; i < 40; i++) {
+			now += 30_000; // 20 minutes: past MAX_ATTEMPTS and the 5 min TTL
+			await queue.tick();
+		}
+		expect(dropped).toEqual([]);
+		expect(queue.all().map((o) => o.docId)).toEqual(["held-1"]);
+		expect(ch.crdtCreate).not.toHaveBeenCalled();
+	});
+
+	test("a held op's refreshed age is persisted, so a reload does not TTL-drop it", async () => {
+		jest.useFakeTimers();
+		try {
+			let now = 1000;
+			const gate = new NotesCapGate(() => now, undefined, 60 * 60 * 1000);
+			gate.trip("notes_cap_reached");
+			const persisted: CrdtOp[][] = [];
+			const queue = new CrdtOpQueue({
+				send: makeCrdtOpSend({
+					channel: () => fakeChannel(),
+					onCreated: () => {},
+					onTerminal: () => {},
+					capGate: gate,
+					capBlocksCreate: () => gate.isClosed(),
+				}),
+				now: () => now,
+				persistDelayMs: 10,
+			});
+			queue.setPersist(async (ops) => {
+				persisted.push(ops.map((o) => ({ ...o })));
+			});
+			queue.enqueue(op("create", "held-1"));
+			await queue.onJoined();
+			jest.advanceTimersByTime(20);
+			// 8 min held, ticking like the plugin's interval: past the 5 min TTL
+			// by the op's ORIGINAL age.
+			for (let i = 0; i < 96; i++) {
+				now += 5_000;
+				await queue.tick();
+				jest.advanceTimersByTime(20);
+			}
+			const saved = persisted.at(-1)?.[0];
+			expect(saved?.docId).toBe("held-1");
+			// What a reload would read back is young, not 8 minutes old.
+			expect(now - (saved?.enqueuedAt ?? 0)).toBeLessThanOrEqual(30_000);
+		} finally {
+			jest.useRealTimers();
+		}
 	});
 });
 

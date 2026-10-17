@@ -14,7 +14,8 @@
  *      onLimit so the user is TOLD via the limit toast: notes_cap_reached is a
  *      plan cap that is TRANSIENT (freeing a note / upgrading clears it), so it
  *      must retry (bounded) and self-deliver once cleared, not drop after one
- *      attempt. Surfaced once per op (the queue retries on backoff).
+ *      attempt. It also closes the shared NotesCapGate, so no other create is
+ *      sent until a note is freed or the hold expires.
  *      recently_deleted moved from RETRYABLE to TERMINAL (finding 1): a
  *      delete-wins reject retried past its window resurrects the note.
  *  - TERMINAL reject                 → "ok" to REMOVE it (retrying cannot help)
@@ -46,6 +47,57 @@ export const TERMINAL_REASONS: ReadonlySet<string> = new Set([
  *  a note, upgrade). Retry (bounded) AND surface to the user, never drop after
  *  one attempt like a terminal reason. */
 export const LIMIT_REASONS: ReadonlySet<string> = new Set(["notes_cap_reached"]);
+
+/** How long one notes_cap_reached reject pauses EVERY create. */
+export const NOTES_CAP_HOLD_MS = 10 * 60 * 1000;
+
+/**
+ * Vault-wide breaker for the plan note cap. The cap belongs to the ACCOUNT, not
+ * the op: once one create is refused, every create will be until a note is freed
+ * or the plan changes. Without a shared gate each create rediscovered the cap on
+ * its own and retried it, so a vault over the cap hammered the server for as long
+ * as Obsidian stayed open (prod 2026-10-17: a 10k+ note first sync pinned web).
+ *
+ * Closes on a cap reject. Reopens on a delete ack (a note was freed) or after
+ * `holdMs`, which covers a delete on another device: the next create is the
+ * probe, and a fresh reject closes it again. `reset()` (plan change, vault
+ * switch, auth swap) reopens it at once.
+ *
+ * The user is told when the cap is first hit and again after notes were freed
+ * (`open`/`reset`), but not on the expiry probe: the self-heal sweep probes
+ * every few minutes for as long as the vault stays over the cap.
+ */
+export class NotesCapGate {
+	private closedUntil = 0;
+	private notified = false;
+
+	constructor(
+		private readonly now: () => number,
+		private readonly onTrip?: (reason: string) => void,
+		private readonly holdMs = NOTES_CAP_HOLD_MS,
+	) {}
+
+	isClosed(): boolean {
+		return this.now() < this.closedUntil;
+	}
+
+	trip(reason: string): void {
+		this.closedUntil = this.now() + this.holdMs;
+		if (this.notified) return;
+		this.notified = true;
+		this.onTrip?.(reason);
+	}
+
+	open(): void {
+		this.closedUntil = 0;
+		this.notified = false;
+	}
+
+	reset(): void {
+		this.closedUntil = 0;
+		this.notified = false;
+	}
+}
 
 /**
  * Extract the server `reason` from a sendRequest rejection. sendRequest rejects
@@ -139,6 +191,13 @@ export type CrdtSendHooks = {
 	 *  (limit toast) so they know the op is blocked; the op is still RETRIED
 	 *  (bounded) so it delivers once they free a note / upgrade. */
 	onLimit?: (op: CrdtOp, reason: string) => void;
+	/** Shared with the push path. A cap reject closes it and a delete ack
+	 *  reopens it. Blocking is decided by `capBlocksCreate`, not here. */
+	capGate?: NotesCapGate;
+	/** Whether the cap blocks a create for this path. Only a row-adding create
+	 *  is blocked: a queued RENAME of a synced note relocates its row and must
+	 *  still go out. Production wires `SyncEngine.capBlocksCreate`. */
+	capBlocksCreate?: (path: string) => boolean;
 };
 
 /** Build the queue's `send`. */
@@ -149,9 +208,11 @@ export function makeCrdtOpSend(hooks: CrdtSendHooks): (op: CrdtOp) => Promise<Se
 	return async (op) => {
 		const ch = hooks.channel();
 		if (!ch) return "error"; // no socket yet. hold and retry on the next tick
+		const path = (op.payload as { path?: string })?.path ?? "";
+		// The account is at its note cap: the server would refuse this create too.
+		if (op.kind === "create" && hooks.capBlocksCreate?.(path)) return "held";
 		try {
 			if (op.kind === "create") {
-				const path = (op.payload as { path?: string })?.path ?? "";
 				const genesis = await hooks.buildGenesisFrame?.(path, op.docId);
 				const {
 					docId: serverId,
@@ -184,6 +245,7 @@ export function makeCrdtOpSend(hooks: CrdtSendHooks): (op: CrdtOp) => Promise<Se
 				}
 			} else if (op.kind === "delete") {
 				await ch.crdtDeleteAcked(op.docId);
+				hooks.capGate?.open(); // a note was freed, so a create may fit again
 			} else {
 				// crdt_msg is a separate task; this queue never enqueues it. Drop
 				// defensively rather than retry an op kind we don't dispatch.
@@ -195,6 +257,7 @@ export function makeCrdtOpSend(hooks: CrdtSendHooks): (op: CrdtOp) => Promise<Se
 		} catch (err) {
 			const reason = crdtOpFailureReason(err);
 			if (reason && LIMIT_REASONS.has(reason)) {
+				hooks.capGate?.trip(reason);
 				if (!limitSurfaced.has(op.id)) {
 					limitSurfaced.add(op.id);
 					hooks.onLimit?.(op, reason); // tell the user, once

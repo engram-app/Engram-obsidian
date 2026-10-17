@@ -17,15 +17,17 @@ import type { EngramApi } from "../src/api";
 import type { GenesisOutcome } from "../src/channel";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import type { ProviderRegistry as CrdtManager } from "../src/crdt/provider-registry";
-import { makeCrdtOpSend } from "../src/crdt-op-dispatch";
+import { makeCrdtOpSend, NotesCapGate } from "../src/crdt-op-dispatch";
 import { type CrdtOp, CrdtOpQueue, type DropReason } from "../src/crdt-op-queue";
+import { LimitExceededError } from "../src/limit-error";
 import { destroyRemoteLog, initRemoteLog } from "../src/remote-log";
 import { SyncEngine } from "../src/sync";
 import { ManualTimeProvider } from "../src/time-provider";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 /** A fake server behind a flapping socket. */
-function fakeServer() {
+function fakeServer(initialCap = Number.POSITIVE_INFINITY) {
+	let notesCap = initialCap;
 	const created = new Map<string, string>(); // docId -> path
 	const state = { up: false, createCalls: 0 };
 	const channel = {
@@ -36,12 +38,31 @@ function fakeServer() {
 		): Promise<{ docId: string; seeded: boolean; genesisOutcome: GenesisOutcome }> => {
 			state.createCalls++;
 			if (!state.up) throw new Error("crdt topic not joined");
+			// A live id at a new path is a relocation: the backend moves the row
+			// before any cap check (genesis_relocate_live), so no new row counts.
+			if (created.has(docId)) {
+				created.set(docId, path);
+				return { docId, seeded: false, genesisOutcome: null };
+			}
+			if (created.size >= notesCap) {
+				throw new Error(
+					`request failed: ${JSON.stringify({ reason: "notes_cap_reached", limit: notesCap })}`,
+				);
+			}
 			created.set(docId, path);
 			return { docId, seeded: false, genesisOutcome: null };
 		},
 		crdtDeleteAcked: async (docId: string) => ({ doc_id: docId }),
 	};
-	return { created, state, channel, paths: () => new Set(created.values()) };
+	return {
+		created,
+		state,
+		channel,
+		paths: () => new Set(created.values()),
+		raiseCap: (n: number) => {
+			notesCap = n;
+		},
+	};
 }
 
 function makeVault(paths: string[], mtime = 1000) {
@@ -99,8 +120,11 @@ const crdtStub = (): Partial<CrdtManager> => ({
 });
 
 /** Engine + queue wired exactly the way main.ts wires them. */
-function harness(paths: string[], opts: { mtime?: number; api?: EngramApi } = {}) {
-	const server = fakeServer();
+function harness(
+	paths: string[],
+	opts: { mtime?: number; api?: EngramApi; notesCap?: number; capGate?: NotesCapGate } = {},
+) {
+	const server = fakeServer(opts.notesCap);
 	const { app, files } = makeVault(paths, opts.mtime);
 	const time = new ManualTimeProvider(5000);
 	const engine = new SyncEngine(
@@ -123,6 +147,8 @@ function harness(paths: string[], opts: { mtime?: number; api?: EngramApi } = {}
 			onCreated: (localId, serverId, path, seeded, genesis, outcome) =>
 				engine.applyCrdtCreateAck(localId, serverId, path, seeded, genesis, outcome),
 			onTerminal: () => {},
+			capGate: opts.capGate,
+			capBlocksCreate: opts.capGate ? (path) => engine.capBlocksCreate(path) : undefined,
 		}),
 		now: () => clock,
 		currentVaultId: () => "v1",
@@ -134,6 +160,7 @@ function harness(paths: string[], opts: { mtime?: number; api?: EngramApi } = {}
 	let joined = false;
 	engine.setCrdtPorts({
 		create: (id, path, b64) => server.channel.crdtCreate(id, path, b64),
+		capGate: opts.capGate,
 		live: () => joined && server.state.up,
 		enqueue: (op) =>
 			queue.enqueue({
@@ -150,6 +177,7 @@ function harness(paths: string[], opts: { mtime?: number; api?: EngramApi } = {}
 		engine,
 		queue,
 		server,
+		app,
 		files,
 		drops,
 		time,
@@ -350,5 +378,197 @@ describe("(e) self-heal telemetry carries counts, never paths", () => {
 			expect(e.message).not.toContain("Secret");
 			expect(e.message).not.toContain("Divorce");
 		}
+	});
+});
+
+describe("vault over the plan note cap (prod 2026-10-17 retry storm)", () => {
+	test("creates past the cap stop after the first refusal instead of retrying per note", async () => {
+		const gate = new NotesCapGate(() => 0);
+		const h = harness(notes(300), { notesCap: 10, capGate: gate });
+		await h.join();
+
+		// First sync, then the queue's retry ticks and two more self-heal sweeps:
+		// the shape that kept a real 10k+ vault hammering the server.
+		await h.engine.pushModifiedFiles();
+		for (let i = 0; i < 10; i++) {
+			h.advance(30_000);
+			await h.queue.tick();
+		}
+		await h.engine.pushModifiedFiles();
+		await h.engine.pushModifiedFiles();
+
+		expect(h.server.created.size).toBe(10);
+		expect(gate.isClosed()).toBe(true);
+		// 10 accepted + the one refusal that closed the gate. Anything near 290
+		// means each note is rediscovering the cap on its own.
+		// 10 accepted + at most maxConcurrentPushes (5) in-flight refusals.
+		expect(h.server.state.createCalls).toBeLessThanOrEqual(15);
+	});
+
+	test("renaming an already-synced note still syncs while the gate is closed (relocation, not a new row)", async () => {
+		const gate = new NotesCapGate(() => 0);
+		const h = harness(["Notes/a.md", "Notes/b.md"], { notesCap: 1, capGate: gate });
+		await h.join();
+		await h.engine.pushModifiedFiles();
+		expect(gate.isClosed()).toBe(true);
+		const [aId] = [...h.server.created.keys()];
+		const synced = h.server.created.get(aId as string) as string;
+		const renamedFrom = synced;
+		const renamedTo = synced.replace(/\.md$/, "-renamed.md");
+		const file = h.files.get(renamedFrom) as TFile;
+		h.files.delete(renamedFrom);
+		file.path = renamedTo;
+		h.files.set(renamedTo, file);
+
+		await h.engine.handleRename(file, renamedFrom);
+
+		expect(h.server.created.get(aId as string)).toBe(renamedTo);
+	});
+
+	test("an upgrade (tier change) reopens the gate and uploads what was held", async () => {
+		const gate = new NotesCapGate(() => 0);
+		const h = harness(notes(5), { notesCap: 2, capGate: gate });
+		await h.join();
+		h.engine.hydratePlanState({
+			tier: "free",
+			attachmentsTextOnly: false,
+			maxFileBytes: 1,
+			attachmentBytesCap: null,
+			indexedNotesCap: 2000,
+			updatedAt: 0,
+		});
+		await h.engine.pushModifiedFiles();
+		expect(h.server.created.size).toBe(2);
+		expect(gate.isClosed()).toBe(true);
+
+		h.server.raiseCap(Number.POSITIVE_INFINITY);
+		h.engine.applyPlanState({
+			tier: "pro",
+			attachmentsTextOnly: false,
+			maxFileBytes: 1,
+			attachmentBytesCap: null,
+			indexedNotesCap: null,
+			updatedAt: 1,
+		});
+		await h.engine.waitForCapResync();
+
+		expect(gate.isClosed()).toBe(false);
+		expect(h.server.created.size).toBe(5);
+	});
+});
+
+describe("catch-up during an upload (prod 2026-10-17: 15 just-uploaded notes trashed)", () => {
+	test("a note uploaded while the manifest is in flight is NOT trashed as server-deleted", async () => {
+		let h!: ReturnType<typeof harness>;
+		let duringFetch: (() => Promise<void>) | null = null;
+		const api = makeApi({
+			getManifest: mock(async () => {
+				const snapshot = [...h.server.paths()];
+				// The upload acks AFTER the server built this snapshot.
+				await duringFetch?.();
+				return {
+					notes: snapshot.map((path) => ({ path, content_hash: "h" })),
+					attachments: [],
+					total_notes: snapshot.length,
+					total_attachments: 0,
+				};
+			}),
+		});
+		h = harness(["Notes/old.md", "Notes/new.md"], { api });
+		await h.join();
+		const late = h.files.get("Notes/new.md") as TFile;
+		h.files.delete("Notes/new.md");
+		await h.engine.pushModifiedFiles(); // old.md synced first
+		h.files.set("Notes/new.md", late);
+		duringFetch = async () => {
+			await h.engine.pushModifiedFiles();
+		};
+
+		await h.engine.catchUp();
+
+		expect(h.server.paths().has("Notes/new.md")).toBe(true);
+		expect(h.app.fileManager.trashFile).not.toHaveBeenCalled();
+	});
+
+	test("a note genuinely deleted on the server is still trashed (the backstop keeps working)", async () => {
+		let h!: ReturnType<typeof harness>;
+		const api = makeApi({
+			getManifest: mock(async () => ({
+				notes: [...h.server.paths()]
+					.filter((p) => p !== "Notes/gone.md")
+					.map((path) => ({ path, content_hash: "h" })),
+				attachments: [],
+				total_notes: 1,
+				total_attachments: 0,
+			})),
+		});
+		h = harness(["Notes/kept.md", "Notes/gone.md"], { api });
+		await h.join();
+		await h.engine.pushModifiedFiles();
+
+		await h.engine.catchUp();
+
+		expect(h.app.fileManager.trashFile).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("note cap gate: lifecycle and every create path (round-3 review)", () => {
+	test("a closed gate keeps over-cap untracked files out of sweeps entirely (no per-file reads)", async () => {
+		const gate = new NotesCapGate(() => 0);
+		const h = harness(notes(200), { notesCap: 5, capGate: gate });
+		await h.join();
+		await h.engine.pushModifiedFiles();
+		expect(gate.isClosed()).toBe(true);
+		// Reads of files the server does NOT hold (the over-cap ones). Synced
+		// notes may still be re-checked; that is normal sweep work.
+		const overCapReads = () =>
+			[...h.app.vault.read.mock.calls, ...h.app.vault.cachedRead.mock.calls].filter(
+				([f]: [TFile]) => !h.server.paths().has(f.path),
+			).length;
+		const readsBefore = overCapReads();
+
+		await h.engine.pushModifiedFiles();
+		await h.engine.selfHealSweep();
+
+		expect(overCapReads()).toBe(readsBefore);
+	});
+
+	test("a vault change or an auth swap resets the gate (it belongs to the old account)", async () => {
+		const gate = new NotesCapGate(() => 0);
+		const h = harness(notes(3), { notesCap: 1, capGate: gate });
+		await h.join();
+		await h.engine.pushModifiedFiles();
+		expect(gate.isClosed()).toBe(true);
+		h.engine.bumpAuthGeneration();
+		expect(gate.isClosed()).toBe(false);
+
+		gate.trip("notes_cap_reached");
+		await h.engine.resetForVaultChange();
+		expect(gate.isClosed()).toBe(false);
+	});
+
+	test("a REST cap refusal (markdown over the CRDT size cap) trips the shared gate too", async () => {
+		const gate = new NotesCapGate(() => 0);
+		const pushNote = mock(async () => {
+			throw new LimitExceededError("notes_cap_reached", null, "notes_cap", 1, 1);
+		});
+		const h = harness(["Big/a.md", "Big/b.md", "Big/c.md"], {
+			api: makeApi({ pushNote }),
+			capGate: gate,
+		});
+		// Over MAX_CRDT_NOTE_BYTES (4 MB): these take the REST pushNote path.
+		const huge = "x".repeat(4 * 1024 * 1024 + 1);
+		h.app.vault.read.mockImplementation(async () => huge);
+		h.app.vault.cachedRead.mockImplementation(async () => huge);
+		await h.join();
+
+		await h.engine.pushModifiedFiles();
+		const calls = pushNote.mock.calls.length;
+		await h.engine.pushModifiedFiles();
+
+		expect(gate.isClosed()).toBe(true);
+		// At most the concurrent first wave; the second sweep sends nothing.
+		expect(pushNote.mock.calls.length).toBe(calls);
+		expect(calls).toBeLessThanOrEqual(3);
 	});
 });
