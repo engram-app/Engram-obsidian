@@ -458,7 +458,10 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 						`announce discovery failed for ${noteRef(announcedPath)}: ${errMsg(e, announcedPath)}`,
 					),
 				)
-				.then(heal);
+				.then(heal)
+				.catch((e) =>
+					rlog().warn("crdt", `announce id-map heal failed for ${docId}: ${errMsg(e)}`),
+				);
 		// Vault-channel fan-out: an IDLE note (not open in an editor) converges over
 		// the note_yjs_update broadcast (applyPushedNoteUpdate) — it must NOT open a
 		// dedicated room. This announce-driven enroll was the primary connect-storm
