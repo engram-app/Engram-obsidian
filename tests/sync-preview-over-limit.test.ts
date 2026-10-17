@@ -68,12 +68,12 @@ describe("notesQuotaFromUsage / fetchNotesQuota", () => {
 		expect(notesQuotaFromUsage(malformed)).toBeNull();
 	});
 
-	test("fetchNotesQuota: unlimited and unknown both mean no step", async () => {
-		expect(await fetchNotesQuota(async () => usage(null))).toBeNull();
+	test("fetchNotesQuota keeps the three states apart", async () => {
+		expect(await fetchNotesQuota(async () => usage(null))).toBe("unlimited");
 		expect(await fetchNotesQuota(async () => ({ tier: "free", usage: {} }))).toBeNull();
 	});
 
-	test("a failed usage call yields no quota instead of throwing", async () => {
+	test("a failed usage call is unknown (null) instead of throwing", async () => {
 		expect(await fetchNotesQuota(() => Promise.reject(new Error("offline")))).toBeNull();
 	});
 

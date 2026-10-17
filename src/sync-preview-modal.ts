@@ -355,19 +355,16 @@ export function notesQuotaFromUsage(data: BillingUsage): NotesQuota | "unlimited
 	return { limit, room: Math.max(0, limit - (notes?.used ?? 0)) };
 }
 
-/** The notes quota, or null when the usage call fails: the over-limit step is
- *  advice, and a failed lookup must never block or delay a sync. */
+/** The one usage lookup: the quota, "unlimited", or null when unknown (the
+ *  call failed or the body is unreadable). Never throws: the over-limit step
+ *  is advice, and a failed lookup must never block or delay a sync. */
 export async function fetchNotesQuota(
 	getUsage: () => Promise<BillingUsage>,
-): Promise<NotesQuota | null> {
+): Promise<NotesQuota | "unlimited" | null> {
 	try {
-		const quota = notesQuotaFromUsage(await getUsage());
-		return quota === "unlimited" ? null : quota;
+		return notesQuotaFromUsage(await getUsage());
 	} catch (e: unknown) {
-		devLog().log(
-			"error",
-			`billing usage lookup failed, skipping over-limit step: ${errMsg(e)}`,
-		);
+		devLog().log("error", `billing usage lookup failed: ${errMsg(e)}`);
 		return null;
 	}
 }
@@ -685,8 +682,9 @@ export class SyncPreviewModal extends Modal {
 		const fetchUsage = this.opts.fetchUsage;
 		if (fetchUsage) {
 			const seq = ++this.quotaSeq;
+			// On open, unlimited and unknown alike mean no step.
 			void fetchNotesQuota(fetchUsage).then((q) => {
-				if (seq === this.quotaSeq) this.state.setNotesQuota(q);
+				if (seq === this.quotaSeq) this.state.setNotesQuota(q === "unlimited" ? null : q);
 			});
 			window.addEventListener("focus", this.onWindowFocus);
 		}
@@ -813,13 +811,7 @@ export class SyncPreviewModal extends Modal {
 		const fetchUsage = this.opts.fetchUsage;
 		if (!fetchUsage) return;
 		const seq = ++this.quotaSeq;
-		let quota: NotesQuota | "unlimited" | null;
-		try {
-			quota = notesQuotaFromUsage(await fetchUsage());
-		} catch (e: unknown) {
-			devLog().log("error", `billing usage re-check failed: ${errMsg(e)}`);
-			return;
-		}
+		const quota = await fetchNotesQuota(fetchUsage);
 		if (quota == null || seq !== this.quotaSeq) return;
 		if (this.state.view !== "over-limit" || this.state.overLimitSaving) return;
 		if (quota === "unlimited") {
