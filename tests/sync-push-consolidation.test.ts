@@ -978,3 +978,51 @@ describe("Sync again's re-check and the note cap", () => {
 		expect(pushFile.mock.calls.map((c: any[]) => c[0].path)).toEqual(["Archive/new.md"]);
 	});
 });
+
+describe("renaming an excluded folder keeps it excluded", () => {
+	function setup(existing: string[] = []) {
+		const { engine, app } = makeEngine([]);
+		app.vault.getAbstractFileByPath.mockImplementation((p: string) =>
+			existing.includes(p) ? ({ path: p } as any) : null,
+		);
+		const settings = (engine as any).settings;
+		settings.excludedFolders = ["Archive"];
+		engine.setCatchupSeq(500);
+		engine.noteExcluded(["Archive"]);
+		const plugin = Object.assign(Object.create(EngramSyncPlugin.prototype), {
+			app,
+			settings,
+			syncEngine: engine,
+			noteIdMap: new NoteIdMap(),
+			writePluginData: mock(async () => {}),
+		});
+		return { engine, plugin, settings };
+	}
+
+	test("Archive renamed to Old: Old's files are still ignored", () => {
+		const { engine, plugin, settings } = setup();
+		plugin.followExcludedFolderRename("Old", "Archive");
+		expect(settings.excludedFolders).toEqual(["Old"]);
+		expect(engine.shouldIgnore("Old/x.md")).toBe(true);
+		expect(engine.exportExcludedSince()).toEqual({ Old: 500 });
+	});
+
+	test("a child's rename event arriving first does the same", () => {
+		const { engine, plugin } = setup();
+		plugin.followExcludedFolderRename("Old/sub/x.md", "Archive/sub/x.md");
+		expect(engine.shouldIgnore("Old/y.md")).toBe(true);
+	});
+
+	test("moved under another folder: excluded by its new path", () => {
+		const { engine, plugin } = setup();
+		plugin.followExcludedFolderRename("Projects/Archive", "Archive");
+		expect(engine.shouldIgnore("Projects/Archive/x.md")).toBe(true);
+		expect(engine.shouldIgnore("Projects/y.md")).toBe(false);
+	});
+
+	test("one file moved out of the folder leaves the exclusion alone", () => {
+		const { plugin, settings } = setup(["Archive"]); // the folder still exists
+		plugin.followExcludedFolderRename("Notes/x.md", "Archive/x.md");
+		expect(settings.excludedFolders).toEqual(["Archive"]);
+	});
+});

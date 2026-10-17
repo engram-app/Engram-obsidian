@@ -1006,6 +1006,9 @@ export default class EngramSyncPlugin extends Plugin {
 		);
 		this.registerEvent(
 			this.app.vault.on("rename", (file, oldPath) => {
+				// First: the engine must see an excluded folder's new name before it
+				// handles this event or its children's.
+				this.followExcludedFolderRename(file.path, oldPath);
 				void this.syncEngine.handleRename(file, oldPath);
 				// Task 6: no CrdtManager.renameDoc call — the CRDT doc is keyed by
 				// the note's stable note_id (SyncEngine.handleRename already moved
@@ -3733,6 +3736,35 @@ export default class EngramSyncPlugin extends Plugin {
 			throw e;
 		}
 		this.syncEngine.updateSettings(this.settings);
+	}
+
+	/** An excluded folder renamed or moved in Obsidian keeps its exclusion:
+	 *  the entry (and its excludedSince seq) follows the new path. Works from
+	 *  the folder's own rename event or any child's, whichever comes first: the
+	 *  excluded folder is the prefix that changed, and its old path is gone
+	 *  (one file moved out leaves the folder where it was). Applied to the live
+	 *  settings synchronously, since the children's rename events follow at
+	 *  once, then saved through the excludedFolders queue. A move under another
+	 *  folder stores the nested path, which inExcludedFolder matches as a prefix
+	 *  from the vault root. */
+	followExcludedFolderRename(path: string, oldPath: string): void {
+		const from = this.settings.excludedFolders.find(
+			(f) => oldPath === f || oldPath.startsWith(`${f}/`),
+		);
+		if (!from) return;
+		const rest = oldPath.slice(from.length);
+		if (!path.endsWith(rest)) return;
+		const to = path.slice(0, path.length - rest.length);
+		if (!to || to === from || this.app.vault.getAbstractFileByPath(from)) return;
+		this.settings.excludedFolders = this.settings.excludedFolders.map((f) =>
+			f === from ? to : f,
+		);
+		this.syncEngine.renameExcluded(from, to);
+		void this.serializeExcluded(() => this.savePluginData(this.syncEngine.getLastSync())).catch(
+			(e: unknown) =>
+				rlog().error("lifecycle", `excluded folder rename save failed: ${errMsg(e)}`),
+		);
+		this.settingTab?.rerender();
 	}
 
 	/** Tell the engine first (holdReinclude), so every save from here on,

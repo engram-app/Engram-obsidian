@@ -9296,6 +9296,14 @@ export class SyncEngine {
 		};
 	}
 
+	/** An excluded folder was renamed or moved: its record follows it. */
+	renameExcluded(from: string, to: string): void {
+		const seq = this.excludedSince.get(from);
+		if (seq === undefined) return;
+		this.excludedSince.delete(from);
+		this.excludedSince.set(to, seq);
+	}
+
 	exportExcludedSince(): Record<string, number> {
 		return Object.fromEntries(this.excludedSince);
 	}
