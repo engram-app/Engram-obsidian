@@ -456,6 +456,12 @@ export class SyncStore {
 		) {
 			return false;
 		}
+		// A forgotten key elsewhere naming this id is a second committed claim
+		// that `set()` publishes the removal of (the loop over `forgotten`).
+		// `pathForId` hides it, so it would otherwise survive the skip.
+		for (const path of this.forgotten) {
+			if (this.map.get(path)?.note_id === meta.note_id) return false;
+		}
 		const held = this.map.get(resolved);
 		return (
 			held !== undefined &&

@@ -188,9 +188,13 @@ export type CrdtSendHooks = {
 	 *  (limit toast) so they know the op is blocked; the op is still RETRIED
 	 *  (bounded) so it delivers once they free a note / upgrade. */
 	onLimit?: (op: CrdtOp, reason: string) => void;
-	/** Shared with the push path. While closed, a create fails locally without a
-	 *  network call; a cap reject closes it and a delete ack reopens it. */
+	/** Shared with the push path. A cap reject closes it and a delete ack
+	 *  reopens it. */
 	capGate?: NotesCapGate;
+	/** Whether the cap blocks a create for this path. Only a row-adding create
+	 *  is blocked: a queued RENAME of a synced note relocates its row and must
+	 *  still go out. Defaults to "gate closed" when unwired. */
+	capBlocksCreate?: (path: string) => boolean;
 };
 
 /** Build the queue's `send`. */
@@ -201,11 +205,16 @@ export function makeCrdtOpSend(hooks: CrdtSendHooks): (op: CrdtOp) => Promise<Se
 	return async (op) => {
 		const ch = hooks.channel();
 		if (!ch) return "error"; // no socket yet. hold and retry on the next tick
+		const path = (op.payload as { path?: string })?.path ?? "";
 		// The account is at its note cap: the server would refuse this create too.
-		if (op.kind === "create" && hooks.capGate?.isClosed()) return "held";
+		if (
+			op.kind === "create" &&
+			(hooks.capBlocksCreate?.(path) ?? hooks.capGate?.isClosed() ?? false)
+		) {
+			return "held";
+		}
 		try {
 			if (op.kind === "create") {
-				const path = (op.payload as { path?: string })?.path ?? "";
 				const genesis = await hooks.buildGenesisFrame?.(path, op.docId);
 				const {
 					docId: serverId,

@@ -314,6 +314,28 @@ describe("NotesCapGate — one cap reject pauses every create (prod 2026-10-17 r
 		expect(onTrip).toHaveBeenCalledTimes(2);
 	});
 
+	test("a queued RENAME (tracked path) is sent while the gate is closed: it adds no row", async () => {
+		const gate = new NotesCapGate(() => 0);
+		gate.trip("notes_cap_reached");
+		const ch = fakeChannel({
+			crdtCreate: mock(async (docId: string) => ({
+				docId,
+				seeded: false,
+				genesisOutcome: "absent" as const,
+			})),
+		});
+		const send = makeCrdtOpSend({
+			channel: () => ch,
+			onCreated: () => {},
+			onTerminal: () => {},
+			capGate: gate,
+			capBlocksCreate: (path) => path !== "Notes/renamed.md",
+		});
+		await expect(send(op("create", "r1", "Notes/renamed.md"))).resolves.toBe("ok");
+		await expect(send(op("create", "n1", "Notes/new.md"))).resolves.toBe("held");
+		expect(ch.crdtCreate).toHaveBeenCalledTimes(1);
+	});
+
 	test("a create held by the closed gate is neither charged an attempt nor dropped", async () => {
 		let now = 1000;
 		const gate = new NotesCapGate(() => now, undefined, 60 * 60 * 1000);

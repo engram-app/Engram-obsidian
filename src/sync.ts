@@ -1654,7 +1654,7 @@ export class SyncEngine {
 	 *  rename: the sync-state row already moved, so no sweep would retry it.
 	 *  A blocked untracked file stays untracked, so a sweep re-pushes it once
 	 *  the gate reopens. */
-	private capBlocksCreate(path: string): boolean {
+	capBlocksCreate(path: string): boolean {
 		return !!this.notesCapGate?.isClosed() && !this.syncState.has(path);
 	}
 
@@ -6108,7 +6108,11 @@ export class SyncEngine {
 			// The note cap moved with the tier. Upload what the gate held now,
 			// not after the 10 min hold plus the next sweep tick.
 			this.notesCapGate.reset();
-			this.capResync = this.selfHealSweep();
+			// Skipped (idle) if a push is mid-flight: the periodic sweep then
+			// picks the held files up, since the gate is already open.
+			this.capResync = this.selfHealSweep().catch((e) => {
+				rlog().warn("push", `plan-change resync failed: ${errMsg(e)}`);
+			});
 		}
 		if (gained) {
 			devLog().log("push", "plan capability gained — re-syncing skipped attachments");
@@ -7317,7 +7321,9 @@ export class SyncEngine {
 	private socketConverge(path: string, noteId: string): void {
 		if (!this.crdtEnrollment) return;
 		const last = this.crdtHealCooldown.get(noteId);
-		const now = Date.now();
+		// The injected clock, like the trailing timer below: mixing it with
+		// Date.now() made the window real-time even under a manual clock.
+		const now = this.time.now();
 		if (last === undefined || now - last >= this.healCooldownMs) {
 			this.fireCrdtReHandshake(path, noteId);
 			return;
@@ -7352,7 +7358,7 @@ export class SyncEngine {
 	 *  client enroll caller — so if these rooms need to go, the fix is to give
 	 *  the queue a room-free delivery path, NOT to gate this call. */
 	private fireCrdtReHandshake(path: string, noteId: string): void {
-		this.crdtHealCooldown.set(noteId, Date.now());
+		this.crdtHealCooldown.set(noteId, this.time.now());
 		this.crdtEnrollment?.reset(noteId);
 		this.crdtEnrollment?.enroll(noteId);
 		rlog().info(

@@ -21,6 +21,7 @@ import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { CRDT_HEAD_CREATED, fnv1a, SyncEngine } from "../src/sync";
+import { ManualTimeProvider } from "../src/time-provider";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 const mockApi = {
@@ -67,12 +68,16 @@ function flush(ms: number): Promise<void> {
 	return new Promise((r) => setTimeout(r, ms));
 }
 
-function createEngine(overrides: Partial<typeof DEFAULT_SETTINGS> = {}): SyncEngine {
+function createEngine(
+	overrides: Partial<typeof DEFAULT_SETTINGS> = {},
+	time?: ManualTimeProvider,
+): SyncEngine {
 	const engine = new SyncEngine(
 		mockApp,
 		mockApi,
 		{ ...DEFAULT_SETTINGS, debounceMs: 1, ...overrides },
 		mock().mockResolvedValue(undefined),
+		time,
 	);
 	engine.setReady();
 	return engine;
@@ -100,8 +105,11 @@ beforeEach(() => {
 });
 
 describe("pull un-masking — CRDT-owned local note must catch up from /changes", () => {
-	function crdtEngine(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
-		const engine = createEngine(overrides);
+	function crdtEngine(
+		overrides: Partial<typeof DEFAULT_SETTINGS> = {},
+		time?: ManualTimeProvider,
+	) {
+		const engine = createEngine(overrides, time);
 		const map = new NoteIdMap();
 		map.set("owned.md", "note-id-1");
 		engine.setNoteIdMap(map);
@@ -1247,7 +1255,9 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 	});
 
 	test("fix wave 2 (c): the trailing fire records a NEW cooldown timestamp (not stale from the suppressed poke)", async () => {
-		const { engine, reset } = crdtEngine();
+		// Manual clock: on real 30-40 ms timers this flaked under full-suite load.
+		const time = new ManualTimeProvider(1_000);
+		const { engine, reset } = crdtEngine({}, time);
 		engine.healCooldownMs = 30;
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
@@ -1266,9 +1276,10 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		await engine.applyChange(c1); // immediate fire #1, cooldown starts at t0
 		await engine.applyChange(c1); // suppressed — arms a trailing timer that
 		// fires at t0+healCooldownMs regardless of when this poke landed.
-		// Wait just past that (not a second full window) so the follow-up poke
+		// Step just past that (not a second full window) so the follow-up poke
 		// below still lands inside the trailing fire's OWN fresh window.
-		await flush(40);
+		time.advance(31);
+		await flush(0);
 		expect(reset).toHaveBeenCalledTimes(2);
 
 		// A poke immediately after the trailing fire must be suppressed — if the

@@ -147,6 +147,7 @@ function harness(
 				engine.applyCrdtCreateAck(localId, serverId, path, seeded, genesis, outcome),
 			onTerminal: () => {},
 			capGate: opts.capGate,
+			capBlocksCreate: opts.capGate ? (path) => engine.capBlocksCreate(path) : undefined,
 		}),
 		now: () => clock,
 		currentVaultId: () => "v1",

@@ -761,7 +761,8 @@ export default class EngramSyncPlugin extends Plugin {
 			}
 		});
 		// One gate for the whole plugin: a single notes_cap_reached pauses every
-		// create, direct and queued, and tells the user once per closure.
+		// row-adding create, direct and queued. The user is told once per reset
+		// (plan change), not on each 10 min probe.
 		const notesCapGate = new NotesCapGate(
 			() => Date.now(),
 			(reason) => {
@@ -775,6 +776,7 @@ export default class EngramSyncPlugin extends Plugin {
 		this.crdtOpQueue = new CrdtOpQueue({
 			send: makeCrdtOpSend({
 				capGate: notesCapGate,
+				capBlocksCreate: (path) => this.syncEngine.capBlocksCreate(path),
 				channel: () => this.noteStream,
 				// #1409 (review H4): re-read disk and build the genesis body at SEND
 				// time so a replayed create (rate-limit backoff, pre-join hold, a
