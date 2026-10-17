@@ -87,7 +87,6 @@ import {
 	QUOTA_WAIT_MS,
 	SyncPreviewModal,
 	type SyncPreviewOptions,
-	within,
 } from "./sync-preview-modal";
 import {
 	describePlannedWork,
@@ -165,7 +164,7 @@ interface PluginData {
 	/** The vault `gateJournal` was recorded for; any other vault drops it. */
 	gateJournalVaultId?: string | null;
 	/** Folders re-included by "Sync again" whose files still await the push
-	 *  pass's content re-check (SyncEngine.markReincluded). */
+	 *  pass's content re-check (SyncEngine.holdReinclude). */
 	reincludedFolders?: string[];
 	/** A catch-up rewind still owed ("Sync again" asks for a genesis replay);
 	 *  cleared once a replay that moves the real cursor completes. */
@@ -3758,11 +3757,10 @@ export default class EngramSyncPlugin extends Plugin {
 	private async folderFitsOrAcknowledged(folder: string): Promise<boolean> {
 		if (!offersUpgrades(this.settings)) return true;
 		// Capped like the first-sync pick: past it the quota counts as unknown.
-		const quota = await within(
+		const quota = await withTimeout(
 			fetchNotesQuota(() => this.api.getBillingUsage()),
 			this.quotaWaitMs ?? QUOTA_WAIT_MS,
-			null,
-		);
+		).catch(() => null);
 		if (quota === null || quota === "unlimited") return true;
 		const count = this.syncEngine.untrackedNotePaths(folder).length;
 		return count <= quota.room || this.confirmFolderOverLimit(count, quota);

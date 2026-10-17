@@ -1,4 +1,5 @@
 import { type App, Modal, setIcon } from "obsidian";
+import { withTimeout } from "./api";
 import { devLog } from "./dev-log";
 import { errMsg, statusOf } from "./error-util";
 import { FolderPicker, ROOT_FOLDER, selectedNoteCount } from "./folder-picker";
@@ -630,17 +631,6 @@ export function simplifiedScreenCopy(simple: NonNullable<ReturnType<typeof simpl
  *  proceeds as if the quota were unknown. */
 export const QUOTA_WAIT_MS = 3000;
 
-/** `p`, or `fallback` once `ms` has passed without an answer. */
-export function within<T>(p: Promise<T>, ms: number, fallback: T): Promise<T> {
-	let timer: number | undefined;
-	return Promise.race([
-		p,
-		new Promise<T>((r) => {
-			timer = window.setTimeout(() => r(fallback), ms);
-		}),
-	]).finally(() => window.clearTimeout(timer));
-}
-
 /** Wait this long before the "Comparing…" line appears. Plans that resolve
  *  faster show no loading copy at all. */
 const LOADING_TEXT_DELAY_MS = 400;
@@ -1263,13 +1253,13 @@ export class SyncPreviewModal extends Modal {
 			}
 			let answered = false;
 			try {
-				await within(
+				// Never throws: fetchNotesQuota does not, and a timeout is "proceed".
+				await withTimeout(
 					this.quotaPending.then(() => {
 						answered = true;
 					}),
 					this.quotaWaitMs,
-					undefined,
-				);
+				).catch(() => undefined);
 				// Still unanswered: proceeding as unknown, so a late answer is owed.
 				if (!answered) this.pickedPastCap = choice;
 			} finally {
