@@ -3658,8 +3658,15 @@ export default class EngramSyncPlugin extends Plugin {
 		try {
 			await this.saveExcludedFolders(excludedFolders, {}, signal);
 		} catch (e: unknown) {
-			// Best effort: the aborted case already wrote the candidate list.
-			if (signal?.aborted) await this.savePluginData(this.syncEngine.getLastSync());
+			// Closed after the candidate list was written: write the live (old)
+			// list back. The abort stays the error the caller sees. If this write
+			// fails too, live settings still hold the old list, so the next save
+			// of plugin data (any sync's first cursor save) puts it back on disk.
+			if (signal?.aborted) {
+				await this.savePluginData(this.syncEngine.getLastSync()).catch((r: unknown) =>
+					rlog().error("lifecycle", `over-limit exclusions rollback failed: ${errMsg(r)}`),
+				);
+			}
 			throw e;
 		}
 		this.settingTab?.rerender();

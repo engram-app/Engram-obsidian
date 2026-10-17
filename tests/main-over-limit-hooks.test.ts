@@ -158,6 +158,24 @@ describe("the live settings change only after the save", () => {
 	});
 });
 
+describe("a failed rollback after Esc keeps the abort error", () => {
+	test("the abort is what rejects; the rollback failure is only logged", async () => {
+		const ctrl = new AbortController();
+		const { fake } = makeFakePlugin(async () => PLAN);
+		let calls = 0;
+		fake.savePluginData = mock(async () => {
+			calls += 1;
+			if (calls === 1) ctrl.abort(); // Esc while writing the candidate list
+			else throw new Error("disk full"); // the rollback write
+		});
+		const err = await hooksOf(fake)
+			.applyExclusions(["Archive"], ctrl.signal)
+			.catch((e: unknown) => e);
+		expect((err as Error).name).toBe("AbortError");
+		expect(fake.settings.excludedFolders).toEqual(["Old"]);
+	});
+});
+
 describe("applyExclusions keeps token rotation", () => {
 	function rotateDuringSave(fake: any, fail: () => void) {
 		fake.settings.refreshToken = "rt-old";
