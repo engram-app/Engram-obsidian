@@ -175,6 +175,7 @@ function harness(
 		engine,
 		queue,
 		server,
+		app,
 		files,
 		drops,
 		time,
@@ -451,5 +452,60 @@ describe("vault over the plan note cap (prod 2026-10-17 retry storm)", () => {
 
 		expect(gate.isClosed()).toBe(false);
 		expect(h.server.created.size).toBe(5);
+	});
+});
+
+describe("catch-up during an upload (prod 2026-10-17: 15 just-uploaded notes trashed)", () => {
+	test("a note uploaded while the manifest is in flight is NOT trashed as server-deleted", async () => {
+		let h!: ReturnType<typeof harness>;
+		let duringFetch: (() => Promise<void>) | null = null;
+		const api = makeApi({
+			getManifest: mock(async () => {
+				const snapshot = [...h.server.paths()];
+				// The upload acks AFTER the server built this snapshot.
+				await duringFetch?.();
+				return {
+					notes: snapshot.map((path) => ({ path, content_hash: "h" })),
+					attachments: [],
+					total_notes: snapshot.length,
+					total_attachments: 0,
+				};
+			}),
+		});
+		h = harness(["Notes/old.md", "Notes/new.md"], { api });
+		await h.join();
+		const late = h.files.get("Notes/new.md") as TFile;
+		h.files.delete("Notes/new.md");
+		await h.engine.pushModifiedFiles(); // old.md synced first
+		h.files.set("Notes/new.md", late);
+		duringFetch = async () => {
+			await h.engine.pushModifiedFiles();
+		};
+
+		await h.engine.catchUp();
+
+		expect(h.server.paths().has("Notes/new.md")).toBe(true);
+		expect(h.app.fileManager.trashFile).not.toHaveBeenCalled();
+	});
+
+	test("a note genuinely deleted on the server is still trashed (the backstop keeps working)", async () => {
+		let h!: ReturnType<typeof harness>;
+		const api = makeApi({
+			getManifest: mock(async () => ({
+				notes: [...h.server.paths()]
+					.filter((p) => p !== "Notes/gone.md")
+					.map((path) => ({ path, content_hash: "h" })),
+				attachments: [],
+				total_notes: 1,
+				total_attachments: 0,
+			})),
+		});
+		h = harness(["Notes/kept.md", "Notes/gone.md"], { api });
+		await h.join();
+		await h.engine.pushModifiedFiles();
+
+		await h.engine.catchUp();
+
+		expect(h.app.fileManager.trashFile).toHaveBeenCalledTimes(1);
 	});
 });

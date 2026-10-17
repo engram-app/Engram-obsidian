@@ -2328,6 +2328,18 @@ export class SyncEngine {
 	 *  track (already-normalized paths stay untouched here). */
 	private stampSyncedRow(path: string, state: FileSyncState): void {
 		this.syncState.set(path, state);
+		this.noteRowWrite(path);
+	}
+
+	/** Monotonic count of syncState row writes, and the count at each path's
+	 *  last write. The manifest delete pass reads these to tell "synced before
+	 *  the manifest was built" from "synced while it was in flight": the second
+	 *  is absent from the manifest only because it is newer, not deleted. */
+	private rowWriteSeq = 0;
+	private rowWrittenAt = this.track(["vault"], new Map<string, number>());
+
+	private noteRowWrite(path: string): void {
+		this.rowWrittenAt.set(path, ++this.rowWriteSeq);
 	}
 
 	/** Can the server PROVE it still holds the bytes we last uploaded for
@@ -2361,6 +2373,7 @@ export class SyncEngine {
 	 *  `hash: 0` (the historical `?? { hash: 0 }` default). */
 	private patchSyncedRow(path: string, patch: Partial<FileSyncState>): void {
 		this.syncState.set(path, { hash: 0, ...this.syncState.get(path), ...patch });
+		this.noteRowWrite(path);
 	}
 
 	/** Drop `path`'s sync bookkeeping — and its CAS merge base unless
@@ -2421,6 +2434,7 @@ export class SyncEngine {
 		// — presence, nothing else. So presence is exactly what moves, and the
 		// new-path push re-establishes the rest from the server's own answer.
 		this.syncState.set(to, { hash: 0 });
+		this.noteRowWrite(to);
 	}
 
 	/** Seed the last-synced baseline from content that just entered the local
@@ -6858,6 +6872,7 @@ export class SyncEngine {
 			// #283: capture before the fetch so reconcileFromManifest can refuse its
 			// destructive pass if an OAuth swap lands while the manifest is in flight.
 			const authGenAtFetch = this.authGeneration;
+			const rowSeqAtFetch = this.rowWriteSeq;
 			const manifest = await this.api.getManifest(
 				this.manifestSeq > 0 ? this.manifestSeq : undefined,
 			);
@@ -6879,7 +6894,7 @@ export class SyncEngine {
 				});
 				return { files, failed, deletes };
 			}
-			await this.reconcileFromManifest(manifest, authGenAtFetch);
+			await this.reconcileFromManifest(manifest, authGenAtFetch, rowSeqAtFetch);
 			const behind = this.validateFromManifest(manifest);
 			const { files, failed, deletes } = await this.catchupViaSeqReplay({
 				onFileApplied,
@@ -8866,12 +8881,14 @@ export class SyncEngine {
 	private async reconcileFromManifest(
 		manifest?: ManifestResponse | null,
 		authGenAtFetch?: number,
+		rowSeqAtFetch?: number,
 	): Promise<void> {
 		// #283: capture the identity-swap counter BEFORE the manifest is read so a
 		// swap racing the fetch is detectable. When catchUp supplies a pre-fetched
 		// manifest it passes the gen it captured before ITS OWN fetch; the
 		// self-fetch path below captures it here.
 		const authGen = authGenAtFetch ?? this.authGeneration;
+		const rowSeq = rowSeqAtFetch ?? this.rowWriteSeq;
 		const m = manifest === undefined ? await this.api.getManifest() : manifest;
 		if (!m) return;
 
@@ -8897,6 +8914,12 @@ export class SyncEngine {
 				const np = normalizePath(file.path);
 				if (serverPaths.has(np)) continue; // in manifest → content handled by catch-up
 				if (!this.syncState.has(np)) continue; // never synced → pushModifiedFiles handles it
+				// Synced AFTER the manifest fetch began (an upload acked while it was
+				// in flight): absent because it is newer than the snapshot, not
+				// because the server deleted it. Trashing it here deleted 15
+				// just-uploaded notes during a prod first sync (2026-10-17). A real
+				// delete is caught by the op-log tombstone or the next catch-up.
+				if ((this.rowWrittenAt.get(np) ?? 0) > rowSeq) continue;
 
 				// In baseline but gone from the server → server-deleted while away.
 				try {
