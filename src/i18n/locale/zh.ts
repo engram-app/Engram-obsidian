@@ -521,6 +521,7 @@ const zh: Dict = {
 		"哪些功能好用，哪些令人沮丧，你希望 Engram 具备什么功能？",
 	"Where this vault syncs to. Each backend keeps its own sign-in.":
 		"此仓库同步到的位置。每个后端有独立的登录。",
+	"Will delete {count} files on the server.": "将在服务器上删除 {count} 个文件。",
 	"Will download {count} files.": "将下载 {count} 个文件。",
 	"Will upload {count} files.": "将上传 {count} 个文件。",
 	"You are about to:": "您将要：",

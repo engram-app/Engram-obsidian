@@ -650,6 +650,11 @@ const fr: Dict = {
 		"Qu'est-ce qui fonctionne, qu'est-ce qui est frustrant, qu'est-ce que tu aimerais que Engram fasse ?",
 	"Where this vault syncs to. Each backend keeps its own sign-in.":
 		"L'emplacement de la synchronisation de ce coffre. Chaque serveur possède sa propre connexion.",
+	"Will delete {count} files on the server.": {
+		one: "Supprimera {count} fichier sur le serveur.",
+		many: "Supprimera {count} de fichiers sur le serveur.",
+		other: "Supprimera {count} fichiers sur le serveur.",
+	},
 	"Will download {count} files.": {
 		one: "Téléchargera {count} fichier.",
 		many: "Téléchargera {count} de fichiers.",

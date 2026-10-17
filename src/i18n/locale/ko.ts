@@ -554,6 +554,7 @@ const ko: Dict = {
 		"어떤 점이 잘 되고, 어떤 점이 답답하며, Engram가 무엇을 해주기를 바라시나요?",
 	"Where this vault syncs to. Each backend keeps its own sign-in.":
 		"이 보관함이 동기화되는 위치입니다. 각 백엔드는 자체 로그인 정보를 사용합니다.",
+	"Will delete {count} files on the server.": "서버에서 {count}개의 파일을 삭제합니다.",
 	"Will download {count} files.": "{count}개의 파일을 다운로드합니다.",
 	"Will upload {count} files.": "{count}개의 파일을 업로드합니다.",
 	"You are about to:": "다음 작업을 수행합니다:",

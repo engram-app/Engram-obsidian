@@ -569,6 +569,7 @@ const id: Dict = {
 		"Apa yang berfungsi, apa yang membuat frustrasi, apa yang Anda harapkan dari Engram?",
 	"Where this vault syncs to. Each backend keeps its own sign-in.":
 		"Tempat Vault ini disinkronkan. Setiap backend memiliki proses login sendiri.",
+	"Will delete {count} files on the server.": "Akan menghapus {count} berkas di server.",
 	"Will download {count} files.": "Akan mengunduh {count} berkas.",
 	"Will upload {count} files.": "Akan mengunggah {count} berkas.",
 	"You are about to:": "Anda akan:",

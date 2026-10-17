@@ -525,6 +525,7 @@ const zhTW: Dict = {
 		"哪些功能正常，哪些令人沮喪，您希望 Engram 具備哪些功能？",
 	"Where this vault syncs to. Each backend keeps its own sign-in.":
 		"此儲存庫同步至此位置。每個後端有自己的登入方式。",
+	"Will delete {count} files on the server.": "將在伺服器上刪除 {count} 個檔案。",
 	"Will download {count} files.": "將下載 {count} 個檔案。",
 	"Will upload {count} files.": "將上傳 {count} 個檔案。",
 	"You are about to:": "您即將：",

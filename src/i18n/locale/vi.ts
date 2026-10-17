@@ -565,6 +565,7 @@ const vi: Dict = {
 		"Điều gì đang hoạt động, điều gì gây khó chịu, bạn mong muốn Engram làm gì?",
 	"Where this vault syncs to. Each backend keeps its own sign-in.":
 		"Nơi kho lưu trữ này được đồng bộ hóa. Mỗi backend có phương thức đăng nhập riêng.",
+	"Will delete {count} files on the server.": "Sẽ xóa {count} tệp trên máy chủ.",
 	"Will download {count} files.": "Sẽ tải xuống {count} tệp.",
 	"Will upload {count} files.": "Sẽ tải lên {count} tệp.",
 	"You are about to:": "Bạn sắp:",

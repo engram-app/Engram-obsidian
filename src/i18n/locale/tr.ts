@@ -613,6 +613,10 @@ const tr: Dict = {
 		"Neler iyi, neler can sıkıcı, Engram'ın ne yapmasını istersiniz?",
 	"Where this vault syncs to. Each backend keeps its own sign-in.":
 		"Bu kasanın senkronize edildiği yer. Her arka uç kendi giriş bilgilerini kullanır.",
+	"Will delete {count} files on the server.": {
+		one: "Sunucuda {count} dosya silinecek.",
+		other: "Sunucuda {count} dosya silinecek.",
+	},
 	"Will download {count} files.": {
 		one: "{count} dosya indirilecektir.",
 		other: "{count} dosya indirilecektir.",

@@ -670,6 +670,12 @@ const pl: Dict = {
 		"Co działa, co jest frustrujące, czego chciałbyś, żeby Engram robił?",
 	"Where this vault syncs to. Each backend keeps its own sign-in.":
 		"Gdzie ten sejf jest synchronizowany. Każdy backend wymaga osobnego logowania.",
+	"Will delete {count} files on the server.": {
+		one: "Usunie {count} plik na serwerze.",
+		few: "Usunie {count} pliki z serwera.",
+		many: "Usunie {count} plików z serwera.",
+		other: "Usunie {count} plików z serwera.",
+	},
 	"Will download {count} files.": {
 		one: "Pobierze {count} plik.",
 		few: "Pobierze {count} pliki.",

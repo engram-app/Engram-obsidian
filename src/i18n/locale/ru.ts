@@ -672,6 +672,12 @@ const ru: Dict = {
 		"Что работает, что вызывает затруднения, что вы хотели бы, чтобы Engram делал?",
 	"Where this vault syncs to. Each backend keeps its own sign-in.":
 		"Куда синхронизируется это хранилище. Каждый сервер требует отдельной авторизации.",
+	"Will delete {count} files on the server.": {
+		one: "Удалит {count} файл на сервере.",
+		few: "Удалит {count} файла на сервере.",
+		many: "Удалит {count} файлов на сервере.",
+		other: "Удалит {count} файла на сервере.",
+	},
 	"Will download {count} files.": {
 		one: "Загрузит {count} файл.",
 		few: "Загрузит {count} файла.",

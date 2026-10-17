@@ -649,6 +649,11 @@ const ptBR: Dict = {
 		"O que está funcionando, o que é frustrante, o que você gostaria que o Engram fizesse?",
 	"Where this vault syncs to. Each backend keeps its own sign-in.":
 		"Para onde este cofre é sincronizado. Cada backend tem seu próprio login.",
+	"Will delete {count} files on the server.": {
+		one: "Excluirá {count} arquivo no servidor.",
+		many: "Excluirá {count} de arquivos no servidor.",
+		other: "Excluirá {count} arquivos no servidor.",
+	},
 	"Will download {count} files.": {
 		one: "Baixará {count} arquivo.",
 		many: "Baixará {count} arquivos.",

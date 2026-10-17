@@ -563,6 +563,7 @@ const ja: Dict = {
 		"何がうまくいっていて、何がストレスで、Engramにはどのような機能が欲しいですか？",
 	"Where this vault syncs to. Each backend keeps its own sign-in.":
 		"この保管庫が同期される場所。各バックエンドは個別のサインインが必要です。",
+	"Will delete {count} files on the server.": "サーバーから {count} 個のファイルを削除します。",
 	"Will download {count} files.": "{count} 個のファイルをダウンロードします。",
 	"Will upload {count} files.": "{count} 個のファイルをアップロードします。",
 	"You are about to:": "以下の操作を行います:",
