@@ -533,6 +533,7 @@ const pt: Dict = {
 	"Switched to {mode}.": "Alterado para {mode}.",
 	Sync: "Sincronizar",
 	"Sync again": "Sincronizar novamente",
+	"Sync again failed: {error}": "A sincronização falhou novamente: {error}",
 	"Sync complete": "Sincronização concluída",
 	"Sync failed": "A sincronização falhou",
 	"Sync in progress...": "Sincronização em curso...",
@@ -748,6 +749,11 @@ const pt: Dict = {
 		many: "{count} ficheiros",
 		other: "{count} ficheiros",
 	},
+	"{count} files could not sync.": {
+		one: "{count} ficheiro não foi possível sincronizar.",
+		many: "{count} ficheiros não puderam ser sincronizados.",
+		other: "{count} ficheiros não puderam ser sincronizados.",
+	},
 	"{count} files not included in your plan": {
 		one: "{count} ficheiro não incluído no plano",
 		many: "{count} ficheiros não incluídos no seu plano",
@@ -775,6 +781,11 @@ const pt: Dict = {
 	},
 	"{count} new": { one: "{count} nova", many: "{count} novas", other: "{count} novas" },
 	"{count} notes": { one: "{count} notas", many: "{count} notas", other: "{count} notas" },
+	"{count} notes did not sync (plan limit).": {
+		one: "{count} nota não foi sincronizada (limite do plano).",
+		many: "{count} notas não foram sincronizadas (limite do plano).",
+		other: "{count} notas não foram sincronizadas (limite do plano).",
+	},
 	"{count} only on server": {
 		one: "{count} apenas no servidor",
 		many: "{count} apenas no servidor",

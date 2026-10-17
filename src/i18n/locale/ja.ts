@@ -460,6 +460,7 @@ const ja: Dict = {
 	"Switched to {mode}.": "{mode} に切り替えました。",
 	Sync: "同期",
 	"Sync again": "再度同期",
+	"Sync again failed: {error}": "同期に失敗しました: {error}",
 	"Sync complete": "同期完了",
 	"Sync failed": "同期に失敗しました",
 	"Sync in progress...": "同期処理中...",
@@ -611,6 +612,7 @@ const ja: Dict = {
 	'{count} failed. Run "{command}" for details.':
 		'{count}件失敗しました。詳細は "{command}" をご確認ください。',
 	"{count} files": "{count} 個のファイル",
+	"{count} files could not sync.": "{count} 個のファイルが同期できませんでした。",
 	"{count} files not included in your plan": "{count} 個のファイルはプランに含まれていません",
 	"{count} files queued": "{count}つのファイルが処理待ちです",
 	"{count} ignored": "{count}件を除外中",
@@ -618,6 +620,8 @@ const ja: Dict = {
 	"{count} need attention": "{count} の注意が必要です",
 	"{count} new": "{count} 新規",
 	"{count} notes": "{count} ノート",
+	"{count} notes did not sync (plan limit).":
+		"{count}個のノートが同期されませんでした（プランの制限）。",
 	"{count} only on server": "{count} はサーバーにのみ存在します",
 	"{count} queued — {reason}": "{count}件待ち — {reason}",
 	"{count} retrying": "{count} 再試行中",

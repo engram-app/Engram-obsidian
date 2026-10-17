@@ -504,6 +504,7 @@ const tr: Dict = {
 	"Switched to {mode}.": "{mode} konumuna geçildi.",
 	Sync: "Senkronizasyon",
 	"Sync again": "Tekrar senkronize et",
+	"Sync again failed: {error}": "Senkronizasyon tekrar başarısız oldu: {error}",
 	"Sync complete": "Senkronizasyon tamamlandı",
 	"Sync failed": "Senkronizasyon başarısız oldu",
 	"Sync in progress...": "Senkronizasyon devam ediyor...",
@@ -687,6 +688,10 @@ const tr: Dict = {
 		other: '{count} başarısız. Detaylar için "{command}"\'ı çalıştırın.',
 	},
 	"{count} files": { one: "{count} dosya", other: "{count} dosya" },
+	"{count} files could not sync.": {
+		one: "{count} dosya senkronize edilemedi.",
+		other: "{count} dosya senkronize edilemedi.",
+	},
 	"{count} files not included in your plan": {
 		one: "Planınızda olmayan {count} dosya",
 		other: "Planınızda yer almayan {count} dosya",
@@ -706,6 +711,10 @@ const tr: Dict = {
 	},
 	"{count} new": { one: "{count} yeni", other: "{count} yeni" },
 	"{count} notes": { one: "{count} not", other: "{count} not" },
+	"{count} notes did not sync (plan limit).": {
+		one: "{count} not senkronize olmadı (kota doldu).",
+		other: "{count} not senkronize olmadı (kota doldu).",
+	},
 	"{count} only on server": { one: "{count}. Sadece sunucuda", other: "{count} sadece sunucuda" },
 	"{count} queued — {reason}": {
 		one: "{count} sırada bekliyor — {reason}",

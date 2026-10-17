@@ -505,6 +505,7 @@ const de: Dict = {
 	"Switched to {mode}.": "Umgestellt auf {mode}.",
 	Sync: "Synchronisieren",
 	"Sync again": "Wieder synchronisieren",
+	"Sync again failed: {error}": "Synchronisierung fehlgeschlagen: {error}",
 	"Sync complete": "Synchronisierung abgeschlossen",
 	"Sync failed": "Synchronisierung fehlgeschlagen",
 	"Sync in progress...": "Synchronisierung läuft...",
@@ -688,6 +689,10 @@ const de: Dict = {
 		other: '{count} fehlgeschlagen. Starte "{command}", um Details zu sehen.',
 	},
 	"{count} files": { one: "{count} Datei", other: "{count} Dateien" },
+	"{count} files could not sync.": {
+		one: "{count} Datei konnte nicht synchronisiert werden.",
+		other: "{count} Dateien konnten nicht synchronisiert werden.",
+	},
 	"{count} files not included in your plan": {
 		one: "{count} Datei nicht in deinem Plan enthalten",
 		other: "{count} Dateien nicht in deinem Plan enthalten",
@@ -707,6 +712,10 @@ const de: Dict = {
 	},
 	"{count} new": { one: "{count} neu", other: "{count} neu" },
 	"{count} notes": { one: "{count} Notiz", other: "{count} Notizen" },
+	"{count} notes did not sync (plan limit).": {
+		one: "{count} Notiz konnte nicht synchronisiert werden (Limit erreicht).",
+		other: "{count} Notizen konnten nicht synchronisiert werden (Limit erreicht).",
+	},
 	"{count} only on server": {
 		one: "{count} nur auf dem Server",
 		other: "{count} nur auf dem Server",

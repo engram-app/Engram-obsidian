@@ -463,6 +463,7 @@ const ms: Dict = {
 	"Switched to {mode}.": "Beralih ke {mode}.",
 	Sync: "Segerakkan",
 	"Sync again": "Segerakkan semula",
+	"Sync again failed: {error}": "Segerakan gagal sekali lagi: {error}",
 	"Sync complete": "Sync selesai",
 	"Sync failed": "Kegagalan penyegerakan",
 	"Sync in progress...": "Proses sync sedang berjalan...",
@@ -616,6 +617,7 @@ const ms: Dict = {
 	'{count} failed. Run "{command}" for details.':
 		'{count} gagal. Jalankan "{command}" untuk butiran.',
 	"{count} files": "{count} fail",
+	"{count} files could not sync.": "{count} fail tidak dapat disegerakkan.",
 	"{count} files not included in your plan": "{count} fail tidak termasuk dalam pelan anda",
 	"{count} files queued": "{count} fail dalam senarai tunggu",
 	"{count} ignored": "{count} pengecualian",
@@ -623,6 +625,7 @@ const ms: Dict = {
 	"{count} need attention": "{count} memerlukan perhatian",
 	"{count} new": "{count} baru",
 	"{count} notes": "{count} nota",
+	"{count} notes did not sync (plan limit).": "{count} nota tidak disegerakkan (had pelan).",
 	"{count} only on server": "{count} sahaja pada pelayan",
 	"{count} queued — {reason}": "{count} dalam senarai — {reason}",
 	"{count} retrying": "{count} cuba semula",

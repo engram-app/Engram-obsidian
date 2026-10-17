@@ -461,6 +461,7 @@ const vi: Dict = {
 	"Switched to {mode}.": "Đã chuyển sang {mode}.",
 	Sync: "Đồng bộ hóa",
 	"Sync again": "Đồng bộ hóa lại",
+	"Sync again failed: {error}": "Đồng bộ hóa thất bại lần nữa: {error}",
 	"Sync complete": "Đã hoàn thành đồng bộ hóa",
 	"Sync failed": "Đồng bộ hóa thất bại",
 	"Sync in progress...": "Đang đồng bộ hóa...",
@@ -614,6 +615,7 @@ const vi: Dict = {
 	'{count} failed. Run "{command}" for details.':
 		'{count} lần thất bại. Xem "{command}" để biết chi tiết.',
 	"{count} files": "{count} tệp",
+	"{count} files could not sync.": "{count} tệp không thể đồng bộ hóa.",
 	"{count} files not included in your plan": "{count} tệp không nằm trong gói của bạn",
 	"{count} files queued": "{count} tệp đang chờ xử lý",
 	"{count} ignored": "{count} bị bỏ qua",
@@ -621,6 +623,7 @@ const vi: Dict = {
 	"{count} need attention": "{count} cần xử lý",
 	"{count} new": "{count} mới",
 	"{count} notes": "{count} ghi chú",
+	"{count} notes did not sync (plan limit).": "{count} ghi chú chưa đồng bộ hóa (giới hạn gói).",
 	"{count} only on server": "{count} chỉ có trên máy chủ",
 	"{count} queued — {reason}": "{count} đang chờ — {reason}",
 	"{count} retrying": "{count} đang thử lại",

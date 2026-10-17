@@ -465,6 +465,7 @@ const id: Dict = {
 	"Switched to {mode}.": "Beralih ke {mode}.",
 	Sync: "Sinkronisasi",
 	"Sync again": "Sinkronisasi ulang",
+	"Sync again failed: {error}": "Sinkronisasi gagal lagi: {error}",
 	"Sync complete": "Sinkronisasi selesai",
 	"Sync failed": "Sinkronisasi gagal",
 	"Sync in progress...": "Sinkronisasi sedang berlangsung...",
@@ -618,6 +619,7 @@ const id: Dict = {
 	'{count} failed. Run "{command}" for details.':
 		'{count} gagal. Jalankan "{command}" untuk detailnya.',
 	"{count} files": "{count} berkas",
+	"{count} files could not sync.": "{count} berkas tidak dapat disinkronkan.",
 	"{count} files not included in your plan": "{count} berkas tidak termasuk dalam paket Anda",
 	"{count} files queued": "{count} berkas dalam antrean",
 	"{count} ignored": "{count} diabaikan",
@@ -625,6 +627,8 @@ const id: Dict = {
 	"{count} need attention": "{count} memerlukan perhatian",
 	"{count} new": "{count} baru",
 	"{count} notes": "{count} catatan",
+	"{count} notes did not sync (plan limit).":
+		"{count} catatan tidak tersinkronisasi (batas paket).",
 	"{count} only on server": "{count} hanya di server",
 	"{count} queued — {reason}": "{count} dalam antrean — {reason}",
 	"{count} retrying": "{count} mencoba lagi",

@@ -452,6 +452,7 @@ const ko: Dict = {
 	"Switched to {mode}.": "{mode}으로 전환했습니다.",
 	Sync: "동기화",
 	"Sync again": "다시 동기화",
+	"Sync again failed: {error}": "동기화 실패: {error}",
 	"Sync complete": "동기화 완료",
 	"Sync failed": "동기화 실패",
 	"Sync in progress...": "동기화 진행 중...",
@@ -602,6 +603,7 @@ const ko: Dict = {
 	'{count} failed. Run "{command}" for details.':
 		'{count}건 실패했습니다. 자세한 내용은 "{command}"을 확인하세요.',
 	"{count} files": "{count} 개의 파일",
+	"{count} files could not sync.": "{count}개의 파일이 동기화되지 않았습니다.",
 	"{count} files not included in your plan": "{count} 파일은 구독 플랜에 포함되지 않습니다",
 	"{count} files queued": "{count}개의 파일 대기 중",
 	"{count} ignored": "{count}개 제외됨",
@@ -609,6 +611,8 @@ const ko: Dict = {
 	"{count} need attention": "{count} 건 확인이 필요합니다",
 	"{count} new": "{count} 개 새 항목",
 	"{count} notes": "{count}개의 노트",
+	"{count} notes did not sync (plan limit).":
+		"{count}개의 노트가 동기화되지 않았습니다 (계획 제한).",
 	"{count} only on server": "{count}이(가) 서버에만 있습니다",
 	"{count} queued — {reason}": "{count}개 대기 중 — {reason}",
 	"{count} retrying": "{count} 재시도 중",

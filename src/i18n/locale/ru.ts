@@ -553,6 +553,7 @@ const ru: Dict = {
 	"Switched to {mode}.": "Переключено на {mode}.",
 	Sync: "Синхронизировать",
 	"Sync again": "Синхронизировать снова",
+	"Sync again failed: {error}": "Синхронизация снова не удалась: {error}",
 	"Sync complete": "Синхронизация завершена",
 	"Sync failed": "Синхронизация не удалась",
 	"Sync in progress...": "Синхронизация в процессе...",
@@ -784,6 +785,12 @@ const ru: Dict = {
 		many: "{count} файлов",
 		other: "{count} файла",
 	},
+	"{count} files could not sync.": {
+		one: "Не удалось синхронизировать {count} файл.",
+		few: "Не удалось синхронизировать {count} файла.",
+		many: "Не удалось синхронизировать {count} файлов.",
+		other: "{count} файлов не удалось синхронизировать.",
+	},
 	"{count} files not included in your plan": {
 		one: "{count} файл не входят в ваш план",
 		few: "{count} файла не входят в ваш план",
@@ -825,6 +832,12 @@ const ru: Dict = {
 		few: "{count} заметки",
 		many: "{count} заметок",
 		other: "{count} заметки",
+	},
+	"{count} notes did not sync (plan limit).": {
+		one: "{count} заметка не синхронизированы (ограничение по плану).",
+		few: "{count} заметки не синхронизированы (ограничение по плану).",
+		many: "{count} заметок не синхронизированы (ограничение по плану).",
+		other: "{count} заметки не синхронизированы (ограничение плана).",
 	},
 	"{count} only on server": {
 		one: "{count} только на сервере",
