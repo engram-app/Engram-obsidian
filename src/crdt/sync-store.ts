@@ -369,7 +369,6 @@ export class SyncStore {
 	 *  devices until `commit()`. */
 	set(path: string, meta: FileMeta): void {
 		const resolved = this.resolvePath(path);
-		if (this.alreadyCommitted(resolved, meta)) return;
 
 		// ID-KEYED REMOVAL. An entry naming this note at some OTHER path is stale
 		// the moment we claim it here — a claim is a MOVE, not a copy. This is the
@@ -438,38 +437,6 @@ export class SyncStore {
 		// promoting delete-then-set would otherwise depend on commit order.
 		this.deleteSet.delete(resolved);
 		this.reverse = null;
-	}
-
-	/** The shared doc already holds exactly this claim and nothing staged or
-	 *  hidden touches the path, so re-setting it would publish an identical
-	 *  entry. Yjs emits an update for every `Y.Map.set`, equal value or not, so
-	 *  the pull feed echoing a device's own creates back cost one index frame
-	 *  per note: about 3 per create on a prod first sync, enough to exhaust the
-	 *  per-device edit rate limit (2026-10-17). */
-	private alreadyCommitted(resolved: string, meta: FileMeta): boolean {
-		if (
-			this.overlay.has(resolved) ||
-			this.deleteSet.has(resolved) ||
-			this.forgotten.has(resolved) ||
-			this.renamedAway.has(resolved) ||
-			this.evicted.has(meta.note_id)
-		) {
-			return false;
-		}
-		// A forgotten key elsewhere naming this id is a second committed claim
-		// that `set()` publishes the removal of (the loop over `forgotten`).
-		// `pathForId` hides it, so it would otherwise survive the skip.
-		for (const path of this.forgotten) {
-			if (this.map.get(path)?.note_id === meta.note_id) return false;
-		}
-		const held = this.map.get(resolved);
-		return (
-			held !== undefined &&
-			held.note_id === meta.note_id &&
-			held.type === meta.type &&
-			held.hash === meta.hash &&
-			this.pathForId(meta.note_id) === resolved
-		);
 	}
 
 	/** Forget a mapping LOCALLY, without telling anyone.

@@ -452,21 +452,6 @@ describe("the mint guard refuses a tombstoned claim", () => {
 });
 
 describe("re-claiming a mapping the doc already holds is a no-op (prod 2026-10-17 index-frame storm)", () => {
-	test("setting an identical committed claim stages nothing and publishes no update", () => {
-		const { store, doc } = store_();
-		store.set("Notes/a.md", { note_id: "id-a" });
-		store.commit();
-		let updates = 0;
-		doc.on("update", () => updates++);
-
-		// The pull feed echoes this device's own create back: same path, same id.
-		store.set("Notes/a.md", { note_id: "id-a" });
-		store.commit();
-
-		expect(store.dirty).toBe(false);
-		expect(updates).toBe(0);
-	});
-
 	test("a claim that differs (new id, or extra meta) still stages and publishes", () => {
 		const { store, doc } = store_();
 		store.set("Notes/a.md", { note_id: "id-a" });
