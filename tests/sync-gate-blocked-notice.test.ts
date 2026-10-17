@@ -14,7 +14,9 @@
 import { describe, expect, test } from "bun:test";
 import { SyncEngine } from "../src/sync";
 
-/** A SyncEngine with only the fields `handleModify`'s gate branch touches. */
+/** A SyncEngine with only the fields `handleModify`'s gate branch and
+ *  `setSyncBlocked` touch (closing the gate also cancels the live id-map
+ *  reconcile, which has nothing pending here). */
 function blockedEngine() {
 	const fired: number[] = [];
 	const engine = Object.create(SyncEngine.prototype) as SyncEngine;
@@ -23,6 +25,8 @@ function blockedEngine() {
 		ready: true,
 		blockedEditReported: false,
 		onSyncBlockedEdit: () => fired.push(1),
+		idMapThrottle: { cancel: () => {} },
+		idMapPending: new Map(),
 	});
 	return { engine, fired };
 }

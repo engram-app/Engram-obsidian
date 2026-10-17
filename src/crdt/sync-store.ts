@@ -107,6 +107,8 @@ export class SyncStore {
 	 *  decide what to do about the bytes on disk. Optional so the store stays
 	 *  usable headless (tests, the index room before the engine exists). */
 	onRelocate?: (from: string, to: string, note_id: string) => void;
+	/** Fired after a local `set` or a remote update changes what reads answer. */
+	onChange?: () => void;
 
 	/** Has this note_id been permanently tombstoned by the CRDT manager?
 	 *  Injected because the store must not depend on the registry; see the
@@ -140,6 +142,7 @@ export class SyncStore {
 			}
 			this.reverse = null;
 			this.cacheById = null;
+			this.onChange?.();
 		});
 	}
 
@@ -438,6 +441,7 @@ export class SyncStore {
 		// promoting delete-then-set would otherwise depend on commit order.
 		this.deleteSet.delete(resolved);
 		this.reverse = null;
+		this.onChange?.();
 	}
 
 	/** The shared doc already holds exactly this claim and nothing staged or

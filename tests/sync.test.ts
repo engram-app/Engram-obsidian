@@ -1502,7 +1502,9 @@ describe("SyncEngine.getStatus + onStatusChange", () => {
 		try {
 			const engine = createEngine();
 			engine.setNoteIdMap(new NoteIdMap());
-			engine.reconcileNoteIdMapFromManifest = mock().mockRejectedValue(
+			// The live reconcile fetches through the api itself (fetch and apply are
+			// split so a vault switch mid-GET applies nothing), so fail it there.
+			(mockApi.getManifest as jest.Mock).mockRejectedValueOnce(
 				new Error("EACCES: permission denied, open '/Users/alice/Vault/Notes/Secret.md'"),
 			);
 			engine.ensureNoteIdMapped("unknown-id");

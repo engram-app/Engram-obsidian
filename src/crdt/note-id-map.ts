@@ -101,6 +101,7 @@ export class NoteIdMap {
 		// the first vault change, which is the quiet half of every "works until you
 		// switch vaults" bug.
 		if (this.relocateHandler) store.onRelocate = this.relocateHandler;
+		if (this.changeHandler) store.onChange = this.changeHandler;
 	}
 
 	/** Warm the local cache from data.json. Never published — see
@@ -133,6 +134,16 @@ export class NoteIdMap {
 	}
 
 	private relocateHandler: ((from: string, to: string, id: string) => void) | null = null;
+
+	/** Called after any change to what this map answers, local or remote — so
+	 *  the engine can release work waiting for an id to become mapped. Same
+	 *  rebind contract as the relocate handler. */
+	setChangeHandler(fn: () => void): void {
+		this.changeHandler = fn;
+		this.store.onChange = fn;
+	}
+
+	private changeHandler: (() => void) | null = null;
 
 	/** Where this note used to live. See `SyncStore.priorPathsForId`. */
 	priorPathsForId(id: string): string[] {
