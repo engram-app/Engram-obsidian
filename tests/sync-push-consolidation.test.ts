@@ -865,6 +865,19 @@ describe("Sync again survives a restart before the push pass", () => {
 });
 
 describe("SyncEngine.untrackedNotePaths", () => {
+	test("applies the plan's ignore rules, but not the folder's own exclusion", () => {
+		const files = ["Archive/new.md", "Archive/drafts/d.md", "Archive/skip.md"].map(
+			(p) => new TFile(p, 1),
+		);
+		const { engine } = makeEngine(files);
+		const settings = (engine as any).settings;
+		settings.excludedFolders = ["Archive"]; // still excluded when Sync again asks
+		settings.ignorePatterns = "drafts/";
+		engine.updateSettings(settings);
+		engine.ignoredFiles.add("Archive/skip.md");
+		expect(engine.untrackedNotePaths("Archive")).toEqual(["Archive/new.md"]);
+	});
+
 	test("counts only never-synced notes under the folder", () => {
 		const files = ["Archive/new.md", "Archive/old.md", "Archive/img.png", "Notes/new.md"].map(
 			(p) => new TFile(p, 1),

@@ -3496,7 +3496,12 @@ export class SyncEngine {
 			.filter((p) => p.length > 0);
 	}
 
-	shouldIgnore(path: string): boolean {
+	/** `excluded`: the excludedFolders to apply; Sync again's quota check
+	 *  passes the list without the folder it is about to re-include. */
+	shouldIgnore(
+		path: string,
+		excluded: readonly string[] = this.settings.excludedFolders ?? [],
+	): boolean {
 		// Hardcoded ignores — always enforced, cannot be overridden
 		const configDir = `${this.app.vault.configDir}/`;
 		if (path.startsWith(configDir) || path.includes(`/${configDir}`)) {
@@ -3509,7 +3514,7 @@ export class SyncEngine {
 		}
 		// User-explicit per-file ignores (from Sync Center)
 		if (this.ignoredFiles.has(path)) return true;
-		if (inExcludedFolder(path, this.settings.excludedFolders ?? [])) return true;
+		if (inExcludedFolder(path, excluded)) return true;
 		return this.ignorePatterns.some((pattern) => matchesIgnorePattern(path, pattern));
 	}
 
@@ -9257,15 +9262,19 @@ export class SyncEngine {
 	 *  and by a vault change. */
 	private reincludedFolders = this.track(["vault"], new Set<string>());
 
-	/** Local notes under `folder` this device never synced: the ones a
-	 *  re-include would create on the server (Sync again's quota check). */
+	/** Local notes under `folder` this device never synced and would sync:
+	 *  the ones a re-include would create on the server (Sync again's quota
+	 *  check). Same ignore rules as computeSyncPlan's newNotePaths. */
 	untrackedNotePaths(folder: string): string[] {
+		// The plan's own ignore predicate, minus the folder's exclusion.
+		const others = (this.settings.excludedFolders ?? []).filter((f) => f !== folder);
 		return this.app.vault
 			.getFiles()
 			.filter(
 				(f: TFile) =>
 					inExcludedFolder(f.path, [folder]) &&
 					this.isSyncable(f) &&
+					!this.shouldIgnore(f.path, others) &&
 					!this.isBinaryFile(f) &&
 					this.getCrdtHead(f.path) == null &&
 					!this.syncState.has(f.path),
