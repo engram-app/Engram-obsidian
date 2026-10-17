@@ -3625,16 +3625,16 @@ export default class EngramSyncPlugin extends Plugin {
 		this.settingTab?.rerender();
 	}
 
-	/** "Sync again" for a folder in excludedFolders: drop it, save, then run a
-	 *  full sync whose catch-up replays from genesis, so server edits made while
-	 *  it was excluded are pulled and its never-uploaded notes are pushed (the
-	 *  push sweep always includes untracked files). The sync runs in the
-	 *  background; the returned promise settles once the change is saved. */
+	/** "Sync again" for a folder in excludedFolders: drop it, save, catch the
+	 *  engine up on what happened there while excluded (reincludeFolder: local
+	 *  deletes and edits, then a replay from genesis), and run a full sync. The
+	 *  sync runs in the background; the returned promise settles once the change
+	 *  is saved. */
 	async syncFolderAgain(folder: string): Promise<void> {
 		this.settings.excludedFolders = this.settings.excludedFolders.filter((f) => f !== folder);
 		this.syncEngine.updateSettings(this.settings);
 		await this.savePluginData(this.syncEngine.getLastSync());
-		this.syncEngine.requestFullReplay();
+		await this.syncEngine.reincludeFolder(folder);
 		void this.syncEngine
 			.fullSync()
 			.catch((e) => this.handleSyncError("Sync folder again", e, { notice: true }));

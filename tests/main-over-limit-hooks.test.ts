@@ -185,14 +185,14 @@ describe("loadSettings defaults excludedFolders", () => {
 });
 
 describe("syncFolderAgain", () => {
-	test("drops the folder, saves, then re-syncs from genesis", async () => {
+	test("drops the folder, saves, re-includes it in the engine, then syncs", async () => {
 		const order: string[] = [];
 		const { fake } = makeFakePlugin(async () => PLAN);
 		fake.settings.excludedFolders = ["Archive", "Old"];
 		fake.savePluginData = mock(async () => {
 			order.push("save");
 		});
-		fake.syncEngine.requestFullReplay = mock(() => order.push("rewind"));
+		fake.syncEngine.reincludeFolder = mock(async (f: string) => order.push(`reinclude:${f}`));
 		fake.syncEngine.fullSync = mock(async () => {
 			order.push("sync");
 			return { pulled: 0, pushed: 0 };
@@ -203,6 +203,6 @@ describe("syncFolderAgain", () => {
 		await Bun.sleep(0);
 
 		expect(fake.settings.excludedFolders).toEqual(["Old"]);
-		expect(order).toEqual(["engine", "save", "rewind", "sync"]);
+		expect(order).toEqual(["engine", "save", "reinclude:Archive", "sync"]);
 	});
 });

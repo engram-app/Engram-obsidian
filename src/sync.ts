@@ -9223,6 +9223,34 @@ export class SyncEngine {
 		this.seqRewindFloor = 0;
 	}
 
+	/** Folders just taken out of excludedFolders. The next push sweep visits
+	 *  every tracked file under them and lets pushFile's hash check decide:
+	 *  an edit made while excluded predates lastSync, so the mtime filter would
+	 *  skip it. Cleared by a sweep with no failures. */
+	private reincludedFolders = new Set<string>();
+
+	/** "Sync again" for a folder the caller has ALREADY taken out of
+	 *  excludedFolders. While excluded, its vault events were ignored, so:
+	 *  - a tracked file deleted meanwhile is deleted now, through the same path
+	 *    a vault delete event takes (the gate journal, or deleteSyncedPath,
+	 *    whose recently-deleted fence stops the replay below resurrecting it);
+	 *  - a tracked file edited meanwhile is re-checked by content in the next
+	 *    push sweep (reincludedFolders);
+	 *  - server ops made there are re-served by a replay from genesis.
+	 *  ponytail: the replay is vault-wide. The server has no per-folder feed, so
+	 *  a scoped pull would walk the same op log; applies outside the folder are
+	 *  idempotent no-ops. */
+	async reincludeFolder(folder: string): Promise<void> {
+		for (const path of [...this.syncState.keys()]) {
+			if (!inExcludedFolder(path, [folder])) continue;
+			if (this.app.vault.getAbstractFileByPath(path)) continue;
+			if (this.gateHolds()) this.journalGateEvent({ op: "delete", path });
+			else await this.deleteSyncedPath(path);
+		}
+		this.reincludedFolders.add(folder);
+		this.requestFullReplay();
+	}
+
 	private async healDivergedLiveBoundNotes(manifest: ManifestResponse | null): Promise<number> {
 		if (!manifest || !this.crdt) return 0;
 		let poked = 0;
@@ -10754,7 +10782,7 @@ export class SyncEngine {
 				const id = this.noteIdMap?.get(f.path);
 				return !(id && this.crdtHasPendingOp?.(id));
 			}
-			return f.stat.mtime > sinceMs;
+			return f.stat.mtime > sinceMs || inExcludedFolder(f.path, this.reincludedFolders);
 		});
 	}
 
@@ -10837,6 +10865,7 @@ export class SyncEngine {
 		const sinceMs = since ? new Date(since).getTime() : 0;
 		let pushed = 0;
 
+		const reincluded = [...this.reincludedFolders];
 		const toSync = this.pushCandidates(sinceMs);
 		devLog().log("push", `pushModifiedFiles: ${toSync.length} files modified since ${since}`);
 		// warn, not info: client `info` never reaches Loki. A bulk sweep firing
@@ -10853,6 +10882,8 @@ export class SyncEngine {
 
 		const outcome = await this.pushPartitioned(toSync, "incremental", base);
 		pushed += outcome.pushed;
+		// A failed file keeps its folder in the set, so the next sweep retries it.
+		if (outcome.failed === 0) for (const f of reincluded) this.reincludedFolders.delete(f);
 
 		this.flushAttachmentLimitedToast();
 		this.flushFailureSummaryToast();

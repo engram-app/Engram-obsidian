@@ -706,3 +706,92 @@ describe("pushFile — echo suppression runs before the push slot (#426)", () =>
 		expect(result).toBe("HUNG");
 	});
 });
+
+describe("SyncEngine.reincludeFolder: Sync again for an excluded folder", () => {
+	const LAST_SYNC = "2026-10-01T00:00:00.000Z";
+	const EDITED_BEFORE = new Date("2026-09-01T00:00:00Z").getTime();
+	/** The vault holds exactly `files`. */
+	function present(app: any, files: TFile[]) {
+		app.vault.getAbstractFileByPath.mockImplementation(
+			(p: string) => files.find((f) => f.path === p) ?? null,
+		);
+	}
+
+	test("a tracked note edited while excluded is pushed, though its mtime predates lastSync", async () => {
+		const edited = new TFile("Archive/a.md", EDITED_BEFORE);
+		const { engine, app } = makeEngine([edited], { "Archive/a.md": "# edited while excluded" });
+		present(app, [edited]);
+		engine.importSyncState({ "Archive/a.md": { hash: fnv1a("# as last synced") } });
+		const pushFile = mock().mockResolvedValue(true);
+		(engine as any).pushFile = pushFile;
+
+		await engine.reincludeFolder("Archive");
+		await engine.pushModifiedFiles(LAST_SYNC);
+
+		expect(pushFile.mock.calls.map((c: any[]) => c[0].path)).toEqual(["Archive/a.md"]);
+		// Pushed as an edit of the tracked note, not as a re-created one.
+		expect((engine as any).syncState.has("Archive/a.md")).toBe(true);
+	});
+
+	test("the content re-check is one-shot: a clean sweep clears it", async () => {
+		const edited = new TFile("Archive/a.md", EDITED_BEFORE);
+		const { engine, app } = makeEngine([edited], { "Archive/a.md": "# x" });
+		present(app, [edited]);
+		engine.importSyncState({ "Archive/a.md": { hash: fnv1a("# old") } });
+		const pushFile = mock().mockResolvedValue(true);
+		(engine as any).pushFile = pushFile;
+
+		await engine.reincludeFolder("Archive");
+		await engine.pushModifiedFiles(LAST_SYNC);
+		await engine.pushModifiedFiles(LAST_SYNC);
+
+		expect(pushFile).toHaveBeenCalledTimes(1);
+	});
+
+	test("other folders keep the mtime filter", async () => {
+		const other = new TFile("Notes/b.md", EDITED_BEFORE);
+		const { engine, app } = makeEngine([other], { "Notes/b.md": "# b" });
+		present(app, [other]);
+		engine.importSyncState({ "Notes/b.md": { hash: fnv1a("# old") } });
+		const pushFile = mock().mockResolvedValue(true);
+		(engine as any).pushFile = pushFile;
+
+		await engine.reincludeFolder("Archive");
+		await engine.pushModifiedFiles(LAST_SYNC);
+
+		expect(pushFile).not.toHaveBeenCalled();
+	});
+
+	test("a tracked note deleted while excluded is deleted on the server, not resurrected", async () => {
+		const { engine, app } = makeEngine([]);
+		engine.importSyncState({ "Archive/gone.md": { hash: fnv1a("# gone") } });
+		(engine as any).noteIdMap.set("Archive/gone.md", "gone-id");
+		const enqueued: any[] = [];
+		(engine as any).crdtEnqueue = (op: any) => enqueued.push(op);
+		engine.setCrdtCatchupSince(async () => ({
+			changes: [
+				{
+					type: "note",
+					id: "gone-id",
+					seq: 1,
+					path: "Archive/gone.md",
+					title: "gone",
+					content: "# gone",
+					folder: "Archive",
+					tags: [],
+					mtime: 1,
+					updated_at: "2026-01-01T00:00:00Z",
+					deleted: false,
+				},
+			],
+			has_more: false,
+			next_seq: null,
+		}));
+
+		await engine.reincludeFolder("Archive");
+		await engine.catchupViaSeqReplay();
+
+		expect(app.vault.create).not.toHaveBeenCalled();
+		expect(enqueued).toEqual([{ kind: "delete", docId: "gone-id", path: "Archive/gone.md" }]);
+	});
+});
