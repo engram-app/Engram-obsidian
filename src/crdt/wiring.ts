@@ -421,20 +421,24 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		// Live heal for the create-race: an announce naming an id the map cannot
 		// resolve means another writer owns this note under an identity we never
 		// learned — enrollment alone would sync a doc we can't flush (no path).
-		// Map it now, not at the next cold start: from the announce's server path
-		// when it carries one, else via the throttled manifest reconcile.
-		syncEngine.ensureNoteIdMapped(docId, announcedPath);
-		// Empty-note discovery (e2e test_27): an empty note's genesis emits ZERO
-		// Y.Doc ops, so no note_yjs_update ever fans out — the announce carries only
-		// the id and (now) the path. Without this the note is found ~30s later via
-		// the level-triggered pull. When the announce carries a path, run a per-note
-		// discovery+adopt now so the empty-materialize backstop writes the file in
-		// seconds. discoverAnnouncedNote is gate-safe, skips notes already on disk /
-		// live-bound / locally deleted, and NEVER opens a dedicated room (that was
-		// the connect-storm) — it reuses the socket catch-up delta path and isolates
-		// its own failure, so the fire-and-forget call can't throw out of here.
-		if (announcedPath !== undefined)
-			void syncEngine.discoverAnnouncedNote(docId, announcedPath);
+		//
+		// Discovery FIRST. Empty-note discovery (e2e test_27): an empty note's
+		// genesis emits ZERO Y.Doc ops, so no note_yjs_update ever fans out — the
+		// announce carries only the id and the path. discoverAnnouncedNote maps the
+		// id from that path and materializes the note in seconds; it is gate-safe,
+		// skips ignored paths, notes already on disk / live-bound / locally deleted
+		// (incl. a pending offline delete), NEVER opens a dedicated room (that was
+		// the connect-storm), and isolates its own failure.
+		//
+		// Only an id discovery left unmapped (no path, or a file already on disk)
+		// falls back to the whole-vault manifest reconcile, which is throttled: on
+		// a 1,000-note import (e2e test_77) running it first cost ~970 manifest
+		// GETs for notes discovery maps for free.
+		const heal = (): void => {
+			if (noteIdMap.pathForId(docId) === null) syncEngine.ensureNoteIdMapped(docId);
+		};
+		if (announcedPath === undefined) heal();
+		else void syncEngine.discoverAnnouncedNote(docId, announcedPath).then(heal);
 		// Vault-channel fan-out: an IDLE note (not open in an editor) converges over
 		// the note_yjs_update broadcast (applyPushedNoteUpdate) — it must NOT open a
 		// dedicated room. This announce-driven enroll was the primary connect-storm

@@ -11,8 +11,10 @@
  * only healed at cold start.
  */
 import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
+import { createCrdtWiring } from "../src/crdt/wiring";
 import { SyncEngine } from "../src/sync";
 import { ManualTimeProvider } from "../src/time-provider";
 import { DEFAULT_SETTINGS } from "../src/types";
@@ -331,30 +333,79 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 		return () => release();
 	}
 
-	describe("announced path (primary)", () => {
-		test("maps straight from the announce's server path: zero manifest fetches", async () => {
-			const { engine, map } = throttledEngine();
+	describe("announce: discoverAnnouncedNote first, throttled manifest only as fallback", () => {
+		// The real engine behind the real wiring: the ORDER is the contract.
+		function announceRig() {
+			const rig = throttledEngine();
+			const e = rig.engine as any;
+			e.crdt = {}; // discovery requires a CRDT stack
+			e.crdtCatchupSince = async () => null;
+			e.catchupViaSeqReplay = async () => {};
+			const wiring = createCrdtWiring({
+				noteIdMap: rig.map,
+				syncEngine: rig.engine,
+				sendCrdt: () => {},
+				isBound: () => false,
+				strandHealDebounceMs: 100_000,
+				dbPrefix: `announce-${Math.random()}`,
+			});
+			return { ...rig, wiring };
+		}
+
+		test("a note not on disk is mapped by discovery: zero manifest fetches", async () => {
+			const { map, wiring } = announceRig();
 			liveManifest([]);
-
-			for (let i = 0; i < 50; i++) engine.ensureNoteIdMapped(`id-${i}`, `n${i}.md`);
+			wiring.onCrdtDocReady("fresh", "fresh.md");
 			await flush();
-
 			expect(fetches()).toBe(0);
-			for (let i = 0; i < 50; i++) expect(map.pathForId(`id-${i}`)).toBe(`n${i}.md`);
+			expect(map.pathForId("fresh")).toBe("fresh.md");
+			wiring.dispose();
 		});
 
-		test("a path this device maps to ANOTHER id falls back to the manifest", async () => {
-			// Locally-minted id vs server id for one path (create race), or a stale
-			// announce racing a rename: only the full snapshot can arbitrate.
-			const { engine, map } = throttledEngine();
-			map.set("taken.md", "local-id");
-			liveManifest([{ id: "server-id", path: "taken.md" }]);
-
-			engine.ensureNoteIdMapped("server-id", "taken.md");
+		test("a note with a pending offline delete is not mapped from the announce", async () => {
+			const { engine, map, wiring } = announceRig();
+			engine.queue.load([
+				{
+					path: "gone.md",
+					action: "delete",
+					evidenced: true,
+					mtime: 1,
+					timestamp: 1,
+				} as any,
+			]);
+			liveManifest([]);
+			wiring.onCrdtDocReady("gone-id", "gone.md");
 			await flush();
+			expect(map.pathForId("gone-id")).toBeNull();
+			wiring.dispose();
+		});
 
-			expect(fetches()).toBe(1);
-			expect(map.pathForId("server-id")).toBe("taken.md");
+		test("an ignored path is not mapped from the announce", async () => {
+			const { map, wiring } = announceRig();
+			liveManifest([]);
+			wiring.onCrdtDocReady("cfg-id", ".obsidian/x.md");
+			await flush();
+			expect(map.pathForId("cfg-id")).toBeNull();
+			wiring.dispose();
+		});
+
+		test("a file already on disk but unmapped falls back to one throttled fetch", async () => {
+			const { map, wiring } = announceRig();
+			(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockImplementation(
+				(p: string) => (p === "disk.md" ? new TFile("disk.md") : null),
+			);
+			try {
+				liveManifest([{ id: "disk-id", path: "disk.md" }]);
+				wiring.onCrdtDocReady("disk-id", "disk.md");
+				await flush();
+				expect(fetches()).toBe(1);
+				expect(map.pathForId("disk-id")).toBe("disk.md");
+			} finally {
+				(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>)
+					.mockReset()
+					.mockReturnValue(null);
+				wiring.dispose();
+			}
 		});
 	});
 
@@ -637,32 +688,6 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			expect((engine as any).manifestOwners.owners?.has("old.md") ?? false).toBe(false);
 		});
 
-		test("100 announces cost a bounded number of id-map saves, never concurrent", async () => {
-			const { engine, time, saveData, idSaves } = throttledEngine();
-			let inflight = 0;
-			let maxInflight = 0;
-			let releaseSave: () => void = () => {};
-			saveData.mockImplementation(async () => {
-				inflight++;
-				maxInflight = Math.max(maxInflight, inflight);
-				await new Promise<void>((r) => {
-					releaseSave = r;
-				});
-				inflight--;
-			});
-			for (let i = 0; i < 100; i++) engine.ensureNoteIdMapped(`id-${i}`, `n${i}.md`);
-			await flush();
-			releaseSave();
-			await flush();
-			time.advance(60_000);
-			await flush();
-			releaseSave();
-			await flush();
-
-			expect(idSaves()).toBeLessThanOrEqual(2);
-			expect(maxInflight).toBe(1);
-		});
-
 		test("a fan-out waiting on an id that arrived mid-fetch is fetched right after completion", async () => {
 			const { engine, map } = throttledEngine();
 			const release = heldManifest([{ id: "a", path: "a.md" }]);
@@ -727,6 +752,149 @@ describe("ensureNoteIdMapped — announce path + throttled manifest fallback", (
 			release();
 			time.advance(60_000);
 			await flush();
+		});
+	});
+
+	describe("round 3", () => {
+		test("a gate closing during the apply's save stops before the orphan sweep", async () => {
+			const { engine, saveData } = throttledEngine();
+			const e = engine as any;
+			const swept: string[] = [];
+			e.trashRemotelyDeleted = async (f: { path: string }) => swept.push(f.path);
+			(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation(
+				(p: string) => (p === "orphan.md" ? new TFile("orphan.md") : null),
+			);
+			try {
+				e.pendingOrphanSweep.add("orphan.md");
+				let releaseSave: () => void = () => {};
+				saveData.mockImplementation(
+					() =>
+						new Promise<void>((r) => {
+							releaseSave = r;
+						}),
+				);
+				liveManifest([{ id: "a", path: "a.md" }]);
+				engine.ensureNoteIdMapped("a");
+				await flush(); // fetched, applying, parked in saveData
+				engine.setSyncBlocked(true);
+				releaseSave();
+				await flush();
+				expect(swept).toEqual([]);
+			} finally {
+				(mockApp.vault.getFileByPath as ReturnType<typeof mock>)
+					.mockReset()
+					.mockReturnValue(null);
+			}
+		});
+
+		test("a vault switch during the apply's save stops before the orphan sweep", async () => {
+			const { engine, saveData } = throttledEngine();
+			const e = engine as any;
+			const swept: string[] = [];
+			e.trashRemotelyDeleted = async (f: { path: string }) => swept.push(f.path);
+			(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation(
+				(p: string) => (p === "orphan.md" ? new TFile("orphan.md") : null),
+			);
+			try {
+				let releaseSave: () => void = () => {};
+				saveData.mockImplementationOnce(
+					() =>
+						new Promise<void>((r) => {
+							releaseSave = r;
+						}),
+				);
+				liveManifest([{ id: "a", path: "a.md" }]);
+				engine.ensureNoteIdMapped("a");
+				await flush();
+				await engine.resetForVaultChange();
+				e.pendingOrphanSweep.add("orphan.md"); // the NEW vault's deferred trash
+				releaseSave();
+				await flush();
+				expect(swept).toEqual([]);
+			} finally {
+				(mockApp.vault.getFileByPath as ReturnType<typeof mock>)
+					.mockReset()
+					.mockReturnValue(null);
+			}
+		});
+
+		test("5 consecutive failed fetches give up on pending ids; a later request starts fresh", async () => {
+			const { engine, time } = throttledEngine();
+			(mockApi.getManifest as ReturnType<typeof mock>).mockRejectedValue(new Error("503"));
+			engine.ensureNoteIdMapped("a");
+			for (let i = 0; i < 20; i++) {
+				await flush();
+				time.advance(60_000);
+			}
+			await flush();
+			expect(fetches()).toBe(5);
+
+			liveManifest([{ id: "a", path: "a.md" }]);
+			engine.ensureNoteIdMapped("a");
+			await flush();
+			expect(fetches()).toBe(6);
+		});
+
+		test("a burst of id-map changes prunes pending ids once, not once per change", async () => {
+			const { engine, map } = throttledEngine();
+			heldManifest([]);
+			for (let i = 0; i < 20; i++) engine.ensureNoteIdMapped(`p-${i}`);
+			await flush();
+			const spy = mock(map.pathForId.bind(map));
+			map.pathForId = spy;
+			for (let i = 0; i < 100; i++) map.set(`other-${i}.md`, `other-${i}`);
+			await flush();
+			// One scan of the 20 pending ids for the staged sets, one for the
+			// microtask commit's index-doc update: independent of the 100 changes
+			// (unbatched, this was a scan per change: 2,000+ lookups).
+			expect(spy.mock.calls.length).toBeLessThanOrEqual(2 * 20);
+		});
+
+		test("a fan-out's first wait gets an urgent retry even during failure backoff", async () => {
+			const { engine, map } = throttledEngine();
+			(mockApi.getManifest as ReturnType<typeof mock>).mockRejectedValueOnce(
+				new Error("503"),
+			);
+			engine.ensureNoteIdMapped("x");
+			await flush(); // the covering fetch failed; backoff is now 4s
+			expect(fetches()).toBe(1);
+
+			liveManifest([{ id: "x", path: "x.md" }]);
+			engine.ensureNoteIdMapped("x");
+			void engine.awaitNoteIdMapped("x");
+			await flush();
+			// No time advanced.
+			expect(fetches()).toBe(2);
+			expect(map.pathForId("x")).toBe("x.md");
+		});
+
+		test("a fetch does not credit an id that was settled and re-requested while it was in flight", async () => {
+			const { engine, map } = throttledEngine();
+			const release = heldManifest([]);
+			heldManifest([]); // the trailing fetch never answers in this test
+			engine.ensureNoteIdMapped("z");
+			await flush();
+			map.set("z.md", "z"); // settled by another path
+			await flush();
+			map.delete("z.md"); // ...and lost again
+			engine.ensureNoteIdMapped("z"); // a NEW request
+			let released = false;
+			void engine.awaitNoteIdMapped("z").then(() => {
+				released = true;
+			});
+			release(); // the old fetch answers, without z
+			await flush();
+
+			expect(released).toBe(false);
+			expect((engine as any).idMapPending.get("z").attempts).toBe(0);
+		});
+
+		test("the manifest maps the same normalized path discovery would", async () => {
+			const { engine, map } = throttledEngine();
+			liveManifest([{ id: "n", path: "Folder//note.md" }]);
+			engine.ensureNoteIdMapped("n");
+			await flush();
+			expect(map.pathForId("n")).toBe("Folder/note.md");
 		});
 	});
 });

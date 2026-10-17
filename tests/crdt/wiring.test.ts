@@ -639,20 +639,23 @@ test("#1550: a note_not_found reply drives the orphaned-claim repair, ahead of t
 	await wiring.manager.destroyAll();
 });
 
-// Receiver manifest storm (e2e test_77): the announce's server path is what
-// lets the engine map a new id without a whole-vault manifest fetch, so the
-// wiring must hand it through rather than drop it.
-test("crdt_doc_ready forwards the announced path to the id-map heal", async () => {
+// Receiver manifest storm (e2e test_77): discovery maps an announced note from
+// its path (with the delete/ignore checks); the whole-vault manifest heal is
+// only the fallback for an id discovery left unmapped, so it must run AFTER.
+test("crdt_doc_ready runs discovery before the id-map heal, and only falls back", async () => {
 	const map = new NoteIdMap();
-	const calls: Array<[string, string | undefined]> = [];
+	const calls: string[] = [];
 	const syncEngine = {
 		flushFromCrdt: async () => true,
 		isUnchangedSynced: () => false,
 		materializeEmptyDiscovered: async () => {},
 		reconcileNoteIdMapFromManifest: async () => 0,
 		isSyncBlocked: () => false,
-		discoverAnnouncedNote: async () => {},
-		ensureNoteIdMapped: (id: string, path?: string) => calls.push([id, path]),
+		discoverAnnouncedNote: async (id: string, path: string) => {
+			calls.push(`discover:${id}:${path}`);
+			if (id === "mapped-by-discovery") map.set(path, id);
+		},
+		ensureNoteIdMapped: (...args: unknown[]) => calls.push(`heal:${args.join(":")}`),
 	};
 	const wiring = createCrdtWiring({
 		noteIdMap: map,
@@ -660,12 +663,20 @@ test("crdt_doc_ready forwards the announced path to the id-map heal", async () =
 		sendCrdt: () => {},
 		isBound: () => false,
 		strandHealDebounceMs: 100_000,
-		dbPrefix: "announcepath",
+		dbPrefix: "announceorder",
 	});
 
-	wiring.onCrdtDocReady("new-id", "From/elsewhere.md");
+	wiring.onCrdtDocReady("mapped-by-discovery", "a.md");
+	wiring.onCrdtDocReady("left-unmapped", "b.md");
+	wiring.onCrdtDocReady("no-path");
+	await new Promise((r) => setTimeout(r, 0));
 
-	expect(calls).toEqual([["new-id", "From/elsewhere.md"]]);
+	expect(calls).toEqual([
+		"discover:mapped-by-discovery:a.md",
+		"discover:left-unmapped:b.md",
+		"heal:no-path",
+		"heal:left-unmapped",
+	]);
 
 	wiring.dispose();
 	await wiring.manager.destroyAll();
