@@ -84,7 +84,6 @@ const ru: Dict = {
 	"Cloud server": "Облачный сервер",
 	"CocoaPods dependencies": "Зависимости CocoaPods",
 	"Code copied!": "Код скопирован!",
-	"Code expired. Please try again.": "Код устарел. Пожалуйста, попробуйте снова.",
 	"Comparing your vault with the cloud…": "Сравнение вашего хранилища с облаком…",
 	Complete: "Завершено",
 	Confirm: "Подтвердить",
@@ -343,6 +342,7 @@ const ru: Dict = {
 	'Frontmatter key "{key}" could not be parsed as YAML.':
 		'Ключ в заголовке "{key}" не удалось обработать как YAML.',
 	"Frontmatter needs a fix": "Необходимо исправить метаданные",
+	"Generate new code": "Сгенерировать новый код",
 	"Generic cache directory": "Каталог общего кэша",
 	"Getting set up": "Начало работы",
 	"Getting started…": "Начало работы…",
@@ -582,6 +582,8 @@ const ru: Dict = {
 	"This account was deleted. Contact support if that is wrong.":
 		"Эта учётная запись была удалена. Обратитесь в службу поддержки, если это не так.",
 	"This cannot be undone.": "Это действие необратимо.",
+	"This code expired before the link finished. Generate a new code to try again.":
+		"Этот код устарел до завершения процесса. Сгенерируйте новый код, чтобы повторить попытку.",
 	"This device's vault is empty. Download {what} from the server?":
 		"Хранилище на этом устройстве пустое. Загрузить {what} с сервера?",
 	"This file type isn't accepted by this server.": "Этот тип файла не принимается этим сервером.",
@@ -599,7 +601,6 @@ const ru: Dict = {
 		"Подключено слишком много хранилищ Obsidian. Отключите одно или обновите тариф.",
 	"Too many requests. Wait a moment and try again.":
 		"Слишком много запросов. Подождите немного и попробуйте ещё раз.",
-	"Try again": "Повторить попытку",
 	"Type {keyword} to confirm:": "Введите {keyword}, чтобы подтвердить:",
 	"Unknown error": "Неизвестная ошибка",
 	"Unlimited AI searches": "Неограниченное количество поисков с использованием ИИ",

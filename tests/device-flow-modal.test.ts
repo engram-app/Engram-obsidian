@@ -254,7 +254,7 @@ describe("post-link handoff", () => {
 });
 
 /**
- * The expired-code retry path. "Try again" re-enters onOpen(), and onOpen ends
+ * The expired-code retry path. "Generate new code" re-enters onOpen(), and onOpen ends
  * in startPolling() — which ASSIGNS this.disposeSocket and this.pollInterval.
  * Without an explicit teardown first, the previous attempt's WebSocket and its
  * 30s heartbeat survive for the rest of the Obsidian session, and the orphan's
@@ -286,22 +286,22 @@ describe("DeviceFlowModal — retry after expiry", () => {
 		expect(modal.pendingAuthorized).toBe(false);
 	});
 
-	test("'Try again' tears the old attempt down BEFORE starting a new one", () => {
+	test("'Generate new code' tears the old attempt down BEFORE starting a new one", () => {
 		const modal = makeModal();
 		const order: string[] = [];
 		modal.resetFlow = () => order.push("reset");
 		modal.onOpen = () => order.push("open");
 
 		modal.renderExpired();
-		modal.contentEl.__find("Try again").click();
+		modal.contentEl.__find("Generate new code").click();
 
 		// Two resets: rendering the dead-end screen retires the attempt, and
-		// "Try again" retires it again before re-opening. resetFlow is
+		// "Generate new code" retires it again before re-opening. resetFlow is
 		// idempotent, and the second one is what the ordering test is about.
 		expect(order).toEqual(["reset", "reset", "open"]);
 	});
 
-	// "Code expired. Please try again." is a terminal screen, but both expiry
+	// The expired screen is terminal, but both expiry
 	// paths only cleared the interval. The socket stayed open and the resume
 	// listener stayed armed with `aborted` still false, so every return to the
 	// foreground fired another exchange of a dead device_code and re-rendered
@@ -642,7 +642,7 @@ describe("DeviceFlowModal — foreground resume", () => {
 		}
 	});
 
-	// Same leak class as the socket and the interval: "Try again" re-runs
+	// Same leak class as the socket and the interval: "Generate new code" re-runs
 	// startPolling, so an un-removed listener would stack one exchange per
 	// abandoned attempt, each holding a dead device_code.
 	test("resetFlow removes the resume listener", () => {
@@ -659,7 +659,7 @@ describe("DeviceFlowModal — foreground resume", () => {
 	// and a removal that re-reads the global unregisters from the wrong
 	// Document: the listener survives with the OLD device_code, and
 	// `onVisibilityChange = null` means nothing can ever reach it again.
-	// "Try again" then clears `aborted`, so the next foreground return
+	// "Generate new code" then clears `aborted`, so the next foreground return
 	// exchanges the dead code, takes the 410, and wipes the fresh code screen
 	// with "Code expired".
 	test("removes the listener from the document it registered on, not the focused one", () => {

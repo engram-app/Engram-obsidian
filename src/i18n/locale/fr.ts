@@ -83,7 +83,6 @@ const fr: Dict = {
 	"Cloud server": "Serveur cloud",
 	"CocoaPods dependencies": "Dépendances CocoaPods",
 	"Code copied!": "Code copié !",
-	"Code expired. Please try again.": "Code expiré. Merci de réessayer.",
 	"Comparing your vault with the cloud…": "Comparaison de ton coffre avec le cloud…",
 	Complete: "Terminé",
 	Confirm: "Confirmer",
@@ -324,6 +323,7 @@ const fr: Dict = {
 	'Frontmatter key "{key}" could not be parsed as YAML.':
 		'La clé du frontmatter "{key}" n\'a pas pu être interprétée comme du YAML.',
 	"Frontmatter needs a fix": "Le frontmatter nécessite une correction",
+	"Generate new code": "Générer un nouveau code",
 	"Generic cache directory": "Répertoire de cache générique",
 	"Getting set up": "Installation",
 	"Getting started…": "Démarrage…",
@@ -563,6 +563,8 @@ const fr: Dict = {
 	"This account was deleted. Contact support if that is wrong.":
 		"Ce compte a été supprimé. Contacte le support si c'est une erreur.",
 	"This cannot be undone.": "Cela ne peut pas être annulé.",
+	"This code expired before the link finished. Generate a new code to try again.":
+		"Ce code a expiré avant que le lien ne soit terminé. Génère un nouveau code pour réessayer.",
 	"This device's vault is empty. Download {what} from the server?":
 		"Le coffre de cet appareil est vide. Souhaites-tu télécharger {what} depuis le serveur?",
 	"This file type isn't accepted by this server.":
@@ -581,7 +583,6 @@ const fr: Dict = {
 		"Trop de coffres Obsidian connectés. Déconnecte-en un ou passe à un abonnement supérieur.",
 	"Too many requests. Wait a moment and try again.":
 		"Trop de requêtes. Attends un moment et réessaie.",
-	"Try again": "Réessayer",
 	"Type {keyword} to confirm:": "Tape {keyword} pour confirmer :",
 	"Unknown error": "Erreur inconnue",
 	"Unlimited AI searches": "Recherches IA illimitées",

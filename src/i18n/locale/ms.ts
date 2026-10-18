@@ -80,7 +80,6 @@ const ms: Dict = {
 	"Cloud server": "Pelayan awan",
 	"CocoaPods dependencies": "Ketergantungan CocoaPods",
 	"Code copied!": "Kod telah disalin!",
-	"Code expired. Please try again.": "Kod tamat tempoh. Sila cuba lagi.",
 	"Comparing your vault with the cloud…": "Membandingkan peti nota anda dengan awan…",
 	Complete: "Selesai",
 	Confirm: "Sahkan",
@@ -263,6 +262,7 @@ const ms: Dict = {
 	'Frontmatter key "{key}" could not be parsed as YAML.':
 		'Kunci frontmatter "{key}" tidak dapat ditafsir sebagai YAML.',
 	"Frontmatter needs a fix": "Frontmatter memerlukan pembetulan",
+	"Generate new code": "Jana kod baharu",
 	"Generic cache directory": "Direktori cache umum",
 	"Getting set up": "Memulakan",
 	"Getting started…": "Memulakan…",
@@ -497,6 +497,8 @@ const ms: Dict = {
 	"This account was deleted. Contact support if that is wrong.":
 		"Akaun ini telah dipadam. Hubungi sokongan jika ini tidak betul.",
 	"This cannot be undone.": "Ini tidak dapat dibatalkan.",
+	"This code expired before the link finished. Generate a new code to try again.":
+		"Kod ini telah tamat tempoh sebelum pautan selesai. Jana kod baharu untuk cuba lagi.",
 	"This device's vault is empty. Download {what} from the server?":
 		"Peti nota peranti ini kosong. Adakah anda ingin memuat turun {what} dari server?",
 	"This file type isn't accepted by this server.":
@@ -515,7 +517,6 @@ const ms: Dict = {
 		"Terlalu banyak Peti Nota Obsidian yang disambungkan. Putuskan sambungan satu atau tingkatkan.",
 	"Too many requests. Wait a moment and try again.":
 		"Terlalu banyak permintaan. Tunggu sebentar dan cuba lagi.",
-	"Try again": "Cuba lagi",
 	"Type {keyword} to confirm:": "Taip {keyword} untuk mengesahkan:",
 	"Unknown error": "Ralat tidak diketahui",
 	"Unlimited AI searches": "Carian AI tanpa had",
