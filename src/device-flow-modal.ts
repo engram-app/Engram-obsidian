@@ -101,7 +101,7 @@ export class DeviceFlowModal extends Modal {
 
 	/** Tear down everything belonging to ONE attempt at the flow.
 	 *
-	 *  Both exits need this. Close is the obvious one; "Try again" is the one
+	 *  Both exits need this. Close is the obvious one; "Generate new code" is the one
 	 *  that bit: it re-ran onOpen(), and startPolling() then OVERWROTE
 	 *  disposeSocket and pollInterval, leaking the previous socket and its
 	 *  heartbeat for the rest of the Obsidian session. Worse, the orphan's
@@ -209,7 +209,7 @@ export class DeviceFlowModal extends Modal {
 		this.waitingEl = contentEl.createEl("p", { cls: "engram-device-waiting" });
 		this.setWaitingStatus(false);
 
-		const btnContainer = contentEl.createDiv({ cls: "engram-device-buttons" });
+		const btnContainer = contentEl.createDiv({ cls: "modal-button-container" });
 		const cancelBtn = btnContainer.createEl("button", { text: t("Cancel") });
 		cancelBtn.addEventListener("click", () => this.close());
 	}
@@ -292,9 +292,9 @@ export class DeviceFlowModal extends Modal {
 		// Captured once, NOT re-read in resetFlow: `activeDocument` follows the
 		// focused window, so a popout taking focus between arming and teardown
 		// would make removeEventListener a silent no-op. The orphan holds the old
-		// device_code, and "Try again" clears `aborted` — so the next foreground
+		// device_code, and "Generate new code" clears `aborted` — so the next foreground
 		// return exchanges the dead code, takes the 410, and wipes the freshly
-		// rendered code screen with "Code expired". Same orphan-closure class the
+		// rendered code screen with the expired screen. Same orphan-closure class the
 		// socket already hit (see resetFlow).
 		//
 		// A live socket DEFERS this check; it never cancels it.
@@ -457,16 +457,27 @@ export class DeviceFlowModal extends Modal {
 		// interval, so the socket stayed open and the resume listener stayed
 		// armed with `aborted` still false — every return to the foreground
 		// exchanged a dead device_code and re-rendered this same screen.
-		// Idempotent, and "Try again" calls it again before re-opening.
+		// Idempotent, and "Generate new code" calls it again before re-opening.
 		this.resetFlow();
 		const contentEl = this.contentEl;
 		contentEl.empty();
 		contentEl.createEl("h2", { text: t("Link Obsidian to Engram") });
-		contentEl.createEl("p", { text: t("Code expired. Please try again.") });
+		contentEl.createEl("p", {
+			text: t(
+				"This code expired before the link finished. Generate a new code to try again.",
+			),
+		});
 
-		const btnContainer = contentEl.createDiv({ cls: "engram-device-buttons" });
+		// Obsidian's own footer: right-aligned, primary action last.
+		const btnContainer = contentEl.createDiv({ cls: "modal-button-container" });
 
-		const retryBtn = btnContainer.createEl("button", { text: t("Try again"), cls: "mod-cta" });
+		const closeBtn = btnContainer.createEl("button", { text: t("Close") });
+		closeBtn.addEventListener("click", () => this.close());
+
+		const retryBtn = btnContainer.createEl("button", {
+			text: t("Generate new code"),
+			cls: "mod-cta",
+		});
 		retryBtn.addEventListener("click", () => {
 			// Kill the expired attempt's socket and interval BEFORE onOpen()
 			// starts a fresh set — see resetFlow.
@@ -474,8 +485,5 @@ export class DeviceFlowModal extends Modal {
 			this.aborted = false;
 			this.onOpen();
 		});
-
-		const closeBtn = btnContainer.createEl("button", { text: t("Close") });
-		closeBtn.addEventListener("click", () => this.close());
 	}
 }

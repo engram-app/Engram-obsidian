@@ -72,7 +72,6 @@ const zhTW: Dict = {
 	"Cloud server": "雲端伺服器",
 	"CocoaPods dependencies": "CocoaPods 依賴",
 	"Code copied!": "驗證碼已複製！",
-	"Code expired. Please try again.": "驗證碼已過期。請重試。",
 	"Comparing your vault with the cloud…": "正在比較您的儲存庫與雲端…",
 	Complete: "完成",
 	Confirm: "確認",
@@ -243,6 +242,7 @@ const zhTW: Dict = {
 	'Frontmatter key "{key}" could not be parsed as YAML.':
 		'無法將前置區塊中的鍵 "{key}" 解析為 YAML。',
 	"Frontmatter needs a fix": "Frontmatter 需要修正",
+	"Generate new code": "重新生成驗證碼",
 	"Generic cache directory": "常見快取目錄",
 	"Getting set up": "開始設定",
 	"Getting started…": "正在開始…",
@@ -462,6 +462,8 @@ const zhTW: Dict = {
 	"This account was deleted. Contact support if that is wrong.":
 		"該帳戶已刪除。若有誤，請聯繫客服。",
 	"This cannot be undone.": "此動作無法撤銷。",
+	"This code expired before the link finished. Generate a new code to try again.":
+		"此驗證碼已過期。請重新生成驗證碼後再試。",
 	"This device's vault is empty. Download {what} from the server?":
 		"此裝置的儲存庫是空的。要從伺服器下載 {what} 嗎？",
 	"This file type isn't accepted by this server.": "此檔案類型本伺服器不支援。",
@@ -477,7 +479,6 @@ const zhTW: Dict = {
 	"Too many connected Obsidian vaults. Disconnect one or upgrade.":
 		"已連接過多個 Obsidian 知識庫。請斷開一個或升級。",
 	"Too many requests. Wait a moment and try again.": "請求次數過多。請稍後再試。",
-	"Try again": "再次嘗試",
 	"Type {keyword} to confirm:": "輸入 {keyword} 以確認：",
 	"Unknown error": "發生未知錯誤",
 	"Unlimited AI searches": "無限制的 AI 搜尋",

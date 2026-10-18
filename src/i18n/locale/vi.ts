@@ -79,7 +79,6 @@ const vi: Dict = {
 	"Cloud server": "Máy chủ đám mây",
 	"CocoaPods dependencies": "Các thư viện CocoaPods",
 	"Code copied!": "Đã sao chép mã!",
-	"Code expired. Please try again.": "Mã đã hết hạn. Vui lòng thử lại.",
 	"Comparing your vault with the cloud…": "Đang so sánh kho lưu trữ của bạn với đám mây…",
 	Complete: "Hoàn tất",
 	Confirm: "Xác nhận",
@@ -261,6 +260,7 @@ const vi: Dict = {
 	'Frontmatter key "{key}" could not be parsed as YAML.':
 		'Không thể phân tích khóa frontmatter "{key}" thành YAML.',
 	"Frontmatter needs a fix": "Cần sửa phần frontmatter",
+	"Generate new code": "Tạo mã mới",
 	"Generic cache directory": "Thư mục bộ nhớ đệm chung",
 	"Getting set up": "Thiết lập",
 	"Getting started…": "Bắt đầu…",
@@ -493,6 +493,8 @@ const vi: Dict = {
 	"This account was deleted. Contact support if that is wrong.":
 		"Tài khoản này đã bị xóa. Liên hệ hỗ trợ nếu điều này là sai.",
 	"This cannot be undone.": "Không thể hoàn tác.",
+	"This code expired before the link finished. Generate a new code to try again.":
+		"Mã này đã hết hạn trước khi quá trình hoàn tất. Tạo mã mới để thử lại.",
 	"This device's vault is empty. Download {what} from the server?":
 		"Kho lưu trữ trên thiết bị này trống. Bạn muốn tải xuống {what} từ máy chủ?",
 	"This file type isn't accepted by this server.":
@@ -511,7 +513,6 @@ const vi: Dict = {
 		"Quá nhiều kho lưu trữ Obsidian được kết nối. Ngắt kết nối một kho hoặc nâng cấp.",
 	"Too many requests. Wait a moment and try again.":
 		"Quá nhiều yêu cầu. Chờ một lát rồi thử lại.",
-	"Try again": "Thử lại",
 	"Type {keyword} to confirm:": "Nhập {keyword} để xác nhận:",
 	"Unknown error": "Lỗi không xác định",
 	"Unlimited AI searches": "Tìm kiếm AI không giới hạn",

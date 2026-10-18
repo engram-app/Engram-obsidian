@@ -363,14 +363,6 @@
 	font-style: italic;
 }
 
-.engram-device-buttons {
-	margin-top: 1rem;
-}
-
-.engram-device-buttons button + button {
-	margin-left: 8px;
-}
-
 /* Upgrade button appended to limit-exceeded Notice toasts (limit-toast.ts). */
 .engram-limit-upgrade-btn {
 	margin-left: 8px;

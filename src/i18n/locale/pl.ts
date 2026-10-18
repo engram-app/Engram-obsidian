@@ -85,7 +85,6 @@ const pl: Dict = {
 	"Cloud server": "Serwer w chmurze",
 	"CocoaPods dependencies": "Zależności CocoaPods",
 	"Code copied!": "Kod skopiowany!",
-	"Code expired. Please try again.": "Kod wygasł. Spróbuj ponownie.",
 	"Comparing your vault with the cloud…": "Porównywanie twojego sejfu z chmurą…",
 	Complete: "Zakończono",
 	Confirm: "Potwierdź",
@@ -342,6 +341,7 @@ const pl: Dict = {
 	'Frontmatter key "{key}" could not be parsed as YAML.':
 		'Nie można zinterpretować klucza nagłówka "{key}" jako YAML.',
 	"Frontmatter needs a fix": "Wymagane poprawki w nagłówku",
+	"Generate new code": "Wygeneruj nowy kod",
 	"Generic cache directory": "Ogólny katalog pamięci podręcznej",
 	"Getting set up": "Konfiguracja",
 	"Getting started…": "Rozpocznij…",
@@ -580,6 +580,8 @@ const pl: Dict = {
 	"This account was deleted. Contact support if that is wrong.":
 		"To konto zostało usunięte. Skontaktuj się z działem pomocy technicznej, jeśli to nieprawda.",
 	"This cannot be undone.": "Nie można tego cofnąć.",
+	"This code expired before the link finished. Generate a new code to try again.":
+		"Ten kod wygasł zanim link został ukończony. Wygeneruj nowy kod i spróbuj ponownie.",
 	"This device's vault is empty. Download {what} from the server?":
 		"Sejf tego urządzenia jest pusty. Czy chcesz pobrać {what} z serwera?",
 	"This file type isn't accepted by this server.":
@@ -598,7 +600,6 @@ const pl: Dict = {
 		"Zbyt wiele połączonych sejfów Obsidian. Odłącz jeden lub rozszerz plan.",
 	"Too many requests. Wait a moment and try again.":
 		"Zbyt wiele zapytań. Poczekaj chwilę i spróbuj ponownie.",
-	"Try again": "Spróbuj ponownie",
 	"Type {keyword} to confirm:": "Wpisz {keyword} aby potwierdzić:",
 	"Unknown error": "Nieznany błąd",
 	"Unlimited AI searches": "Nieograniczone wyszukiwania AI",

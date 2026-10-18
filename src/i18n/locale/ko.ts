@@ -78,7 +78,6 @@ const ko: Dict = {
 	"Cloud server": "클라우드 서버",
 	"CocoaPods dependencies": "CocoaPods 종속성",
 	"Code copied!": "코드 복사 완료!",
-	"Code expired. Please try again.": "코드가 만료되었습니다. 다시 시도하세요.",
 	"Comparing your vault with the cloud…": "보관함과 클라우드를 비교 중…",
 	Complete: "완료",
 	Confirm: "확인",
@@ -258,6 +257,7 @@ const ko: Dict = {
 	'Frontmatter key "{key}" could not be parsed as YAML.':
 		'Frontmatter 키 "{key}"을 YAML로 파싱할 수 없습니다.',
 	"Frontmatter needs a fix": "Frontmatter 수정 필요",
+	"Generate new code": "새 코드 생성",
 	"Generic cache directory": "일반 캐시 디렉토리",
 	"Getting set up": "설정하기",
 	"Getting started…": "시작합니다…",
@@ -486,6 +486,8 @@ const ko: Dict = {
 	"This account was deleted. Contact support if that is wrong.":
 		"이 계정이 삭제되었습니다. 오류인 경우 지원팀에 문의하세요.",
 	"This cannot be undone.": "이 작업은 되돌릴 수 없습니다.",
+	"This code expired before the link finished. Generate a new code to try again.":
+		"이 코드는 링크 완료 전에 만료되었습니다. 다시 시도하려면 새 코드를 생성하세요.",
 	"This device's vault is empty. Download {what} from the server?":
 		"이 기기의 보관함이 비어 있습니다. 서버에서 {what}을 다운로드하시겠습니까?",
 	"This file type isn't accepted by this server.": "이 파일 형식은 서버에서 지원하지 않습니다.",
@@ -503,7 +505,6 @@ const ko: Dict = {
 		"연결된 Obsidian 보관함이 너무 많습니다. 하나를 연결 해제하거나 업그레이드하세요.",
 	"Too many requests. Wait a moment and try again.":
 		"요청이 너무 많습니다. 잠시 기다린 후 다시 시도해 주세요.",
-	"Try again": "다시 시도",
 	"Type {keyword} to confirm:": "확인을 위해 {keyword}을 입력하세요:",
 	"Unknown error": "알 수 없는 오류",
 	"Unlimited AI searches": "AI 검색 제한 없음",

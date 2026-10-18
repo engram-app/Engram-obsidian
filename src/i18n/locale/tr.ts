@@ -79,7 +79,6 @@ const tr: Dict = {
 	"Cloud server": "Bulut sunucusu",
 	"CocoaPods dependencies": "CocoaPods bağımlılıkları",
 	"Code copied!": "Kod kopyalandı!",
-	"Code expired. Please try again.": "Kod süresi doldu. Lütfen tekrar deneyin.",
 	"Comparing your vault with the cloud…": "Kasanızı bulutla karşılaştırıyoruz…",
 	Complete: "Tamamlandı",
 	Confirm: "Onayla",
@@ -300,6 +299,7 @@ const tr: Dict = {
 	'Frontmatter key "{key}" could not be parsed as YAML.':
 		'Ön bilgi anahtarı "{key}" YAML olarak çözülemedi.',
 	"Frontmatter needs a fix": "Başlık bölümünde düzeltme gerekiyor",
+	"Generate new code": "Yeni kod oluştur",
 	"Generic cache directory": "Genel önbellek dizini",
 	"Getting set up": "Kurulum",
 	"Getting started…": "Başlangıç...",
@@ -535,6 +535,8 @@ const tr: Dict = {
 	"This account was deleted. Contact support if that is wrong.":
 		"Bu hesap silindi. Yanlışsa destekle iletişime geçin.",
 	"This cannot be undone.": "Bu geri alınamaz.",
+	"This code expired before the link finished. Generate a new code to try again.":
+		"Bu kod, bağlantı tamamlanmadan doldu. Lütfen tekrar denemek için yeni bir kod oluşturun.",
 	"This device's vault is empty. Download {what} from the server?":
 		"Bu cihazın kasası boş. Sunucudan {what} dosyasını indirmek ister misiniz?",
 	"This file type isn't accepted by this server.":
@@ -552,7 +554,6 @@ const tr: Dict = {
 		"Bağlı çok fazla Obsidian kasa var. Birini ayırın veya yükseltin.",
 	"Too many requests. Wait a moment and try again.":
 		"Çok fazla istek. Bir süre bekleyin ve tekrar deneyin.",
-	"Try again": "Tekrar dene",
 	"Type {keyword} to confirm:": "Onaylamak için {keyword} yazın:",
 	"Unknown error": "Bilinmeyen hata",
 	"Unlimited AI searches": "Sınırsız yapay zeka araması",

@@ -85,7 +85,6 @@ const es: Dict = {
 	"Cloud server": "Servidor en la nube",
 	"CocoaPods dependencies": "Dependencias de CocoaPods",
 	"Code copied!": "¡Código copiado!",
-	"Code expired. Please try again.": "Código expirado. Por favor, inténtalo de nuevo.",
 	"Comparing your vault with the cloud…": "Comparando tu bóveda con la nube…",
 	Complete: "Completado",
 	Confirm: "Confirmar",
@@ -327,6 +326,7 @@ const es: Dict = {
 	'Frontmatter key "{key}" could not be parsed as YAML.':
 		'No se pudo analizar la clave del frontmatter "{key}" como YAML.',
 	"Frontmatter needs a fix": "El frontmatter necesita una corrección",
+	"Generate new code": "Generar nuevo código",
 	"Generic cache directory": "Directorio de caché genérico",
 	"Getting set up": "Configuración",
 	"Getting started…": "Empezando…",
@@ -565,6 +565,8 @@ const es: Dict = {
 	"This account was deleted. Contact support if that is wrong.":
 		"Esta cuenta fue eliminada. Contacta con soporte si es incorrecto.",
 	"This cannot be undone.": "Esto no se puede deshacer.",
+	"This code expired before the link finished. Generate a new code to try again.":
+		"Este código ha expirado antes de que se completara la conexión. Genera un nuevo código para intentarlo de nuevo.",
 	"This device's vault is empty. Download {what} from the server?":
 		"La bóveda de este dispositivo está vacía. ¿Descargar {what} del servidor?",
 	"This file type isn't accepted by this server.":
@@ -583,7 +585,6 @@ const es: Dict = {
 		"Demasiadas bóvedas de Obsidian conectadas. Desconecta una o actualiza.",
 	"Too many requests. Wait a moment and try again.":
 		"Demasiadas solicitudes. Espera un momento e inténtalo de nuevo.",
-	"Try again": "Intentar de nuevo",
 	"Type {keyword} to confirm:": "Escribe {keyword} para confirmar:",
 	"Unknown error": "Error desconocido",
 	"Unlimited AI searches": "Búsquedas ilimitadas con IA",

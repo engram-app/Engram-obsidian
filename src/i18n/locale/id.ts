@@ -80,7 +80,6 @@ const id: Dict = {
 	"Cloud server": "Server cloud",
 	"CocoaPods dependencies": "Dependensi CocoaPods",
 	"Code copied!": "Kode telah disalin!",
-	"Code expired. Please try again.": "Kode kedaluwarsa. Silakan coba lagi.",
 	"Comparing your vault with the cloud…": "Membandingkan Vault Anda dengan cloud…",
 	Complete: "Selesai",
 	Confirm: "Konfirmasi",
@@ -264,6 +263,7 @@ const id: Dict = {
 	'Frontmatter key "{key}" could not be parsed as YAML.':
 		'Kunci frontmatter "{key}" tidak dapat diuraikan sebagai YAML.',
 	"Frontmatter needs a fix": "Frontmatter memerlukan perbaikan",
+	"Generate new code": "Hasilkan kode baru",
 	"Generic cache directory": "Direktori cache umum",
 	"Getting set up": "Proses pengaturan",
 	"Getting started…": "Memulai…",
@@ -498,6 +498,8 @@ const id: Dict = {
 	"This account was deleted. Contact support if that is wrong.":
 		"Akun ini telah dihapus. Hubungi dukungan jika itu salah.",
 	"This cannot be undone.": "Ini tidak dapat dibatalkan.",
+	"This code expired before the link finished. Generate a new code to try again.":
+		"Kode ini kedaluwarsa sebelum tautan selesai. Hasilkan kode baru untuk mencoba lagi.",
 	"This device's vault is empty. Download {what} from the server?":
 		"Vault perangkat ini kosong. Apakah Anda ingin mengunduh {what} dari server?",
 	"This file type isn't accepted by this server.":
@@ -516,7 +518,6 @@ const id: Dict = {
 		"Terlalu banyak Vault Obsidian yang terhubung. Putuskan sambungan satu atau tingkatkan.",
 	"Too many requests. Wait a moment and try again.":
 		"Terlalu banyak permintaan. Tunggu sebentar dan coba lagi.",
-	"Try again": "Coba lagi",
 	"Type {keyword} to confirm:": "Ketik {keyword} untuk konfirmasi:",
 	"Unknown error": "Kesalahan tidak diketahui",
 	"Unlimited AI searches": "Pencarian AI tanpa batas",

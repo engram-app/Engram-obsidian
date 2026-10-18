@@ -84,7 +84,6 @@ const ptBR: Dict = {
 	"Cloud server": "Servidor na nuvem",
 	"CocoaPods dependencies": "Dependências do CocoaPods",
 	"Code copied!": "Código copiado!",
-	"Code expired. Please try again.": "Código expirado. Tente novamente.",
 	"Comparing your vault with the cloud…": "Comparando seu cofre com a nuvem…",
 	Complete: "Completo",
 	Confirm: "Confirmar",
@@ -326,6 +325,7 @@ const ptBR: Dict = {
 	'Frontmatter key "{key}" could not be parsed as YAML.':
 		'A chave do frontmatter "{key}" não pôde ser interpretada como YAML.',
 	"Frontmatter needs a fix": "O cabeçalho precisa de correção",
+	"Generate new code": "Gerar novo código",
 	"Generic cache directory": "Diretório de cache genérico",
 	"Getting set up": "Configurando",
 	"Getting started…": "Iniciando…",
@@ -563,6 +563,8 @@ const ptBR: Dict = {
 	"This account was deleted. Contact support if that is wrong.":
 		"Esta conta foi excluída. Entre em contato com o suporte se isso estiver incorreto.",
 	"This cannot be undone.": "Isso não pode ser desfeito.",
+	"This code expired before the link finished. Generate a new code to try again.":
+		"Este código expirou antes que o link fosse finalizado. Gere um novo código para tentar novamente.",
 	"This device's vault is empty. Download {what} from the server?":
 		"O cofre deste dispositivo está vazio. Deseja baixar {what} do servidor?",
 	"This file type isn't accepted by this server.":
@@ -581,7 +583,6 @@ const ptBR: Dict = {
 		"Muitos cofres Obsidian conectados. Desconecte um ou faça um upgrade.",
 	"Too many requests. Wait a moment and try again.":
 		"Muitos pedidos. Aguarde um momento e tente novamente.",
-	"Try again": "Tentar novamente",
 	"Type {keyword} to confirm:": "Digite {keyword} para confirmar:",
 	"Unknown error": "Erro desconhecido",
 	"Unlimited AI searches": "Pesquisas de IA ilimitadas",

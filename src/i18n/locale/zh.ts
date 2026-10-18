@@ -72,7 +72,6 @@ const zh: Dict = {
 	"Cloud server": "云服务器",
 	"CocoaPods dependencies": "CocoaPods 依赖",
 	"Code copied!": "代码已复制！",
-	"Code expired. Please try again.": "代码已过期。请重试。",
 	"Comparing your vault with the cloud…": "正在比较您的仓库和云端…",
 	Complete: "完成",
 	Confirm: "确认",
@@ -241,6 +240,7 @@ const zh: Dict = {
 	"Frontmatter isn't valid YAML.": "YAML 格式错误。",
 	'Frontmatter key "{key}" could not be parsed as YAML.': '无法将 YAML 格式解析为键 "{key}"。',
 	"Frontmatter needs a fix": "需要修复前置信息",
+	"Generate new code": "重新生成验证码",
 	"Generic cache directory": "常用缓存目录",
 	"Getting set up": "开始设置",
 	"Getting started…": "正在开始…",
@@ -458,6 +458,8 @@ const zh: Dict = {
 	"This account was deleted. Contact support if that is wrong.":
 		"账号已删除。如果错误，请联系支持。",
 	"This cannot be undone.": "此操作不可撤销。",
+	"This code expired before the link finished. Generate a new code to try again.":
+		"此验证码已过期。请重新生成验证码后重试。",
 	"This device's vault is empty. Download {what} from the server?":
 		"此设备的仓库为空。从服务器下载 {what} 吗？",
 	"This file type isn't accepted by this server.": "此文件类型不受服务器支持。",
@@ -473,7 +475,6 @@ const zh: Dict = {
 	"Too many connected Obsidian vaults. Disconnect one or upgrade.":
 		"已连接过多个 Obsidian 知识库。断开一个或升级。",
 	"Too many requests. Wait a moment and try again.": "请求过多。请稍等片刻后重试。",
-	"Try again": "再次尝试",
 	"Type {keyword} to confirm:": "输入{keyword}以确认：",
 	"Unknown error": "未知错误",
 	"Unlimited AI searches": "无限制的 AI 搜索",

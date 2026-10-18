@@ -81,7 +81,6 @@ const ja: Dict = {
 	"Cloud server": "クラウドサーバー",
 	"CocoaPods dependencies": "CocoaPodsの依存関係",
 	"Code copied!": "コードをコピーしました！",
-	"Code expired. Please try again.": "コードが期限切れです。再度お試しください。",
 	"Comparing your vault with the cloud…": "保管庫とクラウドを比較しています…",
 	Complete: "完了",
 	Confirm: "確認",
@@ -263,6 +262,7 @@ const ja: Dict = {
 	'Frontmatter key "{key}" could not be parsed as YAML.':
 		'YAML として解析できない Frontmatter キー "{key}" があります。',
 	"Frontmatter needs a fix": "フロントマターに修正が必要です",
+	"Generate new code": "新しいコードを生成",
 	"Generic cache directory": "一般的なキャッシュディレクトリ",
 	"Getting set up": "セットアップ",
 	"Getting started…": "開始します…",
@@ -494,6 +494,8 @@ const ja: Dict = {
 	"This account was deleted. Contact support if that is wrong.":
 		"このアカウントは削除されました。もし誤りがあれば、サポートまでご連絡ください。",
 	"This cannot be undone.": "この操作は取り消せません。",
+	"This code expired before the link finished. Generate a new code to try again.":
+		"このコードはリンクが完了する前に期限切れになりました。再試行するには、新しいコードを生成してください。",
 	"This device's vault is empty. Download {what} from the server?":
 		"このデバイスの保管庫が空です。サーバーから {what} をダウンロードしますか？",
 	"This file type isn't accepted by this server.":
@@ -512,7 +514,6 @@ const ja: Dict = {
 		"接続されているObsidianの保管庫が多すぎます。いずれかを解除するか、アップグレードしてください。",
 	"Too many requests. Wait a moment and try again.":
 		"リクエストが多すぎます。しばらく待ってから、もう一度お試しください。",
-	"Try again": "再試行",
 	"Type {keyword} to confirm:": "確認のため、{keyword}を入力してください:",
 	"Unknown error": "不明なエラー",
 	"Unlimited AI searches": "AI検索 無制限",
