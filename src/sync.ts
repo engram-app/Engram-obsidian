@@ -2063,7 +2063,9 @@ export class SyncEngine {
 	 *  CRDT. No baseline (fresh note → the bounded REST fullSync uploads it and
 	 *  the backend bind/3 seeds CRDT from content) or in-sync => false, so
 	 *  cold-start does NOT open a Y.Doc per note (the reconnect-storm amplifier).
-	 *  Inverse of isUnchangedSynced except it also requires a baseline to exist. */
+	 *  Inverse of isUnchangedSynced except it also requires a baseline to exist.
+	 *  Also the general "disk drifted from the CURRENT baseline, excluding our
+	 *  own in-flight write" test for the drift-copy sites; keep it that broad. */
 	needsColdReconcile(path: string, content: string): boolean {
 		const normalized = normalizePath(path);
 		const state = this.syncState.get(normalized);
@@ -9558,6 +9560,11 @@ export class SyncEngine {
 						const localNow = localFile
 							? await this.app.vault.cachedRead(localFile)
 							: null;
+						// Re-read the row AFTER the awaited file read: `stored` was taken
+						// before it, and the engine's own flush (genesis apply) can write disk
+						// and stamp a new baseline in between (backend e2e test_101). Every
+						// check below reads this one snapshot.
+						const fresh = this.syncState.get(normalized);
 						// Row content == the last-synced BASELINE while its hash
 						// diverges: the content is NOT evidence of a remote change.
 						// Two indistinguishable cases share this shape — (a) our OWN
@@ -9575,14 +9582,14 @@ export class SyncEngine {
 						// so the commit is the best-effort next-frame kind.
 						if (
 							noteId &&
-							stored !== undefined &&
-							stored.hash !== undefined &&
+							fresh !== undefined &&
+							fresh.hash !== undefined &&
 							content !== undefined &&
-							fnv1a(content) === stored.hash &&
+							fnv1a(content) === fresh.hash &&
 							// The wipe-class quiet-record below takes precedence: no
 							// CAS base ever recorded AND disk already equals the row
 							// bytes — a re-handshake per such row is the storm.
-							!(stored.serverHash === undefined && localNow === content)
+							!(fresh.serverHash === undefined && localNow === content)
 						) {
 							rlog().info(
 								"pull",
@@ -9601,11 +9608,15 @@ export class SyncEngine {
 							// date" while bodies are actively rewritten (review finding 5).
 							return true;
 						}
+						// needsColdReconcile judges against the current row and ignores
+						// bytes an in-flight flushFromCrdt is writing (see `fresh`).
+						// No hasUndeliveredOps gate, unlike the delete sites: this
+						// converges rather than trashing, and never-consumed disk drift
+						// is not in the ops.
 						const localDiverged =
 							localNow !== null &&
-							stored?.hash !== undefined &&
-							fnv1a(localNow) !== stored.hash &&
-							localNow !== content;
+							localNow !== content &&
+							this.needsColdReconcile(normalized, localNow);
 						if (localDiverged && localNow !== null) {
 							// Both the on-disk file AND the authoritative doc moved off
 							// the last-synced baseline. Preserve the local drift as a
@@ -9666,7 +9677,7 @@ export class SyncEngine {
 
 						if (
 							noteId &&
-							stored?.serverHash === undefined &&
+							fresh?.serverHash === undefined &&
 							localNow !== null &&
 							localNow === content
 						) {
