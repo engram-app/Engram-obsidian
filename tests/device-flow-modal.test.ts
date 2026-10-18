@@ -661,7 +661,7 @@ describe("DeviceFlowModal — foreground resume", () => {
 	// `onVisibilityChange = null` means nothing can ever reach it again.
 	// "Generate new code" then clears `aborted`, so the next foreground return
 	// exchanges the dead code, takes the 410, and wipes the fresh code screen
-	// with "Code expired".
+	// with the expired screen.
 	test("removes the listener from the document it registered on, not the focused one", () => {
 		const { modal, exchanged, fire } = startFlow();
 

@@ -294,7 +294,7 @@ export class DeviceFlowModal extends Modal {
 		// would make removeEventListener a silent no-op. The orphan holds the old
 		// device_code, and "Generate new code" clears `aborted` — so the next foreground
 		// return exchanges the dead code, takes the 410, and wipes the freshly
-		// rendered code screen with "Code expired". Same orphan-closure class the
+		// rendered code screen with the expired screen. Same orphan-closure class the
 		// socket already hit (see resetFlow).
 		//
 		// A live socket DEFERS this check; it never cancels it.
