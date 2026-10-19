@@ -694,7 +694,10 @@ export class EngramApi {
 				// from octet-stream and says content_base64 is missing. Stop sending
 				// raw and resend this upload as JSON, once.
 				if (!rawRefused(e)) throw e;
-				rlog().warn("api", "Raw attachment upload refused; falling back to base64 JSON");
+				rlog().warn(
+					"api",
+					`Raw attachment upload refused (${refusalCause(e)}); falling back to base64 JSON`,
+				);
 				this.rawAttachmentUpload = false;
 			}
 		}
@@ -947,6 +950,14 @@ function rawRefused(e: unknown): boolean {
 	const error = errorBody(e).error;
 	if (status === 422) return error === "content_base64 is required";
 	return status === 415 && error !== "mime_not_allowed" && error !== "extension_not_allowed";
+}
+
+/** `status=N error=X` for a refusal log line. The body's `error` is a
+ *  server-chosen code, capped in length in case a proxy answered instead. */
+function refusalCause(e: unknown): string {
+	const error = errorBody(e).error;
+	const shown = typeof error === "string" ? error.slice(0, 80) : "<no parseable body>";
+	return `status=${statusOf(e) ?? "none"} error=${shown}`;
 }
 
 function parseLimitExceededError(e: unknown): LimitExceededError {

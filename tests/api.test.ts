@@ -1,7 +1,7 @@
 /**
  * Tests for api.ts — utility functions and EngramApi method behavior.
  */
-import { afterAll, beforeEach, describe, expect, type Mock, mock, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, type Mock, mock, spyOn, test } from "bun:test";
 import { requestUrl } from "obsidian";
 import {
 	arrayBufferToBase64,
@@ -11,6 +11,7 @@ import {
 } from "../src/api";
 import type { AuthProvider } from "../src/auth";
 import { LimitExceededError } from "../src/limit-error";
+import { rlog } from "../src/remote-log";
 
 // requestUrl is mocked via tests/preload.ts — it is already a mock() instance
 const mockRequestUrl = requestUrl as unknown as Mock<() => Promise<any>>;
@@ -872,6 +873,47 @@ describe("EngramApi", () => {
 			await api.pushAttachment("b.png", "aGk=", "image/png", 5, bytes);
 			const next = mockRequestUrl.mock.calls[2][0] as any;
 			expect(next.headers["Content-Type"]).toBe("application/json");
+		});
+
+		// 2026-10-19: one desktop fell back for the whole session and nothing
+		// said why. The warn must carry the status and the body's `error`.
+		describe("refusal warn names the cause", () => {
+			const warnLine = async (err: unknown): Promise<string> => {
+				const warn = spyOn(rlog(), "warn");
+				try {
+					mockRequestUrl
+						.mockRejectedValueOnce(err)
+						.mockResolvedValueOnce({ status: 200, json: {} } as any);
+					api.setRawAttachmentUpload(true);
+					await api.pushAttachment("a.png", "aGk=", "image/png", 5, new ArrayBuffer(2));
+					const call = warn.mock.calls.find((c) =>
+						String(c[1]).includes("Raw attachment upload"),
+					);
+					return String(call?.[1]);
+				} finally {
+					warn.mockRestore();
+				}
+			};
+
+			test("status and error field", async () => {
+				const line = await warnLine({
+					status: 422,
+					json: { error: "content_base64 is required" },
+				});
+				expect(line).toContain("status=422");
+				expect(line).toContain("error=content_base64 is required");
+			});
+
+			test("an empty body says so", async () => {
+				const line = await warnLine({ status: 415 });
+				expect(line).toContain("status=415");
+				expect(line).toContain("error=<no parseable body>");
+			});
+
+			test("an unparseable text body says so", async () => {
+				const line = await warnLine({ status: 415, text: "<html>proxy</html>" });
+				expect(line).toContain("error=<no parseable body>");
+			});
 		});
 
 		test("raw upload answered by a generic 415 retries as JSON", async () => {
