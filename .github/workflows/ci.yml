@@ -13,6 +13,13 @@ on:
     # the releases API with GITHUB_TOKEN, so they never triggered this anyway.)
     tags-ignore: ["**"]
 
+# A newer push to the same branch supersedes this run: cancel it instead of
+# letting it fail (release-please force-pushes twice within seconds). Never
+# on main, where every merge must be verified.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 permissions:
   contents: read
 

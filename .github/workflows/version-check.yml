@@ -4,6 +4,14 @@ on:
   pull_request:
     branches: [main]
 
+# A newer push to the same PR supersedes this run: cancel it instead of
+# letting it fail. release-please force-pushes a second commit seconds after
+# the first, and the first run's checkout of its dead merge ref failed
+# ("not our ref"), 23 red plugin runs in 14 days.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
