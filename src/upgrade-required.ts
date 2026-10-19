@@ -23,18 +23,18 @@
  * clears only on plugin reload, which is also when a freshly-installed version
  * would take effect.
  *
- * ponytail: does NOT stop sync. The server already refuses everything, so a
- * local kill switch would only duplicate that at the cost of a second piece of
- * state to get wrong. Add one if the reconnect traffic ever shows up as load.
+ * ## Refused means refused locally too
  *
- * What that actually looks like on the wire, since "does not stop sync" sounds
- * busier than it is: Phoenix does not close a socket on a join error, so a
- * refused client keeps ONE open socket. `sync:` and `crdt:` are refused,
+ * Once latched, `EngramApi.request` throws `upgradeRequiredError()` without
+ * touching the network, and the trace beacon drops its batches. Nothing
+ * retries: the remote logger re-buffers a failed batch and flushes on a
+ * timer, so a per-request 426 turned into an endless POST /api/logs loop.
+ *
+ * The socket is left alone: Phoenix does not close a socket on a join error,
+ * so a refused client keeps ONE open socket. `sync:` and `crdt:` are refused,
  * `user:` still joins (no version gate on `check_not_deleted/1`), and the 30s
- * heartbeat keeps the connection alive — so `onclose` never fires and the
- * `crdtJoinFailedReason` backoff in `channel.ts` is never reached. The client
- * idles with `connected === false` rather than retry-storming. Nothing watches
- * that flag today.
+ * heartbeat keeps it alive, so `onclose` never fires and the client idles
+ * with `connected === false` rather than retry-storming.
  */
 import { Notice } from "obsidian";
 import { t } from "./i18n";
@@ -112,6 +112,15 @@ export function notifyUpgradeRequired(
 /** True once the server has refused us for being too old. */
 export function isUpgradeRequired(): boolean {
 	return notified;
+}
+
+/** What `EngramApi` throws in place of a request once refused. Carries
+ *  `status: 426` so every caller's existing status routing treats it exactly
+ *  like the server's own refusal. */
+export function upgradeRequiredError(): Error & { status: 426 } {
+	return Object.assign(new Error("plugin_upgrade_required (refused locally)"), {
+		status: 426 as const,
+	});
 }
 
 /** Test seam. The latch is otherwise per-process by design. */

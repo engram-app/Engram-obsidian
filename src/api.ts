@@ -26,7 +26,7 @@ import type {
 	VaultRegistrationResponse,
 	VersionConflictResponse,
 } from "./types";
-import { notifyUpgradeRequired } from "./upgrade-required";
+import { isUpgradeRequired, notifyUpgradeRequired, upgradeRequiredError } from "./upgrade-required";
 import { wasmCore } from "./wasm-core";
 
 /** Slugs must match the backend's Engram.Feedback; it 422s anything else. */
@@ -120,7 +120,7 @@ export class EngramApi {
 		this.beacon = new BeaconBuffer(() => {
 			// No credential = drop the batch. The beacon posts with window.fetch,
 			// so it bypasses the getAuthToken guard and would 401 on its own.
-			if (!this.tracingEnabled || !this.lastToken) return null;
+			if (!this.tracingEnabled || !this.lastToken || isUpgradeRequired()) return null;
 			return {
 				baseUrl: this.baseUrl,
 				token: this.lastToken,
@@ -291,6 +291,12 @@ export class EngramApi {
 		body?: unknown,
 		extraHeaders?: Record<string, string>,
 	): Promise<RequestUrlResponse> {
+		// A 426 is permanent until the plugin is updated, which means a reload.
+		// Once refused (here or on a socket join), every later call would 426
+		// too: refuse locally instead of sending. Without this the remote logger
+		// re-buffered each refused batch and retried it forever (1,330 POST
+		// /api/logs in 12h from one install, 2026-10-18).
+		if (isUpgradeRequired()) throw upgradeRequiredError();
 		try {
 			return await this.sendRequest(method, path, body, extraHeaders);
 		} catch (e) {
