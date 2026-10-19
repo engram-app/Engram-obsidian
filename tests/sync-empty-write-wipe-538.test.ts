@@ -114,6 +114,33 @@ describe("#538 flushFromCrdt refuses an empty write the doc cannot vouch for", (
 		expect(mockApp.vault.modify).not.toHaveBeenCalled();
 	});
 
+	test("an empty discovery create that loses the create race does not blank the winner", async () => {
+		// Backend e2e test_bidirectional_multi_file (CI run 39208702971): two
+		// flushes for a not-yet-indexed path overlapped. The 28-byte one created
+		// the file; the empty one hit "File already exists" and its fallback
+		// modified the file to "". With no TFile at flush start, the empty-write
+		// guard never ran.
+		const BODY = "hello from B, 28 bytes long\n";
+		let created = false;
+		mockApp.vault.getAbstractFileByPath = mock(() => (created ? new TFile("n.md") : null));
+		mockApp.vault.cachedRead = mock().mockResolvedValue(BODY);
+		mockApp.vault.create = mock(async () => {
+			created = true; // the concurrent flush won the create
+			throw new Error("File already exists.");
+		});
+		const map = new NoteIdMap();
+		map.set("n.md", "id-server");
+		const engine = createEngine(map);
+		confirm(engine, "id-server");
+		engine.setCrdtManager(registry({ "id-server": new Y.Doc() }) as any);
+
+		const wrote = await engine.flushFromCrdt("n.md", "");
+
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+		expect(wrote).toBe(false);
+		expect((engine as any).syncState.get("n.md")?.hash).not.toBe(fnv1a(""));
+	});
+
 	test("no id at all must NOT blank a non-empty file", async () => {
 		const engine = createEngine(new NoteIdMap());
 		engine.setCrdtManager(registry({}) as any);

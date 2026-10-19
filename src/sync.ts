@@ -2114,6 +2114,42 @@ export class SyncEngine {
 		new Map<string, { started: number; recorded: number }>(),
 	);
 
+	/** Paths whose own create round trip is running: from just before
+	 *  `crdt_create` is sent until its ack is adopted (seed, genesis flush,
+	 *  baseline). Disk still holds the raw pre-create bytes in that window and
+	 *  the row is at best a `hash: 0` placeholder, so catch-up's drift check
+	 *  reads the note's own create as a local edit and writes a "(conflict)"
+	 *  copy (backend e2e test_101). Catch-up parks such a change in
+	 *  `deferredDuringCreate` instead; `endCreate` replays it against the
+	 *  settled row (the catch-up cursor has already moved past it, so nothing
+	 *  else would). Set by `beginCreate`, cleared by `endCreate` in each create's
+	 *  `finally`, live (pushFile) and queued (crdt-op-dispatch) alike. */
+	private readonly creatingPaths = this.track(["vault", "destroy"], new Set<string>());
+	private readonly deferredDuringCreate = this.track(
+		["vault", "destroy"],
+		new Map<string, NoteChange>(),
+	);
+
+	beginCreate(path: string): void {
+		this.creatingPaths.add(normalizePath(path));
+	}
+
+	async endCreate(path: string): Promise<void> {
+		const normalized = normalizePath(path);
+		this.creatingPaths.delete(normalized);
+		const change = this.deferredDuringCreate.get(normalized);
+		if (!change) return;
+		this.deferredDuringCreate.delete(normalized);
+		try {
+			await this.applyChange(change);
+		} catch (e) {
+			rlog().warn(
+				"pull",
+				`replay of a change deferred during create failed for ${noteRef(normalized)}: ${errMsg(e, normalized)}`,
+			);
+		}
+	}
+
 	/** Strand-heal drain (#569): fold an unpushed disk edit into the note's
 	 *  doc, then write the doc's CURRENT projection. The content captured when
 	 *  the id stranded can predate both a local edit and later doc updates, so
@@ -2245,7 +2281,7 @@ export class SyncEngine {
 				// had on disk (it lived only in the Yjs doc). Create it — without this
 				// flushFromCrdt returned early and the note stayed permanently invisible
 				// on this device even though its content was in the local CRDT doc.
-				await this.createFileWithFolders(normalized, content);
+				if (!(await this.createFileWithFolders(normalized, content))) return false;
 			}
 			// CRDT delivery IS a sync: record the last-synced baseline so the REST
 			// reconcile path treats this note as server-known. Without it a
@@ -5558,6 +5594,7 @@ export class SyncEngine {
 					// which would let a row-adding create for pushedPath through.
 					!this.capBlocksCreate(pushedPath)
 				) {
+					this.beginCreate(pushedPath);
 					try {
 						// Only the crdtCreate call itself is covered by this catch — once
 						// it RESOLVES, the server row exists (possibly under a remapped
@@ -5781,6 +5818,8 @@ export class SyncEngine {
 						);
 						this.crdtEnqueue?.({ kind: "create", docId: noteId, path: pushedPath });
 						return false;
+					} finally {
+						await this.endCreate(pushedPath);
 					}
 				}
 
@@ -9617,6 +9656,16 @@ export class SyncEngine {
 							localNow !== null &&
 							localNow !== content &&
 							this.needsColdReconcile(normalized, localNow);
+						if (localDiverged && this.creatingPaths.has(normalized)) {
+							// Disk is this note's own pre-create bytes, not a local edit
+							// (see `creatingPaths`). Parked; `endCreate` replays it.
+							this.deferredDuringCreate.set(normalized, change);
+							rlog().info(
+								"pull",
+								`CRDT catch-up: own create in flight, deferring ${noteRef(change.path)}`,
+							);
+							return false;
+						}
 						if (localDiverged && localNow !== null) {
 							// Both the on-disk file AND the authoritative doc moved off
 							// the last-synced baseline. Preserve the local drift as a
@@ -9642,8 +9691,9 @@ export class SyncEngine {
 								// The local edit could NOT be backed up. Do NOT converge:
 								// socketConverge would overwrite the main file with the
 								// server version, destroying the only remaining copy of
-								// the local edit. Leave disk untouched; the next catch-up
-								// re-attempts the copy for this still-diverged row.
+								// the local edit. Leave disk untouched. The catch-up cursor
+								// still moves past this row, so convergence waits for the
+								// note's next remote op or handshake.
 								rlog().warn(
 									"conflict",
 									`drift-copy failed — leaving ${noteRef(normalized)} intact, deferring convergence to next catch-up`,
@@ -10034,7 +10084,7 @@ export class SyncEngine {
 	 *  a rename it originated, and renameFile would rewrite them again (the
 	 *  exactly-one-rewriter invariant). renameFile would be correct only against
 	 *  a server that does not rewrite at all. */
-	private async createFileWithFolders(normalized: string, content: string): Promise<void> {
+	private async createFileWithFolders(normalized: string, content: string): Promise<boolean> {
 		const folder = normalized.includes("/")
 			? normalized.substring(0, normalized.lastIndexOf("/"))
 			: "";
@@ -10057,7 +10107,7 @@ export class SyncEngine {
 				if (moved) {
 					await this.modifyFile(moved, content);
 					this.rememberFileFor(normalized);
-					return;
+					return true;
 				}
 			}
 		}
@@ -10068,6 +10118,7 @@ export class SyncEngine {
 			// that were on disk at startup -- which is exactly the hole e2e
 			// test_93 fell through while a manual test on an older note passed.
 			this.rememberFileFor(normalized);
+			return true;
 		} catch (e) {
 			// A concurrent materialization path (pull vs WS delivery) can create
 			// this file between the caller's existence check and our create —
@@ -10076,9 +10127,23 @@ export class SyncEngine {
 			// goal, so degrade to modify with the same content; rethrow the rest.
 			const raced = this.app.vault.getAbstractFileByPath(normalized);
 			if (raced instanceof TFile) {
+				// An empty body never overwrites what the winner wrote. It started
+				// with no file on disk, so flushFromCrdt's empty-write guard never
+				// ran; a real remote clear arrives with the file present and goes
+				// through that guard (backend e2e test_bidirectional_multi_file).
+				if (
+					content.trim() === "" &&
+					(await this.app.vault.cachedRead(raced)).trim() !== ""
+				) {
+					rlog().warn(
+						"crdt",
+						`empty create lost the create race; kept the winner's body for ${noteRef(normalized)}`,
+					);
+					return false;
+				}
 				await this.modifyFile(raced, content);
 				this.rememberFileFor(normalized);
-				return;
+				return true;
 			}
 			throw e;
 		}
