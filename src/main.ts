@@ -793,6 +793,8 @@ export default class EngramSyncPlugin extends Plugin {
 						genesis,
 						genesisOutcome,
 					),
+				beginCreate: (path) => this.syncEngine.beginCreate(path),
+				endCreate: (path) => this.syncEngine.endCreate(path),
 				onPostAckError: (docId, path, error) =>
 					// The row exists, so the create is not retried — but the ack's
 					// bookkeeping (id map, oracle, confirm, held-edit flush) did NOT

@@ -150,3 +150,21 @@ test("same placeholder row with no create in flight is still drift-copied", asyn
 	});
 	expect(copies).toBe(1);
 });
+
+test("a change deferred during the create is replayed when the create ends", async () => {
+	let engine: AnyEngine | null = null;
+	const copies = await catchUp((e) => {
+		engine = e;
+		placeholderRow(e);
+		e.beginCreate(PATH);
+	});
+	expect(copies).toBe(0);
+	const replay = spyOn(engine! as any, "applyChange").mockResolvedValue(true);
+	await engine!.endCreate(PATH);
+	expect(replay).toHaveBeenCalledTimes(1);
+	expect(replay.mock.calls[0][0].path).toBe(PATH);
+	expect(engine!.creatingPaths.has(PATH)).toBe(false);
+	// Replayed once, then forgotten.
+	await engine!.endCreate(PATH);
+	expect(replay).toHaveBeenCalledTimes(1);
+});

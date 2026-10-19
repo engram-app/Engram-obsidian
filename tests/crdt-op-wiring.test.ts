@@ -501,3 +501,51 @@ describe("CrdtOpQueue integration (durable create/delete)", () => {
 		expect(queue.size()).toBe(0);
 	});
 });
+
+describe("queued create brackets its round trip for catch-up (test_101)", () => {
+	const fakeChannel = (crdtCreate: CrdtOpChannel["crdtCreate"]): CrdtOpChannel => ({
+		crdtCreate,
+		crdtDeleteAcked: async (docId: string) => ({ doc_id: docId }),
+	});
+
+	test("beginCreate before the send, endCreate after the ack is adopted", async () => {
+		const events: string[] = [];
+		const send = makeCrdtOpSend({
+			channel: () =>
+				fakeChannel(async () => {
+					events.push("send");
+					return { docId: "server-id", seeded: false, genesisOutcome: "absent" as const };
+				}),
+			onCreated: async () => {
+				events.push("ack");
+			},
+			onTerminal: () => {},
+			beginCreate: (p) => events.push(`begin ${p}`),
+			endCreate: async (p) => {
+				events.push(`end ${p}`);
+			},
+		});
+
+		await expect(send(op("create", "local-id", "N.md"))).resolves.toBe("ok");
+
+		expect(events).toEqual(["begin N.md", "send", "ack", "end N.md"]);
+	});
+
+	test("endCreate still runs when the create is rejected", async () => {
+		const ended = mock(async () => {});
+		const send = makeCrdtOpSend({
+			channel: () =>
+				fakeChannel(async () => {
+					throw new Error("crdt topic not joined");
+				}),
+			onCreated: async () => {},
+			onTerminal: () => {},
+			beginCreate: () => {},
+			endCreate: ended,
+		});
+
+		await send(op("create", "local-id", "N.md"));
+
+		expect(ended).toHaveBeenCalledTimes(1);
+	});
+});

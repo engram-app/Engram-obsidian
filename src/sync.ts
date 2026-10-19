@@ -1773,23 +1773,6 @@ export class SyncEngine {
 		genesisOutcome?: GenesisOutcome,
 	): Promise<void> {
 		const normalized = normalizePath(path);
-		this.creatingPaths.add(normalized);
-		try {
-			await this.adoptQueuedCreate(localId, serverId, path, seeded, genesis, genesisOutcome);
-		} finally {
-			this.creatingPaths.delete(normalized);
-		}
-	}
-
-	private async adoptQueuedCreate(
-		localId: string,
-		serverId: string,
-		path: string,
-		seeded: boolean,
-		genesis: GenesisFrame | undefined,
-		genesisOutcome: GenesisOutcome | undefined,
-	): Promise<void> {
-		const normalized = normalizePath(path);
 		let effectiveId = localId;
 		// What the manager actually took, from whichever of the two seed routes
 		// below ran (they are mutually exclusive). Handed to adoptCreateAck as the
@@ -2136,10 +2119,36 @@ export class SyncEngine {
 	 *  baseline). Disk still holds the raw pre-create bytes in that window and
 	 *  the row is at best a `hash: 0` placeholder, so catch-up's drift check
 	 *  reads the note's own create as a local edit and writes a "(conflict)"
-	 *  copy (backend e2e test_101). The create path owns the note until it
-	 *  finishes; a local edit made meanwhile is merged by the seed's
-	 *  `preApplyDisk` step. Cleared by: each create's own `finally`. */
+	 *  copy (backend e2e test_101). Catch-up parks such a change in
+	 *  `deferredDuringCreate` instead; `endCreate` replays it against the
+	 *  settled row (the catch-up cursor has already moved past it, so nothing
+	 *  else would). Set by `beginCreate`, cleared by `endCreate` in each create's
+	 *  `finally`, live (pushFile) and queued (crdt-op-dispatch) alike. */
 	private readonly creatingPaths = this.track(["vault", "destroy"], new Set<string>());
+	private readonly deferredDuringCreate = this.track(
+		["vault", "destroy"],
+		new Map<string, NoteChange>(),
+	);
+
+	beginCreate(path: string): void {
+		this.creatingPaths.add(normalizePath(path));
+	}
+
+	async endCreate(path: string): Promise<void> {
+		const normalized = normalizePath(path);
+		this.creatingPaths.delete(normalized);
+		const change = this.deferredDuringCreate.get(normalized);
+		if (!change) return;
+		this.deferredDuringCreate.delete(normalized);
+		try {
+			await this.applyChange(change);
+		} catch (e) {
+			rlog().warn(
+				"pull",
+				`replay of a change deferred during create failed for ${noteRef(normalized)}: ${errMsg(e, normalized)}`,
+			);
+		}
+	}
 
 	/** Strand-heal drain (#569): fold an unpushed disk edit into the note's
 	 *  doc, then write the doc's CURRENT projection. The content captured when
@@ -5585,8 +5594,7 @@ export class SyncEngine {
 					// which would let a row-adding create for pushedPath through.
 					!this.capBlocksCreate(pushedPath)
 				) {
-					const creating = normalizePath(pushedPath);
-					this.creatingPaths.add(creating);
+					this.beginCreate(pushedPath);
 					try {
 						// Only the crdtCreate call itself is covered by this catch — once
 						// it RESOLVES, the server row exists (possibly under a remapped
@@ -5811,7 +5819,7 @@ export class SyncEngine {
 						this.crdtEnqueue?.({ kind: "create", docId: noteId, path: pushedPath });
 						return false;
 					} finally {
-						this.creatingPaths.delete(creating);
+						await this.endCreate(pushedPath);
 					}
 				}
 
@@ -9650,8 +9658,8 @@ export class SyncEngine {
 							this.needsColdReconcile(normalized, localNow);
 						if (localDiverged && this.creatingPaths.has(normalized)) {
 							// Disk is this note's own pre-create bytes, not a local edit
-							// (see `creatingPaths`). Same deferral as a failed copy below:
-							// nothing recorded, the next catch-up re-reads this row.
+							// (see `creatingPaths`). Parked; `endCreate` replays it.
+							this.deferredDuringCreate.set(normalized, change);
 							rlog().info(
 								"pull",
 								`CRDT catch-up: own create in flight, deferring ${noteRef(change.path)}`,
@@ -9683,8 +9691,9 @@ export class SyncEngine {
 								// The local edit could NOT be backed up. Do NOT converge:
 								// socketConverge would overwrite the main file with the
 								// server version, destroying the only remaining copy of
-								// the local edit. Leave disk untouched; the next catch-up
-								// re-attempts the copy for this still-diverged row.
+								// the local edit. Leave disk untouched. The catch-up cursor
+								// still moves past this row, so convergence waits for the
+								// note's next remote op or handshake.
 								rlog().warn(
 									"conflict",
 									`drift-copy failed — leaving ${noteRef(normalized)} intact, deferring convergence to next catch-up`,
