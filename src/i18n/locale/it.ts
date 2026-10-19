@@ -552,6 +552,8 @@ const it: Dict = {
 		"Non sembra una chiave API di Engram (previsto {prefix}…).",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"Il piano gratuito sincronizza solo le note. Aggiorna per sincronizzare immagini e PDF.",
+	"The file is over the server's size limit. Compress or split it, then it will sync.":
+		"Il file supera il limite di dimensione del server. Comprimilo o dividilo, poi verrà sincronizzato.",
 	"The file is too large for the server.": "Il file è troppo grande per il server.",
 	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
 		"La nota è stata sincronizzata, ma il suo frontmatter non è stato completamente analizzato. Aprila per correggere la riga evidenziata.",
@@ -559,8 +561,6 @@ const it: Dict = {
 		"Il server non è riuscito a elaborare questa nota. Controlla il contenuto, poi modificala e salvala per riprovare.",
 	"The server does not accept this type of file. It will retry if the file changes.":
 		"Il server non accetta questo tipo di file. Riproverà se il file cambia.",
-	"The server limit is 5 MB. Compress or split the file, then it will sync.":
-		"Il limite del server è di 5 MB. Comprimi o dividi il file, poi verrà sincronizzato.",
 	"The server took too long to respond. Try again.":
 		"Il server ha impiegato troppo tempo per rispondere. Riprova.",
 	"These files are fine. They just need a paid plan to sync.":
@@ -656,6 +656,8 @@ const it: Dict = {
 	"Your feedback": "Il tuo feedback",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"La tua sessione è scaduta. Accedi di nuovo nelle impostazioni di Engram per continuare.",
+	"Your plan's file limit is {limit}. Compress or split the file, then it will sync.":
+		"Il limite di file del tuo piano è {limit}. Comprimi o dividi il file, poi verrà sincronizzato.",
 	"Your vault shares {percent} of its data with Engram":
 		"Il tuo vault condivide {percent} dei suoi dati con Engram",
 	attachments: "allegati",

@@ -3,6 +3,7 @@ import { statusOf } from "./error-util";
 import { t } from "./i18n";
 import { userErrorMessage } from "./i18n/user-error";
 import { LimitExceededError } from "./limit-error";
+import { formatBytes } from "./plan-usage";
 import type { ParseReason, SyncIssue, SyncIssueCategory } from "./types";
 
 /** Persistent store of sync failures keyed by file path.
@@ -246,6 +247,8 @@ export function issueDisposition(
 export function remediation(
 	category: SyncIssueCategory,
 	reason?: ParseReason | null,
+	/** The file limit that refused these files, when known. */
+	limitBytes?: number,
 ): { title: string; hint: string } {
 	// A per-entry server-side processing failure is bucketed under "other" but,
 	// unlike a genuine transient error, will NOT self-heal on an identical
@@ -273,7 +276,17 @@ export function remediation(
 		case "too_large":
 			return {
 				title: t("Too large for the server"),
-				hint: t("The server limit is 5 MB. Compress or split the file, then it will sync."),
+				hint:
+					limitBytes !== undefined
+						? t(
+								"Your plan's file limit is {limit}. Compress or split the file, then it will sync.",
+								{
+									limit: formatBytes(limitBytes),
+								},
+							)
+						: t(
+								"The file is over the server's size limit. Compress or split it, then it will sync.",
+							),
 			};
 		case "unsupported":
 			return {

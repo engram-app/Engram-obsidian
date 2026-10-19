@@ -567,6 +567,8 @@ const pl: Dict = {
 		"To nie wygląda na klucz API Engram (oczekiwano {prefix}…).",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"W wersji darmowej synchronizowane są tylko notatki. Zaktualizuj, aby synchronizować obrazy i pliki PDF.",
+	"The file is over the server's size limit. Compress or split it, then it will sync.":
+		"Plik przekracza limit rozmiaru serwera. Skompresuj lub podziel go, a następnie synchronizacja się wykona.",
 	"The file is too large for the server.": "Plik jest zbyt duży dla serwera.",
 	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
 		"Notatka została zsynchronizowana, ale jej nagłówek nie mógł zostać w pełni przetworzony. Otwórz ją, aby poprawić zaznaczony wiersz.",
@@ -574,8 +576,6 @@ const pl: Dict = {
 		"Serwer nie mógł przetworzyć tej notatki. Sprawdź jej zawartość, a następnie edytuj i zapisz, aby spróbować ponownie.",
 	"The server does not accept this type of file. It will retry if the file changes.":
 		"Serwer nie akceptuje tego typu pliku. Spróbuje ponownie, jeśli plik się zmieni.",
-	"The server limit is 5 MB. Compress or split the file, then it will sync.":
-		"Limit serwera to 5 MB. Skompresuj lub podziel plik, a następnie będzie można go zsynchronizować.",
 	"The server took too long to respond. Try again.":
 		"Serwer zbyt długo odpowiadał. Spróbuj ponownie.",
 	"These files are fine. They just need a paid plan to sync.":
@@ -673,6 +673,8 @@ const pl: Dict = {
 	"Your feedback": "Twoja opinia",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Twoje logowanie wygasło. Zaloguj się ponownie w ustawieniach Engram, aby kontynuować.",
+	"Your plan's file limit is {limit}. Compress or split the file, then it will sync.":
+		"Limit plików w twoim planie to {limit}. Skompresuj lub podziel plik, a następnie synchronizacja się wykona.",
 	"Your vault shares {percent} of its data with Engram":
 		"Twój sejf udostępnia {percent} swoich danych do Engram",
 	attachments: "załączniki",

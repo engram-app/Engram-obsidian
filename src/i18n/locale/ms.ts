@@ -484,6 +484,8 @@ const ms: Dict = {
 		"Itu tidak kelihatan seperti kunci API Engram (diharapkan {prefix}…).",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"Versi percuma hanya menyegerakkan nota. Tingkatkan untuk menyegerakkan imej dan fail PDF.",
+	"The file is over the server's size limit. Compress or split it, then it will sync.":
+		"Saiz fail melebihi had pelayan. Kompres atau bahagikannya, kemudian ia akan disegerakkan.",
 	"The file is too large for the server.": "Fail ini terlalu besar untuk pelayan.",
 	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
 		"Nota telah disink, tetapi frontmatternya tidak dapat diproses sepenuhnya. Buka untuk memperbaiki baris yang diserlahkan.",
@@ -491,8 +493,6 @@ const ms: Dict = {
 		"Pelayan tidak dapat memproses nota ini. Semak kandungannya, kemudian edit dan simpan untuk cuba lagi.",
 	"The server does not accept this type of file. It will retry if the file changes.":
 		"Pelayan tidak menerima jenis fail ini. Ia akan cuba semula jika fail berubah.",
-	"The server limit is 5 MB. Compress or split the file, then it will sync.":
-		"Had saiz fail ialah 5 MB. Kompres atau bahagikan fail, kemudian ia akan disegerakkan.",
 	"The server took too long to respond. Try again.":
 		"Pelayan mengambil masa terlalu lama untuk menjawab. Cuba lagi.",
 	"These files are fine. They just need a paid plan to sync.":
@@ -571,6 +571,8 @@ const ms: Dict = {
 	"Your feedback": "Maklum balas anda",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Log masuk anda telah tamat tempoh. Log masuk semula dalam tetapan Engram untuk meneruskan.",
+	"Your plan's file limit is {limit}. Compress or split the file, then it will sync.":
+		"Had fail untuk pelan anda ialah {limit}. Kompres atau bahagikan fail tersebut, kemudian ia akan disegerakkan.",
 	"Your vault shares {percent} of its data with Engram":
 		"Peti nota anda berkongsi {percent} data dengan Engram",
 	attachments: "lampiran",

@@ -481,6 +481,8 @@ const ja: Dict = {
 		"これはEngramのAPIキーのように見えません (期待されるのは {prefix}…)",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"無料プランではノートのみ同期されます。画像やPDFを同期するには、有料プランにアップグレードしてください。",
+	"The file is over the server's size limit. Compress or split it, then it will sync.":
+		"ファイルがサーバーのサイズ制限を超えています。圧縮するか分割し、再度同期してください。",
 	"The file is too large for the server.": "ファイルがサーバーの許容量を超えています。",
 	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
 		"ノートは同期されましたが、フロントマターを完全に解析できませんでした。ハイライトされた行を修正するために開いてください。",
@@ -488,8 +490,6 @@ const ja: Dict = {
 		"サーバーでこのノートの処理に失敗しました。内容を確認し、編集して保存してから再度お試しください。",
 	"The server does not accept this type of file. It will retry if the file changes.":
 		"サーバーがこの種類のファイルを許可していません。ファイルが変更された場合、再試行します。",
-	"The server limit is 5 MB. Compress or split the file, then it will sync.":
-		"サーバーの制限は5MBです。ファイルを圧縮するか分割し、再度同期してください。",
 	"The server took too long to respond. Try again.":
 		"サーバーの応答が遅すぎます。もう一度お試しください。",
 	"These files are fine. They just need a paid plan to sync.":
@@ -567,6 +567,8 @@ const ja: Dict = {
 	"Your feedback": "お客様からのフィードバック",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"ログインが期限切れです。Engramの設定で再度ログインしてください。",
+	"Your plan's file limit is {limit}. Compress or split the file, then it will sync.":
+		"プランのファイル制限は{limit}です。圧縮するか分割し、再度同期してください。",
 	"Your vault shares {percent} of its data with Engram":
 		"あなたの保管庫のデータの一部({percent})がEngramと共有されています",
 	attachments: "添付ファイル",

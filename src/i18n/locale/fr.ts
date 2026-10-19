@@ -550,6 +550,8 @@ const fr: Dict = {
 		"Cela ne ressemble pas à une clé API Engram (attendu {prefix}…).",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"Le plan gratuit synchronise uniquement les notes. Passe à un abonnement payant pour synchroniser les images et les PDF.",
+	"The file is over the server's size limit. Compress or split it, then it will sync.":
+		"Le fichier dépasse la limite de taille du serveur. Compresse-le ou divise-le, puis il sera synchronisé.",
 	"The file is too large for the server.": "Le fichier est trop volumineux pour le serveur.",
 	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
 		"La note a été synchronisée, mais son frontmatter n'a pas pu être entièrement analysé. Ouvre-la pour corriger la ligne surlignée.",
@@ -557,8 +559,6 @@ const fr: Dict = {
 		"Le serveur n'a pas pu traiter cette note. Vérifie son contenu, puis modifie et enregistre pour réessayer.",
 	"The server does not accept this type of file. It will retry if the file changes.":
 		"Le serveur n'accepte pas ce type de fichier. Il retentera si le fichier change.",
-	"The server limit is 5 MB. Compress or split the file, then it will sync.":
-		"La limite du serveur est de 5 Mo. Compresse ou divise le fichier, puis il sera synchronisé.",
 	"The server took too long to respond. Try again.":
 		"Le serveur a mis trop de temps à répondre. Réessaie.",
 	"These files are fine. They just need a paid plan to sync.":
@@ -654,6 +654,8 @@ const fr: Dict = {
 	"Your feedback": "Ton feedback",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Ton identifiant a expiré. Connecte-toi à nouveau dans les paramètres d'Engram pour continuer.",
+	"Your plan's file limit is {limit}. Compress or split the file, then it will sync.":
+		"La limite de fichiers de ton abonnement est de {limit}. Compresse ou divise le fichier, puis il sera synchronisé.",
 	"Your vault shares {percent} of its data with Engram":
 		"Ton coffre partage {percent} de ses données avec Engram",
 	attachments: "pièces jointes",

@@ -523,6 +523,8 @@ const de: Dict = {
 		"Das sieht nicht nach einem Engram API-Schlüssel aus (erwartet {prefix}…).",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"Die kostenlose Version synchronisiert nur Notizen. Upgrade, um auch Bilder und PDFs zu synchronisieren.",
+	"The file is over the server's size limit. Compress or split it, then it will sync.":
+		"Die Datei ist größer als die Server-Größenbeschränkung. Komprimiere oder teile sie, dann wird sie synchronisiert.",
 	"The file is too large for the server.": "Die Datei ist zu groß für den Server.",
 	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
 		"Die Notiz wurde synchronisiert, aber ihr Frontmatter konnte nicht vollständig analysiert werden. Öffne sie, um die hervorgehobene Zeile zu korrigieren.",
@@ -530,8 +532,6 @@ const de: Dict = {
 		"Der Server konnte diese Notiz nicht verarbeiten. Überprüfe den Inhalt, bearbeite sie und speichere sie, um es erneut zu versuchen.",
 	"The server does not accept this type of file. It will retry if the file changes.":
 		"Der Server akzeptiert diesen Dateityp nicht. Er wird es erneut versuchen, wenn sich die Datei ändert.",
-	"The server limit is 5 MB. Compress or split the file, then it will sync.":
-		"Die Server-Grenze beträgt 5 MB. Komprimiere oder teile die Datei, dann wird sie synchronisiert.",
 	"The server took too long to respond. Try again.":
 		"Der Server hat zu lange zum Antworten gebraucht. Versuche es erneut.",
 	"These files are fine. They just need a paid plan to sync.":
@@ -619,6 +619,8 @@ const de: Dict = {
 	"Your feedback": "Dein Feedback",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Dein Login ist abgelaufen. Melde dich erneut in den Engram-Einstellungen an, um fortzufahren.",
+	"Your plan's file limit is {limit}. Compress or split the file, then it will sync.":
+		"Dein Plan hat eine Dateigrößenbeschränkung von {limit}. Komprimiere oder teile die Datei, dann wird sie synchronisiert.",
 	"Your vault shares {percent} of its data with Engram":
 		"Dein Vault teilt {percent} seiner Daten mit Engram",
 	attachments: "Anhänge",

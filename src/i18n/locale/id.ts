@@ -485,6 +485,8 @@ const id: Dict = {
 		"Itu tidak terlihat seperti kunci API Engram (diharapkan {prefix}…).",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"Paket gratis hanya menyinkronkan catatan. Tingkatkan untuk menyinkronkan gambar dan PDF.",
+	"The file is over the server's size limit. Compress or split it, then it will sync.":
+		"Ukuran berkas melebihi batas server. Kompres atau bagi berkas tersebut, lalu lakukan sinkronisasi.",
 	"The file is too large for the server.": "File terlalu besar untuk server.",
 	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
 		"Catatan berhasil disinkronisasi, tetapi frontmatter-nya tidak dapat diproses sepenuhnya. Buka untuk memperbaiki baris yang ditandai.",
@@ -492,8 +494,6 @@ const id: Dict = {
 		"Server tidak dapat memproses catatan ini. Periksa isinya, lalu edit dan simpan untuk mencoba lagi.",
 	"The server does not accept this type of file. It will retry if the file changes.":
 		"Server tidak menerima tipe file ini. Akan dicoba lagi jika file berubah.",
-	"The server limit is 5 MB. Compress or split the file, then it will sync.":
-		"Batas server adalah 5 MB. Kompres atau bagi file, lalu akan disinkronkan.",
 	"The server took too long to respond. Try again.":
 		"Server membutuhkan waktu terlalu lama untuk merespons. Coba lagi.",
 	"These files are fine. They just need a paid plan to sync.":
@@ -572,6 +572,8 @@ const id: Dict = {
 	"Your feedback": "Umpan balik Anda",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Login Anda telah kedaluwarsa. Masuk kembali di pengaturan Engram untuk melanjutkan.",
+	"Your plan's file limit is {limit}. Compress or split the file, then it will sync.":
+		"Batas ukuran berkas paket Anda adalah {limit}. Kompres atau bagi berkas tersebut, lalu lakukan sinkronisasi.",
 	"Your vault shares {percent} of its data with Engram":
 		"Vault Anda berbagi {percent} dari datanya dengan Engram",
 	attachments: "lampiran",

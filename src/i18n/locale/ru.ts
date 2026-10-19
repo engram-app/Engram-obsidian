@@ -569,6 +569,8 @@ const ru: Dict = {
 		"Это не похоже на ключ API Engram (ожидается {prefix}…).",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"Бесплатный тариф синхронизирует только заметки. Обновите подписку, чтобы синхронизировать изображения и PDF-файлы.",
+	"The file is over the server's size limit. Compress or split it, then it will sync.":
+		"Размер файла превышает ограничение сервера. Сжатие или разделение файла позволит синхронизировать его.",
 	"The file is too large for the server.": "Файл слишком большой для сервера.",
 	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
 		"Заметка синхронизирована, но метаданные не были полностью обработаны. Откройте её, чтобы исправить выделенную строку.",
@@ -576,8 +578,6 @@ const ru: Dict = {
 		"Сервер не смог обработать эту заметку. Проверьте её содержимое, затем отредактируйте и сохраните, чтобы повторить попытку.",
 	"The server does not accept this type of file. It will retry if the file changes.":
 		"Сервер не принимает файлы этого типа. Повторная попытка произойдет, если файл изменится.",
-	"The server limit is 5 MB. Compress or split the file, then it will sync.":
-		"Предел сервера составляет 5 МБ. Сжатие или разделение файла позволит выполнить синхронизацию.",
 	"The server took too long to respond. Try again.":
 		"Сервер слишком долго отвечает. Попробуйте ещё раз.",
 	"These files are fine. They just need a paid plan to sync.":
@@ -676,6 +676,8 @@ const ru: Dict = {
 	"Your feedback": "Ваши отзывы",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Ваш сеанс завершён. Войдите снова в настройках Engram, чтобы продолжить.",
+	"Your plan's file limit is {limit}. Compress or split the file, then it will sync.":
+		"Предел размера файлов для вашего плана: {limit}. Сжатие или разделение файла позволит синхронизировать его.",
 	"Your vault shares {percent} of its data with Engram":
 		"Ваше хранилище передает {percent} своих данных в Engram",
 	attachments: "Вложения",

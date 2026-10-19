@@ -550,6 +550,8 @@ const ptBR: Dict = {
 		"Isso não parece ser uma chave de API do Engram (esperado {prefix}…).",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"O plano gratuito sincroniza apenas notas. Faça um upgrade para sincronizar imagens e PDFs.",
+	"The file is over the server's size limit. Compress or split it, then it will sync.":
+		"O arquivo excede o limite de tamanho do servidor. Comprima ou divida-o, então ele será sincronizado.",
 	"The file is too large for the server.": "O arquivo é muito grande para o servidor.",
 	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
 		"A nota foi sincronizada, mas o cabeçalho não pôde ser totalmente analisado. Abra-a para corrigir a linha destacada.",
@@ -557,8 +559,6 @@ const ptBR: Dict = {
 		"O servidor não conseguiu processar esta nota. Verifique o conteúdo, edite e salve para tentar novamente.",
 	"The server does not accept this type of file. It will retry if the file changes.":
 		"O servidor não aceita este tipo de arquivo. Tentará novamente se o arquivo for alterado.",
-	"The server limit is 5 MB. Compress or split the file, then it will sync.":
-		"O limite do servidor é de 5 MB. Comprima ou divida o arquivo, então ele será sincronizado.",
 	"The server took too long to respond. Try again.":
 		"O servidor demorou muito para responder. Tente novamente.",
 	"These files are fine. They just need a paid plan to sync.":
@@ -653,6 +653,8 @@ const ptBR: Dict = {
 	"Your feedback": "Seu feedback",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Sua sessão expirou. Faça login novamente nas configurações de Engram para continuar.",
+	"Your plan's file limit is {limit}. Compress or split the file, then it will sync.":
+		"O limite de arquivos do seu plano é {limit}. Comprima ou divida o arquivo, então ele será sincronizado.",
 	"Your vault shares {percent} of its data with Engram":
 		"Seu cofre compartilha {percent} de seus dados com Engram",
 	attachments: "anexos",

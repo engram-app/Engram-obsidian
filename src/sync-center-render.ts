@@ -356,6 +356,13 @@ function renderNeedsAttention(
 	}
 }
 
+/** The plan's file limit, when it is what refused every one of `issues`. A
+ *  413 is the server's request ceiling, which the plan limit doesn't describe. */
+function planFileLimit(plugin: EngramSyncPlugin, issues: SyncIssue[]): number | undefined {
+	const max = plugin.syncEngine.getPlanState()?.maxFileBytes ?? 0;
+	return max > 0 && issues.every((i) => i.status !== 413) ? max : undefined;
+}
+
 function renderAttentionCard(
 	parent: HTMLElement,
 	plugin: EngramSyncPlugin,
@@ -367,7 +374,11 @@ function renderAttentionCard(
 	// category they're all note_processing_failed. Pass the reason through so
 	// the card gets the accurate non-retrying copy instead of the generic
 	// "Sync failed... retrying automatically" default.
-	const { title, hint } = remediation(category, issues[0]?.parseReason);
+	const { title, hint } = remediation(
+		category,
+		issues[0]?.parseReason,
+		category === "too_large" ? planFileLimit(plugin, issues) : undefined,
+	);
 	renderIssueCard(parent, plugin, refresh, issues, {
 		cardCls: "engram-sync-center-card",
 		icon: CATEGORY_ICON[category] ?? "⚠",
