@@ -566,4 +566,19 @@ describe("a deletion whose replacement is still pending is not a vacancy (CI run
 		expect(store.get(P)).toBeNull();
 		expect(store.pathForId(X)).toBeNull();
 	});
+
+	test("a real delete that landed during the gap is honoured once it fills", () => {
+		const { store, S, B, P, X } = lostClaim();
+		// While B is still pending, the server genuinely releases a claim B holds.
+		B.getMap("filemeta_v0").set("q.md", { note_id: "id-q" });
+		Y.applyUpdate(S, Y.encodeStateAsUpdate(B));
+		const sv = Y.encodeStateVector(S);
+		S.getMap("filemeta_v0").delete("q.md");
+		Y.applyUpdate(B, Y.encodeStateAsUpdate(S, sv));
+		expect(B.store.pendingStructs).not.toBeNull();
+		expect(store.get("q.md")).toBe("id-q"); // bridged: cannot yet tell it from the tie case
+		Y.applyUpdate(B, Y.encodeStateAsUpdate(S));
+		expect(store.get("q.md")).toBeNull();
+		expect(store.get(P)).toBe(X);
+	});
 });
