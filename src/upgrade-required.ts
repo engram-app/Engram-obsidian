@@ -121,9 +121,11 @@ export function isUpgradeRequired(): boolean {
 	return refused;
 }
 
-/** A different server has its own floor (or none): stop refusing locally. */
+/** A different server has its own floor (or none): stop refusing locally,
+ *  and re-arm the notice so that server's own refusal is not swallowed. */
 export function clearUpgradeRefusal(): void {
 	refused = false;
+	notified = false;
 }
 
 /** What `EngramApi` throws in place of a request once refused. Carries

@@ -418,7 +418,8 @@ export class EngramApi {
 			method,
 			headers,
 			body: raw ? body : body !== undefined ? JSON.stringify(body) : undefined,
-		});
+			throw: false,
+		}).then(throwIfHttpError);
 		let abandonReject: (e: Error) => void = () => {};
 		const abandoned = new Promise<never>((_, rej) => {
 			abandonReject = rej;
@@ -896,6 +897,25 @@ export function beaconRoute(path: string): string {
 		})
 		.join("/")
 		.slice(0, 64);
+}
+
+/** Obsidian's own `throw: true` rejection carries only `status` + `headers`:
+ *  the body is gone, so a 426 floor refusal, 402 limit or 409 conflict body was
+ *  unreadable. Requests go out with `throw: false` and this rebuilds the same
+ *  rejection (same message, `status`, `headers`) plus the raw `text`. */
+function throwIfHttpError(resp: RequestUrlResponse): RequestUrlResponse {
+	if (resp.status < 400) return resp;
+	let text: string | undefined;
+	try {
+		text = resp.text;
+	} catch {
+		// Undecodable body: the status alone still routes the error.
+	}
+	throw Object.assign(new Error(`Request failed, status ${resp.status}`), {
+		status: resp.status,
+		headers: resp.headers,
+		text,
+	});
 }
 
 /** The JSON body of an Obsidian `requestUrl` rejection. Arrives as `.json`

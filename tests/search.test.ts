@@ -29,6 +29,7 @@ describe("EngramApi.search", () => {
 				"Content-Type": "application/json",
 			},
 			body: JSON.stringify({ query: "omega oils" }),
+			throw: false,
 		});
 		expect(resp.results).toEqual([]);
 	});

@@ -341,6 +341,40 @@ describe("refusal latch scope", () => {
 		expect(isUpgradeRequired()).toBe(false);
 	});
 
+	// Real Obsidian requestUrl rejects a >=400 with an Error carrying only
+	// status + headers, no body, so the floor body is unreadable on that path.
+	// The client must ask for `throw: false` and read the body itself.
+	test("a real-shaped 426 response latches the refusal", async () => {
+		mockRequestUrl.mockResolvedValueOnce({
+			status: 426,
+			headers: {},
+			text: JSON.stringify({ error: "plugin_upgrade_required", min_version: "1.29.0" }),
+		});
+		const api = new EngramApi("https://api.example.com", "key");
+
+		await expect(api.pushLogs([])).rejects.toMatchObject({ status: 426 });
+
+		expect(mockRequestUrl.mock.calls[0][0]).toMatchObject({ throw: false });
+		expect(isUpgradeRequired()).toBe(true);
+		expect(__noticeCapture.notices[0].message).toContain("1.29.0");
+	});
+
+	test("a server change re-arms the notice for the next refusal", async () => {
+		const refused = () => ({
+			status: 426,
+			headers: {},
+			text: JSON.stringify({ error: "plugin_upgrade_required", min_version: "1.29.0" }),
+		});
+		mockRequestUrl.mockResolvedValueOnce(refused()).mockResolvedValueOnce(refused());
+		const api = new EngramApi("https://a.example.com", "key");
+
+		await expect(api.pushLogs([])).rejects.toMatchObject({ status: 426 });
+		api.updateConfig("https://b.example.com", "key");
+		await expect(api.pushLogs([])).rejects.toMatchObject({ status: 426 });
+
+		expect(__noticeCapture.notices).toHaveLength(2);
+	});
+
 	test("pointing the plugin at a different server clears the refusal", async () => {
 		mockRequestUrl.mockRejectedValueOnce({
 			status: 426,
