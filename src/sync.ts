@@ -1773,6 +1773,23 @@ export class SyncEngine {
 		genesisOutcome?: GenesisOutcome,
 	): Promise<void> {
 		const normalized = normalizePath(path);
+		this.creatingPaths.add(normalized);
+		try {
+			await this.adoptQueuedCreate(localId, serverId, path, seeded, genesis, genesisOutcome);
+		} finally {
+			this.creatingPaths.delete(normalized);
+		}
+	}
+
+	private async adoptQueuedCreate(
+		localId: string,
+		serverId: string,
+		path: string,
+		seeded: boolean,
+		genesis: GenesisFrame | undefined,
+		genesisOutcome: GenesisOutcome | undefined,
+	): Promise<void> {
+		const normalized = normalizePath(path);
 		let effectiveId = localId;
 		// What the manager actually took, from whichever of the two seed routes
 		// below ran (they are mutually exclusive). Handed to adoptCreateAck as the
@@ -2113,6 +2130,16 @@ export class SyncEngine {
 		["vault", "destroy"],
 		new Map<string, { started: number; recorded: number }>(),
 	);
+
+	/** Paths whose own create round trip is running: from just before
+	 *  `crdt_create` is sent until its ack is adopted (seed, genesis flush,
+	 *  baseline). Disk still holds the raw pre-create bytes in that window and
+	 *  the row is at best a `hash: 0` placeholder, so catch-up's drift check
+	 *  reads the note's own create as a local edit and writes a "(conflict)"
+	 *  copy (backend e2e test_101). The create path owns the note until it
+	 *  finishes; a local edit made meanwhile is merged by the seed's
+	 *  `preApplyDisk` step. Cleared by: each create's own `finally`. */
+	private readonly creatingPaths = this.track(["vault", "destroy"], new Set<string>());
 
 	/** Strand-heal drain (#569): fold an unpushed disk edit into the note's
 	 *  doc, then write the doc's CURRENT projection. The content captured when
@@ -5558,6 +5585,8 @@ export class SyncEngine {
 					// which would let a row-adding create for pushedPath through.
 					!this.capBlocksCreate(pushedPath)
 				) {
+					const creating = normalizePath(pushedPath);
+					this.creatingPaths.add(creating);
 					try {
 						// Only the crdtCreate call itself is covered by this catch — once
 						// it RESOLVES, the server row exists (possibly under a remapped
@@ -5781,6 +5810,8 @@ export class SyncEngine {
 						);
 						this.crdtEnqueue?.({ kind: "create", docId: noteId, path: pushedPath });
 						return false;
+					} finally {
+						this.creatingPaths.delete(creating);
 					}
 				}
 
@@ -9617,6 +9648,16 @@ export class SyncEngine {
 							localNow !== null &&
 							localNow !== content &&
 							this.needsColdReconcile(normalized, localNow);
+						if (localDiverged && this.creatingPaths.has(normalized)) {
+							// Disk is this note's own pre-create bytes, not a local edit
+							// (see `creatingPaths`). Same deferral as a failed copy below:
+							// nothing recorded, the next catch-up re-reads this row.
+							rlog().info(
+								"pull",
+								`CRDT catch-up: own create in flight, deferring ${noteRef(change.path)}`,
+							);
+							return false;
+						}
 						if (localDiverged && localNow !== null) {
 							// Both the on-disk file AND the authoritative doc moved off
 							// the last-synced baseline. Preserve the local drift as a

@@ -127,3 +127,26 @@ test("a REAL local edit racing a flush is still drift-copied", async () => {
 	});
 	expect(copies).toBe(1);
 });
+
+/** The note's own create round trip is still running: disk holds the raw
+ *  pre-create bytes, and the row is the `hash: 0` placeholder a seq or head
+ *  patch leaves before the create-ack stamps a baseline (backend e2e test_101,
+ *  CI run 39188780962: the copy was written ~90ms before the genesis flush). */
+function placeholderRow(e: AnyEngine) {
+	e.syncState.set(PATH, { hash: 0, seq: 7 });
+}
+
+test("own create still in flight: not drift-copied", async () => {
+	const copies = await catchUp((e) => {
+		placeholderRow(e);
+		e.creatingPaths.add(PATH);
+	});
+	expect(copies).toBe(0);
+});
+
+test("same placeholder row with no create in flight is still drift-copied", async () => {
+	const copies = await catchUp((e) => {
+		placeholderRow(e);
+	});
+	expect(copies).toBe(1);
+});
