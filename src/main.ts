@@ -2962,6 +2962,7 @@ export default class EngramSyncPlugin extends Plugin {
 						// module singleton the plugin reads; cleared to null on teardown so a
 						// stale stack can't be hit.
 						setLiveBindingCoordinator(this.crdtLiveViews);
+						this.noteIdMap.onIdChanged = (path) => this.crdtLiveViews?.rebindPath(path);
 						// Tell the sync engine which paths have a live editor binding so its
 						// disk-modify handler skips re-feeding disk content into the Y.Text
 						// for open notes (the binding owns them).

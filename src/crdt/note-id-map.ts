@@ -148,9 +148,21 @@ export class NoteIdMap {
 	 *  bad row must not take down the batch. */
 	set(path: string, id: string): void {
 		if (!path || path === "null" || path === "undefined" || !id) return;
+		const before = this.store.get(path);
 		this.store.set(path, { note_id: id });
 		this.flush();
+		if (before !== null && before !== id) this.onIdChanged?.(path);
 	}
+
+	/** Fired when `set` moves `path` off an id it already resolved to (a
+	 *  manifest heal replacing a stray local mint, a cross-wire repair). An
+	 *  editor binding re-resolves its id only inside a CM update, so an idle
+	 *  editor bound under the old id stays on that dead doc while the wire syncs
+	 *  the new one: the note looks open and live but never shows a remote edit
+	 *  (CI run 39053943843). Relay re-evaluates its live views on every docset
+	 *  change for the same reason (`LiveViews.ts`, `fset.on` -> `refresh`). Set
+	 *  by main.ts. */
+	onIdChanged: ((path: string) => void) | null = null;
 
 	/** Unchanged from `origin/main`: LOCAL only.
 	 *

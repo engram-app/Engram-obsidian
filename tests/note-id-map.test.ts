@@ -96,4 +96,19 @@ describe("NoteIdMap", () => {
 		expect(m.get("new.md")).toBe(minted);
 		expect(m.pathForId(minted)).toBe("new.md");
 	});
+	// CI run 39053943843: an open note's editor bound under a stray local mint;
+	// the manifest heal re-`set` the server id, but nothing told the idle editor,
+	// so it stayed on the dead doc and every remote edit went to the other one.
+	it("set reports a path whose id CHANGED, and stays silent otherwise", () => {
+		const m = new NoteIdMap();
+		const changed: string[] = [];
+		m.onIdChanged = (p) => changed.push(p);
+		const stray = m.getOrMint("a.md");
+		m.set("b.md", "id-b"); // first mapping: nothing was bound under another id
+		m.set("b.md", "id-b"); // same id again
+		expect(changed).toEqual([]);
+		m.set("a.md", "server-id"); // the heal replaces the stray mint
+		expect(stray).not.toBe("server-id");
+		expect(changed).toEqual(["a.md"]);
+	});
 });

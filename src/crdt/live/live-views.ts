@@ -8,7 +8,7 @@ import { isDestroyedError } from "../destroyed-error";
 import { CONTENT_KEY } from "../frontmatter-codec";
 import type { ProviderRegistry } from "../provider-registry";
 import type { LiveBindingCoordinator } from "./live-binding";
-import { getMarkdownFilePath } from "./obsidian-internals";
+import { getEditorViewForLeaf, getMarkdownFilePath } from "./obsidian-internals";
 import { CrdtReadingView } from "./reading-view";
 
 /** Fix wave 6: trailing debounce window for `requestSaveForBoundPath` — a
@@ -154,6 +154,22 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 	 *  the whole binding set, e.g. every bound path resolves to a note_id. */
 	boundPaths(): string[] {
 		return this.refcount.boundPaths();
+	}
+
+	/** `path` now resolves to a different note_id than its editor may be bound
+	 *  under (see `NoteIdMap.onIdChanged`). Poke each editor showing it with an
+	 *  empty transaction: the ViewPlugin's `update` re-resolves the id and, via
+	 *  `needsReattach`, re-attaches to the doc the wire actually syncs. Deferred
+	 *  to a microtask because the caller may be inside a CM update, where a
+	 *  dispatch throws. */
+	rebindPath(path: string): void {
+		if (!this.isBound(path)) return;
+		queueMicrotask(() => {
+			for (const leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
+				if (getMarkdownFilePath(leaf.view) !== path) continue;
+				getEditorViewForLeaf(leaf.view)?.dispatch({});
+			}
+		});
 	}
 
 	/** Fix wave 6: nudge Obsidian's own save pipeline for the bound editor

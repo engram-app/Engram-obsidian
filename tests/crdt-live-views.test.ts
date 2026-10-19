@@ -445,3 +445,51 @@ describe("destroy() teardown flush (repo-review 2026-08)", () => {
 		expect(flushed).toEqual([]);
 	});
 });
+
+describe("CrdtLiveViews.rebindPath", () => {
+	function viewWithEditor(path: string) {
+		const view = new MdView();
+		(view as unknown as { file: { path: string } }).file = { path };
+		const dispatch = mock((_spec: unknown) => {});
+		(view as unknown as { editor: unknown }).editor = { cm: { dispatch } };
+		return { view, dispatch };
+	}
+
+	function liveViews(views: Array<InstanceType<typeof MdView>>) {
+		return new CrdtLiveViews({
+			app: { workspace: { getLeavesOfType: () => views.map((view) => ({ view })) } } as never,
+			manager: { projectedText: async () => "", closeDoc: () => {} } as never,
+			enrollment: {} as never,
+			resolveId: (p: string) => `id:${p}`,
+			resolveExistingId: (p: string) => `id:${p}`,
+			flushToDisk: async () => {},
+		});
+	}
+
+	// The binding re-resolves its note_id only inside a CM update. An idle editor
+	// bound under a superseded id never gets one, so it stays deaf until reopened.
+	it("pokes every editor showing a bound path with an empty transaction, deferred", async () => {
+		const a = viewWithEditor("a.md");
+		const a2 = viewWithEditor("a.md");
+		const b = viewWithEditor("b.md");
+		const lv = liveViews([a.view, a2.view, b.view]);
+		lv.onBind("a.md", "v1");
+		lv.onBind("b.md", "v2");
+
+		lv.rebindPath("a.md");
+		// Never dispatch synchronously: the caller may be inside a CM update.
+		expect(a.dispatch).not.toHaveBeenCalled();
+		await Promise.resolve();
+		expect(a.dispatch).toHaveBeenCalledWith({});
+		expect(a2.dispatch).toHaveBeenCalledTimes(1);
+		expect(b.dispatch).not.toHaveBeenCalled();
+	});
+
+	it("is a no-op for a path no editor is bound to", async () => {
+		const a = viewWithEditor("a.md");
+		const lv = liveViews([a.view]);
+		lv.rebindPath("a.md");
+		await Promise.resolve();
+		expect(a.dispatch).not.toHaveBeenCalled();
+	});
+});

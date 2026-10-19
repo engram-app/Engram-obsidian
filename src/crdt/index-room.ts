@@ -92,11 +92,21 @@ export class IndexRoom {
 	receive(b64: string): boolean {
 		try {
 			this.provider.receive(b64);
-			return true;
 		} catch {
 			return false;
 		}
+		// A frame that depends on an update we never received parks as pending,
+		// and every later frame from that peer parks behind it: blind to its
+		// identity writes until the next reconnect, while its deletions still
+		// apply (see `SyncStore.parked`). Ask for the gap once per episode; a
+		// re-ask per frame would be the re-handshake storm again.
+		const gap = this.doc.store.pendingStructs !== null;
+		if (gap && !this.gapRequested) this.provider.requestMissing();
+		this.gapRequested = gap;
+		return true;
 	}
+
+	private gapRequested = false;
 
 	/** True once the peer's state has landed. Reading the store before this is
 	 *  legal but answers only from local layers — a caller that needs to know

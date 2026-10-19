@@ -7,7 +7,12 @@
  * hand-rolled fake of it.
  */
 import { describe, expect, test } from "bun:test";
-import { IndexRoom } from "../src/crdt/index-room";
+import * as decoding from "lib0/decoding";
+import * as encoding from "lib0/encoding";
+import * as syncProtocol from "y-protocols/sync";
+import * as Y from "yjs";
+import { FILEMETA_MAP, IndexRoom } from "../src/crdt/index-room";
+import { fromB64, MESSAGE_SYNC, toB64 } from "../src/crdt/wire";
 
 /** Wire two rooms together directly. The server is a relay for these frames,
  *  so device-to-device is the honest shape of the test. */
@@ -208,5 +213,55 @@ describe("requeue + drain (the re-offer path, #433)", () => {
 		room.connect();
 		// Still there to be re-offered: a refused rejoin must not consume the claim.
 		expect(sent).toContain(delivered);
+	});
+});
+
+describe("a clock gap is repaired, not lived with (CI run 39053943843)", () => {
+	// A frame whose structs depend on an update this device never received is
+	// parked by Yjs as pending, and every LATER frame from that peer parks behind
+	// it. Nothing re-requested the gap, so the device stayed blind to that peer's
+	// identity writes until the next reconnect. A syncStep1 is the protocol's own
+	// "send me what I am missing".
+	test("a frame that leaves structs pending re-sends syncStep1 and the gap fills", () => {
+		const server = new Y.Doc();
+		const peer = new Y.Doc();
+		const sent: Uint8Array[] = [];
+		const b = new IndexRoom({
+			send: (frame) => {
+				sent.push(fromB64(frame));
+				return true;
+			},
+		});
+		b.connect();
+		// Answer B's syncStep1 the way the server does: with a syncStep2.
+		const serve = () => {
+			for (const frame of sent.splice(0)) {
+				const dec = decoding.createDecoder(frame);
+				decoding.readVarUint(dec);
+				const reply = encoding.createEncoder();
+				encoding.writeVarUint(reply, MESSAGE_SYNC);
+				syncProtocol.readSyncMessage(dec, reply, server, null);
+				if (encoding.length(reply) > 1) b.receive(toB64(encoding.toUint8Array(reply)));
+			}
+		};
+		serve();
+
+		peer.getMap(FILEMETA_MAP).set("first.md", { note_id: "id-1" });
+		Y.applyUpdate(server, Y.encodeStateAsUpdate(peer)); // B misses this fan-out
+		const sv = Y.encodeStateVector(peer);
+		peer.getMap(FILEMETA_MAP).set("second.md", { note_id: "id-2" });
+		const update = Y.encodeStateAsUpdate(peer, sv);
+		Y.applyUpdate(server, update);
+		const frame = encoding.createEncoder();
+		encoding.writeVarUint(frame, MESSAGE_SYNC);
+		syncProtocol.writeUpdate(frame, update);
+		b.receive(toB64(encoding.toUint8Array(frame)));
+		expect(b.doc.store.pendingStructs).not.toBeNull();
+
+		serve();
+
+		expect(b.doc.store.pendingStructs).toBeNull();
+		expect(b.store.get("first.md")).toBe("id-1");
+		expect(b.store.get("second.md")).toBe("id-2");
 	});
 });

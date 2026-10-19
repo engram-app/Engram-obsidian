@@ -83,6 +83,19 @@ export class SyncStore {
 	 *  resolution only and must never publish a deletion. */
 	private readonly renamedAway = new Set<string>();
 
+	/** Claims the shared doc deleted while it still had PENDING structs: the
+	 *  opposite of a hiding layer, it keeps a claim visible.
+	 *
+	 *  A peer's claim that wins a concurrent tie deletes ours, and both travel in
+	 *  one update. If that peer's struct cannot integrate yet (this device missed
+	 *  an earlier update of theirs), Yjs applies the deletion now and parks the
+	 *  replacement, so the path reads as unclaimed and `getOrMint` minted a second
+	 *  id for a note the server already knows (CI run 39053943843). Cleared when
+	 *  the key is rewritten, and wholesale once no structs are pending. If the gap
+	 *  never fills, a real remote delete in that window stays visible here until
+	 *  it does; `IndexRoom` re-requests the gap so that window is one round trip. */
+	private readonly parked = new Map<string, FileMeta>();
+
 	/** Whether some staged entry already claims `id` at a path.
 	 *
 	 *  Guards the eviction below. A cross-wire repair (`A→Y, B→X` corrected to
@@ -132,12 +145,18 @@ export class SyncStore {
 			// to `getMeta` or `pathForId` again, so `getOrMint` would mint a SECOND
 			// id for a note that already has one and publish it over the live claim.
 			//
-			// `keysChanged` is `Set<any>` in yjs's types, so the key is narrowed
-			// rather than asserted. A Y.Map key is always a string; the guard costs
-			// one typeof per changed key and keeps the boundary honest.
-			for (const key of event.keysChanged) {
-				if (typeof key === "string") this.forgotten.delete(key);
+			// `parked` follows the same rule: a rewrite of the key replaces the
+			// bridge, and the bridge as a whole comes down once the doc has no
+			// pending structs left (the gap filled, so the map is the truth again).
+			const pending = this.map.doc?.store.pendingStructs != null;
+			for (const [key, change] of event.changes.keys) {
+				this.forgotten.delete(key);
+				this.parked.delete(key);
+				if (pending && change.action === "delete" && change.oldValue) {
+					this.parked.set(key, change.oldValue as FileMeta);
+				}
 			}
+			if (!pending) this.parked.clear();
 			this.reverse = null;
 			this.cacheById = null;
 		});
@@ -204,7 +223,13 @@ export class SyncStore {
 		if (this.deleteSet.has(path)) return null;
 		if (this.forgotten.has(path) && !this.overlay.has(path)) return null;
 		// Cache LAST: anything the shared doc knows outranks a local memory of it.
-		return this.overlay.get(path) ?? this.map.get(path) ?? this.cache.get(path) ?? null;
+		return (
+			this.overlay.get(path) ??
+			this.map.get(path) ??
+			this.parked.get(path) ??
+			this.cache.get(path) ??
+			null
+		);
 	}
 
 	/** Warm the local cache from `data.json`. Never staged and never published —
@@ -594,6 +619,11 @@ export class SyncStore {
 				if (live && live !== meta.note_id) continue;
 				index.set(meta.note_id, path);
 			}
+			// Parked before committed: a claim the doc holds now outranks one it
+			// only lost to a pending struct.
+			for (const [path, meta] of this.parked) {
+				if (!this.deleteSet.has(path)) index.set(meta.note_id, path);
+			}
 			// Committed first, overlay second: overlay is the newer truth, so it
 			// must win where both know the id.
 			this.map.forEach((meta, path) => {
@@ -661,6 +691,7 @@ export class SyncStore {
 		this.cache.clear();
 		this.forgotten.clear();
 		this.evicted.clear();
+		this.parked.clear();
 		this.reverse = null;
 	}
 
