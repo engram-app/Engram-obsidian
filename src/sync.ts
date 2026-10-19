@@ -3533,6 +3533,30 @@ export class SyncEngine {
 	}
 
 	/** Get current sync status snapshot. */
+	/** Everything this device still owes or is still doing, for the e2e
+	 *  quiescence barrier (backend e2e/helpers: await_quiescent). Settled means
+	 *  `catchupSeq` has reached the server's `change_seq` and every count is 0.
+	 *  The CRDT op queue lives on the plugin, which adds it. */
+	quiescence(): {
+		catchupSeq: number;
+		pulling: boolean;
+		pushing: number;
+		pendingPushes: number;
+		queued: number;
+		flushing: number;
+		creating: number;
+	} {
+		return {
+			catchupSeq: this.catchupSeq,
+			pulling: this.pulling,
+			pushing: this.pushing.size,
+			pendingPushes: this.debounceTimers.size,
+			queued: this.queue.size,
+			flushing: this.flushingHash.size,
+			creating: this.creatingPaths.size,
+		};
+	}
+
 	getStatus(): SyncStatus {
 		const isSyncing = this.pulling || this.pushing.size > 0;
 		let state: SyncStatus["state"];
