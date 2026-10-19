@@ -267,6 +267,30 @@ describe("#234 (Phase E3 storm-safe): history-less note applies the delta direct
 		expect(state.has(conflictKey as string)).toBe(false);
 		await mgr.destroyAll();
 	});
+
+	test("(iv) drift ON TOP of exactly the delta's content → merged as a local edit, NO conflict copy", async () => {
+		// Discovery wrote "BASE" from the catch-up row (doc stays history-less),
+		// the user appended " local", THEN the genesis fan-out lands carrying the
+		// same "BASE". Nothing diverged: the edit descends from the delta's text.
+		// Keep-both here moved the edit into a copy and reverted the note, so the
+		// edit never reached the other device (e2e test_edit_after_discovery).
+		const { e, mgr, disk, enroll, serverFullUpdate } = await historyLessScenario({
+			dbPrefix: "hl-ff",
+			disk: "BASE local",
+			baselineHash: fnv1a("BASE"),
+			serverFull: "BASE",
+		});
+
+		const result = await (e as any).applyPushedNoteUpdate("id-a", serverFullUpdate, "SRV");
+
+		expect(result).toBe("applied");
+		expect([...disk.keys()].some((k) => k.includes("(conflict"))).toBe(false);
+		expect(disk.get("a.md")).toBe("BASE local");
+		expect(await mgr.getText("id-a")).toBe("BASE local"); // on the server lineage, not doubled
+		expect((e as any).getCrdtHead("a.md")).toBe("SRV");
+		expect(enroll).not.toHaveBeenCalled();
+		await mgr.destroyAll();
+	});
 });
 
 describe("I1: keep-both preserves the local edit even if the copy write fails", () => {

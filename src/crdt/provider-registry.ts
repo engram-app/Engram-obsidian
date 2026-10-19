@@ -668,6 +668,24 @@ export class ProviderRegistry {
 	 *  delta arrived before its base" gap can still occur there. The caller defers
 	 *  + fires a re-handshake so syncStep1/2 delivers the base and the pended ops
 	 *  integrate (history-less fan-out convergence). */
+	/** What `update` alone reconstructs for `noteId`, on a scratch doc that
+	 *  touches nothing: the projected text, or null when it pends (an
+	 *  incremental delta with no causal base). Lets a caller decide how to
+	 *  apply an update BEFORE the apply's disk flush runs. */
+	async previewUpdate(noteId: string, update: Uint8Array): Promise<string | null> {
+		const e = await this.entry(noteId);
+		const doc = new Y.Doc();
+		try {
+			Y.applyUpdate(doc, update);
+			if ((doc.store as unknown as { pendingStructs: unknown }).pendingStructs != null) {
+				return null;
+			}
+			return this.project({ ...e, doc, text: doc.getText(CONTENT_KEY) });
+		} finally {
+			doc.destroy();
+		}
+	}
+
 	async hasPendingGap(noteId: string): Promise<boolean> {
 		const e = this.entries.get(noteId);
 		if (!e) return false;
