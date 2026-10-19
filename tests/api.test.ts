@@ -928,6 +928,91 @@ describe("EngramApi", () => {
 			);
 		});
 
+		// Plug.Parsers' own refusal of the content type, rendered by ErrorJSON:
+		// the server provably cannot take raw, so stop sending it.
+		test("the parser's Unsupported Media Type 415 retries as JSON and turns raw off", async () => {
+			mockRequestUrl
+				.mockRejectedValueOnce({
+					status: 415,
+					json: { errors: { detail: "Unsupported Media Type" } },
+				})
+				.mockResolvedValue({ status: 200, json: {} } as any);
+			api.setRawAttachmentUpload(true);
+			await api.pushAttachment("a.png", "aGk=", "image/png", 5, new ArrayBuffer(2));
+			await api.pushAttachment("b.png", "aGk=", "image/png", 5, new ArrayBuffer(2));
+			expect(mockRequestUrl).toHaveBeenCalledTimes(3);
+			expect((mockRequestUrl.mock.calls[2][0] as any).headers["Content-Type"]).toBe(
+				"application/json",
+			);
+		});
+
+		// 2026-10-19: a 415 nobody could read turned raw off for the session, and
+		// every file over ~8 MB then 413'd as JSON. An unexplained 415 says nothing
+		// about the server, so only this upload is retried as JSON.
+		for (const [label, err] of [
+			["no body", { status: 415 }],
+			["an unparseable body", { status: 415, text: "<html>proxy</html>" }],
+			["an unknown error code", { status: 415, json: { error: "something_else" } }],
+		] as const) {
+			test(`a 415 with ${label} retries this upload as JSON but keeps raw on`, async () => {
+				mockRequestUrl
+					.mockRejectedValueOnce(err)
+					.mockResolvedValue({ status: 200, json: {} } as any);
+				api.setRawAttachmentUpload(true);
+				await api.pushAttachment("a.png", "aGk=", "image/png", 5, new ArrayBuffer(2));
+				expect((mockRequestUrl.mock.calls[1][0] as any).headers["Content-Type"]).toBe(
+					"application/json",
+				);
+				await api.pushAttachment("b.png", "aGk=", "image/png", 5, new ArrayBuffer(2));
+				expect((mockRequestUrl.mock.calls[2][0] as any).headers["Content-Type"]).toBe(
+					"application/octet-stream",
+				);
+			});
+		}
+
+		// base64 inflates 4/3: a file over ~8.2 MB cannot fit the backend's 11 MB
+		// JSON body cap, so a JSON retry is a guaranteed 413 after a long upload.
+		describe("file too large for the JSON body", () => {
+			const big = new ArrayBuffer(8_300_000);
+
+			test("an unexplained 415 is rethrown without a JSON retry", async () => {
+				const err = { status: 415 };
+				mockRequestUrl.mockRejectedValueOnce(err);
+				api.setRawAttachmentUpload(true);
+				const b64 = mock(() => "x");
+				await expect(api.pushAttachment("a.png", b64, "image/png", 5, big)).rejects.toBe(
+					err,
+				);
+				expect(mockRequestUrl).toHaveBeenCalledTimes(1);
+				expect(b64).not.toHaveBeenCalled();
+			});
+
+			test("an old backend's 422 still turns raw off but is not retried as JSON", async () => {
+				const err = { status: 422, json: { error: "content_base64 is required" } };
+				mockRequestUrl
+					.mockRejectedValueOnce(err)
+					.mockResolvedValue({ status: 200, json: {} } as any);
+				api.setRawAttachmentUpload(true);
+				await expect(api.pushAttachment("a.png", "x", "image/png", 5, big)).rejects.toBe(
+					err,
+				);
+				expect(mockRequestUrl).toHaveBeenCalledTimes(1);
+				await api.pushAttachment("b.png", "aGk=", "image/png", 5, new ArrayBuffer(2));
+				expect((mockRequestUrl.mock.calls[1][0] as any).headers["Content-Type"]).toBe(
+					"application/json",
+				);
+			});
+
+			test("a file that fits is still retried as JSON", async () => {
+				mockRequestUrl
+					.mockRejectedValueOnce({ status: 415 })
+					.mockResolvedValueOnce({ status: 200, json: {} } as any);
+				api.setRawAttachmentUpload(true);
+				await api.pushAttachment("a.png", "x", "image/png", 5, new ArrayBuffer(8_000_000));
+				expect(mockRequestUrl).toHaveBeenCalledTimes(2);
+			});
+		});
+
 		test("a 415 refusing the MIME type is not retried", async () => {
 			const err = { status: 415, json: { error: "mime_not_allowed", mime_type: "x/y" } };
 			mockRequestUrl.mockRejectedValueOnce(err);
