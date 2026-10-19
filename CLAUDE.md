@@ -158,6 +158,7 @@ Catalogs in `src/i18n/locale/` come from `translategemma:12b` on FastRaid's Olla
 - Probing real Obsidian editor behaviour in a throwaway instance (two panes on one file, external modify, when the `ViewPlugin` is constructed, Live Preview CM doc includes frontmatter; running the real live binding as a plugin) → `docs/context/obsidian-cdp-binding-probe.md`
 - Source map, CRDT layer, sync flows, file-type and ignore rules → `docs/internals.md`
 - CDP + Obsidian remote debugging (MCP devtools, evaluate_script) → `docs/engram-ops.md`
+- Code reads `err.json`/`err.text` from a failed `requestUrl` and gets `{}` (default `throw: true` drops the body; tests pass because mocks reject with a body) → `docs/context/requesturl-error-body-dropped.md`
 - A `bun audit` high on `brace-expansion` that looks already patched (bun's merged advisory range; the fix is a PAIRED `brace-expansion` + `minimatch` override) → `docs/context/bun-audit-brace-expansion-false-positive.md`
 - Version-bump.mjs foot-gun (running it directly drops `version` from `manifest.json`) → `docs/context/version-bump-script.md`
 - Releases page full of orphaned `-pr.N` / `-rc.N` prereleases, or a closed PR's preview never got deleted (`pull_request: closed` never fires for superseded dependabot PRs; `prereleases.sh` + daily `preview-reconcile.yml`) → `docs/context/preview-release-cleanup.md`

@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, type Mock, mock, test } from "
 import { requestUrl } from "obsidian";
 import { EngramApi } from "../src/api";
 import { NoteChannel } from "../src/channel";
+import { RemoteLogger } from "../src/remote-log";
 import {
 	isUpgradeRequired,
 	notifyUpgradeRequired,
@@ -166,6 +167,101 @@ describe("REST 426", () => {
 	});
 });
 
+// A 426 is permanent until the plugin is updated, and updating means a reload.
+// Prod 2026-10-18: one below-floor install POSTed /api/logs 1,330 times in 12h,
+// every one a 426, because the remote logger re-buffers a failed batch and the
+// api layer sent each retry. Once refused, nothing should reach the wire.
+describe("REST after a 426 refusal", () => {
+	const refusal = () => ({
+		status: 426,
+		json: { error: "plugin_upgrade_required", min_version: "1.29.0" },
+	});
+	const ok = () => ({ status: 200, json: {}, text: "{}", headers: {} });
+
+	test("a 426 on the logs endpoint stops every later log push", async () => {
+		mockRequestUrl.mockRejectedValueOnce(refusal());
+		const api = new EngramApi("https://api.example.com", "key");
+
+		await expect(api.pushLogs([])).rejects.toMatchObject({ status: 426 });
+		for (let i = 0; i < 5; i++) {
+			await expect(api.pushLogs([])).rejects.toMatchObject({ status: 426 });
+		}
+
+		expect(mockRequestUrl).toHaveBeenCalledTimes(1);
+		expect(__noticeCapture.notices).toHaveLength(1);
+	});
+
+	test("a 426 on a sync call stops log pushes and sync calls alike", async () => {
+		mockRequestUrl.mockRejectedValueOnce(refusal());
+		const api = new EngramApi("https://api.example.com", "key");
+
+		await expect(api.getManifest()).rejects.toMatchObject({ status: 426 });
+		await expect(api.pushLogs([])).rejects.toMatchObject({ status: 426 });
+		await expect(api.getManifest()).rejects.toMatchObject({ status: 426 });
+
+		expect(mockRequestUrl).toHaveBeenCalledTimes(1);
+	});
+
+	test("a socket join refusal stops REST too, with no 426 ever seen on REST", async () => {
+		notifyUpgradeRequired("1.29.0");
+		const api = new EngramApi("https://api.example.com", "key");
+
+		await expect(api.pushLogs([])).rejects.toMatchObject({ status: 426 });
+		expect(mockRequestUrl).not.toHaveBeenCalled();
+	});
+
+	test("the remote logger's flush loop sends exactly one request", async () => {
+		mockRequestUrl.mockRejectedValueOnce(refusal());
+		const api = new EngramApi("https://api.example.com", "key");
+		const logger = new RemoteLogger();
+		logger.configure((entries) => api.pushLogs(entries), "1.10.0", "desktop");
+		logger.setEnabled(true);
+
+		try {
+			for (let i = 0; i < 20; i++) {
+				logger.warn("test", `entry ${i}`);
+				await logger.flush();
+			}
+		} finally {
+			logger.setEnabled(false);
+		}
+
+		expect(mockRequestUrl).toHaveBeenCalledTimes(1);
+	});
+
+	test("recovery is not attempted until reload, then traffic resumes", async () => {
+		mockRequestUrl.mockRejectedValueOnce(refusal());
+		const api = new EngramApi("https://api.example.com", "key");
+		await expect(api.getManifest()).rejects.toMatchObject({ status: 426 });
+
+		// No timer, no backoff probe: still nothing after many attempts.
+		for (let i = 0; i < 10; i++) {
+			await expect(api.pushLogs([])).rejects.toMatchObject({ status: 426 });
+		}
+		expect(mockRequestUrl).toHaveBeenCalledTimes(1);
+
+		// Plugin reload (fresh module state) is the only reset.
+		resetUpgradeRequired();
+		mockRequestUrl.mockResolvedValueOnce(ok());
+		await api.pushLogs([]);
+		expect(mockRequestUrl).toHaveBeenCalledTimes(2);
+	});
+
+	test("the trace beacon is dropped once refused", () => {
+		const api = new EngramApi("https://api.example.com", "key");
+		const internals = api as unknown as {
+			tracingEnabled: boolean;
+			lastToken: string;
+			beacon: { transport: () => unknown };
+		};
+		internals.tracingEnabled = true;
+		internals.lastToken = "tok";
+		notifyUpgradeRequired("1.29.0");
+
+		expect(internals.beacon.transport()).toBeNull();
+	});
+});
+
 describe("channel join refusal", () => {
 	class FakeWS {
 		static last: FakeWS | null = null;
@@ -224,5 +320,76 @@ describe("channel join refusal", () => {
 
 		expect(__noticeCapture.notices).toHaveLength(0);
 		expect(isUpgradeRequired()).toBe(false);
+	});
+});
+
+// A 426 is a generic HTTP status: a proxy in front of a self-hosted backend can
+// emit a bare one. Updating cannot fix that, so it must not brick the plugin
+// until reload. Only the server's own floor body latches the local refusal.
+describe("refusal latch scope", () => {
+	const ok = () => ({ status: 200, json: {}, text: "{}", headers: {} });
+
+	test("a bare 426 without the floor body notifies but keeps sending", async () => {
+		mockRequestUrl.mockRejectedValueOnce({ status: 426, text: "<html>proxy</html>" });
+		mockRequestUrl.mockResolvedValueOnce(ok());
+		const api = new EngramApi("https://api.example.com", "key");
+
+		await expect(api.pushLogs([])).rejects.toMatchObject({ status: 426 });
+		await api.pushLogs([]);
+
+		expect(mockRequestUrl).toHaveBeenCalledTimes(2);
+		expect(isUpgradeRequired()).toBe(false);
+	});
+
+	// Real Obsidian requestUrl rejects a >=400 with an Error carrying only
+	// status + headers, no body, so the floor body is unreadable on that path.
+	// The client must ask for `throw: false` and read the body itself.
+	test("a real-shaped 426 response latches the refusal", async () => {
+		mockRequestUrl.mockResolvedValueOnce({
+			status: 426,
+			headers: {},
+			text: JSON.stringify({ error: "plugin_upgrade_required", min_version: "1.29.0" }),
+		});
+		const api = new EngramApi("https://api.example.com", "key");
+
+		await expect(api.pushLogs([])).rejects.toMatchObject({ status: 426 });
+
+		expect(mockRequestUrl.mock.calls[0][0]).toMatchObject({ throw: false });
+		expect(isUpgradeRequired()).toBe(true);
+		expect(__noticeCapture.notices[0].message).toContain("1.29.0");
+	});
+
+	test("a server change re-arms the notice for the next refusal", async () => {
+		const refused = () => ({
+			status: 426,
+			headers: {},
+			text: JSON.stringify({ error: "plugin_upgrade_required", min_version: "1.29.0" }),
+		});
+		mockRequestUrl.mockResolvedValueOnce(refused()).mockResolvedValueOnce(refused());
+		const api = new EngramApi("https://a.example.com", "key");
+
+		await expect(api.pushLogs([])).rejects.toMatchObject({ status: 426 });
+		api.updateConfig("https://b.example.com", "key");
+		await expect(api.pushLogs([])).rejects.toMatchObject({ status: 426 });
+
+		expect(__noticeCapture.notices).toHaveLength(2);
+	});
+
+	test("pointing the plugin at a different server clears the refusal", async () => {
+		mockRequestUrl.mockRejectedValueOnce({
+			status: 426,
+			json: { error: "plugin_upgrade_required", min_version: "1.29.0" },
+		});
+		mockRequestUrl.mockResolvedValueOnce(ok());
+		const api = new EngramApi("https://selfhost.example.com", "key");
+
+		await expect(api.pushLogs([])).rejects.toMatchObject({ status: 426 });
+		api.updateConfig("https://selfhost.example.com", "key2");
+		expect(isUpgradeRequired()).toBe(true);
+
+		api.updateConfig("https://api.example.com", "key");
+		await api.pushLogs([]);
+
+		expect(mockRequestUrl).toHaveBeenCalledTimes(2);
 	});
 });

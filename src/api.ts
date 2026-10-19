@@ -26,7 +26,12 @@ import type {
 	VaultRegistrationResponse,
 	VersionConflictResponse,
 } from "./types";
-import { notifyUpgradeRequired } from "./upgrade-required";
+import {
+	clearUpgradeRefusal,
+	isUpgradeRequired,
+	notifyUpgradeRequired,
+	upgradeRequiredError,
+} from "./upgrade-required";
 import { wasmCore } from "./wasm-core";
 
 /** Slugs must match the backend's Engram.Feedback; it 422s anything else. */
@@ -120,7 +125,7 @@ export class EngramApi {
 		this.beacon = new BeaconBuffer(() => {
 			// No credential = drop the batch. The beacon posts with window.fetch,
 			// so it bypasses the getAuthToken guard and would 401 on its own.
-			if (!this.tracingEnabled || !this.lastToken) return null;
+			if (!this.tracingEnabled || !this.lastToken || isUpgradeRequired()) return null;
 			return {
 				baseUrl: this.baseUrl,
 				token: this.lastToken,
@@ -230,6 +235,7 @@ export class EngramApi {
 		if (normalized !== this.baseUrl) {
 			this.rawAttachmentUpload = false;
 			this.rawAttachmentDownload = false;
+			clearUpgradeRefusal();
 		}
 		this.baseUrl = normalized;
 		this.apiKey = apiKey;
@@ -265,10 +271,11 @@ export class EngramApi {
 	): boolean {
 		if (status !== 426) return false;
 		const body = errorBody(e);
-		notifyUpgradeRequired(typeof body.min_version === "string" ? body.min_version : null, {
-			method,
-			route: beaconRoute(path),
-		});
+		notifyUpgradeRequired(
+			typeof body.min_version === "string" ? body.min_version : null,
+			{ method, route: beaconRoute(path) },
+			body.error === "plugin_upgrade_required",
+		);
 		return true;
 	}
 
@@ -291,6 +298,12 @@ export class EngramApi {
 		body?: unknown,
 		extraHeaders?: Record<string, string>,
 	): Promise<RequestUrlResponse> {
+		// A 426 is permanent until the plugin is updated, which means a reload.
+		// Once refused (here or on a socket join), every later call would 426
+		// too: refuse locally instead of sending. Without this the remote logger
+		// re-buffered each refused batch and retried it forever (1,330 POST
+		// /api/logs in 12h from one install, 2026-10-18).
+		if (isUpgradeRequired()) throw upgradeRequiredError();
 		try {
 			return await this.sendRequest(method, path, body, extraHeaders);
 		} catch (e) {
@@ -405,7 +418,8 @@ export class EngramApi {
 			method,
 			headers,
 			body: raw ? body : body !== undefined ? JSON.stringify(body) : undefined,
-		});
+			throw: false,
+		}).then(throwIfHttpError);
 		let abandonReject: (e: Error) => void = () => {};
 		const abandoned = new Promise<never>((_, rej) => {
 			abandonReject = rej;
@@ -883,6 +897,25 @@ export function beaconRoute(path: string): string {
 		})
 		.join("/")
 		.slice(0, 64);
+}
+
+/** Obsidian's own `throw: true` rejection carries only `status` + `headers`:
+ *  the body is gone, so a 426 floor refusal, 402 limit or 409 conflict body was
+ *  unreadable. Requests go out with `throw: false` and this rebuilds the same
+ *  rejection (same message, `status`, `headers`) plus the raw `text`. */
+function throwIfHttpError(resp: RequestUrlResponse): RequestUrlResponse {
+	if (resp.status < 400) return resp;
+	let text: string | undefined;
+	try {
+		text = resp.text;
+	} catch {
+		// Undecodable body: the status alone still routes the error.
+	}
+	throw Object.assign(new Error(`Request failed, status ${resp.status}`), {
+		status: resp.status,
+		headers: resp.headers,
+		text,
+	});
 }
 
 /** The JSON body of an Obsidian `requestUrl` rejection. Arrives as `.json`

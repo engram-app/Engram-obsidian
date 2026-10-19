@@ -1348,7 +1348,7 @@ describe("path encoding for by-path URL methods", () => {
 	}
 
 	test("getAttachment keeps real slashes and encodes segment chars", async () => {
-		mockRequestUrl.mockResolvedValue({ json: {} });
+		mockRequestUrl.mockResolvedValue({ status: 200, json: {} });
 		await api().getAttachment("Legal/Formation/a b.pdf");
 		const url = lastUrl();
 		expect(url).toContain("/attachments/Legal/Formation/a%20b.pdf");
@@ -1356,14 +1356,14 @@ describe("path encoding for by-path URL methods", () => {
 	});
 
 	test("deleteAttachment keeps real slashes", async () => {
-		mockRequestUrl.mockResolvedValue({ json: {} });
+		mockRequestUrl.mockResolvedValue({ status: 200, json: {} });
 		await api().deleteAttachment("Legal/Formation/x.pdf");
 		expect(lastUrl()).toContain("/attachments/Legal/Formation/x.pdf");
 		expect(lastUrl()).not.toContain("%2F");
 	});
 
 	test("deleteNote keeps real slashes", async () => {
-		mockRequestUrl.mockResolvedValue({ json: {} });
+		mockRequestUrl.mockResolvedValue({ status: 200, json: {} });
 		await api().deleteNote("Notes/Sub/Deep.md");
 		expect(lastUrl()).toContain("/notes/Notes/Sub/Deep.md");
 		expect(lastUrl()).not.toContain("%2F");
