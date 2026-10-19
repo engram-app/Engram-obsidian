@@ -2272,7 +2272,7 @@ export class SyncEngine {
 				// had on disk (it lived only in the Yjs doc). Create it — without this
 				// flushFromCrdt returned early and the note stayed permanently invisible
 				// on this device even though its content was in the local CRDT doc.
-				await this.createFileWithFolders(normalized, content);
+				if (!(await this.createFileWithFolders(normalized, content))) return false;
 			}
 			// CRDT delivery IS a sync: record the last-synced baseline so the REST
 			// reconcile path treats this note as server-known. Without it a
@@ -10075,7 +10075,7 @@ export class SyncEngine {
 	 *  a rename it originated, and renameFile would rewrite them again (the
 	 *  exactly-one-rewriter invariant). renameFile would be correct only against
 	 *  a server that does not rewrite at all. */
-	private async createFileWithFolders(normalized: string, content: string): Promise<void> {
+	private async createFileWithFolders(normalized: string, content: string): Promise<boolean> {
 		const folder = normalized.includes("/")
 			? normalized.substring(0, normalized.lastIndexOf("/"))
 			: "";
@@ -10098,7 +10098,7 @@ export class SyncEngine {
 				if (moved) {
 					await this.modifyFile(moved, content);
 					this.rememberFileFor(normalized);
-					return;
+					return true;
 				}
 			}
 		}
@@ -10109,6 +10109,7 @@ export class SyncEngine {
 			// that were on disk at startup -- which is exactly the hole e2e
 			// test_93 fell through while a manual test on an older note passed.
 			this.rememberFileFor(normalized);
+			return true;
 		} catch (e) {
 			// A concurrent materialization path (pull vs WS delivery) can create
 			// this file between the caller's existence check and our create —
@@ -10117,9 +10118,20 @@ export class SyncEngine {
 			// goal, so degrade to modify with the same content; rethrow the rest.
 			const raced = this.app.vault.getAbstractFileByPath(normalized);
 			if (raced instanceof TFile) {
+				// An empty body never overwrites what the winner wrote. It started
+				// with no file on disk, so flushFromCrdt's empty-write guard never
+				// ran; a real remote clear arrives with the file present and goes
+				// through that guard (backend e2e test_bidirectional_multi_file).
+				if (content.trim() === "" && (await this.app.vault.cachedRead(raced)).trim() !== "") {
+					rlog().warn(
+						"crdt",
+						`empty create lost the create race; kept the winner's body for ${noteRef(normalized)}`,
+					);
+					return false;
+				}
 				await this.modifyFile(raced, content);
 				this.rememberFileFor(normalized);
-				return;
+				return true;
 			}
 			throw e;
 		}
