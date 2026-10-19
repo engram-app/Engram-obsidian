@@ -10122,7 +10122,10 @@ export class SyncEngine {
 				// with no file on disk, so flushFromCrdt's empty-write guard never
 				// ran; a real remote clear arrives with the file present and goes
 				// through that guard (backend e2e test_bidirectional_multi_file).
-				if (content.trim() === "" && (await this.app.vault.cachedRead(raced)).trim() !== "") {
+				if (
+					content.trim() === "" &&
+					(await this.app.vault.cachedRead(raced)).trim() !== ""
+				) {
 					rlog().warn(
 						"crdt",
 						`empty create lost the create race; kept the winner's body for ${noteRef(normalized)}`,
