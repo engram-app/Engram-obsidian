@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.36.1](https://github.com/engram-app/Engram-obsidian/compare/1.36.0...1.36.1) (2026-10-19)
+
+
+### Bug Fixes
+
+* **crdt:** stop duplicate note ids and deaf editors ([#603](https://github.com/engram-app/Engram-obsidian/issues/603)) ([f7899b9](https://github.com/engram-app/Engram-obsidian/commit/f7899b9d9902e7bbb41f2d2303eeaa8fbed396f9))
+* **link:** clearer expired-code modal with Generate new code ([#600](https://github.com/engram-app/Engram-obsidian/issues/600)) ([9864d87](https://github.com/engram-app/Engram-obsidian/commit/9864d87858409feba60ec6451be38d0dde2995e4))
+* **sync:** catch-up drift check reads the row after its file read ([#602](https://github.com/engram-app/Engram-obsidian/issues/602)) ([1facf71](https://github.com/engram-app/Engram-obsidian/commit/1facf71231e3e23ba77048f82a29b000c687ccdf))
+* **sync:** two first-sync races (drift copy, empty create) ([#605](https://github.com/engram-app/Engram-obsidian/issues/605)) ([fcbf71d](https://github.com/engram-app/Engram-obsidian/commit/fcbf71d2d9d967dc810e1ba3482affee9748523e))
+
 ## [1.36.0](https://github.com/engram-app/Engram-obsidian/compare/1.35.0...1.36.0) (2026-10-17)
 
 
