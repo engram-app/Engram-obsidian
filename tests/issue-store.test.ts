@@ -143,6 +143,15 @@ describe("categorizeError", () => {
 		expect(categorizeError(err).category).toBe("too_large");
 	});
 
+	// The server refused the file type (MIME/extension whitelist). Re-pushing
+	// the same file can only be refused again, so it parks like a 413.
+	test("415 → unsupported, terminal, actionable", () => {
+		const c = categorizeError(Object.assign(new Error("x"), { status: 415 }));
+		expect(c.category).toBe("unsupported");
+		expect(c.terminal).toBe(true);
+		expect(issueDisposition("unsupported")).toBe("actionable");
+	});
+
 	test("401/403 → auth", () => {
 		expect(categorizeError(Object.assign(new Error("auth"), { status: 401 })).category).toBe(
 			"auth",
@@ -387,7 +396,9 @@ describe("remediation", () => {
 
 	test("needs_pro points at upgrading; too_large explains the size limit", () => {
 		expect(remediation("needs_pro").hint.toLowerCase()).toContain("upgrade");
-		expect(remediation("too_large").hint).toContain("5 MB");
+		// No hardcoded number: limits vary by plan and the request ceiling.
+		expect(remediation("too_large").hint).not.toMatch(/\d/);
+		expect(remediation("too_large", null, 25_000_000).hint).toContain("23.8 MB");
 	});
 
 	test("quota has its own remediation copy", () => {

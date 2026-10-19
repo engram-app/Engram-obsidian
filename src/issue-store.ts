@@ -3,6 +3,7 @@ import { statusOf } from "./error-util";
 import { t } from "./i18n";
 import { userErrorMessage } from "./i18n/user-error";
 import { LimitExceededError } from "./limit-error";
+import { formatBytes } from "./plan-usage";
 import type { ParseReason, SyncIssue, SyncIssueCategory } from "./types";
 
 /** Persistent store of sync failures keyed by file path.
@@ -147,6 +148,9 @@ export function categorizeError(err: unknown): CategorizedError {
 
 	if (status === 413)
 		return { category: "too_large", status, message, userMessage, terminal: true };
+	// The MIME/extension whitelist. The same file can only be refused again.
+	if (status === 415)
+		return { category: "unsupported", status, message, userMessage, terminal: true };
 	// 401/403 are terminal: api.ts already does a single inline refresh-and-retry on
 	// 401, so a status reaching here means the credential is permanently invalid
 	// (revoked key, expired session that won't refresh, wrong vault). Re-enqueueing
@@ -227,6 +231,7 @@ export function issueDisposition(
 		case "quota":
 			return "informational";
 		case "too_large":
+		case "unsupported":
 		case "auth":
 		case "conflict":
 		case "frontmatter":
@@ -242,6 +247,8 @@ export function issueDisposition(
 export function remediation(
 	category: SyncIssueCategory,
 	reason?: ParseReason | null,
+	/** The file limit that refused these files, when known. */
+	limitBytes?: number,
 ): { title: string; hint: string } {
 	// A per-entry server-side processing failure is bucketed under "other" but,
 	// unlike a genuine transient error, will NOT self-heal on an identical
@@ -269,7 +276,24 @@ export function remediation(
 		case "too_large":
 			return {
 				title: t("Too large for the server"),
-				hint: t("The server limit is 5 MB. Compress or split the file, then it will sync."),
+				hint:
+					limitBytes !== undefined
+						? t(
+								"Your plan's file limit is {limit}. Compress or split the file, then it will sync.",
+								{
+									limit: formatBytes(limitBytes),
+								},
+							)
+						: t(
+								"The file is over the server's size limit. Compress or split it, then it will sync.",
+							),
+			};
+		case "unsupported":
+			return {
+				title: t("File type not accepted"),
+				hint: t(
+					"The server does not accept this type of file. It will retry if the file changes.",
+				),
 			};
 		case "auth":
 			return {

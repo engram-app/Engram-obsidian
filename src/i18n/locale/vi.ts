@@ -240,6 +240,7 @@ const vi: Dict = {
 	"File exceeds the {limit} limit": "Tệp vượt quá giới hạn {limit}",
 	"File not found locally: {path}": "Không tìm thấy tệp cục bộ: {path}",
 	"File too large for your plan.": "Tệp quá lớn cho gói của bạn.",
+	"File type not accepted": "Loại tệp không được chấp nhận",
 	"Files that will be deleted:": "Các tệp sẽ bị xóa:",
 	"Filter by folder…": "Lọc theo thư mục…",
 	"Filter by tags…": "Lọc theo thẻ…",
@@ -480,13 +481,15 @@ const vi: Dict = {
 		"Đó không phải là khóa API Engram (mong đợi {prefix}…).",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"Gói miễn phí chỉ đồng bộ hóa ghi chú. Nâng cấp để đồng bộ hóa hình ảnh và PDF.",
+	"The file is over the server's size limit. Compress or split it, then it will sync.":
+		"Tệp vượt quá giới hạn kích thước của máy chủ. Nén hoặc chia nhỏ nó, sau đó nó sẽ được đồng bộ hóa.",
 	"The file is too large for the server.": "Tệp quá lớn đối với máy chủ.",
 	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
 		"Ghi chú đã được đồng bộ hóa, nhưng phần frontmatter không thể phân tích đầy đủ. Mở nó để sửa dòng được đánh dấu.",
 	"The server couldn't process this note. Check its contents, then edit and save to try again.":
 		"Máy chủ không thể xử lý ghi chú này. Kiểm tra nội dung, sau đó chỉnh sửa và lưu để thử lại.",
-	"The server limit is 5 MB. Compress or split the file, then it will sync.":
-		"Giới hạn của máy chủ là 5 MB. Nén hoặc chia nhỏ tệp, sau đó nó sẽ được đồng bộ hóa.",
+	"The server does not accept this type of file. It will retry if the file changes.":
+		"Máy chủ không chấp nhận loại tệp này. Hệ thống sẽ thử lại nếu tệp thay đổi.",
 	"The server took too long to respond. Try again.": "Máy chủ phản hồi quá chậm. Thử lại.",
 	"These files are fine. They just need a paid plan to sync.":
 		"Các tệp này không có vấn đề. Chúng chỉ cần một gói trả phí để đồng bộ hóa.",
@@ -565,6 +568,8 @@ const vi: Dict = {
 	"Your feedback": "Phản hồi của bạn",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Phiên đăng nhập của bạn đã hết hạn. Đăng nhập lại trong phần cài đặt Engram để tiếp tục.",
+	"Your plan's file limit is {limit}. Compress or split the file, then it will sync.":
+		"Giới hạn dung lượng tệp của gói của bạn là {limit}. Nén hoặc chia nhỏ tệp, sau đó nó sẽ được đồng bộ hóa.",
 	"Your vault shares {percent} of its data with Engram":
 		"Kho lưu trữ của bạn chia sẻ {percent} dữ liệu với Engram",
 	attachments: "tệp đính kèm",

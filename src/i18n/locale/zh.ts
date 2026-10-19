@@ -222,6 +222,7 @@ const zh: Dict = {
 	"File exceeds the {limit} limit": "文件超过 {limit} 限制",
 	"File not found locally: {path}": "找不到本地文件: {path}",
 	"File too large for your plan.": "文件过大，超出您的套餐限制。",
+	"File type not accepted": "文件类型不受支持",
 	"Files that will be deleted:": "将删除的文件：",
 	"Filter by folder…": "按文件夹过滤…",
 	"Filter by tags…": "按标签过滤…",
@@ -445,13 +446,15 @@ const zh: Dict = {
 		"这看起来不像一个 Engram API 密钥（预期为 {prefix}…）。",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"免费版仅同步笔记。升级以同步图片和PDF。",
+	"The file is over the server's size limit. Compress or split it, then it will sync.":
+		"文件超过服务器大小限制。压缩或拆分后，即可同步。",
 	"The file is too large for the server.": "文件过大，服务器无法处理。",
 	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
 		"笔记已同步，但其前置信息无法完全解析。打开它以修复高亮显示的行。",
 	"The server couldn't process this note. Check its contents, then edit and save to try again.":
 		"服务器无法处理此笔记。检查内容，编辑并保存后再次尝试。",
-	"The server limit is 5 MB. Compress or split the file, then it will sync.":
-		"服务器限制为5MB。压缩或拆分文件，然后即可同步。",
+	"The server does not accept this type of file. It will retry if the file changes.":
+		"服务器不支持此文件类型。文件更改时将重试。",
 	"The server took too long to respond. Try again.": "服务器响应时间过长。请重试。",
 	"These files are fine. They just need a paid plan to sync.":
 		"这些文件没问题，只需付费计划即可同步。",
@@ -523,6 +526,8 @@ const zh: Dict = {
 	"Your feedback": "您的反馈",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"您的登录已过期。请在 Engram 设置中重新登录以继续。",
+	"Your plan's file limit is {limit}. Compress or split the file, then it will sync.":
+		"您的套餐文件限制为 {limit}。压缩或拆分文件后，即可同步。",
 	"Your vault shares {percent} of its data with Engram":
 		"您的仓库已与 Engram 共享 {percent} 的数据",
 	attachments: "附件",

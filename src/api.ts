@@ -106,6 +106,10 @@ export class EngramApi {
 	 *  join reply. Off until it says so: a self-hosted backend can be older
 	 *  than this plugin. */
 	private rawAttachmentUpload = false;
+	/** Whether this backend has said anything about raw uploads yet (join
+	 *  reply, or a refusal proving it can't). Until then a file too big for
+	 *  base64 JSON waits rather than 413 and park. */
+	private rawAttachmentUploadKnown = false;
 	/** Same, for `features.raw_attachment_download` (`GET ?raw=1` + metadata
 	 *  headers instead of a base64 JSON body). */
 	private rawAttachmentDownload = false;
@@ -144,6 +148,7 @@ export class EngramApi {
 
 	setRawAttachmentUpload(enabled: boolean): void {
 		this.rawAttachmentUpload = enabled;
+		this.rawAttachmentUploadKnown = true;
 	}
 
 	setRawAttachmentDownload(enabled: boolean): void {
@@ -234,6 +239,7 @@ export class EngramApi {
 		// join reply would come to turn them back on.
 		if (normalized !== this.baseUrl) {
 			this.rawAttachmentUpload = false;
+			this.rawAttachmentUploadKnown = false;
 			this.rawAttachmentDownload = false;
 			clearUpgradeRefusal();
 		}
@@ -691,12 +697,29 @@ export class EngramApi {
 			} catch (e) {
 				// The socket's advertisement can outlive the task that answers the
 				// POST (rolling deploy, rollback): an older backend reads no body
-				// from octet-stream and says content_base64 is missing. Stop sending
-				// raw and resend this upload as JSON, once.
-				if (!rawRefused(e)) throw e;
-				rlog().warn("api", "Raw attachment upload refused; falling back to base64 JSON");
-				this.rawAttachmentUpload = false;
+				// from octet-stream and says content_base64 is missing. That proves
+				// the server can't take raw, so stop sending it. A 415 nobody can
+				// explain proves nothing about the server: retry just this upload
+				// as JSON and keep raw on (2026-10-19, it disabled raw for a whole
+				// session and every file over ~8 MB then 413'd as JSON).
+				const refusal = rawRefusal(e);
+				if (!refusal) throw e;
+				if (refusal === "server") this.rawAttachmentUpload = false;
+				const fits = fitsJsonBody(bytes.byteLength);
+				rlog().warn(
+					"api",
+					`Raw attachment upload refused (${refusalCause(e)}); ${
+						fits
+							? "falling back to base64 JSON"
+							: "too large for base64 JSON, not retrying"
+					} | raw=${this.rawAttachmentUpload ? "kept" : "off"}`,
+				);
+				if (!fits) throw e;
 			}
+		}
+		if (!this.rawAttachmentUploadKnown && bytes && !fitsJsonBody(bytes.byteLength)) {
+			// No status: categorizeError reads it as retryable, not a terminal 413.
+			throw new Error("Attachment waits for the server's upload features");
 		}
 		// compat(server): raw_attachment_upload - remove when the backend floor has it (#1877)
 		const resp = await this.request("POST", "/attachments", {
@@ -939,14 +962,40 @@ function errorBody(e: unknown): Record<string, unknown> {
 	return {};
 }
 
-/** A raw (octet-stream) attachment upload refused for its encoding, not its
- *  content: an older backend's "content_base64 is required" 422, or a 415
- *  that is not the MIME/extension whitelist (that one JSON would get too). */
-function rawRefused(e: unknown): boolean {
+/** Backend `EngramWeb.Endpoint.max_body_bytes`: Plug.Parsers' cap on a JSON
+ *  body. Not advertised to clients, so mirrored here. */
+const JSON_BODY_MAX_BYTES = 11_000_000;
+/** Room for the rest of the JSON envelope (path, mime_type, mtime). */
+const JSON_ENVELOPE_SLACK = 8_192;
+
+/** Whether `n` bytes, base64-encoded in the JSON upload body, fit the server's
+ *  body cap. Past ~8.2 MB they don't, and a JSON retry is a certain 413. */
+function fitsJsonBody(n: number): boolean {
+	return Math.ceil(n / 3) * 4 + JSON_ENVELOPE_SLACK <= JSON_BODY_MAX_BYTES;
+}
+
+/** Why a raw (octet-stream) attachment upload was refused for its encoding
+ *  rather than its content. `server`: the server provably can't take raw (an
+ *  older backend's "content_base64 is required" 422, or Plug.Parsers' own
+ *  Unsupported Media Type 415). `request`: a 415 without the MIME/extension
+ *  whitelist code, which says nothing about the server. `null`: anything else,
+ *  including the whitelist 415s, which JSON would get too. */
+function rawRefusal(e: unknown): "server" | "request" | null {
 	const status = statusOf(e);
+	const body = errorBody(e);
+	if (status === 422) return body.error === "content_base64 is required" ? "server" : null;
+	if (status !== 415) return null;
+	if (body.error === "mime_not_allowed" || body.error === "extension_not_allowed") return null;
+	const detail = (body.errors as { detail?: unknown } | undefined)?.detail;
+	return detail === "Unsupported Media Type" ? "server" : "request";
+}
+
+/** `status=N error=X` for a refusal log line. The body's `error` is a
+ *  server-chosen code, capped in length in case a proxy answered instead. */
+function refusalCause(e: unknown): string {
 	const error = errorBody(e).error;
-	if (status === 422) return error === "content_base64 is required";
-	return status === 415 && error !== "mime_not_allowed" && error !== "extension_not_allowed";
+	const shown = typeof error === "string" ? error.slice(0, 80) : "<no parseable body>";
+	return `status=${statusOf(e) ?? "none"} error=${shown}`;
 }
 
 function parseLimitExceededError(e: unknown): LimitExceededError {

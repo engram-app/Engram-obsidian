@@ -303,6 +303,7 @@ const ptBR: Dict = {
 	"File exceeds the {limit} limit": "Arquivo excede o limite de {limit}",
 	"File not found locally: {path}": "Arquivo não encontrado localmente: {path}",
 	"File too large for your plan.": "Arquivo muito grande para o seu plano.",
+	"File type not accepted": "Tipo de arquivo não aceito",
 	"Files that will be deleted:": "Arquivos que serão excluídos:",
 	"Filter by folder…": "Filtrar por pasta…",
 	"Filter by tags…": "Filtrar por tags…",
@@ -549,13 +550,15 @@ const ptBR: Dict = {
 		"Isso não parece ser uma chave de API do Engram (esperado {prefix}…).",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"O plano gratuito sincroniza apenas notas. Faça um upgrade para sincronizar imagens e PDFs.",
+	"The file is over the server's size limit. Compress or split it, then it will sync.":
+		"O arquivo excede o limite de tamanho do servidor. Comprima ou divida-o, então ele será sincronizado.",
 	"The file is too large for the server.": "O arquivo é muito grande para o servidor.",
 	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
 		"A nota foi sincronizada, mas o cabeçalho não pôde ser totalmente analisado. Abra-a para corrigir a linha destacada.",
 	"The server couldn't process this note. Check its contents, then edit and save to try again.":
 		"O servidor não conseguiu processar esta nota. Verifique o conteúdo, edite e salve para tentar novamente.",
-	"The server limit is 5 MB. Compress or split the file, then it will sync.":
-		"O limite do servidor é de 5 MB. Comprima ou divida o arquivo, então ele será sincronizado.",
+	"The server does not accept this type of file. It will retry if the file changes.":
+		"O servidor não aceita este tipo de arquivo. Tentará novamente se o arquivo for alterado.",
 	"The server took too long to respond. Try again.":
 		"O servidor demorou muito para responder. Tente novamente.",
 	"These files are fine. They just need a paid plan to sync.":
@@ -650,6 +653,8 @@ const ptBR: Dict = {
 	"Your feedback": "Seu feedback",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Sua sessão expirou. Faça login novamente nas configurações de Engram para continuar.",
+	"Your plan's file limit is {limit}. Compress or split the file, then it will sync.":
+		"O limite de arquivos do seu plano é {limit}. Comprima ou divida o arquivo, então ele será sincronizado.",
 	"Your vault shares {percent} of its data with Engram":
 		"Seu cofre compartilha {percent} de seus dados com Engram",
 	attachments: "anexos",

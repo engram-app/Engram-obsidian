@@ -278,6 +278,7 @@ const tr: Dict = {
 	"File exceeds the {limit} limit": "Dosya {limit} sınırını aştı",
 	"File not found locally: {path}": "Dosya yerel olarak bulunamadı: {path}",
 	"File too large for your plan.": "Dosya, aboneliğiniz için çok büyük.",
+	"File type not accepted": "Dosya türü kabul edilmiyor",
 	"Files that will be deleted:": "Silinecek dosyalar:",
 	"Filter by folder…": "Klasöre göre filtrele…",
 	"Filter by tags…": "Etiketlere göre filtrele…",
@@ -521,13 +522,15 @@ const tr: Dict = {
 		"Bu, bir Engram API anahtarı gibi görünmüyor (beklenen {prefix}…).",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"Ücretsiz planda sadece notlar senkronize edilir. Resimleri ve PDF'leri senkronize etmek için yükseltin.",
+	"The file is over the server's size limit. Compress or split it, then it will sync.":
+		"Dosya, sunucunun boyut sınırını aştı. Sıkıştırın veya bölün, sonra senkronize olur.",
 	"The file is too large for the server.": "Dosya, sunucu için çok büyük.",
 	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
 		"Not senkronize edildi, ancak başlık bölümü tamamen işlenemedi. Vurgulanan satırı düzeltmek için açın.",
 	"The server couldn't process this note. Check its contents, then edit and save to try again.":
 		"Sunucu bu notu işleyemedi. İçeriğini kontrol edin, düzenleyin ve tekrar denemek için kaydedin.",
-	"The server limit is 5 MB. Compress or split the file, then it will sync.":
-		"Sunucu limiti 5 MB'tır. Dosyayı sıkıştırın veya bölün, sonra senkronize olur.",
+	"The server does not accept this type of file. It will retry if the file changes.":
+		"Sunucu bu tür dosyaları kabul etmiyor. Dosya değişirse tekrar denenecek.",
 	"The server took too long to respond. Try again.":
 		"Sunucu yanıt vermekte çok yavaş. Lütfen tekrar deneyin.",
 	"These files are fine. They just need a paid plan to sync.":
@@ -614,6 +617,8 @@ const tr: Dict = {
 	"Your feedback": "Geri bildiriminiz",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Girişiniz sona erdi. Devam etmek için Engram ayarlarından tekrar giriş yapın.",
+	"Your plan's file limit is {limit}. Compress or split the file, then it will sync.":
+		"Planınızın dosya sınırı {limit}. Dosyayı sıkıştırın veya bölün, sonra senkronize olur.",
 	"Your vault shares {percent} of its data with Engram":
 		"Kasanızın verilerinin {percent} kısmı Engram ile paylaşılıyor",
 	attachments: "Ekler",

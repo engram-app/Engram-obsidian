@@ -304,6 +304,7 @@ const es: Dict = {
 	"File exceeds the {limit} limit": "El archivo excede el límite de {limit}",
 	"File not found locally: {path}": "Archivo no encontrado localmente: {path}",
 	"File too large for your plan.": "El archivo es demasiado grande para tu plan.",
+	"File type not accepted": "Tipo de archivo no aceptado",
 	"Files that will be deleted:": "Archivos que se eliminarán:",
 	"Filter by folder…": "Filtrar por carpeta…",
 	"Filter by tags…": "Filtrar por etiquetas…",
@@ -551,13 +552,15 @@ const es: Dict = {
 		"Eso no parece una clave API de Engram (se espera {prefix}…).",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"El plan gratuito sincroniza solo notas. Actualiza para sincronizar imágenes y PDFs.",
+	"The file is over the server's size limit. Compress or split it, then it will sync.":
+		"El archivo supera el límite de tamaño del servidor. Comprime o divídelo, luego se sincronizará.",
 	"The file is too large for the server.": "El archivo es demasiado grande para el servidor.",
 	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
 		"La nota se sincronizó, pero no se pudo analizar completamente su frontmatter. Ábrela para corregir la línea resaltada.",
 	"The server couldn't process this note. Check its contents, then edit and save to try again.":
 		"El servidor no pudo procesar esta nota. Revisa su contenido, luego edita y guarda para intentarlo de nuevo.",
-	"The server limit is 5 MB. Compress or split the file, then it will sync.":
-		"El límite del servidor es de 5 MB. Comprime o divide el archivo, luego se sincronizará.",
+	"The server does not accept this type of file. It will retry if the file changes.":
+		"El servidor no acepta este tipo de archivo. Lo volverá a intentar si el archivo cambia.",
 	"The server took too long to respond. Try again.":
 		"El servidor tardó demasiado en responder. Inténtalo de nuevo.",
 	"These files are fine. They just need a paid plan to sync.":
@@ -652,6 +655,8 @@ const es: Dict = {
 	"Your feedback": "Tu opinión",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"Tu sesión ha expirado. Inicia sesión de nuevo en la configuración de Engram para continuar.",
+	"Your plan's file limit is {limit}. Compress or split the file, then it will sync.":
+		"El límite de archivos de tu plan es {limit}. Comprime o divide el archivo, luego se sincronizará.",
 	"Your vault shares {percent} of its data with Engram":
 		"Tu bóveda comparte {percent} de sus datos con Engram",
 	attachments: "adjuntos",

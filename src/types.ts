@@ -473,6 +473,7 @@ export interface SyncLogEntry {
 
 export type SyncIssueCategory =
 	| "too_large"
+	| "unsupported"
 	| "auth"
 	| "server"
 	| "network"
@@ -496,6 +497,9 @@ export interface SyncIssue {
 	sizeBytes?: number;
 	/** Billing/upgrade URL — set when category is "needs_pro". */
 	upgradeUrl?: string;
+	/** The attachment's size, mtime and plan when it was refused for good
+	 *  (`parkStamp`). While they match, the file is not re-pushed. */
+	parkedAt?: string;
 	/** Structured parse failure detail — set when category is "frontmatter". */
 	parseReason?: ParseReason;
 	firstFailedAt: number;

@@ -3875,6 +3875,80 @@ describe("SyncEngine IssueStore integration", () => {
 		expect(engine.queue.size).toBe(0);
 	});
 
+	// 2026-10-19: the same over-limit files were re-uploaded every few seconds,
+	// forever. A terminal refusal of an attachment parks it until its content
+	// (size/mtime) or the plan changes.
+	describe("terminal attachment refusals are not retried", () => {
+		const status = (n: number, json?: unknown) =>
+			Object.assign(new Error(`Request failed, status ${n}`), { status: n, json });
+		const fileTooLarge = () =>
+			new LimitExceededError("file_too_large", null, "max_file_bytes", 5_000_000, null);
+
+		for (const [label, make] of [
+			["413", () => status(413, { error: "request_too_large" })],
+			["402 file_too_large", fileTooLarge],
+			["415 mime_not_allowed", () => status(415, { error: "mime_not_allowed" })],
+		] as const) {
+			test(`${label}: a second push of the unchanged file skips the API`, async () => {
+				const engine = createEngine();
+				const file = new TFile("Assets/big.zip", Date.now());
+				(file as any).stat = { mtime: 1_000, size: 9_000_000 };
+				mockApp.vault.readBinary.mockResolvedValue(new ArrayBuffer(8));
+				(mockApi.pushAttachment as jest.Mock).mockRejectedValueOnce(make());
+
+				await (engine as any).pushFile(file, true);
+				expect(engine.queue.size).toBe(0);
+				const calls = (mockApi.pushAttachment as jest.Mock).mock.calls.length;
+				await (engine as any).pushFile(file, true);
+				expect((mockApi.pushAttachment as jest.Mock).mock.calls.length).toBe(calls);
+				expect(engine.issues.all()[0].attempts).toBe(1);
+			});
+		}
+
+		test("editing the file makes it eligible again", async () => {
+			const engine = createEngine();
+			const file = new TFile("Assets/big.zip", Date.now());
+			(file as any).stat = { mtime: 1_000, size: 9_000_000 };
+			mockApp.vault.readBinary.mockResolvedValue(new ArrayBuffer(8));
+			(mockApi.pushAttachment as jest.Mock)
+				.mockRejectedValueOnce(status(413))
+				.mockResolvedValueOnce({ attachment: {} });
+
+			await (engine as any).pushFile(file, true);
+			(file as any).stat = { mtime: 2_000, size: 4_000_000 };
+			mockApp.vault.readBinary.mockResolvedValue(new ArrayBuffer(9));
+			await (engine as any).pushFile(file, true);
+
+			expect(mockApi.pushAttachment).toHaveBeenCalledTimes(2);
+			expect(engine.issues.all()).toHaveLength(0);
+		});
+
+		test("a plan change makes it eligible again", async () => {
+			const engine = createEngine();
+			const plan = {
+				tier: "starter" as const,
+				attachmentsTextOnly: false,
+				maxFileBytes: 10_000_000,
+				attachmentBytesCap: null,
+				indexedNotesCap: null,
+				updatedAt: 0,
+			};
+			engine.hydratePlanState(plan);
+			const file = new TFile("Assets/big.zip", Date.now());
+			(file as any).stat = { mtime: 1_000, size: 9_000_000 };
+			mockApp.vault.readBinary.mockResolvedValue(new ArrayBuffer(8));
+			(mockApi.pushAttachment as jest.Mock)
+				.mockRejectedValueOnce(fileTooLarge())
+				.mockResolvedValueOnce({ attachment: {} });
+
+			await (engine as any).pushFile(file, true);
+			engine.hydratePlanState({ ...plan, tier: "pro", maxFileBytes: 50_000_000 });
+			await (engine as any).pushFile(file, true);
+
+			expect(mockApi.pushAttachment).toHaveBeenCalledTimes(2);
+		});
+	});
+
 	test("401 auth failure records issue and skips offline queue", async () => {
 		const engine = createEngine();
 		// Oversized .md so the LWW REST push fires and surfaces the 401 issue.

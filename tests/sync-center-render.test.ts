@@ -242,6 +242,43 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		expect(allText(parent)).toMatch(/Too large/);
 	});
 
+	// The hint used to claim a fixed 5 MB limit. A plan-cap refusal (402 or the
+	// local pre-gate) names the plan's actual limit; a 413 is the server's
+	// request ceiling, which the plan limit does not describe, so no number.
+	describe("too_large hint", () => {
+		const plan = { tier: "starter", maxFileBytes: 25_000_000 };
+		test("names the plan limit when every refusal is the plan cap", () => {
+			const plugin = makeMockPlugin(
+				[
+					makeIssue({ path: "a.pdf", category: "too_large", status: 402 }),
+					makeIssue({ path: "b.pdf", category: "too_large", status: undefined }),
+				],
+				plan,
+			);
+			renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+			expect(allText(parent)).toContain("23.8 MB");
+			expect(allText(parent)).not.toContain("5 MB.");
+		});
+
+		test("drops the number when a refusal is the 413 request ceiling", () => {
+			const plugin = makeMockPlugin(
+				[makeIssue({ path: "a.pdf", category: "too_large", status: 413 })],
+				plan,
+			);
+			renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+			expect(allText(parent)).not.toContain("23.8 MB");
+			expect(allText(parent)).not.toContain("5 MB");
+		});
+
+		test("drops the number when the plan is unknown", () => {
+			const plugin = makeMockPlugin([
+				makeIssue({ path: "a.pdf", category: "too_large", status: 402 }),
+			]);
+			renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+			expect(allText(parent)).not.toContain("5 MB");
+		});
+	});
+
 	test("needs_pro renders the plan section + remediation copy; too_large is a card", () => {
 		const plugin = makeMockPlugin([
 			makeIssue({ path: "Health/big.pdf", category: "too_large", status: 413 }),

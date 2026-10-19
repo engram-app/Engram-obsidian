@@ -238,6 +238,7 @@ const ko: Dict = {
 	"File exceeds the {limit} limit": "파일 크기가 {limit} 제한을 초과합니다",
 	"File not found locally: {path}": "로컬에서 파일을 찾을 수 없습니다: {path}",
 	"File too large for your plan.": "파일 크기가 구독 한도를 초과합니다.",
+	"File type not accepted": "지원하지 않는 파일 형식입니다",
 	"Files that will be deleted:": "삭제될 파일:",
 	"Filter by folder…": "폴더로 필터링…",
 	"Filter by tags…": "태그로 필터링…",
@@ -472,13 +473,15 @@ const ko: Dict = {
 		"이것은 Engram API 키처럼 보이지 않습니다 (예상 값: {prefix}…).",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"무료 플랜은 노트만 동기화합니다. 이미지 및 PDF 동기화를 원하시면 유료 플랜으로 업그레이드하세요.",
+	"The file is over the server's size limit. Compress or split it, then it will sync.":
+		"파일 크기가 서버 제한을 초과합니다. 압축하거나 분할한 후 동기화됩니다.",
 	"The file is too large for the server.": "파일 크기가 서버 용량을 초과합니다.",
 	"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.":
 		"노트는 동기화되었지만, frontmatter를 완전히 분석하지 못했습니다. 강조 표시된 줄을 수정하려면 파일을 엽니다.",
 	"The server couldn't process this note. Check its contents, then edit and save to try again.":
 		"서버에서 이 노트를 처리할 수 없습니다. 내용을 확인한 후 편집하고 저장하여 다시 시도해 주세요.",
-	"The server limit is 5 MB. Compress or split the file, then it will sync.":
-		"서버 제한은 5MB입니다. 파일을 압축하거나 분할한 후 동기화를 시도해 주세요.",
+	"The server does not accept this type of file. It will retry if the file changes.":
+		"서버에서 해당 파일 형식을 받지 않습니다. 파일이 변경되면 다시 시도합니다.",
 	"The server took too long to respond. Try again.":
 		"서버 응답 시간이 너무 오래 걸렸습니다. 다시 시도해 주세요.",
 	"These files are fine. They just need a paid plan to sync.":
@@ -555,6 +558,8 @@ const ko: Dict = {
 	"Your feedback": "사용자 의견",
 	"Your login expired. Sign in again in Engram settings to continue.":
 		"로그인 세션이 만료되었습니다. Engram 설정에서 다시 로그인하여 계속하세요.",
+	"Your plan's file limit is {limit}. Compress or split the file, then it will sync.":
+		"계획의 파일 제한은 {limit}입니다. 파일을 압축하거나 분할한 후 동기화됩니다.",
 	"Your vault shares {percent} of its data with Engram":
 		"귀하의 보관함 데이터 중 {percent}이 Engram과 동기화됩니다",
 	attachments: "첨부 파일",
