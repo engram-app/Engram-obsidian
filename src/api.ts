@@ -106,6 +106,10 @@ export class EngramApi {
 	 *  join reply. Off until it says so: a self-hosted backend can be older
 	 *  than this plugin. */
 	private rawAttachmentUpload = false;
+	/** Whether this backend has said anything about raw uploads yet (join
+	 *  reply, or a refusal proving it can't). Until then a file too big for
+	 *  base64 JSON waits rather than 413 and park. */
+	private rawAttachmentUploadKnown = false;
 	/** Same, for `features.raw_attachment_download` (`GET ?raw=1` + metadata
 	 *  headers instead of a base64 JSON body). */
 	private rawAttachmentDownload = false;
@@ -144,6 +148,7 @@ export class EngramApi {
 
 	setRawAttachmentUpload(enabled: boolean): void {
 		this.rawAttachmentUpload = enabled;
+		this.rawAttachmentUploadKnown = true;
 	}
 
 	setRawAttachmentDownload(enabled: boolean): void {
@@ -234,6 +239,7 @@ export class EngramApi {
 		// join reply would come to turn them back on.
 		if (normalized !== this.baseUrl) {
 			this.rawAttachmentUpload = false;
+			this.rawAttachmentUploadKnown = false;
 			this.rawAttachmentDownload = false;
 			clearUpgradeRefusal();
 		}
@@ -710,6 +716,10 @@ export class EngramApi {
 				);
 				if (!fits) throw e;
 			}
+		}
+		if (!this.rawAttachmentUploadKnown && bytes && !fitsJsonBody(bytes.byteLength)) {
+			// No status: categorizeError reads it as retryable, not a terminal 413.
+			throw new Error("Attachment waits for the server's upload features");
 		}
 		// compat(server): raw_attachment_upload - remove when the backend floor has it (#1877)
 		const resp = await this.request("POST", "/attachments", {

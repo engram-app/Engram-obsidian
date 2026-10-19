@@ -847,6 +847,43 @@ describe("EngramApi", () => {
 			expect(opts.headers["Content-Type"]).toBe("application/json");
 		});
 
+		// Startup pushes before the join reply says what the server takes. A file
+		// too big for base64 JSON would 413 and park for good, though raw may
+		// arrive a second later. Hold it back with a retryable (status-less) error.
+		test("too big for JSON before the server says what it takes: not sent, retryable", async () => {
+			const big = new ArrayBuffer(9_000_000);
+			const err = await api
+				.pushAttachment("big.png", () => "x", "image/png", 5, big)
+				.catch((e: unknown) => e);
+			expect(err).toBeInstanceOf(Error);
+			expect((err as { status?: number }).status).toBeUndefined();
+			expect(mockRequestUrl).not.toHaveBeenCalled();
+		});
+
+		test("server said no raw: a file too big for JSON is still sent (its 413 is real)", async () => {
+			mockRequestUrl.mockResolvedValueOnce({ status: 200, json: {} } as any);
+			api.setRawAttachmentUpload(false);
+			await api.pushAttachment(
+				"big.png",
+				() => "x",
+				"image/png",
+				5,
+				new ArrayBuffer(9_000_000),
+			);
+			const opts = mockRequestUrl.mock.calls[0][0] as any;
+			expect(opts.headers["Content-Type"]).toBe("application/json");
+		});
+
+		test("switching backends forgets what the old one said: big files wait again", async () => {
+			api.setRawAttachmentUpload(false);
+			api.updateConfig("http://other:4000", TEST_KEY);
+			const err = await api
+				.pushAttachment("big.png", () => "x", "image/png", 5, new ArrayBuffer(9_000_000))
+				.catch((e: unknown) => e);
+			expect(err).toBeInstanceOf(Error);
+			expect(mockRequestUrl).not.toHaveBeenCalled();
+		});
+
 		// Rolling deploy / rollback: the socket advertised raw support but the
 		// POST hit an older task, whose Plug.Parsers passes octet-stream unread.
 		test("raw upload refused as missing content_base64 retries once as JSON and turns raw off", async () => {
