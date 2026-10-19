@@ -26,7 +26,12 @@ import type {
 	VaultRegistrationResponse,
 	VersionConflictResponse,
 } from "./types";
-import { isUpgradeRequired, notifyUpgradeRequired, upgradeRequiredError } from "./upgrade-required";
+import {
+	clearUpgradeRefusal,
+	isUpgradeRequired,
+	notifyUpgradeRequired,
+	upgradeRequiredError,
+} from "./upgrade-required";
 import { wasmCore } from "./wasm-core";
 
 /** Slugs must match the backend's Engram.Feedback; it 422s anything else. */
@@ -230,6 +235,7 @@ export class EngramApi {
 		if (normalized !== this.baseUrl) {
 			this.rawAttachmentUpload = false;
 			this.rawAttachmentDownload = false;
+			clearUpgradeRefusal();
 		}
 		this.baseUrl = normalized;
 		this.apiKey = apiKey;
@@ -265,10 +271,11 @@ export class EngramApi {
 	): boolean {
 		if (status !== 426) return false;
 		const body = errorBody(e);
-		notifyUpgradeRequired(typeof body.min_version === "string" ? body.min_version : null, {
-			method,
-			route: beaconRoute(path),
-		});
+		notifyUpgradeRequired(
+			typeof body.min_version === "string" ? body.min_version : null,
+			{ method, route: beaconRoute(path) },
+			body.error === "plugin_upgrade_required",
+		);
 		return true;
 	}
 

@@ -43,6 +43,9 @@ import { rlog } from "./remote-log";
 const NOTICE_MS = 15_000;
 
 let notified = false;
+// Separate from `notified`: a bare 426 (a proxy) still warns, but only the
+// server's own floor refusal stops requests. Updating cannot fix a proxy.
+let refused = false;
 let openUpdateUi: (() => void) | null = null;
 
 /**
@@ -68,11 +71,15 @@ export interface UpgradeRefusalSource {
 	route: string;
 }
 
-/** Tell the user their plugin is too old. First call wins; the rest are no-ops. */
+/** Tell the user their plugin is too old. First call wins; the rest are no-ops.
+ *  `confirmed` = the server's own floor said so (`plugin_upgrade_required`),
+ *  which is what latches the local refusal. */
 export function notifyUpgradeRequired(
 	minVersion: string | null,
 	source?: UpgradeRefusalSource,
+	confirmed = true,
 ): void {
+	if (confirmed) refused = true;
 	if (notified) return;
 	notified = true;
 
@@ -111,7 +118,12 @@ export function notifyUpgradeRequired(
 
 /** True once the server has refused us for being too old. */
 export function isUpgradeRequired(): boolean {
-	return notified;
+	return refused;
+}
+
+/** A different server has its own floor (or none): stop refusing locally. */
+export function clearUpgradeRefusal(): void {
+	refused = false;
 }
 
 /** What `EngramApi` throws in place of a request once refused. Carries
@@ -126,5 +138,6 @@ export function upgradeRequiredError(): Error & { status: 426 } {
 /** Test seam. The latch is otherwise per-process by design. */
 export function resetUpgradeRequired(): void {
 	notified = false;
+	refused = false;
 	openUpdateUi = null;
 }

@@ -322,3 +322,40 @@ describe("channel join refusal", () => {
 		expect(isUpgradeRequired()).toBe(false);
 	});
 });
+
+// A 426 is a generic HTTP status: a proxy in front of a self-hosted backend can
+// emit a bare one. Updating cannot fix that, so it must not brick the plugin
+// until reload. Only the server's own floor body latches the local refusal.
+describe("refusal latch scope", () => {
+	const ok = () => ({ status: 200, json: {}, text: "{}", headers: {} });
+
+	test("a bare 426 without the floor body notifies but keeps sending", async () => {
+		mockRequestUrl.mockRejectedValueOnce({ status: 426, text: "<html>proxy</html>" });
+		mockRequestUrl.mockResolvedValueOnce(ok());
+		const api = new EngramApi("https://api.example.com", "key");
+
+		await expect(api.pushLogs([])).rejects.toMatchObject({ status: 426 });
+		await api.pushLogs([]);
+
+		expect(mockRequestUrl).toHaveBeenCalledTimes(2);
+		expect(isUpgradeRequired()).toBe(false);
+	});
+
+	test("pointing the plugin at a different server clears the refusal", async () => {
+		mockRequestUrl.mockRejectedValueOnce({
+			status: 426,
+			json: { error: "plugin_upgrade_required", min_version: "1.29.0" },
+		});
+		mockRequestUrl.mockResolvedValueOnce(ok());
+		const api = new EngramApi("https://selfhost.example.com", "key");
+
+		await expect(api.pushLogs([])).rejects.toMatchObject({ status: 426 });
+		api.updateConfig("https://selfhost.example.com", "key2");
+		expect(isUpgradeRequired()).toBe(true);
+
+		api.updateConfig("https://api.example.com", "key");
+		await api.pushLogs([]);
+
+		expect(mockRequestUrl).toHaveBeenCalledTimes(2);
+	});
+});
