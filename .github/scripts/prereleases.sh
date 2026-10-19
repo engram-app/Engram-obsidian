@@ -61,7 +61,9 @@ require_env() {
 	: "${GH_TOKEN:?GH_TOKEN required}"
 	: "${GH_REPO:?GH_REPO required}"
 	API="https://api.github.com/repos/${GH_REPO}"
-	AUTH=(-H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json")
+	# Retry transient failures: a single runner connection reset (curl 35)
+	# failed pr-build on PR 611. Every call here is a GET or a DELETE.
+	AUTH=(--retry 3 --retry-all-errors -H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json")
 }
 
 cmd_list() {
