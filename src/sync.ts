@@ -2662,7 +2662,14 @@ export class SyncEngine {
 		if (hasDrift && disk !== null && file instanceof TFile) {
 			const preview = await this.crdt.previewUpdate(noteId, update);
 			if (preview !== null && fnv1a(preview) === this.syncState.get(normalized)?.hash) {
-				return await this.fastForwardHistoryLess(normalized, file, noteId, update, head, disk);
+				return await this.fastForwardHistoryLess(
+					normalized,
+					file,
+					noteId,
+					update,
+					head,
+					disk,
+				);
 			}
 		}
 
