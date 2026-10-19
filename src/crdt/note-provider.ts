@@ -225,6 +225,13 @@ export class NoteProvider {
 		}
 	}
 
+	/** Ask the peer for everything this doc lacks: a fresh syncStep1, which the
+	 *  server answers with a syncStep2. No edge guard (see `setAdvertised` for
+	 *  why that matters), so the caller owns the once-per-gap rule. */
+	requestMissing(): void {
+		if (this.connected) this.sendSyncStep1();
+	}
+
 	private sendSyncStep1(): void {
 		const encoder = encoding.createEncoder();
 		encoding.writeVarUint(encoder, MESSAGE_SYNC);
