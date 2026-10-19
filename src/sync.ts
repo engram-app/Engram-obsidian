@@ -5178,6 +5178,15 @@ export class SyncEngine {
 			devLog().log("push", `skip (plan-informational): ${file.path}`);
 			return false;
 		}
+		// Same for an attachment the server refused for good (413, 402
+		// file_too_large, 415 file type): re-sending it unchanged can only be
+		// refused again, after uploading megabytes (2026-10-19: retried every
+		// few seconds, forever). Eligible again once its size/mtime or the plan
+		// changes.
+		if (this.isBinaryFile(file) && this.isParked(file)) {
+			devLog().log("push", `skip (parked): ${file.path}`);
+			return false;
+		}
 
 		// Plan-limit pre-gate: with known limits, don't even attempt an upload the
 		// backend WILL reject. Records the same informational/actionable issue a
@@ -5196,6 +5205,7 @@ export class SyncEngine {
 					message: gate.message,
 					sizeBytes: gate.category === "too_large" ? file.stat.size : undefined,
 					upgradeUrl: gate.upgradeUrl,
+					parkedAt: this.parkStamp(file),
 					firstFailedAt: now,
 					lastFailedAt: now,
 					attempts: 1,
@@ -5955,6 +5965,7 @@ export class SyncEngine {
 				message: classified.message,
 				sizeBytes: classified.category === "too_large" ? file.stat.size : undefined,
 				upgradeUrl: classified.upgradeUrl,
+				parkedAt: isBinary ? this.parkStamp(file) : undefined,
 				firstFailedAt: now,
 				lastFailedAt: now,
 				attempts: 1,
@@ -6041,6 +6052,23 @@ export class SyncEngine {
 				return true;
 		}
 		return false;
+	}
+
+	/** True iff `file` is parked under a permanent refusal (too_large,
+	 *  unsupported) recorded for its current size, mtime and plan. */
+	private isParked(file: TFile): boolean {
+		const issue = this.issues.get(file.path);
+		return (
+			(issue?.category === "too_large" || issue?.category === "unsupported") &&
+			issue.parkedAt === this.parkStamp(file)
+		);
+	}
+
+	/** What a permanent attachment refusal depends on: the file's content
+	 *  (size + mtime, no read needed) and the plan's file limit. */
+	private parkStamp(file: TFile): string {
+		const plan = this.planState;
+		return `${file.stat.size}:${file.stat.mtime}:${plan?.tier ?? "-"}:${plan?.maxFileBytes ?? "-"}`;
 	}
 
 	/** Plan-limit pre-check for an attachment, using last-known PlanState. Returns
@@ -11349,6 +11377,7 @@ export class SyncEngine {
 		classified: ReturnType<typeof categorizeError>,
 	): Promise<void> {
 		const now = Date.now();
+		const file = entry.kind === "attachment" ? this.app.vault.getFileByPath(entry.path) : null;
 		this.issues.record({
 			path: entry.path,
 			kind: entry.kind ?? "note",
@@ -11356,6 +11385,7 @@ export class SyncEngine {
 			status: classified.status,
 			message: classified.message,
 			upgradeUrl: classified.upgradeUrl,
+			parkedAt: file ? this.parkStamp(file) : undefined,
 			firstFailedAt: now,
 			lastFailedAt: now,
 			attempts: 1,

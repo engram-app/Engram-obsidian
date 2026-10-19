@@ -243,6 +243,7 @@ const ms: Dict = {
 	"File exceeds the {limit} limit": "Fail melebihi had {limit}",
 	"File not found locally: {path}": "Fail tidak ditemui secara tempatan: {path}",
 	"File too large for your plan.": "Fail terlalu besar untuk langganan anda.",
+	"File type not accepted": "Jenis fail tidak diterima",
 	"Files that will be deleted:": "Fail yang akan dipadam:",
 	"Filter by folder…": "Tukis ikut folder…",
 	"Filter by tags…": "Tukis ikut tag…",
@@ -488,6 +489,8 @@ const ms: Dict = {
 		"Nota telah disink, tetapi frontmatternya tidak dapat diproses sepenuhnya. Buka untuk memperbaiki baris yang diserlahkan.",
 	"The server couldn't process this note. Check its contents, then edit and save to try again.":
 		"Pelayan tidak dapat memproses nota ini. Semak kandungannya, kemudian edit dan simpan untuk cuba lagi.",
+	"The server does not accept this type of file. It will retry if the file changes.":
+		"Pelayan tidak menerima jenis fail ini. Ia akan cuba semula jika fail berubah.",
 	"The server limit is 5 MB. Compress or split the file, then it will sync.":
 		"Had saiz fail ialah 5 MB. Kompres atau bahagikan fail, kemudian ia akan disegerakkan.",
 	"The server took too long to respond. Try again.":

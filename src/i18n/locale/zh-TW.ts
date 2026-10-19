@@ -223,6 +223,7 @@ const zhTW: Dict = {
 	"File exceeds the {limit} limit": "檔案超過 {limit} 限制",
 	"File not found locally: {path}": "找不到本地檔案：{path}",
 	"File too large for your plan.": "檔案太大，超出您的方案限制。",
+	"File type not accepted": "檔案類型不受支援",
 	"Files that will be deleted:": "將刪除的檔案：",
 	"Filter by folder…": "依資料夾篩選…",
 	"Filter by tags…": "依標籤篩選…",
@@ -454,6 +455,8 @@ const zhTW: Dict = {
 		"筆記已同步，但其 Frontmatter 無法完全解析。開啟它以修正標示的行。",
 	"The server couldn't process this note. Check its contents, then edit and save to try again.":
 		"伺服器無法處理此筆記。請檢查內容，編輯並儲存後再次嘗試。",
+	"The server does not accept this type of file. It will retry if the file changes.":
+		"伺服器不接受此類檔案。檔案變更時會再次嘗試。",
 	"The server limit is 5 MB. Compress or split the file, then it will sync.":
 		"伺服器限制為 5 MB。壓縮或分割檔案，然後即可同步。",
 	"The server took too long to respond. Try again.": "伺服器回應時間過長。請重試。",

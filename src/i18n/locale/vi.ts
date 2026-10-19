@@ -240,6 +240,7 @@ const vi: Dict = {
 	"File exceeds the {limit} limit": "Tệp vượt quá giới hạn {limit}",
 	"File not found locally: {path}": "Không tìm thấy tệp cục bộ: {path}",
 	"File too large for your plan.": "Tệp quá lớn cho gói của bạn.",
+	"File type not accepted": "Loại tệp không được chấp nhận",
 	"Files that will be deleted:": "Các tệp sẽ bị xóa:",
 	"Filter by folder…": "Lọc theo thư mục…",
 	"Filter by tags…": "Lọc theo thẻ…",
@@ -485,6 +486,8 @@ const vi: Dict = {
 		"Ghi chú đã được đồng bộ hóa, nhưng phần frontmatter không thể phân tích đầy đủ. Mở nó để sửa dòng được đánh dấu.",
 	"The server couldn't process this note. Check its contents, then edit and save to try again.":
 		"Máy chủ không thể xử lý ghi chú này. Kiểm tra nội dung, sau đó chỉnh sửa và lưu để thử lại.",
+	"The server does not accept this type of file. It will retry if the file changes.":
+		"Máy chủ không chấp nhận loại tệp này. Hệ thống sẽ thử lại nếu tệp thay đổi.",
 	"The server limit is 5 MB. Compress or split the file, then it will sync.":
 		"Giới hạn của máy chủ là 5 MB. Nén hoặc chia nhỏ tệp, sau đó nó sẽ được đồng bộ hóa.",
 	"The server took too long to respond. Try again.": "Máy chủ phản hồi quá chậm. Thử lại.",

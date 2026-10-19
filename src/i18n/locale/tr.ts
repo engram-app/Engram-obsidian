@@ -278,6 +278,7 @@ const tr: Dict = {
 	"File exceeds the {limit} limit": "Dosya {limit} sınırını aştı",
 	"File not found locally: {path}": "Dosya yerel olarak bulunamadı: {path}",
 	"File too large for your plan.": "Dosya, aboneliğiniz için çok büyük.",
+	"File type not accepted": "Dosya türü kabul edilmiyor",
 	"Files that will be deleted:": "Silinecek dosyalar:",
 	"Filter by folder…": "Klasöre göre filtrele…",
 	"Filter by tags…": "Etiketlere göre filtrele…",
@@ -526,6 +527,8 @@ const tr: Dict = {
 		"Not senkronize edildi, ancak başlık bölümü tamamen işlenemedi. Vurgulanan satırı düzeltmek için açın.",
 	"The server couldn't process this note. Check its contents, then edit and save to try again.":
 		"Sunucu bu notu işleyemedi. İçeriğini kontrol edin, düzenleyin ve tekrar denemek için kaydedin.",
+	"The server does not accept this type of file. It will retry if the file changes.":
+		"Sunucu bu tür dosyaları kabul etmiyor. Dosya değişirse tekrar denenecek.",
 	"The server limit is 5 MB. Compress or split the file, then it will sync.":
 		"Sunucu limiti 5 MB'tır. Dosyayı sıkıştırın veya bölün, sonra senkronize olur.",
 	"The server took too long to respond. Try again.":

@@ -318,6 +318,7 @@ const ru: Dict = {
 	"File exceeds the {limit} limit": "Файл превышает лимит в {limit}",
 	"File not found locally: {path}": "Файл не найден локально: {path}",
 	"File too large for your plan.": "Файл слишком большой для вашего тарифа.",
+	"File type not accepted": "Тип файла не поддерживается",
 	"Files that will be deleted:": "Файлы, которые будут удалены:",
 	"Filter by folder…": "Фильтр по папке…",
 	"Filter by tags…": "Фильтр по тегам…",
@@ -573,6 +574,8 @@ const ru: Dict = {
 		"Заметка синхронизирована, но метаданные не были полностью обработаны. Откройте её, чтобы исправить выделенную строку.",
 	"The server couldn't process this note. Check its contents, then edit and save to try again.":
 		"Сервер не смог обработать эту заметку. Проверьте её содержимое, затем отредактируйте и сохраните, чтобы повторить попытку.",
+	"The server does not accept this type of file. It will retry if the file changes.":
+		"Сервер не принимает файлы этого типа. Повторная попытка произойдет, если файл изменится.",
 	"The server limit is 5 MB. Compress or split the file, then it will sync.":
 		"Предел сервера составляет 5 МБ. Сжатие или разделение файла позволит выполнить синхронизацию.",
 	"The server took too long to respond. Try again.":

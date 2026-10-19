@@ -143,6 +143,15 @@ describe("categorizeError", () => {
 		expect(categorizeError(err).category).toBe("too_large");
 	});
 
+	// The server refused the file type (MIME/extension whitelist). Re-pushing
+	// the same file can only be refused again, so it parks like a 413.
+	test("415 → unsupported, terminal, actionable", () => {
+		const c = categorizeError(Object.assign(new Error("x"), { status: 415 }));
+		expect(c.category).toBe("unsupported");
+		expect(c.terminal).toBe(true);
+		expect(issueDisposition("unsupported")).toBe("actionable");
+	});
+
 	test("401/403 → auth", () => {
 		expect(categorizeError(Object.assign(new Error("auth"), { status: 401 })).category).toBe(
 			"auth",

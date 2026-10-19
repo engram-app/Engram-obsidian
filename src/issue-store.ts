@@ -147,6 +147,9 @@ export function categorizeError(err: unknown): CategorizedError {
 
 	if (status === 413)
 		return { category: "too_large", status, message, userMessage, terminal: true };
+	// The MIME/extension whitelist. The same file can only be refused again.
+	if (status === 415)
+		return { category: "unsupported", status, message, userMessage, terminal: true };
 	// 401/403 are terminal: api.ts already does a single inline refresh-and-retry on
 	// 401, so a status reaching here means the credential is permanently invalid
 	// (revoked key, expired session that won't refresh, wrong vault). Re-enqueueing
@@ -227,6 +230,7 @@ export function issueDisposition(
 		case "quota":
 			return "informational";
 		case "too_large":
+		case "unsupported":
 		case "auth":
 		case "conflict":
 		case "frontmatter":
@@ -270,6 +274,13 @@ export function remediation(
 			return {
 				title: t("Too large for the server"),
 				hint: t("The server limit is 5 MB. Compress or split the file, then it will sync."),
+			};
+		case "unsupported":
+			return {
+				title: t("File type not accepted"),
+				hint: t(
+					"The server does not accept this type of file. It will retry if the file changes.",
+				),
 			};
 		case "auth":
 			return {

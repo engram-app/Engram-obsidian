@@ -244,6 +244,7 @@ const id: Dict = {
 	"File exceeds the {limit} limit": "File melebihi batas {limit}",
 	"File not found locally: {path}": "File tidak ditemukan secara lokal: {path}",
 	"File too large for your plan.": "File terlalu besar untuk paket Anda.",
+	"File type not accepted": "Tipe file tidak diterima",
 	"Files that will be deleted:": "File yang akan dihapus:",
 	"Filter by folder…": "Filter berdasarkan folder…",
 	"Filter by tags…": "Filter berdasarkan tag…",
@@ -489,6 +490,8 @@ const id: Dict = {
 		"Catatan berhasil disinkronisasi, tetapi frontmatter-nya tidak dapat diproses sepenuhnya. Buka untuk memperbaiki baris yang ditandai.",
 	"The server couldn't process this note. Check its contents, then edit and save to try again.":
 		"Server tidak dapat memproses catatan ini. Periksa isinya, lalu edit dan simpan untuk mencoba lagi.",
+	"The server does not accept this type of file. It will retry if the file changes.":
+		"Server tidak menerima tipe file ini. Akan dicoba lagi jika file berubah.",
 	"The server limit is 5 MB. Compress or split the file, then it will sync.":
 		"Batas server adalah 5 MB. Kompres atau bagi file, lalu akan disinkronkan.",
 	"The server took too long to respond. Try again.":

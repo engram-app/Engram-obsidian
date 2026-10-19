@@ -303,6 +303,7 @@ const ptBR: Dict = {
 	"File exceeds the {limit} limit": "Arquivo excede o limite de {limit}",
 	"File not found locally: {path}": "Arquivo não encontrado localmente: {path}",
 	"File too large for your plan.": "Arquivo muito grande para o seu plano.",
+	"File type not accepted": "Tipo de arquivo não aceito",
 	"Files that will be deleted:": "Arquivos que serão excluídos:",
 	"Filter by folder…": "Filtrar por pasta…",
 	"Filter by tags…": "Filtrar por tags…",
@@ -554,6 +555,8 @@ const ptBR: Dict = {
 		"A nota foi sincronizada, mas o cabeçalho não pôde ser totalmente analisado. Abra-a para corrigir a linha destacada.",
 	"The server couldn't process this note. Check its contents, then edit and save to try again.":
 		"O servidor não conseguiu processar esta nota. Verifique o conteúdo, edite e salve para tentar novamente.",
+	"The server does not accept this type of file. It will retry if the file changes.":
+		"O servidor não aceita este tipo de arquivo. Tentará novamente se o arquivo for alterado.",
 	"The server limit is 5 MB. Compress or split the file, then it will sync.":
 		"O limite do servidor é de 5 MB. Comprima ou divida o arquivo, então ele será sincronizado.",
 	"The server took too long to respond. Try again.":

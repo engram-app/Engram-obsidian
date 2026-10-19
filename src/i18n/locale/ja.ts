@@ -243,6 +243,7 @@ const ja: Dict = {
 	"File exceeds the {limit} limit": "ファイルが{limit}の制限を超えています",
 	"File not found locally: {path}": "ローカルにファイルが見つかりません: {path}",
 	"File too large for your plan.": "ファイルサイズがプランの制限を超えています。",
+	"File type not accepted": "ファイル形式がサポートされていません",
 	"Files that will be deleted:": "削除されるファイル:",
 	"Filter by folder…": "フォルダで絞り込み…",
 	"Filter by tags…": "タグで絞り込み…",
@@ -485,6 +486,8 @@ const ja: Dict = {
 		"ノートは同期されましたが、フロントマターを完全に解析できませんでした。ハイライトされた行を修正するために開いてください。",
 	"The server couldn't process this note. Check its contents, then edit and save to try again.":
 		"サーバーでこのノートの処理に失敗しました。内容を確認し、編集して保存してから再度お試しください。",
+	"The server does not accept this type of file. It will retry if the file changes.":
+		"サーバーがこの種類のファイルを許可していません。ファイルが変更された場合、再試行します。",
 	"The server limit is 5 MB. Compress or split the file, then it will sync.":
 		"サーバーの制限は5MBです。ファイルを圧縮するか分割し、再度同期してください。",
 	"The server took too long to respond. Try again.":

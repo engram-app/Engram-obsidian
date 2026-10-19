@@ -303,6 +303,7 @@ const it: Dict = {
 	"File exceeds the {limit} limit": "Il file supera il limite di {limit}",
 	"File not found locally: {path}": "File non trovato localmente: {path}",
 	"File too large for your plan.": "File troppo grande per il tuo piano.",
+	"File type not accepted": "Tipo di file non accettato",
 	"Files that will be deleted:": "File che verranno eliminati:",
 	"Filter by folder…": "Filtra per cartella…",
 	"Filter by tags…": "Filtra per tag…",
@@ -556,6 +557,8 @@ const it: Dict = {
 		"La nota è stata sincronizzata, ma il suo frontmatter non è stato completamente analizzato. Aprila per correggere la riga evidenziata.",
 	"The server couldn't process this note. Check its contents, then edit and save to try again.":
 		"Il server non è riuscito a elaborare questa nota. Controlla il contenuto, poi modificala e salvala per riprovare.",
+	"The server does not accept this type of file. It will retry if the file changes.":
+		"Il server non accetta questo tipo di file. Riproverà se il file cambia.",
 	"The server limit is 5 MB. Compress or split the file, then it will sync.":
 		"Il limite del server è di 5 MB. Comprimi o dividi il file, poi verrà sincronizzato.",
 	"The server took too long to respond. Try again.":

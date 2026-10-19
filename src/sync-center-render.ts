@@ -31,6 +31,7 @@ const CATEGORY_ORDER: SyncIssueCategory[] = [
 	"quota",
 	"frontmatter",
 	"too_large",
+	"unsupported",
 	"auth",
 	"conflict",
 	"server",

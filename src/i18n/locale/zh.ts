@@ -222,6 +222,7 @@ const zh: Dict = {
 	"File exceeds the {limit} limit": "文件超过 {limit} 限制",
 	"File not found locally: {path}": "找不到本地文件: {path}",
 	"File too large for your plan.": "文件过大，超出您的套餐限制。",
+	"File type not accepted": "文件类型不受支持",
 	"Files that will be deleted:": "将删除的文件：",
 	"Filter by folder…": "按文件夹过滤…",
 	"Filter by tags…": "按标签过滤…",
@@ -450,6 +451,8 @@ const zh: Dict = {
 		"笔记已同步，但其前置信息无法完全解析。打开它以修复高亮显示的行。",
 	"The server couldn't process this note. Check its contents, then edit and save to try again.":
 		"服务器无法处理此笔记。检查内容，编辑并保存后再次尝试。",
+	"The server does not accept this type of file. It will retry if the file changes.":
+		"服务器不支持此文件类型。文件更改时将重试。",
 	"The server limit is 5 MB. Compress or split the file, then it will sync.":
 		"服务器限制为5MB。压缩或拆分文件，然后即可同步。",
 	"The server took too long to respond. Try again.": "服务器响应时间过长。请重试。",
