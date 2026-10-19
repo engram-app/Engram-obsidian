@@ -510,3 +510,60 @@ describe("re-claiming a mapping the doc already holds is a no-op (prod 2026-10-1
 		expect(map.get("Notes/a.md")).toEqual({ note_id: "id-x" });
 	});
 });
+
+describe("a deletion whose replacement is still pending is not a vacancy (CI run 39053943843)", () => {
+	// The shape: this device (B) is missing one of a peer's (A's) earlier index
+	// updates. A and B both claim P concurrently; the server integrates A's claim,
+	// which wins and deletes B's item, and fans out ONE update carrying A's
+	// struct AND the deletion of B's. On B, Yjs applies the deletion at once but
+	// parks A's struct as pending (its predecessor never arrived), so P reads as
+	// unclaimed until the gap fills. getOrMint then minted a second id for a note
+	// the server already knows, and pathForId lost the real one.
+	function lostClaim() {
+		const P = "E2E/x.md";
+		const X = "server-id";
+		const S = new Y.Doc();
+		const A = new Y.Doc();
+		const B = new Y.Doc();
+		// Yjs breaks a concurrent same-key tie by clientID: A must outrank B for
+		// A's claim to be the one that deletes B's.
+		S.clientID = 1;
+		A.clientID = 3;
+		B.clientID = 2;
+		const store = new SyncStore(B.getMap("filemeta_v0"));
+		A.getMap("filemeta_v0").set("other.md", { note_id: "o" });
+		Y.applyUpdate(S, Y.encodeStateAsUpdate(A)); // B never receives this one
+		store.set(P, { note_id: X });
+		store.commit();
+		Y.applyUpdate(S, Y.encodeStateAsUpdate(B));
+		let fanout: Uint8Array | null = null;
+		S.on("update", (u: Uint8Array) => {
+			fanout = u;
+		});
+		const sv = Y.encodeStateVector(A);
+		A.getMap("filemeta_v0").set(P, { note_id: X });
+		Y.applyUpdate(S, Y.encodeStateAsUpdate(A, sv));
+		if (!fanout) throw new Error("server emitted no update");
+		Y.applyUpdate(B, fanout);
+		return { store, S, B, P, X };
+	}
+
+	test("getOrMint returns the live claim instead of minting", () => {
+		const { store, B, P, X } = lostClaim();
+		expect(B.store.pendingStructs).not.toBeNull(); // precondition: the gap is real
+		expect(store.getOrMint(P)).toBe(X);
+		expect(store.pathForId(X)).toBe(P);
+	});
+
+	test("the bridge comes down once the gap fills", () => {
+		const { store, S, B, P, X } = lostClaim();
+		Y.applyUpdate(B, Y.encodeStateAsUpdate(S));
+		expect(B.store.pendingStructs).toBeNull();
+		expect(store.get(P)).toBe(X);
+		// A real delete after the gap filled is a vacancy again.
+		S.getMap("filemeta_v0").delete(P);
+		Y.applyUpdate(B, Y.encodeStateAsUpdate(S));
+		expect(store.get(P)).toBeNull();
+		expect(store.pathForId(X)).toBeNull();
+	});
+});
