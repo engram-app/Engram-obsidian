@@ -242,7 +242,25 @@ describe("SyncEngine.handleModify", () => {
 		// Wait for debounce
 		await new Promise((r) => setTimeout(r, 100));
 
-		expect(mockApi.pushNote).toHaveBeenCalledWith("Notes/Test.md", big, expect.any(Number));
+		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
+		// ctime rides as the 7th arg, in seconds like mtime.
+		const args = (mockApi.pushNote as ReturnType<typeof mock>).mock.calls[0];
+		expect(args.slice(0, 3)).toEqual(["Notes/Test.md", big, expect.any(Number)]);
+		expect(args[6]).toBe(file.stat.ctime / 1000);
+	});
+
+	test("omits ctime when the file reports none", async () => {
+		const engine = createEngine({ debounceMs: 10 });
+		const big = "a".repeat(5 * 1024 * 1024);
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(big);
+		const file = new TFile("Notes/NoCtime.md", Date.now());
+		file.stat.ctime = 0;
+
+		engine.handleModify(file);
+		await new Promise((r) => setTimeout(r, 60));
+
+		const args = (mockApi.pushNote as ReturnType<typeof mock>).mock.calls[0];
+		expect(args.length).toBe(3);
 	});
 
 	test("ignores non-markdown files", async () => {
@@ -2208,6 +2226,10 @@ describe("SyncEngine pull accuracy", () => {
 			"Notes/Modified.md",
 			expect.any(String),
 			expect.any(Number),
+			undefined,
+			undefined,
+			undefined,
+			expect.any(Number),
 		);
 	});
 
@@ -2243,6 +2265,10 @@ describe("SyncEngine pull accuracy", () => {
 		expect(mockApi.pushNote).toHaveBeenCalledWith(
 			"Notes/Tracked.md",
 			expect.any(String),
+			expect.any(Number),
+			undefined,
+			undefined,
+			undefined,
 			expect.any(Number),
 		);
 	});
@@ -2606,6 +2632,10 @@ describe("content-free queue entries", () => {
 			"Notes/Queued.md",
 			"vault content",
 			expect.any(Number),
+			undefined,
+			undefined,
+			undefined,
+			expect.any(Number),
 		);
 
 		// Restore default mock for other tests
@@ -2890,7 +2920,15 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 
 		// Should push despite hash match because pushAll uses force=true
 		expect(pushed).toBe(1);
-		expect(mockApi.pushNote).toHaveBeenCalledWith("Notes/Existing.md", big, expect.any(Number));
+		expect(mockApi.pushNote).toHaveBeenCalledWith(
+			"Notes/Existing.md",
+			big,
+			expect.any(Number),
+			undefined,
+			undefined,
+			undefined,
+			expect.any(Number),
+		);
 	});
 
 	test("pushAll() reports skipped count when some files fail", async () => {
@@ -3400,6 +3438,10 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 		expect(mockApi.pushNote).toHaveBeenCalledWith(
 			"Notes/DuringPull.md",
 			big,
+			expect.any(Number),
+			undefined,
+			undefined,
+			undefined,
 			expect.any(Number),
 		);
 	});

@@ -204,6 +204,17 @@ describe("EngramApi", () => {
 			expect(result).toEqual({ path: "Notes/Test.md", status: "created" });
 		});
 
+		test("sends ctime only when given", async () => {
+			mockRequestUrl.mockResolvedValue({ status: 200, json: {} } as any);
+			await api.pushNote("a.md", "x", 10, undefined, undefined, undefined, 5.5);
+			expect(JSON.parse((mockRequestUrl.mock.calls[0][0] as any).body).ctime).toBe(5.5);
+			mockRequestUrl.mockClear();
+			await api.pushNote("a.md", "x", 10);
+			expect("ctime" in JSON.parse((mockRequestUrl.mock.calls[0][0] as any).body)).toBe(
+				false,
+			);
+		});
+
 		test("returns conflict response on 409 with json body", async () => {
 			const conflictBody = {
 				conflict: true,

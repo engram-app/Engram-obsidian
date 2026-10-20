@@ -241,6 +241,13 @@ export async function reconcileColdStart(
 /** Count distinct parent folders across the given file paths. Files at the
  *  root contribute nothing; "a/b/c.md" contributes "a/b". Used by the sync
  *  preview to surface "how many folders contain files" per side. */
+/** File creation time in seconds (Obsidian reports ms), or undefined when the
+ *  platform gives none (0/absent), so callers omit the key rather than send 0. */
+function fileCtimeSeconds(file: TFile): number | undefined {
+	const ms = file.stat?.ctime;
+	return ms !== undefined && ms > 0 ? ms / 1000 : undefined;
+}
+
 function countFolders(paths: Iterable<string>): number {
 	const set = new Set<string>();
 	for (const p of paths) {
@@ -6056,7 +6063,19 @@ export class SyncEngine {
 				if (this.capBlocksCreate(pushedPath)) return false;
 				let resp: Awaited<ReturnType<EngramApi["pushNote"]>>;
 				try {
-					resp = await this.api.pushNote(pushedPath, content, mtime);
+					const ctime = fileCtimeSeconds(file);
+					resp =
+						ctime === undefined
+							? await this.api.pushNote(pushedPath, content, mtime)
+							: await this.api.pushNote(
+									pushedPath,
+									content,
+									mtime,
+									undefined,
+									undefined,
+									undefined,
+									ctime,
+								);
 				} catch (e) {
 					if (e instanceof LimitExceededError && LIMIT_REASONS.has(e.reason)) {
 						this.notesCapGate?.trip(e.reason);
@@ -12005,6 +12024,7 @@ export class SyncEngine {
 					// Note upsert — legacy entries have content; new entries are content-free
 					let content = entry.content;
 					let mtime = entry.mtime;
+					let replayCtime: number | undefined;
 					if (content === undefined) {
 						const file = this.app.vault.getFileByPath(entry.path);
 						if (!file) {
@@ -12022,6 +12042,7 @@ export class SyncEngine {
 						}
 						content = await this.app.vault.cachedRead(file);
 						mtime = file.stat.mtime / 1000;
+						replayCtime = fileCtimeSeconds(file);
 					}
 					// Mint-and-send the client id like a live push — and adopt the id
 					// the server echoes back. The replay path never adopted, so a
@@ -12054,7 +12075,7 @@ export class SyncEngine {
 					const replayState = this.syncState.get(replayNp);
 					const replayBase = replayState?.serverHash;
 					const resp =
-						replayBase !== undefined
+						replayCtime !== undefined
 							? await this.api.pushNote(
 									entry.path,
 									content,
@@ -12062,16 +12083,26 @@ export class SyncEngine {
 									replayState?.version,
 									replayId ?? undefined,
 									replayBase,
+									replayCtime,
 								)
-							: replayId
+							: replayBase !== undefined
 								? await this.api.pushNote(
 										entry.path,
 										content,
 										mtime!,
-										undefined,
-										replayId,
+										replayState?.version,
+										replayId ?? undefined,
+										replayBase,
 									)
-								: await this.api.pushNote(entry.path, content, mtime!);
+								: replayId
+									? await this.api.pushNote(
+											entry.path,
+											content,
+											mtime!,
+											undefined,
+											replayId,
+										)
+									: await this.api.pushNote(entry.path, content, mtime!);
 					if ("conflict" in resp) {
 						// Hand the conflict to the single-note flow, which owns 3-way
 						// merge + resolution — previously a conflicting replay was

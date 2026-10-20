@@ -635,8 +635,12 @@ export class EngramApi {
 		version?: number,
 		clientId?: string,
 		baseHash?: string,
+		ctime?: number,
 	): Promise<NoteResponse | VersionConflictResponse> {
 		const body: Record<string, unknown> = { path, content, mtime };
+		// File creation time (seconds). Omitted when unknown so the server keeps
+		// whatever it has; older backends ignore the key.
+		if (ctime !== undefined) body.ctime = ctime;
 		if (version !== undefined) body.version = version;
 		if (clientId !== undefined) body.id = clientId;
 		// CAS guard (backend v0.5.642): the server content_hash this client last
