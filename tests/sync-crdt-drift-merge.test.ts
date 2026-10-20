@@ -104,6 +104,11 @@ async function historyLessScenario(opts: {
 	serverFull: string; // full server body (what getUpdates reconstructs)
 	baseStoreContent?: string; // LCA content, if present
 	createThrows?: boolean; // vault.create rejects (conflict-copy write fails)
+	/** Runs once, inside the FIRST manager flush, before its disk write: a
+	 *  fan-out or autosave racing the apply flush. */
+	midFirstFlush?: (mgr: ProviderRegistry) => Promise<void>;
+	/** vault.modify rejects when writing exactly this content. */
+	modifyThrowsOn?: string;
 }) {
 	const disk = new Map<string, string>();
 	disk.set("a.md", opts.disk);
@@ -114,6 +119,9 @@ async function historyLessScenario(opts: {
 		dbPrefix: opts.dbPrefix,
 		send: () => true,
 		onFlushToDisk: async (id, content) => {
+			const race = opts.midFirstFlush;
+			opts.midFirstFlush = undefined;
+			if (race) await race(mgr);
 			// Mirror production wiring: route the manager flush through the engine's
 			// flushFromCrdt so it lands on the shared fake disk with baseline recording.
 			await box.e.flushFromCrdt("a.md", content);
@@ -135,6 +143,7 @@ async function historyLessScenario(opts: {
 			cachedRead: mock(async (f: TFile) => disk.get(f.path) ?? ""),
 			read: mock(async (f: TFile) => disk.get(f.path) ?? ""),
 			modify: mock(async (f: TFile, c: string) => {
+				if (c === opts.modifyThrowsOn) throw new Error("EIO: simulated modify failure");
 				disk.set(f.path, c);
 			}),
 			create: mock(async (p: string, c: string) => {
@@ -265,6 +274,101 @@ describe("#234 (Phase E3 storm-safe): history-less note applies the delta direct
 		const state = (e as any).syncState as Map<string, { hash: number }>;
 		// Unstamped, so the copy is pushed rather than trashed by reconcile (#1931).
 		expect(state.has(conflictKey as string)).toBe(false);
+		await mgr.destroyAll();
+	});
+
+	test("(iv) drift ON TOP of exactly the delta's content → merged as a local edit, NO conflict copy", async () => {
+		// Discovery wrote "BASE" from the catch-up row (doc stays history-less),
+		// the user appended " local", THEN the genesis fan-out lands carrying the
+		// same "BASE". Nothing diverged: the edit descends from the delta's text.
+		// Keep-both here moved the edit into a copy and reverted the note, so the
+		// edit never reached the other device (e2e test_edit_after_discovery).
+		const { e, mgr, disk, enroll, serverFullUpdate } = await historyLessScenario({
+			dbPrefix: "hl-ff",
+			disk: "BASE local",
+			baselineHash: fnv1a("BASE"),
+			serverFull: "BASE",
+		});
+
+		const result = await (e as any).applyPushedNoteUpdate("id-a", serverFullUpdate, "SRV");
+
+		expect(result).toBe("applied");
+		expect([...disk.keys()].some((k) => k.includes("(conflict"))).toBe(false);
+		expect(disk.get("a.md")).toBe("BASE local");
+		expect(await mgr.getText("id-a")).toBe("BASE local"); // on the server lineage, not doubled
+		expect((e as any).getCrdtHead("a.md")).toBe("SRV");
+		expect(enroll).not.toHaveBeenCalled();
+		await mgr.destroyAll();
+	});
+});
+
+/** A server-lineage delta on top of `serverFull`: prepends "R2 ". */
+function prependDelta(serverFullUpdate: Uint8Array): Uint8Array {
+	const d = new Y.Doc();
+	Y.applyUpdate(d, serverFullUpdate);
+	const sv = Y.encodeStateVector(d);
+	d.getText("content").insert(0, "R2 ");
+	return Y.encodeStateAsUpdate(d, sv);
+}
+
+describe("history-less fast-forward: races and failures never lose an edit", () => {
+	test("(v) remote delta lands DURING the apply flush → it survives (not diffed away), the edit goes to keep-both", async () => {
+		let d2: Uint8Array | null = null;
+		const { e, mgr, disk, serverFullUpdate } = await historyLessScenario({
+			dbPrefix: "hl-ff-race",
+			disk: "BASE local",
+			baselineHash: fnv1a("BASE"),
+			serverFull: "BASE",
+			midFirstFlush: async (m) => {
+				await m.applyRemoteUpdate("id-a", d2 as Uint8Array);
+			},
+		});
+		d2 = prependDelta(serverFullUpdate);
+
+		await (e as any).applyPushedNoteUpdate("id-a", serverFullUpdate, "SRV");
+
+		expect(await mgr.getText("id-a")).toBe("R2 BASE"); // remote op NOT deleted
+		const copy = [...disk.keys()].find((k) => k.includes("(conflict"));
+		expect(copy).toBeDefined();
+		expect(disk.get(copy as string)).toBe("BASE local"); // edit preserved
+		await mgr.destroyAll();
+	});
+
+	test("(vi) doc moved AND the conflict-copy write throws → edit merged into the note, nothing lost", async () => {
+		let d2: Uint8Array | null = null;
+		const { e, mgr, disk, serverFullUpdate } = await historyLessScenario({
+			dbPrefix: "hl-ff-race-copyfail",
+			disk: "BASE local",
+			baselineHash: fnv1a("BASE"),
+			serverFull: "BASE",
+			createThrows: true,
+			midFirstFlush: async (m) => {
+				await m.applyRemoteUpdate("id-a", d2 as Uint8Array);
+			},
+		});
+		d2 = prependDelta(serverFullUpdate);
+
+		await (e as any).applyPushedNoteUpdate("id-a", serverFullUpdate, "SRV");
+
+		expect(await mgr.getText("id-a")).toBe("R2 BASE local");
+		expect(disk.get("a.md")).toBe("R2 BASE local");
+		await mgr.destroyAll();
+	});
+
+	test("(vii) merge lands but its disk flush throws → NO spurious conflict copy, doc keeps the edit", async () => {
+		const { e, mgr, disk, serverFullUpdate } = await historyLessScenario({
+			dbPrefix: "hl-ff-flushfail",
+			disk: "BASE local",
+			baselineHash: fnv1a("BASE"),
+			serverFull: "BASE",
+			modifyThrowsOn: "BASE local",
+		});
+
+		const result = await (e as any).applyPushedNoteUpdate("id-a", serverFullUpdate, "SRV");
+
+		expect(result).toBe("applied");
+		expect([...disk.keys()].some((k) => k.includes("(conflict"))).toBe(false);
+		expect(await mgr.getText("id-a")).toBe("BASE local");
 		await mgr.destroyAll();
 	});
 });
