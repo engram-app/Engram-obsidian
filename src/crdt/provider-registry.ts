@@ -22,7 +22,7 @@ import {
 	rawFrontmatterOf,
 	splitFrontmatter,
 } from "./frontmatter-codec";
-import { mergeDiskOntoDoc } from "./lca-merge";
+import { merge3, mergeDiskOntoDoc } from "./lca-merge";
 import { type FrameKind, NoteProvider } from "./note-provider";
 import { docHasAnyHistory, docHasHistory, seedContentInto, seedFrontmatterInto } from "./note-seed";
 
@@ -464,15 +464,17 @@ export class ProviderRegistry {
 	}
 
 	/** Merge a disk edit made FROM `base` onto the doc, with no await between
-	 *  the check and the seed. Doc still projects `base` → seed `disk` (minimal
-	 *  diff). Doc moved off `base` (a fan-out or autosave landed meanwhile) →
-	 *  null, so the caller keeps both rather than diffing those ops away;
-	 *  `force` instead 3-way merges base→disk onto the doc, possibly dirty or
-	 *  duplicated, for when no copy can be written. Null too when the note is
-	 *  gone or not a note. */
+	 *  the check and the seed. The doc must still project `expected` (what the
+	 *  caller just applied); if a fan-out or autosave moved it since, return
+	 *  null so the caller keeps both rather than merging against a doc it never
+	 *  saw. Otherwise `merge3(base, disk, doc)`; `base === expected` is the
+	 *  fast-forward and seeds `disk` as a minimal diff. Overlapping edits are
+	 *  null too. `force` skips both refusals, possibly dirty or duplicated, for
+	 *  when no copy can be written. Null when the note is gone or not a note. */
 	async mergeLocalEditFromBase(
 		noteId: string,
 		base: string,
+		expected: string,
 		disk: string,
 		force = false,
 	): Promise<string | null> {
@@ -480,8 +482,12 @@ export class ProviderRegistry {
 		const e = await this.entry(noteId);
 		if (!e.lifetime.active || e.kind !== "note") return null;
 		const current = this.project(e);
-		if (current !== base && !force) return null;
-		const text = mergeDiskOntoDoc(base, disk, current).text;
+		if (current !== expected && !force) return null;
+		const merged = merge3(base, disk, current);
+		if (!merged.clean && !force) return null;
+		// Forced past a conflict: merge3 returns `current` untouched, so fall to
+		// the fuzzy patch, which at least lands the disk edit.
+		const text = merged.clean ? merged.text : mergeDiskOntoDoc(base, disk, current).text;
 		seedContentInto(e.doc, e.text, text, true);
 		return text;
 	}

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mergeDiskOntoDoc } from "../../src/crdt/lca-merge";
+import { merge3, mergeDiskOntoDoc } from "../../src/crdt/lca-merge";
 
 describe("mergeDiskOntoDoc", () => {
 	test("applies a disk-side edit that the doc has not seen", () => {
@@ -88,4 +88,63 @@ describe("mergeDiskOntoDoc", () => {
 		expect(r.text).toBe("x");
 		expect(r.clean).toBe(true);
 	});
+});
+
+describe("merge3 (both sides' edits on one base, CRDT-like)", () => {
+	const cases: [string, string, string, string, string | null][] = [
+		// [name, base, local, remote, expected merged text | null = conflict]
+		["no edits", "a\n", "a\n", "a\n", "a\n"],
+		["local only", "a\n", "a\nL\n", "a\n", "a\nL\n"],
+		["remote only", "a\n", "a\n", "a\nR\n", "a\nR\n"],
+		[
+			"both append at EOF: remote first, both kept",
+			"base line\n",
+			"base line\nB change\n",
+			"base line\nA change\n",
+			"base line\nA change\nB change\n",
+		],
+		[
+			"edits in different paragraphs",
+			"# T\n\npara one\n\npara two\n",
+			"# T\n\npara one EDIT\n\npara two\n",
+			"# T\n\npara one\n\npara two REMOTE\n",
+			"# T\n\npara one EDIT\n\npara two REMOTE\n",
+		],
+		[
+			"same word changed differently",
+			"one two three\n",
+			"one TWO three\n",
+			"one deux three\n",
+			null,
+		],
+		["whole text replaced differently", "xxx\n", "zzz\n", "yyy\n", null],
+		["identical edit on both sides applied once", "a b c\n", "a B c\n", "a B c\n", "a B c\n"],
+		[
+			"insert inside the other side's deletion",
+			"keep DROPME keep\n",
+			"keep DROP+ME keep\n",
+			"keep  keep\n",
+			null,
+		],
+		[
+			"insert at the edge of a deletion",
+			"abcXYZdef\n",
+			"abc!XYZdef\n",
+			"abcdef\n",
+			"abc!def\n",
+		],
+		["local deletes, remote edits elsewhere", "1\n2\n3\n", "1\n3\n", "1\n2\n3!\n", "1\n3!\n"],
+		["empty base, both write", "", "L", "R", "RL"],
+	];
+	for (const [name, base, local, remote, want] of cases) {
+		test(name, () => {
+			const r = merge3(base, local, remote);
+			if (want === null) {
+				expect(r.clean).toBe(false);
+			} else {
+				expect(r.clean).toBe(true);
+				expect(r.text).toBe(want);
+			}
+		});
+	}
 });

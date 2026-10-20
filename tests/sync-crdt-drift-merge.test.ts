@@ -373,6 +373,102 @@ describe("history-less fast-forward: races and failures never lose an edit", () 
 	});
 });
 
+describe("history-less divergence: 3-way merge on the body discovery wrote", () => {
+	test("(viii) both sides edited the discovered body → merged into the note, NO conflict copy", async () => {
+		// Discovery wrote "base line\n" from the catch-up row (doc history-less).
+		// A appended "A change" (the fan-out carries A's whole lineage); B, before
+		// that landed, appended "B change" on disk. Both descend from the body
+		// discovery wrote, so they merge (e2e test_no_conflict_modal_on_divergence).
+		const { e, mgr, disk, serverFullUpdate } = await historyLessScenario({
+			dbPrefix: "hl-div-merge",
+			disk: "base line\nB change\n",
+			baselineHash: fnv1a("base line\n"),
+			serverFull: "base line\nA change\n",
+		});
+		(e as any).rememberDiscoveryBase("a.md", "base line\n");
+
+		const result = await (e as any).applyPushedNoteUpdate("id-a", serverFullUpdate, "SRV");
+
+		expect(result).toBe("applied");
+		expect([...disk.keys()].some((k) => k.includes("(conflict"))).toBe(false);
+		const text = await mgr.getText("id-a");
+		expect(text).toContain("A change");
+		expect(text).toContain("B change");
+		expect(text.match(/base line/g)?.length).toBe(1); // not doubled
+		expect(disk.get("a.md")).toBe(text);
+		expect((e as any).getCrdtHead("a.md")).toBe("SRV");
+		await mgr.destroyAll();
+	});
+
+	test("(ix) overlapping edits (dirty merge) → keep-both, nothing lost", async () => {
+		const { e, mgr, disk, serverFullUpdate } = await historyLessScenario({
+			dbPrefix: "hl-div-dirty",
+			disk: "zzz\n",
+			baselineHash: fnv1a("xxx\n"),
+			serverFull: "yyy\n",
+		});
+		(e as any).rememberDiscoveryBase("a.md", "xxx\n");
+
+		await (e as any).applyPushedNoteUpdate("id-a", serverFullUpdate, "SRV");
+
+		const copy = [...disk.keys()].find((k) => k.includes("(conflict"));
+		expect(copy).toBeDefined();
+		expect(disk.get(copy as string)).toBe("zzz\n");
+		expect(await mgr.getText("id-a")).toBe("yyy\n");
+		await mgr.destroyAll();
+	});
+
+	test("(x) remembered body is NOT the recorded baseline → ignored, keep-both", async () => {
+		const { e, mgr, disk, serverFullUpdate } = await historyLessScenario({
+			dbPrefix: "hl-div-wrongbase",
+			disk: "base line\nB change\n",
+			baselineHash: fnv1a("base line\n"),
+			serverFull: "base line\nA change\n",
+		});
+		(e as any).rememberDiscoveryBase("a.md", "something else\n");
+
+		await (e as any).applyPushedNoteUpdate("id-a", serverFullUpdate, "SRV");
+
+		expect([...disk.keys()].some((k) => k.includes("(conflict"))).toBe(true);
+		await mgr.destroyAll();
+	});
+
+	test("(xi) remembered body past its TTL → ignored, keep-both", async () => {
+		const { e, mgr, disk, serverFullUpdate } = await historyLessScenario({
+			dbPrefix: "hl-div-ttl",
+			disk: "base line\nB change\n",
+			baselineHash: fnv1a("base line\n"),
+			serverFull: "base line\nA change\n",
+		});
+		(e as any).rememberDiscoveryBase("a.md", "base line\n");
+		(e as any).discoveryBases.get("a.md").at -= 11 * 60_000;
+
+		await (e as any).applyPushedNoteUpdate("id-a", serverFullUpdate, "SRV");
+
+		expect([...disk.keys()].some((k) => k.includes("(conflict"))).toBe(true);
+		await mgr.destroyAll();
+	});
+
+	test("(xii) the remembered body is one-shot and byte-capped", async () => {
+		const { e, mgr, serverFullUpdate } = await historyLessScenario({
+			dbPrefix: "hl-div-oneshot",
+			disk: "base line\nB change\n",
+			baselineHash: fnv1a("base line\n"),
+			serverFull: "base line\nA change\n",
+		});
+		(e as any).rememberDiscoveryBase("a.md", "base line\n");
+		await (e as any).applyPushedNoteUpdate("id-a", serverFullUpdate, "SRV");
+		expect((e as any).discoveryBases.has("a.md")).toBe(false);
+
+		const big = "x".repeat(3 * 1024 * 1024);
+		(e as any).rememberDiscoveryBase("p1.md", big);
+		(e as any).rememberDiscoveryBase("p2.md", big);
+		expect((e as any).discoveryBases.has("p1.md")).toBe(false); // oldest evicted
+		expect((e as any).discoveryBases.has("p2.md")).toBe(true);
+		await mgr.destroyAll();
+	});
+});
+
 describe("I1: keep-both preserves the local edit even if the copy write fails", () => {
 	test("conflict-copy write THROWS → local edit NOT lost: abort BEFORE the apply, crdtHead unadvanced, disk intact", async () => {
 		const { e, mgr, disk, serverFullUpdate } = await historyLessScenario({
