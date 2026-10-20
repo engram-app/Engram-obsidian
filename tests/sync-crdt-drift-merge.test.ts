@@ -449,6 +449,53 @@ describe("history-less divergence: 3-way merge on the body discovery wrote", () 
 		await mgr.destroyAll();
 	});
 
+	test("(xiii) a fan-out with no drift does not burn the body early; adopting forgets it", async () => {
+		const { e, mgr, serverFullUpdate } = await historyLessScenario({
+			dbPrefix: "hl-div-nodrift",
+			disk: "base line\n",
+			baselineHash: fnv1a("base line\n"),
+			serverFull: "base line\n",
+		});
+		(e as any).rememberDiscoveryBase("a.md", "base line\n");
+		await (e as any).applyPushedNoteUpdate("id-a", serverFullUpdate, "SRV");
+		expect((e as any).discoveryBases.has("a.md")).toBe(false); // doc has history now
+		await mgr.destroyAll();
+	});
+
+	test("(xiv) a pended fan-out keeps the body for the next one", async () => {
+		const { e, mgr } = await historyLessScenario({
+			dbPrefix: "hl-div-pend",
+			disk: "base line\nB change\n",
+			baselineHash: fnv1a("base line\n"),
+			serverFull: "base line\n",
+		});
+		(e as any).rememberDiscoveryBase("a.md", "base line\n");
+		const d = new Y.Doc();
+		d.getText("content").insert(0, "base line\n");
+		const sv = Y.encodeStateVector(d);
+		d.getText("content").insert(0, "R ");
+		const incremental = Y.encodeStateAsUpdate(d, sv); // pends on the empty doc
+		await (e as any).applyPushedNoteUpdate("id-a", incremental, "SRV");
+		expect((e as any).discoveryBases.has("a.md")).toBe(true);
+		await mgr.destroyAll();
+	});
+
+	test("(xv) expired bodies are swept on the next remember; over-limit bodies are not kept", async () => {
+		const { e, mgr } = await historyLessScenario({
+			dbPrefix: "hl-div-sweep",
+			disk: "x",
+			baselineHash: fnv1a("x"),
+			serverFull: "x",
+		});
+		(e as any).rememberDiscoveryBase("old.md", "old");
+		(e as any).discoveryBases.get("old.md").at -= 11 * 60_000;
+		(e as any).rememberDiscoveryBase("new.md", "new");
+		expect((e as any).discoveryBases.has("old.md")).toBe(false);
+		(e as any).rememberDiscoveryBase("huge.md", "y".repeat(5 * 1024 * 1024));
+		expect((e as any).discoveryBases.has("huge.md")).toBe(false);
+		await mgr.destroyAll();
+	});
+
 	test("(xii) the remembered body is one-shot and byte-capped", async () => {
 		const { e, mgr, serverFullUpdate } = await historyLessScenario({
 			dbPrefix: "hl-div-oneshot",

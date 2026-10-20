@@ -698,10 +698,11 @@ export class SyncEngine {
 	 *  merge a real divergence instead of keeping both. Kept out of
 	 *  `baseStore` on purpose: `lcaFor` feeds that to every later merge and a
 	 *  CRDT flush never refreshes it (#544 stale-base class). Read once, and
-	 *  only when its hash equals the recorded baseline. Cleared on that read,
-	 *  after DISCOVERY_BASE_TTL_MS, and oldest-first past the byte cap. */
+	 *  only when its hash equals the recorded baseline. Cleared once the adopt
+	 *  gives the doc history, after DISCOVERY_BASE_TTL_MS, and oldest-first
+	 *  past the char cap. */
 	private discoveryBases = new Map<string, { text: string; at: number }>();
-	private discoveryBaseBytes = 0;
+	private discoveryBaseChars = 0;
 
 	/** Persisted set of server-side "explicit empty folder" markers. Owned by
 	 *  the plugin layer (main.ts) and assigned after construction, matching the
@@ -2678,10 +2679,10 @@ export class SyncEngine {
 		//     moved a user's edit into a copy and reverted the note.
 		//     Both moved off the body discovery wrote: 3-way merge on that body
 		//     (both descend from it), keep-both only if the merge is dirty.
-		const discoveryBase = this.takeDiscoveryBase(normalized);
 		if (hasDrift && disk !== null && file instanceof TFile) {
 			const preview = await this.crdt.previewUpdate(noteId, update);
 			const baseline = this.syncState.get(normalized)?.hash;
+			const discoveryBase = this.peekDiscoveryBase(normalized);
 			const base =
 				preview === null
 					? null
@@ -2757,29 +2758,45 @@ export class SyncEngine {
 			this.socketConverge(normalized, noteId);
 			return "deferred";
 		}
+		this.forgetDiscoveryBase(normalized); // doc has history now
 		this.setCrdtHead(normalized, head);
 		return "applied";
 	}
 
-	/** Record the body discovery wrote (see `discoveryBases`). */
+	/** Record the body discovery wrote (see `discoveryBases`). Sweeps expired
+	 *  entries (oldest first: re-records go to the end), skips bodies over the
+	 *  CRDT note limit (they never take the adopt path), and evicts oldest past
+	 *  the char cap. */
 	private rememberDiscoveryBase(path: string, text: string): void {
-		this.takeDiscoveryBase(path);
-		this.discoveryBases.set(path, { text, at: Date.now() });
-		this.discoveryBaseBytes += text.length;
+		this.forgetDiscoveryBase(path);
+		const now = Date.now();
 		for (const [p, entry] of this.discoveryBases) {
-			if (this.discoveryBaseBytes <= DISCOVERY_BASE_MAX_CHARS || p === path) break;
-			this.discoveryBases.delete(p);
-			this.discoveryBaseBytes -= entry.text.length;
+			if (now - entry.at <= DISCOVERY_BASE_TTL_MS) break;
+			this.forgetDiscoveryBase(p);
+		}
+		if (exceedsCrdtNoteLimit(text, MAX_CRDT_NOTE_BYTES)) return;
+		this.discoveryBases.set(path, { text, at: now });
+		this.discoveryBaseChars += text.length;
+		for (const p of this.discoveryBases.keys()) {
+			if (this.discoveryBaseChars <= DISCOVERY_BASE_MAX_CHARS || p === path) break;
+			this.forgetDiscoveryBase(p);
 		}
 	}
 
-	/** One-shot read of `discoveryBases`; null when absent or past the TTL. */
-	private takeDiscoveryBase(path: string): string | null {
+	/** The remembered body for `path`, or null when absent or past the TTL. */
+	private peekDiscoveryBase(path: string): string | null {
 		const entry = this.discoveryBases.get(path);
 		if (!entry) return null;
+		if (Date.now() - entry.at <= DISCOVERY_BASE_TTL_MS) return entry.text;
+		this.forgetDiscoveryBase(path);
+		return null;
+	}
+
+	private forgetDiscoveryBase(path: string): void {
+		const entry = this.discoveryBases.get(path);
+		if (!entry) return;
 		this.discoveryBases.delete(path);
-		this.discoveryBaseBytes -= entry.text.length;
-		return Date.now() - entry.at <= DISCOVERY_BASE_TTL_MS ? entry.text : null;
+		this.discoveryBaseChars -= entry.text.length;
 	}
 
 	/** `adoptHistoryLessNote`'s merge: apply a delta that projects `expected`,
@@ -2847,6 +2864,7 @@ export class SyncEngine {
 				void this.flushQueue();
 			}
 		}
+		this.forgetDiscoveryBase(normalized); // doc has history now
 		this.setCrdtHead(normalized, head);
 		return "applied";
 	}

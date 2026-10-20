@@ -61,9 +61,13 @@ interface Edit {
 	text: string;
 }
 
+/** Line-level edits: diff3 granularity. A character diff's alignment shifts
+ *  with cleanup, so the same edit on both sides stops looking identical
+ *  (duplicated on merge) and same-point inserts can split a "\r\n". */
 function editsFrom(dmp: diff_match_patch, base: string, other: string): Edit[] {
-	const diffs = dmp.diff_main(base, other);
-	dmp.diff_cleanupSemantic(diffs);
+	const lines = dmp.diff_linesToChars_(base, other);
+	const diffs = dmp.diff_main(lines.chars1, lines.chars2, false);
+	dmp.diff_charsToLines_(diffs, lines.lineArray);
 	const out: Edit[] = [];
 	let pos = 0;
 	let cur: Edit | null = null;
@@ -86,22 +90,29 @@ function editsFrom(dmp: diff_match_patch, base: string, other: string): Edit[] {
 	return out;
 }
 
-/** Edits that cannot both apply: their replaced ranges overlap, or one
- *  inserts strictly inside the range the other replaces. Two insertions at
- *  the same point do not conflict; both are kept, as a CRDT would. */
+/** Edits that cannot both apply. Like git's merge, any edits that overlap or
+ *  TOUCH conflict: with repeated lines (blank lines, list items) the line diff
+ *  can pin an edit to the wrong copy, and touching edits are where that loses
+ *  one side's line. The one exception is two pure insertions at the same
+ *  point (both appended a line, the concurrent-edit case): both are kept,
+ *  remote first, as a CRDT would, unless one contains the other (the same
+ *  edit extended on one side; keeping both duplicates it) or either leaves a
+ *  line open (no trailing newline; keeping both joins two lines). */
 function conflicts(a: Edit, b: Edit): boolean {
-	if (a.start < b.end && b.start < a.end) return true;
-	const inside = (p: number, e: Edit) => e.start < p && p < e.end;
-	return (a.start === a.end && inside(a.start, b)) || (b.start === b.end && inside(b.start, a));
+	if (a.start > b.end || b.start > a.end) return false;
+	const sameInsertPoint = a.start === a.end && b.start === b.end && a.start === b.start;
+	if (!sameInsertPoint) return true;
+	if (a.text.includes(b.text) || b.text.includes(a.text)) return true;
+	return !a.text.endsWith("\n") || !b.text.endsWith("\n");
 }
 
 /**
- * Three-way merge of two texts that both descend from `base`, with CRDT-like
- * semantics: every edit from both sides applies; insertions at the same point
- * are all kept (`remote` first); an edit made identically on both sides
- * applies once. Not clean when the two sides changed overlapping text, and
- * then `text` is `remote` unchanged, so a caller that ignores `clean` loses
- * nothing remote.
+ * Three-way merge of two texts that both descend from `base`, at line
+ * granularity like diff3: every edit from both sides applies; distinct
+ * insertions at the same point are both kept (`remote` first); an edit made
+ * identically on both sides applies once. Not clean when the two sides'
+ * edits overlap or touch (see `conflicts`); `text` is then `remote`
+ * unchanged, so a caller that ignores `clean` loses nothing remote.
  *
  * Unlike `mergeDiskOntoDoc` this never fuzzy-matches: diff-match-patch's
  * patch_apply reports a same-word conflict as clean and drops one side.
