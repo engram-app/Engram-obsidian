@@ -53,3 +53,94 @@ export function mergeDiskOntoDoc(base: string, disk: string, current: string): L
 	const [merged, applied] = dmp.patch_apply(patches, current);
 	return { text: merged, clean: applied.every(Boolean) };
 }
+
+/** One side's change to the base: replace `base[start, end)` with `text`. */
+interface Edit {
+	start: number;
+	end: number;
+	text: string;
+}
+
+/** Line-level edits: diff3 granularity. A character diff's alignment shifts
+ *  with cleanup, so the same edit on both sides stops looking identical
+ *  (duplicated on merge) and same-point inserts can split a "\r\n". */
+function editsFrom(base: string, other: string): Edit[] {
+	const dmp = new diff_match_patch();
+	const lines = dmp.diff_linesToChars_(base, other);
+	const diffs = dmp.diff_main(lines.chars1, lines.chars2, false);
+	dmp.diff_charsToLines_(diffs, lines.lineArray);
+	const out: Edit[] = [];
+	let pos = 0;
+	let cur: Edit | null = null;
+	for (const [op, s] of diffs) {
+		if (op === 0) {
+			if (cur) out.push(cur);
+			cur = null;
+			pos += s.length;
+			continue;
+		}
+		cur ??= { start: pos, end: pos, text: "" };
+		if (op === -1) {
+			pos += s.length;
+			cur.end = pos;
+		} else {
+			cur.text += s;
+		}
+	}
+	if (cur) out.push(cur);
+	return out;
+}
+
+/** Edits that cannot both apply. Like git's merge, any edits that overlap or
+ *  TOUCH conflict: with repeated lines (blank lines, list items) the line diff
+ *  can pin an edit to the wrong copy, and touching edits are where that loses
+ *  one side's line. The one exception is two pure insertions at the same
+ *  point (both appended a line, the concurrent-edit case): both are kept,
+ *  remote first, as a CRDT would, unless one contains the other (the same
+ *  edit extended on one side; keeping both duplicates it) or either leaves a
+ *  line open (no trailing newline; keeping both joins two lines). */
+function conflicts(a: Edit, b: Edit): boolean {
+	if (a.start > b.end || b.start > a.end) return false;
+	const sameInsertPoint = a.start === a.end && b.start === b.end && a.start === b.start;
+	if (!sameInsertPoint) return true;
+	if (a.text.includes(b.text) || b.text.includes(a.text)) return true;
+	return !a.text.endsWith("\n") || !b.text.endsWith("\n");
+}
+
+/**
+ * Three-way merge of two texts that both descend from `base`, at line
+ * granularity like diff3: every edit from both sides applies; distinct
+ * insertions at the same point are both kept (`remote` first); an edit made
+ * identically on both sides applies once. Not clean when the two sides'
+ * edits overlap or touch (see `conflicts`); `text` is then `remote`
+ * unchanged, so a caller that ignores `clean` loses nothing remote.
+ *
+ * Unlike `mergeDiskOntoDoc` this never fuzzy-matches: diff-match-patch's
+ * patch_apply reports a same-word conflict as clean and drops one side.
+ */
+export function merge3(base: string, local: string, remote: string): LcaMergeResult {
+	const mine = editsFrom(base, local);
+	const theirs = editsFrom(base, remote).filter(
+		(r) => !mine.some((m) => m.start === r.start && m.end === r.end && m.text === r.text),
+	);
+	for (const m of mine) {
+		const clash = theirs.some((r) => conflicts(m, r));
+		if (clash) return { text: remote, clean: false };
+	}
+	// Remote before local at the same start; at one start an insertion
+	// (empty range) goes before a replacement so the replacement still finds
+	// its base text.
+	const all = [...theirs.map((e) => ({ e, side: 0 })), ...mine.map((e) => ({ e, side: 1 }))].sort(
+		(x, y) =>
+			x.e.start - y.e.start ||
+			Number(x.e.end > x.e.start) - Number(y.e.end > y.e.start) ||
+			x.side - y.side,
+	);
+	let out = "";
+	let pos = 0;
+	for (const { e } of all) {
+		out += base.slice(pos, e.start) + e.text;
+		pos = Math.max(pos, e.end);
+	}
+	return { text: out + base.slice(pos), clean: true };
+}

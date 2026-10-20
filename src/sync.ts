@@ -265,6 +265,12 @@ const RECENT_DELETE_COOLDOWN_MS = 60_000;
  *  Generous next to the milliseconds a racing flush needs, and short next to
  *  the lifetime of a path that might legitimately be recreated. */
 const RELOCATION_MEMORY_MS = 30_000;
+
+/** `discoveryBases` bounds. The genesis fan-out lands seconds after
+ *  discovery; ten minutes covers a slow reconnect. The char cap bounds a
+ *  first sync that discovers thousands of notes. */
+const DISCOVERY_BASE_TTL_MS = 10 * 60_000;
+const DISCOVERY_BASE_MAX_CHARS = 4 * 1024 * 1024;
 /** How long the serialized stream queue waits on one event before moving on.
  *  Generous next to any real apply (disk + a manifest fetch), short next to a
  *  session. */
@@ -685,6 +691,24 @@ export class SyncEngine {
 
 	/** Optional base content store for 3-way merge (Step 2+). */
 	baseStore: BaseStore | null = null;
+
+	/** The body the CRDT discovery leg wrote from a catch-up row, while the
+	 *  doc is still history-less. It is the base both a local disk edit and
+	 *  the genesis fan-out descend from, so `adoptHistoryLessNote` can 3-way
+	 *  merge a real divergence instead of keeping both. Kept out of
+	 *  `baseStore` on purpose: `lcaFor` feeds that to every later merge and a
+	 *  CRDT flush never refreshes it (#544 stale-base class). Read once, and
+	 *  only when its hash equals the recorded baseline. Cleared once the adopt
+	 *  gives the doc history, after DISCOVERY_BASE_TTL_MS, and oldest-first
+	 *  past the char cap. */
+	private discoveryBaseChars = 0;
+	private discoveryBases = this.track(
+		["vault", "destroy"],
+		new Map<string, { text: string; at: number }>(),
+		(entry) => {
+			this.discoveryBaseChars -= entry.text.length;
+		},
+	);
 
 	/** Persisted set of server-side "explicit empty folder" markers. Owned by
 	 *  the plugin layer (main.ts) and assigned after construction, matching the
@@ -2659,15 +2683,28 @@ export class SyncEngine {
 		//     this fan-out landed). Nothing diverged, so the drift is a plain local
 		//     edit on this lineage: adopt it, then diff the edit on. Keep-both here
 		//     moved a user's edit into a copy and reverted the note.
+		//     Both moved off the body discovery wrote: 3-way merge on that body
+		//     (both descend from it), keep-both only if the merge is dirty.
 		if (hasDrift && disk !== null && file instanceof TFile) {
 			const preview = await this.crdt.previewUpdate(noteId, update);
-			if (preview !== null && fnv1a(preview) === this.syncState.get(normalized)?.hash) {
+			const baseline = this.syncState.get(normalized)?.hash;
+			const discoveryBase = this.peekDiscoveryBase(normalized);
+			const base =
+				preview === null
+					? null
+					: fnv1a(preview) === baseline
+						? preview
+						: discoveryBase !== null && fnv1a(discoveryBase) === baseline
+							? discoveryBase
+							: null;
+			if (preview !== null && base !== null) {
 				return await this.fastForwardHistoryLess(
 					normalized,
 					file,
 					noteId,
 					update,
 					head,
+					base,
 					preview,
 					disk,
 				);
@@ -2727,17 +2764,55 @@ export class SyncEngine {
 			this.socketConverge(normalized, noteId);
 			return "deferred";
 		}
+		this.forgetDiscoveryBase(normalized); // doc has history now
 		this.setCrdtHead(normalized, head);
 		return "applied";
 	}
 
-	/** `adoptHistoryLessNote`'s fast-forward: apply a delta whose content is the
-	 *  drift's own base, then put the drift on top as a local edit (the doc has
-	 *  history now, so no rival lineage). The apply flushes the base over disk,
-	 *  so `disk` lives only in memory from here on; every path below must land
-	 *  it somewhere. If the doc moved off `base` during the apply flush, a
-	 *  2-way seed would delete what moved it, so the edit goes to a keep-both
-	 *  copy; if that copy fails, a forced 3-way merge into the note. */
+	/** Record the body discovery wrote (see `discoveryBases`). Sweeps expired
+	 *  entries (oldest first: re-records go to the end), skips bodies over the
+	 *  CRDT note limit (they never take the adopt path), and evicts oldest past
+	 *  the char cap. */
+	private rememberDiscoveryBase(path: string, text: string): void {
+		this.forgetDiscoveryBase(path);
+		const now = Date.now();
+		for (const [p, entry] of this.discoveryBases) {
+			if (now - entry.at <= DISCOVERY_BASE_TTL_MS) break;
+			this.forgetDiscoveryBase(p);
+		}
+		if (exceedsCrdtNoteLimit(text, MAX_CRDT_NOTE_BYTES)) return;
+		this.discoveryBases.set(path, { text, at: now });
+		this.discoveryBaseChars += text.length;
+		for (const p of this.discoveryBases.keys()) {
+			if (this.discoveryBaseChars <= DISCOVERY_BASE_MAX_CHARS || p === path) break;
+			this.forgetDiscoveryBase(p);
+		}
+	}
+
+	/** The remembered body for `path`, or null when absent or past the TTL. */
+	private peekDiscoveryBase(path: string): string | null {
+		const entry = this.discoveryBases.get(path);
+		if (!entry) return null;
+		if (Date.now() - entry.at <= DISCOVERY_BASE_TTL_MS) return entry.text;
+		this.forgetDiscoveryBase(path);
+		return null;
+	}
+
+	private forgetDiscoveryBase(path: string): void {
+		const entry = this.discoveryBases.get(path);
+		if (!entry) return;
+		this.discoveryBases.delete(path);
+		this.discoveryBaseChars -= entry.text.length;
+	}
+
+	/** `adoptHistoryLessNote`'s merge: apply a delta that projects `expected`,
+	 *  then put the drift (edited from `base`) on top as a local edit; the doc
+	 *  has history now, so no rival lineage. `base === expected` is the
+	 *  fast-forward. The apply flushes `expected` over disk, so `disk` lives
+	 *  only in memory from here on; every path below must land it somewhere.
+	 *  If the doc moved off `expected` during the apply flush, or the 3-way
+	 *  merge is dirty, the edit goes to a keep-both copy; if that copy fails,
+	 *  a forced merge into the note. */
 	private async fastForwardHistoryLess(
 		normalized: string,
 		file: TFile,
@@ -2745,13 +2820,14 @@ export class SyncEngine {
 		update: Uint8Array,
 		head: string,
 		base: string,
+		expected: string,
 		disk: string,
 	): Promise<"applied" | "deferred"> {
 		if (!this.crdt || !(await this.crdt.applyRemoteUpdate(noteId, update))) return "deferred";
 		const crdt = this.crdt;
 		const merge = async (force: boolean): Promise<string | null> => {
 			try {
-				return await crdt.mergeLocalEditFromBase(noteId, base, disk, force);
+				return await crdt.mergeLocalEditFromBase(noteId, base, expected, disk, force);
 			} catch (e) {
 				rlog().warn(
 					"crdt",
@@ -2794,6 +2870,7 @@ export class SyncEngine {
 				void this.flushQueue();
 			}
 		}
+		this.forgetDiscoveryBase(normalized); // doc has history now
 		this.setCrdtHead(normalized, head);
 		return "applied";
 	}
@@ -9577,6 +9654,7 @@ export class SyncEngine {
 						: content;
 				const wrote = await this.flushFromCrdt(normalized, body);
 				if (!wrote) return false;
+				if (body === content) this.rememberDiscoveryBase(normalized, content);
 				// The doc can trail the row (its fan-out was lost). This note is idle
 				// and never enrolled, and the feed cursor moves past the row, so
 				// nothing else would ever bring disk up to the server: re-handshake,

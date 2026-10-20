@@ -42,6 +42,42 @@ from then on. Every path must land it:
 - merge's disk flush throws: warn only; the doc already holds and broadcast
   the edit, so no copy.
 
+## Divergence on the discovered body
+
+When BOTH sides edited the body discovery wrote (A's edit is in the fan-out,
+B's is on disk), the preview no longer hashes to the baseline and the note
+used to go keep-both: e2e `test_no_conflict_modal_on_divergence` found B's
+edit in `NoModal (conflict ...).md`.
+
+The discovery leg now remembers the body it wrote (`discoveryBases`, in
+memory, cleared once the adopt gives the doc history, 10 min TTL swept on
+write, 4M-char cap, over-limit notes skipped). When its hash equals the
+baseline, the adopt 3-way merges with `merge3(base, disk, doc)` and keeps
+both edits; overlapping edits still go keep-both.
+
+Not `baseStore`: `lcaFor` feeds that to every later `applyLocalEdit` merge
+and CRDT flushes never refresh it, so a body stored there goes stale and
+re-applies remote edits (#544 class).
+
+Not `mergeDiskOntoDoc`: diff-match-patch's fuzzy `patch_apply` reports a
+same-word conflict as clean and silently drops one side ("one TWO three" vs
+"one deux three" merges clean to "one TWO three"). `applyLocalEdit` still
+uses it; that is a separate change.
+
+`merge3` rules, each from a probe counterexample (PR 615 review):
+- Line granularity, like diff3. Character diffs shift alignment with
+  cleanup, so the same edit on both sides stopped looking identical and was
+  kept twice, and same-point inserts split a `\r\n` into a bare CR.
+- Overlapping or touching edits conflict, like git. With repeated lines the
+  line diff can pin an edit to the wrong copy; touching edits are where that
+  lost a side's line.
+- Exception: two pure inserts at one point (both appended a line) keep both,
+  remote first. Refused if one contains the other (an extended edit would be
+  duplicated) or either lacks a trailing newline (two lines would join).
+- Known, accepted: with repeated identical lines the merge can place blank
+  lines differently, and two sides producing the same line apply it once.
+  Randomized probes found no lost line content.
+
 ## How it was found
 
 Remote client logs only ship warn+, and the keep-both line is info. A
