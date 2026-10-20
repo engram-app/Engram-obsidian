@@ -72,6 +72,8 @@ when the doc has not diverged from the base, or when **any** hunk fails to apply
 
 `src/crdt/lca-merge.ts` (`mergeDiskOntoDoc(base, disk, current)`, #357) applies a disk edit's delta relative to a base onto the doc's current text so remote ops that landed mid-read survive. Its base IS `BaseStore`, wired in `main.ts` as `lcaFor`. That is the exact staleness hazard above; the guard is that a dirty merge (`clean: false`, a hunk failed to apply) must fall back to the two-way path rather than ship, which `onDirtyMerge` logs as `LCA merge left unapplied hunks`. Treat a stale `BaseStore` base here as a known risk, not a solved one.
 
+A *clean* result is not safe either. diff-match-patch's `patch_apply` fuzzy-matches short patches and never checks the deleted text, so concurrent edits to the same span merge "clean" with the disk side kept: base `one two three`, disk `one TWO three`, doc `one deux three` gives `one TWO three`. Swapping in `merge3` does not help on its own: its conflict falls through to the two-way path, which also keeps the disk side, and its git-style rules turn common adjacent-line edits into conflicts. `overwritesConcurrentEdit` (char-level overlap) flags these merges and `onLossyMerge` warns `LCA merge overwrote a concurrent edit` so prod frequency is measurable; if it is not rare, overlapping edits need a keep-both path in `applyLocalEdit`'s callers.
+
 ## Gotchas
 
 - A "3-way merge" that reaches for `BaseStore` is almost certainly wrong now (the one consumer, `lcaFor`, is described above). Ask
