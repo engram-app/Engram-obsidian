@@ -701,8 +701,14 @@ export class SyncEngine {
 	 *  only when its hash equals the recorded baseline. Cleared once the adopt
 	 *  gives the doc history, after DISCOVERY_BASE_TTL_MS, and oldest-first
 	 *  past the char cap. */
-	private discoveryBases = new Map<string, { text: string; at: number }>();
 	private discoveryBaseChars = 0;
+	private discoveryBases = this.track(
+		["vault", "destroy"],
+		new Map<string, { text: string; at: number }>(),
+		(entry) => {
+			this.discoveryBaseChars -= entry.text.length;
+		},
+	);
 
 	/** Persisted set of server-side "explicit empty folder" markers. Owned by
 	 *  the plugin layer (main.ts) and assigned after construction, matching the
