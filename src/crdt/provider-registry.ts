@@ -584,6 +584,34 @@ export class ProviderRegistry {
 		e.deliveredReceipt = receipt;
 	}
 
+	/** The state vector of the last ACKED delivery: a lower bound of what the
+	 *  server holds, so `encodeStateAsUpdate(noteId, it)` carries only what the
+	 *  server can lack. This is syncStep2's rule (diff against the peer's
+	 *  vector), with the handshake's advertised vector replaced by the one the
+	 *  ack proved. The diff still ships the FULL delete set, so the vector's
+	 *  blindness to deletions loses nothing here.
+	 *
+	 *  Undefined when no delivery was acked on this entry (first push, a doc
+	 *  rehydrated after eviction, a reload): send the full state.
+	 *
+	 *  ponytail: trusts the server's state to be monotone. A server that DROPS
+	 *  a lineage it acked (the checkpoint flatten) would hold the diff as pending
+	 *  structs; a full-state push into a flattened doc already doubles it, so
+	 *  the fix for both is on the flatten side. */
+	deliveredStateVector(noteId: string): Uint8Array | undefined {
+		const e = this.entries.get(noteId);
+		if (!e?.lifetime.active || !e.deliveredReceipt) return undefined;
+		return Y.encodeStateVector(Y.decodeSnapshot(e.deliveredReceipt).sv);
+	}
+
+	/** Forget the acked delivery: a refused write may mean the server lacks the
+	 *  base, so the next push falls back to the full state. Also voids the
+	 *  receipt for `hasCurrentDeliveryReceipt`, which costs at most a room. */
+	clearDelivered(noteId: string): void {
+		const e = this.entries.get(noteId);
+		if (e) e.deliveredReceipt = undefined;
+	}
+
 	/** Encode brand-new content as a standalone genesis update (throwaway doc, no
 	 *  persistence / listeners) — byte-identical to a live seed via seedContentInto. */
 	encodeGenesisUpdate(content: string, kind: DocKind = "note"): Uint8Array {

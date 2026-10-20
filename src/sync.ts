@@ -3939,9 +3939,11 @@ export class SyncEngine {
 	 *
 	 *  `crdt_doc_update` carries the same ops as a plain Yjs update and the
 	 *  server merges it into a doc owned by a short-lived applier, so no room is
-	 *  left behind. It sends the doc's FULL state rather than a delta: without a
-	 *  handshake we do not know the server's state vector, and a Yjs merge of
-	 *  full state is idempotent — larger on the wire, never wrong.
+	 *  left behind. Without a handshake the server never advertises its state
+	 *  vector, so the base is the vector of the last ACKED delivery
+	 *  (`deliveredStateVector`), a proven lower bound. With none known it sends
+	 *  the FULL state: a Yjs merge of full state is idempotent, larger on the
+	 *  wire, never wrong.
 	 *
 	 *  Unlike the READ twin this needs NO `hasUndeliveredOps` precondition. That
 	 *  gate exists because `crdt_doc_state` cannot carry anything upward; this
@@ -3991,7 +3993,11 @@ export class SyncEngine {
 			// landing between the two then makes the receipt under-claim (one
 			// wasted room) instead of covering an op that never went.
 			receipt = await crdt.encodeDeliveryReceipt?.(noteId);
-			const state = await crdt.encodeStateAsUpdate(noteId);
+			// Only what the server can lack: a diff against the last acked
+			// delivery, the full state when none is known. Read BEFORE the
+			// receipt above is recorded, so it is the PREVIOUS ack's base.
+			const base = crdt.deliveredStateVector?.(noteId);
+			const state = await crdt.encodeStateAsUpdate(noteId, base);
 			if (this.crdt !== crdt) return false;
 			// A doc's full state carries its history and tombstones, so it can
 			// dwarf the note's text. Same budget the genesis frame is held to
@@ -4019,7 +4025,9 @@ export class SyncEngine {
 			// Counter, not a log line: the trigger is a whole restored queue at
 			// once, and one remote warn per note would flood the drain this
 			// feature exists to make cheap. Same call the sibling caps make.
-			if (state.byteLength <= EMPTY_YJS_UPDATE_BYTES) {
+			// A full state only: a DIFF is 2 bytes whenever the server already
+			// holds everything, and that is a delivered note.
+			if (!base && state.byteLength <= EMPTY_YJS_UPDATE_BYTES) {
 				rlog().anomaly("crdt", "roomfree_state_empty");
 				return false;
 			}
@@ -4062,6 +4070,9 @@ export class SyncEngine {
 			// `hasCurrentDeliveryReceipt`, which only the room-free read consults.
 			return true;
 		} catch (e) {
+			// Any refusal may mean the server lacks the base (`note_not_found`, a
+			// reset doc), and a diff against a base it lacks pends there unseen.
+			crdt.clearDelivered?.(noteId);
 			this.noteDocUpdateFailure(e, entry.path);
 			return false;
 		}

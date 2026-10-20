@@ -356,9 +356,11 @@ describe("room-free queue delivery (#1493)", () => {
 	function queuedEngine(opts: {
 		docUpdate?: (docId: string, b64: string) => Promise<{ head: string }>;
 		liveBound?: (path: string) => boolean;
-		encode?: (noteId: string) => Promise<Uint8Array>;
+		encode?: (noteId: string, sv?: Uint8Array) => Promise<Uint8Array>;
 		markSynced?: (noteId: string) => void;
 		markDelivered?: (noteId: string, receipt: Uint8Array) => void;
+		deliveredStateVector?: (noteId: string) => Uint8Array | undefined;
+		clearDelivered?: (noteId: string) => void;
 	}) {
 		let receiptSeq = 1;
 		const crdt = {
@@ -378,6 +380,10 @@ describe("room-free queue delivery (#1493)", () => {
 			encodeDeliveryReceipt: async () => new Uint8Array([receiptSeq++]),
 			markSynced: opts.markSynced ?? (() => {}),
 			markDelivered: opts.markDelivered ?? (() => {}),
+			...(opts.deliveredStateVector
+				? { deliveredStateVector: opts.deliveredStateVector }
+				: {}),
+			...(opts.clearDelivered ? { clearDelivered: opts.clearDelivered } : {}),
 		};
 		const enroll = mock();
 		const reset = mock();
@@ -496,6 +502,88 @@ describe("room-free queue delivery (#1493)", () => {
 		// The FIRST receipt — the one captured before the state was encoded. A
 		// capture moved after the send would hand over a later value.
 		expect(markDelivered.mock.calls[0]?.[1]).toEqual(new Uint8Array([1]));
+	});
+
+	/** A fake of the registry's delivery base: `markDelivered` records the
+	 *  receipt, `deliveredStateVector` hands its vector back, `clearDelivered`
+	 *  forgets it. Stands in for the real one, which
+	 *  tests/crdt/provider-registry.test.ts proves against real Yjs docs. */
+	function deliveryBase() {
+		let base: Uint8Array | undefined;
+		return {
+			markDelivered: mock((_id: string, receipt: Uint8Array) => {
+				base = receipt;
+			}),
+			deliveredStateVector: () => base,
+			clearDelivered: mock(() => {
+				base = undefined;
+			}),
+		};
+	}
+
+	test("the first push is the FULL state; after an ack the next one diffs against the acked base", async () => {
+		const base = deliveryBase();
+		const encode = mock(async (_id: string, _sv?: Uint8Array) => new Uint8Array([1, 2, 3]));
+		const docUpdate = mock(async () => ({ head: "h1" }));
+		const { e } = queuedEngine({ docUpdate, encode, ...base });
+
+		await enqueueOne(e);
+		await e.flushQueue();
+		await enqueueOne(e);
+		await e.flushQueue();
+
+		expect(docUpdate).toHaveBeenCalledTimes(2);
+		// No known server state on the first push: full state, as before.
+		expect(encode.mock.calls[0]?.[1]).toBeUndefined();
+		// The second is diffed against what the first ack proved the server holds.
+		expect(encode.mock.calls[1]?.[1]).toEqual(base.markDelivered.mock.calls[0]?.[1]);
+	});
+
+	test("a REFUSED write drops the base, so the retry sends the full state", async () => {
+		// Any refusal may mean the server lacks the base (`note_not_found`, a
+		// reset doc). A diff against a base it lacks would pend there unseen, so
+		// the next attempt must not assume it.
+		const base = deliveryBase();
+		const encode = mock(async (_id: string, _sv?: Uint8Array) => new Uint8Array([1, 2, 3]));
+		let fail = false;
+		const docUpdate = mock(async () => {
+			if (fail) throw new Error('request failed: {"reason":"note_not_found"}');
+			return { head: "h1" };
+		});
+		const { e } = queuedEngine({ docUpdate, encode, ...base });
+
+		await enqueueOne(e);
+		await e.flushQueue();
+		fail = true;
+		await enqueueOne(e);
+		await e.flushQueue();
+		fail = false;
+		await e.flushQueue();
+
+		expect(base.clearDelivered).toHaveBeenCalledWith("id-1");
+		expect(encode.mock.calls[1]?.[1]).toBeDefined();
+		expect(encode.mock.calls[2]?.[1]).toBeUndefined();
+	});
+
+	test("an EMPTY diff against a known base is a delivery, not an empty doc", async () => {
+		// The empty-doc guard reads a full state; a diff is 2 bytes whenever the
+		// server already holds everything, and that is a delivered note.
+		const base = deliveryBase();
+		const encode = mock(async (_id: string, sv?: Uint8Array) =>
+			sv ? new Uint8Array([0, 0]) : new Uint8Array([1, 2, 3]),
+		);
+		const docUpdate = mock(async () => ({ head: "h1" }));
+		const { e, enroll } = queuedEngine({ docUpdate, encode, ...base });
+
+		await enqueueOne(e);
+		await e.flushQueue();
+		await enqueueOne(e);
+		const flushed = await e.flushQueue();
+
+		expect(docUpdate).toHaveBeenCalledTimes(2);
+		expect(flushed).toBe(1);
+		expect(e.queue.size).toBe(0);
+		expect(enroll).not.toHaveBeenCalled();
 	});
 
 	test("a REFUSED write records NO delivery", async () => {
