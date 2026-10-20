@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { merge3, mergeDiskOntoDoc } from "../../src/crdt/lca-merge";
+import { merge3, mergeDiskOntoDoc, overwritesConcurrentEdit } from "../../src/crdt/lca-merge";
 
 describe("mergeDiskOntoDoc", () => {
 	test("applies a disk-side edit that the doc has not seen", () => {
@@ -203,4 +203,53 @@ test("merge3: an appended line plus an edit elsewhere is not duplicated", () => 
 	expect(
 		merge3("# T\n\nbody\n", "# T\n\nbody\n- [ ] task\n", "# T\n\nintro\nbody\n- [ ] task\n"),
 	).toEqual({ text: "# T\n\nintro\nbody\n- [ ] task\n", clean: true });
+});
+
+describe("overwritesConcurrentEdit (char-level overlap of disk and doc edits)", () => {
+	const cases: [string, string, string, string, boolean][] = [
+		// [name, base, disk, current (doc), expected]
+		[
+			"same word edited both sides",
+			"one two three\n",
+			"one TWO three\n",
+			"one deux three\n",
+			true,
+		],
+		[
+			"disk deletes text the doc edited",
+			"keep DROPME keep\n",
+			"keep  keep\n",
+			"keep DROP+ME keep\n",
+			true,
+		],
+		// The fuzzy merge gives "alpha NEW gamma": the doc insert survives.
+		[
+			"disk deletes next to a doc insert",
+			"alpha beta gamma\n",
+			"alpha gamma\n",
+			"alpha beta NEW gamma\n",
+			false,
+		],
+		[
+			"different words on one line",
+			"the quick brown fox\n",
+			"the QUICK brown fox\n",
+			"the quick brown FOX\n",
+			false,
+		],
+		["adjacent lines", "1\n2\n3\n", "1\nTWO\n3\n", "1\n2\nTHREE\n", false],
+		[
+			"both append at EOF",
+			"base line\n",
+			"base line\nB change\n",
+			"base line\nA change\n",
+			false,
+		],
+		["identical edit", "a b c\n", "a B c\n", "a B c\n", false],
+		["doc unchanged", "a\n", "a\nL\n", "a\n", false],
+		["disk unchanged", "a\n", "a\n", "a\nR\n", false],
+	];
+	for (const [name, base, disk, current, want] of cases) {
+		test(name, () => expect(overwritesConcurrentEdit(base, disk, current)).toBe(want));
+	}
 });

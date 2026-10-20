@@ -22,7 +22,7 @@ import {
 	rawFrontmatterOf,
 	splitFrontmatter,
 } from "./frontmatter-codec";
-import { merge3, mergeDiskOntoDoc } from "./lca-merge";
+import { merge3, mergeDiskOntoDoc, overwritesConcurrentEdit } from "./lca-merge";
 import { type FrameKind, NoteProvider } from "./note-provider";
 import { docHasAnyHistory, docHasHistory, seedContentInto, seedFrontmatterInto } from "./note-seed";
 
@@ -107,6 +107,10 @@ export interface ProviderRegistryOpts {
 	 *  written, but the caller may want to record an issue — a dirty merge is the
 	 *  honest conflict signal that the two-way diff never produced. */
 	onDirtyMerge?: (noteId: string) => void;
+	/** Called when a merge reported clean but the disk edit overwrote a
+	 *  concurrent edit already in the doc (`overwritesConcurrentEdit`): the
+	 *  doc's side is silently dropped. Measurement only; behaviour unchanged. */
+	onLossyMerge?: (noteId: string) => void;
 }
 
 export class ProviderRegistry {
@@ -402,8 +406,12 @@ export class ProviderRegistry {
 		// isUnchangedSynced for a note that actually has content (#846 doubling).
 		const base = (hasLca ?? docHasHistory(e.doc, e.kind)) ? this.opts.lcaFor?.(noteId) : null;
 		if (base !== null && base !== undefined && e.kind === "note") {
-			const merged = mergeDiskOntoDoc(base, diskContent, this.project(e));
+			const current = this.project(e);
+			const merged = mergeDiskOntoDoc(base, diskContent, current);
 			if (merged.clean) {
+				if (overwritesConcurrentEdit(base, diskContent, current)) {
+					this.opts.onLossyMerge?.(noteId);
+				}
 				seedContentInto(e.doc, e.text, merged.text, docHasHistory(e.doc, e.kind));
 				return merged.text;
 			}

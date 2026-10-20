@@ -92,6 +92,8 @@ export interface CrdtWiringDeps {
 	lcaFor?: (noteId: string) => string | null;
 	/** A merge that could not apply every hunk. */
 	onDirtyMerge?: (noteId: string) => void;
+	/** A clean merge that dropped a concurrent doc edit (measurement). */
+	onLossyMerge?: (noteId: string) => void;
 }
 
 export interface CrdtWiring {
@@ -284,6 +286,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		dbPrefix: deps.dbPrefix,
 		lcaFor: deps.lcaFor,
 		onDirtyMerge: deps.onDirtyMerge,
+		onLossyMerge: deps.onLossyMerge,
 		send: (docId, frame, kind) => {
 			// Create-before-edit: hold OPS until the note's server row exists. Never
 			// hold a "handshake" frame (syncStep1, or the syncStep2 written in reply

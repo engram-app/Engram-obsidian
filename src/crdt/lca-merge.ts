@@ -61,14 +61,18 @@ interface Edit {
 	text: string;
 }
 
-/** Line-level edits: diff3 granularity. A character diff's alignment shifts
- *  with cleanup, so the same edit on both sides stops looking identical
- *  (duplicated on merge) and same-point inserts can split a "\r\n". */
-function editsFrom(base: string, other: string): Edit[] {
+/** `other`'s edits against `base`. Line level (`merge3`, diff3 granularity):
+ *  a character diff's alignment shifts with cleanup, so the same edit on both
+ *  sides stops looking identical (duplicated on merge) and same-point inserts
+ *  can split a "\r\n". Character level for `overwritesConcurrentEdit`. */
+function editsFrom(base: string, other: string, granularity: "line" | "char"): Edit[] {
 	const dmp = new diff_match_patch();
-	const lines = dmp.diff_linesToChars_(base, other);
-	const diffs = dmp.diff_main(lines.chars1, lines.chars2, false);
-	dmp.diff_charsToLines_(diffs, lines.lineArray);
+	const lines = granularity === "line" ? dmp.diff_linesToChars_(base, other) : null;
+	const diffs = lines
+		? dmp.diff_main(lines.chars1, lines.chars2, false)
+		: dmp.diff_main(base, other);
+	if (lines) dmp.diff_charsToLines_(diffs, lines.lineArray);
+	else dmp.diff_cleanupSemantic(diffs);
 	const out: Edit[] = [];
 	let pos = 0;
 	let cur: Edit | null = null;
@@ -119,8 +123,8 @@ function conflicts(a: Edit, b: Edit): boolean {
  * patch_apply reports a same-word conflict as clean and drops one side.
  */
 export function merge3(base: string, local: string, remote: string): LcaMergeResult {
-	const mine = editsFrom(base, local);
-	const theirs = editsFrom(base, remote).filter(
+	const mine = editsFrom(base, local, "line");
+	const theirs = editsFrom(base, remote, "line").filter(
 		(r) => !mine.some((m) => m.start === r.start && m.end === r.end && m.text === r.text),
 	);
 	for (const m of mine) {
@@ -143,4 +147,27 @@ export function merge3(base: string, local: string, remote: string): LcaMergeRes
 		pos = Math.max(pos, e.end);
 	}
 	return { text: out + base.slice(pos), clean: true };
+}
+
+/**
+ * Whether the disk edit and the doc's edit (both relative to `base`) touch the
+ * same characters: overlapping replaced ranges, or one inserting strictly
+ * inside a range the other replaced. `mergeDiskOntoDoc` reports those clean
+ * and keeps the disk side, silently dropping the doc's edit. Used to MEASURE
+ * how often that happens, not to change the merge.
+ */
+export function overwritesConcurrentEdit(base: string, disk: string, current: string): boolean {
+	if (base === disk || base === current) return false;
+	const mine = editsFrom(base, disk, "char");
+	const theirs = editsFrom(base, current, "char");
+	const inside = (p: number, e: Edit) => e.start < p && p < e.end;
+	return mine.some((m) =>
+		theirs.some(
+			(t) =>
+				!(m.start === t.start && m.end === t.end && m.text === t.text) &&
+				((m.start < t.end && t.start < m.end) ||
+					(m.start === m.end && inside(m.start, t)) ||
+					(t.start === t.end && inside(t.start, m))),
+		),
+	);
 }

@@ -11,17 +11,45 @@ interface Opts {
 
 function registryWith({ lca, dbPrefix }: Opts) {
 	const dirty: string[] = [];
+	const lossy: string[] = [];
 	const registry = new ProviderRegistry({
 		dbPrefix,
 		send: () => true,
 		onFlushToDisk: () => true,
 		lcaFor: () => lca,
 		onDirtyMerge: (id) => dirty.push(id),
+		onLossyMerge: (id) => lossy.push(id),
 	});
-	return { registry, dirty };
+	return { registry, dirty, lossy };
 }
 
 describe("applyLocalEdit with an LCA", () => {
+	test("reports a clean merge that overwrote a concurrent edit (behaviour unchanged)", async () => {
+		// diff-match-patch's fuzzy patch_apply reports this clean and keeps the
+		// disk side. Measured, not changed: onLossyMerge counts it in prod.
+		const { registry, lossy } = registryWith({ lca: "one two three\n", dbPrefix: "lca-lossy" });
+		await registry.applyLocalEdit("nl", "one deux three\n");
+		await settle();
+
+		await registry.applyLocalEdit("nl", "one TWO three\n");
+
+		expect(await registry.projectedText("nl")).toBe("one TWO three\n");
+		expect(lossy).toEqual(["nl"]);
+		await registry.destroyAll();
+	});
+
+	test("does not report a merge that kept both edits", async () => {
+		const { registry, lossy } = registryWith({ lca: "1\n2\n3\n", dbPrefix: "lca-notlossy" });
+		await registry.applyLocalEdit("nk", "1\n2\nTHREE\n");
+		await settle();
+
+		await registry.applyLocalEdit("nk", "1\nTWO\n3\n");
+
+		expect(await registry.projectedText("nk")).toBe("1\nTWO\nTHREE\n");
+		expect(lossy).toEqual([]);
+		await registry.destroyAll();
+	});
+
 	test("keeps a remote edit that the disk snapshot predates", async () => {
 		// The regression the whole change exists for. The doc has remote content
 		// the disk read never saw; applying the disk delta relative to the base
