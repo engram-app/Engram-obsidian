@@ -467,6 +467,7 @@ describe("opening the sync gate re-runs the catch-up (#425)", () => {
 				getCatchupSeq: () => 0,
 				getCatchupId: () => null,
 				getManifestSeq: () => 0,
+				getCtimeSweepVaultId: () => "",
 				queue: { persistable: () => [] },
 				exportSyncState: () => ({}),
 				getSyncStateVaultId: () => "v1",

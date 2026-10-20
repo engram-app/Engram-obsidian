@@ -248,6 +248,8 @@ function fileCtimeSeconds(file: TFile): number | undefined {
 	return ms !== undefined && ms > 0 ? ms / 1000 : undefined;
 }
 
+const CTIME_SWEEP_BATCH = 500;
+
 function countFolders(paths: Iterable<string>): number {
 	const set = new Set<string>();
 	for (const p of paths) {
@@ -609,6 +611,10 @@ export class SyncEngine {
 	);
 	private pulling = false;
 	private lastSync = "";
+	private ctimeSweepVaultId = "";
+	private ctimeSweepRunning = false;
+	/** A failed sweep is not retried again this session (no hammering a 429/404). */
+	private ctimeSweepTried = false;
 	private lastError = "";
 	private offline = false;
 	private healthCheckTimer: number | null = null;
@@ -3070,6 +3076,7 @@ export class SyncEngine {
 			// (same object), so the callback need not read this — it just triggers
 			// the wholesale save.
 			noteIds?: Record<string, string>;
+			ctimeSweepVaultId?: string;
 		}) => Promise<void>,
 		/** Injectable clock + timers. Defaulted so every existing caller is
 		 *  unchanged; tests pass a ManualTimeProvider to advance a TTL window
@@ -3351,6 +3358,52 @@ export class SyncEngine {
 
 	getManifestSeq(): number {
 		return this.manifestSeq;
+	}
+
+	/** The vault whose one-time ctime sweep finished on this device ("" = none). */
+	getCtimeSweepVaultId(): string {
+		return this.ctimeSweepVaultId;
+	}
+
+	setCtimeSweepVaultId(id: string): void {
+		this.ctimeSweepVaultId = id;
+	}
+
+	/** One-time background sweep: send every note's file ctime in bulk batches so
+	 *  notes that never get re-pushed (most of an imported vault) still carry
+	 *  their real created time. Runs after a full sync, once per vault per
+	 *  device (recorded in data.json). Skips while offline or with queued
+	 *  changes; any failed batch (429, 404 on an old backend, network) aborts
+	 *  without recording, so the next full sync retries. In-session retries are
+	 *  capped to one attempt. */
+	async runCtimeSweep(): Promise<void> {
+		const vaultId = this.settings.vaultId;
+		if (!vaultId || this.ctimeSweepVaultId === vaultId) return;
+		if (this.ctimeSweepRunning || this.ctimeSweepTried) return;
+		if (this.offline || this.syncBlocked || this.queue.size > 0) return;
+		this.ctimeSweepRunning = true;
+		try {
+			const entries = this.app.vault
+				.getFiles()
+				.filter(
+					(f: TFile) =>
+						this.isSyncable(f) && !this.isBinaryFile(f) && !this.shouldIgnore(f.path),
+				)
+				.filter((f: TFile) => f.stat.ctime > 0)
+				.map((f: TFile) => ({ path: f.path, ctime: f.stat.ctime / 1000 }));
+			for (let i = 0; i < entries.length; i += CTIME_SWEEP_BATCH) {
+				if (this.offline) return;
+				await this.api.setNoteCtimes(entries.slice(i, i + CTIME_SWEEP_BATCH));
+			}
+			this.ctimeSweepVaultId = vaultId;
+			await this.saveData({ ctimeSweepVaultId: vaultId });
+			rlog().info("lifecycle", `ctime sweep done: ${entries.length} notes`);
+		} catch (e) {
+			this.ctimeSweepTried = true;
+			rlog().warn("lifecycle", `ctime sweep aborted, retries next session: ${errMsg(e)}`);
+		} finally {
+			this.ctimeSweepRunning = false;
+		}
 	}
 
 	setManifestSeq(seq: number): void {
@@ -10581,6 +10634,7 @@ export class SyncEngine {
 
 		devLog().log("lifecycle", `fullSync done — pulled=${pulled} pushed=${pushed}`);
 		rlog().info("lifecycle", `FullSync done — pulled=${pulled} pushed=${pushed}`);
+		void this.runCtimeSweep();
 		return { pulled, pushed };
 	}
 

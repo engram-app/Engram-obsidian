@@ -122,6 +122,8 @@ interface PluginData {
 	/** Manifest change_seq watermark of the last fully-processed catch-up pass
 	 *  (Phase E1 #1065) — sent as ?since_seq= to short-circuit an unchanged vault. */
 	manifestSeq?: number;
+	/** Vault whose one-time ctime sweep finished on this device. */
+	ctimeSweepVaultId?: string;
 	/** New unified sync state (hash + version per file). */
 	syncState?: Record<string, FileSyncState>;
 	/** The server vaultId that `syncState` was recorded under. Used to
@@ -679,6 +681,9 @@ export default class EngramSyncPlugin extends Plugin {
 			if (data.manifestSeq !== undefined) {
 				this.syncEngine.setManifestSeq(data.manifestSeq);
 			}
+			if (data.ctimeSweepVaultId !== undefined) {
+				this.syncEngine.setCtimeSweepVaultId(data.ctimeSweepVaultId);
+			}
 			await this.savePluginData(this.syncEngine.getLastSync());
 		});
 
@@ -900,6 +905,9 @@ export default class EngramSyncPlugin extends Plugin {
 		}
 		if (saved?.manifestSeq !== undefined) {
 			this.syncEngine.setManifestSeq(saved.manifestSeq);
+		}
+		if (saved?.ctimeSweepVaultId !== undefined) {
+			this.syncEngine.setCtimeSweepVaultId(saved.ctimeSweepVaultId);
 		}
 		if (saved?.offlineQueue?.length) {
 			this.syncEngine.queue.load(saved.offlineQueue);
@@ -1990,6 +1998,8 @@ export default class EngramSyncPlugin extends Plugin {
 			// Manifest since_seq watermark (E1 #1065) — re-listed for the same
 			// wholesale-save reason.
 			manifestSeq: this.syncEngine.getManifestSeq(),
+			// Re-listed for the wholesale-save reason: wiped otherwise, re-sweeping.
+			ctimeSweepVaultId: this.syncEngine.getCtimeSweepVaultId(),
 			// persistable(), not all(): note bodies from legacy entries must not be
 			// written back into data.json — see OfflineQueue.persistable.
 			offlineQueue: offlineQueue ?? this.syncEngine.queue.persistable(),

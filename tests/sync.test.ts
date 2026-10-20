@@ -5323,3 +5323,87 @@ describe("SyncEngine.applyPlanState / resyncSkippedAttachments", () => {
 		expect(mockApi.pushAttachment).toHaveBeenCalled();
 	});
 });
+
+describe("SyncEngine.runCtimeSweep", () => {
+	const setCtimes = mock();
+	beforeEach(() => {
+		setCtimes.mockReset().mockImplementation(async (e: unknown[]) => ({ updated: e.length }));
+		(mockApi as any).setNoteCtimes = setCtimes;
+		mockSaveData.mockClear();
+	});
+
+	function files(n: number): TFile[] {
+		return Array.from({ length: n }, (_, i) => {
+			const f = new TFile(`Notes/n${i}.md`, 5000);
+			f.stat.ctime = 2000 + i;
+			return f;
+		});
+	}
+
+	test("sends every note ctime in 500-sized batches, then records done once", async () => {
+		const engine = createEngine({ vaultId: "v1" });
+		mockApp.vault.getFiles.mockReturnValue(files(1201));
+
+		await engine.runCtimeSweep();
+
+		expect(setCtimes.mock.calls.map((c) => (c[0] as unknown[]).length)).toEqual([
+			500, 500, 201,
+		]);
+		expect((setCtimes.mock.calls[0][0] as any[])[0]).toEqual({ path: "Notes/n0.md", ctime: 2 });
+		expect(engine.getCtimeSweepVaultId()).toBe("v1");
+		expect(mockSaveData).toHaveBeenCalledWith({ ctimeSweepVaultId: "v1" });
+
+		setCtimes.mockClear();
+		await engine.runCtimeSweep();
+		expect(setCtimes).not.toHaveBeenCalled();
+	});
+
+	test("skips files without a ctime", async () => {
+		const engine = createEngine({ vaultId: "v1" });
+		const [a, b] = files(2);
+		b.stat.ctime = 0;
+		mockApp.vault.getFiles.mockReturnValue([a, b]);
+
+		await engine.runCtimeSweep();
+
+		expect((setCtimes.mock.calls[0][0] as unknown[]).length).toBe(1);
+	});
+
+	test("does not run offline, or with queued changes, or without a vault", async () => {
+		mockApp.vault.getFiles.mockReturnValue(files(2));
+		const offline = createEngine({ vaultId: "v1" });
+		(offline as any).offline = true;
+		await offline.runCtimeSweep();
+
+		const queued = createEngine({ vaultId: "v1" });
+		queued.queue.load([
+			{ path: "Q.md", action: "upsert", content: "q", mtime: 1, timestamp: 1 },
+		]);
+		await queued.runCtimeSweep();
+
+		await createEngine({ vaultId: null }).runCtimeSweep();
+
+		expect(setCtimes).not.toHaveBeenCalled();
+	});
+
+	test("a failed batch stops the sweep and leaves it unrecorded for a retry", async () => {
+		const engine = createEngine({ vaultId: "v1" });
+		mockApp.vault.getFiles.mockReturnValue(files(1001));
+		setCtimes.mockRejectedValueOnce(Object.assign(new Error("429"), { status: 429 }));
+
+		await engine.runCtimeSweep();
+
+		expect(setCtimes).toHaveBeenCalledTimes(1);
+		expect(engine.getCtimeSweepVaultId()).toBe("");
+	});
+
+	test("reruns for a different vault", async () => {
+		const engine = createEngine({ vaultId: "v2" });
+		engine.setCtimeSweepVaultId("v1");
+		mockApp.vault.getFiles.mockReturnValue(files(1));
+
+		await engine.runCtimeSweep();
+
+		expect(setCtimes).toHaveBeenCalledTimes(1);
+	});
+});

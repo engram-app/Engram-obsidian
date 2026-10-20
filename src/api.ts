@@ -628,6 +628,14 @@ export class EngramApi {
 	 *  server adopts as the note's primary key on first create (note_id-keyed
 	 *  CRDT rework, Task 5). Harmless to send for an existing note: the server
 	 *  already has an id and ignores it. */
+	/** Fill file creation times on notes that already exist server-side. One
+	 *  bulk call per <=500 entries; the server only fills NULLs, so re-sends are
+	 *  harmless. 404 on a backend that predates the endpoint. */
+	async setNoteCtimes(entries: { path: string; ctime: number }[]): Promise<{ updated: number }> {
+		const resp = await this.request("POST", "/notes/ctime", { entries });
+		return resp.json as { updated: number };
+	}
+
 	async pushNote(
 		path: string,
 		content: string,
