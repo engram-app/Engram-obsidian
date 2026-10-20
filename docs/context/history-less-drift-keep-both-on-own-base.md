@@ -24,13 +24,23 @@ edited from (the recorded baseline hash).
 
 `ProviderRegistry.previewUpdate` applies the delta to a scratch doc and
 projects it (null if it pends). When the projection hashes to the recorded
-baseline, `fastForwardHistoryLess` applies the delta, then merges disk back
-with `applyLocalEdit` (doc has history now, so a minimal diff, no #234
-doubling), same shape as `adoptCreateAck`'s M1. Keep-both remains for real
-divergence and as the fallback if the merge does not land.
+baseline, `fastForwardHistoryLess` applies the delta, then
+`mergeLocalEditFromBase(preview, disk)` seeds the edit as a minimal diff,
+checking and seeding with no await in between.
 
-Known window: the apply's flush writes the base over disk before the merge
-flush restores the edit. The edit lives only in memory between the two.
+Do NOT use `applyLocalEdit` here. These notes have no `baseStore` entry (the
+catch-up discovery leg never sets one), so it falls to a 2-way diff from the
+doc to the stale `disk` snapshot, deleting any fan-out or autosave that
+landed during the apply flush and broadcasting the deletion.
+
+The apply flush writes the base over disk, so the edit lives only in memory
+from then on. Every path must land it:
+- doc still projects the base: seed the edit, flush.
+- doc moved: keep-both copy (old behaviour, nothing diffed away).
+- copy write throws: forced 3-way merge of base→disk onto the doc (may be
+  dirty or duplicate text, never loses it).
+- merge's disk flush throws: warn only; the doc already holds and broadcast
+  the edit, so no copy.
 
 ## How it was found
 

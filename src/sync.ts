@@ -2668,6 +2668,7 @@ export class SyncEngine {
 					noteId,
 					update,
 					head,
+					preview,
 					disk,
 				);
 			}
@@ -2731,42 +2732,67 @@ export class SyncEngine {
 	}
 
 	/** `adoptHistoryLessNote`'s fast-forward: apply a delta whose content is the
-	 *  drift's own base, then merge the drift back as a minimal diff (the doc
-	 *  has history now, so no rival lineage). The apply flushes the base over
-	 *  disk, so `disk` lives only in memory until the merge lands. No reread,
-	 *  it would read the just-reverted disk (same as adoptCreateAck's M1). If
-	 *  the merge does not land, the edit goes to a keep-both copy instead. */
+	 *  drift's own base, then put the drift on top as a local edit (the doc has
+	 *  history now, so no rival lineage). The apply flushes the base over disk,
+	 *  so `disk` lives only in memory from here on; every path below must land
+	 *  it somewhere. If the doc moved off `base` during the apply flush, a
+	 *  2-way seed would delete what moved it, so the edit goes to a keep-both
+	 *  copy; if that copy fails, a forced 3-way merge into the note. */
 	private async fastForwardHistoryLess(
 		normalized: string,
 		file: TFile,
 		noteId: string,
 		update: Uint8Array,
 		head: string,
+		base: string,
 		disk: string,
 	): Promise<"applied" | "deferred"> {
 		if (!this.crdt || !(await this.crdt.applyRemoteUpdate(noteId, update))) return "deferred";
-		let merged: string | null = null;
-		try {
-			merged = await this.crdt.applyLocalEdit(noteId, disk);
-			if (merged !== null) await this.flushFromCrdt(normalized, merged);
-		} catch (e) {
-			rlog().warn(
-				"crdt",
-				`history-less fast-forward merge failed for ${noteRef(normalized)}: ${errMsg(e, normalized)}`,
-			);
-			merged = null;
-		}
+		const crdt = this.crdt;
+		const merge = async (force: boolean): Promise<string | null> => {
+			try {
+				return await crdt.mergeLocalEditFromBase(noteId, base, disk, force);
+			} catch (e) {
+				rlog().warn(
+					"crdt",
+					`history-less fast-forward merge failed for ${noteRef(normalized)}: ${errMsg(e, normalized)}`,
+				);
+				return null;
+			}
+		};
+		let merged = await merge(false);
 		if (merged === null) {
-			const copy = await this.writeDriftConflictCopy(normalized, disk);
-			rlog().info(
-				"conflict",
-				`history-less fast-forward fell back to keep-both | original=${noteRef(normalized)} copy=${noteRef(copy)}`,
-			);
-		} else if (!(this.crdtLive?.() ?? true)) {
-			// Topic down: the live send of the merged edit is dropped and the
-			// baseline now matches disk, so queue it (captureDiskDriftBeforeRemote).
-			await this.enqueueCrdtEdit(file, noteId);
-			void this.flushQueue();
+			try {
+				const copy = await this.writeDriftConflictCopy(normalized, disk);
+				rlog().info(
+					"conflict",
+					`history-less fast-forward fell back to keep-both | original=${noteRef(normalized)} copy=${noteRef(copy)}`,
+				);
+			} catch (e) {
+				rlog().error(
+					"conflict",
+					`history-less fast-forward copy failed for ${noteRef(normalized)}: ${errMsg(e, normalized)}. Merging the edit into the note instead`,
+				);
+				merged = await merge(true);
+			}
+		}
+		if (merged !== null) {
+			// The doc holds the edit and has broadcast it; a failed write here
+			// leaves disk at the base until the next flush, never a copy.
+			try {
+				await this.flushFromCrdt(normalized, merged);
+			} catch (e) {
+				rlog().warn(
+					"crdt",
+					`history-less fast-forward flush failed for ${noteRef(normalized)}: ${errMsg(e, normalized)}`,
+				);
+			}
+			if (!(this.crdtLive?.() ?? true)) {
+				// Topic down: the live send of the merged edit is dropped and the
+				// baseline now matches disk, so queue it (captureDiskDriftBeforeRemote).
+				await this.enqueueCrdtEdit(file, noteId);
+				void this.flushQueue();
+			}
 		}
 		this.setCrdtHead(normalized, head);
 		return "applied";

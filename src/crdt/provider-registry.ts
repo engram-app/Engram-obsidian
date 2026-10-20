@@ -463,6 +463,29 @@ export class ProviderRegistry {
 		return content;
 	}
 
+	/** Merge a disk edit made FROM `base` onto the doc, with no await between
+	 *  the check and the seed. Doc still projects `base` → seed `disk` (minimal
+	 *  diff). Doc moved off `base` (a fan-out or autosave landed meanwhile) →
+	 *  null, so the caller keeps both rather than diffing those ops away;
+	 *  `force` instead 3-way merges base→disk onto the doc, possibly dirty or
+	 *  duplicated, for when no copy can be written. Null too when the note is
+	 *  gone or not a note. */
+	async mergeLocalEditFromBase(
+		noteId: string,
+		base: string,
+		disk: string,
+		force = false,
+	): Promise<string | null> {
+		if (this.removed.has(noteId)) return null;
+		const e = await this.entry(noteId);
+		if (!e.lifetime.active || e.kind !== "note") return null;
+		const current = this.project(e);
+		if (current !== base && !force) return null;
+		const text = mergeDiskOntoDoc(base, disk, current).text;
+		seedContentInto(e.doc, e.text, text, true);
+		return text;
+	}
+
 	/** Apply a raw Yjs update (vault-channel fan-out) as a remote merge, awaiting
 	 *  its disk flush so a write failure can be surfaced (#235).
 	 *
