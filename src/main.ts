@@ -3153,6 +3153,12 @@ export default class EngramSyncPlugin extends Plugin {
 			});
 	}
 
+	/** The engine's quiescence snapshot plus the CRDT op queue (owned here).
+	 *  Read over CDP by the backend e2e harness's `await_quiescent` barrier. */
+	syncQuiescence(): ReturnType<SyncEngine["quiescence"]> & { crdtOps: number } {
+		return { ...this.syncEngine.quiescence(), crdtOps: this.crdtOpQueue?.size() ?? 0 };
+	}
+
 	/** Dispatch a user's SyncChoice to the appropriate engine method.
 	 *  Returns true if a sync ran (regardless of success); false if the choice
 	 *  was a no-op (`cancel`, `change-vault`). Caller is responsible for the
