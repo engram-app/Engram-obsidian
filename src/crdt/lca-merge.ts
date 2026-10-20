@@ -64,7 +64,8 @@ interface Edit {
 /** Line-level edits: diff3 granularity. A character diff's alignment shifts
  *  with cleanup, so the same edit on both sides stops looking identical
  *  (duplicated on merge) and same-point inserts can split a "\r\n". */
-function editsFrom(dmp: diff_match_patch, base: string, other: string): Edit[] {
+function editsFrom(base: string, other: string): Edit[] {
+	const dmp = new diff_match_patch();
 	const lines = dmp.diff_linesToChars_(base, other);
 	const diffs = dmp.diff_main(lines.chars1, lines.chars2, false);
 	dmp.diff_charsToLines_(diffs, lines.lineArray);
@@ -118,9 +119,8 @@ function conflicts(a: Edit, b: Edit): boolean {
  * patch_apply reports a same-word conflict as clean and drops one side.
  */
 export function merge3(base: string, local: string, remote: string): LcaMergeResult {
-	const dmp = new diff_match_patch();
-	const mine = editsFrom(dmp, base, local);
-	const theirs = editsFrom(dmp, base, remote).filter(
+	const mine = editsFrom(base, local);
+	const theirs = editsFrom(base, remote).filter(
 		(r) => !mine.some((m) => m.start === r.start && m.end === r.end && m.text === r.text),
 	);
 	for (const m of mine) {
