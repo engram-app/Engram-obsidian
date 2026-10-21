@@ -238,9 +238,6 @@ export async function reconcileColdStart(
 	crdt.enroll?.(file.noteId);
 }
 
-/** Count distinct parent folders across the given file paths. Files at the
- *  root contribute nothing; "a/b/c.md" contributes "a/b". Used by the sync
- *  preview to surface "how many folders contain files" per side. */
 /** File creation time in seconds (Obsidian reports ms), or undefined when the
  *  platform gives none (0/absent), so callers omit the key rather than send 0. */
 function fileCtimeSeconds(file: TFile): number | undefined {
@@ -250,6 +247,9 @@ function fileCtimeSeconds(file: TFile): number | undefined {
 
 const CTIME_SWEEP_BATCH = 500;
 
+/** Count distinct parent folders across the given file paths. Files at the
+ *  root contribute nothing; "a/b/c.md" contributes "a/b". Used by the sync
+ *  preview to surface "how many folders contain files" per side. */
 function countFolders(paths: Iterable<string>): number {
 	const set = new Set<string>();
 	for (const p of paths) {
@@ -3394,8 +3394,10 @@ export class SyncEngine {
 					(f: TFile) =>
 						this.isSyncable(f) && !this.isBinaryFile(f) && !this.shouldIgnore(f.path),
 				)
-				.filter((f: TFile) => f.stat.ctime > 0)
-				.map((f: TFile) => ({ path: f.path, ctime: f.stat.ctime / 1000 }));
+				.flatMap((f: TFile) => {
+					const ctime = fileCtimeSeconds(f);
+					return ctime === undefined ? [] : [{ path: f.path, ctime }];
+				});
 			for (let i = 0; i < entries.length; i += CTIME_SWEEP_BATCH) {
 				if (this.offline) return;
 				await this.api.setNoteCtimes(entries.slice(i, i + CTIME_SWEEP_BATCH));

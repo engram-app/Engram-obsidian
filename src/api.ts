@@ -620,14 +620,6 @@ export class EngramApi {
 		}
 	}
 
-	/** Push a note to Engram.
-	 *  When version is provided, the server uses optimistic concurrency control:
-	 *  returns 409 with the current server state if the version doesn't match.
-	 *  `clientId` carries a plugin-minted note_id (UUIDv7) for a note whose id
-	 *  isn't yet known server-side — sent as the body `id` field, which the
-	 *  server adopts as the note's primary key on first create (note_id-keyed
-	 *  CRDT rework, Task 5). Harmless to send for an existing note: the server
-	 *  already has an id and ignores it. */
 	/** Fill file creation times on notes that already exist server-side. One
 	 *  bulk call per <=500 entries; the server only fills NULLs, so re-sends are
 	 *  harmless. 404 on a backend that predates the endpoint. */
@@ -636,6 +628,14 @@ export class EngramApi {
 		return resp.json as { updated: number };
 	}
 
+	/** Push a note to Engram.
+	 *  When version is provided, the server uses optimistic concurrency control:
+	 *  returns 409 with the current server state if the version doesn't match.
+	 *  `clientId` carries a plugin-minted note_id (UUIDv7) for a note whose id
+	 *  isn't yet known server-side — sent as the body `id` field, which the
+	 *  server adopts as the note's primary key on first create (note_id-keyed
+	 *  CRDT rework, Task 5). Harmless to send for an existing note: the server
+	 *  already has an id and ignores it. */
 	async pushNote(
 		path: string,
 		content: string,
