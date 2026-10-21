@@ -13,18 +13,18 @@
 import { IndexeddbPersistence } from "y-indexeddb";
 import * as Y from "yjs";
 import { Lifetime } from "../lifetime";
-import { projectCanvas, seedCanvasInto } from "./canvas-codec";
+import { seedCanvasInto } from "./canvas-codec";
 import { isDestroyedError, NoteDestroyedError } from "./destroyed-error";
-import {
-	CONTENT_KEY,
-	frontmatterOf,
-	projectNote,
-	rawFrontmatterOf,
-	splitFrontmatter,
-} from "./frontmatter-codec";
+import { CONTENT_KEY, splitFrontmatter } from "./frontmatter-codec";
 import { merge3, mergeDiskOntoDoc, overwritesConcurrentEdit } from "./lca-merge";
 import { type FrameKind, NoteProvider } from "./note-provider";
-import { docHasAnyHistory, docHasHistory, seedContentInto, seedFrontmatterInto } from "./note-seed";
+import {
+	docHasAnyHistory,
+	docHasHistory,
+	projectDoc,
+	seedContentInto,
+	seedFrontmatterInto,
+} from "./note-seed";
 
 export type DocKind = "note" | "canvas";
 
@@ -158,9 +158,7 @@ export class ProviderRegistry {
 	}
 
 	private project(e: Entry): string {
-		if (e.kind === "canvas") return projectCanvas(e.doc);
-		const { order, values } = frontmatterOf(e.doc);
-		return projectNote(order, values, e.text.toJSON(), rawFrontmatterOf(e.doc));
+		return projectDoc(e.doc, e.kind);
 	}
 
 	/** Liveness: a tombstoned note is dead for

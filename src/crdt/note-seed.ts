@@ -7,14 +7,17 @@
 // no Obsidian imports.
 import type * as Y from "yjs";
 import { diffIntoYText, seedOnce } from "./bridge";
-import { canvasIsEmpty } from "./canvas-codec";
+import { canvasIsEmpty, projectCanvas } from "./canvas-codec";
 import {
 	CONTENT_KEY,
 	FRONTMATTER_KEY,
 	type FrontmatterParse,
+	frontmatterOf,
 	ORDER_KEY,
 	parseFrontmatterBlock,
+	projectNote,
 	RAW_FRONTMATTER_KEY,
+	rawFrontmatterOf,
 	splitFrontmatter,
 } from "./frontmatter-codec";
 
@@ -186,4 +189,12 @@ export function seedFrontmatterInto(doc: Y.Doc, content: string): void {
 	if (parsed.kind === "degraded") return;
 	if (parsed.kind === "empty") applyFrontmatterInto(doc, [], {});
 	else applyFrontmatterInto(doc, parsed.order, parsed.values);
+}
+
+/** The on-disk text a doc projects to (frontmatter + body, or canvas JSON).
+ *  The single projection shared by the registry and `canonText`. */
+export function projectDoc(doc: Y.Doc, kind: "note" | "canvas"): string {
+	if (kind === "canvas") return projectCanvas(doc);
+	const { order, values } = frontmatterOf(doc);
+	return projectNote(order, values, doc.getText(CONTENT_KEY).toJSON(), rawFrontmatterOf(doc));
 }
