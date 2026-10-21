@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.38.0](https://github.com/engram-app/Engram-obsidian/compare/1.37.1...1.38.0) (2026-10-21)
+
+
+### Features
+
+* **sync:** send file ctime with note pushes ([#617](https://github.com/engram-app/Engram-obsidian/issues/617)) ([b3dbc6e](https://github.com/engram-app/Engram-obsidian/commit/b3dbc6e92d217a52ec5d39ba336f626453eb4cce))
+
 ## [1.37.1](https://github.com/engram-app/Engram-obsidian/compare/1.37.0...1.37.1) (2026-10-21)
 
 
