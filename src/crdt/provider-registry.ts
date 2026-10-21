@@ -594,10 +594,11 @@ export class ProviderRegistry {
 	 *  Undefined when no delivery was acked on this entry (first push, a doc
 	 *  rehydrated after eviction, a reload): send the full state.
 	 *
-	 *  ponytail: trusts the server's state to be monotone. A server that DROPS
-	 *  a lineage it acked (the checkpoint flatten) would hold the diff as pending
-	 *  structs; a full-state push into a flattened doc already doubles it, so
-	 *  the fix for both is on the flatten side. */
+	 *  A server that DROPS a lineage it acked (the checkpoint flatten, a lost
+	 *  doc) cannot apply the diff. Backend 0.59.0 refuses it, the refusal
+	 *  calls `clearDelivered`, and the retry is full state; older backends ack
+	 *  it unapplied, so SyncEngine only diffs once the server is known to be
+	 *  >= 0.59.0 (`docUpdateDiffs`). */
 	deliveredStateVector(noteId: string): Uint8Array | undefined {
 		const e = this.entries.get(noteId);
 		if (!e?.lifetime.active || !e.deliveredReceipt) return undefined;

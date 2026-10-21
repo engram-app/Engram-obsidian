@@ -2792,6 +2792,8 @@ export default class EngramSyncPlugin extends Plugin {
 					if (epoch !== this.channelEpoch) return;
 					this.api.setRawAttachmentUpload(f.rawAttachmentUpload);
 					this.api.setRawAttachmentDownload(f.rawAttachmentDownload);
+					// Once per join, not per push: gates room-free diffs.
+					void this.api.learnServerVersion();
 				};
 
 				this.noteStream = channel;
@@ -2839,6 +2841,7 @@ export default class EngramSyncPlugin extends Plugin {
 						}
 						return channel.crdtDocUpdate(id, b64);
 					},
+					docUpdateDiffs: () => this.api.refusesUnappliableDocUpdate(),
 					// #1409: release the server's room as soon as this device is
 					// done with the note, instead of leaving it to the 5-minute
 					// idle drain. Same vault guard as the two above — releasing

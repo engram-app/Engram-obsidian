@@ -421,6 +421,10 @@ export interface CrdtPorts {
 	 *  backend too old to serve `crdt_doc_update`; the caller falls back to the
 	 *  room re-handshake, so an unwired port costs rooms, never delivery. */
 	docUpdate?: CrdtDocUpdateFn | null;
+	/** True when the backend refuses a `docUpdate` diff it cannot apply
+	 *  (>= 0.59.0). Until then a diff could be acked unapplied, so room-free
+	 *  delivery sends the full state. Absent/null = false. */
+	docUpdateDiffs?: (() => boolean) | null;
 	/** #1409: tell the server this device is done with a note's room, so its
 	 *  `auto_exit` can fire now instead of after the 5-minute idle drain. */
 	release?: ((docId: string) => void) | null;
@@ -763,6 +767,8 @@ export class SyncEngine {
 		if ("catchupSince" in ports) this.crdtCatchupSince = ports.catchupSince ?? null;
 		if ("docState" in ports) this.crdtDocState = ports.docState ?? null;
 		if ("docUpdate" in ports) this.crdtDocUpdate = ports.docUpdate ?? null;
+		if ("docUpdateDiffs" in ports)
+			this.crdtDocUpdateDiffs = ports.docUpdateDiffs ?? (() => false);
 		if ("release" in ports) this.crdtRelease = ports.release ?? null;
 	}
 
@@ -3996,7 +4002,11 @@ export class SyncEngine {
 			// Only what the server can lack: a diff against the last acked
 			// delivery, the full state when none is known. Read BEFORE the
 			// receipt above is recorded, so it is the PREVIOUS ack's base.
-			const base = crdt.deliveredStateVector?.(noteId);
+			// Only to a server that refuses a diff it cannot apply: an older one
+			// acks it as pending structs and the edit never lands.
+			const base = this.crdtDocUpdateDiffs()
+				? crdt.deliveredStateVector?.(noteId)
+				: undefined;
 			const state = await crdt.encodeStateAsUpdate(noteId, base);
 			if (this.crdt !== crdt) return false;
 			// A doc's full state carries its history and tombstones, so it can
@@ -6618,6 +6628,7 @@ export class SyncEngine {
 	private frameStrikes = this.track(["vault", "destroy"], new Map<string, number>());
 
 	private crdtDocUpdate: CrdtDocUpdateFn | null = null;
+	private crdtDocUpdateDiffs: () => boolean = () => false;
 
 	setCrdtCatchupSince(fn: CrdtCatchupSinceFn): void {
 		this.setCrdtPorts({ catchupSince: fn });
