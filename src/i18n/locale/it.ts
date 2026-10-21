@@ -456,6 +456,8 @@ const it: Dict = {
 	Refresh: "Aggiorna",
 	"Remote vault": "Vault remoto",
 	"Remove tag {tag}": "Rimuovi il tag {tag}",
+	"Replacing the remote stopped early: the ignore list changed during sync. Some remote notes were not removed; run it again.":
+		"Sostituzione remota interrotta prematuramente: la lista di ignorati è cambiata durante la sincronizzazione. Alcune note remote non sono state eliminate; riprova.",
 	"Report an issue": "Segnala un problema",
 	"Report an issue on GitHub": "Segnala un problema su GitHub",
 	"Request failed ({status})": "Richiesta fallita ({status})",

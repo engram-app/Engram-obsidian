@@ -472,6 +472,8 @@ const ru: Dict = {
 	Refresh: "Обновить",
 	"Remote vault": "Удалённое хранилище",
 	"Remove tag {tag}": "Удалить тег {tag}",
+	"Replacing the remote stopped early: the ignore list changed during sync. Some remote notes were not removed; run it again.":
+		"Синхронизация прервана: список исключений изменился. Некоторые удалённые заметки не были удалены; попробуйте снова.",
 	"Report an issue": "Сообщить о проблеме",
 	"Report an issue on GitHub": "Сообщить о проблеме в GitHub",
 	"Request failed ({status})": "Запрос не удался ({status})",

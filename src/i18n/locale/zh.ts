@@ -361,6 +361,8 @@ const zh: Dict = {
 	Refresh: "刷新",
 	"Remote vault": "远程仓库",
 	"Remove tag {tag}": "移除标签 {tag}",
+	"Replacing the remote stopped early: the ignore list changed during sync. Some remote notes were not removed; run it again.":
+		"远程同步中断：同步过程中，忽略列表已更改。部分远程笔记未删除，请重新运行。",
 	"Report an issue": "报告问题",
 	"Report an issue on GitHub": "在 GitHub 上报告问题",
 	"Request failed ({status})": "请求失败 ({status})",

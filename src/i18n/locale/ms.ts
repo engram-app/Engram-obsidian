@@ -393,6 +393,8 @@ const ms: Dict = {
 	Refresh: "Segarkan",
 	"Remote vault": "Peti Nota jauh",
 	"Remove tag {tag}": "Buang tag {tag}",
+	"Replacing the remote stopped early: the ignore list changed during sync. Some remote notes were not removed; run it again.":
+		"Pemindahan jauh dihentikan awal: senarai pengecualian berubah semasa proses sync. Sesetengah nota jauh tidak dipadam; jalankan semula.",
 	"Report an issue": "Laporkan masalah",
 	"Report an issue on GitHub": "Laporkan masalah di GitHub",
 	"Request failed ({status})": "Permintaan gagal ({status})",

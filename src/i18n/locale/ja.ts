@@ -390,6 +390,8 @@ const ja: Dict = {
 	Refresh: "更新",
 	"Remote vault": "リモート保管庫",
 	"Remove tag {tag}": "タグ {tag} を削除",
+	"Replacing the remote stopped early: the ignore list changed during sync. Some remote notes were not removed; run it again.":
+		"リモートの更新が途中で停止しました：同期中に除外リストが変更されました。一部のリモートノートが削除されませんでした。再度実行してください。",
 	"Report an issue": "問題を報告する",
 	"Report an issue on GitHub": "GitHubで問題を報告",
 	"Request failed ({status})": "リクエストに失敗しました ({status})",

@@ -427,6 +427,8 @@ const tr: Dict = {
 	Refresh: "Yenile",
 	"Remote vault": "Uzak kasa",
 	"Remove tag {tag}": "Etiketi {tag} kaldır",
+	"Replacing the remote stopped early: the ignore list changed during sync. Some remote notes were not removed; run it again.":
+		"Uzak sunucuyla senkronizasyon erken durdu: Yoksama listesi senkronizasyon sırasında değişti. Bazı uzak notlar silinmedi; tekrar deneyin.",
 	"Report an issue": "Bir sorun bildirin",
 	"Report an issue on GitHub": "GitHub üzerinde bir sorun bildirin",
 	"Request failed ({status})": "İstek başarısız oldu ({status})",

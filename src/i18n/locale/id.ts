@@ -393,6 +393,8 @@ const id: Dict = {
 	Refresh: "Segarkan",
 	"Remote vault": "Vault jarak jauh",
 	"Remove tag {tag}": "Hapus tag {tag}",
+	"Replacing the remote stopped early: the ignore list changed during sync. Some remote notes were not removed; run it again.":
+		"Penghentian sinkronisasi jarak jauh terjadi lebih awal: daftar yang diabaikan berubah selama sinkronisasi. Beberapa catatan jarak jauh tidak dihapus; jalankan lagi.",
 	"Report an issue": "Laporkan masalah",
 	"Report an issue on GitHub": "Laporkan masalah di GitHub",
 	"Request failed ({status})": "Permintaan gagal ({status})",

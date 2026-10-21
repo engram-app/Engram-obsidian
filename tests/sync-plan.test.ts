@@ -1167,7 +1167,7 @@ describe("destructive passes vs ignored server rows", () => {
 		const crdtDelete = mock().mockResolvedValue(undefined);
 		engine.setCrdtDelete(crdtDelete);
 		const localSnapshot = engine.snapshotLocalPaths();
-		const ignoreKey = engine.ignoreKey();
+		const ignoreRevision = engine.ignoreRevision();
 		let call = 0;
 		engine.setCrdtManager({} as any);
 		engine.setCrdtLiveCheck(() => true);
@@ -1183,7 +1183,7 @@ describe("destructive passes vs ignored server rows", () => {
 			};
 		});
 
-		await engine.pushAll({ replaceRemote: true, localSnapshot, ignoreKey });
+		await engine.pushAll({ replaceRemote: true, localSnapshot, ignoreRevision });
 
 		// The preview promised drafts/ survives; the run must not disagree.
 		expect(crdtDelete).not.toHaveBeenCalled();
@@ -1196,11 +1196,11 @@ describe("destructive passes vs ignored server rows", () => {
 		const crdtDelete = mock().mockResolvedValue(undefined);
 		engine.setCrdtDelete(crdtDelete);
 		const localSnapshot = engine.snapshotLocalPaths();
-		const ignoreKey = engine.ignoreKey();
+		const ignoreRevision = engine.ignoreRevision();
 		engine.updateSettings({ ...DEFAULT_SETTINGS, ignorePatterns: "" });
 		wireFeed(engine, [[noteRow("drafts/s.md", { id: "n-s" })]]);
 
-		await engine.pushAll({ replaceRemote: true, localSnapshot, ignoreKey });
+		await engine.pushAll({ replaceRemote: true, localSnapshot, ignoreRevision });
 
 		expect(crdtDelete).not.toHaveBeenCalled();
 	});
@@ -1220,6 +1220,70 @@ describe("destructive passes vs ignored server rows", () => {
 
 		expect(crdtDelete).toHaveBeenCalledTimes(1);
 		expect(mockApi.deleteAttachment as jest.Mock).not.toHaveBeenCalled();
+	});
+
+	test("replace-remote deletes nothing when the ignore list changes and changes BACK mid-replay", async () => {
+		const engine = createEngine({ ignorePatterns: "drafts/" });
+		mockApp.vault.getFiles.mockReturnValue([]);
+		const crdtDelete = mock().mockResolvedValue(undefined);
+		engine.setCrdtDelete(crdtDelete);
+		const localSnapshot = engine.snapshotLocalPaths();
+		const ignoreRevision = engine.ignoreRevision();
+		let call = 0;
+		engine.setCrdtManager({} as any);
+		engine.setCrdtLiveCheck(() => true);
+		const pages = [
+			[noteRow("drafts/s.md", { id: "n-s" })],
+			[noteRow("other.md", { id: "n-o" })],
+		];
+		engine.setCrdtCatchupSince(async () => {
+			// Backspace the "/" then retype it: the textarea saves per keystroke.
+			// Page 0 is folded while "drafts" (no slash) is active.
+			if (call === 0)
+				engine.updateSettings({ ...DEFAULT_SETTINGS, ignorePatterns: "drafts" });
+			if (call === 1)
+				engine.updateSettings({ ...DEFAULT_SETTINGS, ignorePatterns: "drafts/" });
+			const changes = pages[call] ?? [];
+			call++;
+			return {
+				changes,
+				has_more: call < pages.length,
+				next_seq: changes.length ? changes[changes.length - 1].seq : null,
+			};
+		});
+
+		await engine.pushAll({ replaceRemote: true, localSnapshot, ignoreRevision });
+
+		expect(crdtDelete).not.toHaveBeenCalled();
+		expect(engine.replaceStopped).toBe(true);
+	});
+
+	test("ignore revision: moves on every real change, not on an unrelated settings save", () => {
+		const engine = createEngine({ ignorePatterns: "drafts/" });
+		const r0 = engine.ignoreRevision();
+		engine.updateSettings({ ...DEFAULT_SETTINGS, ignorePatterns: "drafts/", debounceMs: 99 });
+		expect(engine.ignoreRevision()).toBe(r0);
+		engine.updateSettings({ ...DEFAULT_SETTINGS, ignorePatterns: "drafts" });
+		engine.updateSettings({ ...DEFAULT_SETTINGS, ignorePatterns: "drafts/" });
+		const r1 = engine.ignoreRevision();
+		expect(r1).toBeGreaterThan(r0);
+		engine.ignoredFiles.add("a.md");
+		engine.ignoredFiles.remove("a.md");
+		const r2 = engine.ignoreRevision();
+		expect(r2).toBeGreaterThan(r1);
+		engine.ignoredFiles.remove("a.md"); // absent: no change
+		expect(engine.ignoreRevision()).toBe(r2);
+		engine.ignoredFiles.hydrate(["b.md"]);
+		expect(engine.ignoreRevision()).toBeGreaterThan(r2);
+	});
+
+	test("a replace that runs to completion is not flagged as stopped", async () => {
+		const engine = createEngine();
+		mockApp.vault.getFiles.mockReturnValue([]);
+		engine.setCrdtDelete(mock().mockResolvedValue(undefined));
+		wireFeed(engine, [[noteRow("a.md", { id: "n-a" })]]);
+		await engine.pushAll({ replaceRemote: true, localSnapshot: engine.snapshotLocalPaths() });
+		expect(engine.replaceStopped).toBe(false);
 	});
 
 	test("the preview's server and local paths equal what replace-remote and pull-all-delete execute", async () => {

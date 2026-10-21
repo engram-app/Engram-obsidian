@@ -471,6 +471,8 @@ const pl: Dict = {
 	Refresh: "Odśwież",
 	"Remote vault": "Zdalny sejf",
 	"Remove tag {tag}": "Usuń tag {tag}",
+	"Replacing the remote stopped early: the ignore list changed during sync. Some remote notes were not removed; run it again.":
+		"Synchronizacja zakończona przedwcześnie: lista ignorowanych elementów została zmieniona podczas synchronizacji. Niektóre notatki nie zostały usunięte; uruchom ponownie.",
 	"Report an issue": "Zgłoś problem",
 	"Report an issue on GitHub": "Zgłoś problem na GitHub",
 	"Request failed ({status})": "Wystąpił błąd ({status})",

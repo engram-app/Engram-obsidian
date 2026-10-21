@@ -455,6 +455,8 @@ const ptBR: Dict = {
 	Refresh: "Atualizar",
 	"Remote vault": "Cofre remoto",
 	"Remove tag {tag}": "Remover tag {tag}",
+	"Replacing the remote stopped early: the ignore list changed during sync. Some remote notes were not removed; run it again.":
+		"Substituição remota interrompida prematuramente: a lista de ignorados foi alterada durante a sincronização. Algumas notas remotas não foram removidas; execute novamente.",
 	"Report an issue": "Reportar um problema",
 	"Report an issue on GitHub": "Relate um problema no GitHub",
 	"Request failed ({status})": "Solicitação falhou ({status})",

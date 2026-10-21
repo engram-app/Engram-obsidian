@@ -3030,6 +3030,10 @@ export class SyncEngine {
 	 *  shouldIgnore so excluded files never enter push plans, isSyncable filters,
 	 *  or the Issues list. Distinct from settings.ignorePatterns (regex textarea). */
 	readonly ignoredFiles: IgnoredFiles = new IgnoredFiles();
+	private ignorePatternsRevision = 0;
+	/** Set by pushAll: the last replace-remote stopped its delete pass because
+	 *  the ignore list changed, so the server is NOT a mirror yet. */
+	replaceStopped = false;
 
 	/** Count of attachments skipped this session because the backend returned
 	 *  402 attachments_disabled (Free tier). Reset on each batch via
@@ -3689,10 +3693,13 @@ export class SyncEngine {
 	// --- Ignore pattern matching ---
 
 	private parseIgnorePatterns(): void {
-		this.ignorePatterns = this.settings.ignorePatterns
+		const next = this.settings.ignorePatterns
 			.split("\n")
 			.map((p) => p.trim())
 			.filter((p) => p.length > 0);
+		// Every settings save lands here; only a real change moves the revision.
+		if (next.join("\n") !== this.ignorePatterns.join("\n")) this.ignorePatternsRevision++;
+		this.ignorePatterns = next;
 	}
 
 	shouldIgnore(path: string): boolean {
@@ -3724,11 +3731,12 @@ export class SyncEngine {
 		});
 	}
 
-	/** Fingerprint of the user's ignore config. A destructive pass compares it
-	 *  across the run: the snapshot, the server enumeration and the delete
-	 *  loop must all see the same ignore list the preview showed. */
-	ignoreKey(): string {
-		return JSON.stringify([this.ignorePatterns, this.ignoredFiles.all()]);
+	/** Monotonic revision of the user's ignore config: moves on every real
+	 *  change and never comes back, so a list changed and changed back (the
+	 *  textarea saves per keystroke) still reads as changed. A destructive pass
+	 *  requires it unchanged from the snapshot to each delete. */
+	ignoreRevision(): number {
+		return this.ignorePatternsRevision + this.ignoredFiles.revision;
 	}
 
 	/** A path the plan reports in `ignoredCount`: hidden by the USER's ignores.
@@ -11322,14 +11330,22 @@ export class SyncEngine {
 	}
 
 	async pushAll(
-		opts: { replaceRemote?: boolean; localSnapshot?: Set<string>; ignoreKey?: string } = {},
+		opts: {
+			replaceRemote?: boolean;
+			localSnapshot?: Set<string>;
+			ignoreRevision?: number;
+		} = {},
 	): Promise<number> {
 		// Thin wrapper so the sweep is marked without reindenting the whole body.
 		return this.inBulkSweep(() => this.pushAllInner(opts));
 	}
 
 	private async pushAllInner(
-		opts: { replaceRemote?: boolean; localSnapshot?: Set<string>; ignoreKey?: string } = {},
+		opts: {
+			replaceRemote?: boolean;
+			localSnapshot?: Set<string>;
+			ignoreRevision?: number;
+		} = {},
 	): Promise<number> {
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", "pushAll short-circuited — gate closed");
@@ -11361,11 +11377,12 @@ export class SyncEngine {
 		// The ignore list decides which server rows are "extras". If it changes
 		// between the snapshot and the deletes, the run would delete rows the
 		// preview promised to keep, so the delete pass is skipped instead.
-		const ignoreKeyAtStart = opts.ignoreKey ?? this.ignoreKey();
-		let ignoreChanged = false;
+		const ignoreRevisionAtStart = opts.ignoreRevision ?? this.ignoreRevision();
+		this.replaceStopped = false;
 		const ignoreListChanged = (): boolean => {
-			if (ignoreChanged || this.ignoreKey() === ignoreKeyAtStart) return ignoreChanged;
-			ignoreChanged = true;
+			if (this.replaceStopped || this.ignoreRevision() === ignoreRevisionAtStart)
+				return this.replaceStopped;
+			this.replaceStopped = true;
 			rlog().error(
 				"push",
 				"replace-remote: ignore list changed during the sync; skipping the remaining server-extra deletes (the push still ran)",

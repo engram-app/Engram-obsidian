@@ -391,7 +391,7 @@ describe("opening the sync gate re-runs the catch-up (#425)", () => {
 					pullAll: async () => 0,
 					pushAll: async () => 0,
 					snapshotLocalPaths: () => new Set<string>(),
-					ignoreKey: () => "",
+					ignoreRevision: () => 0,
 				},
 			});
 			await fake.runSyncFromChoice(choice);
@@ -403,6 +403,27 @@ describe("opening the sync gate re-runs the catch-up (#425)", () => {
 			"push-all-delete-remote": false,
 			"push-all-keep-remote": false,
 		});
+	});
+
+	test("replace-remote that stopped on an ignore change says so, not 'replaced'", async () => {
+		const { __noticeCapture } = await import("obsidian");
+		for (const stopped of [true, false]) {
+			__noticeCapture.notices.length = 0;
+			const fake = Object.assign(Object.create(EngramSyncPlugin.prototype), {
+				async markSyncGateAccepted() {},
+				syncEngine: {
+					pushAll: async () => 3,
+					snapshotLocalPaths: () => new Set<string>(),
+					ignoreRevision: () => 0,
+					replaceStopped: stopped,
+				},
+			});
+			await fake.runSyncFromChoice("push-all-delete-remote");
+			const messages = __noticeCapture.notices.map((n: { message: string }) => n.message);
+			const said = messages.join("\n");
+			expect(said.includes("Replacing the remote stopped early")).toBe(stopped);
+			expect(said.includes("replaced remote with local")).toBe(!stopped);
+		}
 	});
 
 	test("re-picking a direction on an already-open gate keeps the journal", async () => {

@@ -384,6 +384,8 @@ const ko: Dict = {
 	Refresh: "새로 고침",
 	"Remote vault": "원격 보관함",
 	"Remove tag {tag}": "태그 {tag} 삭제",
+	"Replacing the remote stopped early: the ignore list changed during sync. Some remote notes were not removed; run it again.":
+		"원격 보관함 업데이트가 조기에 중단되었습니다. 동기화 중 제외 목록이 변경되었기 때문입니다. 일부 원격 노트가 삭제되지 않았으므로 다시 실행해 주세요.",
 	"Report an issue": "문제 신고",
 	"Report an issue on GitHub": "GitHub에서 문제 보고",
 	"Request failed ({status})": "요청 실패 ({status})",

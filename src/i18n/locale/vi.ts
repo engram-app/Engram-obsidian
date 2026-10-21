@@ -390,6 +390,8 @@ const vi: Dict = {
 	Refresh: "Làm mới",
 	"Remote vault": "Kho lưu trữ từ xa",
 	"Remove tag {tag}": "Xóa thẻ {tag}",
+	"Replacing the remote stopped early: the ignore list changed during sync. Some remote notes were not removed; run it again.":
+		"Quá trình đồng bộ hóa từ xa bị dừng sớm: danh sách bỏ qua đã thay đổi trong quá trình đồng bộ hóa. Một số ghi chú từ xa chưa được xóa; hãy chạy lại.",
 	"Report an issue": "Báo cáo sự cố",
 	"Report an issue on GitHub": "Báo cáo sự cố trên GitHub",
 	"Request failed ({status})": "Yêu cầu thất bại ({status})",
