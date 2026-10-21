@@ -3822,9 +3822,12 @@ export class SyncEngine {
 	 *  that, the edit applies as-is onto the server's state. If it moved, the
 	 *  edit is merged from the discovery body (the same base
 	 *  `adoptHistoryLessNote` uses), or applied as-is when it deletes nothing
-	 *  the server holds. Otherwise both are kept: the disk edit goes to a conflict copy and the note
-	 *  takes the server's state. A plain diff onto a moved server would delete
-	 *  its new work.
+	 *  the server holds. Otherwise both are kept: the disk edit goes to a
+	 *  conflict copy and the note takes the server's state. A plain diff onto
+	 *  a moved server would delete its new work. Known cost: a server whose
+	 *  stored content is not byte-identical to its projection (frontmatter
+	 *  canonicalization, #1928) fails the unchanged check, so past the
+	 *  discovery base's TTL such a note's first edit may keep both.
 	 *
 	 *  An unreadable state is retried (`LINEAGE_RETRY_MS`), never dropped. A
 	 *  backend without `crdt_doc_state`, or retries spent, falls back to the
@@ -3842,6 +3845,10 @@ export class SyncEngine {
 			rlog().anomaly("crdt", "lineage_read_unsupported_seeding");
 			return undefined;
 		}
+		// A retry is already queued: it re-reads disk when it fires, so this edit
+		// rides it. Counting every autosave as an attempt would spend the backoff
+		// in seconds.
+		if (this.lineageTimers.has(normalized)) return null;
 		const state = await this.readServerDocState(noteId, path);
 		// Same vault fence as adoptServerLineage: note ids are unique per vault.
 		if (this.crdt !== crdt) return null;
@@ -3858,7 +3865,8 @@ export class SyncEngine {
 			if (merged.clean) return { update, text: merged.text };
 		}
 		// No provable base: the disk text may still replace the server's if it
-		// deletes nothing the server holds.
+		// deletes nothing the server holds. (A paragraph the server deleted can
+		// come back this way; nothing is lost.)
 		if (onlyInserts(server, disk)) return { update, text: disk };
 		try {
 			const copy = await this.writeDriftConflictCopy(normalized, disk);
@@ -3873,9 +3881,9 @@ export class SyncEngine {
 			);
 			return this.retryLineage(normalized);
 		}
-		await crdt.applyRemoteUpdate(noteId, update);
+		// The note takes the server's text; the registry writes it over disk.
 		this.forgetDiscoveryBase(normalized);
-		return null;
+		return { update, text: server };
 	}
 
 	/** Re-run the edit later rather than drop it (see `serverLineageFor`). */

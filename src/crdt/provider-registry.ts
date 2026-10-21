@@ -426,6 +426,16 @@ export class ProviderRegistry {
 			}
 			if (!e.lifetime.active || lineage === null) return null;
 			if (lineage !== undefined) {
+				// The read took a round trip: a save landing meanwhile is newer than
+				// `diskContent`, and its own modify event re-runs this. Don't write
+				// over it.
+				if (reread) {
+					try {
+						if ((await e.lifetime.guard(reread())) !== diskContent) return null;
+					} catch {
+						return null;
+					}
+				}
 				// Provider origin: no re-send of the server's own ops. No flush: disk
 				// holds the edit, which the seed below lays onto this state.
 				e.adopting = true;

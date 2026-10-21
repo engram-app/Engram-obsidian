@@ -28,6 +28,17 @@ const ID = "id-fresh";
 const C1 = "# fresh\n\nfirst body line.\n";
 const C2 = "# fresh\n\nfirst body line.\nsecond line from a fresh device.\n";
 
+/** Clients owning a ROOT insert (no origin, no right origin) in the body: more
+ *  than one is a rival lineage, however the text reads. */
+function rootClients(doc: Y.Doc): number[] {
+	const ids = new Set<number>();
+	// biome-ignore lint/suspicious/noExplicitAny: Yjs item internals.
+	for (let it: any = (doc.getText("content") as any)._start; it; it = it.right) {
+		if (it.origin === null && it.rightOrigin === null) ids.add(it.id.client);
+	}
+	return [...ids];
+}
+
 async function scenario(dbPrefix: string) {
 	// The server's lineage: another device created c1.
 	const server = new Y.Doc();
@@ -128,7 +139,7 @@ async function scenario(dbPrefix: string) {
 		await (e as any).pushFile(new TFile(PATH));
 		await settle();
 	};
-	return { e, mgr, disk, ctl, time, serverText, remoteEdit, edit, settle, docStateCalls };
+	return { e, mgr, server, disk, ctl, time, serverText, remoteEdit, edit, settle, docStateCalls };
 }
 
 test("discovery leaves the doc empty but the note server-known (the precondition)", async () => {
@@ -139,9 +150,10 @@ test("discovery leaves the doc empty but the note server-known (the precondition
 });
 
 test("first edit after discovery reaches the server exactly once", async () => {
-	const { disk, serverText, edit } = await scenario("disc-lineage-edit");
+	const { server, disk, serverText, edit } = await scenario("disc-lineage-edit");
 	await edit(C2);
 	expect(await serverText()).toBe(C2);
+	expect(rootClients(server)).toHaveLength(1);
 	expect(disk.get(PATH)).toBe(C2);
 });
 
@@ -162,7 +174,7 @@ test("server moved since discovery: the edit merges, the remote work survives", 
 });
 
 test("server moved and no provable base: keep both, delete nothing", async () => {
-	const { e, disk, serverText, remoteEdit, edit } = await scenario("disc-lineage-nobase");
+	const { e, mgr, server, disk, serverText, remoteEdit, edit } = await scenario("disc-lineage-nobase");
 	(e as any).forgetDiscoveryBase(PATH);
 	remoteEdit(0, "REMOTE\n");
 	await edit(C2);
@@ -170,6 +182,39 @@ test("server moved and no provable base: keep both, delete nothing", async () =>
 	expect(disk.get(PATH)).toBe(`REMOTE\n${C1}`);
 	const copies = [...disk.entries()].filter(([p]) => p !== PATH);
 	expect(copies.map(([, c]) => c)).toEqual([C2]);
+	expect(await mgr.hasHistory(ID)).toBe(true);
+	expect(rootClients(server)).toHaveLength(1);
+});
+
+test("no provable base, disk only adds: the edit applies, server text kept", async () => {
+	const { e, server, serverText, remoteEdit, edit } = await scenario("disc-lineage-inserts");
+	(e as any).forgetDiscoveryBase(PATH);
+	remoteEdit(C1.length, "tail\n");
+	await edit(`${C1}tail\nmine\n`);
+	expect(await serverText()).toBe(`${C1}tail\nmine\n`);
+	expect(rootClients(server)).toHaveLength(1);
+});
+
+test("edits while a retry is pending ride it instead of spending attempts", async () => {
+	const { ctl, edit, docStateCalls } = await scenario("disc-lineage-pending");
+	ctl.docStateFails = true;
+	await edit(C2);
+	await edit(`${C2}more\n`);
+	await edit(`${C2}more more\n`);
+	expect(docStateCalls).toHaveLength(1);
+});
+
+test("retries spent: the edit still ships (old seed), never stranded", async () => {
+	const { ctl, time, serverText, edit, settle } = await scenario("disc-lineage-spent");
+	ctl.docStateFails = true;
+	await edit(C2);
+	for (const ms of [2_000, 10_000, 30_000]) {
+		time.advance(ms);
+		await settle();
+		time.advance(10);
+		await settle();
+	}
+	expect(await serverText()).toContain("second line from a fresh device.");
 });
 
 test("server state unreadable: declined, retried, then delivered once", async () => {
