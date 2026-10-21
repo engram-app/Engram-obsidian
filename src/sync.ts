@@ -3803,6 +3803,16 @@ export class SyncEngine {
 		return await crdt.projectedText(noteId);
 	}
 
+	/** `ProviderRegistryOpts.serverLineage`: the server's Yjs state for a note it
+	 *  holds, `undefined` when it holds none (a local seed is genesis), `null`
+	 *  when it holds one we cannot read right now. */
+	async serverLineageFor(noteId: string): Promise<Uint8Array | null | undefined> {
+		if (!this.hasServerNote(noteId)) return undefined;
+		const path = this.noteIdMap?.pathForId(noteId) ?? noteId;
+		const state = await this.readServerDocState(noteId, path);
+		return state === null ? null : fromB64(state.b64);
+	}
+
 	/** Give the note up to the server's lineage: transmit nothing now, and record
 	 *  disk as the baseline so nothing transmits it LATER either.
 	 *

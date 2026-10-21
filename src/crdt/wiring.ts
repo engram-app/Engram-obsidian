@@ -27,6 +27,7 @@ type WiringSyncEngine = Pick<
 	| "applyLiveOpWithSeq"
 	| "commitCrdtConvergence"
 	| "recordUndeliveredCrdtEdit"
+	| "serverLineageFor"
 >;
 
 /** How often the structural invariants are swept. Cheap (set arithmetic over
@@ -343,6 +344,9 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 			const path = noteIdMap.pathForId(noteId);
 			return path ? syncEngine.isUnchangedSynced(path, content) : false;
 		},
+		// Lineage before edit: a history-less doc for a server-known note adopts
+		// the server's state before any disk edit is diffed in.
+		serverLineage: (noteId) => syncEngine.serverLineageFor(noteId),
 		onPersistError: (noteId, err) => {
 			rlog().warn(
 				"crdt",

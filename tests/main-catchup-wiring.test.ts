@@ -122,6 +122,7 @@ function makeFakeThis(catchup: () => Promise<void>, pull: () => Promise<number>,
 			pull,
 			handleStreamEvent: () => Promise.resolve(),
 			isUnchangedSynced: () => false,
+			serverLineageFor: async () => undefined,
 			isSyncBlocked: () => false,
 			// Wired unconditionally by connectChannel; the fake must accept it to
 			// reach a clean, error-free assignment. One port patch per lifecycle
