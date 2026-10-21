@@ -211,6 +211,7 @@ describe("noteIdsVaultId records provenance, not the active vault", () => {
 				getCatchupSeq: () => 0,
 				getCatchupId: () => null,
 				getManifestSeq: () => 0,
+				getCtimeSweepVaultId: () => "",
 				getSyncStateVaultId: () => null,
 				queue: { persistable: () => [] },
 				issues: { serialize: () => [] },

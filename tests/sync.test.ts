@@ -242,7 +242,25 @@ describe("SyncEngine.handleModify", () => {
 		// Wait for debounce
 		await new Promise((r) => setTimeout(r, 100));
 
-		expect(mockApi.pushNote).toHaveBeenCalledWith("Notes/Test.md", big, expect.any(Number));
+		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
+		// ctime rides as the 7th arg, in seconds like mtime.
+		const args = (mockApi.pushNote as ReturnType<typeof mock>).mock.calls[0];
+		expect(args.slice(0, 3)).toEqual(["Notes/Test.md", big, expect.any(Number)]);
+		expect(args[6]).toBe(file.stat.ctime / 1000);
+	});
+
+	test("omits ctime when the file reports none", async () => {
+		const engine = createEngine({ debounceMs: 10 });
+		const big = "a".repeat(5 * 1024 * 1024);
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(big);
+		const file = new TFile("Notes/NoCtime.md", Date.now());
+		file.stat.ctime = 0;
+
+		engine.handleModify(file);
+		await new Promise((r) => setTimeout(r, 60));
+
+		const args = (mockApi.pushNote as ReturnType<typeof mock>).mock.calls[0];
+		expect(args.length).toBe(3);
 	});
 
 	test("ignores non-markdown files", async () => {
@@ -2208,6 +2226,10 @@ describe("SyncEngine pull accuracy", () => {
 			"Notes/Modified.md",
 			expect.any(String),
 			expect.any(Number),
+			undefined,
+			undefined,
+			undefined,
+			expect.any(Number),
 		);
 	});
 
@@ -2243,6 +2265,10 @@ describe("SyncEngine pull accuracy", () => {
 		expect(mockApi.pushNote).toHaveBeenCalledWith(
 			"Notes/Tracked.md",
 			expect.any(String),
+			expect.any(Number),
+			undefined,
+			undefined,
+			undefined,
 			expect.any(Number),
 		);
 	});
@@ -2606,6 +2632,10 @@ describe("content-free queue entries", () => {
 			"Notes/Queued.md",
 			"vault content",
 			expect.any(Number),
+			undefined,
+			undefined,
+			undefined,
+			expect.any(Number),
 		);
 
 		// Restore default mock for other tests
@@ -2890,7 +2920,15 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 
 		// Should push despite hash match because pushAll uses force=true
 		expect(pushed).toBe(1);
-		expect(mockApi.pushNote).toHaveBeenCalledWith("Notes/Existing.md", big, expect.any(Number));
+		expect(mockApi.pushNote).toHaveBeenCalledWith(
+			"Notes/Existing.md",
+			big,
+			expect.any(Number),
+			undefined,
+			undefined,
+			undefined,
+			expect.any(Number),
+		);
 	});
 
 	test("pushAll() reports skipped count when some files fail", async () => {
@@ -3400,6 +3438,10 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 		expect(mockApi.pushNote).toHaveBeenCalledWith(
 			"Notes/DuringPull.md",
 			big,
+			expect.any(Number),
+			undefined,
+			undefined,
+			undefined,
 			expect.any(Number),
 		);
 	});
@@ -5279,5 +5321,176 @@ describe("SyncEngine.applyPlanState / resyncSkippedAttachments", () => {
 		// bypassPlanSkip=true (the resync path): short-circuit bypassed, uploads.
 		await (engine as any).pushFile(png, true, true);
 		expect(mockApi.pushAttachment).toHaveBeenCalled();
+	});
+});
+
+describe("SyncEngine.runCtimeSweep", () => {
+	const setCtimes = mock();
+	beforeEach(() => {
+		setCtimes.mockReset().mockImplementation(async (e: unknown[]) => ({ updated: e.length }));
+		(mockApi as any).setNoteCtimes = setCtimes;
+		mockSaveData.mockClear();
+	});
+
+	function files(n: number): TFile[] {
+		return Array.from({ length: n }, (_, i) => {
+			const f = new TFile(`Notes/n${i}.md`, 5000);
+			f.stat.ctime = 2000 + i;
+			return f;
+		});
+	}
+
+	test("sends every note ctime in 500-sized batches, then records done once", async () => {
+		const engine = createEngine({ vaultId: "v1" });
+		mockApp.vault.getFiles.mockReturnValue(files(1201));
+
+		await engine.runCtimeSweep();
+
+		expect(setCtimes.mock.calls.map((c) => (c[0] as unknown[]).length)).toEqual([
+			500, 500, 201,
+		]);
+		expect((setCtimes.mock.calls[0][0] as any[])[0]).toEqual({ path: "Notes/n0.md", ctime: 2 });
+		expect(engine.getCtimeSweepVaultId()).toBe("v1");
+		expect(mockSaveData).toHaveBeenCalledWith({ ctimeSweepVaultId: "v1" });
+
+		setCtimes.mockClear();
+		await engine.runCtimeSweep();
+		expect(setCtimes).not.toHaveBeenCalled();
+	});
+
+	test("skips files without a ctime", async () => {
+		const engine = createEngine({ vaultId: "v1" });
+		const [a, b] = files(2);
+		b.stat.ctime = 0;
+		mockApp.vault.getFiles.mockReturnValue([a, b]);
+
+		await engine.runCtimeSweep();
+
+		expect((setCtimes.mock.calls[0][0] as unknown[]).length).toBe(1);
+	});
+
+	test("does not run offline, or with queued changes, or without a vault", async () => {
+		mockApp.vault.getFiles.mockReturnValue(files(2));
+		const offline = createEngine({ vaultId: "v1" });
+		(offline as any).offline = true;
+		await offline.runCtimeSweep();
+
+		const queued = createEngine({ vaultId: "v1" });
+		queued.queue.load([
+			{ path: "Q.md", action: "upsert", content: "q", mtime: 1, timestamp: 1 },
+		]);
+		await queued.runCtimeSweep();
+
+		await createEngine({ vaultId: null }).runCtimeSweep();
+
+		expect(setCtimes).not.toHaveBeenCalled();
+	});
+
+	test("a failed batch stops the sweep and leaves it unrecorded for a retry", async () => {
+		const engine = createEngine({ vaultId: "v1" });
+		mockApp.vault.getFiles.mockReturnValue(files(1001));
+		setCtimes.mockRejectedValueOnce(Object.assign(new Error("429"), { status: 429 }));
+
+		await engine.runCtimeSweep();
+
+		expect(setCtimes).toHaveBeenCalledTimes(1);
+		expect(engine.getCtimeSweepVaultId()).toBe("");
+	});
+
+	function timedEngine(time: ManualTimeProvider): SyncEngine {
+		const e = new SyncEngine(
+			mockApp,
+			mockApi,
+			{ ...DEFAULT_SETTINGS, debounceMs: 10, vaultId: "v1" },
+			mockSaveData,
+			time,
+		);
+		e.setReady();
+		activeEngines.push(e);
+		return e;
+	}
+
+	// crdt_create carries no ctime, so after this device's one-time sweep a
+	// note created over the socket (the sole markdown create path) would never
+	// get one: an old file moved into the vault would show its sync time.
+	test("a note crdt_created after the sweep gets its ctime in one batched call", async () => {
+		const time = new ManualTimeProvider(0);
+		const engine = timedEngine(time);
+		engine.setCtimeSweepVaultId("v1");
+		const [a, b] = files(2);
+		mockApp.vault.getFileByPath.mockImplementation(
+			(p: string) => [a, b].find((f) => f.path === p) ?? null,
+		);
+
+		await (engine as any).adoptCreateAck("id-a", a.path, null, { flushHeld: false });
+		await (engine as any).adoptCreateAck("id-b", b.path, null, { flushHeld: false });
+		expect(setCtimes).not.toHaveBeenCalled();
+
+		time.advance(2000);
+		await new Promise((r) => setTimeout(r, 0));
+
+		expect(setCtimes).toHaveBeenCalledTimes(1);
+		expect(setCtimes.mock.calls[0][0]).toEqual([
+			{ path: a.path, ctime: 2 },
+			{ path: b.path, ctime: 2.001 },
+		]);
+		mockApp.vault.getFileByPath.mockReturnValue(null);
+	});
+
+	// The sweep snapshots getFiles() once, then awaits its batches. A note
+	// crdt_created while those are in flight is in neither the snapshot nor
+	// (since the sweep is not yet recorded) the post-sweep queue.
+	test("a note crdt_created while the sweep is in flight still gets its ctime", async () => {
+		const time = new ManualTimeProvider(0);
+		const engine = timedEngine(time);
+		const [old, fresh] = files(2);
+		mockApp.vault.getFiles.mockReturnValue([old]);
+		mockApp.vault.getFileByPath.mockImplementation((p: string) =>
+			p === fresh.path ? fresh : null,
+		);
+		let release!: () => void;
+		setCtimes.mockImplementationOnce(
+			(e: unknown[]) =>
+				new Promise((r) => {
+					release = () => r({ updated: e.length });
+				}),
+		);
+
+		const sweep = engine.runCtimeSweep();
+		await (engine as any).adoptCreateAck("id-f", fresh.path, null, { flushHeld: false });
+		release();
+		await sweep;
+		time.advance(2000);
+		await new Promise((r) => setTimeout(r, 0));
+
+		expect(setCtimes.mock.calls.flatMap((c) => c[0] as unknown[])).toContainEqual({
+			path: fresh.path,
+			ctime: 2.001,
+		});
+		mockApp.vault.getFileByPath.mockReturnValue(null);
+	});
+
+	test("a create before the sweep queues nothing (the sweep covers it)", async () => {
+		const time = new ManualTimeProvider(0);
+		const engine = timedEngine(time);
+		const [a] = files(1);
+		mockApp.vault.getFileByPath.mockReturnValue(a);
+
+		await (engine as any).adoptCreateAck("id-a", a.path, null, { flushHeld: false });
+		time.advance(2000);
+		await new Promise((r) => setTimeout(r, 0));
+
+		expect(setCtimes).not.toHaveBeenCalled();
+		mockApp.vault.getFileByPath.mockReturnValue(null);
+	});
+
+	test("reruns for a different vault", async () => {
+		const engine = createEngine({ vaultId: "v2" });
+		engine.setCtimeSweepVaultId("v1");
+		mockApp.vault.getFiles.mockReturnValue(files(1));
+
+		await engine.runCtimeSweep();
+
+		expect(setCtimes).toHaveBeenCalledTimes(1);
 	});
 });

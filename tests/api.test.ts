@@ -245,6 +245,17 @@ describe("EngramApi", () => {
 		});
 	});
 
+	describe("setNoteCtimes", () => {
+		test("POSTs entries to /notes/ctime", async () => {
+			mockRequestUrl.mockResolvedValueOnce({ status: 200, json: { updated: 2 } } as any);
+			const r = await api.setNoteCtimes([{ path: "a.md", ctime: 1 }]);
+			const req = mockRequestUrl.mock.calls[0][0] as any;
+			expect(req.url).toBe(`${TEST_API_BASE}/notes/ctime`);
+			expect(JSON.parse(req.body)).toEqual({ entries: [{ path: "a.md", ctime: 1 }] });
+			expect(r).toEqual({ updated: 2 });
+		});
+	});
+
 	describe("pushNote", () => {
 		test("sends POST with path, content, mtime", async () => {
 			mockRequestUrl.mockResolvedValueOnce({
@@ -264,6 +275,17 @@ describe("EngramApi", () => {
 				}),
 			);
 			expect(result).toEqual({ path: "Notes/Test.md", status: "created" });
+		});
+
+		test("sends ctime only when given", async () => {
+			mockRequestUrl.mockResolvedValue({ status: 200, json: {} } as any);
+			await api.pushNote("a.md", "x", 10, undefined, undefined, undefined, 5.5);
+			expect(JSON.parse((mockRequestUrl.mock.calls[0][0] as any).body).ctime).toBe(5.5);
+			mockRequestUrl.mockClear();
+			await api.pushNote("a.md", "x", 10);
+			expect("ctime" in JSON.parse((mockRequestUrl.mock.calls[0][0] as any).body)).toBe(
+				false,
+			);
 		});
 
 		test("returns conflict response on 409 with json body", async () => {

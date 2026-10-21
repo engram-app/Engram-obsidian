@@ -238,6 +238,15 @@ export async function reconcileColdStart(
 	crdt.enroll?.(file.noteId);
 }
 
+/** File creation time in seconds (Obsidian reports ms), or undefined when the
+ *  platform gives none (0/absent), so callers omit the key rather than send 0. */
+function fileCtimeSeconds(file: TFile): number | undefined {
+	const ms = file.stat?.ctime;
+	return ms !== undefined && ms > 0 ? ms / 1000 : undefined;
+}
+
+const CTIME_SWEEP_BATCH = 500;
+
 /** Count distinct parent folders across the given file paths. Files at the
  *  root contribute nothing; "a/b/c.md" contributes "a/b". Used by the sync
  *  preview to surface "how many folders contain files" per side. */
@@ -606,6 +615,14 @@ export class SyncEngine {
 	);
 	private pulling = false;
 	private lastSync = "";
+	private ctimeSweepVaultId = "";
+	private ctimeSweepRunning = false;
+	/** A failed sweep is not retried again this session (no hammering a 429/404). */
+	private ctimeSweepTried = false;
+	/** Notes crdt_created after the sweep, awaiting a batched ctime send. Vault
+	 *  paths, so a switch drops them (the timer then fires on an empty map). */
+	private pendingCtimes = this.track(["vault", "destroy"], new Map<string, number>());
+	private ctimeFlushTimer: number | null = null;
 	private lastError = "";
 	private offline = false;
 	private healthCheckTimer: number | null = null;
@@ -1593,6 +1610,7 @@ export class SyncEngine {
 		// the authoritative head.
 		this.setCrdtHead(path, CRDT_HEAD_CREATED);
 		this.confirmNoteId(effectiveId);
+		this.queueCreatedCtime(normalized);
 		if (consumed !== null) {
 			this.recordCrdtBaseline(normalized, consumed, { markCreated: true });
 		}
@@ -3077,6 +3095,7 @@ export class SyncEngine {
 			// (same object), so the callback need not read this — it just triggers
 			// the wholesale save.
 			noteIds?: Record<string, string>;
+			ctimeSweepVaultId?: string;
 		}) => Promise<void>,
 		/** Injectable clock + timers. Defaulted so every existing caller is
 		 *  unchanged; tests pass a ManualTimeProvider to advance a TTL window
@@ -3358,6 +3377,80 @@ export class SyncEngine {
 
 	getManifestSeq(): number {
 		return this.manifestSeq;
+	}
+
+	/** The vault whose one-time ctime sweep finished on this device ("" = none). */
+	getCtimeSweepVaultId(): string {
+		return this.ctimeSweepVaultId;
+	}
+
+	setCtimeSweepVaultId(id: string): void {
+		this.ctimeSweepVaultId = id;
+	}
+
+	/** One-time background sweep: send every note's file ctime in bulk batches so
+	 *  notes that never get re-pushed (most of an imported vault) still carry
+	 *  their real created time. Runs after a full sync, once per vault per
+	 *  device (recorded in data.json). Skips while offline or with queued
+	 *  changes; any failed batch (429, 404 on an old backend, network) aborts
+	 *  without recording, so the next full sync retries. In-session retries are
+	 *  capped to one attempt. */
+	async runCtimeSweep(): Promise<void> {
+		const vaultId = this.settings.vaultId;
+		if (!vaultId || this.ctimeSweepVaultId === vaultId) return;
+		if (this.ctimeSweepRunning || this.ctimeSweepTried) return;
+		if (this.offline || this.syncBlocked || this.queue.size > 0) return;
+		this.ctimeSweepRunning = true;
+		try {
+			const entries = this.app.vault
+				.getFiles()
+				.filter(
+					(f: TFile) =>
+						this.isSyncable(f) && !this.isBinaryFile(f) && !this.shouldIgnore(f.path),
+				)
+				.flatMap((f: TFile) => {
+					const ctime = fileCtimeSeconds(f);
+					return ctime === undefined ? [] : [{ path: f.path, ctime }];
+				});
+			for (let i = 0; i < entries.length; i += CTIME_SWEEP_BATCH) {
+				if (this.offline) return;
+				await this.api.setNoteCtimes(entries.slice(i, i + CTIME_SWEEP_BATCH));
+			}
+			this.ctimeSweepVaultId = vaultId;
+			await this.saveData({ ctimeSweepVaultId: vaultId });
+			rlog().info("lifecycle", `ctime sweep done: ${entries.length} notes`);
+		} catch (e) {
+			this.ctimeSweepTried = true;
+			rlog().warn("lifecycle", `ctime sweep aborted, retries next session: ${errMsg(e)}`);
+		} finally {
+			this.ctimeSweepRunning = false;
+		}
+	}
+
+	/** crdt_create carries no ctime, so a note created after this vault's sweep
+	 *  gets its file ctime via POST /notes/ctime, batched over a 2s window.
+	 *  Before the sweep, the sweep covers it; during it, the sweep's getFiles()
+	 *  snapshot is already taken, so queue those too.
+	 *  ponytail: best effort, memory-only (lost on quit inside the window, dropped
+	 *  on failure); proper fix is a ctime field on crdt_create. */
+	private queueCreatedCtime(path: string): void {
+		const vaultId = this.settings.vaultId;
+		if (!vaultId || (this.ctimeSweepVaultId !== vaultId && !this.ctimeSweepRunning)) return;
+		const file = this.app.vault.getFileByPath(path);
+		const ctime = file ? fileCtimeSeconds(file) : undefined;
+		if (ctime === undefined) return;
+		this.pendingCtimes.set(path, ctime);
+		if (this.ctimeFlushTimer !== null) return;
+		this.ctimeFlushTimer = this.time.setTimeout(() => {
+			this.ctimeFlushTimer = null;
+			const entries = [...this.pendingCtimes].map(([p, c]) => ({ path: p, ctime: c }));
+			this.pendingCtimes.clear();
+			void (async () => {
+				for (let i = 0; i < entries.length; i += CTIME_SWEEP_BATCH) {
+					await this.api.setNoteCtimes(entries.slice(i, i + CTIME_SWEEP_BATCH));
+				}
+			})().catch((e) => rlog().warn("lifecycle", `ctime send failed: ${errMsg(e)}`));
+		}, 2000);
 	}
 
 	setManifestSeq(seq: number): void {
@@ -6111,7 +6204,19 @@ export class SyncEngine {
 				if (this.capBlocksCreate(pushedPath)) return false;
 				let resp: Awaited<ReturnType<EngramApi["pushNote"]>>;
 				try {
-					resp = await this.api.pushNote(pushedPath, content, mtime);
+					const ctime = fileCtimeSeconds(file);
+					resp =
+						ctime === undefined
+							? await this.api.pushNote(pushedPath, content, mtime)
+							: await this.api.pushNote(
+									pushedPath,
+									content,
+									mtime,
+									undefined,
+									undefined,
+									undefined,
+									ctime,
+								);
 				} catch (e) {
 					if (e instanceof LimitExceededError && LIMIT_REASONS.has(e.reason)) {
 						this.notesCapGate?.trip(e.reason);
@@ -10667,6 +10772,7 @@ export class SyncEngine {
 
 		devLog().log("lifecycle", `fullSync done — pulled=${pulled} pushed=${pushed}`);
 		rlog().info("lifecycle", `FullSync done — pulled=${pulled} pushed=${pushed}`);
+		void this.runCtimeSweep();
 		return { pulled, pushed };
 	}
 
@@ -12152,6 +12258,7 @@ export class SyncEngine {
 					// Note upsert — legacy entries have content; new entries are content-free
 					let content = entry.content;
 					let mtime = entry.mtime;
+					let replayCtime: number | undefined;
 					if (content === undefined) {
 						const file = this.app.vault.getFileByPath(entry.path);
 						if (!file) {
@@ -12169,6 +12276,7 @@ export class SyncEngine {
 						}
 						content = await this.app.vault.cachedRead(file);
 						mtime = file.stat.mtime / 1000;
+						replayCtime = fileCtimeSeconds(file);
 					}
 					// Mint-and-send the client id like a live push — and adopt the id
 					// the server echoes back. The replay path never adopted, so a
@@ -12201,7 +12309,7 @@ export class SyncEngine {
 					const replayState = this.syncState.get(replayNp);
 					const replayBase = replayState?.serverHash;
 					const resp =
-						replayBase !== undefined
+						replayCtime !== undefined
 							? await this.api.pushNote(
 									entry.path,
 									content,
@@ -12209,16 +12317,26 @@ export class SyncEngine {
 									replayState?.version,
 									replayId ?? undefined,
 									replayBase,
+									replayCtime,
 								)
-							: replayId
+							: replayBase !== undefined
 								? await this.api.pushNote(
 										entry.path,
 										content,
 										mtime!,
-										undefined,
-										replayId,
+										replayState?.version,
+										replayId ?? undefined,
+										replayBase,
 									)
-								: await this.api.pushNote(entry.path, content, mtime!);
+								: replayId
+									? await this.api.pushNote(
+											entry.path,
+											content,
+											mtime!,
+											undefined,
+											replayId,
+										)
+									: await this.api.pushNote(entry.path, content, mtime!);
 					if ("conflict" in resp) {
 						// Hand the conflict to the single-note flow, which owns 3-way
 						// merge + resolution — previously a conflicting replay was

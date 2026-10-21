@@ -651,6 +651,14 @@ export class EngramApi {
 		}
 	}
 
+	/** Fill file creation times on notes that already exist server-side. One
+	 *  bulk call per <=500 entries; the server only fills NULLs, so re-sends are
+	 *  harmless. 404 on a backend that predates the endpoint. */
+	async setNoteCtimes(entries: { path: string; ctime: number }[]): Promise<{ updated: number }> {
+		const resp = await this.request("POST", "/notes/ctime", { entries });
+		return resp.json as { updated: number };
+	}
+
 	/** Push a note to Engram.
 	 *  When version is provided, the server uses optimistic concurrency control:
 	 *  returns 409 with the current server state if the version doesn't match.
@@ -666,8 +674,12 @@ export class EngramApi {
 		version?: number,
 		clientId?: string,
 		baseHash?: string,
+		ctime?: number,
 	): Promise<NoteResponse | VersionConflictResponse> {
 		const body: Record<string, unknown> = { path, content, mtime };
+		// File creation time (seconds). Omitted when unknown so the server keeps
+		// whatever it has; older backends ignore the key.
+		if (ctime !== undefined) body.ctime = ctime;
 		if (version !== undefined) body.version = version;
 		if (clientId !== undefined) body.id = clientId;
 		// CAS guard (backend v0.5.642): the server content_hash this client last
