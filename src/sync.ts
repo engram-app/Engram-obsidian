@@ -20,6 +20,7 @@ import { splitFrontmatter } from "./crdt/frontmatter-codec";
 import type { NoteIdMap } from "./crdt/note-id-map";
 import type { ProviderRegistry } from "./crdt/provider-registry";
 import { uuid7 } from "./crdt/uuid7";
+import { merge3, onlyInserts } from "./crdt/lca-merge";
 import { encodeUpdateFrame, fromB64 } from "./crdt/wire";
 import {
 	crdtOpFailureReason,
@@ -265,6 +266,10 @@ const RECENT_DELETE_COOLDOWN_MS = 60_000;
  *  Generous next to the milliseconds a racing flush needs, and short next to
  *  the lifetime of a path that might legitimately be recreated. */
 const RELOCATION_MEMORY_MS = 30_000;
+
+/** Backoff for a lineage adopt whose server state was unreadable; past the
+ *  last step the edit seeds as before (see `serverLineageFor`). */
+const LINEAGE_RETRY_MS = [2_000, 10_000, 30_000];
 
 /** `discoveryBases` bounds. The genesis fan-out lands seconds after
  *  discovery; ten minutes covers a slow reconnect. The char cap bounds a
@@ -564,6 +569,11 @@ export class SyncEngine {
 	}
 
 	private debounceTimers = this.track(["destroy"], new Map<string, number>(), (timer) =>
+		this.time.clearTimeout(timer),
+	);
+	/** Lineage-adopt retries per path (`retryLineage`). */
+	private lineageAttempts = this.track(["vault", "destroy"], new Map<string, number>());
+	private lineageTimers = this.track(["vault", "destroy"], new Map<string, number>(), (timer) =>
 		this.time.clearTimeout(timer),
 	);
 	/** Paths that newly degraded (ok/none -> frontmatter issue) since the last
@@ -1835,7 +1845,8 @@ export class SyncEngine {
 				try {
 					const mintText = await this.crdt.projectedText(localId);
 					consumed = await this.crdt.applyLocalEdit(serverId, mintText);
-					transferredLiveContent = true;
+					// Declined (lineage unreadable): seed from disk below instead.
+					transferredLiveContent = consumed !== null;
 				} catch (e) {
 					rlog().warn(
 						"crdt",
@@ -3803,14 +3814,92 @@ export class SyncEngine {
 		return await crdt.projectedText(noteId);
 	}
 
-	/** `ProviderRegistryOpts.serverLineage`: the server's Yjs state for a note it
-	 *  holds, `undefined` when it holds none (a local seed is genesis), `null`
-	 *  when it holds one we cannot read right now. */
-	async serverLineageFor(noteId: string): Promise<Uint8Array | null | undefined> {
+	/** `ProviderRegistryOpts.serverLineage`: lineage before edit for a
+	 *  history-less doc (a discovered note: body on disk, empty doc).
+	 *
+	 *  The disk edit descends from the body this device last synced, which the
+	 *  recorded baseline hash identifies. If the server still holds exactly
+	 *  that, the edit applies as-is onto the server's state. If it moved, the
+	 *  edit is merged from the discovery body (the same base
+	 *  `adoptHistoryLessNote` uses), or applied as-is when it deletes nothing
+	 *  the server holds. Otherwise both are kept: the disk edit goes to a conflict copy and the note
+	 *  takes the server's state. A plain diff onto a moved server would delete
+	 *  its new work.
+	 *
+	 *  An unreadable state is retried (`LINEAGE_RETRY_MS`), never dropped. A
+	 *  backend without `crdt_doc_state`, or retries spent, falls back to the
+	 *  old seed, which can double the note but cannot lose the edit. */
+	async serverLineageFor(
+		noteId: string,
+		disk: string,
+	): Promise<{ update: Uint8Array; text: string } | null | undefined> {
 		if (!this.hasServerNote(noteId)) return undefined;
-		const path = this.noteIdMap?.pathForId(noteId) ?? noteId;
+		const crdt = this.crdt;
+		const path = this.noteIdMap?.pathForId(noteId);
+		if (!crdt || !path) return null;
+		const normalized = normalizePath(path);
+		if (!this.crdtDocState || this.unsupportedFrames.has(DOC_STATE_FRAME)) {
+			rlog().anomaly("crdt", "lineage_read_unsupported_seeding");
+			return undefined;
+		}
 		const state = await this.readServerDocState(noteId, path);
-		return state === null ? null : fromB64(state.b64);
+		// Same vault fence as adoptServerLineage: note ids are unique per vault.
+		if (this.crdt !== crdt) return null;
+		const update = state === null ? null : fromB64(state.b64);
+		const server = update === null ? null : await crdt.previewUpdate(noteId, update);
+		if (update === null || server === null) return this.retryLineage(normalized);
+		this.lineageAttempts.delete(normalized);
+
+		const baseline = this.syncState.get(normalized)?.hash;
+		if (fnv1a(server) === baseline) return { update, text: disk };
+		const discovered = this.peekDiscoveryBase(normalized);
+		if (discovered !== null && fnv1a(discovered) === baseline && !normalized.endsWith(".canvas")) {
+			const merged = merge3(discovered, disk, server);
+			if (merged.clean) return { update, text: merged.text };
+		}
+		// No provable base: the disk text may still replace the server's if it
+		// deletes nothing the server holds.
+		if (onlyInserts(server, disk)) return { update, text: disk };
+		try {
+			const copy = await this.writeDriftConflictCopy(normalized, disk);
+			rlog().info(
+				"conflict",
+				`lineage adopt: server moved, no clean merge → keep-both | original=${noteRef(normalized)} copy=${noteRef(copy)}`,
+			);
+		} catch (e) {
+			rlog().error(
+				"conflict",
+				`lineage adopt: keep-both copy failed for ${noteRef(normalized)}: ${errMsg(e, normalized)}`,
+			);
+			return this.retryLineage(normalized);
+		}
+		await crdt.applyRemoteUpdate(noteId, update);
+		this.forgetDiscoveryBase(normalized);
+		return null;
+	}
+
+	/** Re-run the edit later rather than drop it (see `serverLineageFor`). */
+	private retryLineage(normalized: string): null | undefined {
+		const attempt = (this.lineageAttempts.get(normalized) ?? 0) + 1;
+		if (attempt > LINEAGE_RETRY_MS.length) {
+			this.lineageAttempts.delete(normalized);
+			rlog().anomaly("crdt", "lineage_read_retries_spent_seeding");
+			return undefined;
+		}
+		this.lineageAttempts.set(normalized, attempt);
+		rlog().warn(
+			"crdt",
+			`lineage adopt: server state unreadable for ${noteRef(normalized)}, retry ${attempt}`,
+		);
+		this.lineageTimers.set(
+			normalized,
+			this.time.setTimeout(() => {
+				this.lineageTimers.delete(normalized);
+				const file = this.app.vault.getFileByPath(normalized);
+				if (file) this.handleModify(file);
+			}, LINEAGE_RETRY_MS[attempt - 1] ?? 0),
+		);
+		return null;
 	}
 
 	/** Give the note up to the server's lineage: transmit nothing now, and record

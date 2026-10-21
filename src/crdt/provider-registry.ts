@@ -93,13 +93,19 @@ export interface ProviderRegistryOpts {
 	/** Adopt-first gate: content byte-identical to the last-synced content must
 	 *  NOT seed (would fork a second lineage → #846 doubling). */
 	isUnchangedSynced?: (noteId: string, content: string) => boolean;
-	/** The server's Yjs state for a note it already holds, so a local edit to a
-	 *  history-less doc diffs onto the server's lineage instead of seeding a
-	 *  rival (a discovered note: body on disk from a catch-up row, doc empty).
-	 *  `undefined` = the server does not know this note (seeding is genesis,
-	 *  correct). `null` = it does, but the state is unreadable right now: the
-	 *  edit is declined and stays on disk for the next attempt. */
-	serverLineage?: (noteId: string) => Promise<Uint8Array | null | undefined>;
+	/** Lineage before edit, for a history-less doc. A note the server already
+	 *  holds (discovery wrote its body to disk, never to the doc) must not be
+	 *  seeded from disk: that mints a rival clientID the server unions with its
+	 *  own copy. Given the disk text, the engine answers:
+	 *  - `undefined`: seed as before (the server holds no such note, or the
+	 *    server state cannot be read on this backend at all);
+	 *  - `null`: do not consume now (the engine retries or kept both copies);
+	 *  - `{ update, text }`: the server's state, and the text the doc should
+	 *    hold once the disk edit is merged onto it. */
+	serverLineage?: (
+		noteId: string,
+		disk: string,
+	) => Promise<{ update: Uint8Array; text: string } | null | undefined>;
 	/** Fired on the first inbound syncStep2 for a note. */
 	onSynced?: (noteId: string) => void;
 	/** Fired when the first inbound syncStep2 leaves the doc EMPTY — the server's
@@ -403,35 +409,43 @@ export class ProviderRegistry {
 		if (!e.lifetime.active) return null; // destroyed while we awaited hydration
 		let content = diskContent;
 
-		// Lineage before edit. A history-less doc for a note the SERVER already
-		// holds (catch-up discovery wrote its body to disk, never to the doc) must
-		// take the server's state first; seeding disk into it mints a rival
-		// clientID that the server unions with its own copy (c1+c2). Same rule as
-		// pushFile's genesis arm ("adopt first, then diff") and Relay's: a client
-		// never writes into a doc it has not synced. Unchanged-synced content
-		// skips the read: the adopt-first gate below already declines it.
+		// Lineage before edit (see `serverLineage`). Same rule as pushFile's
+		// genesis arm and Relay's invariant #3: never write into a history-less
+		// doc the server already holds. Unchanged-synced content skips the read:
+		// the adopt-first gate below already declines it.
 		if (
 			this.opts.serverLineage &&
 			!docHasHistory(e.doc, e.kind) &&
 			!this.opts.isUnchangedSynced?.(noteId, diskContent)
 		) {
-			let state: Uint8Array | null | undefined;
+			let lineage: { update: Uint8Array; text: string } | null | undefined;
 			try {
-				state = await e.lifetime.guard(this.opts.serverLineage(noteId));
+				lineage = await e.lifetime.guard(this.opts.serverLineage(noteId, diskContent));
 			} catch {
-				state = null;
+				return null; // destroyed mid-read, or the engine threw: never seed
 			}
-			if (!e.lifetime.active) return null;
-			if (state === null) return null; // server holds it, state unreadable: decline
-			if (state !== undefined) {
+			if (!e.lifetime.active || lineage === null) return null;
+			if (lineage !== undefined) {
 				// Provider origin: no re-send of the server's own ops. No flush: disk
-				// holds the user's edit, which is diffed onto this state below.
+				// holds the edit, which the seed below lays onto this state.
 				e.adopting = true;
 				try {
-					Y.applyUpdate(e.doc, state, e.provider);
+					Y.applyUpdate(e.doc, lineage.update, e.provider);
 				} finally {
 					e.adopting = false;
 				}
+				if (e.kind === "canvas") seedCanvasInto(e.doc, lineage.text);
+				else seedContentInto(e.doc, e.text, lineage.text, true);
+				// A merge brought in server work the disk lacks: write it back, or
+				// the next disk edit would diff it away.
+				const projected = this.project(e);
+				if (projected !== diskContent) {
+					const fm = splitFrontmatter(projected).fmBlock;
+					const fmChanged = fm !== e.lastFlushedFm;
+					e.lastFlushedFm = fm;
+					await this.opts.onFlushToDisk(noteId, projected, fmChanged);
+				}
+				return projected;
 			}
 		}
 

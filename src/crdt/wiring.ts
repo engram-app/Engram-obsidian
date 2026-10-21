@@ -346,7 +346,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		},
 		// Lineage before edit: a history-less doc for a server-known note adopts
 		// the server's state before any disk edit is diffed in.
-		serverLineage: (noteId) => syncEngine.serverLineageFor(noteId),
+		serverLineage: (noteId, disk) => syncEngine.serverLineageFor(noteId, disk),
 		onPersistError: (noteId, err) => {
 			rlog().warn(
 				"crdt",

@@ -1,6 +1,6 @@
 /**
- * A fresh device's first edit to a DISCOVERED note must diff onto the server's
- * lineage, never seed a rival one.
+ * A fresh device's first edit to a DISCOVERED note must land on the server
+ * exactly once, on the server's lineage.
  *
  * Staging 0.59.0, 8/8 (plugin e3747eb6): device D joins with an empty
  * IndexedDB, catch-up's discovery leg writes the row body c1 to disk and marks
@@ -20,6 +20,7 @@ import { NoteIdMap } from "../src/crdt/note-id-map";
 import { ProviderRegistry } from "../src/crdt/provider-registry";
 import { toB64 } from "../src/crdt/wire";
 import { reconcileColdStart, SyncEngine } from "../src/sync";
+import { ManualTimeProvider } from "../src/time-provider";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 const PATH = "Notes/Fresh.md";
@@ -27,13 +28,15 @@ const ID = "id-fresh";
 const C1 = "# fresh\n\nfirst body line.\n";
 const C2 = "# fresh\n\nfirst body line.\nsecond line from a fresh device.\n";
 
-async function scenario(dbPrefix: string, docState: "ok" | "unavailable" = "ok") {
+async function scenario(dbPrefix: string) {
 	// The server's lineage: another device created c1.
 	const server = new Y.Doc();
 	server.getText("content").insert(0, C1);
+	const ctl = { docStateFails: false };
 
 	const disk = new Map<string, string>();
 	const map = new NoteIdMap();
+	const time = new ManualTimeProvider();
 	let e!: SyncEngine;
 	const mgr = new ProviderRegistry({
 		dbPrefix,
@@ -47,7 +50,7 @@ async function scenario(dbPrefix: string, docState: "ok" | "unavailable" = "ok")
 			return p ? e.isUnchangedSynced(p, content) : false;
 		},
 		// Production wiring (src/crdt/wiring.ts).
-		serverLineage: (id) => e.serverLineageFor(id),
+		serverLineage: (id, d) => e.serverLineageFor(id, d),
 	});
 	const app = {
 		vault: {
@@ -60,6 +63,7 @@ async function scenario(dbPrefix: string, docState: "ok" | "unavailable" = "ok")
 			create: mock(async (p: string, c: string) => {
 				if (disk.has(p)) throw new Error("File already exists.");
 				disk.set(p, c);
+				return new TFile(p);
 			}),
 			createFolder: mock().mockResolvedValue(undefined),
 			getName: mock().mockReturnValue("Test Vault"),
@@ -72,6 +76,7 @@ async function scenario(dbPrefix: string, docState: "ok" | "unavailable" = "ok")
 		{} as unknown as EngramApi,
 		{ ...DEFAULT_SETTINGS, debounceMs: 1 },
 		mock().mockResolvedValue(undefined),
+		time,
 	);
 	e.setCrdtManager(mgr as never);
 	e.setReady();
@@ -83,7 +88,7 @@ async function scenario(dbPrefix: string, docState: "ok" | "unavailable" = "ok")
 		live: () => true,
 		docState: async (id: string) => {
 			docStateCalls.push(id);
-			if (docState === "unavailable") throw new Error("rate_limited");
+			if (ctl.docStateFails) throw new Error("rate_limited");
 			return { b64: toB64(Y.encodeStateAsUpdate(server)), head: "h1" };
 		},
 	} as never);
@@ -104,12 +109,26 @@ async function scenario(dbPrefix: string, docState: "ok" | "unavailable" = "ok")
 		content_hash: "hash-c1",
 	} as never);
 
-	/** What the server holds once it has merged everything this device has. */
-	const serverAfterMerge = async () => {
-		Y.applyUpdate(server, Y.encodeStateAsUpdate(await mgr.getDoc(ID)));
+	/** The server after merging everything this device holds (what any
+	 *  delivery path, live or queued, ends with). */
+	const serverText = async () => {
+		if (mgr.hasDoc(ID)) Y.applyUpdate(server, Y.encodeStateAsUpdate(await mgr.getDoc(ID)));
 		return server.getText("content").toJSON();
 	};
-	return { e, mgr, disk, server, serverAfterMerge, docStateCalls };
+	/** Another device edits the note after discovery. */
+	const remoteEdit = (at: number, s: string) => {
+		const other = new Y.Doc();
+		Y.applyUpdate(other, Y.encodeStateAsUpdate(server));
+		other.getText("content").insert(at, s);
+		Y.applyUpdate(server, Y.encodeStateAsUpdate(other));
+	};
+	const settle = () => new Promise((r) => setTimeout(r, 10));
+	const edit = async (text: string) => {
+		disk.set(PATH, text);
+		await (e as any).pushFile(new TFile(PATH));
+		await settle();
+	};
+	return { e, mgr, disk, ctl, time, serverText, remoteEdit, edit, settle, docStateCalls };
 }
 
 test("discovery leaves the doc empty but the note server-known (the precondition)", async () => {
@@ -119,28 +138,60 @@ test("discovery leaves the doc empty but the note server-known (the precondition
 	expect(await mgr.hasHistory(ID)).toBe(false);
 });
 
-test("first edit after discovery diffs onto the server lineage (no c1+c2)", async () => {
-	const { e, disk, serverAfterMerge } = await scenario("disc-lineage-edit");
-	disk.set(PATH, C2);
-	await (e as any).pushFile(new TFile(PATH));
-	expect(await serverAfterMerge()).toBe(C2);
+test("first edit after discovery reaches the server exactly once", async () => {
+	const { disk, serverText, edit } = await scenario("disc-lineage-edit");
+	await edit(C2);
+	expect(await serverText()).toBe(C2);
 	expect(disk.get(PATH)).toBe(C2);
 });
 
-test("cold-start reconcile of a discovered note also diffs onto the server lineage", async () => {
-	const { mgr, disk, serverAfterMerge } = await scenario("disc-lineage-cold");
+test("cold-start reconcile of a discovered note reaches the server exactly once", async () => {
+	const { mgr, disk, serverText, settle } = await scenario("disc-lineage-cold");
 	disk.set(PATH, C2);
 	await reconcileColdStart({ path: PATH, noteId: ID, diskContent: C2 }, mgr as never, () => {});
-	expect(await serverAfterMerge()).toBe(C2);
+	await settle();
+	expect(await serverText()).toBe(C2);
 });
 
-test("lineage unavailable: the edit is declined, never seeded as a rival", async () => {
-	const { e, mgr, disk, serverAfterMerge } = await scenario("disc-lineage-down", "unavailable");
-	disk.set(PATH, C2);
-	await (e as any).pushFile(new TFile(PATH));
+test("server moved since discovery: the edit merges, the remote work survives", async () => {
+	const { disk, serverText, remoteEdit, edit } = await scenario("disc-lineage-moved");
+	remoteEdit(0, "REMOTE\n");
+	await edit(C2);
+	expect(await serverText()).toBe(`REMOTE\n${C2}`);
+	expect(disk.get(PATH)).toBe(`REMOTE\n${C2}`);
+});
+
+test("server moved and no provable base: keep both, delete nothing", async () => {
+	const { e, disk, serverText, remoteEdit, edit } = await scenario("disc-lineage-nobase");
+	(e as any).forgetDiscoveryBase(PATH);
+	remoteEdit(0, "REMOTE\n");
+	await edit(C2);
+	expect(await serverText()).toBe(`REMOTE\n${C1}`);
+	expect(disk.get(PATH)).toBe(`REMOTE\n${C1}`);
+	const copies = [...disk.entries()].filter(([p]) => p !== PATH);
+	expect(copies.map(([, c]) => c)).toEqual([C2]);
+});
+
+test("server state unreadable: declined, retried, then delivered once", async () => {
+	const { mgr, ctl, time, serverText, edit, settle } = await scenario("disc-lineage-retry");
+	ctl.docStateFails = true;
+	await edit(C2);
 	expect(await mgr.hasHistory(ID)).toBe(false);
-	expect(await serverAfterMerge()).toBe(C1);
-	// The edit is still on disk for the next attempt.
+	expect(await serverText()).toBe(C1);
+	ctl.docStateFails = false;
+	time.advance(2_000); // retry -> handleModify -> debounced push
+	await settle();
+	time.advance(10);
+	await settle();
+	expect(await serverText()).toBe(C2);
+});
+
+test("backend without crdt_doc_state: the edit still ships (old seed path)", async () => {
+	const { e, disk, serverText, edit } = await scenario("disc-lineage-oldbackend");
+	e.setCrdtPorts({ docState: null } as never);
+	await edit(C2);
+	// Doubling is the pre-fix behaviour on such a backend; losing the edit is not.
+	expect(await serverText()).toContain("second line from a fresh device.");
 	expect(disk.get(PATH)).toBe(C2);
 });
 
