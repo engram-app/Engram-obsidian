@@ -149,6 +149,14 @@ export function merge3(base: string, local: string, remote: string): LcaMergeRes
 	return { text: out + base.slice(pos), clean: true };
 }
 
+/** True when turning `from` into `to` only inserts: every character of
+ *  `from` survives, in order. A disk edit with no provable base may replace a
+ *  server text only under this rule, since it then deletes nothing the server
+ *  holds. */
+export function onlyInserts(from: string, to: string): boolean {
+	return new diff_match_patch().diff_main(from, to).every(([op]) => op !== -1);
+}
+
 /**
  * Whether the disk edit and the doc's edit (both relative to `base`) touch the
  * same characters: overlapping replaced ranges, or one inserting strictly
