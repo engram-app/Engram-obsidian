@@ -5397,6 +5397,60 @@ describe("SyncEngine.runCtimeSweep", () => {
 		expect(engine.getCtimeSweepVaultId()).toBe("");
 	});
 
+	function timedEngine(time: ManualTimeProvider): SyncEngine {
+		const e = new SyncEngine(
+			mockApp,
+			mockApi,
+			{ ...DEFAULT_SETTINGS, debounceMs: 10, vaultId: "v1" },
+			mockSaveData,
+			time,
+		);
+		e.setReady();
+		activeEngines.push(e);
+		return e;
+	}
+
+	// crdt_create carries no ctime, so after this device's one-time sweep a
+	// note created over the socket (the sole markdown create path) would never
+	// get one: an old file moved into the vault would show its sync time.
+	test("a note crdt_created after the sweep gets its ctime in one batched call", async () => {
+		const time = new ManualTimeProvider(0);
+		const engine = timedEngine(time);
+		engine.setCtimeSweepVaultId("v1");
+		const [a, b] = files(2);
+		mockApp.vault.getFileByPath.mockImplementation(
+			(p: string) => [a, b].find((f) => f.path === p) ?? null,
+		);
+
+		await (engine as any).adoptCreateAck("id-a", a.path, null, { flushHeld: false });
+		await (engine as any).adoptCreateAck("id-b", b.path, null, { flushHeld: false });
+		expect(setCtimes).not.toHaveBeenCalled();
+
+		time.advance(2000);
+		await new Promise((r) => setTimeout(r, 0));
+
+		expect(setCtimes).toHaveBeenCalledTimes(1);
+		expect(setCtimes.mock.calls[0][0]).toEqual([
+			{ path: a.path, ctime: 2 },
+			{ path: b.path, ctime: 2.001 },
+		]);
+		mockApp.vault.getFileByPath.mockReturnValue(null);
+	});
+
+	test("a create before the sweep queues nothing (the sweep covers it)", async () => {
+		const time = new ManualTimeProvider(0);
+		const engine = timedEngine(time);
+		const [a] = files(1);
+		mockApp.vault.getFileByPath.mockReturnValue(a);
+
+		await (engine as any).adoptCreateAck("id-a", a.path, null, { flushHeld: false });
+		time.advance(2000);
+		await new Promise((r) => setTimeout(r, 0));
+
+		expect(setCtimes).not.toHaveBeenCalled();
+		mockApp.vault.getFileByPath.mockReturnValue(null);
+	});
+
 	test("reruns for a different vault", async () => {
 		const engine = createEngine({ vaultId: "v2" });
 		engine.setCtimeSweepVaultId("v1");

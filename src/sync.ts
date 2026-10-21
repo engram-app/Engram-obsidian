@@ -615,6 +615,10 @@ export class SyncEngine {
 	private ctimeSweepRunning = false;
 	/** A failed sweep is not retried again this session (no hammering a 429/404). */
 	private ctimeSweepTried = false;
+	/** Notes crdt_created after the sweep, awaiting a batched ctime send. Vault
+	 *  paths, so a switch drops them (the timer then fires on an empty map). */
+	private pendingCtimes = this.track(["vault", "destroy"], new Map<string, number>());
+	private ctimeFlushTimer: number | null = null;
 	private lastError = "";
 	private offline = false;
 	private healthCheckTimer: number | null = null;
@@ -1596,6 +1600,7 @@ export class SyncEngine {
 		// the authoritative head.
 		this.setCrdtHead(path, CRDT_HEAD_CREATED);
 		this.confirmNoteId(effectiveId);
+		this.queueCreatedCtime(normalized);
 		if (consumed !== null) {
 			this.recordCrdtBaseline(normalized, consumed, { markCreated: true });
 		}
@@ -3404,6 +3409,31 @@ export class SyncEngine {
 		} finally {
 			this.ctimeSweepRunning = false;
 		}
+	}
+
+	/** crdt_create carries no ctime, so a note created after this vault's sweep
+	 *  gets its file ctime via POST /notes/ctime, batched over a 2s window.
+	 *  Before the sweep, the sweep covers it.
+	 *  ponytail: best effort, memory-only (lost on quit inside the window, dropped
+	 *  on failure); proper fix is a ctime field on crdt_create. */
+	private queueCreatedCtime(path: string): void {
+		const vaultId = this.settings.vaultId;
+		if (!vaultId || this.ctimeSweepVaultId !== vaultId) return;
+		const file = this.app.vault.getFileByPath(path);
+		const ctime = file ? fileCtimeSeconds(file) : undefined;
+		if (ctime === undefined) return;
+		this.pendingCtimes.set(path, ctime);
+		if (this.ctimeFlushTimer !== null) return;
+		this.ctimeFlushTimer = this.time.setTimeout(() => {
+			this.ctimeFlushTimer = null;
+			const entries = [...this.pendingCtimes].map(([p, c]) => ({ path: p, ctime: c }));
+			this.pendingCtimes.clear();
+			void (async () => {
+				for (let i = 0; i < entries.length; i += CTIME_SWEEP_BATCH) {
+					await this.api.setNoteCtimes(entries.slice(i, i + CTIME_SWEEP_BATCH));
+				}
+			})().catch((e) => rlog().warn("lifecycle", `ctime send failed: ${errMsg(e)}`));
+		}, 2000);
 	}
 
 	setManifestSeq(seq: number): void {
