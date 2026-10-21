@@ -18,6 +18,9 @@ export type PendingEntry = {
 
 export class PendingIngestStore {
 	private readonly entries = new Map<string, PendingEntry>();
+	/** Saves run strictly one after another, each snapshotting at run time, so a
+	 *  slow earlier write can never land after (and overwrite) a newer one. */
+	private tail: Promise<void> = Promise.resolve();
 
 	constructor(
 		load: () => PendingEntry[],
@@ -38,12 +41,27 @@ export class PendingIngestStore {
 			e.noteId,
 			old ? { ...e, base: old.base, baseHash: old.baseHash, enqueuedAt: old.enqueuedAt } : e,
 		);
-		await this.save([...this.entries.values()]);
+		// A rejected put keeps the new entry in memory: a later save persists it.
+		await this.persist();
 	}
 
 	async delete(noteId: string): Promise<void> {
-		if (!this.entries.delete(noteId)) return;
-		await this.save([...this.entries.values()]);
+		const old = this.entries.get(noteId);
+		if (!old) return;
+		this.entries.delete(noteId);
+		try {
+			await this.persist();
+		} catch (err) {
+			// Still on disk, so it must stay replayable: roll back (unless re-put since).
+			if (!this.entries.has(noteId)) this.entries.set(noteId, old);
+			throw err;
+		}
+	}
+
+	private persist(): Promise<void> {
+		const run = this.tail.then(() => this.save([...this.entries.values()]));
+		this.tail = run.catch(() => {});
+		return run;
 	}
 
 	forVault(vaultId: string): PendingEntry[] {

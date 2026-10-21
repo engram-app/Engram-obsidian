@@ -83,4 +83,54 @@ describe("PendingIngestStore", () => {
 		await s.delete("nope");
 		expect(s.forVault("v1")).toEqual([]);
 	});
+
+	test("saves are serialized: a slow first save cannot land last with a stale snapshot", async () => {
+		const written: PendingEntry[][] = [];
+		let release1!: () => void;
+		let calls = 0;
+		const s = new PendingIngestStore(
+			() => [],
+			async (all) => {
+				const n = ++calls;
+				if (n === 1) await new Promise<void>((r) => (release1 = r));
+				written.push(structuredClone(all));
+			},
+		);
+		const p1 = s.put(entry());
+		const p2 = s.put(entry({ noteId: "n2" }));
+		await Promise.resolve();
+		release1();
+		await Promise.all([p1, p2]);
+		expect(written[written.length - 1].map((e) => e.noteId).sort()).toEqual(["n1", "n2"]);
+	});
+
+	test("a delete racing a put never resurrects the deleted entry", async () => {
+		const written: PendingEntry[][] = [];
+		let release1!: () => void;
+		let calls = 0;
+		const s = new PendingIngestStore(
+			() => [entry()],
+			async (all) => {
+				if (++calls === 1) await new Promise<void>((r) => (release1 = r));
+				written.push(structuredClone(all));
+			},
+		);
+		const p1 = s.put(entry({ noteId: "n2" }));
+		const p2 = s.delete("n1");
+		await Promise.resolve();
+		release1();
+		await Promise.all([p1, p2]);
+		expect(written[written.length - 1].map((e) => e.noteId)).toEqual(["n2"]);
+	});
+
+	test("a rejected delete save rolls the entry back and rethrows", async () => {
+		const s = new PendingIngestStore(
+			() => [entry()],
+			async () => {
+				throw new Error("disk full");
+			},
+		);
+		await expect(s.delete("n1")).rejects.toThrow("disk full");
+		expect(s.get("n1")).toBeDefined();
+	});
 });
