@@ -523,6 +523,8 @@ export class Replica {
 		engine.setCrdtCatchupSince((cursorSeq, limit) =>
 			channel.crdtCatchupSince(cursorSeq, limit),
 		);
+		// Room-free full-state read (main.ts setCrdtPorts `docState`).
+		engine.setCrdtPorts({ docState: (id: string) => channel.crdtDocState(id) });
 
 		// Paths this replica has an editor open on (openNote adds, closeNote
 		// removes). Backs isBound + setLiveBoundCheck below, exactly as

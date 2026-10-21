@@ -247,6 +247,17 @@ export class ModelServer {
 			this.handleCatchup(clientId, joinRef, ref, topic, payload);
 			return;
 		}
+		if (event === "crdt_doc_state") {
+			// Room-free full-state read, as the live CrdtChannel serves it.
+			const n = this.byId.get(payload.doc_id as string);
+			if (!n || n.deleted) {
+				this.reply(clientId, joinRef, ref, topic, "error", { reason: "note_not_found" });
+				return;
+			}
+			const b64 = toB64(Y.encodeStateAsUpdate(n.doc));
+			this.reply(clientId, joinRef, ref, topic, "ok", { b64, head: this.head(n) });
+			return;
+		}
 		// Unknown WS event: ignore (the real client never sends others).
 	}
 

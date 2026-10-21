@@ -41,6 +41,7 @@ import { Replica } from "./replica";
 import {
 	cleanup,
 	equalSeqFence,
+	freshDeviceEditsDiscoveredNote,
 	genesisWipe,
 	offlineBoundEditRecovers,
 	offlineEditSwitchAwayRecovers,
@@ -191,6 +192,19 @@ test("#489 rename-then-delete: the delete lands and the next note is not adopted
 		expect(r.firstId).not.toBeNull();
 		expect(r.secondId).not.toBeNull();
 		expect(r.secondId).not.toBe(r.firstId);
+	} finally {
+		cleanup(r.topology);
+	}
+});
+
+// Fresh device's first edit to a discovered note must not double it on the
+// server (old body + edit). Server CONTENT, not convergence: a doubled body
+// converges everywhere and would pass assertConverged.
+test("fresh device edits a discovered note: server holds the edit once", async () => {
+	const r = await freshDeviceEditsDiscoveredNote();
+	try {
+		expect(r.topology.server.state().notes.get(r.notePath)?.content).toBe(r.edited);
+		await assertConverged(r.topology.replicas, r.topology.server, r.topology.scheduler);
 	} finally {
 		cleanup(r.topology);
 	}
