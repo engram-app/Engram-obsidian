@@ -27,6 +27,8 @@ function makeManager(opts?: {
 }) {
 	const flushed: Record<string, string> = {};
 	const mgr = new ProviderRegistry({
+		// Local mints: the server does not hold these notes, so they seed.
+		isServerKnown: () => false,
 		dbPrefix: `vault-atomic-${Math.random().toString(36).slice(2)}`,
 		// Provider model: the provider owns its own outbound send; the old onUpdate capture
 		// is replaced by a doc.on("update") listener per test where a count matters.

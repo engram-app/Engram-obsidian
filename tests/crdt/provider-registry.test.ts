@@ -39,6 +39,8 @@ function twoDevices() {
 	let A: ProviderRegistry;
 	let B: ProviderRegistry;
 	A = new ProviderRegistry({
+		// Local mints: the server does not hold these notes, so they seed.
+		isServerKnown: () => false,
 		dbPrefix: "devA",
 		send: (id, frame) => {
 			if (up) deliver(() => B, id, frame);
@@ -49,6 +51,8 @@ function twoDevices() {
 		},
 	});
 	B = new ProviderRegistry({
+		// Local mints: the server does not hold these notes, so they seed.
+		isServerKnown: () => false,
 		dbPrefix: "devB",
 		send: (id, frame) => {
 			if (up) deliver(() => A, id, frame);
@@ -90,6 +94,8 @@ describe("ProviderRegistry destroyed-doc guard", () => {
 	function oneDevice() {
 		const flushed: Record<string, string> = {};
 		const reg = new ProviderRegistry({
+			// Local mints: the server does not hold these notes, so they seed.
+			isServerKnown: () => false,
 			dbPrefix: "devGuard",
 			send: () => true,
 			onFlushToDisk: (id, content) => {
@@ -258,6 +264,8 @@ describe("ProviderRegistry (provider-model engine)", () => {
 describe("enrollment cleared on teardown", () => {
 	function oneDevice() {
 		return new ProviderRegistry({
+			// Local mints: the server does not hold these notes, so they seed.
+			isServerKnown: () => false,
 			dbPrefix: "devEnroll",
 			send: () => true,
 			onFlushToDisk: () => {},
@@ -287,6 +295,8 @@ describe("enrollment cleared on teardown", () => {
 describe("hasAnyHistoryTransient residency", () => {
 	function oneDevice(prefix: string) {
 		return new ProviderRegistry({
+			// Local mints: the server does not hold these notes, so they seed.
+			isServerKnown: () => false,
 			dbPrefix: prefix,
 			send: () => true,
 			onFlushToDisk: () => true,
@@ -366,6 +376,8 @@ describe("hasAnyHistoryTransient residency", () => {
 describe("teardown projection includes frontmatter (#483)", () => {
 	function oneDevice(prefix: string) {
 		return new ProviderRegistry({
+			// Local mints: the server does not hold these notes, so they seed.
+			isServerKnown: () => false,
 			dbPrefix: prefix,
 			send: () => true,
 			onFlushToDisk: () => {},
@@ -426,6 +438,8 @@ describe("room-free delivery receipt (#1493)", () => {
 	 *  frame, and a buffered frame correctly vetoes the receipt. */
 	function unhandshookDevice(prefix: string) {
 		const reg = new ProviderRegistry({
+			// Local mints: the server does not hold these notes, so they seed.
+			isServerKnown: () => false,
 			dbPrefix: prefix,
 			send: () => true,
 			onFlushToDisk: () => {},
@@ -516,6 +530,8 @@ describe("room-free delivery receipt (#1493)", () => {
 		// the doc's state can speak for a frame that went nowhere, so the receipt
 		// must not override it.
 		const reg = new ProviderRegistry({
+			// Local mints: the server does not hold these notes, so they seed.
+			isServerKnown: () => false,
 			dbPrefix: "receipt-buffered",
 			send: () => true,
 			onFlushToDisk: () => {},
@@ -587,6 +603,8 @@ describe("room-free delivery receipt (#1493)", () => {
 describe("delivery base (diff against what the server acked)", () => {
 	function device(prefix: string) {
 		const reg = new ProviderRegistry({
+			// Local mints: the server does not hold these notes, so they seed.
+			isServerKnown: () => false,
 			dbPrefix: prefix,
 			send: () => true,
 			onFlushToDisk: () => {},

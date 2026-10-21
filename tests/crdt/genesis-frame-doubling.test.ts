@@ -182,6 +182,8 @@ test("the real ProviderRegistry reports history after an actual local edit", asy
 	// implementation always return false would sail through them and silently
 	// re-enable the doubling.
 	const registry = new ProviderRegistry({
+		// Local mints: the server does not hold these notes, so they seed.
+		isServerKnown: () => false,
 		dbPrefix: `doubling-real-${ID_A}`,
 		send: () => true,
 		onFlushToDisk: async () => {},

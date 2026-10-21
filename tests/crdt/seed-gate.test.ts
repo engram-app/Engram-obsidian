@@ -26,6 +26,8 @@ import { ProviderRegistry } from "../../src/crdt/provider-registry";
 // never share state; callers who WANT to share a store pass the same dbPrefix.
 function makeManager(dbPrefix = `seed-gate-${Math.random().toString(36).slice(2)}`) {
 	return new ProviderRegistry({
+		// Local mints: the server does not hold these notes, so they seed.
+		isServerKnown: () => false,
 		dbPrefix,
 		send: () => true,
 		onFlushToDisk: async () => {},

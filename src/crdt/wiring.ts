@@ -94,6 +94,9 @@ export interface CrdtWiringDeps {
 	onDirtyMerge?: (noteId: string) => void;
 	/** A clean merge that dropped a concurrent doc edit (measurement). */
 	onLossyMerge?: (noteId: string) => void;
+	/** Ingest gate: does the server hold this note? Omitted = every note is
+	 *  (fail closed), so no history-less doc is ever seeded. */
+	isServerKnown?: (noteId: string) => boolean;
 }
 
 export interface CrdtWiring {
@@ -287,6 +290,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		lcaFor: deps.lcaFor,
 		onDirtyMerge: deps.onDirtyMerge,
 		onLossyMerge: deps.onLossyMerge,
+		isServerKnown: deps.isServerKnown,
 		send: (docId, frame, kind) => {
 			// Create-before-edit: hold OPS until the note's server row exists. Never
 			// hold a "handshake" frame (syncStep1, or the syncStep2 written in reply

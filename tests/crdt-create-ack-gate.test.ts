@@ -62,6 +62,8 @@ describe("create-ack gate on live send", () => {
 		const send = mock(() => true);
 		const acked = new Set<string>(); // nothing acked yet
 		const mgr = new ProviderRegistry({
+			// Local mints: the server does not hold these notes, so they seed.
+			isServerKnown: () => false,
 			dbPrefix: "gate-unacked",
 			send: gatedSend((id: string) => acked.has(id), send),
 			onFlushToDisk: async () => {},
@@ -76,6 +78,8 @@ describe("create-ack gate on live send", () => {
 		const send = mock(() => true);
 		const acked = new Set<string>(["note-1"]);
 		const mgr = new ProviderRegistry({
+			// Local mints: the server does not hold these notes, so they seed.
+			isServerKnown: () => false,
 			dbPrefix: "gate-acked",
 			send: gatedSend((id: string) => acked.has(id), send),
 			onFlushToDisk: async () => {},
@@ -89,6 +93,8 @@ describe("create-ack gate on live send", () => {
 	test("an UNWRAPPED transport always sends — the registry adds no gate", async () => {
 		const send = mock(() => true);
 		const mgr = new ProviderRegistry({
+			// Local mints: the server does not hold these notes, so they seed.
+			isServerKnown: () => false,
 			dbPrefix: "gate-default",
 			send,
 			onFlushToDisk: async () => {},
@@ -111,6 +117,8 @@ describe("create-ack gate on live send", () => {
 	test("enroll's syncStep1 is NOT held by the create-ack gate", async () => {
 		const send = mock(() => true);
 		const mgr = new ProviderRegistry({
+			// Local mints: the server does not hold these notes, so they seed.
+			isServerKnown: () => false,
 			dbPrefix: "gate-step1-pull",
 			// no crdtHead recorded for this note -> the gate holds every op
 			send: gatedSend(() => false, send),
@@ -133,6 +141,8 @@ describe("create-ack gate on live send", () => {
 		const peer = new NoteProvider(server);
 		const flushed: string[] = [];
 		const mgr = new ProviderRegistry({
+			// Local mints: the server does not hold these notes, so they seed.
+			isServerKnown: () => false,
 			dbPrefix: "gate-step1-heal",
 			// no crdtHead — the note is "unknown" to the gate
 			send: gatedSend(
@@ -177,6 +187,8 @@ describe("create-ack gate on live send", () => {
 			return true;
 		});
 		const mgr = new ProviderRegistry({
+			// Local mints: the server does not hold these notes, so they seed.
+			isServerKnown: () => false,
 			dbPrefix: "gate-step2-reply",
 			send: gatedSend(() => false, registrySend), // ops held for the whole test
 			onFlushToDisk: async () => {},
@@ -213,6 +225,8 @@ describe("create-ack gate on live send", () => {
 			return true;
 		});
 		const mgr = new ProviderRegistry({
+			// Local mints: the server does not hold these notes, so they seed.
+			isServerKnown: () => false,
 			dbPrefix: "gate-step1-reconnect",
 			send: gatedSend(() => false, send),
 			onFlushToDisk: async () => {},
@@ -239,6 +253,8 @@ describe("SyncEngine.flushHeldEditsOnCreateAck", () => {
 		const engine = makeEngine();
 		const confirmed = new Set<string>();
 		const mgr = new ProviderRegistry({
+			// Local mints: the server does not hold these notes, so they seed.
+			isServerKnown: () => false,
 			dbPrefix: "flush-ack",
 			send: gatedSend((id: string) => confirmed.has(id), send),
 			onFlushToDisk: async () => {},
@@ -264,6 +280,8 @@ describe("SyncEngine.flushHeldEditsOnCreateAck", () => {
 		});
 		const engine = makeEngine();
 		const mgr = new ProviderRegistry({
+			// Local mints: the server does not hold these notes, so they seed.
+			isServerKnown: () => false,
 			dbPrefix: "flush-ack-empty",
 			send,
 			onFlushToDisk: async () => {},
@@ -373,6 +391,12 @@ describe("Defect 1: gate must survive reconnect for server-known notes", () => {
 		});
 		mgr.setConnected(true);
 		engine.setCrdtManager(mgr);
+		// The doc holds the server's lineage (a server-known note's history-less
+		// doc never takes local text: the ingest gate makes it wait).
+		const server = new Y.Doc();
+		server.getText(CONTENT_KEY).insert(0, "server body");
+		await mgr.applyRemoteUpdate("note-existing", Y.encodeStateAsUpdate(server));
+		send.mockClear();
 
 		await mgr.applyLocalEdit("note-existing", "edited after reconnect");
 		expect(send).toHaveBeenCalled(); // must NOT stall: server already has this note
@@ -409,6 +433,8 @@ describe("Task 3: create-before-edit wire ordering (regression)", () => {
 		engine.setNoteIdMap(noteIdMap);
 
 		const mgr = new ProviderRegistry({
+			// Local mints: the server does not hold these notes, so they seed.
+			isServerKnown: () => false,
 			dbPrefix: "order-genesis",
 			// The gate is what enforces the ordering under test: an op for a
 			// not-yet-confirmed note must not reach the wire ahead of its create.

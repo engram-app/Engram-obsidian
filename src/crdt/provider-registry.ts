@@ -12,10 +12,13 @@
 // re-handshake) become no-ops the persistent doc doesn't need.
 import { IndexeddbPersistence } from "y-indexeddb";
 import * as Y from "yjs";
+import { fnv1a } from "../content-hash";
 import { Lifetime } from "../lifetime";
 import { seedCanvasInto } from "./canvas-codec";
 import { isDestroyedError, NoteDestroyedError } from "./destroyed-error";
+import type { DiscoveryBaseStore } from "./discovery-base-store";
 import { CONTENT_KEY, splitFrontmatter } from "./frontmatter-codec";
+import { decideReplay } from "./ingest-gate";
 import { merge3, mergeDiskOntoDoc, overwritesConcurrentEdit } from "./lca-merge";
 import { type FrameKind, NoteProvider } from "./note-provider";
 import {
@@ -25,8 +28,21 @@ import {
 	seedContentInto,
 	seedFrontmatterInto,
 } from "./note-seed";
+import { type PendingEntry, PendingIngestStore } from "./pending-ingest-store";
+import { canonText } from "./root-clients";
 
 export type DocKind = "note" | "canvas";
+
+export type IngestInput = {
+	text: string;
+	base: string | null;
+	source: PendingEntry["source"];
+	reread?: () => Promise<string>;
+};
+export type IngestResult = { consumed: string } | { pending: true };
+
+/** Replay passes before a note that keeps moving is left pending. */
+const MAX_REPLAY_PASSES = 3;
 
 /** Applied to remote merges so the provider suppresses re-send AND the registry
  *  flush listener writes them to disk. The NoteProvider stamps itself as the
@@ -66,6 +82,11 @@ interface Entry {
 	 *  (delete-note resurrection). `lifetime.guard(...)` races the await against
 	 *  the end; `lifetime.active` is the cheap synchronous check. */
 	lifetime: Lifetime;
+	/** In-flight onLineage replay, so arrivals that land mid-replay join it. */
+	replay: Promise<void> | null;
+	/** The first STEP2 left the doc empty: the server holds no lineage to
+	 *  rival, so a pending edit may replay onto the empty doc. */
+	serverEmpty: boolean;
 }
 
 export interface ProviderRegistryOpts {
@@ -87,9 +108,6 @@ export interface ProviderRegistryOpts {
 		 *  frontmatter change justifies writing under a live editor. */
 		fmChanged: boolean,
 	) => Promise<boolean | undefined> | boolean | undefined;
-	/** Adopt-first gate: content byte-identical to the last-synced content must
-	 *  NOT seed (would fork a second lineage → #846 doubling). */
-	isUnchangedSynced?: (noteId: string, content: string) => boolean;
 	/** Fired on the first inbound syncStep2 for a note. */
 	onSynced?: (noteId: string) => void;
 	/** Fired when the first inbound syncStep2 leaves the doc EMPTY — the server's
@@ -111,6 +129,35 @@ export interface ProviderRegistryOpts {
 	 *  concurrent edit already in the doc (`overwritesConcurrentEdit`): the
 	 *  doc's side is silently dropped. Measurement only; behaviour unchanged. */
 	onLossyMerge?: (noteId: string) => void;
+	/** @deprecated Task 5 wires `baselineHash` and drops this. Kept so the
+	 *  unchanged-content shortcut in `ingest` works until then. */
+	isUnchangedSynced?: (noteId: string, content: string) => boolean;
+
+	// --- Single ingest gate --------------------------------------------------
+	// Every option below may be absent; each default FAILS CLOSED (waits),
+	// never seeds.
+
+	/** Does the server hold this note? Absent = every note is server-known. */
+	isServerKnown?: (noteId: string) => boolean;
+	/** fnv1a of the content last synced for this note (the syncState hash). */
+	baselineHash?: (noteId: string) => number | undefined;
+	/** Durable queue of edits waiting for the server lineage. Default: in memory. */
+	pending?: PendingIngestStore;
+	/** Catch-up's body for a note: the replay base when the entry has none. */
+	discoveryBase?: DiscoveryBaseStore;
+	/** Ask the engine to fetch the server's lineage for this note. */
+	requestLineage?: (noteId: string) => void;
+	/** Keep-both: write `text` beside the note. Absent = cannot, so stay pending. */
+	writeConflictCopy?: (noteId: string, text: string) => Promise<boolean>;
+	/** The note's current disk text; the replay input when it is not bound. */
+	readDisk?: (noteId: string) => Promise<string | null>;
+	/** The bound editor's full text, or null when the note is not open. */
+	editorText?: (noteId: string) => string | null;
+	/** Repaint the bound editor after a replay. */
+	paintEditor?: (noteId: string, text: string) => void;
+	/** Path and vault stamped on a pending entry. */
+	pathFor?: (noteId: string) => string | undefined;
+	vaultId?: string;
 }
 
 export class ProviderRegistry {
@@ -127,7 +174,16 @@ export class ProviderRegistry {
 	 *  so the e2e introspection (get_enrolled_note_ids) reads it unchanged. */
 	private readonly enrolledIds = new Set<string>();
 
-	constructor(private readonly opts: ProviderRegistryOpts) {}
+	private readonly pending: PendingIngestStore;
+
+	constructor(private readonly opts: ProviderRegistryOpts) {
+		this.pending =
+			opts.pending ??
+			new PendingIngestStore(
+				() => [],
+				async () => {},
+			);
+	}
 
 	/** The set of note_ids holding an open CRDT room (STEP1-advertised). Read by
 	 *  the e2e `get_enrolled_note_ids` helper — a note absent here is room-free. */
@@ -180,6 +236,16 @@ export class ProviderRegistry {
 	 *  lineage, which is the trap the pre-handshake seed gate exists for. */
 	async ingestFrontmatter(noteId: string, content: string): Promise<void> {
 		const e = await this.entry(noteId);
+		// Frontmatter is local text too: an awaiting note queues it like a body
+		// edit (the ORDER_KEY insert into a history-less doc doubles on merge).
+		if (this.isAwaiting(noteId, e)) {
+			await this.enqueue(noteId, e, {
+				text: content,
+				base: this.opts.lcaFor?.(noteId) ?? null,
+				source: "disk",
+			});
+			return;
+		}
 		seedFrontmatterInto(e.doc, content);
 	}
 
@@ -225,6 +291,11 @@ export class ProviderRegistry {
 			},
 			onSynced: () => {
 				this.opts.onSynced?.(noteId);
+				// Lineage arrival via the first STEP2 (the update handler below
+				// already kicked it; this joins the same replay). An empty STEP2
+				// is the server's word that it holds nothing to rival.
+				if (!docHasAnyHistory(doc, kind)) entry.serverEmpty = true;
+				void this.kickReplay(noteId, entry);
 				// A first syncStep2 that left the doc empty = the server's "genuinely
 				// empty note" signal (materialize off the handshake, #547).
 				if (text.length === 0) this.opts.onEmptyStep2?.(noteId);
@@ -242,6 +313,8 @@ export class ProviderRegistry {
 			lastFlushedFm: null,
 			pendingFlush: null,
 			lifetime: new Lifetime(),
+			replay: null,
+			serverEmpty: false,
 		};
 		// Disk-flush listener: a REMOTE merge (origin === provider from
 		// readSyncMessage, or REMOTE from applyRemoteUpdate) writes back to disk.
@@ -250,6 +323,12 @@ export class ProviderRegistry {
 			if (!entry.lifetime.active) return; // deleted mid-flight — never flush a dead doc
 			if (origin !== provider && origin !== REMOTE) return;
 			entry.remoteSeq += 1;
+			// A pending local edit is still only on disk: flushing S here would
+			// overwrite it. The replay writes the merged result instead.
+			if (this.pending.get(noteId)) {
+				void this.kickReplay(noteId, entry);
+				return;
+			}
 			const projected = this.project(entry);
 			// Compare the BLOCK against what the last flush projected, not against
 			// the editor. The editor is the wrong oracle: in Live Preview the CM
@@ -285,6 +364,8 @@ export class ProviderRegistry {
 			// vector of the hydrated doc), so the server returns only the diff.
 			provider.activate();
 			if (this.connected) provider.setConnected(true);
+			// Lineage arrival via IndexedDB: the doc already held history.
+			void this.kickReplay(noteId, entry);
 		});
 		this.entries.set(noteId, entry);
 		return entry;
@@ -375,10 +456,29 @@ export class ProviderRegistry {
 
 	// --- Local edits (disk → doc) -----------------------------------------------
 
-	/** Ingest disk content into the doc (frontmatter + body). Returns the content
-	 *  the doc consumed, or null when NOT consumed (caller's REST path owns it).
-	 *  Ports CrdtManager.applyLocalEdit: stale-snapshot guard + adopt-first gate +
-	 *  the shared seedContentInto codec. */
+	/** The ONE way local text enters a note's doc.
+	 *
+	 *  - local (the server does not hold the note): seed, as before.
+	 *  - live (the doc holds history): LCA merge / stale-snapshot diff.
+	 *  - awaiting (server-known and history-less, or an entry already
+	 *    pending): queue a durable pending entry, ask for the lineage, return
+	 *    pending. No text enters the doc until `onLineage` replays it as a diff
+	 *    on top of the server's lineage. There is no fallback to seeding.
+	 *
+	 *  Throws NoteDestroyedError for a deleted note. */
+	async ingest(noteId: string, input: IngestInput): Promise<IngestResult> {
+		this.assertAlive(noteId);
+		const e = await this.entry(noteId);
+		if (!e.lifetime.active) throw new NoteDestroyedError(noteId);
+		if (this.isAwaiting(noteId, e)) return this.enqueue(noteId, e, input);
+		const r = await this.ingestLive(noteId, e, input, undefined);
+		// Declined (remote storm, unreadable reread, unparseable canvas): the doc
+		// has history, so the replay path is a safe retry.
+		return r ?? this.enqueue(noteId, e, input);
+	}
+
+	/** @deprecated Shim over the gate for sync.ts/main.ts until Task 5: the
+	 *  consumed text, or null when pending/declined (main's decline semantics). */
 	async applyLocalEdit(
 		noteId: string,
 		diskContent: string,
@@ -386,8 +486,71 @@ export class ProviderRegistry {
 		reread?: () => Promise<string>,
 	): Promise<string | null> {
 		if (this.removed.has(noteId)) return null; // deleted — don't resurrect
-		const e = await this.entry(noteId);
-		if (!e.lifetime.active) return null; // destroyed while we awaited hydration
+		try {
+			const e = await this.entry(noteId);
+			if (!e.lifetime.active) return null;
+			const input: IngestInput = {
+				text: diskContent,
+				base: this.opts.lcaFor?.(noteId) ?? null,
+				source: "disk",
+				reread,
+			};
+			const r = this.isAwaiting(noteId, e)
+				? await this.enqueue(noteId, e, input)
+				: await this.ingestLive(noteId, e, input, hasLca);
+			return r && "consumed" in r ? r.consumed : null;
+		} catch (err) {
+			if (isDestroyedError(err)) return null;
+			throw err;
+		}
+	}
+
+	/** Server-known and history-less, or already waiting. A pending entry keeps
+	 *  the note awaiting even after the doc gains history, until replay ends. */
+	private isAwaiting(noteId: string, e: Entry): boolean {
+		if (this.pending.get(noteId)) return true;
+		return !docHasAnyHistory(e.doc, e.kind) && (this.opts.isServerKnown?.(noteId) ?? true);
+	}
+
+	private async enqueue(noteId: string, e: Entry, input: IngestInput): Promise<IngestResult> {
+		const prior = this.pending.get(noteId);
+		// Byte-identical to what was last synced: nothing local to preserve.
+		if (!prior && this.isUnchanged(noteId, input.text)) return { consumed: input.text };
+		const put = this.pending.put({
+			noteId,
+			path: this.opts.pathFor?.(noteId) ?? "",
+			vaultId: this.opts.vaultId ?? "",
+			base: input.base,
+			baseHash: input.base === null ? null : fnv1a(input.base),
+			enqueuedAt: Date.now(),
+			source: input.source,
+			text:
+				input.source === "editor" || input.source === "migration" ? input.text : undefined,
+		});
+		// put() set the entry synchronously, so an arrival from here on replays it.
+		// Already holding the lineage (a refused replay, a declined live edit):
+		// replay now. Otherwise ask for it, once per entry.
+		if (this.hasLineage(e)) void this.kickReplay(noteId, e);
+		else if (!prior) this.opts.requestLineage?.(noteId);
+		await put;
+		return { pending: true };
+	}
+
+	private isUnchanged(noteId: string, text: string): boolean {
+		const h = this.opts.baselineHash?.(noteId);
+		if (h !== undefined) return h === fnv1a(text);
+		return this.opts.isUnchangedSynced?.(noteId, text) ?? false;
+	}
+
+	/** The local and live paths. Null = declined, nothing written. */
+	private async ingestLive(
+		noteId: string,
+		e: Entry,
+		input: IngestInput,
+		hasLca: boolean | undefined,
+	): Promise<IngestResult | null> {
+		const diskContent = input.text;
+		const reread = input.reread;
 		let content = diskContent;
 
 		// LCA path (#357). With a merge base we apply the disk's delta RELATIVE TO
@@ -411,7 +574,7 @@ export class ProviderRegistry {
 					this.opts.onLossyMerge?.(noteId);
 				}
 				seedContentInto(e.doc, e.text, merged.text, docHasHistory(e.doc, e.kind));
-				return merged.text;
+				return { consumed: merged.text };
 			}
 			// Dirty merge: overlapping edits to the same region. Fall through to the
 			// pre-LCA path rather than writing content we know is mangled — the
@@ -452,21 +615,171 @@ export class ProviderRegistry {
 			if (!stable) return null; // live remote storm — skip the stale diff
 		}
 
-		const lca = hasLca ?? docHasHistory(e.doc, e.kind);
-
-		// Adopt-first: history-less doc whose disk bytes == last-synced content has
-		// nothing local to preserve; leave it empty and let STEP2 populate it on the
-		// server's lineage (avoids the #846 doubling). "Consumed, nothing to push".
-		if (!lca && this.opts.isUnchangedSynced?.(noteId, content)) return content;
+		// The reread awaited: the note may have become awaiting meanwhile (a
+		// create-ack made it server-known, or another ingest queued it).
+		if (this.isAwaiting(noteId, e)) return this.enqueue(noteId, e, { ...input, text: content });
 
 		// `lca` decides the seed strategy — history vs no history — and getting
-		// that wrong is the #846 lineage-doubling class.
-
+		// that wrong is the #846 lineage-doubling class. A history-less doc here
+		// is a local note the server does not hold, so seeding is correct.
+		const lca = hasLca ?? docHasHistory(e.doc, e.kind);
 		if (e.kind === "canvas") {
-			return seedCanvasInto(e.doc, content) ? content : null;
+			return seedCanvasInto(e.doc, content) ? { consumed: content } : null;
 		}
 		seedContentInto(e.doc, e.text, content, lca);
-		return content;
+		return { consumed: content };
+	}
+
+	// --- onLineage replay -------------------------------------------------------
+
+	/** onLineage: start (or join) the replay of `noteId`'s pending edit, if it
+	 *  has one and its doc now holds the server lineage. Never rejects: a failed
+	 *  replay leaves the entry pending and asks for the lineage again. */
+	private kickReplay(noteId: string, e: Entry): Promise<void> {
+		if (e.replay) return e.replay;
+		if (!e.lifetime.active || !this.pending.get(noteId) || !this.hasLineage(e)) {
+			return Promise.resolve();
+		}
+		const run: Promise<void> = this.replay(noteId, e)
+			.catch((err) => {
+				if (!isDestroyedError(err)) this.opts.requestLineage?.(noteId);
+			})
+			.finally(() => {
+				if (e.replay === run) e.replay = null;
+			});
+		e.replay = run;
+		return run;
+	}
+
+	/** Replay the pending edit T onto the server state S now in the doc.
+	 *  Disk is written BEFORE the doc is touched; a refused write leaves the
+	 *  entry pending and the doc holding only S. A bound note runs
+	 *  editorText -> decide -> diff -> paint with no await in between. */
+	private async replay(noteId: string, e: Entry): Promise<void> {
+		// Leave the Yjs update handler that kicked us before writing the doc.
+		await Promise.resolve();
+		// After a pass that wrote `out` to disk and doc, `out` is the base.
+		let settled: string | null = null;
+		for (let pass = 0; pass < MAX_REPLAY_PASSES; pass++) {
+			const p = this.pending.get(noteId);
+			if (!p || !e.lifetime.active || !this.hasLineage(e)) return;
+			const base =
+				settled ?? p.base ?? (await e.lifetime.guard(this.discoveryBaseFor(noteId)));
+			const editor = this.opts.editorText?.(noteId) ?? null;
+
+			if (editor === null) {
+				const T = p.text ?? (await e.lifetime.guard(this.readDisk(noteId)));
+				if (T === null) break; // nothing readable to replay: stay pending
+				if ((this.opts.editorText?.(noteId) ?? null) !== null) continue; // bound meanwhile
+				const S = this.project(e);
+				const d = this.decide(noteId, e, S, T, base);
+				const out = d.kind === "apply" ? d.text : S;
+				if (d.kind === "keep-both" && !(await this.writeCopy(e, noteId, T))) break;
+				if (!(await this.flushReplay(e, noteId, out))) break;
+				if (this.pending.get(noteId) !== p || !e.lifetime.active) continue;
+				if (this.project(e) !== S) {
+					// The doc moved during the write. Disk holds `out`, derived from S,
+					// so S is the base for the next pass.
+					if (p.text === undefined) settled = S;
+					continue;
+				}
+				this.writeInto(e, out);
+				if (p.text === undefined) {
+					// Re-read: an edit made during the write must not be dropped.
+					const now = await e.lifetime.guard(this.readDisk(noteId));
+					if (now !== out || this.project(e) !== out || this.pending.get(noteId) !== p) {
+						settled = out;
+						continue;
+					}
+				}
+				await this.finishReplay(noteId);
+				return;
+			}
+
+			// Bound: the editor holds T, and Obsidian's own save writes disk after
+			// the paint.
+			const S = this.project(e);
+			const d = this.decide(noteId, e, S, editor, base);
+			if (d.kind === "keep-both") {
+				if (!(await this.writeCopy(e, noteId, editor))) break;
+				if (this.opts.editorText?.(noteId) !== editor || this.project(e) !== S) continue;
+				if (this.pending.get(noteId) !== p || !e.lifetime.active) continue;
+				this.opts.paintEditor?.(noteId, S);
+			} else {
+				this.writeInto(e, d.text);
+				this.opts.paintEditor?.(noteId, d.text);
+			}
+			await this.finishReplay(noteId);
+			return;
+		}
+		// Refused, unreadable, or still moving after MAX_REPLAY_PASSES.
+		this.opts.requestLineage?.(noteId);
+	}
+
+	/** The doc holds the server's lineage, or the server said it has none.
+	 *  "Empty" is trusted only for the session that heard it: it expires with
+	 *  the synced mark (reset / clearSynced) and on disconnect. */
+	private hasLineage(e: Entry): boolean {
+		return docHasAnyHistory(e.doc, e.kind) || (e.serverEmpty && e.provider.synced);
+	}
+
+	private decide(noteId: string, e: Entry, server: string, text: string, base: string | null) {
+		return decideReplay(
+			{ server, text, base, baselineHash: this.opts.baselineHash?.(noteId), kind: e.kind },
+			(t) => canonText(t, e.kind),
+		);
+	}
+
+	/** Diff replayed text into the doc as a LOCAL edit on top of the lineage. */
+	private writeInto(e: Entry, text: string): void {
+		if (e.kind === "canvas") seedCanvasInto(e.doc, text);
+		else seedContentInto(e.doc, e.text, text, true);
+	}
+
+	private async discoveryBaseFor(noteId: string): Promise<string | null> {
+		try {
+			return (await this.opts.discoveryBase?.get(noteId)) ?? null;
+		} catch {
+			// Unreadable base = no provable base: decideReplay keeps both rather
+			// than guessing, so this can only cost a conflict copy.
+			return null;
+		}
+	}
+
+	private async readDisk(noteId: string): Promise<string | null> {
+		return (await this.opts.readDisk?.(noteId)) ?? null;
+	}
+
+	/** False on a refused or failed write; the caller stays pending. */
+	private async flushReplay(e: Entry, noteId: string, out: string): Promise<boolean> {
+		const fm = splitFrontmatter(out).fmBlock;
+		try {
+			const ok = await e.lifetime.guard(
+				Promise.resolve(this.opts.onFlushToDisk(noteId, out, fm !== e.lastFlushedFm)),
+			);
+			if (ok === false) return false;
+		} catch (err) {
+			if (isDestroyedError(err)) throw err;
+			return false;
+		}
+		e.lastFlushedFm = fm;
+		return true;
+	}
+
+	private async writeCopy(e: Entry, noteId: string, text: string): Promise<boolean> {
+		const write = this.opts.writeConflictCopy;
+		if (!write) return false; // cannot keep both: stay pending
+		try {
+			return (await e.lifetime.guard(write(noteId, text))) === true;
+		} catch (err) {
+			if (isDestroyedError(err)) throw err;
+			return false;
+		}
+	}
+
+	private async finishReplay(noteId: string): Promise<void> {
+		await this.pending.delete(noteId);
+		await this.opts.discoveryBase?.delete(noteId);
 	}
 
 	/** Merge a disk edit made FROM `base` onto the doc, with no await between
@@ -487,6 +800,11 @@ export class ProviderRegistry {
 		if (this.removed.has(noteId)) return null;
 		const e = await this.entry(noteId);
 		if (!e.lifetime.active || e.kind !== "note") return null;
+		// Never seed blind, even forced: a history-less doc of a server-known
+		// note means the lineage did not land.
+		if (!docHasAnyHistory(e.doc, e.kind) && (this.opts.isServerKnown?.(noteId) ?? true)) {
+			return null;
+		}
 		const current = this.project(e);
 		if (current !== expected && !force) return null;
 		const merged = merge3(base, disk, current);
@@ -522,6 +840,9 @@ export class ProviderRegistry {
 		// the provider origin too, so the merge still writes to disk. (Invariant:
 		// everything the sync machinery applies uses the provider as origin.)
 		Y.applyUpdate(e.doc, update, e.provider);
+		// A pending edit's replay stands in for the flush. It never rejects: a
+		// refused write leaves the entry pending, which is the durable record.
+		if (e.replay) await e.replay;
 		const flush = e.pendingFlush;
 		if (flush) {
 			e.pendingFlush = null;
@@ -699,7 +1020,10 @@ export class ProviderRegistry {
 	 *  outlives the socket. */
 	setConnected(connected: boolean): void {
 		this.connected = connected;
-		for (const e of this.entries.values()) e.provider.setConnected(connected);
+		for (const e of this.entries.values()) {
+			if (!connected) e.serverEmpty = false;
+			e.provider.setConnected(connected);
+		}
 	}
 
 	// --- Synced bookkeeping -----------------------------------------------------

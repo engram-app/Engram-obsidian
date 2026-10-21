@@ -94,6 +94,8 @@ function makeDevice(
 	};
 
 	const wiring = createCrdtWiring({
+		// Local mints: the server does not hold these notes, so they seed.
+		isServerKnown: () => false,
 		noteIdMap: map,
 		syncEngine,
 		sendCrdt: (docId, frame) => relayTo.send(docId, frame),
@@ -151,6 +153,8 @@ test("onCrdtDocReady does NOT enroll an idle (unbound) note — fan-out delivers
 	map.set("Idle.md", "id-idle");
 	const sent: string[] = [];
 	const wiring = createCrdtWiring({
+		// Local mints: the server does not hold these notes, so they seed.
+		isServerKnown: () => false,
 		noteIdMap: map,
 		syncEngine: fanoutStubEngine(),
 		sendCrdt: (docId) => sent.push(docId),
@@ -174,6 +178,8 @@ test("onCrdtDocReady DOES enroll a live-bound (open) note", async () => {
 	map.set("Open.md", "id-open");
 	const sent: string[] = [];
 	const wiring = createCrdtWiring({
+		// Local mints: the server does not hold these notes, so they seed.
+		isServerKnown: () => false,
 		noteIdMap: map,
 		syncEngine: fanoutStubEngine(),
 		sendCrdt: (docId) => sent.push(docId),
@@ -198,6 +204,8 @@ test("onCrdtDocReady with a path triggers per-note discovery (empty-note, test_2
 	const map = new NoteIdMap();
 	const discovered: Array<[string, string]> = [];
 	const wiring = createCrdtWiring({
+		// Local mints: the server does not hold these notes, so they seed.
+		isServerKnown: () => false,
 		noteIdMap: map,
 		syncEngine: {
 			...fanoutStubEngine(),
@@ -225,6 +233,8 @@ test("onCrdtDocReady WITHOUT a path does not trigger discovery (pre-path backend
 	map.set("Idle.md", "id-idle");
 	const discovered: string[] = [];
 	const wiring = createCrdtWiring({
+		// Local mints: the server does not hold these notes, so they seed.
+		isServerKnown: () => false,
 		noteIdMap: map,
 		syncEngine: {
 			...fanoutStubEngine(),
@@ -264,6 +274,8 @@ test("#235: a flushFromCrdt write failure rejects applyRemoteUpdate (head stays 
 		ensureNoteIdMapped: () => {},
 	};
 	const wiring = createCrdtWiring({
+		// Local mints: the server does not hold these notes, so they seed.
+		isServerKnown: () => false,
 		noteIdMap: map,
 		syncEngine,
 		sendCrdt: () => {},
@@ -477,6 +489,8 @@ test("a refused live frame records a durable delivery, not a rejoin enroll", asy
 	const noteId = map.getOrMint("held.md");
 	const recorded: string[] = [];
 	const wiring = createCrdtWiring({
+		// Local mints: the server does not hold these notes, so they seed.
+		isServerKnown: () => false,
 		noteIdMap: map,
 		syncEngine: {
 			flushFromCrdt: async () => true,
@@ -511,6 +525,8 @@ test("a create-gated op frame also records a durable delivery", async () => {
 	const noteId = map.getOrMint("unacked.md");
 	const recorded: string[] = [];
 	const wiring = createCrdtWiring({
+		// Local mints: the server does not hold these notes, so they seed.
+		isServerKnown: () => false,
 		noteIdMap: map,
 		syncEngine: {
 			flushFromCrdt: async () => true,
@@ -553,6 +569,8 @@ test("wiring gate: syncStep1 reaches sendCrdt for a held doc, ops do not", async
 
 	const sent: string[] = [];
 	const wiring = createCrdtWiring({
+		// Local mints: the server does not hold these notes, so they seed.
+		isServerKnown: () => false,
 		noteIdMap: map,
 		syncEngine: {
 			flushFromCrdt: async () => true,
@@ -620,6 +638,8 @@ test("#1550: a note_not_found reply drives the orphaned-claim repair, ahead of t
 		ensureNoteIdMapped: (id: string) => calls.push(`reconcile:${id}`),
 	};
 	const wiring = createCrdtWiring({
+		// Local mints: the server does not hold these notes, so they seed.
+		isServerKnown: () => false,
 		noteIdMap: map,
 		syncEngine,
 		sendCrdt: () => {},

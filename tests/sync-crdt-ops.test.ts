@@ -641,6 +641,8 @@ describe("room-free queue delivery (#1493)", () => {
 			return { head: "h" };
 		});
 		const reg = new ProviderRegistry({
+			// Setup seeds local history: the server does not know this note yet.
+			isServerKnown: () => false,
 			dbPrefix: "roomfree-lost-base",
 			send: () => true,
 			onFlushToDisk: async () => {},
@@ -918,6 +920,8 @@ describe("runFlushQueue: durable crdt queue entry delivery over the socket", () 
 			},
 		};
 		const realCrdt = new ProviderRegistry({
+			// Setup seeds local history: the server does not know this note yet.
+			isServerKnown: () => false,
 			dbPrefix: "flush-roundtrip",
 			send: () => true,
 			onFlushToDisk: async () => {},

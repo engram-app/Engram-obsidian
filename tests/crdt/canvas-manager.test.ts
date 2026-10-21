@@ -9,6 +9,8 @@ import { ProviderRegistry } from "../../src/crdt/provider-registry";
 function makeCanvasManager(prefix: string) {
 	const flushed: Record<string, string> = {};
 	const mgr = new ProviderRegistry({
+		// Local mints: the server does not hold these notes, so they seed.
+		isServerKnown: () => false,
 		dbPrefix: prefix,
 		send: () => true,
 		onFlushToDisk: async (p, c) => {

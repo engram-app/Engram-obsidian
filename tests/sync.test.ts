@@ -3080,6 +3080,8 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 			const content = "line one\n";
 
 			const registry = new ProviderRegistry({
+				// Setup seeds local history: the server does not know this note yet.
+				isServerKnown: () => false,
 				dbPrefix: `sync-test-rename-no-double-${Math.random().toString(36).slice(2)}`,
 				send: () => true,
 				onFlushToDisk: async () => true,
@@ -3130,6 +3132,8 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 			const content = "---\ntags: alpha\n---\n";
 
 			const registry = new ProviderRegistry({
+				// Setup seeds local history: the server does not know this note yet.
+				isServerKnown: () => false,
 				dbPrefix: `sync-test-rename-fm-no-double-${Math.random().toString(36).slice(2)}`,
 				send: () => true,
 				onFlushToDisk: async () => true,

@@ -13,6 +13,8 @@ function registryWith({ lca, dbPrefix }: Opts) {
 	const dirty: string[] = [];
 	const lossy: string[] = [];
 	const registry = new ProviderRegistry({
+		// Local mints: the server does not hold these notes, so they seed.
+		isServerKnown: () => false,
 		dbPrefix,
 		send: () => true,
 		onFlushToDisk: () => true,
