@@ -315,6 +315,8 @@ const zhTW: Dict = {
 	"Nothing needs your attention. 🎉": "目前沒有需要您關注的項目。🎉",
 	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
 		"目前沒有任何內容需要同步 — 此儲存庫在兩端都是空的。開始同步，您寫下的所有內容都會顯示在其他裝置上。",
+	"Nothing to sync yet: every file here is on your ignore list. Start syncing and everything you write appears on your other devices.":
+		"尚未有任何內容可同步：這裡的所有檔案都在您的忽略列表中。開始同步，您寫下的所有內容都會顯示在其他裝置上。",
 	"Nothing will be deleted.": "不會刪除任何內容。",
 	"Nothing will be removed from this device.": "此裝置上的內容不會被刪除。",
 	Open: "開啟",
@@ -362,6 +364,8 @@ const zhTW: Dict = {
 	Refresh: "重新整理",
 	"Remote vault": "遠端儲存庫",
 	"Remove tag {tag}": "移除標籤 {tag}",
+	"Replacing the remote stopped early: the ignore list changed during sync. Some remote notes were not removed; run it again.":
+		"遠端同步中斷：忽略列表在同步期間已變更。部分遠端筆記未被移除；請再次執行。",
 	"Report an issue": "回報問題",
 	"Report an issue on GitHub": "在 GitHub 上回報問題",
 	"Request failed ({status})": "請求失敗 ({status})",

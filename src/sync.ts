@@ -1098,6 +1098,10 @@ export class SyncEngine {
 		return this.manifestOwners.owners.get(path) ?? null;
 	}
 
+	/** Deliberately UNFILTERED by the ignore list. This answers "does a live
+	 *  server note own this path?" for destructive-op guards (the id-keyed-move
+	 *  trash and the orphan sweep below). Hiding an owner at an ignored path
+	 *  would read as "path absent", which is exactly what authorizes a trash. */
 	private cacheManifestOwners(manifest: ManifestResponse): void {
 		this.manifestOwners.owners = new Map(
 			manifest.notes.filter((n) => n.id).map((n) => [normalizePath(n.path), n.id as string]),
@@ -3026,6 +3030,10 @@ export class SyncEngine {
 	 *  shouldIgnore so excluded files never enter push plans, isSyncable filters,
 	 *  or the Issues list. Distinct from settings.ignorePatterns (regex textarea). */
 	readonly ignoredFiles: IgnoredFiles = new IgnoredFiles();
+	private ignorePatternsRevision = 0;
+	/** Set by pushAll: the last replace-remote stopped its delete pass because
+	 *  the ignore list changed, so the server is NOT a mirror yet. */
+	replaceStopped = false;
 
 	/** Count of attachments skipped this session because the backend returned
 	 *  402 attachments_disabled (Free tier). Reset on each batch via
@@ -3685,14 +3693,21 @@ export class SyncEngine {
 	// --- Ignore pattern matching ---
 
 	private parseIgnorePatterns(): void {
-		this.ignorePatterns = this.settings.ignorePatterns
+		const next = this.settings.ignorePatterns
 			.split("\n")
 			.map((p) => p.trim())
 			.filter((p) => p.length > 0);
+		// Every settings save lands here; only a real change moves the revision.
+		if (next.join("\n") !== this.ignorePatterns.join("\n")) this.ignorePatternsRevision++;
+		this.ignorePatterns = next;
 	}
 
 	shouldIgnore(path: string): boolean {
-		// Hardcoded ignores — always enforced, cannot be overridden
+		return this.isBuiltinIgnored(path) || this.isUserIgnored(path);
+	}
+
+	/** Hardcoded ignores — always enforced, cannot be overridden. */
+	private isBuiltinIgnored(path: string): boolean {
 		const configDir = `${this.app.vault.configDir}/`;
 		if (path.startsWith(configDir) || path.includes(`/${configDir}`)) {
 			return true;
@@ -3702,7 +3717,11 @@ export class SyncEngine {
 				return true;
 			}
 		}
-		// User-explicit per-file ignores (from Sync Center)
+		return false;
+	}
+
+	/** The user's own ignores: per-file (Sync Center) and the pattern list. */
+	private isUserIgnored(path: string): boolean {
 		if (this.ignoredFiles.has(path)) return true;
 		return this.ignorePatterns.some((pattern) => {
 			if (pattern.endsWith("/")) {
@@ -3710,6 +3729,21 @@ export class SyncEngine {
 			}
 			return path === pattern || path.endsWith(`/${pattern}`);
 		});
+	}
+
+	/** Monotonic revision of the user's ignore config: moves on every real
+	 *  change and never comes back, so a list changed and changed back (the
+	 *  textarea saves per keystroke) still reads as changed. A destructive pass
+	 *  requires it unchanged from the snapshot to each delete. */
+	ignoreRevision(): number {
+		return this.ignorePatternsRevision + this.ignoredFiles.revision;
+	}
+
+	/** A path the plan reports in `ignoredCount`: hidden by the USER's ignores.
+	 *  Built-ins are hidden too but never counted (they are not the user's
+	 *  choice, and configDir alone would dwarf every other number). */
+	private isCountedIgnore(path: string): boolean {
+		return !this.isBuiltinIgnored(path) && this.isUserIgnored(path);
 	}
 
 	isMarkdown(file: TAbstractFile): boolean {
@@ -6682,7 +6716,7 @@ export class SyncEngine {
 
 	/** Returns the number of ops applied across this replay (incl. any coalesced
 	 *  re-run) plus the sets of server note-ids and attachment paths seen
-	 *  (non-deleted only) — used by the pull-all-delete / push-all-delete
+	 *  (live at their last row, ignored paths excluded) — used by the pull-all-delete / push-all-delete
 	 *  choices. A coalesced call that folds into an in-flight replay returns
 	 *  applied:0/empty sets — the running call reports the total. `fromZero`
 	 *  forces the replay to start at cursor 0 regardless of the persisted
@@ -6791,9 +6825,15 @@ export class SyncEngine {
 		}
 	}
 
+	/** Server rows at ignored paths are filtered HERE, once, by their FINAL
+	 *  folded path (a note renamed into an ignored folder leaves the view), so
+	 *  every reader sees the same server the sync will act on. `ignored` holds
+	 *  the live final paths hidden by the user's own ignores, for the plan's
+	 *  `ignoredCount`. */
 	private async enumerateServerState(): Promise<{
 		notes: Map<string, { deleted: boolean; content?: string; contentHash?: string }>;
 		attachments: Map<string, { deleted: boolean }>;
+		ignored: Set<string>;
 	}> {
 		// The preview reads server state off the live op-log socket. On startup
 		// the plan is computed the moment the user channel joins — often before
@@ -6831,18 +6871,28 @@ export class SyncEngine {
 				}
 			},
 		});
+		const ignored = new Set<string>();
+		const hidden = (path: string, deleted: boolean): boolean => {
+			if (!this.shouldIgnore(path)) return false;
+			if (!deleted && this.isCountedIgnore(path)) ignored.add(path);
+			return true;
+		};
 		const notes = new Map<
 			string,
 			{ deleted: boolean; content?: string; contentHash?: string }
 		>();
 		for (const c of byId.values()) {
+			if (hidden(c.path, c.deleted)) continue;
 			notes.set(c.path, {
 				deleted: c.deleted,
 				content: c.content,
 				contentHash: c.content_hash,
 			});
 		}
-		return { notes, attachments };
+		for (const [path, row] of attachments) {
+			if (hidden(path, row.deleted)) attachments.delete(path);
+		}
+		return { notes, attachments, ignored };
 	}
 
 	async catchupViaSeqReplay(
@@ -6872,6 +6922,8 @@ export class SyncEngine {
 		deletes: number;
 		serverIds: Set<string>;
 		serverAttachmentPaths: Set<string>;
+		/** Live server rows at ignored paths (note ids + attachment paths). */
+		ignoredLive: Set<string>;
 		/** `true` when THIS call executed the replay loop exclusively (so
 		 *  `serverIds`/`serverAttachmentPaths` are real + complete); `false` when it
 		 *  COALESCED behind an in-flight replay and returned EMPTY sets. Destructive
@@ -6887,6 +6939,7 @@ export class SyncEngine {
 	}> {
 		const serverIds = new Set<string>();
 		const serverAttachmentPaths = new Set<string>();
+		const ignoredLive = new Set<string>();
 
 		// Gate closed: walk NOTHING. The block used to live per-file inside
 		// flushFromCrdt, so a blocked replay still fetched every page, and the
@@ -6922,6 +6975,7 @@ export class SyncEngine {
 				deletes: 0,
 				serverIds,
 				serverAttachmentPaths,
+				ignoredLive,
 				ran: false,
 				complete: false,
 			};
@@ -6942,6 +6996,7 @@ export class SyncEngine {
 					deletes: 0,
 					serverIds,
 					serverAttachmentPaths,
+					ignoredLive,
 					ran: false,
 					complete: false,
 				};
@@ -6976,6 +7031,7 @@ export class SyncEngine {
 				// keep requiring ran && complete.
 				serverIds,
 				serverAttachmentPaths,
+				ignoredLive,
 				ran: false,
 				complete: false,
 			};
@@ -7018,6 +7074,7 @@ export class SyncEngine {
 						(opts.fromZero ?? false) || (opts.enumerateOnly ?? false),
 						serverIds,
 						serverAttachmentPaths,
+						ignoredLive,
 						tickedKeys,
 						opts.enumerateOnly ?? false,
 						emitFileApplied,
@@ -7076,6 +7133,7 @@ export class SyncEngine {
 				deletes,
 				serverIds,
 				serverAttachmentPaths,
+				ignoredLive,
 				ran: true,
 				complete,
 			};
@@ -7111,6 +7169,7 @@ export class SyncEngine {
 		failed: number;
 		serverIds: Set<string>;
 		serverAttachmentPaths: Set<string>;
+		ignoredLive: Set<string>;
 	} | null> {
 		for (let attempt = 0; attempt < 10; attempt++) {
 			const res = await this.catchupViaSeqReplay(opts);
@@ -7245,6 +7304,9 @@ export class SyncEngine {
 		fromZero: boolean,
 		serverIds: Set<string>,
 		serverAttachmentPaths: Set<string>,
+		/** Note ids and attachment paths live at an IGNORED path (see the set
+		 *  update below). Disjoint from the two sets above. */
+		ignoredLive: Set<string>,
 		/** Session-scoped: keys already counted as downloaded files. Multiple
 		 *  op-log rows for the same note/attachment tick the file counter once. */
 		tickedKeys: Set<string>,
@@ -7351,14 +7413,31 @@ export class SyncEngine {
 							);
 						}
 					}
-					// Every non-deleted id/path SEEN (applied or skipped) — the
+					// Every id/path SEEN (applied or skipped) — the
 					// pull-all-delete / push-all-delete choices (Tasks 5/5b/6) need the
 					// full server id-set and attachment-path-set, not just the
 					// successfully-applied subset.
-					if (c.type === "attachment") {
-						if (!c.deleted) serverAttachmentPaths.add(c.path);
-					} else if (c.id && !c.deleted) {
-						serverIds.add(c.id);
+					//
+					// The LAST row per id (notes) or path (attachments) decides, so
+					// a later tombstone removes an earlier live row. Rows at ignored
+					// paths leave the sets too: they drive the replace-remote and
+					// pull-all-delete passes, and a sync must never act on what it
+					// cannot see. (`c.path` can be null on a leaked folder-marker
+					// row despite its type.)
+					//
+					// A live row at an ignored path goes to `ignoredLive` instead, so
+					// pull-all-delete can still tell "the server holds it where you
+					// cannot see" from "the server deleted it" (a note renamed into an
+					// ignored folder on another device is not a local extra).
+					const hidden = !c.deleted && !!c.path && this.shouldIgnore(c.path);
+					const visible = !c.deleted && !hidden;
+					const key = c.type === "attachment" ? c.path : c.id;
+					const set = c.type === "attachment" ? serverAttachmentPaths : serverIds;
+					if (key) {
+						if (visible) set.add(key);
+						else set.delete(key);
+						if (hidden) ignoredLive.add(key);
+						else ignoredLive.delete(key);
 					}
 				},
 				onPage: async (seq, id) => {
@@ -7978,6 +8057,7 @@ export class SyncEngine {
 			let replayFailed: number;
 			let serverIds: Set<string>;
 			let serverAttachmentPaths: Set<string>;
+			let ignoredLive: Set<string> = new Set();
 			if (wipe) {
 				const replay = await this.catchupViaSeqReplayExclusive({
 					fromZero: true,
@@ -8003,6 +8083,8 @@ export class SyncEngine {
 					failed: replayFailed,
 					serverIds,
 					serverAttachmentPaths,
+					// Defaulted for callers that stub the replay without it.
+					ignoredLive = new Set<string>(),
 				} = replay);
 			} else {
 				// Keep-branch needs the from-zero replay to ACTUALLY run too: a
@@ -8058,9 +8140,10 @@ export class SyncEngine {
 				const files = this.app.vault.getFiles();
 				const extras = files.filter((f) => {
 					if (!this.isSyncable(f) || this.shouldIgnore(f.path)) return false;
-					return this.isBinaryFile(f)
-						? !serverAttachmentPaths.has(f.path)
-						: !serverIds.has(this.noteIdMap?.get(f.path) ?? "");
+					const key = this.isBinaryFile(f) ? f.path : (this.noteIdMap?.get(f.path) ?? "");
+					const onServer = this.isBinaryFile(f) ? serverAttachmentPaths : serverIds;
+					// Held live at an ignored path is still held: never a local extra.
+					return !onServer.has(key) && !ignoredLive.has(key);
 				});
 				const total = extras.length;
 				this.onSyncProgress?.({ phase: "deleting", current: 0, total, failed: 0 });
@@ -11034,13 +11117,22 @@ export class SyncEngine {
 	 *  - server changed: local unchanged → toPull · both changed → conflict
 	 */
 	async computeSyncPlan(mode: "push-all" | "pull-all" | "full"): Promise<SyncPlan> {
+		// Both sides read ONE ignore-filtered view: enumerateServerState filters
+		// the server rows, the loop below the local files. Before, only the local
+		// side was filtered, so a server note at an ignored path read as "server
+		// has it, local missing": a pull the sync then skipped.
 		const server = await this.enumerateServerState();
 		const serverNotes = server.notes;
 		const serverAttachments = server.attachments;
+		const ignored = new Set(server.ignored);
 
 		// Enumerate local files
-		const allFiles = this.app.vault.getFiles();
-		const syncable = allFiles.filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path));
+		const syncable: TFile[] = [];
+		for (const f of this.app.vault.getFiles()) {
+			if (!this.isSyncable(f)) continue;
+			if (!this.shouldIgnore(f.path)) syncable.push(f);
+			else if (this.isCountedIgnore(f.path)) ignored.add(f.path);
+		}
 
 		const localNotes: string[] = [];
 		const localAttachments: string[] = [];
@@ -11172,6 +11264,7 @@ export class SyncEngine {
 			conflicts: mode === "push-all" || mode === "pull-all" ? [] : conflictNotes,
 			toDeleteLocal: [...toDeleteLocal, ...toDeleteLocalAttach],
 			toDeleteRemote: [], // computed during execution (local deletes since last sync)
+			ignoredCount: ignored.size,
 		};
 	}
 
@@ -11212,7 +11305,11 @@ export class SyncEngine {
 	 *  server had BEFORE the push; reconcile asks what it has after), so they
 	 *  cannot be collapsed. Deliberate trade: ~240KB of manifest on the
 	 *  incident vault against ~478MB of re-uploaded attachments. Only manual
-	 *  full pushes pay it — the incremental path never calls this. */
+	 *  full pushes pay it — the incremental path never calls this.
+	 *
+	 *  Not ignore-filtered, and it need not be: the map is only ever looked up
+	 *  by the paths of local files being pushed, which already passed
+	 *  shouldIgnore, so a row at an ignored path is never read. */
 	private async fetchServerAttachmentHashes(): Promise<Map<string, string> | undefined> {
 		try {
 			const manifest = await this.api.getManifest();
@@ -11233,14 +11330,22 @@ export class SyncEngine {
 	}
 
 	async pushAll(
-		opts: { replaceRemote?: boolean; localSnapshot?: Set<string> } = {},
+		opts: {
+			replaceRemote?: boolean;
+			localSnapshot?: Set<string>;
+			ignoreRevision?: number;
+		} = {},
 	): Promise<number> {
 		// Thin wrapper so the sweep is marked without reindenting the whole body.
 		return this.inBulkSweep(() => this.pushAllInner(opts));
 	}
 
 	private async pushAllInner(
-		opts: { replaceRemote?: boolean; localSnapshot?: Set<string> } = {},
+		opts: {
+			replaceRemote?: boolean;
+			localSnapshot?: Set<string>;
+			ignoreRevision?: number;
+		} = {},
 	): Promise<number> {
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", "pushAll short-circuited — gate closed");
@@ -11269,6 +11374,21 @@ export class SyncEngine {
 		// The actual deletes run push-FIRST (below) — push-then-delete avoids the
 		// 2026-07-08 wipe-before-enumerate vault-wipe incident.
 		let replaceExtras: { ids: string[]; attachments: string[] } | null = null;
+		// The ignore list decides which server rows are "extras". If it changes
+		// between the snapshot and the deletes, the run would delete rows the
+		// preview promised to keep, so the delete pass is skipped instead.
+		const ignoreRevisionAtStart = opts.ignoreRevision ?? this.ignoreRevision();
+		this.replaceStopped = false;
+		const ignoreListChanged = (): boolean => {
+			if (this.replaceStopped || this.ignoreRevision() === ignoreRevisionAtStart)
+				return this.replaceStopped;
+			this.replaceStopped = true;
+			rlog().error(
+				"push",
+				"replace-remote: ignore list changed during the sync; skipping the remaining server-extra deletes (the push still ran)",
+			);
+			return true;
+		};
 		if (opts.replaceRemote) {
 			// The server-extra DELETE decision MUST come from an EXCLUSIVE replay: a
 			// coalesced replay returns EMPTY sets, which here would silently under-
@@ -11284,7 +11404,7 @@ export class SyncEngine {
 					"push",
 					"replace-remote extras enumeration never ran exclusively (persistent replay contention); skipping server-extra deletes — the push still ran",
 				);
-			} else {
+			} else if (!ignoreListChanged()) {
 				const { serverIds, serverAttachmentPaths } = replay;
 				const snap = opts.localSnapshot ?? this.snapshotLocalPaths();
 				const localIds = new Set<string>();
@@ -11350,6 +11470,7 @@ export class SyncEngine {
 			let delDone = 0;
 			this.onSyncProgress?.({ phase: "deleting", current: 0, total: delTotal, failed: 0 });
 			for (const id of replaceExtras.ids) {
+				if (ignoreListChanged()) break;
 				try {
 					await this.crdtDelete?.(id);
 					this.notesCapGate?.open(); // a note was freed
@@ -11365,6 +11486,7 @@ export class SyncEngine {
 				});
 			}
 			for (const path of replaceExtras.attachments) {
+				if (ignoreListChanged()) break;
 				try {
 					await this.api.deleteAttachment(path);
 					this.logEntry("delete", path, "ok", undefined, "replace-remote");
@@ -11505,7 +11627,10 @@ export class SyncEngine {
 		}
 
 		// Remaining server entries are files not in the local vault
-		const extraOnServer = [...serverNotes.keys()];
+		// The manifest is a separate REST source with no shared enumeration site;
+		// this report is its one user-facing count ("N only on server"), so it is
+		// filtered here, through the same shouldIgnore as everything else.
+		const extraOnServer = [...serverNotes.keys()].filter((p) => !this.shouldIgnore(p));
 
 		devLog().log(
 			"reconcile",

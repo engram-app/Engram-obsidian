@@ -336,6 +336,8 @@ const vi: Dict = {
 	"Nothing needs your attention. 🎉": "Không có gì cần bạn quan tâm. 🎉",
 	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
 		"Hiện tại chưa có gì để đồng bộ hóa — kho lưu trữ này trống ở cả hai phía. Bắt đầu đồng bộ hóa và mọi thứ bạn viết sẽ xuất hiện trên các thiết bị khác của bạn.",
+	"Nothing to sync yet: every file here is on your ignore list. Start syncing and everything you write appears on your other devices.":
+		"Chưa có gì để đồng bộ hóa: mọi tệp ở đây đều nằm trong danh sách bỏ qua của bạn. Bắt đầu đồng bộ hóa và mọi thứ bạn viết sẽ hiển thị trên các thiết bị khác.",
 	"Nothing will be deleted.": "Không có gì sẽ bị xóa.",
 	"Nothing will be removed from this device.": "Không có gì sẽ bị xóa khỏi thiết bị này.",
 	Open: "Mở",
@@ -388,6 +390,8 @@ const vi: Dict = {
 	Refresh: "Làm mới",
 	"Remote vault": "Kho lưu trữ từ xa",
 	"Remove tag {tag}": "Xóa thẻ {tag}",
+	"Replacing the remote stopped early: the ignore list changed during sync. Some remote notes were not removed; run it again.":
+		"Quá trình đồng bộ hóa từ xa bị dừng sớm: danh sách bỏ qua đã thay đổi trong quá trình đồng bộ hóa. Một số ghi chú từ xa chưa được xóa; hãy chạy lại.",
 	"Report an issue": "Báo cáo sự cố",
 	"Report an issue on GitHub": "Báo cáo sự cố trên GitHub",
 	"Request failed ({status})": "Yêu cầu thất bại ({status})",

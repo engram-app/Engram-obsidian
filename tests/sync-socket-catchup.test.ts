@@ -434,6 +434,7 @@ describe("catchupViaSeqReplay", () => {
 			deletes: 0,
 			serverIds: new Set(),
 			serverAttachmentPaths: new Set(),
+			ignoredLive: new Set(),
 			ran: true,
 			// NOT complete: the walk never happened, so the empty sets describe our
 			// ignorance, not the server. A destructive caller reading these as

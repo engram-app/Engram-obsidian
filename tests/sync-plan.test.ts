@@ -822,3 +822,524 @@ describe("SyncEngine.pushAll with progress", () => {
 		expect(errors[0].error).toContain("500");
 	});
 });
+
+// ---------------------------------------------------------------------------
+// The plan reads ONE ignore-filtered view of both sides. Local files were
+// always filtered through shouldIgnore; server rows were not, so a server note
+// at an ignored path read as "server has it, local is missing" — a planned
+// pull the sync then skipped, and a server count no local count could match.
+// ---------------------------------------------------------------------------
+
+let seqCounter = 0;
+function noteRow(path: string, opts: { id?: string; deleted?: boolean } = {}) {
+	seqCounter++;
+	return opts.deleted
+		? { type: "note", id: opts.id ?? `id-${path}`, seq: seqCounter, path, deleted: true }
+		: {
+				type: "note",
+				id: opts.id ?? `id-${path}`,
+				seq: seqCounter,
+				path,
+				content: `body of ${path}`,
+				content_hash: `H-${path}`,
+				deleted: false,
+			};
+}
+function attRow(path: string, deleted = false) {
+	seqCounter++;
+	return { type: "attachment", seq: seqCounter, path, deleted };
+}
+
+/** Every path the plan names anywhere — counts are checked separately. */
+function everyPlanPath(plan: Awaited<ReturnType<SyncEngine["computeSyncPlan"]>>): string[] {
+	return [
+		...plan.localPaths,
+		...plan.serverPaths,
+		...plan.toPush.notes,
+		...plan.toPush.attachments,
+		...plan.toPull.notes,
+		...plan.toPull.attachments,
+		...plan.conflicts,
+		...plan.toDeleteLocal,
+		...plan.toDeleteRemote,
+	];
+}
+
+describe("computeSyncPlan respects the ignore list on the SERVER side", () => {
+	test("server notes and attachments at ignored paths are absent from every count and list", async () => {
+		const engine = createEngine({ ignorePatterns: "drafts/\nsecret.md" });
+		mockApp.vault.getFiles.mockReturnValue([makeTFile("local.md")]);
+		wireFeed(engine, [
+			[
+				noteRow("keep.md"),
+				noteRow("drafts/a.md"),
+				noteRow("deep/drafts/b.md"),
+				noteRow("notes/secret.md"),
+				noteRow(".trash/old.md"),
+				noteRow(".git/HEAD.md"),
+				noteRow(".obsidian/workspace.md"),
+				attRow("img/keep.png"),
+				attRow("drafts/pic.png"),
+			],
+		]);
+
+		const plan = await engine.computeSyncPlan("full");
+
+		expect(plan.serverNoteCount).toBe(1);
+		expect(plan.serverAttachmentCount).toBe(1);
+		expect(plan.serverFolderCount).toBe(1); // "img" only
+		expect(plan.serverPaths.sort()).toEqual(["img/keep.png", "keep.md"]);
+		expect(plan.toPull.notes).toEqual(["keep.md"]);
+		expect(plan.toPull.attachments).toEqual(["img/keep.png"]);
+		for (const p of everyPlanPath(plan)) expect(engine.shouldIgnore(p)).toBe(false);
+		// USER ignores only: drafts/a.md, deep/drafts/b.md, notes/secret.md,
+		// drafts/pic.png. The built-ins (.trash/, .git/, configDir) are hidden
+		// but never counted.
+		expect(plan.ignoredCount).toBe(4);
+	});
+
+	test("tombstones at ignored paths do not produce local deletes", async () => {
+		const engine = createEngine({ ignorePatterns: "drafts/" });
+		mockApp.vault.getFiles.mockReturnValue([
+			makeTFile("drafts/gone.md"),
+			makeTFile("drafts/gone.png"),
+			makeTFile("real-gone.md"),
+		]);
+		wireFeed(engine, [
+			[
+				noteRow("drafts/gone.md", { deleted: true }),
+				attRow("drafts/gone.png", true),
+				noteRow("real-gone.md", { deleted: true }),
+			],
+		]);
+
+		const plan = await engine.computeSyncPlan("full");
+
+		expect(plan.toDeleteLocal).toEqual(["real-gone.md"]);
+		// A tombstone is not a file: only the two ignored LOCAL files count.
+		expect(plan.ignoredCount).toBe(2);
+	});
+
+	test("a path ignored on both sides counts once", async () => {
+		const engine = createEngine({ ignorePatterns: "drafts/" });
+		mockApp.vault.getFiles.mockReturnValue([makeTFile("drafts/both.md")]);
+		wireFeed(engine, [[noteRow("drafts/both.md")]]);
+
+		const plan = await engine.computeSyncPlan("full");
+
+		expect(plan.ignoredCount).toBe(1);
+		expect(plan.localNoteCount).toBe(0);
+		expect(plan.serverNoteCount).toBe(0);
+	});
+
+	test("local and server counts agree when the only differences are ignored", async () => {
+		const engine = createEngine({ ignorePatterns: "private/" });
+		const shared = makeTFile("shared.md");
+		mockApp.vault.getFiles.mockReturnValue([shared, makeTFile("private/local-only.md")]);
+		mockApp.vault.getFileByPath.mockImplementation((p: string) =>
+			p === "shared.md" ? shared : null,
+		);
+		mockApp.vault.cachedRead.mockResolvedValue("body of shared.md");
+		wireFeed(engine, [[noteRow("shared.md"), noteRow("private/server-only.md")]]);
+
+		const plan = await engine.computeSyncPlan("full");
+
+		expect(plan.localNoteCount).toBe(plan.serverNoteCount);
+		expect(plan.toPull.notes).toEqual([]);
+		expect(plan.toPush.notes).toEqual([]);
+		expect(plan.ignoredCount).toBe(2);
+		mockApp.vault.getFileByPath.mockReset().mockReturnValue(null);
+	});
+
+	test("an empty ignore list ignores only the built-ins", async () => {
+		const engine = createEngine({ ignorePatterns: "" });
+		mockApp.vault.getFiles.mockReturnValue([makeTFile("a.md")]);
+		wireFeed(engine, [[noteRow("drafts/b.md"), noteRow(".trash/c.md")]]);
+
+		const plan = await engine.computeSyncPlan("full");
+
+		expect(plan.toPull.notes).toEqual(["drafts/b.md"]);
+		expect(plan.serverNoteCount).toBe(1);
+		expect(plan.ignoredCount).toBe(0); // .trash/ is a built-in, not counted
+	});
+
+	test('leading-slash patterns keep main\'s semantics: "/" and "/x/" match nothing', async () => {
+		const engine = createEngine({ ignorePatterns: "/\n/x/\n/top.md" });
+		for (const p of ["a.md", "x/a.md", "sub/x/b.md", "top.md", "sub/top.md"]) {
+			expect(engine.shouldIgnore(p)).toBe(false);
+		}
+		mockApp.vault.getFiles.mockReturnValue([makeTFile("x/l.md")]);
+		wireFeed(engine, [[noteRow("x/s.md")]]);
+
+		const plan = await engine.computeSyncPlan("full");
+
+		expect(plan.toPush.notes).toEqual(["x/l.md"]);
+		expect(plan.toPull.notes).toEqual(["x/s.md"]);
+		expect(plan.ignoredCount).toBe(0);
+	});
+
+	test("a path both built-in and user-ignored is not counted, on either side", async () => {
+		const engine = createEngine({ ignorePatterns: ".trash/\nlocal-trash/" });
+		mockApp.vault.getFiles.mockReturnValue([
+			makeTFile(".trash/l.md"),
+			makeTFile("local-trash/l.md"),
+		]);
+		wireFeed(engine, [[noteRow(".trash/s.md"), noteRow("local-trash/s.md")]]);
+
+		const plan = await engine.computeSyncPlan("full");
+
+		expect(plan.ignoredCount).toBe(2); // local-trash/l.md + local-trash/s.md
+	});
+
+	test("per-file ignores from Sync Center apply to server rows too", async () => {
+		const engine = createEngine();
+		engine.ignoredFiles.add("remote/odd.md");
+		wireFeed(engine, [[noteRow("remote/odd.md")]]);
+
+		const plan = await engine.computeSyncPlan("full");
+
+		expect(plan.toPull.notes).toEqual([]);
+		expect(plan.serverNoteCount).toBe(0);
+		expect(plan.ignoredCount).toBe(1);
+	});
+});
+
+describe("reconcile respects the ignore list on the server side", () => {
+	test("server notes at ignored paths are not reported as extraOnServer", async () => {
+		const engine = createEngine({ ignorePatterns: "drafts/" });
+		(mockApi.getManifest as jest.Mock).mockResolvedValue({
+			notes: [
+				{ path: "drafts/x.md", content_hash: "h1" },
+				{ path: "real.md", content_hash: "h2" },
+			],
+			attachments: [],
+			total_notes: 2,
+			total_attachments: 0,
+		});
+
+		const result = await engine.reconcile();
+
+		expect(result?.extraOnServer).toEqual(["real.md"]);
+	});
+});
+
+describe("pushAll({ replaceRemote }) never deletes server rows at ignored paths", () => {
+	test("server-only notes and attachments at ignored paths survive the replace", async () => {
+		const engine = createEngine({ ignorePatterns: "drafts/" });
+		mockApp.vault.getFiles.mockReturnValue([]);
+		const crdtDelete = mock().mockResolvedValue(undefined);
+		engine.setCrdtDelete(crdtDelete);
+		wireFeed(engine, [
+			[
+				noteRow("extra.md", { id: "n-extra" }),
+				noteRow("drafts/keep.md", { id: "n-ignored" }),
+				// Renamed INTO an ignored folder: its final path is what counts.
+				noteRow("moved.md", { id: "n-moved" }),
+				noteRow("drafts/moved.md", { id: "n-moved" }),
+				attRow("drafts/pic.png"),
+				attRow("extra.png"),
+			],
+		]);
+
+		await engine.pushAll({ replaceRemote: true });
+
+		expect(crdtDelete.mock.calls.map((c) => c[0])).toEqual(["n-extra"]);
+		expect((mockApi.deleteAttachment as jest.Mock).mock.calls.map((c) => c[0])).toEqual([
+			"extra.png",
+		]);
+	});
+});
+
+describe("seq replay server sets: the LAST row decides, tombstones included", () => {
+	test("replace-remote does not re-delete a note the server already tombstoned", async () => {
+		const engine = createEngine();
+		mockApp.vault.getFiles.mockReturnValue([]);
+		const crdtDelete = mock().mockResolvedValue(undefined);
+		engine.setCrdtDelete(crdtDelete);
+		wireFeed(engine, [
+			[
+				noteRow("dead.md", { id: "n-dead" }),
+				noteRow("dead.md", { id: "n-dead", deleted: true }),
+				attRow("dead.png"),
+				attRow("dead.png", true),
+				noteRow("extra.md", { id: "n-extra" }),
+			],
+		]);
+
+		await engine.pushAll({ replaceRemote: true });
+
+		expect(crdtDelete.mock.calls.map((c) => c[0])).toEqual(["n-extra"]);
+		expect(mockApi.deleteAttachment as jest.Mock).not.toHaveBeenCalled();
+	});
+
+	test("pull-all-delete trashes a local note whose id the server tombstoned", async () => {
+		const engine = createEngine();
+		const { NoteIdMap } = await import("../src/crdt/note-id-map");
+		const map = new NoteIdMap();
+		map.set("dead.md", "n-dead");
+		map.set("live.md", "n-live");
+		engine.setNoteIdMap(map);
+		mockApp.vault.getFiles.mockReturnValue([makeTFile("dead.md"), makeTFile("live.md")]);
+		// Isolate the set decision from the replay's own apply of the tombstone.
+		(engine as any).applySyncChange = async () => false;
+		wireFeed(engine, [
+			[
+				noteRow("dead.md", { id: "n-dead" }),
+				noteRow("dead.md", { id: "n-dead", deleted: true }),
+				noteRow("live.md", { id: "n-live" }),
+			],
+		]);
+
+		await engine.pullAll({ deleteLocalExtras: true });
+
+		const trashed = (mockApp.fileManager.trashFile as jest.Mock).mock.calls.map(
+			(c) => (c[0] as TFile).path,
+		);
+		expect(trashed).toEqual(["dead.md"]);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Adversarial review: the destructive passes must not act on what the ignore
+// list hides, even when the two sides disagree about a note's path or the
+// ignore list changes while the sync runs.
+// ---------------------------------------------------------------------------
+
+describe("destructive passes vs ignored server rows", () => {
+	test("pull-all-delete keeps a local note whose server row moved INTO an ignored folder", async () => {
+		const engine = createEngine({ ignorePatterns: "drafts/" });
+		const { NoteIdMap } = await import("../src/crdt/note-id-map");
+		const map = new NoteIdMap();
+		map.set("notes/a.md", "n-a");
+		engine.setNoteIdMap(map);
+		mockApp.vault.getFiles.mockReturnValue([makeTFile("notes/a.md")]);
+		(engine as any).applySyncChange = async () => false;
+		wireFeed(engine, [
+			[noteRow("notes/a.md", { id: "n-a" }), noteRow("drafts/a.md", { id: "n-a" })],
+		]);
+
+		await engine.pullAll({ deleteLocalExtras: true });
+
+		// The server still has the note (at a path this device cannot see), so
+		// it is not a local extra. Main kept it; trashing it is a regression.
+		expect(mockApp.fileManager.trashFile as jest.Mock).not.toHaveBeenCalled();
+	});
+
+	test("pull-all-delete trashes nothing the server holds when the ignore list is cleared mid-replay", async () => {
+		const engine = createEngine({ ignorePatterns: "drafts/" });
+		const { NoteIdMap } = await import("../src/crdt/note-id-map");
+		const map = new NoteIdMap();
+		map.set("drafts/n.md", "n-d");
+		engine.setNoteIdMap(map);
+		mockApp.vault.getFiles.mockReturnValue([
+			makeTFile("drafts/n.md"),
+			makeTFile("drafts/pic.png"),
+		]);
+		(engine as any).applySyncChange = async () => false;
+		(engine as any).applyAttachmentChange = async () => false;
+		let call = 0;
+		engine.setCrdtManager({} as any);
+		engine.setCrdtLiveCheck(() => true);
+		const pages = [
+			[noteRow("drafts/n.md", { id: "n-d" }), attRow("drafts/pic.png")],
+			[noteRow("other.md", { id: "n-o" })],
+		];
+		engine.setCrdtCatchupSince(async () => {
+			// The user un-ignores drafts/ while the replay walks the feed.
+			if (call === 1) engine.updateSettings({ ...DEFAULT_SETTINGS, ignorePatterns: "" });
+			const changes = pages[call] ?? [];
+			call++;
+			return {
+				changes,
+				has_more: call < pages.length,
+				next_seq: changes.length ? changes[changes.length - 1].seq : null,
+			};
+		});
+
+		await engine.pullAll({ deleteLocalExtras: true });
+
+		expect(mockApp.fileManager.trashFile as jest.Mock).not.toHaveBeenCalled();
+	});
+
+	test("replace-remote deletes nothing when the ignore list changes during the sync", async () => {
+		const engine = createEngine({ ignorePatterns: "drafts/" });
+		mockApp.vault.getFiles.mockReturnValue([]);
+		const crdtDelete = mock().mockResolvedValue(undefined);
+		engine.setCrdtDelete(crdtDelete);
+		const localSnapshot = engine.snapshotLocalPaths();
+		const ignoreRevision = engine.ignoreRevision();
+		let call = 0;
+		engine.setCrdtManager({} as any);
+		engine.setCrdtLiveCheck(() => true);
+		const pages = [[noteRow("drafts/s.md", { id: "n-s" }), attRow("drafts/s.png")]];
+		engine.setCrdtCatchupSince(async () => {
+			if (call === 0) engine.updateSettings({ ...DEFAULT_SETTINGS, ignorePatterns: "" });
+			const changes = pages[call] ?? [];
+			call++;
+			return {
+				changes,
+				has_more: call < pages.length,
+				next_seq: changes.length ? changes[changes.length - 1].seq : null,
+			};
+		});
+
+		await engine.pushAll({ replaceRemote: true, localSnapshot, ignoreRevision });
+
+		// The preview promised drafts/ survives; the run must not disagree.
+		expect(crdtDelete).not.toHaveBeenCalled();
+		expect(mockApi.deleteAttachment as jest.Mock).not.toHaveBeenCalled();
+	});
+
+	test("replace-remote deletes nothing when the ignore list changed after the snapshot", async () => {
+		const engine = createEngine({ ignorePatterns: "drafts/" });
+		mockApp.vault.getFiles.mockReturnValue([]);
+		const crdtDelete = mock().mockResolvedValue(undefined);
+		engine.setCrdtDelete(crdtDelete);
+		const localSnapshot = engine.snapshotLocalPaths();
+		const ignoreRevision = engine.ignoreRevision();
+		engine.updateSettings({ ...DEFAULT_SETTINGS, ignorePatterns: "" });
+		wireFeed(engine, [[noteRow("drafts/s.md", { id: "n-s" })]]);
+
+		await engine.pushAll({ replaceRemote: true, localSnapshot, ignoreRevision });
+
+		expect(crdtDelete).not.toHaveBeenCalled();
+	});
+
+	test("replace-remote stops deleting the moment the ignore list changes mid-loop", async () => {
+		const engine = createEngine({ ignorePatterns: "drafts/" });
+		mockApp.vault.getFiles.mockReturnValue([]);
+		const crdtDelete = mock().mockImplementation(async () => {
+			engine.updateSettings({ ...DEFAULT_SETTINGS, ignorePatterns: "" });
+		});
+		engine.setCrdtDelete(crdtDelete);
+		wireFeed(engine, [
+			[noteRow("a.md", { id: "n-a" }), noteRow("b.md", { id: "n-b" }), attRow("c.png")],
+		]);
+
+		await engine.pushAll({ replaceRemote: true, localSnapshot: engine.snapshotLocalPaths() });
+
+		expect(crdtDelete).toHaveBeenCalledTimes(1);
+		expect(mockApi.deleteAttachment as jest.Mock).not.toHaveBeenCalled();
+	});
+
+	test("replace-remote deletes nothing when the ignore list changes and changes BACK mid-replay", async () => {
+		const engine = createEngine({ ignorePatterns: "drafts/" });
+		mockApp.vault.getFiles.mockReturnValue([]);
+		const crdtDelete = mock().mockResolvedValue(undefined);
+		engine.setCrdtDelete(crdtDelete);
+		const localSnapshot = engine.snapshotLocalPaths();
+		const ignoreRevision = engine.ignoreRevision();
+		let call = 0;
+		engine.setCrdtManager({} as any);
+		engine.setCrdtLiveCheck(() => true);
+		const pages = [
+			[noteRow("drafts/s.md", { id: "n-s" })],
+			[noteRow("other.md", { id: "n-o" })],
+		];
+		engine.setCrdtCatchupSince(async () => {
+			// Backspace the "/" then retype it: the textarea saves per keystroke.
+			// Page 0 is folded while "drafts" (no slash) is active.
+			if (call === 0)
+				engine.updateSettings({ ...DEFAULT_SETTINGS, ignorePatterns: "drafts" });
+			if (call === 1)
+				engine.updateSettings({ ...DEFAULT_SETTINGS, ignorePatterns: "drafts/" });
+			const changes = pages[call] ?? [];
+			call++;
+			return {
+				changes,
+				has_more: call < pages.length,
+				next_seq: changes.length ? changes[changes.length - 1].seq : null,
+			};
+		});
+
+		await engine.pushAll({ replaceRemote: true, localSnapshot, ignoreRevision });
+
+		expect(crdtDelete).not.toHaveBeenCalled();
+		expect(engine.replaceStopped).toBe(true);
+	});
+
+	test("ignore revision: moves on every real change, not on an unrelated settings save", () => {
+		const engine = createEngine({ ignorePatterns: "drafts/" });
+		const r0 = engine.ignoreRevision();
+		engine.updateSettings({ ...DEFAULT_SETTINGS, ignorePatterns: "drafts/", debounceMs: 99 });
+		expect(engine.ignoreRevision()).toBe(r0);
+		engine.updateSettings({ ...DEFAULT_SETTINGS, ignorePatterns: "drafts" });
+		engine.updateSettings({ ...DEFAULT_SETTINGS, ignorePatterns: "drafts/" });
+		const r1 = engine.ignoreRevision();
+		expect(r1).toBeGreaterThan(r0);
+		engine.ignoredFiles.add("a.md");
+		engine.ignoredFiles.remove("a.md");
+		const r2 = engine.ignoreRevision();
+		expect(r2).toBeGreaterThan(r1);
+		engine.ignoredFiles.remove("a.md"); // absent: no change
+		expect(engine.ignoreRevision()).toBe(r2);
+		engine.ignoredFiles.hydrate(["b.md"]);
+		expect(engine.ignoreRevision()).toBeGreaterThan(r2);
+	});
+
+	test("a replace that runs to completion is not flagged as stopped", async () => {
+		const engine = createEngine();
+		mockApp.vault.getFiles.mockReturnValue([]);
+		engine.setCrdtDelete(mock().mockResolvedValue(undefined));
+		wireFeed(engine, [[noteRow("a.md", { id: "n-a" })]]);
+		await engine.pushAll({ replaceRemote: true, localSnapshot: engine.snapshotLocalPaths() });
+		expect(engine.replaceStopped).toBe(false);
+	});
+
+	test("the preview's server and local paths equal what replace-remote and pull-all-delete execute", async () => {
+		const ignorePatterns = "drafts/\nsecret.md";
+		const files = [makeTFile("both.md"), makeTFile("local-only.md"), makeTFile("drafts/l.md")];
+		const { NoteIdMap } = await import("../src/crdt/note-id-map");
+		const rows = () => [
+			noteRow("both.md", { id: "n-both" }),
+			noteRow("server-only.md", { id: "n-so" }),
+			noteRow("drafts/s.md", { id: "n-ds" }),
+			noteRow("x/secret.md", { id: "n-sec" }),
+			noteRow("was.md", { id: "n-mv" }),
+			noteRow("drafts/was.md", { id: "n-mv" }),
+			attRow("server.png"),
+			attRow("drafts/s.png"),
+		];
+		const freshMap = () => {
+			const m = new NoteIdMap();
+			m.set("both.md", "n-both");
+			m.set("drafts/l.md", "n-dl");
+			return m;
+		};
+
+		// Preview.
+		const planner = createEngine({ ignorePatterns });
+		planner.setNoteIdMap(freshMap());
+		mockApp.vault.getFiles.mockReturnValue(files);
+		wireFeed(planner, [rows()]);
+		const plan = await planner.computeSyncPlan("push-all");
+		const serverOnly = plan.serverPaths.filter((p) => !plan.localPaths.includes(p)).sort();
+		const localOnly = plan.localPaths.filter((p) => !plan.serverPaths.includes(p)).sort();
+		expect(serverOnly).toEqual(["server-only.md", "server.png"]);
+		expect(localOnly).toEqual(["local-only.md"]);
+
+		// Replace-remote: deletes exactly the preview's server-only paths.
+		const pusher = createEngine({ ignorePatterns });
+		pusher.setNoteIdMap(freshMap());
+		const crdtDelete = mock().mockResolvedValue(undefined);
+		pusher.setCrdtDelete(crdtDelete);
+		wireFeed(pusher, [rows()]);
+		await pusher.pushAll({ replaceRemote: true, localSnapshot: pusher.snapshotLocalPaths() });
+		expect(crdtDelete.mock.calls.map((c) => c[0])).toEqual(["n-so"]);
+		expect((mockApi.deleteAttachment as jest.Mock).mock.calls.map((c) => c[0])).toEqual([
+			"server.png",
+		]);
+
+		// Pull-all-delete: trashes exactly the preview's local-only paths.
+		const puller = createEngine({ ignorePatterns });
+		puller.setNoteIdMap(freshMap());
+		(puller as any).applySyncChange = async () => false;
+		(puller as any).applyAttachmentChange = async () => false;
+		wireFeed(puller, [rows()]);
+		await puller.pullAll({ deleteLocalExtras: true });
+		const trashed = (mockApp.fileManager.trashFile as jest.Mock).mock.calls.map(
+			(c) => (c[0] as TFile).path,
+		);
+		expect(trashed).toEqual(localOnly);
+	});
+});

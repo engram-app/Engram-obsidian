@@ -418,6 +418,8 @@ const ru: Dict = {
 	"Nothing needs your attention. 🎉": "Ничего не требует вашего внимания. 🎉",
 	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
 		"Пока нет данных для синхронизации — это хранилище пустое с обеих сторон. Начните синхронизацию, и всё, что вы напишете, появится на ваших других устройствах.",
+	"Nothing to sync yet: every file here is on your ignore list. Start syncing and everything you write appears on your other devices.":
+		"Пока ничего не синхронизируется: все файлы здесь находятся в вашем списке исключений. Начните синхронизацию, и всё, что вы пишете, появится на ваших других устройствах.",
 	"Nothing will be deleted.": "Ничего не будет удалено.",
 	"Nothing will be removed from this device.": "Ничего не будет удалено с этого устройства.",
 	Open: "Открыть",
@@ -470,6 +472,8 @@ const ru: Dict = {
 	Refresh: "Обновить",
 	"Remote vault": "Удалённое хранилище",
 	"Remove tag {tag}": "Удалить тег {tag}",
+	"Replacing the remote stopped early: the ignore list changed during sync. Some remote notes were not removed; run it again.":
+		"Синхронизация прервана: список исключений изменился. Некоторые удалённые заметки не были удалены; попробуйте снова.",
 	"Report an issue": "Сообщить о проблеме",
 	"Report an issue on GitHub": "Сообщить о проблеме в GitHub",
 	"Request failed ({status})": "Запрос не удался ({status})",

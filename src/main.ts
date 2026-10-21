@@ -3207,13 +3207,21 @@ export default class EngramSyncPlugin extends Plugin {
 				// push and dodge the server-only delete (test_86 gate-open race).
 				// See SyncEngine.snapshotLocalPaths.
 				const localSnapshot = this.syncEngine.snapshotLocalPaths();
+				const ignoreRevision = this.syncEngine.ignoreRevision();
 				await this.markSyncGateAccepted();
 				const pushed = await this.syncEngine.pushAll({
 					replaceRemote: true,
 					localSnapshot,
+					ignoreRevision,
 				});
 				new Notice(
-					t("Engram Sync: replaced remote with local ({pushed} uploaded)", { pushed }),
+					this.syncEngine.replaceStopped
+						? t(
+								"Replacing the remote stopped early: the ignore list changed during sync. Some remote notes were not removed; run it again.",
+							)
+						: t("Engram Sync: replaced remote with local ({pushed} uploaded)", {
+								pushed,
+							}),
 				);
 				return true;
 			}
