@@ -401,6 +401,8 @@ const pt: Dict = {
 	"Nothing needs your attention. 🎉": "Nada requer a sua atenção. 🎉",
 	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
 		"Ainda não há nada para sincronizar — este cofre está vazio em ambos os lados. Inicie a sincronização e tudo o que escreve aparece nos seus outros dispositivos.",
+	"Nothing to sync yet: every file here is on your ignore list. Start syncing and everything you write appears on your other devices.":
+		"Ainda não há nada para sincronizar: todos os ficheiros aqui estão na sua lista de ignorados. Comece a sincronizar e tudo o que escreve aparece nos seus outros dispositivos.",
 	"Nothing will be deleted.": "Nada será eliminado.",
 	"Nothing will be removed from this device.": "Nada será removido deste dispositivo.",
 	Open: "Abrir",
@@ -452,6 +454,8 @@ const pt: Dict = {
 	Refresh: "Atualizar",
 	"Remote vault": "Cofre remoto",
 	"Remove tag {tag}": "Remover etiqueta {tag}",
+	"Replacing the remote stopped early: the ignore list changed during sync. Some remote notes were not removed; run it again.":
+		"A substituição remota foi interrompida prematuramente: a lista de ignorados foi alterada durante a sincronização. Algumas notas remotas não foram removidas; execute novamente.",
 	"Report an issue": "Reportar um problema",
 	"Report an issue on GitHub": "Reporte um problema no GitHub",
 	"Request failed ({status})": "Falha na requisição ({status})",

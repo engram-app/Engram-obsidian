@@ -339,6 +339,8 @@ const ja: Dict = {
 	"Nothing needs your attention. 🎉": "問題ありません。🎉",
 	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
 		"まだ同期するものがありません。この保管庫は両方で空です。同期を開始すると、書いたものが他のデバイスにも表示されます。",
+	"Nothing to sync yet: every file here is on your ignore list. Start syncing and everything you write appears on your other devices.":
+		"まだ同期するものがありません：ここに表示されているファイルはすべて除外リストに含まれています。同期を開始すると、書いたものが他のデバイスにも表示されます。",
 	"Nothing will be deleted.": "データは削除されません。",
 	"Nothing will be removed from this device.": "このデバイスからファイルは削除されません。",
 	Open: "開く",
@@ -388,6 +390,8 @@ const ja: Dict = {
 	Refresh: "更新",
 	"Remote vault": "リモート保管庫",
 	"Remove tag {tag}": "タグ {tag} を削除",
+	"Replacing the remote stopped early: the ignore list changed during sync. Some remote notes were not removed; run it again.":
+		"リモートの更新が途中で停止しました：同期中に除外リストが変更されました。一部のリモートノートが削除されませんでした。再度実行してください。",
 	"Report an issue": "問題を報告する",
 	"Report an issue on GitHub": "GitHubで問題を報告",
 	"Request failed ({status})": "リクエストに失敗しました ({status})",

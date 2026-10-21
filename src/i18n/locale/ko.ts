@@ -334,6 +334,8 @@ const ko: Dict = {
 	"Nothing needs your attention. 🎉": "특별한 조치가 필요 없습니다. 🎉",
 	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
 		"아직 동기화할 내용이 없습니다. 이 보관함은 양쪽 모두 비어 있습니다. 동기화를 시작하면 작성하는 모든 내용이 다른 기기에 표시됩니다.",
+	"Nothing to sync yet: every file here is on your ignore list. Start syncing and everything you write appears on your other devices.":
+		"아직 동기화할 내용이 없습니다: 여기의 모든 파일은 제외 목록에 있습니다. 동기화를 시작하면 작성하신 모든 내용이 다른 기기에 표시됩니다.",
 	"Nothing will be deleted.": "삭제되는 항목은 없습니다.",
 	"Nothing will be removed from this device.": "이 기기에서 파일은 삭제되지 않습니다.",
 	Open: "열기",
@@ -382,6 +384,8 @@ const ko: Dict = {
 	Refresh: "새로 고침",
 	"Remote vault": "원격 보관함",
 	"Remove tag {tag}": "태그 {tag} 삭제",
+	"Replacing the remote stopped early: the ignore list changed during sync. Some remote notes were not removed; run it again.":
+		"원격 보관함 업데이트가 조기에 중단되었습니다. 동기화 중 제외 목록이 변경되었기 때문입니다. 일부 원격 노트가 삭제되지 않았으므로 다시 실행해 주세요.",
 	"Report an issue": "문제 신고",
 	"Report an issue on GitHub": "GitHub에서 문제 보고",
 	"Request failed ({status})": "요청 실패 ({status})",

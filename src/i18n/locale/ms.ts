@@ -338,6 +338,8 @@ const ms: Dict = {
 	"Nothing needs your attention. 🎉": "Tiada perkara yang memerlukan perhatian anda. 🎉",
 	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
 		"Tiada apa yang perlu disegerakkan setakat ini — peti nota ini kosong di kedua-dua bahagian. Mulakan sync dan semua yang anda tulis akan muncul pada peranti anda yang lain.",
+	"Nothing to sync yet: every file here is on your ignore list. Start syncing and everything you write appears on your other devices.":
+		"Tiada apa untuk disegerakkan: setiap fail di sini ada dalam senarai pengecualian anda. Mulakan proses sync dan semua yang anda tulis akan muncul pada peranti anda yang lain.",
 	"Nothing will be deleted.": "Tiada apa yang akan dipadam.",
 	"Nothing will be removed from this device.":
 		"Tiada apa yang akan dipadam daripada peranti ini.",
@@ -391,6 +393,8 @@ const ms: Dict = {
 	Refresh: "Segarkan",
 	"Remote vault": "Peti Nota jauh",
 	"Remove tag {tag}": "Buang tag {tag}",
+	"Replacing the remote stopped early: the ignore list changed during sync. Some remote notes were not removed; run it again.":
+		"Pemindahan jauh dihentikan awal: senarai pengecualian berubah semasa proses sync. Sesetengah nota jauh tidak dipadam; jalankan semula.",
 	"Report an issue": "Laporkan masalah",
 	"Report an issue on GitHub": "Laporkan masalah di GitHub",
 	"Request failed ({status})": "Permintaan gagal ({status})",

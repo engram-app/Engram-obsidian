@@ -375,6 +375,8 @@ const tr: Dict = {
 	"Nothing needs your attention. 🎉": "Herhangi bir şeye dikkat etmeniz gerekmiyor. 🎉",
 	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
 		"Henüz senkronize edilecek bir şey yok — bu kasa her iki tarafta da boş. Senkronizasyonu başlatın ve yazdığınız her şey diğer cihazlarınızda görünecek.",
+	"Nothing to sync yet: every file here is on your ignore list. Start syncing and everything you write appears on your other devices.":
+		"Henüz senkronize edilecek veri yok: Buradaki tüm dosyalar yoksayma listenizde. Senkronizasyonu başlatın ve yazdığınız her şey diğer cihazlarınızda görünecek.",
 	"Nothing will be deleted.": "Herhangi bir veri silinmeyecek.",
 	"Nothing will be removed from this device.": "Bu cihazdan hiçbir şey silinmeyecek.",
 	Open: "Aç",
@@ -425,6 +427,8 @@ const tr: Dict = {
 	Refresh: "Yenile",
 	"Remote vault": "Uzak kasa",
 	"Remove tag {tag}": "Etiketi {tag} kaldır",
+	"Replacing the remote stopped early: the ignore list changed during sync. Some remote notes were not removed; run it again.":
+		"Uzak sunucuyla senkronizasyon erken durdu: Yoksama listesi senkronizasyon sırasında değişti. Bazı uzak notlar silinmedi; tekrar deneyin.",
 	"Report an issue": "Bir sorun bildirin",
 	"Report an issue on GitHub": "GitHub üzerinde bir sorun bildirin",
 	"Request failed ({status})": "İstek başarısız oldu ({status})",

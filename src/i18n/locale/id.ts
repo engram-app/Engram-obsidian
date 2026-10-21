@@ -339,6 +339,8 @@ const id: Dict = {
 	"Nothing needs your attention. 🎉": "Tidak ada yang membutuhkan perhatian Anda. 🎉",
 	"Nothing to sync yet — this vault is empty on both sides. Start syncing and everything you write appears on your other devices.":
 		"Belum ada yang perlu disinkronkan — Vault ini kosong di kedua sisi. Mulai sinkronisasi dan semua yang Anda tulis akan muncul di perangkat lain Anda.",
+	"Nothing to sync yet: every file here is on your ignore list. Start syncing and everything you write appears on your other devices.":
+		"Belum ada yang perlu disinkronkan: setiap file di sini ada dalam daftar abaikan Anda. Mulai sinkronisasi dan semua yang Anda tulis akan muncul di perangkat lain Anda.",
 	"Nothing will be deleted.": "Tidak ada yang akan dihapus.",
 	"Nothing will be removed from this device.": "Tidak ada yang akan dihapus dari perangkat ini.",
 	Open: "Buka",
@@ -391,6 +393,8 @@ const id: Dict = {
 	Refresh: "Segarkan",
 	"Remote vault": "Vault jarak jauh",
 	"Remove tag {tag}": "Hapus tag {tag}",
+	"Replacing the remote stopped early: the ignore list changed during sync. Some remote notes were not removed; run it again.":
+		"Penghentian sinkronisasi jarak jauh terjadi lebih awal: daftar yang diabaikan berubah selama sinkronisasi. Beberapa catatan jarak jauh tidak dihapus; jalankan lagi.",
 	"Report an issue": "Laporkan masalah",
 	"Report an issue on GitHub": "Laporkan masalah di GitHub",
 	"Request failed ({status})": "Permintaan gagal ({status})",

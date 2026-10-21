@@ -4,10 +4,14 @@
  */
 import { describe, expect, mock, test } from "bun:test";
 import "fake-indexeddb/auto";
+import * as decoding from "lib0/decoding";
 import { TFile } from "obsidian";
+import * as YDoc from "yjs";
 import type { EngramApi } from "../src/api";
+import { CONTENT_KEY } from "../src/crdt/frontmatter-codec";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { ProviderRegistry } from "../src/crdt/provider-registry";
+import { fromB64 } from "../src/crdt/wire";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -356,9 +360,15 @@ describe("room-free queue delivery (#1493)", () => {
 	function queuedEngine(opts: {
 		docUpdate?: (docId: string, b64: string) => Promise<{ head: string }>;
 		liveBound?: (path: string) => boolean;
-		encode?: (noteId: string) => Promise<Uint8Array>;
+		encode?: (noteId: string, sv?: Uint8Array) => Promise<Uint8Array>;
 		markSynced?: (noteId: string) => void;
 		markDelivered?: (noteId: string, receipt: Uint8Array) => void;
+		deliveredStateVector?: (noteId: string) => Uint8Array | undefined;
+		clearDelivered?: (noteId: string) => void;
+		/** The `docUpdateDiffs` port: the server refuses a diff it cannot apply. */
+		diffs?: () => boolean;
+		/** A real registry in place of the fake below. */
+		realCrdt?: ProviderRegistry;
 	}) {
 		let receiptSeq = 1;
 		const crdt = {
@@ -378,6 +388,10 @@ describe("room-free queue delivery (#1493)", () => {
 			encodeDeliveryReceipt: async () => new Uint8Array([receiptSeq++]),
 			markSynced: opts.markSynced ?? (() => {}),
 			markDelivered: opts.markDelivered ?? (() => {}),
+			...(opts.deliveredStateVector
+				? { deliveredStateVector: opts.deliveredStateVector }
+				: {}),
+			...(opts.clearDelivered ? { clearDelivered: opts.clearDelivered } : {}),
 		};
 		const enroll = mock();
 		const reset = mock();
@@ -387,13 +401,14 @@ describe("room-free queue delivery (#1493)", () => {
 					throw new Error("must not legacy-push a crdt entry");
 				},
 			} as Partial<EngramApi>,
-			crdt,
+			crdt: opts.realCrdt ?? crdt,
 		});
 		e.setCrdtEnrollment({ enroll, reset } as any);
 		e.setCrdtLiveCheck(() => true);
 		e.setCrdtPorts({
 			...(opts.docUpdate ? { docUpdate: opts.docUpdate } : {}),
 			...(opts.liveBound ? { liveBound: opts.liveBound } : {}),
+			...(opts.diffs ? { docUpdateDiffs: opts.diffs } : {}),
 		});
 		return { e, enroll, reset };
 	}
@@ -496,6 +511,169 @@ describe("room-free queue delivery (#1493)", () => {
 		// The FIRST receipt — the one captured before the state was encoded. A
 		// capture moved after the send would hand over a later value.
 		expect(markDelivered.mock.calls[0]?.[1]).toEqual(new Uint8Array([1]));
+	});
+
+	/** A fake of the registry's delivery base: `markDelivered` records the
+	 *  receipt, `deliveredStateVector` hands its vector back, `clearDelivered`
+	 *  forgets it. Stands in for the real one, which
+	 *  tests/crdt/provider-registry.test.ts proves against real Yjs docs. */
+	function deliveryBase() {
+		let base: Uint8Array | undefined;
+		return {
+			markDelivered: mock((_id: string, receipt: Uint8Array) => {
+				base = receipt;
+			}),
+			deliveredStateVector: () => base,
+			clearDelivered: mock(() => {
+				base = undefined;
+			}),
+		};
+	}
+
+	test("the first push is the FULL state; after an ack the next one diffs against the acked base", async () => {
+		const base = deliveryBase();
+		const encode = mock(async (_id: string, _sv?: Uint8Array) => new Uint8Array([1, 2, 3]));
+		const docUpdate = mock(async () => ({ head: "h1" }));
+		const { e } = queuedEngine({ docUpdate, encode, ...base, diffs: () => true });
+
+		await enqueueOne(e);
+		await e.flushQueue();
+		await enqueueOne(e);
+		await e.flushQueue();
+
+		expect(docUpdate).toHaveBeenCalledTimes(2);
+		// No known server state on the first push: full state, as before.
+		expect(encode.mock.calls[0]?.[1]).toBeUndefined();
+		// The second is diffed against what the first ack proved the server holds.
+		expect(encode.mock.calls[1]?.[1]).toEqual(base.markDelivered.mock.calls[0]?.[1]);
+	});
+
+	test("a REFUSED write drops the base, so the retry sends the full state", async () => {
+		// Any refusal may mean the server lacks the base (`note_not_found`, a
+		// reset doc). A diff against a base it lacks would pend there unseen, so
+		// the next attempt must not assume it.
+		const base = deliveryBase();
+		const encode = mock(async (_id: string, _sv?: Uint8Array) => new Uint8Array([1, 2, 3]));
+		let fail = false;
+		const docUpdate = mock(async () => {
+			if (fail) throw new Error('request failed: {"reason":"note_not_found"}');
+			return { head: "h1" };
+		});
+		const { e } = queuedEngine({ docUpdate, encode, ...base, diffs: () => true });
+
+		await enqueueOne(e);
+		await e.flushQueue();
+		fail = true;
+		await enqueueOne(e);
+		await e.flushQueue();
+		fail = false;
+		await e.flushQueue();
+
+		expect(base.clearDelivered).toHaveBeenCalledWith("id-1");
+		expect(encode.mock.calls[1]?.[1]).toBeDefined();
+		expect(encode.mock.calls[2]?.[1]).toBeUndefined();
+	});
+
+	test("an EMPTY diff against a known base is a delivery, not an empty doc", async () => {
+		// The empty-doc guard reads a full state; a diff is 2 bytes whenever the
+		// server already holds everything, and that is a delivered note.
+		const base = deliveryBase();
+		const encode = mock(async (_id: string, sv?: Uint8Array) =>
+			sv ? new Uint8Array([0, 0]) : new Uint8Array([1, 2, 3]),
+		);
+		const docUpdate = mock(async () => ({ head: "h1" }));
+		const { e, enroll } = queuedEngine({ docUpdate, encode, ...base, diffs: () => true });
+
+		await enqueueOne(e);
+		await e.flushQueue();
+		await enqueueOne(e);
+		const flushed = await e.flushQueue();
+
+		expect(docUpdate).toHaveBeenCalledTimes(2);
+		expect(flushed).toBe(1);
+		expect(e.queue.size).toBe(0);
+		expect(enroll).not.toHaveBeenCalled();
+	});
+
+	test("a server NOT known to refuse an unappliable diff gets the FULL state, even after an ack", async () => {
+		// Before backend 0.59.0 the server acks a diff whose base it lacks and
+		// parks it as pending structs: an ack for an edit it never applied. With
+		// the version unknown (or old) the port is false and nothing changes
+		// from the full-state behaviour those servers were built against.
+		const base = deliveryBase();
+		const encode = mock(async (_id: string, _sv?: Uint8Array) => new Uint8Array([1, 2, 3]));
+		const docUpdate = mock(async () => ({ head: "h1" }));
+		for (const diffs of [undefined, () => false]) {
+			encode.mockClear();
+			const { e } = queuedEngine({ docUpdate, encode, ...base, ...(diffs ? { diffs } : {}) });
+
+			await enqueueOne(e);
+			await e.flushQueue();
+			await enqueueOne(e);
+			await e.flushQueue();
+
+			expect(encode).toHaveBeenCalledTimes(2);
+			expect(encode.mock.calls[1]?.[1]).toBeUndefined();
+		}
+	});
+
+	test("real Yjs: a server that LOST the base refuses the diff, and the full-state retry converges", async () => {
+		// The server's doc fell behind the acked base (a durability gap reset it
+		// to empty). The diff then leaves pending structs, which 0.59.0's
+		// `apply_checked` refuses as `missing_dependencies` (`doc_update_failed`
+		// on the wire) without keeping any of it. Modelled on a scratch copy so
+		// a refusal keeps nothing, as there.
+		let server = new YDoc.Doc();
+		const pendingAfter: (unknown | null)[] = [];
+		const docUpdate = mock(async (_id: string, b64: string) => {
+			const dec = decoding.createDecoder(fromB64(b64));
+			decoding.readVarUint(dec); // messageSync
+			decoding.readVarUint(dec); // messageYjsUpdate
+			const update = decoding.readVarUint8Array(dec);
+			const probe = new YDoc.Doc();
+			YDoc.applyUpdate(probe, YDoc.encodeStateAsUpdate(server));
+			YDoc.applyUpdate(probe, update);
+			pendingAfter.push(probe.store.pendingStructs);
+			if (probe.store.pendingStructs || probe.store.pendingDs) {
+				throw new Error('request failed: {"reason":"doc_update_failed"}');
+			}
+			YDoc.applyUpdate(server, update);
+			return { head: "h" };
+		});
+		const reg = new ProviderRegistry({
+			dbPrefix: "roomfree-lost-base",
+			send: () => true,
+			onFlushToDisk: async () => {},
+		});
+		const { e, enroll, reset } = queuedEngine({ docUpdate, realCrdt: reg, diffs: () => true });
+
+		await reg.applyLocalEdit("id-1", "alpha\n");
+		await enqueueOne(e);
+		await e.flushQueue();
+		expect(reg.deliveredStateVector("id-1")).toBeDefined();
+
+		server = new YDoc.Doc(); // the server lost what it acked
+		await reg.applyLocalEdit("id-1", "alpha\nbeta\n");
+		await enqueueOne(e);
+		await e.flushQueue();
+
+		// The diff could not apply: refused, base dropped, room handshake asked for.
+		expect(pendingAfter[1]).not.toBeNull();
+		expect(reg.deliveredStateVector("id-1")).toBeUndefined();
+		expect(reset).toHaveBeenCalledWith("id-1");
+		expect(enroll).toHaveBeenCalledWith("id-1");
+		expect(e.queue.size).toBe(1);
+
+		// The next drain sends the full state, which carries its own dependencies.
+		await e.flushQueue();
+
+		expect(docUpdate).toHaveBeenCalledTimes(3);
+		expect(pendingAfter[2]).toBeNull();
+		expect(server.getText(CONTENT_KEY).toString()).toBe(await reg.getText("id-1"));
+		expect(server.getText(CONTENT_KEY).toString()).toBe("alpha\nbeta\n");
+		expect(e.queue.size).toBe(0);
+
+		await reg.destroyAll();
 	});
 
 	test("a REFUSED write records NO delivery", async () => {

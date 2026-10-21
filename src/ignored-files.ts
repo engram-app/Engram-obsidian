@@ -9,13 +9,18 @@
  */
 export class IgnoredFiles {
 	private set: Set<string> = new Set();
+	/** Bumped on every real change, never reset. A destructive pass compares
+	 *  it across its run (SyncEngine.ignoreRevision). */
+	revision = 0;
 
 	add(path: string): void {
+		if (this.set.has(path)) return;
 		this.set.add(path);
+		this.revision++;
 	}
 
 	remove(path: string): void {
-		this.set.delete(path);
+		if (this.set.delete(path)) this.revision++;
 	}
 
 	has(path: string): boolean {
@@ -27,6 +32,7 @@ export class IgnoredFiles {
 	}
 
 	clear(): void {
+		this.revision++;
 		this.set.clear();
 	}
 
@@ -40,6 +46,7 @@ export class IgnoredFiles {
 	}
 
 	hydrate(data: unknown): void {
+		this.revision++;
 		this.set.clear();
 		if (!Array.isArray(data)) return;
 		for (const entry of data) {

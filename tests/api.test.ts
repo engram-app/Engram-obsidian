@@ -153,6 +153,68 @@ describe("EngramApi", () => {
 		});
 	});
 
+	describe("learnServerVersion / refusesUnappliableDocUpdate", () => {
+		const reply = (version: unknown) =>
+			mockRequestUrl.mockResolvedValueOnce({
+				status: 200,
+				json: { status: "ok", version },
+			} as any);
+
+		test("unknown until learned: no diff before the server has said its version", () => {
+			expect(api.refusesUnappliableDocUpdate()).toBe(false);
+		});
+
+		test("0.59.0 and later refuse a diff they cannot apply; earlier ones do not", async () => {
+			for (const [v, want] of [
+				["0.59.0", true],
+				["0.60.2", true],
+				["1.0.0", true],
+				["0.58.9", false],
+				["0.9.0", false],
+			] as const) {
+				reply(v);
+				await api.learnServerVersion();
+				expect([v, api.refusesUnappliableDocUpdate()]).toEqual([v, want]);
+			}
+			expect(mockRequestUrl).toHaveBeenCalledWith(
+				expect.objectContaining({ url: "http://localhost:8000/api/health" }),
+			);
+		});
+
+		test("unparseable, missing or pre-release versions mean full state", async () => {
+			for (const v of ["0.59.0-rc.1", "garbage", "", 59, null, undefined]) {
+				reply("0.59.0");
+				await api.learnServerVersion();
+				reply(v);
+				await api.learnServerVersion();
+				expect([v, api.refusesUnappliableDocUpdate()]).toEqual([v, false]);
+			}
+		});
+
+		test("a failed probe forgets the old answer", async () => {
+			reply("0.59.0");
+			await api.learnServerVersion();
+			mockRequestUrl.mockRejectedValueOnce(new Error("network"));
+			await api.learnServerVersion();
+			expect(api.refusesUnappliableDocUpdate()).toBe(false);
+		});
+
+		test("a backend switch forgets it, and a late reply from the old one is ignored", async () => {
+			reply("0.59.0");
+			await api.learnServerVersion();
+			api.updateConfig("http://other.example", "key");
+			expect(api.refusesUnappliableDocUpdate()).toBe(false);
+
+			let resolve!: (r: unknown) => void;
+			mockRequestUrl.mockReturnValueOnce(new Promise((r) => (resolve = r)) as any);
+			const inFlight = api.learnServerVersion();
+			api.updateConfig("http://third.example", "key");
+			resolve({ status: 200, json: { version: "0.59.0" } });
+			await inFlight;
+			expect(api.refusesUnappliableDocUpdate()).toBe(false);
+		});
+	});
+
 	describe("ping", () => {
 		test("returns ok on success", async () => {
 			mockRequestUrl.mockResolvedValueOnce({ status: 200, json: [] } as any);
