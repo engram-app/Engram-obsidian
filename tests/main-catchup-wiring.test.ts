@@ -326,9 +326,11 @@ describe("connectChannel server-features wiring", () => {
 		);
 		const setRaw = mock((_on: boolean) => {});
 		const setRawDown = mock((_on: boolean) => {});
+		const learnVersion = mock(async () => {});
 		Object.assign(fakeThis.api as object, {
 			setRawAttachmentUpload: setRaw,
 			setRawAttachmentDownload: setRawDown,
+			learnServerVersion: learnVersion,
 		});
 
 		runConnectChannel(fakeThis);
@@ -344,6 +346,8 @@ describe("connectChannel server-features wiring", () => {
 		stale.onServerFeatures({ rawAttachmentUpload: true, rawAttachmentDownload: false });
 		expect(setRaw).toHaveBeenCalledWith(true);
 		expect(setRawDown).toHaveBeenCalledWith(false);
+		// The backend release (gates room-free diffs) is learned once per join.
+		expect(learnVersion).toHaveBeenCalledTimes(1);
 
 		// A backend switch bumps the epoch (and the api reset turns raw off);
 		// the old channel's join reply landing afterwards must not re-enable it.
@@ -353,5 +357,6 @@ describe("connectChannel server-features wiring", () => {
 		stale.onServerFeatures({ rawAttachmentUpload: true, rawAttachmentDownload: true });
 		expect(setRaw).not.toHaveBeenCalled();
 		expect(setRawDown).not.toHaveBeenCalled();
+		expect(learnVersion).toHaveBeenCalledTimes(1);
 	});
 });
