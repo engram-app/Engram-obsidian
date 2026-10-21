@@ -391,6 +391,7 @@ describe("opening the sync gate re-runs the catch-up (#425)", () => {
 					pullAll: async () => 0,
 					pushAll: async () => 0,
 					snapshotLocalPaths: () => new Set<string>(),
+					ignoreKey: () => "",
 				},
 			});
 			await fake.runSyncFromChoice(choice);

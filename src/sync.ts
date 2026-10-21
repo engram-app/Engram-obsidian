@@ -3724,6 +3724,13 @@ export class SyncEngine {
 		});
 	}
 
+	/** Fingerprint of the user's ignore config. A destructive pass compares it
+	 *  across the run: the snapshot, the server enumeration and the delete
+	 *  loop must all see the same ignore list the preview showed. */
+	ignoreKey(): string {
+		return JSON.stringify([this.ignorePatterns, this.ignoredFiles.all()]);
+	}
+
 	/** A path the plan reports in `ignoredCount`: hidden by the USER's ignores.
 	 *  Built-ins are hidden too but never counted (they are not the user's
 	 *  choice, and configDir alone would dwarf every other number). */
@@ -6907,6 +6914,8 @@ export class SyncEngine {
 		deletes: number;
 		serverIds: Set<string>;
 		serverAttachmentPaths: Set<string>;
+		/** Live server rows at ignored paths (note ids + attachment paths). */
+		ignoredLive: Set<string>;
 		/** `true` when THIS call executed the replay loop exclusively (so
 		 *  `serverIds`/`serverAttachmentPaths` are real + complete); `false` when it
 		 *  COALESCED behind an in-flight replay and returned EMPTY sets. Destructive
@@ -6922,6 +6931,7 @@ export class SyncEngine {
 	}> {
 		const serverIds = new Set<string>();
 		const serverAttachmentPaths = new Set<string>();
+		const ignoredLive = new Set<string>();
 
 		// Gate closed: walk NOTHING. The block used to live per-file inside
 		// flushFromCrdt, so a blocked replay still fetched every page, and the
@@ -6957,6 +6967,7 @@ export class SyncEngine {
 				deletes: 0,
 				serverIds,
 				serverAttachmentPaths,
+				ignoredLive,
 				ran: false,
 				complete: false,
 			};
@@ -6977,6 +6988,7 @@ export class SyncEngine {
 					deletes: 0,
 					serverIds,
 					serverAttachmentPaths,
+					ignoredLive,
 					ran: false,
 					complete: false,
 				};
@@ -7011,6 +7023,7 @@ export class SyncEngine {
 				// keep requiring ran && complete.
 				serverIds,
 				serverAttachmentPaths,
+				ignoredLive,
 				ran: false,
 				complete: false,
 			};
@@ -7053,6 +7066,7 @@ export class SyncEngine {
 						(opts.fromZero ?? false) || (opts.enumerateOnly ?? false),
 						serverIds,
 						serverAttachmentPaths,
+						ignoredLive,
 						tickedKeys,
 						opts.enumerateOnly ?? false,
 						emitFileApplied,
@@ -7111,6 +7125,7 @@ export class SyncEngine {
 				deletes,
 				serverIds,
 				serverAttachmentPaths,
+				ignoredLive,
 				ran: true,
 				complete,
 			};
@@ -7146,6 +7161,7 @@ export class SyncEngine {
 		failed: number;
 		serverIds: Set<string>;
 		serverAttachmentPaths: Set<string>;
+		ignoredLive: Set<string>;
 	} | null> {
 		for (let attempt = 0; attempt < 10; attempt++) {
 			const res = await this.catchupViaSeqReplay(opts);
@@ -7280,6 +7296,9 @@ export class SyncEngine {
 		fromZero: boolean,
 		serverIds: Set<string>,
 		serverAttachmentPaths: Set<string>,
+		/** Note ids and attachment paths live at an IGNORED path (see the set
+		 *  update below). Disjoint from the two sets above. */
+		ignoredLive: Set<string>,
 		/** Session-scoped: keys already counted as downloaded files. Multiple
 		 *  op-log rows for the same note/attachment tick the file counter once. */
 		tickedKeys: Set<string>,
@@ -7397,13 +7416,20 @@ export class SyncEngine {
 					// pull-all-delete passes, and a sync must never act on what it
 					// cannot see. (`c.path` can be null on a leaked folder-marker
 					// row despite its type.)
-					const live = !c.deleted && !(c.path && this.shouldIgnore(c.path));
-					if (c.type === "attachment") {
-						if (live) serverAttachmentPaths.add(c.path);
-						else serverAttachmentPaths.delete(c.path);
-					} else if (c.id) {
-						if (live) serverIds.add(c.id);
-						else serverIds.delete(c.id);
+					//
+					// A live row at an ignored path goes to `ignoredLive` instead, so
+					// pull-all-delete can still tell "the server holds it where you
+					// cannot see" from "the server deleted it" (a note renamed into an
+					// ignored folder on another device is not a local extra).
+					const hidden = !c.deleted && !!c.path && this.shouldIgnore(c.path);
+					const visible = !c.deleted && !hidden;
+					const key = c.type === "attachment" ? c.path : c.id;
+					const set = c.type === "attachment" ? serverAttachmentPaths : serverIds;
+					if (key) {
+						if (visible) set.add(key);
+						else set.delete(key);
+						if (hidden) ignoredLive.add(key);
+						else ignoredLive.delete(key);
 					}
 				},
 				onPage: async (seq, id) => {
@@ -8023,6 +8049,7 @@ export class SyncEngine {
 			let replayFailed: number;
 			let serverIds: Set<string>;
 			let serverAttachmentPaths: Set<string>;
+			let ignoredLive: Set<string> = new Set();
 			if (wipe) {
 				const replay = await this.catchupViaSeqReplayExclusive({
 					fromZero: true,
@@ -8048,6 +8075,8 @@ export class SyncEngine {
 					failed: replayFailed,
 					serverIds,
 					serverAttachmentPaths,
+					// Defaulted for callers that stub the replay without it.
+					ignoredLive = new Set<string>(),
 				} = replay);
 			} else {
 				// Keep-branch needs the from-zero replay to ACTUALLY run too: a
@@ -8103,9 +8132,10 @@ export class SyncEngine {
 				const files = this.app.vault.getFiles();
 				const extras = files.filter((f) => {
 					if (!this.isSyncable(f) || this.shouldIgnore(f.path)) return false;
-					return this.isBinaryFile(f)
-						? !serverAttachmentPaths.has(f.path)
-						: !serverIds.has(this.noteIdMap?.get(f.path) ?? "");
+					const key = this.isBinaryFile(f) ? f.path : (this.noteIdMap?.get(f.path) ?? "");
+					const onServer = this.isBinaryFile(f) ? serverAttachmentPaths : serverIds;
+					// Held live at an ignored path is still held: never a local extra.
+					return !onServer.has(key) && !ignoredLive.has(key);
 				});
 				const total = extras.length;
 				this.onSyncProgress?.({ phase: "deleting", current: 0, total, failed: 0 });
@@ -11292,14 +11322,14 @@ export class SyncEngine {
 	}
 
 	async pushAll(
-		opts: { replaceRemote?: boolean; localSnapshot?: Set<string> } = {},
+		opts: { replaceRemote?: boolean; localSnapshot?: Set<string>; ignoreKey?: string } = {},
 	): Promise<number> {
 		// Thin wrapper so the sweep is marked without reindenting the whole body.
 		return this.inBulkSweep(() => this.pushAllInner(opts));
 	}
 
 	private async pushAllInner(
-		opts: { replaceRemote?: boolean; localSnapshot?: Set<string> } = {},
+		opts: { replaceRemote?: boolean; localSnapshot?: Set<string>; ignoreKey?: string } = {},
 	): Promise<number> {
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", "pushAll short-circuited — gate closed");
@@ -11328,6 +11358,20 @@ export class SyncEngine {
 		// The actual deletes run push-FIRST (below) — push-then-delete avoids the
 		// 2026-07-08 wipe-before-enumerate vault-wipe incident.
 		let replaceExtras: { ids: string[]; attachments: string[] } | null = null;
+		// The ignore list decides which server rows are "extras". If it changes
+		// between the snapshot and the deletes, the run would delete rows the
+		// preview promised to keep, so the delete pass is skipped instead.
+		const ignoreKeyAtStart = opts.ignoreKey ?? this.ignoreKey();
+		let ignoreChanged = false;
+		const ignoreListChanged = (): boolean => {
+			if (ignoreChanged || this.ignoreKey() === ignoreKeyAtStart) return ignoreChanged;
+			ignoreChanged = true;
+			rlog().error(
+				"push",
+				"replace-remote: ignore list changed during the sync; skipping the remaining server-extra deletes (the push still ran)",
+			);
+			return true;
+		};
 		if (opts.replaceRemote) {
 			// The server-extra DELETE decision MUST come from an EXCLUSIVE replay: a
 			// coalesced replay returns EMPTY sets, which here would silently under-
@@ -11343,7 +11387,7 @@ export class SyncEngine {
 					"push",
 					"replace-remote extras enumeration never ran exclusively (persistent replay contention); skipping server-extra deletes — the push still ran",
 				);
-			} else {
+			} else if (!ignoreListChanged()) {
 				const { serverIds, serverAttachmentPaths } = replay;
 				const snap = opts.localSnapshot ?? this.snapshotLocalPaths();
 				const localIds = new Set<string>();
@@ -11409,6 +11453,7 @@ export class SyncEngine {
 			let delDone = 0;
 			this.onSyncProgress?.({ phase: "deleting", current: 0, total: delTotal, failed: 0 });
 			for (const id of replaceExtras.ids) {
+				if (ignoreListChanged()) break;
 				try {
 					await this.crdtDelete?.(id);
 					this.notesCapGate?.open(); // a note was freed
@@ -11424,6 +11469,7 @@ export class SyncEngine {
 				});
 			}
 			for (const path of replaceExtras.attachments) {
+				if (ignoreListChanged()) break;
 				try {
 					await this.api.deleteAttachment(path);
 					this.logEntry("delete", path, "ok", undefined, "replace-remote");

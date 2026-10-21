@@ -1098,3 +1098,184 @@ describe("seq replay server sets: the LAST row decides, tombstones included", ()
 		expect(trashed).toEqual(["dead.md"]);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Adversarial review: the destructive passes must not act on what the ignore
+// list hides, even when the two sides disagree about a note's path or the
+// ignore list changes while the sync runs.
+// ---------------------------------------------------------------------------
+
+describe("destructive passes vs ignored server rows", () => {
+	test("pull-all-delete keeps a local note whose server row moved INTO an ignored folder", async () => {
+		const engine = createEngine({ ignorePatterns: "drafts/" });
+		const { NoteIdMap } = await import("../src/crdt/note-id-map");
+		const map = new NoteIdMap();
+		map.set("notes/a.md", "n-a");
+		engine.setNoteIdMap(map);
+		mockApp.vault.getFiles.mockReturnValue([makeTFile("notes/a.md")]);
+		(engine as any).applySyncChange = async () => false;
+		wireFeed(engine, [
+			[noteRow("notes/a.md", { id: "n-a" }), noteRow("drafts/a.md", { id: "n-a" })],
+		]);
+
+		await engine.pullAll({ deleteLocalExtras: true });
+
+		// The server still has the note (at a path this device cannot see), so
+		// it is not a local extra. Main kept it; trashing it is a regression.
+		expect(mockApp.fileManager.trashFile as jest.Mock).not.toHaveBeenCalled();
+	});
+
+	test("pull-all-delete trashes nothing the server holds when the ignore list is cleared mid-replay", async () => {
+		const engine = createEngine({ ignorePatterns: "drafts/" });
+		const { NoteIdMap } = await import("../src/crdt/note-id-map");
+		const map = new NoteIdMap();
+		map.set("drafts/n.md", "n-d");
+		engine.setNoteIdMap(map);
+		mockApp.vault.getFiles.mockReturnValue([
+			makeTFile("drafts/n.md"),
+			makeTFile("drafts/pic.png"),
+		]);
+		(engine as any).applySyncChange = async () => false;
+		(engine as any).applyAttachmentChange = async () => false;
+		let call = 0;
+		engine.setCrdtManager({} as any);
+		engine.setCrdtLiveCheck(() => true);
+		const pages = [
+			[noteRow("drafts/n.md", { id: "n-d" }), attRow("drafts/pic.png")],
+			[noteRow("other.md", { id: "n-o" })],
+		];
+		engine.setCrdtCatchupSince(async () => {
+			// The user un-ignores drafts/ while the replay walks the feed.
+			if (call === 1) engine.updateSettings({ ...DEFAULT_SETTINGS, ignorePatterns: "" });
+			const changes = pages[call] ?? [];
+			call++;
+			return {
+				changes,
+				has_more: call < pages.length,
+				next_seq: changes.length ? changes[changes.length - 1].seq : null,
+			};
+		});
+
+		await engine.pullAll({ deleteLocalExtras: true });
+
+		expect(mockApp.fileManager.trashFile as jest.Mock).not.toHaveBeenCalled();
+	});
+
+	test("replace-remote deletes nothing when the ignore list changes during the sync", async () => {
+		const engine = createEngine({ ignorePatterns: "drafts/" });
+		mockApp.vault.getFiles.mockReturnValue([]);
+		const crdtDelete = mock().mockResolvedValue(undefined);
+		engine.setCrdtDelete(crdtDelete);
+		const localSnapshot = engine.snapshotLocalPaths();
+		const ignoreKey = engine.ignoreKey();
+		let call = 0;
+		engine.setCrdtManager({} as any);
+		engine.setCrdtLiveCheck(() => true);
+		const pages = [[noteRow("drafts/s.md", { id: "n-s" }), attRow("drafts/s.png")]];
+		engine.setCrdtCatchupSince(async () => {
+			if (call === 0) engine.updateSettings({ ...DEFAULT_SETTINGS, ignorePatterns: "" });
+			const changes = pages[call] ?? [];
+			call++;
+			return {
+				changes,
+				has_more: call < pages.length,
+				next_seq: changes.length ? changes[changes.length - 1].seq : null,
+			};
+		});
+
+		await engine.pushAll({ replaceRemote: true, localSnapshot, ignoreKey });
+
+		// The preview promised drafts/ survives; the run must not disagree.
+		expect(crdtDelete).not.toHaveBeenCalled();
+		expect(mockApi.deleteAttachment as jest.Mock).not.toHaveBeenCalled();
+	});
+
+	test("replace-remote deletes nothing when the ignore list changed after the snapshot", async () => {
+		const engine = createEngine({ ignorePatterns: "drafts/" });
+		mockApp.vault.getFiles.mockReturnValue([]);
+		const crdtDelete = mock().mockResolvedValue(undefined);
+		engine.setCrdtDelete(crdtDelete);
+		const localSnapshot = engine.snapshotLocalPaths();
+		const ignoreKey = engine.ignoreKey();
+		engine.updateSettings({ ...DEFAULT_SETTINGS, ignorePatterns: "" });
+		wireFeed(engine, [[noteRow("drafts/s.md", { id: "n-s" })]]);
+
+		await engine.pushAll({ replaceRemote: true, localSnapshot, ignoreKey });
+
+		expect(crdtDelete).not.toHaveBeenCalled();
+	});
+
+	test("replace-remote stops deleting the moment the ignore list changes mid-loop", async () => {
+		const engine = createEngine({ ignorePatterns: "drafts/" });
+		mockApp.vault.getFiles.mockReturnValue([]);
+		const crdtDelete = mock().mockImplementation(async () => {
+			engine.updateSettings({ ...DEFAULT_SETTINGS, ignorePatterns: "" });
+		});
+		engine.setCrdtDelete(crdtDelete);
+		wireFeed(engine, [
+			[noteRow("a.md", { id: "n-a" }), noteRow("b.md", { id: "n-b" }), attRow("c.png")],
+		]);
+
+		await engine.pushAll({ replaceRemote: true, localSnapshot: engine.snapshotLocalPaths() });
+
+		expect(crdtDelete).toHaveBeenCalledTimes(1);
+		expect(mockApi.deleteAttachment as jest.Mock).not.toHaveBeenCalled();
+	});
+
+	test("the preview's server and local paths equal what replace-remote and pull-all-delete execute", async () => {
+		const ignorePatterns = "drafts/\nsecret.md";
+		const files = [makeTFile("both.md"), makeTFile("local-only.md"), makeTFile("drafts/l.md")];
+		const { NoteIdMap } = await import("../src/crdt/note-id-map");
+		const rows = () => [
+			noteRow("both.md", { id: "n-both" }),
+			noteRow("server-only.md", { id: "n-so" }),
+			noteRow("drafts/s.md", { id: "n-ds" }),
+			noteRow("x/secret.md", { id: "n-sec" }),
+			noteRow("was.md", { id: "n-mv" }),
+			noteRow("drafts/was.md", { id: "n-mv" }),
+			attRow("server.png"),
+			attRow("drafts/s.png"),
+		];
+		const freshMap = () => {
+			const m = new NoteIdMap();
+			m.set("both.md", "n-both");
+			m.set("drafts/l.md", "n-dl");
+			return m;
+		};
+
+		// Preview.
+		const planner = createEngine({ ignorePatterns });
+		planner.setNoteIdMap(freshMap());
+		mockApp.vault.getFiles.mockReturnValue(files);
+		wireFeed(planner, [rows()]);
+		const plan = await planner.computeSyncPlan("push-all");
+		const serverOnly = plan.serverPaths.filter((p) => !plan.localPaths.includes(p)).sort();
+		const localOnly = plan.localPaths.filter((p) => !plan.serverPaths.includes(p)).sort();
+		expect(serverOnly).toEqual(["server-only.md", "server.png"]);
+		expect(localOnly).toEqual(["local-only.md"]);
+
+		// Replace-remote: deletes exactly the preview's server-only paths.
+		const pusher = createEngine({ ignorePatterns });
+		pusher.setNoteIdMap(freshMap());
+		const crdtDelete = mock().mockResolvedValue(undefined);
+		pusher.setCrdtDelete(crdtDelete);
+		wireFeed(pusher, [rows()]);
+		await pusher.pushAll({ replaceRemote: true, localSnapshot: pusher.snapshotLocalPaths() });
+		expect(crdtDelete.mock.calls.map((c) => c[0])).toEqual(["n-so"]);
+		expect((mockApi.deleteAttachment as jest.Mock).mock.calls.map((c) => c[0])).toEqual([
+			"server.png",
+		]);
+
+		// Pull-all-delete: trashes exactly the preview's local-only paths.
+		const puller = createEngine({ ignorePatterns });
+		puller.setNoteIdMap(freshMap());
+		(puller as any).applySyncChange = async () => false;
+		(puller as any).applyAttachmentChange = async () => false;
+		wireFeed(puller, [rows()]);
+		await puller.pullAll({ deleteLocalExtras: true });
+		const trashed = (mockApp.fileManager.trashFile as jest.Mock).mock.calls.map(
+			(c) => (c[0] as TFile).path,
+		);
+		expect(trashed).toEqual(localOnly);
+	});
+});
