@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.37.0](https://github.com/engram-app/Engram-obsidian/compare/1.36.1...1.37.0) (2026-10-21)
+
+
+### Features
+
+* **e2e:** expose a sync quiescence snapshot ([#608](https://github.com/engram-app/Engram-obsidian/issues/608)) ([a7625a4](https://github.com/engram-app/Engram-obsidian/commit/a7625a4fb18664bcf10c919a9627e158726e243a))
+* measure LCA merges that drop a concurrent edit ([#616](https://github.com/engram-app/Engram-obsidian/issues/616)) ([fce39ac](https://github.com/engram-app/Engram-obsidian/commit/fce39ac771cba26d1887c432542d2357fdb7280e))
+
+
+### Bug Fixes
+
+* **i18n:** sync core with backend (cs, uk pins) ([#614](https://github.com/engram-app/Engram-obsidian/issues/614)) ([1264efb](https://github.com/engram-app/Engram-obsidian/commit/1264efbea368dd13684ebb3fb75301a33316a0ef))
+* merge concurrent edits on a discovered note ([#615](https://github.com/engram-app/Engram-obsidian/issues/615)) ([665a009](https://github.com/engram-app/Engram-obsidian/commit/665a009e75b2be605ab11528d5c06054e5b2a3c4))
+* merge history-less drift that sits on the delta ([#611](https://github.com/engram-app/Engram-obsidian/issues/611)) ([4e334fb](https://github.com/engram-app/Engram-obsidian/commit/4e334fbdc191b269239a127a610c055bd07800dc))
+* stop all REST traffic after a 426 refusal ([#607](https://github.com/engram-app/Engram-obsidian/issues/607)) ([c89556a](https://github.com/engram-app/Engram-obsidian/commit/c89556a68977e50840f2e0c234f2b4d7f89cbb6e))
+* stop attachment raw→JSON fallback loop ([#609](https://github.com/engram-app/Engram-obsidian/issues/609)) ([f7eb72c](https://github.com/engram-app/Engram-obsidian/commit/f7eb72c62462d897af5b5dc32572205cf244c2b0))
+
+
+### Performance Improvements
+
+* **crdt:** diff room-free delivery against acked base ([#618](https://github.com/engram-app/Engram-obsidian/issues/618)) ([e3747eb](https://github.com/engram-app/Engram-obsidian/commit/e3747eb6b428d4174abd6b0338fc7e56b999e20b))
+
 ## [1.36.1](https://github.com/engram-app/Engram-obsidian/compare/1.36.0...1.36.1) (2026-10-19)
 
 
