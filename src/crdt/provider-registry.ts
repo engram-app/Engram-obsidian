@@ -436,8 +436,20 @@ export class ProviderRegistry {
 						return null;
 					}
 				}
+				// A merge or keep-both changes the note under the user: write that to
+				// disk FIRST. Unwritten, the caller's baseline would claim text disk
+				// lacks and the next edit would diff the server's work away; failing
+				// here leaves the doc untouched for the next attempt.
+				const flush = async (text: string): Promise<boolean> => {
+					const fm = splitFrontmatter(text).fmBlock;
+					const fmChanged = fm !== e.lastFlushedFm;
+					e.lastFlushedFm = fm;
+					return (await this.opts.onFlushToDisk(noteId, text, fmChanged)) !== false;
+				};
+				if (lineage.text !== diskContent && !(await flush(lineage.text))) return null;
+				if (!e.lifetime.active) return null;
 				// Provider origin: no re-send of the server's own ops. No flush: disk
-				// holds the edit, which the seed below lays onto this state.
+				// already holds the target text, which the seed lays onto this state.
 				e.adopting = true;
 				try {
 					Y.applyUpdate(e.doc, lineage.update, e.provider);
@@ -446,15 +458,9 @@ export class ProviderRegistry {
 				}
 				if (e.kind === "canvas") seedCanvasInto(e.doc, lineage.text);
 				else seedContentInto(e.doc, e.text, lineage.text, true);
-				// A merge brought in server work the disk lacks: write it back, or
-				// the next disk edit would diff it away.
+				// The codec may canonicalize (frontmatter): disk follows the doc.
 				const projected = this.project(e);
-				if (projected !== diskContent) {
-					const fm = splitFrontmatter(projected).fmBlock;
-					const fmChanged = fm !== e.lastFlushedFm;
-					e.lastFlushedFm = fm;
-					await this.opts.onFlushToDisk(noteId, projected, fmChanged);
-				}
+				if (projected !== lineage.text) await flush(projected);
 				return projected;
 			}
 		}

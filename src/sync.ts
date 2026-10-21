@@ -3859,6 +3859,14 @@ export class SyncEngine {
 
 		const baseline = this.syncState.get(normalized)?.hash;
 		if (fnv1a(server) === baseline) return { update, text: disk };
+		// Past here the note's text changes under the user. While an editor holds
+		// it, disk writes become save nudges the registry cannot confirm, so leave
+		// it to the live binding: the room seeds the doc and the binding merges
+		// from the text the user started typing on.
+		if (this.isLiveBound(normalized)) {
+			this.crdtEnrollment?.enroll(noteId);
+			return null;
+		}
 		const discovered = this.peekDiscoveryBase(normalized);
 		if (discovered !== null && fnv1a(discovered) === baseline && !normalized.endsWith(".canvas")) {
 			const merged = merge3(discovered, disk, server);
@@ -3869,6 +3877,10 @@ export class SyncEngine {
 		// come back this way; nothing is lost.)
 		if (onlyInserts(server, disk)) return { update, text: disk };
 		try {
+			// A save during the read is newer than `disk`; its own modify event
+			// re-runs this, and copying the stale text now would copy twice.
+			const file = this.app.vault.getFileByPath(normalized);
+			if (!file || (await this.app.vault.cachedRead(file)) !== disk) return null;
 			const copy = await this.writeDriftConflictCopy(normalized, disk);
 			rlog().info(
 				"conflict",

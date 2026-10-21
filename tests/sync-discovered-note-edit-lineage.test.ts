@@ -43,7 +43,12 @@ async function scenario(dbPrefix: string) {
 	// The server's lineage: another device created c1.
 	const server = new Y.Doc();
 	server.getText("content").insert(0, C1);
-	const ctl = { docStateFails: false };
+	const ctl = {
+		docStateFails: false,
+		bound: false,
+		refuseFlush: false,
+		onRead: () => {},
+	};
 
 	const disk = new Map<string, string>();
 	const map = new NoteIdMap();
@@ -53,6 +58,7 @@ async function scenario(dbPrefix: string) {
 		dbPrefix,
 		send: () => true,
 		onFlushToDisk: async (id, content) => {
+			if (ctl.refuseFlush) return false;
 			const p = map.pathForId(id);
 			if (p) await e.flushFromCrdt(p, content);
 		},
@@ -92,13 +98,15 @@ async function scenario(dbPrefix: string) {
 	e.setCrdtManager(mgr as never);
 	e.setReady();
 	e.setNoteIdMap(map);
-	e.setLiveBoundCheck(() => false);
-	e.setCrdtEnrollment({ enroll: mock(), reset: mock() } as never);
+	e.setLiveBoundCheck(() => ctl.bound);
+	const enroll = mock();
+	e.setCrdtEnrollment({ enroll, reset: mock() } as never);
 	const docStateCalls: string[] = [];
 	e.setCrdtPorts({
 		live: () => true,
 		docState: async (id: string) => {
 			docStateCalls.push(id);
+			ctl.onRead();
 			if (ctl.docStateFails) throw new Error("rate_limited");
 			return { b64: toB64(Y.encodeStateAsUpdate(server)), head: "h1" };
 		},
@@ -139,7 +147,7 @@ async function scenario(dbPrefix: string) {
 		await (e as any).pushFile(new TFile(PATH));
 		await settle();
 	};
-	return { e, mgr, server, disk, ctl, time, serverText, remoteEdit, edit, settle, docStateCalls };
+	return { e, mgr, server, disk, ctl, time, enroll, serverText, remoteEdit, edit, settle, docStateCalls };
 }
 
 test("discovery leaves the doc empty but the note server-known (the precondition)", async () => {
@@ -252,4 +260,53 @@ test("a note the server does not know yet still seeds (genesis is unaffected)", 
 	expect(await mgr.applyLocalEdit(fresh, "new note")).toBe("new note");
 	expect(await mgr.getText(fresh)).toBe("new note");
 	expect(docStateCalls).toEqual([]);
+});
+
+test("editor open and the note would change: left to the live binding", async () => {
+	const { e, mgr, disk, ctl, enroll, remoteEdit, edit } = await scenario("disc-lineage-bound");
+	(e as any).forgetDiscoveryBase(PATH);
+	remoteEdit(0, "REMOTE\n");
+	ctl.bound = true;
+	await edit(C2);
+	expect(await mgr.hasHistory(ID)).toBe(false);
+	expect(disk.get(PATH)).toBe(C2);
+	expect([...disk.keys()]).toEqual([PATH]); // no conflict copy
+	expect(enroll).toHaveBeenCalledWith(ID);
+});
+
+test("a save during the read: one conflict copy, of the newer text", async () => {
+	const { e, disk, ctl, remoteEdit, edit } = await scenario("disc-lineage-midread");
+	(e as any).forgetDiscoveryBase(PATH);
+	remoteEdit(0, "REMOTE\n");
+	const C3 = `${C2}third\n`;
+	ctl.onRead = () => {
+		ctl.onRead = () => {};
+		disk.set(PATH, C3);
+	};
+	await edit(C2);
+	await (e as any).pushFile(new TFile(PATH));
+	const copies = [...disk.entries()].filter(([p]) => p !== PATH).map(([, c]) => c);
+	expect(copies).toEqual([C3]);
+});
+
+test("disk write refused: the doc is left untouched for the next attempt", async () => {
+	const { mgr, disk, ctl, remoteEdit, edit } = await scenario("disc-lineage-refused");
+	remoteEdit(0, "REMOTE\n");
+	ctl.refuseFlush = true;
+	await edit(C2);
+	expect(await mgr.hasHistory(ID)).toBe(false);
+	expect(disk.get(PATH)).toBe(C2);
+});
+
+test("the latest edit made during a pending retry is what ships", async () => {
+	const { ctl, time, serverText, edit, settle } = await scenario("disc-lineage-latest");
+	ctl.docStateFails = true;
+	await edit(C2);
+	await edit(`${C2}later\n`);
+	ctl.docStateFails = false;
+	time.advance(2_000);
+	await settle();
+	time.advance(10);
+	await settle();
+	expect(await serverText()).toBe(`${C2}later\n`);
 });
