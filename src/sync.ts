@@ -17,10 +17,10 @@ import type { BaseStore } from "./base-store";
 import type { GenesisOutcome } from "./channel";
 import { fnv1a, fnv1aBase64 } from "./content-hash";
 import { splitFrontmatter } from "./crdt/frontmatter-codec";
+import { merge3, onlyInserts } from "./crdt/lca-merge";
 import type { NoteIdMap } from "./crdt/note-id-map";
 import type { ProviderRegistry } from "./crdt/provider-registry";
 import { uuid7 } from "./crdt/uuid7";
-import { merge3, onlyInserts } from "./crdt/lca-merge";
 import { encodeUpdateFrame, fromB64 } from "./crdt/wire";
 import {
 	crdtOpFailureReason,
@@ -267,9 +267,11 @@ const RECENT_DELETE_COOLDOWN_MS = 60_000;
  *  the lifetime of a path that might legitimately be recreated. */
 const RELOCATION_MEMORY_MS = 30_000;
 
-/** Backoff for a lineage adopt whose server state was unreadable; past the
- *  last step the edit seeds as before (see `serverLineageFor`). */
-const LINEAGE_RETRY_MS = [2_000, 10_000, 30_000];
+/** Backoff for a lineage adopt whose server state was unreadable; the last
+ *  step repeats while the edit is pending (see `serverLineageFor`). */
+const LINEAGE_RETRY_MS = [2_000, 10_000, 30_000, 60_000];
+/** A lineage adopt pending this long shows in Sync Center (`pendLineage`). */
+const LINEAGE_SURFACE_MS = 10 * 60_000;
 
 /** `discoveryBases` bounds. The genesis fan-out lands seconds after
  *  discovery; ten minutes covers a slow reconnect. The char cap bounds a
@@ -573,6 +575,10 @@ export class SyncEngine {
 	);
 	/** Lineage-adopt retries per path (`retryLineage`). */
 	private lineageAttempts = this.track(["vault", "destroy"], new Map<string, number>());
+	/** Path -> when its lineage adopt first went pending (`pendLineage`). */
+	private lineagePending = this.track(["vault", "destroy"], new Map<string, number>());
+	/** Open notes whose lineage was handed to the live binding. */
+	private lineageBoundDeferred = this.track(["vault", "destroy"], new Set<string>());
 	private lineageTimers = this.track(["vault", "destroy"], new Map<string, number>(), (timer) =>
 		this.time.clearTimeout(timer),
 	);
@@ -3815,7 +3821,8 @@ export class SyncEngine {
 	}
 
 	/** `ProviderRegistryOpts.serverLineage`: lineage before edit for a
-	 *  history-less doc (a discovered note: body on disk, empty doc).
+	 *  history-less doc (a discovered note: body on disk, empty doc). Never
+	 *  seeds blind: a rival seed is the doubling this exists to stop.
 	 *
 	 *  The disk edit descends from the body this device last synced, which the
 	 *  recorded baseline hash identifies. If the server still holds exactly
@@ -3829,9 +3836,14 @@ export class SyncEngine {
 	 *  canonicalization, #1928) fails the unchanged check, so past the
 	 *  discovery base's TTL such a note's first edit may keep both.
 	 *
-	 *  An unreadable state is retried (`LINEAGE_RETRY_MS`), never dropped. A
-	 *  backend without `crdt_doc_state`, or retries spent, falls back to the
-	 *  old seed, which can double the note but cannot lose the edit. */
+	 *  An open editor whose note would change is left to the live binding (the
+	 *  room seeds the doc), after a conflict copy of disk: the binding may
+	 *  adopt the server text over what the user typed.
+	 *
+	 *  An unreadable state leaves the edit on disk, pending: retried on a
+	 *  backoff while the session lives, by cold-start reconcile after a restart
+	 *  (disk differs from the baseline), and shown in Sync Center once pending
+	 *  past `LINEAGE_SURFACE_MS`. */
 	async serverLineageFor(
 		noteId: string,
 		disk: string,
@@ -3841,34 +3853,36 @@ export class SyncEngine {
 		const path = this.noteIdMap?.pathForId(noteId);
 		if (!crdt || !path) return null;
 		const normalized = normalizePath(path);
-		if (!this.crdtDocState || this.unsupportedFrames.has(DOC_STATE_FRAME)) {
-			rlog().anomaly("crdt", "lineage_read_unsupported_seeding");
-			return undefined;
-		}
-		// A retry is already queued: it re-reads disk when it fires, so this edit
-		// rides it. Counting every autosave as an attempt would spend the backoff
-		// in seconds.
+		const bound = this.isLiveBound(normalized);
+		// Already handed to the binding, or a retry is queued that re-reads disk
+		// when it fires: either way this edit rides it, with no extra read.
+		if (bound && this.lineageBoundDeferred.has(normalized)) return null;
 		if (this.lineageTimers.has(normalized)) return null;
+		if (!this.crdtDocState || this.unsupportedFrames.has(DOC_STATE_FRAME)) {
+			// This backend cannot serve the lineage: nothing to retry against.
+			rlog().anomaly("crdt", "lineage_read_unsupported");
+			return this.pendLineage(normalized, false);
+		}
 		const state = await this.readServerDocState(noteId, path);
 		// Same vault fence as adoptServerLineage: note ids are unique per vault.
 		if (this.crdt !== crdt) return null;
 		const update = state === null ? null : fromB64(state.b64);
 		const server = update === null ? null : await crdt.previewUpdate(noteId, update);
-		if (update === null || server === null) return this.retryLineage(normalized);
-		this.lineageAttempts.delete(normalized);
+		if (update === null || server === null) return this.pendLineage(normalized, true);
+		this.clearPendingLineage(normalized);
 
 		const baseline = this.syncState.get(normalized)?.hash;
 		if (fnv1a(server) === baseline) return { update, text: disk };
-		// Past here the note's text changes under the user. While an editor holds
-		// it, disk writes become save nudges the registry cannot confirm, so leave
-		// it to the live binding: the room seeds the doc and the binding merges
-		// from the text the user started typing on.
-		if (this.isLiveBound(normalized)) {
-			this.crdtEnrollment?.enroll(noteId);
-			return null;
+		if (bound) {
+			if (!(await this.keepDiskCopy(normalized, disk))) return null;
+			return this.deferToBinding(noteId, normalized);
 		}
 		const discovered = this.peekDiscoveryBase(normalized);
-		if (discovered !== null && fnv1a(discovered) === baseline && !normalized.endsWith(".canvas")) {
+		if (
+			discovered !== null &&
+			fnv1a(discovered) === baseline &&
+			!normalized.endsWith(".canvas")
+		) {
 			const merged = merge3(discovered, disk, server);
 			if (merged.clean) return { update, text: merged.text };
 		}
@@ -3876,50 +3890,85 @@ export class SyncEngine {
 		// deletes nothing the server holds. (A paragraph the server deleted can
 		// come back this way; nothing is lost.)
 		if (onlyInserts(server, disk)) return { update, text: disk };
-		try {
-			// A save during the read is newer than `disk`; its own modify event
-			// re-runs this, and copying the stale text now would copy twice.
-			const file = this.app.vault.getFileByPath(normalized);
-			if (!file || (await this.app.vault.cachedRead(file)) !== disk) return null;
-			const copy = await this.writeDriftConflictCopy(normalized, disk);
-			rlog().info(
-				"conflict",
-				`lineage adopt: server moved, no clean merge → keep-both | original=${noteRef(normalized)} copy=${noteRef(copy)}`,
-			);
-		} catch (e) {
-			rlog().error(
-				"conflict",
-				`lineage adopt: keep-both copy failed for ${noteRef(normalized)}: ${errMsg(e, normalized)}`,
-			);
-			return this.retryLineage(normalized);
-		}
+		if (!(await this.keepDiskCopy(normalized, disk))) return null;
 		// The note takes the server's text; the registry writes it over disk.
 		this.forgetDiscoveryBase(normalized);
 		return { update, text: server };
 	}
 
-	/** Re-run the edit later rather than drop it (see `serverLineageFor`). */
-	private retryLineage(normalized: string): null | undefined {
-		const attempt = (this.lineageAttempts.get(normalized) ?? 0) + 1;
-		if (attempt > LINEAGE_RETRY_MS.length) {
-			this.lineageAttempts.delete(normalized);
-			rlog().anomaly("crdt", "lineage_read_retries_spent_seeding");
-			return undefined;
+	/** Keep-both half of `serverLineageFor`: copy `disk` aside. False when the
+	 *  copy was not made: disk moved on since the read (that save's own modify
+	 *  event re-runs the gate, and copying stale text would copy twice) or the
+	 *  write failed (pending, retried). */
+	private async keepDiskCopy(normalized: string, disk: string): Promise<boolean> {
+		try {
+			const file = this.app.vault.getFileByPath(normalized);
+			if (!file || (await this.app.vault.cachedRead(file)) !== disk) return false;
+			const copy = await this.writeDriftConflictCopy(normalized, disk);
+			rlog().info(
+				"conflict",
+				`lineage adopt: server moved, no clean merge → keep-both | original=${noteRef(normalized)} copy=${noteRef(copy)}`,
+			);
+			return true;
+		} catch (e) {
+			rlog().error(
+				"conflict",
+				`lineage adopt: keep-both copy failed for ${noteRef(normalized)}: ${errMsg(e, normalized)}`,
+			);
+			this.pendLineage(normalized, true);
+			return false;
 		}
+	}
+
+	/** The note is open: the room seeds the doc and the live binding owns the
+	 *  merge. Enrolled once; later saves skip the read until it lands. */
+	private deferToBinding(noteId: string, normalized: string): null {
+		this.lineageBoundDeferred.add(normalized);
+		this.crdtEnrollment?.enroll(noteId);
+		return null;
+	}
+
+	/** Leave the edit on disk, pending (see `serverLineageFor`). `retry`
+	 *  schedules the next attempt; a backend that cannot serve the lineage
+	 *  waits for the next edit or restart instead. */
+	private pendLineage(normalized: string, retry: boolean): null {
+		const now = this.time.now();
+		const since = this.lineagePending.get(normalized) ?? now;
+		this.lineagePending.set(normalized, since);
+		const attempt = (this.lineageAttempts.get(normalized) ?? 0) + 1;
 		this.lineageAttempts.set(normalized, attempt);
 		rlog().warn(
 			"crdt",
-			`lineage adopt: server state unreadable for ${noteRef(normalized)}, retry ${attempt}`,
+			`lineage adopt: server state unavailable for ${noteRef(normalized)}, pending (attempt ${attempt})`,
 		);
-		this.lineageTimers.set(
-			normalized,
-			this.time.setTimeout(() => {
-				this.lineageTimers.delete(normalized);
-				const file = this.app.vault.getFileByPath(normalized);
-				if (file) this.handleModify(file);
-			}, LINEAGE_RETRY_MS[attempt - 1] ?? 0),
-		);
+		if (now - since >= LINEAGE_SURFACE_MS || !retry) {
+			this.issues.record({
+				path: normalized,
+				kind: "note",
+				category: "other",
+				message: t("A temporary server problem — retrying automatically."),
+				firstFailedAt: since,
+				lastFailedAt: now,
+				attempts: attempt,
+			});
+		}
+		if (retry) {
+			const delay = LINEAGE_RETRY_MS[Math.min(attempt, LINEAGE_RETRY_MS.length) - 1] ?? 0;
+			this.lineageTimers.set(
+				normalized,
+				this.time.setTimeout(() => {
+					this.lineageTimers.delete(normalized);
+					const file = this.app.vault.getFileByPath(normalized);
+					if (file) this.handleModify(file);
+				}, delay),
+			);
+		}
 		return null;
+	}
+
+	private clearPendingLineage(normalized: string): void {
+		if (this.lineagePending.delete(normalized)) this.issues.clear(normalized);
+		this.lineageAttempts.delete(normalized);
 	}
 
 	/** Give the note up to the server's lineage: transmit nothing now, and record

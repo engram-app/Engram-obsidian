@@ -32,7 +32,6 @@ const C2 = "# fresh\n\nfirst body line.\nsecond line from a fresh device.\n";
  *  than one is a rival lineage, however the text reads. */
 function rootClients(doc: Y.Doc): number[] {
 	const ids = new Set<number>();
-	// biome-ignore lint/suspicious/noExplicitAny: Yjs item internals.
 	for (let it: any = (doc.getText("content") as any)._start; it; it = it.right) {
 		if (it.origin === null && it.rightOrigin === null) ids.add(it.id.client);
 	}
@@ -147,7 +146,20 @@ async function scenario(dbPrefix: string) {
 		await (e as any).pushFile(new TFile(PATH));
 		await settle();
 	};
-	return { e, mgr, server, disk, ctl, time, enroll, serverText, remoteEdit, edit, settle, docStateCalls };
+	return {
+		e,
+		mgr,
+		server,
+		disk,
+		ctl,
+		time,
+		enroll,
+		serverText,
+		remoteEdit,
+		edit,
+		settle,
+		docStateCalls,
+	};
 }
 
 test("discovery leaves the doc empty but the note server-known (the precondition)", async () => {
@@ -182,7 +194,8 @@ test("server moved since discovery: the edit merges, the remote work survives", 
 });
 
 test("server moved and no provable base: keep both, delete nothing", async () => {
-	const { e, mgr, server, disk, serverText, remoteEdit, edit } = await scenario("disc-lineage-nobase");
+	const { e, mgr, server, disk, serverText, remoteEdit, edit } =
+		await scenario("disc-lineage-nobase");
 	(e as any).forgetDiscoveryBase(PATH);
 	remoteEdit(0, "REMOTE\n");
 	await edit(C2);
@@ -212,17 +225,29 @@ test("edits while a retry is pending ride it instead of spending attempts", asyn
 	expect(docStateCalls).toHaveLength(1);
 });
 
-test("retries spent: the edit still ships (old seed), never stranded", async () => {
-	const { ctl, time, serverText, edit, settle } = await scenario("disc-lineage-spent");
+test("server unreachable for long: never seeded blind, shown in Sync Center", async () => {
+	const { e, mgr, disk, ctl, time, serverText, edit, settle } =
+		await scenario("disc-lineage-pending");
 	ctl.docStateFails = true;
 	await edit(C2);
-	for (const ms of [2_000, 10_000, 30_000]) {
-		time.advance(ms);
+	for (let i = 0; i < 14; i++) {
+		time.advance(60_000);
 		await settle();
 		time.advance(10);
 		await settle();
 	}
-	expect(await serverText()).toContain("second line from a fresh device.");
+	expect(await mgr.hasHistory(ID)).toBe(false);
+	expect(await serverText()).toBe(C1);
+	expect(disk.get(PATH)).toBe(C2);
+	expect(e.issues.get(PATH)?.category).toBe("other");
+	// Back online: the pending edit lands once and the issue clears.
+	ctl.docStateFails = false;
+	time.advance(60_000);
+	await settle();
+	time.advance(10);
+	await settle();
+	expect(await serverText()).toBe(C2);
+	expect(e.issues.get(PATH)).toBeUndefined();
 });
 
 test("server state unreadable: declined, retried, then delivered once", async () => {
@@ -239,13 +264,13 @@ test("server state unreadable: declined, retried, then delivered once", async ()
 	expect(await serverText()).toBe(C2);
 });
 
-test("backend without crdt_doc_state: the edit still ships (old seed path)", async () => {
+test("backend without crdt_doc_state: never seeded, kept on disk, shown", async () => {
 	const { e, disk, serverText, edit } = await scenario("disc-lineage-oldbackend");
 	e.setCrdtPorts({ docState: null } as never);
 	await edit(C2);
-	// Doubling is the pre-fix behaviour on such a backend; losing the edit is not.
-	expect(await serverText()).toContain("second line from a fresh device.");
+	expect(await serverText()).toBe(C1);
 	expect(disk.get(PATH)).toBe(C2);
+	expect(e.issues.get(PATH)).toBeDefined();
 });
 
 test("an unchanged discovered note costs no doc-state read", async () => {
@@ -263,15 +288,30 @@ test("a note the server does not know yet still seeds (genesis is unaffected)", 
 });
 
 test("editor open and the note would change: left to the live binding", async () => {
-	const { e, mgr, disk, ctl, enroll, remoteEdit, edit } = await scenario("disc-lineage-bound");
+	const { e, mgr, disk, ctl, enroll, remoteEdit, edit, docStateCalls } =
+		await scenario("disc-lineage-bound");
 	(e as any).forgetDiscoveryBase(PATH);
 	remoteEdit(0, "REMOTE\n");
 	ctl.bound = true;
 	await edit(C2);
 	expect(await mgr.hasHistory(ID)).toBe(false);
 	expect(disk.get(PATH)).toBe(C2);
-	expect([...disk.keys()]).toEqual([PATH]); // no conflict copy
+	// The binding may adopt the server text: the typed text is kept aside.
+	const copies = [...disk.entries()].filter(([p]) => p !== PATH).map(([, c]) => c);
+	expect(copies).toEqual([C2]);
 	expect(enroll).toHaveBeenCalledWith(ID);
+	// Later saves while bound ride the defer: no new read, no new copy.
+	const reads = docStateCalls.length;
+	await edit(`${C2}x\n`);
+	expect(docStateCalls).toHaveLength(reads);
+	expect([...disk.keys()]).toHaveLength(2);
+});
+
+test("editor open, server unchanged: the edit applies directly", async () => {
+	const { ctl, serverText, edit } = await scenario("disc-lineage-bound-same");
+	ctl.bound = true;
+	await edit(C2);
+	expect(await serverText()).toBe(C2);
 });
 
 test("a save during the read: one conflict copy, of the newer text", async () => {
