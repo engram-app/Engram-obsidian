@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.37.1](https://github.com/engram-app/Engram-obsidian/compare/1.37.0...1.37.1) (2026-10-21)
+
+
+### Bug Fixes
+
+* **sync:** sync preview counts respect the ignore list ([#598](https://github.com/engram-app/Engram-obsidian/issues/598)) ([45130ce](https://github.com/engram-app/Engram-obsidian/commit/45130ce7f0da2c630625dd80a22ecaf728245dac))
+
 ## [1.37.0](https://github.com/engram-app/Engram-obsidian/compare/1.36.1...1.37.0) (2026-10-21)
 
 
