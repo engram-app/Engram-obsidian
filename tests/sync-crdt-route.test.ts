@@ -645,6 +645,38 @@ describe("needsColdReconcile", () => {
 		seedBaseline(engine, "n.md", "old body");
 		expect(asPredicate(engine)("n.md", "new body edited while closed")).toBe(true);
 	});
+
+	// #1928 residual (e2e test_101, CI run 39195070213): catch-up reached a note
+	// whose crdt_create was still in flight and drift-copied the raw bytes being
+	// created. Catch-up defers paths in `creatingPaths` (#605); this pins that
+	// the LIVE pushFile create holds the path there for the whole round trip and
+	// releases it on success and on failure.
+	async function creatingDuringPush(fail: boolean): Promise<{ mid: boolean; after: boolean }> {
+		const engine = createEngine();
+		engine.setCrdtManager({
+			applyLocalEdit: mock(async (_id: string, c: string) => c),
+			encodeGenesisUpdate: stubEncodeGenesisUpdate(),
+		} as any);
+		const creating = (engine as unknown as { creatingPaths: Set<string> }).creatingPaths;
+		let mid = false;
+		engine.setCrdtCreate(async (id: string) => {
+			mid = creating.has("Notes/new.md");
+			if (fail) throw new Error("socket closed");
+			return { docId: id, seeded: false };
+		});
+		await (engine as unknown as { pushFile: (f: TFile) => Promise<boolean> }).pushFile(
+			new TFile("Notes/new.md"),
+		);
+		return { mid, after: creating.has("Notes/new.md") };
+	}
+
+	test("live crdt_create holds the path in creatingPaths until it ends", async () => {
+		expect(await creatingDuringPush(false)).toEqual({ mid: true, after: false });
+	});
+
+	test("a failed live crdt_create still releases the path", async () => {
+		expect(await creatingDuringPush(true)).toEqual({ mid: true, after: false });
+	});
 });
 
 // ---------------------------------------------------------------------------
