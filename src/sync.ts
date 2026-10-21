@@ -421,6 +421,10 @@ export interface CrdtPorts {
 	 *  backend too old to serve `crdt_doc_update`; the caller falls back to the
 	 *  room re-handshake, so an unwired port costs rooms, never delivery. */
 	docUpdate?: CrdtDocUpdateFn | null;
+	/** True when the backend refuses a `docUpdate` diff it cannot apply
+	 *  (>= 0.59.0). Until then a diff could be acked unapplied, so room-free
+	 *  delivery sends the full state. Absent/null = false. */
+	docUpdateDiffs?: (() => boolean) | null;
 	/** #1409: tell the server this device is done with a note's room, so its
 	 *  `auto_exit` can fire now instead of after the 5-minute idle drain. */
 	release?: ((docId: string) => void) | null;
@@ -763,6 +767,8 @@ export class SyncEngine {
 		if ("catchupSince" in ports) this.crdtCatchupSince = ports.catchupSince ?? null;
 		if ("docState" in ports) this.crdtDocState = ports.docState ?? null;
 		if ("docUpdate" in ports) this.crdtDocUpdate = ports.docUpdate ?? null;
+		if ("docUpdateDiffs" in ports)
+			this.crdtDocUpdateDiffs = ports.docUpdateDiffs ?? (() => false);
 		if ("release" in ports) this.crdtRelease = ports.release ?? null;
 	}
 
@@ -3939,9 +3945,11 @@ export class SyncEngine {
 	 *
 	 *  `crdt_doc_update` carries the same ops as a plain Yjs update and the
 	 *  server merges it into a doc owned by a short-lived applier, so no room is
-	 *  left behind. It sends the doc's FULL state rather than a delta: without a
-	 *  handshake we do not know the server's state vector, and a Yjs merge of
-	 *  full state is idempotent — larger on the wire, never wrong.
+	 *  left behind. Without a handshake the server never advertises its state
+	 *  vector, so the base is the vector of the last ACKED delivery
+	 *  (`deliveredStateVector`), a proven lower bound. With none known it sends
+	 *  the FULL state: a Yjs merge of full state is idempotent, larger on the
+	 *  wire, never wrong.
 	 *
 	 *  Unlike the READ twin this needs NO `hasUndeliveredOps` precondition. That
 	 *  gate exists because `crdt_doc_state` cannot carry anything upward; this
@@ -3991,7 +3999,15 @@ export class SyncEngine {
 			// landing between the two then makes the receipt under-claim (one
 			// wasted room) instead of covering an op that never went.
 			receipt = await crdt.encodeDeliveryReceipt?.(noteId);
-			const state = await crdt.encodeStateAsUpdate(noteId);
+			// Only what the server can lack: a diff against the last acked
+			// delivery, the full state when none is known. Read BEFORE the
+			// receipt above is recorded, so it is the PREVIOUS ack's base.
+			// Only to a server that refuses a diff it cannot apply: an older one
+			// acks it as pending structs and the edit never lands.
+			const base = this.crdtDocUpdateDiffs()
+				? crdt.deliveredStateVector?.(noteId)
+				: undefined;
+			const state = await crdt.encodeStateAsUpdate(noteId, base);
 			if (this.crdt !== crdt) return false;
 			// A doc's full state carries its history and tombstones, so it can
 			// dwarf the note's text. Same budget the genesis frame is held to
@@ -4019,7 +4035,9 @@ export class SyncEngine {
 			// Counter, not a log line: the trigger is a whole restored queue at
 			// once, and one remote warn per note would flood the drain this
 			// feature exists to make cheap. Same call the sibling caps make.
-			if (state.byteLength <= EMPTY_YJS_UPDATE_BYTES) {
+			// A full state only: a DIFF is 2 bytes whenever the server already
+			// holds everything, and that is a delivered note.
+			if (!base && state.byteLength <= EMPTY_YJS_UPDATE_BYTES) {
 				rlog().anomaly("crdt", "roomfree_state_empty");
 				return false;
 			}
@@ -4062,6 +4080,9 @@ export class SyncEngine {
 			// `hasCurrentDeliveryReceipt`, which only the room-free read consults.
 			return true;
 		} catch (e) {
+			// Any refusal may mean the server lacks the base (`note_not_found`, a
+			// reset doc), and a diff against a base it lacks pends there unseen.
+			crdt.clearDelivered?.(noteId);
 			this.noteDocUpdateFailure(e, entry.path);
 			return false;
 		}
@@ -6607,6 +6628,7 @@ export class SyncEngine {
 	private frameStrikes = this.track(["vault", "destroy"], new Map<string, number>());
 
 	private crdtDocUpdate: CrdtDocUpdateFn | null = null;
+	private crdtDocUpdateDiffs: () => boolean = () => false;
 
 	setCrdtCatchupSince(fn: CrdtCatchupSinceFn): void {
 		this.setCrdtPorts({ catchupSince: fn });

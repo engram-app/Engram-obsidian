@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import "fake-indexeddb/auto";
 import * as YDoc from "yjs";
 import { isDestroyedError } from "../../src/crdt/destroyed-error";
+import { CONTENT_KEY } from "../../src/crdt/frontmatter-codec";
 import { ProviderRegistry } from "../../src/crdt/provider-registry";
 
 /** Hand a frame to the other device the way the REAL transport does.
@@ -573,5 +574,115 @@ describe("room-free delivery receipt (#1493)", () => {
 		// so it could not tell a no-op from a recorded receipt.
 		expect(reg.hasCurrentDeliveryReceipt("gone")).toBe(false);
 		expect(reg.hasCurrentDeliveryReceipt("n1")).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Room-free delivery sends a DIFF, not the full doc. The last acked receipt is
+// a snapshot the server provably holds, so its state vector is a lower bound
+// of the server's: `encodeStateAsUpdate(doc, thatVector)` carries only what the
+// server can lack. The same rule y-protocols' syncStep2 follows, with the
+// handshake's advertised vector replaced by the one the ack proved.
+// ---------------------------------------------------------------------------
+describe("delivery base (diff against what the server acked)", () => {
+	function device(prefix: string) {
+		const reg = new ProviderRegistry({
+			dbPrefix: prefix,
+			send: () => true,
+			onFlushToDisk: () => {},
+		});
+		reg.setConnected(true);
+		return reg;
+	}
+
+	/** One full-state delivery, the way the queue drain does it: receipt first,
+	 *  then the state, then the ack records the receipt. Returns the server's
+	 *  doc holding exactly what was sent. */
+	async function deliverFull(reg: ProviderRegistry, id: string): Promise<YDoc.Doc> {
+		expect(reg.deliveredStateVector(id)).toBeUndefined();
+		const receipt = await reg.encodeDeliveryReceipt(id);
+		const server = new YDoc.Doc();
+		YDoc.applyUpdate(server, await reg.encodeStateAsUpdate(id, reg.deliveredStateVector(id)));
+		reg.markDelivered(id, receipt);
+		return server;
+	}
+
+	const serverText = (doc: YDoc.Doc) => doc.getText(CONTENT_KEY).toString();
+	const big = "lorem ipsum dolor sit amet ".repeat(400); // ~10.8 KB
+
+	test("no acked delivery means no base: the first push is the full state", async () => {
+		const reg = device("base-none");
+		await reg.applyLocalEdit("n1", "hello");
+
+		expect(reg.deliveredStateVector("n1")).toBeUndefined();
+		expect(reg.deliveredStateVector("unknown")).toBeUndefined();
+	});
+
+	test("after an ack the next push is a small diff that converges the server's doc", async () => {
+		const reg = device("base-diff");
+		await reg.applyLocalEdit("n1", big);
+		const server = await deliverFull(reg, "n1");
+
+		await reg.applyLocalEdit("n1", `${big}one more line`);
+		const full = await reg.encodeStateAsUpdate("n1");
+		const diff = await reg.encodeStateAsUpdate("n1", reg.deliveredStateVector("n1"));
+
+		expect(full.byteLength).toBeGreaterThan(10_000);
+		expect(diff.byteLength).toBeLessThan(100);
+		YDoc.applyUpdate(server, diff);
+		expect(serverText(server)).toBe(await reg.getText("n1"));
+		// Nothing pending: every struct the diff references was already there.
+		expect(server.store.pendingStructs).toBeNull();
+	});
+
+	test("a DELETE-only edit after an ack still reaches the server", async () => {
+		// A state vector cannot see deletions, but the diff ships the FULL delete
+		// set whatever vector it is handed, so a delete-only edit is not lost.
+		const reg = device("base-delete");
+		await reg.applyLocalEdit("n1", "keep this, drop that");
+		const server = await deliverFull(reg, "n1");
+
+		await reg.applyLocalEdit("n1", "keep this");
+		YDoc.applyUpdate(
+			server,
+			await reg.encodeStateAsUpdate("n1", reg.deliveredStateVector("n1")),
+		);
+
+		expect(serverText(server)).toBe("keep this");
+	});
+
+	test("converges when the server took a concurrent edit from another client", async () => {
+		const reg = device("base-concurrent");
+		await reg.applyLocalEdit("n1", "alpha\n");
+		const server = await deliverFull(reg, "n1");
+
+		// Another device (the web app, MCP) appends on the server meanwhile.
+		const other = new YDoc.Doc();
+		YDoc.applyUpdate(other, YDoc.encodeStateAsUpdate(server));
+		other.getText(CONTENT_KEY).insert(0, "web\n");
+		YDoc.applyUpdate(server, YDoc.encodeStateAsUpdate(other, YDoc.encodeStateVector(server)));
+
+		await reg.applyLocalEdit("n1", "alpha\nlocal\n");
+		YDoc.applyUpdate(
+			server,
+			await reg.encodeStateAsUpdate("n1", reg.deliveredStateVector("n1")),
+		);
+		// The server's edit comes back down through any later read.
+		await reg.applyRemoteUpdate("n1", YDoc.encodeStateAsUpdate(server));
+
+		expect(serverText(server)).toBe("web\nalpha\nlocal\n");
+		expect(await reg.getText("n1")).toBe(serverText(server));
+	});
+
+	test("clearDelivered drops the base, so the next push falls back to full state", async () => {
+		const reg = device("base-clear");
+		await reg.applyLocalEdit("n1", "hello");
+		await deliverFull(reg, "n1");
+		expect(reg.deliveredStateVector("n1")).toBeDefined();
+
+		reg.clearDelivered("n1");
+
+		expect(reg.deliveredStateVector("n1")).toBeUndefined();
+		expect(reg.hasCurrentDeliveryReceipt("n1")).toBe(false);
 	});
 });

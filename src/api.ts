@@ -113,6 +113,9 @@ export class EngramApi {
 	/** Same, for `features.raw_attachment_download` (`GET ?raw=1` + metadata
 	 *  headers instead of a base64 JSON body). */
 	private rawAttachmentDownload = false;
+	/** The backend's release from `/api/health`, re-learned on every user-topic
+	 *  join (`learnServerVersion`). Null while unknown. */
+	private serverVersion: string | null = null;
 	// Cached from the most recent sendRequest call so the beacon transport
 	// thunk (invoked later, on the buffer's own flush timer) can post with a
 	// still-valid token without re-awaiting the auth provider.
@@ -241,6 +244,7 @@ export class EngramApi {
 			this.rawAttachmentUpload = false;
 			this.rawAttachmentUploadKnown = false;
 			this.rawAttachmentDownload = false;
+			this.serverVersion = null;
 			clearUpgradeRefusal();
 		}
 		this.baseUrl = normalized;
@@ -532,6 +536,33 @@ export class EngramApi {
 		} catch {
 			return false;
 		}
+	}
+
+	/** Learn the backend's release: one `/health` GET per user-topic join,
+	 *  never per push. Forgotten first, so a failed or late probe leaves it
+	 *  unknown, and a reply from a backend switched away from is dropped. */
+	async learnServerVersion(): Promise<void> {
+		const base = this.baseUrl;
+		this.serverVersion = null;
+		try {
+			const resp = await withTimeout(
+				requestUrl({ url: `${base}/health`, method: "GET", throw: false }),
+				this.requestTimeoutMs,
+			);
+			const v = (resp.json as { version?: unknown } | undefined)?.version;
+			if (this.baseUrl === base && typeof v === "string") this.serverVersion = v;
+		} catch {
+			// Unknown stays unknown: room-free pushes send the full state.
+		}
+	}
+
+	/** Backend 0.59.0 (#2088, `apply_checked`) refuses a `crdt_doc_update`
+	 *  whose base it lacks as `missing_dependencies`. Earlier ones ACK it and
+	 *  park it as pending structs, so the edit is silently lost: they must keep
+	 *  getting the full state. Unknown, unparseable or pre-release = false. */
+	refusesUnappliableDocUpdate(): boolean {
+		const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(this.serverVersion ?? "");
+		return m !== null && (Number(m[1]) > 0 || Number(m[2]) >= 59);
 	}
 
 	/** Get the current authenticated user (id + email). Used to determine channel topic. */
