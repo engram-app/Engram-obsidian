@@ -3415,12 +3415,13 @@ export class SyncEngine {
 
 	/** crdt_create carries no ctime, so a note created after this vault's sweep
 	 *  gets its file ctime via POST /notes/ctime, batched over a 2s window.
-	 *  Before the sweep, the sweep covers it.
+	 *  Before the sweep, the sweep covers it; during it, the sweep's getFiles()
+	 *  snapshot is already taken, so queue those too.
 	 *  ponytail: best effort, memory-only (lost on quit inside the window, dropped
 	 *  on failure); proper fix is a ctime field on crdt_create. */
 	private queueCreatedCtime(path: string): void {
 		const vaultId = this.settings.vaultId;
-		if (!vaultId || this.ctimeSweepVaultId !== vaultId) return;
+		if (!vaultId || (this.ctimeSweepVaultId !== vaultId && !this.ctimeSweepRunning)) return;
 		const file = this.app.vault.getFileByPath(path);
 		const ctime = file ? fileCtimeSeconds(file) : undefined;
 		if (ctime === undefined) return;

@@ -5437,6 +5437,39 @@ describe("SyncEngine.runCtimeSweep", () => {
 		mockApp.vault.getFileByPath.mockReturnValue(null);
 	});
 
+	// The sweep snapshots getFiles() once, then awaits its batches. A note
+	// crdt_created while those are in flight is in neither the snapshot nor
+	// (since the sweep is not yet recorded) the post-sweep queue.
+	test("a note crdt_created while the sweep is in flight still gets its ctime", async () => {
+		const time = new ManualTimeProvider(0);
+		const engine = timedEngine(time);
+		const [old, fresh] = files(2);
+		mockApp.vault.getFiles.mockReturnValue([old]);
+		mockApp.vault.getFileByPath.mockImplementation((p: string) =>
+			p === fresh.path ? fresh : null,
+		);
+		let release!: () => void;
+		setCtimes.mockImplementationOnce(
+			(e: unknown[]) =>
+				new Promise((r) => {
+					release = () => r({ updated: e.length });
+				}),
+		);
+
+		const sweep = engine.runCtimeSweep();
+		await (engine as any).adoptCreateAck("id-f", fresh.path, null, { flushHeld: false });
+		release();
+		await sweep;
+		time.advance(2000);
+		await new Promise((r) => setTimeout(r, 0));
+
+		expect(setCtimes.mock.calls.flatMap((c) => c[0] as unknown[])).toContainEqual({
+			path: fresh.path,
+			ctime: 2.001,
+		});
+		mockApp.vault.getFileByPath.mockReturnValue(null);
+	});
+
 	test("a create before the sweep queues nothing (the sweep covers it)", async () => {
 		const time = new ManualTimeProvider(0);
 		const engine = timedEngine(time);
