@@ -159,7 +159,31 @@ export class SyncStore {
 			if (!pending) this.parked.clear();
 			this.reverse = null;
 			this.cacheById = null;
+			if (!event.transaction.local) this.restageReleasedPending(event);
 		});
+	}
+
+	/** The server released a claim whose id is still PENDING here (its create
+	 *  never landed). That is not a delete of the note: it is the server giving
+	 *  up on an unacked claim (1h grace from the UUIDv7 mint time). Keep the
+	 *  SAME id as a local-only overlay entry, so the sweep retries `crdt_create`
+	 *  under it instead of minting a new one (prod 2026-10-22: ~14k re-mints).
+	 *  `commit()` holds pending entries back, so this is never re-published
+	 *  until the create is acked.
+	 *
+	 *  Remote only: a LOCAL delete of the key is the user's. An acked id is a
+	 *  real delete and is not touched. Skipped if anything else already answers
+	 *  for the path or the id lives elsewhere. */
+	private restageReleasedPending(event: Y.YMapEvent<FileMeta>): void {
+		for (const [key, change] of event.changes.keys) {
+			if (change.action !== "delete") continue;
+			const old = change.oldValue as FileMeta | undefined;
+			if (!old?.note_id || !this.pendingUpload.has(old.note_id)) continue;
+			if (this.map.has(key) || this.overlay.has(key) || this.deleteSet.has(key)) continue;
+			if (this.pathForId(old.note_id) !== null) continue;
+			this.overlay.set(key, old);
+			this.reverse = null;
+		}
 	}
 
 	/** Follow the rename chain to the path an entry lives at NOW.
@@ -384,10 +408,22 @@ export class SyncStore {
 			}
 		}
 
+		return this.mint(path);
+	}
+
+	/** Stage a fresh UUIDv7 for `path`, PENDING until `confirmUpload`. The
+	 *  claim stays local until then: see `commit()`. */
+	mint(path: string): string {
 		const note_id = uuid7();
 		this.set(path, { note_id });
 		this.pendingUpload.add(note_id);
 		return note_id;
+	}
+
+	/** Mark `note_id` as not yet acked by the server, so its claim is held back
+	 *  from the shared index until `confirmUpload`. */
+	markPendingUpload(note_id: string): void {
+		this.pendingUpload.add(note_id);
 	}
 
 	/** Stage `meta` for `path`. Visible to reads immediately, invisible to other
@@ -551,6 +587,19 @@ export class SyncStore {
 
 		const meta = this.getMeta(oldPath);
 		const from = this.resolvePath(oldPath);
+		// Known ONLY from the data.json cache: nothing says the server has this
+		// note. Staging it at the new path would publish the cache as a claim
+		// (the cache is evidence, never a claim; see `cache`). Hold it as pending
+		// instead: the rename's create-at-new-path ack publishes it.
+		if (
+			meta &&
+			!this.overlay.has(oldPath) &&
+			!this.map.has(oldPath) &&
+			!this.parked.has(oldPath) &&
+			this.cache.get(oldPath) === meta
+		) {
+			this.pendingUpload.add(meta.note_id);
+		}
 
 		// An unknown path still records the REDIRECT — that is what stops a folder
 		// cascade minting a second id for a descendant this device never opened.
@@ -597,7 +646,8 @@ export class SyncStore {
 		return this.pendingUpload.has(note_id);
 	}
 
-	/** The server has acknowledged the note, so the id is no longer provisional.
+	/** The server has acknowledged the note, so the id is no longer provisional,
+	 *  and its held claim becomes publishable at the next `commit()`.
 	 *  NOT cleared by `commit()`: committing publishes the id to other devices,
 	 *  which is a different fact from the server having stored the note. */
 	confirmUpload(note_id: string): void {
@@ -695,9 +745,16 @@ export class SyncStore {
 		this.reverse = null;
 	}
 
-	/** True when there is staged state that `commit()` would publish. */
+	/** True when there is staged state that `commit()` would publish. An
+	 *  overlay entry held back as pending does not count. */
 	get dirty(): boolean {
-		return this.overlay.size > 0 || this.deleteSet.size > 0 || this.renames.size > 0;
+		if (this.deleteSet.size > 0 || this.renames.size > 0 || this.renamedAway.size > 0) {
+			return true;
+		}
+		for (const meta of this.overlay.values()) {
+			if (!this.pendingUpload.has(meta.note_id)) return true;
+		}
+		return false;
 	}
 
 	/** Promote every staged layer into the shared doc in ONE transaction.
@@ -709,17 +766,32 @@ export class SyncStore {
 	 *
 	 *  Removals are applied BEFORE additions so that a path which is both
 	 *  deleted and re-added (delete then create, same tick) ends up present.
-	 *  `pendingUpload` deliberately survives — see `confirmUpload`. */
+	 *  `pendingUpload` deliberately survives — see `confirmUpload`.
+	 *
+	 *  CLAIM AFTER ACK: an overlay entry whose id is still `pendingUpload` is
+	 *  NOT promoted. It stays staged (reads, `getOrMint`, `entries()` and so
+	 *  data.json still see it) and is published by the first commit after
+	 *  `confirmUpload`. Publishing it before the create was acked put ~7.8k
+	 *  claims for notes the server never got into the shared index; the server
+	 *  released them, and every release re-minted (prod 2026-10-22).
+	 *
+	 *  ponytail: walks the overlay once per commit, so a first sync holding N
+	 *  pending entries costs O(N) per commit. Move held entries to their own
+	 *  map if that ever shows up in a profile. */
 	commit(origin?: unknown): void {
 		if (!this.dirty) return;
 
 		this.map.doc?.transact(() => {
 			for (const from of this.renamedAway) this.map.delete(from);
 			for (const path of this.deleteSet) this.map.delete(path);
-			for (const [path, meta] of this.overlay) this.map.set(path, meta);
+			for (const [path, meta] of this.overlay) {
+				if (!this.pendingUpload.has(meta.note_id)) this.map.set(path, meta);
+			}
 		}, origin);
 
-		this.overlay.clear();
+		for (const [path, meta] of this.overlay) {
+			if (!this.pendingUpload.has(meta.note_id)) this.overlay.delete(path);
+		}
 		this.deleteSet.clear();
 		this.renames.clear();
 		this.renamedAway.clear();

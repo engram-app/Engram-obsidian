@@ -51,6 +51,11 @@ export const LIMIT_REASONS: ReadonlySet<string> = new Set(["notes_cap_reached"])
 /** How long one notes_cap_reached reject pauses EVERY create. */
 export const NOTES_CAP_HOLD_MS = 10 * 60 * 1000;
 
+/** First hold after a failed create (create_failed, rate_limited, timeout,
+ *  transport). Doubles per failed probe up to CREATE_BACKOFF_MAX_MS. */
+export const CREATE_BACKOFF_BASE_MS = 30 * 1000;
+export const CREATE_BACKOFF_MAX_MS = 10 * 60 * 1000;
+
 /**
  * Vault-wide breaker for the plan note cap. The cap belongs to the ACCOUNT, not
  * the op: once one create is refused, every create will be until a note is freed
@@ -66,10 +71,20 @@ export const NOTES_CAP_HOLD_MS = 10 * 60 * 1000;
  * The user is told when the cap is first hit and again after notes were freed
  * (`open`/`reset`), but not on the expiry probe: the self-heal sweep probes
  * every few minutes for as long as the vault stays over the cap.
+ *
+ * It is also the vault-wide CREATE BACKOFF (`backoff` / `createAcked`). A
+ * failing server fails every create, not one: prod 2026-10-22 (vault f4cd93e6)
+ * re-sent ~7k creates per sweep and per rejoin into a server already out of DB
+ * connections. One failed create holds every create for 30s, doubling per
+ * failed probe to 10 min; the first acked create reopens it. `isClosed` covers
+ * both holds, so every create site that already respects the cap (the sweep's
+ * `pushCandidates`, pushFile, the queue's `"held"`) respects the backoff too.
  */
 export class NotesCapGate {
 	private closedUntil = 0;
 	private notified = false;
+	private backoffUntil = 0;
+	private backoffMs = 0;
 
 	constructor(
 		private readonly now: () => number,
@@ -78,7 +93,27 @@ export class NotesCapGate {
 	) {}
 
 	isClosed(): boolean {
-		return this.now() < this.closedUntil;
+		const now = this.now();
+		return now < this.closedUntil || now < this.backoffUntil;
+	}
+
+	/** A create failed for a reason that is the SERVER's, not the op's. A
+	 *  failure that lands while already holding (concurrent pushes in flight
+	 *  when the first one failed) does not escalate: only a failed probe does. */
+	backoff(): void {
+		const now = this.now();
+		if (now < this.backoffUntil) return;
+		this.backoffMs = Math.min(
+			this.backoffMs ? this.backoffMs * 2 : CREATE_BACKOFF_BASE_MS,
+			CREATE_BACKOFF_MAX_MS,
+		);
+		this.backoffUntil = now + this.backoffMs;
+	}
+
+	/** A create was acked: the server is healthy again. */
+	createAcked(): void {
+		this.backoffUntil = 0;
+		this.backoffMs = 0;
 	}
 
 	trip(reason: string): void {
@@ -96,6 +131,7 @@ export class NotesCapGate {
 	reset(): void {
 		this.closedUntil = 0;
 		this.notified = false;
+		this.createAcked();
 	}
 }
 
@@ -279,6 +315,9 @@ export function makeCrdtOpSend(hooks: CrdtSendHooks): (op: CrdtOp) => Promise<Se
 				limitSurfaced.delete(op.id); // dropped — no more retries to throttle
 				return "ok"; // remove from the queue
 			}
+			// Retryable and not the op's fault (create_failed, rate_limited, a
+			// timeout, transport): hold EVERY create, not just this one.
+			if (op.kind === "create") hooks.capGate?.backoff();
 			const msg = err instanceof Error ? err.message : String(err);
 			return /timeout/i.test(msg) ? "timeout" : "error";
 		}

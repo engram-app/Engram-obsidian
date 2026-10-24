@@ -19,13 +19,13 @@ import { fnv1a, fnv1aBase64 } from "./content-hash";
 import { splitFrontmatter } from "./crdt/frontmatter-codec";
 import type { NoteIdMap } from "./crdt/note-id-map";
 import type { ProviderRegistry } from "./crdt/provider-registry";
-import { uuid7 } from "./crdt/uuid7";
 import { encodeUpdateFrame, fromB64 } from "./crdt/wire";
 import {
 	crdtOpFailureReason,
 	type GenesisFrame,
 	LIMIT_REASONS,
 	type NotesCapGate,
+	TERMINAL_REASONS,
 } from "./crdt-op-dispatch";
 import { devLog } from "./dev-log";
 import { errMsg, isHttpStatus } from "./error-util";
@@ -1565,8 +1565,9 @@ export class SyncEngine {
 		if (!noteId) return;
 		this.confirmedNoteIds.add(noteId);
 		// The server has acked this id, so a local mint is no longer provisional
-		// (#538). Durable across reconnects, unlike `confirmedNoteIds`.
-		this.noteIdMap?.store?.confirmUpload(noteId);
+		// (#538). Durable across reconnects, unlike `confirmedNoteIds`. Also
+		// what publishes the note's held index claim (claim-after-ack).
+		this.noteIdMap?.confirmUpload(noteId);
 	}
 
 	/** True for an id THIS device minted that the server has never acked (#538).
@@ -5791,8 +5792,9 @@ export class SyncEngine {
 						);
 						return false;
 					}
-					noteId = uuid7();
-					this.noteIdMap.set(file.path, noteId);
+					// mint(), not uuid7 + set: the id is PENDING until its create is
+					// acked, so the store holds its claim back from the shared index.
+					noteId = this.noteIdMap.mint(file.path);
 					mintedNow = true;
 				}
 
@@ -6011,6 +6013,7 @@ export class SyncEngine {
 									pushedPath,
 									encodeUpdateFrame(genesisUpdate),
 								);
+						this.notesCapGate?.createAcked();
 						let effectiveId = noteId;
 						try {
 							// On ADOPT (serverId !== noteId) the path is already owned by a
@@ -6188,6 +6191,13 @@ export class SyncEngine {
 						if (createReason && LIMIT_REASONS.has(createReason)) {
 							this.notesCapGate?.trip(createReason);
 							return false;
+						}
+						// Anything else retryable (create_failed, rate-limit, timeout,
+						// transport) is the server's state, not this note's: hold EVERY
+						// create, or the sweep re-sends the whole vault into it (prod
+						// 2026-10-22). Terminal reasons are per-op and do not.
+						if (!createReason || !TERMINAL_REASONS.has(createReason)) {
+							this.notesCapGate?.backoff();
 						}
 						// Anything else (rate-limit, transport): enqueue a durable
 						// crdt_create so the genesis is HELD and retried (transient) or
@@ -12605,8 +12615,7 @@ export class SyncEngine {
 							);
 							continue;
 						}
-						replayId = uuid7();
-						this.noteIdMap.set(replayNp, replayId);
+						replayId = this.noteIdMap.mint(replayNp);
 					}
 					// CAS base, mirroring pushFile: a queued edit may be STALE (the
 					// server moved on during the offline window) — without base_hash
