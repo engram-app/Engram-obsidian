@@ -38,6 +38,7 @@ import {
 	categorizeError,
 	healthCheckDelay,
 	IssueStore,
+	isBlobMissing,
 	issueDisposition,
 	parseStatusToIssue,
 	shouldGoOffline,
@@ -63,6 +64,7 @@ import { SyncedFileTable } from "./synced-file";
 import { DefaultTimeProvider, type TimeProvider } from "./time-provider";
 import type {
 	AttachmentChange,
+	AttachmentDetail,
 	EngramSyncSettings,
 	FileSyncState,
 	ManifestResponse,
@@ -98,6 +100,16 @@ export const MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024;
  *  serverHead → skip`) always runs at least once after create and overwrites
  *  this with the authoritative head. */
 export const CRDT_HEAD_CREATED = "__crdt_created__";
+
+/** Most re-uploads of a lost attachment blob one catch-up pass may start
+ *  (see handleBlobMissing). The rest stay Sync Center issues until a later
+ *  pass, so a full replay of a vault that lost its bytes is not an upload
+ *  storm. */
+export const BLOB_HEAL_PUSHES_PER_PASS = 20;
+
+/** Most heal pushes one row hash ever gets when each fails transiently
+ *  (see handleBlobMissing). A definitive outcome stops it sooner. */
+export const BLOB_HEAL_MAX_ATTEMPTS = 3;
 
 /** True when `content` is too large to enter the Yjs doc: seeding it would
  *  produce a base64 `crdt_msg` past Bandit's 8 MB WebSocket frame limit → 1009,
@@ -458,6 +470,16 @@ class OpLogFetchError extends Error {
 }
 
 /** A collection the engine can sweep on teardown. Map and Set both satisfy it. */
+/** What one `pushFile` call did (see SyncEngine.pushOutcome). */
+type PushOutcome =
+	| { kind: "sent_ok" }
+	| { kind: "not_sent" }
+	| { kind: "refused" }
+	| { kind: "failed"; status?: number; transient: boolean };
+
+/** What `pushFile` tells its `report` sink about a false return. */
+type PushReport = { kind: "failed"; error: unknown } | { kind: "refused" };
+
 type Sweepable = { clear(): void };
 
 /**
@@ -663,6 +685,12 @@ export class SyncEngine {
 	 *  the last sync (Obsidian sets mtime to "now" on vault.modify(),
 	 *  making mtime-based detection unreliable). */
 	private syncState = this.track(["vault"], new Map<string, FileSyncState>());
+	/** Heal uploads started in the current catch-up pass (handleBlobMissing). */
+	private blobHealsThisPass = 0;
+	/** Paths with a heal attempt in flight: the synchronous claim. */
+	private readonly blobHealsInFlight = this.track(["vault", "destroy"], new Set<string>());
+	/** Per-pass heal budget. A field only so tests can shrink it. */
+	private blobHealBudget = BLOB_HEAL_PUSHES_PER_PASS;
 
 	/** Vault events that arrived while the gate was closed or before setReady
 	 *  (#247), in event order. Dropping them lost deletes and turned renames
@@ -5501,6 +5529,11 @@ export class SyncEngine {
 		force = false,
 		bypassPlanSkip = false,
 		serverAttachmentHashes?: Map<string, string>,
+		/** Why a false return happened, for `pushOutcome` (its only caller):
+		 *  `failed` = sent and refused or errored; `refused` = never sent because
+		 *  the plan or a standing park forbids it. A false return with no report
+		 *  means it was not sent but would be later (in flight, deferred, echo). */
+		report?: (r: PushReport) => void,
 	): Promise<boolean> {
 		if (this.pushing.has(file.path)) return false;
 
@@ -5512,6 +5545,7 @@ export class SyncEngine {
 		// sync — there's nothing left to fail, so the count is 0.
 		if (!bypassPlanSkip && this.isBinaryFile(file) && this.hasInformationalIssue(file.path)) {
 			devLog().log("push", `skip (plan-informational): ${file.path}`);
+			report?.({ kind: "refused" });
 			return false;
 		}
 		// Same for an attachment the server refused for good (413, 402
@@ -5521,6 +5555,7 @@ export class SyncEngine {
 		// changes.
 		if (this.isBinaryFile(file) && this.isParked(file)) {
 			devLog().log("push", `skip (parked): ${file.path}`);
+			report?.({ kind: "refused" });
 			return false;
 		}
 
@@ -5554,6 +5589,7 @@ export class SyncEngine {
 					this.firstFailureCategoryThisBatch ??= gate.category;
 				}
 				devLog().log("push", `skip (pre-gate ${gate.category}): ${file.path}`);
+				report?.({ kind: "refused" });
 				return false;
 			}
 		}
@@ -6292,6 +6328,7 @@ export class SyncEngine {
 			);
 			this.goOnline();
 		} catch (e) {
+			report?.({ kind: "failed", error: e });
 			const msg = errMsg(e, file.path);
 			const classified = categorizeError(e);
 			// Plan-limit 402s (needs_pro, quota) are expected Free-tier outcomes,
@@ -7471,6 +7508,7 @@ export class SyncEngine {
 			cursor = floored;
 		}
 		this.seqRewindFloor = null;
+		this.beginBlobHealPass();
 		const startedAtZero = cursor === 0;
 		let applied = 0;
 		let files = 0;
@@ -7579,6 +7617,7 @@ export class SyncEngine {
 			// walk never reached.
 			return { applied, files, failed, deletes, complete: false, fromGenesis: startedAtZero };
 		}
+		if (!enumerateOnly) await this.drainPendingBlobHeals();
 		return { applied, files, failed, deletes, complete: true, fromGenesis: startedAtZero };
 	}
 
@@ -8721,19 +8760,17 @@ export class SyncEngine {
 			// suppression so an echo-skipped rename still relocates the room).
 			try {
 				if (isAttachment) {
-					const attachment = await this.api.getAttachment(event.path);
-					await this.applyAttachmentChange(
-						{
-							path: attachment.path,
-							mime_type: attachment.mime_type,
-							size_bytes: attachment.size_bytes,
-							mtime: attachment.mtime,
-							updated_at: attachment.updated_at,
-							deleted: false,
-						},
-						attachment.content_base64,
-						attachment.bytes,
-					);
+					// No bytes passed: applyAttachmentChange fetches them, so a 410
+					// blob_missing is handled in one place for every pull path.
+					await this.applyAttachmentChange({
+						path: event.path,
+						mime_type: "",
+						size_bytes: 0,
+						mtime: event.mtime ?? 0,
+						updated_at: event.updated_at ?? "",
+						deleted: false,
+						...(event.content_hash ? { content_hash: event.content_hash } : {}),
+					});
 				} else if (
 					this.crdt &&
 					this.isCrdtEligiblePath(event.path) &&
@@ -9243,6 +9280,7 @@ export class SyncEngine {
 				mtime: c.mtime,
 				updated_at: c.updated_at,
 				deleted: c.deleted,
+				...(c.content_hash ? { content_hash: c.content_hash } : {}),
 			};
 			return this.applyAttachmentChange(ac);
 		}
@@ -10416,7 +10454,14 @@ export class SyncEngine {
 		let resolvedBase64 = contentBase64;
 		let resolvedBytes = contentBytes;
 		if (resolvedBase64 === undefined && resolvedBytes === undefined) {
-			const fetched = await this.api.getAttachment(change.path);
+			let fetched: AttachmentDetail;
+			try {
+				fetched = await this.api.getAttachment(change.path);
+			} catch (e) {
+				if (!isBlobMissing(e)) throw e;
+				await this.handleBlobMissing(normalized, change.content_hash, e);
+				return false;
+			}
 			resolvedBase64 = fetched.content_base64;
 			resolvedBytes = fetched.bytes;
 			// Prefer the value that came WITH the bytes we are about to write:
@@ -10445,13 +10490,21 @@ export class SyncEngine {
 		// never replace: a bare `set` would drop it again on the following
 		// write, which is the same bug that kept force-push unprovable.
 		const rowPatch = serverHash ? { hash, serverHash } : { hash };
+		// Runs only once the vault holds these bytes. The server served them, so
+		// a blob_missing issue is stale now, and not before: a failed write must
+		// leave it visible.
+		const settle = () => {
+			this.patchSyncedRow(normalized, rowPatch);
+			if (this.issues.get(normalized)?.category === "blob_missing")
+				this.issues.clear(normalized);
+		};
 
 		if (existing) {
 			// Skip if content is identical — prevents modify event and push-back loop
 			if (existing.stat.size === buffer.byteLength) {
 				const localBuffer = await this.app.vault.readBinary(existing);
 				if (this.arrayBuffersEqual(localBuffer, buffer)) {
-					this.patchSyncedRow(normalized, rowPatch);
+					settle();
 					rlog().info(
 						"pull",
 						`Attachment unchanged: ${noteRef(change.path)} | bytes=${buffer.byteLength}`,
@@ -10460,7 +10513,7 @@ export class SyncEngine {
 				}
 			}
 			await this.app.vault.modifyBinary(existing, buffer);
-			this.patchSyncedRow(normalized, rowPatch);
+			settle();
 			rlog().info(
 				"pull",
 				`Attachment applied: ${noteRef(change.path)} | bytes=${buffer.byteLength}`,
@@ -10468,12 +10521,266 @@ export class SyncEngine {
 			return true;
 		}
 		await this.createBinaryFileWithFolders(normalized, buffer);
-		this.patchSyncedRow(normalized, rowPatch);
+		settle();
 		rlog().info(
 			"pull",
 			`Attachment created: ${noteRef(change.path)} | bytes=${buffer.byteLength}`,
 		);
 		return true;
+	}
+
+	/** `pushFile`, with its outcome spelled out instead of folded into a
+	 *  boolean. `failed` carries whether retrying can help: 408, 429, 5xx and
+	 *  no response at all are transient; any other refusal (400, 401, 402, 403,
+	 *  404, 409, 413, 415, 422 ...) is definitive. `refused` (never sent: plan
+	 *  skip, plan pre-gate, standing park) is definitive too. `not_sent` is only
+	 *  a push that did not run now but would later (in flight, deferred). */
+	private async pushOutcome(file: TFile, force: boolean): Promise<PushOutcome> {
+		let report: PushReport | undefined;
+		const ok = await this.pushFile(file, force, false, undefined, (r) => {
+			report = r;
+		});
+		if (ok) return { kind: "sent_ok" };
+		if (!report) return { kind: "not_sent" };
+		if (report.kind === "refused") return { kind: "refused" };
+		const { status, terminal } = categorizeError(report.error);
+		const transient =
+			!terminal &&
+			(status === undefined || status === 408 || status === 429 || status >= 500);
+		return { kind: "failed", status, transient };
+	}
+
+	/** The server kept this attachment's row but lost its bytes (410
+	 *  blob_missing, engram-app/Engram#2159). Terminal: never retried as a
+	 *  pull, and the local file is never touched. If the local copy is provably
+	 *  the bytes the row describes, re-upload it so the server heals from this
+	 *  device (backend #2160 writes identical bytes onto a row whose blob is
+	 *  missing); otherwise, or until the heal takes, park a visible issue.
+	 *
+	 *  The proof has to be server evidence: the row's content_hash is an HMAC
+	 *  this client cannot compute. The synced row pairs the serverHash of our
+	 *  last converge with the fnv hash of the bytes we held then, so the row
+	 *  hash matching that serverHash AND the file still hashing the same proves
+	 *  it. An unknown row hash proves nothing, and uploading then could replace
+	 *  newer content the server is able to restore.
+	 *
+	 *  Bounded, because a replay from cursor 0 can hit thousands of these at
+	 *  once (the #2159 vault had 7,440). `blobHeal` (persisted on the synced
+	 *  row, per row hash) counts heal pushes: a definitive outcome (healed, the
+	 *  copy differs, the push refused for good, or the server still 410s after
+	 *  taking the bytes) settles it; a transient one (network or 5xx on the
+	 *  push or the confirming GET) leaves it retryable, at most
+	 *  BLOB_HEAL_MAX_ATTEMPTS pushes in all. A failed local read counts nothing.
+	 *  BLOB_HEAL_PUSHES_PER_PASS caps the pushes one catch-up pass may start,
+	 *  and a proven row past it keeps its issue for `drainPendingBlobHeals`.
+	 *  The claim on the path is taken synchronously, before the first await,
+	 *  so a live event and the drain racing on one path cannot both push. */
+	private async handleBlobMissing(
+		normalized: string,
+		rowHash: string | undefined,
+		cause: unknown,
+	): Promise<void> {
+		const file = this.app.vault.getFileByPath(normalized);
+		const synced = this.syncState.get(normalized);
+		// Cheap checks first: past the budget, settled, or out of attempts for
+		// this row hash, the file is never read (a 7,000-row replay must not hash
+		// every file).
+		const candidate =
+			file !== null &&
+			rowHash !== undefined &&
+			synced?.serverHash === rowHash &&
+			this.blobHealEligible(normalized, synced, rowHash) &&
+			this.blobHealsThisPass < this.blobHealBudget;
+		let local:
+			| "absent"
+			| "unread"
+			| "unreadable"
+			| "matches"
+			| "differs"
+			| "unhealed"
+			| "refused" = file ? "unread" : "absent";
+		if (candidate) {
+			this.blobHealsInFlight.add(normalized);
+			try {
+				local = await this.healMissingBlob(file, normalized, rowHash, synced);
+				if (local === "matches") return;
+			} finally {
+				this.blobHealsInFlight.delete(normalized);
+			}
+		}
+		// A standing refusal (park, plan limit, auth) stays the visible reason:
+		// replacing a park with blob_missing would un-park the file and let the
+		// next sweep re-send it just to be refused again.
+		const standing = this.issues.get(normalized);
+		if (
+			standing &&
+			standing.category !== "blob_missing" &&
+			issueDisposition(standing.category) !== "transient"
+		) {
+			rlog().warn(
+				"pull",
+				`Attachment blob missing on server: ${noteRef(normalized)} | local=${local} | kept=${standing.category}`,
+			);
+			return;
+		}
+		const classified = categorizeError(cause);
+		const now = Date.now();
+		this.issues.record({
+			path: normalized,
+			kind: "attachment",
+			category: classified.category,
+			status: classified.status,
+			message: classified.message,
+			...(rowHash ? { rowHash } : {}),
+			firstFailedAt: now,
+			lastFailedAt: now,
+			attempts: 1,
+		});
+		rlog().warn(
+			"pull",
+			`Attachment blob missing on server: ${noteRef(normalized)} | local=${local}`,
+		);
+	}
+
+	/** Whether `rowHash` may still get a heal push on `path`: not claimed by a
+	 *  heal in flight, not settled, and under BLOB_HEAL_MAX_ATTEMPTS. */
+	private blobHealEligible(path: string, row: FileSyncState, rowHash: string): boolean {
+		if (this.blobHealsInFlight.has(path)) return false;
+		const h = row.blobHeal;
+		return h?.rowHash !== rowHash || (!h.done && h.attempts < BLOB_HEAL_MAX_ATTEMPTS);
+	}
+
+	/** One heal attempt for a claimed candidate. Returns "matches" only when
+	 *  the server is proven to serve the blob again ("unhealed" when the copy
+	 *  matched but the heal did not take). Every outcome but an unreadable file
+	 *  is recorded on `blobHeal`; that one is left eligible for a later pass. */
+	private async healMissingBlob(
+		file: TFile,
+		normalized: string,
+		rowHash: string,
+		synced: FileSyncState,
+	): Promise<"unreadable" | "matches" | "differs" | "unhealed" | "refused"> {
+		let localHash: number;
+		try {
+			localHash = fnv1aBase64(await this.app.vault.readBinary(file));
+		} catch (e) {
+			rlog().warn(
+				"pull",
+				`Heal read failed: ${noteRef(normalized)} | ${errMsg(e, normalized)}`,
+			);
+			return "unreadable";
+		}
+		const prior = synced.blobHeal?.rowHash === rowHash ? synced.blobHeal.attempts : 0;
+		const settle = (attempts: number, done: boolean) =>
+			this.patchSyncedRow(normalized, { blobHeal: { rowHash, attempts, done } });
+		// This copy can never heal that row hash.
+		if (localHash !== synced.hash) {
+			settle(prior, true);
+			return "differs";
+		}
+		this.blobHealsThisPass += 1;
+		settle(prior + 1, false);
+		const before = this.syncState.get(normalized);
+		rlog().warn(
+			"pull",
+			`Attachment blob missing on server, re-uploading: ${noteRef(normalized)}`,
+		);
+		// Forced: the local echo guard would skip these unchanged bytes, which are
+		// exactly the ones the server needs back. A 200 alone proves nothing (a
+		// backend without the heal answers 200 and keeps no bytes), so only a
+		// follow-up GET that serves the blob counts.
+		const pushed = await this.pushOutcome(file, true);
+		if (pushed.kind === "not_sent") {
+			// Nothing went out (a user edit's push holds the path, say): refund the
+			// attempt and the budget slot, and leave the row eligible.
+			this.blobHealsThisPass -= 1;
+			this.patchSyncedRow(normalized, { blobHeal: synced.blobHeal });
+			return "unhealed";
+		}
+		if (pushed.kind === "refused") {
+			// The plan or a standing park forbids this upload, and pushFile has
+			// already put that reason in the Sync Center: keep it (overwriting a
+			// park un-parks it, and the next sweep re-sends megabytes to be refused
+			// again). Settled: retrying cannot help. Both clearing events re-upload
+			// on their own: a plan upgrade runs resyncSkippedAttachments (which
+			// bypasses the gate, and that upload heals the blob too), and a file
+			// change moves the park stamp but also breaks this proof.
+			this.patchSyncedRow(normalized, {
+				blobHeal: { rowHash, attempts: prior, done: true },
+			});
+			return "refused";
+		}
+		const served = pushed.kind === "sent_ok" ? await this.attachmentServes(normalized) : null;
+		if (served === "yes") {
+			settle(prior + 1, true);
+			rlog().info("pull", `Attachment blob healed from this device: ${noteRef(normalized)}`);
+			return "matches";
+		}
+		// Not healed: undo pushFile's stamp so the row still says what we knew.
+		if (before) this.syncState.set(normalized, before);
+		// Settled for good on a definitive refusal, or a server that took the
+		// bytes and still 410s; a transient failure leaves it retryable.
+		const definitive = pushed.kind === "failed" ? !pushed.transient : served === "missing";
+		settle(prior + 1, definitive);
+		return "unhealed";
+	}
+
+	/** Whether the server now serves this attachment's bytes ("missing" on
+	 *  another 410 blob_missing, "transient" on any other failure). Downloads
+	 *  them: the cost of proving a heal, bounded by BLOB_HEAL_PUSHES_PER_PASS. */
+	private async attachmentServes(path: string): Promise<"yes" | "missing" | "transient"> {
+		try {
+			await this.api.getAttachment(path);
+			return "yes";
+		} catch (e) {
+			rlog().warn("pull", `Heal check failed: ${noteRef(path)} | ${errMsg(e, path)}`);
+			return isBlobMissing(e) ? "missing" : "transient";
+		}
+	}
+
+	/** Spend what is left of this pass's heal budget on rows that were proven
+	 *  candidates but fell past an earlier pass's budget. The queue is the open
+	 *  blob_missing issues themselves (already persisted, one per file, so it is
+	 *  bounded by the vault): an entry drops out once its file is gone, its row
+	 *  hash moved (the synced serverHash no longer equals the hash the 410 was
+	 *  recorded against), or it is settled for that hash. Each entry re-GETs
+	 *  first: the server may have restored it, and the heal path needs a fresh
+	 *  410 anyway. At most the leftover budget of entries is touched per pass. */
+	private async drainPendingBlobHeals(): Promise<void> {
+		let left = this.blobHealBudget - this.blobHealsThisPass;
+		for (const issue of this.issues.all()) {
+			if (left <= 0) return;
+			if (issue.category !== "blob_missing" || !issue.rowHash) continue;
+			const synced = this.syncState.get(issue.path);
+			if (
+				synced?.serverHash !== issue.rowHash ||
+				!this.blobHealEligible(issue.path, synced, issue.rowHash) ||
+				!this.app.vault.getFileByPath(issue.path)
+			)
+				continue;
+			left -= 1;
+			try {
+				await this.applyAttachmentChange({
+					path: issue.path,
+					mime_type: "",
+					size_bytes: 0,
+					mtime: 0,
+					updated_at: "",
+					deleted: false,
+					content_hash: issue.rowHash,
+				});
+			} catch (e) {
+				rlog().warn(
+					"pull",
+					`Pending heal skipped: ${noteRef(issue.path)} | ${errMsg(e, issue.path)}`,
+				);
+			}
+		}
+	}
+
+	/** Start a catch-up pass's budget of heal uploads. */
+	private beginBlobHealPass(): void {
+		this.blobHealsThisPass = 0;
 	}
 
 	/** Create a text file, ensuring parent folders exist. */

@@ -376,6 +376,7 @@ const ru: Dict = {
 	"Manage account": "Управление аккаунтом",
 	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
 		"Минимальный уровень серьёзности, при котором отправляются данные при включенной диагностике. Более высокие уровни отправляют меньше строк. По умолчанию: Info.",
+	"Missing on the server": "Отсутствует на сервере",
 	"Needs attention ({count})": "Требует внимания ({count})",
 	"Network unavailable": "Сеть недоступна",
 	"New here? Watch the setup video": "Вы здесь впервые? Посмотрите видеоинструкцию",
@@ -582,6 +583,8 @@ const ru: Dict = {
 		"Сервер не смог обработать эту заметку. Проверьте её содержимое, затем отредактируйте и сохраните, чтобы повторить попытку.",
 	"The server does not accept this type of file. It will retry if the file changes.":
 		"Сервер не принимает файлы этого типа. Повторная попытка произойдет, если файл изменится.",
+	"The server lost this file's stored content and will try to restore it. Nothing on this device was changed.":
+		"Сервер потерял содержимое этого файла и попытается его восстановить. На этом устройстве ничего не изменилось.",
 	"The server took too long to respond. Try again.":
 		"Сервер слишком долго отвечает. Попробуйте ещё раз.",
 	"These files are fine. They just need a paid plan to sync.":

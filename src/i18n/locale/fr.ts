@@ -358,6 +358,7 @@ const fr: Dict = {
 	"Manage account": "Gérer le compte",
 	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
 		"Niveau de gravité minimum envoyé lorsque les diagnostics sont activés. Les niveaux supérieurs envoient moins de lignes. Par défaut : Info.",
+	"Missing on the server": "Manquant sur le serveur",
 	"Needs attention ({count})": "Nécessite ton attention ({count})",
 	"Network unavailable": "Réseau indisponible",
 	"New here? Watch the setup video": "Nouveau ici ? Regarde la vidéo d'installation",
@@ -563,6 +564,8 @@ const fr: Dict = {
 		"Le serveur n'a pas pu traiter cette note. Vérifie son contenu, puis modifie et enregistre pour réessayer.",
 	"The server does not accept this type of file. It will retry if the file changes.":
 		"Le serveur n'accepte pas ce type de fichier. Il retentera si le fichier change.",
+	"The server lost this file's stored content and will try to restore it. Nothing on this device was changed.":
+		"Le serveur a perdu le contenu de ce fichier et va essayer de le restaurer. Rien n'a été modifié sur cet appareil.",
 	"The server took too long to respond. Try again.":
 		"Le serveur a mis trop de temps à répondre. Réessaie.",
 	"These files are fine. They just need a paid plan to sync.":

@@ -297,6 +297,7 @@ const ja: Dict = {
 	"Manage account": "アカウントの管理",
 	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
 		"診断が有効な場合に送信される最小の重要度。レベルが高いほど、送信される行数が少なくなります。デフォルト: Info",
+	"Missing on the server": "サーバーに存在しません",
 	"Needs attention ({count})": "注意が必要です ({count})",
 	"Network unavailable": "ネットワークに接続できません",
 	"New here? Watch the setup video": "初めての方はこちら。セットアップ動画をご覧ください",
@@ -494,6 +495,8 @@ const ja: Dict = {
 		"サーバーでこのノートの処理に失敗しました。内容を確認し、編集して保存してから再度お試しください。",
 	"The server does not accept this type of file. It will retry if the file changes.":
 		"サーバーがこの種類のファイルを許可していません。ファイルが変更された場合、再試行します。",
+	"The server lost this file's stored content and will try to restore it. Nothing on this device was changed.":
+		"サーバーがこのファイルのデータを失い、復元を試みます。このデバイスの内容は変更されていません。",
 	"The server took too long to respond. Try again.":
 		"サーバーの応答が遅すぎます。もう一度お試しください。",
 	"These files are fine. They just need a paid plan to sync.":

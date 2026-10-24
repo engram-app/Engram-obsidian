@@ -6,7 +6,7 @@
 import { type RequestUrlResponse, requestUrl } from "obsidian";
 import type { AuthProvider } from "./auth";
 import { interpretHealthProbe, type PreflightResult } from "./auth-state";
-import { isHttpStatus, NotAuthenticatedError, statusOf } from "./error-util";
+import { errorBody, isHttpStatus, NotAuthenticatedError, statusOf } from "./error-util";
 import { t } from "./i18n";
 import type { LegalNotice } from "./legal-notices";
 import { LimitExceededError } from "./limit-error";
@@ -982,27 +982,6 @@ function throwIfHttpError(resp: RequestUrlResponse): RequestUrlResponse {
 		headers: resp.headers,
 		text,
 	});
-}
-
-/** The JSON body of an Obsidian `requestUrl` rejection. Arrives as `.json`
- *  (parsed) or `.text` (raw) depending on platform, so try both; a malformed
- *  or missing body yields `{}` rather than a decode crash, because every
- *  caller here is already on an error path and must not fail twice. */
-function errorBody(e: unknown): Record<string, unknown> {
-	const err = e as { json?: unknown; text?: string };
-	if (err.json && typeof err.json === "object") {
-		return err.json as Record<string, unknown>;
-	}
-	if (typeof err.text === "string") {
-		try {
-			const parsed: unknown = JSON.parse(err.text);
-			if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
-		} catch {
-			// Malformed text — fall through to {}. For a 402 that still routes
-			// to the generic toast via the "unknown" reason.
-		}
-	}
-	return {};
 }
 
 /** Backend `EngramWeb.Endpoint.max_body_bytes`: Plug.Parsers' cap on a JSON

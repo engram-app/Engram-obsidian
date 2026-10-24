@@ -239,6 +239,9 @@ export interface SyncAttachmentChange {
 	updated_at: string;
 	deleted: boolean;
 	version?: number;
+	/** Server's opaque content hash. Not sent by the feed yet; passed through
+	 *  so a feed that carries it lets a 410 blob_missing heal from this copy. */
+	content_hash?: string;
 }
 
 /** A single entry in the merged ordered feed — note or attachment, tagged. */
@@ -449,6 +452,10 @@ export interface FileSyncState {
 	/** Last server content_hash seen for this path (opaque HMAC, from push
 	 *  responses / changes pages / broadcasts). Never computed locally. */
 	serverHash?: string;
+	/** Heal pushes this device made for `rowHash` after a 410 blob_missing,
+	 *  and whether the outcome is final (healed, or refused for good). Bounds
+	 *  re-uploads of a lost blob per row hash; see SyncEngine.handleBlobMissing. */
+	blobHeal?: { rowHash: string; attempts: number; done: boolean };
 	/** Last CRDT head marker (sha256(state_vector) url-b64) synced for this
 	 *  path via cold-receive. Separate namespace from serverHash (which is the
 	 *  /changes content_hash). Absent = never cold-synced. */
@@ -481,6 +488,7 @@ export type SyncIssueCategory =
 	| "needs_pro"
 	| "quota"
 	| "frontmatter"
+	| "blob_missing"
 	| "other";
 
 /** A file the sync engine could not push or pull. Persisted across reloads
@@ -502,6 +510,10 @@ export interface SyncIssue {
 	parkedAt?: string;
 	/** Structured parse failure detail — set when category is "frontmatter". */
 	parseReason?: ParseReason;
+	/** The row content_hash a 410 blob_missing was recorded against, when
+	 *  known. Lets the pending-heal drain tell a still-current row from one
+	 *  that moved on. */
+	rowHash?: string;
 	firstFailedAt: number;
 	lastFailedAt: number;
 	attempts: number;

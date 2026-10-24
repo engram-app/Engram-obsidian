@@ -1,5 +1,5 @@
 import { expBackoff } from "./backoff";
-import { statusOf } from "./error-util";
+import { errorBody, statusOf } from "./error-util";
 import { t } from "./i18n";
 import { userErrorMessage } from "./i18n/user-error";
 import { LimitExceededError } from "./limit-error";
@@ -157,6 +157,8 @@ export function categorizeError(err: unknown): CategorizedError {
 	// would loop forever — user must re-auth via Sync Center.
 	if (status === 401 || status === 403)
 		return { category: "auth", status, message, userMessage, terminal: true };
+	if (isBlobMissing(err))
+		return { category: "blob_missing", status, message, userMessage, terminal: true };
 	if (status !== undefined && status >= 500)
 		return { category: "server", status, message, userMessage, terminal: false };
 	if (status === undefined) return { category: "network", message, userMessage, terminal: false };
@@ -168,21 +170,17 @@ export function categorizeError(err: unknown): CategorizedError {
  *  mirror parseLimitExceededError's tolerance. Returns undefined when there's
  *  no usable string message. */
 export function extractServerMessage(err: unknown): string | undefined {
-	if (typeof err !== "object" || err === null) return undefined;
-	const e = err as { json?: unknown; text?: string };
-	let body: Record<string, unknown> | null = null;
-	if (e.json && typeof e.json === "object") {
-		body = e.json as Record<string, unknown>;
-	} else if (typeof e.text === "string") {
-		try {
-			const parsed: unknown = JSON.parse(e.text);
-			if (parsed && typeof parsed === "object") body = parsed as Record<string, unknown>;
-		} catch {
-			return undefined;
-		}
-	}
-	if (body && typeof body.error === "string" && body.error.length > 0) return body.error;
+	const body = errorBody(err);
+	if (typeof body.error === "string" && body.error.length > 0) return body.error;
 	return undefined;
+}
+
+/** A 410 `{code: "blob_missing"}`: the server still has the attachment's row
+ *  but lost its stored bytes (engram-app/Engram#2159). Permanent until the
+ *  bytes are restored, so it is never retried like a 5xx. Keyed on the code,
+ *  not the bare status: a 410 from anything else proves nothing about the blob. */
+export function isBlobMissing(err: unknown): boolean {
+	return statusOf(err) === 410 && errorBody(err).code === "blob_missing";
 }
 
 /** Whether a push/pull failure means the backend is genuinely unreachable
@@ -235,6 +233,7 @@ export function issueDisposition(
 		case "auth":
 		case "conflict":
 		case "frontmatter":
+		case "blob_missing":
 			return "actionable";
 		default:
 			return "transient";
@@ -310,6 +309,13 @@ export function remediation(
 				title: t("Frontmatter needs a fix"),
 				hint: t(
 					"The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.",
+				),
+			};
+		case "blob_missing":
+			return {
+				title: t("Missing on the server"),
+				hint: t(
+					"The server lost this file's stored content and will try to restore it. Nothing on this device was changed.",
 				),
 			};
 		case "server":

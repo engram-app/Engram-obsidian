@@ -294,6 +294,7 @@ const vi: Dict = {
 	"Manage account": "Quản lý tài khoản",
 	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
 		"Mức độ nghiêm trọng tối thiểu khi bật chẩn đoán. Mức độ cao hơn sẽ gửi ít dòng hơn. Mặc định: Thông tin.",
+	"Missing on the server": "Mất trên máy chủ",
 	"Needs attention ({count})": "Cần xử lý ({count})",
 	"Network unavailable": "Mạng không khả dụng",
 	"New here? Watch the setup video": "Bạn mới bắt đầu? Xem video hướng dẫn",
@@ -494,6 +495,8 @@ const vi: Dict = {
 		"Máy chủ không thể xử lý ghi chú này. Kiểm tra nội dung, sau đó chỉnh sửa và lưu để thử lại.",
 	"The server does not accept this type of file. It will retry if the file changes.":
 		"Máy chủ không chấp nhận loại tệp này. Hệ thống sẽ thử lại nếu tệp thay đổi.",
+	"The server lost this file's stored content and will try to restore it. Nothing on this device was changed.":
+		"Máy chủ đã mất nội dung của tệp này và sẽ cố gắng khôi phục. Không có gì thay đổi trên thiết bị này.",
 	"The server took too long to respond. Try again.": "Máy chủ phản hồi quá chậm. Thử lại.",
 	"These files are fine. They just need a paid plan to sync.":
 		"Các tệp này không có vấn đề. Chúng chỉ cần một gói trả phí để đồng bộ hóa.",

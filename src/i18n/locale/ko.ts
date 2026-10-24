@@ -292,6 +292,7 @@ const ko: Dict = {
 	"Manage account": "계정 관리",
 	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
 		"진단 기능 활성화 시 표시되는 최소 심각도 수준입니다. 높은 수준일수록 더 적은 정보가 전송됩니다. 기본값: 정보.",
+	"Missing on the server": "서버에서 찾을 수 없음",
 	"Needs attention ({count})": "확인 필요 ({count})",
 	"Network unavailable": "네트워크 연결 안됨",
 	"New here? Watch the setup video": "처음이신가요? 설정 안내 영상을 보세요",
@@ -486,6 +487,8 @@ const ko: Dict = {
 		"서버에서 이 노트를 처리할 수 없습니다. 내용을 확인한 후 편집하고 저장하여 다시 시도해 주세요.",
 	"The server does not accept this type of file. It will retry if the file changes.":
 		"서버에서 해당 파일 형식을 받지 않습니다. 파일이 변경되면 다시 시도합니다.",
+	"The server lost this file's stored content and will try to restore it. Nothing on this device was changed.":
+		"서버에서 해당 파일의 내용이 삭제되었으며, 복구를 시도합니다. 이 장치에는 변경 사항이 없습니다.",
 	"The server took too long to respond. Try again.":
 		"서버 응답 시간이 너무 오래 걸렸습니다. 다시 시도해 주세요.",
 	"These files are fine. They just need a paid plan to sync.":
