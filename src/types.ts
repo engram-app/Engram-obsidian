@@ -510,6 +510,10 @@ export interface SyncIssue {
 	parkedAt?: string;
 	/** Structured parse failure detail — set when category is "frontmatter". */
 	parseReason?: ParseReason;
+	/** The row content_hash a 410 blob_missing was recorded against, when
+	 *  known. Lets the pending-heal drain tell a still-current row from one
+	 *  that moved on. */
+	rowHash?: string;
 	firstFailedAt: number;
 	lastFailedAt: number;
 	attempts: number;

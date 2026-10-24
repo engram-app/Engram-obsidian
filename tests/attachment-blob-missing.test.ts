@@ -271,6 +271,65 @@ describe("applyAttachmentChange on 410 blob_missing", () => {
 		for (const p of paths) expect(e.issues.get(p)?.category).toBe("blob_missing");
 	});
 
+	test("rows past the cap heal on later normal passes, without a replay re-feeding them", async () => {
+		const paths = Array.from({ length: 7 }, (_, i) => `img/q${i}.png`);
+		const server = fakeServer(paths, { heals: true });
+		const { e } = makeEngine(
+			server,
+			paths.map((p) => new TFile(p, 1, 3)),
+		);
+		for (const p of paths) synced(e, p);
+		(e as any).blobHealBudget = 2;
+		e.setCrdtManager({ hasUndeliveredOps: () => false, closeDoc: () => {} } as any);
+		// The feed serves the 7 rows ONCE (the replay that found the 410s);
+		// every later pass is an ordinary incremental one with nothing new.
+		let fed = false;
+		e.setCrdtCatchupSince(async () => {
+			if (fed) return { changes: [], has_more: false, next_seq: null };
+			fed = true;
+			return {
+				changes: paths.map((p, i) => ({
+					type: "attachment" as const,
+					id: `a${i}`,
+					seq: i + 1,
+					...change(ROW_HASH, p),
+				})),
+				has_more: false,
+				next_seq: null,
+			};
+		});
+
+		for (let pass = 0; pass < 4; pass++) await e.catchupViaSeqReplay();
+
+		expect(server.pushAttachment).toHaveBeenCalledTimes(7);
+		expect(new Set(server.pushAttachment.mock.calls.map((c) => c[0])).size).toBe(7);
+		for (const p of paths) {
+			expect(server.blobPresent.get(p)).toBe(true);
+			expect(e.issues.get(p)).toBeUndefined();
+		}
+	});
+
+	test("an exhausted budget or an already-settled row never reads the local file", async () => {
+		const server = fakeServer([PATH, "img/b.png"], { heals: true });
+		const { e, app } = makeEngine(server, [
+			new TFile(PATH, 1, 3),
+			new TFile("img/b.png", 1, 3),
+		]);
+		synced(e, PATH);
+		(e as any).syncState.set("img/b.png", {
+			hash: fnv1a(B64),
+			serverHash: ROW_HASH,
+			blobHealedFor: ROW_HASH,
+		});
+		await e.applyAttachmentChange(change(ROW_HASH, "img/b.png"));
+		(e as any).blobHealBudget = 0;
+		await e.applyAttachmentChange(change(ROW_HASH));
+
+		expect(app.vault.readBinary).not.toHaveBeenCalled();
+		expect(server.pushAttachment).not.toHaveBeenCalled();
+		expect(e.issues.get(PATH)?.category).toBe("blob_missing");
+	});
+
 	test("a push already in flight for the path still leaves a visible issue", async () => {
 		const server = fakeServer([PATH], { heals: true });
 		const { e } = makeEngine(server, [new TFile(PATH, 1, 3)]);

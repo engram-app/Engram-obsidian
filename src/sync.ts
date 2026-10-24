@@ -673,6 +673,8 @@ export class SyncEngine {
 	private syncState = this.track(["vault"], new Map<string, FileSyncState>());
 	/** Heal uploads started in the current catch-up pass (handleBlobMissing). */
 	private blobHealsThisPass = 0;
+	/** Per-pass heal budget. A field only so tests can shrink it. */
+	private blobHealBudget = BLOB_HEAL_PUSHES_PER_PASS;
 
 	/** Vault events that arrived while the gate was closed or before setReady
 	 *  (#247), in event order. Dropping them lost deletes and turned renames
@@ -7590,6 +7592,7 @@ export class SyncEngine {
 			// walk never reached.
 			return { applied, files, failed, deletes, complete: false, fromGenesis: startedAtZero };
 		}
+		if (!enumerateOnly) await this.drainPendingBlobHeals();
 		return { applied, files, failed, deletes, complete: true, fromGenesis: startedAtZero };
 	}
 
@@ -10519,7 +10522,14 @@ export class SyncEngine {
 	 *  at once (the #2159 vault had 7,440): `blobHealedFor` (persisted) means a
 	 *  row hash is healed at most once ever, and BLOB_HEAL_PUSHES_PER_PASS caps
 	 *  the uploads one catch-up pass may start. Heals run one at a time, since
-	 *  the catch-up loop awaits each row. */
+	 *  the catch-up loop awaits each row. A proven row past the budget keeps its
+	 *  issue, and `drainPendingBlobHeals` spends later passes' leftover budget on
+	 *  it, so healing finishes on its own without a replay re-feeding the row.
+	 *
+	 *  Deliberate tradeoff: the marker is set BEFORE the push, so a heal that
+	 *  fails for a transient reason (network on the push or the confirming GET)
+	 *  is never retried for that row hash. The issue stays visible, and the
+	 *  backend's version restore remains the recovery path. */
 	private async handleBlobMissing(
 		normalized: string,
 		rowHash: string | undefined,
@@ -10527,13 +10537,20 @@ export class SyncEngine {
 	): Promise<void> {
 		const file = this.app.vault.getFileByPath(normalized);
 		const synced = this.syncState.get(normalized);
-		const proven =
+		// Cheap checks first: past the budget, or settled for this row hash, the
+		// file is never read (a 7,000-row replay must not hash every file).
+		const candidate =
 			file !== null &&
 			rowHash !== undefined &&
 			synced?.serverHash === rowHash &&
 			synced.blobHealedFor !== rowHash &&
-			fnv1aBase64(await this.app.vault.readBinary(file)) === synced.hash;
-		if (proven && this.blobHealsThisPass < BLOB_HEAL_PUSHES_PER_PASS) {
+			this.blobHealsThisPass < this.blobHealBudget;
+		const proven =
+			candidate && fnv1aBase64(await this.app.vault.readBinary(file)) === synced.hash;
+		// Read and different: this copy can never heal that row hash. Settle it so
+		// the pending-heal drain stops re-reading it every pass.
+		if (candidate && !proven) this.patchSyncedRow(normalized, { blobHealedFor: rowHash });
+		if (proven) {
 			this.blobHealsThisPass += 1;
 			// Marked before the push: one attempt per row hash, whatever happens.
 			this.patchSyncedRow(normalized, { blobHealedFor: rowHash });
@@ -10564,6 +10581,7 @@ export class SyncEngine {
 			category: classified.category,
 			status: classified.status,
 			message: classified.message,
+			...(rowHash ? { rowHash } : {}),
 			firstFailedAt: now,
 			lastFailedAt: now,
 			attempts: 1,
@@ -10571,7 +10589,7 @@ export class SyncEngine {
 		rlog().warn(
 			"pull",
 			`Attachment blob missing on server: ${noteRef(normalized)} | local=${
-				file ? (proven ? "matches" : "differs-or-unproven") : "absent"
+				!file ? "absent" : !candidate ? "unread" : proven ? "matches" : "differs"
 			}`,
 		);
 	}
@@ -10585,6 +10603,46 @@ export class SyncEngine {
 		} catch (e) {
 			rlog().warn("pull", `Heal check failed: ${noteRef(path)} | ${errMsg(e, path)}`);
 			return false;
+		}
+	}
+
+	/** Spend what is left of this pass's heal budget on rows that were proven
+	 *  candidates but fell past an earlier pass's budget. The queue is the open
+	 *  blob_missing issues themselves (already persisted, one per file, so it is
+	 *  bounded by the vault): an entry drops out once its file is gone, its row
+	 *  hash moved (the synced serverHash no longer equals the hash the 410 was
+	 *  recorded against), or it is settled for that hash. Each entry re-GETs
+	 *  first: the server may have restored it, and the heal path needs a fresh
+	 *  410 anyway. At most the leftover budget of entries is touched per pass. */
+	private async drainPendingBlobHeals(): Promise<void> {
+		let left = this.blobHealBudget - this.blobHealsThisPass;
+		for (const issue of this.issues.all()) {
+			if (left <= 0) return;
+			if (issue.category !== "blob_missing" || !issue.rowHash) continue;
+			const synced = this.syncState.get(issue.path);
+			if (
+				synced?.serverHash !== issue.rowHash ||
+				synced.blobHealedFor === issue.rowHash ||
+				!this.app.vault.getFileByPath(issue.path)
+			)
+				continue;
+			left -= 1;
+			try {
+				await this.applyAttachmentChange({
+					path: issue.path,
+					mime_type: "",
+					size_bytes: 0,
+					mtime: 0,
+					updated_at: "",
+					deleted: false,
+					content_hash: issue.rowHash,
+				});
+			} catch (e) {
+				rlog().warn(
+					"pull",
+					`Pending heal skipped: ${noteRef(issue.path)} | ${errMsg(e, issue.path)}`,
+				);
+			}
 		}
 	}
 
