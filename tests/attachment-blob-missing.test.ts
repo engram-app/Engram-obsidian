@@ -11,6 +11,14 @@
  * this client cannot compute, so the proof is the recorded pair
  * (serverHash, local fnv hash) from the last converge, matched against the
  * row's current content_hash and the file's current bytes.
+ *
+ * The server side is modelled by `fakeServer`, which follows backend PR
+ * engram-app/Engram#2160's contract: a GET of a live row whose blob is gone
+ * answers 410 blob_missing; an upload of identical bytes onto that row writes
+ * the blob (`attachment blob healed from client`) and answers with the SAME
+ * content_hash, because the hash is an HMAC of the plaintext. `heals: false`
+ * models a backend without the heal (identical upload short-circuits, the
+ * blob stays gone): the client must notice via its follow-up GET.
  */
 import { describe, expect, mock, test } from "bun:test";
 import "fake-indexeddb/auto";
@@ -23,12 +31,13 @@ import {
 	issueDisposition,
 	shouldRetryAfterFailure,
 } from "../src/issue-store";
-import { fnv1a, SyncEngine } from "../src/sync";
+import { BLOB_HEAL_PUSHES_PER_PASS, fnv1a, SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 // base64 of the [1, 2, 3] bytes readBinary returns below.
 const B64 = "AQID";
 const PATH = "img/photo.png";
+const ROW_HASH = "server-hash-1";
 
 /** The rejection shape `throwIfHttpError` builds: status + headers + raw text. */
 function httpError(status: number, text: string) {
@@ -41,15 +50,31 @@ function httpError(status: number, text: string) {
 const gone = () =>
 	httpError(410, JSON.stringify({ error: "attachment content missing", code: "blob_missing" }));
 
-function makeEngine(getAttachment: () => Promise<unknown>, localFile: TFile | null) {
-	const pushAttachment = mock().mockResolvedValue({
-		attachment: { path: PATH, content_hash: "server-hash-new" },
+/** One attachment row per path, each with a content_hash and a blob that may
+ *  be missing. See the file header for the contract it follows. */
+function fakeServer(paths: string[], opts: { heals: boolean }) {
+	const blobPresent = new Map(paths.map((p) => [p, false]));
+	const getAttachment = mock(async (path: string) => {
+		if (!blobPresent.get(path)) throw gone();
+		return { path, content_base64: B64, content_hash: ROW_HASH, updated_at: "x" };
 	});
+	const pushAttachment = mock(async (path: string) => {
+		if (opts.heals) blobPresent.set(path, true);
+		return { attachment: { path, content_hash: ROW_HASH } };
+	});
+	return { blobPresent, getAttachment, pushAttachment };
+}
+
+function makeEngine(
+	server: { getAttachment: unknown; pushAttachment: unknown },
+	localFiles: TFile[],
+) {
 	const api = {
-		pushAttachment,
-		getAttachment: mock(getAttachment),
+		pushAttachment: server.pushAttachment,
+		getAttachment: server.getAttachment,
 		ping: mock().mockResolvedValue({ ok: true }),
 	} as unknown as EngramApi;
+	const byPath = new Map(localFiles.map((f) => [f.path, f]));
 	const app = {
 		vault: {
 			configDir: ".obsidian",
@@ -59,9 +84,9 @@ function makeEngine(getAttachment: () => Promise<unknown>, localFile: TFile | nu
 			createBinary: mock().mockResolvedValue(undefined),
 			modifyBinary: mock().mockResolvedValue(undefined),
 			createFolder: mock().mockResolvedValue(undefined),
-			getAbstractFileByPath: mock().mockReturnValue(localFile),
-			getFileByPath: mock().mockReturnValue(localFile),
-			getFiles: mock().mockReturnValue(localFile ? [localFile] : []),
+			getAbstractFileByPath: mock((p: string) => byPath.get(p) ?? null),
+			getFileByPath: mock((p: string) => byPath.get(p) ?? null),
+			getFiles: mock().mockReturnValue(localFiles),
 			getName: mock().mockReturnValue("Test Vault"),
 		},
 		fileManager: { trashFile: mock().mockResolvedValue(undefined) },
@@ -75,11 +100,16 @@ function makeEngine(getAttachment: () => Promise<unknown>, localFile: TFile | nu
 	);
 	e.setReady();
 	e.setNoteIdMap(new NoteIdMap());
-	return { e, app, pushAttachment };
+	return { e, app };
 }
 
-const change = (content_hash?: string) => ({
-	path: PATH,
+/** Record the row a previous converge left behind: our bytes, the row's hash. */
+function synced(e: SyncEngine, path: string, hash = fnv1a(B64), serverHash = ROW_HASH) {
+	(e as any).syncState.set(path, { hash, serverHash });
+}
+
+const change = (content_hash?: string, path = PATH) => ({
+	path,
 	mime_type: "image/png",
 	size_bytes: 3,
 	mtime: 1,
@@ -121,133 +151,210 @@ describe("categorizeError: 410 blob_missing", () => {
 
 describe("applyAttachmentChange on 410 blob_missing", () => {
 	test("no local file: records a visible issue, no push, no throw", async () => {
-		const { e, app, pushAttachment } = makeEngine(() => Promise.reject(gone()), null);
+		const server = fakeServer([PATH], { heals: true });
+		const { e, app } = makeEngine(server, []);
 
-		await expect(e.applyAttachmentChange(change("server-hash-1"))).resolves.toBe(false);
+		await expect(e.applyAttachmentChange(change(ROW_HASH))).resolves.toBe(false);
 
-		expect(pushAttachment).not.toHaveBeenCalled();
+		expect(server.pushAttachment).not.toHaveBeenCalled();
 		expect(e.issues.get(PATH)?.category).toBe("blob_missing");
 		expect(e.issues.get(PATH)?.kind).toBe("attachment");
 		expectLocalUntouched(app);
 	});
 
 	test("local bytes differ from the last converge: issue, no push, file untouched", async () => {
-		const { e, app, pushAttachment } = makeEngine(
-			() => Promise.reject(gone()),
-			new TFile(PATH, 1, 3),
-		);
-		(e as any).syncState.set(PATH, {
-			hash: fnv1a("edited-since"),
-			serverHash: "server-hash-1",
-		});
+		const server = fakeServer([PATH], { heals: true });
+		const { e, app } = makeEngine(server, [new TFile(PATH, 1, 3)]);
+		synced(e, PATH, fnv1a("edited-since"));
 
-		await expect(e.applyAttachmentChange(change("server-hash-1"))).resolves.toBe(false);
+		await expect(e.applyAttachmentChange(change(ROW_HASH))).resolves.toBe(false);
 
-		expect(pushAttachment).not.toHaveBeenCalled();
+		expect(server.pushAttachment).not.toHaveBeenCalled();
 		expect(e.issues.get(PATH)?.category).toBe("blob_missing");
 		expectLocalUntouched(app);
 	});
 
 	test("server row moved past our converge: issue, no push (never upload stale bytes)", async () => {
-		const { e, pushAttachment } = makeEngine(
-			() => Promise.reject(gone()),
-			new TFile(PATH, 1, 3),
-		);
-		(e as any).syncState.set(PATH, { hash: fnv1a(B64), serverHash: "server-hash-OLD" });
+		const server = fakeServer([PATH], { heals: true });
+		const { e } = makeEngine(server, [new TFile(PATH, 1, 3)]);
+		synced(e, PATH, fnv1a(B64), "server-hash-OLD");
 
-		await e.applyAttachmentChange(change("server-hash-1"));
+		await e.applyAttachmentChange(change(ROW_HASH));
 
-		expect(pushAttachment).not.toHaveBeenCalled();
+		expect(server.pushAttachment).not.toHaveBeenCalled();
 		expect(e.issues.get(PATH)?.category).toBe("blob_missing");
 	});
 
 	test("row hash unknown (feed row without content_hash): issue, no push", async () => {
-		const { e, pushAttachment } = makeEngine(
-			() => Promise.reject(gone()),
-			new TFile(PATH, 1, 3),
-		);
-		(e as any).syncState.set(PATH, { hash: fnv1a(B64), serverHash: "server-hash-1" });
+		const server = fakeServer([PATH], { heals: true });
+		const { e } = makeEngine(server, [new TFile(PATH, 1, 3)]);
+		synced(e, PATH);
 
 		await e.applyAttachmentChange(change());
 
-		expect(pushAttachment).not.toHaveBeenCalled();
+		expect(server.pushAttachment).not.toHaveBeenCalled();
 		expect(e.issues.get(PATH)?.category).toBe("blob_missing");
 	});
 
-	test("local copy matches the row: re-uploads exactly once and records no issue", async () => {
-		const { e, app, pushAttachment } = makeEngine(
-			() => Promise.reject(gone()),
-			new TFile(PATH, 1, 3),
-		);
-		(e as any).syncState.set(PATH, { hash: fnv1a(B64), serverHash: "server-hash-1" });
+	test("healing backend: one push, the follow-up GET proves the blob is back, no issue", async () => {
+		const server = fakeServer([PATH], { heals: true });
+		const { e, app } = makeEngine(server, [new TFile(PATH, 1, 3)]);
+		synced(e, PATH);
 
-		await expect(e.applyAttachmentChange(change("server-hash-1"))).resolves.toBe(false);
+		await expect(e.applyAttachmentChange(change(ROW_HASH))).resolves.toBe(false);
 
-		expect(pushAttachment).toHaveBeenCalledTimes(1);
-		expect(pushAttachment.mock.calls[0]?.[0]).toBe(PATH);
+		expect(server.pushAttachment).toHaveBeenCalledTimes(1);
+		expect(server.blobPresent.get(PATH)).toBe(true);
+		// The original GET, then the confirming one.
+		expect(server.getAttachment).toHaveBeenCalledTimes(2);
 		expect(e.issues.get(PATH)).toBeUndefined();
-		expect((e as any).syncState.get(PATH)?.serverHash).toBe("server-hash-new");
+		expect((e as any).syncState.get(PATH)?.serverHash).toBe(ROW_HASH);
 		expectLocalUntouched(app);
 	});
 
-	test("the catch-up feed passes the row's content_hash through, so it heals too", async () => {
-		const { e, pushAttachment } = makeEngine(
-			() => Promise.reject(gone()),
-			new TFile(PATH, 1, 3),
-		);
-		(e as any).syncState.set(PATH, { hash: fnv1a(B64), serverHash: "server-hash-1" });
+	test("backend that does not heal: the push is not trusted, issue recorded, row unchanged", async () => {
+		const server = fakeServer([PATH], { heals: false });
+		const { e, app } = makeEngine(server, [new TFile(PATH, 1, 3)]);
+		synced(e, PATH, fnv1a(B64), ROW_HASH);
+		const before = { ...(e as any).syncState.get(PATH) };
 
-		await e.applySyncChange({
-			type: "attachment",
-			id: "a1",
-			seq: 7,
-			...change("server-hash-1"),
+		await e.applyAttachmentChange(change(ROW_HASH));
+
+		expect(server.pushAttachment).toHaveBeenCalledTimes(1);
+		expect(server.blobPresent.get(PATH)).toBe(false);
+		expect(e.issues.get(PATH)?.category).toBe("blob_missing");
+		const after = (e as any).syncState.get(PATH);
+		expect(after.hash).toBe(before.hash);
+		expect(after.serverHash).toBe(before.serverHash);
+		expectLocalUntouched(app);
+	});
+
+	test("never heals the same row twice, even across a reload", async () => {
+		const server = fakeServer([PATH], { heals: false });
+		const { e } = makeEngine(server, [new TFile(PATH, 1, 3)]);
+		synced(e, PATH);
+
+		await e.applyAttachmentChange(change(ROW_HASH));
+		const persisted = e.exportSyncState();
+		const { e: reloaded } = makeEngine(server, [new TFile(PATH, 1, 3)]);
+		reloaded.importSyncState(persisted);
+		await reloaded.applyAttachmentChange(change(ROW_HASH));
+
+		expect(server.pushAttachment).toHaveBeenCalledTimes(1);
+		expect(reloaded.issues.get(PATH)?.category).toBe("blob_missing");
+	});
+
+	test("a replay of N proven files pushes each at most once across two passes, capped per pass", async () => {
+		const n = BLOB_HEAL_PUSHES_PER_PASS + 3;
+		const paths = Array.from({ length: n }, (_, i) => `img/p${i}.png`);
+		const server = fakeServer(paths, { heals: false });
+		const { e } = makeEngine(
+			server,
+			paths.map((p) => new TFile(p, 1, 3)),
+		);
+		for (const p of paths) synced(e, p);
+
+		for (let pass = 0; pass < 2; pass++) {
+			(e as any).beginBlobHealPass();
+			for (const p of paths) await e.applyAttachmentChange(change(ROW_HASH, p));
+			if (pass === 0) {
+				expect(server.pushAttachment).toHaveBeenCalledTimes(BLOB_HEAL_PUSHES_PER_PASS);
+			}
+		}
+
+		expect(server.pushAttachment).toHaveBeenCalledTimes(n);
+		const pushed = server.pushAttachment.mock.calls.map((c) => c[0]);
+		expect(new Set(pushed).size).toBe(n);
+		for (const p of paths) expect(e.issues.get(p)?.category).toBe("blob_missing");
+	});
+
+	test("a push already in flight for the path still leaves a visible issue", async () => {
+		const server = fakeServer([PATH], { heals: true });
+		const { e } = makeEngine(server, [new TFile(PATH, 1, 3)]);
+		synced(e, PATH);
+		(e as any).pushing.add(PATH);
+
+		await e.applyAttachmentChange(change(ROW_HASH));
+
+		expect(server.pushAttachment).not.toHaveBeenCalled();
+		expect(e.issues.get(PATH)?.category).toBe("blob_missing");
+	});
+
+	test("the catch-up feed passes the row's content_hash through, so it heals too", async () => {
+		const server = fakeServer([PATH], { heals: true });
+		const { e } = makeEngine(server, [new TFile(PATH, 1, 3)]);
+		synced(e, PATH);
+
+		await e.applySyncChange({ type: "attachment", id: "a1", seq: 7, ...change(ROW_HASH) });
+
+		expect(server.pushAttachment).toHaveBeenCalledTimes(1);
+		expect(server.blobPresent.get(PATH)).toBe(true);
+	});
+
+	test("live path: an upsert carrying the synced hash is hash-skipped, so it never GETs or heals", async () => {
+		const server = fakeServer([PATH], { heals: true });
+		const { e } = makeEngine(server, [new TFile(PATH, 1, 3)]);
+		synced(e, PATH);
+
+		await e.handleStreamEvent({
+			event_type: "upsert",
+			kind: "attachment",
+			path: PATH,
+			timestamp: 1,
+			content_hash: ROW_HASH,
 		});
 
-		expect(pushAttachment).toHaveBeenCalledTimes(1);
+		expect(server.getAttachment).not.toHaveBeenCalled();
+		expect(server.pushAttachment).not.toHaveBeenCalled();
 	});
 
 	test("a later successful download clears the blob_missing issue", async () => {
-		let first = true;
-		const { e } = makeEngine(() => {
-			if (first) {
-				first = false;
-				return Promise.reject(gone());
-			}
-			return Promise.resolve({ path: PATH, content_base64: B64, updated_at: "x" });
-		}, null);
+		const server = fakeServer([PATH], { heals: true });
+		const { e } = makeEngine(server, []);
 
 		await e.applyAttachmentChange(change());
 		expect(e.issues.get(PATH)?.category).toBe("blob_missing");
+		server.blobPresent.set(PATH, true);
 		await e.applyAttachmentChange(change());
 		expect(e.issues.get(PATH)).toBeUndefined();
 	});
 
-	test("502 still throws to the caller (transient) and records nothing here", async () => {
-		const { e, app, pushAttachment } = makeEngine(
-			() => Promise.reject(httpError(502, JSON.stringify({ error: "storage" }))),
-			new TFile(PATH, 1, 3),
-		);
-		(e as any).syncState.set(PATH, { hash: fnv1a(B64), serverHash: "server-hash-1" });
+	test("the issue survives a download whose local write fails", async () => {
+		const server = fakeServer([PATH], { heals: true });
+		const { e, app } = makeEngine(server, []);
+		await e.applyAttachmentChange(change());
+		server.blobPresent.set(PATH, true);
+		app.vault.createBinary.mockRejectedValueOnce(new Error("disk full"));
 
-		await expect(e.applyAttachmentChange(change("server-hash-1"))).rejects.toMatchObject({
+		await expect(e.applyAttachmentChange(change())).rejects.toThrow("disk full");
+		expect(e.issues.get(PATH)?.category).toBe("blob_missing");
+	});
+
+	test("502 still throws to the caller (transient) and records nothing here", async () => {
+		const server = fakeServer([PATH], { heals: true });
+		server.getAttachment.mockImplementation(() =>
+			Promise.reject(httpError(502, JSON.stringify({ error: "storage" }))),
+		);
+		const { e, app } = makeEngine(server, [new TFile(PATH, 1, 3)]);
+		synced(e, PATH);
+
+		await expect(e.applyAttachmentChange(change(ROW_HASH))).rejects.toMatchObject({
 			status: 502,
 		});
-		expect(pushAttachment).not.toHaveBeenCalled();
+		expect(server.pushAttachment).not.toHaveBeenCalled();
 		expect(e.issues.get(PATH)).toBeUndefined();
 		expectLocalUntouched(app);
 	});
 
 	test("a non-JSON 410 is not healed: it throws like any other failure", async () => {
-		const { e, pushAttachment } = makeEngine(
-			() => Promise.reject(httpError(410, "Gone")),
-			new TFile(PATH, 1, 3),
-		);
-		(e as any).syncState.set(PATH, { hash: fnv1a(B64), serverHash: "server-hash-1" });
+		const server = fakeServer([PATH], { heals: true });
+		server.getAttachment.mockImplementation(() => Promise.reject(httpError(410, "Gone")));
+		const { e } = makeEngine(server, [new TFile(PATH, 1, 3)]);
+		synced(e, PATH);
 
-		await expect(e.applyAttachmentChange(change("server-hash-1"))).rejects.toMatchObject({
+		await expect(e.applyAttachmentChange(change(ROW_HASH))).rejects.toMatchObject({
 			status: 410,
 		});
-		expect(pushAttachment).not.toHaveBeenCalled();
+		expect(server.pushAttachment).not.toHaveBeenCalled();
 	});
 });

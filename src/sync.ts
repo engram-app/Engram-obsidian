@@ -101,6 +101,12 @@ export const MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024;
  *  this with the authoritative head. */
 export const CRDT_HEAD_CREATED = "__crdt_created__";
 
+/** Most re-uploads of a lost attachment blob one catch-up pass may start
+ *  (see handleBlobMissing). The rest stay Sync Center issues until a later
+ *  pass, so a full replay of a vault that lost its bytes is not an upload
+ *  storm. */
+export const BLOB_HEAL_PUSHES_PER_PASS = 20;
+
 /** True when `content` is too large to enter the Yjs doc: seeding it would
  *  produce a base64 `crdt_msg` past Bandit's 8 MB WebSocket frame limit → 1009,
  *  killing the socket (and re-crashing on every reconnect). Every CRDT seed
@@ -665,6 +671,8 @@ export class SyncEngine {
 	 *  the last sync (Obsidian sets mtime to "now" on vault.modify(),
 	 *  making mtime-based detection unreliable). */
 	private syncState = this.track(["vault"], new Map<string, FileSyncState>());
+	/** Heal uploads started in the current catch-up pass (handleBlobMissing). */
+	private blobHealsThisPass = 0;
 
 	/** Vault events that arrived while the gate was closed or before setReady
 	 *  (#247), in event order. Dropping them lost deletes and turned renames
@@ -7473,6 +7481,7 @@ export class SyncEngine {
 			cursor = floored;
 		}
 		this.seqRewindFloor = null;
+		this.beginBlobHealPass();
 		const startedAtZero = cursor === 0;
 		let applied = 0;
 		let files = 0;
@@ -10453,15 +10462,21 @@ export class SyncEngine {
 		// never replace: a bare `set` would drop it again on the following
 		// write, which is the same bug that kept force-push unprovable.
 		const rowPatch = serverHash ? { hash, serverHash } : { hash };
-		// The server has the bytes again: a blob_missing issue is now stale.
-		if (this.issues.get(normalized)?.category === "blob_missing") this.issues.clear(normalized);
+		// Runs only once the vault holds these bytes. The server served them, so
+		// a blob_missing issue is stale now, and not before: a failed write must
+		// leave it visible.
+		const settle = () => {
+			this.patchSyncedRow(normalized, rowPatch);
+			if (this.issues.get(normalized)?.category === "blob_missing")
+				this.issues.clear(normalized);
+		};
 
 		if (existing) {
 			// Skip if content is identical — prevents modify event and push-back loop
 			if (existing.stat.size === buffer.byteLength) {
 				const localBuffer = await this.app.vault.readBinary(existing);
 				if (this.arrayBuffersEqual(localBuffer, buffer)) {
-					this.patchSyncedRow(normalized, rowPatch);
+					settle();
 					rlog().info(
 						"pull",
 						`Attachment unchanged: ${noteRef(change.path)} | bytes=${buffer.byteLength}`,
@@ -10470,7 +10485,7 @@ export class SyncEngine {
 				}
 			}
 			await this.app.vault.modifyBinary(existing, buffer);
-			this.patchSyncedRow(normalized, rowPatch);
+			settle();
 			rlog().info(
 				"pull",
 				`Attachment applied: ${noteRef(change.path)} | bytes=${buffer.byteLength}`,
@@ -10478,7 +10493,7 @@ export class SyncEngine {
 			return true;
 		}
 		await this.createBinaryFileWithFolders(normalized, buffer);
-		this.patchSyncedRow(normalized, rowPatch);
+		settle();
 		rlog().info(
 			"pull",
 			`Attachment created: ${noteRef(change.path)} | bytes=${buffer.byteLength}`,
@@ -10489,15 +10504,22 @@ export class SyncEngine {
 	/** The server kept this attachment's row but lost its bytes (410
 	 *  blob_missing, engram-app/Engram#2159). Terminal: never retried, and the
 	 *  local file is never touched. If the local copy is provably the bytes the
-	 *  row describes, re-upload it so the server heals from this device;
-	 *  otherwise park a visible issue.
+	 *  row describes, re-upload it once so the server heals from this device
+	 *  (backend #2160 writes identical bytes onto a row whose blob is missing);
+	 *  otherwise, or if the heal does not take, park a visible issue.
 	 *
 	 *  The proof has to be server evidence: the row's content_hash is an HMAC
 	 *  this client cannot compute. The synced row pairs the serverHash of our
 	 *  last converge with the fnv hash of the bytes we held then, so the row
 	 *  hash matching that serverHash AND the file still hashing the same proves
 	 *  it. An unknown row hash proves nothing, and uploading then could replace
-	 *  newer content the server is able to restore. */
+	 *  newer content the server is able to restore.
+	 *
+	 *  Bounded twice, because a replay from cursor 0 can hit thousands of these
+	 *  at once (the #2159 vault had 7,440): `blobHealedFor` (persisted) means a
+	 *  row hash is healed at most once ever, and BLOB_HEAL_PUSHES_PER_PASS caps
+	 *  the uploads one catch-up pass may start. Heals run one at a time, since
+	 *  the catch-up loop awaits each row. */
 	private async handleBlobMissing(
 		normalized: string,
 		rowHash: string | undefined,
@@ -10509,16 +10531,30 @@ export class SyncEngine {
 			file !== null &&
 			rowHash !== undefined &&
 			synced?.serverHash === rowHash &&
+			synced.blobHealedFor !== rowHash &&
 			fnv1aBase64(await this.app.vault.readBinary(file)) === synced.hash;
-		if (proven) {
+		if (proven && this.blobHealsThisPass < BLOB_HEAL_PUSHES_PER_PASS) {
+			this.blobHealsThisPass += 1;
+			// Marked before the push: one attempt per row hash, whatever happens.
+			this.patchSyncedRow(normalized, { blobHealedFor: rowHash });
+			const before = this.syncState.get(normalized);
 			rlog().warn(
 				"pull",
 				`Attachment blob missing on server, re-uploading: ${noteRef(normalized)}`,
 			);
 			// Forced: the local echo guard would skip these unchanged bytes, which
-			// are exactly the ones the server needs back.
-			await this.pushFile(file, true);
-			return;
+			// are exactly the ones the server needs back. A 200 alone proves
+			// nothing (a backend without the heal answers 200 and keeps no bytes),
+			// so only a follow-up GET that serves the blob counts.
+			if ((await this.pushFile(file, true)) && (await this.attachmentServes(normalized))) {
+				rlog().info(
+					"pull",
+					`Attachment blob healed from this device: ${noteRef(normalized)}`,
+				);
+				return;
+			}
+			// Not healed: undo pushFile's stamp so the row still says what we knew.
+			if (before) this.syncState.set(normalized, before);
 		}
 		const classified = categorizeError(cause);
 		const now = Date.now();
@@ -10534,8 +10570,27 @@ export class SyncEngine {
 		});
 		rlog().warn(
 			"pull",
-			`Attachment blob missing on server: ${noteRef(normalized)} | local=${file ? "differs-or-unproven" : "absent"}`,
+			`Attachment blob missing on server: ${noteRef(normalized)} | local=${
+				file ? (proven ? "matches" : "differs-or-unproven") : "absent"
+			}`,
 		);
+	}
+
+	/** Whether the server now serves this attachment's bytes. Downloads them:
+	 *  the cost of proving a heal, bounded by BLOB_HEAL_PUSHES_PER_PASS. */
+	private async attachmentServes(path: string): Promise<boolean> {
+		try {
+			await this.api.getAttachment(path);
+			return true;
+		} catch (e) {
+			rlog().warn("pull", `Heal check failed: ${noteRef(path)} | ${errMsg(e, path)}`);
+			return false;
+		}
+	}
+
+	/** Start a catch-up pass's budget of heal uploads. */
+	private beginBlobHealPass(): void {
+		this.blobHealsThisPass = 0;
 	}
 
 	/** Create a text file, ensuring parent folders exist. */
