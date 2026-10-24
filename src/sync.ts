@@ -10545,15 +10545,15 @@ export class SyncEngine {
 			synced?.serverHash === rowHash &&
 			synced.blobHealedFor !== rowHash &&
 			this.blobHealsThisPass < this.blobHealBudget;
+		// Claimed synchronously, before the first await: a live event and the
+		// pending-heal drain racing on this path must not both get through. The
+		// claim stays whatever happens next (a copy that differs can never heal
+		// this row hash; a failed push is the tradeoff documented above).
+		if (candidate) this.patchSyncedRow(normalized, { blobHealedFor: rowHash });
 		const proven =
 			candidate && fnv1aBase64(await this.app.vault.readBinary(file)) === synced.hash;
-		// Read and different: this copy can never heal that row hash. Settle it so
-		// the pending-heal drain stops re-reading it every pass.
-		if (candidate && !proven) this.patchSyncedRow(normalized, { blobHealedFor: rowHash });
 		if (proven) {
 			this.blobHealsThisPass += 1;
-			// Marked before the push: one attempt per row hash, whatever happens.
-			this.patchSyncedRow(normalized, { blobHealedFor: rowHash });
 			const before = this.syncState.get(normalized);
 			rlog().warn(
 				"pull",

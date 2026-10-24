@@ -330,6 +330,31 @@ describe("applyAttachmentChange on 410 blob_missing", () => {
 		expect(e.issues.get(PATH)?.category).toBe("blob_missing");
 	});
 
+	test("two concurrent heal attempts on one path push exactly once", async () => {
+		const server = fakeServer([PATH], { heals: true });
+		const { e, app } = makeEngine(server, [new TFile(PATH, 1, 3)]);
+		synced(e, PATH);
+		// The second attempt's file read finishes only after the first heal is
+		// done, so the push-in-flight guard cannot be what stops it.
+		let reads = 0;
+		app.vault.readBinary.mockImplementation(async () => {
+			reads += 1;
+			if (reads === 2) await new Promise((r) => setTimeout(r, 30));
+			return new Uint8Array([1, 2, 3]).buffer;
+		});
+
+		// A live event and the pending-heal drain racing on the same row.
+		await Promise.all([
+			e.applyAttachmentChange(change(ROW_HASH)),
+			e.applyAttachmentChange(change(ROW_HASH)),
+		]);
+
+		expect(server.pushAttachment).toHaveBeenCalledTimes(1);
+		expect(server.blobPresent.get(PATH)).toBe(true);
+		expect((e as any).syncState.get(PATH)?.blobHealedFor).toBe(ROW_HASH);
+		expect(e.issues.get(PATH)).toBeUndefined();
+	});
+
 	test("a push already in flight for the path still leaves a visible issue", async () => {
 		const server = fakeServer([PATH], { heals: true });
 		const { e } = makeEngine(server, [new TFile(PATH, 1, 3)]);
