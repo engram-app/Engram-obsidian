@@ -470,6 +470,12 @@ class OpLogFetchError extends Error {
 }
 
 /** A collection the engine can sweep on teardown. Map and Set both satisfy it. */
+/** What one `pushFile` call did (see SyncEngine.pushOutcome). */
+type PushOutcome =
+	| { kind: "sent_ok" }
+	| { kind: "not_sent" }
+	| { kind: "failed"; status?: number; transient: boolean };
+
 type Sweepable = { clear(): void };
 
 /**
@@ -5519,6 +5525,10 @@ export class SyncEngine {
 		force = false,
 		bypassPlanSkip = false,
 		serverAttachmentHashes?: Map<string, string>,
+		/** Called with the error when a push was SENT and failed. A false
+		 *  return without this call means nothing was sent (in flight, parked,
+		 *  plan-skipped, echo). Only `pushOutcome` passes it. */
+		onSendFailed?: (e: unknown) => void,
 	): Promise<boolean> {
 		if (this.pushing.has(file.path)) return false;
 
@@ -6310,6 +6320,7 @@ export class SyncEngine {
 			);
 			this.goOnline();
 		} catch (e) {
+			onSendFailed?.(e);
 			const msg = errMsg(e, file.path);
 			const classified = categorizeError(e);
 			// Plan-limit 402s (needs_pro, quota) are expected Free-tier outcomes,
@@ -10510,6 +10521,24 @@ export class SyncEngine {
 		return true;
 	}
 
+	/** `pushFile`, with its outcome spelled out instead of folded into a
+	 *  boolean. `failed` carries whether retrying can help: 408, 429, 5xx and
+	 *  no response at all are transient; any other refusal (400, 401, 402, 403,
+	 *  404, 409, 413, 415, 422 ...) is definitive. */
+	private async pushOutcome(file: TFile, force: boolean): Promise<PushOutcome> {
+		let failure: { error: unknown } | undefined;
+		const ok = await this.pushFile(file, force, false, undefined, (error) => {
+			failure = { error };
+		});
+		if (ok) return { kind: "sent_ok" };
+		if (!failure) return { kind: "not_sent" };
+		const { status, terminal } = categorizeError(failure.error);
+		const transient =
+			!terminal &&
+			(status === undefined || status === 408 || status === 429 || status >= 500);
+		return { kind: "failed", status, transient };
+	}
+
 	/** The server kept this attachment's row but lost its bytes (410
 	 *  blob_missing, engram-app/Engram#2159). Terminal: never retried as a
 	 *  pull, and the local file is never touched. If the local copy is provably
@@ -10629,8 +10658,15 @@ export class SyncEngine {
 		// exactly the ones the server needs back. A 200 alone proves nothing (a
 		// backend without the heal answers 200 and keeps no bytes), so only a
 		// follow-up GET that serves the blob counts.
-		const pushed = await this.pushFile(file, true);
-		const served = pushed ? await this.attachmentServes(normalized) : "transient";
+		const pushed = await this.pushOutcome(file, true);
+		if (pushed.kind === "not_sent") {
+			// Nothing went out (a user edit's push holds the path, say): refund the
+			// attempt and the budget slot, and leave the row eligible.
+			this.blobHealsThisPass -= 1;
+			this.patchSyncedRow(normalized, { blobHeal: synced.blobHeal });
+			return "unhealed";
+		}
+		const served = pushed.kind === "sent_ok" ? await this.attachmentServes(normalized) : null;
 		if (served === "yes") {
 			settle(prior + 1, true);
 			rlog().info("pull", `Attachment blob healed from this device: ${noteRef(normalized)}`);
@@ -10638,13 +10674,9 @@ export class SyncEngine {
 		}
 		// Not healed: undo pushFile's stamp so the row still says what we knew.
 		if (before) this.syncState.set(normalized, before);
-		// pushFile records its own failure as an issue; a terminal one (413, 415,
-		// auth, plan limit) is a refusal that retrying cannot change. A server
-		// that took the bytes and still 410s will not change either.
-		const pushIssue = this.issues.get(normalized);
-		const definitive = pushed
-			? served === "missing"
-			: pushIssue !== undefined && issueDisposition(pushIssue.category) !== "transient";
+		// Settled for good on a definitive refusal, or a server that took the
+		// bytes and still 410s; a transient failure leaves it retryable.
+		const definitive = pushed.kind === "failed" ? !pushed.transient : served === "missing";
 		settle(prior + 1, definitive);
 		return "unhealed";
 	}
