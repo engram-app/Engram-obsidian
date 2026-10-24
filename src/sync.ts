@@ -12411,8 +12411,9 @@ export class SyncEngine {
 			this.time.clearTimeout(this.queueRetryTimer);
 			this.queueRetryTimer = null;
 		}
-		// Refused for an old version: no timer. The clearing event re-drives the
-		// drain (main.ts's upgrade-state listener calls flushQueue).
+		// Refused for an old version: no timer. Admission re-drives the drain
+		// (main.ts's upgrade-state listener); reload / backend switch drain from
+		// the crdt: join kick.
 		if (this.offline || this.syncBlocked || isUpgradeRequired()) return;
 		let due = Number.POSITIVE_INFINITY;
 		for (const e of this.queue.all()) {

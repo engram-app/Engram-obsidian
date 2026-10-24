@@ -39,8 +39,9 @@
  *
  * While refused, the offline queue holds untouched (sync.ts runFlushQueue)
  * and per-file 426 issues are not recorded (issue-store.ts), so nothing the
- * user changed is dropped. main.ts drains the queue on clearing event 3; a
- * reload or backend switch drains through the normal startup / sync-gate path.
+ * user changed is dropped. main.ts drains the queue on clearing event 3; after
+ * a reload or backend switch the drain comes from the `crdt:` join kick in
+ * main.ts (onCrdtTopicJoined), like any other reconnect.
  *
  * ## Refused means refused locally too
  *
@@ -70,7 +71,7 @@ let refusedMinVersion: string | null = null;
 /** `admitted` = cleared by the server accepting a `sync:` join (event 3),
  *  the only clear where draining the held queue is safe: a backend switch
  *  (event 2) lands mid-reconfigure, before the new auth exists, and drains
- *  through the sync gate on its own. */
+ *  later from the new channel's `crdt:` join kick. */
 type UpgradeStateListener = (admitted: boolean) => void;
 let onStateChange: UpgradeStateListener | null = null;
 
