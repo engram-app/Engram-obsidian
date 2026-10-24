@@ -280,6 +280,7 @@ const ru: Dict = {
 		"Engram: этот плагин слишком старый для синхронизации. Обновите его, чтобы продолжить.",
 	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
 		"Engram: это хранилище больше не существует на сервере. Выберите или создайте хранилище, чтобы продолжить.",
+	"Engram: update required": "Engram: требуется обновление",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: ваш сеанс завершен — откройте настройки Engram, чтобы подключиться заново.",
 	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.": {
@@ -404,6 +405,10 @@ const ru: Dict = {
 	"Not signed in. Click to open settings and reconnect.":
 		"Не вошли в систему. Нажмите, чтобы открыть настройки и подключиться заново.",
 	"Not synced on your plan ({count})": "Не синхронизировано по вашему тарифному плану ({count})",
+	"Not syncing: this plugin version is too old (needs {version} or newer). Click to update.":
+		"Синхронизация не происходит: версия плагина слишком старая (требуется {version} или новее). Нажмите для обновления.",
+	"Not syncing: this plugin version is too old. Click to update.":
+		"Синхронизация не происходит: версия плагина слишком старая. Нажмите для обновления.",
 	"Note couldn't be processed": "Заметку не удалось обработать",
 	"Note limit reached. Upgrade to keep adding notes.":
 		"Достигнут лимит заметок. Обновите подписку, чтобы добавлять больше заметок.",
@@ -572,6 +577,10 @@ const ru: Dict = {
 		"Это не похоже на полный адрес сервера. Укажите схему, например http://127.0.0.1:4000",
 	"That does not look like an Engram API key (expected {prefix}…).":
 		"Это не похоже на ключ API Engram (ожидается {prefix}…).",
+	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Your notes are safe; they will sync once you update.":
+		"Сервер Engram больше не принимает эту версию плагина (требуется {version} или новее), поэтому заметки не отправляются и не принимаются. Ваши заметки в безопасности; они будут синхронизированы после обновления.",
+	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Your notes are safe; they will sync once you update.":
+		"Сервер Engram больше не принимает эту версию плагина, поэтому заметки не отправляются и не принимаются. Ваши заметки в безопасности; они будут синхронизированы после обновления.",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"Бесплатный тариф синхронизирует только заметки. Обновите подписку, чтобы синхронизировать изображения и PDF-файлы.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
@@ -619,6 +628,8 @@ const ru: Dict = {
 	Untitled: "Без названия",
 	Update: "Обновить",
 	"Update in settings": "Обновить в настройках",
+	"Update required, not syncing": "Требуется обновление, синхронизация не происходит",
+	"Update required: Engram is not syncing": "Требуется обновление: Engram не синхронизируется",
 	Upgrade: "Обновить",
 	"Upload everything": "Загрузить всё",
 	"Upload local files without downloading the remote":
