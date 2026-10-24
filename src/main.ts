@@ -620,12 +620,13 @@ export default class EngramSyncPlugin extends Plugin {
 		// and a "newer version available" nudge want the same place, and that
 		// path is already feature-detected against Obsidian internals.
 		setUpgradeAction(() => this.openCommunityPluginsUpdate());
-		setUpgradeStateListener(() => {
+		setUpgradeStateListener((admitted) => {
 			if (!this.syncEngine) return;
 			this.updateStatusBar(this.syncEngine.getStatus());
-			// Cleared: the queue held every change while refused (sync.ts
-			// runFlushQueue), and nothing else re-drives it. Drain it now.
-			if (!isUpgradeRequired()) {
+			// Admitted by the server: the queue held every change while refused
+			// (sync.ts runFlushQueue), and a socket join does not re-drive it.
+			// Only on admission: see UpgradeStateListener in upgrade-required.ts.
+			if (admitted) {
 				void this.syncEngine.flushQueue().catch((e: unknown) => {
 					rlog().warn("queue", `post-refusal flush failed: ${errMsg(e)}`);
 				});

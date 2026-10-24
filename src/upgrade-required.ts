@@ -39,7 +39,8 @@
  *
  * While refused, the offline queue holds untouched (sync.ts runFlushQueue)
  * and per-file 426 issues are not recorded (issue-store.ts), so nothing the
- * user changed is dropped; main.ts drains the queue on the clearing event.
+ * user changed is dropped. main.ts drains the queue on clearing event 3; a
+ * reload or backend switch drains through the normal startup / sync-gate path.
  *
  * ## Refused means refused locally too
  *
@@ -66,21 +67,26 @@ let notified = false;
 let refused = false;
 let openUpdateUi: (() => void) | null = null;
 let refusedMinVersion: string | null = null;
-let onStateChange: (() => void) | null = null;
+/** `admitted` = cleared by the server accepting a `sync:` join (event 3),
+ *  the only clear where draining the held queue is safe: a backend switch
+ *  (event 2) lands mid-reconfigure, before the new auth exists, and drains
+ *  through the sync gate on its own. */
+type UpgradeStateListener = (admitted: boolean) => void;
+let onStateChange: UpgradeStateListener | null = null;
 
 /** Repaint hook for the persistent UI (status bar + Sync Center). Called on
  *  every change of `isUpgradeRequired()`, never on a no-op. One slot: `main.ts`
  *  is the only subscriber, and clears it on unload like `setUpgradeAction`. */
-export function setUpgradeStateListener(fn: (() => void) | null): void {
+export function setUpgradeStateListener(fn: UpgradeStateListener | null): void {
 	onStateChange = fn;
 }
 
-function setRefused(next: boolean, minVersion: string | null = null): void {
+function setRefused(next: boolean, minVersion: string | null = null, admitted = false): void {
 	if (next) refusedMinVersion = minVersion ?? refusedMinVersion;
 	else refusedMinVersion = null;
 	if (refused === next) return;
 	refused = next;
-	onStateChange?.();
+	onStateChange?.(admitted);
 }
 
 /** Whether an update action is wired, so a caller can skip a dead button. */
@@ -184,7 +190,7 @@ export function clearUpgradeRefusal(): void {
 /** Clearing event 3: the server admitted a `sync:` join, so its floor accepts
  *  this version. The notice stays latched (see module doc). */
 export function markAdmitted(): void {
-	setRefused(false);
+	setRefused(false, null, true);
 }
 
 /** What `EngramApi` throws in place of a request once refused. Carries

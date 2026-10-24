@@ -240,12 +240,12 @@ export class EngramApi {
 		// Same backend: keep them. saveSettings lands here on every write (OAuth
 		// rotation included) while setupNoteStream reuses the live socket, so no
 		// join reply would come to turn them back on.
-		if (normalized !== this.baseUrl) {
+		const switched = normalized !== this.baseUrl;
+		if (switched) {
 			this.rawAttachmentUpload = false;
 			this.rawAttachmentUploadKnown = false;
 			this.rawAttachmentDownload = false;
 			this.serverVersion = null;
-			clearUpgradeRefusal();
 		}
 		this.baseUrl = normalized;
 		this.apiKey = apiKey;
@@ -253,6 +253,9 @@ export class EngramApi {
 		// exactly this reason: a pending beacon batch must never ship the old
 		// backend's JWT to the new origin.
 		this.lastToken = "";
+		// Last, so a listener reacting to the clear never sees the old
+		// backend's address or credentials on this client.
+		if (switched) clearUpgradeRefusal();
 	}
 
 	/** Surface a `426` — this plugin is below the backend's minimum version —

@@ -15,6 +15,7 @@ import type { SyncStatus } from "../src/types";
 import {
 	clearUpgradeRefusal,
 	isUpgradeRequired,
+	markAdmitted,
 	notifyUpgradeRequired,
 	resetUpgradeRequired,
 	setUpgradeAction,
@@ -499,7 +500,7 @@ describe("persistent blocked state", () => {
 	});
 
 	test("latching and clearing both tell the listener, so the UI repaints", () => {
-		const listener = mock(() => {});
+		const listener = mock((_admitted: boolean) => {});
 		setUpgradeStateListener(listener);
 
 		notifyUpgradeRequired("1.36.0");
@@ -510,5 +511,26 @@ describe("persistent blocked state", () => {
 		clearUpgradeRefusal();
 		expect(listener).toHaveBeenCalledTimes(2);
 		expect(upgradeRequiredMinVersion()).toBeNull();
+
+		// Only a server admission says "safe to drain the held queue".
+		notifyUpgradeRequired("1.36.0");
+		markAdmitted();
+		expect(listener.mock.calls.map((c) => c[0])).toEqual([false, false, false, true]);
+	});
+
+	// main.ts reacts to the clear; it must never act while this client still
+	// points at the OLD backend with the old key (delta check on #635).
+	test("a backend switch clears the refusal only after the new address and key are set", () => {
+		const api = new EngramApi("https://a.example.com", "old-key");
+		notifyUpgradeRequired("1.36.0");
+		const seen: unknown[] = [];
+		setUpgradeStateListener(() => {
+			const raw = api as unknown as { baseUrl: string; apiKey: string };
+			seen.push([raw.baseUrl, raw.apiKey]);
+		});
+
+		api.updateConfig("https://b.example.com", "new-key");
+
+		expect(seen).toEqual([["https://b.example.com/api", "new-key"]]);
 	});
 });

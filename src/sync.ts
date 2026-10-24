@@ -28,7 +28,7 @@ import {
 	TERMINAL_REASONS,
 } from "./crdt-op-dispatch";
 import { devLog } from "./dev-log";
-import { errMsg, isHttpStatus } from "./error-util";
+import { errMsg, isHttpStatus, statusOf } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
 import { isCanvasPath as canvasPath, isCrdtEligiblePath as crdtEligiblePath } from "./file-kind";
 import { t } from "./i18n";
@@ -6421,8 +6421,9 @@ export class SyncEngine {
 				// Drives the batched session toast (drained by pushAll /
 				// pushModifiedFiles) and the progress "skipped" count.
 				this.attachmentLimitedThisBatch += 1;
-			} else {
-				// Tally for the batched "N files failed to sync" Notice.
+			} else if (!(isHttpStatus(e, 426) && isUpgradeRequired())) {
+				// Tally for the batched "N files failed to sync" Notice. Not while
+				// the version floor refuses us: the update banner owns that.
 				this.failuresThisBatch += 1;
 				this.firstFailureMessageThisBatch ??= classified.userMessage;
 				this.firstFailureCategoryThisBatch ??= classified.category;
@@ -11359,6 +11360,8 @@ export class SyncEngine {
 						path: f.path,
 						kind: this.isBinaryFile(f) ? "attachment" : "note",
 						category: "other",
+						// IssueStore keys its version-floor filter on this.
+						status: statusOf(e),
 						message: msg,
 						firstFailedAt: Date.now(),
 						lastFailedAt: Date.now(),
