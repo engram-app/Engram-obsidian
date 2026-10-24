@@ -60,6 +60,9 @@ interface Entry {
 	/** In-flight disk-flush from the last remote merge; applyRemoteUpdate awaits
 	 *  it so a write failure can leave crdtHead unadvanced (#235). */
 	pendingFlush: Promise<void> | null;
+	/** True while applyLocalEdit applies the server's lineage under a pending
+	 *  disk edit; the flush listener must not write that state over the edit. */
+	adopting?: boolean;
 	/** Ownership window for this doc. Ended the instant removeDoc/destroy begins
 	 *  (before doc.destroy()), so an in-flight operation that captured this entry
 	 *  across an await is ABANDONED rather than resuming onto a dead doc
@@ -90,6 +93,19 @@ export interface ProviderRegistryOpts {
 	/** Adopt-first gate: content byte-identical to the last-synced content must
 	 *  NOT seed (would fork a second lineage → #846 doubling). */
 	isUnchangedSynced?: (noteId: string, content: string) => boolean;
+	/** Lineage before edit, for a history-less doc. A note the server already
+	 *  holds (discovery wrote its body to disk, never to the doc) must not be
+	 *  seeded from disk: that mints a rival clientID the server unions with its
+	 *  own copy. Given the disk text, the engine answers:
+	 *  - `undefined`: seed as before (the server holds no such note, or the
+	 *    server state cannot be read on this backend at all);
+	 *  - `null`: do not consume now (the engine retries or kept both copies);
+	 *  - `{ update, text }`: the server's state, and the text the doc should
+	 *    hold once the disk edit is merged onto it. */
+	serverLineage?: (
+		noteId: string,
+		disk: string,
+	) => Promise<{ update: Uint8Array; text: string } | null | undefined>;
 	/** Fired on the first inbound syncStep2 for a note. */
 	onSynced?: (noteId: string) => void;
 	/** Fired when the first inbound syncStep2 leaves the doc EMPTY — the server's
@@ -251,6 +267,7 @@ export class ProviderRegistry {
 		doc.on("update", (_u: Uint8Array, origin: unknown) => {
 			if (!entry.lifetime.active) return; // deleted mid-flight — never flush a dead doc
 			if (origin !== provider && origin !== REMOTE) return;
+			if (entry.adopting) return; // applyLocalEdit's lineage adopt: disk holds the edit
 			entry.remoteSeq += 1;
 			const projected = this.project(entry);
 			// Compare the BLOCK against what the last flush projected, not against
@@ -391,6 +408,62 @@ export class ProviderRegistry {
 		const e = await this.entry(noteId);
 		if (!e.lifetime.active) return null; // destroyed while we awaited hydration
 		let content = diskContent;
+
+		// Lineage before edit (see `serverLineage`). Same rule as pushFile's
+		// genesis arm and Relay's invariant #3: never write into a history-less
+		// doc the server already holds. Unchanged-synced content skips the read:
+		// the adopt-first gate below already declines it.
+		if (
+			this.opts.serverLineage &&
+			!docHasHistory(e.doc, e.kind) &&
+			!this.opts.isUnchangedSynced?.(noteId, diskContent)
+		) {
+			let lineage: { update: Uint8Array; text: string } | null | undefined;
+			try {
+				lineage = await e.lifetime.guard(this.opts.serverLineage(noteId, diskContent));
+			} catch {
+				return null; // destroyed mid-read, or the engine threw: never seed
+			}
+			if (!e.lifetime.active || lineage === null) return null;
+			if (lineage !== undefined) {
+				// The read took a round trip: a save landing meanwhile is newer than
+				// `diskContent`, and its own modify event re-runs this. Don't write
+				// over it.
+				if (reread) {
+					try {
+						if ((await e.lifetime.guard(reread())) !== diskContent) return null;
+					} catch {
+						return null;
+					}
+				}
+				// A merge or keep-both changes the note under the user: write that to
+				// disk FIRST. Unwritten, the caller's baseline would claim text disk
+				// lacks and the next edit would diff the server's work away; failing
+				// here leaves the doc untouched for the next attempt.
+				const flush = async (text: string): Promise<boolean> => {
+					const fm = splitFrontmatter(text).fmBlock;
+					const fmChanged = fm !== e.lastFlushedFm;
+					e.lastFlushedFm = fm;
+					return (await this.opts.onFlushToDisk(noteId, text, fmChanged)) !== false;
+				};
+				if (lineage.text !== diskContent && !(await flush(lineage.text))) return null;
+				if (!e.lifetime.active) return null;
+				// Provider origin: no re-send of the server's own ops. No flush: disk
+				// already holds the target text, which the seed lays onto this state.
+				e.adopting = true;
+				try {
+					Y.applyUpdate(e.doc, lineage.update, e.provider);
+				} finally {
+					e.adopting = false;
+				}
+				if (e.kind === "canvas") seedCanvasInto(e.doc, lineage.text);
+				else seedContentInto(e.doc, e.text, lineage.text, true);
+				// The codec may canonicalize (frontmatter): disk follows the doc.
+				const projected = this.project(e);
+				if (projected !== lineage.text) await flush(projected);
+				return projected;
+			}
+		}
 
 		// LCA path (#357). With a merge base we apply the disk's delta RELATIVE TO
 		// THE BASE, so a remote op that landed after the disk read survives by

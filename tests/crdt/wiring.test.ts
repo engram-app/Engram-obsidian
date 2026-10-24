@@ -78,6 +78,7 @@ function makeDevice(
 		flushStrandedNote: async (path: string, noteId: string) =>
 			syncEngine.flushFromCrdt(path, await wiring.manager.projectedText(noteId)),
 		isUnchangedSynced: () => false,
+		serverLineageFor: async () => undefined,
 		materializeEmptyDiscovered: async (path: string) => {
 			disk.set(path, "");
 		},
@@ -137,6 +138,7 @@ function fanoutStubEngine() {
 		flushFromCrdt: async () => {},
 		flushStrandedNote: async () => true,
 		isUnchangedSynced: () => false,
+		serverLineageFor: async () => undefined,
 		materializeEmptyDiscovered: async () => {},
 		reconcileNoteIdMapFromManifest: async () => 0,
 		isSyncBlocked: () => false,
@@ -258,6 +260,7 @@ test("#235: a flushFromCrdt write failure rejects applyRemoteUpdate (head stays 
 		// Real flushFromCrdt returns false when the disk write throws.
 		flushFromCrdt: async () => false,
 		isUnchangedSynced: () => false,
+		serverLineageFor: async () => undefined,
 		materializeEmptyDiscovered: async () => {},
 		reconcileNoteIdMapFromManifest: async () => 0,
 		isSyncBlocked: () => false,
@@ -481,6 +484,7 @@ test("a refused live frame records a durable delivery, not a rejoin enroll", asy
 		syncEngine: {
 			flushFromCrdt: async () => true,
 			isUnchangedSynced: () => false,
+			serverLineageFor: async () => undefined,
 			materializeEmptyDiscovered: async () => {},
 			reconcileNoteIdMapFromManifest: async () => 0,
 			isSyncBlocked: () => false,
@@ -515,6 +519,7 @@ test("a create-gated op frame also records a durable delivery", async () => {
 		syncEngine: {
 			flushFromCrdt: async () => true,
 			isUnchangedSynced: () => false,
+			serverLineageFor: async () => undefined,
 			materializeEmptyDiscovered: async () => {},
 			reconcileNoteIdMapFromManifest: async () => 0,
 			isSyncBlocked: () => false,
@@ -557,6 +562,7 @@ test("wiring gate: syncStep1 reaches sendCrdt for a held doc, ops do not", async
 		syncEngine: {
 			flushFromCrdt: async () => true,
 			isUnchangedSynced: () => false,
+			serverLineageFor: async () => undefined,
 			materializeEmptyDiscovered: async () => {},
 			reconcileNoteIdMapFromManifest: async () => 0,
 			isSyncBlocked: () => false,
@@ -609,6 +615,7 @@ test("#1550: a note_not_found reply drives the orphaned-claim repair, ahead of t
 	const syncEngine = {
 		flushFromCrdt: async () => true,
 		isUnchangedSynced: () => false,
+		serverLineageFor: async () => undefined,
 		materializeEmptyDiscovered: async () => {},
 		reconcileNoteIdMapFromManifest: async () => 0,
 		isSyncBlocked: () => false,

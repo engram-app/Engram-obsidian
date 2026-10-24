@@ -338,3 +338,32 @@ export async function renameThenDeleteFast(seed = 489): Promise<RenameThenDelete
 		secondId: a.noteIdMap.get(reusedPath) ?? null,
 	};
 }
+
+// ---------------------------------------------------------------------------
+// Fresh device edits a DISCOVERED note (staging 0.59.0, 8/8 doubled). B is
+// offline while A creates, so B learns the note from catch-up's discovery leg:
+// body on disk, Y.Doc empty, note server-known. B's first edit must diff onto
+// the server's lineage. Seeding the empty doc minted a rival clientID and the
+// server stored the old body followed by the edit.
+// ---------------------------------------------------------------------------
+export interface FreshDeviceEditResult {
+	topology: Topology;
+	notePath: string;
+	edited: string;
+}
+
+export async function freshDeviceEditsDiscoveredNote(seed = 590): Promise<FreshDeviceEditResult> {
+	const t = await boot(seed, ["A", "B"], { genesisEmptyDoc: true });
+	const [a, b] = t.replicas;
+	const notePath = "fresh590.md";
+	const edited = "# fresh\n\nfirst body line.\nsecond line from a fresh device.\n";
+	await b.goOffline();
+	await t.scheduler.drain();
+	await a.createNote(notePath, "# fresh\n\nfirst body line.\n");
+	await t.scheduler.drain();
+	await b.goOnline();
+	await t.scheduler.drain();
+	await b.editNote(notePath, edited);
+	await t.scheduler.drain();
+	return { topology: t, notePath, edited };
+}
