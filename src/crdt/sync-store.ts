@@ -159,31 +159,7 @@ export class SyncStore {
 			if (!pending) this.parked.clear();
 			this.reverse = null;
 			this.cacheById = null;
-			if (!event.transaction.local) this.restageReleasedPending(event);
 		});
-	}
-
-	/** The server released a claim whose id is still PENDING here (its create
-	 *  never landed). That is not a delete of the note: it is the server giving
-	 *  up on an unacked claim (1h grace from the UUIDv7 mint time). Keep the
-	 *  SAME id as a local-only overlay entry, so the sweep retries `crdt_create`
-	 *  under it instead of minting a new one (prod 2026-10-22: ~14k re-mints).
-	 *  `commit()` holds pending entries back, so this is never re-published
-	 *  until the create is acked.
-	 *
-	 *  Remote only: a LOCAL delete of the key is the user's. An acked id is a
-	 *  real delete and is not touched. Skipped if anything else already answers
-	 *  for the path or the id lives elsewhere. */
-	private restageReleasedPending(event: Y.YMapEvent<FileMeta>): void {
-		for (const [key, change] of event.changes.keys) {
-			if (change.action !== "delete") continue;
-			const old = change.oldValue as FileMeta | undefined;
-			if (!old?.note_id || !this.pendingUpload.has(old.note_id)) continue;
-			if (this.map.has(key) || this.overlay.has(key) || this.deleteSet.has(key)) continue;
-			if (this.pathForId(old.note_id) !== null) continue;
-			this.overlay.set(key, old);
-			this.reverse = null;
-		}
 	}
 
 	/** Follow the rename chain to the path an entry lives at NOW.
@@ -412,18 +388,23 @@ export class SyncStore {
 	}
 
 	/** Stage a fresh UUIDv7 for `path`, PENDING until `confirmUpload`. The
-	 *  claim stays local until then: see `commit()`. */
+	 *  claim stays local until then: see `commit()`.
+	 *
+	 *  TWO DEVICES, ONE NEW PATH. With claims held until ack, a staggered first
+	 *  sync of the same vault on two devices has each device mint its OWN id
+	 *  for a path neither has published yet: neither can see the other's
+	 *  claim, because there is none until a create is acked. That is expected,
+	 *  and it is not a fork. The server's create decides: the first create
+	 *  creates the row; the second device's create for the same path is
+	 *  ADOPTED, and its ack carries the first device's id, which
+	 *  `adoptCreateAck` sets (published as the only claim) while the losing
+	 *  mint is never published. Before claim-after-ack the race was the same,
+	 *  only both mints were published to the index first. */
 	mint(path: string): string {
 		const note_id = uuid7();
 		this.set(path, { note_id });
 		this.pendingUpload.add(note_id);
 		return note_id;
-	}
-
-	/** Mark `note_id` as not yet acked by the server, so its claim is held back
-	 *  from the shared index until `confirmUpload`. */
-	markPendingUpload(note_id: string): void {
-		this.pendingUpload.add(note_id);
 	}
 
 	/** Stage `meta` for `path`. Visible to reads immediately, invisible to other
@@ -545,6 +526,20 @@ export class SyncStore {
 	 *  That is what broke `test_drifted_map_self_heals_on_inbound_edit`: the
 	 *  drift injected on one device propagated to the other, so there was no
 	 *  healthy peer left to heal from. */
+	/** `forget`, for a REMOTE delete of `path` carrying `deletedId` (null when
+	 *  the feed does not say). A held, still-pending entry at `path` under a
+	 *  DIFFERENT id is not what was deleted: the server has never seen that id,
+	 *  so it cannot be deleting it, and forgetting it re-minted the note. Narrow
+	 *  on purpose: only a held pending entry is spared; any other entry is
+	 *  forgotten exactly as before (the path-keyed delete itself is #630). */
+	forgetRemoteDelete(path: string, deletedId: string | null): void {
+		const held = this.overlay.get(path);
+		if (held && held.note_id !== deletedId && this.pendingUpload.has(held.note_id)) {
+			return;
+		}
+		this.forget(path);
+	}
+
 	forget(path: string): void {
 		// LITERAL path, deliberately unresolved. `delete()` resolves because it
 		// publishes and the entry really did move; a forget that resolved reached
@@ -800,7 +795,18 @@ export class SyncStore {
 		// redundant — and keeping it is pure blindness: a peer that re-claims
 		// that id at another path would never be visible to `pathForId` again,
 		// leaving inbound frames for the note with no disk path to resolve to.
-		this.evicted.clear();
+		//
+		// EXCEPT where a held pending entry still covers the path: nothing was
+		// published there, so the displaced id is still committed at it, and
+		// clearing its eviction let `pathForId` answer it with the held note's
+		// file (a tombstoned lineage resurrected at a live path). Those stay
+		// evicted until the held entry is published.
+		const shadowed = new Set<string>();
+		for (const path of this.overlay.keys()) {
+			const committed = this.map.get(path)?.note_id;
+			if (committed) shadowed.add(committed);
+		}
+		for (const id of this.evicted) if (!shadowed.has(id)) this.evicted.delete(id);
 		this.reverse = null;
 	}
 

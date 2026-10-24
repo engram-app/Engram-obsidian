@@ -6,9 +6,12 @@
  * every create again with no backoff, on every rejoin. ~19k creates never
  * reached the server.
  *
- * (a) a claim is published only once its create is acked
- * (b) a server release of a still-pending id keeps the SAME id
- * (c) a vault-wide create backoff gate bounds the retry rate
+ * (a) a claim is published only once its create is acked. A pending id is
+ *     held in the overlay, so a server release cannot take it away and the
+ *     retry goes out under the SAME id (round 1 deleted the separate re-stage
+ *     path, which production could never reach).
+ * (c) a vault-wide create backoff gate bounds BULK resends (sweep + queue);
+ *     a single user push always goes out and is the probe.
  */
 import { afterEach, describe, expect, mock, test } from "bun:test";
 import "fake-indexeddb/auto";
@@ -150,76 +153,110 @@ describe("(a) a claim is published only after its create is acked", () => {
 	});
 });
 
-describe("(b) a server release of a still-pending id keeps the same id", () => {
-	test("re-staged locally, never published, and getOrMint returns the SAME id", async () => {
-		const { doc, map, store, ids } = storeWithMap();
-		// A claim a pre-fix build published before its create was acked: the
-		// server still holds it, and the id is still unacked here.
-		map.set("a.md", { note_id: "id-x" });
-		store.markPendingUpload("id-x");
-
-		remote(doc, (m) => m.delete("a.md")); // the server releases the claim
-		expect(map.has("a.md")).toBe(false);
-
-		expect(ids.get("a.md")).toBe("id-x");
-		expect(ids.getOrMint("a.md")).toBe("id-x");
-		await tick();
-		ids.flushNow();
-		expect(map.has("a.md")).toBe(false); // still not re-published
-		ids.confirmUpload("id-x");
-		await tick();
-		expect(map.get("a.md")).toEqual({ note_id: "id-x" });
-	});
-
-	test("a remote delete of an ACKED id is a real delete, not re-staged", () => {
-		const { doc, map, store } = storeWithMap();
-		map.set("a.md", { note_id: "id-x" });
-		remote(doc, (m) => m.delete("a.md"));
-		expect(store.get("a.md")).toBeNull();
-		expect(store.isPendingUpload("id-x")).toBe(false);
-	});
-
-	test("a LOCAL delete of a pending id's key is not undone", async () => {
+describe("held pending entries survive what used to remove a published claim", () => {
+	// M3: commit() used to clear `evicted` wholesale. A held entry is not
+	// published, so the displaced id is still committed at the same path, and
+	// clearing its eviction made `pathForId` answer it with the held note's
+	// file: a tombstoned lineage resurrected at a live path.
+	test("an id evicted by a held pending entry stays evicted across an unrelated commit", () => {
+		const tomb = new Set<string>();
 		const { map, store, ids } = storeWithMap();
-		map.set("a.md", { note_id: "id-x" });
-		store.markPendingUpload("id-x");
-		ids.release("a.md");
-		await tick();
-		expect(map.has("a.md")).toBe(false);
+		store.setTombstoneCheck((id) => tomb.has(id));
+		map.set("a.md", { note_id: "id-e" }); // an acked, published claim
+		store.forget("a.md"); // remote delete: forget + room teardown
+		tomb.add("id-e");
+		const fresh = store.getOrMint("a.md"); // tombstoned: fresh mint, held
+		expect(fresh).not.toBe("id-e");
+		expect(store.pathForId("id-e")).toBeNull();
+
+		ids.set("other.md", "id-other"); // an unrelated publish
+		ids.flushNow();
+		expect(map.get("other.md")).toEqual({ note_id: "id-other" });
+		expect(store.pathForId("id-e")).toBeNull();
+		expect(store.get("a.md")).toBe(fresh);
+
+		// Once the held entry is acked and published, it really replaces id-e.
+		ids.confirmUpload(fresh);
+		ids.flushNow();
+		expect(map.get("a.md")).toEqual({ note_id: fresh });
+		expect(store.pathForId("id-e")).toBeNull();
+	});
+
+	// M5: a remote delete under ANOTHER id (or no id) is not about a note the
+	// server has never seen. Forgetting the held entry re-minted it.
+	test("a remote delete under another id keeps the held id", () => {
+		const { ids } = storeWithMap();
+		const held = ids.getOrMint("a.md");
+		ids.forgetRemoteDelete("a.md", "id-dead");
+		expect(ids.get("a.md")).toBe(held);
+		expect(ids.getOrMint("a.md")).toBe(held);
+	});
+
+	test("a remote delete with no id (legacy feed) keeps the held id", () => {
+		const { ids } = storeWithMap();
+		const held = ids.getOrMint("a.md");
+		ids.forgetRemoteDelete("a.md", null);
+		expect(ids.getOrMint("a.md")).toBe(held);
+	});
+
+	test("a remote delete under the held id itself still forgets it", () => {
+		const { ids } = storeWithMap();
+		const held = ids.getOrMint("a.md");
+		ids.forgetRemoteDelete("a.md", held);
+		expect(ids.get("a.md")).toBeNull();
+	});
+
+	test("an acked, published entry is forgotten exactly as before", () => {
+		const { store, ids } = storeWithMap();
+		ids.set("a.md", "id-a");
+		ids.flushNow();
+		ids.forgetRemoteDelete("a.md", "id-b");
 		expect(store.get("a.md")).toBeNull();
 	});
 });
 
 describe("(c) vault-wide create backoff gate", () => {
-	test("holds 30s, doubles per failed probe, caps at 10 min, and the first ack resets it", () => {
-		let now = 0;
-		const gate = new NotesCapGate(() => now);
-		expect(CREATE_BACKOFF_BASE_MS).toBe(30_000);
-		expect(CREATE_BACKOFF_MAX_MS).toBe(10 * 60_000);
+	const holdFor = (gate: NotesCapGate, clock: { now: number }) => {
+		const start = clock.now;
+		while (gate.isClosed()) clock.now += 1000;
+		return clock.now - start;
+	};
 
+	test("one note failing over and over holds 30s each time and never escalates", () => {
+		const c = { now: 0 };
+		const gate = new NotesCapGate(() => c.now);
+		expect(CREATE_BACKOFF_BASE_MS).toBe(30_000);
+		const holds: number[] = [];
+		for (let i = 0; i < 6; i++) {
+			gate.backoff("id-bad");
+			gate.backoff("id-bad"); // a repeat inside the window does not count
+			holds.push(holdFor(gate, c));
+		}
+		expect(holds).toEqual(Array(6).fill(30_000));
+	});
+
+	test("failures of 2+ distinct ids in one window double the hold, capped at 10 min", () => {
+		const c = { now: 0 };
+		const gate = new NotesCapGate(() => c.now);
+		expect(CREATE_BACKOFF_MAX_MS).toBe(10 * 60_000);
 		const holds: number[] = [];
 		for (let i = 0; i < 8; i++) {
-			gate.backoff();
-			const start = now;
-			while (gate.isClosed()) now += 1000;
-			holds.push(now - start);
+			gate.backoff(`a${i}`);
+			c.now += 1000;
+			gate.backoff(`b${i}`);
+			gate.backoff(`c${i}`); // a third distinct id: still one doubling per window
+			holds.push(holdFor(gate, c) + 1000);
 		}
-		expect(holds).toEqual([30, 60, 120, 240, 480, 600, 600, 600].map((s) => s * 1000));
+		expect(holds).toEqual([60, 120, 240, 480, 600, 600, 600, 600].map((s) => s * 1000));
 
-		// Failures while already holding do not escalate (concurrent pushes).
-		gate.backoff();
-		gate.backoff();
-		gate.backoff();
-		const start = now;
-		while (gate.isClosed()) now += 1000;
-		expect(now - start).toBe(600_000);
+		// A single-id window after that keeps the level, it does not double.
+		gate.backoff("solo");
+		expect(holdFor(gate, c)).toBe(600_000);
 
 		gate.createAcked();
 		expect(gate.isClosed()).toBe(false);
-		gate.backoff();
-		const s2 = now;
-		while (gate.isClosed()) now += 1000;
-		expect(now - s2).toBe(30_000);
+		gate.backoff("x");
+		expect(holdFor(gate, c)).toBe(30_000);
 	});
 
 	test("a cap trip is independent of the backoff, and an ack does not open the cap", () => {
@@ -230,7 +267,7 @@ describe("(c) vault-wide create backoff gate", () => {
 		expect(gate.isClosed()).toBe(true);
 		gate.open();
 		expect(gate.isClosed()).toBe(false);
-		gate.backoff();
+		gate.backoff("x");
 		gate.open(); // a delete ack frees a note; it says nothing about server health
 		expect(gate.isClosed()).toBe(true);
 		gate.reset();
@@ -328,20 +365,54 @@ describe("(c) vault-wide create backoff gate", () => {
 	});
 });
 
+describe("(c) only a create the SERVER refused trips the gate", () => {
+	test("queue: a local genesis-frame exception does not trip it", async () => {
+		const gate = new NotesCapGate(() => 0);
+		let sent = 0;
+		const send = makeCrdtOpSend({
+			channel: () => ({
+				crdtCreate: async (docId: string) => {
+					sent++;
+					return { docId, seeded: false, genesisOutcome: null as GenesisOutcome };
+				},
+				crdtDeleteAcked: async (docId: string) => ({ doc_id: docId }),
+			}),
+			buildGenesisFrame: async () => {
+				throw new Error("disk read failed");
+			},
+			onCreated: () => {},
+			onTerminal: () => {},
+			capGate: gate,
+		});
+		await send({
+			id: "o",
+			kind: "create",
+			docId: "d",
+			payload: { path: "a.md" },
+			enqueuedAt: 0,
+			attempts: 0,
+		});
+		expect(sent).toBe(0);
+		expect(gate.isClosed()).toBe(false);
+	});
+});
+
 // ---------------------------------------------------------------------------
 // Engine-level: the real SyncEngine push path + the real queue, against a
 // fake server whose creates fail, then recover.
 // ---------------------------------------------------------------------------
 
-function makeVault(paths: string[]) {
-	const files = new Map(paths.map((p) => [p, new TFile(p, 1000)]));
+function makeVault(paths: string[], files = new Map(paths.map((p) => [p, new TFile(p, 1000)]))) {
 	return {
 		vault: {
 			configDir: ".obsidian",
 			read: mock(async (f: TFile) => `body of ${f.path}`),
-			cachedRead: mock(async (f: TFile) => `body of ${f.path}`),
+			// A file created with a large size reads back that large (oversized md).
+			cachedRead: mock(async (f: TFile) =>
+				f.stat.size > 100 ? "x".repeat(f.stat.size) : `body of ${f.path}`,
+			),
 			readBinary: mock(async () => new ArrayBuffer(3)),
-			getMarkdownFiles: () => [...files.values()],
+			getMarkdownFiles: () => [...files.values()].filter((f) => f.extension === "md"),
 			getFiles: () => [...files.values()],
 			getAbstractFileByPath: (p: string) => files.get(p) ?? null,
 			getFileByPath: (p: string) => files.get(p) ?? null,
@@ -386,9 +457,11 @@ const crdtStub = (): Partial<CrdtManager> => ({
 function harness(paths: string[]) {
 	let clock = 0;
 	const time = new ManualTimeProvider(5000);
+	const files = new Map(paths.map((p) => [p, new TFile(p, 1000)]));
+	const api = makeApi();
 	const engine = new SyncEngine(
-		makeVault(paths),
-		makeApi(),
+		makeVault(paths, files),
+		api,
 		{ ...DEFAULT_SETTINGS, debounceMs: 1, vaultId: "v1" },
 		mock().mockResolvedValue(undefined),
 		time,
@@ -402,13 +475,16 @@ function harness(paths: string[]) {
 	const gate = new NotesCapGate(() => clock);
 	const server = {
 		fail: true,
+		poison: new Set<string>(),
 		created: new Map<string, string>(), // docId -> path
 		sent: [] as Array<{ at: number; docId: string; path: string }>,
 		createsPerId: new Map<string, number>(),
 	};
 	const crdtCreate = async (docId: string, path: string) => {
 		server.sent.push({ at: clock, docId, path });
-		if (server.fail) throw new Error(`request failed: {"reason":"create_failed"}`);
+		if (server.fail || server.poison.has(path)) {
+			throw new Error(`request failed: {"reason":"create_failed"}`);
+		}
 		server.createsPerId.set(docId, (server.createsPerId.get(docId) ?? 0) + 1);
 		server.created.set(docId, path);
 		return { docId, seeded: false, genesisOutcome: null as GenesisOutcome };
@@ -462,6 +538,9 @@ function harness(paths: string[]) {
 
 	return {
 		engine,
+		api,
+		addFile: (p: string, size?: number) => files.set(p, new TFile(p, 1000, size)),
+		file: (p: string) => files.get(p),
 		queue,
 		server,
 		gate,
@@ -479,30 +558,142 @@ function harness(paths: string[]) {
 	};
 }
 
-describe("(b) engine: the sweep retries a released pending claim under the SAME id", () => {
-	test("server deletes the key of a pending id; the next sweep re-sends crdt_create with that id and mints nothing", async () => {
-		const h = harness(["Notes/a.md"]);
-		await h.engine.pushModifiedFiles(); // create fails
-		const id = h.ids.get("Notes/a.md")!;
-		expect(id).toBeTruthy();
-		expect(h.map.size).toBe(0);
+describe("(c) engine: one bad note never holds the user's own new note", () => {
+	test("a permanently failing note; the user's new note goes out immediately and its ack reopens bulk", async () => {
+		const h = harness(["Notes/bad.md"]);
+		h.server.fail = false;
+		h.server.poison.add("Notes/bad.md");
+		await h.engine.pushModifiedFiles();
+		for (let c = 0; c < 12; c++) {
+			h.advance(5 * 60_000);
+			await h.queue.onJoined();
+			await h.engine.selfHealSweep();
+			await h.queue.tick();
+		}
+		// Same note every time: the hold never escalated past the base.
+		h.advance(CREATE_BACKOFF_MAX_MS);
+		// bad.md is retried by the queue or the sweep, whichever holds it.
+		const retryBad = async () => {
+			await h.queue.tick();
+			await h.engine.selfHealSweep();
+		};
+		await retryBad(); // bad.md fails again, arming a hold
+		expect(h.gate.isClosed()).toBe(true);
+		h.advance(CREATE_BACKOFF_BASE_MS + 1000);
+		expect(h.gate.isClosed()).toBe(false);
+		await retryBad(); // and again: the hold is live right now
+		expect(h.gate.isClosed()).toBe(true);
 
-		// The pre-fix shape: the server holds a claim for the unacked id, then
-		// releases it.
-		remote(h.doc, (m) => m.set("Notes/a.md", { note_id: id }));
-		remote(h.doc, (m) => m.delete("Notes/a.md"));
+		h.addFile("Notes/new.md");
+		const sentBefore = h.server.sent.length;
+		await (h.engine as any).pushFile(h.file("Notes/new.md"));
+		expect(h.server.sent.length).toBe(sentBefore + 1);
+		expect([...h.server.created.values()]).toContain("Notes/new.md");
+		// Its ack was the probe: bulk resends are open again.
+		expect(h.gate.isClosed()).toBe(false);
+	});
+});
+
+describe("(c) engine: a local failure before the request leaves does not trip the gate", () => {
+	test("pushFile: genesisUpdateFor throwing is not the server refusing creates", async () => {
+		const h = harness(["Notes/a.md"]);
+		h.server.fail = false;
+		(h.engine as any).genesisUpdateFor = async () => {
+			throw new Error("local encode failed");
+		};
+		await (h.engine as any).pushFile(h.file("Notes/a.md"));
+		expect(h.server.sent.length).toBe(0);
+		expect(h.gate.isClosed()).toBe(false);
+	});
+});
+
+describe("(c) engine: a recovery delivered by the QUEUE resets the hold", () => {
+	test("queued create acks reset the backoff to 30s", async () => {
+		const paths = Array.from({ length: 20 }, (_, i) => `Notes/n${i}.md`);
+		const h = harness(paths);
+		await h.engine.pushModifiedFiles(); // 10 distinct in flight fail: escalated
+		expect(h.queue.size()).toBeGreaterThan(1);
+		h.advance(40_000);
+		expect(h.gate.isClosed()).toBe(true); // 60s, not 30s
 
 		h.server.fail = false;
 		h.advance(CREATE_BACKOFF_MAX_MS);
-		await h.queue.onJoined();
-		await h.engine.selfHealSweep();
-		await tick();
-		// Same id, no second mint: the only id the server ever saw is the original.
-		expect(h.ids.get("Notes/a.md")).toBe(id);
-		expect(new Set(h.server.sent.map((s) => s.docId))).toEqual(new Set([id]));
-		expect([...h.server.created.keys()]).toEqual([id]);
-		expect(h.map.get("Notes/a.md")).toEqual({ note_id: id });
+		await h.queue.onJoined(); // queue only, no sweep
+		expect(h.queue.size()).toBe(0);
+		expect(h.gate.isClosed()).toBe(false);
+
+		h.gate.backoff("later");
+		h.advance(29_000);
+		expect(h.gate.isClosed()).toBe(true);
+		h.advance(2_000);
+		expect(h.gate.isClosed()).toBe(false);
 	});
+});
+
+describe("(c) engine: the gate holds only creates (M2)", () => {
+	test("attachments and REST-routed notes still go out while the gate holds", async () => {
+		const h = harness(["Notes/n.md", "img/a.png"]);
+		h.addFile("Notes/big.md", 5 * 1024 * 1024); // over the CRDT cap: REST
+		h.gate.backoff("x");
+		await h.engine.pushModifiedFiles();
+		expect(h.server.sent.length).toBe(0); // the md create is held
+		expect((h.api.pushAttachment as any).mock.calls.length).toBe(1);
+		expect((h.api.pushNote as any).mock.calls.length).toBe(1); // oversized md over REST
+	});
+});
+
+describe("upgrade: reload with data.json ids and pre-fix claims the server still holds", () => {
+	test("no new ids, no pre-ack claims, every note created once, no path with two ids", async () => {
+		const N = 200;
+		const paths = Array.from({ length: N }, (_, i) => `Notes/n${i}.md`);
+		const h = harness(paths);
+		const cacheIds: Record<string, string> = {};
+		const legacy: Record<string, string> = {};
+		const pad = (i: number) => String(i).padStart(4, "0");
+		for (const [i, p] of paths.entries()) {
+			cacheIds[p] = `0190${pad(i)}-0000-7000-8000-000000000001`;
+			// Half the vault has a pre-fix claim; a quarter under a DIFFERENT id.
+			if (i % 2 === 0) {
+				legacy[p] = i % 4 === 0 ? cacheIds[p] : `0190${pad(i)}-0000-7000-8000-000000000002`;
+			}
+		}
+		h.ids.seed(cacheIds);
+		remote(h.doc, (m) => {
+			for (const [p, id] of Object.entries(legacy)) m.set(p, { note_id: id });
+		});
+		const known = new Set([...Object.values(cacheIds), ...Object.values(legacy)]);
+
+		await h.engine.pushModifiedFiles(); // failing
+		remote(h.doc, (m) => {
+			for (const p of Object.keys(legacy)) m.delete(p); // grace expired
+		});
+		for (let c = 0; c < 6; c++) {
+			h.advance(5 * 60_000);
+			await h.queue.onJoined();
+			await h.engine.selfHealSweep();
+			await h.queue.tick();
+		}
+		h.server.fail = false;
+		for (let c = 0; c < 6 && h.server.created.size < N; c++) {
+			h.advance(CREATE_BACKOFF_MAX_MS);
+			await h.queue.onJoined();
+			await h.engine.selfHealSweep();
+		}
+		await tick();
+		h.ids.flushNow();
+
+		expect(
+			[...new Set(h.server.sent.map((x) => x.docId))].filter((id) => !known.has(id)),
+		).toEqual([]);
+		expect(h.published.filter((x) => !x.acked)).toEqual([]);
+		expect(h.server.created.size).toBe(N);
+		expect([...h.server.createsPerId.values()].every((n) => n === 1)).toBe(true);
+		const perPath = new Map<string, Set<string>>();
+		for (const [id, p] of h.server.created)
+			perPath.set(p, (perPath.get(p) ?? new Set()).add(id));
+		expect([...perPath.values()].every((ids) => ids.size === 1)).toBe(true);
+		expect(perPath.size).toBe(N);
+	}, 120_000);
 });
 
 describe("(c) engine: the sweep sends zero creates while the gate holds", () => {
@@ -523,7 +714,7 @@ describe("(c) engine: the sweep sends zero creates while the gate holds", () => 
 		expect(h.server.sent.length).toBe(first);
 
 		h.server.fail = false;
-		h.advance(10_000);
+		h.advance(CREATE_BACKOFF_MAX_MS);
 		await h.queue.onJoined();
 		await h.engine.selfHealSweep();
 		expect(h.server.created.size).toBe(50);
@@ -537,24 +728,37 @@ describe("incident replay: 7,800-file first sync, failing creates, released clai
 		const paths = Array.from({ length: N }, (_, i) => `Notes/n${i}.md`);
 		const h = harness(paths);
 
+		// The id each path FIRST went out under. Every later send, and the
+		// created row, must reuse it: ids minted == file count, not files x waves.
+		const firstId = new Map<string, string>();
+		const sameIdEverySend = () => {
+			for (const x of h.server.sent) {
+				const first = firstId.get(x.path) ?? x.docId;
+				firstId.set(x.path, first);
+				expect(x.docId).toBe(first);
+			}
+		};
+
 		// Wave 1: the startup push. Creates fail.
 		await h.engine.pushModifiedFiles();
-		const original = new Map(paths.map((p) => [p, h.ids.get(p)]));
-		expect([...original.values()].every((id) => typeof id === "string")).toBe(true);
-		expect(new Set(original.values()).size).toBe(N);
+		const sentBefore = h.server.sent.length;
+		// Bounded: only the pushes already in flight (the 10-slot push window)
+		// when the first failure closed the gate; the rest were held unread.
+		expect(sentBefore).toBeGreaterThan(0);
+		expect(sentBefore).toBeLessThanOrEqual(10);
 
-		// The server echoes what a pre-fix build would have claimed, then
-		// releases every claim (its 1h grace expired).
+		// The server releases whatever it holds for these paths (the pre-fix
+		// shape: claims for unacked ids, released after the 1h grace).
+		const minted = paths.filter((p) => h.ids.get(p) !== null);
 		remote(h.doc, (m) => {
-			for (const [p, id] of original) m.set(p, { note_id: id });
+			for (const p of minted) m.set(p, { note_id: h.ids.get(p) });
 		});
 		remote(h.doc, (m) => {
-			for (const p of paths) m.delete(p);
+			for (const p of minted) m.delete(p);
 		});
 
 		// Several sweep + rejoin cycles over ~2h, 5 min apart, server still down.
 		const WINDOW = 5 * 60_000;
-		const sentBefore = h.server.sent.length;
 		for (let cycle = 0; cycle < 24; cycle++) {
 			h.advance(WINDOW);
 			await h.queue.onJoined(); // rejoin flushes the queue
@@ -562,26 +766,21 @@ describe("incident replay: 7,800-file first sync, failing creates, released clai
 			await h.queue.tick();
 		}
 		const failingSends = h.server.sent.slice(sentBefore);
-		// Bounded by the backoff: at most one probe per hold (>= 30s), so a
-		// 5 min window carries a handful, never thousands.
+		// Bounded by the backoff: one probe burst (at most the push window plus
+		// a queue probe) per hold, never the vault.
 		const perWindow = new Map<number, number>();
-		for (const s of failingSends) {
-			const w = Math.floor(s.at / WINDOW);
+		for (const x of failingSends) {
+			const w = Math.floor(x.at / WINDOW);
 			perWindow.set(w, (perWindow.get(w) ?? 0) + 1);
 		}
-		expect(Math.max(0, ...perWindow.values())).toBeLessThanOrEqual(
-			WINDOW / CREATE_BACKOFF_BASE_MS,
-		);
-		// Wave 1 itself is bounded too: only the pushes already in flight (the
-		// 10-slot push window) when the first failure closed the gate.
-		expect(sentBefore).toBeLessThanOrEqual(10);
+		expect(Math.max(0, ...perWindow.values())).toBeLessThanOrEqual(11);
+		expect(failingSends.length).toBeLessThan(24 * 11);
 
-		// Every create ever sent went out under its file's ORIGINAL id.
-		for (const s of h.server.sent) expect(s.docId).toBe(original.get(s.path)!);
-		// Zero new ids: still exactly one per file.
-		for (const p of paths) expect(h.ids.get(p)).toBe(original.get(p));
+		sameIdEverySend();
+		// The ids held locally are the ones that went out: nothing re-minted.
+		for (const [p, id] of firstId) expect(h.ids.get(p)).toBe(id);
 		// Zero claims published before an ack.
-		expect(h.published.filter((x) => !x.acked)).toEqual([]);
+		expect(h.published).toEqual([]);
 		expect(h.map.size).toBe(0);
 
 		// Creates recover.
@@ -594,14 +793,17 @@ describe("incident replay: 7,800-file first sync, failing creates, released clai
 		await tick();
 		h.ids.flushNow();
 
+		sameIdEverySend();
 		expect(h.server.created.size).toBe(N);
-		// Total ids minted == file count: every note created once, under its original id.
-		expect(new Map([...h.server.created].map(([id, p]) => [p, id]))).toEqual(original);
+		// Total ids minted == file count.
+		expect(new Set(h.server.sent.map((x) => x.docId)).size).toBe(N);
+		// Every note created once, under the id it first went out with.
+		expect(new Map([...h.server.created].map(([id, p]) => [p, id]))).toEqual(firstId);
 		expect([...h.server.createsPerId.values()].every((n) => n === 1)).toBe(true);
 		// ...and claimed once, after its ack.
 		expect(h.published.length).toBe(N);
 		expect(h.published.every((x) => x.acked)).toBe(true);
 		expect(new Set(h.published.map((x) => x.path)).size).toBe(N);
-		for (const p of paths) expect(h.map.get(p)).toEqual({ note_id: original.get(p) });
+		for (const p of paths) expect(h.map.get(p)).toEqual({ note_id: firstId.get(p) });
 	}, 120_000);
 });

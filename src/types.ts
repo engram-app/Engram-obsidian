@@ -178,6 +178,10 @@ export interface NoteChange {
 	 *  feed rows via applyOp; absent on shapes that predate the seq feed). Feeds
 	 *  the per-path stale-row fence in applyChange. */
 	seq?: number;
+	/** The row's note id, when the feed carries one (seq replay). Lets a remote
+	 *  delete tell a held local mint at the same path apart from the deleted
+	 *  note (`NoteIdMap.forgetRemoteDelete`). */
+	note_id?: string;
 }
 
 /** A note row on the op-log feed (`crdt_catchup_since`, folded by

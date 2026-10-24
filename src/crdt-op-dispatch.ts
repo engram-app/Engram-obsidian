@@ -75,16 +75,21 @@ export const CREATE_BACKOFF_MAX_MS = 10 * 60 * 1000;
  * It is also the vault-wide CREATE BACKOFF (`backoff` / `createAcked`). A
  * failing server fails every create, not one: prod 2026-10-22 (vault f4cd93e6)
  * re-sent ~7k creates per sweep and per rejoin into a server already out of DB
- * connections. One failed create holds every create for 30s, doubling per
- * failed probe to 10 min; the first acked create reopens it. `isClosed` covers
- * both holds, so every create site that already respects the cap (the sweep's
- * `pushCandidates`, pushFile, the queue's `"held"`) respects the backoff too.
+ * connections. One failed create holds BULK creates (the self-heal sweep and
+ * the op queue) for 30s; the hold doubles, to 10 min, only when 2+ DISTINCT
+ * notes fail inside one hold window, so one bad note (a per-note
+ * create_failed, a note that always times out) can never escalate it. The
+ * first acked create reopens it. A single push of a note the user just
+ * created or edited is never held (`isCapClosed`): it is the probe.
  */
 export class NotesCapGate {
 	private closedUntil = 0;
 	private notified = false;
 	private backoffUntil = 0;
 	private backoffMs = 0;
+	private windowStart = 0;
+	private windowIds = new Set<string>();
+	private windowEscalated = false;
 
 	constructor(
 		private readonly now: () => number,
@@ -92,28 +97,42 @@ export class NotesCapGate {
 		private readonly holdMs = NOTES_CAP_HOLD_MS,
 	) {}
 
+	/** Closed for BULK creates: the cap, or the create backoff. */
 	isClosed(): boolean {
-		const now = this.now();
-		return now < this.closedUntil || now < this.backoffUntil;
+		return this.isCapClosed() || this.now() < this.backoffUntil;
 	}
 
-	/** A create failed for a reason that is the SERVER's, not the op's. A
-	 *  failure that lands while already holding (concurrent pushes in flight
-	 *  when the first one failed) does not escalate: only a failed probe does. */
-	backoff(): void {
+	/** Closed by the plan note cap alone. What a single user push checks. */
+	isCapClosed(): boolean {
+		return this.now() < this.closedUntil;
+	}
+
+	/** `noteId`'s create was refused by the server for a retryable reason.
+	 *  Opens a hold at the current level if none is running. Inside a running
+	 *  hold, a SECOND distinct id doubles it once (from the window's start):
+	 *  that is a server failing every note, not one note failing. */
+	backoff(noteId: string): void {
 		const now = this.now();
-		if (now < this.backoffUntil) return;
-		this.backoffMs = Math.min(
-			this.backoffMs ? this.backoffMs * 2 : CREATE_BACKOFF_BASE_MS,
-			CREATE_BACKOFF_MAX_MS,
-		);
-		this.backoffUntil = now + this.backoffMs;
+		if (now >= this.backoffUntil) {
+			this.backoffMs ||= CREATE_BACKOFF_BASE_MS;
+			this.windowStart = now;
+			this.windowIds = new Set([noteId]);
+			this.windowEscalated = false;
+			this.backoffUntil = now + this.backoffMs;
+			return;
+		}
+		this.windowIds.add(noteId);
+		if (this.windowEscalated || this.windowIds.size < 2) return;
+		this.windowEscalated = true;
+		this.backoffMs = Math.min(this.backoffMs * 2, CREATE_BACKOFF_MAX_MS);
+		this.backoffUntil = this.windowStart + this.backoffMs;
 	}
 
 	/** A create was acked: the server is healthy again. */
 	createAcked(): void {
 		this.backoffUntil = 0;
 		this.backoffMs = 0;
+		this.windowIds.clear();
 	}
 
 	trip(reason: string): void {
@@ -247,6 +266,9 @@ export function makeCrdtOpSend(hooks: CrdtSendHooks): (op: CrdtOp) => Promise<Se
 	// MAX_ATTEMPTS, and a toast per retry would spam the user.
 	const limitSurfaced = new Set<string>();
 	return async (op) => {
+		// Only a create the SERVER refused trips the backoff: a local throw
+		// (building the genesis frame) says nothing about the server.
+		let reachedServer = false;
 		const ch = hooks.channel();
 		if (!ch) return "error"; // no socket yet. hold and retry on the next tick
 		const path = (op.payload as { path?: string })?.path ?? "";
@@ -257,6 +279,7 @@ export function makeCrdtOpSend(hooks: CrdtSendHooks): (op: CrdtOp) => Promise<Se
 				hooks.beginCreate?.(path);
 				try {
 					const genesis = await hooks.buildGenesisFrame?.(path, op.docId);
+					reachedServer = true;
 					const {
 						docId: serverId,
 						seeded,
@@ -264,6 +287,8 @@ export function makeCrdtOpSend(hooks: CrdtSendHooks): (op: CrdtOp) => Promise<Se
 					} = genesis
 						? await ch.crdtCreate(op.docId, path, genesis.b64)
 						: await ch.crdtCreate(op.docId, path);
+					// The server is taking creates again: reopen bulk resends.
+					hooks.capGate?.createAcked();
 					try {
 						await hooks.onCreated(
 							op.docId,
@@ -317,7 +342,7 @@ export function makeCrdtOpSend(hooks: CrdtSendHooks): (op: CrdtOp) => Promise<Se
 			}
 			// Retryable and not the op's fault (create_failed, rate_limited, a
 			// timeout, transport): hold EVERY create, not just this one.
-			if (op.kind === "create") hooks.capGate?.backoff();
+			if (op.kind === "create" && reachedServer) hooks.capGate?.backoff(op.docId);
 			const msg = err instanceof Error ? err.message : String(err);
 			return /timeout/i.test(msg) ? "timeout" : "error";
 		}

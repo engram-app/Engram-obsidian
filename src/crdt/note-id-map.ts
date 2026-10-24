@@ -196,6 +196,12 @@ export class NoteIdMap {
 		this.store.forget(path);
 	}
 
+	/** `delete` for a REMOTE delete that names `deletedId`. Spares a held,
+	 *  still-pending entry under another id: see `SyncStore.forgetRemoteDelete`. */
+	forgetRemoteDelete(path: string, deletedId: string | null): void {
+		this.store.forgetRemoteDelete(path, deletedId);
+	}
+
 	/** Publish a claim release. For a note the user actually deleted. */
 	release(path: string): void {
 		this.store.delete(path);
