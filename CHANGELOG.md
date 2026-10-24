@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.38.1](https://github.com/engram-app/Engram-obsidian/compare/1.38.0...1.38.1) (2026-10-24)
+
+
+### Bug Fixes
+
+* **deps:** override fast-uri for advisory ([#626](https://github.com/engram-app/Engram-obsidian/issues/626)) ([9e81e7c](https://github.com/engram-app/Engram-obsidian/commit/9e81e7c089fd2e37139048b5ac65c8fcf4963c19))
+* **sync:** claim index paths only after create ack; back off bulk creates ([#631](https://github.com/engram-app/Engram-obsidian/issues/631)) ([101e74f](https://github.com/engram-app/Engram-obsidian/commit/101e74f1e4d2fae268240d371672b5423e64f0b3))
+* **sync:** handle 410 blob_missing on attachment pulls ([#625](https://github.com/engram-app/Engram-obsidian/issues/625)) ([141b28b](https://github.com/engram-app/Engram-obsidian/commit/141b28bea0baeeb21bc6fe6f96f8575eefa807c8))
+
 ## [1.38.0](https://github.com/engram-app/Engram-obsidian/compare/1.37.1...1.38.0) (2026-10-21)
 
 
