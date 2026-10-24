@@ -13,12 +13,15 @@
  * row's current content_hash and the file's current bytes.
  *
  * The server side is modelled by `fakeServer`, which follows backend PR
- * engram-app/Engram#2160's contract: a GET of a live row whose blob is gone
+ * engram-app/Engram#2160's contract (commit aa5df60d8, `identical_or_changed`
+ * checks `blob_present?`): a GET of a live row whose blob is gone
  * answers 410 blob_missing; an upload of identical bytes onto that row writes
- * the blob (`attachment blob healed from client`) and answers with the SAME
- * content_hash, because the hash is an HMAC of the plaintext. `heals: false`
- * models a backend without the heal (identical upload short-circuits, the
- * blob stays gone): the client must notice via its follow-up GET.
+ * the blob under a fresh key (`attachment blob healed from client`) and
+ * answers with the SAME content_hash, because the hash is an HMAC of the
+ * plaintext. The response carries no "healed" flag, so the client confirms
+ * with a GET. `heals: false` models a backend without the heal (identical
+ * upload short-circuits, the blob stays gone): the client must notice via
+ * its follow-up GET.
  */
 import { describe, expect, mock, test } from "bun:test";
 import "fake-indexeddb/auto";
