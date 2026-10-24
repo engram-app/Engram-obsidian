@@ -296,6 +296,7 @@ const ms: Dict = {
 	"Manage account": "Urus akaun",
 	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
 		"Tahap keparuhan minimum yang dihantar semasa diagnosis diaktifkan. Tahap yang lebih tinggi menghantar lebih sedikit baris. Lalai: Info.",
+	"Missing on the server": "Tidak ditemui di pelayan",
 	"Needs attention ({count})": "Perlu perhatian ({count})",
 	"Network unavailable": "Rangkaian tidak tersedia",
 	"New here? Watch the setup video": "Baru di sini? Tonton video panduan",
@@ -497,6 +498,8 @@ const ms: Dict = {
 		"Pelayan tidak dapat memproses nota ini. Semak kandungannya, kemudian edit dan simpan untuk cuba lagi.",
 	"The server does not accept this type of file. It will retry if the file changes.":
 		"Pelayan tidak menerima jenis fail ini. Ia akan cuba semula jika fail berubah.",
+	"The server lost this file's stored content and will try to restore it. Nothing on this device was changed.":
+		"Pelayan telah kehilangan kandungan fail ini dan akan cuba memulihkannya. Tiada apa yang berubah pada peranti ini.",
 	"The server took too long to respond. Try again.":
 		"Pelayan mengambil masa terlalu lama untuk menjawab. Cuba lagi.",
 	"These files are fine. They just need a paid plan to sync.":

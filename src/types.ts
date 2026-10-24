@@ -239,6 +239,9 @@ export interface SyncAttachmentChange {
 	updated_at: string;
 	deleted: boolean;
 	version?: number;
+	/** Server's opaque content hash. Not sent by the feed yet; passed through
+	 *  so a feed that carries it lets a 410 blob_missing heal from this copy. */
+	content_hash?: string;
 }
 
 /** A single entry in the merged ordered feed — note or attachment, tagged. */
@@ -481,6 +484,7 @@ export type SyncIssueCategory =
 	| "needs_pro"
 	| "quota"
 	| "frontmatter"
+	| "blob_missing"
 	| "other";
 
 /** A file the sync engine could not push or pull. Persisted across reloads

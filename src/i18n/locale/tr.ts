@@ -333,6 +333,7 @@ const tr: Dict = {
 	"Manage account": "Hesap yönetimi",
 	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
 		"Tanı açıkken gönderilecek minimum önem düzeyi. Daha yüksek seviyeler daha az satır gönderir. Varsayılan: Bilgi.",
+	"Missing on the server": "Sunucuda eksik",
 	"Needs attention ({count})": "Dikkat gerektiriyor ({count})",
 	"Network unavailable": "Ağ bağlantısı yok",
 	"New here? Watch the setup video": "Yeni misiniz? Kurulum videosunu izleyin",
@@ -535,6 +536,8 @@ const tr: Dict = {
 		"Sunucu bu notu işleyemedi. İçeriğini kontrol edin, düzenleyin ve tekrar denemek için kaydedin.",
 	"The server does not accept this type of file. It will retry if the file changes.":
 		"Sunucu bu tür dosyaları kabul etmiyor. Dosya değişirse tekrar denenecek.",
+	"The server lost this file's stored content and will try to restore it. Nothing on this device was changed.":
+		"Sunucu bu dosyanın içeriğini kaybetti ve geri yüklemeyi deneyecek. Bu cihazda hiçbir değişiklik yapılmadı.",
 	"The server took too long to respond. Try again.":
 		"Sunucu yanıt vermekte çok yavaş. Lütfen tekrar deneyin.",
 	"These files are fine. They just need a paid plan to sync.":

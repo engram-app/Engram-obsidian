@@ -276,6 +276,7 @@ const zhTW: Dict = {
 	"Manage account": "管理帳戶",
 	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
 		"診斷啟用時，顯示的最低嚴重程度。較高的等級會減少顯示的行數。預設：Info。",
+	"Missing on the server": "伺服器上遺失",
 	"Needs attention ({count})": "需要注意 ({count})",
 	"Network unavailable": "無法連線網路",
 	"New here? Watch the setup video": "第一次使用？觀看設定影片",
@@ -463,6 +464,8 @@ const zhTW: Dict = {
 		"伺服器無法處理此筆記。請檢查內容，編輯並儲存後再次嘗試。",
 	"The server does not accept this type of file. It will retry if the file changes.":
 		"伺服器不接受此類檔案。檔案變更時會再次嘗試。",
+	"The server lost this file's stored content and will try to restore it. Nothing on this device was changed.":
+		"伺服器已遺失此檔案的內容，將嘗試恢復。此設備上的內容未變更。",
 	"The server took too long to respond. Try again.": "伺服器回應時間過長。請重試。",
 	"These files are fine. They just need a paid plan to sync.":
 		"這些檔案沒有問題，只是需要付費方案才能同步。",

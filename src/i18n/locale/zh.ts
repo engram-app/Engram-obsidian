@@ -274,6 +274,7 @@ const zh: Dict = {
 	"Manage account": "管理账号",
 	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
 		"启用诊断时，发送的最低严重级别。级别越高，发送的行数越少。默认：Info。",
+	"Missing on the server": "服务器未找到",
 	"Needs attention ({count})": "需要注意 ({count})",
 	"Network unavailable": "网络不可用",
 	"New here? Watch the setup video": "首次使用？观看设置视频",
@@ -459,6 +460,8 @@ const zh: Dict = {
 		"服务器无法处理此笔记。检查内容，编辑并保存后再次尝试。",
 	"The server does not accept this type of file. It will retry if the file changes.":
 		"服务器不支持此文件类型。文件更改时将重试。",
+	"The server lost this file's stored content and will try to restore it. Nothing on this device was changed.":
+		"服务器丢失了该文件的内容，正在尝试恢复。本设备未做任何更改。",
 	"The server took too long to respond. Try again.": "服务器响应时间过长。请重试。",
 	"These files are fine. They just need a paid plan to sync.":
 		"这些文件没问题，只需付费计划即可同步。",

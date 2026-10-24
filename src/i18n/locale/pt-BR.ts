@@ -359,6 +359,7 @@ const ptBR: Dict = {
 	"Manage account": "Gerenciar conta",
 	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
 		"Nível mínimo de severidade quando os diagnósticos estão ativados. Níveis mais altos enviam menos linhas. Padrão: Info.",
+	"Missing on the server": "Ausente no servidor",
 	"Needs attention ({count})": "Precisa de atenção ({count})",
 	"Network unavailable": "Rede indisponível",
 	"New here? Watch the setup video": "Novo por aqui? Assista ao vídeo de configuração",
@@ -563,6 +564,8 @@ const ptBR: Dict = {
 		"O servidor não conseguiu processar esta nota. Verifique o conteúdo, edite e salve para tentar novamente.",
 	"The server does not accept this type of file. It will retry if the file changes.":
 		"O servidor não aceita este tipo de arquivo. Tentará novamente se o arquivo for alterado.",
+	"The server lost this file's stored content and will try to restore it. Nothing on this device was changed.":
+		"O servidor perdeu o conteúdo armazenado deste arquivo e tentará restaurá-lo. Nada foi alterado neste dispositivo.",
 	"The server took too long to respond. Try again.":
 		"O servidor demorou muito para responder. Tente novamente.",
 	"These files are fine. They just need a paid plan to sync.":

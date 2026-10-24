@@ -297,6 +297,7 @@ const id: Dict = {
 	"Manage account": "Kelola akun",
 	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
 		"Tingkat keparahan minimum yang dikirim saat diagnostik aktif. Tingkat yang lebih tinggi mengirim lebih sedikit baris. Default: Info.",
+	"Missing on the server": "Tidak ada di server",
 	"Needs attention ({count})": "Membutuhkan perhatian ({count})",
 	"Network unavailable": "Jaringan tidak tersedia",
 	"New here? Watch the setup video": "Baru di sini? Tonton video pengaturan",
@@ -498,6 +499,8 @@ const id: Dict = {
 		"Server tidak dapat memproses catatan ini. Periksa isinya, lalu edit dan simpan untuk mencoba lagi.",
 	"The server does not accept this type of file. It will retry if the file changes.":
 		"Server tidak menerima tipe file ini. Akan dicoba lagi jika file berubah.",
+	"The server lost this file's stored content and will try to restore it. Nothing on this device was changed.":
+		"Server kehilangan konten file ini dan akan mencoba memulihkannya. Tidak ada yang berubah di perangkat ini.",
 	"The server took too long to respond. Try again.":
 		"Server membutuhkan waktu terlalu lama untuk merespons. Coba lagi.",
 	"These files are fine. They just need a paid plan to sync.":
