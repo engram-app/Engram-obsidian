@@ -34,7 +34,7 @@ import {
 	issueDisposition,
 	shouldRetryAfterFailure,
 } from "../src/issue-store";
-import { BLOB_HEAL_PUSHES_PER_PASS, fnv1a, SyncEngine } from "../src/sync";
+import { BLOB_HEAL_MAX_ATTEMPTS, BLOB_HEAL_PUSHES_PER_PASS, fnv1a, SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 // base64 of the [1, 2, 3] bytes readBinary returns below.
@@ -319,7 +319,7 @@ describe("applyAttachmentChange on 410 blob_missing", () => {
 		(e as any).syncState.set("img/b.png", {
 			hash: fnv1a(B64),
 			serverHash: ROW_HASH,
-			blobHealedFor: ROW_HASH,
+			blobHeal: { rowHash: ROW_HASH, attempts: 1, done: true },
 		});
 		await e.applyAttachmentChange(change(ROW_HASH, "img/b.png"));
 		(e as any).blobHealBudget = 0;
@@ -351,8 +351,86 @@ describe("applyAttachmentChange on 410 blob_missing", () => {
 
 		expect(server.pushAttachment).toHaveBeenCalledTimes(1);
 		expect(server.blobPresent.get(PATH)).toBe(true);
-		expect((e as any).syncState.get(PATH)?.blobHealedFor).toBe(ROW_HASH);
+		expect((e as any).syncState.get(PATH)?.blobHeal).toEqual({
+			rowHash: ROW_HASH,
+			attempts: 1,
+			done: true,
+		});
 		expect(e.issues.get(PATH)).toBeUndefined();
+	});
+
+	test("a failed file read releases the claim: issue now, healed on a later attempt", async () => {
+		const server = fakeServer([PATH], { heals: true });
+		const { e, app } = makeEngine(server, [new TFile(PATH, 1, 3)]);
+		synced(e, PATH);
+		app.vault.readBinary.mockRejectedValueOnce(new Error("EBUSY"));
+
+		await expect(e.applyAttachmentChange(change(ROW_HASH))).resolves.toBe(false);
+		expect(server.pushAttachment).not.toHaveBeenCalled();
+		expect(e.issues.get(PATH)?.category).toBe("blob_missing");
+		expect((e as any).syncState.get(PATH)?.blobHeal).toBeUndefined();
+
+		await e.applyAttachmentChange(change(ROW_HASH));
+		expect(server.pushAttachment).toHaveBeenCalledTimes(1);
+		expect(server.blobPresent.get(PATH)).toBe(true);
+		expect(e.issues.get(PATH)).toBeUndefined();
+	});
+
+	test("a transient push failure is retried on later passes, at most BLOB_HEAL_MAX_ATTEMPTS times", async () => {
+		const server = fakeServer([PATH], { heals: true });
+		server.pushAttachment.mockImplementation(() =>
+			Promise.reject(httpError(502, JSON.stringify({ error: "storage" }))),
+		);
+		const { e } = makeEngine(server, [new TFile(PATH, 1, 3)]);
+		synced(e, PATH);
+
+		for (let pass = 0; pass < BLOB_HEAL_MAX_ATTEMPTS + 2; pass++) {
+			(e as any).beginBlobHealPass();
+			await e.applyAttachmentChange(change(ROW_HASH));
+		}
+
+		expect(BLOB_HEAL_MAX_ATTEMPTS).toBe(3);
+		expect(server.pushAttachment).toHaveBeenCalledTimes(BLOB_HEAL_MAX_ATTEMPTS);
+		expect(e.issues.get(PATH)?.category).toBe("blob_missing");
+	});
+
+	test("a transient failure of the confirming GET also leaves the row retryable", async () => {
+		const server = fakeServer([PATH], { heals: true });
+		const { e } = makeEngine(server, [new TFile(PATH, 1, 3)]);
+		synced(e, PATH);
+		// First GET: the 410. Confirming GET: a storage 502. Then the real server.
+		const real = server.getAttachment.getMockImplementation()!;
+		server.getAttachment
+			.mockImplementationOnce(() => Promise.reject(gone()))
+			.mockImplementationOnce(() => Promise.reject(httpError(502, "")));
+
+		await e.applyAttachmentChange(change(ROW_HASH));
+		expect(e.issues.get(PATH)?.category).toBe("blob_missing");
+		expect((e as any).syncState.get(PATH)?.blobHeal?.done).toBe(false);
+
+		server.blobPresent.set(PATH, false);
+		server.getAttachment.mockImplementation(real);
+		await e.applyAttachmentChange(change(ROW_HASH));
+		expect(server.pushAttachment).toHaveBeenCalledTimes(2);
+		expect((e as any).syncState.get(PATH)?.blobHeal?.done).toBe(true);
+		expect(e.issues.get(PATH)).toBeUndefined();
+	});
+
+	test("a definitive refusal of the heal push is never retried", async () => {
+		const server = fakeServer([PATH], { heals: true });
+		server.pushAttachment.mockImplementation(() =>
+			Promise.reject(httpError(415, JSON.stringify({ error: "mime_not_allowed" }))),
+		);
+		const { e } = makeEngine(server, [new TFile(PATH, 1, 3)]);
+		synced(e, PATH);
+
+		for (let pass = 0; pass < 3; pass++) {
+			(e as any).beginBlobHealPass();
+			await e.applyAttachmentChange(change(ROW_HASH));
+		}
+
+		expect(server.pushAttachment).toHaveBeenCalledTimes(1);
+		expect((e as any).syncState.get(PATH)?.blobHeal?.done).toBe(true);
 	});
 
 	test("a push already in flight for the path still leaves a visible issue", async () => {

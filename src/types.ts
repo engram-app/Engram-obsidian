@@ -452,10 +452,10 @@ export interface FileSyncState {
 	/** Last server content_hash seen for this path (opaque HMAC, from push
 	 *  responses / changes pages / broadcasts). Never computed locally. */
 	serverHash?: string;
-	/** Row content_hash this device already re-uploaded after a 410
-	 *  blob_missing. A row hash is healed at most once, so a replay that keeps
-	 *  hitting the same lost blob cannot keep re-sending it. */
-	blobHealedFor?: string;
+	/** Heal pushes this device made for `rowHash` after a 410 blob_missing,
+	 *  and whether the outcome is final (healed, or refused for good). Bounds
+	 *  re-uploads of a lost blob per row hash; see SyncEngine.handleBlobMissing. */
+	blobHeal?: { rowHash: string; attempts: number; done: boolean };
 	/** Last CRDT head marker (sha256(state_vector) url-b64) synced for this
 	 *  path via cold-receive. Separate namespace from serverHash (which is the
 	 *  /changes content_hash). Absent = never cold-synced. */
