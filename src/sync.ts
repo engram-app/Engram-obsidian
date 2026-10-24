@@ -19,13 +19,13 @@ import { fnv1a, fnv1aBase64 } from "./content-hash";
 import { splitFrontmatter } from "./crdt/frontmatter-codec";
 import type { NoteIdMap } from "./crdt/note-id-map";
 import type { ProviderRegistry } from "./crdt/provider-registry";
-import { uuid7 } from "./crdt/uuid7";
 import { encodeUpdateFrame, fromB64 } from "./crdt/wire";
 import {
 	crdtOpFailureReason,
 	type GenesisFrame,
 	LIMIT_REASONS,
 	type NotesCapGate,
+	TERMINAL_REASONS,
 } from "./crdt-op-dispatch";
 import { devLog } from "./dev-log";
 import { errMsg, isHttpStatus } from "./error-util";
@@ -1565,8 +1565,9 @@ export class SyncEngine {
 		if (!noteId) return;
 		this.confirmedNoteIds.add(noteId);
 		// The server has acked this id, so a local mint is no longer provisional
-		// (#538). Durable across reconnects, unlike `confirmedNoteIds`.
-		this.noteIdMap?.store?.confirmUpload(noteId);
+		// (#538). Durable across reconnects, unlike `confirmedNoteIds`. Also
+		// what publishes the note's held index claim (claim-after-ack).
+		this.noteIdMap?.confirmUpload(noteId);
 	}
 
 	/** True for an id THIS device minted that the server has never acked (#538).
@@ -1737,6 +1738,45 @@ export class SyncEngine {
 	 *  the gate reopens. */
 	capBlocksCreate(path: string): boolean {
 		return !!this.notesCapGate?.isClosed() && !this.syncState.has(path);
+	}
+
+	/** `capBlocksCreate` for a SINGLE push of a note the user just created or
+	 *  edited: the plan cap only, never the create backoff. That push is the
+	 *  backoff's probe (its ack reopens bulk resends), and holding it let one
+	 *  bad note in the vault delay every new note for up to 10 min. */
+	private capHoldsNote(path: string): boolean {
+		return !!this.notesCapGate?.isCapClosed() && !this.syncState.has(path);
+	}
+
+	/** Whether a BULK push (sweep, startup push) must hold `f`: the gate is
+	 *  closed and `f` would go out as a row-adding `crdt_create`. Attachments
+	 *  and REST-routed notes (canvas, oversized md) are not held; REST notes
+	 *  still meet the cap inside pushFile. */
+	private bulkCreateHeld(f: TFile): boolean {
+		return (
+			!!this.notesCapGate?.isClosed() &&
+			!this.syncState.has(f.path) &&
+			this.isCrdtEligible(f) &&
+			f.stat.size <= MAX_CRDT_NOTE_BYTES
+		);
+	}
+
+	/** `pushFile` for every BULK caller: a loop over many files (the sweep
+	 *  worker, pushAll's reconcile pass, the gate-journal replay, the post-pull
+	 *  flush). It is the ONE place the create backoff holds pushes. A single
+	 *  user event (a debounced edit, a rename, a conflict copy) calls
+	 *  `pushFile` directly and is never held: it is the probe.
+	 *
+	 *  A held file is skipped unread and stays untracked, so the self-heal
+	 *  sweep re-pushes it once the gate reopens. */
+	private pushFileBulk(
+		file: TFile,
+		force = false,
+		bypassPlanSkip = false,
+		serverAttachmentHashes?: Map<string, string>,
+	): Promise<boolean> {
+		if (this.bulkCreateHeld(file)) return Promise.resolve(false);
+		return this.pushFile(file, force, bypassPlanSkip, serverAttachmentHashes);
 	}
 
 	/** In-flight re-sweep started by a plan change (test hook). */
@@ -3294,7 +3334,7 @@ export class SyncEngine {
 				if (!file || !this.isSyncable(file) || this.shouldIgnore(path)) continue;
 				this.gateModified.delete(path); // pushed here; no second push via modify
 				try {
-					await this.pushFile(file);
+					await this.pushFileBulk(file);
 				} catch (e) {
 					rlog().error("vault", `Gate journal replay: push failed: ${errMsg(e, path)}`);
 				}
@@ -5791,8 +5831,12 @@ export class SyncEngine {
 						);
 						return false;
 					}
-					noteId = uuid7();
-					this.noteIdMap.set(file.path, noteId);
+					// mint(), not uuid7 + set: the id is PENDING until its create is
+					// acked, so the store holds its claim back from the shared index.
+					// Two devices first-syncing the same new path therefore each mint
+					// their own id; the server's ADOPT on the second create decides,
+					// and only the adopted id is ever claimed (see SyncStore.mint).
+					noteId = this.noteIdMap.mint(file.path);
 					mintedNow = true;
 				}
 
@@ -5974,9 +6018,12 @@ export class SyncEngine {
 					!exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES) &&
 					// pushedPath, not file.path: a rename mid-push stamps file.path,
 					// which would let a row-adding create for pushedPath through.
-					!this.capBlocksCreate(pushedPath)
+					!this.capHoldsNote(pushedPath)
 				) {
 					this.beginCreate(pushedPath);
+					// Set once the request is about to leave: a local throw before it
+					// (genesisUpdateFor) is not the server refusing creates.
+					let reachedServer = false;
 					try {
 						// Only the crdtCreate call itself is covered by this catch — once
 						// it RESOLVES, the server row exists (possibly under a remapped
@@ -6000,6 +6047,7 @@ export class SyncEngine {
 							content,
 						);
 						const genesisUpdate = chosenGenesis?.update;
+						reachedServer = true;
 						const {
 							docId: serverId,
 							seeded,
@@ -6011,6 +6059,7 @@ export class SyncEngine {
 									pushedPath,
 									encodeUpdateFrame(genesisUpdate),
 								);
+						this.notesCapGate?.createAcked();
 						let effectiveId = noteId;
 						try {
 							// On ADOPT (serverId !== noteId) the path is already owned by a
@@ -6189,6 +6238,16 @@ export class SyncEngine {
 							this.notesCapGate?.trip(createReason);
 							return false;
 						}
+						// Anything else retryable (create_failed, rate-limit, timeout,
+						// transport) is the server's state, not this note's: hold EVERY
+						// create, or the sweep re-sends the whole vault into it (prod
+						// 2026-10-22). Terminal reasons are per-op and do not.
+						if (
+							reachedServer &&
+							(!createReason || !TERMINAL_REASONS.has(createReason))
+						) {
+							this.notesCapGate?.backoff(noteId);
+						}
 						// Anything else (rate-limit, transport): enqueue a durable
 						// crdt_create so the genesis is HELD and retried (transient) or
 						// surfaced (terminal) by the CrdtOpQueue. Return FALSE — a queued
@@ -6228,7 +6287,7 @@ export class SyncEngine {
 						this.crdt &&
 						noteId &&
 						!this.hasServerNote(noteId) &&
-						!this.capBlocksCreate(pushedPath)
+						!this.capHoldsNote(pushedPath)
 					) {
 						this.crdtEnqueue({ kind: "create", docId: noteId, path: pushedPath });
 					}
@@ -6237,7 +6296,7 @@ export class SyncEngine {
 				// REST covers notes outside the CRDT domain (canvas, oversized md).
 				// Same cap, same gate: skip row-adding pushes while closed, and let a
 				// REST refusal close it for every path.
-				if (this.capBlocksCreate(pushedPath)) return false;
+				if (this.capHoldsNote(pushedPath)) return false;
 				let resp: Awaited<ReturnType<EngramApi["pushNote"]>>;
 				try {
 					const ctime = fileCtimeSeconds(file);
@@ -8136,7 +8195,7 @@ export class SyncEngine {
 		for (const path of paths) {
 			const file = this.app.vault.getFileByPath(path);
 			if (file) {
-				await this.pushFile(file);
+				await this.pushFileBulk(file);
 			}
 		}
 	}
@@ -8746,7 +8805,7 @@ export class SyncEngine {
 			// here targetId == currentId or one is null): clear the path mapping and
 			// tear down the room for that id.
 			if (this.isCrdtEligiblePath(normalized)) {
-				this.noteIdMap?.delete(normalized);
+				this.noteIdMap?.forgetRemoteDelete(normalized, event.id ?? null);
 				const roomId = targetId ?? currentId;
 				if (roomId) {
 					await this.teardownCrdtDoc(roomId);
@@ -9395,11 +9454,12 @@ export class SyncEngine {
 			deleted: op.kind === "delete",
 			version: op.version,
 			seq: op.seq,
+			...(op.kind === "delete" && op.id ? { note_id: op.id } : {}),
 		};
 		const applied = await this.applyChange(nc);
 		// Retire the id now that applyChange has consumed the mapping (see the
 		// deferral note above). Idempotent with applyChange's own md teardown.
-		if (op.kind === "delete") this.noteIdMap?.delete(op.path);
+		if (op.kind === "delete") this.noteIdMap?.forgetRemoteDelete(op.path, op.id ?? null);
 		return applied;
 	}
 
@@ -9743,7 +9803,7 @@ export class SyncEngine {
 				// path is unchanged. Clears the map too (idempotent with
 				// applySyncChange's deferred clear).
 				if (crdtNoteId && this.isCrdtEligiblePath(normalized)) {
-					this.noteIdMap?.delete(normalized);
+					this.noteIdMap?.forgetRemoteDelete(normalized, change.note_id ?? null);
 					await this.teardownCrdtDoc(crdtNoteId);
 				}
 				return true;
@@ -11274,7 +11334,10 @@ export class SyncEngine {
 		const worker = async (): Promise<void> => {
 			for (let f = toSync[next++]; f !== undefined && !stop; f = toSync[next++]) {
 				try {
-					const ok = await this.pushFile(
+					// Bulk: the gate can close MID-sweep (the first failed create),
+					// after the candidate list was taken, so it is re-checked per file
+					// or the rest of a 7.8k-file sweep goes out into a failing server.
+					const ok = await this.pushFileBulk(
 						f,
 						mode === "force",
 						false,
@@ -11398,9 +11461,10 @@ export class SyncEngine {
 		return this.app.vault.getFiles().filter((f: TFile) => {
 			if (!this.isSyncable(f) || this.shouldIgnore(f.path)) return false;
 			if (!this.syncState.has(f.path)) {
-				// At the note cap every untracked file is a row-adding create the
-				// server refuses: skip it here, before pushFile reads it.
-				if (this.notesCapGate?.isClosed()) return false;
+				// At the note cap, or under the create backoff, an untracked file
+				// that would go out as a crdt_create is held: skip it here, before
+				// pushFile reads it. Attachments and REST-routed notes are not.
+				if (this.bulkCreateHeld(f)) return false;
 				const id = this.noteIdMap?.get(f.path);
 				return !(id && this.crdtHasPendingOp?.(id));
 			}
@@ -11964,7 +12028,7 @@ export class SyncEngine {
 					}
 					const file = this.app.vault.getFileByPath(normalizePath(path));
 					if (file) {
-						await this.pushFile(file, true);
+						await this.pushFileBulk(file, true);
 					}
 				}
 			}
@@ -12605,8 +12669,7 @@ export class SyncEngine {
 							);
 							continue;
 						}
-						replayId = uuid7();
-						this.noteIdMap.set(replayNp, replayId);
+						replayId = this.noteIdMap.mint(replayNp);
 					}
 					// CAS base, mirroring pushFile: a queued edit may be STALE (the
 					// server moved on during the offline window) — without base_hash

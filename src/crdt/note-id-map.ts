@@ -123,6 +123,22 @@ export class NoteIdMap {
 		return id;
 	}
 
+	/** Mint a fresh id for `path` unconditionally. For callers that already
+	 *  asked `get` and decided to mint (pushFile, queue replay). Pending until
+	 *  `confirmUpload`, so its claim is not published before then. */
+	mint(path: string): string {
+		const id = this.store.mint(path);
+		this.flush();
+		return id;
+	}
+
+	/** The server acked `id`'s create. Publishes its held claim at the next
+	 *  flush. See `SyncStore.commit`. */
+	confirmUpload(id: string): void {
+		this.store.confirmUpload(id);
+		this.flush();
+	}
+
 	/** Forward the store's relocation signal to the engine, which owns the
 	 *  vault. Set here rather than on the store directly so callers keep dealing
 	 *  with one identity object and a `rebind` (vault switch) cannot silently
@@ -178,6 +194,12 @@ export class NoteIdMap {
 	 *  in `handleDelete` — uses `release/1`. */
 	delete(path: string): void {
 		this.store.forget(path);
+	}
+
+	/** `delete` for a REMOTE delete that names `deletedId`. Spares a held,
+	 *  still-pending entry under another id: see `SyncStore.forgetRemoteDelete`. */
+	forgetRemoteDelete(path: string, deletedId: string | null): void {
+		this.store.forgetRemoteDelete(path, deletedId);
 	}
 
 	/** Publish a claim release. For a note the user actually deleted. */

@@ -427,6 +427,8 @@ describe("the mint guard refuses a tombstoned claim", () => {
 		const tombstoned = new Set<string>();
 		const store = storeWith(tombstoned);
 		const original = store.getOrMint("a.md");
+		// A committed claim is an ACKED one: claims are held until the ack.
+		store.confirmUpload(original);
 		store.commit();
 
 		// What sync.ts does on an inbound delete: forget the path, tear the doc down.
@@ -444,6 +446,8 @@ describe("the mint guard refuses a tombstoned claim", () => {
 	test("a LIVE claim is still reused", () => {
 		const store = storeWith(new Set());
 		const original = store.getOrMint("b.md");
+		// A committed claim is an ACKED one: claims are held until the ack.
+		store.confirmUpload(original);
 		store.commit();
 		store.forget("b.md");
 
