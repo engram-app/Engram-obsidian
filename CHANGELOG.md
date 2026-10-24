@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.39.0](https://github.com/engram-app/Engram-obsidian/compare/1.38.1...1.39.0) (2026-10-24)
+
+
+### Features
+
+* keep update-required state on screen until resolved ([#635](https://github.com/engram-app/Engram-obsidian/issues/635)) ([7d8f128](https://github.com/engram-app/Engram-obsidian/commit/7d8f128ea18faa54b798097121a67121f93f9df8))
+
 ## [1.38.1](https://github.com/engram-app/Engram-obsidian/compare/1.38.0...1.38.1) (2026-10-24)
 
 
