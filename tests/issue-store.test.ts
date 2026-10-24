@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
 	categorizeError,
 	healthCheckDelay,
@@ -13,6 +13,7 @@ import {
 } from "../src/issue-store";
 import { LimitExceededError } from "../src/limit-error";
 import type { SyncIssue, SyncIssueCategory } from "../src/types";
+import { notifyUpgradeRequired, resetUpgradeRequired } from "../src/upgrade-required";
 
 function makeIssue(overrides: Partial<SyncIssue> = {}): SyncIssue {
 	const now = Date.now();
@@ -484,5 +485,27 @@ describe("frontmatter parse issues", () => {
 		const got = parseStatusToIssue("degraded", null);
 		expect(got?.category).toBe("frontmatter");
 		expect(got?.message.length).toBeGreaterThan(0);
+	});
+});
+
+// While the version floor refuses us, every push path fails with a 426. Those
+// are not per-file problems: the Sync Center banner explains the one cause, so
+// a card per file ("Request failed (426)", under "Retrying automatically")
+// would contradict it. A bare proxy 426 (not confirmed) is still recorded.
+describe("IssueStore — version-floor refusal", () => {
+	afterEach(() => resetUpgradeRequired());
+
+	test("a 426 while refused is not recorded as a per-file issue", () => {
+		const store = new IssueStore();
+		notifyUpgradeRequired("1.36.0");
+		store.record(makeIssue({ category: "other", status: 426 }));
+		expect(store.count()).toBe(0);
+	});
+
+	test("a 426 that did not latch the refusal (proxy) is recorded", () => {
+		const store = new IssueStore();
+		notifyUpgradeRequired(null, undefined, false);
+		store.record(makeIssue({ category: "other", status: 426 }));
+		expect(store.count()).toBe(1);
 	});
 });

@@ -222,6 +222,7 @@ const ja: Dict = {
 		"Engram：このプラグインは古く、同期できません。続行するには更新してください。",
 	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
 		"Engram: この保管庫はサーバー上に存在しません。利用可能な保管庫を選択するか、新規作成して続行してください。",
+	"Engram: update required": "Engram: 更新が必要です",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: ログインが期限切れです。Engram の設定を開いて再接続してください。",
 	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.":
@@ -325,6 +326,10 @@ const ja: Dict = {
 	"Not signed in. Click to open settings and reconnect.":
 		"まだログインされていません。設定を開いて、再接続してください。",
 	"Not synced on your plan ({count})": "プランでは同期できません ({count})",
+	"Not syncing: this plugin version is too old (needs {version} or newer). Click to update.":
+		"同期していません: このプラグインのバージョンが古すぎます (バージョン {version} 以上が必要です)。更新するにはクリックしてください。",
+	"Not syncing: this plugin version is too old. Click to update.":
+		"同期していません: このプラグインのバージョンが古すぎます。更新するにはクリックしてください。",
 	"Note couldn't be processed": "ノートの処理に失敗しました",
 	"Note limit reached. Upgrade to keep adding notes.":
 		"ノートの制限に達しました。ノートを追加するには、アップグレードしてください。",
@@ -484,6 +489,10 @@ const ja: Dict = {
 		"これは完全なサーバーアドレスのように見えません。スキームを含めてください。例: http://127.0.0.1:4000",
 	"That does not look like an Engram API key (expected {prefix}…).":
 		"これはEngramのAPIキーのように見えません (期待されるのは {prefix}…)",
+	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Engramサーバーは、このプラグインのバージョンに対応していません（{version}以上が必要です）。そのため、ノートの送受信ができません。このデバイスで行った変更は、アップデートするまでここで保存されます。",
+	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Engramサーバーは、このプラグインのバージョンに対応していません。そのため、ノートの送受信ができません。このデバイスで行った変更は、アップデートするまでここで保存されます。",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"無料プランではノートのみ同期されます。画像やPDFを同期するには、有料プランにアップグレードしてください。",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
@@ -532,6 +541,8 @@ const ja: Dict = {
 	Untitled: "タイトルなし",
 	Update: "更新",
 	"Update in settings": "設定で更新",
+	"Update required, not syncing": "更新が必要です。同期していません",
+	"Update required: Engram is not syncing": "更新が必要です: Engram は同期されていません",
 	Upgrade: "アップグレード",
 	"Upload everything": "すべてをアップロード",
 	"Upload local files without downloading the remote":
@@ -598,6 +609,7 @@ const ja: Dict = {
 	"syncing now": "同期中",
 	unknown: "不明",
 	"waiting for a connection": "接続待ち",
+	"waiting for a plugin update": "プラグインのアップデートを待っています",
 	"waiting to retry": "再試行待ち",
 	"{count} attachments": "{count}つの添付ファイル",
 	"{count} attachments need a paid plan to sync. See Sync Center.":

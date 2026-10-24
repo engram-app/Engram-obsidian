@@ -201,6 +201,7 @@ const zh: Dict = {
 		"Engram：此插件版本过旧，无法同步。更新后继续。",
 	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
 		"Engram: 此仓库不再存在于服务器上。选择或创建仓库以继续。",
+	"Engram: update required": "Engram: 需要更新",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram：您的登录已过期，请在 Engram 设置中重新连接。",
 	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.":
@@ -299,6 +300,10 @@ const zh: Dict = {
 		"未登录，或会话已过期。请在 Engram 设置中重新登录。",
 	"Not signed in. Click to open settings and reconnect.": "尚未登录。点击打开设置并重新连接。",
 	"Not synced on your plan ({count})": "您的计划不支持同步 ({count})",
+	"Not syncing: this plugin version is too old (needs {version} or newer). Click to update.":
+		"暂未同步：此插件版本过旧（需要 {version} 或更高版本）。点击更新。",
+	"Not syncing: this plugin version is too old. Click to update.":
+		"暂未同步：此插件版本过旧。点击更新。",
 	"Note couldn't be processed": "笔记处理失败",
 	"Note limit reached. Upgrade to keep adding notes.": "笔记数量已达上限。升级以继续添加笔记。",
 	"Note not synced locally": "笔记未本地同步",
@@ -449,6 +454,10 @@ const zh: Dict = {
 		"这看起来不是完整的服务器地址。请包含协议，例如 http://127.0.0.1:4000",
 	"That does not look like an Engram API key (expected {prefix}…).":
 		"这看起来不像一个 Engram API 密钥（预期为 {prefix}…）。",
+	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Engram 服务器不再接受此插件版本（需要 {version} 或更高版本），因此笔记无法发送或接收。在此设备上进行的更改将在此处保留，直到您更新。",
+	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Engram 服务器不再接受此插件版本，因此笔记无法发送或接收。在此设备上进行的更改将在此处保留，直到您更新。",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"免费版仅同步笔记。升级以同步图片和PDF。",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
@@ -493,6 +502,8 @@ const zh: Dict = {
 	Untitled: "未命名",
 	Update: "更新",
 	"Update in settings": "在设置中更新",
+	"Update required, not syncing": "需要更新，暂未同步",
+	"Update required: Engram is not syncing": "需要更新：Engram 暂未同步",
 	Upgrade: "升级",
 	"Upload everything": "上传全部",
 	"Upload local files without downloading the remote": "上传本地文件，不下载远程文件",
@@ -557,6 +568,7 @@ const zh: Dict = {
 	"syncing now": "正在同步",
 	unknown: "未知",
 	"waiting for a connection": "正在等待连接",
+	"waiting for a plugin update": "等待插件更新",
 	"waiting to retry": "正在等待重试",
 	"{count} attachments": "{count} 个附件",
 	"{count} attachments need a paid plan to sync. See Sync Center.":

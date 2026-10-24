@@ -19,6 +19,7 @@ import { renderSyncCenterTab } from "./tabs/sync-center-tab";
 import type { TabContext } from "./tabs/types";
 import { DEFAULT_UPGRADE_URL } from "./tabs/urls";
 import type { SyncProgress } from "./types";
+import { isUpgradeRequired } from "./upgrade-required";
 
 /** Build the settings pane's progress-bar render callback. Extracted
  *  DOM-agnostic (like renderCompletionSummary) so the teardown-without-hide
@@ -87,6 +88,9 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 	/** Last sync-gate value this pane rendered against. See
 	 *  handleStatusBarChange — the gate is an EDGE, the status strip is a tick. */
 	private lastSyncBlocked = false;
+	/** Same edge rule, for the version-floor refusal: the Sync Center banner
+	 *  appears/disappears on a full re-render, the strip label on a tick. */
+	private lastUpdateRequired = false;
 
 	constructor(app: App, plugin: EngramSyncPlugin) {
 		super(app, plugin);
@@ -173,6 +177,7 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 		this.renderStatus();
 
 		this.lastSyncBlocked = this.plugin.syncEngine?.isSyncBlocked() ?? false;
+		this.lastUpdateRequired = isUpgradeRequired();
 		this.plugin.onStatusBarChange = () => this.handleStatusBarChange();
 
 		// ── Progress bar (hidden until sync is active, persists across tabs) ──
@@ -326,7 +331,10 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 		let dotState: "is-error" | "is-connected" | "is-polling" | "is-idle" | "is-waiting";
 		let label: string;
 
-		if (status.state === "offline") {
+		if (isUpgradeRequired()) {
+			dotState = "is-error";
+			label = t("Update required, not syncing");
+		} else if (status.state === "offline") {
 			dotState = "is-error";
 			label = t("Disconnected");
 		} else if (status.state === "error") {
@@ -413,8 +421,10 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 	private handleStatusBarChange(): void {
 		this.renderStatus();
 		const blocked = this.plugin.syncEngine?.isSyncBlocked() ?? false;
-		if (blocked === this.lastSyncBlocked) return;
+		const updateRequired = isUpgradeRequired();
+		if (blocked === this.lastSyncBlocked && updateRequired === this.lastUpdateRequired) return;
 		this.lastSyncBlocked = blocked;
+		this.lastUpdateRequired = updateRequired;
 		this.rerender();
 	}
 

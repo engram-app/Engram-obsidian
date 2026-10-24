@@ -17,6 +17,12 @@ import { destroyRemoteLog, initRemoteLog } from "../src/remote-log";
 import { OFFLINE_RETRY_BASE_MS, SyncEngine } from "../src/sync";
 import { ManualTimeProvider } from "../src/time-provider";
 import { DEFAULT_SETTINGS } from "../src/types";
+import {
+	markAdmitted,
+	notifyUpgradeRequired,
+	resetUpgradeRequired,
+	upgradeRequiredError,
+} from "../src/upgrade-required";
 
 const BAD = "Assets/Holiday photo.png";
 
@@ -214,5 +220,53 @@ describe("(e) push give-up telemetry", () => {
 		for (const e of sent) {
 			expect(e.message).not.toContain("Holiday");
 		}
+	});
+});
+
+// Refused by the server's version floor: every push fails locally with a 426.
+// Burning RETRY_CAP on that dropped the user's queued edits within minutes,
+// and parked them as "Request failed (426)" cards under the update banner.
+// The queue must HOLD, untouched, until the refusal clears.
+describe("version-floor refusal holds the queue", () => {
+	afterEach(() => resetUpgradeRequired());
+
+	test("no attempts burned, nothing parked, and it drains once admitted", async () => {
+		const paths = ["Assets/a.png", "Assets/b.png"];
+		const h = harness(paths, () => (isRefused ? upgradeRequiredError() : null));
+		let isRefused = true;
+		await enqueueAll(h.engine, paths);
+		notifyUpgradeRequired("1.36.0");
+
+		await h.engine.flushQueue();
+		for (let i = 0; i < 10; i++) {
+			h.time.advance(OFFLINE_RETRY_BASE_MS * 2 ** i);
+			await settle();
+		}
+
+		expect(h.calls.length).toBe(0);
+		expect(h.engine.queue.size).toBe(2);
+		expect(h.engine.queue.all().every((e) => (e.attempts ?? 0) === 0)).toBe(true);
+		expect(h.engine.issues.all()).toHaveLength(0);
+		expect(h.engine.queuedReason()).toBe("update-required");
+
+		isRefused = false;
+		markAdmitted();
+		await h.engine.flushQueue();
+
+		expect(h.calls.map((c) => c.path)).toEqual(paths);
+		expect(h.engine.queue.size).toBe(0);
+	});
+
+	test("a push already in flight when the refusal lands keeps its entry as-is", async () => {
+		const h = harness(["Assets/a.png"], () => {
+			notifyUpgradeRequired("1.36.0");
+			return upgradeRequiredError();
+		});
+		await enqueueAll(h.engine, ["Assets/a.png"]);
+
+		await h.engine.flushQueue();
+
+		expect(h.engine.queue.all().map((e) => e.attempts ?? 0)).toEqual([0]);
+		expect(h.engine.issues.all()).toHaveLength(0);
 	});
 });

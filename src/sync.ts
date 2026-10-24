@@ -28,7 +28,7 @@ import {
 	TERMINAL_REASONS,
 } from "./crdt-op-dispatch";
 import { devLog } from "./dev-log";
-import { errMsg, isHttpStatus } from "./error-util";
+import { errMsg, isHttpStatus, statusOf } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
 import { isCanvasPath as canvasPath, isCrdtEligiblePath as crdtEligiblePath } from "./file-kind";
 import { t } from "./i18n";
@@ -81,6 +81,7 @@ import type {
 	SyncProgress,
 	SyncStatus,
 } from "./types";
+import { isUpgradeRequired } from "./upgrade-required";
 
 /**
  * Pure routing helper: for a markdown note, apply the disk content into the
@@ -6420,8 +6421,9 @@ export class SyncEngine {
 				// Drives the batched session toast (drained by pushAll /
 				// pushModifiedFiles) and the progress "skipped" count.
 				this.attachmentLimitedThisBatch += 1;
-			} else {
-				// Tally for the batched "N files failed to sync" Notice.
+			} else if (!(isHttpStatus(e, 426) && isUpgradeRequired())) {
+				// Tally for the batched "N files failed to sync" Notice. Not while
+				// the version floor refuses us: the update banner owns that.
 				this.failuresThisBatch += 1;
 				this.firstFailureMessageThisBatch ??= classified.userMessage;
 				this.firstFailureCategoryThisBatch ??= classified.category;
@@ -11358,6 +11360,8 @@ export class SyncEngine {
 						path: f.path,
 						kind: this.isBinaryFile(f) ? "attachment" : "note",
 						category: "other",
+						// IssueStore keys its version-floor filter on this.
+						status: statusOf(e),
 						message: msg,
 						firstFailedAt: Date.now(),
 						lastFailedAt: Date.now(),
@@ -12161,6 +12165,7 @@ export class SyncEngine {
 			inFlight: this.pushing.size,
 			offline: this.offline,
 			syncBlocked: this.syncBlocked,
+			updateRequired: isUpgradeRequired(),
 		});
 	}
 
@@ -12223,6 +12228,10 @@ export class SyncEngine {
 	 *  (re-queued with the bumped count; caller stops this flush pass) or "parked"
 	 *  (issue recorded + dequeued; caller keeps flushing the rest). */
 	private async handleFlushFailure(entry: QueueEntry, e: unknown): Promise<"parked" | "retry"> {
+		// The push in flight when the version-floor refusal latched: leave the
+		// entry exactly as it was (no attempt bump, no issue). It drains after
+		// the refusal clears, like the rest of the held queue.
+		if (isHttpStatus(e, 426) && isUpgradeRequired()) return "retry";
 		const classified = categorizeError(e);
 		const attempts = (entry.attempts ?? 0) + 1;
 		if (shouldRetryAfterFailure(classified, attempts)) {
@@ -12402,7 +12411,10 @@ export class SyncEngine {
 			this.time.clearTimeout(this.queueRetryTimer);
 			this.queueRetryTimer = null;
 		}
-		if (this.offline || this.syncBlocked) return;
+		// Refused for an old version: no timer. Admission re-drives the drain
+		// (main.ts's upgrade-state listener); reload / backend switch drain from
+		// the crdt: join kick.
+		if (this.offline || this.syncBlocked || isUpgradeRequired()) return;
 		let due = Number.POSITIVE_INFINITY;
 		for (const e of this.queue.all()) {
 			if (e.nextAttemptAt !== undefined && e.nextAttemptAt < due) due = e.nextAttemptAt;
@@ -12434,6 +12446,9 @@ export class SyncEngine {
 			// entries stay queued and drain when the gate reopens (re-auth →
 			// applySyncGate → fullSync → pushModifiedFiles → flushQueue).
 			if (this.syncBlocked) break;
+			// Refused by the server's version floor: every push fails locally, so
+			// draining would only burn RETRY_CAP and drop the user's edits. Hold.
+			if (isUpgradeRequired()) break;
 
 			// Backing off after a transient failure: skip it and keep draining
 			// the entries behind it (head-of-line blocking, 2026-10-09). The

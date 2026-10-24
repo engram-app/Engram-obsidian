@@ -107,6 +107,20 @@ describe("queuedReason", () => {
 		);
 	});
 
+	// Outranks offline: being refused for an old version is the one cause that
+	// does not resolve itself, and the one whose fix (update) unblocks the rest.
+	test("explains a queue held by the version floor", () => {
+		expect(
+			queuedReason({
+				queued: 3,
+				inFlight: 0,
+				offline: true,
+				syncBlocked: true,
+				updateRequired: true,
+			}),
+		).toBe("update-required");
+	});
+
 	test("returns null when there is nothing queued", () => {
 		expect(
 			queuedReason({ queued: 0, inFlight: 0, offline: true, syncBlocked: false }),

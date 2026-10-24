@@ -19,6 +19,7 @@
  */
 import { describe, expect, test } from "bun:test";
 import { EngramSyncSettingTab } from "../src/settings";
+import { markAdmitted, notifyUpgradeRequired, resetUpgradeRequired } from "../src/upgrade-required";
 
 const makeTab = (startBlocked: boolean) => {
 	const tab = Object.create(EngramSyncSettingTab.prototype) as any;
@@ -33,6 +34,7 @@ const makeTab = (startBlocked: boolean) => {
 	};
 	// What renderContent() seeds when it installs the handler.
 	tab.lastSyncBlocked = startBlocked;
+	tab.lastUpdateRequired = false;
 	const tick = () => tab.handleStatusBarChange();
 	return { calls, gate, tick };
 };
@@ -83,5 +85,24 @@ describe("settings pane — sync gate edge", () => {
 
 		expect(calls.rerender).toBe(1);
 		expect(calls.status).toBe(3);
+	});
+});
+
+// The Sync Center's update-required banner is drawn by a full render, so the
+// version-floor refusal is an edge too: on when it latches, off when cleared.
+describe("settings pane — update required edge", () => {
+	test("latching and clearing the refusal each re-render once", () => {
+		resetUpgradeRequired();
+		const { calls, tick } = makeTab(false);
+
+		notifyUpgradeRequired("1.36.0");
+		tick();
+		tick();
+		expect(calls.rerender).toBe(1);
+
+		markAdmitted();
+		tick();
+		expect(calls.rerender).toBe(2);
+		resetUpgradeRequired();
 	});
 });

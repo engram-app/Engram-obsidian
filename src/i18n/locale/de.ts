@@ -249,6 +249,7 @@ const de: Dict = {
 		"Engram: Dieses Plugin ist zu alt, um synchronisiert zu werden. Aktualisiere es, um fortzufahren.",
 	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
 		"Engram: Dieses Vault existiert nicht mehr auf dem Server. Wähle ein Vault aus oder erstelle eines, um fortzufahren.",
+	"Engram: update required": "Engram: Update erforderlich",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: Deine Anmeldung ist abgelaufen – öffne die Engram-Einstellungen, um die Verbindung wiederherzustellen.",
 	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.": {
@@ -362,6 +363,10 @@ const de: Dict = {
 	"Not signed in. Click to open settings and reconnect.":
 		"Noch nicht angemeldet. Klicke, um die Einstellungen zu öffnen und dich erneut zu verbinden.",
 	"Not synced on your plan ({count})": "Nicht im Rahmen deines Plans synchronisiert ({count})",
+	"Not syncing: this plugin version is too old (needs {version} or newer). Click to update.":
+		"Wird nicht synchronisiert: Diese Plugin-Version ist zu alt (benötigt {version} oder neuer). Klicke zum Aktualisieren.",
+	"Not syncing: this plugin version is too old. Click to update.":
+		"Wird nicht synchronisiert: Diese Plugin-Version ist zu alt. Klicke zum Aktualisieren.",
 	"Note couldn't be processed": "Notiz konnte nicht verarbeitet werden",
 	"Note limit reached. Upgrade to keep adding notes.":
 		"Notizen-Limit erreicht. Upgrade, um weitere Notizen hinzufügen zu können.",
@@ -526,6 +531,10 @@ const de: Dict = {
 		"Das sieht nicht nach einer vollständigen Serveradresse aus. Gib das Schema mit an, z.B. http://127.0.0.1:4000",
 	"That does not look like an Engram API key (expected {prefix}…).":
 		"Das sieht nicht nach einem Engram API-Schlüssel aus (erwartet {prefix}…).",
+	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Der Engram-Server akzeptiert diese Plugin-Version nicht (er benötigt {version} oder neuer), daher werden keine Notizen gesendet oder empfangen. Änderungen, die du hier vornimmst, bleiben lokal, bis du aktualisierst.",
+	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Der Engram-Server akzeptiert diese Plugin-Version nicht, daher werden keine Notizen gesendet oder empfangen. Änderungen, die du hier vornimmst, bleiben lokal, bis du aktualisierst.",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"Die kostenlose Version synchronisiert nur Notizen. Upgrade, um auch Bilder und PDFs zu synchronisieren.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
@@ -574,6 +583,9 @@ const de: Dict = {
 	Untitled: "Ohne Titel",
 	Update: "Aktualisieren",
 	"Update in settings": "In den Einstellungen aktualisieren",
+	"Update required, not syncing": "Update erforderlich, nicht synchronisiert",
+	"Update required: Engram is not syncing":
+		"Update erforderlich: Engram wird nicht synchronisiert",
 	Upgrade: "Upgrade",
 	"Upload everything": "Alles hochladen",
 	"Upload local files without downloading the remote":
@@ -650,6 +662,7 @@ const de: Dict = {
 	"syncing now": "Synchronisiert",
 	unknown: "unbekannt",
 	"waiting for a connection": "wartet auf eine Verbindung",
+	"waiting for a plugin update": "Wartet auf ein Plugin-Update",
 	"waiting to retry": "wartet auf Wiederholung",
 	"{count} attachments": { one: "{count} Anhang", other: "{count} Anhänge" },
 	"{count} attachments need a paid plan to sync. See Sync Center.": {

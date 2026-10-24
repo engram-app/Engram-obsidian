@@ -222,6 +222,7 @@ const ms: Dict = {
 		"Engram: plugin ini terlalu lama untuk melakukan sync. Kemas kini untuk meneruskan.",
 	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
 		"Engram: peti nota ini tidak lagi wujud di server. Pilih atau cipta peti nota untuk meneruskan.",
+	"Engram: update required": "Engram: kemas kini diperlukan",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: log masuk anda telah tamat tempoh — buka tetapan Engram untuk menyambung semula.",
 	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.":
@@ -324,6 +325,10 @@ const ms: Dict = {
 	"Not signed in. Click to open settings and reconnect.":
 		"Belum log masuk. Klik untuk membuka tetapan dan sambungkan semula.",
 	"Not synced on your plan ({count})": "Tidak disinkronkan dalam pelan anda ({count})",
+	"Not syncing: this plugin version is too old (needs {version} or newer). Click to update.":
+		"Tidak disegerakkan: versi plugin ini terlalu lama (perlu {version} atau yang lebih baru). Klik untuk mengemas kini.",
+	"Not syncing: this plugin version is too old. Click to update.":
+		"Tidak disegerakkan: versi plugin ini terlalu lama. Klik untuk mengemas kini.",
 	"Note couldn't be processed": "Nota tidak dapat diproses",
 	"Note limit reached. Upgrade to keep adding notes.":
 		"Had nota telah dicapai. Tingkatkan untuk terus menambah nota.",
@@ -487,6 +492,10 @@ const ms: Dict = {
 		"Itu tidak seperti alamat pelayan yang lengkap. Sertakan skema, contohnya http://127.0.0.1:4000",
 	"That does not look like an Engram API key (expected {prefix}…).":
 		"Itu tidak kelihatan seperti kunci API Engram (diharapkan {prefix}…).",
+	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Pelayan Engram tidak lagi menerima versi plugin ini (perlukan {version} atau versi yang lebih baru), jadi nota tidak dihantar atau diterima. Perubahan yang dibuat pada peranti ini kekal di sini sehingga anda mengemas kini.",
+	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Pelayan Engram tidak lagi menerima versi plugin ini, jadi nota tidak dihantar atau diterima. Perubahan yang dibuat pada peranti ini kekal di sini sehingga anda mengemas kini.",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"Versi percuma hanya menyegerakkan nota. Tingkatkan untuk menyegerakkan imej dan fail PDF.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
@@ -535,6 +544,8 @@ const ms: Dict = {
 	Untitled: "Tanpa tajuk",
 	Update: "Kemas kini",
 	"Update in settings": "Kemas kini dalam tetapan",
+	"Update required, not syncing": "Kemas kini diperlukan, tidak disegerakkan",
+	"Update required: Engram is not syncing": "Kemas kini diperlukan: Engram tidak disegerakkan",
 	Upgrade: "Tingkatkan",
 	"Upload everything": "Muat naik semuanya",
 	"Upload local files without downloading the remote":
@@ -602,6 +613,7 @@ const ms: Dict = {
 	"syncing now": "sedang sync",
 	unknown: "tidak diketahui",
 	"waiting for a connection": "menunggu sambungan",
+	"waiting for a plugin update": "sedang menunggu kemas kini plugin",
 	"waiting to retry": "menunggu untuk cuba semula",
 	"{count} attachments": "{count} lampiran",
 	"{count} attachments need a paid plan to sync. See Sync Center.":

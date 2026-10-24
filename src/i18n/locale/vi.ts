@@ -219,6 +219,7 @@ const vi: Dict = {
 		"Engram: plugin này quá cũ để đồng bộ hóa. Cập nhật để tiếp tục.",
 	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
 		"Engram: kho lưu trữ này không còn tồn tại trên máy chủ. Chọn hoặc tạo một kho lưu trữ để tiếp tục.",
+	"Engram: update required": "Engram: cần cập nhật",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: phiên đăng nhập của bạn đã hết hạn — mở cài đặt Engram để kết nối lại.",
 	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.":
@@ -322,6 +323,10 @@ const vi: Dict = {
 	"Not signed in. Click to open settings and reconnect.":
 		"Chưa đăng nhập. Nhấp để mở cài đặt và kết nối lại.",
 	"Not synced on your plan ({count})": "Chưa được đồng bộ hóa trong gói của bạn ({count})",
+	"Not syncing: this plugin version is too old (needs {version} or newer). Click to update.":
+		"Không đồng bộ hóa: phiên bản plugin này quá cũ (cần {version} trở lên). Nhấp để cập nhật.",
+	"Not syncing: this plugin version is too old. Click to update.":
+		"Không đồng bộ hóa: phiên bản plugin này quá cũ. Nhấp để cập nhật.",
 	"Note couldn't be processed": "Không thể xử lý ghi chú",
 	"Note limit reached. Upgrade to keep adding notes.":
 		"Đã đạt giới hạn ghi chú. Nâng cấp để thêm nhiều ghi chú hơn.",
@@ -484,6 +489,10 @@ const vi: Dict = {
 		"Địa chỉ máy chủ này có vẻ không đầy đủ. Hãy bao gồm cả giao thức, ví dụ: http://127.0.0.1:4000",
 	"That does not look like an Engram API key (expected {prefix}…).":
 		"Đó không phải là khóa API Engram (mong đợi {prefix}…).",
+	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Máy chủ Engram không còn hỗ trợ phiên bản plugin này (cần phiên bản {version} trở lên), vì vậy ghi chú không được gửi hoặc nhận. Các thay đổi bạn thực hiện trên thiết bị này sẽ vẫn ở đây cho đến khi bạn cập nhật.",
+	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Máy chủ Engram không còn hỗ trợ phiên bản plugin này, vì vậy ghi chú không được gửi hoặc nhận. Các thay đổi bạn thực hiện trên thiết bị này sẽ vẫn ở đây cho đến khi bạn cập nhật.",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"Gói miễn phí chỉ đồng bộ hóa ghi chú. Nâng cấp để đồng bộ hóa hình ảnh và PDF.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
@@ -531,6 +540,8 @@ const vi: Dict = {
 	Untitled: "Không tiêu đề",
 	Update: "Cập nhật",
 	"Update in settings": "Cập nhật trong cài đặt",
+	"Update required, not syncing": "Cần cập nhật, không đồng bộ hóa",
+	"Update required: Engram is not syncing": "Cần cập nhật: Engram không đang đồng bộ hóa",
 	Upgrade: "Nâng cấp",
 	"Upload everything": "Tải lên tất cả",
 	"Upload local files without downloading the remote":
@@ -599,6 +610,7 @@ const vi: Dict = {
 	"syncing now": "đang đồng bộ hóa",
 	unknown: "không xác định",
 	"waiting for a connection": "đang chờ kết nối",
+	"waiting for a plugin update": "Đang chờ cập nhật plugin",
 	"waiting to retry": "đang chờ thử lại",
 	"{count} attachments": "{count} tệp đính kèm",
 	"{count} attachments need a paid plan to sync. See Sync Center.":

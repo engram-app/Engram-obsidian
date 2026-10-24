@@ -993,6 +993,22 @@ body.is-mobile .engram-support-buttons > a {
 	box-shadow: var(--shadow-s);
 }
 
+/* Version-floor refusal: terminal until updated, so it reads as an error, not
+   the accent-coloured info strip below it. */
+.engram-update-required-banner {
+	background-color: var(--background-modifier-form-field);
+	border: 1px solid var(--background-modifier-border);
+	border-left: 3px solid var(--text-error);
+	border-radius: 8px;
+	padding: 10px 14px;
+	margin-bottom: 12px;
+}
+
+.engram-update-required-banner p {
+	margin: 4px 0 10px;
+	color: var(--text-muted);
+}
+
 .engram-sync-center-issue-badge {
 	background: var(--background-modifier-error);
 	color: var(--text-on-accent);

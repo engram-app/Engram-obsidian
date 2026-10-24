@@ -90,7 +90,13 @@ import {
 	type SyncStatus,
 } from "./types";
 import { checkForPluginUpdate } from "./update-check";
-import { setUpgradeAction } from "./upgrade-required";
+import {
+	isUpgradeRequired,
+	openUpgradeUi,
+	setUpgradeAction,
+	setUpgradeStateListener,
+	upgradeRequiredMinVersion,
+} from "./upgrade-required";
 import { loadWasmCore } from "./wasm-core";
 
 /** Generate a stable client ID for vault registration.
@@ -614,6 +620,18 @@ export default class EngramSyncPlugin extends Plugin {
 		// and a "newer version available" nudge want the same place, and that
 		// path is already feature-detected against Obsidian internals.
 		setUpgradeAction(() => this.openCommunityPluginsUpdate());
+		setUpgradeStateListener((admitted) => {
+			if (!this.syncEngine) return;
+			this.updateStatusBar(this.syncEngine.getStatus());
+			// Admitted by the server: the queue held every change while refused
+			// (sync.ts runFlushQueue), and a socket join does not re-drive it.
+			// Only on admission: see UpgradeStateListener in upgrade-required.ts.
+			if (admitted) {
+				void this.syncEngine.flushQueue().catch((e: unknown) => {
+					rlog().warn("queue", `post-refusal flush failed: ${errMsg(e)}`);
+				});
+			}
+		});
 		rlog().info("lifecycle", `onload start — v${this.manifest.version}`);
 		activeDocument.body.classList.add("engram-vault-sync-active");
 		await this.loadSettings();
@@ -1180,6 +1198,9 @@ export default class EngramSyncPlugin extends Plugin {
 		this.statusBarEl.addClass("engram-status-bar-clickable");
 
 		this.registerDomEvent(this.statusBarEl, "click", () => {
+			// Refused by the server's version floor: syncing cannot work, so the
+			// click goes where the fix is. Falls through if no action is wired.
+			if (isUpgradeRequired() && openUpgradeUi()) return;
 			if (!this.hasAuthConfigured()) {
 				// Signed out: a silent dead click here was the incident's limbo —
 				// route to settings where the re-link lives.
@@ -1572,6 +1593,7 @@ export default class EngramSyncPlugin extends Plugin {
 		// notifyUpgradeRequired.) Without this, the notice's Update button
 		// would call into a dead `this.app`.
 		setUpgradeAction(null);
+		setUpgradeStateListener(null);
 		this.promiseTracker?.destroy();
 		this.promiseTracker = null;
 		destroyDevLog();
@@ -3666,8 +3688,23 @@ export default class EngramSyncPlugin extends Plugin {
 		// sends a first-run user off looking for what broke instead of finishing
 		// the two steps they abandoned.
 		const neverSynced = !status.lastSync;
+		const updateRequired = isUpgradeRequired();
 
-		if (!this.hasAuthConfigured()) {
+		if (updateRequired) {
+			// First: the server's version floor refuses every sync path, so any
+			// other state here ("live", "ready") would be a lie. Persistent until
+			// a clearing event in upgrade-required.ts; the Notice fades.
+			const min = upgradeRequiredMinVersion();
+			text = t("Engram: update required");
+			tooltip = min
+				? t(
+						"Not syncing: this plugin version is too old (needs {version} or newer). Click to update.",
+						{
+							version: min,
+						},
+					)
+				: t("Not syncing: this plugin version is too old. Click to update.");
+		} else if (!this.hasAuthConfigured()) {
 			// Signed out (or never linked): "ready" here was a lie the 2026-08-12
 			// incident shipped — after a forced sign-out the bar claimed ready
 			// while every sync path was dead.
@@ -3718,7 +3755,13 @@ export default class EngramSyncPlugin extends Plugin {
 		// hasAuthConfigured guard: dead auth PRODUCES logged sync errors, so
 		// without it the error badge overwrites "signed out" in exactly the
 		// forced-sign-out state the branch above exists for.
-		if (errorCount > 0 && status.state === "idle" && !blocked && this.hasAuthConfigured()) {
+		if (
+			errorCount > 0 &&
+			status.state === "idle" &&
+			!blocked &&
+			!updateRequired &&
+			this.hasAuthConfigured()
+		) {
 			text = t("Engram: ⚠ {count} sync errors", { count: errorCount });
 		}
 

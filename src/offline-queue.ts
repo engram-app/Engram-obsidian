@@ -40,9 +40,16 @@ export interface QueueGateState {
 	inFlight: number;
 	offline: boolean;
 	syncBlocked: boolean;
+	/** The server's version floor refused this plugin (upgrade-required.ts). */
+	updateRequired?: boolean;
 }
 
-export type QueuedReason = "offline" | "sync-blocked" | "in-progress" | "waiting";
+export type QueuedReason =
+	| "update-required"
+	| "offline"
+	| "sync-blocked"
+	| "in-progress"
+	| "waiting";
 
 /**
  * Why is this queue not draining?
@@ -51,13 +58,15 @@ export type QueuedReason = "offline" | "sync-blocked" | "in-progress" | "waiting
  * "waiting" in particular names the case that currently looks like a hang —
  * online, unblocked, nothing in flight, work still sitting there.
  *
- * Offline outranks sync-blocked because it is the one the user can act on and
- * the one that resolves itself.
+ * Update-required outranks everything: it never resolves itself, and nothing
+ * else can drain until the user updates. Offline outranks sync-blocked because
+ * it is the one the user can act on and the one that resolves itself.
  *
  * Derived from No-Instructions/Relay (MIT); see THIRD-PARTY-NOTICES.md.
  */
 export function queuedReason(state: QueueGateState): QueuedReason | null {
 	if (state.queued === 0) return null;
+	if (state.updateRequired) return "update-required";
 	if (state.offline) return "offline";
 	if (state.syncBlocked) return "sync-blocked";
 	if (state.inFlight > 0) return "in-progress";

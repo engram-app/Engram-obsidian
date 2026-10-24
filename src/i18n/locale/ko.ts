@@ -217,6 +217,7 @@ const ko: Dict = {
 		"Engram: 이 플러그인은 너무 오래되어 동기화할 수 없습니다. 계속하려면 업데이트하세요.",
 	"Engram: this vault no longer exists on the server. Pick or create a vault to continue.":
 		"Engram: 이 보관함은 더 이상 서버에 존재하지 않습니다. 계속하려면 보관함을 선택하거나 새로 만드세요.",
+	"Engram: update required": "Engram: 업데이트 필요",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: 로그인 만료되었습니다. 다시 연결하려면 Engram 설정으로 이동하세요.",
 	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.":
@@ -320,6 +321,10 @@ const ko: Dict = {
 	"Not signed in. Click to open settings and reconnect.":
 		"아직 로그인하지 않았습니다. 설정을 클릭하여 다시 연결하세요.",
 	"Not synced on your plan ({count})": "구독 플랜에 포함되지 않아 동기화되지 않음 ({count})",
+	"Not syncing: this plugin version is too old (needs {version} or newer). Click to update.":
+		"동기화 중지: 이 플러그인 버전이 너무 낮습니다 (최소 {version} 이상 필요). 업데이트하려면 클릭하세요.",
+	"Not syncing: this plugin version is too old. Click to update.":
+		"동기화 중지: 이 플러그인 버전이 너무 낮습니다. 업데이트하려면 클릭하세요.",
 	"Note couldn't be processed": "노트 처리 실패",
 	"Note limit reached. Upgrade to keep adding notes.":
 		"노트 제한에 도달했습니다. 더 많은 노트를 추가하려면 업그레이드하세요.",
@@ -476,6 +481,10 @@ const ko: Dict = {
 		"서버 주소가 올바르지 않습니다. 스키마를 포함해주세요. 예: http://127.0.0.1:4000",
 	"That does not look like an Engram API key (expected {prefix}…).":
 		"이것은 Engram API 키처럼 보이지 않습니다 (예상 값: {prefix}…).",
+	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Engram 서버는 더 이상 이 플러그인 버전을 지원하지 않습니다 (최소 {version} 이상 필요). 따라서 노트가 전송되거나 수신되지 않습니다. 이 장치에서 변경한 내용은 업데이트할 때까지 여기에 보관됩니다.",
+	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Engram 서버는 더 이상 이 플러그인 버전을 지원하지 않습니다. 따라서 노트가 전송되거나 수신되지 않습니다. 이 장치에서 변경한 내용은 업데이트할 때까지 여기에 보관됩니다.",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"무료 플랜은 노트만 동기화합니다. 이미지 및 PDF 동기화를 원하시면 유료 플랜으로 업그레이드하세요.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
@@ -523,6 +532,8 @@ const ko: Dict = {
 	Untitled: "제목 없음",
 	Update: "업데이트",
 	"Update in settings": "설정에서 업데이트",
+	"Update required, not syncing": "업데이트 필요, 동기화 중지",
+	"Update required: Engram is not syncing": "업데이트 필요: Engram이(가) 동기화되지 않음",
 	Upgrade: "업그레이드",
 	"Upload everything": "모두 업로드",
 	"Upload local files without downloading the remote":
@@ -589,6 +600,7 @@ const ko: Dict = {
 	"syncing now": "현재 동기화 중",
 	unknown: "알 수 없음",
 	"waiting for a connection": "연결 대기 중",
+	"waiting for a plugin update": "플러그인 업데이트를 기다 중입니다",
 	"waiting to retry": "재시도 대기 중",
 	"{count} attachments": "{count}개의 첨부 파일",
 	"{count} attachments need a paid plan to sync. See Sync Center.":
