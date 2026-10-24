@@ -1761,6 +1761,24 @@ export class SyncEngine {
 		);
 	}
 
+	/** `pushFile` for every BULK caller: a loop over many files (the sweep
+	 *  worker, pushAll's reconcile pass, the gate-journal replay, the post-pull
+	 *  flush). It is the ONE place the create backoff holds pushes. A single
+	 *  user event (a debounced edit, a rename, a conflict copy) calls
+	 *  `pushFile` directly and is never held: it is the probe.
+	 *
+	 *  A held file is skipped unread and stays untracked, so the self-heal
+	 *  sweep re-pushes it once the gate reopens. */
+	private pushFileBulk(
+		file: TFile,
+		force = false,
+		bypassPlanSkip = false,
+		serverAttachmentHashes?: Map<string, string>,
+	): Promise<boolean> {
+		if (this.bulkCreateHeld(file)) return Promise.resolve(false);
+		return this.pushFile(file, force, bypassPlanSkip, serverAttachmentHashes);
+	}
+
 	/** In-flight re-sweep started by a plan change (test hook). */
 	private capResync: Promise<unknown> | null = null;
 
@@ -3316,7 +3334,7 @@ export class SyncEngine {
 				if (!file || !this.isSyncable(file) || this.shouldIgnore(path)) continue;
 				this.gateModified.delete(path); // pushed here; no second push via modify
 				try {
-					await this.pushFile(file);
+					await this.pushFileBulk(file);
 				} catch (e) {
 					rlog().error("vault", `Gate journal replay: push failed: ${errMsg(e, path)}`);
 				}
@@ -8177,7 +8195,7 @@ export class SyncEngine {
 		for (const path of paths) {
 			const file = this.app.vault.getFileByPath(path);
 			if (file) {
-				await this.pushFile(file);
+				await this.pushFileBulk(file);
 			}
 		}
 	}
@@ -11315,20 +11333,11 @@ export class SyncEngine {
 		let stop = false;
 		const worker = async (): Promise<void> => {
 			for (let f = toSync[next++]; f !== undefined && !stop; f = toSync[next++]) {
-				// The gate can close MID-sweep (the first failed create): the
-				// candidate list was taken before, so re-check per file or the
-				// rest of a 7.8k-file sweep goes out into a failing server.
-				if (this.bulkCreateHeld(f)) {
-					this.emitPushing(
-						base.pushed + pushed,
-						base.pushed + total,
-						base.failed + failed,
-						f.path,
-					);
-					continue;
-				}
 				try {
-					const ok = await this.pushFile(
+					// Bulk: the gate can close MID-sweep (the first failed create),
+					// after the candidate list was taken, so it is re-checked per file
+					// or the rest of a 7.8k-file sweep goes out into a failing server.
+					const ok = await this.pushFileBulk(
 						f,
 						mode === "force",
 						false,
@@ -12019,7 +12028,7 @@ export class SyncEngine {
 					}
 					const file = this.app.vault.getFileByPath(normalizePath(path));
 					if (file) {
-						await this.pushFile(file, true);
+						await this.pushFileBulk(file, true);
 					}
 				}
 			}

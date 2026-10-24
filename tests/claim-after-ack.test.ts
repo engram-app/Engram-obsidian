@@ -642,6 +642,98 @@ describe("(c) engine: the gate holds only creates (M2)", () => {
 	});
 });
 
+describe("(c) engine: every BULK caller of pushFile is held; single events are not", () => {
+	const closedGateHarness = (n: number) => {
+		const paths = Array.from({ length: n }, (_, i) => `Notes/n${i}.md`);
+		const h = harness(paths);
+		return { h, paths };
+	};
+	const settle = async () => {
+		for (let i = 0; i < 50; i++) await new Promise((r) => setTimeout(r, 0));
+	};
+
+	// Review round 2: pushAll's post-push reconcile re-pushed every missing
+	// file one by one (pushFile(file, true)), unheld: 210 creates for 200
+	// files against a failing server. "Push entire vault" and the onboarding
+	// push-all choices reach it: a first sync into a failing server.
+	test("pushAll + its reconcile pass: 200 files, failing creates, sends at most the push window", async () => {
+		const { h } = closedGateHarness(200);
+		(h.api as any).getManifest = mock().mockResolvedValue({ notes: [], attachments: [] });
+		await h.engine.pushAll();
+		expect(h.server.sent.length).toBeGreaterThan(0);
+		expect(h.server.sent.length).toBeLessThanOrEqual(10);
+		expect(h.gate.isClosed()).toBe(true);
+	});
+
+	test("gate-journal replay is held", async () => {
+		const { h, paths } = closedGateHarness(50);
+		h.gate.backoff("x");
+		for (const path of paths) (h.engine as any).journalGateEvent({ op: "push", path });
+		await (h.engine as any).drainGateJournal();
+		expect(h.server.sent.length).toBe(0);
+	});
+
+	test("the post-pull flush is held", async () => {
+		const { h, paths } = closedGateHarness(50);
+		h.gate.backoff("x");
+		for (const p of paths) (h.engine as any).pendingPostPullPushes.add(p);
+		await (h.engine as any).flushPostPullPushes();
+		expect(h.server.sent.length).toBe(0);
+	});
+
+	test("the sweep worker is held", async () => {
+		const { h } = closedGateHarness(50);
+		h.gate.backoff("x");
+		await h.engine.pushModifiedFiles();
+		expect(h.server.sent.length).toBe(0);
+	});
+
+	test("a single debounced edit still goes out while the gate holds", async () => {
+		const { h } = closedGateHarness(0);
+		h.server.fail = false;
+		h.gate.backoff("x");
+		h.addFile("Notes/new.md");
+		h.engine.handleModify(h.file("Notes/new.md"));
+		h.advance(10); // fire the debounce
+		await settle();
+		expect(h.server.sent.map((x) => x.path)).toEqual(["Notes/new.md"]);
+		expect(h.gate.isClosed()).toBe(false); // its ack was the probe
+	});
+});
+
+describe("(c) engine: the distinct-id rule, through the real sweep and queue", () => {
+	test("one note failing repeatedly never escalates past 30s", async () => {
+		const h = harness(["Notes/bad.md"]);
+		h.server.fail = false;
+		h.server.poison.add("Notes/bad.md");
+		await h.engine.pushModifiedFiles();
+		let failures = 0;
+		for (let c = 0; c < 10; c++) {
+			const before = h.server.sent.length;
+			await h.queue.onJoined();
+			await h.engine.selfHealSweep();
+			if (h.server.sent.length > before) {
+				failures++;
+				expect(h.gate.isClosed()).toBe(true);
+			}
+			h.advance(CREATE_BACKOFF_BASE_MS + 1000);
+			expect(h.gate.isClosed()).toBe(false); // never more than 30s
+		}
+		expect(failures).toBeGreaterThan(3);
+		expect(new Set(h.server.sent.map((x) => x.docId)).size).toBe(1);
+	});
+
+	test("two distinct notes failing in one window double the hold", async () => {
+		const h = harness(["Notes/a.md", "Notes/b.md"]);
+		await h.engine.pushModifiedFiles(); // both in flight, both fail
+		expect(new Set(h.server.sent.map((x) => x.docId)).size).toBe(2);
+		h.advance(CREATE_BACKOFF_BASE_MS + 1000);
+		expect(h.gate.isClosed()).toBe(true);
+		h.advance(CREATE_BACKOFF_BASE_MS);
+		expect(h.gate.isClosed()).toBe(false);
+	});
+});
+
 describe("upgrade: reload with data.json ids and pre-fix claims the server still holds", () => {
 	test("no new ids, no pre-ack claims, every note created once, no path with two ids", async () => {
 		const N = 200;
