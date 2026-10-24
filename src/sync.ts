@@ -474,7 +474,11 @@ class OpLogFetchError extends Error {
 type PushOutcome =
 	| { kind: "sent_ok" }
 	| { kind: "not_sent" }
+	| { kind: "refused" }
 	| { kind: "failed"; status?: number; transient: boolean };
+
+/** What `pushFile` tells its `report` sink about a false return. */
+type PushReport = { kind: "failed"; error: unknown } | { kind: "refused" };
 
 type Sweepable = { clear(): void };
 
@@ -5525,10 +5529,11 @@ export class SyncEngine {
 		force = false,
 		bypassPlanSkip = false,
 		serverAttachmentHashes?: Map<string, string>,
-		/** Called with the error when a push was SENT and failed. A false
-		 *  return without this call means nothing was sent (in flight, parked,
-		 *  plan-skipped, echo). Only `pushOutcome` passes it. */
-		onSendFailed?: (e: unknown) => void,
+		/** Why a false return happened, for `pushOutcome` (its only caller):
+		 *  `failed` = sent and refused or errored; `refused` = never sent because
+		 *  the plan or a standing park forbids it. A false return with no report
+		 *  means it was not sent but would be later (in flight, deferred, echo). */
+		report?: (r: PushReport) => void,
 	): Promise<boolean> {
 		if (this.pushing.has(file.path)) return false;
 
@@ -5540,6 +5545,7 @@ export class SyncEngine {
 		// sync — there's nothing left to fail, so the count is 0.
 		if (!bypassPlanSkip && this.isBinaryFile(file) && this.hasInformationalIssue(file.path)) {
 			devLog().log("push", `skip (plan-informational): ${file.path}`);
+			report?.({ kind: "refused" });
 			return false;
 		}
 		// Same for an attachment the server refused for good (413, 402
@@ -5549,6 +5555,7 @@ export class SyncEngine {
 		// changes.
 		if (this.isBinaryFile(file) && this.isParked(file)) {
 			devLog().log("push", `skip (parked): ${file.path}`);
+			report?.({ kind: "refused" });
 			return false;
 		}
 
@@ -5582,6 +5589,7 @@ export class SyncEngine {
 					this.firstFailureCategoryThisBatch ??= gate.category;
 				}
 				devLog().log("push", `skip (pre-gate ${gate.category}): ${file.path}`);
+				report?.({ kind: "refused" });
 				return false;
 			}
 		}
@@ -6320,7 +6328,7 @@ export class SyncEngine {
 			);
 			this.goOnline();
 		} catch (e) {
-			onSendFailed?.(e);
+			report?.({ kind: "failed", error: e });
 			const msg = errMsg(e, file.path);
 			const classified = categorizeError(e);
 			// Plan-limit 402s (needs_pro, quota) are expected Free-tier outcomes,
@@ -10524,15 +10532,18 @@ export class SyncEngine {
 	/** `pushFile`, with its outcome spelled out instead of folded into a
 	 *  boolean. `failed` carries whether retrying can help: 408, 429, 5xx and
 	 *  no response at all are transient; any other refusal (400, 401, 402, 403,
-	 *  404, 409, 413, 415, 422 ...) is definitive. */
+	 *  404, 409, 413, 415, 422 ...) is definitive. `refused` (never sent: plan
+	 *  skip, plan pre-gate, standing park) is definitive too. `not_sent` is only
+	 *  a push that did not run now but would later (in flight, deferred). */
 	private async pushOutcome(file: TFile, force: boolean): Promise<PushOutcome> {
-		let failure: { error: unknown } | undefined;
-		const ok = await this.pushFile(file, force, false, undefined, (error) => {
-			failure = { error };
+		let report: PushReport | undefined;
+		const ok = await this.pushFile(file, force, false, undefined, (r) => {
+			report = r;
 		});
 		if (ok) return { kind: "sent_ok" };
-		if (!failure) return { kind: "not_sent" };
-		const { status, terminal } = categorizeError(failure.error);
+		if (!report) return { kind: "not_sent" };
+		if (report.kind === "refused") return { kind: "refused" };
+		const { status, terminal } = categorizeError(report.error);
 		const transient =
 			!terminal &&
 			(status === undefined || status === 408 || status === 429 || status >= 500);
@@ -10580,9 +10591,14 @@ export class SyncEngine {
 			synced?.serverHash === rowHash &&
 			this.blobHealEligible(normalized, synced, rowHash) &&
 			this.blobHealsThisPass < this.blobHealBudget;
-		let local: "absent" | "unread" | "unreadable" | "matches" | "differs" | "unhealed" = file
-			? "unread"
-			: "absent";
+		let local:
+			| "absent"
+			| "unread"
+			| "unreadable"
+			| "matches"
+			| "differs"
+			| "unhealed"
+			| "refused" = file ? "unread" : "absent";
 		if (candidate) {
 			this.blobHealsInFlight.add(normalized);
 			try {
@@ -10591,6 +10607,21 @@ export class SyncEngine {
 			} finally {
 				this.blobHealsInFlight.delete(normalized);
 			}
+		}
+		// A standing refusal (park, plan limit, auth) stays the visible reason:
+		// replacing a park with blob_missing would un-park the file and let the
+		// next sweep re-send it just to be refused again.
+		const standing = this.issues.get(normalized);
+		if (
+			standing &&
+			standing.category !== "blob_missing" &&
+			issueDisposition(standing.category) !== "transient"
+		) {
+			rlog().warn(
+				"pull",
+				`Attachment blob missing on server: ${noteRef(normalized)} | local=${local} | kept=${standing.category}`,
+			);
+			return;
 		}
 		const classified = categorizeError(cause);
 		const now = Date.now();
@@ -10628,7 +10659,7 @@ export class SyncEngine {
 		normalized: string,
 		rowHash: string,
 		synced: FileSyncState,
-	): Promise<"unreadable" | "matches" | "differs" | "unhealed"> {
+	): Promise<"unreadable" | "matches" | "differs" | "unhealed" | "refused"> {
 		let localHash: number;
 		try {
 			localHash = fnv1aBase64(await this.app.vault.readBinary(file));
@@ -10665,6 +10696,19 @@ export class SyncEngine {
 			this.blobHealsThisPass -= 1;
 			this.patchSyncedRow(normalized, { blobHeal: synced.blobHeal });
 			return "unhealed";
+		}
+		if (pushed.kind === "refused") {
+			// The plan or a standing park forbids this upload, and pushFile has
+			// already put that reason in the Sync Center: keep it (overwriting a
+			// park un-parks it, and the next sweep re-sends megabytes to be refused
+			// again). Settled: retrying cannot help. Both clearing events re-upload
+			// on their own: a plan upgrade runs resyncSkippedAttachments (which
+			// bypasses the gate, and that upload heals the blob too), and a file
+			// change moves the park stamp but also breaks this proof.
+			this.patchSyncedRow(normalized, {
+				blobHeal: { rowHash, attempts: prior, done: true },
+			});
+			return "refused";
 		}
 		const served = pushed.kind === "sent_ok" ? await this.attachmentServes(normalized) : null;
 		if (served === "yes") {

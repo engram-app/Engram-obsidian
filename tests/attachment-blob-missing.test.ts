@@ -454,6 +454,64 @@ describe("applyAttachmentChange on 410 blob_missing", () => {
 		expect(server.blobPresent.get(PATH)).toBe(true);
 	});
 
+	test("a plan pre-gated row settles after one pass: no re-GET, no repeat toast", async () => {
+		const server = fakeServer([PATH], { heals: true });
+		const { e } = makeEngine(server, [new TFile(PATH, 1, 3)]);
+		synced(e, PATH);
+		// Free plan: images need a paid plan, so the push is gated locally.
+		(e as any).planState = { tier: "free", maxFileBytes: 0, attachmentsTextOnly: true };
+		e.setCrdtManager({ hasUndeliveredOps: () => false, closeDoc: () => {} } as any);
+		let fed = false;
+		e.setCrdtCatchupSince(async () => {
+			if (fed) return { changes: [], has_more: false, next_seq: null };
+			fed = true;
+			return {
+				changes: [{ type: "attachment" as const, id: "a1", seq: 1, ...change(ROW_HASH) }],
+				has_more: false,
+				next_seq: null,
+			};
+		});
+
+		await e.catchupViaSeqReplay();
+		expect(server.getAttachment).toHaveBeenCalledTimes(1);
+		expect((e as any).syncState.get(PATH)?.blobHeal?.done).toBe(true);
+		expect(e.issues.get(PATH)?.category).toBe("needs_pro");
+		(e as any).attachmentLimitedThisBatch = 0;
+
+		await e.catchupViaSeqReplay();
+		expect(server.getAttachment).toHaveBeenCalledTimes(1);
+		expect((e as any).attachmentLimitedThisBatch).toBe(0);
+		expect(server.pushAttachment).not.toHaveBeenCalled();
+	});
+
+	test("a parked row is not re-pushed while parked, and its park survives", async () => {
+		const server = fakeServer([PATH], { heals: true });
+		const file = new TFile(PATH, 1, 3);
+		const { e } = makeEngine(server, [file]);
+		synced(e, PATH);
+		e.issues.record({
+			path: PATH,
+			kind: "attachment",
+			category: "too_large",
+			status: 413,
+			message: "too large",
+			parkedAt: (e as any).parkStamp(file),
+			firstFailedAt: 1,
+			lastFailedAt: 1,
+			attempts: 1,
+		});
+
+		for (let pass = 0; pass < 3; pass++) {
+			(e as any).beginBlobHealPass();
+			await e.applyAttachmentChange(change(ROW_HASH));
+		}
+
+		expect(server.pushAttachment).not.toHaveBeenCalled();
+		expect((e as any).syncState.get(PATH)?.blobHeal?.done).toBe(true);
+		expect(e.issues.get(PATH)?.category).toBe("too_large");
+		expect((e as any).isParked(file)).toBe(true);
+	});
+
 	test("a 409 on the heal push settles at once", async () => {
 		const server = fakeServer([PATH], { heals: true });
 		server.pushAttachment.mockImplementation(() =>
