@@ -288,6 +288,28 @@ export function statusOf(e: unknown): number | undefined {
 	return typeof s === "number" ? s : undefined;
 }
 
+/** The JSON body of an Obsidian `requestUrl` rejection. Arrives as `.json`
+ *  (parsed) or `.text` (raw) depending on platform, so try both; a malformed
+ *  or missing body (an HTML page from a proxy, say) yields `{}` rather than a
+ *  decode crash, because every caller is already on an error path and must
+ *  not fail twice. */
+export function errorBody(e: unknown): Record<string, unknown> {
+	if (typeof e !== "object" || e === null) return {};
+	const err = e as { json?: unknown; text?: string };
+	if (err.json && typeof err.json === "object") {
+		return err.json as Record<string, unknown>;
+	}
+	if (typeof err.text === "string") {
+		try {
+			const parsed: unknown = JSON.parse(err.text);
+			if (parsed && typeof parsed === "object") return parsed as Record<string, unknown>;
+		} catch {
+			// Malformed text: fall through to {}.
+		}
+	}
+	return {};
+}
+
 /** True when the caught value is an HTTP response with the given status. */
 export function isHttpStatus(e: unknown, status: number): boolean {
 	return statusOf(e) === status;

@@ -1,5 +1,5 @@
 import { expBackoff } from "./backoff";
-import { statusOf } from "./error-util";
+import { errorBody, statusOf } from "./error-util";
 import { t } from "./i18n";
 import { userErrorMessage } from "./i18n/user-error";
 import { LimitExceededError } from "./limit-error";
@@ -170,24 +170,9 @@ export function categorizeError(err: unknown): CategorizedError {
  *  mirror parseLimitExceededError's tolerance. Returns undefined when there's
  *  no usable string message. */
 export function extractServerMessage(err: unknown): string | undefined {
-	const body = serverErrorBody(err);
-	if (body && typeof body.error === "string" && body.error.length > 0) return body.error;
+	const body = errorBody(err);
+	if (typeof body.error === "string" && body.error.length > 0) return body.error;
 	return undefined;
-}
-
-/** The parsed JSON body of a rejected request, or null when there is none or
- *  it is not a JSON object (an HTML error page from a proxy, say). */
-function serverErrorBody(err: unknown): Record<string, unknown> | null {
-	if (typeof err !== "object" || err === null) return null;
-	const e = err as { json?: unknown; text?: string };
-	if (e.json && typeof e.json === "object") return e.json as Record<string, unknown>;
-	if (typeof e.text !== "string") return null;
-	try {
-		const parsed: unknown = JSON.parse(e.text);
-		return parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : null;
-	} catch {
-		return null;
-	}
 }
 
 /** A 410 `{code: "blob_missing"}`: the server still has the attachment's row
@@ -195,7 +180,7 @@ function serverErrorBody(err: unknown): Record<string, unknown> | null {
  *  bytes are restored, so it is never retried like a 5xx. Keyed on the code,
  *  not the bare status: a 410 from anything else proves nothing about the blob. */
 export function isBlobMissing(err: unknown): boolean {
-	return statusOf(err) === 410 && serverErrorBody(err)?.code === "blob_missing";
+	return statusOf(err) === 410 && errorBody(err).code === "blob_missing";
 }
 
 /** Whether a push/pull failure means the backend is genuinely unreachable
