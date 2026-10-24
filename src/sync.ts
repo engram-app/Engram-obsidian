@@ -38,6 +38,7 @@ import {
 	categorizeError,
 	healthCheckDelay,
 	IssueStore,
+	isBlobMissing,
 	issueDisposition,
 	parseStatusToIssue,
 	shouldGoOffline,
@@ -63,6 +64,7 @@ import { SyncedFileTable } from "./synced-file";
 import { DefaultTimeProvider, type TimeProvider } from "./time-provider";
 import type {
 	AttachmentChange,
+	AttachmentDetail,
 	EngramSyncSettings,
 	FileSyncState,
 	ManifestResponse,
@@ -8721,19 +8723,17 @@ export class SyncEngine {
 			// suppression so an echo-skipped rename still relocates the room).
 			try {
 				if (isAttachment) {
-					const attachment = await this.api.getAttachment(event.path);
-					await this.applyAttachmentChange(
-						{
-							path: attachment.path,
-							mime_type: attachment.mime_type,
-							size_bytes: attachment.size_bytes,
-							mtime: attachment.mtime,
-							updated_at: attachment.updated_at,
-							deleted: false,
-						},
-						attachment.content_base64,
-						attachment.bytes,
-					);
+					// No bytes passed: applyAttachmentChange fetches them, so a 410
+					// blob_missing is handled in one place for every pull path.
+					await this.applyAttachmentChange({
+						path: event.path,
+						mime_type: "",
+						size_bytes: 0,
+						mtime: event.mtime ?? 0,
+						updated_at: event.updated_at ?? "",
+						deleted: false,
+						...(event.content_hash ? { content_hash: event.content_hash } : {}),
+					});
 				} else if (
 					this.crdt &&
 					this.isCrdtEligiblePath(event.path) &&
@@ -9243,6 +9243,7 @@ export class SyncEngine {
 				mtime: c.mtime,
 				updated_at: c.updated_at,
 				deleted: c.deleted,
+				...(c.content_hash ? { content_hash: c.content_hash } : {}),
 			};
 			return this.applyAttachmentChange(ac);
 		}
@@ -10416,7 +10417,14 @@ export class SyncEngine {
 		let resolvedBase64 = contentBase64;
 		let resolvedBytes = contentBytes;
 		if (resolvedBase64 === undefined && resolvedBytes === undefined) {
-			const fetched = await this.api.getAttachment(change.path);
+			let fetched: AttachmentDetail;
+			try {
+				fetched = await this.api.getAttachment(change.path);
+			} catch (e) {
+				if (!isBlobMissing(e)) throw e;
+				await this.handleBlobMissing(normalized, change.content_hash, e);
+				return false;
+			}
 			resolvedBase64 = fetched.content_base64;
 			resolvedBytes = fetched.bytes;
 			// Prefer the value that came WITH the bytes we are about to write:
@@ -10445,6 +10453,8 @@ export class SyncEngine {
 		// never replace: a bare `set` would drop it again on the following
 		// write, which is the same bug that kept force-push unprovable.
 		const rowPatch = serverHash ? { hash, serverHash } : { hash };
+		// The server has the bytes again: a blob_missing issue is now stale.
+		if (this.issues.get(normalized)?.category === "blob_missing") this.issues.clear(normalized);
 
 		if (existing) {
 			// Skip if content is identical — prevents modify event and push-back loop
@@ -10474,6 +10484,58 @@ export class SyncEngine {
 			`Attachment created: ${noteRef(change.path)} | bytes=${buffer.byteLength}`,
 		);
 		return true;
+	}
+
+	/** The server kept this attachment's row but lost its bytes (410
+	 *  blob_missing, engram-app/Engram#2159). Terminal: never retried, and the
+	 *  local file is never touched. If the local copy is provably the bytes the
+	 *  row describes, re-upload it so the server heals from this device;
+	 *  otherwise park a visible issue.
+	 *
+	 *  The proof has to be server evidence: the row's content_hash is an HMAC
+	 *  this client cannot compute. The synced row pairs the serverHash of our
+	 *  last converge with the fnv hash of the bytes we held then, so the row
+	 *  hash matching that serverHash AND the file still hashing the same proves
+	 *  it. An unknown row hash proves nothing, and uploading then could replace
+	 *  newer content the server is able to restore. */
+	private async handleBlobMissing(
+		normalized: string,
+		rowHash: string | undefined,
+		cause: unknown,
+	): Promise<void> {
+		const file = this.app.vault.getFileByPath(normalized);
+		const synced = this.syncState.get(normalized);
+		const proven =
+			file !== null &&
+			rowHash !== undefined &&
+			synced?.serverHash === rowHash &&
+			fnv1aBase64(await this.app.vault.readBinary(file)) === synced.hash;
+		if (proven) {
+			rlog().warn(
+				"pull",
+				`Attachment blob missing on server, re-uploading: ${noteRef(normalized)}`,
+			);
+			// Forced: the local echo guard would skip these unchanged bytes, which
+			// are exactly the ones the server needs back.
+			await this.pushFile(file, true);
+			return;
+		}
+		const classified = categorizeError(cause);
+		const now = Date.now();
+		this.issues.record({
+			path: normalized,
+			kind: "attachment",
+			category: classified.category,
+			status: classified.status,
+			message: classified.message,
+			firstFailedAt: now,
+			lastFailedAt: now,
+			attempts: 1,
+		});
+		rlog().warn(
+			"pull",
+			`Attachment blob missing on server: ${noteRef(normalized)} | local=${file ? "differs-or-unproven" : "absent"}`,
+		);
 	}
 
 	/** Create a text file, ensuring parent folders exist. */
