@@ -17,11 +17,22 @@
  * rule, the action is supplied locally by `main.ts` via `setUpgradeAction`.
  * The server field stays useful to other clients; this one never trusts it.
  *
- * ## Once per session
+ * ## Once per session, but the blocked state stays on screen
  *
- * Every refused request and every reconnect would otherwise toast. The latch
- * clears only on plugin reload, which is also when a freshly-installed version
- * would take effect.
+ * Every refused request and every reconnect would otherwise toast, so the
+ * Notice fires once per session. The Notice alone was not enough: a user on
+ * 1.35.0 synced nothing for two days after it faded. So the refusal also
+ * drives a persistent "update required" status bar item and a Sync Center
+ * banner, repainted through `setUpgradeStateListener`.
+ *
+ * The blocked state has exactly three clearing events:
+ *  1. Plugin reload (including the reload Obsidian does after an update): the
+ *     module graph is re-evaluated, so every latch here starts fresh.
+ *  2. Backend change (`clearUpgradeRefusal`, from `EngramApi.updateConfig`):
+ *     a different server has its own floor. Re-arms the Notice too.
+ *  3. Server admits us (`markAdmitted`, from a successful `sync:` join): the
+ *     floor no longer refuses this version. Does NOT re-arm the Notice, so a
+ *     fleet mid-rollout with mixed floors cannot toast on every flip.
  *
  * ## Refused means refused locally too
  *
@@ -47,6 +58,30 @@ let notified = false;
 // server's own floor refusal stops requests. Updating cannot fix a proxy.
 let refused = false;
 let openUpdateUi: (() => void) | null = null;
+let refusedMinVersion: string | null = null;
+let onStateChange: (() => void) | null = null;
+
+/** Repaint hook for the persistent UI (status bar + Sync Center). Called on
+ *  every change of `isUpgradeRequired()`, never on a no-op. One slot: `main.ts`
+ *  is the only subscriber, and clears it on unload like `setUpgradeAction`. */
+export function setUpgradeStateListener(fn: (() => void) | null): void {
+	onStateChange = fn;
+}
+
+function setRefused(next: boolean, minVersion: string | null = null): void {
+	if (next) refusedMinVersion = minVersion ?? refusedMinVersion;
+	else refusedMinVersion = null;
+	if (refused === next) return;
+	refused = next;
+	onStateChange?.();
+}
+
+/** Open the update UI if one is wired. False when unset (tests, unload). */
+export function openUpgradeUi(): boolean {
+	if (!openUpdateUi) return false;
+	openUpdateUi();
+	return true;
+}
 
 /**
  * Supply the "take me there" action. `main.ts` passes its
@@ -79,7 +114,7 @@ export function notifyUpgradeRequired(
 	source?: UpgradeRefusalSource,
 	confirmed = true,
 ): void {
-	if (confirmed) refused = true;
+	if (confirmed) setRefused(true, minVersion);
 	if (notified) return;
 	notified = true;
 
@@ -103,8 +138,7 @@ export function notifyUpgradeRequired(
 
 	// No action wired = no button. A button that does nothing is worse than
 	// prose telling the user to go update.
-	const action = openUpdateUi;
-	if (!action) return;
+	if (!openUpdateUi) return;
 	const noticeEl = (notice as unknown as { noticeEl?: HTMLElement }).noticeEl;
 	if (!noticeEl) return;
 	// "Update", never "Upgrade" — the 402 toast next door uses "Upgrade" for
@@ -113,7 +147,7 @@ export function notifyUpgradeRequired(
 		text: t("Update"),
 		cls: "engram-limit-upgrade-btn",
 	});
-	btn.addEventListener("click", () => action());
+	btn.addEventListener("click", () => openUpgradeUi());
 }
 
 /** True once the server has refused us for being too old. */
@@ -121,11 +155,24 @@ export function isUpgradeRequired(): boolean {
 	return refused;
 }
 
-/** A different server has its own floor (or none): stop refusing locally,
- *  and re-arm the notice so that server's own refusal is not swallowed. */
+/** The minimum version the server's floor named, or null if not refused (or
+ *  the refusal carried none). */
+export function upgradeRequiredMinVersion(): string | null {
+	return refused ? refusedMinVersion : null;
+}
+
+/** Clearing event 2: a different server has its own floor (or none). Stop
+ *  refusing locally, and re-arm the notice so that server's own refusal is not
+ *  swallowed. */
 export function clearUpgradeRefusal(): void {
-	refused = false;
+	setRefused(false);
 	notified = false;
+}
+
+/** Clearing event 3: the server admitted a `sync:` join, so its floor accepts
+ *  this version. The notice stays latched (see module doc). */
+export function markAdmitted(): void {
+	setRefused(false);
 }
 
 /** What `EngramApi` throws in place of a request once refused. Carries
@@ -141,5 +188,7 @@ export function upgradeRequiredError(): Error & { status: 426 } {
 export function resetUpgradeRequired(): void {
 	notified = false;
 	refused = false;
+	refusedMinVersion = null;
 	openUpdateUi = null;
+	onStateChange = null;
 }

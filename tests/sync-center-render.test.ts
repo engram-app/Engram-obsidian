@@ -5,9 +5,10 @@
  * we wrap them locally with a tree-tracking adapter so we can assert
  * structure + emitted text without needing real DOM.
  */
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { formatRelative, renderSyncCenter } from "../src/sync-center-render";
 import type { SyncIssue } from "../src/types";
+import { notifyUpgradeRequired, resetUpgradeRequired } from "../src/upgrade-required";
 import { __setLanguage } from "./__mocks__/obsidian";
 
 interface FakeEl {
@@ -682,5 +683,33 @@ describe("formatRelative speaks the app's language", () => {
 		__setLanguage("ru");
 		expect(ago(180)).toBe("3 мин. назад");
 		__setLanguage("en");
+	});
+});
+
+// Refused by the server's version floor: nothing syncs, and the Sync Center is
+// where a user goes to find out why. Say what is blocked, why, and the action.
+describe("renderSyncCenter — update required banner", () => {
+	afterEach(() => resetUpgradeRequired());
+
+	test("names what is blocked, the required version, and offers Update", () => {
+		notifyUpgradeRequired("1.36.0");
+		const parent = makeFakeEl("div");
+		renderSyncCenter(parent as unknown as HTMLElement, makeMockPlugin([]), () => {});
+
+		const banner = findByCls(parent, "engram-update-required-banner");
+		expect(banner).not.toBeNull();
+		const text = allText(banner!);
+		expect(text).toMatch(/not syncing/i);
+		expect(text).toContain("1.36.0");
+		expect(findAllByCls(banner!, "mod-cta").map((b) => b.text)).toEqual(["Update"]);
+		// First thing on the pane, above the Sync button that cannot work.
+		expect(parent.children[0]).toBe(banner!);
+	});
+
+	test("absent when the server has not refused us", () => {
+		const parent = makeFakeEl("div");
+		renderSyncCenter(parent as unknown as HTMLElement, makeMockPlugin([]), () => {});
+
+		expect(findByCls(parent, "engram-update-required-banner")).toBeNull();
 	});
 });

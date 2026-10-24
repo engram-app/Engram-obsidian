@@ -18,6 +18,7 @@ import { ACTION_ICONS } from "./sync-log-modal";
 import { planLoadErrorMessage, SyncPreviewModal } from "./sync-preview-modal";
 import { DEFAULT_UPGRADE_URL } from "./tabs/urls";
 import type { SyncIssue, SyncIssueCategory, SyncLogEntry } from "./types";
+import { isUpgradeRequired, openUpgradeUi, upgradeRequiredMinVersion } from "./upgrade-required";
 
 /** Build an Obsidian Setting heading inside `parent` so the section title
  *  matches the visual style of the Cloud / Self-hosted / Advanced tabs. */
@@ -56,6 +57,7 @@ export function renderSyncCenter(
 ): void {
 	parent.empty();
 	parent.addClass("engram-sync-center");
+	renderUpdateRequired(parent);
 	renderHeader(parent, plugin);
 	renderActions(parent, plugin, refresh);
 	// Stats sits directly under the Sync / Refresh buttons: it now carries the
@@ -100,6 +102,31 @@ function queuedReasonText(): Record<QueuedReason, string> {
 		"in-progress": t("syncing now"),
 		waiting: t("waiting to retry"),
 	};
+}
+
+/** The server's version floor refused this plugin: every sync path is dead
+ *  until it is updated. Top of the pane, above the Sync button that cannot
+ *  work. Leaves on the next render after a clearing event (upgrade-required.ts). */
+function renderUpdateRequired(parent: HTMLElement): void {
+	if (!isUpgradeRequired()) return;
+	const min = upgradeRequiredMinVersion();
+	const banner = parent.createDiv({ cls: "engram-update-required-banner" });
+	banner.createEl("strong", { text: t("Update required: Engram is not syncing") });
+	banner.createEl("p", {
+		text: min
+			? t(
+					"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Your notes are safe; they will sync once you update.",
+					{ version: min },
+				)
+			: t(
+					"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Your notes are safe; they will sync once you update.",
+				),
+	});
+	// "Update", never "Upgrade": same rule as the Notice in upgrade-required.ts.
+	const btn = banner.createEl("button", { text: t("Update"), cls: "mod-cta" });
+	btn.addEventListener("click", () => {
+		openUpgradeUi();
+	});
 }
 
 function renderHeader(parent: HTMLElement, plugin: EngramSyncPlugin): void {

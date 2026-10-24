@@ -9,12 +9,17 @@ import { afterEach, beforeEach, describe, expect, type Mock, mock, test } from "
 import { requestUrl } from "obsidian";
 import { EngramApi } from "../src/api";
 import { NoteChannel } from "../src/channel";
+import EngramSyncPlugin from "../src/main";
 import { RemoteLogger } from "../src/remote-log";
+import type { SyncStatus } from "../src/types";
 import {
+	clearUpgradeRefusal,
 	isUpgradeRequired,
 	notifyUpgradeRequired,
 	resetUpgradeRequired,
 	setUpgradeAction,
+	setUpgradeStateListener,
+	upgradeRequiredMinVersion,
 } from "../src/upgrade-required";
 import { __noticeCapture } from "./__mocks__/obsidian";
 
@@ -321,6 +326,35 @@ describe("channel join refusal", () => {
 		expect(__noticeCapture.notices).toHaveLength(0);
 		expect(isUpgradeRequired()).toBe(false);
 	});
+
+	// Clearing event: the server admitted a sync: join, so its floor no longer
+	// refuses us (floor lowered, or a rolling deploy reached an older node).
+	// The notice is NOT re-armed: a flapping fleet must not toast per flip.
+	test("a later successful sync: join clears the refusal without a second notice", async () => {
+		const ch = new NoteChannel("http://x", "key", "user-1", "vault-9", "dev-1");
+		await ch.connect();
+		FakeWS.last?.onmessage?.({
+			data: joinError("sync:user-1:vault-9", "plugin_upgrade_required", "1.36.0"),
+		});
+		expect(isUpgradeRequired()).toBe(true);
+
+		FakeWS.last?.onmessage?.({
+			data: JSON.stringify([
+				null,
+				"2",
+				"sync:user-1:vault-9",
+				"phx_reply",
+				{ status: "ok", response: {} },
+			]),
+		});
+		expect(isUpgradeRequired()).toBe(false);
+
+		FakeWS.last?.onmessage?.({
+			data: joinError("sync:user-1:vault-9", "plugin_upgrade_required", "1.36.0"),
+		});
+		expect(isUpgradeRequired()).toBe(true);
+		expect(__noticeCapture.notices).toHaveLength(1);
+	});
 });
 
 // A 426 is a generic HTTP status: a proxy in front of a self-hosted backend can
@@ -391,5 +425,68 @@ describe("refusal latch scope", () => {
 		await api.pushLogs([]);
 
 		expect(mockRequestUrl).toHaveBeenCalledTimes(2);
+	});
+});
+
+// A user on 1.35.0 synced nothing for two days: the 15s notice was the only
+// signal, and once it faded the status bar said "live". The blocked state has
+// to stay on screen until one of its named clearing events happens.
+describe("persistent blocked state", () => {
+	type StatusBarHost = { updateStatusBar(this: unknown, s: SyncStatus): void };
+	function statusBar() {
+		const texts: string[] = [];
+		const labels: string[] = [];
+		const fake = Object.assign(Object.create(EngramSyncPlugin.prototype), {
+			settings: { apiUrl: "https://api.example.com", apiKey: "k" },
+			statusBarEl: {
+				setText(t: string) {
+					texts.push(t);
+				},
+				setAttribute(_k: string, v: string) {
+					labels.push(v);
+				},
+			},
+			syncEngine: { isSyncBlocked: () => false },
+			syncLog: { errorCount: () => 3 },
+			liveConnected: true,
+		});
+		const render = () =>
+			(EngramSyncPlugin.prototype as unknown as StatusBarHost).updateStatusBar.call(fake, {
+				state: "idle",
+				pending: 0,
+				queued: 0,
+			} as SyncStatus);
+		return { render, texts, labels };
+	}
+
+	test("the status bar says update required instead of live, and names the version", () => {
+		const bar = statusBar();
+		notifyUpgradeRequired("1.36.0");
+		bar.render();
+
+		expect(bar.texts.at(-1)).toMatch(/update required/i);
+		expect(bar.labels.at(-1)).toContain("1.36.0");
+	});
+
+	test("a bare 426 (proxy) does not claim an update is required", () => {
+		const bar = statusBar();
+		notifyUpgradeRequired(null, undefined, false);
+		bar.render();
+
+		expect(bar.texts.at(-1)).not.toMatch(/update required/i);
+	});
+
+	test("latching and clearing both tell the listener, so the UI repaints", () => {
+		const listener = mock(() => {});
+		setUpgradeStateListener(listener);
+
+		notifyUpgradeRequired("1.36.0");
+		notifyUpgradeRequired("1.36.0");
+		expect(listener).toHaveBeenCalledTimes(1);
+		expect(upgradeRequiredMinVersion()).toBe("1.36.0");
+
+		clearUpgradeRefusal();
+		expect(listener).toHaveBeenCalledTimes(2);
+		expect(upgradeRequiredMinVersion()).toBeNull();
 	});
 });

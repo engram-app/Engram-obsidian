@@ -4,7 +4,7 @@ import { errMsg } from "./error-util";
 import { noteRef } from "./note-ref";
 import { pluginVersion } from "./plugin-version";
 import { rlog } from "./remote-log";
-import { notifyUpgradeRequired } from "./upgrade-required";
+import { markAdmitted, notifyUpgradeRequired } from "./upgrade-required";
 
 /** How long to wait before reconnecting when no auth token is available
  *  (e.g. plugin loaded before OAuth refresh hydrated, or user signed out).
@@ -1275,6 +1275,9 @@ export class NoteChannel {
 					).response;
 					const clamped = clampReconnectJitter(response?.reconnect_jitter_max_ms);
 					if (clamped !== null) this.reconnectJitterMaxMs = clamped;
+					// The version floor gates this join, so an ok here is the server
+					// saying it accepts this version: clear any earlier refusal.
+					markAdmitted();
 					if (!this.connected) {
 						this.setConnected(true);
 						rlog().info("channel", `Joined ${this.topic}`);
