@@ -5,6 +5,7 @@ import { userErrorMessage } from "./i18n/user-error";
 import { LimitExceededError } from "./limit-error";
 import { formatBytes } from "./plan-usage";
 import type { ParseReason, SyncIssue, SyncIssueCategory } from "./types";
+import { isUpgradeRequired } from "./upgrade-required";
 
 /** Persistent store of sync failures keyed by file path.
  *
@@ -14,11 +15,17 @@ import type { ParseReason, SyncIssue, SyncIssueCategory } from "./types";
  *  terminal failures (e.g. 413 Payload Too Large) are kept here without
  *  re-enqueueing so they don't loop forever.
  */
+
 export class IssueStore {
 	private issues: Map<string, SyncIssue> = new Map();
 
 	/** Record a new failure or merge into the existing one for `path`. */
 	record(issue: SyncIssue): void {
+		// Refused by the server's version floor: every push path fails with a
+		// 426, which is not this file's problem. The Sync Center banner names
+		// the one cause; per-file cards would contradict it. The held queue
+		// keeps the work. An unconfirmed (proxy) 426 is still recorded.
+		if (issue.status === 426 && isUpgradeRequired()) return;
 		const existing = this.issues.get(issue.path);
 		if (existing) {
 			this.issues.set(issue.path, {

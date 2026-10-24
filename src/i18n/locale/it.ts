@@ -560,10 +560,10 @@ const it: Dict = {
 		"Sembra che l'indirizzo del server sia incompleto. Includi lo schema, ad esempio http://127.0.0.1:4000",
 	"That does not look like an Engram API key (expected {prefix}…).":
 		"Non sembra una chiave API di Engram (previsto {prefix}…).",
-	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Your notes are safe; they will sync once you update.":
-		"Il server Engram non accetta più questa versione del plugin (richiede {version} o superiore), quindi le note non vengono inviate o ricevute. Le tue note sono al sicuro; verranno sincronizzate quando aggiornerai.",
-	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Your notes are safe; they will sync once you update.":
-		"Il server Engram non accetta più questa versione del plugin, quindi le note non vengono inviate o ricevute. Le tue note sono al sicuro; verranno sincronizzate quando aggiornerai.",
+	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Il server Engram non accetta più questa versione del plugin (è necessaria la versione {version} o successiva), quindi le note non vengono inviate o ricevute. Le modifiche apportate su questo dispositivo rimangono qui finché non aggiorni.",
+	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Il server Engram non accetta più questa versione del plugin, quindi le note non vengono inviate o ricevute. Le modifiche apportate su questo dispositivo rimangono qui finché non aggiorni.",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"Il piano gratuito sincronizza solo le note. Aggiorna per sincronizzare immagini e PDF.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
@@ -699,6 +699,7 @@ const it: Dict = {
 	"syncing now": "sincronizzando",
 	unknown: "sconosciuto",
 	"waiting for a connection": "in attesa di connessione",
+	"waiting for a plugin update": "in attesa di un aggiornamento del plugin",
 	"waiting to retry": "in attesa di riprovare",
 	"{count} attachments": {
 		one: "{count} allegato",

@@ -577,10 +577,10 @@ const ru: Dict = {
 		"Это не похоже на полный адрес сервера. Укажите схему, например http://127.0.0.1:4000",
 	"That does not look like an Engram API key (expected {prefix}…).":
 		"Это не похоже на ключ API Engram (ожидается {prefix}…).",
-	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Your notes are safe; they will sync once you update.":
-		"Сервер Engram больше не принимает эту версию плагина (требуется {version} или новее), поэтому заметки не отправляются и не принимаются. Ваши заметки в безопасности; они будут синхронизированы после обновления.",
-	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Your notes are safe; they will sync once you update.":
-		"Сервер Engram больше не принимает эту версию плагина, поэтому заметки не отправляются и не принимаются. Ваши заметки в безопасности; они будут синхронизированы после обновления.",
+	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Сервер Engram больше не принимает эту версию плагина (требуется {version} или новее), поэтому заметки не отправляются и не получаются. Изменения, сделанные на этом устройстве, остаются здесь до обновления.",
+	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Сервер Engram больше не принимает эту версию плагина, поэтому заметки не отправляются и не получаются. Изменения, сделанные на этом устройстве, остаются здесь до обновления.",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"Бесплатный тариф синхронизирует только заметки. Обновите подписку, чтобы синхронизировать изображения и PDF-файлы.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
@@ -718,6 +718,7 @@ const ru: Dict = {
 	"syncing now": "синхронизация в процессе",
 	unknown: "неизвестно",
 	"waiting for a connection": "ожидание подключения",
+	"waiting for a plugin update": "Ожидание обновления плагина",
 	"waiting to retry": "ожидание повторной попытки",
 	"{count} attachments": {
 		one: "{count} вложение",

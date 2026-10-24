@@ -327,6 +327,28 @@ describe("channel join refusal", () => {
 		expect(isUpgradeRequired()).toBe(false);
 	});
 
+	// Only the sync: join is gated by the floor. A user: join (no version gate)
+	// or a crdt: ack must not read as "admitted".
+	test("an ok reply on user: or crdt: does not clear the refusal", async () => {
+		const ch = new NoteChannel("http://x", "key", "user-1", "vault-9", "dev-1");
+		await ch.connect();
+		FakeWS.last?.onmessage?.({
+			data: joinError("sync:user-1:vault-9", "plugin_upgrade_required", "1.36.0"),
+		});
+		for (const topic of ["user:user-1", "crdt:user-1:vault-9"]) {
+			FakeWS.last?.onmessage?.({
+				data: JSON.stringify([
+					null,
+					"3",
+					topic,
+					"phx_reply",
+					{ status: "ok", response: {} },
+				]),
+			});
+		}
+		expect(isUpgradeRequired()).toBe(true);
+	});
+
 	// Clearing event: the server admitted a sync: join, so its floor no longer
 	// refuses us (floor lowered, or a rolling deploy reached an older node).
 	// The notice is NOT re-armed: a flapping fleet must not toast per flip.

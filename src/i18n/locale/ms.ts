@@ -492,10 +492,10 @@ const ms: Dict = {
 		"Itu tidak seperti alamat pelayan yang lengkap. Sertakan skema, contohnya http://127.0.0.1:4000",
 	"That does not look like an Engram API key (expected {prefix}…).":
 		"Itu tidak kelihatan seperti kunci API Engram (diharapkan {prefix}…).",
-	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Your notes are safe; they will sync once you update.":
-		"Pelayan Engram tidak lagi menerima versi plugin ini (perlu {version} atau yang lebih baru), jadi nota tidak dihantar atau diterima. Nota anda selamat; ia akan disegerakkan setelah anda mengemas kini.",
-	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Your notes are safe; they will sync once you update.":
-		"Pelayan Engram tidak lagi menerima versi plugin ini, jadi nota tidak dihantar atau diterima. Nota anda selamat; ia akan disegerakkan setelah anda mengemas kini.",
+	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Pelayan Engram tidak lagi menerima versi plugin ini (perlukan {version} atau versi yang lebih baru), jadi nota tidak dihantar atau diterima. Perubahan yang dibuat pada peranti ini kekal di sini sehingga anda mengemas kini.",
+	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Pelayan Engram tidak lagi menerima versi plugin ini, jadi nota tidak dihantar atau diterima. Perubahan yang dibuat pada peranti ini kekal di sini sehingga anda mengemas kini.",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"Versi percuma hanya menyegerakkan nota. Tingkatkan untuk menyegerakkan imej dan fail PDF.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
@@ -613,6 +613,7 @@ const ms: Dict = {
 	"syncing now": "sedang sync",
 	unknown: "tidak diketahui",
 	"waiting for a connection": "menunggu sambungan",
+	"waiting for a plugin update": "sedang menunggu kemas kini plugin",
 	"waiting to retry": "menunggu untuk cuba semula",
 	"{count} attachments": "{count} lampiran",
 	"{count} attachments need a paid plan to sync. See Sync Center.":

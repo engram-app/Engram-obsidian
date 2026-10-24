@@ -454,10 +454,10 @@ const zh: Dict = {
 		"这看起来不是完整的服务器地址。请包含协议，例如 http://127.0.0.1:4000",
 	"That does not look like an Engram API key (expected {prefix}…).":
 		"这看起来不像一个 Engram API 密钥（预期为 {prefix}…）。",
-	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Your notes are safe; they will sync once you update.":
-		"Engram 服务器不再支持此插件版本（需要 {version} 或更高版本），因此笔记无法发送或接收。您的笔记安全，更新后即可同步。",
-	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Your notes are safe; they will sync once you update.":
-		"Engram 服务器不再支持此插件版本，因此笔记无法发送或接收。您的笔记安全，更新后即可同步。",
+	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Engram 服务器不再接受此插件版本（需要 {version} 或更高版本），因此笔记无法发送或接收。在此设备上进行的更改将在此处保留，直到您更新。",
+	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Engram 服务器不再接受此插件版本，因此笔记无法发送或接收。在此设备上进行的更改将在此处保留，直到您更新。",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"免费版仅同步笔记。升级以同步图片和PDF。",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
@@ -568,6 +568,7 @@ const zh: Dict = {
 	"syncing now": "正在同步",
 	unknown: "未知",
 	"waiting for a connection": "正在等待连接",
+	"waiting for a plugin update": "等待插件更新",
 	"waiting to retry": "正在等待重试",
 	"{count} attachments": "{count} 个附件",
 	"{count} attachments need a paid plan to sync. See Sync Center.":

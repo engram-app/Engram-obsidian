@@ -32,7 +32,14 @@
  *     a different server has its own floor. Re-arms the Notice too.
  *  3. Server admits us (`markAdmitted`, from a successful `sync:` join): the
  *     floor no longer refuses this version. Does NOT re-arm the Notice, so a
- *     fleet mid-rollout with mixed floors cannot toast on every flip.
+ *     fleet mid-rollout with mixed floors cannot toast on every flip. A
+ *     refused client never rejoins by itself (see "Refused means refused
+ *     locally too" below), so a server that LOWERS its floor is only noticed
+ *     on the next socket reconnect (network drop, backend restart) or reload.
+ *
+ * While refused, the offline queue holds untouched (sync.ts runFlushQueue)
+ * and per-file 426 issues are not recorded (issue-store.ts), so nothing the
+ * user changed is dropped; main.ts drains the queue on the clearing event.
  *
  * ## Refused means refused locally too
  *
@@ -74,6 +81,11 @@ function setRefused(next: boolean, minVersion: string | null = null): void {
 	if (refused === next) return;
 	refused = next;
 	onStateChange?.();
+}
+
+/** Whether an update action is wired, so a caller can skip a dead button. */
+export function canOpenUpgradeUi(): boolean {
+	return openUpdateUi !== null;
 }
 
 /** Open the update UI if one is wired. False when unset (tests, unload). */

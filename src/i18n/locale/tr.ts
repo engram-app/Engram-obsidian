@@ -530,10 +530,10 @@ const tr: Dict = {
 		"Bu, eksik bir sunucu adresi gibi görünüyor. Şemayı da dahil edin, örneğin http://127.0.0.1:4000",
 	"That does not look like an Engram API key (expected {prefix}…).":
 		"Bu, bir Engram API anahtarı gibi görünmüyor (beklenen {prefix}…).",
-	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Your notes are safe; they will sync once you update.":
-		"Engram sunucusu artık bu eklenti sürümünü kabul etmiyor (en az {version} veya daha yeni gerekiyor), bu nedenle notlar gönderilmiyor veya alınmıyor. Notlarınız güvenli; güncelledikten sonra senkronize olacaklar.",
-	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Your notes are safe; they will sync once you update.":
-		"Engram sunucusu artık bu eklenti sürümünü kabul etmiyor, bu nedenle notlar gönderilmiyor veya alınmıyor. Notlarınız güvenli; güncelledikten sonra senkronize olacaklar.",
+	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Engram sunucusu artık bu eklenti sürümünü kabul etmiyor (şu anda {version} veya daha yeni bir sürüm gerekiyor), bu nedenle notlar gönderilmiyor veya alınmıyor. Bu cihazda yapılan değişiklikler, güncelleyene kadar burada kalacak.",
+	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Engram sunucusu artık bu eklenti sürümünü kabul etmiyor, bu nedenle notlar gönderilmiyor veya alınmıyor. Bu cihazda yapılan değişiklikler, güncelleyene kadar burada kalacak.",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"Ücretsiz planda sadece notlar senkronize edilir. Resimleri ve PDF'leri senkronize etmek için yükseltin.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
@@ -659,6 +659,7 @@ const tr: Dict = {
 	"syncing now": "Şu anda senkronize ediliyor",
 	unknown: "bilinmeyen",
 	"waiting for a connection": "Bağlantı bekleniyor",
+	"waiting for a plugin update": "Eklenti güncellemesini bekliyor",
 	"waiting to retry": "Yeniden denemeyi bekliyor",
 	"{count} attachments": { one: "{count} ek", other: "{count} ek" },
 	"{count} attachments need a paid plan to sync. See Sync Center.": {

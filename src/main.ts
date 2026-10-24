@@ -621,7 +621,15 @@ export default class EngramSyncPlugin extends Plugin {
 		// path is already feature-detected against Obsidian internals.
 		setUpgradeAction(() => this.openCommunityPluginsUpdate());
 		setUpgradeStateListener(() => {
-			if (this.syncEngine) this.updateStatusBar(this.syncEngine.getStatus());
+			if (!this.syncEngine) return;
+			this.updateStatusBar(this.syncEngine.getStatus());
+			// Cleared: the queue held every change while refused (sync.ts
+			// runFlushQueue), and nothing else re-drives it. Drain it now.
+			if (!isUpgradeRequired()) {
+				void this.syncEngine.flushQueue().catch((e: unknown) => {
+					rlog().warn("queue", `post-refusal flush failed: ${errMsg(e)}`);
+				});
+			}
 		});
 		rlog().info("lifecycle", `onload start — v${this.manifest.version}`);
 		activeDocument.body.classList.add("engram-vault-sync-active");

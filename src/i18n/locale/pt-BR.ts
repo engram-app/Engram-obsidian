@@ -558,10 +558,10 @@ const ptBR: Dict = {
 		"Isso não parece um endereço de servidor completo. Inclua o esquema, por exemplo http://127.0.0.1:4000",
 	"That does not look like an Engram API key (expected {prefix}…).":
 		"Isso não parece ser uma chave de API do Engram (esperado {prefix}…).",
-	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Your notes are safe; they will sync once you update.":
-		"O servidor Engram não aceita mais esta versão do plugin (requer {version} ou mais recente), portanto, as notas não estão sendo enviadas ou recebidas. Suas notas estão seguras; elas serão sincronizadas quando você atualizar.",
-	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Your notes are safe; they will sync once you update.":
-		"O servidor Engram não aceita mais esta versão do plugin, portanto, as notas não estão sendo enviadas ou recebidas. Suas notas estão seguras; elas serão sincronizadas quando você atualizar.",
+	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"O servidor Engram não aceita mais esta versão do plugin (é necessário {version} ou superior), portanto, as notas não estão sendo enviadas ou recebidas. As alterações feitas neste dispositivo permanecem aqui até você atualizar.",
+	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"O servidor Engram não aceita mais esta versão do plugin, portanto, as notas não estão sendo enviadas ou recebidas. As alterações feitas neste dispositivo permanecem aqui até você atualizar.",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"O plano gratuito sincroniza apenas notas. Faça um upgrade para sincronizar imagens e PDFs.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
@@ -696,6 +696,7 @@ const ptBR: Dict = {
 	"syncing now": "sincronizando agora",
 	unknown: "desconhecido",
 	"waiting for a connection": "aguardando conexão",
+	"waiting for a plugin update": "Aguardando uma atualização do plugin",
 	"waiting to retry": "aguardando nova tentativa",
 	"{count} attachments": {
 		one: "{count} anexo",

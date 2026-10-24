@@ -531,10 +531,10 @@ const de: Dict = {
 		"Das sieht nicht nach einer vollständigen Serveradresse aus. Gib das Schema mit an, z.B. http://127.0.0.1:4000",
 	"That does not look like an Engram API key (expected {prefix}…).":
 		"Das sieht nicht nach einem Engram API-Schlüssel aus (erwartet {prefix}…).",
-	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Your notes are safe; they will sync once you update.":
-		"Der Engram-Server akzeptiert diese Plugin-Version nicht mehr (er benötigt {version} oder neuer), daher werden keine Notizen gesendet oder empfangen. Deine Notizen sind sicher; sie werden synchronisiert, sobald du aktualisierst.",
-	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Your notes are safe; they will sync once you update.":
-		"Der Engram-Server akzeptiert diese Plugin-Version nicht mehr, daher werden keine Notizen gesendet oder empfangen. Deine Notizen sind sicher; sie werden synchronisiert, sobald du aktualisierst.",
+	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Der Engram-Server akzeptiert diese Plugin-Version nicht (er benötigt {version} oder neuer), daher werden keine Notizen gesendet oder empfangen. Änderungen, die du hier vornimmst, bleiben lokal, bis du aktualisierst.",
+	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Der Engram-Server akzeptiert diese Plugin-Version nicht, daher werden keine Notizen gesendet oder empfangen. Änderungen, die du hier vornimmst, bleiben lokal, bis du aktualisierst.",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"Die kostenlose Version synchronisiert nur Notizen. Upgrade, um auch Bilder und PDFs zu synchronisieren.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
@@ -662,6 +662,7 @@ const de: Dict = {
 	"syncing now": "Synchronisiert",
 	unknown: "unbekannt",
 	"waiting for a connection": "wartet auf eine Verbindung",
+	"waiting for a plugin update": "Wartet auf ein Plugin-Update",
 	"waiting to retry": "wartet auf Wiederholung",
 	"{count} attachments": { one: "{count} Anhang", other: "{count} Anhänge" },
 	"{count} attachments need a paid plan to sync. See Sync Center.": {

@@ -493,10 +493,10 @@ const id: Dict = {
 		"Itu tidak terlihat seperti alamat server yang lengkap. Sertakan skema, misalnya http://127.0.0.1:4000",
 	"That does not look like an Engram API key (expected {prefix}…).":
 		"Itu tidak terlihat seperti kunci API Engram (diharapkan {prefix}…).",
-	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Your notes are safe; they will sync once you update.":
-		"Server Engram tidak lagi menerima versi plugin ini (membutuhkan {version} atau lebih baru), sehingga catatan tidak dikirim atau diterima. Catatan Anda aman; mereka akan disinkronkan setelah Anda memperbarui.",
-	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Your notes are safe; they will sync once you update.":
-		"Server Engram tidak lagi menerima versi plugin ini, sehingga catatan tidak dikirim atau diterima. Catatan Anda aman; mereka akan disinkronkan setelah Anda memperbarui.",
+	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Server Engram tidak lagi menerima versi plugin ini (membutuhkan {version} atau lebih baru), sehingga catatan tidak dikirim atau diterima. Perubahan yang dibuat di perangkat ini akan tetap di sini sampai Anda memperbarui.",
+	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Server Engram tidak lagi menerima versi plugin ini, sehingga catatan tidak dikirim atau diterima. Perubahan yang dibuat di perangkat ini akan tetap di sini sampai Anda memperbarui.",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"Paket gratis hanya menyinkronkan catatan. Tingkatkan untuk menyinkronkan gambar dan PDF.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
@@ -615,6 +615,7 @@ const id: Dict = {
 	"syncing now": "Sedang melakukan sinkronisasi",
 	unknown: "tidak diketahui",
 	"waiting for a connection": "Menunggu koneksi",
+	"waiting for a plugin update": "Menunggu pembaruan plugin",
 	"waiting to retry": "Menunggu untuk mencoba lagi",
 	"{count} attachments": "{count} lampiran",
 	"{count} attachments need a paid plan to sync. See Sync Center.":

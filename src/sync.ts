@@ -81,6 +81,7 @@ import type {
 	SyncProgress,
 	SyncStatus,
 } from "./types";
+import { isUpgradeRequired } from "./upgrade-required";
 
 /**
  * Pure routing helper: for a markdown note, apply the disk content into the
@@ -12161,6 +12162,7 @@ export class SyncEngine {
 			inFlight: this.pushing.size,
 			offline: this.offline,
 			syncBlocked: this.syncBlocked,
+			updateRequired: isUpgradeRequired(),
 		});
 	}
 
@@ -12223,6 +12225,10 @@ export class SyncEngine {
 	 *  (re-queued with the bumped count; caller stops this flush pass) or "parked"
 	 *  (issue recorded + dequeued; caller keeps flushing the rest). */
 	private async handleFlushFailure(entry: QueueEntry, e: unknown): Promise<"parked" | "retry"> {
+		// The push in flight when the version-floor refusal latched: leave the
+		// entry exactly as it was (no attempt bump, no issue). It drains after
+		// the refusal clears, like the rest of the held queue.
+		if (isHttpStatus(e, 426) && isUpgradeRequired()) return "retry";
 		const classified = categorizeError(e);
 		const attempts = (entry.attempts ?? 0) + 1;
 		if (shouldRetryAfterFailure(classified, attempts)) {
@@ -12402,7 +12408,9 @@ export class SyncEngine {
 			this.time.clearTimeout(this.queueRetryTimer);
 			this.queueRetryTimer = null;
 		}
-		if (this.offline || this.syncBlocked) return;
+		// Refused for an old version: no timer. The clearing event re-drives the
+		// drain (main.ts's upgrade-state listener calls flushQueue).
+		if (this.offline || this.syncBlocked || isUpgradeRequired()) return;
 		let due = Number.POSITIVE_INFINITY;
 		for (const e of this.queue.all()) {
 			if (e.nextAttemptAt !== undefined && e.nextAttemptAt < due) due = e.nextAttemptAt;
@@ -12434,6 +12442,9 @@ export class SyncEngine {
 			// entries stay queued and drain when the gate reopens (re-auth →
 			// applySyncGate → fullSync → pushModifiedFiles → flushQueue).
 			if (this.syncBlocked) break;
+			// Refused by the server's version floor: every push fails locally, so
+			// draining would only burn RETRY_CAP and drop the user's edits. Hold.
+			if (isUpgradeRequired()) break;
 
 			// Backing off after a transient failure: skip it and keep draining
 			// the entries behind it (head-of-line blocking, 2026-10-09). The

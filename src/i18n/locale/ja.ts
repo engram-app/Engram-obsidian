@@ -489,10 +489,10 @@ const ja: Dict = {
 		"これは完全なサーバーアドレスのように見えません。スキームを含めてください。例: http://127.0.0.1:4000",
 	"That does not look like an Engram API key (expected {prefix}…).":
 		"これはEngramのAPIキーのように見えません (期待されるのは {prefix}…)",
-	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Your notes are safe; they will sync once you update.":
-		"Engram サーバーは、このプラグインのバージョンをサポートしていません (バージョン {version} 以上が必要です)。そのため、ノートの送受信ができません。ノートは安全です。更新すると同期されます。",
-	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Your notes are safe; they will sync once you update.":
-		"Engram サーバーは、このプラグインのバージョンをサポートしていません。そのため、ノートの送受信ができません。ノートは安全です。更新すると同期されます。",
+	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Engramサーバーは、このプラグインのバージョンに対応していません（{version}以上が必要です）。そのため、ノートの送受信ができません。このデバイスで行った変更は、アップデートするまでここで保存されます。",
+	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Engramサーバーは、このプラグインのバージョンに対応していません。そのため、ノートの送受信ができません。このデバイスで行った変更は、アップデートするまでここで保存されます。",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"無料プランではノートのみ同期されます。画像やPDFを同期するには、有料プランにアップグレードしてください。",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
@@ -609,6 +609,7 @@ const ja: Dict = {
 	"syncing now": "同期中",
 	unknown: "不明",
 	"waiting for a connection": "接続待ち",
+	"waiting for a plugin update": "プラグインのアップデートを待っています",
 	"waiting to retry": "再試行待ち",
 	"{count} attachments": "{count}つの添付ファイル",
 	"{count} attachments need a paid plan to sync. See Sync Center.":

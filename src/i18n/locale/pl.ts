@@ -575,10 +575,10 @@ const pl: Dict = {
 		"To nie wygląda na pełny adres serwera. Dodaj schemat, np. http://127.0.0.1:4000",
 	"That does not look like an Engram API key (expected {prefix}…).":
 		"To nie wygląda na klucz API Engram (oczekiwano {prefix}…).",
-	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Your notes are safe; they will sync once you update.":
-		"Serwer Engram nie obsługuje już tej wersji wtyczki (wymagana wersja {version} lub nowsza), więc notatki nie są wysyłane ani odbierane. Twoje notatki są bezpieczne; zostaną zsynchronizowane po aktualizacji.",
-	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Your notes are safe; they will sync once you update.":
-		"Serwer Engram nie obsługuje już tej wersji wtyczki, więc notatki nie są wysyłane ani odbierane. Twoje notatki są bezpieczne; zostaną zsynchronizowane po aktualizacji.",
+	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Serwer Engram nie obsługuje już tej wersji wtyczki (wymagane jest {version} lub nowsza), więc notatki nie są wysyłane ani odbierane. Zmiany wprowadzone na tym urządzeniu pozostają tutaj, dopóki nie zaktualizujesz.",
+	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Serwer Engram nie obsługuje już tej wersji wtyczki, więc notatki nie są wysyłane ani odbierane. Zmiany wprowadzone na tym urządzeniu pozostają tutaj, dopóki nie zaktualizujesz.",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"W wersji darmowej synchronizowane są tylko notatki. Zaktualizuj, aby synchronizować obrazy i pliki PDF.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
@@ -715,6 +715,7 @@ const pl: Dict = {
 	"syncing now": "synchronizacja w toku",
 	unknown: "nieznane",
 	"waiting for a connection": "oczekiwanie na połączenie",
+	"waiting for a plugin update": "oczekiwanie na aktualizację wtyczki",
 	"waiting to retry": "oczekiwanie na ponowną próbę",
 	"{count} attachments": {
 		one: "{count} załącznik",

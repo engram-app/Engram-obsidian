@@ -489,10 +489,10 @@ const vi: Dict = {
 		"Địa chỉ máy chủ này có vẻ không đầy đủ. Hãy bao gồm cả giao thức, ví dụ: http://127.0.0.1:4000",
 	"That does not look like an Engram API key (expected {prefix}…).":
 		"Đó không phải là khóa API Engram (mong đợi {prefix}…).",
-	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Your notes are safe; they will sync once you update.":
-		"Máy chủ Engram không còn hỗ trợ phiên bản plugin này (cần {version} trở lên), vì vậy ghi chú không được gửi hoặc nhận. Ghi chú của bạn vẫn an toàn; chúng sẽ được đồng bộ hóa khi bạn cập nhật.",
-	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Your notes are safe; they will sync once you update.":
-		"Máy chủ Engram không còn hỗ trợ phiên bản plugin này, vì vậy ghi chú không được gửi hoặc nhận. Ghi chú của bạn vẫn an toàn; chúng sẽ được đồng bộ hóa khi bạn cập nhật.",
+	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Máy chủ Engram không còn hỗ trợ phiên bản plugin này (cần phiên bản {version} trở lên), vì vậy ghi chú không được gửi hoặc nhận. Các thay đổi bạn thực hiện trên thiết bị này sẽ vẫn ở đây cho đến khi bạn cập nhật.",
+	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Máy chủ Engram không còn hỗ trợ phiên bản plugin này, vì vậy ghi chú không được gửi hoặc nhận. Các thay đổi bạn thực hiện trên thiết bị này sẽ vẫn ở đây cho đến khi bạn cập nhật.",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"Gói miễn phí chỉ đồng bộ hóa ghi chú. Nâng cấp để đồng bộ hóa hình ảnh và PDF.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
@@ -610,6 +610,7 @@ const vi: Dict = {
 	"syncing now": "đang đồng bộ hóa",
 	unknown: "không xác định",
 	"waiting for a connection": "đang chờ kết nối",
+	"waiting for a plugin update": "Đang chờ cập nhật plugin",
 	"waiting to retry": "đang chờ thử lại",
 	"{count} attachments": "{count} tệp đính kèm",
 	"{count} attachments need a paid plan to sync. See Sync Center.":

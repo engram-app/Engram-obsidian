@@ -481,10 +481,10 @@ const ko: Dict = {
 		"서버 주소가 올바르지 않습니다. 스키마를 포함해주세요. 예: http://127.0.0.1:4000",
 	"That does not look like an Engram API key (expected {prefix}…).":
 		"이것은 Engram API 키처럼 보이지 않습니다 (예상 값: {prefix}…).",
-	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Your notes are safe; they will sync once you update.":
-		"Engram 서버에서 더 이상 이 플러그인 버전을 지원하지 않습니다 (최소 {version} 이상 필요). 따라서 노트가 전송되거나 수신되지 않습니다. 노트는 안전하며, 업데이트하면 동기화됩니다.",
-	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Your notes are safe; they will sync once you update.":
-		"Engram 서버에서 더 이상 이 플러그인 버전을 지원하지 않습니다. 따라서 노트가 전송되거나 수신되지 않습니다. 노트는 안전하며, 업데이트하면 동기화됩니다.",
+	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Engram 서버는 더 이상 이 플러그인 버전을 지원하지 않습니다 (최소 {version} 이상 필요). 따라서 노트가 전송되거나 수신되지 않습니다. 이 장치에서 변경한 내용은 업데이트할 때까지 여기에 보관됩니다.",
+	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Engram 서버는 더 이상 이 플러그인 버전을 지원하지 않습니다. 따라서 노트가 전송되거나 수신되지 않습니다. 이 장치에서 변경한 내용은 업데이트할 때까지 여기에 보관됩니다.",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"무료 플랜은 노트만 동기화합니다. 이미지 및 PDF 동기화를 원하시면 유료 플랜으로 업그레이드하세요.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
@@ -600,6 +600,7 @@ const ko: Dict = {
 	"syncing now": "현재 동기화 중",
 	unknown: "알 수 없음",
 	"waiting for a connection": "연결 대기 중",
+	"waiting for a plugin update": "플러그인 업데이트를 기다 중입니다",
 	"waiting to retry": "재시도 대기 중",
 	"{count} attachments": "{count}개의 첨부 파일",
 	"{count} attachments need a paid plan to sync. See Sync Center.":

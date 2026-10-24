@@ -18,7 +18,12 @@ import { ACTION_ICONS } from "./sync-log-modal";
 import { planLoadErrorMessage, SyncPreviewModal } from "./sync-preview-modal";
 import { DEFAULT_UPGRADE_URL } from "./tabs/urls";
 import type { SyncIssue, SyncIssueCategory, SyncLogEntry } from "./types";
-import { isUpgradeRequired, openUpgradeUi, upgradeRequiredMinVersion } from "./upgrade-required";
+import {
+	canOpenUpgradeUi,
+	isUpgradeRequired,
+	openUpgradeUi,
+	upgradeRequiredMinVersion,
+} from "./upgrade-required";
 
 /** Build an Obsidian Setting heading inside `parent` so the section title
  *  matches the visual style of the Cloud / Self-hosted / Advanced tabs. */
@@ -97,6 +102,7 @@ function groupedByCategory(
  *  then, which is the same bug `limit-copy.ts` documents. */
 function queuedReasonText(): Record<QueuedReason, string> {
 	return {
+		"update-required": t("waiting for a plugin update"),
 		offline: t("waiting for a connection"),
 		"sync-blocked": t("sync is paused"),
 		"in-progress": t("syncing now"),
@@ -115,14 +121,16 @@ function renderUpdateRequired(parent: HTMLElement): void {
 	banner.createEl("p", {
 		text: min
 			? t(
-					"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Your notes are safe; they will sync once you update.",
+					"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Changes made on this device stay here until you update.",
 					{ version: min },
 				)
 			: t(
-					"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Your notes are safe; they will sync once you update.",
+					"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.",
 				),
 	});
-	// "Update", never "Upgrade": same rule as the Notice in upgrade-required.ts.
+	// No action wired = no button, same as the Notice. "Update", never
+	// "Upgrade": that word means paying more money next door.
+	if (!canOpenUpgradeUi()) return;
 	const btn = banner.createEl("button", { text: t("Update"), cls: "mod-cta" });
 	btn.addEventListener("click", () => {
 		openUpgradeUi();

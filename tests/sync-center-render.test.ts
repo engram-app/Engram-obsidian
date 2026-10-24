@@ -8,7 +8,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { formatRelative, renderSyncCenter } from "../src/sync-center-render";
 import type { SyncIssue } from "../src/types";
-import { notifyUpgradeRequired, resetUpgradeRequired } from "../src/upgrade-required";
+import {
+	notifyUpgradeRequired,
+	resetUpgradeRequired,
+	setUpgradeAction,
+} from "../src/upgrade-required";
 import { __setLanguage } from "./__mocks__/obsidian";
 
 interface FakeEl {
@@ -692,6 +696,7 @@ describe("renderSyncCenter — update required banner", () => {
 	afterEach(() => resetUpgradeRequired());
 
 	test("names what is blocked, the required version, and offers Update", () => {
+		setUpgradeAction(() => {});
 		notifyUpgradeRequired("1.36.0");
 		const parent = makeFakeEl("div");
 		renderSyncCenter(parent as unknown as HTMLElement, makeMockPlugin([]), () => {});
@@ -704,6 +709,16 @@ describe("renderSyncCenter — update required banner", () => {
 		expect(findAllByCls(banner!, "mod-cta").map((b) => b.text)).toEqual(["Update"]);
 		// First thing on the pane, above the Sync button that cannot work.
 		expect(parent.children[0]).toBe(banner!);
+	});
+
+	test("no dead Update button when no action is wired", () => {
+		notifyUpgradeRequired("1.36.0");
+		const parent = makeFakeEl("div");
+		renderSyncCenter(parent as unknown as HTMLElement, makeMockPlugin([]), () => {});
+
+		const banner = findByCls(parent, "engram-update-required-banner");
+		expect(banner).not.toBeNull();
+		expect(findAllByCls(banner!, "mod-cta")).toHaveLength(0);
 	});
 
 	test("absent when the server has not refused us", () => {

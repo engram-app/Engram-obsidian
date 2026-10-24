@@ -558,10 +558,10 @@ const fr: Dict = {
 		"Ce n'est pas l'adresse complète du serveur. Inclue le protocole, par exemple http://127.0.0.1:4000",
 	"That does not look like an Engram API key (expected {prefix}…).":
 		"Cela ne ressemble pas à une clé API Engram (attendu {prefix}…).",
-	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Your notes are safe; they will sync once you update.":
-		"Le serveur Engram n'accepte plus cette version du plugin (il nécessite {version} ou une version ultérieure), donc les notes ne sont ni envoyées ni reçues. Tes notes sont en sécurité ; elles seront synchronisées une fois que tu auras mis à jour.",
-	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Your notes are safe; they will sync once you update.":
-		"Le serveur Engram n'accepte plus cette version du plugin, donc les notes ne sont ni envoyées ni reçues. Tes notes sont en sécurité ; elles seront synchronisées une fois que tu auras mis à jour.",
+	"The Engram server no longer accepts this plugin version (it needs {version} or newer), so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Le serveur Engram n'accepte plus cette version du plugin (il nécessite {version} ou une version ultérieure), donc les notes ne sont ni envoyées ni reçues. Les modifications effectuées sur cet appareil restent ici jusqu'à ce que tu mettes à jour.",
+	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
+		"Le serveur Engram n'accepte plus cette version du plugin, donc les notes ne sont ni envoyées ni reçues. Les modifications effectuées sur cet appareil restent ici jusqu'à ce que tu mettes à jour.",
 	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
 		"Le plan gratuit synchronise uniquement les notes. Passe à un abonnement payant pour synchroniser les images et les PDF.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
@@ -696,6 +696,7 @@ const fr: Dict = {
 	"syncing now": "synchronisation en cours",
 	unknown: "inconnu",
 	"waiting for a connection": "en attente de connexion",
+	"waiting for a plugin update": "En attente d'une mise à jour du plugin",
 	"waiting to retry": "en attente de reconnexion",
 	"{count} attachments": {
 		one: "{count} pièce jointe",
