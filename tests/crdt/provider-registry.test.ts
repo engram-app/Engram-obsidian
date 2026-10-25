@@ -529,16 +529,29 @@ describe("room-free delivery receipt (#1493)", () => {
 		expect(reg.hasCurrentDeliveryReceipt("n1")).toBe(false);
 	});
 
-	test("a REMOTE update also voids the receipt", async () => {
-		// Conservative on purpose: an inbound edit needs no sending back, but it
-		// moves the snapshot, so the note pays one room. Pinned because the
-		// asymmetry is invisible — nothing fails if a later refactor makes remote
-		// updates skip the receipt, and the failure would be silent data loss in
-		// the one direction that matters.
+	test("a REMOTE update into a doc with nothing local since the ack keeps the receipt current", async () => {
+		// Engram#2242: the server sent it, so the merged doc is still all server
+		// state. Voiding here sent every resumed idle doc to a room.
 		const reg = unhandshookDevice("receipt-remote");
 		await reg.applyLocalEdit("n1", "hello");
 		reg.markDelivered("n1", await reg.encodeDeliveryReceipt("n1"));
 		expect(reg.hasCurrentDeliveryReceipt("n1")).toBe(true);
+
+		const peer = new YDoc.Doc();
+		peer.getText("content").insert(0, "from elsewhere");
+		await reg.applyRemoteUpdate("n1", YDoc.encodeStateAsUpdate(peer));
+
+		expect(reg.hasCurrentDeliveryReceipt("n1")).toBe(true);
+	});
+
+	test("a REMOTE update after an unsent local edit never covers that edit", async () => {
+		// The direction that would lose data: advancing the receipt over a local
+		// op the server never got would stamp it delivered, and the read-only
+		// converge would then never transmit it.
+		const reg = unhandshookDevice("receipt-remote-dirty");
+		await reg.applyLocalEdit("n1", "hello");
+		reg.markDelivered("n1", await reg.encodeDeliveryReceipt("n1"));
+		(await reg.getDoc("n1")).getText("content").insert(0, "unsent ");
 
 		const peer = new YDoc.Doc();
 		peer.getText("content").insert(0, "from elsewhere");
