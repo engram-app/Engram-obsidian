@@ -27,6 +27,7 @@ type WiringSyncEngine = Pick<
 	| "applyLiveOpWithSeq"
 	| "commitCrdtConvergence"
 	| "recordUndeliveredCrdtEdit"
+	| "loadServerState"
 >;
 
 /** How often the structural invariants are swept. Cheap (set arithmetic over
@@ -343,6 +344,11 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 			const path = noteIdMap.pathForId(noteId);
 			return path ? syncEngine.isUnchangedSynced(path, content) : false;
 		},
+		// The load gate: a server-known note with an empty doc takes no local
+		// input until the server's state is loaded (see awaitsServerState).
+		// "Server-known" is the same oracle the create-ack gate reads.
+		serverHolds: deps.canSendLive,
+		onAwaitingServer: (noteId) => void syncEngine.loadServerState(noteId),
 		onPersistError: (noteId, err) => {
 			rlog().warn(
 				"crdt",

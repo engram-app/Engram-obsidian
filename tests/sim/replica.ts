@@ -629,6 +629,7 @@ export class Replica {
 			} catch {
 				/* resumes from the persisted cursor on the next join */
 			}
+			engine.retryHeldLocalEdits(); // mirror main.ts: loads the gate held
 			// Mirror main.ts: kick the durable queue, which is where an edit
 			// refused while unjoined was recorded (#516) — this is what delivers
 			// an edit to a since-closed note.

@@ -2621,6 +2621,8 @@ export default class EngramSyncPlugin extends Plugin {
 		} catch (e) {
 			rlog().warn("crdt", `socket seq-replay on reconnect failed: ${errMsg(e)}`);
 		}
+		// Edits the load gate held while the server state was unreachable.
+		this.syncEngine.retryHeldLocalEdits();
 		// Drain the durable queue now that the crdt topic is LIVE (Phase E3):
 		// the socket is the ONLY delivery path for queued crdt edits, and the
 		// drain deliberately skips them while the topic is down — without this

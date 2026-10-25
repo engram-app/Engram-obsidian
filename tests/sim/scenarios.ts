@@ -139,7 +139,11 @@ export async function equalSeqFence(seed = 282): Promise<EqualSeqResult> {
 
 	// B makes its own local edit -> B pushes -> server merges -> B's own push
 	// echo advances B's recorded high-water seq to the merged row's seq.
-	await b.editNote(notePath, "base\nedited by A (B will miss the live delivery)\nand by B\n");
+	// B edits the text it HAS: A's line never reached it. (This used to type
+	// A's line too, which no user can do; the load gate 3-way merges B's edit
+	// from the discovered body, and an insert that contains A's insert is an
+	// overlap merge3 refuses, so it became a conflict copy.)
+	await b.editNote(notePath, "base\nand by B\n");
 	await t.scheduler.drain();
 
 	// Reconnect B: the crdt: rejoin fires catch-up (catchupViaSeqReplay), which

@@ -66,6 +66,10 @@ interface Entry {
 	 *  (delete-note resurrection). `lifetime.guard(...)` races the await against
 	 *  the end; `lifetime.active` is the cheap synchronous check. */
 	lifetime: Lifetime;
+	/** The server's state was read and holds no lineage (a row with no CRDT
+	 *  state yet), so a local seed cannot rival anything: the load gate is
+	 *  open. Set by `openLoadGate`; moot once the doc has history. */
+	serverEmpty?: boolean;
 }
 
 export interface ProviderRegistryOpts {
@@ -90,6 +94,13 @@ export interface ProviderRegistryOpts {
 	/** Adopt-first gate: content byte-identical to the last-synced content must
 	 *  NOT seed (would fork a second lineage → #846 doubling). */
 	isUnchangedSynced?: (noteId: string, content: string) => boolean;
+	/** The server holds this note. With an empty doc that means this device has
+	 *  not loaded the server's state yet, so local input must wait (see
+	 *  `awaitsServerState`). */
+	serverHolds?: (noteId: string) => boolean;
+	/** A local edit was held because the doc awaits the server's state: load it.
+	 *  The edit stays where it is (disk, or the editor buffer) until then. */
+	onAwaitingServer?: (noteId: string) => void;
 	/** Fired on the first inbound syncStep2 for a note. */
 	onSynced?: (noteId: string) => void;
 	/** Fired when the first inbound syncStep2 leaves the doc EMPTY — the server's
@@ -182,7 +193,31 @@ export class ProviderRegistry {
 	 *  lineage, which is the trap the pre-handshake seed gate exists for. */
 	async ingestFrontmatter(noteId: string, content: string): Promise<void> {
 		const e = await this.entry(noteId);
+		if (this.awaitsServerState(noteId)) return; // the binding's load resolves it
 		seedFrontmatterInto(e.doc, content);
+	}
+
+	/** True while `noteId`'s doc must accept no local input: the server holds
+	 *  the note but this device has none of its history (catch-up wrote the body
+	 *  to disk, never to the doc). Any write now mints a rival lineage that the
+	 *  server unions with its own copy, doubling the body. Relay's System
+	 *  Invariant #3 is the same rule: consult the server before merging.
+	 *
+	 *  Ends the moment the server's state lands in the doc, by any route (room
+	 *  handshake, `crdt_doc_state`, fan-out). Not resident or not yet hydrated
+	 *  reads false: callers check after `entry()`/`ready`. */
+	awaitsServerState(noteId: string): boolean {
+		const e = this.entries.get(noteId);
+		if (!e || e.serverEmpty || !this.opts.serverHolds?.(noteId)) return false;
+		return !docHasAnyHistory(e.doc, e.kind);
+	}
+
+	/** The loaded server state `update` carries no lineage: open the gate so
+	 *  the held edit seeds. False (gate stays shut) when it does carry one. */
+	async openLoadGate(noteId: string, update: Uint8Array): Promise<boolean> {
+		if (Y.decodeUpdate(update).structs.length > 0) return false;
+		(await this.entry(noteId)).serverEmpty = true;
+		return true;
 	}
 
 	private async entry(noteId: string): Promise<Entry> {
@@ -391,6 +426,15 @@ export class ProviderRegistry {
 		const e = await this.entry(noteId);
 		if (!e.lifetime.active) return null; // destroyed while we awaited hydration
 		let content = diskContent;
+
+		// The load gate (`awaitsServerState`). Disk unchanged since sync is no
+		// input at all. Anything else is held on disk, unconsumed, while the
+		// engine loads the server state and merges it.
+		if (this.awaitsServerState(noteId)) {
+			if (this.opts.isUnchangedSynced?.(noteId, diskContent)) return diskContent;
+			this.opts.onAwaitingServer?.(noteId);
+			return null;
+		}
 
 		// LCA path (#357). With a merge base we apply the disk's delta RELATIVE TO
 		// THE BASE, so a remote op that landed after the disk read survives by
