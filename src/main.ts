@@ -23,7 +23,7 @@ import {
 	type RefreshFn,
 	seededAccessToken,
 } from "./auth";
-import { migrateCloudApiUrl, withClearedAuth } from "./auth-state";
+import { ackScopeFor, migrateCloudApiUrl, withClearedAuth } from "./auth-state";
 import { migrateBackendMode, offersUpgrades, switchMode } from "./backend-mode";
 import { BaseStore } from "./base-store";
 import {
@@ -1029,6 +1029,8 @@ export default class EngramSyncPlugin extends Plugin {
 		// heartbeat tick, which is what made the first post-unlock sync feel laggy.
 		this.registerDomEvent(activeDocument, "visibilitychange", () => {
 			if (activeDocument.visibilityState === "hidden") {
+				this.syncEngine.flushHealRoomCounts();
+				void this.crdtWiring?.manager.flushAcked();
 				void rlog().flush();
 				void this.savePluginData(this.syncEngine.getLastSync());
 				// A silent sync-bases.json write failure degrades 3-way merge to
@@ -2946,6 +2948,8 @@ export default class EngramSyncPlugin extends Plugin {
 					// above) at call time so a swapped socket is transparent.
 					if (!this.crdtWiring) {
 						const wiring = createCrdtWiring({
+							ackScope: () =>
+								ackScopeFor(this.settings.apiUrl, this.settings.vaultId),
 							noteIdMap: this.noteIdMap,
 							syncEngine: this.syncEngine,
 							// BaseStore is keyed by vault path and already holds exactly the

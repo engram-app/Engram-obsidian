@@ -1,6 +1,7 @@
 import { describe, expect, mock, test } from "bun:test";
 import {
 	type ApiUrlSwitchTarget,
+	ackScopeFor,
 	applyApiUrlChange,
 	completeOrigin,
 	interpretHealthProbe,
@@ -480,5 +481,27 @@ describe("pluginSwitchTarget.resetAuthProvider (#420)", () => {
 		// tokens back into the settings the user just wiped.
 		expect(disposed).toBe(1);
 		expect(plugin.authProvider).toBeNull();
+	});
+});
+
+describe("ackScopeFor (Engram#2242: the acked-mark key)", () => {
+	test("a trailing slash, letter case or the legacy-host rewrite do not change the scope", () => {
+		const canonical = ackScopeFor(ENGRAM_CLOUD_URL, "v1");
+		expect(ackScopeFor(`${ENGRAM_CLOUD_URL}/`, "v1")).toBe(canonical);
+		expect(ackScopeFor(ENGRAM_CLOUD_URL.toUpperCase(), "v1")).toBe(canonical);
+		expect(ackScopeFor("https://app.engram.page", "v1")).toBe(canonical);
+	});
+
+	test("a different server or vault is a different scope", () => {
+		expect(ackScopeFor("https://engram.example.com", "v1")).not.toBe(
+			ackScopeFor(ENGRAM_CLOUD_URL, "v1"),
+		);
+		expect(ackScopeFor(ENGRAM_CLOUD_URL, "v2")).not.toBe(ackScopeFor(ENGRAM_CLOUD_URL, "v1"));
+	});
+
+	test("a single-label self-host address still scopes, normalised", () => {
+		expect(ackScopeFor("http://Engram:4000/", "v1")).toBe(
+			ackScopeFor("http://engram:4000", "v1"),
+		);
 	});
 });

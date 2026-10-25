@@ -113,6 +113,51 @@ export const BLOB_HEAL_PUSHES_PER_PASS = 20;
  *  (see handleBlobMissing). A definitive outcome stops it sooner. */
 export const BLOB_HEAL_MAX_ATTEMPTS = 3;
 
+/** Heal rooms (re-handshakes) one device may hold open at once for notes
+ *  nobody has open in an editor (Engram#2242). The server's per-node LRU keeps
+ *  64 rooms resident, so one phone's backlog must never claim more than a small
+ *  slice of it. A heal round trip is about 100-300 ms, so 4 in flight still
+ *  drains an 800-note backlog in roughly a minute. Notes past the pool wait,
+ *  still marked: they fire as slots free. */
+export const IDLE_HEAL_ROOMS = 4;
+
+/** Why an idle note needed a heal room, for the `heal_room_fallback` counts. */
+type HealRoomReason =
+	| "undelivered"
+	| "doc_state_failed"
+	| "doc_state_latched"
+	| "queue_fallback"
+	| "other";
+
+/** How long a heal room waits for the server's STEP2 before it is closed (and
+ *  the note re-queued if still marked). A lost STEP2 must not shrink the pool
+ *  for the session. */
+const HEAL_SLOT_TIMEOUT_MS = 30_000;
+
+/** Per-device budget for idle heal-room STARTS (Engram#2242). The server alert
+ *  fires on more than 300 starts per task in 10 minutes. A burst of 5 plus 15 a
+ *  minute caps any 60 s window at 20 and a 10-minute window at 155 from one
+ *  device, so one phone alone can never trip it. */
+const HEAL_ROOM_BURST = 5;
+const HEAL_ROOMS_PER_MINUTE = 15;
+
+/** Report idle heal rooms at least this often, not only when the pool drains. */
+const HEAL_ROOM_REPORT_EVERY = 50;
+
+/** Cap on a timed-out note's retry backoff (it starts at HEAL_SLOT_TIMEOUT_MS). */
+const HEAL_RETRY_MAX_MS = 10 * 60_000;
+
+interface HealSlot {
+	path: string;
+	reason: HealRoomReason;
+	/** The budget wait, then the STEP2 timeout. */
+	timer: number;
+}
+
+/** Room-free frame latch backoff (see `frameLatched`): 30 s, doubling, 10 min cap. */
+const FRAME_LATCH_BASE_MS = 30_000;
+const FRAME_LATCH_MAX_MS = 10 * 60_000;
+
 /** True when `content` is too large to enter the Yjs doc: seeding it would
  *  produce a base64 `crdt_msg` past Bandit's 8 MB WebSocket frame limit → 1009,
  *  killing the socket (and re-crashing on every reconnect). Every CRDT seed
@@ -678,6 +723,48 @@ export class SyncEngine {
 	/** Room-free doc-state reads a bulk revive may have in flight at once: a
 	 *  7k-note folder restore otherwise fires 7k at one channel. */
 	private readonly revivedDocReads = new Semaphore(4);
+	/** Heal rooms open at once for IDLE notes (Engram#2242, `IDLE_HEAL_ROOMS`). */
+	private readonly idleHealRooms = new Semaphore(IDLE_HEAL_ROOMS);
+	/** Idle notes queued for a heal slot. Being in here IS the pending-repair
+	 *  mark: the note fires when a slot frees. Cleared by the fire. */
+	private readonly idleHealWaiting = this.track(
+		["vault", "destroy"],
+		new Map<string, { path: string; reason: HealRoomReason }>(),
+	);
+	/** Idle notes holding a heal slot. Cleared when the room CLOSES
+	 *  (`releaseHealRoom` -> `freeHealSlot`). A sweep hands the slot back
+	 *  directly: the rooms belong to the old vault's channel. */
+	private readonly idleHealSlots = this.track(
+		["vault", "destroy"],
+		new Map<string, HealSlot>(),
+		(slot) => {
+			this.time.clearTimeout(slot.timer);
+			this.idleHealRooms.release();
+		},
+	);
+	/** Heals asked for while the note's room was still open; queued again when
+	 *  it closes. Cleared by that re-queue. */
+	private readonly idleHealRefire = this.track(["vault", "destroy"], new Set<string>());
+	/** Idle heal rooms OPENED since the last report, by reason. */
+	private readonly healRoomsOpened = this.track(
+		["vault", "destroy"],
+		new Map<HealRoomReason, number>(),
+	);
+	private healRoomsUnreported = 0;
+	/** Heal rooms that timed out for a note since it last converged. Cleared by
+	 *  a STEP2 for it (`commitCrdtConvergence`). */
+	private readonly healRetries = this.track(["vault", "destroy"], new Map<string, number>());
+	/** A timed-out note's next try, on its backoff. Cleared when it fires. */
+	private readonly healRetryTimers = this.track(
+		["vault", "destroy"],
+		new Map<string, { timer: number; path: string; reason: HealRoomReason }>(),
+		(pending) => this.time.clearTimeout(pending.timer),
+	);
+	/** Token bucket for idle heal-room starts; `at` null until first use. */
+	private readonly healRoomBucket: { tokens: number; at: number | null } = {
+		tokens: HEAL_ROOM_BURST,
+		at: null,
+	};
 	/** >0 while a bulk sweep (pushAll / fullSync) is running. Queue entries it
 	 *  produces get Background priority — see priorityForPath. */
 	private bulkDepth = 0;
@@ -4231,7 +4318,12 @@ export class SyncEngine {
 		const strikes = (this.frameStrikes.get(frame) ?? 0) + 1;
 		this.frameStrikes.set(frame, strikes);
 		if (strikes < SyncEngine.FRAME_UNSUPPORTED_LATCH) return false;
-		this.unsupportedFrames.add(frame);
+		// Already latched by a concurrent failure: one backoff step per window.
+		if (this.frameLatched(frame)) return false;
+		const latches = (this.unsupportedFrames.get(frame)?.latches ?? 0) + 1;
+		const until =
+			this.time.now() + expBackoff(FRAME_LATCH_BASE_MS, latches - 1, FRAME_LATCH_MAX_MS);
+		this.unsupportedFrames.set(frame, { until, latches });
 		return true;
 	}
 
@@ -4252,7 +4344,7 @@ export class SyncEngine {
 		{ honorLatch = true, strike = true }: { honorLatch?: boolean; strike?: boolean } = {},
 	): Promise<{ b64: string; head: string } | null> {
 		const fetchState = this.crdtDocState;
-		if (!fetchState || (honorLatch && this.unsupportedFrames.has(DOC_STATE_FRAME))) return null;
+		if (!fetchState || (honorLatch && this.frameLatched(DOC_STATE_FRAME))) return null;
 
 		try {
 			const state = await fetchState(noteId);
@@ -4260,6 +4352,7 @@ export class SyncEngine {
 			// count so one slow reply mid-import cannot accumulate toward a latch
 			// across an otherwise healthy session.
 			this.frameStrikes.delete(DOC_STATE_FRAME);
+			this.unsupportedFrames.delete(DOC_STATE_FRAME);
 			return state;
 		} catch (e) {
 			const detail = errMsg(e, path);
@@ -4269,8 +4362,8 @@ export class SyncEngine {
 			if (strike && this.strikeFrame(DOC_STATE_FRAME, detail)) {
 				rlog().warn(
 					"crdt",
-					`crdt_doc_state unsupported ${SyncEngine.FRAME_UNSUPPORTED_LATCH}x — disabling ` +
-						`room-free doc reads for this session. Either the backend predates the frame ` +
+					`crdt_doc_state unsupported ${SyncEngine.FRAME_UNSUPPORTED_LATCH}x, pausing ` +
+						`room-free doc reads, then probing again. Either the backend predates the frame ` +
 						`or the channel is crashing; both look like this from the client.`,
 				);
 			}
@@ -4313,7 +4406,7 @@ export class SyncEngine {
 	}): Promise<boolean> {
 		const noteId = entry.noteId;
 		const send = this.crdtDocUpdate;
-		if (!noteId || !send || this.unsupportedFrames.has(DOC_UPDATE_FRAME)) return false;
+		if (!noteId || !send || this.frameLatched(DOC_UPDATE_FRAME)) return false;
 		// Capture the registry BEFORE the encode and refuse if it was swapped
 		// underneath — the same fence `adoptServerLineage` takes, and it matters
 		// MORE here for the reason `setCrdtPorts` gives: this is a WRITE.
@@ -4402,6 +4495,7 @@ export class SyncEngine {
 		try {
 			await send(noteId, frame);
 			this.frameStrikes.delete(DOC_UPDATE_FRAME);
+			this.unsupportedFrames.delete(DOC_UPDATE_FRAME);
 			// THE receipt (#1493). The ack proves the server holds everything the
 			// receipt described — a SNAPSHOT, not a state vector, because a vector
 			// cannot see deletions and the first attempt at this stranded them.
@@ -4447,8 +4541,8 @@ export class SyncEngine {
 		if (this.strikeFrame(DOC_UPDATE_FRAME, detail)) {
 			rlog().warn(
 				"crdt",
-				`crdt_doc_update unsupported ${SyncEngine.FRAME_UNSUPPORTED_LATCH}x — disabling ` +
-					`room-free queue delivery for this session and falling back to the room handshake.`,
+				`crdt_doc_update unsupported ${SyncEngine.FRAME_UNSUPPORTED_LATCH}x, pausing ` +
+					`room-free queue delivery, then probing again; the room handshake covers it meanwhile.`,
 			);
 		}
 
@@ -4795,8 +4889,19 @@ export class SyncEngine {
 		// it means "would tearing this down destroy something", which a receipt
 		// does not answer. Relaxing it here can cost a wasted room; relaxing it
 		// there would cost a file.
-		const delivered = this.crdt?.hasCurrentDeliveryReceipt?.(noteId) === true;
+		let delivered = this.crdt?.hasCurrentDeliveryReceipt?.(noteId) === true;
+		// Real local work: ship it room-free first (#1493). The ack records the
+		// receipt, which makes the read below legal, so an idle note with local
+		// edits converges with zero rooms (Engram#2242). Only a failed write
+		// leaves it to the room.
+		if (this.crdt?.hasUndeliveredOps(noteId) && !delivered) {
+			delivered =
+				(await this.deliverQueuedOpsRoomFree({ path: normalized, noteId })) &&
+				this.crdt?.hasCurrentDeliveryReceipt?.(noteId) === true;
+		}
+		let reason: HealRoomReason = "undelivered";
 		if (this.crdt && (!this.crdt.hasUndeliveredOps(noteId) || delivered)) {
+			reason = this.frameLatched(DOC_STATE_FRAME) ? "doc_state_latched" : "doc_state_failed";
 			// Routed through the shared reader so this caller both CHECKS and
 			// FEEDS the capability latch. It used to do neither, so against an
 			// older backend every diverged cold note paid a full request timeout
@@ -4810,8 +4915,24 @@ export class SyncEngine {
 				// then record a note as converged that holds none of the server's
 				// state — after which every catch-up compares equal hashes and
 				// skips it, permanently. Fall back to the room.
-				if (!(await this.applyServerDocState(noteId, change.path))) {
-					throw new Error("crdt_doc_state unavailable, or the registry refused it");
+				const state = await this.readServerDocState(noteId, change.path);
+				if (state === null) throw new Error("crdt_doc_state unavailable");
+				const update = fromB64(state.b64);
+				// The acked mark is a claim about what the server HOLDS, and a
+				// server can lose it (a restore, a doc reset, a relink). The read
+				// returns the server's full state, so check the claim before
+				// trusting it; if the server no longer covers it, re-send.
+				if (this.crdt.ackedCoveredBy?.(noteId, update) === false) {
+					rlog().anomaly("crdt", "acked_state_missing_on_server");
+					this.crdt.clearDelivered?.(noteId);
+					if (!(await this.deliverQueuedOpsRoomFree({ path: normalized, noteId }))) {
+						throw new Error(
+							"the server lost acked state and the room-free re-send failed",
+						);
+					}
+				}
+				if (!(await this.crdt.applyRemoteUpdate(noteId, update))) {
+					throw new Error("the registry refused the crdt_doc_state update");
 				}
 				// `onSynced` fires ONLY from NoteProvider.handleFrame on an
 				// inbound syncStep2 — an applyRemoteUpdate does not fire it. So
@@ -4849,7 +4970,7 @@ export class SyncEngine {
 			"pull",
 			`CRDT catch-up: diverged cold note, socket re-handshake ${noteRef(change.path)}`,
 		);
-		this.socketConverge(normalized, noteId);
+		this.socketConverge(normalized, noteId, reason);
 	}
 
 	/** The full local cleanup for a remotely-deleted file: trash it (marked so
@@ -7009,7 +7130,24 @@ export class SyncEngine {
 	 *  answers, so each attempt costs a full request timeout). Vault-scoped
 	 *  because a vault switch can move us to a different backend entirely —
 	 *  self-host and SaaS are different servers at different versions. */
-	private unsupportedFrames = this.track(["vault", "destroy"], new Set<string>());
+	private unsupportedFrames = this.track(
+		["vault", "destroy"],
+		new Map<string, { until: number; latches: number }>(),
+	);
+
+	/** True while `frame` is latched off. The latch is a BACKOFF, not a session
+	 *  verdict (Engram#2242): a resuming phone times out a couple of reads while
+	 *  its socket comes back, and a session-long latch then sent every diverged
+	 *  cold note to its own room. When the window lapses one probe goes out; a
+	 *  failed probe re-latches at once (strikes are pre-loaded) for twice as
+	 *  long, a success clears the latch for good. An old backend costs one
+	 *  probe per window, capped at 10 minutes. */
+	private frameLatched(frame: string): boolean {
+		const latch = this.unsupportedFrames.get(frame);
+		if (!latch || this.time.now() < latch.until) return latch !== undefined;
+		this.frameStrikes.set(frame, SyncEngine.FRAME_UNSUPPORTED_LATCH - 1);
+		return false;
+	}
 
 	/** Consecutive unsupported-looking replies, keyed BY FRAME. Per-frame on
 	 *  purpose: the two room-free frames shipped in different releases, so a
@@ -8065,14 +8203,14 @@ export class SyncEngine {
 	 *  it silently stranded a deaf note whose single recovery poke landed
 	 *  inside the window (CI: `test_deaf_note_survives_handshake_rate_limit_
 	 *  and_heals_on_restore`). Never throws. */
-	private socketConverge(path: string, noteId: string): void {
+	private socketConverge(path: string, noteId: string, reason: HealRoomReason = "other"): void {
 		if (!this.crdtEnrollment) return;
 		const last = this.crdtHealCooldown.get(noteId);
 		// The injected clock, like the trailing timer below: mixing it with
 		// Date.now() made the window real-time even under a manual clock.
 		const now = this.time.now();
 		if (last === undefined || now - last >= this.healCooldownMs) {
-			this.fireCrdtReHandshake(path, noteId);
+			this.fireCrdtReHandshake(path, noteId, reason);
 			return;
 		}
 		if (this.crdtHealTrailingTimers.has(noteId)) {
@@ -8083,7 +8221,7 @@ export class SyncEngine {
 		const remaining = this.healCooldownMs - (now - last);
 		const timer = this.time.setTimeout(() => {
 			this.crdtHealTrailingTimers.delete(noteId);
-			this.fireCrdtReHandshake(path, noteId);
+			this.fireCrdtReHandshake(path, noteId, reason);
 		}, remaining);
 		this.crdtHealTrailingTimers.set(noteId, timer);
 	}
@@ -8104,7 +8242,182 @@ export class SyncEngine {
 	 *  It IS a real #1409 contributor — attribution measured it as the top
 	 *  client enroll caller — so if these rooms need to go, the fix is to give
 	 *  the queue a room-free delivery path, NOT to gate this call. */
-	private fireCrdtReHandshake(path: string, noteId: string): void {
+	private fireCrdtReHandshake(path: string, noteId: string, reason: HealRoomReason): void {
+		if (!this.isLiveBound(normalizePath(path))) {
+			this.poolIdleHeal(path, noteId, reason);
+			return;
+		}
+		this.openHealRoom(path, noteId);
+	}
+
+	/** Engram#2242: an IDLE note's heal room waits for one of `IDLE_HEAL_ROOMS`
+	 *  slots AND a token from the per-device start budget
+	 *  (`HEAL_ROOM_BURST` + `HEAL_ROOMS_PER_MINUTE`), so a burst of diverged
+	 *  idle notes is paced rather than opening a room each at once. A backstop:
+	 *  the root fix (a persisted server-acked snapshot) means most idle notes
+	 *  never ask for a room at all.
+	 *
+	 *  Never dropped. A note waits here, marked (`idleHealWaiting`), until it
+	 *  fires. A second request while its room is still open is remembered
+	 *  (`idleHealRefire`) and re-queued when the room closes, so a recovery poke
+	 *  after a lost STEP2 still lands. A note opened in an editor while it waits
+	 *  takes its room at once; one deleted or swept meanwhile is skipped. */
+	private poolIdleHeal(path: string, noteId: string, reason: HealRoomReason): void {
+		// A retry is already scheduled on its backoff; this request rides it.
+		if (this.healRetryTimers.has(noteId)) return;
+		if (this.idleHealSlots.has(noteId)) {
+			this.idleHealRefire.add(noteId);
+			return;
+		}
+		if (this.idleHealWaiting.has(noteId)) return;
+		this.idleHealWaiting.set(noteId, { path, reason });
+		if (this.idleHealRooms.tryAcquire()) {
+			this.startHeal(noteId);
+			return;
+		}
+		void this.idleHealRooms.acquire().then(() => this.startHeal(noteId));
+	}
+
+	/** Holding a pool slot: claim it for `noteId`, then open the room as soon as
+	 *  the start budget allows. */
+	private startHeal(noteId: string): void {
+		const queued = this.idleHealWaiting.get(noteId);
+		this.idleHealWaiting.delete(noteId);
+		const path = queued && (this.noteIdMap ? this.noteIdMap.pathForId(noteId) : queued.path);
+		if (!queued || !path || !this.crdtEnrollment) {
+			this.idleHealRooms.release();
+			this.maybeReportHealRooms();
+			return;
+		}
+		if (this.isLiveBound(normalizePath(path))) {
+			this.idleHealRooms.release();
+			this.openHealRoom(path, noteId);
+			return;
+		}
+		const slot: HealSlot = { path, reason: queued.reason, timer: 0 };
+		this.idleHealSlots.set(noteId, slot);
+		this.openWhenBudgeted(noteId, slot);
+	}
+
+	private openWhenBudgeted(noteId: string, slot: HealSlot): void {
+		if (this.idleHealSlots.get(noteId) !== slot) return;
+		const wait = this.takeHealRoomToken();
+		if (wait > 0) {
+			slot.timer = this.time.setTimeout(() => this.openWhenBudgeted(noteId, slot), wait);
+			return;
+		}
+		slot.timer = this.time.setTimeout(
+			() => this.healSlotTimedOut(noteId, slot),
+			HEAL_SLOT_TIMEOUT_MS,
+		);
+		this.countHealRoom(slot.reason);
+		this.openHealRoom(slot.path, noteId);
+	}
+
+	/** Token bucket for idle heal-room STARTS (what the server's surge alert
+	 *  counts). Returns 0 when a token was taken, else the ms until one is due. */
+	private takeHealRoomToken(): number {
+		const now = this.time.now();
+		const perToken = 60_000 / HEAL_ROOMS_PER_MINUTE;
+		const bucket = this.healRoomBucket;
+		bucket.tokens = Math.min(
+			HEAL_ROOM_BURST,
+			bucket.tokens + (now - (bucket.at ?? now)) / perToken,
+		);
+		bucket.at = now;
+		if (bucket.tokens >= 1) {
+			bucket.tokens -= 1;
+			return 0;
+		}
+		return Math.ceil((1 - bucket.tokens) * perToken);
+	}
+
+	/** The STEP2 never came. Close the room (a freed slot must mean a closed
+	 *  room, or the server-side bound does not hold) and, if the note is still
+	 *  marked for repair, queue it again. */
+	private healSlotTimedOut(noteId: string, slot: HealSlot): void {
+		if (this.idleHealSlots.get(noteId) !== slot) return;
+		if (this.pendingConvergence.has(noteId) || this.pendingQueueDeliveries.has(noteId)) {
+			this.idleHealRefire.add(noteId);
+		}
+		this.healRetries.set(noteId, (this.healRetries.get(noteId) ?? 0) + 1);
+		this.releaseHealRoom(noteId, null);
+	}
+
+	/** Give a slot back. Called only once its room is closed (`releaseHealRoom`).
+	 *  A heal asked for while the room was open is queued now. */
+	private freeHealSlot(noteId: string): void {
+		const slot = this.idleHealSlots.get(noteId);
+		if (!slot) return;
+		this.idleHealSlots.delete(noteId);
+		this.time.clearTimeout(slot.timer);
+		this.idleHealRooms.release();
+		if (!this.idleHealRefire.delete(noteId)) {
+			this.maybeReportHealRooms();
+			return;
+		}
+		// A note the server keeps not answering waits longer each time (30 s,
+		// doubling, 10 min cap), so it cannot spend the whole start budget.
+		const retries = this.healRetries.get(noteId) ?? 0;
+		if (retries === 0) {
+			this.poolIdleHeal(slot.path, noteId, slot.reason);
+			return;
+		}
+		const delay = expBackoff(HEAL_SLOT_TIMEOUT_MS, retries - 1, HEAL_RETRY_MAX_MS);
+		const timer = this.time.setTimeout(() => {
+			this.healRetryTimers.delete(noteId);
+			this.poolIdleHeal(slot.path, noteId, slot.reason);
+		}, delay);
+		this.healRetryTimers.set(noteId, { timer, path: slot.path, reason: slot.reason });
+	}
+
+	/** The note CONVERGED (a STEP2, or a room-free read, both of which commit
+	 *  here): forget its backoff AND its pending retry, which is no longer owed. */
+	private clearHealBackoff(noteId: string): void {
+		this.healRetries.delete(noteId);
+		const pending = this.healRetryTimers.get(noteId);
+		if (pending === undefined) return;
+		this.time.clearTimeout(pending.timer);
+		this.healRetryTimers.delete(noteId);
+	}
+
+	/** The server is answering for this note again (a room-free delivery was
+	 *  acked), but that leg only carried OUR ops: the server's change is still
+	 *  owed. Reset the backoff and run a pending retry now, never cancel it. */
+	private resetHealBackoff(noteId: string): void {
+		this.healRetries.delete(noteId);
+		const pending = this.healRetryTimers.get(noteId);
+		if (pending === undefined) return;
+		this.time.clearTimeout(pending.timer);
+		this.healRetryTimers.delete(noteId);
+		this.poolIdleHeal(pending.path, noteId, pending.reason);
+	}
+
+	private countHealRoom(reason: HealRoomReason): void {
+		this.healRoomsOpened.set(reason, (this.healRoomsOpened.get(reason) ?? 0) + 1);
+		if (++this.healRoomsUnreported >= HEAL_ROOM_REPORT_EVERY) this.flushHealRoomCounts();
+	}
+
+	private maybeReportHealRooms(): void {
+		if (this.idleHealSlots.size === 0 && this.idleHealWaiting.size === 0) {
+			this.flushHealRoomCounts();
+		}
+	}
+
+	/** Ship the idle heal rooms OPENED since the last report, by reason, as one
+	 *  counts-only line. Runs when the pool drains, every
+	 *  `HEAL_ROOM_REPORT_EVERY` rooms, when the app is hidden (main.ts), and on
+	 *  destroy, so an iOS session killed mid-drain still reports. */
+	flushHealRoomCounts(): void {
+		if (this.healRoomsOpened.size === 0) return;
+		const counts: Record<string, number> = Object.fromEntries(this.healRoomsOpened);
+		counts.queued = this.idleHealWaiting.size;
+		this.healRoomsOpened.clear();
+		this.healRoomsUnreported = 0;
+		rlog().anomaly("crdt", "heal_room_fallback", counts);
+	}
+
+	private openHealRoom(path: string, noteId: string): void {
 		this.crdtHealCooldown.set(noteId, this.time.now());
 		this.crdtEnrollment?.reset(noteId);
 		this.crdtEnrollment?.enroll(noteId);
@@ -8157,6 +8470,7 @@ export class SyncEngine {
 	 *  can't write syncState at a stale/dead path — no separate teardown hook
 	 *  needed. Never throws into the CRDT manager's synchronous callback. */
 	async commitCrdtConvergence(noteId: string): Promise<void> {
+		this.clearHealBackoff(noteId);
 		// Settle a fired durable-queue delivery FIRST (independent of any
 		// staged convergence): an inbound frame for this note proves the room
 		// round-tripped, so the queued local ops went out on that same live
@@ -8183,7 +8497,10 @@ export class SyncEngine {
 			// A settled queue nudge with no staged convergence: the nudge's
 			// transient room is done — release it. A frame with NOTHING pending
 			// stays a pure no-op (commit fires on every inbound frame).
+			// An idle heal's room (gap heal, history-less delta) has done its job
+			// too: close it, so the freed slot means a closed room.
 			if (queued) this.releaseHealRoom(noteId, queued.path);
+			else if (this.idleHealSlots.has(noteId)) this.releaseHealRoom(noteId, null);
 			return;
 		}
 		// Provider model: the provider fired onSynced from readSyncMessage — the doc is
@@ -8263,6 +8580,17 @@ export class SyncEngine {
 	private crdtRelease: ((docId: string) => void) | null = null;
 
 	private releaseHealRoom(noteId: string, path: string | null): void {
+		// Close FIRST, free the slot LAST: freeing can re-queue this same note
+		// and open a fresh room, which a close after it would tear down before
+		// its STEP2 lands (Engram#2242 review).
+		try {
+			this.closeHealRoom(noteId, path);
+		} finally {
+			this.freeHealSlot(noteId);
+		}
+	}
+
+	private closeHealRoom(noteId: string, path: string | null): void {
 		// Re-resolve the CURRENT path — `path` may be the enqueue/staging-time
 		// path, and a rename in between would otherwise check liveness (and
 		// hibernate) against the stale path and closeDoc a doc the editor still
@@ -12844,6 +13172,7 @@ export class SyncEngine {
 								!this.isLiveBound(normalizePath(entry.path)) &&
 								(await this.deliverQueuedOpsRoomFree(entry))
 							) {
+								this.resetHealBackoff(entry.noteId);
 								await this.queue.dequeue(entry.path, this.entryVaultId(entry));
 								this.issues.clear(entry.path);
 								flushed++;
@@ -12854,7 +13183,11 @@ export class SyncEngine {
 								path: entry.path,
 								vaultId: this.entryVaultId(entry),
 							});
-							this.socketConverge(normalizePath(entry.path), entry.noteId);
+							this.socketConverge(
+								normalizePath(entry.path),
+								entry.noteId,
+								"queue_fallback",
+							);
 						}
 						continue;
 					}
@@ -13007,6 +13340,7 @@ export class SyncEngine {
 
 	/** Cancel all pending debounce, cooldown, and health check timers. */
 	destroy(): void {
+		this.flushHealRoomCounts();
 		// Every tracked collection registered for "destroy", timers cancelled by
 		// the dispose hooks at their declarations. `syncState` is registered for
 		// "vault" only and so is deliberately spared here: it is the persisted

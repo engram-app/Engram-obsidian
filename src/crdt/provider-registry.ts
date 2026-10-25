@@ -38,6 +38,50 @@ function eqBytes(a: Uint8Array, b: Uint8Array): boolean {
 	return a.length === b.length && a.every((byte, i) => byte === b[i]);
 }
 
+/** y-indexeddb custom-store key prefix for the server-acked snapshot. Same
+ *  store Relay uses for its `serverSync` mark; scoped by `ackScope` so a mark
+ *  from one server or vault never vouches for another. */
+const ACKED_KEY = "acked";
+
+/** Trailing debounce for persisting the acked mark. */
+const ACKED_PERSIST_MS = 2_000;
+
+/** Every client the mark claims, at a clock the server state has reached. A
+ *  state vector cannot see deletes; `dsCovers` checks those. */
+function svCovers(server: Map<number, number>, mark: Map<number, number>): boolean {
+	for (const [client, clock] of mark) if ((server.get(client) ?? 0) < clock) return false;
+	return true;
+}
+
+type DeleteRanges = Map<number, { clock: number; len: number }[]>;
+
+/** Every range the mark records as deleted is deleted on the server too.
+ *  Range-wise: a server range may cover a mark range in several pieces. */
+function dsCovers(server: DeleteRanges, mark: DeleteRanges): boolean {
+	for (const [client, ranges] of mark) {
+		const have = [...(server.get(client) ?? [])].sort((a, b) => a.clock - b.clock);
+		for (const { clock, len } of ranges) {
+			let reached = clock;
+			for (const r of have) {
+				if (r.clock > reached) break;
+				reached = Math.max(reached, r.clock + r.len);
+				if (reached >= clock + len) break;
+			}
+			if (reached < clock + len) return false;
+		}
+	}
+	return true;
+}
+
+/** No structs: nothing this doc could owe the server. */
+function isEmptyDoc(doc: Y.Doc): boolean {
+	return doc.store.clients.size === 0;
+}
+
+function snapshotOf(doc: Y.Doc): Uint8Array {
+	return Y.encodeSnapshot(Y.snapshot(doc));
+}
+
 interface Entry {
 	doc: Y.Doc;
 	provider: NoteProvider;
@@ -51,12 +95,28 @@ interface Entry {
 	/** The frontmatter block as of the last flush, so the next one can say
 	 *  whether the frontmatter CHANGED. `null` means "no block". */
 	lastFlushedFm: string | null;
-	/** Snapshot (state vector + delete set) the server last ACKED over
-	 *  `crdt_doc_update` (#1493). The upward half of `synced`, which the
-	 *  room-free write earns and the handshake flag cannot express. A snapshot
-	 *  rather than a vector because a vector cannot see deletions. Undefined
-	 *  until a delivery is acked. */
+	/** Snapshot (state vector + delete set) of state the server is known to
+	 *  hold: the last `crdt_doc_update` ack (#1493), advanced by every remote
+	 *  merge into a doc that held nothing beyond it. PERSISTED in the doc's own
+	 *  IndexedDB store, so it survives a restart and a disconnect, unlike the
+	 *  handshake `synced` flag (Engram#2242). A snapshot rather than a vector
+	 *  because a vector cannot see deletions. Undefined until known. */
 	deliveredReceipt?: Uint8Array;
+	/** The mark equals the doc's CURRENT state (advanced by a remote merge) and
+	 *  is materialized lazily: a snapshot is only computed when it is persisted,
+	 *  or just before the first local change would move the doc past it. */
+	ackedIsDoc: boolean;
+	/** The mark changed and is not yet in IndexedDB. */
+	ackedDirty: boolean;
+	ackedTimer: number | null;
+	/** IndexedDB key for the mark, fixed when the entry LOADS, so a vault switch
+	 *  mid-session never files it under the new vault. */
+	ackedKey: string;
+	/** A local change may have landed since `deliveredReceipt` was taken. Set
+	 *  on every non-remote update; recomputed exactly against the snapshot on
+	 *  hydration and on each ack. While true a remote merge does not advance
+	 *  the receipt, because the doc holds work the server may lack. */
+	localSinceAck: boolean;
 	/** In-flight disk-flush from the last remote merge; applyRemoteUpdate awaits
 	 *  it so a write failure can leave crdtHead unadvanced (#235). */
 	pendingFlush: Promise<void> | null;
@@ -123,6 +183,10 @@ export interface ProviderRegistryOpts {
 	onEmptyStep2?: (noteId: string) => void;
 	docKind?: (noteId: string) => DocKind;
 	onPersistError?: (noteId: string, err: unknown) => void;
+	/** Identity of the server + vault this stack syncs with. Scopes the
+	 *  persisted acked mark, so a relink to another (or a restored) server never
+	 *  inherits a mark this one earned. */
+	ackScope?: () => string;
 	/** Last-synced content for this note — the merge base (#357). Backed by
 	 *  `BaseStore`, which already persists exactly this and calls it "the common
 	 *  ancestor for 3-way merge". Null when none is recorded (a note that has
@@ -329,7 +393,19 @@ export class ProviderRegistry {
 			lifetime: new Lifetime(),
 			hadHistory: false,
 			gateWaiters: new Set(),
+			localSinceAck: true,
+			ackedIsDoc: false,
+			ackedDirty: false,
+			ackedTimer: null,
+			ackedKey: this.ackedKey(),
 		};
+		// Before a LOCAL change moves the doc past a lazily held mark, pin the
+		// mark to the state it described.
+		doc.on("beforeTransaction", (tr: Y.Transaction) => {
+			if (!entry.ackedIsDoc || tr.origin === provider || tr.origin === REMOTE) return;
+			entry.deliveredReceipt = snapshotOf(doc);
+			entry.ackedIsDoc = false;
+		});
 		// Disk-flush listener: a REMOTE merge (origin === provider from
 		// readSyncMessage, or REMOTE from applyRemoteUpdate) writes back to disk.
 		// Local edits (editor/default origin) and IndexedDB replay do NOT flush.
@@ -337,7 +413,17 @@ export class ProviderRegistry {
 			if (!entry.lifetime.active) return; // deleted mid-flight — never flush a dead doc
 			const firstLoad = !entry.hadHistory && docHasAnyHistory(doc, kind);
 			if (firstLoad) entry.hadHistory = true;
-			if (origin !== provider && origin !== REMOTE) return;
+			if (origin !== provider && origin !== REMOTE) {
+				entry.localSinceAck = true;
+				return;
+			}
+			// The server sent this, so the merged doc is still all server state
+			// when nothing local was outstanding before it.
+			if (!entry.localSinceAck && entry.lifetime.active) {
+				entry.ackedIsDoc = true;
+				entry.deliveredReceipt = undefined;
+				this.markAckedDirty(noteId, entry);
+			}
 			entry.remoteSeq += 1;
 			const write = () => {
 				const projected = this.project(entry);
@@ -382,13 +468,14 @@ export class ProviderRegistry {
 					if (entry.pendingFlush === flush) entry.pendingFlush = null;
 				});
 		});
-		entry.ready = persistence.whenSynced.then(() => {
+		entry.ready = persistence.whenSynced.then(async () => {
 			// IndexedDB replay is done: the doc holds the persisted state and the
 			// replay updates were dropped (provider was muted). NOW start broadcasting
 			// local edits, then connect — setConnected sends syncStep1 (the state
 			// vector of the hydrated doc), so the server returns only the diff.
 			provider.activate();
 			if (this.connected) provider.setConnected(true);
+			await this.loadAcked(noteId, entry);
 		});
 		this.entries.set(noteId, entry);
 		return entry;
@@ -668,7 +755,7 @@ export class ProviderRegistry {
 	 *  receipt UNDER-claim (one wasted room). Taken after, it would cover an op
 	 *  that was never sent, and strand it silently. */
 	async encodeDeliveryReceipt(noteId: string): Promise<Uint8Array> {
-		return Y.encodeSnapshot(Y.snapshot((await this.entry(noteId)).doc));
+		return snapshotOf((await this.entry(noteId)).doc);
 	}
 
 	async encodeStateAsUpdate(noteId: string, sv?: Uint8Array): Promise<Uint8Array> {
@@ -693,6 +780,96 @@ export class ProviderRegistry {
 		const e = this.entries.get(noteId);
 		if (!e?.lifetime.active) return;
 		e.deliveredReceipt = receipt;
+		e.ackedIsDoc = false;
+		this.markAckedDirty(noteId, e);
+		// An edit (or a merge) may have landed between the receipt and the ack.
+		e.localSinceAck = !eqBytes(snapshotOf(e.doc), receipt);
+	}
+
+	/** The acked mark as a snapshot, or undefined when none is known. */
+	private ackedSnapshot(e: Entry): Uint8Array | undefined {
+		return e.ackedIsDoc ? snapshotOf(e.doc) : e.deliveredReceipt;
+	}
+
+	private ackedKey(): string {
+		const scope = this.opts.ackScope?.();
+		return scope ? `${ACKED_KEY}:${scope}` : ACKED_KEY;
+	}
+
+	/** Whether `serverUpdate` (the server's FULL state, from the room-free
+	 *  read) still holds everything the acked mark claims. False after a server
+	 *  rollback (a restore, a doc reset, a relink): the caller must treat the
+	 *  note as undelivered and re-send. True when no mark is held. */
+	ackedCoveredBy(noteId: string, serverUpdate: Uint8Array): boolean {
+		const e = this.entries.get(noteId);
+		if (!e?.lifetime.active) return true;
+		const markBytes = this.ackedSnapshot(e);
+		if (!markBytes) return true;
+		const mark = Y.decodeSnapshot(markBytes);
+		const scratch = new Y.Doc();
+		try {
+			Y.applyUpdate(scratch, serverUpdate);
+			const server = Y.snapshot(scratch);
+			return svCovers(server.sv, mark.sv) && dsCovers(server.ds.clients, mark.ds.clients);
+		} finally {
+			scratch.destroy();
+		}
+	}
+
+	private markAckedDirty(noteId: string, e: Entry): void {
+		e.ackedDirty = true;
+		if (e.ackedTimer) return;
+		e.ackedTimer = window.setTimeout(() => {
+			e.ackedTimer = null;
+			void this.persistAcked(noteId, e);
+		}, ACKED_PERSIST_MS);
+	}
+
+	/** Write the mark if it changed. A failed write leaves an older mark (or
+	 *  none), which only ever reads as undelivered. */
+	private async persistAcked(noteId: string, e: Entry): Promise<void> {
+		if (e.ackedTimer) {
+			window.clearTimeout(e.ackedTimer);
+			e.ackedTimer = null;
+		}
+		if (!e.ackedDirty || !e.lifetime.active) return;
+		e.ackedDirty = false;
+		const snapshot = this.ackedSnapshot(e);
+		try {
+			if (snapshot) await e.persistence.set(e.ackedKey, snapshot.slice().buffer);
+			else await e.persistence.del(e.ackedKey);
+		} catch (err) {
+			this.opts.onPersistError?.(noteId, err);
+		}
+	}
+
+	/** Persist every pending acked mark now (app backgrounded, shutdown). */
+	async flushAcked(): Promise<void> {
+		await Promise.all([...this.entries].map(([id, e]) => this.persistAcked(id, e)));
+	}
+
+	/** Read the persisted acked snapshot after hydration. The local flag is
+	 *  decided by comparing it with the doc AS HYDRATED, so an edit that reached
+	 *  IndexedDB but never the server reads as undelivered. An empty doc holds
+	 *  nothing to deliver, so it starts with no local work. A failed
+	 *  read leaves the conservative default (undelivered: a room-free write
+	 *  first, never a lost edit). */
+	private async loadAcked(noteId: string, e: Entry): Promise<void> {
+		let stored: unknown;
+		try {
+			stored = await e.persistence.get(e.ackedKey);
+		} catch (err) {
+			this.opts.onPersistError?.(noteId, err);
+			return;
+		}
+		if (!e.lifetime.active) return;
+		if (stored instanceof ArrayBuffer) {
+			const acked = new Uint8Array(stored);
+			e.deliveredReceipt = acked;
+			e.localSinceAck = !eqBytes(snapshotOf(e.doc), acked);
+		} else if (isEmptyDoc(e.doc)) {
+			e.localSinceAck = false;
+		}
 	}
 
 	/** The state vector of the last ACKED delivery: a lower bound of what the
@@ -712,7 +889,9 @@ export class ProviderRegistry {
 	 *  >= 0.59.0 (`docUpdateDiffs`). */
 	deliveredStateVector(noteId: string): Uint8Array | undefined {
 		const e = this.entries.get(noteId);
-		if (!e?.lifetime.active || !e.deliveredReceipt) return undefined;
+		if (!e?.lifetime.active) return undefined;
+		if (e.ackedIsDoc) return Y.encodeStateVector(e.doc);
+		if (!e.deliveredReceipt) return undefined;
 		return Y.encodeStateVector(Y.decodeSnapshot(e.deliveredReceipt).sv);
 	}
 
@@ -721,7 +900,13 @@ export class ProviderRegistry {
 	 *  receipt for `hasCurrentDeliveryReceipt`, which costs at most a room. */
 	clearDelivered(noteId: string): void {
 		const e = this.entries.get(noteId);
-		if (e) e.deliveredReceipt = undefined;
+		if (!e) return;
+		e.deliveredReceipt = undefined;
+		e.ackedIsDoc = false;
+		e.localSinceAck = true;
+		// The safety-direction write goes out now, not on the debounce.
+		e.ackedDirty = true;
+		void this.persistAcked(noteId, e);
 	}
 
 	/** Encode brand-new content as a standalone genesis update (throwaway doc, no
@@ -906,9 +1091,11 @@ export class ProviderRegistry {
 	 *  about frames that never reached the transport, not a handshake proxy. */
 	hasCurrentDeliveryReceipt(noteId: string): boolean {
 		const e = this.entries.get(noteId);
-		if (!e?.lifetime.active || !e.deliveredReceipt) return false;
-		if (e.provider.hasBufferedFrames()) return false;
-		return eqBytes(Y.encodeSnapshot(Y.snapshot(e.doc)), e.deliveredReceipt);
+		if (!e?.lifetime.active || e.provider.hasBufferedFrames()) return false;
+		if (e.ackedIsDoc) return true;
+		// An empty doc has nothing to deliver.
+		if (!e.deliveredReceipt) return isEmptyDoc(e.doc);
+		return eqBytes(snapshotOf(e.doc), e.deliveredReceipt);
 	}
 
 	// --- Lifecycle no-ops the persistent doc doesn't need -----------------------
@@ -1005,6 +1192,10 @@ export class ProviderRegistry {
 		// forever (invariant WARN every sweep, lying e2e `enrolled` probe).
 		this.enrolledIds.delete(noteId);
 		const e = this.entries.get(noteId);
+		// A pending acked mark is snapshotted NOW (the sync head of
+		// persistAcked) and written below, before the store closes.
+		const markWrite = e && !clearData ? this.persistAcked(noteId, e) : undefined;
+		if (e?.ackedTimer) window.clearTimeout(e.ackedTimer);
 		// End BEFORE any await so in-flight ops are abandoned, not merely checked.
 		if (e) e.lifetime.end(new NoteDestroyedError(noteId));
 		if (!e) {
@@ -1019,6 +1210,7 @@ export class ProviderRegistry {
 		this.entries.delete(noteId);
 		e.provider.destroy();
 		e.doc.destroy();
+		await markWrite;
 		if (clearData) await e.persistence.clearData();
 		await e.persistence.destroy();
 	}

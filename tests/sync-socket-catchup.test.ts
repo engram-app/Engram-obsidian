@@ -1411,7 +1411,7 @@ describe("convergeColdNoteRoomFree (#1409 — cold notes converge without a room
 		);
 
 		expect(converge).toHaveBeenCalledTimes(1);
-		expect(converge.mock.calls[0]).toEqual(["Notes/a.md", "id-a"]);
+		expect(converge.mock.calls[0]).toEqual(["Notes/a.md", "id-a", "doc_state_failed"]);
 	});
 
 	test("latches the READ frame off after two unsupported-looking replies, on bad_frame as well as on timeouts", async () => {

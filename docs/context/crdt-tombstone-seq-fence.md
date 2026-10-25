@@ -54,8 +54,9 @@ server, never seeded from disk (that mints a rival lineage, backend
 NO room fallback: a folder restore of thousands of notes must open zero rooms
 (#1409). Those reads go through a small pool (`Semaphore(4)`), and a failed one
 does NOT strike the frame: a timed-out burst would otherwise latch room-free
-reads off for the session, and `convergeColdNoteRoomFree` would then open a
-room per cold note. If the read fails, the doc stays empty until the note is
+reads off for a backoff window (30 s, doubling to 10 min, then one recovery
+probe; Engram#2242), during which `convergeColdNoteRoomFree` sends cold notes
+to the paced heal-room pool instead of reading them. If the read fails, the doc stays empty until the note is
 opened or edited.
 
 ## Known gap

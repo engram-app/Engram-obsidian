@@ -264,7 +264,10 @@ test("load never arrives: the edit stays on disk, nothing seeds, rejoin lands it
 
 test("a latched crdt_doc_state frame does not strand a held edit", async () => {
 	const { e, server, serverText, edit } = await scenario("gate-latched");
-	(e as any).unsupportedFrames.add("crdt_doc_state");
+	(e as any).unsupportedFrames.set("crdt_doc_state", {
+		until: Number.POSITIVE_INFINITY,
+		latches: 1,
+	});
 	await edit(C2);
 	expect(await serverText()).toBe(C2);
 	expect(rootClients(server)).toHaveLength(1);
