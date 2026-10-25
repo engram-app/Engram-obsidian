@@ -119,6 +119,7 @@ function makeFakeThis(catchup: () => Promise<void>, pull: () => Promise<number>,
 			// Reconnect convergence replays the seq-ordered op-log over the socket
 			// (catchupViaSeqReplay, crdt_catchup_since) — the sole catch-up path.
 			catchupViaSeqReplay: catchup,
+			retryHeldLocalEdits: () => {},
 			pull,
 			handleStreamEvent: () => Promise.resolve(),
 			isUnchangedSynced: () => false,

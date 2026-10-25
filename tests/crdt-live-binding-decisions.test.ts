@@ -2,6 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { splitFrontmatter } from "../src/crdt/frontmatter-codec";
 import {
 	classifyEditSpan,
+	decideLoadedReconcile,
 	decideReconcile,
 	fmCreationBodyDiff,
 	frontmatterPrefixLen,
@@ -357,5 +358,63 @@ describe("ownedMarkdownPath", () => {
 		const view = { id: "main" };
 		expect(ownedMarkdownPath(view, { file, editor: undefined })).toBeNull();
 		expect(ownedMarkdownPath(view, { file, editor: { cm: undefined } })).toBeNull();
+	});
+});
+
+// The load gate's reconcile for an open editor: the server's state just
+// landed, the editor holds the file as opened plus any keystrokes queued while
+// the doc was held. Same outcomes as the idle adopt.
+describe("decideLoadedReconcile", () => {
+	const BASE = "# note\n\nfirst line.\n";
+	const converge = (editor: string, doc: string, base: string | null) => {
+		const a = decideLoadedReconcile(editor, doc, base);
+		if (a.kind !== "merge") return a;
+		return { kind: a.kind, doc: applyCm(doc, a.toDoc), editor: applyCm(editor, a.toEditor) };
+	};
+
+	it("keystrokes queued before the load, server unchanged: each lands once", () => {
+		const typed = `${BASE}typed while loading.\n`;
+		expect(converge(typed, BASE, BASE)).toEqual({ kind: "merge", doc: typed, editor: typed });
+	});
+
+	it("server moved elsewhere: both edits kept, neither duplicated", () => {
+		const typed = `${BASE}mine.\n`;
+		const server = `THEIRS\n${BASE}`;
+		const out = `THEIRS\n${BASE}mine.\n`;
+		expect(converge(typed, server, BASE)).toEqual({ kind: "merge", doc: out, editor: out });
+	});
+
+	it("an unedited editor adopts the server's text", () => {
+		const server = `${BASE}remote.\n`;
+		expect(converge(BASE, server, BASE)).toEqual({
+			kind: "merge",
+			doc: server,
+			editor: server,
+		});
+	});
+
+	it("disk drift from before the open survives, untyped", () => {
+		// The idle gate held an edit (load failed), then the user opened the note.
+		const drift = `${BASE}held on disk.\n`;
+		const server = `top\n${BASE}`;
+		const out = `top\n${BASE}held on disk.\n`;
+		expect(converge(drift, server, BASE)).toEqual({ kind: "merge", doc: out, editor: out });
+	});
+
+	it("both changed the same line: one conflict, never a two-way forward", () => {
+		expect(
+			decideLoadedReconcile(
+				BASE.replace("first", "MINE"),
+				BASE.replace("first", "THEIR"),
+				BASE,
+			),
+		).toEqual({
+			kind: "conflict",
+		});
+	});
+
+	it("no provable base: conflict, unless the texts already agree", () => {
+		expect(decideLoadedReconcile(`${BASE}x\n`, BASE, null)).toEqual({ kind: "conflict" });
+		expect(decideLoadedReconcile(BASE, BASE, null)).toEqual({ kind: "noop" });
 	});
 });

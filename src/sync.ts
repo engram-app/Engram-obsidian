@@ -760,6 +760,13 @@ export class SyncEngine {
 		},
 	);
 
+	/** Notes whose local edit the load gate holds (`loadServerState`), so a
+	 *  failed load can be retried on rejoin (`retryHeldLocalEdits`). Cleared
+	 *  when the load lands, or with the vault. The edit itself stays on disk. */
+	private heldForServer = this.track(["vault", "destroy"], new Set<string>());
+	/** In-flight `loadServerState` per note: a burst of edits makes one read. */
+	private serverLoads = this.track(["vault", "destroy"], new Map<string, Promise<void>>());
+
 	/** Persisted set of server-side "explicit empty folder" markers. Owned by
 	 *  the plugin layer (main.ts) and assigned after construction, matching the
 	 *  baseStore pattern. */
@@ -2313,7 +2320,7 @@ export class SyncEngine {
 	 *  Safe to call from main.ts — does not expose the private markRecentlyFlushed.
 	 *  Requires the sync gate to be open — returns early when blocked so inbound
 	 *  CRDT frames cannot overwrite local files before the user picks a direction. */
-	async flushFromCrdt(path: string, content: string): Promise<boolean> {
+	async flushFromCrdt(path: string, content: string, loadedId?: string): Promise<boolean> {
 		if (this.syncBlocked) {
 			// FALSE, not true. This wrote nothing, and claiming otherwise is what
 			// made the 2026-08-13 prod failure invisible: the `true` propagated
@@ -2345,6 +2352,13 @@ export class SyncEngine {
 			const order = this.flushGen.get(normalized);
 			if (order) order.recorded = order.started;
 			return true;
+		}
+		// Disk-drift interlock: `loadedId` marks the doc's first server state
+		// (see `resolveDriftOnLoad`). Never written over held local input.
+		if (loadedId && file instanceof TFile) {
+			const resolved = await this.resolveDriftOnLoad(normalized, file, loadedId, content);
+			if (resolved === null) return false;
+			content = resolved;
 		}
 		// Content-loss guard: a CRDT flush must never blank a non-empty file with a
 		// STALE remote projection. The manager flushes projectNote(doc) on every
@@ -2641,6 +2655,12 @@ export class SyncEngine {
 		this.patchSyncedRow(normalizePath(path), { hash: 0 });
 	}
 
+	/** `ProviderRegistry.awaitsServerState` for a path. */
+	private awaitsServer(path: string): boolean {
+		const noteId = this.noteIdMap?.get(normalizePath(path)) ?? null;
+		return noteId !== null && this.crdt?.awaitsServerState?.(noteId) === true;
+	}
+
 	/** Refresh a LIVE-BOUND note's baseline from the autosave that just landed.
 	 *  Fire-and-forget from handleModify's editor-owns-the-file gate (which is
 	 *  synchronous): the read is the same `cachedRead` the push path would have
@@ -2738,17 +2758,12 @@ export class SyncEngine {
 	 *   - A note created while this device is online arrives as its FIRST
 	 *     delta = the entire lineage since genesis — it integrates gap-free
 	 *     and the doc is history-full on the server's own lineage, room-free.
-	 *   - An incremental delta for a note that predates this device PENDS —
-	 *     return "deferred" with NO re-handshake: disk convergence is owned by
-	 *     the op-log rows (the caller's seq is not stamped, so the row is not
-	 *     fence-masked), and the doc hydrates at open/bind time via the room.
-	 *     A per-note room refire here re-created the connect storm at
-	 *     reconnect scale (hundreds of enrolls → server rate limit → the one
-	 *     note that genuinely needed a handshake starved; CI run 29942250643).
-	 *  Any un-pushed disk drift is preserved to a keep-both conflict copy
-	 *  BEFORE the apply (a gap-free integrate flushes server content over
-	 *  disk via the manager's remote-merge listener); copy failure aborts
-	 *  without applying so the sole live copy of the edit survives.
+	 *   - An incremental delta for a note that predates this device PENDS:
+	 *     fire the cooldown-gated socket converge (below).
+	 *  Un-pushed disk drift is NOT handled here: the apply is the doc's first
+	 *  server state, and its flush (`flushFromCrdt` with `loadedId`) merges the
+	 *  drift in or keeps one copy. That one interlock covers every route a
+	 *  first state arrives by (fan-out, `crdt_doc_state`, room STEP2).
 	 *  Best-effort: isolates its own failure, never throws. */
 	private async adoptHistoryLessNote(
 		path: string,
@@ -2758,87 +2773,6 @@ export class SyncEngine {
 	): Promise<"applied" | "deferred"> {
 		if (!this.crdt) return "deferred";
 		const normalized = normalizePath(path);
-
-		// 1. Capture disk + the drift flag BEFORE the apply-flush overwrites disk
-		//    and its recorded baseline (needsColdReconcile compares to syncState).
-		const file = this.app.vault.getAbstractFileByPath(normalized);
-		let disk: string | null = null;
-		if (file instanceof TFile) {
-			try {
-				disk = await this.app.vault.cachedRead(file);
-			} catch {
-				disk = null; // unreadable — proceed with a plain apply, no drift copy
-			}
-		}
-		const hasDrift =
-			disk !== null &&
-			!exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES) &&
-			this.needsColdReconcile(normalized, disk);
-
-		// 1b. Fast-forward: the delta rebuilds, gap-free, exactly the text the
-		//     drift was edited FROM (discovery wrote it from the op-log row before
-		//     this fan-out landed). Nothing diverged, so the drift is a plain local
-		//     edit on this lineage: adopt it, then diff the edit on. Keep-both here
-		//     moved a user's edit into a copy and reverted the note.
-		//     Both moved off the body discovery wrote: 3-way merge on that body
-		//     (both descend from it), keep-both only if the merge is dirty.
-		if (hasDrift && disk !== null && file instanceof TFile) {
-			const preview = await this.crdt.previewUpdate(noteId, update);
-			const baseline = this.syncState.get(normalized)?.hash;
-			const discoveryBase = this.peekDiscoveryBase(normalized);
-			const base =
-				preview === null
-					? null
-					: fnv1a(preview) === baseline
-						? preview
-						: discoveryBase !== null && fnv1a(discoveryBase) === baseline
-							? discoveryBase
-							: null;
-			if (preview !== null && base !== null) {
-				return await this.fastForwardHistoryLess(
-					normalized,
-					file,
-					noteId,
-					update,
-					head,
-					base,
-					preview,
-					disk,
-				);
-			}
-		}
-
-		// 2. Keep-both: a gap-free integrate flushes server content over the
-		//    original's disk, after which `disk` survives ONLY in memory.
-		//    Preserve ANY drift (there is no server text to 3-way-merge against
-		//    until the ops land) to its conflict copy FIRST; if that write
-		//    fails for real, ABORT without applying so the original disk keeps
-		//    the local edit and the caller retries next fan-out/poll. The
-		//    original's baseline then advances to the drift content so the
-		//    pending drift can never be seeded as a fresh lineage (the #234
-		//    doubling door) nor re-pushed — it lives on in the copy.
-		if (hasDrift && disk !== null) {
-			try {
-				const copy = await this.writeDriftConflictCopy(normalized, disk);
-				rlog().info(
-					"conflict",
-					`history-less drift → keep-both | original=${noteRef(normalized)} copy=${noteRef(copy)}`,
-				);
-			} catch (e) {
-				rlog().error(
-					"conflict",
-					`history-less keep-both copy failed for ${noteRef(normalized)}: ${errMsg(e, normalized)}. Aborting apply to retain the local edit for retry`,
-				);
-				return "deferred";
-			}
-			this.recordCrdtBaseline(normalized, disk);
-		}
-
-		// 3. Apply the delta to the empty doc. Gap-free (a full-lineage first
-		//    delta) → history-full on the server lineage, record the head.
-		//    Pended (incremental, predates this device) → deferred: no room,
-		//    no head, no seq stamp — the op-log rows own disk convergence and
-		//    the doc hydrates at open.
 		await this.crdt.applyRemoteUpdate(noteId, update);
 		const gapped =
 			typeof this.crdt.hasPendingGap === "function" &&
@@ -2864,6 +2798,244 @@ export class SyncEngine {
 		this.forgetDiscoveryBase(normalized); // doc has history now
 		this.setCrdtHead(normalized, head);
 		return "applied";
+	}
+
+	/** The disk-drift interlock (Relay's `acceptsRemoteEnrollment`): the doc's
+	 *  FIRST server state is about to be written over a file that may hold input
+	 *  the load gate held (an edit made before the state loaded, an offline
+	 *  autosave). Returns what to write: `server` when disk holds nothing local;
+	 *  the 3-way merge from `provableBase` (also seeded into the doc, so it
+	 *  syncs) when that is clean; else `server` after ONE conflict copy of disk.
+	 *  Null when the copy could not be written: the caller must not overwrite. */
+	private async resolveDriftOnLoad(
+		normalized: string,
+		file: TFile,
+		noteId: string,
+		server: string,
+	): Promise<string | null> {
+		let disk: string;
+		try {
+			disk = await this.app.vault.cachedRead(file);
+		} catch {
+			return server; // unreadable: nothing to protect that we can see
+		}
+		if (disk === server || !this.needsColdReconcile(normalized, disk)) return server;
+		if (exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES)) return server;
+		const base = this.provableBase(normalized, server);
+		this.forgetDiscoveryBase(normalized); // read once: the doc has history now
+		const crdt = this.crdt;
+		if (base !== null && crdt) {
+			let merged: string | null = null;
+			try {
+				merged = await crdt.mergeLocalEditFromBase(noteId, base, server, disk);
+			} catch (e) {
+				rlog().warn(
+					"crdt",
+					`load interlock: merge failed for ${noteRef(normalized)}: ${errMsg(e, normalized)}`,
+				);
+			}
+			if (merged !== null) {
+				rlog().info(
+					"crdt",
+					`load interlock: held disk edit merged | ${noteRef(normalized)}`,
+				);
+				if (!(this.crdtLive?.() ?? true)) {
+					// Topic down: the merged seed's live send is dropped; queue it.
+					await this.enqueueCrdtEdit(file, noteId);
+					void this.flushQueue();
+				}
+				return merged;
+			}
+		}
+		try {
+			const copy = await this.writeDriftConflictCopy(normalized, disk);
+			rlog().info(
+				"conflict",
+				`load interlock: held disk edit diverged → keep-both | original=${noteRef(normalized)} copy=${noteRef(copy)}`,
+			);
+			return server;
+		} catch (e) {
+			rlog().error(
+				"conflict",
+				`load interlock: copy failed for ${noteRef(normalized)}: ${errMsg(e, normalized)}`,
+			);
+		}
+		// No copy: force the edit into the note (possibly dirty, never lost), or
+		// with no base, leave disk as it is.
+		if (base !== null && crdt) {
+			try {
+				return await crdt.mergeLocalEditFromBase(noteId, base, server, disk, true);
+			} catch {
+				// fall through: keep disk
+			}
+		}
+		return null;
+	}
+
+	/** The text a local edit on a history-less note was made FROM, given the
+	 *  server's projection `server`: the server text itself when it still
+	 *  hashes to the recorded baseline (nothing moved), else the body discovery
+	 *  wrote when THAT hashes to the baseline (both sides moved off it). Null
+	 *  when neither is provable: the caller keeps both. Shared by the idle
+	 *  adopt (`adoptHistoryLessNote`) and the open editor's load (the live
+	 *  binding, via `loadMergeBase`), so both resolve a held edit from the
+	 *  same base. */
+	private provableBase(normalized: string, server: string): string | null {
+		const baseline = this.syncState.get(normalized)?.hash;
+		if (fnv1a(server) === baseline) return server;
+		const discovered = this.peekDiscoveryBase(normalized);
+		return discovered !== null && fnv1a(discovered) === baseline ? discovered : null;
+	}
+
+	/** `provableBase` for the open editor's load. Also accepts disk when it is
+	 *  unchanged since sync: the editor loaded it, so whatever the buffer adds
+	 *  on top is the only local input. */
+	async loadMergeBase(path: string, server: string): Promise<string | null> {
+		const normalized = normalizePath(path);
+		const base = this.provableBase(normalized, server);
+		if (base !== null) return base;
+		const file = this.app.vault.getFileByPath(normalized);
+		if (!file) return null;
+		try {
+			const disk = await this.app.vault.cachedRead(file);
+			return this.needsColdReconcile(normalized, disk) ? null : disk;
+		} catch {
+			return null;
+		}
+	}
+
+	/** Load the server's state for a note the load gate is holding an edit for
+	 *  (`ProviderRegistry.awaitsServerState`), room-free over `crdt_doc_state`.
+	 *
+	 *  Relay's model: no local input until the server state is in. The held
+	 *  edit waits where it is, so a load that fails or never arrives loses
+	 *  nothing; it is retried on the next edit, on rejoin
+	 *  (`retryHeldLocalEdits`) and by cold-start reconcile.
+	 *
+	 *  One decision point for who resolves the held edit, taken when the state
+	 *  lands: an open editor's binding (its buffer is the held input, see
+	 *  `decideLoadedReconcile`), else `adoptHistoryLessNote` from disk. Both
+	 *  merge from `loadMergeBase` and keep both copies when that fails.
+	 *
+	 *  Ignores the `crdt_doc_state` capability latch: it guards bulk reads, and
+	 *  honouring it here stranded a held edit for the rest of the session. */
+	loadServerState(noteId: string): Promise<void> {
+		this.heldForServer.add(noteId);
+		const inflight = this.serverLoads.get(noteId);
+		if (inflight) return inflight;
+		const run = this.runServerLoad(noteId).finally(() => {
+			if (this.serverLoads.get(noteId) === run) this.serverLoads.delete(noteId);
+		});
+		this.serverLoads.set(noteId, run);
+		return run;
+	}
+
+	private async runServerLoad(noteId: string): Promise<void> {
+		const crdt = this.crdt;
+		const path = this.noteIdMap?.pathForId(noteId);
+		if (!crdt || !path) {
+			this.heldForServer.delete(noteId);
+			return;
+		}
+		const normalized = normalizePath(path);
+		try {
+			// Already loaded by another route (fan-out, room): nothing is held.
+			if (await crdt.hasAnyHistory(noteId)) {
+				this.heldForServer.delete(noteId);
+				return;
+			}
+			const state = await this.readServerDocState(noteId, path, false);
+			// Note ids are unique per vault: never apply across a vault switch.
+			if (this.crdt !== crdt) return;
+			if (state === null) {
+				rlog().warn(
+					"crdt",
+					`load gate: server state unavailable for ${noteRef(normalized)}; the edit stays on disk until the next attempt`,
+				);
+				return;
+			}
+			const update = fromB64(state.b64);
+			if (await crdt.openLoadGate(noteId, update)) {
+				// The row predates CRDT state: no server lineage to rival, so the
+				// held edit seeds as before. An open editor seeds from its buffer
+				// (the gate's waiters); a closed note re-routes from disk.
+				this.heldForServer.delete(noteId);
+				const file = this.app.vault.getFileByPath(normalized);
+				if (file && !this.isLiveBound(normalized)) this.handleModify(file);
+				return;
+			}
+			if (this.isLiveBound(normalized)) {
+				// The binding holds the keystrokes and resolves them on this apply.
+				if (await crdt.applyRemoteUpdate(noteId, update)) {
+					this.setCrdtHead(normalized, state.head);
+					this.heldForServer.delete(noteId);
+				}
+				return;
+			}
+			if ((await this.adoptHistoryLessNote(path, noteId, update, state.head)) === "applied") {
+				this.heldForServer.delete(noteId);
+			}
+		} catch (e) {
+			rlog().warn(
+				"crdt",
+				`load gate: load failed for ${noteRef(normalized)}: ${errMsg(e, path)}`,
+			);
+		}
+	}
+
+	/** Re-run every held load (see `loadServerState`). Called on crdt rejoin. */
+	retryHeldLocalEdits(): void {
+		for (const noteId of [...this.heldForServer]) void this.loadServerState(noteId);
+	}
+
+	/** Keep `text` beside `path` as a conflict copy (the open editor's half of
+	 *  the load gate's keep-both). False when the copy could not be written. */
+	async keepConflictCopy(path: string, text: string): Promise<boolean> {
+		const normalized = normalizePath(path);
+		try {
+			const copy = await this.writeDriftConflictCopy(normalized, text);
+			rlog().info(
+				"conflict",
+				`load gate: open editor diverged from the server → keep-both | original=${noteRef(normalized)} copy=${noteRef(copy)}`,
+			);
+			return true;
+		} catch (e) {
+			rlog().error(
+				"conflict",
+				`load gate: keep-both copy failed for ${noteRef(normalized)}: ${errMsg(e, normalized)}`,
+			);
+			return false;
+		}
+	}
+
+	/** The keep-both's last resort (the copy failed and the editor closed):
+	 *  write `text` over the note so its modify event pushes it as a local edit.
+	 *  If the note is gone (deleted during the load), NEVER recreate its path:
+	 *  that is a fresh create that bypasses the delete's seq fence. The text
+	 *  goes to a conflict copy beside it instead. Logged, never thrown. */
+	async restoreLocalText(path: string, text: string): Promise<void> {
+		const normalized = normalizePath(path);
+		const file = this.app.vault.getFileByPath(normalized);
+		try {
+			if (file) {
+				await this.app.vault.modify(file, text);
+				rlog().warn(
+					"conflict",
+					`load gate: restored the editor's text over ${noteRef(normalized)}`,
+				);
+				return;
+			}
+			const copy = await this.writeDriftConflictCopy(normalized, text);
+			rlog().warn(
+				"conflict",
+				`load gate: ${noteRef(normalized)} was deleted; kept the editor's text in ${noteRef(copy)}`,
+			);
+		} catch (e) {
+			rlog().error(
+				"conflict",
+				`load gate: could not restore the editor's text for ${noteRef(normalized)}: ${errMsg(e, normalized)}`,
+			);
+		}
 	}
 
 	/** Record the body discovery wrote (see `discoveryBases`). Sweeps expired
@@ -2900,76 +3072,6 @@ export class SyncEngine {
 		if (!entry) return;
 		this.discoveryBases.delete(path);
 		this.discoveryBaseChars -= entry.text.length;
-	}
-
-	/** `adoptHistoryLessNote`'s merge: apply a delta that projects `expected`,
-	 *  then put the drift (edited from `base`) on top as a local edit; the doc
-	 *  has history now, so no rival lineage. `base === expected` is the
-	 *  fast-forward. The apply flushes `expected` over disk, so `disk` lives
-	 *  only in memory from here on; every path below must land it somewhere.
-	 *  If the doc moved off `expected` during the apply flush, or the 3-way
-	 *  merge is dirty, the edit goes to a keep-both copy; if that copy fails,
-	 *  a forced merge into the note. */
-	private async fastForwardHistoryLess(
-		normalized: string,
-		file: TFile,
-		noteId: string,
-		update: Uint8Array,
-		head: string,
-		base: string,
-		expected: string,
-		disk: string,
-	): Promise<"applied" | "deferred"> {
-		if (!this.crdt || !(await this.crdt.applyRemoteUpdate(noteId, update))) return "deferred";
-		const crdt = this.crdt;
-		const merge = async (force: boolean): Promise<string | null> => {
-			try {
-				return await crdt.mergeLocalEditFromBase(noteId, base, expected, disk, force);
-			} catch (e) {
-				rlog().warn(
-					"crdt",
-					`history-less fast-forward merge failed for ${noteRef(normalized)}: ${errMsg(e, normalized)}`,
-				);
-				return null;
-			}
-		};
-		let merged = await merge(false);
-		if (merged === null) {
-			try {
-				const copy = await this.writeDriftConflictCopy(normalized, disk);
-				rlog().info(
-					"conflict",
-					`history-less fast-forward fell back to keep-both | original=${noteRef(normalized)} copy=${noteRef(copy)}`,
-				);
-			} catch (e) {
-				rlog().error(
-					"conflict",
-					`history-less fast-forward copy failed for ${noteRef(normalized)}: ${errMsg(e, normalized)}. Merging the edit into the note instead`,
-				);
-				merged = await merge(true);
-			}
-		}
-		if (merged !== null) {
-			// The doc holds the edit and has broadcast it; a failed write here
-			// leaves disk at the base until the next flush, never a copy.
-			try {
-				await this.flushFromCrdt(normalized, merged);
-			} catch (e) {
-				rlog().warn(
-					"crdt",
-					`history-less fast-forward flush failed for ${noteRef(normalized)}: ${errMsg(e, normalized)}`,
-				);
-			}
-			if (!(this.crdtLive?.() ?? true)) {
-				// Topic down: the live send of the merged edit is dropped and the
-				// baseline now matches disk, so queue it (captureDiskDriftBeforeRemote).
-				await this.enqueueCrdtEdit(file, noteId);
-				void this.flushQueue();
-			}
-		}
-		this.forgetDiscoveryBase(normalized); // doc has history now
-		this.setCrdtHead(normalized, head);
-		return "applied";
 	}
 
 	/** Write `localDisk` to a dated `<name> (conflict <date>).md` copy beside
@@ -4099,9 +4201,10 @@ export class SyncEngine {
 	private async readServerDocState(
 		noteId: string,
 		path: string,
-	): Promise<{ b64: string } | null> {
+		honorLatch = true,
+	): Promise<{ b64: string; head: string } | null> {
 		const fetchState = this.crdtDocState;
-		if (!fetchState || this.unsupportedFrames.has(DOC_STATE_FRAME)) return null;
+		if (!fetchState || (honorLatch && this.unsupportedFrames.has(DOC_STATE_FRAME))) return null;
 
 		try {
 			const state = await fetchState(noteId);
@@ -4867,7 +4970,11 @@ export class SyncEngine {
 			// cold-start adopt keep-both a copy of content that was never in
 			// conflict. The editor's content IS in the Y.Doc, so recording it here
 			// is the truthful baseline, not an optimistic one.
-			if (file instanceof TFile) void this.recordLiveBoundBaseline(file);
+			// Not while the load gate holds the note: the buffer is unsynced input
+			// then, and recording it would hide it from cold-start reconcile.
+			if (file instanceof TFile && !this.awaitsServer(file.path)) {
+				void this.recordLiveBoundBaseline(file);
+			}
 			// ...and the FRONTMATTER still has to be ingested. The skip above is
 			// right about the body (the binding forwards keystrokes into the
 			// Y.Text) and wrong about frontmatter, which the binding explicitly
@@ -5969,17 +6076,16 @@ export class SyncEngine {
 						rlog().info("push", `CRDT push ok: ${noteRef(file.path)}`);
 						return true;
 					}
-					// DECLINED (handshake gate): applyLocalEdit did not consume because
-					// the doc is empty and STEP2 has not yet arrived this session. This is
-					// effectively unreachable now that Branch A is gated on hasServerNote
-					// (a server-known note's doc has already been seeded/converged, so it
-					// has history and won't decline) — but stay defensive rather than
-					// silently drop. Enroll the markdown note so the STEP1 handshake kicks
-					// off; the edit remains on disk and re-routes on the next edit /
-					// reconnect re-push once STEP2 lands. Md + cap + live-bound gated (an
-					// oversized doc must never enroll — 8 MB WS frame limit).
-					// ponytail: no immediate delivery on decline (the old REST fallback is
-					// gone); acceptable because the gate makes this path unreachable.
+					// DECLINED (also: a deleted note, or a live remote storm that left no
+					// stable reread). Mostly the load gate
+					// (`ProviderRegistry.awaitsServerState`): the server holds this note and the doc has none of its history
+					// yet, so the edit was NOT consumed and stays on disk while
+					// `loadServerState` (already fired by the registry) loads and
+					// merges it. Reached by design on every first edit to a note this
+					// device only discovered: returning true here is correct, nothing
+					// was lost. Do not "simplify" it into a seed: that is the rival-
+					// lineage doubling the gate exists for. Enroll only an open,
+					// md-eligible note under the cap (8 MB WS frame limit).
 					if (
 						this.isCrdtEligible(file) &&
 						!exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES) &&

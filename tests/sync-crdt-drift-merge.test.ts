@@ -118,14 +118,25 @@ async function historyLessScenario(opts: {
 	const mgr = new ProviderRegistry({
 		dbPrefix: opts.dbPrefix,
 		send: () => true,
-		onFlushToDisk: async (id, content) => {
+		onFlushToDisk: async (id, content, _fmChanged, firstLoad) => {
 			const race = opts.midFirstFlush;
 			opts.midFirstFlush = undefined;
-			if (race) await race(mgr);
+			// A racing fan-out is not awaited by the flush it races (the registry
+			// queues its flush behind this first-load one, so awaiting it here
+			// would deadlock): start it, wait until its update has INTEGRATED into
+			// the doc (an explicit latch, no timer), then write.
+			if (race) {
+				const doc = await mgr.getDoc(id);
+				const integrated = new Promise<void>((r) => doc.once("update", () => r()));
+				void race(mgr);
+				await integrated;
+			}
 			// Mirror production wiring: route the manager flush through the engine's
-			// flushFromCrdt so it lands on the shared fake disk with baseline recording.
-			await box.e.flushFromCrdt("a.md", content);
-			void id;
+			// flushFromCrdt so it lands on the shared fake disk with baseline recording,
+			// a first server state through the disk-drift interlock, and a refused
+			// write reported as a failure.
+			const ok = await box.e.flushFromCrdt("a.md", content, firstLoad ? id : undefined);
+			return ok === false ? false : undefined;
 		},
 	});
 
@@ -366,7 +377,9 @@ describe("history-less fast-forward: races and failures never lose an edit", () 
 
 		const result = await (e as any).applyPushedNoteUpdate("id-a", serverFullUpdate, "SRV");
 
-		expect(result).toBe("applied");
+		// The merge runs inside the shared write path now, so a failed write is
+		// reported like any other flush failure (#235): head unadvanced, retried.
+		expect(result).toBe("deferred");
 		expect([...disk.keys()].some((k) => k.includes("(conflict"))).toBe(false);
 		expect(await mgr.getText("id-a")).toBe("BASE local");
 		await mgr.destroyAll();
