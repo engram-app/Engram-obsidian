@@ -146,6 +146,11 @@ export class ProviderRegistry {
 	 *  live: a restore) and by destroyAll (stack teardown). Never revived, an id
 	 *  just stays dead, which is the delete's intent. */
 	private readonly removed = new Set<string>();
+	/** The seq fence for each tombstone: the delete's seq, or the newest seq this
+	 *  device knew for the note when it deleted. Only a row NEWER than it can
+	 *  revive the id; anything at or below it is history from before the delete.
+	 *  Kept beside `removed` (not instead of it) so `removedIds` stays a Set. */
+	private readonly removedAtSeq = new Map<string, number>();
 	private connected = false;
 	/** note_ids with an OPEN room — those advertising syncStep1 (the down-sync
 	 *  pull). Only enroll/startSync adds; a cold SEND or fan-out RECEIVE never
@@ -939,13 +944,27 @@ export class ProviderRegistry {
 	 *  removeDoc cleared the IndexedDB store, so that doc starts EMPTY and
 	 *  converges from server state; nothing local is seeded into it, which would
 	 *  mint a rival lineage. Relay does the same: a remote re-add of a path clears
-	 *  its deleteSet entry. Returns whether a tombstone was lifted. */
-	revive(noteId: string): boolean {
+	 *  its deleteSet entry. Seq-fenced: lifts only for `seq` strictly NEWER than
+	 *  the tombstone's fence, so a replayed pre-delete row cannot resurrect it.
+	 *  Returns whether a tombstone was lifted. */
+	revive(noteId: string, seq: number): boolean {
+		const fence = this.removedAtSeq.get(noteId);
+		if (fence === undefined || seq <= fence) return false;
+		this.removedAtSeq.delete(noteId);
 		return this.removed.delete(noteId);
 	}
 
-	async removeDoc(noteId: string): Promise<void> {
+	/** The tombstone's seq fence, or undefined when `noteId` is not tombstoned. */
+	deletedAtSeq(noteId: string): number | undefined {
+		return this.removedAtSeq.get(noteId);
+	}
+
+	/** `deleteSeq`: the delete's seq when known, else the newest seq this device
+	 *  held for the note (see `removedAtSeq`). 0 when nothing is known, so any
+	 *  sequenced re-announce revives it. */
+	async removeDoc(noteId: string, deleteSeq = 0): Promise<void> {
 		this.removed.add(noteId); // tombstone: block any resurrection of a deleted note
+		this.removedAtSeq.set(noteId, Math.max(deleteSeq, this.removedAtSeq.get(noteId) ?? 0));
 		await this.destroy(noteId, true);
 	}
 
@@ -976,6 +995,7 @@ export class ProviderRegistry {
 
 	async destroyAll(): Promise<void> {
 		for (const noteId of [...this.entries.keys()]) await this.destroy(noteId, false);
+		this.removedAtSeq.clear();
 		this.removed.clear(); // fresh stack — tombstones do not outlive a teardown
 		// Enrollments for never-materialized docs (enroll raced a teardown) have
 		// no entries key above; a fresh stack starts with none either way.

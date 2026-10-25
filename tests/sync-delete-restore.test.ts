@@ -90,25 +90,29 @@ async function deletedNote(dbPrefix: string) {
 	return h;
 }
 
+/** A seq-replay row for `path`/`id` (`deleted` flips it to a tombstone). */
+const row = (id: string, path: string, seq: number, content: string, deleted = false) =>
+	({
+		type: "note",
+		id,
+		seq,
+		path,
+		title: path.replace(/\.md$/, ""),
+		content,
+		content_hash: `srv-${seq}`,
+		folder: "",
+		tags: [],
+		mtime: 1,
+		updated_at: new Date().toISOString(),
+		deleted,
+		version: seq,
+	}) as any;
+
 describe("server delete then restore of a note", () => {
 	test("the seq-replay row for the restored id re-materializes it", async () => {
 		const h = await deletedNote("restore-seq");
 
-		await h.e.applySyncChange({
-			type: "note",
-			id: "id-a",
-			seq: 50,
-			path: "a.md",
-			title: "a",
-			content: "hello",
-			content_hash: "srv-hash",
-			folder: "",
-			tags: [],
-			mtime: 1,
-			updated_at: new Date().toISOString(),
-			deleted: false,
-			version: 3,
-		} as any);
+		await h.e.applySyncChange(row("id-a", "a.md", 50, "hello"));
 
 		expect(h.disk.get("a.md")).toBe("hello");
 		expect(h.map.get("a.md")).toBe("id-a");
@@ -116,15 +120,73 @@ describe("server delete then restore of a note", () => {
 		expect(h.created.filter((p) => p.includes("(conflict "))).toEqual([]);
 	});
 
-	test("the upsert broadcast for the restored id re-materializes it", async () => {
+	test("an unsequenced upsert broadcast does not revive; it asks for a seq replay", async () => {
 		const h = await deletedNote("restore-ws");
+		let replays = 0;
+		(h.e as any).catchupViaSeqReplay = async () => {
+			replays += 1;
+		};
 
 		await h.e.handleStreamEvent(
 			ev({ id: "id-a", content: "hello", content_hash: "srv-hash", version: 3 }),
 		);
 
+		// A broadcast cannot tell a restore from a late pre-delete upsert.
+		expect(h.disk.has("a.md")).toBe(false);
+		expect(h.mgr.removedIds.has("id-a")).toBe(true);
+		expect(replays).toBe(1);
+
+		// The replayed row carries a seq, passes the fence, and revives.
+		await h.e.applySyncChange(row("id-a", "a.md", 50, "hello"));
 		expect(h.disk.get("a.md")).toBe("hello");
-		expect(h.map.get("a.md")).toBe("id-a");
+		expect(h.mgr.removedIds.has("id-a")).toBe(false);
+	});
+
+	test("a stale pre-delete upsert neither revives nor writes disk", async () => {
+		const h = harness("restore-stale");
+		h.disk.set("a.md", "hello");
+		h.map.set("a.md", "id-a");
+		h.e.importSyncState({ "a.md": { hash: fnv1a("hello"), seq: 40 } });
+		await h.e.applySyncChange(row("id-a", "a.md", 50, "", true));
+		expect(h.mgr.removedIds.has("id-a")).toBe(true);
+
+		// The row from BEFORE the delete, replayed (gap-heal / fromZero race).
+		await h.e.applySyncChange(row("id-a", "a.md", 40, "stale body"));
+
+		expect(h.disk.has("a.md")).toBe(false);
+		expect(h.mgr.removedIds.has("id-a")).toBe(true);
+		expect(h.mgr.enrolled.size).toBe(0);
+	});
+
+	test("our own delete still queued past the 60 s window is not revived", async () => {
+		const h = await deletedNote("restore-queued");
+		h.e.setCrdtHasPendingOp((id) => id === "id-a");
+
+		await h.e.applySyncChange(row("id-a", "a.md", 50, "hello"));
+
+		expect(h.disk.has("a.md")).toBe(false);
+		expect(h.mgr.removedIds.has("id-a")).toBe(true);
+	});
+
+	test("a bulk restore of 1,000 idle notes opens zero rooms", async () => {
+		const h = harness("restore-bulk");
+		h.e.setCrdtPorts({ enrollment: h.mgr });
+		const N = 1000;
+		const ids = Array.from({ length: N }, (_, i) => `id-${i}`);
+		ids.forEach((id, i) => {
+			h.disk.set(`n${i}.md`, `body ${i}`);
+			h.map.set(`n${i}.md`, id);
+		});
+		for (const [i, id] of ids.entries())
+			await h.e.applySyncChange(row(id, `n${i}.md`, 100 + i, "", true));
+		expect(h.mgr.removedIds.size).toBe(N);
+
+		for (const [i, id] of ids.entries())
+			await h.e.applySyncChange(row(id, `n${i}.md`, 5000 + i, `body ${i}`));
+
+		expect(h.mgr.removedIds.size).toBe(0);
+		expect(h.disk.get("n999.md")).toBe("body 999");
+		expect(h.mgr.enrolled.size).toBe(0);
 	});
 });
 

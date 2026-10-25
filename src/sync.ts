@@ -3079,6 +3079,28 @@ export class SyncEngine {
 		this.discoveryBaseChars -= entry.text.length;
 	}
 
+	/** A revived doc is EMPTY (the delete cleared its IndexedDB store) while disk
+	 *  now holds the restored row. Load the server's lineage into it, never a
+	 *  seed from disk (that mints a rival lineage, crdt-lineage-doubling). An
+	 *  open note takes the room; an IDLE one reads room-free and, if that read
+	 *  fails, stays empty for the first open or edit to load. A folder restore
+	 *  of thousands of idle notes must open zero rooms (#1409). */
+	private loadRevivedDoc(noteId: string, normalized: string): void {
+		if (this.isLiveBound(normalized)) {
+			this.socketConverge(normalized, noteId);
+			return;
+		}
+		void this.applyServerDocState(noteId, normalized).catch(() => false);
+	}
+
+	/** Read the server's full Yjs state room-free and merge it into the doc.
+	 *  False when the frame is unavailable or the registry refused the update. */
+	private async applyServerDocState(noteId: string, path: string): Promise<boolean> {
+		const state = await this.readServerDocState(noteId, path);
+		if (state === null || !this.crdt) return false;
+		return this.crdt.applyRemoteUpdate(noteId, fromB64(state.b64));
+	}
+
 	/** Write `localDisk` to a dated `<name> (conflict <date>).md` copy beside
 	 *  `normalized`. The copy gets NO synced row: it is a new local file the
 	 *  server has never seen, so the vault create event pushes it like any
@@ -4759,9 +4781,7 @@ export class SyncEngine {
 			// older backend every diverged cold note paid a full request timeout
 			// before falling back — the exact pathology the latch exists for,
 			// running on the higher-volume path (#1409 review).
-			const state = await this.readServerDocState(noteId, change.path);
 			try {
-				if (state === null) throw new Error("crdt_doc_state unavailable");
 				// Flushes disk on the merge and AWAITS that write, so a failed
 				// write rejects here rather than being reported as converged.
 				// A REFUSED apply (note removed, doc destroyed mid-hydration)
@@ -4769,8 +4789,8 @@ export class SyncEngine {
 				// then record a note as converged that holds none of the server's
 				// state — after which every catch-up compares equal hashes and
 				// skips it, permanently. Fall back to the room.
-				if (!(await this.crdt.applyRemoteUpdate(noteId, fromB64(state.b64)))) {
-					throw new Error("registry refused the doc state (note removed or destroyed)");
+				if (!(await this.applyServerDocState(noteId, change.path))) {
+					throw new Error("crdt_doc_state unavailable, or the registry refused it");
 				}
 				// `onSynced` fires ONLY from NoteProvider.handleFrame on an
 				// inbound syncStep2 — an applyRemoteUpdate does not fire it. So
@@ -4845,8 +4865,8 @@ export class SyncEngine {
 	 *  which is a separate object only in test harnesses. This pair was
 	 *  hand-written at 6 call sites; a missed pair left a tombstoned id
 	 *  enrolled forever. */
-	private async teardownCrdtDoc(noteId: string): Promise<void> {
-		await this.crdt?.removeDoc(noteId);
+	private async teardownCrdtDoc(noteId: string, deleteSeq?: number): Promise<void> {
+		await this.crdt?.removeDoc(noteId, deleteSeq);
 		this.crdtEnrollment?.reset(noteId);
 	}
 
@@ -5199,6 +5219,9 @@ export class SyncEngine {
 		// Resolve the note_id BEFORE clearing the map (removeDoc/reset below need
 		// it to tear down the right CRDT doc, keyed by id not path).
 		const crdtNoteId = !isBinary ? (this.noteIdMap?.get(path) ?? null) : null;
+		// The tombstone's seq fence for a LOCAL delete: the newest seq this device
+		// held for the note. Read before the sync-state row is dropped below.
+		const deleteSeq = this.syncState.get(normalizePath(path))?.seq;
 
 		// Clear the file's note_id mapping — the vault file is genuinely gone,
 		// so a note later recreated at this path must mint a fresh id rather
@@ -5270,7 +5293,7 @@ export class SyncEngine {
 			// which is exactly what the tombstone used to prevent.
 			rlog().info("vault", `Delete echo skip (remote-applied): ${noteRef(path)}`);
 			if (this.isCrdtEligiblePath(path) && crdtNoteId) {
-				await this.teardownCrdtDoc(crdtNoteId);
+				await this.teardownCrdtDoc(crdtNoteId, deleteSeq);
 			}
 			return;
 		}
@@ -5293,7 +5316,8 @@ export class SyncEngine {
 			if (crdtNoteId && this.crdtHasPendingOp?.(crdtNoteId)) {
 				this.markRecentlyDeleted(crdtNoteId, path);
 				this.crdtEnqueue?.({ kind: "delete", docId: crdtNoteId, path: path });
-				if (this.isCrdtEligiblePath(path)) await this.teardownCrdtDoc(crdtNoteId);
+				if (this.isCrdtEligiblePath(path))
+					await this.teardownCrdtDoc(crdtNoteId, deleteSeq);
 				rlog().info("push", `Delete superseded pending create: ${noteRef(path)}`);
 				return;
 			}
@@ -5302,7 +5326,7 @@ export class SyncEngine {
 			// delete-wins tombstone would block exactly that for 60s (finding 7).
 			rlog().warn("push", `Delete push REFUSED (no sync evidence): ${noteRef(path)}`);
 			if (this.isCrdtEligiblePath(path) && crdtNoteId) {
-				await this.teardownCrdtDoc(crdtNoteId);
+				await this.teardownCrdtDoc(crdtNoteId, deleteSeq);
 			}
 			return;
 		}
@@ -5341,14 +5365,14 @@ export class SyncEngine {
 			// attachments never hit removeDoc. Also gate on a known id — nothing to
 			// tear down if this note never had a CRDT room.
 			if (this.isCrdtEligiblePath(path) && crdtNoteId) {
-				await this.teardownCrdtDoc(crdtNoteId);
+				await this.teardownCrdtDoc(crdtNoteId, deleteSeq);
 			}
 		} catch (e) {
 			// 404 means already deleted — treat as success; still tear down CRDT.
 			if (isHttpStatus(e, 404)) {
 				this.goOnline();
 				if (this.isCrdtEligiblePath(path) && crdtNoteId) {
-					await this.teardownCrdtDoc(crdtNoteId);
+					await this.teardownCrdtDoc(crdtNoteId, deleteSeq);
 				}
 				return;
 			}
@@ -8797,6 +8821,9 @@ export class SyncEngine {
 			// delete of a live confirmed note was silently dropped — e2e test_47).
 			const currentId = this.noteIdMap?.get(normalized) ?? null;
 			const targetId = event.id ?? currentId;
+			// A broadcast carries no seq: fence the tombstone at the newest seq we
+			// held for the note (captured before the removal drops the row).
+			const knownSeq = this.syncState.get(normalized)?.seq;
 			// Rename old-leg guard: the backend now emits the upsert for the NEW
 			// path BEFORE this delete for the OLD path, so moveIfIdRelocated already
 			// relocated the id to its new path. If the id now lives at a DIFFERENT
@@ -8921,7 +8948,7 @@ export class SyncEngine {
 				this.noteIdMap?.forgetRemoteDelete(normalized, event.id ?? null);
 				const roomId = targetId ?? currentId;
 				if (roomId) {
-					await this.teardownCrdtDoc(roomId);
+					await this.teardownCrdtDoc(roomId, knownSeq);
 				}
 			}
 			return;
@@ -9513,14 +9540,41 @@ export class SyncEngine {
 		// across a delete). The clear is DEFERRED to after applyChange (below):
 		// its delete branch needs the path→id mapping to classify the note as
 		// CRDT-managed and tear its room down, so retiring the id here would blind it.
-		// The server re-announcing an id as live is the clearing event for the
-		// registry's delete tombstone: a restore brings the SAME id back (safer
-		// delete, Engram#2233), and a tombstone left standing throws
-		// NoteDestroyedError on every apply, so the note never reappears. Our own
-		// fresh deletes returned above (recentlyDeleted), so a stale upsert cannot
-		// reach here and resurrect them. Optional call: partial registry doubles
-		// in tests lack it.
-		const revived = op.kind === "upsert" && this.crdt?.revive?.(op.id) === true;
+		// A TOMBSTONED id (deleted here or by the server) comes back only through
+		// the seq fence, and the fence also guards the disk write below: a
+		// replayed pre-delete upsert used to re-materialize the stale body even
+		// though the doc stayed dead. The clearing event is a sequenced row NEWER
+		// than the delete: a restore (safer delete, Engram#2233) keeps the id.
+		// See docs/context/crdt-tombstone-seq-fence.md. Optional calls: partial
+		// registry doubles in tests lack them.
+		const deletedAt = op.kind === "upsert" ? this.crdt?.deletedAtSeq?.(op.id) : undefined;
+		if (deletedAt !== undefined) {
+			// Our own delete still waits in the CRDT op queue (offline, or the
+			// topic is down): the id is dead whatever the feed says, however long
+			// ago recentlyDeleted lapsed.
+			if (this.crdtHasPendingOp?.(op.id)) {
+				rlog().info("crdt", `op skip (own delete still queued): ${op.id}`);
+				return false;
+			}
+			// A live broadcast carries no seq, so it cannot tell a restore from a
+			// late pre-delete upsert. Let the seq replay deliver the row instead.
+			if (op.seq === undefined) {
+				rlog().info(
+					"crdt",
+					`op skip (unsequenced upsert for deleted id, seq heal): ${op.id}`,
+				);
+				this.scheduleSeqHeal();
+				return false;
+			}
+			if (op.seq <= deletedAt) {
+				rlog().info(
+					"crdt",
+					`op skip (seq ${op.seq} <= delete fence ${deletedAt}): ${op.id}`,
+				);
+				return false;
+			}
+			this.crdt?.revive(op.id, op.seq);
+		}
 		if (op.kind === "upsert") {
 			// Id-keyed move: the server sends a note's stable id at a NEW path, but
 			// this device still holds that id at a DIFFERENT local path. A rename
@@ -9581,12 +9635,15 @@ export class SyncEngine {
 		// Retire the id now that applyChange has consumed the mapping (see the
 		// deferral note above). Idempotent with applyChange's own md teardown.
 		if (op.kind === "delete") this.noteIdMap?.forgetRemoteDelete(op.path, op.id ?? null);
-		// The revived doc is EMPTY (the delete cleared its IndexedDB store) while
-		// disk now holds the row. Load the server's lineage into it now, over a
-		// handshake, rather than leave a history-less doc for the next local edit
-		// to seed from disk: that seed is a rival lineage (crdt-lineage-doubling).
-		if (revived && this.isCrdtEligiblePath(op.path)) {
-			this.socketConverge(normalizePath(op.path), op.id);
+		if (deletedAt !== undefined) {
+			const normalized = normalizePath(op.path);
+			if (!applied && !this.isCanvasPath(normalized)) {
+				// Nothing landed: put the tombstone back. (Canvas reports false by
+				// design; it converges over the room applyChange just enrolled.)
+				await this.crdt?.removeDoc(op.id, deletedAt);
+			} else if (applied) {
+				this.loadRevivedDoc(op.id, normalized);
+			}
 		}
 		return applied;
 	}
@@ -9836,6 +9893,7 @@ export class SyncEngine {
 			// defers its tombstone map-clear until AFTER this call so the id is
 			// still resolvable here.
 			const crdtNoteId = this.noteIdMap?.get(normalized) ?? null;
+			const deleteSeq = change.seq ?? this.syncState.get(normalized)?.seq;
 			const crdtManaged = !!this.crdt && crdtNoteId !== null;
 
 			// Delete local file if it exists
@@ -9932,7 +9990,7 @@ export class SyncEngine {
 				// applySyncChange's deferred clear).
 				if (crdtNoteId && this.isCrdtEligiblePath(normalized)) {
 					this.noteIdMap?.forgetRemoteDelete(normalized, change.note_id ?? null);
-					await this.teardownCrdtDoc(crdtNoteId);
+					await this.teardownCrdtDoc(crdtNoteId, deleteSeq);
 				}
 				return true;
 			}
