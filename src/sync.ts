@@ -144,6 +144,9 @@ const HEAL_ROOMS_PER_MINUTE = 15;
 /** Report idle heal rooms at least this often, not only when the pool drains. */
 const HEAL_ROOM_REPORT_EVERY = 50;
 
+/** Cap on a timed-out note's retry backoff (it starts at HEAL_SLOT_TIMEOUT_MS). */
+const HEAL_RETRY_MAX_MS = 10 * 60_000;
+
 interface HealSlot {
 	path: string;
 	reason: HealRoomReason;
@@ -748,6 +751,15 @@ export class SyncEngine {
 		new Map<HealRoomReason, number>(),
 	);
 	private healRoomsUnreported = 0;
+	/** Heal rooms that timed out for a note since it last converged. Cleared by
+	 *  a STEP2 for it (`commitCrdtConvergence`). */
+	private readonly healRetries = this.track(["vault", "destroy"], new Map<string, number>());
+	/** A timed-out note's next try, on its backoff. Cleared when it fires. */
+	private readonly healRetryTimers = this.track(
+		["vault", "destroy"],
+		new Map<string, number>(),
+		(timer) => this.time.clearTimeout(timer),
+	);
 	/** Token bucket for idle heal-room starts; `at` null until first use. */
 	private readonly healRoomBucket: { tokens: number; at: number | null } = {
 		tokens: HEAL_ROOM_BURST,
@@ -4903,8 +4915,24 @@ export class SyncEngine {
 				// then record a note as converged that holds none of the server's
 				// state — after which every catch-up compares equal hashes and
 				// skips it, permanently. Fall back to the room.
-				if (!(await this.applyServerDocState(noteId, change.path))) {
-					throw new Error("crdt_doc_state unavailable, or the registry refused it");
+				const state = await this.readServerDocState(noteId, change.path);
+				if (state === null) throw new Error("crdt_doc_state unavailable");
+				const update = fromB64(state.b64);
+				// The acked mark is a claim about what the server HOLDS, and a
+				// server can lose it (a restore, a doc reset, a relink). The read
+				// returns the server's full state, so check the claim before
+				// trusting it; if the server no longer covers it, re-send.
+				if (this.crdt.ackedCoveredBy?.(noteId, update) === false) {
+					rlog().anomaly("crdt", "acked_state_missing_on_server");
+					this.crdt.clearDelivered?.(noteId);
+					if (!(await this.deliverQueuedOpsRoomFree({ path: normalized, noteId }))) {
+						throw new Error(
+							"the server lost acked state and the room-free re-send failed",
+						);
+					}
+				}
+				if (!(await this.crdt.applyRemoteUpdate(noteId, update))) {
+					throw new Error("the registry refused the crdt_doc_state update");
 				}
 				// `onSynced` fires ONLY from NoteProvider.handleFrame on an
 				// inbound syncStep2 — an applyRemoteUpdate does not fire it. So
@@ -8235,6 +8263,8 @@ export class SyncEngine {
 	 *  after a lost STEP2 still lands. A note opened in an editor while it waits
 	 *  takes its room at once; one deleted or swept meanwhile is skipped. */
 	private poolIdleHeal(path: string, noteId: string, reason: HealRoomReason): void {
+		// A retry is already scheduled on its backoff; this request rides it.
+		if (this.healRetryTimers.has(noteId)) return;
 		if (this.idleHealSlots.has(noteId)) {
 			this.idleHealRefire.add(noteId);
 			return;
@@ -8310,6 +8340,7 @@ export class SyncEngine {
 		if (this.pendingConvergence.has(noteId) || this.pendingQueueDeliveries.has(noteId)) {
 			this.idleHealRefire.add(noteId);
 		}
+		this.healRetries.set(noteId, (this.healRetries.get(noteId) ?? 0) + 1);
 		this.releaseHealRoom(noteId, null);
 	}
 
@@ -8321,8 +8352,23 @@ export class SyncEngine {
 		this.idleHealSlots.delete(noteId);
 		this.time.clearTimeout(slot.timer);
 		this.idleHealRooms.release();
-		if (this.idleHealRefire.delete(noteId)) this.poolIdleHeal(slot.path, noteId, slot.reason);
-		else this.maybeReportHealRooms();
+		if (!this.idleHealRefire.delete(noteId)) {
+			this.maybeReportHealRooms();
+			return;
+		}
+		// A note the server keeps not answering waits longer each time (30 s,
+		// doubling, 10 min cap), so it cannot spend the whole start budget.
+		const retries = this.healRetries.get(noteId) ?? 0;
+		if (retries === 0) {
+			this.poolIdleHeal(slot.path, noteId, slot.reason);
+			return;
+		}
+		const delay = expBackoff(HEAL_SLOT_TIMEOUT_MS, retries - 1, HEAL_RETRY_MAX_MS);
+		const timer = this.time.setTimeout(() => {
+			this.healRetryTimers.delete(noteId);
+			this.poolIdleHeal(slot.path, noteId, slot.reason);
+		}, delay);
+		this.healRetryTimers.set(noteId, timer);
 	}
 
 	private countHealRoom(reason: HealRoomReason): void {
@@ -8402,6 +8448,7 @@ export class SyncEngine {
 	 *  can't write syncState at a stale/dead path — no separate teardown hook
 	 *  needed. Never throws into the CRDT manager's synchronous callback. */
 	async commitCrdtConvergence(noteId: string): Promise<void> {
+		this.healRetries.delete(noteId);
 		// Settle a fired durable-queue delivery FIRST (independent of any
 		// staged convergence): an inbound frame for this note proves the room
 		// round-tripped, so the queued local ops went out on that same live
@@ -8511,7 +8558,17 @@ export class SyncEngine {
 	private crdtRelease: ((docId: string) => void) | null = null;
 
 	private releaseHealRoom(noteId: string, path: string | null): void {
-		this.freeHealSlot(noteId);
+		// Close FIRST, free the slot LAST: freeing can re-queue this same note
+		// and open a fresh room, which a close after it would tear down before
+		// its STEP2 lands (Engram#2242 review).
+		try {
+			this.closeHealRoom(noteId, path);
+		} finally {
+			this.freeHealSlot(noteId);
+		}
+	}
+
+	private closeHealRoom(noteId: string, path: string | null): void {
 		// Re-resolve the CURRENT path — `path` may be the enqueue/staging-time
 		// path, and a rename in between would otherwise check liveness (and
 		// hibernate) against the stale path and closeDoc a doc the editor still

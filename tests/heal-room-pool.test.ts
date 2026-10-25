@@ -87,6 +87,7 @@ function harness(
 		released: 0,
 	};
 	const liveBound = opts.liveBound ?? new Set<string>();
+	const pendingStep2 = new Map<string, ReturnType<typeof setTimeout>>();
 	engine.setCrdtEnrollment({
 		enroll: (noteId: string) => {
 			rooms.open.add(noteId);
@@ -96,13 +97,22 @@ function harness(
 			const attempt = (rooms.attempts.get(noteId) ?? 0) + 1;
 			rooms.attempts.set(noteId, attempt);
 			if (opts.dropStep2?.(noteId, attempt)) return;
-			// The server's STEP2, one macrotask later.
-			setTimeout(() => void engine.commitCrdtConvergence(noteId), 1);
+			// The server's STEP2, one macrotask later, unless the room is closed
+			// first: a released room (and a closed doc) never gets its reply.
+			pendingStep2.set(
+				noteId,
+				setTimeout(() => {
+					pendingStep2.delete(noteId);
+					void engine.commitCrdtConvergence(noteId);
+				}, 1),
+			);
 		},
 		reset: () => {},
 	} as any);
 	engine.setCrdtPorts({
 		release: (noteId: string) => {
+			clearTimeout(pendingStep2.get(noteId));
+			pendingStep2.delete(noteId);
 			if (rooms.open.delete(noteId)) rooms.released++;
 		},
 		liveBound: (p: string) => liveBound.has(p),
@@ -262,6 +272,27 @@ describe("idle heal rooms: the start budget and the lost-reply paths (Engram#224
 		expect(converged(engine)).toBe(1);
 		expect(rooms.attempts.get(id(0))).toBeGreaterThanOrEqual(2);
 		expect(rooms.open.size).toBe(0);
+	});
+
+	test("a note the server never answers backs off, and cannot starve the other heals", async () => {
+		const stuck = 8;
+		const { engine, rooms, time, settle } = harness({
+			dropStep2: (noteId) => Number(noteId.slice(3)) < stuck,
+		});
+		engine.setCrdtPorts({ docState: mock().mockRejectedValue(new Error("timeout")) });
+		for (let i = 0; i < stuck; i++) await coldConverge(engine, i);
+		const t0 = time.now();
+		await settle(() => time.now() - t0 >= 10 * 60_000, 5_000);
+
+		// 30 s, doubling: about five tries in ten minutes, not two a minute.
+		for (let i = 0; i < stuck; i++) expect(rooms.attempts.get(id(i))).toBeLessThanOrEqual(6);
+
+		// A healthy note still heals promptly.
+		await coldConverge(engine, stuck);
+		const t1 = time.now();
+		await settle(() => converged(engine) === 1, 1_000, 120);
+		expect(converged(engine)).toBe(1);
+		expect(time.now() - t1).toBeLessThan(60_000);
 	});
 
 	test("a room whose STEP2 never comes is CLOSED before its slot is reused", async () => {

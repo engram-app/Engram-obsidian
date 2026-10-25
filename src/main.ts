@@ -1030,6 +1030,7 @@ export default class EngramSyncPlugin extends Plugin {
 		this.registerDomEvent(activeDocument, "visibilitychange", () => {
 			if (activeDocument.visibilityState === "hidden") {
 				this.syncEngine.flushHealRoomCounts();
+				void this.crdtWiring?.manager.flushAcked();
 				void rlog().flush();
 				void this.savePluginData(this.syncEngine.getLastSync());
 				// A silent sync-bases.json write failure degrades 3-way merge to
@@ -2947,6 +2948,8 @@ export default class EngramSyncPlugin extends Plugin {
 					// above) at call time so a swapped socket is transparent.
 					if (!this.crdtWiring) {
 						const wiring = createCrdtWiring({
+							ackScope: () =>
+								`${this.settings.apiUrl}|${this.settings.vaultId ?? ""}`,
 							noteIdMap: this.noteIdMap,
 							syncEngine: this.syncEngine,
 							// BaseStore is keyed by vault path and already holds exactly the
