@@ -72,10 +72,16 @@ export interface LiveBindingCoordinator {
 	enroll(noteId: string): void;
 	/** The load gate holds this doc (`ProviderRegistry.awaitsServerState`). */
 	awaitsServer(noteId: string): boolean;
+	/** Run `cb` once if the load gate opens on an empty server state
+	 *  (`ProviderRegistry.onLoadGateOpen`); returns the unsubscribe. */
+	onLoadGateOpen(noteId: string, cb: () => void): () => void;
 	/** Base for the load gate's reconcile (`SyncEngine.loadMergeBase`). */
 	loadMergeBase(path: string, noteId: string): Promise<string | null>;
 	/** Write `text` to a conflict copy beside `path`; false on failure. */
 	keepConflictCopy(path: string, text: string): Promise<boolean>;
+	/** Last resort when the copy failed and the editor is gone: write `text`
+	 *  back over the note on disk so it syncs as a local edit. */
+	restoreLocalText(path: string, text: string): Promise<void>;
 	/** Viewer refcount: while bound, remote merges paint the editor instead of
 	 *  writing disk directly (the editor owns the file). */
 	onBind(path: string, viewId: string): void;
@@ -97,7 +103,7 @@ function editorPath(editor: EditorView): string | null {
 	return ownedMarkdownPath(editor, info);
 }
 
-class LiveBindingValue implements PluginValue {
+export class LiveBindingValue implements PluginValue {
 	private readonly viewId = `lb-${viewSeq++}`;
 	private editor: EditorView;
 	private path: string | null = null;
@@ -128,6 +134,8 @@ class LiveBindingValue implements PluginValue {
 	private observer: ((event: Y.YTextEvent, tr: Y.Transaction) => void) | null = null;
 	/** One-shot observer waiting for an unseeded doc to receive its server seed. */
 	private deferObserver: ((event: Y.YTextEvent, tr: Y.Transaction) => void) | null = null;
+	/** Unsubscribe from the load gate's empty-server opening (gated defer). */
+	private gateOpenUnsub: (() => void) | null = null;
 	/** Periodic drift-check timer (self-heal backstop); null when not scheduled. */
 	private driftTimer: number | null = null;
 
@@ -394,11 +402,27 @@ class LiveBindingValue implements PluginValue {
 			if (text.length === 0) return; // still unseeded — keep waiting
 			text.unobserve(onSeed);
 			this.deferObserver = null;
+			this.gateOpenUnsub?.();
+			this.gateOpenUnsub = null;
 			if (gated) this.resolveLoaded(text);
 			else this.reconcileAndGoLive(text); // now non-empty -> adopt branch
 		};
 		this.deferObserver = onSeed;
 		text.observe(onSeed);
+		// The server state may hold no structs (a row with no CRDT state yet):
+		// no seed will come, and the gate opens instead. Seed from the editor.
+		if (gated && this.noteId && this.boundCoordinator) {
+			this.gateOpenUnsub = this.boundCoordinator.onLoadGateOpen(this.noteId, () => {
+				this.gateOpenUnsub = null;
+				if (this.destroyed || this.ytext !== text || this.deferObserver !== onSeed) return;
+				text.unobserve(onSeed);
+				this.deferObserver = null;
+				const fullText = this.editor.state.doc.toString();
+				const prefix = frontmatterPrefixLen(fullText);
+				const changes = textDiffToChangeSpec(text.toJSON(), fullText.slice(prefix));
+				this.applyAndGoLive(text, { kind: "forward", changes }, prefix);
+			});
+		}
 	}
 
 	/** The load gate's reconcile (`decideLoadedReconcile`). Still not live while
@@ -435,7 +459,9 @@ class LiveBindingValue implements PluginValue {
 				const adopt = textDiffToChangeSpec(editorText, docText);
 				this.applyAndGoLive(text, { kind: "adopt", changes: adopt }, prefix);
 				void c.keepConflictCopy(path, fullText).then((kept) => {
-					if (kept || stale()) return;
+					if (kept) return;
+					// Editor closed meanwhile: its text has no other home but disk.
+					if (stale()) return void c.restoreLocalText(path, fullText);
 					const now = this.editor.state.doc.toString();
 					const p = frontmatterPrefixLen(now);
 					const merged = merge3(docText, now.slice(p), editorText);
@@ -533,6 +559,8 @@ class LiveBindingValue implements PluginValue {
 		}
 		if (this.observer && this.ytext) this.ytext.unobserve(this.observer);
 		if (this.deferObserver && this.ytext) this.ytext.unobserve(this.deferObserver);
+		this.gateOpenUnsub?.();
+		this.gateOpenUnsub = null;
 		this.observer = null;
 		this.deferObserver = null;
 		// Release against the coordinator we BOUND to, not the current module one:

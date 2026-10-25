@@ -70,6 +70,17 @@ interface Entry {
 	 *  state yet), so a local seed cannot rival anything: the load gate is
 	 *  open. Set by `openLoadGate`; moot once the doc has history. */
 	serverEmpty?: boolean;
+	/** The doc has integrated anything at all (IndexedDB replay, a local seed,
+	 *  a remote merge). The remote merge that flips it is the doc's FIRST server
+	 *  state: its flush is told so (`firstLoad`), so disk drift is merged, not
+	 *  overwritten. */
+	hadHistory: boolean;
+	/** Bindings waiting for `openLoadGate` (an empty server state). Fired and
+	 *  cleared when the gate opens; dropped with the entry. */
+	gateWaiters: Set<() => void>;
+	/** The in-flight first-load flush; later flushes queue behind it. Cleared
+	 *  when it settles. */
+	loadFlush?: Promise<void> | null;
 }
 
 export interface ProviderRegistryOpts {
@@ -90,6 +101,9 @@ export interface ProviderRegistryOpts {
 		 *  the body, but nothing in the editor represents frontmatter, so only a
 		 *  frontmatter change justifies writing under a live editor. */
 		fmChanged: boolean,
+		/** This is the doc's first server state (it had no history before). Disk
+		 *  may hold input the load gate held; the write must not overwrite it. */
+		firstLoad: boolean,
 	) => Promise<boolean | undefined> | boolean | undefined;
 	/** Adopt-first gate: content byte-identical to the last-synced content must
 	 *  NOT seed (would fork a second lineage → #846 doubling). */
@@ -216,8 +230,22 @@ export class ProviderRegistry {
 	 *  the held edit seeds. False (gate stays shut) when it does carry one. */
 	async openLoadGate(noteId: string, update: Uint8Array): Promise<boolean> {
 		if (Y.decodeUpdate(update).structs.length > 0) return false;
-		(await this.entry(noteId)).serverEmpty = true;
+		const e = await this.entry(noteId);
+		e.serverEmpty = true;
+		const waiters = [...e.gateWaiters];
+		e.gateWaiters.clear();
+		for (const w of waiters) w();
 		return true;
+	}
+
+	/** Run `cb` once when `openLoadGate` opens `noteId`'s gate (the open
+	 *  editor's way out of waiting for a seed that will never come). Returns
+	 *  the unsubscribe. A no-op when the doc is not resident. */
+	onLoadGateOpen(noteId: string, cb: () => void): () => void {
+		const e = this.entries.get(noteId);
+		if (!e) return () => {};
+		e.gateWaiters.add(cb);
+		return () => e.gateWaiters.delete(cb);
 	}
 
 	private async entry(noteId: string): Promise<Entry> {
@@ -279,29 +307,48 @@ export class ProviderRegistry {
 			lastFlushedFm: null,
 			pendingFlush: null,
 			lifetime: new Lifetime(),
+			hadHistory: false,
+			gateWaiters: new Set(),
 		};
 		// Disk-flush listener: a REMOTE merge (origin === provider from
 		// readSyncMessage, or REMOTE from applyRemoteUpdate) writes back to disk.
 		// Local edits (editor/default origin) and IndexedDB replay do NOT flush.
 		doc.on("update", (_u: Uint8Array, origin: unknown) => {
 			if (!entry.lifetime.active) return; // deleted mid-flight — never flush a dead doc
+			const firstLoad = !entry.hadHistory && docHasAnyHistory(doc, kind);
+			if (firstLoad) entry.hadHistory = true;
 			if (origin !== provider && origin !== REMOTE) return;
 			entry.remoteSeq += 1;
-			const projected = this.project(entry);
-			// Compare the BLOCK against what the last flush projected, not against
-			// the editor. The editor is the wrong oracle: in Live Preview the CM
-			// document is body-only, so it never carries a fence, and comparing
-			// against it reported "frontmatter differs" for EVERY note that has
-			// any — turning the bound-path nudge into a direct write under a live
-			// editor on Obsidian's default mode.
-			const fmBlock = splitFrontmatter(projected).fmBlock;
-			const fmChanged = fmBlock !== entry.lastFlushedFm;
-			entry.lastFlushedFm = fmBlock;
+			const write = () => {
+				const projected = this.project(entry);
+				// Compare the BLOCK against what the last flush projected, not against
+				// the editor. The editor is the wrong oracle: in Live Preview the CM
+				// document is body-only, so it never carries a fence, and comparing
+				// against it reported "frontmatter differs" for EVERY note that has
+				// any — turning the bound-path nudge into a direct write under a live
+				// editor on Obsidian's default mode.
+				const fmBlock = splitFrontmatter(projected).fmBlock;
+				const fmChanged = fmBlock !== entry.lastFlushedFm;
+				entry.lastFlushedFm = fmBlock;
+				return this.opts.onFlushToDisk(noteId, projected, fmChanged, firstLoad);
+			};
+			// While the first-load flush resolves held disk input, later flushes
+			// wait for it (and project afresh): writing first would put server text
+			// over the very input the interlock is reading.
+			const prior = entry.loadFlush;
 			const flush = Promise.resolve(
-				this.opts.onFlushToDisk(noteId, projected, fmChanged),
+				prior ? prior.catch(() => undefined).then(write) : write(),
 			).then((ok) => {
 				if (ok === false) throw new Error(`flushFromCrdt write failure for ${noteId}`);
 			});
+			if (firstLoad) {
+				entry.loadFlush = flush;
+				void flush
+					.catch(() => undefined)
+					.finally(() => {
+						if (entry.loadFlush === flush) entry.loadFlush = null;
+					});
+			}
 			entry.pendingFlush = flush;
 			// Clear pendingFlush once it SETTLES (success or failure) so it only ever
 			// reflects an in-flight flush. The room path (readSyncMessage) has no

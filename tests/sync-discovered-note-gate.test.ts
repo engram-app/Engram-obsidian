@@ -50,6 +50,8 @@ async function scenario(dbPrefix: string, body = C1) {
 		docStateFails: false,
 		/** When set, crdt_doc_state waits on this before answering. */
 		hold: null as Promise<void> | null,
+		/** Answer crdt_doc_state with no structs (a row with no CRDT state). */
+		emptyState: false,
 	};
 
 	const disk = new Map<string, string>();
@@ -58,9 +60,13 @@ async function scenario(dbPrefix: string, body = C1) {
 	const mgr = new ProviderRegistry({
 		dbPrefix,
 		send: () => true,
-		onFlushToDisk: async (id, content) => {
+		// Production wiring (src/crdt/wiring.ts): a closed note's first server
+		// state goes through the disk-drift interlock.
+		onFlushToDisk: async (id, content, _fm, firstLoad) => {
 			const p = map.pathForId(id);
-			if (p) await e.flushFromCrdt(p, content);
+			if (!p) return undefined;
+			const loaded = firstLoad && !ctl.bound ? id : undefined;
+			return (await e.flushFromCrdt(p, content, loaded)) === false ? false : undefined;
 		},
 		isUnchangedSynced: (id, content) => {
 			const p = map.pathForId(id);
@@ -108,7 +114,8 @@ async function scenario(dbPrefix: string, body = C1) {
 			docStateCalls.push(id);
 			if (ctl.hold) await ctl.hold;
 			if (ctl.docStateFails) throw new Error("timeout");
-			return { b64: toB64(Y.encodeStateAsUpdate(server)), head: "h1" };
+			const state = ctl.emptyState ? new Y.Doc() : server;
+			return { b64: toB64(Y.encodeStateAsUpdate(state)), head: "h1" };
 		},
 	} as never);
 	map.set(PATH, ID);
@@ -297,4 +304,30 @@ test("frontmatter saved from an open editor before the load lands is not doubled
 	// The room handshake (or crdt_doc_state) brings the server's state.
 	await mgr.applyRemoteUpdate(ID, Y.encodeStateAsUpdate(server));
 	expect(await mgr.projectedText(ID)).toBe(FM);
+});
+
+test("server state with no data, editor open: the gate opens and tells the binding", async () => {
+	const { e, mgr, ctl, settle } = await scenario("gate-empty-bound");
+	ctl.emptyState = true;
+	ctl.bound = true;
+	await mgr.getDoc(ID); // resident, as under an open editor
+	let opened = 0;
+	mgr.onLoadGateOpen(ID, () => opened++);
+	await e.loadServerState(ID);
+	await settle();
+	expect(opened).toBe(1);
+	expect(mgr.awaitsServerState(ID)).toBe(false);
+	expect((e as any).heldForServer.size).toBe(0);
+});
+
+test("server state with no data, note closed: the held edit seeds once", async () => {
+	const { e, mgr, ctl, disk, edit, settle } = await scenario("gate-empty-closed");
+	ctl.emptyState = true;
+	await edit(C2);
+	await settle();
+	(e as any).time.advance(10); // the re-routed debounced push
+	await settle();
+	expect(mgr.awaitsServerState(ID)).toBe(false);
+	expect(await mgr.projectedText(ID)).toBe(C2);
+	expect(disk.get(PATH)).toBe(C2);
 });

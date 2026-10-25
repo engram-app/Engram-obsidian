@@ -3002,6 +3002,8 @@ export default class EngramSyncPlugin extends Plugin {
 								this.syncEngine.loadMergeBase(path, server),
 							keepConflictCopy: (path, text) =>
 								this.syncEngine.keepConflictCopy(path, text),
+							restoreLocalText: (path, text) =>
+								this.syncEngine.restoreLocalText(path, text),
 							onReleaseError: (path, err) =>
 								rlog().warn(
 									"crdt",

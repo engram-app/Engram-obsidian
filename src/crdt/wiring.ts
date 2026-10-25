@@ -310,7 +310,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 			if (!ok && kind === "op") syncEngine.recordUndeliveredCrdtEdit(docId);
 			return ok;
 		},
-		onFlushToDisk: async (noteId, content, fmChanged) => {
+		onFlushToDisk: async (noteId, content, fmChanged, firstLoad) => {
 			const path = noteIdMap.pathForId(noteId);
 			if (!path) {
 				// Unknown id: content is safe in the Y.Doc; heal the id from the
@@ -337,7 +337,12 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 			}
 			// Return false on a real write failure so applyRemoteUpdate rejects and
 			// the caller leaves crdtHead unadvanced (#235).
-			return (await syncEngine.flushFromCrdt(path, content)) === false ? false : undefined;
+			// A closed note's first server state: disk may hold input the load
+			// gate held, so the write merges it in (or keeps a copy), never over it.
+			const loaded = firstLoad && !deps.isBound(path) ? noteId : undefined;
+			return (await syncEngine.flushFromCrdt(path, content, loaded)) === false
+				? false
+				: undefined;
 		},
 		// Adopt-first seed gate: never re-encode content the server already holds.
 		isUnchangedSynced: (noteId, content) => {
