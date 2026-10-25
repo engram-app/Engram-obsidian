@@ -323,6 +323,32 @@ describe("idle heal rooms: the start budget and the lost-reply paths (Engram#224
 		expect(rooms.starts).toBe(before + 1);
 	});
 
+	test("a room-free QUEUE delivery while the note's pull is still owed: it converges with no manual retrigger", async () => {
+		// The queue leg delivers this device's ops, not the server's change, so
+		// the pending heal is still owed and must run on its own.
+		const { engine, rooms, settle } = harness({
+			dropStep2: (noteId, attempt) => noteId === id(0) && attempt === 1,
+		});
+		engine.setCrdtPorts({ docState: mock().mockRejectedValue(new Error("timeout")) });
+		await coldConverge(engine, 0);
+		await settle(() => rooms.released >= 1, 1_000, 40); // timed out, retry owed
+
+		engine.setCrdtLiveCheck(() => true);
+		engine.setCrdtPorts({ docUpdate: mock(async () => ({ head: "h" })) });
+		await engine.queue.enqueue({
+			path: path(0),
+			action: "upsert",
+			noteId: id(0),
+			crdt: true,
+			timestamp: 1,
+			vaultId: "v",
+		});
+		await engine.flushQueue();
+
+		await settle(() => converged(engine) === 1, 1_000, 15 * 60);
+		expect(converged(engine)).toBe(1);
+	});
+
 	test("a room whose STEP2 never comes is CLOSED before its slot is reused", async () => {
 		const { engine, rooms, settle } = harness({ dropStep2: (_id, attempt) => attempt === 1 });
 		engine.setCrdtPorts({ docState: mock().mockRejectedValue(new Error("timeout")) });

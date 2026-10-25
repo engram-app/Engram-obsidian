@@ -757,8 +757,8 @@ export class SyncEngine {
 	/** A timed-out note's next try, on its backoff. Cleared when it fires. */
 	private readonly healRetryTimers = this.track(
 		["vault", "destroy"],
-		new Map<string, number>(),
-		(timer) => this.time.clearTimeout(timer),
+		new Map<string, { timer: number; path: string; reason: HealRoomReason }>(),
+		(pending) => this.time.clearTimeout(pending.timer),
 	);
 	/** Token bucket for idle heal-room starts; `at` null until first use. */
 	private readonly healRoomBucket: { tokens: number; at: number | null } = {
@@ -8368,17 +8368,29 @@ export class SyncEngine {
 			this.healRetryTimers.delete(noteId);
 			this.poolIdleHeal(slot.path, noteId, slot.reason);
 		}, delay);
-		this.healRetryTimers.set(noteId, timer);
+		this.healRetryTimers.set(noteId, { timer, path: slot.path, reason: slot.reason });
 	}
 
-	/** The note converged (a STEP2, or room-free): forget its retry backoff, so
-	 *  a later heal for it is not held behind a timer it no longer needs. */
+	/** The note CONVERGED (a STEP2, or a room-free read, both of which commit
+	 *  here): forget its backoff AND its pending retry, which is no longer owed. */
 	private clearHealBackoff(noteId: string): void {
 		this.healRetries.delete(noteId);
-		const timer = this.healRetryTimers.get(noteId);
-		if (timer === undefined) return;
-		this.time.clearTimeout(timer);
+		const pending = this.healRetryTimers.get(noteId);
+		if (pending === undefined) return;
+		this.time.clearTimeout(pending.timer);
 		this.healRetryTimers.delete(noteId);
+	}
+
+	/** The server is answering for this note again (a room-free delivery was
+	 *  acked), but that leg only carried OUR ops: the server's change is still
+	 *  owed. Reset the backoff and run a pending retry now, never cancel it. */
+	private resetHealBackoff(noteId: string): void {
+		this.healRetries.delete(noteId);
+		const pending = this.healRetryTimers.get(noteId);
+		if (pending === undefined) return;
+		this.time.clearTimeout(pending.timer);
+		this.healRetryTimers.delete(noteId);
+		this.poolIdleHeal(pending.path, noteId, pending.reason);
 	}
 
 	private countHealRoom(reason: HealRoomReason): void {
@@ -13160,7 +13172,7 @@ export class SyncEngine {
 								!this.isLiveBound(normalizePath(entry.path)) &&
 								(await this.deliverQueuedOpsRoomFree(entry))
 							) {
-								this.clearHealBackoff(entry.noteId);
+								this.resetHealBackoff(entry.noteId);
 								await this.queue.dequeue(entry.path, this.entryVaultId(entry));
 								this.issues.clear(entry.path);
 								flushed++;
