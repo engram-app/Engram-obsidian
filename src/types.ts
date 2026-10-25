@@ -287,6 +287,10 @@ export interface NoteStreamEvent {
 	mtime?: number;
 	updated_at?: string;
 	version?: number;
+	/** The row's vault change seq, when the server stamps broadcasts with it
+	 *  (Engram#2233). Absent from older servers. Same meaning as a replay row's
+	 *  seq: it lets a delete fence its tombstone and a restore pass the fence. */
+	seq?: number;
 }
 
 /** A queued change waiting to be pushed when connectivity returns. */

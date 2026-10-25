@@ -498,7 +498,7 @@ describe("a rename's old leg must not destroy the note's CRDT room", () => {
 		await (e as any).trashRemotelyDeleted(file);
 		await e.handleDelete(file);
 
-		expect(removeDoc).toHaveBeenCalledWith("id-gone");
+		expect(removeDoc).toHaveBeenCalledWith("id-gone", undefined, "Gone.md");
 	});
 });
 

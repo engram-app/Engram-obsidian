@@ -142,7 +142,11 @@ describe("handleDelete — md branch calls removeDoc + enrollment.reset", () => 
 		await engine.handleDelete(file);
 
 		expect(crdt.removeDoc).toHaveBeenCalledTimes(1);
-		expect(crdt.removeDoc).toHaveBeenCalledWith("Notes/deleted.md");
+		expect(crdt.removeDoc).toHaveBeenCalledWith(
+			"Notes/deleted.md",
+			undefined,
+			"Notes/deleted.md",
+		);
 		expect(enrollment.reset).toHaveBeenCalledTimes(1);
 		expect(enrollment.reset).toHaveBeenCalledWith("Notes/deleted.md");
 	});
@@ -161,7 +165,11 @@ describe("handleDelete — md branch calls removeDoc + enrollment.reset", () => 
 		await engine.handleDelete(file);
 
 		expect(crdt.removeDoc).toHaveBeenCalledTimes(1);
-		expect(crdt.removeDoc).toHaveBeenCalledWith("Notes/already-gone.md");
+		expect(crdt.removeDoc).toHaveBeenCalledWith(
+			"Notes/already-gone.md",
+			undefined,
+			"Notes/already-gone.md",
+		);
 		expect(enrollment.reset).toHaveBeenCalledTimes(1);
 		expect(enrollment.reset).toHaveBeenCalledWith("Notes/already-gone.md");
 	});
@@ -324,7 +332,11 @@ describe("handleStreamEvent remote-delete — md branch calls removeDoc + enroll
 		});
 
 		expect(crdt.removeDoc).toHaveBeenCalledTimes(1);
-		expect(crdt.removeDoc).toHaveBeenCalledWith("Notes/remote-del.md");
+		expect(crdt.removeDoc).toHaveBeenCalledWith(
+			"Notes/remote-del.md",
+			undefined,
+			"Notes/remote-del.md",
+		);
 		expect(enrollment.reset).toHaveBeenCalledTimes(1);
 		expect(enrollment.reset).toHaveBeenCalledWith("Notes/remote-del.md");
 	});
@@ -368,7 +380,7 @@ describe("handleStreamEvent remote-delete — md branch calls removeDoc + enroll
 		});
 
 		expect(crdt.removeDoc).toHaveBeenCalledTimes(1);
-		expect(crdt.removeDoc).toHaveBeenCalledWith("Notes/ghost.md");
+		expect(crdt.removeDoc).toHaveBeenCalledWith("Notes/ghost.md", undefined, "Notes/ghost.md");
 		expect(enrollment.reset).toHaveBeenCalledTimes(1);
 		expect(enrollment.reset).toHaveBeenCalledWith("Notes/ghost.md");
 	});

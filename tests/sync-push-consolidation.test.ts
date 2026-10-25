@@ -506,7 +506,7 @@ describe("pushFile — echo suppression runs before the push slot (#426)", () =>
 		// modify event for it; the resulting push is pure echo.
 		(engine as any).stampSyncedRow("Notes/Echo.md", { hash: fnv1a("# same") });
 		// Every push slot held by a real in-flight upload.
-		(engine as any).activePushCount = (engine as any).maxConcurrentPushes;
+		(engine as any).pushSlots.active = (engine as any).pushSlots.max;
 
 		const result = await Promise.race([
 			(engine as any).pushFile(file),
@@ -520,7 +520,7 @@ describe("pushFile — echo suppression runs before the push slot (#426)", () =>
 		const file = new TFile("Notes/Real.md", Date.now());
 		const { engine } = makeEngine([file], { "Notes/Real.md": "# edited" });
 		(engine as any).stampSyncedRow("Notes/Real.md", { hash: fnv1a("# stale") });
-		(engine as any).activePushCount = (engine as any).maxConcurrentPushes;
+		(engine as any).pushSlots.active = (engine as any).pushSlots.max;
 
 		const result = await Promise.race([
 			(engine as any).pushFile(file),

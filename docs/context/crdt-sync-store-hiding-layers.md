@@ -90,6 +90,7 @@ goes red. `tests/index-crdt-regressions.test.ts` ("a forget is a bridge, not a
 verdict") is the worked example.
 
 ## Related
+- `crdt-tombstone-seq-fence.md`: the registry's delete tombstone, the same rule one layer down. Its clearing event is a sequenced row newer than the delete.
 - `path-keyed-oracle-id-keyed-wire.md`: what the engine does once a second id is minted
 - `crdt-editor-bind-race-pollution.md` — same `pathForId` seam, different cause
 - Local-vs-published split: `forget()` is local-only and takes the LITERAL path;

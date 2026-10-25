@@ -28,7 +28,7 @@ export interface Topology {
 }
 
 /** Boot N replicas sharing one model server + scheduler, joins settled. */
-async function boot(
+export async function boot(
 	seed: number,
 	ids: string[],
 	serverOpts: { genesisEmptyDoc?: boolean } = {},
