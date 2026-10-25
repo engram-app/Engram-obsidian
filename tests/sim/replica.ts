@@ -523,6 +523,8 @@ export class Replica {
 		engine.setCrdtCatchupSince((cursorSeq, limit) =>
 			channel.crdtCatchupSince(cursorSeq, limit),
 		);
+		// Room-free full-state read (main.ts setCrdtPorts `docState`).
+		engine.setCrdtPorts({ docState: (id: string) => channel.crdtDocState(id) });
 
 		// Paths this replica has an editor open on (openNote adds, closeNote
 		// removes). Backs isBound + setLiveBoundCheck below, exactly as
@@ -627,6 +629,7 @@ export class Replica {
 			} catch {
 				/* resumes from the persisted cursor on the next join */
 			}
+			engine.retryHeldLocalEdits(); // mirror main.ts: loads the gate held
 			// Mirror main.ts: kick the durable queue, which is where an edit
 			// refused while unjoined was recorded (#516) — this is what delivers
 			// an edit to a since-closed note.

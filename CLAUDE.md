@@ -184,6 +184,7 @@ Catalogs in `src/i18n/locale/` come from `translategemma:12b` on FastRaid's Olla
 - A path-keyed oracle (`hasServerNote`) gating an id-keyed wire, a frame the server drops with `note_not_found`, or `Echo skip` repeating forever → `docs/context/path-keyed-oracle-id-keyed-wire.md`
 - A web-app rename recreates the file in Obsidian instead of moving it, or live sync dies after a remote rename → `docs/context/remote-rename-identity-vs-file.md`
 - The progress modal or recap shows a different number than the preview promised (file units vs op-log rows) → `docs/context/sync-progress-units-files-not-ops.md`
+- A note's server copy holds its old body then the edited body, frontmatter keys doubled, or you are adding a path that writes disk or editor text into a Y.Doc (the load gate: no local input into a server-known doc with no local history; who resolves the held edit) → `docs/context/crdt-load-gate.md`
 - Editor-binding bug classes (note content copied into a DIFFERENT file on file-switch; base deleted when binding to an unseeded doc; typing at the frontmatter boundary dropped) → `docs/context/crdt-editor-bind-race-pollution.md`
 - Clicking a table cell in Live Preview pastes the whole note into it (any nested `EditorView` inherits the parent owner's `editorInfoField`) → `docs/context/live-binding-table-cell-editor.md`
 - Adding or reviewing a "hide this locally" Set in `SyncStore` (`evicted`/`forgotten`/`renamedAway`/`deleteSet`), or a note went deaf and re-minted a duplicate id → `docs/context/crdt-sync-store-hiding-layers.md`

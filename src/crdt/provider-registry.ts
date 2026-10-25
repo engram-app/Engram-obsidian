@@ -66,6 +66,21 @@ interface Entry {
 	 *  (delete-note resurrection). `lifetime.guard(...)` races the await against
 	 *  the end; `lifetime.active` is the cheap synchronous check. */
 	lifetime: Lifetime;
+	/** The server's state was read and holds no lineage (a row with no CRDT
+	 *  state yet), so a local seed cannot rival anything: the load gate is
+	 *  open. Set by `openLoadGate`; moot once the doc has history. */
+	serverEmpty?: boolean;
+	/** The doc has integrated anything at all (IndexedDB replay, a local seed,
+	 *  a remote merge). The remote merge that flips it is the doc's FIRST server
+	 *  state: its flush is told so (`firstLoad`), so disk drift is merged, not
+	 *  overwritten. */
+	hadHistory: boolean;
+	/** Bindings waiting for `openLoadGate` (an empty server state). Fired and
+	 *  cleared when the gate opens; dropped with the entry. */
+	gateWaiters: Set<() => void>;
+	/** The in-flight first-load flush; later flushes queue behind it. Cleared
+	 *  when it settles. */
+	loadFlush?: Promise<void> | null;
 }
 
 export interface ProviderRegistryOpts {
@@ -86,10 +101,20 @@ export interface ProviderRegistryOpts {
 		 *  the body, but nothing in the editor represents frontmatter, so only a
 		 *  frontmatter change justifies writing under a live editor. */
 		fmChanged: boolean,
+		/** This is the doc's first server state (it had no history before). Disk
+		 *  may hold input the load gate held; the write must not overwrite it. */
+		firstLoad: boolean,
 	) => Promise<boolean | undefined> | boolean | undefined;
 	/** Adopt-first gate: content byte-identical to the last-synced content must
 	 *  NOT seed (would fork a second lineage → #846 doubling). */
 	isUnchangedSynced?: (noteId: string, content: string) => boolean;
+	/** The server holds this note. With an empty doc that means this device has
+	 *  not loaded the server's state yet, so local input must wait (see
+	 *  `awaitsServerState`). */
+	serverHolds?: (noteId: string) => boolean;
+	/** A local edit was held because the doc awaits the server's state: load it.
+	 *  The edit stays where it is (disk, or the editor buffer) until then. */
+	onAwaitingServer?: (noteId: string) => void;
 	/** Fired on the first inbound syncStep2 for a note. */
 	onSynced?: (noteId: string) => void;
 	/** Fired when the first inbound syncStep2 leaves the doc EMPTY — the server's
@@ -182,7 +207,51 @@ export class ProviderRegistry {
 	 *  lineage, which is the trap the pre-handshake seed gate exists for. */
 	async ingestFrontmatter(noteId: string, content: string): Promise<void> {
 		const e = await this.entry(noteId);
+		if (this.awaitsServerState(noteId)) return; // the binding's load resolves it
 		seedFrontmatterInto(e.doc, content);
+	}
+
+	/** True while `noteId`'s doc must accept no local input: the server holds
+	 *  the note but this device has none of its history (catch-up wrote the body
+	 *  to disk, never to the doc). Any write now mints a rival lineage that the
+	 *  server unions with its own copy, doubling the body. Relay's System
+	 *  Invariant #3 is the same rule: consult the server before merging.
+	 *
+	 *  Ends the moment the server's state lands in the doc, by any route (room
+	 *  handshake, `crdt_doc_state`, fan-out). Not resident or not yet hydrated
+	 *  reads false: callers check after `entry()`/`ready`. */
+	awaitsServerState(noteId: string): boolean {
+		const e = this.entries.get(noteId);
+		if (!e || e.serverEmpty || !this.opts.serverHolds?.(noteId)) return false;
+		return !docHasAnyHistory(e.doc, e.kind);
+	}
+
+	/** The loaded server state `update` carries no lineage: open the gate so
+	 *  the held edit seeds. False (gate stays shut) when it does carry one. */
+	async openLoadGate(noteId: string, update: Uint8Array): Promise<boolean> {
+		if (Y.decodeUpdate(update).structs.length > 0) return false;
+		this.releaseLoadGate(await this.entry(noteId));
+		return true;
+	}
+
+	/** The server's state is known to hold nothing (a struct-less
+	 *  `crdt_doc_state`, or a room's first syncStep2 that left the doc with no
+	 *  history): open the gate and fire the waiting bindings, once. */
+	private releaseLoadGate(e: Entry): void {
+		e.serverEmpty = true;
+		const waiters = [...e.gateWaiters];
+		e.gateWaiters.clear();
+		for (const w of waiters) w();
+	}
+
+	/** Run `cb` once when `openLoadGate` opens `noteId`'s gate (the open
+	 *  editor's way out of waiting for a seed that will never come). Returns
+	 *  the unsubscribe. A no-op when the doc is not resident. */
+	onLoadGateOpen(noteId: string, cb: () => void): () => void {
+		const e = this.entries.get(noteId);
+		if (!e) return () => {};
+		e.gateWaiters.add(cb);
+		return () => e.gateWaiters.delete(cb);
 	}
 
 	private async entry(noteId: string): Promise<Entry> {
@@ -229,7 +298,12 @@ export class ProviderRegistry {
 				this.opts.onSynced?.(noteId);
 				// A first syncStep2 that left the doc empty = the server's "genuinely
 				// empty note" signal (materialize off the handshake, #547).
-				if (text.length === 0) this.opts.onEmptyStep2?.(noteId);
+				if (text.length === 0) {
+					// The same proof opens the load gate for an open editor waiting
+					// on a seed that will never come (the room's only loader).
+					if (this.awaitsServerState(noteId)) this.releaseLoadGate(entry);
+					this.opts.onEmptyStep2?.(noteId);
+				}
 			},
 		});
 		persistence.on("error", (err: unknown) => this.opts.onPersistError?.(noteId, err));
@@ -244,29 +318,48 @@ export class ProviderRegistry {
 			lastFlushedFm: null,
 			pendingFlush: null,
 			lifetime: new Lifetime(),
+			hadHistory: false,
+			gateWaiters: new Set(),
 		};
 		// Disk-flush listener: a REMOTE merge (origin === provider from
 		// readSyncMessage, or REMOTE from applyRemoteUpdate) writes back to disk.
 		// Local edits (editor/default origin) and IndexedDB replay do NOT flush.
 		doc.on("update", (_u: Uint8Array, origin: unknown) => {
 			if (!entry.lifetime.active) return; // deleted mid-flight — never flush a dead doc
+			const firstLoad = !entry.hadHistory && docHasAnyHistory(doc, kind);
+			if (firstLoad) entry.hadHistory = true;
 			if (origin !== provider && origin !== REMOTE) return;
 			entry.remoteSeq += 1;
-			const projected = this.project(entry);
-			// Compare the BLOCK against what the last flush projected, not against
-			// the editor. The editor is the wrong oracle: in Live Preview the CM
-			// document is body-only, so it never carries a fence, and comparing
-			// against it reported "frontmatter differs" for EVERY note that has
-			// any — turning the bound-path nudge into a direct write under a live
-			// editor on Obsidian's default mode.
-			const fmBlock = splitFrontmatter(projected).fmBlock;
-			const fmChanged = fmBlock !== entry.lastFlushedFm;
-			entry.lastFlushedFm = fmBlock;
+			const write = () => {
+				const projected = this.project(entry);
+				// Compare the BLOCK against what the last flush projected, not against
+				// the editor. The editor is the wrong oracle: in Live Preview the CM
+				// document is body-only, so it never carries a fence, and comparing
+				// against it reported "frontmatter differs" for EVERY note that has
+				// any — turning the bound-path nudge into a direct write under a live
+				// editor on Obsidian's default mode.
+				const fmBlock = splitFrontmatter(projected).fmBlock;
+				const fmChanged = fmBlock !== entry.lastFlushedFm;
+				entry.lastFlushedFm = fmBlock;
+				return this.opts.onFlushToDisk(noteId, projected, fmChanged, firstLoad);
+			};
+			// While the first-load flush resolves held disk input, later flushes
+			// wait for it (and project afresh): writing first would put server text
+			// over the very input the interlock is reading.
+			const prior = entry.loadFlush;
 			const flush = Promise.resolve(
-				this.opts.onFlushToDisk(noteId, projected, fmChanged),
+				prior ? prior.catch(() => undefined).then(write) : write(),
 			).then((ok) => {
 				if (ok === false) throw new Error(`flushFromCrdt write failure for ${noteId}`);
 			});
+			if (firstLoad) {
+				entry.loadFlush = flush;
+				void flush
+					.catch(() => undefined)
+					.finally(() => {
+						if (entry.loadFlush === flush) entry.loadFlush = null;
+					});
+			}
 			entry.pendingFlush = flush;
 			// Clear pendingFlush once it SETTLES (success or failure) so it only ever
 			// reflects an in-flight flush. The room path (readSyncMessage) has no
@@ -391,6 +484,15 @@ export class ProviderRegistry {
 		const e = await this.entry(noteId);
 		if (!e.lifetime.active) return null; // destroyed while we awaited hydration
 		let content = diskContent;
+
+		// The load gate (`awaitsServerState`). Disk unchanged since sync is no
+		// input at all. Anything else is held on disk, unconsumed, while the
+		// engine loads the server state and merges it.
+		if (this.awaitsServerState(noteId)) {
+			if (this.opts.isUnchangedSynced?.(noteId, diskContent)) return diskContent;
+			this.opts.onAwaitingServer?.(noteId);
+			return null;
+		}
 
 		// LCA path (#357). With a merge base we apply the disk's delta RELATIVE TO
 		// THE BASE, so a remote op that landed after the disk read survives by

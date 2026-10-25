@@ -5,6 +5,14 @@ copy and the original reverts; or e2e `test_concurrent_edits_both_survive` /
 `test_edit_after_discovery_round_trips` fail intermittently, usually the first
 CRDT test after session start.
 
+
+> **Superseded mechanism (2026-10-25, PR #640):** `fastForwardHistoryLess` and
+> the pre-apply keep-both in `adoptHistoryLessNote` are gone. The same rules
+> (fast-forward, 3-way merge on the discovered body, one copy otherwise) now run
+> in ONE place, the disk-drift interlock in `flushFromCrdt`, for every route a
+> first server state arrives by. See `crdt-load-gate.md`. The history below is
+> still why the rules are what they are.
+
 ## What happened
 
 Backend #2043 (atomic genesis) made the genesis op-log row carry the note
