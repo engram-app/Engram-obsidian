@@ -23,6 +23,14 @@
 // — that overlay IS the differential proof, not a regression. Do not "fix" a red
 // here by loosening the oracle; restore the fence.
 //
+// LOAD GATE (#640): both scenarios open the note on B once before the dropped
+// delivery, so B holds the note's history and the load gate does not fire. Left
+// history-less, B's own crdt_doc_state load handed it A's edit before the
+// reconnect and both gates passed under the plain fence too. Re-proved
+// 2026-10-25 by overlaying only the equal-seq clause
+// (`(change.seq === stored.seq && contentMatches)` -> `change.seq === stored.seq`):
+// both RED; restored: both GREEN.
+//
 // NOT COVERED — #288 genesis wipe (model-tier fidelity limit, Task 7b third
 // gap): a PLAIN-content genesis is a truly-EMPTY server doc in reality too
 // (crdt_create -> genesis_crdt_note makes content=""; bind/3 seed_from_content
@@ -43,6 +51,7 @@ import {
 	equalSeqFence,
 	freshDeviceEditsDiscoveredNote,
 	genesisWipe,
+	heldTypingSurvivesReconnect,
 	offlineBoundEditRecovers,
 	offlineEditSwitchAwayRecovers,
 	renameThenDeleteFast,
@@ -204,6 +213,19 @@ test("fresh device edits a discovered note: server holds the edit once", async (
 	const r = await freshDeviceEditsDiscoveredNote();
 	try {
 		expect(r.topology.server.state().notes.get(r.notePath)?.content).toBe(r.edited);
+		await assertConverged(r.topology.replicas, r.topology.server, r.topology.scheduler);
+	} finally {
+		cleanup(r.topology);
+	}
+});
+
+// Typing held while offline must survive the reconnect handshake's disk
+// write (#640 review, HIGH 1): the server state lands on a doc whose disk
+// holds unsynced typing; it merges in, never overwrites.
+test("held typing survives the reconnect handshake: merged, not overwritten", async () => {
+	const r = await heldTypingSurvivesReconnect();
+	try {
+		expect(r.topology.server.state().notes.get(r.notePath)?.content).toBe(r.typed);
 		await assertConverged(r.topology.replicas, r.topology.server, r.topology.scheduler);
 	} finally {
 		cleanup(r.topology);

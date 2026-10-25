@@ -131,6 +131,15 @@ export async function equalSeqFence(seed = 282): Promise<EqualSeqResult> {
 	await a.createNote(notePath, "base\n");
 	await t.scheduler.drain(); // both converge to "base"
 
+	// B holds the note's history BEFORE the dropped delivery (it opens the note
+	// once, so the room seeds its doc). Otherwise the load gate fires on B's
+	// edit and its own crdt_doc_state read hands B A's edit early, and the
+	// fence below never decides anything (#640 review, HIGH 2).
+	await b.openNote(notePath);
+	await t.scheduler.drain();
+	await b.closeNote(notePath);
+	await t.scheduler.drain();
+
 	// B misses the NEXT server->B delivery: A's edit fan-out is dropped.
 	t.server.dropNext("B");
 	const fromA = "base\nedited by A (B will miss the live delivery)\n";
@@ -176,6 +185,15 @@ export async function test85MissedDeliveryLocalPush(seed = 85): Promise<Test85Re
 	const [a, b] = t.replicas;
 	const notePath = "test85.md";
 	await a.createNote(notePath, "line1\n");
+	await t.scheduler.drain();
+
+	// B holds the note's history BEFORE the dropped delivery (it opens the note
+	// once, so the room seeds its doc). Otherwise the load gate fires on B's
+	// edit and its own crdt_doc_state read hands B A's edit early, and the
+	// fence below never decides anything (#640 review, HIGH 2).
+	await b.openNote(notePath);
+	await t.scheduler.drain();
+	await b.closeNote(notePath);
 	await t.scheduler.drain();
 
 	// A appends a line; B misses the live fan-out.
@@ -370,4 +388,45 @@ export async function freshDeviceEditsDiscoveredNote(seed = 590): Promise<FreshD
 	await b.editNote(notePath, edited);
 	await t.scheduler.drain();
 	return { topology: t, notePath, edited };
+}
+
+// ---------------------------------------------------------------------------
+// Typing held while offline survives the reconnect handshake (#640 review,
+// HIGH 1). B discovers a note, goes offline, opens it (the binding enrolls, the
+// doc is held: no server state yet), autosave writes typing to disk, B closes
+// it and reconnects. The re-sent STEP1 brings the server state, and its disk
+// flush used to write the old body over the typing with no conflict copy.
+// ---------------------------------------------------------------------------
+export interface HeldTypingResult {
+	topology: Topology;
+	notePath: string;
+	typed: string;
+	replicaB: Replica;
+}
+
+export async function heldTypingSurvivesReconnect(seed = 591): Promise<HeldTypingResult> {
+	const t = await boot(seed, ["A", "B"], { genesisEmptyDoc: true });
+	const [a, b] = t.replicas;
+	const notePath = "held591.md";
+	const body = "# held\n\nfirst body line.\n";
+	const typed = `${body}typed offline while gated.\n`;
+	await b.goOffline();
+	await t.scheduler.drain();
+	await a.createNote(notePath, body);
+	await t.scheduler.drain();
+	await b.goOnline();
+	await t.scheduler.drain();
+	await b.goOffline();
+	await t.scheduler.drain();
+	await b.openNote(notePath);
+	await t.scheduler.drain();
+	// Obsidian's autosave of the typing; the binding holds it (doc not loaded).
+	const app = (b as unknown as { app: { vault: any } }).app;
+	await app.vault.modify(app.vault.getFileByPath(notePath), typed);
+	await t.scheduler.drain();
+	await b.closeNote(notePath);
+	await t.scheduler.drain();
+	await b.goOnline();
+	await t.scheduler.drain();
+	return { topology: t, notePath, typed, replicaB: b };
 }
