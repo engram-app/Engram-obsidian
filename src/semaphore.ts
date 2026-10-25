@@ -7,18 +7,27 @@ export class Semaphore {
 
 	constructor(public max: number) {}
 
+	/** Take a slot now if one is free; never waits. */
+	tryAcquire(): boolean {
+		if (this.active >= this.max) return false;
+		this.active++;
+		return true;
+	}
+
 	async acquire(): Promise<void> {
 		if (this.active < this.max) {
 			this.active++;
 			return;
 		}
+		// The releaser hands its slot straight over (see `release`), so there is
+		// no gap in which a `tryAcquire` or a fresh `acquire` could take it too.
 		await new Promise<void>((resolve) => this.waiters.push(resolve));
-		this.active++;
 	}
 
 	release(): void {
-		this.active--;
-		this.waiters.shift()?.();
+		const next = this.waiters.shift();
+		if (next) next();
+		else this.active--;
 	}
 
 	/** Run `fn` holding a slot; the slot is released however `fn` settles. */

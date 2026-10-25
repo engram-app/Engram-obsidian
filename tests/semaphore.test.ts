@@ -18,3 +18,17 @@ test("never exceeds max holders, wakes waiters in order, releases on throw", asy
 	expect(results[1].status).toBe("rejected");
 	expect(order.sort()).toEqual([0, 1, 2, 3, 4]);
 });
+
+test("a released slot goes to the waiter, never to a tryAcquire in between", async () => {
+	const s = new Semaphore(1);
+	expect(s.tryAcquire()).toBe(true);
+	let woke = false;
+	const waiter = s.acquire().then(() => {
+		woke = true;
+	});
+	s.release();
+	expect(s.tryAcquire()).toBe(false);
+	await waiter;
+	expect(woke).toBe(true);
+	expect(s.active).toBe(1);
+});
