@@ -6,8 +6,13 @@
  * lands, then resolves once.
  */
 import { afterEach, expect, test } from "bun:test";
+import "fake-indexeddb/auto";
+import * as encoding from "lib0/encoding";
+import * as syncProtocol from "y-protocols/sync";
 import * as Y from "yjs";
 import { LiveBindingValue, setLiveBindingCoordinator } from "../src/crdt/live/live-binding";
+import { ProviderRegistry } from "../src/crdt/provider-registry";
+import { MESSAGE_SYNC, toB64 } from "../src/crdt/wire";
 
 const PATH = "Notes/Held.md";
 const ID = "id-held";
@@ -156,4 +161,40 @@ test("server state with no data: the gate opens and the editor seeds the doc", a
 	openGate();
 	expect(text.toJSON()).toBe(typed);
 	binding.destroy();
+});
+
+test("empty server note, editor open: the room's empty STEP2 opens the gate, the editor seeds", async () => {
+	// The production trigger, not a hand-fired gate: a real registry, the open
+	// editor's room handshake answering with a server doc that holds nothing.
+	const mgr = new ProviderRegistry({
+		dbPrefix: "resolve-empty-step2",
+		send: () => true,
+		onFlushToDisk: () => undefined,
+		serverHolds: () => true,
+	});
+	const typed = `${BASE}typed into an empty server note.\n`;
+	setLiveBindingCoordinator({
+		resolveId: () => ID,
+		residentText: (id) => mgr.residentText(id),
+		enroll: () => {},
+		onBind: () => {},
+		onRelease: () => {},
+		awaitsServer: (id) => mgr.awaitsServerState(id),
+		onLoadGateOpen: (id, cb) => mgr.onLoadGateOpen(id, cb),
+		loadMergeBase: async () => null,
+		keepConflictCopy: async () => true,
+		restoreLocalText: async () => {},
+	});
+	const binding = new LiveBindingValue(fakeEditor(typed));
+	await tick();
+	expect(mgr.awaitsServerState(ID)).toBe(true); // held, deferred
+	const enc = encoding.createEncoder();
+	encoding.writeVarUint(enc, MESSAGE_SYNC);
+	syncProtocol.writeSyncStep2(enc, new Y.Doc());
+	await mgr.receive(ID, toB64(encoding.toUint8Array(enc)));
+	await tick();
+	expect(mgr.awaitsServerState(ID)).toBe(false);
+	expect(await mgr.getText(ID)).toBe(typed);
+	binding.destroy();
+	await mgr.destroyAll();
 });

@@ -331,3 +331,18 @@ test("server state with no data, note closed: the held edit seeds once", async (
 	expect(await mgr.projectedText(ID)).toBe(C2);
 	expect(disk.get(PATH)).toBe(C2);
 });
+
+test("restoring the editor's text never recreates a note deleted meanwhile", async () => {
+	const { e, disk } = await scenario("gate-restore-deleted");
+	disk.delete(PATH); // deleted (tombstoned) during the load window
+	await e.restoreLocalText(PATH, C2);
+	expect(disk.has(PATH)).toBe(false); // no resurrection at the original path
+	const copies = [...disk.entries()].filter(([p]) => p.includes("(conflict"));
+	expect(copies.map(([, c]) => c)).toEqual([C2]); // the text is kept, in a copy
+});
+
+test("restoring the editor's text writes it over a note that still exists", async () => {
+	const { e, disk } = await scenario("gate-restore-exists");
+	await e.restoreLocalText(PATH, C2);
+	expect(disk.get(PATH)).toBe(C2);
+});

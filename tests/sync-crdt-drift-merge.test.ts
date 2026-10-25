@@ -123,10 +123,13 @@ async function historyLessScenario(opts: {
 			opts.midFirstFlush = undefined;
 			// A racing fan-out is not awaited by the flush it races (the registry
 			// queues its flush behind this first-load one, so awaiting it here
-			// would deadlock): start it, let it integrate, then write.
+			// would deadlock): start it, wait until its update has INTEGRATED into
+			// the doc (an explicit latch, no timer), then write.
 			if (race) {
+				const doc = await mgr.getDoc(id);
+				const integrated = new Promise<void>((r) => doc.once("update", () => r()));
 				void race(mgr);
-				await new Promise((r) => setTimeout(r, 5));
+				await integrated;
 			}
 			// Mirror production wiring: route the manager flush through the engine's
 			// flushFromCrdt so it lands on the shared fake disk with baseline recording,
