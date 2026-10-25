@@ -113,6 +113,14 @@ export const BLOB_HEAL_PUSHES_PER_PASS = 20;
  *  (see handleBlobMissing). A definitive outcome stops it sooner. */
 export const BLOB_HEAL_MAX_ATTEMPTS = 3;
 
+/** Heal rooms (re-handshakes) one device may hold open at once for notes
+ *  nobody has open in an editor (Engram#2242). The server's per-node LRU keeps
+ *  64 rooms resident, so one phone's backlog must never claim more than a small
+ *  slice of it. A heal round trip is about 100-300 ms, so 4 in flight still
+ *  drains an 800-note backlog in roughly a minute. Notes past the pool wait,
+ *  still marked: they fire as slots free. */
+export const IDLE_HEAL_ROOMS = 4;
+
 /** True when `content` is too large to enter the Yjs doc: seeding it would
  *  produce a base64 `crdt_msg` past Bandit's 8 MB WebSocket frame limit → 1009,
  *  killing the socket (and re-crashing on every reconnect). Every CRDT seed
