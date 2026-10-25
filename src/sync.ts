@@ -129,9 +129,27 @@ type HealRoomReason =
 	| "queue_fallback"
 	| "other";
 
-/** How long a heal slot is held waiting for the server's STEP2 before it is
- *  given back. A lost STEP2 must not shrink the pool for the session. */
+/** How long a heal room waits for the server's STEP2 before it is closed (and
+ *  the note re-queued if still marked). A lost STEP2 must not shrink the pool
+ *  for the session. */
 const HEAL_SLOT_TIMEOUT_MS = 30_000;
+
+/** Per-device budget for idle heal-room STARTS (Engram#2242). The server alert
+ *  fires on more than 300 starts per task in 10 minutes. A burst of 5 plus 15 a
+ *  minute caps any 60 s window at 20 and a 10-minute window at 155 from one
+ *  device, so one phone alone can never trip it. */
+const HEAL_ROOM_BURST = 5;
+const HEAL_ROOMS_PER_MINUTE = 15;
+
+/** Report idle heal rooms at least this often, not only when the pool drains. */
+const HEAL_ROOM_REPORT_EVERY = 50;
+
+interface HealSlot {
+	path: string;
+	reason: HealRoomReason;
+	/** The budget wait, then the STEP2 timeout. */
+	timer: number;
+}
 
 /** Room-free frame latch backoff (see `frameLatched`): 30 s, doubling, 10 min cap. */
 const FRAME_LATCH_BASE_MS = 30_000;
@@ -706,20 +724,35 @@ export class SyncEngine {
 	private readonly idleHealRooms = new Semaphore(IDLE_HEAL_ROOMS);
 	/** Idle notes queued for a heal slot. Being in here IS the pending-repair
 	 *  mark: the note fires when a slot frees. Cleared by the fire. */
-	private readonly idleHealWaiting = this.track(["vault", "destroy"], new Set<string>());
-	/** Idle notes holding a heal slot -> the slot's release. Cleared by the
-	 *  room's release (a converged STEP2), or by `HEAL_SLOT_TIMEOUT_MS`. */
+	private readonly idleHealWaiting = this.track(
+		["vault", "destroy"],
+		new Map<string, { path: string; reason: HealRoomReason }>(),
+	);
+	/** Idle notes holding a heal slot. Cleared when the room CLOSES
+	 *  (`releaseHealRoom` -> `freeHealSlot`). A sweep hands the slot back
+	 *  directly: the rooms belong to the old vault's channel. */
 	private readonly idleHealSlots = this.track(
 		["vault", "destroy"],
-		new Map<string, () => void>(),
-		(free) => free(),
+		new Map<string, HealSlot>(),
+		(slot) => {
+			this.time.clearTimeout(slot.timer);
+			this.idleHealRooms.release();
+		},
 	);
-	/** Why idle notes needed a heal room since the last report; shipped as one
-	 *  counts-only anomaly each time the pool drains. */
-	private readonly healRoomReasons = this.track(
+	/** Heals asked for while the note's room was still open; queued again when
+	 *  it closes. Cleared by that re-queue. */
+	private readonly idleHealRefire = this.track(["vault", "destroy"], new Set<string>());
+	/** Idle heal rooms OPENED since the last report, by reason. */
+	private readonly healRoomsOpened = this.track(
 		["vault", "destroy"],
 		new Map<HealRoomReason, number>(),
 	);
+	private healRoomsUnreported = 0;
+	/** Token bucket for idle heal-room starts; `at` null until first use. */
+	private readonly healRoomBucket: { tokens: number; at: number | null } = {
+		tokens: HEAL_ROOM_BURST,
+		at: null,
+	};
 	/** >0 while a bulk sweep (pushAll / fullSync) is running. Queue entries it
 	 *  produces get Background priority — see priorityForPath. */
 	private bulkDepth = 0;
@@ -4273,6 +4306,8 @@ export class SyncEngine {
 		const strikes = (this.frameStrikes.get(frame) ?? 0) + 1;
 		this.frameStrikes.set(frame, strikes);
 		if (strikes < SyncEngine.FRAME_UNSUPPORTED_LATCH) return false;
+		// Already latched by a concurrent failure: one backoff step per window.
+		if (this.frameLatched(frame)) return false;
 		const latches = (this.unsupportedFrames.get(frame)?.latches ?? 0) + 1;
 		const until =
 			this.time.now() + expBackoff(FRAME_LATCH_BASE_MS, latches - 1, FRAME_LATCH_MAX_MS);
@@ -4842,7 +4877,16 @@ export class SyncEngine {
 		// it means "would tearing this down destroy something", which a receipt
 		// does not answer. Relaxing it here can cost a wasted room; relaxing it
 		// there would cost a file.
-		const delivered = this.crdt?.hasCurrentDeliveryReceipt?.(noteId) === true;
+		let delivered = this.crdt?.hasCurrentDeliveryReceipt?.(noteId) === true;
+		// Real local work: ship it room-free first (#1493). The ack records the
+		// receipt, which makes the read below legal, so an idle note with local
+		// edits converges with zero rooms (Engram#2242). Only a failed write
+		// leaves it to the room.
+		if (this.crdt?.hasUndeliveredOps(noteId) && !delivered) {
+			delivered =
+				(await this.deliverQueuedOpsRoomFree({ path: normalized, noteId })) &&
+				this.crdt?.hasCurrentDeliveryReceipt?.(noteId) === true;
+		}
 		let reason: HealRoomReason = "undelivered";
 		if (this.crdt && (!this.crdt.hasUndeliveredOps(noteId) || delivered)) {
 			reason = this.frameLatched(DOC_STATE_FRAME) ? "doc_state_latched" : "doc_state_failed";
@@ -8179,60 +8223,129 @@ export class SyncEngine {
 	}
 
 	/** Engram#2242: an IDLE note's heal room waits for one of `IDLE_HEAL_ROOMS`
-	 *  slots, so a burst of diverged idle notes is paced rather than opening a
-	 *  room each at once. The note is never dropped: it waits here, marked, and
-	 *  fires as soon as a slot frees. A note already waiting or in flight
-	 *  coalesces (the in-flight STEP2 commits the newest stage). One that is
-	 *  opened in an editor while it waits takes its room at once, and one
-	 *  deleted meanwhile is skipped. */
+	 *  slots AND a token from the per-device start budget
+	 *  (`HEAL_ROOM_BURST` + `HEAL_ROOMS_PER_MINUTE`), so a burst of diverged
+	 *  idle notes is paced rather than opening a room each at once. A backstop:
+	 *  the root fix (a persisted server-acked snapshot) means most idle notes
+	 *  never ask for a room at all.
+	 *
+	 *  Never dropped. A note waits here, marked (`idleHealWaiting`), until it
+	 *  fires. A second request while its room is still open is remembered
+	 *  (`idleHealRefire`) and re-queued when the room closes, so a recovery poke
+	 *  after a lost STEP2 still lands. A note opened in an editor while it waits
+	 *  takes its room at once; one deleted or swept meanwhile is skipped. */
 	private poolIdleHeal(path: string, noteId: string, reason: HealRoomReason): void {
-		this.healRoomReasons.set(reason, (this.healRoomReasons.get(reason) ?? 0) + 1);
-		if (this.idleHealWaiting.has(noteId) || this.idleHealSlots.has(noteId)) return;
-		if (this.idleHealRooms.tryAcquire()) {
-			this.holdHealSlot(path, noteId);
+		if (this.idleHealSlots.has(noteId)) {
+			this.idleHealRefire.add(noteId);
 			return;
 		}
-		this.idleHealWaiting.add(noteId);
-		void this.idleHealRooms.acquire().then(() => {
-			const current = this.noteIdMap ? this.noteIdMap.pathForId(noteId) : path;
-			// Swept (vault switch, destroy) or deleted while it waited.
-			if (!this.idleHealWaiting.delete(noteId) || !current || !this.crdtEnrollment) {
-				this.idleHealRooms.release();
-				this.reportHealRoomReasons();
-				return;
-			}
-			if (this.isLiveBound(normalizePath(current))) {
-				this.idleHealRooms.release();
-				this.openHealRoom(current, noteId);
-				return;
-			}
-			this.holdHealSlot(current, noteId);
-		});
+		if (this.idleHealWaiting.has(noteId)) return;
+		this.idleHealWaiting.set(noteId, { path, reason });
+		if (this.idleHealRooms.tryAcquire()) {
+			this.startHeal(noteId);
+			return;
+		}
+		void this.idleHealRooms.acquire().then(() => this.startHeal(noteId));
 	}
 
-	/** Open the room holding a slot. The slot frees when the room is released
-	 *  (`releaseHealRoom`, after the converging STEP2), when an inbound frame
-	 *  finds nothing to commit, on a sweep, or after `HEAL_SLOT_TIMEOUT_MS`. */
-	private holdHealSlot(path: string, noteId: string): void {
-		let timer = 0;
-		const free = () => {
-			if (this.idleHealSlots.get(noteId) !== free) return;
-			this.idleHealSlots.delete(noteId);
-			this.time.clearTimeout(timer);
+	/** Holding a pool slot: claim it for `noteId`, then open the room as soon as
+	 *  the start budget allows. */
+	private startHeal(noteId: string): void {
+		const queued = this.idleHealWaiting.get(noteId);
+		this.idleHealWaiting.delete(noteId);
+		const path = queued && (this.noteIdMap ? this.noteIdMap.pathForId(noteId) : queued.path);
+		if (!queued || !path || !this.crdtEnrollment) {
 			this.idleHealRooms.release();
-			this.reportHealRoomReasons();
-		};
-		timer = this.time.setTimeout(free, HEAL_SLOT_TIMEOUT_MS);
-		this.idleHealSlots.set(noteId, free);
-		this.openHealRoom(path, noteId);
+			this.maybeReportHealRooms();
+			return;
+		}
+		if (this.isLiveBound(normalizePath(path))) {
+			this.idleHealRooms.release();
+			this.openHealRoom(path, noteId);
+			return;
+		}
+		const slot: HealSlot = { path, reason: queued.reason, timer: 0 };
+		this.idleHealSlots.set(noteId, slot);
+		this.openWhenBudgeted(noteId, slot);
 	}
 
-	/** One counts-only line per burst: when the pool has fully drained. */
-	private reportHealRoomReasons(): void {
-		if (this.idleHealSlots.size > 0 || this.idleHealWaiting.size > 0) return;
-		if (this.healRoomReasons.size === 0) return;
-		const counts = Object.fromEntries(this.healRoomReasons);
-		this.healRoomReasons.clear();
+	private openWhenBudgeted(noteId: string, slot: HealSlot): void {
+		if (this.idleHealSlots.get(noteId) !== slot) return;
+		const wait = this.takeHealRoomToken();
+		if (wait > 0) {
+			slot.timer = this.time.setTimeout(() => this.openWhenBudgeted(noteId, slot), wait);
+			return;
+		}
+		slot.timer = this.time.setTimeout(
+			() => this.healSlotTimedOut(noteId, slot),
+			HEAL_SLOT_TIMEOUT_MS,
+		);
+		this.countHealRoom(slot.reason);
+		this.openHealRoom(slot.path, noteId);
+	}
+
+	/** Token bucket for idle heal-room STARTS (what the server's surge alert
+	 *  counts). Returns 0 when a token was taken, else the ms until one is due. */
+	private takeHealRoomToken(): number {
+		const now = this.time.now();
+		const perToken = 60_000 / HEAL_ROOMS_PER_MINUTE;
+		const bucket = this.healRoomBucket;
+		bucket.tokens = Math.min(
+			HEAL_ROOM_BURST,
+			bucket.tokens + (now - (bucket.at ?? now)) / perToken,
+		);
+		bucket.at = now;
+		if (bucket.tokens >= 1) {
+			bucket.tokens -= 1;
+			return 0;
+		}
+		return Math.ceil((1 - bucket.tokens) * perToken);
+	}
+
+	/** The STEP2 never came. Close the room (a freed slot must mean a closed
+	 *  room, or the server-side bound does not hold) and, if the note is still
+	 *  marked for repair, queue it again. */
+	private healSlotTimedOut(noteId: string, slot: HealSlot): void {
+		if (this.idleHealSlots.get(noteId) !== slot) return;
+		if (this.pendingConvergence.has(noteId) || this.pendingQueueDeliveries.has(noteId)) {
+			this.idleHealRefire.add(noteId);
+		}
+		this.releaseHealRoom(noteId, null);
+	}
+
+	/** Give a slot back. Called only once its room is closed (`releaseHealRoom`).
+	 *  A heal asked for while the room was open is queued now. */
+	private freeHealSlot(noteId: string): void {
+		const slot = this.idleHealSlots.get(noteId);
+		if (!slot) return;
+		this.idleHealSlots.delete(noteId);
+		this.time.clearTimeout(slot.timer);
+		this.idleHealRooms.release();
+		if (this.idleHealRefire.delete(noteId)) this.poolIdleHeal(slot.path, noteId, slot.reason);
+		else this.maybeReportHealRooms();
+	}
+
+	private countHealRoom(reason: HealRoomReason): void {
+		this.healRoomsOpened.set(reason, (this.healRoomsOpened.get(reason) ?? 0) + 1);
+		if (++this.healRoomsUnreported >= HEAL_ROOM_REPORT_EVERY) this.flushHealRoomCounts();
+	}
+
+	private maybeReportHealRooms(): void {
+		if (this.idleHealSlots.size === 0 && this.idleHealWaiting.size === 0) {
+			this.flushHealRoomCounts();
+		}
+	}
+
+	/** Ship the idle heal rooms OPENED since the last report, by reason, as one
+	 *  counts-only line. Runs when the pool drains, every
+	 *  `HEAL_ROOM_REPORT_EVERY` rooms, when the app is hidden (main.ts), and on
+	 *  destroy, so an iOS session killed mid-drain still reports. */
+	flushHealRoomCounts(): void {
+		if (this.healRoomsOpened.size === 0) return;
+		const counts: Record<string, number> = Object.fromEntries(this.healRoomsOpened);
+		counts.queued = this.idleHealWaiting.size;
+		this.healRoomsOpened.clear();
+		this.healRoomsUnreported = 0;
 		rlog().anomaly("crdt", "heal_room_fallback", counts);
 	}
 
@@ -8315,8 +8428,10 @@ export class SyncEngine {
 			// A settled queue nudge with no staged convergence: the nudge's
 			// transient room is done — release it. A frame with NOTHING pending
 			// stays a pure no-op (commit fires on every inbound frame).
+			// An idle heal's room (gap heal, history-less delta) has done its job
+			// too: close it, so the freed slot means a closed room.
 			if (queued) this.releaseHealRoom(noteId, queued.path);
-			else this.idleHealSlots.get(noteId)?.();
+			else if (this.idleHealSlots.has(noteId)) this.releaseHealRoom(noteId, null);
 			return;
 		}
 		// Provider model: the provider fired onSynced from readSyncMessage — the doc is
@@ -8396,7 +8511,7 @@ export class SyncEngine {
 	private crdtRelease: ((docId: string) => void) | null = null;
 
 	private releaseHealRoom(noteId: string, path: string | null): void {
-		this.idleHealSlots.get(noteId)?.();
+		this.freeHealSlot(noteId);
 		// Re-resolve the CURRENT path — `path` may be the enqueue/staging-time
 		// path, and a rename in between would otherwise check liveness (and
 		// hibernate) against the stale path and closeDoc a doc the editor still
@@ -13145,6 +13260,7 @@ export class SyncEngine {
 
 	/** Cancel all pending debounce, cooldown, and health check timers. */
 	destroy(): void {
+		this.flushHealRoomCounts();
 		// Every tracked collection registered for "destroy", timers cancelled by
 		// the dispose hooks at their declarations. `syncState` is registered for
 		// "vault" only and so is deliberately spared here: it is the persisted

@@ -18,7 +18,7 @@ import { NoteIdMap } from "../src/crdt/note-id-map";
 import type { ProviderRegistry as CrdtManager } from "../src/crdt/provider-registry";
 import { rlog } from "../src/remote-log";
 import { IDLE_HEAL_ROOMS, SyncEngine } from "../src/sync";
-import { ManualTimeProvider, type TimeProvider } from "../src/time-provider";
+import { ManualTimeProvider } from "../src/time-provider";
 import { DEFAULT_SETTINGS, type SyncNoteChange } from "../src/types";
 
 const N = 500;
@@ -41,14 +41,23 @@ const path = (i: number) => `Notes/n${i}.md`;
 const id = (i: number) => `id-${i}`;
 
 /** A server that answers handshakes on a later macrotask and counts the rooms
- *  this device holds open at once. */
-function harness(opts: { time?: TimeProvider; liveBound?: Set<string> } = {}) {
+ *  this device holds open at once, and when each one started. `dropStep2`
+ *  loses the reply for a given (note, attempt). The clock is manual so the
+ *  start budget can be measured in minutes without spending them. */
+function harness(
+	opts: {
+		time?: ManualTimeProvider;
+		liveBound?: Set<string>;
+		dropStep2?: (noteId: string, attempt: number) => boolean;
+	} = {},
+) {
+	const time = opts.time ?? new ManualTimeProvider(1_000_000);
 	const engine = new SyncEngine(
 		mockApp,
 		{} as unknown as EngramApi,
 		{ ...DEFAULT_SETTINGS, debounceMs: 1 },
 		mock().mockResolvedValue(undefined),
-		opts.time,
+		time,
 	);
 	engine.setCrdtManager({
 		hasUndeliveredOps: () => false,
@@ -69,23 +78,58 @@ function harness(opts: { time?: TimeProvider; liveBound?: Set<string> } = {}) {
 	engine.setNoteIdMap(map);
 	engine.importSyncState(state);
 
-	const rooms = { open: new Set<string>(), max: 0, starts: 0 };
+	const rooms = {
+		open: new Set<string>(),
+		max: 0,
+		starts: 0,
+		startedAt: [] as number[],
+		attempts: new Map<string, number>(),
+		released: 0,
+	};
 	const liveBound = opts.liveBound ?? new Set<string>();
 	engine.setCrdtEnrollment({
 		enroll: (noteId: string) => {
 			rooms.open.add(noteId);
 			rooms.starts++;
+			rooms.startedAt.push(time.now());
 			rooms.max = Math.max(rooms.max, rooms.open.size);
+			const attempt = (rooms.attempts.get(noteId) ?? 0) + 1;
+			rooms.attempts.set(noteId, attempt);
+			if (opts.dropStep2?.(noteId, attempt)) return;
 			// The server's STEP2, one macrotask later.
 			setTimeout(() => void engine.commitCrdtConvergence(noteId), 1);
 		},
 		reset: () => {},
 	} as any);
 	engine.setCrdtPorts({
-		release: (noteId: string) => rooms.open.delete(noteId),
+		release: (noteId: string) => {
+			if (rooms.open.delete(noteId)) rooms.released++;
+		},
 		liveBound: (p: string) => liveBound.has(p),
 	});
-	return { engine, rooms };
+	const settle = async (
+		done: () => boolean,
+		stepMs = 4_000,
+		maxSteps = 20_000,
+	): Promise<void> => {
+		for (let n = 0; n < maxSteps && !done(); n++) {
+			await new Promise((r) => setTimeout(r, 0));
+			await new Promise((r) => setTimeout(r, 1));
+			if (!done()) time.advance(stepMs);
+		}
+	};
+	return { engine, rooms, time, settle };
+}
+
+/** Most room starts in any 60 s window. */
+function maxPerMinute(startedAt: number[]): number {
+	let best = 0;
+	for (let i = 0; i < startedAt.length; i++) {
+		let n = 0;
+		for (let j = i; j < startedAt.length && startedAt[j]! < startedAt[i]! + 60_000; j++) n++;
+		best = Math.max(best, n);
+	}
+	return best;
 }
 
 const change = (i: number) =>
@@ -95,16 +139,12 @@ function coldConverge(engine: SyncEngine, i: number): Promise<void> {
 	return (engine as any).convergeColdNoteRoomFree(id(i), path(i), change(i), "body", "H2");
 }
 
-async function settle(done: () => boolean): Promise<void> {
-	for (let n = 0; n < 5000 && !done(); n++) await new Promise((r) => setTimeout(r, 1));
-}
-
 const converged = (engine: SyncEngine) =>
 	Object.values(engine.exportSyncState()).filter((s) => s.serverHash === "H2").length;
 
 describe("idle heal rooms are pooled (Engram#2242)", () => {
 	test(`${N} idle notes with TIMED-OUT room-free reads: all converge, at most ${IDLE_HEAL_ROOMS} rooms open at once`, async () => {
-		const { engine, rooms } = harness();
+		const { engine, rooms, settle } = harness();
 		engine.setCrdtPorts({ docState: mock().mockRejectedValue(new Error("timeout")) });
 
 		for (let i = 0; i < N; i++) await coldConverge(engine, i);
@@ -116,7 +156,7 @@ describe("idle heal rooms are pooled (Engram#2242)", () => {
 	});
 
 	test(`${N} idle notes with UNDELIVERED ops (the read is not legal): same bound`, async () => {
-		const { engine, rooms } = harness();
+		const { engine, rooms, settle } = harness();
 		(engine as any).crdt.hasUndeliveredOps = () => true;
 		engine.setCrdtPorts({ docState: mock().mockResolvedValue({ b64: "AQID", head: "h" }) });
 
@@ -128,7 +168,7 @@ describe("idle heal rooms are pooled (Engram#2242)", () => {
 	});
 
 	test(`queue flush: ${N} idle entries whose room-free write fails all deliver, at most ${IDLE_HEAL_ROOMS} rooms at once`, async () => {
-		const { engine, rooms } = harness();
+		const { engine, rooms, settle } = harness();
 		engine.setCrdtLiveCheck(() => true);
 		engine.setCrdtPorts({ docUpdate: mock().mockRejectedValue(new Error("timeout")) });
 		for (let i = 0; i < N; i++) {
@@ -151,7 +191,7 @@ describe("idle heal rooms are pooled (Engram#2242)", () => {
 
 	test("a LIVE-BOUND note keeps its normal path: it handshakes at once even with the pool full", async () => {
 		const live = path(N - 1);
-		const { engine, rooms } = harness({ liveBound: new Set([live]) });
+		const { engine, rooms, settle } = harness({ liveBound: new Set([live]) });
 		engine.setCrdtPorts({ docState: mock().mockRejectedValue(new Error("timeout")) });
 
 		for (let i = 0; i < IDLE_HEAL_ROOMS * 3; i++) await coldConverge(engine, i);
@@ -164,7 +204,7 @@ describe("idle heal rooms are pooled (Engram#2242)", () => {
 
 	test("the fallback reasons ship as counts-only anomalies, not a line per note", async () => {
 		const anomaly = spyOn(rlog(), "anomaly");
-		const { engine, rooms } = harness();
+		const { engine, rooms, settle } = harness();
 		engine.setCrdtPorts({ docState: mock().mockRejectedValue(new Error("timeout")) });
 
 		for (let i = 0; i < 10; i++) await coldConverge(engine, i);
@@ -183,10 +223,109 @@ describe("idle heal rooms are pooled (Engram#2242)", () => {
 	});
 });
 
+describe("idle heal rooms: the start budget and the lost-reply paths (Engram#2242)", () => {
+	test("805 idle heals start at most 20 rooms in any minute, and all converge", async () => {
+		const { engine, rooms, settle } = harness();
+		const many = 805;
+		const map = (engine as any).noteIdMap as NoteIdMap;
+		const state: Record<string, { hash: number; serverHash: string }> = {};
+		for (let i = N; i < many; i++) {
+			map.set(path(i), id(i));
+			state[path(i)] = { hash: 1, serverHash: "H1" };
+		}
+		engine.importSyncState({ ...engine.exportSyncState(), ...state });
+		engine.setCrdtPorts({ docState: mock().mockRejectedValue(new Error("timeout")) });
+
+		for (let i = 0; i < many; i++) await coldConverge(engine, i);
+		await settle(() => converged(engine) === many && rooms.open.size === 0);
+
+		expect(converged(engine)).toBe(many);
+		expect(rooms.starts).toBe(many);
+		expect(maxPerMinute(rooms.startedAt)).toBeLessThanOrEqual(20);
+		expect(rooms.max).toBeLessThanOrEqual(IDLE_HEAL_ROOMS);
+	});
+
+	test("a LOST reply plus a second poke inside the cooldown still converges (never dropped)", async () => {
+		// The deaf-note class: the first STEP2 is lost on a dropping socket, and
+		// the recovery poke lands while the room is still open.
+		const { engine, rooms, time, settle } = harness({
+			dropStep2: (noteId, attempt) => noteId === id(0) && attempt === 1,
+		});
+		engine.setCrdtPorts({ docState: mock().mockRejectedValue(new Error("timeout")) });
+		await coldConverge(engine, 0);
+		expect(rooms.open.has(id(0))).toBe(true);
+		time.advance(5_000);
+		(engine as any).socketConverge(path(0), id(0), "other");
+
+		await settle(() => converged(engine) === 1 && rooms.open.size === 0, 1_000);
+
+		expect(converged(engine)).toBe(1);
+		expect(rooms.attempts.get(id(0))).toBeGreaterThanOrEqual(2);
+		expect(rooms.open.size).toBe(0);
+	});
+
+	test("a room whose STEP2 never comes is CLOSED before its slot is reused", async () => {
+		const { engine, rooms, settle } = harness({ dropStep2: (_id, attempt) => attempt === 1 });
+		engine.setCrdtPorts({ docState: mock().mockRejectedValue(new Error("timeout")) });
+
+		for (let i = 0; i < IDLE_HEAL_ROOMS * 2; i++) await coldConverge(engine, i);
+		await settle(
+			() => converged(engine) === IDLE_HEAL_ROOMS * 2 && rooms.open.size === 0,
+			1_000,
+		);
+
+		expect(converged(engine)).toBe(IDLE_HEAL_ROOMS * 2);
+		expect(rooms.max).toBeLessThanOrEqual(IDLE_HEAL_ROOMS);
+		expect(rooms.released).toBeGreaterThanOrEqual(IDLE_HEAL_ROOMS * 2);
+	});
+
+	test("a heal with NOTHING staged (gap heal) closes its room when the STEP2 lands", async () => {
+		const { engine, rooms, settle } = harness();
+		for (let i = 0; i < 10; i++) (engine as any).socketConverge(path(i), id(i), "other");
+
+		await settle(() => rooms.starts === 10 && rooms.open.size === 0);
+
+		expect(rooms.starts).toBe(10);
+		expect(rooms.open.size).toBe(0);
+		expect(rooms.max).toBeLessThanOrEqual(IDLE_HEAL_ROOMS);
+	});
+
+	test("a vault switch with heals still waiting opens none of them and leaks no slot", async () => {
+		const { engine, rooms, settle } = harness({ dropStep2: () => true });
+		engine.setCrdtPorts({ docState: mock().mockRejectedValue(new Error("timeout")) });
+		for (let i = 0; i < 20; i++) await coldConverge(engine, i);
+		const before = rooms.starts;
+		expect(before).toBe(IDLE_HEAL_ROOMS);
+
+		await (engine as any).wipePerVaultState();
+		await settle(() => false, 60_000, 5);
+
+		expect(rooms.starts).toBe(before);
+		expect((engine as any).idleHealRooms.active).toBe(0);
+	});
+
+	test("reason counts are rooms OPENED, not requests, and ship before the pool drains", async () => {
+		const anomaly = spyOn(rlog(), "anomaly");
+		const { engine, settle } = harness({ dropStep2: () => true });
+		engine.setCrdtPorts({ docState: mock().mockRejectedValue(new Error("timeout")) });
+		for (let i = 0; i < 3; i++) await coldConverge(engine, i);
+		// Coalesced repeats of a waiting or open note are not new rooms.
+		for (let i = 0; i < 3; i++) (engine as any).poolIdleHeal(path(i), id(i), "other");
+		await settle(() => false, 1_000, 10);
+
+		engine.flushHealRoomCounts(); // what main.ts does when the app is hidden
+		const calls = anomaly.mock.calls.filter((c) => c[1] === "heal_room_fallback");
+		anomaly.mockRestore();
+		const total = (key: string) =>
+			calls.reduce((n, c) => n + Number((c[2] as Record<string, number>)[key] ?? 0), 0);
+		expect(total("doc_state_failed") + total("doc_state_latched")).toBeGreaterThanOrEqual(3);
+		expect(total("other")).toBe(0);
+	});
+});
+
 describe("room-free reads recover after timeouts (Engram#2242)", () => {
 	test("two timeouts from a resuming socket do NOT switch room-free reads off for the session", async () => {
-		const time = new ManualTimeProvider(1_000_000);
-		const { engine, rooms } = harness({ time });
+		const { engine, rooms, time } = harness();
 		const docState = mock().mockRejectedValue(new Error("timeout"));
 		engine.setCrdtPorts({ docState });
 

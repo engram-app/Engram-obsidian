@@ -1029,6 +1029,7 @@ export default class EngramSyncPlugin extends Plugin {
 		// heartbeat tick, which is what made the first post-unlock sync feel laggy.
 		this.registerDomEvent(activeDocument, "visibilitychange", () => {
 			if (activeDocument.visibilityState === "hidden") {
+				this.syncEngine.flushHealRoomCounts();
 				void rlog().flush();
 				void this.savePluginData(this.syncEngine.getLastSync());
 				// A silent sync-bases.json write failure degrades 3-way merge to
