@@ -12,7 +12,7 @@ the SAME id at a fresh seq. So the tombstone is a hiding layer, and it needs a
 clearing event (see `crdt-sync-store-hiding-layers.md`).
 
 ## The rule
-Each tombstone stores a seq fence (`removedAtSeq`). It is the delete's seq
+Each tombstone stores a seq fence (`removedAtSeq`) and, when known, the path it was deleted at (`removedAtPath`). It is the delete's seq
 when known: a seq-replay tombstone row, or a delete broadcast that carries
 `seq` (Engram#2233 adds it). Otherwise it is the newest seq this device held
 for the note (an older server's broadcast, or a local delete), read BEFORE the
@@ -31,8 +31,14 @@ In `SyncEngine.applyOp`, for an upsert of a tombstoned id:
 2. **No seq** (a live `note_changed` broadcast): skip and `scheduleSeqHeal()`.
    A broadcast cannot tell a restore from a late pre-delete upsert; the replay
    row carries a seq and goes through the fence.
-3. **`seq <= fence`**: skip. This is history from before the delete.
-4. Otherwise `revive(id, seq)` and apply. If `applyChange` lands nothing,
+3. **Rename's other leg**: an upsert at a DIFFERENT path from the one the id
+   was deleted at, with `seq >= fence`, revives (`reviveRelocated`, decided in
+   `clearTombstoneOnRelocation`, the same rule that clears `recentlyDeleted`).
+   Engram#2233 stamps a rename-away delete with the live note's own seq, so the
+   new-path row carries a seq EQUAL to the fence. A strict `>` there made a
+   delete-first rename vanish on the receiving device.
+4. **`seq <= fence`** (same path): skip. This is history from before the delete.
+5. Otherwise `revive(id, seq)` and apply. If `applyChange` lands nothing,
    restore the tombstone.
 
 The fence covers the DISK write too, not just the doc. Before this, main

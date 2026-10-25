@@ -4886,8 +4886,12 @@ export class SyncEngine {
 	 *  which is a separate object only in test harnesses. This pair was
 	 *  hand-written at 6 call sites; a missed pair left a tombstoned id
 	 *  enrolled forever. */
-	private async teardownCrdtDoc(noteId: string, deleteSeq?: number): Promise<void> {
-		await this.crdt?.removeDoc(noteId, deleteSeq);
+	private async teardownCrdtDoc(
+		noteId: string,
+		deleteSeq?: number,
+		path?: string,
+	): Promise<void> {
+		await this.crdt?.removeDoc(noteId, deleteSeq, path);
 		this.crdtEnrollment?.reset(noteId);
 	}
 
@@ -5314,7 +5318,7 @@ export class SyncEngine {
 			// which is exactly what the tombstone used to prevent.
 			rlog().info("vault", `Delete echo skip (remote-applied): ${noteRef(path)}`);
 			if (this.isCrdtEligiblePath(path) && crdtNoteId) {
-				await this.teardownCrdtDoc(crdtNoteId, deleteSeq);
+				await this.teardownCrdtDoc(crdtNoteId, deleteSeq, normalizePath(path));
 			}
 			return;
 		}
@@ -5338,7 +5342,7 @@ export class SyncEngine {
 				this.markRecentlyDeleted(crdtNoteId, path);
 				this.crdtEnqueue?.({ kind: "delete", docId: crdtNoteId, path: path });
 				if (this.isCrdtEligiblePath(path))
-					await this.teardownCrdtDoc(crdtNoteId, deleteSeq);
+					await this.teardownCrdtDoc(crdtNoteId, deleteSeq, normalizePath(path));
 				rlog().info("push", `Delete superseded pending create: ${noteRef(path)}`);
 				return;
 			}
@@ -5347,7 +5351,7 @@ export class SyncEngine {
 			// delete-wins tombstone would block exactly that for 60s (finding 7).
 			rlog().warn("push", `Delete push REFUSED (no sync evidence): ${noteRef(path)}`);
 			if (this.isCrdtEligiblePath(path) && crdtNoteId) {
-				await this.teardownCrdtDoc(crdtNoteId, deleteSeq);
+				await this.teardownCrdtDoc(crdtNoteId, deleteSeq, normalizePath(path));
 			}
 			return;
 		}
@@ -5386,14 +5390,14 @@ export class SyncEngine {
 			// attachments never hit removeDoc. Also gate on a known id — nothing to
 			// tear down if this note never had a CRDT room.
 			if (this.isCrdtEligiblePath(path) && crdtNoteId) {
-				await this.teardownCrdtDoc(crdtNoteId, deleteSeq);
+				await this.teardownCrdtDoc(crdtNoteId, deleteSeq, normalizePath(path));
 			}
 		} catch (e) {
 			// 404 means already deleted — treat as success; still tear down CRDT.
 			if (isHttpStatus(e, 404)) {
 				this.goOnline();
 				if (this.isCrdtEligiblePath(path) && crdtNoteId) {
-					await this.teardownCrdtDoc(crdtNoteId, deleteSeq);
+					await this.teardownCrdtDoc(crdtNoteId, deleteSeq, normalizePath(path));
 				}
 				return;
 			}
@@ -6924,10 +6928,18 @@ export class SyncEngine {
 	 *  so neither delivery order can produce it.
 	 *
 	 *  A same-path upsert is exactly the stale echo #970 exists to block: leave
-	 *  that tombstone standing. */
-	private clearTombstoneOnRelocation(noteId: string, path: string): void {
+	 *  that tombstone standing.
+	 *
+	 *  The registry's delete tombstone follows the same rule, seq-gated: with a
+	 *  `seq` at or past its fence, an upsert at a different path lifts it too
+	 *  (the old-leg delete can carry the rename's own seq, Engram#2233). Returns
+	 *  whether THAT tombstone came off, so the caller loads the fresh doc. */
+	private clearTombstoneOnRelocation(noteId: string, path: string, seq?: number): boolean {
+		const revived =
+			seq !== undefined &&
+			this.crdt?.reviveRelocated?.(noteId, normalizePath(path), seq) === true;
 		const tomb = this.recentlyDeleted.get(noteId);
-		if (!tomb || tomb.path === normalizePath(path)) return;
+		if (!tomb || tomb.path === normalizePath(path)) return revived;
 		this.time.clearTimeout(tomb.timer);
 		this.recentlyDeleted.delete(noteId);
 		rlog().info(
@@ -6935,6 +6947,7 @@ export class SyncEngine {
 			`Delete tombstone cleared — ${noteId} is alive at ${noteRef(path)}, so the delete of ` +
 				`${noteRef(tomb.path)} was a rename's old leg`,
 		);
+		return revived;
 	}
 
 	/** MINT REFUSAL (backend #972, PRs #216/#217) — the single decision both
@@ -8961,7 +8974,7 @@ export class SyncEngine {
 				this.noteIdMap?.forgetRemoteDelete(normalized, event.id ?? null);
 				const roomId = targetId ?? currentId;
 				if (roomId) {
-					await this.teardownCrdtDoc(roomId, knownSeq);
+					await this.teardownCrdtDoc(roomId, knownSeq, normalized);
 				}
 			}
 			return;
@@ -9582,14 +9595,19 @@ export class SyncEngine {
 				this.scheduleSeqHeal();
 				return false;
 			}
-			if (op.seq <= deletedAt) {
-				rlog().info(
-					"crdt",
-					`op skip (seq ${op.seq} <= delete fence ${deletedAt}): ${op.id}`,
-				);
-				return false;
+			// The other leg of a rename (a different path, seq >= fence) revives.
+			// A same-path row needs a strictly newer seq.
+			const renameLeg = this.clearTombstoneOnRelocation(op.id, op.path, op.seq);
+			if (!renameLeg) {
+				if (op.seq <= deletedAt) {
+					rlog().info(
+						"crdt",
+						`op skip (seq ${op.seq} <= delete fence ${deletedAt}): ${op.id}`,
+					);
+					return false;
+				}
+				this.crdt?.revive(op.id, op.seq);
 			}
-			this.crdt?.revive(op.id, op.seq);
 		}
 		if (op.kind === "upsert") {
 			// Id-keyed move: the server sends a note's stable id at a NEW path, but
@@ -10006,7 +10024,7 @@ export class SyncEngine {
 				// applySyncChange's deferred clear).
 				if (crdtNoteId && this.isCrdtEligiblePath(normalized)) {
 					this.noteIdMap?.forgetRemoteDelete(normalized, change.note_id ?? null);
-					await this.teardownCrdtDoc(crdtNoteId, deleteSeq);
+					await this.teardownCrdtDoc(crdtNoteId, deleteSeq, normalized);
 				}
 				return true;
 			}

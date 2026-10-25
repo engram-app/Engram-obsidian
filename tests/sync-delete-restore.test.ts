@@ -218,6 +218,44 @@ describe("server delete then restore of a note", () => {
 		expect(h.mgr.removedIds.has("id-a")).toBe(true);
 	});
 
+	test("a delete-first rename: the seq-stamped old leg does not hide the note at its new path", async () => {
+		const h = harness("rename-delete-first");
+		h.disk.set("a.md", "hello");
+		h.map.set("a.md", "id-a");
+		h.e.importSyncState({ "a.md": { hash: fnv1a("hello"), seq: 40 } });
+		// Engram#2233 stamps the rename-away delete with the LIVE note's seq.
+		await h.e.handleStreamEvent(
+			ev({ event_type: "delete", path: "a.md", id: "id-a", seq: 50 }),
+		);
+		// A stale row at the OLD path, before the new leg: still refused.
+		await h.e.applySyncChange(row("id-a", "a.md", 45, "pre-rename body"));
+		expect(h.disk.has("a.md")).toBe(false);
+		expect(h.mgr.removedIds.has("id-a")).toBe(true);
+
+		// The new leg carries the SAME seq as the old-leg delete.
+		await h.e.applySyncChange(row("id-a", "b.md", 50, "hello"));
+
+		expect(h.disk.get("b.md")).toBe("hello");
+		expect(h.disk.has("a.md")).toBe(false);
+		expect(h.map.get("b.md")).toBe("id-a");
+		expect(h.mgr.removedIds.has("id-a")).toBe(false);
+	});
+
+	test("a same-path row at the delete's own seq does not revive", async () => {
+		const h = harness("same-path-equal");
+		h.disk.set("a.md", "hello");
+		h.map.set("a.md", "id-a");
+		h.e.importSyncState({ "a.md": { hash: fnv1a("hello"), seq: 40 } });
+		await h.e.handleStreamEvent(
+			ev({ event_type: "delete", path: "a.md", id: "id-a", seq: 50 }),
+		);
+
+		await h.e.applySyncChange(row("id-a", "a.md", 50, "hello"));
+
+		expect(h.disk.has("a.md")).toBe(false);
+		expect(h.mgr.removedIds.has("id-a")).toBe(true);
+	});
+
 	test("bulk idle revive: room-free reads are pooled, failures open no room and keep the frame on", async () => {
 		const h = harness("restore-pool");
 		h.e.setCrdtPorts({ enrollment: h.mgr });

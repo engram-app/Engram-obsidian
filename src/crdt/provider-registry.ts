@@ -151,6 +151,9 @@ export class ProviderRegistry {
 	 *  revive the id; anything at or below it is history from before the delete.
 	 *  Kept beside `removed` (not instead of it) so `removedIds` stays a Set. */
 	private readonly removedAtSeq = new Map<string, number>();
+	/** The path each tombstoned id was deleted AT, when known. An upsert at a
+	 *  different path is the other leg of a rename (see `reviveRelocated`). */
+	private readonly removedAtPath = new Map<string, string>();
 	private connected = false;
 	/** note_ids with an OPEN room — those advertising syncStep1 (the down-sync
 	 *  pull). Only enroll/startSync adds; a cold SEND or fan-out RECEIVE never
@@ -951,7 +954,25 @@ export class ProviderRegistry {
 	revive(noteId: string, seq: number): boolean {
 		const fence = this.removedAtSeq.get(noteId);
 		if (fence === undefined || seq <= fence) return false;
+		return this.lift(noteId);
+	}
+
+	/** The other leg of a RENAME: the id is alive at `path`, a different path
+	 *  from the one it was deleted at. The old-leg delete can carry the live
+	 *  note's own seq (Engram#2233 stamps it), so here `seq >= fence` revives;
+	 *  a same-path row still needs `revive`'s strictly newer seq. False when the
+	 *  path is unknown or the same. */
+	reviveRelocated(noteId: string, path: string, seq: number): boolean {
+		const fence = this.removedAtSeq.get(noteId);
+		const deletedAt = this.removedAtPath.get(noteId);
+		if (fence === undefined || deletedAt === undefined || deletedAt === path) return false;
+		if (seq < fence) return false;
+		return this.lift(noteId);
+	}
+
+	private lift(noteId: string): boolean {
 		this.removedAtSeq.delete(noteId);
+		this.removedAtPath.delete(noteId);
 		return this.removed.delete(noteId);
 	}
 
@@ -969,10 +990,11 @@ export class ProviderRegistry {
 
 	/** `deleteSeq`: the delete's seq when known, else the newest seq this device
 	 *  held for the note (see `removedAtSeq`). 0 when nothing is known, so any
-	 *  sequenced re-announce revives it. */
-	async removeDoc(noteId: string, deleteSeq = 0): Promise<void> {
+	 *  sequenced re-announce revives it. `path`: the normalized path deleted. */
+	async removeDoc(noteId: string, deleteSeq = 0, path?: string): Promise<void> {
 		this.removed.add(noteId); // tombstone: block any resurrection of a deleted note
 		this.removedAtSeq.set(noteId, Math.max(deleteSeq, this.removedAtSeq.get(noteId) ?? 0));
+		if (path !== undefined) this.removedAtPath.set(noteId, path);
 		await this.destroy(noteId, true);
 	}
 
@@ -1004,6 +1026,7 @@ export class ProviderRegistry {
 	async destroyAll(): Promise<void> {
 		for (const noteId of [...this.entries.keys()]) await this.destroy(noteId, false);
 		this.removedAtSeq.clear();
+		this.removedAtPath.clear();
 		this.removed.clear(); // fresh stack — tombstones do not outlive a teardown
 		// Enrollments for never-materialized docs (enroll raced a teardown) have
 		// no entries key above; a fresh stack starts with none either way.

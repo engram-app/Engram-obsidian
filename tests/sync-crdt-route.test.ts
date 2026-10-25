@@ -1144,7 +1144,7 @@ describe("Task 3: new-note genesis routes through crdt_create", () => {
 		expect(applyLocalEdit.mock.calls[0]?.[1]).toBe("hello world"); // in-flight buffer, not disk
 		// Mint doc retired. No external rebind call: the CM6 ViewPlugin re-resolves
 		// path -> serverId on its next update and re-attaches itself (#484).
-		expect(removeDoc).toHaveBeenCalledWith(mintId, undefined);
+		expect(removeDoc).toHaveBeenCalledWith(mintId, undefined, undefined);
 		expect(reset).toHaveBeenCalledWith(mintId);
 		expect(enroll).toHaveBeenCalledWith("server-owns-this");
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
@@ -1194,7 +1194,7 @@ describe("Task 3: new-note genesis routes through crdt_create", () => {
 			),
 		).toBe(true);
 		// The editor still has to leave the mint doc for the server's.
-		expect(removeDoc).toHaveBeenCalledWith(mintId, undefined);
+		expect(removeDoc).toHaveBeenCalledWith(mintId, undefined, undefined);
 	});
 
 	test("idle ADOPT (note NOT live-bound): uses the disk-seed path, no transfer/removeDoc", async () => {
