@@ -881,18 +881,21 @@ export default class EngramSyncPlugin extends Plugin {
 		// queued create or no-ops server-side" — collapses for a pending EDIT or
 		// a foreign-vault op, where the enqueued delete could reach a note the
 		// server genuinely owns despite this device having no sync evidence.
+		// The owner check mirrors the queue's OWN delivery semantics: an
+		// unstamped/null owner WILL be delivered, so the probe must count it, or
+		// a delete for such a doc is refused while its queued create still fires
+		// (round-3 review finding 1). See CrdtOpQueue.hasPending.
 		this.syncEngine.setCrdtHasPendingOp(
 			(docId) =>
-				this.crdtOpQueue?.all().some((op) => {
-					if (op.docId !== docId || op.kind !== "create") return false;
-					// Mirror the queue's OWN delivery semantics (dropIfForeignVault):
-					// an unstamped/null owner means "current vault" and WILL be
-					// delivered — the probe must count it, or a delete for such a
-					// doc is refused while its queued create still fires (round-3
-					// review finding 1).
-					const owner = op.vaultId ?? null;
-					return owner === null || owner === (this.settings.vaultId ?? null);
-				}) ?? false,
+				this.crdtOpQueue?.hasPending(docId, "create", this.settings.vaultId ?? null) ??
+				false,
+		);
+		// This device's own delete, still waiting to be delivered: a restore
+		// replay must not revive the id while it sits here (#642 review).
+		this.syncEngine.setCrdtHasPendingDelete(
+			(docId) =>
+				this.crdtOpQueue?.hasPending(docId, "delete", this.settings.vaultId ?? null) ??
+				false,
 		);
 		this.syncEngine.setCrdtPorts({
 			capGate: notesCapGate,

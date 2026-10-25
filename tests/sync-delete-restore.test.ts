@@ -20,6 +20,7 @@ import type { EngramApi } from "../src/api";
 import { fnv1aBase64 } from "../src/content-hash";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { ProviderRegistry } from "../src/crdt/provider-registry";
+import { CrdtOpQueue } from "../src/crdt-op-queue";
 import { fnv1a, SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS, type NoteStreamEvent } from "../src/types";
 
@@ -158,15 +159,98 @@ describe("server delete then restore of a note", () => {
 		expect(h.mgr.enrolled.size).toBe(0);
 	});
 
-	test("our own delete still queued past the 60 s window is not revived", async () => {
+	test("our own delete still in the REAL op queue is not revived; dequeued, it is", async () => {
 		const h = await deletedNote("restore-queued");
-		h.e.setCrdtHasPendingOp((id) => id === "id-a");
+		// The ports exactly as main.ts wires them, over a real CrdtOpQueue.
+		const queue = new CrdtOpQueue({ send: async () => "ok", now: () => Date.now() });
+		h.e.setCrdtHasPendingOp((id) => queue.hasPending(id, "create", null));
+		h.e.setCrdtHasPendingDelete((id) => queue.hasPending(id, "delete", null));
+		queue.enqueue({
+			id: "op-1",
+			kind: "delete",
+			docId: "id-a",
+			payload: { path: "a.md" },
+			enqueuedAt: Date.now() - 120_000, // well past the 60 s recentlyDeleted window
+			attempts: 0,
+		});
 
 		await h.e.applySyncChange(row("id-a", "a.md", 50, "hello"));
+		expect(h.disk.has("a.md")).toBe(false);
+		expect(h.mgr.removedIds.has("id-a")).toBe(true);
+
+		// Clearing event: the delete leaves the queue (delivered).
+		queue.load([]);
+		await h.e.applySyncChange(row("id-a", "a.md", 51, "hello"));
+		expect(h.disk.get("a.md")).toBe("hello");
+	});
+
+	test("a replayed delete row raises the fence of an already-tombstoned id", async () => {
+		const h = harness("restore-raise");
+		h.disk.set("a.md", "hello");
+		h.map.set("a.md", "id-a");
+		h.e.importSyncState({ "a.md": { hash: fnv1a("hello"), seq: 40 } });
+		const server = new Y.Doc();
+		server.getText("content").insert(0, "hello");
+		await h.mgr.applyRemoteUpdate("id-a", Y.encodeStateAsUpdate(server));
+		// Live delete from an older server: no seq, so the fence is 40.
+		await h.e.handleStreamEvent(ev({ event_type: "delete", id: "id-a" }));
+		// The replay's tombstone row (file already gone) carries the real seq.
+		await h.e.applySyncChange(row("id-a", "a.md", 50, "", true));
+		// A pre-delete row from an in-flight page.
+		await h.e.applySyncChange(row("id-a", "a.md", 45, "pre-delete body"));
 
 		expect(h.disk.has("a.md")).toBe(false);
 		expect(h.mgr.removedIds.has("id-a")).toBe(true);
 	});
+
+	test("a delete broadcast that carries seq fences at it", async () => {
+		const h = await (async () => {
+			const x = harness("restore-wsseq");
+			x.disk.set("a.md", "hello");
+			x.map.set("a.md", "id-a");
+			x.e.importSyncState({ "a.md": { hash: fnv1a("hello"), seq: 40 } });
+			return x;
+		})();
+		await h.e.handleStreamEvent(ev({ event_type: "delete", id: "id-a", seq: 50 }));
+		await h.e.applySyncChange(row("id-a", "a.md", 45, "pre-delete body"));
+
+		expect(h.disk.has("a.md")).toBe(false);
+		expect(h.mgr.removedIds.has("id-a")).toBe(true);
+	});
+
+	test("bulk idle revive: room-free reads are pooled, failures open no room and keep the frame on", async () => {
+		const h = harness("restore-pool");
+		h.e.setCrdtPorts({ enrollment: h.mgr });
+		let inFlight = 0;
+		let peak = 0;
+		let reads = 0;
+		h.e.setCrdtPorts({
+			docState: async () => {
+				inFlight += 1;
+				peak = Math.max(peak, inFlight);
+				await new Promise((r) => setTimeout(r, 1));
+				inFlight -= 1;
+				reads += 1;
+				throw new Error("timeout");
+			},
+		});
+		const N = 1000;
+		for (let i = 0; i < N; i++) {
+			h.disk.set(`n${i}.md`, `body ${i}`);
+			h.map.set(`n${i}.md`, `id-${i}`);
+			await h.e.applySyncChange(row(`id-${i}`, `n${i}.md`, 100 + i, "", true));
+		}
+		for (let i = 0; i < N; i++)
+			await h.e.applySyncChange(row(`id-${i}`, `n${i}.md`, 5000 + i, `body ${i}`));
+		for (let spin = 0; reads < N && spin < 20_000; spin++)
+			await new Promise((r) => setTimeout(r, 0));
+
+		expect(reads).toBe(N);
+		expect(peak).toBeLessThanOrEqual(4);
+		expect(h.mgr.enrolled.size).toBe(0);
+		// A timed-out burst must not latch room-free reads off for the session.
+		expect((h.e as any).unsupportedFrames.has("crdt_doc_state")).toBe(false);
+	}, 30_000);
 
 	test("a bulk restore of 1,000 idle notes opens zero rooms", async () => {
 		const h = harness("restore-bulk");
@@ -187,7 +271,7 @@ describe("server delete then restore of a note", () => {
 		expect(h.mgr.removedIds.size).toBe(0);
 		expect(h.disk.get("n999.md")).toBe("body 999");
 		expect(h.mgr.enrolled.size).toBe(0);
-	});
+	}, 30_000);
 });
 
 describe("server delete of a just-synced attachment", () => {

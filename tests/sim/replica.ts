@@ -481,6 +481,14 @@ export class Replica {
 			window.setTimeout(() => void crdtOpQueue.tick(), 0);
 		});
 
+		// main.ts's pending-op probes, through the same queue predicate.
+		engine.setCrdtHasPendingOp((docId) =>
+			crdtOpQueue.hasPending(docId, "create", settings.vaultId ?? null),
+		);
+		engine.setCrdtHasPendingDelete((docId) =>
+			crdtOpQueue.hasPending(docId, "delete", settings.vaultId ?? null),
+		);
+
 		// --- connectChannel, mirroring main.ts:1666-2013 ---
 		// main.ts freezes the topic userId from an awaited getMe() (main.ts:1666-1707).
 		// The sim's identity is deterministic — the model /me returns a constant

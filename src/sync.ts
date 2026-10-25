@@ -59,6 +59,7 @@ import {
 import { attachmentCapabilityGained, type PlanState, samePlanState } from "./plan-state";
 import { formatBytes } from "./plan-usage";
 import { rlog } from "./remote-log";
+import { Semaphore } from "./semaphore";
 import type { SyncLog } from "./sync-log";
 import { SyncedFileTable } from "./synced-file";
 import { DefaultTimeProvider, type TimeProvider } from "./time-provider";
@@ -673,12 +674,13 @@ export class SyncEngine {
 	/** Announce a gate-blocked edit. Set by main.ts; unset in tests and in any
 	 *  headless construction, so the engine stays usable without a UI. */
 	onSyncBlockedEdit?: () => void;
-	private activePushCount = 0;
-	private maxConcurrentPushes = 5;
+	private readonly pushSlots = new Semaphore(5);
+	/** Room-free doc-state reads a bulk revive may have in flight at once: a
+	 *  7k-note folder restore otherwise fires 7k at one channel. */
+	private readonly revivedDocReads = new Semaphore(4);
 	/** >0 while a bulk sweep (pushAll / fullSync) is running. Queue entries it
 	 *  produces get Background priority — see priorityForPath. */
 	private bulkDepth = 0;
-	private pushWaiters: (() => void)[] = [];
 	readonly queue: OfflineQueue = new OfflineQueue();
 
 	/** Per-file sync metadata (content hash + server version).
@@ -1850,6 +1852,16 @@ export class SyncEngine {
 		this.crdtHasPendingOp = fn;
 	}
 
+	/** True while THIS device's own crdt_delete for docId is still queued. A
+	 *  tombstoned id must not be revived meanwhile: the delete has not reached
+	 *  the server, so a replayed upsert is not news. Clears the moment the
+	 *  delete is dequeued; the tombstone's seq fence covers the rest. */
+	private crdtHasPendingDelete: ((docId: string) => boolean) | null = null;
+
+	setCrdtHasPendingDelete(fn: ((docId: string) => boolean) | null): void {
+		this.crdtHasPendingDelete = fn;
+	}
+
 	setCrdtEnqueue(
 		fn: ((op: { kind: "create" | "delete"; docId: string; path: string }) => void) | null,
 	): void {
@@ -2949,7 +2961,7 @@ export class SyncEngine {
 				this.heldForServer.delete(noteId);
 				return;
 			}
-			const state = await this.readServerDocState(noteId, path, false);
+			const state = await this.readServerDocState(noteId, path, { honorLatch: false });
 			// Note ids are unique per vault: never apply across a vault switch.
 			if (this.crdt !== crdt) return;
 			if (state === null) {
@@ -3090,13 +3102,22 @@ export class SyncEngine {
 			this.socketConverge(normalized, noteId);
 			return;
 		}
-		void this.applyServerDocState(noteId, normalized).catch(() => false);
+		// Pooled, and a failure does NOT strike the frame: a timed-out burst
+		// would otherwise latch room-free reads off for the session, and
+		// convergeColdNoteRoomFree would then open a room per cold note.
+		void this.revivedDocReads
+			.run(() => this.applyServerDocState(noteId, normalized, { strike: false }))
+			.catch(() => false);
 	}
 
 	/** Read the server's full Yjs state room-free and merge it into the doc.
 	 *  False when the frame is unavailable or the registry refused the update. */
-	private async applyServerDocState(noteId: string, path: string): Promise<boolean> {
-		const state = await this.readServerDocState(noteId, path);
+	private async applyServerDocState(
+		noteId: string,
+		path: string,
+		opts: { strike?: boolean } = {},
+	): Promise<boolean> {
+		const state = await this.readServerDocState(noteId, path, opts);
 		if (state === null || !this.crdt) return false;
 		return this.crdt.applyRemoteUpdate(noteId, fromB64(state.b64));
 	}
@@ -4228,7 +4249,7 @@ export class SyncEngine {
 	private async readServerDocState(
 		noteId: string,
 		path: string,
-		honorLatch = true,
+		{ honorLatch = true, strike = true }: { honorLatch?: boolean; strike?: boolean } = {},
 	): Promise<{ b64: string; head: string } | null> {
 		const fetchState = this.crdtDocState;
 		if (!fetchState || (honorLatch && this.unsupportedFrames.has(DOC_STATE_FRAME))) return null;
@@ -4245,7 +4266,7 @@ export class SyncEngine {
 
 			// The log states the OBSERVATION, not a diagnosis: an old backend and
 			// a crashing channel are indistinguishable from here.
-			if (this.strikeFrame(DOC_STATE_FRAME, detail)) {
+			if (strike && this.strikeFrame(DOC_STATE_FRAME, detail)) {
 				rlog().warn(
 					"crdt",
 					`crdt_doc_state unsupported ${SyncEngine.FRAME_UNSUPPORTED_LATCH}x — disabling ` +
@@ -5667,22 +5688,13 @@ export class SyncEngine {
 	}
 
 	/** Acquire a push slot, blocking if at max concurrency. */
-	private async acquirePushSlot(): Promise<void> {
-		if (this.activePushCount < this.maxConcurrentPushes) {
-			this.activePushCount++;
-			return;
-		}
-		await new Promise<void>((resolve) => {
-			this.pushWaiters.push(resolve);
-		});
-		this.activePushCount++;
+	private acquirePushSlot(): Promise<void> {
+		return this.pushSlots.acquire();
 	}
 
 	/** Release a push slot and wake the next waiter if any. */
 	private releasePushSlot(): void {
-		this.activePushCount--;
-		const next = this.pushWaiters.shift();
-		if (next) next();
+		this.pushSlots.release();
 	}
 
 	/** Paths modified during a pull that need pushing once pull completes. */
@@ -5832,11 +5844,11 @@ export class SyncEngine {
 			| undefined;
 		devLog().log(
 			"push",
-			`start ${isBinary ? "attachment" : "note"}: ${file.path} (active=${this.activePushCount})`,
+			`start ${isBinary ? "attachment" : "note"}: ${file.path} (active=${this.pushSlots.active})`,
 		);
 		rlog().info(
 			"push",
-			`Push start: ${noteRef(file.path)} | type=${isBinary ? "attachment" : "note"} | active=${this.activePushCount}`,
+			`Push start: ${noteRef(file.path)} | type=${isBinary ? "attachment" : "note"} | active=${this.pushSlots.active}`,
 		);
 
 		try {
@@ -8821,9 +8833,10 @@ export class SyncEngine {
 			// delete of a live confirmed note was silently dropped — e2e test_47).
 			const currentId = this.noteIdMap?.get(normalized) ?? null;
 			const targetId = event.id ?? currentId;
-			// A broadcast carries no seq: fence the tombstone at the newest seq we
-			// held for the note (captured before the removal drops the row).
-			const knownSeq = this.syncState.get(normalized)?.seq;
+			// Fence the tombstone at the delete's own seq when the server sends one
+			// (Engram#2233 adds it); an older server sends none, so fall back to the
+			// newest seq we held for the note, read before the removal drops it.
+			const knownSeq = event.seq ?? this.syncState.get(normalized)?.seq;
 			// Rename old-leg guard: the backend now emits the upsert for the NEW
 			// path BEFORE this delete for the OLD path, so moveIfIdRelocated already
 			// relocated the id to its new path. If the id now lives at a DIFFERENT
@@ -9547,12 +9560,15 @@ export class SyncEngine {
 		// than the delete: a restore (safer delete, Engram#2233) keeps the id.
 		// See docs/context/crdt-tombstone-seq-fence.md. Optional calls: partial
 		// registry doubles in tests lack them.
+		// A delete op for an id already tombstoned (its file is gone, so
+		// applyChange's teardown will not run) still teaches the real delete seq.
+		if (op.kind === "delete" && op.seq !== undefined) this.crdt?.raiseFence?.(op.id, op.seq);
 		const deletedAt = op.kind === "upsert" ? this.crdt?.deletedAtSeq?.(op.id) : undefined;
 		if (deletedAt !== undefined) {
 			// Our own delete still waits in the CRDT op queue (offline, or the
 			// topic is down): the id is dead whatever the feed says, however long
 			// ago recentlyDeleted lapsed.
-			if (this.crdtHasPendingOp?.(op.id)) {
+			if (this.crdtHasPendingDelete?.(op.id)) {
 				rlog().info("crdt", `op skip (own delete still queued): ${op.id}`);
 				return false;
 			}

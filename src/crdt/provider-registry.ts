@@ -954,6 +954,13 @@ export class ProviderRegistry {
 		return this.removed.delete(noteId);
 	}
 
+	/** A delete op for an already-tombstoned id carries the delete's REAL seq:
+	 *  lift the fence to it (never lower it). No-op for a live id. */
+	raiseFence(noteId: string, seq: number): void {
+		const fence = this.removedAtSeq.get(noteId);
+		if (fence !== undefined && seq > fence) this.removedAtSeq.set(noteId, seq);
+	}
+
 	/** The tombstone's seq fence, or undefined when `noteId` is not tombstoned. */
 	deletedAtSeq(noteId: string): number | undefined {
 		return this.removedAtSeq.get(noteId);

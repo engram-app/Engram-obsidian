@@ -142,6 +142,16 @@ export class CrdtOpQueue {
 		return this.pending();
 	}
 
+	/** Is a `kind` op for `docId` pending that WILL be delivered to `vaultId`?
+	 *  Mirrors the queue's own delivery rule (dropIfForeignVault): an unstamped
+	 *  or null owner means "current vault" and is delivered, so it counts. */
+	hasPending(docId: string, kind: CrdtOp["kind"], vaultId: string | null): boolean {
+		const op = this.entries.get(docId)?.op;
+		if (!op || op.kind !== kind) return false;
+		const owner = op.vaultId ?? null;
+		return owner === null || owner === vaultId;
+	}
+
 	/** Register a callback to persist the flat pending op list. */
 	setPersist(fn: (ops: CrdtOp[]) => Promise<void> | void): void {
 		this.persistFn = fn;

@@ -182,6 +182,7 @@ function toStreamEvent(
 		mtime: p.mtime as number | undefined,
 		updated_at: p.updated_at as string | undefined,
 		version: p.version as number | undefined,
+		seq: p.seq as number | undefined,
 		...overrides,
 	};
 }
