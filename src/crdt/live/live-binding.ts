@@ -27,6 +27,7 @@ import { editorInfoField } from "obsidian";
 import type * as Y from "yjs";
 import { noteRef } from "../../note-ref";
 import { rlog } from "../../remote-log";
+import { merge3 } from "../lca-merge";
 import {
 	applyCmChangesToYText,
 	type CmChangeSpec,
@@ -36,12 +37,14 @@ import {
 } from "./cm-yjs-bridge";
 import {
 	classifyEditSpan,
+	decideLoadedReconcile,
 	decideReconcile,
 	type EditorOwnerInfo,
 	fmCreationBodyDiff,
 	frontmatterPrefixLen,
 	needsReattach,
 	ownedMarkdownPath,
+	type ReconcileAction,
 } from "./live-binding-decisions";
 
 /** Interval for the drift backstop. */
@@ -67,6 +70,12 @@ export interface LiveBindingCoordinator {
 	residentText(noteId: string): { text: Y.Text; ready: Promise<void> };
 	/** Open the note's CRDT room (syncStep1) so edits reach the server. */
 	enroll(noteId: string): void;
+	/** The load gate holds this doc (`ProviderRegistry.awaitsServerState`). */
+	awaitsServer(noteId: string): boolean;
+	/** Base for the load gate's reconcile (`SyncEngine.loadMergeBase`). */
+	loadMergeBase(path: string, noteId: string): Promise<string | null>;
+	/** Write `text` to a conflict copy beside `path`; false on failure. */
+	keepConflictCopy(path: string, text: string): Promise<boolean>;
 	/** Viewer refcount: while bound, remote merges paint the editor instead of
 	 *  writing disk directly (the editor owns the file). */
 	onBind(path: string, viewId: string): void;
@@ -299,9 +308,22 @@ class LiveBindingValue implements PluginValue {
 				: this.preEditText.slice(frontmatterPrefixLen(this.preEditText));
 		const action = decideReconcile(editorText, docText, this.dirtySinceAttach, base);
 		if (action.kind === "defer") {
-			this.deferSeed(text);
+			// The load gate: a server-known note waits for the server's state like
+			// any empty doc, but resolves it with the gate's own merge on arrival.
+			const gated =
+				this.noteId !== null && this.boundCoordinator?.awaitsServer(this.noteId) === true;
+			this.deferSeed(text, gated);
 			return;
 		}
+		this.applyAndGoLive(text, action, prefix);
+	}
+
+	/** Run a reconcile action, then go live. */
+	private applyAndGoLive(
+		text: Y.Text,
+		action: Exclude<ReconcileAction, { kind: "defer" }>,
+		prefix: number,
+	): void {
 		// NOTE: everything below runs BEFORE goLive(), so neither echo guard is live
 		// yet — the observer is unregistered and `ready` is still false, which is what
 		// actually stops these writes from being re-forwarded or re-painted. Keep
@@ -362,7 +384,7 @@ class LiveBindingValue implements PluginValue {
 	 *  observers once at transaction cleanup with every delta already applied. A
 	 *  partial seed would need the server to split one document across separate
 	 *  transactions, which the sync protocol never does. */
-	private deferSeed(text: Y.Text): void {
+	private deferSeed(text: Y.Text, gated = false): void {
 		const onSeed = (_event: Y.YTextEvent, _tr: Y.Transaction) => {
 			if (this.destroyed || this.ytext !== text) {
 				text.unobserve(onSeed);
@@ -372,10 +394,57 @@ class LiveBindingValue implements PluginValue {
 			if (text.length === 0) return; // still unseeded — keep waiting
 			text.unobserve(onSeed);
 			this.deferObserver = null;
-			this.reconcileAndGoLive(text); // now non-empty -> adopt branch
+			if (gated) this.resolveLoaded(text);
+			else this.reconcileAndGoLive(text); // now non-empty -> adopt branch
 		};
 		this.deferObserver = onSeed;
 		text.observe(onSeed);
+	}
+
+	/** The load gate's reconcile (`decideLoadedReconcile`). Still not live while
+	 *  the base loads, so keystrokes keep queuing in the editor; the decision
+	 *  reads the editor afresh after the await. */
+	private resolveLoaded(text: Y.Text): void {
+		const c = this.boundCoordinator;
+		const path = this.path;
+		const noteId = this.noteId;
+		if (!c || !path || !noteId) {
+			this.reconcileAndGoLive(text);
+			return;
+		}
+		const stale = () => this.destroyed || this.ytext !== text;
+		void c
+			.loadMergeBase(path, noteId)
+			.catch(() => null)
+			.then((base) => {
+				if (stale()) return;
+				const fullText = this.editor.state.doc.toString();
+				const prefix = frontmatterPrefixLen(fullText);
+				const editorText = fullText.slice(prefix);
+				const docText = text.toJSON();
+				const baseBody = base === null ? null : base.slice(frontmatterPrefixLen(base));
+				const action = decideLoadedReconcile(editorText, docText, baseBody);
+				if (action.kind !== "conflict") {
+					this.applyAndGoLive(text, action, prefix);
+					return;
+				}
+				// One conflict: the note takes the server's text now, with no await
+				// in between so no keystroke can land unseen, and the editor's text
+				// goes to a copy. If the copy cannot be written, the editor's text is
+				// merged back over the note (as an edit, so it syncs): never lost.
+				const adopt = textDiffToChangeSpec(editorText, docText);
+				this.applyAndGoLive(text, { kind: "adopt", changes: adopt }, prefix);
+				void c.keepConflictCopy(path, fullText).then((kept) => {
+					if (kept || stale()) return;
+					const now = this.editor.state.doc.toString();
+					const p = frontmatterPrefixLen(now);
+					const merged = merge3(docText, now.slice(p), editorText);
+					const target = merged.clean ? merged.text : editorText;
+					this.editor.dispatch({
+						changes: shiftChanges(textDiffToChangeSpec(now.slice(p), target), p),
+					});
+				});
+			});
 	}
 
 	private goLive(text: Y.Text): void {

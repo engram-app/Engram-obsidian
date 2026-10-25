@@ -86,6 +86,10 @@ export interface CrdtLiveViewsDeps {
 	/** Optional: surface a last-release flush/projection failure (the doc is left
 	 *  resident in that case) instead of dropping the rejection on the floor. */
 	onReleaseError?: (path: string, err: unknown) => void;
+	/** `SyncEngine.loadMergeBase`: the base for the load gate's reconcile. */
+	loadMergeBase?(path: string, server: string): Promise<string | null>;
+	/** `SyncEngine.keepConflictCopy`: the load gate's keep-both. */
+	keepConflictCopy?(path: string, text: string): Promise<boolean>;
 }
 
 /** Owns the non-editor CRDT view concerns (reading-mode render) and the viewer
@@ -135,6 +139,19 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 
 	enroll(noteId: string): void {
 		this.deps.enrollment.enroll(noteId);
+	}
+
+	awaitsServer(noteId: string): boolean {
+		return this.deps.manager.awaitsServerState(noteId);
+	}
+
+	async loadMergeBase(path: string, noteId: string): Promise<string | null> {
+		const server = this.deps.manager.residentProjection(noteId);
+		return (await this.deps.loadMergeBase?.(path, server)) ?? null;
+	}
+
+	async keepConflictCopy(path: string, text: string): Promise<boolean> {
+		return (await this.deps.keepConflictCopy?.(path, text)) ?? false;
 	}
 
 	onBind(path: string, viewId: string): void {

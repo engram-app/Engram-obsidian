@@ -4,6 +4,7 @@
 import { diff_match_patch } from "diff-match-patch";
 import { isMarkdownPath } from "../../file-kind";
 import { splitFrontmatter } from "../frontmatter-codec";
+import { merge3 } from "../lca-merge";
 import { type CmChangeSpec, textDiffToChangeSpec } from "./cm-yjs-bridge";
 
 /** The shape of Obsidian's `editorInfoField` that the binding actually reads. */
@@ -205,4 +206,31 @@ export function decideReconcile(
 	// The user did NOT type; the editor is just stale disk while the doc holds
 	// authoritative (e.g. server-newer) content. Snap the editor to the doc.
 	return { kind: "adopt", changes: textDiffToChangeSpec(editorText, docText) };
+}
+
+/** The initial reconcile for a doc the load gate held (server-known, no local
+ *  history; see `ProviderRegistry.awaitsServerState`): the server's state just
+ *  landed in `docText`, and `editorText` is everything local (the file as
+ *  opened plus any keystrokes queued since). `base` is the text both descend
+ *  from (`SyncEngine.loadMergeBase`), or null when none is provable.
+ *
+ *  Same outcomes as the idle adopt: identical is synced, a clean `merge3` from
+ *  the base converges both sides, anything else is ONE conflict (the caller
+ *  keeps the editor's text in a copy and the note takes the server's). Never
+ *  the two-way forward `decideReconcile` falls back to, which deletes server
+ *  work the editor never saw. */
+export function decideLoadedReconcile(
+	editorText: string,
+	docText: string,
+	base: string | null,
+): Exclude<ReconcileAction, { kind: "defer" }> | { kind: "conflict" } {
+	if (editorText === docText) return { kind: "noop" };
+	if (base === null) return { kind: "conflict" };
+	const merged = merge3(base, editorText, docText);
+	if (!merged.clean) return { kind: "conflict" };
+	return {
+		kind: "merge",
+		toDoc: textDiffToChangeSpec(docText, merged.text),
+		toEditor: textDiffToChangeSpec(editorText, merged.text),
+	};
 }

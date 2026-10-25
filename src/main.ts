@@ -2998,6 +2998,10 @@ export default class EngramSyncPlugin extends Plugin {
 							resolveExistingId: (path) => this.noteIdMap.get(path),
 							flushToDisk: (path, content) =>
 								this.syncEngine.flushFromCrdt(path, content).then(() => {}),
+							loadMergeBase: (path, server) =>
+								this.syncEngine.loadMergeBase(path, server),
+							keepConflictCopy: (path, text) =>
+								this.syncEngine.keepConflictCopy(path, text),
 							onReleaseError: (path, err) =>
 								rlog().warn(
 									"crdt",
