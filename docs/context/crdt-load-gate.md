@@ -42,7 +42,9 @@ unsynced buffer would be stamped as synced and hidden from cold reconcile.
 `SyncEngine.loadServerState(noteId)` reads `crdt_doc_state` (room-free). One
 in-flight read per note (`serverLoads`); a burst of edits shares it. A state
 with no structs (a row that predates CRDT state) opens the gate instead
-(`openLoadGate`): there is no lineage to rival, so a closed note's edit
+(`openLoadGate` for `crdt_doc_state`; for an open editor the usual trigger is
+its room's first syncStep2 leaving the doc empty, same proof, same
+`releaseLoadGate` tail): there is no lineage to rival, so a closed note's edit
 re-routes from disk and seeds, and an open editor seeds from its buffer
 (`onLoadGateOpen`, the binding's way out of waiting for a seed that never
 comes; its waiter is cleared when it fires, on detach, or with the entry).
@@ -83,7 +85,10 @@ disk is unchanged since sync):
 3. otherwise exactly ONE conflict copy of the local text; the note takes the
    server's. No base at all is also a conflict (Relay's two-way rule). If the
    open editor's copy fails it merges its text back as an edit; if the editor
-   closed meanwhile, `restoreLocalText` writes it over the note on disk.
+   closed meanwhile, `restoreLocalText` writes it over the note on disk, or,
+   if the note was deleted meanwhile, into a conflict copy. It never recreates
+   the deleted path: that would be a fresh create that skips the delete's seq
+   fence.
 
 ## Deviations from Relay (each with its reason)
 

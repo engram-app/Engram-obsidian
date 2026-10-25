@@ -3010,16 +3010,25 @@ export class SyncEngine {
 
 	/** The keep-both's last resort (the copy failed and the editor closed):
 	 *  write `text` over the note so its modify event pushes it as a local edit.
-	 *  Logged, never thrown: there is nowhere further to hand it. */
+	 *  If the note is gone (deleted during the load), NEVER recreate its path:
+	 *  that is a fresh create that bypasses the delete's seq fence. The text
+	 *  goes to a conflict copy beside it instead. Logged, never thrown. */
 	async restoreLocalText(path: string, text: string): Promise<void> {
 		const normalized = normalizePath(path);
 		const file = this.app.vault.getFileByPath(normalized);
 		try {
-			if (file) await this.app.vault.modify(file, text);
-			else await this.createFileWithFolders(normalized, text);
+			if (file) {
+				await this.app.vault.modify(file, text);
+				rlog().warn(
+					"conflict",
+					`load gate: restored the editor's text over ${noteRef(normalized)}`,
+				);
+				return;
+			}
+			const copy = await this.writeDriftConflictCopy(normalized, text);
 			rlog().warn(
 				"conflict",
-				`load gate: restored the editor's text over ${noteRef(normalized)}`,
+				`load gate: ${noteRef(normalized)} was deleted; kept the editor's text in ${noteRef(copy)}`,
 			);
 		} catch (e) {
 			rlog().error(

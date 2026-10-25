@@ -230,12 +230,18 @@ export class ProviderRegistry {
 	 *  the held edit seeds. False (gate stays shut) when it does carry one. */
 	async openLoadGate(noteId: string, update: Uint8Array): Promise<boolean> {
 		if (Y.decodeUpdate(update).structs.length > 0) return false;
-		const e = await this.entry(noteId);
+		this.releaseLoadGate(await this.entry(noteId));
+		return true;
+	}
+
+	/** The server's state is known to hold nothing (a struct-less
+	 *  `crdt_doc_state`, or a room's first syncStep2 that left the doc with no
+	 *  history): open the gate and fire the waiting bindings, once. */
+	private releaseLoadGate(e: Entry): void {
 		e.serverEmpty = true;
 		const waiters = [...e.gateWaiters];
 		e.gateWaiters.clear();
 		for (const w of waiters) w();
-		return true;
 	}
 
 	/** Run `cb` once when `openLoadGate` opens `noteId`'s gate (the open
@@ -292,7 +298,12 @@ export class ProviderRegistry {
 				this.opts.onSynced?.(noteId);
 				// A first syncStep2 that left the doc empty = the server's "genuinely
 				// empty note" signal (materialize off the handshake, #547).
-				if (text.length === 0) this.opts.onEmptyStep2?.(noteId);
+				if (text.length === 0) {
+					// The same proof opens the load gate for an open editor waiting
+					// on a seed that will never come (the room's only loader).
+					if (this.awaitsServerState(noteId)) this.releaseLoadGate(entry);
+					this.opts.onEmptyStep2?.(noteId);
+				}
 			},
 		});
 		persistence.on("error", (err: unknown) => this.opts.onPersistError?.(noteId, err));
