@@ -8371,6 +8371,16 @@ export class SyncEngine {
 		this.healRetryTimers.set(noteId, timer);
 	}
 
+	/** The note converged (a STEP2, or room-free): forget its retry backoff, so
+	 *  a later heal for it is not held behind a timer it no longer needs. */
+	private clearHealBackoff(noteId: string): void {
+		this.healRetries.delete(noteId);
+		const timer = this.healRetryTimers.get(noteId);
+		if (timer === undefined) return;
+		this.time.clearTimeout(timer);
+		this.healRetryTimers.delete(noteId);
+	}
+
 	private countHealRoom(reason: HealRoomReason): void {
 		this.healRoomsOpened.set(reason, (this.healRoomsOpened.get(reason) ?? 0) + 1);
 		if (++this.healRoomsUnreported >= HEAL_ROOM_REPORT_EVERY) this.flushHealRoomCounts();
@@ -8448,7 +8458,7 @@ export class SyncEngine {
 	 *  can't write syncState at a stale/dead path — no separate teardown hook
 	 *  needed. Never throws into the CRDT manager's synchronous callback. */
 	async commitCrdtConvergence(noteId: string): Promise<void> {
-		this.healRetries.delete(noteId);
+		this.clearHealBackoff(noteId);
 		// Settle a fired durable-queue delivery FIRST (independent of any
 		// staged convergence): an inbound frame for this note proves the room
 		// round-tripped, so the queued local ops went out on that same live
@@ -13150,6 +13160,7 @@ export class SyncEngine {
 								!this.isLiveBound(normalizePath(entry.path)) &&
 								(await this.deliverQueuedOpsRoomFree(entry))
 							) {
+								this.clearHealBackoff(entry.noteId);
 								await this.queue.dequeue(entry.path, this.entryVaultId(entry));
 								this.issues.clear(entry.path);
 								flushed++;

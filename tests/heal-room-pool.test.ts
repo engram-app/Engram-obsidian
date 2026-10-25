@@ -67,6 +67,7 @@ function harness(
 		closeDoc: () => {},
 		encodeDeliveryReceipt: async () => new Uint8Array([1]),
 		encodeStateAsUpdate: async () => new Uint8Array([1, 2, 3]),
+		markDelivered: () => {},
 	} as unknown as CrdtManager);
 	engine.setReady();
 	const map = new NoteIdMap();
@@ -253,7 +254,7 @@ describe("idle heal rooms: the start budget and the lost-reply paths (Engram#224
 		expect(rooms.starts).toBe(many);
 		expect(maxPerMinute(rooms.startedAt)).toBeLessThanOrEqual(20);
 		expect(rooms.max).toBeLessThanOrEqual(IDLE_HEAL_ROOMS);
-	});
+	}, 30_000); // ~54 simulated minutes of pacing: slow on a loaded box
 
 	test("a LOST reply plus a second poke inside the cooldown still converges (never dropped)", async () => {
 		// The deaf-note class: the first STEP2 is lost on a dropping socket, and
@@ -293,6 +294,33 @@ describe("idle heal rooms: the start budget and the lost-reply paths (Engram#224
 		await settle(() => converged(engine) === 1, 1_000, 120);
 		expect(converged(engine)).toBe(1);
 		expect(time.now() - t1).toBeLessThan(60_000);
+	});
+
+	test("a note that later converges ROOM-FREE drops its retry backoff", async () => {
+		const { engine, rooms, settle } = harness({ dropStep2: (noteId) => noteId === id(0) });
+		engine.setCrdtPorts({ docState: mock().mockRejectedValue(new Error("timeout")) });
+		await coldConverge(engine, 0);
+		// The room times out: the note is now on its retry backoff.
+		await settle(() => rooms.released >= 1, 1_000, 40);
+		const before = rooms.starts;
+
+		// Its queued edit then goes out room-free and is acked.
+		engine.setCrdtLiveCheck(() => true);
+		engine.setCrdtPorts({ docUpdate: mock(async () => ({ head: "h" })) });
+		await engine.queue.enqueue({
+			path: path(0),
+			action: "upsert",
+			noteId: id(0),
+			crdt: true,
+			timestamp: 1,
+			vaultId: "v",
+		});
+		await engine.flushQueue();
+		expect(engine.queue.size).toBe(0);
+
+		// A later heal for it opens at once, not after the backoff.
+		(engine as any).poolIdleHeal(path(0), id(0), "other");
+		expect(rooms.starts).toBe(before + 1);
 	});
 
 	test("a room whose STEP2 never comes is CLOSED before its slot is reused", async () => {

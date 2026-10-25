@@ -47,9 +47,29 @@ const ACKED_KEY = "acked";
 const ACKED_PERSIST_MS = 2_000;
 
 /** Every client the mark claims, at a clock the server state has reached. A
- *  state vector cannot see deletes, so this proves inserts only. */
+ *  state vector cannot see deletes; `dsCovers` checks those. */
 function svCovers(server: Map<number, number>, mark: Map<number, number>): boolean {
 	for (const [client, clock] of mark) if ((server.get(client) ?? 0) < clock) return false;
+	return true;
+}
+
+type DeleteRanges = Map<number, { clock: number; len: number }[]>;
+
+/** Every range the mark records as deleted is deleted on the server too.
+ *  Range-wise: a server range may cover a mark range in several pieces. */
+function dsCovers(server: DeleteRanges, mark: DeleteRanges): boolean {
+	for (const [client, ranges] of mark) {
+		const have = [...(server.get(client) ?? [])].sort((a, b) => a.clock - b.clock);
+		for (const { clock, len } of ranges) {
+			let reached = clock;
+			for (const r of have) {
+				if (r.clock > reached) break;
+				reached = Math.max(reached, r.clock + r.len);
+				if (reached >= clock + len) break;
+			}
+			if (reached < clock + len) return false;
+		}
+	}
 	return true;
 }
 
@@ -89,6 +109,9 @@ interface Entry {
 	/** The mark changed and is not yet in IndexedDB. */
 	ackedDirty: boolean;
 	ackedTimer: number | null;
+	/** IndexedDB key for the mark, fixed when the entry LOADS, so a vault switch
+	 *  mid-session never files it under the new vault. */
+	ackedKey: string;
 	/** A local change may have landed since `deliveredReceipt` was taken. Set
 	 *  on every non-remote update; recomputed exactly against the snapshot on
 	 *  hydration and on each ack. While true a remote merge does not advance
@@ -374,6 +397,7 @@ export class ProviderRegistry {
 			ackedIsDoc: false,
 			ackedDirty: false,
 			ackedTimer: null,
+			ackedKey: this.ackedKey(),
 		};
 		// Before a LOCAL change moves the doc past a lazily held mark, pin the
 		// mark to the state it described.
@@ -779,11 +803,17 @@ export class ProviderRegistry {
 	ackedCoveredBy(noteId: string, serverUpdate: Uint8Array): boolean {
 		const e = this.entries.get(noteId);
 		if (!e?.lifetime.active) return true;
-		const mark = e.ackedIsDoc
-			? Y.decodeStateVector(Y.encodeStateVector(e.doc))
-			: e.deliveredReceipt && Y.decodeSnapshot(e.deliveredReceipt).sv;
-		if (!mark) return true;
-		return svCovers(Y.decodeStateVector(Y.encodeStateVectorFromUpdate(serverUpdate)), mark);
+		const markBytes = this.ackedSnapshot(e);
+		if (!markBytes) return true;
+		const mark = Y.decodeSnapshot(markBytes);
+		const scratch = new Y.Doc();
+		try {
+			Y.applyUpdate(scratch, serverUpdate);
+			const server = Y.snapshot(scratch);
+			return svCovers(server.sv, mark.sv) && dsCovers(server.ds.clients, mark.ds.clients);
+		} finally {
+			scratch.destroy();
+		}
 	}
 
 	private markAckedDirty(noteId: string, e: Entry): void {
@@ -806,8 +836,8 @@ export class ProviderRegistry {
 		e.ackedDirty = false;
 		const snapshot = this.ackedSnapshot(e);
 		try {
-			if (snapshot) await e.persistence.set(this.ackedKey(), snapshot.slice().buffer);
-			else await e.persistence.del(this.ackedKey());
+			if (snapshot) await e.persistence.set(e.ackedKey, snapshot.slice().buffer);
+			else await e.persistence.del(e.ackedKey);
 		} catch (err) {
 			this.opts.onPersistError?.(noteId, err);
 		}
@@ -827,7 +857,7 @@ export class ProviderRegistry {
 	private async loadAcked(noteId: string, e: Entry): Promise<void> {
 		let stored: unknown;
 		try {
-			stored = await e.persistence.get(this.ackedKey());
+			stored = await e.persistence.get(e.ackedKey);
 		} catch (err) {
 			this.opts.onPersistError?.(noteId, err);
 			return;
@@ -874,7 +904,9 @@ export class ProviderRegistry {
 		e.deliveredReceipt = undefined;
 		e.ackedIsDoc = false;
 		e.localSinceAck = true;
-		this.markAckedDirty(noteId, e);
+		// The safety-direction write goes out now, not on the debounce.
+		e.ackedDirty = true;
+		void this.persistAcked(noteId, e);
 	}
 
 	/** Encode brand-new content as a standalone genesis update (throwaway doc, no

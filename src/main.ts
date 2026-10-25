@@ -23,7 +23,7 @@ import {
 	type RefreshFn,
 	seededAccessToken,
 } from "./auth";
-import { migrateCloudApiUrl, withClearedAuth } from "./auth-state";
+import { ackScopeFor, migrateCloudApiUrl, withClearedAuth } from "./auth-state";
 import { migrateBackendMode, offersUpgrades, switchMode } from "./backend-mode";
 import { BaseStore } from "./base-store";
 import {
@@ -2949,7 +2949,7 @@ export default class EngramSyncPlugin extends Plugin {
 					if (!this.crdtWiring) {
 						const wiring = createCrdtWiring({
 							ackScope: () =>
-								`${this.settings.apiUrl}|${this.settings.vaultId ?? ""}`,
+								ackScopeFor(this.settings.apiUrl, this.settings.vaultId),
 							noteIdMap: this.noteIdMap,
 							syncEngine: this.syncEngine,
 							// BaseStore is keyed by vault path and already holds exactly the

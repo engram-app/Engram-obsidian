@@ -268,4 +268,56 @@ describe("the acked mark is checked, scoped and cheap (Engram#2242 review)", () 
 		expect(reg.hasCurrentDeliveryReceipt(ID)).toBe(true);
 		await reg.destroyAll();
 	});
+
+	test("a server ROLLBACK that lost an acked DELETE makes the idle note re-send it", async () => {
+		// A delete advances no clock, so a state-vector check alone cannot see it.
+		const prefix = `acked-${++prefixSeq}`;
+		const scope = () => "https://api|vault-1";
+		let server = new Y.Doc();
+		server.getText(CONTENT_KEY).insert(0, "hello world");
+		const beforeDelete = Y.encodeStateAsUpdate(server);
+		const first = new ProviderRegistry({
+			ackScope: scope,
+			dbPrefix: prefix,
+			send: () => true,
+			onFlushToDisk: async () => true,
+		});
+		first.setConnected(true);
+		await first.applyRemoteUpdate(ID, beforeDelete);
+		(await first.getDoc(ID)).getText(CONTENT_KEY).delete(5, 6);
+		const receipt = await first.encodeDeliveryReceipt(ID);
+		Y.applyUpdate(server, await first.encodeStateAsUpdate(ID));
+		first.markDelivered(ID, receipt); // the server acked the delete
+		await first.destroyAll();
+
+		server = new Y.Doc(); // restored to before the delete
+		Y.applyUpdate(server, beforeDelete);
+		const { engine, reg, enroll, docUpdate } = await relaunch(prefix, server);
+		await converge(engine);
+
+		expect(enroll).not.toHaveBeenCalled();
+		expect(docUpdate).toHaveBeenCalledTimes(1);
+		expect(server.getText(CONTENT_KEY).toString()).toBe("hello");
+		await reg.destroyAll();
+	});
+
+	test("the mark is filed under the scope the note LOADED with, not the one live at save", async () => {
+		const { prefix, server } = await deviceThatSyncedThenQuit();
+		let scope = "https://api|vault-1";
+		const reg = new ProviderRegistry({
+			ackScope: () => scope,
+			dbPrefix: prefix,
+			send: () => true,
+			onFlushToDisk: async () => true,
+		});
+		await reg.applyRemoteUpdate(ID, Y.encodeStateAsUpdate(server));
+		scope = "https://api|vault-2"; // a vault switch before the debounce fires
+		await reg.destroyAll();
+
+		const { engine, reg: again, docUpdate } = await relaunch(prefix, server);
+		await converge(engine);
+		// Still vault-1's mark: nothing to re-send.
+		expect(docUpdate).not.toHaveBeenCalled();
+		await again.destroyAll();
+	});
 });

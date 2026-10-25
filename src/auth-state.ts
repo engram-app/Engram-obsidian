@@ -1,4 +1,4 @@
-import { LEGACY_CLOUD_HOSTS } from "./tabs/urls";
+import { ENGRAM_CLOUD_URL, LEGACY_CLOUD_HOSTS } from "./tabs/urls";
 import type { BackendScopedField, EngramSyncSettings } from "./types";
 
 /** If `apiUrl` points at a legacy Cloud host (one that used to serve the REST
@@ -13,6 +13,28 @@ export function migrateCloudApiUrl(apiUrl: string, cloudUrl: string): string | n
 	if (!origin) return null;
 	const host = new URL(origin).hostname;
 	return LEGACY_CLOUD_HOSTS.includes(host) ? cloudUrl : null;
+}
+
+/** The scope a note's persisted acked mark is filed under (Engram#2242): the
+ *  server origin plus the vault. Normalised (case, trailing slash, the legacy
+ *  Cloud host rewrite) so an equivalent edit of the address does not drop
+ *  every mark. Single-label self-host names that `completeOrigin` refuses are
+ *  normalised by hand. */
+export function ackScopeFor(
+	apiUrl: string,
+	vaultId: string | null | undefined,
+	cloudUrl: string = ENGRAM_CLOUD_URL,
+): string {
+	const url = migrateCloudApiUrl(apiUrl, cloudUrl) ?? apiUrl;
+	let origin = completeOrigin(url);
+	if (!origin) {
+		try {
+			origin = new URL(url).origin.toLowerCase();
+		} catch {
+			origin = url.trim().toLowerCase().replace(/\/+$/, "");
+		}
+	}
+	return `${origin}|${vaultId ?? ""}`;
 }
 
 /** Returns scheme+host+port for a URL that looks like a *finished* origin
