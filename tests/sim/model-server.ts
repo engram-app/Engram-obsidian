@@ -105,6 +105,9 @@ export class ModelServer {
 	private readonly byId = new Map<string, Note>();
 	private readonly byPath = new Map<string, string>();
 	private readonly clients = new Map<string, ClientRec>();
+	/** Attachments by path: just enough for a push to land and a server-side
+	 *  delete to be announced. Bytes are not modeled. */
+	private readonly attachments = new Map<string, { size: number; hash: string }>();
 	private vaultSeq = 0;
 
 	constructor(opts: { scheduler: Scheduler; genesisEmptyDoc?: boolean }) {
@@ -155,6 +158,59 @@ export class ModelServer {
 	 *  asserted AFTER all faults cease. */
 	clearDrops(): void {
 		for (const c of this.clients.values()) c.drop = 0;
+	}
+
+	// -------------------------------------------------------------------------
+	// Server-side mutations (MCP / REST / web-app actions no replica performs)
+	// -------------------------------------------------------------------------
+
+	/** Delete a note server-side (an MCP or web-app delete): tombstone it at a
+	 *  fresh seq and broadcast `note_changed` delete to every device. */
+	serverDeleteNote(id: string): void {
+		const n = this.byId.get(id);
+		if (!n || n.deleted) return;
+		n.deleted = true;
+		this.byPath.delete(n.path);
+		this.bump(n);
+		this.broadcastNoteChanged({ event_type: "delete", kind: "note", id, path: n.path });
+	}
+
+	/** Restore a deleted note under its SAME id (backend safer delete,
+	 *  Engram#2233): live again at a fresh seq, announced by an upsert broadcast
+	 *  carrying the body, exactly as `restore_deleted` does. */
+	serverRestoreNote(id: string): void {
+		const n = this.byId.get(id);
+		if (!n?.deleted) return;
+		n.deleted = false;
+		this.byPath.set(n.path, id);
+		this.bump(n);
+		this.broadcastNoteChanged({
+			event_type: "upsert",
+			kind: "note",
+			id,
+			path: n.path,
+			content: this.text(n),
+			content_hash: this.head(n),
+			version: n.version,
+			updated_at: n.updatedAt,
+		});
+	}
+
+	/** Delete an attachment server-side and broadcast it. */
+	serverDeleteAttachment(path: string): void {
+		if (!this.attachments.delete(path)) return;
+		this.vaultSeq += 1;
+		this.broadcastNoteChanged({ event_type: "delete", kind: "attachment", path });
+	}
+
+	hasAttachment(path: string): boolean {
+		return this.attachments.has(path);
+	}
+
+	private broadcastNoteChanged(payload: Record<string, unknown>): void {
+		for (const [id, c] of this.clients) {
+			if (c.syncTopic) this.deliver(id, [null, null, c.syncTopic, "note_changed", payload]);
+		}
 	}
 
 	// -------------------------------------------------------------------------
@@ -531,6 +587,7 @@ export class ModelServer {
 
 		if (method === "POST" && path === "/notes") return this.restPushNote(body);
 		if (method === "GET" && path === "/sync/manifest") return this.restManifest();
+		if (method === "POST" && path === "/attachments") return this.restPushAttachment(body);
 
 		// /notes/:id/updates (id, not path-encoded — encodeURIComponent single seg)
 		const upd = /^\/notes\/([^/]+)\/updates$/.exec(path);
@@ -563,6 +620,28 @@ export class ModelServer {
 		const upd = this.lastUpdate(n);
 		if (upd) this.fanoutUpdate("__rest__", n, upd);
 		return ok({ note: this.noteJson(n), chunks_indexed: 1 });
+	}
+
+	private restPushAttachment(body: Record<string, unknown>): SimResponse {
+		const path = body.path as string;
+		const b64 = (body.content_base64 as string) ?? "";
+		const hash = `att-${b64.length}-${this.vaultSeq + 1}`;
+		this.attachments.set(path, { size: b64.length, hash });
+		this.vaultSeq += 1;
+		const now = nowIso();
+		return ok({
+			attachment: {
+				id: `att-${path}`,
+				user_id: "sim-user",
+				path,
+				mime_type: (body.mime_type as string) ?? "application/octet-stream",
+				size_bytes: b64.length,
+				mtime: (body.mtime as number) ?? 0,
+				content_hash: hash,
+				created_at: now,
+				updated_at: now,
+			},
+		});
 	}
 
 	private restGetNote(path: string): SimResponse {
@@ -610,11 +689,16 @@ export class ModelServer {
 				content_hash: this.head(n),
 				version: n.version,
 			}));
+		const attachments = [...this.attachments].map(([path, a]) => ({
+			path,
+			content_hash: a.hash,
+			size_bytes: a.size,
+		}));
 		return ok({
 			notes,
-			attachments: [],
+			attachments,
 			total_notes: notes.length,
-			total_attachments: 0,
+			total_attachments: attachments.length,
 			change_seq: this.vaultSeq,
 		});
 	}

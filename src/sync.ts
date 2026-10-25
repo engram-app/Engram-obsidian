@@ -2307,6 +2307,11 @@ export class SyncEngine {
 	 *  Registries without the probe (older fakes in tests) fall back to the
 	 *  drift proxy alone — the pre-existing, copy-happy behavior. */
 	private shouldKeepDriftCopy(normalized: string, disk: string, noteId: string | null): boolean {
+		// Notes only. An attachment's `disk` is binary read as text, which never
+		// hashes like the base64 baseline its push recorded, so every synced
+		// attachment read as drifted and its delete wrote `img.png (conflict).md`
+		// holding the image bytes. Attachments have no CRDT room to lose.
+		if (!this.isCrdtEligiblePath(normalized)) return false;
 		if (exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES)) return false;
 		if (!this.needsColdReconcile(normalized, disk)) return false;
 		if (!noteId || typeof this.crdt?.hasUndeliveredOps !== "function") return true;
@@ -9508,6 +9513,14 @@ export class SyncEngine {
 		// across a delete). The clear is DEFERRED to after applyChange (below):
 		// its delete branch needs the path→id mapping to classify the note as
 		// CRDT-managed and tear its room down, so retiring the id here would blind it.
+		// The server re-announcing an id as live is the clearing event for the
+		// registry's delete tombstone: a restore brings the SAME id back (safer
+		// delete, Engram#2233), and a tombstone left standing throws
+		// NoteDestroyedError on every apply, so the note never reappears. Our own
+		// fresh deletes returned above (recentlyDeleted), so a stale upsert cannot
+		// reach here and resurrect them. Optional call: partial registry doubles
+		// in tests lack it.
+		const revived = op.kind === "upsert" && this.crdt?.revive?.(op.id) === true;
 		if (op.kind === "upsert") {
 			// Id-keyed move: the server sends a note's stable id at a NEW path, but
 			// this device still holds that id at a DIFFERENT local path. A rename
@@ -9568,6 +9581,13 @@ export class SyncEngine {
 		// Retire the id now that applyChange has consumed the mapping (see the
 		// deferral note above). Idempotent with applyChange's own md teardown.
 		if (op.kind === "delete") this.noteIdMap?.forgetRemoteDelete(op.path, op.id ?? null);
+		// The revived doc is EMPTY (the delete cleared its IndexedDB store) while
+		// disk now holds the row. Load the server's lineage into it now, over a
+		// handshake, rather than leave a history-less doc for the next local edit
+		// to seed from disk: that seed is a rival lineage (crdt-lineage-doubling).
+		if (revived && this.isCrdtEligiblePath(op.path)) {
+			this.socketConverge(normalizePath(op.path), op.id);
+		}
 		return applied;
 	}
 

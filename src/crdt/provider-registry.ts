@@ -142,8 +142,9 @@ export class ProviderRegistry {
 	private readonly entries = new Map<string, Entry>();
 	/** Tombstones for notes torn down via removeDoc (delete). A late fan-out
 	 *  update or a stray edit for a deleted note must NOT re-materialize + re-flush
-	 *  it (resurrection). A note_id is minted once and never reused, so a permanent
-	 *  tombstone is safe; cleared on destroyAll (stack teardown). */
+	 *  it (resurrection). Cleared by `revive` (the server re-announced the id as
+	 *  live: a restore) and by destroyAll (stack teardown). Never revived, an id
+	 *  just stays dead, which is the delete's intent. */
 	private readonly removed = new Set<string>();
 	private connected = false;
 	/** note_ids with an OPEN room — those advertising syncStep1 (the down-sync
@@ -188,9 +189,8 @@ export class ProviderRegistry {
 		return projectNote(order, values, e.text.toJSON(), rawFrontmatterOf(e.doc));
 	}
 
-	/** Liveness: a tombstoned note is dead for
-	 *  good — a note_id is minted once and never reused, so this never rejects a
-	 *  legitimate access. Cleared only by destroyAll (stack teardown). */
+	/** Liveness: a tombstoned note is dead until the server brings the same id
+	 *  back (`revive`) or the stack is torn down (destroyAll). */
 	private assertAlive(noteId: string): void {
 		if (this.removed.has(noteId)) throw new NoteDestroyedError(noteId);
 	}
@@ -933,6 +933,16 @@ export class ProviderRegistry {
 	}
 
 	// --- True teardown (delete / rename / unload) -------------------------------
+
+	/** The server re-announced `noteId` as live (a restore of a deleted note
+	 *  keeps its id). Lift the tombstone so the next access builds a fresh doc.
+	 *  removeDoc cleared the IndexedDB store, so that doc starts EMPTY and
+	 *  converges from server state; nothing local is seeded into it, which would
+	 *  mint a rival lineage. Relay does the same: a remote re-add of a path clears
+	 *  its deleteSet entry. Returns whether a tombstone was lifted. */
+	revive(noteId: string): boolean {
+		return this.removed.delete(noteId);
+	}
 
 	async removeDoc(noteId: string): Promise<void> {
 		this.removed.add(noteId); // tombstone: block any resurrection of a deleted note

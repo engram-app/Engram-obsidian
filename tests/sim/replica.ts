@@ -666,6 +666,10 @@ export class Replica {
 		await this.app.vault.create(path, content);
 	}
 
+	async createAttachment(path: string, bytes: Uint8Array): Promise<void> {
+		await this.app.vault.createBinary(path, bytes.slice().buffer);
+	}
+
 	/** Open a note in an editor: makes isBound(path) true and fires the real
 	 *  STEP1 enrollment (main.ts:623 active-leaf-change → enroll(getOrMint(path))),
 	 *  so the note pulls remote CRDT history and becomes history-FULL. A real user
