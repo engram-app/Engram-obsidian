@@ -716,7 +716,10 @@ export class SyncEngine {
 	);
 	/** Why idle notes needed a heal room since the last report; shipped as one
 	 *  counts-only anomaly each time the pool drains. */
-	private healRoomReasons = new Map<HealRoomReason, number>();
+	private readonly healRoomReasons = this.track(
+		["vault", "destroy"],
+		new Map<HealRoomReason, number>(),
+	);
 	/** >0 while a bulk sweep (pushAll / fullSync) is running. Queue entries it
 	 *  produces get Background priority — see priorityForPath. */
 	private bulkDepth = 0;
@@ -8229,7 +8232,7 @@ export class SyncEngine {
 		if (this.idleHealSlots.size > 0 || this.idleHealWaiting.size > 0) return;
 		if (this.healRoomReasons.size === 0) return;
 		const counts = Object.fromEntries(this.healRoomReasons);
-		this.healRoomReasons = new Map();
+		this.healRoomReasons.clear();
 		rlog().anomaly("crdt", "heal_room_fallback", counts);
 	}
 
