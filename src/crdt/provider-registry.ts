@@ -276,7 +276,8 @@ export class ProviderRegistry {
 		const cached = this.entries.get(noteId);
 		if (cached) return cached;
 		// The contract: a destroyed doc is not
-		// re-creatable — touching it throws. This is the ONE choke point where a
+		// re-creatable — touching it throws — until a sequenced server row newer
+		// than its delete revives the id (`revive`, a restore keeps the id). This is the ONE choke point where a
 		// doc comes into existence, so refusing here makes "a deleted note's room
 		// silently rebuilt by a late frame" unrepresentable, rather than something
 		// each inbound path has to remember to guard.
