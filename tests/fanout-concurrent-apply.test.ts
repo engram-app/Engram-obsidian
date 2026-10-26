@@ -31,8 +31,8 @@ const tick = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** A device holding a synced idle note: the real registry wired to the engine
  *  as wiring.ts wires it, a disk whose writes take time and fire Obsidian's
- *  modify event. `writesLand(false)` makes writes resolve without reaching
- *  disk yet (a write still in flight when the next modify fires). */
+ *  modify event. `writesTake(ms)` slows every later write. `bind(true)`
+ *  makes the note editor-bound, so a remote merge nudges instead of writing. */
 async function device() {
 	ID = `id-a-${++deviceSeq}`;
 	const server = new Y.Doc();
@@ -43,11 +43,10 @@ async function device() {
 	let engine!: SyncEngine;
 	// A write takes a few ms and then fires the vault modify event, as
 	// Obsidian does for every write, the plugin's own included.
-	let land = true;
 	let writeMs = 2;
+	let bound = false;
 	const modify = mock(async (f: TFile, content: string) => {
 		await tick(writeMs);
-		if (!land) return;
 		disk.set(f.path, content);
 		engine.handleModify(f);
 	});
@@ -84,7 +83,8 @@ async function device() {
 		noteIdMap: map,
 		syncEngine: engine,
 		canSendLive: () => true,
-		isBound: () => false,
+		isBound: () => bound,
+		onBoundUpdate: () => {},
 		sendCrdt: (_id: string, frame: string) => {
 			sent.push(new TextEncoder().encode(frame));
 			return true;
@@ -109,15 +109,17 @@ async function device() {
 	};
 	return {
 		engine,
+		map,
+		server,
 		reg,
 		disk,
 		file,
 		push,
-		writesLand: (v: boolean) => {
-			land = v;
-		},
 		writesTake: (ms: number) => {
 			writeMs = ms;
+		},
+		bind: (v: boolean) => {
+			bound = v;
 		},
 	};
 }
@@ -205,18 +207,100 @@ test("a burst of fan-outs for an unknown note id shares one manifest fetch", asy
 });
 
 describe("a disk that lags the doc is folded against what disk held, not the doc", () => {
-	test("remote appends in the doc, disk still on the older flush, a modify fires: nothing deleted", async () => {
-		const { engine, reg, disk, file, push, writesLand } = await device();
+	test("a modify for the older disk fires while the next flush is still writing: nothing deleted", async () => {
+		const { engine, reg, disk, file, push, writesTake } = await device();
 		push("B one\n");
 		await tick(50); // flushed and settled: disk = base + B one
-		writesLand(false); // B two's flush is still in flight...
-		push("B two\n");
+		writesTake(60);
+		push("B two\n"); // its write lands 60 ms from now...
 		await tick(20);
-		engine.handleModify(file); // ...when a modify for the older disk fires
-		await tick(100);
+		engine.handleModify(file); // ...a modify for the older disk fires mid-write
+		await tick(200);
 
-		expect(disk.get(PATH)).not.toContain("B two");
 		expect(await reg.projectedText(ID)).toContain("B two\n");
+		expect(disk.get(PATH)).toContain("B two\n");
+	});
+
+	test("a user adds a line then deletes it: the delete reaches the doc", async () => {
+		// Review probe: disk returns to a text it held, which is NOT no-edit.
+		const B1 = `${BASE}B one\n`;
+		const { engine, reg, disk, file, push } = await device();
+		push("B one\n");
+		await tick(80);
+		disk.set(PATH, `${B1}user line\n`);
+		engine.handleModify(file);
+		await tick(80);
+		disk.set(PATH, B1);
+		engine.handleModify(file);
+		await tick(120);
+
+		expect(await reg.projectedText(ID)).not.toContain("user line");
+		expect(disk.get(PATH)).toBe(B1);
+	});
+
+	test("a user deletes a remote line that just arrived: the delete reaches the doc", async () => {
+		const B1 = `${BASE}B one\n`;
+		const { engine, reg, disk, file, push } = await device();
+		push("B one\n");
+		await tick(80);
+		push("B two\n");
+		await tick(80);
+		disk.set(PATH, B1);
+		engine.handleModify(file);
+		await tick(120);
+
+		expect(await reg.projectedText(ID)).not.toContain("B two");
+		expect(disk.get(PATH)).toBe(B1);
+	});
+
+	test("an editor-bound note's remote merge writes nothing, so it is not the fold's base", async () => {
+		// The nudge leaves disk to the editor. Had the merge been recorded as on
+		// disk, a fold of the pre-save disk with a user line would read the
+		// remote line as deleted.
+		const { reg, disk, push, bind } = await device();
+		push("B one\n");
+		await tick(50); // written: the base is base + B one
+		bind(true);
+		const before = disk.get(PATH) ?? "";
+		push("R remote\n");
+		await tick(50);
+		expect(disk.get(PATH)).toBe(before); // nudged, not written
+
+		await reg.applyLocalEdit(
+			ID,
+			`user line\n${before}`,
+			undefined,
+			async () => `user line\n${before}`,
+		);
+
+		const doc = await reg.projectedText(ID);
+		expect(doc).toContain("R remote\n");
+		expect(doc).toContain("user line\n");
+	});
+
+	test("a flush for an id not yet mapped writes nothing, so it is not the fold's base", async () => {
+		const { reg, map, disk, server, push } = await device();
+		push("B one\n");
+		await tick(50); // written: the base is base + B one
+		const before = disk.get(PATH) ?? "";
+		map.delete(PATH);
+		const sv = Y.encodeStateVector(server);
+		server.getText(CONTENT_KEY).insert(server.getText(CONTENT_KEY).length, "R remote\n");
+		await reg.applyRemoteUpdate(ID, Y.encodeStateAsUpdate(server, sv)); // heal: no write
+		await tick(20);
+		map.set(PATH, ID);
+		expect(disk.get(PATH)).toBe(before);
+
+		await reg.applyLocalEdit(
+			ID,
+			`user line\n${before}`,
+			undefined,
+			async () => `user line\n${before}`,
+		);
+
+		const doc = await reg.projectedText(ID);
+		expect(doc).toContain("R remote\n");
+		expect(doc).toContain("user line\n");
 	});
 
 	test("a local append, a remote append whose flush is slow, the push reads pre-flush disk: both kept", async () => {
@@ -234,5 +318,23 @@ describe("a disk that lags the doc is folded against what disk held, not the doc
 		expect(doc).toContain("B local\n");
 		expect(doc).toContain("A remote\n");
 		expect(disk.get(PATH)).toBe(doc);
+	});
+
+	test("a refused empty write is not recorded as on disk", async () => {
+		// flushFromCrdt refuses an empty write while the doc still has content
+		// (a transient projection) and reports true without writing.
+		const { engine, reg, disk } = await device();
+		const before = disk.get(PATH);
+		const recorded: string[] = [];
+		const orig = reg.noteDiskText.bind(reg);
+		reg.noteDiskText = (id, text, written) => {
+			recorded.push(text);
+			orig(id, text, written);
+		};
+
+		await engine.flushFromCrdt(PATH, "");
+
+		expect(disk.get(PATH)).toBe(before);
+		expect(recorded).not.toContain("");
 	});
 });

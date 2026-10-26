@@ -66,16 +66,13 @@ interface Entry {
 	 *  (delete-note resurrection). `lifetime.guard(...)` races the await against
 	 *  the end; `lifetime.active` is the cheap synchronous check. */
 	lifetime: Lifetime;
-	/** The disk-side base: texts this device last saw on disk for the note,
-	 *  newest first, each written by our own flush or read by a fold.
-	 *  See `applyLocalEdit`. Resident only (dropped with the entry), at most
-	 *  DISK_TEXTS per note and none over DISK_TEXT_MAX_CHARS. */
-	diskTexts: string[];
+	/** The disk-side base: the text this device last saw on disk for the note,
+	 *  and whether it got there by our own completed write (`written`) or was
+	 *  read by a fold. See `applyLocalEdit`. Resident only (dropped with the
+	 *  entry), one text per note, none over DISK_TEXT_MAX_CHARS. */
+	diskBase: { text: string; written: boolean } | null;
 }
 
-/** How many recent disk texts a resident note keeps (see Entry.diskTexts): the
- *  newest is the fold's base; older ones recognise a late-landing older flush. */
-const DISK_TEXTS = 3;
 /** A note bigger than this keeps no disk-side base (memory bound) and folds
  *  against the last-synced LCA as before. */
 const DISK_TEXT_MAX_CHARS = 1_000_000;
@@ -253,7 +250,7 @@ export class ProviderRegistry {
 			kind,
 			ready: Promise.resolve(),
 			remoteSeq: 0,
-			diskTexts: [],
+			diskBase: null,
 			lastFlushedFm: null,
 			pendingFlush: null,
 			lifetime: new Lifetime(),
@@ -279,8 +276,6 @@ export class ProviderRegistry {
 				this.opts.onFlushToDisk(noteId, projected, fmChanged),
 			).then((ok) => {
 				if (ok === false) throw new Error(`flushFromCrdt write failure for ${noteId}`);
-				// Disk holds this now (or the bound editor saves it): the fold's base.
-				this.noteDiskText(noteId, projected);
 			});
 			entry.pendingFlush = flush;
 			// Clear pendingFlush once it SETTLES (success or failure) so it only ever
@@ -453,20 +448,13 @@ export class ProviderRegistry {
 			// last text disk held, never against the doc, and applies only that
 			// delta: a disk behind the doc can never delete remote content.
 			//
-			// Disk equal to a text it held recently (an older flush of ours that
-			// landed after a newer one) is no edit at all: re-flush the doc over it.
-			if (e.diskTexts.includes(content)) {
-				this.noteDiskText(noteId, content);
-				const current = this.project(e);
-				if (current !== content) {
-					void Promise.resolve(this.opts.onFlushToDisk(noteId, current, false)).catch(
-						() => undefined,
-					);
-				}
-				return current;
-			}
+			// Disk still equal to OUR newest completed write is no edit: the read
+			// predates nothing we have not already folded. Only our own write
+			// counts: a text read from a user edit can be returned to on purpose
+			// (add a line, delete it), and that delete must go out.
+			if (e.diskBase?.written && e.diskBase.text === content) return content;
 			// LCA path (#357) when no disk text is recorded (not resident since
-			// the last flush): the last-synced content is the best base we have.
+			// the last write or fold): the last-synced content is the best base.
 			//
 			// Gated on the doc HAVING history. A history-less doc holds no remote
 			// work for the merge to protect, and routing it here would bypass the
@@ -475,7 +463,7 @@ export class ProviderRegistry {
 			// caller records fnv1a(returned) as the last-synced baseline, so an
 			// empty return poisons isUnchangedSynced for a note that actually has
 			// content (#846 doubling).
-			const base = e.diskTexts[0] ?? this.opts.lcaFor?.(noteId);
+			const base = e.diskBase?.text ?? this.opts.lcaFor?.(noteId);
 			if (base !== null && base !== undefined) {
 				const current = this.project(e);
 				const merged = mergeDiskOntoDoc(base, content, current);
@@ -484,7 +472,7 @@ export class ProviderRegistry {
 						this.opts.onLossyMerge?.(noteId);
 					}
 					seedContentInto(e.doc, e.text, merged.text, docHasHistory(e.doc, e.kind));
-					this.noteDiskText(noteId, content);
+					this.noteDiskText(noteId, content, false);
 					return merged.text;
 				}
 				// Dirty merge: overlapping edits to the same region. Fall through to
@@ -507,17 +495,19 @@ export class ProviderRegistry {
 		seedContentInto(e.doc, e.text, content, lca);
 		// A history-less seed records nothing: the note has no flush of ours yet,
 		// so its base stays the LCA until one lands.
-		if (lca) this.noteDiskText(noteId, content);
+		if (lca) this.noteDiskText(noteId, content, false);
 		return content;
 	}
 
-	/** Record `text` as on disk for the note now: our own flush just wrote it,
-	 *  or a fold just read it (see Entry.diskTexts). Non-resident notes keep
-	 *  nothing. */
-	noteDiskText(noteId: string, text: string): void {
+	/** Record `text` as on disk for the note now: a write of ours COMPLETED
+	 *  (`written`, called by flushFromCrdt for the newest-started write only) or
+	 *  a fold just read it. Never on a flush that wrote nothing (the bound
+	 *  editor nudge, an unknown id, a refused empty write). Non-resident notes
+	 *  keep nothing. */
+	noteDiskText(noteId: string, text: string, written: boolean): void {
 		const e = this.entries.get(noteId);
-		if (!e || text.length > DISK_TEXT_MAX_CHARS) return;
-		e.diskTexts = [text, ...e.diskTexts.filter((t) => t !== text)].slice(0, DISK_TEXTS);
+		if (!e) return;
+		e.diskBase = text.length > DISK_TEXT_MAX_CHARS ? null : { text, written };
 	}
 
 	/** Merge a disk edit made FROM `base` onto the doc, with no await between
@@ -546,7 +536,7 @@ export class ProviderRegistry {
 		// the fuzzy patch, which at least lands the disk edit.
 		const text = merged.clean ? merged.text : mergeDiskOntoDoc(base, disk, current).text;
 		seedContentInto(e.doc, e.text, text, true);
-		this.noteDiskText(noteId, disk);
+		this.noteDiskText(noteId, disk, false);
 		return text;
 	}
 

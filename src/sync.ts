@@ -2313,6 +2313,15 @@ export class SyncEngine {
 	 *  Safe to call from main.ts — does not expose the private markRecentlyFlushed.
 	 *  Requires the sync gate to be open — returns early when blocked so inbound
 	 *  CRDT frames cannot overwrite local files before the user picks a direction. */
+	/** The fold's disk-side base (ProviderRegistry.applyLocalEdit): disk now
+	 *  holds `content` for the note, by our newest-started write or a read
+	 *  that found it already there. Never for a write that did not happen. */
+	private noteWrittenText(normalized: string, content: string): void {
+		const id = this.noteIdMap?.get(normalized);
+		// Optional: test doubles of the manager need not track a base.
+		if (id) this.crdt?.noteDiskText?.(id, content, true);
+	}
+
 	async flushFromCrdt(path: string, content: string): Promise<boolean> {
 		if (this.syncBlocked) {
 			// FALSE, not true. This wrote nothing, and claiming otherwise is what
@@ -2344,6 +2353,7 @@ export class SyncEngine {
 			// one finishing later must not record its text over it (#578).
 			const order = this.flushGen.get(normalized);
 			if (order) order.recorded = order.started;
+			this.noteWrittenText(normalized, content);
 			return true;
 		}
 		// Content-loss guard: a CRDT flush must never blank a non-empty file with a
@@ -2421,6 +2431,7 @@ export class SyncEngine {
 			if (gen > order.recorded) {
 				order.recorded = gen;
 				this.recordCrdtBaseline(normalized, content);
+				this.noteWrittenText(normalized, content);
 			}
 			return true;
 		} catch (e) {
