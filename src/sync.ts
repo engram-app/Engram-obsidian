@@ -10482,6 +10482,31 @@ export class SyncEngine {
 							);
 							return false;
 						}
+						// A history-less doc's server load is the note's FIRST load, and
+						// the load interlock resolves disk against it (merged from a
+						// provable base, or kept both): resolveDriftOnLoad, the one
+						// resolver (crdt-load-gate.md). Copying here as well wrote a
+						// conflict copy of an edit the load then merged. Converge only.
+						if (
+							localDiverged &&
+							noteId &&
+							typeof this.crdt?.hasAnyHistoryTransient === "function" &&
+							!(await this.crdt.hasAnyHistoryTransient(noteId))
+						) {
+							rlog().info(
+								"pull",
+								`CRDT catch-up: diverged disk on a first load, the load resolves it ${noteRef(change.path)}`,
+							);
+							this.stageAndConverge(
+								noteId,
+								normalized,
+								change.content_hash,
+								content,
+								change.version,
+								change.seq,
+							);
+							return true;
+						}
 						if (localDiverged && localNow !== null) {
 							// Both the on-disk file AND the authoritative doc moved off
 							// the last-synced baseline. Preserve the local drift as a
