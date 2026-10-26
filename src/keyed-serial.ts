@@ -46,10 +46,4 @@ export class KeyedSerial {
 		});
 		return result;
 	}
-
-	/** Forget every queue (vault switch): a task from the old vault must not
-	 *  delay the new one's. Running tasks finish on their own. */
-	clear(): void {
-		this.tails.clear();
-	}
 }

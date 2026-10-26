@@ -141,7 +141,9 @@ async function renamedLocally(
 	// The rename's relocating crdt_create goes out and is acked.
 	engine.setCrdtPorts({
 		create: mock(async (docId: string) => {
-			if (opts.createRefused) throw new Error("crdt_create refused: invalid_path");
+			if (opts.createRefused) {
+				throw new Error('crdt_create request failed: {"reason":"notes_cap_reached"}');
+			}
 			return { docId, seeded: false, genesisOutcome: "occupied" };
 		}),
 	} as never);
@@ -259,7 +261,7 @@ describe("a local rename fences older path claims", () => {
 		expect([...h.present.keys()]).toEqual(["Elsewhere.md"]);
 	});
 
-	test("a refused rename push clears the fence: the server's path is current again", async () => {
+	test("a rename push refused by the plan cap clears the fence: the server's path is current again", async () => {
 		const h = await renamedLocally({ "Old.md": ID }, [["Old.md", "New.md"]], {
 			createRefused: true,
 		});
@@ -268,6 +270,51 @@ describe("a local rename fences older path claims", () => {
 		await settle();
 
 		expect([...h.present.keys()]).toEqual(["Elsewhere.md"]);
+	});
+
+	test("after the WS echo, a replay row from before the rename still does not move it back", async () => {
+		// Review D1: the echo carries no seq; a replay page fetched before the
+		// server applied the rename lands after it.
+		const h = await renamedLocally({ "Old.md": ID }, [["Old.md", "New.md"]]);
+		await h.engine.handleStreamEvent({
+			event_type: "upsert",
+			kind: "note",
+			id: ID,
+			path: "New.md",
+			content_hash: "h",
+			timestamp: 3,
+			updated_at: "2026-01-01T00:00:05Z",
+		} as never);
+		await settle();
+
+		await h.engine.applyOp(row(ID, "Old.md", 9));
+		await settle();
+
+		expect([...h.present.keys()]).toEqual(["New.md"]);
+	});
+
+	test("a seq-bearing row at the new path confirms the move: a later rename elsewhere applies", async () => {
+		const h = await renamedLocally({ "Old.md": ID }, [["Old.md", "New.md"]]);
+		await h.engine.applyOp(row(ID, "New.md", 10));
+		await settle();
+
+		await h.engine.applyOp(row(ID, "Elsewhere.md", 11));
+		await settle();
+
+		expect([...h.present.keys()]).toEqual(["Elsewhere.md"]);
+	});
+
+	test("the fence does not expire while the rename is still queued (offline over 2 min)", async () => {
+		// Review D2.
+		const time = new ManualTimeProvider(1_000_000);
+		const h = await renamedLocally({ "Old.md": ID }, [["Old.md", "New.md"]], { time });
+		(h.engine as unknown as { crdtHasPendingOp: () => boolean }).crdtHasPendingOp = () => true;
+		time.advance(121_000);
+
+		await h.engine.applyOp(row(ID, "Old.md", 9));
+		await settle();
+
+		expect([...h.present.keys()]).toEqual(["New.md"]);
 	});
 
 	test("a stale broadcast still delivers its content, at the note's current path", async () => {
@@ -345,11 +392,24 @@ describe("KeyedSerial", () => {
 		expect(await next).toBe("ran");
 		expect(stalled).toEqual(["k"]);
 	});
+});
 
-	test("clear forgets every queue", async () => {
-		const q = new KeyedSerial(time(), 1000);
-		void q.run("k", () => new Promise(() => {}));
-		q.clear();
-		expect(await q.run("k", async () => "fresh")).toBe("fresh");
-	});
+test("a stream event queued before a vault switch is dropped, not applied to the new vault", async () => {
+	const engine = makeEngine(makeVault({}).app);
+	const applied: string[] = [];
+	(
+		engine as unknown as { applyStreamEvent: (e: { path: string }) => Promise<void> }
+	).applyStreamEvent = async (e) => {
+		applied.push(e.path);
+		await new Promise((r) => setTimeout(r, 5));
+	};
+	const settings = (engine as unknown as { settings: { vaultId: string | null } }).settings;
+	settings.vaultId = "vault-1";
+	const first = engine.handleStreamEvent({ event_type: "upsert", path: "a.md" } as never);
+	const queued = engine.handleStreamEvent({ event_type: "upsert", path: "b.md" } as never);
+	await new Promise((r) => setTimeout(r, 1)); // a.md is running, b.md waits
+	settings.vaultId = "vault-2";
+	await Promise.all([first, queued]);
+
+	expect(applied).toEqual(["a.md"]);
 });

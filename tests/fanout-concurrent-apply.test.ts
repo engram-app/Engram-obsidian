@@ -9,7 +9,7 @@
  * fire Obsidian's modify event, and the fan-outs delivered the way the
  * channel delivers them: fire-and-forget, back to back.
  */
-import { expect, mock, test } from "bun:test";
+import { describe, expect, mock, test } from "bun:test";
 import "fake-indexeddb/auto";
 import { TFile } from "obsidian";
 import * as Y from "yjs";
@@ -23,12 +23,18 @@ import { fnv1a, SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 const PATH = "a.md";
-const ID = "id-a";
+let deviceSeq = 0;
+let ID = "id-a";
 const BASE = "# a\nbase\n";
 
 const tick = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-test("three back-to-back fan-outs and a pending local append keep every line", async () => {
+/** A device holding a synced idle note: the real registry wired to the engine
+ *  as wiring.ts wires it, a disk whose writes take time and fire Obsidian's
+ *  modify event. `writesTake(ms)` slows every later write. `bind(true)`
+ *  makes the note editor-bound, so a remote merge nudges instead of writing. */
+async function device() {
+	ID = `id-a-${++deviceSeq}`;
 	const server = new Y.Doc();
 	server.getText(CONTENT_KEY).insert(0, BASE);
 
@@ -37,8 +43,10 @@ test("three back-to-back fan-outs and a pending local append keep every line", a
 	let engine!: SyncEngine;
 	// A write takes a few ms and then fires the vault modify event, as
 	// Obsidian does for every write, the plugin's own included.
+	let writeMs = 2;
+	let bound = false;
 	const modify = mock(async (f: TFile, content: string) => {
-		await tick(2);
+		await tick(writeMs);
 		disk.set(f.path, content);
 		engine.handleModify(f);
 	});
@@ -75,7 +83,8 @@ test("three back-to-back fan-outs and a pending local append keep every line", a
 		noteIdMap: map,
 		syncEngine: engine,
 		canSendLive: () => true,
-		isBound: () => false,
+		isBound: () => bound,
+		onBoundUpdate: () => {},
 		sendCrdt: (_id: string, frame: string) => {
 			sent.push(new TextEncoder().encode(frame));
 			return true;
@@ -92,17 +101,37 @@ test("three back-to-back fan-outs and a pending local append keep every line", a
 	await tick(10);
 	engine.importSyncState({ [PATH]: { hash: fnv1a(BASE), crdtHead: "h0" } });
 
+	const push = (line: string) => {
+		const before = Y.encodeStateVector(server);
+		const t = server.getText(CONTENT_KEY);
+		t.insert(t.length, line);
+		wiring.onNoteYjsUpdate(ID, toB64(Y.encodeStateAsUpdate(server, before)), "h", null);
+	};
+	return {
+		engine,
+		map,
+		server,
+		reg,
+		disk,
+		file,
+		push,
+		writesTake: (ms: number) => {
+			writeMs = ms;
+		},
+		bind: (v: boolean) => {
+			bound = v;
+		},
+	};
+}
+
+test("three back-to-back fan-outs and a pending local append keep every line", async () => {
+	const { engine, reg, disk, file, push } = await device();
 	// A appends a line on disk; its debounced push has not fired yet.
 	disk.set(PATH, `${BASE}A line\n`);
 	engine.handleModify(file);
 
 	// B appends three times; each update reaches A as a fan-out, back to back.
-	for (const line of ["B one\n", "B two\n", "B three\n"]) {
-		const before = Y.encodeStateVector(server);
-		const t = server.getText(CONTENT_KEY);
-		t.insert(t.length, line);
-		wiring.onNoteYjsUpdate(ID, toB64(Y.encodeStateAsUpdate(server, before)), "h", null);
-	}
+	for (const line of ["B one\n", "B two\n", "B three\n"]) push(line);
 	await tick(200);
 
 	const doc = await reg.projectedText(ID);
@@ -175,4 +204,69 @@ test("a burst of fan-outs for an unknown note id shares one manifest fetch", asy
 
 	expect(results.every((r) => r === "deferred")).toBe(true);
 	expect(getManifest.mock.calls.length).toBeLessThanOrEqual(2);
+});
+
+describe("a disk that lags the doc never deletes remote lines", () => {
+	test("a modify for the older disk fires while the next flush is still writing: nothing deleted", async () => {
+		const { engine, reg, disk, file, push, writesTake } = await device();
+		push("B one\n");
+		await tick(50); // flushed and settled: disk = base + B one
+		writesTake(60);
+		push("B two\n"); // its write lands 60 ms from now...
+		await tick(20);
+		engine.handleModify(file); // ...a modify for the older disk fires mid-write
+		await tick(200);
+
+		expect(await reg.projectedText(ID)).toContain("B two\n");
+		expect(disk.get(PATH)).toContain("B two\n");
+	});
+
+	test("a user adds a line then deletes it: the delete reaches the doc", async () => {
+		// Review probe: disk returns to a text it held, which is NOT no-edit.
+		const B1 = `${BASE}B one\n`;
+		const { engine, reg, disk, file, push } = await device();
+		push("B one\n");
+		await tick(80);
+		disk.set(PATH, `${B1}user line\n`);
+		engine.handleModify(file);
+		await tick(80);
+		disk.set(PATH, B1);
+		engine.handleModify(file);
+		await tick(120);
+
+		expect(await reg.projectedText(ID)).not.toContain("user line");
+		expect(disk.get(PATH)).toBe(B1);
+	});
+
+	test("a user deletes a remote line that just arrived: the delete reaches the doc", async () => {
+		const B1 = `${BASE}B one\n`;
+		const { engine, reg, disk, file, push } = await device();
+		push("B one\n");
+		await tick(80);
+		push("B two\n");
+		await tick(80);
+		disk.set(PATH, B1);
+		engine.handleModify(file);
+		await tick(120);
+
+		expect(await reg.projectedText(ID)).not.toContain("B two");
+		expect(disk.get(PATH)).toBe(B1);
+	});
+
+	test("a local append, a remote append whose flush is slow, the push reads pre-flush disk: both kept", async () => {
+		// Real-Obsidian pairing 40253955588, note-052 on B: B appended (107 B),
+		// A's append merged and B began writing the merged text (131 B), and B's
+		// debounced push folded the pre-flush disk: A's line was deleted.
+		const { engine, reg, disk, file, push, writesTake } = await device();
+		writesTake(40);
+		disk.set(PATH, `${BASE}B local\n`);
+		engine.handleModify(file); // debounced 5 ms
+		push("A remote\n"); // its merged flush takes 40 ms
+		await tick(300);
+
+		const doc = await reg.projectedText(ID);
+		expect(doc).toContain("B local\n");
+		expect(doc).toContain("A remote\n");
+		expect(disk.get(PATH)).toBe(doc);
+	});
 });
