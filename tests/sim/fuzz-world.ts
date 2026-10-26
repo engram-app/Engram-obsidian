@@ -781,6 +781,14 @@ export class World {
 				const got = slots[slot];
 				if (got === want) continue;
 				if (note.rolledBack && note.history[slot].has(got)) continue;
+				// A real conflict resolves as ONE conflict copy of the local text
+				// (crdt-load-gate.md): that device's edits live on in the copy.
+				if (
+					note.conflict &&
+					conflicts.some(([, c]) => parseBody(n, c.content)?.[slot] === want)
+				) {
+					continue;
+				}
 				this.fail(
 					"lost-edit",
 					`t${n} slot ${slot} is ${JSON.stringify(got)}, expected ${JSON.stringify(want)} (server ${p})`,
