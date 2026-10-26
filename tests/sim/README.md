@@ -38,6 +38,41 @@ SIM_SEED=123 bun --preload ./tests/preload.ts tests/sim/random-harness.ts
 is always printed at the start of a run and on any divergence, so a failure
 anyone reports is a one-line rerun.
 
+## The sync fuzz (`fuzz.test.ts`)
+
+A seeded property-based suite on the same tier. Two or three devices run the
+real sync stack and a seeded op stream tries to break it: edits (closed and
+open), MCP edits, renames, folder renames, deletes, MCP restores, offline,
+network drops, iOS suspend/resume, restarts and crashes (memory gone,
+IndexedDB and data.json kept), lost/duplicated/reordered frames, server
+rollbacks, bulk imports and attachments. Invariants at quiescence (full list
+in `fuzz-world.ts`): convergence, no duplicated or interleaved text, no lost
+edit, no unexplained conflict copy, deletes stick and restores reappear,
+loaded docs equal the server, the idle heal-room budget (20 starts a minute,
+4 open), and heal liveness.
+
+```bash
+bun test tests/sim/fuzz.test.ts                    # 200 seeds (the gate)
+SIM_SEED=17 bun test tests/sim/fuzz.test.ts        # replay one seed
+SIM_SEED=17 SIM_REPLAY='[...]' bun test tests/sim/fuzz.test.ts   # replay a shrunk op list
+SIM_SEEDS=5000 bun test tests/sim/fuzz.test.ts     # the nightly soak (sim-soak.yml)
+```
+
+Other knobs: `SIM_SEED_BASE`, `SIM_OPS`, `SIM_TRACE=1` (print every run's
+trace), `SIM_KEEP_GOING=1` (report every failing seed), `SIM_EXCLUDE=kind,...`
+(drop op kinds to explore around a known failure), `SIM_SHRINK_RUNS` /
+`SIM_SHRINK_MS` (shrinker budget), `SIM_TIMER_STACKS=1` (stacks in a livelock
+report). A failure prints the seed, the invariant, a shrunk trace and the
+`SIM_REPLAY` JSON for it.
+
+Each device runs in its own process context (`process.ts`): the clock never
+fires a dead process's timers and holds a suspended one's, which is how one
+device crashes or sleeps while the others keep the shared clock. The editor
+stand-in follows the real binding: keystrokes go straight into the Y.Text and
+the initial reconcile runs the real `decideReconcile` /
+`decideLoadedReconcile`. Where the stand-in and the real binding differed, the
+fuzz over-reported (an e2e probe refuted it): keep them aligned.
+
 ## Adding a scenario
 
 Scenarios live in `scenarios.ts` as named, seeded, fully-deterministic

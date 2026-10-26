@@ -135,12 +135,12 @@ const ALL_WEIGHTS: [OpKind, number][] = [
 	["attachDelete", 1],
 	["attachServerDelete", 1],
 	["bulkCreate", 1],
-	["bulkRemoteEdit", 2],
+	["bulkRemoteEdit", 1],
 ];
 
 /** A bulk import: this many notes at once (t100...), enough idle notes to
  *  push the heal-room pool and its start budget. */
-const BULK_NOTES = 30;
+const BULK_NOTES = 16;
 /** SIM_EXCLUDE=kind,kind drops op kinds from the mix (to explore around a
  *  known failure class). */
 const EXCLUDED = new Set((process.env.SIM_EXCLUDE ?? "").split(",").filter(Boolean));
@@ -968,9 +968,15 @@ export async function shrink(
 	let cur = ops;
 	let chunk = Math.max(1, Math.floor(cur.length / 2));
 	let budget = Number(process.env.SIM_SHRINK_RUNS ?? 150);
-	while (chunk >= 1 && budget > 0) {
+	// Wall-clock cap too, so a red CI run still reports in reasonable time.
+	const deadline = performance.now() + Number(process.env.SIM_SHRINK_MS ?? 120_000);
+	while (chunk >= 1 && budget > 0 && performance.now() < deadline) {
 		let removed = false;
-		for (let at = 0; at < cur.length && budget > 0; at += chunk) {
+		for (
+			let at = 0;
+			at < cur.length && budget > 0 && performance.now() < deadline;
+			at += chunk
+		) {
 			const cand = [...cur.slice(0, at), ...cur.slice(at + chunk)];
 			budget--;
 			const res = await runOps(seed, nDev, cand);

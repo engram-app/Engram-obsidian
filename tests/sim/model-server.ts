@@ -587,7 +587,7 @@ export class ModelServer {
 				genesis,
 			});
 		const announceReady = (id: string) =>
-			// crdt_doc_ready is broadcast_from! — only OTHER devices see it (so an
+			// crdt_doc_ready is broadcast_from!: only OTHER devices see it (so an
 			// empty note can be discovered + STEP1-enrolled without a fan-out).
 			this.broadcastOthers(
 				clientId,

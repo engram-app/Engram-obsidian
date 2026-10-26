@@ -1,0 +1,35 @@
+name: Sim soak
+
+# Nightly long run of the seeded sync fuzz (tests/sim/fuzz.test.ts): the PR
+# gate runs 200 seeds, this runs 5000 fresh ones from a date-derived base so
+# every night explores new ground. A failure prints the seed and a shrunk,
+# replayable op list.
+on:
+  schedule:
+    - cron: "41 6 * * *"
+  workflow_dispatch:
+    inputs:
+      seeds:
+        description: "Seeds to run"
+        default: "5000"
+
+permissions:
+  contents: read
+
+jobs:
+  soak:
+    runs-on: [self-hosted, linux, x64, isolated]
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v7
+
+      - run: bun install --frozen-lockfile
+
+      - name: Sync fuzz soak
+        run: |
+          base=$(( $(date +%s) / 86400 * 10000 ))
+          echo "seed base ${base}"
+          SIM_SEEDS="${SEEDS:-5000}" SIM_SEED_BASE="${base}" SIM_KEEP_GOING=1 \
+            bun test tests/sim/fuzz.test.ts
+        env:
+          SEEDS: ${{ github.event.inputs.seeds }}
