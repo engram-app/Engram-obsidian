@@ -44,6 +44,7 @@ import {
 	shouldGoOffline,
 	shouldRetryAfterFailure,
 } from "./issue-store";
+import { KeyedSerial } from "./keyed-serial";
 import { LimitExceededError } from "./limit-error";
 import { isTextAttachment } from "./mime";
 import { noteRef } from "./note-ref";
@@ -5655,7 +5656,18 @@ export class SyncEngine {
 		if (!isBinary) {
 			const echoHash = fnv1a(await this.app.vault.cachedRead(file));
 			const existing = this.syncState.get(normalizePath(file.path));
-			if (!force && existing !== undefined && echoHash === existing.hash) {
+			// The plugin's OWN write is never a local edit: disk equal to the
+			// synced baseline, or to bytes an in-flight flushFromCrdt is writing
+			// (`flushingHash`, the same self-write identity needsColdReconcile
+			// reads). A modify event from our write that landed before its
+			// baseline was stamped was otherwise pushed back into the doc as a
+			// local edit, deleting whatever had merged since.
+			if (
+				!force &&
+				existing !== undefined &&
+				(echoHash === existing.hash ||
+					this.flushingHash.get(normalizePath(file.path))?.has(echoHash) === true)
+			) {
 				devLog().log("push", `skip (echo): ${file.path}`);
 				rlog().info("push", `Echo skip: ${noteRef(file.path)} | hash=${echoHash}`);
 				return false;
@@ -7741,7 +7753,24 @@ export class SyncEngine {
 	 *  to a path (first-discovery is pull()'s job, same as coldReceive). Frees
 	 *  the doc after a successful apply (hibernateIfIdle) — same reasoning as
 	 *  coldReceive. Best-effort: isolates its own failure, never throws. */
-	async applyPushedNoteUpdate(
+	/** Applies a vault-channel fan-out, one at a time per note. The channel
+	 *  delivers fan-outs fire-and-forget, and several for one idle note can
+	 *  land within milliseconds. Run concurrently, each one's disk-drift capture
+	 *  and flush interleaved with the others': a flush wrote a projection that
+	 *  predated the next update, and its modify event came back as a local
+	 *  edit that DELETED the other writers' lines (real-Obsidian gauntlet
+	 *  40247603066). Serial per note, so each applies to the state the last left. */
+	applyPushedNoteUpdate(
+		noteId: string,
+		update: Uint8Array,
+		head: string,
+	): Promise<"applied" | "deferred"> {
+		return this.liveOps.run(noteId, () => this.applyPushedNoteUpdateNow(noteId, update, head));
+	}
+
+	private readonly liveOps = new KeyedSerial();
+
+	private async applyPushedNoteUpdateNow(
 		noteId: string,
 		update: Uint8Array,
 		head: string,
