@@ -86,7 +86,9 @@ type OpKind =
 	| "conflict"
 	| "attachAdd"
 	| "attachDelete"
-	| "attachServerDelete";
+	| "attachServerDelete"
+	| "bulkCreate"
+	| "bulkRemoteEdit";
 
 export interface Op {
 	kind: OpKind;
@@ -132,7 +134,13 @@ const ALL_WEIGHTS: [OpKind, number][] = [
 	["attachAdd", 2],
 	["attachDelete", 1],
 	["attachServerDelete", 1],
+	["bulkCreate", 1],
+	["bulkRemoteEdit", 2],
 ];
+
+/** A bulk import: this many notes at once (t100...), enough idle notes to
+ *  push the heal-room pool and its start budget. */
+const BULK_NOTES = 30;
 /** SIM_EXCLUDE=kind,kind drops op kinds from the mix (to explore around a
  *  known failure class). */
 const EXCLUDED = new Set((process.env.SIM_EXCLUDE ?? "").split(",").filter(Boolean));
@@ -375,9 +383,16 @@ export class World {
 	async drain(): Promise<void> {
 		try {
 			// drain() throws on a livelock instead of hanging the suite.
-			await this.scheduler.drain();
+			// A day of virtual time with only timers firing is a livelock...
+			await this.scheduler.drain(100_000, 24 * 3_600_000);
 			this.checkOpenRooms();
 		} catch (e) {
+			// ...unless every timer still running belongs to an offline device:
+			// its heal retry keeps backing off until it reconnects (10 min cap,
+			// sync.ts freeHealSlot), which is quiet enough to call settled.
+			const offline = new Set([...this.offline].map((d) => this.devs[d].inc));
+			const owners = this.clock.pendingOwners();
+			if (owners.length > 0 && owners.every((o) => o && offline.has(o))) return;
 			if (e instanceof Fail) throw e;
 			this.fail("liveness/drain", e instanceof Error ? e.message.split("\n")[0] : String(e));
 		}
@@ -642,6 +657,28 @@ export class World {
 				this.server.rollback(s.id, snap);
 				note.rolledBack = true;
 				did = "ok";
+				break;
+			}
+			case "bulkCreate": {
+				if (this.note(100).created || this.suspended.has(op.d)) break;
+				for (let k = 0; k < BULK_NOTES; k++) {
+					await r.run(() => r.createNote(`bulk/t${100 + k}.md`, skeleton(100 + k)));
+					this.note(100 + k).created = true;
+				}
+				did = `${BULK_NOTES} notes`;
+				break;
+			}
+			case "bulkRemoteEdit": {
+				// An MCP agent touching every note: each device's idle copies diverge.
+				let count = 0;
+				for (const [k, nt] of this.notes) {
+					const s = nt.created && !nt.deleted ? this.serverNote(k) : null;
+					if (!s) continue;
+					this.server.serverEditNote(s.id, (b) => setSlot(b, "S", `s${i}`) ?? b);
+					this.expect(nt, "S", `s${i}`);
+					count++;
+				}
+				did = `${count} notes`;
 				break;
 			}
 			case "attachAdd": {
