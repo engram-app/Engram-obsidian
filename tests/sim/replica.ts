@@ -968,16 +968,21 @@ export class Replica {
 			unsubGate = this.crdtManager.onLoadGateOpen(id, () => {
 				text.unobserve(onSeed);
 				if (!this.boundPaths.has(norm)) return;
-				const f = this.app.vault.getFileByPath(path);
-				if (!f) return;
+				this.hydrated.add(norm);
+				const file = this.app.vault.getFileByPath(path);
+				if (!file) return;
+				// Straight into the Y.Text with the binding as origin (applyAndGoLive
+				// "forward"), NOT applyLocalEdit: that treats a buffer equal to the
+				// recorded baseline as "no input" and sends nothing, which left the
+				// sim's row empty where real Obsidian seeds it (e2e 40248570109,
+				// green on the same lost-create-then-open shape).
 				void this.app.vault
-					.read(f)
-					.then((buffer) => {
-						if (text.length === 0 && buffer.length > 0 && text.doc) {
-							text.doc.transact(() => text.insert(0, buffer), BINDING_ORIGIN);
-						}
-						this.hydrated.add(norm);
-						this.dirty.delete(norm);
+					.read(file)
+					.then(async (buffer) => {
+						const doc = await this.crdtManager.getDoc(id);
+						const body = doc.getText("content");
+						if (body.length > 0 || buffer.length === 0) return;
+						doc.transact(() => body.insert(0, buffer), BINDING_ORIGIN);
 					})
 					.catch(() => {});
 			});
