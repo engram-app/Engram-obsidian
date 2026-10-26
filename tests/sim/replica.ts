@@ -59,6 +59,12 @@ import { IDBFactory } from "fake-indexeddb";
 import { requestUrl as mockedRequestUrl } from "obsidian";
 import { EngramApi } from "../../src/api";
 import { NoteChannel } from "../../src/channel";
+import { applyCmChangesToYText, textDiffToChangeSpec } from "../../src/crdt/live/cm-yjs-bridge";
+import {
+	decideLoadedReconcile,
+	decideReconcile,
+	frontmatterPrefixLen,
+} from "../../src/crdt/live/live-binding-decisions";
 import { NoteIdMap } from "../../src/crdt/note-id-map";
 import type { ProviderRegistry } from "../../src/crdt/provider-registry";
 import { createCrdtWiring } from "../../src/crdt/wiring";
@@ -76,6 +82,10 @@ import type { Scheduler } from "./scheduler";
 import { makeVault, type SimApp, type VaultEvents, type WriteJournalEntry } from "./vault-fs";
 
 let requestUrlRedirected = false;
+
+/** Transaction origin for the sim's editor stand-in, as the CM6 binding uses
+ *  itself (live-binding.ts `doc.transact(..., this)`): a local edit. */
+const BINDING_ORIGIN = Symbol("sim-editor-binding");
 
 // ---------------------------------------------------------------------------
 // WebSocket adapter: bridges NoteChannel <-> SimSocket over scheduler lanes.
@@ -276,8 +286,8 @@ export class Replica {
 	readonly persisted: PersistedData;
 	private readonly server: ModelServer;
 	private readonly onUnload: () => void;
-	/** Paint the doc into the "editor" (disk), as the binding does once live. */
-	private readonly flushBound: (path: string) => void;
+	/** Open paths with keystrokes typed before the binding went live. */
+	private readonly dirty = new Set<string>();
 
 	private constructor(args: {
 		id: string;
@@ -294,7 +304,6 @@ export class Replica {
 		persisted: PersistedData;
 		server: ModelServer;
 		onUnload: () => void;
-		flushBound: (path: string) => void;
 	}) {
 		this.id = args.id;
 		this.engine = args.engine;
@@ -310,7 +319,6 @@ export class Replica {
 		this.persisted = args.persisted;
 		this.server = args.server;
 		this.onUnload = args.onUnload;
-		this.flushBound = args.flushBound;
 	}
 
 	/** Oracle (Task 6) accessor: the #288 wipe-detector journal — every
@@ -878,7 +886,6 @@ export class Replica {
 			persisted,
 			server,
 			onUnload,
-			flushBound: (path) => boundFlush(path),
 		});
 	}
 
@@ -908,47 +915,123 @@ export class Replica {
 	async openNote(path: string): Promise<void> {
 		const norm = normalizePath(path);
 		this.boundPaths.add(norm);
+		this.dirty.delete(norm);
 		const id = this.noteIdMap.getOrMint(path);
 		this.enrollment.enroll(id);
-		// Fire-and-forget (scheduler-driven, like every CRDT op here): mark the
-		// note hydrated now if the Y.Text already has content, else once its first
-		// non-empty seed lands. Deterministic — the seed arrives via a scheduled
-		// STEP2 frame that drain() delivers in seed order.
+		const file = this.app.vault.getFileByPath(path);
+		// live-binding.ts attach: the editor text as opened is the merge base for
+		// keystrokes typed before the binding goes live (`preEditText`).
+		const preEdit = file ? await this.app.vault.read(file) : null;
+		// Fire-and-forget (scheduler-driven, like every CRDT op here): once the
+		// doc is ready, run the binding's initial reconcile; an unseeded doc
+		// defers until its first seed (or the load gate opening). Deterministic:
+		// the seed arrives on a scheduled frame that drain() delivers in order.
 		void (async () => {
 			const text = (await this.crdtManager.getDoc(id)).getText("content");
-			// Once the binding goes live the editor shows the doc's text, and
-			// Obsidian's autosave writes it: a remote merge that landed before
-			// hydration (its flush skipped, see boundFlush) reaches disk here.
+			if (!this.boundPaths.has(norm)) return;
 			if (text.length > 0) {
-				this.hydrated.add(norm);
-				this.flushBound(path);
+				await this.reconcileBound(path, id, false, preEdit);
 				return;
 			}
+			// deferSeed: a gated doc (the load gate holds it) resolves with the
+			// gate's merge on arrival, an ungated one with the plain reconcile.
+			const gated = this.crdtManager.awaitsServerState(id);
 			let unsubGate: () => void = () => {};
 			const onSeed = (): void => {
-				if (text.length > 0) {
-					this.hydrated.add(norm);
-					text.unobserve(onSeed);
-					unsubGate();
-					this.flushBound(path);
-				}
+				if (text.length === 0) return;
+				text.unobserve(onSeed);
+				unsubGate();
+				if (this.boundPaths.has(norm)) void this.reconcileBound(path, id, gated, preEdit);
 			};
 			text.observe(onSeed);
-			// live-binding.ts deferSeed: when the server state turns out to hold
-			// no structs the load gate opens instead of a seed arriving, and the
-			// binding forwards the editor buffer (here, disk) into the doc.
+			// When the server state holds no structs the load gate opens instead of
+			// a seed arriving, and the binding forwards the editor buffer (here,
+			// disk) straight into the Y.Text (applyAndGoLive "forward"), NOT via
+			// applyLocalEdit: that treats a buffer equal to the recorded baseline as
+			// "no input" and sends nothing, which left the sim's row empty where
+			// real Obsidian seeds it (e2e 40248570109).
+			if (!gated) return;
 			unsubGate = this.crdtManager.onLoadGateOpen(id, () => {
 				text.unobserve(onSeed);
 				if (!this.boundPaths.has(norm)) return;
-				this.hydrated.add(norm);
-				const file = this.app.vault.getFileByPath(path);
-				if (!file) return;
+				const f = this.app.vault.getFileByPath(path);
+				if (!f) return;
 				void this.app.vault
-					.read(file)
-					.then((buffer) => this.crdtManager.applyLocalEdit(id, buffer))
+					.read(f)
+					.then((buffer) => {
+						if (text.length === 0 && buffer.length > 0 && text.doc) {
+							text.doc.transact(() => text.insert(0, buffer), BINDING_ORIGIN);
+						}
+						this.hydrated.add(norm);
+						this.dirty.delete(norm);
+					})
 					.catch(() => {});
 			});
 		})().catch(() => {});
+	}
+
+	/** The binding's initial reconcile, with the REAL decision functions
+	 *  (live-binding-decisions.ts): `decideReconcile` for a doc that was
+	 *  already seeded or that seeded ungated, `decideLoadedReconcile` (merge3
+	 *  from `loadMergeBase`, else one conflict copy) for a doc the load gate
+	 *  held. The editor buffer is disk: it holds the file as opened plus any
+	 *  keystrokes typed before the binding went live (`dirty`). Afterwards the
+	 *  note is live: keystrokes go straight into the Y.Text (editNote). */
+	private async reconcileBound(
+		path: string,
+		id: string,
+		gated: boolean,
+		preEdit: string | null,
+	): Promise<void> {
+		const norm = normalizePath(path);
+		const file = this.app.vault.getFileByPath(path);
+		const { text } = this.crdtManager.residentText(id);
+		if (!file || !text.doc) return;
+		const editorText = await this.app.vault.read(file);
+		if (!this.boundPaths.has(norm) || frontmatterPrefixLen(editorText) > 0) return;
+		const docText = text.toJSON();
+		const toDoc = (changes: { from: number; to: number; insert: string }[]) =>
+			text.doc?.transact(
+				() =>
+					applyCmChangesToYText(
+						text,
+						changes.map((c) => ({ fromA: c.from, toA: c.to, insert: c.insert })),
+					),
+				BINDING_ORIGIN,
+			);
+		const goLive = () => {
+			this.hydrated.add(norm);
+			this.dirty.delete(norm);
+		};
+		if (gated) {
+			const base = await this.engine
+				.loadMergeBase(path, this.crdtManager.residentProjection(id))
+				.catch(() => null);
+			const action = decideLoadedReconcile(editorText, text.toJSON(), base);
+			if (action.kind === "conflict") {
+				// The note takes the server's text, the editor's goes to a copy.
+				const server = text.toJSON();
+				goLive();
+				await this.app.vault.modify(file, server);
+				if (!(await this.engine.keepConflictCopy(path, editorText))) {
+					await this.engine.restoreLocalText(path, editorText);
+				}
+				return;
+			}
+			if (action.kind === "merge") toDoc(action.toDoc);
+			goLive();
+			if (action.kind !== "noop") await this.app.vault.modify(file, text.toJSON());
+			return;
+		}
+		const action = decideReconcile(editorText, docText, this.dirty.has(norm), preEdit);
+		if (action.kind === "defer") return;
+		if (action.kind === "forward") toDoc(action.changes);
+		else if (action.kind === "merge") toDoc(action.toDoc);
+		goLive();
+		// adopt / merge: the editor now shows the doc, and autosave writes it.
+		if (action.kind === "adopt" || action.kind === "merge") {
+			await this.app.vault.modify(file, text.toJSON());
+		}
 	}
 
 	/** Close the editor: flush the projected Y.Text to disk and free the doc
@@ -975,45 +1058,61 @@ export class Replica {
 		})().catch(() => {});
 	}
 
-	/** Resolves true when the edit landed (disk, and the doc for an open note),
-	 *  false when an open note's editor is still waiting for its first seed
-	 *  and so held the keystrokes back (see the deferUntilSeeded note below). */
-	async editNote(path: string, content: string): Promise<boolean> {
+	/** Edit a note. `next` is the new text, or a function from the text the
+	 *  user SEES to the new text: the doc's text for an open note (the binding
+	 *  paints remote merges into the editor live), disk for a closed one.
+	 *  Resolves false only when `next` declined. Keystrokes into an open note
+	 *  whose binding is not live yet queue in the editor buffer and are
+	 *  resolved by the binding's initial reconcile (reconcileBound). */
+	async editNote(
+		path: string,
+		next: string | ((current: string) => string | null),
+	): Promise<boolean> {
 		const file = this.app.vault.getFileByPath(path);
 		if (!file) throw new Error(`editNote: no file at ${path}`);
-		if (this.boundPaths.has(normalizePath(path))) {
+		const norm = normalizePath(path);
+		if (this.boundPaths.has(norm)) {
 			// deferUntilSeeded: the real editor does NOT forward a keystroke into a
-			// history-less doc (it would seed a second lineage → doubling). Until the
-			// server seeds this note's Y.Doc, the edit is buffered in the editor, not
-			// yet on the wire. Model that by dropping the edit here — a later edit
-			// (after hydration) forwards convergently. NEVER touch disk without the
-			// Y.Text, or the bound path would drift from its authoritative doc.
-			if (!this.hydrated.has(normalizePath(path))) return false;
-			// Live-editor edit: the y-codemirror.next binding would stream keystrokes
-			// into the Y.Text; headless, feed the whole content through the SAME
-			// manager method routeModify drives (the one editor stand-in, see header).
-			// handleModify short-circuits the disk-driven CRDT route for a bound path
-			// (sync.ts:1982), so the Y.Text is the ONLY inbound edit channel here.
-			// FIRED not awaited: applyLocalEdit awaits IndexedDB (scheduler-driven);
-			// awaiting it before the caller drains would freeze the virtual clock. The
-			// real binding applies to Y.Text synchronously too — only persistence is
-			// async, and drain() completes it deterministically.
-			// Surface (don't swallow) an apply/persist failure: a systemically
-			// dropped edit would otherwise read as trivial oracle AGREEMENT (both
-			// replicas never see it), the one blind spot the convergence check
-			// can't catch on its own. Fires only on the error path — silent green.
-			void this.crdtManager
-				.applyLocalEdit(this.noteIdMap.getOrMint(path), content)
-				.catch((err) =>
-					// biome-ignore lint/suspicious/noConsole: error-path visibility, see above
-					console.warn(`SIM editNote applyLocalEdit failed for ${path}:`, err),
-				);
-			// Obsidian's autosave still writes the editor buffer to disk (~2s); that
-			// modify event hits the bound short-circuit above and never re-pushes.
-			await this.app.vault.modify(file, content);
+			// history-less doc (it would seed a second lineage, the doubling).
+			if (!this.hydrated.has(norm)) {
+				// Not live yet: the keystrokes queue in the editor buffer (disk here)
+				// and the binding's initial reconcile resolves them (dirty).
+				const disk = await this.app.vault.read(file);
+				const typed = typeof next === "function" ? next(disk) : next;
+				if (typed === null) return false;
+				this.dirty.add(norm);
+				await this.app.vault.modify(file, typed);
+				return true;
+			}
+			const noteId = this.noteIdMap.getOrMint(path);
+			const { text } = this.crdtManager.residentText(noteId);
+			const current = text.toJSON();
+			const target = typeof next === "function" ? next(current) : next;
+			if (target === null) return false;
+			// The keystrokes go straight into the Y.Text with the binding as the
+			// transaction origin, exactly as live-binding.ts forwards a CM6 change
+			// (`doc.transact(() => applyCmChangesToYText(...), this)`). NOT through
+			// applyLocalEdit: its load gate and "disk equals baseline means no
+			// input" rule belong to the disk path, not the editor, and a stand-in
+			// that differs from the binding is what produced bug 4's false alarm.
+			// Body only: the binding drops edits inside a frontmatter block.
+			if (frontmatterPrefixLen(target) === 0 && text.doc) {
+				const changes = textDiffToChangeSpec(current, target).map((c) => ({
+					fromA: c.from,
+					toA: c.to,
+					insert: c.insert,
+				}));
+				text.doc.transact(() => applyCmChangesToYText(text, changes), BINDING_ORIGIN);
+			}
+			// Obsidian's autosave writes the editor buffer to disk (~2s); that
+			// modify hits the bound short-circuit (sync.ts:1982), never re-pushes.
+			await this.app.vault.modify(file, target);
 			return true;
 		}
-		await this.app.vault.modify(file, content);
+		const disk = await this.app.vault.read(file);
+		const target = typeof next === "function" ? next(disk) : next;
+		if (target === null) return false;
+		await this.app.vault.modify(file, target);
 		return true;
 	}
 
