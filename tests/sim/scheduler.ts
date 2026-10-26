@@ -81,8 +81,12 @@ export class Scheduler {
 		await flushMicrotasks(); // settle ALL microtasks (incl. detached chains)
 		return true;
 	}
-	async drain(maxSteps = 100_000): Promise<void> {
+	/** `maxVirtualMs` bounds how far virtual time may run inside one drain: a
+	 *  timer that re-arms forever with nothing else happening is a livelock,
+	 *  reported long before `maxSteps` would catch it. */
+	async drain(maxSteps = 100_000, maxVirtualMs = Number.POSITIVE_INFINITY): Promise<void> {
 		let steps = 0;
+		const until = this.clock.now() + maxVirtualMs;
 		const deliverable = () =>
 			[...this.lanes.entries()].find(([k, v]) => v.length > 0 && !this.held.has(k))?.[1];
 		while (steps++ < maxSteps) {
@@ -93,6 +97,7 @@ export class Scheduler {
 				continue;
 			}
 			if (this.clock.pendingCount() > 0) {
+				if (this.clock.now() > until) break;
 				this.clock.fireNext();
 				await flushMicrotasks();
 				continue;
@@ -107,7 +112,7 @@ export class Scheduler {
 			return;
 		}
 		throw new Error(
-			`drain: not quiescent after ${maxSteps} steps — livelock? lanes=${JSON.stringify(this.laneSizes())} timers=${this.clock.pendingCount()}`,
+			`drain: not quiescent after ${maxSteps} steps — livelock? lanes=${JSON.stringify(this.laneSizes())} timers=${this.clock.pendingCount()} t=${this.clock.now()}ms ${JSON.stringify(this.clock.describePending())}`,
 		);
 	}
 }
