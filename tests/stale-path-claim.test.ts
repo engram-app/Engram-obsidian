@@ -12,7 +12,9 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
+import { KeyedSerial } from "../src/keyed-serial";
 import { SyncEngine } from "../src/sync";
+import { ManualTimeProvider } from "../src/time-provider";
 import { DEFAULT_SETTINGS, type SyncOp } from "../src/types";
 
 const ID = "01a011f9-3b85-79b3-af2f-de167b256949";
@@ -89,12 +91,13 @@ function makeVault(initial: Record<string, string>) {
 	return { app, vault, present, bodies, folders, attach };
 }
 
-function makeEngine(app: any) {
+function makeEngine(app: any, time?: ManualTimeProvider) {
 	const e = new SyncEngine(
 		app,
 		api,
 		{ ...DEFAULT_SETTINGS, debounceMs: 1 },
 		mock().mockResolvedValue(undefined),
+		time,
 	);
 	e.setReady();
 	e.setCrdtManager({
@@ -124,13 +127,24 @@ const row = (id: string, path: string, seq: number): SyncOp =>
 
 const settle = () => new Promise((r) => setTimeout(r, 60));
 
-async function renamedLocally(files: Record<string, string>, renames: [string, string][]) {
+async function renamedLocally(
+	files: Record<string, string>,
+	renames: [string, string][],
+	opts: { time?: ManualTimeProvider; createRefused?: boolean } = {},
+) {
 	const h = makeVault(Object.fromEntries(Object.keys(files).map((p) => [p, "original"])));
-	const engine = makeEngine(h.app);
+	const engine = makeEngine(h.app, opts.time);
 	h.attach(engine);
 	const map = new NoteIdMap();
 	map.seed(files);
 	engine.setNoteIdMap(map);
+	// The rename's relocating crdt_create goes out and is acked.
+	engine.setCrdtPorts({
+		create: mock(async (docId: string) => {
+			if (opts.createRefused) throw new Error("crdt_create refused: invalid_path");
+			return { docId, seeded: false, genesisOutcome: "occupied" };
+		}),
+	} as never);
 	for (const p of Object.keys(files)) {
 		(engine as unknown as { syncState: Map<string, unknown> }).syncState.set(p, {
 			hash: 1,
@@ -210,5 +224,132 @@ describe("a local rename fences older path claims", () => {
 
 		expect([...h.present.keys()]).toEqual(["Other.md"]);
 		expect(h.map.pathForId(ID)).toBe("Other.md");
+	});
+
+	test("an equal seq at a different path is a real rename (B was offline while A renamed)", async () => {
+		// Review R1: a fan-out stamped the note's current seq as the mark, then the
+		// replay serves the rename row at that same seq. Strict `<` lets it move.
+		const h = await plainEngine({ "Old.md": ID }, 10);
+
+		await h.engine.applyOp(row(ID, "Moved.md", 10));
+		await settle();
+
+		expect([...h.present.keys()]).toEqual(["Moved.md"]);
+		expect(h.map.pathForId(ID)).toBe("Moved.md");
+	});
+
+	test("an older seq at a different path is history: it does not move", async () => {
+		const h = await plainEngine({ "New.md": ID }, 10);
+
+		await h.engine.applyOp(row(ID, "Old.md", 9));
+		await settle();
+
+		expect([...h.present.keys()]).toEqual(["New.md"]);
+	});
+
+	test("a fence whose echo never comes expires, and a later real rename moves", async () => {
+		// Review R2.
+		const time = new ManualTimeProvider(1_000_000);
+		const h = await renamedLocally({ "Old.md": ID }, [["Old.md", "New.md"]], { time });
+		time.advance(121_000);
+
+		await h.engine.applyOp(row(ID, "Elsewhere.md", 50));
+		await settle();
+
+		expect([...h.present.keys()]).toEqual(["Elsewhere.md"]);
+	});
+
+	test("a refused rename push clears the fence: the server's path is current again", async () => {
+		const h = await renamedLocally({ "Old.md": ID }, [["Old.md", "New.md"]], {
+			createRefused: true,
+		});
+
+		await h.engine.applyOp(row(ID, "Elsewhere.md", 50));
+		await settle();
+
+		expect([...h.present.keys()]).toEqual(["Elsewhere.md"]);
+	});
+
+	test("a stale broadcast still delivers its content, at the note's current path", async () => {
+		const h = await renamedLocally({ "Old.md": ID }, [["Old.md", "New.md"]]);
+		const applied: string[] = [];
+		(h.engine as any).moveIfIdRelocated = mock(async (_id: string, p: string) => {
+			applied.push(p);
+		});
+
+		await h.engine.handleStreamEvent({
+			event_type: "upsert",
+			kind: "note",
+			id: ID,
+			path: "Old.md",
+			content: "original",
+			timestamp: 2,
+			updated_at: "2026-01-01T00:00:02Z",
+		} as never);
+		await settle();
+
+		// Processed (not dropped), against the path the note lives at now.
+		expect(applied).toEqual(["New.md"]);
+	});
+});
+
+/** An engine holding `files` as synced notes at `seq`, no local rename. */
+async function plainEngine(files: Record<string, string>, seq: number) {
+	const h = makeVault(Object.fromEntries(Object.keys(files).map((p) => [p, "original"])));
+	const engine = makeEngine(h.app);
+	h.attach(engine);
+	const map = new NoteIdMap();
+	map.seed(files);
+	engine.setNoteIdMap(map);
+	for (const p of Object.keys(files)) {
+		(engine as unknown as { syncState: Map<string, unknown> }).syncState.set(p, {
+			hash: 1,
+			seq,
+		});
+	}
+	return { ...h, engine, map };
+}
+
+describe("KeyedSerial", () => {
+	const time = () => new ManualTimeProvider(0);
+
+	test("runs one key in order; a rejection does not wedge it", async () => {
+		const q = new KeyedSerial(time(), 1000);
+		const order: number[] = [];
+		const a = q.run("k", async () => {
+			await new Promise((r) => setTimeout(r, 5));
+			order.push(1);
+		});
+		const b = q.run("k", async () => {
+			throw new Error("boom");
+		});
+		const c = q.run("k", async () => {
+			order.push(3);
+			return 3;
+		});
+		await a;
+		await expect(b).rejects.toThrow("boom");
+		expect(await c).toBe(3);
+		expect(order).toEqual([1, 3]);
+	});
+
+	test("a task that never settles releases its key after the stall bound", async () => {
+		const t = time();
+		const stalled: string[] = [];
+		const q = new KeyedSerial(t, 1000, (k) => stalled.push(k));
+		void q.run("k", () => new Promise(() => {}));
+		const next = q.run("k", async () => "ran");
+		await new Promise((r) => setTimeout(r, 1));
+		t.advance(1001);
+
+		expect(await next).toBe("ran");
+		expect(stalled).toEqual(["k"]);
+	});
+
+	test("clear forgets every queue", async () => {
+		const q = new KeyedSerial(time(), 1000);
+		void q.run("k", () => new Promise(() => {}));
+		q.clear();
+		expect(await q.run("k", async () => "fresh")).toBe("fresh");
 	});
 });

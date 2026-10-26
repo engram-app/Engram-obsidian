@@ -143,3 +143,36 @@ test("a modify event for the plugin's own in-flight write is not pushed as a loc
 	expect(await engine.pushFile(file)).toBe(false);
 	expect(applyLocalEdit).not.toHaveBeenCalled();
 });
+
+test("a burst of fan-outs for an unknown note id shares one manifest fetch", async () => {
+	const getManifest = mock(async () => {
+		await tick(10);
+		return { notes: [], change_seq: 1 };
+	});
+	const engine = new SyncEngine(
+		{
+			vault: {
+				configDir: ".obsidian",
+				getAbstractFileByPath: mock(() => null),
+				getFileByPath: mock(() => null),
+				getMarkdownFiles: mock(() => []),
+				getFiles: mock(() => []),
+				getName: mock().mockReturnValue("Test Vault"),
+			},
+			workspace: { getActiveViewOfType: mock().mockReturnValue(null) },
+		} as any,
+		{ getManifest } as unknown as EngramApi,
+		{ ...DEFAULT_SETTINGS, debounceMs: 1 },
+		mock().mockResolvedValue(undefined),
+	);
+	engine.setCrdtManager({ applyRemoteUpdate: async () => true } as never);
+	engine.setNoteIdMap(new NoteIdMap());
+	engine.setReady();
+
+	const results = await Promise.all(
+		[1, 2, 3, 4, 5].map(() => engine.applyPushedNoteUpdate("ghost", new Uint8Array([1]), "h")),
+	);
+
+	expect(results.every((r) => r === "deferred")).toBe(true);
+	expect(getManifest.mock.calls.length).toBeLessThanOrEqual(2);
+});
