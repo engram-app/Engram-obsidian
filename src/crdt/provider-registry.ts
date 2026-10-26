@@ -66,7 +66,19 @@ interface Entry {
 	 *  (delete-note resurrection). `lifetime.guard(...)` races the await against
 	 *  the end; `lifetime.active` is the cheap synchronous check. */
 	lifetime: Lifetime;
+	/** The disk-side base: texts this device last saw on disk for the note,
+	 *  newest first, each written by our own flush or read by a fold.
+	 *  See `applyLocalEdit`. Resident only (dropped with the entry), at most
+	 *  DISK_TEXTS per note and none over DISK_TEXT_MAX_CHARS. */
+	diskTexts: string[];
 }
+
+/** How many recent disk texts a resident note keeps (see Entry.diskTexts): the
+ *  newest is the fold's base; older ones recognise a late-landing older flush. */
+const DISK_TEXTS = 3;
+/** A note bigger than this keeps no disk-side base (memory bound) and folds
+ *  against the last-synced LCA as before. */
+const DISK_TEXT_MAX_CHARS = 1_000_000;
 
 export interface ProviderRegistryOpts {
 	dbPrefix?: string;
@@ -241,6 +253,7 @@ export class ProviderRegistry {
 			kind,
 			ready: Promise.resolve(),
 			remoteSeq: 0,
+			diskTexts: [],
 			lastFlushedFm: null,
 			pendingFlush: null,
 			lifetime: new Lifetime(),
@@ -266,6 +279,8 @@ export class ProviderRegistry {
 				this.opts.onFlushToDisk(noteId, projected, fmChanged),
 			).then((ok) => {
 				if (ok === false) throw new Error(`flushFromCrdt write failure for ${noteId}`);
+				// Disk holds this now (or the bound editor saves it): the fold's base.
+				this.noteDiskText(noteId, projected);
 			});
 			entry.pendingFlush = flush;
 			// Clear pendingFlush once it SETTLES (success or failure) so it only ever
@@ -392,40 +407,13 @@ export class ProviderRegistry {
 		if (!e.lifetime.active) return null; // destroyed while we awaited hydration
 		let content = diskContent;
 
-		// LCA path (#357). With a merge base we apply the disk's delta RELATIVE TO
-		// THE BASE, so a remote op that landed after the disk read survives by
-		// construction. That removes the reason for the retry loop below: there is
-		// no stale-snapshot race left to detect, because we are no longer forcing
-		// the doc to equal the snapshot.
-		//
-		// Gated on the doc HAVING history. A history-less doc holds no remote work
-		// for the merge to protect, and routing it here would bypass the adopt-first
-		// gate below: `mergeDiskOntoDoc` short-circuits base===disk to the doc's own
-		// projection, which for a fresh doc is empty — and the caller records
-		// fnv1a(returned) as the last-synced baseline, so an empty return poisons
-		// isUnchangedSynced for a note that actually has content (#846 doubling).
-		const base = (hasLca ?? docHasHistory(e.doc, e.kind)) ? this.opts.lcaFor?.(noteId) : null;
-		if (base !== null && base !== undefined && e.kind === "note") {
-			const current = this.project(e);
-			const merged = mergeDiskOntoDoc(base, diskContent, current);
-			if (merged.clean) {
-				if (overwritesConcurrentEdit(base, diskContent, current)) {
-					this.opts.onLossyMerge?.(noteId);
-				}
-				seedContentInto(e.doc, e.text, merged.text, docHasHistory(e.doc, e.kind));
-				return merged.text;
-			}
-			// Dirty merge: overlapping edits to the same region. Fall through to the
-			// pre-LCA path rather than writing content we know is mangled — the
-			// existing guards are conservative and will decline rather than revert.
-			this.opts.onDirtyMerge?.(noteId);
-		}
-
-		// Stale-snapshot revert guard (e2e test_83): diskContent was read before
-		// this resolved; a remote merge in that window is absent from it, and
-		// diffing would DELETE the remote ops. Re-read across a doc-stable window.
-		// Still the path when no base is recorded yet, the doc is a canvas, or the
-		// merge came back dirty.
+		// Read disk as it IS before folding anything (e2e test_83, real-Obsidian
+		// pairing 40253955588). `diskContent` was read before this resolved: our
+		// own flush may still be writing over it, and a remote merge may have
+		// landed since. Wait out the in-flight flush and re-read across a
+		// doc-stable window, for EVERY fold below: the merge-base path used to
+		// skip this, and merged a pre-flush snapshot against a base that already
+		// held the flush, which read the flushed remote lines as user deletes.
 		if (reread) {
 			let stable = false;
 			for (let attempt = 0; attempt < 3 && !stable; attempt++) {
@@ -456,6 +444,55 @@ export class ProviderRegistry {
 
 		const lca = hasLca ?? docHasHistory(e.doc, e.kind);
 
+		if (lca && e.kind === "note") {
+			// DISK-SIDE BASE (Relay's model). Relay folds disk into a local doc that
+			// holds only what disk has seen, and merges remote into it 3-way from
+			// the LCA (merge-hsm/MergeHSM.ts invokeIdleDiskAutoMerge and
+			// invokeIdleThreeWayAutoMerge, y-diffMatchPatch.ts). Our one doc holds
+			// remote ops disk may not have yet, so the fold diffs disk against the
+			// last text disk held, never against the doc, and applies only that
+			// delta: a disk behind the doc can never delete remote content.
+			//
+			// Disk equal to a text it held recently (an older flush of ours that
+			// landed after a newer one) is no edit at all: re-flush the doc over it.
+			if (e.diskTexts.includes(content)) {
+				this.noteDiskText(noteId, content);
+				const current = this.project(e);
+				if (current !== content) {
+					void Promise.resolve(this.opts.onFlushToDisk(noteId, current, false)).catch(
+						() => undefined,
+					);
+				}
+				return current;
+			}
+			// LCA path (#357) when no disk text is recorded (not resident since
+			// the last flush): the last-synced content is the best base we have.
+			//
+			// Gated on the doc HAVING history. A history-less doc holds no remote
+			// work for the merge to protect, and routing it here would bypass the
+			// adopt-first gate below: `mergeDiskOntoDoc` short-circuits base===disk
+			// to the doc's own projection, which for a fresh doc is empty, and the
+			// caller records fnv1a(returned) as the last-synced baseline, so an
+			// empty return poisons isUnchangedSynced for a note that actually has
+			// content (#846 doubling).
+			const base = e.diskTexts[0] ?? this.opts.lcaFor?.(noteId);
+			if (base !== null && base !== undefined) {
+				const current = this.project(e);
+				const merged = mergeDiskOntoDoc(base, content, current);
+				if (merged.clean) {
+					if (overwritesConcurrentEdit(base, content, current)) {
+						this.opts.onLossyMerge?.(noteId);
+					}
+					seedContentInto(e.doc, e.text, merged.text, docHasHistory(e.doc, e.kind));
+					this.noteDiskText(noteId, content);
+					return merged.text;
+				}
+				// Dirty merge: overlapping edits to the same region. Fall through to
+				// the two-way path rather than writing content we know is mangled.
+				this.opts.onDirtyMerge?.(noteId);
+			}
+		}
+
 		// Adopt-first: history-less doc whose disk bytes == last-synced content has
 		// nothing local to preserve; leave it empty and let STEP2 populate it on the
 		// server's lineage (avoids the #846 doubling). "Consumed, nothing to push".
@@ -468,7 +505,19 @@ export class ProviderRegistry {
 			return seedCanvasInto(e.doc, content) ? content : null;
 		}
 		seedContentInto(e.doc, e.text, content, lca);
+		// A history-less seed records nothing: the note has no flush of ours yet,
+		// so its base stays the LCA until one lands.
+		if (lca) this.noteDiskText(noteId, content);
 		return content;
+	}
+
+	/** Record `text` as on disk for the note now: our own flush just wrote it,
+	 *  or a fold just read it (see Entry.diskTexts). Non-resident notes keep
+	 *  nothing. */
+	noteDiskText(noteId: string, text: string): void {
+		const e = this.entries.get(noteId);
+		if (!e || text.length > DISK_TEXT_MAX_CHARS) return;
+		e.diskTexts = [text, ...e.diskTexts.filter((t) => t !== text)].slice(0, DISK_TEXTS);
 	}
 
 	/** Merge a disk edit made FROM `base` onto the doc, with no await between
@@ -497,6 +546,7 @@ export class ProviderRegistry {
 		// the fuzzy patch, which at least lands the disk edit.
 		const text = merged.clean ? merged.text : mergeDiskOntoDoc(base, disk, current).text;
 		seedContentInto(e.doc, e.text, text, true);
+		this.noteDiskText(noteId, disk);
 		return text;
 	}
 

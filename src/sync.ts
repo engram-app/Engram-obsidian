@@ -3634,7 +3634,6 @@ export class SyncEngine {
 		// maps were missing from it (#1409); adding a field no longer requires
 		// remembering that this method exists.
 		this.sweep("vault");
-		this.serial.clear();
 		this.gateEpoch++; // stop any in-flight gate replay (#247)
 		this.lastSync = "";
 		// The socket op-log replay cursor marks a position in the OLD vault's
@@ -5301,9 +5300,14 @@ export class SyncEngine {
 
 		// Push new path if it isn't ignored
 		if (!this.shouldIgnore(file.path)) {
-			// Not sent and not queued (refused, or failed for good): the server
-			// keeps the old path, so the old-path claims are current again.
-			if (!(await this.pushFile(file))) this.dropPendingLocalMove(file.path);
+			// Refused or failed, and not queued: the server keeps the old path, so
+			// the old-path claims are current again. A plain false (in flight,
+			// deferred) will still be sent; keep the fence.
+			let report: PushReport | undefined;
+			const sent = await this.pushFile(file, false, false, undefined, (r) => {
+				report = r;
+			});
+			if (!sent && report) this.dropPendingLocalMove(file.path);
 		}
 	}
 
@@ -5332,7 +5336,7 @@ export class SyncEngine {
 		// A no-op if oldPath has no entry (attachments, or a note never pushed).
 		if (!isBinary) {
 			this.noteIdMap?.rename(oldPath, newPath);
-			this.notePendingLocalMove(newPath);
+			this.notePendingLocalMove(oldPath, newPath);
 		}
 
 		// Delete old path if it wasn't ignored.
@@ -5915,17 +5919,22 @@ export class SyncEngine {
 				// branch, which ADOPTS the server's authoritative id for a path it
 				// already owns and re-keys the map — the recovery that already exists.
 				if (this.crdt && noteId && !mintedNow && this.hasServerNote(noteId)) {
-					const consumed = await routeModify(
-						{
-							crdtEligible: this.isCrdtEligible(file),
-							noteId,
-							// A LIVE read, not the frozen `content` above: routeModify
-							// forwards this as the manager's stale-snapshot reread, and a
-							// frozen closure would defeat that guard (e2e test_83).
-							readContent: () => this.app.vault.cachedRead(file),
-						},
-						this.crdt,
-						MAX_CRDT_NOTE_BYTES,
+					// In the note's lane, so this fold never interleaves with a
+					// fan-out's capture and flush for the same note.
+					const crdt = this.crdt;
+					const consumed = await this.serial.run(noteId, () =>
+						routeModify(
+							{
+								crdtEligible: this.isCrdtEligible(file),
+								noteId,
+								// A LIVE read, not the frozen `content` above: routeModify
+								// forwards this as the manager's stale-snapshot reread, and a
+								// frozen closure would defeat that guard (e2e test_83).
+								readContent: () => this.app.vault.cachedRead(file),
+							},
+							crdt,
+							MAX_CRDT_NOTE_BYTES,
+						),
 					);
 					if (consumed !== null) {
 						// Record the transmitted content's hash as the echo-hash baseline
@@ -6259,6 +6268,7 @@ export class SyncEngine {
 						// rediscover the cap on its own (prod 2026-10-17 retry storm).
 						if (createReason && LIMIT_REASONS.has(createReason)) {
 							this.notesCapGate?.trip(createReason);
+							report?.({ kind: "refused" });
 							return false;
 						}
 						// Anything else retryable (create_failed, rate-limit, timeout,
@@ -7780,7 +7790,13 @@ export class SyncEngine {
 		// burst of updates for it joins one in-flight fetch instead of each
 		// running its own after the previous one in turn.
 		if (!this.noteIdMap?.pathForId(noteId)) this.ensureNoteIdMapped(noteId);
-		return this.serial.run(noteId, () => this.applyPushedNoteUpdateNow(noteId, update, head));
+		const vault = this.settings.vaultId;
+		return this.serial.run(noteId, async () =>
+			// Queued before a vault switch: it belongs to the old vault.
+			vault === this.settings.vaultId
+				? this.applyPushedNoteUpdateNow(noteId, update, head)
+				: "deferred",
+		);
 	}
 
 	private async applyPushedNoteUpdateNow(
@@ -8518,7 +8534,11 @@ export class SyncEngine {
 	 *  delays later ones. These handlers already await disk and network, and
 	 *  unordered application is the bug. Per-note lanes if it ever matters. */
 	handleStreamEvent(event: NoteStreamEvent): Promise<void> {
-		return this.serial.run("stream", () => this.applyStreamEvent(event));
+		const vault = this.settings.vaultId;
+		return this.serial.run("stream", async () => {
+			// Queued before a vault switch: an old-vault event, drop it.
+			if (vault === this.settings.vaultId) await this.applyStreamEvent(event);
+		});
 	}
 
 	private async applyStreamEvent(event: NoteStreamEvent): Promise<void> {
@@ -9030,31 +9050,41 @@ export class SyncEngine {
 		}
 	}
 
-	/** Notes this device renamed whose new path the server has not shown back
-	 *  yet: note_id -> the new path and when the rename was made. Vault-scoped
-	 *  like every id map. See isStalePathClaim. */
+	/** Notes this device renamed that the server has not confirmed at the new
+	 *  path yet: note_id -> the new path, the paths it left, whether the WS echo
+	 *  has come back, and when the fence was last refreshed. Vault-scoped like
+	 *  every id map. See isStalePathClaim. */
 	private pendingLocalMoves = this.track(
 		["vault", "destroy"],
-		new Map<string, { path: string; at: number }>(),
+		new Map<string, { path: string; from: Set<string>; echoed: boolean; at: number }>(),
 	);
 
-	/** Backstop for a pending local move whose server echo never comes (the
-	 *  relocation lost for good, the note deleted elsewhere). A hiding layer
-	 *  must expire: past this a different path is judged by seq alone again. */
+	/** Backstop for a fence nothing confirms (the relocation lost for good, the
+	 *  note deleted elsewhere), counted from when the rename left the queue. A
+	 *  hiding layer must expire: past this a path is judged by seq alone again. */
 	private static readonly PENDING_MOVE_TTL_MS = 120_000;
 
 	/** Fence a local rename's older path claims (see isStalePathClaim). Only for
 	 *  a note the server will hear about: an ignored or non-CRDT path is never
 	 *  pushed, so nothing would ever clear the fence. */
-	private notePendingLocalMove(newPath: string): void {
+	private notePendingLocalMove(oldPath: string, newPath: string): void {
 		const normalized = normalizePath(newPath);
 		if (!this.isCrdtEligiblePath(normalized) || this.shouldIgnore(normalized)) return;
 		const id = this.noteIdMap?.get(normalized);
-		if (id) this.pendingLocalMoves.set(id, { path: normalized, at: this.time.now() });
+		if (!id) return;
+		const from = new Set(this.pendingLocalMoves.get(id)?.from);
+		from.add(normalizePath(oldPath));
+		from.delete(normalized);
+		this.pendingLocalMoves.set(id, {
+			path: normalized,
+			from,
+			echoed: false,
+			at: this.time.now(),
+		});
 	}
 
-	/** The rename's push did not go out and nothing will retry it (refused, or
-	 *  no create queued): the server keeps the old path, so stop fencing it. */
+	/** The rename's push was refused or failed and nothing is queued to retry
+	 *  it: the server keeps the old path, so stop fencing it. */
 	private dropPendingLocalMove(newPath: string): void {
 		const id = this.noteIdMap?.get(normalizePath(newPath));
 		if (id && !this.crdtHasPendingOp?.(id)) this.pendingLocalMoves.delete(id);
@@ -9063,14 +9093,17 @@ export class SyncEngine {
 	/** Is a server row or broadcast naming `id` at `path` an OLD claim, not a
 	 *  move? The id is authoritative; a path is only as fresh as its seq.
 	 *
-	 *  - This device renamed the note and the server has not shown it at the new
-	 *    path yet: any other path is from before the rename (a replayed row
-	 *    checkpointed before the rename reached the server, an in-flight
-	 *    broadcast). Applying it renamed the user's file BACK, and in a folder
-	 *    rename re-minted the moved notes under new ids: duplicates (prod
-	 *    pairing run 40251575611, both devices on 1.38.1). The server showing
-	 *    the note at the new path clears the fence: seq order puts that row
-	 *    after every row that predates the rename.
+	 *  - This device renamed the note and the server has not confirmed it yet.
+	 *    Before the WS echo, any other path is from before the rename (a
+	 *    replayed row checkpointed before the rename reached the server, an
+	 *    in-flight broadcast). Applying it renamed the user's file BACK, and in
+	 *    a folder rename re-minted the moved notes under new ids: duplicates
+	 *    (prod pairing run 40251575611, both devices on 1.38.1). The echo has no
+	 *    seq, and a replay page fetched before the server applied the rename
+	 *    can land after it, so after the echo the paths the note LEFT stay
+	 *    rejected (a fresh remote rename elsewhere is not). Only a seq-bearing
+	 *    row at the new path confirms the move: seq order puts it after every
+	 *    row that predates the rename.
 	 *  - Otherwise the per-path seq fence (crdt-catchup-backfill-revert-and-seq-
 	 *    fence.md): a row BELOW the seq this device holds for the note is
 	 *    history. Strict: live updates carry the note's current seq, so a real
@@ -9080,13 +9113,17 @@ export class SyncEngine {
 		const target = normalizePath(path);
 		const pending = this.pendingLocalMoves.get(id);
 		if (pending !== undefined) {
-			if (this.time.now() - pending.at > SyncEngine.PENDING_MOVE_TTL_MS) {
+			const now = this.time.now();
+			// Still queued (offline): the TTL counts from when the rename leaves.
+			if (this.crdtHasPendingOp?.(id)) pending.at = now;
+			if (now - pending.at > SyncEngine.PENDING_MOVE_TTL_MS) {
 				this.pendingLocalMoves.delete(id);
-			} else if (pending.path !== target) {
-				return true;
-			} else {
-				this.pendingLocalMoves.delete(id);
+			} else if (pending.path === target) {
+				if (Number.isInteger(seq)) this.pendingLocalMoves.delete(id);
+				else pending.echoed = true;
 				return false;
+			} else if (!pending.echoed || pending.from.has(target)) {
+				return true;
 			}
 		}
 		if (!Number.isInteger(seq)) return false;
