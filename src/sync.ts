@@ -1362,11 +1362,23 @@ export class SyncEngine {
 		// the editor re-attach dropped text typed since the note was opened (#544).
 		if (this.isUnackedMint(noteId) && this.getCrdtHead(path) != null) return false;
 		if (!this.isCrdtEligiblePath(path)) return false;
+		// Not an orphan: its create is on its way. A brand-new open note's
+		// handshake races its own crdt_create and gets this same note_not_found,
+		// so re-creating here sent a SECOND create whose occupied adopt then
+		// reverted any edit landed in between (prod: 113 notes / 24 users / 30
+		// days). Not marked repaired: a create that then fails for good is a
+		// real orphan, and the next note_not_found repairs it.
+		if (this.creatingPaths.has(normalizePath(path)) || this.crdtHasPendingOp?.(noteId)) {
+			return false;
+		}
 		const file = this.app.vault.getFileByPath(normalizePath(path));
 		if (!file) return false;
 		if ((file.stat?.size ?? 0) > MAX_CRDT_NOTE_BYTES) return false;
 
 		this.repairedClaims.add(noteId);
+		// Forced, counts only: this fires from every device, not only the
+		// diagnostics-on ones the warn below reaches.
+		rlog().anomaly("sync", "orphan_claim_recreate");
 		// warn, not info: client `info` never reaches Loki, and this is the only
 		// client-side signal that a note is stranded on one device.
 		rlog().warn(
@@ -1650,6 +1662,8 @@ export class SyncEngine {
 		this.queueCreatedCtime(normalized);
 		if (consumed !== null) {
 			this.recordCrdtBaseline(normalized, consumed, { markCreated: true });
+			// The baseline now holds the base; the create's own record is done.
+			this.ownGenesis.delete(effectiveId);
 		}
 		if (opts?.flushHeld !== false) {
 			await this.flushHeldEditsOnCreateAck(effectiveId, path);
@@ -2029,6 +2043,8 @@ export class SyncEngine {
 		path: string,
 		content: string,
 	): Promise<{ update: Uint8Array; fromThrowaway: boolean } | undefined> {
+		// Every create (inline and queued) asks this first, framed or not.
+		if (this.crdt && noteId) this.stampOwnGenesis(noteId, path, content);
 		if (!this.crdt || !this.eligibleForGenesisFrame(path, content)) return undefined;
 
 		// No resolvable id: cannot ask about history and cannot encode the doc's
@@ -2202,6 +2218,32 @@ export class SyncEngine {
 		// Disk holding exactly what an in-flight flushFromCrdt is writing is the
 		// engine's own write, not drift (#578). See `flushingHash`.
 		return state.hash !== hash && !this.flushingHash.get(normalized)?.has(hash);
+	}
+
+	/** Is `hash` this device's own last-known content for `path`: the synced
+	 *  baseline, or, before the note's first create is acked, the body that
+	 *  create sent (`ownGenesis`). Disk equal to it carries no local edit,
+	 *  whatever the server has done since. */
+	private isOwnBase(path: string, hash: number): boolean {
+		if (this.syncState.get(path)?.hash === hash) return true;
+		const noteId = this.noteIdMap?.get(path);
+		return noteId != null && this.ownGenesis.get(noteId) === hash;
+	}
+
+	/** fnv1a of the body a note's FIRST `crdt_create` sent, by note_id, from
+	 *  just before the send until the create-ack stamps the baseline. Kept off
+	 *  the sync-state row on purpose: a row is sync evidence (#416) and marks a
+	 *  file tracked, which a create that has not landed must not claim. */
+	private ownGenesis = this.track(["vault", "destroy"], new Map<string, number>());
+
+	/** Record the body a note's first create sends, before it is sent. Only
+	 *  for a note the server does not know yet (a rename's relocating create
+	 *  has a head), and only once: a re-sent create must not move the base to
+	 *  whatever disk holds by then, or an edit made in between would read as no
+	 *  edit at all. */
+	private stampOwnGenesis(noteId: string, path: string, content: string): void {
+		if (this.ownGenesis.has(noteId) || this.getCrdtHead(path) != null) return;
+		this.ownGenesis.set(noteId, fnv1a(content));
 	}
 
 	/** Hashes of the bodies in-flight `flushFromCrdt` calls are writing, per
@@ -4101,6 +4143,30 @@ export class SyncEngine {
 		return await crdt.projectedText(noteId);
 	}
 
+	/** Merge `disk`, edited from `base` (the body this device's create sent),
+	 *  onto the doc, which projects `current`. Null when nothing was merged:
+	 *  the edits overlap (or the doc moved under us), and disk is kept as a
+	 *  conflict copy instead, so neither side is lost. */
+	private async mergeOwnCreateDrift(
+		noteId: string,
+		normalized: string,
+		base: string,
+		current: string,
+		disk: string,
+	): Promise<string | null> {
+		const crdt = this.crdt;
+		if (!crdt) return null;
+		const merged = await crdt.mergeLocalEditFromBase(noteId, base, current, disk);
+		if (merged !== null) return merged;
+		const copy = await this.writeDriftConflictCopy(normalized, disk);
+		rlog().info(
+			"conflict",
+			`create: an edit made during the create overlaps a remote one → keep-both | ` +
+				`original=${noteRef(normalized)} copy=${noteRef(copy)}`,
+		);
+		return null;
+	}
+
 	/** Give the note up to the server's lineage: transmit nothing now, and record
 	 *  disk as the baseline so nothing transmits it LATER either.
 	 *
@@ -4483,11 +4549,22 @@ export class SyncEngine {
 				let consumed: string | null = await this.crdt.projectedText(effectiveId);
 				// M1: `genesisContent` was frozen before the create round-trip, and
 				// the apply above flushes it over disk. Anything that landed in that
-				// window survives only in `preApplyDisk`. Merged back as a minimal
-				// diff (the doc has history now). NO reread — it would read the
-				// just-reverted disk and discard the drift.
+				// window survives only in `preApplyDisk`. NO reread: it would read
+				// the just-reverted disk and discard the drift.
+				//
+				// Merged THREE-way from `genesisContent`, the body this create sent.
+				// The doc may already hold a remote edit made to the stored note
+				// while the ack was in flight (a catch-up landing before this apply),
+				// and a two-way diff of disk onto it deleted that edit: disk never
+				// had it. Overlapping edits keep both rather than drop either.
 				if (preApplyDisk !== null && preApplyDisk !== opts.genesisContent) {
-					const merged = await this.crdt.applyLocalEdit(effectiveId, preApplyDisk);
+					const merged = await this.mergeOwnCreateDrift(
+						effectiveId,
+						normalized,
+						opts.genesisContent,
+						consumed,
+						preApplyDisk,
+					);
 					if (merged !== null) {
 						consumed = merged;
 						await this.flushFromCrdt(normalized, merged);
@@ -4583,6 +4660,26 @@ export class SyncEngine {
 			// below is an `lca` diff. This is deliberate even when `adopted` is
 			// empty — an empty projection means the server is genuinely blank and
 			// our body is the only copy.
+		}
+
+		// OUR OWN CREATE IS THE OCCUPANT. Under our own id (`sameId`) a body on
+		// the server can only descend from this device's create: an earlier copy
+		// of it that landed (the orphan repair's second create, a create re-sent
+		// after a restart before its ack was saved), plus whatever other writers
+		// did to it since (an MCP edit, another device). Diffing disk onto that
+		// two-way, as below, reads every one of their changes as something disk
+		// removed, and deletes it under a fresh client id: a lost edit on every
+		// device, no conflict copy. Three-way from our base instead: when disk
+		// still holds what we sent, there is no local input, so transmit nothing
+		// and keep the server's text.
+		if (sameId && known !== "absent" && typeof this.crdt.projectedText === "function") {
+			if (effectiveIdHasHistory) await this.adoptServerLineage(effectiveId, normalized);
+			const server = await this.crdt.projectedText(effectiveId);
+			const disk = await this.app.vault.cachedRead(file);
+			if (server !== "" && this.isOwnBase(normalized, fnv1a(disk))) {
+				rlog().anomaly("crdt", "occupied_create_own_base");
+				return server;
+			}
 		}
 
 		// Either the server holds nothing (`absent`), or we now share its lineage
