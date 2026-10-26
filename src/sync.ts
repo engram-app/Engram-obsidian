@@ -8417,6 +8417,10 @@ export class SyncEngine {
 	private poolIdleHeal(path: string, noteId: string, reason: HealRoomReason): void {
 		// A retry is already scheduled on its backoff; this request rides it.
 		if (this.healRetryTimers.has(noteId)) return;
+		if (this.healPaused()) {
+			this.parkedHeals.set(noteId, { path, reason });
+			return;
+		}
 		if (this.idleHealSlots.has(noteId)) {
 			this.idleHealRefire.add(noteId);
 			return;
@@ -8453,6 +8457,15 @@ export class SyncEngine {
 
 	private openWhenBudgeted(noteId: string, slot: HealSlot): void {
 		if (this.idleHealSlots.get(noteId) !== slot) return;
+		// Went offline while this waited for a token: give the slot back and park.
+		if (this.healPaused()) {
+			this.idleHealSlots.delete(noteId);
+			this.time.clearTimeout(slot.timer);
+			this.idleHealRooms.release();
+			this.parkedHeals.set(noteId, { path: slot.path, reason: slot.reason });
+			this.maybeReportHealRooms();
+			return;
+		}
 		const wait = this.takeHealRoomToken();
 		if (wait > 0) {
 			slot.timer = this.time.setTimeout(() => this.openWhenBudgeted(noteId, slot), wait);
@@ -8464,6 +8477,27 @@ export class SyncEngine {
 		);
 		this.countHealRoom(slot.reason);
 		this.openHealRoom(slot.path, noteId);
+	}
+
+	/** No room can open with the crdt topic down (offline, or between a drop
+	 *  and the rejoin): a heal fired then only spun the backoff to its 10 min
+	 *  cap and counted rooms that never opened. Such heals park until the next
+	 *  crdt join, which is exactly when the topic comes back. */
+	private healPaused(): boolean {
+		return !(this.crdtLive?.() ?? true);
+	}
+
+	/** Heals parked while offline (`healPaused`), re-queued on the next crdt
+	 *  join (`selfHealSweep`). Never dropped, same as the pool. */
+	private parkedHeals = this.track(
+		["vault", "destroy"],
+		new Map<string, { path: string; reason: HealRoomReason }>(),
+	);
+
+	private resumeParkedHeals(): void {
+		const parked = [...this.parkedHeals];
+		this.parkedHeals.clear();
+		for (const [noteId, { path, reason }] of parked) this.poolIdleHeal(path, noteId, reason);
 	}
 
 	/** Token bucket for idle heal-room STARTS (what the server's surge alert
@@ -12202,6 +12236,7 @@ export class SyncEngine {
 		failed: number;
 	}> {
 		const idle = { ran: false, candidates: 0, pushed: 0, failed: 0 };
+		this.resumeParkedHeals();
 		if (!this.syncBlocked) await this.redeliverUnackedDocs();
 		if (
 			this.syncBlocked ||
