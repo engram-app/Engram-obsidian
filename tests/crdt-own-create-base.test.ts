@@ -145,3 +145,28 @@ describe("a stored create whose disk moved during the round trip", () => {
 		expect(calls.copies).toEqual([overlapping]);
 	});
 });
+
+describe("the first server load before the create-ack (fuzz seed 6)", () => {
+	test("disk holding our own unacked create is not a held local edit", async () => {
+		const { engine, calls } = makeEngine(SENT, SERVER);
+		engine.syncState.set(PATH, { hash: 0, seq: 3 }); // the pre-ack placeholder row
+		engine.stampOwnGenesis("note-1", PATH, SENT);
+
+		expect(engine.needsColdReconcile(PATH, SENT)).toBe(false);
+		expect(engine.needsColdReconcile(PATH, LOCAL_EDIT)).toBe(true);
+		const written = await engine.resolveDriftOnLoad(PATH, { path: PATH }, "note-1", SERVER);
+
+		expect(written).toBe(SERVER);
+		expect(calls.copies).toEqual([]);
+	});
+
+	test("once the ack stamps the baseline, the create's own record is gone", async () => {
+		const { engine } = makeEngine(SENT, SERVER);
+		engine.stampOwnGenesis("note-1", PATH, SENT);
+
+		await engine.adoptCreateAck("note-1", PATH, SERVER, { flushHeld: false });
+
+		expect(engine.ownGenesis.has("note-1")).toBe(false);
+		expect(engine.needsColdReconcile(PATH, SENT)).toBe(true);
+	});
+});
