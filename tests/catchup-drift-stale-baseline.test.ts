@@ -30,7 +30,10 @@ const USER_EDIT = '---\ntitle: "Meeting: kickoff" # comment\n---\nbody\nmy edit\
 /** Runs one catch-up of ROW over a note whose baseline is RAW. `duringRead`
  *  fires inside catch-up's awaited file read, after its row snapshot: the
  *  window the race lives in. Returns how many drift copies were written. */
-async function catchUp(duringRead: (e: AnyEngine, disk: Map<string, string>) => void) {
+async function catchUp(
+	duringRead: (e: AnyEngine, disk: Map<string, string>) => void,
+	opts: { docHasHistory?: boolean } = {},
+) {
 	const disk = new Map<string, string>([[PATH, RAW]]);
 	let engine: AnyEngine | null = null;
 	let fired = false;
@@ -78,6 +81,9 @@ async function catchUp(duringRead: (e: AnyEngine, disk: Map<string, string>) => 
 	e.setLiveBoundCheck(() => false);
 	e.setCrdtEnrollment({ enroll: mock(), reset: mock() } as never);
 	map.set(PATH, ID);
+	// A synced note's doc has its lineage. A history-less one is a first load,
+	// which the load interlock resolves instead (see the last test).
+	if (opts.docHasHistory !== false) await mgr.applyLocalEdit(ID, RAW);
 	// The create-ack era baseline: still the raw bytes when catch-up starts.
 	engine.recordCrdtBaseline(PATH, RAW);
 
@@ -167,4 +173,17 @@ test("a change deferred during the create is replayed when the create ends", asy
 	// Replayed once, then forgotten.
 	await engine!.endCreate(PATH);
 	expect(replay).toHaveBeenCalledTimes(1);
+});
+
+test("a history-less doc (a first load) is converged, not copied: the load resolves it", async () => {
+	let converge: ReturnType<typeof spyOn> | null = null;
+	const copies = await catchUp(
+		(e, disk) => {
+			disk.set(PATH, USER_EDIT);
+			converge = spyOn(e as any, "stageAndConverge");
+		},
+		{ docHasHistory: false },
+	);
+	expect(copies).toBe(0);
+	expect(converge!).toHaveBeenCalledTimes(1);
 });
