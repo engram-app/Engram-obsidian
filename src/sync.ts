@@ -2333,7 +2333,7 @@ export class SyncEngine {
 		const hash = fnv1a(content);
 		// Disk holding exactly what an in-flight flushFromCrdt is writing is the
 		// engine's own write, not drift (#578). See `flushingHash`.
-		return state.hash !== hash && !this.flushingHash.get(normalized)?.has(hash);
+		return !this.isOwnBase(normalized, hash) && !this.flushingHash.get(normalized)?.has(hash);
 	}
 
 	/** Is `hash` this device's own last-known content for `path`: the synced
