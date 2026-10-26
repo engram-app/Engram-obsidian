@@ -26,7 +26,22 @@
  * Verdict: install() also patches Date.now so the two scheduling-relevant
  * sites above see virtual time.
  */
-type Entry = { id: number; deadline: number; seq: number; fn: () => void; every?: number };
+import { currentIncarnation, type Incarnation, runAs } from "./process";
+
+type Entry = {
+	id: number;
+	deadline: number;
+	seq: number;
+	fn: () => void;
+	every?: number;
+	/** The device process that scheduled it (see process.ts). Fired back inside
+	 *  that context; never fired once it is dead; held while it is frozen. */
+	owner?: Incarnation;
+	/** Fires even for a dead or frozen owner: IndexedDB's own task queue, which
+	 *  must drain or a later incarnation's transactions on the same store wait
+	 *  forever behind a half-run one. */
+	ungated?: boolean;
+};
 
 export class SimClock {
 	private t = 0;
@@ -37,13 +52,33 @@ export class SimClock {
 	now(): number {
 		return this.t;
 	}
+	/** Timers that can fire now: a dead owner's are purged, a frozen owner's
+	 *  wait for resume and do not count toward quiescence. */
 	pendingCount(): number {
-		return this.entries.size;
+		let n = 0;
+		for (const e of this.entries.values()) if (this.eligible(e)) n++;
+		return n;
 	}
 
-	setTimeout(fn: () => void, ms: number): number {
+	private eligible(e: Entry): boolean {
+		if (e.ungated || !e.owner) return true;
+		if (e.owner.dead) {
+			this.entries.delete(e.id);
+			return false;
+		}
+		return !e.owner.frozen;
+	}
+
+	setTimeout(fn: () => void, ms: number, ungated = false): number {
 		const id = this.nextId++;
-		this.entries.set(id, { id, deadline: this.t + Math.max(0, ms), seq: this.seq++, fn });
+		this.entries.set(id, {
+			id,
+			deadline: this.t + Math.max(0, ms),
+			seq: this.seq++,
+			fn,
+			owner: currentIncarnation(),
+			ungated,
+		});
 		return id;
 	}
 	clearTimeout(id: number): void {
@@ -57,6 +92,7 @@ export class SimClock {
 			seq: this.seq++,
 			fn,
 			every: Math.max(1, ms),
+			owner: currentIncarnation(),
 		});
 		return id;
 	}
@@ -67,8 +103,9 @@ export class SimClock {
 	/** Fire the earliest-deadline timer (ties: registration order). */
 	fireNext(): boolean {
 		let best: Entry | undefined;
-		for (const e of this.entries.values())
-			if (
+		for (const e of [...this.entries.values()])
+			if (!this.eligible(e)) continue;
+			else if (
 				!best ||
 				e.deadline < best.deadline ||
 				(e.deadline === best.deadline && e.seq < best.seq)
@@ -80,14 +117,15 @@ export class SimClock {
 			best.deadline = this.t + best.every;
 			best.seq = this.seq++;
 		} else this.entries.delete(best.id);
-		best.fn();
+		runAs(best.owner, best.fn);
 		return true;
 	}
 	advanceTo(t: number): void {
 		while (true) {
 			let e: Entry | undefined;
-			for (const x of this.entries.values())
-				if (
+			for (const x of [...this.entries.values()])
+				if (!this.eligible(x)) continue;
+				else if (
 					x.deadline <= t &&
 					(!e || x.deadline < e.deadline || (x.deadline === e.deadline && x.seq < e.seq))
 				)

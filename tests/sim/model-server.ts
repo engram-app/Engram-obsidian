@@ -88,6 +88,8 @@ interface Note {
 	version: number;
 	seq: number;
 	deleted: boolean;
+	/** Virtual ms of the delete, for the delete-wins window. */
+	deletedAt?: number;
 	createdAt: string;
 	updatedAt: string;
 }
@@ -97,6 +99,44 @@ interface ClientRec {
 	syncTopic: string | null;
 	crdtTopic: string | null;
 	drop: number;
+	/** Next N server->client frames delivered twice (a duplicated reply). */
+	dup: number;
+	/** Next N server->client frames moved to a side lane, so later frames can
+	 *  overtake them (a reordered broadcast). */
+	late: number;
+	/** Next N client->server frames lost before the server sees them. */
+	dropIn: number;
+	/** Next N `phx_reply` frames to this client lost (the reply to a request,
+	 *  not a broadcast). */
+	dropReply: number;
+	/** Notes this client holds a server room open on: every `crdt_msg` frame
+	 *  routes through the backend's `ensure_room`, and `crdt_release` (or the
+	 *  socket going away) leaves it. */
+	rooms: Map<string, Room>;
+}
+
+/** A server room this client is in. `handshake`: opened by a syncStep1 (the
+ *  backend's `room_start{source="handshake"}`), else by an op frame. */
+interface Room {
+	handshake: boolean;
+	lastAt: number;
+}
+
+/** A room nobody sends to for this long drains on its own (the backend's
+ *  idle exit). */
+const ROOM_IDLE_MS = 5 * 60_000;
+
+/** The backend's delete-wins window (`@delete_tombstone_window_seconds`). */
+const DELETE_WINDOW_MS = 60_000;
+
+interface Attachment {
+	size: number;
+	hash: string;
+	b64: string;
+	mime: string;
+	seq: number;
+	deleted: boolean;
+	updatedAt: string;
 }
 
 export class ModelServer {
@@ -107,11 +147,19 @@ export class ModelServer {
 	private readonly clients = new Map<string, ClientRec>();
 	/** Attachments by path: just enough for a push to land and a server-side
 	 *  delete to be announced. Bytes are not modeled. */
-	private readonly attachments = new Map<string, { size: number; hash: string }>();
+	private readonly attachments = new Map<string, Attachment>();
 	private vaultSeq = 0;
+	/** Called when a client OPENS a room on a note (its first `crdt_msg` for a
+	 *  note it is not already in the room of). The fuzz suite's room-budget
+	 *  invariant reads this; the real server's `room_start{source="handshake"}`
+	 *  surge alert counts the same event. */
+	onRoomStart: ((clientId: string, docId: string, handshake: boolean) => void) | null = null;
+	/** Virtual time, for room idle expiry. */
+	private readonly now: () => number;
 
-	constructor(opts: { scheduler: Scheduler; genesisEmptyDoc?: boolean }) {
+	constructor(opts: { scheduler: Scheduler; genesisEmptyDoc?: boolean; now?: () => number }) {
 		this.scheduler = opts.scheduler;
+		this.now = opts.now ?? (() => Date.now());
 		this.genesisEmptyDoc = opts.genesisEmptyDoc ?? true;
 	}
 
@@ -157,7 +205,13 @@ export class ModelServer {
 	 *  divergence — an active fault, not a convergence bug. Convergence is only
 	 *  asserted AFTER all faults cease. */
 	clearDrops(): void {
-		for (const c of this.clients.values()) c.drop = 0;
+		for (const c of this.clients.values()) {
+			c.drop = 0;
+			c.dup = 0;
+			c.late = 0;
+			c.dropIn = 0;
+			c.dropReply = 0;
+		}
 	}
 
 	// -------------------------------------------------------------------------
@@ -165,14 +219,100 @@ export class ModelServer {
 	// -------------------------------------------------------------------------
 
 	/** Delete a note server-side (an MCP or web-app delete): tombstone it at a
-	 *  fresh seq and broadcast `note_changed` delete to every device. */
-	serverDeleteNote(id: string): void {
+	 *  fresh seq and broadcast `note_changed` delete to every device. The
+	 *  broadcast carries the tombstone seq (Engram#2233) and, for a device's own
+	 *  delete, its device id (#970). */
+	serverDeleteNote(id: string, deviceId?: string): void {
 		const n = this.byId.get(id);
 		if (!n || n.deleted) return;
 		n.deleted = true;
+		n.deletedAt = this.now();
 		this.byPath.delete(n.path);
 		this.bump(n);
-		this.broadcastNoteChanged({ event_type: "delete", kind: "note", id, path: n.path });
+		this.broadcastNoteChanged({
+			event_type: "delete",
+			kind: "note",
+			id,
+			path: n.path,
+			seq: n.seq,
+			...(deviceId ? { device_id: deviceId } : {}),
+		});
+	}
+
+	/** An MCP / web-app edit: `edit` maps the current body to the new one, and
+	 *  the change lands as a MINIMAL diff (common prefix and suffix kept), the
+	 *  way the backend's diffIntoYText writes a REST body, so a concurrent edit
+	 *  on another line merges instead of colliding with a full-body replace. */
+	serverEditNote(id: string, edit: (body: string) => string): void {
+		const n = this.byId.get(id);
+		if (!n || n.deleted) return;
+		const updates: Uint8Array[] = [];
+		const onUpdate = (u: Uint8Array, origin: unknown) => {
+			if (origin === APPLY_ORIGIN) updates.push(u);
+		};
+		n.doc.on("update", onUpdate);
+		Y.transact(
+			n.doc,
+			() => {
+				const t = n.doc.getText(CONTENT_KEY);
+				const cur = t.toString();
+				const next = edit(cur);
+				let pre = 0;
+				while (pre < cur.length && pre < next.length && cur[pre] === next[pre]) pre++;
+				let suf = 0;
+				while (
+					suf < cur.length - pre &&
+					suf < next.length - pre &&
+					cur[cur.length - 1 - suf] === next[next.length - 1 - suf]
+				)
+					suf++;
+				if (cur.length - pre - suf > 0) t.delete(pre, cur.length - pre - suf);
+				if (next.length - pre - suf > 0) t.insert(pre, next.slice(pre, next.length - suf));
+			},
+			APPLY_ORIGIN,
+		);
+		n.doc.off("update", onUpdate);
+		if (updates.length === 0) return;
+		this.bump(n);
+		this.fanoutUpdate("__rest__", n, Y.mergeUpdates(updates));
+	}
+
+	/** The note's full CRDT state, for a later `rollback`. */
+	snapshotNote(id: string): Uint8Array | null {
+		const n = this.byId.get(id);
+		return n && !n.deleted ? Y.encodeStateAsUpdate(n.doc) : null;
+	}
+
+	/** Restore a note's stored state to an earlier snapshot (a database
+	 *  restore). Ops written since are GONE server-side and nothing is
+	 *  broadcast; the row takes a fresh seq, so catch-up re-announces it. Only
+	 *  devices still holding those ops can bring them back. */
+	rollback(id: string, snap: Uint8Array): void {
+		const n = this.byId.get(id);
+		if (!n || n.deleted) return;
+		const doc = new Y.Doc();
+		doc.getText(CONTENT_KEY);
+		Y.applyUpdate(doc, snap);
+		n.doc = doc;
+		this.bump(n);
+		// A restore drops the live rooms too; every device re-handshakes.
+		for (const c of this.clients.values()) c.rooms.delete(id);
+	}
+
+	/** Every note id the server holds, live or tombstoned. */
+	noteIds(): { id: string; path: string; deleted: boolean }[] {
+		return [...this.byId.values()].map((n) => ({ id: n.id, path: n.path, deleted: n.deleted }));
+	}
+
+	/** The live note at `path`, if any. */
+	noteIdAt(path: string): string | undefined {
+		return this.byPath.get(path);
+	}
+
+	/** Server-side kill of a client's socket (the OS suspended the app; the
+	 *  server's side times the socket out). The client is not told. */
+	killClient(clientId: string): void {
+		this.clients.delete(clientId);
 	}
 
 	/** Restore a deleted note under its SAME id (backend safer delete,
@@ -197,14 +337,29 @@ export class ModelServer {
 	}
 
 	/** Delete an attachment server-side and broadcast it. */
-	serverDeleteAttachment(path: string): void {
-		if (!this.attachments.delete(path)) return;
-		this.vaultSeq += 1;
-		this.broadcastNoteChanged({ event_type: "delete", kind: "attachment", path });
+	serverDeleteAttachment(path: string, deviceId?: string): void {
+		const a = this.attachments.get(path);
+		if (!a || a.deleted) return;
+		a.deleted = true;
+		a.seq = ++this.vaultSeq;
+		a.updatedAt = nowIso();
+		this.broadcastNoteChanged({
+			event_type: "delete",
+			kind: "attachment",
+			path,
+			seq: a.seq,
+			...(deviceId ? { device_id: deviceId } : {}),
+		});
 	}
 
 	hasAttachment(path: string): boolean {
-		return this.attachments.has(path);
+		const a = this.attachments.get(path);
+		return a !== undefined && !a.deleted;
+	}
+
+	/** Paths of every live attachment. */
+	attachmentPaths(): string[] {
+		return [...this.attachments].filter(([, a]) => !a.deleted).map(([p]) => p);
 	}
 
 	private broadcastNoteChanged(payload: Record<string, unknown>): void {
@@ -221,10 +376,26 @@ export class ModelServer {
 		const sock: SimSocket = {
 			clientId,
 			onmessage: null,
-			send: (raw: string) => this.onFrame(clientId, raw),
-			close: () => this.clients.delete(clientId),
+			// A closed (or superseded) socket reaches nothing: a frame a dead
+			// process sends must not arrive as if from the client's next socket.
+			send: (raw: string) => {
+				if (this.clients.get(clientId)?.sock === sock) this.onFrame(clientId, raw);
+			},
+			close: () => {
+				if (this.clients.get(clientId)?.sock === sock) this.clients.delete(clientId);
+			},
 		};
-		this.clients.set(clientId, { sock, syncTopic: null, crdtTopic: null, drop: 0 });
+		this.clients.set(clientId, {
+			sock,
+			syncTopic: null,
+			crdtTopic: null,
+			drop: 0,
+			dup: 0,
+			late: 0,
+			dropIn: 0,
+			dropReply: 0,
+			rooms: new Map(),
+		});
 		return sock;
 	}
 
@@ -237,11 +408,64 @@ export class ModelServer {
 			c.drop -= 1;
 			return;
 		}
+		if (c.dropReply > 0 && frame[3] === "phx_reply") {
+			c.dropReply -= 1;
+			return;
+		}
 		const raw = JSON.stringify(frame);
-		this.scheduler.enqueue(`net:${clientId}`, () => {
-			const cur = this.clients.get(clientId);
-			cur?.sock.onmessage?.(raw);
-		});
+		// Delivered to THIS socket only: a frame queued for a socket that has
+		// since closed must not reach the client's next socket.
+		const sock = c.sock;
+		const send = () => {
+			if (this.clients.get(clientId)?.sock === sock) sock.onmessage?.(raw);
+		};
+		let lane = `net:${clientId}`;
+		if (c.late > 0) {
+			c.late -= 1;
+			lane = `net-late:${clientId}`;
+		}
+		this.scheduler.enqueue(lane, send);
+		if (c.dup > 0) {
+			c.dup -= 1;
+			this.scheduler.enqueue(lane, send);
+		}
+	}
+
+	private expireRooms(c: ClientRec): void {
+		const now = this.now();
+		for (const [id, r] of c.rooms) if (now - r.lastAt > ROOM_IDLE_MS) c.rooms.delete(id);
+	}
+
+	/** Rooms `clientId` holds open now (idle ones drained). */
+	openRooms(clientId: string): { docId: string; handshake: boolean }[] {
+		const c = this.clients.get(clientId);
+		if (!c) return [];
+		this.expireRooms(c);
+		return [...c.rooms].map(([docId, r]) => ({ docId, handshake: r.handshake }));
+	}
+
+	/** Lose the next reply to a request from `clientId`. */
+	dropNextReply(clientId: string): void {
+		const c = this.clients.get(clientId);
+		if (c) c.dropReply += 1;
+	}
+
+	/** Deliver the next server->client frame to `clientId` twice. */
+	duplicateNext(clientId: string): void {
+		const c = this.clients.get(clientId);
+		if (c) c.dup += 1;
+	}
+
+	/** Let later frames to `clientId` overtake the next one. */
+	delayNext(clientId: string): void {
+		const c = this.clients.get(clientId);
+		if (c) c.late += 1;
+	}
+
+	/** Lose the next client->server frame from `clientId`. */
+	dropNextInbound(clientId: string): void {
+		const c = this.clients.get(clientId);
+		if (c) c.dropIn += 1;
 	}
 
 	private onFrame(clientId: string, raw: string): void {
@@ -254,6 +478,10 @@ export class ModelServer {
 		const [joinRef, ref, topic, event, payload] = msg;
 		const c = this.clients.get(clientId);
 		if (!c) return;
+		if (c.dropIn > 0) {
+			c.dropIn -= 1;
+			return;
+		}
 
 		if (event === "phx_join") {
 			if (topic.startsWith("sync:")) c.syncTopic = topic;
@@ -291,12 +519,21 @@ export class ModelServer {
 		}
 		if (event === "crdt_delete") {
 			const docId = payload.doc_id as string;
-			const n = this.byId.get(docId);
-			if (n) {
-				n.deleted = true;
-				this.byPath.delete(n.path);
-			}
+			// Tombstone at a fresh seq and tell every device, like a server delete
+			// (the backend's socket delete broadcasts note_changed with the
+			// caller's device id, which the caller drops as its own echo).
+			this.serverDeleteNote(docId, clientId);
+			c.rooms.delete(docId);
 			this.reply(clientId, joinRef, ref, topic, "ok", { doc_id: docId });
+			return;
+		}
+		if (event === "crdt_release") {
+			c.rooms.delete(payload.doc_id as string);
+			this.reply(clientId, joinRef, ref, topic, "ok", {});
+			return;
+		}
+		if (event === "crdt_doc_update") {
+			this.handleCrdtDocUpdate(clientId, joinRef, ref, topic, payload);
 			return;
 		}
 		if (event === "crdt_catchup_since") {
@@ -338,46 +575,107 @@ export class ModelServer {
 		const docId = payload.doc_id as string;
 		const path = payload.path as string;
 		const b64 = payload.b64 as string | undefined;
-		// ADOPT: if the path is already owned by a different live note, return that
-		// note's id (the create-race / adopt-first behaviour the client remaps on).
+		// The reply's `genesis` says what the row holds, as the backend's
+		// reply_created does (crdt_channel.ex): `stored` (our frame seeded a
+		// fresh row), `absent` (the row is empty: push the body), `occupied`
+		// (the row has a body: acquire its lineage, then send a diff; a blind
+		// push would union two bodies, #476). `seeded` is the legacy lossy view.
+		const respond = (id: string, genesis: "stored" | "absent" | "occupied") =>
+			this.reply(clientId, joinRef, ref, topic, "ok", {
+				doc_id: id,
+				seeded: genesis === "stored",
+				genesis,
+			});
+		const announceReady = (id: string) =>
+			// crdt_doc_ready is broadcast_from! — only OTHER devices see it (so an
+			// empty note can be discovered + STEP1-enrolled without a fan-out).
+			this.broadcastOthers(
+				clientId,
+				(t) => [null, null, t, "crdt_doc_ready", { doc_id: id, path }],
+				"crdt",
+			);
 		const owner = this.byPath.get(path);
-		let effectiveId = docId;
-		// #1409: seeded is true only for a genuine (non-adopt) genesis that carried
-		// a b64 frame we actually applied — mirrors the real backend's contract
-		// (`seeded: false` on adopt/no-frame/live-room/bad-frame), so a simulation
-		// run exercises the client's `seeded`-gated local-apply path (sync.ts) same
-		// as `handleCrdtCreateBatch` already does for the batch path.
-		let seeded = false;
+		const n = this.byId.get(docId);
 		if (owner && owner !== docId) {
-			effectiveId = owner;
-		} else if (!this.byId.has(docId)) {
-			// Genesis: an EMPTY body Y.Doc unless a genesis frame was sent, in which
-			// case it's applied below (genesisEmptyDoc default true — the prod
-			// adopt-first shape #288/#285 exploit; retained for the P2 exploit naming
-			// and a future non-empty-genesis-by-default mode).
-			void this.genesisEmptyDoc;
-			const n = this.mint(docId, path);
-			if (b64) {
-				this.applyClientFrame(n, b64);
-				seeded = true;
-			}
+			// ADOPT: the path is owned by a different live note; the client remaps
+			// onto that id and transfers its body deliberately.
+			respond(owner, "occupied");
+			announceReady(owner);
+			return;
 		}
-		// NOTE (P2 rename fidelity): a rename is client-modeled as crdt_delete(old id)
-		// THEN crdt_create(new path, SAME id). The real backend hits the tombstone and
-		// :announce_moved-resurrects the SAME row at the new path, AND broadcasts a
-		// `note_changed` upsert that drives other devices' `moveIfIdRelocated`
-		// (sync.ts:4030-4046) to rename the old path locally. This CRDT-only model
-		// omits note_changed (divergence #3), so remote old-path cleanup can't happen
-		// here — rename is a P2 server-tier concern and is excluded from the Task 8
-		// random suite. See p1-task-8-report.md.
-		this.reply(clientId, joinRef, ref, topic, "ok", { doc_id: effectiveId, seeded });
-		// crdt_doc_ready is broadcast_from! — only OTHER devices see it (so an empty
-		// note can be discovered + STEP1-enrolled without a note_yjs_update fan-out).
-		this.broadcastOthers(
-			clientId,
-			(t) => [null, null, t, "crdt_doc_ready", { doc_id: effectiveId, path }],
-			"crdt",
-		);
+		if (!n) {
+			const fresh = this.mint(docId, path);
+			if (b64) this.applyClientFrame(fresh, b64);
+			respond(docId, b64 ? "stored" : "absent");
+			announceReady(docId);
+			return;
+		}
+		const holds = (): "occupied" | "absent" =>
+			this.text(n).length > 0 ? "occupied" : "absent";
+		if (n.deleted) {
+			// Delete-wins (#970): the same id re-created at its OWN path within the
+			// 60 s delete window is a stale device un-deleting; refused. Otherwise
+			// the tombstone resurrects with its prior body (genesis_resurrect).
+			if (n.path === path && this.now() - (n.deletedAt ?? 0) < DELETE_WINDOW_MS) {
+				this.reply(clientId, joinRef, ref, topic, "error", { reason: "recently_deleted" });
+				return;
+			}
+			const renamed = n.path !== path;
+			n.deleted = false;
+			n.path = path;
+			this.byPath.set(path, docId);
+			this.bump(n);
+			respond(docId, holds());
+			if (renamed) this.announceMoved(clientId, n, null);
+			else announceReady(docId);
+			return;
+		}
+		if (n.path !== path) {
+			// Rename-as-move (Phase E2): a create for a LIVE id at a new path
+			// relocates the row in place (genesis_relocate_live -> move_note).
+			const oldPath = n.path;
+			this.byPath.delete(oldPath);
+			n.path = path;
+			this.byPath.set(path, docId);
+			this.bump(n);
+			respond(docId, holds());
+			this.announceMoved(clientId, n, oldPath);
+			return;
+		}
+		// Idempotent same-path create (a retry, or a device that lost track of
+		// the row): an empty row takes the frame, a row with a body says so.
+		if (holds() === "absent" && b64) {
+			this.applyClientFrame(n, b64);
+			respond(docId, "stored");
+		} else respond(docId, holds());
+		announceReady(docId);
+	}
+
+	/** The :announce_moved fan-out: an upsert at the NEW path, then (for a
+	 *  move) a delete of the OLD one, both carrying the id and the caller's
+	 *  device id. */
+	private announceMoved(clientId: string, n: Note, oldPath: string | null): void {
+		this.broadcastNoteChanged({
+			event_type: "upsert",
+			kind: "note",
+			id: n.id,
+			path: n.path,
+			content: this.text(n),
+			content_hash: this.head(n),
+			version: n.version,
+			updated_at: n.updatedAt,
+			seq: n.seq,
+			device_id: clientId,
+		});
+		if (oldPath === null) return;
+		this.broadcastNoteChanged({
+			event_type: "delete",
+			kind: "note",
+			id: n.id,
+			path: oldPath,
+			seq: n.seq,
+			device_id: clientId,
+		});
 	}
 
 	private handleCrdtCreateBatch(
@@ -417,6 +715,17 @@ export class ModelServer {
 			return;
 		}
 		const { replyB64, changed, serverStep1B64 } = this.applyClientFrame(n, b64);
+		const c = this.clients.get(clientId);
+		if (c) {
+			this.expireRooms(c);
+			const room = c.rooms.get(docId);
+			if (room) room.lastAt = this.now();
+			else {
+				const handshake = serverStep1B64 !== null;
+				c.rooms.set(docId, { handshake, lastAt: this.now() });
+				this.onRoomStart?.(clientId, docId, handshake);
+			}
+		}
 		// A STEP1 produces a STEP2 reply back to the SENDER only (a query answer).
 		if (replyB64 !== null) {
 			this.deliver(clientId, [
@@ -441,6 +750,49 @@ export class ModelServer {
 		}
 		// A STEP2/UPDATE that changed the server doc fans out to OTHER devices.
 		if (changed) this.fanoutUpdate(clientId, n, changed);
+	}
+
+	/** Room-free delivery of a device's ops (`crdt_doc_update`, #1493): a
+	 *  sync_update only (a STEP1 here would need a room), merged, fanned out,
+	 *  acked with the new head. No room is opened. */
+	private handleCrdtDocUpdate(
+		clientId: string,
+		joinRef: string | null,
+		ref: string | null,
+		topic: string,
+		payload: Record<string, unknown>,
+	): void {
+		const docId = payload.doc_id as string;
+		const n = this.byId.get(docId);
+		if (!n || n.deleted) {
+			this.reply(clientId, joinRef, ref, topic, "error", {
+				reason: "note_not_found",
+				doc_id: docId,
+			});
+			return;
+		}
+		const decoder = decoding.createDecoder(fromB64(payload.b64 as string));
+		if (decoding.readVarUint(decoder) !== MESSAGE_SYNC) {
+			this.reply(clientId, joinRef, ref, topic, "error", { reason: "not_sync_update" });
+			return;
+		}
+		if (decoding.readVarUint(decoder) !== syncProtocol.messageYjsUpdate) {
+			this.reply(clientId, joinRef, ref, topic, "error", { reason: "not_sync_update" });
+			return;
+		}
+		const update = decoding.readVarUint8Array(decoder);
+		const updates: Uint8Array[] = [];
+		const onUpdate = (u: Uint8Array, origin: unknown) => {
+			if (origin === APPLY_ORIGIN) updates.push(u);
+		};
+		n.doc.on("update", onUpdate);
+		Y.applyUpdate(n.doc, update, APPLY_ORIGIN);
+		n.doc.off("update", onUpdate);
+		if (updates.length > 0) {
+			this.bump(n);
+			this.fanoutUpdate(clientId, n, Y.mergeUpdates(updates));
+		}
+		this.reply(clientId, joinRef, ref, topic, "ok", { head: this.head(n) });
 	}
 
 	/** Decode a client `messageSync` frame, apply it to the note's doc, and (for
@@ -553,11 +905,20 @@ export class ModelServer {
 	): void {
 		const cursor = (payload.cursor_seq as number) ?? 0;
 		const limit = (payload.limit as number | undefined) ?? Number.POSITIVE_INFINITY;
-		const rows = [...this.byId.values()]
-			.filter((n) => n.seq > cursor)
+		const rows: { seq: number; change: () => Record<string, unknown> }[] = [
+			...[...this.byId.values()].map((n) => ({
+				seq: n.seq,
+				change: () => this.syncNoteChange(n),
+			})),
+			...[...this.attachments].map(([p, a]) => ({
+				seq: a.seq,
+				change: () => this.syncAttachmentChange(p, a),
+			})),
+		]
+			.filter((r) => r.seq > cursor)
 			.sort((a, b) => a.seq - b.seq);
 		const page = rows.slice(0, limit === Number.POSITIVE_INFINITY ? rows.length : limit);
-		const changes = page.map((n) => this.syncNoteChange(n));
+		const changes = page.map((r) => r.change());
 		const hasMore = page.length < rows.length;
 		const nextSeq = page.length > 0 ? page[page.length - 1].seq : null;
 		this.reply(clientId, joinRef, ref, topic, "ok", {
@@ -587,7 +948,31 @@ export class ModelServer {
 
 		if (method === "POST" && path === "/notes") return this.restPushNote(body);
 		if (method === "GET" && path === "/sync/manifest") return this.restManifest();
-		if (method === "POST" && path === "/attachments") return this.restPushAttachment(body);
+		const deviceId = req.headers?.["X-Device-Id"];
+		if (method === "POST" && path === "/attachments") {
+			return this.restPushAttachment(body, deviceId);
+		}
+		const att = /^\/attachments\/(.+)$/.exec(path);
+		if (att) {
+			const attPath = decodePath(att[1]);
+			const a = this.attachments.get(attPath);
+			if (method === "DELETE") {
+				this.serverDeleteAttachment(attPath, deviceId);
+				return ok({ deleted: true, path: attPath });
+			}
+			if (method === "GET") {
+				if (!a || a.deleted) return { status: 404, json: { error: "not_found" }, text: "" };
+				return ok({
+					path: attPath,
+					content_base64: a.b64,
+					mime_type: a.mime,
+					size_bytes: a.size,
+					mtime: a.seq,
+					content_hash: a.hash,
+					updated_at: a.updatedAt,
+				});
+			}
+		}
 
 		// /notes/:id/updates (id, not path-encoded — encodeURIComponent single seg)
 		const upd = /^\/notes\/([^/]+)\/updates$/.exec(path);
@@ -622,13 +1007,34 @@ export class ModelServer {
 		return ok({ note: this.noteJson(n), chunks_indexed: 1 });
 	}
 
-	private restPushAttachment(body: Record<string, unknown>): SimResponse {
+	private restPushAttachment(body: Record<string, unknown>, deviceId?: string): SimResponse {
 		const path = body.path as string;
 		const b64 = (body.content_base64 as string) ?? "";
-		const hash = `att-${b64.length}-${this.vaultSeq + 1}`;
-		this.attachments.set(path, { size: b64.length, hash });
-		this.vaultSeq += 1;
+		const hash = `att-${simpleHash(b64)}`;
+		const mime = (body.mime_type as string) ?? "application/octet-stream";
+		const seq = ++this.vaultSeq;
 		const now = nowIso();
+		const prev = this.attachments.get(path);
+		this.attachments.set(path, {
+			size: b64.length,
+			hash,
+			b64,
+			mime,
+			seq,
+			deleted: false,
+			updatedAt: now,
+		});
+		if (!prev || prev.deleted || prev.hash !== hash) {
+			this.broadcastNoteChanged({
+				event_type: "upsert",
+				kind: "attachment",
+				path,
+				content_hash: hash,
+				updated_at: now,
+				seq,
+				...(deviceId ? { device_id: deviceId } : {}),
+			});
+		}
 		return ok({
 			attachment: {
 				id: `att-${path}`,
@@ -689,11 +1095,13 @@ export class ModelServer {
 				content_hash: this.head(n),
 				version: n.version,
 			}));
-		const attachments = [...this.attachments].map(([path, a]) => ({
-			path,
-			content_hash: a.hash,
-			size_bytes: a.size,
-		}));
+		const attachments = [...this.attachments]
+			.filter(([, a]) => !a.deleted)
+			.map(([path, a]) => ({
+				path,
+				content_hash: a.hash,
+				size_bytes: a.size,
+			}));
 		return ok({
 			notes,
 			attachments,
@@ -817,6 +1225,21 @@ export class ModelServer {
 		};
 	}
 
+	private syncAttachmentChange(path: string, a: Attachment): Record<string, unknown> {
+		return {
+			type: "attachment",
+			id: `att-${path}`,
+			seq: a.seq,
+			path,
+			mime_type: a.mime,
+			size_bytes: a.size,
+			mtime: a.seq,
+			updated_at: a.updatedAt,
+			deleted: a.deleted,
+			content_hash: a.hash,
+		};
+	}
+
 	private syncNoteChange(n: Note): Record<string, unknown> {
 		return {
 			type: "note",
@@ -847,6 +1270,13 @@ interface Note {
 
 function fromB64(b64: string): Uint8Array {
 	return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+}
+
+/** Deterministic content hash for attachment bytes (FNV-1a). */
+function simpleHash(s: string): string {
+	let h = 0x811c9dc5;
+	for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193) >>> 0;
+	return h.toString(16);
 }
 
 function ok(json: unknown): SimResponse {
