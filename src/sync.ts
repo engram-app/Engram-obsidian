@@ -902,7 +902,22 @@ export class SyncEngine {
 		if ("enrollment" in ports) this.crdtEnrollment = ports.enrollment ?? null;
 		if ("create" in ports) this.crdtCreate = ports.create ?? null;
 		if ("delete" in ports) this.crdtDelete = ports.delete ?? null;
-		if ("enqueue" in ports) this.crdtEnqueue = ports.enqueue ?? null;
+		if ("enqueue" in ports) {
+			const enqueue = ports.enqueue ?? null;
+			// A queued create carries the note's CURRENT path, not the one its
+			// failed send was for. The queue keeps one op per docId (newest wins),
+			// so a create that failed for a path the note has since been renamed
+			// away from otherwise replaced the rename's own create, and the replay
+			// recreated the note at the old path, dragging the file back with it.
+			this.crdtEnqueue = enqueue
+				? (op) =>
+						enqueue(
+							op.kind === "create"
+								? { ...op, path: this.noteIdMap?.pathForId(op.docId) ?? op.path }
+								: op,
+						)
+				: null;
+		}
 		if ("capGate" in ports) this.notesCapGate = ports.capGate ?? null;
 		if ("live" in ports) this.crdtLive = ports.live ?? null;
 		if ("liveBound" in ports) this.isLiveBound = ports.liveBound ?? (() => false);
@@ -1150,7 +1165,7 @@ export class SyncEngine {
 			// bookkeeping intact rather than destroying state for a file that never
 			// went anywhere.
 			this.baseStore?.rename(src, dest);
-			this.dropPath(src, { dropBase: false });
+			this.renamePath(src, dest, "remote");
 			this.rememberFileFor(dest);
 			rlog().info("pull", `Followed identity move: ${noteRef(src)} -> ${noteRef(dest)}`);
 		} catch (e) {
@@ -1747,6 +1762,8 @@ export class SyncEngine {
 		// this id immediately. The first convergence overwrites the sentinel with
 		// the authoritative head.
 		this.setCrdtHead(path, CRDT_HEAD_CREATED);
+		// The create at this path IS the relocation of a local rename (renamePath).
+		this.patchSyncedRow(normalized, { relocating: undefined });
 		this.confirmNoteId(effectiveId);
 		this.queueCreatedCtime(normalized);
 		if (consumed !== null) {
@@ -2708,18 +2725,31 @@ export class SyncEngine {
 	/** Move `path`'s sync bookkeeping to `to`, for a rename. The merge base is
 	 *  the caller's job (`baseStore.rename`) — this is the row beside it.
 	 *
-	 *  A rename moves a path and changes no content, so the recorded evidence is
-	 *  the NOTE's, not the path's. Dropping it (what both rename legs used to do)
-	 *  left the note with no evidence at its new path until the rename's push
-	 *  landed, and a delete inside that window hit `handleDelete`'s evidence rule
-	 *  (#416) and was REFUSED — so a note the user really deleted stayed live on
-	 *  the server, and the next `crdt_create` at the freed old path was ADOPTED
-	 *  onto that orphan row instead of creating a note (#489).
+	 *  A RE-KEY, never a reset (Relay's model: a path change moves the doc's
+	 *  metadata to the new key and leaves its sync state alone). A rename moves
+	 *  a path and changes no content, so every field on the row is still true of
+	 *  the note: its baseline hash, crdtHead, seq, version and serverHash.
 	 *
-	 *  The OLD key still goes away, which is the half the drop got right: a stale
-	 *  row there echo-suppresses a later create whose content happens to hash the
-	 *  same (rename a note away, then make a new one at the old path). */
-	private renamePath(from: string, to: string): void {
+	 *  This used to write a presence-only `{ hash: 0 }`, on both legs. That threw
+	 *  the note's baseline away: a cold start then saw "disk drifted" against
+	 *  hash 0 and seeded disk into an empty doc as a rival lineage (body doubled
+	 *  on the next handshake), and a catch-up saw both sides diverged and wrote a
+	 *  conflict copy of an unedited note. Dropping the row outright (older still)
+	 *  made a delete inside the window fail the #416 evidence rule (#489).
+	 *
+	 *  `origin: "local"` is the device that did the rename. The server still
+	 *  holds the note at the OLD path, and its new-path push must take the
+	 *  `crdt_create` relocation branch (genesis_relocate_live), not the
+	 *  `crdt_msg` edit branch, which carries no path (e2e test_93). That is the
+	 *  `relocating` flag, read by `hasServerNote` and the push echo filter, and
+	 *  cleared by the create-ack. A flag, not a zeroed hash, so nothing that
+	 *  reads the baseline is lied to. `"remote"` is a receiver applying a rename
+	 *  the server already made: nothing to push, so nothing to flag.
+	 *
+	 *  The OLD key still goes away: a stale row there echo-suppresses a later
+	 *  create whose content happens to hash the same (rename a note away, then
+	 *  make a new one at the old path). */
+	private renamePath(from: string, to: string, origin: "local" | "remote"): void {
 		const row = this.syncState.get(from);
 		this.syncState.delete(from);
 		this.rowWrittenAt.delete(from);
@@ -2729,33 +2759,9 @@ export class SyncEngine {
 		// note materialized twice" from "an unrelated note we are about to
 		// displace" — and overwriting the latter hands it a version that belongs
 		// to a different note, so its next write CASes against the wrong one.
-		// The old `dropPath` left the occupant alone; keep that.
 		if (this.syncState.has(to)) return;
-		// PRESENCE ONLY. `{ hash: 0 }`, not `{ ...row }` — every other field on
-		// that row is a PATH-scoped claim about the server, and after a rename
-		// none of them is true at `to` yet:
-		//
-		//   - `hash` — a rename changes no content, so a carried hash equals the
-		//     file's own and `pushFile`'s echo filter (above the push slot)
-		//     skips the relocation outright. `hash: 0` is the established
-		//     "content unknown here" marker (`clearPushedBaselineForId`) and
-		//     fnv1a never returns it.
-		//   - `crdtHead` — this one is worse, and e2e test_93 is what caught it.
-		//     `hasServerNote` is PATH-keyed (`getCrdtHead(pathForId(id))`), so a
-		//     carried head makes the engine believe the server already holds the
-		//     note AT THE NEW PATH. `pushFile` then takes the `crdt_msg` edit
-		//     branch, which carries no path and cannot move the row, instead of
-		//     the `crdt_create` genesis branch that IS the relocation
-		//     (genesis_relocate_live). The rename never transmits, and the CRDT
-		//     leg issues no old-leg delete to fall back on: "Note <new path> not
-		//     on server after 120s".
-		//   - `version` / `serverHash` — same family, CAS facts about a row the
-		//     server holds at the OLD path.
-		//
-		// What the delete-push evidence rule (#416) reads is `syncState.has(path)`
-		// — presence, nothing else. So presence is exactly what moves, and the
-		// new-path push re-establishes the rest from the server's own answer.
-		this.syncState.set(to, { hash: 0 });
+		const { relocating: _, ...kept } = row;
+		this.syncState.set(to, origin === "local" ? { ...kept, relocating: true } : kept);
 		this.noteRowWrite(to);
 	}
 
@@ -4054,7 +4060,11 @@ export class SyncEngine {
 		if (this.isUnackedMint(noteId)) return false;
 		const path = this.noteIdMap?.pathForId(noteId);
 		if (!path) return false;
-		return this.getCrdtHead(path) != null;
+		const row = this.syncState.get(normalizePath(path));
+		// A local rename not yet relocated server-side: the server holds the note
+		// at its OLD path, so the push must be the relocating create (renamePath).
+		if (row?.relocating) return false;
+		return row?.crdtHead != null;
 	}
 
 	/** Import legacy hash-only format (migration from old plugin versions). */
@@ -5827,7 +5837,7 @@ export class SyncEngine {
 			// with it, so a delete before the new-path push lands is not refused.
 			// (The base moved with the note via baseStore.rename above; deleting it
 			// here would erase the just-renamed entry.)
-			this.renamePath(normalizePath(oldPath), normalizePath(newPath));
+			this.renamePath(normalizePath(oldPath), normalizePath(newPath), "local");
 			// Un-confirm the id so pushFile below takes the `crdt_create` genesis
 			// branch (not the crdt_msg edit branch, which carries no path and
 			// can't move the row): the create for a LIVE id at the new path IS
@@ -6055,9 +6065,23 @@ export class SyncEngine {
 		// body, which is the expensive part — hoisting it would not avoid it.
 		const isBinary = this.isBinaryFile(file);
 		if (!isBinary) {
-			const echoHash = fnv1a(await this.app.vault.cachedRead(file));
+			let echoHash: number;
+			try {
+				echoHash = fnv1a(await this.app.vault.cachedRead(file));
+			} catch (e) {
+				// Gone since this push was requested (a debounced modify that fired
+				// after the file was deleted, or renamed: the rename pushes the new
+				// path itself). Nothing at this path to push.
+				devLog().log("push", `skip (unreadable): ${file.path} | ${errMsg(e, file.path)}`);
+				return false;
+			}
 			const existing = this.syncState.get(normalizePath(file.path));
-			if (!force && existing !== undefined && echoHash === existing.hash) {
+			if (
+				!force &&
+				existing !== undefined &&
+				!existing.relocating &&
+				echoHash === existing.hash
+			) {
 				devLog().log("push", `skip (echo): ${file.path}`);
 				rlog().info("push", `Echo skip: ${noteRef(file.path)} | hash=${echoHash}`);
 				return false;
@@ -9785,7 +9809,7 @@ export class SyncEngine {
 		// The sync-state row moves WITH the note for the same reason the base
 		// does (see renamePath): the old key still goes away, so a later create
 		// there isn't echo-suppressed, but the evidence is not destroyed.
-		this.renamePath(normalizePath(priorPath), normalizePath(newPath));
+		this.renamePath(normalizePath(priorPath), normalizePath(newPath), "remote");
 		// normalizePath for the vault lookup (map keys arrive normalized from the
 		// server feed, but a non-normalized key would silently miss the trash and
 		// leave the duplicate this fix exists to remove). rename() above keeps the
