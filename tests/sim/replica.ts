@@ -886,20 +886,6 @@ export class Replica {
 			persisted,
 			server,
 			onUnload,
-			// Only when disk holds nothing unsynced. A disk write still inside the
-			// modify debounce would be overwritten by this paint (the binding's
-			// bind-time "adopt"); whether the real binding drops such a write is
-			// not something this editor stand-in can settle, so it stays out.
-			flushBound: (path) => {
-				const file = app.vault.getFileByPath(path);
-				if (!file) return;
-				void app.vault
-					.read(file)
-					.then((disk) => {
-						if (!engine.needsColdReconcile(path, disk)) boundFlush(path);
-					})
-					.catch(() => {});
-			},
 		});
 	}
 
@@ -968,21 +954,16 @@ export class Replica {
 			unsubGate = this.crdtManager.onLoadGateOpen(id, () => {
 				text.unobserve(onSeed);
 				if (!this.boundPaths.has(norm)) return;
-				this.hydrated.add(norm);
-				const file = this.app.vault.getFileByPath(path);
-				if (!file) return;
-				// Straight into the Y.Text with the binding as origin (applyAndGoLive
-				// "forward"), NOT applyLocalEdit: that treats a buffer equal to the
-				// recorded baseline as "no input" and sends nothing, which left the
-				// sim's row empty where real Obsidian seeds it (e2e 40248570109,
-				// green on the same lost-create-then-open shape).
+				const f = this.app.vault.getFileByPath(path);
+				if (!f) return;
 				void this.app.vault
-					.read(file)
-					.then(async (buffer) => {
-						const doc = await this.crdtManager.getDoc(id);
-						const body = doc.getText("content");
-						if (body.length > 0 || buffer.length === 0) return;
-						doc.transact(() => body.insert(0, buffer), BINDING_ORIGIN);
+					.read(f)
+					.then((buffer) => {
+						if (text.length === 0 && buffer.length > 0 && text.doc) {
+							text.doc.transact(() => text.insert(0, buffer), BINDING_ORIGIN);
+						}
+						this.hydrated.add(norm);
+						this.dirty.delete(norm);
 					})
 					.catch(() => {});
 			});
