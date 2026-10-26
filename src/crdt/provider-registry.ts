@@ -1098,6 +1098,17 @@ export class ProviderRegistry {
 		return eqBytes(snapshotOf(e.doc), e.deliveredReceipt);
 	}
 
+	/** Resident docs holding state the server has not acked
+	 *  (`hasCurrentDeliveryReceipt` false). A live `crdt_msg` is fire-and-forget:
+	 *  one that went out on a socket that was already dead (an iOS resume)
+	 *  leaves exactly this, with nothing else to re-send it. */
+	unackedDocIds(): string[] {
+		return [...this.entries.keys()].filter((id) => {
+			const e = this.entries.get(id);
+			return e?.lifetime.active === true && !this.hasCurrentDeliveryReceipt(id);
+		});
+	}
+
 	// --- Lifecycle no-ops the persistent doc doesn't need -----------------------
 
 	/** The doc is NEVER closed on a transport reconnect (that was the
