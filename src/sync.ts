@@ -2314,8 +2314,11 @@ export class SyncEngine {
 	 *  Requires the sync gate to be open — returns early when blocked so inbound
 	 *  CRDT frames cannot overwrite local files before the user picks a direction. */
 	/** The fold's disk-side base (ProviderRegistry.applyLocalEdit): disk now
-	 *  holds `content` for the note, by our newest-started write or a read
-	 *  that found it already there. Never for a write that did not happen. */
+	 *  holds `content` for the note, by a write of ours that landed or a read
+	 *  that found it already there. Never for a write that did not happen.
+	 *  Every writer goes through modifyFile, createFileWithFolders or
+	 *  flushFromCrdt, which call this; a base behind disk makes the fold apply
+	 *  our own write a second time. */
 	private noteWrittenText(normalized: string, content: string): void {
 		const id = this.noteIdMap?.get(normalized);
 		// Optional: test doubles of the manager need not track a base.
@@ -2431,7 +2434,9 @@ export class SyncEngine {
 			if (gen > order.recorded) {
 				order.recorded = gen;
 				this.recordCrdtBaseline(normalized, content);
-				this.noteWrittenText(normalized, content);
+				// Its own vault.modify, in start order. A create recorded itself
+				// (createFileWithFolders).
+				if (file instanceof TFile) this.noteWrittenText(normalized, content);
 			}
 			return true;
 		} catch (e) {
@@ -11012,6 +11017,7 @@ export class SyncEngine {
 		} else {
 			await this.app.vault.modify(file, content);
 		}
+		this.noteWrittenText(file.path, content);
 	}
 
 	/** Create a note's file at `normalized` -- or MOVE it there, if the note this
@@ -11065,6 +11071,7 @@ export class SyncEngine {
 		}
 		try {
 			await this.app.vault.create(normalized, content);
+			this.noteWrittenText(normalized, content);
 			// The load-bearing call. A note received this session is created here
 			// and nowhere else, so without this the registry only ever knows notes
 			// that were on disk at startup -- which is exactly the hole e2e

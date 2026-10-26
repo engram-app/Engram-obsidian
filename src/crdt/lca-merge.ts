@@ -47,6 +47,10 @@ export function mergeDiskOntoDoc(base: string, disk: string, current: string): L
 	// The doc has not moved since the base, so the disk content IS the answer.
 	// Short-circuited rather than routed through patching, which can fuzz.
 	if (base === current) return { text: disk, clean: true };
+	// Disk already says what the doc says (an editor save of the doc's own
+	// text): nothing to merge. patch_apply is not idempotent, so patching the
+	// base->disk delta onto a doc that has it would apply it a second time.
+	if (disk === current) return { text: current, clean: true };
 
 	const dmp = new diff_match_patch();
 	const patches = dmp.patch_make(base, disk);
