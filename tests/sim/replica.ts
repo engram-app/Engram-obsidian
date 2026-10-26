@@ -886,6 +886,20 @@ export class Replica {
 			persisted,
 			server,
 			onUnload,
+			// Only when disk holds nothing unsynced. A disk write still inside the
+			// modify debounce would be overwritten by this paint (the binding's
+			// bind-time "adopt"); whether the real binding drops such a write is
+			// not something this editor stand-in can settle, so it stays out.
+			flushBound: (path) => {
+				const file = app.vault.getFileByPath(path);
+				if (!file) return;
+				void app.vault
+					.read(file)
+					.then((disk) => {
+						if (!engine.needsColdReconcile(path, disk)) boundFlush(path);
+					})
+					.catch(() => {});
+			},
 		});
 	}
 
