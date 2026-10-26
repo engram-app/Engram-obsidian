@@ -693,9 +693,11 @@ export class World {
 	): Promise<boolean> {
 		const p = this.pathOn(r, n);
 		if (!p) return false;
+		const body = this.read(r, p);
+		const next = body === null ? null : setSlot(body, slot, value);
+		if (next === null) return false;
 		if (open && !r.isOpen(p)) await r.run(() => r.openNote(p));
-		// Edit the text the user sees (the doc's, for an open note).
-		const ok = await r.run(() => r.editNote(p, (cur) => setSlot(cur, slot, value)));
+		const ok = await r.run(() => r.editNote(p, next));
 		if (ok) this.expect(this.note(n), slot, value);
 		return ok;
 	}
@@ -779,14 +781,6 @@ export class World {
 				const got = slots[slot];
 				if (got === want) continue;
 				if (note.rolledBack && note.history[slot].has(got)) continue;
-				// A real conflict resolves as ONE conflict copy of the local text
-				// (crdt-load-gate.md): that device's edits live on in the copy.
-				if (
-					note.conflict &&
-					conflicts.some(([, c]) => parseBody(n, c.content)?.[slot] === want)
-				) {
-					continue;
-				}
 				this.fail(
 					"lost-edit",
 					`t${n} slot ${slot} is ${JSON.stringify(got)}, expected ${JSON.stringify(want)} (server ${p})`,
