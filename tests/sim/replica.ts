@@ -64,13 +64,14 @@ import type { ProviderRegistry } from "../../src/crdt/provider-registry";
 import { createCrdtWiring } from "../../src/crdt/wiring";
 import { makeCrdtOpSend } from "../../src/crdt-op-dispatch";
 import { type CrdtOp, CrdtOpQueue } from "../../src/crdt-op-queue";
-import { SyncEngine } from "../../src/sync";
+import { reconcileColdStart, SyncEngine } from "../../src/sync";
 import { SyncLog } from "../../src/sync-log";
 import { DEFAULT_SETTINGS, type EngramSyncSettings } from "../../src/types";
 import { requestUrl as baseRequestUrl, normalizePath, TFile, TFolder } from "../__mocks__/obsidian";
 import type { SimClock } from "./clock";
 import type { ModelServer } from "./model-server";
 import { setRequestUrlHandler, requestUrl as shimRequestUrl } from "./obsidian-shim";
+import { currentIncarnation, type Incarnation, newIncarnation, runAs } from "./process";
 import type { Scheduler } from "./scheduler";
 import { makeVault, type SimApp, type VaultEvents, type WriteJournalEntry } from "./vault-fs";
 
@@ -133,6 +134,9 @@ class SimWebSocket {
 	private readonly sock: ReturnType<ModelServer["connect"]>;
 	private readonly reg: SocketReg;
 	private readonly clientId: string;
+	/** The device process that opened this socket (process.ts). A dead one's
+	 *  socket delivers nothing; every delivery re-enters its context. */
+	private readonly inc: Incarnation | undefined;
 
 	constructor(url: string) {
 		const clientId = new URL(url).searchParams.get("device_id");
@@ -141,11 +145,33 @@ class SimWebSocket {
 		if (!reg) throw new Error(`SimWebSocket: no server registered for client ${clientId}`);
 		this.clientId = clientId;
 		this.reg = reg;
+		this.inc = currentIncarnation();
 		this.sock = reg.server.connect(clientId);
-		this.sock.onmessage = (raw: string) => this.onmessage?.({ data: raw });
+		this.sock.onmessage = (raw: string) => {
+			if (this.inc?.dead || this.readyState === SimWebSocket.CLOSED) return;
+			runAs(this.inc, () => this.onmessage?.({ data: raw }));
+		};
+		if (this.inc) liveSockets.set(this.inc, this);
 		reg.scheduler.enqueue(`ws-open:${clientId}`, () => {
-			this.readyState = SimWebSocket.OPEN;
-			this.onopen?.();
+			if (this.inc?.dead || this.readyState === SimWebSocket.CLOSED) return;
+			runAs(this.inc, () => {
+				this.readyState = SimWebSocket.OPEN;
+				this.onopen?.();
+			});
+		});
+	}
+
+	/** The connection died under the client (network drop, a suspended app's
+	 *  socket timed out server-side): the server forgets it at once. With
+	 *  `notifyClient` the client learns through its close handler, as a real
+	 *  unclean close; without, it finds out when it next probes. */
+	dropFromNetwork(notifyClient: boolean): void {
+		this.reg.server.killClient(this.clientId);
+		if (this.readyState === SimWebSocket.CLOSED || !notifyClient) return;
+		this.readyState = SimWebSocket.CLOSED;
+		this.reg.scheduler.enqueue(`ws-close:${this.clientId}`, () => {
+			if (this.inc?.dead) return;
+			runAs(this.inc, () => this.onclose?.({ code: 1006, reason: "", wasClean: false }));
 		});
 	}
 
@@ -161,9 +187,41 @@ class SimWebSocket {
 		// before calling close() (no reconnect on an intentional disconnect), so on
 		// that path this is a no-op; only a server-driven close would deliver.
 		this.reg.scheduler.enqueue(`ws-close:${this.clientId}`, () => {
-			this.onclose?.({ code: 1000, reason: "", wasClean: true });
+			if (this.inc?.dead) return;
+			runAs(this.inc, () => this.onclose?.({ code: 1000, reason: "", wasClean: true }));
 		});
 	}
+}
+
+/** The newest socket each device process opened, so the sim can drop it. */
+const liveSockets = new WeakMap<Incarnation, SimWebSocket>();
+
+/** HTTP replies that landed while a process was suspended; failed on resume. */
+const parkedReplies = new WeakMap<Incarnation, Array<() => void>>();
+function parkedFor(inc: Incarnation): Array<() => void> {
+	let list = parkedReplies.get(inc);
+	if (!list) {
+		list = [];
+		parkedReplies.set(inc, list);
+	}
+	return list;
+}
+
+/** What a device keeps across a restart in data.json: the subset of main.ts's
+ *  savePluginData that the sync data plane reads back (main.ts onload restore,
+ *  :916-950 and :1672). IndexedDB (Y.Docs, acked marks) survives on its own:
+ *  the store is per replica id, not per process. */
+export interface PersistedData {
+	lastSync?: string;
+	catchupSeq?: number;
+	catchupId?: string | null;
+	manifestSeq?: number;
+	offlineQueue?: ReturnType<SyncEngine["queue"]["persistable"]>;
+	crdtOpQueue?: CrdtOp[];
+	syncState?: ReturnType<SyncEngine["exportSyncState"]>;
+	syncStateVaultId?: string | null;
+	noteIds?: Record<string, string>;
+	gateJournal?: ReturnType<SyncEngine["exportGateJournal"]>;
 }
 
 export interface ReplicaBootOpts {
@@ -173,6 +231,15 @@ export interface ReplicaBootOpts {
 	clock: SimClock;
 	/** Shared root; the replica's vault lives at `${rootDir}/${id}`. */
 	rootDir: string;
+	/** data.json across restarts: written on every engine save, restored at
+	 *  boot. Pass the previous process's object to boot a restart. */
+	persisted?: PersistedData;
+	/** Boot as a RESTART of an existing device: run main.ts's layout-ready
+	 *  startup (map reconcile, gate replay, cold-start reconcile,
+	 *  pushModifiedFiles) after restoring `persisted`. */
+	restart?: boolean;
+	/** Process number, for traces. */
+	incarnation?: number;
 }
 
 const VAULT_ID = "vsim";
@@ -204,6 +271,13 @@ export class Replica {
 	 *  this gate: until seed, the editor BUFFER (= disk) is authoritative, so the
 	 *  flush must not overwrite disk with the still-empty Y.Text (a wipe). */
 	private readonly hydrated: Set<string>;
+	/** This device process (process.ts). Killed by `kill`, frozen by `suspend`. */
+	readonly inc: Incarnation;
+	readonly persisted: PersistedData;
+	private readonly server: ModelServer;
+	private readonly onUnload: () => void;
+	/** Paint the doc into the "editor" (disk), as the binding does once live. */
+	private readonly flushBound: (path: string) => void;
 
 	private constructor(args: {
 		id: string;
@@ -216,6 +290,11 @@ export class Replica {
 		enrollment: ProviderRegistry;
 		boundPaths: Set<string>;
 		hydrated: Set<string>;
+		inc: Incarnation;
+		persisted: PersistedData;
+		server: ModelServer;
+		onUnload: () => void;
+		flushBound: (path: string) => void;
 	}) {
 		this.id = args.id;
 		this.engine = args.engine;
@@ -227,6 +306,11 @@ export class Replica {
 		this.enrollment = args.enrollment;
 		this.boundPaths = args.boundPaths;
 		this.hydrated = args.hydrated;
+		this.inc = args.inc;
+		this.persisted = args.persisted;
+		this.server = args.server;
+		this.onUnload = args.onUnload;
+		this.flushBound = args.flushBound;
 	}
 
 	/** Oracle (Task 6) accessor: the #288 wipe-detector journal — every
@@ -266,7 +350,13 @@ export class Replica {
 	}
 
 	static async boot(opts: ReplicaBootOpts): Promise<Replica> {
+		const inc = newIncarnation(opts.id, opts.incarnation ?? 0);
+		return runAs(inc, () => Replica.bootAs(opts, inc));
+	}
+
+	private static async bootAs(opts: ReplicaBootOpts, inc: Incarnation): Promise<Replica> {
 		const { id, server, scheduler, clock, rootDir } = opts;
+		const persisted: PersistedData = opts.persisted ?? {};
 
 		// Snapshot the REAL globals ONCE, before any patch below runs, so
 		// restoreGlobals() can undo the leak after the sim tests finish.
@@ -310,9 +400,12 @@ export class Replica {
 			// DETERMINISTICALLY by drain(): without this, drain() reaches "no lanes +
 			// no timers" and returns while IDB work is still pending on the real event
 			// loop, so a note's Y.Doc seed (manager.entry -> whenSynced) never lands.
+			// Ungated: IndexedDB's task queue must drain even for a killed or
+			// suspended device, or a later process's transactions on the same
+			// store queue forever behind a half-run one (see clock.ts Entry).
 			(globalThis as unknown as { setImmediate: (fn: () => void) => number }).setImmediate = (
 				fn: () => void,
-			) => clock.setTimeout(fn, 0);
+			) => clock.setTimeout(fn, 0, true);
 			installedClocks.add(clock);
 		}
 		// Install the WebSocket adapter once; register this replica's routing.
@@ -342,7 +435,20 @@ export class Replica {
 		setRequestUrlHandler(
 			(o) =>
 				new Promise((resolve, reject) => {
-					scheduler.enqueue(`http:${id}`, () => {
+					// The CALLER's device process, not the last-booted one: the handler
+					// is process-global. A dead caller never hears back; a suspended
+					// one's reply is failed on resume (the OS killed the request).
+					const caller = currentIncarnation();
+					scheduler.enqueue(`http:${caller?.replicaId ?? id}`, () => {
+						if (caller?.dead) return;
+						if (caller?.frozen) {
+							parkedFor(caller).push(() =>
+								runAs(caller, () =>
+									reject(new Error("request failed: network lost")),
+								),
+							);
+							return;
+						}
 						const res = server.http({
 							method: o.method ?? "GET",
 							url: o.url,
@@ -430,11 +536,28 @@ export class Replica {
 			app as unknown as import("obsidian").App,
 			api,
 			settings,
-			async () => {
-				// saveData: persistence is a no-op in the sim (no data.json). The engine
-				// mutates the shared noteIdMap instance directly, which the test reads.
-			},
+			async () => saveAll(),
 		);
+		// main.ts savePluginData: the WHOLE blob on every save, from the engine's
+		// current state. A dead process saves nothing.
+		const saveAll = (offlineQueue?: PersistedData["offlineQueue"]): void => {
+			if (currentIncarnation()?.dead) return;
+			Object.assign(
+				persisted,
+				structuredClone({
+					lastSync: engine.getLastSync(),
+					catchupSeq: engine.getCatchupSeq(),
+					catchupId: engine.getCatchupId(),
+					manifestSeq: engine.getManifestSeq(),
+					offlineQueue: offlineQueue ?? engine.queue.persistable(),
+					crdtOpQueue: crdtOpQueue.all(),
+					syncState: engine.exportSyncState(),
+					syncStateVaultId: engine.getSyncStateVaultId(),
+					noteIds: noteIdMap.toJSON(),
+					gateJournal: engine.exportGateJournal(),
+				}),
+			);
+		};
 
 		// --- post-construction setters, in main.ts order ---
 		// `noteStream` is the mutable channel holder main.ts keeps as `this.noteStream`
@@ -443,6 +566,7 @@ export class Replica {
 		// it lands. Declared here so those forward-ref closures can close over it.
 		let noteStream: NoteChannel | null = null;
 		engine.syncLog = new SyncLog(); // main.ts:402-403
+		engine.queue.onPersist(async (entries) => saveAll(entries)); // main.ts:765
 		engine.setCrdtLiveCheck(() => noteStream?.isCrdtConnected() ?? false); // main.ts:412
 		engine.setNoteIdMap(noteIdMap); // main.ts:418
 		engine.setDeviceId(id); // main.ts:423
@@ -465,6 +589,22 @@ export class Replica {
 			}),
 			now: () => Date.now(),
 		});
+		crdtOpQueue.setPersist(() => saveAll()); // main.ts:866
+		// main.ts drives retries off a 5 s registerInterval (main.ts:870). The sim
+		// excludes perpetual intervals (they keep drain() from ever quiescing), so
+		// the tick re-arms itself only while ops are waiting: a lost create or
+		// delete reply is retried as in production, and an empty queue lets the
+		// clock go quiet.
+		let pumpArmed: number | null = null;
+		const pumpQueue = (ms: number): void => {
+			if (pumpArmed !== null) return;
+			pumpArmed = window.setTimeout(() => {
+				pumpArmed = null;
+				void crdtOpQueue.tick().finally(() => {
+					if (crdtOpQueue.size() > 0) pumpQueue(5000);
+				});
+			}, ms);
+		};
 		// Retry tick: main.ts drives this off a 5s registerInterval (main.ts:519).
 		// The sim excludes perpetual intervals (see setInterval no-op above), so the
 		// queue is instead pumped by onJoined() (on the crdt: join) plus a one-shot
@@ -477,8 +617,9 @@ export class Replica {
 				payload: { path: op.path },
 				enqueuedAt: Date.now(),
 				attempts: 0,
+				vaultId: settings.vaultId ?? null, // main.ts:912
 			} satisfies CrdtOp);
-			window.setTimeout(() => void crdtOpQueue.tick(), 0);
+			pumpQueue(0);
 		});
 
 		// main.ts's pending-op probes, through the same queue predicate.
@@ -488,6 +629,20 @@ export class Replica {
 		engine.setCrdtHasPendingDelete((docId) =>
 			crdtOpQueue.hasPending(docId, "delete", settings.vaultId ?? null),
 		);
+
+		// --- restore data.json (main.ts onload, :916-950 and :1672) ---
+		if (persisted.lastSync) engine.setLastSync(persisted.lastSync);
+		if (persisted.catchupSeq !== undefined) engine.setCatchupSeq(persisted.catchupSeq);
+		if (persisted.catchupId !== undefined) engine.setCatchupId(persisted.catchupId);
+		if (persisted.manifestSeq !== undefined) engine.setManifestSeq(persisted.manifestSeq);
+		if (persisted.offlineQueue?.length) engine.queue.load(persisted.offlineQueue);
+		if (persisted.crdtOpQueue?.length) crdtOpQueue.load(persisted.crdtOpQueue);
+		if (persisted.syncStateVaultId !== undefined) {
+			engine.setSyncStateVaultId(persisted.syncStateVaultId);
+		}
+		if (persisted.syncState) engine.importSyncState(persisted.syncState);
+		if (persisted.gateJournal) engine.importGateJournal(persisted.gateJournal);
+		if (persisted.noteIds) noteIdMap.seed(persisted.noteIds);
 
 		// --- connectChannel, mirroring main.ts:1666-2013 ---
 		// main.ts freezes the topic userId from an awaited getMe() (main.ts:1666-1707).
@@ -605,6 +760,7 @@ export class Replica {
 			manager.setConnected(true);
 			void (async () => {
 				await crdtOpQueue.onJoined();
+				if (crdtOpQueue.size() > 0) pumpQueue(5000);
 				await onCrdtTopicJoined();
 			})();
 		};
@@ -642,6 +798,13 @@ export class Replica {
 			// refused while unjoined was recorded (#516) — this is what delivers
 			// an edit to a since-closed note.
 			await engine.flushQueue();
+			// main.ts runSelfHealSweep (main.ts:2645): what pushes a note created
+			// while the socket was down.
+			try {
+				await engine.selfHealSweep();
+			} catch {
+				/* main.ts logs and carries on */
+			}
 		}
 
 		// The engine's event handlers are gated on setReady() (main.ts calls it after
@@ -649,6 +812,56 @@ export class Replica {
 		engine.setReady();
 
 		void channel.connect(); // main.ts:2013
+
+		// A restart runs main.ts's layout-ready startup (main.ts:1316-1430): map
+		// reconcile + gate replay, the cold-start reconcile of notes edited while
+		// the app was closed, then pushModifiedFiles. Fired, like every chain
+		// here; the caller's drain completes it.
+		if (opts.restart) {
+			void (async () => {
+				try {
+					await engine.reconcileNoteIdMapFromManifest();
+				} catch {
+					/* offline startup: main.ts logs and carries on */
+				}
+				await engine.replayGateJournal();
+				for (const file of app.vault.getMarkdownFiles()) {
+					const noteId = noteIdMap.getOrMint(file.path);
+					const diskContent = await app.vault.cachedRead(file);
+					if (!engine.needsColdReconcile(file.path, diskContent)) continue;
+					void reconcileColdStart(
+						{
+							path: file.path,
+							noteId,
+							diskContent,
+							reread: () => app.vault.cachedRead(file),
+						},
+						{
+							applyLocalEdit: manager.applyLocalEdit.bind(manager),
+							getText: manager.getText.bind(manager),
+							projectedText: manager.projectedText.bind(manager),
+							enroll: (nid) => {
+								if (boundPaths.has(normalizePath(file.path)))
+									wiring.enrollment.enroll(nid);
+							},
+						},
+						() => {},
+					).catch(() => {});
+				}
+				if (channel.isCrdtConnected()) await engine.catchupViaSeqReplay();
+				await engine.pushModifiedFiles();
+			})().catch(() => {});
+		}
+
+		// main.ts onunload, the parts that touch sync state (:1531-1576).
+		const onUnload = (): void => {
+			saveAll();
+			crdtOpQueue.dispose();
+			engine.destroy();
+			noteIdMap.flushNow();
+			channel.disconnect();
+			void manager.destroyAll();
+		};
 
 		return new Replica({
 			id,
@@ -661,6 +874,11 @@ export class Replica {
 			enrollment: wiring.enrollment,
 			boundPaths,
 			hydrated,
+			inc,
+			persisted,
+			server,
+			onUnload,
+			flushBound: (path) => boundFlush(path),
 		});
 	}
 
@@ -698,17 +916,38 @@ export class Replica {
 		// STEP2 frame that drain() delivers in seed order.
 		void (async () => {
 			const text = (await this.crdtManager.getDoc(id)).getText("content");
+			// Once the binding goes live the editor shows the doc's text, and
+			// Obsidian's autosave writes it: a remote merge that landed before
+			// hydration (its flush skipped, see boundFlush) reaches disk here.
 			if (text.length > 0) {
 				this.hydrated.add(norm);
+				this.flushBound(path);
 				return;
 			}
+			let unsubGate: () => void = () => {};
 			const onSeed = (): void => {
 				if (text.length > 0) {
 					this.hydrated.add(norm);
 					text.unobserve(onSeed);
+					unsubGate();
+					this.flushBound(path);
 				}
 			};
 			text.observe(onSeed);
+			// live-binding.ts deferSeed: when the server state turns out to hold
+			// no structs the load gate opens instead of a seed arriving, and the
+			// binding forwards the editor buffer (here, disk) into the doc.
+			unsubGate = this.crdtManager.onLoadGateOpen(id, () => {
+				text.unobserve(onSeed);
+				if (!this.boundPaths.has(norm)) return;
+				this.hydrated.add(norm);
+				const file = this.app.vault.getFileByPath(path);
+				if (!file) return;
+				void this.app.vault
+					.read(file)
+					.then((buffer) => this.crdtManager.applyLocalEdit(id, buffer))
+					.catch(() => {});
+			});
 		})().catch(() => {});
 	}
 
@@ -736,7 +975,10 @@ export class Replica {
 		})().catch(() => {});
 	}
 
-	async editNote(path: string, content: string): Promise<void> {
+	/** Resolves true when the edit landed (disk, and the doc for an open note),
+	 *  false when an open note's editor is still waiting for its first seed
+	 *  and so held the keystrokes back (see the deferUntilSeeded note below). */
+	async editNote(path: string, content: string): Promise<boolean> {
 		const file = this.app.vault.getFileByPath(path);
 		if (!file) throw new Error(`editNote: no file at ${path}`);
 		if (this.boundPaths.has(normalizePath(path))) {
@@ -746,7 +988,7 @@ export class Replica {
 			// yet on the wire. Model that by dropping the edit here — a later edit
 			// (after hydration) forwards convergently. NEVER touch disk without the
 			// Y.Text, or the bound path would drift from its authoritative doc.
-			if (!this.hydrated.has(normalizePath(path))) return;
+			if (!this.hydrated.has(normalizePath(path))) return false;
 			// Live-editor edit: the y-codemirror.next binding would stream keystrokes
 			// into the Y.Text; headless, feed the whole content through the SAME
 			// manager method routeModify drives (the one editor stand-in, see header).
@@ -769,15 +1011,26 @@ export class Replica {
 			// Obsidian's autosave still writes the editor buffer to disk (~2s); that
 			// modify event hits the bound short-circuit above and never re-pushes.
 			await this.app.vault.modify(file, content);
-			return;
+			return true;
 		}
 		await this.app.vault.modify(file, content);
+		return true;
 	}
 
 	async renameNote(oldPath: string, newPath: string): Promise<void> {
 		const file = this.app.vault.getFileByPath(oldPath);
 		if (!file) throw new Error(`renameNote: no file at ${oldPath}`);
 		await this.app.vault.rename(file, newPath);
+	}
+
+	async renameFolder(oldPath: string, newPath: string): Promise<void> {
+		await this.app.vault.renameFolder(oldPath, newPath);
+	}
+
+	/** Delete a file of any kind (a note or an attachment) to the trash. */
+	async deleteFile(path: string): Promise<void> {
+		const file = this.app.vault.getFileByPath(path);
+		if (file) await this.app.fileManager.trashFile(file);
 	}
 
 	async deleteNote(path: string): Promise<void> {
@@ -798,5 +1051,67 @@ export class Replica {
 
 	async fullSync(): Promise<void> {
 		await this.engine.fullSync();
+	}
+
+	/** Paths open in an editor on this device. */
+	openPaths(): string[] {
+		return [...this.boundPaths];
+	}
+
+	isOpen(path: string): boolean {
+		return this.boundPaths.has(normalizePath(path));
+	}
+
+	/** Run `fn` as this device process (process.ts), so everything it starts
+	 *  belongs to it. Every sim op on a device goes through here. */
+	run<T>(fn: () => T): T {
+		return runAs(this.inc, fn);
+	}
+
+	/** The process is killed (force-quit, crash, OS kill): nothing it held in
+	 *  memory is saved, nothing it scheduled runs. IndexedDB and data.json keep
+	 *  whatever they last held. The server times the socket out. */
+	kill(): void {
+		// The path -> note_id map lives in the index-room Y.Doc in production
+		// (main.ts makeNoteIdMap), persisted to IndexedDB per change, not only
+		// when data.json is saved. The sim's map is in memory, so carry it as
+		// IndexedDB would have.
+		this.persisted.noteIds = this.noteIdMap.toJSON();
+		this.inc.dead = true;
+		liveSockets.get(this.inc)?.dropFromNetwork(false);
+	}
+
+	/** main.ts onunload (quit / reload): save, tear the stack down. The caller
+	 *  drains so destroyAll's IndexedDB flush lands, then kills and reboots. */
+	quit(): void {
+		this.run(() => this.onUnload());
+	}
+
+	/** The network under the socket died: the server forgets it, the client
+	 *  sees an unclean close and runs its own reconnect. */
+	dropNetwork(): void {
+		this.run(() => liveSockets.get(this.inc)?.dropFromNetwork(true));
+	}
+
+	/** iOS backgrounding: the visibilitychange "hidden" flushes run (main.ts
+	 *  :1030-1040), then the JS context freezes. The OS kills the socket; the
+	 *  server times it out, the client is not told. */
+	suspend(): void {
+		if (this.inc.frozen) return;
+		this.run(() => {
+			this.engine.flushHealRoomCounts();
+			void this.crdtManager.flushAcked();
+		});
+		this.inc.frozen = true;
+		liveSockets.get(this.inc)?.dropFromNetwork(false);
+	}
+
+	/** Foreground again: timers resume, requests that were in flight fail, and
+	 *  main.ts calls channel.onResume (probe the socket, close it if dead). */
+	resume(): void {
+		if (!this.inc.frozen) return;
+		this.inc.frozen = false;
+		for (const fail of parkedFor(this.inc).splice(0)) fail();
+		this.run(() => this.channel.onResume());
 	}
 }

@@ -12,6 +12,15 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { TFile, TFolder } from "../__mocks__/obsidian";
+import { currentIncarnation } from "./process";
+
+/** A killed device process (process.ts) writes nothing: a chain still in
+ *  flight when the sim crashed it must not touch the vault the next
+ *  incarnation boots on. It simply never continues (a dead process does not
+ *  get an error back), so the write awaits a promise that never settles. */
+async function assertAlive(): Promise<void> {
+	if (currentIncarnation()?.dead) await new Promise<never>(() => {});
+}
 
 /** Callbacks the sim wires to the SyncEngine's vault-event handlers, mirroring
  *  src/main.ts's `registerEvent(this.app.vault.on(...))` wiring:
@@ -62,6 +71,9 @@ export interface SimApp {
 		modifyBinary(file: TFile, data: ArrayBuffer): Promise<void>;
 		process(file: TFile, fn: (data: string) => string): Promise<string>;
 		rename(file: TFile, newPath: string): Promise<void>;
+		/** Rename a folder. Obsidian fires `rename` for the folder and then for
+		 *  every file under it, each with its own old path. */
+		renameFolder(oldPath: string, newPath: string): Promise<void>;
 		getName(): string;
 	};
 	fileManager: {
@@ -197,6 +209,7 @@ export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
 		},
 
 		async create(p, data) {
+			await assertAlive();
 			recordWrite(p, data);
 			atomicWrite(p, data);
 			rebuildIndex();
@@ -205,6 +218,7 @@ export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
 		},
 
 		async createBinary(p, data) {
+			await assertAlive();
 			atomicWrite(p, Buffer.from(data));
 			rebuildIndex();
 			events.onCreate?.(p);
@@ -212,12 +226,14 @@ export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
 		},
 
 		async createFolder(p) {
+			await assertAlive();
 			fs.mkdirSync(abs(p), { recursive: true });
 			events.onCreate?.(p);
 			return buildFolder(p);
 		},
 
 		async modify(file, data) {
+			await assertAlive();
 			recordWrite(file.path, data);
 			atomicWrite(file.path, data);
 			rebuildIndex();
@@ -225,12 +241,14 @@ export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
 		},
 
 		async modifyBinary(file, data) {
+			await assertAlive();
 			atomicWrite(file.path, Buffer.from(data));
 			rebuildIndex();
 			events.onModify?.(file.path);
 		},
 
 		async process(file, fn) {
+			await assertAlive();
 			const current = fs.readFileSync(abs(file.path), "utf8");
 			const next = fn(current);
 			writeJournal.push({
@@ -245,11 +263,22 @@ export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
 		},
 
 		async rename(file, newPath) {
+			await assertAlive();
 			const oldPath = file.path;
 			ensureParentDir(newPath);
 			fs.renameSync(abs(oldPath), abs(newPath));
 			rebuildIndex();
 			events.onRename?.(oldPath, newPath);
+		},
+
+		async renameFolder(oldPath, newPath) {
+			await assertAlive();
+			const before = [...index.keys()].filter((p) => p.startsWith(`${oldPath}/`));
+			ensureParentDir(newPath);
+			fs.renameSync(abs(oldPath), abs(newPath));
+			rebuildIndex();
+			events.onRename?.(oldPath, newPath);
+			for (const p of before) events.onRename?.(p, `${newPath}${p.slice(oldPath.length)}`);
 		},
 
 		getName() {
@@ -259,6 +288,7 @@ export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
 
 	const fileManager: SimApp["fileManager"] = {
 		async trashFile(file) {
+			await assertAlive();
 			const p = file.path;
 			const isFolder = file instanceof TFolder;
 			// Remove BEFORE firing. Real Obsidian's delete event hands the listener
