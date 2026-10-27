@@ -1197,9 +1197,11 @@ export class Replica {
 	 *  server times it out, the client is not told. */
 	suspend(): void {
 		if (this.inc.frozen) return;
+		// Optional calls: the teeth runs boot this harness on engines from before
+		// these hooks existed (#644).
 		this.run(() => {
-			this.engine.flushHealRoomCounts();
-			void this.crdtManager.flushAcked();
+			(this.engine as Partial<SyncEngine>).flushHealRoomCounts?.call(this.engine);
+			void (this.crdtManager as Partial<ProviderRegistry>).flushAcked?.call(this.crdtManager);
 		});
 		this.inc.frozen = true;
 		liveSockets.get(this.inc)?.dropFromNetwork(false);

@@ -41,7 +41,11 @@ type Entry = {
 	 *  must drain or a later incarnation's transactions on the same store wait
 	 *  forever behind a half-run one. */
 	ungated?: boolean;
+	/** Scheduling stack, only with SIM_TIMER_STACKS=1 (livelock triage). */
+	stack?: string;
 };
+
+const TIMER_STACKS = !!process.env.SIM_TIMER_STACKS;
 
 export class SimClock {
 	private t = 0;
@@ -69,6 +73,21 @@ export class SimClock {
 		return !e.owner.frozen;
 	}
 
+	/** Owners of the eligible pending timers (undefined: no owner). */
+	pendingOwners(): (Incarnation | undefined)[] {
+		return [...this.entries.values()].filter((e) => this.eligible(e)).map((e) => e.owner);
+	}
+
+	/** What the eligible pending timers are, for a livelock report. */
+	describePending(): string[] {
+		return [...this.entries.values()]
+			.filter((e) => this.eligible(e))
+			.map(
+				(e) =>
+					`+${e.deadline - this.t}ms ${e.owner?.replicaId ?? "-"}: ${e.fn.toString().replace(/\s+/g, " ").slice(0, 120)}${e.stack ? ` @ ${e.stack}` : ""}`,
+			);
+	}
+
 	setTimeout(fn: () => void, ms: number, ungated = false): number {
 		const id = this.nextId++;
 		this.entries.set(id, {
@@ -78,6 +97,9 @@ export class SimClock {
 			fn,
 			owner: currentIncarnation(),
 			ungated,
+			stack: TIMER_STACKS
+				? new Error().stack?.split("\n").slice(2, 9).join(" <- ")
+				: undefined,
 		});
 		return id;
 	}
