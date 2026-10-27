@@ -59,7 +59,10 @@ describe("styles.css — no :has() selector (broad invalidation perf)", () => {
 describe("styles.css — no multicolumn properties (stylelint property-disallowed-list)", () => {
 	test.each(FORBIDDEN_PROPS)("does not declare '%s'", (prop) => {
 		// Match the property at start of declaration: optional whitespace + prop + colon
-		const re = new RegExp(`(^|[;{\\s])${prop.replace(/-/g, "\\-")}\\s*:`, "gm");
+		// Props are plain [a-z-] literals: no regex metacharacters, so no escaping.
+		// The guard fails loudly if someone adds one that would need it.
+		expect(prop).toMatch(/^[a-z-]+$/);
+		const re = new RegExp(`(^|[;{\\s])${prop}\\s*:`, "gm");
 		expect(cssNoComments.match(re) ?? []).toEqual([]);
 	});
 });
