@@ -80,6 +80,23 @@ describe("EngramApi", () => {
 		api = new EngramApi(TEST_SERVER, TEST_KEY);
 	});
 
+	describe("postSyncSummary", () => {
+		test("POSTs the payload to /analytics/sync-summary", async () => {
+			mockRequestUrl.mockResolvedValueOnce({ status: 200, json: {} } as any);
+			await api.postSyncSummary({
+				phase: "finished",
+				total: 3,
+				failed: 0,
+				skipped: 0,
+				duration_ms: 10,
+				platform: "mobile",
+			});
+			const call = (mockRequestUrl.mock.calls[0] as any[])[0];
+			expect(call.url).toEndWith("/api/analytics/sync-summary");
+			expect(JSON.parse(call.body).phase).toBe("finished");
+		});
+	});
+
 	describe("sendFeedback", () => {
 		test("POSTs general feedback tagged as the plugin", async () => {
 			mockRequestUrl.mockResolvedValueOnce({ status: 200, json: { status: "ok" } } as any);

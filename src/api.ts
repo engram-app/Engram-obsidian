@@ -7,6 +7,7 @@ import { type RequestUrlResponse, requestUrl } from "obsidian";
 import type { AuthProvider } from "./auth";
 import { interpretHealthProbe, type PreflightResult } from "./auth-state";
 import { errorBody, isHttpStatus, NotAuthenticatedError, statusOf } from "./error-util";
+import type { SyncSummaryPayload } from "./first-sync-report";
 import { t } from "./i18n";
 import type { LegalNotice } from "./legal-notices";
 import { LimitExceededError } from "./limit-error";
@@ -290,6 +291,11 @@ export class EngramApi {
 			body.error === "plugin_upgrade_required",
 		);
 		return true;
+	}
+
+	/** First-sync summary for product analytics (counts and enums only). */
+	async postSyncSummary(payload: SyncSummaryPayload): Promise<void> {
+		await this.request("POST", "/analytics/sync-summary", payload);
 	}
 
 	/** Send free-form feedback from the plugin's Feedback tab. */

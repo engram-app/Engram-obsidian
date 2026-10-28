@@ -44,6 +44,7 @@ import { type CrdtOp, CrdtOpQueue, makeDropReporter } from "./crdt-op-queue";
 import { createDebugApi, installDebugApi, uninstallDebugApi } from "./debug-api";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
 import { isMarkdownPath } from "./file-kind";
+import { FirstSyncReporter } from "./first-sync-report";
 import { setLogSink } from "./has-logging";
 import { noteRef } from "./note-ref";
 import { PromiseTracker, setActiveTracker } from "./track-promise";
@@ -3305,12 +3306,27 @@ export default class EngramSyncPlugin extends Plugin {
 			webUrl: engramWebUrl(this.settings.apiUrl),
 			offerUpgrade: offersUpgrades(this.settings),
 		});
+		const reporter =
+			opts.firstSync && opts.plan
+				? new FirstSyncReporter(
+						(p) => this.api.postSyncSummary(p),
+						Platform.isMobile ? "mobile" : "desktop",
+					)
+				: null;
+		reporter?.planned(choice, opts.plan as SyncPlan);
 		const prev = this.syncEngine.onSyncProgress;
 		// Stash the plan so the settings-pane bar (prev callback) renders the same
 		// plan-aware counts as the modal, not the raw examine-count denominator.
 		this.activeSyncPhases = phases ?? null;
 		this.syncEngine.onSyncProgress = (progress) => {
 			modal.update(progress);
+			if (progress.phase === "complete") {
+				reporter?.finished({
+					synced: progress.current,
+					skipped: progress.skipped ?? 0,
+					failed: progress.failed,
+				});
+			}
 			prev?.(progress);
 		};
 		modal.open();
@@ -3320,6 +3336,7 @@ export default class EngramSyncPlugin extends Plugin {
 			// Don't leave the modal stuck on "Preparing…" — close it so the
 			// caller's error Notice is the visible signal.
 			modal.close();
+			reporter?.finished({ synced: 0, skipped: 0, failed: 1 });
 			throw e;
 		} finally {
 			this.syncEngine.onSyncProgress = prev;
