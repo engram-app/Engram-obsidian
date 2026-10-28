@@ -2330,16 +2330,11 @@ export class SyncEngine {
 		new Map<string, Map<number, number>>(),
 	);
 
-	/** Per path while any flush is in flight: how many have started, and the
-	 *  start order of the newest one that has recorded its baseline. Newest
-	 *  SUCCESSFUL write wins: an older flush finishing after a newer one must
-	 *  not record its stale text, but one whose newer sibling threw must
-	 *  (else disk holds its text against the old baseline). Cleared with
-	 *  `flushingHash`. */
-	private readonly flushGen = this.track(
-		["vault", "destroy"],
-		new Map<string, { started: number; recorded: number }>(),
-	);
+	/** Paths where writes overlapped (two in flight at once, or an
+	 *  already-matching check while one was in flight): until the path's last
+	 *  write settles, each write records its baseline only if disk still holds
+	 *  its text. Cleared with `flushingHash`. */
+	private readonly flushOverlap = this.track(["vault", "destroy"], new Set<string>());
 
 	/** Paths whose own create round trip is running: from just before
 	 *  `crdt_create` is sent until its ack is adopted (seed, genesis flush,
@@ -2501,10 +2496,9 @@ export class SyncEngine {
 			// missing (an earlier flush created the file before this fix). Record
 			// it so a later server tombstone isn't misread as a resurrection.
 			this.recordCrdtBaseline(normalized, content);
-			// This read is newer than every write in flight on the path: an older
-			// one finishing later must not record its text over it (#578).
-			const order = this.flushGen.get(normalized);
-			if (order) order.recorded = order.started;
+			// A write still in flight here may land before or after this read:
+			// it must check disk before it records.
+			if (this.flushingHash.has(normalized)) this.flushOverlap.add(normalized);
 			return content;
 		}
 		// Disk-drift interlock: `loadedId` marks the doc's first server state
@@ -2570,13 +2564,15 @@ export class SyncEngine {
 		this.flushingHash.set(normalized, inFlight);
 		const marked: number[] = [];
 		const mark = (text: string) => {
+			// Another write already in flight on this path: from here on, which
+			// one lands last is decided by disk, not by order (see the record).
+			if ([...inFlight.values()].reduce((a, b) => a + b, 0) > marked.length) {
+				this.flushOverlap.add(normalized);
+			}
 			const h = fnv1a(text);
 			inFlight.set(h, (inFlight.get(h) ?? 0) + 1);
 			marked.push(h);
 		};
-		const order = this.flushGen.get(normalized) ?? { started: 0, recorded: 0 };
-		const gen = ++order.started;
-		this.flushGen.set(normalized, order);
 		try {
 			// Discovery (no file yet): CRDT delivered the body for a note this
 			// device has never had on disk (it lived only in the Yjs doc). Create
@@ -2589,18 +2585,22 @@ export class SyncEngine {
 			// CRDT-delivered note has syncedHash=none, and a legitimate server
 			// delete (folder-rename cleanup) trips the resurrection guard, which
 			// re-pushes the old path and resurrects it forever (e2e test_34/78).
-			// The baseline is the text WRITTEN, which can differ from `content`.
 			//
-			// Newest successful write wins (#578). An overlapping flush that
-			// started after us and already recorded (a fan-out flush inside
-			// discovery's modify window) wrote disk after us; recording our older
-			// text over its baseline made the next fan-out read its write as drift.
-			// Assumes concurrent vault.modify calls on one path land on disk in
-			// the order they started (Obsidian writes each through the adapter as
-			// it is issued). If that ever stops holding, record the hash read back
-			// after the write instead.
-			if (gen > order.recorded) {
-				order.recorded = gen;
+			// The baseline is what disk HOLDS (#578, Engram#2271). A write alone
+			// on its path landed last and records. When writes overlap (another
+			// still in flight, or an already-matching check recorded meanwhile)
+			// start order cannot say which landed last, so the write records only
+			// if disk still holds its text; otherwise the write or edit that
+			// overtook it owns the baseline. Ordering by start let a check that
+			// resolved while a newer write was in flight mark that write
+			// superseded: it landed unrecorded and its own text later read as a
+			// user edit.
+			const overlapped = this.flushOverlap.has(normalized);
+			const landed = this.app.vault.getAbstractFileByPath(normalized);
+			if (
+				!overlapped ||
+				(landed instanceof TFile && (await this.app.vault.cachedRead(landed)) === written)
+			) {
 				this.recordCrdtBaseline(normalized, written);
 			}
 			return written;
@@ -2625,7 +2625,7 @@ export class SyncEngine {
 			}
 			if (inFlight.size === 0 && this.flushingHash.get(normalized) === inFlight) {
 				this.flushingHash.delete(normalized);
-				this.flushGen.delete(normalized);
+				this.flushOverlap.delete(normalized);
 			}
 		}
 	}

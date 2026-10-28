@@ -299,12 +299,8 @@ test("#578: overlapping flushes to one path each keep their own in-flight guard"
 	// Both writes finished: the guard is gone, the baseline governs again.
 	expect(e.needsColdReconcile(RAW, "A")).toBe(true);
 	expect(e.needsColdReconcile(RAW, "B")).toBe(false);
-	const maps = e as unknown as {
-		flushingHash: Map<string, unknown>;
-		flushGen: Map<string, unknown>;
-	};
+	const maps = e as unknown as { flushingHash: Map<string, unknown> };
 	expect(maps.flushingHash.size).toBe(0);
-	expect(maps.flushGen.size).toBe(0);
 });
 
 test("#578: first-sync discovery with no syncState row opens no Y.Doc and enrolls nothing", async () => {

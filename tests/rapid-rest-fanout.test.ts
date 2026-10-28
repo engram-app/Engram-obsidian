@@ -352,3 +352,51 @@ test("a blank doc never replaces a caller's text past the empty-write guard", as
 	await reg.destroyAll();
 	expect(disk.get(PATH)).toBe(body(2));
 });
+
+test("a write landing after an already-matching check still records its baseline", async () => {
+	// e2e 40632775792 (B's engine trace): flush v3 found disk already at v3
+	// and returned, but its read resolved while flush v4's write was in
+	// flight. It marked every started write as superseded, so v4 landed
+	// without recording. Baseline v3 with disk v4: the next fan-out read the
+	// plugin's own v4 as a user edit, reverted the doc from v5 and pushed it.
+	const { ID, reg, disk, states, map, engine, app } = await setup(1);
+	map.set(PATH, ID);
+	await reg.applyRemoteUpdate(ID, states[2]);
+	await settle();
+	expect(disk.get(PATH)).toBe(body(3));
+	const modify = app.vault.modify;
+	let releaseWrite: () => void = () => {};
+	const writeHeld = new Promise<void>((r) => {
+		releaseWrite = r;
+	});
+	let writing: () => void = () => {};
+	const writeStarted = new Promise<void>((r) => {
+		writing = r;
+	});
+	app.vault.modify = async (f: TFile, c: string) => {
+		writing();
+		await writeHeld;
+		return modify(f, c);
+	};
+	const cachedRead = app.vault.cachedRead;
+	let armed = true;
+	app.vault.cachedRead = async (f: TFile) => {
+		const text = disk.get(f.path) ?? "";
+		if (armed) {
+			// The v3 check has read disk; v4's flush starts and is writing
+			// before this read resolves.
+			armed = false;
+			void reg.applyRemoteUpdate(ID, states[3]);
+			await writeStarted;
+			return text;
+		}
+		return cachedRead(f);
+	};
+	const v3 = engine.flushFromCrdt(PATH, body(3));
+	await v3;
+	releaseWrite();
+	await settle();
+	await reg.destroyAll();
+	expect(disk.get(PATH)).toBe(body(4));
+	expect(engine.needsColdReconcile(PATH, body(4))).toBe(false);
+});
