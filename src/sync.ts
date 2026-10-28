@@ -2330,16 +2330,11 @@ export class SyncEngine {
 		new Map<string, Map<number, number>>(),
 	);
 
-	/** Per path while any flush is in flight: how many have started, and the
-	 *  start order of the newest one that has recorded its baseline. Newest
-	 *  SUCCESSFUL write wins: an older flush finishing after a newer one must
-	 *  not record its stale text, but one whose newer sibling threw must
-	 *  (else disk holds its text against the old baseline). Cleared with
-	 *  `flushingHash`. */
-	private readonly flushGen = this.track(
-		["vault", "destroy"],
-		new Map<string, { started: number; recorded: number }>(),
-	);
+	/** Paths where writes overlapped (two in flight at once, or an
+	 *  already-matching check while one was in flight): until the path's last
+	 *  write settles, each write records its baseline only if disk still holds
+	 *  its text. Cleared with `flushingHash`. */
+	private readonly flushOverlap = this.track(["vault", "destroy"], new Set<string>());
 
 	/** Paths whose own create round trip is running: from just before
 	 *  `crdt_create` is sent until its ack is adopted (seed, genesis flush,
@@ -2417,14 +2412,55 @@ export class SyncEngine {
 		return this.crdt.hasUndeliveredOps(noteId);
 	}
 
+	/** The doc's current text when `normalized` maps to a doc with history,
+	 *  else null: what disk must hold for a CRDT note (#570). Asks a doc that is
+	 *  in memory, or one this device already tracks (a sync-state row): a note
+	 *  with neither has no local history to find, and hydrating a Y.Doc for it
+	 *  would open one per note on a first sync. */
+	private async currentDocText(normalized: string): Promise<string | null> {
+		const crdt = this.crdt;
+		const noteId = this.noteIdMap?.get(normalized);
+		if (!crdt || !noteId || typeof crdt.hasHistory !== "function") return null;
+		const resident = typeof crdt.hasDoc === "function" && crdt.hasDoc(noteId);
+		if (!resident && !this.syncState.has(normalized)) return null;
+		if (!(await crdt.hasHistory(noteId))) return null;
+		return crdt.projectedText(noteId);
+	}
+
 	/** Write a remote-merged CRDT result to disk.
 	 *  Marks the path recentlyFlushed first so the resulting vault.modify/create
 	 *  event is suppressed by the recentlyFlushed guard in handleModify (the
 	 *  'create' handler routes through handleModify too).
 	 *  Safe to call from main.ts — does not expose the private markRecentlyFlushed.
 	 *  Requires the sync gate to be open — returns early when blocked so inbound
-	 *  CRDT frames cannot overwrite local files before the user picks a direction. */
+	 *  CRDT frames cannot overwrite local files before the user picks a direction.
+	 *
+	 *  Disk follows the doc (Engram#2271). Every CRDT-managed write to a
+	 *  note's file comes through here, from callers that captured their text
+	 *  BEFORE awaiting: the stream event's first-delivery apply (the row body),
+	 *  catch-up's replay (the row body), and one registry flush per remote
+	 *  update. Five REST saves ~16 ms apart put them all in flight on one new
+	 *  note. A snapshot landing after a newer write (the create race's
+	 *  "already exists" fallback, or a caller slower than the next fan-out)
+	 *  left disk holding text the doc had moved past; its modify event then
+	 *  read as a user edit and was pushed into the doc, reverting the note
+	 *  here and, through the server, on every device.
+	 *
+	 *  So a note whose doc has history is written with the doc's text as of
+	 *  the write itself (`currentDocText`, asked again right before each disk
+	 *  call), never a caller's snapshot. A write that lands late then holds the
+	 *  newest doc, and reading it back as an edit is a no-op diff. A doc with
+	 *  no history (discovery) still writes the caller's text: the row body is
+	 *  all there is. */
 	async flushFromCrdt(path: string, content: string, loadedId?: string): Promise<boolean> {
+		return (await this.writeCrdtNote(path, content, loadedId)) !== null;
+	}
+
+	/** `flushFromCrdt`, returning the text now on disk for the note (null: the
+	 *  gate is shut, the write was refused, or it failed). A caller that
+	 *  branches on what was written must use this, not its own snapshot: the
+	 *  write may hold the doc's newer text. */
+	async writeCrdtNote(path: string, content: string, loadedId?: string): Promise<string | null> {
 		if (this.syncBlocked) {
 			// FALSE, not true. This wrote nothing, and claiming otherwise is what
 			// made the 2026-08-13 prod failure invisible: the `true` propagated
@@ -2437,9 +2473,18 @@ export class SyncEngine {
 			// A no-op must never report as work. The caller decides what to do
 			// about a closed gate; it cannot decide anything if we lie to it.
 			devLog().log("sync-blocked", `flushFromCrdt short-circuited — gate closed: ${path}`);
-			return false;
+			return null;
 		}
 		const normalized = normalizePath(path);
+		// The doc's text, never blank: a blank doc does not override a caller's
+		// text here, so the empty-write guard below always sees what is written.
+		const latest = async (): Promise<string | null> => {
+			const text = await this.currentDocText(normalized);
+			return text !== null && text.trim() !== "" ? text : null;
+		};
+		// A first load's text is the registry's projection of that load: the
+		// interlock below resolves held input against exactly that.
+		if (loadedId === undefined) content = (await latest()) ?? content;
 		const file = this.app.vault.getAbstractFileByPath(normalized);
 		// Idempotency: skip the write when the file already holds exactly this
 		// content. An identical re-push re-flushes the same CRDT body; rewriting it
@@ -2451,19 +2496,26 @@ export class SyncEngine {
 			// missing (an earlier flush created the file before this fix). Record
 			// it so a later server tombstone isn't misread as a resurrection.
 			this.recordCrdtBaseline(normalized, content);
-			// This read is newer than every write in flight on the path: an older
-			// one finishing later must not record its text over it (#578).
-			const order = this.flushGen.get(normalized);
-			if (order) order.recorded = order.started;
-			return true;
+			// A write still in flight here may land before or after this read:
+			// it must check disk before it records.
+			if (this.flushingHash.has(normalized)) this.flushOverlap.add(normalized);
+			return content;
 		}
 		// Disk-drift interlock: `loadedId` marks the doc's first server state
 		// (see `resolveDriftOnLoad`). Never written over held local input.
-		if (loadedId && file instanceof TFile) {
+		// When it resolved held input (a merge, or a forced merge it could not
+		// seed) that text is written verbatim: re-asking the doc would drop the
+		// input. With nothing held it answered the load projection, which the
+		// doc may have moved past while it awaited, so that one is re-asked.
+		let verbatim = false;
+		if (loadedId !== undefined && file instanceof TFile) {
 			const resolved = await this.resolveDriftOnLoad(normalized, file, loadedId, content);
-			if (resolved === null) return false;
+			if (resolved === null) return null;
+			verbatim = resolved !== content;
 			content = resolved;
 		}
+		const ask = verbatim ? undefined : latest;
+		if (ask) content = (await ask()) ?? content;
 		// Content-loss guard: a CRDT flush must never blank a non-empty file with a
 		// STALE remote projection. The manager flushes projectNote(doc) on every
 		// REMOTE_ORIGIN update (manager.ts), so a self-echo fan-out landing during a
@@ -2500,49 +2552,60 @@ export class SyncEngine {
 					// no longer matches what the caller was told: report false, or a
 					// stamping caller records hash("") over the old body and the next
 					// scan pushes that body back over the clear (#265 class).
-					return refusal.docHasContent;
+					return refusal.docHasContent ? prev : null;
 				}
 			}
 		}
 		this.markRecentlyFlushed(normalized);
-		const writingHash = fnv1a(content);
+		// Every text this write may put on disk is registered as in flight just
+		// before its disk call (#578): the create race's fallback writes a
+		// different text from the create it replaces.
 		const inFlight = this.flushingHash.get(normalized) ?? new Map<number, number>();
-		inFlight.set(writingHash, (inFlight.get(writingHash) ?? 0) + 1);
 		this.flushingHash.set(normalized, inFlight);
-		const order = this.flushGen.get(normalized) ?? { started: 0, recorded: 0 };
-		const gen = ++order.started;
-		this.flushGen.set(normalized, order);
-		try {
-			if (file instanceof TFile) {
-				await this.app.vault.modify(file, content);
-			} else {
-				// Discovery: CRDT delivered the body for a note this device has never
-				// had on disk (it lived only in the Yjs doc). Create it — without this
-				// flushFromCrdt returned early and the note stayed permanently invisible
-				// on this device even though its content was in the local CRDT doc.
-				if (!(await this.createFileWithFolders(normalized, content))) return false;
+		const marked: number[] = [];
+		const mark = (text: string) => {
+			// Another write already in flight on this path: from here on, which
+			// one lands last is decided by disk, not by order (see the record).
+			if ([...inFlight.values()].reduce((a, b) => a + b, 0) > marked.length) {
+				this.flushOverlap.add(normalized);
 			}
+			const h = fnv1a(text);
+			inFlight.set(h, (inFlight.get(h) ?? 0) + 1);
+			marked.push(h);
+		};
+		try {
+			// Discovery (no file yet): CRDT delivered the body for a note this
+			// device has never had on disk (it lived only in the Yjs doc). Create
+			// it, or the note stays invisible here although its content is in the
+			// local CRDT doc.
+			const written = await this.writeNoteFile(normalized, file, content, ask, mark);
+			if (written === null) return null;
 			// CRDT delivery IS a sync: record the last-synced baseline so the REST
 			// reconcile path treats this note as server-known. Without it a
 			// CRDT-delivered note has syncedHash=none, and a legitimate server
 			// delete (folder-rename cleanup) trips the resurrection guard, which
 			// re-pushes the old path and resurrects it forever (e2e test_34/78).
 			//
-			// Newest successful write wins (#578). An overlapping flush that
-			// started after us and already recorded (a fan-out flush inside
-			// discovery's modify window) wrote disk after us; recording our older
-			// text over its baseline made the next fan-out read its write as drift.
-			// Assumes concurrent vault.modify calls on one path land on disk in
-			// the order they started (Obsidian writes each through the adapter as
-			// it is issued). If that ever stops holding, record the hash read back
-			// after the write instead.
-			if (gen > order.recorded) {
-				order.recorded = gen;
-				this.recordCrdtBaseline(normalized, content);
+			// The baseline is what disk HOLDS (#578, Engram#2271). A write alone
+			// on its path landed last and records. When writes overlap (another
+			// still in flight, or an already-matching check recorded meanwhile)
+			// start order cannot say which landed last, so the write records only
+			// if disk still holds its text; otherwise the write or edit that
+			// overtook it owns the baseline. Ordering by start let a check that
+			// resolved while a newer write was in flight mark that write
+			// superseded: it landed unrecorded and its own text later read as a
+			// user edit.
+			const overlapped = this.flushOverlap.has(normalized);
+			const landed = this.app.vault.getAbstractFileByPath(normalized);
+			if (
+				!overlapped ||
+				(landed instanceof TFile && (await this.app.vault.cachedRead(landed)) === written)
+			) {
+				this.recordCrdtBaseline(normalized, written);
 			}
-			return true;
+			return written;
 		} catch (e) {
-			// Return false (do NOT swallow silently): the remote-apply path's
+			// Return null (do NOT swallow silently): the remote-apply path's
 			// onFlushToDisk wrapper turns this into a rejection so applyRemoteUpdate
 			// rejects and crdtHead stays unadvanced (#235). recordCrdtBaseline is
 			// intentionally NOT reached here — a failed write must not mark the note
@@ -2552,15 +2615,17 @@ export class SyncEngine {
 				"crdt",
 				`flushFromCrdt: write failed for ${noteRef(path)}: ${errMsg(e, path)}`,
 			);
-			return false;
+			return null;
 		} finally {
-			// Drop only our own count: overlapping flushes keep theirs.
-			const n = (inFlight.get(writingHash) ?? 1) - 1;
-			if (n > 0) inFlight.set(writingHash, n);
-			else inFlight.delete(writingHash);
+			// Drop only our own counts: overlapping flushes keep theirs.
+			for (const h of marked) {
+				const n = (inFlight.get(h) ?? 1) - 1;
+				if (n > 0) inFlight.set(h, n);
+				else inFlight.delete(h);
+			}
 			if (inFlight.size === 0 && this.flushingHash.get(normalized) === inFlight) {
 				this.flushingHash.delete(normalized);
-				this.flushGen.delete(normalized);
+				this.flushOverlap.delete(normalized);
 			}
 		}
 	}
@@ -10499,17 +10564,10 @@ export class SyncEngine {
 				// over a doc at edit j left disk holding text the doc lacks: the
 				// next disk edit diffed k into j as a client copy (#578), and with
 				// no later fan-out disk stayed at k.
-				const crdt = this.crdt;
-				const body =
-					crdt &&
-					noteId &&
-					this.syncState.has(normalized) &&
-					typeof crdt.hasHistory === "function" &&
-					(await crdt.hasHistory(noteId))
-						? await crdt.projectedText(noteId)
-						: content;
-				const wrote = await this.flushFromCrdt(normalized, body);
-				if (!wrote) return false;
+				// writeCrdtNote writes the doc's text when the doc has history: branch
+				// on what it actually wrote, not on a snapshot taken before it.
+				const body = await this.writeCrdtNote(normalized, content);
+				if (body === null) return false;
 				if (body === content) this.rememberDiscoveryBase(normalized, content);
 				// The doc can trail the row (its fan-out was lost). This note is idle
 				// and never enrolled, and the feed cursor moves past the row, so
@@ -11426,7 +11484,47 @@ export class SyncEngine {
 	 *  a rename it originated, and renameFile would rewrite them again (the
 	 *  exactly-one-rewriter invariant). renameFile would be correct only against
 	 *  a server that does not rewrite at all. */
-	private async createFileWithFolders(normalized: string, content: string): Promise<boolean> {
+	/** Write a note's file (modify it, or create it with its folders) and
+	 *  return the text that went to disk, or null when nothing did. The one
+	 *  write path for CRDT notes (`writeCrdtNote`); see `textForWrite`. */
+	private async writeNoteFile(
+		normalized: string,
+		file: TAbstractFile | null,
+		content: string,
+		latest?: () => Promise<string | null>,
+		mark?: (text: string) => void,
+	): Promise<string | null> {
+		if (!(file instanceof TFile)) {
+			return this.createFileWithFolders(normalized, content, latest, mark);
+		}
+		const text = await this.textForWrite(content, latest, mark);
+		await this.app.vault.modify(file, text);
+		return text;
+	}
+
+	/** The text for ONE disk call, asked immediately before it (Engram#2271):
+	 *  `latest` (a CRDT note's doc text) over the caller's `content`, so a
+	 *  write that runs after an await, or after another write, never lands a
+	 *  snapshot the doc has moved past. `mark` registers it as in flight. */
+	private async textForWrite(
+		content: string,
+		latest?: () => Promise<string | null>,
+		mark?: (text: string) => void,
+	): Promise<string> {
+		const text = (await latest?.()) ?? content;
+		mark?.(text);
+		return text;
+	}
+
+	/** Returns the text written, or null when the create race was lost by an
+	 *  empty body (nothing written). `latest`/`mark`: see `textForWrite`; every
+	 *  disk call here (the move, the create, the race fallback) uses it. */
+	private async createFileWithFolders(
+		normalized: string,
+		content: string,
+		latest?: () => Promise<string | null>,
+		mark?: (text: string) => void,
+	): Promise<string | null> {
 		const folder = normalized.includes("/")
 			? normalized.substring(0, normalized.lastIndexOf("/"))
 			: "";
@@ -11447,20 +11545,22 @@ export class SyncEngine {
 				// create below, which is the old behaviour and still converges.
 				const moved = this.app.vault.getFileByPath?.(normalized);
 				if (moved) {
-					await this.modifyFile(moved, content);
+					const text = await this.textForWrite(content, latest, mark);
+					await this.modifyFile(moved, text);
 					this.rememberFileFor(normalized);
-					return true;
+					return text;
 				}
 			}
 		}
 		try {
-			await this.app.vault.create(normalized, content);
+			const text = await this.textForWrite(content, latest, mark);
+			await this.app.vault.create(normalized, text);
 			// The load-bearing call. A note received this session is created here
 			// and nowhere else, so without this the registry only ever knows notes
 			// that were on disk at startup -- which is exactly the hole e2e
 			// test_93 fell through while a manual test on an older note passed.
 			this.rememberFileFor(normalized);
-			return true;
+			return text;
 		} catch (e) {
 			// A concurrent materialization path (pull vs WS delivery) can create
 			// this file between the caller's existence check and our create —
@@ -11481,11 +11581,14 @@ export class SyncEngine {
 						"crdt",
 						`empty create lost the create race; kept the winner's body for ${noteRef(normalized)}`,
 					);
-					return false;
+					return null;
 				}
-				await this.modifyFile(raced, content);
+				// The winner wrote first: this write lands after it, so it must hold
+				// the newest text, not the snapshot this create started with.
+				const text = await this.textForWrite(content, latest, mark);
+				await this.modifyFile(raced, text);
 				this.rememberFileFor(normalized);
-				return true;
+				return text;
 			}
 			throw e;
 		}
