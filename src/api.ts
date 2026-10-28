@@ -295,7 +295,15 @@ export class EngramApi {
 
 	/** First-sync summary for product analytics (counts and enums only). */
 	async postSyncSummary(payload: SyncSummaryPayload): Promise<void> {
-		await this.request("POST", "/analytics/sync-summary", payload);
+		// Not request(): its 401 path invalidates the user's token and every
+		// non-2xx warn-logs, both wrong for a best-effort beacon. A 404 is an
+		// older backend without the route: quietly nothing to do.
+		if (isUpgradeRequired()) return;
+		try {
+			await this.sendRequest("POST", "/analytics/sync-summary", payload);
+		} catch (e) {
+			if (statusOf(e) !== 404) throw e;
+		}
 	}
 
 	/** Send free-form feedback from the plugin's Feedback tab. */

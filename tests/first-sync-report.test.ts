@@ -61,12 +61,48 @@ describe("FirstSyncReporter", () => {
 		});
 	});
 
-	test("a rejected post never throws", async () => {
-		const post = mock(async () => {
+	test("dedupes a path present in both push and pull", () => {
+		const { post, r } = make();
+		r.planned("smart-merge", {
+			...plan,
+			toPush: { notes: ["a.md", "b.md"], attachments: ["x.png"] },
+			toPull: { notes: ["b.md"], attachments: ["x.png"] },
+		} as SyncPlan);
+		const p = post.mock.calls[0][0] as any;
+		expect([p.notes, p.attachments]).toEqual([2, 1]);
+	});
+
+	test("finish(aborted) reports real counts so far, never complete, once", () => {
+		const { post, r } = make();
+		r.planned("smart-merge", plan);
+		r.observe({ phase: "pushing", current: 3000, total: 4000, failed: 0 });
+		r.observe({ phase: "pulling", current: 5, total: 10, failed: 0, skipped: 2 });
+		r.finish(true);
+		r.finish(true);
+		expect(post).toHaveBeenCalledTimes(2);
+		const p = post.mock.calls[1][0] as any;
+		expect([p.total, p.failed, p.skipped]).toEqual([3008, 1, 2]);
+	});
+
+	test("finish after a complete event does not double-report", () => {
+		const { post, r } = make();
+		r.finished({ synced: 1, skipped: 0, failed: 0 });
+		r.finish(false);
+		expect(post).toHaveBeenCalledTimes(1);
+	});
+
+	test("a rejected or throwing post never throws and is logged quietly", async () => {
+		const rejecting = mock(async () => {
 			throw new Error("offline");
 		});
-		const { r } = make(post);
-		expect(() => r.planned("smart-merge", plan)).not.toThrow();
-		await Promise.resolve();
+		const throwing = mock(() => {
+			throw new Error("sync throw");
+		});
+		for (const post of [rejecting, throwing]) {
+			const r = new FirstSyncReporter(post as any, "desktop");
+			expect(() => r.planned("smart-merge", plan)).not.toThrow();
+			await Promise.resolve();
+			expect(post).toHaveBeenCalledTimes(1);
+		}
 	});
 });

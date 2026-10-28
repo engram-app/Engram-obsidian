@@ -1,5 +1,5 @@
 import { rlog } from "./remote-log";
-import type { SyncChoice, SyncPlan } from "./types";
+import type { SyncChoice, SyncPlan, SyncProgress } from "./types";
 
 /** Body of `POST /api/analytics/sync-summary`. Counts, enums and a duration
  *  only: the type has no string slot a path, title or vault name could fill.
@@ -36,6 +36,12 @@ export class FirstSyncReporter {
 	private startedAt: number | null = null;
 	private plannedSent = false;
 	private finishedSent = false;
+	/** Latest tally per phase: `current` restarts each phase, so the run total
+	 *  is the sum of every phase's last value. */
+	private readonly phases = new Map<
+		string,
+		{ current: number; failed: number; skipped: number }
+	>();
 
 	constructor(
 		private readonly post: (payload: SyncSummaryPayload) => Promise<void>,
@@ -49,12 +55,33 @@ export class FirstSyncReporter {
 		this.startedAt = this.now();
 		this.send({
 			phase: "planned",
-			notes: plan.toPush.notes.length + plan.toPull.notes.length,
-			attachments: plan.toPush.attachments.length + plan.toPull.attachments.length,
+			// A path in both lists is one note, not two.
+			notes: new Set([...plan.toPush.notes, ...plan.toPull.notes]).size,
+			attachments: new Set([...plan.toPush.attachments, ...plan.toPull.attachments]).size,
 			folders: Math.max(plan.localFolderCount, plan.serverFolderCount),
 			choice: choiceKind(choice),
 			platform: this.platform,
 		});
+	}
+
+	/** Feed every engine progress event so a run that ends without a
+	 *  "complete" event still reports the work done so far. */
+	observe(p: SyncProgress): void {
+		this.phases.set(p.phase, { current: p.current, failed: p.failed, skipped: p.skipped ?? 0 });
+	}
+
+	/** Report the run's tally from what `observe` saw. `aborted` (the sync threw
+	 *  or never completed) counts as at least one failure so the outcome is
+	 *  never "complete". The backend derives `partial` vs `failed` from counts. */
+	finish(aborted: boolean): void {
+		const t = { synced: 0, skipped: 0, failed: 0 };
+		for (const v of this.phases.values()) {
+			t.synced += v.current;
+			t.skipped += v.skipped;
+			t.failed += v.failed;
+		}
+		if (aborted && t.failed === 0) t.failed = 1;
+		this.finished(t);
 	}
 
 	finished(tally: { synced: number; skipped: number; failed: number }): void {

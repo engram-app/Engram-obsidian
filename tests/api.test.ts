@@ -97,6 +97,36 @@ describe("EngramApi", () => {
 		});
 	});
 
+	describe("postSyncSummary errors", () => {
+		const payload = {
+			phase: "planned",
+			notes: 1,
+			attachments: 0,
+			folders: 0,
+			choice: "merge",
+			platform: "desktop",
+		} as const;
+
+		test("404 (older backend) is a quiet no-op", async () => {
+			mockRequestUrl.mockRejectedValueOnce({ status: 404 });
+			await expect(api.postSyncSummary(payload)).resolves.toBeUndefined();
+		});
+
+		test("401 rejects without invalidating the token or retrying", async () => {
+			const invalidate = mock(() => {});
+			api = new EngramApi(TEST_SERVER, TEST_KEY);
+			api.setAuthProvider({ getToken: async () => "t", getVaultId: () => null, isAuthenticated: () => true, signOut: () => {}, invalidateAccessToken: invalidate } as any);
+				getAccessToken: async () => "t",
+				invalidateAccessToken: invalidate,
+			};
+			mockRequestUrl.mockClear();
+			mockRequestUrl.mockRejectedValueOnce({ status: 401 });
+			await expect(api.postSyncSummary(payload)).rejects.toBeDefined();
+			expect(invalidate).not.toHaveBeenCalled();
+			expect(mockRequestUrl).toHaveBeenCalledTimes(1);
+		});
+	});
+
 	describe("sendFeedback", () => {
 		test("POSTs general feedback tagged as the plugin", async () => {
 			mockRequestUrl.mockResolvedValueOnce({ status: 200, json: { status: "ok" } } as any);

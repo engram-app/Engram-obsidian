@@ -3306,6 +3306,8 @@ export default class EngramSyncPlugin extends Plugin {
 			webUrl: engramWebUrl(this.settings.apiUrl),
 			offerUpgrade: offersUpgrades(this.settings),
 		});
+		// "First sync" is per accepted gate, so unlink + relink (gate reset) is a
+		// new first sync by design; the backend throttles repeats to 1/user/hour.
 		const reporter =
 			opts.firstSync && opts.plan
 				? new FirstSyncReporter(
@@ -3326,19 +3328,28 @@ export default class EngramSyncPlugin extends Plugin {
 					skipped: progress.skipped ?? 0,
 					failed: progress.failed,
 				});
+			} else {
+				reporter?.observe(progress);
 			}
 			prev?.(progress);
 		};
 		modal.open();
+		let aborted = false;
 		try {
-			return await this.runSyncFromChoice(choice);
+			const ran = await this.runSyncFromChoice(choice);
+			aborted = !ran;
+			return ran;
 		} catch (e) {
 			// Don't leave the modal stuck on "Preparing…" — close it so the
 			// caller's error Notice is the visible signal.
 			modal.close();
-			reporter?.finished({ synced: 0, skipped: 0, failed: 1 });
+			aborted = true;
 			throw e;
 		} finally {
+			// Once-only: a no-op when "complete" already reported. Any other exit
+			// (throw, or a return without a complete event) must not leave
+			// `planned` unmatched.
+			reporter?.finish(aborted);
 			this.syncEngine.onSyncProgress = prev;
 			this.activeSyncPhases = null;
 		}
