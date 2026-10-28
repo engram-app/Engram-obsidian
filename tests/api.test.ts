@@ -115,10 +115,13 @@ describe("EngramApi", () => {
 		test("401 rejects without invalidating the token or retrying", async () => {
 			const invalidate = mock(() => {});
 			api = new EngramApi(TEST_SERVER, TEST_KEY);
-			api.setAuthProvider({ getToken: async () => "t", getVaultId: () => null, isAuthenticated: () => true, signOut: () => {}, invalidateAccessToken: invalidate } as any);
-				getAccessToken: async () => "t",
+			api.setAuthProvider({
+				getToken: async () => "t",
+				getVaultId: () => null,
+				isAuthenticated: () => true,
+				signOut: () => {},
 				invalidateAccessToken: invalidate,
-			};
+			} as any);
 			mockRequestUrl.mockClear();
 			mockRequestUrl.mockRejectedValueOnce({ status: 401 });
 			await expect(api.postSyncSummary(payload)).rejects.toBeDefined();
