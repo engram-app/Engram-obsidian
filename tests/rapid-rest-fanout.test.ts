@@ -241,3 +241,114 @@ test("a write whose doc moves on while it awaits writes the doc's newer text", a
 	await reg.destroyAll();
 	expect({ disk: disk.get(PATH), doc }).toEqual({ disk: body(5), doc: body(5) });
 });
+
+test("the create-race fallback records the text it wrote as the baseline", async () => {
+	// Review probe (#653). The doc's v2 flush starts first and is held inside
+	// its create. A row-body write (v1) then starts; its doc asks miss (the
+	// doc not yet answering, forced here) and it reaches its own create while
+	// v2's completes. v1's create rejects, and its fallback writes the doc's
+	// v2. v1 is the newer write, so its baseline is the one kept: it must be
+	// the v2 it wrote, not the v1 it was given, or disk != baseline and the
+	// next fan-out reads the plugin's own write as a user edit.
+	const { ID, reg, disk, states, map, engine, app } = await setup(1);
+	map.set(PATH, ID);
+	const create = app.vault.create;
+	let releaseV2: () => void = () => {};
+	const v2Held = new Promise<void>((r) => {
+		releaseV2 = r;
+	});
+	let v2Created: Promise<unknown> = Promise.resolve();
+	let calls = 0;
+	app.vault.create = (p: string, c: string) => {
+		calls++;
+		if (calls === 1) {
+			v2Created = v2Held.then(() => create(p, c));
+			return v2Created;
+		}
+		// v1's create: let the held v2 create land first.
+		releaseV2();
+		return v2Created.then(() => create(p, c));
+	};
+	const v2 = reg.applyRemoteUpdate(ID, states[1]);
+	while (calls === 0) await new Promise((r) => setTimeout(r, 1));
+	const ask = (engine as any).currentDocText.bind(engine);
+	let missing = true;
+	(engine as any).currentDocText = async (p: string) => (missing && calls === 1 ? null : ask(p));
+	const v1 = engine.flushFromCrdt(PATH, body(1));
+	await v1;
+	missing = false;
+	await v2;
+	expect(disk.get(PATH)).toBe(body(2));
+	expect(engine.needsColdReconcile(PATH, body(2))).toBe(false);
+	await reg.destroyAll();
+});
+
+test("a first load's interlock re-asks the doc when it held no local input", async () => {
+	// With nothing held on disk the interlock answers the load projection.
+	// The doc can take a newer state (and that state's flush land) while the
+	// interlock reads disk; the older projection must not land after it.
+	const { ID, reg, disk, states, map, engine, app } = await setup(1);
+	map.set(PATH, ID);
+	await reg.applyRemoteUpdate(ID, states[1]);
+	await settle();
+	disk.set(PATH, body(1));
+	engine.importSyncState({ [PATH]: { hash: fnv1a(body(1)) } });
+	const cachedRead = app.vault.cachedRead;
+	let reads = 0;
+	app.vault.cachedRead = async (f: TFile) => {
+		// Read 1 is the idempotency check, read 2 the interlock's.
+		if (++reads === 2) await reg.applyRemoteUpdate(ID, states[3]);
+		return cachedRead(f);
+	};
+	await engine.flushFromCrdt(PATH, body(2), ID);
+	await settle();
+	const doc = await reg.projectedText(ID);
+	await reg.destroyAll();
+	expect({ disk: disk.get(PATH), doc }).toEqual({ disk: body(4), doc: body(4) });
+	expect(engine.needsColdReconcile(PATH, body(4))).toBe(false);
+});
+
+test("a write that follows a rename lands the doc's text, not the caller's snapshot", async () => {
+	// createFileWithFolders moves the note's old file to the new path, then
+	// writes. The move awaits; a doc that moved meanwhile must win.
+	const { ID, reg, disk, states, map, engine, app } = await setup(1);
+	const OLD = "E2E/Old.md";
+	map.set(PATH, ID);
+	await reg.applyRemoteUpdate(ID, states[1]);
+	await settle();
+	// The note's file is still at its old path; the new one is empty.
+	disk.delete(PATH);
+	disk.set(OLD, body(2));
+	engine.importSyncState({ [PATH]: { hash: fnv1a(body(2)) } });
+	(engine as any).relocatedFrom.set(PATH, { from: OLD, timer: 0 });
+	app.vault.rename = async (f: TFile, to: string) => {
+		disk.set(to, disk.get(f.path) ?? "");
+		disk.delete(f.path);
+		// The doc moves on while the move is still settling.
+		await reg.applyRemoteUpdate(ID, states[4]);
+	};
+	await engine.flushFromCrdt(PATH, body(2));
+	await settle();
+	const doc = await reg.projectedText(ID);
+	await reg.destroyAll();
+	expect({ disk: disk.get(PATH), doc }).toEqual({ disk: body(5), doc: body(5) });
+});
+
+test("a blank doc never replaces a caller's text past the empty-write guard", async () => {
+	// The doc ask runs after the guard; a blank answer there would blank the
+	// file unchecked. A blank doc is not an answer: the caller's text stands
+	// and a real clear goes through the guard on its own flush.
+	const { ID, reg, disk, map, engine } = await setup(1);
+	map.set(PATH, ID);
+	const cleared = new Y.Doc();
+	const t = cleared.getText(CONTENT_KEY);
+	t.insert(0, body(1));
+	t.delete(0, t.length);
+	await reg.applyRemoteUpdate(ID, Y.encodeStateAsUpdate(cleared));
+	await settle();
+	disk.set(PATH, body(1));
+	engine.importSyncState({ [PATH]: { hash: fnv1a(body(1)) } });
+	await engine.flushFromCrdt(PATH, body(2));
+	await reg.destroyAll();
+	expect(disk.get(PATH)).toBe(body(2));
+});

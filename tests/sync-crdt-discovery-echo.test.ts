@@ -348,3 +348,19 @@ test("#578: an already-matching flush is newer than an older in-flight write", a
 	// A resolved after C's read: its older text must not become the baseline.
 	expect(e.needsColdReconcile(RAW, "C")).toBe(false);
 });
+
+test("#578: on a doc WITH history, an older flush finishing LAST keeps the newer baseline", async () => {
+	// Mapped path: every write holds the doc's text (Engram#2271). The doc
+	// takes v3 while the outer write of v2 is in flight; the v3 flush lands
+	// inside that window and the outer write resolves last.
+	const { e, mgr, disk, hooks, updates } = await scenario("disc-echo-history-older-last");
+	disk.set(PATH, "old");
+	hooks.onModify = async () => {
+		hooks.onModify = async () => {};
+		await mgr.applyRemoteUpdate(ID, updates[2]);
+	};
+	expect(await e.flushFromCrdt(PATH, "a stale caller snapshot")).toBe(true);
+	expect(disk.get(PATH)).toBe(body(3));
+	expect(e.needsColdReconcile(PATH, body(3))).toBe(false);
+	expect(await mgr.getText(ID)).toBe(body(3));
+});
