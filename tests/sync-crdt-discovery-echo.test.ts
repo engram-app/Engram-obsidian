@@ -25,6 +25,10 @@ import { DEFAULT_SETTINGS } from "../src/types";
 
 const PATH = "E2E/RapidEdits.md";
 const ID = "id-rapid";
+// The overlapping-write bookkeeping tests write arbitrary text, which only a
+// path with no doc history keeps: a doc with history is written with the
+// doc's own text (Engram#2271), whatever the caller passed.
+const RAW = "E2E/Unmapped.md";
 const body = (i: number) => `# Rapid Edit\nVersion ${i} of 5`;
 
 /** The server's lineage: edit i rewrites the version digit, one update each. */
@@ -223,29 +227,29 @@ test("#578: a doc that moved on while discovery's write is cached is not reverte
 
 test("#578: an older flush finishing LAST does not overwrite the newer write's baseline", async () => {
 	const { e, disk, hooks } = await scenario("disc-echo-older-last");
-	disk.set(PATH, "old");
+	disk.set(RAW, "old");
 	hooks.onModify = async () => {
 		hooks.onModify = async () => {};
 		// B starts after A and finishes first; A resolves last.
-		await e.flushFromCrdt(PATH, "B");
+		await e.flushFromCrdt(RAW, "B");
 	};
-	await e.flushFromCrdt(PATH, "A");
-	expect(disk.get(PATH)).toBe("B");
-	expect(e.needsColdReconcile(PATH, "B")).toBe(false);
+	await e.flushFromCrdt(RAW, "A");
+	expect(disk.get(RAW)).toBe("B");
+	expect(e.needsColdReconcile(RAW, "B")).toBe(false);
 });
 
 test("#578: a newer flush that THROWS does not stop the older one recording its baseline", async () => {
 	const { e, disk, hooks } = await scenario("disc-echo-newer-throws");
-	disk.set(PATH, "old");
+	disk.set(RAW, "old");
 	hooks.modifyThrowsFor = "B";
 	hooks.onModify = async () => {
 		hooks.onModify = async () => {};
-		expect(await e.flushFromCrdt(PATH, "B")).toBe(false);
+		expect(await e.flushFromCrdt(RAW, "B")).toBe(false);
 	};
-	expect(await e.flushFromCrdt(PATH, "A")).toBe(true);
+	expect(await e.flushFromCrdt(RAW, "A")).toBe(true);
 	// Disk holds A, and A is the recorded baseline: no phantom drift.
-	expect(disk.get(PATH)).toBe("A");
-	expect(e.needsColdReconcile(PATH, "A")).toBe(false);
+	expect(disk.get(RAW)).toBe("A");
+	expect(e.needsColdReconcile(RAW, "A")).toBe(false);
 });
 
 test("#578: a real user edit after the discovery flush still reaches applyLocalEdit", async () => {
@@ -268,7 +272,7 @@ test("#578: a real user edit after the discovery flush still reaches applyLocalE
 
 test("#578: overlapping flushes to one path each keep their own in-flight guard", async () => {
 	const { e, disk, hooks } = await scenario("disc-echo-overlap");
-	disk.set(PATH, "old");
+	disk.set(RAW, "old");
 	let releaseInner: () => void = () => {};
 	const innerHeld = new Promise<void>((r) => {
 		releaseInner = r;
@@ -280,21 +284,21 @@ test("#578: overlapping flushes to one path each keep their own in-flight guard"
 		// The outer flush's text "A" is cached; an inner flush to the same path
 		// starts and is still writing "B" when drift capture reads disk.
 		hooks.onModify = async () => innerHeld;
-		innerDone = e.flushFromCrdt(PATH, "B");
+		innerDone = e.flushFromCrdt(RAW, "B");
 		await new Promise((r) => setTimeout(r, 0));
-		const restore = disk.get(PATH);
-		disk.set(PATH, "A");
-		checked = e.needsColdReconcile(PATH, "A");
-		disk.set(PATH, restore ?? "A");
+		const restore = disk.get(RAW);
+		disk.set(RAW, "A");
+		checked = e.needsColdReconcile(RAW, "A");
+		disk.set(RAW, restore ?? "A");
 	};
-	const outer = e.flushFromCrdt(PATH, "A");
+	const outer = e.flushFromCrdt(RAW, "A");
 	await outer;
 	expect(checked).toBe(false);
 	releaseInner();
 	await innerDone;
 	// Both writes finished: the guard is gone, the baseline governs again.
-	expect(e.needsColdReconcile(PATH, "A")).toBe(true);
-	expect(e.needsColdReconcile(PATH, "B")).toBe(false);
+	expect(e.needsColdReconcile(RAW, "A")).toBe(true);
+	expect(e.needsColdReconcile(RAW, "B")).toBe(false);
 	const maps = e as unknown as {
 		flushingHash: Map<string, unknown>;
 		flushGen: Map<string, unknown>;
@@ -333,14 +337,14 @@ test("#578: first-sync discovery with no syncState row opens no Y.Doc and enroll
 
 test("#578: an already-matching flush is newer than an older in-flight write", async () => {
 	const { e, disk, hooks } = await scenario("disc-echo-early-return");
-	disk.set(PATH, "old");
+	disk.set(RAW, "old");
 	hooks.onModify = async () => {
 		hooks.onModify = async () => {};
 		// While A is writing, disk moves to C and C's flush finds it already there.
-		disk.set(PATH, "C");
-		expect(await e.flushFromCrdt(PATH, "C")).toBe(true);
+		disk.set(RAW, "C");
+		expect(await e.flushFromCrdt(RAW, "C")).toBe(true);
 	};
-	await e.flushFromCrdt(PATH, "A");
+	await e.flushFromCrdt(RAW, "A");
 	// A resolved after C's read: its older text must not become the baseline.
-	expect(e.needsColdReconcile(PATH, "C")).toBe(false);
+	expect(e.needsColdReconcile(RAW, "C")).toBe(false);
 });
