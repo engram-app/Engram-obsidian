@@ -2417,13 +2417,46 @@ export class SyncEngine {
 		return this.crdt.hasUndeliveredOps(noteId);
 	}
 
+	/** The doc's current text when `normalized` maps to a doc with history,
+	 *  else null: what disk must hold for a CRDT note (#570). Asks a doc that is
+	 *  in memory, or one this device already tracks (a sync-state row): a note
+	 *  with neither has no local history to find, and hydrating a Y.Doc for it
+	 *  would open one per note on a first sync. */
+	private async currentDocText(normalized: string): Promise<string | null> {
+		const crdt = this.crdt;
+		const noteId = this.noteIdMap?.get(normalized);
+		if (!crdt || !noteId || typeof crdt.hasHistory !== "function") return null;
+		const resident = typeof crdt.hasDoc === "function" && crdt.hasDoc(noteId);
+		if (!resident && !this.syncState.has(normalized)) return null;
+		if (!(await crdt.hasHistory(noteId))) return null;
+		return crdt.projectedText(noteId);
+	}
+
 	/** Write a remote-merged CRDT result to disk.
 	 *  Marks the path recentlyFlushed first so the resulting vault.modify/create
 	 *  event is suppressed by the recentlyFlushed guard in handleModify (the
 	 *  'create' handler routes through handleModify too).
 	 *  Safe to call from main.ts — does not expose the private markRecentlyFlushed.
 	 *  Requires the sync gate to be open — returns early when blocked so inbound
-	 *  CRDT frames cannot overwrite local files before the user picks a direction. */
+	 *  CRDT frames cannot overwrite local files before the user picks a direction.
+	 *
+	 *  Disk follows the doc (Engram#2271). Every CRDT-managed write to a
+	 *  note's file comes through here, from callers that captured their text
+	 *  BEFORE awaiting: the stream event's first-delivery apply (the row body),
+	 *  catch-up's replay (the row body), and one registry flush per remote
+	 *  update. Five REST saves ~16 ms apart put them all in flight on one new
+	 *  note. A snapshot landing after a newer write (the create race's
+	 *  "already exists" fallback, or a caller slower than the next fan-out)
+	 *  left disk holding text the doc had moved past; its modify event then
+	 *  read as a user edit and was pushed into the doc, reverting the note
+	 *  here and, through the server, on every device.
+	 *
+	 *  So a note whose doc has history is written with the doc's text as of
+	 *  the write itself (`currentDocText`, asked again right before each disk
+	 *  call), never a caller's snapshot. A write that lands late then holds the
+	 *  newest doc, and reading it back as an edit is a no-op diff. A doc with
+	 *  no history (discovery) still writes the caller's text: the row body is
+	 *  all there is. */
 	async flushFromCrdt(path: string, content: string, loadedId?: string): Promise<boolean> {
 		if (this.syncBlocked) {
 			// FALSE, not true. This wrote nothing, and claiming otherwise is what
@@ -2440,6 +2473,9 @@ export class SyncEngine {
 			return false;
 		}
 		const normalized = normalizePath(path);
+		// A first load's text is the registry's projection of that load: the
+		// interlock below resolves held input against exactly that.
+		if (loadedId === undefined) content = (await this.currentDocText(normalized)) ?? content;
 		const file = this.app.vault.getAbstractFileByPath(normalized);
 		// Idempotency: skip the write when the file already holds exactly this
 		// content. An identical re-push re-flushes the same CRDT body; rewriting it
@@ -2459,7 +2495,10 @@ export class SyncEngine {
 		}
 		// Disk-drift interlock: `loadedId` marks the doc's first server state
 		// (see `resolveDriftOnLoad`). Never written over held local input.
-		if (loadedId && file instanceof TFile) {
+		// The interlock's answer is final: a forced merge it could not seed is
+		// the user's held input, which re-asking the doc would drop.
+		const interlocked = loadedId !== undefined && file instanceof TFile;
+		if (interlocked) {
 			const resolved = await this.resolveDriftOnLoad(normalized, file, loadedId, content);
 			if (resolved === null) return false;
 			content = resolved;
@@ -2504,6 +2543,9 @@ export class SyncEngine {
 				}
 			}
 		}
+		// Asked again: the guards above awaited, and a newer write may have
+		// started (and landed) meanwhile.
+		if (!interlocked) content = (await this.currentDocText(normalized)) ?? content;
 		this.markRecentlyFlushed(normalized);
 		const writingHash = fnv1a(content);
 		const inFlight = this.flushingHash.get(normalized) ?? new Map<number, number>();
@@ -2520,7 +2562,10 @@ export class SyncEngine {
 				// had on disk (it lived only in the Yjs doc). Create it — without this
 				// flushFromCrdt returned early and the note stayed permanently invisible
 				// on this device even though its content was in the local CRDT doc.
-				if (!(await this.createFileWithFolders(normalized, content))) return false;
+				const created = await this.createFileWithFolders(normalized, content, () =>
+					this.currentDocText(normalized),
+				);
+				if (!created) return false;
 			}
 			// CRDT delivery IS a sync: record the last-synced baseline so the REST
 			// reconcile path treats this note as server-known. Without it a
@@ -10499,15 +10544,9 @@ export class SyncEngine {
 				// over a doc at edit j left disk holding text the doc lacks: the
 				// next disk edit diffed k into j as a client copy (#578), and with
 				// no later fan-out disk stayed at k.
-				const crdt = this.crdt;
-				const body =
-					crdt &&
-					noteId &&
-					this.syncState.has(normalized) &&
-					typeof crdt.hasHistory === "function" &&
-					(await crdt.hasHistory(noteId))
-						? await crdt.projectedText(noteId)
-						: content;
+				// flushFromCrdt re-asks at the write itself (the doc can move while
+				// this awaits); asked here too for the bookkeeping below.
+				const body = (await this.currentDocText(normalized)) ?? content;
 				const wrote = await this.flushFromCrdt(normalized, body);
 				if (!wrote) return false;
 				if (body === content) this.rememberDiscoveryBase(normalized, content);
@@ -11426,7 +11465,14 @@ export class SyncEngine {
 	 *  a rename it originated, and renameFile would rewrite them again (the
 	 *  exactly-one-rewriter invariant). renameFile would be correct only against
 	 *  a server that does not rewrite at all. */
-	private async createFileWithFolders(normalized: string, content: string): Promise<boolean> {
+	/** `latest`: for a CRDT note, the doc's text at the moment of the write.
+	 *  The create-race fallback writes AFTER the winner, so it must write the
+	 *  newest text, not the snapshot this create was started with. */
+	private async createFileWithFolders(
+		normalized: string,
+		content: string,
+		latest?: () => Promise<string | null>,
+	): Promise<boolean> {
 		const folder = normalized.includes("/")
 			? normalized.substring(0, normalized.lastIndexOf("/"))
 			: "";
@@ -11483,7 +11529,7 @@ export class SyncEngine {
 					);
 					return false;
 				}
-				await this.modifyFile(raced, content);
+				await this.modifyFile(raced, (await latest?.()) ?? content);
 				this.rememberFileFor(normalized);
 				return true;
 			}
