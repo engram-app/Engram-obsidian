@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.39.0](https://github.com/engram-app/Engram-obsidian/compare/1.38.1...1.39.0) (2026-10-28)
+
+
+### Features
+
+* keep update-required state on screen until resolved ([#635](https://github.com/engram-app/Engram-obsidian/issues/635)) ([7d8f128](https://github.com/engram-app/Engram-obsidian/commit/7d8f128ea18faa54b798097121a67121f93f9df8))
+
+
+### Bug Fixes
+
+* **crdt:** disk follows the doc at the write itself ([#653](https://github.com/engram-app/Engram-obsidian/issues/653)) ([8dbcb42](https://github.com/engram-app/Engram-obsidian/commit/8dbcb42b482e22e8530465b361b6ab6d51e0d3cf))
+* **crdt:** hold local input until a discovered note's server state loads ([#640](https://github.com/engram-app/Engram-obsidian/issues/640)) ([765f8d8](https://github.com/engram-app/Engram-obsidian/commit/765f8d86a0a6b348406d7bdd098e4e877e0cff9c))
+* **i18n:** sync core, reject added currency signs ([#639](https://github.com/engram-app/Engram-obsidian/issues/639)) ([dd7653a](https://github.com/engram-app/Engram-obsidian/commit/dd7653a2d1a8034d526406a4409139c526c14301))
+* **sync:** pool idle heal rooms, back off frame latch ([#644](https://github.com/engram-app/Engram-obsidian/issues/644)) ([0a5dc6c](https://github.com/engram-app/Engram-obsidian/commit/0a5dc6ca1cad69ca5e5b5018d0894d6734952d65))
+* **sync:** revive restored note ids, no binary drift copy ([#642](https://github.com/engram-app/Engram-obsidian/issues/642)) ([e8eca5b](https://github.com/engram-app/Engram-obsidian/commit/e8eca5bb3268531c77694dea82710757af9b4af0))
+
 ## [1.38.1](https://github.com/engram-app/Engram-obsidian/compare/1.38.0...1.38.1) (2026-10-24)
 
 
