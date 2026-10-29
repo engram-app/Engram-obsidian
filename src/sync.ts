@@ -152,6 +152,9 @@ interface HealSlot {
 	reason: HealRoomReason;
 	/** The budget wait, then the STEP2 timeout. */
 	timer: number;
+	/** The STEP2 landed and committed; only the release (waiting on the
+	 *  server's trailing STEP1) is left. A timeout now is not a failure. */
+	converged?: boolean;
 }
 
 /** Room-free frame latch backoff (see `frameLatched`): 30 s, doubling, 10 min cap. */
@@ -8409,6 +8412,10 @@ export class SyncEngine {
 	 *  marked for repair, queue it again. */
 	private healSlotTimedOut(noteId: string, slot: HealSlot): void {
 		if (this.idleHealSlots.get(noteId) !== slot) return;
+		if (slot.converged) {
+			this.releaseHealRoom(noteId, null);
+			return;
+		}
 		if (this.pendingConvergence.has(noteId) || this.pendingQueueDeliveries.has(noteId)) {
 			this.idleHealRefire.add(noteId);
 		}
@@ -8642,6 +8649,7 @@ export class SyncEngine {
 	 *  and a new heal's room is that heal's to close. */
 	private releaseAfterHandshake(noteId: string, path: string | null): void {
 		const slot = this.idleHealSlots.get(noteId);
+		if (slot) slot.converged = true;
 		const release = () => {
 			if (this.idleHealSlots.get(noteId) === slot) this.releaseHealRoom(noteId, path);
 		};
