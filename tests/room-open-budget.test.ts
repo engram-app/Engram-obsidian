@@ -57,7 +57,7 @@ type Server = {
  *  IndexedDB and localStorage, talking to the same server. */
 function setup(
 	notes: string[],
-	opts: { prefix?: string; store?: Map<string, string>; prior?: Server } = {},
+	opts: { prefix?: string; store?: Map<string, unknown>; prior?: Server } = {},
 ) {
 	const server: Server = opts.prior ?? {
 		docs: new Map<string, Y.Doc>(),
@@ -66,10 +66,10 @@ function setup(
 		up: true,
 		step1s: new Map<string, number>(),
 	};
-	const kv = opts.store ?? new Map<string, string>();
+	const kv = opts.store ?? new Map<string, unknown>();
 	const store = {
-		getItem: (k: string) => kv.get(k) ?? null,
-		setItem: (k: string, v: string) => {
+		load: (k: string) => kv.get(k) ?? null,
+		save: (k: string, v: unknown) => {
 			kv.set(k, v);
 		},
 	};
@@ -169,6 +169,13 @@ function setup(
 		}
 		if (!done()) throw new Error(`settle timed out: ${label}`);
 	};
+	/** The handshake finished from BOTH sides: the STEP2 landed AND the
+	 *  server's trailing STEP1 was answered. Dropping the socket before the
+	 *  answer would re-spin a room by itself and muddy the room counts. */
+	const handshook = async (...ids: string[]) => {
+		await settle(() => ids.every((id) => reg.isSynced(id)), `handshook ${ids}`);
+		for (const id of ids) await new Promise<void>((r) => reg.afterPeerStep1(id, r));
+	};
 	/** The socket dropped and a new one joined: the server holds no rooms for it. */
 	const reconnect = (openIds: string[]) => {
 		reg.setConnected(false);
@@ -177,7 +184,18 @@ function setup(
 		engine.reopenRoomsOnRejoin(openIds);
 		reg.setConnected(true);
 	};
-	return { engine, reg, server, serverDoc, liveBound, settle, reconnect, docUpdates, kv };
+	return {
+		engine,
+		reg,
+		server,
+		serverDoc,
+		liveBound,
+		settle,
+		handshook,
+		reconnect,
+		docUpdates,
+		kv,
+	};
 }
 
 const text = (d: Y.Doc) => d.getText(CONTENT_KEY).toString();
@@ -198,10 +216,10 @@ describe("room opens against a y_ex-shaped server (#658)", () => {
 	});
 
 	test("an op lost on a half-open socket reaches the server after the rejoin, editor closed meanwhile", async () => {
-		const { reg, server, serverDoc, liveBound, settle, reconnect } = setup(["a"]);
+		const { reg, server, serverDoc, liveBound, settle, handshook, reconnect } = setup(["a"]);
 		liveBound.add("a.md");
 		reg.enroll("a"); // the editor opened it
-		await settle(() => reg.isSynced("a"), "first handshake");
+		await handshook("a");
 
 		server.up = false; // the socket is dead but still reports OPEN
 		await reg.applyLocalEdit("a", "typed while half-open");
@@ -217,10 +235,10 @@ describe("room opens against a y_ex-shaped server (#658)", () => {
 	// tab, then a remote update, unloads the doc (hibernate -> closeDoc), and the
 	// op the half-open socket dropped was never resent.
 	test("half-open op, tab closed, doc unloaded by a remote update: the rejoin still resends it", async () => {
-		const { reg, server, serverDoc, liveBound, settle, reconnect } = setup(["a"]);
+		const { reg, server, serverDoc, liveBound, settle, handshook, reconnect } = setup(["a"]);
 		liveBound.add("a.md");
 		reg.enroll("a");
-		await settle(() => reg.isSynced("a"), "first handshake");
+		await handshook("a");
 		server.up = false;
 		await reg.applyLocalEdit("a", "typed while half-open");
 		liveBound.delete("a.md");
@@ -236,7 +254,7 @@ describe("room opens against a y_ex-shaped server (#658)", () => {
 		const first = setup(["a"], { prefix: "roomBudgetRestart" });
 		first.liveBound.add("a.md");
 		first.reg.enroll("a");
-		await first.settle(() => first.reg.isSynced("a"), "first handshake");
+		await first.handshook("a");
 		first.server.up = false;
 		await first.reg.applyLocalEdit("a", "typed before the restart");
 		await first.reg.flushAcked();
@@ -256,9 +274,9 @@ describe("room opens against a y_ex-shaped server (#658)", () => {
 	});
 
 	test("the server's ack clears the resend entry: the next rejoin sends nothing", async () => {
-		const { reg, server, settle, reconnect, docUpdates } = setup(["a"]);
+		const { reg, server, settle, handshook, reconnect, docUpdates } = setup(["a"]);
 		reg.enroll("a");
-		await settle(() => reg.isSynced("a"), "first handshake");
+		await handshook("a");
 		server.up = false;
 		await reg.applyLocalEdit("a", "edit");
 		reconnect([]);
@@ -273,9 +291,9 @@ describe("room opens against a y_ex-shaped server (#658)", () => {
 	});
 
 	test("the resend waits for the sync gate, then runs once it opens", async () => {
-		const { engine, reg, server, settle, reconnect, docUpdates } = setup(["a"]);
+		const { engine, reg, server, settle, handshook, reconnect, docUpdates } = setup(["a"]);
 		reg.enroll("a");
-		await settle(() => reg.isSynced("a"), "first handshake");
+		await handshook("a");
 		server.up = false;
 		await reg.applyLocalEdit("a", "edit");
 		engine.setSyncBlocked(true); // first run: no direction picked yet
@@ -291,9 +309,9 @@ describe("room opens against a y_ex-shaped server (#658)", () => {
 	});
 
 	test("a note whose create is still queued is not resent (the row may not exist yet)", async () => {
-		const { engine, reg, server, settle, reconnect, docUpdates } = setup(["a"]);
+		const { engine, reg, server, handshook, reconnect, docUpdates } = setup(["a"]);
 		reg.enroll("a");
-		await settle(() => reg.isSynced("a"), "first handshake");
+		await handshook("a");
 		server.up = false;
 		await reg.applyLocalEdit("a", "edit");
 		engine.setCrdtHasPendingOp((id) => id === "a");
@@ -310,10 +328,10 @@ describe("room opens against a y_ex-shaped server (#658)", () => {
 	// cap), the only resend is a pooled heal, and nothing receipts a heal. The
 	// entry never cleared, so it cost a heal room on every rejoin for good.
 	test("a heal-only entry clears once the heal PROVES the server holds the doc", async () => {
-		const { engine, reg, server, settle, reconnect } = setup(["a"]);
+		const { engine, reg, server, settle, handshook, reconnect } = setup(["a"]);
 		engine.setCrdtPorts({ docUpdate: null }); // backend predates crdt_doc_update
 		reg.enroll("a");
-		await settle(() => reg.isSynced("a"), "first handshake");
+		await handshook("a");
 		await reg.applyLocalEdit("a", "delivered over the room"); // server has it
 		await new Promise((r) => setTimeout(r, 10));
 		expect(reg.needsResend("a")).toBe(true); // a room op is never receipted
@@ -329,10 +347,10 @@ describe("room opens against a y_ex-shaped server (#658)", () => {
 	});
 
 	test("a heal that cannot prove coverage costs at most ONE heal room per session", async () => {
-		const { engine, reg, server, serverDoc, settle, reconnect } = setup(["a"]);
+		const { engine, reg, server, serverDoc, settle, handshook, reconnect } = setup(["a"]);
 		engine.setCrdtPorts({ docUpdate: null });
 		reg.enroll("a");
-		await settle(() => reg.isSynced("a"), "first handshake");
+		await handshook("a");
 		server.up = false;
 		await reg.applyLocalEdit("a", "lost on a half-open socket");
 
@@ -364,9 +382,9 @@ describe("room opens against a y_ex-shaped server (#658)", () => {
 	});
 
 	test("a cold edit the server already receipted costs no room and no write at the rejoin", async () => {
-		const { reg, server, settle, reconnect, docUpdates } = setup(["a"]);
+		const { reg, server, handshook, reconnect, docUpdates } = setup(["a"]);
 		reg.enroll("a");
-		await settle(() => reg.isSynced("a"), "first handshake");
+		await handshook("a");
 		await reg.applyLocalEdit("a", "delivered cold");
 		reg.markDelivered("a", await reg.encodeDeliveryReceipt("a"));
 		const startsBefore = server.starts;
@@ -396,10 +414,10 @@ describe("room opens against a y_ex-shaped server (#658)", () => {
 	});
 
 	test("rejoin: one STEP1 per open note, none for a note closed since it was enrolled", async () => {
-		const { reg, server, settle, reconnect } = setup(["open", "closed"]);
+		const { reg, server, settle, handshook, reconnect } = setup(["open", "closed"]);
 		reg.enroll("open");
 		reg.enroll("closed");
-		await settle(() => reg.isSynced("open") && reg.isSynced("closed"), "both handshook");
+		await handshook("open", "closed");
 		server.step1s.clear();
 
 		reconnect(["open"]);

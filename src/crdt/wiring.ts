@@ -6,7 +6,7 @@ import type { SyncEngine } from "../sync";
 import { isDestroyedError } from "./destroyed-error";
 import { InvariantChecker, type InvariantViolation } from "./invariants";
 import type { NoteIdMap } from "./note-id-map";
-import { ProviderRegistry } from "./provider-registry";
+import { ProviderRegistry, type ResendStore } from "./provider-registry";
 import { fromB64 } from "./wire";
 
 /** SyncEngine members the CRDT wiring actually touches. Structural so tests can
@@ -89,7 +89,7 @@ export interface CrdtWiringDeps {
 	 *  run two "devices" against one shared fake-indexeddb process. */
 	dbPrefix?: string;
 	/** See `ProviderRegistryOpts.resendStore` (#658). */
-	resendStore?: Pick<Storage, "getItem" | "setItem">;
+	resendStore?: ResendStore;
 	/** See ProviderRegistryOpts.ackScope. */
 	ackScope?: () => string;
 	/** Merge base for a note_id (#357), resolved through the id map to the path

@@ -2949,7 +2949,10 @@ export default class EngramSyncPlugin extends Plugin {
 						const wiring = createCrdtWiring({
 							// #658: notes with edits past the server-acked mark survive an
 							// unloaded doc and a restart.
-							resendStore: window.localStorage,
+							resendStore: {
+								load: (key) => this.app.loadLocalStorage(key),
+								save: (key, value) => this.app.saveLocalStorage(key, value),
+							},
 							ackScope: () =>
 								ackScopeFor(this.settings.apiUrl, this.settings.vaultId),
 							noteIdMap: this.noteIdMap,

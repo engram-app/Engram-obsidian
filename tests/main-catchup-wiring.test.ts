@@ -106,6 +106,9 @@ function makeFakeThis(catchup: () => Promise<void>, pull: () => Promise<number>,
 		},
 		app: {
 			workspace: { getLeavesOfType: () => [] },
+			// The resend list's vault-scoped store (#658).
+			loadLocalStorage: () => null,
+			saveLocalStorage: () => {},
 		},
 		api: {
 			getMe: () => Promise.resolve({ id: "user-1", email: "a@example.com" }),

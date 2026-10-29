@@ -8704,6 +8704,9 @@ export class SyncEngine {
 		void this.resendUnacked(reg.needsResendIds().filter((id) => !keep.has(id)));
 	}
 
+	/** Notes this session already gave a fallback resend heal (#658). */
+	private readonly resendHealed = this.track(["vault", "destroy"], new Set<string>());
+
 	/** Resend each note's unacked ops room-free, one at a time; the ack
 	 *  (`markDelivered`) clears the persisted mark. A note the room-free write
 	 *  cannot carry falls back to a pooled, budgeted heal. An unmapped id is
@@ -8714,13 +8717,22 @@ export class SyncEngine {
 		if (this.syncBlocked) return;
 		for (const noteId of ids) {
 			const path = this.noteIdMap?.pathForId(noteId);
-			if (!path) continue;
+			if (!path) {
+				this.crdt?.forgetResend?.(noteId); // deleted or out of scope: undeliverable
+				continue;
+			}
 			// Its create is still queued: the row may not exist yet, and the queue
 			// delivers the edit with the create.
 			if (this.crdtHasPendingOp?.(noteId)) continue;
 			// An open note's room carries its ops.
 			if (this.isLiveBound(normalizePath(path))) continue;
 			if (await this.deliverQueuedOpsRoomFree({ path, noteId })) continue;
+			// Heal-only (no room-free write for this note). One per note per
+			// session: a heal that proves the server holds the doc clears the
+			// entry (`ackIfPeerCovers`); one that cannot waits for the next
+			// session rather than costing a room on every rejoin.
+			if (this.resendHealed.has(noteId)) continue;
+			this.resendHealed.add(noteId);
 			this.poolIdleHeal(path, noteId, "undelivered");
 		}
 	}

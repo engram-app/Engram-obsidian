@@ -10,7 +10,9 @@
 // …) so the SyncEngine + CrdtLiveViews route through it unchanged. Methods that
 // only made sense for the old churny lifecycle (hibernation, flatten, gap
 // re-handshake) become no-ops the persistent doc doesn't need.
+import * as decoding from "lib0/decoding";
 import { IndexeddbPersistence } from "y-indexeddb";
+import * as syncProtocol from "y-protocols/sync";
 import * as Y from "yjs";
 import { Lifetime } from "../lifetime";
 import { rlog } from "../remote-log";
@@ -26,6 +28,7 @@ import {
 import { merge3, mergeDiskOntoDoc, overwritesConcurrentEdit } from "./lca-merge";
 import { type FrameKind, NoteProvider } from "./note-provider";
 import { docHasAnyHistory, docHasHistory, seedContentInto, seedFrontmatterInto } from "./note-seed";
+import { fromB64, MESSAGE_SYNC } from "./wire";
 
 export type DocKind = "note" | "canvas";
 
@@ -79,6 +82,36 @@ function isEmptyDoc(doc: Y.Doc): boolean {
 	return doc.store.clients.size === 0;
 }
 
+/** Where the resend list persists: Obsidian's vault-scoped
+ *  `app.loadLocalStorage` / `saveLocalStorage` (JSON values). */
+export interface ResendStore {
+	load(key: string): unknown;
+	save(key: string, value: unknown): void;
+}
+
+/** The handshake half of an inbound frame: a syncStep1's state vector or a
+ *  syncStep2's delete set. Null for anything else or a frame that won't
+ *  decode (the provider reports those). */
+function readHandshakeFrame(
+	frameB64: string,
+): { step: 1; vector: Map<number, number> } | { step: 2; deletes: DeleteRanges } | null {
+	try {
+		const decoder = decoding.createDecoder(fromB64(frameB64));
+		if (decoding.readVarUint(decoder) !== MESSAGE_SYNC) return null;
+		const type = decoding.readVarUint(decoder);
+		const payload = decoding.readVarUint8Array(decoder);
+		if (type === syncProtocol.messageYjsSyncStep1) {
+			return { step: 1, vector: Y.decodeStateVector(payload) };
+		}
+		if (type === syncProtocol.messageYjsSyncStep2) {
+			return { step: 2, deletes: Y.decodeUpdate(payload).ds.clients as DeleteRanges };
+		}
+	} catch {
+		// Not a well-formed handshake frame: no proof either way.
+	}
+	return null;
+}
+
 function snapshotOf(doc: Y.Doc): Uint8Array {
 	return Y.encodeSnapshot(Y.snapshot(doc));
 }
@@ -118,6 +151,9 @@ interface Entry {
 	 *  hydration and on each ack. While true a remote merge does not advance
 	 *  the receipt, because the doc holds work the server may lack. */
 	localSinceAck: boolean;
+	/** The delete set of the peer's last syncStep2, held until its syncStep1
+	 *  arrives so the pair can prove coverage (`ackIfPeerCovers`). */
+	peerDeletes?: DeleteRanges;
 	/** In-flight disk-flush from the last remote merge; applyRemoteUpdate awaits
 	 *  it so a write failure can leave crdtHead unadvanced (#235). */
 	pendingFlush: Promise<void> | null;
@@ -206,7 +242,7 @@ export interface ProviderRegistryOpts {
 	onLossyMerge?: (noteId: string) => void;
 	/** Where the resend set persists (#658); typically window.localStorage.
 	 *  Absent = in memory for the session. */
-	resendStore?: Pick<Storage, "getItem" | "setItem">;
+	resendStore?: ResendStore;
 }
 
 export class ProviderRegistry {
@@ -244,34 +280,41 @@ export class ProviderRegistry {
 	/** Fixed at construction, like the acked mark's key: scoped to the server +
 	 *  vault, so a relink or vault switch never inherits another's list. */
 	private readonly resendKey: string;
+	/** The list changed and is not yet stored; written on the acked mark's
+	 *  debounce, so a bulk edit is one write, not one per note. */
+	private resendTimer: number | null = null;
 
 	constructor(private readonly opts: ProviderRegistryOpts) {
-		const scope = opts.ackScope?.() ?? opts.dbPrefix ?? "";
+		// `||`: an empty scope (vault not set yet) must not share one key.
+		const scope = opts.ackScope?.() || opts.dbPrefix || "";
 		this.resendKey = `engram-crdt-resend/${scope}`;
-		this.resendIds = new Set(this.loadResendIds());
-	}
-
-	private loadResendIds(): string[] {
-		try {
-			const raw = this.opts.resendStore?.getItem(this.resendKey);
-			const ids: unknown = raw ? JSON.parse(raw) : [];
-			return Array.isArray(ids) ? ids.filter((id) => typeof id === "string") : [];
-		} catch {
-			// Unreadable: start empty. Worst case an unacked edit waits for the
-			// note to be opened, as before #658.
-			return [];
-		}
+		const stored = opts.resendStore?.load(this.resendKey);
+		this.resendIds = new Set(
+			Array.isArray(stored)
+				? stored.filter((id): id is string => typeof id === "string")
+				: [],
+		);
 	}
 
 	private trackResend(noteId: string, pending: boolean): void {
 		if (pending === this.resendIds.has(noteId)) return;
 		if (pending) this.resendIds.add(noteId);
 		else this.resendIds.delete(noteId);
-		try {
-			this.opts.resendStore?.setItem(this.resendKey, JSON.stringify([...this.resendIds]));
-		} catch (err) {
-			this.opts.onPersistError?.(noteId, err);
-		}
+		if (this.resendTimer !== null || !this.opts.resendStore) return;
+		this.resendTimer = window.setTimeout(() => this.flushResendIds(), ACKED_PERSIST_MS);
+	}
+
+	private flushResendIds(): void {
+		if (this.resendTimer === null) return;
+		window.clearTimeout(this.resendTimer);
+		this.resendTimer = null;
+		this.opts.resendStore?.save(this.resendKey, [...this.resendIds]);
+	}
+
+	/** Drop a resend entry that can no longer be delivered: its id maps to no
+	 *  path any more (deleted, or out of sync scope). */
+	forgetResend(noteId: string): void {
+		if (!this.entries.has(noteId)) this.trackResend(noteId, false);
 	}
 
 	/** The set of note_ids holding an open CRDT room (STEP1-advertised). Read by
@@ -896,6 +939,7 @@ export class ProviderRegistry {
 
 	/** Persist every pending acked mark now (app backgrounded, shutdown). */
 	async flushAcked(): Promise<void> {
+		this.flushResendIds();
 		await Promise.all([...this.entries].map(([id, e]) => this.persistAcked(id, e)));
 	}
 
@@ -992,7 +1036,28 @@ export class ProviderRegistry {
 	/** Route an inbound wire frame to its provider (creating it if a fan-out
 	 *  announced a note this device hasn't opened). */
 	async receive(noteId: string, frameB64: string): Promise<void> {
-		(await this.entry(noteId)).provider.receive(frameB64);
+		const e = await this.entry(noteId);
+		const peer = readHandshakeFrame(frameB64);
+		if (peer?.step === 2) e.peerDeletes = peer.deletes;
+		e.provider.receive(frameB64);
+		if (peer?.step === 1) this.ackIfPeerCovers(noteId, e, peer.vector);
+	}
+
+	/** A handshake is a VERIFIED ack when the peer's own state covers this doc:
+	 *  its syncStep1 vector holds every struct and its syncStep2's delete set
+	 *  (a full one: y_ex encodes it whole) every deletion. Then the server
+	 *  provably has it, so the acked mark advances, through `markDelivered`,
+	 *  the same one definition a room-free receipt uses (#658). Our reply to
+	 *  that syncStep1 is NOT proof (unacked; a half-open socket drops it), so a
+	 *  doc that only the reply would complete stays marked. */
+	private ackIfPeerCovers(noteId: string, e: Entry, vector: Map<number, number>): void {
+		const deletes = e.peerDeletes;
+		e.peerDeletes = undefined;
+		if (!deletes || !this.resendIds.has(noteId)) return;
+		const local = Y.snapshot(e.doc);
+		if (svCovers(vector, local.sv) && dsCovers(deletes, local.ds.clients)) {
+			this.markDelivered(noteId, Y.encodeSnapshot(local));
+		}
 	}
 
 	/** Enroll: OPEN a room for this note — advertise syncStep1 (the down-sync
@@ -1319,6 +1384,7 @@ export class ProviderRegistry {
 
 	async destroyAll(): Promise<void> {
 		this.flushRoomOpenCounts();
+		this.flushResendIds();
 		for (const noteId of [...this.entries.keys()]) await this.destroy(noteId, false);
 		this.removedAtSeq.clear();
 		this.removedAtPath.clear();
