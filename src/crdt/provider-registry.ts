@@ -200,6 +200,10 @@ export interface ProviderRegistryOpts {
 	 *  concurrent edit already in the doc (`overwritesConcurrentEdit`): the
 	 *  doc's side is silently dropped. Measurement only; behaviour unchanged. */
 	onLossyMerge?: (noteId: string) => void;
+	/** Does this note's owner still want its room after a reconnect? An open
+	 *  editor or an in-flight heal does; a note closed since it was enrolled
+	 *  does not. Absent = keep every room (the pre-#658 behaviour). */
+	keepRoomOnReconnect?: (noteId: string) => boolean;
 }
 
 export class ProviderRegistry {
@@ -996,8 +1000,25 @@ export class ProviderRegistry {
 	 *  connect each re-advertises via syncStep1 — the reason the doc layer
 	 *  outlives the socket. */
 	setConnected(connected: boolean): void {
+		// #658: nothing un-advertises a note when its editor closes, so this set
+		// grows with every note opened in the session, and each one re-sent its
+		// syncStep1 on every reconnect: a fresh server room apiece, outside the
+		// heal budget. Close the unwanted ones before the re-advertise. The new
+		// socket holds no rooms yet, so there is nothing to release server-side.
+		const keep = this.opts.keepRoomOnReconnect;
+		if (connected && !this.connected && keep) {
+			for (const id of [...this.enrolledIds]) if (!keep(id)) this.reset(id);
+		}
 		this.connected = connected;
 		for (const e of this.entries.values()) e.provider.setConnected(connected);
+	}
+
+	/** Run `fn` once the note's handshake is answered from both sides (see
+	 *  `NoteProvider.afterPeerStep1`); at once for a note with no resident doc. */
+	afterPeerStep1(noteId: string, fn: () => void): void {
+		const e = this.entries.get(noteId);
+		if (e) e.provider.afterPeerStep1(fn);
+		else fn();
 	}
 
 	// --- Synced bookkeeping -----------------------------------------------------

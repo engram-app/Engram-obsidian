@@ -458,11 +458,20 @@ type CrdtDocUpdateFn = (docId: string, b64: string) => Promise<{ head: string }>
  *  `setX` methods on SyncEngine are thin shims over this, kept because they
  *  are harness-facing surface (engram/e2e/headless/run.ts and
  *  tests/sim/replica.ts drive them). */
+/** Opening and closing a note's room. `afterPeerStep1` defers a close until
+ *  the handshake is answered from both sides (#658); a port without it closes
+ *  at once. */
+export interface CrdtEnrollmentPort {
+	enroll(noteId: string): void;
+	reset(noteId: string): void;
+	afterPeerStep1?(noteId: string, fn: () => void): void;
+}
+
 export interface CrdtPorts {
 	manager?: ProviderRegistry | null;
 	deviceId?: string | null;
 	noteIdMap?: NoteIdMap | null;
-	enrollment?: { enroll(path: string): void; reset(path: string): void } | null;
+	enrollment?: CrdtEnrollmentPort | null;
 	create?:
 		| ((
 				docId: string,
@@ -1805,11 +1814,9 @@ export class SyncEngine {
 	 *  handshake; `reset` (Task 5) clears the once-per-session enroll guard so a
 	 *  note recreated at the same path re-runs the full handshake rather than
 	 *  silently reusing the stale enrolled state from before the delete/rename. */
-	private crdtEnrollment: { enroll(path: string): void; reset(path: string): void } | null = null;
+	private crdtEnrollment: CrdtEnrollmentPort | null = null;
 
-	setCrdtEnrollment(
-		enrollment: { enroll(path: string): void; reset(path: string): void } | null,
-	): void {
+	setCrdtEnrollment(enrollment: CrdtEnrollmentPort | null): void {
 		this.setCrdtPorts({ enrollment });
 	}
 
@@ -8564,8 +8571,8 @@ export class SyncEngine {
 			// stays a pure no-op (commit fires on every inbound frame).
 			// An idle heal's room (gap heal, history-less delta) has done its job
 			// too: close it, so the freed slot means a closed room.
-			if (queued) this.releaseHealRoom(noteId, queued.path);
-			else if (this.idleHealSlots.has(noteId)) this.releaseHealRoom(noteId, null);
+			if (queued) this.releaseAfterHandshake(noteId, queued.path);
+			else if (this.idleHealSlots.has(noteId)) this.releaseAfterHandshake(noteId, null);
 			return;
 		}
 		// Provider model: the provider fired onSynced from readSyncMessage — the doc is
@@ -8626,7 +8633,30 @@ export class SyncEngine {
 				`socket converge: commit failed for ${noteRef(path)} note_id=${noteId}: ${errMsg(e, path)}`,
 			);
 		}
-		this.releaseHealRoom(noteId, path);
+		this.releaseAfterHandshake(noteId, path);
+	}
+
+	/** Release once the server's trailing STEP1 is answered, not on the STEP2
+	 *  (#658: answering it on a closed room re-started the room). Skipped when
+	 *  the room changed hands meanwhile: a slot that timed out already released,
+	 *  and a new heal's room is that heal's to close. */
+	private releaseAfterHandshake(noteId: string, path: string | null): void {
+		const slot = this.idleHealSlots.get(noteId);
+		const release = () => {
+			if (this.idleHealSlots.get(noteId) === slot) this.releaseHealRoom(noteId, path);
+		};
+		if (this.crdtEnrollment?.afterPeerStep1)
+			this.crdtEnrollment.afterPeerStep1(noteId, release);
+		else release();
+	}
+
+	/** Should this note keep its room across a reconnect (#658)? Only while an
+	 *  editor shows it or a heal holds a pool slot for it; any other note is
+	 *  idle and converges over the vault fan-out, room-free. */
+	wantsRoom(noteId: string): boolean {
+		if (this.idleHealSlots.has(noteId)) return true;
+		const path = this.noteIdMap?.pathForId(noteId);
+		return path != null && this.isLiveBound(normalizePath(path));
 	}
 
 	/** Release the TRANSIENT heal room once its job is done (fan-out idle

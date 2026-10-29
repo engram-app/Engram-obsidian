@@ -74,6 +74,11 @@ export class NoteProvider {
 	 *  idle note never contributes to the server room fan-out (the connect-storm
 	 *  the fan-out design avoids). Set via setAdvertised on enroll. */
 	private advertised = false;
+	/** Our syncStep1 went out and the peer's own syncStep1, which y_ex sends
+	 *  right behind its syncStep2, is not answered yet. Releases waiting on that
+	 *  answer queue in `afterAnswer` (see `afterPeerStep1`). */
+	private peerStep1Owed = false;
+	private readonly afterAnswer: (() => void)[] = [];
 	/** False while local persistence is still replaying into the doc: the update
 	 *  handler drops those (already-persisted) updates instead of broadcasting them.
 	 *  Flipped true by activate() once IndexedDB has finished loading. */
@@ -203,6 +208,7 @@ export class NoteProvider {
 	setConnected(connected: boolean): void {
 		if (!connected) {
 			this.connected = false;
+			this.settlePeerStep1(); // that answer can no longer come
 			return;
 		}
 		const wasConnected = this.connected;
@@ -236,7 +242,27 @@ export class NoteProvider {
 		const encoder = encoding.createEncoder();
 		encoding.writeVarUint(encoder, MESSAGE_SYNC);
 		syncProtocol.writeSyncStep1(encoder, this.doc);
-		this.send(toB64(encoding.toUint8Array(encoder)), "handshake");
+		if (this.send(toB64(encoding.toUint8Array(encoder)), "handshake")) {
+			this.peerStep1Owed = true;
+		}
+	}
+
+	/** Run `fn` once this handshake is finished from BOTH sides: the peer's
+	 *  syncStep1 that follows its syncStep2 has been answered. At once when no
+	 *  handshake is in flight.
+	 *
+	 *  For closing a room (#658). Closing it on the syncStep2 left the trailing
+	 *  syncStep1 to be answered on a room the server had just torn down, and
+	 *  that answer started the room again: two server room starts per heal, the
+	 *  second outside the heal pool's budget and never released. */
+	afterPeerStep1(fn: () => void): void {
+		if (this.peerStep1Owed) this.afterAnswer.push(fn);
+		else fn();
+	}
+
+	private settlePeerStep1(): void {
+		this.peerStep1Owed = false;
+		for (const fn of this.afterAnswer.splice(0)) fn();
 	}
 
 	/** messageSync handler: apply an inbound frame and, for an
@@ -261,11 +287,14 @@ export class NoteProvider {
 			this.synced = true;
 			this.onSynced?.();
 		}
+		// Answered above, so a room closed now is closed for good.
+		if (syncType === syncProtocol.messageYjsSyncStep1) this.settlePeerStep1();
 	}
 
 	/** Detach the update listener. Call ONLY when the note truly closes / on
 	 *  unload — NOT on a transport reconnect. */
 	destroy(): void {
 		this.doc.off("update", this.updateHandler);
+		this.settlePeerStep1();
 	}
 }

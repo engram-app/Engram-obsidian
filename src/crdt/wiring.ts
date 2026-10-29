@@ -46,6 +46,8 @@ export interface CrdtWiringDeps {
 	 *  the binding stays authoritative. Backed lazily by CrdtLiveViews (which is
 	 *  constructed after this wiring), so it must be a closure, not a value. */
 	isBound: (path: string) => boolean;
+	/** See `ProviderRegistryOpts.keepRoomOnReconnect` (#658). */
+	keepRoomOnReconnect?: (noteId: string) => boolean;
 	/** Every currently bound path. Enumerable counterpart to `isBound`, so the
 	 *  invariant checker can assert properties across the whole binding set
 	 *  rather than one path at a time. Same lazy-closure reason as `isBound`.
@@ -291,6 +293,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		lcaFor: deps.lcaFor,
 		onDirtyMerge: deps.onDirtyMerge,
 		onLossyMerge: deps.onLossyMerge,
+		keepRoomOnReconnect: deps.keepRoomOnReconnect,
 		send: (docId, frame, kind) => {
 			// Create-before-edit: hold OPS until the note's server row exists. Never
 			// hold a "handshake" frame (syncStep1, or the syncStep2 written in reply

@@ -2980,6 +2980,9 @@ export default class EngramSyncPlugin extends Plugin {
 							// crdtLiveViews is constructed just below; read the field at call
 							// time, never capture a value.
 							isBound: (path) => this.crdtLiveViews?.isBound(path) ?? false,
+							// #658: a reconnect re-opens only an open editor's room or an
+							// in-flight heal's, not every note enrolled this session.
+							keepRoomOnReconnect: (id) => this.syncEngine.wantsRoom(id),
 							boundPaths: () => this.crdtLiveViews?.boundPaths() ?? [],
 							// Fix wave 6: nudge Obsidian's save pipeline after a remote merge
 							// paints into an unfocused bound editor (CI doesn't flush it).
