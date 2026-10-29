@@ -49,6 +49,8 @@ function harness(
 		time?: ManualTimeProvider;
 		liveBound?: Set<string>;
 		dropStep2?: (noteId: string, attempt: number) => boolean;
+		/** Hold the server's trailing STEP1s until `deliverTrailing()`. */
+		holdTrailing?: boolean;
 	} = {},
 ) {
 	const time = opts.time ?? new ManualTimeProvider(1_000_000);
@@ -63,6 +65,10 @@ function harness(
 	// (y_ex `encode_sync_step1_response_v1`). Ids here have that trailing STEP1
 	// still in flight; the releases waiting on its answer queue under them.
 	const owedStep1 = new Map<string, (() => void)[]>();
+	const heldTrailing: (() => void)[] = [];
+	const deliverTrailing = () => {
+		for (const fn of heldTrailing.splice(0)) fn();
+	};
 	engine.setCrdtManager({
 		hasUndeliveredOps: () => false,
 		hasCurrentDeliveryReceipt: () => false,
@@ -115,12 +121,14 @@ function harness(
 					// can no longer stop it. The device answers it on a later frame; a
 					// room closed by then is started again by that answer.
 					owedStep1.set(noteId, []);
-					setTimeout(() => {
+					const trailing = () => {
 						if (!rooms.open.has(noteId)) rooms.respins++;
 						const waiting = owedStep1.get(noteId) ?? [];
 						owedStep1.delete(noteId);
 						for (const fn of waiting) fn();
-					}, 0);
+					};
+					if (opts.holdTrailing) heldTrailing.push(trailing);
+					else setTimeout(trailing, 0);
 					void engine.commitCrdtConvergence(noteId);
 				}, 1),
 			);
@@ -151,7 +159,7 @@ function harness(
 			if (!done()) time.advance(stepMs);
 		}
 	};
-	return { engine, rooms, time, settle };
+	return { engine, rooms, time, settle, deliverTrailing };
 }
 
 /** Most room starts in any 60 s window. */
@@ -202,6 +210,20 @@ describe("idle heal rooms are pooled (Engram#2242)", () => {
 		expect(rooms.starts).toBe(N);
 		expect(rooms.respins).toBe(0);
 		expect(rooms.open.size).toBe(0);
+	});
+
+	test("a trailing STEP1 slower than the slot timeout is not a heal failure", async () => {
+		const { engine, rooms, time, deliverTrailing } = harness({ holdTrailing: true });
+		(engine as any).socketConverge(path(0), id(0), "other");
+		await new Promise((r) => setTimeout(r, 10)); // STEP2 lands, commit runs
+
+		time.advance(31_000); // past HEAL_SLOT_TIMEOUT_MS, trailing STEP1 still out
+		await new Promise((r) => setTimeout(r, 0));
+		deliverTrailing();
+
+		expect((engine as any).healRetries.get(id(0))).toBeUndefined();
+		expect(rooms.open.size).toBe(0);
+		expect((engine as any).idleHealSlots.size).toBe(0);
 	});
 
 	test(`${N} idle notes with UNDELIVERED ops (the read is not legal): same bound`, async () => {

@@ -252,6 +252,31 @@ describe("closing a room after the handshake (#658)", () => {
 		p.destroy();
 	});
 
+	test("two STEP1s in flight: the release waits for the SECOND trailing syncStep1", () => {
+		const server = new Y.Doc();
+		const sent: string[] = [];
+		const p = new NoteProvider(new Y.Doc());
+		p.setSend((frame) => {
+			sent.push(frame);
+			return true;
+		});
+		p.setAdvertised(true);
+		p.connect();
+		p.requestMissing(); // a gap heal re-asks before the first pair is back
+		const first = serverAnswer(server, sent[0] as string);
+		const second = serverAnswer(server, sent[1] as string);
+
+		let released = 0;
+		p.afterPeerStep1(() => released++);
+		p.receive(first.step2);
+		p.receive(first.step1);
+		expect(released).toBe(0); // the second pair is still out
+		p.receive(second.step2);
+		p.receive(second.step1);
+		expect(released).toBe(1);
+		p.destroy();
+	});
+
 	test("afterPeerStep1 runs at once when no handshake is in flight", () => {
 		const p = new NoteProvider(new Y.Doc());
 		p.setSend(() => true);
