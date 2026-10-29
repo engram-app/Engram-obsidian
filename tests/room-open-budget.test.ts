@@ -369,6 +369,28 @@ describe("room opens against a y_ex-shaped server (#658)", () => {
 		await reg.destroyAll();
 	});
 
+	// A deletion moves no state vector, so a heal whose server vector covers
+	// the doc proves nothing about a delete the half-open socket dropped. Only
+	// the delete set can, and the server's still lacks it.
+	test("a delete lost on a half-open socket keeps its entry when only the state vector is covered", async () => {
+		const { engine, reg, server, serverDoc, settle, handshook, reconnect } = setup(["a"]);
+		engine.setCrdtPorts({ docUpdate: null }); // heal-only
+		serverDoc("a").getText(CONTENT_KEY).insert(0, "hello world");
+		reg.enroll("a");
+		await handshook("a");
+		server.up = false;
+		await reg.applyLocalEdit("a", "hello"); // a pure deletion
+		expect(reg.needsResend("a")).toBe(true);
+
+		reconnect([]);
+		await settle(() => text(serverDoc("a")) === "hello", "the heal delivered the delete");
+		await new Promise<void>((r) => reg.afterPeerStep1("a", r));
+
+		// The server's STEP1 vector covers the doc; its STEP2 delete set did not.
+		expect(reg.needsResend("a")).toBe(true);
+		await reg.destroyAll();
+	});
+
 	test("an id with no path left is dropped from the resend list", async () => {
 		const { reg, reconnect } = setup([]);
 		(reg as any).trackResend("gone", true);
