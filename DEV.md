@@ -151,7 +151,7 @@ This lets you verify the fix before it merges, and revert back to stable by rein
 
 ### Branch protection
 
-`main` requires two passing checks: `build-and-test` and `version-check / version-check`.
+`main` requires the `build-and-test` check, signed commits and squash merges (the `protect-main` repo ruleset is the source of truth).
 
 ## Settings reference
 
@@ -200,8 +200,8 @@ Anything outside both sets is silently ignored by `isSyncable()`.
 
 ## Contributing
 
-- **Everything goes through a PR: no exceptions, including doc-only changes.** The old "docs can land on `main` directly" carve-out is rescinded (it drifted into code commits and bypassed the test gate). `main` is protected with `enforce_admins=true`; the release pipeline only fires on PR merge, so direct pushes break the deploy. See `CLAUDE.md` → Git Workflow.
-- Code changes: CI must pass and the version must be bumped before merge.
+- **Everything goes through a PR: no exceptions, including doc-only changes.** The old "docs can land on `main` directly" carve-out is rescinded (it drifted into code commits and bypassed the test gate). `main` is protected by a ruleset (squash only, signed commits, `build-and-test` required); the release pipeline only fires on PR merge, so direct pushes break the deploy. See `AGENTS.md` "Hard rules".
+- Code changes: CI must pass before merge. Do not bump the version: release-please owns it.
 - Conventional Commits: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`; subject ≤50 chars.
 - Tests are the spec. Add or update tests alongside code changes; never modify tests to mask a regression.
 

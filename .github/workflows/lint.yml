@@ -134,7 +134,8 @@ jobs:
           #   - dead org refs → [[project_engram_app_org_complete]]
           # Stripe references are intentionally NOT linted — too noisy
           # against legitimate "Stripe removed" historical context.
-          mapfile -t files < <(find . -name 'CLAUDE.md' -type f -not -path './.git/*')
+          # CLAUDE.md is a symlink to AGENTS.md, so scan the real file too.
+          mapfile -t files < <(find . \( -name 'CLAUDE.md' -o -name 'AGENTS.md' \) -type f -not -path './.git/*' -not -path './node_modules/*')
           if [ ${#files[@]} -eq 0 ]; then
             echo "OK — no CLAUDE.md files in repo."
             exit 0

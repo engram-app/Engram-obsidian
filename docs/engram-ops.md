@@ -23,7 +23,7 @@ A project-scoped MCP server (`obsidian-devtools`) connects to it for runtime ins
 
 **Launch config:** `~/.local/share/applications/obsidian.desktop` has `--remote-debugging-port=9222` in the Exec line. The flag must be present to enable CDP — without it, no debug server starts.
 
-**CLI launch:** `DISPLAY=:0 /home/open-claw/Applications/Obsidian.AppImage --no-sandbox --remote-debugging-port=9222`
+**CLI launch:** `DISPLAY=:0 ~/Applications/Obsidian.AppImage --no-sandbox --remote-debugging-port=9222`
 
 **Verify it's working:**
 ```bash
