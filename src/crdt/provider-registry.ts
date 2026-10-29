@@ -1037,7 +1037,9 @@ export class ProviderRegistry {
 	 *  announced a note this device hasn't opened). */
 	async receive(noteId: string, frameB64: string): Promise<void> {
 		const e = await this.entry(noteId);
-		const peer = readHandshakeFrame(frameB64);
+		// Only a note on the resend list needs the coverage proof; skip the
+		// decode (a whole STEP2 update) for every other frame.
+		const peer = this.resendIds.has(noteId) ? readHandshakeFrame(frameB64) : null;
 		if (peer?.step === 2) e.peerDeletes = peer.deletes;
 		e.provider.receive(frameB64);
 		if (peer?.step === 1) this.ackIfPeerCovers(noteId, e, peer.vector);
@@ -1053,7 +1055,7 @@ export class ProviderRegistry {
 	private ackIfPeerCovers(noteId: string, e: Entry, vector: Map<number, number>): void {
 		const deletes = e.peerDeletes;
 		e.peerDeletes = undefined;
-		if (!deletes || !this.resendIds.has(noteId)) return;
+		if (!deletes) return;
 		const local = Y.snapshot(e.doc);
 		if (svCovers(vector, local.sv) && dsCovers(deletes, local.ds.clients)) {
 			this.markDelivered(noteId, Y.encodeSnapshot(local));
