@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.39.1](https://github.com/engram-app/Engram-obsidian/compare/1.39.0...1.39.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* stop CRDT room starts outside the heal budget ([#660](https://github.com/engram-app/Engram-obsidian/issues/660)) ([59833d5](https://github.com/engram-app/Engram-obsidian/commit/59833d574b4b568e10ad6af21eb37f516deb032d))
+
 ## [1.39.0](https://github.com/engram-app/Engram-obsidian/compare/1.38.1...1.39.0) (2026-10-28)
 
 
