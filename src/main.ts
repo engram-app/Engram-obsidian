@@ -2950,7 +2950,7 @@ export default class EngramSyncPlugin extends Plugin {
 							// #658: notes with edits past the server-acked mark survive an
 							// unloaded doc and a restart.
 							resendStore: {
-								load: (key) => this.app.loadLocalStorage(key),
+								load: (key): unknown => this.app.loadLocalStorage(key),
 								save: (key, value) => this.app.saveLocalStorage(key, value),
 							},
 							ackScope: () =>

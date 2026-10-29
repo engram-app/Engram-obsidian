@@ -104,7 +104,7 @@ function readHandshakeFrame(
 			return { step: 1, vector: Y.decodeStateVector(payload) };
 		}
 		if (type === syncProtocol.messageYjsSyncStep2) {
-			return { step: 2, deletes: Y.decodeUpdate(payload).ds.clients as DeleteRanges };
+			return { step: 2, deletes: Y.decodeUpdate(payload).ds.clients };
 		}
 	} catch {
 		// Not a well-formed handshake frame: no proof either way.
