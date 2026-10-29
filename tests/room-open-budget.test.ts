@@ -306,6 +306,63 @@ describe("room opens against a y_ex-shaped server (#658)", () => {
 		await reg.destroyAll();
 	});
 
+	// Round 4: with no room-free write (an older self-host, a note over the
+	// cap), the only resend is a pooled heal, and nothing receipts a heal. The
+	// entry never cleared, so it cost a heal room on every rejoin for good.
+	test("a heal-only entry clears once the heal PROVES the server holds the doc", async () => {
+		const { engine, reg, server, settle, reconnect } = setup(["a"]);
+		engine.setCrdtPorts({ docUpdate: null }); // backend predates crdt_doc_update
+		reg.enroll("a");
+		await settle(() => reg.isSynced("a"), "first handshake");
+		await reg.applyLocalEdit("a", "delivered over the room"); // server has it
+		await new Promise((r) => setTimeout(r, 10));
+		expect(reg.needsResend("a")).toBe(true); // a room op is never receipted
+
+		reconnect([]);
+		await settle(() => !reg.needsResend("a"), "the heal verified coverage");
+		const starts = server.starts;
+		reconnect([]);
+		await new Promise((r) => setTimeout(r, 30));
+
+		expect(server.starts).toBe(starts); // nothing left to resend
+		await reg.destroyAll();
+	});
+
+	test("a heal that cannot prove coverage costs at most ONE heal room per session", async () => {
+		const { engine, reg, server, serverDoc, settle, reconnect } = setup(["a"]);
+		engine.setCrdtPorts({ docUpdate: null });
+		reg.enroll("a");
+		await settle(() => reg.isSynced("a"), "first handshake");
+		server.up = false;
+		await reg.applyLocalEdit("a", "lost on a half-open socket");
+
+		reconnect([]);
+		await settle(() => text(serverDoc("a")) === "lost on a half-open socket", "healed");
+		await new Promise((r) => setTimeout(r, 20));
+		const starts = server.starts;
+		reconnect([]);
+		reconnect([]);
+		await new Promise((r) => setTimeout(r, 30));
+
+		// The server's STEP1 predates our reply, so coverage is not proven and
+		// the entry stays for the next session; this session pays no more rooms.
+		expect(reg.needsResend("a")).toBe(true);
+		expect(server.starts).toBe(starts);
+		await reg.destroyAll();
+	});
+
+	test("an id with no path left is dropped from the resend list", async () => {
+		const { reg, reconnect } = setup([]);
+		(reg as any).trackResend("gone", true);
+		expect(reg.needsResend("gone")).toBe(true);
+
+		reconnect([]);
+		await new Promise((r) => setTimeout(r, 10));
+
+		expect(reg.needsResend("gone")).toBe(false);
+		await reg.destroyAll();
+	});
+
 	test("a cold edit the server already receipted costs no room and no write at the rejoin", async () => {
 		const { reg, server, settle, reconnect, docUpdates } = setup(["a"]);
 		reg.enroll("a");
