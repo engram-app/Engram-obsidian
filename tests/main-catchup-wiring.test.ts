@@ -363,3 +363,33 @@ describe("connectChannel server-features wiring", () => {
 		expect(learnVersion).toHaveBeenCalledTimes(1);
 	});
 });
+
+// #658 delta review: the rejoin keep set must hold every note the user can
+// see, not only markdown leaves. A canvas file-node embed or a hover editor is
+// a live CM binding with no MarkdownView leaf, and an open canvas leaf has no
+// binding at all; dropping either left an open view without its room.
+describe("openCrdtNoteIds: the notes the rejoin keeps", () => {
+	test("markdown leaves, canvas leaves AND live bindings outside any leaf", async () => {
+		const { MarkdownView, TFile } = await import("obsidian");
+		const md = Object.assign(new MarkdownView(), { file: new TFile("Notes/a.md") });
+		const canvas = { file: new TFile("Boards/b.canvas") };
+		const fake = Object.assign(Object.create(EngramSyncPlugin.prototype), {
+			app: {
+				workspace: {
+					getLeavesOfType: (type: string) =>
+						type === "markdown"
+							? [{ view: md }]
+							: type === "canvas"
+								? [{ view: canvas }]
+								: [],
+				},
+			},
+			crdtLiveViews: { boundPaths: () => ["Notes/a.md", "Notes/embedded.md"] },
+			noteIdMap: { getOrMint: (p: string) => `id:${p}` },
+		});
+
+		const ids = (fake as { openCrdtNoteIds(): string[] }).openCrdtNoteIds();
+
+		expect(ids.sort()).toEqual(["id:Boards/b.canvas", "id:Notes/a.md", "id:Notes/embedded.md"]);
+	});
+});

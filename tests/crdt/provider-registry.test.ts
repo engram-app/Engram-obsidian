@@ -729,3 +729,29 @@ describe("room opens are counted per caller (#658)", () => {
 		await reg.destroyAll();
 	});
 });
+
+// ---------------------------------------------------------------------------
+// #658 delta review: "has the server got my ops" has ONE source, the
+// persisted server-acked mark. A local edit sets it; a delivery receipt that
+// covers the doc clears it, so a receipted cold edit costs no resend.
+// ---------------------------------------------------------------------------
+describe("needsResend reads the server-acked mark (#658)", () => {
+	test("set by a local edit, cleared by a covering receipt, set again by the next edit", async () => {
+		const reg = new ProviderRegistry({
+			dbPrefix: "devNeedsResend",
+			send: () => true,
+			onFlushToDisk: () => {},
+		});
+		reg.setConnected(true);
+		await reg.applyLocalEdit("n1", "hello");
+		expect(reg.needsResend("n1")).toBe(true);
+
+		reg.markDelivered("n1", await reg.encodeDeliveryReceipt("n1"));
+		expect(reg.needsResend("n1")).toBe(false);
+
+		await reg.applyLocalEdit("n1", "hello again");
+		expect(reg.needsResend("n1")).toBe(true);
+		expect(reg.needsResend("unknown")).toBe(false);
+		await reg.destroyAll();
+	});
+});

@@ -512,6 +512,23 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 		expect(release).toHaveBeenCalledWith("id-board");
 	});
 
+	test("a canvas the user is VIEWING connects at once, not through the heal pool (#658)", async () => {
+		const engine = createEngine();
+		const enroll = mock((_id: string) => {});
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => null) } as any);
+		engine.setCrdtEnrollment({ enroll, reset: mock(() => {}) } as any);
+		engine.setCrdtPorts({
+			liveBound: () => false,
+			viewed: (p: string) => p === "Notes/board.canvas",
+		});
+		const pool = spyOn(engine as any, "poolIdleHeal");
+
+		(engine as any).openRoomPooled("Notes/board.canvas", "id-board", "canvas");
+
+		expect(enroll).toHaveBeenCalled();
+		expect(pool).not.toHaveBeenCalled();
+	});
+
 	test("applyChange materializes a not-yet-local markdown note WITHOUT enrolling it (cold discovery, room-free)", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);

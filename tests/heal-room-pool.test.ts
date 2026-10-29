@@ -226,6 +226,22 @@ describe("idle heal rooms are pooled (Engram#2242)", () => {
 		expect((engine as any).idleHealSlots.size).toBe(0);
 	});
 
+	// Delta review HIGH: a queue give-up hands the note to the pool and drops
+	// the queue entry. If that one heal's STEP2 is lost, nothing retried it, and
+	// the ops (past the server-acked mark) sat local until the note was opened.
+	test("a give-up heal whose STEP2 is lost re-arms on backoff and converges", async () => {
+		const { engine, rooms, settle } = harness({
+			dropStep2: (_id, attempt) => attempt === 1,
+		});
+		(engine as any).crdt.needsResend = () => true;
+		(engine as any).openRoomPooled(path(0), id(0), "undelivered");
+
+		await settle(() => (rooms.attempts.get(id(0)) ?? 0) >= 2 && rooms.open.size === 0);
+
+		expect(rooms.attempts.get(id(0))).toBe(2);
+		expect(rooms.open.size).toBe(0);
+	});
+
 	test(`${N} idle notes with UNDELIVERED ops (the read is not legal): same bound`, async () => {
 		const { engine, rooms, settle } = harness();
 		(engine as any).crdt.hasUndeliveredOps = () => true;

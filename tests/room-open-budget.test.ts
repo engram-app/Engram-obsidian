@@ -12,7 +12,7 @@
  * `up = false` models a half-open socket: the send "succeeds" and the frame
  * vanishes, so nothing is buffered or queued for it.
  */
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, mock, spyOn, test } from "bun:test";
 import "fake-indexeddb/auto";
 import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
@@ -113,7 +113,19 @@ function setup(notes: string[]) {
 	engine.setCrdtManager(reg);
 	engine.setCrdtEnrollment(reg);
 	const liveBound = new Set<string>();
+	/** Room-free writes (`crdt_doc_update`): applied by a short-lived applier
+	 *  on the server, no room. */
+	const docUpdates: string[] = [];
 	engine.setCrdtPorts({
+		docUpdate: async (id: string, b64: string) => {
+			if (!server.up) throw new Error("timeout");
+			docUpdates.push(id);
+			const dec = decoding.createDecoder(fromB64(b64));
+			decoding.readVarUint(dec);
+			decoding.readVarUint(dec);
+			Y.applyUpdate(serverDoc(id), decoding.readVarUint8Array(dec), "server");
+			return { head: "h" };
+		},
 		release: (id: string) => {
 			server.rooms.delete(id);
 		},
@@ -144,7 +156,7 @@ function setup(notes: string[]) {
 		engine.reopenRoomsOnRejoin(openIds);
 		reg.setConnected(true);
 	};
-	return { engine, reg, server, serverDoc, liveBound, settle, reconnect };
+	return { engine, reg, server, serverDoc, liveBound, settle, reconnect, docUpdates };
 }
 
 const text = (d: Y.Doc) => d.getText(CONTENT_KEY).toString();
@@ -177,6 +189,38 @@ describe("room opens against a y_ex-shaped server (#658)", () => {
 
 		reconnect([]);
 		await settle(() => text(serverDoc("a")) === "typed while half-open", "lost op resent");
+		await reg.destroyAll();
+	});
+
+	test("a cold edit the server already receipted costs no room and no write at the rejoin", async () => {
+		const { reg, server, settle, reconnect, docUpdates } = setup(["a"]);
+		reg.enroll("a");
+		await settle(() => reg.isSynced("a"), "first handshake");
+		await reg.applyLocalEdit("a", "delivered cold");
+		reg.markDelivered("a", await reg.encodeDeliveryReceipt("a"));
+		const startsBefore = server.starts;
+
+		reconnect([]);
+		await new Promise((r) => setTimeout(r, 30));
+
+		expect(server.starts).toBe(startsBefore);
+		expect(docUpdates).toEqual([]);
+		await reg.destroyAll();
+	});
+
+	test("heal-pool opens are counted under their own label", async () => {
+		const { rlog } = await import("../src/remote-log");
+		const reports: Array<Record<string, number | boolean>> = [];
+		const spy = spyOn(rlog(), "anomaly").mockImplementation((_c, code, counts) => {
+			if (code === "room_opens") reports.push(counts ?? {});
+		});
+		const { engine, reg, settle, server } = setup(["a"]);
+		(engine as any).socketConverge("a.md", "a", "other");
+		await settle(() => server.starts === 1, "heal opened");
+		reg.flushRoomOpenCounts();
+		spy.mockRestore();
+
+		expect(reports).toEqual([{ heal_pool: 1 }]);
 		await reg.destroyAll();
 	});
 
