@@ -140,7 +140,7 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 	}
 
 	enroll(noteId: string): void {
-		this.deps.enrollment.enroll(noteId);
+		this.deps.enrollment.enroll(noteId, "editor");
 	}
 
 	awaitsServer(noteId: string): boolean {
@@ -298,7 +298,7 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 			this.hookPaths.set(view, path);
 			// Reading-only leaves have no CM editor (no ViewPlugin), so enroll here
 			// too. Idempotent + edge-guarded, so an already-enrolled note is ~free.
-			this.deps.enrollment.enroll(this.deps.resolveId(path));
+			this.deps.enrollment.enroll(this.deps.resolveId(path), "reading");
 			void this.reading.attach(view, path);
 		}
 	}

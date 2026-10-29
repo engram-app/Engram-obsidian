@@ -403,7 +403,8 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
 		const enroll = mock((_p: string) => {});
-		engine.setCrdtEnrollment({ enroll } as any);
+		// An idle canvas room goes through the heal pool (#658): reset + enroll.
+		engine.setCrdtEnrollment({ enroll, reset: mock(() => {}) } as any);
 
 		await engine.handleStreamEvent({
 			event_type: "upsert",
@@ -449,7 +450,8 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 		const enroll = mock((_p: string) => {});
 		const applyLocalEdit = mock(async () => null);
 		engine.setCrdtManager({ applyLocalEdit } as any);
-		engine.setCrdtEnrollment({ enroll } as any);
+		// An idle canvas room goes through the heal pool (#658): reset + enroll.
+		engine.setCrdtEnrollment({ enroll, reset: mock(() => {}) } as any);
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("Notes/board.canvas", "id-board");
 		engine.setNoteIdMap(noteIdMap);
@@ -476,6 +478,55 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 		expect(mockApp.vault.create).not.toHaveBeenCalled();
 		expect(mockApp.vault.modify).not.toHaveBeenCalled();
 		expect(applyLocalEdit).not.toHaveBeenCalled();
+	});
+
+	// #658: the idle canvas enroll opened a room outside the heal pool and
+	// nothing ever released it (its comment said it was released). Through the
+	// pool it is budgeted and closed once it converges.
+	test("an IDLE canvas pull takes a pooled room that is released once it converges (#658)", async () => {
+		const engine = createEngine();
+		const enroll = mock((_id: string) => {});
+		const release = mock((_id: string) => {});
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => null) } as any);
+		engine.setCrdtEnrollment({ enroll, reset: mock(() => {}) } as any);
+		engine.setCrdtPorts({ release, liveBound: () => false });
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Notes/board.canvas", "id-board");
+		engine.setNoteIdMap(noteIdMap);
+
+		await engine.applyChange({
+			path: "Notes/board.canvas",
+			title: "board",
+			content: "{}",
+			folder: "Notes",
+			tags: [],
+			mtime: Date.now() / 1000,
+			updated_at: new Date().toISOString(),
+			deleted: false,
+			version: 1,
+			id: "id-board",
+		} as never);
+		expect(enroll).toHaveBeenCalledWith("id-board");
+
+		await engine.commitCrdtConvergence("id-board"); // its STEP2 landed
+		expect(release).toHaveBeenCalledWith("id-board");
+	});
+
+	test("a canvas the user is VIEWING connects at once, not through the heal pool (#658)", async () => {
+		const engine = createEngine();
+		const enroll = mock((_id: string) => {});
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => null) } as any);
+		engine.setCrdtEnrollment({ enroll, reset: mock(() => {}) } as any);
+		engine.setCrdtPorts({
+			liveBound: () => false,
+			viewed: (p: string) => p === "Notes/board.canvas",
+		});
+		const pool = spyOn(engine as any, "poolIdleHeal");
+
+		(engine as any).openRoomPooled("Notes/board.canvas", "id-board", "canvas");
+
+		expect(enroll).toHaveBeenCalled();
+		expect(pool).not.toHaveBeenCalled();
 	});
 
 	test("applyChange materializes a not-yet-local markdown note WITHOUT enrolling it (cold discovery, room-free)", async () => {

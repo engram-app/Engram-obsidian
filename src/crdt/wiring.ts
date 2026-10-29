@@ -6,7 +6,7 @@ import type { SyncEngine } from "../sync";
 import { isDestroyedError } from "./destroyed-error";
 import { InvariantChecker, type InvariantViolation } from "./invariants";
 import type { NoteIdMap } from "./note-id-map";
-import { ProviderRegistry } from "./provider-registry";
+import { ProviderRegistry, type ResendStore } from "./provider-registry";
 import { fromB64 } from "./wire";
 
 /** SyncEngine members the CRDT wiring actually touches. Structural so tests can
@@ -88,6 +88,8 @@ export interface CrdtWiringDeps {
 	 *  it — each real device has its own browser origin. Set only by tests that
 	 *  run two "devices" against one shared fake-indexeddb process. */
 	dbPrefix?: string;
+	/** See `ProviderRegistryOpts.resendStore` (#658). */
+	resendStore?: ResendStore;
 	/** See ProviderRegistryOpts.ackScope. */
 	ackScope?: () => string;
 	/** Merge base for a note_id (#357), resolved through the id map to the path
@@ -189,7 +191,7 @@ export function partitionStrandedFlushes(
  * plugin-lifecycle state, not the keying/CRDT layer:
  *   - CrdtLiveViews (app + workspace) — reached via the `isBound` closure;
  *   - `onCrdtJoined` / `onCrdtJoinError` — set plugin flags + show Notices +
- *     call reEnrollOpenCrdtNotes; they delegate the manager activation to
+ *     call reopenRoomsOnRejoin; they delegate the manager activation to
  *     `syncEngine.setCrdtManager(wiring.manager)`;
  *   - the connect/disconnect reconcile in `onStatusChange` — per-session flags
  *     + catch-up pull.
@@ -287,6 +289,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	// provider sends its own local updates through this `send`.
 	const registry = new ProviderRegistry({
 		dbPrefix: deps.dbPrefix,
+		resendStore: deps.resendStore,
 		ackScope: deps.ackScope,
 		lcaFor: deps.lcaFor,
 		onDirtyMerge: deps.onDirtyMerge,
@@ -459,7 +462,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		// Enroll (STEP1) ONLY when a live editor binding owns the note, matching every
 		// other enroll gate. An unmapped id can't be open, so pathForId null → skip.
 		const path = noteIdMap.pathForId(docId);
-		if (path !== null && deps.isBound(path)) enrollment.enroll(docId);
+		if (path !== null && deps.isBound(path)) enrollment.enroll(docId, "doc_ready");
 	};
 
 	// Backend #955 (plugin #202): the server tells us when a crdt_msg we sent

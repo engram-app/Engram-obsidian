@@ -106,6 +106,9 @@ function makeFakeThis(catchup: () => Promise<void>, pull: () => Promise<number>,
 		},
 		app: {
 			workspace: { getLeavesOfType: () => [] },
+			// The resend list's vault-scoped store (#658).
+			loadLocalStorage: () => null,
+			saveLocalStorage: () => {},
 		},
 		api: {
 			getMe: () => Promise.resolve({ id: "user-1", email: "a@example.com" }),
@@ -128,6 +131,8 @@ function makeFakeThis(catchup: () => Promise<void>, pull: () => Promise<number>,
 			// reach a clean, error-free assignment. One port patch per lifecycle
 			// stage now, so this stub no longer tracks a setter-per-port list.
 			setCrdtPorts: () => {},
+			// The crdt join settles which rooms survive before reconnecting (#658).
+			reopenRoomsOnRejoin: () => {},
 		},
 		updateStatusBar: () => {},
 	});
@@ -359,5 +364,35 @@ describe("connectChannel server-features wiring", () => {
 		expect(setRaw).not.toHaveBeenCalled();
 		expect(setRawDown).not.toHaveBeenCalled();
 		expect(learnVersion).toHaveBeenCalledTimes(1);
+	});
+});
+
+// #658 delta review: the rejoin keep set must hold every note the user can
+// see, not only markdown leaves. A canvas file-node embed or a hover editor is
+// a live CM binding with no MarkdownView leaf, and an open canvas leaf has no
+// binding at all; dropping either left an open view without its room.
+describe("openCrdtNoteIds: the notes the rejoin keeps", () => {
+	test("markdown leaves, canvas leaves AND live bindings outside any leaf", async () => {
+		const { MarkdownView, TFile } = await import("obsidian");
+		const md = Object.assign(new MarkdownView(), { file: new TFile("Notes/a.md") });
+		const canvas = { file: new TFile("Boards/b.canvas") };
+		const fake = Object.assign(Object.create(EngramSyncPlugin.prototype), {
+			app: {
+				workspace: {
+					getLeavesOfType: (type: string) =>
+						type === "markdown"
+							? [{ view: md }]
+							: type === "canvas"
+								? [{ view: canvas }]
+								: [],
+				},
+			},
+			crdtLiveViews: { boundPaths: () => ["Notes/a.md", "Notes/embedded.md"] },
+			noteIdMap: { getOrMint: (p: string) => `id:${p}` },
+		});
+
+		const ids = (fake as { openCrdtNoteIds(): string[] }).openCrdtNoteIds();
+
+		expect(ids.sort()).toEqual(["id:Boards/b.canvas", "id:Notes/a.md", "id:Notes/embedded.md"]);
 	});
 });

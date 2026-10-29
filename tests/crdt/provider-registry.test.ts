@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import "fake-indexeddb/auto";
 import * as YDoc from "yjs";
 import { isDestroyedError } from "../../src/crdt/destroyed-error";
@@ -697,5 +697,61 @@ describe("delivery base (diff against what the server acked)", () => {
 
 		expect(reg.deliveredStateVector("n1")).toBeUndefined();
 		expect(reg.hasCurrentDeliveryReceipt("n1")).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// #658 backstop: every room this registry opens is counted by the caller that
+// asked for it and shipped as counts, so the next path that opens rooms
+// outside the heal pool shows up by name instead of as an unexplained surge.
+// ---------------------------------------------------------------------------
+describe("room opens are counted per caller (#658)", () => {
+	test("opens are counted by source; a re-enroll of an open room is not an open", async () => {
+		const { rlog } = await import("../../src/remote-log");
+		const reports: Array<Record<string, number | boolean>> = [];
+		const spy = spyOn(rlog(), "anomaly").mockImplementation((_c, code, counts) => {
+			if (code === "room_opens") reports.push(counts ?? {});
+		});
+		const reg = new ProviderRegistry({
+			dbPrefix: "devRoomOpens",
+			send: () => true,
+			onFlushToDisk: () => {},
+		});
+		reg.setConnected(true);
+		reg.enroll("e", "editor");
+		reg.enroll("e", "editor"); // already open: not counted
+		reg.enroll("h", "heal");
+		reg.enroll("x");
+		reg.flushRoomOpenCounts();
+		spy.mockRestore();
+
+		expect(reports).toEqual([{ editor: 1, heal: 1, unlabeled: 1 }]);
+		await reg.destroyAll();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// #658 delta review: "has the server got my ops" has ONE source, the
+// persisted server-acked mark. A local edit sets it; a delivery receipt that
+// covers the doc clears it, so a receipted cold edit costs no resend.
+// ---------------------------------------------------------------------------
+describe("needsResend reads the server-acked mark (#658)", () => {
+	test("set by a local edit, cleared by a covering receipt, set again by the next edit", async () => {
+		const reg = new ProviderRegistry({
+			dbPrefix: "devNeedsResend",
+			send: () => true,
+			onFlushToDisk: () => {},
+		});
+		reg.setConnected(true);
+		await reg.applyLocalEdit("n1", "hello");
+		expect(reg.needsResend("n1")).toBe(true);
+
+		reg.markDelivered("n1", await reg.encodeDeliveryReceipt("n1"));
+		expect(reg.needsResend("n1")).toBe(false);
+
+		await reg.applyLocalEdit("n1", "hello again");
+		expect(reg.needsResend("n1")).toBe(true);
+		expect(reg.needsResend("unknown")).toBe(false);
+		await reg.destroyAll();
 	});
 });

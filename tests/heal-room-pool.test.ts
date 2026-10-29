@@ -49,6 +49,8 @@ function harness(
 		time?: ManualTimeProvider;
 		liveBound?: Set<string>;
 		dropStep2?: (noteId: string, attempt: number) => boolean;
+		/** Hold the server's trailing STEP1s until `deliverTrailing()`. */
+		holdTrailing?: boolean;
 	} = {},
 ) {
 	const time = opts.time ?? new ManualTimeProvider(1_000_000);
@@ -59,6 +61,14 @@ function harness(
 		mock().mockResolvedValue(undefined),
 		time,
 	);
+	// The server answers a STEP1 with its STEP2 AND its own STEP1, back to back
+	// (y_ex `encode_sync_step1_response_v1`). Ids here have that trailing STEP1
+	// still in flight; the releases waiting on its answer queue under them.
+	const owedStep1 = new Map<string, (() => void)[]>();
+	const heldTrailing: (() => void)[] = [];
+	const deliverTrailing = () => {
+		for (const fn of heldTrailing.splice(0)) fn();
+	};
 	engine.setCrdtManager({
 		hasUndeliveredOps: () => false,
 		hasCurrentDeliveryReceipt: () => false,
@@ -86,6 +96,9 @@ function harness(
 		startedAt: [] as number[],
 		attempts: new Map<string, number>(),
 		released: 0,
+		/** Rooms the SERVER started again because this device answered its
+		 *  trailing STEP1 after closing the room (#658). Not counted in `starts`. */
+		respins: 0,
 	};
 	const liveBound = opts.liveBound ?? new Set<string>();
 	const pendingStep2 = new Map<string, ReturnType<typeof setTimeout>>();
@@ -104,11 +117,28 @@ function harness(
 				noteId,
 				setTimeout(() => {
 					pendingStep2.delete(noteId);
+					// The trailing STEP1 left the server with this STEP2, so a release
+					// can no longer stop it. The device answers it on a later frame; a
+					// room closed by then is started again by that answer.
+					owedStep1.set(noteId, []);
+					const trailing = () => {
+						if (!rooms.open.has(noteId)) rooms.respins++;
+						const waiting = owedStep1.get(noteId) ?? [];
+						owedStep1.delete(noteId);
+						for (const fn of waiting) fn();
+					};
+					if (opts.holdTrailing) heldTrailing.push(trailing);
+					else setTimeout(trailing, 0);
 					void engine.commitCrdtConvergence(noteId);
 				}, 1),
 			);
 		},
 		reset: () => {},
+		afterPeerStep1: (noteId: string, fn: () => void) => {
+			const waiting = owedStep1.get(noteId);
+			if (waiting) waiting.push(fn);
+			else fn();
+		},
 	} as any);
 	engine.setCrdtPorts({
 		release: (noteId: string) => {
@@ -129,7 +159,7 @@ function harness(
 			if (!done()) time.advance(stepMs);
 		}
 	};
-	return { engine, rooms, time, settle };
+	return { engine, rooms, time, settle, deliverTrailing };
 }
 
 /** Most room starts in any 60 s window. */
@@ -163,6 +193,52 @@ describe("idle heal rooms are pooled (Engram#2242)", () => {
 
 		expect(converged(engine)).toBe(N);
 		expect(rooms.max).toBeLessThanOrEqual(IDLE_HEAL_ROOMS);
+		expect(rooms.open.size).toBe(0);
+	});
+
+	// #658: the pool's own reports counted ~17 rooms/min while the server saw
+	// ~31. Each heal closed its room on the STEP2 and then answered the
+	// server's trailing STEP1, which opened the room again: two starts per heal.
+	test(`one heal = one room start: ${N} heals, no room re-opened by a late STEP1 answer`, async () => {
+		const { engine, rooms, settle } = harness();
+		engine.setCrdtPorts({ docState: mock().mockRejectedValue(new Error("timeout")) });
+
+		for (let i = 0; i < N; i++) await coldConverge(engine, i);
+		await settle(() => converged(engine) === N && rooms.open.size === 0);
+
+		expect(converged(engine)).toBe(N);
+		expect(rooms.starts).toBe(N);
+		expect(rooms.respins).toBe(0);
+		expect(rooms.open.size).toBe(0);
+	});
+
+	test("a trailing STEP1 slower than the slot timeout is not a heal failure", async () => {
+		const { engine, rooms, time, deliverTrailing } = harness({ holdTrailing: true });
+		(engine as any).socketConverge(path(0), id(0), "other");
+		await new Promise((r) => setTimeout(r, 10)); // STEP2 lands, commit runs
+
+		time.advance(31_000); // past HEAL_SLOT_TIMEOUT_MS, trailing STEP1 still out
+		await new Promise((r) => setTimeout(r, 0));
+		deliverTrailing();
+
+		expect((engine as any).healRetries.get(id(0))).toBeUndefined();
+		expect(rooms.open.size).toBe(0);
+		expect((engine as any).idleHealSlots.size).toBe(0);
+	});
+
+	// Delta review HIGH: a queue give-up hands the note to the pool and drops
+	// the queue entry. If that one heal's STEP2 is lost, nothing retried it, and
+	// the ops (past the server-acked mark) sat local until the note was opened.
+	test("a give-up heal whose STEP2 is lost re-arms on backoff and converges", async () => {
+		const { engine, rooms, settle } = harness({
+			dropStep2: (_id, attempt) => attempt === 1,
+		});
+		(engine as any).crdt.needsResend = () => true;
+		(engine as any).openRoomPooled(path(0), id(0), "undelivered");
+
+		await settle(() => (rooms.attempts.get(id(0)) ?? 0) >= 2 && rooms.open.size === 0);
+
+		expect(rooms.attempts.get(id(0))).toBe(2);
 		expect(rooms.open.size).toBe(0);
 	});
 
