@@ -74,10 +74,11 @@ export class NoteProvider {
 	 *  idle note never contributes to the server room fan-out (the connect-storm
 	 *  the fan-out design avoids). Set via setAdvertised on enroll. */
 	private advertised = false;
-	/** Our syncStep1 went out and the peer's own syncStep1, which y_ex sends
-	 *  right behind its syncStep2, is not answered yet. Releases waiting on that
-	 *  answer queue in `afterAnswer` (see `afterPeerStep1`). */
-	private peerStep1Owed = false;
+	/** Our syncStep1s still waiting for the peer's own syncStep1, which y_ex
+	 *  sends right behind its syncStep2. A count, because a gap heal's
+	 *  `requestMissing` can put a second one out before the first pair is back.
+	 *  Releases waiting on the last answer queue in `afterAnswer`. */
+	private peerStep1sOwed = 0;
 	private readonly afterAnswer: (() => void)[] = [];
 	/** False while local persistence is still replaying into the doc: the update
 	 *  handler drops those (already-persisted) updates instead of broadcasting them.
@@ -208,7 +209,7 @@ export class NoteProvider {
 	setConnected(connected: boolean): void {
 		if (!connected) {
 			this.connected = false;
-			this.settlePeerStep1(); // that answer can no longer come
+			this.dropOwedPeerStep1s(); // that answer can no longer come
 			return;
 		}
 		const wasConnected = this.connected;
@@ -243,7 +244,7 @@ export class NoteProvider {
 		encoding.writeVarUint(encoder, MESSAGE_SYNC);
 		syncProtocol.writeSyncStep1(encoder, this.doc);
 		if (this.send(toB64(encoding.toUint8Array(encoder)), "handshake")) {
-			this.peerStep1Owed = true;
+			this.peerStep1sOwed++;
 		}
 	}
 
@@ -256,12 +257,23 @@ export class NoteProvider {
 	 *  that answer started the room again: two server room starts per heal, the
 	 *  second outside the heal pool's budget and never released. */
 	afterPeerStep1(fn: () => void): void {
-		if (this.peerStep1Owed) this.afterAnswer.push(fn);
+		if (this.peerStep1sOwed > 0) this.afterAnswer.push(fn);
 		else fn();
 	}
 
-	private settlePeerStep1(): void {
-		this.peerStep1Owed = false;
+	/** One owed syncStep1 was answered; the waiting releases run on the last. */
+	private answeredPeerStep1(): void {
+		this.peerStep1sOwed = Math.max(0, this.peerStep1sOwed - 1);
+		if (this.peerStep1sOwed === 0) this.runAfterAnswer();
+	}
+
+	/** No owed syncStep1 can be answered any more (disconnect, destroy). */
+	private dropOwedPeerStep1s(): void {
+		this.peerStep1sOwed = 0;
+		this.runAfterAnswer();
+	}
+
+	private runAfterAnswer(): void {
 		for (const fn of this.afterAnswer.splice(0)) fn();
 	}
 
@@ -288,13 +300,13 @@ export class NoteProvider {
 			this.onSynced?.();
 		}
 		// Answered above, so a room closed now is closed for good.
-		if (syncType === syncProtocol.messageYjsSyncStep1) this.settlePeerStep1();
+		if (syncType === syncProtocol.messageYjsSyncStep1) this.answeredPeerStep1();
 	}
 
 	/** Detach the update listener. Call ONLY when the note truly closes / on
 	 *  unload — NOT on a transport reconnect. */
 	destroy(): void {
 		this.doc.off("update", this.updateHandler);
-		this.settlePeerStep1();
+		this.dropOwedPeerStep1s();
 	}
 }
