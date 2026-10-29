@@ -32,7 +32,7 @@ These run only in CI, so run the relevant ones before pushing: `./node_modules/.
 
 ## Hard rules
 
-**Git.** Everything goes through a PR, docs included. `main` is protected (`enforce_admins=true`, required check `build-and-test`; `lint`, `version-check` and backend e2e also run, do not merge on red). Conventional Commits, subject 50 chars or less. Worktrees: `git worktree add <path> -b <branch> origin/main`; a lefthook `post-checkout` hook hardlinks `node_modules`, so no `bun install` unless you edit `bun.lock`.
+**Git.** Everything goes through a PR, docs included. `main` is protected by the `protect-main` ruleset: squash merge only, signed commits required, required check `build-and-test` (branch must be up to date), review threads resolved. `lint`, `version-check` and backend e2e also run; do not merge on red. Conventional Commits, subject 50 chars or less. Worktrees: `git worktree add <path> -b <branch> origin/main`; a lefthook `post-checkout` hook hardlinks `node_modules`, so no `bun install` unless you edit `bun.lock`.
 
 **Tests are the spec.** A failing test means fix the app, not the test. UI-heavy files (`settings.ts`, `search-modal.ts`, `search-view.ts`, `main.ts`) are covered by the backend repo's Obsidian e2e suite; removing a UI selector can break that suite, so grep the backend `e2e/tests/` first.
 
