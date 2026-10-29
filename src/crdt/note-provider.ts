@@ -60,6 +60,11 @@ export interface NoteProviderOpts {
 	 *  ordering: hydrate local persistence FIRST, then start network sync. Direct
 	 *  (no-persistence) callers omit this and broadcast immediately. */
 	deferActivation?: boolean;
+	/** This doc sent local ops no completed handshake has confirmed (true), or
+	 *  a handshake just answered the peer's syncStep1, whose reply carries every
+	 *  op the peer lacks (false). A sent op can still be lost: a half-open
+	 *  socket accepts it and drops it, and nothing buffers or queues it. */
+	onUnconfirmedChange?: (unconfirmed: boolean) => void;
 }
 
 export class NoteProvider {
@@ -80,6 +85,7 @@ export class NoteProvider {
 	 *  Releases waiting on the last answer queue in `afterAnswer`. */
 	private peerStep1sOwed = 0;
 	private readonly afterAnswer: (() => void)[] = [];
+	private readonly onUnconfirmedChange?: (unconfirmed: boolean) => void;
 	/** False while local persistence is still replaying into the doc: the update
 	 *  handler drops those (already-persisted) updates instead of broadcasting them.
 	 *  Flipped true by activate() once IndexedDB has finished loading. */
@@ -97,6 +103,7 @@ export class NoteProvider {
 		this.doc = doc;
 		this.send = opts.send ?? (() => false);
 		this.onSynced = opts.onSynced;
+		this.onUnconfirmedChange = opts.onUnconfirmedChange;
 		this.active = !opts.deferActivation;
 		// Update handler: a LOCAL edit (origin !== this) becomes a sync
 		// UPDATE frame; a remote-applied op (origin === this, set by
@@ -116,6 +123,7 @@ export class NoteProvider {
 			syncProtocol.writeUpdate(encoder, update);
 			// A local edit — the one frame class the create-ack gate exists to hold.
 			this.broadcast(toB64(encoding.toUint8Array(encoder)), "op");
+			this.onUnconfirmedChange?.(true);
 		};
 		this.doc.on("update", this.updateHandler);
 	}
@@ -263,6 +271,7 @@ export class NoteProvider {
 
 	/** One owed syncStep1 was answered; the waiting releases run on the last. */
 	private answeredPeerStep1(): void {
+		this.onUnconfirmedChange?.(false);
 		this.peerStep1sOwed = Math.max(0, this.peerStep1sOwed - 1);
 		if (this.peerStep1sOwed === 0) this.runAfterAnswer();
 	}

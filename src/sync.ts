@@ -127,6 +127,7 @@ type HealRoomReason =
 	| "doc_state_failed"
 	| "doc_state_latched"
 	| "queue_fallback"
+	| "canvas"
 	| "other";
 
 /** How long a heal room waits for the server's STEP2 before it is closed (and
@@ -465,7 +466,8 @@ type CrdtDocUpdateFn = (docId: string, b64: string) => Promise<{ head: string }>
  *  the handshake is answered from both sides (#658); a port without it closes
  *  at once. */
 export interface CrdtEnrollmentPort {
-	enroll(noteId: string): void;
+	/** `source` labels the caller in the room-open counts (#658). */
+	enroll(noteId: string, source?: string): void;
 	reset(noteId: string): void;
 	afterPeerStep1?(noteId: string, fn: () => void): void;
 }
@@ -8325,6 +8327,13 @@ export class SyncEngine {
 		this.openHealRoom(path, noteId);
 	}
 
+	/** Open `noteId`'s room the budgeted way (#658): at once while an editor
+	 *  shows it, else through the heal pool, which closes it on convergence. */
+	private openRoomPooled(path: string, noteId: string, reason: HealRoomReason): void {
+		if (this.isLiveBound(normalizePath(path))) this.crdtEnrollment?.enroll(noteId);
+		else this.poolIdleHeal(path, noteId, reason);
+	}
+
 	/** Engram#2242: an IDLE note's heal room waits for one of `IDLE_HEAL_ROOMS`
 	 *  slots AND a token from the per-device start budget
 	 *  (`HEAL_ROOM_BURST` + `HEAL_ROOMS_PER_MINUTE`), so a burst of diverged
@@ -8658,13 +8667,29 @@ export class SyncEngine {
 		else release();
 	}
 
-	/** Should this note keep its room across a reconnect (#658)? Only while an
-	 *  editor shows it or a heal holds a pool slot for it; any other note is
-	 *  idle and converges over the vault fan-out, room-free. */
-	wantsRoom(noteId: string): boolean {
-		if (this.idleHealSlots.has(noteId)) return true;
-		const path = this.noteIdMap?.pathForId(noteId);
-		return path != null && this.isLiveBound(normalizePath(path));
+	/** The ONE owner of which rooms survive a crdt rejoin (#658). Runs while the
+	 *  providers are still offline, so each kept room sends exactly one STEP1
+	 *  when they reconnect:
+	 *
+	 *  - a note open in a leaf (`openNoteIds`, every view mode) or held by a heal
+	 *    slot keeps its room, at once;
+	 *  - a note with local ops no handshake has confirmed takes a POOLED heal:
+	 *    the reply to the server's STEP1 is the only resend for ops a half-open
+	 *    socket accepted and dropped (nothing buffered or queued them);
+	 *  - every other room closes. That note is idle and converges over the vault
+	 *    fan-out. The new socket holds no rooms, so nothing to release upstream. */
+	reopenRoomsOnRejoin(openNoteIds: Iterable<string>): void {
+		const reg = this.crdt;
+		const enrollment = this.crdtEnrollment;
+		if (!reg || !enrollment) return;
+		const keep = new Set([...openNoteIds, ...this.idleHealSlots.keys()]);
+		reg.resetAll();
+		for (const id of keep) enrollment.enroll(id, "rejoin");
+		for (const id of reg.unconfirmedNoteIds()) {
+			if (keep.has(id)) continue;
+			const path = this.noteIdMap?.pathForId(id);
+			if (path) this.poolIdleHeal(path, id, "undelivered");
+		}
 	}
 
 	/** Release the TRANSIENT heal room once its job is done (fan-out idle
@@ -9482,7 +9507,7 @@ export class SyncEngine {
 							this.isCanvasPath(normalizePath(event.path)) ||
 							this.isLiveBound(normalizePath(event.path))
 						) {
-							this.crdtEnrollment?.enroll(noteId);
+							this.openRoomPooled(event.path, noteId, "canvas");
 						}
 						// SEED the CAS base from the event when none exists — the CRDT
 						// delivery that writes the body never advances serverHash (issue
@@ -10531,11 +10556,11 @@ export class SyncEngine {
 			// the state over STEP1/STEP2 (the manager projects it via projectCanvas);
 			// a migrated REST-era canvas with no server Yjs state is seeded by the
 			// first client that opens it (the push path). Unlike markdown, canvas
-			// enrolls even when idle — it has no content-fallback delivery — but the
-			// room is released after convergence, and later live deltas ride the
-			// note_yjs_update fan-out room-free, so this is not an enrollment storm.
+			// enrolls even when idle — it has no content-fallback delivery — through
+			// the heal pool, which budgets it and closes the room on convergence
+			// (#658); later live deltas ride the note_yjs_update fan-out room-free.
 			if (this.isCanvasPath(normalized)) {
-				if (noteId) this.crdtEnrollment?.enroll(noteId);
+				if (noteId) this.openRoomPooled(normalized, noteId, "canvas");
 				rlog().info(
 					"pull",
 					`CRDT canvas: enroll for Yjs convergence ${noteRef(change.path)}`,
@@ -12951,7 +12976,8 @@ export class SyncEngine {
 		// never lost even though REST couldn't carry it (e.g. a 413 too-large
 		// /updates that the channel handshake can still merge). Then record a Sync
 		// Center issue + dequeue so it stops looping.
-		if (entry.crdt && entry.noteId) this.crdtEnrollment?.enroll(entry.noteId);
+		if (entry.crdt && entry.noteId)
+			this.openRoomPooled(entry.path, entry.noteId, "undelivered");
 		await this.recordTerminalIssue(entry, classified);
 		return "parked";
 	}
@@ -13346,7 +13372,7 @@ export class SyncEngine {
 							// it over the CRDT channel instead of silently dropping it; a
 							// non-crdt entry has nothing left to send.
 							if (entry.crdt && entry.noteId)
-								this.crdtEnrollment?.enroll(entry.noteId);
+								this.openRoomPooled(entry.path, entry.noteId, "undelivered");
 							await this.queue.dequeue(entry.path, this.entryVaultId(entry));
 							this.issues.clear(entry.path);
 							flushed++;

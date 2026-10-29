@@ -46,8 +46,6 @@ export interface CrdtWiringDeps {
 	 *  the binding stays authoritative. Backed lazily by CrdtLiveViews (which is
 	 *  constructed after this wiring), so it must be a closure, not a value. */
 	isBound: (path: string) => boolean;
-	/** See `ProviderRegistryOpts.keepRoomOnReconnect` (#658). */
-	keepRoomOnReconnect?: (noteId: string) => boolean;
 	/** Every currently bound path. Enumerable counterpart to `isBound`, so the
 	 *  invariant checker can assert properties across the whole binding set
 	 *  rather than one path at a time. Same lazy-closure reason as `isBound`.
@@ -191,7 +189,7 @@ export function partitionStrandedFlushes(
  * plugin-lifecycle state, not the keying/CRDT layer:
  *   - CrdtLiveViews (app + workspace) — reached via the `isBound` closure;
  *   - `onCrdtJoined` / `onCrdtJoinError` — set plugin flags + show Notices +
- *     call reEnrollOpenCrdtNotes; they delegate the manager activation to
+ *     call reopenRoomsOnRejoin; they delegate the manager activation to
  *     `syncEngine.setCrdtManager(wiring.manager)`;
  *   - the connect/disconnect reconcile in `onStatusChange` — per-session flags
  *     + catch-up pull.
@@ -293,7 +291,6 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		lcaFor: deps.lcaFor,
 		onDirtyMerge: deps.onDirtyMerge,
 		onLossyMerge: deps.onLossyMerge,
-		keepRoomOnReconnect: deps.keepRoomOnReconnect,
 		send: (docId, frame, kind) => {
 			// Create-before-edit: hold OPS until the note's server row exists. Never
 			// hold a "handshake" frame (syncStep1, or the syncStep2 written in reply

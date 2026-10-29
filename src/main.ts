@@ -995,7 +995,7 @@ export default class EngramSyncPlugin extends Plugin {
 					// keeps behavior identical to the old path-keyed enroll — the
 					// note gets a live handshake immediately on open rather than
 					// waiting for the next tab-switch after its first save.
-					this.crdtEnrollment?.enroll(this.noteIdMap.getOrMint(file.path));
+					this.crdtEnrollment?.enroll(this.noteIdMap.getOrMint(file.path), "active_leaf");
 				}
 			}),
 		);
@@ -2533,30 +2533,20 @@ export default class EngramSyncPlugin extends Plugin {
 		this.connectChannel();
 	}
 
-	/**
-	 * Re-enroll every currently-open markdown note into the CRDT handshake so the
-	 * server re-registers this device as an observer of each note's room. Called
-	 * on every crdt: topic (re)join. For each open note it clears the once-per-doc
-	 * STEP1 guard (reset) then enrolls (sends STEP1), which is order-independent
-	 * and idempotent — on the initial join the active note is already enrolled, so
-	 * this just re-advertises; after a reconnect it restores the observer
-	 * subscription that a tab left open across the drop would otherwise lose.
-	 */
-	private reEnrollOpenCrdtNotes(): void {
-		const enrollment = this.crdtEnrollment;
-		if (!enrollment) return;
-		const seen = new Set<string>();
+	/** The note_ids of every open markdown leaf, in any view mode (reading-only
+	 *  leaves too: they have no CM editor, so no live binding, but the user is
+	 *  looking at them). Input to `SyncEngine.reopenRoomsOnRejoin`, the one
+	 *  owner of which rooms survive a rejoin (#658). */
+	private openCrdtNoteIds(): string[] {
+		const ids = new Set<string>();
 		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
 			const view = leaf.view;
 			if (!(view instanceof MarkdownView)) continue;
 			const file = view.file;
 			if (!(file instanceof TFile) || file.extension !== "md") continue;
-			if (seen.has(file.path)) continue;
-			seen.add(file.path);
-			const noteId = this.noteIdMap.getOrMint(file.path);
-			enrollment.reset(noteId);
-			enrollment.enroll(noteId);
+			ids.add(this.noteIdMap.getOrMint(file.path));
 		}
+		return [...ids];
 	}
 
 	/**
@@ -2598,19 +2588,16 @@ export default class EngramSyncPlugin extends Plugin {
 				);
 			}
 		}
-		// Reset all CRDT enrollments so a fresh startSync STEP1 handshake fires for
-		// each note after reconnect, then re-enroll every open note so the server
-		// re-registers this device as a room observer (the active-leaf-change handler
-		// only fires on a tab switch). Mirrors the web client's reconnect resync; on
-		// the initial join it is a near no-op (already enrolled).
-		this.crdtEnrollment?.resetAll();
+		// Which rooms survive the rejoin was settled BEFORE the providers
+		// reconnected (`reopenRoomsOnRejoin` in the crdt-joined handler), so each
+		// open note sent one STEP1. Re-enrolling here sent a second (#658).
+		//
 		// A reconnect just reconciled the noteIdMap above, so any note_id stranded by
 		// map drift deserves fresh retry attempts against the now-current map, not a
 		// counter left over from before the drift was fixed.
 		this.crdtWiring?.clearStrandHealAttempts();
-		this.reEnrollOpenCrdtNotes();
 		// A note edited while the socket was down and then switched away from has
-		// no leaf, so reEnrollOpenCrdtNotes does not reach it. Its refused edit was
+		// no leaf, so the rejoin does not keep its room. Its refused edit was
 		// recorded in the durable queue (`recordUndeliveredCrdtEdit`), and the
 		// queue flush below delivers it — room-free, since nobody has it open.
 		// Re-enrolling it here instead cost a server room per held note (#516).
@@ -2980,9 +2967,6 @@ export default class EngramSyncPlugin extends Plugin {
 							// crdtLiveViews is constructed just below; read the field at call
 							// time, never capture a value.
 							isBound: (path) => this.crdtLiveViews?.isBound(path) ?? false,
-							// #658: a reconnect re-opens only an open editor's room or an
-							// in-flight heal's, not every note enrolled this session.
-							keepRoomOnReconnect: (id) => this.syncEngine.wantsRoom(id),
 							boundPaths: () => this.crdtLiveViews?.boundPaths() ?? [],
 							// Fix wave 6: nudge Obsidian's save pipeline after a remote merge
 							// paints into an unfocused bound editor (CI doesn't flush it).
@@ -3111,6 +3095,9 @@ export default class EngramSyncPlugin extends Plugin {
 						// flushes any frames buffered while offline. This is the reconnect
 						// convergence trigger; the enroll/catch-up below layer on id-map
 						// reconcile + seq replay.
+						// #658: settle which rooms survive BEFORE the providers reconnect,
+						// so each kept room sends exactly one STEP1.
+						this.syncEngine.reopenRoomsOnRejoin(this.openCrdtNoteIds());
 						this.crdtManager?.setConnected(true);
 						// Deliver any HELD create/delete ops FIRST, then reconcile the
 						// id-map, re-enroll open notes, run the socket catch-up, and

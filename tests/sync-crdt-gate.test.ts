@@ -403,7 +403,8 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
 		const enroll = mock((_p: string) => {});
-		engine.setCrdtEnrollment({ enroll } as any);
+		// An idle canvas room goes through the heal pool (#658): reset + enroll.
+		engine.setCrdtEnrollment({ enroll, reset: mock(() => {}) } as any);
 
 		await engine.handleStreamEvent({
 			event_type: "upsert",
@@ -449,7 +450,8 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 		const enroll = mock((_p: string) => {});
 		const applyLocalEdit = mock(async () => null);
 		engine.setCrdtManager({ applyLocalEdit } as any);
-		engine.setCrdtEnrollment({ enroll } as any);
+		// An idle canvas room goes through the heal pool (#658): reset + enroll.
+		engine.setCrdtEnrollment({ enroll, reset: mock(() => {}) } as any);
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("Notes/board.canvas", "id-board");
 		engine.setNoteIdMap(noteIdMap);

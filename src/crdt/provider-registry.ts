@@ -13,6 +13,7 @@
 import { IndexeddbPersistence } from "y-indexeddb";
 import * as Y from "yjs";
 import { Lifetime } from "../lifetime";
+import { rlog } from "../remote-log";
 import { projectCanvas, seedCanvasInto } from "./canvas-codec";
 import { isDestroyedError, NoteDestroyedError } from "./destroyed-error";
 import {
@@ -143,6 +144,9 @@ interface Entry {
 	loadFlush?: Promise<void> | null;
 }
 
+/** Ship the room-open counts every this many opens (and on teardown). */
+const ROOM_OPEN_REPORT_EVERY = 50;
+
 export interface ProviderRegistryOpts {
 	dbPrefix?: string;
 	/** Transport: base64 frame → wire for `noteId`. False when the socket isn't
@@ -200,10 +204,6 @@ export interface ProviderRegistryOpts {
 	 *  concurrent edit already in the doc (`overwritesConcurrentEdit`): the
 	 *  doc's side is silently dropped. Measurement only; behaviour unchanged. */
 	onLossyMerge?: (noteId: string) => void;
-	/** Does this note's owner still want its room after a reconnect? An open
-	 *  editor or an in-flight heal does; a note closed since it was enrolled
-	 *  does not. Absent = keep every room (the pre-#658 behaviour). */
-	keepRoomOnReconnect?: (noteId: string) => boolean;
 }
 
 export class ProviderRegistry {
@@ -228,6 +228,13 @@ export class ProviderRegistry {
 	 *  does. Mirrors the old CrdtEnrollment.enrolled set; exposed via `enrolled`
 	 *  so the e2e introspection (get_enrolled_note_ids) reads it unchanged. */
 	private readonly enrolledIds = new Set<string>();
+	/** Notes holding local ops no handshake has confirmed (see
+	 *  `NoteProviderOpts.onUnconfirmedChange`). Kept here, not on the provider,
+	 *  so an evicted doc is not forgotten. */
+	private readonly unconfirmedIds = new Set<string>();
+	/** Room opens since the last report, by the caller that asked (#658). */
+	private readonly roomOpens = new Map<string, number>();
+	private roomOpensUnreported = 0;
 
 	constructor(private readonly opts: ProviderRegistryOpts) {}
 
@@ -370,6 +377,10 @@ export class ProviderRegistry {
 			// exercised only the duplicate, so #1130 could regress green).
 			send: (frame, kind) => {
 				return this.opts.send(noteId, frame, kind);
+			},
+			onUnconfirmedChange: (unconfirmed) => {
+				if (unconfirmed) this.unconfirmedIds.add(noteId);
+				else this.unconfirmedIds.delete(noteId);
 			},
 			onSynced: () => {
 				this.opts.onSynced?.(noteId);
@@ -949,23 +960,25 @@ export class ProviderRegistry {
 	 *  pull) now and on every reconnect. Only open/live-bound notes call this; a
 	 *  cold SEND or fan-out RECEIVE stays room-free. (CrdtChannel.startSync +
 	 *  CrdtEnrollment.enroll collapse to this.) */
-	async startSync(noteId: string): Promise<void> {
+	async startSync(noteId: string, source = "unlabeled"): Promise<void> {
 		// Liveness FIRST, before any state mutation: a deleted note must not even
 		// appear enrolled. Throws NoteDestroyedError — enroll()
 		// below is the fire-and-forget wrapper that absorbs it.
 		this.assertAlive(noteId);
+		this.countRoomOpen(noteId, source);
 		this.enrolledIds.add(noteId);
 		const e = await this.entry(noteId);
 		e.provider.setAdvertised(true);
 		if (this.connected) e.provider.setConnected(true);
 	}
 
-	enroll(noteId: string): void {
+	enroll(noteId: string, source = "unlabeled"): void {
 		if (this.removed.has(noteId)) return; // deleted — nothing to open
+		this.countRoomOpen(noteId, source);
 		this.enrolledIds.add(noteId); // sync mark so the room shows immediately
 		// Fire-and-forget: absorb the destroyed-note rejection (a delete racing an
 		// enroll is expected), but let any OTHER failure surface as it did before.
-		void this.startSync(noteId).catch((e) => {
+		void this.startSync(noteId, source).catch((e) => {
 			if (!isDestroyedError(e)) throw e;
 		});
 	}
@@ -996,19 +1009,32 @@ export class ProviderRegistry {
 		for (const id of [...this.enrolledIds]) this.reset(id);
 	}
 
+	/** Notes with local ops no handshake has confirmed yet. */
+	unconfirmedNoteIds(): string[] {
+		return [...this.unconfirmedIds];
+	}
+
+	/** #658 backstop: count every room this registry opens by the caller that
+	 *  asked, so a path opening rooms outside the heal pool shows up by name.
+	 *  A re-enroll of a room already open is not an open. Counts only. */
+	private countRoomOpen(noteId: string, source: string): void {
+		if (this.enrolledIds.has(noteId)) return;
+		this.roomOpens.set(source, (this.roomOpens.get(source) ?? 0) + 1);
+		if (++this.roomOpensUnreported >= ROOM_OPEN_REPORT_EVERY) this.flushRoomOpenCounts();
+	}
+
+	flushRoomOpenCounts(): void {
+		if (this.roomOpens.size === 0) return;
+		const counts = Object.fromEntries(this.roomOpens);
+		this.roomOpens.clear();
+		this.roomOpensUnreported = 0;
+		rlog().anomaly("crdt", "room_opens", counts);
+	}
+
 	/** Socket (re)connected/dropped: fan out to every resident provider. On
 	 *  connect each re-advertises via syncStep1 — the reason the doc layer
 	 *  outlives the socket. */
 	setConnected(connected: boolean): void {
-		// #658: nothing un-advertises a note when its editor closes, so this set
-		// grows with every note opened in the session, and each one re-sent its
-		// syncStep1 on every reconnect: a fresh server room apiece, outside the
-		// heal budget. Close the unwanted ones before the re-advertise. The new
-		// socket holds no rooms yet, so there is nothing to release server-side.
-		const keep = this.opts.keepRoomOnReconnect;
-		if (connected && !this.connected && keep) {
-			for (const id of [...this.enrolledIds]) if (!keep(id)) this.reset(id);
-		}
 		this.connected = connected;
 		for (const e of this.entries.values()) e.provider.setConnected(connected);
 	}
@@ -1212,6 +1238,8 @@ export class ProviderRegistry {
 		// with reset() by hand — one missed pair left a tombstoned id enrolled
 		// forever (invariant WARN every sweep, lying e2e `enrolled` probe).
 		this.enrolledIds.delete(noteId);
+		// A delete has nothing left to deliver; an eviction keeps the mark.
+		if (clearData) this.unconfirmedIds.delete(noteId);
 		const e = this.entries.get(noteId);
 		// A pending acked mark is snapshotted NOW (the sync head of
 		// persistAcked) and written below, before the store closes.
@@ -1237,6 +1265,8 @@ export class ProviderRegistry {
 	}
 
 	async destroyAll(): Promise<void> {
+		this.flushRoomOpenCounts();
+		this.unconfirmedIds.clear();
 		for (const noteId of [...this.entries.keys()]) await this.destroy(noteId, false);
 		this.removedAtSeq.clear();
 		this.removedAtPath.clear();

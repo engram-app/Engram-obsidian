@@ -128,6 +128,8 @@ function makeFakeThis(catchup: () => Promise<void>, pull: () => Promise<number>,
 			// reach a clean, error-free assignment. One port patch per lifecycle
 			// stage now, so this stub no longer tracks a setter-per-port list.
 			setCrdtPorts: () => {},
+			// The crdt join settles which rooms survive before reconnecting (#658).
+			reopenRoomsOnRejoin: () => {},
 		},
 		updateStatusBar: () => {},
 	});
