@@ -204,6 +204,9 @@ export interface ProviderRegistryOpts {
 	 *  concurrent edit already in the doc (`overwritesConcurrentEdit`): the
 	 *  doc's side is silently dropped. Measurement only; behaviour unchanged. */
 	onLossyMerge?: (noteId: string) => void;
+	/** Where the resend set persists (#658); typically window.localStorage.
+	 *  Absent = in memory for the session. */
+	resendStore?: Pick<Storage, "getItem" | "setItem">;
 }
 
 export class ProviderRegistry {
@@ -232,7 +235,44 @@ export class ProviderRegistry {
 	private readonly roomOpens = new Map<string, number>();
 	private roomOpensUnreported = 0;
 
-	constructor(private readonly opts: ProviderRegistryOpts) {}
+	/** Notes with local edits past the server-acked mark (#658), PERSISTED in
+	 *  `resendStore` so an unloaded doc or a restart keeps them. Added by a
+	 *  local edit; removed only when the acked mark covers the doc (a receipt,
+	 *  or the stored mark on hydration) or the note is deleted. Keyed by
+	 *  note_id, which a rename does not change. */
+	private readonly resendIds: Set<string>;
+	/** Fixed at construction, like the acked mark's key: scoped to the server +
+	 *  vault, so a relink or vault switch never inherits another's list. */
+	private readonly resendKey: string;
+
+	constructor(private readonly opts: ProviderRegistryOpts) {
+		const scope = opts.ackScope?.() ?? opts.dbPrefix ?? "";
+		this.resendKey = `engram-crdt-resend/${scope}`;
+		this.resendIds = new Set(this.loadResendIds());
+	}
+
+	private loadResendIds(): string[] {
+		try {
+			const raw = this.opts.resendStore?.getItem(this.resendKey);
+			const ids: unknown = raw ? JSON.parse(raw) : [];
+			return Array.isArray(ids) ? ids.filter((id) => typeof id === "string") : [];
+		} catch {
+			// Unreadable: start empty. Worst case an unacked edit waits for the
+			// note to be opened, as before #658.
+			return [];
+		}
+	}
+
+	private trackResend(noteId: string, pending: boolean): void {
+		if (pending === this.resendIds.has(noteId)) return;
+		if (pending) this.resendIds.add(noteId);
+		else this.resendIds.delete(noteId);
+		try {
+			this.opts.resendStore?.setItem(this.resendKey, JSON.stringify([...this.resendIds]));
+		} catch (err) {
+			this.opts.onPersistError?.(noteId, err);
+		}
+	}
 
 	/** The set of note_ids holding an open CRDT room (STEP1-advertised). Read by
 	 *  the e2e `get_enrolled_note_ids` helper — a note absent here is room-free. */
@@ -423,6 +463,8 @@ export class ProviderRegistry {
 			if (firstLoad) entry.hadHistory = true;
 			if (origin !== provider && origin !== REMOTE) {
 				entry.localSinceAck = true;
+				// Not the IndexedDB replay: loadAcked decides that one against the mark.
+				if (origin !== persistence) this.trackResend(noteId, true);
 				return;
 			}
 			// The server sent this, so the merged doc is still all server state
@@ -792,6 +834,7 @@ export class ProviderRegistry {
 		this.markAckedDirty(noteId, e);
 		// An edit (or a merge) may have landed between the receipt and the ack.
 		e.localSinceAck = !eqBytes(snapshotOf(e.doc), receipt);
+		this.trackResend(noteId, e.localSinceAck);
 	}
 
 	/** The acked mark as a snapshot, or undefined when none is known. */
@@ -875,8 +918,10 @@ export class ProviderRegistry {
 			const acked = new Uint8Array(stored);
 			e.deliveredReceipt = acked;
 			e.localSinceAck = !eqBytes(snapshotOf(e.doc), acked);
+			this.trackResend(noteId, e.localSinceAck);
 		} else if (isEmptyDoc(e.doc)) {
 			e.localSinceAck = false;
+			this.trackResend(noteId, false);
 		}
 	}
 
@@ -912,6 +957,7 @@ export class ProviderRegistry {
 		e.deliveredReceipt = undefined;
 		e.ackedIsDoc = false;
 		e.localSinceAck = true;
+		this.trackResend(noteId, true);
 		// The safety-direction write goes out now, not on the debounce.
 		e.ackedDirty = true;
 		void this.persistAcked(noteId, e);
@@ -1008,19 +1054,17 @@ export class ProviderRegistry {
 		this.enroll(noteId, source);
 	}
 
-	/** Does this doc hold local work the server has not ACKED (#658)? Read off
-	 *  the persisted acked mark (`localSinceAck`, recomputed from IndexedDB on
-	 *  hydration), the one record of what the server holds. A room handshake
-	 *  never clears it: the reply carrying our ops is not acked, and a half-open
-	 *  socket drops it. A covering `markDelivered` receipt does. */
+	/** Does this note hold local edits the server has not ACKED (#658)? The
+	 *  persisted `resendIds`, which mirrors `localSinceAck` transitions so it
+	 *  outlives the doc. A room handshake never clears it: the reply carrying our
+	 *  ops is not acked, and a half-open socket drops it. A covering receipt does. */
 	needsResend(noteId: string): boolean {
-		const e = this.entries.get(noteId);
-		return !!e?.lifetime.active && e.localSinceAck;
+		return this.resendIds.has(noteId);
 	}
 
-	/** Resident notes for which `needsResend` holds. */
+	/** Every note for which `needsResend` holds, resident or not. */
 	needsResendIds(): string[] {
-		return [...this.entries.keys()].filter((id) => this.needsResend(id));
+		return [...this.resendIds];
 	}
 
 	/** #658 backstop: count every room this registry opens by the caller that
@@ -1247,6 +1291,8 @@ export class ProviderRegistry {
 		// with reset() by hand — one missed pair left a tombstoned id enrolled
 		// forever (invariant WARN every sweep, lying e2e `enrolled` probe).
 		this.enrolledIds.delete(noteId);
+		// A delete leaves nothing to resend; an eviction keeps the entry.
+		if (clearData) this.trackResend(noteId, false);
 		const e = this.entries.get(noteId);
 		// A pending acked mark is snapshotted NOW (the sync head of
 		// persistAcked) and written below, before the store closes.

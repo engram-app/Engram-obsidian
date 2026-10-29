@@ -88,6 +88,8 @@ export interface CrdtWiringDeps {
 	 *  it — each real device has its own browser origin. Set only by tests that
 	 *  run two "devices" against one shared fake-indexeddb process. */
 	dbPrefix?: string;
+	/** See `ProviderRegistryOpts.resendStore` (#658). */
+	resendStore?: Pick<Storage, "getItem" | "setItem">;
 	/** See ProviderRegistryOpts.ackScope. */
 	ackScope?: () => string;
 	/** Merge base for a note_id (#357), resolved through the id map to the path
@@ -287,6 +289,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	// provider sends its own local updates through this `send`.
 	const registry = new ProviderRegistry({
 		dbPrefix: deps.dbPrefix,
+		resendStore: deps.resendStore,
 		ackScope: deps.ackScope,
 		lcaFor: deps.lcaFor,
 		onDirtyMerge: deps.onDirtyMerge,

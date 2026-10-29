@@ -269,6 +269,9 @@ describe("opening the sync gate re-runs the catch-up (#425)", () => {
 				replayGateJournal: async () => {
 					calls.push("replayGateJournal");
 				},
+				resendUnackedOnGateOpen() {
+					calls.push("resendUnackedOnGateOpen");
+				},
 			},
 			crdtEnrollment: {
 				resetAll() {
@@ -288,6 +291,8 @@ describe("opening the sync gate re-runs the catch-up (#425)", () => {
 
 		expect(calls).toContain("setSyncBlocked(false)");
 		expect(calls).toContain("catchupViaSeqReplay");
+		// #658: edits past the server-acked mark the gate held back go now.
+		expect(calls).toContain("resendUnackedOnGateOpen");
 		// Order matters: pulling before the unblock would bail on the closed gate.
 		expect(calls.indexOf("setSyncBlocked(false)")).toBeLessThan(
 			calls.indexOf("catchupViaSeqReplay"),

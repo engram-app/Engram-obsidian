@@ -8709,12 +8709,25 @@ export class SyncEngine {
 	 *  cannot carry falls back to a pooled, budgeted heal. An unmapped id is
 	 *  skipped: the mark is derived, so there is nothing to clear. */
 	private async resendUnacked(ids: string[]): Promise<void> {
+		// A first-run user has not picked a direction: no writes until they do.
+		// `resendUnackedOnGateOpen` runs it then.
+		if (this.syncBlocked) return;
 		for (const noteId of ids) {
 			const path = this.noteIdMap?.pathForId(noteId);
 			if (!path) continue;
+			// Its create is still queued: the row may not exist yet, and the queue
+			// delivers the edit with the create.
+			if (this.crdtHasPendingOp?.(noteId)) continue;
+			// An open note's room carries its ops.
+			if (this.isLiveBound(normalizePath(path))) continue;
 			if (await this.deliverQueuedOpsRoomFree({ path, noteId })) continue;
 			this.poolIdleHeal(path, noteId, "undelivered");
 		}
+	}
+
+	/** The sync gate just opened: send what `resendUnacked` held back. */
+	resendUnackedOnGateOpen(): void {
+		void this.resendUnacked(this.crdt?.needsResendIds() ?? []);
 	}
 
 	/** Every room SyncEngine opens goes through here, labelled by caller for

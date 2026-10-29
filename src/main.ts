@@ -2947,6 +2947,9 @@ export default class EngramSyncPlugin extends Plugin {
 					// above) at call time so a swapped socket is transparent.
 					if (!this.crdtWiring) {
 						const wiring = createCrdtWiring({
+							// #658: notes with edits past the server-acked mark survive an
+							// unloaded doc and a restart.
+							resendStore: window.localStorage,
 							ackScope: () =>
 								ackScopeFor(this.settings.apiUrl, this.settings.vaultId),
 							noteIdMap: this.noteIdMap,
@@ -3401,6 +3404,8 @@ export default class EngramSyncPlugin extends Plugin {
 		// Active-leaf-change enrollment was skipped while the gate was closed;
 		// resetAll clears the once-per-session guards so the next enroll re-issues STEP1.
 		this.crdtEnrollment?.resetAll();
+		// Edits past the server-acked mark the closed gate held back (#658).
+		this.syncEngine.resendUnackedOnGateOpen();
 		// Pull what the gate held back (#425). A blocked replay now bails before
 		// walking, which preserves the catch-up cursor — so those feed rows are
 		// still waiting, and until now nothing asked for them on unblock. The
