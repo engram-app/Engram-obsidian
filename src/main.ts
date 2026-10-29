@@ -1366,7 +1366,7 @@ export default class EngramSyncPlugin extends Plugin {
 									// send (applyLocalEdit → manager.onUpdate) — no enrollment storm.
 									enroll: (id) => {
 										if (this.crdtLiveViews?.isBound(file.path)) {
-											this.crdtEnrollment?.enroll(id);
+											this.crdtEnrollment?.enroll(id, "drift");
 										}
 									},
 								},
@@ -2533,20 +2533,32 @@ export default class EngramSyncPlugin extends Plugin {
 		this.connectChannel();
 	}
 
-	/** The note_ids of every open markdown leaf, in any view mode (reading-only
-	 *  leaves too: they have no CM editor, so no live binding, but the user is
-	 *  looking at them). Input to `SyncEngine.reopenRoomsOnRejoin`, the one
-	 *  owner of which rooms survive a rejoin (#658). */
+	/** The note_ids of every note the user can see: markdown leaves in any
+	 *  view mode (reading-only leaves have no CM editor, so no live binding),
+	 *  canvas leaves (never bound), and live bindings outside any markdown leaf
+	 *  (a canvas file-node embed, a hover editor). Input to
+	 *  `SyncEngine.reopenRoomsOnRejoin`, the one owner of which rooms survive a
+	 *  rejoin (#658). */
 	private openCrdtNoteIds(): string[] {
-		const ids = new Set<string>();
+		const paths = new Set<string>(this.crdtLiveViews?.boundPaths() ?? []);
 		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
 			const view = leaf.view;
 			if (!(view instanceof MarkdownView)) continue;
 			const file = view.file;
-			if (!(file instanceof TFile) || file.extension !== "md") continue;
-			ids.add(this.noteIdMap.getOrMint(file.path));
+			if (file instanceof TFile && file.extension === "md") paths.add(file.path);
 		}
-		return [...ids];
+		for (const path of this.openCanvasPaths()) paths.add(path);
+		return [...paths].map((path) => this.noteIdMap.getOrMint(path));
+	}
+
+	/** Paths of the canvas files open in a leaf. */
+	private openCanvasPaths(): string[] {
+		const paths: string[] = [];
+		for (const leaf of this.app.workspace.getLeavesOfType("canvas")) {
+			const file = (leaf.view as { file?: unknown }).file;
+			if (file instanceof TFile) paths.push(file.path);
+		}
+		return paths;
 	}
 
 	/**
@@ -3014,6 +3026,7 @@ export default class EngramSyncPlugin extends Plugin {
 						// for open notes (the binding owns them).
 						this.syncEngine.setCrdtPorts({
 							liveBound: (path) => this.crdtLiveViews?.isBound(path) ?? false,
+							viewed: (path) => this.openCanvasPaths().includes(path),
 						});
 						// Remember the identity this stack belongs to. setupNoteStream tears
 						// the stack down ONLY when this key changes (real vault/account/backend

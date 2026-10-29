@@ -228,10 +228,6 @@ export class ProviderRegistry {
 	 *  does. Mirrors the old CrdtEnrollment.enrolled set; exposed via `enrolled`
 	 *  so the e2e introspection (get_enrolled_note_ids) reads it unchanged. */
 	private readonly enrolledIds = new Set<string>();
-	/** Notes holding local ops no handshake has confirmed (see
-	 *  `NoteProviderOpts.onUnconfirmedChange`). Kept here, not on the provider,
-	 *  so an evicted doc is not forgotten. */
-	private readonly unconfirmedIds = new Set<string>();
 	/** Room opens since the last report, by the caller that asked (#658). */
 	private readonly roomOpens = new Map<string, number>();
 	private roomOpensUnreported = 0;
@@ -378,10 +374,7 @@ export class ProviderRegistry {
 			send: (frame, kind) => {
 				return this.opts.send(noteId, frame, kind);
 			},
-			onUnconfirmedChange: (unconfirmed) => {
-				if (unconfirmed) this.unconfirmedIds.add(noteId);
-				else this.unconfirmedIds.delete(noteId);
-			},
+
 			onSynced: () => {
 				this.opts.onSynced?.(noteId);
 				// A first syncStep2 that left the doc empty = the server's "genuinely
@@ -1009,9 +1002,25 @@ export class ProviderRegistry {
 		for (const id of [...this.enrolledIds]) this.reset(id);
 	}
 
-	/** Notes with local ops no handshake has confirmed yet. */
-	unconfirmedNoteIds(): string[] {
-		return [...this.unconfirmedIds];
+	/** Room open with a caller label, for the per-caller counts. The engine's
+	 *  enrollment port calls this when present (#658). */
+	enrollAs(noteId: string, source: string): void {
+		this.enroll(noteId, source);
+	}
+
+	/** Does this doc hold local work the server has not ACKED (#658)? Read off
+	 *  the persisted acked mark (`localSinceAck`, recomputed from IndexedDB on
+	 *  hydration), the one record of what the server holds. A room handshake
+	 *  never clears it: the reply carrying our ops is not acked, and a half-open
+	 *  socket drops it. A covering `markDelivered` receipt does. */
+	needsResend(noteId: string): boolean {
+		const e = this.entries.get(noteId);
+		return !!e?.lifetime.active && e.localSinceAck;
+	}
+
+	/** Resident notes for which `needsResend` holds. */
+	needsResendIds(): string[] {
+		return [...this.entries.keys()].filter((id) => this.needsResend(id));
 	}
 
 	/** #658 backstop: count every room this registry opens by the caller that
@@ -1238,8 +1247,6 @@ export class ProviderRegistry {
 		// with reset() by hand — one missed pair left a tombstoned id enrolled
 		// forever (invariant WARN every sweep, lying e2e `enrolled` probe).
 		this.enrolledIds.delete(noteId);
-		// A delete has nothing left to deliver; an eviction keeps the mark.
-		if (clearData) this.unconfirmedIds.delete(noteId);
 		const e = this.entries.get(noteId);
 		// A pending acked mark is snapshotted NOW (the sync head of
 		// persistAcked) and written below, before the store closes.
@@ -1266,7 +1273,6 @@ export class ProviderRegistry {
 
 	async destroyAll(): Promise<void> {
 		this.flushRoomOpenCounts();
-		this.unconfirmedIds.clear();
 		for (const noteId of [...this.entries.keys()]) await this.destroy(noteId, false);
 		this.removedAtSeq.clear();
 		this.removedAtPath.clear();

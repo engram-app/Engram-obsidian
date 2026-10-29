@@ -459,7 +459,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		// Enroll (STEP1) ONLY when a live editor binding owns the note, matching every
 		// other enroll gate. An unmapped id can't be open, so pathForId null → skip.
 		const path = noteIdMap.pathForId(docId);
-		if (path !== null && deps.isBound(path)) enrollment.enroll(docId);
+		if (path !== null && deps.isBound(path)) enrollment.enroll(docId, "doc_ready");
 	};
 
 	// Backend #955 (plugin #202): the server tells us when a crdt_msg we sent
