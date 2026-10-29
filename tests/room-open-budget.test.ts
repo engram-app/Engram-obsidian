@@ -44,14 +44,34 @@ const mockApp = {
 
 let stack = 0;
 
-function setup(notes: string[]) {
-	const server = {
+type Server = {
+	docs: Map<string, Y.Doc>;
+	rooms: Set<string>;
+	starts: number;
+	up: boolean;
+	/** Client STEP1s received, per note. */
+	step1s: Map<string, number>;
+};
+
+/** `prefix` + `store` + `prior` model a RESTART: a new registry over the same
+ *  IndexedDB and localStorage, talking to the same server. */
+function setup(
+	notes: string[],
+	opts: { prefix?: string; store?: Map<string, string>; prior?: Server } = {},
+) {
+	const server: Server = opts.prior ?? {
 		docs: new Map<string, Y.Doc>(),
 		rooms: new Set<string>(),
 		starts: 0,
 		up: true,
-		/** Client STEP1s received, per note. */
 		step1s: new Map<string, number>(),
+	};
+	const kv = opts.store ?? new Map<string, string>();
+	const store = {
+		getItem: (k: string) => kv.get(k) ?? null,
+		setItem: (k: string, v: string) => {
+			kv.set(k, v);
+		},
 	};
 	const serverDoc = (id: string) => {
 		let d = server.docs.get(id);
@@ -105,7 +125,8 @@ function setup(notes: string[]) {
 		time,
 	);
 	reg = new ProviderRegistry({
-		dbPrefix: `roomBudget${stack++}`,
+		dbPrefix: opts.prefix ?? `roomBudget${stack++}`,
+		resendStore: store,
 		send: (id, b64) => onFrame(id, b64),
 		onFlushToDisk: () => true,
 		onSynced: (id) => void engine.commitCrdtConvergence(id),
@@ -156,7 +177,7 @@ function setup(notes: string[]) {
 		engine.reopenRoomsOnRejoin(openIds);
 		reg.setConnected(true);
 	};
-	return { engine, reg, server, serverDoc, liveBound, settle, reconnect, docUpdates };
+	return { engine, reg, server, serverDoc, liveBound, settle, reconnect, docUpdates, kv };
 }
 
 const text = (d: Y.Doc) => d.getText(CONTENT_KEY).toString();
@@ -189,6 +210,99 @@ describe("room opens against a y_ex-shaped server (#658)", () => {
 
 		reconnect([]);
 		await settle(() => text(serverDoc("a")) === "typed while half-open", "lost op resent");
+		await reg.destroyAll();
+	});
+
+	// Round 3 HIGH: the resend list was read off RESIDENT docs only. Closing the
+	// tab, then a remote update, unloads the doc (hibernate -> closeDoc), and the
+	// op the half-open socket dropped was never resent.
+	test("half-open op, tab closed, doc unloaded by a remote update: the rejoin still resends it", async () => {
+		const { reg, server, serverDoc, liveBound, settle, reconnect } = setup(["a"]);
+		liveBound.add("a.md");
+		reg.enroll("a");
+		await settle(() => reg.isSynced("a"), "first handshake");
+		server.up = false;
+		await reg.applyLocalEdit("a", "typed while half-open");
+		liveBound.delete("a.md");
+		reg.closeDoc("a"); // what hibernateIfIdle does after the remote update
+		await settle(() => !reg.docs.has("a"), "doc unloaded");
+
+		reconnect([]);
+		await settle(() => text(serverDoc("a")) === "typed while half-open", "resent after unload");
+		await reg.destroyAll();
+	});
+
+	test("a RESTART with an unacked edit on disk resends it at the first join", async () => {
+		const first = setup(["a"], { prefix: "roomBudgetRestart" });
+		first.liveBound.add("a.md");
+		first.reg.enroll("a");
+		await first.settle(() => first.reg.isSynced("a"), "first handshake");
+		first.server.up = false;
+		await first.reg.applyLocalEdit("a", "typed before the restart");
+		await first.reg.flushAcked();
+		await first.reg.destroyAll(); // the app quits; IndexedDB + localStorage stay
+
+		const second = setup(["a"], {
+			prefix: "roomBudgetRestart",
+			store: first.kv,
+			prior: first.server,
+		});
+		second.reconnect([]);
+		await second.settle(
+			() => text(second.serverDoc("a")) === "typed before the restart",
+			"resent after restart",
+		);
+		await second.reg.destroyAll();
+	});
+
+	test("the server's ack clears the resend entry: the next rejoin sends nothing", async () => {
+		const { reg, server, settle, reconnect, docUpdates } = setup(["a"]);
+		reg.enroll("a");
+		await settle(() => reg.isSynced("a"), "first handshake");
+		server.up = false;
+		await reg.applyLocalEdit("a", "edit");
+		reconnect([]);
+		await settle(() => docUpdates.length === 1, "first resend");
+
+		reconnect([]);
+		await new Promise((r) => setTimeout(r, 30));
+
+		expect(docUpdates).toEqual(["a"]);
+		expect(reg.needsResend("a")).toBe(false);
+		await reg.destroyAll();
+	});
+
+	test("the resend waits for the sync gate, then runs once it opens", async () => {
+		const { engine, reg, server, settle, reconnect, docUpdates } = setup(["a"]);
+		reg.enroll("a");
+		await settle(() => reg.isSynced("a"), "first handshake");
+		server.up = false;
+		await reg.applyLocalEdit("a", "edit");
+		engine.setSyncBlocked(true); // first run: no direction picked yet
+
+		reconnect([]);
+		await new Promise((r) => setTimeout(r, 30));
+		expect(docUpdates).toEqual([]);
+
+		engine.setSyncBlocked(false);
+		engine.resendUnackedOnGateOpen();
+		await settle(() => docUpdates.length === 1, "resent on gate open");
+		await reg.destroyAll();
+	});
+
+	test("a note whose create is still queued is not resent (the row may not exist yet)", async () => {
+		const { engine, reg, server, settle, reconnect, docUpdates } = setup(["a"]);
+		reg.enroll("a");
+		await settle(() => reg.isSynced("a"), "first handshake");
+		server.up = false;
+		await reg.applyLocalEdit("a", "edit");
+		engine.setCrdtHasPendingOp((id) => id === "a");
+
+		reconnect([]);
+		await new Promise((r) => setTimeout(r, 30));
+
+		expect(docUpdates).toEqual([]);
+		expect(server.starts).toBe(1); // only the first handshake's room
 		await reg.destroyAll();
 	});
 
