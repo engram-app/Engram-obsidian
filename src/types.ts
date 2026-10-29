@@ -28,7 +28,7 @@ export type BackendScopedField = (typeof BACKEND_SCOPED_FIELDS)[number];
 
 /** Plugin settings stored in data.json */
 export interface EngramSyncSettings {
-	/** Engram base URL (e.g. "http://10.0.20.214:8000") */
+	/** Engram base URL (e.g. "http://localhost:4000") */
 	apiUrl: string;
 	/** Bearer token for Engram (e.g. "engram_abc123...") */
 	apiKey: string;
