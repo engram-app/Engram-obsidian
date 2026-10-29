@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import * as decoding from "lib0/decoding";
+import * as encoding from "lib0/encoding";
 import * as syncProtocol from "y-protocols/sync";
 import * as Y from "yjs";
 import { NoteProvider } from "../../src/crdt/note-provider";
-import { fromB64, MESSAGE_SYNC } from "../../src/crdt/wire";
+import { fromB64, MESSAGE_SYNC, toB64 } from "../../src/crdt/wire";
 
 /**
  * Provider sync-core tests: one persistent Y.Doc,
@@ -194,5 +195,83 @@ describe("NoteProvider (provider model)", () => {
 		expect(docA.getText("content").toString()).toBe("same"); // no doubling
 		a.destroy();
 		b.destroy();
+	});
+});
+
+/** The server's answer to a client syncStep1, the way y_ex sends it
+ *  (`encode_sync_step1_response_v1`): its syncStep2 FIRST, then its own
+ *  syncStep1, as two frames. */
+function serverAnswer(server: Y.Doc, clientStep1B64: string): { step2: string; step1: string } {
+	const decoder = decoding.createDecoder(fromB64(clientStep1B64));
+	decoding.readVarUint(decoder); // MESSAGE_SYNC
+	decoding.readVarUint(decoder); // messageYjsSyncStep1
+	const sv = decoding.readVarUint8Array(decoder);
+	const frame = (write: (e: encoding.Encoder) => void) => {
+		const e = encoding.createEncoder();
+		encoding.writeVarUint(e, MESSAGE_SYNC);
+		write(e);
+		return toB64(encoding.toUint8Array(e));
+	};
+	return {
+		step2: frame((e) => syncProtocol.writeSyncStep2(e, server, sv)),
+		step1: frame((e) => syncProtocol.writeSyncStep1(e, server)),
+	};
+}
+
+describe("closing a room after the handshake (#658)", () => {
+	// A heal closed its room on the server's syncStep2, then answered the
+	// server's syncStep1 that was already on the wire behind it. The server had
+	// just torn the room down, so that answer opened a SECOND room: two room
+	// starts per heal, the second one outside the pool's budget.
+	test("afterPeerStep1 runs only once the peer's trailing syncStep1 is answered", () => {
+		const server = new Y.Doc();
+		server.getText("content").insert(0, "server body");
+		const sent: string[] = [];
+		const order: string[] = [];
+		const p = new NoteProvider(new Y.Doc());
+		p.setSend((frame) => {
+			sent.push(frame);
+			order.push("reply");
+			return true;
+		});
+		p.setAdvertised(true);
+		p.connect();
+		const { step2, step1 } = serverAnswer(server, sent[0] as string);
+		order.length = 0;
+
+		let released = 0;
+		p.afterPeerStep1(() => {
+			released++;
+			order.push("release");
+		});
+		p.receive(step2);
+		expect(released).toBe(0); // the server's syncStep1 is still owed an answer
+		p.receive(step1);
+		expect(released).toBe(1);
+		expect(order).toEqual(["reply", "release"]);
+		p.destroy();
+	});
+
+	test("afterPeerStep1 runs at once when no handshake is in flight", () => {
+		const p = new NoteProvider(new Y.Doc());
+		p.setSend(() => true);
+		p.connect(); // un-advertised: no syncStep1 went out
+		let released = 0;
+		p.afterPeerStep1(() => released++);
+		expect(released).toBe(1);
+		p.destroy();
+	});
+
+	test("a disconnect runs a waiting release: that answer can no longer come", () => {
+		const p = new NoteProvider(new Y.Doc());
+		p.setSend(() => true);
+		p.setAdvertised(true);
+		p.connect();
+		let released = 0;
+		p.afterPeerStep1(() => released++);
+		expect(released).toBe(0);
+		p.setConnected(false);
+		expect(released).toBe(1);
+		p.destroy();
 	});
 });

@@ -59,6 +59,10 @@ function harness(
 		mock().mockResolvedValue(undefined),
 		time,
 	);
+	// The server answers a STEP1 with its STEP2 AND its own STEP1, back to back
+	// (y_ex `encode_sync_step1_response_v1`). Ids here have that trailing STEP1
+	// still in flight; the releases waiting on its answer queue under them.
+	const owedStep1 = new Map<string, (() => void)[]>();
 	engine.setCrdtManager({
 		hasUndeliveredOps: () => false,
 		hasCurrentDeliveryReceipt: () => false,
@@ -86,6 +90,9 @@ function harness(
 		startedAt: [] as number[],
 		attempts: new Map<string, number>(),
 		released: 0,
+		/** Rooms the SERVER started again because this device answered its
+		 *  trailing STEP1 after closing the room (#658). Not counted in `starts`. */
+		respins: 0,
 	};
 	const liveBound = opts.liveBound ?? new Set<string>();
 	const pendingStep2 = new Map<string, ReturnType<typeof setTimeout>>();
@@ -104,11 +111,26 @@ function harness(
 				noteId,
 				setTimeout(() => {
 					pendingStep2.delete(noteId);
+					// The trailing STEP1 left the server with this STEP2, so a release
+					// can no longer stop it. The device answers it on a later frame; a
+					// room closed by then is started again by that answer.
+					owedStep1.set(noteId, []);
+					setTimeout(() => {
+						if (!rooms.open.has(noteId)) rooms.respins++;
+						const waiting = owedStep1.get(noteId) ?? [];
+						owedStep1.delete(noteId);
+						for (const fn of waiting) fn();
+					}, 0);
 					void engine.commitCrdtConvergence(noteId);
 				}, 1),
 			);
 		},
 		reset: () => {},
+		afterPeerStep1: (noteId: string, fn: () => void) => {
+			const waiting = owedStep1.get(noteId);
+			if (waiting) waiting.push(fn);
+			else fn();
+		},
 	} as any);
 	engine.setCrdtPorts({
 		release: (noteId: string) => {
@@ -163,6 +185,22 @@ describe("idle heal rooms are pooled (Engram#2242)", () => {
 
 		expect(converged(engine)).toBe(N);
 		expect(rooms.max).toBeLessThanOrEqual(IDLE_HEAL_ROOMS);
+		expect(rooms.open.size).toBe(0);
+	});
+
+	// #658: the pool's own reports counted ~17 rooms/min while the server saw
+	// ~31. Each heal closed its room on the STEP2 and then answered the
+	// server's trailing STEP1, which opened the room again: two starts per heal.
+	test(`one heal = one room start: ${N} heals, no room re-opened by a late STEP1 answer`, async () => {
+		const { engine, rooms, settle } = harness();
+		engine.setCrdtPorts({ docState: mock().mockRejectedValue(new Error("timeout")) });
+
+		for (let i = 0; i < N; i++) await coldConverge(engine, i);
+		await settle(() => converged(engine) === N && rooms.open.size === 0);
+
+		expect(converged(engine)).toBe(N);
+		expect(rooms.starts).toBe(N);
+		expect(rooms.respins).toBe(0);
 		expect(rooms.open.size).toBe(0);
 	});
 

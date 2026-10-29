@@ -699,3 +699,37 @@ describe("delivery base (diff against what the server acked)", () => {
 		expect(reg.hasCurrentDeliveryReceipt("n1")).toBe(false);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// #658: a reconnect re-sent syncStep1 for EVERY note enrolled this session.
+// Closing an editor never un-advertises its note, so the set grew with each
+// note opened, and every `read_timeout` reconnect opened a fresh server room
+// for each one, outside the heal pool's budget. A reconnect now re-opens only
+// the rooms its owner still wants (an open editor, a heal holding a pool slot).
+// ---------------------------------------------------------------------------
+describe("reconnect re-opens only wanted rooms (#658)", () => {
+	test("50 notes enrolled this session, 1 still open: the reconnect sends ONE syncStep1", async () => {
+		const handshakes: string[] = [];
+		const reg = new ProviderRegistry({
+			dbPrefix: "devReconnect658",
+			send: (id, _frame, kind) => {
+				if (kind === "handshake") handshakes.push(id);
+				return true;
+			},
+			onFlushToDisk: () => {},
+			keepRoomOnReconnect: (id) => id === "open",
+		});
+		reg.setConnected(true);
+		const ids = ["open", ...Array.from({ length: 50 }, (_, i) => `closed-${i}`)];
+		for (const id of ids) await reg.startSync(id);
+		await waitFor(() => handshakes.length === ids.length, "every room opened once");
+
+		reg.setConnected(false);
+		handshakes.length = 0;
+		reg.setConnected(true);
+
+		expect(handshakes).toEqual(["open"]);
+		expect([...reg.enrolled]).toEqual(["open"]);
+		await reg.destroyAll();
+	});
+});
