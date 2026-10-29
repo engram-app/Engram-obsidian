@@ -5,7 +5,7 @@
  * WHY THIS FILE EXISTS
  * --------------------
  * Our machines and self-hosted CI runners set
- * `registry=http://10.0.20.214:4873` (the LAN Verdaccio proxy) in ~/.npmrc.
+ * `registry=` pointing at the LAN Verdaccio proxy (a 10.x address) in ~/.npmrc.
  * Both bun and npm bake that host into every tarball URL they write into a
  * lockfile. The result installs fine for us and is unusable for everyone
  * else, because 10.0.0.0/8 is not routable from outside our LAN:
@@ -22,7 +22,7 @@
  * That second one already cost us two months. PR #125 (2026-05) committed a
  * package-lock.json to fix the scorecard, saw no change, and concluded "the
  * audit ignores package-lock.json". But that lockfile had 466 of 466 tarballs
- * on 10.0.20.214:4873, so npm could not fetch a single one. A negative result
+ * on the LAN proxy, so npm could not fetch a single one. A negative result
  * from a silently invalid artifact is worse than no result: it gets written
  * into a commit message as settled fact and closes off the right hypothesis.
  * This check exists so that cannot happen a third time.
@@ -56,7 +56,7 @@ import { fileURLToPath } from "node:url";
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
 // Lockfiles carry the symptom; .npmrc and bunfig.toml carry the cause. A
-// committed `registry=http://10.0.20.214:4873` would re-poison the lockfile on
+// committed `registry=` line for the LAN proxy would re-poison the lockfile on
 // the next resolve and break every outside contributor, so check both.
 // package-lock.json is optional: only tracked if something external (the
 // Obsidian scanner) turns out to need an npm install path.
