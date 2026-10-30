@@ -14,6 +14,7 @@ import { describe, expect, mock, test } from "bun:test";
 import "fake-indexeddb/auto";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
+import { fnv1a } from "../src/content-hash";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -72,7 +73,6 @@ describe("a rename re-keys the sync-state row", () => {
 		expect(engine.exportSyncState()).toEqual({ "b.md": { ...ROW, relocating: true } });
 		// Its push must be the relocating create, not a crdt_msg (e2e test_93).
 		expect(engine.hasServerNote("id-1")).toBe(false);
-		expect(engine.isUnchangedSynced("b.md", "x")).toBe(false);
 	});
 
 	test("the relocation's create-ack clears the flag and keeps the row", async () => {
@@ -112,5 +112,30 @@ describe("a rename re-keys the sync-state row", () => {
 		const { engine } = engineWith();
 
 		await expect(engine.pushFile({ path: "gone.md", extension: "md" })).resolves.toBe(false);
+	});
+
+	test("a read error on a file that still exists propagates, not a silent skip", async () => {
+		const { engine } = engineWith({ "a.md": "body" });
+		engine.app.vault.cachedRead.mockRejectedValueOnce(new Error("EIO"));
+
+		await expect(engine.pushFile({ path: "a.md", extension: "md" })).rejects.toThrow("EIO");
+	});
+
+	test("a renamed note's unchanged body is not echo-skipped: the push is the relocation", async () => {
+		const { engine, map } = engineWith({ "b.md": "body" });
+		// Baseline hash equals the file's own: a rename changes no content.
+		engine.importSyncState({ "a.md": { ...ROW, hash: fnv1a("body") } });
+		map.rename("a.md", "b.md");
+		engine.renamePath("a.md", "b.md", "local");
+		// The push gets past the echo filter into the push slot.
+		const slot = mock(async () => {
+			throw new Error("reached push slot");
+		});
+		engine.acquirePushSlot = slot;
+
+		await expect(engine.pushFile({ path: "b.md", extension: "md" })).rejects.toThrow(
+			"reached push slot",
+		);
+		expect(slot).toHaveBeenCalledTimes(1);
 	});
 });
