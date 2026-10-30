@@ -348,6 +348,8 @@ const DISCOVERY_BASE_MAX_CHARS = 4 * 1024 * 1024;
  *  Generous next to any real apply (disk + a manifest fetch), short next to a
  *  session. */
 const STREAM_EVENT_STALL_MS = 30_000;
+/** A staged convergence older than this stops holding its note's push. */
+const CONVERGENCE_HOLD_MS = 30_000;
 
 /** Debounce window for the ok->degraded transition Notice: aggregates a
  *  burst of newly-degraded notes (e.g. a batch push) into one Notice. */
@@ -1564,9 +1566,15 @@ export class SyncEngine {
 				content: string | null;
 				version?: number;
 				seq?: number;
+				/** `time.now()` at staging, so a stage that never commits stops holding pushes. */
+				at: number;
 			}
 		>(),
 	);
+
+	/** Paths whose push `pushFile` held back because their convergence is
+	 *  staged (Engram-obsidian#666). Re-armed by `commitCrdtConvergence`. */
+	private heldForConvergence = this.track(["vault", "destroy"], new Set<string>());
 
 	/** Fix wave 1: per-note_id cooldown for `socketConverge`'s STEP1
 	 *  re-handshake — bounds how often a live-bound note can re-fire reset+
@@ -4862,7 +4870,14 @@ export class SyncEngine {
 		version?: number,
 		seq?: number,
 	): void {
-		this.pendingConvergence.set(noteId, { path, serverHash, content, version, seq });
+		this.pendingConvergence.set(noteId, {
+			path,
+			serverHash,
+			content,
+			version,
+			seq,
+			at: this.time.now(),
+		});
 	}
 
 	/** Is `normalized` a 0-byte placeholder THIS device wrote and never
@@ -6026,6 +6041,16 @@ export class SyncEngine {
 		// Attachments keep their check inside the slot: theirs needs the base64
 		// body, which is the expensive part — hoisting it would not avoid it.
 		const isBinary = this.isBinaryFile(file);
+		// A note whose convergence is staged has a disk that is known to be
+		// stale against the doc: the room is about to merge the server's ops and
+		// flush them over it. Diffing that disk into the doc now deletes the
+		// server's edit (#666), so wait for the commit; it re-arms this push
+		// against the re-read disk.
+		if (!isBinary && this.convergenceStaged(file.path)) {
+			this.heldForConvergence.add(normalizePath(file.path));
+			devLog().log("push", `hold (convergence staged): ${file.path}`);
+			return false;
+		}
 		if (!isBinary) {
 			const echoHash = fnv1a(await this.app.vault.cachedRead(file));
 			const existing = this.syncState.get(normalizePath(file.path));
@@ -8606,6 +8631,14 @@ export class SyncEngine {
 		);
 	}
 
+	/** Is a convergence staged for the note at `path`, recently enough to trust
+	 *  that its commit is still coming? */
+	private convergenceStaged(path: string): boolean {
+		const id = this.noteIdMap?.get(path);
+		const staged = id ? this.pendingConvergence.get(id) : undefined;
+		return staged !== undefined && this.time.now() - staged.at < CONVERGENCE_HOLD_MS;
+	}
+
 	/** Commit a staged convergence (see `pendingConvergence` — staged by BOTH
 	 *  the live-bound and the cold catch-up legs since Phase E3) — the ONLY
 	 *  place those legs' `serverHash`/`version`/`seq` get written. Wired
@@ -8705,6 +8738,7 @@ export class SyncEngine {
 		this.pendingConvergence.delete(noteId);
 		this.crdtRehandshakeAttempts.delete(noteId);
 		const path = this.noteIdMap?.pathForId(noteId);
+		this.rearmHeldPush(path ?? staged.path);
 		if (!path) {
 			// Id unmapped since staging (deleted) — nothing to record, and a
 			// deleted note must not keep holding a room.
@@ -8741,6 +8775,14 @@ export class SyncEngine {
 			);
 		}
 		this.releaseAfterHandshake(noteId, path);
+	}
+
+	/** Re-run a push `pushFile` held while this note's convergence was staged. */
+	private rearmHeldPush(path: string): void {
+		const p = normalizePath(path);
+		if (!this.heldForConvergence.delete(p)) return;
+		const file = this.app.vault.getFileByPath(p);
+		if (file) this.handleModify(file);
 	}
 
 	/** Release once the server's trailing STEP1 is answered, not on the STEP2
