@@ -340,6 +340,78 @@ describe("a local rename fences older path claims", () => {
 	});
 });
 
+describe("fence review follow-ups", () => {
+	const echo = (id: string, path: string) =>
+		({
+			event_type: "upsert",
+			kind: "note",
+			id,
+			path,
+			content_hash: "h",
+			timestamp: 3,
+			updated_at: "2026-01-01T00:00:05Z",
+		}) as never;
+
+	test("an offline rename whose push drains first still holds the fence for a full TTL", async () => {
+		const time = new ManualTimeProvider(1_000_000);
+		const h = await renamedLocally({ "Old.md": ID }, [["Old.md", "New.md"]], { time });
+		const eng = h.engine as unknown as { crdtHasPendingOp: () => boolean };
+		let queued = true;
+		eng.crdtHasPendingOp = () => queued;
+		time.advance(300_000); // offline for 5 min, nobody checks a claim meanwhile
+		queued = false; // reconnect: the push drains
+		time.advance(10_000);
+
+		await h.engine.applyOp(row(ID, "Old.md", 9)); // stale replay
+		await settle();
+
+		expect([...h.present.keys()]).toEqual(["New.md"]);
+	});
+
+	test("after the echo, a stream rename back to the old path is real and applies", async () => {
+		const h = await renamedLocally({ "Old.md": ID }, [["Old.md", "New.md"]]);
+		await h.engine.handleStreamEvent(echo(ID, "New.md"));
+		await settle();
+
+		await h.engine.handleStreamEvent(echo(ID, "Old.md")); // another device renames it back
+		await settle();
+
+		expect([...h.present.keys()]).toEqual(["Old.md"]);
+		expect(h.map.pathForId(ID)).toBe("Old.md");
+	});
+
+	test("an unclaimed fence is pruned once its TTL passes", async () => {
+		const time = new ManualTimeProvider(1_000_000);
+		const h = await renamedLocally({ "Old.md": ID }, [["Old.md", "New.md"]], { time });
+		const moves = (h.engine as unknown as { pendingLocalMoves: Map<string, unknown> })
+			.pendingLocalMoves;
+		expect(moves.size).toBe(1);
+
+		time.advance(200_000); // no claim ever arrives
+
+		expect(moves.size).toBe(0);
+	});
+
+	test("a fan-out waiting on a slow manifest heal does not hold its note's lane", async () => {
+		const h = await plainEngine({ "A.md": ID }, 1);
+		const eng = h.engine as any;
+		let release!: () => void;
+		eng.idMapReconcileInflight = new Promise<void>((r) => {
+			release = r;
+		});
+		void h.engine.applyPushedNoteUpdate(ID2, new Uint8Array(), "h"); // unmapped id
+		let ran = false;
+		const probe = eng.serial.run(ID2, async () => {
+			ran = true;
+		});
+		await settle();
+
+		expect(ran).toBe(true);
+		release();
+		await probe;
+	});
+});
+
 /** An engine holding `files` as synced notes at `seq`, no local rename. */
 async function plainEngine(files: Record<string, string>, seq: number) {
 	const h = makeVault(Object.fromEntries(Object.keys(files).map((p) => [p, "original"])));

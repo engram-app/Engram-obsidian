@@ -8172,13 +8172,20 @@ export class SyncEngine {
 	): Promise<"applied" | "deferred"> {
 		// An unmapped id starts its manifest heal NOW, outside the lane, so a
 		// burst of updates for it joins one in-flight fetch.
-		if (!this.noteIdMap?.pathForId(noteId)) this.ensureNoteIdMapped(noteId);
 		const vault = this.settings.vaultId;
-		return this.serial.run(noteId, async () =>
-			// Queued before a vault switch: it belongs to the old vault.
-			vault === this.settings.vaultId
-				? this.applyPushedNoteUpdateNow(noteId, update, head)
-				: "deferred",
+		const heal = async () => {
+			if (this.noteIdMap?.pathForId(noteId)) return;
+			this.ensureNoteIdMapped(noteId);
+			// Outside the lane: a slow manifest fetch must not eat its stall bound.
+			await this.idMapReconcileInflight;
+		};
+		return heal().then(() =>
+			this.serial.run(noteId, async () =>
+				// Queued before a vault switch: it belongs to the old vault.
+				vault === this.settings.vaultId
+					? this.applyPushedNoteUpdateNow(noteId, update, head)
+					: "deferred",
+			),
 		);
 	}
 
@@ -8207,8 +8214,7 @@ export class SyncEngine {
 			// delivery. Heal the map (single-flight manifest reconcile, the same
 			// primitive the crdt_doc_ready announce path uses) and retry the
 			// lookup once (e2e test_82, local repro 2026-07-22).
-			// (The heal was started when this update was queued.)
-			await this.idMapReconcileInflight;
+			// (The heal ran before this update entered the lane.)
 			path = this.noteIdMap?.pathForId(noteId) ?? null;
 			if (!path) {
 				rlog().info("crdt", `fan-out drop: id unmapped after reconcile note=${noteId}`);
@@ -9741,6 +9747,7 @@ export class SyncEngine {
 	 *  note deleted elsewhere), counted from when the rename left the queue. A
 	 *  hiding layer must expire: past this a path is judged by seq alone again. */
 	private static readonly PENDING_MOVE_TTL_MS = 120_000;
+	private static readonly PENDING_MOVE_SWEEP_MS = 30_000;
 
 	/** Fence a local rename's older path claims (see isStalePathClaim). Only for
 	 *  a note the server will hear about: an ignored or non-CRDT path is never
@@ -9759,6 +9766,28 @@ export class SyncEngine {
 			echoed: false,
 			at: this.time.now(),
 		});
+		this.scheduleMoveSweep();
+	}
+
+	private moveSweepTimer: number | null = null;
+
+	/** Keeps every fence's TTL honest without waiting for a claim: while a
+	 *  rename is still queued its clock is held at "now", so the TTL counts from
+	 *  the moment the queue drains (even if nothing checked a claim meanwhile),
+	 *  and a fence nothing ever claims is pruned instead of lingering. */
+	private scheduleMoveSweep(): void {
+		if (this.moveSweepTimer !== null) return;
+		this.moveSweepTimer = this.time.setTimeout(() => {
+			this.moveSweepTimer = null;
+			const now = this.time.now();
+			for (const [id, pending] of this.pendingLocalMoves) {
+				if (this.crdtHasPendingOp?.(id)) pending.at = now;
+				else if (now - pending.at > SyncEngine.PENDING_MOVE_TTL_MS) {
+					this.pendingLocalMoves.delete(id);
+				}
+			}
+			if (this.pendingLocalMoves.size > 0) this.scheduleMoveSweep();
+		}, SyncEngine.PENDING_MOVE_SWEEP_MS);
 	}
 
 	/** The rename's push was refused or failed and nothing is queued to retry
@@ -9800,8 +9829,14 @@ export class SyncEngine {
 				if (Number.isInteger(seq)) this.pendingLocalMoves.delete(id);
 				else pending.echoed = true;
 				return false;
-			} else if (!pending.echoed || pending.from.has(target)) {
+			} else if (!pending.echoed) {
 				return true;
+			} else if (pending.from.has(target)) {
+				// A replay row (seq) naming a path the note left may predate the
+				// rename. A stream event is ordered after the echo, so it is a
+				// real rename back: stop fencing and let it apply.
+				if (Number.isInteger(seq)) return true;
+				this.pendingLocalMoves.delete(id);
 			}
 		}
 		if (!Number.isInteger(seq)) return false;
