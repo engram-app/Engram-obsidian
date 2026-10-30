@@ -5315,7 +5315,17 @@ export class SyncEngine {
 				);
 				return;
 			}
-			void this.pushFile(file);
+			// pushFile rethrows a real read error; nothing awaits this timer.
+			this.pushFile(file).catch((e) => {
+				devLog().log(
+					"push",
+					`debounced push failed: ${armedPath} | ${errMsg(e, armedPath)}`,
+				);
+				rlog().warn(
+					"push",
+					`Debounced push failed: ${noteRef(armedPath)} | ${errMsg(e, armedPath)}`,
+				);
+			});
 		}, this.settings.debounceMs);
 
 		this.debounceTimers.set(armedPath, timer);
