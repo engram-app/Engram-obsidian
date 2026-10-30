@@ -16,15 +16,18 @@ import { NoteIdMap } from "../src/crdt/note-id-map";
 import type { ProviderRegistry } from "../src/crdt/provider-registry";
 import { createCrdtWiring } from "../src/crdt/wiring";
 import { fnv1a, SyncEngine } from "../src/sync";
+import { ManualTimeProvider } from "../src/time-provider";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 const PATH = "a.md";
-const ID = "id-converge";
+let ID = "id-converge";
+let deviceSeq = 0;
 const BASE = "# a\nbase\n";
 const SERVER_EDIT = "server edit\n";
 const tick = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-async function device() {
+async function device(time?: ManualTimeProvider) {
+	ID = `id-converge-${++deviceSeq}`;
 	const server = new Y.Doc();
 	server.getText(CONTENT_KEY).insert(0, BASE);
 	const disk = new Map<string, string>([[PATH, BASE]]);
@@ -54,6 +57,7 @@ async function device() {
 		{} as unknown as EngramApi,
 		{ ...DEFAULT_SETTINGS, debounceMs: 5 },
 		mock().mockResolvedValue(undefined),
+		time,
 	);
 	const wiring = createCrdtWiring({
 		ackScope: () => "s",
@@ -73,7 +77,7 @@ async function device() {
 	await reg.applyRemoteUpdate(ID, Y.encodeStateAsUpdate(server));
 	await tick(10);
 	engine.importSyncState({ [PATH]: { hash: fnv1a(BASE), crdtHead: "h0" } });
-	return { engine: engine as any, server, reg, disk, file };
+	return { engine: engine as any, server, reg, disk, file, map };
 }
 
 test("a sweep push waits for a staged convergence and never deletes the server edit", async () => {
@@ -99,5 +103,53 @@ test("a sweep push waits for a staged convergence and never deletes the server e
 	const doc = await reg.projectedText(ID);
 	expect(doc).toContain(SERVER_EDIT);
 	expect(doc).toContain("kept local\n");
+	await reg.destroyAll();
+});
+
+/** Stage a convergence, merge the server edit into the doc (flush never lands),
+ *  and let a sweep push of the stale disk try to run. */
+async function heldDevice(time?: ManualTimeProvider) {
+	const d = await device(time);
+	d.disk.set(PATH, `${BASE}local edit\n`);
+	d.engine.stageConvergence(ID, PATH, "srv-hash", `${BASE}${SERVER_EDIT}`);
+	const before = Y.encodeStateVector(d.server);
+	d.server.getText(CONTENT_KEY).insert(BASE.length, SERVER_EDIT);
+	void d.reg.applyRemoteUpdate(ID, Y.encodeStateAsUpdate(d.server, before));
+	await tick(20);
+	await d.engine.pushFile(d.file);
+	return d;
+}
+
+test("a stage that never commits stops holding: the held push re-runs when it expires", async () => {
+	const time = new ManualTimeProvider(1_000);
+	const { engine, reg, disk } = await heldDevice(time);
+	disk.set(PATH, `${BASE}${SERVER_EDIT}kept local\n`);
+
+	time.advance(31_000);
+	await tick(80);
+	time.advance(1_000); // the re-armed debounce
+	await tick(80);
+
+	const doc = await reg.projectedText(ID);
+	expect(doc).toContain("kept local\n");
+	expect(doc).toContain(SERVER_EDIT);
+	expect(engine.heldForConvergence.size).toBe(0);
+	await reg.destroyAll();
+});
+
+test("a rename between hold and commit still re-arms the held push", async () => {
+	const { engine, reg, disk, map } = await heldDevice();
+	const NEW = "b.md";
+	const moved = new TFile(NEW);
+	disk.delete(PATH);
+	disk.set(NEW, `${BASE}${SERVER_EDIT}kept local\n`);
+	map.set(NEW, ID);
+	engine.importSyncState({ [NEW]: { hash: fnv1a(BASE), crdtHead: "h0" } });
+	engine.app.vault.getFileByPath.mockImplementation((p: string) => (disk.has(p) ? moved : null));
+
+	await engine.commitCrdtConvergence(ID);
+	await tick(80);
+
+	expect(await reg.projectedText(ID)).toContain("kept local\n");
 	await reg.destroyAll();
 });
