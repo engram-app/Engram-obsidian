@@ -9782,7 +9782,10 @@ export class SyncEngine {
 	}
 
 	private moveSweepTimer: number | null = null;
-	private readonly fanoutHeal = new Map<string, Promise<void>>();
+	private readonly fanoutHeal = this.track(
+		["vault", "destroy"],
+		new Map<string, Promise<void>>(),
+	);
 
 	/** Keeps every fence's TTL honest without waiting for a claim: while a
 	 *  rename is still queued its clock is held at "now", so the TTL counts from
