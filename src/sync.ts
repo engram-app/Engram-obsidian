@@ -8179,7 +8179,19 @@ export class SyncEngine {
 			// Outside the lane: a slow manifest fetch must not eat its stall bound.
 			await this.idMapReconcileInflight;
 		};
-		return heal().then(() =>
+		// One heal chain per note, so a later update never overtakes an earlier
+		// one still waiting on the heal.
+		// A queued update joins the earlier one's heal instead of fetching again.
+		const prior = this.fanoutHeal.get(noteId);
+		const entered = prior ? prior.then(() => {}) : heal();
+		this.fanoutHeal.set(noteId, entered);
+		void entered.then(
+			() => {
+				if (this.fanoutHeal.get(noteId) === entered) this.fanoutHeal.delete(noteId);
+			},
+			() => {},
+		);
+		return entered.then(() =>
 			this.serial.run(noteId, async () =>
 				// Queued before a vault switch: it belongs to the old vault.
 				vault === this.settings.vaultId
@@ -9770,6 +9782,7 @@ export class SyncEngine {
 	}
 
 	private moveSweepTimer: number | null = null;
+	private readonly fanoutHeal = new Map<string, Promise<void>>();
 
 	/** Keeps every fence's TTL honest without waiting for a claim: while a
 	 *  rename is still queued its clock is held at "now", so the TTL counts from
@@ -13753,6 +13766,10 @@ export class SyncEngine {
 		this.sweep("destroy");
 		this.files.destroy();
 		// Standalone timer handles — not collections, so they stay explicit.
+		if (this.moveSweepTimer !== null) {
+			this.time.clearTimeout(this.moveSweepTimer);
+			this.moveSweepTimer = null;
+		}
 		if (this.seqHealTimer !== null) {
 			this.time.clearTimeout(this.seqHealTimer);
 			this.seqHealTimer = null;

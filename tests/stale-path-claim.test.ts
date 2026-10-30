@@ -392,6 +392,36 @@ describe("fence review follow-ups", () => {
 		expect(moves.size).toBe(0);
 	});
 
+	test("fan-outs for one note apply in arrival order even when the first waits on a heal", async () => {
+		const h = await plainEngine({ "A.md": ID }, 1);
+		const eng = h.engine as any;
+		const order: string[] = [];
+		eng.applyPushedNoteUpdateNow = mock(async (_id: string, _u: Uint8Array, head: string) => {
+			order.push(head);
+			return "applied";
+		});
+		let release!: () => void;
+		eng.idMapReconcileInflight = new Promise<void>((r) => {
+			release = r;
+		});
+		void h.engine.applyPushedNoteUpdate(ID2, new Uint8Array(), "first"); // unmapped: waits
+		h.map.set("B.md", ID2); // healed in the meantime, then a second update arrives
+		void h.engine.applyPushedNoteUpdate(ID2, new Uint8Array(), "second");
+		await settle();
+		release();
+		await settle();
+
+		expect(order).toEqual(["first", "second"]);
+	});
+
+	test("destroy clears the fence sweep timer", async () => {
+		const time = new ManualTimeProvider(1_000_000);
+		const h = await renamedLocally({ "Old.md": ID }, [["Old.md", "New.md"]], { time });
+		expect((h.engine as any).moveSweepTimer).not.toBeNull();
+		h.engine.destroy();
+		expect((h.engine as any).moveSweepTimer).toBeNull();
+	});
+
 	test("a fan-out waiting on a slow manifest heal does not hold its note's lane", async () => {
 		const h = await plainEngine({ "A.md": ID }, 1);
 		const eng = h.engine as any;
