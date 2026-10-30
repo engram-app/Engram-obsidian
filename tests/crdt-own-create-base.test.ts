@@ -14,6 +14,7 @@ import "fake-indexeddb/auto";
 import { fnv1a } from "../src/content-hash";
 import { merge3 } from "../src/crdt/lca-merge";
 import { NoteIdMap } from "../src/crdt/note-id-map";
+import { ProviderRegistry } from "../src/crdt/provider-registry";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -104,23 +105,70 @@ describe("an occupied create under our own id", () => {
 		expect(consumed).toBe(SERVER);
 	});
 
-	test("a real local edit since the create still transmits", async () => {
-		const { engine, calls } = makeEngine(LOCAL_EDIT, SERVER);
+	test("a real local edit since the create merges three-way with the server's edit", async () => {
+		const { engine, calls, doc } = makeEngine(LOCAL_EDIT, SERVER);
+		engine.stampOwnGenesis("note-1", PATH, SENT);
+
+		const consumed = await seed(engine, "occupied");
+
+		// Never the lossy two-way diff of disk onto the server doc (#645).
+		expect(calls.applyLocalEdit).toEqual([]);
+		expect(doc()).toBe("# t0\nA: a2\n--\nS: s3\n");
+		expect(consumed).toBe("# t0\nA: a2\n--\nS: s3\n");
+	});
+
+	test("an overlapping local edit keeps both: server text stays, disk goes to a copy", async () => {
+		const overlapping = "# t0\nA: -\n--\nS: mine\n";
+		const { engine, calls, doc } = makeEngine(overlapping, SERVER);
 		engine.stampOwnGenesis("note-1", PATH, SENT);
 
 		await seed(engine, "occupied");
 
-		expect(calls.applyLocalEdit).toEqual([LOCAL_EDIT]);
+		expect(doc()).toBe(SERVER);
+		expect(calls.copies).toEqual([overlapping]);
 	});
 
 	test("the base is the FIRST create's body: a re-send does not move it", async () => {
-		const { engine, calls } = makeEngine(LOCAL_EDIT, SERVER);
+		const { engine, doc } = makeEngine(LOCAL_EDIT, SERVER);
 		engine.stampOwnGenesis("note-1", PATH, SENT);
 		engine.stampOwnGenesis("note-1", PATH, LOCAL_EDIT); // the re-sent create's disk
 
 		await seed(engine, "occupied");
 
+		expect(doc()).toBe("# t0\nA: a2\n--\nS: s3\n");
+	});
+
+	test("a note created before this session has no own base: a restart's re-send keeps the edit", async () => {
+		// The first create landed (body SENT), its ack was never saved, the user
+		// edited to LOCAL_EDIT, the plugin restarted. The re-sent create would
+		// stamp LOCAL_EDIT as "what we sent" and return the server's text over
+		// the disk, losing the edit.
+		const { engine, calls } = makeEngine(LOCAL_EDIT, SENT);
+		engine.app = {
+			vault: {
+				cachedRead: async () => LOCAL_EDIT,
+				getFileByPath: () => ({ stat: { ctime: 1 } }),
+			},
+		};
+		engine.ownGenesisSince = 1000; // this session started after the file was created
+
+		engine.stampOwnGenesis("note-1", PATH, LOCAL_EDIT);
+		const consumed = await seed(engine, "occupied");
+
+		expect(engine.ownGenesis.has("note-1")).toBe(false);
+		// Falls to the two-way diff of disk onto the server's body: the edit stays.
 		expect(calls.applyLocalEdit).toEqual([LOCAL_EDIT]);
+		expect(consumed).toBe(LOCAL_EDIT);
+	});
+
+	test("an abandoned create's base is forgotten", () => {
+		const { engine } = makeEngine(SENT, SENT);
+		engine.stampOwnGenesis("note-1", PATH, SENT);
+		expect(engine.ownGenesis.has("note-1")).toBe(true);
+
+		engine.forgetOwnGenesis("note-1");
+
+		expect(engine.ownGenesis.has("note-1")).toBe(false);
 	});
 });
 
@@ -143,5 +191,36 @@ describe("a stored create whose disk moved during the round trip", () => {
 
 		expect(doc()).toBe(SERVER);
 		expect(calls.copies).toEqual([overlapping]);
+	});
+});
+
+describe("the three-way base is in the projection's form", () => {
+	test("the registry projects a create's body the way the doc will", async () => {
+		const reg = new ProviderRegistry({
+			ackScope: () => "s",
+			dbPrefix: "canon-1",
+			send: () => true,
+			onFlushToDisk: async () => true,
+		} as any);
+
+		// The frontmatter codec re-emits flow lists and spacing.
+		expect(reg.canonicalText("---\ntitle:   x\ntags: [a,  b]\n---\nbody\n")).toBe(
+			"---\ntitle: x\ntags:\n  - a\n  - b\n---\nbody\n",
+		);
+		await reg.destroyAll();
+	});
+
+	test("the drift merge hands the canonical base, not the raw one, to the merge", async () => {
+		const { engine } = makeEngine(LOCAL_EDIT, SERVER);
+		const seen: string[] = [];
+		engine.crdt.canonicalText = (t: string) => `canon:${t}`;
+		engine.crdt.mergeLocalEditFromBase = async (_i: string, base: string) => {
+			seen.push(base);
+			return "merged";
+		};
+
+		await engine.mergeOwnCreateDrift("note-1", PATH, SENT, SERVER, LOCAL_EDIT);
+
+		expect(seen).toEqual([`canon:${SENT}`]);
 	});
 });
