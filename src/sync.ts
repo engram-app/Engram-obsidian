@@ -578,6 +578,8 @@ function isGateEvent(e: unknown): e is GateEvent {
 
 /** Most unacked docs `redeliverUnackedDocs` re-sends in one sweep. */
 const REDELIVER_PER_SWEEP = 50;
+/** Most heal rooms `redeliverUnackedDocs` opens for failed writes in one sweep. */
+const REDELIVER_ROOMS_PER_SWEEP = 5;
 
 export class SyncEngine {
 	/**
@@ -4640,27 +4642,46 @@ export class SyncEngine {
 	 *  an open note (the rejoin re-handshake delivers it). One at a time and
 	 *  room-free, so it costs a frame per unacked doc; only a failed write
 	 *  falls back to the heal pool's room. */
+	/** Where the next `redeliverUnackedDocs` batch starts in its eligible list. */
+	private redeliverCursor = 0;
+
 	private async redeliverUnackedDocs(): Promise<void> {
 		// A latched `crdt_doc_update` is a server that refuses the frame, not a
 		// failed write: a room per doc is the surge the latch exists to stop, and
 		// the heal pool's own paths cover the notes that matter.
 		if (this.frameLatched(DOC_UPDATE_FRAME)) return;
+		// Skips first, THEN the bound: docs this sweep never sends (create not
+		// acked, live-bound, no path) must not fill the slots and starve the rest.
+		const eligible = (this.crdt?.unackedDocIds?.() ?? []).flatMap((noteId) => {
+			const path = this.noteIdMap?.pathForId(noteId);
+			if (!this.hasServerNote(noteId) || !path || this.isLiveBound(normalizePath(path))) {
+				return [];
+			}
+			return [{ noteId, path }];
+		});
 		// Bounded per sweep: a doc with NO stored ack (every doc on the first
 		// join after an upgrade) reads as unacked and is re-sent in full. Each
-		// ack shrinks the set, so the periodic sweep drains the rest.
-		const ids = (this.crdt?.unackedDocIds?.() ?? []).slice(0, REDELIVER_PER_SWEEP);
+		// ack shrinks the set; a rotating cursor means docs that send but never
+		// get acked do not pin the head of the list.
+		const start = eligible.length > 0 ? this.redeliverCursor % eligible.length : 0;
+		const batch = [...eligible.slice(start), ...eligible.slice(0, start)].slice(
+			0,
+			REDELIVER_PER_SWEEP,
+		);
+		this.redeliverCursor = start + batch.length;
 		let delivered = 0;
-		for (const noteId of ids) {
-			if (!this.hasServerNote(noteId)) continue;
-			const path = this.noteIdMap?.pathForId(noteId);
-			if (!path || this.isLiveBound(normalizePath(path))) continue;
+		let rooms = 0;
+		for (const { noteId, path } of batch) {
 			if (await this.deliverQueuedOpsRoomFree({ path, noteId })) delivered++;
 			// A real failure (encode, oversized, rejected write): the room is
-			// always correct, just dearer: the pooled re-handshake (#644 caps idle
-			// heal rooms) carries the ops up instead. A frame that latched during
-			// this very sweep ends it.
+			// always correct, just dearer. A frame that latched during this very
+			// sweep ends it; otherwise only a few rooms per sweep (the pooled
+			// re-handshake, #644, caps idle heal rooms), the rest wait for the next.
 			else if (this.frameLatched(DOC_UPDATE_FRAME)) break;
-			else this.socketConverge(normalizePath(path), noteId);
+			else if (rooms < REDELIVER_ROOMS_PER_SWEEP) {
+				rooms++;
+				this.socketConverge(normalizePath(path), noteId);
+			}
 		}
 		if (delivered > 0) rlog().anomaly("crdt", "rejoin_redeliver", { docs: delivered });
 	}

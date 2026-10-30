@@ -180,4 +180,77 @@ describe("a crdt join re-sends what the server never acked", () => {
 		expect(docUpdate).toHaveBeenCalledTimes(60);
 		await reg.destroyAll();
 	});
+
+	test("docs the sweep skips do not starve the ones after them", async () => {
+		const { engine, reg, docUpdate } = await device();
+		const map = (engine as any).noteIdMap as NoteIdMap;
+		const rows: Record<string, { hash: number; crdtHead?: string }> = {};
+		// 50 docs with unacked state but no server note (create unacked): always
+		// skipped. They come first, then 10 deliverable ones.
+		for (let i = 1; i <= 60; i++) {
+			const id = `id-${i}`;
+			const path = `Notes/n${i}.md`;
+			const doc = new Y.Doc();
+			doc.getText(CONTENT_KEY).insert(0, "hello");
+			await reg.applyRemoteUpdate(id, Y.encodeStateAsUpdate(doc));
+			await reg.applyLocalEdit(id, "hello world");
+			map.set(path, id);
+			rows[path] = i <= 50 ? { hash: 1 } : { hash: 1, crdtHead: "h1" };
+		}
+		engine.importSyncState({ [PATH]: { hash: 1, crdtHead: "h1" }, ...rows });
+
+		await engine.selfHealSweep();
+
+		expect(docUpdate).toHaveBeenCalledTimes(10);
+		await reg.destroyAll();
+	});
+
+	test("failed writes open at most 5 heal rooms per sweep", async () => {
+		const { engine, reg } = await device({ docUpdateFails: true });
+		const converge = mock();
+		(engine as any).socketConverge = converge;
+		const map = (engine as any).noteIdMap as NoteIdMap;
+		const rows: Record<string, { hash: number; crdtHead: string }> = {};
+		for (let i = 1; i <= 20; i++) {
+			const id = `id-${i}`;
+			const path = `Notes/n${i}.md`;
+			const doc = new Y.Doc();
+			doc.getText(CONTENT_KEY).insert(0, "hello");
+			await reg.applyRemoteUpdate(id, Y.encodeStateAsUpdate(doc));
+			await reg.applyLocalEdit(id, "hello world");
+			map.set(path, id);
+			rows[path] = { hash: 1, crdtHead: "h1" };
+		}
+		engine.importSyncState({ [PATH]: { hash: 1, crdtHead: "h1" }, ...rows });
+
+		await engine.selfHealSweep();
+
+		expect(converge).toHaveBeenCalledTimes(5);
+		await reg.destroyAll();
+	});
+
+	test("docs that send but are never acked do not pin the head of the list", async () => {
+		const { engine, reg, docUpdate } = await device();
+		(reg as any).markDelivered = () => {}; // the ack never sticks
+		const map = (engine as any).noteIdMap as NoteIdMap;
+		const rows: Record<string, { hash: number; crdtHead: string }> = {};
+		for (let i = 1; i <= 60; i++) {
+			const id = `id-${i}`;
+			const path = `Notes/n${i}.md`;
+			const doc = new Y.Doc();
+			doc.getText(CONTENT_KEY).insert(0, "hello");
+			await reg.applyRemoteUpdate(id, Y.encodeStateAsUpdate(doc));
+			await reg.applyLocalEdit(id, "hello world");
+			map.set(path, id);
+			rows[path] = { hash: 1, crdtHead: "h1" };
+		}
+		engine.importSyncState({ [PATH]: { hash: 1, crdtHead: "h1" }, ...rows });
+
+		await engine.selfHealSweep();
+		await engine.selfHealSweep();
+
+		const sent = new Set(docUpdate.mock.calls.map((c) => c[0]));
+		expect(sent.size).toBe(60);
+		await reg.destroyAll();
+	});
 });
