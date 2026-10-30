@@ -5667,7 +5667,14 @@ export class SyncEngine {
 
 		// Push new path if it isn't ignored
 		if (!this.shouldIgnore(file.path)) {
-			await this.pushFile(file);
+			// Refused or failed, and not queued: the server keeps the old path, so
+			// the old-path claims are current again. A plain false (in flight,
+			// deferred) will still be sent; keep the fence.
+			let report: PushReport | undefined;
+			const sent = await this.pushFile(file, false, false, undefined, (r) => {
+				report = r;
+			});
+			if (!sent && report) this.dropPendingLocalMove(file.path);
 		}
 	}
 
@@ -5696,6 +5703,7 @@ export class SyncEngine {
 		// A no-op if oldPath has no entry (attachments, or a note never pushed).
 		if (!isBinary) {
 			this.noteIdMap?.rename(oldPath, newPath);
+			this.notePendingLocalMove(oldPath, newPath);
 		}
 
 		// Delete old path if it wasn't ignored.
@@ -6617,6 +6625,7 @@ export class SyncEngine {
 						// rediscover the cap on its own (prod 2026-10-17 retry storm).
 						if (createReason && LIMIT_REASONS.has(createReason)) {
 							this.notesCapGate?.trip(createReason);
+							report?.({ kind: "refused" });
 							return false;
 						}
 						// Anything else retryable (create_failed, rate-limit, timeout,
@@ -9322,9 +9331,12 @@ export class SyncEngine {
 			// one. NaN (missing/malformed updated_at) becomes undefined, same as
 			// the pull path, which disables the staleness guard rather than
 			// comparing garbage.
+			const movedId = event.id;
+			const claimed = this.resolvePathClaim(movedId, event.path);
+			if (claimed !== event.path) event = { ...event, path: claimed };
 			const wsRelocationTs = Date.parse(event.updated_at ?? "");
 			await this.moveIfIdRelocated(
-				event.id,
+				movedId,
 				event.path,
 				Number.isNaN(wsRelocationTs) ? undefined : wsRelocationTs,
 			);
@@ -9714,6 +9726,104 @@ export class SyncEngine {
 				);
 			}
 		}
+	}
+
+	/** Notes this device renamed that the server has not confirmed at the new
+	 *  path yet: note_id -> the new path, the paths it left, whether the WS echo
+	 *  has come back, and when the fence was last refreshed. Vault-scoped like
+	 *  every id map. See isStalePathClaim. */
+	private pendingLocalMoves = this.track(
+		["vault", "destroy"],
+		new Map<string, { path: string; from: Set<string>; echoed: boolean; at: number }>(),
+	);
+
+	/** Backstop for a fence nothing confirms (the relocation lost for good, the
+	 *  note deleted elsewhere), counted from when the rename left the queue. A
+	 *  hiding layer must expire: past this a path is judged by seq alone again. */
+	private static readonly PENDING_MOVE_TTL_MS = 120_000;
+
+	/** Fence a local rename's older path claims (see isStalePathClaim). Only for
+	 *  a note the server will hear about: an ignored or non-CRDT path is never
+	 *  pushed, so nothing would ever clear the fence. */
+	private notePendingLocalMove(oldPath: string, newPath: string): void {
+		const normalized = normalizePath(newPath);
+		if (!this.isCrdtEligiblePath(normalized) || this.shouldIgnore(normalized)) return;
+		const id = this.noteIdMap?.get(normalized);
+		if (!id) return;
+		const from = new Set(this.pendingLocalMoves.get(id)?.from);
+		from.add(normalizePath(oldPath));
+		from.delete(normalized);
+		this.pendingLocalMoves.set(id, {
+			path: normalized,
+			from,
+			echoed: false,
+			at: this.time.now(),
+		});
+	}
+
+	/** The rename's push was refused or failed and nothing is queued to retry
+	 *  it: the server keeps the old path, so stop fencing it. */
+	private dropPendingLocalMove(newPath: string): void {
+		const id = this.noteIdMap?.get(normalizePath(newPath));
+		if (id && !this.crdtHasPendingOp?.(id)) this.pendingLocalMoves.delete(id);
+	}
+
+	/** Is a server row or broadcast naming `id` at `path` an OLD claim, not a
+	 *  move? The id is authoritative; a path is only as fresh as its seq.
+	 *
+	 *  - This device renamed the note and the server has not confirmed it yet.
+	 *    Before the WS echo, any other path is from before the rename (a
+	 *    replayed row checkpointed before the rename reached the server, an
+	 *    in-flight broadcast). Applying it renamed the user's file BACK, and in
+	 *    a folder rename re-minted the moved notes under new ids: duplicates
+	 *    (prod pairing run 40251575611, both devices on 1.38.1). The echo has no
+	 *    seq, and a replay page fetched before the server applied the rename
+	 *    can land after it, so after the echo the paths the note LEFT stay
+	 *    rejected (a fresh remote rename elsewhere is not). Only a seq-bearing
+	 *    row at the new path confirms the move: seq order puts it after every
+	 *    row that predates the rename.
+	 *  - Otherwise the per-path seq fence (crdt-catchup-backfill-revert-and-seq-
+	 *    fence.md): a row BELOW the seq this device holds for the note is
+	 *    history. Strict: live updates carry the note's current seq, so a real
+	 *    rename row usually EQUALS the mark, and an equal seq at a different
+	 *    path is that rename. (Equal seq at the same path is not a claim at all.) */
+	private isStalePathClaim(id: string, path: string, seq?: number): boolean {
+		const target = normalizePath(path);
+		const pending = this.pendingLocalMoves.get(id);
+		if (pending !== undefined) {
+			const now = this.time.now();
+			// Still queued (offline): the TTL counts from when the rename leaves.
+			if (this.crdtHasPendingOp?.(id)) pending.at = now;
+			if (now - pending.at > SyncEngine.PENDING_MOVE_TTL_MS) {
+				this.pendingLocalMoves.delete(id);
+			} else if (pending.path === target) {
+				if (Number.isInteger(seq)) this.pendingLocalMoves.delete(id);
+				else pending.echoed = true;
+				return false;
+			} else if (!pending.echoed || pending.from.has(target)) {
+				return true;
+			}
+		}
+		if (!Number.isInteger(seq)) return false;
+		const current = this.noteIdMap?.pathForId(id);
+		if (!current || normalizePath(current) === target) return false;
+		const mark = this.syncState.get(normalizePath(current))?.seq;
+		return mark !== undefined && (seq as number) < mark;
+	}
+
+	/** The path an inbound row or broadcast for `id` should be applied at: its
+	 *  own, or, for a stale claim, wherever the note lives now, so the content
+	 *  it carries still converges and the path does not move. */
+	private resolvePathClaim(id: string, path: string, seq?: number): string {
+		const current = this.noteIdMap?.pathForId(id);
+		if (!current || !this.isStalePathClaim(id, path, seq)) return path;
+		rlog().anomaly("sync", "stale_path_claim");
+		rlog().info(
+			"pull",
+			`Inbound row names a path the note has left, applied at its current path: ` +
+				`${noteRef(path)} -> ${noteRef(current)}`,
+		);
+		return current;
 	}
 
 	/** Id-keyed move: if `id` is already mapped to a DIFFERENT local path than
@@ -10171,12 +10281,17 @@ export class SyncEngine {
 			// than NaN, which would poison every future comparison for this id
 			// (NaN is never < anything, so the guard would silently stop
 			// protecting it for the rest of the session).
-			const relocationTs = Date.parse(op.updated_at ?? "");
-			await this.moveIfIdRelocated(
-				op.id,
-				op.path,
-				Number.isNaN(relocationTs) ? undefined : relocationTs,
-			);
+			const claimed = this.resolvePathClaim(op.id, op.path, op.seq);
+			if (claimed !== op.path) {
+				op = { ...op, path: claimed };
+			} else {
+				const relocationTs = Date.parse(op.updated_at ?? "");
+				await this.moveIfIdRelocated(
+					op.id,
+					op.path,
+					Number.isNaN(relocationTs) ? undefined : relocationTs,
+				);
+			}
 			this.noteIdMap?.set(op.path, op.id);
 			// Learned from the server's own feed — it unquestionably has a note
 			// row for this id, so future edits may route through CRDT (see

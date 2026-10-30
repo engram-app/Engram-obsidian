@@ -270,3 +270,19 @@ describe("a disk that lags the doc never deletes remote lines", () => {
 		expect(disk.get(PATH)).toBe(doc);
 	});
 });
+
+test("applyLocalEdit re-reads disk after the flush and again if disk moved, up to 3 times", async () => {
+	const { reg } = await device();
+	const e = (reg as any).entries.get(ID);
+	// An in-flight flush, and a disk that changes once more after it lands.
+	e.pendingFlush = tick(5);
+	const reads = ["after flush\n", "moved again\n", "moved again\n"];
+	const reread = mock(async () => reads.shift() ?? "moved again\n");
+
+	const consumed = await reg.applyLocalEdit(ID, "stale pre-flush\n", true, reread);
+
+	expect(reread.mock.calls.length).toBeGreaterThanOrEqual(3);
+	expect(consumed).not.toContain("stale pre-flush");
+	expect(consumed).toContain("moved again");
+	await reg.destroyAll();
+});
