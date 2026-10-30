@@ -1244,6 +1244,21 @@ export class ProviderRegistry {
 		}
 	}
 
+	/** `content` as this registry would project it back: seeded into a scratch
+	 *  doc and projected through the frontmatter codec, which can re-emit a
+	 *  fence or key differently from the bytes on disk. The base of a three-way
+	 *  merge against a projection has to be in the projection's form. */
+	canonicalText(content: string): string {
+		const doc = new Y.Doc();
+		try {
+			const text = doc.getText(CONTENT_KEY);
+			seedContentInto(doc, text, content, false);
+			return this.project({ kind: "note", doc, text } as unknown as Entry);
+		} finally {
+			doc.destroy();
+		}
+	}
+
 	async hasPendingGap(noteId: string): Promise<boolean> {
 		const e = this.entries.get(noteId);
 		if (!e) return false;
