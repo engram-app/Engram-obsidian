@@ -1572,9 +1572,15 @@ export class SyncEngine {
 		>(),
 	);
 
-	/** Paths whose push `pushFile` held back because their convergence is
-	 *  staged (Engram-obsidian#666). Re-armed by `commitCrdtConvergence`. */
-	private heldForConvergence = this.track(["vault", "destroy"], new Set<string>());
+	/** Notes whose push `pushFile` held back because their convergence is
+	 *  staged (Engram-obsidian#666), keyed by note id so a rename in between
+	 *  still finds the file. Value = the expiry timer: a stage that never
+	 *  commits must not strand the held edit. Released by `rearmHeldPush`. */
+	private heldForConvergence = this.track(
+		["vault", "destroy"],
+		new Map<string, number>(),
+		(timer) => this.time.clearTimeout(timer),
+	);
 
 	/** Fix wave 1: per-note_id cooldown for `socketConverge`'s STEP1
 	 *  re-handshake — bounds how often a live-bound note can re-fire reset+
@@ -6046,8 +6052,7 @@ export class SyncEngine {
 		// flush them over it. Diffing that disk into the doc now deletes the
 		// server's edit (#666), so wait for the commit; it re-arms this push
 		// against the re-read disk.
-		if (!isBinary && this.convergenceStaged(file.path)) {
-			this.heldForConvergence.add(normalizePath(file.path));
+		if (!isBinary && this.holdForConvergence(file.path)) {
 			devLog().log("push", `hold (convergence staged): ${file.path}`);
 			return false;
 		}
@@ -8631,12 +8636,23 @@ export class SyncEngine {
 		);
 	}
 
-	/** Is a convergence staged for the note at `path`, recently enough to trust
-	 *  that its commit is still coming? */
-	private convergenceStaged(path: string): boolean {
+	/** Hold the push of the note at `path` if a convergence is staged for it
+	 *  recently enough to trust its commit is coming. The hold ends at the
+	 *  commit, or when the stage expires, whichever is first; both re-arm the
+	 *  push (`rearmHeldPush`). */
+	private holdForConvergence(path: string): boolean {
 		const id = this.noteIdMap?.get(path);
 		const staged = id ? this.pendingConvergence.get(id) : undefined;
-		return staged !== undefined && this.time.now() - staged.at < CONVERGENCE_HOLD_MS;
+		if (!id || staged === undefined) return false;
+		const remaining = CONVERGENCE_HOLD_MS - (this.time.now() - staged.at);
+		if (remaining <= 0) return false;
+		if (!this.heldForConvergence.has(id)) {
+			this.heldForConvergence.set(
+				id,
+				this.time.setTimeout(() => this.rearmHeldPush(id), remaining),
+			);
+		}
+		return true;
 	}
 
 	/** Commit a staged convergence (see `pendingConvergence` — staged by BOTH
@@ -8738,7 +8754,7 @@ export class SyncEngine {
 		this.pendingConvergence.delete(noteId);
 		this.crdtRehandshakeAttempts.delete(noteId);
 		const path = this.noteIdMap?.pathForId(noteId);
-		this.rearmHeldPush(path ?? staged.path);
+		this.rearmHeldPush(noteId);
 		if (!path) {
 			// Id unmapped since staging (deleted) — nothing to record, and a
 			// deleted note must not keep holding a room.
@@ -8778,11 +8794,14 @@ export class SyncEngine {
 	}
 
 	/** Re-run a push `pushFile` held while this note's convergence was staged. */
-	private rearmHeldPush(path: string): void {
-		const p = normalizePath(path);
-		if (!this.heldForConvergence.delete(p)) return;
-		const file = this.app.vault.getFileByPath(p);
-		if (file) this.handleModify(file);
+	private rearmHeldPush(noteId: string): void {
+		const timer = this.heldForConvergence.get(noteId);
+		if (timer === undefined) return;
+		this.time.clearTimeout(timer);
+		this.heldForConvergence.delete(noteId);
+		const path = this.noteIdMap?.pathForId(noteId);
+		const file = path ? this.app.vault.getFileByPath(normalizePath(path)) : null;
+		if (file !== null) this.handleModify(file);
 	}
 
 	/** Release once the server's trailing STEP1 is answered, not on the STEP2
@@ -11284,6 +11303,7 @@ export class SyncEngine {
 							this.pendingConvergence.delete(noteId);
 							this.crdtRehandshakeAttempts.delete(noteId);
 							if (!(await this.flushFromCrdt(normalized, content))) return false;
+							this.rearmHeldPush(noteId);
 							// Same feed, same proof (#339): a row off the server's own
 							// op-log is the server telling us it holds this note. Merges
 							// (never replaces), so the placeholder's head survives.
