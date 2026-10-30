@@ -849,6 +849,8 @@ export default class EngramSyncPlugin extends Plugin {
 			currentVaultId: () => this.settings.vaultId ?? null,
 			onDrop: (op, reason) => {
 				dropReporter.onDrop(op, reason);
+				// No ack will ever clear the create's own-body base: forget it.
+				if (op.kind === "create") this.syncEngine.forgetOwnGenesis(op.docId);
 				this.syncEngine.onCrdtOpDropped(op, reason);
 			},
 		});
