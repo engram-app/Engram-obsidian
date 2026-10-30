@@ -4621,6 +4621,37 @@ export class SyncEngine {
 		}
 	}
 
+	/** Re-send, room-free, every idle doc whose state the server never acked.
+	 *
+	 *  Delivery is proven only by an ACK, never by a send (Relay's serverSync
+	 *  mark; ours is the persisted acked snapshot). A live `crdt_msg` has no
+	 *  ack, so one sent on a half-dead socket (an iOS resume runs the debounced
+	 *  push before the channel's probe finds the socket dead) was gone, while
+	 *  the echo baseline already said disk was synced: the sweep skipped it,
+	 *  catch-up saw nothing newer on the server, and the edit never left this
+	 *  device. Called on every crdt join (via `selfHealSweep`). The acked
+	 *  `crdt_doc_update` is idempotent and advances the mark, so a doc is
+	 *  re-sent until one lands and never after.
+	 *
+	 *  Skips a note whose create is unacked (its create carries the body) and
+	 *  an open note (the rejoin re-handshake delivers it). One at a time and
+	 *  room-free, so it costs a frame per unacked doc; only a failed write
+	 *  falls back to the heal pool's room. */
+	private async redeliverUnackedDocs(): Promise<void> {
+		const ids = this.crdt?.unackedDocIds?.() ?? [];
+		let delivered = 0;
+		for (const noteId of ids) {
+			if (!this.hasServerNote(noteId)) continue;
+			const path = this.noteIdMap?.pathForId(noteId);
+			if (!path || this.isLiveBound(normalizePath(path))) continue;
+			if (await this.deliverQueuedOpsRoomFree({ path, noteId })) delivered++;
+			// The room is always correct, just dearer: the pooled re-handshake
+			// (#644 caps idle heal rooms) carries the ops up instead.
+			else this.socketConverge(normalizePath(path), noteId);
+		}
+		if (delivered > 0) rlog().anomaly("crdt", "rejoin_redeliver", { docs: delivered });
+	}
+
 	/** Log + strike accounting for a failed `crdt_doc_update`, mirroring the
 	 *  same two steps in `readServerDocState`. Which replies count toward the
 	 *  latch is `strikeFrame`'s call, not this function's — that is the point of
@@ -12470,6 +12501,7 @@ export class SyncEngine {
 		failed: number;
 	}> {
 		const idle = { ran: false, candidates: 0, pushed: 0, failed: 0 };
+		if (!this.syncBlocked) await this.redeliverUnackedDocs();
 		if (
 			this.syncBlocked ||
 			this.offline ||
