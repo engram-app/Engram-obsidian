@@ -2378,8 +2378,12 @@ export class SyncEngine {
 	 *  then is an edit on top of it, not what the server was sent. */
 	private stampOwnGenesis(noteId: string, path: string, content: string): void {
 		if (this.ownGenesis.has(noteId) || this.getCrdtHead(path) != null) return;
+		// An oversized body never creates over CRDT, so nothing would clear it.
+		if (exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES)) return;
+		// Fail closed: an unknown creation time (stub, adapter without ctime)
+		// grants no base, which is the old two-way diff.
 		const ctime = this.app.vault.getFileByPath?.(normalizePath(path))?.stat?.ctime;
-		if (typeof ctime === "number" && ctime < this.ownGenesisSince) return;
+		if (typeof ctime !== "number" || ctime < this.ownGenesisSince) return;
 		this.ownGenesis.set(noteId, content);
 	}
 
