@@ -129,4 +129,55 @@ describe("a crdt join re-sends what the server never acked", () => {
 		expect(docUpdate).not.toHaveBeenCalled();
 		await reg.destroyAll();
 	});
+
+	test("an offline engine re-sends nothing (the periodic poll calls this too)", async () => {
+		const { engine, reg, docUpdate, enroll } = await device();
+		await reg.applyLocalEdit(ID, "hello world");
+		(engine as any).offline = true;
+
+		await engine.selfHealSweep();
+
+		expect(docUpdate).not.toHaveBeenCalled();
+		expect(enroll).not.toHaveBeenCalled();
+		await reg.destroyAll();
+	});
+
+	test("a latched crdt_doc_update opens no heal room: it is not a failed write", async () => {
+		const { engine, reg, docUpdate, enroll } = await device();
+		await reg.applyLocalEdit(ID, "hello world");
+		(engine as any).unsupportedFrames.set("crdt_doc_update", {
+			until: Date.now() + 60_000,
+			latches: 1,
+		});
+
+		await engine.selfHealSweep();
+
+		expect(docUpdate).not.toHaveBeenCalled();
+		expect(enroll).not.toHaveBeenCalled();
+		await reg.destroyAll();
+	});
+
+	test("a sweep re-sends at most REDELIVER_PER_SWEEP docs; the next one drains the rest", async () => {
+		const { engine, reg, docUpdate } = await device();
+		const map = (engine as any).noteIdMap as NoteIdMap;
+		const rows: Record<string, { hash: number; crdtHead: string }> = {};
+		for (let i = 1; i <= 60; i++) {
+			const id = `id-${i}`;
+			const path = `Notes/n${i}.md`;
+			const doc = new Y.Doc();
+			doc.getText(CONTENT_KEY).insert(0, "hello");
+			await reg.applyRemoteUpdate(id, Y.encodeStateAsUpdate(doc));
+			await reg.applyLocalEdit(id, "hello world");
+			map.set(path, id);
+			rows[path] = { hash: 1, crdtHead: "h1" };
+		}
+		engine.importSyncState({ [PATH]: { hash: 1, crdtHead: "h1" }, ...rows });
+
+		await engine.selfHealSweep();
+		expect(docUpdate).toHaveBeenCalledTimes(50);
+
+		await engine.selfHealSweep();
+		expect(docUpdate).toHaveBeenCalledTimes(60);
+		await reg.destroyAll();
+	});
 });

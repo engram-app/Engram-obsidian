@@ -583,6 +583,9 @@ function isGateEvent(e: unknown): e is GateEvent {
 	return op !== "rename" || typeof oldPath === "string";
 }
 
+/** Most unacked docs `redeliverUnackedDocs` re-sends in one sweep. */
+const REDELIVER_PER_SWEEP = 50;
+
 export class SyncEngine {
 	/**
 	 * Every collection that a teardown has to sweep, declared WITH its scope so
@@ -4749,15 +4752,25 @@ export class SyncEngine {
 	 *  room-free, so it costs a frame per unacked doc; only a failed write
 	 *  falls back to the heal pool's room. */
 	private async redeliverUnackedDocs(): Promise<void> {
-		const ids = this.crdt?.unackedDocIds?.() ?? [];
+		// A latched `crdt_doc_update` is a server that refuses the frame, not a
+		// failed write: a room per doc is the surge the latch exists to stop, and
+		// the heal pool's own paths cover the notes that matter.
+		if (this.frameLatched(DOC_UPDATE_FRAME)) return;
+		// Bounded per sweep: a doc with NO stored ack (every doc on the first
+		// join after an upgrade) reads as unacked and is re-sent in full. Each
+		// ack shrinks the set, so the periodic sweep drains the rest.
+		const ids = (this.crdt?.unackedDocIds?.() ?? []).slice(0, REDELIVER_PER_SWEEP);
 		let delivered = 0;
 		for (const noteId of ids) {
 			if (!this.hasServerNote(noteId)) continue;
 			const path = this.noteIdMap?.pathForId(noteId);
 			if (!path || this.isLiveBound(normalizePath(path))) continue;
 			if (await this.deliverQueuedOpsRoomFree({ path, noteId })) delivered++;
-			// The room is always correct, just dearer: the pooled re-handshake
-			// (#644 caps idle heal rooms) carries the ops up instead.
+			// A real failure (encode, oversized, rejected write): the room is
+			// always correct, just dearer: the pooled re-handshake (#644 caps idle
+			// heal rooms) carries the ops up instead. A frame that latched during
+			// this very sweep ends it.
+			else if (this.frameLatched(DOC_UPDATE_FRAME)) break;
 			else this.socketConverge(normalizePath(path), noteId);
 		}
 		if (delivered > 0) rlog().anomaly("crdt", "rejoin_redeliver", { docs: delivered });
@@ -12708,7 +12721,6 @@ export class SyncEngine {
 		failed: number;
 	}> {
 		const idle = { ran: false, candidates: 0, pushed: 0, failed: 0 };
-		if (!this.syncBlocked) await this.redeliverUnackedDocs();
 		if (
 			this.syncBlocked ||
 			this.offline ||
@@ -12719,6 +12731,7 @@ export class SyncEngine {
 		) {
 			return idle;
 		}
+		await this.redeliverUnackedDocs();
 		const startedAt = this.time.now();
 		const candidates = this.pushCandidates(this.selfHealSince);
 		if (candidates.length === 0) {
