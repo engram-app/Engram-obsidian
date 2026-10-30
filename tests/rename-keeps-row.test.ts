@@ -165,4 +165,20 @@ describe("a rename re-keys the sync-state row", () => {
 
 		expect(engine.pushCandidates(Date.now())).toEqual([]);
 	});
+
+	test("a debounced push that hits a real read error is logged, not an unhandled rejection", async () => {
+		const file = new TFile("a.md", 1);
+		const { engine } = engineWith({ "a.md": "body" });
+		engine.app.vault.getAbstractFileByPath.mockReturnValue(file);
+		engine.app.vault.cachedRead.mockRejectedValue(new Error("EIO"));
+		const unhandled: unknown[] = [];
+		const onUnhandled = (e: unknown) => unhandled.push(e);
+		process.on("unhandledRejection", onUnhandled);
+
+		engine.handleModify(file);
+		await new Promise((r) => setTimeout(r, 50));
+		process.off("unhandledRejection", onUnhandled);
+
+		expect(unhandled).toEqual([]);
+	});
 });
