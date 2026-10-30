@@ -31,7 +31,12 @@ function makeEngine(disk: string, server: string) {
 	const calls = { applyLocalEdit: [] as string[], copies: [] as string[] };
 	let doc = "";
 	const engine = new SyncEngine(
-		{ vault: { cachedRead: mock().mockResolvedValue(disk) } } as any,
+		{
+			vault: {
+				cachedRead: mock().mockResolvedValue(disk),
+				getFileByPath: () => ({ stat: { ctime: Date.now() } }),
+			},
+		} as any,
 		{} as any,
 		{ ...DEFAULT_SETTINGS },
 		mock().mockResolvedValue(undefined),
@@ -159,6 +164,23 @@ describe("an occupied create under our own id", () => {
 		// Falls to the two-way diff of disk onto the server's body: the edit stays.
 		expect(calls.applyLocalEdit).toEqual([LOCAL_EDIT]);
 		expect(consumed).toBe(LOCAL_EDIT);
+	});
+
+	test("an unknown creation time grants no base (fails closed)", () => {
+		const { engine } = makeEngine(SENT, SENT);
+		engine.app.vault.getFileByPath = () => null;
+		engine.stampOwnGenesis("note-1", PATH, SENT);
+		expect(engine.ownGenesis.has("note-1")).toBe(false);
+
+		engine.app.vault.getFileByPath = () => ({ stat: {} });
+		engine.stampOwnGenesis("note-1", PATH, SENT);
+		expect(engine.ownGenesis.has("note-1")).toBe(false);
+	});
+
+	test("an oversized body is never held as a base", () => {
+		const { engine } = makeEngine(SENT, SENT);
+		engine.stampOwnGenesis("note-1", PATH, "x".repeat(4 * 1024 * 1024 + 1));
+		expect(engine.ownGenesis.has("note-1")).toBe(false);
 	});
 
 	test("an abandoned create's base is forgotten", () => {
