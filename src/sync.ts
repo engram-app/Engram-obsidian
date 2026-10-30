@@ -6037,16 +6037,15 @@ export class SyncEngine {
 		// body, which is the expensive part — hoisting it would not avoid it.
 		const isBinary = this.isBinaryFile(file);
 		if (!isBinary) {
-			let echoHash: number;
-			try {
-				echoHash = fnv1a(await this.app.vault.cachedRead(file));
-			} catch (e) {
-				// Gone since this push was requested (a debounced modify that fired
-				// after the file was deleted, or renamed: the rename pushes the new
-				// path itself). Nothing at this path to push.
-				devLog().log("push", `skip (unreadable): ${file.path} | ${errMsg(e, file.path)}`);
+			// Gone since this push was requested (a debounced modify that fired
+			// after the file was deleted, or renamed: the rename pushes the new
+			// path itself). Nothing at this path to push. Any other read error
+			// is real and propagates.
+			if (this.app.vault.getAbstractFileByPath(file.path) == null) {
+				devLog().log("push", `skip (gone): ${file.path}`);
 				return false;
 			}
+			const echoHash = fnv1a(await this.app.vault.cachedRead(file));
 			const existing = this.syncState.get(normalizePath(file.path));
 			// The plugin's OWN write is never a local edit: disk equal to the
 			// synced baseline, or to bytes an in-flight flushFromCrdt is writing
