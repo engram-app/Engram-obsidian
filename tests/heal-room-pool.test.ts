@@ -276,6 +276,26 @@ describe("idle heal rooms are pooled (Engram#2242)", () => {
 		expect(rooms.max).toBeLessThanOrEqual(IDLE_HEAL_ROOMS);
 	});
 
+	test("with the crdt topic down, idle heals park (no room, no backoff spin) and run on the next join", async () => {
+		const { engine, rooms, settle, time } = harness();
+		let live = false;
+		engine.setCrdtLiveCheck(() => live);
+		engine.setCrdtPorts({ docState: mock().mockRejectedValue(new Error("timeout")) });
+
+		for (let i = 0; i < 20; i++) await coldConverge(engine, i);
+		time.advance(60 * 60_000); // an hour offline
+		await new Promise((r) => setTimeout(r, 5));
+
+		expect(rooms.starts).toBe(0);
+
+		live = true;
+		await engine.selfHealSweep();
+		await settle(() => converged(engine) === 20 && rooms.open.size === 0);
+
+		expect(converged(engine)).toBe(20);
+		expect(rooms.max).toBeLessThanOrEqual(IDLE_HEAL_ROOMS);
+	});
+
 	test("a LIVE-BOUND note keeps its normal path: it handshakes at once even with the pool full", async () => {
 		const live = path(N - 1);
 		const { engine, rooms, settle } = harness({ liveBound: new Set([live]) });

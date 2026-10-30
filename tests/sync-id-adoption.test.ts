@@ -200,6 +200,35 @@ describe("ensureNoteIdMapped — live reconcile on an unmappable announce id", (
 			expect(enqueue).toHaveBeenCalledTimes(1);
 		});
 
+		// A brand-new open note's handshake races its own crdt_create and gets
+		// note_not_found. Re-creating then sent a SECOND create, whose occupied
+		// adopt reverted any remote edit landed in between (fuzz seed 3).
+		test("a note whose create is in flight is not an orphan", () => {
+			const { engine, enqueue } = orphanEngine({ fileExists: true });
+			engine.beginCreate("stranded.md");
+
+			expect(engine.repairOrphanedClaim("orphan-id")).toBe(false);
+			expect(enqueue).not.toHaveBeenCalled();
+		});
+
+		test("a note whose create is still queued is not an orphan", () => {
+			const { engine, enqueue } = orphanEngine({ fileExists: true });
+			engine.setCrdtHasPendingOp((id) => id === "orphan-id");
+
+			expect(engine.repairOrphanedClaim("orphan-id")).toBe(false);
+			expect(enqueue).not.toHaveBeenCalled();
+		});
+
+		test("once the create is over, a still-missing row is repaired", async () => {
+			const { engine, enqueue } = orphanEngine({ fileExists: true });
+			engine.beginCreate("stranded.md");
+			expect(engine.repairOrphanedClaim("orphan-id")).toBe(false);
+			await engine.endCreate("stranded.md");
+
+			expect(engine.repairOrphanedClaim("orphan-id")).toBe(true);
+			expect(enqueue).toHaveBeenCalledTimes(1);
+		});
+
 		test("a note the server DOES know is left alone", () => {
 			const { engine, enqueue } = orphanEngine({ fileExists: true });
 			// A server-delivered head is the one thing this device cannot forge.

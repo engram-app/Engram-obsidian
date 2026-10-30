@@ -44,6 +44,7 @@ import {
 	shouldGoOffline,
 	shouldRetryAfterFailure,
 } from "./issue-store";
+import { KeyedSerial } from "./keyed-serial";
 import { LimitExceededError } from "./limit-error";
 import { isTextAttachment } from "./mime";
 import { noteRef } from "./note-ref";
@@ -920,7 +921,22 @@ export class SyncEngine {
 		if ("enrollment" in ports) this.crdtEnrollment = ports.enrollment ?? null;
 		if ("create" in ports) this.crdtCreate = ports.create ?? null;
 		if ("delete" in ports) this.crdtDelete = ports.delete ?? null;
-		if ("enqueue" in ports) this.crdtEnqueue = ports.enqueue ?? null;
+		if ("enqueue" in ports) {
+			const enqueue = ports.enqueue ?? null;
+			// A queued create carries the note's CURRENT path, not the one its
+			// failed send was for. The queue keeps one op per docId (newest wins),
+			// so a create that failed for a path the note has since been renamed
+			// away from otherwise replaced the rename's own create, and the replay
+			// recreated the note at the old path, dragging the file back with it.
+			this.crdtEnqueue = enqueue
+				? (op) =>
+						enqueue(
+							op.kind === "create"
+								? { ...op, path: this.noteIdMap?.pathForId(op.docId) ?? op.path }
+								: op,
+						)
+				: null;
+		}
 		if ("capGate" in ports) this.notesCapGate = ports.capGate ?? null;
 		if ("live" in ports) this.crdtLive = ports.live ?? null;
 		if ("liveBound" in ports) this.isLiveBound = ports.liveBound ?? (() => false);
@@ -1169,7 +1185,7 @@ export class SyncEngine {
 			// bookkeeping intact rather than destroying state for a file that never
 			// went anywhere.
 			this.baseStore?.rename(src, dest);
-			this.dropPath(src, { dropBase: false });
+			this.renamePath(src, dest, "remote");
 			this.rememberFileFor(dest);
 			rlog().info("pull", `Followed identity move: ${noteRef(src)} -> ${noteRef(dest)}`);
 		} catch (e) {
@@ -1470,11 +1486,23 @@ export class SyncEngine {
 		// the editor re-attach dropped text typed since the note was opened (#544).
 		if (this.isUnackedMint(noteId) && this.getCrdtHead(path) != null) return false;
 		if (!this.isCrdtEligiblePath(path)) return false;
+		// Not an orphan: its create is on its way. A brand-new open note's
+		// handshake races its own crdt_create and gets this same note_not_found,
+		// so re-creating here sent a SECOND create whose occupied adopt then
+		// reverted any edit landed in between (prod: 113 notes / 24 users / 30
+		// days). Not marked repaired: a create that then fails for good is a
+		// real orphan, and the next note_not_found repairs it.
+		if (this.creatingPaths.has(normalizePath(path)) || this.crdtHasPendingOp?.(noteId)) {
+			return false;
+		}
 		const file = this.app.vault.getFileByPath(normalizePath(path));
 		if (!file) return false;
 		if ((file.stat?.size ?? 0) > MAX_CRDT_NOTE_BYTES) return false;
 
 		this.repairedClaims.add(noteId);
+		// Forced, counts only: this fires from every device, not only the
+		// diagnostics-on ones the warn below reaches.
+		rlog().anomaly("sync", "orphan_claim_recreate");
 		// warn, not info: client `info` never reaches Loki, and this is the only
 		// client-side signal that a note is stranded on one device.
 		rlog().warn(
@@ -1754,10 +1782,14 @@ export class SyncEngine {
 		// this id immediately. The first convergence overwrites the sentinel with
 		// the authoritative head.
 		this.setCrdtHead(path, CRDT_HEAD_CREATED);
+		// The create at this path IS the relocation of a local rename (renamePath).
+		this.patchSyncedRow(normalized, { relocating: undefined });
 		this.confirmNoteId(effectiveId);
 		this.queueCreatedCtime(normalized);
 		if (consumed !== null) {
 			this.recordCrdtBaseline(normalized, consumed, { markCreated: true });
+			// The baseline now holds the base; the create's own record is done.
+			this.ownGenesis.delete(effectiveId);
 		}
 		if (opts?.flushHeld !== false) {
 			await this.flushHeldEditsOnCreateAck(effectiveId, path);
@@ -2145,6 +2177,8 @@ export class SyncEngine {
 		path: string,
 		content: string,
 	): Promise<{ update: Uint8Array; fromThrowaway: boolean } | undefined> {
+		// Every create (inline and queued) asks this first, framed or not.
+		if (this.crdt && noteId) this.stampOwnGenesis(noteId, path, content);
 		if (!this.crdt || !this.eligibleForGenesisFrame(path, content)) return undefined;
 
 		// No resolvable id: cannot ask about history and cannot encode the doc's
@@ -2319,7 +2353,33 @@ export class SyncEngine {
 		const hash = fnv1a(content);
 		// Disk holding exactly what an in-flight flushFromCrdt is writing is the
 		// engine's own write, not drift (#578). See `flushingHash`.
-		return state.hash !== hash && !this.flushingHash.get(normalized)?.has(hash);
+		return !this.isOwnBase(normalized, hash) && !this.flushingHash.get(normalized)?.has(hash);
+	}
+
+	/** Is `hash` this device's own last-known content for `path`: the synced
+	 *  baseline, or, before the note's first create is acked, the body that
+	 *  create sent (`ownGenesis`). Disk equal to it carries no local edit,
+	 *  whatever the server has done since. */
+	private isOwnBase(path: string, hash: number): boolean {
+		if (this.syncState.get(path)?.hash === hash) return true;
+		const noteId = this.noteIdMap?.get(path);
+		return noteId != null && this.ownGenesis.get(noteId) === hash;
+	}
+
+	/** fnv1a of the body a note's FIRST `crdt_create` sent, by note_id, from
+	 *  just before the send until the create-ack stamps the baseline. Kept off
+	 *  the sync-state row on purpose: a row is sync evidence (#416) and marks a
+	 *  file tracked, which a create that has not landed must not claim. */
+	private ownGenesis = this.track(["vault", "destroy"], new Map<string, number>());
+
+	/** Record the body a note's first create sends, before it is sent. Only
+	 *  for a note the server does not know yet (a rename's relocating create
+	 *  has a head), and only once: a re-sent create must not move the base to
+	 *  whatever disk holds by then, or an edit made in between would read as no
+	 *  edit at all. */
+	private stampOwnGenesis(noteId: string, path: string, content: string): void {
+		if (this.ownGenesis.has(noteId) || this.getCrdtHead(path) != null) return;
+		this.ownGenesis.set(noteId, fnv1a(content));
 	}
 
 	/** Hashes of the bodies in-flight `flushFromCrdt` calls are writing, per
@@ -2750,18 +2810,31 @@ export class SyncEngine {
 	/** Move `path`'s sync bookkeeping to `to`, for a rename. The merge base is
 	 *  the caller's job (`baseStore.rename`) — this is the row beside it.
 	 *
-	 *  A rename moves a path and changes no content, so the recorded evidence is
-	 *  the NOTE's, not the path's. Dropping it (what both rename legs used to do)
-	 *  left the note with no evidence at its new path until the rename's push
-	 *  landed, and a delete inside that window hit `handleDelete`'s evidence rule
-	 *  (#416) and was REFUSED — so a note the user really deleted stayed live on
-	 *  the server, and the next `crdt_create` at the freed old path was ADOPTED
-	 *  onto that orphan row instead of creating a note (#489).
+	 *  A RE-KEY, never a reset (Relay's model: a path change moves the doc's
+	 *  metadata to the new key and leaves its sync state alone). A rename moves
+	 *  a path and changes no content, so every field on the row is still true of
+	 *  the note: its baseline hash, crdtHead, seq, version and serverHash.
 	 *
-	 *  The OLD key still goes away, which is the half the drop got right: a stale
-	 *  row there echo-suppresses a later create whose content happens to hash the
-	 *  same (rename a note away, then make a new one at the old path). */
-	private renamePath(from: string, to: string): void {
+	 *  This used to write a presence-only `{ hash: 0 }`, on both legs. That threw
+	 *  the note's baseline away: a cold start then saw "disk drifted" against
+	 *  hash 0 and seeded disk into an empty doc as a rival lineage (body doubled
+	 *  on the next handshake), and a catch-up saw both sides diverged and wrote a
+	 *  conflict copy of an unedited note. Dropping the row outright (older still)
+	 *  made a delete inside the window fail the #416 evidence rule (#489).
+	 *
+	 *  `origin: "local"` is the device that did the rename. The server still
+	 *  holds the note at the OLD path, and its new-path push must take the
+	 *  `crdt_create` relocation branch (genesis_relocate_live), not the
+	 *  `crdt_msg` edit branch, which carries no path (e2e test_93). That is the
+	 *  `relocating` flag, read by `hasServerNote` and the push echo filter, and
+	 *  cleared by the create-ack. A flag, not a zeroed hash, so nothing that
+	 *  reads the baseline is lied to. `"remote"` is a receiver applying a rename
+	 *  the server already made: nothing to push, so nothing to flag.
+	 *
+	 *  The OLD key still goes away: a stale row there echo-suppresses a later
+	 *  create whose content happens to hash the same (rename a note away, then
+	 *  make a new one at the old path). */
+	private renamePath(from: string, to: string, origin: "local" | "remote"): void {
 		const row = this.syncState.get(from);
 		this.syncState.delete(from);
 		this.rowWrittenAt.delete(from);
@@ -2771,33 +2844,9 @@ export class SyncEngine {
 		// note materialized twice" from "an unrelated note we are about to
 		// displace" — and overwriting the latter hands it a version that belongs
 		// to a different note, so its next write CASes against the wrong one.
-		// The old `dropPath` left the occupant alone; keep that.
 		if (this.syncState.has(to)) return;
-		// PRESENCE ONLY. `{ hash: 0 }`, not `{ ...row }` — every other field on
-		// that row is a PATH-scoped claim about the server, and after a rename
-		// none of them is true at `to` yet:
-		//
-		//   - `hash` — a rename changes no content, so a carried hash equals the
-		//     file's own and `pushFile`'s echo filter (above the push slot)
-		//     skips the relocation outright. `hash: 0` is the established
-		//     "content unknown here" marker (`clearPushedBaselineForId`) and
-		//     fnv1a never returns it.
-		//   - `crdtHead` — this one is worse, and e2e test_93 is what caught it.
-		//     `hasServerNote` is PATH-keyed (`getCrdtHead(pathForId(id))`), so a
-		//     carried head makes the engine believe the server already holds the
-		//     note AT THE NEW PATH. `pushFile` then takes the `crdt_msg` edit
-		//     branch, which carries no path and cannot move the row, instead of
-		//     the `crdt_create` genesis branch that IS the relocation
-		//     (genesis_relocate_live). The rename never transmits, and the CRDT
-		//     leg issues no old-leg delete to fall back on: "Note <new path> not
-		//     on server after 120s".
-		//   - `version` / `serverHash` — same family, CAS facts about a row the
-		//     server holds at the OLD path.
-		//
-		// What the delete-push evidence rule (#416) reads is `syncState.has(path)`
-		// — presence, nothing else. So presence is exactly what moves, and the
-		// new-path push re-establishes the rest from the server's own answer.
-		this.syncState.set(to, { hash: 0 });
+		const { relocating: _, ...kept } = row;
+		this.syncState.set(to, origin === "local" ? { ...kept, relocating: true } : kept);
 		this.noteRowWrite(to);
 	}
 
@@ -4096,7 +4145,11 @@ export class SyncEngine {
 		if (this.isUnackedMint(noteId)) return false;
 		const path = this.noteIdMap?.pathForId(noteId);
 		if (!path) return false;
-		return this.getCrdtHead(path) != null;
+		const row = this.syncState.get(normalizePath(path));
+		// A local rename not yet relocated server-side: the server holds the note
+		// at its OLD path, so the push must be the relocating create (renamePath).
+		if (row?.relocating) return false;
+		return row?.crdtHead != null;
 	}
 
 	/** Import legacy hash-only format (migration from old plugin versions). */
@@ -4318,6 +4371,30 @@ export class SyncEngine {
 		}
 		rlog().info("crdt", `create: adopted server lineage for ${noteRef(path)}`);
 		return await crdt.projectedText(noteId);
+	}
+
+	/** Merge `disk`, edited from `base` (the body this device's create sent),
+	 *  onto the doc, which projects `current`. Null when nothing was merged:
+	 *  the edits overlap (or the doc moved under us), and disk is kept as a
+	 *  conflict copy instead, so neither side is lost. */
+	private async mergeOwnCreateDrift(
+		noteId: string,
+		normalized: string,
+		base: string,
+		current: string,
+		disk: string,
+	): Promise<string | null> {
+		const crdt = this.crdt;
+		if (!crdt) return null;
+		const merged = await crdt.mergeLocalEditFromBase(noteId, base, current, disk);
+		if (merged !== null) return merged;
+		const copy = await this.writeDriftConflictCopy(normalized, disk);
+		rlog().info(
+			"conflict",
+			`create: an edit made during the create overlaps a remote one → keep-both | ` +
+				`original=${noteRef(normalized)} copy=${noteRef(copy)}`,
+		);
+		return null;
 	}
 
 	/** Give the note up to the server's lineage: transmit nothing now, and record
@@ -4613,6 +4690,37 @@ export class SyncEngine {
 		}
 	}
 
+	/** Re-send, room-free, every idle doc whose state the server never acked.
+	 *
+	 *  Delivery is proven only by an ACK, never by a send (Relay's serverSync
+	 *  mark; ours is the persisted acked snapshot). A live `crdt_msg` has no
+	 *  ack, so one sent on a half-dead socket (an iOS resume runs the debounced
+	 *  push before the channel's probe finds the socket dead) was gone, while
+	 *  the echo baseline already said disk was synced: the sweep skipped it,
+	 *  catch-up saw nothing newer on the server, and the edit never left this
+	 *  device. Called on every crdt join (via `selfHealSweep`). The acked
+	 *  `crdt_doc_update` is idempotent and advances the mark, so a doc is
+	 *  re-sent until one lands and never after.
+	 *
+	 *  Skips a note whose create is unacked (its create carries the body) and
+	 *  an open note (the rejoin re-handshake delivers it). One at a time and
+	 *  room-free, so it costs a frame per unacked doc; only a failed write
+	 *  falls back to the heal pool's room. */
+	private async redeliverUnackedDocs(): Promise<void> {
+		const ids = this.crdt?.unackedDocIds?.() ?? [];
+		let delivered = 0;
+		for (const noteId of ids) {
+			if (!this.hasServerNote(noteId)) continue;
+			const path = this.noteIdMap?.pathForId(noteId);
+			if (!path || this.isLiveBound(normalizePath(path))) continue;
+			if (await this.deliverQueuedOpsRoomFree({ path, noteId })) delivered++;
+			// The room is always correct, just dearer: the pooled re-handshake
+			// (#644 caps idle heal rooms) carries the ops up instead.
+			else this.socketConverge(normalizePath(path), noteId);
+		}
+		if (delivered > 0) rlog().anomaly("crdt", "rejoin_redeliver", { docs: delivered });
+	}
+
 	/** Log + strike accounting for a failed `crdt_doc_update`, mirroring the
 	 *  same two steps in `readServerDocState`. Which replies count toward the
 	 *  latch is `strikeFrame`'s call, not this function's — that is the point of
@@ -4709,11 +4817,22 @@ export class SyncEngine {
 				let consumed: string | null = await this.crdt.projectedText(effectiveId);
 				// M1: `genesisContent` was frozen before the create round-trip, and
 				// the apply above flushes it over disk. Anything that landed in that
-				// window survives only in `preApplyDisk`. Merged back as a minimal
-				// diff (the doc has history now). NO reread — it would read the
-				// just-reverted disk and discard the drift.
+				// window survives only in `preApplyDisk`. NO reread: it would read
+				// the just-reverted disk and discard the drift.
+				//
+				// Merged THREE-way from `genesisContent`, the body this create sent.
+				// The doc may already hold a remote edit made to the stored note
+				// while the ack was in flight (a catch-up landing before this apply),
+				// and a two-way diff of disk onto it deleted that edit: disk never
+				// had it. Overlapping edits keep both rather than drop either.
 				if (preApplyDisk !== null && preApplyDisk !== opts.genesisContent) {
-					const merged = await this.crdt.applyLocalEdit(effectiveId, preApplyDisk);
+					const merged = await this.mergeOwnCreateDrift(
+						effectiveId,
+						normalized,
+						opts.genesisContent,
+						consumed,
+						preApplyDisk,
+					);
 					if (merged !== null) {
 						consumed = merged;
 						await this.flushFromCrdt(normalized, merged);
@@ -4809,6 +4928,26 @@ export class SyncEngine {
 			// below is an `lca` diff. This is deliberate even when `adopted` is
 			// empty — an empty projection means the server is genuinely blank and
 			// our body is the only copy.
+		}
+
+		// OUR OWN CREATE IS THE OCCUPANT. Under our own id (`sameId`) a body on
+		// the server can only descend from this device's create: an earlier copy
+		// of it that landed (the orphan repair's second create, a create re-sent
+		// after a restart before its ack was saved), plus whatever other writers
+		// did to it since (an MCP edit, another device). Diffing disk onto that
+		// two-way, as below, reads every one of their changes as something disk
+		// removed, and deletes it under a fresh client id: a lost edit on every
+		// device, no conflict copy. Three-way from our base instead: when disk
+		// still holds what we sent, there is no local input, so transmit nothing
+		// and keep the server's text.
+		if (sameId && known !== "absent" && typeof this.crdt.projectedText === "function") {
+			if (effectiveIdHasHistory) await this.adoptServerLineage(effectiveId, normalized);
+			const server = await this.crdt.projectedText(effectiveId);
+			const disk = await this.app.vault.cachedRead(file);
+			if (server !== "" && this.isOwnBase(normalized, fnv1a(disk))) {
+				rlog().anomaly("crdt", "occupied_create_own_base");
+				return server;
+			}
 		}
 
 		// Either the server holds nothing (`absent`), or we now share its lineage
@@ -5688,6 +5827,10 @@ export class SyncEngine {
 		// A no-op if oldPath has no entry (attachments, or a note never pushed).
 		if (!isBinary) {
 			this.noteIdMap?.rename(oldPath, newPath);
+			// Fence older path claims until the server shows the note here (see
+			// isStalePathClaim).
+			const movedId = this.noteIdMap?.get(normalizePath(newPath));
+			if (movedId) this.pendingLocalMoves.set(movedId, normalizePath(newPath));
 		}
 
 		// Delete old path if it wasn't ignored.
@@ -5783,7 +5926,7 @@ export class SyncEngine {
 			// with it, so a delete before the new-path push lands is not refused.
 			// (The base moved with the note via baseStore.rename above; deleting it
 			// here would erase the just-renamed entry.)
-			this.renamePath(normalizePath(oldPath), normalizePath(newPath));
+			this.renamePath(normalizePath(oldPath), normalizePath(newPath), "local");
 			// Un-confirm the id so pushFile below takes the `crdt_create` genesis
 			// branch (not the crdt_msg edit branch, which carries no path and
 			// can't move the row): the create for a LIVE id at the new path IS
@@ -6011,9 +6154,30 @@ export class SyncEngine {
 		// body, which is the expensive part — hoisting it would not avoid it.
 		const isBinary = this.isBinaryFile(file);
 		if (!isBinary) {
-			const echoHash = fnv1a(await this.app.vault.cachedRead(file));
+			let echoHash: number;
+			try {
+				echoHash = fnv1a(await this.app.vault.cachedRead(file));
+			} catch (e) {
+				// Gone since this push was requested (a debounced modify that fired
+				// after the file was deleted, or renamed: the rename pushes the new
+				// path itself). Nothing at this path to push.
+				devLog().log("push", `skip (unreadable): ${file.path} | ${errMsg(e, file.path)}`);
+				return false;
+			}
 			const existing = this.syncState.get(normalizePath(file.path));
-			if (!force && existing !== undefined && echoHash === existing.hash) {
+			// The plugin's OWN write is never a local edit: disk equal to the
+			// synced baseline, or to bytes an in-flight flushFromCrdt is writing
+			// (`flushingHash`, the same self-write identity needsColdReconcile
+			// reads). A modify event from our write that landed before its
+			// baseline was stamped was otherwise pushed back into the doc as a
+			// local edit, deleting whatever had merged since.
+			if (
+				!force &&
+				existing !== undefined &&
+				!existing.relocating &&
+				(echoHash === existing.hash ||
+					this.flushingHash.get(normalizePath(file.path))?.has(echoHash) === true)
+			) {
 				devLog().log("push", `skip (echo): ${file.path}`);
 				rlog().info("push", `Echo skip: ${noteRef(file.path)} | hash=${echoHash}`);
 				return false;
@@ -8125,7 +8289,24 @@ export class SyncEngine {
 	 *  to a path (first-discovery is pull()'s job, same as coldReceive). Frees
 	 *  the doc after a successful apply (hibernateIfIdle) — same reasoning as
 	 *  coldReceive. Best-effort: isolates its own failure, never throws. */
-	async applyPushedNoteUpdate(
+	/** Applies a vault-channel fan-out, one at a time per note. The channel
+	 *  delivers fan-outs fire-and-forget, and several for one idle note can
+	 *  land within milliseconds. Run concurrently, each one's disk-drift capture
+	 *  and flush interleaved with the others': a flush wrote a projection that
+	 *  predated the next update, and its modify event came back as a local
+	 *  edit that DELETED the other writers' lines (real-Obsidian gauntlet
+	 *  40247603066). Serial per note, so each applies to the state the last left. */
+	applyPushedNoteUpdate(
+		noteId: string,
+		update: Uint8Array,
+		head: string,
+	): Promise<"applied" | "deferred"> {
+		return this.liveOps.run(noteId, () => this.applyPushedNoteUpdateNow(noteId, update, head));
+	}
+
+	private readonly liveOps = new KeyedSerial();
+
+	private async applyPushedNoteUpdateNow(
 		noteId: string,
 		update: Uint8Array,
 		head: string,
@@ -8358,6 +8539,10 @@ export class SyncEngine {
 	private poolIdleHeal(path: string, noteId: string, reason: HealRoomReason): void {
 		// A retry is already scheduled on its backoff; this request rides it.
 		if (this.healRetryTimers.has(noteId)) return;
+		if (this.healPaused()) {
+			this.parkedHeals.set(noteId, { path, reason });
+			return;
+		}
 		if (this.idleHealSlots.has(noteId)) {
 			this.idleHealRefire.add(noteId);
 			return;
@@ -8394,6 +8579,15 @@ export class SyncEngine {
 
 	private openWhenBudgeted(noteId: string, slot: HealSlot): void {
 		if (this.idleHealSlots.get(noteId) !== slot) return;
+		// Went offline while this waited for a token: give the slot back and park.
+		if (this.healPaused()) {
+			this.idleHealSlots.delete(noteId);
+			this.time.clearTimeout(slot.timer);
+			this.idleHealRooms.release();
+			this.parkedHeals.set(noteId, { path: slot.path, reason: slot.reason });
+			this.maybeReportHealRooms();
+			return;
+		}
 		const wait = this.takeHealRoomToken();
 		if (wait > 0) {
 			slot.timer = this.time.setTimeout(() => this.openWhenBudgeted(noteId, slot), wait);
@@ -8405,6 +8599,27 @@ export class SyncEngine {
 		);
 		this.countHealRoom(slot.reason);
 		this.openHealRoom(slot.path, noteId);
+	}
+
+	/** No room can open with the crdt topic down (offline, or between a drop
+	 *  and the rejoin): a heal fired then only spun the backoff to its 10 min
+	 *  cap and counted rooms that never opened. Such heals park until the next
+	 *  crdt join, which is exactly when the topic comes back. */
+	private healPaused(): boolean {
+		return !(this.crdtLive?.() ?? true);
+	}
+
+	/** Heals parked while offline (`healPaused`), re-queued on the next crdt
+	 *  join (`selfHealSweep`). Never dropped, same as the pool. */
+	private parkedHeals = this.track(
+		["vault", "destroy"],
+		new Map<string, { path: string; reason: HealRoomReason }>(),
+	);
+
+	private resumeParkedHeals(): void {
+		const parked = [...this.parkedHeals];
+		this.parkedHeals.clear();
+		for (const [noteId, { path, reason }] of parked) this.poolIdleHeal(path, noteId, reason);
 	}
 
 	/** Token bucket for idle heal-room STARTS (what the server's surge alert
@@ -9293,6 +9508,14 @@ export class SyncEngine {
 			// one. NaN (missing/malformed updated_at) becomes undefined, same as
 			// the pull path, which disables the staleness guard rather than
 			// comparing garbage.
+			if (this.isStalePathClaim(event.id, event.path)) {
+				rlog().anomaly("sync", "stale_path_claim");
+				rlog().info(
+					"ws",
+					`Upsert for a path the note has left (local rename pending), skipped: ${noteRef(event.path)}`,
+				);
+				return;
+			}
 			const wsRelocationTs = Date.parse(event.updated_at ?? "");
 			await this.moveIfIdRelocated(
 				event.id,
@@ -9729,6 +9952,40 @@ export class SyncEngine {
 	 *  the pull feed's `updated_at` is only seconds-precision on the wire, so
 	 *  two genuinely different relocations for the same id within one second
 	 *  can tie exactly. A tie can't be proven newer, so it must not win. */
+	/** Notes this device renamed whose new path the server has not shown back
+	 *  yet: note_id -> the path it was renamed to. Vault-scoped like every id map. */
+	private pendingLocalMoves = this.track(["vault", "destroy"], new Map<string, string>());
+
+	/** Is a server row or broadcast naming `id` at `path` an OLD claim, not a
+	 *  move? The id is authoritative; a path is only as fresh as its seq.
+	 *
+	 *  - This device renamed the note and the server has not shown it at the new
+	 *    path yet: any other path is from before the rename (a replayed row
+	 *    checkpointed before the rename reached the server, an in-flight
+	 *    broadcast). Applying it renamed the user's file BACK, and in a folder
+	 *    rename re-minted the moved notes under new ids: duplicates (prod
+	 *    pairing run 40251575611, both devices on 1.38.1). The server showing
+	 *    the note at the new path clears the fence: seq order puts that row
+	 *    after every row that predates the rename.
+	 *  - Otherwise a row whose seq is at or below the seq this device already
+	 *    holds for the note is history (the per-path seq fence of
+	 *    crdt-catchup-backfill-revert-and-seq-fence.md). A real rename bumps the
+	 *    seq, so it always passes. */
+	private isStalePathClaim(id: string, path: string, seq?: number): boolean {
+		const target = normalizePath(path);
+		const pending = this.pendingLocalMoves.get(id);
+		if (pending !== undefined) {
+			if (pending !== target) return true;
+			this.pendingLocalMoves.delete(id);
+			return false;
+		}
+		if (!Number.isInteger(seq)) return false;
+		const current = this.noteIdMap?.pathForId(id);
+		if (!current || normalizePath(current) === target) return false;
+		const mark = this.syncState.get(normalizePath(current))?.seq;
+		return mark !== undefined && (seq as number) <= mark;
+	}
+
 	/** Vault-scoped: note_ids are unique only WITHIN a vault (review MINOR-6), so
 	 *  a relocation timestamp from the OLD vault must not stale-gate an unrelated
 	 *  note that reuses the same id in the new one. */
@@ -9844,7 +10101,7 @@ export class SyncEngine {
 		// The sync-state row moves WITH the note for the same reason the base
 		// does (see renamePath): the old key still goes away, so a later create
 		// there isn't echo-suppressed, but the evidence is not destroyed.
-		this.renamePath(normalizePath(priorPath), normalizePath(newPath));
+		this.renamePath(normalizePath(priorPath), normalizePath(newPath), "remote");
 		// normalizePath for the vault lookup (map keys arrive normalized from the
 		// server feed, but a non-normalized key would silently miss the trash and
 		// leave the duplicate this fix exists to remove). rename() above keeps the
@@ -10142,12 +10399,25 @@ export class SyncEngine {
 			// than NaN, which would poison every future comparison for this id
 			// (NaN is never < anything, so the guard would silently stop
 			// protecting it for the rest of the session).
-			const relocationTs = Date.parse(op.updated_at ?? "");
-			await this.moveIfIdRelocated(
-				op.id,
-				op.path,
-				Number.isNaN(relocationTs) ? undefined : relocationTs,
-			);
+			const current = this.noteIdMap?.pathForId(op.id);
+			if (current && this.isStalePathClaim(op.id, op.path, op.seq)) {
+				// Not a move. Keep the row's content for the note where it lives
+				// now, so a newer edit in it still converges, and leave the path.
+				rlog().anomaly("sync", "stale_path_claim");
+				rlog().info(
+					"pull",
+					`Replayed row names a path the note has left, applied at its current path: ` +
+						`${noteRef(op.path)} -> ${noteRef(current)}`,
+				);
+				op = { ...op, path: current };
+			} else {
+				const relocationTs = Date.parse(op.updated_at ?? "");
+				await this.moveIfIdRelocated(
+					op.id,
+					op.path,
+					Number.isNaN(relocationTs) ? undefined : relocationTs,
+				);
+			}
 			this.noteIdMap?.set(op.path, op.id);
 			// Learned from the server's own feed — it unquestionably has a note
 			// row for this id, so future edits may route through CRDT (see
@@ -10918,6 +11188,31 @@ export class SyncEngine {
 								`CRDT catch-up: own create in flight, deferring ${noteRef(change.path)}`,
 							);
 							return false;
+						}
+						// A history-less doc's server load is the note's FIRST load, and
+						// the load interlock resolves disk against it (merged from a
+						// provable base, or kept both): resolveDriftOnLoad, the one
+						// resolver (crdt-load-gate.md). Copying here as well wrote a
+						// conflict copy of an edit the load then merged. Converge only.
+						if (
+							localDiverged &&
+							noteId &&
+							typeof this.crdt?.hasAnyHistoryTransient === "function" &&
+							!(await this.crdt.hasAnyHistoryTransient(noteId))
+						) {
+							rlog().info(
+								"pull",
+								`CRDT catch-up: diverged disk on a first load, the load resolves it ${noteRef(change.path)}`,
+							);
+							this.stageAndConverge(
+								noteId,
+								normalized,
+								change.content_hash,
+								content,
+								change.version,
+								change.seq,
+							);
+							return true;
 						}
 						if (localDiverged && localNow !== null) {
 							// Both the on-disk file AND the authoritative doc moved off
@@ -12275,6 +12570,8 @@ export class SyncEngine {
 		failed: number;
 	}> {
 		const idle = { ran: false, candidates: 0, pushed: 0, failed: 0 };
+		this.resumeParkedHeals();
+		if (!this.syncBlocked) await this.redeliverUnackedDocs();
 		if (
 			this.syncBlocked ||
 			this.offline ||
