@@ -683,6 +683,35 @@ export class ProviderRegistry {
 			return null;
 		}
 
+		// Disk as it IS before the merge-base path (real-Obsidian pairing
+		// 40253955588). `diskContent` was read before this resolved: our own flush
+		// may still be writing over it, and the LCA branch would merge that
+		// pre-flush snapshot against a base that already holds the flush, reading
+		// the flushed remote lines as user deletes. Wait out the flush, re-read,
+		// and go again if disk (or a new flush) moved meanwhile, up to 3 times.
+		if (reread && e.pendingFlush) {
+			for (let attempt = 0; attempt < 3; attempt++) {
+				const flush = e.pendingFlush;
+				if (flush) {
+					try {
+						await e.lifetime.guard(flush);
+					} catch {
+						// a failed flush left disk as it was; the re-read still tells us
+					}
+				}
+				let fresh: string;
+				try {
+					fresh = await e.lifetime.guard(reread());
+				} catch {
+					return null; // unreadable / cap exceeded / note destroyed
+				}
+				const moved = fresh !== content;
+				content = fresh;
+				if (!moved && !e.pendingFlush) break;
+			}
+			diskContent = content;
+		}
+
 		// LCA path (#357). With a merge base we apply the disk's delta RELATIVE TO
 		// THE BASE, so a remote op that landed after the disk read survives by
 		// construction. That removes the reason for the retry loop below: there is

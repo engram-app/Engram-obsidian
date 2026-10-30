@@ -44,6 +44,7 @@ import {
 	shouldGoOffline,
 	shouldRetryAfterFailure,
 } from "./issue-store";
+import { KeyedSerial } from "./keyed-serial";
 import { LimitExceededError } from "./limit-error";
 import { isTextAttachment } from "./mime";
 import { noteRef } from "./note-ref";
@@ -3492,6 +3493,13 @@ export class SyncEngine {
 		 *  instead of sleeping through it. */
 		private time: TimeProvider = new DefaultTimeProvider(),
 	) {
+		this.serial = new KeyedSerial(this.time, STREAM_EVENT_STALL_MS, (lane) =>
+			rlog().warn(
+				"ws",
+				`${lane === "stream" ? "Stream event" : "Fan-out apply"} still running after ` +
+					`${STREAM_EVENT_STALL_MS}ms, releasing its queue so later ones are not blocked`,
+			),
+		);
 		this.parseIgnorePatterns();
 		this.selfHealSince = this.time.now();
 	}
@@ -6013,7 +6021,18 @@ export class SyncEngine {
 		if (!isBinary) {
 			const echoHash = fnv1a(await this.app.vault.cachedRead(file));
 			const existing = this.syncState.get(normalizePath(file.path));
-			if (!force && existing !== undefined && echoHash === existing.hash) {
+			// The plugin's OWN write is never a local edit: disk equal to the
+			// synced baseline, or to bytes an in-flight flushFromCrdt is writing
+			// (`flushingHash`, the same self-write identity needsColdReconcile
+			// reads). A modify event from our write that landed before its
+			// baseline was stamped was otherwise pushed back into the doc as a
+			// local edit, deleting whatever had merged since.
+			if (
+				!force &&
+				existing !== undefined &&
+				(echoHash === existing.hash ||
+					this.flushingHash.get(normalizePath(file.path))?.has(echoHash) === true)
+			) {
 				devLog().log("push", `skip (echo): ${file.path}`);
 				rlog().info("push", `Echo skip: ${noteRef(file.path)} | hash=${echoHash}`);
 				return false;
@@ -6250,17 +6269,22 @@ export class SyncEngine {
 				// branch, which ADOPTS the server's authoritative id for a path it
 				// already owns and re-keys the map — the recovery that already exists.
 				if (this.crdt && noteId && !mintedNow && this.hasServerNote(noteId)) {
-					const consumed = await routeModify(
-						{
-							crdtEligible: this.isCrdtEligible(file),
-							noteId,
-							// A LIVE read, not the frozen `content` above: routeModify
-							// forwards this as the manager's stale-snapshot reread, and a
-							// frozen closure would defeat that guard (e2e test_83).
-							readContent: () => this.app.vault.cachedRead(file),
-						},
-						this.crdt,
-						MAX_CRDT_NOTE_BYTES,
+					// In the note's lane, so this fold never interleaves with a
+					// fan-out's capture and flush for the same note.
+					const crdt = this.crdt;
+					const consumed = await this.serial.run(noteId, () =>
+						routeModify(
+							{
+								crdtEligible: this.isCrdtEligible(file),
+								noteId,
+								// A LIVE read, not the frozen `content` above: routeModify
+								// forwards this as the manager's stale-snapshot reread, and a
+								// frozen closure would defeat that guard (e2e test_83).
+								readContent: () => this.app.vault.cachedRead(file),
+							},
+							crdt,
+							MAX_CRDT_NOTE_BYTES,
+						),
 					);
 					if (consumed !== null) {
 						// Record the transmitted content's hash as the echo-hash baseline
@@ -8125,7 +8149,31 @@ export class SyncEngine {
 	 *  to a path (first-discovery is pull()'s job, same as coldReceive). Frees
 	 *  the doc after a successful apply (hibernateIfIdle) — same reasoning as
 	 *  coldReceive. Best-effort: isolates its own failure, never throws. */
-	async applyPushedNoteUpdate(
+	/** Applies a vault-channel fan-out, one at a time per note. The channel
+	 *  delivers fan-outs fire-and-forget, and several for one idle note can
+	 *  land within milliseconds. Run concurrently, each one's disk-drift capture
+	 *  and flush interleaved with the others': a flush wrote a projection that
+	 *  predated the next update, and its modify event came back as a local
+	 *  edit that DELETED the other writers' lines (real-Obsidian gauntlet
+	 *  40247603066). Serial per note, so each applies to the state the last left. */
+	applyPushedNoteUpdate(
+		noteId: string,
+		update: Uint8Array,
+		head: string,
+	): Promise<"applied" | "deferred"> {
+		// An unmapped id starts its manifest heal NOW, outside the lane, so a
+		// burst of updates for it joins one in-flight fetch.
+		if (!this.noteIdMap?.pathForId(noteId)) this.ensureNoteIdMapped(noteId);
+		const vault = this.settings.vaultId;
+		return this.serial.run(noteId, async () =>
+			// Queued before a vault switch: it belongs to the old vault.
+			vault === this.settings.vaultId
+				? this.applyPushedNoteUpdateNow(noteId, update, head)
+				: "deferred",
+		);
+	}
+
+	private async applyPushedNoteUpdateNow(
 		noteId: string,
 		update: Uint8Array,
 		head: string,
@@ -8150,7 +8198,7 @@ export class SyncEngine {
 			// delivery. Heal the map (single-flight manifest reconcile, the same
 			// primitive the crdt_doc_ready announce path uses) and retry the
 			// lookup once (e2e test_82, local repro 2026-07-22).
-			this.ensureNoteIdMapped(noteId);
+			// (The heal was started when this update was queued.)
 			await this.idMapReconcileInflight;
 			path = this.noteIdMap?.pathForId(noteId) ?? null;
 			if (!path) {
@@ -9117,9 +9165,10 @@ export class SyncEngine {
 		};
 	}
 
-	/** Tail of the serialized stream-event chain. See `handleStreamEvent`. */
-	private streamTail: Promise<void> = Promise.resolve();
-
+	/** Serial lanes: "stream" for WebSocket events (see `handleStreamEvent`),
+	 *  a note_id for that note's fan-outs (see `applyPushedNoteUpdate`). A lane
+	 *  whose task hangs is released after STREAM_EVENT_STALL_MS. */
+	private readonly serial: KeyedSerial;
 	/** Handle a WebSocket stream event (upsert or delete), STRICTLY IN ARRIVAL
 	 *  ORDER — one event's application completes before the next begins.
 	 *
@@ -9150,31 +9199,11 @@ export class SyncEngine {
 	 *  delays later ones. These handlers already await disk and network, and
 	 *  unordered application is the bug. Per-note lanes if it ever matters. */
 	handleStreamEvent(event: NoteStreamEvent): Promise<void> {
-		const applied = this.streamTail.then(() => this.applyStreamEvent(event));
-		// The TAIL is bounded, the event is not. Serializing means a single event
-		// that never settles stops every later one for the life of the session --
-		// a total sync stall, not merely added latency. The stalled event keeps
-		// running (it cannot be cancelled); the queue simply stops waiting on it.
-		this.streamTail = new Promise<void>((resolve) => {
-			let settled = false;
-			const release = () => {
-				if (settled) return;
-				settled = true;
-				this.time.clearTimeout(timer);
-				resolve();
-			};
-			const timer = this.time.setTimeout(() => {
-				if (settled) return;
-				settled = true;
-				rlog().warn(
-					"ws",
-					`Stream event still running after ${STREAM_EVENT_STALL_MS}ms — releasing the queue so later events are not blocked`,
-				);
-				resolve();
-			}, STREAM_EVENT_STALL_MS);
-			applied.then(release, release);
+		const vault = this.settings.vaultId;
+		return this.serial.run("stream", async () => {
+			// Queued before a vault switch: an old-vault event, drop it.
+			if (vault === this.settings.vaultId) await this.applyStreamEvent(event);
 		});
-		return applied;
 	}
 
 	private async applyStreamEvent(event: NoteStreamEvent): Promise<void> {
