@@ -849,6 +849,8 @@ export default class EngramSyncPlugin extends Plugin {
 			currentVaultId: () => this.settings.vaultId ?? null,
 			onDrop: (op, reason) => {
 				dropReporter.onDrop(op, reason);
+				// No ack will ever clear the create's own-body base: forget it.
+				if (op.kind === "create") this.syncEngine.forgetOwnGenesis(op.docId);
 				// Creates are counted by dropReporter alone: a dropped create is
 				// recoverable (self-heal re-pushes the untracked file), and one line
 				// per op was 815 lines from a single prod first sync. A dropped

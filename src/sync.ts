@@ -2339,30 +2339,48 @@ export class SyncEngine {
 		return state.hash !== hash && !this.flushingHash.get(normalized)?.has(hash);
 	}
 
-	/** Is `hash` this device's own last-known content for `path`: the synced
-	 *  baseline, or, before the note's first create is acked, the body that
-	 *  create sent (`ownGenesis`). Disk equal to it carries no local edit,
-	 *  whatever the server has done since. */
-	private isOwnBase(path: string, hash: number): boolean {
-		if (this.syncState.get(path)?.hash === hash) return true;
+	/** The body this device's own first create sent for `path`'s note, until the
+	 *  create-ack stamps a baseline; null otherwise. */
+	private ownBaseBody(path: string): string | null {
 		const noteId = this.noteIdMap?.get(path);
-		return noteId != null && this.ownGenesis.get(noteId) === hash;
+		return (noteId != null ? this.ownGenesis.get(noteId) : undefined) ?? null;
 	}
 
-	/** fnv1a of the body a note's FIRST `crdt_create` sent, by note_id, from
-	 *  just before the send until the create-ack stamps the baseline. Kept off
-	 *  the sync-state row on purpose: a row is sync evidence (#416) and marks a
-	 *  file tracked, which a create that has not landed must not claim. */
-	private ownGenesis = this.track(["vault", "destroy"], new Map<string, number>());
+	/** Does the synced baseline cover `hash`: disk equal to it carries no local
+	 *  edit, whatever the server has done since. */
+	private isAckedBase(path: string, hash: number): boolean {
+		return this.syncState.get(path)?.hash === hash;
+	}
+
+	/** The body a note's FIRST `crdt_create` sent, by note_id, from just before
+	 *  the send until the create-ack stamps the baseline (or the create is
+	 *  abandoned: `forgetOwnGenesis`). Kept off the sync-state row on purpose: a
+	 *  row is sync evidence (#416) and marks a file tracked, which a create that
+	 *  has not landed must not claim. In memory only, so it is only trusted for a
+	 *  note created THIS session (`stampOwnGenesis`). */
+	private ownGenesis = this.track(["vault", "destroy"], new Map<string, string>());
+
+	/** Session start, for `stampOwnGenesis` (set in the constructor). */
+	private ownGenesisSince = 0;
+
+	/** Drop a note's own-create base: its create was abandoned (queue give-up)
+	 *  or the note is gone, so no ack will ever clear it. */
+	forgetOwnGenesis(noteId: string): void {
+		this.ownGenesis.delete(noteId);
+	}
 
 	/** Record the body a note's first create sends, before it is sent. Only
 	 *  for a note the server does not know yet (a rename's relocating create
-	 *  has a head), and only once: a re-sent create must not move the base to
-	 *  whatever disk holds by then, or an edit made in between would read as no
-	 *  edit at all. */
+	 *  has a head), only once (a re-sent create must not move the base to
+	 *  whatever disk holds by then), and only for a file created in THIS
+	 *  session: after a restart a re-sent create may find the server holding an
+	 *  EARLIER body (the first create landed, its ack was lost), and the disk
+	 *  then is an edit on top of it, not what the server was sent. */
 	private stampOwnGenesis(noteId: string, path: string, content: string): void {
 		if (this.ownGenesis.has(noteId) || this.getCrdtHead(path) != null) return;
-		this.ownGenesis.set(noteId, fnv1a(content));
+		const ctime = this.app.vault.getFileByPath?.(normalizePath(path))?.stat?.ctime;
+		if (typeof ctime === "number" && ctime < this.ownGenesisSince) return;
+		this.ownGenesis.set(noteId, content);
 	}
 
 	/** Hashes of the bodies in-flight `flushFromCrdt` calls are writing, per
@@ -3544,6 +3562,7 @@ export class SyncEngine {
 		);
 		this.parseIgnorePatterns();
 		this.selfHealSince = this.time.now();
+		this.ownGenesisSince = this.selfHealSince;
 	}
 
 	updateSettings(settings: EngramSyncSettings): void {
@@ -4383,7 +4402,10 @@ export class SyncEngine {
 	): Promise<string | null> {
 		const crdt = this.crdt;
 		if (!crdt) return null;
-		const merged = await crdt.mergeLocalEditFromBase(noteId, base, current, disk);
+		// The doc projects through the frontmatter codec, which can re-emit what
+		// the create sent differently; a raw base would read that as an edit.
+		const canonical = crdt.canonicalText?.(base) ?? base;
+		const merged = await crdt.mergeLocalEditFromBase(noteId, canonical, current, disk);
 		if (merged !== null) return merged;
 		const copy = await this.writeDriftConflictCopy(normalized, disk);
 		rlog().info(
@@ -4910,9 +4932,25 @@ export class SyncEngine {
 			if (effectiveIdHasHistory) await this.adoptServerLineage(effectiveId, normalized);
 			const server = await this.crdt.projectedText(effectiveId);
 			const disk = await this.app.vault.cachedRead(file);
-			if (server !== "" && this.isOwnBase(normalized, fnv1a(disk))) {
-				rlog().anomaly("crdt", "occupied_create_own_base");
-				return server;
+			if (server !== "") {
+				const base = this.ownBaseBody(normalized);
+				if (this.isAckedBase(normalized, fnv1a(disk)) || (base !== null && base === disk)) {
+					rlog().anomaly("crdt", "occupied_create_own_base");
+					return server;
+				}
+				// Disk moved off what we sent: three-way from it, so an edit another
+				// writer landed on the server in the same window survives next to
+				// ours (a two-way diff reads it as something disk deleted).
+				if (base !== null) {
+					const merged = await this.mergeOwnCreateDrift(
+						effectiveId,
+						normalized,
+						base,
+						server,
+						disk,
+					);
+					return merged ?? server;
+				}
 			}
 		}
 
@@ -5201,6 +5239,7 @@ export class SyncEngine {
 		deleteSeq?: number,
 		path?: string,
 	): Promise<void> {
+		this.ownGenesis.delete(noteId);
 		await this.crdt?.removeDoc(noteId, deleteSeq, path);
 		this.crdtEnrollment?.reset(noteId);
 	}
