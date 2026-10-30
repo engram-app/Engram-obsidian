@@ -348,8 +348,13 @@ const DISCOVERY_BASE_MAX_CHARS = 4 * 1024 * 1024;
  *  Generous next to any real apply (disk + a manifest fetch), short next to a
  *  session. */
 const STREAM_EVENT_STALL_MS = 30_000;
-/** A staged convergence older than this stops holding its note's push. */
-const CONVERGENCE_HOLD_MS = 30_000;
+/** HARD CEILING on holding a note's push behind its staged convergence. The
+ *  stage lives exactly as long as the converge is in flight (cleared at the
+ *  commit or superseded), so the hold follows the converge; this only bounds a
+ *  stage whose commit never comes. Past it the push runs on whatever disk
+ *  holds, so it must outlast a slow handshake (idle-heal pacing, rate-limit
+ *  backoff), or the #666 loss returns. A newer episode restarts the clock. */
+const CONVERGENCE_HOLD_MS = 120_000;
 
 /** Debounce window for the ok->degraded transition Notice: aggregates a
  *  burst of newly-degraded notes (e.g. a batch push) into one Notice. */
