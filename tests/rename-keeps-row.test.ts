@@ -12,9 +12,10 @@
  */
 import { describe, expect, mock, test } from "bun:test";
 import "fake-indexeddb/auto";
+import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
-import { NoteIdMap } from "../src/crdt/note-id-map";
 import { fnv1a } from "../src/content-hash";
+import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -137,5 +138,31 @@ describe("a rename re-keys the sync-state row", () => {
 			"reached push slot",
 		);
 		expect(slot).toHaveBeenCalledTimes(1);
+	});
+
+	test("a relocation lost in a crash is re-found by the sweep despite an old mtime", () => {
+		const file = new TFile("b.md", 1);
+		const { engine, map } = engineWith({ "b.md": "body" });
+		engine.app.vault.getFiles.mockReturnValue([file]);
+		map.rename("a.md", "b.md");
+		engine.renamePath("a.md", "b.md", "local");
+		// Restart: the row (with its flag) comes back from disk.
+		engine.importSyncState(engine.exportSyncState());
+
+		expect(engine.pushCandidates(Date.now())).toEqual([file]);
+
+		engine.patchSyncedRow("b.md", { relocating: undefined });
+		expect(engine.pushCandidates(Date.now())).toEqual([]);
+	});
+
+	test("a relocation whose create is still queued is left to the queue", () => {
+		const file = new TFile("b.md", 1);
+		const { engine, map } = engineWith({ "b.md": "body" });
+		engine.app.vault.getFiles.mockReturnValue([file]);
+		map.rename("a.md", "b.md");
+		engine.renamePath("a.md", "b.md", "local");
+		engine.setCrdtHasPendingOp(() => true);
+
+		expect(engine.pushCandidates(Date.now())).toEqual([]);
 	});
 });
