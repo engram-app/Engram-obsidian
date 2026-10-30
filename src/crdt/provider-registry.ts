@@ -692,7 +692,7 @@ export class ProviderRegistry {
 		if (reread && e.pendingFlush) {
 			for (let attempt = 0; attempt < 3; attempt++) {
 				const flush = e.pendingFlush;
-				if (flush) {
+				if (flush !== null) {
 					try {
 						await e.lifetime.guard(flush);
 					} catch {
@@ -707,7 +707,7 @@ export class ProviderRegistry {
 				}
 				const moved = fresh !== content;
 				content = fresh;
-				if (!moved && !e.pendingFlush) break;
+				if (!moved && e.pendingFlush === null) break;
 			}
 			diskContent = content;
 		}
