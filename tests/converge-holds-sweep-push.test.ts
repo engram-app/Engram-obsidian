@@ -125,7 +125,13 @@ test("a stage that never commits stops holding: the held push re-runs when it ex
 	const { engine, reg, disk } = await heldDevice(time);
 	disk.set(PATH, `${BASE}${SERVER_EDIT}kept local\n`);
 
+	// A converge slower than 30 s is still in flight: the push stays held.
 	time.advance(31_000);
+	await tick(80);
+	expect(engine.heldForConvergence.size).toBe(1);
+	expect(await reg.projectedText(ID)).not.toContain("kept local");
+
+	time.advance(90_000); // past the ceiling
 	await tick(80);
 	time.advance(1_000); // the re-armed debounce
 	await tick(80);
