@@ -12731,6 +12731,14 @@ export class SyncEngine {
 				const id = this.noteIdMap?.get(f.path);
 				return !(id && this.crdtHasPendingOp?.(id));
 			}
+			// A local rename the server never confirmed (relocating, persisted) is
+			// not an mtime change: a crash before its create landed would leave the
+			// note at its old server path for good. Left to the queue while a
+			// create is pending, like an untracked file.
+			if (this.syncState.get(f.path)?.relocating === true) {
+				const id = this.noteIdMap?.get(f.path);
+				if (!(id && this.crdtHasPendingOp?.(id))) return true;
+			}
 			return f.stat.mtime > sinceMs;
 		});
 	}
