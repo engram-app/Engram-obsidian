@@ -13648,6 +13648,20 @@ export class SyncEngine {
 						`Held delete EXPIRED after ${HELD_DELETE_MAX_AGE_MS / 86_400_000} days ` +
 							`(vault ${owner.slice(0, 8)} never active again): ${noteRef(entry.path)}`,
 					);
+					// Never silent: the server copy in that vault survives.
+					const now = Date.now();
+					this.issues.record({
+						path: entry.path,
+						kind: entry.kind ?? "attachment",
+						category: "other",
+						message:
+							`Delete was held for vault ${owner.slice(0, 8)} for ` +
+							`${HELD_DELETE_MAX_AGE_MS / 86_400_000} days and expired; the server copy ` +
+							"in that vault was not deleted.",
+						firstFailedAt: now,
+						lastFailedAt: now,
+						attempts: 1,
+					});
 				}
 				rlog().warn(
 					"queue",

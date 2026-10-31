@@ -342,11 +342,19 @@ export function retryAfterMs(e: unknown, nowMs: number): number | undefined {
 
 /** A delete's 404 means the target is already gone, EXCEPT VaultPlug's
  *  "Vault not found" (wrong account or a deleted vault): that delete never
- *  ran and must not be counted as done. Current backends answer an absent
+ *  ran and must not be counted as done (likewise "No vault found"). Current backends answer an absent
  *  attachment path with 200; the 404 reading is kept for older ones. */
 export function isAlreadyGone(e: unknown): boolean {
-	return statusOf(e) === 404 && errorBody(e).error !== "Vault not found";
+	if (statusOf(e) !== 404) return false;
+	const error = errorBody(e).error;
+	return !(typeof error === "string" && VAULT_PLUG_404.some((m) => error.startsWith(m)));
 }
+
+/** VaultPlug's 404 bodies (`{error: <message>}`, engram
+ *  `lib/engram_web/plugs/vault_plug.ex`): an unknown or malformed vault id,
+ *  and no default vault (`FrontendUrl.no_vault_message/0`). The server sends
+ *  no stable code yet, so these strings are matched; pinned by a test. */
+export const VAULT_PLUG_404 = ["Vault not found", "No vault found:"] as const;
 
 /** True when the caught value is an HTTP response with the given status. */
 export function isHttpStatus(e: unknown, status: number): boolean {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { errMsg, RETRY_AFTER_MAX_MS, retryAfterMs } from "../src/error-util";
+import { errMsg, isAlreadyGone, RETRY_AFTER_MAX_MS, retryAfterMs } from "../src/error-util";
 
 describe("errMsg", () => {
 	test("Error instance → its message", () => {
@@ -291,5 +291,27 @@ describe("retryAfterMs", () => {
 		expect(retryAfterMs(err("2.5"), now)).toBeUndefined();
 		expect(retryAfterMs(err("-1"), now)).toBeUndefined();
 		expect(retryAfterMs(new Error("x"), now)).toBeUndefined();
+	});
+});
+
+describe("isAlreadyGone", () => {
+	const e404 = (error?: string) => ({ status: 404, json: error === undefined ? {} : { error } });
+	// Pinned to engram VaultPlug's exact 404 bodies (vault_plug.ex reject/3 and
+	// FrontendUrl.no_vault_message/0). The server sends no stable code; if this
+	// text changes there, a vault 404 would be read as a completed delete.
+	test("VaultPlug 404s are failures, not completed deletes", () => {
+		expect(isAlreadyGone(e404("Vault not found"))).toBe(false);
+		expect(
+			isAlreadyGone(
+				e404(
+					"No vault found: this account has no vault yet. Create one in the Engram web app at https://app.engram.page/onboard, or install ...",
+				),
+			),
+		).toBe(false);
+	});
+	test("other 404s and non-404s", () => {
+		expect(isAlreadyGone(e404("not_found"))).toBe(true);
+		expect(isAlreadyGone(e404())).toBe(true);
+		expect(isAlreadyGone({ status: 500 })).toBe(false);
 	});
 });

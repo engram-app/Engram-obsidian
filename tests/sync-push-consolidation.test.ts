@@ -775,6 +775,10 @@ describe("rate limits and unload (review M1-M3, M6)", () => {
 		await (engine as any).queue.enqueue(queuedDelete("img/new.png", "vault-A"));
 		await engine.flushQueue();
 		expect((engine as any).queue.all().map((e: any) => e.path)).toEqual(["img/new.png"]);
+		// Never silent: the expiry is a Sync Center issue (delta 3 review).
+		const issue = (engine as any).issues.get("img/old.png");
+		expect(issue?.message).toContain("expired");
+		expect((engine as any).issues.get("img/new.png")).toBeUndefined();
 	});
 
 	test("held deletes clear on account change; a deleted vault loses all its entries", async () => {
