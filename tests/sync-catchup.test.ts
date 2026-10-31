@@ -419,6 +419,25 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(engine.hasServerNote("note-id-1")).toBe(true);
 	});
 
+	test("#666: superseding a staged convergence re-arms the push held behind it, once, after the flush", async () => {
+		const { engine } = emptyPlaceholder();
+		engine.stageConvergence("note-id-1", "owned.md", "old-hash", BODY);
+		expect(engine.holdForConvergence("owned.md")).toBe(true);
+		const order: string[] = [];
+		mockApp.vault.modify.mockImplementation(async () => {
+			order.push("flush");
+		});
+		const rearm = spyOn(engine as any, "handleModify").mockImplementation(() => {
+			order.push("rearm");
+		});
+
+		await engine.applyChange(bodyRow as any);
+
+		expect(order).toEqual(["flush", "rearm"]);
+		expect(rearm).toHaveBeenCalledTimes(1);
+		expect(engine.heldForConvergence.size).toBe(0);
+	});
+
 	test("#477: a CONVERGED empty note is not a placeholder — a lagged row must not resurrect cleared content", async () => {
 		// A remote clear applied through flushFromCrdt calls recordCrdtBaseline(""),
 		// so stored.hash === fnv1a("") and localDiverged reads FALSE — the

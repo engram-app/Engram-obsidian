@@ -1244,6 +1244,21 @@ export class ProviderRegistry {
 		}
 	}
 
+	/** `content` as this registry would project it back: seeded into a scratch
+	 *  doc and projected through the frontmatter codec, which can re-emit a
+	 *  fence or key differently from the bytes on disk. The base of a three-way
+	 *  merge against a projection has to be in the projection's form. */
+	canonicalText(content: string): string {
+		const doc = new Y.Doc();
+		try {
+			const text = doc.getText(CONTENT_KEY);
+			seedContentInto(doc, text, content, false);
+			return this.project({ kind: "note", doc, text } as unknown as Entry);
+		} finally {
+			doc.destroy();
+		}
+	}
+
 	async hasPendingGap(noteId: string): Promise<boolean> {
 		const e = this.entries.get(noteId);
 		if (!e) return false;
@@ -1292,6 +1307,17 @@ export class ProviderRegistry {
 		// An empty doc has nothing to deliver.
 		if (!e.deliveredReceipt) return isEmptyDoc(e.doc);
 		return eqBytes(snapshotOf(e.doc), e.deliveredReceipt);
+	}
+
+	/** Resident docs holding state the server has not acked
+	 *  (`hasCurrentDeliveryReceipt` false). A live `crdt_msg` is fire-and-forget:
+	 *  one that went out on a socket that was already dead (an iOS resume)
+	 *  leaves exactly this, with nothing else to re-send it. */
+	unackedDocIds(): string[] {
+		return [...this.entries.keys()].filter((id) => {
+			const e = this.entries.get(id);
+			return e?.lifetime.active === true && !this.hasCurrentDeliveryReceipt(id);
+		});
 	}
 
 	// --- Lifecycle no-ops the persistent doc doesn't need -----------------------

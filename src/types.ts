@@ -474,6 +474,9 @@ export interface FileSyncState {
 	 *  or below this mark is history, not divergence — backfilling it reverts
 	 *  newer live-applied content). Never advances the global replay cursor. */
 	seq?: number;
+	/** Set by a LOCAL rename until its relocating `crdt_create` is acked: the
+	 *  server still holds the note at the old path (see SyncEngine.renamePath). */
+	relocating?: true;
 }
 
 /** A single entry in the sync log ring buffer. */
