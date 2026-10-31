@@ -161,7 +161,7 @@ describe("makeCrdtOpSend dispatch + taxonomy", () => {
 		await expect(send(op("create", "d1"))).resolves.toBe("error");
 	});
 
-	test("retryable reason (rate_limited) → error, not surfaced", async () => {
+	test("rate_limited reason → rate_limited (uncharged by the queue), not surfaced", async () => {
 		const onTerminal = mock(() => {});
 		const send = makeCrdtOpSend({
 			channel: () =>
@@ -171,7 +171,7 @@ describe("makeCrdtOpSend dispatch + taxonomy", () => {
 			onCreated: () => {},
 			onTerminal,
 		});
-		await expect(send(op("create", "d1"))).resolves.toBe("error");
+		await expect(send(op("create", "d1"))).resolves.toBe("rate_limited");
 		expect(onTerminal).not.toHaveBeenCalled();
 	});
 

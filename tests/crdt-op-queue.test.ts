@@ -601,3 +601,45 @@ describe("drop reporter", () => {
 		expect(lines.length).toBe(2); // nothing new, nothing re-sent
 	});
 });
+
+// PR 671: a `rate_limited` reply was charged like any failure, so a server
+// shedding load for ~1 min dropped queued deletes at MAX_ATTEMPTS (the server
+// copy survived). Fails on the old queue (drops + every op re-sent into the
+// limit each pass); passes now.
+describe("rate_limited replies", () => {
+	test("400 queued deletes: one in flight, queue pauses on rate_limited, none dropped", async () => {
+		const clock = fakeClock(0);
+		let inFlight = 0;
+		let maxInFlight = 0;
+		let limitedLeft = 20; // more consecutive rate limits than MAX_ATTEMPTS
+		const sent: string[] = [];
+		const drops: DropReason[] = [];
+		const q = new CrdtOpQueue({
+			send: async (op) => {
+				maxInFlight = Math.max(maxInFlight, ++inFlight);
+				await Promise.resolve();
+				inFlight--;
+				if (limitedLeft > 0) {
+					limitedLeft--;
+					return "rate_limited";
+				}
+				sent.push(op.docId);
+				return "ok";
+			},
+			now: clock.now,
+			onDrop: (_op, r) => drops.push(r),
+		});
+		for (let i = 0; i < 400; i++) q.enqueue(makeOp(`n${i}`, "delete"));
+		await q.onJoined();
+		// A pass stops at the first rate_limited: one frame per pause, not 400.
+		expect(sent).toHaveLength(0);
+		for (let i = 0; i < 40 && q.size() > 0; i++) {
+			clock.advance(MAX_BACKOFF_MS);
+			await q.tick();
+		}
+		expect(drops).toEqual([]);
+		expect(q.size()).toBe(0);
+		expect(new Set(sent).size).toBe(400);
+		expect(maxInFlight).toBe(1);
+	});
+});
