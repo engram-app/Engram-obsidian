@@ -1534,6 +1534,11 @@ export default class EngramSyncPlugin extends Plugin {
 		// over the NEW instance's data.json and fork the rotating token chain
 		// (two live refreshers → server reuse detection revokes the family).
 		this.unloaded = true;
+		// Before anything is torn down: deletes still in the batch window go
+		// to the durable queue (best effort, like savePluginData below).
+		void this.syncEngine?.stashPendingAttachmentDeletes().catch((e: unknown) => {
+			devLog().log("lifecycle", `stash pending deletes failed: ${errMsg(e)}`);
+		});
 		this.retireAuthProvider();
 		this.dismissSetupNotice();
 		this.dismissLegalNotices();

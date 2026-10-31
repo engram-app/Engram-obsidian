@@ -139,6 +139,13 @@ describe("IssueStore", () => {
 });
 
 describe("categorizeError", () => {
+	// Review M4: a 503 with Retry-After parked like any 5xx.
+	test("503 with Retry-After is rate limited; a bare 503 is a server error", () => {
+		const with503 = { status: 503, headers: { "retry-after": "60" } };
+		expect(categorizeError(with503)).toMatchObject({ rateLimited: true, retryAfterMs: 60_000 });
+		expect(categorizeError({ status: 503 }).rateLimited).toBeUndefined();
+	});
+
 	test("413 → too_large", () => {
 		const err = Object.assign(new Error("Request failed, status 413"), { status: 413 });
 		expect(categorizeError(err).category).toBe("too_large");

@@ -310,27 +310,37 @@ export function errorBody(e: unknown): Record<string, unknown> {
 	return {};
 }
 
-/** True when the caught value is an HTTP response with the given status. */
 /** Longest Retry-After the plugin will honor; a larger (or hostile) value is
  *  clamped so a bad header cannot park work for hours. */
 export const RETRY_AFTER_MAX_MS = 5 * 60_000;
 
-/** Delay a 429/503 asked for via `Retry-After` (delta-seconds or HTTP-date),
- *  clamped to [0, RETRY_AFTER_MAX_MS]. Undefined when absent or unparseable. */
+/** Case-insensitive response-header reader: desktop requestUrl lower-cases
+ *  header names, other platforms may not. */
+export function headerLookup(headers: Record<string, string> | undefined) {
+	const lower = new Map<string, string>();
+	for (const [k, v] of Object.entries(headers ?? {})) lower.set(k.toLowerCase(), v);
+	return (name: string): string | undefined => lower.get(name);
+}
+
+/** Delay a 429/503 asked for via `Retry-After`, clamped to
+ *  [0, RETRY_AFTER_MAX_MS]. Accepts delta-seconds (digits only) or an
+ *  HTTP-date (must name a day or month, so "2.5" or "-1" is not read as a
+ *  year). Undefined when absent or unparseable; callers apply their own floor. */
 export function retryAfterMs(e: unknown, nowMs: number): number | undefined {
 	if (typeof e !== "object" || e === null) return undefined;
 	const headers = (e as { headers?: unknown }).headers;
 	if (typeof headers !== "object" || headers === null) return undefined;
-	const raw: unknown = Object.entries(headers as Record<string, unknown>).find(
-		([k]) => k.toLowerCase() === "retry-after",
-	)?.[1];
-	if (typeof raw !== "string" || raw.trim() === "") return undefined;
-	const v = raw.trim();
-	const ms = /^\d+$/.test(v) ? Number(v) * 1000 : Date.parse(v) - nowMs;
+	const v = headerLookup(headers as Record<string, string>)("retry-after")?.trim();
+	if (typeof v !== "string" || v === "") return undefined;
+	let ms: number;
+	if (/^\d+$/.test(v)) ms = Number(v) * 1000;
+	else if (/[a-z]/i.test(v)) ms = Date.parse(v) - nowMs;
+	else return undefined;
 	if (Number.isNaN(ms)) return undefined;
 	return Math.min(Math.max(ms, 0), RETRY_AFTER_MAX_MS);
 }
 
+/** True when the caught value is an HTTP response with the given status. */
 export function isHttpStatus(e: unknown, status: number): boolean {
 	return statusOf(e) === status;
 }

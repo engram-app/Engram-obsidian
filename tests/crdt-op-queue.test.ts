@@ -602,10 +602,10 @@ describe("drop reporter", () => {
 	});
 });
 
-// PR 671: a `rate_limited` reply was charged like any failure, so a server
-// shedding load for ~1 min dropped queued deletes at MAX_ATTEMPTS (the server
-// copy survived). Fails on the old queue (drops + every op re-sent into the
-// limit each pass); passes now.
+// PR 671: a `rate_limited` reply was charged like any failure, and every
+// queued op was sent into the same limit on each pass. This one fails on the
+// old queue through the pass-stops-at-first-limit assertion; the no-drop
+// property is proven by the single-op test below.
 describe("rate_limited replies", () => {
 	test("400 queued deletes: one in flight, queue pauses on rate_limited, none dropped", async () => {
 		const clock = fakeClock(0);
@@ -641,5 +641,51 @@ describe("rate_limited replies", () => {
 		expect(q.size()).toBe(0);
 		expect(new Set(sent).size).toBe(400);
 		expect(maxInFlight).toBe(1);
+	});
+});
+
+describe("rate_limited: one op, many replies (review M7, L7)", () => {
+	// Fails on 8fbaca0's parent: the op was charged per reply and dropped at
+	// MAX_ATTEMPTS (8), so the server copy of the note survived.
+	test("ONE delete rate-limited 12 times in a row is kept and then delivered", async () => {
+		const clock = fakeClock(0);
+		let replies = 0;
+		const drops: DropReason[] = [];
+		const q = new CrdtOpQueue({
+			send: async () => (++replies <= 12 ? "rate_limited" : "ok"),
+			now: clock.now,
+			onDrop: (_op, r) => drops.push(r),
+		});
+		q.enqueue(makeOp("n1", "delete"));
+		await q.onJoined();
+		for (let i = 0; i < 20 && q.size() > 0; i++) {
+			clock.advance(MAX_BACKOFF_MS);
+			await q.tick();
+		}
+		expect(drops).toEqual([]);
+		expect(replies).toBe(13);
+		expect(q.size()).toBe(0);
+	});
+
+	// L7: the pause was credited in full to ops enqueued mid-pause, pushing
+	// their age into the future.
+	test("an op enqueued mid-pause is credited only the time it waited", async () => {
+		const clock = fakeClock(0);
+		let limited = true;
+		const q = new CrdtOpQueue({
+			send: async () => (limited ? "rate_limited" : "error"),
+			now: clock.now,
+		});
+		q.enqueue(makeOp("a", "delete", { enqueuedAt: 0 }));
+		await q.onJoined(); // pause starts at t=0 for BASE_BACKOFF_MS
+		clock.advance(BASE_BACKOFF_MS / 2);
+		q.enqueue(makeOp("late", "delete", { enqueuedAt: clock.now() }));
+		limited = false;
+		clock.advance(BASE_BACKOFF_MS);
+		await q.tick(); // credits the pause
+		const late = q.all().find((o) => o.docId === "late");
+		// Waited from BASE/2 to the pause end at BASE: credited BASE/2, landing
+		// at BASE. The old full credit put it at 1.5 * BASE, i.e. in the future.
+		expect(late!.enqueuedAt).toBe(BASE_BACKOFF_MS);
 	});
 });

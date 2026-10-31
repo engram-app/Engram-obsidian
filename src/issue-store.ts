@@ -1,3 +1,4 @@
+import { VaultSwitchedError } from "./attachment-delete-batcher";
 import { expBackoff } from "./backoff";
 import { errorBody, retryAfterMs, statusOf } from "./error-util";
 import { t } from "./i18n";
@@ -171,7 +172,14 @@ export function categorizeError(err: unknown): CategorizedError {
 		return { category: "auth", status, message, userMessage, terminal: true };
 	if (isBlobMissing(err))
 		return { category: "blob_missing", status, message, userMessage, terminal: true };
-	if (status === 429)
+	if (err instanceof VaultSwitchedError)
+		// Never sent: the vault changed under a batched delete. Not a network
+		// failure (must not flip us offline); the queue's vault guard decides.
+		return { category: "other", message, userMessage, terminal: false };
+	// A 503 that names a Retry-After (backend dek_unavailable, rotation, an
+	// edge during a deploy) is load shedding too, not a broken request.
+	const retryAfter = retryAfterMs(err, Date.now());
+	if (status === 429 || (status === 503 && retryAfter !== undefined))
 		return {
 			category: "server",
 			status,
@@ -179,7 +187,7 @@ export function categorizeError(err: unknown): CategorizedError {
 			userMessage,
 			terminal: false,
 			rateLimited: true,
-			retryAfterMs: retryAfterMs(err, Date.now()),
+			retryAfterMs: retryAfter,
 		};
 	if (status !== undefined && status >= 500)
 		return { category: "server", status, message, userMessage, terminal: false };

@@ -190,6 +190,11 @@ export class OfflineQueue {
 		await this.persistNow();
 	}
 
+	/** Write the queue now instead of on the debounce (plugin unload). */
+	persist(): Promise<void> {
+		return this.persistNow();
+	}
+
 	/** Cancel any pending persist timer. Call on plugin unload. */
 	destroy(): void {
 		if (this.persistTimer) {

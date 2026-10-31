@@ -971,6 +971,29 @@ describe("SyncEngine.handleStreamEvent", () => {
 		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(file);
 	});
 
+	// Review H2: a batch attachment delete broadcasts with NO device id on
+	// backends that do not stamp it yet, so the own-device drop above never
+	// fired and our own echo trashed a file recreated at the path. Fails on 8fbaca0.
+	test("unattributed delete echo of our own batched attachment delete is dropped", async () => {
+		const engine = createEngine();
+		engine.setDeviceId("device-self");
+		const file = new TFile("Assets/pic.png");
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValueOnce(file);
+		(mockApi as any).attachmentDeletes = {
+			consumeOwnDelete: (p: string) => p === "Assets/pic.png",
+		};
+		try {
+			await engine.handleStreamEvent({
+				event_type: "delete",
+				path: "Assets/pic.png",
+				timestamp: 1709345678,
+			});
+			expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
+		} finally {
+			delete (mockApi as any).attachmentDeletes;
+		}
+	});
+
 	test("delete whose id matches the live note trashes it authoritatively (no pull)", async () => {
 		// CRDT-authoritative rewire: a received delete is applied directly on the
 		// socket receive path, never deferred to a REST pull (the old pull-defer

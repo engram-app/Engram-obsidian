@@ -116,8 +116,8 @@ export class CrdtOpQueue {
 	 *  row (the pause doubles per streak, reset by the next delivered op). */
 	private rateLimitedUntil = 0;
 	private rateLimitStreak = 0;
-	/** Length of the pause not yet credited back to queued ops' TTL age. */
-	private uncreditedPauseMs = 0;
+	/** Start of the pause not yet credited back to queued ops' TTL age. */
+	private pauseFrom: number | null = null;
 
 	private readonly send: (op: CrdtOp) => Promise<SendResult>;
 	private readonly now: () => number;
@@ -297,9 +297,14 @@ export class CrdtOpQueue {
 	 *  to every op's age so the TTL cannot expire the outbox while the server
 	 *  sheds load. Runs once per pause, when the pause has ended. */
 	private creditRateLimitPause(): void {
-		if (this.uncreditedPauseMs === 0) return;
-		for (const e of this.entries.values()) e.op.enqueuedAt += this.uncreditedPauseMs;
-		this.uncreditedPauseMs = 0;
+		if (this.pauseFrom === null) return;
+		// Same rule as onJoined: credit only the part of the pause each op was
+		// actually queued for, so an op enqueued mid-pause is not aged negative.
+		for (const e of this.entries.values()) {
+			const heldFor = this.rateLimitedUntil - Math.max(this.pauseFrom, e.op.enqueuedAt);
+			if (heldFor > 0) e.op.enqueuedAt += heldFor;
+		}
+		this.pauseFrom = null;
 		this.schedulePersist();
 	}
 
@@ -370,8 +375,7 @@ export class CrdtOpQueue {
 			this.rateLimitStreak += 1;
 			const wait = this.backoffFor(this.rateLimitStreak);
 			this.rateLimitedUntil = this.now() + wait;
-			this.uncreditedPauseMs += wait;
-			entry.op.enqueuedAt = this.now();
+			this.pauseFrom ??= this.now();
 			entry.nextAttemptAt = this.now() + wait;
 			this.schedulePersist();
 			return;

@@ -584,3 +584,105 @@ describe("attachment deletes under a 429 (Retry-After)", () => {
 		expect((engine as any).issues.all()).toHaveLength(0);
 	});
 });
+
+// PR 671 adversarial review, sync-engine half. Each fails on 8fbaca0.
+describe("rate limits and unload (review M1-M3, M6)", () => {
+	const err = (status: number, retryAfter?: string) =>
+		Object.assign(new Error(`Request failed, status ${status}`), {
+			status,
+			headers: retryAfter === undefined ? {} : { "Retry-After": retryAfter },
+		});
+	const drainOnce = async (engine: SyncEngine, path: string) => {
+		await (engine as any).queue.enqueue({
+			path,
+			action: "delete",
+			kind: "attachment",
+			timestamp: 0,
+			evidenced: true,
+		});
+		await engine.flushQueue();
+		return (engine as any).queue.all().find((e: any) => e.path === path);
+	};
+
+	// M2: the live upload path charged a 429 as a failure (issue, tally, RETRY_CAP).
+	test("a 429 on a live attachment push re-queues uncharged, records no issue", async () => {
+		const time = new ManualTimeProvider(1_000_000);
+		const file = new TFile("img/a.png", Date.now());
+		const { engine, api } = makeEngine([file], {}, mockCrdt(), time);
+		(api.pushAttachment as any) = mock().mockRejectedValue(err(429, "7"));
+		await (engine as any).pushFile(file);
+		const entry = (engine as any).queue.all()[0];
+		expect(entry?.path).toBe("img/a.png");
+		expect(entry.attempts ?? 0).toBe(0);
+		expect(entry.nextAttemptAt).toBe(1_000_000 + 7_000);
+		expect((engine as any).issues.all()).toHaveLength(0);
+		expect((engine as any).failuresThisBatch).toBe(0);
+	});
+
+	// M3: Retry-After 0 (or a past date) re-drained at 0 ms, a hot loop.
+	test("Retry-After: 0 is floored to 1s", async () => {
+		const time = new ManualTimeProvider(1_000_000);
+		const { engine, api } = makeEngine([], {}, mockCrdt(), time);
+		(api.deleteAttachment as any) = mock().mockRejectedValue(err(429, "0"));
+		const entry = await drainOnce(engine, "a.png");
+		expect(entry.nextAttemptAt).toBe(1_000_000 + 1_000);
+	});
+
+	test("no Retry-After backs off progressively across consecutive 429s", async () => {
+		const time = new ManualTimeProvider(1_000_000);
+		const { engine, api } = makeEngine([], {}, mockCrdt(), time);
+		(api.deleteAttachment as any) = mock().mockRejectedValue(err(429));
+		const first = (await drainOnce(engine, "a.png")).nextAttemptAt - time.now();
+		time.advance(first);
+		await engine.flushQueue();
+		const entry = (engine as any).queue.all()[0];
+		expect(entry.nextAttemptAt - time.now()).toBe(first * 2);
+		expect(entry.attempts ?? 0).toBe(0);
+	});
+
+	// M4: a 503 carrying Retry-After parked like any 5xx.
+	test("a 503 with Retry-After is honored and never parks", async () => {
+		const time = new ManualTimeProvider(1_000_000);
+		const { engine, api } = makeEngine([], {}, mockCrdt(), time);
+		(api.deleteAttachment as any) = mock().mockRejectedValue(err(503, "60"));
+		let entry = await drainOnce(engine, "a.png");
+		for (let i = 0; i < 7; i++) {
+			time.advance(60_000);
+			await engine.flushQueue();
+			entry = (engine as any).queue.all()[0];
+		}
+		expect(entry?.attempts ?? 0).toBe(0);
+		expect((engine as any).issues.all()).toHaveLength(0);
+	});
+
+	// M1: deletes in the batch window were lost on quit.
+	test("unload moves unsent batched deletes into the durable queue and persists", async () => {
+		const { engine, api } = makeEngine([]);
+		(api as any).attachmentDeletes = {
+			takePending: () => [{ path: "img/gone.png", vaultId: "v1" }],
+		};
+		const persist = mock(async () => {});
+		(engine as any).queue.persist = persist;
+		await engine.stashPendingAttachmentDeletes();
+		const entry = (engine as any).queue.all()[0];
+		expect(entry).toMatchObject({
+			path: "img/gone.png",
+			action: "delete",
+			kind: "attachment",
+			vaultId: "v1",
+			evidenced: true,
+		});
+		expect(persist).toHaveBeenCalledTimes(1);
+	});
+
+	// M6: a CRDT delete held past the 60 s cooldown let a fan-out resurrect it.
+	test("a fan-out is refused while this device's delete is still queued", async () => {
+		const { engine } = makeEngine([]);
+		engine.setCrdtHasPendingDelete((id) => id === "n1");
+		const pathForId = mock(() => null);
+		(engine as any).noteIdMap.pathForId = pathForId;
+		const r = await (engine as any).applyPushedNoteUpdateNow("n1", new Uint8Array([0]), "h");
+		expect(r).toBe("deferred");
+		expect(pathForId).not.toHaveBeenCalled();
+	});
+});

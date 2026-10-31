@@ -287,6 +287,9 @@ describe("retryAfterMs", () => {
 	test("absent or garbage is undefined", () => {
 		expect(retryAfterMs(err(), now)).toBeUndefined();
 		expect(retryAfterMs(err("soon"), now)).toBeUndefined();
+		// Review M3: V8 parses these as year-2001 / year -1 dates.
+		expect(retryAfterMs(err("2.5"), now)).toBeUndefined();
+		expect(retryAfterMs(err("-1"), now)).toBeUndefined();
 		expect(retryAfterMs(new Error("x"), now)).toBeUndefined();
 	});
 });
