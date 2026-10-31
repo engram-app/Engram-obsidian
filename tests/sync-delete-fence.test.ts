@@ -259,7 +259,9 @@ describe("queue-replayed attachment gains evidence (review finding 6)", () => {
 
 		// The replay must stamp sync evidence, or this delete is refused forever.
 		await e.handleDelete(makeAttachmentFile("flaky/photo.png"));
-		expect(deleteAttachment).toHaveBeenCalledWith("flaky/photo.png");
+		expect(deleteAttachment.mock.calls.map((c: unknown[]) => c[0])).toContain(
+			"flaky/photo.png",
+		);
 	});
 });
 
@@ -280,7 +282,7 @@ describe("rename old-leg delete (review finding 2)", () => {
 
 		await e.handleRename(file, "img/pic.png");
 
-		expect(deleteAttachment).toHaveBeenCalledWith("img/pic.png");
+		expect(deleteAttachment.mock.calls.map((c: unknown[]) => c[0])).toContain("img/pic.png");
 	});
 });
 

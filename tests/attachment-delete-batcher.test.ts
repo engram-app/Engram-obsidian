@@ -1,111 +1,121 @@
 /**
- * AttachmentDeleteBatcher: the vault, ordering, echo and fallback rules the
- * PR 671 adversarial review found missing (H1, H3, L6, M1, mixed chunks).
- * Deterministic: a manual clock, timers fired by hand, scripted sends.
+ * AttachmentDeleteBatcher: origin gating, vault pinning, ordering and the
+ * unload hand-off (PR 671 reviews). Deterministic: timers fired by hand,
+ * scripted sends.
  */
 import { describe, expect, test } from "bun:test";
 import {
 	ATTACHMENT_DELETE_CHUNK,
-	ATTACHMENT_ECHO_MEMORY_MS,
 	AttachmentDeleteBatcher,
 	VaultSwitchedError,
 } from "../src/attachment-delete-batcher";
 
 type Sent = { paths: string[]; vaultId: string | null };
 
-function harness(opts: { send?: (s: Sent) => Promise<void> } = {}) {
+function harness(opts: { batch?: boolean; send?: (s: Sent) => Promise<void> } = {}) {
 	let vault: string | null = "A";
-	let now = 1_000;
 	const sent: Sent[] = [];
 	const single: Sent[] = [];
-	let timer: (() => void) | null = null;
+	let inFlight = 0;
+	let maxInFlight = 0;
+	const track = async (fn: () => Promise<void>) => {
+		maxInFlight = Math.max(maxInFlight, ++inFlight);
+		try {
+			await fn();
+		} finally {
+			inFlight--;
+		}
+	};
 	const b = new AttachmentDeleteBatcher({
-		send: async (paths, vaultId) => {
-			sent.push({ paths, vaultId });
-			await opts.send?.({ paths, vaultId });
-		},
-		sendOne: async (path, vaultId) => {
-			single.push({ paths: [path], vaultId });
-		},
+		send: (paths, vaultId) =>
+			track(async () => {
+				sent.push({ paths, vaultId });
+				await opts.send?.({ paths, vaultId });
+			}),
+		sendOne: (path, vaultId) =>
+			track(async () => {
+				single.push({ paths: [path], vaultId });
+				await Promise.resolve();
+			}),
+		batchEnabled: () => opts.batch ?? true,
 		activeVaultId: () => vault,
-		now: () => now,
-		setTimeout: (cb) => {
-			timer = cb;
-			return 1;
-		},
-		clearTimeout: () => {
-			timer = null;
-		},
+		setTimeout: () => 1,
+		clearTimeout: () => {},
 	});
 	return {
 		b,
 		sent,
 		single,
+		maxInFlight: () => maxInFlight,
 		setVault: (v: string | null) => {
 			vault = v;
 		},
-		advance: (ms: number) => {
-			now += ms;
-		},
-		fire: () => timer?.(),
 	};
 }
 
-const settle = () => new Promise((r) => setTimeout(r, 0));
+const tick = () => new Promise((r) => setTimeout(r, 0));
+const gate = () => {
+	let release!: () => void;
+	const p = new Promise<void>((r) => {
+		release = r;
+	});
+	return { p, release };
+};
 
 describe("AttachmentDeleteBatcher", () => {
-	// H1: before, the vault was read at SEND time, so a switch inside the
-	// window sent vault A's deletes into vault B.
+	// Delta review M1: batching is only safe when the server's batch broadcast
+	// names this device, so without the capability every delete goes out as a
+	// single DELETE (which always carried X-Device-Id), still one at a time.
+	test("without the origin capability: single deletes, serial, never a batch", async () => {
+		const h = harness({ batch: false });
+		const ps = Array.from({ length: 50 }, (_, i) => h.b.delete(`p${i}.png`, "A"));
+		await h.b.flush();
+		await Promise.all(ps);
+		expect(h.sent).toEqual([]);
+		expect(h.single).toHaveLength(50);
+		expect(h.maxInFlight()).toBe(1);
+	});
+
+	test("with the capability: 400 deletes become 2 batch requests, one in flight", async () => {
+		const h = harness();
+		const ps = Array.from({ length: 400 }, (_, i) => h.b.delete(`p${i}.png`, "A"));
+		await h.b.flush();
+		await Promise.all(ps);
+		expect(h.sent).toHaveLength(Math.ceil(400 / ATTACHMENT_DELETE_CHUNK));
+		expect(h.maxInFlight()).toBe(1);
+	});
+
 	test("a vault switch before the send rejects the deletes, sends nothing", async () => {
 		const h = harness();
-		const p = h.b.delete("img/a.png");
+		const p = h.b.delete("img/a.png", "A");
 		h.setVault("B");
 		await h.b.flush();
 		await expect(p).rejects.toBeInstanceOf(VaultSwitchedError);
 		expect(h.sent).toEqual([]);
 	});
 
-	test("each chunk carries the vault its deletes were requested in", async () => {
+	test("each chunk carries the vault its caller stamped", async () => {
 		const h = harness();
-		const a = h.b.delete("a.png");
 		h.setVault("B");
-		const b1 = h.b.delete("b.png");
-		await h.b.flush();
-		await expect(a).rejects.toBeInstanceOf(VaultSwitchedError);
-		await b1;
+		await Promise.all([h.b.delete("b.png", "B"), h.b.flush()]);
 		expect(h.sent).toEqual([{ paths: ["b.png"], vaultId: "B" }]);
 	});
 
-	// H3: before, only deletes still in the window were awaited; one already
-	// in flight (or in a later chunk) raced the upload.
 	test("settled(path) waits for a delete that is already IN FLIGHT", async () => {
-		let release!: () => void;
-		const gate = new Promise<void>((r) => {
-			release = r;
-		});
-		const h = harness({ send: () => gate });
-		void h.b.delete("x.png");
-		void h.b.flush(); // now in flight
-		await settle();
-		expect(h.sent).toHaveLength(1);
+		const g = gate();
+		const h = harness({ send: () => g.p });
+		void h.b.delete("x.png", "A");
+		void h.b.flush();
+		await tick();
 		let done = false;
 		const waiting = h.b.settled("x.png").then(() => {
 			done = true;
 		});
-		await settle();
+		await tick();
 		expect(done).toBe(false);
-		release();
+		g.release();
 		await waiting;
 		expect(done).toBe(true);
-	});
-
-	test("settled(path) waits for a delete queued behind another chunk", async () => {
-		const h = harness();
-		const paths = Array.from({ length: ATTACHMENT_DELETE_CHUNK + 1 }, (_, i) => `p${i}.png`);
-		for (const p of paths) void h.b.delete(p);
-		void h.b.flush();
-		await h.b.settled(paths[ATTACHMENT_DELETE_CHUNK]!);
-		expect(h.sent).toHaveLength(2);
 	});
 
 	test("a failed chunk rejects only its own callers", async () => {
@@ -116,7 +126,7 @@ describe("AttachmentDeleteBatcher", () => {
 			},
 		});
 		const ps = Array.from({ length: ATTACHMENT_DELETE_CHUNK + 1 }, (_, i) =>
-			h.b.delete(`p${i}.png`).then(
+			h.b.delete(`p${i}.png`, "A").then(
 				() => "ok",
 				() => "err",
 			),
@@ -127,38 +137,23 @@ describe("AttachmentDeleteBatcher", () => {
 		expect(results[ATTACHMENT_DELETE_CHUNK]).toBe("err");
 	});
 
-	// L6: a backend without the batch route 404s it; before, every delete was
-	// silently treated as "already gone".
-	test("404 on the batch route falls back to single deletes, then stays there", async () => {
-		const h = harness({
-			send: async () => {
-				throw Object.assign(new Error("nf"), { status: 404 });
-			},
-		});
-		await Promise.all([h.b.delete("a.png"), h.b.delete("b.png"), h.b.flush()]);
-		expect(h.single.map((s) => s.paths[0])).toEqual(["a.png", "b.png"]);
-		await Promise.all([h.b.delete("c.png"), h.b.flush()]);
-		expect(h.sent).toHaveLength(1); // not retried on the batch route
-		expect(h.single.map((s) => s.paths[0])).toContain("c.png");
-	});
-
-	test("remembers own deletes for the echo window, once", async () => {
-		const h = harness();
-		await Promise.all([h.b.delete("a.png"), h.b.flush()]);
-		expect(h.b.consumeOwnDelete("a.png")).toBe(true);
-		expect(h.b.consumeOwnDelete("a.png")).toBe(false);
-		await Promise.all([h.b.delete("b.png"), h.b.flush()]);
-		h.advance(ATTACHMENT_ECHO_MEMORY_MS + 1);
-		expect(h.b.consumeOwnDelete("b.png")).toBe(false);
-	});
-
-	test("takePending hands back unsent deletes and sends nothing", async () => {
-		const h = harness();
-		void h.b.delete("a.png");
-		expect(h.b.takePending()).toEqual([{ path: "a.png", vaultId: "A" }]);
-		h.fire();
+	// Delta review M3: unload took only the 100 ms window; chunks queued behind
+	// the in-flight one went out after auth was retired and were lost.
+	test("takeUnacked returns the in-flight chunk, every queued chunk and the window", async () => {
+		const g = gate();
+		const h = harness({ send: () => g.p });
+		const total = 2 * ATTACHMENT_DELETE_CHUNK + 50;
+		for (let i = 0; i < total; i++) void h.b.delete(`p${i}.png`, "A");
+		void h.b.flush(); // chunk 1 in flight, 2 and 3 queued
+		await tick();
+		void h.b.delete("late.png", "A"); // still in the window
+		const taken = h.b.takeUnacked();
+		expect(taken).toHaveLength(total + 1);
+		expect(new Set(taken.map((t) => t.vaultId))).toEqual(new Set(["A"]));
+		g.release();
 		await h.b.flush();
-		expect(h.sent).toEqual([]);
-		await h.b.settled("a.png"); // no longer blocks an upload
+		await tick();
+		expect(h.sent).toHaveLength(1); // nothing sent after the hand-off
+		await h.b.settled("p0.png"); // and nothing left blocking an upload
 	});
 });

@@ -2835,6 +2835,7 @@ export default class EngramSyncPlugin extends Plugin {
 					if (epoch !== this.channelEpoch) return;
 					this.api.setRawAttachmentUpload(f.rawAttachmentUpload);
 					this.api.setRawAttachmentDownload(f.rawAttachmentDownload);
+					this.api.setAttachmentBatchDelete(f.attachmentBatchDeleteOrigin);
 					// Once per join, not per push: gates room-free diffs.
 					void this.api.learnServerVersion();
 				};

@@ -17,6 +17,7 @@ import { TFile } from "obsidian";
 import * as syncProtocol from "y-protocols/sync";
 import * as Y from "yjs";
 import type { EngramApi } from "../src/api";
+import { ATTACHMENT_DELETE_CHUNK, AttachmentDeleteBatcher } from "../src/attachment-delete-batcher";
 import { fnv1a } from "../src/content-hash";
 import {
 	CONTENT_KEY,
@@ -655,24 +656,94 @@ describe("rate limits and unload (review M1-M3, M6)", () => {
 		expect((engine as any).issues.all()).toHaveLength(0);
 	});
 
-	// M1: deletes in the batch window were lost on quit.
-	test("unload moves unsent batched deletes into the durable queue and persists", async () => {
+	// M1 + delta M3: unload saved only the 100 ms window; chunks queued behind
+	// the in-flight one were lost. Real batcher, real offline queue.
+	test("unload persists EVERY unacknowledged delete: window, queued chunks, in flight", async () => {
 		const { engine, api } = makeEngine([]);
-		(api as any).attachmentDeletes = {
-			takePending: () => [{ path: "img/gone.png", vaultId: "v1" }],
-		};
+		let release!: () => void;
+		const held = new Promise<void>((r) => {
+			release = r;
+		});
+		const batcher = new AttachmentDeleteBatcher({
+			send: () => held,
+			sendOne: () => held,
+			batchEnabled: () => true,
+			activeVaultId: () => "v1",
+			setTimeout: () => 1,
+			clearTimeout: () => {},
+		});
+		(api as any).attachmentDeletes = batcher;
+		const total = 2 * ATTACHMENT_DELETE_CHUNK + 10;
+		for (let i = 0; i < total; i++) void batcher.delete(`img/${i}.png`, "v1");
+		void batcher.flush(); // chunk 1 in flight, the rest queued
+		await new Promise((r) => setTimeout(r, 0));
 		const persist = mock(async () => {});
 		(engine as any).queue.persist = persist;
+
 		await engine.stashPendingAttachmentDeletes();
-		const entry = (engine as any).queue.all()[0];
-		expect(entry).toMatchObject({
-			path: "img/gone.png",
+
+		const queued = (engine as any).queue.all();
+		expect(queued).toHaveLength(total);
+		expect(
+			queued.every((e: any) => e.action === "delete" && e.evidenced && e.vaultId === "v1"),
+		).toBe(true);
+		expect(persist).toHaveBeenCalledTimes(1);
+		release();
+	});
+
+	// Delta review M2: a delete made in vault A, still queued when the user
+	// switched to B, was DROPPED by the next drain; switching back resurrected it.
+	test("a queued delete from another vault is held, then sent when that vault is active", async () => {
+		const { engine, api } = makeEngine([]);
+		const calls: Array<[string, string | null]> = [];
+		(api.deleteAttachment as any) = mock(async (p: string, v: string | null) => {
+			calls.push([p, v]);
+			return { deleted: true, path: p };
+		});
+		(engine as any).settings.vaultId = "vault-B";
+		await (engine as any).queue.enqueue({
+			path: "img/a.png",
 			action: "delete",
 			kind: "attachment",
+			timestamp: 0,
+			vaultId: "vault-A",
+			evidenced: true,
+		});
+		await engine.flushQueue();
+		expect(calls).toEqual([]);
+		expect((engine as any).queue.size).toBe(1);
+
+		(engine as any).settings.vaultId = "vault-A";
+		await engine.flushQueue();
+		expect(calls).toEqual([["img/a.png", "vault-A"]]);
+		expect((engine as any).queue.size).toBe(0);
+	});
+
+	// Delta review M4: a 429'd delete re-queued, then the file was recreated and
+	// uploaded; the delete's retry deleted the NEW server copy.
+	test("a successful upload of a path supersedes a delete still queued for it", async () => {
+		const time = new ManualTimeProvider(1_000_000);
+		const file = new TFile("img/x.png", Date.now());
+		const { engine, api } = makeEngine([file], {}, mockCrdt(), time);
+		(engine as any).settings.vaultId = "v1";
+		(api.deleteAttachment as any) = mock().mockRejectedValueOnce(err(429, "5"));
+		await (engine as any).queue.enqueue({
+			path: "img/x.png",
+			action: "delete",
+			kind: "attachment",
+			timestamp: 0,
 			vaultId: "v1",
 			evidenced: true,
 		});
-		expect(persist).toHaveBeenCalledTimes(1);
+		await engine.flushQueue(); // 429: re-queued for t+5s
+		expect((engine as any).queue.all()[0]?.action).toBe("delete");
+
+		await (engine as any).pushFile(file); // recreated and uploaded
+		time.advance(10_000);
+		await engine.flushQueue();
+
+		expect((api.deleteAttachment as any).mock.calls).toHaveLength(1); // never retried
+		expect((engine as any).queue.all().some((e: any) => e.action === "delete")).toBe(false);
 	});
 
 	// M6: a CRDT delete held past the 60 s cooldown let a fan-out resurrect it.

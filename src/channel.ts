@@ -332,7 +332,11 @@ export class NoteChannel {
 	 *  join, including a reply with no `features` (an older backend), so a
 	 *  reconnect to a downgraded server turns them back off. */
 	onServerFeatures:
-		| ((features: { rawAttachmentUpload: boolean; rawAttachmentDownload: boolean }) => void)
+		| ((features: {
+				rawAttachmentUpload: boolean;
+				rawAttachmentDownload: boolean;
+				attachmentBatchDeleteOrigin: boolean;
+		  }) => void)
 		| null = null;
 	/** Inbound CRDT frames from the server. `docId` is the note's bare note_id. */
 	onCrdtMessage: ((docId: string, b64: string) => void) | null = null;
@@ -1291,6 +1295,7 @@ export class NoteChannel {
 								features?: {
 									raw_attachment_upload?: unknown;
 									raw_attachment_download?: unknown;
+									attachment_batch_delete_origin?: unknown;
 								};
 							};
 						}
@@ -1298,6 +1303,8 @@ export class NoteChannel {
 					this.onServerFeatures?.({
 						rawAttachmentUpload: response?.features?.raw_attachment_upload === true,
 						rawAttachmentDownload: response?.features?.raw_attachment_download === true,
+						attachmentBatchDeleteOrigin:
+							response?.features?.attachment_batch_delete_origin === true,
 					});
 					const plan = response?.plan;
 					if (plan !== undefined && plan !== null) {

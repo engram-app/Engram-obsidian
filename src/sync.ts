@@ -5592,7 +5592,7 @@ export class SyncEngine {
 
 		try {
 			if (isBinary) {
-				await this.api.deleteAttachment(path); // attachments stay REST
+				await this.api.deleteAttachment(path, deleteVaultId ?? null); // attachments stay REST
 				this.goOnline();
 			} else if (this.isCrdtEligiblePath(path)) {
 				// CRDT-sole delete path (markdown AND canvas since #306; REST removed).
@@ -5750,11 +5750,13 @@ export class SyncEngine {
 		// existed have no row, so their first rename leaves the old server path
 		// behind until a pull reconciles it — safe-direction, self-healing.
 		const hadOldEvidence = this.syncState.has(normalizePath(oldPath));
+		// One vault for the send and the re-queue (see deleteSyncedPath).
+		const renameVaultId = this.settings.vaultId ?? undefined;
 		if (!this.shouldIgnore(oldPath)) {
 			try {
 				if (isBinary) {
 					if (hadOldEvidence) {
-						await this.api.deleteAttachment(oldPath);
+						await this.api.deleteAttachment(oldPath, renameVaultId ?? null);
 						this.goOnline();
 					} else {
 						rlog().warn(
@@ -5809,7 +5811,7 @@ export class SyncEngine {
 						action: "delete",
 						kind: isBinary ? "attachment" : "note",
 						timestamp: Date.now(),
-						vaultId: this.settings.vaultId ?? undefined,
+						vaultId: renameVaultId,
 						// Provably equal to `true` today (refused legs never call out),
 						// but kept code-derived so a future throwing edit inside the
 						// refusal legs cannot silently stamp evidence (round-3 review).
@@ -6808,18 +6810,28 @@ export class SyncEngine {
 				"push",
 				`Push ok: ${noteRef(file.path)} | type=${isBinary ? "attachment" : "note"}`,
 			);
+			// The path lives again on the server: a delete still queued for it
+			// (a 429'd or offline delete before this recreate) is now stale and
+			// would delete the copy just uploaded. Supersede it.
+			const vaultForPath = this.settings.vaultId ?? undefined;
+			if (this.queue.get(pushedPath, vaultForPath)?.action === "delete") {
+				this.queue.cancel(pushedPath, vaultForPath);
+				rlog().info("queue", `Queued delete superseded by upload: ${noteRef(pushedPath)}`);
+			}
 			this.goOnline();
 		} catch (e) {
 			report?.({ kind: "failed", error: e });
 			const msg = errMsg(e, file.path);
 			const classified = categorizeError(e);
-			if (classified.rateLimited) {
+			// Attachments only: a note's queue entry carries crdt/noteId fields
+			// this content-free entry would overwrite.
+			if (classified.rateLimited && isBinary) {
 				rlog().warn("push", `Push rate limited, re-queued: ${noteRef(file.path)}`);
 				await this.deferRateLimited(
 					{
 						path: file.path,
 						action: "upsert",
-						kind: isBinary ? "attachment" : "note",
+						kind: "attachment",
 						mtime: file.stat.mtime / 1000,
 						timestamp: Date.now(),
 						vaultId: this.settings.vaultId ?? undefined,
@@ -9455,15 +9467,6 @@ export class SyncEngine {
 			// echoes also drive id-relocation, so they are not dropped here.
 			if (this.deviceId && event.device_id === this.deviceId) {
 				rlog().info("ws", `Echo skip (own device): ${noteRef(event.path)}`);
-				return;
-			}
-			// compat(server): batch attachment deletes broadcast with NO device id
-			// on backends before origin-device stamping reached batch-delete. A
-			// delete this device just sent must still not trash a file recreated
-			// at the path since. Unattributed only: another device's delete
-			// carries its own id and applies normally.
-			if (!event.device_id && this.api.attachmentDeletes?.consumeOwnDelete(event.path)) {
-				rlog().info("ws", `Echo skip (own batch delete): ${noteRef(event.path)}`);
 				return;
 			}
 			// A delete is an AUTHORITATIVE CRDT operation applied directly here — no
@@ -13482,7 +13485,11 @@ export class SyncEngine {
 		// the crdt: join kick.
 		if (this.offline || this.syncBlocked || isUpgradeRequired()) return;
 		let due = Number.POSITIVE_INFINITY;
+		const active = this.settings.vaultId;
 		for (const e of this.queue.all()) {
+			// A held other-vault delete is not due here; arming for it would spin.
+			const owner = this.entryVaultId(e);
+			if (owner && active && owner !== active) continue;
 			if (e.nextAttemptAt !== undefined && e.nextAttemptAt < due) due = e.nextAttemptAt;
 		}
 		if (due === Number.POSITIVE_INFINITY) return;
@@ -13520,7 +13527,7 @@ export class SyncEngine {
 					(entry.nextAttemptAt ?? 0) <= now &&
 					!(owner && active && owner !== active)
 				) {
-					const p = this.api.deleteAttachment(entry.path);
+					const p = this.api.deleteAttachment(entry.path, owner ?? null);
 					p.catch(() => {}); // observed by the loop below; not unhandled
 					startedDeletes.set(entry, p);
 				}
@@ -13558,6 +13565,11 @@ export class SyncEngine {
 			const owner = this.entryVaultId(entry);
 			const active = this.settings.vaultId;
 			if (owner && active && owner !== active) {
+				// A user DELETE made in that vault is held, not dropped: it replays
+				// when that vault is active again (a vault switch mid-way through a
+				// folder delete must not resurrect the rest). Never SENT here.
+				// Upserts re-read disk, so dropping them loses nothing.
+				if (entry.action === "delete" && entry.evidenced) continue;
 				rlog().warn(
 					"queue",
 					`Dropping queued op for ${noteRef(entry.path)} — queued under a different ` +
@@ -13593,7 +13605,10 @@ export class SyncEngine {
 						try {
 							if (entry.kind === "attachment") {
 								await (startedDeletes.get(entry) ??
-									this.api.deleteAttachment(entry.path));
+									this.api.deleteAttachment(
+										entry.path,
+										this.entryVaultId(entry) ?? null,
+									));
 							} else {
 								await this.api.deleteNote(entry.path);
 							}
@@ -13884,13 +13899,13 @@ export class SyncEngine {
 		return true;
 	}
 
-	/** Plugin unload: attachment deletes still inside the batch window have
-	 *  not been sent. Move them into the durable queue and write it now, so a
+	/** Plugin unload: attachment deletes not yet acknowledged (in the batch
+	 *  window, queued behind a chunk, or in flight) may never be. Move them into the durable queue and write it now, so a
 	 *  quit right after a delete replays it on the next start instead of
 	 *  losing it (the file would otherwise resurrect on the next pull). No
 	 *  network here: the auth provider is being retired. */
 	stashPendingAttachmentDeletes(): Promise<void> {
-		const taken = this.api.attachmentDeletes?.takePending() ?? [];
+		const taken = this.api.attachmentDeletes?.takeUnacked() ?? [];
 		if (taken.length === 0) return Promise.resolve();
 		for (const p of taken) {
 			void this.queue.enqueue({

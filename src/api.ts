@@ -253,6 +253,7 @@ export class EngramApi {
 			this.rawAttachmentUpload = false;
 			this.rawAttachmentUploadKnown = false;
 			this.rawAttachmentDownload = false;
+			this.attachmentBatchDelete = false;
 			this.serverVersion = null;
 		}
 		this.baseUrl = normalized;
@@ -834,9 +835,19 @@ export class EngramApi {
 
 	/** Delete an attachment. Coalesced into batch requests, see
 	 *  attachment-delete-batcher.ts for the vault, ordering and echo rules. */
-	async deleteAttachment(path: string): Promise<DeleteResponse> {
-		await this.attachmentDeletes.delete(path);
+	async deleteAttachment(path: string, vaultId?: string | null): Promise<DeleteResponse> {
+		// `vaultId`: the caller's durable-queue stamp. Default is the same
+		// source, this.vaultId (main.ts mirrors settings.vaultId into it).
+		await this.attachmentDeletes.delete(path, vaultId === undefined ? this.vaultId : vaultId);
 		return { deleted: true, path };
+	}
+
+	/** The server advertised `features.attachment_batch_delete_origin`. Until
+	 *  then (or on an older backend) deletes go out one by one, serially. */
+	private attachmentBatchDelete = false;
+
+	setAttachmentBatchDelete(enabled: boolean): void {
+		this.attachmentBatchDelete = enabled;
 	}
 
 	readonly attachmentDeletes = new AttachmentDeleteBatcher({
@@ -856,8 +867,9 @@ export class EngramApi {
 				vaultHeader(vaultId),
 			);
 		},
-		activeVaultId: () => this.getActiveVaultId(),
-		now: () => Date.now(),
+		batchEnabled: () => this.attachmentBatchDelete,
+		// The same vault source the sync engine stamps on queue entries.
+		activeVaultId: () => this.vaultId,
 		setTimeout: (cb, ms) => window.setTimeout(cb, ms),
 		clearTimeout: (id) => window.clearTimeout(id),
 	});

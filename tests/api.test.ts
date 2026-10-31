@@ -1385,6 +1385,7 @@ describe("EngramApi", () => {
 	describe("deleteAttachment", () => {
 		test("sends POST /attachments/batch-delete with the path and an idempotency key", async () => {
 			mockRequestUrl.mockResolvedValueOnce({ status: 200, json: { deleted: 1 } } as any);
+			api.setAttachmentBatchDelete(true);
 			await api.deleteAttachment("images/photo.png");
 			const opts = mockRequestUrl.mock.calls[0][0] as any;
 			expect(opts.method).toBe("POST");
@@ -1404,6 +1405,7 @@ describe("EngramApi", () => {
 				inFlight--;
 				return { status: 200, json: { deleted: 1 } };
 			}) as any);
+			api.setAttachmentBatchDelete(true);
 			const paths = Array.from({ length: 407 }, (_, i) => `img/${i}.jpg`);
 			await Promise.all(paths.map((p) => api.deleteAttachment(p)));
 			expect(mockRequestUrl.mock.calls.length).toBeLessThanOrEqual(3);
@@ -1412,6 +1414,34 @@ describe("EngramApi", () => {
 				(c) => JSON.parse((c[0] as any).body).paths,
 			);
 			expect(sent.sort()).toEqual([...paths].sort());
+		});
+
+		// Delta review M1: until the server advertises that its batch broadcast
+		// carries the device id, a batch would lose own-echo suppression. The
+		// fallback is single DELETEs (they always carried it), still serial.
+		test("without the server capability, deletes go out as single DELETEs, one at a time", async () => {
+			let inFlight = 0;
+			let maxInFlight = 0;
+			mockRequestUrl.mockImplementation((async () => {
+				maxInFlight = Math.max(maxInFlight, ++inFlight);
+				await new Promise((r) => setTimeout(r, 1));
+				inFlight--;
+				return { status: 200, json: {} };
+			}) as any);
+			await Promise.all(
+				Array.from({ length: 20 }, (_, i) => api.deleteAttachment(`img/${i}.jpg`)),
+			);
+			const methods = mockRequestUrl.mock.calls.map((c) => (c[0] as any).method);
+			expect(methods).toEqual(Array(20).fill("DELETE"));
+			expect(maxInFlight).toBe(1);
+		});
+
+		test("the capability turns off when the backend changes", async () => {
+			mockRequestUrl.mockResolvedValue({ status: 200, json: {} } as any);
+			api.setAttachmentBatchDelete(true);
+			api.updateConfig("https://other.example", "k");
+			await api.deleteAttachment("a.png");
+			expect((mockRequestUrl.mock.calls[0][0] as any).method).toBe("DELETE");
 		});
 
 		// Review H1: the vault was read at send time, so a switch inside the
@@ -1428,6 +1458,7 @@ describe("EngramApi", () => {
 
 		test("the batch request names the vault the delete was made in", async () => {
 			mockRequestUrl.mockResolvedValue({ status: 200, json: { deleted: 1 } } as any);
+			api.setAttachmentBatchDelete(true);
 			api.setVaultId("vault-A");
 			await api.deleteAttachment("img/a.png");
 			const opts = mockRequestUrl.mock.calls[0][0] as any;
@@ -1675,11 +1706,8 @@ describe("path encoding for by-path URL methods", () => {
 	test("deleteAttachment keeps real slashes", async () => {
 		mockRequestUrl.mockResolvedValue({ status: 200, json: {} });
 		await api().deleteAttachment("Legal/Formation/x.pdf");
-		// Batched: the path travels raw in the JSON body, not the URL.
-		expect(lastUrl()).toContain("/attachments/batch-delete");
-		expect(JSON.parse((mockRequestUrl.mock.calls.at(-1)![0] as any).body).paths).toEqual([
-			"Legal/Formation/x.pdf",
-		]);
+		expect(lastUrl()).toContain("/attachments/Legal/Formation/x.pdf");
+		expect(lastUrl()).not.toContain("%2F");
 	});
 
 	test("deleteNote keeps real slashes", async () => {
