@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.39.2](https://github.com/engram-app/Engram-obsidian/compare/1.39.1...1.39.2) (2026-10-31)
+
+
+### Bug Fixes
+
+* apply fan-outs per note in order and wait out own flush ([#663](https://github.com/engram-app/Engram-obsidian/issues/663)) ([2421144](https://github.com/engram-app/Engram-obsidian/commit/2421144a8ac1151bf6f6b64d6bff307b47b36363))
+* batch attachment deletes into one request ([#671](https://github.com/engram-app/Engram-obsidian/issues/671)) ([03b2be1](https://github.com/engram-app/Engram-obsidian/commit/03b2be1ddc809c7e30626d8fee3229cce3280bc9))
+* **deps:** override minimatch to ^11.0.1 ([#672](https://github.com/engram-app/Engram-obsidian/issues/672)) ([69acbb2](https://github.com/engram-app/Engram-obsidian/commit/69acbb2a387250e25fcfa1c1b5825ab3e29728d7))
+
 ## [1.39.1](https://github.com/engram-app/Engram-obsidian/compare/1.39.0...1.39.1) (2026-10-29)
 
 
