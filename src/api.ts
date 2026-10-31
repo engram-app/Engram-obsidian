@@ -78,6 +78,10 @@ export async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 	}
 }
 
+/** Coalescing window and per-request cap for attachment deletes (server max is 500). */
+const ATTACHMENT_DELETE_WINDOW_MS = 100;
+const ATTACHMENT_DELETE_CHUNK = 200;
+
 export class EngramApi {
 	/** Deadline for note/metadata requests. Instance fields (not consts) so
 	 *  tests can shrink them; attachments get a longer one — a large upload on
@@ -424,7 +428,9 @@ export class EngramApi {
 		// the REST bulk-page class (batch push, change feeds) died with the
 		// socket-only migration (#304).
 		const attachmentTransfer =
-			path.startsWith("/attachments") && (method === "POST" || method === "GET");
+			path.startsWith("/attachments") &&
+			path !== "/attachments/batch-delete" &&
+			(method === "POST" || method === "GET");
 		const timeoutMs = attachmentTransfer ? this.attachmentTimeoutMs : this.requestTimeoutMs;
 		const pending = requestUrl({
 			url: `${this.baseUrl}${path}`,
@@ -735,6 +741,11 @@ export class EngramApi {
 		mtime: number,
 		bytes?: ArrayBuffer,
 	): Promise<AttachmentResponse> {
+		// A delete still coalescing for this path must land first, or it would
+		// soft-delete the file this push is about to (re)create.
+		if (this.pendingAttachmentDeletes.some((d) => d.path === path)) {
+			await this.flushAttachmentDeletes();
+		}
 		if (this.rawAttachmentUpload && bytes) {
 			const qs = new URLSearchParams({ path, mime_type: mimeType, mtime: String(mtime) });
 			try {
@@ -817,11 +828,53 @@ export class EngramApi {
 		return resp.json as AttachmentDetail;
 	}
 
-	/** Delete an attachment. */
-	async deleteAttachment(path: string): Promise<DeleteResponse> {
-		const encoded = encodePath(path);
-		const resp = await this.request("DELETE", `/attachments/${encoded}`);
-		return resp.json as DeleteResponse;
+	/** Delete an attachment. Calls made within ATTACHMENT_DELETE_WINDOW_MS are
+	 *  coalesced into POST /attachments/batch-delete (chunks of
+	 *  ATTACHMENT_DELETE_CHUNK): a folder delete used to fire one DELETE per
+	 *  file (407 in ~1 min, 2026-10-31), each taking the server's per-vault seq
+	 *  lock. The server treats missing paths as a no-op, so every caller's
+	 *  promise resolves; a failed chunk rejects its callers with that error. */
+	deleteAttachment(path: string): Promise<DeleteResponse> {
+		return new Promise((resolve, reject) => {
+			this.pendingAttachmentDeletes.push({ path, resolve, reject });
+			this.attachmentDeleteTimer ??= window.setTimeout(
+				() => void this.flushAttachmentDeletes(),
+				ATTACHMENT_DELETE_WINDOW_MS,
+			);
+		});
+	}
+
+	private pendingAttachmentDeletes: {
+		path: string;
+		resolve: (r: DeleteResponse) => void;
+		reject: (e: unknown) => void;
+	}[] = [];
+	private attachmentDeleteTimer: number | null = null;
+	private attachmentDeleteFlush: Promise<void> = Promise.resolve();
+
+	/** Send everything queued by deleteAttachment, chunks strictly one at a time. */
+	flushAttachmentDeletes(): Promise<void> {
+		if (this.attachmentDeleteTimer) window.clearTimeout(this.attachmentDeleteTimer);
+		this.attachmentDeleteTimer = null;
+		const batch = this.pendingAttachmentDeletes;
+		this.pendingAttachmentDeletes = [];
+		this.attachmentDeleteFlush = this.attachmentDeleteFlush.then(async () => {
+			for (let i = 0; i < batch.length; i += ATTACHMENT_DELETE_CHUNK) {
+				const chunk = batch.slice(i, i + ATTACHMENT_DELETE_CHUNK);
+				try {
+					await this.request(
+						"POST",
+						"/attachments/batch-delete",
+						{ paths: [...new Set(chunk.map((c) => c.path))] },
+						{ "X-Idempotency-Key": crypto.randomUUID() },
+					);
+					for (const c of chunk) c.resolve({ deleted: true, path: c.path });
+				} catch (e) {
+					for (const c of chunk) c.reject(e);
+				}
+			}
+		});
+		return this.attachmentDeleteFlush;
 	}
 
 	/** Search indexed notes.

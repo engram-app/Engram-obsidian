@@ -1383,15 +1383,40 @@ describe("EngramApi", () => {
 	});
 
 	describe("deleteAttachment", () => {
-		test("sends DELETE /attachments/{encoded_path}", async () => {
-			mockRequestUrl.mockResolvedValueOnce({
-				status: 200,
-				json: { status: "deleted" },
-			} as any);
+		test("sends POST /attachments/batch-delete with the path and an idempotency key", async () => {
+			mockRequestUrl.mockResolvedValueOnce({ status: 200, json: { deleted: 1 } } as any);
 			await api.deleteAttachment("images/photo.png");
 			const opts = mockRequestUrl.mock.calls[0][0] as any;
-			expect(opts.method).toBe("DELETE");
-			expect(opts.url).toContain("images/photo.png");
+			expect(opts.method).toBe("POST");
+			expect(opts.url).toContain("/attachments/batch-delete");
+			expect(JSON.parse(opts.body)).toEqual({ paths: ["images/photo.png"] });
+			expect(opts.headers["X-Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+		});
+
+		// Incident 2026-10-31: 407 single DELETEs in ~1 min starved the server.
+		// Fails without the fix (407 requests); passes with it (<= 3 sequential).
+		test("a burst of 407 deletes becomes <= 3 requests, one in flight at a time", async () => {
+			let inFlight = 0;
+			let maxInFlight = 0;
+			mockRequestUrl.mockImplementation((async () => {
+				maxInFlight = Math.max(maxInFlight, ++inFlight);
+				await new Promise((r) => setTimeout(r, 1));
+				inFlight--;
+				return { status: 200, json: { deleted: 1 } };
+			}) as any);
+			const paths = Array.from({ length: 407 }, (_, i) => `img/${i}.jpg`);
+			await Promise.all(paths.map((p) => api.deleteAttachment(p)));
+			expect(mockRequestUrl.mock.calls.length).toBeLessThanOrEqual(3);
+			expect(maxInFlight).toBe(1);
+			const sent = mockRequestUrl.mock.calls.flatMap(
+				(c) => JSON.parse((c[0] as any).body).paths,
+			);
+			expect(sent.sort()).toEqual([...paths].sort());
+		});
+
+		test("a failed chunk rejects its callers", async () => {
+			mockRequestUrl.mockRejectedValue({ status: 500 });
+			await expect(api.deleteAttachment("a.png")).rejects.toBeDefined();
 		});
 	});
 
@@ -1606,8 +1631,11 @@ describe("path encoding for by-path URL methods", () => {
 	test("deleteAttachment keeps real slashes", async () => {
 		mockRequestUrl.mockResolvedValue({ status: 200, json: {} });
 		await api().deleteAttachment("Legal/Formation/x.pdf");
-		expect(lastUrl()).toContain("/attachments/Legal/Formation/x.pdf");
-		expect(lastUrl()).not.toContain("%2F");
+		// Batched: the path travels raw in the JSON body, not the URL.
+		expect(lastUrl()).toContain("/attachments/batch-delete");
+		expect(JSON.parse((mockRequestUrl.mock.calls.at(-1)![0] as any).body).paths).toEqual([
+			"Legal/Formation/x.pdf",
+		]);
 	});
 
 	test("deleteNote keeps real slashes", async () => {
