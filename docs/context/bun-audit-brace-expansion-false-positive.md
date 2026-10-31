@@ -6,10 +6,10 @@ _Last verified: 2026-10-03_
 
 ## Fix: both overrides, as a pair
 
-In `package.json` `overrides`: `"brace-expansion": "^5.0.x"` AND `"minimatch": "^10.0.1"` (see the current file for the exact brace-expansion range).
+In `package.json` `overrides`: `"brace-expansion": "^5.0.x"` AND `"minimatch": "^11.0.1"` (see the current file for the exact brace-expansion range).
 
 - Bumping `brace-expansion` alone breaks eslint: its transitive `minimatch@3` does `require('brace-expansion')` expecting the bare function, but 5.x's CJS build exports `{ expand }` (`TypeError: expand is not a function`).
-- `minimatch@10` consumes the named `{ expand }` export. `minimatch` is eslint-toolchain-only (not imported in `src/`), so there is no runtime or bundle impact.
+- `minimatch@10+` (now ^11.0.1, GHSA-g3hv-75wg-m249) consumes the named `{ expand }` export. `minimatch` is eslint-toolchain-only (not imported in `src/`), so there is no runtime or bundle impact.
 
 The same pair fixed `engram-marketing` (it hit the identical advisory through dev-only lint tooling). If a third repo trips it, apply the pair, not `brace-expansion` alone.
 
