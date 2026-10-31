@@ -12932,14 +12932,22 @@ export class SyncEngine {
 					failed: 0,
 				});
 			}
+			// Attachment deletes go through the offline queue, not a fire-once
+			// loop: the drain batches them, and a 429/5xx/offline failure is
+			// retried on the queue's backoff instead of logged and dropped. The
+			// server-only extras were enumerated from the manifest, which is this
+			// path's sync evidence.
 			for (const path of replaceExtras.attachments) {
 				if (ignoreListChanged()) break;
-				try {
-					await this.api.deleteAttachment(path);
-					this.logEntry("delete", path, "ok", undefined, "replace-remote");
-				} catch (e) {
-					this.logEntry("delete", path, "error", errMsg(e));
-				}
+				await this.enqueueChange({
+					path,
+					action: "delete",
+					kind: "attachment",
+					timestamp: Date.now(),
+					vaultId: this.settings.vaultId ?? undefined,
+					evidenced: true,
+				});
+				this.logEntry("delete", path, "ok", undefined, "replace-remote");
 				this.onSyncProgress?.({
 					phase: "deleting",
 					current: ++delDone,
@@ -12948,6 +12956,7 @@ export class SyncEngine {
 					currentPath: path,
 				});
 			}
+			if (replaceExtras.attachments.length > 0) await this.flushQueue();
 		}
 
 		// Flush first so the terminal "complete" can report the plan-skipped
@@ -13199,6 +13208,16 @@ export class SyncEngine {
 		// the refusal clears, like the rest of the held queue.
 		if (isHttpStatus(e, 426) && isUpgradeRequired()) return "retry";
 		const classified = categorizeError(e);
+		// Rate limited: the server is shedding load, not refusing this entry.
+		// Wait what it asked for and keep the attempt count, so a busy server
+		// can never push a delete into "parked" (where the server copy survives).
+		if (classified.rateLimited) {
+			await this.queue.enqueue({
+				...entry,
+				nextAttemptAt: this.time.now() + (classified.retryAfterMs ?? OFFLINE_RETRY_BASE_MS),
+			});
+			return "retry";
+		}
 		const attempts = (entry.attempts ?? 0) + 1;
 		if (shouldRetryAfterFailure(classified, attempts)) {
 			// Transient and under the cap: persist the bumped count (survives
@@ -13404,6 +13423,30 @@ export class SyncEngine {
 		devLog().log("queue", `flush start — ${entries.length} entries`);
 		rlog().info("queue", `Queue flush start — ${entries.length} entries`);
 
+		// Due attachment deletes are started together so EngramApi coalesces them
+		// into batch-delete requests; awaiting them one by one below would send
+		// one request per entry (the 407-DELETE burst, 2026-10-31). Same gates
+		// as the loop: anything not started here goes through the loop as before.
+		const now = this.time.now();
+		const active = this.settings.vaultId;
+		const startedDeletes = new Map<QueueEntry, Promise<unknown>>();
+		if (!this.syncBlocked && !isUpgradeRequired()) {
+			for (const entry of entries) {
+				const owner = this.entryVaultId(entry);
+				if (
+					entry.action === "delete" &&
+					entry.kind === "attachment" &&
+					entry.evidenced &&
+					(entry.nextAttemptAt ?? 0) <= now &&
+					!(owner && active && owner !== active)
+				) {
+					const p = this.api.deleteAttachment(entry.path);
+					p.catch(() => {}); // observed by the loop below; not unhandled
+					startedDeletes.set(entry, p);
+				}
+			}
+		}
+
 		let flushed = 0;
 		for (const entry of entries) {
 			// Sync gate closed (signed out / onboarding not accepted): stop pushing.
@@ -13469,7 +13512,8 @@ export class SyncEngine {
 					} else {
 						try {
 							if (entry.kind === "attachment") {
-								await this.api.deleteAttachment(entry.path);
+								await (startedDeletes.get(entry) ??
+									this.api.deleteAttachment(entry.path));
 							} else {
 								await this.api.deleteNote(entry.path);
 							}

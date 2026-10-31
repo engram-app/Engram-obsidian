@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { errMsg } from "../src/error-util";
+import { errMsg, RETRY_AFTER_MAX_MS, retryAfterMs } from "../src/error-util";
 
 describe("errMsg", () => {
 	test("Error instance → its message", () => {
@@ -268,5 +268,25 @@ describe("errMsg — cannot be made to hang", () => {
 		errMsg(new Error(input));
 
 		expect(performance.now() - started).toBeLessThan(500);
+	});
+});
+
+describe("retryAfterMs", () => {
+	const err = (v?: string) => ({
+		status: 429,
+		headers: v === undefined ? {} : { "retry-after": v },
+	});
+	const now = Date.parse("2026-10-31T07:00:00Z");
+	test("delta-seconds", () => expect(retryAfterMs(err("2"), now)).toBe(2_000));
+	test("HTTP-date", () =>
+		expect(retryAfterMs(err("Sat, 31 Oct 2026 07:00:30 GMT"), now)).toBe(30_000));
+	test("past date clamps to 0, huge value clamps to the max", () => {
+		expect(retryAfterMs(err("Sat, 31 Oct 2026 06:00:00 GMT"), now)).toBe(0);
+		expect(retryAfterMs(err("86400"), now)).toBe(RETRY_AFTER_MAX_MS);
+	});
+	test("absent or garbage is undefined", () => {
+		expect(retryAfterMs(err(), now)).toBeUndefined();
+		expect(retryAfterMs(err("soon"), now)).toBeUndefined();
+		expect(retryAfterMs(new Error("x"), now)).toBeUndefined();
 	});
 });

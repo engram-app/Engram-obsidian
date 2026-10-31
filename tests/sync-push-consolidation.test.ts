@@ -29,6 +29,7 @@ import type { ProviderRegistry as CrdtManagerType } from "../src/crdt/provider-r
 import { ProviderRegistry } from "../src/crdt/provider-registry";
 import { encodeUpdateFrame, fromB64 } from "../src/crdt/wire";
 import { SyncEngine } from "../src/sync";
+import { ManualTimeProvider } from "../src/time-provider";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 function makeApp(files: TFile[], contentByPath: Record<string, string>): any {
@@ -92,6 +93,7 @@ function makeEngine(
 	files: TFile[],
 	contentByPath: Record<string, string> = {},
 	crdt: Partial<CrdtManagerType> = mockCrdt(),
+	time?: ManualTimeProvider,
 ): { engine: SyncEngine; app: any; api: EngramApi } {
 	const app = makeApp(files, contentByPath);
 	const api = makeApi();
@@ -100,6 +102,7 @@ function makeEngine(
 		api,
 		{ ...DEFAULT_SETTINGS, debounceMs: 1 },
 		mock().mockResolvedValue(undefined),
+		time,
 	);
 	engine.setCrdtManager(crdt as unknown as CrdtManagerType);
 	engine.setReady();
@@ -528,5 +531,56 @@ describe("pushFile — echo suppression runs before the push slot (#426)", () =>
 		]);
 
 		expect(result).toBe("HUNG");
+	});
+});
+
+// PR 671 review: a 429 was classified `other`, burned one of RETRY_CAP attempts
+// per pass (parking the delete so the server copy survived), ignored
+// Retry-After, and replace-remote attachment deletes were logged and dropped.
+describe("attachment deletes under a 429 (Retry-After)", () => {
+	const rateLimited = () =>
+		Object.assign(new Error("Request failed, status 429"), {
+			status: 429,
+			headers: { "Retry-After": "2" },
+		});
+	const flushMicro = () => new Promise((r) => setTimeout(r, 0));
+
+	test("replace-remote delete that hits 429 is retried after ~2s, not dropped or parked", async () => {
+		const time = new ManualTimeProvider(1_000_000);
+		const { engine, api } = makeEngine([], {}, mockCrdt(), time);
+		(engine as any).crdtDelete = async (id: string) => ({ doc_id: id });
+		(engine as any).pushFile = mock().mockResolvedValue(true);
+		(engine as any).catchupViaSeqReplay = async () => ({
+			applied: 0,
+			serverIds: new Set<string>(),
+			serverAttachmentPaths: new Set(["gone.jpg"]),
+			ran: true,
+			complete: true,
+		});
+		const calls: number[] = [];
+		(api.deleteAttachment as any) = mock(async () => {
+			calls.push(time.now());
+			// Rate limited for more passes than RETRY_CAP: none may count.
+			if (calls.length <= 6) throw rateLimited();
+			return { deleted: true, path: "gone.jpg" };
+		});
+
+		await engine.pushAll({ replaceRemote: true, localSnapshot: engine.snapshotLocalPaths() });
+		expect(calls).toHaveLength(1);
+		const entry = (engine as any).queue.all()[0];
+		expect(entry.path).toBe("gone.jpg");
+		expect(entry.attempts ?? 0).toBe(0); // a 429 consumes no attempt
+		expect(entry.nextAttemptAt).toBe(calls[0] + 2_000); // honors Retry-After: 2
+
+		for (let i = 0; i < 6; i++) {
+			time.advance(1_999);
+			await flushMicro();
+			expect(calls).toHaveLength(i + 1); // not before Retry-After
+			time.advance(1);
+			for (let j = 0; j < 5; j++) await flushMicro();
+		}
+		expect(calls).toHaveLength(7);
+		expect((engine as any).queue.size).toBe(0); // delivered, never parked
+		expect((engine as any).issues.all()).toHaveLength(0);
 	});
 });

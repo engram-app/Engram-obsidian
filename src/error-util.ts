@@ -311,6 +311,26 @@ export function errorBody(e: unknown): Record<string, unknown> {
 }
 
 /** True when the caught value is an HTTP response with the given status. */
+/** Longest Retry-After the plugin will honor; a larger (or hostile) value is
+ *  clamped so a bad header cannot park work for hours. */
+export const RETRY_AFTER_MAX_MS = 5 * 60_000;
+
+/** Delay a 429/503 asked for via `Retry-After` (delta-seconds or HTTP-date),
+ *  clamped to [0, RETRY_AFTER_MAX_MS]. Undefined when absent or unparseable. */
+export function retryAfterMs(e: unknown, nowMs: number): number | undefined {
+	if (typeof e !== "object" || e === null) return undefined;
+	const headers = (e as { headers?: unknown }).headers;
+	if (typeof headers !== "object" || headers === null) return undefined;
+	const raw: unknown = Object.entries(headers as Record<string, unknown>).find(
+		([k]) => k.toLowerCase() === "retry-after",
+	)?.[1];
+	if (typeof raw !== "string" || raw.trim() === "") return undefined;
+	const v = raw.trim();
+	const ms = /^\d+$/.test(v) ? Number(v) * 1000 : Date.parse(v) - nowMs;
+	if (Number.isNaN(ms)) return undefined;
+	return Math.min(Math.max(ms, 0), RETRY_AFTER_MAX_MS);
+}
+
 export function isHttpStatus(e: unknown, status: number): boolean {
 	return statusOf(e) === status;
 }

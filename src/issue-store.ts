@@ -1,5 +1,5 @@
 import { expBackoff } from "./backoff";
-import { errorBody, statusOf } from "./error-util";
+import { errorBody, retryAfterMs, statusOf } from "./error-util";
 import { t } from "./i18n";
 import { userErrorMessage } from "./i18n/user-error";
 import { LimitExceededError } from "./limit-error";
@@ -102,6 +102,11 @@ interface CategorizedError {
 	terminal: boolean;
 	/** Billing/upgrade URL when the failure is a tier limit (needs_pro). */
 	upgradeUrl?: string;
+	/** A 429: the server is shedding load, the request itself is fine. The
+	 *  queue waits `retryAfterMs` (when the server sent one) and does NOT
+	 *  count it toward RETRY_CAP. */
+	rateLimited?: boolean;
+	retryAfterMs?: number;
 }
 
 /** Map a backend 402 `reason` to a SyncIssueCategory. Unknown reasons default
@@ -166,6 +171,16 @@ export function categorizeError(err: unknown): CategorizedError {
 		return { category: "auth", status, message, userMessage, terminal: true };
 	if (isBlobMissing(err))
 		return { category: "blob_missing", status, message, userMessage, terminal: true };
+	if (status === 429)
+		return {
+			category: "server",
+			status,
+			message,
+			userMessage,
+			terminal: false,
+			rateLimited: true,
+			retryAfterMs: retryAfterMs(err, Date.now()),
+		};
 	if (status !== undefined && status >= 500)
 		return { category: "server", status, message, userMessage, terminal: false };
 	if (status === undefined) return { category: "network", message, userMessage, terminal: false };
