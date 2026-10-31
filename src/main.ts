@@ -849,16 +849,7 @@ export default class EngramSyncPlugin extends Plugin {
 			currentVaultId: () => this.settings.vaultId ?? null,
 			onDrop: (op, reason) => {
 				dropReporter.onDrop(op, reason);
-				// Creates are counted by dropReporter alone: a dropped create is
-				// recoverable (self-heal re-pushes the untracked file), and one line
-				// per op was 815 lines from a single prod first sync. A dropped
-				// DELETE has no fallback and resurrects the note, so it keeps its id.
-				if (op.kind !== "create") {
-					rlog().warn(
-						"crdt",
-						`crdt_${op.kind} dropped (${reason}) without delivery: ${op.docId}`,
-					);
-				}
+				this.syncEngine.onCrdtOpDropped(op, reason);
 			},
 		});
 		// Persist on every mutation (mirrors OfflineQueue); the flat op list is
@@ -2305,6 +2296,11 @@ export default class EngramSyncPlugin extends Plugin {
 		// straddling this call refuses its destructive delete-reconcile (a stale
 		// snapshot from the old identity would trash live notes as server-deleted).
 		this.syncEngine.bumpAuthGeneration();
+		// Another account: deletes held for the previous one's vaults are not
+		// ours to send any more.
+		if (this.settings.userEmail && this.settings.userEmail !== userEmail) {
+			this.syncEngine.dropHeldDeletes("account_changed");
+		}
 		this.settings.refreshToken = refreshToken;
 		this.settings.userEmail = userEmail;
 		this.settings.authMethod = "oauth";
@@ -2378,6 +2374,7 @@ export default class EngramSyncPlugin extends Plugin {
 		// #283: same identity-swap guard as saveOAuthTokens — a logout swaps the
 		// provider too, so a straddling manifest fetch must not delete-reconcile.
 		this.syncEngine.bumpAuthGeneration();
+		this.syncEngine.dropHeldDeletes("account_changed");
 		// A sign-out must not leave the OTHER backend's credentials sitting in
 		// data.json: that file replicates to every machine syncing .obsidian.
 		this.settings.inactiveBackend = undefined;
@@ -2802,6 +2799,10 @@ export default class EngramSyncPlugin extends Plugin {
 				channel.onVaultDeleted = () => {
 					new Notice(t("Engram: This vault has been deleted on the server."));
 					rlog().info("lifecycle", "Vault deleted on server — clearing vaultId");
+					// Its queued deletes (held or not) address a vault that is gone.
+					if (this.settings.vaultId) {
+						this.syncEngine.dropHeldDeletes("vault_deleted", this.settings.vaultId);
+					}
 					// Same reasoning as healDeadVault: the vault is gone, so its
 					// note-id map, cursors and index room address nothing. Nulling
 					// only the id left them to be inherited by the next vault.

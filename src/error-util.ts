@@ -340,6 +340,14 @@ export function retryAfterMs(e: unknown, nowMs: number): number | undefined {
 	return Math.min(Math.max(ms, 0), RETRY_AFTER_MAX_MS);
 }
 
+/** A delete's 404 means the target is already gone, EXCEPT VaultPlug's
+ *  "Vault not found" (wrong account or a deleted vault): that delete never
+ *  ran and must not be counted as done. Current backends answer an absent
+ *  attachment path with 200; the 404 reading is kept for older ones. */
+export function isAlreadyGone(e: unknown): boolean {
+	return statusOf(e) === 404 && errorBody(e).error !== "Vault not found";
+}
+
 /** True when the caught value is an HTTP response with the given status. */
 export function isHttpStatus(e: unknown, status: number): boolean {
 	return statusOf(e) === status;

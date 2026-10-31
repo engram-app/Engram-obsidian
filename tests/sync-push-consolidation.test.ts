@@ -29,7 +29,9 @@ import { NoteIdMap } from "../src/crdt/note-id-map";
 import type { ProviderRegistry as CrdtManagerType } from "../src/crdt/provider-registry";
 import { ProviderRegistry } from "../src/crdt/provider-registry";
 import { encodeUpdateFrame, fromB64 } from "../src/crdt/wire";
-import { SyncEngine } from "../src/sync";
+import { makeCrdtOpSend } from "../src/crdt-op-dispatch";
+import { CrdtOpQueue, MAX_ATTEMPTS, MAX_BACKOFF_MS } from "../src/crdt-op-queue";
+import { HELD_DELETE_MAX_AGE_MS, SyncEngine } from "../src/sync";
 import { ManualTimeProvider } from "../src/time-provider";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -691,50 +693,165 @@ describe("rate limits and unload (review M1-M3, M6)", () => {
 		release();
 	});
 
+	/** A real AttachmentDeleteBatcher behind the mock api, wired the way
+	 *  EngramApi wires it: deleteAttachment goes through the batcher's vault
+	 *  check and settle path, pushAttachment waits on settled(). */
+	const realDeletes = (
+		api: EngramApi,
+		opts: { vault: () => string | null; send?: (paths: string[]) => Promise<void> },
+	) => {
+		const sent: Array<{ paths: string[]; vaultId: string | null }> = [];
+		const batcher = new AttachmentDeleteBatcher({
+			send: async (paths, vaultId) => {
+				sent.push({ paths, vaultId });
+				await opts.send?.(paths);
+			},
+			sendOne: async () => {},
+			batchEnabled: () => true,
+			activeVaultId: opts.vault,
+			setTimeout: (cb, ms) => setTimeout(cb, ms) as unknown as number,
+			clearTimeout: (id) => clearTimeout(id),
+		});
+		const upload = api.pushAttachment as any;
+		Object.assign(api as any, {
+			attachmentDeletes: batcher,
+			deleteAttachment: async (p: string, v?: string | null) => {
+				await batcher.delete(p, v ?? null);
+				return { deleted: true, path: p };
+			},
+			pushAttachment: async (p: string, ...rest: unknown[]) => {
+				await batcher.settled(p);
+				return upload(p, ...rest);
+			},
+		});
+		return { batcher, sent };
+	};
+	const queuedDelete = (path: string, vaultId: string, timestamp = Date.now()) => ({
+		path,
+		action: "delete" as const,
+		kind: "attachment" as const,
+		timestamp,
+		vaultId,
+		evidenced: true,
+	});
+
 	// Delta review M2: a delete made in vault A, still queued when the user
 	// switched to B, was DROPPED by the next drain; switching back resurrected it.
 	test("a queued delete from another vault is held, then sent when that vault is active", async () => {
 		const { engine, api } = makeEngine([]);
-		const calls: Array<[string, string | null]> = [];
-		(api.deleteAttachment as any) = mock(async (p: string, v: string | null) => {
-			calls.push([p, v]);
-			return { deleted: true, path: p };
-		});
-		(engine as any).settings.vaultId = "vault-B";
-		await (engine as any).queue.enqueue({
-			path: "img/a.png",
-			action: "delete",
-			kind: "attachment",
-			timestamp: 0,
-			vaultId: "vault-A",
-			evidenced: true,
-		});
+		const settings = (engine as any).settings;
+		const { sent } = realDeletes(api, { vault: () => settings.vaultId });
+		settings.vaultId = "vault-B";
+		await (engine as any).queue.enqueue(queuedDelete("img/a.png", "vault-A"));
 		await engine.flushQueue();
-		expect(calls).toEqual([]);
+		expect(sent).toEqual([]);
 		expect((engine as any).queue.size).toBe(1);
 
-		(engine as any).settings.vaultId = "vault-A";
+		settings.vaultId = "vault-A";
 		await engine.flushQueue();
-		expect(calls).toEqual([["img/a.png", "vault-A"]]);
+		expect(sent).toEqual([{ paths: ["img/a.png"], vaultId: "vault-A" }]);
 		expect((engine as any).queue.size).toBe(0);
 	});
 
-	// Delta review M4: a 429'd delete re-queued, then the file was recreated and
-	// uploaded; the delete's retry deleted the NEW server copy.
-	test("a successful upload of a path supersedes a delete still queued for it", async () => {
+	// Delta 2 M2: held deletes are not this vault's work.
+	test("a held delete does not count as queued, block the ctime sweep or read as waiting", async () => {
+		const { engine, app } = makeEngine([]);
+		(engine as any).settings.vaultId = "vault-B";
+		await (engine as any).queue.enqueue(queuedDelete("img/a.png", "vault-A"));
+		expect(engine.getStatus().queued).toBe(0);
+		expect(engine.queuedReason()).toBeNull();
+		app.vault.getFiles.mockClear();
+		await engine.runCtimeSweep();
+		expect(app.vault.getFiles).toHaveBeenCalled();
+	});
+
+	test("a held delete expires after the age cap, logged", async () => {
+		const { engine, api } = makeEngine([]);
+		const settings = (engine as any).settings;
+		realDeletes(api, { vault: () => settings.vaultId });
+		settings.vaultId = "vault-B";
+		const old = Date.now() - HELD_DELETE_MAX_AGE_MS - 1;
+		await (engine as any).queue.enqueue(queuedDelete("img/old.png", "vault-A", old));
+		await (engine as any).queue.enqueue(queuedDelete("img/new.png", "vault-A"));
+		await engine.flushQueue();
+		expect((engine as any).queue.all().map((e: any) => e.path)).toEqual(["img/new.png"]);
+	});
+
+	test("held deletes clear on account change; a deleted vault loses all its entries", async () => {
+		const { engine } = makeEngine([]);
+		(engine as any).settings.vaultId = "vault-B";
+		const q = (engine as any).queue;
+		await q.enqueue(queuedDelete("a.png", "vault-A"));
+		await q.enqueue(queuedDelete("b.png", "vault-B"));
+		engine.dropHeldDeletes("account_changed");
+		expect(q.all().map((e: any) => e.path)).toEqual(["b.png"]);
+		engine.dropHeldDeletes("vault_deleted", "vault-B");
+		expect(q.size).toBe(0);
+	});
+
+	// Delta 2 M1: an older upload succeeding cancelled a NEWER delete.
+	test("a delete made while an older upload is in flight stays queued and wins", async () => {
 		const time = new ManualTimeProvider(1_000_000);
 		const file = new TFile("img/x.png", Date.now());
 		const { engine, api } = makeEngine([file], {}, mockCrdt(), time);
-		(engine as any).settings.vaultId = "v1";
-		(api.deleteAttachment as any) = mock().mockRejectedValueOnce(err(429, "5"));
-		await (engine as any).queue.enqueue({
-			path: "img/x.png",
-			action: "delete",
-			kind: "attachment",
-			timestamp: 0,
-			vaultId: "v1",
-			evidenced: true,
+		const settings = (engine as any).settings;
+		settings.vaultId = "v1";
+		let release!: () => void;
+		(api.pushAttachment as any) = mock(
+			() => new Promise((r) => (release = () => r({ attachment: {} }))),
+		);
+		const { sent } = realDeletes(api, { vault: () => settings.vaultId });
+		const upload = (engine as any).pushFile(file);
+		await new Promise((r) => setTimeout(r, 5));
+		// The user deletes while the upload is in flight (a 429 queued it).
+		await (engine as any).queue.enqueue(queuedDelete("img/x.png", "v1", Date.now() + 1));
+		release();
+		await upload;
+		expect((engine as any).queue.all()[0]?.action).toBe("delete");
+		await engine.flushQueue();
+		expect(sent).toEqual([{ paths: ["img/x.png"], vaultId: "v1" }]);
+	});
+
+	test("delete, upload, delete again: the second delete survives the upload", async () => {
+		const time = new ManualTimeProvider(1_000_000);
+		const file = new TFile("img/x.png", Date.now());
+		const { engine, api } = makeEngine([file], {}, mockCrdt(), time);
+		const settings = (engine as any).settings;
+		settings.vaultId = "v1";
+		const q = (engine as any).queue;
+		await q.enqueue(queuedDelete("img/x.png", "v1", Date.now() - 10)); // first delete
+		let release!: () => void;
+		(api.pushAttachment as any) = mock(
+			() => new Promise((r) => (release = () => r({ attachment: {} }))),
+		);
+		realDeletes(api, { vault: () => settings.vaultId });
+		const upload = (engine as any).pushFile(file);
+		await new Promise((r) => setTimeout(r, 5));
+		await q.enqueue(queuedDelete("img/x.png", "v1", Date.now() + 1)); // second delete
+		release();
+		await upload;
+		expect(q.all()[0]?.action).toBe("delete");
+	});
+
+	// Delta review M4 (real batcher): a 429'd delete re-queued, then the file
+	// was recreated and uploaded; the retry deleted the NEW server copy.
+	test("a successful upload supersedes a delete queued before it started", async () => {
+		const time = new ManualTimeProvider(1_000_000);
+		const file = new TFile("img/x.png", Date.now());
+		const { engine, api } = makeEngine([file], {}, mockCrdt(), time);
+		const settings = (engine as any).settings;
+		settings.vaultId = "v1";
+		let first = true;
+		const { sent } = realDeletes(api, {
+			vault: () => settings.vaultId,
+			send: async () => {
+				if (first) {
+					first = false;
+					throw err(429, "5");
+				}
+			},
 		});
+		await (engine as any).queue.enqueue(queuedDelete("img/x.png", "v1", Date.now() - 10));
 		await engine.flushQueue(); // 429: re-queued for t+5s
 		expect((engine as any).queue.all()[0]?.action).toBe("delete");
 
@@ -742,8 +859,46 @@ describe("rate limits and unload (review M1-M3, M6)", () => {
 		time.advance(10_000);
 		await engine.flushQueue();
 
-		expect((api.deleteAttachment as any).mock.calls).toHaveLength(1); // never retried
+		expect(sent).toHaveLength(1); // the 429'd attempt only, never retried
 		expect((engine as any).queue.all().some((e: any) => e.action === "delete")).toBe(false);
+	});
+
+	// PR 2359: the backend replies `delete_failed`; after MAX_ATTEMPTS the CRDT
+	// queue dropped the delete silently and the server copy survived.
+	test("a CRDT delete that fails MAX_ATTEMPTS times becomes a Sync Center issue", async () => {
+		const { engine } = makeEngine([]);
+		let t = 0;
+		const send = makeCrdtOpSend({
+			channel: () =>
+				({
+					crdtDeleteAcked: () =>
+						Promise.reject(new Error('request failed: {"reason":"delete_failed"}')),
+				}) as any,
+			onCreated: () => {},
+			onTerminal: () => {},
+		});
+		const q = new CrdtOpQueue({
+			send,
+			now: () => t,
+			onDrop: (op, reason) => engine.onCrdtOpDropped(op, reason),
+		});
+		q.enqueue({
+			id: "op1",
+			kind: "delete",
+			docId: "n1",
+			payload: { path: "Notes/gone.md" },
+			enqueuedAt: 0,
+			attempts: 0,
+		});
+		await q.onJoined();
+		for (let i = 0; i < MAX_ATTEMPTS + 2; i++) {
+			t += MAX_BACKOFF_MS;
+			await q.tick();
+		}
+		expect(q.size()).toBe(0);
+		const issue = (engine as any).issues.get("Notes/gone.md");
+		expect(issue?.kind).toBe("note");
+		expect(issue?.message).toContain("not delivered");
 	});
 
 	// M6: a CRDT delete held past the 60 s cooldown let a fan-out resurrect it.

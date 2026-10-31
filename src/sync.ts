@@ -1,6 +1,7 @@
 /**
  * Sync engine — handles push/pull logic, debouncing, and ignore patterns.
  */
+
 import {
 	type App,
 	MarkdownView,
@@ -27,8 +28,9 @@ import {
 	type NotesCapGate,
 	TERMINAL_REASONS,
 } from "./crdt-op-dispatch";
+import type { CrdtOp } from "./crdt-op-queue";
 import { devLog } from "./dev-log";
-import { errMsg, isHttpStatus, statusOf } from "./error-util";
+import { errMsg, isAlreadyGone, isHttpStatus, statusOf } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
 import { isCanvasPath as canvasPath, isCrdtEligiblePath as crdtEligiblePath } from "./file-kind";
 import { t } from "./i18n";
@@ -425,6 +427,9 @@ export const OFFLINE_RETRY_MAX_MS = 5 * 60_000;
 /** Shortest wait after a rate-limited failure, whatever Retry-After says (0,
  *  a past date from a skewed clock): re-sending at once re-hits the limiter. */
 export const RATE_LIMIT_FLOOR_MS = 1_000;
+/** A delete held for a vault that never becomes active again is dropped
+ *  after this long (logged). */
+export const HELD_DELETE_MAX_AGE_MS = 7 * 86_400_000;
 
 type CrdtCatchupSinceFn = (
 	cursorSeq: number,
@@ -3813,7 +3818,7 @@ export class SyncEngine {
 		const vaultId = this.settings.vaultId;
 		if (!vaultId || this.ctimeSweepVaultId === vaultId) return;
 		if (this.ctimeSweepRunning || this.ctimeSweepTried) return;
-		if (this.offline || this.syncBlocked || this.queue.size > 0) return;
+		if (this.offline || this.syncBlocked || this.activeQueueSize() > 0) return;
 		this.ctimeSweepRunning = true;
 		try {
 			const entries = this.app.vault
@@ -4149,7 +4154,7 @@ export class SyncEngine {
 			pulling: this.pulling,
 			pushing: this.pushing.size,
 			pendingPushes: this.debounceTimers.size,
-			queued: this.queue.size,
+			queued: this.activeQueueSize(),
 			flushing: this.flushingHash.size,
 			creating: this.creatingPaths.size,
 		};
@@ -4170,7 +4175,7 @@ export class SyncEngine {
 		return {
 			state,
 			pending: this.debounceTimers.size,
-			queued: this.queue.size,
+			queued: this.activeQueueSize(),
 			lastSync: this.lastSync,
 			error: this.lastError || undefined,
 		};
@@ -5624,7 +5629,7 @@ export class SyncEngine {
 			}
 		} catch (e) {
 			// 404 means already deleted — treat as success; still tear down CRDT.
-			if (isHttpStatus(e, 404)) {
+			if (isAlreadyGone(e)) {
 				this.goOnline();
 				if (this.isCrdtEligiblePath(path) && crdtNoteId) {
 					await this.teardownCrdtDoc(crdtNoteId, deleteSeq, normalizePath(path));
@@ -5797,7 +5802,7 @@ export class SyncEngine {
 				// the exact bug this rework exists to fix.
 			} catch (e) {
 				// 404 means already deleted — treat as success.
-				if (isHttpStatus(e, 404)) {
+				if (isAlreadyGone(e)) {
 					this.goOnline();
 				} else {
 					// biome-ignore lint/suspicious/noConsole: error boundary
@@ -6089,6 +6094,7 @@ export class SyncEngine {
 		// server-sanitized-rename check) must be made against the path we
 		// actually pushed, not wherever the file lives by reply time (#245).
 		const pushedPath = file.path;
+		const pushStartedAt = Date.now();
 		// Re-check the guard HERE, not just at entry (line ~3494): two awaits sit
 		// between that check and this claim (the echo-hash read, acquirePushSlot),
 		// so two overlapping pushFile calls for the same path — e.g. two
@@ -6813,8 +6819,11 @@ export class SyncEngine {
 			// The path lives again on the server: a delete still queued for it
 			// (a 429'd or offline delete before this recreate) is now stale and
 			// would delete the copy just uploaded. Supersede it.
+			// Only a delete queued BEFORE this upload started: one made while it
+			// was in flight is the user's newer intent and must win.
 			const vaultForPath = this.settings.vaultId ?? undefined;
-			if (this.queue.get(pushedPath, vaultForPath)?.action === "delete") {
+			const queuedDelete = this.queue.get(pushedPath, vaultForPath);
+			if (queuedDelete?.action === "delete" && queuedDelete.timestamp < pushStartedAt) {
 				this.queue.cancel(pushedPath, vaultForPath);
 				rlog().info("queue", `Queued delete superseded by upload: ${noteRef(pushedPath)}`);
 			}
@@ -13196,7 +13205,7 @@ export class SyncEngine {
 	 *  spinner. */
 	queuedReason(): QueuedReason | null {
 		return computeQueuedReason({
-			queued: this.queue.size,
+			queued: this.activeQueueSize(),
 			inFlight: this.pushing.size,
 			offline: this.offline,
 			syncBlocked: this.syncBlocked,
@@ -13251,6 +13260,69 @@ export class SyncEngine {
 			this.firstFailureCategoryThisBatch ??= classified.category;
 		}
 		await this.queue.dequeue(entry.path, this.entryVaultId(entry));
+	}
+
+	/** The CRDT op queue gave up on an op. Creates are counted by the drop
+	 *  reporter alone: a dropped create is recoverable (self-heal re-pushes the
+	 *  untracked file), and one line per op was 815 lines from a single prod
+	 *  first sync. A dropped DELETE has no fallback (the server copy survives
+	 *  and comes back on the next pull), so it is logged by id AND surfaced in
+	 *  the Sync Center, never dropped silently (backend `delete_failed`, #2359). */
+	onCrdtOpDropped(op: CrdtOp, reason: string): void {
+		if (op.kind === "create") return;
+		rlog().warn("crdt", `crdt_${op.kind} dropped (${reason}) without delivery: ${op.docId}`);
+		if (op.kind !== "delete") return;
+		const path = (op.payload as { path?: string } | undefined)?.path;
+		if (!path) return;
+		const now = Date.now();
+		this.issues.record({
+			path,
+			kind: "note",
+			category: "server",
+			message: `Delete was not delivered to the server (${reason}). Delete the note again to retry.`,
+			firstFailedAt: now,
+			lastFailedAt: now,
+			attempts: 1,
+		});
+		this.emitStatus();
+	}
+
+	/** An evidenced delete queued in a vault other than the active one: held
+	 *  for that vault, never sent here. Cleared by that vault becoming active
+	 *  (it drains), `dropHeldDeletes` (vault deleted, account change) or
+	 *  HELD_DELETE_MAX_AGE_MS. */
+	private isHeldDelete(entry: QueueEntry): boolean {
+		const owner = this.entryVaultId(entry);
+		const active = this.settings.vaultId;
+		return (
+			entry.action === "delete" &&
+			entry.evidenced === true &&
+			!!owner &&
+			!!active &&
+			owner !== active
+		);
+	}
+
+	/** Queue entries this vault can act on: held other-vault deletes are not
+	 *  "waiting" here and must not hold the status or the ctime sweep. */
+	private activeQueueSize(): number {
+		let n = 0;
+		for (const e of this.queue.all()) if (!this.isHeldDelete(e)) n++;
+		return n;
+	}
+
+	/** Named clearing event for held deletes: a vault was deleted (pass its id:
+	 *  all its entries go, held or not) or the account changed (no id: every
+	 *  held delete goes, they belong to another identity's vaults). */
+	dropHeldDeletes(reason: "vault_deleted" | "account_changed", vaultId?: string): void {
+		let n = 0;
+		for (const e of this.queue.all()) {
+			const owner = this.entryVaultId(e);
+			const drop = vaultId ? owner === vaultId : this.isHeldDelete(e);
+			if (drop && this.queue.cancel(e.path, owner)) n++;
+		}
+		if (n > 0) rlog().warn("queue", `Dropped ${n} queued deletes: ${reason}`);
+		this.emitStatus();
 	}
 
 	/** Consecutive rate-limited failures (429, or 503 with Retry-After), so a
@@ -13569,7 +13641,14 @@ export class SyncEngine {
 				// when that vault is active again (a vault switch mid-way through a
 				// folder delete must not resurrect the rest). Never SENT here.
 				// Upserts re-read disk, so dropping them loses nothing.
-				if (entry.action === "delete" && entry.evidenced) continue;
+				if (this.isHeldDelete(entry)) {
+					if (Date.now() - entry.timestamp <= HELD_DELETE_MAX_AGE_MS) continue;
+					rlog().warn(
+						"queue",
+						`Held delete EXPIRED after ${HELD_DELETE_MAX_AGE_MS / 86_400_000} days ` +
+							`(vault ${owner.slice(0, 8)} never active again): ${noteRef(entry.path)}`,
+					);
+				}
 				rlog().warn(
 					"queue",
 					`Dropping queued op for ${noteRef(entry.path)} — queued under a different ` +
@@ -13614,7 +13693,7 @@ export class SyncEngine {
 							}
 						} catch (e) {
 							// 404 means already deleted — dequeue and continue
-							if (!isHttpStatus(e, 404)) throw e;
+							if (!isAlreadyGone(e)) throw e;
 						}
 					}
 				} else if (entry.kind === "attachment") {

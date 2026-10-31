@@ -154,6 +154,43 @@ describe("AttachmentDeleteBatcher", () => {
 		await h.b.flush();
 		await tick();
 		expect(h.sent).toHaveLength(1); // nothing sent after the hand-off
-		await h.b.settled("p0.png"); // and nothing left blocking an upload
+	});
+
+	// Delta 2 L2: unload woke uploads waiting on a delete, so one could land
+	// before its own saved delete replayed on the next start.
+	test("takeUnacked leaves uploads waiting on those paths parked", async () => {
+		const h = harness();
+		void h.b.delete("x.png", "A");
+		let woke = false;
+		void h.b.settled("x.png").then(() => {
+			woke = true;
+		});
+		h.b.takeUnacked();
+		await tick();
+		await tick();
+		expect(woke).toBe(false);
+	});
+
+	// Delta 2 L3: a single DELETE 404 from VaultPlug ("Vault not found") is
+	// not "already gone"; counting it as done lost the delete.
+	test("a vault-not-found 404 rejects; any other 404 counts as already gone", async () => {
+		let body = "Vault not found";
+		const b = new AttachmentDeleteBatcher({
+			send: async () => {},
+			sendOne: async () => {
+				throw Object.assign(new Error("404"), { status: 404, json: { error: body } });
+			},
+			batchEnabled: () => false,
+			activeVaultId: () => "A",
+			setTimeout: () => 1,
+			clearTimeout: () => {},
+		});
+		const lost = b.delete("a.png", "A");
+		await b.flush();
+		await expect(lost).rejects.toMatchObject({ status: 404 });
+		body = "not_found";
+		const gone = b.delete("b.png", "A");
+		await b.flush();
+		await expect(gone).resolves.toBeUndefined();
 	});
 });

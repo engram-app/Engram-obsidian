@@ -20,10 +20,11 @@
  *    pending, queued or in flight, so an upload of the same path can wait it
  *    out (delete then recreate must never delete the new file).
  *  - UNLOAD: `takeUnacked()` hands back every delete not yet acknowledged
- *    (window, queued chunks AND the in-flight one) for durable persistence.
+ *    (window, queued chunks AND the in-flight one) for durable persistence,
+ *    and leaves uploads waiting on those paths parked.
  */
 
-import { statusOf } from "./error-util";
+import { isAlreadyGone, statusOf } from "./error-util";
 import { rlog } from "./remote-log";
 
 export const ATTACHMENT_DELETE_WINDOW_MS = 100;
@@ -68,6 +69,8 @@ export class AttachmentDeleteBatcher {
 	private unsettled = new Map<string, number>();
 	private timer: number | null = null;
 	private chain: Promise<void> = Promise.resolve();
+	/** Set by takeUnacked(): the plugin is going away. */
+	private unloading = false;
 
 	constructor(private readonly deps: AttachmentDeleteBatcherDeps) {}
 
@@ -120,13 +123,20 @@ export class AttachmentDeleteBatcher {
 		this.pending = [];
 		this.queued = [];
 		this.inFlight = null;
-		this.unsettled.clear();
+		this.unloading = true;
+		// `unsettled` is deliberately kept: an upload waiting on one of these
+		// paths must stay parked, or it could land before its own saved delete
+		// replays on the next start (and that replay would delete it).
 		return taken.map(({ path, vaultId }) => ({ path, vaultId }));
 	}
 
 	/** Resolves once no delete for `path` is pending, queued or in flight. */
 	async settled(path: string): Promise<void> {
-		while (this.unsettled.has(path)) await this.flush();
+		while (this.unsettled.has(path)) {
+			// Handed off at unload: park for good (never spin on an idle chain).
+			if (this.unloading) return new Promise<void>(() => {});
+			await this.flush();
+		}
 	}
 
 	private async drain(): Promise<void> {
@@ -149,8 +159,7 @@ export class AttachmentDeleteBatcher {
 					try {
 						await this.deps.sendOne(p, vaultId);
 					} catch (e) {
-						// Already gone: the single-delete contract since before batching.
-						if (statusOf(e) !== 404) throw e;
+						if (!isAlreadyGone(e)) throw e;
 					}
 				}
 			}
