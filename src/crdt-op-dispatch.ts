@@ -343,6 +343,7 @@ export function makeCrdtOpSend(hooks: CrdtSendHooks): (op: CrdtOp) => Promise<Se
 			// Retryable and not the op's fault (create_failed, rate_limited, a
 			// timeout, transport): hold EVERY create, not just this one.
 			if (op.kind === "create" && reachedServer) hooks.capGate?.backoff(op.docId);
+			if (reason === "rate_limited") return "rate_limited"; // uncharged; queue pauses
 			const msg = err instanceof Error ? err.message : String(err);
 			return /timeout/i.test(msg) ? "timeout" : "error";
 		}

@@ -310,6 +310,52 @@ export function errorBody(e: unknown): Record<string, unknown> {
 	return {};
 }
 
+/** Longest Retry-After the plugin will honor; a larger (or hostile) value is
+ *  clamped so a bad header cannot park work for hours. */
+export const RETRY_AFTER_MAX_MS = 5 * 60_000;
+
+/** Case-insensitive response-header reader: desktop requestUrl lower-cases
+ *  header names, other platforms may not. */
+export function headerLookup(headers: Record<string, string> | undefined) {
+	const lower = new Map<string, string>();
+	for (const [k, v] of Object.entries(headers ?? {})) lower.set(k.toLowerCase(), v);
+	return (name: string): string | undefined => lower.get(name);
+}
+
+/** Delay a 429/503 asked for via `Retry-After`, clamped to
+ *  [0, RETRY_AFTER_MAX_MS]. Accepts delta-seconds (digits only) or an
+ *  HTTP-date (must name a day or month, so "2.5" or "-1" is not read as a
+ *  year). Undefined when absent or unparseable; callers apply their own floor. */
+export function retryAfterMs(e: unknown, nowMs: number): number | undefined {
+	if (typeof e !== "object" || e === null) return undefined;
+	const headers = (e as { headers?: unknown }).headers;
+	if (typeof headers !== "object" || headers === null) return undefined;
+	const v = headerLookup(headers as Record<string, string>)("retry-after")?.trim();
+	if (typeof v !== "string" || v === "") return undefined;
+	let ms: number;
+	if (/^\d+$/.test(v)) ms = Number(v) * 1000;
+	else if (/[a-z]/i.test(v)) ms = Date.parse(v) - nowMs;
+	else return undefined;
+	if (Number.isNaN(ms)) return undefined;
+	return Math.min(Math.max(ms, 0), RETRY_AFTER_MAX_MS);
+}
+
+/** A delete's 404 means the target is already gone, EXCEPT VaultPlug's
+ *  "Vault not found" (wrong account or a deleted vault): that delete never
+ *  ran and must not be counted as done (likewise "No vault found"). Current backends answer an absent
+ *  attachment path with 200; the 404 reading is kept for older ones. */
+export function isAlreadyGone(e: unknown): boolean {
+	if (statusOf(e) !== 404) return false;
+	const error = errorBody(e).error;
+	return !(typeof error === "string" && VAULT_PLUG_404.some((m) => error.startsWith(m)));
+}
+
+/** VaultPlug's 404 bodies (`{error: <message>}`, engram
+ *  `lib/engram_web/plugs/vault_plug.ex`): an unknown or malformed vault id,
+ *  and no default vault (`FrontendUrl.no_vault_message/0`). The server sends
+ *  no stable code yet, so these strings are matched; pinned by a test. */
+export const VAULT_PLUG_404 = ["Vault not found", "No vault found:"] as const;
+
 /** True when the caught value is an HTTP response with the given status. */
 export function isHttpStatus(e: unknown, status: number): boolean {
 	return statusOf(e) === status;

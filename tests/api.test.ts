@@ -1383,15 +1383,115 @@ describe("EngramApi", () => {
 	});
 
 	describe("deleteAttachment", () => {
-		test("sends DELETE /attachments/{encoded_path}", async () => {
-			mockRequestUrl.mockResolvedValueOnce({
-				status: 200,
-				json: { status: "deleted" },
-			} as any);
+		test("sends POST /attachments/batch-delete with the path and an idempotency key", async () => {
+			mockRequestUrl.mockResolvedValueOnce({ status: 200, json: { deleted: 1 } } as any);
+			api.setAttachmentBatchDelete(true);
 			await api.deleteAttachment("images/photo.png");
 			const opts = mockRequestUrl.mock.calls[0][0] as any;
-			expect(opts.method).toBe("DELETE");
-			expect(opts.url).toContain("images/photo.png");
+			expect(opts.method).toBe("POST");
+			expect(opts.url).toContain("/attachments/batch-delete");
+			expect(JSON.parse(opts.body)).toEqual({ paths: ["images/photo.png"] });
+			expect(opts.headers["X-Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+		});
+
+		// Incident 2026-10-31: 407 single DELETEs in ~1 min starved the server.
+		// Fails without the fix (407 requests); passes with it (<= 3 sequential).
+		test("a burst of 407 deletes becomes <= 3 requests, one in flight at a time", async () => {
+			let inFlight = 0;
+			let maxInFlight = 0;
+			mockRequestUrl.mockImplementation((async () => {
+				maxInFlight = Math.max(maxInFlight, ++inFlight);
+				await new Promise((r) => setTimeout(r, 1));
+				inFlight--;
+				return { status: 200, json: { deleted: 1 } };
+			}) as any);
+			api.setAttachmentBatchDelete(true);
+			const paths = Array.from({ length: 407 }, (_, i) => `img/${i}.jpg`);
+			await Promise.all(paths.map((p) => api.deleteAttachment(p)));
+			expect(mockRequestUrl.mock.calls.length).toBeLessThanOrEqual(3);
+			expect(maxInFlight).toBe(1);
+			const sent = mockRequestUrl.mock.calls.flatMap(
+				(c) => JSON.parse((c[0] as any).body).paths,
+			);
+			expect(sent.sort()).toEqual([...paths].sort());
+		});
+
+		// Delta review M1: until the server advertises that its batch broadcast
+		// carries the device id, a batch would lose own-echo suppression. The
+		// fallback is single DELETEs (they always carried it), still serial.
+		test("without the server capability, deletes go out as single DELETEs, one at a time", async () => {
+			let inFlight = 0;
+			let maxInFlight = 0;
+			mockRequestUrl.mockImplementation((async () => {
+				maxInFlight = Math.max(maxInFlight, ++inFlight);
+				await new Promise((r) => setTimeout(r, 1));
+				inFlight--;
+				return { status: 200, json: {} };
+			}) as any);
+			await Promise.all(
+				Array.from({ length: 20 }, (_, i) => api.deleteAttachment(`img/${i}.jpg`)),
+			);
+			const methods = mockRequestUrl.mock.calls.map((c) => (c[0] as any).method);
+			expect(methods).toEqual(Array(20).fill("DELETE"));
+			expect(maxInFlight).toBe(1);
+		});
+
+		test("the capability turns off when the backend changes", async () => {
+			mockRequestUrl.mockResolvedValue({ status: 200, json: {} } as any);
+			api.setAttachmentBatchDelete(true);
+			api.updateConfig("https://other.example", "k");
+			await api.deleteAttachment("a.png");
+			expect((mockRequestUrl.mock.calls[0][0] as any).method).toBe("DELETE");
+		});
+
+		// Review H1: the vault was read at send time, so a switch inside the
+		// window sent vault A's delete into vault B. Fails on 8fbaca0.
+		test("a vault switch inside the window never sends the delete into the new vault", async () => {
+			mockRequestUrl.mockResolvedValue({ status: 200, json: { deleted: 1 } } as any);
+			api.setVaultId("vault-A");
+			const p = api.deleteAttachment("img/a.png");
+			api.setVaultId("vault-B");
+			await api.flushAttachmentDeletes();
+			await expect(p).rejects.toThrow(/Vault switched/);
+			expect(mockRequestUrl).not.toHaveBeenCalled();
+		});
+
+		test("the batch request names the vault the delete was made in", async () => {
+			mockRequestUrl.mockResolvedValue({ status: 200, json: { deleted: 1 } } as any);
+			api.setAttachmentBatchDelete(true);
+			api.setVaultId("vault-A");
+			await api.deleteAttachment("img/a.png");
+			const opts = mockRequestUrl.mock.calls[0][0] as any;
+			expect(opts.headers["X-Vault-ID"]).toBe("vault-A");
+		});
+
+		// Review H3: only deletes still in the window were awaited; one already
+		// in flight raced the re-upload of the same path. Fails on 8fbaca0.
+		test("pushAttachment waits for an IN-FLIGHT delete of the same path", async () => {
+			let release!: () => void;
+			mockRequestUrl.mockImplementationOnce(
+				() =>
+					new Promise((r) => {
+						release = () => r({ status: 200, json: { deleted: 1 } } as any);
+					}) as any,
+			);
+			mockRequestUrl.mockResolvedValue({ status: 200, json: { attachment: {} } } as any);
+			const del = api.deleteAttachment("img/x.png");
+			void api.flushAttachmentDeletes();
+			await new Promise((r) => setTimeout(r, 0));
+			expect(mockRequestUrl.mock.calls).toHaveLength(1); // delete in flight
+			const up = api.pushAttachment("img/x.png", "AAAA", "image/png", 1);
+			await new Promise((r) => setTimeout(r, 5));
+			expect(mockRequestUrl.mock.calls).toHaveLength(1); // upload held
+			release();
+			await del;
+			await up;
+			expect((mockRequestUrl.mock.calls[1][0] as any).url).not.toContain("batch-delete");
+		});
+
+		test("a failed chunk rejects its callers", async () => {
+			mockRequestUrl.mockRejectedValue({ status: 500 });
+			await expect(api.deleteAttachment("a.png")).rejects.toBeDefined();
 		});
 	});
 

@@ -332,10 +332,12 @@ describe("connectChannel server-features wiring", () => {
 		);
 		const setRaw = mock((_on: boolean) => {});
 		const setRawDown = mock((_on: boolean) => {});
+		const setBatch = mock((_on: boolean) => {});
 		const learnVersion = mock(async () => {});
 		Object.assign(fakeThis.api as object, {
 			setRawAttachmentUpload: setRaw,
 			setRawAttachmentDownload: setRawDown,
+			setAttachmentBatchDelete: setBatch,
 			learnServerVersion: learnVersion,
 		});
 
@@ -360,8 +362,14 @@ describe("connectChannel server-features wiring", () => {
 		setRaw.mockClear();
 		setRawDown.mockClear();
 		fakeThis.channelEpoch++;
-		stale.onServerFeatures({ rawAttachmentUpload: true, rawAttachmentDownload: true });
+		setBatch.mockClear();
+		stale.onServerFeatures({
+			rawAttachmentUpload: true,
+			rawAttachmentDownload: true,
+			attachmentBatchDeleteOrigin: true,
+		});
 		expect(setRaw).not.toHaveBeenCalled();
+		expect(setBatch).not.toHaveBeenCalled();
 		expect(setRawDown).not.toHaveBeenCalled();
 		expect(learnVersion).toHaveBeenCalledTimes(1);
 	});

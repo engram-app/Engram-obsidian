@@ -234,12 +234,22 @@ describe("NoteChannel user topic + plan state", () => {
 				status: "ok",
 				response: {
 					plan: { tier: "pro" },
-					features: { raw_attachment_upload: true, raw_attachment_download: true },
+					features: {
+						raw_attachment_upload: true,
+						raw_attachment_download: true,
+						attachment_batch_delete_origin: true,
+					},
 				},
 			},
 		]);
 
-		expect(seen).toEqual([{ rawAttachmentUpload: true, rawAttachmentDownload: true }]);
+		expect(seen).toEqual([
+			{
+				rawAttachmentUpload: true,
+				rawAttachmentDownload: true,
+				attachmentBatchDeleteOrigin: true,
+			},
+		]);
 		channel.disconnect();
 	});
 
@@ -260,7 +270,13 @@ describe("NoteChannel user topic + plan state", () => {
 			{ status: "ok", response: { plan: { tier: "pro" } } },
 		]);
 
-		expect(seen).toEqual([{ rawAttachmentUpload: false, rawAttachmentDownload: false }]);
+		expect(seen).toEqual([
+			{
+				rawAttachmentUpload: false,
+				rawAttachmentDownload: false,
+				attachmentBatchDeleteOrigin: false,
+			},
+		]);
 		channel.disconnect();
 	});
 

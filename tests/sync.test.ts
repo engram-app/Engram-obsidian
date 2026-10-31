@@ -2033,7 +2033,9 @@ describe("SyncEngine offline queue integration", () => {
 			100,
 			undefined,
 		);
-		expect(mockApi.deleteAttachment).toHaveBeenCalledWith("Assets/old.pdf");
+		expect((mockApi.deleteAttachment as jest.Mock).mock.calls.map((c) => c[0])).toContain(
+			"Assets/old.pdf",
+		);
 	});
 });
 
@@ -2111,7 +2113,9 @@ describe("SyncEngine binary push", () => {
 
 		await engine.handleDelete(file);
 
-		expect(mockApi.deleteAttachment).toHaveBeenCalledWith("Assets/old.png");
+		expect((mockApi.deleteAttachment as jest.Mock).mock.calls.map((c) => c[0])).toContain(
+			"Assets/old.png",
+		);
 		expect(mockApi.deleteNote).not.toHaveBeenCalled();
 	});
 });

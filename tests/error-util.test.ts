@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { errMsg } from "../src/error-util";
+import { errMsg, isAlreadyGone, RETRY_AFTER_MAX_MS, retryAfterMs } from "../src/error-util";
 
 describe("errMsg", () => {
 	test("Error instance → its message", () => {
@@ -268,5 +268,50 @@ describe("errMsg — cannot be made to hang", () => {
 		errMsg(new Error(input));
 
 		expect(performance.now() - started).toBeLessThan(500);
+	});
+});
+
+describe("retryAfterMs", () => {
+	const err = (v?: string) => ({
+		status: 429,
+		headers: v === undefined ? {} : { "retry-after": v },
+	});
+	const now = Date.parse("2026-10-31T07:00:00Z");
+	test("delta-seconds", () => expect(retryAfterMs(err("2"), now)).toBe(2_000));
+	test("HTTP-date", () =>
+		expect(retryAfterMs(err("Sat, 31 Oct 2026 07:00:30 GMT"), now)).toBe(30_000));
+	test("past date clamps to 0, huge value clamps to the max", () => {
+		expect(retryAfterMs(err("Sat, 31 Oct 2026 06:00:00 GMT"), now)).toBe(0);
+		expect(retryAfterMs(err("86400"), now)).toBe(RETRY_AFTER_MAX_MS);
+	});
+	test("absent or garbage is undefined", () => {
+		expect(retryAfterMs(err(), now)).toBeUndefined();
+		expect(retryAfterMs(err("soon"), now)).toBeUndefined();
+		// Review M3: V8 parses these as year-2001 / year -1 dates.
+		expect(retryAfterMs(err("2.5"), now)).toBeUndefined();
+		expect(retryAfterMs(err("-1"), now)).toBeUndefined();
+		expect(retryAfterMs(new Error("x"), now)).toBeUndefined();
+	});
+});
+
+describe("isAlreadyGone", () => {
+	const e404 = (error?: string) => ({ status: 404, json: error === undefined ? {} : { error } });
+	// Pinned to engram VaultPlug's exact 404 bodies (vault_plug.ex reject/3 and
+	// FrontendUrl.no_vault_message/0). The server sends no stable code; if this
+	// text changes there, a vault 404 would be read as a completed delete.
+	test("VaultPlug 404s are failures, not completed deletes", () => {
+		expect(isAlreadyGone(e404("Vault not found"))).toBe(false);
+		expect(
+			isAlreadyGone(
+				e404(
+					"No vault found: this account has no vault yet. Create one in the Engram web app at https://app.engram.page/onboard, or install ...",
+				),
+			),
+		).toBe(false);
+	});
+	test("other 404s and non-404s", () => {
+		expect(isAlreadyGone(e404("not_found"))).toBe(true);
+		expect(isAlreadyGone(e404())).toBe(true);
+		expect(isAlreadyGone({ status: 500 })).toBe(false);
 	});
 });

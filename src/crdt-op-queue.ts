@@ -39,8 +39,11 @@ export type DropReason = "ttl" | "overflow" | "max-attempts" | "vault-changed";
 
 /** Result of an outbound send attempt. `held`: not sent because a known,
  *  account-wide condition would refuse it (the plan note cap). The op is kept,
- *  uncharged and un-aged, and re-checked after the max backoff. */
-export type SendResult = "ok" | "error" | "timeout" | "held";
+ *  uncharged and un-aged, and re-checked after the max backoff.
+ *  `rate_limited`: the server shed this frame (`rate_limited` reply). Not the
+ *  op's fault, so it is uncharged and un-aged too, and the WHOLE queue pauses
+ *  (sending the rest into the same bucket only burns their attempts). */
+export type SendResult = "ok" | "error" | "timeout" | "held" | "rate_limited";
 
 /** Max distinct pending docId ops. Bounds memory across long offline spells;
  *  overflow drops the oldest pending op rather than growing unbounded. */
@@ -109,6 +112,12 @@ export class CrdtOpQueue {
 	private heldSince: number | null;
 	/** Re-entrancy guard so overlapping flush/tick calls don't double-send. */
 	private flushing = false;
+	/** Queue-wide pause after a `rate_limited` reply, and how many arrived in a
+	 *  row (the pause doubles per streak, reset by the next delivered op). */
+	private rateLimitedUntil = 0;
+	private rateLimitStreak = 0;
+	/** Start of the pause not yet credited back to queued ops' TTL age. */
+	private pauseFrom: number | null = null;
 
 	private readonly send: (op: CrdtOp) => Promise<SendResult>;
 	private readonly now: () => number;
@@ -284,6 +293,21 @@ export class CrdtOpQueue {
 		return true;
 	}
 
+	/** A rate-limit pause is held time, like a channel outage: credit it back
+	 *  to every op's age so the TTL cannot expire the outbox while the server
+	 *  sheds load. Runs once per pause, when the pause has ended. */
+	private creditRateLimitPause(): void {
+		if (this.pauseFrom === null) return;
+		// Same rule as onJoined: credit only the part of the pause each op was
+		// actually queued for, so an op enqueued mid-pause is not aged negative.
+		for (const e of this.entries.values()) {
+			const heldFor = this.rateLimitedUntil - Math.max(this.pauseFrom, e.op.enqueuedAt);
+			if (heldFor > 0) e.op.enqueuedAt += heldFor;
+		}
+		this.pauseFrom = null;
+		this.schedulePersist();
+	}
+
 	/** Drop and notify if the op has aged past its TTL. Returns true if dropped. */
 	private dropIfExpired(docId: string, entry: Entry): boolean {
 		if (this.now() - entry.op.enqueuedAt <= this.opts.opTtlMs) return false;
@@ -321,6 +345,8 @@ export class CrdtOpQueue {
 				// The channel dropped mid-pass: every remaining send would fail
 				// instantly and burn an attempt against a dead socket.
 				if (!this.joined) break;
+				if (this.now() < this.rateLimitedUntil) break;
+				this.creditRateLimitPause();
 				const entry = this.entries.get(docId);
 				if (!entry) continue;
 				if (this.dropIfExpired(docId, entry)) continue;
@@ -342,7 +368,20 @@ export class CrdtOpQueue {
 		// op, only about the socket. Keep it, uncharged, for the next join.
 		if (!this.joined && result !== "ok") return;
 
+		if (result === "rate_limited") {
+			// Uncharged, like `held`: a server busy for longer than
+			// MAX_ATTEMPTS backoffs must not drop a queued delete (the server
+			// copy would survive). The socket reply carries no Retry-After.
+			this.rateLimitStreak += 1;
+			const wait = this.backoffFor(this.rateLimitStreak);
+			this.rateLimitedUntil = this.now() + wait;
+			this.pauseFrom ??= this.now();
+			entry.nextAttemptAt = this.now() + wait;
+			this.schedulePersist();
+			return;
+		}
 		if (result === "ok") {
+			this.rateLimitStreak = 0;
 			this.entries.delete(docId);
 			this.schedulePersist();
 			return;

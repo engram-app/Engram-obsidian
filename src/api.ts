@@ -3,10 +3,18 @@
  *
  * Uses Obsidian's requestUrl() which bypasses CORS and works on mobile.
  */
+
 import { type RequestUrlResponse, requestUrl } from "obsidian";
+import { AttachmentDeleteBatcher } from "./attachment-delete-batcher";
 import type { AuthProvider } from "./auth";
 import { interpretHealthProbe, type PreflightResult } from "./auth-state";
-import { errorBody, isHttpStatus, NotAuthenticatedError, statusOf } from "./error-util";
+import {
+	errorBody,
+	headerLookup,
+	isHttpStatus,
+	NotAuthenticatedError,
+	statusOf,
+} from "./error-util";
 import { t } from "./i18n";
 import type { LegalNotice } from "./legal-notices";
 import { LimitExceededError } from "./limit-error";
@@ -245,6 +253,7 @@ export class EngramApi {
 			this.rawAttachmentUpload = false;
 			this.rawAttachmentUploadKnown = false;
 			this.rawAttachmentDownload = false;
+			this.attachmentBatchDelete = false;
 			this.serverVersion = null;
 		}
 		this.baseUrl = normalized;
@@ -400,7 +409,9 @@ export class EngramApi {
 		// field can be empty while the provider holds the real vault, which made
 		// vault-scoped REST calls (notably /search) fall back to the user's
 		// default vault server-side (VaultPlug defaults when X-Vault-ID is absent).
-		const activeVaultId = this.getActiveVaultId();
+		// A caller that captured its vault earlier (batched attachment deletes)
+		// pins it; the active vault may have moved on since.
+		const activeVaultId = extraHeaders?.["X-Vault-ID"] ?? this.getActiveVaultId();
 		if (activeVaultId) {
 			headers["X-Vault-ID"] = activeVaultId;
 		}
@@ -424,7 +435,9 @@ export class EngramApi {
 		// the REST bulk-page class (batch push, change feeds) died with the
 		// socket-only migration (#304).
 		const attachmentTransfer =
-			path.startsWith("/attachments") && (method === "POST" || method === "GET");
+			path.startsWith("/attachments") &&
+			path !== "/attachments/batch-delete" &&
+			(method === "POST" || method === "GET");
 		const timeoutMs = attachmentTransfer ? this.attachmentTimeoutMs : this.requestTimeoutMs;
 		const pending = requestUrl({
 			url: `${this.baseUrl}${path}`,
@@ -735,6 +748,9 @@ export class EngramApi {
 		mtime: number,
 		bytes?: ArrayBuffer,
 	): Promise<AttachmentResponse> {
+		// A delete of this path still pending or in flight must land first, or
+		// the server could apply it after this upload and delete the new file.
+		await this.attachmentDeletes.settled(path);
 		if (this.rawAttachmentUpload && bytes) {
 			const qs = new URLSearchParams({ path, mime_type: mimeType, mtime: String(mtime) });
 			try {
@@ -817,11 +833,50 @@ export class EngramApi {
 		return resp.json as AttachmentDetail;
 	}
 
-	/** Delete an attachment. */
-	async deleteAttachment(path: string): Promise<DeleteResponse> {
-		const encoded = encodePath(path);
-		const resp = await this.request("DELETE", `/attachments/${encoded}`);
-		return resp.json as DeleteResponse;
+	/** Delete an attachment. Coalesced into batch requests, see
+	 *  attachment-delete-batcher.ts for the vault, ordering and echo rules. */
+	async deleteAttachment(path: string, vaultId?: string | null): Promise<DeleteResponse> {
+		// `vaultId`: the caller's durable-queue stamp. Default is the same
+		// source, this.vaultId (main.ts mirrors settings.vaultId into it).
+		await this.attachmentDeletes.delete(path, vaultId === undefined ? this.vaultId : vaultId);
+		return { deleted: true, path };
+	}
+
+	/** The server advertised `features.attachment_batch_delete_origin`. Until
+	 *  then (or on an older backend) deletes go out one by one, serially. */
+	private attachmentBatchDelete = false;
+
+	setAttachmentBatchDelete(enabled: boolean): void {
+		this.attachmentBatchDelete = enabled;
+	}
+
+	readonly attachmentDeletes = new AttachmentDeleteBatcher({
+		send: async (paths, vaultId) => {
+			await this.request(
+				"POST",
+				"/attachments/batch-delete",
+				{ paths },
+				{ "X-Idempotency-Key": crypto.randomUUID(), ...vaultHeader(vaultId) },
+			);
+		},
+		sendOne: async (path, vaultId) => {
+			await this.request(
+				"DELETE",
+				`/attachments/${encodePath(path)}`,
+				undefined,
+				vaultHeader(vaultId),
+			);
+		},
+		batchEnabled: () => this.attachmentBatchDelete,
+		// The same vault source the sync engine stamps on queue entries.
+		activeVaultId: () => this.vaultId,
+		setTimeout: (cb, ms) => window.setTimeout(cb, ms),
+		clearTimeout: (id) => window.clearTimeout(id),
+	});
+
+	/** Send any coalescing attachment deletes now (unload, tests). */
+	flushAttachmentDeletes(): Promise<void> {
+		return this.attachmentDeletes.flush();
 	}
 
 	/** Search indexed notes.
@@ -972,6 +1027,10 @@ export function beaconRoute(path: string): string {
  *  the body is gone, so a 426 floor refusal, 402 limit or 409 conflict body was
  *  unreadable. Requests go out with `throw: false` and this rebuilds the same
  *  rejection (same message, `status`, `headers`) plus the raw `text`. */
+function vaultHeader(vaultId: string | null): Record<string, string> {
+	return vaultId ? { "X-Vault-ID": vaultId } : {};
+}
+
 function throwIfHttpError(resp: RequestUrlResponse): RequestUrlResponse {
 	if (resp.status < 400) return resp;
 	let text: string | undefined;
@@ -1062,14 +1121,6 @@ function sanitizeUpgradeUrl(v: unknown): string | null {
  *  encodeURIComponent over the whole path breaks any file in a subfolder. */
 function encodePath(path: string): string {
 	return path.split("/").map(encodeURIComponent).join("/");
-}
-
-/** Case-insensitive response-header reader: desktop requestUrl lower-cases
- *  header names, other platforms may not. */
-function headerLookup(headers: Record<string, string> | undefined) {
-	const lower = new Map<string, string>();
-	for (const [k, v] of Object.entries(headers ?? {})) lower.set(k.toLowerCase(), v);
-	return (name: string): string | undefined => lower.get(name);
 }
 
 /** Convert an ArrayBuffer to a base64 string: the engine's native encoder

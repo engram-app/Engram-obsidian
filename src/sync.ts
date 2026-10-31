@@ -1,6 +1,7 @@
 /**
  * Sync engine — handles push/pull logic, debouncing, and ignore patterns.
  */
+
 import {
 	type App,
 	MarkdownView,
@@ -27,8 +28,9 @@ import {
 	type NotesCapGate,
 	TERMINAL_REASONS,
 } from "./crdt-op-dispatch";
+import type { CrdtOp } from "./crdt-op-queue";
 import { devLog } from "./dev-log";
-import { errMsg, isHttpStatus, statusOf } from "./error-util";
+import { errMsg, isAlreadyGone, isHttpStatus, statusOf } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
 import { isCanvasPath as canvasPath, isCrdtEligiblePath as crdtEligiblePath } from "./file-kind";
 import { t } from "./i18n";
@@ -409,6 +411,10 @@ const MIME_TYPES: Record<string, string> = {
 	canvas: "application/json",
 };
 
+/** Delete failures already logged: a batched chunk rejects every caller with
+ *  one shared error object. */
+const loggedDeleteErrors = new WeakSet<object>();
+
 /** Window width of the per-file push loop (both the incremental and the
  *  force pipeline): at most this many pushFile calls outstanding at once. */
 const PUSH_BATCH_SIZE = 10;
@@ -418,6 +424,12 @@ const PUSH_BATCH_SIZE = 10;
  *  while the drain moves on to the entries behind it. */
 export const OFFLINE_RETRY_BASE_MS = 5_000;
 export const OFFLINE_RETRY_MAX_MS = 5 * 60_000;
+/** Shortest wait after a rate-limited failure, whatever Retry-After says (0,
+ *  a past date from a skewed clock): re-sending at once re-hits the limiter. */
+export const RATE_LIMIT_FLOOR_MS = 1_000;
+/** A delete held for a vault that never becomes active again is dropped
+ *  after this long (logged). */
+export const HELD_DELETE_MAX_AGE_MS = 7 * 86_400_000;
 
 type CrdtCatchupSinceFn = (
 	cursorSeq: number,
@@ -1310,7 +1322,7 @@ export class SyncEngine {
 			// path adopts the buried id through `getOrMint` instead of minting.
 			// Reconciling ANY id against a snapshot older than our own delete is
 			// the engine believing stale news over a fact it authored (#491).
-			if (this.recentlyDeleted.has(note.id)) continue;
+			if (this.isLocallyDeleted(note.id)) continue;
 			const localPath = this.noteIdMap.pathForId(note.id);
 			if (localPath === note.path) continue; // already correct — nothing to do
 			if (localPath !== null && !manifestPaths.has(localPath)) {
@@ -1375,7 +1387,7 @@ export class SyncEngine {
 		// This one saves the pointless manifest FETCH. It is not the safety
 		// boundary — `reconcileNoteIdMapFromManifest` has three other callers
 		// and carries its own tombstone skip; see there.
-		if (this.recentlyDeleted.has(noteId)) return;
+		if (this.isLocallyDeleted(noteId)) return;
 
 		if (this.noteIdMap.pathForId(noteId) !== null) return; // already mapped
 		if (this.idMapReconcileInflight) {
@@ -1952,6 +1964,15 @@ export class SyncEngine {
 	 *  docId is still pending (unsent create/edit). Consulted by the evidence
 	 *  rule so a create-then-delete supersedes instead of resurrecting. */
 	private crdtHasPendingOp: ((docId: string) => boolean) | null = null;
+
+	/** The delete-wins tombstone check every resurrect guard uses: a delete
+	 *  this device made recently, OR one still waiting in the CRDT op queue.
+	 *  The second half matters once the queue holds a delete past the 60 s
+	 *  cooldown (rate-limit pauses are uncharged and can last minutes): the
+	 *  note must not re-materialize while its delete is still owed. */
+	private isLocallyDeleted(noteId: string): boolean {
+		return this.recentlyDeleted.has(noteId) || (this.crdtHasPendingDelete?.(noteId) ?? false);
+	}
 
 	setCrdtHasPendingOp(fn: ((docId: string) => boolean) | null): void {
 		this.crdtHasPendingOp = fn;
@@ -3356,7 +3377,7 @@ export class SyncEngine {
 		// way, as discoverAnnouncedNote: recentlyDeleted (by note_id, ~60s TTL)
 		// covers a delete already sent; hasPendingDelete (by path) covers one
 		// still sitting unsent in the offline queue.
-		if (this.recentlyDeleted.has(noteId)) {
+		if (this.isLocallyDeleted(noteId)) {
 			rlog().info(
 				"crdt",
 				`empty-materialize skip (recent local delete): ${noteRef(normalized)}`,
@@ -3797,7 +3818,7 @@ export class SyncEngine {
 		const vaultId = this.settings.vaultId;
 		if (!vaultId || this.ctimeSweepVaultId === vaultId) return;
 		if (this.ctimeSweepRunning || this.ctimeSweepTried) return;
-		if (this.offline || this.syncBlocked || this.queue.size > 0) return;
+		if (this.offline || this.syncBlocked || this.activeQueueSize() > 0) return;
 		this.ctimeSweepRunning = true;
 		try {
 			const entries = this.app.vault
@@ -4133,7 +4154,7 @@ export class SyncEngine {
 			pulling: this.pulling,
 			pushing: this.pushing.size,
 			pendingPushes: this.debounceTimers.size,
-			queued: this.queue.size,
+			queued: this.activeQueueSize(),
 			flushing: this.flushingHash.size,
 			creating: this.creatingPaths.size,
 		};
@@ -4154,7 +4175,7 @@ export class SyncEngine {
 		return {
 			state,
 			pending: this.debounceTimers.size,
-			queued: this.queue.size,
+			queued: this.activeQueueSize(),
 			lastSync: this.lastSync,
 			error: this.lastError || undefined,
 		};
@@ -5429,6 +5450,7 @@ export class SyncEngine {
 	 *  at any path. Callers own the gate, syncable and ignore checks. */
 	private async deleteSyncedPath(path: string): Promise<void> {
 		const isBinary = this.isBinaryPath(path);
+		const deleteVaultId = this.settings.vaultId ?? undefined;
 
 		// RENAME OLD LEG. The engine trashed this path to follow a remote rename;
 		// the note is alive at its new path. Everything below is keyed by note_id
@@ -5575,7 +5597,7 @@ export class SyncEngine {
 
 		try {
 			if (isBinary) {
-				await this.api.deleteAttachment(path); // attachments stay REST
+				await this.api.deleteAttachment(path, deleteVaultId ?? null); // attachments stay REST
 				this.goOnline();
 			} else if (this.isCrdtEligiblePath(path)) {
 				// CRDT-sole delete path (markdown AND canvas since #306; REST removed).
@@ -5607,27 +5629,43 @@ export class SyncEngine {
 			}
 		} catch (e) {
 			// 404 means already deleted — treat as success; still tear down CRDT.
-			if (isHttpStatus(e, 404)) {
+			if (isAlreadyGone(e)) {
 				this.goOnline();
 				if (this.isCrdtEligiblePath(path) && crdtNoteId) {
 					await this.teardownCrdtDoc(crdtNoteId, deleteSeq, normalizePath(path));
 				}
 				return;
 			}
-			// biome-ignore lint/suspicious/noConsole: error boundary
-			console.error("Engram Sync: failed to delete %s", path, e);
-			rlog().error("push", `Delete failed (queued): ${noteRef(path)} | ${errMsg(e, path)}`);
-			await this.enqueueChange({
+			// One batched chunk failing rejects up to ATTACHMENT_DELETE_CHUNK
+			// callers with the SAME error: log it once, not once per file (a
+			// 200-line burst evicts the whole remote-log buffer).
+			if (!(typeof e === "object" && e !== null && loggedDeleteErrors.has(e))) {
+				if (typeof e === "object" && e !== null) loggedDeleteErrors.add(e);
+				// biome-ignore lint/suspicious/noConsole: error boundary
+				console.error("Engram Sync: failed to delete %s", path, e);
+				rlog().error(
+					"push",
+					`Delete failed (queued): ${noteRef(path)} | ${errMsg(e, path)}`,
+				);
+			}
+			const entry: QueueEntry = {
 				path: path,
 				action: "delete",
 				kind: isBinary ? "attachment" : "note",
 				timestamp: Date.now(),
-				vaultId: this.settings.vaultId ?? undefined,
+				// The vault the delete happened in, not whichever is active now.
+				vaultId: deleteVaultId,
 				// This branch is only reachable past the evidence rule — stamp it
 				// so the queue drain can tell fenced deletes from legacy/pre-fence
 				// entries it must drop (#416 review finding 0).
 				evidenced: true,
-			});
+			};
+			const classified = categorizeError(e);
+			if (classified.rateLimited) {
+				await this.deferRateLimited(entry, classified);
+				return;
+			}
+			await this.enqueueChange(entry);
 			this.maybeGoOffline(e);
 		}
 	}
@@ -5717,11 +5755,13 @@ export class SyncEngine {
 		// existed have no row, so their first rename leaves the old server path
 		// behind until a pull reconciles it — safe-direction, self-healing.
 		const hadOldEvidence = this.syncState.has(normalizePath(oldPath));
+		// One vault for the send and the re-queue (see deleteSyncedPath).
+		const renameVaultId = this.settings.vaultId ?? undefined;
 		if (!this.shouldIgnore(oldPath)) {
 			try {
 				if (isBinary) {
 					if (hadOldEvidence) {
-						await this.api.deleteAttachment(oldPath);
+						await this.api.deleteAttachment(oldPath, renameVaultId ?? null);
 						this.goOnline();
 					} else {
 						rlog().warn(
@@ -5762,7 +5802,7 @@ export class SyncEngine {
 				// the exact bug this rework exists to fix.
 			} catch (e) {
 				// 404 means already deleted — treat as success.
-				if (isHttpStatus(e, 404)) {
+				if (isAlreadyGone(e)) {
 					this.goOnline();
 				} else {
 					// biome-ignore lint/suspicious/noConsole: error boundary
@@ -5776,7 +5816,7 @@ export class SyncEngine {
 						action: "delete",
 						kind: isBinary ? "attachment" : "note",
 						timestamp: Date.now(),
-						vaultId: this.settings.vaultId ?? undefined,
+						vaultId: renameVaultId,
 						// Provably equal to `true` today (refused legs never call out),
 						// but kept code-derived so a future throwing edit inside the
 						// refusal legs cannot silently stamp evidence (round-3 review).
@@ -6054,6 +6094,7 @@ export class SyncEngine {
 		// server-sanitized-rename check) must be made against the path we
 		// actually pushed, not wherever the file lives by reply time (#245).
 		const pushedPath = file.path;
+		const pushStartedAt = Date.now();
 		// Re-check the guard HERE, not just at entry (line ~3494): two awaits sit
 		// between that check and this claim (the echo-hash read, acquirePushSlot),
 		// so two overlapping pushFile calls for the same path — e.g. two
@@ -6775,11 +6816,39 @@ export class SyncEngine {
 				"push",
 				`Push ok: ${noteRef(file.path)} | type=${isBinary ? "attachment" : "note"}`,
 			);
+			// The path lives again on the server: a delete still queued for it
+			// (a 429'd or offline delete before this recreate) is now stale and
+			// would delete the copy just uploaded. Supersede it.
+			// Only a delete queued BEFORE this upload started: one made while it
+			// was in flight is the user's newer intent and must win.
+			const vaultForPath = this.settings.vaultId ?? undefined;
+			const queuedDelete = this.queue.get(pushedPath, vaultForPath);
+			if (queuedDelete?.action === "delete" && queuedDelete.timestamp < pushStartedAt) {
+				this.queue.cancel(pushedPath, vaultForPath);
+				rlog().info("queue", `Queued delete superseded by upload: ${noteRef(pushedPath)}`);
+			}
 			this.goOnline();
 		} catch (e) {
 			report?.({ kind: "failed", error: e });
 			const msg = errMsg(e, file.path);
 			const classified = categorizeError(e);
+			// Attachments only: a note's queue entry carries crdt/noteId fields
+			// this content-free entry would overwrite.
+			if (classified.rateLimited && isBinary) {
+				rlog().warn("push", `Push rate limited, re-queued: ${noteRef(file.path)}`);
+				await this.deferRateLimited(
+					{
+						path: file.path,
+						action: "upsert",
+						kind: "attachment",
+						mtime: file.stat.mtime / 1000,
+						timestamp: Date.now(),
+						vaultId: this.settings.vaultId ?? undefined,
+					},
+					classified,
+				);
+				return false;
+			}
 			// Plan-limit 402s (needs_pro, quota) are expected Free-tier outcomes,
 			// not programming errors — don't pollute the dev console. Gate by
 			// disposition so both informational reasons stay quiet; other
@@ -8126,7 +8195,7 @@ export class SyncEngine {
 		// the delete-wins window (#970), hasPendingDelete covers one still in the
 		// offline queue. The seq replay's applyOp re-checks these per op, but the
 		// early return also avoids a pointless replay for a note we're deleting.
-		if (this.recentlyDeleted.has(noteId)) return;
+		if (this.isLocallyDeleted(noteId)) return;
 		if (this.queue.hasPendingEvidencedDelete(normalized, this.settings.vaultId ?? undefined))
 			return;
 		try {
@@ -8212,7 +8281,7 @@ export class SyncEngine {
 		// whether a racing catch-up has re-learned the id's mapping. Checked
 		// first, before confirmNoteId, so a late fan-out can't re-confirm a
 		// deleted id either.
-		if (this.recentlyDeleted.has(noteId)) {
+		if (this.isLocallyDeleted(noteId)) {
 			rlog().info("crdt", `fan-out skip (recent local delete): ${noteId}`);
 			return "deferred";
 		}
@@ -10254,7 +10323,7 @@ export class SyncEngine {
 		// (idempotent delete), so convergence isn't blocked.
 		if (
 			op.kind === "upsert" &&
-			(this.recentlyDeleted.has(op.id) ||
+			(this.isLocallyDeleted(op.id) ||
 				this.queue.hasPendingEvidencedDelete(
 					normalizePath(op.path),
 					this.settings.vaultId ?? undefined,
@@ -12932,14 +13001,22 @@ export class SyncEngine {
 					failed: 0,
 				});
 			}
+			// Attachment deletes go through the offline queue, not a fire-once
+			// loop: the drain batches them, and a 429/5xx/offline failure is
+			// retried on the queue's backoff instead of logged and dropped. The
+			// server-only extras were enumerated from the manifest, which is this
+			// path's sync evidence.
 			for (const path of replaceExtras.attachments) {
 				if (ignoreListChanged()) break;
-				try {
-					await this.api.deleteAttachment(path);
-					this.logEntry("delete", path, "ok", undefined, "replace-remote");
-				} catch (e) {
-					this.logEntry("delete", path, "error", errMsg(e));
-				}
+				await this.enqueueChange({
+					path,
+					action: "delete",
+					kind: "attachment",
+					timestamp: Date.now(),
+					vaultId: this.settings.vaultId ?? undefined,
+					evidenced: true,
+				});
+				this.logEntry("delete", path, "ok", undefined, "replace-remote:queued");
 				this.onSyncProgress?.({
 					phase: "deleting",
 					current: ++delDone,
@@ -12948,6 +13025,7 @@ export class SyncEngine {
 					currentPath: path,
 				});
 			}
+			if (replaceExtras.attachments.length > 0) await this.flushQueue();
 		}
 
 		// Flush first so the terminal "complete" can report the plan-skipped
@@ -13127,7 +13205,7 @@ export class SyncEngine {
 	 *  spinner. */
 	queuedReason(): QueuedReason | null {
 		return computeQueuedReason({
-			queued: this.queue.size,
+			queued: this.activeQueueSize(),
 			inFlight: this.pushing.size,
 			offline: this.offline,
 			syncBlocked: this.syncBlocked,
@@ -13184,6 +13262,95 @@ export class SyncEngine {
 		await this.queue.dequeue(entry.path, this.entryVaultId(entry));
 	}
 
+	/** The CRDT op queue gave up on an op. Creates are counted by the drop
+	 *  reporter alone: a dropped create is recoverable (self-heal re-pushes the
+	 *  untracked file), and one line per op was 815 lines from a single prod
+	 *  first sync. A dropped DELETE has no fallback (the server copy survives
+	 *  and comes back on the next pull), so it is logged by id AND surfaced in
+	 *  the Sync Center, never dropped silently (backend `delete_failed`, #2359). */
+	onCrdtOpDropped(op: CrdtOp, reason: string): void {
+		if (op.kind === "create") return;
+		rlog().warn("crdt", `crdt_${op.kind} dropped (${reason}) without delivery: ${op.docId}`);
+		if (op.kind !== "delete") return;
+		const path = (op.payload as { path?: string } | undefined)?.path;
+		if (!path) return;
+		const now = Date.now();
+		this.issues.record({
+			path,
+			kind: "note",
+			category: "server",
+			message: `Delete was not delivered to the server (${reason}). Delete the note again to retry.`,
+			firstFailedAt: now,
+			lastFailedAt: now,
+			attempts: 1,
+		});
+		this.emitStatus();
+	}
+
+	/** An evidenced delete queued in a vault other than the active one: held
+	 *  for that vault, never sent here. Cleared by that vault becoming active
+	 *  (it drains), `dropHeldDeletes` (vault deleted, account change) or
+	 *  HELD_DELETE_MAX_AGE_MS. */
+	private isHeldDelete(entry: QueueEntry): boolean {
+		const owner = this.entryVaultId(entry);
+		const active = this.settings.vaultId;
+		return (
+			entry.action === "delete" &&
+			entry.evidenced === true &&
+			!!owner &&
+			!!active &&
+			owner !== active
+		);
+	}
+
+	/** Queue entries this vault can act on: held other-vault deletes are not
+	 *  "waiting" here and must not hold the status or the ctime sweep. */
+	private activeQueueSize(): number {
+		let n = 0;
+		for (const e of this.queue.all()) if (!this.isHeldDelete(e)) n++;
+		return n;
+	}
+
+	/** Named clearing event for held deletes: a vault was deleted (pass its id:
+	 *  all its entries go, held or not) or the account changed (no id: every
+	 *  held delete goes, they belong to another identity's vaults). */
+	dropHeldDeletes(reason: "vault_deleted" | "account_changed", vaultId?: string): void {
+		let n = 0;
+		for (const e of this.queue.all()) {
+			const owner = this.entryVaultId(e);
+			const drop = vaultId ? owner === vaultId : this.isHeldDelete(e);
+			if (drop && this.queue.cancel(e.path, owner)) n++;
+		}
+		if (n > 0) rlog().warn("queue", `Dropped ${n} queued deletes: ${reason}`);
+		this.emitStatus();
+	}
+
+	/** Consecutive rate-limited failures (429, or 503 with Retry-After), so a
+	 *  server that sends no usable Retry-After is backed off progressively. */
+	private rateLimitStreak = 0;
+
+	/** The ONE rate-limit disposition for a REST failure, shared by the live
+	 *  push and the queue drain: re-queue `entry` for when the server asked
+	 *  (floored, never a hot loop), with NO attempt charged, no Sync Center
+	 *  issue and no failure tally. A busy server must never park work. */
+	private async deferRateLimited(
+		entry: QueueEntry,
+		classified: ReturnType<typeof categorizeError>,
+	): Promise<void> {
+		this.rateLimitStreak += 1;
+		const wait = Math.max(
+			RATE_LIMIT_FLOOR_MS,
+			classified.retryAfterMs ??
+				expBackoff(OFFLINE_RETRY_BASE_MS, this.rateLimitStreak - 1, OFFLINE_RETRY_MAX_MS),
+		);
+		await this.queue.enqueue({
+			...entry,
+			priority: entry.priority ?? this.priorityForPath(entry.path),
+			nextAttemptAt: this.time.now() + wait,
+		});
+		this.emitStatus();
+	}
+
 	/** Decide the fate of a queue entry whose flush just failed, and act on it.
 	 *  runFlushQueue's legacy note/attachment catch routes here (the crdt drain
 	 *  branch stopped making HTTP calls in Phase E3). Terminal
@@ -13199,6 +13366,13 @@ export class SyncEngine {
 		// the refusal clears, like the rest of the held queue.
 		if (isHttpStatus(e, 426) && isUpgradeRequired()) return "retry";
 		const classified = categorizeError(e);
+		// Rate limited: the server is shedding load, not refusing this entry.
+		// Wait what it asked for and keep the attempt count, so a busy server
+		// can never push a delete into "parked" (where the server copy survives).
+		if (classified.rateLimited) {
+			await this.deferRateLimited(entry, classified);
+			return "retry";
+		}
 		const attempts = (entry.attempts ?? 0) + 1;
 		if (shouldRetryAfterFailure(classified, attempts)) {
 			// Transient and under the cap: persist the bumped count (survives
@@ -13383,7 +13557,11 @@ export class SyncEngine {
 		// the crdt: join kick.
 		if (this.offline || this.syncBlocked || isUpgradeRequired()) return;
 		let due = Number.POSITIVE_INFINITY;
+		const active = this.settings.vaultId;
 		for (const e of this.queue.all()) {
+			// A held other-vault delete is not due here; arming for it would spin.
+			const owner = this.entryVaultId(e);
+			if (owner && active && owner !== active) continue;
 			if (e.nextAttemptAt !== undefined && e.nextAttemptAt < due) due = e.nextAttemptAt;
 		}
 		if (due === Number.POSITIVE_INFINITY) return;
@@ -13403,6 +13581,30 @@ export class SyncEngine {
 		if (entries.length === 0) return 0;
 		devLog().log("queue", `flush start — ${entries.length} entries`);
 		rlog().info("queue", `Queue flush start — ${entries.length} entries`);
+
+		// Due attachment deletes are started together so EngramApi coalesces them
+		// into batch-delete requests; awaiting them one by one below would send
+		// one request per entry (the 407-DELETE burst, 2026-10-31). Same gates
+		// as the loop: anything not started here goes through the loop as before.
+		const now = this.time.now();
+		const active = this.settings.vaultId;
+		const startedDeletes = new Map<QueueEntry, Promise<unknown>>();
+		if (!this.syncBlocked && !isUpgradeRequired()) {
+			for (const entry of entries) {
+				const owner = this.entryVaultId(entry);
+				if (
+					entry.action === "delete" &&
+					entry.kind === "attachment" &&
+					entry.evidenced &&
+					(entry.nextAttemptAt ?? 0) <= now &&
+					!(owner && active && owner !== active)
+				) {
+					const p = this.api.deleteAttachment(entry.path, owner ?? null);
+					p.catch(() => {}); // observed by the loop below; not unhandled
+					startedDeletes.set(entry, p);
+				}
+			}
+		}
 
 		let flushed = 0;
 		for (const entry of entries) {
@@ -13435,6 +13637,32 @@ export class SyncEngine {
 			const owner = this.entryVaultId(entry);
 			const active = this.settings.vaultId;
 			if (owner && active && owner !== active) {
+				// A user DELETE made in that vault is held, not dropped: it replays
+				// when that vault is active again (a vault switch mid-way through a
+				// folder delete must not resurrect the rest). Never SENT here.
+				// Upserts re-read disk, so dropping them loses nothing.
+				if (this.isHeldDelete(entry)) {
+					if (Date.now() - entry.timestamp <= HELD_DELETE_MAX_AGE_MS) continue;
+					rlog().warn(
+						"queue",
+						`Held delete EXPIRED after ${HELD_DELETE_MAX_AGE_MS / 86_400_000} days ` +
+							`(vault ${owner.slice(0, 8)} never active again): ${noteRef(entry.path)}`,
+					);
+					// Never silent: the server copy in that vault survives.
+					const now = Date.now();
+					this.issues.record({
+						path: entry.path,
+						kind: entry.kind ?? "attachment",
+						category: "other",
+						message:
+							`Delete was held for vault ${owner.slice(0, 8)} for ` +
+							`${HELD_DELETE_MAX_AGE_MS / 86_400_000} days and expired; the server copy ` +
+							"in that vault was not deleted.",
+						firstFailedAt: now,
+						lastFailedAt: now,
+						attempts: 1,
+					});
+				}
 				rlog().warn(
 					"queue",
 					`Dropping queued op for ${noteRef(entry.path)} — queued under a different ` +
@@ -13469,13 +13697,17 @@ export class SyncEngine {
 					} else {
 						try {
 							if (entry.kind === "attachment") {
-								await this.api.deleteAttachment(entry.path);
+								await (startedDeletes.get(entry) ??
+									this.api.deleteAttachment(
+										entry.path,
+										this.entryVaultId(entry) ?? null,
+									));
 							} else {
 								await this.api.deleteNote(entry.path);
 							}
 						} catch (e) {
 							// 404 means already deleted — dequeue and continue
-							if (!isHttpStatus(e, 404)) throw e;
+							if (!isAlreadyGone(e)) throw e;
 						}
 					}
 				} else if (entry.kind === "attachment") {
@@ -13725,6 +13957,7 @@ export class SyncEngine {
 				}
 				await this.queue.dequeue(entry.path, this.entryVaultId(entry));
 				this.issues.clear(entry.path);
+				this.rateLimitStreak = 0;
 				flushed++;
 			} catch (e) {
 				// Terminal or retries-exhausted parks (issue + dequeue); a transient
@@ -13757,6 +13990,28 @@ export class SyncEngine {
 			if (va[i] !== vb[i]) return false;
 		}
 		return true;
+	}
+
+	/** Plugin unload: attachment deletes not yet acknowledged (in the batch
+	 *  window, queued behind a chunk, or in flight) may never be. Move them into the durable queue and write it now, so a
+	 *  quit right after a delete replays it on the next start instead of
+	 *  losing it (the file would otherwise resurrect on the next pull). No
+	 *  network here: the auth provider is being retired. */
+	stashPendingAttachmentDeletes(): Promise<void> {
+		const taken = this.api.attachmentDeletes?.takeUnacked() ?? [];
+		if (taken.length === 0) return Promise.resolve();
+		for (const p of taken) {
+			void this.queue.enqueue({
+				path: p.path,
+				action: "delete",
+				kind: "attachment",
+				timestamp: Date.now(),
+				vaultId: p.vaultId ?? undefined,
+				// Only evidence-checked paths reach deleteAttachment.
+				evidenced: true,
+			});
+		}
+		return this.queue.persist();
 	}
 
 	/** Cancel all pending debounce, cooldown, and health check timers. */

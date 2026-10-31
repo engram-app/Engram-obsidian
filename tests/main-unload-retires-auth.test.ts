@@ -34,6 +34,7 @@ describe("onunload auth-provider retirement", () => {
 				getLastSync() {
 					return 0;
 				},
+				async stashPendingAttachmentDeletes() {},
 				destroy() {},
 			},
 			async savePluginData(_ls: unknown) {},
@@ -77,6 +78,7 @@ describe("onunload auth-provider retirement", () => {
 				getLastSync() {
 					return 0;
 				},
+				async stashPendingAttachmentDeletes() {},
 				destroy() {},
 			},
 			async savePluginData(_ls: unknown) {},

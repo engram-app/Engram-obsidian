@@ -54,6 +54,7 @@ describe("saveOAuthTokens auth-provider ordering", () => {
 				async resetForVaultChange() {
 					order.push("resetForVaultChange");
 				},
+				dropHeldDeletes() {},
 				bumpAuthGeneration() {
 					order.push("bumpAuthGeneration");
 				},
@@ -126,6 +127,7 @@ describe("saveOAuthTokens auth-provider ordering", () => {
 				async resetForVaultChange() {
 					order.push("resetForVaultChange");
 				},
+				dropHeldDeletes() {},
 				bumpAuthGeneration() {
 					order.push("bumpAuthGeneration");
 				},
@@ -182,6 +184,7 @@ describe("provider swaps dispose the outgoing OAuthAuth (#420)", () => {
 			},
 			async saveSettings() {},
 			syncEngine: {
+				dropHeldDeletes() {},
 				bumpAuthGeneration() {},
 				async resetForVaultChange() {},
 				getLastSync() {
@@ -266,7 +269,11 @@ describe("swap-site hardening round 2 (#420 review)", () => {
 			api: { setAuthProvider(_p: unknown) {}, setVaultId(_v: unknown) {} },
 			noteStream: null,
 			async saveSettings() {},
-			syncEngine: { bumpAuthGeneration() {}, async resetForVaultChange() {} },
+			syncEngine: {
+				dropHeldDeletes() {},
+				bumpAuthGeneration() {},
+				async resetForVaultChange() {},
+			},
 		});
 
 		void old.getToken();
@@ -302,7 +309,11 @@ describe("swap-site hardening round 2 (#420 review)", () => {
 			},
 			noteStream: null,
 			async saveSettings() {},
-			syncEngine: { bumpAuthGeneration() {}, async resetForVaultChange() {} },
+			syncEngine: {
+				dropHeldDeletes() {},
+				bumpAuthGeneration() {},
+				async resetForVaultChange() {},
+			},
 		});
 
 		await EngramSyncPlugin.prototype.clearOAuthTokens.call(fake as never);
