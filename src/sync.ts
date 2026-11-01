@@ -2440,8 +2440,20 @@ export class SyncEngine {
 	 *  something. Oversized notes are excluded (they never entered CRDT).
 	 *
 	 *  Registries without the probe (older fakes in tests) fall back to the
-	 *  drift proxy alone — the pre-existing, copy-happy behavior. */
-	private shouldKeepDriftCopy(normalized: string, disk: string, noteId: string | null): boolean {
+	 *  drift proxy alone — the pre-existing, copy-happy behavior.
+	 *
+	 *  `hasUndeliveredOps` reads the handshake `synced` flag, which every
+	 *  disconnect wipes (`clearSynced`). After a resume it is true for every
+	 *  resident doc whose heal has not handshaken yet, local work or not, so a
+	 *  delete landing in that window copied notes this device never edited
+	 *  (Engram e2e test_cold_heal_room_budget). Not local work: disk holds
+	 *  exactly the doc's text AND the server's delivery receipt covers the
+	 *  whole doc. Disk drift the doc never absorbed still keeps the copy. */
+	private async shouldKeepDriftCopy(
+		normalized: string,
+		disk: string,
+		noteId: string | null,
+	): Promise<boolean> {
 		// Notes only. An attachment's `disk` is binary read as text, which never
 		// hashes like the base64 baseline its push recorded, so every synced
 		// attachment read as drifted and its delete wrote `img.png (conflict).md`
@@ -2450,7 +2462,14 @@ export class SyncEngine {
 		if (exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES)) return false;
 		if (!this.needsColdReconcile(normalized, disk)) return false;
 		if (!noteId || typeof this.crdt?.hasUndeliveredOps !== "function") return true;
-		return this.crdt.hasUndeliveredOps(noteId);
+		if (!this.crdt.hasUndeliveredOps(noteId)) return false;
+		if (this.crdt.hasCurrentDeliveryReceipt?.(noteId) !== true) return true;
+		try {
+			return (await this.crdt.projectedText(noteId)) !== disk;
+		} catch {
+			// Unreadable doc: keep the copy, the data-safe answer.
+			return true;
+		}
 	}
 
 	/** The doc's current text when `normalized` maps to a doc with history,
@@ -9588,7 +9607,7 @@ export class SyncEngine {
 				// Best-effort: a copy failure must not block the delete.
 				try {
 					const disk = await this.app.vault.cachedRead(existing);
-					if (this.shouldKeepDriftCopy(normalized, disk, targetId ?? currentId)) {
+					if (await this.shouldKeepDriftCopy(normalized, disk, targetId ?? currentId)) {
 						const copy = await this.writeDriftConflictCopy(normalized, disk);
 						rlog().info(
 							"conflict",
@@ -10767,7 +10786,7 @@ export class SyncEngine {
 						}
 						return false;
 					}
-					if (this.shouldKeepDriftCopy(normalized, localContent, crdtNoteId)) {
+					if (await this.shouldKeepDriftCopy(normalized, localContent, crdtNoteId)) {
 						// Best-effort: a copy failure must not block the delete
 						// (mirrors the WS foreign-delete drift-capture on this branch).
 						try {

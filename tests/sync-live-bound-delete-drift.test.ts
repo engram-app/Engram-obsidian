@@ -176,3 +176,49 @@ describe("live-bound note delete drift", () => {
 		expect(conflictCopies()).toHaveLength(1);
 	});
 });
+
+describe("delete after a socket resume", () => {
+	// Engram e2e test_cold_heal_room_budget (run 41273017448): a device with NO
+	// local edits wrote "(conflict …)" copies when the server deleted notes
+	// right after a resume. A disconnect wipes every provider's handshake
+	// `synced` flag (clearSynced), so `hasUndeliveredOps` reads true for any
+	// resident doc whose heal handshake has not landed yet, while its disk
+	// already holds the server's content. Nothing local exists to preserve.
+	test("a resident doc that holds only server state writes no conflict copy", async () => {
+		const { e, mgr, disk, conflictCopies } = await liveBoundScenario({
+			dbPrefix: "lb-resumed",
+			deliverable: true,
+		});
+		e.setLiveBoundCheck(() => false);
+		// Disk holds exactly what the doc holds; the baseline lags behind it
+		// (the staged convergence commits only when the heal handshake lands).
+		disk.set("a.md", "BASE");
+		e.importSyncState({ "a.md": { hash: fnv1a("OLDER") } });
+		// Socket drop + resume: synced marks wiped, no handshake answered yet.
+		mgr.clearSynced();
+		mgr.setConnected(false);
+		mgr.setConnected(true);
+		expect(mgr.hasUndeliveredOps("id-a")).toBe(true);
+
+		await e.applyChange(tombstone("a.md"));
+
+		expect(conflictCopies()).toEqual([]);
+	});
+
+	test("disk drift the doc never saw still keeps a conflict copy", async () => {
+		const { e, mgr, disk, conflictCopies } = await liveBoundScenario({
+			dbPrefix: "lb-resumed-drift",
+			deliverable: true,
+		});
+		e.setLiveBoundCheck(() => false);
+		disk.set("a.md", "BASE edited-while-offline");
+		e.importSyncState({ "a.md": { hash: fnv1a("BASE") } });
+		mgr.clearSynced();
+		mgr.setConnected(false);
+		mgr.setConnected(true);
+
+		await e.applyChange(tombstone("a.md"));
+
+		expect(conflictCopies()).toHaveLength(1);
+	});
+});
