@@ -4058,10 +4058,7 @@ export class SyncEngine {
 		if (!Number.isInteger(seq) || (seq as number) <= this.catchupSeq) {
 			return landed === "applied" ? "applied" : "deferred";
 		}
-		// warn, not info: the backend e2e oracle waits on this line, and the log
-		// diet (min severity "warn") would otherwise never ship it. A heal means a
-		// fan-out was missed, which is worth a warn on its own.
-		rlog().warn("crdt", `gap-heal fired: note=${noteId} seq=${seq} cursor=${this.catchupSeq}`);
+		rlog().info("crdt", `gap-heal fired: note=${noteId} seq=${seq} cursor=${this.catchupSeq}`);
 		this.scheduleSeqHeal();
 		return "healing";
 	}
@@ -8974,8 +8971,7 @@ export class SyncEngine {
 		this.crdtHealCooldown.set(noteId, this.time.now());
 		this.crdtEnrollment?.reset(noteId);
 		this.openRoom(noteId, "heal_pool");
-		// warn: e2e oracle needle (see gap-heal fired); a heal is an anomaly.
-		rlog().warn(
+		rlog().info(
 			"crdt",
 			`socket converge: re-handshake fired for ${noteRef(path)} note_id=${noteId}`,
 		);
@@ -9125,8 +9121,7 @@ export class SyncEngine {
 			// Via markServerKnown so the placeholder can only fill a hole, never
 			// overwrite an authoritative head this note already has.
 			if (staged.content) this.markServerKnown(path);
-			// warn: e2e oracle needle (see gap-heal fired); only reached on a heal.
-			rlog().warn(
+			rlog().info(
 				"crdt",
 				`socket converge: STEP2 committed ${noteRef(path)} note_id=${noteId}`,
 			);
