@@ -12421,11 +12421,11 @@ export class SyncEngine {
 		);
 		const aborted = settled.find((r): r is PromiseRejectedResult => r.status === "rejected");
 		if (aborted) throw aborted.reason;
-		// ONE line per sweep, at warn so it reaches Loki (client info does not).
-		// This is the loop's actual signature: the same sweep firing over and
-		// over with pushed=0 and everything skipped. Per-file logs cannot show
-		// that shape without emitting one entry per file.
-		rlog().warn(
+		// ONE line per sweep. warn (reaches Loki) only for the loop's signature,
+		// the same sweep firing with pushed=0 and everything skipped, or for a
+		// failure; a sweep that did its job is info.
+		const sweepSuspect = failed > 0 || (total > 0 && pushed === 0);
+		rlog()[sweepSuspect ? "warn" : "info"](
 			"push",
 			`Sweep done (${mode}) — pushed=${pushed} skipped=${total - pushed - failed} failed=${failed} of ${total}`,
 		);
@@ -13753,9 +13753,10 @@ export class SyncEngine {
 					const queuedNp = normalizePath(entry.path);
 					const queuedRow = this.syncState.get(queuedNp);
 					if (queuedRow !== undefined && queuedHash === queuedRow.hash) {
-						// warn, not info: client `info` never reaches Loki, which is
-						// why this loop was undiagnosable from the server side.
-						rlog().warn(
+						// info: a dedupe hit is the healthy outcome. It was warn while
+						// #675 was undiagnosed; the queue now dequeues unstamped
+						// entries, and remote-log coalesces any repeat that remains.
+						rlog().info(
 							"queue",
 							`Echo skip (attachment): ${noteRef(entry.path)} | hash=${queuedHash}`,
 						);
