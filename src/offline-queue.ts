@@ -127,10 +127,6 @@ export class OfflineQueue {
 
 	/** Add or replace a queued change for a path. Persistence is debounced. */
 	async enqueue(entry: QueueEntry): Promise<void> {
-		// A stamped entry supersedes an unstamped one for the same path: callers
-		// stamp with the active vault, which is the vault the unstamped one
-		// belongs to (see keyFor).
-		if (entry.vaultId) this.entries.delete(entry.path);
 		this.entries.set(dedupKey(entry), entry);
 		this.schedulePersist();
 	}
@@ -139,12 +135,22 @@ export class OfflineQueue {
 	 *  (older builds, or enqueued before the vault registered) sits under the
 	 *  bare path, while callers address it by the active vault (the vault such
 	 *  an entry belongs to, see SyncEngine.entryVaultId). Fall back to the bare key
-	 *  so every lookup and removal reaches it. Without this the drain's dequeue
-	 *  was a no-op and the entry re-drained on every flush (#675: 212-260k
-	 *  `Echo skip (attachment)` lines a day from one device). */
+	 *  so every lookup reaches it. The stamped key wins when both exist. The
+	 *  drain removes by `remove(entry)`; before that it dequeued by (path,
+	 *  active vault), missed the bare key, and re-drained the entry on every
+	 *  flush (#675: 212-260k `Echo skip (attachment)` lines a day). */
 	private keyFor(path: string, vaultId?: string): string {
 		const key = dedupKey(path, vaultId);
 		return this.entries.has(key) || !vaultId || !this.entries.has(path) ? key : path;
+	}
+
+	/** Remove THIS entry, by the key it is stored under. The drain uses this,
+	 *  never a (path, active vault) lookup: legacy data.json can hold the same
+	 *  path under both the bare and the vault key, and a lookup would remove
+	 *  the sibling, which then never reaches the server. Persists immediately. */
+	async remove(entry: QueueEntry): Promise<void> {
+		this.entries.delete(dedupKey(entry));
+		await this.persistNow();
 	}
 
 	/** Remove a path from the queue (after successful sync). Persists immediately. */

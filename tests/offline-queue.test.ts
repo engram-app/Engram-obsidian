@@ -337,3 +337,48 @@ describe("legacy note bodies are shed on save", () => {
 		);
 	});
 });
+
+// Review of #676: the bare-key fallback (entries persisted without a vaultId).
+describe("OfflineQueue bare-key fallback", () => {
+	const bare = (action: "upsert" | "delete" = "upsert") =>
+		({ path: "a.md", action, timestamp: 1 }) as const;
+	const stamped = (vaultId: string, action: "upsert" | "delete" = "delete") =>
+		({ path: "a.md", action, timestamp: 2, vaultId }) as const;
+
+	test("a lookup by the active vault reaches a bare entry", () => {
+		const q = new OfflineQueue();
+		q.load([bare()]);
+		expect(q.get("a.md", "v1")?.action).toBe("upsert");
+	});
+
+	test("the stamped entry wins when both keys exist", () => {
+		const q = new OfflineQueue();
+		q.load([bare("upsert"), stamped("v1", "delete")]);
+		expect(q.get("a.md", "v1")?.action).toBe("delete");
+		expect(q.hasPendingDelete("a.md", "v1")).toBe(true);
+	});
+
+	test("remove(entry) takes only that entry's own key", async () => {
+		const q = new OfflineQueue();
+		const twin = stamped("v1");
+		q.load([bare(), twin]);
+		await q.remove(bare());
+		expect(q.size).toBe(1);
+		expect(q.get("a.md", "v1")).toEqual(twin);
+	});
+
+	test("another vault's entry at the same path is untouched", async () => {
+		const q = new OfflineQueue();
+		q.load([stamped("vA")]);
+		await q.dequeue("a.md", "vB");
+		expect(q.cancel("a.md", "vB")).toBe(false);
+		expect(q.get("a.md", "vA")).toBeDefined();
+	});
+
+	test("enqueue never drops a bare entry (it may belong to another vault)", async () => {
+		const q = new OfflineQueue();
+		q.load([bare()]);
+		await q.enqueue(stamped("vA"));
+		expect(q.size).toBe(2);
+	});
+});

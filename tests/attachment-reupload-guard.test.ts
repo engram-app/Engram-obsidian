@@ -125,6 +125,48 @@ describe("offline-queue drain: attachments", () => {
 		expect(e.queue.size).toBe(0);
 	});
 
+	// Review of #676: legacy data.json can hold the same path under BOTH the
+	// bare key and the vault key. Draining the bare one must not remove the
+	// stamped sibling, or a queued delete is gone before it reaches the server.
+	test("draining the bare twin keeps the stamped delete queued until the server acks", async () => {
+		let ack: (v: unknown) => void = () => {};
+		const deleteAttachment = mock(() => new Promise((r) => (ack = r)));
+		const { e } = makeEngine({ deleteAttachment });
+		(e as any).settings.vaultId = "vault-1";
+		(e as any).syncState.set("flaky/photo.png", { hash: fnv1a(B64) });
+		e.queue.load([
+			{
+				path: "flaky/photo.png",
+				action: "upsert",
+				contentBase64: B64,
+				mimeType: "image/png",
+				mtime: 100,
+				kind: "attachment",
+				timestamp: 1,
+			},
+			{
+				path: "flaky/photo.png",
+				action: "delete",
+				kind: "attachment",
+				timestamp: 2,
+				vaultId: "vault-1",
+				evidenced: true,
+			},
+		]);
+
+		const flushing = e.flushQueue();
+		for (let i = 0; i < 50 && deleteAttachment.mock.calls.length === 0; i++) {
+			await new Promise((r) => setTimeout(r, 0));
+		}
+		expect(deleteAttachment).toHaveBeenCalledTimes(1);
+		// In flight: the delete must still be queued (an unload now replays it).
+		expect(e.queue.hasPendingDelete("flaky/photo.png", "vault-1")).toBe(true);
+
+		ack({ deleted: true, path: "flaky/photo.png" });
+		await flushing;
+		expect(e.queue.size).toBe(0);
+	});
+
 	test("DOES upload when the bytes differ from the recorded row", async () => {
 		const { e, pushAttachment } = makeEngine();
 		(e as any).syncState.set("flaky/photo.png", { hash: fnv1a("something-else") });
