@@ -159,3 +159,44 @@ test("a rename between hold and commit still re-arms the held push", async () =>
 	expect(await reg.projectedText(ID)).toContain("kept local\n");
 	await reg.destroyAll();
 });
+
+test("a deleted note drops its convergence-hold timer", async () => {
+	const { engine, reg, disk, file } = await heldDevice();
+	expect(engine.heldForConvergence.size).toBe(1);
+
+	disk.delete(PATH);
+	await engine.handleDelete(file);
+
+	expect(engine.heldForConvergence.size).toBe(0);
+	await reg.destroyAll();
+});
+
+test("a held push survives a local rename (relocating create) and lands at the new path", async () => {
+	const { engine, reg, disk, map } = await heldDevice();
+	const NEW = "renamed.md";
+	const moved = new TFile(NEW);
+	disk.delete(PATH);
+	disk.set(NEW, `${BASE}${SERVER_EDIT}kept local\n`);
+	engine.app.vault.getFileByPath.mockImplementation((p: string) => (disk.has(p) ? moved : null));
+	engine.app.vault.getAbstractFileByPath.mockImplementation((p: string) =>
+		disk.has(p) ? moved : null,
+	);
+
+	await engine.handleRename(moved, PATH);
+	expect(map.get(NEW)).toBe(ID);
+	expect(engine.heldForConvergence.size).toBe(1); // the rename must not drop the hold
+
+	const pushed: string[] = [];
+	const realPush = engine.pushFile.bind(engine);
+	engine.pushFile = (f: TFile, ...rest: unknown[]) => {
+		pushed.push(f.path);
+		return realPush(f, ...rest);
+	};
+	await engine.commitCrdtConvergence(ID);
+	await tick(80);
+
+	expect(engine.heldForConvergence.size).toBe(0);
+	expect(pushed).toContain(NEW); // the re-armed push targets the relocated path
+	expect(pushed).not.toContain(PATH);
+	await reg.destroyAll();
+});

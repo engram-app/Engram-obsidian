@@ -259,3 +259,31 @@ describe("createCrdtWiring.onNoteYjsUpdate — seq gap-heal threading", () => {
 		expect(applied).toEqual([new Uint8Array([1, 2, 3])]);
 	});
 });
+
+describe("e2e oracle log lines survive the default log diet", () => {
+	test("gap-heal fired ships at the default (warn) severity", async () => {
+		const { initRemoteLog, destroyRemoteLog } = await import("../src/remote-log");
+		const logger = initRemoteLog();
+		const push = mock().mockResolvedValue(undefined);
+		logger.configure(push, "1.0.0", "desktop");
+		logger.setLevelThreshold("warn"); // the log diet's default (2eef1651)
+		logger.setEnabled(true);
+		const engine = makeEngine();
+		engine.setCatchupSeq(5);
+		spyOn(engine, "catchupViaSeqReplay").mockResolvedValue({ applied: 0 } as any);
+		await engine.applyLiveOpWithSeq("note-x", 9, async () => "applied" as const);
+		await logger.flush();
+		const lines = push.mock.calls.flatMap((c) => c[0] as { message: string }[]);
+		expect(lines.some((l) => l.message.includes("gap-heal fired: note=note-x"))).toBe(true);
+		await destroyRemoteLog();
+	});
+});
+
+describe("vault switch", () => {
+	test("resets the redelivery cursor, which indexes the old vault's list", async () => {
+		const engine = makeEngine() as any;
+		engine.redeliverCursor = 7;
+		await engine.wipePerVaultState();
+		expect(engine.redeliverCursor).toBe(0);
+	});
+});

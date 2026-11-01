@@ -4058,7 +4058,10 @@ export class SyncEngine {
 		if (!Number.isInteger(seq) || (seq as number) <= this.catchupSeq) {
 			return landed === "applied" ? "applied" : "deferred";
 		}
-		rlog().info("crdt", `gap-heal fired: note=${noteId} seq=${seq} cursor=${this.catchupSeq}`);
+		// warn, not info: the backend e2e oracle waits on this line, and the log
+		// diet (min severity "warn") would otherwise never ship it. A heal means a
+		// fan-out was missed, which is worth a warn on its own.
+		rlog().warn("crdt", `gap-heal fired: note=${noteId} seq=${seq} cursor=${this.catchupSeq}`);
 		this.scheduleSeqHeal();
 		return "healing";
 	}
@@ -4102,6 +4105,7 @@ export class SyncEngine {
 		// seq feed — reset to 0 so the next catch-up replays the new vault from
 		// genesis (else a stale high seq would suppress it entirely).
 		this.catchupSeq = 0;
+		this.redeliverCursor = 0; // indexes the OLD vault's unacked-doc list
 		this.catchupId = null;
 		// Same cross-vault hazard for the manifest watermark (E1 #1065): a
 		// stale since_seq could integer-collide with the NEW vault's change_seq
@@ -5755,6 +5759,8 @@ export class SyncEngine {
 		// Resolve the note_id BEFORE clearing the map (removeDoc/reset below need
 		// it to tear down the right CRDT doc, keyed by id not path).
 		const crdtNoteId = !isBinary ? (this.noteIdMap?.get(path) ?? null) : null;
+		// A deleted note must not leave its convergence-hold timer to fire later.
+		if (crdtNoteId !== null) this.cancelHeldPush(crdtNoteId);
 		// The tombstone's seq fence for a LOCAL delete: the newest seq this device
 		// held for the note. Read before the sync-state row is dropped below.
 		const deleteSeq = this.syncState.get(normalizePath(path))?.seq;
@@ -8968,7 +8974,8 @@ export class SyncEngine {
 		this.crdtHealCooldown.set(noteId, this.time.now());
 		this.crdtEnrollment?.reset(noteId);
 		this.openRoom(noteId, "heal_pool");
-		rlog().info(
+		// warn: e2e oracle needle (see gap-heal fired); a heal is an anomaly.
+		rlog().warn(
 			"crdt",
 			`socket converge: re-handshake fired for ${noteRef(path)} note_id=${noteId}`,
 		);
@@ -9118,7 +9125,8 @@ export class SyncEngine {
 			// Via markServerKnown so the placeholder can only fill a hole, never
 			// overwrite an authoritative head this note already has.
 			if (staged.content) this.markServerKnown(path);
-			rlog().info(
+			// warn: e2e oracle needle (see gap-heal fired); only reached on a heal.
+			rlog().warn(
 				"crdt",
 				`socket converge: STEP2 committed ${noteRef(path)} note_id=${noteId}`,
 			);
@@ -9131,12 +9139,18 @@ export class SyncEngine {
 		this.releaseAfterHandshake(noteId, path);
 	}
 
-	/** Re-run a push `pushFile` held while this note's convergence was staged. */
-	private rearmHeldPush(noteId: string): void {
+	/** Drop a note's hold timer without re-running the push. True if one was set. */
+	private cancelHeldPush(noteId: string): boolean {
 		const timer = this.heldForConvergence.get(noteId);
-		if (timer === undefined) return;
+		if (timer === undefined) return false;
 		this.time.clearTimeout(timer);
 		this.heldForConvergence.delete(noteId);
+		return true;
+	}
+
+	/** Re-run a push `pushFile` held while this note's convergence was staged. */
+	private rearmHeldPush(noteId: string): void {
+		if (!this.cancelHeldPush(noteId)) return;
 		const path = this.noteIdMap?.pathForId(noteId);
 		const file = path ? this.app.vault.getFileByPath(normalizePath(path)) : null;
 		if (file !== null) this.handleModify(file);

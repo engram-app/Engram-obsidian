@@ -1096,6 +1096,37 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 	// them apart and `attempt N` is only a reliable tell in the second.
 	// -------------------------------------------------------------------------
 
+	test("the e2e oracle's socket-converge lines ship at warn severity", async () => {
+		const { initRemoteLog, destroyRemoteLog } = await import("../src/remote-log");
+		const logger = initRemoteLog();
+		const push = mock().mockResolvedValue(undefined);
+		logger.configure(push, "1.0.0", "desktop");
+		logger.setLevelThreshold("warn"); // the log diet's default (2eef1651)
+		logger.setEnabled(true);
+		const { engine } = crdtEngine();
+		engine.healCooldownMs = 0;
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		engine.importSyncState({ "owned.md": { hash: fnv1a("body"), version: 1, serverHash: "h0" } });
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "edit one",
+			content_hash: "h1",
+			version: 2,
+			mtime: 1,
+		} as any);
+		await engine.commitCrdtConvergence("note-id-1");
+		await logger.flush();
+		const lines = push.mock.calls.flatMap((c) => c[0] as { message: string }[]);
+		expect(lines.some((l) => l.message.includes("socket converge: re-handshake fired"))).toBe(true);
+		expect(lines.some((l) => l.message.includes("socket converge: STEP2 committed"))).toBe(true);
+		engine.destroy();
+		await destroyRemoteLog();
+	});
+
 	test("#484 benign: two episodes overlap — 2 fires, 1 commit, and serverHash lands on the NEWEST hash", async () => {
 		// The catch-up tick stages a new episode while the previous handshake is
 		// still in flight. The fresh content_hash OVERWRITES the prior stage
