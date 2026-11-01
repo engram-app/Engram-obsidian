@@ -277,7 +277,7 @@ const vi: Dict = {
 	"Ignored ({count})": "Bỏ qua ({count})",
 	"Ignored {path} — won't sync until restored from Sync Center.":
 		"Đã bỏ qua {path} — sẽ không đồng bộ hóa cho đến khi được khôi phục từ Trung tâm đồng bộ hóa.",
-	"Info (default)": "Thông tin (mặc định)",
+	Info: "Thông tin",
 	"Invalid API key": "Khóa API không hợp lệ",
 	"It's OK to email me about this": "Bạn có thể gửi email cho tôi về vấn đề này",
 	"Join our Discord": "Tham gia Discord của chúng tôi",
@@ -293,8 +293,8 @@ const vi: Dict = {
 	"Love it": "Rất thích",
 	"Make new vault": "Tạo kho lưu trữ mới",
 	"Manage account": "Quản lý tài khoản",
-	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
-		"Mức độ nghiêm trọng tối thiểu khi bật chẩn đoán. Mức độ cao hơn sẽ gửi ít dòng hơn. Mặc định: Thông tin.",
+	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Warnings and errors.":
+		"Mức độ nghiêm trọng tối thiểu khi chế độ gỡ lỗi được bật. Các mức độ cao hơn sẽ gửi ít dòng hơn. Mặc định: Cảnh báo và lỗi.",
 	"Missing on the server": "Mất trên máy chủ",
 	"Needs attention ({count})": "Cần xử lý ({count})",
 	"Network unavailable": "Mạng không khả dụng",
@@ -429,8 +429,8 @@ const vi: Dict = {
 	Send: "Gửi",
 	"Send debug logs. Note content stays private.":
 		"Gửi nhật ký gỡ lỗi. Nội dung ghi chú vẫn được bảo mật.",
-	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use.":
-		"Gửi chi tiết hoạt động đồng bộ hóa, kho lưu trữ và kết nối đến máy chủ để khắc phục sự cố, với theo dõi phân tán trên các yêu cầu. Chỉ gửi siêu dữ liệu, không bao giờ gửi nội dung ghi chú. Tắt nếu không cần.",
+	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Turns itself off after 24 hours.":
+		"Gửi thông tin chi tiết về quá trình đồng bộ hóa, kho lưu trữ và kết nối đến máy chủ để khắc phục sự cố, với theo dõi phân tán trên các yêu cầu. Chỉ gửi siêu dữ liệu, không bao giờ gửi nội dung ghi chú. Tự động tắt sau 24 giờ.",
 	"Send feedback": "Gửi phản hồi",
 	"Sending…": "Đang gửi…",
 	"Server error": "Lỗi máy chủ",
@@ -563,7 +563,7 @@ const vi: Dict = {
 		"Đang chờ xác thực — đã kết nối, quá trình này sẽ hoàn tất ngay lập tức.",
 	"Waiting for authorization — no live connection, checking every 30s.":
 		"Đang chờ xác thực — không có kết nối trực tiếp, kiểm tra mỗi 30 giây.",
-	"Warnings and errors": "Cảnh báo và lỗi",
+	"Warnings and errors (default)": "Cảnh báo và lỗi (mặc định)",
 	"WebSocket connected — live sync active":
 		"WebSocket đã kết nối — đồng bộ hóa trực tiếp đang hoạt động",
 	"What Engram does, and how to connect your vault, start to finish.":

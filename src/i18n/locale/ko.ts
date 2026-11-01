@@ -274,7 +274,7 @@ const ko: Dict = {
 	"Ignored ({count})": "제외됨 ({count})",
 	"Ignored {path} — won't sync until restored from Sync Center.":
 		"{path}을 무시함 — 동기화 센터에서 복원할 때까지 동기화되지 않습니다.",
-	"Info (default)": "정보 (기본값)",
+	Info: "정보",
 	"Invalid API key": "잘못된 API 키입니다",
 	"It's OK to email me about this": "이 문제에 대해 이메일로 문의하셔도 괜찮습니다",
 	"Join our Discord": "저희 Discord에 참여하세요",
@@ -291,8 +291,8 @@ const ko: Dict = {
 	"Love it": "매우 만족",
 	"Make new vault": "새 보관함 만들기",
 	"Manage account": "계정 관리",
-	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
-		"진단 기능 활성화 시 표시되는 최소 심각도 수준입니다. 높은 수준일수록 더 적은 정보가 전송됩니다. 기본값: 정보.",
+	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Warnings and errors.":
+		"진단 기능이 활성화된 상태에서 기본적으로 표시되는 심각도 수준입니다. 높은 수준일수록 전송되는 정보가 줄어듭니다. 기본값: 경고 및 오류.",
 	"Missing on the server": "서버에서 찾을 수 없음",
 	"Needs attention ({count})": "확인 필요 ({count})",
 	"Network unavailable": "네트워크 연결 안됨",
@@ -421,8 +421,8 @@ const ko: Dict = {
 	"Semantic search": "의미 검색",
 	Send: "보내기",
 	"Send debug logs. Note content stays private.": "디버그 로그 전송. 노트 내용은 비공개입니다.",
-	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use.":
-		"문제 해결을 위해 자세한 동기화, 보관함 및 연결 정보를 서버로 전송합니다. 요청에 대한 분산 추적 기능이 포함됩니다. 메타데이터만 전송하며, 노트 내용은 전송하지 않습니다. 일반 사용 시에는 이 기능을 끄십시오.",
+	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Turns itself off after 24 hours.":
+		"문제 해결을 위해 상세한 동기화, 보관함, 연결 정보를 서버로 전송합니다. 요청에 대한 분산 추적 기능이 포함됩니다. 메타데이터만 전송하며, 노트 내용은 전송하지 않습니다. 24시간 후 자동으로 꺼집니다.",
 	"Send feedback": "피드백 보내기",
 	"Sending…": "보내는 중…",
 	"Server error": "서버 오류",
@@ -555,7 +555,7 @@ const ko: Dict = {
 		"인증 대기 중 – 연결됨, 즉시 완료됩니다.",
 	"Waiting for authorization — no live connection, checking every 30s.":
 		"인증 대기 중 – 연결 없음, 30초마다 확인합니다.",
-	"Warnings and errors": "경고 및 오류",
+	"Warnings and errors (default)": "경고 및 오류 (기본값)",
 	"WebSocket connected — live sync active": "WebSocket 연결됨 — 실시간 동기화 활성화됨",
 	"What Engram does, and how to connect your vault, start to finish.":
 		"Engram이 무엇을 하는지, 그리고 보관함을 연결하는 방법을 처음부터 끝까지 알려드립니다.",

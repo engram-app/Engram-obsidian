@@ -16,6 +16,46 @@ export function migrateDiagnosticsEnabled(raw: Record<string, unknown> | undefin
 	return Boolean(raw.remoteLoggingEnabled || raw.diagnosticMode || raw.tracingEnabled);
 }
 
+/** How long diagnostics stays on after it is switched on. */
+export const DIAGNOSTICS_TTL_MS = 24 * 60 * 60 * 1000;
+
+/** Keep the diagnostics window honest, in place. Returns true when it just
+ *  EXPIRED (the caller must then apply the off state to the live logger).
+ *
+ *  - off: no stamp.
+ *  - on without a stamp: stamp `now`. That covers a fresh toggle (settings
+ *    tab, first-run checkbox, the e2e seed) AND every install upgrading from a
+ *    build without expiry. Git history shows diagnostics and all three legacy
+ *    toggles always defaulted OFF, so an "on" here was a user choice; it gets
+ *    a fresh 24h rather than being cut mid-debug-session.
+ *  - on and older than DIAGNOSTICS_TTL_MS: off, and the detail level back to
+ *    the "warn" default so the next opt-in does not inherit a firehose.
+ *
+ *  ponytail: checked on load, save and a 10-minute interval, so expiry can lag
+ *  by up to 10 minutes; tighten the interval if that ever matters. */
+export function reconcileDiagnosticsWindow(
+	settings: Pick<
+		EngramSyncSettings,
+		"diagnosticsEnabled" | "diagnosticsEnabledAt" | "remoteLogLevel"
+	>,
+	now: number,
+): boolean {
+	if (!settings.diagnosticsEnabled) {
+		settings.diagnosticsEnabledAt = null;
+		return false;
+	}
+	const at = settings.diagnosticsEnabledAt;
+	if (typeof at !== "number" || !Number.isFinite(at) || at > now) {
+		settings.diagnosticsEnabledAt = now;
+		return false;
+	}
+	if (now - at < DIAGNOSTICS_TTL_MS) return false;
+	settings.diagnosticsEnabled = false;
+	settings.diagnosticsEnabledAt = null;
+	settings.remoteLogLevel = "warn";
+	return true;
+}
+
 /** Settings that used to exist and no longer do. They are deleted from the
  *  in-memory object on load, so the next save persists data.json without them.
  *
