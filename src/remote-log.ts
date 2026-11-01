@@ -164,6 +164,13 @@ export class RemoteLogger {
 			this.startTimer();
 		} else {
 			this.stopTimer();
+			// The user turned logging off: drop, do not ship, everything that
+			// only consent allowed. Pending repeat windows would otherwise turn
+			// into "x N more" summaries on a later flush (test_66 caught 29 such
+			// rows after disable). Forced anomalies are exempt from the switch,
+			// so they stay and still go out.
+			for (const [key, r] of this.repeats) if (!r.forced) this.repeats.delete(key);
+			this.buffer = this.buffer.filter((e) => e.forced);
 			void this.flush();
 		}
 	}
@@ -322,7 +329,8 @@ export class RemoteLogger {
 		for (const [key, r] of this.repeats) {
 			if (!all && now - r.since < REPEAT_WINDOW_MS) break;
 			this.repeats.delete(key);
-			if (r.count === 0) continue;
+			// Never emit a consent-only summary while logging is off.
+			if (r.count === 0 || (!r.forced && !this.enabled)) continue;
 			const secs = Math.max(1, Math.round((now - r.since) / 1000));
 			this.enqueue(
 				r.level,
