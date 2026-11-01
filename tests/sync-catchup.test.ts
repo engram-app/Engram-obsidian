@@ -1109,7 +1109,9 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
 		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
 		engine.setLiveBoundCheck((p: string) => p === "owned.md");
-		engine.importSyncState({ "owned.md": { hash: fnv1a("body"), version: 1, serverHash: "h0" } });
+		engine.importSyncState({
+			"owned.md": { hash: fnv1a("body"), version: 1, serverHash: "h0" },
+		});
 		await engine.applyChange({
 			path: "owned.md",
 			action: "upsert",
@@ -1121,8 +1123,12 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		await engine.commitCrdtConvergence("note-id-1");
 		await logger.flush();
 		const lines = push.mock.calls.flatMap((c) => c[0] as { message: string }[]);
-		expect(lines.some((l) => l.message.includes("socket converge: re-handshake fired"))).toBe(true);
-		expect(lines.some((l) => l.message.includes("socket converge: STEP2 committed"))).toBe(true);
+		expect(lines.some((l) => l.message.includes("socket converge: re-handshake fired"))).toBe(
+			true,
+		);
+		expect(lines.some((l) => l.message.includes("socket converge: STEP2 committed"))).toBe(
+			true,
+		);
 		engine.destroy();
 		await destroyRemoteLog();
 	});
