@@ -7,8 +7,10 @@
  */
 import { describe, expect, test } from "bun:test";
 import {
+	DIAGNOSTICS_TTL_MS,
 	migrateDiagnosticsEnabled,
 	RETIRED_SETTING_KEYS,
+	reconcileDiagnosticsWindow,
 	stripRetiredSettings,
 } from "../src/settings-migrate";
 import { DEFAULT_SETTINGS } from "../src/types";
@@ -112,5 +114,53 @@ describe("stripRetiredSettings", () => {
 		const settings: Record<string, unknown> = { featureFlags: { crdtRecording: true } };
 		stripRetiredSettings(settings);
 		expect(settings.featureFlags).toBeUndefined();
+	});
+});
+
+describe("reconcileDiagnosticsWindow (24h auto-expiry)", () => {
+	const T0 = 1_700_000_000_000;
+	const on = (at: number | null, level: "warn" | "info" | "debug" = "info") => ({
+		diagnosticsEnabled: true,
+		diagnosticsEnabledAt: at,
+		remoteLogLevel: level as "warn" | "info" | "debug" | "error",
+	});
+
+	test("an upgrade (on, no stamp) gets a fresh window, not an instant cut", () => {
+		const s = on(null);
+		expect(reconcileDiagnosticsWindow(s, T0)).toBe(false);
+		expect(s.diagnosticsEnabled).toBe(true);
+		expect(s.diagnosticsEnabledAt).toBe(T0);
+	});
+
+	test("still on inside the window", () => {
+		const s = on(T0);
+		expect(reconcileDiagnosticsWindow(s, T0 + DIAGNOSTICS_TTL_MS - 1)).toBe(false);
+		expect(s.diagnosticsEnabled).toBe(true);
+	});
+
+	test("expires at 24h and resets the detail level to warn", () => {
+		const s = on(T0, "debug");
+		expect(reconcileDiagnosticsWindow(s, T0 + DIAGNOSTICS_TTL_MS)).toBe(true);
+		expect(s).toEqual({
+			diagnosticsEnabled: false,
+			diagnosticsEnabledAt: null,
+			remoteLogLevel: "warn",
+		});
+	});
+
+	test("a stamp from the future (clock skew) restarts the window", () => {
+		const s = on(T0 + 999_999_999);
+		reconcileDiagnosticsWindow(s, T0);
+		expect(s.diagnosticsEnabledAt).toBe(T0);
+	});
+
+	test("off clears the stamp", () => {
+		const s = {
+			diagnosticsEnabled: false,
+			diagnosticsEnabledAt: T0,
+			remoteLogLevel: "warn" as const,
+		};
+		expect(reconcileDiagnosticsWindow(s, T0)).toBe(false);
+		expect(s.diagnosticsEnabledAt).toBeNull();
 	});
 });

@@ -61,7 +61,7 @@ export function renderAdvancedTab(ctx: TabContext): void {
 		.setName(t("Diagnostics"))
 		.setDesc(
 			t(
-				"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use.",
+				"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Turns itself off after 24 hours.",
 			),
 		)
 		.addToggle((toggle) =>
@@ -75,15 +75,15 @@ export function renderAdvancedTab(ctx: TabContext): void {
 		.setName(t("Diagnostics detail"))
 		.setDesc(
 			t(
-				"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.",
+				"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Warnings and errors.",
 			),
 		)
 		.addDropdown((dropdown) =>
 			dropdown
 				.addOptions({
 					error: t("Errors only"),
-					warn: t("Warnings and errors"),
-					info: t("Info (default)"),
+					warn: t("Warnings and errors (default)"),
+					info: t("Info"),
 					debug: t("Debug (verbose)"),
 				})
 				.setValue(plugin.settings.remoteLogLevel)
