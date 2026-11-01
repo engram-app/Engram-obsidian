@@ -8,6 +8,7 @@ import {
 	destroyRemoteLog,
 	initRemoteLog,
 	REPEAT_WINDOW_MS,
+	RESERVED_LINE_BUDGET,
 	type RemoteLogEntry,
 	RemoteLogger,
 	rlog,
@@ -510,11 +511,11 @@ describe("repeat coalescing", () => {
 	let now = 1_000_000;
 	let realNow: () => number;
 	beforeEach(() => {
-		realNow = Date.now;
-		Date.now = () => now;
+		realNow = performance.now;
+		performance.now = () => now;
 	});
 	afterEach(() => {
-		Date.now = realNow;
+		performance.now = realNow;
 	});
 
 	test("identical lines inside the window ship once, then one xN summary", async () => {
@@ -561,11 +562,11 @@ describe("line budget", () => {
 	let now = 5_000_000;
 	let realNow: () => number;
 	beforeEach(() => {
-		realNow = Date.now;
-		Date.now = () => now;
+		realNow = performance.now;
+		performance.now = () => now;
 	});
 	afterEach(() => {
-		Date.now = realNow;
+		performance.now = realNow;
 	});
 
 	test("default budget sits under the server's 500 lines / 10 min cap", () => {
@@ -573,24 +574,61 @@ describe("line budget", () => {
 		expect(BUDGET_WINDOW_MS).toBe(10 * 60_000);
 	});
 
-	test("a loop of distinct lines stops at the budget, then reports the overflow once", async () => {
+	test("a loop of distinct lines stops at the budget and says so at once", async () => {
 		const { logger, sent } = makeLogger();
 		for (let i = 0; i < 1000; i++) {
 			logger.warn("queue", `retry ${i}`);
 			if (i % 50 === 49) await logger.flush();
 		}
 		await logger.flush();
-		expect(sent).toHaveLength(DEFAULT_LINE_BUDGET);
+		expect(sent).toHaveLength(DEFAULT_LINE_BUDGET + 1);
+		const notice = sent[DEFAULT_LINE_BUDGET];
+		expect(notice.message).toBe(`log_budget_exhausted budget=${DEFAULT_LINE_BUDGET}`);
+		expect(notice.forced).toBe(true);
 
 		now += BUDGET_WINDOW_MS;
 		logger.warn("queue", "after the window");
 		await logger.flush();
-		const tail = sent.slice(DEFAULT_LINE_BUDGET);
-		expect(tail[0].message).toBe(
-			`log_budget_exhausted dropped=800 budget=${DEFAULT_LINE_BUDGET}`,
+		expect(sent.slice(DEFAULT_LINE_BUDGET + 1).map((e) => e.message)).toEqual([
+			`log_budget_dropped dropped=800 budget=${DEFAULT_LINE_BUDGET}`,
+			"after the window",
+		]);
+	});
+
+	test("errors and forced anomalies still ship after the budget is spent", async () => {
+		const { logger, sent } = makeLogger();
+		for (let i = 0; i < DEFAULT_LINE_BUDGET + 5; i++) {
+			logger.warn("queue", `noise ${i}`);
+			if (i % 50 === 49) await logger.flush();
+		}
+		logger.error("sync", "the one useful error");
+		logger.anomaly("sync", "first_sync_drop", { n: 3 });
+		await logger.flush();
+		const msgs = sent.map((e) => e.message);
+		expect(msgs).toContain("the one useful error");
+		expect(msgs).toContain("first_sync_drop n=3");
+	});
+
+	test("the reserve for errors is finite too", async () => {
+		const { logger, sent } = makeLogger();
+		for (let i = 0; i < RESERVED_LINE_BUDGET + 10; i++) {
+			logger.error("sync", `err ${i}`);
+			if (i % 10 === 9) await logger.flush();
+		}
+		await logger.flush();
+		expect(sent.filter((e) => e.level === "error")).toHaveLength(RESERVED_LINE_BUDGET);
+	});
+
+	test("destroy ships the pending drop count", async () => {
+		const { logger, sent } = makeLogger();
+		for (let i = 0; i < DEFAULT_LINE_BUDGET + 3; i++) {
+			logger.warn("queue", `noise ${i}`);
+			if (i % 50 === 49) await logger.flush();
+		}
+		await logger.destroy();
+		expect(sent.at(-1)?.message).toBe(
+			`log_budget_dropped dropped=3 budget=${DEFAULT_LINE_BUDGET}`,
 		);
-		expect(tail[0].forced).toBe(true);
-		expect(tail[1].message).toBe("after the window");
 	});
 
 	test("budget 0 is unlimited (the e2e suite seeds this)", async () => {
