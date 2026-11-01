@@ -3,8 +3,11 @@
  */
 import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import {
+	BUDGET_WINDOW_MS,
+	DEFAULT_LINE_BUDGET,
 	destroyRemoteLog,
 	initRemoteLog,
+	REPEAT_WINDOW_MS,
 	type RemoteLogEntry,
 	RemoteLogger,
 	rlog,
@@ -34,6 +37,7 @@ describe("RemoteLogger basics", () => {
 		const pushFn = mock().mockResolvedValue(undefined);
 		logger.configure(pushFn, "1.0.0", "desktop");
 		logger.setEnabled(true);
+		logger.setLevelThreshold("info");
 		logger.info("sync", "started");
 		logger.flush();
 		expect(pushFn).toHaveBeenCalledTimes(1);
@@ -77,6 +81,7 @@ describe("RemoteLogger basics", () => {
 		const pushFn = mock().mockResolvedValue(undefined);
 		logger.configure(pushFn, "1.0.0", "desktop");
 		logger.setEnabled(true);
+		logger.setLevelThreshold("info");
 		logger.info("test", "msg");
 		logger.flush();
 		const entry = pushFn.mock.calls[0][0][0];
@@ -90,7 +95,7 @@ describe("RemoteLogger basics", () => {
 // ---------------------------------------------------------------------------
 
 describe("RemoteLogger level threshold", () => {
-	test("default threshold ships all current levels (info/warn/error)", () => {
+	test("default threshold is warn: info stays on the device", () => {
 		const logger = new RemoteLogger();
 		const pushFn = mock().mockResolvedValue(undefined);
 		logger.configure(pushFn, "1.0.0", "desktop");
@@ -100,7 +105,10 @@ describe("RemoteLogger level threshold", () => {
 		logger.error("cat", "an error line");
 		logger.flush();
 		expect(pushFn).toHaveBeenCalledTimes(1);
-		expect(pushFn.mock.calls[0][0]).toHaveLength(3);
+		expect(pushFn.mock.calls[0][0].map((e: RemoteLogEntry) => e.level)).toEqual([
+			"warn",
+			"error",
+		]);
 		logger.destroy();
 	});
 
@@ -168,6 +176,7 @@ describe("RemoteLogger flush threshold", () => {
 		const pushFn = mock().mockResolvedValue(undefined);
 		logger.configure(pushFn, "1.0.0", "desktop");
 		logger.setEnabled(true);
+		logger.setLevelThreshold("info");
 
 		for (let i = 0; i < 19; i++) {
 			logger.info("test", `msg ${i}`);
@@ -228,6 +237,7 @@ describe("RemoteLogger enable/disable", () => {
 		const pushFn = mock().mockResolvedValue(undefined);
 		logger.configure(pushFn, "1.0.0", "desktop");
 		logger.setEnabled(true);
+		logger.setLevelThreshold("info");
 		logger.info("test", "msg");
 		logger.setEnabled(false);
 		expect(pushFn).toHaveBeenCalledTimes(1);
@@ -269,6 +279,7 @@ describe("RemoteLogger destroy", () => {
 		const pushFn = mock().mockResolvedValue(undefined);
 		logger.configure(pushFn, "1.0.0", "desktop");
 		logger.setEnabled(true);
+		logger.setLevelThreshold("info");
 		logger.info("test", "final");
 		logger.destroy();
 		expect(pushFn).toHaveBeenCalledTimes(1);
@@ -324,6 +335,7 @@ function makeLogger() {
 		"desktop",
 	);
 	logger.setEnabled(true);
+	logger.setLevelThreshold("info");
 	return { logger, sent };
 }
 
@@ -387,7 +399,7 @@ describe("verbose remote logging reaches Loki", () => {
 		expect(sent[0]?.[0]?.diagnostic).toBe(true);
 	});
 
-	test("at the default level, info entries do NOT opt in (no fleet-wide flood)", async () => {
+	test("at info, info entries do NOT opt in (no fleet-wide flood)", async () => {
 		const { logger, sent } = loggerAt("info");
 
 		logger.info("crdt", "routine chatter");
@@ -487,5 +499,108 @@ describe("anomaly() bypasses the diagnostics gate", () => {
 		await logger.flush();
 
 		expect(sent.length).toBe(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Repeat coalescing + line budget (client log diet, #675)
+// ---------------------------------------------------------------------------
+
+describe("repeat coalescing", () => {
+	let now = 1_000_000;
+	let realNow: () => number;
+	beforeEach(() => {
+		realNow = Date.now;
+		Date.now = () => now;
+	});
+	afterEach(() => {
+		Date.now = realNow;
+	});
+
+	test("identical lines inside the window ship once, then one xN summary", async () => {
+		const { logger, sent } = makeLogger();
+		for (let i = 0; i < 4812; i++) logger.warn("queue", "Echo skip (attachment): n7 | hash=42");
+		await logger.flush();
+		expect(sent).toHaveLength(1);
+
+		now += REPEAT_WINDOW_MS;
+		await logger.flush();
+		expect(sent).toHaveLength(2);
+		expect(sent[1].message).toBe("Echo skip (attachment): n7 | hash=42 x 4,811 more in 60s");
+		expect(sent[1].level).toBe("warn");
+	});
+
+	test("lines that differ (a seq, a note id) are not merged", async () => {
+		const { logger, sent } = makeLogger();
+		logger.info("crdt", "gap-heal fired: note=a seq=1");
+		logger.info("crdt", "gap-heal fired: note=a seq=2");
+		await logger.flush();
+		expect(sent).toHaveLength(2);
+	});
+
+	test("destroy ships pending summaries", async () => {
+		const { logger, sent } = makeLogger();
+		logger.warn("queue", "same");
+		logger.warn("queue", "same");
+		await logger.destroy();
+		expect(sent.map((e) => e.message)).toEqual(["same", "same x 1 more in 1s"]);
+	});
+
+	test("a repeated anomaly keeps its forced flag on the summary", async () => {
+		const { logger, sent } = makeLogger();
+		logger.setEnabled(false);
+		logger.anomaly("sync", "drop_seen", { n: 1 });
+		logger.anomaly("sync", "drop_seen", { n: 1 });
+		now += REPEAT_WINDOW_MS;
+		await logger.flush();
+		expect(sent.map((e) => e.forced)).toEqual([true, true]);
+	});
+});
+
+describe("line budget", () => {
+	let now = 5_000_000;
+	let realNow: () => number;
+	beforeEach(() => {
+		realNow = Date.now;
+		Date.now = () => now;
+	});
+	afterEach(() => {
+		Date.now = realNow;
+	});
+
+	test("default budget sits under the server's 500 lines / 10 min cap", () => {
+		expect(DEFAULT_LINE_BUDGET).toBeLessThan(500);
+		expect(BUDGET_WINDOW_MS).toBe(10 * 60_000);
+	});
+
+	test("a loop of distinct lines stops at the budget, then reports the overflow once", async () => {
+		const { logger, sent } = makeLogger();
+		for (let i = 0; i < 1000; i++) {
+			logger.warn("queue", `retry ${i}`);
+			if (i % 50 === 49) await logger.flush();
+		}
+		await logger.flush();
+		expect(sent).toHaveLength(DEFAULT_LINE_BUDGET);
+
+		now += BUDGET_WINDOW_MS;
+		logger.warn("queue", "after the window");
+		await logger.flush();
+		const tail = sent.slice(DEFAULT_LINE_BUDGET);
+		expect(tail[0].message).toBe(
+			`log_budget_exhausted dropped=800 budget=${DEFAULT_LINE_BUDGET}`,
+		);
+		expect(tail[0].forced).toBe(true);
+		expect(tail[1].message).toBe("after the window");
+	});
+
+	test("budget 0 is unlimited (the e2e suite seeds this)", async () => {
+		const { logger, sent } = makeLogger();
+		logger.setLineBudget(0);
+		for (let i = 0; i < 1000; i++) {
+			logger.info("queue", `line ${i}`);
+			if (i % 50 === 49) await logger.flush();
+		}
+		await logger.flush();
+		expect(sent).toHaveLength(1000);
 	});
 });

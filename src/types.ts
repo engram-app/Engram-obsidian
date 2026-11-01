@@ -44,13 +44,22 @@ export interface EngramSyncSettings {
 	 *  Collapses the former remoteLoggingEnabled / diagnosticMode / tracingEnabled
 	 *  trio (migrated in settings-migrate.ts). */
 	diagnosticsEnabled: boolean;
+	/** When diagnostics was last switched on (epoch ms). Diagnostics turns itself
+	 *  off DIAGNOSTICS_TTL_MS later, so a forgotten toggle cannot upload for
+	 *  months. Null while off. See reconcileDiagnosticsWindow. */
+	diagnosticsEnabledAt: number | null;
 	/** Minimum severity that ships while `diagnosticsEnabled` is on. Entries
 	 *  below this threshold are dropped before buffering, so they never occupy
 	 *  the ring buffer or count toward the flush threshold. This is a VOLUME
-	 *  dial, orthogonal to the on/off switch above. Default "info" preserves
-	 *  today's behavior — no emitting call site logs below info. "debug" is
-	 *  reserved for future verbose logging behind the dial. */
+	 *  dial, orthogonal to the on/off switch above. Default "warn": info and
+	 *  debug are an explicit choice, and reset to "warn" when diagnostics
+	 *  expires. */
 	remoteLogLevel: "error" | "warn" | "info" | "debug";
+	/** Remote log lines allowed per 10 minutes (remote-log.ts
+	 *  DEFAULT_LINE_BUDGET when absent). Not in the UI: the backend e2e suite
+	 *  seeds 0 (unlimited) because its oracle reads info lines from a
+	 *  session-long device. */
+	remoteLogBudget?: number;
 	/** Server-assigned vault ID. Populated after registration. Null until first sync. */
 	vaultId: string | null;
 	/** Server-side name for the selected vault, mirrored from the registration
@@ -117,7 +126,8 @@ export const DEFAULT_SETTINGS: EngramSyncSettings = {
 	ignorePatterns: "",
 	debounceMs: 2000,
 	diagnosticsEnabled: false,
-	remoteLogLevel: "info",
+	diagnosticsEnabledAt: null,
+	remoteLogLevel: "warn",
 	vaultId: null,
 	clientId: "",
 	planState: null,
