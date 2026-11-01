@@ -1280,8 +1280,11 @@ export class ProviderRegistry {
 	 *  empty placeholder may be overwritten wholesale. For those "would tearing
 	 *  this down destroy something" is the question, and a receipt does not
 	 *  answer it — the doc still holds the only copy of state the room path
-	 *  would need to re-advertise. Only the room-free READ gate may consult
-	 *  this, so relaxing it can cost a wasted room and never a file.
+	 *  would need to re-advertise. The room-free READ gate consults it, where
+	 *  relaxing it can cost a wasted room and never a file. The delete
+	 *  keep-both gate (`shouldKeepDriftCopy`) consults it too, but only
+	 *  together with "disk holds exactly the doc's text": a server delete makes
+	 *  re-advertising moot, and with both true nothing local exists to lose.
 	 *
 	 *  A buffered frame vetoes the receipt: `buffer.length > 0` is a hard fact
 	 *  about frames that never reached the transport, not a handshake proxy. */

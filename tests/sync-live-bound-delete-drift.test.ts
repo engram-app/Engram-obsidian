@@ -37,7 +37,13 @@ import { DEFAULT_SETTINGS, type NoteChange } from "../src/types";
  *  `deliverable` controls whether the provider's transport accepts frames:
  *  true  → the doc reaches isFullySynced (nothing buffered, server has it all)
  *  false → frames buffer locally (offline edits the server has NOT seen) */
-async function liveBoundScenario(opts: { dbPrefix: string; deliverable: boolean }) {
+async function liveBoundScenario(opts: {
+	dbPrefix: string;
+	deliverable: boolean;
+	/** Reopen a registry over this prefix's existing IndexedDB instead of
+	 *  seeding a fresh doc. The doc is left un-hydrated. */
+	reopen?: boolean;
+}) {
 	const disk = new Map<string, string>([["a.md", "BASE typed-in-obsidian"]]);
 	const created: string[] = [];
 
@@ -48,6 +54,11 @@ async function liveBoundScenario(opts: { dbPrefix: string; deliverable: boolean 
 			disk.set("a.md", content);
 		},
 	});
+	const returned = {
+		mgr,
+		disk,
+		conflictCopies: () => created.filter((p) => p.includes("(conflict ")),
+	};
 
 	const tfile = (p: string) => new TFile(p);
 	const mockApp = {
@@ -94,6 +105,7 @@ async function liveBoundScenario(opts: { dbPrefix: string; deliverable: boolean 
 	);
 	(e as unknown as { confirmedNoteIds: Set<string> }).confirmedNoteIds.add("id-a");
 	e.setLiveBoundCheck((p) => p === "a.md");
+	if (opts.reopen) return { e, ...returned };
 
 	// Seed the doc so the note has a real room.
 	const server = new Y.Doc();
@@ -174,5 +186,109 @@ describe("live-bound note delete drift", () => {
 		// The server never acknowledged this doc's frames — deleting the room
 		// would destroy them, so the keep-both copy is correct here.
 		expect(conflictCopies()).toHaveLength(1);
+	});
+});
+
+describe("delete after a socket resume", () => {
+	// Engram e2e test_cold_heal_room_budget (run 41273017448): a device with NO
+	// local edits wrote "(conflict …)" copies when the server deleted notes
+	// right after a resume. A disconnect wipes every provider's handshake
+	// `synced` flag (clearSynced), so `hasUndeliveredOps` reads true for any
+	// resident doc whose heal handshake has not landed yet, while its disk
+	// already holds the server's content. Nothing local exists to preserve.
+	test("a resident doc that holds only server state writes no conflict copy", async () => {
+		const { e, mgr, disk, conflictCopies } = await liveBoundScenario({
+			dbPrefix: "lb-resumed",
+			deliverable: true,
+		});
+		e.setLiveBoundCheck(() => false);
+		// Disk holds exactly what the doc holds; the baseline lags behind it
+		// (the staged convergence commits only when the heal handshake lands).
+		disk.set("a.md", "BASE");
+		e.importSyncState({ "a.md": { hash: fnv1a("OLDER") } });
+		// Socket drop + resume: synced marks wiped, no handshake answered yet.
+		mgr.clearSynced();
+		mgr.setConnected(false);
+		mgr.setConnected(true);
+		expect(mgr.hasUndeliveredOps("id-a")).toBe(true);
+
+		await e.applyChange(tombstone("a.md"));
+
+		expect(conflictCopies()).toEqual([]);
+	});
+
+	test("an edit in the doc and on disk but not on the server keeps its copy", async () => {
+		const { e, mgr, disk, conflictCopies } = await liveBoundScenario({
+			dbPrefix: "lb-resumed-undelivered-edit",
+			deliverable: true,
+		});
+		e.setLiveBoundCheck(() => false);
+		// Offline: the edit lands in the doc and is flushed to disk identically,
+		// so only the delivery receipt can tell it was never sent.
+		mgr.clearSynced();
+		mgr.setConnected(false);
+		await mgr.applyLocalEdit("id-a", "BASE edited-offline");
+		disk.set("a.md", await mgr.projectedText("id-a"));
+		e.importSyncState({ "a.md": { hash: fnv1a("BASE") } });
+		mgr.setConnected(true);
+
+		await e.applyChange(tombstone("a.md"));
+
+		expect(conflictCopies()).toHaveLength(1);
+	});
+
+	test("disk drift the doc never saw still keeps a conflict copy", async () => {
+		const { e, mgr, disk, conflictCopies } = await liveBoundScenario({
+			dbPrefix: "lb-resumed-drift",
+			deliverable: true,
+		});
+		e.setLiveBoundCheck(() => false);
+		disk.set("a.md", "BASE edited-while-offline");
+		e.importSyncState({ "a.md": { hash: fnv1a("BASE") } });
+		mgr.clearSynced();
+		mgr.setConnected(false);
+		mgr.setConnected(true);
+
+		await e.applyChange(tombstone("a.md"));
+
+		expect(conflictCopies()).toHaveLength(1);
+	});
+});
+
+describe("delete keep-both gate reads the HYDRATED doc", () => {
+	// Review of #678: an entry `ensureEntrySync` just created holds an EMPTY
+	// doc until IndexedDB loads, and the delivery receipt of an empty doc reads
+	// true. Reading the receipt before the projection skipped the copy of an
+	// edit that was persisted locally but never delivered.
+	test("an undelivered persisted edit keeps its copy while the doc is still loading", async () => {
+		const prefix = "lb-hydrating";
+		const first = new ProviderRegistry({
+			dbPrefix: prefix,
+			send: () => false,
+			onFlushToDisk: async () => {},
+		});
+		const server = new Y.Doc();
+		server.getText("content").insert(0, "BASE");
+		await first.applyRemoteUpdate("id-a", Y.encodeStateAsUpdate(server));
+		await first.applyLocalEdit("id-a", "BASE local-only");
+		const persisted = await first.projectedText("id-a");
+		expect(persisted).toContain("local-only");
+		await first.destroyAll();
+
+		const { e, mgr, disk, conflictCopies } = await liveBoundScenario({
+			dbPrefix: prefix,
+			deliverable: false,
+			reopen: true,
+		});
+		e.setLiveBoundCheck(() => false);
+		disk.set("a.md", persisted);
+		e.importSyncState({ "a.md": { hash: fnv1a("BASE") } });
+		// Something (an editor bind, catch-up) touches the doc: resident, not loaded.
+		mgr.residentText("id-a");
+
+		await e.applyChange(tombstone("a.md"));
+
+		expect(conflictCopies()).toHaveLength(1);
+		await mgr.destroyAll();
 	});
 });
