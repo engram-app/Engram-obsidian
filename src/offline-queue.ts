@@ -137,8 +137,8 @@ export class OfflineQueue {
 
 	/** The stored key for (path, vaultId). An entry persisted WITHOUT a vaultId
 	 *  (older builds, or enqueued before the vault registered) sits under the
-	 *  bare path, while callers address it by the active vault — the vault such
-	 *  an entry belongs to (SyncEngine.entryVaultId). Fall back to the bare key
+	 *  bare path, while callers address it by the active vault (the vault such
+	 *  an entry belongs to, see SyncEngine.entryVaultId). Fall back to the bare key
 	 *  so every lookup and removal reaches it. Without this the drain's dequeue
 	 *  was a no-op and the entry re-drained on every flush (#675: 212-260k
 	 *  `Echo skip (attachment)` lines a day from one device). */
