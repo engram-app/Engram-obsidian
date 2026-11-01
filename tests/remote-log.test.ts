@@ -233,15 +233,19 @@ describe("RemoteLogger ring buffer", () => {
 // ---------------------------------------------------------------------------
 
 describe("RemoteLogger enable/disable", () => {
-	test("disabling flushes remaining entries", () => {
+	test("disabling drops buffered non-forced entries instead of shipping them", () => {
 		const logger = new RemoteLogger();
 		const pushFn = mock().mockResolvedValue(undefined);
 		logger.configure(pushFn, "1.0.0", "desktop");
 		logger.setEnabled(true);
 		logger.setLevelThreshold("info");
 		logger.info("test", "msg");
+		logger.anomaly("sync", "still_ships");
 		logger.setEnabled(false);
 		expect(pushFn).toHaveBeenCalledTimes(1);
+		expect(pushFn.mock.calls[0][0].map((e: RemoteLogEntry) => e.message)).toEqual([
+			"still_ships",
+		]);
 		logger.destroy();
 	});
 });
@@ -537,6 +541,20 @@ describe("repeat coalescing", () => {
 		logger.info("crdt", "gap-heal fired: note=a seq=2");
 		await logger.flush();
 		expect(sent).toHaveLength(2);
+	});
+
+	// test_66 (Engram#2370): 29 "x N more" rows reached the server after the
+	// user turned logging off, because flush() closed the repeat windows.
+	test("no repeat summary ships after logging is disabled", async () => {
+		const { logger, sent } = makeLogger();
+		logger.info("channel", "Joined crdt:x");
+		logger.info("channel", "Joined crdt:x");
+		await logger.flush();
+		logger.setEnabled(false);
+		now += REPEAT_WINDOW_MS + 1000;
+		await logger.flush();
+		await logger.destroy();
+		expect(sent.filter((e) => !e.forced).map((e) => e.message)).toEqual(["Joined crdt:x"]);
 	});
 
 	test("destroy ships pending summaries", async () => {
