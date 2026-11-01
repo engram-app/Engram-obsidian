@@ -2463,13 +2463,18 @@ export class SyncEngine {
 		if (!this.needsColdReconcile(normalized, disk)) return false;
 		if (!noteId || typeof this.crdt?.hasUndeliveredOps !== "function") return true;
 		if (!this.crdt.hasUndeliveredOps(noteId)) return false;
-		if (this.crdt.hasCurrentDeliveryReceipt?.(noteId) !== true) return true;
+		// Project FIRST: it awaits hydration (and the persisted ack load). An
+		// entry still loading holds an empty doc, whose receipt reads true.
+		let docText: string;
 		try {
-			return (await this.crdt.projectedText(noteId)) !== disk;
+			docText = await this.crdt.projectedText(noteId);
 		} catch {
 			// Unreadable doc: keep the copy, the data-safe answer.
 			return true;
 		}
+		// No await between this read and the compare.
+		if (this.crdt.hasCurrentDeliveryReceipt?.(noteId) !== true) return true;
+		return docText !== disk;
 	}
 
 	/** The doc's current text when `normalized` maps to a doc with history,

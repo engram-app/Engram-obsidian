@@ -37,7 +37,13 @@ import { DEFAULT_SETTINGS, type NoteChange } from "../src/types";
  *  `deliverable` controls whether the provider's transport accepts frames:
  *  true  → the doc reaches isFullySynced (nothing buffered, server has it all)
  *  false → frames buffer locally (offline edits the server has NOT seen) */
-async function liveBoundScenario(opts: { dbPrefix: string; deliverable: boolean }) {
+async function liveBoundScenario(opts: {
+	dbPrefix: string;
+	deliverable: boolean;
+	/** Reopen a registry over this prefix's existing IndexedDB instead of
+	 *  seeding a fresh doc. The doc is left un-hydrated. */
+	reopen?: boolean;
+}) {
 	const disk = new Map<string, string>([["a.md", "BASE typed-in-obsidian"]]);
 	const created: string[] = [];
 
@@ -48,6 +54,11 @@ async function liveBoundScenario(opts: { dbPrefix: string; deliverable: boolean 
 			disk.set("a.md", content);
 		},
 	});
+	const returned = {
+		mgr,
+		disk,
+		conflictCopies: () => created.filter((p) => p.includes("(conflict ")),
+	};
 
 	const tfile = (p: string) => new TFile(p);
 	const mockApp = {
@@ -94,6 +105,7 @@ async function liveBoundScenario(opts: { dbPrefix: string; deliverable: boolean 
 	);
 	(e as unknown as { confirmedNoteIds: Set<string> }).confirmedNoteIds.add("id-a");
 	e.setLiveBoundCheck((p) => p === "a.md");
+	if (opts.reopen) return { e, ...returned };
 
 	// Seed the doc so the note has a real room.
 	const server = new Y.Doc();
@@ -220,5 +232,43 @@ describe("delete after a socket resume", () => {
 		await e.applyChange(tombstone("a.md"));
 
 		expect(conflictCopies()).toHaveLength(1);
+	});
+});
+
+describe("delete keep-both gate reads the HYDRATED doc", () => {
+	// Review of #678: an entry `ensureEntrySync` just created holds an EMPTY
+	// doc until IndexedDB loads, and the delivery receipt of an empty doc reads
+	// true. Reading the receipt before the projection skipped the copy of an
+	// edit that was persisted locally but never delivered.
+	test("an undelivered persisted edit keeps its copy while the doc is still loading", async () => {
+		const prefix = "lb-hydrating";
+		const first = new ProviderRegistry({
+			dbPrefix: prefix,
+			send: () => false,
+			onFlushToDisk: async () => {},
+		});
+		const server = new Y.Doc();
+		server.getText("content").insert(0, "BASE");
+		await first.applyRemoteUpdate("id-a", Y.encodeStateAsUpdate(server));
+		await first.applyLocalEdit("id-a", "BASE local-only");
+		const persisted = await first.projectedText("id-a");
+		expect(persisted).toContain("local-only");
+		await first.destroyAll();
+
+		const { e, mgr, disk, conflictCopies } = await liveBoundScenario({
+			dbPrefix: prefix,
+			deliverable: false,
+			reopen: true,
+		});
+		e.setLiveBoundCheck(() => false);
+		disk.set("a.md", persisted);
+		e.importSyncState({ "a.md": { hash: fnv1a("BASE") } });
+		// Something (an editor bind, catch-up) touches the doc: resident, not loaded.
+		mgr.residentText("id-a");
+
+		await e.applyChange(tombstone("a.md"));
+
+		expect(conflictCopies()).toHaveLength(1);
+		await mgr.destroyAll();
 	});
 });
