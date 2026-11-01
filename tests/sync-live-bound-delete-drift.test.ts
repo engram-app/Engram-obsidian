@@ -217,6 +217,26 @@ describe("delete after a socket resume", () => {
 		expect(conflictCopies()).toEqual([]);
 	});
 
+	test("an edit in the doc and on disk but not on the server keeps its copy", async () => {
+		const { e, mgr, disk, conflictCopies } = await liveBoundScenario({
+			dbPrefix: "lb-resumed-undelivered-edit",
+			deliverable: true,
+		});
+		e.setLiveBoundCheck(() => false);
+		// Offline: the edit lands in the doc and is flushed to disk identically,
+		// so only the delivery receipt can tell it was never sent.
+		mgr.clearSynced();
+		mgr.setConnected(false);
+		await mgr.applyLocalEdit("id-a", "BASE edited-offline");
+		disk.set("a.md", await mgr.projectedText("id-a"));
+		e.importSyncState({ "a.md": { hash: fnv1a("BASE") } });
+		mgr.setConnected(true);
+
+		await e.applyChange(tombstone("a.md"));
+
+		expect(conflictCopies()).toHaveLength(1);
+	});
+
 	test("disk drift the doc never saw still keeps a conflict copy", async () => {
 		const { e, mgr, disk, conflictCopies } = await liveBoundScenario({
 			dbPrefix: "lb-resumed-drift",
