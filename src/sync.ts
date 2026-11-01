@@ -4654,8 +4654,9 @@ export class SyncEngine {
 			//
 			// `markDelivered` above IS that primitive: it records the upward half
 			// WITHOUT the convergence commit, which is what lets the next catch-up
-			// skip the room. It is deliberately not the same flag — see
-			// `hasCurrentDeliveryReceipt`, which only the room-free read consults.
+			// skip the room. It is deliberately not the same flag; see
+			// `hasCurrentDeliveryReceipt`, which the room-free read consults, and
+			// the delete keep-both gate only together with "disk equals the doc".
 			return true;
 		} catch (e) {
 			// Any refusal may mean the server lacks the base (`note_not_found`, a
