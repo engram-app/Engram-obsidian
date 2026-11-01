@@ -259,3 +259,12 @@ describe("createCrdtWiring.onNoteYjsUpdate — seq gap-heal threading", () => {
 		expect(applied).toEqual([new Uint8Array([1, 2, 3])]);
 	});
 });
+
+describe("vault switch", () => {
+	test("resets the redelivery cursor, which indexes the old vault's list", async () => {
+		const engine = makeEngine() as any;
+		engine.redeliverCursor = 7;
+		await engine.wipePerVaultState();
+		expect(engine.redeliverCursor).toBe(0);
+	});
+});
