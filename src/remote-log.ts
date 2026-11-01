@@ -227,7 +227,7 @@ export class RemoteLogger {
 		try {
 			sent = this.pushFn(batch);
 		} catch (e) {
-			sent = Promise.reject(e);
+			sent = Promise.reject(e instanceof Error ? e : new Error(String(e)));
 		}
 		this.inflight = sent.then(
 			() => {},
