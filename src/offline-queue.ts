@@ -127,25 +127,41 @@ export class OfflineQueue {
 
 	/** Add or replace a queued change for a path. Persistence is debounced. */
 	async enqueue(entry: QueueEntry): Promise<void> {
+		// A stamped entry supersedes an unstamped one for the same path: callers
+		// stamp with the active vault, which is the vault the unstamped one
+		// belongs to (see keyFor).
+		if (entry.vaultId) this.entries.delete(entry.path);
 		this.entries.set(dedupKey(entry), entry);
 		this.schedulePersist();
 	}
 
+	/** The stored key for (path, vaultId). An entry persisted WITHOUT a vaultId
+	 *  (older builds, or enqueued before the vault registered) sits under the
+	 *  bare path, while callers address it by the active vault — the vault such
+	 *  an entry belongs to (SyncEngine.entryVaultId). Fall back to the bare key
+	 *  so every lookup and removal reaches it. Without this the drain's dequeue
+	 *  was a no-op and the entry re-drained on every flush (#675: 212-260k
+	 *  `Echo skip (attachment)` lines a day from one device). */
+	private keyFor(path: string, vaultId?: string): string {
+		const key = dedupKey(path, vaultId);
+		return this.entries.has(key) || !vaultId || !this.entries.has(path) ? key : path;
+	}
+
 	/** Remove a path from the queue (after successful sync). Persists immediately. */
 	async dequeue(path: string, vaultId?: string): Promise<void> {
-		this.entries.delete(dedupKey(path, vaultId));
+		this.entries.delete(this.keyFor(path, vaultId));
 		await this.persistNow();
 	}
 
 	/** The queued change for a path, if any. */
 	get(path: string, vaultId?: string): QueueEntry | undefined {
-		return this.entries.get(dedupKey(path, vaultId));
+		return this.entries.get(this.keyFor(path, vaultId));
 	}
 
 	/** True when a not-yet-synced DELETE is queued for this path. Catch-up uses
 	 *  this to avoid recreating a note the user deleted locally while offline. */
 	hasPendingDelete(path: string, vaultId?: string): boolean {
-		return this.entries.get(dedupKey(path, vaultId))?.action === "delete";
+		return this.entries.get(this.keyFor(path, vaultId))?.action === "delete";
 	}
 
 	/** Like hasPendingDelete, but only for entries the drain will actually
@@ -153,7 +169,7 @@ export class OfflineQueue {
 	 *  drain gate — letting them suppress catch-up recreation would hide a
 	 *  note behind a delete that never happens. */
 	hasPendingEvidencedDelete(path: string, vaultId?: string): boolean {
-		const entry = this.entries.get(dedupKey(path, vaultId));
+		const entry = this.entries.get(this.keyFor(path, vaultId));
 		return entry?.action === "delete" && entry.evidenced === true;
 	}
 
@@ -163,7 +179,7 @@ export class OfflineQueue {
 	 *  the entry gone before the flush loop can pick up work for a path that no
 	 *  longer exists. Returns whether anything was removed. */
 	cancel(path: string, vaultId?: string): boolean {
-		const removed = this.entries.delete(dedupKey(path, vaultId));
+		const removed = this.entries.delete(this.keyFor(path, vaultId));
 		if (removed) this.schedulePersist();
 		return removed;
 	}

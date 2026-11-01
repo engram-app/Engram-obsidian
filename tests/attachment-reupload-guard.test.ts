@@ -98,6 +98,33 @@ describe("offline-queue drain: attachments", () => {
 		expect(e.queue.size).toBe(0);
 	});
 
+	// #675: one device logged `Echo skip (attachment)` ~2.5x a second for four
+	// days. An entry persisted WITHOUT a vaultId lives under the bare-path key,
+	// but the drain dequeued it by `entryVaultId(entry)` = the active vault, a
+	// different key, so the delete was a no-op and every flush skipped it again.
+	test("an unstamped entry leaves the queue once a vault is active (#675)", async () => {
+		const { e, pushAttachment } = makeEngine();
+		(e as any).settings.vaultId = "vault-1";
+		(e as any).syncState.set("flaky/photo.png", { hash: fnv1a(B64) });
+
+		e.queue.load([
+			{
+				path: "flaky/photo.png",
+				action: "upsert",
+				contentBase64: B64,
+				mimeType: "image/png",
+				mtime: 100,
+				kind: "attachment",
+				timestamp: 1,
+			},
+		]);
+
+		await e.flushQueue();
+
+		expect(pushAttachment).not.toHaveBeenCalled();
+		expect(e.queue.size).toBe(0);
+	});
+
 	test("DOES upload when the bytes differ from the recorded row", async () => {
 		const { e, pushAttachment } = makeEngine();
 		(e as any).syncState.set("flaky/photo.png", { hash: fnv1a("something-else") });
