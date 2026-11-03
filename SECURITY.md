@@ -47,5 +47,5 @@ disclosure first, reasonable time to fix.
 
 ## Bounty
 
-No paid bounty at launch. Credit in release notes is available with your
+No paid bounty program at this time. Credit in release notes is available with your
 permission.
