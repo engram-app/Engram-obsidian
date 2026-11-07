@@ -30,20 +30,29 @@
  * |----------------|---------------------------------------------------------|
  * | pending op     | ack: clear. Refusal or `unknown_event`: clear, then the |
  * |                | per-file fallback. Feature off: per-file fallback.      |
- * |                | Timeout: stays, re-sent with the same `op_id`. Crash:   |
- * |                | replayed from disk. Vault switch: dropped. NEVER by a   |
+ * |                | No answer (timeout, lost frame, disconnect, rate        |
+ * |                | limit): re-sent with backoff, same `op_id`, until       |
+ * |                | `MAX_ATTEMPTS` sends or `OP_TTL_MS` since the first     |
+ * |                | send, then the per-file fallback (final). Not joined:   |
+ * |                | held, spends nothing. Crash: replayed from disk with    |
+ * |                | its spent budget. Vault switch: dropped. NEVER by a     |
  * |                | hold expiry: only the server's answer or a fallback.    |
+ * |                | The delete-pass skip and held changes clear with it.    |
  * | held inbound   | ack (changes newer than the ack's seq apply), refusal   |
  * |                | (newest applies), socket reconnect (dropped; the        |
  * |                | reconnect's manifest is the truth), max age             |
  * |                | `HOLD_MAX_MS` (newest applies; the op stays queued and  |
  * |                | its ack moves the disk back to the server's state).     |
  *
- * If a clearing event never fires: a pending op is re-sent on every flush
- * (it hides nothing but the server's ignorance of a local move), and a held
- * change expires after `HOLD_MAX_MS`, so no folder can go deaf.
+ * If the server never answers, the attempt cap or the age cap ends the op in
+ * the per-file fallback, so a pending op cannot hide anything forever; a held
+ * change expires after `HOLD_MAX_MS`. No folder can go deaf.
  */
+import { expBackoff } from "./backoff";
 import { uuid7 } from "./crdt/uuid7";
+// One source of truth for "how long may an unanswered socket op wait": the
+// durable note-op queue's limits, not a sibling set.
+import { BASE_BACKOFF_MS, MAX_ATTEMPTS, MAX_BACKOFF_MS, OP_TTL_MS } from "./crdt-op-queue";
 
 /** One `folders` row as the server sends it. `parent_id: null` = root. */
 export type FolderRow = { id: string; parent_id: string | null; name: string };
@@ -68,15 +77,24 @@ export type FolderOp = {
 	to: string;
 	/** The vault the op was made in. Another vault's op is never sent. */
 	vaultId: string | null;
+	/** Sends that got no answer (persisted, so a crash loop is bounded too). */
+	attempts?: number;
+	/** When the first send went out; the age cap counts from here, so time
+	 *  spent offline before it does not count. */
+	firstSentAt?: number;
+	/** Backoff: not re-sent before this. */
+	nextAttemptAt?: number;
 };
 
-/** What the server did with one op. `retry`: no answer (timeout, socket down,
- *  rate limited); the op stays queued. */
+/** What the server did with one op. `retry`: sent but no answer (timeout,
+ *  lost frame, disconnect, rate limited); spends an attempt. `held`: never
+ *  sent (crdt topic not joined, no socket); spends nothing. */
 export type FolderOpResult =
 	| { kind: "ok"; seq: number | null }
 	| { kind: "refused"; reason: string }
 	| { kind: "unknown_event" }
-	| { kind: "retry" };
+	| { kind: "retry" }
+	| { kind: "held" };
 
 /** How long a held inbound change waits for the local op's answer. */
 export const HOLD_MAX_MS = 3 * 60 * 1000;
@@ -205,6 +223,29 @@ export class FolderOps {
 		return [...this.queue.values()];
 	}
 
+	/** Learn server folder rows, the ONE rule for every source (manifest list,
+	 *  `POST /folders` and `crdt_create` chains): malformed rows are dropped,
+	 *  and a folder with OUR op pending keeps our row, since the server's is
+	 *  from before that op. `chain`: a root-first ancestor chain, learned up
+	 *  to its first broken parent link; otherwise the full list, which
+	 *  replaces the index. */
+	learnServerRows(rows: unknown, chain: boolean): void {
+		if (!Array.isArray(rows)) return;
+		const valid: FolderRow[] = [];
+		for (const r of rows) {
+			if (!isFolderRow(r)) {
+				if (chain) break;
+				continue;
+			}
+			const prev = valid[valid.length - 1];
+			if (chain && r.parent_id !== (prev ? prev.id : null)) break;
+			valid.push(r);
+		}
+		if (!chain) this.index.load(valid, (id) => this.hasPending(id));
+		else for (const r of valid) if (!this.hasPending(r.id)) this.index.set(r);
+		this.deps.persist();
+	}
+
 	/** Restore ops persisted by an earlier session (ops without a target path
 	 *  predate this format and cannot fall back, so they are not restored). */
 	load(ops: FolderOp[]): void {
@@ -253,11 +294,12 @@ export class FolderOps {
 		if (!this.enabled()) return;
 		for (const op of [...this.queue.values()]) {
 			if (this.queue.get(op.folder_id) !== op) continue;
-			if (!(await this.sendOne(op))) return; // no answer: retry later
+			if ((op.nextAttemptAt ?? 0) > this.deps.now()) continue; // backing off
+			if (!(await this.sendOne(op))) return; // socket down: stop until next flush
 		}
 	}
 
-	/** Send `op`. False = the server gave no answer, so stop until the next
+	/** Send `op`. False = not sent (socket down), so stop until the next
 	 *  flush. */
 	private async sendOne(op: FolderOp): Promise<boolean> {
 		if (op.vaultId !== null && op.vaultId !== this.deps.vaultId()) {
@@ -265,8 +307,25 @@ export class FolderOps {
 			this.deps.persist();
 			return true;
 		}
+		const sentAt = this.deps.now();
 		const res = await this.deps.send(op);
-		if (res.kind === "retry") return false;
+		if (res.kind === "held") return false;
+		if (res.kind === "retry") {
+			if (this.queue.get(op.folder_id) !== op) return true;
+			op.attempts = (op.attempts ?? 0) + 1;
+			op.firstSentAt ??= sentAt;
+			op.nextAttemptAt =
+				this.deps.now() + expBackoff(BASE_BACKOFF_MS, op.attempts - 1, MAX_BACKOFF_MS);
+			this.deps.persist();
+			const why =
+				op.attempts >= MAX_ATTEMPTS
+					? "max-attempts"
+					: this.deps.now() - op.firstSentAt > OP_TTL_MS
+						? "ttl"
+						: null;
+			if (why) await this.giveUp(op, why);
+			return true;
+		}
 		// Superseded (or dropped by a hold expiry) while in flight: whatever
 		// replaced it owns the folder now.
 		if (this.queue.get(op.folder_id) !== op) return true;
@@ -285,6 +344,15 @@ export class FolderOps {
 			await this.deps.fallback(op, res.reason);
 		}
 		return true;
+	}
+
+	/** The server never answered: end the op in the per-file fallback (its
+	 *  final clearing event), which also clears its hold and delete-pass skip. */
+	private async giveUp(op: FolderOp, why: string): Promise<void> {
+		this.queue.delete(op.folder_id);
+		this.deps.persist();
+		await this.release(op.folder_id, null);
+		await this.deps.fallback(op, why);
 	}
 
 	/** Every queued op goes per file. */
@@ -328,6 +396,9 @@ export class FolderOps {
 	 *  re-teaches the server's folder state, so no held change is kept. */
 	async onReconnect(): Promise<void> {
 		this.held.clear();
+		// Due at once on a fresh socket, as the note-op queue's onJoined does;
+		// the spent attempts and the age stand.
+		for (const op of this.queue.values()) op.nextAttemptAt = 0;
 		await this.flush();
 	}
 
@@ -346,4 +417,17 @@ export class FolderOps {
 		}
 		await this.flush();
 	}
+}
+
+function isFolderRow(r: unknown): r is FolderRow {
+	if (typeof r !== "object" || r === null) return false;
+	const row = r as Record<string, unknown>;
+	return (
+		typeof row.id === "string" &&
+		row.id.length > 0 &&
+		typeof row.name === "string" &&
+		row.name.length > 0 &&
+		!row.name.includes("/") &&
+		(row.parent_id === null || typeof row.parent_id === "string")
+	);
 }

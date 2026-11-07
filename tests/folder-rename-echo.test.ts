@@ -350,3 +350,19 @@ describe("the server's folder chain teaches every id (N5)", () => {
 		expect(s.e.folderOps.index.idFor("X/Y")).toBe("fy");
 	});
 });
+
+describe("a refusal after an inbound move keeps the index at the truth (R3-5)", () => {
+	test("the fallback does not rewrite the index to the op's stale `from`", async () => {
+		const s = setup();
+		let answer: { kind: "retry" } | { kind: "refused"; reason: string } = { kind: "retry" };
+		s.e.setCrdtPorts({ create: s.crdtCreate, folderOp: async () => answer });
+		await s.e.setFolderOpsEnabled(true);
+		await s.e.handleRename(s.folder, "Proj");
+		// An expired hold applied another writer's move: index (and disk) at Theirs.
+		s.e.folderOps.index.set({ id: "f1", parent_id: null, name: "Theirs" });
+		answer = { kind: "refused", reason: "conflict" };
+		await s.e.folderOps.onReconnect();
+		expect(s.e.folderOps.hasPending("f1")).toBe(false);
+		expect(s.e.folderOps.index.pathFor("f1")).toBe("Theirs");
+	});
+});

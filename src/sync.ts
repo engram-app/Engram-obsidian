@@ -6300,17 +6300,21 @@ export class SyncEngine {
 	private async folderOpFallback(op: FolderOp, why: string): Promise<void> {
 		const { from, to } = op;
 		const index = this.folderOps.index;
-		// The server still has the folder at `from`.
-		const cut = from.lastIndexOf("/");
-		const parent = index.idFor(cut < 0 ? "" : from.slice(0, cut));
-		if (parent !== undefined) {
-			index.set({
-				id: op.folder_id,
-				parent_id: parent,
-				name: cut < 0 ? from : from.slice(cut + 1),
-			});
-		} else index.remove(op.folder_id);
-		this.persistGateJournalSoon();
+		// The server still has the folder at `from`, unless an inbound change
+		// (an expired hold) already moved the index and disk elsewhere: that is
+		// the truth then, and rewriting the index to `from` would be stale.
+		if (index.pathFor(op.folder_id) === to) {
+			const cut = from.lastIndexOf("/");
+			const parent = index.idFor(cut < 0 ? "" : from.slice(0, cut));
+			if (parent !== undefined) {
+				index.set({
+					id: op.folder_id,
+					parent_id: parent,
+					name: cut < 0 ? from : from.slice(cut + 1),
+				});
+			} else index.remove(op.folder_id);
+			this.persistGateJournalSoon();
+		}
 		rlog().warn(
 			"push",
 			`Folder op refused (${why}): ${noteRef(from)} -> ${noteRef(to)}, renaming per file`,
@@ -6334,7 +6338,7 @@ export class SyncEngine {
 
 	/** Engram#2523 S4: one op per folder rename. Exposed for main.ts wiring. */
 	readonly folderOps = new FolderOps({
-		send: (op) => this.folderOpPort?.(op) ?? Promise.resolve({ kind: "retry" } as const),
+		send: (op) => this.folderOpPort?.(op) ?? Promise.resolve({ kind: "held" } as const),
 		now: () => this.time.now(),
 		vaultId: () => this.settings.vaultId ?? null,
 		fallback: (op, why) => this.folderOpFallback(op, why),
@@ -6470,18 +6474,14 @@ export class SyncEngine {
 
 	/** Learn the server's folder rows (manifest `folders`). */
 	learnFolders(rows: FolderRow[] | undefined): void {
-		if (!rows) return;
-		this.folderOps.index.load(rows, (id) => this.folderOps.hasPending(id));
-		this.persistGateJournalSoon();
+		if (rows) this.folderOps.learnServerRows(rows, false);
 	}
 
 	/** A server-returned ancestor chain (`folders`, root-first, root parent
 	 *  null) from `POST /folders` or the `crdt_create` reply: learn every id in
 	 *  it, so a move into a folder created this session goes by id. */
 	learnFolderChain(rows: FolderRow[] | undefined): void {
-		if (!rows?.length) return;
-		for (const r of rows) this.folderOps.index.set(r);
-		this.persistGateJournalSoon();
+		if (rows?.length) this.folderOps.learnServerRows(rows, true);
 	}
 
 	/** The `crdt_create` reply named the server's folder for `notePath`. */
