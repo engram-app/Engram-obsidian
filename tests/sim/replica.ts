@@ -540,14 +540,13 @@ export class Replica {
 		// Room-free full-state read (main.ts setCrdtPorts `docState`).
 		engine.setCrdtPorts({ docState: (id: string) => channel.crdtDocState(id) });
 		// Engram#2523 S4 folder ops (main.ts: setCrdtPorts `folderOp`,
-		// onServerFeatures, folderRefFor / onFolderNotFound / onFolderChanged).
+		// onServerFeatures, onCreated / onFolderChanged).
 		engine.setCrdtPorts({ folderOp: (op) => channel.folderOp(op) });
 		channel.onServerFeatures = (f) => void engine.setFolderOpsEnabled(f.folderOps);
-		channel.folderRefFor = (p, nid) => engine.folderRefFor(p, nid);
+		channel.onCreated = (p, nid) => engine.folderRefFor(p, nid);
 		channel.onIndexV1 = (on) => engine.setIndexV1(on);
 		channel.onCreateFolderId = (p, fid) => engine.learnFolderOf(p, fid);
 		channel.onCreateFolders = (rows) => engine.learnFolderChain(rows);
-		channel.onFolderNotFound = (fid) => engine.forgetFolder(fid);
 		channel.onFolderChanged = (c) => void engine.onFolderChanged(c);
 
 		// Paths this replica has an editor open on (openNote adds, closeNote

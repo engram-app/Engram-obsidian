@@ -231,7 +231,6 @@ type CrdtCreateReply = {
 };
 
 /** Where a note create places the note by id (Engram#2523 S4). */
-type FolderRef = { folder_id: string | null; name: string };
 
 function createResult(res: CrdtCreateReply): CrdtCreateResult {
 	const outcome = res.genesis;
@@ -365,9 +364,8 @@ export class NoteChannel {
 		| null = null;
 	/** Engram#2523 S4: a folder row changed on the server (`folder_changed`). */
 	onFolderChanged: ((change: FolderChange) => void) | null = null;
-	/** `{ folder_id, name }` to send with a note create or move, or null for
-	 *  path-only. Synchronous, so a create without folder ops is unchanged. */
-	folderRefFor: ((path: string, noteId: string) => FolderRef | null) | null = null;
+	/** The server took a note create (writes its filemeta_v1 claim). */
+	onCreated: ((path: string, noteId: string) => void) | null = null;
 	/** A `crdt_create` reply named the server folder of the note's path. */
 	onCreateFolderId: ((path: string, folderId: string | null) => void) | null = null;
 	/** A `crdt_create` reply carried the folder chain (`folders`, root-first). */
@@ -376,8 +374,6 @@ export class NoteChannel {
 		| null = null;
 	/** The sync join reply's `index_v1` (S5 stamps it per vault). */
 	onIndexV1: ((on: boolean) => void) | null = null;
-	/** The server refused a create's `folder_id` (`folder_not_found`). */
-	onFolderNotFound: ((folderId: string) => void) | null = null;
 	/** Inbound CRDT frames from the server. `docId` is the note's bare note_id. */
 	onCrdtMessage: ((docId: string, b64: string) => void) | null = null;
 
@@ -648,26 +644,6 @@ export class NoteChannel {
 	 *  decision about whether to transmit a body (#476). No outcome ever means
 	 *  "retry the create". */
 	async crdtCreate(docId: string, path: string, b64?: string): Promise<CrdtCreateResult> {
-		// Engram#2523 S4: with folder ops on, the note is placed by folder id too.
-		// The path is still sent, so a server that ignores the id places it the
-		// same way, and `folder_not_found` is retried by path (the server then
-		// recreates the folder from the path, as for any path-only create).
-		const ref = this.folderRefFor?.(path, docId) ?? null;
-		try {
-			return await this.sendCrdtCreate(docId, path, b64, ref);
-		} catch (e) {
-			if (!ref?.folder_id || crdtOpFailureReason(e) !== "folder_not_found") throw e;
-			this.onFolderNotFound?.(ref.folder_id);
-			return this.sendCrdtCreate(docId, path, b64, null);
-		}
-	}
-
-	private async sendCrdtCreate(
-		docId: string,
-		path: string,
-		b64: string | undefined,
-		ref: FolderRef | null,
-	): Promise<CrdtCreateResult> {
 		// This literal is a THIRD legitimate wire-send the source-compliance
 		// privacy guard (tests/source-compliance.test.ts) allowlists by exact
 		// statement, beside `wireStatement`/`indexWireStatement`. It is written
@@ -678,9 +654,12 @@ export class NoteChannel {
 		const res = (await this.sendRequest("crdt_create", {
 			doc_id: docId,
 			path,
-			...(ref ?? {}),
 			...(b64 === undefined ? {} : { b64 }),
 		})) as CrdtCreateReply;
+		// Engram#2523 S4: the frame is main's. #2533 places by path and reads no
+		// folder id, so none is sent until a server stage reads one. The note's
+		// filemeta_v1 claim is written once the server took the create.
+		this.onCreated?.(path, docId);
 		if (res.folder_id === null || typeof res.folder_id === "string") {
 			this.onCreateFolderId?.(path, res.folder_id);
 		}
