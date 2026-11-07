@@ -425,17 +425,25 @@ describe("the server's folder nudge (Engram#2533)", () => {
 });
 
 describe("manifest-move rows go through the one row rule (R4-2)", () => {
-	test("an invalid parent row cannot place a valid child: nothing moves", async () => {
+	// Adopted from the delta check on 1cbe40f3 (comment 6708700136): the
+	// parent is KNOWN locally, so only the manifest-move filter stops it.
+	test("a KNOWN parent whose new server row is invalid cannot pull a valid child under it", async () => {
 		const s = setup();
+		s.e.learnFolders([
+			{ id: "f1", parent_id: null, name: "Proj" },
+			{ id: "f9", parent_id: null, name: "Old" },
+		]);
 		const proj = new TFolder("Proj", []);
+		const old = new TFolder("Old", []);
 		const app = (s.e as any).app;
 		const realGet = app.vault.getAbstractFileByPath;
-		app.vault.getAbstractFileByPath = (p: string) => (p === "Proj" ? proj : realGet(p));
+		app.vault.getAbstractFileByPath = (p: string) =>
+			p === "Proj" ? proj : p === "Old" ? old : realGet(p);
 		app.vault.rename = mock().mockResolvedValue(undefined);
 		await s.e.setFolderOpsEnabled(true);
 		await (s.e as any).syncManifestFolders({
 			folders: [
-				{ id: "f9", parent_id: null, name: "Elsewhere/Deep" },
+				{ id: "f9", parent_id: null, name: "Bad/Name" },
 				{ id: "f1", parent_id: "f9", name: "Proj" },
 			],
 		});
