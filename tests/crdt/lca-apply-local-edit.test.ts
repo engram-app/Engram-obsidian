@@ -64,15 +64,15 @@ describe("applyLocalEdit with an LCA", () => {
 		await registry.destroyAll();
 	});
 
-	test("edits on ADJACENT lines conflict (merge3's git rule): kept both, nothing lost", async () => {
+	test("edits on ADJACENT lines merge clean (character-level region re-merge)", async () => {
 		const { registry, copies } = registryWith({ lca: "1\n2\n3\n", dbPrefix: "lca-adjacent" });
 		await registry.applyLocalEdit("na", "1\n2\nTHREE\n");
 		await settle();
 
 		await registry.applyLocalEdit("na", "1\nTWO\n3\n");
 
-		expect(await registry.projectedText("na")).toBe("1\n2\nTHREE\n");
-		expect(copies).toEqual(["1\nTWO\n3\n"]);
+		expect(await registry.projectedText("na")).toBe("1\nTWO\nTHREE\n");
+		expect(copies).toEqual([]);
 		await registry.destroyAll();
 	});
 

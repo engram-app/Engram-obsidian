@@ -159,11 +159,11 @@ describe("merge3 (both sides' edits on one base, CRDT-like)", () => {
 			"1\n3\n4!\n",
 		],
 		[
-			"delete next to the other side's edit (touching, like git)",
+			"delete next to the other side's edit (touching lines, disjoint characters): merged",
 			"1\n2\n3\n",
 			"1\n3\n",
 			"1\n2\n3!\n",
-			null,
+			"1\n3!\n",
 		],
 		// No trailing newline: keeping both would join them into one line "RL".
 		["empty base, both write", "", "L", "R", null],
@@ -190,8 +190,23 @@ describe("merge3 (both sides' edits on one base, CRDT-like)", () => {
 	}
 });
 
-test("merge3: edits on adjacent lines conflict, like git", () => {
-	expect(merge3("1\n2\n3\n", "1\nTWO\n3\n", "1\n2\nTHREE\n").clean).toBe(false);
+test("merge3: edits on adjacent lines merge (the clashing region is re-merged by character)", () => {
+	expect(merge3("1\n2\n3\n", "1\nTWO\n3\n", "1\n2\nTHREE\n")).toEqual({
+		text: "1\nTWO\nTHREE\n",
+		clean: true,
+	});
+	// A line replaced on one side plus a line inserted right under it.
+	expect(merge3("a\nold\nb\n", "a\nold\nnew line\nb\n", "a\nnew\nb\n")).toEqual({
+		text: "a\nnew\nnew line\nb\n",
+		clean: true,
+	});
+	// Different words of one line.
+	expect(merge3("one two three\n", "ONE two three\n", "one two THREE\n")).toEqual({
+		text: "ONE two THREE\n",
+		clean: true,
+	});
+	// The same word on both sides is a real overlap.
+	expect(merge3("one two three\n", "one TWO three\n", "one deux three\n").clean).toBe(false);
 	expect(merge3("1\n2\n3\n4\n", "1\nTWO\n3\n4\n", "1\n2\n3\nFOUR\n")).toEqual({
 		text: "1\nTWO\n3\nFOUR\n",
 		clean: true,
