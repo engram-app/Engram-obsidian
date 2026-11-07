@@ -705,7 +705,8 @@ export class NoteChannel {
 			// Never sent: spends no attempt (the note-op queue's "held" rule).
 			if (errMsg(e).startsWith("sendRequest refused")) return { kind: "held" };
 			const reason = crdtOpFailureReason(e);
-			if (reason === null || reason === "rate_limited") return { kind: "retry" };
+			if (reason === "rate_limited") return { kind: "rate_limited" };
+			if (reason === null) return { kind: "retry" };
 			// `bad_frame`: an older crdt channel's catch-all for an event it has no
 			// handler for (crdt_channel.ex), i.e. a server without folder ops.
 			if (reason === "unknown_event" || reason === "bad_frame")

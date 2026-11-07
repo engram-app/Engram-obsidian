@@ -5,7 +5,7 @@
  * is permanent blindness.
  */
 import { describe, expect, mock, test } from "bun:test";
-import { MAX_ATTEMPTS } from "../src/crdt-op-queue";
+import { MAX_ATTEMPTS, OP_TTL_MS } from "../src/crdt-op-queue";
 import {
 	type FolderChange,
 	FolderIndex,
@@ -286,34 +286,78 @@ describe("hold expiry never drops OUR op (delta review #689)", () => {
 	});
 });
 
-describe("FolderIndex.learn (the crdt_create reply)", () => {
+describe("FolderOps.learnServerLeaf (the crdt_create reply's folder_id)", () => {
 	test("learns a folder whose parent is known; ignores one whose parent is not", () => {
-		const ix = new FolderIndex();
-		ix.load([{ id: "1", parent_id: null, name: "a" }]);
-		ix.learn("a/b", "2");
-		ix.learn("x/y", "3");
-		expect(ix.idFor("a/b")).toBe("2");
-		expect(ix.idFor("x/y")).toBeUndefined();
-		ix.learn("top", "4");
-		expect(ix.idFor("top")).toBe("4");
+		const h = harness();
+		h.ops.learnServerLeaf("A/b", "2");
+		h.ops.learnServerLeaf("x/y", "3");
+		h.ops.learnServerLeaf("top", "4");
+		expect(h.ops.index.idFor("A/b")).toBe("2");
+		expect(h.ops.index.idFor("x/y")).toBeUndefined();
+		expect(h.ops.index.idFor("top")).toBe("4");
 	});
 });
 
 describe("the pending-op budget (round 3: MAX_ATTEMPTS / OP_TTL_MS, shared with the note-op queue)", () => {
-	test("held (never sent) spends no attempt, however long", async () => {
+	test("held (never sent) spends no attempt; the age cap still ends it (R4-4)", async () => {
 		const results: FolderOpResult[] = Array.from({ length: 50 }, () => ({ kind: "held" }));
 		const h = harness(results);
 		h.ops.setFeature(true);
 		h.ops.move("fa", "fb", "A", "A", "B/A");
-		for (let i = 0; i < 50; i++) {
+		for (let i = 0; i < 4; i++) {
 			h.advance(60_000);
 			await h.ops.tick();
 		}
-		expect(h.ops.hasPending("fa")).toBe(true);
 		expect(h.ops.all()[0]?.attempts ?? 0).toBe(0);
 		expect(h.fallbacks).toEqual([]);
+		h.advance(2 * 60_000); // past OP_TTL_MS since enqueue
+		await h.ops.tick();
+		expect(h.fallbacks).toEqual([["fa", "ttl"]]);
+		expect(h.ops.hasPending("fa")).toBe(false);
 	});
 
+	test("a restored op with no features reply ever still ends in the fallback (R4-4)", async () => {
+		const h = harness();
+		h.ops.load([
+			{
+				op: "move",
+				op_id: "o1",
+				folder_id: "fa",
+				parent_id: "fb",
+				name: "A",
+				from: "A",
+				to: "B/A",
+				vaultId: "v1",
+			},
+		]);
+		// setFeature never called: the user-topic join keeps failing.
+		h.advance(OP_TTL_MS + 1);
+		await h.ops.tick();
+		expect(h.fallbacks).toEqual([["fa", "ttl"]]);
+		expect(h.sent).toEqual([]);
+	});
+
+	test("rate_limited pauses the queue and spends nothing (the note-op queue's RateLimitPause, R4-5)", async () => {
+		const results: FolderOpResult[] = [
+			...Array.from({ length: MAX_ATTEMPTS + 4 }, () => ({ kind: "rate_limited" }) as const),
+			{ kind: "ok", seq: 3 },
+		];
+		const h = harness(results);
+		h.ops.setFeature(true);
+		h.ops.move("fa", "fb", "A", "A", "B/A");
+		h.ops.move("fb", null, "B2", "B", "B2");
+		await h.ops.flush();
+		// One reply paused the WHOLE queue: fb was not sent behind it.
+		expect(h.sent.map((o) => o.folder_id)).toEqual(["fa"]);
+		await h.ops.tick(); // still paused
+		expect(h.sent).toHaveLength(1);
+		for (let i = 0; i < MAX_ATTEMPTS + 4; i++) {
+			h.advance(31_000);
+			await h.ops.tick();
+		}
+		expect(h.fallbacks).toEqual([]);
+		expect(h.acked).toContain("fa");
+	});
 	test("a restored op keeps its spent attempts (a crash loop is bounded too)", async () => {
 		const h = harness([{ kind: "retry" }]);
 		h.ops.load([
@@ -327,7 +371,7 @@ describe("the pending-op budget (round 3: MAX_ATTEMPTS / OP_TTL_MS, shared with 
 				to: "B/A",
 				vaultId: "v1",
 				attempts: MAX_ATTEMPTS - 1,
-				firstSentAt: 1_000,
+				queuedAt: 1_000,
 			},
 		]);
 		h.ops.setFeature(true);

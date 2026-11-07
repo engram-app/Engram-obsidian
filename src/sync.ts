@@ -42,6 +42,7 @@ import {
 	type FolderOpResult,
 	FolderOps,
 	type FolderRow,
+	isFolderRow,
 } from "./folder-ops";
 import { t } from "./i18n";
 import { userErrorMessage } from "./i18n/user-error";
@@ -6374,9 +6375,10 @@ export class SyncEngine {
 		if (!rows) return;
 		this.serverSentFolders = true;
 		if (!this.syncBlocked) {
+			const valid = rows.filter(isFolderRow); // the one row rule
 			const server = new FolderIndex();
-			server.load(rows);
-			const moves = rows
+			server.load(valid);
+			const moves = valid
 				.map((r) => ({ row: r, at: server.pathFor(r.id) }))
 				.filter((m): m is { row: FolderRow; at: string } => m.at !== null)
 				.sort((a, b) => a.at.split("/").length - b.at.split("/").length);
@@ -6474,14 +6476,14 @@ export class SyncEngine {
 
 	/** Learn the server's folder rows (manifest `folders`). */
 	learnFolders(rows: FolderRow[] | undefined): void {
-		if (rows) this.folderOps.learnServerRows(rows, false);
+		if (rows) this.folderOps.learnServerRows(rows, "list");
 	}
 
 	/** A server-returned ancestor chain (`folders`, root-first, root parent
 	 *  null) from `POST /folders` or the `crdt_create` reply: learn every id in
 	 *  it, so a move into a folder created this session goes by id. */
 	learnFolderChain(rows: FolderRow[] | undefined): void {
-		if (rows?.length) this.folderOps.learnServerRows(rows, true);
+		if (rows?.length) this.folderOps.learnServerRows(rows, "chain");
 	}
 
 	/** The `crdt_create` reply named the server's folder for `notePath`. */
@@ -6489,7 +6491,7 @@ export class SyncEngine {
 		const p = normalizePath(notePath);
 		const cut = p.lastIndexOf("/");
 		if (cut < 0 || folderId === null) return; // root has no row
-		this.folderOps.index.learn(p.slice(0, cut), folderId);
+		this.folderOps.learnServerLeaf(p.slice(0, cut), folderId);
 	}
 
 	/** The persisted folder index (rows + their vault), and its restore. */
