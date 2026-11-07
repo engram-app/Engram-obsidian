@@ -794,6 +794,11 @@ export class Replica {
 		await this.app.vault.rename(file, newPath);
 	}
 
+	/** Every path this replica's engine trashed, in order. */
+	trashed(): string[] {
+		return [...this.app.trashed];
+	}
+
 	/** Rename a folder; Obsidian's per-item events fire in `order`. */
 	async renameFolder(oldPath: string, newPath: string, order: FolderRenameOrder): Promise<void> {
 		await this.app.renameFolder(oldPath, newPath, order);

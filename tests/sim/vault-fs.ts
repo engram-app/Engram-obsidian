@@ -83,6 +83,8 @@ export interface SimApp {
 	};
 	/** #288 wipe-detector journal — see WriteJournalEntry. */
 	writeJournal: WriteJournalEntry[];
+	/** Every path the engine trashed, in order. */
+	trashed: string[];
 }
 
 export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
@@ -267,9 +269,11 @@ export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
 		},
 	};
 
+	const trashed: string[] = [];
 	const fileManager: SimApp["fileManager"] = {
 		async trashFile(file) {
 			const p = file.path;
+			trashed.push(p);
 			const isFolder = file instanceof TFolder;
 			// Remove BEFORE firing. Real Obsidian's delete event hands the listener
 			// the TFile it already evicted from the index, so `getFileByPath(path)`
@@ -327,5 +331,5 @@ export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
 		}
 	}
 
-	return { renameFolder, vault, fileManager, workspace, writeJournal };
+	return { renameFolder, vault, fileManager, workspace, writeJournal, trashed };
 }

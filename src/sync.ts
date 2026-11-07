@@ -36,6 +36,7 @@ import type { ExplicitFolders } from "./explicit-folders";
 import { isCanvasPath as canvasPath, isCrdtEligiblePath as crdtEligiblePath } from "./file-kind";
 import {
 	type FolderChange,
+	FolderIndex,
 	type FolderOp,
 	type FolderOpResult,
 	FolderOps,
@@ -1313,7 +1314,6 @@ export class SyncEngine {
 	 *  trash and the orphan sweep below). Hiding an owner at an ignored path
 	 *  would read as "path absent", which is exactly what authorizes a trash. */
 	private cacheManifestOwners(manifest: ManifestResponse): void {
-		this.learnFolders(manifest.folders);
 		this.manifestOwners.owners = new Map(
 			manifest.notes.filter((n) => n.id).map((n) => [normalizePath(n.path), n.id as string]),
 		);
@@ -1340,6 +1340,9 @@ export class SyncEngine {
 		if (!this.noteIdMap) return 0;
 		const manifest = await this.api.getManifest();
 		if (!manifest) return 0; // pre-B1 backend: no manifest endpoint, nothing to reconcile
+		// Folders first: a folder another device moved moves here before any
+		// note path in this manifest is read against the local map.
+		await this.syncManifestFolders(manifest);
 		this.cacheManifestOwners(manifest); // keep the destructive-op guard's snapshot fresh
 		let applied = 0;
 		// Every path the server currently holds a note at. Lets us tell a
@@ -6242,8 +6245,9 @@ export class SyncEngine {
 
 	/** Move every listed path's LOCAL bookkeeping (id map, base, sync row,
 	 *  armed push), with nothing on the wire: the folder op moves the server
-	 *  rows. One id-map publication for the lot. */
-	private rekeyMoved(moved: [string, string][]): void {
+	 *  rows. One id-map publication for the lot. `fence`: this device made the
+	 *  move, so a row naming an old path is stale (the rename fence). */
+	private rekeyMoved(moved: [string, string][], fence = true): void {
 		const rearm: string[] = [];
 		const apply = () => {
 			for (const [from, to] of moved) {
@@ -6259,7 +6263,7 @@ export class SyncEngine {
 				}
 				this.renamePath(from, to, "remote");
 				// The rename fence: a row naming the old path is from before the move.
-				this.notePendingLocalMove(from, to);
+				if (fence) this.notePendingLocalMove(from, to);
 			}
 		};
 		if (this.noteIdMap) this.noteIdMap.batch(apply);
@@ -6326,14 +6330,77 @@ export class SyncEngine {
 	});
 	private folderOpPort: ((op: FolderOp) => Promise<FolderOpResult>) | null = null;
 
-	/** A `folder_changed` event from the server. */
+	/** A `folder_changed` event from the server. Our own echo is dropped by
+	 *  `device_id` (the key the server already stamps on note broadcasts). */
 	async onFolderChanged(change: FolderChange): Promise<void> {
+		if (this.syncBlocked) return; // the next manifest pass re-teaches it
+		if (this.deviceId && change.device_id === this.deviceId) {
+			rlog().info("ws", `Echo skip (own device): folder ${change.id}`);
+			return;
+		}
 		await this.folderOps.inbound(change);
 	}
 
-	/** Inbound folder change (step 4 fills this in). */
+	/** The manifest's `folders` list: move every folder whose server path
+	 *  differs from where this device has it (through the hold), then learn the
+	 *  rows. Shallowest first, so a moved parent carries its children and their
+	 *  own rows then read as already in place. */
+	private async syncManifestFolders(manifest: ManifestResponse | null): Promise<void> {
+		const rows = manifest?.folders;
+		if (!rows) return;
+		if (this.folderOps.enabled() && !this.syncBlocked) {
+			const server = new FolderIndex();
+			server.load(rows);
+			const moves = rows
+				.map((r) => ({ row: r, at: server.pathFor(r.id) }))
+				.filter((m): m is { row: FolderRow; at: string } => m.at !== null)
+				.sort((a, b) => a.at.split("/").length - b.at.split("/").length);
+			for (const { row, at } of moves) {
+				const here = this.folderOps.index.pathFor(row.id);
+				if (here !== null && here !== at) await this.folderOps.inbound(row);
+			}
+		}
+		this.learnFolders(rows);
+	}
+
+	/** Apply one server folder change to the vault: ONE `vault.rename` of the
+	 *  folder, with every descendant's bookkeeping moved first, so the child
+	 *  events Obsidian then fires hit the Relay echo rule. */
 	private async applyFolderChange(change: FolderChange): Promise<void> {
-		void change;
+		const index = this.folderOps.index;
+		if (change.deleted) {
+			// Folder delete stays per note until the deletes overhaul (parked).
+			index.remove(change.id);
+			return;
+		}
+		const parent = index.pathFor(change.parent_id);
+		const from = index.pathFor(change.id);
+		index.set(change);
+		if (parent === null || from === null) return; // unplaceable: the manifest heals it
+		const to = parent ? `${parent}/${change.name}` : change.name;
+		if (from === to || this.shouldIgnore(from) || this.shouldIgnore(to)) return;
+		const folder = this.app.vault.getAbstractFileByPath(from);
+		if (!(folder instanceof TFolder) || this.app.vault.getAbstractFileByPath(to)) return;
+		const moved = this.descendantMoves(folder, from, to);
+		this.rekeyMoved(moved, false);
+		try {
+			if (parent) await this.ensureFolder(parent);
+			await this.app.vault.rename(folder, to);
+			rlog().info(
+				"pull",
+				`Followed folder move: ${noteRef(from)} -> ${noteRef(to)} | ${moved.length} files`,
+			);
+		} catch (e) {
+			// Not moved: put the bookkeeping back, the per-note events converge it.
+			this.rekeyMoved(
+				moved.map(([o, n]): [string, string] => [n, o]),
+				false,
+			);
+			rlog().warn(
+				"pull",
+				`Folder move could not follow on disk (${noteRef(from)} -> ${noteRef(to)}): ${errMsg(e, to)}`,
+			);
+		}
 	}
 
 	/** `features.folder_ops` from the join reply. */
@@ -8746,6 +8813,11 @@ export class SyncEngine {
 				});
 				return { files, failed, deletes };
 			}
+			// Engram#2523 S4: folder moves and their relocations BEFORE the delete
+			// pass. That pass trashes a synced file whose path the manifest does
+			// not list, and after a remote folder rename every old path is unlisted
+			// (old plugins trash-then-redownload here; see the #2523 S4 plan).
+			await this.syncManifestFolders(manifest);
 			await this.reconcileFromManifest(manifest, authGenAtFetch, rowSeqAtFetch);
 			const behind = this.validateFromManifest(manifest);
 			const { files, failed, deletes } = await this.catchupViaSeqReplay({
