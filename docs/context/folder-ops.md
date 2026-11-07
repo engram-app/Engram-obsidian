@@ -28,11 +28,14 @@ guaranteed (mobile unverified, R4 on Engram#2523).
   per-file fallback); feature off (per-file fallback); timeout keeps it (same
   `op_id`, with backoff); no answer `MAX_ATTEMPTS` times ends it in the
   per-file fallback; `rate_limited` pauses the whole queue and spends nothing
-  (`RateLimitPause`, shared with the note-op queue); `OP_TTL_MS` since ENQUEUE
-  ends it too, sent or not, so a crdt topic that stays down or a features
-  reply that never comes cannot pin it (round 4 R4-4); the limits are the
-  note-op queue's, imported; restart replays it with its spent budget; vault
-  switch drops it. NEVER by a hold expiry. Its
+  (`RateLimitPause`, shared with the note-op queue); `OP_TTL_MS` of time the
+  SYNC channel was joined ends it too, sent or not, so a crdt topic that stays
+  down or a features reply that never comes cannot pin it (round 4 R4-4).
+  Offline time is not age (`HeldClock`, the note-op queue's): fully offline
+  nothing is sent and no delete pass runs, so the hold costs nothing, and an
+  offline rename stays ONE op on reconnect instead of N per-file renames. The
+  limits are the note-op queue's, imported; restart replays it with its spent
+  attempts and a fresh age clock; vault switch drops it. NEVER by a hold expiry. Its
   delete-pass skip and held changes clear with it. Unbounded, it hid a
   server-deleted note forever (round 3 R3-1 on #689).
 - Held inbound change (a folder with a pending local op): ack (only changes
