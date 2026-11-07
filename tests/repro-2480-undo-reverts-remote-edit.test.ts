@@ -13,7 +13,7 @@
  * real `@codemirror/commands` undo. live-binding.ts is the real code under test.
  */
 import { afterEach, expect, test } from "bun:test";
-import { history, undo } from "@codemirror/commands";
+import { history, isolateHistory, undo } from "@codemirror/commands";
 import { EditorState, type Transaction, type TransactionSpec } from "@codemirror/state";
 import * as Y from "yjs";
 import { LiveBindingValue, setLiveBindingCoordinator } from "../src/crdt/live/live-binding";
@@ -146,5 +146,44 @@ test("2480 A edge: the user's own edit stays undoable, and its undo keeps the re
 	undo({ state: ed.realState(), dispatch: ed.dispatch });
 	expect(ed.state.doc.toString()).toBe(NEW);
 	expect(text.toJSON()).toBe(NEW);
+	binding.destroy();
+});
+
+test("2480 A edge: the drift repair stays undoable, so text it deleted can come back", async () => {
+	const local = new Y.Doc();
+	local.getText("content").insert(0, OLD);
+	const text = local.getText("content");
+	setLiveBindingCoordinator({
+		resolveId: () => ID,
+		residentText: () => ({ text, ready: Promise.resolve() }),
+		enroll: () => {},
+		onBind: () => {},
+		onRelease: () => {},
+		awaitsServer: () => false,
+		onLoadGateOpen: () => () => {},
+		loadMergeBase: async () => null,
+		keepConflictCopy: async () => true,
+		restoreLocalText: async () => {},
+	});
+	const { ed, setBinding } = realStateEditor(OLD);
+	const binding = new LiveBindingValue(ed);
+	setBinding(binding);
+	await new Promise((r) => setTimeout(r, 5));
+
+	// The user's keystroke reaches the editor, but its forward is dropped.
+	const typed = `${OLD}typed\n`;
+	setBinding(null as unknown as LiveBindingValue);
+	// Isolated: the real drift check runs 3 s later, past CM6's grouping delay.
+	ed.dispatch({
+		changes: { from: OLD.length, insert: "typed\n" },
+		annotations: isolateHistory.of("after"),
+	});
+	setBinding(binding);
+	(binding as unknown as { runDriftCheck(): void }).runDriftCheck();
+	expect(ed.state.doc.toString()).toBe(OLD); // re-adopted toward the doc
+
+	undo({ state: ed.realState(), dispatch: ed.dispatch });
+	expect(ed.state.doc.toString()).toBe(typed); // the typing is recoverable
+	expect(text.toJSON()).toBe(typed); // and the undo forwards it
 	binding.destroy();
 });

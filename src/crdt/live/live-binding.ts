@@ -67,18 +67,23 @@ function shiftChanges(changes: CmChangeSpec[], n: number): CmChangeSpec[] {
 const ySyncAnnotation = Annotation.define<EditorView>();
 
 /** Dispatch doc-originated changes into `view`. Ported from Relay's
- *  `syncDispatchAnnotations` (single-user history): the echo guard, plus
- *  `addToHistory: false` so the user's undo stack holds only their own edits
- *  (CM6 maps those through this change instead), plus `remote` to mark it as
- *  another actor's. The ONLY path a doc change may take into the editor. */
-function syncDispatch(view: EditorView, changes: ChangeSpec): void {
+ *  `syncDispatchAnnotations` (single-user history): the echo guard, plus, for
+ *  a paint of REMOTE content, `addToHistory: false` so the user's undo stack
+ *  holds only their own edits (CM6 maps those through this change instead)
+ *  and `remote` to mark it as another actor's. `remote: false` (the drift
+ *  repair) stays in history: it can delete text the user typed whose forward
+ *  was dropped, and undo must be able to bring that back. The ONLY path a doc
+ *  change may take into the editor. */
+function syncDispatch(view: EditorView, changes: ChangeSpec, remote = true): void {
 	view.dispatch({
 		changes,
-		annotations: [
-			ySyncAnnotation.of(view),
-			Transaction.addToHistory.of(false),
-			Transaction.remote.of(true),
-		],
+		annotations: remote
+			? [
+					ySyncAnnotation.of(view),
+					Transaction.addToHistory.of(false),
+					Transaction.remote.of(true),
+				]
+			: [ySyncAnnotation.of(view)],
 	});
 }
 
@@ -387,10 +392,11 @@ export class LiveBindingValue implements PluginValue {
 	}
 
 	/** Dispatch BODY-coordinate changes into the editor, shifted past any
-	 *  frontmatter block, annotated so update() does not echo them back. */
-	private paintEditor(changes: CmChangeSpec[], prefix: number): void {
+	 *  frontmatter block, annotated so update() does not echo them back.
+	 *  `remote: false` keeps them undoable (see `syncDispatch`). */
+	private paintEditor(changes: CmChangeSpec[], prefix: number, remote = true): void {
 		if (changes.length === 0) return;
-		syncDispatch(this.editor, shiftChanges(changes, prefix));
+		syncDispatch(this.editor, shiftChanges(changes, prefix), remote);
 	}
 
 	/** Apply BODY-coordinate changes into the Y.Text under our own origin (so the
@@ -551,7 +557,7 @@ export class LiveBindingValue implements PluginValue {
 				`drift on ${noteRef(this.path)} (editor ${editorText.length} vs doc ${docText.length}) - re-adopting`,
 			);
 			try {
-				this.paintEditor(textDiffToChangeSpec(editorText, docText), prefix);
+				this.paintEditor(textDiffToChangeSpec(editorText, docText), prefix, false);
 			} catch (err) {
 				rlog().error(
 					"crdt-live-binding",
