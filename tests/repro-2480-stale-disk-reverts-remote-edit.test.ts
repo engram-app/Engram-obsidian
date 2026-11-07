@@ -259,24 +259,6 @@ test("2480 B edge: a disk text the doc held but no local edit preceded is ingest
 	expect(await d.docText()).toBe(V1);
 });
 
-test("2480 B3 edge: the editor-echo window expires, so a later revert to that text wins", async () => {
-	const d = await device();
-	const typed = "typed while open\n";
-	const t = (await d.reg.getDoc(d.ID)).getText(CONTENT_KEY);
-	t.insert(t.length, typed); // editor-origin edit
-	await d.mcpEdit(); // arms the window; the flush lands
-	const realNow = Date.now;
-	Date.now = () => realNow() + 6_000; // past ECHO_COOLDOWN_MS
-	try {
-		d.disk.set(PATH, `${V1}${typed}`);
-		await d.engine.pushFile(d.file);
-		await tick(20);
-	} finally {
-		Date.now = realNow;
-	}
-	expect(await d.docText()).toBe(`${V1}${typed}`);
-});
-
 test("2480 B edge: same-line overlap is a keep-both conflict, not an interleave", async () => {
 	const d = await device();
 	const copies: string[] = [];
@@ -388,4 +370,130 @@ test("2480 B3 edge: the first ingest closes the editor-echo window, match or not
 	await d.engine.pushFile(d.file);
 	await tick(20);
 	expect(await d.docText()).toBe(`${V1}${typed}`);
+});
+
+// Delta review of PR 683 at 4924e016 (findings D1 to D4), verbatim except
+// where noted.
+
+/** A second remote edit, built from the device's own doc state. */
+async function remoteEdit(d: Awaited<ReturnType<typeof device>>, from: string, to: string) {
+	const local = await d.reg.getDoc(d.ID);
+	const peer = new Y.Doc();
+	Y.applyUpdate(peer, Y.encodeStateAsUpdate(local));
+	const before = Y.encodeStateVector(peer);
+	const t = peer.getText(CONTENT_KEY);
+	const at = t.toJSON().indexOf(from);
+	peer.transact(() => {
+		t.delete(at, from.length);
+		t.insert(at, to);
+	});
+	await d.reg.applyRemoteUpdate(d.ID, Y.encodeStateAsUpdate(peer, before)).catch(() => {});
+	await tick(20);
+}
+
+test("D1 timing: close-save landing 6 s after the remote merge reverts the MCP edit", async () => {
+	const d = await device();
+	const copies: string[] = [];
+	d.engine.keepConflictCopy = async (_p: string, text: string) => {
+		copies.push(text);
+		return true;
+	};
+	const typed = "typed while open\n";
+	const t = (await d.reg.getDoc(d.ID)).getText(CONTENT_KEY);
+	t.insert(t.length, typed); // editor-origin edit
+	d.ctl.bound = false;
+	await d.mcpEdit(); // arms localHead; flush lands, base = flushed text
+	const realNow = Date.now;
+	Date.now = () => realNow() + 6_000; // slow mobile fs / app suspended mid-window
+	try {
+		d.disk.set(PATH, `${V1}${typed}`); // the late close-save of the pre-merge buffer
+		await d.engine.pushFile(d.file);
+		await tick(20);
+	} finally {
+		Date.now = realNow;
+	}
+	await expectMcpSectionKept(await d.docText());
+	// Added: past the window it is a keep-both, not a silent drop.
+	expect(copies).toEqual([`${V1}${typed}`]);
+});
+
+test("D2 crash: merge base (eager IDB) ahead of syncState (lazy data.json) drops to the two-way path", async () => {
+	const d = await device();
+	await d.mcpEdit(); // flush lands: base = T2 written to IDB at once; hash H2 only in memory
+	expect(d.disk.get(PATH)).toContain(MCP_SECTION);
+	const t2 = d.disk.get(PATH) as string;
+	d.ctl.failWrites = 1;
+	await remoteEdit(d, "# Note", "# Note EDIT2"); // doc T3, flush fails, disk T2
+	expect(d.disk.get(PATH)).toBe(t2);
+	await d.reg.destroyAll(); // crash: data.json was last saved with hash(V1)
+	const reg2 = new ProviderRegistry({
+		dbPrefix: undefined,
+		send: () => true,
+		onFlushToDisk: () => true,
+		isUnchangedSynced: (_id, c) => fnv1a(c) === fnv1a(V1), // stale persisted syncState
+	});
+	live.push(reg2);
+	await reg2.applyLocalEdit(d.ID, `${t2}\nupdated: 2026-11-02\n`);
+	expect(await reg2.projectedText(d.ID)).toContain("# Note EDIT2");
+});
+
+test("D3 upgrade: no persisted base yet (first launch of this version) still reverts", async () => {
+	const d = await device();
+	// Changed from the review: the upgrade happens BEFORE the failed flush.
+	// As written (base dropped after the flush failed) no copy of V1 exists
+	// anywhere on the device, so nothing could merge from it; the real
+	// upgrade launches with no key and then sees disk at the baseline.
+	(d.reg as any).entries.get(d.ID).mergeBase = null; // pre-upgrade IDB has no merge-base key
+	d.ctl.failWrites = 1;
+	await d.mcpEdit();
+	d.disk.set(PATH, `${V1}\nupdated: 2026-11-02\n`);
+	await d.engine.pushFile(d.file);
+	await tick(20);
+	await expectMcpSectionKept(await d.docText());
+});
+
+test("D4 adjacency: a plugin line written right under the MCP-edited line makes a conflict copy", async () => {
+	const d = await device();
+	const copies: string[] = [];
+	d.engine.keepConflictCopy = async (_p: string, text: string) => {
+		copies.push(text);
+		return true;
+	};
+	d.ctl.failWrites = 1;
+	await d.mcpEdit();
+	d.disk.set(PATH, V1.replace(`${OLD_SECTION}\n`, `${OLD_SECTION}\n- [ ] follow up\n`));
+	await d.engine.pushFile(d.file);
+	await tick(20);
+	expect(copies).toEqual([]); // no conflict copy for edits on different lines
+	// Added: both edits landed.
+	const doc = await d.docText();
+	await expectMcpSectionKept(doc);
+	expect(doc).toContain("- [ ] follow up");
+});
+
+test("D4 fallback: a true conflict with no copy handler keeps both in the doc, never reverts", async () => {
+	const d = await device();
+	d.engine.keepConflictCopy = async () => false; // the copy cannot be written
+	d.ctl.failWrites = 1;
+	await d.mcpEdit();
+	const linted = V1.replace(OLD_SECTION, `${OLD_SECTION}.`);
+	d.disk.set(PATH, linted);
+	await d.engine.pushFile(d.file);
+	await tick(20);
+	const doc = await d.docText();
+	expect(doc).toContain(MCP_SECTION); // the remote edit survives
+	expect(doc).toContain(`${OLD_SECTION}.`); // and so does disk's edit
+	expect(d.disk.get(PATH)).toBe(doc);
+});
+
+test("D4 last line plus an EOF append merges with no copy handler", async () => {
+	const d = await device();
+	d.ctl.failWrites = 1;
+	await remoteEdit(d, "keep me", "keep me edited");
+	d.disk.set(PATH, `${V1}updated: 2026-11-02\n`);
+	await d.engine.pushFile(d.file);
+	await tick(20);
+	const doc = await d.docText();
+	expect(doc).toContain("keep me edited\n");
+	expect(doc).toContain("updated: 2026-11-02");
 });

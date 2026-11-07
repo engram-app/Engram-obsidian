@@ -70,11 +70,18 @@ when the doc has not diverged from the base, or when **any** hunk fails to apply
 
 ## The other LCA consumer: the disk ingest (`applyLocalEdit`)
 
-_Updated 2026-11-06 (Engram#2480, PR 683)._ `ProviderRegistry.applyLocalEdit` merges a disk edit with `merge3(base, disk, doc)`, so a remote edit disk never got survives. Its base is NOT `BaseStore` any more: it is the per-note merge base the engine records with every disk baseline (`recordCrdtBaseline` -> `ProviderRegistry.setMergeBase`), the last text disk and doc agreed on. It is persisted in the doc's own IndexedDB store (key `merge-base`, one record per note, rewritten when it changes, Relay's per-doc LCA), and used only while it hashes to `syncState.hash`; otherwise there is no base and the two-way path runs. Baselines that are hash-only claims about disk (the live-bound autosave, a deferred create) pass `mergeBase: false` and leave the base behind. `lcaFor` is now a test-only override.
+_Updated 2026-11-06 (Engram#2480, PR 683, after two adversarial reviews)._ `ProviderRegistry.applyLocalEdit` merges a disk edit with `merge3(base, disk, doc)`, so a remote edit that disk never got survives.
 
-- A merge that keeps doc work disk lacks is written back to disk (`writeBack`), unless disk moved since the read.
-- A dirty `merge3` (overlapping or touching line edits) is a keep-both: disk's text goes to a conflict copy (`onMergeConflict` -> `keepConflictCopy`) and the doc is written back. `mergeDiskOntoDoc`'s fuzzy `patch_apply` is no longer used here because it reported same-span edits clean and interleaved them. Cost: edits on ADJACENT lines also conflict (git rules), so they now make a copy instead of merging.
-- An editor's late save of a buffer the doc already absorbed (closed tab, Obsidian's close-save lands after a remote flush) is caught by the `localHead` window: armed only by editor-origin edits (never disk ingests, origin `DISK`), cleared by the first ingest, and matching only within `ECHO_COOLDOWN_MS`.
+- **Base.** NOT `BaseStore`. It is the per-note merge base the engine records with every disk baseline (`recordCrdtBaseline` -> `ProviderRegistry.setMergeBase`), the last text disk and doc agreed on (Relay's per-doc LCA). It lives in the doc's own IndexedDB store as one `{ text, hash }` record (key `merge-base`), written when it changes.
+- **Self-validating.** It is never checked against `syncState.hash`, because that hash reaches data.json lazily (hide/unload) while the base is written at once, so after a crash they disagree. The record's own hash only guards against a torn write. Baselines that are hash-only claims about disk (the live-bound autosave, a deferred create) pass `mergeBase: false`, which CLEARS the base.
+- **First launch after upgrade.** There is no record yet. The flush path seeds one from disk when disk still hashes to the baseline (`writeCrdtNote`), and so does an ingest of disk at the baseline.
+- `lcaFor` is a test-only override.
+- **merge3.** Line-level diff3 detects conflicts. Each clashing region is re-merged at character level, so adjacent lines and different words of one line merge. Only a true character overlap is dirty: shared characters, two inserts at one point, or an insert at or inside the other side's replaced range.
+- **Keep-both.** A dirty merge keeps both: disk's text goes to a conflict copy (`onMergeConflict` -> `keepConflictCopy`) and the doc is written back. With no copy possible, both are kept IN the doc under a marker. There is no path that reverts either side.
+- **Write-back.** A merge that keeps doc work disk lacks is written back to disk (`writeBack`), unless disk moved since the read.
+- **Late editor saves.** An editor's late save of a buffer the doc already absorbed (closed tab, close-save lands after a remote flush) is caught by the `localHead` window. It is armed only by editor-origin edits (never disk ingests, origin `DISK`) and cleared by the first ingest. Inside `ECHO_COOLDOWN_MS` it is ignored; past it, the same text is a keep-both, never a fast-forward.
+
+The live binding's drift repair uses the same `merge3` from the last text editor and doc agreed on. Editor-only text is forwarded to the doc, and doc-only text is painted out of undo history. Ambiguous cases keep the editor's text as a conflict copy before the doc is adopted.
 
 ## Gotchas
 

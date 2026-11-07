@@ -2659,7 +2659,15 @@ export class SyncEngine {
 		// needlessly bumps mtime and emits a modify echo, which reads as a spurious
 		// local change (e2e test_78 hash-only). No write → nothing to echo-suppress,
 		// so we also skip markRecentlyFlushed.
-		if (file instanceof TFile && (await this.app.vault.cachedRead(file)) === content) {
+		const onDisk = file instanceof TFile ? await this.app.vault.cachedRead(file) : null;
+		// Disk still at the baseline is a merge base, even with none recorded
+		// yet (the first launch after upgrade): if this write then fails, the
+		// next disk edit still merges from it instead of reverting the doc.
+		if (onDisk !== null && onDisk !== content && this.isUnchangedSynced(normalized, onDisk)) {
+			const noteId = this.noteIdMap?.get(normalized);
+			if (noteId) this.crdt?.seedMergeBase?.(noteId, onDisk);
+		}
+		if (file instanceof TFile && onDisk === content) {
 			// Disk already holds this content, but the baseline may still be
 			// missing (an earlier flush created the file before this fix). Record
 			// it so a later server tombstone isn't misread as a resurrection.
@@ -2965,11 +2973,10 @@ export class SyncEngine {
 		// remote edit disk never got reads as a local delete (Engram#2480).
 		// `mergeBase: false`: a hash-only claim about disk the DOC may not hold
 		// (an editor's autosave, a deferred create). The base must be a text
-		// disk and doc agreed on; left behind, it stops matching the hash and
-		// reads as no base (the two-way path).
-		if (opts?.mergeBase === false) return;
+		// disk and doc agreed on, so the old one is cleared: no base, the
+		// two-way path.
 		const noteId = this.noteIdMap?.get(normalized);
-		if (noteId) this.crdt?.setMergeBase?.(noteId, content);
+		if (noteId) this.crdt?.setMergeBase?.(noteId, opts?.mergeBase === false ? null : content);
 	}
 
 	/** Un-bank the echo baseline for a frame the server DROPPED (note_not_found).
