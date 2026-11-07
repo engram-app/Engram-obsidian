@@ -26,13 +26,15 @@ guaranteed (mobile unverified, R4 on Engram#2523).
 ## Hiding layers (each with its clearing events)
 - Pending folder op: ack; refusal, `unknown_event` or `bad_frame` (then
   per-file fallback); feature off (per-file fallback); timeout keeps it (same
-  `op_id`); restart replays it from data.json; hold expiry drops it (the
-  server's state wins); vault switch drops it.
+  `op_id`); restart replays it from data.json; vault switch drops it. NEVER
+  by a hold expiry: only the server's answer or a per-file fallback.
 - Held inbound change (a folder with a pending local op): ack (only changes
   newer than the ack's seq apply), refusal (newest applies), reconnect
   (dropped; the join's manifest re-teaches), max age `HOLD_MAX_MS` (newest
-  applies AND the pending op is dropped, so a late ack cannot move the server
-  away from the disk).
+  applies; the op stays, and its ack moves the disk back to the server).
+  Manifest rows for a folder with our op pending never enter the hold: they
+  are the server's state from BEFORE our op, not another writer, and their
+  expiry undid the user's own move (delta review N1 on #689).
 - Same-tick batch: cleared at the end of its tick.
 
 ## Gotchas
@@ -53,7 +55,15 @@ guaranteed (mobile unverified, R4 on Engram#2523).
   list, `folder_changed`, and the `crdt_create` reply's `folder_id`.
 - **Manifest folder moves are not gated on `features.folder_ops`**: the list
   is the capability signal, and the user-topic features reply can land after
-  a restart's first catch-up. `folder_changed` IS gated (flag off = main).
+  a restart's first catch-up. `folder_changed` IS gated, and the echo rule
+  runs only with the flag or a manifest `folders` list THIS session (never
+  from the persisted index alone), so a flag-off server behaves as main.
+- **The manifest delete pass skips unconfirmed local moves**: files under a
+  pending folder op's `to`, and a note's pending rename (the rename fence).
+  The `rowWrittenAt` fence alone only covers a manifest fetched before the
+  re-key. This was a hole on main for single renames too.
+- Folder ids also come from the root-first ancestor chain `folders` that
+  `POST /folders` and the `crdt_create` reply return on a folder-ops server.
 - The folder index is persisted (`folderIndex` in data.json) so a restart
   knows where its folders were before the first manifest.
 - An inbound move updates the index BEFORE `vault.rename`: Obsidian fires the
