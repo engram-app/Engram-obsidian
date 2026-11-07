@@ -109,7 +109,7 @@ export class CrdtOpQueue {
 	 *  joined yet). Neither the TTL nor the attempt budget may be spent while
 	 *  nothing can be delivered: on rejoin every held op's age is credited the
 	 *  time it spent held. Cleared by `onJoined`; set by `onLeft`. */
-	private heldSince: number | null;
+	private readonly held: HeldClock;
 	/** Re-entrancy guard so overlapping flush/tick calls don't double-send. */
 	private flushing = false;
 	/** Queue-wide pause after a `rate_limited` reply (see RateLimitPause). */
@@ -132,7 +132,7 @@ export class CrdtOpQueue {
 		this.currentVaultId = deps.currentVaultId;
 		this.opts = { ...DEFAULT_OPTIONS, ...deps.options };
 		this.persistDelayMs = deps.persistDelayMs ?? PERSIST_DELAY_MS;
-		this.heldSince = this.now();
+		this.held = new HeldClock(this.now);
 		this.rateLimit = new RateLimitPause(this.now, (n) => this.backoffFor(n));
 	}
 
@@ -218,14 +218,12 @@ export class CrdtOpQueue {
 	 *  back to each op's age, so the TTL measures time the op COULD have been
 	 *  delivered, not wall time. Held ops are due immediately. */
 	async onJoined(): Promise<void> {
-		if (this.heldSince !== null) {
-			const now = this.now();
+		const span = this.held.join();
+		if (span) {
 			for (const entry of this.entries.values()) {
-				const heldFor = now - Math.max(this.heldSince, entry.op.enqueuedAt);
-				if (heldFor > 0) entry.op.enqueuedAt += heldFor;
+				entry.op.enqueuedAt = creditAge(entry.op.enqueuedAt, span);
 				entry.nextAttemptAt = 0;
 			}
-			this.heldSince = null;
 			this.schedulePersist();
 		}
 		this.joined = true;
@@ -236,9 +234,8 @@ export class CrdtOpQueue {
 	 *  including the rest of an in-flight pass, and pauses the TTL until the
 	 *  next `onJoined`. Idempotent. */
 	onLeft(): void {
-		if (!this.joined && this.heldSince !== null) return;
 		this.joined = false;
-		this.heldSince = this.now();
+		this.held.leave();
 	}
 
 	/**
@@ -296,12 +293,7 @@ export class CrdtOpQueue {
 	private creditRateLimitPause(): void {
 		const pause = this.rateLimit.takeEnded();
 		if (!pause) return;
-		// Same rule as onJoined: credit only the part of the pause each op was
-		// actually queued for, so an op enqueued mid-pause is not aged negative.
-		for (const e of this.entries.values()) {
-			const heldFor = pause.until - Math.max(pause.from, e.op.enqueuedAt);
-			if (heldFor > 0) e.op.enqueuedAt += heldFor;
-		}
+		for (const e of this.entries.values()) e.op.enqueuedAt = creditAge(e.op.enqueuedAt, pause);
 		this.schedulePersist();
 	}
 
@@ -399,6 +391,49 @@ export class CrdtOpQueue {
 	}
 }
 
+/** A span in which nothing could be delivered. */
+export type HeldSpan = { from: number; until: number };
+
+/** Credit a held span back to an op's age, counting only the part the op was
+ *  actually queued for (an op enqueued mid-span is not aged negative). Shared
+ *  by every socket op queue: ages count delivery time, never wall time. */
+export function creditAge(queuedAt: number, span: HeldSpan): number {
+	const heldFor = span.until - Math.max(span.from, queuedAt);
+	return heldFor > 0 ? queuedAt + heldFor : queuedAt;
+}
+
+/** When a queue's channel went down, so its ops' age can be credited the
+ *  held time on rejoin (construction counts as down: nothing is joined yet).
+ *  Shared by the note-op queue and folder ops. */
+export class HeldClock {
+	private since: number | null;
+
+	/** `since`: when it went down (default now). */
+	constructor(
+		private readonly now: () => number,
+		since: number = now(),
+	) {
+		this.since = since;
+	}
+
+	isHeld(): boolean {
+		return this.since !== null;
+	}
+
+	/** The channel went down (idempotent: the first leave starts the span). */
+	leave(): void {
+		this.since ??= this.now();
+	}
+
+	/** The channel joined: the held span, once (null when it was not held). */
+	join(): HeldSpan | null {
+		if (this.since === null) return null;
+		const span = { from: this.since, until: this.now() };
+		this.since = null;
+		return span;
+	}
+}
+
 /** The queue-wide pause after a `rate_limited` reply, shared by every socket
  *  op queue (note ops here, folder ops in folder-ops.ts). A rate limit is not
  *  the op's fault, so it spends no attempt: the WHOLE queue pauses, the pause
@@ -435,7 +470,7 @@ export class RateLimitPause {
 
 	/** The ended pause not yet credited to queued ops' age, once (null while
 	 *  none ended or it is still running). */
-	takeEnded(): { from: number; until: number } | null {
+	takeEnded(): HeldSpan | null {
 		if (this.from === null || this.paused()) return null;
 		const ended = { from: this.from, until: this.until };
 		this.from = null;
