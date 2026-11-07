@@ -343,7 +343,7 @@ const es: Dict = {
 	"Ignored ({count})": "Ignorados ({count})",
 	"Ignored {path} — won't sync until restored from Sync Center.":
 		"Ignorado {path} — no se sincronizará hasta que se restaure desde el Centro de sincronización.",
-	"Info (default)": "Info (predeterminado)",
+	Info: "Información",
 	"Invalid API key": "Clave API inválida",
 	"It's OK to email me about this": "Puedes enviarme un correo electrónico sobre esto",
 	"Join our Discord": "Únete a nuestro Discord",
@@ -359,8 +359,8 @@ const es: Dict = {
 	"Love it": "Me encanta",
 	"Make new vault": "Crear nueva bóveda",
 	"Manage account": "Administrar cuenta",
-	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
-		"Nivel de severidad mínimo que se envía mientras los diagnósticos están activados. Los niveles más altos envían menos líneas. Predeterminado: Info.",
+	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Warnings and errors.":
+		"Nivel de severidad mínimo cuando los diagnósticos están activados. Los niveles más altos envían menos líneas. Predeterminado: Advertencias y errores.",
 	"Missing on the server": "No encontrado en el servidor",
 	"Needs attention ({count})": "Requiere atención ({count})",
 	"Network unavailable": "Red no disponible",
@@ -496,8 +496,8 @@ const es: Dict = {
 	Send: "Enviar",
 	"Send debug logs. Note content stays private.":
 		"Enviar registros de depuración. El contenido de las notas se mantiene privado.",
-	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use.":
-		"Envía información detallada de la sincronización, la bóveda y la conexión al servidor para solucionar problemas, con trazado distribuido en las solicitudes. Solo metadatos, nunca contenido de las notas. Desactiva para uso normal.",
+	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Turns itself off after 24 hours.":
+		"Envía información detallada de la sincronización, la bóveda y la conexión al servidor para solucionar problemas, con trazado distribuido en las solicitudes. Solo metadatos, nunca contenido de las notas. Se desactiva después de 24 horas.",
 	"Send feedback": "Enviar comentarios",
 	"Sending…": "Enviando…",
 	"Server error": "Error del servidor",
@@ -644,7 +644,7 @@ const es: Dict = {
 		"Esperando autorización — conectado, esto se completará al instante.",
 	"Waiting for authorization — no live connection, checking every 30s.":
 		"Esperando autorización — sin conexión activa, verificando cada 30 segundos.",
-	"Warnings and errors": "Advertencias y errores",
+	"Warnings and errors (default)": "Advertencias y errores (predeterminado)",
 	"WebSocket connected — live sync active": "WebSocket conectado — sincronización en vivo activa",
 	"What Engram does, and how to connect your vault, start to finish.":
 		"¿Qué hace Engram y cómo conectar tu bóveda, de principio a fin.",

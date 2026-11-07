@@ -279,7 +279,7 @@ const ms: Dict = {
 	"Ignored ({count})": "Diabaikan ({count})",
 	"Ignored {path} — won't sync until restored from Sync Center.":
 		"Dielakkan {path} — tidak akan disegerakkan sehingga dipulihkan dari Pusat Sync.",
-	"Info (default)": "Info (lalai)",
+	Info: "Maklumat",
 	"Invalid API key": "Kunci API tidak sah",
 	"It's OK to email me about this": "Anda boleh emel saya tentang ini",
 	"Join our Discord": "Sertai Discord kami",
@@ -295,8 +295,8 @@ const ms: Dict = {
 	"Love it": "Sangat suka",
 	"Make new vault": "Buat peti nota baharu",
 	"Manage account": "Urus akaun",
-	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
-		"Tahap keparuhan minimum yang dihantar semasa diagnosis diaktifkan. Tahap yang lebih tinggi menghantar lebih sedikit baris. Lalai: Info.",
+	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Warnings and errors.":
+		"Tahap keparuhan minimum semasa diagnostik diaktifkan. Tahap yang lebih tinggi menghantar lebih sedikit baris. Lalai: Amaran dan ralat.",
 	"Missing on the server": "Tidak ditemui di pelayan",
 	"Needs attention ({count})": "Perlu perhatian ({count})",
 	"Network unavailable": "Rangkaian tidak tersedia",
@@ -433,8 +433,8 @@ const ms: Dict = {
 	Send: "Hantar",
 	"Send debug logs. Note content stays private.":
 		"Hantar log ralat. Kandungan nota kekal peribadi.",
-	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use.":
-		"Hantar maklumat terperinci tentang proses sync, peti nota, dan sambungan ke pelayan untuk penyelesaian masalah, dengan penjejakan teragih pada permintaan. Hanya metadata, tidak pernah kandungan nota. Biarkan tidak aktif untuk penggunaan biasa.",
+	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Turns itself off after 24 hours.":
+		"Hantar maklumat terperinci tentang proses sync, peti nota, dan aktiviti sambungan ke pelayan untuk penyelesaian masalah, dengan penjejakan permintaan. Hanya metadata, tidak termasuk kandungan nota. Akan berhenti selepas 24 jam.",
 	"Send feedback": "Hantar maklum balas",
 	"Sending…": "Mengirim…",
 	"Server error": "Ralat pelayan",
@@ -567,7 +567,7 @@ const ms: Dict = {
 		"Menunggu pengesahan — disambungkan, ini akan selesai dengan serta-merta.",
 	"Waiting for authorization — no live connection, checking every 30s.":
 		"Menunggu pengesahan — tiada sambungan langsung, menyemak setiap 30 saat.",
-	"Warnings and errors": "Amaran dan ralat",
+	"Warnings and errors (default)": "Amaran dan ralat (lalai)",
 	"WebSocket connected — live sync active": "WebSocket disambungkan — sync langsung aktif",
 	"What Engram does, and how to connect your vault, start to finish.":
 		"Apa yang Engram lakukan, dan cara menyambungkan peti nota anda, dari awal hingga akhir.",

@@ -316,7 +316,7 @@ const tr: Dict = {
 	"Ignored ({count})": "Yoksayıldı ({count})",
 	"Ignored {path} — won't sync until restored from Sync Center.":
 		"{path} yoksayıldı — Senkronizasyon Merkezi'nden geri yüklenene kadar senkronize edilmeyecek.",
-	"Info (default)": "Bilgi (varsayılan)",
+	Info: "Bilgi",
 	"Invalid API key": "Geçersiz API anahtarı",
 	"It's OK to email me about this": "Bu konuyla ilgili bana e-posta gönderebilirsiniz",
 	"Join our Discord": "Discord'umuza katılın",
@@ -332,8 +332,8 @@ const tr: Dict = {
 	"Love it": "Çok beğendim",
 	"Make new vault": "Yeni kasa oluştur",
 	"Manage account": "Hesap yönetimi",
-	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.":
-		"Tanı açıkken gönderilecek minimum önem düzeyi. Daha yüksek seviyeler daha az satır gönderir. Varsayılan: Bilgi.",
+	"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Warnings and errors.":
+		"Tanılamalar açıkken gönderilen minimum önem düzeyi. Daha yüksek seviyeler daha az satır gönderir. Varsayılan: Uyarılar ve hatalar.",
 	"Missing on the server": "Sunucuda eksik",
 	"Needs attention ({count})": "Dikkat gerektiriyor ({count})",
 	"Network unavailable": "Ağ bağlantısı yok",
@@ -467,8 +467,8 @@ const tr: Dict = {
 	Send: "Gönder",
 	"Send debug logs. Note content stays private.":
 		"Hata ayıklama günlüklerini gönderin. Not içeriği gizli kalır.",
-	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use.":
-		"Sorun giderme için, ayrıntılı senkronizasyon, kasa ve bağlantı bilgilerini dağıtık izleme ile birlikte sunucuya gönderin. Sadece meta veriler, asla not içeriği gönderilmez. Normal kullanım için bu seçeneği kapatın.",
+	"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Turns itself off after 24 hours.":
+		"Sorun giderme için, ayrıntılı kasa ve senkronizasyon bilgilerini, dağıtık izleme ile birlikte sunucuya gönderir. Sadece meta veriler gönderilir, not içeriği asla gönderilmez. 24 saat sonra kendiliğinden kapanır.",
 	"Send feedback": "Geri bildirim gönder",
 	"Sending…": "Gönderiliyor…",
 	"Server error": "Sunucu hatası",
@@ -607,7 +607,7 @@ const tr: Dict = {
 		"Yetkilendirme bekleniyor — Bağlandı, bu işlem anında tamamlanacak.",
 	"Waiting for authorization — no live connection, checking every 30s.":
 		"Yetkilendirme bekleniyor — canlı bağlantı yok, her 30 saniyede bir kontrol ediliyor.",
-	"Warnings and errors": "Uyarılar ve hatalar",
+	"Warnings and errors (default)": "Uyarılar ve hatalar (varsayılan)",
 	"WebSocket connected — live sync active": "WebSocket bağlantısı — canlı senkronizasyon aktif",
 	"What Engram does, and how to connect your vault, start to finish.":
 		"Engram'ın ne yaptığı ve kasanızı nasıl bağlayacağınız, baştan sona.",
