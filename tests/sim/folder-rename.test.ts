@@ -206,4 +206,47 @@ describe("Engram#2523 S4: a folder rename is one folder op", () => {
 			cleanup(t);
 		}
 	});
+
+	test("offline peer: folder moves apply BEFORE the manifest delete pass (nothing trashed)", async () => {
+		const t = await seeded(2533, { folderOps: true, cascadeBroadcasts: false });
+		try {
+			const [a, b] = t.replicas;
+			await b.goOffline();
+			await a.renameFolder("Proj", "Done", "folder-first");
+			await t.scheduler.drain();
+			// B's catch-up runs with the socket still down: the manifest's folders
+			// and the delete pass, nothing from the live feed.
+			const sync = b.fullSync();
+			await t.scheduler.drain();
+			await sync;
+			expect(b.trashed()).toEqual([]);
+			expect(read(b, "Done/a.md")).toBe(NOTES["Proj/a.md"]);
+			expect(read(b, "Done/sub/b.md")).toBe(NOTES["Proj/sub/b.md"]);
+			expect(onDisk(b, "Proj/a.md")).toBe(false);
+		} finally {
+			cleanup(t);
+		}
+	});
+
+	test("our own folder_changed echo is dropped by device_id", async () => {
+		const t = await seeded(2534, { folderOps: true, cascadeBroadcasts: false });
+		try {
+			const [a] = t.replicas;
+			const seen: string[] = [];
+			const engine = a.engine as unknown as {
+				applyFolderChange: (c: { id: string }) => Promise<void>;
+			};
+			const real = engine.applyFolderChange.bind(a.engine);
+			engine.applyFolderChange = async (c) => {
+				seen.push(c.id);
+				await real(c);
+			};
+			await a.renameFolder("Proj", "Done", "folder-first");
+			await t.scheduler.drain();
+			expect(t.server.count("folder_op")).toBeGreaterThan(0);
+			expect(seen).toEqual([]);
+		} finally {
+			cleanup(t);
+		}
+	});
 });
