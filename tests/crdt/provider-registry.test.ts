@@ -4,6 +4,7 @@ import * as YDoc from "yjs";
 import { isDestroyedError } from "../../src/crdt/destroyed-error";
 import { CONTENT_KEY } from "../../src/crdt/frontmatter-codec";
 import { ProviderRegistry } from "../../src/crdt/provider-registry";
+import { waitFor } from "../helpers/wait-for";
 
 /** Hand a frame to the other device the way the REAL transport does.
  *
@@ -78,14 +79,6 @@ const flush = () => new Promise<void>((r) => setTimeout(r, 15));
  *  load, pre-existing on main: `synced` was still false when closeDoc ran, so
  *  isFullySynced refused to evict). Same helper, same reason, as the sibling
  *  wiring.test.ts. Use this — not a bigger sleep — for handshake preconditions. */
-async function waitFor(cond: () => boolean, label: string): Promise<void> {
-	for (let i = 0; i < 200; i++) {
-		if (cond()) return;
-		await new Promise<void>((r) => setTimeout(r, 5));
-	}
-	throw new Error(`waitFor timed out: ${label}`);
-}
-
 describe("ProviderRegistry destroyed-doc guard", () => {
 	function oneDevice() {
 		const flushed: Record<string, string> = {};

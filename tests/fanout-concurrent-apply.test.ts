@@ -21,6 +21,7 @@ import { toB64 } from "../src/crdt/wire";
 import { createCrdtWiring } from "../src/crdt/wiring";
 import { fnv1a, SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
+import { waitFor } from "./helpers/wait-for";
 
 const PATH = "a.md";
 let deviceSeq = 0;
@@ -132,7 +133,12 @@ test("three back-to-back fan-outs and a pending local append keep every line", a
 
 	// B appends three times; each update reaches A as a fan-out, back to back.
 	for (const line of ["B one\n", "B two\n", "B three\n"]) push(line);
-	await tick(200);
+	await waitFor(
+		async () =>
+			disk.get(PATH) === (await reg.projectedText(ID)) && disk.get(PATH)!.includes("B three"),
+		"every fan-out applied and flushed",
+	);
+	await tick(50); // let any late write land before asserting nothing was lost
 
 	const doc = await reg.projectedText(ID);
 	expect(doc).toContain("A line\n");

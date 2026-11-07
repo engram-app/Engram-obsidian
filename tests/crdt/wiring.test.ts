@@ -29,18 +29,9 @@ import { NoteIdMap } from "../../src/crdt/note-id-map";
 import { type CrdtWiring, createCrdtWiring } from "../../src/crdt/wiring";
 import { noteRef } from "../../src/note-ref";
 import { rlog } from "../../src/remote-log";
+import { waitFor } from "../helpers/wait-for";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-/** Poll until `cond` holds — the STEP1/STEP2 handshake plus a cold IndexedDB
- *  store open span several async turns, so a fixed sleep is racy. */
-async function waitFor(cond: () => boolean | Promise<boolean>, label: string): Promise<void> {
-	for (let i = 0; i < 100; i++) {
-		if (await cond()) return;
-		await sleep(10);
-	}
-	throw new Error(`waitFor timed out: ${label}`);
-}
 
 interface Device {
 	id: string;
