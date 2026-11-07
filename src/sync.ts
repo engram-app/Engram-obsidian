@@ -14,7 +14,7 @@ import {
 } from "obsidian";
 import { arrayBufferToBase64, base64ToArrayBuffer, type EngramApi } from "./api";
 import { expBackoff } from "./backoff";
-import { BaseStore } from "./base-store";
+import type { BaseStore } from "./base-store";
 import type { GenesisOutcome } from "./channel";
 import { fnv1a, fnv1aBase64 } from "./content-hash";
 import { splitFrontmatter } from "./crdt/frontmatter-codec";
@@ -30,6 +30,7 @@ import {
 } from "./crdt-op-dispatch";
 import type { CrdtOp } from "./crdt-op-queue";
 import { devLog } from "./dev-log";
+import { ECHO_COOLDOWN_MS } from "./echo-window";
 import { errMsg, isAlreadyGone, isHttpStatus, statusOf } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
 import { isCanvasPath as canvasPath, isCrdtEligiblePath as crdtEligiblePath } from "./file-kind";
@@ -324,9 +325,6 @@ function countFolders(paths: Iterable<string>): number {
 	}
 	return set.size;
 }
-
-/** How long (ms) after a push completes to suppress WebSocket echoes for that path. */
-const ECHO_COOLDOWN_MS = 5000;
 
 /** How long (ms) after THIS device deletes a note to refuse resurrecting it
  *  via either CRDT convergence path (catch-up head map or vault-channel
@@ -871,20 +869,15 @@ export class SyncEngine {
 	 *  the failure direction is a replay round-trip, never a 0-byte write. */
 	private emptyContentHash: string | null = null;
 
-	/** Base content store for 3-way merge. In memory until the plugin swaps in
-	 *  its persisted one (main.ts), so the CRDT merge base never depends on
-	 *  that wiring. */
-	baseStore: BaseStore | null = new BaseStore(
-		{ read: async () => "", write: async () => {} },
-		"",
-	);
+	/** Optional base content store for 3-way merge (Step 2+). */
+	baseStore: BaseStore | null = null;
 
 	/** The body the CRDT discovery leg wrote from a catch-up row, while the
 	 *  doc is still history-less. It is the base both a local disk edit and
 	 *  the genesis fan-out descend from, so `adoptHistoryLessNote` can 3-way
 	 *  merge a real divergence instead of keeping both. Kept out of
-	 *  `baseStore` on purpose: that holds what disk holds (`crdtMergeBase`),
-	 *  and this row body may never have reached disk. Read once, and
+	 *  `baseStore` on purpose: `lcaFor` feeds that to every later merge and a
+	 *  CRDT flush never refreshes it (#544 stale-base class). Read once, and
 	 *  only when its hash equals the recorded baseline. Cleared once the adopt
 	 *  gives the doc history, after DISCOVERY_BASE_TTL_MS, and oldest-first
 	 *  past the char cap. */
@@ -2966,27 +2959,17 @@ export class SyncEngine {
 			hash: fnv1a(content),
 			...(opts?.markCreated ? { crdtHead: CRDT_HEAD_CREATED } : {}),
 		});
-		// The text beside the hash: the merge base a later disk edit is diffed
-		// against (`crdtMergeBase`). Without it a disk ingest diffs disk against
-		// the DOC, and a remote edit disk never got reads as a local delete.
+		// The text beside the hash is the note's merge base (Relay's LCA): what
+		// a later disk edit is diffed against, persisted per note by the
+		// registry. Without it a disk ingest diffs disk against the DOC, and a
+		// remote edit disk never got reads as a local delete (Engram#2480).
 		// `mergeBase: false`: a hash-only claim about disk the DOC may not hold
 		// (an editor's autosave, a deferred create). The base must be a text
-		// disk and doc agreed on (Relay's LCA); left behind, it stops matching
-		// the hash and `crdtMergeBase` answers null (the two-way path).
+		// disk and doc agreed on; left behind, it stops matching the hash and
+		// reads as no base (the two-way path).
 		if (opts?.mergeBase === false) return;
-		this.baseStore?.set(normalized, content, this.syncState.get(normalized)?.version ?? 0);
-	}
-
-	/** The last text this device wrote to or read from disk for `path`, the
-	 *  merge base for a disk edit (Relay's LCA). Only while it still hashes to
-	 *  the recorded baseline: anything else is a base the baseline moved past
-	 *  (a REST-era entry, an un-banked push), and a stale base re-creates the
-	 *  #544 doubling class, so it answers null (the two-way path). */
-	crdtMergeBase(path: string): string | null {
-		const normalized = normalizePath(path);
-		const content = this.baseStore?.get(normalized)?.content;
-		if (content === undefined) return null;
-		return this.syncState.get(normalized)?.hash === fnv1a(content) ? content : null;
+		const noteId = this.noteIdMap?.get(normalized);
+		if (noteId) this.crdt?.setMergeBase?.(noteId, content);
 	}
 
 	/** Un-bank the echo baseline for a frame the server DROPPED (note_not_found).
@@ -3343,21 +3326,26 @@ export class SyncEngine {
 		for (const noteId of [...this.heldForServer]) void this.loadServerState(noteId);
 	}
 
-	/** Keep `text` beside `path` as a conflict copy (the open editor's half of
-	 *  the load gate's keep-both). False when the copy could not be written. */
-	async keepConflictCopy(path: string, text: string): Promise<boolean> {
+	/** Keep `text` beside `path` as a conflict copy (the keep-both of the
+	 *  load gate's open editor, or of a conflicting disk merge). False when
+	 *  the copy could not be written. */
+	async keepConflictCopy(
+		path: string,
+		text: string,
+		why = "load gate: open editor diverged from the server",
+	): Promise<boolean> {
 		const normalized = normalizePath(path);
 		try {
 			const copy = await this.writeDriftConflictCopy(normalized, text);
 			rlog().info(
 				"conflict",
-				`load gate: open editor diverged from the server → keep-both | original=${noteRef(normalized)} copy=${noteRef(copy)}`,
+				`${why} → keep-both | original=${noteRef(normalized)} copy=${noteRef(copy)}`,
 			);
 			return true;
 		} catch (e) {
 			rlog().error(
 				"conflict",
-				`load gate: keep-both copy failed for ${noteRef(normalized)}: ${errMsg(e, normalized)}`,
+				`${why}: keep-both copy failed for ${noteRef(normalized)}: ${errMsg(e, normalized)}`,
 			);
 			return false;
 		}

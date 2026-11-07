@@ -23,9 +23,10 @@ import "fake-indexeddb/auto";
 import { TFile } from "obsidian";
 import * as Y from "yjs";
 import type { EngramApi } from "../src/api";
+import { BaseStore } from "../src/base-store";
 import { CONTENT_KEY } from "../src/crdt/frontmatter-codec";
 import { NoteIdMap } from "../src/crdt/note-id-map";
-import type { ProviderRegistry } from "../src/crdt/provider-registry";
+import { ProviderRegistry } from "../src/crdt/provider-registry";
 import { createCrdtWiring } from "../src/crdt/wiring";
 import { fnv1a, reconcileColdStart, SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
@@ -220,11 +221,8 @@ test("2480 B edge: the merge is written back to disk, so the next disk edit merg
 	d.disk.set(PATH, `${V1}\nupdated: 1\n`);
 	await d.engine.pushFile(d.file);
 	await tick(20);
-	// Disk now holds the merge, not the stale text, and the engine's base is it.
-	expect(d.disk.get(PATH)).toBe(await d.docText());
-	expect(d.engine.crdtMergeBase(PATH)).toBe(d.disk.get(PATH));
+	expect(d.disk.get(PATH)).toBe(await d.docText()); // disk holds the merge
 
-	// A second one-line write on top of the merged disk keeps the MCP section.
 	d.disk.set(PATH, `${d.disk.get(PATH)}more\n`);
 	await d.engine.pushFile(d.file);
 	await tick(20);
@@ -243,7 +241,6 @@ test("2480 B edge: a failed write-back leaves the base at the stale disk text", 
 	await d.engine.pushFile(d.file);
 	await tick(20);
 	expect(d.disk.get(PATH)).toBe(stale);
-	expect(d.engine.crdtMergeBase(PATH)).toBe(stale); // what disk actually holds
 
 	d.disk.set(PATH, `${stale}more\n`);
 	await d.engine.pushFile(d.file);
@@ -253,20 +250,142 @@ test("2480 B edge: a failed write-back leaves the base at the stale disk text", 
 	expect(doc).toContain("more");
 });
 
-test("2480 B edge: a base the baseline moved past is not used", async () => {
-	const d = await device();
-	expect(d.engine.crdtMergeBase(PATH)).toBe(V1);
-	d.engine.importSyncState({ [PATH]: { hash: fnv1a("something else"), crdtHead: "h0" } });
-	expect(d.engine.crdtMergeBase(PATH)).toBeNull();
-});
-
-test("2480 B3 edge: a disk text the doc held but no local edit preceded is ingested normally", async () => {
+test("2480 B edge: a disk text the doc held but no local edit preceded is ingested normally", async () => {
 	const d = await device();
 	await d.mcpEdit(); // flush lands: disk == doc == MCP text
-	// No local edit before the remote merge, so V1 is not the doc's local
-	// head: a user who restores V1 on disk by hand gets V1.
-	d.disk.set(PATH, V1);
+	d.disk.set(PATH, V1); // a user restores V1 by hand
 	await d.engine.pushFile(d.file);
 	await tick(20);
 	expect(await d.docText()).toBe(V1);
+});
+
+test("2480 B3 edge: the editor-echo window expires, so a later revert to that text wins", async () => {
+	const d = await device();
+	const typed = "typed while open\n";
+	const t = (await d.reg.getDoc(d.ID)).getText(CONTENT_KEY);
+	t.insert(t.length, typed); // editor-origin edit
+	await d.mcpEdit(); // arms the window; the flush lands
+	const realNow = Date.now;
+	Date.now = () => realNow() + 6_000; // past ECHO_COOLDOWN_MS
+	try {
+		d.disk.set(PATH, `${V1}${typed}`);
+		await d.engine.pushFile(d.file);
+		await tick(20);
+	} finally {
+		Date.now = realNow;
+	}
+	expect(await d.docText()).toBe(`${V1}${typed}`);
+});
+
+test("2480 B edge: same-line overlap is a keep-both conflict, not an interleave", async () => {
+	const d = await device();
+	const copies: string[] = [];
+	d.engine.keepConflictCopy = async (_p: string, text: string) => {
+		copies.push(text);
+		return true;
+	};
+	d.ctl.failWrites = 1;
+	await d.mcpEdit();
+	// A linter rewrote the very line MCP replaced.
+	const linted = V1.replace(OLD_SECTION, `${OLD_SECTION}.`);
+	d.disk.set(PATH, linted);
+	await d.engine.pushFile(d.file);
+	await tick(20);
+	const doc = await d.docText();
+	await expectMcpSectionKept(doc);
+	expect(doc).not.toContain(`${MCP_SECTION}.`);
+	expect(copies).toEqual([linted]);
+	expect(d.disk.get(PATH)).toBe(doc);
+});
+
+test("2480 B edge: the merge base survives a restart (persisted per note)", async () => {
+	const d = await device();
+	d.ctl.failWrites = 1;
+	await d.mcpEdit(); // base stays V1, disk V1, doc MCP
+	await d.reg.destroyAll(); // app killed: the in-memory entry is gone
+	const reg2 = new ProviderRegistry({
+		dbPrefix: undefined,
+		send: () => true,
+		onFlushToDisk: () => true,
+		isUnchangedSynced: (_id, c) => fnv1a(c) === fnv1a(V1),
+	});
+	live.push(reg2);
+	const disk = `${V1}\nupdated: 2026-11-02\n`;
+	await reg2.applyLocalEdit(d.ID, disk);
+	await expectMcpSectionKept(await reg2.projectedText(d.ID));
+});
+
+// Adversarial review of PR 683 (findings 1 and 2), verbatim.
+test("review 683 R1: localHead never expires and swallows a deliberate external revert later", async () => {
+	const d = await device();
+	const mine = `${V1}local line\n`;
+	d.disk.set(PATH, mine);
+	await d.engine.pushFile(d.file);
+	await tick(20);
+	await d.mcpEdit(); // localHead = hash(mine); the flush lands, disk == doc
+	expect(d.disk.get(PATH)).toContain(MCP_SECTION);
+	await tick(50); // no late close-save ever comes
+	d.disk.set(PATH, mine); // user restores the old text (git checkout -- Plan.md)
+	await d.engine.pushFile(d.file);
+	await tick(20);
+	expect(await d.docText()).toBe(mine); // PR: doc keeps the MCP text and writes it back
+	expect(d.disk.get(PATH)).toBe(mine);
+});
+
+test("review 683 R3: external edit then external undo is discarded when any server frame landed in between", async () => {
+	const d = await device();
+	const d1 = `${V1}first external edit\n`;
+	d.disk.set(PATH, d1);
+	await d.engine.pushFile(d.file); // local origin: localDirty = true
+	await tick(20);
+	// Any provider/REMOTE transaction (fan-out echo, handshake) pins localHead = hash(d1).
+	await d.reg.applyRemoteUpdate(d.ID, Y.encodeStateAsUpdate(new Y.Doc())).catch(() => {});
+	await tick(20);
+	const d2 = `${V1}second external edit\n`;
+	d.disk.set(PATH, d2);
+	await d.engine.pushFile(d.file);
+	await tick(20);
+	expect(await d.docText()).toBe(d2);
+	d.disk.set(PATH, d1); // undo in the external editor
+	await d.engine.pushFile(d.file);
+	await tick(20);
+	expect(await d.docText()).toBe(d1); // PR: "second external edit"
+	expect(d.disk.get(PATH)).toBe(d1);
+});
+
+test("review 683 R2: cold start with no persisted base (crash / first run after upgrade) still reverts", async () => {
+	const d = await device();
+	d.ctl.failWrites = 1;
+	await d.mcpEdit();
+	expect(d.disk.get(PATH)).toBe(V1);
+	d.engine.baseStore = new BaseStore({ read: async () => "", write: async () => {} }, "");
+	d.disk.set(PATH, `${V1}\nupdated: 2026-11-02\n`);
+	const disk = d.disk.get(PATH) as string;
+	await reconcileColdStart(
+		{ path: PATH, noteId: d.ID, diskContent: disk, reread: async () => d.disk.get(PATH) ?? "" },
+		{
+			applyLocalEdit: d.reg.applyLocalEdit.bind(d.reg),
+			getText: d.reg.getText.bind(d.reg),
+			projectedText: d.reg.projectedText.bind(d.reg),
+		},
+		() => {},
+	);
+	await expectMcpSectionKept(await d.docText()); // REVERTED
+});
+
+test("2480 B3 edge: the first ingest closes the editor-echo window, match or not", async () => {
+	const d = await device();
+	const typed = "typed while open\n";
+	const t = (await d.reg.getDoc(d.ID)).getText(CONTENT_KEY);
+	t.insert(t.length, typed); // editor-origin edit
+	await d.mcpEdit(); // arms the window; the flush lands
+	// An unrelated disk edit is ingested first: the window closes.
+	d.disk.set(PATH, `${d.disk.get(PATH)}other\n`);
+	await d.engine.pushFile(d.file);
+	await tick(20);
+	// A revert to the buffer text, still inside the cooldown, now wins.
+	d.disk.set(PATH, `${V1}${typed}`);
+	await d.engine.pushFile(d.file);
+	await tick(20);
+	expect(await d.docText()).toBe(`${V1}${typed}`);
 });

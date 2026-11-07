@@ -11,42 +11,87 @@ interface Opts {
 
 function registryWith({ lca, dbPrefix }: Opts) {
 	const dirty: string[] = [];
-	const lossy: string[] = [];
+	const copies: string[] = [];
+	const writes: string[] = [];
 	const registry = new ProviderRegistry({
 		dbPrefix,
 		send: () => true,
-		onFlushToDisk: () => true,
+		onFlushToDisk: (_id, content) => {
+			writes.push(content);
+			return true;
+		},
 		lcaFor: () => lca,
 		onDirtyMerge: (id) => dirty.push(id),
-		onLossyMerge: (id) => lossy.push(id),
+		onMergeConflict: async (_id, diskText) => {
+			copies.push(diskText);
+			return true;
+		},
 	});
-	return { registry, dirty, lossy };
+	return { registry, dirty, copies, writes };
 }
 
 describe("applyLocalEdit with an LCA", () => {
-	test("reports a clean merge that overwrote a concurrent edit (behaviour unchanged)", async () => {
-		// diff-match-patch's fuzzy patch_apply reports this clean and keeps the
-		// disk side. Measured, not changed: onLossyMerge counts it in prod.
-		const { registry, lossy } = registryWith({ lca: "one two three\n", dbPrefix: "lca-lossy" });
+	test("same-span edits on both sides are a keep-both conflict, never a silent overwrite", async () => {
+		// diff-match-patch's fuzzy patch_apply reported this clean and kept the
+		// disk side (the doc's edit dropped). merge3 calls it a conflict: the doc
+		// keeps its text, disk's goes to a copy, and the doc is written back.
+		const { registry, dirty, copies, writes } = registryWith({
+			lca: "one two three\n",
+			dbPrefix: "lca-lossy",
+		});
 		await registry.applyLocalEdit("nl", "one deux three\n");
 		await settle();
 
-		await registry.applyLocalEdit("nl", "one TWO three\n");
+		const onDisk = await registry.applyLocalEdit("nl", "one TWO three\n");
 
-		expect(await registry.projectedText("nl")).toBe("one TWO three\n");
-		expect(lossy).toEqual(["nl"]);
+		expect(await registry.projectedText("nl")).toBe("one deux three\n");
+		expect(dirty).toEqual(["nl"]);
+		expect(copies).toEqual(["one TWO three\n"]);
+		expect(writes).toEqual(["one deux three\n"]);
+		expect(onDisk).toBe("one deux three\n");
 		await registry.destroyAll();
 	});
 
-	test("does not report a merge that kept both edits", async () => {
-		const { registry, lossy } = registryWith({ lca: "1\n2\n3\n", dbPrefix: "lca-notlossy" });
-		await registry.applyLocalEdit("nk", "1\n2\nTHREE\n");
+	test("edits on separate lines merge clean", async () => {
+		const { registry, dirty } = registryWith({ lca: "1\n2\n3\n4\n", dbPrefix: "lca-notlossy" });
+		await registry.applyLocalEdit("nk", "1\n2\n3\nFOUR\n");
 		await settle();
 
-		await registry.applyLocalEdit("nk", "1\nTWO\n3\n");
+		await registry.applyLocalEdit("nk", "1\nTWO\n3\n4\n");
 
-		expect(await registry.projectedText("nk")).toBe("1\nTWO\nTHREE\n");
-		expect(lossy).toEqual([]);
+		expect(await registry.projectedText("nk")).toBe("1\nTWO\n3\nFOUR\n");
+		expect(dirty).toEqual([]);
+		await registry.destroyAll();
+	});
+
+	test("edits on ADJACENT lines conflict (merge3's git rule): kept both, nothing lost", async () => {
+		const { registry, copies } = registryWith({ lca: "1\n2\n3\n", dbPrefix: "lca-adjacent" });
+		await registry.applyLocalEdit("na", "1\n2\nTHREE\n");
+		await settle();
+
+		await registry.applyLocalEdit("na", "1\nTWO\n3\n");
+
+		expect(await registry.projectedText("na")).toBe("1\n2\nTHREE\n");
+		expect(copies).toEqual(["1\nTWO\n3\n"]);
+		await registry.destroyAll();
+	});
+
+	test("write-back skips when disk moved during the ingest (an external write wins)", async () => {
+		const { registry, writes } = registryWith({ lca: "a\nb\nc\n", dbPrefix: "lca-race" });
+		await registry.applyLocalEdit("nr", "a\nb\nC\n"); // the doc's own edit
+		await settle();
+		writes.length = 0;
+
+		// Disk read "A\nb\nc", but an external write landed before the write-back.
+		const onDisk = await registry.applyLocalEdit(
+			"nr",
+			"A\nb\nc\n",
+			undefined,
+			async () => "external\n",
+		);
+
+		expect(writes).toEqual([]); // the external write is not clobbered
+		expect(onDisk).toBe("A\nb\nc\n"); // what disk held when it was read
 		await registry.destroyAll();
 	});
 

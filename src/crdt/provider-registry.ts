@@ -15,6 +15,8 @@ import { IndexeddbPersistence } from "y-indexeddb";
 import * as syncProtocol from "y-protocols/sync";
 import * as Y from "yjs";
 import { fnv1a } from "../content-hash";
+import { ECHO_COOLDOWN_MS } from "../echo-window";
+import { errMsg } from "../error-util";
 import { Lifetime } from "../lifetime";
 import { rlog } from "../remote-log";
 import { projectCanvas, seedCanvasInto } from "./canvas-codec";
@@ -26,7 +28,7 @@ import {
 	rawFrontmatterOf,
 	splitFrontmatter,
 } from "./frontmatter-codec";
-import { merge3, mergeDiskOntoDoc, overwritesConcurrentEdit } from "./lca-merge";
+import { merge3, mergeDiskOntoDoc } from "./lca-merge";
 import { type FrameKind, NoteProvider } from "./note-provider";
 import { docHasAnyHistory, docHasHistory, seedContentInto, seedFrontmatterInto } from "./note-seed";
 import { fromB64, MESSAGE_SYNC } from "./wire";
@@ -38,6 +40,11 @@ export type DocKind = "note" | "canvas";
  *  origin on readSyncMessage; a raw applyRemoteUpdate (vault-channel fan-out)
  *  uses this shared marker so the same listener fires. */
 const REMOTE = Symbol("remote");
+/** Origin of a disk ingest's seed: a local change, but not an editor's, so
+ *  it never arms the editor-echo window (`localHead`). */
+const DISK = Symbol("disk");
+/** IndexedDB key, in the doc's own store, of the note's merge base. */
+const MERGE_BASE_KEY = "merge-base";
 
 function eqBytes(a: Uint8Array, b: Uint8Array): boolean {
 	return a.length === b.length && a.every((byte, i) => byte === b[i]);
@@ -130,17 +137,26 @@ interface Entry {
 	/** The frontmatter block as of the last flush, so the next one can say
 	 *  whether the frontmatter CHANGED. `null` means "no block". */
 	lastFlushedFm: string | null;
-	/** Hash of the doc's text as it stood right before the first remote merge
-	 *  after a local edit: the newest text holding ALL local intent and none of
-	 *  the remote work since. Disk equal to it is an editor's late save of a
-	 *  buffer the doc already absorbed, so ingesting it would only delete that
-	 *  remote work (Engram#2480 B3). `localDirty` defers the hash to the next
-	 *  remote merge, so a keystroke costs nothing. Cleared by the one ingest it
-	 *  matches; otherwise replaced at the next local-then-remote transition, or
-	 *  dropped with the entry (in memory only: a restart loses nothing a late
-	 *  save could still race). */
+	/** Editor-echo window (Engram#2480 B3). Hash of the doc's text right before
+	 *  the first remote merge after an EDITOR edit (any local origin but a disk
+	 *  ingest or the IndexedDB replay): what an open editor's buffer held. Disk
+	 *  equal to it soon after is that editor's late save, a buffer the doc
+	 *  already absorbed; ingesting it would only delete the remote work.
+	 *  `localDirty` defers the hash to that merge, so a keystroke costs nothing.
+	 *  Clears on the FIRST disk ingest after it is set, match or not, and
+	 *  matches only within ECHO_COOLDOWN_MS of `localHeadAt`. If no ingest
+	 *  comes, it stops matching at the deadline and the next ingest drops it,
+	 *  so a later deliberate revert (git checkout, external undo) always wins. */
 	localHead: number | null;
+	localHeadAt: number;
 	localDirty: boolean;
+	/** The note's merge base (Relay's LCA): the last text disk and doc agreed
+	 *  on, set by the engine (`setMergeBase`) and PERSISTED in the doc's own
+	 *  IndexedDB store, one record per note, rewritten when it changes. Used
+	 *  only while it hashes to the engine's baseline (`mergeBaseFor`). */
+	mergeBase: string | null;
+	/** The in-flight write of `mergeBase`; awaited before the store closes. */
+	mergeBaseWrite: Promise<void> | null;
 	/** Snapshot (state vector + delete set) of state the server is known to
 	 *  hold: the last `crdt_doc_update` ack (#1493), advanced by every remote
 	 *  merge into a doc that held nothing beyond it. PERSISTED in the doc's own
@@ -239,19 +255,17 @@ export interface ProviderRegistryOpts {
 	 *  persisted acked mark, so a relink to another (or a restored) server never
 	 *  inherits a mark this one earned. */
 	ackScope?: () => string;
-	/** Last-synced content for this note — the merge base (#357). Backed by
-	 *  `BaseStore`, which already persists exactly this and calls it "the common
-	 *  ancestor for 3-way merge". Null when none is recorded (a note that has
-	 *  never completed a sync), which falls back to the pre-LCA path. */
+	/** Override for the merge base (#357), tests only. Omitted = the base the
+	 *  engine records through `setMergeBase`. Null = the pre-LCA path. */
 	lcaFor?: (noteId: string) => string | null;
 	/** Called when a merge could not apply every hunk. The content is still
 	 *  written, but the caller may want to record an issue — a dirty merge is the
 	 *  honest conflict signal that the two-way diff never produced. */
 	onDirtyMerge?: (noteId: string) => void;
-	/** Called when a merge reported clean but the disk edit overwrote a
-	 *  concurrent edit already in the doc (`overwritesConcurrentEdit`): the
-	 *  doc's side is silently dropped. Measurement only; behaviour unchanged. */
-	onLossyMerge?: (noteId: string) => void;
+	/** A disk edit and the doc's edit overlap (a dirty `merge3`): keep disk's
+	 *  text as a conflict copy beside the note. True when the copy was written;
+	 *  the doc then keeps its text and is written back to disk. */
+	onMergeConflict?: (noteId: string, diskText: string) => Promise<boolean>;
 	/** Where the resend set persists (#658); typically window.localStorage.
 	 *  Absent = in memory for the session. */
 	resendStore?: ResendStore;
@@ -493,7 +507,10 @@ export class ProviderRegistry {
 			remoteSeq: 0,
 			lastFlushedFm: null,
 			localHead: null,
+			localHeadAt: 0,
 			localDirty: false,
+			mergeBase: null,
+			mergeBaseWrite: null,
 			pendingFlush: null,
 			lifetime: new Lifetime(),
 			hadHistory: false,
@@ -510,6 +527,7 @@ export class ProviderRegistry {
 			if (entry.localDirty && (tr.origin === provider || tr.origin === REMOTE)) {
 				entry.localDirty = false;
 				entry.localHead = kind === "note" ? fnv1a(this.project(entry)) : null;
+				entry.localHeadAt = Date.now();
 			}
 			if (!entry.ackedIsDoc || tr.origin === provider || tr.origin === REMOTE) return;
 			entry.deliveredReceipt = snapshotOf(doc);
@@ -527,7 +545,7 @@ export class ProviderRegistry {
 				// Not the IndexedDB replay: loadAcked decides that one against the mark.
 				if (origin !== persistence) {
 					this.trackResend(noteId, true);
-					entry.localDirty = true;
+					if (origin !== DISK) entry.localDirty = true;
 				}
 				return;
 			}
@@ -578,6 +596,7 @@ export class ProviderRegistry {
 			provider.activate();
 			if (this.connected) provider.setConnected(true);
 			await this.loadAcked(noteId, entry);
+			await this.loadMergeBase(noteId, entry);
 		});
 		this.entries.set(noteId, entry);
 		return entry;
@@ -753,39 +772,27 @@ export class ProviderRegistry {
 		// fnv1a(returned) as the last-synced baseline, so an empty return poisons
 		// isUnchangedSynced for a note that actually has content (#846 doubling).
 		//
-		// Disk equal to `localHead` is the doc's own earlier text: its base is
-		// itself, so the merge keeps the doc and writes it back to disk.
+		// An editor's late save of a buffer the doc already absorbed (see
+		// `localHead`) is its own base: the merge keeps the doc.
 		const history = hasLca ?? docHasHistory(e.doc, e.kind);
-		const ownPast = history && e.localHead !== null && e.localHead === fnv1a(diskContent);
-		if (ownPast) e.localHead = null;
-		const base = ownPast ? diskContent : history ? this.opts.lcaFor?.(noteId) : null;
-		if (base !== null && base !== undefined && e.kind === "note") {
+		const echo = this.takeEditorEcho(e, diskContent);
+		const base = history ? (echo ? diskContent : this.mergeBaseFor(noteId, e)) : null;
+		if (base !== null && e.kind === "note") {
 			const current = this.project(e);
-			const merged = mergeDiskOntoDoc(base, diskContent, current);
+			// Line-level diff3: never fuzzy, so a same-line edit on both sides is
+			// a conflict, not an interleave reported as clean.
+			const merged = merge3(base, diskContent, current);
 			if (merged.clean) {
-				if (overwritesConcurrentEdit(base, diskContent, current)) {
-					this.opts.onLossyMerge?.(noteId);
-				}
-				seedContentInto(e.doc, e.text, merged.text, docHasHistory(e.doc, e.kind));
-				if (merged.text === diskContent) return merged.text;
-				// The doc kept work disk never got (a failed or deferred flush):
-				// write the merge back, so disk stops holding the stale text and the
-				// recorded baseline (the caller stamps the return) is what disk holds.
-				// A failed write leaves disk, and so the base, at `diskContent`.
-				try {
-					return (await e.lifetime.guard(
-						Promise.resolve(this.writeToDisk(noteId, e, false)),
-					)) === false
-						? diskContent
-						: merged.text;
-				} catch {
-					return diskContent;
-				}
+				this.seedFromDisk(e, merged.text, docHasHistory(e.doc, e.kind));
+				return this.writeBack(noteId, e, diskContent, reread);
 			}
-			// Dirty merge: overlapping edits to the same region. Fall through to the
-			// pre-LCA path rather than writing content we know is mangled — the
-			// existing guards are conservative and will decline rather than revert.
+			// Overlapping edits: keep both. The doc keeps its text and disk's goes
+			// to a conflict copy. With no copy written, fall through to the
+			// pre-LCA path: disk is never dropped.
 			this.opts.onDirtyMerge?.(noteId);
+			if (await this.opts.onMergeConflict?.(noteId, diskContent)) {
+				return this.writeBack(noteId, e, diskContent, reread);
+			}
 		}
 
 		// Stale-snapshot revert guard (e2e test_83): diskContent was read before
@@ -834,8 +841,97 @@ export class ProviderRegistry {
 		if (e.kind === "canvas") {
 			return seedCanvasInto(e.doc, content) ? content : null;
 		}
-		seedContentInto(e.doc, e.text, content, lca);
+		this.seedFromDisk(e, content, lca);
 		return content;
+	}
+
+	/** Seed disk text into the doc under the DISK origin (see `localHead`). */
+	private seedFromDisk(e: Entry, content: string, lca: boolean): void {
+		e.doc.transact(() => seedContentInto(e.doc, e.text, content, lca), DISK);
+	}
+
+	/** After a merge seeded the doc: if the doc kept work disk lacks (a failed
+	 *  or deferred flush, a keep-both), write it to disk, so disk stops holding
+	 *  the stale text. Returns what disk holds, which the caller stamps as the
+	 *  baseline (and so the merge base). Not written when disk moved since it
+	 *  was read (an external write mid-ingest: its own modify ingests it), or
+	 *  when the write fails; disk then still holds `diskContent`. */
+	private async writeBack(
+		noteId: string,
+		e: Entry,
+		diskContent: string,
+		reread?: () => Promise<string>,
+	): Promise<string> {
+		const docText = this.project(e);
+		if (docText === diskContent) return diskContent;
+		try {
+			if (reread && (await e.lifetime.guard(reread())) !== diskContent) return diskContent;
+			const ok = await e.lifetime.guard(Promise.resolve(this.writeToDisk(noteId, e, false)));
+			return ok === false ? diskContent : docText;
+		} catch (err) {
+			rlog().warn(
+				"crdt",
+				`write-back after a disk merge failed for ${noteId}: ${errMsg(err)}`,
+			);
+			return diskContent;
+		}
+	}
+
+	/** Take the editor-echo window: true when `disk` is the editor's late save
+	 *  it covers. Every ingest clears it, match or not. */
+	private takeEditorEcho(e: Entry, disk: string): boolean {
+		if (e.localHead === null) return false;
+		const hit = Date.now() - e.localHeadAt <= ECHO_COOLDOWN_MS && e.localHead === fnv1a(disk);
+		e.localHead = null;
+		return hit;
+	}
+
+	/** The merge base, or null when none is usable: `lcaFor` when the caller
+	 *  supplies one, else the persisted base, only while it hashes to the
+	 *  engine's baseline. A base the baseline moved past would re-create the
+	 *  #544 doubling class, so it answers null (the two-way path). */
+	private mergeBaseFor(noteId: string, e: Entry): string | null {
+		if (this.opts.lcaFor) return this.opts.lcaFor(noteId);
+		const base = e.mergeBase;
+		return base !== null && this.opts.isUnchangedSynced?.(noteId, base) ? base : null;
+	}
+
+	/** Record the note's merge base: a text disk and doc now agree on. Kept
+	 *  only for a resident doc (every caller just flushed or ingested it), and
+	 *  written to the doc's own IndexedDB store at once, so a crash or a
+	 *  force-quit keeps it. */
+	setMergeBase(noteId: string, text: string): void {
+		const e = this.entries.get(noteId);
+		if (!e?.lifetime.active || e.kind !== "note" || e.mergeBase === text) return;
+		e.mergeBase = text;
+		const prior = e.mergeBaseWrite ?? Promise.resolve();
+		const write = prior.then(async () => {
+			// Not lifetime-gated: `destroy` awaits this before the store closes.
+			if (e.mergeBase !== text) return;
+			try {
+				await e.persistence.set(MERGE_BASE_KEY, text);
+			} catch (err) {
+				this.opts.onPersistError?.(noteId, err);
+			}
+		});
+		e.mergeBaseWrite = write;
+		void write.finally(() => {
+			if (e.mergeBaseWrite === write) e.mergeBaseWrite = null;
+		});
+	}
+
+	/** Read the persisted merge base after hydration. A set that landed first
+	 *  is newer and wins. A failed read leaves none (the two-way path). */
+	private async loadMergeBase(noteId: string, e: Entry): Promise<void> {
+		if (e.kind !== "note") return;
+		try {
+			const stored: unknown = await e.persistence.get(MERGE_BASE_KEY);
+			if (e.lifetime.active && e.mergeBase === null && typeof stored === "string") {
+				e.mergeBase = stored;
+			}
+		} catch (err) {
+			this.opts.onPersistError?.(noteId, err);
+		}
 	}
 
 	/** Merge a disk edit made FROM `base` onto the doc, with no await between
@@ -863,7 +959,7 @@ export class ProviderRegistry {
 		// Forced past a conflict: merge3 returns `current` untouched, so fall to
 		// the fuzzy patch, which at least lands the disk edit.
 		const text = merged.clean ? merged.text : mergeDiskOntoDoc(base, disk, current).text;
-		seedContentInto(e.doc, e.text, text, true);
+		this.seedFromDisk(e, text, true);
 		return text;
 	}
 
@@ -1485,6 +1581,7 @@ export class ProviderRegistry {
 		e.provider.destroy();
 		e.doc.destroy();
 		await markWrite;
+		await e.mergeBaseWrite?.catch(() => undefined);
 		if (clearData) await e.persistence.clearData();
 		await e.persistence.destroy();
 	}

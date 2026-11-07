@@ -44,9 +44,6 @@ export class BaseStore {
 		const entry: BaseEntry = { content, version, ts: Date.now() };
 		this.entries.set(path, entry);
 		this.bytes += this.entryBytes(path, entry);
-		// Every CRDT baseline lands here, so hold the budget during the session,
-		// not only at unload. Pruning to 90% keeps the sort off every later set.
-		if (this.bytes > this.maxBytes) this.prune(this.maxBytes * 0.9);
 	}
 
 	delete(path: string): void {

@@ -1,6 +1,6 @@
 # Textual merge: where an LCA still exists, and which one to use
 
-_Last verified: 2026-10-03_
+_Last verified: 2026-11-06_
 
 **Read this before wiring `BaseStore` into anything.** Its content is stale for
 CRDT-synced notes, and the previous version of this doc said the opposite.
@@ -68,15 +68,17 @@ falls back, so it must reject early rather than guess.
 Fallback to the old two-way forward (user's keystrokes win) when there is no base,
 when the doc has not diverged from the base, or when **any** hunk fails to apply.
 
-## The other LCA consumer: `mergeDiskOntoDoc`
+## The other LCA consumer: the disk ingest (`applyLocalEdit`)
 
-`src/crdt/lca-merge.ts` (`mergeDiskOntoDoc(base, disk, current)`, #357) applies a disk edit's delta relative to a base onto the doc's current text so remote ops that landed mid-read survive. Its base IS `BaseStore`, wired in `main.ts` as `lcaFor`. That is the exact staleness hazard above; the guard is that a dirty merge (`clean: false`, a hunk failed to apply) must fall back to the two-way path rather than ship, which `onDirtyMerge` logs as `LCA merge left unapplied hunks`. Treat a stale `BaseStore` base here as a known risk, not a solved one.
+_Updated 2026-11-06 (Engram#2480, PR 683)._ `ProviderRegistry.applyLocalEdit` merges a disk edit with `merge3(base, disk, doc)`, so a remote edit disk never got survives. Its base is NOT `BaseStore` any more: it is the per-note merge base the engine records with every disk baseline (`recordCrdtBaseline` -> `ProviderRegistry.setMergeBase`), the last text disk and doc agreed on. It is persisted in the doc's own IndexedDB store (key `merge-base`, one record per note, rewritten when it changes, Relay's per-doc LCA), and used only while it hashes to `syncState.hash`; otherwise there is no base and the two-way path runs. Baselines that are hash-only claims about disk (the live-bound autosave, a deferred create) pass `mergeBase: false` and leave the base behind. `lcaFor` is now a test-only override.
 
-A *clean* result is not safe either. diff-match-patch's `patch_apply` fuzzy-matches short patches and never checks the deleted text, so concurrent edits to the same span merge "clean" with the disk side kept: base `one two three`, disk `one TWO three`, doc `one deux three` gives `one TWO three`. Swapping in `merge3` does not help on its own: its conflict falls through to the two-way path, which also keeps the disk side, and its git-style rules turn common adjacent-line edits into conflicts. `overwritesConcurrentEdit` (char-level overlap) flags these merges and `onLossyMerge` warns `LCA merge overwrote a concurrent edit` so prod frequency is measurable; if it is not rare, overlapping edits need a keep-both path in `applyLocalEdit`'s callers.
+- A merge that keeps doc work disk lacks is written back to disk (`writeBack`), unless disk moved since the read.
+- A dirty `merge3` (overlapping or touching line edits) is a keep-both: disk's text goes to a conflict copy (`onMergeConflict` -> `keepConflictCopy`) and the doc is written back. `mergeDiskOntoDoc`'s fuzzy `patch_apply` is no longer used here because it reported same-span edits clean and interleaved them. Cost: edits on ADJACENT lines also conflict (git rules), so they now make a copy instead of merging.
+- An editor's late save of a buffer the doc already absorbed (closed tab, Obsidian's close-save lands after a remote flush) is caught by the `localHead` window: armed only by editor-origin edits (never disk ingests, origin `DISK`), cleared by the first ingest, and matching only within `ECHO_COOLDOWN_MS`.
 
 ## Gotchas
 
-- A "3-way merge" that reaches for `BaseStore` is almost certainly wrong now (the one consumer, `lcaFor`, is described above). Ask
+- A "3-way merge" that reaches for `BaseStore` is almost certainly wrong now (the disk ingest uses the per-note merge base above). Ask
   what the true common ancestor is and whether it is fresh.
 - `dirty` (user typed during hydration) and "disk diverges from the baseline" are
   different questions. The reconcile only answers the first; the second is

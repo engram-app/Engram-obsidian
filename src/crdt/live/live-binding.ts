@@ -144,8 +144,9 @@ export class LiveBindingValue implements PluginValue {
 	 *  the reconcile needs to forward ONLY the typed hunks into a doc that hydrated
 	 *  with remote content the editor never saw, instead of a whole-text diff that
 	 *  would delete it. Tracked here rather than read from the SyncEngine's
-	 *  BaseStore because that store tracks DISK (`crdtMergeBase`), which lags
-	 *  a bound editor. Null = unknown -> two-way fallback. */
+	 *  BaseStore because that store is only refreshed on the REST push/pull paths
+	 *  (CRDT delivery advances the syncState hash alone), so it goes stale for
+	 *  live-synced notes. Null = unknown -> two-way fallback. */
 	private preEditText: string | null = null;
 	private destroyed = false;
 	/** The permanent delta->editor observer, once live. */
