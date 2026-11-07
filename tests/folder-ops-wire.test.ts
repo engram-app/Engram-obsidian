@@ -205,7 +205,8 @@ describe("SyncEngine folder ref for note creates", () => {
 			app,
 			{} as EngramApi,
 			{ ...DEFAULT_SETTINGS, vaultId: "v1" },
-			mock(),
+			// Resolves: the folder-op persist timer awaits it a second later.
+			mock().mockResolvedValue(undefined),
 		);
 		e.setNoteIdMap(new NoteIdMap());
 		return e;

@@ -30,7 +30,12 @@ function engine() {
 		},
 		workspace: { getActiveViewOfType: () => null },
 	} as any;
-	const e = new SyncEngine(app, {} as EngramApi, { ...DEFAULT_SETTINGS, vaultId: "v1" }, mock());
+	const e = new SyncEngine(
+		app,
+		{} as EngramApi,
+		{ ...DEFAULT_SETTINGS, vaultId: "v1" },
+		mock().mockResolvedValue(undefined),
+	);
 	e.setReady();
 	e.setNoteIdMap(ids);
 	e.setCrdtPorts({ folderOp: async () => ({ kind: "retry" }) });
