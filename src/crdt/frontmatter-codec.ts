@@ -190,3 +190,38 @@ export function projectNote(
 	const block = emitFrontmatter(order, values, raws);
 	return block === "" ? body : `${FENCE}\n${block}${FENCE}\n${body}`;
 }
+
+/** Do two frontmatter blocks (`splitFrontmatter`'s `fmBlock`) MEAN the same?
+ *  Parsed with `parseFrontmatterBlock`, so YAML formatting (flow vs block
+ *  lists, spacing, quoting, comments) does not count: same keys in the same
+ *  order with the same canonical values. No block and an empty one match.
+ *  A block that does not parse only matches itself byte for byte. */
+function sameFrontmatterMeaning(a: string | null, b: string | null): boolean {
+	if (a === b) return true;
+	const pa = a === null ? ({ kind: "empty" } as const) : parseFrontmatterBlock(a);
+	const pb = b === null ? ({ kind: "empty" } as const) : parseFrontmatterBlock(b);
+	if (pa.kind === "empty" || pb.kind === "empty") return pa.kind === pb.kind;
+	if (pa.kind !== "ok" || pb.kind !== "ok") return false;
+	return (
+		canonicalJson(pa.order) === canonicalJson(pb.order) &&
+		canonicalJson(pa.values) === canonicalJson(pb.values)
+	);
+}
+
+/** `next` carrying `disk`'s own frontmatter bytes when the two blocks mean the
+ *  same (see `sameFrontmatterMeaning`); otherwise `next` unchanged. A write
+ *  built from the doc's projection then never rewrites YAML the user wrote
+ *  (comments, flow lists, spacing) that the doc only re-serialised. */
+export function keepDiskFrontmatter(next: string, disk: string): string {
+	if (next === disk) return next;
+	const n = splitFrontmatter(next);
+	const d = splitFrontmatter(disk);
+	if (!sameFrontmatterMeaning(n.fmBlock, d.fmBlock)) return next;
+	return disk.slice(0, disk.length - d.body.length) + n.body;
+}
+
+/** Do two note texts mean the same: identical bodies and frontmatter that
+ *  differs only in YAML formatting? */
+export function sameNoteMeaning(a: string, b: string): boolean {
+	return keepDiskFrontmatter(a, b) === b;
+}

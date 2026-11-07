@@ -17,7 +17,7 @@ import { expBackoff } from "./backoff";
 import type { BaseStore } from "./base-store";
 import type { GenesisOutcome } from "./channel";
 import { fnv1a, fnv1aBase64 } from "./content-hash";
-import { splitFrontmatter } from "./crdt/frontmatter-codec";
+import { keepDiskFrontmatter, splitFrontmatter } from "./crdt/frontmatter-codec";
 import type { NoteIdMap } from "./crdt/note-id-map";
 import type { ProviderRegistry } from "./crdt/provider-registry";
 import { encodeUpdateFrame, fromB64 } from "./crdt/wire";
@@ -2646,9 +2646,18 @@ export class SyncEngine {
 		const normalized = normalizePath(path);
 		// The doc's text, never blank: a blank doc does not override a caller's
 		// text here, so the empty-write guard below always sees what is written.
+		// It keeps disk's own frontmatter bytes when they mean the same as the
+		// doc's (`keepDiskFrontmatter`): the codec re-serialises YAML (flow
+		// lists, spacing, comments), and a flush must never rewrite what the
+		// user wrote when the meaning is unchanged. Equal by meaning then reads
+		// as "disk already holds it" below, so nothing is written at all.
 		const latest = async (): Promise<string | null> => {
 			const text = await this.currentDocText(normalized);
-			return text !== null && text.trim() !== "" ? text : null;
+			if (text === null || text.trim() === "") return null;
+			const onDiskNow = this.app.vault.getAbstractFileByPath(normalized);
+			return onDiskNow instanceof TFile
+				? keepDiskFrontmatter(text, await this.app.vault.cachedRead(onDiskNow))
+				: text;
 		};
 		// A first load's text is the registry's projection of that load: the
 		// interlock below resolves held input against exactly that.
@@ -2898,10 +2907,13 @@ export class SyncEngine {
 	): void {
 		const before = this.syncState.get(path)?.hash;
 		this.syncState.set(path, { hash: 0, ...this.syncState.get(path), ...patch });
-		// The one place a baseline hash moves. One that moves WITHOUT a base
-		// makes the old base no ancestor of disk, so the registry marks it
-		// invalid (Engram#2480: no caller may hand merge3 a stale base). Hash 0
-		// means "unknown" (an un-banked push), not a different disk: exempt.
+		// Every CRDT-path baseline hash change goes through here. (`stampSyncedRow`
+		// also writes hashes, at REST, legacy, load-time import, CAS-seed and
+		// no-note_id backfill sites; none reaches a CRDT note with a base.) One
+		// that moves WITHOUT a base makes the old base no ancestor of disk, so
+		// the registry marks it invalid (Engram#2480: no caller may hand merge3
+		// a stale base). Hash 0 means "unknown" (an un-banked push), not a
+		// different disk: exempt.
 		if (!withBase && patch.hash !== undefined && patch.hash !== 0 && patch.hash !== before) {
 			const noteId = this.noteIdMap?.get(path);
 			if (noteId) this.crdt?.invalidateMergeBase?.(noteId, patch.hash);

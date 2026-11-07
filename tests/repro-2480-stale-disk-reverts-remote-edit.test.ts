@@ -547,3 +547,70 @@ test("invariant: a disk base the baseline moved past goes to the conflict copy (
 	expect(copies).toEqual([disk]);
 	await expectMcpSectionKept(await reg2.projectedText(d.ID));
 });
+
+// Frontmatter is compared by meaning, never as serialised strings: the codec
+// re-serialises YAML (flow lists become block lists, comments and spacing
+// go), and no write may rewrite what the user wrote when the meaning is the
+// same.
+const HAND_FM = `---\ntitle:   x\ntags: [a, "b"]\n# keep this comment\naliases:\n  - c\n  - d\n---\n`;
+
+async function withHandFrontmatter() {
+	const d = await device();
+	d.disk.set(PATH, `${HAND_FM}${V1}`);
+	await d.engine.pushFile(d.file);
+	await tick(30);
+	return d;
+}
+
+test("2480 fm: an ingest of hand-written frontmatter writes nothing back", async () => {
+	const d = await withHandFrontmatter();
+	const writes = d.ctl.writes.length;
+	d.disk.set(PATH, `${d.disk.get(PATH)}more\n`); // a plain body append
+	await d.engine.pushFile(d.file);
+	await tick(30);
+	expect(d.ctl.writes.length).toBe(writes); // disk and doc mean the same
+	expect(d.disk.get(PATH)).toBe(`${HAND_FM}${V1}more\n`);
+});
+
+test("2480 fm: a remote body edit keeps the user's YAML bytes on disk", async () => {
+	const d = await withHandFrontmatter();
+	await d.mcpEdit(); // the flush writes the MCP body
+	const disk = d.disk.get(PATH) as string;
+	expect(disk).toContain(MCP_SECTION);
+	expect(disk.startsWith(HAND_FM)).toBe(true); // flow list, comment, spacing kept
+});
+
+test("2480 fm: a disk edit inside the block merges with a remote body edit, no copy", async () => {
+	const d = await withHandFrontmatter();
+	const copies: string[] = [];
+	d.engine.keepConflictCopy = async (_p: string, text: string) => {
+		copies.push(text);
+		return true;
+	};
+	d.ctl.failWrites = 1;
+	await d.mcpEdit(); // doc holds the MCP body, disk does not
+	const edited = `${HAND_FM.replace('[a, "b"]', '[a, "b", z]')}${V1}`;
+	d.disk.set(PATH, edited);
+	await d.engine.pushFile(d.file);
+	await tick(30);
+	expect(copies).toEqual([]);
+	const doc = await d.docText();
+	await expectMcpSectionKept(doc);
+	expect(doc).toContain("- z"); // the doc took the new tag
+	const disk = d.disk.get(PATH) as string;
+	expect(disk).toContain(MCP_SECTION);
+	expect(disk).toContain("# keep this comment"); // the user's block survived the write-back
+	expect(disk).toContain('tags: [a, "b", z]');
+});
+
+test("2480 fm: a remote change that MEANS something different is still written", async () => {
+	const d = await withHandFrontmatter();
+	const doc = await d.reg.getDoc(d.ID);
+	const peer = new Y.Doc();
+	Y.applyUpdate(peer, Y.encodeStateAsUpdate(doc));
+	const sv = Y.encodeStateVector(peer);
+	peer.getMap("frontmatter").set("title", JSON.stringify("changed"));
+	await d.reg.applyRemoteUpdate(d.ID, Y.encodeStateAsUpdate(peer, sv)).catch(() => {});
+	await tick(30);
+	expect(d.disk.get(PATH)).toContain("title: changed");
+});

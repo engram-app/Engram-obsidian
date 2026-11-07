@@ -24,8 +24,10 @@ import { isDestroyedError, NoteDestroyedError } from "./destroyed-error";
 import {
 	CONTENT_KEY,
 	frontmatterOf,
+	keepDiskFrontmatter,
 	projectNote,
 	rawFrontmatterOf,
+	sameNoteMeaning,
 	splitFrontmatter,
 } from "./frontmatter-codec";
 import { diskOnlyText, merge3, mergeDiskOntoDoc } from "./lca-merge";
@@ -226,6 +228,8 @@ interface Entry {
 	 *  ingest that differs from the doc is a keep-both, never a merge or a
 	 *  two-way diff: no caller can hand `merge3` a base it cannot vouch for. */
 	mergeBaseInvalid: boolean;
+	/** `loadMergeBase` has run (or there is nothing to load). */
+	mergeBaseLoaded: boolean;
 	/** The in-flight write of `mergeBase`; awaited before the store closes. */
 	mergeBaseWrite: Promise<void> | null;
 	/** Snapshot (state vector + delete set) of state the server is known to
@@ -350,6 +354,13 @@ export class ProviderRegistry {
 	 *  live: a restore) and by destroyAll (stack teardown). Never revived, an id
 	 *  just stays dead, which is the delete's intent. */
 	private readonly removed = new Set<string>();
+	/** Baseline hashes an `invalidateMergeBase` asked for while the note's
+	 *  stored base was not loaded yet (doc hydrating, or not resident while
+	 *  its IndexedDB record is being marked). `loadMergeBase` applies the
+	 *  latest one to whatever it reads, so a stale base never resurrects.
+	 *  Cleared by that load; for a non-resident note, also when the direct
+	 *  IndexedDB mark finishes. */
+	private readonly pendingInvalidation = new Map<string, number>();
 	/** The seq fence for each tombstone: the delete's seq, or the newest seq this
 	 *  device knew for the note when it deleted. Only a row NEWER than it can
 	 *  revive the id; anything at or below it is history from before the delete.
@@ -584,6 +595,7 @@ export class ProviderRegistry {
 			mergeBaseTouched: false,
 			mergeBaseCleared: false,
 			mergeBaseInvalid: false,
+			mergeBaseLoaded: false,
 			mergeBaseWrite: null,
 			pendingFlush: null,
 			lifetime: new Lifetime(),
@@ -859,11 +871,11 @@ export class ProviderRegistry {
 			this.seedMergeBase(noteId, diskContent);
 		if (history && echo === "late" && e.kind === "note") {
 			// Disk already equals the doc: nothing to keep twice.
-			if (this.project(e) === diskContent) return diskContent;
+			if (sameNoteMeaning(this.project(e), diskContent)) return diskContent;
 			return this.keepBoth(noteId, e, diskContent, reread);
 		}
 		if (history && e.mergeBaseInvalid && e.kind === "note" && echo !== "echo") {
-			if (this.project(e) === diskContent) return diskContent;
+			if (sameNoteMeaning(this.project(e), diskContent)) return diskContent;
 			return this.keepBoth(noteId, e, diskContent, reread);
 		}
 		const base = history
@@ -872,7 +884,10 @@ export class ProviderRegistry {
 				: this.mergeBaseFor(noteId, e)
 			: null;
 		if (base !== null && e.kind === "note") {
-			const current = this.project(e);
+			// The doc re-serialises YAML: when its frontmatter means what the
+			// base's does, merge from the base's bytes, so formatting alone is
+			// never a doc-side edit that clashes with a disk edit to the block.
+			const current = keepDiskFrontmatter(this.project(e), base);
 			// diff3, never fuzzy: a conflicting region is re-merged by character
 			// and only a true overlap is dirty (see `merge3`).
 			const merged = merge3(base, diskContent, current);
@@ -952,7 +967,8 @@ export class ProviderRegistry {
 		reread?: () => Promise<string>,
 	): Promise<string> {
 		const docText = this.project(e);
-		if (docText === diskContent) return diskContent;
+		// Equal by meaning (only YAML formatting differs): disk keeps its bytes.
+		if (sameNoteMeaning(docText, diskContent)) return diskContent;
 		try {
 			if (reread && (await e.lifetime.guard(reread())) !== diskContent) return diskContent;
 			const ok = await e.lifetime.guard(Promise.resolve(this.writeToDisk(noteId, e, false)));
@@ -1086,6 +1102,10 @@ export class ProviderRegistry {
 	 *  IndexedDB record, without hydrating the doc. */
 	invalidateMergeBase(noteId: string, hash: number): void {
 		const e = this.entries.get(noteId);
+		if (e && !e.mergeBaseLoaded) {
+			this.pendingInvalidation.set(noteId, hash); // applied when the load lands
+			return;
+		}
 		if (e) {
 			if (e.kind !== "note" || e.mergeBase === null || fnv1a(e.mergeBase) === hash) return;
 			e.mergeBaseTouched = true;
@@ -1095,7 +1115,13 @@ export class ProviderRegistry {
 			this.persistMergeBase(noteId, e);
 			return;
 		}
-		void invalidateStoredBase(this.storeName(noteId), hash);
+		// A load may start before this mark commits: it applies the pending hash.
+		this.pendingInvalidation.set(noteId, hash);
+		void invalidateStoredBase(this.storeName(noteId), hash).finally(() => {
+			if (this.pendingInvalidation.get(noteId) === hash && !this.entries.has(noteId)) {
+				this.pendingInvalidation.delete(noteId);
+			}
+		});
 	}
 
 	/** An open editor's autosave: a merge base only if the doc holds exactly
@@ -1105,7 +1131,9 @@ export class ProviderRegistry {
 	recordEditorSave(noteId: string, text: string): void {
 		const e = this.entries.get(noteId);
 		if (!e?.lifetime.active || e.kind !== "note") return;
-		this.setMergeBase(noteId, this.project(e) === text ? text : null);
+		// By meaning: the doc re-serialises the user's YAML, and the RAW text is
+		// what later disk edits are diffed against.
+		this.setMergeBase(noteId, sameNoteMeaning(this.project(e), text) ? text : null);
 	}
 
 	/** Adopt `disk` as the merge base when the note has never had one (the
@@ -1123,6 +1151,18 @@ export class ProviderRegistry {
 	 *  newer and wins. A record whose hash does not match its text (a torn or
 	 *  foreign write) is ignored. A failed read leaves none (the two-way path). */
 	private async loadMergeBase(noteId: string, e: Entry): Promise<void> {
+		try {
+			await this.readMergeBase(noteId, e);
+		} finally {
+			e.mergeBaseLoaded = true;
+			const pending = this.pendingInvalidation.get(noteId);
+			this.pendingInvalidation.delete(noteId);
+			if (pending !== undefined && e.lifetime.active)
+				this.invalidateMergeBase(noteId, pending);
+		}
+	}
+
+	private async readMergeBase(noteId: string, e: Entry): Promise<void> {
 		if (e.kind !== "note") return;
 		try {
 			const stored: unknown = await e.persistence.get(MERGE_BASE_KEY);
