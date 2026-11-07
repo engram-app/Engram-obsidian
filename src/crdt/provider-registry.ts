@@ -45,6 +45,61 @@ const REMOTE = Symbol("remote");
 const DISK = Symbol("disk");
 /** IndexedDB key, in the doc's own store, of the note's merge base. */
 const MERGE_BASE_KEY = "merge-base";
+/** Mark a non-resident note's stored base invalid when it does not hash to
+ *  `hash`, in one IndexedDB transaction on y-indexeddb's `custom` store,
+ *  without loading the doc. A missing database is never created: the
+ *  upgrade is aborted. Best effort; any failure leaves the record as it is. */
+function invalidateStoredBase(dbName: string, hash: number): Promise<void> {
+	return new Promise((resolve) => {
+		let req: IDBOpenDBRequest;
+		try {
+			req = indexedDB.open(dbName);
+		} catch {
+			resolve();
+			return;
+		}
+		req.onupgradeneeded = () => req.transaction?.abort(); // no such doc: create nothing
+		req.onerror = () => resolve();
+		req.onblocked = () => resolve();
+		req.onsuccess = () => {
+			const db = req.result;
+			const done = () => {
+				db.close();
+				resolve();
+			};
+			try {
+				if (!db.objectStoreNames.contains("custom")) {
+					done();
+					return;
+				}
+				const tx = db.transaction("custom", "readwrite");
+				const store = tx.objectStore("custom");
+				const get = store.get(MERGE_BASE_KEY);
+				get.onsuccess = () => {
+					try {
+						const raw: unknown = get.result;
+						const rec: unknown = typeof raw === "string" ? JSON.parse(raw) : null;
+						const text = (rec as { text?: unknown } | null)?.text;
+						if (typeof text === "string" && fnv1a(text) !== hash) {
+							store.put(
+								JSON.stringify({ text: null, invalid: true }),
+								MERGE_BASE_KEY,
+							);
+						}
+					} catch {
+						// unreadable record: leave it; loadMergeBase ignores it
+					}
+				};
+				tx.oncomplete = done;
+				tx.onerror = done;
+				tx.onabort = done;
+			} catch {
+				done();
+			}
+		};
+	});
+}
+
 /** Heads disk's text when a conflict is kept in the doc (no copy possible). */
 const IN_DOC_CONFLICT_MARKER = "<!-- Engram kept both: the conflicting disk version follows -->";
 
@@ -165,6 +220,12 @@ interface Entry {
 	 *  disk at the baseline is NOT known to be in the doc: `seedMergeBase`
 	 *  must not trust it. Only a real base (`setMergeBase(text)`) lifts it. */
 	mergeBaseCleared: boolean;
+	/** The baseline moved to a text the base is NOT (a writer that records a
+	 *  hash without a base: `invalidateMergeBase`), so the base was not an
+	 *  ancestor of disk any more. Persisted. Until a real base is set, a disk
+	 *  ingest that differs from the doc is a keep-both, never a merge or a
+	 *  two-way diff: no caller can hand `merge3` a base it cannot vouch for. */
+	mergeBaseInvalid: boolean;
 	/** The in-flight write of `mergeBase`; awaited before the store closes. */
 	mergeBaseWrite: Promise<void> | null;
 	/** Snapshot (state vector + delete set) of state the server is known to
@@ -522,6 +583,7 @@ export class ProviderRegistry {
 			mergeBase: null,
 			mergeBaseTouched: false,
 			mergeBaseCleared: false,
+			mergeBaseInvalid: false,
 			mergeBaseWrite: null,
 			pendingFlush: null,
 			lifetime: new Lifetime(),
@@ -800,6 +862,10 @@ export class ProviderRegistry {
 			if (this.project(e) === diskContent) return diskContent;
 			return this.keepBoth(noteId, e, diskContent, reread);
 		}
+		if (history && e.mergeBaseInvalid && e.kind === "note" && echo !== "echo") {
+			if (this.project(e) === diskContent) return diskContent;
+			return this.keepBoth(noteId, e, diskContent, reread);
+		}
 		const base = history
 			? echo === "echo"
 				? diskContent
@@ -970,15 +1036,34 @@ export class ProviderRegistry {
 		const e = this.entries.get(noteId);
 		if (!e?.lifetime.active || e.kind !== "note") return;
 		e.mergeBaseTouched = true;
-		if (e.mergeBase === text && e.mergeBaseCleared === (text === null)) return;
+		const wasInvalid = e.mergeBaseInvalid;
+		// A cleared base stays invalid; only a real base lifts it.
+		if (text !== null) e.mergeBaseInvalid = false;
+		const unchanged =
+			e.mergeBase === text &&
+			e.mergeBaseCleared === (text === null) &&
+			e.mergeBaseInvalid === wasInvalid;
+		if (unchanged) return;
 		e.mergeBase = text;
 		e.mergeBaseCleared = text === null;
+		this.persistMergeBase(noteId, e);
+	}
+
+	/** Write the entry's base state as one record, queued behind any write in
+	 *  flight. Not lifetime-gated: `destroy` awaits it before the store closes. */
+	private persistMergeBase(noteId: string, e: Entry): void {
+		const text = e.mergeBase;
+		const invalid = e.mergeBaseInvalid;
 		const prior = e.mergeBaseWrite ?? Promise.resolve();
 		const write = prior.then(async () => {
-			// Not lifetime-gated: `destroy` awaits this before the store closes.
-			if (e.mergeBase !== text) return;
+			if (e.mergeBase !== text || e.mergeBaseInvalid !== invalid) return; // superseded
 			try {
-				const rec = text === null ? { text } : { text, hash: fnv1a(text) };
+				const rec =
+					text === null
+						? invalid
+							? { text, invalid }
+							: { text }
+						: { text, hash: fnv1a(text) };
 				await e.persistence.set(MERGE_BASE_KEY, JSON.stringify(rec));
 			} catch (err) {
 				this.opts.onPersistError?.(noteId, err);
@@ -992,6 +1077,25 @@ export class ProviderRegistry {
 		void write.finally(() => {
 			if (e.mergeBaseWrite === write) e.mergeBaseWrite = null;
 		});
+	}
+
+	/** The baseline for this note just moved to `hash` through a writer that
+	 *  records no base (a catch-up quiet record, a REST path). A base that
+	 *  does not hash to it is no longer an ancestor of disk: mark it invalid
+	 *  (see `mergeBaseInvalid`). A non-resident note is marked straight in its
+	 *  IndexedDB record, without hydrating the doc. */
+	invalidateMergeBase(noteId: string, hash: number): void {
+		const e = this.entries.get(noteId);
+		if (e) {
+			if (e.kind !== "note" || e.mergeBase === null || fnv1a(e.mergeBase) === hash) return;
+			e.mergeBaseTouched = true;
+			e.mergeBase = null;
+			e.mergeBaseCleared = true;
+			e.mergeBaseInvalid = true;
+			this.persistMergeBase(noteId, e);
+			return;
+		}
+		void invalidateStoredBase(this.storeName(noteId), hash);
 	}
 
 	/** An open editor's autosave: a merge base only if the doc holds exactly
@@ -1011,7 +1115,7 @@ export class ProviderRegistry {
 	 *  it (an offline editor save the doc may lack). */
 	seedMergeBase(noteId: string, disk: string): void {
 		const e = this.entries.get(noteId);
-		if (!e || e.mergeBase !== null || e.mergeBaseCleared) return;
+		if (!e || e.mergeBase !== null || e.mergeBaseCleared || e.mergeBaseInvalid) return;
 		this.setMergeBase(noteId, disk);
 	}
 
@@ -1026,8 +1130,10 @@ export class ProviderRegistry {
 			const rec: unknown = JSON.parse(stored);
 			if (typeof rec !== "object" || rec === null) return;
 			const { text, hash } = rec as { text?: unknown; hash?: unknown };
-			if (text === null) e.mergeBaseCleared = true;
-			else if (typeof text === "string" && hash === fnv1a(text)) e.mergeBase = text;
+			if (text === null) {
+				e.mergeBaseCleared = true;
+				e.mergeBaseInvalid = (rec as { invalid?: unknown }).invalid === true;
+			} else if (typeof text === "string" && hash === fnv1a(text)) e.mergeBase = text;
 		} catch (err) {
 			this.opts.onPersistError?.(noteId, err);
 		}

@@ -497,3 +497,53 @@ test("D4 last line plus an EOF append merges with no copy handler", async () => 
 	expect(doc).toContain("keep me edited\n");
 	expect(doc).toContain("updated: 2026-11-02");
 });
+
+// Invariant: no caller can hand merge3 a base that is not a true common
+// ancestor. For the disk ingest, a baseline that moved through a writer that
+// records no base makes the old base no ancestor of disk; it is detected and
+// the ingest is a keep-both (conflict copy), never a merge or a two-way diff.
+test("invariant: a disk base the baseline moved past goes to the conflict copy (resident)", async () => {
+	const d = await device();
+	const copies: string[] = [];
+	d.engine.keepConflictCopy = async (_p: string, text: string) => {
+		copies.push(text);
+		return true;
+	};
+	d.ctl.failWrites = 1;
+	await d.mcpEdit(); // base V1, disk V1, doc MCP
+	const other = `${V1}written by another path\n`;
+	d.disk.set(PATH, other);
+	(d.engine as any).patchSyncedRow(PATH, { hash: fnv1a(other) }); // hash, no base
+	d.disk.set(PATH, `${other}then edited\n`);
+	await d.engine.pushFile(d.file);
+	await tick(20);
+	expect(copies).toEqual([`${other}then edited\n`]);
+	const doc = await d.docText();
+	await expectMcpSectionKept(doc);
+	expect(doc).not.toContain("then edited"); // no merge from the stale base
+	expect(d.disk.get(PATH)).toBe(doc);
+});
+
+test("invariant: a disk base the baseline moved past goes to the conflict copy (not resident)", async () => {
+	const d = await device();
+	d.ctl.failWrites = 1;
+	await d.mcpEdit(); // base V1 persisted
+	await d.reg.destroyAll(); // the doc is evicted; only its IndexedDB record remains
+	(d.engine as any).patchSyncedRow(PATH, { hash: fnv1a("elsewhere") });
+	await tick(50); // the record is marked straight in IndexedDB
+	const copies: string[] = [];
+	const reg2 = new ProviderRegistry({
+		dbPrefix: undefined,
+		send: () => true,
+		onFlushToDisk: () => true,
+		onMergeConflict: async (_id, text) => {
+			copies.push(text);
+			return true;
+		},
+	});
+	live.push(reg2);
+	const disk = `${V1}\nupdated: 2026-11-02\n`;
+	await reg2.applyLocalEdit(d.ID, disk);
+	expect(copies).toEqual([disk]);
+	await expectMcpSectionKept(await reg2.projectedText(d.ID));
+});

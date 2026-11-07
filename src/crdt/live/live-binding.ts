@@ -50,6 +50,9 @@ import {
 	type ReconcileAction,
 } from "./live-binding-decisions";
 
+/** Characters either side of an edit `agreed` must match the editor on. */
+const AGREED_CONTEXT = 16;
+
 /** Interval for the drift backstop. */
 const DRIFT_CHECK_MS = 3000;
 
@@ -255,7 +258,7 @@ export class LiveBindingValue implements PluginValue {
 			if (creation !== null) {
 				try {
 					this.writeYText(ytext, creation);
-					this.advanceAgreed(creation);
+					this.resetAgreed(null); // the body/frontmatter split moved: unknown
 				} catch (err) {
 					rlog().error(
 						"crdt-live-binding",
@@ -266,6 +269,7 @@ export class LiveBindingValue implements PluginValue {
 				continue;
 			}
 			const changes: Array<{ fromA: number; toA: number; insert: string }> = [];
+			const before = tr.startState.doc;
 			let spansFrontmatter = false;
 			tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
 				const span = classifyEditSpan(fromA, toA, prefix);
@@ -299,6 +303,8 @@ export class LiveBindingValue implements PluginValue {
 				doc.transact(() => applyCmChangesToYText(ytext, changes), this);
 				this.advanceAgreed(
 					changes.map((c) => ({ from: c.fromA, to: c.toA, insert: c.insert })),
+					before,
+					prefix,
 				);
 			} catch (err) {
 				// A malformed offset / concurrent-transaction error must not throw out of
@@ -421,16 +427,34 @@ export class LiveBindingValue implements PluginValue {
 
 	/** Move `agreed` by BODY-coordinate changes both sides just took (CM6
 	 *  semantics: every change is against the same starting text), or freeze
-	 *  it if only one side took them (see `agreedOffset`). */
-	private advanceAgreed(changes: CmChangeSpec[]): void {
-		if (this.agreed === null || this.agreedFrozen || changes.length === 0 || !this.ytext)
-			return;
+	 *  it if only one side took them (see `agreedOffset`). `editorBefore` is
+	 *  the editor's text right before the change (frontmatter `prefix` chars
+	 *  ahead of the body): `agreed` must hold the same text over each change
+	 *  and AGREED_CONTEXT chars either side of it, or it is no ancestor of the
+	 *  editor (an out-of-step drop shifted it) and is dropped (null): the
+	 *  drift repair then keeps a conflict copy, never merges. O(change). */
+	private advanceAgreed(changes: CmChangeSpec[], editorBefore: Text, prefix: number): void {
+		const agreed = this.agreed;
+		if (agreed === null || this.agreedFrozen || changes.length === 0 || !this.ytext) return;
 		if (this.editor.state.doc.length - this.ytext.length !== this.agreedOffset) {
 			this.agreedFrozen = true;
 			return;
 		}
+		const bodyLen = editorBefore.length - prefix;
+		const window = (t: Text, offset: number, from: number, to: number) =>
+			t.sliceString(
+				offset + Math.max(0, from - AGREED_CONTEXT),
+				offset + Math.min(bodyLen, to + AGREED_CONTEXT),
+			);
 		try {
-			this.agreed = ChangeSet.of(changes, this.agreed.length).apply(this.agreed);
+			const mismatch =
+				bodyLen !== agreed.length ||
+				changes.some(
+					(c) =>
+						window(agreed, 0, c.from, c.to) !==
+						window(editorBefore, prefix, c.from, c.to),
+				);
+			this.agreed = mismatch ? null : ChangeSet.of(changes, agreed.length).apply(agreed);
 		} catch {
 			this.agreed = null; // out of step: unknown, never a wrong base
 		}
@@ -548,9 +572,10 @@ export class LiveBindingValue implements PluginValue {
 			if (changes.length === 0) return;
 			try {
 				// Body-coordinate delta -> editor coordinates (offset past any frontmatter).
-				const prefix = frontmatterPrefixLen(this.editor.state.doc.toString());
+				const before = this.editor.state.doc;
+				const prefix = frontmatterPrefixLen(before.toString());
 				this.paintEditor(changes, prefix);
-				this.advanceAgreed(changes);
+				this.advanceAgreed(changes, before, prefix);
 			} catch (err) {
 				// A dispatch mid-update / offset disagreement throws here (inside a Y.Text
 				// observe callback, which would otherwise break painting for this

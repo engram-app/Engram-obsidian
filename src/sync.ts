@@ -2890,8 +2890,22 @@ export class SyncEngine {
 	/** MERGE onto `path`'s row as read at stamp time: refresh the named fields,
 	 *  preserve everything else already recorded. A missing row starts at
 	 *  `hash: 0` (the historical `?? { hash: 0 }` default). */
-	private patchSyncedRow(path: string, patch: Partial<FileSyncState>): void {
+	private patchSyncedRow(
+		path: string,
+		patch: Partial<FileSyncState>,
+		/** The caller records the matching merge base itself (`recordCrdtBaseline`). */
+		withBase = false,
+	): void {
+		const before = this.syncState.get(path)?.hash;
 		this.syncState.set(path, { hash: 0, ...this.syncState.get(path), ...patch });
+		// The one place a baseline hash moves. One that moves WITHOUT a base
+		// makes the old base no ancestor of disk, so the registry marks it
+		// invalid (Engram#2480: no caller may hand merge3 a stale base). Hash 0
+		// means "unknown" (an un-banked push), not a different disk: exempt.
+		if (!withBase && patch.hash !== undefined && patch.hash !== 0 && patch.hash !== before) {
+			const noteId = this.noteIdMap?.get(path);
+			if (noteId) this.crdt?.invalidateMergeBase?.(noteId, patch.hash);
+		}
 		this.noteRowWrite(path);
 	}
 
@@ -2963,10 +2977,14 @@ export class SyncEngine {
 		content: string,
 		opts?: { markCreated?: boolean; mergeBase?: false | "if-doc-holds" },
 	): void {
-		this.patchSyncedRow(normalized, {
-			hash: fnv1a(content),
-			...(opts?.markCreated ? { crdtHead: CRDT_HEAD_CREATED } : {}),
-		});
+		this.patchSyncedRow(
+			normalized,
+			{
+				hash: fnv1a(content),
+				...(opts?.markCreated ? { crdtHead: CRDT_HEAD_CREATED } : {}),
+			},
+			true,
+		);
 		// The text beside the hash is the note's merge base (Relay's LCA): what
 		// a later disk edit is diffed against, persisted per note by the
 		// registry. Without it a disk ingest diffs disk against the DOC, and a

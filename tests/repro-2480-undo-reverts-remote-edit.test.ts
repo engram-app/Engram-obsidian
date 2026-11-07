@@ -302,3 +302,52 @@ test("2480 A edge: the agreed base tracks every forward, so a drift right after 
 	expect(copies).toEqual([]); // an exact base: the delete is simply painted
 	binding.destroy();
 });
+
+// Invariant: no caller can hand merge3 a base that is not a true common
+// ancestor. For the drift repair, a base that the edits show is out of step
+// is detected and the repair keeps a conflict copy instead of merging.
+test("invariant: a drift base that is no common ancestor is detected and goes to the conflict copy", async () => {
+	const start = "- a\n- b\n- c\n- d\n";
+	const local = new Y.Doc();
+	const text = local.getText("content");
+	text.insert(0, start);
+	const copies: string[] = [];
+	setLiveBindingCoordinator({
+		resolveId: () => ID,
+		residentText: () => ({ text, ready: Promise.resolve() }),
+		enroll: () => {},
+		onBind: () => {},
+		onRelease: () => {},
+		awaitsServer: () => false,
+		onLoadGateOpen: () => () => {},
+		loadMergeBase: async () => null,
+		keepConflictCopy: async (_p: string, t: string) => {
+			copies.push(t);
+			return true;
+		},
+		restoreLocalText: async () => {},
+	});
+	const { ed, setBinding } = realStateEditor(start);
+	const binding = new LiveBindingValue(ed);
+	setBinding(binding);
+	await new Promise((r) => setTimeout(r, 5));
+	// Two silent drops of equal length, one per side, so the length check
+	// cannot see them: an editor line never forwarded, a doc line never painted.
+	setBinding(null as unknown as LiveBindingValue);
+	ed.dispatch({ changes: { from: 0, insert: "X\n" } });
+	setBinding(binding);
+	local.transact(() => text.insert(text.length, "Y\n"), binding);
+	// A forwarded pure insertion now lands at editor offsets the base does
+	// not share (nothing is deleted, so only the context shows it).
+	const at = ed.state.doc.toString().indexOf("- c");
+	ed.dispatch({ changes: { from: at, insert: "new line\n" } });
+	const editorBefore = ed.state.doc.toString();
+	(binding as unknown as { runDriftCheck(): void }).runDriftCheck();
+	await new Promise((r) => setTimeout(r, 5));
+	expect(copies).toEqual([editorBefore]); // detected: a copy, not a merge
+	// Then the doc is adopted. (The forward itself already landed at offsets
+	// shifted by the dropped line: the pre-existing drift the repair heals.
+	// The editor's version survives in the copy.)
+	expect(ed.state.doc.toString()).toBe(text.toJSON());
+	binding.destroy();
+});
