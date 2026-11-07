@@ -6527,12 +6527,6 @@ export class SyncEngine {
 		return { folder_id: id, name };
 	}
 
-	/** The server has no folder `folderId` (deleted elsewhere): forget it, so the
-	 *  next note create places the note by path and the server recreates it. */
-	forgetFolder(folderId: string): void {
-		this.folderOps.index.remove(folderId);
-	}
-
 	private async handleRenameNow(file: TAbstractFile, oldPath: string): Promise<void> {
 		// Relay echo rule (Relay SharedFolder.ts notifyVaultRename): a child whose
 		// bookkeeping a folder op already moved to its new path has nothing left

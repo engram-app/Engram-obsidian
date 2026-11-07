@@ -135,37 +135,18 @@ describe("NoteChannel folder ops", () => {
 		await expect(channel.folderOp(op)).resolves.toEqual({ kind: "held" });
 	});
 
-	test("a note create carries folder_id and name from the folder ref", async () => {
+	test("a note create sends main's frame (no folder id until a server stage reads it) and writes its claim once taken", async () => {
 		const { channel, ws } = await joined();
-		channel.folderRefFor = () => ({ folder_id: "f1", name: "n.md" });
+		const claims: string[] = [];
+		channel.onCreated = (p, id) => claims.push(`${id}@${p}`);
 		const p = channel.crdtCreate("id-1", "Proj/n.md");
 		await tick();
 		const [frame] = frames(ws, "crdt_create");
-		expect(frame[4]).toEqual({
-			doc_id: "id-1",
-			path: "Proj/n.md",
-			folder_id: "f1",
-			name: "n.md",
-		});
+		expect(frame[4]).toEqual({ doc_id: "id-1", path: "Proj/n.md" });
+		expect(claims).toEqual([]);
 		reply(ws, frame[1], "ok", { doc_id: "id-1" });
 		await expect(p).resolves.toMatchObject({ docId: "id-1" });
-		channel.disconnect();
-	});
-
-	test("folder_not_found: the folder is forgotten and the create retried by path", async () => {
-		const { channel, ws } = await joined();
-		const forgot: string[] = [];
-		channel.folderRefFor = () => ({ folder_id: "dead", name: "n.md" });
-		channel.onFolderNotFound = (id) => forgot.push(id);
-		const p = channel.crdtCreate("id-1", "Proj/n.md");
-		await tick();
-		reply(ws, frames(ws, "crdt_create")[0][1], "error", { reason: "folder_not_found" });
-		await tick();
-		const retry = frames(ws, "crdt_create")[1];
-		expect(retry[4]).toEqual({ doc_id: "id-1", path: "Proj/n.md" });
-		reply(ws, retry[1], "ok", { doc_id: "id-1" });
-		await expect(p).resolves.toMatchObject({ docId: "id-1" });
-		expect(forgot).toEqual(["dead"]);
+		expect(claims).toEqual(["id-1@Proj/n.md"]);
 		channel.disconnect();
 	});
 
