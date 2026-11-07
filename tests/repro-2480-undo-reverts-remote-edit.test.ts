@@ -149,7 +149,7 @@ test("2480 A edge: the user's own edit stays undoable, and its undo keeps the re
 	binding.destroy();
 });
 
-test("2480 A edge: the drift repair stays undoable, so text it deleted can come back", async () => {
+test("2480 A edge: a drift repair pushes typing the doc missed to the doc, never erases it", async () => {
 	const local = new Y.Doc();
 	local.getText("content").insert(0, OLD);
 	const text = local.getText("content");
@@ -180,10 +180,89 @@ test("2480 A edge: the drift repair stays undoable, so text it deleted can come 
 	});
 	setBinding(binding);
 	(binding as unknown as { runDriftCheck(): void }).runDriftCheck();
-	expect(ed.state.doc.toString()).toBe(OLD); // re-adopted toward the doc
+	// Review finding 5, under the delta review's rule: the typing stays in
+	// the editor and is forwarded to the doc, not deleted.
+	expect(ed.state.doc.toString()).toBe(typed);
+	expect(text.toJSON()).toBe(typed);
 
+	// It is still the user's own undoable edit, and its undo is forwarded.
 	undo({ state: ed.realState(), dispatch: ed.dispatch });
-	expect(ed.state.doc.toString()).toBe(typed); // the typing is recoverable
-	expect(text.toJSON()).toBe(typed); // and the undo forwards it
+	expect(ed.state.doc.toString()).toBe(OLD);
+	expect(text.toJSON()).toBe(OLD);
+	binding.destroy();
+});
+
+test("D5 drift: undoing a drift repair that adopted a dropped REMOTE paint deletes the remote edit", async () => {
+	const local = new Y.Doc();
+	local.getText("content").insert(0, OLD);
+	const text = local.getText("content");
+	setLiveBindingCoordinator({
+		resolveId: () => ID,
+		residentText: () => ({ text, ready: Promise.resolve() }),
+		enroll: () => {},
+		onBind: () => {},
+		onRelease: () => {},
+		awaitsServer: () => false,
+		onLoadGateOpen: () => () => {},
+		loadMergeBase: async () => null,
+		keepConflictCopy: async () => true,
+		restoreLocalText: async () => {},
+	});
+	const { ed, setBinding } = realStateEditor(OLD);
+	const binding = new LiveBindingValue(ed);
+	setBinding(binding);
+	await new Promise((r) => setTimeout(r, 5));
+	// A remote edit lands in the doc but its paint is dropped (the drift case).
+	const at = OLD.indexOf("old section");
+	local.transact(() => {
+		text.delete(at, "old section".length);
+		text.insert(at, "new section from MCP");
+	}, binding);
+	expect(ed.state.doc.toString()).toBe(OLD);
+	(binding as unknown as { runDriftCheck(): void }).runDriftCheck();
+	expect(ed.state.doc.toString()).toBe(NEW); // repaired toward the doc
+	undo({ state: ed.realState(), dispatch: ed.dispatch }); // user presses Ctrl+Z once
+	expect(text.toJSON()).toBe(NEW); // the remote edit must survive in the doc
+	binding.destroy();
+});
+
+test("2480 A edge: an ambiguous drift keeps the editor's text as a conflict copy, then takes the doc", async () => {
+	const local = new Y.Doc();
+	local.getText("content").insert(0, OLD);
+	const text = local.getText("content");
+	const copies: string[] = [];
+	setLiveBindingCoordinator({
+		resolveId: () => ID,
+		residentText: () => ({ text, ready: Promise.resolve() }),
+		enroll: () => {},
+		onBind: () => {},
+		onRelease: () => {},
+		awaitsServer: () => false,
+		onLoadGateOpen: () => () => {},
+		loadMergeBase: async () => null,
+		keepConflictCopy: async (_p: string, t: string) => {
+			copies.push(t);
+			return true;
+		},
+		restoreLocalText: async () => {},
+	});
+	const { ed, setBinding } = realStateEditor(OLD);
+	const binding = new LiveBindingValue(ed);
+	setBinding(binding);
+	await new Promise((r) => setTimeout(r, 5));
+	// Both sides rewrote the same words, each change dropped on the other side.
+	setBinding(null as unknown as LiveBindingValue);
+	const at = OLD.indexOf("old section");
+	ed.dispatch({ changes: { from: at, to: at + "old section".length, insert: "typed text" } });
+	setBinding(binding);
+	local.transact(() => {
+		text.delete(at, "old section".length);
+		text.insert(at, "new section from MCP");
+	}, binding);
+	(binding as unknown as { runDriftCheck(): void }).runDriftCheck();
+	await new Promise((r) => setTimeout(r, 5));
+	expect(copies).toEqual([OLD.replace("old section", "typed text")]);
+	expect(ed.state.doc.toString()).toBe(NEW);
+	expect(text.toJSON()).toBe(NEW);
 	binding.destroy();
 });

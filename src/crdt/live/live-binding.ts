@@ -67,23 +67,19 @@ function shiftChanges(changes: CmChangeSpec[], n: number): CmChangeSpec[] {
 const ySyncAnnotation = Annotation.define<EditorView>();
 
 /** Dispatch doc-originated changes into `view`. Ported from Relay's
- *  `syncDispatchAnnotations` (single-user history): the echo guard, plus, for
- *  a paint of REMOTE content, `addToHistory: false` so the user's undo stack
- *  holds only their own edits (CM6 maps those through this change instead)
- *  and `remote` to mark it as another actor's. `remote: false` (the drift
- *  repair) stays in history: it can delete text the user typed whose forward
- *  was dropped, and undo must be able to bring that back. The ONLY path a doc
- *  change may take into the editor. */
-function syncDispatch(view: EditorView, changes: ChangeSpec, remote = true): void {
+ *  `syncDispatchAnnotations` (single-user history): the echo guard, plus
+ *  `addToHistory: false` so the user's undo stack holds only their own edits
+ *  (CM6 maps those through this change instead), plus `remote` to mark it as
+ *  another actor's. The ONLY path a doc change may take into the editor: no
+ *  remote content may ever enter undo history (Engram#2480 mechanism A). */
+function syncDispatch(view: EditorView, changes: ChangeSpec): void {
 	view.dispatch({
 		changes,
-		annotations: remote
-			? [
-					ySyncAnnotation.of(view),
-					Transaction.addToHistory.of(false),
-					Transaction.remote.of(true),
-				]
-			: [ySyncAnnotation.of(view)],
+		annotations: [
+			ySyncAnnotation.of(view),
+			Transaction.addToHistory.of(false),
+			Transaction.remote.of(true),
+		],
 	});
 }
 
@@ -162,6 +158,12 @@ export class LiveBindingValue implements PluginValue {
 	private gateOpenUnsub: (() => void) | null = null;
 	/** Periodic drift-check timer (self-heal backstop); null when not scheduled. */
 	private driftTimer: number | null = null;
+	/** The body text editor and doc last agreed on (set when live, and by
+	 *  every drift check that finds them equal): the base `repairDrift` splits
+	 *  a drift by direction against. Null = unknown. */
+	private agreed: string | null = null;
+	/** A drift repair is waiting on its conflict copy. */
+	private driftResolving = false;
 
 	constructor(editor: EditorView) {
 		this.editor = editor;
@@ -392,11 +394,10 @@ export class LiveBindingValue implements PluginValue {
 	}
 
 	/** Dispatch BODY-coordinate changes into the editor, shifted past any
-	 *  frontmatter block, annotated so update() does not echo them back.
-	 *  `remote: false` keeps them undoable (see `syncDispatch`). */
-	private paintEditor(changes: CmChangeSpec[], prefix: number, remote = true): void {
+	 *  frontmatter block, annotated so update() does not echo them back. */
+	private paintEditor(changes: CmChangeSpec[], prefix: number): void {
 		if (changes.length === 0) return;
-		syncDispatch(this.editor, shiftChanges(changes, prefix), remote);
+		syncDispatch(this.editor, shiftChanges(changes, prefix));
 	}
 
 	/** Apply BODY-coordinate changes into the Y.Text under our own origin (so the
@@ -519,15 +520,23 @@ export class LiveBindingValue implements PluginValue {
 		};
 		text.observe(this.observer);
 		this.ready = true;
+		const body = this.editorBody().body;
+		this.agreed = body === text.toJSON() ? body : null;
 		this.scheduleDriftCheck();
+	}
+
+	/** The editor's body (past any frontmatter block) and that block's length. */
+	private editorBody(): { body: string; prefix: number; full: string } {
+		const full = this.editor.state.doc.toString();
+		const prefix = frontmatterPrefixLen(full);
+		return { body: prefix > 0 ? full.slice(prefix) : full, prefix, full };
 	}
 
 	/** Periodic drift backstop: while bound, compare the
 	 *  editor text to the Y.Text every DRIFT_CHECK_MS. If a delta/forward was silently
 	 *  dropped (a swallowed dispatch/transact error, a filtered transaction) they
-	 *  diverge; re-adopt the doc into the editor so the two never stay out of sync.
-	 *  The doc is authoritative for a live-bound synced note, so adopting toward it is
-	 *  the safe restore. Skipped during IME composition (a diff mid-composition would
+	 *  diverge; `repairDrift` re-converges them by direction so they never stay out
+	 *  of sync. Skipped during IME composition (a diff mid-composition would
 	 *  corrupt the input). Reschedules itself; cleared on detach. */
 	private scheduleDriftCheck(): void {
 		if (this.driftTimer !== null) window.clearTimeout(this.driftTimer);
@@ -539,16 +548,16 @@ export class LiveBindingValue implements PluginValue {
 
 	private runDriftCheck(): void {
 		if (this.destroyed || !this.ready || !this.ytext) return;
-		if (this.editor.composing) {
+		if (this.editor.composing || this.driftResolving) {
 			// Mid-IME: a diff dispatch now would corrupt the composition. Retry later.
 			this.scheduleDriftCheck();
 			return;
 		}
-		const fullText = this.editor.state.doc.toString();
-		const prefix = frontmatterPrefixLen(fullText);
-		const editorText = prefix > 0 ? fullText.slice(prefix) : fullText;
+		const { body: editorText, prefix, full } = this.editorBody();
 		const docText = this.ytext.toJSON();
-		if (editorText !== docText) {
+		if (editorText === docText) {
+			this.agreed = docText;
+		} else {
 			// A tripwire, not routine: every delta and forward is supposed to keep these
 			// in lockstep, so drift means one was silently dropped. warn (not info) so it
 			// actually reaches Loki.
@@ -557,7 +566,7 @@ export class LiveBindingValue implements PluginValue {
 				`drift on ${noteRef(this.path)} (editor ${editorText.length} vs doc ${docText.length}) - re-adopting`,
 			);
 			try {
-				this.paintEditor(textDiffToChangeSpec(editorText, docText), prefix, false);
+				this.repairDrift(this.ytext, editorText, docText, prefix, full);
 			} catch (err) {
 				rlog().error(
 					"crdt-live-binding",
@@ -566,6 +575,45 @@ export class LiveBindingValue implements PluginValue {
 			}
 		}
 		this.scheduleDriftCheck();
+	}
+
+	/** Repair a drift by direction, from the last text both agreed on: text
+	 *  only the editor holds is the user's (a dropped forward) and goes to the
+	 *  doc as their edit; text only the doc holds (a dropped paint) is painted
+	 *  out of undo history. Remote content never enters history, and typing is
+	 *  never erased. When the two cannot be told apart (no agreed text, or the
+	 *  edits overlap) the editor's text is kept as a conflict copy before the
+	 *  doc is adopted; if no copy can be written, nothing changes and the next
+	 *  check retries. */
+	private repairDrift(
+		text: Y.Text,
+		editorText: string,
+		docText: string,
+		prefix: number,
+		full: string,
+	): void {
+		const merged = this.agreed === null ? null : merge3(this.agreed, editorText, docText);
+		if (merged?.clean) {
+			this.writeYText(text, textDiffToChangeSpec(docText, merged.text));
+			this.paintEditor(textDiffToChangeSpec(editorText, merged.text), prefix);
+			this.agreed = merged.text;
+			return;
+		}
+		const c = this.boundCoordinator;
+		const path = this.path;
+		if (!c || !path) return;
+		this.driftResolving = true;
+		void c
+			.keepConflictCopy(path, full)
+			.catch(() => false)
+			.then((kept) => {
+				this.driftResolving = false;
+				if (!kept || this.destroyed || this.ytext !== text) return;
+				const now = this.editorBody();
+				const doc = text.toJSON();
+				this.paintEditor(textDiffToChangeSpec(now.body, doc), now.prefix);
+				this.agreed = doc;
+			});
 	}
 
 	private detach(): void {
