@@ -543,7 +543,8 @@ export class Replica {
 		// onServerFeatures, folderRefFor / onFolderNotFound / onFolderChanged).
 		engine.setCrdtPorts({ folderOp: (op) => channel.folderOp(op) });
 		channel.onServerFeatures = (f) => void engine.setFolderOpsEnabled(f.folderOps);
-		channel.folderRefFor = (p) => engine.folderRefFor(p);
+		channel.folderRefFor = (p, nid) => engine.folderRefFor(p, nid);
+		channel.onIndexV1 = (on) => engine.setIndexV1(on);
 		channel.onFolderNotFound = (fid) => engine.forgetFolder(fid);
 		channel.onFolderChanged = (c) => void engine.onFolderChanged(c);
 

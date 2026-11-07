@@ -359,9 +359,9 @@ export class NoteChannel {
 	onFolderChanged: ((change: FolderChange) => void) | null = null;
 	/** `{ folder_id, name }` to send with a note create or move, or null for
 	 *  path-only. Async: it may first send the folder's own pending create. */
-	folderRefFor:
-		| ((path: string) => Promise<{ folder_id: string | null; name: string } | null>)
-		| null = null;
+	folderRefFor: ((path: string, noteId: string) => Promise<FolderRef | null>) | null = null;
+	/** The sync join reply's `index_v1` (S5 stamps it per vault). */
+	onIndexV1: ((on: boolean) => void) | null = null;
 	/** The server refused a create's `folder_id` (`folder_not_found`). */
 	onFolderNotFound: ((folderId: string) => void) | null = null;
 	/** Inbound CRDT frames from the server. `docId` is the note's bare note_id. */
@@ -638,7 +638,7 @@ export class NoteChannel {
 		// The path is still sent, so a server that ignores the id places it the
 		// same way, and `folder_not_found` is retried by path (the server then
 		// recreates the folder from the path, as for any path-only create).
-		const ref = this.folderRefFor ? await this.folderRefFor(path) : null;
+		const ref = this.folderRefFor ? await this.folderRefFor(path, docId) : null;
 		try {
 			return await this.sendCrdtCreate(docId, path, b64, ref);
 		} catch (e) {
@@ -1336,8 +1336,13 @@ export class NoteChannel {
 				// The user topic is best-effort and must never flip connected.
 				if (topic === this.topic) {
 					const response = (
-						payload as { response?: { reconnect_jitter_max_ms?: unknown } }
+						payload as {
+							response?: { reconnect_jitter_max_ms?: unknown; index_v1?: unknown };
+						}
 					).response;
+					// Engram#2523: this vault's index projects from filemeta_v1. Per
+					// join, so a reconnect to an unstamped vault turns it back off.
+					this.onIndexV1?.(response?.index_v1 === true);
 					const clamped = clampReconnectJitter(response?.reconnect_jitter_max_ms);
 					if (clamped !== null) this.reconnectJitterMaxMs = clamped;
 					// The version floor gates this join, so an ok here is the server

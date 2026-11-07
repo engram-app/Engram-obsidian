@@ -2854,7 +2854,8 @@ export default class EngramSyncPlugin extends Plugin {
 				};
 
 				// Engram#2523 S4: folder ids on note creates, folder_changed inbound.
-				channel.folderRefFor = (p) => this.syncEngine.folderRefFor(p);
+				channel.folderRefFor = (p, id) => this.syncEngine.folderRefFor(p, id);
+				channel.onIndexV1 = (on) => this.syncEngine.setIndexV1(on);
 				channel.onFolderNotFound = (id) => this.syncEngine.forgetFolder(id);
 				channel.onFolderChanged = (c) => void this.syncEngine.onFolderChanged(c);
 
