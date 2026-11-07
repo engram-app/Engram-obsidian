@@ -131,6 +131,11 @@ export class SyncStore {
 		this.isTombstoned = fn;
 	}
 
+	/** The index doc this store's map lives in (`filemeta_v1` shares it). */
+	get doc(): Y.Doc | null {
+		return this.map.doc;
+	}
+
 	constructor(private readonly map: Y.Map<FileMeta>) {
 		// A remote update invalidates the reverse index just as a local one does.
 		// Without this a path learned from another device answers `pathForId`

@@ -17,6 +17,7 @@ import { expBackoff } from "./backoff";
 import type { BaseStore } from "./base-store";
 import type { GenesisOutcome } from "./channel";
 import { fnv1a, fnv1aBase64 } from "./content-hash";
+import { FileMetaV1Writer } from "./crdt/filemeta-v1";
 import { flushTarget, splitFrontmatter } from "./crdt/frontmatter-codec";
 import type { NoteIdMap } from "./crdt/note-id-map";
 import type { ProviderRegistry } from "./crdt/provider-registry";
@@ -4188,6 +4189,7 @@ export class SyncEngine {
 		// Folder ids, pending folder ops and held inbound changes address the
 		// old vault.
 		this.folderOps.reset();
+		this.indexV1 = false;
 		// Folder markers are vault-scoped too: a stale set after a switch lets
 		// handleFolderDelete push marker deletes against the NEW vault (post-
 		// merge review finding 8 — data-safe but cross-vault noise).
@@ -6211,7 +6213,9 @@ export class SyncEngine {
 		const cut = to.lastIndexOf("/");
 		const parentId = this.folderOps.ensure(cut < 0 ? "" : to.slice(0, cut));
 		this.rekeyMoved(moved);
-		this.folderOps.move(id, parentId, cut < 0 ? to : to.slice(cut + 1), from);
+		const name = cut < 0 ? to : to.slice(cut + 1);
+		this.folderOps.move(id, parentId, name, from);
+		this.fileMetaV1.folder(id, parentId, name);
 		rlog().info(
 			"push",
 			`Folder op queued: move ${noteRef(from)} -> ${noteRef(to)} | ${moved.length} files re-keyed locally`,
@@ -6403,6 +6407,17 @@ export class SyncEngine {
 		}
 	}
 
+	/** `index_v1` from this vault's sync join reply (S5 stamps it per vault).
+	 *  Per vault: a vault switch turns it off until the new vault's join says. */
+	private indexV1 = false;
+	setIndexV1(on: boolean): void {
+		this.indexV1 = on;
+	}
+	private readonly fileMetaV1 = new FileMetaV1Writer(
+		() => this.noteIdMap?.store.doc ?? null,
+		() => this.indexV1 && this.folderOps.enabled(),
+	);
+
 	/** `features.folder_ops` from the join reply. */
 	async setFolderOpsEnabled(on: boolean): Promise<void> {
 		await this.folderOps.setFeature(on);
@@ -6425,7 +6440,10 @@ export class SyncEngine {
 	 *  note in the same place, while a minted create races the server's own
 	 *  create-from-path and is refused `conflict`. A folder whose create IS
 	 *  queued (a move target, see `handleFolderRename`) is sent first. */
-	async folderRefFor(path: string): Promise<{ folder_id: string | null; name: string } | null> {
+	async folderRefFor(
+		path: string,
+		noteId?: string,
+	): Promise<{ folder_id: string | null; name: string } | null> {
 		if (!this.folderOps.enabled()) return null;
 		const p = normalizePath(path);
 		const cut = p.lastIndexOf("/");
@@ -6433,7 +6451,11 @@ export class SyncEngine {
 		if (id === undefined) return null;
 		if (id !== null && this.folderOps.hasPending(id)) await this.folderOps.flush();
 		if (id !== null && this.folderOps.hasPending(id)) return null;
-		return { folder_id: id, name: cut < 0 ? p : p.slice(cut + 1) };
+		const name = cut < 0 ? p : p.slice(cut + 1);
+		// Claim before the move, as for v0: the note's v1 entry is its folder id
+		// and name, written as the create or move goes out.
+		if (noteId) this.fileMetaV1.note(noteId, id, name);
+		return { folder_id: id, name };
 	}
 
 	/** The server has no folder `folderId` (deleted elsewhere): forget it, so the
