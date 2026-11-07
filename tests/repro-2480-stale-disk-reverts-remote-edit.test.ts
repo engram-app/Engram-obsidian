@@ -653,3 +653,38 @@ test("review 683 round 5: a newer real base supersedes an invalidation pending d
 	expect(e.mergeBase).toBe(c2);
 	expect(e.mergeBaseInvalid).toBe(false);
 });
+
+test("2480 B edge: an edit landing just before the write-back is never overwritten", async () => {
+	const d = await device();
+	d.ctl.failWrites = 1;
+	await d.mcpEdit(); // the doc holds work disk lacks
+	d.disk.set(PATH, `${V1}\nupdated: 1\n`);
+	const guarded = d.engine.writeNoteIfDiskStill.bind(d.engine);
+	d.engine.writeNoteIfDiskStill = async (...a: unknown[]) => {
+		d.disk.set(PATH, `${d.disk.get(PATH)}typed during the merge\n`); // lands now
+		return (guarded as (...x: unknown[]) => Promise<string | null>)(...a);
+	};
+	await d.engine.pushFile(d.file);
+	await tick(20);
+	expect(d.disk.get(PATH)).toContain("typed during the merge"); // not overwritten
+	d.engine.writeNoteIfDiskStill = guarded;
+	await d.engine.pushFile(d.file); // that edit's own modify
+	await tick(20);
+	const doc = await d.docText();
+	await expectMcpSectionKept(doc);
+	expect(doc).toContain("typed during the merge");
+	expect(d.disk.get(PATH)).toBe(doc);
+});
+
+test("2480 B edge: a failed write-back records no baseline the disk lacks", async () => {
+	const d = await device();
+	d.ctl.failWrites = 2; // the remote flush AND the write-back fail
+	await d.mcpEdit();
+	const stale = `${V1}\nupdated: 1\n`;
+	d.disk.set(PATH, stale);
+	await d.engine.pushFile(d.file);
+	await tick(20);
+	expect(d.disk.get(PATH)).toBe(stale);
+	expect(d.engine.isUnchangedSynced(PATH, stale)).toBe(true); // baseline = disk, not merged
+	expect((d.reg as any).entries.get(d.ID).mergeBase).toBe(stale);
+});

@@ -17,6 +17,7 @@ type WiringSyncEngine = Pick<
 	| "flushStrandedNote"
 	| "isUnchangedSynced"
 	| "keepConflictCopy"
+	| "writeNoteIfDiskStill"
 	| "materializeEmptyDiscovered"
 	| "reconcileNoteIdMapFromManifest"
 	| "isSyncBlocked"
@@ -291,6 +292,17 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		ackScope: deps.ackScope,
 		lcaFor: deps.lcaFor,
 		onDirtyMerge: deps.onDirtyMerge,
+		// The registry write-back goes through the engine's one guarded write. An
+		// open editor owns the note's disk: nudge its save instead.
+		writeIfDiskStill: async (noteId, expectedDisk, text) => {
+			const path = noteIdMap.pathForId(noteId);
+			if (!path) return null;
+			if (deps.isBound(path)) {
+				deps.onBoundUpdate?.(path);
+				return null;
+			}
+			return syncEngine.writeNoteIfDiskStill(path, expectedDisk, text);
+		},
 		onMergeConflict: async (noteId, diskText) => {
 			const path = noteIdMap.pathForId(noteId);
 			return path

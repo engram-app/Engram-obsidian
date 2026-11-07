@@ -16,9 +16,12 @@ function registryWith({ lca, dbPrefix }: Opts) {
 	const registry = new ProviderRegistry({
 		dbPrefix,
 		send: () => true,
-		onFlushToDisk: (_id, content) => {
-			writes.push(content);
-			return true;
+		onFlushToDisk: () => true,
+		// The engine's guarded write, landing (the guard itself is tested
+		// against the real engine in the repro-2480 stale-disk file).
+		writeIfDiskStill: async (_id, _expected, text) => {
+			writes.push(text);
+			return text;
 		},
 		lcaFor: () => lca,
 		onDirtyMerge: (id) => dirty.push(id),
@@ -73,25 +76,6 @@ describe("applyLocalEdit with an LCA", () => {
 
 		expect(await registry.projectedText("na")).toBe("1\nTWO\nTHREE\n");
 		expect(copies).toEqual([]);
-		await registry.destroyAll();
-	});
-
-	test("write-back skips when disk moved during the ingest (an external write wins)", async () => {
-		const { registry, writes } = registryWith({ lca: "a\nb\nc\n", dbPrefix: "lca-race" });
-		await registry.applyLocalEdit("nr", "a\nb\nC\n"); // the doc's own edit
-		await settle();
-		writes.length = 0;
-
-		// Disk read "A\nb\nc", but an external write landed before the write-back.
-		const onDisk = await registry.applyLocalEdit(
-			"nr",
-			"A\nb\nc\n",
-			undefined,
-			async () => "external\n",
-		);
-
-		expect(writes).toEqual([]); // the external write is not clobbered
-		expect(onDisk).toBe("A\nb\nc\n"); // what disk held when it was read
 		await registry.destroyAll();
 	});
 

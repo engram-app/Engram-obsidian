@@ -69,6 +69,8 @@ function makeEngine(disk: string, server: string) {
 	engine.setNoteIdMap(map);
 	engine.crdtDocState = async () => ({ b64: "" });
 	engine.flushFromCrdt = async () => true;
+	// The guarded merge write lands and reports the bytes it wrote.
+	engine.writeCrdtNote = async (_p: string, text: string) => text;
 	engine.writeDriftConflictCopy = async (_p: string, text: string) => {
 		calls.copies.push(text);
 		return "copy.md";

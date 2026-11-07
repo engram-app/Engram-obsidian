@@ -4533,19 +4533,44 @@ export class SyncEngine {
 		return (await this.flushedProjection(crdt, noteId, file)).onDisk;
 	}
 
-	/** Write `text` (the doc after a create-time merge) to disk and return the
-	 *  baseline to stamp: what that write left there, which keeps disk's
-	 *  frontmatter bytes when they mean the same (`flushTarget`), never `text`
-	 *  itself. Unreadable afterwards: `text`. */
-	private async writeAndBaseline(normalized: string, file: TFile, text: string): Promise<string> {
-		await this.flushFromCrdt(normalized, text);
-		let after: string | null = null;
+	/** THE guarded write of a note's doc after a merge, and the only place one
+	 *  records a baseline: the registry write-back (via `writeIfDiskStill`) and
+	 *  both create-time merges use it.
+	 *
+	 *  Disk is re-read right before the write. If it no longer holds
+	 *  `expectedDisk` (the text the merge read; an edit landed while the merge
+	 *  ran), nothing is written: the doc must never overwrite typing it never
+	 *  saw. That edit's own modify ingests it, merging from what the caller
+	 *  records. Otherwise `writeCrdtNote` writes and records the baseline only
+	 *  once the write lands, from the bytes it wrote (disk's frontmatter bytes
+	 *  kept when they mean the same), and returns them. Null when nothing was
+	 *  written (disk moved, unreadable, or the write failed, logged there); no
+	 *  baseline is recorded then, and the caller records `expectedDisk`, what
+	 *  disk still holds, never the merged text. */
+	async writeNoteIfDiskStill(
+		normalized: string,
+		expectedDisk: string,
+		text: string,
+		/** The note's file when the caller holds it; else resolved here. */
+		file?: TFile,
+	): Promise<string | null> {
+		const found = file ? null : this.app.vault.getAbstractFileByPath(normalized);
+		const target = file ?? (found instanceof TFile ? found : null);
+		if (!target) return null;
+		let now: string;
 		try {
-			after = await this.app.vault.cachedRead(file);
+			now = await this.app.vault.cachedRead(target);
 		} catch {
-			// unreadable: fall back to the text written
+			return null;
 		}
-		return flushTarget(text, after).onDisk;
+		if (now !== expectedDisk) {
+			rlog().info(
+				"crdt",
+				`merge write skipped: ${noteRef(normalized)} changed on disk during the merge`,
+			);
+			return null;
+		}
+		return this.writeCrdtNote(normalized, text);
 	}
 
 	/** `flushTarget` for `noteId`'s doc against its file now: after an apply
@@ -5060,6 +5085,16 @@ export class SyncEngine {
 				// and a two-way diff of disk onto it deleted that edit: disk never
 				// had it. Overlapping edits keep both rather than drop either.
 				if (preApplyDisk !== null && preApplyDisk !== opts.genesisContent) {
+					// What disk holds after the apply's flush, read BEFORE the merge:
+					// the write below is guarded against it (an edit landing while the
+					// merge runs is never overwritten), and it is the baseline when
+					// nothing is written.
+					let held: string = consumed;
+					try {
+						held = await this.app.vault.cachedRead(file);
+					} catch {
+						// unreadable: keep what the flush left
+					}
 					const merged = await this.mergeOwnCreateDrift(
 						effectiveId,
 						normalized,
@@ -5067,8 +5102,11 @@ export class SyncEngine {
 						flushed.projection, // what the doc holds: the merge's expected text
 						preApplyDisk,
 					);
-					if (merged !== null)
-						consumed = await this.writeAndBaseline(normalized, file, merged);
+					if (merged !== null) {
+						consumed =
+							(await this.writeNoteIfDiskStill(normalized, held, merged, file)) ??
+							held;
+					}
 				}
 				return consumed;
 			}
@@ -5196,7 +5234,14 @@ export class SyncEngine {
 						server,
 						disk,
 					);
-					return await this.writeAndBaseline(normalized, file, merged ?? server);
+					return (
+						(await this.writeNoteIfDiskStill(
+							normalized,
+							disk,
+							merged ?? server,
+							file,
+						)) ?? disk
+					);
 				}
 			}
 		}

@@ -23,7 +23,6 @@ import { projectCanvas, seedCanvasInto } from "./canvas-codec";
 import { isDestroyedError, NoteDestroyedError } from "./destroyed-error";
 import {
 	CONTENT_KEY,
-	flushTarget,
 	frontmatterOf,
 	keepDiskFrontmatter,
 	projectNote,
@@ -342,6 +341,17 @@ export interface ProviderRegistryOpts {
 	 *  text as a conflict copy beside the note. True when the copy was written;
 	 *  the doc then keeps its text and is written back to disk. */
 	onMergeConflict?: (noteId: string, diskText: string) => Promise<boolean>;
+	/** Write `text` (the doc after a disk merge) over disk ONLY if disk still
+	 *  holds `expectedDisk`, through the engine's single guarded write
+	 *  (`SyncEngine.writeNoteIfDiskStill`). Returns the bytes written, their
+	 *  baseline already recorded, or null when nothing was written: disk moved
+	 *  (that edit's own modify ingests it), the write failed (logged), or an
+	 *  open editor owns the note. Absent: write-backs never write. */
+	writeIfDiskStill?: (
+		noteId: string,
+		expectedDisk: string,
+		text: string,
+	) => Promise<string | null>;
 	/** Where the resend set persists (#658); typically window.localStorage.
 	 *  Absent = in memory for the session. */
 	resendStore?: ResendStore;
@@ -644,7 +654,19 @@ export class ProviderRegistry {
 				this.markAckedDirty(noteId, entry);
 			}
 			entry.remoteSeq += 1;
-			const write = () => this.writeToDisk(noteId, entry, firstLoad);
+			const write = () => {
+				const projected = this.project(entry);
+				// Compare the BLOCK against what the last flush projected, not against
+				// the editor. The editor is the wrong oracle: in Live Preview the CM
+				// document is body-only, so it never carries a fence, and comparing
+				// against it reported "frontmatter differs" for EVERY note that has
+				// any — turning the bound-path nudge into a direct write under a live
+				// editor on Obsidian's default mode.
+				const fmBlock = splitFrontmatter(projected).fmBlock;
+				const fmChanged = fmBlock !== entry.lastFlushedFm;
+				entry.lastFlushedFm = fmBlock;
+				return this.opts.onFlushToDisk(noteId, projected, fmChanged, firstLoad);
+			};
 			// While the first-load flush resolves held disk input, later flushes
 			// wait for it (and project afresh): writing first would put server text
 			// over the very input the interlock is reading.
@@ -772,25 +794,6 @@ export class ProviderRegistry {
 		return this.entries.has(noteId);
 	}
 
-	/** Write the doc's projection to disk through `onFlushToDisk`. */
-	private writeToDisk(
-		noteId: string,
-		entry: Entry,
-		firstLoad: boolean,
-	): ReturnType<ProviderRegistryOpts["onFlushToDisk"]> {
-		const projected = this.project(entry);
-		// Compare the BLOCK against what the last flush projected, not against
-		// the editor. The editor is the wrong oracle: in Live Preview the CM
-		// document is body-only, so it never carries a fence, and comparing
-		// against it reported "frontmatter differs" for EVERY note that has
-		// any, turning the bound-path nudge into a direct write under a live
-		// editor on Obsidian's default mode.
-		const fmBlock = splitFrontmatter(projected).fmBlock;
-		const fmChanged = fmBlock !== entry.lastFlushedFm;
-		entry.lastFlushedFm = fmBlock;
-		return this.opts.onFlushToDisk(noteId, projected, fmChanged, firstLoad);
-	}
-
 	// --- Local edits (disk → doc) -----------------------------------------------
 
 	/** Ingest disk content into the doc (frontmatter + body). Returns the content
@@ -873,11 +876,11 @@ export class ProviderRegistry {
 		if (history && echo === "late" && e.kind === "note") {
 			// Disk already equals the doc: nothing to keep twice.
 			if (sameNoteMeaning(this.project(e), diskContent)) return diskContent;
-			return this.keepBoth(noteId, e, diskContent, reread);
+			return this.keepBoth(noteId, e, diskContent);
 		}
 		if (history && e.mergeBaseInvalid && e.kind === "note" && echo !== "echo") {
 			if (sameNoteMeaning(this.project(e), diskContent)) return diskContent;
-			return this.keepBoth(noteId, e, diskContent, reread);
+			return this.keepBoth(noteId, e, diskContent);
 		}
 		const base = history
 			? echo === "echo"
@@ -894,10 +897,10 @@ export class ProviderRegistry {
 			const merged = merge3(base, diskContent, current);
 			if (merged.clean) {
 				this.seedFromDisk(e, merged.text, docHasHistory(e.doc, e.kind));
-				return this.writeBack(noteId, e, diskContent, reread);
+				return this.writeBack(noteId, e, diskContent);
 			}
 			this.opts.onDirtyMerge?.(noteId);
-			return this.keepBoth(noteId, e, diskContent, reread);
+			return this.keepBoth(noteId, e, diskContent);
 		}
 
 		// Stale-snapshot revert guard (e2e test_83): diskContent was read before
@@ -961,22 +964,17 @@ export class ProviderRegistry {
 	 *  baseline (and so the merge base). Not written when disk moved since it
 	 *  was read (an external write mid-ingest: its own modify ingests it), or
 	 *  when the write fails; disk then still holds `diskContent`. */
-	private async writeBack(
-		noteId: string,
-		e: Entry,
-		diskContent: string,
-		reread?: () => Promise<string>,
-	): Promise<string> {
+	private async writeBack(noteId: string, e: Entry, diskContent: string): Promise<string> {
 		const docText = this.project(e);
 		// Equal by meaning (only YAML formatting differs): disk keeps its bytes.
 		if (sameNoteMeaning(docText, diskContent)) return diskContent;
 		try {
-			if (reread && (await e.lifetime.guard(reread())) !== diskContent) return diskContent;
-			const ok = await e.lifetime.guard(Promise.resolve(this.writeToDisk(noteId, e, false)));
-			// What the flush actually wrote: it keeps disk's frontmatter bytes when
-			// they mean what the doc's do (`writeCrdtNote`), and the re-read above
-			// proved disk was still `diskContent`.
-			return ok === false ? diskContent : flushTarget(docText, diskContent).onDisk;
+			// The engine's one guarded write: nothing is written if disk moved
+			// since `diskContent` was read, and only the bytes that landed come
+			// back (their baseline recorded by the write itself).
+			const write = this.opts.writeIfDiskStill?.(noteId, diskContent, docText);
+			const written = write ? await e.lifetime.guard(write) : null;
+			return written ?? diskContent;
 		} catch (err) {
 			rlog().warn(
 				"crdt",
@@ -995,12 +993,7 @@ export class ProviderRegistry {
 	 *  only disk-only lines, so a retry after a write-back adds nothing (no
 	 *  nesting), and the next ingest tries the copy again. Then the doc is
 	 *  written back to disk. */
-	private async keepBoth(
-		noteId: string,
-		e: Entry,
-		diskContent: string,
-		reread?: () => Promise<string>,
-	): Promise<string> {
+	private async keepBoth(noteId: string, e: Entry, diskContent: string): Promise<string> {
 		let copied = false;
 		try {
 			copied = (await this.opts.onMergeConflict?.(noteId, diskContent)) === true;
@@ -1025,7 +1018,7 @@ export class ProviderRegistry {
 				this.seedFromDisk(e, kept, true);
 			}
 		}
-		return this.writeBack(noteId, e, diskContent, reread);
+		return this.writeBack(noteId, e, diskContent);
 	}
 
 	/** Take the editor-echo window. `"echo"`: `disk` is the editor's late save
