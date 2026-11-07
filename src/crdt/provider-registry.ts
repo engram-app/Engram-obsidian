@@ -1021,6 +1021,18 @@ export class ProviderRegistry {
 		return this.writeBack(noteId, e, diskContent);
 	}
 
+	/** The doc's text just reached disk through a write that is not a remote
+	 *  flush (a merge write-back, a create-time merge): record its frontmatter
+	 *  block as flushed, in the projection's form the flush compares against,
+	 *  so the next remote flush does not report a block change that did not
+	 *  happen (which would turn a bound note's save nudge into a direct write
+	 *  under its editor). Called by `SyncEngine.writeNoteIfDiskStill`. */
+	markWritten(noteId: string): void {
+		const e = this.entries.get(noteId);
+		if (!e?.lifetime.active || e.kind !== "note") return;
+		e.lastFlushedFm = splitFrontmatter(this.project(e)).fmBlock;
+	}
+
 	/** Take the editor-echo window. `"echo"`: `disk` is the editor's late save
 	 *  inside the window. `"late"`: the same save past it. Every ingest clears
 	 *  the window, match or not. */

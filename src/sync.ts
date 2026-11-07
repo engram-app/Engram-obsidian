@@ -4553,6 +4553,8 @@ export class SyncEngine {
 		text: string,
 		/** The note's file when the caller holds it; else resolved here. */
 		file?: TFile,
+		/** The note's id when the caller holds it (a create, before the map). */
+		noteId: string | null | undefined = this.noteIdMap?.get(normalized),
 	): Promise<string | null> {
 		const found = file ? null : this.app.vault.getAbstractFileByPath(normalized);
 		const target = file ?? (found instanceof TFile ? found : null);
@@ -4570,15 +4572,42 @@ export class SyncEngine {
 			);
 			return null;
 		}
-		return this.writeCrdtNote(normalized, text);
+		const written = await this.writeCrdtNote(normalized, text);
+		if (written !== null && noteId) this.crdt?.markWritten?.(noteId);
+		return written;
 	}
 
-	/** `flushTarget` for `noteId`'s doc against its file now: after an apply
-	 *  has flushed, `onDisk` is what that flush left there. A baseline stamped
-	 *  after an apply must be `onDisk`, never the bare projection: on a note
-	 *  whose YAML the codec re-serialises, that is a baseline no file holds,
-	 *  and the next catch-up drift-copies the note (Engram#1928 class, backend
-	 *  e2e test_101). A merge's "expected doc" is `projection`. */
+	/** After an apply or a merge the doc may hold text disk lacks (its flush
+	 *  failed or was refused, or nothing wrote it): make disk hold the doc
+	 *  through the one guarded write, and return the baseline, which is what
+	 *  disk holds afterwards. `expectedDisk` is disk as last read; if the write
+	 *  does not land (disk moved, failed), the baseline is that, never the
+	 *  doc's text. A baseline without the write is the #2480 revert. */
+	private async baselineFromDisk(
+		normalized: string,
+		file: TFile,
+		noteId: string,
+		expectedDisk: string,
+		docText: string,
+	): Promise<string> {
+		const written = await this.writeNoteIfDiskStill(
+			normalized,
+			expectedDisk,
+			docText,
+			file,
+			noteId,
+		);
+		return written ?? expectedDisk;
+	}
+
+	/** `noteId`'s doc and its file after an apply (which awaits its flush):
+	 *  `onDisk` is what the file holds now, read, not predicted. A baseline
+	 *  stamped after an apply must be `onDisk`, never the bare projection: on
+	 *  a note whose YAML the codec re-serialises, that is a baseline no file
+	 *  holds, and the next catch-up drift-copies the note (Engram#1928 class,
+	 *  backend e2e test_101). When the flush was refused or nudged instead,
+	 *  the projection is text disk never got, and stamping it is the #2480
+	 *  revert. A merge's "expected doc" is `projection`. */
 	private async flushedProjection(
 		crdt: { projectedText(noteId: string): Promise<string> },
 		noteId: string,
@@ -4591,7 +4620,7 @@ export class SyncEngine {
 		} catch {
 			// unreadable: the projection is all we know
 		}
-		return flushTarget(projected, disk);
+		return { projection: projected, onDisk: disk ?? projected };
 	}
 
 	/** Merge `disk`, edited from `base` (the body this device's create sent),
@@ -5103,9 +5132,13 @@ export class SyncEngine {
 						preApplyDisk,
 					);
 					if (merged !== null) {
-						consumed =
-							(await this.writeNoteIfDiskStill(normalized, held, merged, file)) ??
-							held;
+						consumed = await this.baselineFromDisk(
+							normalized,
+							file,
+							effectiveId,
+							held,
+							merged,
+						);
 					}
 				}
 				return consumed;
@@ -5218,7 +5251,9 @@ export class SyncEngine {
 				const base = this.ownBaseBody(normalized);
 				if (this.isAckedBase(normalized, fnv1a(disk)) || (base !== null && base === disk)) {
 					rlog().anomaly("crdt", "occupied_create_own_base");
-					return flushTarget(server, disk).onDisk; // the baseline: what disk holds
+					// Disk holds our base, so no local input: if the doc holds a
+					// server edit disk lacks (its flush failed or was refused), write it.
+					return this.baselineFromDisk(normalized, file, effectiveId, disk, server);
 				}
 				// Disk moved off what we sent: three-way from it, so an edit another
 				// writer landed on the server in the same window survives next to
@@ -5234,13 +5269,12 @@ export class SyncEngine {
 						server,
 						disk,
 					);
-					return (
-						(await this.writeNoteIfDiskStill(
-							normalized,
-							disk,
-							merged ?? server,
-							file,
-						)) ?? disk
+					return this.baselineFromDisk(
+						normalized,
+						file,
+						effectiveId,
+						disk,
+						merged ?? server,
 					);
 				}
 			}
