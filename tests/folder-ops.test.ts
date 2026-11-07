@@ -232,6 +232,7 @@ describe("held inbound changes (a hiding layer: every clearing event)", () => {
 		h.advance(HOLD_MAX_MS + 1);
 		await h.ops.tick();
 		expect(h.applied.map((c) => c.name)).toEqual(["theirs"]);
+		expect(h.ops.hasPending("fa")).toBe(true);
 	});
 
 	test("reconnect drops the hold; the op is re-sent", async () => {
@@ -260,19 +261,23 @@ describe("held inbound changes (a hiding layer: every clearing event)", () => {
 });
 
 // Adopted from the adversarial review of #689: red at f020b50d.
-describe("review #689: hold expiry vs the still-pending op", () => {
-	test("after an expired hold applies the server's state, no op may still move the folder elsewhere", async () => {
+describe("hold expiry never drops OUR op (delta review #689)", () => {
+	// Round 1 dropped the op on expiry; the delta review showed a merely slow
+	// server then undid the user's own move. Only the server's answer (or a
+	// fallback to per file) resolves our op; a late ack brings the disk back.
+	test("expiry applies theirs, the op stays queued, and its ack is followed", async () => {
 		const h = harness([{ kind: "retry" }, { kind: "retry" }, { kind: "ok", seq: 20 }]);
 		h.ops.setFeature(true);
 		h.ops.move("fa", "fb", "A", "A", "B/A");
 		await h.ops.inbound({ id: "fa", parent_id: null, name: "Theirs", seq: 7 });
 		await h.ops.flush();
 		h.advance(HOLD_MAX_MS + 1);
-		await h.ops.tick(); // applies "Theirs" locally
+		await h.ops.tick(); // applies "Theirs" locally; the re-send gets no answer
 		expect(h.applied.map((c) => c.name)).toEqual(["Theirs"]);
-		// Local disk is now at Theirs; a pending move to fb/A would make the server
-		// diverge from it (our own folder_changed echo is dropped by device_id).
+		expect(h.ops.hasPending("fa")).toBe(true);
+		await h.ops.tick(); // the server answers ok
 		expect(h.ops.hasPending("fa")).toBe(false);
+		expect(h.acked).toEqual(["fa"]); // the engine's ack handler follows onto disk
 	});
 });
 

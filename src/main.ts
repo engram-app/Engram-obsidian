@@ -2862,6 +2862,7 @@ export default class EngramSyncPlugin extends Plugin {
 				channel.folderRefFor = (p, id) => this.syncEngine.folderRefFor(p, id);
 				channel.onIndexV1 = (on) => this.syncEngine.setIndexV1(on);
 				channel.onCreateFolderId = (p, id) => this.syncEngine.learnFolderOf(p, id);
+				channel.onCreateFolders = (rows) => this.syncEngine.learnFolderChain(rows);
 				channel.onFolderNotFound = (id) => this.syncEngine.forgetFolder(id);
 				channel.onFolderChanged = (c) => void this.syncEngine.onFolderChanged(c);
 

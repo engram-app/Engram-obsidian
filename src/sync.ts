@@ -4195,6 +4195,7 @@ export class SyncEngine {
 		// old vault.
 		this.folderOps.reset();
 		this.indexV1 = false;
+		this.serverSentFolders = false;
 		// Folder markers are vault-scoped too: a stale set after a switch lets
 		// handleFolderDelete push marker deletes against the NEW vault (post-
 		// merge review finding 8 — data-safe but cross-vault noise).
@@ -6367,6 +6368,7 @@ export class SyncEngine {
 	private async syncManifestFolders(manifest: ManifestResponse | null): Promise<void> {
 		const rows = manifest?.folders;
 		if (!rows) return;
+		this.serverSentFolders = true;
 		if (!this.syncBlocked) {
 			const server = new FolderIndex();
 			server.load(rows);
@@ -6376,6 +6378,10 @@ export class SyncEngine {
 				.sort((a, b) => a.at.split("/").length - b.at.split("/").length);
 			for (const { row, at } of moves) {
 				const here = this.folderOps.index.pathFor(row.id);
+				// A folder with OUR op pending: the manifest is the server's state
+				// from before that op, not another writer. Holding it would let its
+				// expiry undo the user's own move; the op's answer settles it.
+				if (this.folderOps.hasPending(row.id)) continue;
 				if (here !== null && here !== at) await this.folderOps.inbound(row);
 			}
 		}
@@ -6440,6 +6446,11 @@ export class SyncEngine {
 		}
 	}
 
+	/** A manifest `folders` list arrived this session: the server speaks
+	 *  folders even before (or without) `features.folder_ops`. Session state,
+	 *  never persisted, so a flag-off server behaves exactly as main. */
+	private serverSentFolders = false;
+
 	/** `index_v1` from this vault's sync join reply (S5 stamps it per vault).
 	 *  Per vault: a vault switch turns it off until the new vault's join says. */
 	private indexV1 = false;
@@ -6461,6 +6472,15 @@ export class SyncEngine {
 	learnFolders(rows: FolderRow[] | undefined): void {
 		if (!rows) return;
 		this.folderOps.index.load(rows, (id) => this.folderOps.hasPending(id));
+		this.persistGateJournalSoon();
+	}
+
+	/** A server-returned ancestor chain (`folders`, root-first, root parent
+	 *  null) from `POST /folders` or the `crdt_create` reply: learn every id in
+	 *  it, so a move into a folder created this session goes by id. */
+	learnFolderChain(rows: FolderRow[] | undefined): void {
+		if (!rows?.length) return;
+		for (const r of rows) this.folderOps.index.set(r);
 		this.persistGateJournalSoon();
 	}
 
@@ -6516,11 +6536,11 @@ export class SyncEngine {
 		// bookkeeping a folder op already moved to its new path has nothing left
 		// to send. A state check, not a marker: it reads the truth, so it needs
 		// no expiry and also covers child events from a later tick (R4). Active
-		// once the server speaks folders (the flag, or a manifest `folders` list,
-		// which moves folders before the flag has landed); on a server without
-		// them, as on main, it never runs.
+		// once the server speaks folders THIS session (the flag, or a manifest
+		// `folders` list, which moves folders before the flag has landed); on a
+		// server without them, as on main, it never runs, persisted index or not.
 		if (
-			(this.folderOps.enabled() || this.folderOps.index.size() > 0) &&
+			(this.folderOps.enabled() || this.serverSentFolders) &&
 			file instanceof TFile &&
 			this.alreadyMovedLocally(oldPath, file.path)
 		) {
@@ -6568,6 +6588,15 @@ export class SyncEngine {
 			});
 			if (!sent && report) this.dropPendingLocalMove(file.path);
 		}
+	}
+
+	/** Is `path` where an unconfirmed local move put a file: under a pending
+	 *  folder op's target, or a note's pending local move (the rename fence)?
+	 *  O(pending ops + pending moves). */
+	private isPendingLocalMoveTarget(path: string): boolean {
+		for (const op of this.folderOps.all()) if (path.startsWith(`${op.to}/`)) return true;
+		for (const m of this.pendingLocalMoves.values()) if (m.path === path) return true;
+		return false;
 	}
 
 	/** Nothing is left at `oldPath` and the note or attachment is already
@@ -6778,7 +6807,8 @@ export class SyncEngine {
 		if (this.explicitFolders.has(path)) return;
 
 		try {
-			await this.api.createFolder(path);
+			const resp = await this.api.createFolder(path);
+			this.learnFolderChain(resp?.folders);
 			await this.explicitFolders.add(path);
 		} catch (e) {
 			devLog().log("push", `createFolder("${path}") failed: ${errMsg(e)}`);
@@ -6835,7 +6865,8 @@ export class SyncEngine {
 			if (this.subtreeHasSyncableFile(f)) continue; // appears via its notes
 
 			try {
-				await this.api.createFolder(path);
+				const resp = await this.api.createFolder(path);
+				this.learnFolderChain(resp?.folders);
 				await this.explicitFolders.add(path);
 			} catch (e) {
 				devLog().log("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`);
@@ -11494,6 +11525,10 @@ export class SyncEngine {
 				// just-uploaded notes during a prod first sync (2026-10-17). A real
 				// delete is caught by the op-log tombstone or the next catch-up.
 				if ((this.rowWrittenAt.get(np) ?? 0) > rowSeq) continue;
+				// Moved here by a local rename or folder op the server has not
+				// confirmed: absent because the server still has it at the old
+				// path, not because anyone deleted it.
+				if (this.isPendingLocalMoveTarget(np)) continue;
 
 				// In baseline but gone from the server → server-deleted while away.
 				try {

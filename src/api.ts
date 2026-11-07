@@ -70,6 +70,13 @@ export class RequestTimeoutError extends Error {
  *  outside EngramApi (token refresh, device flow, update check,
  *  probeHealth) — anything unbounded there can wedge its caller forever;
  *  the token-refresh case stalls EVERY request behind getToken(). */
+/** `POST /folders` reply. `folders`: root-first ancestor chain with server
+ *  ids, present only on a folder-ops server (Engram#2523 S4). */
+export type CreateFolderResponse = {
+	folder: { name: string; count: number };
+	folders?: { id: string; parent_id: string | null; name: string }[];
+};
+
 export async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 	let timer: number | undefined;
 	const deadline = new Promise<never>((_, reject) => {
@@ -947,10 +954,11 @@ export class EngramApi {
 	// --- Explicit folder markers (kind='folder' rows) ---
 
 	/** Create an explicit empty folder marker. Server is idempotent — repeated
-	 *  calls return 200 instead of 201 but the same shape. */
-	async createFolder(folder: string): Promise<{ folder: { name: string; count: number } }> {
+	 *  calls return 200 instead of 201 but the same shape. A folder-ops server
+	 *  adds `folders`, the folder's ancestor chain with ids (Engram#2523). */
+	async createFolder(folder: string): Promise<CreateFolderResponse> {
 		const resp = await this.request("POST", "/folders", { folder });
-		return resp.json as { folder: { name: string; count: number } };
+		return resp.json as CreateFolderResponse;
 	}
 
 	/** Delete an explicit empty folder marker. Server always 204 — idempotent.

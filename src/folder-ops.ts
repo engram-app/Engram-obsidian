@@ -31,12 +31,13 @@
  * | pending op     | ack: clear. Refusal or `unknown_event`: clear, then the |
  * |                | per-file fallback. Feature off: per-file fallback.      |
  * |                | Timeout: stays, re-sent with the same `op_id`. Crash:   |
- * |                | replayed from disk. Hold expiry: dropped, the server's  |
- * |                | state wins (as on a refusal). Vault switch: dropped.    |
+ * |                | replayed from disk. Vault switch: dropped. NEVER by a   |
+ * |                | hold expiry: only the server's answer or a fallback.    |
  * | held inbound   | ack (changes newer than the ack's seq apply), refusal   |
  * |                | (newest applies), socket reconnect (dropped; the        |
  * |                | reconnect's manifest is the truth), max age             |
- * |                | `HOLD_MAX_MS` (newest applies AND the op is dropped).   |
+ * |                | `HOLD_MAX_MS` (newest applies; the op stays queued and  |
+ * |                | its ack moves the disk back to the server's state).     |
  *
  * If a clearing event never fires: a pending op is re-sent on every flush
  * (it hides nothing but the server's ignorance of a local move), and a held
@@ -332,17 +333,16 @@ export class FolderOps {
 
 	/** Periodic: expire holds past `HOLD_MAX_MS` and retry unanswered ops.
 	 *
-	 *  An expired hold means the server never answered our op while it kept
-	 *  moving the folder. The server's state wins, as on a refusal: the op is
-	 *  DROPPED, not left to land later. Applying theirs while ours is still
-	 *  queued would let a late ack move the server back to ours, and our own
-	 *  `folder_changed` echo is dropped, so disk and server would part. */
+	 *  An expired hold applies the other writer's newest change, but OUR op
+	 *  stays queued: only the server's answer (ack or refusal) or a fallback
+	 *  to per file resolves it. Dropping it on expiry undid the user's own
+	 *  move whenever the server was merely slow. If the op is then acked, the
+	 *  server is at ours and the ack handler moves the disk there too (our own
+	 *  `folder_changed` echo is dropped, so nothing else would). */
 	async tick(): Promise<void> {
 		const now = this.deps.now();
 		for (const [id, h] of [...this.held]) {
-			if (now - h.since <= HOLD_MAX_MS) continue;
-			if (this.queue.delete(id)) this.deps.persist();
-			await this.release(id, null);
+			if (now - h.since > HOLD_MAX_MS) await this.release(id, null);
 		}
 		await this.flush();
 	}
