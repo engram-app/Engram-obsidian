@@ -1,6 +1,6 @@
 # Context Doc: folder ops (one op per folder rename)
 
-_Last verified: 2026-11-07 (PR #689, Engram#2523 S4)_
+_Last verified: 2026-11-07 (PR #689 after its first adversarial review, Engram#2523 S4)_
 
 ## What this is
 With `features.folder_ops` on (user-topic join reply), a local folder rename or
@@ -24,13 +24,15 @@ guaranteed (mobile unverified, R4 on Engram#2523).
    on a later tick.
 
 ## Hiding layers (each with its clearing events)
-- Pending folder op: ack; refusal or `unknown_event` (then per-file fallback);
-  feature off (per-file fallback); timeout keeps it (same `op_id`); restart
-  replays it from data.json; vault switch drops it.
+- Pending folder op: ack; refusal, `unknown_event` or `bad_frame` (then
+  per-file fallback); feature off (per-file fallback); timeout keeps it (same
+  `op_id`); restart replays it from data.json; hold expiry drops it (the
+  server's state wins); vault switch drops it.
 - Held inbound change (a folder with a pending local op): ack (only changes
   newer than the ack's seq apply), refusal (newest applies), reconnect
   (dropped; the join's manifest re-teaches), max age `HOLD_MAX_MS` (newest
-  applies).
+  applies AND the pending op is dropped, so a late ack cannot move the server
+  away from the disk).
 - Same-tick batch: cleared at the end of its tick.
 
 ## Gotchas
@@ -42,11 +44,23 @@ guaranteed (mobile unverified, R4 on Engram#2523).
   ends in an echo skip (no row at the old path, so no relocating flag), so no
   wire call changes. The rule saves a read of every child's bytes and an
   un-confirmed note id; `tests/folder-rename-echo.test.ts` pins that.
-- A folder first synced this session has no server id until the next
-  manifest, so its rename falls back per file.
-- Note creates send `{folder_id, name}` only for a folder with a server id.
-  Minting a `folder_op create` for an unknown folder races the server's own
-  create-from-path and is refused `conflict`.
+- **The per-file fallback reads the op's own persisted `from`/`to`**, never
+  the in-memory index: a restart empties the index, and a fallback that walked
+  it silently undid the user's move (review H1/H2 on #689).
+- **Only ops whose folder AND target parent have server ids are sent.** No
+  client-minted `create`: an op naming an id the server never issued can only
+  be refused after the local re-key. Ids come from the manifest `folders`
+  list, `folder_changed`, and the `crdt_create` reply's `folder_id`.
+- **Manifest folder moves are not gated on `features.folder_ops`**: the list
+  is the capability signal, and the user-topic features reply can land after
+  a restart's first catch-up. `folder_changed` IS gated (flag off = main).
+- The folder index is persisted (`folderIndex` in data.json) so a restart
+  knows where its folders were before the first manifest.
+- An inbound move updates the index BEFORE `vault.rename`: Obsidian fires the
+  folder's rename event inside it, and the echo rule must already see `to`
+  or the device sends the move back as its own op. A failed rename restores it.
+- An older crdt channel answers an unknown event with `bad_frame`, not
+  `unknown_event`; both turn folder ops off for the session.
 - `filemeta_v1` (`notes_v1`, `folders_v1`) is written only while the vault's
   sync join reply says `index_v1`; before S5 a plugin-written v1 would be
   stale and projecting it reverts renames.
