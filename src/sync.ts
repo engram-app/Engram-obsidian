@@ -3830,8 +3830,7 @@ export class SyncEngine {
 					if (ev.op === "delete") {
 						await this.deleteSyncedPath(ev.path);
 					} else if (ev.op === "rename") {
-						await this.renameSyncedPath(ev.oldPath, ev.path);
-						moved.add(ev.path);
+						if (await this.renameSyncedPath(ev.oldPath, ev.path)) moved.add(ev.path);
 					} else if (ev.op === "push") {
 						moved.add(ev.path);
 					} else if (ev.op === "folder-create") {
@@ -6161,10 +6160,10 @@ export class SyncEngine {
 			this.kickGateReplay();
 			return;
 		}
-		await this.renameSyncedPath(oldPath, file.path);
+		const needsPush = await this.renameSyncedPath(oldPath, file.path);
 
-		// Push new path if it isn't ignored
-		if (!this.shouldIgnore(file.path)) {
+		// Push new path if it isn't ignored (and the server did not already move it)
+		if (needsPush && !this.shouldIgnore(file.path)) {
 			// Refused or failed, and not queued: the server keeps the old path, so
 			// the old-path claims are current again. A plain false (in flight,
 			// deferred) will still be sent; keep the fence.
@@ -6178,8 +6177,10 @@ export class SyncEngine {
 
 	/** The bookkeeping + old-leg half of a vault rename, keyed by path so the
 	 *  gate-window replay (#247) can apply renames in event order and push only
-	 *  the final paths. Callers own the gate, syncable and echo checks. */
-	private async renameSyncedPath(oldPath: string, newPath: string): Promise<void> {
+	 *  the final paths. Callers own the gate, syncable and echo checks.
+	 *  Returns false when the new path needs no push: the server already moved
+	 *  the attachment row there (`moveAttachmentRow`). */
+	private async renameSyncedPath(oldPath: string, newPath: string): Promise<boolean> {
 		const isBinary = this.isBinaryPath(newPath);
 
 		// Cancel any push still armed under the OLD path. Capturing armedPath at
@@ -6217,7 +6218,21 @@ export class SyncEngine {
 		const hadOldEvidence = this.syncState.has(normalizePath(oldPath));
 		// One vault for the send and the re-queue (see deleteSyncedPath).
 		const renameVaultId = this.settings.vaultId ?? undefined;
-		if (!this.shouldIgnore(oldPath)) {
+		// Engram#2523 S4: move the attachment row instead of deleting it and
+		// uploading the bytes again. The move is destructive at the old path, so
+		// it needs the same evidence the old-leg delete does.
+		let oldLegGone = false;
+		if (
+			isBinary &&
+			hadOldEvidence &&
+			!this.shouldIgnore(oldPath) &&
+			!this.shouldIgnore(newPath)
+		) {
+			const moved = await this.moveAttachmentRow(oldPath, newPath);
+			if (moved === "moved") return false;
+			oldLegGone = moved === "gone";
+		}
+		if (!this.shouldIgnore(oldPath) && !oldLegGone) {
 			try {
 				if (isBinary) {
 					if (hadOldEvidence) {
@@ -6305,6 +6320,41 @@ export class SyncEngine {
 			// can't move the row): the create for a LIVE id at the new path IS
 			// the relocation server-side (Phase E2, genesis_relocate_live).
 			this.unconfirmNoteId(this.noteIdMap?.get(newPath) ?? null);
+		}
+		return true;
+	}
+
+	/** `POST /attachments/rename` for a local attachment rename. The sync row
+	 *  moves FIRST, so the server's own upsert broadcast for the new path
+	 *  hash-skips instead of downloading the bytes back; any failure puts the
+	 *  rows back exactly as they were. `gone` = 404, the server has nothing at
+	 *  the old path (upload at the new one, no delete). `failed` = any other
+	 *  refusal or error: the caller runs today's delete-plus-upload, which owns
+	 *  the 402 plan gate and the durable queue. */
+	private async moveAttachmentRow(
+		oldPath: string,
+		newPath: string,
+	): Promise<"moved" | "gone" | "failed"> {
+		const from = normalizePath(oldPath);
+		const to = normalizePath(newPath);
+		const fromRow = this.syncState.get(from);
+		const toRow = this.syncState.get(to);
+		this.renamePath(from, to, "remote");
+		try {
+			await this.api.renameAttachment(oldPath, newPath);
+			this.goOnline();
+			rlog().info("push", `Attachment moved: ${noteRef(oldPath)} -> ${noteRef(newPath)}`);
+			return "moved";
+		} catch (e) {
+			if (fromRow) this.syncState.set(from, fromRow);
+			if (toRow) this.syncState.set(to, toRow);
+			else this.syncState.delete(to);
+			const gone = isHttpStatus(e, 404);
+			rlog().warn(
+				"push",
+				`Attachment move refused, ${gone ? "uploading at the new path" : "deleting and re-uploading"}: ${noteRef(oldPath)} -> ${noteRef(newPath)} | ${errMsg(e, oldPath)}`,
+			);
+			return gone ? "gone" : "failed";
 		}
 	}
 

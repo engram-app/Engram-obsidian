@@ -437,6 +437,7 @@ export class EngramApi {
 		const attachmentTransfer =
 			path.startsWith("/attachments") &&
 			path !== "/attachments/batch-delete" &&
+			path !== "/attachments/rename" &&
 			(method === "POST" || method === "GET");
 		const timeoutMs = attachmentTransfer ? this.attachmentTimeoutMs : this.requestTimeoutMs;
 		const pending = requestUrl({
@@ -831,6 +832,16 @@ export class EngramApi {
 		// compat(server): raw_attachment_download - remove when the backend floor has it (#1877)
 		const resp = await this.request("GET", `/attachments/${encoded}`);
 		return resp.json as AttachmentDetail;
+	}
+
+	/** Move an attachment's server row to `newPath` (O(1) server side, no
+	 *  bytes). Throws the HTTP error: callers fall back on 404 and others. */
+	async renameAttachment(oldPath: string, newPath: string): Promise<void> {
+		// A delete still pending for either path must land first: one for the
+		// new path applied after the move would delete the moved row.
+		await this.attachmentDeletes.settled(oldPath);
+		await this.attachmentDeletes.settled(newPath);
+		await this.request("POST", "/attachments/rename", { old_path: oldPath, new_path: newPath });
 	}
 
 	/** Delete an attachment. Coalesced into batch requests, see
