@@ -24,7 +24,7 @@
 // The bound Y.Text is the note BODY only (frontmatter lives in a separate Y.Map
 // handled by CrdtFrontmatterHook); in Live Preview the CM document is body-only
 // too, so editor text and Y.Text are directly comparable.
-import { Annotation, type ChangeSpec, Transaction } from "@codemirror/state";
+import { Annotation, ChangeSet, type ChangeSpec, Text, Transaction } from "@codemirror/state";
 import { type EditorView, type PluginValue, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 import { editorInfoField } from "obsidian";
 import type * as Y from "yjs";
@@ -158,10 +158,22 @@ export class LiveBindingValue implements PluginValue {
 	private gateOpenUnsub: (() => void) | null = null;
 	/** Periodic drift-check timer (self-heal backstop); null when not scheduled. */
 	private driftTimer: number | null = null;
-	/** The body text editor and doc last agreed on (set when live, and by
-	 *  every drift check that finds them equal): the base `repairDrift` splits
-	 *  a drift by direction against. Null = unknown. */
-	private agreed: string | null = null;
+	/** The body text editor and doc last agreed on, kept EXACT: a CM6 rope
+	 *  that every forwarded edit and every painted delta is applied to as it
+	 *  happens (O(log n) each), so it is always a true common ancestor of both
+	 *  (what y-codemirror's lockstep guarantees). A dropped forward or paint
+	 *  simply does not advance it, which is exactly the drift `repairDrift`
+	 *  then splits by direction. Null = unknown (an edit straddled the
+	 *  frontmatter boundary, or a change set failed to apply): the repair then
+	 *  never merges, it keeps a conflict copy. */
+	private agreed: Text | null = null;
+	/** Editor length minus doc length when `agreed` was last exact. An edit
+	 *  after which they differ was taken by one side only (a dropped forward or
+	 *  paint), so `agreed` FREEZES there: still a true common ancestor, just an
+	 *  older one. A frontmatter edit (editor-only by design) freezes it too,
+	 *  harmlessly; the next equal drift check thaws it. */
+	private agreedOffset = 0;
+	private agreedFrozen = false;
 	/** A drift repair is waiting on its conflict copy. */
 	private driftResolving = false;
 
@@ -243,6 +255,7 @@ export class LiveBindingValue implements PluginValue {
 			if (creation !== null) {
 				try {
 					this.writeYText(ytext, creation);
+					this.advanceAgreed(creation);
 				} catch (err) {
 					rlog().error(
 						"crdt-live-binding",
@@ -277,10 +290,16 @@ export class LiveBindingValue implements PluginValue {
 					}
 				}
 			});
-			if (spansFrontmatter) this.scheduleDriftCheck();
+			if (spansFrontmatter) {
+				this.resetAgreed(null); // part of this edit was not forwarded: unknown
+				this.scheduleDriftCheck();
+			}
 			if (changes.length === 0) continue;
 			try {
 				doc.transact(() => applyCmChangesToYText(ytext, changes), this);
+				this.advanceAgreed(
+					changes.map((c) => ({ from: c.fromA, to: c.toA, insert: c.insert })),
+				);
 			} catch (err) {
 				// A malformed offset / concurrent-transaction error must not throw out of
 				// update() and wedge the editor. Log and let the drift check reconcile.
@@ -400,6 +419,30 @@ export class LiveBindingValue implements PluginValue {
 		syncDispatch(this.editor, shiftChanges(changes, prefix));
 	}
 
+	/** Move `agreed` by BODY-coordinate changes both sides just took (CM6
+	 *  semantics: every change is against the same starting text), or freeze
+	 *  it if only one side took them (see `agreedOffset`). */
+	private advanceAgreed(changes: CmChangeSpec[]): void {
+		if (this.agreed === null || this.agreedFrozen || changes.length === 0 || !this.ytext)
+			return;
+		if (this.editor.state.doc.length - this.ytext.length !== this.agreedOffset) {
+			this.agreedFrozen = true;
+			return;
+		}
+		try {
+			this.agreed = ChangeSet.of(changes, this.agreed.length).apply(this.agreed);
+		} catch {
+			this.agreed = null; // out of step: unknown, never a wrong base
+		}
+	}
+
+	/** Both sides hold `body` now: it is the exact agreed text again. */
+	private resetAgreed(body: string | null): void {
+		this.agreed = body === null ? null : Text.of(body.split("\n"));
+		this.agreedFrozen = false;
+		this.agreedOffset = this.ytext ? this.editor.state.doc.length - this.ytext.length : 0;
+	}
+
 	/** Apply BODY-coordinate changes into the Y.Text under our own origin (so the
 	 *  observer suppresses a repaint and the provider broadcasts them). */
 	private writeYText(text: Y.Text, changes: CmChangeSpec[]): void {
@@ -507,6 +550,7 @@ export class LiveBindingValue implements PluginValue {
 				// Body-coordinate delta -> editor coordinates (offset past any frontmatter).
 				const prefix = frontmatterPrefixLen(this.editor.state.doc.toString());
 				this.paintEditor(changes, prefix);
+				this.advanceAgreed(changes);
 			} catch (err) {
 				// A dispatch mid-update / offset disagreement throws here (inside a Y.Text
 				// observe callback, which would otherwise break painting for this
@@ -521,7 +565,7 @@ export class LiveBindingValue implements PluginValue {
 		text.observe(this.observer);
 		this.ready = true;
 		const body = this.editorBody().body;
-		this.agreed = body === text.toJSON() ? body : null;
+		this.resetAgreed(body === text.toJSON() ? body : null);
 		this.scheduleDriftCheck();
 	}
 
@@ -556,7 +600,7 @@ export class LiveBindingValue implements PluginValue {
 		const { body: editorText, prefix, full } = this.editorBody();
 		const docText = this.ytext.toJSON();
 		if (editorText === docText) {
-			this.agreed = docText;
+			if (this.agreedFrozen || this.agreed?.toString() !== docText) this.resetAgreed(docText);
 		} else {
 			// A tripwire, not routine: every delta and forward is supposed to keep these
 			// in lockstep, so drift means one was silently dropped. warn (not info) so it
@@ -592,11 +636,16 @@ export class LiveBindingValue implements PluginValue {
 		prefix: number,
 		full: string,
 	): void {
-		const merged = this.agreed === null ? null : merge3(this.agreed, editorText, docText);
+		// Line level only: the base is a true common ancestor, but a silent drop
+		// that kept lengths equal could leave it subtly stale, and a stale base
+		// must never be re-merged by character (it applies shared edits twice).
+		const base = this.agreed?.toString() ?? null;
+		const merged =
+			base === null ? null : merge3(base, editorText, docText, { charLevel: false });
 		if (merged?.clean) {
 			this.writeYText(text, textDiffToChangeSpec(docText, merged.text));
 			this.paintEditor(textDiffToChangeSpec(editorText, merged.text), prefix);
-			this.agreed = merged.text;
+			this.resetAgreed(merged.text);
 			return;
 		}
 		const c = this.boundCoordinator;
@@ -612,7 +661,7 @@ export class LiveBindingValue implements PluginValue {
 				const now = this.editorBody();
 				const doc = text.toJSON();
 				this.paintEditor(textDiffToChangeSpec(now.body, doc), now.prefix);
-				this.agreed = doc;
+				this.resetAgreed(doc);
 			});
 	}
 

@@ -266,3 +266,39 @@ test("2480 A edge: an ambiguous drift keeps the editor's text as a conflict copy
 	expect(text.toJSON()).toBe(NEW);
 	binding.destroy();
 });
+
+test("2480 A edge: the agreed base tracks every forward, so a drift right after typing merges without a copy", async () => {
+	const start = "- a\n- b\n";
+	const local = new Y.Doc();
+	const text = local.getText("content");
+	text.insert(0, start);
+	const copies: string[] = [];
+	setLiveBindingCoordinator({
+		resolveId: () => ID,
+		residentText: () => ({ text, ready: Promise.resolve() }),
+		enroll: () => {},
+		onBind: () => {},
+		onRelease: () => {},
+		awaitsServer: () => false,
+		onLoadGateOpen: () => () => {},
+		loadMergeBase: async () => null,
+		keepConflictCopy: async (_p: string, t: string) => {
+			copies.push(t);
+			return true;
+		},
+		restoreLocalText: async () => {},
+	});
+	const { ed, setBinding } = realStateEditor(start);
+	const binding = new LiveBindingValue(ed);
+	setBinding(binding);
+	await new Promise((r) => setTimeout(r, 5));
+	ed.dispatch({ changes: { from: start.length, insert: "- x\n" } }); // typed, forwarded
+	const at = text.toJSON().indexOf("- b\n");
+	local.transact(() => text.delete(at, 4), binding); // remote delete, paint dropped
+	(binding as unknown as { runDriftCheck(): void }).runDriftCheck();
+	await new Promise((r) => setTimeout(r, 5));
+	expect(text.toJSON()).toBe("- a\n- x\n");
+	expect(ed.state.doc.toString()).toBe("- a\n- x\n");
+	expect(copies).toEqual([]); // an exact base: the delete is simply painted
+	binding.destroy();
+});
