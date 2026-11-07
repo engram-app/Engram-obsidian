@@ -2960,7 +2960,7 @@ export class SyncEngine {
 	private recordCrdtBaseline(
 		normalized: string,
 		content: string,
-		opts?: { markCreated?: boolean },
+		opts?: { markCreated?: boolean; mergeBase?: false },
 	): void {
 		this.patchSyncedRow(normalized, {
 			hash: fnv1a(content),
@@ -2969,6 +2969,11 @@ export class SyncEngine {
 		// The text beside the hash: the merge base a later disk edit is diffed
 		// against (`crdtMergeBase`). Without it a disk ingest diffs disk against
 		// the DOC, and a remote edit disk never got reads as a local delete.
+		// `mergeBase: false`: a hash-only claim about disk the DOC may not hold
+		// (an editor's autosave, a deferred create). The base must be a text
+		// disk and doc agreed on (Relay's LCA); left behind, it stops matching
+		// the hash and `crdtMergeBase` answers null (the two-way path).
+		if (opts?.mergeBase === false) return;
 		this.baseStore?.set(normalized, content, this.syncState.get(normalized)?.version ?? 0);
 	}
 
@@ -3021,6 +3026,7 @@ export class SyncEngine {
 			this.recordCrdtBaseline(
 				normalizePath(file.path),
 				await this.app.vault.cachedRead(file),
+				{ mergeBase: false },
 			);
 		} catch (e) {
 			devLog().log(
@@ -4553,7 +4559,9 @@ export class SyncEngine {
 		why: string,
 	): Promise<null> {
 		try {
-			this.recordCrdtBaseline(normalized, await this.app.vault.cachedRead(file));
+			this.recordCrdtBaseline(normalized, await this.app.vault.cachedRead(file), {
+				mergeBase: false,
+			});
 		} catch (e) {
 			rlog().warn(
 				"crdt",
