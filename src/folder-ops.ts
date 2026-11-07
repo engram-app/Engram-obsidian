@@ -36,12 +36,13 @@
  * |                | with backoff, same `op_id`, until `MAX_ATTEMPTS` sends, |
  * |                | then the per-file fallback (final). `rate_limited`:     |
  * |                | the queue pauses, no attempt spent (the note-op queue's |
- * |                | RateLimitPause). Age: `OP_TTL_MS` from enqueue, sent or |
- * |                | not (a crdt topic that stays down, a features reply     |
- * |                | that never comes), then the per-file fallback, which    |
- * |                | today's REST/queue paths deliver. Not joined: no        |
- * |                | attempt spent. Crash: replayed from disk with its spent |
- * |                | budget. Vault switch: dropped. NEVER by a hold expiry.  |
+ * |                | RateLimitPause). Age: `OP_TTL_MS` of time the SYNC      |
+ * |                | channel was joined (the note-op queue's HeldClock),     |
+ * |                | sent or not (a crdt topic that stays down, a features   |
+ * |                | reply that never comes), then the per-file fallback.    |
+ * |                | Offline time is not age. Crash: replayed from disk with |
+ * |                | its spent attempts, its age clock restarted. Vault      |
+ * |                | switch: dropped. NEVER by a hold expiry.                |
  * |                | The delete-pass skip and held changes clear with it.    |
  * | held inbound   | ack (changes newer than the ack's seq apply), refusal   |
  * |                | (newest applies), socket reconnect (dropped; the        |
@@ -59,6 +60,8 @@ import { uuid7 } from "./crdt/uuid7";
 // durable note-op queue's limits, not a sibling set.
 import {
 	BASE_BACKOFF_MS,
+	creditAge,
+	HeldClock,
 	MAX_ATTEMPTS,
 	MAX_BACKOFF_MS,
 	OP_TTL_MS,
@@ -209,7 +212,14 @@ export class FolderOps {
 	private refusedForSession = false;
 	private flushing: Promise<void> | null = null;
 
-	constructor(private readonly deps: FolderOpsDeps) {}
+	/** When the sync channel went down; down since construction. */
+	private readonly offline: HeldClock;
+
+	constructor(private readonly deps: FolderOpsDeps) {
+		// Down since before any op: every op's age is credited up to the first
+		// join. (The engine's clock is not readable while it is constructed.)
+		this.offline = new HeldClock(deps.now, Number.NEGATIVE_INFINITY);
+	}
 
 	enabled(): boolean {
 		return this.feature && !this.refusedForSession;
@@ -271,7 +281,8 @@ export class FolderOps {
 	load(ops: FolderOp[]): void {
 		for (const op of ops) {
 			if (typeof op.to !== "string") continue;
-			this.queue.set(op.folder_id, { ...op, queuedAt: op.queuedAt ?? this.deps.now() });
+			// The age clock restarts: time the app was closed is offline time.
+			this.queue.set(op.folder_id, { ...op, queuedAt: this.deps.now() });
 		}
 	}
 
@@ -444,16 +455,35 @@ export class FolderOps {
 		for (const [id, h] of [...this.held]) {
 			if (now - h.since > HOLD_MAX_MS) await this.release(id, null);
 		}
-		// The age cap runs whether or not anything could be sent: an op held for
-		// a crdt topic that stays down, or restored with no features reply, ends
-		// in the per-file fallback too, so its delete-pass skip always clears.
+		// The age cap runs while the SYNC channel is joined, whether or not the
+		// op could be sent: an op held for a crdt topic that stays down, or
+		// restored with no features reply, ends in the per-file fallback, so its
+		// delete-pass skip clears. While the sync channel is down the clock
+		// stops: nothing is sent and no catch-up runs its delete pass, so the
+		// hold costs nothing, and an offline rename stays ONE op on reconnect.
 		if (!this.rateLimit.paused()) this.creditRateLimitPause();
-		for (const op of [...this.queue.values()]) {
-			if (now - (op.queuedAt ?? now) > OP_TTL_MS && this.queue.get(op.folder_id) === op) {
-				await this.giveUp(op, "ttl");
+		if (!this.offline.isHeld())
+			for (const op of [...this.queue.values()]) {
+				if (now - (op.queuedAt ?? now) > OP_TTL_MS && this.queue.get(op.folder_id) === op) {
+					await this.giveUp(op, "ttl");
+				}
 			}
-		}
 		await this.flush();
+	}
+
+	/** The sync channel joined or left. Offline time is credited back to every
+	 *  op's age on join (the note-op queue's HeldClock), so it is never age. */
+	onSyncStatus(connected: boolean): void {
+		if (!connected) {
+			this.offline.leave();
+			return;
+		}
+		const span = this.offline.join();
+		if (!span) return;
+		for (const op of this.queue.values()) {
+			if (op.queuedAt !== undefined) op.queuedAt = creditAge(op.queuedAt, span);
+		}
+		this.deps.persist();
 	}
 
 	/** The note-op queue's pause, shared code: see `RateLimitPause`. */
@@ -467,8 +497,7 @@ export class FolderOps {
 		const pause = this.rateLimit.takeEnded();
 		if (!pause) return;
 		for (const op of this.queue.values()) {
-			const heldFor = pause.until - Math.max(pause.from, op.queuedAt ?? pause.from);
-			if (heldFor > 0 && op.queuedAt !== undefined) op.queuedAt += heldFor;
+			if (op.queuedAt !== undefined) op.queuedAt = creditAge(op.queuedAt, pause);
 		}
 		this.deps.persist();
 	}
