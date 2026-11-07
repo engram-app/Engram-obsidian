@@ -61,6 +61,9 @@ interface Edit {
 	text: string;
 }
 
+/** Seconds one merge diff may take before dmp settles for a coarser one. */
+const MERGE_DIFF_TIMEOUT_S = 0.15;
+
 /** `other`'s edits against `base`. Line level is diff3 granularity: a
  *  character diff's alignment shifts with cleanup, so the same edit on both
  *  sides stops looking identical (duplicated on merge) and same-point inserts
@@ -68,6 +71,10 @@ interface Edit {
  *  region (`merge3`), where both sides' text is short and local. */
 function editsFrom(base: string, other: string, granularity: "line" | "char"): Edit[] {
 	const dmp = new diff_match_patch();
+	// Bound the main-thread cost of a huge rewrite (dmp's default is 1 s). A
+	// timed-out diff is still a valid diff, only coarser, which can only turn
+	// a clean merge into a conflict, never the reverse.
+	dmp.Diff_Timeout = MERGE_DIFF_TIMEOUT_S;
 	let diffs: [number, string][];
 	if (granularity === "line") {
 		const lines = dmp.diff_linesToChars_(base, other);
@@ -152,8 +159,15 @@ function apply(base: string, edits: { e: Edit; side: number }[]): string {
 	return out + base.slice(pos);
 }
 
-/** Merge one conflicting region at character level; null on a true overlap. */
+/** Largest region (chars, either side) re-merged at character level. A
+ *  character diff of a whole-file rewrite (a CRLF normalisation, a formatter)
+ *  took 2.2 s on a 1 MB note; past this a clashing region stays a conflict. */
+export const CHAR_MERGE_MAX = 64 * 1024;
+
+/** Merge one conflicting region at character level; null on a true overlap
+ *  or a region past CHAR_MERGE_MAX. */
 function mergeRegion(base: string, local: string, remote: string): string | null {
+	if (Math.max(base.length, local.length, remote.length) > CHAR_MERGE_MAX) return null;
 	const mine = editsFrom(base, local, "char");
 	const theirs = editsFrom(base, remote, "char").filter((r) => !mine.some((m) => same(m, r)));
 	if (mine.some((m) => theirs.some((r) => overlaps(m, r)))) return null;
@@ -177,7 +191,15 @@ function mergeRegion(base: string, local: string, remote: string): string | null
  * Unlike `mergeDiskOntoDoc` this never fuzzy-matches: diff-match-patch's
  * patch_apply reports a same-word conflict as clean and drops one side.
  */
-export function merge3(base: string, local: string, remote: string): LcaMergeResult {
+export function merge3(
+	base: string,
+	local: string,
+	remote: string,
+	/** `false`: line level only, no character re-merge. For a base that may
+	 *  be stale (shared edits on both sides): a stale base makes one shared
+	 *  edit look like two, and the character pass would apply it twice. */
+	opts: { charLevel?: boolean } = {},
+): LcaMergeResult {
 	const mine = editsFrom(base, local, "line");
 	const theirs = editsFrom(base, remote, "line").filter((r) => !mine.some((m) => same(m, r)));
 	type Side = { e: Edit; side: number };
@@ -199,6 +221,7 @@ export function merge3(base: string, local: string, remote: string): LcaMergeRes
 			out.push(...members);
 			continue;
 		}
+		if (opts.charLevel === false) return { text: remote, clean: false };
 		const start = Math.min(...members.map((m) => m.e.start));
 		const end = Math.max(...members.map((m) => m.e.end));
 		const region = base.slice(start, end);
@@ -214,4 +237,12 @@ export function merge3(base: string, local: string, remote: string): LcaMergeRes
 		out.push({ e: { start, end, text }, side: 0 });
 	}
 	return { text: apply(base, out), clean: true };
+}
+
+/** The text `disk` holds that `doc` lacks, line by line, in order: what a
+ *  keep-both must preserve when no conflict copy can be written. */
+export function diskOnlyText(doc: string, disk: string): string {
+	return editsFrom(doc, disk, "line")
+		.map((e) => e.text)
+		.join("");
 }
