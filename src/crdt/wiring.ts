@@ -15,6 +15,7 @@ type WiringSyncEngine = Pick<
 	SyncEngine,
 	| "flushFromCrdt"
 	| "flushStrandedNote"
+	| "crdtMergeBase"
 	| "isUnchangedSynced"
 	| "materializeEmptyDiscovered"
 	| "reconcileNoteIdMapFromManifest"
@@ -92,8 +93,8 @@ export interface CrdtWiringDeps {
 	resendStore?: ResendStore;
 	/** See ProviderRegistryOpts.ackScope. */
 	ackScope?: () => string;
-	/** Merge base for a note_id (#357), resolved through the id map to the path
-	 *  BaseStore is keyed by. Omitted = the pre-LCA path. */
+	/** Merge base for a note_id (#357). Omitted = the engine's
+	 *  `crdtMergeBase` (the last text it wrote to or read from disk). */
 	lcaFor?: (noteId: string) => string | null;
 	/** A merge that could not apply every hunk. */
 	onDirtyMerge?: (noteId: string) => void;
@@ -291,7 +292,12 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		dbPrefix: deps.dbPrefix,
 		resendStore: deps.resendStore,
 		ackScope: deps.ackScope,
-		lcaFor: deps.lcaFor,
+		lcaFor:
+			deps.lcaFor ??
+			((noteId) => {
+				const path = noteIdMap.pathForId(noteId);
+				return path ? syncEngine.crdtMergeBase(path) : null;
+			}),
 		onDirtyMerge: deps.onDirtyMerge,
 		onLossyMerge: deps.onLossyMerge,
 		send: (docId, frame, kind) => {

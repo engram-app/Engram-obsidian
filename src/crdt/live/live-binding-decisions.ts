@@ -168,10 +168,9 @@ export function decideReconcile(
 	dirty: boolean,
 	/** The editor's text immediately BEFORE the user's first keystroke this attach
 	 *  — the LCA for the merge below. Null when unknown (no base -> old behavior).
-	 *  NOTE: deliberately NOT the SyncEngine's BaseStore: that content is only
-	 *  refreshed on the REST push/pull paths (CRDT delivery updates the syncState
-	 *  hash alone), so for a live-synced note it can be arbitrarily stale, and
-	 *  patching a stale base onto the doc re-creates the content-doubling class. */
+	 *  NOTE: deliberately NOT the SyncEngine's BaseStore: that tracks DISK, which
+	 *  lags a bound editor, and patching a stale base onto the doc re-creates the
+	 *  content-doubling class. */
 	base: string | null = null,
 ): ReconcileAction {
 	// Unseeded doc + a disk body: NEVER seed locally (the server owns this doc and

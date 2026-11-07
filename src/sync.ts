@@ -14,7 +14,7 @@ import {
 } from "obsidian";
 import { arrayBufferToBase64, base64ToArrayBuffer, type EngramApi } from "./api";
 import { expBackoff } from "./backoff";
-import type { BaseStore } from "./base-store";
+import { BaseStore } from "./base-store";
 import type { GenesisOutcome } from "./channel";
 import { fnv1a, fnv1aBase64 } from "./content-hash";
 import { splitFrontmatter } from "./crdt/frontmatter-codec";
@@ -871,15 +871,20 @@ export class SyncEngine {
 	 *  the failure direction is a replay round-trip, never a 0-byte write. */
 	private emptyContentHash: string | null = null;
 
-	/** Optional base content store for 3-way merge (Step 2+). */
-	baseStore: BaseStore | null = null;
+	/** Base content store for 3-way merge. In memory until the plugin swaps in
+	 *  its persisted one (main.ts), so the CRDT merge base never depends on
+	 *  that wiring. */
+	baseStore: BaseStore | null = new BaseStore(
+		{ read: async () => "", write: async () => {} },
+		"",
+	);
 
 	/** The body the CRDT discovery leg wrote from a catch-up row, while the
 	 *  doc is still history-less. It is the base both a local disk edit and
 	 *  the genesis fan-out descend from, so `adoptHistoryLessNote` can 3-way
 	 *  merge a real divergence instead of keeping both. Kept out of
-	 *  `baseStore` on purpose: `lcaFor` feeds that to every later merge and a
-	 *  CRDT flush never refreshes it (#544 stale-base class). Read once, and
+	 *  `baseStore` on purpose: that holds what disk holds (`crdtMergeBase`),
+	 *  and this row body may never have reached disk. Read once, and
 	 *  only when its hash equals the recorded baseline. Cleared once the adopt
 	 *  gives the doc history, after DISCOVERY_BASE_TTL_MS, and oldest-first
 	 *  past the char cap. */
@@ -2961,6 +2966,22 @@ export class SyncEngine {
 			hash: fnv1a(content),
 			...(opts?.markCreated ? { crdtHead: CRDT_HEAD_CREATED } : {}),
 		});
+		// The text beside the hash: the merge base a later disk edit is diffed
+		// against (`crdtMergeBase`). Without it a disk ingest diffs disk against
+		// the DOC, and a remote edit disk never got reads as a local delete.
+		this.baseStore?.set(normalized, content, this.syncState.get(normalized)?.version ?? 0);
+	}
+
+	/** The last text this device wrote to or read from disk for `path`, the
+	 *  merge base for a disk edit (Relay's LCA). Only while it still hashes to
+	 *  the recorded baseline: anything else is a base the baseline moved past
+	 *  (a REST-era entry, an un-banked push), and a stale base re-creates the
+	 *  #544 doubling class, so it answers null (the two-way path). */
+	crdtMergeBase(path: string): string | null {
+		const normalized = normalizePath(path);
+		const content = this.baseStore?.get(normalized)?.content;
+		if (content === undefined) return null;
+		return this.syncState.get(normalized)?.hash === fnv1a(content) ? content : null;
 	}
 
 	/** Un-bank the echo baseline for a frame the server DROPPED (note_not_found).

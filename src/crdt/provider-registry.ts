@@ -14,6 +14,7 @@ import * as decoding from "lib0/decoding";
 import { IndexeddbPersistence } from "y-indexeddb";
 import * as syncProtocol from "y-protocols/sync";
 import * as Y from "yjs";
+import { fnv1a } from "../content-hash";
 import { Lifetime } from "../lifetime";
 import { rlog } from "../remote-log";
 import { projectCanvas, seedCanvasInto } from "./canvas-codec";
@@ -129,6 +130,17 @@ interface Entry {
 	/** The frontmatter block as of the last flush, so the next one can say
 	 *  whether the frontmatter CHANGED. `null` means "no block". */
 	lastFlushedFm: string | null;
+	/** Hash of the doc's text as it stood right before the first remote merge
+	 *  after a local edit: the newest text holding ALL local intent and none of
+	 *  the remote work since. Disk equal to it is an editor's late save of a
+	 *  buffer the doc already absorbed, so ingesting it would only delete that
+	 *  remote work (Engram#2480 B3). `localDirty` defers the hash to the next
+	 *  remote merge, so a keystroke costs nothing. Cleared by the one ingest it
+	 *  matches; otherwise replaced at the next local-then-remote transition, or
+	 *  dropped with the entry (in memory only: a restart loses nothing a late
+	 *  save could still race). */
+	localHead: number | null;
+	localDirty: boolean;
 	/** Snapshot (state vector + delete set) of state the server is known to
 	 *  hold: the last `crdt_doc_update` ack (#1493), advanced by every remote
 	 *  merge into a doc that held nothing beyond it. PERSISTED in the doc's own
@@ -480,6 +492,8 @@ export class ProviderRegistry {
 			ready: Promise.resolve(),
 			remoteSeq: 0,
 			lastFlushedFm: null,
+			localHead: null,
+			localDirty: false,
 			pendingFlush: null,
 			lifetime: new Lifetime(),
 			hadHistory: false,
@@ -493,6 +507,10 @@ export class ProviderRegistry {
 		// Before a LOCAL change moves the doc past a lazily held mark, pin the
 		// mark to the state it described.
 		doc.on("beforeTransaction", (tr: Y.Transaction) => {
+			if (entry.localDirty && (tr.origin === provider || tr.origin === REMOTE)) {
+				entry.localDirty = false;
+				entry.localHead = kind === "note" ? fnv1a(this.project(entry)) : null;
+			}
 			if (!entry.ackedIsDoc || tr.origin === provider || tr.origin === REMOTE) return;
 			entry.deliveredReceipt = snapshotOf(doc);
 			entry.ackedIsDoc = false;
@@ -507,7 +525,10 @@ export class ProviderRegistry {
 			if (origin !== provider && origin !== REMOTE) {
 				entry.localSinceAck = true;
 				// Not the IndexedDB replay: loadAcked decides that one against the mark.
-				if (origin !== persistence) this.trackResend(noteId, true);
+				if (origin !== persistence) {
+					this.trackResend(noteId, true);
+					entry.localDirty = true;
+				}
 				return;
 			}
 			// The server sent this, so the merged doc is still all server state
@@ -518,19 +539,7 @@ export class ProviderRegistry {
 				this.markAckedDirty(noteId, entry);
 			}
 			entry.remoteSeq += 1;
-			const write = () => {
-				const projected = this.project(entry);
-				// Compare the BLOCK against what the last flush projected, not against
-				// the editor. The editor is the wrong oracle: in Live Preview the CM
-				// document is body-only, so it never carries a fence, and comparing
-				// against it reported "frontmatter differs" for EVERY note that has
-				// any — turning the bound-path nudge into a direct write under a live
-				// editor on Obsidian's default mode.
-				const fmBlock = splitFrontmatter(projected).fmBlock;
-				const fmChanged = fmBlock !== entry.lastFlushedFm;
-				entry.lastFlushedFm = fmBlock;
-				return this.opts.onFlushToDisk(noteId, projected, fmChanged, firstLoad);
-			};
+			const write = () => this.writeToDisk(noteId, entry, firstLoad);
 			// While the first-load flush resolves held disk input, later flushes
 			// wait for it (and project afresh): writing first would put server text
 			// over the very input the interlock is reading.
@@ -657,6 +666,25 @@ export class ProviderRegistry {
 		return this.entries.has(noteId);
 	}
 
+	/** Write the doc's projection to disk through `onFlushToDisk`. */
+	private writeToDisk(
+		noteId: string,
+		entry: Entry,
+		firstLoad: boolean,
+	): ReturnType<ProviderRegistryOpts["onFlushToDisk"]> {
+		const projected = this.project(entry);
+		// Compare the BLOCK against what the last flush projected, not against
+		// the editor. The editor is the wrong oracle: in Live Preview the CM
+		// document is body-only, so it never carries a fence, and comparing
+		// against it reported "frontmatter differs" for EVERY note that has
+		// any, turning the bound-path nudge into a direct write under a live
+		// editor on Obsidian's default mode.
+		const fmBlock = splitFrontmatter(projected).fmBlock;
+		const fmChanged = fmBlock !== entry.lastFlushedFm;
+		entry.lastFlushedFm = fmBlock;
+		return this.opts.onFlushToDisk(noteId, projected, fmChanged, firstLoad);
+	}
+
 	// --- Local edits (disk → doc) -----------------------------------------------
 
 	/** Ingest disk content into the doc (frontmatter + body). Returns the content
@@ -724,7 +752,13 @@ export class ProviderRegistry {
 		// projection, which for a fresh doc is empty — and the caller records
 		// fnv1a(returned) as the last-synced baseline, so an empty return poisons
 		// isUnchangedSynced for a note that actually has content (#846 doubling).
-		const base = (hasLca ?? docHasHistory(e.doc, e.kind)) ? this.opts.lcaFor?.(noteId) : null;
+		//
+		// Disk equal to `localHead` is the doc's own earlier text: its base is
+		// itself, so the merge keeps the doc and writes it back to disk.
+		const history = hasLca ?? docHasHistory(e.doc, e.kind);
+		const ownPast = history && e.localHead !== null && e.localHead === fnv1a(diskContent);
+		if (ownPast) e.localHead = null;
+		const base = ownPast ? diskContent : history ? this.opts.lcaFor?.(noteId) : null;
 		if (base !== null && base !== undefined && e.kind === "note") {
 			const current = this.project(e);
 			const merged = mergeDiskOntoDoc(base, diskContent, current);
@@ -733,7 +767,20 @@ export class ProviderRegistry {
 					this.opts.onLossyMerge?.(noteId);
 				}
 				seedContentInto(e.doc, e.text, merged.text, docHasHistory(e.doc, e.kind));
-				return merged.text;
+				if (merged.text === diskContent) return merged.text;
+				// The doc kept work disk never got (a failed or deferred flush):
+				// write the merge back, so disk stops holding the stale text and the
+				// recorded baseline (the caller stamps the return) is what disk holds.
+				// A failed write leaves disk, and so the base, at `diskContent`.
+				try {
+					return (await e.lifetime.guard(
+						Promise.resolve(this.writeToDisk(noteId, e, false)),
+					)) === false
+						? diskContent
+						: merged.text;
+				} catch {
+					return diskContent;
+				}
 			}
 			// Dirty merge: overlapping edits to the same region. Fall through to the
 			// pre-LCA path rather than writing content we know is mangled — the

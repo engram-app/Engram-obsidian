@@ -2966,14 +2966,6 @@ export default class EngramSyncPlugin extends Plugin {
 								ackScopeFor(this.settings.apiUrl, this.settings.vaultId),
 							noteIdMap: this.noteIdMap,
 							syncEngine: this.syncEngine,
-							// BaseStore is keyed by vault path and already holds exactly the
-							// last-synced content its own docstring calls "the common
-							// ancestor for 3-way merge"; the registry is keyed by note_id,
-							// so resolve through the id map.
-							lcaFor: (noteId) => {
-								const path = this.noteIdMap.pathForId(noteId);
-								return path ? (this.baseStore?.get(path)?.content ?? null) : null;
-							},
 							onDirtyMerge: (noteId) =>
 								rlog().warn(
 									"crdt",

@@ -212,3 +212,61 @@ test("repro 2480 B4: cold-start reconcile after the doc persisted the edit but d
 
 	await expectMcpSectionKept(await d.docText());
 });
+
+test("2480 B edge: the merge is written back to disk, so the next disk edit merges from it", async () => {
+	const d = await device();
+	d.ctl.failWrites = 1;
+	await d.mcpEdit();
+	d.disk.set(PATH, `${V1}\nupdated: 1\n`);
+	await d.engine.pushFile(d.file);
+	await tick(20);
+	// Disk now holds the merge, not the stale text, and the engine's base is it.
+	expect(d.disk.get(PATH)).toBe(await d.docText());
+	expect(d.engine.crdtMergeBase(PATH)).toBe(d.disk.get(PATH));
+
+	// A second one-line write on top of the merged disk keeps the MCP section.
+	d.disk.set(PATH, `${d.disk.get(PATH)}more\n`);
+	await d.engine.pushFile(d.file);
+	await tick(20);
+	const doc = await d.docText();
+	await expectMcpSectionKept(doc);
+	expect(doc).toContain("updated: 1");
+	expect(doc).toContain("more");
+});
+
+test("2480 B edge: a failed write-back leaves the base at the stale disk text", async () => {
+	const d = await device();
+	d.ctl.failWrites = 2; // the remote flush AND the write-back hit EBUSY
+	await d.mcpEdit();
+	const stale = `${V1}\nupdated: 1\n`;
+	d.disk.set(PATH, stale);
+	await d.engine.pushFile(d.file);
+	await tick(20);
+	expect(d.disk.get(PATH)).toBe(stale);
+	expect(d.engine.crdtMergeBase(PATH)).toBe(stale); // what disk actually holds
+
+	d.disk.set(PATH, `${stale}more\n`);
+	await d.engine.pushFile(d.file);
+	await tick(20);
+	const doc = await d.docText();
+	await expectMcpSectionKept(doc);
+	expect(doc).toContain("more");
+});
+
+test("2480 B edge: a base the baseline moved past is not used", async () => {
+	const d = await device();
+	expect(d.engine.crdtMergeBase(PATH)).toBe(V1);
+	d.engine.importSyncState({ [PATH]: { hash: fnv1a("something else"), crdtHead: "h0" } });
+	expect(d.engine.crdtMergeBase(PATH)).toBeNull();
+});
+
+test("2480 B3 edge: a disk text the doc held but no local edit preceded is ingested normally", async () => {
+	const d = await device();
+	await d.mcpEdit(); // flush lands: disk == doc == MCP text
+	// No local edit before the remote merge, so V1 is not the doc's local
+	// head: a user who restores V1 on disk by hand gets V1.
+	d.disk.set(PATH, V1);
+	await d.engine.pushFile(d.file);
+	await tick(20);
+	expect(await d.docText()).toBe(V1);
+});

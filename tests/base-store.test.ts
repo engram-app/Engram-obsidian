@@ -198,3 +198,10 @@ describe("a deleted note leaves no body behind", () => {
 		expect(store.get("b.md")).toBeDefined();
 	});
 });
+
+it("set holds the byte budget during the session, oldest first", () => {
+	const store = new BaseStore({ read: async () => "", write: async () => {} }, "x", 1000);
+	for (let i = 0; i < 20; i++) store.set(`n${i}.md`, "x".repeat(40), 1);
+	expect(store.get("n0.md")).toBeUndefined();
+	expect(store.get("n19.md")?.content).toBe("x".repeat(40));
+});
