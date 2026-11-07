@@ -22,6 +22,7 @@ import {
 	type DropReason,
 	MAX_BACKOFF_MS,
 	makeDropReporter,
+	RateLimitPause,
 	type SendResult,
 } from "../src/crdt-op-queue";
 
@@ -688,4 +689,23 @@ describe("rate_limited: one op, many replies (review M7, L7)", () => {
 		// at BASE. The old full credit put it at 1.5 * BASE, i.e. in the future.
 		expect(late!.enqueuedAt).toBe(BASE_BACKOFF_MS);
 	});
+});
+
+// Adopted from the delta check on 1cbe40f3 (comment 6708700136): pins the
+// shared pause's streak reset and pause start, which no queue test caught.
+test("RateLimitPause: doubles per streak, delivered resets, from is the FIRST hit", () => {
+	let t = 0;
+	const p = new RateLimitPause(
+		() => t,
+		(n) => 1000 * 2 ** (n - 1),
+	);
+	expect(p.hit()).toBe(1000);
+	t = 500;
+	expect(p.hit()).toBe(500 + 2000);
+	expect(p.takeEnded()).toBeNull();
+	t = 2500;
+	expect(p.takeEnded()).toEqual({ from: 0, until: 2500 });
+	expect(p.takeEnded()).toBeNull();
+	p.delivered();
+	expect(p.hit()).toBe(2500 + 1000);
 });

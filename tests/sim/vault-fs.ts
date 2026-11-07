@@ -44,7 +44,17 @@ export interface WriteJournalEntry {
 	newLen: number;
 }
 
+/** The order Obsidian's per-item `rename` events arrive in for ONE folder
+ *  rename (design risk R4 on Engram#2523: not verified on mobile).
+ *  - `folder-first`: the folder, then each descendant, one tick.
+ *  - `children-first`: each descendant, then the folder, one tick.
+ *  - `split`: the folder and the first descendant now, the rest on a later
+ *    tick (a timer), so a same-tick batch cannot see them. */
+export type FolderRenameOrder = "folder-first" | "children-first" | "split";
+
 export interface SimApp {
+	/** Move a folder on disk, then fire the per-item rename events in `order`. */
+	renameFolder(oldPath: string, newPath: string, order: FolderRenameOrder): Promise<void>;
 	vault: {
 		configDir: string;
 		getFileByPath(path: string): TFile | null;
@@ -73,6 +83,10 @@ export interface SimApp {
 	};
 	/** #288 wipe-detector journal — see WriteJournalEntry. */
 	writeJournal: WriteJournalEntry[];
+	/** Every path the engine trashed, in order. */
+	trashed: string[];
+	/** Every `vault.rename` call (folder or file), as `from -> to`. */
+	renamed: string[];
 }
 
 export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
@@ -106,6 +120,7 @@ export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
 	rebuildIndex();
 
 	const writeJournal: WriteJournalEntry[] = [];
+	const renamed: string[] = [];
 	/** Record a write's before/after byte length. Must be called BEFORE the
 	 *  write lands (atomicWrite overwrites the file this reads). */
 	function recordWrite(relPath: string, data: string | Buffer): void {
@@ -246,6 +261,7 @@ export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
 
 		async rename(file, newPath) {
 			const oldPath = file.path;
+			renamed.push(`${oldPath} -> ${newPath}`);
 			ensureParentDir(newPath);
 			fs.renameSync(abs(oldPath), abs(newPath));
 			rebuildIndex();
@@ -257,9 +273,11 @@ export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
 		},
 	};
 
+	const trashed: string[] = [];
 	const fileManager: SimApp["fileManager"] = {
 		async trashFile(file) {
 			const p = file.path;
+			trashed.push(p);
 			const isFolder = file instanceof TFolder;
 			// Remove BEFORE firing. Real Obsidian's delete event hands the listener
 			// the TFile it already evicted from the index, so `getFileByPath(path)`
@@ -282,5 +300,40 @@ export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
 		},
 	};
 
-	return { vault, fileManager, workspace, writeJournal };
+	/** Every descendant (files and folders) under `rel`, depth-first. */
+	function descendants(rel: string): string[] {
+		const out: string[] = [];
+		for (const entry of fs.readdirSync(abs(rel), { withFileTypes: true })) {
+			const childRel = `${rel}/${entry.name}`;
+			out.push(childRel);
+			if (entry.isDirectory()) out.push(...descendants(childRel));
+		}
+		return out;
+	}
+
+	async function renameFolder(
+		oldPath: string,
+		newPath: string,
+		order: FolderRenameOrder,
+	): Promise<void> {
+		ensureParentDir(newPath);
+		fs.renameSync(abs(oldPath), abs(newPath));
+		rebuildIndex();
+		const folder: [string, string] = [oldPath, newPath];
+		const children = descendants(newPath).map((p): [string, string] => [
+			`${oldPath}${p.slice(newPath.length)}`,
+			p,
+		]);
+		const fire = ([from, to]: [string, string]) => events.onRename?.(from, to);
+		if (order === "folder-first") [folder, ...children].forEach(fire);
+		else if (order === "children-first") [...children, folder].forEach(fire);
+		else {
+			const [first, ...rest] = children;
+			fire(folder);
+			if (first) fire(first);
+			setTimeout(() => rest.forEach(fire), 50);
+		}
+	}
+
+	return { renameFolder, vault, fileManager, workspace, writeJournal, trashed, renamed };
 }
