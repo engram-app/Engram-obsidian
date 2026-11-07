@@ -3908,6 +3908,11 @@ export class SyncEngine {
 		}, 1000);
 	}
 
+	/** Unanswered folder ops, for the wholesale plugin-data save. */
+	exportFolderOps(): FolderOp[] {
+		return this.folderOps.all();
+	}
+
 	exportGateJournal(): GateEvent[] {
 		return [...this.gateJournal];
 	}

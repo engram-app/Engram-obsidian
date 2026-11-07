@@ -2039,7 +2039,7 @@ export default class EngramSyncPlugin extends Plugin {
 			// saveData() wipes the durable CRDT ops.
 			crdtOpQueue: this.crdtOpQueue?.all() ?? [],
 			// Re-listed for the wholesale-save reason: unanswered folder ops.
-			folderOps: this.syncEngine.folderOps.all(),
+			folderOps: this.syncEngine.exportFolderOps(),
 			syncState: this.syncEngine.exportSyncState(),
 			syncStateVaultId: this.syncEngine.getSyncStateVaultId(),
 			// Dual-write legacy format for rollback safety (remove after one release cycle)
