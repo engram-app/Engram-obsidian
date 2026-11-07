@@ -43,6 +43,7 @@ function harness(results: FolderOpResult[] = []) {
 		{ id: "fa", parent_id: null, name: "A" },
 		{ id: "fb", parent_id: null, name: "B" },
 	]);
+	ops.onSyncStatus(true); // the sync channel is up unless a test says not
 	return {
 		ops,
 		sent,
@@ -314,6 +315,73 @@ describe("the pending-op budget (round 3: MAX_ATTEMPTS / OP_TTL_MS, shared with 
 		await h.ops.tick();
 		expect(h.fallbacks).toEqual([["fa", "ttl"]]);
 		expect(h.ops.hasPending("fa")).toBe(false);
+	});
+
+	test("offline 1h, then reconnect: exactly ONE folder_op, no fallback (offline time is not age)", async () => {
+		const results: FolderOpResult[] = Array.from(
+			{ length: 800 },
+			() => ({ kind: "held" }) as const,
+		);
+		const h = harness(results);
+		h.ops.setFeature(true);
+		h.ops.onSyncStatus(false);
+		h.ops.move("fa", "fb", "A", "A", "B/A");
+		for (let i = 0; i < 720; i++) {
+			h.advance(5_000); // the 5 s interval keeps ticking offline
+			await h.ops.tick();
+		}
+		expect(h.fallbacks).toEqual([]);
+		// Offline, the port answers `held` without writing a frame.
+		results.length = 0; // back online: the send goes through
+		const offlineCalls = h.sent.length;
+		h.ops.onSyncStatus(true);
+		await h.ops.onReconnect();
+		await h.ops.tick();
+		expect(h.fallbacks).toEqual([]);
+		expect(h.acked).toEqual(["fa"]);
+		expect(h.sent.length - offlineCalls).toBe(1); // ONE folder_op on the wire
+		expect(h.ops.hasPending("fa")).toBe(false);
+	});
+
+	test("joined with no answer for over OP_TTL_MS: the per-file fallback", async () => {
+		const results: FolderOpResult[] = Array.from(
+			{ length: 200 },
+			() => ({ kind: "held" }) as const,
+		);
+		const h = harness(results);
+		h.ops.setFeature(true);
+		h.ops.move("fa", "fb", "A", "A", "B/A");
+		for (let i = 0; i < 61 && h.ops.hasPending("fa"); i++) {
+			h.advance(5_000);
+			await h.ops.tick();
+		}
+		expect(h.fallbacks).toEqual([["fa", "ttl"]]);
+	});
+
+	test("a restored old op: its age clock starts at the reconnect, not at the enqueue", async () => {
+		const h = harness();
+		h.ops.onSyncStatus(false);
+		h.ops.load([
+			{
+				op: "move",
+				op_id: "o1",
+				folder_id: "fa",
+				parent_id: "fb",
+				name: "A",
+				from: "A",
+				to: "B/A",
+				vaultId: "v1",
+				queuedAt: -10 * OP_TTL_MS,
+			},
+		]);
+		h.advance(OP_TTL_MS * 3); // app open, still offline
+		await h.ops.tick();
+		h.ops.onSyncStatus(true);
+		await h.ops.tick();
+		expect(h.fallbacks).toEqual([]);
+		h.advance(OP_TTL_MS + 1);
+		await h.ops.tick();
+		expect(h.fallbacks).toEqual([["fa", "ttl"]]);
 	});
 
 	test("a restored op with no features reply ever still ends in the fallback (R4-4)", async () => {

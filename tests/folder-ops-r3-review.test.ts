@@ -106,6 +106,9 @@ describe("the delete-pass skip under a stuck op's target (round 3 review #689)",
 		await s.e.setFolderOpsEnabled(true);
 		await s.e.handleRename(s.folder, "Proj");
 		(s.e as any).pendingLocalMoves.clear(); // its own TTL expires; isolate the folder-op skip
+		// Author's adaptation (delta check on 1cbe40f3): age counts only time
+		// the sync channel is joined, and a manifest pass means it is.
+		s.e.folderOps.onSyncStatus(true);
 		const clock = (s.e as any).time;
 		const t0 = clock.now();
 		clock.now = () => t0 + 24 * 3600 * 1000;

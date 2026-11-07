@@ -135,7 +135,7 @@ function makeFakeThis(catchup: () => Promise<void>, pull: () => Promise<number>,
 			reopenRoomsOnRejoin: () => {},
 			// Engram#2523 S4: the crdt join re-sends unanswered folder ops, and the
 			// join reply's features switch them on.
-			folderOps: { onReconnect: () => Promise.resolve() },
+			folderOps: { onReconnect: () => Promise.resolve(), onSyncStatus: () => {} },
 			setFolderOpsEnabled: () => Promise.resolve(),
 		},
 		updateStatusBar: () => {},

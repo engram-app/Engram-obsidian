@@ -2532,6 +2532,7 @@ export default class EngramSyncPlugin extends Plugin {
 		// Disconnect existing channel + invalidate any in-flight connectChannel()
 		// (its async getMe() may still be pending) so it can't spawn a zombie.
 		this.crdtOpQueue?.onLeft();
+		this.syncEngine.folderOps.onSyncStatus(false);
 		this.noteStream?.disconnect();
 		this.noteStream = null;
 		this.channelEpoch++;
@@ -2736,6 +2737,8 @@ export default class EngramSyncPlugin extends Plugin {
 
 				channel.onStatusChange = (connected) => {
 					this.liveConnected = connected;
+					// Folder-op age counts only time the sync channel is joined.
+					this.syncEngine.folderOps.onSyncStatus(connected);
 					if (connected) this.everConnected = true;
 					if (!connected) {
 						// A dropped channel is the earliest wedge signal: any HTTP

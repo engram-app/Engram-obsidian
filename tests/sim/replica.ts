@@ -517,6 +517,7 @@ export class Replica {
 
 		let crdtEverJoined = false;
 		channel.onStatusChange = (connected) => {
+			engine.folderOps.onSyncStatus(connected); // main.ts onStatusChange
 			if (connected) {
 				engine.clearConfirmedNoteIds(); // main.ts:1734
 			} else if (!crdtEverJoined) {
