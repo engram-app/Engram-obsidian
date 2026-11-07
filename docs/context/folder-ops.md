@@ -26,10 +26,13 @@ guaranteed (mobile unverified, R4 on Engram#2523).
 ## Hiding layers (each with its clearing events)
 - Pending folder op: ack; refusal, `unknown_event` or `bad_frame` (then
   per-file fallback); feature off (per-file fallback); timeout keeps it (same
-  `op_id`, with backoff); no answer `MAX_ATTEMPTS` times or for `OP_TTL_MS`
-  since the first send (the note-op queue's limits, imported, not copied) ends
-  it in the per-file fallback; not joined spends nothing; restart replays it
-  with its spent budget; vault switch drops it. NEVER by a hold expiry. Its
+  `op_id`, with backoff); no answer `MAX_ATTEMPTS` times ends it in the
+  per-file fallback; `rate_limited` pauses the whole queue and spends nothing
+  (`RateLimitPause`, shared with the note-op queue); `OP_TTL_MS` since ENQUEUE
+  ends it too, sent or not, so a crdt topic that stays down or a features
+  reply that never comes cannot pin it (round 4 R4-4); the limits are the
+  note-op queue's, imported; restart replays it with its spent budget; vault
+  switch drops it. NEVER by a hold expiry. Its
   delete-pass skip and held changes clear with it. Unbounded, it hid a
   server-deleted note forever (round 3 R3-1 on #689).
 - Held inbound change (a folder with a pending local op): ack (only changes
@@ -57,6 +60,8 @@ guaranteed (mobile unverified, R4 on Engram#2523).
   client-minted `create`: an op naming an id the server never issued can only
   be refused after the local re-key. Ids come from the manifest `folders`
   list, `folder_changed`, and the `crdt_create` reply's `folder_id`.
+- **`crdt_create` sends main's frame**: no `folder_id`/`name`. #2533 places a
+  note by path and reads neither; send them when a server stage reads them.
 - **Manifest folder moves are not gated on `features.folder_ops`**: the list
   is the capability signal, and the user-topic features reply can land after
   a restart's first catch-up. `folder_changed` IS gated, and the echo rule
@@ -68,9 +73,11 @@ guaranteed (mobile unverified, R4 on Engram#2523).
   re-key. This was a hole on main for single renames too.
 - Folder ids also come from the root-first ancestor chain `folders` that
   `POST /folders` and the `crdt_create` reply return on a folder-ops server.
-  Every server row source goes through ONE rule (`FolderOps.learnServerRows`):
-  malformed rows dropped, a chain learned up to its first broken parent link,
-  and a folder with our op pending keeps our row.
+  Every server row source goes through ONE rule (`FolderOps.learnServerRows`,
+  with `learnServerLeaf` for the create reply's `folder_id`, and
+  `isFolderRow` on `folder_changed` and manifest moves): malformed rows
+  dropped, a chain learned up to its first broken parent link, and a folder
+  with our op pending keeps our row.
 - The folder index is persisted (`folderIndex` in data.json) so a restart
   knows where its folders were before the first manifest.
 - An inbound move updates the index BEFORE `vault.rename`: Obsidian fires the
@@ -78,7 +85,8 @@ guaranteed (mobile unverified, R4 on Engram#2523).
   or the device sends the move back as its own op. A failed rename restores it.
 - Server wire (Engram#2533): `folder_op` on the vault `crdt:` channel, acked
   `{folder_id, seq}`; `folder_changed` plus a `note_changed` nudge (no id, path
-  = the folder's new path, a trailing `/` if it ends in `.md`) on `sync:`;
+  = the folder's new path, a trailing `/` if it ends in `.md`) on `sync:`
+  (this plugin answers the nudge with one seq catch-up and nothing else);
   `features.folder_ops` on the USER join reply, from the ServiceConfig
   `folder_ops` switch (default off). `not_found` (a move racing a move before
   S5) and `failed` are retried inside the op's attempt budget; `conflict`,
