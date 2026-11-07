@@ -6210,16 +6210,19 @@ export class SyncEngine {
 		// `to` (an inbound move this engine applied). A state check, no marker.
 		if (id === undefined && index.idFor(to) !== undefined) return true;
 		if (typeof id !== "string") return false; // no server id: per file
+		const cut = to.lastIndexOf("/");
+		// The target parent needs a server id too: an op naming an id the server
+		// never issued can only be refused, after the local move was re-keyed.
+		const parentId = index.idFor(cut < 0 ? "" : to.slice(0, cut));
+		if (parentId === undefined) return false;
 		if (this.syncBlocked || this.gateHolds()) return false; // the journal replays per file
 		if (this.shouldIgnore(from) || this.shouldIgnore(to)) return false;
-		const moved = this.descendantMoves(folder, from, to);
+		const moved = this.descendantMoves(from, to);
 		// A child whose ignore status flips needs its own push or delete.
 		if (moved.some(([o, n]) => this.shouldIgnore(o) !== this.shouldIgnore(n))) return false;
-		const cut = to.lastIndexOf("/");
-		const parentId = this.folderOps.ensure(cut < 0 ? "" : to.slice(0, cut));
 		this.rekeyMoved(moved);
 		const name = cut < 0 ? to : to.slice(cut + 1);
-		this.folderOps.move(id, parentId, name, from);
+		this.folderOps.move(id, parentId, name, from, to);
 		this.fileMetaV1.folder(id, parentId, name);
 		rlog().info(
 			"push",
@@ -6229,27 +6232,33 @@ export class SyncEngine {
 		return true;
 	}
 
-	/** [oldPath, newPath] for every file under `folder` (which already lives at
-	 *  `to`). Obsidian may or may not have rewritten a child's path yet, so
-	 *  either prefix is accepted. */
-	private descendantMoves(folder: TFolder, from: string, to: string): [string, string][] {
-		const out: [string, string][] = [];
+	/** [path under `from`, same path under `to`] for every file of the folder:
+	 *  what is on disk at either path (Obsidian may or may not have rewritten a
+	 *  child's path yet) AND every tracked row under either prefix, so a note
+	 *  known but not on disk (not downloaded yet, evicted) moves too. Relay
+	 *  re-keys its whole store under the old prefix the same way
+	 *  (`SharedFolder.ts` renameFile). ponytail: the tracked half scans every
+	 *  row, O(vault) local work per folder rename; a prefix index if it shows. */
+	private descendantMoves(from: string, to: string): [string, string][] {
+		const rels = new Set<string>();
+		const add = (raw: string) => {
+			const p = normalizePath(raw);
+			if (p.startsWith(`${to}/`)) rels.add(p.slice(to.length + 1));
+			else if (p.startsWith(`${from}/`)) rels.add(p.slice(from.length + 1));
+		};
 		const walk = (f: TFolder) => {
 			for (const child of f.children) {
 				if (child instanceof TFolder) walk(child);
-				else if (child instanceof TFile) {
-					const p = normalizePath(child.path);
-					const rel = p.startsWith(`${to}/`)
-						? p.slice(to.length + 1)
-						: p.startsWith(`${from}/`)
-							? p.slice(from.length + 1)
-							: null;
-					if (rel !== null) out.push([`${from}/${rel}`, `${to}/${rel}`]);
-				}
+				else if (child instanceof TFile) add(child.path);
 			}
 		};
-		walk(folder);
-		return out;
+		for (const at of [to, from]) {
+			const f = this.app.vault.getAbstractFileByPath(at);
+			if (f instanceof TFolder) walk(f);
+		}
+		for (const p of this.syncState.keys()) add(p);
+		for (const p of Object.keys(this.noteIdMap?.toJSON() ?? {})) add(p);
+		return [...rels].map((rel): [string, string] => [`${from}/${rel}`, `${to}/${rel}`]);
 	}
 
 	/** Move every listed path's LOCAL bookkeeping (id map, base, sync row,
@@ -6283,36 +6292,29 @@ export class SyncEngine {
 		}
 	}
 
-	/** A refused (or unsendable) folder op, redone per file: put each child's
-	 *  bookkeeping back where the server still has it, then run today's
-	 *  per-file rename for it. */
+	/** A refused (or unsendable) folder op, redone per file from the op's own
+	 *  persisted paths (never the in-memory index, which a restart empties and
+	 *  a refusal may have left wrong): put each child's bookkeeping back where
+	 *  the server still has it, then run today's per-file rename for it. */
 	private async folderOpFallback(op: FolderOp, why: string): Promise<void> {
-		if (op.op === "create") {
-			this.folderOps.index.remove(op.folder_id);
-			rlog().warn("push", `Folder op refused (${why}): create ${op.folder_id}`);
-			return;
-		}
-		const to = this.folderOps.index.pathFor(op.folder_id);
-		const from = op.from;
+		const { from, to } = op;
+		const index = this.folderOps.index;
 		// The server still has the folder at `from`.
-		if (from !== null) {
-			const cut = from.lastIndexOf("/");
-			const parent = this.folderOps.index.idFor(cut < 0 ? "" : from.slice(0, cut));
-			if (parent !== undefined) {
-				this.folderOps.index.set({
-					id: op.folder_id,
-					parent_id: parent,
-					name: cut < 0 ? from : from.slice(cut + 1),
-				});
-			} else this.folderOps.index.remove(op.folder_id);
-		}
-		const folder = to === null ? null : this.app.vault.getAbstractFileByPath(to);
+		const cut = from.lastIndexOf("/");
+		const parent = index.idFor(cut < 0 ? "" : from.slice(0, cut));
+		if (parent !== undefined) {
+			index.set({
+				id: op.folder_id,
+				parent_id: parent,
+				name: cut < 0 ? from : from.slice(cut + 1),
+			});
+		} else index.remove(op.folder_id);
+		this.persistGateJournalSoon();
 		rlog().warn(
 			"push",
-			`Folder op refused (${why}): ${noteRef(from ?? "?")} -> ${noteRef(to ?? "?")}, renaming per file`,
+			`Folder op refused (${why}): ${noteRef(from)} -> ${noteRef(to)}, renaming per file`,
 		);
-		if (from === null || to === null || !(folder instanceof TFolder)) return;
-		const moved = this.descendantMoves(folder, from, to);
+		const moved = this.descendantMoves(from, to);
 		this.rekeyMoved(moved.map(([o, n]): [string, string] => [n, o]));
 		for (const [o, n] of moved) {
 			const file = this.app.vault.getAbstractFileByPath(n);
@@ -6320,11 +6322,13 @@ export class SyncEngine {
 		}
 	}
 
-	/** The server applied our op. If the folder has since moved locally
-	 *  somewhere else it would have queued another op; if an inbound change
-	 *  moved it away meanwhile, the server's state is ours again, so follow. */
+	/** The server applied our op, so its state is ours. If the disk is not
+	 *  there (an inbound change moved the folder meanwhile), follow it back:
+	 *  our own `folder_changed` echo is dropped, so nothing else would. A no-op
+	 *  in the normal case, where the index already says `to`. */
 	private async folderOpAcked(op: FolderOp): Promise<void> {
 		rlog().info("push", `Folder op acked: ${op.op} ${op.folder_id}`);
+		await this.applyFolderChange({ id: op.folder_id, parent_id: op.parent_id, name: op.name });
 	}
 
 	/** Engram#2523 S4: one op per folder rename. Exposed for main.ts wiring. */
@@ -6339,10 +6343,11 @@ export class SyncEngine {
 	});
 	private folderOpPort: ((op: FolderOp) => Promise<FolderOpResult>) | null = null;
 
-	/** A `folder_changed` event from the server. Our own echo is dropped by
-	 *  `device_id` (the key the server already stamps on note broadcasts). */
+	/** A `folder_changed` event from the sync topic. Ignored with folder ops
+	 *  off (as on main). Our own echo is dropped by `device_id`, the key the
+	 *  server already stamps on note broadcasts. */
 	async onFolderChanged(change: FolderChange): Promise<void> {
-		if (this.syncBlocked) return; // the next manifest pass re-teaches it
+		if (!this.folderOps.enabled() || this.syncBlocked) return; // the manifest re-teaches it
 		if (this.deviceId && change.device_id === this.deviceId) {
 			rlog().info("ws", `Echo skip (own device): folder ${change.id}`);
 			return;
@@ -6353,11 +6358,16 @@ export class SyncEngine {
 	/** The manifest's `folders` list: move every folder whose server path
 	 *  differs from where this device has it (through the hold), then learn the
 	 *  rows. Shallowest first, so a moved parent carries its children and their
-	 *  own rows then read as already in place. */
+	 *  own rows then read as already in place.
+	 *
+	 *  Not gated on `features.folder_ops`: the list is itself the capability
+	 *  signal, and the features reply (user topic, best effort) can land after
+	 *  the first catch-up of a restart, whose delete pass would otherwise trash
+	 *  every file of a folder moved elsewhere and download it again. */
 	private async syncManifestFolders(manifest: ManifestResponse | null): Promise<void> {
 		const rows = manifest?.folders;
 		if (!rows) return;
-		if (this.folderOps.enabled() && !this.syncBlocked) {
+		if (!this.syncBlocked) {
 			const server = new FolderIndex();
 			server.load(rows);
 			const moves = rows
@@ -6374,24 +6384,39 @@ export class SyncEngine {
 
 	/** Apply one server folder change to the vault: ONE `vault.rename` of the
 	 *  folder, with every descendant's bookkeeping moved first, so the child
-	 *  events Obsidian then fires hit the Relay echo rule. */
+	 *  events Obsidian then fires hit the Relay echo rule. A move that cannot
+	 *  happen (target occupied, rename throws) leaves the index where the disk
+	 *  is, so the next manifest retries it. */
 	private async applyFolderChange(change: FolderChange): Promise<void> {
 		const index = this.folderOps.index;
+		const learn = () => {
+			index.set(change);
+			this.persistGateJournalSoon();
+		};
 		if (change.deleted) {
 			// Folder delete stays per note until the deletes overhaul (parked).
 			index.remove(change.id);
+			this.persistGateJournalSoon();
 			return;
 		}
 		const parent = index.pathFor(change.parent_id);
 		const from = index.pathFor(change.id);
-		index.set(change);
-		if (parent === null || from === null) return; // unplaceable: the manifest heals it
+		if (parent === null || from === null) return learn(); // nothing local to move
 		const to = parent ? `${parent}/${change.name}` : change.name;
-		if (from === to || this.shouldIgnore(from) || this.shouldIgnore(to)) return;
+		if (from === to || this.shouldIgnore(from) || this.shouldIgnore(to)) return learn();
 		const folder = this.app.vault.getAbstractFileByPath(from);
-		if (!(folder instanceof TFolder) || this.app.vault.getAbstractFileByPath(to)) return;
-		const moved = this.descendantMoves(folder, from, to);
+		if (!(folder instanceof TFolder)) return learn(); // not here (per-note moves won)
+		if (this.app.vault.getAbstractFileByPath(to)) {
+			rlog().warn("pull", `Folder move target occupied: ${noteRef(from)} -> ${noteRef(to)}`);
+			return;
+		}
+		const moved = this.descendantMoves(from, to);
 		this.rekeyMoved(moved, false);
+		// The index moves BEFORE the rename: Obsidian fires the folder's own
+		// rename event inside it, and the echo rule must already read it at
+		// `to`, or this device sends the move back as its own op.
+		const prior = index.all().find((r) => r.id === change.id);
+		learn();
 		try {
 			if (parent) await this.ensureFolder(parent);
 			await this.app.vault.rename(folder, to);
@@ -6400,7 +6425,10 @@ export class SyncEngine {
 				`Followed folder move: ${noteRef(from)} -> ${noteRef(to)} | ${moved.length} files`,
 			);
 		} catch (e) {
-			// Not moved: put the bookkeeping back, the per-note events converge it.
+			// Not moved: put the index and the bookkeeping back, so the next
+			// manifest retries it and the per-note events converge meanwhile.
+			if (prior) index.set(prior);
+			this.persistGateJournalSoon();
 			this.rekeyMoved(
 				moved.map(([o, n]): [string, string] => [n, o]),
 				false,
@@ -6433,29 +6461,43 @@ export class SyncEngine {
 	learnFolders(rows: FolderRow[] | undefined): void {
 		if (!rows) return;
 		this.folderOps.index.load(rows, (id) => this.folderOps.hasPending(id));
+		this.persistGateJournalSoon();
+	}
+
+	/** The `crdt_create` reply named the server's folder for `notePath`. */
+	learnFolderOf(notePath: string, folderId: string | null): void {
+		const p = normalizePath(notePath);
+		const cut = p.lastIndexOf("/");
+		if (cut < 0 || folderId === null) return; // root has no row
+		this.folderOps.index.learn(p.slice(0, cut), folderId);
+	}
+
+	/** The persisted folder index (rows + their vault), and its restore. */
+	exportFolderIndex(): { vaultId: string | null; rows: FolderRow[] } {
+		return { vaultId: this.settings.vaultId ?? null, rows: this.folderOps.index.all() };
+	}
+
+	restoreFolderIndex(saved: { vaultId: string | null; rows: FolderRow[] } | undefined): void {
+		if (saved && saved.vaultId === (this.settings.vaultId ?? null)) {
+			this.folderOps.index.load(saved.rows);
+		}
 	}
 
 	/** `{ folder_id, name }` for a note create or move at `path`, or null when
 	 *  folder ops are off or the folder has no server id yet (the path alone
 	 *  then places it, and the server creates the folder from the path).
+	 *  Synchronous, so a create with folder ops off is sent exactly as on main.
 	 *
 	 *  Deviation from the S4 plan, on purpose: an unknown folder is NOT given a
 	 *  client-minted `folder_op create` first. A folder the server has never
 	 *  seen cannot have been renamed by anyone, so path placement lands the
-	 *  note in the same place, while a minted create races the server's own
-	 *  create-from-path and is refused `conflict`. A folder whose create IS
-	 *  queued (a move target, see `handleFolderRename`) is sent first. */
-	async folderRefFor(
-		path: string,
-		noteId?: string,
-	): Promise<{ folder_id: string | null; name: string } | null> {
+	 *  note in the same place, and the reply's `folder_id` teaches the id. */
+	folderRefFor(path: string, noteId?: string): { folder_id: string | null; name: string } | null {
 		if (!this.folderOps.enabled()) return null;
 		const p = normalizePath(path);
 		const cut = p.lastIndexOf("/");
 		const id = this.folderOps.index.idFor(cut < 0 ? "" : p.slice(0, cut));
 		if (id === undefined) return null;
-		if (id !== null && this.folderOps.hasPending(id)) await this.folderOps.flush();
-		if (id !== null && this.folderOps.hasPending(id)) return null;
 		const name = cut < 0 ? p : p.slice(cut + 1);
 		// Claim before the move, as for v0: the note's v1 entry is its folder id
 		// and name, written as the create or move goes out.
@@ -6473,9 +6515,12 @@ export class SyncEngine {
 		// Relay echo rule (Relay SharedFolder.ts notifyVaultRename): a child whose
 		// bookkeeping a folder op already moved to its new path has nothing left
 		// to send. A state check, not a marker: it reads the truth, so it needs
-		// no expiry and also covers child events from a later tick (R4).
+		// no expiry and also covers child events from a later tick (R4). Active
+		// once the server speaks folders (the flag, or a manifest `folders` list,
+		// which moves folders before the flag has landed); on a server without
+		// them, as on main, it never runs.
 		if (
-			this.folderOps.enabled() &&
+			(this.folderOps.enabled() || this.folderOps.index.size() > 0) &&
 			file instanceof TFile &&
 			this.alreadyMovedLocally(oldPath, file.path)
 		) {
@@ -6684,9 +6729,9 @@ export class SyncEngine {
 	}
 
 	/** `POST /attachments/rename` for a local attachment rename. The sync row
-	 *  moves FIRST, so the server's own upsert broadcast for the new path
-	 *  hash-skips instead of downloading the bytes back; any failure puts the
-	 *  rows back exactly as they were. `gone` = 404, the server has nothing at
+	 *  moves only after the server confirms (accepted cost: a server upsert
+	 *  broadcast that beats the reply can download the bytes once). `gone` =
+	 *  404, the server has nothing at
 	 *  the old path (upload at the new one, no delete). `failed` = any other
 	 *  refusal or error: the caller runs today's delete-plus-upload, which owns
 	 *  the 402 plan gate and the durable queue. */
@@ -6694,20 +6739,9 @@ export class SyncEngine {
 		oldPath: string,
 		newPath: string,
 	): Promise<"moved" | "gone" | "failed"> {
-		const from = normalizePath(oldPath);
-		const to = normalizePath(newPath);
-		const fromRow = this.syncState.get(from);
-		const toRow = this.syncState.get(to);
-		this.renamePath(from, to, "remote");
 		try {
 			await this.api.renameAttachment(oldPath, newPath);
-			this.goOnline();
-			rlog().info("push", `Attachment moved: ${noteRef(oldPath)} -> ${noteRef(newPath)}`);
-			return "moved";
 		} catch (e) {
-			if (fromRow) this.syncState.set(from, fromRow);
-			if (toRow) this.syncState.set(to, toRow);
-			else this.syncState.delete(to);
 			const gone = isHttpStatus(e, 404);
 			const next = gone ? "upload" : "delete + upload";
 			rlog().warn(
@@ -6716,6 +6750,13 @@ export class SyncEngine {
 			);
 			return gone ? "gone" : "failed";
 		}
+		// Only once the server has it there: a manifest read before that lists
+		// the old path, and a row already at the new one could get its file
+		// trashed by the delete pass.
+		this.renamePath(normalizePath(oldPath), normalizePath(newPath), "remote");
+		this.goOnline();
+		rlog().info("push", `Attachment moved: ${noteRef(oldPath)} -> ${noteRef(newPath)}`);
+		return "moved";
 	}
 
 	/** Push a folder-create from the vault to the server's explicit-folder

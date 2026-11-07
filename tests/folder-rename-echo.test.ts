@@ -14,6 +14,7 @@ import "fake-indexeddb/auto";
 import { TFile, TFolder } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
+import type { FolderOpResult } from "../src/folder-ops";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -92,5 +93,120 @@ describe("Relay echo rule", () => {
 		await new Promise((r) => setTimeout(r, 5));
 		expect(s.ids.get("Done/a.md")).toBe("id-a");
 		expect(s.cachedRead).toHaveBeenCalled();
+	});
+});
+
+// Adopted from the adversarial review of #689: red at f020b50d (the fallback
+// read its target from an index a restart had emptied).
+/** A restart after an offline folder rename: the child bookkeeping was
+ *  persisted at the NEW path, the op is replayed from disk, and the in-memory
+ *  folder index is EMPTY until the next manifest. */
+function restarted(reply: FolderOpResult | null) {
+	const s = setup();
+	s.e.setCrdtPorts({
+		create: s.crdtCreate,
+		folderOp: async () => reply ?? { kind: "retry" },
+	});
+	(s.e as any).folderOps.index.load([]);
+	(s.e as any).syncState.delete("Proj/a.md");
+	(s.e as any).syncState.delete("Proj/img.png");
+	s.ids.rename("Proj/a.md", "Done/a.md");
+	(s.e as any).syncState.set("Done/a.md", { hash: 1, crdtHead: "h" });
+	(s.e as any).syncState.set("Done/img.png", { hash: 2, serverHash: "s" });
+	s.e.folderOps.load([
+		{
+			op: "move",
+			op_id: "o1",
+			folder_id: "f1",
+			parent_id: null,
+			name: "Done",
+			from: "Proj",
+			to: "Done",
+			vaultId: "v1",
+		},
+	]);
+	return s;
+}
+
+describe("review #689: replayed op after a restart", () => {
+	test("server has no folder_ops: the replayed op is redone per file", async () => {
+		const s = restarted(null);
+		await s.e.setFolderOpsEnabled(false);
+		await new Promise((r) => setTimeout(r, 5));
+		expect(s.e.folderOps.all()).toEqual([]);
+		expect(s.cachedRead).toHaveBeenCalled();
+	});
+
+	test("replayed op refused (conflict): redone per file", async () => {
+		const s = restarted({ kind: "refused", reason: "conflict" });
+		await s.e.setFolderOpsEnabled(true);
+		await new Promise((r) => setTimeout(r, 5));
+		expect(s.e.folderOps.all()).toEqual([]);
+		expect(s.cachedRead).toHaveBeenCalled();
+	});
+});
+
+describe("review #689: control (same session, index populated)", () => {
+	test("in-session refusal does redo per file", async () => {
+		const s = restarted({ kind: "refused", reason: "conflict" });
+		(s.e as any).folderOps.index.set({ id: "f1", parent_id: null, name: "Done" });
+		await s.e.setFolderOpsEnabled(true);
+		await new Promise((r) => setTimeout(r, 5));
+		expect(s.cachedRead).toHaveBeenCalled();
+	});
+});
+
+describe("folder walk includes tracked rows not on disk (Relay parity)", () => {
+	test("a synced note with no file yet moves with its folder", async () => {
+		const s = setup();
+		s.ids.set("Proj/later.md", "id-l");
+		(s.e as any).syncState.set("Proj/later.md", { hash: 3 });
+		await s.e.setFolderOpsEnabled(true);
+		await s.e.handleRename(s.folder, "Proj");
+		expect(s.ids.get("Done/later.md")).toBe("id-l");
+		expect((s.e as any).syncState.has("Done/later.md")).toBe(true);
+		expect((s.e as any).syncState.has("Proj/later.md")).toBe(false);
+	});
+});
+
+describe("attachment move bookkeeping waits for the server", () => {
+	test("the row stays at the old path until the move is confirmed", async () => {
+		const s = setup();
+		let confirm: () => void = () => {};
+		s.api.renameAttachment.mockImplementation(
+			() =>
+				new Promise<void>((r) => {
+					confirm = r;
+				}),
+		);
+		const rename = s.e.handleRename(s.image, "Proj/img.png");
+		await new Promise((r) => setTimeout(r, 0));
+		expect((s.e as any).syncState.has("Proj/img.png")).toBe(true);
+		expect((s.e as any).syncState.has("Done/img.png")).toBe(false);
+		confirm();
+		await rename;
+		expect((s.e as any).syncState.has("Done/img.png")).toBe(true);
+		expect(s.api.pushAttachment).not.toHaveBeenCalled();
+	});
+});
+
+describe("a folder_op is only sent when the target parent has a server id", () => {
+	test("move under an unknown parent: no op, per file instead", async () => {
+		const s = setup();
+		const sent: unknown[] = [];
+		s.e.setCrdtPorts({
+			create: s.crdtCreate,
+			folderOp: async (op) => {
+				sent.push(op);
+				return { kind: "ok", seq: 1 };
+			},
+		});
+		await s.e.setFolderOpsEnabled(true);
+		const moved = new TFolder("New/Done", []);
+		await s.e.handleRename(moved, "Proj");
+		expect(sent).toEqual([]);
+		expect(s.e.folderOps.all()).toEqual([]);
+		// Not re-keyed: the children's own events take the per-file path.
+		expect(s.ids.get("Proj/a.md")).toBe("id-a");
 	});
 });

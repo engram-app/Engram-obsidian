@@ -234,17 +234,36 @@ describe("Engram#2523 S4: a folder rename is one folder op", () => {
 			const [a] = t.replicas;
 			const seen: string[] = [];
 			const engine = a.engine as unknown as {
-				applyFolderChange: (c: { id: string }) => Promise<void>;
+				applyFolderChange: (c: { id: string; device_id?: string | null }) => Promise<void>;
 			};
 			const real = engine.applyFolderChange.bind(a.engine);
 			engine.applyFolderChange = async (c) => {
-				seen.push(c.id);
+				// The ack's own follow-up (no device_id) is not an inbound event.
+				if (c.device_id !== undefined) seen.push(c.id);
 				await real(c);
 			};
 			await a.renameFolder("Proj", "Done", "folder-first");
 			await t.scheduler.drain();
 			expect(t.server.count("folder_op")).toBeGreaterThan(0);
 			expect(seen).toEqual([]);
+		} finally {
+			cleanup(t);
+		}
+	});
+
+	test("cascading server: the peer absorbs the per-note events after the one folder event", async () => {
+		const t = await seeded(2535, { folderOps: true, cascadeBroadcasts: true });
+		try {
+			const [a, b] = t.replicas;
+			const renames = b.renamed().length;
+			const writes = b.writeJournal().length;
+			await a.renameFolder("Proj", "Done", "folder-first");
+			await t.scheduler.drain();
+			// One folder rename on B's disk: no per-file move, no rewrite, no trash.
+			expect(b.renamed().slice(renames)).toEqual(["Proj -> Done"]);
+			expect(b.writeJournal().length - writes).toBe(0);
+			expect(b.trashed()).toEqual([]);
+			expect(read(b, "Done/a.md")).toBe(NOTES["Proj/a.md"]);
 		} finally {
 			cleanup(t);
 		}
