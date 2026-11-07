@@ -210,3 +210,143 @@ describe("a folder_op is only sent when the target parent has a server id", () =
 		expect(s.ids.get("Proj/a.md")).toBe("id-a");
 	});
 });
+
+describe("the manifest delete pass spares unconfirmed local moves (N3)", () => {
+	function trashRun(s: ReturnType<typeof setup>) {
+		const trashed: string[] = [];
+		(s.e as any).app.fileManager = {
+			trashFile: async (f: TFile) => {
+				trashed.push(f.path);
+			},
+		};
+		(s.e as any).app.vault.getFiles = () => [s.note];
+		// The server still lists the note at its OLD path.
+		const manifest = {
+			notes: [{ id: "id-a", path: "Proj/a.md", content_hash: "x" }],
+			attachments: [],
+			total_notes: 1,
+			total_attachments: 0,
+		};
+		return { trashed, run: () => (s.e as any).reconcileFromManifest(manifest) };
+	}
+
+	test("flag off: a note whose own rename is unconfirmed is not trashed", async () => {
+		const s = setup();
+		s.e.setCrdtPorts({ create: () => new Promise(() => {}) });
+		void s.e.handleRename(s.note, "Proj/a.md");
+		await new Promise((r) => setTimeout(r, 0));
+		const { trashed, run } = trashRun(s);
+		await run();
+		expect(trashed).toEqual([]);
+	});
+
+	test("folder op pending: files under its target are not trashed", async () => {
+		const s = setup();
+		s.e.setCrdtPorts({ create: s.crdtCreate, folderOp: async () => ({ kind: "retry" }) });
+		await s.e.setFolderOpsEnabled(true);
+		await s.e.handleRename(s.folder, "Proj");
+		(s.e as any).pendingLocalMoves.clear(); // the folder op alone must cover it
+		const { trashed, run } = trashRun(s);
+		await run();
+		expect(trashed).toEqual([]);
+	});
+});
+
+describe("inbound folder move that cannot happen leaves the index where the disk is (L1)", () => {
+	function inbound(renameThrows: boolean, occupied: boolean) {
+		const s = setup();
+		const app = (s.e as any).app;
+		const proj = new TFolder("Proj", []);
+		const realGet = app.vault.getAbstractFileByPath;
+		app.vault.getAbstractFileByPath = (p: string) =>
+			p === "Proj" ? proj : p === "Moved" && occupied ? new TFolder("Moved", []) : realGet(p);
+		app.vault.getFileByPath = () => null;
+		app.vault.rename = async () => {
+			if (renameThrows) throw new Error("EBUSY");
+		};
+		app.vault.createFolder = async () => {};
+		return s;
+	}
+	const change = { id: "f1", parent_id: null, name: "Moved", seq: 9, device_id: "web" };
+
+	test("rename throws: index and bookkeeping restored", async () => {
+		const s = inbound(true, false);
+		await s.e.setFolderOpsEnabled(true);
+		await s.e.onFolderChanged(change);
+		expect(s.e.folderOps.index.pathFor("f1")).toBe("Proj");
+		expect(s.ids.get("Proj/a.md")).toBe("id-a");
+		expect(s.ids.get("Moved/a.md")).toBeNull();
+	});
+
+	test("target occupied: nothing moves, index stays", async () => {
+		const s = inbound(false, true);
+		await s.e.setFolderOpsEnabled(true);
+		await s.e.onFolderChanged(change);
+		expect(s.e.folderOps.index.pathFor("f1")).toBe("Proj");
+		expect(s.ids.get("Proj/a.md")).toBe("id-a");
+	});
+
+	test("control: a clean move moves the index", async () => {
+		const s = inbound(false, false);
+		await s.e.setFolderOpsEnabled(true);
+		await s.e.onFolderChanged(change);
+		expect(s.e.folderOps.index.pathFor("f1")).toBe("Moved");
+		expect(s.ids.get("Moved/a.md")).toBe("id-a");
+	});
+});
+
+describe("flag off is main (N4)", () => {
+	test("a persisted folder index alone does not switch the echo rule on", async () => {
+		const s = setup();
+		// A row known at the new path, nothing at the old one: the echo rule's
+		// shape. With the flag off and no manifest folders this session, the
+		// per-file path must still run (it reads the file).
+		(s.e as any).syncState.delete("Proj/a.md");
+		(s.e as any).syncState.set("Done/a.md", { hash: 1 });
+		s.ids.rename("Proj/a.md", "Done/a.md");
+		s.e.restoreFolderIndex({
+			vaultId: "v1",
+			rows: [{ id: "f1", parent_id: null, name: "Done" }],
+		});
+		await s.e.handleRename(s.note, "Proj/a.md");
+		await new Promise((r) => setTimeout(r, 5));
+		expect(s.cachedRead).toHaveBeenCalled();
+	});
+});
+
+describe("the server's folder chain teaches every id (N5)", () => {
+	test("POST /folders returning a root-first chain: a move into it goes by id", async () => {
+		const s = setup();
+		const sent: { parent_id: string | null }[] = [];
+		s.e.setCrdtPorts({
+			create: s.crdtCreate,
+			folderOp: async (op) => {
+				sent.push(op);
+				return { kind: "ok", seq: 1 };
+			},
+		});
+		(s.e as any).explicitFolders = { has: () => false, add: async () => {} };
+		(s.e as any).api.createFolder = async () => ({
+			folder: { name: "Archive/2026", count: 0 },
+			folders: [
+				{ id: "fa", parent_id: null, name: "Archive" },
+				{ id: "f26", parent_id: "fa", name: "2026" },
+			],
+		});
+		await s.e.setFolderOpsEnabled(true);
+		await s.e.handleFolderCreate({ path: "Archive/2026" });
+		expect(s.e.folderOps.index.idFor("Archive/2026")).toBe("f26");
+		await s.e.handleRename(new TFolder("Archive/2026/Proj", []), "Proj");
+		expect(sent.map((o) => o.parent_id)).toEqual(["f26"]);
+	});
+
+	test("a crdt_create reply chain is learned; without one, nothing changes", () => {
+		const s = setup();
+		s.e.learnFolderChain([
+			{ id: "fx", parent_id: null, name: "X" },
+			{ id: "fy", parent_id: "fx", name: "Y" },
+		]);
+		s.e.learnFolderChain(undefined);
+		expect(s.e.folderOps.index.idFor("X/Y")).toBe("fy");
+	});
+});

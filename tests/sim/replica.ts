@@ -546,6 +546,7 @@ export class Replica {
 		channel.folderRefFor = (p, nid) => engine.folderRefFor(p, nid);
 		channel.onIndexV1 = (on) => engine.setIndexV1(on);
 		channel.onCreateFolderId = (p, fid) => engine.learnFolderOf(p, fid);
+		channel.onCreateFolders = (rows) => engine.learnFolderChain(rows);
 		channel.onFolderNotFound = (fid) => engine.forgetFolder(fid);
 		channel.onFolderChanged = (c) => void engine.onFolderChanged(c);
 

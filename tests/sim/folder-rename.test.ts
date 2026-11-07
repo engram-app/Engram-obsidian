@@ -268,4 +268,23 @@ describe("Engram#2523 S4: a folder rename is one folder op", () => {
 			cleanup(t);
 		}
 	});
+
+	test("a manifest read while our op is pending holds nothing (it is not another writer)", async () => {
+		const t = await seeded(2536, { folderOps: true });
+		try {
+			const [a] = t.replicas;
+			(a.engine as any).setCrdtPorts({ folderOp: async () => ({ kind: "retry" }) });
+			await a.renameFolder("Proj", "Done", "folder-first");
+			await t.scheduler.drain();
+			const r = (a.engine as any).reconcileNoteIdMapFromManifest();
+			await t.scheduler.drain();
+			await r;
+			const fo = (a.engine as any).folderOps;
+			expect(fo.held.size).toBe(0);
+			expect(fo.all()).toHaveLength(1);
+			expect(onDisk(a, "Done/a.md")).toBe(true);
+		} finally {
+			cleanup(t);
+		}
+	});
 });

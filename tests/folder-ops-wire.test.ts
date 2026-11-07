@@ -262,4 +262,19 @@ describe("crdt_create reply folder_id", () => {
 		expect(seen).toEqual([["Proj/n.md", "f7"]]);
 		channel.disconnect();
 	});
+
+	test("a reply's `folders` chain is handed on", async () => {
+		const { channel, ws } = await joined();
+		const seen: unknown[] = [];
+		channel.onCreateFolders = (rows) => seen.push(rows);
+		const chain = [
+			{ id: "fa", parent_id: null, name: "A" },
+			{ id: "fb", parent_id: "fa", name: "B" },
+		];
+		const p = channel.crdtCreate("id-1", "A/B/n.md");
+		reply(ws, frames(ws, "crdt_create")[0][1], "ok", { doc_id: "id-1", folders: chain });
+		await p;
+		expect(seen).toEqual([chain]);
+		channel.disconnect();
+	});
 });

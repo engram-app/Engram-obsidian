@@ -226,6 +226,8 @@ type CrdtCreateReply = {
 	genesis?: string;
 	/** The note's server folder (Engram#2523 S4); null = root. */
 	folder_id?: string | null;
+	/** The folder's whole ancestor chain, root-first (switch-gated). */
+	folders?: { id: string; parent_id: string | null; name: string }[];
 };
 
 /** Where a note create places the note by id (Engram#2523 S4). */
@@ -368,6 +370,10 @@ export class NoteChannel {
 	folderRefFor: ((path: string, noteId: string) => FolderRef | null) | null = null;
 	/** A `crdt_create` reply named the server folder of the note's path. */
 	onCreateFolderId: ((path: string, folderId: string | null) => void) | null = null;
+	/** A `crdt_create` reply carried the folder chain (`folders`, root-first). */
+	onCreateFolders:
+		| ((rows: { id: string; parent_id: string | null; name: string }[]) => void)
+		| null = null;
 	/** The sync join reply's `index_v1` (S5 stamps it per vault). */
 	onIndexV1: ((on: boolean) => void) | null = null;
 	/** The server refused a create's `folder_id` (`folder_not_found`). */
@@ -678,6 +684,7 @@ export class NoteChannel {
 		if (res.folder_id === null || typeof res.folder_id === "string") {
 			this.onCreateFolderId?.(path, res.folder_id);
 		}
+		if (Array.isArray(res.folders)) this.onCreateFolders?.(res.folders);
 		return createResult(res);
 	}
 
