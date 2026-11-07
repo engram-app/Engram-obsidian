@@ -336,3 +336,46 @@ describe("the pending-op budget (round 3: MAX_ATTEMPTS / OP_TTL_MS, shared with 
 		expect(h.ops.hasPending("fa")).toBe(false);
 	});
 });
+
+describe("not_found is retried inside the budget (Engram#2533: a move racing a move)", () => {
+	test("one not_found does not fall back; a retry that lands acks", async () => {
+		const h = harness([
+			{ kind: "refused", reason: "not_found" },
+			{ kind: "ok", seq: 12 },
+		]);
+		h.ops.setFeature(true);
+		h.ops.move("fa", "fb", "A", "A", "B/A");
+		await h.ops.flush();
+		expect(h.fallbacks).toEqual([]);
+		expect(h.ops.hasPending("fa")).toBe(true);
+		h.advance(1_000);
+		await h.ops.tick();
+		expect(h.acked).toEqual(["fa"]);
+		expect(h.fallbacks).toEqual([]);
+	});
+
+	test("not_found every time ends in the fallback after MAX_ATTEMPTS, named by the refusal", async () => {
+		const results: FolderOpResult[] = Array.from({ length: MAX_ATTEMPTS + 2 }, () => ({
+			kind: "refused",
+			reason: "not_found",
+		}));
+		const h = harness(results);
+		h.ops.setFeature(true);
+		h.ops.move("fa", "fb", "A", "A", "B/A");
+		for (let i = 0; i < MAX_ATTEMPTS + 2; i++) {
+			h.advance(31_000); // past the max backoff, inside the age cap
+
+			await h.ops.tick();
+		}
+		expect(h.sent).toHaveLength(MAX_ATTEMPTS);
+		expect(h.fallbacks).toEqual([["fa", "not_found"]]);
+	});
+
+	test("conflict still falls back at once", async () => {
+		const h = harness([{ kind: "refused", reason: "conflict" }]);
+		h.ops.setFeature(true);
+		h.ops.move("fa", "fb", "A", "A", "B/A");
+		await h.ops.flush();
+		expect(h.fallbacks).toEqual([["fa", "conflict"]]);
+	});
+});

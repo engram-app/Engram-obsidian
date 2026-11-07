@@ -104,7 +104,7 @@ describe("NoteChannel folder ops", () => {
 			parent_id: "f2",
 			name: "Done",
 		});
-		reply(ws, frame[1], "ok", { seq: 42 });
+		reply(ws, frame[1], "ok", { folder_id: "f1", seq: 42 });
 		await expect(p).resolves.toEqual({ kind: "ok", seq: 42 });
 		channel.disconnect();
 	});
