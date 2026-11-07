@@ -72,7 +72,13 @@ import type { SimClock } from "./clock";
 import type { ModelServer } from "./model-server";
 import { setRequestUrlHandler, requestUrl as shimRequestUrl } from "./obsidian-shim";
 import type { Scheduler } from "./scheduler";
-import { makeVault, type SimApp, type VaultEvents, type WriteJournalEntry } from "./vault-fs";
+import {
+	type FolderRenameOrder,
+	makeVault,
+	type SimApp,
+	type VaultEvents,
+	type WriteJournalEntry,
+} from "./vault-fs";
 
 let requestUrlRedirected = false;
 
@@ -778,6 +784,11 @@ export class Replica {
 		const file = this.app.vault.getFileByPath(oldPath);
 		if (!file) throw new Error(`renameNote: no file at ${oldPath}`);
 		await this.app.vault.rename(file, newPath);
+	}
+
+	/** Rename a folder; Obsidian's per-item events fire in `order`. */
+	async renameFolder(oldPath: string, newPath: string, order: FolderRenameOrder): Promise<void> {
+		await this.app.renameFolder(oldPath, newPath, order);
 	}
 
 	async deleteNote(path: string): Promise<void> {

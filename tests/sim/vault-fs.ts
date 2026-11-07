@@ -44,7 +44,17 @@ export interface WriteJournalEntry {
 	newLen: number;
 }
 
+/** The order Obsidian's per-item `rename` events arrive in for ONE folder
+ *  rename (design risk R4 on Engram#2523: not verified on mobile).
+ *  - `folder-first`: the folder, then each descendant, one tick.
+ *  - `children-first`: each descendant, then the folder, one tick.
+ *  - `split`: the folder and the first descendant now, the rest on a later
+ *    tick (a timer), so a same-tick batch cannot see them. */
+export type FolderRenameOrder = "folder-first" | "children-first" | "split";
+
 export interface SimApp {
+	/** Move a folder on disk, then fire the per-item rename events in `order`. */
+	renameFolder(oldPath: string, newPath: string, order: FolderRenameOrder): Promise<void>;
 	vault: {
 		configDir: string;
 		getFileByPath(path: string): TFile | null;
@@ -282,5 +292,40 @@ export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
 		},
 	};
 
-	return { vault, fileManager, workspace, writeJournal };
+	/** Every descendant (files and folders) under `rel`, depth-first. */
+	function descendants(rel: string): string[] {
+		const out: string[] = [];
+		for (const entry of fs.readdirSync(abs(rel), { withFileTypes: true })) {
+			const childRel = `${rel}/${entry.name}`;
+			out.push(childRel);
+			if (entry.isDirectory()) out.push(...descendants(childRel));
+		}
+		return out;
+	}
+
+	async function renameFolder(
+		oldPath: string,
+		newPath: string,
+		order: FolderRenameOrder,
+	): Promise<void> {
+		ensureParentDir(newPath);
+		fs.renameSync(abs(oldPath), abs(newPath));
+		rebuildIndex();
+		const folder: [string, string] = [oldPath, newPath];
+		const children = descendants(newPath).map((p): [string, string] => [
+			`${oldPath}${p.slice(newPath.length)}`,
+			p,
+		]);
+		const fire = ([from, to]: [string, string]) => events.onRename?.(from, to);
+		if (order === "folder-first") [folder, ...children].forEach(fire);
+		else if (order === "children-first") [...children, folder].forEach(fire);
+		else {
+			const [first, ...rest] = children;
+			fire(folder);
+			if (first) fire(first);
+			setTimeout(() => rest.forEach(fire), 50);
+		}
+	}
+
+	return { renameFolder, vault, fileManager, workspace, writeJournal };
 }
