@@ -4533,6 +4533,21 @@ export class SyncEngine {
 		return (await this.flushedProjection(crdt, noteId, file)).onDisk;
 	}
 
+	/** Write `text` (the doc after a create-time merge) to disk and return the
+	 *  baseline to stamp: what that write left there, which keeps disk's
+	 *  frontmatter bytes when they mean the same (`flushTarget`), never `text`
+	 *  itself. Unreadable afterwards: `text`. */
+	private async writeAndBaseline(normalized: string, file: TFile, text: string): Promise<string> {
+		await this.flushFromCrdt(normalized, text);
+		let after: string | null = null;
+		try {
+			after = await this.app.vault.cachedRead(file);
+		} catch {
+			// unreadable: fall back to the text written
+		}
+		return flushTarget(text, after).onDisk;
+	}
+
 	/** `flushTarget` for `noteId`'s doc against its file now: after an apply
 	 *  has flushed, `onDisk` is what that flush left there. A baseline stamped
 	 *  after an apply must be `onDisk`, never the bare projection: on a note
@@ -5052,18 +5067,8 @@ export class SyncEngine {
 						flushed.projection, // what the doc holds: the merge's expected text
 						preApplyDisk,
 					);
-					if (merged !== null) {
-						await this.flushFromCrdt(normalized, merged);
-						// The baseline is what that write left on disk (it keeps disk's
-						// frontmatter bytes when they mean the same), not `merged`.
-						let after: string | null = null;
-						try {
-							after = await this.app.vault.cachedRead(file);
-						} catch {
-							// unreadable: fall back to the merged text
-						}
-						consumed = flushTarget(merged, after).onDisk;
-					}
+					if (merged !== null)
+						consumed = await this.writeAndBaseline(normalized, file, merged);
 				}
 				return consumed;
 			}
@@ -5180,6 +5185,9 @@ export class SyncEngine {
 				// Disk moved off what we sent: three-way from it, so an edit another
 				// writer landed on the server in the same window survives next to
 				// ours (a two-way diff reads it as something disk deleted).
+				// Either way the doc moved off disk (the merge, or the server's text
+				// after a refused merge kept disk in a copy), and nothing else writes
+				// it here: write it, and stamp what that write left on disk.
 				if (base !== null) {
 					const merged = await this.mergeOwnCreateDrift(
 						effectiveId,
@@ -5188,7 +5196,7 @@ export class SyncEngine {
 						server,
 						disk,
 					);
-					return merged ?? server;
+					return await this.writeAndBaseline(normalized, file, merged ?? server);
 				}
 			}
 		}

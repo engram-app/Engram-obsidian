@@ -1,104 +1,136 @@
 /**
  * First sync of notes whose frontmatter the codec re-serialises must not
- * drift-copy them (Engram#1928 class), now that a flush keeps disk's own
- * frontmatter bytes when they mean the same (PR 683, `keepDiskFrontmatter`).
- *
- * The genesis apply flushes the doc's projection; with equal meaning the
- * flush writes NOTHING and disk keeps the raw bytes. The create-ack baseline
- * must then be those raw bytes, not the projection: a baseline no file holds
- * makes the next catch-up read the note as locally edited (backend e2e
- * test_101: 7 conflict copies). Real SyncEngine + createCrdtWiring +
- * ProviderRegistry; the shapes are the backend fixture's DRIFTING_SHAPES.
+ * drift-copy them (Engram#1928 class, backend e2e test_101), now that a flush
+ * keeps disk's own frontmatter bytes when they mean the same (PR 683). Every
+ * create-ack path must stamp what disk HOLDS as the baseline, never the bare
+ * projection: a baseline no file holds makes the next catch-up read the note
+ * as locally edited and drift-copy it.
  */
-import { expect, mock, test } from "bun:test";
-import "fake-indexeddb/auto";
-import { TFile } from "obsidian";
-import type { EngramApi } from "../src/api";
-import { NoteIdMap } from "../src/crdt/note-id-map";
-import type { ProviderRegistry } from "../src/crdt/provider-registry";
-import { createCrdtWiring } from "../src/crdt/wiring";
-import { SyncEngine } from "../src/sync";
-import { DEFAULT_SETTINGS } from "../src/types";
+import { expect, test } from "bun:test";
+import * as Y from "yjs";
+import { CONTENT_KEY } from "../src/crdt/frontmatter-codec";
+import { FM_SHAPES, fmDevice } from "./helpers/first-sync-fm";
 
-// e2e/helpers/frontmatter_first_sync.py DRIFTING_SHAPES (backend repo).
-const SHAPES: Record<string, string> = {
-	"wikilink-and-empty": '---\nup: "[[Home]]"\nstatus:\n---\n',
-	"hashtag-and-flow-list": '---\ntag: "#project"\ntags: [a, b]\n---\n',
-	"wikilink-and-quoted-title": '---\nup: "[[Home]]"\ntitle: "Hello"\n---\n',
-	"colon-and-comment": '---\ntitle: "Meeting: kickoff" # agenda below\n---\n',
-	"aliases-flow-wikilinks": '---\naliases: ["[[Alpha]]", "[[Beta]]"]\n---\n',
-	"tilde-null": "---\nstatus: ~\n---\n",
-	"yes-string": '---\nanswer: "yes"\n---\n',
-	"obsidian-cssclasses": "---\ncssclasses: \n---\n",
-};
+/** A peer's edit of `from` -> `to`, applied to the device's doc as a remote update. */
+async function remoteEdit(d: ReturnType<typeof fmDevice>, from: string, to: string) {
+	const peer = new Y.Doc();
+	Y.applyUpdate(peer, Y.encodeStateAsUpdate(await d.reg.getDoc(d.ID)));
+	const sv = Y.encodeStateVector(peer);
+	const t = peer.getText(CONTENT_KEY);
+	const at = t.toJSON().indexOf(from);
+	peer.transact(() => {
+		t.delete(at, from.length);
+		t.insert(at, to);
+	});
+	await d.reg.applyRemoteUpdate(d.ID, Y.encodeStateAsUpdate(peer, sv));
+}
 
-let seq = 0;
-for (const [name, fm] of Object.entries(SHAPES)) {
-	test(`first sync of "${name}" frontmatter: create-ack baseline is what disk holds`, async () => {
-		const PATH = `FmFirstSync/${name}.md`;
-		const ID = `fm-first-sync-${++seq}`;
-		const raw = `${fm}body of ${name}\n`;
-		const disk = new Map<string, string>([[PATH, raw]]);
-		const file = new TFile(PATH);
-		const app = {
-			vault: {
-				configDir: ".obsidian",
-				getAbstractFileByPath: mock((p: string) => (disk.has(p) ? file : null)),
-				getFileByPath: mock((p: string) => (disk.has(p) ? file : null)),
-				cachedRead: mock(async (f: TFile) => disk.get(f.path) ?? ""),
-				read: mock(async (f: TFile) => disk.get(f.path) ?? ""),
-				modify: mock(async (f: TFile, text: string) => void disk.set(f.path, text)),
-				getMarkdownFiles: mock(() => [file]),
-				getFiles: mock(() => [file]),
-				getName: mock().mockReturnValue("Test Vault"),
-			},
-			fileManager: { trashFile: mock().mockResolvedValue(undefined) },
-			workspace: { getActiveViewOfType: mock().mockReturnValue(null) },
-		} as any;
-		const map = new NoteIdMap();
-		map.set(PATH, ID);
-		const engine = new SyncEngine(
-			app,
-			{} as unknown as EngramApi,
-			{ ...DEFAULT_SETTINGS, debounceMs: 5 },
-			mock().mockResolvedValue(undefined),
-		) as any;
-		const wiring = createCrdtWiring({
-			ackScope: () => "s",
-			noteIdMap: map,
-			syncEngine: engine,
-			canSendLive: () => true,
-			isBound: () => false,
-			onBoundUpdate: () => {},
-			sendCrdt: () => true,
-		} as any);
-		const reg = wiring.manager as ProviderRegistry;
-		engine.setCrdtManager(reg);
-		engine.setNoteIdMap(map);
-		engine.setLiveBoundCheck(() => false);
-		engine.setCrdtLiveCheck(() => true);
-		engine.setReady();
+for (const [name, fm] of Object.entries(FM_SHAPES)) {
+	const raw = `${fm}body of ${name}\nsecond line\n`;
+
+	test(`stored genesis of "${name}": baseline is what disk holds`, async () => {
+		const d = fmDevice(name, raw);
 		try {
-			const consumed = await engine.seedBodyAfterCreate({
-				effectiveId: ID,
-				normalized: PATH,
-				file,
+			const consumed = await d.engine.seedBodyAfterCreate({
+				effectiveId: d.ID,
+				normalized: d.PATH,
+				file: d.file,
 				seeded: true,
 				sameId: true,
 				genesisOutcome: "stored",
-				genesisUpdate: reg.encodeGenesisUpdate(raw),
+				genesisUpdate: d.reg.encodeGenesisUpdate(raw),
 				genesisContent: raw,
 			});
-			await engine.adoptCreateAck(ID, PATH, consumed, { flushHeld: false });
-
-			const now = disk.get(PATH) as string;
+			await d.engine.adoptCreateAck(d.ID, d.PATH, consumed, { flushHeld: false });
+			const { now, synced } = d.diskSynced();
 			expect(now).toBe(raw); // equal by meaning: the user's bytes are kept
-			// Disk untouched since the apply must read as synced, or catch-up
-			// drift-copies the note.
-			expect(engine.isUnchangedSynced(PATH, now)).toBe(true);
-			expect(engine.needsColdReconcile(PATH, now)).toBe(false);
+			expect(synced).toBe(true);
 		} finally {
-			await reg.destroyAll();
+			await d.reg.destroyAll();
+		}
+	});
+
+	test(`stored genesis of "${name}" with an edit during the create: merges, baseline is disk`, async () => {
+		const edited = `${raw}edited during the create\n`;
+		const d = fmDevice(name, edited);
+		try {
+			const consumed = await d.engine.seedBodyAfterCreate({
+				effectiveId: d.ID,
+				normalized: d.PATH,
+				file: d.file,
+				seeded: true,
+				sameId: true,
+				genesisOutcome: "stored",
+				genesisUpdate: d.reg.encodeGenesisUpdate(raw),
+				genesisContent: raw,
+			});
+			await d.engine.adoptCreateAck(d.ID, d.PATH, consumed, { flushHeld: false });
+			expect(d.copies).toEqual([]); // no conflict copy
+			expect(await d.reg.projectedText(d.ID)).toContain("edited during the create");
+			const { now, synced } = d.diskSynced();
+			expect(now).toContain("edited during the create");
+			expect(consumed).toBe(now); // the merge's write is the baseline
+			expect(synced).toBe(true);
+		} finally {
+			await d.reg.destroyAll();
+		}
+	});
+
+	// The occupied re-sent create under our own id: this device already holds
+	// the lineage (an earlier create of it that landed).
+	const occupied = (d: ReturnType<typeof fmDevice>) =>
+		d.engine.seedBodyAfterCreate({
+			effectiveId: d.ID,
+			normalized: d.PATH,
+			file: d.file,
+			seeded: false,
+			sameId: true,
+			genesisOutcome: "occupied",
+			genesisUpdate: undefined,
+			genesisContent: undefined,
+		});
+
+	test(`occupied own-base create of "${name}" with a disk edit: merges, baseline is disk`, async () => {
+		const d = fmDevice(name, raw);
+		try {
+			await d.reg.applyRemoteUpdate(d.ID, d.reg.encodeGenesisUpdate(raw));
+			await remoteEdit(d, "second line", "second line, server edit"); // flushed to disk
+			d.engine.ownGenesis.set(d.ID, raw);
+			d.engine.readServerDocState = async () => null;
+			d.disk.set(d.PATH, `${raw}local edit\n`); // disk moved off what we sent
+			const consumed = await occupied(d);
+			await d.engine.adoptCreateAck(d.ID, d.PATH, consumed, { flushHeld: false });
+			const doc = await d.reg.projectedText(d.ID);
+			expect(doc).toContain("server edit");
+			expect(doc).toContain("local edit");
+			const { now, synced } = d.diskSynced();
+			expect(now).toContain("server edit"); // disk got the merge
+			expect(now).toContain("local edit");
+			expect(now.startsWith(fm)).toBe(true); // and kept the user's YAML
+			expect(synced).toBe(true);
+		} finally {
+			await d.reg.destroyAll();
+		}
+	});
+
+	test(`occupied own-base create of "${name}" with an overlapping disk edit: copy, baseline is disk`, async () => {
+		const d = fmDevice(name, raw);
+		try {
+			await d.reg.applyRemoteUpdate(d.ID, d.reg.encodeGenesisUpdate(raw));
+			await remoteEdit(d, "second line", "server version");
+			d.engine.ownGenesis.set(d.ID, raw);
+			d.engine.readServerDocState = async () => null;
+			const local = raw.replace("second line", "local version");
+			d.disk.set(d.PATH, local); // the same line: the merge is refused
+			const consumed = await occupied(d);
+			await d.engine.adoptCreateAck(d.ID, d.PATH, consumed, { flushHeld: false });
+			expect(d.copies).toEqual([local]); // disk's edit kept as a copy
+			const { now, synced } = d.diskSynced();
+			expect(now).toContain("server version"); // disk converged to the doc
+			expect(now.startsWith(fm)).toBe(true);
+			expect(synced).toBe(true);
+		} finally {
+			await d.reg.destroyAll();
 		}
 	});
 }
