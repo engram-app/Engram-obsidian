@@ -133,6 +133,10 @@ function makeFakeThis(catchup: () => Promise<void>, pull: () => Promise<number>,
 			setCrdtPorts: () => {},
 			// The crdt join settles which rooms survive before reconnecting (#658).
 			reopenRoomsOnRejoin: () => {},
+			// Engram#2523 S4: the crdt join re-sends unanswered folder ops, and the
+			// join reply's features switch them on.
+			folderOps: { onReconnect: () => Promise.resolve() },
+			setFolderOpsEnabled: () => Promise.resolve(),
 		},
 		updateStatusBar: () => {},
 	});

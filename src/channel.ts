@@ -1,6 +1,8 @@
 import type { AuthProvider } from "./auth";
 import { expBackoff } from "./backoff";
+import { crdtOpFailureReason } from "./crdt-op-dispatch";
 import { errMsg } from "./error-util";
+import type { FolderChange, FolderOp, FolderOpResult } from "./folder-ops";
 import { noteRef } from "./note-ref";
 import { pluginVersion } from "./plugin-version";
 import { rlog } from "./remote-log";
@@ -220,6 +222,19 @@ export type GenesisOutcome = "stored" | "absent" | "occupied" | null;
  *  same "no inline `;`" reasoning as CrdtCreateResult above. */
 type CrdtCreateReply = { doc_id: string; seeded?: boolean; genesis?: string };
 
+/** Where a note create places the note by id (Engram#2523 S4). */
+type FolderRef = { folder_id: string | null; name: string };
+
+function createResult(res: CrdtCreateReply): CrdtCreateResult {
+	const outcome = res.genesis;
+	return {
+		docId: res.doc_id,
+		seeded: res.seeded === true,
+		genesisOutcome:
+			outcome === "stored" || outcome === "absent" || outcome === "occupied" ? outcome : null,
+	};
+}
+
 export class NoteChannel {
 	private ws: WebSocket | null = null;
 	private ref = 0;
@@ -336,8 +351,19 @@ export class NoteChannel {
 				rawAttachmentUpload: boolean;
 				rawAttachmentDownload: boolean;
 				attachmentBatchDeleteOrigin: boolean;
+				/** Engram#2523 S4: the server takes `folder_op`. */
+				folderOps: boolean;
 		  }) => void)
 		| null = null;
+	/** Engram#2523 S4: a folder row changed on the server (`folder_changed`). */
+	onFolderChanged: ((change: FolderChange) => void) | null = null;
+	/** `{ folder_id, name }` to send with a note create or move, or null for
+	 *  path-only. Async: it may first send the folder's own pending create. */
+	folderRefFor:
+		| ((path: string) => Promise<{ folder_id: string | null; name: string } | null>)
+		| null = null;
+	/** The server refused a create's `folder_id` (`folder_not_found`). */
+	onFolderNotFound: ((folderId: string) => void) | null = null;
 	/** Inbound CRDT frames from the server. `docId` is the note's bare note_id. */
 	onCrdtMessage: ((docId: string, b64: string) => void) | null = null;
 
@@ -608,6 +634,26 @@ export class NoteChannel {
 	 *  decision about whether to transmit a body (#476). No outcome ever means
 	 *  "retry the create". */
 	async crdtCreate(docId: string, path: string, b64?: string): Promise<CrdtCreateResult> {
+		// Engram#2523 S4: with folder ops on, the note is placed by folder id too.
+		// The path is still sent, so a server that ignores the id places it the
+		// same way, and `folder_not_found` is retried by path (the server then
+		// recreates the folder from the path, as for any path-only create).
+		const ref = this.folderRefFor ? await this.folderRefFor(path) : null;
+		try {
+			return await this.sendCrdtCreate(docId, path, b64, ref);
+		} catch (e) {
+			if (!ref?.folder_id || crdtOpFailureReason(e) !== "folder_not_found") throw e;
+			this.onFolderNotFound?.(ref.folder_id);
+			return this.sendCrdtCreate(docId, path, b64, null);
+		}
+	}
+
+	private async sendCrdtCreate(
+		docId: string,
+		path: string,
+		b64: string | undefined,
+		ref: FolderRef | null,
+	): Promise<CrdtCreateResult> {
 		// This literal is a THIRD legitimate wire-send the source-compliance
 		// privacy guard (tests/source-compliance.test.ts) allowlists by exact
 		// statement, beside `wireStatement`/`indexWireStatement`. It is written
@@ -618,17 +664,31 @@ export class NoteChannel {
 		const res = (await this.sendRequest("crdt_create", {
 			doc_id: docId,
 			path,
+			...(ref ?? {}),
 			...(b64 === undefined ? {} : { b64 }),
 		})) as CrdtCreateReply;
-		const outcome = res.genesis;
-		return {
-			docId: res.doc_id,
-			seeded: res.seeded === true,
-			genesisOutcome:
-				outcome === "stored" || outcome === "absent" || outcome === "occupied"
-					? outcome
-					: null,
-		};
+		return createResult(res);
+	}
+
+	/** Send one `folder_op` and map the reply: an ack, a refusal (`conflict`,
+	 *  `cycle`, `not_found`, or anything else terminal), `unknown_event` (an
+	 *  older server), or no answer (timeout, socket down, rate limited). */
+	async folderOp(op: FolderOp): Promise<FolderOpResult> {
+		try {
+			const res = (await this.sendRequest("folder_op", {
+				op: op.op,
+				op_id: op.op_id,
+				folder_id: op.folder_id,
+				parent_id: op.parent_id,
+				name: op.name,
+			})) as { seq?: unknown } | null;
+			return { kind: "ok", seq: Number.isInteger(res?.seq) ? (res?.seq as number) : null };
+		} catch (e) {
+			const reason = crdtOpFailureReason(e);
+			if (reason === null || reason === "rate_limited") return { kind: "retry" };
+			if (reason === "unknown_event") return { kind: "unknown_event" };
+			return { kind: "refused", reason };
+		}
 	}
 
 	/** Delete a note over the socket, AWAITING the server ack (idempotent). The
@@ -1296,6 +1356,7 @@ export class NoteChannel {
 									raw_attachment_upload?: unknown;
 									raw_attachment_download?: unknown;
 									attachment_batch_delete_origin?: unknown;
+									folder_ops?: unknown;
 								};
 							};
 						}
@@ -1305,6 +1366,7 @@ export class NoteChannel {
 						rawAttachmentDownload: response?.features?.raw_attachment_download === true,
 						attachmentBatchDeleteOrigin:
 							response?.features?.attachment_batch_delete_origin === true,
+						folderOps: response?.features?.folder_ops === true,
 					});
 					const plan = response?.plan;
 					if (plan !== undefined && plan !== null) {
@@ -1465,6 +1527,22 @@ export class NoteChannel {
 		if (event === "vault_deleted") {
 			rlog().info("channel", "Received vault_deleted event");
 			this.onVaultDeleted?.();
+			return;
+		}
+
+		if (event === "folder_changed" && payload) {
+			const id = payload.folder_id;
+			const name = payload.name;
+			if (typeof id === "string" && typeof name === "string") {
+				this.onFolderChanged?.({
+					id,
+					name,
+					parent_id: typeof payload.parent_id === "string" ? payload.parent_id : null,
+					seq: Number.isInteger(payload.seq) ? (payload.seq as number) : null,
+					deleted: payload.deleted === true,
+					device_id: typeof payload.device_id === "string" ? payload.device_id : null,
+				});
+			}
 			return;
 		}
 

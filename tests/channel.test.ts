@@ -248,6 +248,7 @@ describe("NoteChannel user topic + plan state", () => {
 				rawAttachmentUpload: true,
 				rawAttachmentDownload: true,
 				attachmentBatchDeleteOrigin: true,
+				folderOps: false,
 			},
 		]);
 		channel.disconnect();
@@ -275,6 +276,7 @@ describe("NoteChannel user topic + plan state", () => {
 				rawAttachmentUpload: false,
 				rawAttachmentDownload: false,
 				attachmentBatchDeleteOrigin: false,
+				folderOps: false,
 			},
 		]);
 		channel.disconnect();

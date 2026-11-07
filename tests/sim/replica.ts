@@ -539,6 +539,13 @@ export class Replica {
 		);
 		// Room-free full-state read (main.ts setCrdtPorts `docState`).
 		engine.setCrdtPorts({ docState: (id: string) => channel.crdtDocState(id) });
+		// Engram#2523 S4 folder ops (main.ts: setCrdtPorts `folderOp`,
+		// onServerFeatures, folderRefFor / onFolderNotFound / onFolderChanged).
+		engine.setCrdtPorts({ folderOp: (op) => channel.folderOp(op) });
+		channel.onServerFeatures = (f) => void engine.setFolderOpsEnabled(f.folderOps);
+		channel.folderRefFor = (p) => engine.folderRefFor(p);
+		channel.onFolderNotFound = (fid) => engine.forgetFolder(fid);
+		channel.onFolderChanged = (c) => void engine.onFolderChanged(c);
 
 		// Paths this replica has an editor open on (openNote adds, closeNote
 		// removes). Backs isBound + setLiveBoundCheck below, exactly as
@@ -611,6 +618,7 @@ export class Replica {
 			manager.setConnected(true);
 			void (async () => {
 				await crdtOpQueue.onJoined();
+				await engine.folderOps.onReconnect(); // main.ts onCrdtJoined
 				await onCrdtTopicJoined();
 			})();
 		};

@@ -34,6 +34,13 @@ import { ECHO_COOLDOWN_MS } from "./echo-window";
 import { errMsg, isAlreadyGone, isHttpStatus, statusOf } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
 import { isCanvasPath as canvasPath, isCrdtEligiblePath as crdtEligiblePath } from "./file-kind";
+import {
+	type FolderChange,
+	type FolderOp,
+	type FolderOpResult,
+	FolderOps,
+	type FolderRow,
+} from "./folder-ops";
 import { t } from "./i18n";
 import { userErrorMessage } from "./i18n/user-error";
 import { IgnoredFiles } from "./ignored-files";
@@ -532,6 +539,9 @@ export interface CrdtPorts {
 	/** #1409: tell the server this device is done with a note's room, so its
 	 *  `auto_exit` can fire now instead of after the 5-minute idle drain. */
 	release?: ((docId: string) => void) | null;
+	/** Send one `folder_op` (Engram#2523 S4) and map the reply. Null: no
+	 *  socket; folder ops wait in their queue. */
+	folderOp?: ((op: FolderOp) => Promise<FolderOpResult>) | null;
 }
 
 /** Thrown by `walkOpLog` when the op-log FETCH itself fails, so a caller can
@@ -969,6 +979,7 @@ export class SyncEngine {
 		if ("docUpdateDiffs" in ports)
 			this.crdtDocUpdateDiffs = ports.docUpdateDiffs ?? (() => false);
 		if ("release" in ports) this.crdtRelease = ports.release ?? null;
+		if ("folderOp" in ports) this.folderOpPort = ports.folderOp ?? null;
 	}
 
 	setCrdtManager(mgr: ProviderRegistry | null): void {
@@ -1302,6 +1313,7 @@ export class SyncEngine {
 	 *  trash and the orphan sweep below). Hiding an owner at an ignored path
 	 *  would read as "path absent", which is exactly what authorizes a trash. */
 	private cacheManifestOwners(manifest: ManifestResponse): void {
+		this.learnFolders(manifest.folders);
 		this.manifestOwners.owners = new Map(
 			manifest.notes.filter((n) => n.id).map((n) => [normalizePath(n.path), n.id as string]),
 		);
@@ -4170,6 +4182,9 @@ export class SyncEngine {
 		// 2026-07-07 cross-wire class (plugin #200). Ids re-learn via the manifest
 		// reconcile + push adoption. (`confirmedNoteIds` rides the sweep above.)
 		this.noteIdMap?.clear();
+		// Folder ids, pending folder ops and held inbound changes address the
+		// old vault.
+		this.folderOps.reset();
 		// Folder markers are vault-scoped too: a stale set after a switch lets
 		// handleFolderDelete push marker deletes against the NEW vault (post-
 		// merge review finding 8 — data-safe but cross-vault noise).
@@ -6129,8 +6144,249 @@ export class SyncEngine {
 		}
 	}
 
-	/** Handle a vault rename event. */
+	/** Handle a vault rename event.
+	 *
+	 *  With folder ops on (Engram#2523 S4), events are batched to the end of
+	 *  the tick: Obsidian fires one `rename` for a folder plus one per
+	 *  descendant, in one tick, and the order is not guaranteed (R4). The
+	 *  batch handles folder events first, so a folder's ONE `folder_op`
+	 *  re-keys every descendant before their own events run; those then hit
+	 *  the Relay echo rule in `handleRenameNow` and send nothing. */
 	async handleRename(file: TAbstractFile, oldPath: string): Promise<void> {
+		if (!this.folderOps.enabled()) return this.handleRenameNow(file, oldPath);
+		this.renameBatch.push({ file, oldPath });
+		this.renameBatchFlush ??= Promise.resolve().then(() => this.flushRenameBatch());
+		return this.renameBatchFlush;
+	}
+
+	/** Same-tick rename batch (a hiding layer cleared at the end of its tick by
+	 *  `flushRenameBatch`, never carried across ticks). */
+	private renameBatch: { file: TAbstractFile; oldPath: string }[] = [];
+	private renameBatchFlush: Promise<void> | null = null;
+
+	private async flushRenameBatch(): Promise<void> {
+		const batch = this.renameBatch;
+		this.renameBatch = [];
+		this.renameBatchFlush = null;
+		// Outermost folder first: a nested folder's event is a consequence of its
+		// ancestor's move, and is either an echo (the op moved it) or, when the
+		// ancestor fell back, must fall back too.
+		const depth = (p: string) => p.split("/").length;
+		const folders = batch
+			.flatMap((e) =>
+				e.file instanceof TFolder ? [{ folder: e.file, oldPath: e.oldPath }] : [],
+			)
+			.sort((a, b) => depth(a.oldPath) - depth(b.oldPath));
+		const perFile: string[] = [];
+		for (const e of folders) {
+			if (perFile.some((p) => e.oldPath.startsWith(`${p}/`))) continue;
+			if (!(await this.handleFolderRename(e.folder, e.oldPath))) {
+				perFile.push(normalizePath(e.oldPath));
+			}
+		}
+		for (const e of batch) {
+			if (!(e.file instanceof TFolder)) await this.handleRenameNow(e.file, e.oldPath);
+		}
+	}
+
+	/** One `folder_op` for a local folder rename or move. False = not sent: the
+	 *  descendants' own events take today's per-file path. */
+	private async handleFolderRename(folder: TFolder, oldPath: string): Promise<boolean> {
+		const from = normalizePath(oldPath);
+		const to = normalizePath(folder.path);
+		const index = this.folderOps.index;
+		const id = index.idFor(from);
+		// Relay echo rule, for the folder itself: the index already holds it at
+		// `to` (an inbound move this engine applied). A state check, no marker.
+		if (id === undefined && index.idFor(to) !== undefined) return true;
+		if (typeof id !== "string") return false; // no server id: per file
+		if (this.syncBlocked || this.gateHolds()) return false; // the journal replays per file
+		if (this.shouldIgnore(from) || this.shouldIgnore(to)) return false;
+		const moved = this.descendantMoves(folder, from, to);
+		// A child whose ignore status flips needs its own push or delete.
+		if (moved.some(([o, n]) => this.shouldIgnore(o) !== this.shouldIgnore(n))) return false;
+		const cut = to.lastIndexOf("/");
+		const parentId = this.folderOps.ensure(cut < 0 ? "" : to.slice(0, cut));
+		this.rekeyMoved(moved);
+		this.folderOps.move(id, parentId, cut < 0 ? to : to.slice(cut + 1), from);
+		rlog().info(
+			"push",
+			`Folder op queued: move ${noteRef(from)} -> ${noteRef(to)} | ${moved.length} files re-keyed locally`,
+		);
+		void this.folderOps.flush();
+		return true;
+	}
+
+	/** [oldPath, newPath] for every file under `folder` (which already lives at
+	 *  `to`). Obsidian may or may not have rewritten a child's path yet, so
+	 *  either prefix is accepted. */
+	private descendantMoves(folder: TFolder, from: string, to: string): [string, string][] {
+		const out: [string, string][] = [];
+		const walk = (f: TFolder) => {
+			for (const child of f.children) {
+				if (child instanceof TFolder) walk(child);
+				else if (child instanceof TFile) {
+					const p = normalizePath(child.path);
+					const rel = p.startsWith(`${to}/`)
+						? p.slice(to.length + 1)
+						: p.startsWith(`${from}/`)
+							? p.slice(from.length + 1)
+							: null;
+					if (rel !== null) out.push([`${from}/${rel}`, `${to}/${rel}`]);
+				}
+			}
+		};
+		walk(folder);
+		return out;
+	}
+
+	/** Move every listed path's LOCAL bookkeeping (id map, base, sync row,
+	 *  armed push), with nothing on the wire: the folder op moves the server
+	 *  rows. One id-map publication for the lot. */
+	private rekeyMoved(moved: [string, string][]): void {
+		const rearm: string[] = [];
+		const apply = () => {
+			for (const [from, to] of moved) {
+				const armed = this.debounceTimers.get(from);
+				if (armed) {
+					this.time.clearTimeout(armed);
+					this.debounceTimers.delete(from);
+					rearm.push(to);
+				}
+				if (!this.isBinaryPath(to)) {
+					this.noteIdMap?.rename(from, to);
+					this.baseStore?.rename(from, to);
+				}
+				this.renamePath(from, to, "remote");
+				// The rename fence: a row naming the old path is from before the move.
+				this.notePendingLocalMove(from, to);
+			}
+		};
+		if (this.noteIdMap) this.noteIdMap.batch(apply);
+		else apply();
+		for (const p of rearm) {
+			const f = this.app.vault.getAbstractFileByPath(p);
+			if (f) this.handleModify(f);
+		}
+	}
+
+	/** A refused (or unsendable) folder op, redone per file: put each child's
+	 *  bookkeeping back where the server still has it, then run today's
+	 *  per-file rename for it. */
+	private async folderOpFallback(op: FolderOp, why: string): Promise<void> {
+		if (op.op === "create") {
+			this.folderOps.index.remove(op.folder_id);
+			rlog().warn("push", `Folder op refused (${why}): create ${op.folder_id}`);
+			return;
+		}
+		const to = this.folderOps.index.pathFor(op.folder_id);
+		const from = op.from;
+		// The server still has the folder at `from`.
+		if (from !== null) {
+			const cut = from.lastIndexOf("/");
+			const parent = this.folderOps.index.idFor(cut < 0 ? "" : from.slice(0, cut));
+			if (parent !== undefined) {
+				this.folderOps.index.set({
+					id: op.folder_id,
+					parent_id: parent,
+					name: cut < 0 ? from : from.slice(cut + 1),
+				});
+			} else this.folderOps.index.remove(op.folder_id);
+		}
+		const folder = to === null ? null : this.app.vault.getAbstractFileByPath(to);
+		rlog().warn(
+			"push",
+			`Folder op refused (${why}): ${noteRef(from ?? "?")} -> ${noteRef(to ?? "?")}, renaming per file`,
+		);
+		if (from === null || to === null || !(folder instanceof TFolder)) return;
+		const moved = this.descendantMoves(folder, from, to);
+		this.rekeyMoved(moved.map(([o, n]): [string, string] => [n, o]));
+		for (const [o, n] of moved) {
+			const file = this.app.vault.getAbstractFileByPath(n);
+			if (file) await this.handleRenameNow(file, o);
+		}
+	}
+
+	/** The server applied our op. If the folder has since moved locally
+	 *  somewhere else it would have queued another op; if an inbound change
+	 *  moved it away meanwhile, the server's state is ours again, so follow. */
+	private async folderOpAcked(op: FolderOp): Promise<void> {
+		rlog().info("push", `Folder op acked: ${op.op} ${op.folder_id}`);
+	}
+
+	/** Engram#2523 S4: one op per folder rename. Exposed for main.ts wiring. */
+	readonly folderOps = new FolderOps({
+		send: (op) => this.folderOpPort?.(op) ?? Promise.resolve({ kind: "retry" } as const),
+		now: () => this.time.now(),
+		vaultId: () => this.settings.vaultId ?? null,
+		fallback: (op, why) => this.folderOpFallback(op, why),
+		acked: (op) => this.folderOpAcked(op),
+		apply: (change) => this.applyFolderChange(change),
+		persist: () => this.persistGateJournalSoon(),
+	});
+	private folderOpPort: ((op: FolderOp) => Promise<FolderOpResult>) | null = null;
+
+	/** A `folder_changed` event from the server. */
+	async onFolderChanged(change: FolderChange): Promise<void> {
+		await this.folderOps.inbound(change);
+	}
+
+	/** Inbound folder change (step 4 fills this in). */
+	private async applyFolderChange(change: FolderChange): Promise<void> {
+		void change;
+	}
+
+	/** `features.folder_ops` from the join reply. */
+	async setFolderOpsEnabled(on: boolean): Promise<void> {
+		await this.folderOps.setFeature(on);
+		if (this.folderOps.enabled()) await this.folderOps.onReconnect();
+	}
+
+	/** Learn the server's folder rows (manifest `folders`). */
+	learnFolders(rows: FolderRow[] | undefined): void {
+		if (!rows) return;
+		this.folderOps.index.load(rows, (id) => this.folderOps.hasPending(id));
+	}
+
+	/** `{ folder_id, name }` for a note create or move at `path`, or null when
+	 *  folder ops are off or the folder has no server id yet (the path alone
+	 *  then places it, and the server creates the folder from the path).
+	 *
+	 *  Deviation from the S4 plan, on purpose: an unknown folder is NOT given a
+	 *  client-minted `folder_op create` first. A folder the server has never
+	 *  seen cannot have been renamed by anyone, so path placement lands the
+	 *  note in the same place, while a minted create races the server's own
+	 *  create-from-path and is refused `conflict`. A folder whose create IS
+	 *  queued (a move target, see `handleFolderRename`) is sent first. */
+	async folderRefFor(path: string): Promise<{ folder_id: string | null; name: string } | null> {
+		if (!this.folderOps.enabled()) return null;
+		const p = normalizePath(path);
+		const cut = p.lastIndexOf("/");
+		const id = this.folderOps.index.idFor(cut < 0 ? "" : p.slice(0, cut));
+		if (id === undefined) return null;
+		if (id !== null && this.folderOps.hasPending(id)) await this.folderOps.flush();
+		if (id !== null && this.folderOps.hasPending(id)) return null;
+		return { folder_id: id, name: cut < 0 ? p : p.slice(cut + 1) };
+	}
+
+	/** The server has no folder `folderId` (deleted elsewhere): forget it, so the
+	 *  next note create places the note by path and the server recreates it. */
+	forgetFolder(folderId: string): void {
+		this.folderOps.index.remove(folderId);
+	}
+
+	private async handleRenameNow(file: TAbstractFile, oldPath: string): Promise<void> {
+		// Relay echo rule (Relay SharedFolder.ts notifyVaultRename): a child whose
+		// bookkeeping a folder op already moved to its new path has nothing left
+		// to send. A state check, not a marker: it reads the truth, so it needs
+		// no expiry and also covers child events from a later tick (R4).
+		if (
+			this.folderOps.enabled() &&
+			file instanceof TFile &&
+			this.alreadyMovedLocally(oldPath, file.path)
+		) {
+			return;
+		}
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", "handleRename deferred — gate closed");
 			this.reportBlockedEdit();
@@ -6173,6 +6429,15 @@ export class SyncEngine {
 			});
 			if (!sent && report) this.dropPendingLocalMove(file.path);
 		}
+	}
+
+	/** Nothing is left at `oldPath` and the note or attachment is already
+	 *  known at `newPath` (the Relay echo rule's state check). */
+	private alreadyMovedLocally(oldPath: string, newPath: string): boolean {
+		const from = normalizePath(oldPath);
+		const to = normalizePath(newPath);
+		if (this.syncState.has(from) || this.noteIdMap?.get(from)) return false;
+		return this.syncState.has(to) || this.noteIdMap?.get(to) != null;
 	}
 
 	/** The bookkeeping + old-leg half of a vault rename, keyed by path so the
@@ -6350,9 +6615,10 @@ export class SyncEngine {
 			if (toRow) this.syncState.set(to, toRow);
 			else this.syncState.delete(to);
 			const gone = isHttpStatus(e, 404);
+			const next = gone ? "upload" : "delete + upload";
 			rlog().warn(
 				"push",
-				`Attachment move refused, ${gone ? "uploading at the new path" : "deleting and re-uploading"}: ${noteRef(oldPath)} -> ${noteRef(newPath)} | ${errMsg(e, oldPath)}`,
+				`Attachment move refused (${next}): ${noteRef(oldPath)} -> ${noteRef(newPath)} | ${errMsg(e, oldPath)}`,
 			);
 			return gone ? "gone" : "failed";
 		}

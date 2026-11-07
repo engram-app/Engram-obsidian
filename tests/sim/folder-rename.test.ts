@@ -51,6 +51,13 @@ async function seeded(
 	for (const [p, body] of Object.entries(NOTES)) await a.createNote(p, body);
 	await a.createAttachment(IMAGE, PNG);
 	await t.scheduler.drain();
+	// A reconnect: the join's manifest teaches both devices the folder ids
+	// (a folder first synced this session has none yet, and falls back).
+	for (const r of t.replicas) {
+		await r.goOffline();
+		await r.goOnline();
+	}
+	await t.scheduler.drain();
 	return t;
 }
 
@@ -154,6 +161,47 @@ describe("Engram#2523 S4: a folder rename is one folder op", () => {
 			expect(delta(t, before, "crdt_create")).toBe(Object.keys(NOTES).length);
 			expect(delta(t, before, "POST /attachments/rename")).toBe(1);
 			expect(delta(t, before, "POST /attachments")).toBe(0);
+		} finally {
+			cleanup(t);
+		}
+	});
+
+	test("refused (the name was taken while offline): per-file fallback converges", async () => {
+		const t = await seeded(2532, { folderOps: true });
+		try {
+			const [a, b] = t.replicas;
+			const ids = t.server.liveNoteIds().sort();
+			await a.goOffline();
+			await b.createNote("Done/x.md", "x body");
+			await t.scheduler.drain();
+			const before = snapshot(t);
+
+			await a.renameFolder("Proj", "Done", "folder-first");
+			await t.scheduler.drain();
+			await a.goOnline();
+			await t.scheduler.drain();
+
+			// One op was tried and refused; the notes then moved one by one.
+			expect(delta(t, before, "folder_op")).toBe(1);
+			expect(delta(t, before, "crdt_create")).toBe(Object.keys(NOTES).length);
+			const xId = t.server.state().notes.get("Done/x.md")?.id;
+			expect(t.server.liveNoteIds().sort()).toEqual([...ids, xId].sort());
+			expect([...t.server.state().notes.keys()].sort()).toEqual([
+				"Done/a.md",
+				"Done/sub/b.md",
+				"Done/x.md",
+			]);
+			for (const r of [a, b]) {
+				for (const [p, srv] of t.server.state().notes) {
+					expect([r.id, p, read(r, p), r.noteIdMap.get(p)]).toEqual([
+						r.id,
+						p,
+						srv.content,
+						srv.id,
+					]);
+				}
+				expect(onDisk(r, "Proj/a.md")).toBe(false);
+			}
 		} finally {
 			cleanup(t);
 		}
