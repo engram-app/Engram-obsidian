@@ -366,3 +366,22 @@ describe("a refusal after an inbound move keeps the index at the truth (R3-5)", 
 		expect(s.e.folderOps.index.pathFor("f1")).toBe("Theirs");
 	});
 });
+
+describe("a folder delete stays per file (folder deletes are parked, Engram#2523)", () => {
+	test("with folder ops on, deleting a folder sends no folder_op", async () => {
+		const s = setup();
+		const sent: unknown[] = [];
+		s.e.setCrdtPorts({
+			create: s.crdtCreate,
+			folderOp: async (op) => {
+				sent.push(op);
+				return { kind: "ok", seq: 1 };
+			},
+		});
+		(s.e as any).api.deleteFolder = mock().mockResolvedValue(undefined);
+		await s.e.setFolderOpsEnabled(true);
+		await s.e.handleFolderDelete(new TFolder("Proj", []));
+		expect(sent).toEqual([]);
+		expect(s.e.folderOps.all()).toEqual([]);
+	});
+});

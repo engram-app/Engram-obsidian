@@ -76,6 +76,13 @@ guaranteed (mobile unverified, R4 on Engram#2523).
 - An inbound move updates the index BEFORE `vault.rename`: Obsidian fires the
   folder's rename event inside it, and the echo rule must already see `to`
   or the device sends the move back as its own op. A failed rename restores it.
+- Server wire (Engram#2533): `folder_op` on the vault `crdt:` channel, acked
+  `{folder_id, seq}`; `folder_changed` plus a `note_changed` nudge (no id, path
+  = the folder's new path, a trailing `/` if it ends in `.md`) on `sync:`;
+  `features.folder_ops` on the USER join reply, from the ServiceConfig
+  `folder_ops` switch (default off). `not_found` (a move racing a move before
+  S5) and `failed` are retried inside the op's attempt budget; `conflict`,
+  `cycle`, `invalid_name` fall back at once. Folder delete stays per file.
 - An older crdt channel answers an unknown event with `bad_frame`, not
   `unknown_event`; both turn folder ops off for the session.
 - `filemeta_v1` (`notes_v1`, `folders_v1`) is written only while the vault's

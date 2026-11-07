@@ -501,7 +501,10 @@ export class ModelServer {
 		const row = this.folders.get(folderId);
 		if (payload.op === "create") {
 			if (row && !row.deleted) {
-				this.reply(clientId, joinRef, ref, topic, "ok", { seq: row.seq });
+				this.reply(clientId, joinRef, ref, topic, "ok", {
+					folder_id: row.id,
+					seq: row.seq,
+				});
 				return;
 			}
 			if (taken) {
@@ -516,7 +519,10 @@ export class ModelServer {
 				seq: ++this.vaultSeq,
 			};
 			this.folders.set(folderId, created);
-			this.reply(clientId, joinRef, ref, topic, "ok", { seq: created.seq });
+			this.reply(clientId, joinRef, ref, topic, "ok", {
+				folder_id: created.id,
+				seq: created.seq,
+			});
 			this.broadcastFolderChanged(created, clientId);
 			return;
 		}
@@ -541,7 +547,7 @@ export class ModelServer {
 		row.name = name;
 		row.seq = ++this.vaultSeq;
 		const newPath = this.folderPath(folderId) ?? "";
-		this.reply(clientId, joinRef, ref, topic, "ok", { seq: row.seq });
+		this.reply(clientId, joinRef, ref, topic, "ok", { folder_id: row.id, seq: row.seq });
 		if (newPath === oldPath) return; // a no-op move cascades nothing
 		this.broadcastFolderChanged(row, clientId);
 		// S3 staging: today's cascading rename behind the op. Every moved note

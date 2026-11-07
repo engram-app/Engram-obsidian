@@ -28,8 +28,10 @@
  *
  * | layer          | clearing events                                         |
  * |----------------|---------------------------------------------------------|
- * | pending op     | ack: clear. Refusal or `unknown_event`: clear, then the |
- * |                | per-file fallback. Feature off: per-file fallback.      |
+ * | pending op     | ack: clear. Refusal (`conflict`, `cycle`,               |
+ * |                | `invalid_name`) or `unknown_event`: clear, then the     |
+ * |                | per-file fallback. `not_found` / `failed`: retried in   |
+ * |                | the budget below. Feature off: per-file fallback.       |
  * |                | No answer (timeout, lost frame, disconnect, rate        |
  * |                | limit): re-sent with backoff, same `op_id`, until       |
  * |                | `MAX_ATTEMPTS` sends or `OP_TTL_MS` since the first     |
@@ -95,6 +97,13 @@ export type FolderOpResult =
 	| { kind: "unknown_event" }
 	| { kind: "retry" }
 	| { kind: "held" };
+
+/** Refusals that are retried inside the op's attempt budget instead of
+ *  falling back at once. `not_found`: until S5 the server resolves ids to
+ *  paths before its write transaction, so a move racing another move can
+ *  miss (Engram#2533 `Folders.Wire.move`). `failed`: the server's own
+ *  transient error. */
+const RETRIED_REFUSALS: ReadonlySet<string> = new Set(["not_found", "failed"]);
 
 /** How long a held inbound change waits for the local op's answer. */
 export const HOLD_MAX_MS = 3 * 60 * 1000;
@@ -310,19 +319,21 @@ export class FolderOps {
 		const sentAt = this.deps.now();
 		const res = await this.deps.send(op);
 		if (res.kind === "held") return false;
-		if (res.kind === "retry") {
+		if (res.kind === "retry" || (res.kind === "refused" && RETRIED_REFUSALS.has(res.reason))) {
 			if (this.queue.get(op.folder_id) !== op) return true;
 			op.attempts = (op.attempts ?? 0) + 1;
 			op.firstSentAt ??= sentAt;
 			op.nextAttemptAt =
 				this.deps.now() + expBackoff(BASE_BACKOFF_MS, op.attempts - 1, MAX_BACKOFF_MS);
 			this.deps.persist();
-			const why =
+			const capped =
 				op.attempts >= MAX_ATTEMPTS
 					? "max-attempts"
 					: this.deps.now() - op.firstSentAt > OP_TTL_MS
 						? "ttl"
 						: null;
+			// The last refusal names the fallback when there was one.
+			const why = capped && res.kind === "refused" ? res.reason : capped;
 			if (why) await this.giveUp(op, why);
 			return true;
 		}
