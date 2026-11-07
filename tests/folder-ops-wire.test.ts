@@ -2,10 +2,9 @@
  * Engram#2523 S4: the folder-op wire on NoteChannel and its engine hooks.
  * - `features.folder_ops` on the user-topic join reply turns folder ops on;
  * - `folder_op` frames and their ack / refusal / `unknown_event` mapping;
- * - note creates carry `{ folder_id, name }`, retried by path on
- *   `folder_not_found`;
+ * - note creates send main's frame, and the claim follows the server's id;
  * - `folder_changed` is parsed and handed on;
- * - the engine's folder ref: only a folder with a server id is sent by id;
+ * - the engine's filemeta_v1 note claim: only under a folder with a server id;
  * - the `crdt_create` reply's `folder_id` teaches the folder's id.
  */
 import { beforeEach, describe, expect, mock, test } from "bun:test";
@@ -135,6 +134,18 @@ describe("NoteChannel folder ops", () => {
 		await expect(channel.folderOp(op)).resolves.toEqual({ kind: "held" });
 	});
 
+	test("ADOPT: the claim is written under the server's doc_id, not the minted one", async () => {
+		const { channel, ws } = await joined();
+		const claims: string[] = [];
+		channel.onCreated = (p, id) => claims.push(`${id}@${p}`);
+		const p = channel.crdtCreate("id-minted", "Proj/n.md");
+		await tick();
+		reply(ws, frames(ws, "crdt_create")[0][1], "ok", { doc_id: "id-server" });
+		await expect(p).resolves.toMatchObject({ docId: "id-server" });
+		expect(claims).toEqual(["id-server@Proj/n.md"]);
+		channel.disconnect();
+	});
+
 	test("a note create sends main's frame (no folder id until a server stage reads it) and writes its claim once taken", async () => {
 		const { channel, ws } = await joined();
 		const claims: string[] = [];
@@ -196,22 +207,6 @@ describe("SyncEngine folder ref for note creates", () => {
 		e.setNoteIdMap(new NoteIdMap());
 		return e;
 	}
-
-	test("off: no ref (path only)", async () => {
-		const e = engine();
-		e.learnFolders([{ id: "f1", parent_id: null, name: "Proj" }]);
-		expect(e.folderRefFor("Proj/n.md")).toBeNull();
-	});
-
-	test("on: a server-known folder is sent by id; root is null; unknown is path only", async () => {
-		const e = engine();
-		e.setCrdtPorts({ folderOp: async () => ({ kind: "ok", seq: 1 }) });
-		await e.setFolderOpsEnabled(true);
-		e.learnFolders([{ id: "f1", parent_id: null, name: "Proj" }]);
-		expect(e.folderRefFor("Proj/n.md")).toEqual({ folder_id: "f1", name: "n.md" });
-		expect(e.folderRefFor("top.md")).toEqual({ folder_id: null, name: "top.md" });
-		expect(e.folderRefFor("Never/n.md")).toBeNull();
-	});
 
 	test("flag off: a folder_changed event is ignored, as on main", async () => {
 		const e = engine();

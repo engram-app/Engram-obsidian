@@ -6505,26 +6505,22 @@ export class SyncEngine {
 		}
 	}
 
-	/** `{ folder_id, name }` for a note create or move at `path`, or null when
-	 *  folder ops are off or the folder has no server id yet (the path alone
-	 *  then places it, and the server creates the folder from the path).
-	 *  Synchronous, so a create with folder ops off is sent exactly as on main.
+	/** The server took a note create at `path` (a create is also how a note
+	 *  moves): write its filemeta_v1 entry `{ folder_id, name }`, after the ack
+	 *  as v0 does. Nothing when folder ops are off or the folder has no server
+	 *  id yet.
 	 *
 	 *  Deviation from the S4 plan, on purpose: an unknown folder is NOT given a
 	 *  client-minted `folder_op create` first. A folder the server has never
 	 *  seen cannot have been renamed by anyone, so path placement lands the
 	 *  note in the same place, and the reply's `folder_id` teaches the id. */
-	folderRefFor(path: string, noteId?: string): { folder_id: string | null; name: string } | null {
-		if (!this.folderOps.enabled()) return null;
+	claimNote(path: string, noteId: string): void {
+		if (!this.folderOps.enabled()) return;
 		const p = normalizePath(path);
 		const cut = p.lastIndexOf("/");
 		const id = this.folderOps.index.idFor(cut < 0 ? "" : p.slice(0, cut));
-		if (id === undefined) return null;
-		const name = cut < 0 ? p : p.slice(cut + 1);
-		// Claim before the move, as for v0: the note's v1 entry is its folder id
-		// and name, written as the create or move goes out.
-		if (noteId) this.fileMetaV1.note(noteId, id, name);
-		return { folder_id: id, name };
+		if (id === undefined) return;
+		this.fileMetaV1.note(noteId, id, cut < 0 ? p : p.slice(cut + 1));
 	}
 
 	private async handleRenameNow(file: TAbstractFile, oldPath: string): Promise<void> {
