@@ -26,8 +26,12 @@ guaranteed (mobile unverified, R4 on Engram#2523).
 ## Hiding layers (each with its clearing events)
 - Pending folder op: ack; refusal, `unknown_event` or `bad_frame` (then
   per-file fallback); feature off (per-file fallback); timeout keeps it (same
-  `op_id`); restart replays it from data.json; vault switch drops it. NEVER
-  by a hold expiry: only the server's answer or a per-file fallback.
+  `op_id`, with backoff); no answer `MAX_ATTEMPTS` times or for `OP_TTL_MS`
+  since the first send (the note-op queue's limits, imported, not copied) ends
+  it in the per-file fallback; not joined spends nothing; restart replays it
+  with its spent budget; vault switch drops it. NEVER by a hold expiry. Its
+  delete-pass skip and held changes clear with it. Unbounded, it hid a
+  server-deleted note forever (round 3 R3-1 on #689).
 - Held inbound change (a folder with a pending local op): ack (only changes
   newer than the ack's seq apply), refusal (newest applies), reconnect
   (dropped; the join's manifest re-teaches), max age `HOLD_MAX_MS` (newest
@@ -64,6 +68,9 @@ guaranteed (mobile unverified, R4 on Engram#2523).
   re-key. This was a hole on main for single renames too.
 - Folder ids also come from the root-first ancestor chain `folders` that
   `POST /folders` and the `crdt_create` reply return on a folder-ops server.
+  Every server row source goes through ONE rule (`FolderOps.learnServerRows`):
+  malformed rows dropped, a chain learned up to its first broken parent link,
+  and a folder with our op pending keeps our row.
 - The folder index is persisted (`folderIndex` in data.json) so a restart
   knows where its folders were before the first manifest.
 - An inbound move updates the index BEFORE `vault.rename`: Obsidian fires the
