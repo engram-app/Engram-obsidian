@@ -2961,7 +2961,7 @@ export class SyncEngine {
 	private recordCrdtBaseline(
 		normalized: string,
 		content: string,
-		opts?: { markCreated?: boolean; mergeBase?: false },
+		opts?: { markCreated?: boolean; mergeBase?: false | "if-doc-holds" },
 	): void {
 		this.patchSyncedRow(normalized, {
 			hash: fnv1a(content),
@@ -2972,11 +2972,14 @@ export class SyncEngine {
 		// registry. Without it a disk ingest diffs disk against the DOC, and a
 		// remote edit disk never got reads as a local delete (Engram#2480).
 		// `mergeBase: false`: a hash-only claim about disk the DOC may not hold
-		// (an editor's autosave, a deferred create). The base must be a text
-		// disk and doc agreed on, so the old one is cleared: no base, the
-		// two-way path.
+		// (a deferred create). The base must be a text disk and doc agreed on,
+		// so the old one is cleared: no base, the two-way path.
+		// `"if-doc-holds"` (an open editor's autosave): a base only when the doc
+		// holds exactly that text, which the registry checks.
 		const noteId = this.noteIdMap?.get(normalized);
-		if (noteId) this.crdt?.setMergeBase?.(noteId, opts?.mergeBase === false ? null : content);
+		if (!noteId) return;
+		if (opts?.mergeBase === "if-doc-holds") this.crdt?.recordEditorSave?.(noteId, content);
+		else this.crdt?.setMergeBase?.(noteId, opts?.mergeBase === false ? null : content);
 	}
 
 	/** Un-bank the echo baseline for a frame the server DROPPED (note_not_found).
@@ -3016,7 +3019,7 @@ export class SyncEngine {
 			this.recordCrdtBaseline(
 				normalizePath(file.path),
 				await this.app.vault.cachedRead(file),
-				{ mergeBase: false },
+				{ mergeBase: "if-doc-holds" },
 			);
 		} catch (e) {
 			devLog().log(

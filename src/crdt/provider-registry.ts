@@ -28,7 +28,7 @@ import {
 	rawFrontmatterOf,
 	splitFrontmatter,
 } from "./frontmatter-codec";
-import { merge3, mergeDiskOntoDoc } from "./lca-merge";
+import { diskOnlyText, merge3, mergeDiskOntoDoc } from "./lca-merge";
 import { type FrameKind, NoteProvider } from "./note-provider";
 import { docHasAnyHistory, docHasHistory, seedContentInto, seedFrontmatterInto } from "./note-seed";
 import { fromB64, MESSAGE_SYNC } from "./wire";
@@ -796,6 +796,8 @@ export class ProviderRegistry {
 		if (this.opts.isUnchangedSynced?.(noteId, diskContent))
 			this.seedMergeBase(noteId, diskContent);
 		if (history && echo === "late" && e.kind === "note") {
+			// Disk already equals the doc: nothing to keep twice.
+			if (this.project(e) === diskContent) return diskContent;
 			return this.keepBoth(noteId, e, diskContent, reread);
 		}
 		const base = history
@@ -900,9 +902,13 @@ export class ProviderRegistry {
 
 	/** Keep both sides of a disk edit the doc cannot take: the doc keeps its
 	 *  text, and disk's goes to a conflict copy beside the note. With no copy
-	 *  (no handler, or the write failed) both are kept IN the doc: disk's text
-	 *  is appended under a marker, so the fallback never reverts either side.
-	 *  Then the doc is written back to disk. */
+	 *  (no handler, or the write failed: a file-system error, an unknown path)
+	 *  the lines only disk holds are kept IN the doc under a marker, so the
+	 *  fallback never reverts either side. Refusing the ingest instead would
+	 *  not be safer: the next remote flush overwrites disk. The block holds
+	 *  only disk-only lines, so a retry after a write-back adds nothing (no
+	 *  nesting), and the next ingest tries the copy again. Then the doc is
+	 *  written back to disk. */
 	private async keepBoth(
 		noteId: string,
 		e: Entry,
@@ -918,8 +924,20 @@ export class ProviderRegistry {
 		if (!e.lifetime.active) return diskContent;
 		if (!copied) {
 			const current = this.project(e);
-			const kept = `${current.replace(/\n*$/, "")}\n\n${IN_DOC_CONFLICT_MARKER}\n${diskContent}`;
-			this.seedFromDisk(e, kept, true);
+			const only = diskOnlyText(current, diskContent);
+			if (only !== "") {
+				rlog().error(
+					"crdt",
+					`conflict copy unavailable for ${noteId}: kept ${only.length} chars of disk in the note`,
+				);
+				// One block per note: a later round appends to it, never nests.
+				const at = current.lastIndexOf(IN_DOC_CONFLICT_MARKER);
+				const kept =
+					at === -1
+						? `${current.replace(/\n*$/, "")}\n\n${IN_DOC_CONFLICT_MARKER}\n${only}`
+						: `${current.replace(/\n*$/, "")}\n${only}`;
+				this.seedFromDisk(e, kept, true);
+			}
 		}
 		return this.writeBack(noteId, e, diskContent, reread);
 	}
@@ -964,12 +982,26 @@ export class ProviderRegistry {
 				await e.persistence.set(MERGE_BASE_KEY, JSON.stringify(rec));
 			} catch (err) {
 				this.opts.onPersistError?.(noteId, err);
+				// The older record is self-consistent and would load after a
+				// restart as a STALE base: drop it (best effort), so no base
+				// (the two-way path, or a later seed) is used instead.
+				await e.persistence.del(MERGE_BASE_KEY).catch(() => undefined);
 			}
 		});
 		e.mergeBaseWrite = write;
 		void write.finally(() => {
 			if (e.mergeBaseWrite === write) e.mergeBaseWrite = null;
 		});
+	}
+
+	/** An open editor's autosave: a merge base only if the doc holds exactly
+	 *  that text (the binding forwards every keystroke, so it normally does);
+	 *  otherwise the save is a claim about disk the doc may lack, and the base
+	 *  is cleared. One O(n) compare per autosave. */
+	recordEditorSave(noteId: string, text: string): void {
+		const e = this.entries.get(noteId);
+		if (!e?.lifetime.active || e.kind !== "note") return;
+		this.setMergeBase(noteId, this.project(e) === text ? text : null);
 	}
 
 	/** Adopt `disk` as the merge base when the note has never had one (the
