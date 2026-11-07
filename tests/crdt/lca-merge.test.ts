@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { merge3, mergeDiskOntoDoc, overwritesConcurrentEdit } from "../../src/crdt/lca-merge";
+import { merge3, mergeDiskOntoDoc } from "../../src/crdt/lca-merge";
 
 describe("mergeDiskOntoDoc", () => {
 	test("applies a disk-side edit that the doc has not seen", () => {
@@ -159,11 +159,11 @@ describe("merge3 (both sides' edits on one base, CRDT-like)", () => {
 			"1\n3\n4!\n",
 		],
 		[
-			"delete next to the other side's edit (touching, like git)",
+			"delete next to the other side's edit (touching lines, disjoint characters): merged",
 			"1\n2\n3\n",
 			"1\n3\n",
 			"1\n2\n3!\n",
-			null,
+			"1\n3!\n",
 		],
 		// No trailing newline: keeping both would join them into one line "RL".
 		["empty base, both write", "", "L", "R", null],
@@ -190,8 +190,23 @@ describe("merge3 (both sides' edits on one base, CRDT-like)", () => {
 	}
 });
 
-test("merge3: edits on adjacent lines conflict, like git", () => {
-	expect(merge3("1\n2\n3\n", "1\nTWO\n3\n", "1\n2\nTHREE\n").clean).toBe(false);
+test("merge3: edits on adjacent lines merge (the clashing region is re-merged by character)", () => {
+	expect(merge3("1\n2\n3\n", "1\nTWO\n3\n", "1\n2\nTHREE\n")).toEqual({
+		text: "1\nTWO\nTHREE\n",
+		clean: true,
+	});
+	// A line replaced on one side plus a line inserted right under it.
+	expect(merge3("a\nold\nb\n", "a\nold\nnew line\nb\n", "a\nnew\nb\n")).toEqual({
+		text: "a\nnew\nnew line\nb\n",
+		clean: true,
+	});
+	// Different words of one line.
+	expect(merge3("one two three\n", "ONE two three\n", "one two THREE\n")).toEqual({
+		text: "ONE two THREE\n",
+		clean: true,
+	});
+	// The same word on both sides is a real overlap.
+	expect(merge3("one two three\n", "one TWO three\n", "one deux three\n").clean).toBe(false);
 	expect(merge3("1\n2\n3\n4\n", "1\nTWO\n3\n4\n", "1\n2\n3\nFOUR\n")).toEqual({
 		text: "1\nTWO\n3\nFOUR\n",
 		clean: true,
@@ -203,53 +218,4 @@ test("merge3: an appended line plus an edit elsewhere is not duplicated", () => 
 	expect(
 		merge3("# T\n\nbody\n", "# T\n\nbody\n- [ ] task\n", "# T\n\nintro\nbody\n- [ ] task\n"),
 	).toEqual({ text: "# T\n\nintro\nbody\n- [ ] task\n", clean: true });
-});
-
-describe("overwritesConcurrentEdit (char-level overlap of disk and doc edits)", () => {
-	const cases: [string, string, string, string, boolean][] = [
-		// [name, base, disk, current (doc), expected]
-		[
-			"same word edited both sides",
-			"one two three\n",
-			"one TWO three\n",
-			"one deux three\n",
-			true,
-		],
-		[
-			"disk deletes text the doc edited",
-			"keep DROPME keep\n",
-			"keep  keep\n",
-			"keep DROP+ME keep\n",
-			true,
-		],
-		// The fuzzy merge gives "alpha NEW gamma": the doc insert survives.
-		[
-			"disk deletes next to a doc insert",
-			"alpha beta gamma\n",
-			"alpha gamma\n",
-			"alpha beta NEW gamma\n",
-			false,
-		],
-		[
-			"different words on one line",
-			"the quick brown fox\n",
-			"the QUICK brown fox\n",
-			"the quick brown FOX\n",
-			false,
-		],
-		["adjacent lines", "1\n2\n3\n", "1\nTWO\n3\n", "1\n2\nTHREE\n", false],
-		[
-			"both append at EOF",
-			"base line\n",
-			"base line\nB change\n",
-			"base line\nA change\n",
-			false,
-		],
-		["identical edit", "a b c\n", "a B c\n", "a B c\n", false],
-		["doc unchanged", "a\n", "a\nL\n", "a\n", false],
-		["disk unchanged", "a\n", "a\n", "a\nR\n", false],
-	];
-	for (const [name, base, disk, current, want] of cases) {
-		test(name, () => expect(overwritesConcurrentEdit(base, disk, current)).toBe(want));
-	}
 });

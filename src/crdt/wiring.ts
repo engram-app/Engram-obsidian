@@ -16,6 +16,8 @@ type WiringSyncEngine = Pick<
 	| "flushFromCrdt"
 	| "flushStrandedNote"
 	| "isUnchangedSynced"
+	| "keepConflictCopy"
+	| "writeNoteIfDiskStill"
 	| "materializeEmptyDiscovered"
 	| "reconcileNoteIdMapFromManifest"
 	| "isSyncBlocked"
@@ -92,13 +94,10 @@ export interface CrdtWiringDeps {
 	resendStore?: ResendStore;
 	/** See ProviderRegistryOpts.ackScope. */
 	ackScope?: () => string;
-	/** Merge base for a note_id (#357), resolved through the id map to the path
-	 *  BaseStore is keyed by. Omitted = the pre-LCA path. */
+	/** See ProviderRegistryOpts.lcaFor (tests only). */
 	lcaFor?: (noteId: string) => string | null;
-	/** A merge that could not apply every hunk. */
+	/** A disk merge that conflicted (kept both). */
 	onDirtyMerge?: (noteId: string) => void;
-	/** A clean merge that dropped a concurrent doc edit (measurement). */
-	onLossyMerge?: (noteId: string) => void;
 }
 
 export interface CrdtWiring {
@@ -293,7 +292,23 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		ackScope: deps.ackScope,
 		lcaFor: deps.lcaFor,
 		onDirtyMerge: deps.onDirtyMerge,
-		onLossyMerge: deps.onLossyMerge,
+		// The registry write-back goes through the engine's one guarded write. An
+		// open editor owns the note's disk: nudge its save instead.
+		writeIfDiskStill: async (noteId, expectedDisk, text) => {
+			const path = noteIdMap.pathForId(noteId);
+			if (!path) return null;
+			if (deps.isBound(path)) {
+				deps.onBoundUpdate?.(path);
+				return null;
+			}
+			return syncEngine.writeNoteIfDiskStill(path, expectedDisk, text);
+		},
+		onMergeConflict: async (noteId, diskText) => {
+			const path = noteIdMap.pathForId(noteId);
+			return path
+				? syncEngine.keepConflictCopy(path, diskText, "disk edit overlaps the doc")
+				: false;
+		},
 		send: (docId, frame, kind) => {
 			// Create-before-edit: hold OPS until the note's server row exists. Never
 			// hold a "handshake" frame (syncStep1, or the syncStep2 written in reply

@@ -2966,25 +2966,10 @@ export default class EngramSyncPlugin extends Plugin {
 								ackScopeFor(this.settings.apiUrl, this.settings.vaultId),
 							noteIdMap: this.noteIdMap,
 							syncEngine: this.syncEngine,
-							// BaseStore is keyed by vault path and already holds exactly the
-							// last-synced content its own docstring calls "the common
-							// ancestor for 3-way merge"; the registry is keyed by note_id,
-							// so resolve through the id map.
-							lcaFor: (noteId) => {
-								const path = this.noteIdMap.pathForId(noteId);
-								return path ? (this.baseStore?.get(path)?.content ?? null) : null;
-							},
 							onDirtyMerge: (noteId) =>
 								rlog().warn(
 									"crdt",
-									`LCA merge left unapplied hunks for ${noteId} — fell back to the two-way path`,
-								),
-							// Warn so it ships from user devices: the count decides whether
-							// overlapping edits need a keep-both path instead.
-							onLossyMerge: (noteId) =>
-								rlog().warn(
-									"crdt",
-									`LCA merge overwrote a concurrent edit for ${noteId}; disk side kept`,
+									`LCA merge conflict for ${noteId}: keeping both (conflict copy)`,
 								),
 							// `?? false`: a null socket (mid-reconnect) must read as REFUSED so
 							// the edit is recorded in the durable queue and delivered on

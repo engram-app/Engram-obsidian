@@ -21,6 +21,7 @@ import { toB64 } from "../src/crdt/wire";
 import { createCrdtWiring } from "../src/crdt/wiring";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
+import { waitFor } from "./helpers/wait-for";
 
 /** Lean SyncEngine — applyLiveOpWithSeq only touches the catchupSeq cursor
  *  and catchupViaSeqReplay, so bare stubs are enough (mirrors
@@ -158,14 +159,6 @@ describe("SyncEngine.applyLiveOpWithSeq", () => {
 /** Polls until `cond` holds — applyPushedNoteUpdate's apply body runs as a
  *  fire-and-forget promise chain (several awaits deep), so a fixed sleep
  *  would be racy. Mirrors tests/crdt/wiring.test.ts's waitFor. */
-async function waitFor(cond: () => boolean, label: string): Promise<void> {
-	for (let i = 0; i < 100; i++) {
-		if (cond()) return;
-		await new Promise((r) => setTimeout(r, 5));
-	}
-	throw new Error(`waitFor timed out: ${label}`);
-}
-
 /** A real SyncEngine + a real createCrdtWiring, wired around a fake CrdtManager
  *  (applyRemoteUpdate/closeDoc only — mirrors tests/crdt/note-yjs-update.test.ts's
  *  noteEngine). Drives the wiring's onNoteYjsUpdate callback end to end so the

@@ -17,7 +17,7 @@ import { expBackoff } from "./backoff";
 import type { BaseStore } from "./base-store";
 import type { GenesisOutcome } from "./channel";
 import { fnv1a, fnv1aBase64 } from "./content-hash";
-import { splitFrontmatter } from "./crdt/frontmatter-codec";
+import { flushTarget, splitFrontmatter } from "./crdt/frontmatter-codec";
 import type { NoteIdMap } from "./crdt/note-id-map";
 import type { ProviderRegistry } from "./crdt/provider-registry";
 import { encodeUpdateFrame, fromB64 } from "./crdt/wire";
@@ -30,6 +30,7 @@ import {
 } from "./crdt-op-dispatch";
 import type { CrdtOp } from "./crdt-op-queue";
 import { devLog } from "./dev-log";
+import { ECHO_COOLDOWN_MS } from "./echo-window";
 import { errMsg, isAlreadyGone, isHttpStatus, statusOf } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
 import { isCanvasPath as canvasPath, isCrdtEligiblePath as crdtEligiblePath } from "./file-kind";
@@ -324,9 +325,6 @@ function countFolders(paths: Iterable<string>): number {
 	}
 	return set.size;
 }
-
-/** How long (ms) after a push completes to suppress WebSocket echoes for that path. */
-const ECHO_COOLDOWN_MS = 5000;
 
 /** How long (ms) after THIS device deletes a note to refuse resurrecting it
  *  via either CRDT convergence path (catch-up head map or vault-channel
@@ -2648,9 +2646,18 @@ export class SyncEngine {
 		const normalized = normalizePath(path);
 		// The doc's text, never blank: a blank doc does not override a caller's
 		// text here, so the empty-write guard below always sees what is written.
+		// It keeps disk's own frontmatter bytes when they mean the same as the
+		// doc's (`flushTarget`): the codec re-serialises YAML (flow
+		// lists, spacing, comments), and a flush must never rewrite what the
+		// user wrote when the meaning is unchanged. Equal by meaning then reads
+		// as "disk already holds it" below, so nothing is written at all.
 		const latest = async (): Promise<string | null> => {
 			const text = await this.currentDocText(normalized);
-			return text !== null && text.trim() !== "" ? text : null;
+			if (text === null || text.trim() === "") return null;
+			const onDiskNow = this.app.vault.getAbstractFileByPath(normalized);
+			return onDiskNow instanceof TFile
+				? flushTarget(text, await this.app.vault.cachedRead(onDiskNow)).onDisk
+				: text;
 		};
 		// A first load's text is the registry's projection of that load: the
 		// interlock below resolves held input against exactly that.
@@ -2661,7 +2668,15 @@ export class SyncEngine {
 		// needlessly bumps mtime and emits a modify echo, which reads as a spurious
 		// local change (e2e test_78 hash-only). No write → nothing to echo-suppress,
 		// so we also skip markRecentlyFlushed.
-		if (file instanceof TFile && (await this.app.vault.cachedRead(file)) === content) {
+		const onDisk = file instanceof TFile ? await this.app.vault.cachedRead(file) : null;
+		// Disk still at the baseline is a merge base, even with none recorded
+		// yet (the first launch after upgrade): if this write then fails, the
+		// next disk edit still merges from it instead of reverting the doc.
+		if (onDisk !== null && onDisk !== content && this.isUnchangedSynced(normalized, onDisk)) {
+			const noteId = this.noteIdMap?.get(normalized);
+			if (noteId) this.crdt?.seedMergeBase?.(noteId, onDisk);
+		}
+		if (file instanceof TFile && onDisk === content) {
 			// Disk already holds this content, but the baseline may still be
 			// missing (an earlier flush created the file before this fix). Record
 			// it so a later server tombstone isn't misread as a resurrection.
@@ -2884,8 +2899,25 @@ export class SyncEngine {
 	/** MERGE onto `path`'s row as read at stamp time: refresh the named fields,
 	 *  preserve everything else already recorded. A missing row starts at
 	 *  `hash: 0` (the historical `?? { hash: 0 }` default). */
-	private patchSyncedRow(path: string, patch: Partial<FileSyncState>): void {
+	private patchSyncedRow(
+		path: string,
+		patch: Partial<FileSyncState>,
+		/** The caller records the matching merge base itself (`recordCrdtBaseline`). */
+		withBase = false,
+	): void {
+		const before = this.syncState.get(path)?.hash;
 		this.syncState.set(path, { hash: 0, ...this.syncState.get(path), ...patch });
+		// Every CRDT-path baseline hash change goes through here. (`stampSyncedRow`
+		// also writes hashes, at REST, legacy, load-time import, CAS-seed and
+		// no-note_id backfill sites; none reaches a CRDT note with a base.) One
+		// that moves WITHOUT a base makes the old base no ancestor of disk, so
+		// the registry marks it invalid (Engram#2480: no caller may hand merge3
+		// a stale base). Hash 0 means "unknown" (an un-banked push), not a
+		// different disk: exempt.
+		if (!withBase && patch.hash !== undefined && patch.hash !== 0 && patch.hash !== before) {
+			const noteId = this.noteIdMap?.get(path);
+			if (noteId) this.crdt?.invalidateMergeBase?.(noteId, patch.hash);
+		}
 		this.noteRowWrite(path);
 	}
 
@@ -2955,12 +2987,29 @@ export class SyncEngine {
 	private recordCrdtBaseline(
 		normalized: string,
 		content: string,
-		opts?: { markCreated?: boolean },
+		opts?: { markCreated?: boolean; mergeBase?: false | "if-doc-holds" },
 	): void {
-		this.patchSyncedRow(normalized, {
-			hash: fnv1a(content),
-			...(opts?.markCreated ? { crdtHead: CRDT_HEAD_CREATED } : {}),
-		});
+		this.patchSyncedRow(
+			normalized,
+			{
+				hash: fnv1a(content),
+				...(opts?.markCreated ? { crdtHead: CRDT_HEAD_CREATED } : {}),
+			},
+			true,
+		);
+		// The text beside the hash is the note's merge base (Relay's LCA): what
+		// a later disk edit is diffed against, persisted per note by the
+		// registry. Without it a disk ingest diffs disk against the DOC, and a
+		// remote edit disk never got reads as a local delete (Engram#2480).
+		// `mergeBase: false`: a hash-only claim about disk the DOC may not hold
+		// (a deferred create). The base must be a text disk and doc agreed on,
+		// so the old one is cleared: no base, the two-way path.
+		// `"if-doc-holds"` (an open editor's autosave): a base only when the doc
+		// holds exactly that text, which the registry checks.
+		const noteId = this.noteIdMap?.get(normalized);
+		if (!noteId) return;
+		if (opts?.mergeBase === "if-doc-holds") this.crdt?.recordEditorSave?.(noteId, content);
+		else this.crdt?.setMergeBase?.(noteId, opts?.mergeBase === false ? null : content);
 	}
 
 	/** Un-bank the echo baseline for a frame the server DROPPED (note_not_found).
@@ -3000,6 +3049,7 @@ export class SyncEngine {
 			this.recordCrdtBaseline(
 				normalizePath(file.path),
 				await this.app.vault.cachedRead(file),
+				{ mergeBase: "if-doc-holds" },
 			);
 		} catch (e) {
 			devLog().log(
@@ -3316,21 +3366,26 @@ export class SyncEngine {
 		for (const noteId of [...this.heldForServer]) void this.loadServerState(noteId);
 	}
 
-	/** Keep `text` beside `path` as a conflict copy (the open editor's half of
-	 *  the load gate's keep-both). False when the copy could not be written. */
-	async keepConflictCopy(path: string, text: string): Promise<boolean> {
+	/** Keep `text` beside `path` as a conflict copy (the keep-both of the
+	 *  load gate's open editor, or of a conflicting disk merge). False when
+	 *  the copy could not be written. */
+	async keepConflictCopy(
+		path: string,
+		text: string,
+		why = "load gate: open editor diverged from the server",
+	): Promise<boolean> {
 		const normalized = normalizePath(path);
 		try {
 			const copy = await this.writeDriftConflictCopy(normalized, text);
 			rlog().info(
 				"conflict",
-				`load gate: open editor diverged from the server → keep-both | original=${noteRef(normalized)} copy=${noteRef(copy)}`,
+				`${why} → keep-both | original=${noteRef(normalized)} copy=${noteRef(copy)}`,
 			);
 			return true;
 		} catch (e) {
 			rlog().error(
 				"conflict",
-				`load gate: keep-both copy failed for ${noteRef(normalized)}: ${errMsg(e, normalized)}`,
+				`${why}: keep-both copy failed for ${noteRef(normalized)}: ${errMsg(e, normalized)}`,
 			);
 			return false;
 		}
@@ -4434,7 +4489,12 @@ export class SyncEngine {
 	 *  ONE implementation on purpose: both callers below reach it from a state
 	 *  where re-sending the body would mint a rival lineage, and a second copy
 	 *  is how the first one drifted (#476). */
-	private async adoptServerLineage(noteId: string, path: string): Promise<string | null> {
+	private async adoptServerLineage(
+		noteId: string,
+		path: string,
+		/** The note's file, to report what the apply's flush left on it. */
+		file?: TFile,
+	): Promise<string | null> {
 		// Capture the registry BEFORE the await. `setCrdtPorts` reassigns
 		// `this.crdt` on a vault change, so re-reading it after the round trip
 		// can apply the OLD vault's Yjs bytes into the NEW vault's registry under
@@ -4470,7 +4530,97 @@ export class SyncEngine {
 			return null;
 		}
 		rlog().info("crdt", `create: adopted server lineage for ${noteRef(path)}`);
-		return await crdt.projectedText(noteId);
+		return (await this.flushedProjection(crdt, noteId, file)).onDisk;
+	}
+
+	/** THE guarded write of a note's doc after a merge, and the only place one
+	 *  records a baseline: the registry write-back (via `writeIfDiskStill`) and
+	 *  both create-time merges use it.
+	 *
+	 *  Disk is re-read right before the write. If it no longer holds
+	 *  `expectedDisk` (the text the merge read; an edit landed while the merge
+	 *  ran), nothing is written: the doc must never overwrite typing it never
+	 *  saw. That edit's own modify ingests it, merging from what the caller
+	 *  records. Otherwise `writeCrdtNote` writes and records the baseline only
+	 *  once the write lands, from the bytes it wrote (disk's frontmatter bytes
+	 *  kept when they mean the same), and returns them. Null when nothing was
+	 *  written (disk moved, unreadable, or the write failed, logged there); no
+	 *  baseline is recorded then, and the caller records `expectedDisk`, what
+	 *  disk still holds, never the merged text. */
+	async writeNoteIfDiskStill(
+		normalized: string,
+		expectedDisk: string,
+		text: string,
+		/** The note's file when the caller holds it; else resolved here. */
+		file?: TFile,
+		/** The note's id when the caller holds it (a create, before the map). */
+		noteId: string | null | undefined = this.noteIdMap?.get(normalized),
+	): Promise<string | null> {
+		const found = file ? null : this.app.vault.getAbstractFileByPath(normalized);
+		const target = file ?? (found instanceof TFile ? found : null);
+		if (!target) return null;
+		let now: string;
+		try {
+			now = await this.app.vault.cachedRead(target);
+		} catch {
+			return null;
+		}
+		if (now !== expectedDisk) {
+			rlog().info(
+				"crdt",
+				`merge write skipped: ${noteRef(normalized)} changed on disk during the merge`,
+			);
+			return null;
+		}
+		const written = await this.writeCrdtNote(normalized, text);
+		if (written !== null && noteId) this.crdt?.markWritten?.(noteId);
+		return written;
+	}
+
+	/** After an apply or a merge the doc may hold text disk lacks (its flush
+	 *  failed or was refused, or nothing wrote it): make disk hold the doc
+	 *  through the one guarded write, and return the baseline, which is what
+	 *  disk holds afterwards. `expectedDisk` is disk as last read; if the write
+	 *  does not land (disk moved, failed), the baseline is that, never the
+	 *  doc's text. A baseline without the write is the #2480 revert. */
+	private async baselineFromDisk(
+		normalized: string,
+		file: TFile,
+		noteId: string,
+		expectedDisk: string,
+		docText: string,
+	): Promise<string> {
+		const written = await this.writeNoteIfDiskStill(
+			normalized,
+			expectedDisk,
+			docText,
+			file,
+			noteId,
+		);
+		return written ?? expectedDisk;
+	}
+
+	/** `noteId`'s doc and its file after an apply (which awaits its flush):
+	 *  `onDisk` is what the file holds now, read, not predicted. A baseline
+	 *  stamped after an apply must be `onDisk`, never the bare projection: on
+	 *  a note whose YAML the codec re-serialises, that is a baseline no file
+	 *  holds, and the next catch-up drift-copies the note (Engram#1928 class,
+	 *  backend e2e test_101). When the flush was refused or nudged instead,
+	 *  the projection is text disk never got, and stamping it is the #2480
+	 *  revert. A merge's "expected doc" is `projection`. */
+	private async flushedProjection(
+		crdt: { projectedText(noteId: string): Promise<string> },
+		noteId: string,
+		file: TFile | undefined,
+	): Promise<{ projection: string; onDisk: string }> {
+		const projected = await crdt.projectedText(noteId);
+		let disk: string | null = null;
+		try {
+			disk = file ? await this.app.vault.cachedRead(file) : null;
+		} catch {
+			// unreadable: the projection is all we know
+		}
+		return { projection: projected, onDisk: disk ?? projected };
 	}
 
 	/** Merge `disk`, edited from `base` (the body this device's create sent),
@@ -4532,7 +4682,9 @@ export class SyncEngine {
 		why: string,
 	): Promise<null> {
 		try {
-			this.recordCrdtBaseline(normalized, await this.app.vault.cachedRead(file));
+			this.recordCrdtBaseline(normalized, await this.app.vault.cachedRead(file), {
+				mergeBase: false,
+			});
 		} catch (e) {
 			rlog().warn(
 				"crdt",
@@ -4941,13 +5093,16 @@ export class SyncEngine {
 					// unreadable — proceed without drift protection
 				}
 				await this.crdt.applyRemoteUpdate(effectiveId, opts.genesisUpdate);
-				// The baseline is the doc's PROJECTION, not `genesisContent`: the
-				// apply above just flushed that projection over disk, and the codec
-				// canonicalizes frontmatter (`key:` -> `key: null`, flow lists,
-				// quotes, comments). Stamping the raw bytes left a baseline no file
-				// holds, so the next catch-up read every such note as locally edited
-				// and drift-copied it (#1928: 54 conflict copies on one first sync).
-				let consumed: string | null = await this.crdt.projectedText(effectiveId);
+				// The baseline is what the apply's flush left on disk, not
+				// `genesisContent`: the codec canonicalizes frontmatter (`key:` ->
+				// `key: null`, flow lists, quotes, comments), and the flush writes
+				// that projection unless it means what disk already holds, in which
+				// case it keeps disk's bytes and writes nothing. A baseline no file
+				// holds made the next catch-up read every such note as locally
+				// edited and drift-copy it (#1928: 54 conflict copies on one first
+				// sync; test_101).
+				const flushed = await this.flushedProjection(this.crdt, effectiveId, file);
+				let consumed: string | null = flushed.onDisk;
 				// M1: `genesisContent` was frozen before the create round-trip, and
 				// the apply above flushes it over disk. Anything that landed in that
 				// window survives only in `preApplyDisk`. NO reread: it would read
@@ -4959,16 +5114,31 @@ export class SyncEngine {
 				// and a two-way diff of disk onto it deleted that edit: disk never
 				// had it. Overlapping edits keep both rather than drop either.
 				if (preApplyDisk !== null && preApplyDisk !== opts.genesisContent) {
+					// What disk holds after the apply's flush, read BEFORE the merge:
+					// the write below is guarded against it (an edit landing while the
+					// merge runs is never overwritten), and it is the baseline when
+					// nothing is written.
+					let held: string = consumed;
+					try {
+						held = await this.app.vault.cachedRead(file);
+					} catch {
+						// unreadable: keep what the flush left
+					}
 					const merged = await this.mergeOwnCreateDrift(
 						effectiveId,
 						normalized,
 						opts.genesisContent,
-						consumed,
+						flushed.projection, // what the doc holds: the merge's expected text
 						preApplyDisk,
 					);
 					if (merged !== null) {
-						consumed = merged;
-						await this.flushFromCrdt(normalized, merged);
+						consumed = await this.baselineFromDisk(
+							normalized,
+							file,
+							effectiveId,
+							held,
+							merged,
+						);
 					}
 				}
 				return consumed;
@@ -4977,7 +5147,7 @@ export class SyncEngine {
 			// The server re-id'd us (#1409): it stored our body under a lineage we
 			// do not have. Pushing again is exactly how the doubling happens, so
 			// ADOPT its lineage instead.
-			const adopted = await this.adoptServerLineage(effectiveId, normalized);
+			const adopted = await this.adoptServerLineage(effectiveId, normalized, file);
 			if (adopted !== null) return adopted;
 
 			// No way to adopt (old backend, rate limit, dropped socket). Pushing
@@ -5030,7 +5200,7 @@ export class SyncEngine {
 		// server already holds exactly our bytes, so there is nothing to send.
 		const known = opts.genesisOutcome;
 		if (!effectiveIdHasHistory && known !== "absent") {
-			const adopted = await this.adoptServerLineage(effectiveId, normalized);
+			const adopted = await this.adoptServerLineage(effectiveId, normalized, file);
 
 			// Adopt failed. What to do depends on whether the server ASSERTED it
 			// holds content, and the two answers are opposite:
@@ -5074,18 +5244,23 @@ export class SyncEngine {
 		// still holds what we sent, there is no local input, so transmit nothing
 		// and keep the server's text.
 		if (sameId && known !== "absent" && typeof this.crdt.projectedText === "function") {
-			if (effectiveIdHasHistory) await this.adoptServerLineage(effectiveId, normalized);
+			if (effectiveIdHasHistory) await this.adoptServerLineage(effectiveId, normalized, file);
 			const server = await this.crdt.projectedText(effectiveId);
 			const disk = await this.app.vault.cachedRead(file);
 			if (server !== "") {
 				const base = this.ownBaseBody(normalized);
 				if (this.isAckedBase(normalized, fnv1a(disk)) || (base !== null && base === disk)) {
 					rlog().anomaly("crdt", "occupied_create_own_base");
-					return server;
+					// Disk holds our base, so no local input: if the doc holds a
+					// server edit disk lacks (its flush failed or was refused), write it.
+					return this.baselineFromDisk(normalized, file, effectiveId, disk, server);
 				}
 				// Disk moved off what we sent: three-way from it, so an edit another
 				// writer landed on the server in the same window survives next to
 				// ours (a two-way diff reads it as something disk deleted).
+				// Either way the doc moved off disk (the merge, or the server's text
+				// after a refused merge kept disk in a copy), and nothing else writes
+				// it here: write it, and stamp what that write left on disk.
 				if (base !== null) {
 					const merged = await this.mergeOwnCreateDrift(
 						effectiveId,
@@ -5094,7 +5269,13 @@ export class SyncEngine {
 						server,
 						disk,
 					);
-					return merged ?? server;
+					return this.baselineFromDisk(
+						normalized,
+						file,
+						effectiveId,
+						disk,
+						merged ?? server,
+					);
 				}
 			}
 		}
