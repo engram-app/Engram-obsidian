@@ -88,7 +88,7 @@ describe("outbound folder ops", () => {
 	test("a move is sent once, acked, and leaves nothing pending", async () => {
 		const h = harness();
 		h.ops.setFeature(true);
-		h.ops.move("fa", "fb", "A", "A");
+		h.ops.move("fa", "fb", "A", "A", "B/A");
 		await h.ops.flush();
 		expect(h.sent.map((o) => [o.op, o.folder_id, o.parent_id, o.name])).toEqual([
 			["move", "fa", "fb", "A"],
@@ -100,41 +100,18 @@ describe("outbound folder ops", () => {
 
 	test("two queued moves of one folder coalesce, keeping the server's from", async () => {
 		const h = harness();
-		h.ops.move("fa", null, "A2", "A");
-		h.ops.move("fa", "fb", "A3", "A2");
-		expect(h.ops.all().map((o) => [o.name, o.from])).toEqual([["A3", "A"]]);
+		h.ops.move("fa", null, "A2", "A", "A2");
+		h.ops.move("fa", "fb", "A3", "A2", "B/A3");
+		expect(h.ops.all().map((o) => [o.name, o.from, o.to])).toEqual([["A3", "A", "B/A3"]]);
 		h.ops.setFeature(true);
 		await h.ops.flush();
 		expect(h.sent).toHaveLength(1);
 	});
 
-	test("a create absorbs a later move of the same folder", () => {
-		const h = harness();
-		const id = h.ops.create(null, "New");
-		h.ops.move(id, "fb", "Renamed", "New");
-		expect(h.ops.all().map((o) => [o.op, o.parent_id, o.name])).toEqual([
-			["create", "fb", "Renamed"],
-		]);
-	});
-
-	test("a folder create is sent before an op that depends on it", async () => {
-		const h = harness();
-		h.ops.setFeature(true);
-		h.ops.move("fa", "fb", "A", "A");
-		const parent = h.ops.ensure("B/Inbox/2026");
-		h.ops.move("fa", parent, "A", "B/A");
-		await h.ops.flush();
-		expect(h.sent.map((o) => `${o.op}:${o.name}`)).toEqual([
-			"create:Inbox",
-			"create:2026",
-			"move:A",
-		]);
-	});
-
 	test("timeout: the op stays queued and is re-sent with the same op_id", async () => {
 		const h = harness([{ kind: "retry" }]);
 		h.ops.setFeature(true);
-		h.ops.move("fa", "fb", "A", "A");
+		h.ops.move("fa", "fb", "A", "A", "B/A");
 		await h.ops.flush();
 		expect(h.ops.hasPending("fa")).toBe(true);
 		await h.ops.tick();
@@ -144,7 +121,7 @@ describe("outbound folder ops", () => {
 
 	test("restart: a persisted op is replayed", async () => {
 		const h = harness();
-		h.ops.move("fa", "fb", "A", "A");
+		h.ops.move("fa", "fb", "A", "A", "B/A");
 		const saved = h.ops.all();
 		const h2 = harness();
 		h2.ops.load(saved);
@@ -156,7 +133,7 @@ describe("outbound folder ops", () => {
 	test("refusal clears the op and falls back per file", async () => {
 		const h = harness([{ kind: "refused", reason: "cycle" }]);
 		h.ops.setFeature(true);
-		h.ops.move("fa", "fb", "A", "A");
+		h.ops.move("fa", "fb", "A", "A", "B/A");
 		await h.ops.flush();
 		expect(h.fallbacks).toEqual([["fa", "cycle"]]);
 		expect(h.ops.hasPending("fa")).toBe(false);
@@ -165,8 +142,8 @@ describe("outbound folder ops", () => {
 	test("unknown_event falls back every queued op and turns folder ops off", async () => {
 		const h = harness([{ kind: "unknown_event" }]);
 		h.ops.setFeature(true);
-		h.ops.move("fa", null, "A2", "A");
-		h.ops.move("fb", null, "B2", "B");
+		h.ops.move("fa", null, "A2", "A", "A2");
+		h.ops.move("fb", null, "B2", "B", "B2");
 		await h.ops.flush();
 		expect(h.fallbacks.map(([id]) => id)).toEqual(["fa", "fb"]);
 		expect(h.ops.enabled()).toBe(false);
@@ -175,7 +152,7 @@ describe("outbound folder ops", () => {
 
 	test("feature off after a reconnect: queued ops go per file", async () => {
 		const h = harness();
-		h.ops.move("fa", "fb", "A", "A");
+		h.ops.move("fa", "fb", "A", "A", "B/A");
 		await h.ops.setFeature(false);
 		expect(h.fallbacks).toEqual([["fa", "feature_off"]]);
 		expect(h.sent).toHaveLength(0);
@@ -191,6 +168,7 @@ describe("outbound folder ops", () => {
 				parent_id: null,
 				name: "A",
 				from: "A",
+				to: "A",
 				vaultId: "other",
 			},
 		]);
@@ -217,7 +195,7 @@ describe("held inbound changes (a hiding layer: every clearing event)", () => {
 
 	test("ack: only changes the server made after our op apply", async () => {
 		const h = harness([{ kind: "ok", seq: 10 }]);
-		h.ops.move("fa", "fb", "A", "A");
+		h.ops.move("fa", "fb", "A", "A", "B/A");
 		await h.ops.inbound(change(7, "older"));
 		await h.ops.inbound(change(12, "newer"));
 		expect(h.applied).toEqual([]);
@@ -228,7 +206,7 @@ describe("held inbound changes (a hiding layer: every clearing event)", () => {
 
 	test("ack with nothing newer applies nothing", async () => {
 		const h = harness([{ kind: "ok", seq: 10 }]);
-		h.ops.move("fa", "fb", "A", "A");
+		h.ops.move("fa", "fb", "A", "A", "B/A");
 		await h.ops.inbound(change(7, "older"));
 		h.ops.setFeature(true);
 		await h.ops.flush();
@@ -237,7 +215,7 @@ describe("held inbound changes (a hiding layer: every clearing event)", () => {
 
 	test("refusal: the newest held change applies", async () => {
 		const h = harness([{ kind: "refused", reason: "conflict" }]);
-		h.ops.move("fa", "fb", "A", "A");
+		h.ops.move("fa", "fb", "A", "A", "B/A");
 		await h.ops.inbound(change(7, "one"));
 		await h.ops.inbound(change(9, "two"));
 		h.ops.setFeature(true);
@@ -248,7 +226,7 @@ describe("held inbound changes (a hiding layer: every clearing event)", () => {
 	test("max age: a hold expires even if no answer ever comes", async () => {
 		const h = harness([{ kind: "retry" }, { kind: "retry" }]);
 		h.ops.setFeature(true);
-		h.ops.move("fa", "fb", "A", "A");
+		h.ops.move("fa", "fb", "A", "A", "B/A");
 		await h.ops.inbound(change(7, "theirs"));
 		await h.ops.flush();
 		h.advance(HOLD_MAX_MS + 1);
@@ -259,7 +237,7 @@ describe("held inbound changes (a hiding layer: every clearing event)", () => {
 	test("reconnect drops the hold; the op is re-sent", async () => {
 		const h = harness([{ kind: "retry" }]);
 		h.ops.setFeature(true);
-		h.ops.move("fa", "fb", "A", "A");
+		h.ops.move("fa", "fb", "A", "A", "B/A");
 		await h.ops.inbound(change(7, "theirs"));
 		await h.ops.flush();
 		await h.ops.onReconnect();
@@ -271,12 +249,42 @@ describe("held inbound changes (a hiding layer: every clearing event)", () => {
 
 	test("vault reset drops queue, holds and index", async () => {
 		const h = harness();
-		h.ops.move("fa", "fb", "A", "A");
+		h.ops.move("fa", "fb", "A", "A", "B/A");
 		await h.ops.inbound(change(7, "theirs"));
 		h.ops.reset();
 		expect(h.ops.all()).toEqual([]);
 		expect(h.ops.index.size()).toBe(0);
 		await h.ops.inbound(change(8, "after"));
 		expect(h.applied.map((c) => c.name)).toEqual(["after"]);
+	});
+});
+
+// Adopted from the adversarial review of #689: red at f020b50d.
+describe("review #689: hold expiry vs the still-pending op", () => {
+	test("after an expired hold applies the server's state, no op may still move the folder elsewhere", async () => {
+		const h = harness([{ kind: "retry" }, { kind: "retry" }, { kind: "ok", seq: 20 }]);
+		h.ops.setFeature(true);
+		h.ops.move("fa", "fb", "A", "A", "B/A");
+		await h.ops.inbound({ id: "fa", parent_id: null, name: "Theirs", seq: 7 });
+		await h.ops.flush();
+		h.advance(HOLD_MAX_MS + 1);
+		await h.ops.tick(); // applies "Theirs" locally
+		expect(h.applied.map((c) => c.name)).toEqual(["Theirs"]);
+		// Local disk is now at Theirs; a pending move to fb/A would make the server
+		// diverge from it (our own folder_changed echo is dropped by device_id).
+		expect(h.ops.hasPending("fa")).toBe(false);
+	});
+});
+
+describe("FolderIndex.learn (the crdt_create reply)", () => {
+	test("learns a folder whose parent is known; ignores one whose parent is not", () => {
+		const ix = new FolderIndex();
+		ix.load([{ id: "1", parent_id: null, name: "a" }]);
+		ix.learn("a/b", "2");
+		ix.learn("x/y", "3");
+		expect(ix.idFor("a/b")).toBe("2");
+		expect(ix.idFor("x/y")).toBeUndefined();
+		ix.learn("top", "4");
+		expect(ix.idFor("top")).toBe("4");
 	});
 });

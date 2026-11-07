@@ -132,6 +132,9 @@ export class ModelServer {
 	/** The S3 staging cascade: a folder move also announces every moved note
 	 *  as its own `note_changed` pair. Off = S5, `folder_changed` only. */
 	cascadeBroadcasts: boolean;
+	/** Stage-1 server: the folder_ops wire only, no manifest `folders`, no
+	 *  `folder_id` in the `crdt_create` reply. */
+	manifestFolders: boolean;
 	/** Count of every client wire call, by socket event or `METHOD /route`.
 	 *  What the "1 op per folder rename" property reads. */
 	readonly wireCounts = new Map<string, number>();
@@ -141,11 +144,13 @@ export class ModelServer {
 		genesisEmptyDoc?: boolean;
 		folderOps?: boolean;
 		cascadeBroadcasts?: boolean;
+		manifestFolders?: boolean;
 	}) {
 		this.scheduler = opts.scheduler;
 		this.genesisEmptyDoc = opts.genesisEmptyDoc ?? true;
 		this.folderOps = opts.folderOps ?? false;
 		this.cascadeBroadcasts = opts.cascadeBroadcasts ?? true;
+		this.manifestFolders = opts.manifestFolders ?? true;
 	}
 
 	/** Wire calls of `key` so far (see `wireCounts`). */
@@ -451,7 +456,14 @@ export class ModelServer {
 		// omits note_changed (divergence #3), so remote old-path cleanup can't happen
 		// here — rename is a P2 server-tier concern and is excluded from the Task 8
 		// random suite. See p1-task-8-report.md.
-		this.reply(clientId, joinRef, ref, topic, "ok", { doc_id: effectiveId, seeded });
+		const owned = this.byId.get(effectiveId);
+		this.reply(clientId, joinRef, ref, topic, "ok", {
+			doc_id: effectiveId,
+			seeded,
+			...(this.folderOps && this.manifestFolders && owned
+				? { folder_id: this.folderIdFor(folderOf(owned.path)) }
+				: {}),
+		});
 		// crdt_doc_ready is broadcast_from! — only OTHER devices see it (so an empty
 		// note can be discovered + STEP1-enrolled without a note_yjs_update fan-out).
 		this.broadcastOthers(
@@ -469,7 +481,8 @@ export class ModelServer {
 		payload: Record<string, unknown>,
 	): void {
 		if (!this.folderOps) {
-			this.reply(clientId, joinRef, ref, topic, "error", { reason: "unknown_event" });
+			// An older crdt channel's catch-all for an unhandled event.
+			this.reply(clientId, joinRef, ref, topic, "error", { reason: "bad_frame" });
 			return;
 		}
 		const folderId = payload.folder_id as string;
@@ -529,6 +542,7 @@ export class ModelServer {
 		row.seq = ++this.vaultSeq;
 		const newPath = this.folderPath(folderId) ?? "";
 		this.reply(clientId, joinRef, ref, topic, "ok", { seq: row.seq });
+		if (newPath === oldPath) return; // a no-op move cascades nothing
 		this.broadcastFolderChanged(row, clientId);
 		// S3 staging: today's cascading rename behind the op. Every moved note
 		// gets a fresh seq (catch-up sees it); its broadcast pair is optional.
@@ -964,7 +978,9 @@ export class ModelServer {
 				path: n.path,
 				content_hash: this.head(n),
 				version: n.version,
-				...(this.folderOps ? { folder_id: this.folderIdFor(folderOf(n.path)) } : {}),
+				...(this.folderOps && this.manifestFolders
+					? { folder_id: this.folderIdFor(folderOf(n.path)) }
+					: {}),
 			}));
 		const attachments = [...this.attachments].map(([path, a]) => ({
 			path,
@@ -977,7 +993,7 @@ export class ModelServer {
 			total_notes: notes.length,
 			total_attachments: attachments.length,
 			change_seq: this.vaultSeq,
-			...(this.folderOps
+			...(this.folderOps && this.manifestFolders
 				? {
 						folders: [...this.folders.values()]
 							.filter((f) => !f.deleted)

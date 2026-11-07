@@ -209,6 +209,7 @@ describe("noteIdsVaultId records provenance, not the active vault", () => {
 				exportHashes: () => ({}),
 				exportGateJournal: () => [],
 				exportFolderOps: () => [],
+				exportFolderIndex: () => ({ vaultId: null, rows: [] }),
 				getCatchupSeq: () => 0,
 				getCatchupId: () => null,
 				getManifestSeq: () => 0,

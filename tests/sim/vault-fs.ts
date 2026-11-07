@@ -85,6 +85,8 @@ export interface SimApp {
 	writeJournal: WriteJournalEntry[];
 	/** Every path the engine trashed, in order. */
 	trashed: string[];
+	/** Every `vault.rename` call (folder or file), as `from -> to`. */
+	renamed: string[];
 }
 
 export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
@@ -118,6 +120,7 @@ export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
 	rebuildIndex();
 
 	const writeJournal: WriteJournalEntry[] = [];
+	const renamed: string[] = [];
 	/** Record a write's before/after byte length. Must be called BEFORE the
 	 *  write lands (atomicWrite overwrites the file this reads). */
 	function recordWrite(relPath: string, data: string | Buffer): void {
@@ -258,6 +261,7 @@ export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
 
 		async rename(file, newPath) {
 			const oldPath = file.path;
+			renamed.push(`${oldPath} -> ${newPath}`);
 			ensureParentDir(newPath);
 			fs.renameSync(abs(oldPath), abs(newPath));
 			rebuildIndex();
@@ -331,5 +335,5 @@ export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
 		}
 	}
 
-	return { renameFolder, vault, fileManager, workspace, writeJournal, trashed };
+	return { renameFolder, vault, fileManager, workspace, writeJournal, trashed, renamed };
 }

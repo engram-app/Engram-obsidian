@@ -1,20 +1,29 @@
 /**
  * Folder identity and the outbound folder-op protocol (Engram#2523 S4).
  *
- * One Obsidian folder rename or move becomes ONE `folder_op` on the wire
+ * One Obsidian folder rename or move becomes ONE `folder_op move` on the wire
  * instead of one operation per descendant. The server addresses folders by id
  * (`folders` rows, R9), so this module keeps:
  *
  *  - `FolderIndex`: folder id <-> path, learned from the manifest's `folders`
- *    list and from `folder_changed` events. Root is `null` on the wire and
- *    never has a row.
- *  - the PENDING queue: folder ops the server has not answered yet, keyed by
- *    folder id, persisted with the plugin data so a crash replays them.
+ *    list, `folder_changed` events and the `crdt_create` reply. Root is `null`
+ *    on the wire and never has a row. Persisted with the plugin data, so a
+ *    restarted device still knows where its folders were before the next
+ *    manifest arrives.
+ *  - the PENDING queue: moves the server has not answered yet, keyed by folder
+ *    id, persisted so a crash replays them. Each op carries both paths (`from`,
+ *    where the server has the folder; `to`, where the user put it), so its
+ *    per-file fallback never depends on in-memory state.
  *  - the HELD inbound changes: server state for a folder that has a pending
  *    local op, which would otherwise undo the local move before the server
  *    has seen it.
  *
- * Both of the last two are hiding layers (docs/context/
+ * Only a folder AND a target parent that both have server ids are ever sent:
+ * a `folder_op` naming an id the server never issued cannot succeed, so such a
+ * rename goes per file from the start. (The plan's client-minted `create` is
+ * not sent for the same reason: its target has no server id by definition.)
+ *
+ * Both of the last two layers hide state (docs/context/
  * crdt-sync-store-hiding-layers.md), so each names what clears it:
  *
  * | layer          | clearing events                                         |
@@ -22,19 +31,16 @@
  * | pending op     | ack: clear. Refusal or `unknown_event`: clear, then the |
  * |                | per-file fallback. Feature off: per-file fallback.      |
  * |                | Timeout: stays, re-sent with the same `op_id`. Crash:   |
- * |                | replayed from disk. Vault switch: dropped (`reset`).    |
+ * |                | replayed from disk. Hold expiry: dropped, the server's  |
+ * |                | state wins (as on a refusal). Vault switch: dropped.    |
  * | held inbound   | ack (changes newer than the ack's seq apply), refusal   |
  * |                | (newest applies), socket reconnect (dropped; the        |
  * |                | reconnect's manifest is the truth), max age             |
- * |                | `HOLD_MAX_MS` (newest applies).                         |
+ * |                | `HOLD_MAX_MS` (newest applies AND the op is dropped).   |
  *
  * If a clearing event never fires: a pending op is re-sent on every flush
- * (it never hides anything but the server's ignorance of a local move), and a
- * held change expires after `HOLD_MAX_MS`, so no folder can go deaf.
- *
- * The same-tick rename batch and the Relay echo rule live in the sync engine:
- * the batch is cleared at the end of its tick, and the echo rule is a state
- * check, not a layer.
+ * (it hides nothing but the server's ignorance of a local move), and a held
+ * change expires after `HOLD_MAX_MS`, so no folder can go deaf.
  */
 import { uuid7 } from "./crdt/uuid7";
 
@@ -49,15 +55,16 @@ export type FolderChange = FolderRow & {
 };
 
 export type FolderOp = {
-	op: "move" | "create";
+	op: "move";
 	/** For tracing only: the target is absolute, so a replay is idempotent. */
 	op_id: string;
 	folder_id: string;
 	parent_id: string | null;
 	name: string;
-	/** The folder's path BEFORE this op, as the server last knew it. The per-file
-	 *  fallback rebuilds each child's old path from it. Null for a create. */
-	from: string | null;
+	/** The folder's path as the server knows it (before the op). */
+	from: string;
+	/** Where the user put it: the local path the per-file fallback walks. */
+	to: string;
 	/** The vault the op was made in. Another vault's op is never sent. */
 	vaultId: string | null;
 };
@@ -100,8 +107,8 @@ export class FolderIndex {
 		if (this.rows.delete(id)) this.byPath = null;
 	}
 
-	has(id: string): boolean {
-		return this.rows.has(id);
+	all(): FolderRow[] {
+		return [...this.rows.values()];
 	}
 
 	size(): number {
@@ -135,6 +142,17 @@ export class FolderIndex {
 		}
 		return this.byPath.get(path);
 	}
+
+	/** The server says the folder at `path` has id `id` (a `crdt_create` reply):
+	 *  learn it when its parent is known, so a folder synced this session can be
+	 *  moved by id without waiting for the next manifest. */
+	learn(path: string, id: string): void {
+		if (this.idFor(path) === id) return;
+		const cut = path.lastIndexOf("/");
+		const parent = this.idFor(cut < 0 ? "" : path.slice(0, cut));
+		if (parent === undefined) return;
+		this.set({ id, parent_id: parent, name: cut < 0 ? path : path.slice(cut + 1) });
+	}
 }
 
 export type FolderOpsDeps = {
@@ -144,11 +162,11 @@ export type FolderOpsDeps = {
 	vaultId: () => string | null;
 	/** Redo a refused or unsendable op per file (today's path). */
 	fallback: (op: FolderOp, why: string) => Promise<void>;
-	/** The server applied `op` (its local self-heal hook). */
+	/** The server applied `op`: make sure the disk is where the server is. */
 	acked: (op: FolderOp, seq: number | null) => Promise<void>;
 	/** Apply an inbound folder change to the vault now. */
 	apply: (change: FolderChange) => Promise<void>;
-	/** The pending queue changed: persist it. */
+	/** The queue or the index changed: persist them. */
 	persist: () => void;
 };
 
@@ -186,9 +204,10 @@ export class FolderOps {
 		return [...this.queue.values()];
 	}
 
-	/** Restore ops persisted by an earlier session. */
+	/** Restore ops persisted by an earlier session (ops without a target path
+	 *  predate this format and cannot fall back, so they are not restored). */
 	load(ops: FolderOp[]): void {
-		for (const op of ops) this.queue.set(op.folder_id, op);
+		for (const op of ops) if (typeof op.to === "string") this.queue.set(op.folder_id, op);
 	}
 
 	/** Vault switch or sign-out: nothing here addresses the new vault. */
@@ -200,58 +219,24 @@ export class FolderOps {
 		this.deps.persist();
 	}
 
-	/** Queue a move of a server-known folder to `parentId`/`name`. `from` is the
-	 *  path the server knows it at. The index moves now: local state is true. */
-	move(folderId: string, parentId: string | null, name: string, from: string): void {
-		this.enqueue({
+	/** Queue a move of a server-known folder (now at `to` locally) under
+	 *  `parentId`, both server ids. `from` is where the server has it. A later
+	 *  move of the same folder replaces this one but keeps the earliest `from`.
+	 *  The index moves now: local state is true. */
+	move(folderId: string, parentId: string | null, name: string, from: string, to: string): void {
+		const prev = this.queue.get(folderId);
+		if (prev) this.queue.delete(folderId);
+		this.queue.set(folderId, {
 			op: "move",
 			op_id: uuid7(),
 			folder_id: folderId,
 			parent_id: parentId,
 			name,
-			from,
+			from: prev?.from ?? from,
+			to,
 			vaultId: this.deps.vaultId(),
 		});
 		this.index.set({ id: folderId, parent_id: parentId, name });
-	}
-
-	/** Mint an id for a folder the server has never seen and queue its create. */
-	create(parentId: string | null, name: string): string {
-		const folderId = uuid7();
-		this.index.set({ id: folderId, parent_id: parentId, name });
-		this.enqueue({
-			op: "create",
-			op_id: uuid7(),
-			folder_id: folderId,
-			parent_id: parentId,
-			name,
-			from: null,
-			vaultId: this.deps.vaultId(),
-		});
-		return folderId;
-	}
-
-	/** Id for the folder at `path`, queueing creates for it and any missing
-	 *  ancestor. `null` = root. */
-	ensure(path: string): string | null {
-		const known = this.index.idFor(path);
-		if (known !== undefined) return known;
-		const cut = path.lastIndexOf("/");
-		const parentId = this.ensure(cut < 0 ? "" : path.slice(0, cut));
-		return this.create(parentId, cut < 0 ? path : path.slice(cut + 1));
-	}
-
-	/** Coalesce per folder: a create absorbs a later move (the server never saw
-	 *  it, so create it at the final place); a later move replaces an earlier one
-	 *  but keeps the earliest `from`, which is what the server still holds. */
-	private enqueue(op: FolderOp): void {
-		const prev = this.queue.get(op.folder_id);
-		if (prev?.op === "create") {
-			this.queue.set(op.folder_id, { ...prev, parent_id: op.parent_id, name: op.name });
-		} else {
-			if (prev) this.queue.delete(op.folder_id);
-			this.queue.set(op.folder_id, prev ? { ...op, from: prev.from } : op);
-		}
 		this.deps.persist();
 	}
 
@@ -266,20 +251,14 @@ export class FolderOps {
 	private async runFlush(): Promise<void> {
 		if (!this.enabled()) return;
 		for (const op of [...this.queue.values()]) {
-			if (this.queue.get(op.folder_id) !== op) continue; // answered via a dependency
-			if (!(await this.sendOne(op, new Set()))) return; // no answer: retry later
+			if (this.queue.get(op.folder_id) !== op) continue;
+			if (!(await this.sendOne(op))) return; // no answer: retry later
 		}
 	}
 
-	/** Send `op`, after any pending create its parent depends on. False = the
-	 *  server gave no answer, so stop until the next flush. */
-	private async sendOne(op: FolderOp, seen: Set<string>): Promise<boolean> {
-		seen.add(op.folder_id);
-		const parent = op.parent_id === null ? undefined : this.queue.get(op.parent_id);
-		if (parent?.op === "create" && !seen.has(parent.folder_id)) {
-			if (!(await this.sendOne(parent, seen))) return false;
-		}
-		if (this.queue.get(op.folder_id) !== op) return true;
+	/** Send `op`. False = the server gave no answer, so stop until the next
+	 *  flush. */
+	private async sendOne(op: FolderOp): Promise<boolean> {
 		if (op.vaultId !== null && op.vaultId !== this.deps.vaultId()) {
 			this.queue.delete(op.folder_id);
 			this.deps.persist();
@@ -287,8 +266,8 @@ export class FolderOps {
 		}
 		const res = await this.deps.send(op);
 		if (res.kind === "retry") return false;
-		// Superseded while in flight: the newer op is still queued and owns the
-		// folder. Its own send settles it.
+		// Superseded (or dropped by a hold expiry) while in flight: whatever
+		// replaced it owns the folder now.
 		if (this.queue.get(op.folder_id) !== op) return true;
 		if (res.kind === "unknown_event") {
 			this.refusedForSession = true;
@@ -351,11 +330,19 @@ export class FolderOps {
 		await this.flush();
 	}
 
-	/** Periodic: expire holds past `HOLD_MAX_MS` and retry unanswered ops. */
+	/** Periodic: expire holds past `HOLD_MAX_MS` and retry unanswered ops.
+	 *
+	 *  An expired hold means the server never answered our op while it kept
+	 *  moving the folder. The server's state wins, as on a refusal: the op is
+	 *  DROPPED, not left to land later. Applying theirs while ours is still
+	 *  queued would let a late ack move the server back to ours, and our own
+	 *  `folder_changed` echo is dropped, so disk and server would part. */
 	async tick(): Promise<void> {
 		const now = this.deps.now();
 		for (const [id, h] of [...this.held]) {
-			if (now - h.since > HOLD_MAX_MS) await this.release(id, null);
+			if (now - h.since <= HOLD_MAX_MS) continue;
+			if (this.queue.delete(id)) this.deps.persist();
+			await this.release(id, null);
 		}
 		await this.flush();
 	}

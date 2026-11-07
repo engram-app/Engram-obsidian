@@ -220,7 +220,13 @@ export type GenesisOutcome = "stored" | "absent" | "occupied" | null;
 
 /** Raw server reply shape for `crdt_create`, before the docId/seeded rename —
  *  same "no inline `;`" reasoning as CrdtCreateResult above. */
-type CrdtCreateReply = { doc_id: string; seeded?: boolean; genesis?: string };
+type CrdtCreateReply = {
+	doc_id: string;
+	seeded?: boolean;
+	genesis?: string;
+	/** The note's server folder (Engram#2523 S4); null = root. */
+	folder_id?: string | null;
+};
 
 /** Where a note create places the note by id (Engram#2523 S4). */
 type FolderRef = { folder_id: string | null; name: string };
@@ -358,8 +364,10 @@ export class NoteChannel {
 	/** Engram#2523 S4: a folder row changed on the server (`folder_changed`). */
 	onFolderChanged: ((change: FolderChange) => void) | null = null;
 	/** `{ folder_id, name }` to send with a note create or move, or null for
-	 *  path-only. Async: it may first send the folder's own pending create. */
-	folderRefFor: ((path: string, noteId: string) => Promise<FolderRef | null>) | null = null;
+	 *  path-only. Synchronous, so a create without folder ops is unchanged. */
+	folderRefFor: ((path: string, noteId: string) => FolderRef | null) | null = null;
+	/** A `crdt_create` reply named the server folder of the note's path. */
+	onCreateFolderId: ((path: string, folderId: string | null) => void) | null = null;
 	/** The sync join reply's `index_v1` (S5 stamps it per vault). */
 	onIndexV1: ((on: boolean) => void) | null = null;
 	/** The server refused a create's `folder_id` (`folder_not_found`). */
@@ -638,7 +646,7 @@ export class NoteChannel {
 		// The path is still sent, so a server that ignores the id places it the
 		// same way, and `folder_not_found` is retried by path (the server then
 		// recreates the folder from the path, as for any path-only create).
-		const ref = this.folderRefFor ? await this.folderRefFor(path, docId) : null;
+		const ref = this.folderRefFor?.(path, docId) ?? null;
 		try {
 			return await this.sendCrdtCreate(docId, path, b64, ref);
 		} catch (e) {
@@ -667,6 +675,9 @@ export class NoteChannel {
 			...(ref ?? {}),
 			...(b64 === undefined ? {} : { b64 }),
 		})) as CrdtCreateReply;
+		if (res.folder_id === null || typeof res.folder_id === "string") {
+			this.onCreateFolderId?.(path, res.folder_id);
+		}
 		return createResult(res);
 	}
 
@@ -686,7 +697,10 @@ export class NoteChannel {
 		} catch (e) {
 			const reason = crdtOpFailureReason(e);
 			if (reason === null || reason === "rate_limited") return { kind: "retry" };
-			if (reason === "unknown_event") return { kind: "unknown_event" };
+			// `bad_frame`: an older crdt channel's catch-all for an event it has no
+			// handler for (crdt_channel.ex), i.e. a server without folder ops.
+			if (reason === "unknown_event" || reason === "bad_frame")
+				return { kind: "unknown_event" };
 			return { kind: "refused", reason };
 		}
 	}

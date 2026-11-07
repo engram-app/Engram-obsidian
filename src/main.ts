@@ -44,7 +44,7 @@ import { type CrdtOp, CrdtOpQueue, makeDropReporter } from "./crdt-op-queue";
 import { createDebugApi, installDebugApi, uninstallDebugApi } from "./debug-api";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
 import { isMarkdownPath } from "./file-kind";
-import type { FolderOp } from "./folder-ops";
+import type { FolderOp, FolderRow } from "./folder-ops";
 import { setLogSink } from "./has-logging";
 import { noteRef } from "./note-ref";
 import { PromiseTracker, setActiveTracker } from "./track-promise";
@@ -161,6 +161,9 @@ interface PluginData {
 	/** Folder ops the server has not answered (Engram#2523 S4). Each carries
 	 *  its vault; another vault's op is dropped unsent. */
 	folderOps?: FolderOp[];
+	/** The folder id <-> path index as last applied to disk, and its vault, so
+	 *  a restart can follow a remote folder move before its first manifest. */
+	folderIndex?: { vaultId: string | null; rows: FolderRow[] };
 }
 
 /** Whether setupNoteStream() may keep the existing stream instead of
@@ -936,6 +939,7 @@ export default class EngramSyncPlugin extends Plugin {
 			this.crdtOpQueue?.load(saved.crdtOpQueue);
 		}
 		if (saved?.folderOps?.length) this.syncEngine.folderOps.load(saved.folderOps);
+		this.syncEngine.restoreFolderIndex(saved?.folderIndex);
 		if (saved?.syncStateVaultId !== undefined) {
 			this.syncEngine.setSyncStateVaultId(saved.syncStateVaultId);
 		}
@@ -2040,6 +2044,7 @@ export default class EngramSyncPlugin extends Plugin {
 			crdtOpQueue: this.crdtOpQueue?.all() ?? [],
 			// Re-listed for the wholesale-save reason: unanswered folder ops.
 			folderOps: this.syncEngine.exportFolderOps(),
+			folderIndex: this.syncEngine.exportFolderIndex(),
 			syncState: this.syncEngine.exportSyncState(),
 			syncStateVaultId: this.syncEngine.getSyncStateVaultId(),
 			// Dual-write legacy format for rollback safety (remove after one release cycle)
@@ -2856,6 +2861,7 @@ export default class EngramSyncPlugin extends Plugin {
 				// Engram#2523 S4: folder ids on note creates, folder_changed inbound.
 				channel.folderRefFor = (p, id) => this.syncEngine.folderRefFor(p, id);
 				channel.onIndexV1 = (on) => this.syncEngine.setIndexV1(on);
+				channel.onCreateFolderId = (p, id) => this.syncEngine.learnFolderOf(p, id);
 				channel.onFolderNotFound = (id) => this.syncEngine.forgetFolder(id);
 				channel.onFolderChanged = (c) => void this.syncEngine.onFolderChanged(c);
 

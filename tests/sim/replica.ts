@@ -545,6 +545,7 @@ export class Replica {
 		channel.onServerFeatures = (f) => void engine.setFolderOpsEnabled(f.folderOps);
 		channel.folderRefFor = (p, nid) => engine.folderRefFor(p, nid);
 		channel.onIndexV1 = (on) => engine.setIndexV1(on);
+		channel.onCreateFolderId = (p, fid) => engine.learnFolderOf(p, fid);
 		channel.onFolderNotFound = (fid) => engine.forgetFolder(fid);
 		channel.onFolderChanged = (c) => void engine.onFolderChanged(c);
 
@@ -798,6 +799,11 @@ export class Replica {
 	/** Every path this replica's engine trashed, in order. */
 	trashed(): string[] {
 		return [...this.app.trashed];
+	}
+
+	/** Every `vault.rename` this replica's vault saw, in order. */
+	renamed(): string[] {
+		return [...this.app.renamed];
 	}
 
 	/** Rename a folder; Obsidian's per-item events fire in `order`. */

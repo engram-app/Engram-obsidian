@@ -5,8 +5,8 @@
  * - note creates carry `{ folder_id, name }`, retried by path on
  *   `folder_not_found`;
  * - `folder_changed` is parsed and handed on;
- * - the engine's folder ref: only a folder with a server id is sent by id,
- *   and a queued create for it goes first.
+ * - the engine's folder ref: only a folder with a server id is sent by id;
+ * - the `crdt_create` reply's `folder_id` teaches the folder's id.
  */
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import "fake-indexeddb/auto";
@@ -65,6 +65,7 @@ const op: FolderOp = {
 	parent_id: "f2",
 	name: "Done",
 	from: "Proj",
+	to: "Done",
 	vaultId: "v1",
 };
 
@@ -112,7 +113,10 @@ describe("NoteChannel folder ops", () => {
 		["cycle", "refused"],
 		["conflict", "refused"],
 		["not_found", "refused"],
+		["invalid_name", "refused"],
 		["unknown_event", "unknown_event"],
+		// An older crdt channel's catch-all: a server without the handler.
+		["bad_frame", "unknown_event"],
 		["rate_limited", "retry"],
 	] as const) {
 		test(`refusal ${reason} maps to ${kind}`, async () => {
@@ -133,7 +137,7 @@ describe("NoteChannel folder ops", () => {
 
 	test("a note create carries folder_id and name from the folder ref", async () => {
 		const { channel, ws } = await joined();
-		channel.folderRefFor = async () => ({ folder_id: "f1", name: "n.md" });
+		channel.folderRefFor = () => ({ folder_id: "f1", name: "n.md" });
 		const p = channel.crdtCreate("id-1", "Proj/n.md");
 		await tick();
 		const [frame] = frames(ws, "crdt_create");
@@ -151,7 +155,7 @@ describe("NoteChannel folder ops", () => {
 	test("folder_not_found: the folder is forgotten and the create retried by path", async () => {
 		const { channel, ws } = await joined();
 		const forgot: string[] = [];
-		channel.folderRefFor = async () => ({ folder_id: "dead", name: "n.md" });
+		channel.folderRefFor = () => ({ folder_id: "dead", name: "n.md" });
 		channel.onFolderNotFound = (id) => forgot.push(id);
 		const p = channel.crdtCreate("id-1", "Proj/n.md");
 		await tick();
@@ -215,7 +219,7 @@ describe("SyncEngine folder ref for note creates", () => {
 	test("off: no ref (path only)", async () => {
 		const e = engine();
 		e.learnFolders([{ id: "f1", parent_id: null, name: "Proj" }]);
-		expect(await e.folderRefFor("Proj/n.md")).toBeNull();
+		expect(e.folderRefFor("Proj/n.md")).toBeNull();
 	});
 
 	test("on: a server-known folder is sent by id; root is null; unknown is path only", async () => {
@@ -223,39 +227,39 @@ describe("SyncEngine folder ref for note creates", () => {
 		e.setCrdtPorts({ folderOp: async () => ({ kind: "ok", seq: 1 }) });
 		await e.setFolderOpsEnabled(true);
 		e.learnFolders([{ id: "f1", parent_id: null, name: "Proj" }]);
-		expect(await e.folderRefFor("Proj/n.md")).toEqual({ folder_id: "f1", name: "n.md" });
-		expect(await e.folderRefFor("top.md")).toEqual({ folder_id: null, name: "top.md" });
-		expect(await e.folderRefFor("Never/n.md")).toBeNull();
+		expect(e.folderRefFor("Proj/n.md")).toEqual({ folder_id: "f1", name: "n.md" });
+		expect(e.folderRefFor("top.md")).toEqual({ folder_id: null, name: "top.md" });
+		expect(e.folderRefFor("Never/n.md")).toBeNull();
 	});
 
-	test("a queued create for the note's folder is sent before the note's create", async () => {
+	test("flag off: a folder_changed event is ignored, as on main", async () => {
 		const e = engine();
-		const sent: string[] = [];
-		e.setCrdtPorts({
-			folderOp: async (o) => {
-				sent.push(`${o.op}:${o.name}`);
-				return { kind: "ok", seq: 1 };
-			},
-		});
-		await e.setFolderOpsEnabled(true);
-		const id = e.folderOps.ensure("Inbox");
-		expect(e.folderOps.hasPending(id as string)).toBe(true);
-		e.setCrdtPorts({
-			folderOp: async (o) => {
-				sent.push(`${o.op}:${o.name}`);
-				return { kind: "ok", seq: 1 };
-			},
-		});
-		const ref = await e.folderRefFor("Inbox/n.md");
-		expect(sent).toEqual(["create:Inbox"]);
-		expect(ref).toEqual({ folder_id: id, name: "n.md" });
+		e.learnFolders([{ id: "f1", parent_id: null, name: "Proj" }]);
+		await e.onFolderChanged({ id: "f1", parent_id: null, name: "Done", seq: 3 });
+		expect(e.folderOps.index.pathFor("f1")).toBe("Proj");
 	});
 
-	test("the create still unanswered: the note goes path only", async () => {
+	test("the crdt_create reply's folder_id teaches the folder", async () => {
 		const e = engine();
-		e.setCrdtPorts({ folderOp: async () => ({ kind: "retry" }) });
-		await e.setFolderOpsEnabled(true);
-		e.folderOps.ensure("Inbox");
-		expect(await e.folderRefFor("Inbox/n.md")).toBeNull();
+		e.learnFolders([{ id: "f1", parent_id: null, name: "Proj" }]);
+		e.learnFolderOf("Proj/New/n.md", "f9");
+		e.learnFolderOf("top.md", null);
+		expect(e.folderOps.index.idFor("Proj/New")).toBe("f9");
+	});
+});
+
+describe("crdt_create reply folder_id", () => {
+	test("is handed on with the note's path; absent on an older server", async () => {
+		const { channel, ws } = await joined();
+		const seen: unknown[] = [];
+		channel.onCreateFolderId = (p, id) => seen.push([p, id]);
+		const p1 = channel.crdtCreate("id-1", "Proj/n.md");
+		reply(ws, frames(ws, "crdt_create")[0][1], "ok", { doc_id: "id-1", folder_id: "f7" });
+		await p1;
+		const p2 = channel.crdtCreate("id-2", "Proj/m.md");
+		reply(ws, frames(ws, "crdt_create")[1][1], "ok", { doc_id: "id-2" });
+		await p2;
+		expect(seen).toEqual([["Proj/n.md", "f7"]]);
+		channel.disconnect();
 	});
 });
