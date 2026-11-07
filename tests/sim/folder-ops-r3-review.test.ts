@@ -38,7 +38,7 @@ for (const cascadeBroadcasts of [true, false])
 			// The sim's drains jump virtual time ~5 min with no 5 s tick wired, so
 			// the op's age cap (OP_TTL_MS) would end it in the fallback; restart its
 			// age so this test reaches the late ack it exists to pin.
-			for (const op of fo.all()) op.firstSentAt = fo.deps.now();
+			for (const op of fo.all()) op.queuedAt = fo.deps.now();
 			const expired = fo.tick();
 			await t.scheduler.drain();
 			await expired;

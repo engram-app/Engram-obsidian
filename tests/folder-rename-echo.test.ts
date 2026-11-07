@@ -385,3 +385,60 @@ describe("a folder delete stays per file (folder deletes are parked, Engram#2523
 		expect(s.e.folderOps.all()).toEqual([]);
 	});
 });
+
+describe("the server's folder nudge (Engram#2533)", () => {
+	// `note_changed {event_type: "upsert", kind: "note", path}` with no id,
+	// content, hash or seq; `path` is the folder's new path, with a trailing
+	// "/" when it would end in .md/.canvas. Old plugins answer it with a seq
+	// catch-up; this one must do no more: no REST read, no file written, no
+	// folder or note created at that path, no op sent.
+	for (const path of ["Done", "Notes.md/"]) {
+		test(`nudge for ${JSON.stringify(path)}: one seq catch-up, nothing else`, async () => {
+			const s = setup();
+			const sent: unknown[] = [];
+			s.e.setCrdtPorts({
+				create: s.crdtCreate,
+				folderOp: async (op) => {
+					sent.push(op);
+					return { kind: "ok", seq: 1 };
+				},
+			});
+			await s.e.setFolderOpsEnabled(true);
+			const replay = mock().mockResolvedValue({ files: 0, failed: 0, deletes: 0 });
+			(s.e as any).catchupViaSeqReplay = replay;
+			const app = (s.e as any).app;
+			app.vault.create = mock();
+			app.vault.modify = mock();
+			app.vault.createFolder = mock();
+			(s.e as any).api.getNote = mock();
+			await s.e.handleStreamEvent({ event_type: "upsert", kind: "note", path } as any);
+			await new Promise((r) => setTimeout(r, 0));
+			expect(replay).toHaveBeenCalledTimes(1);
+			expect(app.vault.create).not.toHaveBeenCalled();
+			expect(app.vault.modify).not.toHaveBeenCalled();
+			expect(app.vault.createFolder).not.toHaveBeenCalled();
+			expect((s.e as any).api.getNote).not.toHaveBeenCalled();
+			expect(s.crdtCreate).not.toHaveBeenCalled();
+			expect(sent).toEqual([]);
+		});
+	}
+});
+
+describe("manifest-move rows go through the one row rule (R4-2)", () => {
+	test("an invalid parent row cannot place a valid child: nothing moves", async () => {
+		const s = setup();
+		const proj = new TFolder("Proj", []);
+		const app = (s.e as any).app;
+		const realGet = app.vault.getAbstractFileByPath;
+		app.vault.getAbstractFileByPath = (p: string) => (p === "Proj" ? proj : realGet(p));
+		app.vault.rename = mock().mockResolvedValue(undefined);
+		await s.e.setFolderOpsEnabled(true);
+		await (s.e as any).syncManifestFolders({
+			folders: [
+				{ id: "f9", parent_id: null, name: "Elsewhere/Deep" },
+				{ id: "f1", parent_id: "f9", name: "Proj" },
+			],
+		});
+		expect(app.vault.rename).not.toHaveBeenCalled();
+	});
+});

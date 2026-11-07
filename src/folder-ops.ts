@@ -32,13 +32,16 @@
  * |                | `invalid_name`) or `unknown_event`: clear, then the     |
  * |                | per-file fallback. `not_found` / `failed`: retried in   |
  * |                | the budget below. Feature off: per-file fallback.       |
- * |                | No answer (timeout, lost frame, disconnect, rate        |
- * |                | limit): re-sent with backoff, same `op_id`, until       |
- * |                | `MAX_ATTEMPTS` sends or `OP_TTL_MS` since the first     |
- * |                | send, then the per-file fallback (final). Not joined:   |
- * |                | held, spends nothing. Crash: replayed from disk with    |
- * |                | its spent budget. Vault switch: dropped. NEVER by a     |
- * |                | hold expiry: only the server's answer or a fallback.    |
+ * |                | No answer (timeout, lost frame, disconnect): re-sent    |
+ * |                | with backoff, same `op_id`, until `MAX_ATTEMPTS` sends, |
+ * |                | then the per-file fallback (final). `rate_limited`:     |
+ * |                | the queue pauses, no attempt spent (the note-op queue's |
+ * |                | RateLimitPause). Age: `OP_TTL_MS` from enqueue, sent or |
+ * |                | not (a crdt topic that stays down, a features reply     |
+ * |                | that never comes), then the per-file fallback, which    |
+ * |                | today's REST/queue paths deliver. Not joined: no        |
+ * |                | attempt spent. Crash: replayed from disk with its spent |
+ * |                | budget. Vault switch: dropped. NEVER by a hold expiry.  |
  * |                | The delete-pass skip and held changes clear with it.    |
  * | held inbound   | ack (changes newer than the ack's seq apply), refusal   |
  * |                | (newest applies), socket reconnect (dropped; the        |
@@ -54,7 +57,13 @@ import { expBackoff } from "./backoff";
 import { uuid7 } from "./crdt/uuid7";
 // One source of truth for "how long may an unanswered socket op wait": the
 // durable note-op queue's limits, not a sibling set.
-import { BASE_BACKOFF_MS, MAX_ATTEMPTS, MAX_BACKOFF_MS, OP_TTL_MS } from "./crdt-op-queue";
+import {
+	BASE_BACKOFF_MS,
+	MAX_ATTEMPTS,
+	MAX_BACKOFF_MS,
+	OP_TTL_MS,
+	RateLimitPause,
+} from "./crdt-op-queue";
 
 /** One `folders` row as the server sends it. `parent_id: null` = root. */
 export type FolderRow = { id: string; parent_id: string | null; name: string };
@@ -81,9 +90,9 @@ export type FolderOp = {
 	vaultId: string | null;
 	/** Sends that got no answer (persisted, so a crash loop is bounded too). */
 	attempts?: number;
-	/** When the first send went out; the age cap counts from here, so time
-	 *  spent offline before it does not count. */
-	firstSentAt?: number;
+	/** When the op was queued; the age cap counts from here whether or not a
+	 *  send ever went out (rate-limit pauses are credited back). */
+	queuedAt?: number;
 	/** Backoff: not re-sent before this. */
 	nextAttemptAt?: number;
 };
@@ -96,6 +105,7 @@ export type FolderOpResult =
 	| { kind: "refused"; reason: string }
 	| { kind: "unknown_event" }
 	| { kind: "retry" }
+	| { kind: "rate_limited" }
 	| { kind: "held" };
 
 /** Refusals that are retried inside the op's attempt budget instead of
@@ -170,17 +180,6 @@ export class FolderIndex {
 		}
 		return this.byPath.get(path);
 	}
-
-	/** The server says the folder at `path` has id `id` (a `crdt_create` reply):
-	 *  learn it when its parent is known, so a folder synced this session can be
-	 *  moved by id without waiting for the next manifest. */
-	learn(path: string, id: string): void {
-		if (this.idFor(path) === id) return;
-		const cut = path.lastIndexOf("/");
-		const parent = this.idFor(cut < 0 ? "" : path.slice(0, cut));
-		if (parent === undefined) return;
-		this.set({ id, parent_id: parent, name: cut < 0 ? path : path.slice(cut + 1) });
-	}
 }
 
 export type FolderOpsDeps = {
@@ -238,8 +237,9 @@ export class FolderOps {
 	 *  from before that op. `chain`: a root-first ancestor chain, learned up
 	 *  to its first broken parent link; otherwise the full list, which
 	 *  replaces the index. */
-	learnServerRows(rows: unknown, chain: boolean): void {
+	learnServerRows(rows: unknown, mode: "list" | "chain" | "rows"): void {
 		if (!Array.isArray(rows)) return;
+		const chain = mode === "chain";
 		const valid: FolderRow[] = [];
 		for (const r of rows) {
 			if (!isFolderRow(r)) {
@@ -250,15 +250,29 @@ export class FolderOps {
 			if (chain && r.parent_id !== (prev ? prev.id : null)) break;
 			valid.push(r);
 		}
-		if (!chain) this.index.load(valid, (id) => this.hasPending(id));
+		if (mode === "list") this.index.load(valid, (id) => this.hasPending(id));
 		else for (const r of valid) if (!this.hasPending(r.id)) this.index.set(r);
 		this.deps.persist();
+	}
+
+	/** The server says the folder at `path` is `id` (the `crdt_create` reply's
+	 *  leaf `folder_id`): one row through `learnServerRows`, learned when its
+	 *  parent is known. */
+	learnServerLeaf(path: string, id: string): void {
+		const cut = path.lastIndexOf("/");
+		const parent = this.index.idFor(cut < 0 ? "" : path.slice(0, cut));
+		if (parent === undefined || this.index.idFor(path) === id) return;
+		const name = cut < 0 ? path : path.slice(cut + 1);
+		this.learnServerRows([{ id, parent_id: parent, name }], "rows");
 	}
 
 	/** Restore ops persisted by an earlier session (ops without a target path
 	 *  predate this format and cannot fall back, so they are not restored). */
 	load(ops: FolderOp[]): void {
-		for (const op of ops) if (typeof op.to === "string") this.queue.set(op.folder_id, op);
+		for (const op of ops) {
+			if (typeof op.to !== "string") continue;
+			this.queue.set(op.folder_id, { ...op, queuedAt: op.queuedAt ?? this.deps.now() });
+		}
 	}
 
 	/** Vault switch or sign-out: nothing here addresses the new vault. */
@@ -286,6 +300,7 @@ export class FolderOps {
 			from: prev?.from ?? from,
 			to,
 			vaultId: this.deps.vaultId(),
+			queuedAt: prev?.queuedAt ?? this.deps.now(),
 		});
 		this.index.set({ id: folderId, parent_id: parentId, name });
 		this.deps.persist();
@@ -302,6 +317,8 @@ export class FolderOps {
 	private async runFlush(): Promise<void> {
 		if (!this.enabled()) return;
 		for (const op of [...this.queue.values()]) {
+			if (this.rateLimit.paused()) return;
+			this.creditRateLimitPause();
 			if (this.queue.get(op.folder_id) !== op) continue;
 			if ((op.nextAttemptAt ?? 0) > this.deps.now()) continue; // backing off
 			if (!(await this.sendOne(op))) return; // socket down: stop until next flush
@@ -316,25 +333,24 @@ export class FolderOps {
 			this.deps.persist();
 			return true;
 		}
-		const sentAt = this.deps.now();
 		const res = await this.deps.send(op);
 		if (res.kind === "held") return false;
+		if (res.kind === "rate_limited") {
+			// Not the op's fault: pause the whole queue, spend nothing.
+			if (this.queue.get(op.folder_id) === op) op.nextAttemptAt = this.rateLimit.hit();
+			this.deps.persist();
+			return false;
+		}
 		if (res.kind === "retry" || (res.kind === "refused" && RETRIED_REFUSALS.has(res.reason))) {
 			if (this.queue.get(op.folder_id) !== op) return true;
 			op.attempts = (op.attempts ?? 0) + 1;
-			op.firstSentAt ??= sentAt;
 			op.nextAttemptAt =
 				this.deps.now() + expBackoff(BASE_BACKOFF_MS, op.attempts - 1, MAX_BACKOFF_MS);
 			this.deps.persist();
-			const capped =
-				op.attempts >= MAX_ATTEMPTS
-					? "max-attempts"
-					: this.deps.now() - op.firstSentAt > OP_TTL_MS
-						? "ttl"
-						: null;
-			// The last refusal names the fallback when there was one.
-			const why = capped && res.kind === "refused" ? res.reason : capped;
-			if (why) await this.giveUp(op, why);
+			if (op.attempts >= MAX_ATTEMPTS) {
+				// The last refusal names the fallback when there was one.
+				await this.giveUp(op, res.kind === "refused" ? res.reason : "max-attempts");
+			}
 			return true;
 		}
 		// Superseded (or dropped by a hold expiry) while in flight: whatever
@@ -348,6 +364,7 @@ export class FolderOps {
 		this.queue.delete(op.folder_id);
 		this.deps.persist();
 		if (res.kind === "ok") {
+			this.rateLimit.delivered();
 			await this.deps.acked(op, res.seq);
 			await this.release(op.folder_id, res.seq);
 		} else {
@@ -381,6 +398,7 @@ export class FolderOps {
 	/** An inbound folder change. Held while this device has a pending op for
 	 *  the same folder, applied otherwise. */
 	async inbound(change: FolderChange): Promise<void> {
+		if (!isFolderRow(change)) return; // the one row rule, as learnServerRows
 		if (this.queue.has(change.id)) {
 			const h = this.held.get(change.id);
 			if (h) h.changes.push(change);
@@ -426,11 +444,39 @@ export class FolderOps {
 		for (const [id, h] of [...this.held]) {
 			if (now - h.since > HOLD_MAX_MS) await this.release(id, null);
 		}
+		// The age cap runs whether or not anything could be sent: an op held for
+		// a crdt topic that stays down, or restored with no features reply, ends
+		// in the per-file fallback too, so its delete-pass skip always clears.
+		if (!this.rateLimit.paused()) this.creditRateLimitPause();
+		for (const op of [...this.queue.values()]) {
+			if (now - (op.queuedAt ?? now) > OP_TTL_MS && this.queue.get(op.folder_id) === op) {
+				await this.giveUp(op, "ttl");
+			}
+		}
 		await this.flush();
+	}
+
+	/** The note-op queue's pause, shared code: see `RateLimitPause`. */
+	private readonly rateLimit = new RateLimitPause(
+		() => this.deps.now(),
+		(n) => expBackoff(BASE_BACKOFF_MS, n - 1, MAX_BACKOFF_MS),
+	);
+
+	/** A pause that ended is held time, not age: credit it back (the queue's rule). */
+	private creditRateLimitPause(): void {
+		const pause = this.rateLimit.takeEnded();
+		if (!pause) return;
+		for (const op of this.queue.values()) {
+			const heldFor = pause.until - Math.max(pause.from, op.queuedAt ?? pause.from);
+			if (heldFor > 0 && op.queuedAt !== undefined) op.queuedAt += heldFor;
+		}
+		this.deps.persist();
 	}
 }
 
-function isFolderRow(r: unknown): r is FolderRow {
+/** The one shape check for a server folder row (manifest, chains,
+ *  `folder_changed`, manifest moves). */
+export function isFolderRow(r: unknown): r is FolderRow {
 	if (typeof r !== "object" || r === null) return false;
 	const row = r as Record<string, unknown>;
 	return (

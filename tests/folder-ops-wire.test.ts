@@ -117,7 +117,7 @@ describe("NoteChannel folder ops", () => {
 		["unknown_event", "unknown_event"],
 		// An older crdt channel's catch-all: a server without the handler.
 		["bad_frame", "unknown_event"],
-		["rate_limited", "retry"],
+		["rate_limited", "rate_limited"],
 	] as const) {
 		test(`refusal ${reason} maps to ${kind}`, async () => {
 			const { channel, ws } = await joined();
