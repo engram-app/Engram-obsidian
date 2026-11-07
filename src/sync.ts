@@ -4489,7 +4489,12 @@ export class SyncEngine {
 	 *  ONE implementation on purpose: both callers below reach it from a state
 	 *  where re-sending the body would mint a rival lineage, and a second copy
 	 *  is how the first one drifted (#476). */
-	private async adoptServerLineage(noteId: string, path: string): Promise<string | null> {
+	private async adoptServerLineage(
+		noteId: string,
+		path: string,
+		/** The note's file, to report what the apply's flush left on it. */
+		file?: TFile,
+	): Promise<string | null> {
 		// Capture the registry BEFORE the await. `setCrdtPorts` reassigns
 		// `this.crdt` on a vault change, so re-reading it after the round trip
 		// can apply the OLD vault's Yjs bytes into the NEW vault's registry under
@@ -4525,7 +4530,27 @@ export class SyncEngine {
 			return null;
 		}
 		rlog().info("crdt", `create: adopted server lineage for ${noteRef(path)}`);
-		return await crdt.projectedText(noteId);
+		return await this.flushedProjection(crdt, noteId, file);
+	}
+
+	/** What a flush of `noteId`'s doc left on disk: the projection, carrying
+	 *  disk's own frontmatter bytes when they mean the same (`writeCrdtNote`
+	 *  keeps them, and then writes nothing). A baseline stamped after an apply
+	 *  must be this, never the bare projection: on a note whose YAML the codec
+	 *  re-serialises, that is a baseline no file holds, and the next catch-up
+	 *  drift-copies the note (Engram#1928 class, backend e2e test_101). */
+	private async flushedProjection(
+		crdt: { projectedText(noteId: string): Promise<string> },
+		noteId: string,
+		file: TFile | undefined,
+	): Promise<string> {
+		const projected = await crdt.projectedText(noteId);
+		if (!file) return projected;
+		try {
+			return keepDiskFrontmatter(projected, await this.app.vault.cachedRead(file));
+		} catch {
+			return projected; // unreadable: the projection is all we know
+		}
 	}
 
 	/** Merge `disk`, edited from `base` (the body this device's create sent),
@@ -4998,13 +5023,19 @@ export class SyncEngine {
 					// unreadable — proceed without drift protection
 				}
 				await this.crdt.applyRemoteUpdate(effectiveId, opts.genesisUpdate);
-				// The baseline is the doc's PROJECTION, not `genesisContent`: the
-				// apply above just flushed that projection over disk, and the codec
-				// canonicalizes frontmatter (`key:` -> `key: null`, flow lists,
-				// quotes, comments). Stamping the raw bytes left a baseline no file
-				// holds, so the next catch-up read every such note as locally edited
-				// and drift-copied it (#1928: 54 conflict copies on one first sync).
-				let consumed: string | null = await this.crdt.projectedText(effectiveId);
+				// The baseline is what the apply's flush left on disk, not
+				// `genesisContent`: the codec canonicalizes frontmatter (`key:` ->
+				// `key: null`, flow lists, quotes, comments), and the flush writes
+				// that projection unless it means what disk already holds, in which
+				// case it keeps disk's bytes and writes nothing. A baseline no file
+				// holds made the next catch-up read every such note as locally
+				// edited and drift-copy it (#1928: 54 conflict copies on one first
+				// sync; test_101).
+				let consumed: string | null = await this.flushedProjection(
+					this.crdt,
+					effectiveId,
+					file,
+				);
 				// M1: `genesisContent` was frozen before the create round-trip, and
 				// the apply above flushes it over disk. Anything that landed in that
 				// window survives only in `preApplyDisk`. NO reread: it would read
@@ -5034,7 +5065,7 @@ export class SyncEngine {
 			// The server re-id'd us (#1409): it stored our body under a lineage we
 			// do not have. Pushing again is exactly how the doubling happens, so
 			// ADOPT its lineage instead.
-			const adopted = await this.adoptServerLineage(effectiveId, normalized);
+			const adopted = await this.adoptServerLineage(effectiveId, normalized, file);
 			if (adopted !== null) return adopted;
 
 			// No way to adopt (old backend, rate limit, dropped socket). Pushing
@@ -5087,7 +5118,7 @@ export class SyncEngine {
 		// server already holds exactly our bytes, so there is nothing to send.
 		const known = opts.genesisOutcome;
 		if (!effectiveIdHasHistory && known !== "absent") {
-			const adopted = await this.adoptServerLineage(effectiveId, normalized);
+			const adopted = await this.adoptServerLineage(effectiveId, normalized, file);
 
 			// Adopt failed. What to do depends on whether the server ASSERTED it
 			// holds content, and the two answers are opposite:
@@ -5131,7 +5162,7 @@ export class SyncEngine {
 		// still holds what we sent, there is no local input, so transmit nothing
 		// and keep the server's text.
 		if (sameId && known !== "absent" && typeof this.crdt.projectedText === "function") {
-			if (effectiveIdHasHistory) await this.adoptServerLineage(effectiveId, normalized);
+			if (effectiveIdHasHistory) await this.adoptServerLineage(effectiveId, normalized, file);
 			const server = await this.crdt.projectedText(effectiveId);
 			const disk = await this.app.vault.cachedRead(file);
 			if (server !== "") {
