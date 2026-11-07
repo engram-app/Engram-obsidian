@@ -191,15 +191,7 @@ function mergeRegion(base: string, local: string, remote: string): string | null
  * Unlike `mergeDiskOntoDoc` this never fuzzy-matches: diff-match-patch's
  * patch_apply reports a same-word conflict as clean and drops one side.
  */
-export function merge3(
-	base: string,
-	local: string,
-	remote: string,
-	/** `false`: line level only, no character re-merge. For a base that may
-	 *  be stale (shared edits on both sides): a stale base makes one shared
-	 *  edit look like two, and the character pass would apply it twice. */
-	opts: { charLevel?: boolean } = {},
-): LcaMergeResult {
+export function merge3(base: string, local: string, remote: string): LcaMergeResult {
 	const mine = editsFrom(base, local, "line");
 	const theirs = editsFrom(base, remote, "line").filter((r) => !mine.some((m) => same(m, r)));
 	type Side = { e: Edit; side: number };
@@ -221,7 +213,6 @@ export function merge3(
 			out.push(...members);
 			continue;
 		}
-		if (opts.charLevel === false) return { text: remote, clean: false };
 		const start = Math.min(...members.map((m) => m.e.start));
 		const end = Math.max(...members.map((m) => m.e.end));
 		const region = base.slice(start, end);
