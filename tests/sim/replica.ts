@@ -544,7 +544,7 @@ export class Replica {
 		// onServerFeatures, onCreated / onFolderChanged).
 		engine.setCrdtPorts({ folderOp: (op) => channel.folderOp(op) });
 		channel.onServerFeatures = (f) => void engine.setFolderOpsEnabled(f.folderOps);
-		channel.onCreated = (p, nid) => engine.folderRefFor(p, nid);
+		channel.onCreated = (p, nid) => engine.claimNote(p, nid);
 		channel.onIndexV1 = (on) => engine.setIndexV1(on);
 		channel.onCreateFolderId = (p, fid) => engine.learnFolderOf(p, fid);
 		channel.onCreateFolders = (rows) => engine.learnFolderChain(rows);

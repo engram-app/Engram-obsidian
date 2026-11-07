@@ -230,8 +230,6 @@ type CrdtCreateReply = {
 	folders?: { id: string; parent_id: string | null; name: string }[];
 };
 
-/** Where a note create places the note by id (Engram#2523 S4). */
-
 function createResult(res: CrdtCreateReply): CrdtCreateResult {
 	const outcome = res.genesis;
 	return {
@@ -659,7 +657,7 @@ export class NoteChannel {
 		// Engram#2523 S4: the frame is main's. #2533 places by path and reads no
 		// folder id, so none is sent until a server stage reads one. The note's
 		// filemeta_v1 claim is written once the server took the create.
-		this.onCreated?.(path, docId);
+		this.onCreated?.(path, typeof res.doc_id === "string" ? res.doc_id : docId);
 		if (res.folder_id === null || typeof res.folder_id === "string") {
 			this.onCreateFolderId?.(path, res.folder_id);
 		}

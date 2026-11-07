@@ -52,7 +52,7 @@ describe("filemeta_v1 writer", () => {
 	test("not written without index_v1", async () => {
 		const { e, doc, folder } = engine();
 		await e.setFolderOpsEnabled(true);
-		e.folderRefFor("Proj/n.md", "note-1");
+		e.claimNote("Proj/n.md", "note-1");
 		await e.handleRename(folder, "Proj");
 		expect(v1(doc)).toEqual({ notes: {}, folders: {} });
 	});
@@ -65,11 +65,11 @@ describe("filemeta_v1 writer", () => {
 		expect(v1(doc)).toEqual({ notes: {}, folders: { f1: { parent_id: null, name: "Done" } } });
 	});
 
-	test("with index_v1: a note create or move by id writes its notes_v1 entry", async () => {
+	test("with index_v1: a note create taken by the server writes its notes_v1 entry", async () => {
 		const { e, doc } = engine();
 		await e.setFolderOpsEnabled(true);
 		e.setIndexV1(true);
-		e.folderRefFor("Proj/n.md", "note-1");
+		e.claimNote("Proj/n.md", "note-1");
 		expect(v1(doc).notes).toEqual({ "note-1": { folder_id: "f1", name: "n.md" } });
 	});
 
@@ -80,7 +80,7 @@ describe("filemeta_v1 writer", () => {
 		await e.resetForVaultChange();
 		await e.setFolderOpsEnabled(true);
 		e.learnFolders([{ id: "f1", parent_id: null, name: "Proj" }]);
-		e.folderRefFor("Proj/n.md", "note-1");
+		e.claimNote("Proj/n.md", "note-1");
 		expect(v1(doc).notes).toEqual({});
 	});
 });

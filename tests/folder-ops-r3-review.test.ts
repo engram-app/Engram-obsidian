@@ -144,7 +144,7 @@ describe("chain learning respects a pending op (round 3 review #689, N5)", () =>
 		// not applied our op yet, replies with f1's chain as it knows it.
 		s.e.learnFolderChain([{ id: "f1", parent_id: null, name: "Proj" }]);
 		expect(s.e.folderOps.index.pathFor("f1")).toBe("Done");
-		expect(s.e.folderRefFor("Done/new.md")?.folder_id).toBe("f1");
+		expect(s.e.folderOps.index.idFor("Done")).toBe("f1");
 	});
 
 	test("malformed chain rows are not learned", () => {
