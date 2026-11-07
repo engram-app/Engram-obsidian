@@ -106,3 +106,45 @@ test("repro 2480 A: Ctrl+Z after a remote MCP edit must not revert it on the ser
 	).toBe(NEW);
 	binding.destroy();
 });
+
+test("2480 A edge: the user's own edit stays undoable, and its undo keeps the remote edit", async () => {
+	const server = new Y.Doc();
+	server.getText("content").insert(0, OLD);
+	const local = new Y.Doc();
+	Y.applyUpdate(local, Y.encodeStateAsUpdate(server));
+	const text = local.getText("content");
+	setLiveBindingCoordinator({
+		resolveId: () => ID,
+		residentText: () => ({ text, ready: Promise.resolve() }),
+		enroll: () => {},
+		onBind: () => {},
+		onRelease: () => {},
+		awaitsServer: () => false,
+		onLoadGateOpen: () => () => {},
+		loadMergeBase: async () => null,
+		keepConflictCopy: async () => true,
+		restoreLocalText: async () => {},
+	});
+	const { ed, setBinding } = realStateEditor(OLD);
+	const binding = new LiveBindingValue(ed);
+	setBinding(binding);
+	await new Promise((r) => setTimeout(r, 5));
+
+	// The user types at the top, then the MCP edit lands below it.
+	ed.dispatch({ changes: { from: 0, insert: "typed\n" } });
+	const st = server.getText("content");
+	Y.applyUpdate(server, Y.encodeStateAsUpdate(local, Y.encodeStateVector(server)));
+	const at = st.toJSON().indexOf("old section");
+	server.transact(() => {
+		st.delete(at, "old section".length);
+		st.insert(at, "new section from MCP");
+	});
+	Y.applyUpdate(local, Y.encodeStateAsUpdate(server, Y.encodeStateVector(local)), "provider");
+	expect(ed.state.doc.toString()).toBe(`typed\n${NEW}`);
+
+	// Undo removes only the user's line; the remote section survives in both.
+	undo({ state: ed.realState(), dispatch: ed.dispatch });
+	expect(ed.state.doc.toString()).toBe(NEW);
+	expect(text.toJSON()).toBe(NEW);
+	binding.destroy();
+});

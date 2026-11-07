@@ -11,7 +11,10 @@
 // forward local editor changes -> Y.Text. An origin (Y side) + an annotation (CM
 // side) guard the echo loop. There is NO yCollab/ySync layer, so the elaborate
 // native-undo rerouting yCollab required is simply gone: a native undo is just
-// more editor changes the plugin forwards to Y.Text as ordinary deltas.
+// more editor changes the plugin forwards to Y.Text as ordinary deltas. Every
+// doc-to-editor dispatch goes through `syncDispatch`, which keeps it out of
+// CM6 history: otherwise Ctrl+Z undoes a REMOTE edit and forwards the inverse
+// as a local one, reverting it on every device (Engram#2480).
 //
 // Doc hydration is async (the anti-lag design): the plugin binds immediately
 // against the resident (possibly still-hydrating) Y.Text and does the initial
@@ -21,7 +24,7 @@
 // The bound Y.Text is the note BODY only (frontmatter lives in a separate Y.Map
 // handled by CrdtFrontmatterHook); in Live Preview the CM document is body-only
 // too, so editor text and Y.Text are directly comparable.
-import { Annotation } from "@codemirror/state";
+import { Annotation, type ChangeSpec, Transaction } from "@codemirror/state";
 import { type EditorView, type PluginValue, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 import { editorInfoField } from "obsidian";
 import type * as Y from "yjs";
@@ -62,6 +65,22 @@ function shiftChanges(changes: CmChangeSpec[], n: number): CmChangeSpec[] {
  *  reconcile) so update() does not echo them back into the Y.Text. Value = the
  *  EditorView the sync targeted (mirrors y-codemirror's ySyncAnnotation). */
 const ySyncAnnotation = Annotation.define<EditorView>();
+
+/** Dispatch doc-originated changes into `view`. Ported from Relay's
+ *  `syncDispatchAnnotations` (single-user history): the echo guard, plus
+ *  `addToHistory: false` so the user's undo stack holds only their own edits
+ *  (CM6 maps those through this change instead), plus `remote` to mark it as
+ *  another actor's. The ONLY path a doc change may take into the editor. */
+function syncDispatch(view: EditorView, changes: ChangeSpec): void {
+	view.dispatch({
+		changes,
+		annotations: [
+			ySyncAnnotation.of(view),
+			Transaction.addToHistory.of(false),
+			Transaction.remote.of(true),
+		],
+	});
+}
 
 export interface LiveBindingCoordinator {
 	/** Resolve (minting if new) the note_id that keys the resident doc for a path. */
@@ -371,10 +390,7 @@ export class LiveBindingValue implements PluginValue {
 	 *  frontmatter block, annotated so update() does not echo them back. */
 	private paintEditor(changes: CmChangeSpec[], prefix: number): void {
 		if (changes.length === 0) return;
-		this.editor.dispatch({
-			changes: shiftChanges(changes, prefix),
-			annotations: [ySyncAnnotation.of(this.editor)],
-		});
+		syncDispatch(this.editor, shiftChanges(changes, prefix));
 	}
 
 	/** Apply BODY-coordinate changes into the Y.Text under our own origin (so the
@@ -483,10 +499,7 @@ export class LiveBindingValue implements PluginValue {
 			try {
 				// Body-coordinate delta -> editor coordinates (offset past any frontmatter).
 				const prefix = frontmatterPrefixLen(this.editor.state.doc.toString());
-				this.editor.dispatch({
-					changes: shiftChanges(changes, prefix),
-					annotations: [ySyncAnnotation.of(this.editor)],
-				});
+				this.paintEditor(changes, prefix);
 			} catch (err) {
 				// A dispatch mid-update / offset disagreement throws here (inside a Y.Text
 				// observe callback, which would otherwise break painting for this
@@ -538,10 +551,7 @@ export class LiveBindingValue implements PluginValue {
 				`drift on ${noteRef(this.path)} (editor ${editorText.length} vs doc ${docText.length}) - re-adopting`,
 			);
 			try {
-				this.editor.dispatch({
-					changes: shiftChanges(textDiffToChangeSpec(editorText, docText), prefix),
-					annotations: [ySyncAnnotation.of(this.editor)],
-				});
+				this.paintEditor(textDiffToChangeSpec(editorText, docText), prefix);
 			} catch (err) {
 				rlog().error(
 					"crdt-live-binding",
