@@ -35,6 +35,11 @@ function makeEngine() {
 	const deleteAttachment = mock().mockResolvedValue({ deleted: true, path: "" });
 	const api = {
 		deleteAttachment,
+		// Engram#2523 S4 moves a synced attachment's row first; refuse it here so
+		// these tests keep exercising the delete-plus-upload fallback they guard.
+		renameAttachment: mock().mockRejectedValue(
+			Object.assign(new Error("409"), { status: 409 }),
+		),
 		deleteNote: mock().mockResolvedValue({ deleted: true, path: "" }),
 	} as unknown as EngramApi;
 	const app = {
@@ -275,7 +280,7 @@ describe("rename old-leg delete (review finding 2)", () => {
 		expect(deleteAttachment).not.toHaveBeenCalled();
 	});
 
-	test("rename of a synced attachment still deletes the old path", async () => {
+	test("rename of a synced attachment whose move is refused still deletes the old path", async () => {
 		const { e, deleteAttachment } = makeEngine();
 		const file = makeAttachmentFile("img/pic2.png");
 		recordSyncEvidence(e, "img/pic.png");
