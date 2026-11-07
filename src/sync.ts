@@ -17,7 +17,7 @@ import { expBackoff } from "./backoff";
 import type { BaseStore } from "./base-store";
 import type { GenesisOutcome } from "./channel";
 import { fnv1a, fnv1aBase64 } from "./content-hash";
-import { keepDiskFrontmatter, splitFrontmatter } from "./crdt/frontmatter-codec";
+import { flushTarget, splitFrontmatter } from "./crdt/frontmatter-codec";
 import type { NoteIdMap } from "./crdt/note-id-map";
 import type { ProviderRegistry } from "./crdt/provider-registry";
 import { encodeUpdateFrame, fromB64 } from "./crdt/wire";
@@ -2647,7 +2647,7 @@ export class SyncEngine {
 		// The doc's text, never blank: a blank doc does not override a caller's
 		// text here, so the empty-write guard below always sees what is written.
 		// It keeps disk's own frontmatter bytes when they mean the same as the
-		// doc's (`keepDiskFrontmatter`): the codec re-serialises YAML (flow
+		// doc's (`flushTarget`): the codec re-serialises YAML (flow
 		// lists, spacing, comments), and a flush must never rewrite what the
 		// user wrote when the meaning is unchanged. Equal by meaning then reads
 		// as "disk already holds it" below, so nothing is written at all.
@@ -2656,7 +2656,7 @@ export class SyncEngine {
 			if (text === null || text.trim() === "") return null;
 			const onDiskNow = this.app.vault.getAbstractFileByPath(normalized);
 			return onDiskNow instanceof TFile
-				? keepDiskFrontmatter(text, await this.app.vault.cachedRead(onDiskNow))
+				? flushTarget(text, await this.app.vault.cachedRead(onDiskNow)).onDisk
 				: text;
 		};
 		// A first load's text is the registry's projection of that load: the
@@ -4530,27 +4530,28 @@ export class SyncEngine {
 			return null;
 		}
 		rlog().info("crdt", `create: adopted server lineage for ${noteRef(path)}`);
-		return await this.flushedProjection(crdt, noteId, file);
+		return (await this.flushedProjection(crdt, noteId, file)).onDisk;
 	}
 
-	/** What a flush of `noteId`'s doc left on disk: the projection, carrying
-	 *  disk's own frontmatter bytes when they mean the same (`writeCrdtNote`
-	 *  keeps them, and then writes nothing). A baseline stamped after an apply
-	 *  must be this, never the bare projection: on a note whose YAML the codec
-	 *  re-serialises, that is a baseline no file holds, and the next catch-up
-	 *  drift-copies the note (Engram#1928 class, backend e2e test_101). */
+	/** `flushTarget` for `noteId`'s doc against its file now: after an apply
+	 *  has flushed, `onDisk` is what that flush left there. A baseline stamped
+	 *  after an apply must be `onDisk`, never the bare projection: on a note
+	 *  whose YAML the codec re-serialises, that is a baseline no file holds,
+	 *  and the next catch-up drift-copies the note (Engram#1928 class, backend
+	 *  e2e test_101). A merge's "expected doc" is `projection`. */
 	private async flushedProjection(
 		crdt: { projectedText(noteId: string): Promise<string> },
 		noteId: string,
 		file: TFile | undefined,
-	): Promise<string> {
+	): Promise<{ projection: string; onDisk: string }> {
 		const projected = await crdt.projectedText(noteId);
-		if (!file) return projected;
+		let disk: string | null = null;
 		try {
-			return keepDiskFrontmatter(projected, await this.app.vault.cachedRead(file));
+			disk = file ? await this.app.vault.cachedRead(file) : null;
 		} catch {
-			return projected; // unreadable: the projection is all we know
+			// unreadable: the projection is all we know
 		}
+		return flushTarget(projected, disk);
 	}
 
 	/** Merge `disk`, edited from `base` (the body this device's create sent),
@@ -5031,11 +5032,8 @@ export class SyncEngine {
 				// holds made the next catch-up read every such note as locally
 				// edited and drift-copy it (#1928: 54 conflict copies on one first
 				// sync; test_101).
-				let consumed: string | null = await this.flushedProjection(
-					this.crdt,
-					effectiveId,
-					file,
-				);
+				const flushed = await this.flushedProjection(this.crdt, effectiveId, file);
+				let consumed: string | null = flushed.onDisk;
 				// M1: `genesisContent` was frozen before the create round-trip, and
 				// the apply above flushes it over disk. Anything that landed in that
 				// window survives only in `preApplyDisk`. NO reread: it would read
@@ -5051,12 +5049,20 @@ export class SyncEngine {
 						effectiveId,
 						normalized,
 						opts.genesisContent,
-						consumed,
+						flushed.projection, // what the doc holds: the merge's expected text
 						preApplyDisk,
 					);
 					if (merged !== null) {
-						consumed = merged;
 						await this.flushFromCrdt(normalized, merged);
+						// The baseline is what that write left on disk (it keeps disk's
+						// frontmatter bytes when they mean the same), not `merged`.
+						let after: string | null = null;
+						try {
+							after = await this.app.vault.cachedRead(file);
+						} catch {
+							// unreadable: fall back to the merged text
+						}
+						consumed = flushTarget(merged, after).onDisk;
 					}
 				}
 				return consumed;
@@ -5169,7 +5175,7 @@ export class SyncEngine {
 				const base = this.ownBaseBody(normalized);
 				if (this.isAckedBase(normalized, fnv1a(disk)) || (base !== null && base === disk)) {
 					rlog().anomaly("crdt", "occupied_create_own_base");
-					return server;
+					return flushTarget(server, disk).onDisk; // the baseline: what disk holds
 				}
 				// Disk moved off what we sent: three-way from it, so an edit another
 				// writer landed on the server in the same window survives next to

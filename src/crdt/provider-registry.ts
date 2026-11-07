@@ -23,6 +23,7 @@ import { projectCanvas, seedCanvasInto } from "./canvas-codec";
 import { isDestroyedError, NoteDestroyedError } from "./destroyed-error";
 import {
 	CONTENT_KEY,
+	flushTarget,
 	frontmatterOf,
 	keepDiskFrontmatter,
 	projectNote,
@@ -975,7 +976,7 @@ export class ProviderRegistry {
 			// What the flush actually wrote: it keeps disk's frontmatter bytes when
 			// they mean what the doc's do (`writeCrdtNote`), and the re-read above
 			// proved disk was still `diskContent`.
-			return ok === false ? diskContent : keepDiskFrontmatter(docText, diskContent);
+			return ok === false ? diskContent : flushTarget(docText, diskContent).onDisk;
 		} catch (err) {
 			rlog().warn(
 				"crdt",

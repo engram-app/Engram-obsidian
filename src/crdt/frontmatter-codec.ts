@@ -220,6 +220,25 @@ export function keepDiskFrontmatter(next: string, disk: string): string {
 	return disk.slice(0, disk.length - d.body.length) + n.body;
 }
 
+/** What a flush of `projection` leaves on disk, and the projection itself.
+ *  The ONE owner of that answer (`writeCrdtNote`, the registry write-back and
+ *  the create-ack baselines all ask it): a CRDT write keeps disk's own
+ *  frontmatter bytes when they mean the same, so `onDisk` is the projection
+ *  with disk's block, or the bare projection when disk is unknown (`null`)
+ *  or means something else. Callers pick by use: `projection` is what the
+ *  doc holds (a merge's "expected" text), `onDisk` is what disk holds (a
+ *  baseline, a merge base). Mixing them is how a baseline names bytes no
+ *  file holds, or a merge refuses its own doc. */
+export function flushTarget(
+	projection: string,
+	disk: string | null,
+): { projection: string; onDisk: string } {
+	return {
+		projection,
+		onDisk: disk === null ? projection : keepDiskFrontmatter(projection, disk),
+	};
+}
+
 /** Do two note texts mean the same: identical bodies and frontmatter that
  *  differs only in YAML formatting? */
 export function sameNoteMeaning(a: string, b: string): boolean {
