@@ -33,6 +33,13 @@
 //      them to converge markdown notes); unknown routes return 404.
 //   5. BODY ONLY. The server Y.Doc tracks only the body Y.Text (CONTENT_KEY);
 //      the frontmatter map/order shared types are ignored.
+//   6. FOLDERS (Engram#2523 S4). Folder rows are modeled only far enough to
+//      test the plugin's folder-op protocol: ids, parent/name, `folder_op`
+//      move/create with the conflict/cycle/not_found refusals, the S3 staging
+//      cascade (per-note `note_changed` moves, toggled by `cascadeBroadcasts`),
+//      `folder_changed`, and the manifest `folders` list. A `crdt_create` for a
+//      LIVE id at a new path relocates it (genesis_relocate_live) with the
+//      same upsert-new-then-delete-old broadcast pair the real backend sends.
 // ============================================================================
 import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
@@ -92,6 +99,14 @@ interface Note {
 	updatedAt: string;
 }
 
+interface FolderRow {
+	id: string;
+	parent_id: string | null;
+	name: string;
+	deleted: boolean;
+	seq: number;
+}
+
 interface ClientRec {
 	sock: SimSocket;
 	syncTopic: string | null;
@@ -109,10 +124,62 @@ export class ModelServer {
 	 *  delete to be announced. Bytes are not modeled. */
 	private readonly attachments = new Map<string, { size: number; hash: string }>();
 	private vaultSeq = 0;
+	private readonly folders = new Map<string, FolderRow>();
+	private folderSeq = 0;
+	/** `features.folder_ops` on the user-topic join reply, and the `folder_op`
+	 *  handler. Off = an older server: `folder_op` replies `unknown_event`. */
+	folderOps: boolean;
+	/** The S3 staging cascade: a folder move also announces every moved note
+	 *  as its own `note_changed` pair. Off = S5, `folder_changed` only. */
+	cascadeBroadcasts: boolean;
+	/** Count of every client wire call, by socket event or `METHOD /route`.
+	 *  What the "1 op per folder rename" property reads. */
+	readonly wireCounts = new Map<string, number>();
 
-	constructor(opts: { scheduler: Scheduler; genesisEmptyDoc?: boolean }) {
+	constructor(opts: {
+		scheduler: Scheduler;
+		genesisEmptyDoc?: boolean;
+		folderOps?: boolean;
+		cascadeBroadcasts?: boolean;
+	}) {
 		this.scheduler = opts.scheduler;
 		this.genesisEmptyDoc = opts.genesisEmptyDoc ?? true;
+		this.folderOps = opts.folderOps ?? false;
+		this.cascadeBroadcasts = opts.cascadeBroadcasts ?? true;
+	}
+
+	/** Wire calls of `key` so far (see `wireCounts`). */
+	count(key: string): number {
+		return this.wireCounts.get(key) ?? 0;
+	}
+
+	private tally(key: string): void {
+		this.wireCounts.set(key, this.count(key) + 1);
+	}
+
+	/** Every live note id, one entry per row (a duplicate id would be a bug in
+	 *  the model; duplicate NOTES show up as two ids). */
+	liveNoteIds(): string[] {
+		return [...this.byId.values()].filter((n) => !n.deleted).map((n) => n.id);
+	}
+
+	/** Live folder rows' derived paths (sorted). */
+	folderPaths(): string[] {
+		return [...this.folders.values()]
+			.filter((f) => !f.deleted)
+			.map((f) => this.folderPath(f.id) ?? "?")
+			.sort();
+	}
+
+	folderIdFor(path: string): string | null {
+		for (const f of this.folders.values()) {
+			if (!f.deleted && this.folderPath(f.id) === path) return f.id;
+		}
+		return null;
+	}
+
+	hasAttachmentAt(path: string): boolean {
+		return this.attachments.has(path);
 	}
 
 	// -------------------------------------------------------------------------
@@ -259,12 +326,17 @@ export class ModelServer {
 			if (topic.startsWith("sync:")) c.syncTopic = topic;
 			if (topic.startsWith("crdt:")) c.crdtTopic = topic;
 			// sync join advertises the reconnect jitter window (channel.ts reads
-			// response.reconnect_jitter_max_ms); user/crdt replies carry an empty
-			// response (crdt ack flips crdtJoined; user is best-effort).
-			const response = topic.startsWith("sync:") ? { reconnect_jitter_max_ms: 5000 } : {};
+			// response.reconnect_jitter_max_ms); the user topic carries features
+			// (folder_ops); crdt replies carry an empty response.
+			const response = topic.startsWith("sync:")
+				? { reconnect_jitter_max_ms: 5000 }
+				: topic.startsWith("user:")
+					? { features: { folder_ops: this.folderOps } }
+					: {};
 			this.reply(clientId, joinRef, ref, topic, "ok", response);
 			return;
 		}
+		if (event !== "heartbeat") this.tally(event);
 
 		if (event === "heartbeat" && topic === "phoenix") {
 			this.deliver(clientId, [
@@ -297,6 +369,10 @@ export class ModelServer {
 				this.byPath.delete(n.path);
 			}
 			this.reply(clientId, joinRef, ref, topic, "ok", { doc_id: docId });
+			return;
+		}
+		if (event === "folder_op") {
+			this.handleFolderOp(clientId, joinRef, ref, topic, payload);
 			return;
 		}
 		if (event === "crdt_catchup_since") {
@@ -348,8 +424,13 @@ export class ModelServer {
 		// run exercises the client's `seeded`-gated local-apply path (sync.ts) same
 		// as `handleCrdtCreateBatch` already does for the batch path.
 		let seeded = false;
+		const live = this.byId.get(docId);
 		if (owner && owner !== docId) {
 			effectiveId = owner;
+		} else if (live && !live.deleted && live.path !== path) {
+			// genesis_relocate_live: the create for a LIVE id at a new path IS the
+			// move. Upsert the new path first, then the old path's delete leg.
+			this.relocate(live, path);
 		} else if (!this.byId.has(docId)) {
 			// Genesis: an EMPTY body Y.Doc unless a genesis frame was sent, in which
 			// case it's applied below (genesisEmptyDoc default true — the prod
@@ -378,6 +459,174 @@ export class ModelServer {
 			(t) => [null, null, t, "crdt_doc_ready", { doc_id: effectiveId, path }],
 			"crdt",
 		);
+	}
+
+	private handleFolderOp(
+		clientId: string,
+		joinRef: string | null,
+		ref: string | null,
+		topic: string,
+		payload: Record<string, unknown>,
+	): void {
+		if (!this.folderOps) {
+			this.reply(clientId, joinRef, ref, topic, "error", { reason: "unknown_event" });
+			return;
+		}
+		const folderId = payload.folder_id as string;
+		const parentId = (payload.parent_id as string | null) ?? null;
+		const name = payload.name as string;
+		const refuse = (reason: string) =>
+			this.reply(clientId, joinRef, ref, topic, "error", { reason });
+		const parent = parentId === null ? null : this.folders.get(parentId);
+		if (parentId !== null && (!parent || parent.deleted)) {
+			refuse("not_found");
+			return;
+		}
+		const taken = [...this.folders.values()].some(
+			(f) => !f.deleted && f.id !== folderId && f.parent_id === parentId && f.name === name,
+		);
+		const row = this.folders.get(folderId);
+		if (payload.op === "create") {
+			if (row && !row.deleted) {
+				this.reply(clientId, joinRef, ref, topic, "ok", { seq: row.seq });
+				return;
+			}
+			if (taken) {
+				refuse("conflict");
+				return;
+			}
+			const created: FolderRow = {
+				id: folderId,
+				parent_id: parentId,
+				name,
+				deleted: false,
+				seq: ++this.vaultSeq,
+			};
+			this.folders.set(folderId, created);
+			this.reply(clientId, joinRef, ref, topic, "ok", { seq: created.seq });
+			this.broadcastFolderChanged(created, clientId);
+			return;
+		}
+		if (!row || row.deleted) {
+			refuse("not_found");
+			return;
+		}
+		// Cycle: walk up from the new parent; meeting the moving id refuses.
+		for (let at = parentId, depth = 0; at !== null && depth < 256; depth++) {
+			if (at === folderId) {
+				refuse("cycle");
+				return;
+			}
+			at = this.folders.get(at)?.parent_id ?? null;
+		}
+		if (taken) {
+			refuse("conflict");
+			return;
+		}
+		const oldPath = this.folderPath(folderId) ?? "";
+		row.parent_id = parentId;
+		row.name = name;
+		row.seq = ++this.vaultSeq;
+		const newPath = this.folderPath(folderId) ?? "";
+		this.reply(clientId, joinRef, ref, topic, "ok", { seq: row.seq });
+		this.broadcastFolderChanged(row, clientId);
+		// S3 staging: today's cascading rename behind the op. Every moved note
+		// gets a fresh seq (catch-up sees it); its broadcast pair is optional.
+		for (const n of this.byId.values()) {
+			if (n.deleted || !n.path.startsWith(`${oldPath}/`)) continue;
+			const to = `${newPath}${n.path.slice(oldPath.length)}`;
+			if (this.cascadeBroadcasts) this.relocate(n, to);
+			else {
+				this.byPath.delete(n.path);
+				n.path = to;
+				this.byPath.set(to, n.id);
+				this.bump(n);
+			}
+		}
+		for (const [p, a] of [...this.attachments]) {
+			if (!p.startsWith(`${oldPath}/`)) continue;
+			this.attachments.delete(p);
+			this.attachments.set(`${newPath}${p.slice(oldPath.length)}`, a);
+		}
+	}
+
+	private broadcastFolderChanged(row: FolderRow, originClientId: string): void {
+		this.broadcastNoteChangedEvent("folder_changed", {
+			folder_id: row.id,
+			parent_id: row.parent_id,
+			name: row.name,
+			seq: row.seq,
+			deleted: row.deleted,
+			device_id: originClientId,
+		});
+	}
+
+	/** Move a live note to `to`, announcing it as the real backend does: the
+	 *  new path's upsert, then the old path's delete leg. */
+	private relocate(n: Note, to: string): void {
+		const from = n.path;
+		this.byPath.delete(from);
+		n.path = to;
+		this.byPath.set(to, n.id);
+		this.ensureFolderPath(folderOf(to));
+		this.bump(n);
+		this.broadcastNoteChanged({
+			event_type: "upsert",
+			kind: "note",
+			id: n.id,
+			path: to,
+			content: this.text(n),
+			content_hash: this.head(n),
+			version: n.version,
+			updated_at: n.updatedAt,
+			seq: n.seq,
+		});
+		this.broadcastNoteChanged({ event_type: "delete", kind: "note", id: n.id, path: from });
+	}
+
+	/** Derived path of a folder row (parent chain + name), or null. */
+	private folderPath(id: string): string | null {
+		const parts: string[] = [];
+		let at: string | null = id;
+		for (let depth = 0; at !== null && depth < 256; depth++) {
+			const row = this.folders.get(at);
+			if (!row) return null;
+			parts.unshift(row.name);
+			at = row.parent_id;
+		}
+		return parts.join("/");
+	}
+
+	/** `Rows.ensure`: every writer that places a note creates its folder and
+	 *  missing ancestors. Returns the leaf folder id (null = root). */
+	private ensureFolderPath(path: string): string | null {
+		if (!path) return null;
+		let parent: string | null = null;
+		const segs = path.split("/");
+		for (let i = 0; i < segs.length; i++) {
+			const sub = segs.slice(0, i + 1).join("/");
+			const existing = this.folderIdFor(sub);
+			if (existing) {
+				parent = existing;
+				continue;
+			}
+			const id = `fold-${++this.folderSeq}`;
+			this.folders.set(id, {
+				id,
+				parent_id: parent,
+				name: segs[i],
+				deleted: false,
+				seq: ++this.vaultSeq,
+			});
+			parent = id;
+		}
+		return parent;
+	}
+
+	private broadcastNoteChangedEvent(event: string, payload: Record<string, unknown>): void {
+		for (const [id, c] of this.clients) {
+			if (c.syncTopic) this.deliver(id, [null, null, c.syncTopic, event, payload]);
+		}
 	}
 
 	private handleCrdtCreateBatch(
@@ -575,6 +824,9 @@ export class ModelServer {
 		const { path, query } = parseUrl(req.url);
 		const method = req.method.toUpperCase();
 		const body = req.body ? (JSON.parse(req.body) as Record<string, unknown>) : {};
+		const route =
+			path.startsWith("/attachments/") && method !== "POST" ? "/attachments/*" : path;
+		this.tally(`${method} ${route}`);
 
 		if (method === "GET" && path === "/health") return ok({ status: "ok" });
 		if (method === "GET" && path === "/me") {
@@ -588,6 +840,29 @@ export class ModelServer {
 		if (method === "POST" && path === "/notes") return this.restPushNote(body);
 		if (method === "GET" && path === "/sync/manifest") return this.restManifest();
 		if (method === "POST" && path === "/attachments") return this.restPushAttachment(body);
+		if (method === "POST" && path === "/attachments/rename") {
+			const from = body.old_path as string;
+			const to = body.new_path as string;
+			const a = this.attachments.get(from);
+			if (!a) return { status: 404, json: { error: "not_found" }, text: "not found" };
+			this.attachments.delete(from);
+			this.attachments.set(to, a);
+			this.ensureFolderPath(folderOf(to));
+			this.vaultSeq += 1;
+			this.broadcastNoteChanged({ event_type: "delete", kind: "attachment", path: from });
+			this.broadcastNoteChanged({
+				event_type: "upsert",
+				kind: "attachment",
+				path: to,
+				content_hash: a.hash,
+			});
+			return ok({ renamed: true, old_path: from, new_path: to });
+		}
+		if (method === "DELETE" && path.startsWith("/attachments/")) {
+			const p = decodePath(path.slice("/attachments/".length));
+			this.serverDeleteAttachment(p);
+			return ok({ deleted: true, path: p });
+		}
 
 		// /notes/:id/updates (id, not path-encoded — encodeURIComponent single seg)
 		const upd = /^\/notes\/([^/]+)\/updates$/.exec(path);
@@ -627,6 +902,7 @@ export class ModelServer {
 		const b64 = (body.content_base64 as string) ?? "";
 		const hash = `att-${b64.length}-${this.vaultSeq + 1}`;
 		this.attachments.set(path, { size: b64.length, hash });
+		this.ensureFolderPath(folderOf(path));
 		this.vaultSeq += 1;
 		const now = nowIso();
 		return ok({
@@ -688,6 +964,7 @@ export class ModelServer {
 				path: n.path,
 				content_hash: this.head(n),
 				version: n.version,
+				...(this.folderOps ? { folder_id: this.folderIdFor(folderOf(n.path)) } : {}),
 			}));
 		const attachments = [...this.attachments].map(([path, a]) => ({
 			path,
@@ -700,6 +977,13 @@ export class ModelServer {
 			total_notes: notes.length,
 			total_attachments: attachments.length,
 			change_seq: this.vaultSeq,
+			...(this.folderOps
+				? {
+						folders: [...this.folders.values()]
+							.filter((f) => !f.deleted)
+							.map((f) => ({ id: f.id, parent_id: f.parent_id, name: f.name })),
+					}
+				: {}),
 		});
 	}
 
@@ -733,6 +1017,7 @@ export class ModelServer {
 		);
 		this.byId.set(id, n);
 		this.byPath.set(path, id);
+		this.ensureFolderPath(folderOf(path));
 		return n;
 	}
 
