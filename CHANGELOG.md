@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.39.3](https://github.com/engram-app/Engram-obsidian/compare/1.39.2...1.39.3) (2026-11-07)
+
+
+### Bug Fixes
+
+* stop the Obsidian client reverting remote edits ([#683](https://github.com/engram-app/Engram-obsidian/issues/683)) ([597289f](https://github.com/engram-app/Engram-obsidian/commit/597289f1fdaa08d243b69c5318c872415e25da74))
+
 ## [1.39.2](https://github.com/engram-app/Engram-obsidian/compare/1.39.1...1.39.2) (2026-11-03)
 
 
