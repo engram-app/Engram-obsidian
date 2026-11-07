@@ -40,7 +40,12 @@ describe("delta review #689: hold from a manifest row, no other writer", () => {
 				const fo = (a.engine as any).folderOps;
 				const now0 = fo.deps.now;
 				fo.deps.now = () => now0() + HOLD_MAX_MS + 1;
-				await fo.tick(); // hold expires: op dropped, pre-op row applied
+				// Driven through the scheduler (author's adaptation, round 3): the op
+				// may now reach its attempt/age cap here, and the per-file fallback
+				// waits on replies only drain() delivers.
+				const ticked = fo.tick();
+				await t.scheduler.drain();
+				await ticked;
 				fo.deps.now = now0;
 				await t.scheduler.drain();
 				(a.engine as any).setCrdtPorts({ folderOp: real }); // server recovers

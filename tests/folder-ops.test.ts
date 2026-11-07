@@ -5,6 +5,7 @@
  * is permanent blindness.
  */
 import { describe, expect, mock, test } from "bun:test";
+import { MAX_ATTEMPTS } from "../src/crdt-op-queue";
 import {
 	type FolderChange,
 	FolderIndex,
@@ -114,6 +115,9 @@ describe("outbound folder ops", () => {
 		h.ops.move("fa", "fb", "A", "A", "B/A");
 		await h.ops.flush();
 		expect(h.ops.hasPending("fa")).toBe(true);
+		await h.ops.tick(); // still backing off: not re-sent yet
+		expect(h.sent).toHaveLength(1);
+		h.advance(1_000);
 		await h.ops.tick();
 		expect(h.sent.map((o) => o.op_id)).toEqual([h.sent[0]?.op_id, h.sent[0]?.op_id]);
 		expect(h.ops.hasPending("fa")).toBe(false);
@@ -275,6 +279,7 @@ describe("hold expiry never drops OUR op (delta review #689)", () => {
 		await h.ops.tick(); // applies "Theirs" locally; the re-send gets no answer
 		expect(h.applied.map((c) => c.name)).toEqual(["Theirs"]);
 		expect(h.ops.hasPending("fa")).toBe(true);
+		h.advance(5_000);
 		await h.ops.tick(); // the server answers ok
 		expect(h.ops.hasPending("fa")).toBe(false);
 		expect(h.acked).toEqual(["fa"]); // the engine's ack handler follows onto disk
@@ -291,5 +296,43 @@ describe("FolderIndex.learn (the crdt_create reply)", () => {
 		expect(ix.idFor("x/y")).toBeUndefined();
 		ix.learn("top", "4");
 		expect(ix.idFor("top")).toBe("4");
+	});
+});
+
+describe("the pending-op budget (round 3: MAX_ATTEMPTS / OP_TTL_MS, shared with the note-op queue)", () => {
+	test("held (never sent) spends no attempt, however long", async () => {
+		const results: FolderOpResult[] = Array.from({ length: 50 }, () => ({ kind: "held" }));
+		const h = harness(results);
+		h.ops.setFeature(true);
+		h.ops.move("fa", "fb", "A", "A", "B/A");
+		for (let i = 0; i < 50; i++) {
+			h.advance(60_000);
+			await h.ops.tick();
+		}
+		expect(h.ops.hasPending("fa")).toBe(true);
+		expect(h.ops.all()[0]?.attempts ?? 0).toBe(0);
+		expect(h.fallbacks).toEqual([]);
+	});
+
+	test("a restored op keeps its spent attempts (a crash loop is bounded too)", async () => {
+		const h = harness([{ kind: "retry" }]);
+		h.ops.load([
+			{
+				op: "move",
+				op_id: "o1",
+				folder_id: "fa",
+				parent_id: "fb",
+				name: "A",
+				from: "A",
+				to: "B/A",
+				vaultId: "v1",
+				attempts: MAX_ATTEMPTS - 1,
+				firstSentAt: 1_000,
+			},
+		]);
+		h.ops.setFeature(true);
+		await h.ops.flush();
+		expect(h.fallbacks).toEqual([["fa", "max-attempts"]]);
+		expect(h.ops.hasPending("fa")).toBe(false);
 	});
 });

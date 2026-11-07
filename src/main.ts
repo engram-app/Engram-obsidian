@@ -2924,7 +2924,7 @@ export default class EngramSyncPlugin extends Plugin {
 					folderOp: (op) =>
 						channel.getVaultId() === this.settings.vaultId
 							? channel.folderOp(op)
-							: Promise.resolve({ kind: "retry" }),
+							: Promise.resolve({ kind: "held" }),
 				});
 
 				// Wire CRDT transport through this channel.

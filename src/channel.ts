@@ -702,6 +702,8 @@ export class NoteChannel {
 			})) as { seq?: unknown } | null;
 			return { kind: "ok", seq: Number.isInteger(res?.seq) ? (res?.seq as number) : null };
 		} catch (e) {
+			// Never sent: spends no attempt (the note-op queue's "held" rule).
+			if (errMsg(e).startsWith("sendRequest refused")) return { kind: "held" };
 			const reason = crdtOpFailureReason(e);
 			if (reason === null || reason === "rate_limited") return { kind: "retry" };
 			// `bad_frame`: an older crdt channel's catch-all for an event it has no

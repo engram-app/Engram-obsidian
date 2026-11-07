@@ -130,9 +130,9 @@ describe("NoteChannel folder ops", () => {
 		});
 	}
 
-	test("no socket: retry, never a refusal", async () => {
+	test("no socket: held (spends no attempt), never a refusal", async () => {
 		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
-		await expect(channel.folderOp(op)).resolves.toEqual({ kind: "retry" });
+		await expect(channel.folderOp(op)).resolves.toEqual({ kind: "held" });
 	});
 
 	test("a note create carries folder_id and name from the folder ref", async () => {
