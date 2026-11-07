@@ -614,3 +614,42 @@ test("2480 fm: a remote change that MEANS something different is still written",
 	await tick(30);
 	expect(d.disk.get(PATH)).toContain("title: changed");
 });
+
+test("review 683 round 5: the write-back records the bytes it wrote as baseline and base", async () => {
+	const d = await device();
+	const fm = "---\ntags: [a, b]\n---\n";
+	d.disk.set(PATH, `${fm}${V1}`);
+	await d.engine.pushFile(d.file);
+	await tick(30);
+	d.ctl.failWrites = 1;
+	await d.mcpEdit(); // the flush fails: disk lacks the MCP section
+	d.disk.set(PATH, `${d.disk.get(PATH)}footer\n`);
+	await d.engine.pushFile(d.file);
+	await tick(30);
+	const disk = d.disk.get(PATH) as string;
+	expect(disk.startsWith(fm)).toBe(true); // the user's flow list kept
+	expect(disk).toContain(MCP_SECTION);
+	expect(disk).toContain("footer");
+	expect(d.engine.isUnchangedSynced(PATH, disk)).toBe(true); // baseline = disk
+	expect((d.reg as any).entries.get(d.ID).mergeBase).toBe(disk); // base = disk
+});
+
+test("review 683 round 5: a newer real base supersedes an invalidation pending during the load", async () => {
+	const d = await device();
+	await d.reg.destroyAll();
+	const reg2 = new ProviderRegistry({
+		dbPrefix: undefined,
+		send: () => true,
+		onFlushToDisk: () => true,
+	});
+	live.push(reg2);
+	const p = reg2.getDoc(d.ID); // resident, base still loading
+	reg2.invalidateMergeBase(d.ID, fnv1a("old elsewhere"));
+	const c2 = `${V1}newer base\n`;
+	reg2.setMergeBase(d.ID, c2);
+	await p;
+	await tick(20);
+	const e = (reg2 as any).entries.get(d.ID);
+	expect(e.mergeBase).toBe(c2);
+	expect(e.mergeBaseInvalid).toBe(false);
+});

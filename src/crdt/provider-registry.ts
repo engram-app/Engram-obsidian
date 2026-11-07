@@ -972,7 +972,10 @@ export class ProviderRegistry {
 		try {
 			if (reread && (await e.lifetime.guard(reread())) !== diskContent) return diskContent;
 			const ok = await e.lifetime.guard(Promise.resolve(this.writeToDisk(noteId, e, false)));
-			return ok === false ? diskContent : docText;
+			// What the flush actually wrote: it keeps disk's frontmatter bytes when
+			// they mean what the doc's do (`writeCrdtNote`), and the re-read above
+			// proved disk was still `diskContent`.
+			return ok === false ? diskContent : keepDiskFrontmatter(docText, diskContent);
 		} catch (err) {
 			rlog().warn(
 				"crdt",
@@ -1052,6 +1055,8 @@ export class ProviderRegistry {
 		const e = this.entries.get(noteId);
 		if (!e?.lifetime.active || e.kind !== "note") return;
 		e.mergeBaseTouched = true;
+		// A real base supersedes any invalidation asked for before it.
+		if (text !== null) this.pendingInvalidation.delete(noteId);
 		const wasInvalid = e.mergeBaseInvalid;
 		// A cleared base stays invalid; only a real base lifts it.
 		if (text !== null) e.mergeBaseInvalid = false;
