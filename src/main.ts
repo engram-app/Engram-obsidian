@@ -934,6 +934,7 @@ export default class EngramSyncPlugin extends Plugin {
 		}
 		if (saved?.offlineQueue?.length) {
 			this.syncEngine.queue.load(saved.offlineQueue);
+			this.syncEngine.gateRestReplaysAtStartup();
 		}
 		if (saved?.crdtOpQueue?.length) {
 			this.crdtOpQueue?.load(saved.crdtOpQueue);

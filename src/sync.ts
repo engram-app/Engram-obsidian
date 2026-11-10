@@ -344,6 +344,8 @@ function countFolders(paths: Iterable<string>): number {
  *  delete-then-recreate window: within it the server won't have a live row for
  *  this id anyway (delete-wins), so honoring the local tombstone is exact. */
 const RECENT_DELETE_COOLDOWN_MS = 60_000;
+/** Flush attempts a REST replay waits for the post-offline catch-up. */
+const CATCHUP_MISS_CAP = 3;
 /** How long a relocation's origin stays available to a later materialization.
  *  Generous next to the milliseconds a racing flush needs, and short next to
  *  the lifetime of a path that might legitimately be recreated. */
@@ -751,10 +753,19 @@ export class SyncEngine {
 	/** True from going offline until a catch-up that STARTED after that reached the
 	 *  end of the feed. Held REST replays wait on it: the server may have moved
 	 *  their path while we were away (a folder rename), and a replay to the old
-	 *  path forks the note and resurrects the folder. Cleared by exactly one
-	 *  event: a complete `catchupViaSeqReplay` session of the current epoch. */
+	 *  path forks the note and resurrects the folder.
+	 *
+	 *  Set by: going offline, and by `gateRestReplaysAtStartup` (a reload with
+	 *  REST replays still queued). Cleared by exactly these events:
+	 *   1. a complete `catchupViaSeqReplay` session of the current epoch;
+	 *   2. the session has no catch-up port at all (`holdsRestReplay` is false);
+	 *   3. `CATCHUP_MISS_CAP` flush attempts passed without 1 happening. The
+	 *      replay then goes out, and a 409 on a moved path re-keys by note id
+	 *      rather than force-pushing. Misses are NOT reset by going offline, so
+	 *      a flapping link cannot starve the queue. */
 	private catchupPending = false;
 	private catchupEpoch = 0;
+	private catchupMisses = 0;
 	private healthCheckTimer: number | null = null;
 	/** Consecutive failed health probes — drives exponential backoff. */
 	private healthCheckFailures = 0;
@@ -8742,6 +8753,7 @@ export class SyncEngine {
 				} while (this.seqReplayAgain);
 				if (complete && epoch === this.catchupEpoch && this.catchupPending) {
 					this.catchupPending = false;
+					this.catchupMisses = 0;
 					// Held replays have no timer: release them the moment the gate opens.
 					if (this.queue.size > 0) {
 						void this.flushQueue().catch((e: unknown) => {
@@ -14570,10 +14582,19 @@ export class SyncEngine {
 		let total = 0;
 		// ONE flush entry point: every trigger (health check, rejoin, timers)
 		// lands here, so the catch-up precondition lives here and nowhere else.
-		if (this.catchupPending && !this.syncBlocked) {
+		if (this.catchupPending && this.crdtCatchupSince !== null && !this.syncBlocked) {
 			await this.catchupViaSeqReplay().catch((e: unknown) => {
 				rlog().warn("queue", `pre-flush catch-up failed: ${errMsg(e)}`);
 			});
+			// Still owed: this attempt was a miss. Past the cap, release the gate.
+			if (this.catchupPending && ++this.catchupMisses >= CATCHUP_MISS_CAP) {
+				rlog().warn(
+					"queue",
+					`Catch-up did not complete in ${CATCHUP_MISS_CAP} flush attempts; releasing held replays`,
+				);
+				this.catchupPending = false;
+				this.catchupMisses = 0;
+			}
 		}
 		while (this.queue.size > 0) {
 			const flushed = await this.runFlushQueue();
@@ -14605,6 +14626,11 @@ export class SyncEngine {
 			const owner = this.entryVaultId(e);
 			if (owner && active && owner !== active) continue;
 			if (e.nextAttemptAt !== undefined && e.nextAttemptAt < due) due = e.nextAttemptAt;
+			// Held for the catch-up: re-try on the health-check backoff. Bounded,
+			// because every attempt is a miss and `CATCHUP_MISS_CAP` releases.
+			if (this.holdsRestReplay(e)) {
+				due = Math.min(due, this.time.now() + healthCheckDelay(this.catchupMisses));
+			}
 		}
 		if (due === Number.POSITIVE_INFINITY) return;
 		this.queueRetryTimer = this.time.setTimeout(
@@ -14626,6 +14652,19 @@ export class SyncEngine {
 		return e.action === "upsert" && e.kind !== "attachment" && !(e.crdt && e.noteId);
 	}
 
+	/** Is this entry held right now? No catch-up port means no catch-up can ever
+	 *  clear the gate, so nothing is held. */
+	private holdsRestReplay(e: QueueEntry): boolean {
+		return this.catchupPending && this.crdtCatchupSince !== null && this.isRestReplay(e);
+	}
+
+	/** After a reload the persisted queue may hold REST replays whose paths the
+	 *  server moved while the app was closed: gate them like an offline spell.
+	 *  Call once, after `queue.load`. */
+	gateRestReplaysAtStartup(): void {
+		if (this.queue.all().some((e) => this.isRestReplay(e))) this.catchupPending = true;
+	}
+
 	/** The entry's note now lives at another path (the pull moved it): re-key the
 	 *  entry there, so the edit goes to the NEW path instead of being dropped or
 	 *  sent to the old one. Identity is the note id the entry carries. */
@@ -14634,8 +14673,13 @@ export class SyncEngine {
 		if (!cur || normalizePath(cur) === normalizePath(entry.path)) return false;
 		if (!this.app.vault.getFileByPath(cur)) return false;
 		const owner = this.entryVaultId(entry);
+		// Enqueue before dequeue (a crash between them must not lose the edit), and
+		// never overwrite an entry already at the new path: it is as new or newer
+		// (a queued delete is the user's later intent) and covers the same file.
+		if (!this.queue.get(cur, owner)) {
+			await this.queue.enqueue({ ...entry, path: cur, nextAttemptAt: undefined });
+		}
 		await this.queue.dequeue(entry.path, owner);
-		await this.queue.enqueue({ ...entry, path: cur, nextAttemptAt: undefined });
 		rlog().info(
 			"queue",
 			`Replay re-keyed to the moved path: ${noteRef(entry.path)} -> ${noteRef(cur)}`,
@@ -14693,7 +14737,7 @@ export class SyncEngine {
 
 			// A REST replay targets a PATH. Until the post-offline catch-up has
 			// landed, that path may be stale (server-side folder rename): hold it.
-			if (this.catchupPending && this.isRestReplay(entry)) continue;
+			if (this.holdsRestReplay(entry)) continue;
 
 			// The entry was created under a DIFFERENT vault. `this.api` points at
 			// whichever vault is active now, so delivering it executes against the
@@ -15001,11 +15045,6 @@ export class SyncEngine {
 											replayId,
 										)
 									: await this.api.pushNote(entry.path, content, mtime!);
-					if ("conflict" in resp && (await this.requeueAtCurrentPath(entry))) {
-						// Stale path, not stale content: never force-push the old one.
-						flushed++;
-						continue;
-					}
 					if ("conflict" in resp) {
 						// Hand the conflict to the single-note flow, which owns 3-way
 						// merge + resolution — previously a conflicting replay was
