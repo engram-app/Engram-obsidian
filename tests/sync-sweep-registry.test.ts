@@ -209,6 +209,34 @@ describe("the public vault-change entry point actually reaches the sweep", () =>
 	});
 });
 
+describe("the REST-replay gate belongs to one vault (#692)", () => {
+	test("a vault switch clears the gate state and the per-path hold counts", async () => {
+		const engine = createEngine();
+		const e = engine as unknown as {
+			catchupPending: boolean;
+			catchupMisses: number;
+			joinOwed: boolean;
+			releasedUnpulled: boolean;
+			staleHolds: Map<string, number>;
+			saveData(patch: unknown): Promise<void>;
+		};
+		e.saveData = mock().mockResolvedValue(undefined);
+		e.catchupPending = true;
+		e.catchupMisses = 2;
+		e.joinOwed = true;
+		e.releasedUnpulled = true;
+		e.staleHolds.set("old-vault/a.md", 4);
+
+		await engine.resetForVaultChange();
+
+		expect(e.catchupPending).toBe(false);
+		expect(e.catchupMisses).toBe(0);
+		expect(e.joinOwed).toBe(false);
+		expect(e.releasedUnpulled).toBe(false);
+		expect(e.staleHolds.size).toBe(0);
+	});
+});
+
 describe("sweeping disposes timers rather than stranding them", () => {
 	test("a vault sweep cancels every timer held in a tracked map", () => {
 		const engine = createEngine();
