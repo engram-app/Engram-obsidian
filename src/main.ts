@@ -933,8 +933,7 @@ export default class EngramSyncPlugin extends Plugin {
 			this.syncEngine.setCtimeSweepVaultId(saved.ctimeSweepVaultId);
 		}
 		if (saved?.offlineQueue?.length) {
-			this.syncEngine.queue.load(saved.offlineQueue);
-			this.syncEngine.gateRestReplaysAtStartup();
+			this.syncEngine.loadQueue(saved.offlineQueue);
 		}
 		if (saved?.crdtOpQueue?.length) {
 			this.crdtOpQueue?.load(saved.crdtOpQueue);
