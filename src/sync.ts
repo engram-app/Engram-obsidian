@@ -760,28 +760,38 @@ export class SyncEngine {
 	 *  Set by: going offline, and by `gateRestReplaysAtStartup` (a reload with
 	 *  REST replays still queued). Cleared by exactly these events:
 	 *   1. a complete `catchupViaSeqReplay` session of the current epoch;
-	 *   2. the session has no catch-up port at all (`holdsRestReplay` is false);
-	 *   3. `CATCHUP_MISS_CAP` flush attempts passed without 1 happening. The
+	 *   2. a REST-only session: no catch-up port AND no join owed (`joinOwed`
+	 *      false), so no catch-up will ever exist and nothing is held;
+	 *   3. `CATCHUP_MISS_CAP` flush attempts passed without 1 happening (this
+	 *      also bounds a startup join that never arrives). The
 	 *      replay then goes out; if the server refuses the old path (409) it is
 	 *      re-held, not parked (`releasedUnpulled`), until a pull moves the file
 	 *      and the file-gone branch re-keys it by note id. Misses are NOT reset
 	 *      by going offline, so a flapping link cannot starve the queue.
 	 *
 	 *  There is no retry timer: every flush trigger is an event (catch-up
-	 *  complete, socket join, health-check success), so a held replay costs no
-	 *  wall-clock polling and the sim's drain quiesces. An edit is always on the
+	 *  complete, socket join, health-check success, and the periodic
+	 *  FALLBACK_POLL_MS catch-up in main.ts, whose completion releases held
+	 *  entries), so a held replay costs no wall-clock polling and the sim's
+	 *  drain quiesces. A re-held edit therefore DEPENDS on one of those events
+	 *  (on an idle joined socket: the next poll). An edit is always on the
 	 *  server, still queued, or surfaced as an issue after `STALE_HOLD_ISSUE_AT`
 	 *  refused attempts (it stays queued). */
 	private catchupPending = false;
 	private catchupEpoch = 0;
 	private catchupMisses = 0;
+	/** Startup: the persisted queue holds REST replays and the channel join (which
+	 *  sets the catch-up port) has not resolved yet, so "no port" means "not yet",
+	 *  not "REST-only". Cleared by: the gate clearing (complete catch-up) or the
+	 *  miss cap (the join never arrived). */
+	private joinOwed = false;
 	/** The cap released the gate without a pull: the paths in the queue may still
 	 *  be stale. A 409 on a replay in this state re-holds it (see
 	 *  `holdAfterStaleRelease`) instead of parking it. Cleared by the same event
 	 *  as `catchupPending`: a complete catch-up. */
 	private releasedUnpulled = false;
 	/** Re-holds per path since the last complete catch-up (bounds the silence). */
-	private staleHolds = new Map<string, number>();
+	private staleHolds = this.track(["vault", "destroy"], new Map<string, number>());
 	private healthCheckTimer: number | null = null;
 	/** Consecutive failed health probes — drives exponential backoff. */
 	private healthCheckFailures = 0;
@@ -4206,6 +4216,11 @@ export class SyncEngine {
 		// maps were missing from it (#1409); adding a field no longer requires
 		// remembering that this method exists.
 		this.sweep("vault");
+		// The REST-replay gate describes the OLD vault's queue and server paths.
+		this.catchupPending = false;
+		this.catchupMisses = 0;
+		this.joinOwed = false;
+		this.releasedUnpulled = false;
 		this.gateEpoch++; // stop any in-flight gate replay (#247)
 		this.lastSync = "";
 		// The socket op-log replay cursor marks a position in the OLD vault's
@@ -8771,6 +8786,7 @@ export class SyncEngine {
 				if (complete && passEpoch === this.catchupEpoch && this.catchupPending) {
 					this.catchupPending = false;
 					this.catchupMisses = 0;
+					this.joinOwed = false;
 					this.releasedUnpulled = false;
 					this.staleHolds.clear();
 					// Held replays have no timer: release them the moment the gate opens.
@@ -14604,10 +14620,12 @@ export class SyncEngine {
 		let total = 0;
 		// ONE flush entry point: every trigger (health check, rejoin, timers)
 		// lands here, so the catch-up precondition lives here and nowhere else.
-		if (this.catchupPending && this.crdtCatchupSince !== null && !this.syncBlocked) {
-			await this.catchupViaSeqReplay().catch((e: unknown) => {
-				rlog().warn("queue", `pre-flush catch-up failed: ${errMsg(e)}`);
-			});
+		if (this.catchupPending && this.catchupExpected() && !this.syncBlocked) {
+			if (this.crdtCatchupSince !== null) {
+				await this.catchupViaSeqReplay().catch((e: unknown) => {
+					rlog().warn("queue", `pre-flush catch-up failed: ${errMsg(e)}`);
+				});
+			}
 			// Still owed: this attempt was a miss. Past the cap, release the gate.
 			if (this.catchupPending && ++this.catchupMisses >= CATCHUP_MISS_CAP) {
 				rlog().warn(
@@ -14616,6 +14634,7 @@ export class SyncEngine {
 				);
 				this.catchupPending = false;
 				this.catchupMisses = 0;
+				this.joinOwed = false;
 				this.releasedUnpulled = true;
 			}
 		}
@@ -14673,7 +14692,12 @@ export class SyncEngine {
 	/** Is this entry held right now? No catch-up port means no catch-up can ever
 	 *  clear the gate, so nothing is held. */
 	private holdsRestReplay(e: QueueEntry): boolean {
-		return this.catchupPending && this.crdtCatchupSince !== null && this.isRestReplay(e);
+		return this.catchupPending && this.catchupExpected() && this.isRestReplay(e);
+	}
+
+	/** A catch-up exists or is still coming (the startup join is owed). */
+	private catchupExpected(): boolean {
+		return this.crdtCatchupSince !== null || this.joinOwed;
 	}
 
 	/** Load the persisted queue at startup. REST replays in it may target paths
@@ -14681,7 +14705,10 @@ export class SyncEngine {
 	 *  spell. The single place the persisted queue enters the engine. */
 	loadQueue(entries: QueueEntry[]): void {
 		this.queue.load(entries);
-		if (this.queue.all().some((e) => this.isRestReplay(e))) this.catchupPending = true;
+		if (this.queue.all().some((e) => this.isRestReplay(e))) {
+			this.catchupPending = true;
+			this.joinOwed = true;
+		}
 	}
 
 	/** The server refused a replay's old path after the cap released the gate

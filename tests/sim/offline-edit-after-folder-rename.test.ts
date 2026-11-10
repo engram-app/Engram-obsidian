@@ -246,15 +246,43 @@ describe("the flush gate always clears (#692 delta review)", () => {
 			await e.queue.clear();
 			e.catchupPending = false;
 			e.offline = false;
+			// The catch-up port is set by the channel join, which has not happened.
+			const port = e.crdtCatchupSince;
+			e.setCrdtPorts({ catchupSince: null });
 			e.loadQueue(saved);
 			const startupFlush = e.flushQueue();
 			await t.scheduler.drain();
 			await startupFlush;
 			expect(e.queue.size).toBe(1); // held, not parked, not sent to the old path
+			expect(e.issues.all()).toEqual([]);
 			expect(serverContent(t)).toBe("v1 body");
+			e.setCrdtPorts({ catchupSince: port });
 			await a.goOnline(); // the socket joins: pull, then flush
 			await until(t, landed(t, a, e, BIG), "T5 landed");
 			expectOneNoteAtNewPath(t);
+		} finally {
+			cleanup(t);
+		}
+	}, 30_000);
+});
+
+describe("startup join that never arrives (delta review 3)", () => {
+	test("a REST-only session with a persisted replay is held for at most the miss cap", async () => {
+		const { t, a, e } = await offlineSetup(5500);
+		try {
+			await queueRest(a, e, BIG);
+			const saved = e.queue.persistable();
+			await e.queue.clear();
+			e.offline = false;
+			e.catchupPending = false;
+			e.setCrdtPorts({ catchupSince: null });
+			e.loadQueue(saved);
+			for (let i = 0; i < 2; i++) {
+				await e.flushQueue();
+				expect(e.queue.size).toBe(1); // held
+			}
+			void e.flushQueue(); // third miss releases it
+			await until(t, () => e.queue.size === 0 && serverContent(t) === BIG, "REST-only sent");
 		} finally {
 			cleanup(t);
 		}
@@ -307,23 +335,43 @@ describe("cap release with no pull (delta review 2)", () => {
 		}
 	}, 60_000);
 
-	test("a crdt marker at the new path does not swallow the oversized REST replay", async () => {
-		const { t, a, b, e } = await offlineSetup(7003);
+	test("R3 the only trigger is the periodic poll: its completed catch-up releases the held edit", async () => {
+		const { t, a, e } = await capReleased(7004);
 		try {
-			const id = e.noteIdMap.get("Proj/n.md");
-			await b.renameFolder("Proj", "Done", "folder-first");
+			e.goOnline(); // releases the gate: 409, re-held
+			await until(t, () => e.flushInFlight === null, "re-held");
+			expect(e.queue.size).toBe(1);
+			// The socket returns but its own join flush is muted: only the poll runs.
+			const realFlush = e.flushQueue.bind(e);
+			e.flushQueue = () => Promise.resolve(0);
+			await a.goOnline();
 			await t.scheduler.drain();
-			await queueRest(a, e, BIG);
-			await e.queue.enqueue({
-				path: "Done/n.md",
-				action: "upsert",
-				kind: "note",
-				crdt: true,
-				noteId: id,
-				mtime: 1,
-				timestamp: Date.now(),
-				vaultId: e.settings.vaultId,
-			});
+			e.flushQueue = realFlush;
+			expect(e.queue.size).toBe(1);
+			e.catchupPending = true; // still owed: the join's catch-up ran with the flush muted
+			void e.catchupViaSeqReplay(); // the FALLBACK_POLL_MS tick (main.ts), nothing else
+			await until(t, landed(t, a, e, BIG), "poll released the edit");
+		} finally {
+			cleanup(t);
+		}
+	}, 60_000);
+
+	test("a crdt marker holding a REAL Y.Doc edit at the new path does not swallow the oversized REST replay", async () => {
+		const { t, a, e } = await offlineSetup(7003);
+		try {
+			// Our own folder rename, offline; then a real (small) edit of the moved
+			// note: it lives in the Y.Doc and leaves a crdt marker at Done/n.md.
+			await queueRest(a, e, "REST STUB");
+			await a.renameFolder("Proj", "Done", "folder-first");
+			await t.scheduler.drain();
+			await a.editNote("Done/n.md", "DOC EDIT");
+			await t.scheduler.drain();
+			expect(e.queue.get("Done/n.md", e.settings.vaultId)?.crdt).toBe(true);
+			// Then the file grows past the crdt cap: only REST can carry it.
+			const real = e.handleModify;
+			e.handleModify = () => {};
+			await a.app.vault.modify(a.app.vault.getFileByPath("Done/n.md")!, BIG);
+			e.handleModify = real;
 			e.goOnline();
 			await a.goOnline();
 			await until(t, landed(t, a, e, BIG), "marker + replay landed");
