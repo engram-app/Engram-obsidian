@@ -1,7 +1,12 @@
-// A queued offline edit + a server-side folder rename + a reconnect must leave
-// ONE note at the NEW path with the edit, and no folder at the old path.
+// A queued offline edit + a folder rename + a reconnect must leave ONE note at
+// the NEW path with the edit, and no folder at the old path (#692).
 // The two reconnect triggers race: the REST health check (`goOnline`) used to
 // flush the queue at once, before the crdt rejoin had pulled the rename.
+//
+// No timers drive any of this: the held replay is released by events (catch-up
+// complete, socket join, health-check success), so `drain()` always quiesces.
+// `until` only waits for real file IO (the 4 MiB bodies), which drain cannot
+// see, by polling the CONDITION the test asserts.
 import { afterAll, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -12,15 +17,26 @@ afterAll(() => Replica.restoreGlobals());
 const onDisk = (r: Replica, rel: string) => fs.existsSync(path.join(r.vaultDir, rel));
 /** Past MAX_CRDT_NOTE_BYTES (4 MiB): such a note can only sync over REST. */
 const BIG = `OFFLINE EDIT${"x".repeat(4 * 1024 * 1024 + 10)}`;
-/** drain() cannot see real file IO (a 4 MiB read), so yield to the event loop
- *  between drains until the virtual world is quiet. */
-async function settle(t: { scheduler: { drain(): Promise<unknown> } }): Promise<void> {
-	for (let i = 0; i < 16; i++) {
-		await Bun.sleep(25);
-		await t.scheduler.drain();
-	}
-}
 const read = (r: Replica, rel: string) => fs.readFileSync(path.join(r.vaultDir, rel), "utf8");
+const serverContent = (t: Topology) => [...t.server.state().notes.values()][0]?.content;
+
+/** One flush trigger that cannot complete a catch-up: a health-check success
+ *  with the socket down, then the link drops again. */
+async function missTrigger(t: Topology, e: any): Promise<void> {
+	e.goOnline();
+	await until(t, () => e.flushInFlight === null, "trigger settled");
+	e.goOffline();
+	e.stopHealthCheck();
+}
+
+async function until(t: Topology, cond: () => boolean, label: string): Promise<void> {
+	for (let i = 0; i < 400; i++) {
+		await t.scheduler.drain();
+		if (cond()) return;
+		await Bun.sleep(5);
+	}
+	throw new Error(`never reached: ${label}`);
+}
 
 type Order = "health-first" | "pull-first";
 /** rest = a queue entry with no crdt marker (old entries, the "mint refused"
@@ -63,11 +79,22 @@ async function queueRest(a: Replica, e: any, content: string): Promise<void> {
 	});
 }
 
-const serverContent = (t: Topology) => [...t.server.state().notes.values()][0]?.content;
+/** The converged end state: one note at the new path, edit on server and disk. */
+const landed = (t: Topology, a: Replica, e: any, edited: string) => () =>
+	e.queue.size === 0 &&
+	serverContent(t) === edited &&
+	onDisk(a, "Done/n.md") &&
+	!onDisk(a, "Proj/n.md") &&
+	read(a, "Done/n.md") === edited;
+
+function expectOneNoteAtNewPath(t: Topology) {
+	expect([...t.server.state().notes.keys()]).toEqual(["Done/n.md"]);
+	expect(t.server.folderPaths()).not.toContain("Proj");
+}
 
 /** A has `Proj/n.md` synced; A goes offline and edits it; B renames Proj to
  *  Done on the server; A reconnects with the two triggers in `order`. */
-async function run(kind: Kind, order: Order, seed: number, who: "server" | "me" = "server") {
+async function run(kind: Kind, order: Order, seed: number, who: "server" | "me") {
 	const { t, a, b, e } = await offlineSetup(seed);
 	const edited = kind === "rest" ? BIG : "OFFLINE EDIT";
 	if (who === "server") {
@@ -91,11 +118,10 @@ async function run(kind: Kind, order: Order, seed: number, who: "server" | "me" 
 		await a.goOnline();
 	} else {
 		await a.goOnline(); // rejoin: pull, then flush
-		await settle(t);
+		await t.scheduler.drain();
 		e.goOnline();
 	}
-	await settle(t);
-	await settle(t);
+	await until(t, landed(t, a, e, edited), `${who}/${kind}/${order} landed`);
 	return { t, a, edited, e };
 }
 
@@ -105,13 +131,9 @@ describe("offline edit + folder rename + reconnect", () => {
 		for (const kind of ["rest", "crdt"] as Kind[])
 			for (const order of ["health-first", "pull-first"] as Order[])
 				test(`${who} renames, ${kind} replay, ${order}: one note at the new path, edit kept, no old folder`, async () => {
-					const { t, a, edited } = await run(kind, order, seed++, who);
+					const { t } = await run(kind, order, seed++, who);
 					try {
-						expect([...t.server.state().notes.keys()]).toEqual(["Done/n.md"]);
-						expect(t.server.folderPaths()).not.toContain("Proj");
-						expect(onDisk(a, "Proj/n.md")).toBe(false);
-						expect(read(a, "Done/n.md")).toBe(edited);
-						expect([...t.server.state().notes.values()][0].content).toBe(edited);
+						expectOneNoteAtNewPath(t);
 					} finally {
 						cleanup(t);
 					}
@@ -120,53 +142,24 @@ describe("offline edit + folder rename + reconnect", () => {
 
 describe("pending folder op + queued REST replay", () => {
 	test("our own rename is unanswered while the replay flushes: no fork, no lost edit once it lands", async () => {
-		const t = await boot(5200, ["A", "B"], { folderOps: true, strictRestPath: true });
+		const { t, a, e } = await offlineSetup(5200);
 		try {
-			const [a] = t.replicas;
-			const e = a.engine as any;
-			await a.createNote("Proj/n.md", "v1 body");
-			await t.scheduler.drain();
-			for (const r of t.replicas) {
-				await r.goOffline();
-				await r.goOnline();
-			}
-			await t.scheduler.drain();
-			await a.goOffline();
-			e.goOffline();
-			e.stopHealthCheck();
-			const real = e.handleModify;
-			e.handleModify = () => {};
-			await a.app.vault.modify(a.app.vault.getFileByPath("Proj/n.md")!, BIG);
-			e.handleModify = real;
-			const f = a.app.vault.getFileByPath("Proj/n.md")!;
-			await e.enqueueChange({
-				path: "Proj/n.md",
-				action: "upsert",
-				kind: "note",
-				mtime: f.stat.mtime / 1000,
-				timestamp: Date.now(),
-				vaultId: e.settings.vaultId,
-			});
+			await queueRest(a, e, BIG);
 			// The server answers our folder op "retry": it stays pending/held.
-			const ch = (a as any).channel;
-			const realOp = ch.folderOp.bind(ch);
+			const realOp = (a as any).channel.folderOp.bind((a as any).channel);
 			e.setCrdtPorts({ folderOp: async () => ({ kind: "retry" }) });
 			await a.renameFolder("Proj", "Done", "folder-first");
 			await t.scheduler.drain();
 			e.goOnline();
 			await a.goOnline();
-			await settle(t);
+			await t.scheduler.drain();
 			// The op finally lands.
 			e.setCrdtPorts({ folderOp: realOp });
 			const reconnect = e.folderOps.onReconnect();
-			await settle(t);
+			await t.scheduler.drain();
 			await reconnect;
-			await settle(t);
-			const keys = [...t.server.state().notes.keys()];
-			expect(keys).toEqual(["Done/n.md"]);
-			expect(t.server.folderPaths()).not.toContain("Proj");
-			expect(read(a, "Done/n.md")).toBe(BIG);
-			expect([...t.server.state().notes.values()][0].content).toBe(BIG);
+			await until(t, landed(t, a, e, BIG), "folder op landed with the edit");
+			expectOneNoteAtNewPath(t);
 		} finally {
 			cleanup(t);
 		}
@@ -180,9 +173,7 @@ describe("the flush gate always clears (#692 delta review)", () => {
 			await queueRest(a, e, BIG);
 			e.setCrdtPorts({ catchupSince: null });
 			e.goOnline();
-			await settle(t);
-			expect(e.queue.size).toBe(0);
-			expect(serverContent(t)).toBe(BIG);
+			await until(t, () => e.queue.size === 0 && serverContent(t) === BIG, "T1 sent");
 		} finally {
 			cleanup(t);
 		}
@@ -197,12 +188,14 @@ describe("the flush gate always clears (#692 delta review)", () => {
 					throw new Error("boom");
 				},
 			});
+			// Three flush triggers (health-check successes), each a miss.
+			for (let i = 0; i < 3; i++) await missTrigger(t, e);
 			e.goOnline();
-			await settle(t);
-			await settle(t);
-			expect(e.queue.size).toBe(0);
-			expect(e.catchupPending).toBe(false);
-			expect(serverContent(t)).toBe(BIG);
+			await until(
+				t,
+				() => e.queue.size === 0 && serverContent(t) === BIG,
+				"T2 released and sent",
+			);
 		} finally {
 			cleanup(t);
 		}
@@ -220,12 +213,9 @@ describe("the flush gate always clears (#692 delta review)", () => {
 			e.stopHealthCheck();
 			await queueRest(a, e, BIG);
 			e.goOnline();
-			await settle(t);
+			await until(t, () => e.queue.size === 0 && serverContent(t) === BIG, "T4 sent");
 			await running;
-			await settle(t);
-			expect(e.queue.size).toBe(0);
 			expect(e.catchupPending).toBe(false);
-			expect(serverContent(t)).toBe(BIG);
 		} finally {
 			cleanup(t);
 		}
@@ -235,38 +225,108 @@ describe("the flush gate always clears (#692 delta review)", () => {
 		const { t, a, e } = await offlineSetup(5303);
 		try {
 			await queueRest(a, e, BIG);
-			for (let i = 0; i < 4; i++) {
-				e.goOnline();
-				await Promise.resolve();
-				e.goOffline();
-				e.stopHealthCheck();
-			}
+			for (let i = 0; i < 4; i++) await missTrigger(t, e);
 			e.goOnline();
-			await settle(t);
-			await settle(t);
-			expect(e.queue.size).toBe(0);
-			expect(serverContent(t)).toBe(BIG);
+			await until(t, () => e.queue.size === 0 && serverContent(t) === BIG, "flap sent");
 		} finally {
 			cleanup(t);
 		}
 	}, 30_000);
 
-	test("T5 reload: a persisted REST replay is gated again, the rename is not undone", async () => {
+	test("T5 startup: a persisted REST replay is gated by loadQueue, a startup flush cannot undo the rename", async () => {
 		const { t, a, b, e } = await offlineSetup(5304);
 		try {
 			await b.renameFolder("Proj", "Done", "folder-first");
 			await t.scheduler.drain();
 			await queueRest(a, e, BIG);
-			// A reload: a fresh engine has no gate, then main.ts loads the queue.
+			// A restart: a fresh engine has no gate and an empty queue; main.ts then
+			// loads the persisted queue, and the startup sync flushes it while the
+			// socket is still down.
+			const saved = e.queue.persistable();
+			await e.queue.clear();
 			e.catchupPending = false;
-			e.gateRestReplaysAtStartup();
+			e.offline = false;
+			e.loadQueue(saved);
+			const startupFlush = e.flushQueue();
+			await t.scheduler.drain();
+			await startupFlush;
+			expect(e.queue.size).toBe(1); // held, not parked, not sent to the old path
+			expect(serverContent(t)).toBe("v1 body");
+			await a.goOnline(); // the socket joins: pull, then flush
+			await until(t, landed(t, a, e, BIG), "T5 landed");
+			expectOneNoteAtNewPath(t);
+		} finally {
+			cleanup(t);
+		}
+	}, 30_000);
+});
+
+describe("cap release with no pull (delta review 2)", () => {
+	/** REST is up, the socket stays down: three flush triggers pass, the server
+	 *  renamed the folder. */
+	async function capReleased(seed: number) {
+		const { t, a, b, e } = await offlineSetup(seed);
+		await b.renameFolder("Proj", "Done", "folder-first");
+		await t.scheduler.drain();
+		await queueRest(a, e, BIG);
+		for (let i = 0; i < 3; i++) await missTrigger(t, e);
+		return { t, a, e };
+	}
+
+	test("R2-1 the refused old-path replay is re-held, still queued, and lands once the pull arrives", async () => {
+		const { t, a, e } = await capReleased(7001);
+		try {
+			e.goOnline(); // the trigger that releases the gate: 409 on the old path
+			await until(t, () => e.flushInFlight === null, "released flush settled");
+			// Never silently dropped: not on the server yet, so it must still be queued.
+			expect(serverContent(t)).toBe("v1 body");
+			expect(e.queue.size).toBe(1);
+			expect(e.issues.all()).toEqual([]);
+			await a.goOnline(); // socket back: complete catch-up clears the hold
+			await until(t, landed(t, a, e, BIG), "R2-1 landed");
+			expectOneNoteAtNewPath(t);
+		} finally {
+			cleanup(t);
+		}
+	}, 60_000);
+
+	test("R2-2 after STALE_HOLD_ISSUE_AT refusals the user is told, and the edit stays queued", async () => {
+		const { t, e } = await capReleased(7002);
+		try {
+			for (let i = 0; i < 6; i++) {
+				e.goOffline();
+				e.stopHealthCheck();
+				e.goOnline();
+				await until(t, () => e.flushInFlight === null, "refusal settled");
+			}
+			expect(e.queue.size).toBe(1);
+			expect(e.issues.all().length).toBe(1);
+			expect(serverContent(t)).toBe("v1 body");
+		} finally {
+			cleanup(t);
+		}
+	}, 60_000);
+
+	test("a crdt marker at the new path does not swallow the oversized REST replay", async () => {
+		const { t, a, b, e } = await offlineSetup(7003);
+		try {
+			const id = e.noteIdMap.get("Proj/n.md");
+			await b.renameFolder("Proj", "Done", "folder-first");
+			await t.scheduler.drain();
+			await queueRest(a, e, BIG);
+			await e.queue.enqueue({
+				path: "Done/n.md",
+				action: "upsert",
+				kind: "note",
+				crdt: true,
+				noteId: id,
+				mtime: 1,
+				timestamp: Date.now(),
+				vaultId: e.settings.vaultId,
+			});
 			e.goOnline();
 			await a.goOnline();
-			await settle(t);
-			await settle(t);
-			expect([...t.server.state().notes.keys()]).toEqual(["Done/n.md"]);
-			expect(serverContent(t)).toBe(BIG);
-			expect(t.server.folderPaths()).not.toContain("Proj");
+			await until(t, landed(t, a, e, BIG), "marker + replay landed");
 		} finally {
 			cleanup(t);
 		}
@@ -295,18 +355,14 @@ describe("offline DELETE + server-side folder rename", () => {
 			await t.scheduler.drain();
 			e.goOnline();
 			await a.goOnline();
-			await settle(t);
-			await settle(t);
+			await until(t, () => e.queue.size === 0 && onDisk(a, "Done/n.md"), "delete settled");
 			const keys = [...t.server.state().notes.keys()];
-			expect(keys.filter((k) => k.startsWith("Proj/"))).toEqual([]);
+			// Pinned outcome (follow-up filed separately): the delete went to the old
+			// path (404, already moved), so the note survives at the new path and
+			// comes back locally. No fork, no resurrected folder.
+			expect(keys).toEqual(["Done/n.md"]);
 			expect(t.server.folderPaths()).not.toContain("Proj");
 			expect(onDisk(a, "Proj/n.md")).toBe(false);
-			// Pinned outcome: the delete went to the old path (404, already moved), so
-			// the note survives at the new path and comes back locally. No fork, no
-			// resurrected folder; the user's delete is not honoured (follow-up: delete
-			// entries should follow the note id too).
-			expect(keys).toEqual(["Done/n.md"]);
-			expect(onDisk(a, "Done/n.md")).toBe(true);
 		} finally {
 			cleanup(t);
 		}

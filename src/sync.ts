@@ -346,6 +346,8 @@ function countFolders(paths: Iterable<string>): number {
 const RECENT_DELETE_COOLDOWN_MS = 60_000;
 /** Flush attempts a REST replay waits for the post-offline catch-up. */
 const CATCHUP_MISS_CAP = 3;
+/** Refused old-path replays before the held edit is also shown to the user. */
+const STALE_HOLD_ISSUE_AT = 5;
 /** How long a relocation's origin stays available to a later materialization.
  *  Generous next to the milliseconds a racing flush needs, and short next to
  *  the lifetime of a path that might legitimately be recreated. */
@@ -760,12 +762,26 @@ export class SyncEngine {
 	 *   1. a complete `catchupViaSeqReplay` session of the current epoch;
 	 *   2. the session has no catch-up port at all (`holdsRestReplay` is false);
 	 *   3. `CATCHUP_MISS_CAP` flush attempts passed without 1 happening. The
-	 *      replay then goes out, and a 409 on a moved path re-keys by note id
-	 *      rather than force-pushing. Misses are NOT reset by going offline, so
-	 *      a flapping link cannot starve the queue. */
+	 *      replay then goes out; if the server refuses the old path (409) it is
+	 *      re-held, not parked (`releasedUnpulled`), until a pull moves the file
+	 *      and the file-gone branch re-keys it by note id. Misses are NOT reset
+	 *      by going offline, so a flapping link cannot starve the queue.
+	 *
+	 *  There is no retry timer: every flush trigger is an event (catch-up
+	 *  complete, socket join, health-check success), so a held replay costs no
+	 *  wall-clock polling and the sim's drain quiesces. An edit is always on the
+	 *  server, still queued, or surfaced as an issue after `STALE_HOLD_ISSUE_AT`
+	 *  refused attempts (it stays queued). */
 	private catchupPending = false;
 	private catchupEpoch = 0;
 	private catchupMisses = 0;
+	/** The cap released the gate without a pull: the paths in the queue may still
+	 *  be stale. A 409 on a replay in this state re-holds it (see
+	 *  `holdAfterStaleRelease`) instead of parking it. Cleared by the same event
+	 *  as `catchupPending`: a complete catch-up. */
+	private releasedUnpulled = false;
+	/** Re-holds per path since the last complete catch-up (bounds the silence). */
+	private staleHolds = new Map<string, number>();
 	private healthCheckTimer: number | null = null;
 	/** Consecutive failed health probes — drives exponential backoff. */
 	private healthCheckFailures = 0;
@@ -8699,7 +8715,7 @@ export class SyncEngine {
 			};
 		}
 		this.seqReplayRunning = true;
-		const epoch = this.catchupEpoch;
+		let passEpoch = this.catchupEpoch;
 		const session = (async () => {
 			let applied = 0;
 			let files = 0;
@@ -8733,6 +8749,7 @@ export class SyncEngine {
 			try {
 				do {
 					this.seqReplayAgain = false;
+					passEpoch = this.catchupEpoch; // a pass is "after offline" only if it STARTED after
 					const pass = await this.runSeqReplayOnce(
 						(opts.fromZero ?? false) || (opts.enumerateOnly ?? false),
 						serverIds,
@@ -8751,9 +8768,11 @@ export class SyncEngine {
 					if (!pass.complete) complete = false;
 					if (pass.fromGenesis) fromGenesis = true;
 				} while (this.seqReplayAgain);
-				if (complete && epoch === this.catchupEpoch && this.catchupPending) {
+				if (complete && passEpoch === this.catchupEpoch && this.catchupPending) {
 					this.catchupPending = false;
 					this.catchupMisses = 0;
+					this.releasedUnpulled = false;
+					this.staleHolds.clear();
 					// Held replays have no timer: release them the moment the gate opens.
 					if (this.queue.size > 0) {
 						void this.flushQueue().catch((e: unknown) => {
@@ -14469,6 +14488,9 @@ export class SyncEngine {
 		this.offline = true;
 		this.catchupPending = true;
 		this.catchupEpoch++;
+		// A walk already running began before this drop: have it run another pass
+		// that starts after it (the only pass whose completion may clear the gate).
+		if (this.seqReplayRunning) this.seqReplayAgain = true;
 		this.lastError = "";
 		devLog().log("lifecycle", `went offline — queue=${this.queue.size}`);
 		rlog().warn("lifecycle", `Went offline — queue=${this.queue.size}`);
@@ -14594,6 +14616,7 @@ export class SyncEngine {
 				);
 				this.catchupPending = false;
 				this.catchupMisses = 0;
+				this.releasedUnpulled = true;
 			}
 		}
 		while (this.queue.size > 0) {
@@ -14626,11 +14649,6 @@ export class SyncEngine {
 			const owner = this.entryVaultId(e);
 			if (owner && active && owner !== active) continue;
 			if (e.nextAttemptAt !== undefined && e.nextAttemptAt < due) due = e.nextAttemptAt;
-			// Held for the catch-up: re-try on the health-check backoff. Bounded,
-			// because every attempt is a miss and `CATCHUP_MISS_CAP` releases.
-			if (this.holdsRestReplay(e)) {
-				due = Math.min(due, this.time.now() + healthCheckDelay(this.catchupMisses));
-			}
 		}
 		if (due === Number.POSITIVE_INFINITY) return;
 		this.queueRetryTimer = this.time.setTimeout(
@@ -14658,11 +14676,38 @@ export class SyncEngine {
 		return this.catchupPending && this.crdtCatchupSince !== null && this.isRestReplay(e);
 	}
 
-	/** After a reload the persisted queue may hold REST replays whose paths the
-	 *  server moved while the app was closed: gate them like an offline spell.
-	 *  Call once, after `queue.load`. */
-	gateRestReplaysAtStartup(): void {
+	/** Load the persisted queue at startup. REST replays in it may target paths
+	 *  the server moved while the app was closed: gate them like an offline
+	 *  spell. The single place the persisted queue enters the engine. */
+	loadQueue(entries: QueueEntry[]): void {
+		this.queue.load(entries);
 		if (this.queue.all().some((e) => this.isRestReplay(e))) this.catchupPending = true;
+	}
+
+	/** The server refused a replay's old path after the cap released the gate
+	 *  with no pull. Keep the entry queued and hold it for the next complete
+	 *  catch-up; surface an issue (entry still queued) after
+	 *  `STALE_HOLD_ISSUE_AT` refusals. True = the caller must skip the entry. */
+	private holdAfterStaleRelease(entry: QueueEntry): boolean {
+		if (!this.releasedUnpulled || !this.isRestReplay(entry)) return false;
+		const n = (this.staleHolds.get(entry.path) ?? 0) + 1;
+		this.staleHolds.set(entry.path, n);
+		this.catchupPending = true;
+		this.catchupMisses = CATCHUP_MISS_CAP - 1;
+		if (n === STALE_HOLD_ISSUE_AT) {
+			const now = Date.now();
+			this.issues.record({
+				path: entry.path,
+				kind: "note",
+				category: "other",
+				message:
+					"This edit is waiting: the server moved the note and the move has not synced yet. It stays queued.",
+				firstFailedAt: now,
+				lastFailedAt: now,
+				attempts: n,
+			});
+		}
+		return true;
 	}
 
 	/** The entry's note now lives at another path (the pull moved it): re-key the
@@ -14676,7 +14721,11 @@ export class SyncEngine {
 		// Enqueue before dequeue (a crash between them must not lose the edit), and
 		// never overwrite an entry already at the new path: it is as new or newer
 		// (a queued delete is the user's later intent) and covers the same file.
-		if (!this.queue.get(cur, owner)) {
+		// The one exception: a crdt marker there cannot carry an oversized REST
+		// body, so the REST replay takes the slot (the marker's edit is durable in
+		// its Y.Doc and rides the next handshake).
+		const there = this.queue.get(cur, owner);
+		if (!there || (there.crdt && this.isRestReplay(entry))) {
 			await this.queue.enqueue({ ...entry, path: cur, nextAttemptAt: undefined });
 		}
 		await this.queue.dequeue(entry.path, owner);
@@ -15045,6 +15094,7 @@ export class SyncEngine {
 											replayId,
 										)
 									: await this.api.pushNote(entry.path, content, mtime!);
+					if ("conflict" in resp && this.holdAfterStaleRelease(entry)) continue;
 					if ("conflict" in resp) {
 						// Hand the conflict to the single-note flow, which owns 3-way
 						// merge + resolution — previously a conflicting replay was
@@ -15083,6 +15133,7 @@ export class SyncEngine {
 				// under RETRY_CAP re-queues with a backoff. Either way the pass moves
 				// on to the next entry, unless the failure took us OFFLINE: then
 				// every remaining push would fail the same way.
+				if (isHttpStatus(e, 409) && this.holdAfterStaleRelease(entry)) continue;
 				await this.handleFlushFailure(entry, e);
 				if (this.offline) break;
 			}
