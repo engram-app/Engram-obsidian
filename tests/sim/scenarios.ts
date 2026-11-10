@@ -36,6 +36,7 @@ export async function boot(
 		folderOps?: boolean;
 		cascadeBroadcasts?: boolean;
 		manifestFolders?: boolean;
+		strictRestPath?: boolean;
 	} = {},
 ): Promise<Topology> {
 	const clock = new SimClock();
