@@ -135,6 +135,11 @@ export class ModelServer {
 	/** Stage-1 server: the folder_ops wire only, no manifest `folders`, no
 	 *  `folder_id` in the `crdt_create` reply. */
 	manifestFolders: boolean;
+	/** The real backend's REST write: identity is the PATH. A write to a path
+	 *  with no row creates one (a fork if the note moved), and one carrying a
+	 *  `base_hash` for a path with no row is a 409 `stale_base`. Off = the
+	 *  legacy id-first lookup the older tests rely on. */
+	strictRestPath: boolean;
 	/** Count of every client wire call, by socket event or `METHOD /route`.
 	 *  What the "1 op per folder rename" property reads. */
 	readonly wireCounts = new Map<string, number>();
@@ -145,12 +150,14 @@ export class ModelServer {
 		folderOps?: boolean;
 		cascadeBroadcasts?: boolean;
 		manifestFolders?: boolean;
+		strictRestPath?: boolean;
 	}) {
 		this.scheduler = opts.scheduler;
 		this.genesisEmptyDoc = opts.genesisEmptyDoc ?? true;
 		this.folderOps = opts.folderOps ?? false;
 		this.cascadeBroadcasts = opts.cascadeBroadcasts ?? true;
 		this.manifestFolders = opts.manifestFolders ?? true;
+		this.strictRestPath = opts.strictRestPath ?? false;
 	}
 
 	/** Wire calls of `key` so far (see `wireCounts`). */
@@ -907,8 +914,27 @@ export class ModelServer {
 		const path = body.path as string;
 		const content = (body.content as string) ?? "";
 		const id = body.id as string | undefined;
-		let n = (id && this.byId.get(id)) || this.noteByPath(path);
-		if (!n) n = this.mint(id ?? `srv-${this.byId.size + 1}`, path);
+		if (this.strictRestPath) {
+			const at = this.noteByPath(path);
+			if (!at && body.base_hash !== undefined) {
+				const known = id ? this.byId.get(id) : undefined;
+				return {
+					status: 409,
+					json: {
+						conflict: true,
+						reason: "stale_base",
+						server_note: known ? this.noteDetailJson(known) : null,
+					},
+					text: "stale_base",
+				};
+			}
+		}
+		let n = (!this.strictRestPath && id && this.byId.get(id)) || this.noteByPath(path);
+		if (!n) {
+			// A write that carried the id of a note living elsewhere forks it.
+			const fresh = id && !this.byId.has(id) ? id : `srv-${this.byId.size + 1}`;
+			n = this.mint(fresh, path);
+		}
 		this.setBody(n, content);
 		// Modern CRDT fan-out: broadcast the resulting update to everyone (no
 		// originating socket for a REST call, so all clients receive it).

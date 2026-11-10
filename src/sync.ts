@@ -748,6 +748,13 @@ export class SyncEngine {
 	private ctimeFlushTimer: number | null = null;
 	private lastError = "";
 	private offline = false;
+	/** True from going offline until a catch-up that STARTED after that reached the
+	 *  end of the feed. Held REST replays wait on it: the server may have moved
+	 *  their path while we were away (a folder rename), and a replay to the old
+	 *  path forks the note and resurrects the folder. Cleared by exactly one
+	 *  event: a complete `catchupViaSeqReplay` session of the current epoch. */
+	private catchupPending = false;
+	private catchupEpoch = 0;
 	private healthCheckTimer: number | null = null;
 	/** Consecutive failed health probes — drives exponential backoff. */
 	private healthCheckFailures = 0;
@@ -8681,6 +8688,7 @@ export class SyncEngine {
 			};
 		}
 		this.seqReplayRunning = true;
+		const epoch = this.catchupEpoch;
 		const session = (async () => {
 			let applied = 0;
 			let files = 0;
@@ -8732,6 +8740,15 @@ export class SyncEngine {
 					if (!pass.complete) complete = false;
 					if (pass.fromGenesis) fromGenesis = true;
 				} while (this.seqReplayAgain);
+				if (complete && epoch === this.catchupEpoch && this.catchupPending) {
+					this.catchupPending = false;
+					// Held replays have no timer: release them the moment the gate opens.
+					if (this.queue.size > 0) {
+						void this.flushQueue().catch((e: unknown) => {
+							rlog().warn("queue", `post-catch-up flush failed: ${errMsg(e)}`);
+						});
+					}
+				}
 				// Outcome check. `applied` counts every row the feed handed us;
 				// `files` and `deletes` count what actually reached disk. All three
 				// passes done and applied > 0 with NOTHING materialised or trashed
@@ -14234,6 +14251,9 @@ export class SyncEngine {
 	private async enqueueChange(entry: QueueEntry): Promise<void> {
 		await this.queue.enqueue({
 			...entry,
+			// The id travels with the entry so a replay can follow the note if the
+			// server moves it while the entry waits.
+			noteId: entry.noteId ?? this.noteIdMap?.get(normalizePath(entry.path)) ?? undefined,
 			priority: entry.priority ?? this.priorityForPath(entry.path),
 		});
 		// Enqueuing a retry does NOT by itself mean we're disconnected — a single
@@ -14435,6 +14455,8 @@ export class SyncEngine {
 	private goOffline(): void {
 		if (this.offline) return;
 		this.offline = true;
+		this.catchupPending = true;
+		this.catchupEpoch++;
 		this.lastError = "";
 		devLog().log("lifecycle", `went offline — queue=${this.queue.size}`);
 		rlog().warn("lifecycle", `Went offline — queue=${this.queue.size}`);
@@ -14546,6 +14568,13 @@ export class SyncEngine {
 	 *  entry. Re-looping lets the active drain pick it up. */
 	private async drainUntilStable(): Promise<number> {
 		let total = 0;
+		// ONE flush entry point: every trigger (health check, rejoin, timers)
+		// lands here, so the catch-up precondition lives here and nowhere else.
+		if (this.catchupPending && !this.syncBlocked) {
+			await this.catchupViaSeqReplay().catch((e: unknown) => {
+				rlog().warn("queue", `pre-flush catch-up failed: ${errMsg(e)}`);
+			});
+		}
 		while (this.queue.size > 0) {
 			const flushed = await this.runFlushQueue();
 			total += flushed;
@@ -14587,6 +14616,31 @@ export class SyncEngine {
 			},
 			Math.max(0, due - this.time.now()),
 		);
+	}
+
+	/** A NOTE upsert delivered by a path-addressed REST call (not the crdt
+	 *  socket). Attachments are not held: their path-keyed upload has no note id
+	 *  to re-resolve by, and holding them would stall uploads whenever the socket
+	 *  is slow to rejoin. */
+	private isRestReplay(e: QueueEntry): boolean {
+		return e.action === "upsert" && e.kind !== "attachment" && !(e.crdt && e.noteId);
+	}
+
+	/** The entry's note now lives at another path (the pull moved it): re-key the
+	 *  entry there, so the edit goes to the NEW path instead of being dropped or
+	 *  sent to the old one. Identity is the note id the entry carries. */
+	private async requeueAtCurrentPath(entry: QueueEntry): Promise<boolean> {
+		const cur = entry.noteId ? this.noteIdMap?.pathForId(entry.noteId) : null;
+		if (!cur || normalizePath(cur) === normalizePath(entry.path)) return false;
+		if (!this.app.vault.getFileByPath(cur)) return false;
+		const owner = this.entryVaultId(entry);
+		await this.queue.dequeue(entry.path, owner);
+		await this.queue.enqueue({ ...entry, path: cur, nextAttemptAt: undefined });
+		rlog().info(
+			"queue",
+			`Replay re-keyed to the moved path: ${noteRef(entry.path)} -> ${noteRef(cur)}`,
+		);
+		return true;
 	}
 
 	private async runFlushQueue(): Promise<number> {
@@ -14636,6 +14690,10 @@ export class SyncEngine {
 			// the entries behind it (head-of-line blocking, 2026-10-09). The
 			// retry timer brings the drain back when it comes due.
 			if ((entry.nextAttemptAt ?? 0) > this.time.now()) continue;
+
+			// A REST replay targets a PATH. Until the post-offline catch-up has
+			// landed, that path may be stale (server-side folder rename): hold it.
+			if (this.catchupPending && this.isRestReplay(entry)) continue;
 
 			// The entry was created under a DIFFERENT vault. `this.api` points at
 			// whichever vault is active now, so delivering it executes against the
@@ -14864,6 +14922,10 @@ export class SyncEngine {
 					let replayCtime: number | undefined;
 					if (content === undefined) {
 						const file = this.app.vault.getFileByPath(entry.path);
+						if (!file && (await this.requeueAtCurrentPath(entry))) {
+							flushed++;
+							continue;
+						}
 						if (!file) {
 							// The file is gone (deleted, or renamed away during the offline
 							// window). A crdt entry's edit still lives in the durable Y.Doc
@@ -14939,6 +15001,11 @@ export class SyncEngine {
 											replayId,
 										)
 									: await this.api.pushNote(entry.path, content, mtime!);
+					if ("conflict" in resp && (await this.requeueAtCurrentPath(entry))) {
+						// Stale path, not stale content: never force-push the old one.
+						flushed++;
+						continue;
+					}
 					if ("conflict" in resp) {
 						// Hand the conflict to the single-note flow, which owns 3-way
 						// merge + resolution — previously a conflicting replay was
