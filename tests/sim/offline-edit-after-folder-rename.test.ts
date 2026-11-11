@@ -366,6 +366,64 @@ describe("an entry with no note id is never silently dropped (delta review 4)", 
 	}, 30_000);
 });
 
+describe("a user delete cancels the queued id-less upsert (delta review 5)", () => {
+	const entry = (p: string, e: any) => ({
+		path: p,
+		action: "upsert" as const,
+		kind: "note" as const,
+		mtime: 1,
+		timestamp: Date.now(),
+		vaultId: e.settings.vaultId,
+	});
+
+	async function flushes(t: Topology, e: any, n: number) {
+		for (let i = 0; i < n; i++) {
+			void e.flushQueue();
+			await until(t, () => e.flushInFlight === null, "flush settled");
+		}
+	}
+
+	test("never-synced note: queue and issues end at 0, on every flush", async () => {
+		const { t, a, e } = await offlineSetup(7300);
+		try {
+			const real = e.handleModify;
+			e.handleModify = () => {};
+			await a.createNote("Tmp/x.md", "x"); // never synced, no id
+			e.handleModify = real;
+			e.noteIdMap.release("Tmp/x.md");
+			e.loadQueue([entry("Tmp/x.md", e)]);
+			e.offline = false;
+			await a.deleteNote("Tmp/x.md");
+			await t.scheduler.drain();
+			await flushes(t, e, 4);
+			expect(e.queue.size).toBe(0);
+			expect(e.issues.all()).toEqual([]);
+		} finally {
+			cleanup(t);
+		}
+	}, 30_000);
+
+	test("synced note: the delete wins, queue and issues end at 0, server empty", async () => {
+		const { t, a, e } = await offlineSetup(7301);
+		try {
+			e.loadQueue([entry("Proj/n.md", e)]);
+			e.offline = false;
+			await a.deleteNote("Proj/n.md");
+			await t.scheduler.drain();
+			await flushes(t, e, 4);
+			expect(e.queue.size).toBe(0);
+			expect(e.issues.all()).toEqual([]);
+			// The delete itself rides the crdt op queue; the socket returns.
+			await a.goOnline();
+			await until(t, () => t.server.state().notes.size === 0, "server note deleted");
+			expect(e.queue.size).toBe(0);
+			expect(e.issues.all()).toEqual([]);
+		} finally {
+			cleanup(t);
+		}
+	}, 30_000);
+});
+
 describe("a session whose socket never joins (delta review 4)", () => {
 	test("the poll supplies the triggers: held for two ticks, sent on the third", async () => {
 		const { t, a, e } = await offlineSetup(7200);

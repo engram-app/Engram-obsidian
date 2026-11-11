@@ -408,3 +408,42 @@ describe("openCrdtNoteIds: the notes the rejoin keeps", () => {
 		expect(ids.sort()).toEqual(["id:Boards/b.canvas", "id:Notes/a.md", "id:Notes/embedded.md"]);
 	});
 });
+
+describe("periodic poll", () => {
+	test("flushes the queue after the catch-up, so held REST replays get a trigger", async () => {
+		const pollFlush = mock(() => Promise.resolve());
+		const fakeThis = {
+			syncInterval: null as unknown,
+			hasAuthConfigured: () => true,
+			registerInterval: () => {},
+			runSelfHealSweep: () => Promise.resolve(),
+			syncEngine: {
+				catchUp: () => Promise.resolve({ files: 0, deletes: 0 }),
+				pollFlush,
+			},
+		};
+		let tick: (() => void) | undefined;
+		const g = globalThis as unknown as { window?: Record<string, unknown> };
+		const prev = g.window;
+		g.window = {
+			...(prev ?? {}),
+			clearInterval: () => {},
+			setInterval: (fn: () => void) => {
+				tick = fn;
+				return 1;
+			},
+		};
+		try {
+			(
+				EngramSyncPlugin.prototype as unknown as { startSyncInterval: () => void }
+			).startSyncInterval.call(fakeThis);
+			tick?.();
+			await flushMicrotasks();
+			await flushMicrotasks();
+			await flushMicrotasks();
+			expect(pollFlush).toHaveBeenCalledTimes(1);
+		} finally {
+			g.window = prev;
+		}
+	});
+});
