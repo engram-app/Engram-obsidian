@@ -289,6 +289,106 @@ describe("startup join that never arrives (delta review 3)", () => {
 	}, 30_000);
 });
 
+describe("an entry with no note id is never silently dropped (delta review 4)", () => {
+	/** The server moved the folder; A holds a REST replay for the old path whose
+	 *  entry carries no noteId (as saved by an older plugin). */
+	async function idlessEntry(seed: number, forget: boolean) {
+		const { t, a, b, e } = await offlineSetup(seed);
+		await b.renameFolder("Proj", "Done", "folder-first");
+		await t.scheduler.drain();
+		await queueRest(a, e, BIG);
+		const saved = e.queue.persistable().map((x: any) => ({ ...x, noteId: undefined }));
+		await e.queue.clear();
+		// The id map names the old path unless the test says it forgot it.
+		if (forget) e.noteIdMap.release("Proj/n.md");
+		return { t, a, e, saved };
+	}
+
+	test("old-format entry (no noteId): the id is resolved at load, the edit follows the move", async () => {
+		const { t, a, e, saved } = await idlessEntry(7100, false);
+		try {
+			e.loadQueue(saved);
+			expect(e.queue.all()[0].noteId).toBeTruthy();
+			e.offline = false;
+			await a.goOnline();
+			await until(t, landed(t, a, e, BIG), "old-format entry landed");
+			expectOneNoteAtNewPath(t);
+		} finally {
+			cleanup(t);
+		}
+	}, 30_000);
+
+	test("retryFailedNow entry carries the id and follows the move", async () => {
+		const { t, a, b, e } = await offlineSetup(7101);
+		try {
+			await b.renameFolder("Proj", "Done", "folder-first");
+			await t.scheduler.drain();
+			const f = a.app.vault.getFileByPath("Proj/n.md")!;
+			const real = e.handleModify;
+			e.handleModify = () => {};
+			await a.app.vault.modify(f, BIG);
+			e.handleModify = real;
+			const now = Date.now();
+			e.issues.record({
+				path: "Proj/n.md",
+				kind: "note",
+				category: "network",
+				message: "offline",
+				firstFailedAt: now,
+				lastFailedAt: now,
+				attempts: 1,
+			});
+			void e.retryFailedNow();
+			await t.scheduler.drain();
+			expect(e.queue.all()[0]?.noteId).toBeTruthy();
+			e.goOnline();
+			await a.goOnline();
+			await until(t, landed(t, a, e, BIG), "retryFailedNow entry landed");
+			expectOneNoteAtNewPath(t);
+		} finally {
+			cleanup(t);
+		}
+	}, 30_000);
+
+	test("unresolvable entry (no id anywhere): kept queued and surfaced, never dropped", async () => {
+		const { t, a, e, saved } = await idlessEntry(7102, true);
+		try {
+			e.loadQueue(saved);
+			expect(e.queue.all()[0].noteId).toBeUndefined();
+			e.offline = false;
+			await a.goOnline();
+			await until(t, () => e.issues.all().length === 1, "issue surfaced");
+			expect(e.queue.size).toBe(1);
+			expect(serverContent(t)).toBe("v1 body");
+		} finally {
+			cleanup(t);
+		}
+	}, 30_000);
+});
+
+describe("a session whose socket never joins (delta review 4)", () => {
+	test("the poll supplies the triggers: held for two ticks, sent on the third", async () => {
+		const { t, a, e } = await offlineSetup(7200);
+		try {
+			await queueRest(a, e, BIG);
+			const saved = e.queue.persistable();
+			await e.queue.clear();
+			e.offline = false;
+			e.catchupPending = false;
+			e.setCrdtPorts({ catchupSince: null }); // the join never arrives
+			e.loadQueue(saved);
+			for (let i = 0; i < 2; i++) {
+				await e.pollFlush();
+				expect(e.queue.size).toBe(1);
+			}
+			void e.pollFlush();
+			await until(t, () => e.queue.size === 0 && serverContent(t) === BIG, "third tick sent");
+		} finally {
+			cleanup(t);
+		}
+	}, 30_000);
+});
+
 describe("cap release with no pull (delta review 2)", () => {
 	/** REST is up, the socket stays down: three flush triggers pass, the server
 	 *  renamed the folder. */

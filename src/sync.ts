@@ -762,8 +762,10 @@ export class SyncEngine {
 	 *   1. a complete `catchupViaSeqReplay` session of the current epoch;
 	 *   2. a REST-only session: no catch-up port AND no join owed (`joinOwed`
 	 *      false), so no catch-up will ever exist and nothing is held;
-	 *   3. `CATCHUP_MISS_CAP` flush attempts passed without 1 happening (this
-	 *      also bounds a startup join that never arrives). The
+	 *   3. `CATCHUP_MISS_CAP` (3) flush attempts passed without 1 happening. A
+	 *      session whose socket never joins gets its triggers from the poll
+	 *      (`pollFlush`, every 5 min, so about 15 min) and from health-check
+	 *      successes; this also bounds a startup join that never arrives. The
 	 *      replay then goes out; if the server refuses the old path (409) it is
 	 *      re-held, not parked (`releasedUnpulled`), until a pull moves the file
 	 *      and the file-gone branch re-keys it by note id. Misses are NOT reset
@@ -772,7 +774,8 @@ export class SyncEngine {
 	 *  There is no retry timer: every flush trigger is an event (catch-up
 	 *  complete, socket join, health-check success, and the periodic
 	 *  FALLBACK_POLL_MS catch-up in main.ts, whose completion releases held
-	 *  entries), so a held replay costs no wall-clock polling and the sim's
+	 *  entries, and `pollFlush`, its flush leg for sessions where no catch-up
+	 *  can complete), so a held replay costs no wall-clock polling and the sim's
 	 *  drain quiesces. A re-held edit therefore DEPENDS on one of those events
 	 *  (on an idle joined socket: the next poll). An edit is always on the
 	 *  server, still queued, or surfaced as an issue after `STALE_HOLD_ISSUE_AT`
@@ -14300,7 +14303,7 @@ export class SyncEngine {
 			...entry,
 			// The id travels with the entry so a replay can follow the note if the
 			// server moves it while the entry waits.
-			noteId: entry.noteId ?? this.noteIdMap?.get(normalizePath(entry.path)) ?? undefined,
+			noteId: entry.noteId ?? this.queuedNoteId(entry),
 			priority: entry.priority ?? this.priorityForPath(entry.path),
 		});
 		// Enqueuing a retry does NOT by itself mean we're disconnected — a single
@@ -14579,7 +14582,7 @@ export class SyncEngine {
 				this.issues.clear(issue.path);
 				continue;
 			}
-			await this.queue.enqueue({
+			await this.enqueueChange({
 				path: issue.path,
 				action: "upsert",
 				kind: issue.kind,
@@ -14681,12 +14684,27 @@ export class SyncEngine {
 		);
 	}
 
+	/** The id of the note a queue entry is about, if the id map knows it. Notes
+	 *  only: attachments have no note id. */
+	private queuedNoteId(e: QueueEntry): string | undefined {
+		if (e.kind === "attachment") return undefined;
+		return this.noteIdMap?.get(normalizePath(e.path)) ?? undefined;
+	}
+
 	/** A NOTE upsert delivered by a path-addressed REST call (not the crdt
 	 *  socket). Attachments are not held: their path-keyed upload has no note id
 	 *  to re-resolve by, and holding them would stall uploads whenever the socket
 	 *  is slow to rejoin. */
 	private isRestReplay(e: QueueEntry): boolean {
 		return e.action === "upsert" && e.kind !== "attachment" && !(e.crdt && e.noteId);
+	}
+
+	/** The periodic poll's queue leg (main.ts). A REST-only or never-joined
+	 *  session has no join to flush held replays, so the poll is a trigger: 3 of
+	 *  them (about 15 min at FALLBACK_POLL_MS) release the gate. */
+	async pollFlush(): Promise<void> {
+		if (this.offline || this.syncBlocked || this.queue.size === 0) return;
+		await this.flushQueue();
 	}
 
 	/** Is this entry held right now? No catch-up port means no catch-up can ever
@@ -14704,7 +14722,10 @@ export class SyncEngine {
 	 *  the server moved while the app was closed: gate them like an offline
 	 *  spell. The single place the persisted queue enters the engine. */
 	loadQueue(entries: QueueEntry[]): void {
-		this.queue.load(entries);
+		// Entries saved by an older plugin carry no note id. Resolve it NOW, from the
+		// id map, while the map still names the path the entry was made under: once
+		// a pull moves the file the old path no longer resolves.
+		this.queue.load(entries.map((e) => ({ ...e, noteId: e.noteId ?? this.queuedNoteId(e) })));
 		if (this.queue.all().some((e) => this.isRestReplay(e))) {
 			this.catchupPending = true;
 			this.joinOwed = true;
@@ -15044,6 +15065,24 @@ export class SyncEngine {
 						const file = this.app.vault.getFileByPath(entry.path);
 						if (!file && (await this.requeueAtCurrentPath(entry))) {
 							flushed++;
+							continue;
+						}
+						if (!file && this.noteIdMap && !entry.crdt && !entry.noteId) {
+							// (Needs an id map: without one there is no identity to follow.)
+							// No id to follow and the file is gone: it may well have been MOVED
+							// (the pull renamed it), with the edit inside. Dropping it would
+							// lose that edit silently, so keep it queued and tell the user.
+							const now = Date.now();
+							this.issues.record({
+								path: entry.path,
+								kind: "note",
+								category: "other",
+								message:
+									"This edit is waiting: its note was renamed or moved and could not be matched. It stays queued.",
+								firstFailedAt: now,
+								lastFailedAt: now,
+								attempts: 1,
+							});
 							continue;
 						}
 						if (!file) {
