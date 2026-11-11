@@ -4,6 +4,7 @@
  */
 import { type App, getAllTags, prepareSimpleSearch, type TFile } from "obsidian";
 import type { EngramApi } from "./api";
+import { splitFrontmatter } from "./crdt/frontmatter-codec";
 import { queryTokenRanges } from "./search-highlight";
 import type { SearchMode, SearchResult, UnifiedSearchResult } from "./types";
 
@@ -78,12 +79,6 @@ function excerpt(text: string | null | undefined, query: string): string {
 		if (sp > first[1]) end = sp;
 	}
 	return `${start > 0 ? "…" : ""}${t.slice(start, end)}${end < t.length ? "…" : ""}`;
-}
-
-/** Drop a leading YAML frontmatter block so keyword matches/snippets come from
- *  the note body, not its `---` header. */
-function stripFrontmatter(content: string): string {
-	return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
 }
 
 function mapSemantic(results: SearchResult[], query: string): UnifiedSearchResult[] {
@@ -224,7 +219,8 @@ async function searchLocalKeyword(
 			console.warn("Engram search: skipping unreadable file", file.path, e);
 			continue;
 		}
-		const body = stripFrontmatter(content);
+		// Keyword matches/snippets come from the body, not the `---` header.
+		const { body } = splitFrontmatter(content);
 		const title = basename(file.path);
 		const titleHit = scorer(title);
 		const bodyHit = scorer(body);

@@ -39,11 +39,25 @@ const FENCE = "---";
 const CLOSE_MID = /\n---[ \t]*\r?\n/;
 const CLOSE_EOF = /\n---[ \t]*\r?$/;
 
+// Length of an opening fence (`---` then LF or CRLF) at the start of `s`, else 0.
+function openFence(s: string): number {
+	if (s.startsWith(`${FENCE}\r\n`)) return FENCE.length + 2;
+	return s.startsWith(`${FENCE}\n`) ? FENCE.length + 1 : 0;
+}
+
+/** The one frontmatter fence rule in the plugin; every caller routes here. A
+ *  copy of the backend's (engram_core::frontmatter::split) and the web app's
+ *  splitFrontmatter: opens at byte 0 on a bare `---` line (LF or CRLF), closes
+ *  on `---` plus optional spaces/tabs, or at end of text. `---foo`/`----` never
+ *  close; a leading BOM is NOT skipped. tests/frontmatter-fence-table.test.ts
+ *  asserts the backend's shared fixture table. */
 export function splitFrontmatter(raw: string): { fmBlock: string | null; body: string } {
-	if (!raw.startsWith(`${FENCE}\n`)) return { fmBlock: null, body: raw };
-	const rest = raw.slice(FENCE.length + 1);
+	const start = openFence(raw);
+	if (start === 0) return { fmBlock: null, body: raw };
+	const rest = raw.slice(start);
 	// Empty frontmatter fast path: rest begins with the closing fence.
-	if (rest.startsWith(`${FENCE}\n`)) return { fmBlock: "", body: rest.slice(FENCE.length + 1) };
+	const empty = openFence(rest);
+	if (empty > 0) return { fmBlock: "", body: rest.slice(empty) };
 	const mid = rest.match(CLOSE_MID);
 	if (mid && mid.index !== undefined) {
 		const block = `${rest.slice(0, mid.index)}\n`;
