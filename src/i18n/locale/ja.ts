@@ -105,8 +105,7 @@ const ja: Dict = {
 	"Couldn't send your feedback, please try again.":
 		"フィードバックの送信に失敗しました。再度お試しください。",
 	Create: "作成",
-	"Create a hosted account at {signup}, or self-host the server ({guide}).":
-		"{signup} でホストされたアカウントを作成するか、サーバーを自社でホストします ({guide})。",
+	"Create a hosted account at {signup}.": "{signup} でホストされたアカウントを作成します。",
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"サーバー上に新しい空の保管庫を作成し、このObsidian保管庫をそこに同期します。",
 	"Custom patterns": "カスタムパターン",
@@ -604,7 +603,6 @@ const ja: Dict = {
 	"meaning + exact": "意味 + 完全一致",
 	"not linked": "未連携",
 	notes: "ノート",
-	"setup guide": "2. Engramに保管庫を接続",
 	"sync is paused": "同期を一時停止",
 	"syncing now": "同期中",
 	unknown: "不明",

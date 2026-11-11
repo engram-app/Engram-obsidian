@@ -110,8 +110,7 @@ const pl: Dict = {
 	"Couldn't send your feedback, please try again.":
 		"Nie udało się przesłać Twojej opinii, spróbuj ponownie.",
 	Create: "Utwórz",
-	"Create a hosted account at {signup}, or self-host the server ({guide}).":
-		"Utwórz konto na {signup} lub uruchom serwer samodzielnie ({guide}).",
+	"Create a hosted account at {signup}.": "Utwórz konto na {signup}.",
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"Utwórz nowy, pusty sejf na serwerze, a następnie zsynchronizuj z nim ten sejf Obsidian.",
 	"Custom patterns": "Własne wzorce",
@@ -710,7 +709,6 @@ const pl: Dict = {
 	"meaning + exact": "znaczenie + dokładne",
 	"not linked": "nie połączono",
 	notes: "notatki",
-	"setup guide": "przewodnik konfiguracji",
 	"sync is paused": "synchronizacja wstrzymana",
 	"syncing now": "synchronizacja w toku",
 	unknown: "nieznane",

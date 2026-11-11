@@ -8,7 +8,7 @@
 
 **[engram.page에서 무료로 시작 →](https://engram.page)** · 신용카드 없이, 몇 분이면 준비됩니다.
 
-[설치](#설치) · [AI 연결하기](#ai-연결하기) · [API](https://engram.page/docs/api) · [사용자 가이드](../user-guide.md) · [직접 호스팅](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
+[설치](#설치) · [AI 연결하기](#ai-연결하기) · [API](https://engram.page/docs/api) · [사용자 가이드](../user-guide.md) · [Discord](https://discord.gg/NKWcU2mm7N)
 
 [English](../../README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · **한국어** · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português](README.pt-BR.md) · [Русский](README.ru.md) · [Italiano](README.it.md)
 
@@ -42,9 +42,9 @@ Claude   📝  "Henderson: 갱신 리스크"를 만들었습니다  ✓
 
 ## 설치
 
-**1. Engram 계정을 준비하세요.** 호스팅 버전은 **[engram.page](https://engram.page)**(무료 등급 제공, 설치할 것 없음). 또는 [소스가 공개된 백엔드](https://github.com/engram-app/engram)를 직접 호스팅하면 노트가 자신의 하드웨어를 벗어나지 않습니다.
+**1. Engram 계정을 준비하세요.** 호스팅 버전은 **[engram.page](https://engram.page)**(무료 등급 제공, 설치할 것 없음)입니다.
 
-**2. 연결하세요.** *Settings → Engram Vault Sync*를 열고 **연결** 탭으로 이동합니다. **호스팅:** **Engram Cloud**를 선택하고 **로그인**을 클릭합니다. **직접 호스팅:** **직접 호스팅**을 선택하고 서버 URL과 키를 입력합니다. 어느 방식이든 플러그인이 첫 동기화를 안내합니다. 확인하기 전에는 아무것도 전송되지 않습니다.
+**2. 연결하세요.** *Settings → Engram Vault Sync*를 열고 **연결** 탭으로 이동합니다. **로그인**을 클릭합니다. 플러그인이 첫 동기화를 안내합니다. 확인하기 전에는 아무것도 전송되지 않습니다.
 
 그다음부터는 작업하는 대로 동기화가 이루어집니다.
 
@@ -60,9 +60,9 @@ Engram은 **MCP(Model Context Protocol)**를 사용합니다. Claude, Cursor, Ch
 
 ## 개인정보
 
-- **네트워크 사용과 계정.** 플러그인은 당신의 Engram 서버와만 통신합니다. 다른 곳으로 보내지 않고 중개자도 없습니다. Engram 계정 OAuth 로그인으로 연결하며 모든 요금제에서 작동합니다. API 키도 지원하지만 Engram Cloud에서는 Pro 요금제가 필요합니다. 직접 호스팅한 서버에는 이 제한이 없습니다.
+- **네트워크 사용과 계정.** 플러그인은 당신의 Engram 서버와만 통신합니다. 다른 곳으로 보내지 않고 중개자도 없습니다. Engram 계정 OAuth 로그인으로 연결하며 모든 요금제에서 작동합니다. Pro 요금제에서는 API 키도 지원합니다.
 - **텔레메트리 없음.** 선택적 원격 로깅(기본값 꺼짐)은 오류와 수명 주기 이벤트만 당신의 서버로 보냅니다.
-- **호스팅 버전 개인정보.** [engram.page/privacy](https://engram.page/privacy)를 참고하세요. 유료 등급은 저장 용량과 검색 한도를 올립니다. 직접 호스팅은 무료입니다.
+- **호스팅 버전 개인정보.** [engram.page/privacy](https://engram.page/privacy)를 참고하세요. 유료 등급은 저장 용량과 검색 한도를 올립니다.
 
 ## 더 보기
 

@@ -106,8 +106,7 @@ const id: Dict = {
 	"Couldn't send your feedback, please try again.":
 		"Tidak dapat mengirim umpan balik Anda, silakan coba lagi.",
 	Create: "Buat",
-	"Create a hosted account at {signup}, or self-host the server ({guide}).":
-		"Buat akun di {signup}, atau host server sendiri ({guide}).",
+	"Create a hosted account at {signup}.": "Buat akun di {signup}.",
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"Buat Vault kosong baru di server, lalu sinkronkan Vault Obsidian ini ke dalamnya.",
 	"Custom patterns": "Pola khusus",
@@ -610,7 +609,6 @@ const id: Dict = {
 	"meaning + exact": "makna + tepat",
 	"not linked": "belum terhubung",
 	notes: "catatan",
-	"setup guide": "panduan pengaturan",
 	"sync is paused": "Sinkronisasi dihentikan",
 	"syncing now": "Sedang melakukan sinkronisasi",
 	unknown: "tidak diketahui",

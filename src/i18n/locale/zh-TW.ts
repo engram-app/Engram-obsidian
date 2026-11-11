@@ -93,8 +93,7 @@ const zhTW: Dict = {
 		"無法建立儲存庫 — 名稱可能無效或已被使用。",
 	"Couldn't send your feedback, please try again.": "回饋傳送失敗，請再試一次。",
 	Create: "建立",
-	"Create a hosted account at {signup}, or self-host the server ({guide}).":
-		"在 {signup} 建立帳戶，或自行架設伺服器 ({guide})。",
+	"Create a hosted account at {signup}.": "在 {signup} 建立一個雲端帳戶。",
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"在伺服器上建立一個新的空白儲存庫，然後將此 Obsidian 儲存庫同步到其中。",
 	"Custom patterns": "自訂規則",
@@ -567,7 +566,6 @@ const zhTW: Dict = {
 	"meaning + exact": "意義 + 精確",
 	"not linked": "未連結",
 	notes: "筆記",
-	"setup guide": "2. 將您的知識庫連接到 Engram",
 	"sync is paused": "同步已暫停",
 	"syncing now": "正在同步",
 	unknown: "未知",

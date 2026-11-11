@@ -103,8 +103,7 @@ const vi: Dict = {
 	"Couldn't send your feedback, please try again.":
 		"Không thể gửi phản hồi của bạn, vui lòng thử lại.",
 	Create: "Tạo",
-	"Create a hosted account at {signup}, or self-host the server ({guide}).":
-		"Tạo tài khoản trên {signup}, hoặc tự cài đặt máy chủ ({guide}).",
+	"Create a hosted account at {signup}.": "Tạo tài khoản trên {signup}.",
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"Tạo một kho lưu trữ trống trên máy chủ, sau đó đồng bộ hóa kho lưu trữ Obsidian này vào đó.",
 	"Custom patterns": "Mẫu tùy chỉnh",
@@ -605,7 +604,6 @@ const vi: Dict = {
 	"meaning + exact": "nghĩa + chính xác",
 	"not linked": "chưa liên kết",
 	notes: "ghi chú",
-	"setup guide": "hướng dẫn thiết lập",
 	"sync is paused": "Đã tạm dừng đồng bộ hóa",
 	"syncing now": "đang đồng bộ hóa",
 	unknown: "không xác định",

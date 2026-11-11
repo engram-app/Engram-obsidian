@@ -110,8 +110,7 @@ const ptBR: Dict = {
 	"Couldn't send your feedback, please try again.":
 		"Não foi possível enviar seu feedback, por favor, tente novamente.",
 	Create: "Criar",
-	"Create a hosted account at {signup}, or self-host the server ({guide}).":
-		"Crie uma conta hospedada em {signup}, ou hospede o servidor você mesmo ({guide}).",
+	"Create a hosted account at {signup}.": "Crie uma conta hospedada em {signup}.",
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"Crie um novo cofre vazio no servidor e, em seguida, sincronize este cofre Obsidian para ele.",
 	"Custom patterns": "Padrões personalizados",
@@ -691,7 +690,6 @@ const ptBR: Dict = {
 	"meaning + exact": "significado + exato",
 	"not linked": "não vinculado",
 	notes: "notas",
-	"setup guide": "guia de configuração",
 	"sync is paused": "sincronização pausada",
 	"syncing now": "sincronizando agora",
 	unknown: "desconhecido",

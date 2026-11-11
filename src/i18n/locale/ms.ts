@@ -104,8 +104,7 @@ const ms: Dict = {
 	"Couldn't send your feedback, please try again.":
 		"Tidak dapat menghantar maklum balas anda, sila cuba lagi.",
 	Create: "Buat",
-	"Create a hosted account at {signup}, or self-host the server ({guide}).":
-		"Buat akaun hos di {signup}, atau hoskan sendiri pelayan ({guide}).",
+	"Create a hosted account at {signup}.": "Buat akaun hos di {signup}.",
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"Buat peti nota kosong baharu di server, kemudian segerakkan peti nota Obsidian ini ke dalamnya.",
 	"Custom patterns": "Corak khusus",
@@ -608,7 +607,6 @@ const ms: Dict = {
 	"meaning + exact": "maksud + tepat",
 	"not linked": "belum dikaitkan",
 	notes: "nota",
-	"setup guide": "panduan persediaan",
 	"sync is paused": "Sync ditangguhkan",
 	"syncing now": "sedang sync",
 	unknown: "tidak diketahui",

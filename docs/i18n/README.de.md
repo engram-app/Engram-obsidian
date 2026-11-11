@@ -8,7 +8,7 @@
 
 **[Kostenlos starten auf engram.page →](https://engram.page)** · Ohne Kreditkarte, in wenigen Minuten einsatzbereit.
 
-[Einrichtung](#einrichtung) · [KI verbinden](#ki-verbinden) · [API](https://engram.page/docs/api) · [Handbuch](../user-guide.md) · [Selbst hosten](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
+[Einrichtung](#einrichtung) · [KI verbinden](#ki-verbinden) · [API](https://engram.page/docs/api) · [Handbuch](../user-guide.md) · [Discord](https://discord.gg/NKWcU2mm7N)
 
 [English](../../README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · **Deutsch** · [Français](README.fr.md) · [Español](README.es.md) · [Português](README.pt-BR.md) · [Русский](README.ru.md) · [Italiano](README.it.md)
 
@@ -43,9 +43,9 @@ Nichts wird jemals stillschweigend überschrieben. Offline vorgenommene Änderun
 
 ## Einrichtung
 
-**1. Besorg dir ein Engram-Konto.** Gehostet auf **[engram.page](https://engram.page)** (kostenlose Stufe, nichts zu installieren), oder hoste das [quelloffen verfügbare Backend](https://github.com/engram-app/engram) selbst, damit deine Notizen deine eigene Hardware nie verlassen.
+**1. Besorg dir ein Engram-Konto.** Gehostet auf **[engram.page](https://engram.page)** (kostenlose Stufe, nichts zu installieren).
 
-**2. Verbinde dich.** Öffne *Settings → Engram Vault Sync* und wechsle zum Tab **Verbindung**. **Gehostet:** wähl **Engram Cloud** und klick auf **Anmelden**. **Selbst gehostet:** wähl **Selbst gehostet** und trag die Adresse deines Servers und den Schlüssel ein. In beiden Fällen führt dich das Plugin durch die erste Synchronisierung; bis zu deiner Bestätigung wird nichts gesendet.
+**2. Verbinde dich.** Öffne *Settings → Engram Vault Sync* und wechsle zum Tab **Verbindung**. Klick auf **Anmelden**. Das Plugin führt dich durch die erste Synchronisierung; bis zu deiner Bestätigung wird nichts gesendet.
 
 Danach läuft die Synchronisierung einfach mit, während du arbeitest.
 
@@ -61,9 +61,9 @@ Richte deinen Client auf den Engram-MCP-Server (`https://mcp.engram.page` im geh
 
 ## Datenschutz
 
-- **Netzwerkzugriff und Konten.** Das Plugin spricht ausschließlich mit deinem Engram-Server, mit nichts anderem, ohne Zwischenstationen. Du verbindest dich per OAuth-Anmeldung mit deinem Engram-Konto, was in jedem Tarif funktioniert. API-Schlüssel werden ebenfalls unterstützt, setzen in Engram Cloud aber den Pro-Tarif voraus; selbst gehostete Server haben diese Grenze nicht.
+- **Netzwerkzugriff und Konten.** Das Plugin spricht ausschließlich mit deinem Engram-Server, mit nichts anderem, ohne Zwischenstationen. Du verbindest dich per OAuth-Anmeldung mit deinem Engram-Konto, was in jedem Tarif funktioniert. API-Schlüssel werden im Pro-Tarif ebenfalls unterstützt.
 - **Keine Telemetrie.** Die optionale Fernprotokollierung (standardmäßig aus) sendet nur Fehler- und Lebenszyklusereignisse an deinen eigenen Server.
-- **Datenschutz im gehosteten Dienst.** Siehe [engram.page/privacy](https://engram.page/privacy). Bezahlte Stufen erhöhen die Grenzen für Speicher und Suche; Selbsthosten ist kostenlos.
+- **Datenschutz im gehosteten Dienst.** Siehe [engram.page/privacy](https://engram.page/privacy). Bezahlte Stufen erhöhen die Grenzen für Speicher und Suche.
 
 ## Mehr
 

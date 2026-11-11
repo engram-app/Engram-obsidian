@@ -93,8 +93,7 @@ const zh: Dict = {
 		"无法创建仓库 — 可能是名称无效或已被使用。",
 	"Couldn't send your feedback, please try again.": "无法发送您的反馈，请重试。",
 	Create: "创建",
-	"Create a hosted account at {signup}, or self-host the server ({guide}).":
-		"在 {signup} 创建托管账号，或自行搭建服务器 ({guide})。",
+	"Create a hosted account at {signup}.": "在 {signup} 创建一个托管账号。",
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"在服务器上创建一个新的空仓库，然后将此 Obsidian 仓库同步到其中。",
 	"Custom patterns": "自定义规则",
@@ -563,7 +562,6 @@ const zh: Dict = {
 	"meaning + exact": "含义 + 精确",
 	"not linked": "未连接",
 	notes: "笔记",
-	"setup guide": "设置指南",
 	"sync is paused": "同步已暂停",
 	"syncing now": "正在同步",
 	unknown: "未知",

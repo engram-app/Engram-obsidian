@@ -110,8 +110,7 @@ const it: Dict = {
 	"Couldn't send your feedback, please try again.":
 		"Impossibile inviare il tuo feedback, riprova.",
 	Create: "Crea",
-	"Create a hosted account at {signup}, or self-host the server ({guide}).":
-		"Crea un account ospitato su {signup}, oppure ospita tu stesso il server ({guide}).",
+	"Create a hosted account at {signup}.": "Crea un account ospitato su {signup}.",
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"Crea un nuovo vault vuoto sul server, quindi sincronizza questo vault Obsidian con esso.",
 	"Custom patterns": "Modelli personalizzati",
@@ -694,7 +693,6 @@ const it: Dict = {
 	"meaning + exact": "significato + esatto",
 	"not linked": "non collegato",
 	notes: "note",
-	"setup guide": "2. Collega il tuo archivio a Engram",
 	"sync is paused": "la sincronizzazione è in pausa",
 	"syncing now": "sincronizzando",
 	unknown: "sconosciuto",
