@@ -183,7 +183,11 @@ export function emitFrontmatter(
 	const has = (m: Record<string, string>, k: string) =>
 		// biome-ignore lint/suspicious/noPrototypeBuiltins: Object.hasOwn needs lib ES2022, we target ES2021
 		Object.prototype.hasOwnProperty.call(m, k);
-	const present = order.filter((k) => has(raws, k) || has(values, k));
+	// `order` is a Y.Array, so two concurrent lifts of the same key (the server's
+	// normalize_doc and the plugin's seed) both survive the merge. Values live in
+	// a Y.Map and are already one per key; emit each key once, at its first
+	// position (Y.Array order is identical on every replica, so all agree).
+	const present = [...new Set(order)].filter((k) => has(raws, k) || has(values, k));
 	if (present.length === 0) return "";
 	let out = "";
 	for (const key of present) {
