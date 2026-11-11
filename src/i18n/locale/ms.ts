@@ -109,8 +109,8 @@ const ms: Dict = {
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"Buat peti nota kosong baharu di server, kemudian segerakkan peti nota Obsidian ini ke dalamnya.",
 	"Custom patterns": "Corak khusus",
-	"Daily AI search limit reached. Free includes 20 per day across Obsidian, the web app and MCP. Upgrade for unlimited.":
-		"Had carian AI harian telah dicapai. Versi percuma termasuk 20 carian sehari merentasi Obsidian, aplikasi web dan MCP. Tingkatkan untuk had yang tidak terhad.",
+	"Daily AI search limit reached. Free searches are shared across Obsidian, the web app and MCP. Upgrade for unlimited.":
+		"Had carian AI harian telah dicapai. Carian percuma dikongsi merentasi Obsidian, aplikasi web dan MCP. Tingkatkan untuk carian tanpa had.",
 	"Dart tool cache": "Cache alat Dart",
 	"Debug (verbose)": "Debug (terperinci)",
 	"Delete all local files, then download from remote":

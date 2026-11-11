@@ -57,8 +57,9 @@ function table(): Record<string, string> {
 		// AI cap a user can now hit fell through to the generic fallback. Emitted
 		// by `search_controller.ex`. Copy tracks the web app's wording so the same
 		// limit does not read as two different products.
+		// Names no number: the backend owns the cap and an installed plugin lags it.
 		ai_searches_per_day_exceeded: t(
-			"Daily AI search limit reached. Free includes 20 per day across Obsidian, the web app and MCP. Upgrade for unlimited.",
+			"Daily AI search limit reached. Free searches are shared across Obsidian, the web app and MCP. Upgrade for unlimited.",
 		),
 		// Server rejects an API-key-authed socket or REST call outright: Cloud
 		// gates API keys behind Pro. Point at sign-in, which works on every plan,

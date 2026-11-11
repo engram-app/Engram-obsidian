@@ -111,8 +111,8 @@ const id: Dict = {
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"Buat Vault kosong baru di server, lalu sinkronkan Vault Obsidian ini ke dalamnya.",
 	"Custom patterns": "Pola khusus",
-	"Daily AI search limit reached. Free includes 20 per day across Obsidian, the web app and MCP. Upgrade for unlimited.":
-		"Batas pencarian AI harian tercapai. Versi gratis mencakup 20 per hari di seluruh Obsidian, aplikasi web, dan MCP. Tingkatkan untuk tanpa batas.",
+	"Daily AI search limit reached. Free searches are shared across Obsidian, the web app and MCP. Upgrade for unlimited.":
+		"Batas pencarian AI harian telah tercapai. Pencarian gratis dibagi antara Obsidian, aplikasi web, dan MCP. Tingkatkan untuk pencarian tanpa batas.",
 	"Dart tool cache": "Cache alat Dart",
 	"Debug (verbose)": "Debug (rinci)",
 	"Delete all local files, then download from remote":

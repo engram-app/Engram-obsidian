@@ -108,8 +108,8 @@ const vi: Dict = {
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"Tạo một kho lưu trữ trống trên máy chủ, sau đó đồng bộ hóa kho lưu trữ Obsidian này vào đó.",
 	"Custom patterns": "Mẫu tùy chỉnh",
-	"Daily AI search limit reached. Free includes 20 per day across Obsidian, the web app and MCP. Upgrade for unlimited.":
-		"Đã đạt giới hạn tìm kiếm AI hàng ngày. Bản miễn phí bao gồm 20 lần mỗi ngày trên Obsidian, ứng dụng web và MCP. Nâng cấp để có không giới hạn.",
+	"Daily AI search limit reached. Free searches are shared across Obsidian, the web app and MCP. Upgrade for unlimited.":
+		"Giới hạn tìm kiếm AI hàng ngày đã đạt. Số lượt tìm kiếm miễn phí được chia sẻ giữa Obsidian, ứng dụng web và MCP. Nâng cấp để có số lượt không giới hạn.",
 	"Dart tool cache": "Bộ nhớ đệm công cụ Dart",
 	"Debug (verbose)": "Gỡ lỗi (chi tiết)",
 	"Delete all local files, then download from remote":

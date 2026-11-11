@@ -62,9 +62,12 @@ describe("limit-copy", () => {
 	// `ai_queries_per_day`) were deleted backend-side when `ai_searches_per_day`
 	// consolidated six meters into one, leaving this reason with no copy and
 	// falling through to the generic fallback.
-	test("maps ai_searches_per_day_exceeded with the real number", () => {
+	// No number: the plugin ships separately from the backend, so an installed
+	// build cannot know the current cap. It told users 20 after the cap moved.
+	test("maps ai_searches_per_day_exceeded without naming the cap", () => {
 		const msg = toastFor("ai_searches_per_day_exceeded").toLowerCase();
-		expect(msg).toMatch(/20 per day/);
+		expect(msg).toMatch(/daily ai search limit/);
+		expect(msg).not.toMatch(/\d/);
 		expect(msg).toMatch(/upgrade/);
 	});
 

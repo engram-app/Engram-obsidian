@@ -116,8 +116,8 @@ const es: Dict = {
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"Crea una bóveda vacía en el servidor y luego sincroniza esta bóveda de Obsidian con ella.",
 	"Custom patterns": "Patrones personalizados",
-	"Daily AI search limit reached. Free includes 20 per day across Obsidian, the web app and MCP. Upgrade for unlimited.":
-		"Límite diario de búsquedas de IA alcanzado. La versión gratuita incluye 20 búsquedas por día en Obsidian, la aplicación web y MCP. Actualiza para tener búsquedas ilimitadas.",
+	"Daily AI search limit reached. Free searches are shared across Obsidian, the web app and MCP. Upgrade for unlimited.":
+		"Límite diario de búsquedas con IA alcanzado. Las búsquedas gratuitas se comparten entre Obsidian, la aplicación web y MCP. Actualiza para búsquedas ilimitadas.",
 	"Dart tool cache": "Caché de herramientas Dart",
 	"Debug (verbose)": "Depuración (detallado)",
 	"Delete all local files, then download from remote":

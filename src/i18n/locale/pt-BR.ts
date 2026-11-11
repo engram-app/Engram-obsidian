@@ -115,8 +115,8 @@ const ptBR: Dict = {
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"Crie um novo cofre vazio no servidor e, em seguida, sincronize este cofre Obsidian para ele.",
 	"Custom patterns": "Padrões personalizados",
-	"Daily AI search limit reached. Free includes 20 per day across Obsidian, the web app and MCP. Upgrade for unlimited.":
-		"Limite diário de buscas por IA atingido. A versão gratuita inclui 20 por dia, distribuídos entre Obsidian, o aplicativo web e MCP. Faça um upgrade para acesso ilimitado.",
+	"Daily AI search limit reached. Free searches are shared across Obsidian, the web app and MCP. Upgrade for unlimited.":
+		"Limite diário de buscas por IA atingido. As buscas gratuitas são compartilhadas entre o Obsidian, o aplicativo web e o MCP. Assine para ter buscas ilimitadas.",
 	"Dart tool cache": "Cache de ferramentas Dart",
 	"Debug (verbose)": "Debug (detalhado)",
 	"Delete all local files, then download from remote":
