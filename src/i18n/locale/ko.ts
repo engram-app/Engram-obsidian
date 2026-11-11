@@ -106,8 +106,8 @@ const ko: Dict = {
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"서버에 새 보관함을 만들고, 이 Obsidian 보관함을 동기화합니다.",
 	"Custom patterns": "사용자 정의 패턴",
-	"Daily AI search limit reached. Free includes 20 per day across Obsidian, the web app and MCP. Upgrade for unlimited.":
-		"일일 AI 검색 제한에 도달했습니다. 무료 버전은 Obsidian, 웹 앱 및 MCP에서 하루에 20회 검색을 제공합니다. 무제한 사용을 원하시면 업그레이드하세요.",
+	"Daily AI search limit reached. Free searches are shared across Obsidian, the web app and MCP. Upgrade for unlimited.":
+		"일일 AI 검색 제한에 도달했습니다. 무료 검색 횟수는 Obsidian, 웹 앱 및 MCP에서 공유됩니다. 더 많은 검색을 원하시면 유료 플랜으로 업그레이드하세요.",
 	"Dart tool cache": "Dart 도구 캐시",
 	"Debug (verbose)": "디버그 (상세)",
 	"Delete all local files, then download from remote":

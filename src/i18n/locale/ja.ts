@@ -110,8 +110,8 @@ const ja: Dict = {
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"サーバー上に新しい空の保管庫を作成し、このObsidian保管庫をそこに同期します。",
 	"Custom patterns": "カスタムパターン",
-	"Daily AI search limit reached. Free includes 20 per day across Obsidian, the web app and MCP. Upgrade for unlimited.":
-		"1日のAI検索回数制限に達しました。無料プランでは、Obsidian、ウェブアプリ、MCP全体で1日20回までです。無制限にするにはアップグレードしてください。",
+	"Daily AI search limit reached. Free searches are shared across Obsidian, the web app and MCP. Upgrade for unlimited.":
+		"AI検索の無料利用上限に達しました。無料検索はObsidian、ウェブアプリ、およびMCPで共有されます。無制限の利用にはアップグレードが必要です。",
 	"Dart tool cache": "Dartツールのキャッシュ",
 	"Debug (verbose)": "デバッグ（詳細）",
 	"Delete all local files, then download from remote":

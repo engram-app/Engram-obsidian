@@ -98,8 +98,8 @@ const zhTW: Dict = {
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"在伺服器上建立一個新的空白儲存庫，然後將此 Obsidian 儲存庫同步到其中。",
 	"Custom patterns": "自訂規則",
-	"Daily AI search limit reached. Free includes 20 per day across Obsidian, the web app and MCP. Upgrade for unlimited.":
-		"每日 AI 搜尋次數已達上限。免費方案包含 Obsidian、網頁應用程式和 MCP 各 20 次。升級以獲得無限次數。",
+	"Daily AI search limit reached. Free searches are shared across Obsidian, the web app and MCP. Upgrade for unlimited.":
+		"每日 AI 搜尋次數已達上限。免費搜尋次數在 Obsidian、網頁應用程式和 MCP 之間共享。升級以獲得無限次數。",
 	"Dart tool cache": "Dart 工具快取",
 	"Debug (verbose)": "偵錯 (詳細)",
 	"Delete all local files, then download from remote": "刪除所有本地檔案，然後從遠端下載",

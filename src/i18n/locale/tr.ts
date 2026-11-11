@@ -109,8 +109,8 @@ const tr: Dict = {
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"Sunucuda yeni bir boş kasa oluşturun, ardından bu Obsidian kasayı içine senkronize edin.",
 	"Custom patterns": "Özel kalıplar",
-	"Daily AI search limit reached. Free includes 20 per day across Obsidian, the web app and MCP. Upgrade for unlimited.":
-		"Günlük yapay zeka arama limiti aşıldı. Ücretsiz kullanımda Obsidian, web uygulaması ve MCP için günlük 20 arama dahildir. Sınırsız kullanım için yükseltin.",
+	"Daily AI search limit reached. Free searches are shared across Obsidian, the web app and MCP. Upgrade for unlimited.":
+		"Günlük yapay zeka arama limiti aşıldı. Ücretsiz aramalar Obsidian, web uygulaması ve MCP arasında paylaşılır. Sınırsız kullanım için yükseltin.",
 	"Dart tool cache": "Dart araç önbelleği",
 	"Debug (verbose)": "Hata ayıklama (ayrıntılı)",
 	"Delete all local files, then download from remote":
