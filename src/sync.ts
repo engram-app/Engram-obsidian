@@ -6096,6 +6096,15 @@ export class SyncEngine {
 			return;
 		}
 
+		// The user deleted this path: an upsert still queued for it is moot, and an
+		// id-less one would otherwise sit in the queue forever (the replay cannot
+		// tell "deleted" from "moved"). Cancel it, and its issue, whether or not
+		// the note was ever synced; a synced note's delete is queued below.
+		if (this.queue.get(path, deleteVaultId)?.action === "upsert") {
+			this.queue.cancel(path, deleteVaultId);
+			this.issues.clear(path);
+		}
+
 		// EVIDENCE RULE (#416): a delete may be pushed ONLY for a path this
 		// engine recorded sync evidence for. No syncState entry = we never
 		// completed a sync of this path = nothing of the user's to delete
