@@ -3857,6 +3857,10 @@ export default class EngramSyncPlugin extends Plugin {
 					// biome-ignore lint/suspicious/noConsole: error boundary
 					console.error("Engram Sync: periodic catch-up failed", e);
 				}
+				// Held REST replays need a trigger even when no socket ever joins.
+				await this.syncEngine.pollFlush().catch((e: unknown) => {
+					rlog().warn("queue", `poll flush failed: ${errMsg(e)}`);
+				});
 				// Then push what the server still lacks, whether or not the pull
 				// leg worked. Gated inside on the sync gate, offline, and any sync
 				// already running.
