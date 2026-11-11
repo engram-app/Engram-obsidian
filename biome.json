@@ -31,7 +31,8 @@
 			"!**/node_modules",
 			"!**/main.js",
 			"!**/esbuild.config.mjs",
-			"!**/version-bump.mjs"
+			"!**/version-bump.mjs",
+			"!**/tests/fixtures/frontmatter_fence.json"
 		]
 	},
 	"overrides": [
