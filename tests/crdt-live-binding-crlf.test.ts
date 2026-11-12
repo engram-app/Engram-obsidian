@@ -2,13 +2,13 @@
  * A CRLF note opened in the editor (Engram-obsidian#697, e2e
  * engram-app/Engram tests/crdt/test_crlf_frontmatter.py).
  *
- * CodeMirror holds every document with LF line breaks (EditorState splits on
- * \r\n and joins with \n), while the Y.Text keeps the note's own CRLF bytes.
- * Comparing the two directly read every CRLF note as drifted: the binding
- * re-adopted the doc into the editor every few seconds, Obsidian saved the
- * result, and a server-known note opened through the load gate went straight
- * to a conflict copy. Real Obsidian showed `drift on ... (editor 94 vs doc 100)`
- * looping and a `(conflict ...)` file on open.
+ * CodeMirror holds every document with LF breaks. A doc that kept the note's
+ * CRLF read as drifted on every check: the binding re-adopted the doc into the
+ * editor every few seconds, Obsidian saved the result, and a server-known
+ * note opened through the load gate went straight to a conflict copy (real
+ * Obsidian: `drift on ... (editor 94 vs doc 100)` looping, a `(conflict ...)`
+ * file on open). Docs now hold LF only (line-endings.ts); these pin the open
+ * of a new LF doc, and the one-time heal of a doc from before that.
  *
  * The editor is the real CM6 EditorState behind the minimal EditorView
  * stand-in the 2480 repro uses; live-binding.ts is the real code under test.
@@ -22,6 +22,7 @@ import { LiveBindingValue, setLiveBindingCoordinator } from "../src/crdt/live/li
 const PATH = "Notes/Crlf.md";
 const ID = "id-crlf";
 const BODY = "\r\n# Heading\r\n\r\nline one\r\nline two\r\n";
+const LF_BODY = BODY.replace(/\r\n/g, "\n");
 const FENCE = "---\r\ntitle: T\r\nstatus: draft\r\n---\r\n";
 
 function editorOver(initial: string) {
@@ -52,7 +53,10 @@ function editorOver(initial: string) {
 	return { ed, dispatched, setBinding: (b: LiveBindingValue) => (binding = b) };
 }
 
-function bind(text: Y.Text, opts: { awaitsServer?: boolean; copies?: string[] } = {}) {
+function bind(
+	text: Y.Text,
+	opts: { awaitsServer?: boolean; copies?: string[]; base?: string | null } = {},
+) {
 	setLiveBindingCoordinator({
 		resolveId: () => ID,
 		residentText: () => ({ text, ready: Promise.resolve() }),
@@ -61,7 +65,7 @@ function bind(text: Y.Text, opts: { awaitsServer?: boolean; copies?: string[] } 
 		onRelease: () => {},
 		awaitsServer: () => opts.awaitsServer === true,
 		onLoadGateOpen: () => () => {},
-		loadMergeBase: async () => null,
+		loadMergeBase: async () => opts.base ?? null,
 		keepConflictCopy: async (_p: string, t: string) => {
 			opts.copies?.push(t);
 			return true;
@@ -74,10 +78,10 @@ const tick = () => new Promise((r) => setTimeout(r, 5));
 
 afterEach(() => setLiveBindingCoordinator(null));
 
-test("opening a CRLF note is a no-op: no doc ops, no editor repaint, no drift", async () => {
+test("opening a CRLF file over its LF doc is a no-op: no ops, no repaint, no drift", async () => {
 	const doc = new Y.Doc();
 	const text = doc.getText("content");
-	text.insert(0, BODY);
+	text.insert(0, LF_BODY);
 	const updates: unknown[] = [];
 	doc.on("update", (_u: Uint8Array, origin: unknown) => updates.push(origin));
 	bind(text);
@@ -90,7 +94,25 @@ test("opening a CRLF note is a no-op: no doc ops, no editor repaint, no drift", 
 	(binding as any).runDriftCheck();
 	expect(dispatched, "the editor was repainted (Obsidian then saves it)").toEqual([]);
 	expect(updates, "opening minted CRDT ops").toEqual([]);
-	expect(text.toJSON()).toBe(BODY);
+	binding.destroy();
+});
+
+test("opening a doc from before LF-only heals it once, with no repaint", async () => {
+	const doc = new Y.Doc();
+	const text = doc.getText("content");
+	text.insert(0, BODY);
+	let edits = 0;
+	doc.on("update", () => edits++);
+	bind(text);
+	const { ed, dispatched, setBinding } = editorOver(BODY);
+	const binding = new LiveBindingValue(ed);
+	setBinding(binding);
+	await tick();
+	(binding as any).runDriftCheck();
+
+	expect(text.toJSON()).toBe(LF_BODY);
+	expect(edits, "the heal is ONE transaction").toBe(1);
+	expect(dispatched).toEqual([]);
 	binding.destroy();
 });
 
@@ -98,62 +120,44 @@ test("a server-known CRLF note through the load gate writes no conflict copy", a
 	const doc = new Y.Doc();
 	const text = doc.getText("content");
 	const copies: string[] = [];
-	bind(text, { awaitsServer: true, copies });
+	bind(text, { awaitsServer: true, copies, base: BODY });
 	const { ed, dispatched, setBinding } = editorOver(BODY);
 	const binding = new LiveBindingValue(ed);
 	setBinding(binding);
 	await tick();
 
 	const server = new Y.Doc();
-	server.getText("content").insert(0, BODY);
+	server.getText("content").insert(0, LF_BODY);
 	Y.applyUpdate(doc, Y.encodeStateAsUpdate(server), "provider");
 	await tick();
 	await tick();
 
 	expect(copies, "an identical note was kept as a conflict copy").toEqual([]);
 	expect(dispatched).toEqual([]);
-	expect(text.toJSON()).toBe(BODY);
+	expect(text.toJSON()).toBe(LF_BODY);
 	binding.destroy();
 });
 
-test("typing into a CRLF note lands at the right place and keeps CRLF", async () => {
+test("the load gate merges typed edits over a CRLF merge base", async () => {
 	const doc = new Y.Doc();
 	const text = doc.getText("content");
-	text.insert(0, BODY);
-	bind(text);
+	const copies: string[] = [];
+	// The base is the CRLF file as last synced; the server moved on since.
+	bind(text, { awaitsServer: true, copies, base: BODY });
 	const { ed, setBinding } = editorOver(BODY);
 	const binding = new LiveBindingValue(ed);
 	setBinding(binding);
 	await tick();
+	ed.dispatch({ changes: { from: 0, insert: "typed\n" }, userEvent: "input" });
 
-	const at = ed.state.doc.toString().indexOf("line two");
-	ed.dispatch({ changes: { from: at, insert: "new line\n" } });
-	expect(text.toJSON()).toBe("\r\n# Heading\r\n\r\nline one\r\nnew line\r\nline two\r\n");
-	// Deleting a whole line break removes the CRLF pair, not half of it.
-	const nl = ed.state.doc.toString().indexOf("\nline two");
-	ed.dispatch({ changes: { from: nl, to: nl + 1 } });
-	expect(text.toJSON()).toBe("\r\n# Heading\r\n\r\nline one\r\nnew lineline two\r\n");
-	(binding as any).runDriftCheck();
-	expect(ed.state.doc.toString()).toBe(text.toJSON().replace(/\r\n/g, "\n"));
-	binding.destroy();
-});
-
-test("a remote edit to a CRLF note paints at the right place", async () => {
 	const server = new Y.Doc();
-	server.getText("content").insert(0, BODY);
-	const doc = new Y.Doc();
-	Y.applyUpdate(doc, Y.encodeStateAsUpdate(server));
-	const text = doc.getText("content");
-	bind(text);
-	const { ed, setBinding } = editorOver(BODY);
-	const binding = new LiveBindingValue(ed);
-	setBinding(binding);
+	server.getText("content").insert(0, `${LF_BODY}remote\n`);
+	Y.applyUpdate(doc, Y.encodeStateAsUpdate(server), "provider");
+	await tick();
 	await tick();
 
-	const st = server.getText("content");
-	st.insert(st.toJSON().indexOf("line two"), "remote\r\n");
-	Y.applyUpdate(doc, Y.encodeStateAsUpdate(server, Y.encodeStateVector(doc)), "provider");
-	expect(ed.state.doc.toString()).toBe("\n# Heading\n\nline one\nremote\nline two\n");
+	expect(copies, "a clean three-way merge was kept as a conflict copy").toEqual([]);
+	expect(text.toJSON()).toBe(`typed\n${LF_BODY}remote\n`);
 	binding.destroy();
 });
 
@@ -173,7 +177,7 @@ test("opening an old-plugin-damaged note (fence in the body) heals it with one e
 
 	expect(doc.getArray(ORDER_KEY).toArray()).toEqual(["title", "status"]);
 	expect(Object.keys(doc.getMap(FRONTMATTER_KEY).toJSON()).sort()).toEqual(["status", "title"]);
-	expect(text.toJSON(), "the fence must leave the body, CRLF body intact").toBe(BODY);
+	expect(text.toJSON(), "the fence must leave the body, body in LF").toBe(LF_BODY);
 	expect(edits, "the heal is ONE transaction").toBe(1);
 	expect(dispatched, "the editor already shows the healed note").toEqual([]);
 	binding.destroy();

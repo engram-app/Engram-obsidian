@@ -41,24 +41,42 @@ test.each(CASES.map((c) => [c.name, c] as const))(
 describe("existing CRLF note on first plugin seed after upgrade", () => {
 	// The server splits a CRLF note since Engram #1645 (2026-09-15), so a doc
 	// ingested after that holds the keys in the frontmatter map and only the
-	// body in the Y.Text. Re-seeding the same disk bytes must mint ZERO ops: no
-	// frontmatter clear, no fence text pushed into the body, no second lineage.
-	// Older docs hold the fence in the body and heal with one edit (below).
-	it("mints no CRDT ops", () => {
-		const disk = "---\r\ntitle: T\r\n---\r\nline one\r\nline two\r\n";
+	// body in the Y.Text, and both sides now hold that body in LF. Re-seeding
+	// the CRLF disk bytes must mint ZERO ops: no frontmatter clear, no fence
+	// text pushed into the body, no CRs, no second lineage.
+	const disk = "---\r\ntitle: T\r\n---\r\nline one\r\nline two\r\n";
+	function docWithBody(body: string): { doc: Y.Doc; text: Y.Text } {
 		const doc = new Y.Doc();
 		const text = doc.getText(CONTENT_KEY);
 		doc.transact(() => {
 			applyFrontmatterInto(doc, ["title"], { title: '"T"' });
-			text.insert(0, "line one\r\nline two\r\n");
+			text.insert(0, body);
 		});
+		return { doc, text };
+	}
+
+	it("mints no CRDT ops over an LF doc", () => {
+		const { doc, text } = docWithBody("line one\nline two\n");
 		let updates = 0;
 		doc.on("update", () => updates++);
 
 		seedContentInto(doc, text, disk, true);
 
 		expect(updates).toBe(0);
-		expect(text.toString()).toBe("line one\r\nline two\r\n");
+		expect(text.toString()).toBe("line one\nline two\n");
+		expect(frontmatterOf(doc)).toEqual({ order: ["title"], values: { title: '"T"' } });
+	});
+
+	it("converts a doc from before LF-only in one edit, frontmatter untouched", () => {
+		const { doc, text } = docWithBody("line one\r\nline two\r\n");
+		let updates = 0;
+		doc.on("update", () => updates++);
+
+		seedContentInto(doc, text, disk, true);
+		seedContentInto(doc, text, disk, true);
+
+		expect(updates).toBe(1);
+		expect(text.toString()).toBe("line one\nline two\n");
 		expect(frontmatterOf(doc)).toEqual({ order: ["title"], values: { title: '"T"' } });
 	});
 });
@@ -114,7 +132,10 @@ describe("an old-plugin-damaged CRLF note healed by server and plugin at once", 
 			server.getMap<string>("frontmatter").set("title", '"T"');
 			const arr = server.getArray<string>(ORDER_KEY);
 			arr.insert(arr.length, ["title"]);
-			server.getText(CONTENT_KEY).delete(0, "---\r\ntitle: T\r\n---\r\n".length);
+			// normalize_doc: delete exactly the fence, then each body CR.
+			const body = server.getText(CONTENT_KEY);
+			body.delete(0, "---\r\ntitle: T\r\n---\r\n".length);
+			body.delete("line".length, 1);
 		});
 		seedContentInto(plugin, plugin.getText(CONTENT_KEY), disk, true);
 
@@ -124,7 +145,7 @@ describe("an old-plugin-damaged CRLF note healed by server and plugin at once", 
 		for (const doc of [server, plugin]) {
 			const { order, values } = frontmatterOf(doc);
 			expect(projectNote(order, values, doc.getText(CONTENT_KEY).toString())).toBe(
-				"---\ntitle: T\n---\nline\r\n",
+				"---\ntitle: T\n---\nline\n",
 			);
 		}
 	});
@@ -138,7 +159,7 @@ describe("a doc whose frontmatter_order already holds a key twice", () => {
 		doc.transact(() => {
 			doc.getMap<string>("frontmatter").set("title", '"T"');
 			doc.getArray<string>(ORDER_KEY).insert(0, ["title", "title"]);
-			doc.getText(CONTENT_KEY).insert(0, "line\r\n");
+			doc.getText(CONTENT_KEY).insert(0, "line\n");
 		});
 		return doc;
 	}
@@ -173,6 +194,6 @@ describe("a doc whose frontmatter_order already holds a key twice", () => {
 		expect(updates).toBe(0);
 		Y.applyUpdate(a, Y.encodeStateAsUpdate(b));
 		Y.applyUpdate(b, Y.encodeStateAsUpdate(a));
-		for (const doc of [a, b]) expect(projection(doc)).toBe("---\ntitle: T\n---\nline\r\n");
+		for (const doc of [a, b]) expect(projection(doc)).toBe("---\ntitle: T\n---\nline\n");
 	});
 });
