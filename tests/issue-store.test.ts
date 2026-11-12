@@ -402,8 +402,10 @@ describe("remediation", () => {
 		}
 	});
 
-	test("needs_pro points at upgrading; too_large explains the size limit", () => {
-		expect(remediation("needs_pro").hint.toLowerCase()).toContain("upgrade");
+	// needs_pro is a server capability refusal: every Engram Cloud plan syncs
+	// every attachment type, so it must not blame Free or promise an upgrade.
+	test("needs_pro names the server, not a plan; too_large explains the size limit", () => {
+		expect(remediation("needs_pro").hint).not.toMatch(/Free|upgrade|paid plan|notes only/i);
 		// No hardcoded number: limits vary by plan and the request ceiling.
 		expect(remediation("too_large").hint).not.toMatch(/\d/);
 		expect(remediation("too_large", null, 25_000_000).hint).toContain("23.8 MB");
