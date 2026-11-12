@@ -6,7 +6,6 @@ import { errMsg } from "../../error-util";
 import { isMarkdownPath } from "../../file-kind";
 import { isDestroyedError } from "../destroyed-error";
 import { CONTENT_KEY } from "../frontmatter-codec";
-import { toLf } from "../line-endings";
 import type { ProviderRegistry } from "../provider-registry";
 import type { LiveBindingCoordinator } from "./live-binding";
 import { getEditorViewForLeaf, getMarkdownFilePath } from "./obsidian-internals";
@@ -16,15 +15,6 @@ import { CrdtReadingView } from "./reading-view";
  *  burst of remote deltas into the same bound doc collapses to one
  *  `requestSave()` call. */
 const SAVE_NUDGE_DEBOUNCE_MS = 300;
-
-/** True when the editor buffer holds nothing the file lacks. CodeMirror keeps
- *  LF, so a CRLF file always differs byte-wise from its own buffer; saving it
- *  then would only rewrite the user's line endings. False when unknown. */
-function bufferMatchesFile(view: MdView): boolean {
-	const v = view as Partial<Pick<MdView, "data" | "getViewData">>;
-	if (typeof v.data !== "string" || typeof v.getViewData !== "function") return false;
-	return toLf(v.data) === v.getViewData.call(view);
-}
 
 /** Per-path viewer refcount. A "viewer" is any live binding (editor pane or
  *  reading-view) currently holding a note open. While a path has at least one
@@ -238,7 +228,6 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 				const view = leaf.view;
 				if (!(view instanceof MdView)) continue;
 				if (getMarkdownFilePath(view) !== path) continue;
-				if (bufferMatchesFile(view)) continue;
 				view.requestSave();
 			}
 		} catch (e) {

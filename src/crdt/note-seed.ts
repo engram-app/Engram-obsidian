@@ -18,6 +18,7 @@ import {
 	splitFrontmatter,
 	uniqueKeyOrder,
 } from "./frontmatter-codec";
+import { toLf } from "./line-endings";
 
 /** True when a body Y.Text already carries CRDT history (non-empty after IDB
  *  rehydration). A history-less doc must adopt server state, never seed disk
@@ -117,7 +118,9 @@ export function applyFrontmatterInto(
  *  minimal-diff body gate). ONE transaction so bare ops don't ship a truncated
  *  intermediate state (e2e test_83). `lca` = the doc already has history →
  *  diff; otherwise seed once. */
-export function seedContentInto(doc: Y.Doc, text: Y.Text, content: string, lca: boolean): void {
+export function seedContentInto(doc: Y.Doc, text: Y.Text, raw: string, lca: boolean): void {
+	// Where markdown enters the doc: LF only from here on (line-endings.ts).
+	const content = toLf(raw);
 	const { fmBlock, body: splitBody } = splitFrontmatter(content);
 	const parsed: FrontmatterParse =
 		fmBlock === null ? { kind: "empty" } : parseFrontmatterBlock(fmBlock);
@@ -184,7 +187,7 @@ function hasFrontmatter(doc: Y.Doc): boolean {
  *  — and an emptied one must still clear, or properties could never be deleted
  *  from an open note. */
 export function seedFrontmatterInto(doc: Y.Doc, content: string): void {
-	const { fmBlock } = splitFrontmatter(content);
+	const { fmBlock } = splitFrontmatter(toLf(content));
 	const parsed: FrontmatterParse =
 		fmBlock === null ? { kind: "empty" } : parseFrontmatterBlock(fmBlock);
 	if (parsed.kind === "degraded") return;
@@ -200,11 +203,14 @@ export function seedFrontmatterInto(doc: Y.Doc, content: string): void {
  *  that is not a readable mapping is left alone (no strip, nothing lost), and
  *  stacked fences heal in one call. A lift racing the server's appends the
  *  same key twice to the order; every reader dedupes it (`uniqueKeyOrder`).
- *  Returns whether it changed the doc. */
+ *  Also drops the CRs of a body from before the LF-only model
+ *  (`stripCrlfInto`), in the same transaction. Returns whether it changed
+ *  the doc. */
 export function liftBodyFence(doc: Y.Doc, origin: unknown): boolean {
 	const text = doc.getText(CONTENT_KEY);
 	let healed = false;
 	doc.transact(() => {
+		healed = stripCrlfInto(text, origin);
 		for (;;) {
 			const body = text.toJSON();
 			const { fmBlock, body: rest } = splitFrontmatter(body);
@@ -229,4 +235,28 @@ export function liftBodyFence(doc: Y.Doc, origin: unknown): boolean {
 		}
 	}, origin);
 	return healed;
+}
+
+/** Delete the CR of every CRLF pair in a doc that predates the LF-only model,
+ *  in ONE transaction, one small delete per CR (never a full-text diff), so a
+ *  concurrent heal by the server's `normalize_doc` deletes the same Y items and
+ *  merges clean. A lone CR is left to the server, whose heal replaces it with
+ *  LF: two devices each inserting that LF would merge to two. Returns whether
+ *  it changed the doc. ponytail: scans the body once per open; only a body
+ *  that still holds a CR pays for the deletes. */
+export function stripCrlfInto(text: Y.Text, origin: unknown): boolean {
+	const body = text.toJSON();
+	if (!body.includes("\r\n")) return false;
+	const doc = text.doc;
+	if (!doc) return false;
+	doc.transact(() => {
+		for (
+			let i = body.lastIndexOf("\r\n");
+			i >= 0;
+			i = i > 0 ? body.lastIndexOf("\r\n", i - 1) : -1
+		) {
+			text.delete(i, 1);
+		}
+	}, origin);
+	return true;
 }

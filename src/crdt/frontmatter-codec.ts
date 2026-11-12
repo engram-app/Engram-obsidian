@@ -4,6 +4,7 @@
 
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 import type * as Y from "yjs";
+import { toLf } from "./line-endings";
 
 // ---------------------------------------------------------------------------
 // Y.Doc shared-type keys + accessors — the single source of truth (was
@@ -237,7 +238,11 @@ function sameFrontmatterMeaning(a: string | null, b: string | null): boolean {
  *  same (see `sameFrontmatterMeaning`); otherwise `next` unchanged. A write
  *  built from the doc's projection then never rewrites YAML the user wrote
  *  (comments, flow lists, spacing) that the doc only re-serialised. */
-export function keepDiskFrontmatter(next: string, disk: string): string {
+export function keepDiskFrontmatter(rawNext: string, rawDisk: string): string {
+	// Compare and keep in LF, the doc's form, so a CRLF file never comes back
+	// as a CRLF block over an LF body (line-endings.ts).
+	const next = toLf(rawNext);
+	const disk = toLf(rawDisk);
 	if (next === disk) return next;
 	const n = splitFrontmatter(next);
 	const d = splitFrontmatter(disk);
@@ -267,5 +272,5 @@ export function flushTarget(
 /** Do two note texts mean the same: identical bodies and frontmatter that
  *  differs only in YAML formatting? */
 export function sameNoteMeaning(a: string, b: string): boolean {
-	return keepDiskFrontmatter(a, b) === b;
+	return keepDiskFrontmatter(a, b) === toLf(b);
 }
