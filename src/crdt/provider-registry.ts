@@ -468,7 +468,9 @@ export class ProviderRegistry {
 	private project(e: Entry): string {
 		if (e.kind === "canvas") return projectCanvas(e.doc);
 		const { order, values } = frontmatterOf(e.doc);
-		return projectNote(order, values, e.text.toJSON(), rawFrontmatterOf(e.doc));
+		// LF even while the doc still holds CRs the room has not healed yet
+		// (line-endings.ts): every merge guard and disk flush reads this.
+		return projectNote(order, values, toLf(e.text.toJSON()), rawFrontmatterOf(e.doc));
 	}
 
 	/** Liveness: a tombstoned note is dead until the server brings the same id
