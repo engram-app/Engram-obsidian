@@ -11,13 +11,11 @@ export const SEARCH_VIEW_TYPE = "engram-search-view";
 
 export class SearchView extends ItemView {
 	private api: EngramApi;
-	private indexedNotesCap?: () => number | null;
 	private panel: SearchPanel | null = null;
 
-	constructor(leaf: WorkspaceLeaf, api: EngramApi, indexedNotesCap?: () => number | null) {
+	constructor(leaf: WorkspaceLeaf, api: EngramApi) {
 		super(leaf);
 		this.api = api;
-		this.indexedNotesCap = indexedNotesCap;
 	}
 
 	getViewType(): string {
@@ -35,13 +33,7 @@ export class SearchView extends ItemView {
 	async onOpen(): Promise<void> {
 		this.contentEl.empty();
 		this.contentEl.addClass("engram-search-view-container");
-		this.panel = new SearchPanel(
-			this.contentEl,
-			{ api: this.api, app: this.app },
-			{
-				indexedNotesCap: this.indexedNotesCap,
-			},
-		);
+		this.panel = new SearchPanel(this.contentEl, { api: this.api, app: this.app });
 	}
 
 	async onClose(): Promise<void> {

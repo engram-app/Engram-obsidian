@@ -13,13 +13,13 @@ import { t } from "./i18n";
 /**
  * Resolved per call, not at module load.
  *
- * As a module-scope object literal, all 18 `t()` calls would run once when the
+ * As a module-scope object literal, all 16 `t()` calls would run once when the
  * bundle is first evaluated and freeze to whatever language was active then.
  * Every other `t()` in the plugin resolves per call, and the test mock's
  * language is mutable module state, so the frozen form also made the result
  * depend on import order.
  *
- * ponytail: rebuilds 18 entries per toast. A toast is a human-speed event, so
+ * ponytail: rebuilds 16 entries per toast. A toast is a human-speed event, so
  * the allocation is free; memoize per locale only if this ever shows up hot.
  */
 function table(): Record<string, string> {
@@ -42,14 +42,13 @@ function table(): Record<string, string> {
 		attachments_disabled: t("Attachment sync is disabled for this account."),
 		attachments_quota_exceeded: t("Attachment storage is full — upgrade for more."),
 		file_too_large: t("File too large for your plan."),
-		concurrent_devices_exceeded: t(
-			"Already signed in on another device. Upgrade for multi-device.",
-		),
+		// Names no number: Free allows 2 devices, so "another device" was wrong,
+		// and an installed plugin lags any change to the cap.
+		concurrent_devices_exceeded: t("Device limit reached. Disconnect a device or upgrade."),
 		device_swap_cooldown: t("Device swap cooldown active. Wait or upgrade."),
 		obsidian_connections_exceeded: t(
 			"Too many connected Obsidian vaults. Disconnect one or upgrade.",
 		),
-		mcp_connections_exceeded: t("Too many connected AI clients. Disconnect one or upgrade."),
 		// ONE key, replacing `ai_conversations_per_day_exceeded`,
 		// `ai_queries_per_conversation_exceeded` and `ai_queries_per_day_exceeded`.
 		// Those three were dead strings: the backend deleted the keys behind them
@@ -61,14 +60,13 @@ function table(): Record<string, string> {
 		ai_searches_per_day_exceeded: t(
 			"Daily AI search limit reached. Free searches are shared across Obsidian, the web app and MCP. Upgrade for unlimited.",
 		),
-		// Server rejects an API-key-authed socket or REST call outright: Cloud
-		// gates API keys behind Pro. Point at sign-in, which works on every plan,
-		// rather than at a generic "upgrade".
+		// API keys work on every plan (backend #1974). The server sends this only
+		// when a per-user `api_rps_cap` override is 0, a kill switch on one
+		// account, so it names no plan and points at sign-in, which still works.
+		// `api_write_not_available` and `mcp_connections_exceeded` went with
+		// their gates in the same change; the server never sends them.
 		api_access_not_available: t(
-			"API keys need a Pro plan. Sign in with your Engram account instead.",
-		),
-		api_write_not_available: t(
-			"API keys need a Pro plan. Sign in with your Engram account instead.",
+			"API key access is turned off for this account. Sign in with your Engram account instead.",
 		),
 		account_suspended: t("Account suspended. Contact support."),
 		no_tier: t("Account setup incomplete."),

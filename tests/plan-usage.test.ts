@@ -14,7 +14,7 @@ describe("isUnlimited", () => {
 
 describe("buildRow", () => {
 	it("shows used over limit with a fraction", () => {
-		const row = buildRow("Notes searchable", { used: 300, limit: 2000 }, (n) => String(n));
+		const row = buildRow("Notes stored", { used: 300, limit: 2000 }, (n) => String(n));
 		expect(row?.value).toBe("300 / 2000");
 		expect(row?.fraction).toBeCloseTo(0.15);
 		expect(row?.atLimit).toBe(false);
@@ -36,16 +36,6 @@ describe("buildRow", () => {
 		expect(row?.value).toBe("1240");
 		expect(row?.fraction).toBeNull();
 		expect(row?.atLimit).toBe(false);
-	});
-
-	it("drops a hideWhenUnlimited row on an unlimited plan", () => {
-		const opts = { hideWhenUnlimited: true };
-		expect(buildRow("Notes searchable", { used: 1240, limit: null }, String, opts)).toBeNull();
-		expect(buildRow("Notes searchable", { used: 1240, limit: -1 }, String, opts)).toBeNull();
-		// Still shown when there IS a cap to report.
-		expect(buildRow("Notes searchable", { used: 300, limit: 2000 }, String, opts)?.value).toBe(
-			"300 / 2000",
-		);
 	});
 
 	it("drops the row entirely when both usage and limit are unknown", () => {
@@ -84,16 +74,19 @@ describe("planUsageRows", () => {
 		},
 	};
 
-	it("leads with searchable notes, the limit that binds first and silently", () => {
-		expect(planUsageRows(free)[0]?.label).toBe("Notes searchable");
+	// Prod: every stored note is searchable and `indexed_notes` is a compat
+	// shim (`limit: nil`). The row it fed claimed a search cap that no longer
+	// exists, and its hint said the index keeps your OLDEST notes, while the
+	// backend actually keeps the most recently edited ones on full search.
+	it("shows no searchable-notes row, even if a backend still sends a cap", () => {
+		const labels = planUsageRows(free).map((r) => r.label);
+		expect(labels).not.toContain("Notes searchable");
+		expect(labels[0]).toBe("Notes stored");
 	});
 
 	it("shows a healthy Free vault rather than nothing", () => {
-		// The whole reason this panel exists: at 300/2,000 the old behaviour
-		// showed no indication at all, so a user could not see where they stood
-		// until something silently stopped working.
 		const row = planUsageRows(free)[0];
-		expect(row?.value).toBe("300 / 2,000");
+		expect(row?.value).toBe("300 / 10,000");
 		expect(row?.atLimit).toBe(false);
 	});
 
@@ -134,39 +127,6 @@ describe("planUsageRows", () => {
 			{ localAttachmentCount: 3 },
 		).find((r) => r.label === "Attachments");
 		expect(row?.value).toBe("3 files · 4.8 MB");
-	});
-
-	it("pairs searchable with stored so the gap is legible", () => {
-		const labels = planUsageRows(free).map((r) => r.label);
-		expect(labels.slice(0, 2)).toEqual(["Notes searchable", "Notes stored"]);
-	});
-
-	it("explains that capped notes still sync, and which ones fall out", () => {
-		const hint = planUsageRows(free)[0]?.hint ?? "";
-		expect(hint).toContain("still sync");
-		expect(hint).toContain("oldest");
-	});
-
-	it("hides searchable on paid, where it would just repeat stored", () => {
-		const pro = {
-			tier: "pro",
-			usage: {
-				notes: { used: 1240, limit: null },
-				indexed_notes: { used: 1240, limit: null },
-				attachment_bytes: { used: 5_000_000, limit: 53_687_091_200 },
-			},
-		};
-		const labels = planUsageRows(pro).map((r) => r.label);
-		expect(labels).not.toContain("Notes searchable");
-		expect(labels).toContain("Notes stored");
-	});
-
-	it("keeps the note limit visible on Free, which is the point of the row", () => {
-		const labels = planUsageRows(free).map((r) => r.label);
-		expect(labels).toContain("Notes searchable");
-		expect(planUsageRows(free).find((r) => r.label === "Notes stored")?.value).toBe(
-			"300 / 10,000",
-		);
 	});
 
 	it("puts the unit on the AI-search ceiling, not in its label", () => {

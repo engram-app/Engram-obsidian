@@ -117,23 +117,11 @@ describe("parsePlanState — attachments_all_types migration", () => {
 	});
 });
 
-describe("parsePlanState — indexed_notes_cap", () => {
-	test("reads a real cap", () => {
-		const p = parsePlanState({ tier: "free", indexed_notes_cap: 2000 }, 1);
-		expect(p?.indexedNotesCap).toBe(2000);
-	});
-
-	test("treats the -1 unlimited sentinel as uncapped", () => {
-		const p = parsePlanState({ tier: "pro", indexed_notes_cap: -1 }, 1);
-		expect(p?.indexedNotesCap).toBeNull();
-	});
-
-	test("treats an older backend (field absent) as uncapped", () => {
-		// Permissive on unknown, matching this module's existing direction —
-		// a stale plugin must not tell users their notes are unsearchable.
-		const p = parsePlanState({ tier: "starter" }, 1);
-		expect(p?.indexedNotesCap).toBeNull();
-	});
+// The backend removed the search-coverage cap; `indexed_notes_cap` is a
+// compat shim that is always nil in prod, so the plugin no longer reads it.
+test("parsePlanState ignores the removed indexed_notes_cap", () => {
+	const p = parsePlanState({ tier: "free", indexed_notes_cap: 2000 }, 1);
+	expect(p && "indexedNotesCap" in p).toBe(false);
 });
 
 /**
@@ -151,7 +139,6 @@ describe("samePlanState", () => {
 		attachmentsTextOnly: false,
 		maxFileBytes: 100,
 		attachmentBytesCap: null,
-		indexedNotesCap: 500,
 		updatedAt: 1000,
 	};
 
@@ -161,7 +148,6 @@ describe("samePlanState", () => {
 
 	test("a real plan change is still a change", () => {
 		expect(samePlanState(base, { ...base, tier: "pro" })).toBe(false);
-		expect(samePlanState(base, { ...base, indexedNotesCap: null })).toBe(false);
 		expect(samePlanState(base, { ...base, attachmentsTextOnly: true })).toBe(false);
 		expect(samePlanState(base, { ...base, maxFileBytes: 101 })).toBe(false);
 		expect(samePlanState(base, { ...base, attachmentBytesCap: 5 })).toBe(false);

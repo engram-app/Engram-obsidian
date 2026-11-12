@@ -172,8 +172,7 @@ function makeMockPlugin(issues: SyncIssue[], planState?: unknown): any {
 		// wants the correction overrides this.
 		resolveRemoteVaultName: () => Promise.resolve(settings.remoteVaultName ?? null),
 		syncEngine: {
-			// Real engine has this (see main.ts, where it feeds the search panel's
-			// cap hint). Defaults to null, which is the genuine pre-join state:
+			// Real engine has this. Defaults to null, which is the genuine pre-join state:
 			// plan state arrives over the channel, so it IS absent for a moment.
 			getPlanState: () => planState ?? null,
 			getStatus: () => ({
@@ -219,13 +218,27 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		parent = makeFakeEl("div");
 	});
 
-	test("renders a needs-attention card with plain-language title + upgrade hint", () => {
+	// Every Engram Cloud plan syncs every attachment type, so this card (a
+	// server capability refusal) must not blame Free or promise an upgrade fix.
+	test("renders a needs-attention card that names the server, not a plan", () => {
 		const plugin = makeMockPlugin([makeIssue()]);
 		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
 
 		const text = allText(parent);
-		expect(text).toContain("Attachments need a paid plan");
-		expect(text.toLowerCase()).toContain("upgrade to sync");
+		expect(text).toContain("Attachment not accepted");
+		expect(text).not.toMatch(/Free tier|notes only|Attachments need a paid plan/);
+	});
+
+	// The section hint sits directly above that card and above the quota card,
+	// which a Starter or Pro user at quota also sees, so it names no plan.
+	test("plan-skip section hint names no plan", () => {
+		const plugin = makeMockPlugin([
+			makeIssue(),
+			makeIssue({ path: "big.pdf", category: "quota" }),
+		]);
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+
+		expect(allText(parent)).not.toMatch(/paid plan|Free plan/i);
 	});
 
 	test("renders the lock icon on the needs_pro card", () => {
@@ -298,7 +311,7 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		expect(infoCards.length).toBeGreaterThanOrEqual(1);
 
 		const text = allText(parent);
-		expect(text).toContain("Attachments need a paid plan");
+		expect(text).toContain("Attachment not accepted");
 		// too_large stays an attention card.
 		const titles = findAllByCls(parent, "engram-sync-center-card-title");
 		expect(titles.some((t) => t.text.includes("Too large"))).toBe(true);
@@ -445,9 +458,7 @@ describe("renderSyncCenter — Needs attention cards", () => {
 	});
 	// ── "Your plan" usage panel ────────────────────────────────────────────
 	// Always shown once the tier is known, NOT only when over a cap. A Free
-	// user at 300 of 2,000 previously saw nothing, so the first thing they
-	// learned about the limit was a search quietly failing on a note they had
-	// just written.
+	// user at 300 of 2,000 previously saw nothing until a create was refused.
 
 	const FREE_USAGE = {
 		tier: "free",
@@ -461,7 +472,7 @@ describe("renderSyncCenter — Needs attention cards", () => {
 	};
 
 	function withPlan(tier: string | null, usage: unknown = FREE_USAGE, reject = false) {
-		const plugin = makeMockPlugin([], tier === null ? null : { tier, indexedNotesCap: 2000 });
+		const plugin = makeMockPlugin([], tier === null ? null : { tier });
 		plugin.api = {
 			getBillingUsage: () =>
 				reject ? Promise.reject(new Error("offline")) : Promise.resolve(usage),
@@ -478,8 +489,11 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		await settle();
 
 		const text = allText(parent);
-		expect(text).toContain("300 / 2,000");
-		expect(text).toContain("Notes searchable");
+		expect(text).toContain("300 / 10,000");
+		expect(text).toContain("Notes stored");
+		// Every stored note is searchable in prod, so a backend still sending
+		// the `indexed_notes` compat shim must not resurrect a search-cap row.
+		expect(text).not.toContain("Notes searchable");
 	});
 
 	test("uses the Stats grid rather than a format of its own", async () => {
@@ -490,7 +504,7 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		// Rows land in a `stats-grid` as `stat-label` / `stat-value` pairs, which
 		// is what gives them the separator and spacing Stats already has.
 		const labels = findAllByCls(parent, "engram-sync-center-stat-label").map((e) => e.text);
-		expect(labels).toContain("Notes searchable");
+		expect(labels).toContain("Notes stored");
 		expect(labels).toContain("Notes on this device");
 	});
 
@@ -514,11 +528,9 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		const labels = rows.map((r) => findByCls(r, "engram-sync-center-stat-label")?.text ?? "");
 		// Assert both rows EXIST first. Without this, a plan fill that rendered
 		// nothing at all would still pass the ordering check on -1 < 0.
-		expect(labels).toContain("Notes searchable");
+		expect(labels).toContain("Notes stored");
 		expect(labels).toContain("Notes on this device");
-		expect(labels.indexOf("Notes searchable")).toBeLessThan(
-			labels.indexOf("Notes on this device"),
-		);
+		expect(labels.indexOf("Notes stored")).toBeLessThan(labels.indexOf("Notes on this device"));
 	});
 
 	test("plan rows survive and stay on top when the anchor row is dropped", async () => {
@@ -539,9 +551,9 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		const labels = (grid?.children ?? []).map(
 			(r) => findByCls(r, "engram-sync-center-stat-label")?.text ?? "",
 		);
-		expect(labels).toContain("Notes searchable");
+		expect(labels).toContain("Notes stored");
 		expect(labels).not.toContain("Notes on this device");
-		expect(labels.indexOf("Notes searchable")).toBeLessThan(labels.indexOf("Remote vault"));
+		expect(labels.indexOf("Notes stored")).toBeLessThan(labels.indexOf("Remote vault"));
 	});
 
 	test("says which system each number describes", async () => {
@@ -619,8 +631,7 @@ describe("renderSyncCenter — Needs attention cards", () => {
 	});
 
 	test("drops the local note count once the server agrees with it", async () => {
-		// Was the third row reading the same number as "Notes searchable" and
-		// "Notes stored". It only carries information when it DISAGREES.
+		// It repeated "Notes stored". It only carries information when it DISAGREES.
 		const plugin = withPlan("free", {
 			tier: "free",
 			usage: { notes: { used: 0, limit: 10000 }, indexed_notes: { used: 0, limit: 2000 } },

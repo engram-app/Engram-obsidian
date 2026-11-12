@@ -434,7 +434,6 @@ describe("vault over the plan note cap (prod 2026-10-17 retry storm)", () => {
 			attachmentsTextOnly: false,
 			maxFileBytes: 1,
 			attachmentBytesCap: null,
-			indexedNotesCap: 2000,
 			updatedAt: 0,
 		});
 		await h.engine.pushModifiedFiles();
@@ -447,7 +446,6 @@ describe("vault over the plan note cap (prod 2026-10-17 retry storm)", () => {
 			attachmentsTextOnly: false,
 			maxFileBytes: 1,
 			attachmentBytesCap: null,
-			indexedNotesCap: null,
 			updatedAt: 1,
 		});
 		await h.engine.waitForCapResync();

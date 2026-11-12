@@ -72,7 +72,7 @@ export function renderCompletionSummary(
 	if (summary.skipped > 0) {
 		line.createSpan({
 			cls: "engram-progress-tally-skipped",
-			text: t("⤳ {count} skipped (Free plan)", { count: summary.skipped }),
+			text: t("⤳ {count} skipped", { count: summary.skipped }),
 		});
 	}
 	if (summary.failed > 0) {
@@ -85,7 +85,7 @@ export function renderCompletionSummary(
 	if (summary.skipped > 0) {
 		const note = parent.createDiv({ cls: "engram-progress-plan-note" });
 		note.createSpan({
-			text: t("{count} attachments need a paid plan to sync. See Sync Center.", {
+			text: t("{count} attachments skipped. See Sync Center.", {
 				count: summary.skipped,
 			}),
 		});
@@ -113,7 +113,7 @@ export function describeCompletion(summary: CompletionSummary): string {
 		return t("Finished with some errors. Open the sync log to see what failed.");
 	}
 	if (summary.skipped > 0) {
-		return t("Synced. Some attachments need a paid plan to sync (see below).");
+		return t("Synced. Some attachments were skipped (see below).");
 	}
 	if (summary.synced > 0) {
 		return t("All synced. Your vault and the cloud now match.");

@@ -14,7 +14,6 @@ const pt: Dict = {
 	"1. Make an account": "1. Crie uma conta",
 	"10 GB attachments": "10 GB de anexos",
 	"10 vaults, unlimited devices": "10 Cofres, dispositivos ilimitados",
-	"2,000 notes searchable": "2.000 notas pesquisáveis",
 	"2. Connect your vault to Engram": "2. Conecte o seu cofre ao Engram",
 	"3. Connect your AI": "3. Conecte a sua IA",
 	"50 GB attachments": "50 GB de anexos",
@@ -26,10 +25,9 @@ const pt: Dict = {
 		"Um problema temporário no servidor — a tentar novamente automaticamente.",
 	"AI / MCP setup guide": "Guia de configuração de IA / MCP",
 	"AI searches": "Pesquisas de IA",
-	"API access": "Acesso à API",
 	"API key": "Chave API",
-	"API keys need a Pro plan. Sign in with your Engram account instead.":
-		"As chaves de API necessitam de um plano Pro. Inicie sessão com a sua conta Engram em vez disso.",
+	"API key access is turned off for this account. Sign in with your Engram account instead.":
+		"O acesso à chave API está desativado para esta conta. Inicie sessão com a sua conta Engram em vez disso.",
 	About: "Sobre",
 	"Accept it to keep syncing.": "Aceite para continuar a sincronização.",
 	"Access token": "Token de acesso",
@@ -42,19 +40,17 @@ const pt: Dict = {
 	"All synced. Your vault and the cloud now match.":
 		"Tudo sincronizado. O seu cofre e a nuvem estão agora sincronizados.",
 	"Already in sync. Nothing is deleted.": "Já está sincronizado. Nada é apagado.",
-	"Already signed in on another device. Upgrade for multi-device.":
-		"Já está autenticado noutro dispositivo. Faça uma atualização para usar em vários dispositivos.",
 	"Already up to date. Nothing needed syncing.":
 		"Já está atualizado. Não é necessário sincronizar nada.",
 	"An unexpected error — retrying automatically.":
 		"Um erro inesperado — a tentar novamente automaticamente.",
+	"Attachment not accepted": "Anexo não aceite",
 	"Attachment storage full": "Armazenamento de anexos cheio",
 	"Attachment storage is full — upgrade for more.":
 		"O espaço de armazenamento de anexos está cheio — faça uma atualização para ter mais.",
 	"Attachment sync is disabled for this account.":
 		"A sincronização de anexos está desativada para esta conta.",
 	Attachments: "Anexos",
-	"Attachments need a paid plan": "Os anexos requerem um plano pago",
 	"Attachments on this device": "Anexos neste dispositivo",
 	"Authenticated via Engram account (OAuth).": "Autenticado através da conta Engram (OAuth).",
 	"Authenticated via manual API key.": "Autenticado através de chave API manual.",
@@ -145,6 +141,8 @@ const pt: Dict = {
 		many: "Eliminar {count} na nuvem.",
 		other: "A eliminar {count} na nuvem.",
 	},
+	"Device limit reached. Disconnect a device or upgrade.":
+		"Limite de dispositivos atingido. Desconecte um dispositivo ou faça uma atualização.",
 	"Device swap cooldown active. Wait or upgrade.":
 		"Período de espera para troca de dispositivo ativo. Aguarde ou faça uma atualização.",
 	Diagnostics: "Diagnósticos",
@@ -201,8 +199,6 @@ const pt: Dict = {
 	"Engram URL": "URL do Engram",
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} está disponível. {link}.",
-	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
-		"Engram indexa {indexed} das suas {all} notas. O resto corresponde apenas neste dispositivo. Atualize para indexar tudo.",
 	"Engram is the backend that powers sync and semantic search.":
 		"Engram é o sistema que permite a sincronização e a pesquisa semântica.",
 	"Engram search": "Engram: pesquisa",
@@ -272,10 +268,10 @@ const pt: Dict = {
 	"Engram: update required": "Engram: atualização necessária",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: a sua sessão expirou — abra as definições de Engram para reconectar.",
-	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.": {
-		one: "Engram: {count} anexo ignorado — atualize o plano para sincronizar imagens e PDFs.",
-		many: "Engram: {count} anexos ignorados — atualize o plano para sincronizar imagens e PDFs.",
-		other: "Engram: {count} anexos ignorados — atualize o plano para sincronizar imagens e PDFs.",
+	"Engram: {count} attachments skipped. See Sync Center for why.": {
+		one: "Engram: {count} anexo ignorado. Consulte o Centro de sincronização para saber o motivo.",
+		many: "Engram: {count} anexos ignorados. Consulte o Centro de sincronização para saber o motivo.",
+		other: "Engram: {count} anexos ignorados. Consulte o Centro de sincronização para saber o motivo.",
 	},
 	"Engram: {count} files failed to sync{detail} — open Sync Center": {
 		one: "Engram: {count} ficheiro falhou na sincronização{detail} — abrir o Centro de sincronização",
@@ -315,13 +311,6 @@ const pt: Dict = {
 		"Terminado com alguns erros. Abra o registo de sincronização para ver o que falhou.",
 	"First sync, this may take a moment.": "Primeira sincronização, isto pode demorar um momento.",
 	Free: "Gratuito",
-	"Free syncs notes only — images & PDFs need a paid plan.":
-		"A sincronização gratuita sincroniza apenas notas — imagens e PDFs requerem um plano pago.",
-	"Free syncs notes only — {count} attachments will be skipped.": {
-		one: "Sincronização gratuita: as notas são sincronizadas, mas apenas {count} anexo será ignorado.",
-		many: "Sincronização gratuita de notas apenas — {count} anexos serão ignorados.",
-		other: "Sincroniza notas gratuitamente, apenas {count} anexos serão ignorados.",
-	},
 	"Frontmatter could not be parsed": "Não foi possível analisar o frontmatter",
 	"Frontmatter isn't valid YAML.": "O frontmatter não é um YAML válido.",
 	'Frontmatter key "{key}" could not be parsed as YAML.':
@@ -397,9 +386,6 @@ const pt: Dict = {
 		"Limite de notas atingido. Faça uma atualização para continuar a adicionar notas.",
 	"Note not synced locally": "Nota não sincronizada localmente",
 	"Notes on this device": "Notas neste dispositivo",
-	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
-		"As notas após este ponto continuam a sincronizar e a abrir normalmente, apenas não estão no índice de pesquisa. O índice guarda as suas notas mais antigas, por isso são as mais recentes que ficam de fora.",
-	"Notes searchable": "Notas pesquisáveis",
 	"Notes stored": "Notas armazenadas",
 	"Nothing in this vault syncs until you choose how to merge it with the server.":
 		"Nada neste cofre é sincronizado até que escolha como o combinar com o servidor.",
@@ -428,8 +414,6 @@ const pt: Dict = {
 		"Abre o seu navegador para iniciar sessão, ou criar uma conta se ainda não tiver, e depois associa este cofre.",
 	"Or authenticate with a token instead of signing in.":
 		"Ou autentique-se com um token em vez de iniciar sessão.",
-	"Or authenticate with a token instead of signing in. Engram Cloud API keys require the Pro plan; on Free and Starter, sign in above.":
-		"Ou autentique-se com um token em vez de iniciar sessão. As chaves API Engram requerem o plano Pro; nos planos Free e Starter, inicie sessão acima.",
 	"Paths to skip (one per line). Folder patterns end with /. Built-in: {configDir}/, .trash/, .git/":
 		"Caminhos a ignorar (um por linha). Os padrões de pastas terminam com /. Incorporados: {configDir}/, .trash/, .git/",
 	"Pick a vault": "Escolha um cofre",
@@ -482,8 +466,6 @@ const pt: Dict = {
 	"Search failed — check connection": "A pesquisa falhou — verifique a ligação",
 	"Search settings": "Definições de pesquisa",
 	"Search your vault…": "Pesquisar no seu cofre…",
-	"Searching {indexed} of {all} notes. Upgrade to search everything.":
-		"A pesquisar {indexed} de {all} notas. Atualize para pesquisar tudo.",
 	"See full pricing": "Ver preços completos",
 	"See the AI setup guide": "Consulte o guia de configuração da IA",
 	"Select which vault this plugin syncs with.":
@@ -543,8 +525,8 @@ const pt: Dict = {
 	"Sync server": "Servidor de sincronização",
 	"Sync these now": "Sincronizar agora",
 	"Sync...": "A sincronizar...",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"Sincronizado. Alguns anexos necessitam de um plano pago para sincronizar (ver abaixo).",
+	"Synced. Some attachments were skipped (see below).":
+		"Sincronizado. Alguns anexos foram ignorados (ver abaixo).",
 	"Syncing attachments": "A sincronizar anexos",
 	"Syncing your vault": "A sincronizar o seu cofre",
 	"Syncing...": "A sincronizar...",
@@ -562,8 +544,6 @@ const pt: Dict = {
 		"O servidor Engram já não aceita esta versão do plugin (é necessário {version} ou superior), pelo que as notas não estão a ser enviadas ou recebidas. As alterações feitas neste dispositivo permanecem aqui até que faça uma atualização.",
 	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
 		"O servidor Engram já não aceita esta versão do plugin, pelo que as notas não estão a ser enviadas ou recebidas. As alterações feitas neste dispositivo permanecem aqui até que faça uma atualização.",
-	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
-		"A versão gratuita sincroniza apenas notas. Atualize para sincronizar imagens e PDFs.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
 		"O ficheiro excede o limite de tamanho do servidor. Comprima ou divida-o, e então ele será sincronizado.",
 	"The file is too large for the server.": "O ficheiro é demasiado grande para o servidor.",
@@ -577,8 +557,8 @@ const pt: Dict = {
 		"O servidor perdeu o conteúdo guardado deste ficheiro e tentará restaurá-lo. Nada foi alterado neste dispositivo.",
 	"The server took too long to respond. Try again.":
 		"O servidor demorou demasiado tempo a responder. Tente novamente.",
-	"These files are fine. They just need a paid plan to sync.":
-		"Estes ficheiros estão bem. Apenas precisam de um plano pago para sincronizar.",
+	"These files are fine. Each card below says why they did not sync.":
+		"Estes ficheiros estão bem. Cada cartão abaixo indica o motivo pelo qual não foram sincronizados.",
 	"This account was deleted. Contact support if that is wrong.":
 		"Esta conta foi eliminada. Contacte o suporte se estiver errado.",
 	"This cannot be undone.": "Esta ação não pode ser desfeita.",
@@ -592,12 +572,12 @@ const pt: Dict = {
 		"Esta nota não pôde ser processada e foi ignorada.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Este servidor é alojado localmente, portanto, não são recolhidos dados aqui. ",
+	"This server isn't accepting this attachment for your account.":
+		"Este servidor não aceita este anexo para a sua conta.",
 	"This vault": "Este cofre",
 	"This vault is empty on the server. Upload your {what}?":
 		"Este cofre está vazio no servidor. Deseja enviar {what}?",
 	"Too large for the server": "Demasiado grande para o servidor",
-	"Too many connected AI clients. Disconnect one or upgrade.":
-		"Demasiados clientes de IA conectados. Desconecte um ou faça uma atualização.",
 	"Too many connected Obsidian vaults. Disconnect one or upgrade.":
 		"Demasiados cofres Obsidian conectados. Desconecte um ou faça uma atualização.",
 	"Too many requests. Wait a moment and try again.":
@@ -703,10 +683,15 @@ const pt: Dict = {
 		many: "{count} anexos",
 		other: "{count} anexos",
 	},
-	"{count} attachments need a paid plan to sync. See Sync Center.": {
-		one: "{count} anexo necessita de um plano pago para sincronizar. Consulte o Centro de sincronização.",
-		many: "{count} anexos requerem um plano pago para sincronizar. Consulte o Centro de sincronização.",
-		other: "{count} anexos necessitam de um plano pago para sincronizar. Consulte o Centro de sincronização.",
+	"{count} attachments skipped. See Sync Center.": {
+		one: "{count} anexo ignorado. Consulte o Centro de sincronização.",
+		many: "{count} anexos ignorados. Consulte o Centro de sincronização.",
+		other: "{count} anexos ignorados. Consulte o Centro de sincronização.",
+	},
+	"{count} attachments will be skipped: this server only accepts text files.": {
+		one: "{count} anexo será ignorado: este servidor só aceita ficheiros de texto.",
+		many: "{count} anexos serão ignorados: este servidor só aceita ficheiros de texto.",
+		other: "{count} anexos serão ignorados: este servidor só aceita ficheiros de texto.",
 	},
 	"{count} attempts": {
 		one: "{count} tentativas",
@@ -805,10 +790,10 @@ const pt: Dict = {
 	"✗ couldn't reach a server at this URL": "✗ Não foi possível contactar um servidor neste URL",
 	"✗ server responded but isn't an Engram server":
 		"✗ O servidor respondeu, mas não é um servidor Engram",
-	"⤳ {count} skipped (Free plan)": {
-		one: "⤳ {count} ignorado (Plano gratuito)",
-		many: "⤳ {count} ignorados (Plano gratuito)",
-		other: "⤳ {count} ignorados (Plano gratuito)",
+	"⤳ {count} skipped": {
+		one: "⤳ {count} ignorado",
+		many: "⤳ {count} ignorados",
+		other: "⤳ {count} ignorados",
 	},
 	"👋 Welcome": "👋 Bem-vindo",
 	"💬 Feedback": "💬 Feedback",

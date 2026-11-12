@@ -321,6 +321,27 @@ describe("renderAuthSection — signed in", () => {
 	});
 });
 
+// API keys work on every plan in prod (backend #1974). The cloud description
+// used to say they required Pro, steering Free and Starter users away from the
+// one fallback for MCP clients whose OAuth is broken.
+describe("renderAuthSection: API key description", () => {
+	test("cloud copy does not claim API keys need a paid plan", () => {
+		__settingCapture.descs.length = 0;
+		renderAuthSection({
+			containerEl: {},
+			app: {},
+			plugin: {
+				settings: { apiUrl: "https://api.engram.page", apiKey: "", backendMode: "cloud" },
+			},
+			redisplay: () => {},
+			startDeviceFlow: async () => {},
+		} as any);
+		const keyDesc = __settingCapture.descs.find((d) => /token instead of signing in/.test(d));
+		expect(keyDesc).toBeDefined();
+		expect(keyDesc).not.toMatch(/Pro|Starter|Free|plan/);
+	});
+});
+
 // #1409 root cause: this path changed the active vault while leaving the
 // PREVIOUS vault's path -> note_id map live, so crdt_create proposed
 // foreign-vault ids and the server's re-id cost a room per note. main.ts's

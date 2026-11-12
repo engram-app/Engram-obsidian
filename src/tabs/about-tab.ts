@@ -23,6 +23,46 @@ function heading(containerEl: HTMLElement, name: UIText): void {
 	setting.settingEl.addClass("engram-about-heading");
 }
 
+/**
+ * The Welcome tab's plan cards, as `[name, features]`.
+ *
+ * Every line here must be checkable against `Engram.Billing.LimitKeys` in the
+ * backend. This block drifted twice: it once claimed 1 device (it is 2) and
+ * read-only AI, then kept "2,000 notes searchable" on Free and "API access" on
+ * Pro after every stored note became searchable and API keys opened to every
+ * plan (backend #1974). Hardcoded note counts are avoided because an installed
+ * plugin lags the backend.
+ *
+ * The search lines name COVERAGE, not the retrieval mechanism (pricing v3.1
+ * positioning: "found my note" vs "cannot find my note" is what users feel).
+ */
+export function planCards(): [string, string[]][] {
+	return [
+		[
+			t("Free"),
+			[
+				t("1 vault, 2 devices"),
+				t("Real-time sync"),
+				t("Search all your notes"),
+				t("Connect any AI (MCP)"),
+			],
+		],
+		[
+			t("Starter"),
+			[
+				t("10 vaults, unlimited devices"),
+				t("Search all your notes"),
+				t("10 GB attachments"),
+				t("Unlimited AI searches"),
+			],
+		],
+		[
+			t("Pro"),
+			[t("Unlimited vaults"), t("Search across all vaults at once"), t("50 GB attachments")],
+		],
+	];
+}
+
 /** Welcome / orientation tab — what the plugin does, how to get set up, the
  *  plans, and where to learn more. Static content (no plugin state), shown
  *  first and defaulted to for new users (see `pickInitialTab`). */
@@ -82,39 +122,12 @@ export function renderAboutTab(ctx: TabContext): void {
 	heading(containerEl, t("Plans"));
 
 	const plans = containerEl.createEl("ul", { cls: "engram-plans" });
-	const plan = (name: string, features: string[]): void => {
+	for (const [name, features] of planCards()) {
 		const card = plans.createEl("li", { cls: "engram-plan" });
 		card.createEl("h4", { text: name });
 		const list = card.createEl("ul", { cls: "engram-plan-features" });
 		for (const feature of features) list.createEl("li", { text: feature });
-	};
-	// Every line here must be checkable against `Engram.Billing.LimitKeys` in
-	// the backend. This block drifted badly once: it claimed 1 device (it is 2),
-	// read-only AI (MCP `create_note`/`write_note` have no tier gate at all),
-	// and "Full API" on Starter when API keys went Pro-only on 2026-08-24.
-	//
-	// The search lines deliberately name COVERAGE, not the retrieval mechanism.
-	// That is the pricing v3.1 positioning (ranking differences are single-digit
-	// and imperceptible; "found my note" vs "cannot find my note" is not), and
-	// it also keeps this copy true across the pending Free semantic-search flip.
-	plan(t("Free"), [
-		t("1 vault, 2 devices"),
-		t("Real-time sync"),
-		t("2,000 notes searchable"),
-		t("Connect any AI (MCP)"),
-	]);
-	plan(t("Starter"), [
-		t("10 vaults, unlimited devices"),
-		t("Search all your notes"),
-		t("10 GB attachments"),
-		t("Unlimited AI searches"),
-	]);
-	plan(t("Pro"), [
-		t("Unlimited vaults"),
-		t("Search across all vaults at once"),
-		t("50 GB attachments"),
-		t("API access"),
-	]);
+	}
 
 	const pricing = containerEl.createEl("p", { cls: "engram-about-link" });
 	externalLink(pricing, t("See full pricing"), ENGRAM_PRICING_URL);

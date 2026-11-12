@@ -7478,7 +7478,7 @@ export class SyncEngine {
 		if (plan.attachmentsTextOnly && !isTextAttachment(file.extension)) {
 			return {
 				category: "needs_pro",
-				message: t("Free syncs notes only — images & PDFs need a paid plan."),
+				message: t("This file type isn't accepted by this server."),
 			};
 		}
 		return null;
@@ -7539,7 +7539,7 @@ export class SyncEngine {
 		this.attachmentLimitToastShown = true;
 		const noun = count === 1 ? "attachment" : "attachments";
 		new Notice(
-			t("Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.", {
+			t("Engram: {count} attachments skipped. See Sync Center for why.", {
 				count,
 			}),
 			10_000,

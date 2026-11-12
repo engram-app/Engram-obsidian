@@ -10,7 +10,6 @@ const zhTW: Dict = {
 	"1. Make an account": "1. 建立帳號",
 	"10 GB attachments": "10 GB 附件",
 	"10 vaults, unlimited devices": "10 個知識庫，無限部裝置",
-	"2,000 notes searchable": "可搜尋 2,000 筆筆記",
 	"2. Connect your vault to Engram": "2. 將您的儲存庫連接到 Engram",
 	"3. Connect your AI": "3. 連接您的 AI",
 	"50 GB attachments": "50 GB 附件",
@@ -20,10 +19,9 @@ const zhTW: Dict = {
 	"A temporary server problem — retrying automatically.": "暫時的伺服器問題，正在自動重試。",
 	"AI / MCP setup guide": "AI / MCP 設定指南",
 	"AI searches": "AI 搜尋",
-	"API access": "API 存取",
 	"API key": "API 金鑰",
-	"API keys need a Pro plan. Sign in with your Engram account instead.":
-		"API 金鑰需要 Pro 方案。請使用您的 Engram 帳號登入。",
+	"API key access is turned off for this account. Sign in with your Engram account instead.":
+		"此帳戶已關閉 API 金鑰訪問。請使用您的 Engram 帳號登入。",
 	About: "關於",
 	"Accept it to keep syncing.": "同意以繼續同步。",
 	"Access token": "訪問令牌",
@@ -35,15 +33,13 @@ const zhTW: Dict = {
 	"Advanced sync options": "進階同步選項",
 	"All synced. Your vault and the cloud now match.": "已全部同步。您的儲存庫和雲端現在已同步。",
 	"Already in sync. Nothing is deleted.": "已同步。不會刪除任何內容。",
-	"Already signed in on another device. Upgrade for multi-device.":
-		"已在另一部裝置登入。升級以支援多重裝置。",
 	"Already up to date. Nothing needed syncing.": "已是最新的。無需同步任何內容。",
 	"An unexpected error — retrying automatically.": "發生未預期的錯誤，正在自動重試。",
+	"Attachment not accepted": "附件未被接受",
 	"Attachment storage full": "附件儲存空間已滿",
 	"Attachment storage is full — upgrade for more.": "儲存空間已滿，升級以獲得更多空間。",
 	"Attachment sync is disabled for this account.": "此帳戶已停用附件同步。",
 	Attachments: "附件",
-	"Attachments need a paid plan": "附件需要付費方案",
 	"Attachments on this device": "此裝置上的附件",
 	"Authenticated via Engram account (OAuth).": "透過 Engram 帳戶 (OAuth) 驗證。",
 	"Authenticated via manual API key.": "透過手動 API 金鑰驗證。",
@@ -110,6 +106,8 @@ const zhTW: Dict = {
 	Deleting: "正在刪除",
 	"Deleting {count} local files.": "刪除 {count} 個本地檔案。",
 	"Deleting {count} on the cloud.": "正在從雲端刪除 {count} 個檔案。",
+	"Device limit reached. Disconnect a device or upgrade.":
+		"已達到裝置數量上限。請斷開一個裝置或升級。",
 	"Device swap cooldown active. Wait or upgrade.": "裝置切換暫停中。請稍候或升級。",
 	Diagnostics: "診斷",
 	"Diagnostics detail": "診斷詳情",
@@ -144,8 +142,6 @@ const zhTW: Dict = {
 	"Engram URL": "Engram 位址",
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} 可用。{link}。",
-	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
-		"Engram 已索引您的 {all} 個筆記中的 {indexed} 個。其餘的僅在 此設備上匹配。升級以索引所有內容。",
 	"Engram is the backend that powers sync and semantic search.":
 		"Engram 是提供同步和語意搜尋功能的後端。",
 	"Engram search": "Engram 搜尋",
@@ -205,8 +201,8 @@ const zhTW: Dict = {
 	"Engram: update required": "Engram: 需要更新",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram：您的登入已過期 — 請在 Engram 設定中重新連接。",
-	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.":
-		"Engram: 略過 {count} 個附件 — 升級方案以同步圖片和 PDF。",
+	"Engram: {count} attachments skipped. See Sync Center for why.":
+		"Engram: 由於 {count}，已略過這些附件。請查看同步中心了解原因。",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
 		"Engram：{count} 個檔案同步失敗{detail} — 開啟同步中心",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
@@ -235,10 +231,6 @@ const zhTW: Dict = {
 		"已完成，但有部分錯誤。開啟同步記錄以查看失敗的原因。",
 	"First sync, this may take a moment.": "首次同步，可能需要一些時間。",
 	Free: "免费",
-	"Free syncs notes only — images & PDFs need a paid plan.":
-		"免費同步僅限筆記，圖片與 PDF 需要付費方案。",
-	"Free syncs notes only — {count} attachments will be skipped.":
-		"免費同步筆記，僅限筆記。{count}個附件將被略過。",
 	"Frontmatter could not be parsed": "無法解析 Frontmatter",
 	"Frontmatter isn't valid YAML.": "YAML 前置區塊格式無效。",
 	'Frontmatter key "{key}" could not be parsed as YAML.':
@@ -311,9 +303,6 @@ const zhTW: Dict = {
 	"Note limit reached. Upgrade to keep adding notes.": "筆記數量已達上限。升級以繼續新增筆記。",
 	"Note not synced locally": "筆記尚未本地同步",
 	"Notes on this device": "此裝置上的筆記",
-	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
-		"此處之後的筆記仍可正常同步和開啟，只是不在搜尋索引中。索引保留您最舊的筆記，因此最新的筆記才會超出範圍。",
-	"Notes searchable": "筆記可搜尋",
 	"Notes stored": "筆記已儲存",
 	"Nothing in this vault syncs until you choose how to merge it with the server.":
 		"在您選擇如何將此儲存庫與伺服器合併之前，不會進行任何同步。",
@@ -340,8 +329,6 @@ const zhTW: Dict = {
 	"Opens your browser to sign in, or create an account if you don't have one yet, then links this vault.":
 		"開啟您的瀏覽器以登入，或如果您還沒有帳號，請建立一個帳號，然後將此儲存庫連結到您的帳號。",
 	"Or authenticate with a token instead of signing in.": "或使用 Token 進行驗證，而非登入。",
-	"Or authenticate with a token instead of signing in. Engram Cloud API keys require the Pro plan; on Free and Starter, sign in above.":
-		"或使用 Token 進行驗證，而非登入。Engram Cloud API 金鑰需要 Pro 方案；Free 和 Starter 方案請使用上方登入方式。",
 	"Paths to skip (one per line). Folder patterns end with /. Built-in: {configDir}/, .trash/, .git/":
 		'需忽略的路徑 (每行一個)。資料夾路徑以 "/" 結尾。內建：{configDir}/, .trash/, .git/',
 	"Pick a vault": "選擇一個儲存庫",
@@ -391,8 +378,6 @@ const zhTW: Dict = {
 	"Search failed — check connection": "搜尋失敗 — 檢查連線",
 	"Search settings": "搜尋設定",
 	"Search your vault…": "搜尋您的儲存庫…",
-	"Searching {indexed} of {all} notes. Upgrade to search everything.":
-		"正在搜尋 {all} 個筆記中的 {indexed} 個。升級以搜尋所有內容。",
 	"See full pricing": "詳閱價格",
 	"See the AI setup guide": "參閱 AI 設定指南",
 	"Select which vault this plugin syncs with.": "選擇此插件要同步的儲存庫。",
@@ -443,8 +428,7 @@ const zhTW: Dict = {
 	"Sync server": "同步伺服器",
 	"Sync these now": "立即同步這些",
 	"Sync...": "同步中...",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"已同步。部分附件需要付費方案才能同步（請參閱下方）。",
+	"Synced. Some attachments were skipped (see below).": "已同步。部分附件已略過 (請參閱下方)。",
 	"Syncing attachments": "同步附件",
 	"Syncing your vault": "同步您的儲存庫",
 	"Syncing...": "同步中...",
@@ -462,8 +446,6 @@ const zhTW: Dict = {
 		"Engram伺服器不再接受此插件版本（需要{version}或更新版本），因此筆記無法傳送或接收。在此設備上所做的變更會暫時保留，直到您更新。",
 	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
 		"Engram伺服器不再接受此插件版本，因此筆記無法傳送或接收。在此設備上所做的變更會暫時保留，直到您更新。",
-	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
-		"免费版僅同步筆記。升級以同步圖片和 PDF。",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
 		"檔案超過伺服器大小限制。壓縮或分割後，即可同步。",
 	"The file is too large for the server.": "檔案太大，伺服器無法處理。",
@@ -476,8 +458,8 @@ const zhTW: Dict = {
 	"The server lost this file's stored content and will try to restore it. Nothing on this device was changed.":
 		"伺服器已遺失此檔案的內容，將嘗試恢復。此設備上的內容未變更。",
 	"The server took too long to respond. Try again.": "伺服器回應時間過長。請重試。",
-	"These files are fine. They just need a paid plan to sync.":
-		"這些檔案沒有問題，只是需要付費方案才能同步。",
+	"These files are fine. Each card below says why they did not sync.":
+		"這些檔案沒有問題。下方卡片說明了為何未同步。",
 	"This account was deleted. Contact support if that is wrong.":
 		"該帳戶已刪除。若有誤，請聯繫客服。",
 	"This cannot be undone.": "此動作無法撤銷。",
@@ -489,12 +471,12 @@ const zhTW: Dict = {
 	"This note could not be processed and was skipped.": "該筆記無法處理，已跳過。",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"此伺服器為自行託管，因此不在此處收集回饋。",
+	"This server isn't accepting this attachment for your account.":
+		"此伺服器不接受您帳戶的此附件。",
 	"This vault": "此儲存庫",
 	"This vault is empty on the server. Upload your {what}?":
 		"此儲存庫在伺服器上是空的。要上傳 {what} 嗎？",
 	"Too large for the server": "檔案過大",
-	"Too many connected AI clients. Disconnect one or upgrade.":
-		"已連接過多個 AI 應用程式。請斷開一個或升級。",
 	"Too many connected Obsidian vaults. Disconnect one or upgrade.":
 		"已連接過多個 Obsidian 知識庫。請斷開一個或升級。",
 	"Too many requests. Wait a moment and try again.": "請求次數過多。請稍後再試。",
@@ -575,8 +557,8 @@ const zhTW: Dict = {
 	"waiting for a plugin update": "等待插件更新",
 	"waiting to retry": "正在等待重試",
 	"{count} attachments": "{count} 個附件",
-	"{count} attachments need a paid plan to sync. See Sync Center.":
-		"{count} 個附件需要付費方案才能同步。詳情請見同步中心。",
+	"{count} attachments will be skipped: this server only accepts text files.":
+		"{count} 個附件將被跳過：此伺服器僅接受文字檔案。",
 	"{count} attempts": "{count} 次嘗試",
 	"{count} conflicts need resolution": "{count} 個衝突需要解決",
 	"{count} conflicts to resolve.": "有 {count} 個衝突需要解決。",
@@ -605,7 +587,7 @@ const zhTW: Dict = {
 	"✕ {count} failed": "✕ {count} 失敗",
 	"✗ couldn't reach a server at this URL": "✗ 無法連線到此位址的伺服器",
 	"✗ server responded but isn't an Engram server": "✗ 伺服器已回應，但不是 Engram 伺服器",
-	"⤳ {count} skipped (Free plan)": "⤳ {count} 已跳過 (免費方案)",
+	"⤳ {count} skipped": "⤳ {count} 已跳過",
 	"👋 Welcome": "👋 歡迎",
 	"💬 Feedback": "💬 回饋",
 	"🔄 Sync Center": "🔄 同步中心",

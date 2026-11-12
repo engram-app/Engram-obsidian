@@ -221,7 +221,9 @@ export function countSkippedAttachments(plan: SyncPlan, attachmentsTextOnly: boo
  *  there is nothing to say (n === 0). Pure for testing. */
 export function skippedAttachmentsLine(n: number): string | null {
 	if (n <= 0) return null;
-	return t("Free syncs notes only — {count} attachments will be skipped.", { count: n });
+	return t("{count} attachments will be skipped: this server only accepts text files.", {
+		count: n,
+	});
 }
 
 /** The preview's quiet "N files ignored" line, so totals that skip the ignore

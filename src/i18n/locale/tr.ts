@@ -10,7 +10,6 @@ const tr: Dict = {
 	"1. Make an account": "1. Bir hesap oluşturun",
 	"10 GB attachments": "10 GB ek",
 	"10 vaults, unlimited devices": "10 kasa, sınırsız cihaz",
-	"2,000 notes searchable": "2.000 not aranabilir",
 	"2. Connect your vault to Engram": "2. Kasanızı Engram ile bağlayın",
 	"3. Connect your AI": "3. Yapay zekanızı bağlayın",
 	"50 GB attachments": "50 GB ek",
@@ -22,10 +21,9 @@ const tr: Dict = {
 		"Geçici bir sunucu sorunu — otomatik olarak tekrar deneniyor.",
 	"AI / MCP setup guide": "Yapay zeka / MCP kurulum kılavuzu",
 	"AI searches": "Yapay zeka aramaları",
-	"API access": "API erişimi",
 	"API key": "API anahtarı",
-	"API keys need a Pro plan. Sign in with your Engram account instead.":
-		"API anahtarları için Pro planı gereklidir. Lütfen Engram hesabınızla giriş yapın.",
+	"API key access is turned off for this account. Sign in with your Engram account instead.":
+		"Bu hesap için API anahtarı erişimi devre dışı. Lütfen Engram hesabınızla giriş yapın.",
 	About: "Hakkında",
 	"Accept it to keep syncing.": "Senkronizasyonu devam ettirmek için kabul edin.",
 	"Access token": "Erişim belirteci",
@@ -38,17 +36,15 @@ const tr: Dict = {
 	"All synced. Your vault and the cloud now match.":
 		"Her şey senkronize edildi. Kasanız ve bulut artık aynı.",
 	"Already in sync. Nothing is deleted.": "Zaten senkronize. Hiçbir şey silinmez.",
-	"Already signed in on another device. Upgrade for multi-device.":
-		"Başka bir cihazda zaten giriş yapılmış. Çoklu cihaz için yükseltin.",
 	"Already up to date. Nothing needed syncing.": "Zaten güncel. Senkronize edilecek bir şey yok.",
 	"An unexpected error — retrying automatically.":
 		"Beklenmeyen bir hata — otomatik olarak tekrar deneniyor.",
+	"Attachment not accepted": "Ek kabul edilmedi",
 	"Attachment storage full": "Ek depolama alanı doldu",
 	"Attachment storage is full — upgrade for more.":
 		"Ek depolama alanı doldu — daha fazla için yükseltin.",
 	"Attachment sync is disabled for this account.": "Bu hesap için ek senkronizasyonu devre dışı.",
 	Attachments: "Ekler",
-	"Attachments need a paid plan": "Ekler için ücretli bir plan gereklidir",
 	"Attachments on this device": "Bu cihazdaki ekler",
 	"Authenticated via Engram account (OAuth).":
 		"Engram hesabı üzerinden kimlik doğrulandı (OAuth).",
@@ -135,6 +131,8 @@ const tr: Dict = {
 		one: "Buluttan {count} öğe siliniyor.",
 		other: "Buluttaki {count} öğe siliniyor.",
 	},
+	"Device limit reached. Disconnect a device or upgrade.":
+		"Cihaz limitine ulaşıldı. Bir cihazı ayırın veya yükseltin.",
 	"Device swap cooldown active. Wait or upgrade.":
 		"Cihaz değiştirme bekleme süresi aktif. Bekleyin veya yükseltin.",
 	Diagnostics: "Tanı",
@@ -183,8 +181,6 @@ const tr: Dict = {
 	"Engram URL": "Engram URL'si",
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} mevcut. {link}.",
-	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
-		"Engram, {all} notunuzun {indexed} tanesini indeksliyor. Geri kalanı yalnızca bu cihazda mevcut. Her şeyi indekslemek için yükseltin.",
 	"Engram is the backend that powers sync and semantic search.":
 		"Engram, senkronizasyonu ve anlamsal aramayı sağlayan arka uçtur.",
 	"Engram search": "Engram arama",
@@ -251,9 +247,9 @@ const tr: Dict = {
 	"Engram: update required": "Engram: güncelleme gerekiyor",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: oturum açma süreniz doldu — yeniden bağlanmak için Engram ayarlarını açın.",
-	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.": {
-		one: "Engram: {count} ek atlandı — resim ve PDF'leri senkronize etmek için planınızı yükseltin.",
-		other: "Engram: {count} ek atlandı — resim ve PDF'leri senkronize etmek için planınızı yükseltin.",
+	"Engram: {count} attachments skipped. See Sync Center for why.": {
+		one: "Engram: {count} ek atlandı. Nedenini görmek için Senkronizasyon Merkezi'ne bakın.",
+		other: "Engram: {count} ek atlandı. Nedenini görmek için Senkronizasyon Merkezi'ni açın.",
 	},
 	"Engram: {count} files failed to sync{detail} — open Sync Center": {
 		one: "Engram: {count} dosya senkronize edilemedi{detail} — Senkronizasyon Merkezi'ni aç",
@@ -290,12 +286,6 @@ const tr: Dict = {
 		"Bazı hatalarla tamamlandı. Hangi işlemlerin başarısız olduğunu görmek için senkronizasyon günlüğünü açın.",
 	"First sync, this may take a moment.": "İlk senkronizasyon, bu biraz zaman alabilir.",
 	Free: "Ücretsiz",
-	"Free syncs notes only — images & PDFs need a paid plan.":
-		"Ücretsiz senkronizasyon sadece notlar için geçerlidir — resimler ve PDF'ler için ücretli bir plan gereklidir.",
-	"Free syncs notes only — {count} attachments will be skipped.": {
-		one: "Ücretsiz sürümde sadece notlar senkronize edilir — {count} ek atlanır.",
-		other: "Ücretsiz sürümde sadece notlar senkronize edilir — {count} ek dosya atlanır.",
-	},
 	"Frontmatter could not be parsed": "Başlık bölümü işlenemedi",
 	"Frontmatter isn't valid YAML.": "Ön bilgi geçerli bir YAML değil.",
 	'Frontmatter key "{key}" could not be parsed as YAML.':
@@ -371,9 +361,6 @@ const tr: Dict = {
 		"Not sayısı limiti aşıldı. Daha fazla not eklemek için yükseltin.",
 	"Note not synced locally": "Not yerel olarak senkronize edilmedi",
 	"Notes on this device": "Bu cihazdaki notlar",
-	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
-		"Buradan sonraki notlar hala normal şekilde senkronize olur ve açılır, sadece arama indeksinde yer almazlar. İndeks en eski notlarınızı saklar, bu yüzden en yeni notlarınız indeksin dışında kalır.",
-	"Notes searchable": "Notlar aranabilir",
 	"Notes stored": "Notlar kaydedildi",
 	"Nothing in this vault syncs until you choose how to merge it with the server.":
 		"Bu kasadaki hiçbir şey, sunucuyla nasıl birleştirileceğine karar vermediğiniz sürece senkronize olmaz.",
@@ -402,8 +389,6 @@ const tr: Dict = {
 		"Tarayıcınızı açarak giriş yapın veya henüz bir hesabınız yoksa oluşturun, ardından bu kasayı bağlayın.",
 	"Or authenticate with a token instead of signing in.":
 		"Veya giriş yapmak yerine bir token ile kimlik doğrulayın.",
-	"Or authenticate with a token instead of signing in. Engram Cloud API keys require the Pro plan; on Free and Starter, sign in above.":
-		"Veya giriş yapmak yerine bir token ile kimlik doğrulayın. Engram Cloud API anahtarları, Pro planını gerektirir; Ücretsiz ve Starter planlarında yukarıdaki giriş yöntemini kullanın.",
 	"Paths to skip (one per line). Folder patterns end with /. Built-in: {configDir}/, .trash/, .git/":
 		"Atlanacak yollar (her satırda bir tane). Klasör kalıpları / ile biter. Dahili: {configDir}/, .trash/, .git/",
 	"Pick a vault": "Bir kasa seçin",
@@ -455,8 +440,6 @@ const tr: Dict = {
 	"Search failed — check connection": "Arama başarısız oldu — bağlantıyı kontrol edin",
 	"Search settings": "Arama ayarları",
 	"Search your vault…": "Kasanızı arayın…",
-	"Searching {indexed} of {all} notes. Upgrade to search everything.":
-		"{all} notunuzun içinden {indexed} tanesini arıyor. Her şeyi aramak için yükseltin.",
 	"See full pricing": "Fiyatlandırma bilgilerini görün",
 	"See the AI setup guide": "Yapay zeka kurulum kılavuzuna bakın",
 	"Select which vault this plugin syncs with.":
@@ -515,8 +498,8 @@ const tr: Dict = {
 	"Sync server": "Senkronizasyon sunucusu",
 	"Sync these now": "Şimdi senkronize et",
 	"Sync...": "Senkronize ediliyor...",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"Senkronizasyon tamamlandı. Bazı eklerin senkronizasyonu için ücretli bir plan gerekebilir (aşağıya bakın).",
+	"Synced. Some attachments were skipped (see below).":
+		"Senkronize edildi. Bazı ekler atlandı (aşağıya bakın).",
 	"Syncing attachments": "Eklerin senkronizasyonu",
 	"Syncing your vault": "Kasanızın senkronizasyonu",
 	"Syncing...": "Senkronizasyon yapılıyor...",
@@ -534,8 +517,6 @@ const tr: Dict = {
 		"Engram sunucusu artık bu eklenti sürümünü kabul etmiyor (şu anda {version} veya daha yeni bir sürüm gerekiyor), bu nedenle notlar gönderilmiyor veya alınmıyor. Bu cihazda yapılan değişiklikler, güncelleyene kadar burada kalacak.",
 	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
 		"Engram sunucusu artık bu eklenti sürümünü kabul etmiyor, bu nedenle notlar gönderilmiyor veya alınmıyor. Bu cihazda yapılan değişiklikler, güncelleyene kadar burada kalacak.",
-	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
-		"Ücretsiz planda sadece notlar senkronize edilir. Resimleri ve PDF'leri senkronize etmek için yükseltin.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
 		"Dosya, sunucunun boyut sınırını aştı. Sıkıştırın veya bölün, sonra senkronize olur.",
 	"The file is too large for the server.": "Dosya, sunucu için çok büyük.",
@@ -549,8 +530,8 @@ const tr: Dict = {
 		"Sunucu bu dosyanın içeriğini kaybetti ve geri yüklemeyi deneyecek. Bu cihazda hiçbir değişiklik yapılmadı.",
 	"The server took too long to respond. Try again.":
 		"Sunucu yanıt vermekte çok yavaş. Lütfen tekrar deneyin.",
-	"These files are fine. They just need a paid plan to sync.":
-		"Bu dosyalar sorunsuz. Sadece senkronize olmak için ücretli bir plana ihtiyaçları var.",
+	"These files are fine. Each card below says why they did not sync.":
+		"Bu dosyalar sorunsuz. Aşağıdaki her kart, neden senkronize olmadığını belirtir.",
 	"This account was deleted. Contact support if that is wrong.":
 		"Bu hesap silindi. Yanlışsa destekle iletişime geçin.",
 	"This cannot be undone.": "Bu geri alınamaz.",
@@ -563,12 +544,12 @@ const tr: Dict = {
 	"This note could not be processed and was skipped.": "Bu not işlenemedi ve atlandı.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Bu sunucu kendi kendine barındırıldığı için geri bildirim burada toplanmaz. ",
+	"This server isn't accepting this attachment for your account.":
+		"Bu sunucu, hesabınız için bu eki kabul etmiyor.",
 	"This vault": "Bu kasa",
 	"This vault is empty on the server. Upload your {what}?":
 		"Bu kasa sunucuda boş. {what} dosyanızı yüklemek ister misiniz?",
 	"Too large for the server": "Sunucu için çok büyük",
-	"Too many connected AI clients. Disconnect one or upgrade.":
-		"Bağlı çok fazla yapay zeka istemcisi var. Birini ayırın veya yükseltin.",
 	"Too many connected Obsidian vaults. Disconnect one or upgrade.":
 		"Bağlı çok fazla Obsidian kasa var. Birini ayırın veya yükseltin.",
 	"Too many requests. Wait a moment and try again.":
@@ -662,9 +643,13 @@ const tr: Dict = {
 	"waiting for a plugin update": "Eklenti güncellemesini bekliyor",
 	"waiting to retry": "Yeniden denemeyi bekliyor",
 	"{count} attachments": { one: "{count} ek", other: "{count} ek" },
-	"{count} attachments need a paid plan to sync. See Sync Center.": {
-		one: "{count} ek, senkronize olmak için ücretli bir plana ihtiyaç duyar. Senkronizasyon Merkezi'ni inceleyin.",
-		other: "{count} ek, senkronize olmak için ücretli bir plana ihtiyaç duyar. Senkronizasyon Merkezi'ne bakın.",
+	"{count} attachments skipped. See Sync Center.": {
+		one: "{count} ek atlandı. Senkronizasyon Merkezi'ne bakın.",
+		other: "{count} ek atlandı. Senkronizasyon Merkezi'ne bakın.",
+	},
+	"{count} attachments will be skipped: this server only accepts text files.": {
+		one: "{count} ek atlanacak: bu sunucu sadece metin dosyalarını kabul eder.",
+		other: "{count} ek atlanacak: bu sunucu sadece metin dosyalarını kabul eder.",
 	},
 	"{count} attempts": { one: "{count} deneme", other: "{count} deneme" },
 	"{count} conflicts need resolution": {
@@ -725,10 +710,7 @@ const tr: Dict = {
 	"✗ couldn't reach a server at this URL": "✗ Bu URL'deki bir sunucuya ulaşılamadı",
 	"✗ server responded but isn't an Engram server":
 		"✗ Sunucu yanıt verdi ancak bir Engram sunucusu değil",
-	"⤳ {count} skipped (Free plan)": {
-		one: "⤳ {count} atlandı (Ücretsiz plan)",
-		other: "⤳ {count} atlandı (Ücretsiz plan)",
-	},
+	"⤳ {count} skipped": { one: "⤳ {count} atlandı", other: "⤳ {count} atlandı" },
 	"👋 Welcome": "👋 Hoş geldiniz",
 	"💬 Feedback": "💬 Geri bildirim",
 	"🔄 Sync Center": "🔄 Senkronizasyon Merkezi",

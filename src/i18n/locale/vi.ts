@@ -10,7 +10,6 @@ const vi: Dict = {
 	"1. Make an account": "1. Tạo tài khoản",
 	"10 GB attachments": "10 GB tệp đính kèm",
 	"10 vaults, unlimited devices": "10 kho lưu trữ, số lượng thiết bị không giới hạn",
-	"2,000 notes searchable": "Có thể tìm kiếm 2.000 ghi chú",
 	"2. Connect your vault to Engram": "2. Kết nối kho lưu trữ của bạn với Engram",
 	"3. Connect your AI": "3. Kết nối AI của bạn",
 	"50 GB attachments": "50 GB tệp đính kèm",
@@ -22,10 +21,9 @@ const vi: Dict = {
 		"Một vấn đề tạm thời với máy chủ — đang thử lại tự động.",
 	"AI / MCP setup guide": "Hướng dẫn thiết lập AI / MCP",
 	"AI searches": "Tìm kiếm AI",
-	"API access": "Truy cập API",
 	"API key": "Khóa API",
-	"API keys need a Pro plan. Sign in with your Engram account instead.":
-		"Các khóa API cần gói Pro. Đăng nhập bằng tài khoản Engram của bạn.",
+	"API key access is turned off for this account. Sign in with your Engram account instead.":
+		"Quyền truy cập API key đã bị tắt cho tài khoản này. Đăng nhập bằng tài khoản Engram của bạn.",
 	About: "Giới thiệu",
 	"Accept it to keep syncing.": "Chấp nhận để tiếp tục đồng bộ hóa.",
 	"Access token": "Token truy cập",
@@ -38,18 +36,16 @@ const vi: Dict = {
 	"All synced. Your vault and the cloud now match.":
 		"Tất cả đã đồng bộ hóa. Kho lưu trữ của bạn và trên đám mây hiện đã khớp.",
 	"Already in sync. Nothing is deleted.": "Đã đồng bộ hóa. Không có gì bị xóa.",
-	"Already signed in on another device. Upgrade for multi-device.":
-		"Đã đăng nhập trên một thiết bị khác. Nâng cấp để sử dụng trên nhiều thiết bị.",
 	"Already up to date. Nothing needed syncing.": "Đã cập nhật. Không cần đồng bộ hóa gì.",
 	"An unexpected error — retrying automatically.":
 		"Một lỗi không mong muốn — đang thử lại tự động.",
+	"Attachment not accepted": "Tệp đính kèm không được chấp nhận",
 	"Attachment storage full": "Bộ nhớ tệp đính kèm đã đầy",
 	"Attachment storage is full — upgrade for more.":
 		"Không gian lưu trữ tệp đính kèm đã đầy — nâng cấp để có thêm dung lượng.",
 	"Attachment sync is disabled for this account.":
 		"Tải lên tệp đính kèm đã bị tắt cho tài khoản này.",
 	Attachments: "Tệp đính kèm",
-	"Attachments need a paid plan": "Tệp đính kèm cần gói trả phí",
 	"Attachments on this device": "Tệp đính kèm trên thiết bị này",
 	"Authenticated via Engram account (OAuth).": "Xác thực qua tài khoản Engram (OAuth).",
 	"Authenticated via manual API key.": "Xác thực qua khóa API thủ công.",
@@ -123,6 +119,8 @@ const vi: Dict = {
 	Deleting: "Đang xóa",
 	"Deleting {count} local files.": "Xóa {count} tệp cục bộ.",
 	"Deleting {count} on the cloud.": "Xóa {count} trên đám mây.",
+	"Device limit reached. Disconnect a device or upgrade.":
+		"Đã đạt giới hạn số lượng thiết bị. Hủy kết nối một thiết bị hoặc nâng cấp.",
 	"Device swap cooldown active. Wait or upgrade.":
 		"Chế độ chờ chuyển thiết bị đang hoạt động. Vui lòng chờ hoặc nâng cấp.",
 	Diagnostics: "Chẩn đoán",
@@ -159,8 +157,6 @@ const vi: Dict = {
 	"Engram URL": "URL Engram",
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} khả dụng. {link}.",
-	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
-		"Engram lập chỉ mục {indexed} trong số {all} ghi chú của bạn. Phần còn lại chỉ khớp trên thiết bị này. Nâng cấp để lập chỉ mục mọi thứ.",
 	"Engram is the backend that powers sync and semantic search.":
 		"Engram là backend cung cấp khả năng đồng bộ hóa và tìm kiếm ngữ nghĩa.",
 	"Engram search": "Tìm kiếm Engram",
@@ -222,8 +218,8 @@ const vi: Dict = {
 	"Engram: update required": "Engram: cần cập nhật",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: phiên đăng nhập của bạn đã hết hạn — mở cài đặt Engram để kết nối lại.",
-	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.":
-		"Engram: {count} tệp đính kèm bị bỏ qua — nâng cấp gói của bạn để đồng bộ hóa ảnh & PDF.",
+	"Engram: {count} attachments skipped. See Sync Center for why.":
+		"Engram: {count} tệp đính kèm bị bỏ qua. Xem Trung tâm đồng bộ hóa để biết lý do.",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
 		"Engram: {count} tệp không đồng bộ hóa{detail} — mở Trung tâm đồng bộ hóa",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
@@ -253,10 +249,6 @@ const vi: Dict = {
 	"First sync, this may take a moment.":
 		"Lần đồng bộ hóa đầu tiên, có thể mất một chút thời gian.",
 	Free: "Miễn phí",
-	"Free syncs notes only — images & PDFs need a paid plan.":
-		"Đồng bộ hóa miễn phí chỉ dành cho ghi chú — hình ảnh & PDF cần gói trả phí.",
-	"Free syncs notes only — {count} attachments will be skipped.":
-		"Miễn phí đồng bộ hóa ghi chú, chỉ {count} tệp đính kèm sẽ bị bỏ qua.",
 	"Frontmatter could not be parsed": "Không thể phân tích frontmatter",
 	"Frontmatter isn't valid YAML.": "Frontmatter không phải là định dạng YAML hợp lệ.",
 	'Frontmatter key "{key}" could not be parsed as YAML.':
@@ -332,9 +324,6 @@ const vi: Dict = {
 		"Đã đạt giới hạn ghi chú. Nâng cấp để thêm nhiều ghi chú hơn.",
 	"Note not synced locally": "Ghi chú chưa được đồng bộ hóa cục bộ",
 	"Notes on this device": "Ghi chú trên thiết bị này",
-	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
-		"Các ghi chú sau đây vẫn được đồng bộ hóa và mở bình thường, chúng chỉ không nằm trong chỉ mục tìm kiếm. Chỉ mục lưu trữ các ghi chú cũ nhất của bạn, vì vậy các ghi chú mới nhất của bạn sẽ không nằm trong đó.",
-	"Notes searchable": "Ghi chú có thể tìm kiếm",
 	"Notes stored": "Ghi chú đã được lưu trữ",
 	"Nothing in this vault syncs until you choose how to merge it with the server.":
 		"Không có gì trong kho lưu trữ này được đồng bộ hóa cho đến khi bạn chọn cách hợp nhất nó với máy chủ.",
@@ -363,8 +352,6 @@ const vi: Dict = {
 		"Mở trình duyệt của bạn để đăng nhập, hoặc tạo tài khoản nếu bạn chưa có, sau đó liên kết kho lưu trữ này.",
 	"Or authenticate with a token instead of signing in.":
 		"Hoặc xác thực bằng token thay vì đăng nhập.",
-	"Or authenticate with a token instead of signing in. Engram Cloud API keys require the Pro plan; on Free and Starter, sign in above.":
-		"Hoặc xác thực bằng token thay vì đăng nhập. Các khóa API Engram Cloud yêu cầu gói Pro; trên các gói Free và Starter, hãy đăng nhập ở trên.",
 	"Paths to skip (one per line). Folder patterns end with /. Built-in: {configDir}/, .trash/, .git/":
 		"Các đường dẫn cần bỏ qua (mỗi dòng một). Mẫu thư mục kết thúc bằng /. Tích hợp sẵn: {configDir}/, .trash/, .git/",
 	"Pick a vault": "Chọn một kho lưu trữ",
@@ -418,8 +405,6 @@ const vi: Dict = {
 	"Search failed — check connection": "Tìm kiếm thất bại — kiểm tra kết nối",
 	"Search settings": "Cài đặt tìm kiếm",
 	"Search your vault…": "Tìm kiếm trong kho lưu trữ của bạn…",
-	"Searching {indexed} of {all} notes. Upgrade to search everything.":
-		"Tìm kiếm {indexed} trong số {all} ghi chú. Nâng cấp để tìm kiếm mọi thứ.",
 	"See full pricing": "Xem chi tiết giá",
 	"See the AI setup guide": "Xem hướng dẫn thiết lập AI",
 	"Select which vault this plugin syncs with.": "Chọn kho lưu trữ mà plugin này sẽ đồng bộ hóa.",
@@ -474,8 +459,8 @@ const vi: Dict = {
 	"Sync server": "Máy chủ đồng bộ hóa",
 	"Sync these now": "Đồng bộ hóa các tệp này ngay bây giờ",
 	"Sync...": "Đồng bộ hóa...",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"Đã đồng bộ hóa. Một số tệp đính kèm cần gói trả phí để đồng bộ hóa (xem bên dưới).",
+	"Synced. Some attachments were skipped (see below).":
+		"Đã đồng bộ hóa. Một số tệp đính kèm đã bị bỏ qua (xem bên dưới).",
 	"Syncing attachments": "Đang đồng bộ hóa tệp đính kèm",
 	"Syncing your vault": "Đang đồng bộ hóa kho lưu trữ của bạn",
 	"Syncing...": "Đang đồng bộ hóa...",
@@ -493,8 +478,6 @@ const vi: Dict = {
 		"Máy chủ Engram không còn hỗ trợ phiên bản plugin này (cần phiên bản {version} trở lên), vì vậy ghi chú không được gửi hoặc nhận. Các thay đổi bạn thực hiện trên thiết bị này sẽ vẫn ở đây cho đến khi bạn cập nhật.",
 	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
 		"Máy chủ Engram không còn hỗ trợ phiên bản plugin này, vì vậy ghi chú không được gửi hoặc nhận. Các thay đổi bạn thực hiện trên thiết bị này sẽ vẫn ở đây cho đến khi bạn cập nhật.",
-	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
-		"Gói miễn phí chỉ đồng bộ hóa ghi chú. Nâng cấp để đồng bộ hóa hình ảnh và PDF.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
 		"Tệp vượt quá giới hạn kích thước của máy chủ. Nén hoặc chia nhỏ nó, sau đó nó sẽ được đồng bộ hóa.",
 	"The file is too large for the server.": "Tệp quá lớn đối với máy chủ.",
@@ -507,8 +490,8 @@ const vi: Dict = {
 	"The server lost this file's stored content and will try to restore it. Nothing on this device was changed.":
 		"Máy chủ đã mất nội dung của tệp này và sẽ cố gắng khôi phục. Không có gì thay đổi trên thiết bị này.",
 	"The server took too long to respond. Try again.": "Máy chủ phản hồi quá chậm. Thử lại.",
-	"These files are fine. They just need a paid plan to sync.":
-		"Các tệp này không có vấn đề. Chúng chỉ cần một gói trả phí để đồng bộ hóa.",
+	"These files are fine. Each card below says why they did not sync.":
+		"Các tệp này không có vấn đề gì. Mỗi mục bên dưới giải thích lý do tại sao chúng không được đồng bộ hóa.",
 	"This account was deleted. Contact support if that is wrong.":
 		"Tài khoản này đã bị xóa. Liên hệ hỗ trợ nếu điều này là sai.",
 	"This cannot be undone.": "Không thể hoàn tác.",
@@ -522,12 +505,12 @@ const vi: Dict = {
 		"Ghi chú này không thể xử lý và đã bị bỏ qua.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Máy chủ này được tự lưu trữ, vì vậy phản hồi không được thu thập ở đây. ",
+	"This server isn't accepting this attachment for your account.":
+		"Máy chủ này không chấp nhận tệp đính kèm này cho tài khoản của bạn.",
 	"This vault": "Kho lưu trữ này",
 	"This vault is empty on the server. Upload your {what}?":
 		"Kho lưu trữ này trống trên máy chủ. Bạn muốn tải lên {what}?",
 	"Too large for the server": "Quá lớn cho máy chủ",
-	"Too many connected AI clients. Disconnect one or upgrade.":
-		"Quá nhiều ứng dụng AI được kết nối. Ngắt kết nối một ứng dụng hoặc nâng cấp.",
 	"Too many connected Obsidian vaults. Disconnect one or upgrade.":
 		"Quá nhiều kho lưu trữ Obsidian được kết nối. Ngắt kết nối một kho hoặc nâng cấp.",
 	"Too many requests. Wait a moment and try again.":
@@ -613,8 +596,10 @@ const vi: Dict = {
 	"waiting for a plugin update": "Đang chờ cập nhật plugin",
 	"waiting to retry": "đang chờ thử lại",
 	"{count} attachments": "{count} tệp đính kèm",
-	"{count} attachments need a paid plan to sync. See Sync Center.":
-		"{count} tệp đính kèm cần gói trả phí để đồng bộ hóa. Xem Trung tâm đồng bộ hóa.",
+	"{count} attachments skipped. See Sync Center.":
+		"{count} tệp đính kèm bị bỏ qua. Xem Trung tâm đồng bộ hóa.",
+	"{count} attachments will be skipped: this server only accepts text files.":
+		"{count} tệp đính kèm sẽ bị bỏ qua: máy chủ này chỉ chấp nhận tệp văn bản.",
 	"{count} attempts": "{count} lần thử",
 	"{count} conflicts need resolution": "{count} xung đột cần giải quyết",
 	"{count} conflicts to resolve.": "{count} xung đột cần giải quyết.",
@@ -645,7 +630,7 @@ const vi: Dict = {
 	"✗ couldn't reach a server at this URL": "✗ Không thể kết nối đến máy chủ tại URL này",
 	"✗ server responded but isn't an Engram server":
 		"✗ Máy chủ phản hồi nhưng không phải là máy chủ Engram",
-	"⤳ {count} skipped (Free plan)": "⤳ {count} bỏ qua (Gói miễn phí)",
+	"⤳ {count} skipped": "⤳ {count} đã bỏ qua",
 	"👋 Welcome": "👋 Chào mừng",
 	"💬 Feedback": "💬 Phản hồi",
 	"🔄 Sync Center": "🔄 Trung tâm đồng bộ hóa",

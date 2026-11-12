@@ -265,7 +265,9 @@ function renderPlanSkips(parent: HTMLElement, plugin: EngramSyncPlugin, refresh:
 	const body = section.createDiv({ cls: "engram-sync-center-section-body" });
 	body.createEl("p", {
 		cls: "engram-sync-center-card-hint",
-		text: t("These files are fine. They just need a paid plan to sync."),
+		// Names no plan: a quota card here reaches Starter and Pro users too, and
+		// a text-only server refusal is not a tier at all.
+		text: t("These files are fine. Each card below says why they did not sync."),
 	});
 
 	for (const [category, list] of groups) {
@@ -686,9 +688,8 @@ function renderStats(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 	}
 
 	// "Notes on this device" is rendered now and REMOVED again by renderPlanStats
-	// if the server agrees with it. On a synced vault it was the third row
-	// showing the same number as "Notes searchable" and "Notes stored", which is
-	// two rows of restatement; the count only carries information when it
+	// if the server agrees with it. On a synced vault it repeated "Notes
+	// stored", which is restatement; the count only carries information when it
 	// DISAGREES, and a disagreement is exactly what a user needs to see. It is
 	// created up front rather than after the fetch so a signed-out vault, where
 	// no plan rows ever arrive, still gets its local count.
@@ -721,7 +722,7 @@ function renderStats(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 		vaultEl.value.setText(name || t("not linked"));
 	});
 
-	renderPlanStats(body, grid, plugin, {
+	renderPlanStats(grid, plugin, {
 		localNoteCount: noteCount,
 		localNotesRow: localNotes.row,
 		localAttachmentCount: attCount,
@@ -733,13 +734,12 @@ function renderStats(parent: HTMLElement, plugin: EngramSyncPlugin): void {
  *
  *  Shown whenever the tier is known, NOT only when a cap is exceeded. A Free
  *  user at 300 of 2,000 otherwise sees nothing, and first learns the limit
- *  exists when a search quietly fails to find a note they just wrote.
+ *  exists when a note create is refused.
  *
  *  Caps already reach the plugin on the channel join; usage does not, and it
  *  moves with every note written, so it is fetched here. Advisory only, per
  *  the endpoint's contract: nothing on the client gates on it. */
 function renderPlanStats(
-	body: HTMLElement,
 	grid: HTMLElement,
 	plugin: EngramSyncPlugin,
 	local: {
@@ -776,14 +776,6 @@ function renderPlanStats(
 			// Only reached when that row exists, since a failed fetch skips this
 			// whole block and leaves the local rows standing.
 			if (rows.some((r) => r.label === t("Attachments"))) local.localAttachmentsRow.remove();
-
-			// The hint only earns its line when the limit actually bites. Showing
-			// it at 300/2,000 is noise; showing it at 2,000/2,000 is the one
-			// moment the user needs to know WHICH notes fell out.
-			const pinched = rows.find((r) => r.atLimit && r.hint);
-			if (pinched?.hint) {
-				body.createEl("p", { cls: "engram-sync-center-card-hint", text: pinched.hint });
-			}
 		})
 		.catch(() => {
 			// An advisory read failing must never look like a sync fault.

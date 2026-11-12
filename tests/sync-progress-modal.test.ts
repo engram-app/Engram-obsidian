@@ -123,13 +123,17 @@ describe("renderCompletionSummary — three-way tally", () => {
 		expect(findByCls(parent, "engram-progress-plan-note")).toBeNull();
 	});
 
-	test("skipped > 0 shows the 'need a paid plan' note with an Upgrade affordance", () => {
+	// A skip is a quota hit (any tier, Starter and Pro included) or a server
+	// that only takes text files. Neither is "Free", and a paid user at quota
+	// already has a paid plan, so the summary names no plan and defers to the
+	// Sync Center cards for the reason.
+	test("skipped > 0 shows a plan-neutral note with an Upgrade affordance", () => {
 		const parent = render({ synced: 10, skipped: 3, failed: 0 });
 		const note = findByCls(parent, "engram-progress-plan-note");
 		expect(note).not.toBeNull();
 		const noteText = note ? allText(note) : "";
-		expect(noteText.toLowerCase()).toContain("paid plan");
 		expect(noteText).toContain("Sync Center");
+		expect(allText(parent)).not.toMatch(/paid plan|Free plan/i);
 
 		const upgrade = findByCls(parent, "engram-progress-upgrade");
 		expect(upgrade).not.toBeNull();
@@ -230,7 +234,7 @@ describe("describeCompletion", () => {
 
 	test("plan-skipped attachments point below without sounding like a failure", () => {
 		expect(describeCompletion({ synced: 80, skipped: 3, failed: 0 })).toBe(
-			"Synced. Some attachments need a paid plan to sync (see below).",
+			"Synced. Some attachments were skipped (see below).",
 		);
 	});
 

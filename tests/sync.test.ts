@@ -3976,7 +3976,6 @@ describe("SyncEngine IssueStore integration", () => {
 				attachmentsTextOnly: false,
 				maxFileBytes: 10_000_000,
 				attachmentBytesCap: null,
-				indexedNotesCap: null,
 				updatedAt: 0,
 			};
 			engine.hydratePlanState(plan);
@@ -4084,6 +4083,22 @@ describe("SyncEngine attachment pre-gate (client-side plan limits)", () => {
 		expect(engine.issues.get("photo.png")?.category).toBe("needs_pro");
 		// Informational skip is tallied for the batched toast.
 		expect((engine as any).getAttachmentLimitedCount()).toBe(1);
+	});
+
+	// Every Engram Cloud plan syncs every attachment type, so a text-only plan
+	// state comes from a server setting, not Free. The message used to read
+	// "Free syncs notes only, images & PDFs need a paid plan."
+	test("text-only pre-gate message names the server, not a plan", () => {
+		const engine = createEngine();
+		engine.applyPlanState({
+			tier: "free",
+			attachmentsTextOnly: true,
+			maxFileBytes: 10_000_000,
+			attachmentBytesCap: null,
+			updatedAt: 1,
+		});
+		const gate = (engine as any).preGateAttachment(new TFile("photo.png", Date.now()));
+		expect(gate?.message).toBe("This file type isn't accepted by this server.");
 	});
 
 	test("free text-only: a known text ext (.txt) attachment is NOT pre-skipped", async () => {
@@ -5138,6 +5153,24 @@ describe("SyncEngine attachment 402 (Free tier) handling", () => {
 		const toast = __noticeCapture.notices.find((n) => /attachment skipped/.test(n.message));
 		expect(toast).toBeDefined();
 		expect(toast?.message).toContain("1 attachment skipped");
+	});
+
+	// Skips come from a quota hit on any tier or a text-only server; every
+	// Cloud plan syncs images and PDFs, so the toast must not promise that
+	// upgrading unlocks them.
+	test("skip toast names no plan and promises no image unlock", async () => {
+		const engine = createEngine();
+		const file = new TFile("Assets/only.png", Date.now());
+		(file as any).stat = { mtime: Date.now(), size: 1024 };
+		mockApp.vault.getFiles.mockReturnValue([file]);
+		mockApp.vault.readBinary.mockResolvedValue(new ArrayBuffer(8));
+		(mockApi.pushAttachment as jest.Mock).mockRejectedValueOnce(makeAttachmentLimitedError());
+		(mockApi.ping as jest.Mock).mockResolvedValue({ ok: true });
+
+		await engine.pushAll();
+		const toast = __noticeCapture.notices.find((n) => /attachment skipped/.test(n.message));
+		expect(toast?.message).toContain("Sync Center");
+		expect(toast?.message).not.toMatch(/upgrade|images|paid plan/i);
 	});
 
 	function makeQuotaError(): LimitExceededError {

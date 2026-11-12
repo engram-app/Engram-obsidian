@@ -136,10 +136,9 @@ async function searchServer(
  * missed "running" and the plugin ranked differently than the web app or MCP
  * for the same query. It now runs both and fuses them.
  *
- * The local matcher stays because it is the only thing that can see notes past
- * `indexed_notes_cap` — on Free that is 8,000 of 10,000 notes, synced and
- * openable but absent from the server index. It is also what makes every mode
- * return something offline, and the only reason a per-result provenance pill is
+ * The local matcher stays because it is what makes every mode return something
+ * offline (the server searches every stored note; past the plan's passage
+ * budget the least recently edited ones are keyword-only there), and the only reason a per-result provenance pill is
  * derivable: the server sends no per-leg scores, so only the side that did the
  * fusion knows where a hit came from.
  *

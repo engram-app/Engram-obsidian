@@ -10,7 +10,6 @@ const id: Dict = {
 	"1. Make an account": "1. Buat akun",
 	"10 GB attachments": "10 GB lampiran",
 	"10 vaults, unlimited devices": "10 Vault, perangkat tanpa batas",
-	"2,000 notes searchable": "2.000 catatan dapat dicari",
 	"2. Connect your vault to Engram": "2. Hubungkan Vault Anda ke Engram",
 	"3. Connect your AI": "3. Hubungkan AI Anda",
 	"50 GB attachments": "50 GB lampiran",
@@ -22,10 +21,9 @@ const id: Dict = {
 		"Masalah server sementara — mencoba lagi secara otomatis.",
 	"AI / MCP setup guide": "Panduan pengaturan AI / MCP",
 	"AI searches": "Pencarian AI",
-	"API access": "Akses API",
 	"API key": "Kunci API",
-	"API keys need a Pro plan. Sign in with your Engram account instead.":
-		"Kunci API memerlukan paket Pro. Masuk dengan akun Engram Anda.",
+	"API key access is turned off for this account. Sign in with your Engram account instead.":
+		"Akses kunci API dimatikan untuk akun ini. Masuk dengan akun Engram Anda.",
 	About: "Tentang",
 	"Accept it to keep syncing.": "Terima untuk melanjutkan sinkronisasi.",
 	"Access token": "Token akses",
@@ -38,19 +36,17 @@ const id: Dict = {
 	"All synced. Your vault and the cloud now match.":
 		"Semua sudah disinkronkan. Vault Anda dan cloud sekarang sama.",
 	"Already in sync. Nothing is deleted.": "Sudah tersinkronisasi. Tidak ada yang dihapus.",
-	"Already signed in on another device. Upgrade for multi-device.":
-		"Sudah masuk dengan perangkat lain. Tingkatkan untuk penggunaan multi-perangkat.",
 	"Already up to date. Nothing needed syncing.":
 		"Sudah terbaru. Tidak ada yang perlu disinkronkan.",
 	"An unexpected error — retrying automatically.":
 		"Terjadi kesalahan tak terduga — mencoba lagi secara otomatis.",
+	"Attachment not accepted": "Lampiran tidak diterima",
 	"Attachment storage full": "Ruang penyimpanan lampiran penuh",
 	"Attachment storage is full — upgrade for more.":
 		"Ruang penyimpanan lampiran penuh — tingkatkan untuk mendapatkan lebih banyak.",
 	"Attachment sync is disabled for this account.":
 		"Sinkronisasi lampiran dinonaktifkan untuk akun ini.",
 	Attachments: "Lampiran",
-	"Attachments need a paid plan": "Lampiran memerlukan paket berbayar",
 	"Attachments on this device": "Lampiran di perangkat ini",
 	"Authenticated via Engram account (OAuth).": "Terautentikasi melalui akun Engram (OAuth).",
 	"Authenticated via manual API key.": "Terautentikasi melalui kunci API manual.",
@@ -126,6 +122,8 @@ const id: Dict = {
 	Deleting: "Menghapus",
 	"Deleting {count} local files.": "Menghapus {count} berkas lokal.",
 	"Deleting {count} on the cloud.": "Menghapus {count} di cloud.",
+	"Device limit reached. Disconnect a device or upgrade.":
+		"Batas perangkat tercapai. Putuskan sambungan perangkat atau tingkatkan.",
 	"Device swap cooldown active. Wait or upgrade.":
 		"Fitur penggantian perangkat sedang aktif. Tunggu atau tingkatkan.",
 	Diagnostics: "Diagnostik",
@@ -163,8 +161,6 @@ const id: Dict = {
 	"Engram URL": "URL Engram",
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} tersedia. {link}.",
-	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
-		"Engram mengindeks {indexed} dari {all} catatan Anda. Sisanya hanya cocok di perangkat ini. Tingkatkan untuk mengindeks semuanya.",
 	"Engram is the backend that powers sync and semantic search.":
 		"Engram adalah backend yang mendukung sinkronisasi dan pencarian semantik.",
 	"Engram search": "Engram pencarian",
@@ -226,8 +222,8 @@ const id: Dict = {
 	"Engram: update required": "Engram: pembaruan diperlukan",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: sesi login Anda telah berakhir — buka pengaturan Engram untuk menghubungkan kembali.",
-	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.":
-		"Engram: {count} lampiran dilewati — tingkatkan paket Anda untuk menyinkronkan gambar & PDF.",
+	"Engram: {count} attachments skipped. See Sync Center for why.":
+		"Engram: {count} lampiran dilewati. Lihat Pusat Sinkronisasi untuk alasannya.",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
 		"Engram: {count} berkas gagal disinkronkan{detail} — buka Pusat Sinkronisasi",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
@@ -256,10 +252,6 @@ const id: Dict = {
 		"Selesai dengan beberapa kesalahan. Buka log sinkronisasi untuk melihat apa yang gagal.",
 	"First sync, this may take a moment.": "Sinkronisasi pertama, ini mungkin memerlukan waktu.",
 	Free: "Gratis",
-	"Free syncs notes only — images & PDFs need a paid plan.":
-		"Sinkronisasi catatan gratis saja — gambar & PDF memerlukan langganan berbayar.",
-	"Free syncs notes only — {count} attachments will be skipped.":
-		"Sinkronisasi catatan gratis, hanya {count} lampiran yang akan dilewati.",
 	"Frontmatter could not be parsed": "Frontmatter tidak dapat diproses",
 	"Frontmatter isn't valid YAML.": "Frontmatter bukan YAML yang valid.",
 	'Frontmatter key "{key}" could not be parsed as YAML.':
@@ -335,9 +327,6 @@ const id: Dict = {
 		"Batas catatan tercapai. Tingkatkan untuk menambahkan lebih banyak catatan.",
 	"Note not synced locally": "Catatan belum disinkronkan secara lokal",
 	"Notes on this device": "Catatan di perangkat ini",
-	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
-		"Catatan setelah ini masih disinkronkan dan dibuka seperti biasa, hanya saja tidak ada dalam indeks pencarian. Indeks menyimpan catatan Anda yang paling lama, sehingga catatan terbaru Anda yang tidak masuk ke dalam indeks.",
-	"Notes searchable": "Catatan dapat dicari",
 	"Notes stored": "Catatan disimpan",
 	"Nothing in this vault syncs until you choose how to merge it with the server.":
 		"Tidak ada yang disinkronkan di Vault ini sampai Anda memilih cara menggabungkannya dengan server.",
@@ -366,8 +355,6 @@ const id: Dict = {
 		"Membuka browser Anda untuk masuk, atau membuat akun jika Anda belum memilikinya, lalu menghubungkan Vault ini.",
 	"Or authenticate with a token instead of signing in.":
 		"Atau autentikasi dengan token, bukan masuk.",
-	"Or authenticate with a token instead of signing in. Engram Cloud API keys require the Pro plan; on Free and Starter, sign in above.":
-		"Atau, autentikasi dengan token alih-alih masuk. Kunci API Cloud Engram memerlukan paket Pro; pada paket Gratis dan Starter, masuk seperti di atas.",
 	"Paths to skip (one per line). Folder patterns end with /. Built-in: {configDir}/, .trash/, .git/":
 		"Jalur yang akan dilewati (satu per baris). Pola folder berakhir dengan /. Bawaan: {configDir}/, .trash/, .git/",
 	"Pick a vault": "Pilih Vault",
@@ -421,8 +408,6 @@ const id: Dict = {
 	"Search failed — check connection": "Pencarian gagal — periksa koneksi",
 	"Search settings": "Pengaturan pencarian",
 	"Search your vault…": "Cari di Vault Anda…",
-	"Searching {indexed} of {all} notes. Upgrade to search everything.":
-		"Mencari {indexed} dari {all} catatan. Tingkatkan untuk mencari semuanya.",
 	"See full pricing": "Lihat harga lengkap",
 	"See the AI setup guide": "Lihat panduan pengaturan AI",
 	"Select which vault this plugin syncs with.":
@@ -478,8 +463,8 @@ const id: Dict = {
 	"Sync server": "Server sinkronisasi",
 	"Sync these now": "Sinkronisasi sekarang",
 	"Sync...": "Sinkronisasi...",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"Sinkronisasi selesai. Beberapa lampiran memerlukan paket berbayar untuk disinkronkan (lihat di bawah).",
+	"Synced. Some attachments were skipped (see below).":
+		"Disinkronkan. Beberapa lampiran dilewati (lihat di bawah).",
 	"Syncing attachments": "Mensinkronkan lampiran",
 	"Syncing your vault": "Mensinkronkan Vault Anda",
 	"Syncing...": "Sedang menyinkronkan...",
@@ -497,8 +482,6 @@ const id: Dict = {
 		"Server Engram tidak lagi menerima versi plugin ini (membutuhkan {version} atau lebih baru), sehingga catatan tidak dikirim atau diterima. Perubahan yang dibuat di perangkat ini akan tetap di sini sampai Anda memperbarui.",
 	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
 		"Server Engram tidak lagi menerima versi plugin ini, sehingga catatan tidak dikirim atau diterima. Perubahan yang dibuat di perangkat ini akan tetap di sini sampai Anda memperbarui.",
-	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
-		"Paket gratis hanya menyinkronkan catatan. Tingkatkan untuk menyinkronkan gambar dan PDF.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
 		"Ukuran berkas melebihi batas server. Kompres atau bagi berkas tersebut, lalu lakukan sinkronisasi.",
 	"The file is too large for the server.": "File terlalu besar untuk server.",
@@ -512,8 +495,8 @@ const id: Dict = {
 		"Server kehilangan konten file ini dan akan mencoba memulihkannya. Tidak ada yang berubah di perangkat ini.",
 	"The server took too long to respond. Try again.":
 		"Server membutuhkan waktu terlalu lama untuk merespons. Coba lagi.",
-	"These files are fine. They just need a paid plan to sync.":
-		"File-file ini tidak masalah. Hanya memerlukan paket berbayar untuk disinkronkan.",
+	"These files are fine. Each card below says why they did not sync.":
+		"File-file ini tidak masalah. Setiap kartu di bawah menjelaskan mengapa tidak disinkronkan.",
 	"This account was deleted. Contact support if that is wrong.":
 		"Akun ini telah dihapus. Hubungi dukungan jika itu salah.",
 	"This cannot be undone.": "Ini tidak dapat dibatalkan.",
@@ -527,12 +510,12 @@ const id: Dict = {
 		"Catatan ini tidak dapat diproses dan dilewati.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Server ini dihosting sendiri, jadi umpan balik tidak dikumpulkan di sini. ",
+	"This server isn't accepting this attachment for your account.":
+		"Server ini tidak menerima lampiran ini untuk akun Anda.",
 	"This vault": "Vault ini",
 	"This vault is empty on the server. Upload your {what}?":
 		"Vault ini kosong di server. Apakah Anda ingin mengunggah {what}?",
 	"Too large for the server": "Terlalu besar untuk server",
-	"Too many connected AI clients. Disconnect one or upgrade.":
-		"Terlalu banyak klien AI yang terhubung. Putuskan sambungan satu atau tingkatkan.",
 	"Too many connected Obsidian vaults. Disconnect one or upgrade.":
 		"Terlalu banyak Vault Obsidian yang terhubung. Putuskan sambungan satu atau tingkatkan.",
 	"Too many requests. Wait a moment and try again.":
@@ -618,8 +601,10 @@ const id: Dict = {
 	"waiting for a plugin update": "Menunggu pembaruan plugin",
 	"waiting to retry": "Menunggu untuk mencoba lagi",
 	"{count} attachments": "{count} lampiran",
-	"{count} attachments need a paid plan to sync. See Sync Center.":
-		"{count} lampiran memerlukan paket berbayar untuk sinkronisasi. Lihat Pusat Sinkronisasi.",
+	"{count} attachments skipped. See Sync Center.":
+		"{count} lampiran dilewati. Lihat Pusat Sinkronisasi.",
+	"{count} attachments will be skipped: this server only accepts text files.":
+		"{count} lampiran akan dilewati: server ini hanya menerima berkas teks.",
 	"{count} attempts": "{count} percobaan",
 	"{count} conflicts need resolution": "{count} konflik memerlukan penyelesaian",
 	"{count} conflicts to resolve.": "{count} konflik yang perlu diselesaikan.",
@@ -650,7 +635,7 @@ const id: Dict = {
 	"✗ couldn't reach a server at this URL": "✗ Tidak dapat menjangkau server di URL ini",
 	"✗ server responded but isn't an Engram server":
 		"✗ Server merespons tetapi bukan server Engram",
-	"⤳ {count} skipped (Free plan)": "⤳ {count} dilewati (Paket gratis)",
+	"⤳ {count} skipped": "⤳ {count} dilewati",
 	"👋 Welcome": "👋 Selamat datang",
 	"💬 Feedback": "💬 Umpan balik",
 	"🔄 Sync Center": "🔄 Pusat Sinkronisasi",

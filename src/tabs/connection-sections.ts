@@ -309,16 +309,9 @@ export function renderAuthSection(ctx: TabContext): void {
 	// behavior, Diagnostics). A heading draws its own divider, so
 	// this replaced a hand-rolled one that stacked a second line against the
 	// following row's border-top.
-	// Cloud gates API keys behind Pro (Free and Starter cannot create or use
-	// them: `api_write_enabled` is false and `api_rps_cap` is 0, so the server
-	// refuses both REST and the sync socket). Self-host does not enforce
-	// limits at all, so the plain description stands there.
-	const keyDesc =
-		plugin.settings.backendMode === "cloud"
-			? t(
-					"Or authenticate with a token instead of signing in. Engram Cloud API keys require the Pro plan; on Free and Starter, sign in above.",
-				)
-			: t("Or authenticate with a token instead of signing in.");
+	// API keys work on every plan, cloud and self-host (backend #1974), so one
+	// description serves both.
+	const keyDesc = t("Or authenticate with a token instead of signing in.");
 
 	new Setting(containerEl).setName(t("API key")).setDesc(keyDesc).setHeading();
 

@@ -10,7 +10,6 @@ const ko: Dict = {
 	"1. Make an account": "1. 계정 만들기",
 	"10 GB attachments": "10GB 첨부 파일",
 	"10 vaults, unlimited devices": "10개의 보관함, 기기 수 제한 없음",
-	"2,000 notes searchable": "2,000개의 노트 검색 가능",
 	"2. Connect your vault to Engram": "2. 보관함을 Engram에 연결하세요",
 	"3. Connect your AI": "3. AI 연결",
 	"50 GB attachments": "50GB 첨부 파일",
@@ -21,10 +20,9 @@ const ko: Dict = {
 		"일시적인 서버 문제 - 자동으로 재시도 중입니다.",
 	"AI / MCP setup guide": "AI / MCP 설정 가이드",
 	"AI searches": "AI 검색",
-	"API access": "API 접근",
 	"API key": "API 키",
-	"API keys need a Pro plan. Sign in with your Engram account instead.":
-		"API 키는 Pro 플랜이 필요합니다. Engram 계정으로 로그인하세요.",
+	"API key access is turned off for this account. Sign in with your Engram account instead.":
+		"이 계정의 API 키 사용이 중단되었습니다. Engram 계정으로 로그인하세요.",
 	About: "정보",
 	"Accept it to keep syncing.": "동기화를 계속하려면 수락하세요.",
 	"Access token": "접근 토큰",
@@ -37,18 +35,16 @@ const ko: Dict = {
 	"All synced. Your vault and the cloud now match.":
 		"모두 동기화되었습니다. 보관함과 클라우드가 이제 동일합니다.",
 	"Already in sync. Nothing is deleted.": "이미 동기화되었습니다. 삭제되는 항목은 없습니다.",
-	"Already signed in on another device. Upgrade for multi-device.":
-		"다른 기기에서 이미 로그인되었습니다. 여러 기기 사용을 원하시면 업그레이드하세요.",
 	"Already up to date. Nothing needed syncing.":
 		"이미 최신 상태입니다. 동기화할 필요가 없습니다.",
 	"An unexpected error — retrying automatically.": "예상치 못한 오류 - 자동으로 재시도 중입니다.",
+	"Attachment not accepted": "첨부 파일이 허용되지 않습니다",
 	"Attachment storage full": "첨부 파일 저장 공간 부족",
 	"Attachment storage is full — upgrade for more.":
 		"저장 공간이 가득합니다. 더 많은 용량을 확보하려면 업그레이드하세요.",
 	"Attachment sync is disabled for this account.":
 		"이 계정의 첨부 파일 동기화가 비활성화되었습니다.",
 	Attachments: "첨부 파일",
-	"Attachments need a paid plan": "첨부 파일은 유료 플랜 필요",
 	"Attachments on this device": "이 기기의 첨부 파일",
 	"Authenticated via Engram account (OAuth).": "Engram 계정(OAuth)을 통해 인증됨.",
 	"Authenticated via manual API key.": "수동 API 키를 통해 인증됨.",
@@ -121,6 +117,8 @@ const ko: Dict = {
 	Deleting: "삭제 중",
 	"Deleting {count} local files.": "{count}개의 로컬 파일을 삭제합니다.",
 	"Deleting {count} on the cloud.": "클라우드에서 {count}개를 삭제 중입니다.",
+	"Device limit reached. Disconnect a device or upgrade.":
+		"장치 수 제한에 도달했습니다. 장치를 분리하거나 업그레이드하세요.",
 	"Device swap cooldown active. Wait or upgrade.":
 		"기기 전환 대기 시간이 활성화되었습니다. 기다리거나 업그레이드하세요.",
 	Diagnostics: "진단",
@@ -158,8 +156,6 @@ const ko: Dict = {
 	"Engram URL": "Engram URL",
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version}이 사용 가능합니다. {link}.",
-	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
-		"Engram은 {all}개의 노트 중 {indexed}개를 인덱싱합니다. 나머지는 이 기기에서만 검색 가능합니다. 모든 노트를 인덱싱하려면 업그레이드하세요.",
 	"Engram is the backend that powers sync and semantic search.":
 		"Engram은 동기화 및 의미 검색 기능을 제공하는 백엔드입니다.",
 	"Engram search": "Engram 검색",
@@ -220,8 +216,8 @@ const ko: Dict = {
 	"Engram: update required": "Engram: 업데이트 필요",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: 로그인 만료되었습니다. 다시 연결하려면 Engram 설정으로 이동하세요.",
-	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.":
-		"Engram: {count}개의 첨부 파일 건너�뎠습니다. 이미지 및 PDF 동기화를 위해 요금제를 업그레이드하세요.",
+	"Engram: {count} attachments skipped. See Sync Center for why.":
+		"Engram: {count}개의 첨부 파일이 건너뜬. 이유는 동기화 센터에서 확인하세요.",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
 		"Engram: {count}개의 파일 동기화 실패{detail} — 동기화 센터 열기",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
@@ -250,10 +246,6 @@ const ko: Dict = {
 		"오류와 함께 완료되었습니다. 실패 원인을 보려면 동기화 로그를 확인하세요.",
 	"First sync, this may take a moment.": "첫 번째 동기화, 잠시 시간이 걸릴 수 있습니다.",
 	Free: "무료",
-	"Free syncs notes only — images & PDFs need a paid plan.":
-		"노트만 무료 동기화, 이미지 및 PDF는 유료 플랜이 필요합니다.",
-	"Free syncs notes only — {count} attachments will be skipped.":
-		"무료 동기화는 노트만 동기화하며, 첨부 파일 {count}개는 제외됩니다.",
 	"Frontmatter could not be parsed": "frontmatter 분석 실패",
 	"Frontmatter isn't valid YAML.": "Frontmatter가 유효한 YAML 형식이 아닙니다.",
 	'Frontmatter key "{key}" could not be parsed as YAML.':
@@ -330,9 +322,6 @@ const ko: Dict = {
 		"노트 제한에 도달했습니다. 더 많은 노트를 추가하려면 업그레이드하세요.",
 	"Note not synced locally": "노트가 로컬에 동기화되지 않았습니다",
 	"Notes on this device": "이 기기의 노트",
-	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
-		"이 이후의 노트는 정상적으로 동기화되고 열립니다. 단, 검색 인덱스에 포함되지 않습니다. 인덱스는 가장 오래된 노트를 유지하므로, 가장 최신의 노트는 인덱스에서 제외될 수 있습니다.",
-	"Notes searchable": "검색 가능한 노트",
 	"Notes stored": "저장된 노트",
 	"Nothing in this vault syncs until you choose how to merge it with the server.":
 		"이 보관함의 내용은 서버와 병합하는 방법을 선택할 때까지 동기화되지 않습니다.",
@@ -360,8 +349,6 @@ const ko: Dict = {
 	"Opens your browser to sign in, or create an account if you don't have one yet, then links this vault.":
 		"브라우저를 열어 로그인하거나, 계정이 없다면 새로 만들고, 이 보관함을 연결합니다.",
 	"Or authenticate with a token instead of signing in.": "또는 토큰을 사용하여 인증합니다.",
-	"Or authenticate with a token instead of signing in. Engram Cloud API keys require the Pro plan; on Free and Starter, sign in above.":
-		"또는 토큰을 사용하여 인증합니다. Engram 클라우드 API 키는 Pro 플랜이 필요합니다. Free 및 Starter 플랜에서는 위의 로그인 방법을 사용하세요.",
 	"Paths to skip (one per line). Folder patterns end with /. Built-in: {configDir}/, .trash/, .git/":
 		"건너뛸 경로 (한 줄에 하나). 폴더 패턴은 /로 끝납니다. 내장: {configDir}/, .trash/, .git/",
 	"Pick a vault": "보관함 선택",
@@ -411,8 +398,6 @@ const ko: Dict = {
 	"Search failed — check connection": "검색 실패 – 연결 상태 확인",
 	"Search settings": "검색 설정",
 	"Search your vault…": "보관함에서 검색…",
-	"Searching {indexed} of {all} notes. Upgrade to search everything.":
-		"{all}개의 노트 중 {indexed}개를 검색 중입니다. 모든 노트를 검색하려면 업그레이드하세요.",
 	"See full pricing": "가격 정보 보기",
 	"See the AI setup guide": "AI 설정 가이드 보기",
 	"Select which vault this plugin syncs with.": "이 플러그인이 동기화할 보관함을 선택하세요.",
@@ -466,8 +451,8 @@ const ko: Dict = {
 	"Sync server": "동기화 서버",
 	"Sync these now": "지금 동기화",
 	"Sync...": "동기화 중...",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"동기화 완료. 일부 첨부 파일은 유료 플랜에서만 동기화 가능합니다 (아래 참조).",
+	"Synced. Some attachments were skipped (see below).":
+		"동기화 완료. 일부 첨부 파일은 건너뜬 (아래 내용 참조).",
 	"Syncing attachments": "첨부 파일 동기화 중",
 	"Syncing your vault": "보관함 동기화 중",
 	"Syncing...": "동기화 중...",
@@ -485,8 +470,6 @@ const ko: Dict = {
 		"Engram 서버는 더 이상 이 플러그인 버전을 지원하지 않습니다 (최소 {version} 이상 필요). 따라서 노트가 전송되거나 수신되지 않습니다. 이 장치에서 변경한 내용은 업데이트할 때까지 여기에 보관됩니다.",
 	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
 		"Engram 서버는 더 이상 이 플러그인 버전을 지원하지 않습니다. 따라서 노트가 전송되거나 수신되지 않습니다. 이 장치에서 변경한 내용은 업데이트할 때까지 여기에 보관됩니다.",
-	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
-		"무료 플랜은 노트만 동기화합니다. 이미지 및 PDF 동기화를 원하시면 유료 플랜으로 업그레이드하세요.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
 		"파일 크기가 서버 제한을 초과합니다. 압축하거나 분할한 후 동기화됩니다.",
 	"The file is too large for the server.": "파일 크기가 서버 용량을 초과합니다.",
@@ -500,8 +483,8 @@ const ko: Dict = {
 		"서버에서 해당 파일의 내용이 삭제되었으며, 복구를 시도합니다. 이 장치에는 변경 사항이 없습니다.",
 	"The server took too long to respond. Try again.":
 		"서버 응답 시간이 너무 오래 걸렸습니다. 다시 시도해 주세요.",
-	"These files are fine. They just need a paid plan to sync.":
-		"이 파일들은 괜찮습니다. 동기화를 하려면 유료 플랜이 필요합니다.",
+	"These files are fine. Each card below says why they did not sync.":
+		"이 파일들은 문제가 없습니다. 아래 각 항목에서 동기화되지 않은 이유를 확인하세요.",
 	"This account was deleted. Contact support if that is wrong.":
 		"이 계정이 삭제되었습니다. 오류인 경우 지원팀에 문의하세요.",
 	"This cannot be undone.": "이 작업은 되돌릴 수 없습니다.",
@@ -514,12 +497,12 @@ const ko: Dict = {
 		"이 노트를 처리할 수 없었으며, 건너뜁니다.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"이 서버는 자체 호스팅 서버이므로, 피드백은 이곳에서 수집되지 않습니다. ",
+	"This server isn't accepting this attachment for your account.":
+		"이 서버는 귀하의 계정에 이 첨부 파일을 허용하지 않습니다.",
 	"This vault": "이 보관함",
 	"This vault is empty on the server. Upload your {what}?":
 		"이 보관함은 서버에 비어 있습니다. {what}을 업로드하시겠습니까?",
 	"Too large for the server": "서버 용량 초과",
-	"Too many connected AI clients. Disconnect one or upgrade.":
-		"연결된 AI 클라이언트가 너무 많습니다. 하나를 연결 해제하거나 업그레이드하세요.",
 	"Too many connected Obsidian vaults. Disconnect one or upgrade.":
 		"연결된 Obsidian 보관함이 너무 많습니다. 하나를 연결 해제하거나 업그레이드하세요.",
 	"Too many requests. Wait a moment and try again.":
@@ -603,8 +586,8 @@ const ko: Dict = {
 	"waiting for a plugin update": "플러그인 업데이트를 기다 중입니다",
 	"waiting to retry": "재시도 대기 중",
 	"{count} attachments": "{count}개의 첨부 파일",
-	"{count} attachments need a paid plan to sync. See Sync Center.":
-		"{count}개의 첨부 파일은 유료 플랜이 필요합니다. 동기화 센터에서 확인하세요.",
+	"{count} attachments will be skipped: this server only accepts text files.":
+		"{count}개의 첨부 파일은 건너뜁니다: 이 서버는 텍스트 파일만 허용합니다.",
 	"{count} attempts": "{count}회 시도",
 	"{count} conflicts need resolution": "{count}개의 충돌이 해결되어야 합니다",
 	"{count} conflicts to resolve.": "해결해야 할 충돌이 {count}개 있습니다.",
@@ -635,7 +618,7 @@ const ko: Dict = {
 	"✗ couldn't reach a server at this URL": "✗ 해당 URL의 서버에 연결할 수 없습니다",
 	"✗ server responded but isn't an Engram server":
 		"✗ 서버 응답은 받았지만, Engram 서버가 아닙니다",
-	"⤳ {count} skipped (Free plan)": "⤳ 무료 플랜으로 인해 {count}건 건너뜀",
+	"⤳ {count} skipped": "⤳ {count} 건 건너뜀",
 	"👋 Welcome": "👋 안녕하세요",
 	"💬 Feedback": "💬 피드백",
 	"🔄 Sync Center": "🔄 동기화 센터",

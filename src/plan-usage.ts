@@ -6,10 +6,7 @@
  * lives here and the renderer just walks the result.
  *
  * The point of the panel is that a Free user should be able to see where they
- * stand BEFORE anything refuses them. `indexed_notes_cap` refuses nothing at
- * all — notes past it sync, open and edit normally and are simply absent from
- * search — so a user who is never shown the number only discovers it as a
- * search that cannot find something they know they wrote.
+ * stand BEFORE anything refuses them.
  */
 import { t } from "./i18n";
 
@@ -32,8 +29,6 @@ export interface UsageRow {
 	fraction: number | null;
 	/** At or over the limit. Drives the warning style. */
 	atLimit: boolean;
-	/** Longer explanation, shown under the row. */
-	hint?: string;
 }
 
 /** `null` and negative both mean unlimited; negative is the backend sentinel
@@ -61,19 +56,12 @@ export function formatBytes(bytes: number): string {
 	return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
-/** Per-row policy for what an unlimited plan should do with this row. */
+/** Per-row display options. */
 export interface RowOpts {
-	hint?: string;
 	/** Prepended to the value, before the used/limit pair. Lets one row carry a
 	 *  second measure of the same subject — "24 files · 12.4 MB / 1.00 GB" — so
 	 *  a count and a quota do not need two rows saying "attachments". */
 	prefix?: string;
-	/** Drop the row entirely when the limit is unlimited.
-	 *
-	 *  For rows whose only content IS the limit. "Notes searchable" on a paid
-	 *  plan is every note the user has, which the row directly below already
-	 *  says, so it would be a duplicate dressed up as a constraint. */
-	hideWhenUnlimited?: boolean;
 }
 
 /** Build one row, or null when there is nothing worth showing. */
@@ -85,15 +73,14 @@ export function buildRow(
 ): UsageRow | null {
 	if (!entry) return null;
 	const { used, limit } = entry;
-	const { hint, hideWhenUnlimited, prefix = "" } = opts;
+	const { prefix = "" } = opts;
 
 	if (isUnlimited(limit)) {
-		if (hideWhenUnlimited) return null;
 		// Bare count, not "1,240 / unlimited". A paid user has no limit to read
 		// against, and the word only draws the eye to a constraint that does
 		// not exist.
 		if (used === null) return null;
-		return { label, value: `${prefix}${fmt(used)}`, fraction: null, atLimit: false, hint };
+		return { label, value: `${prefix}${fmt(used)}`, fraction: null, atLimit: false };
 	}
 
 	const cap = limit as number;
@@ -103,7 +90,7 @@ export function buildRow(
 	// Bare, not "20 max": the label carries the unit, and "max" beside four
 	// "used / limit" rows reads as a different kind of number than it is.
 	if (used === null) {
-		return { label, value: `${prefix}${fmt(cap)}`, fraction: null, atLimit: false, hint };
+		return { label, value: `${prefix}${fmt(cap)}`, fraction: null, atLimit: false };
 	}
 
 	return {
@@ -111,17 +98,17 @@ export function buildRow(
 		value: `${prefix}${fmt(used)} / ${fmt(cap)}`,
 		fraction: cap === 0 ? 1 : Math.min(1, used / cap),
 		atLimit: used >= cap,
-		hint,
 	};
 }
 
 /**
  * The Sync Center plan rows, in the order a Free user cares about them.
  *
- * Searchable notes leads because it is the limit that binds first on Free and
- * the only one that fails silently. Stored notes follows so the pair reads as
- * "everything is synced, not all of it is searchable", which is the true and
- * non-alarming version of that fact.
+ * No "Notes searchable" row: every stored note is searchable on every plan.
+ * Past the plan's passage budget the least recently edited notes fall to
+ * keyword-only search, still found. `indexed_notes` stays on the wire as a
+ * compat shim with `limit: nil`, so a row for it could only ever show a cap
+ * the backend no longer has.
  */
 export function planUsageRows(
 	data: BillingUsage,
@@ -138,15 +125,6 @@ export function planUsageRows(
 			? undefined
 			: `${t("{count} files", { count: opts.localAttachmentCount })} · `;
 	const rows = [
-		// Hidden on paid: with no index cap, "searchable" equals "stored", and the
-		// row below already says that. Shown on Free because it is the limit that
-		// binds first and the only one that refuses nothing.
-		buildRow(t("Notes searchable"), u.indexed_notes, count, {
-			hideWhenUnlimited: true,
-			hint: t(
-				"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.",
-			),
-		}),
 		buildRow(t("Notes stored"), u.notes, count),
 		// No Vaults row. On Free it is permanently "1 / 1" — a meter pinned at
 		// full for a limit the user is not near and cannot act on, sitting in a

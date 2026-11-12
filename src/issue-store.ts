@@ -294,8 +294,10 @@ export function remediation(
 	switch (category) {
 		case "needs_pro":
 			return {
-				title: t("Attachments need a paid plan"),
-				hint: t("The Free tier syncs notes only. Upgrade to sync images and PDFs."),
+				// Every Engram Cloud plan syncs every attachment type, so this is
+				// a server capability refusal, not a tier one.
+				title: t("Attachment not accepted"),
+				hint: t("This server isn't accepting this attachment for your account."),
 			};
 		case "quota":
 			return {
