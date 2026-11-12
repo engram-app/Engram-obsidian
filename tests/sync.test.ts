@@ -3976,7 +3976,6 @@ describe("SyncEngine IssueStore integration", () => {
 				attachmentsTextOnly: false,
 				maxFileBytes: 10_000_000,
 				attachmentBytesCap: null,
-				indexedNotesCap: null,
 				updatedAt: 0,
 			};
 			engine.hydratePlanState(plan);
@@ -4084,6 +4083,22 @@ describe("SyncEngine attachment pre-gate (client-side plan limits)", () => {
 		expect(engine.issues.get("photo.png")?.category).toBe("needs_pro");
 		// Informational skip is tallied for the batched toast.
 		expect((engine as any).getAttachmentLimitedCount()).toBe(1);
+	});
+
+	// Every Engram Cloud plan syncs every attachment type, so a text-only plan
+	// state comes from a server setting, not Free. The message used to read
+	// "Free syncs notes only, images & PDFs need a paid plan."
+	test("text-only pre-gate message names the server, not a plan", () => {
+		const engine = createEngine();
+		engine.applyPlanState({
+			tier: "free",
+			attachmentsTextOnly: true,
+			maxFileBytes: 10_000_000,
+			attachmentBytesCap: null,
+			updatedAt: 1,
+		});
+		const gate = (engine as any).preGateAttachment(new TFile("photo.png", Date.now()));
+		expect(gate?.message).toBe("This file type isn't accepted by this server.");
 	});
 
 	test("free text-only: a known text ext (.txt) attachment is NOT pre-skipped", async () => {

@@ -244,10 +244,12 @@ export const __settingCapture: {
 	// Section/row names, so a test can assert WHICH settings a tab rendered —
 	// the only way to check progressive disclosure without a real DOM.
 	names: string[];
+	descs: string[];
 } = {
 	texts: [],
 	buttons: [],
 	names: [],
+	descs: [],
 };
 
 export class Setting {
@@ -259,7 +261,8 @@ export class Setting {
 		__settingCapture.names.push(name);
 		return this;
 	}
-	setDesc(_desc: string): this {
+	setDesc(desc: string): this {
+		__settingCapture.descs.push(desc);
 		return this;
 	}
 	setHeading(): this {

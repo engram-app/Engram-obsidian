@@ -26,8 +26,8 @@ const enPlurals: Dict = {
 	"Engram: plan upgraded — syncing {count} attachments…": {
 		one: "Engram: plan upgraded — syncing {count} attachment…",
 	},
-	"Free syncs notes only — {count} attachments will be skipped.": {
-		one: "Free syncs notes only — {count} attachment will be skipped.",
+	"{count} attachments will be skipped: this server only accepts text files.": {
+		one: "{count} attachment will be skipped: this server only accepts text files.",
 	},
 	"{count} conflicts need resolution": {
 		one: "{count} conflict needs resolution",

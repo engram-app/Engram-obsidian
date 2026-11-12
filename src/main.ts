@@ -1139,15 +1139,7 @@ export default class EngramSyncPlugin extends Plugin {
 		});
 
 		// Register search view
-		this.registerView(
-			SEARCH_VIEW_TYPE,
-			(leaf) =>
-				new SearchView(
-					leaf,
-					this.api,
-					() => this.syncEngine?.getPlanState()?.indexedNotesCap ?? null,
-				),
-		);
+		this.registerView(SEARCH_VIEW_TYPE, (leaf) => new SearchView(leaf, this.api));
 
 		this.addCommand({
 			id: "send-feedback",
@@ -1159,11 +1151,7 @@ export default class EngramSyncPlugin extends Plugin {
 			id: "search",
 			name: t("Semantic search"),
 			callback: () => {
-				new SearchModal(
-					this.app,
-					this.api,
-					() => this.syncEngine?.getPlanState()?.indexedNotesCap ?? null,
-				).open();
+				new SearchModal(this.app, this.api).open();
 			},
 		});
 

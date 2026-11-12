@@ -18,7 +18,7 @@ describe("limit-copy localization", () => {
 		__setLanguage("en");
 		const en = toastFor("api_access_not_available");
 		expect(ja).not.toBe(en);
-		expect(en).toMatch(/API keys need a Pro plan/);
+		expect(en).toMatch(/API key access is turned off/);
 	});
 
 	// The fallback is the branch every reason code the backend adds after this
@@ -85,23 +85,38 @@ describe("limit-copy", () => {
 		expect(toastFor("attachments_quota_exceeded").toLowerCase()).toMatch(/storage is full/);
 	});
 
+	// Free allows 2 devices, so "another device" was wrong on every plan.
+	test("concurrent_devices_exceeded names a limit, not a single other device", () => {
+		const msg = toastFor("concurrent_devices_exceeded").toLowerCase();
+		expect(msg).toMatch(/device limit reached/);
+		expect(msg).not.toMatch(/another device|multi-device/);
+	});
+
 	test("falls back for unknown reason", () => {
 		expect(toastFor("zzz_unknown")).toMatch(/Engram:.*[Ll]imit/);
 	});
 });
 
 describe("API-key plan reasons", () => {
-	// These two used to be unreachable: socket join rejections only logged,
-	// and RequireApiWriteEnabled's 402 body has no `reason` key, so both fell
-	// through to the generic "Limit reached" copy.
-	test("api_access_not_available names the cause and the way out", () => {
+	// API keys work on every plan (backend #1974). ChannelGate and
+	// RequireApiRpsBudget emit this ONLY when a per-user `api_rps_cap` override
+	// is 0, a kill switch for one account. The old copy blamed the plan, which
+	// told a Free user to upgrade for something Free already includes.
+	test("api_access_not_available names no plan and points at sign-in", () => {
 		const msg = toastFor("api_access_not_available").toLowerCase();
-		expect(msg).toMatch(/api keys? need a pro plan/);
+		expect(msg).toMatch(/api key access is turned off for this account/);
 		expect(msg).toMatch(/sign in/);
+		expect(msg).not.toMatch(/pro|upgrade|plan/);
 	});
 
-	test("api_write_not_available uses the same copy", () => {
-		expect(toastFor("api_write_not_available")).toBe(toastFor("api_access_not_available"));
+	// Both reasons were deleted backend-side with their gates (#1974):
+	// `api_write_enabled` and the MCP connection cap no longer exist, so the
+	// server never sends either. Copy for them was a claim about a gate that
+	// is gone.
+	test("removed API and MCP gate reasons are gone from the table", () => {
+		for (const dead of ["api_write_not_available", "mcp_connections_exceeded"]) {
+			expect(toastFor(dead)).toBe(toastFor("some_unmapped_reason"));
+		}
 	});
 
 	// The set must track what ChannelGate actually emits: account_deleted,

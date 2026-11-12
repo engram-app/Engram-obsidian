@@ -74,52 +74,6 @@ function modeHintText(mode: SearchMode): string {
 export interface SearchPanelOpts {
 	/** Called after a result is opened (e.g. so the modal can close itself). */
 	onResultOpened?: () => void;
-	/** Current `indexed_notes_cap` from plan state, or null when uncapped.
-	 *  A getter, not a value: plan state arrives over the WebSocket and can
-	 *  change while the panel is open. */
-	indexedNotesCap?: () => number | null;
-}
-
-/**
- * The "not everything is searchable" line, or null when it should stay quiet.
- *
- * Notes past the plan's indexed-note cap sync normally but are not searchable.
- * Without this the only signal is an empty result list, which reads as "search
- * is broken" rather than "this note isn't indexed" — and because the cap keeps
- * the OLDEST notes, the ones that fall outside it are the user's newest work,
- * which is the opposite of what anyone expects.
- *
- * Split out from the renderer because the panel only renders under Obsidian's
- * HTMLElement extensions, which the unit suite does not have.
- */
-export function capHintText(cap: number | null, total: number, localFused: boolean): string | null {
-	if (unsearchableCount(cap, total) === 0) return null;
-	const indexed = (cap as number).toLocaleString();
-	const all = total.toLocaleString();
-	// Keyword and Both fuse the local vault in, so the notes past the cap ARE
-	// reachable in those modes. Saying "Searching 2,000 of 4,312" there would be
-	// simply false, and false in the direction of underselling the product.
-	// Semantic is server-only, so there the original sentence is exactly right.
-	return localFused
-		? t(
-				"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.",
-				{ indexed, all },
-			)
-		: t("Searching {indexed} of {all} notes. Upgrade to search everything.", { indexed, all });
-}
-
-/**
- * How many notes are synced but NOT searchable. Zero means say nothing.
- *
- * The single place the "is there anything to report" rule lives, so the search
- * panel and the Sync Center cannot drift into disagreeing about whether the
- * user is over their cap. `null` is an uncapped plan; a NEGATIVE cap is the
- * backend's "unlimited" sentinel and must never be read as a literal cap of -1,
- * which would claim every note is unsearchable on the most permissive plan.
- */
-export function unsearchableCount(cap: number | null, total: number): number {
-	if (cap === null || cap < 0) return 0;
-	return Math.max(0, total - cap);
 }
 
 export class SearchPanel {
@@ -152,7 +106,7 @@ export class SearchPanel {
 	private clearHandler!: () => void;
 	private filterToggleHandler!: () => void;
 
-	constructor(parent: HTMLElement, ctx: SearchContext, opts: SearchPanelOpts) {
+	constructor(parent: HTMLElement, ctx: SearchContext, opts: SearchPanelOpts = {}) {
 		this.ctx = ctx;
 		this.opts = opts;
 		// Always the default, never a remembered choice — see DEFAULT_SEARCH_MODE.
@@ -459,16 +413,6 @@ export class SearchPanel {
 		}
 	}
 
-	private renderCapHint(): void {
-		const text = capHintText(
-			this.opts.indexedNotesCap?.() ?? null,
-			this.ctx.app.vault?.getMarkdownFiles?.().length ?? 0,
-			this.mode !== "semantic",
-		);
-		if (text === null) return;
-		this.resultsEl.createEl("p", { text, cls: "engram-search-cap-hint" });
-	}
-
 	private renderResults(query: string): void {
 		this.resultsEl.empty();
 		if (!this.results.length) {
@@ -476,10 +420,8 @@ export class SearchPanel {
 				text: t("No results found"),
 				cls: "engram-search-empty",
 			});
-			this.renderCapHint();
 			return;
 		}
-		this.renderCapHint();
 		// Relative strength across the displayed set — drives the per-result bar.
 		const strengths = matchStrengths(this.results.map((r) => r.score));
 		this.results.forEach((result, i) => {

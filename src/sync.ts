@@ -7478,7 +7478,7 @@ export class SyncEngine {
 		if (plan.attachmentsTextOnly && !isTextAttachment(file.extension)) {
 			return {
 				category: "needs_pro",
-				message: t("Free syncs notes only — images & PDFs need a paid plan."),
+				message: t("This file type isn't accepted by this server."),
 			};
 		}
 		return null;

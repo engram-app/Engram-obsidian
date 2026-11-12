@@ -106,10 +106,14 @@ describe("countSkippedAttachments — plan-gated pre-flight count", () => {
 });
 
 describe("skippedAttachmentsLine — pre-flight copy", () => {
-	test("free + non-text attachments: shows a skip note with the count", () => {
+	// Attachments sync on every Engram Cloud plan (`attachments_all_types` is
+	// true on Free, Starter and Pro), so a text-only gate is a server setting,
+	// never "Free". The old line blamed the plan.
+	test("text-only server + non-text attachments: names the server, not a plan", () => {
 		const line = skippedAttachmentsLine(12);
 		expect(line).not.toBeNull();
-		expect(line).toContain("Free syncs notes only");
+		expect(line).toContain("this server only accepts text files");
+		expect(line).not.toMatch(/Free|plan|notes only/);
 		expect(line).toContain("12");
 	});
 

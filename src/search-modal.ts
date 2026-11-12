@@ -7,13 +7,11 @@ import { SearchPanel } from "./search-ui";
 
 export class SearchModal extends Modal {
 	private api: EngramApi;
-	private indexedNotesCap?: () => number | null;
 	private panel: SearchPanel | null = null;
 
-	constructor(app: App, api: EngramApi, indexedNotesCap?: () => number | null) {
+	constructor(app: App, api: EngramApi) {
 		super(app);
 		this.api = api;
-		this.indexedNotesCap = indexedNotesCap;
 	}
 
 	onOpen(): void {
@@ -23,10 +21,7 @@ export class SearchModal extends Modal {
 		this.panel = new SearchPanel(
 			contentEl,
 			{ api: this.api, app: this.app },
-			{
-				indexedNotesCap: this.indexedNotesCap,
-				onResultOpened: () => this.close(),
-			},
+			{ onResultOpened: () => this.close() },
 		);
 		this.panel.focus();
 	}
