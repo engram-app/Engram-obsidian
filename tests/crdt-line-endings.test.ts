@@ -8,6 +8,7 @@
  * binary files are never converted.
  */
 import { describe, expect, test } from "bun:test";
+import "fake-indexeddb/auto";
 import * as Y from "yjs";
 import { CONTENT_KEY, flushTarget, sameNoteMeaning } from "../src/crdt/frontmatter-codec";
 import { toLf } from "../src/crdt/line-endings";
@@ -149,5 +150,34 @@ describe("one healer: only the room removes CRs already in a doc", () => {
 		expect(texts[0]).not.toContain("\n\n");
 		expect(texts[0]).not.toContain("\r");
 		expect(texts[0]).toContain("from a\n");
+	});
+});
+
+describe("a doc that still holds CRs projects LF", () => {
+	// Under the single-healer rule a server doc nobody has opened since the
+	// room heal, or an old plugin's transient CR, can reach this device with
+	// CRs. The registry projection must still be LF, or every merge guard
+	// (`current !== toLf(expected)`) refuses and disk gets CRLF.
+	test("a held disk edit merges cleanly, flushes LF and needs no conflict copy", async () => {
+		const flushes: string[] = [];
+		const reg = new ProviderRegistry({
+			dbPrefix: "crdoc",
+			send: () => true,
+			onFlushToDisk: (_id: string, content: string) => {
+				flushes.push(content);
+				return true;
+			},
+		} as never);
+		const old = new Y.Doc();
+		old.getText(CONTENT_KEY).insert(0, "one\r\ntwo\r\n");
+		await reg.applyRemoteUpdate("n1", Y.encodeStateAsUpdate(old));
+		await new Promise((r) => setTimeout(r, 30));
+
+		expect(flushes.at(-1)).toBe("one\ntwo\n");
+		// A non-null merge is the "no conflict copy" outcome for every caller.
+		expect(
+			await reg.mergeLocalEditFromBase("n1", "one\ntwo\n", "one\ntwo\n", "one\ntwo\nthree\n"),
+		).toBe("one\ntwo\nthree\n");
+		await reg.destroyAll();
 	});
 });
