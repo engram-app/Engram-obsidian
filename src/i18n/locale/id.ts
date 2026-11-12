@@ -222,8 +222,8 @@ const id: Dict = {
 	"Engram: update required": "Engram: pembaruan diperlukan",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: sesi login Anda telah berakhir — buka pengaturan Engram untuk menghubungkan kembali.",
-	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.":
-		"Engram: {count} lampiran dilewati — tingkatkan paket Anda untuk menyinkronkan gambar & PDF.",
+	"Engram: {count} attachments skipped. See Sync Center for why.":
+		"Engram: {count} lampiran dilewati. Lihat Pusat Sinkronisasi untuk alasannya.",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
 		"Engram: {count} berkas gagal disinkronkan{detail} — buka Pusat Sinkronisasi",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
@@ -463,8 +463,8 @@ const id: Dict = {
 	"Sync server": "Server sinkronisasi",
 	"Sync these now": "Sinkronisasi sekarang",
 	"Sync...": "Sinkronisasi...",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"Sinkronisasi selesai. Beberapa lampiran memerlukan paket berbayar untuk disinkronkan (lihat di bawah).",
+	"Synced. Some attachments were skipped (see below).":
+		"Disinkronkan. Beberapa lampiran dilewati (lihat di bawah).",
 	"Syncing attachments": "Mensinkronkan lampiran",
 	"Syncing your vault": "Mensinkronkan Vault Anda",
 	"Syncing...": "Sedang menyinkronkan...",
@@ -495,8 +495,8 @@ const id: Dict = {
 		"Server kehilangan konten file ini dan akan mencoba memulihkannya. Tidak ada yang berubah di perangkat ini.",
 	"The server took too long to respond. Try again.":
 		"Server membutuhkan waktu terlalu lama untuk merespons. Coba lagi.",
-	"These files are fine. They just need a paid plan to sync.":
-		"File-file ini tidak masalah. Hanya memerlukan paket berbayar untuk disinkronkan.",
+	"These files are fine. Each card below says why they did not sync.":
+		"File-file ini tidak masalah. Setiap kartu di bawah menjelaskan mengapa tidak disinkronkan.",
 	"This account was deleted. Contact support if that is wrong.":
 		"Akun ini telah dihapus. Hubungi dukungan jika itu salah.",
 	"This cannot be undone.": "Ini tidak dapat dibatalkan.",
@@ -601,8 +601,8 @@ const id: Dict = {
 	"waiting for a plugin update": "Menunggu pembaruan plugin",
 	"waiting to retry": "Menunggu untuk mencoba lagi",
 	"{count} attachments": "{count} lampiran",
-	"{count} attachments need a paid plan to sync. See Sync Center.":
-		"{count} lampiran memerlukan paket berbayar untuk sinkronisasi. Lihat Pusat Sinkronisasi.",
+	"{count} attachments skipped. See Sync Center.":
+		"{count} lampiran dilewati. Lihat Pusat Sinkronisasi.",
 	"{count} attachments will be skipped: this server only accepts text files.":
 		"{count} lampiran akan dilewati: server ini hanya menerima berkas teks.",
 	"{count} attempts": "{count} percobaan",
@@ -635,7 +635,7 @@ const id: Dict = {
 	"✗ couldn't reach a server at this URL": "✗ Tidak dapat menjangkau server di URL ini",
 	"✗ server responded but isn't an Engram server":
 		"✗ Server merespons tetapi bukan server Engram",
-	"⤳ {count} skipped (Free plan)": "⤳ {count} dilewati (Paket gratis)",
+	"⤳ {count} skipped": "⤳ {count} dilewati",
 	"👋 Welcome": "👋 Selamat datang",
 	"💬 Feedback": "💬 Umpan balik",
 	"🔄 Sync Center": "🔄 Pusat Sinkronisasi",

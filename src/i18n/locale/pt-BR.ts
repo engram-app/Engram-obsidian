@@ -268,10 +268,10 @@ const ptBR: Dict = {
 	"Engram: update required": "Engram: atualização necessária",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: sua sessão expirou — abra as configurações de Engram para reconectar.",
-	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.": {
-		one: "Engram: {count} anexo ignorado — atualize seu plano para sincronizar imagens e PDFs.",
-		many: "Engram: {count} anexos ignorados — atualize seu plano para sincronizar imagens e PDFs.",
-		other: "Engram: {count} anexos ignorados — atualize seu plano para sincronizar imagens e PDFs.",
+	"Engram: {count} attachments skipped. See Sync Center for why.": {
+		one: "Engram: {count} anexo ignorado. Veja a Central de sincronização para saber o motivo.",
+		many: "Engram: {count} anexos ignorados. Veja a Central de sincronização para saber o motivo.",
+		other: "Engram: {count} anexos ignorados. Veja a Central de sincronização para saber o motivo.",
 	},
 	"Engram: {count} files failed to sync{detail} — open Sync Center": {
 		one: "Engram: {count} arquivo falhou na sincronização{detail} — abra a Central de sincronização",
@@ -525,8 +525,8 @@ const ptBR: Dict = {
 	"Sync server": "Servidor de sincronização",
 	"Sync these now": "Sincronize isso agora",
 	"Sync...": "Sincronizando...",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"Sincronizado. Alguns anexos precisam de um plano pago para sincronizar (veja abaixo).",
+	"Synced. Some attachments were skipped (see below).":
+		"Sincronizado. Alguns anexos foram ignorados (veja abaixo).",
 	"Syncing attachments": "Sincronizando anexos",
 	"Syncing your vault": "Sincronizando seu cofre",
 	"Syncing...": "Sincronizando...",
@@ -557,8 +557,8 @@ const ptBR: Dict = {
 		"O servidor perdeu o conteúdo armazenado deste arquivo e tentará restaurá-lo. Nada foi alterado neste dispositivo.",
 	"The server took too long to respond. Try again.":
 		"O servidor demorou muito para responder. Tente novamente.",
-	"These files are fine. They just need a paid plan to sync.":
-		"Esses arquivos estão ok. Eles só precisam de um plano pago para sincronizar.",
+	"These files are fine. Each card below says why they did not sync.":
+		"Esses arquivos estão ok. Cada cartão abaixo explica por que não foram sincronizados.",
 	"This account was deleted. Contact support if that is wrong.":
 		"Esta conta foi excluída. Entre em contato com o suporte se isso estiver incorreto.",
 	"This cannot be undone.": "Isso não pode ser desfeito.",
@@ -683,10 +683,10 @@ const ptBR: Dict = {
 		many: "{count} anexos",
 		other: "{count} anexos",
 	},
-	"{count} attachments need a paid plan to sync. See Sync Center.": {
-		one: "{count} anexo precisa de um plano pago para sincronizar. Veja a Central de sincronização.",
-		many: "{count} anexos precisam de um plano pago para sincronizar. Veja a Central de sincronização.",
-		other: "{count} anexos precisam de um plano pago para sincronizar. Veja a Central de sincronização.",
+	"{count} attachments skipped. See Sync Center.": {
+		one: "{count} anexo ignorado. Veja a Central de sincronização.",
+		many: "{count} anexos ignorados. Veja a Central de sincronização.",
+		other: "{count} anexos ignorados. Veja a Central de sincronização.",
 	},
 	"{count} attachments will be skipped: this server only accepts text files.": {
 		one: "{count} anexo será ignorado: este servidor aceita apenas arquivos de texto.",
@@ -790,10 +790,10 @@ const ptBR: Dict = {
 	"✗ couldn't reach a server at this URL": "✗ Não foi possível acessar um servidor neste URL",
 	"✗ server responded but isn't an Engram server":
 		"✗ O servidor respondeu, mas não é um servidor Engram",
-	"⤳ {count} skipped (Free plan)": {
-		one: "⤳ {count} ignorado (Plano gratuito)",
-		many: "⤳ {count} ignorados (Plano gratuito)",
-		other: "⤳ {count} ignorados (Plano gratuito)",
+	"⤳ {count} skipped": {
+		one: "⤳ {count} ignorado",
+		many: "⤳ {count} ignorados",
+		other: "⤳ {count} ignorados",
 	},
 	"👋 Welcome": "👋 Bem-vindo",
 	"💬 Feedback": "💬 Feedback",

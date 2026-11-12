@@ -221,8 +221,8 @@ const ms: Dict = {
 	"Engram: update required": "Engram: kemas kini diperlukan",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: log masuk anda telah tamat tempoh — buka tetapan Engram untuk menyambung semula.",
-	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.":
-		"Engram: {count} lampiran dilepaskan — tingkatkan langganan anda untuk menyegerakkan imej & fail PDF.",
+	"Engram: {count} attachments skipped. See Sync Center for why.":
+		"Engram: {count} lampiran dilepaskan. Lihat Pusat Sync untuk maklumat lanjut.",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
 		"Engram: {count} fail gagal disegerakkan{detail} — buka Pusat Sync",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
@@ -462,8 +462,8 @@ const ms: Dict = {
 	"Sync server": "Pelayan sync",
 	"Sync these now": "Segerakkan ini sekarang",
 	"Sync...": "Segerakkan...",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"Disegerakkan. Sesetengah lampiran memerlukan langganan berbayar untuk disegerakkan (lihat di bawah).",
+	"Synced. Some attachments were skipped (see below).":
+		"Disegerakkan. Sesetengah lampiran telah dilepaskan (lihat di bawah).",
 	"Syncing attachments": "Mengsync lampiran",
 	"Syncing your vault": "Mengsync peti nota anda",
 	"Syncing...": "Sedang menyinkronkan...",
@@ -494,8 +494,8 @@ const ms: Dict = {
 		"Pelayan telah kehilangan kandungan fail ini dan akan cuba memulihkannya. Tiada apa yang berubah pada peranti ini.",
 	"The server took too long to respond. Try again.":
 		"Pelayan mengambil masa terlalu lama untuk menjawab. Cuba lagi.",
-	"These files are fine. They just need a paid plan to sync.":
-		"Fail ini selamat. Ia hanya memerlukan langganan berbayar untuk disegerakkan.",
+	"These files are fine. Each card below says why they did not sync.":
+		"Fail-fail ini adalah betul. Setiap kad di bawah menyatakan mengapa ia tidak disegerakkan.",
 	"This account was deleted. Contact support if that is wrong.":
 		"Akaun ini telah dipadam. Hubungi sokongan jika ini tidak betul.",
 	"This cannot be undone.": "Ini tidak dapat dibatalkan.",
@@ -599,8 +599,8 @@ const ms: Dict = {
 	"waiting for a plugin update": "sedang menunggu kemas kini plugin",
 	"waiting to retry": "menunggu untuk cuba semula",
 	"{count} attachments": "{count} lampiran",
-	"{count} attachments need a paid plan to sync. See Sync Center.":
-		"{count} lampiran memerlukan langganan berbayar untuk disegerakkan. Lihat Pusat Sync.",
+	"{count} attachments skipped. See Sync Center.":
+		"{count} lampiran telah dilepaskan. Lihat Pusat Sync.",
 	"{count} attachments will be skipped: this server only accepts text files.":
 		"{count} lampiran akan dilepaskan: pelayan ini hanya menerima fail teks.",
 	"{count} attempts": "{count} percubaan",
@@ -633,7 +633,7 @@ const ms: Dict = {
 	"✗ couldn't reach a server at this URL": "✗ Tidak dapat mengakses perantau di URL ini",
 	"✗ server responded but isn't an Engram server":
 		"✗ Pelayan bertindak balas tetapi bukan pelayan Engram",
-	"⤳ {count} skipped (Free plan)": "⤳ {count} dilangkau (Pelan percuma)",
+	"⤳ {count} skipped": "⤳ {count} dilangkau",
 	"👋 Welcome": "👋 Selamat datang",
 	"💬 Feedback": "💬 Maklum balas",
 	"🔄 Sync Center": "🔄 Pusat Sync",

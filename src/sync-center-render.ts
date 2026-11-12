@@ -265,7 +265,9 @@ function renderPlanSkips(parent: HTMLElement, plugin: EngramSyncPlugin, refresh:
 	const body = section.createDiv({ cls: "engram-sync-center-section-body" });
 	body.createEl("p", {
 		cls: "engram-sync-center-card-hint",
-		text: t("These files are fine. They just need a paid plan to sync."),
+		// Names no plan: a quota card here reaches Starter and Pro users too, and
+		// a text-only server refusal is not a tier at all.
+		text: t("These files are fine. Each card below says why they did not sync."),
 	});
 
 	for (const [category, list] of groups) {

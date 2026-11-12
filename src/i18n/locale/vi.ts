@@ -218,8 +218,8 @@ const vi: Dict = {
 	"Engram: update required": "Engram: cần cập nhật",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: phiên đăng nhập của bạn đã hết hạn — mở cài đặt Engram để kết nối lại.",
-	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.":
-		"Engram: {count} tệp đính kèm bị bỏ qua — nâng cấp gói của bạn để đồng bộ hóa ảnh & PDF.",
+	"Engram: {count} attachments skipped. See Sync Center for why.":
+		"Engram: {count} tệp đính kèm bị bỏ qua. Xem Trung tâm đồng bộ hóa để biết lý do.",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
 		"Engram: {count} tệp không đồng bộ hóa{detail} — mở Trung tâm đồng bộ hóa",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
@@ -459,8 +459,8 @@ const vi: Dict = {
 	"Sync server": "Máy chủ đồng bộ hóa",
 	"Sync these now": "Đồng bộ hóa các tệp này ngay bây giờ",
 	"Sync...": "Đồng bộ hóa...",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"Đã đồng bộ hóa. Một số tệp đính kèm cần gói trả phí để đồng bộ hóa (xem bên dưới).",
+	"Synced. Some attachments were skipped (see below).":
+		"Đã đồng bộ hóa. Một số tệp đính kèm đã bị bỏ qua (xem bên dưới).",
 	"Syncing attachments": "Đang đồng bộ hóa tệp đính kèm",
 	"Syncing your vault": "Đang đồng bộ hóa kho lưu trữ của bạn",
 	"Syncing...": "Đang đồng bộ hóa...",
@@ -490,8 +490,8 @@ const vi: Dict = {
 	"The server lost this file's stored content and will try to restore it. Nothing on this device was changed.":
 		"Máy chủ đã mất nội dung của tệp này và sẽ cố gắng khôi phục. Không có gì thay đổi trên thiết bị này.",
 	"The server took too long to respond. Try again.": "Máy chủ phản hồi quá chậm. Thử lại.",
-	"These files are fine. They just need a paid plan to sync.":
-		"Các tệp này không có vấn đề. Chúng chỉ cần một gói trả phí để đồng bộ hóa.",
+	"These files are fine. Each card below says why they did not sync.":
+		"Các tệp này không có vấn đề gì. Mỗi mục bên dưới giải thích lý do tại sao chúng không được đồng bộ hóa.",
 	"This account was deleted. Contact support if that is wrong.":
 		"Tài khoản này đã bị xóa. Liên hệ hỗ trợ nếu điều này là sai.",
 	"This cannot be undone.": "Không thể hoàn tác.",
@@ -596,8 +596,8 @@ const vi: Dict = {
 	"waiting for a plugin update": "Đang chờ cập nhật plugin",
 	"waiting to retry": "đang chờ thử lại",
 	"{count} attachments": "{count} tệp đính kèm",
-	"{count} attachments need a paid plan to sync. See Sync Center.":
-		"{count} tệp đính kèm cần gói trả phí để đồng bộ hóa. Xem Trung tâm đồng bộ hóa.",
+	"{count} attachments skipped. See Sync Center.":
+		"{count} tệp đính kèm bị bỏ qua. Xem Trung tâm đồng bộ hóa.",
 	"{count} attachments will be skipped: this server only accepts text files.":
 		"{count} tệp đính kèm sẽ bị bỏ qua: máy chủ này chỉ chấp nhận tệp văn bản.",
 	"{count} attempts": "{count} lần thử",
@@ -630,7 +630,7 @@ const vi: Dict = {
 	"✗ couldn't reach a server at this URL": "✗ Không thể kết nối đến máy chủ tại URL này",
 	"✗ server responded but isn't an Engram server":
 		"✗ Máy chủ phản hồi nhưng không phải là máy chủ Engram",
-	"⤳ {count} skipped (Free plan)": "⤳ {count} bỏ qua (Gói miễn phí)",
+	"⤳ {count} skipped": "⤳ {count} đã bỏ qua",
 	"👋 Welcome": "👋 Chào mừng",
 	"💬 Feedback": "💬 Phản hồi",
 	"🔄 Sync Center": "🔄 Trung tâm đồng bộ hóa",

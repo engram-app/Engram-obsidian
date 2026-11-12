@@ -268,10 +268,10 @@ const pt: Dict = {
 	"Engram: update required": "Engram: atualização necessária",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: a sua sessão expirou — abra as definições de Engram para reconectar.",
-	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.": {
-		one: "Engram: {count} anexo ignorado — atualize o plano para sincronizar imagens e PDFs.",
-		many: "Engram: {count} anexos ignorados — atualize o plano para sincronizar imagens e PDFs.",
-		other: "Engram: {count} anexos ignorados — atualize o plano para sincronizar imagens e PDFs.",
+	"Engram: {count} attachments skipped. See Sync Center for why.": {
+		one: "Engram: {count} anexo ignorado. Consulte o Centro de sincronização para saber o motivo.",
+		many: "Engram: {count} anexos ignorados. Consulte o Centro de sincronização para saber o motivo.",
+		other: "Engram: {count} anexos ignorados. Consulte o Centro de sincronização para saber o motivo.",
 	},
 	"Engram: {count} files failed to sync{detail} — open Sync Center": {
 		one: "Engram: {count} ficheiro falhou na sincronização{detail} — abrir o Centro de sincronização",
@@ -525,8 +525,8 @@ const pt: Dict = {
 	"Sync server": "Servidor de sincronização",
 	"Sync these now": "Sincronizar agora",
 	"Sync...": "A sincronizar...",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"Sincronizado. Alguns anexos necessitam de um plano pago para sincronizar (ver abaixo).",
+	"Synced. Some attachments were skipped (see below).":
+		"Sincronizado. Alguns anexos foram ignorados (ver abaixo).",
 	"Syncing attachments": "A sincronizar anexos",
 	"Syncing your vault": "A sincronizar o seu cofre",
 	"Syncing...": "A sincronizar...",
@@ -557,8 +557,8 @@ const pt: Dict = {
 		"O servidor perdeu o conteúdo guardado deste ficheiro e tentará restaurá-lo. Nada foi alterado neste dispositivo.",
 	"The server took too long to respond. Try again.":
 		"O servidor demorou demasiado tempo a responder. Tente novamente.",
-	"These files are fine. They just need a paid plan to sync.":
-		"Estes ficheiros estão bem. Apenas precisam de um plano pago para sincronizar.",
+	"These files are fine. Each card below says why they did not sync.":
+		"Estes ficheiros estão bem. Cada cartão abaixo indica o motivo pelo qual não foram sincronizados.",
 	"This account was deleted. Contact support if that is wrong.":
 		"Esta conta foi eliminada. Contacte o suporte se estiver errado.",
 	"This cannot be undone.": "Esta ação não pode ser desfeita.",
@@ -683,10 +683,10 @@ const pt: Dict = {
 		many: "{count} anexos",
 		other: "{count} anexos",
 	},
-	"{count} attachments need a paid plan to sync. See Sync Center.": {
-		one: "{count} anexo necessita de um plano pago para sincronizar. Consulte o Centro de sincronização.",
-		many: "{count} anexos requerem um plano pago para sincronizar. Consulte o Centro de sincronização.",
-		other: "{count} anexos necessitam de um plano pago para sincronizar. Consulte o Centro de sincronização.",
+	"{count} attachments skipped. See Sync Center.": {
+		one: "{count} anexo ignorado. Consulte o Centro de sincronização.",
+		many: "{count} anexos ignorados. Consulte o Centro de sincronização.",
+		other: "{count} anexos ignorados. Consulte o Centro de sincronização.",
 	},
 	"{count} attachments will be skipped: this server only accepts text files.": {
 		one: "{count} anexo será ignorado: este servidor só aceita ficheiros de texto.",
@@ -790,10 +790,10 @@ const pt: Dict = {
 	"✗ couldn't reach a server at this URL": "✗ Não foi possível contactar um servidor neste URL",
 	"✗ server responded but isn't an Engram server":
 		"✗ O servidor respondeu, mas não é um servidor Engram",
-	"⤳ {count} skipped (Free plan)": {
-		one: "⤳ {count} ignorado (Plano gratuito)",
-		many: "⤳ {count} ignorados (Plano gratuito)",
-		other: "⤳ {count} ignorados (Plano gratuito)",
+	"⤳ {count} skipped": {
+		one: "⤳ {count} ignorado",
+		many: "⤳ {count} ignorados",
+		other: "⤳ {count} ignorados",
 	},
 	"👋 Welcome": "👋 Bem-vindo",
 	"💬 Feedback": "💬 Feedback",

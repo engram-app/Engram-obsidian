@@ -247,9 +247,9 @@ const tr: Dict = {
 	"Engram: update required": "Engram: güncelleme gerekiyor",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: oturum açma süreniz doldu — yeniden bağlanmak için Engram ayarlarını açın.",
-	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.": {
-		one: "Engram: {count} ek atlandı — resim ve PDF'leri senkronize etmek için planınızı yükseltin.",
-		other: "Engram: {count} ek atlandı — resim ve PDF'leri senkronize etmek için planınızı yükseltin.",
+	"Engram: {count} attachments skipped. See Sync Center for why.": {
+		one: "Engram: {count} ek atlandı. Nedenini görmek için Senkronizasyon Merkezi'ne bakın.",
+		other: "Engram: {count} ek atlandı. Nedenini görmek için Senkronizasyon Merkezi'ni açın.",
 	},
 	"Engram: {count} files failed to sync{detail} — open Sync Center": {
 		one: "Engram: {count} dosya senkronize edilemedi{detail} — Senkronizasyon Merkezi'ni aç",
@@ -498,8 +498,8 @@ const tr: Dict = {
 	"Sync server": "Senkronizasyon sunucusu",
 	"Sync these now": "Şimdi senkronize et",
 	"Sync...": "Senkronize ediliyor...",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"Senkronizasyon tamamlandı. Bazı eklerin senkronizasyonu için ücretli bir plan gerekebilir (aşağıya bakın).",
+	"Synced. Some attachments were skipped (see below).":
+		"Senkronize edildi. Bazı ekler atlandı (aşağıya bakın).",
 	"Syncing attachments": "Eklerin senkronizasyonu",
 	"Syncing your vault": "Kasanızın senkronizasyonu",
 	"Syncing...": "Senkronizasyon yapılıyor...",
@@ -530,8 +530,8 @@ const tr: Dict = {
 		"Sunucu bu dosyanın içeriğini kaybetti ve geri yüklemeyi deneyecek. Bu cihazda hiçbir değişiklik yapılmadı.",
 	"The server took too long to respond. Try again.":
 		"Sunucu yanıt vermekte çok yavaş. Lütfen tekrar deneyin.",
-	"These files are fine. They just need a paid plan to sync.":
-		"Bu dosyalar sorunsuz. Sadece senkronize olmak için ücretli bir plana ihtiyaçları var.",
+	"These files are fine. Each card below says why they did not sync.":
+		"Bu dosyalar sorunsuz. Aşağıdaki her kart, neden senkronize olmadığını belirtir.",
 	"This account was deleted. Contact support if that is wrong.":
 		"Bu hesap silindi. Yanlışsa destekle iletişime geçin.",
 	"This cannot be undone.": "Bu geri alınamaz.",
@@ -643,9 +643,9 @@ const tr: Dict = {
 	"waiting for a plugin update": "Eklenti güncellemesini bekliyor",
 	"waiting to retry": "Yeniden denemeyi bekliyor",
 	"{count} attachments": { one: "{count} ek", other: "{count} ek" },
-	"{count} attachments need a paid plan to sync. See Sync Center.": {
-		one: "{count} ek, senkronize olmak için ücretli bir plana ihtiyaç duyar. Senkronizasyon Merkezi'ni inceleyin.",
-		other: "{count} ek, senkronize olmak için ücretli bir plana ihtiyaç duyar. Senkronizasyon Merkezi'ne bakın.",
+	"{count} attachments skipped. See Sync Center.": {
+		one: "{count} ek atlandı. Senkronizasyon Merkezi'ne bakın.",
+		other: "{count} ek atlandı. Senkronizasyon Merkezi'ne bakın.",
 	},
 	"{count} attachments will be skipped: this server only accepts text files.": {
 		one: "{count} ek atlanacak: bu sunucu sadece metin dosyalarını kabul eder.",
@@ -710,10 +710,7 @@ const tr: Dict = {
 	"✗ couldn't reach a server at this URL": "✗ Bu URL'deki bir sunucuya ulaşılamadı",
 	"✗ server responded but isn't an Engram server":
 		"✗ Sunucu yanıt verdi ancak bir Engram sunucusu değil",
-	"⤳ {count} skipped (Free plan)": {
-		one: "⤳ {count} atlandı (Ücretsiz plan)",
-		other: "⤳ {count} atlandı (Ücretsiz plan)",
-	},
+	"⤳ {count} skipped": { one: "⤳ {count} atlandı", other: "⤳ {count} atlandı" },
 	"👋 Welcome": "👋 Hoş geldiniz",
 	"💬 Feedback": "💬 Geri bildirim",
 	"🔄 Sync Center": "🔄 Senkronizasyon Merkezi",

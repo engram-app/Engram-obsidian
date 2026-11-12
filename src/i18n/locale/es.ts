@@ -269,10 +269,10 @@ const es: Dict = {
 	"Engram: update required": "Engram: actualización necesaria",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: tu sesión ha expirado — abre la configuración de Engram para volver a conectar.",
-	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.": {
-		one: "Engram: Se omitió {count} adjunto. Actualiza tu plan para sincronizar imágenes y PDF.",
-		many: "Engram: {count} adjuntos omitidos. Mejora tu plan para sincronizar imágenes y PDF.",
-		other: "Engram: Se omitieron {count} adjuntos. Actualiza tu plan para sincronizar imágenes y PDF.",
+	"Engram: {count} attachments skipped. See Sync Center for why.": {
+		one: "Engram: Se omitió {count} adjunto. Consulta el Centro de sincronización para saber por qué.",
+		many: "Engram: Se omitieron {count} adjuntos. Consulta el Centro de sincronización para saber por qué.",
+		other: "Engram: Se omitieron {count} adjuntos. Consulta el Centro de sincronización para ver el motivo.",
 	},
 	"Engram: {count} files failed to sync{detail} — open Sync Center": {
 		one: "Engram: {count} archivo no se pudo sincronizar{detail} — abre el Centro de sincronización",
@@ -527,8 +527,8 @@ const es: Dict = {
 	"Sync server": "Servidor de sincronización",
 	"Sync these now": "Sincronizar ahora",
 	"Sync...": "Sincronizando...",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"Sincronizado. Algunos adjuntos requieren un plan de pago para sincronizarse (ver abajo).",
+	"Synced. Some attachments were skipped (see below).":
+		"Sincronizado. Algunos adjuntos fueron omitidos (ver abajo).",
 	"Syncing attachments": "Sincronizando adjuntos",
 	"Syncing your vault": "Sincronizando tu bóveda",
 	"Syncing...": "Sincronizando...",
@@ -559,8 +559,8 @@ const es: Dict = {
 		"El servidor perdió el contenido almacenado de este archivo e intentará restaurarlo. Nada se modificó en este dispositivo.",
 	"The server took too long to respond. Try again.":
 		"El servidor tardó demasiado en responder. Inténtalo de nuevo.",
-	"These files are fine. They just need a paid plan to sync.":
-		"Estos archivos están bien. Solo necesitan un plan de pago para sincronizarse.",
+	"These files are fine. Each card below says why they did not sync.":
+		"Estos archivos están bien. Cada tarjeta a continuación explica por qué no se sincronizaron.",
 	"This account was deleted. Contact support if that is wrong.":
 		"Esta cuenta fue eliminada. Contacta con soporte si es incorrecto.",
 	"This cannot be undone.": "Esto no se puede deshacer.",
@@ -685,10 +685,10 @@ const es: Dict = {
 		many: "{count} adjuntos",
 		other: "{count} adjuntos",
 	},
-	"{count} attachments need a paid plan to sync. See Sync Center.": {
-		one: "{count} adjunto necesita un plan de pago para sincronizarse. Consulta el Centro de sincronización.",
-		many: "{count} Los adjuntos requieren un plan de pago para sincronizarse. Consulta el Centro de sincronización.",
-		other: "{count} adjuntos necesitan un plan de pago para sincronizarse. Consulta el Centro de sincronización.",
+	"{count} attachments skipped. See Sync Center.": {
+		one: "{count} adjunto omitido. Consulta el Centro de sincronización.",
+		many: "{count} adjuntos omitidos. Consulta el Centro de sincronización.",
+		other: "{count} adjuntos omitidos. Consulta el Centro de sincronización.",
 	},
 	"{count} attachments will be skipped: this server only accepts text files.": {
 		one: "Se omitirá {count} adjunto: este servidor solo acepta archivos de texto.",
@@ -792,10 +792,10 @@ const es: Dict = {
 	"✗ couldn't reach a server at this URL": "✗ No se pudo acceder a un servidor en esta URL",
 	"✗ server responded but isn't an Engram server":
 		"✗ El servidor respondió, pero no es un servidor de Engram",
-	"⤳ {count} skipped (Free plan)": {
-		one: "⤳ {count} omitido (Plan gratuito)",
-		many: "⤳ {count} omitido (Plan gratuito)",
-		other: "⤳ {count} omitidos (Plan gratuito)",
+	"⤳ {count} skipped": {
+		one: "⤳ {count} omitido",
+		many: "⤳ {count} omitidos",
+		other: "⤳ {count} omitidos",
 	},
 	"👋 Welcome": "👋 Bienvenido/a",
 	"💬 Feedback": "💬 Comentarios",

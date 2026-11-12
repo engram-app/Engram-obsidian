@@ -221,8 +221,8 @@ const ja: Dict = {
 	"Engram: update required": "Engram: 更新が必要です",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: ログインが期限切れです。Engram の設定を開いて再接続してください。",
-	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.":
-		"Engram: {count}個の添付ファイルをスキップしました。画像やPDFを同期するには、プランをアップグレードしてください。",
+	"Engram: {count} attachments skipped. See Sync Center for why.":
+		"Engram: {count}個の添付ファイルをスキップしました。理由は同期センターでご確認ください。",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
 		"Engram: 同期に失敗したファイルが{count}件あります{detail} — 同期センターを開く",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
@@ -459,8 +459,8 @@ const ja: Dict = {
 	"Sync server": "同期サーバー",
 	"Sync these now": "今すぐ同期",
 	"Sync...": "同期中...",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"同期完了。一部の添付ファイルは有料プランでのみ同期可能です (下記参照)。",
+	"Synced. Some attachments were skipped (see below).":
+		"同期完了。一部の添付ファイルはスキップされました（下記参照）。",
 	"Syncing attachments": "添付ファイルの同期",
 	"Syncing your vault": "保管庫の同期",
 	"Syncing...": "同期中...",
@@ -491,8 +491,8 @@ const ja: Dict = {
 		"サーバーがこのファイルのデータを失い、復元を試みます。このデバイスの内容は変更されていません。",
 	"The server took too long to respond. Try again.":
 		"サーバーの応答が遅すぎます。もう一度お試しください。",
-	"These files are fine. They just need a paid plan to sync.":
-		"これらのファイルは問題ありません。同期するには有料プランが必要です。",
+	"These files are fine. Each card below says why they did not sync.":
+		"これらのファイルは問題ありません。各カードには、同期されなかった理由が記載されています。",
 	"This account was deleted. Contact support if that is wrong.":
 		"このアカウントは削除されました。もし誤りがあれば、サポートまでご連絡ください。",
 	"This cannot be undone.": "この操作は取り消せません。",
@@ -595,8 +595,8 @@ const ja: Dict = {
 	"waiting for a plugin update": "プラグインのアップデートを待っています",
 	"waiting to retry": "再試行待ち",
 	"{count} attachments": "{count}つの添付ファイル",
-	"{count} attachments need a paid plan to sync. See Sync Center.":
-		"{count}つの添付ファイルは、有料プランでのみ同期可能です。詳細はこちら: 同期センター。",
+	"{count} attachments skipped. See Sync Center.":
+		"{count}個の添付ファイルをスキップしました。同期センターでご確認ください。",
 	"{count} attachments will be skipped: this server only accepts text files.":
 		"{count} 個の添付ファイルはスキップされます。このサーバーはテキストファイルのみを受け付けます。",
 	"{count} attempts": "{count}回試行しました",
@@ -629,7 +629,7 @@ const ja: Dict = {
 	"✗ couldn't reach a server at this URL": "✗ このURLのサーバーに接続できませんでした",
 	"✗ server responded but isn't an Engram server":
 		"✗ サーバーからの応答ありましたが、Engram サーバーではありません",
-	"⤳ {count} skipped (Free plan)": "⤳ 無料プランでは{count}件スキップされます",
+	"⤳ {count} skipped": "⤳ {count} はスキップされました",
 	"👋 Welcome": "👋 ようこそ",
 	"💬 Feedback": "💬 フィードバック",
 	"🔄 Sync Center": "🔄 同期センター",

@@ -20,8 +20,8 @@ const enPlurals: Dict = {
 	"Engram: {count} files failed to sync{detail} — open Sync Center": {
 		one: "Engram: {count} file failed to sync{detail} — open Sync Center",
 	},
-	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.": {
-		one: "Engram: {count} attachment skipped — upgrade your plan to sync images & PDFs.",
+	"Engram: {count} attachments skipped. See Sync Center for why.": {
+		one: "Engram: {count} attachment skipped. See Sync Center for why.",
 	},
 	"Engram: plan upgraded — syncing {count} attachments…": {
 		one: "Engram: plan upgraded — syncing {count} attachment…",
@@ -32,8 +32,8 @@ const enPlurals: Dict = {
 	"{count} conflicts need resolution": {
 		one: "{count} conflict needs resolution",
 	},
-	"{count} attachments need a paid plan to sync. See Sync Center.": {
-		one: "{count} attachment needs a paid plan to sync. See Sync Center.",
+	"{count} attachments skipped. See Sync Center.": {
+		one: "{count} attachment skipped. See Sync Center.",
 	},
 	"{count} files queued": {
 		one: "{count} file queued",
@@ -102,7 +102,7 @@ const enPlurals: Dict = {
 	"Downloading {count}.": { one: "Downloading {count}." },
 	"Deleting {count} on the cloud.": { one: "Deleting {count} on the cloud." },
 	"✓ {count} synced": { one: "✓ {count} synced" },
-	"⤳ {count} skipped (Free plan)": { one: "⤳ {count} skipped (Free plan)" },
+	"⤳ {count} skipped": { one: "⤳ {count} skipped" },
 	"✕ {count} failed": { one: "✕ {count} failed" },
 	'{count} failed. Run "{command}" for details.': {
 		one: '{count} failed. Run "{command}" for details.',

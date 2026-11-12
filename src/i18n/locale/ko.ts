@@ -216,8 +216,8 @@ const ko: Dict = {
 	"Engram: update required": "Engram: 업데이트 필요",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: 로그인 만료되었습니다. 다시 연결하려면 Engram 설정으로 이동하세요.",
-	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.":
-		"Engram: {count}개의 첨부 파일 건너�뎠습니다. 이미지 및 PDF 동기화를 위해 요금제를 업그레이드하세요.",
+	"Engram: {count} attachments skipped. See Sync Center for why.":
+		"Engram: {count}개의 첨부 파일이 건너뜬. 이유는 동기화 센터에서 확인하세요.",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
 		"Engram: {count}개의 파일 동기화 실패{detail} — 동기화 센터 열기",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
@@ -451,8 +451,8 @@ const ko: Dict = {
 	"Sync server": "동기화 서버",
 	"Sync these now": "지금 동기화",
 	"Sync...": "동기화 중...",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"동기화 완료. 일부 첨부 파일은 유료 플랜에서만 동기화 가능합니다 (아래 참조).",
+	"Synced. Some attachments were skipped (see below).":
+		"동기화 완료. 일부 첨부 파일은 건너뜬 (아래 내용 참조).",
 	"Syncing attachments": "첨부 파일 동기화 중",
 	"Syncing your vault": "보관함 동기화 중",
 	"Syncing...": "동기화 중...",
@@ -483,8 +483,8 @@ const ko: Dict = {
 		"서버에서 해당 파일의 내용이 삭제되었으며, 복구를 시도합니다. 이 장치에는 변경 사항이 없습니다.",
 	"The server took too long to respond. Try again.":
 		"서버 응답 시간이 너무 오래 걸렸습니다. 다시 시도해 주세요.",
-	"These files are fine. They just need a paid plan to sync.":
-		"이 파일들은 괜찮습니다. 동기화를 하려면 유료 플랜이 필요합니다.",
+	"These files are fine. Each card below says why they did not sync.":
+		"이 파일들은 문제가 없습니다. 아래 각 항목에서 동기화되지 않은 이유를 확인하세요.",
 	"This account was deleted. Contact support if that is wrong.":
 		"이 계정이 삭제되었습니다. 오류인 경우 지원팀에 문의하세요.",
 	"This cannot be undone.": "이 작업은 되돌릴 수 없습니다.",
@@ -586,8 +586,6 @@ const ko: Dict = {
 	"waiting for a plugin update": "플러그인 업데이트를 기다 중입니다",
 	"waiting to retry": "재시도 대기 중",
 	"{count} attachments": "{count}개의 첨부 파일",
-	"{count} attachments need a paid plan to sync. See Sync Center.":
-		"{count}개의 첨부 파일은 유료 플랜이 필요합니다. 동기화 센터에서 확인하세요.",
 	"{count} attachments will be skipped: this server only accepts text files.":
 		"{count}개의 첨부 파일은 건너뜁니다: 이 서버는 텍스트 파일만 허용합니다.",
 	"{count} attempts": "{count}회 시도",
@@ -620,7 +618,7 @@ const ko: Dict = {
 	"✗ couldn't reach a server at this URL": "✗ 해당 URL의 서버에 연결할 수 없습니다",
 	"✗ server responded but isn't an Engram server":
 		"✗ 서버 응답은 받았지만, Engram 서버가 아닙니다",
-	"⤳ {count} skipped (Free plan)": "⤳ 무료 플랜으로 인해 {count}건 건너뜀",
+	"⤳ {count} skipped": "⤳ {count} 건 건너뜀",
 	"👋 Welcome": "👋 안녕하세요",
 	"💬 Feedback": "💬 피드백",
 	"🔄 Sync Center": "🔄 동기화 센터",

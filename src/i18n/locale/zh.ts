@@ -200,8 +200,6 @@ const zh: Dict = {
 	"Engram: update required": "Engram: 需要更新",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram：您的登录已过期，请在 Engram 设置中重新连接。",
-	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.":
-		"Engram: 忽略了 {count} 个附件 — 升级您的套餐以同步图片和PDF。",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
 		"Engram：{count}个文件同步失败{detail} — 打开同步中心",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
@@ -424,8 +422,7 @@ const zh: Dict = {
 	"Sync server": "同步服务器",
 	"Sync these now": "立即同步这些",
 	"Sync...": "同步中...",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"已同步。部分附件需要付费计划才能同步（见下方）。",
+	"Synced. Some attachments were skipped (see below).": "已同步。部分附件已跳过（见下方）。",
 	"Syncing attachments": "同步附件",
 	"Syncing your vault": "正在同步您的仓库",
 	"Syncing...": "同步中...",
@@ -455,8 +452,8 @@ const zh: Dict = {
 	"The server lost this file's stored content and will try to restore it. Nothing on this device was changed.":
 		"服务器丢失了该文件的内容，正在尝试恢复。本设备未做任何更改。",
 	"The server took too long to respond. Try again.": "服务器响应时间过长。请重试。",
-	"These files are fine. They just need a paid plan to sync.":
-		"这些文件没问题，只需付费计划即可同步。",
+	"These files are fine. Each card below says why they did not sync.":
+		"这些文件没问题。下方卡片说明了未同步的原因。",
 	"This account was deleted. Contact support if that is wrong.":
 		"账号已删除。如果错误，请联系支持。",
 	"This cannot be undone.": "此操作不可撤销。",
@@ -554,8 +551,6 @@ const zh: Dict = {
 	"waiting for a plugin update": "等待插件更新",
 	"waiting to retry": "正在等待重试",
 	"{count} attachments": "{count} 个附件",
-	"{count} attachments need a paid plan to sync. See Sync Center.":
-		"{count}个附件需要付费计划才能同步。查看同步中心。",
 	"{count} attachments will be skipped: this server only accepts text files.":
 		"{count} 附件将被跳过：此服务器仅接受文本文件。",
 	"{count} attempts": "{count} 次尝试",
@@ -586,7 +581,7 @@ const zh: Dict = {
 	"✕ {count} failed": "✕ {count} 失败",
 	"✗ couldn't reach a server at this URL": "✗ 无法访问该 URL 的服务器",
 	"✗ server responded but isn't an Engram server": "✗ 服务器响应，但不是 Engram 服务器",
-	"⤳ {count} skipped (Free plan)": "⤳ {count} 已跳过 (免费版)",
+	"⤳ {count} skipped": "⤳ {count} 已跳过",
 	"👋 Welcome": "👋 欢迎",
 	"💬 Feedback": "💬 反馈",
 	"🔄 Sync Center": "🔄 同步中心",

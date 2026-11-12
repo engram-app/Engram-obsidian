@@ -266,10 +266,10 @@ const fr: Dict = {
 	"Engram: update required": "Engram: mise à jour requise",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram : ton identifiant a expiré — ouvre les paramètres Engram pour te reconnecter.",
-	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.": {
-		one: "Engram: {count} pièce jointe ignorée — améliore ton abonnement pour synchroniser les images et les PDF.",
-		many: "Engram: {count} pièces jointes ignorées — améliore ton abonnement pour synchroniser les images et les PDF.",
-		other: "Engram: {count} pièces jointes ignorées — améliore ton abonnement pour synchroniser les images et les PDF.",
+	"Engram: {count} attachments skipped. See Sync Center for why.": {
+		one: "Engram: {count} pièce jointe ignorée. Consulte le Centre de synchronisation pour plus de détails.",
+		many: "Engram: {count} pièces jointes ignorées. Consulte le Centre de synchronisation pour plus de détails.",
+		other: "Engram: {count} pièces jointes ignorées. Consulte le Centre de synchronisation pour plus de détails.",
 	},
 	"Engram: {count} files failed to sync{detail} — open Sync Center": {
 		one: "Engram : {count} fichier n'a pas pu être synchronisé{detail} — ouvre le Centre de synchronisation",
@@ -525,8 +525,8 @@ const fr: Dict = {
 	"Sync server": "Serveur de synchronisation",
 	"Sync these now": "Synchroniser maintenant",
 	"Sync...": "Synchronisation...",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"Synchronisé. Certaines pièces jointes nécessitent un abonnement payant pour la synchronisation (voir ci-dessous).",
+	"Synced. Some attachments were skipped (see below).":
+		"Synchronisé. Certaines pièces jointes ont été ignorées (voir ci-dessous).",
 	"Syncing attachments": "Synchronisation des pièces jointes",
 	"Syncing your vault": "Synchronisation de ton coffre",
 	"Syncing...": "Synchronisation en cours...",
@@ -557,8 +557,8 @@ const fr: Dict = {
 		"Le serveur a perdu le contenu de ce fichier et va essayer de le restaurer. Rien n'a été modifié sur cet appareil.",
 	"The server took too long to respond. Try again.":
 		"Le serveur a mis trop de temps à répondre. Réessaie.",
-	"These files are fine. They just need a paid plan to sync.":
-		"Ces fichiers sont corrects. Ils nécessitent un abonnement payant pour être synchronisés.",
+	"These files are fine. Each card below says why they did not sync.":
+		"Ces fichiers sont corrects. Chaque carte ci-dessous explique pourquoi ils n'ont pas été synchronisés.",
 	"This account was deleted. Contact support if that is wrong.":
 		"Ce compte a été supprimé. Contacte le support si c'est une erreur.",
 	"This cannot be undone.": "Cela ne peut pas être annulé.",
@@ -683,10 +683,10 @@ const fr: Dict = {
 		many: "{count} pièces jointes",
 		other: "{count} pièces jointes",
 	},
-	"{count} attachments need a paid plan to sync. See Sync Center.": {
-		one: "{count} pièce jointe nécessite un abonnement payant pour être synchronisée. Consulte le Centre de synchronisation.",
-		many: "{count} Les pièces jointes nécessitent un abonnement payant pour la synchronisation. Consulte le Centre de synchronisation.",
-		other: "{count} pièces jointes nécessitent un abonnement payant pour la synchronisation. Consulte le Centre de synchronisation.",
+	"{count} attachments skipped. See Sync Center.": {
+		one: "{count} pièce jointe ignorée. Consulte le Centre de synchronisation.",
+		many: "{count} pièces jointes ignorées. Consulte le Centre de synchronisation.",
+		other: "{count} pièces jointes ignorées. Consulte le Centre de synchronisation.",
 	},
 	"{count} attachments will be skipped: this server only accepts text files.": {
 		one: "{count} pièce jointe sera ignorée : ce serveur n'accepte que les fichiers texte.",
@@ -786,10 +786,10 @@ const fr: Dict = {
 	"✗ couldn't reach a server at this URL": "✗ Impossible de contacter un serveur à cette URL",
 	"✗ server responded but isn't an Engram server":
 		"✗ Le serveur a répondu, mais ce n'est pas un serveur Engram",
-	"⤳ {count} skipped (Free plan)": {
-		one: "⤳ {count} ignoré (plan gratuit)",
-		many: "⤳ {count} ignoré (Plan gratuit)",
-		other: "⤳ {count} ignorés (Plan gratuit)",
+	"⤳ {count} skipped": {
+		one: "⤳ {count} ignoré",
+		many: "⤳ {count} ignorés",
+		other: "⤳ {count} ignorés",
 	},
 	"👋 Welcome": "👋 Bienvenue",
 	"💬 Feedback": "💬 Retour",

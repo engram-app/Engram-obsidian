@@ -5155,6 +5155,24 @@ describe("SyncEngine attachment 402 (Free tier) handling", () => {
 		expect(toast?.message).toContain("1 attachment skipped");
 	});
 
+	// Skips come from a quota hit on any tier or a text-only server; every
+	// Cloud plan syncs images and PDFs, so the toast must not promise that
+	// upgrading unlocks them.
+	test("skip toast names no plan and promises no image unlock", async () => {
+		const engine = createEngine();
+		const file = new TFile("Assets/only.png", Date.now());
+		(file as any).stat = { mtime: Date.now(), size: 1024 };
+		mockApp.vault.getFiles.mockReturnValue([file]);
+		mockApp.vault.readBinary.mockResolvedValue(new ArrayBuffer(8));
+		(mockApi.pushAttachment as jest.Mock).mockRejectedValueOnce(makeAttachmentLimitedError());
+		(mockApi.ping as jest.Mock).mockResolvedValue({ ok: true });
+
+		await engine.pushAll();
+		const toast = __noticeCapture.notices.find((n) => /attachment skipped/.test(n.message));
+		expect(toast?.message).toContain("Sync Center");
+		expect(toast?.message).not.toMatch(/upgrade|images|paid plan/i);
+	});
+
 	function makeQuotaError(): LimitExceededError {
 		return new LimitExceededError(
 			"attachments_quota_exceeded",

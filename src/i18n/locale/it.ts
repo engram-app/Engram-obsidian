@@ -268,10 +268,10 @@ const it: Dict = {
 	"Engram: update required": "Engram: aggiornamento necessario",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: la tua sessione è scaduta: apri le impostazioni di Engram per ricollegarti.",
-	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.": {
-		one: "Engram: {count} allegato saltato — aggiorna il tuo piano per sincronizzare immagini e PDF.",
-		many: "Engram: {count} allegati saltati — aggiorna il tuo piano per sincronizzare immagini e PDF.",
-		other: "Engram: {count} allegati saltati — aggiorna il tuo piano per sincronizzare immagini e PDF.",
+	"Engram: {count} attachments skipped. See Sync Center for why.": {
+		one: "Engram: {count} allegato saltato. Consulta il Centro di sincronizzazione per il motivo.",
+		many: "Engram: {count} allegati saltati. Consulta il Centro di sincronizzazione per i dettagli.",
+		other: "Engram: {count} allegati saltati. Consulta il Centro di sincronizzazione per il motivo.",
 	},
 	"Engram: {count} files failed to sync{detail} — open Sync Center": {
 		one: "Engram: impossibile sincronizzare {count} file{detail} — apri il Centro di sincronizzazione",
@@ -527,8 +527,8 @@ const it: Dict = {
 	"Sync server": "Server di sincronizzazione",
 	"Sync these now": "Sincronizza ora",
 	"Sync...": "Sincronizza...",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"Sincronizzato. Alcuni allegati richiedono un piano a pagamento per essere sincronizzati (vedi sotto).",
+	"Synced. Some attachments were skipped (see below).":
+		"Sincronizzato. Alcuni allegati sono stati saltati (vedi sotto).",
 	"Syncing attachments": "Sincronizzazione degli allegati",
 	"Syncing your vault": "Sincronizzazione del tuo vault",
 	"Syncing...": "Sincronizzazione in corso...",
@@ -559,8 +559,8 @@ const it: Dict = {
 		"Il server ha perso il contenuto di questo file e tenterà di ripristinarlo. Nulla è cambiato su questo dispositivo.",
 	"The server took too long to respond. Try again.":
 		"Il server ha impiegato troppo tempo per rispondere. Riprova.",
-	"These files are fine. They just need a paid plan to sync.":
-		"Questi file sono ok. Hanno solo bisogno di un piano a pagamento per essere sincronizzati.",
+	"These files are fine. Each card below says why they did not sync.":
+		"Questi file sono corretti. Ogni scheda qui sotto spiega perché non sono stati sincronizzati.",
 	"This account was deleted. Contact support if that is wrong.":
 		"Questo account è stato eliminato. Contatta l'assistenza se non è corretto.",
 	"This cannot be undone.": "Questa operazione non è annullabile.",
@@ -686,10 +686,10 @@ const it: Dict = {
 		many: "{count} allegati",
 		other: "{count} allegati",
 	},
-	"{count} attachments need a paid plan to sync. See Sync Center.": {
-		one: "{count} allegato richiede un piano a pagamento per essere sincronizzato. Vedi il Centro di sincronizzazione.",
-		many: "{count} Gli allegati richiedono un piano a pagamento per la sincronizzazione. Vedi il Centro di sincronizzazione.",
-		other: "{count} allegati richiedono un piano a pagamento per essere sincronizzati. Vedi il Centro di sincronizzazione.",
+	"{count} attachments skipped. See Sync Center.": {
+		one: "{count} allegato saltato. Vedi Centro di sincronizzazione.",
+		many: "{count} allegati saltati. Vedi il Centro di sincronizzazione.",
+		other: "{count} allegati saltati. Vedi il Centro di sincronizzazione.",
 	},
 	"{count} attachments will be skipped: this server only accepts text files.": {
 		one: "{count} allegato verrà saltato: questo server accetta solo file di testo.",
@@ -789,10 +789,10 @@ const it: Dict = {
 	"✗ couldn't reach a server at this URL": "✗ Impossibile raggiungere un server a questo URL",
 	"✗ server responded but isn't an Engram server":
 		"✗ Il server ha risposto, ma non è un server Engram",
-	"⤳ {count} skipped (Free plan)": {
-		one: "⤳ {count} saltata (piano gratuito)",
-		many: "⤳ {count} saltata (Piano gratuito)",
-		other: "⤳ {count} saltati (Piano gratuito)",
+	"⤳ {count} skipped": {
+		one: "⤳ {count} saltato",
+		many: "⤳ {count} saltati",
+		other: "⤳ {count} saltati",
 	},
 	"👋 Welcome": "👋 Benvenuto",
 	"💬 Feedback": "💬 Feedback",

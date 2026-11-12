@@ -229,6 +229,18 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		expect(text).not.toMatch(/Free tier|notes only|Attachments need a paid plan/);
 	});
 
+	// The section hint sits directly above that card and above the quota card,
+	// which a Starter or Pro user at quota also sees, so it names no plan.
+	test("plan-skip section hint names no plan", () => {
+		const plugin = makeMockPlugin([
+			makeIssue(),
+			makeIssue({ path: "big.pdf", category: "quota" }),
+		]);
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+
+		expect(allText(parent)).not.toMatch(/paid plan|Free plan/i);
+	});
+
 	test("renders the lock icon on the needs_pro card", () => {
 		const plugin = makeMockPlugin([makeIssue()]);
 		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});

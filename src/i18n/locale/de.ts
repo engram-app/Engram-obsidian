@@ -248,9 +248,9 @@ const de: Dict = {
 	"Engram: update required": "Engram: Update erforderlich",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: Deine Anmeldung ist abgelaufen – öffne die Engram-Einstellungen, um die Verbindung wiederherzustellen.",
-	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.": {
-		one: "Engram: {count} Anhang übersprungen – aktualisiere dein Abo, um Bilder und PDFs zu synchronisieren.",
-		other: "Engram: {count} Anhänge übersprungen – aktualisiere dein Abo, um Bilder und PDFs zu synchronisieren.",
+	"Engram: {count} attachments skipped. See Sync Center for why.": {
+		one: "Engram: {count} Anhang übersprungen. Siehe Sync-Zentrale, um den Grund zu erfahren.",
+		other: "Engram: {count} Anhänge übersprungen. Siehe Sync-Zentrale, um den Grund zu erfahren.",
 	},
 	"Engram: {count} files failed to sync{detail} — open Sync Center": {
 		one: "Engram: {count} Datei konnte nicht synchronisiert werden{detail} — Öffne die Sync-Zentrale",
@@ -499,8 +499,8 @@ const de: Dict = {
 	"Sync server": "Synchronisierungsserver",
 	"Sync these now": "Jetzt synchronisieren",
 	"Sync...": "Synchronisieren...",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"Synchronisiert. Einige Anhänge benötigen ein kostenpflichtiges Abonnement, um synchronisiert zu werden (siehe unten).",
+	"Synced. Some attachments were skipped (see below).":
+		"Synchronisiert. Einige Anhänge wurden übersprungen (siehe unten).",
 	"Syncing attachments": "Anhänge synchronisieren",
 	"Syncing your vault": "Synchronisiere dein Vault",
 	"Syncing...": "Synchronisieren...",
@@ -531,8 +531,8 @@ const de: Dict = {
 		"Der Server hat den Inhalt dieser Datei verloren und versucht, ihn wiederherzustellen. Auf diesem Gerät wurden keine Änderungen vorgenommen.",
 	"The server took too long to respond. Try again.":
 		"Der Server hat zu lange zum Antworten gebraucht. Versuche es erneut.",
-	"These files are fine. They just need a paid plan to sync.":
-		"Diese Dateien sind in Ordnung. Sie benötigen nur einen kostenpflichtigen Plan, um synchronisiert zu werden.",
+	"These files are fine. Each card below says why they did not sync.":
+		"Diese Dateien sind in Ordnung. Jede Karte unten erklärt, warum sie nicht synchronisiert wurden.",
 	"This account was deleted. Contact support if that is wrong.":
 		"Dieses Konto wurde gelöscht. Kontaktiere den Support, falls das falsch ist.",
 	"This cannot be undone.": "Das kann nicht rückgängig gemacht werden.",
@@ -646,9 +646,9 @@ const de: Dict = {
 	"waiting for a plugin update": "Wartet auf ein Plugin-Update",
 	"waiting to retry": "wartet auf Wiederholung",
 	"{count} attachments": { one: "{count} Anhang", other: "{count} Anhänge" },
-	"{count} attachments need a paid plan to sync. See Sync Center.": {
-		one: "{count} Anhang benötigt ein kostenpflichtiges Abo, um synchronisiert zu werden. Siehe Sync-Zentrale.",
-		other: "{count} Anhänge benötigen ein kostenpflichtiges Abo, um synchronisiert zu werden. Siehe Sync-Zentrale.",
+	"{count} attachments skipped. See Sync Center.": {
+		one: "{count} Anhang übersprungen. Siehe Sync-Zentrale.",
+		other: "{count} Anhänge übersprungen. Siehe Sync-Zentrale.",
 	},
 	"{count} attachments will be skipped: this server only accepts text files.": {
 		one: "{count} Anhang wird übersprungen: dieser Server akzeptiert nur Textdateien.",
@@ -713,10 +713,7 @@ const de: Dict = {
 	"✗ couldn't reach a server at this URL": "✗ Kein Server unter dieser URL erreichbar",
 	"✗ server responded but isn't an Engram server":
 		"✗ Der Server antwortet, ist aber kein Engram-Server",
-	"⤳ {count} skipped (Free plan)": {
-		one: "⤳ {count} übersprungen (kostenlose Version)",
-		other: "⤳ {count} übersprungen (Kostenlose Version)",
-	},
+	"⤳ {count} skipped": { one: "⤳ {count} übersprungen", other: "⤳ {count} übersprungen" },
 	"👋 Welcome": "👋 Willkommen",
 	"💬 Feedback": "💬 Feedback",
 	"🔄 Sync Center": "🔄 Sync-Zentrale",

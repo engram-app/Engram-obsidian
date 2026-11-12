@@ -279,11 +279,11 @@ const pl: Dict = {
 	"Engram: update required": "Engram: wymagana aktualizacja",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: Twoje logowanie wygasło — otwórz ustawienia Engram, aby ponownie się połączyć.",
-	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.": {
-		one: "Engram: pominięto {count} załącznik — rozwiń swój plan, aby synchronizować obrazy i pliki PDF.",
-		few: "Engram: pominięto {count} załączniki — rozwiń swój plan, aby synchronizować obrazy i pliki PDF.",
-		many: "Engram: pominięto {count} załączników — rozważ aktualizację planu, aby synchronizować obrazy i pliki PDF.",
-		other: "Engram: Pominięto {count} załączników — rozważ aktualizację planu, aby synchronizować obrazy i pliki PDF.",
+	"Engram: {count} attachments skipped. See Sync Center for why.": {
+		one: "Engram: Pominięto {count} załącznik. Sprawdź Centrum synchronizacji, aby zobaczyć powód.",
+		few: "Engram: Pominięto {count} załączniki. Sprawdź Centrum synchronizacji, aby dowiedzieć się dlaczego.",
+		many: "Engram: Pominięto {count} załączników. Sprawdź Centrum synchronizacji, aby zobaczyć powód.",
+		other: "Engram: Pominięto {count} załączników. Sprawdź Centrum synchronizacji, aby dowiedzieć się dlaczego.",
 	},
 	"Engram: {count} files failed to sync{detail} — open Sync Center": {
 		one: "Engram: Nie udało się zsynchronizować {count} pliku{detail} — otwórz Centrum synchronizacji",
@@ -541,8 +541,8 @@ const pl: Dict = {
 	"Sync server": "Serwer synchronizacji",
 	"Sync these now": "Synchronizuj to teraz",
 	"Sync...": "Synchronizacja...",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"Zsynchronizowano. Niektóre załączniki wymagają płatnego planu, aby je zsynchronizować (zobacz poniżej).",
+	"Synced. Some attachments were skipped (see below).":
+		"Zsynchronizowano. Niektóre załączniki zostały pominięte (zobacz poniżej).",
 	"Syncing attachments": "Synchronizacja załączników",
 	"Syncing your vault": "Synchronizacja twojego sejfu",
 	"Syncing...": "Synchronizacja...",
@@ -573,8 +573,8 @@ const pl: Dict = {
 		"Serwer utracił zawartość tego pliku i spróbuje go odzyskać. Na tym urządzeniu nic się nie zmieniło.",
 	"The server took too long to respond. Try again.":
 		"Serwer zbyt długo odpowiadał. Spróbuj ponownie.",
-	"These files are fine. They just need a paid plan to sync.":
-		"Te pliki są w porządku. Potrzebują płatnego planu, aby je zsynchronizować.",
+	"These files are fine. Each card below says why they did not sync.":
+		"Te pliki są w porządku. Każda karta poniżej wyjaśnia, dlaczego nie zostały zsynchronizowane.",
 	"This account was deleted. Contact support if that is wrong.":
 		"To konto zostało usunięte. Skontaktuj się z działem pomocy technicznej, jeśli to nieprawda.",
 	"This cannot be undone.": "Nie można tego cofnąć.",
@@ -702,11 +702,11 @@ const pl: Dict = {
 		many: "{count} załączników",
 		other: "{count} załączniki",
 	},
-	"{count} attachments need a paid plan to sync. See Sync Center.": {
-		one: "{count} załącznik wymaga płatnego planu, aby zsynchronizować go. Zobacz Centrum synchronizacji.",
-		few: "{count} załączniki wymagają płatnego planu, aby zsynchronizować je. Zobacz Centrum synchronizacji.",
-		many: "{count} załączników wymaga płatnego planu, aby je zsynchronizować. Zobacz Centrum synchronizacji.",
-		other: "{count} Załączniki wymagają płatnego planu, aby synchronizować. Zobacz Centrum synchronizacji.",
+	"{count} attachments skipped. See Sync Center.": {
+		one: "{count} załącznik pominięto. Zobacz Centrum synchronizacji.",
+		few: "{count} załączniki pominięto. Zobacz Centrum synchronizacji.",
+		many: "{count} załączników pominięto. Zobacz Centrum synchronizacji.",
+		other: "{count} załączników pominięto. Zobacz Centrum synchronizacji.",
 	},
 	"{count} attachments will be skipped: this server only accepts text files.": {
 		one: "{count} załącznik zostanie pominięty: ten serwer akceptuje tylko pliki tekstowe.",
@@ -833,11 +833,11 @@ const pl: Dict = {
 	"✗ couldn't reach a server at this URL": "✗ Nie można połączyć z serwerem pod tym adresem",
 	"✗ server responded but isn't an Engram server":
 		"✗ Serwer odpowiedział, ale nie jest serwerem Engram",
-	"⤳ {count} skipped (Free plan)": {
-		one: "⤳ {count} pominięto (Plan darmowy)",
-		few: "⤳ Pominięto {count} (Plan darmowy)",
-		many: "⤳ Pominięto {count} (Plan darmowy)",
-		other: "⤳ {count} pomijane (Plan darmowy)",
+	"⤳ {count} skipped": {
+		one: "⤳ {count} pominięto",
+		few: "⤳ Pominięto {count} elementy",
+		many: "⤳ Pominięto {count}",
+		other: "⤳ {count} pomijane",
 	},
 	"👋 Welcome": "👋 Witaj",
 	"💬 Feedback": "💬 Opinia",

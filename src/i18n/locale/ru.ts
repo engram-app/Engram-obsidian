@@ -279,11 +279,11 @@ const ru: Dict = {
 	"Engram: update required": "Engram: требуется обновление",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram: ваш сеанс завершен — откройте настройки Engram, чтобы подключиться заново.",
-	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.": {
-		one: "Engram: Пропущено {count} вложение — обновите свой тариф, чтобы синхронизировать изображения и PDF-файлы.",
-		few: "Engram: Пропущено {count} вложения — обновите свой тариф, чтобы синхронизировать изображения и PDF-файлы.",
-		many: "Engram: Пропущено {count} вложений — обновите свой тариф, чтобы синхронизировать изображения и PDF-файлы.",
-		other: "Engram: Пропущено {count} вложений — обновите свой тариф, чтобы синхронизировать изображения и PDF-файлы.",
+	"Engram: {count} attachments skipped. See Sync Center for why.": {
+		one: "Engram: Пропущено {count} вложение. Подробности в Центре синхронизации.",
+		few: "Engram: Пропущено {count} вложения. Подробности в Центре синхронизации.",
+		many: "Engram: Пропущено {count} вложений. Подробности в Центре синхронизации.",
+		other: "Engram: Пропущено {count} вложений. Подробности в Центре синхронизации.",
 	},
 	"Engram: {count} files failed to sync{detail} — open Sync Center": {
 		one: "Engram: Не удалось синхронизировать {count} файл{detail} — откройте Центр синхронизации",
@@ -543,8 +543,8 @@ const ru: Dict = {
 	"Sync server": "Сервер синхронизации",
 	"Sync these now": "Синхронизировать сейчас",
 	"Sync...": "Синхронизация...",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"Синхронизировано. Для синхронизации некоторых вложений требуется платная подписка (см. ниже).",
+	"Synced. Some attachments were skipped (see below).":
+		"Синхронизировано. Некоторые вложения были пропущены (см. ниже).",
 	"Syncing attachments": "Синхронизация вложений",
 	"Syncing your vault": "Синхронизация вашего хранилища",
 	"Syncing...": "Синхронизация...",
@@ -575,8 +575,8 @@ const ru: Dict = {
 		"Сервер потерял содержимое этого файла и попытается его восстановить. На этом устройстве ничего не изменилось.",
 	"The server took too long to respond. Try again.":
 		"Сервер слишком долго отвечает. Попробуйте ещё раз.",
-	"These files are fine. They just need a paid plan to sync.":
-		"Эти файлы в порядке. Для синхронизации требуется платный тариф.",
+	"These files are fine. Each card below says why they did not sync.":
+		"Эти файлы в порядке. Каждая карточка ниже объясняет, почему они не были синхронизированы.",
 	"This account was deleted. Contact support if that is wrong.":
 		"Эта учётная запись была удалена. Обратитесь в службу поддержки, если это не так.",
 	"This cannot be undone.": "Это действие необратимо.",
@@ -705,11 +705,11 @@ const ru: Dict = {
 		many: "{count} вложений",
 		other: "{count} вложений",
 	},
-	"{count} attachments need a paid plan to sync. See Sync Center.": {
-		one: "{count} вложению нужен платный план. См. Центр синхронизации.",
-		few: "{count} вложениям нужен платный план. См. Центр синхронизации.",
-		many: "{count} вложениям нужен платный план. См. Центр синхронизации.",
-		other: "{count} вложениям нужен платный план. См. Центр синхронизации.",
+	"{count} attachments skipped. See Sync Center.": {
+		one: "Пропущено {count} вложение. Подробности в Центре синхронизации.",
+		few: "Пропущено {count} вложения. Подробности в Центре синхронизации.",
+		many: "Пропущено {count} вложений. Подробности в Центре синхронизации.",
+		other: "Пропущено {count} вложений. Подробности в Центре синхронизации.",
 	},
 	"{count} attachments will be skipped: this server only accepts text files.": {
 		one: "Пропущено {count} вложение: этот сервер принимает только текстовые файлы.",
@@ -835,11 +835,11 @@ const ru: Dict = {
 	},
 	"✗ couldn't reach a server at this URL": "✗ Не удалось подключиться к серверу по этому адресу",
 	"✗ server responded but isn't an Engram server": "✗ Сервер ответил, но это не сервер Engram",
-	"⤳ {count} skipped (Free plan)": {
-		one: "⤳ Пропущено {count} (бесплатный тариф)",
-		few: "⤳ Пропущено {count} (бесплатный тариф)",
-		many: "⤳ Пропущено {count} (бесплатный тариф)",
-		other: "⤳ {count} пропущено (Бесплатный план)",
+	"⤳ {count} skipped": {
+		one: "⤳ Пропущено {count} элемент",
+		few: "⤳ Пропущено {count}",
+		many: "⤳ Пропущено {count}",
+		other: "⤳ {count} пропущено",
 	},
 	"👋 Welcome": "👋 Добро пожаловать",
 	"💬 Feedback": "💬 Отзыв",

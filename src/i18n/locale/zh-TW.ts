@@ -201,8 +201,8 @@ const zhTW: Dict = {
 	"Engram: update required": "Engram: 需要更新",
 	"Engram: your login expired — open Engram settings to reconnect.":
 		"Engram：您的登入已過期 — 請在 Engram 設定中重新連接。",
-	"Engram: {count} attachments skipped — upgrade your plan to sync images & PDFs.":
-		"Engram: 略過 {count} 個附件 — 升級方案以同步圖片和 PDF。",
+	"Engram: {count} attachments skipped. See Sync Center for why.":
+		"Engram: 由於 {count}，已略過這些附件。請查看同步中心了解原因。",
 	"Engram: {count} files failed to sync{detail} — open Sync Center":
 		"Engram：{count} 個檔案同步失敗{detail} — 開啟同步中心",
 	"Engram: {count} notes have frontmatter problems. Open Sync Center to fix.":
@@ -428,8 +428,7 @@ const zhTW: Dict = {
 	"Sync server": "同步伺服器",
 	"Sync these now": "立即同步這些",
 	"Sync...": "同步中...",
-	"Synced. Some attachments need a paid plan to sync (see below).":
-		"已同步。部分附件需要付費方案才能同步（請參閱下方）。",
+	"Synced. Some attachments were skipped (see below).": "已同步。部分附件已略過 (請參閱下方)。",
 	"Syncing attachments": "同步附件",
 	"Syncing your vault": "同步您的儲存庫",
 	"Syncing...": "同步中...",
@@ -459,8 +458,8 @@ const zhTW: Dict = {
 	"The server lost this file's stored content and will try to restore it. Nothing on this device was changed.":
 		"伺服器已遺失此檔案的內容，將嘗試恢復。此設備上的內容未變更。",
 	"The server took too long to respond. Try again.": "伺服器回應時間過長。請重試。",
-	"These files are fine. They just need a paid plan to sync.":
-		"這些檔案沒有問題，只是需要付費方案才能同步。",
+	"These files are fine. Each card below says why they did not sync.":
+		"這些檔案沒有問題。下方卡片說明了為何未同步。",
 	"This account was deleted. Contact support if that is wrong.":
 		"該帳戶已刪除。若有誤，請聯繫客服。",
 	"This cannot be undone.": "此動作無法撤銷。",
@@ -558,8 +557,6 @@ const zhTW: Dict = {
 	"waiting for a plugin update": "等待插件更新",
 	"waiting to retry": "正在等待重試",
 	"{count} attachments": "{count} 個附件",
-	"{count} attachments need a paid plan to sync. See Sync Center.":
-		"{count} 個附件需要付費方案才能同步。詳情請見同步中心。",
 	"{count} attachments will be skipped: this server only accepts text files.":
 		"{count} 個附件將被跳過：此伺服器僅接受文字檔案。",
 	"{count} attempts": "{count} 次嘗試",
@@ -590,7 +587,7 @@ const zhTW: Dict = {
 	"✕ {count} failed": "✕ {count} 失敗",
 	"✗ couldn't reach a server at this URL": "✗ 無法連線到此位址的伺服器",
 	"✗ server responded but isn't an Engram server": "✗ 伺服器已回應，但不是 Engram 伺服器",
-	"⤳ {count} skipped (Free plan)": "⤳ {count} 已跳過 (免費方案)",
+	"⤳ {count} skipped": "⤳ {count} 已跳過",
 	"👋 Welcome": "👋 歡迎",
 	"💬 Feedback": "💬 回饋",
 	"🔄 Sync Center": "🔄 同步中心",
