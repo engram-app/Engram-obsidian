@@ -79,15 +79,19 @@ describe("a CRLF disk file against an LF doc", () => {
 
 /** The room heal, as the server's room process does it: the only actor that
  *  removes a CR already in a doc. A CRLF pair loses its CR; a lone CR becomes
- *  LF (delete + insert, which only one actor may do). */
+ *  LF (insert + delete, which only one actor may do). */
 function roomHeal(doc: Y.Doc): void {
 	const text = doc.getText(CONTENT_KEY);
 	const body = text.toJSON();
 	doc.transact(() => {
 		for (let i = body.length - 1; i >= 0; i--) {
 			if (body[i] !== "\r") continue;
-			text.delete(i, 1);
+			// A lone CR: insert the LF BEFORE deleting the CR, so the LF's right
+			// origin is the CR item and it sorts before anything a device
+			// inserted after that CR. Delete first and the LF's neighbour is
+			// whatever follows, and a concurrent insert can land before it.
 			if (body[i + 1] !== "\n") text.insert(i, "\n");
+			text.delete(body[i + 1] === "\n" ? i : i + 1, 1);
 		}
 	});
 }
