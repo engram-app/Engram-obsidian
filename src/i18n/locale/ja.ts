@@ -10,7 +10,6 @@ const ja: Dict = {
 	"1. Make an account": "1. アカウントを作成",
 	"10 GB attachments": "10 GB 添付ファイル",
 	"10 vaults, unlimited devices": "10個の保管庫、デバイス数無制限",
-	"2,000 notes searchable": "2,000件までのノートを検索可能",
 	"2. Connect your vault to Engram": "2. 保管庫をEngramに接続します",
 	"3. Connect your AI": "3. AIとの接続",
 	"50 GB attachments": "50 GB 添付ファイル",
@@ -22,10 +21,9 @@ const ja: Dict = {
 		"一時的なサーバーの問題です。自動的に再試行します。",
 	"AI / MCP setup guide": "AI / MCP 設定ガイド",
 	"AI searches": "AI検索",
-	"API access": "APIアクセス",
 	"API key": "APIキー",
-	"API keys need a Pro plan. Sign in with your Engram account instead.":
-		"APIキーにはProプランが必要です。代わりにEngramアカウントでサインインしてください。",
+	"API key access is turned off for this account. Sign in with your Engram account instead.":
+		"このアカウントのAPIキーの利用は停止されています。Engramアカウントでサインインしてください。",
 	About: "概要",
 	"Accept it to keep syncing.": "同期を続ける場合は、同意してください。",
 	"Access token": "アクセストークン",
@@ -39,19 +37,17 @@ const ja: Dict = {
 	"All synced. Your vault and the cloud now match.":
 		"すべて同期されました。保管庫とクラウドが一致しました。",
 	"Already in sync. Nothing is deleted.": "すでに同期されています。何も削除しません。",
-	"Already signed in on another device. Upgrade for multi-device.":
-		"別のデバイスで既にサインインしています。複数デバイス利用にはアップグレードが必要です。",
 	"Already up to date. Nothing needed syncing.":
 		"すでに最新の状態です。同期する必要はありません。",
 	"An unexpected error — retrying automatically.":
 		"予期しないエラーが発生しました。自動的に再試行します。",
+	"Attachment not accepted": "添付ファイルは受け付けられません",
 	"Attachment storage full": "添付ファイルの保存容量上限",
 	"Attachment storage is full — upgrade for more.":
 		"添付ファイルの保存容量がいっぱいです。より多くの容量のためにアップグレードしてください。",
 	"Attachment sync is disabled for this account.":
 		"このアカウントでは添付ファイルの同期が無効になっています。",
 	Attachments: "添付ファイル",
-	"Attachments need a paid plan": "添付ファイルには有料プランが必要です",
 	"Attachments on this device": "このデバイス上の添付ファイル",
 	"Authenticated via Engram account (OAuth).": "Engramアカウント（OAuth）で認証済み",
 	"Authenticated via manual API key.": "手動で入力したAPIキーで認証済み",
@@ -125,6 +121,8 @@ const ja: Dict = {
 	Deleting: "削除中",
 	"Deleting {count} local files.": "{count}つのローカルファイルを削除しています。",
 	"Deleting {count} on the cloud.": "クラウドから{count}つを削除中。",
+	"Device limit reached. Disconnect a device or upgrade.":
+		"デバイスの接続数制限に達しました。デバイスを切断するか、アップグレードしてください。",
 	"Device swap cooldown active. Wait or upgrade.":
 		"デバイスの切り替え制限中です。しばらく待つか、アップグレードしてください。",
 	Diagnostics: "診断",
@@ -162,8 +160,6 @@ const ja: Dict = {
 	"Engram URL": "EngramのURL",
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} が利用可能です。{link}.",
-	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
-		"Engram は、あなたの {all} 個のノートのうち {indexed} 個をインデックス化しています。残りはこのデバイスでのみ検索可能です。すべてをインデックス化するにはアップグレードしてください。",
 	"Engram is the backend that powers sync and semantic search.":
 		"Engramは、同期とセマンティック検索を支えるバックエンドです。",
 	"Engram search": "Engram 検索",
@@ -255,10 +251,6 @@ const ja: Dict = {
 		"一部のエラーで完了しました。エラーの詳細については、同期ログをご確認ください。",
 	"First sync, this may take a moment.": "初回同期のため、しばらく時間がかかる場合があります。",
 	Free: "無料",
-	"Free syncs notes only — images & PDFs need a paid plan.":
-		"ノートのみ無料で同期。画像とPDFは有料プランが必要です。",
-	"Free syncs notes only — {count} attachments will be skipped.":
-		"無料ではノートのみ同期。添付ファイルは{count}つまで。",
 	"Frontmatter could not be parsed": "フロントマターを解析できませんでした",
 	"Frontmatter isn't valid YAML.": "YAML として無効な Frontmatter です。",
 	'Frontmatter key "{key}" could not be parsed as YAML.':
@@ -335,9 +327,6 @@ const ja: Dict = {
 		"ノートの制限に達しました。ノートを追加するには、アップグレードしてください。",
 	"Note not synced locally": "ノートがローカルに同期されていません",
 	"Notes on this device": "このデバイス上のノート",
-	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
-		"ここより後のノートは通常通り同期され、開くことができます。ただし、検索インデックスには含まれません。インデックスには古いノートが保持されるため、新しいノートが対象外になることがあります。",
-	"Notes searchable": "検索可能なノート",
 	"Notes stored": "ノートを保存",
 	"Nothing in this vault syncs until you choose how to merge it with the server.":
 		"この保管庫の内容は、サーバーとの連携方法を選択するまで同期されません。",
@@ -366,8 +355,6 @@ const ja: Dict = {
 		"ブラウザを開き、ログインするか、アカウントを作成して、この保管庫をリンクします。",
 	"Or authenticate with a token instead of signing in.":
 		"または、サインインの代わりにトークンで認証します。",
-	"Or authenticate with a token instead of signing in. Engram Cloud API keys require the Pro plan; on Free and Starter, sign in above.":
-		"または、サインインの代わりにトークンで認証します。Engram Cloud APIキーはProプランが必要です。FreeおよびStarterプランでは、上記からサインインしてください。",
 	"Paths to skip (one per line). Folder patterns end with /. Built-in: {configDir}/, .trash/, .git/":
 		'除外するパス（1行に1つ）。フォルダのパターンは"/"で終わります。内蔵: {configDir}/, .trash/, .git/',
 	"Pick a vault": "保管庫を選択",
@@ -418,8 +405,6 @@ const ja: Dict = {
 	"Search failed — check connection": "検索に失敗しました。接続を確認してください",
 	"Search settings": "検索設定",
 	"Search your vault…": "保管庫を検索…",
-	"Searching {indexed} of {all} notes. Upgrade to search everything.":
-		"{all} 個のノートのうち {indexed} 個を検索中です。すべてを検索するにはアップグレードしてください。",
 	"See full pricing": "詳細な料金を見る",
 	"See the AI setup guide": "AIの設定ガイドを見る",
 	"Select which vault this plugin syncs with.": "このプラグインで同期する保管庫を選択します。",
@@ -493,8 +478,6 @@ const ja: Dict = {
 		"Engramサーバーは、このプラグインのバージョンに対応していません（{version}以上が必要です）。そのため、ノートの送受信ができません。このデバイスで行った変更は、アップデートするまでここで保存されます。",
 	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
 		"Engramサーバーは、このプラグインのバージョンに対応していません。そのため、ノートの送受信ができません。このデバイスで行った変更は、アップデートするまでここで保存されます。",
-	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
-		"無料プランではノートのみ同期されます。画像やPDFを同期するには、有料プランにアップグレードしてください。",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
 		"ファイルがサーバーのサイズ制限を超えています。圧縮するか分割し、再度同期してください。",
 	"The file is too large for the server.": "ファイルがサーバーの許容量を超えています。",
@@ -523,12 +506,12 @@ const ja: Dict = {
 		"このノートの処理に失敗し、スキップされました。",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"このサーバーは自己ホスト型なので、フィードバックはここで収集されません。",
+	"This server isn't accepting this attachment for your account.":
+		"このサーバーは、お客様のアカウントでこの添付ファイルを受け付けていません。",
 	"This vault": "この保管庫",
 	"This vault is empty on the server. Upload your {what}?":
 		"この保管庫はサーバー上で空です。{what} をアップロードしますか？",
 	"Too large for the server": "ファイルサイズが大きすぎます",
-	"Too many connected AI clients. Disconnect one or upgrade.":
-		"接続されているAIクライアントが多すぎます。いずれかを解除するか、アップグレードしてください。",
 	"Too many connected Obsidian vaults. Disconnect one or upgrade.":
 		"接続されているObsidianの保管庫が多すぎます。いずれかを解除するか、アップグレードしてください。",
 	"Too many requests. Wait a moment and try again.":
@@ -614,6 +597,8 @@ const ja: Dict = {
 	"{count} attachments": "{count}つの添付ファイル",
 	"{count} attachments need a paid plan to sync. See Sync Center.":
 		"{count}つの添付ファイルは、有料プランでのみ同期可能です。詳細はこちら: 同期センター。",
+	"{count} attachments will be skipped: this server only accepts text files.":
+		"{count} 個の添付ファイルはスキップされます。このサーバーはテキストファイルのみを受け付けます。",
 	"{count} attempts": "{count}回試行しました",
 	"{count} conflicts need resolution": "{count}つの競合を解決する必要があります",
 	"{count} conflicts to resolve.": "解決すべき競合が{count}件あります。",

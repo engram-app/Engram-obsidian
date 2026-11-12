@@ -10,7 +10,6 @@ const ms: Dict = {
 	"1. Make an account": "1. Buat akaun",
 	"10 GB attachments": "10 GB lampiran",
 	"10 vaults, unlimited devices": "10 peti nota, peranti tanpa had",
-	"2,000 notes searchable": "2,000 nota boleh dicari",
 	"2. Connect your vault to Engram": "2. Sambungkan peti nota anda ke Engram",
 	"3. Connect your AI": "3. Sambungkan AI anda",
 	"50 GB attachments": "50 GB lampiran",
@@ -22,10 +21,9 @@ const ms: Dict = {
 		"Masalah pelayan sementara — cuba semula secara automatik.",
 	"AI / MCP setup guide": "Panduan persediaan AI / MCP",
 	"AI searches": "Carian AI",
-	"API access": "Akses API",
 	"API key": "Kunci API",
-	"API keys need a Pro plan. Sign in with your Engram account instead.":
-		"Kunci API memerlukan langganan Pro. Log masuk dengan akaun Engram anda.",
+	"API key access is turned off for this account. Sign in with your Engram account instead.":
+		"Akses kunci API telah dimatikan untuk akaun ini. Log masuk dengan akaun Engram anda.",
 	About: "Mengenai",
 	"Accept it to keep syncing.": "Terima untuk terus menyegerakkan.",
 	"Access token": "Token akses",
@@ -38,19 +36,17 @@ const ms: Dict = {
 	"All synced. Your vault and the cloud now match.":
 		"Semuanya disinkronkan. Peti Nota anda dan awan kini sepadan.",
 	"Already in sync. Nothing is deleted.": "Sudah disegerakkan. Tiada apa yang dipadam.",
-	"Already signed in on another device. Upgrade for multi-device.":
-		"Sudah log masuk pada peranti lain. Tingkatkan untuk sokongan berbilang peranti.",
 	"Already up to date. Nothing needed syncing.":
 		"Sudah terkini. Tiada apa yang perlu disinkronkan.",
 	"An unexpected error — retrying automatically.":
 		"Ralat yang tidak dijangka — cuba semula secara automatik.",
+	"Attachment not accepted": "Lampiran tidak diterima",
 	"Attachment storage full": "Ruang simpan lampiran penuh",
 	"Attachment storage is full — upgrade for more.":
 		"Ruang simpanan lampiran telah penuh — tingkatkan untuk lebih banyak ruang.",
 	"Attachment sync is disabled for this account.":
 		"Penyegerakan lampiran dilumpuhkan untuk akaun ini.",
 	Attachments: "Lampiran",
-	"Attachments need a paid plan": "Lampiran memerlukan langganan berbayar",
 	"Attachments on this device": "Lampiran pada peranti ini",
 	"Authenticated via Engram account (OAuth).": "Disahkan melalui akaun Engram (OAuth).",
 	"Authenticated via manual API key.": "Disahkan melalui kunci API manual.",
@@ -124,6 +120,8 @@ const ms: Dict = {
 	Deleting: "Memadam",
 	"Deleting {count} local files.": "Memadam {count} fail tempatan.",
 	"Deleting {count} on the cloud.": "Memadam {count} daripada awan.",
+	"Device limit reached. Disconnect a device or upgrade.":
+		"Had peranti telah dicapai. Cabut peranti atau tingkatkan langganan.",
 	"Device swap cooldown active. Wait or upgrade.":
 		"Tempoh tunggu pertukaran peranti sedang aktif. Tunggu atau tingkatkan.",
 	Diagnostics: "Diagnosis",
@@ -161,8 +159,6 @@ const ms: Dict = {
 	"Engram URL": "URL Engram",
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} tersedia. {link}.",
-	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
-		"Engram mengindeks {indexed} daripada {all} nota anda. Nota yang lain hanya dipadankan pada peranti ini. Tingkatkan untuk mengindeks semuanya.",
 	"Engram is the backend that powers sync and semantic search.":
 		"Engram ialah sistem belakang yang menyokong sync dan carian semantik.",
 	"Engram search": "Carian Engram",
@@ -255,10 +251,6 @@ const ms: Dict = {
 		"Selesai dengan beberapa ralat. Buka log sync untuk melihat apa yang gagal.",
 	"First sync, this may take a moment.": "Sync pertama, ini mungkin mengambil masa.",
 	Free: "Percuma",
-	"Free syncs notes only — images & PDFs need a paid plan.":
-		"Percuma untuk menyinkronkan nota sahaja – imej & fail PDF memerlukan langganan berbayar.",
-	"Free syncs notes only — {count} attachments will be skipped.":
-		"Percuma: sync nota sahaja — {count} lampiran akan dilepaskan.",
 	"Frontmatter could not be parsed": "Frontmatter tidak dapat diproses",
 	"Frontmatter isn't valid YAML.": "Frontmatter bukan YAML yang sah.",
 	'Frontmatter key "{key}" could not be parsed as YAML.':
@@ -334,9 +326,6 @@ const ms: Dict = {
 		"Had nota telah dicapai. Tingkatkan untuk terus menambah nota.",
 	"Note not synced locally": "Nota belum disinkronkan secara tempatan",
 	"Notes on this device": "Nota pada peranti ini",
-	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
-		"Nota selepas ini masih disegerakkan dan dibuka seperti biasa, tetapi tidak berada dalam indeks carian. Indeks menyimpan nota anda yang paling lama, jadi nota terbaru anda yang tidak disertakan.",
-	"Notes searchable": "Nota boleh dicari",
 	"Notes stored": "Nota disimpan",
 	"Nothing in this vault syncs until you choose how to merge it with the server.":
 		"Tiada apa dalam peti nota ini yang disinkronkan sehingga anda memilih cara untuk menggabungkannya dengan pelayan.",
@@ -366,8 +355,6 @@ const ms: Dict = {
 		"Membuka penyemak imbas anda untuk log masuk, atau buat akaun jika anda belum ada, kemudian pautkan peti nota ini.",
 	"Or authenticate with a token instead of signing in.":
 		"Atau gunakan token untuk pengesahan, bukan log masuk.",
-	"Or authenticate with a token instead of signing in. Engram Cloud API keys require the Pro plan; on Free and Starter, sign in above.":
-		"Atau gunakan token untuk pengesahan, bukan log masuk. Kunci API Engram memerlukan pelan Pro; pada Free dan Starter, log masuk seperti di atas.",
 	"Paths to skip (one per line). Folder patterns end with /. Built-in: {configDir}/, .trash/, .git/":
 		"Jalur yang dikecualikan (satu per baris). Corak folder berakhir dengan /. Binaan dalam: {configDir}/, .trash/, .git/",
 	"Pick a vault": "Pilih peti nota",
@@ -421,8 +408,6 @@ const ms: Dict = {
 	"Search failed — check connection": "Pencarian gagal — semak sambungan",
 	"Search settings": "Tetapan carian",
 	"Search your vault…": "Cari dalam peti nota anda…",
-	"Searching {indexed} of {all} notes. Upgrade to search everything.":
-		"Mencari {indexed} daripada {all} nota. Tingkatkan untuk mencari semuanya.",
 	"See full pricing": "Lihat harga penuh",
 	"See the AI setup guide": "Lihat panduan konfigurasi AI",
 	"Select which vault this plugin syncs with.":
@@ -496,8 +481,6 @@ const ms: Dict = {
 		"Pelayan Engram tidak lagi menerima versi plugin ini (perlukan {version} atau versi yang lebih baru), jadi nota tidak dihantar atau diterima. Perubahan yang dibuat pada peranti ini kekal di sini sehingga anda mengemas kini.",
 	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
 		"Pelayan Engram tidak lagi menerima versi plugin ini, jadi nota tidak dihantar atau diterima. Perubahan yang dibuat pada peranti ini kekal di sini sehingga anda mengemas kini.",
-	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
-		"Versi percuma hanya menyegerakkan nota. Tingkatkan untuk menyegerakkan imej dan fail PDF.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
 		"Saiz fail melebihi had pelayan. Kompres atau bahagikannya, kemudian ia akan disegerakkan.",
 	"The file is too large for the server.": "Fail ini terlalu besar untuk pelayan.",
@@ -526,12 +509,12 @@ const ms: Dict = {
 		"Nota ini tidak dapat diproses dan telah dilepaskan.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Pelayan ini dikendalikan sendiri, jadi maklum balas tidak dikumpul di sini. ",
+	"This server isn't accepting this attachment for your account.":
+		"Pelayan ini tidak menerima lampiran ini untuk akaun anda.",
 	"This vault": "Peti nota ini",
 	"This vault is empty on the server. Upload your {what}?":
 		"Peti nota ini kosong di server. Adakah anda ingin memuat naik {what}?",
 	"Too large for the server": "Terlalu besar untuk pelayan",
-	"Too many connected AI clients. Disconnect one or upgrade.":
-		"Terlalu banyak klien AI yang disambungkan. Putuskan sambungan satu atau tingkatkan.",
 	"Too many connected Obsidian vaults. Disconnect one or upgrade.":
 		"Terlalu banyak Peti Nota Obsidian yang disambungkan. Putuskan sambungan satu atau tingkatkan.",
 	"Too many requests. Wait a moment and try again.":
@@ -618,6 +601,8 @@ const ms: Dict = {
 	"{count} attachments": "{count} lampiran",
 	"{count} attachments need a paid plan to sync. See Sync Center.":
 		"{count} lampiran memerlukan langganan berbayar untuk disegerakkan. Lihat Pusat Sync.",
+	"{count} attachments will be skipped: this server only accepts text files.":
+		"{count} lampiran akan dilepaskan: pelayan ini hanya menerima fail teks.",
 	"{count} attempts": "{count} percubaan",
 	"{count} conflicts need resolution": "{count} konflik perlu diselesaikan",
 	"{count} conflicts to resolve.": "{count} konflik untuk diselesaikan.",

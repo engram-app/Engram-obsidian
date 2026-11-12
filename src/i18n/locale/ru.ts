@@ -15,7 +15,6 @@ const ru: Dict = {
 	"1. Make an account": "1. Создайте учётную запись",
 	"10 GB attachments": "10 ГБ вложений",
 	"10 vaults, unlimited devices": "10 хранилищ, неограниченное количество устройств",
-	"2,000 notes searchable": "2000 заметки для поиска",
 	"2. Connect your vault to Engram": "2. Подключите ваше хранилище к Engram",
 	"3. Connect your AI": "3. Подключите ваш ИИ",
 	"50 GB attachments": "50 ГБ вложений",
@@ -27,10 +26,9 @@ const ru: Dict = {
 		"Временная проблема с сервером — повторная попытка.",
 	"AI / MCP setup guide": "Руководство по настройке ИИ / MCP",
 	"AI searches": "Поиск по ИИ",
-	"API access": "Доступ к API",
 	"API key": "Ключ API",
-	"API keys need a Pro plan. Sign in with your Engram account instead.":
-		"Для использования API-ключей требуется тарифный план Pro. Войдите в систему, используя свою учётную запись Engram.",
+	"API key access is turned off for this account. Sign in with your Engram account instead.":
+		"Доступ к API-ключу отключён для этой учётной записи. Войдите с использованием вашей учётной записи Engram.",
 	About: "О программе",
 	"Accept it to keep syncing.": "Примите его, чтобы продолжить синхронизацию.",
 	"Access token": "Токен доступа",
@@ -44,17 +42,15 @@ const ru: Dict = {
 	"All synced. Your vault and the cloud now match.":
 		"Всё синхронизировано. Ваше хранилище и облако теперь совпадают.",
 	"Already in sync. Nothing is deleted.": "Уже синхронизировано. Ничего не будет удалено.",
-	"Already signed in on another device. Upgrade for multi-device.":
-		"Вы уже вошли на другом устройстве. Обновите тариф для поддержки нескольких устройств.",
 	"Already up to date. Nothing needed syncing.": "Уже актуально. Синхронизация не требуется.",
 	"An unexpected error — retrying automatically.": "Неожиданная ошибка — повторная попытка.",
+	"Attachment not accepted": "Вложение не принято",
 	"Attachment storage full": "Место для хранения вложений заполнено",
 	"Attachment storage is full — upgrade for more.":
 		"Место для хранения вложений заполнено — обновите тариф для увеличения.",
 	"Attachment sync is disabled for this account.":
 		"Синхронизация вложений отключена для этой учётной записи.",
 	Attachments: "Вложения",
-	"Attachments need a paid plan": "Вложения требуют платной подписки",
 	"Attachments on this device": "Вложения на этом устройстве",
 	"Authenticated via Engram account (OAuth).": "Аутентификация через аккаунт Engram (OAuth).",
 	"Authenticated via manual API key.": "Аутентификация через ручной API-ключ.",
@@ -149,6 +145,8 @@ const ru: Dict = {
 		many: "Удаление {count} файлов из облака.",
 		other: "Удаление версии {count} из облака.",
 	},
+	"Device limit reached. Disconnect a device or upgrade.":
+		"Достигнут лимит устройств. Отключите устройство или обновите подписку.",
 	"Device swap cooldown active. Wait or upgrade.":
 		"Активен период ожидания при смене устройства. Подождите или обновите тариф.",
 	Diagnostics: "Диагностика",
@@ -210,8 +208,6 @@ const ru: Dict = {
 	"Engram URL": "URL Engram",
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} доступен. {link}.",
-	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
-		"Engram индексирует {indexed} из ваших {all} заметок. Остальные соответствия находятся только на этом устройстве. Обновите, чтобы индексировать всё.",
 	"Engram is the backend that powers sync and semantic search.":
 		"Engram — это серверная часть, обеспечивающая синхронизацию и смысловой поиск.",
 	"Engram search": "Поиск по Engram",
@@ -331,14 +327,6 @@ const ru: Dict = {
 	"First sync, this may take a moment.":
 		"Первая синхронизация, это может занять некоторое время.",
 	Free: "Бесплатно",
-	"Free syncs notes only — images & PDFs need a paid plan.":
-		"Бесплатная синхронизация только для заметок — для изображений и PDF требуется платная подписка.",
-	"Free syncs notes only — {count} attachments will be skipped.": {
-		one: "Бесплатный план синхронизирует только заметки, {count} вложение будет пропущено.",
-		few: "Бесплатный план синхронизирует только заметки, {count} вложения будут пропущены.",
-		many: "Бесплатный план синхронизирует только заметки, {count} вложений будут пропущены.",
-		other: "Бесплатный план синхронизирует только заметки, {count} вложений будут пропущены.",
-	},
 	"Frontmatter could not be parsed": "Не удалось обработать метаданные",
 	"Frontmatter isn't valid YAML.": "Заголовок не является допустимым YAML.",
 	'Frontmatter key "{key}" could not be parsed as YAML.':
@@ -414,9 +402,6 @@ const ru: Dict = {
 		"Достигнут лимит заметок. Обновите подписку, чтобы добавлять больше заметок.",
 	"Note not synced locally": "Заметка не синхронизирована локально",
 	"Notes on this device": "Заметки на этом устройстве",
-	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
-		"Заметки, расположенные после этой точки, синхронизируются и открываются нормально, но они не включены в индекс поиска. Индекс содержит ваши старые заметки, поэтому новые заметки не попадают в него.",
-	"Notes searchable": "Заметки доступны для поиска",
 	"Notes stored": "Заметки сохранены",
 	"Nothing in this vault syncs until you choose how to merge it with the server.":
 		"Ничего из этого хранилища не синхронизируется, пока вы не выберете, как объединить его с сервером.",
@@ -445,8 +430,6 @@ const ru: Dict = {
 		"Откроет ваш браузер для входа или создания учётной записи, если её у вас ещё нет, а затем свяжет это хранилище.",
 	"Or authenticate with a token instead of signing in.":
 		"Или используйте токен для аутентификации вместо входа.",
-	"Or authenticate with a token instead of signing in. Engram Cloud API keys require the Pro plan; on Free and Starter, sign in above.":
-		"Или используйте токен для аутентификации вместо входа. Ключи API Engram Cloud требуют тарифный план Pro; для планов Free и Starter используйте вход выше.",
 	"Paths to skip (one per line). Folder patterns end with /. Built-in: {configDir}/, .trash/, .git/":
 		"Пути для исключения (по одному на строку). Имена папок должны заканчиваться на /. Встроенные: {configDir}/, .trash/, .git/",
 	"Pick a vault": "Выберите хранилище",
@@ -500,8 +483,6 @@ const ru: Dict = {
 	"Search failed — check connection": "Поиск не удался — проверьте соединение",
 	"Search settings": "Настройки поиска",
 	"Search your vault…": "Поиск по вашему хранилищу…",
-	"Searching {indexed} of {all} notes. Upgrade to search everything.":
-		"Поиск по {indexed} из {all} заметок. Обновите, чтобы искать всё.",
 	"See full pricing": "Смотрите полную информацию о ценах",
 	"See the AI setup guide": "Смотрите руководство по настройке ИИ",
 	"Select which vault this plugin syncs with.":
@@ -581,8 +562,6 @@ const ru: Dict = {
 		"Сервер Engram больше не принимает эту версию плагина (требуется {version} или новее), поэтому заметки не отправляются и не получаются. Изменения, сделанные на этом устройстве, остаются здесь до обновления.",
 	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
 		"Сервер Engram больше не принимает эту версию плагина, поэтому заметки не отправляются и не получаются. Изменения, сделанные на этом устройстве, остаются здесь до обновления.",
-	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
-		"Бесплатный тариф синхронизирует только заметки. Обновите подписку, чтобы синхронизировать изображения и PDF-файлы.",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
 		"Размер файла превышает ограничение сервера. Сжатие или разделение файла позволит синхронизировать его.",
 	"The file is too large for the server.": "Файл слишком большой для сервера.",
@@ -610,12 +589,12 @@ const ru: Dict = {
 		"Эта заметка не может быть обработана и была пропущена.",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"Этот сервер работает локально, поэтому отзывы здесь не собираются. ",
+	"This server isn't accepting this attachment for your account.":
+		"Этот сервер не принимает это вложение для вашей учётной записи.",
 	"This vault": "Это хранилище",
 	"This vault is empty on the server. Upload your {what}?":
 		"Это хранилище пустое на сервере. Загрузить ваши {what}?",
 	"Too large for the server": "Слишком большой для сервера",
-	"Too many connected AI clients. Disconnect one or upgrade.":
-		"Подключено слишком много клиентов ИИ. Отключите одного или обновите тариф.",
 	"Too many connected Obsidian vaults. Disconnect one or upgrade.":
 		"Подключено слишком много хранилищ Obsidian. Отключите одно или обновите тариф.",
 	"Too many requests. Wait a moment and try again.":
@@ -731,6 +710,12 @@ const ru: Dict = {
 		few: "{count} вложениям нужен платный план. См. Центр синхронизации.",
 		many: "{count} вложениям нужен платный план. См. Центр синхронизации.",
 		other: "{count} вложениям нужен платный план. См. Центр синхронизации.",
+	},
+	"{count} attachments will be skipped: this server only accepts text files.": {
+		one: "Пропущено {count} вложение: этот сервер принимает только текстовые файлы.",
+		few: "Пропущено {count} вложения: этот сервер принимает только текстовые файлы.",
+		many: "Будет пропущено {count} вложений: этот сервер принимает только текстовые файлы.",
+		other: "{count} Вложения будут пропущены: этот сервер принимает только текстовые файлы.",
 	},
 	"{count} attempts": {
 		one: "{count} попытка",

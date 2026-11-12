@@ -10,7 +10,6 @@ const zh: Dict = {
 	"1. Make an account": "1. 创建账号",
 	"10 GB attachments": "10 GB 附件",
 	"10 vaults, unlimited devices": "10 个知识库，无限设备",
-	"2,000 notes searchable": "可搜索 2000 个笔记",
 	"2. Connect your vault to Engram": "2. 将您的仓库连接到 Engram",
 	"3. Connect your AI": "3. 连接您的 AI",
 	"50 GB attachments": "50 GB 附件",
@@ -20,10 +19,9 @@ const zh: Dict = {
 	"A temporary server problem — retrying automatically.": "临时服务器问题，正在自动重试。",
 	"AI / MCP setup guide": "AI / MCP 设置指南",
 	"AI searches": "AI 搜索",
-	"API access": "API 访问",
 	"API key": "API 密钥",
-	"API keys need a Pro plan. Sign in with your Engram account instead.":
-		"API 密钥需要 Pro 计划。请使用您的 Engram 账号登录。",
+	"API key access is turned off for this account. Sign in with your Engram account instead.":
+		"此账号的API密钥访问已关闭。请使用您的Engram账号登录。",
 	About: "关于",
 	"Accept it to keep syncing.": "同意以继续同步。",
 	"Access token": "访问令牌",
@@ -35,15 +33,13 @@ const zh: Dict = {
 	"Advanced sync options": "高级同步选项",
 	"All synced. Your vault and the cloud now match.": "已全部同步。您的仓库和云端现在已同步。",
 	"Already in sync. Nothing is deleted.": "已同步。不会删除任何内容。",
-	"Already signed in on another device. Upgrade for multi-device.":
-		"已在另一设备上登录。升级以支持多设备。",
 	"Already up to date. Nothing needed syncing.": "已是最新的。无需同步任何内容。",
 	"An unexpected error — retrying automatically.": "出现意外错误，正在自动重试。",
+	"Attachment not accepted": "附件未被接受",
 	"Attachment storage full": "附件存储已满",
 	"Attachment storage is full — upgrade for more.": "存储空间已满，升级以获得更多空间。",
 	"Attachment sync is disabled for this account.": "此账号已禁用附件同步。",
 	Attachments: "附件",
-	"Attachments need a paid plan": "附件需要付费计划",
 	"Attachments on this device": "本设备上的附件",
 	"Authenticated via Engram account (OAuth).": "通过 Engram 账号 (OAuth) 验证。",
 	"Authenticated via manual API key.": "通过手动 API 密钥验证。",
@@ -110,6 +106,8 @@ const zh: Dict = {
 	Deleting: "删除中",
 	"Deleting {count} local files.": "删除 {count} 个本地文件。",
 	"Deleting {count} on the cloud.": "正在删除{count}个云端文件。",
+	"Device limit reached. Disconnect a device or upgrade.":
+		"设备数量已达上限。断开一个设备或升级。",
 	"Device swap cooldown active. Wait or upgrade.": "设备切换冷却中。请等待或升级。",
 	Diagnostics: "诊断",
 	"Diagnostics detail": "诊断详情",
@@ -144,8 +142,6 @@ const zh: Dict = {
 	"Engram URL": "Engram 地址",
 	"Engram Vault Sync {version} is available. {link}.":
 		"Engram Vault Sync {version} 可用。{link}。",
-	"Engram indexes {indexed} of your {all} notes. The rest match on this device only. Upgrade to index everything.":
-		"Engram 索引了您 {all} 个笔记中的 {indexed} 个。其余的仅在此设备上匹配。升级以索引所有内容。",
 	"Engram is the backend that powers sync and semantic search.":
 		"Engram 是提供同步和语义搜索的后端。",
 	"Engram search": "Engram 搜索",
@@ -234,10 +230,6 @@ const zh: Dict = {
 		"完成，但有错误。打开同步日志查看失败原因。",
 	"First sync, this may take a moment.": "首次同步，可能需要一些时间。",
 	Free: "免费",
-	"Free syncs notes only — images & PDFs need a paid plan.":
-		"免费同步仅限笔记，图片和PDF需要付费计划。",
-	"Free syncs notes only — {count} attachments will be skipped.":
-		"免费同步笔记，仅限{count}个附件。",
 	"Frontmatter could not be parsed": "无法解析前置信息",
 	"Frontmatter isn't valid YAML.": "YAML 格式错误。",
 	'Frontmatter key "{key}" could not be parsed as YAML.': '无法将 YAML 格式解析为键 "{key}"。',
@@ -308,9 +300,6 @@ const zh: Dict = {
 	"Note limit reached. Upgrade to keep adding notes.": "笔记数量已达上限。升级以继续添加笔记。",
 	"Note not synced locally": "笔记未本地同步",
 	"Notes on this device": "本设备上的笔记",
-	"Notes past this still sync and open normally, they are just not in the search index. The index keeps your oldest notes, so it is your newest ones that fall outside.":
-		"此后的笔记仍然可以正常同步和打开，只是不在搜索索引中。索引保留您最旧的笔记，因此超出范围的是您最新的笔记。",
-	"Notes searchable": "笔记可搜索",
 	"Notes stored": "笔记已存储",
 	"Nothing in this vault syncs until you choose how to merge it with the server.":
 		"在您选择如何与服务器合并之前，此仓库的内容不会同步。",
@@ -337,8 +326,6 @@ const zh: Dict = {
 	"Opens your browser to sign in, or create an account if you don't have one yet, then links this vault.":
 		"打开您的浏览器进行登录，或创建账号（如果还没有），然后将此仓库链接到账号。",
 	"Or authenticate with a token instead of signing in.": "或者使用令牌进行身份验证，而不是登录。",
-	"Or authenticate with a token instead of signing in. Engram Cloud API keys require the Pro plan; on Free and Starter, sign in above.":
-		"或者使用令牌进行身份验证，而不是登录。Engram 云 API 密钥需要 Pro 计划；免费版和 Starter 版，请在上方登录。",
 	"Paths to skip (one per line). Folder patterns end with /. Built-in: {configDir}/, .trash/, .git/":
 		"跳过路径（每行一条）。文件夹规则以/结尾。内置：{configDir}/, .trash/, .git/",
 	"Pick a vault": "选择一个仓库",
@@ -387,8 +374,6 @@ const zh: Dict = {
 	"Search failed — check connection": "搜索失败，请检查连接",
 	"Search settings": "搜索设置",
 	"Search your vault…": "搜索您的仓库…",
-	"Searching {indexed} of {all} notes. Upgrade to search everything.":
-		"正在搜索 {all} 个笔记中的 {indexed} 个。升级以搜索所有内容。",
 	"See full pricing": "查看完整定价",
 	"See the AI setup guide": "查看 AI 设置指南",
 	"Select which vault this plugin syncs with.": "选择此插件要同步的仓库。",
@@ -458,8 +443,6 @@ const zh: Dict = {
 		"Engram 服务器不再接受此插件版本（需要 {version} 或更高版本），因此笔记无法发送或接收。在此设备上进行的更改将在此处保留，直到您更新。",
 	"The Engram server no longer accepts this plugin version, so notes are not being sent or received. Changes made on this device stay here until you update.":
 		"Engram 服务器不再接受此插件版本，因此笔记无法发送或接收。在此设备上进行的更改将在此处保留，直到您更新。",
-	"The Free tier syncs notes only. Upgrade to sync images and PDFs.":
-		"免费版仅同步笔记。升级以同步图片和PDF。",
 	"The file is over the server's size limit. Compress or split it, then it will sync.":
 		"文件超过服务器大小限制。压缩或拆分后，即可同步。",
 	"The file is too large for the server.": "文件过大，服务器无法处理。",
@@ -485,12 +468,12 @@ const zh: Dict = {
 	"This note could not be processed and was skipped.": "无法处理此笔记，已跳过。",
 	"This server is self-hosted, so feedback is not collected here. ":
 		"此服务器为自托管，因此不收集反馈。",
+	"This server isn't accepting this attachment for your account.":
+		"此服务器未为您的账号接受此附件。",
 	"This vault": "此仓库",
 	"This vault is empty on the server. Upload your {what}?":
 		"此仓库在服务器上为空。上传 {what} 吗？",
 	"Too large for the server": "文件过大",
-	"Too many connected AI clients. Disconnect one or upgrade.":
-		"已连接过多个 AI 客户端。断开一个或升级。",
 	"Too many connected Obsidian vaults. Disconnect one or upgrade.":
 		"已连接过多个 Obsidian 知识库。断开一个或升级。",
 	"Too many requests. Wait a moment and try again.": "请求过多。请稍等片刻后重试。",
@@ -573,6 +556,8 @@ const zh: Dict = {
 	"{count} attachments": "{count} 个附件",
 	"{count} attachments need a paid plan to sync. See Sync Center.":
 		"{count}个附件需要付费计划才能同步。查看同步中心。",
+	"{count} attachments will be skipped: this server only accepts text files.":
+		"{count} 附件将被跳过：此服务器仅接受文本文件。",
 	"{count} attempts": "{count} 次尝试",
 	"{count} conflicts need resolution": "{count}个冲突需要解决",
 	"{count} conflicts to resolve.": "{count}个冲突需要解决。",
