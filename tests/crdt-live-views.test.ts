@@ -324,6 +324,27 @@ describe("CrdtLiveViews.requestSaveForBoundPath (fix wave 6)", () => {
 		await new Promise((r) => setTimeout(r, DEBOUNCE_WAIT_MS));
 		expect(requestSave).not.toHaveBeenCalled();
 	});
+
+	// A CRLF file opens as an LF buffer (CodeMirror joins lines with LF). A
+	// nudge for a remote update that changed nothing visible would make
+	// Obsidian save that buffer and rewrite the user's CRLF file to LF.
+	it("(d) a buffer that already matches the CRLF file is not saved", async () => {
+		const { view, requestSave } = makeView("a.md");
+		const v = view as unknown as { data: string; getViewData: () => string };
+		v.data = "---\r\ntitle: T\r\n---\r\nbody\r\n";
+		v.getViewData = () => "---\ntitle: T\n---\nbody\n";
+		const lv = makeLiveViewsWithViews([view]);
+		(lv as unknown as { refcount: ViewerRefcount }).refcount.bind("a.md", "v1");
+
+		lv.requestSaveForBoundPath("a.md");
+		await new Promise((r) => setTimeout(r, DEBOUNCE_WAIT_MS));
+		expect(requestSave).not.toHaveBeenCalled();
+
+		v.getViewData = () => "---\ntitle: T\n---\nbody\nremote line\n";
+		lv.requestSaveForBoundPath("a.md");
+		await new Promise((r) => setTimeout(r, DEBOUNCE_WAIT_MS));
+		expect(requestSave).toHaveBeenCalledTimes(1);
+	});
 });
 
 describe("CrdtLiveViews.refresh() coalescing", () => {
