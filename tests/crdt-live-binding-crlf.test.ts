@@ -97,7 +97,9 @@ test("opening a CRLF file over its LF doc is a no-op: no ops, no repaint, no dri
 	binding.destroy();
 });
 
-test("opening a doc from before LF-only heals it once, with no repaint", async () => {
+test("opening a doc that still holds CRs mints nothing and never repaints", async () => {
+	// Only the server room removes CRs already in a doc (one healer). Until its
+	// heal lands, the binding reads the doc through its LF view.
 	const doc = new Y.Doc();
 	const text = doc.getText("content");
 	text.insert(0, BODY);
@@ -109,9 +111,48 @@ test("opening a doc from before LF-only heals it once, with no repaint", async (
 	setBinding(binding);
 	await tick();
 	(binding as any).runDriftCheck();
+	(binding as any).runDriftCheck();
 
+	expect(edits, "the plugin removed CRs the room owns").toBe(0);
+	expect(dispatched).toEqual([]);
+
+	// Typing while the doc still holds CRs lands at the right place.
+	const at = ed.state.doc.toString().indexOf("line two");
+	ed.dispatch({ changes: { from: at, insert: "typed\n" }, userEvent: "input" });
+	expect(text.toJSON()).toBe("\r\n# Heading\r\n\r\nline one\r\ntyped\nline two\r\n");
+	binding.destroy();
+});
+
+test("a live CR from an old plugin settles: no extra line, no repaint loop", async () => {
+	const room = new Y.Doc();
+	room.getText("content").insert(0, LF_BODY);
+	const doc = new Y.Doc();
+	Y.applyUpdate(doc, Y.encodeStateAsUpdate(room));
+	const text = doc.getText("content");
+	bind(text);
+	const { ed, dispatched, setBinding } = editorOver(LF_BODY);
+	const binding = new LiveBindingValue(ed);
+	setBinding(binding);
+	await tick();
+
+	// An old plugin seeds a CRLF disk file raw: one CR insert before a LF.
+	const sync = () =>
+		Y.applyUpdate(doc, Y.encodeStateAsUpdate(room, Y.encodeStateVector(doc)), "provider");
+	const rt = room.getText("content");
+	const nl = rt.toJSON().indexOf("\nline two");
+	rt.insert(nl, "\r");
+	sync();
+	expect(ed.state.doc.toString(), "the CR painted as an extra line").toBe(LF_BODY);
+	(binding as any).runDriftCheck();
+	(binding as any).runDriftCheck();
+	expect(dispatched, "the drift check fought the transient CR").toEqual([]);
+
+	// The room's heal arrives: the editor already shows it.
+	rt.delete(nl, 1);
+	sync();
+	(binding as any).runDriftCheck();
+	expect(ed.state.doc.toString()).toBe(LF_BODY);
 	expect(text.toJSON()).toBe(LF_BODY);
-	expect(edits, "the heal is ONE transaction").toBe(1);
 	expect(dispatched).toEqual([]);
 	binding.destroy();
 });
@@ -177,7 +218,8 @@ test("opening an old-plugin-damaged note (fence in the body) heals it with one e
 
 	expect(doc.getArray(ORDER_KEY).toArray()).toEqual(["title", "status"]);
 	expect(Object.keys(doc.getMap(FRONTMATTER_KEY).toJSON()).sort()).toEqual(["status", "title"]);
-	expect(text.toJSON(), "the fence must leave the body, body in LF").toBe(LF_BODY);
+	// The fence goes; the body's CRs stay for the room's heal (one healer).
+	expect(text.toJSON(), "the fence must leave the body").toBe(BODY);
 	expect(edits, "the heal is ONE transaction").toBe(1);
 	expect(dispatched, "the editor already shows the healed note").toEqual([]);
 	binding.destroy();

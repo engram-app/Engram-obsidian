@@ -67,16 +67,15 @@ describe("existing CRLF note on first plugin seed after upgrade", () => {
 		expect(frontmatterOf(doc)).toEqual({ order: ["title"], values: { title: '"T"' } });
 	});
 
-	it("converts a doc from before LF-only in one edit, frontmatter untouched", () => {
+	it("mints no CRDT ops over a doc that still holds CRs: the room removes them", () => {
 		const { doc, text } = docWithBody("line one\r\nline two\r\n");
 		let updates = 0;
 		doc.on("update", () => updates++);
 
 		seedContentInto(doc, text, disk, true);
-		seedContentInto(doc, text, disk, true);
 
-		expect(updates).toBe(1);
-		expect(text.toString()).toBe("line one\nline two\n");
+		expect(updates).toBe(0);
+		expect(text.toString()).toBe("line one\r\nline two\r\n");
 		expect(frontmatterOf(doc)).toEqual({ order: ["title"], values: { title: '"T"' } });
 	});
 });
