@@ -260,6 +260,8 @@ interface Entry {
 	/** In-flight disk-flush from the last remote merge; applyRemoteUpdate awaits
 	 *  it so a write failure can leave crdtHead unadvanced (#235). */
 	pendingFlush: Promise<void> | null;
+	/** `Date.now()` of the last stale-snapshot anomaly line for this doc (rate limit). */
+	staleSnapshotLoggedAt?: number;
 	/** Ownership window for this doc. Ended the instant removeDoc/destroy begins
 	 *  (before doc.destroy()), so an in-flight operation that captured this entry
 	 *  across an await is ABANDONED rather than resuming onto a dead doc
@@ -852,6 +854,7 @@ export class ProviderRegistry {
 				content = fresh;
 				if (!moved && e.pendingFlush === null) break;
 			}
+			this.noteStaleSnapshot(noteId, e, diskContent, content);
 			diskContent = content;
 		}
 
@@ -957,6 +960,23 @@ export class ProviderRegistry {
 		}
 		this.seedFromDisk(e, content, lca);
 		return content;
+	}
+
+	/** The caller's disk snapshot was older than disk by the time the doc was ready.
+	 *  That is the window the reread closes; this makes it visible fleet-wide.
+	 *  `anomaly()` is the always-on, content-free logger (slug code + numbers only,
+	 *  so no path or note text can ship); the note appears as a numeric hash.
+	 *  At most one line per doc per minute. */
+	private noteStaleSnapshot(noteId: string, e: Entry, snapshot: string, reread: string): void {
+		if (snapshot === reread) return;
+		const now = Date.now();
+		if (e.staleSnapshotLoggedAt !== undefined && now - e.staleSnapshotLoggedAt < 60_000) return;
+		e.staleSnapshotLoggedAt = now;
+		rlog().anomaly("crdt", "stale_disk_snapshot", {
+			note: fnv1a(noteId),
+			snapshot_bytes: new TextEncoder().encode(snapshot).length,
+			reread_bytes: new TextEncoder().encode(reread).length,
+		});
 	}
 
 	/** Seed disk text into the doc under the DISK origin (see `localHead`). */

@@ -9,6 +9,7 @@
 
 import { afterAll, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { destroyRemoteLog, formatAnomaly, initRemoteLog } from "../../src/remote-log";
 import { Replica } from "./replica";
 import { boot, cleanup } from "./scenarios";
 
@@ -35,6 +36,11 @@ for (const variant of [
 		const [a, b] = t.replicas;
 		const p = "t85.md";
 		const localEdit = `${BASE}\nlocal-edit-x\n`;
+		// Capture the always-on anomaly lines exactly as they would ship.
+		const lines: string[] = [];
+		initRemoteLog().anomaly = (category: string, code: string, counts) => {
+			lines.push(`${category} ${formatAnomaly(code, counts)}`);
+		};
 		try {
 			await a.createNote(p, BASE);
 			await t.scheduler.drain();
@@ -87,7 +93,22 @@ for (const variant of [
 			const srv = t.server.state().notes.get(p)?.content ?? "";
 			expect(srv).toContain("server-edit-x");
 			expect(srv).toContain("local-edit-x");
+			const stale = lines.filter((l) => l.includes("stale_disk_snapshot"));
+			if (variant.startsWith("INJECTED")) {
+				// The reread saw bytes the caller's snapshot missed: exactly one line,
+				// byte counts only (62-byte snapshot, 88-byte merge), no text, path or id.
+				expect(stale).toHaveLength(1);
+				expect(stale[0]).toMatch(
+					/^crdt stale_disk_snapshot note=\d+ snapshot_bytes=\d+ reread_bytes=\d+$/,
+				);
+				expect(stale[0]).not.toContain("local-edit-x");
+				expect(stale[0]).not.toContain("server-edit-x");
+				expect(stale[0]).not.toContain("t85");
+			} else {
+				expect(stale).toHaveLength(0);
+			}
 		} finally {
+			await destroyRemoteLog();
 			cleanup(t);
 		}
 	});
