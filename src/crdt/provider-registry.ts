@@ -826,7 +826,13 @@ export class ProviderRegistry {
 		// pre-flush snapshot against a base that already holds the flush, reading
 		// the flushed remote lines as user deletes. Wait out the flush, re-read,
 		// and go again if disk (or a new flush) moved meanwhile, up to 3 times.
-		if (reread && e.pendingFlush) {
+		// ALWAYS re-read, not only while a flush is pending: the caller's snapshot was
+		// taken before `await this.entry(...)`, so a flush (and the merge-base update
+		// that follows it) can finish in that gap. The snapshot then predates the base
+		// and reads as a user DELETE of the flushed remote text (merge3 against a base
+		// that already holds it); the reconnect push in e2e test_85 deleted the server
+		// edit this way. One cached read; a settled disk reads back identical.
+		if (reread) {
 			for (let attempt = 0; attempt < 3; attempt++) {
 				const flush = e.pendingFlush;
 				if (flush !== null) {
