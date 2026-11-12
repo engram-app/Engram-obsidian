@@ -25,7 +25,10 @@
 //
 // The bound Y.Text is the note BODY only (frontmatter lives in a separate Y.Map
 // handled by CrdtFrontmatterHook); in Live Preview the CM document is body-only
-// too, so editor text and Y.Text are directly comparable.
+// too, so editor text and Y.Text are directly comparable once line endings
+// match: CodeMirror holds LF, the Y.Text keeps the note's own (CRLF included),
+// so every comparison reads the doc through `toLf` and every write maps
+// through `lfEditsToDoc` (../line-endings.ts).
 import { Annotation, type ChangeSpec, Transaction } from "@codemirror/state";
 import { type EditorView, type PluginValue, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 import { editorInfoField } from "obsidian";
@@ -33,6 +36,8 @@ import type * as Y from "yjs";
 import { noteRef } from "../../note-ref";
 import { rlog } from "../../remote-log";
 import { merge3 } from "../lca-merge";
+import { lfEditsToDoc, toLf } from "../line-endings";
+import { liftBodyFence } from "../note-seed";
 import {
 	applyCmChangesToYText,
 	type CmChangeSpec,
@@ -61,6 +66,26 @@ const DRIFT_CHECK_MS = 3000;
 function shiftChanges(changes: CmChangeSpec[], n: number): CmChangeSpec[] {
 	if (n === 0) return changes;
 	return changes.map((c) => ({ from: c.from + n, to: c.to + n, insert: c.insert }));
+}
+
+/** Editor-view (LF) forward edits mapped onto the Y.Text's own offsets. */
+function toDocEdits(
+	text: Y.Text,
+	changes: Array<{ fromA: number; toA: number; insert: string }>,
+): Array<{ fromA: number; toA: number; insert: string }> {
+	const lf = changes.map((c) => ({ from: c.fromA, to: c.toA, insert: c.insert }));
+	return lfEditsToDoc(text.toJSON(), lf).map((c) => ({
+		fromA: c.from,
+		toA: c.to,
+		insert: c.insert,
+	}));
+}
+
+/** Heal a fence-in-body doc before it is compared with the editor, which holds
+ *  that block as frontmatter: otherwise the reconcile paints the fence in a
+ *  second time below the real one. */
+function healBodyFence(text: Y.Text, origin: unknown): void {
+	if (text.doc) liftBodyFence(text.doc, origin);
 }
 
 /** Marks editor dispatches that ORIGINATE from a Y.Text delta (or the initial
@@ -160,6 +185,8 @@ export class LiveBindingValue implements PluginValue {
 	private gateOpenUnsub: (() => void) | null = null;
 	/** Periodic drift-check timer (self-heal backstop); null when not scheduled. */
 	private driftTimer: number | null = null;
+	/** Whether the bound doc held a CR at the last paint (see goLive). */
+	private docHadCr = false;
 
 	constructor(editor: EditorView) {
 		this.editor = editor;
@@ -276,7 +303,7 @@ export class LiveBindingValue implements PluginValue {
 			if (spansFrontmatter) this.scheduleDriftCheck();
 			if (changes.length === 0) continue;
 			try {
-				doc.transact(() => applyCmChangesToYText(ytext, changes), this);
+				doc.transact(() => applyCmChangesToYText(ytext, toDocEdits(ytext, changes)), this);
 			} catch (err) {
 				// A malformed offset / concurrent-transaction error must not throw out of
 				// update() and wedge the editor. Log and let the drift check reconcile.
@@ -325,12 +352,13 @@ export class LiveBindingValue implements PluginValue {
 	 *  FORWARD the editor's edits into the doc when the user typed during hydration
 	 *  (never revert them — the cold-open loss bug), or defer an unseeded doc. */
 	private reconcileAndGoLive(text: Y.Text): void {
+		healBodyFence(text, this);
 		const fullText = this.editor.state.doc.toString();
 		// Compare/reconcile against the BODY only: in Source mode the CM document
 		// carries the raw frontmatter block, which the body-only Y.Text does not.
 		const prefix = frontmatterPrefixLen(fullText);
 		const editorText = prefix > 0 ? fullText.slice(prefix) : fullText;
-		const docText = text.toJSON();
+		const docText = toLf(text.toJSON());
 		// Body-align the base the same way (Source mode carries the frontmatter block).
 		const base =
 			this.preEditText === null
@@ -401,7 +429,11 @@ export class LiveBindingValue implements PluginValue {
 	private writeYText(text: Y.Text, changes: CmChangeSpec[]): void {
 		const doc = text.doc;
 		if (!doc || changes.length === 0) return;
-		const mapped = changes.map((c) => ({ fromA: c.from, toA: c.to, insert: c.insert }));
+		const mapped = lfEditsToDoc(text.toJSON(), changes).map((c) => ({
+			fromA: c.from,
+			toA: c.to,
+			insert: c.insert,
+		}));
 		doc.transact(() => applyCmChangesToYText(text, mapped), this);
 	}
 
@@ -438,7 +470,7 @@ export class LiveBindingValue implements PluginValue {
 				this.deferObserver = null;
 				const fullText = this.editor.state.doc.toString();
 				const prefix = frontmatterPrefixLen(fullText);
-				const changes = textDiffToChangeSpec(text.toJSON(), fullText.slice(prefix));
+				const changes = textDiffToChangeSpec(toLf(text.toJSON()), fullText.slice(prefix));
 				this.applyAndGoLive(text, { kind: "forward", changes }, prefix);
 			});
 		}
@@ -461,10 +493,11 @@ export class LiveBindingValue implements PluginValue {
 			.catch(() => null)
 			.then((base) => {
 				if (stale()) return;
+				healBodyFence(text, this);
 				const fullText = this.editor.state.doc.toString();
 				const prefix = frontmatterPrefixLen(fullText);
 				const editorText = fullText.slice(prefix);
-				const docText = text.toJSON();
+				const docText = toLf(text.toJSON());
 				const baseBody = base === null ? null : base.slice(frontmatterPrefixLen(base));
 				const action = decideLoadedReconcile(editorText, docText, baseBody);
 				if (action.kind !== "conflict") {
@@ -497,11 +530,20 @@ export class LiveBindingValue implements PluginValue {
 			if (this.destroyed || tr.origin === this) return;
 			// Y.Text (not Y.XmlText) deltas only ever carry string inserts; the shared
 			// yjs delta type widens `insert` to object, so narrow it here.
-			const changes = yDeltaToChangeSpec(event.delta as YDeltaEntry[]);
-			if (changes.length === 0) return;
+			// A delta's offsets are the DOC's; they match the editor's only while
+			// neither the old nor the new text holds a CR. Otherwise diff the editor
+			// body against the doc's LF view. ponytail: O(note) per remote update,
+			// CRLF notes only.
+			const docText = text.toJSON();
+			const crlf = this.docHadCr || docText.includes("\r");
+			this.docHadCr = docText.includes("\r");
 			try {
-				// Body-coordinate delta -> editor coordinates (offset past any frontmatter).
-				const prefix = frontmatterPrefixLen(this.editor.state.doc.toString());
+				// Body-coordinate changes -> editor coordinates (offset past any frontmatter).
+				const fullText = this.editor.state.doc.toString();
+				const prefix = frontmatterPrefixLen(fullText);
+				const changes = crlf
+					? textDiffToChangeSpec(fullText.slice(prefix), toLf(docText))
+					: yDeltaToChangeSpec(event.delta as YDeltaEntry[]);
 				this.paintEditor(changes, prefix);
 			} catch (err) {
 				// A dispatch mid-update / offset disagreement throws here (inside a Y.Text
@@ -514,6 +556,7 @@ export class LiveBindingValue implements PluginValue {
 				this.scheduleDriftCheck();
 			}
 		};
+		this.docHadCr = text.toJSON().includes("\r");
 		text.observe(this.observer);
 		this.ready = true;
 		this.scheduleDriftCheck();
@@ -544,7 +587,7 @@ export class LiveBindingValue implements PluginValue {
 		const fullText = this.editor.state.doc.toString();
 		const prefix = frontmatterPrefixLen(fullText);
 		const editorText = prefix > 0 ? fullText.slice(prefix) : fullText;
-		const docText = this.ytext.toJSON();
+		const docText = toLf(this.ytext.toJSON());
 		if (editorText !== docText) {
 			// A tripwire, not routine: every delta and forward is supposed to keep these
 			// in lockstep, so drift means one was silently dropped. warn (not info) so it
