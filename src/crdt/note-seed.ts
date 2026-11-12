@@ -16,6 +16,7 @@ import {
 	parseFrontmatterBlock,
 	RAW_FRONTMATTER_KEY,
 	splitFrontmatter,
+	uniqueKeyOrder,
 } from "./frontmatter-codec";
 
 /** True when a body Y.Text already carries CRDT history (non-empty after IDB
@@ -98,7 +99,10 @@ export function applyFrontmatterInto(
 		// `toArray()` is a plain string[] and equality here means "the same keys in
 		// the same positions", which is exactly what the delete+insert would have
 		// re-established.
-		const currentOrder = arr.toArray();
+		// Deduped like every other reader (`uniqueKeyOrder`): a doc left holding a
+		// key twice projects it once, so comparing the raw array would see an
+		// edit in every echo of its own projection.
+		const currentOrder = uniqueKeyOrder(arr.toArray());
 		const orderUnchanged =
 			currentOrder.length === order.length && currentOrder.every((k, i) => k === order[i]);
 		if (!orderUnchanged) {

@@ -22,9 +22,20 @@ export const ORDER_KEY = "frontmatter_order";
 /** Y.Doc shared-type key for the note body text. */
 export const CONTENT_KEY = "content";
 
+/** The frontmatter key order as every reader must see it: each key once, at
+ *  its first position. `frontmatter_order` is a Y.Array, so two concurrent
+ *  lifts of one key (the server's normalize_doc and a plugin seed) both
+ *  survive a merge; values are a Y.Map and already one per key. Y.Array order
+ *  is identical on every replica, so first-position-wins agrees everywhere.
+ *  The duplicate stays in the Y.Array, harmless, until a real order change
+ *  rewrites it. Same rule as the canvas `orderedElements`. */
+export function uniqueKeyOrder(order: readonly string[]): string[] {
+	return [...new Set(order)];
+}
+
 /** Read the frontmatter structure from a Y.Doc ({order:[],values:{}} when empty). */
 export function frontmatterOf(doc: Y.Doc): { order: string[]; values: Record<string, string> } {
-	const order = doc.getArray<string>(ORDER_KEY).toArray();
+	const order = uniqueKeyOrder(doc.getArray<string>(ORDER_KEY).toArray());
 	const values = doc.getMap<string>(FRONTMATTER_KEY).toJSON() as Record<string, string>;
 	return { order, values };
 }
@@ -183,11 +194,7 @@ export function emitFrontmatter(
 	const has = (m: Record<string, string>, k: string) =>
 		// biome-ignore lint/suspicious/noPrototypeBuiltins: Object.hasOwn needs lib ES2022, we target ES2021
 		Object.prototype.hasOwnProperty.call(m, k);
-	// `order` is a Y.Array, so two concurrent lifts of the same key (the server's
-	// normalize_doc and the plugin's seed) both survive the merge. Values live in
-	// a Y.Map and are already one per key; emit each key once, at its first
-	// position (Y.Array order is identical on every replica, so all agree).
-	const present = [...new Set(order)].filter((k) => has(raws, k) || has(values, k));
+	const present = uniqueKeyOrder(order).filter((k) => has(raws, k) || has(values, k));
 	if (present.length === 0) return "";
 	let out = "";
 	for (const key of present) {

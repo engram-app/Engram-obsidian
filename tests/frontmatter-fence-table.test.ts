@@ -129,3 +129,50 @@ describe("an old-plugin-damaged CRLF note healed by server and plugin at once", 
 		}
 	});
 });
+
+describe("a doc whose frontmatter_order already holds a key twice", () => {
+	// Left behind by a concurrent lift (above). Every reader dedupes, first
+	// position wins, so seeding the doc's own projection is an echo, not an edit.
+	function duplicated(): Y.Doc {
+		const doc = new Y.Doc();
+		doc.transact(() => {
+			doc.getMap<string>("frontmatter").set("title", '"T"');
+			doc.getArray<string>(ORDER_KEY).insert(0, ["title", "title"]);
+			doc.getText(CONTENT_KEY).insert(0, "line\r\n");
+		});
+		return doc;
+	}
+	const projection = (doc: Y.Doc) => {
+		const { order, values } = frontmatterOf(doc);
+		return projectNote(order, values, doc.getText(CONTENT_KEY).toString());
+	};
+
+	it("reads the order once", () => {
+		expect(frontmatterOf(duplicated()).order).toEqual(["title"]);
+	});
+
+	it("seeding its own unchanged projection mints no ops", () => {
+		const doc = duplicated();
+		let updates = 0;
+		doc.on("update", () => updates++);
+		seedContentInto(doc, doc.getText(CONTENT_KEY), projection(doc), true);
+		expect(updates).toBe(0);
+	});
+
+	it("two devices echoing it at once do not re-create a duplicate", () => {
+		const state = Y.encodeStateAsUpdate(duplicated());
+		const a = new Y.Doc();
+		const b = new Y.Doc();
+		Y.applyUpdate(a, state);
+		Y.applyUpdate(b, state);
+		let updates = 0;
+		a.on("update", () => updates++);
+		b.on("update", () => updates++);
+		seedContentInto(a, a.getText(CONTENT_KEY), projection(a), true);
+		seedContentInto(b, b.getText(CONTENT_KEY), projection(b), true);
+		expect(updates).toBe(0);
+		Y.applyUpdate(a, Y.encodeStateAsUpdate(b));
+		Y.applyUpdate(b, Y.encodeStateAsUpdate(a));
+		for (const doc of [a, b]) expect(projection(doc)).toBe("---\ntitle: T\n---\nline\r\n");
+	});
+});
