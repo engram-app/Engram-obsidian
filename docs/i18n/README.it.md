@@ -8,7 +8,7 @@
 
 **[Inizia gratis su engram.page →](https://engram.page)** · Senza carta di credito, pronto in pochi minuti.
 
-[Installazione](#installazione) · [Collega la tua IA](#collega-la-tua-ia) · [API](https://engram.page/docs/api) · [Guida all'uso](../user-guide.md) · [Installazione autonoma](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
+[Installazione](#installazione) · [Collega la tua IA](#collega-la-tua-ia) · [API](https://engram.page/docs/api) · [Guida all'uso](../user-guide.md) · [Discord](https://discord.gg/NKWcU2mm7N)
 
 [English](../../README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md) · [한국어](README.ko.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português](README.pt-BR.md) · [Русский](README.ru.md) · **Italiano**
 
@@ -42,9 +42,9 @@ Niente viene mai sovrascritto in silenzio. Le modifiche fatte offline si sincron
 
 ## Installazione
 
-**1. Procurati un account Engram.** Ospitato su **[engram.page](https://engram.page)** (piano gratuito, nulla da installare), oppure installa da solo il [backend a codice disponibile](https://github.com/engram-app/engram) così che le tue note non lascino mai il tuo hardware.
+**1. Procurati un account Engram.** Ospitato su **[engram.page](https://engram.page)** (piano gratuito, nulla da installare).
 
-**2. Collegati.** Apri *Settings → Engram Vault Sync* e vai alla scheda **Connessione**. **Ospitato:** scegli **Engram Cloud** e premi **Accedi**. **Installazione autonoma:** scegli **Self-hosted** e inserisci l'indirizzo del tuo server e la chiave. In entrambi i casi il plugin ti accompagna nella prima sincronizzazione; nulla viene inviato prima della tua conferma.
+**2. Collegati.** Apri *Settings → Engram Vault Sync* e vai alla scheda **Connessione**. Premi **Accedi**. Il plugin ti accompagna nella prima sincronizzazione; nulla viene inviato prima della tua conferma.
 
 Da lì in poi la sincronizzazione va da sé, mentre lavori.
 
@@ -60,9 +60,9 @@ Punta il tuo client al server MCP di Engram (`https://mcp.engram.page` nel servi
 
 ## Privacy
 
-- **Uso della rete e account.** Il plugin comunica solo con il tuo server Engram, con nient'altro, senza intermediari. Ti colleghi al tuo account Engram con l'accesso OAuth, che funziona su ogni piano. Sono supportate anche le chiavi API, ma su Engram Cloud richiedono il piano Pro; i server installati da te non hanno questo limite.
+- **Uso della rete e account.** Il plugin comunica solo con il tuo server Engram, con nient'altro, senza intermediari. Ti colleghi al tuo account Engram con l'accesso OAuth, che funziona su ogni piano. Con il piano Pro sono supportate anche le chiavi API.
 - **Nessuna telemetria.** La registrazione remota opzionale (disattivata per impostazione predefinita) invia solo eventi di errore e di ciclo di vita, e solo al tuo server.
-- **Privacy del servizio ospitato.** Vedi [engram.page/privacy](https://engram.page/privacy). I piani a pagamento alzano i limiti di spazio e di ricerca; l'installazione autonoma è gratuita.
+- **Privacy del servizio ospitato.** Vedi [engram.page/privacy](https://engram.page/privacy). I piani a pagamento alzano i limiti di spazio e di ricerca.
 
 ## Altro
 

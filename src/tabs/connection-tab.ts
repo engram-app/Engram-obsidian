@@ -1,5 +1,5 @@
 import { Notice, Setting } from "obsidian";
-import { connectionState } from "../backend-mode";
+import { connectionState, offersSelfHost } from "../backend-mode";
 import { t } from "../i18n";
 import type { BackendMode } from "../types";
 import {
@@ -25,31 +25,12 @@ function modeLabels(): Record<BackendMode, string> {
  *  (see the deleted cloudTabAction and PR #162): navigation is now inert, and
  *  only the toggle changes anything. */
 export function renderConnectionTab(ctx: TabContext): void {
-	const { containerEl, plugin, redisplay } = ctx;
+	const { containerEl, plugin } = ctx;
 	const mode: BackendMode = plugin.settings.backendMode ?? "selfhost";
 
-	// ponytail: a dropdown, not a custom segmented control. Same two-choice
-	// semantics, standard Obsidian affordance, zero new CSS. Swap for segmented
-	// buttons only if the visual matters more than the maintenance.
-	new Setting(containerEl)
-		.setName(t("Sync server"))
-		.setDesc(t("Where this vault syncs to. Each backend keeps its own sign-in."))
-		.addDropdown((dd) => {
-			const labels = modeLabels();
-			dd.addOption("cloud", labels.cloud);
-			dd.addOption("selfhost", labels.selfhost);
-			dd.setValue(mode);
-			dd.onChange(async (value) => {
-				const target = value as BackendMode;
-				// Delegate: a mode switch is a full identity swap and must follow the
-				// same bump/rebuild/commit sequence as an OAuth login. Hand-rolling a
-				// subset here previously nulled the auth provider without rebuilding
-				// it and skipped bumpAuthGeneration.
-				if (!(await plugin.switchBackendMode(target))) return;
-				new Notice(t("Switched to {mode}.", { mode: modeLabels()[target] ?? target }));
-				redisplay();
-			});
-		});
+	// Self-hosting is temporarily hidden: only installs that already use a
+	// self-hosted server get the picker (see offersSelfHost).
+	if (offersSelfHost(plugin.settings)) renderModePicker(ctx, mode);
 
 	const state = connectionState(plugin.settings);
 	// Only the missing-URL case gets a banner. The signed-out case had one too,
@@ -92,6 +73,32 @@ export function renderConnectionTab(ctx: TabContext): void {
 		renderVaultSection(ctx);
 	}
 	if (mode === "selfhost") renderSupportSection(ctx);
+}
+
+function renderModePicker(ctx: TabContext, mode: BackendMode): void {
+	const { containerEl, plugin, redisplay } = ctx;
+	// ponytail: a dropdown, not a custom segmented control. Same two-choice
+	// semantics, standard Obsidian affordance, zero new CSS. Swap for segmented
+	// buttons only if the visual matters more than the maintenance.
+	new Setting(containerEl)
+		.setName(t("Sync server"))
+		.setDesc(t("Where this vault syncs to. Each backend keeps its own sign-in."))
+		.addDropdown((dd) => {
+			const labels = modeLabels();
+			dd.addOption("cloud", labels.cloud);
+			dd.addOption("selfhost", labels.selfhost);
+			dd.setValue(mode);
+			dd.onChange(async (value) => {
+				const target = value as BackendMode;
+				// Delegate: a mode switch is a full identity swap and must follow the
+				// same bump/rebuild/commit sequence as an OAuth login. Hand-rolling a
+				// subset here previously nulled the auth provider without rebuilding
+				// it and skipped bumpAuthGeneration.
+				if (!(await plugin.switchBackendMode(target))) return;
+				new Notice(t("Switched to {mode}.", { mode: modeLabels()[target] ?? target }));
+				redisplay();
+			});
+		});
 }
 
 /** Sitting between auth and vault: the user is signed in and has a vault, but

@@ -8,7 +8,7 @@
 
 **[Start free at engram.page →](https://engram.page)** · No credit card, ready in minutes.
 
-[Setup](#setup) · [Connect your AI](#connect-your-ai) · [API](https://engram.page/docs/api) · [User guide](docs/user-guide.md) · [Self-host](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
+[Setup](#setup) · [Connect your AI](#connect-your-ai) · [API](https://engram.page/docs/api) · [User guide](docs/user-guide.md) · [Discord](https://discord.gg/NKWcU2mm7N)
 
 **English** · [简体中文](docs/i18n/README.zh-CN.md) · [繁體中文](docs/i18n/README.zh-TW.md) · [日本語](docs/i18n/README.ja.md) · [한국어](docs/i18n/README.ko.md) · [Deutsch](docs/i18n/README.de.md) · [Français](docs/i18n/README.fr.md) · [Español](docs/i18n/README.es.md) · [Português](docs/i18n/README.pt-BR.md) · [Русский](docs/i18n/README.ru.md) · [Italiano](docs/i18n/README.it.md)
 
@@ -42,9 +42,9 @@ Nothing is ever silently overwritten. Offline edits sync when you reconnect. You
 
 ## Setup
 
-**1. Get an Engram account.** Hosted at **[engram.page](https://engram.page)** (free tier, nothing to install), or self-host the [source-available backend](https://github.com/engram-app/engram) so your notes never leave your hardware.
+**1. Get an Engram account.** Hosted at **[engram.page](https://engram.page)** (free tier, nothing to install).
 
-**2. Connect.** Open *Settings → Engram Vault Sync*. On the **Connection** tab, **hosted:** choose **Engram Cloud** and click **Sign in**; **self-hosted:** choose **Self-hosted** and add your server URL and key. Either way the plugin walks you through the first sync; nothing is sent until you confirm.
+**2. Connect.** Open *Settings → Engram Vault Sync*. On the **Connection** tab, click **Sign in**. The plugin walks you through the first sync; nothing is sent until you confirm.
 
 After that, syncing just happens as you work.
 
@@ -60,9 +60,9 @@ Point your client at the Engram MCP server (`https://mcp.engram.page` on the hos
 
 ## Privacy
 
-- **Network use & accounts.** The plugin talks only to your Engram server, nothing else, no middlemen. You connect with your Engram account via OAuth sign-in, which works on every plan. API keys are also supported, but on Engram Cloud they require the Pro plan; self-hosted servers have no such limit.
+- **Network use & accounts.** The plugin talks only to your Engram server, nothing else, no middlemen. You connect with your Engram account via OAuth sign-in, which works on every plan. API keys are also supported on the Pro plan.
 - **No telemetry.** Optional remote logging (off by default) sends error/lifecycle events only to your server.
-- **Hosted privacy.** See [engram.page/privacy](https://engram.page/privacy). Paid tiers raise storage/search limits; self-hosting is free.
+- **Hosted privacy.** See [engram.page/privacy](https://engram.page/privacy). Paid tiers raise storage/search limits.
 
 ## More
 

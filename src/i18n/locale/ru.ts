@@ -106,8 +106,7 @@ const ru: Dict = {
 	"Couldn't send your feedback, please try again.":
 		"Не удалось отправить ваш отзыв, попробуйте ещё раз.",
 	Create: "Создать",
-	"Create a hosted account at {signup}, or self-host the server ({guide}).":
-		"Создайте учётную запись на {signup} или настройте сервер самостоятельно ({guide}).",
+	"Create a hosted account at {signup}.": "Создайте учётную запись на {signup}.",
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"Создать новое пустое хранилище на сервере, затем синхронизировать с ним ваше хранилище Obsidian.",
 	"Custom patterns": "Пользовательские правила",
@@ -692,7 +691,6 @@ const ru: Dict = {
 	"meaning + exact": "смысл + точное совпадение",
 	"not linked": "не подключено",
 	notes: "заметки",
-	"setup guide": "руководство по настройке",
 	"sync is paused": "синхронизация приостановлена",
 	"syncing now": "синхронизация в процессе",
 	unknown: "неизвестно",

@@ -8,7 +8,7 @@
 
 **[engram.page で無料で始める →](https://engram.page)** · クレジットカード不要、数分で使えます。
 
-[セットアップ](#セットアップ) · [AI を接続する](#ai-を接続する) · [API](https://engram.page/docs/api) · [ユーザーガイド](../user-guide.md) · [セルフホスト](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
+[セットアップ](#セットアップ) · [AI を接続する](#ai-を接続する) · [API](https://engram.page/docs/api) · [ユーザーガイド](../user-guide.md) · [Discord](https://discord.gg/NKWcU2mm7N)
 
 [English](../../README.md) · [简体中文](README.zh-CN.md) · [繁體中文](README.zh-TW.md) · **日本語** · [한국어](README.ko.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · [Español](README.es.md) · [Português](README.pt-BR.md) · [Русский](README.ru.md) · [Italiano](README.it.md)
 
@@ -42,9 +42,9 @@ Claude   📝  「Henderson: 更新リスク」を作成しました  ✓
 
 ## セットアップ
 
-**1. Engram のアカウントを用意します。** ホスト版は **[engram.page](https://engram.page)**（無料プランあり、インストール不要）。または[ソース公開のバックエンド](https://github.com/engram-app/engram)をセルフホストすれば、ノートが自分のハードウェアから出ることはありません。
+**1. Engram のアカウントを用意します。** ホスト版は **[engram.page](https://engram.page)**（無料プランあり、インストール不要）です。
 
-**2. 接続します。** *Settings → Engram Vault Sync* を開き、**接続** タブに移動します。**ホスト版:** **Engram Cloud** を選び、**サインイン** をクリックします。**セルフホスト版:** **セルフホスト** を選び、サーバー URL とキーを入力します。どちらの場合もプラグインが初回同期を案内します。あなたが確認するまで、何も送信されません。
+**2. 接続します。** *Settings → Engram Vault Sync* を開き、**接続** タブに移動します。**サインイン** をクリックします。プラグインが初回同期を案内します。あなたが確認するまで、何も送信されません。
 
 そのあとは、作業に合わせて同期が自動で行われます。
 
@@ -60,9 +60,9 @@ Engram は **MCP (Model Context Protocol)** を話します。Claude、Cursor、
 
 ## プライバシー
 
-- **通信とアカウント。** プラグインが通信するのはあなたの Engram サーバーだけです。ほかのどこにも送らず、仲介もありません。接続は Engram アカウントの OAuth サインインで行い、すべてのプランで利用できます。API キーにも対応していますが、Engram Cloud では Pro プランが必要です。セルフホストのサーバーにはこの制限はありません。
+- **通信とアカウント。** プラグインが通信するのはあなたの Engram サーバーだけです。ほかのどこにも送らず、仲介もありません。接続は Engram アカウントの OAuth サインインで行い、すべてのプランで利用できます。Pro プランでは API キーにも対応しています。
 - **テレメトリなし。** 任意のリモートログ (既定ではオフ) は、エラーとライフサイクルのイベントだけをあなたのサーバーへ送ります。
-- **ホスト版のプライバシー。** [engram.page/privacy](https://engram.page/privacy) をご覧ください。有料プランは保存容量と検索の上限が上がります。セルフホストは無料です。
+- **ホスト版のプライバシー。** [engram.page/privacy](https://engram.page/privacy) をご覧ください。有料プランは保存容量と検索の上限が上がります。
 
 ## さらに
 

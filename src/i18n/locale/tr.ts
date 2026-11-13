@@ -100,8 +100,7 @@ const tr: Dict = {
 	"Couldn't send your feedback, please try again.":
 		"Geri bildiriminizi göndermek mümkün olmadı, lütfen tekrar deneyin.",
 	Create: "Oluştur",
-	"Create a hosted account at {signup}, or self-host the server ({guide}).":
-		"{signup} adresinde bir hesap oluşturun veya sunucuyu kendiniz barındırın ({guide}).",
+	"Create a hosted account at {signup}.": "{signup} adresinde bir hesap oluşturun.",
 	"Create a new empty vault on the server, then sync this Obsidian vault into it.":
 		"Sunucuda yeni bir boş kasa oluşturun, ardından bu Obsidian kasayı içine senkronize edin.",
 	"Custom patterns": "Özel kalıplar",
@@ -635,7 +634,6 @@ const tr: Dict = {
 	"meaning + exact": "anlamı + tam olarak",
 	"not linked": "Bağlı değil",
 	notes: "notlar",
-	"setup guide": "Kurulum kılavuzu",
 	"sync is paused": "Senkronizasyon durduruldu",
 	"syncing now": "Şu anda senkronize ediliyor",
 	unknown: "bilinmeyen",
