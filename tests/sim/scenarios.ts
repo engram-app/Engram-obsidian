@@ -31,7 +31,13 @@ export interface Topology {
 export async function boot(
 	seed: number,
 	ids: string[],
-	serverOpts: { genesisEmptyDoc?: boolean } = {},
+	serverOpts: {
+		genesisEmptyDoc?: boolean;
+		folderOps?: boolean;
+		cascadeBroadcasts?: boolean;
+		manifestFolders?: boolean;
+		strictRestPath?: boolean;
+	} = {},
 ): Promise<Topology> {
 	const clock = new SimClock();
 	const scheduler = new Scheduler(seed, clock);

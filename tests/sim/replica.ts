@@ -72,7 +72,13 @@ import type { SimClock } from "./clock";
 import type { ModelServer } from "./model-server";
 import { setRequestUrlHandler, requestUrl as shimRequestUrl } from "./obsidian-shim";
 import type { Scheduler } from "./scheduler";
-import { makeVault, type SimApp, type VaultEvents, type WriteJournalEntry } from "./vault-fs";
+import {
+	type FolderRenameOrder,
+	makeVault,
+	type SimApp,
+	type VaultEvents,
+	type WriteJournalEntry,
+} from "./vault-fs";
 
 let requestUrlRedirected = false;
 
@@ -511,6 +517,7 @@ export class Replica {
 
 		let crdtEverJoined = false;
 		channel.onStatusChange = (connected) => {
+			engine.folderOps.onSyncStatus(connected); // main.ts onStatusChange
 			if (connected) {
 				engine.clearConfirmedNoteIds(); // main.ts:1734
 			} else if (!crdtEverJoined) {
@@ -533,6 +540,15 @@ export class Replica {
 		);
 		// Room-free full-state read (main.ts setCrdtPorts `docState`).
 		engine.setCrdtPorts({ docState: (id: string) => channel.crdtDocState(id) });
+		// Engram#2523 S4 folder ops (main.ts: setCrdtPorts `folderOp`,
+		// onServerFeatures, onCreated / onFolderChanged).
+		engine.setCrdtPorts({ folderOp: (op) => channel.folderOp(op) });
+		channel.onServerFeatures = (f) => void engine.setFolderOpsEnabled(f.folderOps);
+		channel.onCreated = (p, nid) => engine.claimNote(p, nid);
+		channel.onIndexV1 = (on) => engine.setIndexV1(on);
+		channel.onCreateFolderId = (p, fid) => engine.learnFolderOf(p, fid);
+		channel.onCreateFolders = (rows) => engine.learnFolderChain(rows);
+		channel.onFolderChanged = (c) => void engine.onFolderChanged(c);
 
 		// Paths this replica has an editor open on (openNote adds, closeNote
 		// removes). Backs isBound + setLiveBoundCheck below, exactly as
@@ -605,6 +621,7 @@ export class Replica {
 			manager.setConnected(true);
 			void (async () => {
 				await crdtOpQueue.onJoined();
+				await engine.folderOps.onReconnect(); // main.ts onCrdtJoined
 				await onCrdtTopicJoined();
 			})();
 		};
@@ -778,6 +795,21 @@ export class Replica {
 		const file = this.app.vault.getFileByPath(oldPath);
 		if (!file) throw new Error(`renameNote: no file at ${oldPath}`);
 		await this.app.vault.rename(file, newPath);
+	}
+
+	/** Every path this replica's engine trashed, in order. */
+	trashed(): string[] {
+		return [...this.app.trashed];
+	}
+
+	/** Every `vault.rename` this replica's vault saw, in order. */
+	renamed(): string[] {
+		return [...this.app.renamed];
+	}
+
+	/** Rename a folder; Obsidian's per-item events fire in `order`. */
+	async renameFolder(oldPath: string, newPath: string, order: FolderRenameOrder): Promise<void> {
+		await this.app.renameFolder(oldPath, newPath, order);
 	}
 
 	async deleteNote(path: string): Promise<void> {

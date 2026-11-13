@@ -1,6 +1,8 @@
 import type { AuthProvider } from "./auth";
 import { expBackoff } from "./backoff";
+import { crdtOpFailureReason } from "./crdt-op-dispatch";
 import { errMsg } from "./error-util";
+import type { FolderChange, FolderOp, FolderOpResult } from "./folder-ops";
 import { noteRef } from "./note-ref";
 import { pluginVersion } from "./plugin-version";
 import { rlog } from "./remote-log";
@@ -218,7 +220,25 @@ export type GenesisOutcome = "stored" | "absent" | "occupied" | null;
 
 /** Raw server reply shape for `crdt_create`, before the docId/seeded rename —
  *  same "no inline `;`" reasoning as CrdtCreateResult above. */
-type CrdtCreateReply = { doc_id: string; seeded?: boolean; genesis?: string };
+type CrdtCreateReply = {
+	doc_id: string;
+	seeded?: boolean;
+	genesis?: string;
+	/** The note's server folder (Engram#2523 S4); null = root. */
+	folder_id?: string | null;
+	/** The folder's whole ancestor chain, root-first (switch-gated). */
+	folders?: { id: string; parent_id: string | null; name: string }[];
+};
+
+function createResult(res: CrdtCreateReply): CrdtCreateResult {
+	const outcome = res.genesis;
+	return {
+		docId: res.doc_id,
+		seeded: res.seeded === true,
+		genesisOutcome:
+			outcome === "stored" || outcome === "absent" || outcome === "occupied" ? outcome : null,
+	};
+}
 
 export class NoteChannel {
 	private ws: WebSocket | null = null;
@@ -336,8 +356,22 @@ export class NoteChannel {
 				rawAttachmentUpload: boolean;
 				rawAttachmentDownload: boolean;
 				attachmentBatchDeleteOrigin: boolean;
+				/** Engram#2523 S4: the server takes `folder_op`. */
+				folderOps: boolean;
 		  }) => void)
 		| null = null;
+	/** Engram#2523 S4: a folder row changed on the server (`folder_changed`). */
+	onFolderChanged: ((change: FolderChange) => void) | null = null;
+	/** The server took a note create (writes its filemeta_v1 claim). */
+	onCreated: ((path: string, noteId: string) => void) | null = null;
+	/** A `crdt_create` reply named the server folder of the note's path. */
+	onCreateFolderId: ((path: string, folderId: string | null) => void) | null = null;
+	/** A `crdt_create` reply carried the folder chain (`folders`, root-first). */
+	onCreateFolders:
+		| ((rows: { id: string; parent_id: string | null; name: string }[]) => void)
+		| null = null;
+	/** The sync join reply's `index_v1` (S5 stamps it per vault). */
+	onIndexV1: ((on: boolean) => void) | null = null;
 	/** Inbound CRDT frames from the server. `docId` is the note's bare note_id. */
 	onCrdtMessage: ((docId: string, b64: string) => void) | null = null;
 
@@ -620,15 +654,42 @@ export class NoteChannel {
 			path,
 			...(b64 === undefined ? {} : { b64 }),
 		})) as CrdtCreateReply;
-		const outcome = res.genesis;
-		return {
-			docId: res.doc_id,
-			seeded: res.seeded === true,
-			genesisOutcome:
-				outcome === "stored" || outcome === "absent" || outcome === "occupied"
-					? outcome
-					: null,
-		};
+		// Engram#2523 S4: the frame is main's. #2533 places by path and reads no
+		// folder id, so none is sent until a server stage reads one. The note's
+		// filemeta_v1 claim is written once the server took the create.
+		this.onCreated?.(path, typeof res.doc_id === "string" ? res.doc_id : docId);
+		if (res.folder_id === null || typeof res.folder_id === "string") {
+			this.onCreateFolderId?.(path, res.folder_id);
+		}
+		if (Array.isArray(res.folders)) this.onCreateFolders?.(res.folders);
+		return createResult(res);
+	}
+
+	/** Send one `folder_op` and map the reply: an ack, a refusal (`conflict`,
+	 *  `cycle`, `not_found`, or anything else terminal), `unknown_event` (an
+	 *  older server), or no answer (timeout, socket down, rate limited). */
+	async folderOp(op: FolderOp): Promise<FolderOpResult> {
+		try {
+			const res = (await this.sendRequest("folder_op", {
+				op: op.op,
+				op_id: op.op_id,
+				folder_id: op.folder_id,
+				parent_id: op.parent_id,
+				name: op.name,
+			})) as { seq?: unknown } | null;
+			return { kind: "ok", seq: Number.isInteger(res?.seq) ? (res?.seq as number) : null };
+		} catch (e) {
+			// Never sent: spends no attempt (the note-op queue's "held" rule).
+			if (errMsg(e).startsWith("sendRequest refused")) return { kind: "held" };
+			const reason = crdtOpFailureReason(e);
+			if (reason === "rate_limited") return { kind: "rate_limited" };
+			if (reason === null) return { kind: "retry" };
+			// `bad_frame`: an older crdt channel's catch-all for an event it has no
+			// handler for (crdt_channel.ex), i.e. a server without folder ops.
+			if (reason === "unknown_event" || reason === "bad_frame")
+				return { kind: "unknown_event" };
+			return { kind: "refused", reason };
+		}
 	}
 
 	/** Delete a note over the socket, AWAITING the server ack (idempotent). The
@@ -1276,8 +1337,13 @@ export class NoteChannel {
 				// The user topic is best-effort and must never flip connected.
 				if (topic === this.topic) {
 					const response = (
-						payload as { response?: { reconnect_jitter_max_ms?: unknown } }
+						payload as {
+							response?: { reconnect_jitter_max_ms?: unknown; index_v1?: unknown };
+						}
 					).response;
+					// Engram#2523: this vault's index projects from filemeta_v1. Per
+					// join, so a reconnect to an unstamped vault turns it back off.
+					this.onIndexV1?.(response?.index_v1 === true);
 					const clamped = clampReconnectJitter(response?.reconnect_jitter_max_ms);
 					if (clamped !== null) this.reconnectJitterMaxMs = clamped;
 					// The version floor gates this join, so an ok here is the server
@@ -1296,6 +1362,7 @@ export class NoteChannel {
 									raw_attachment_upload?: unknown;
 									raw_attachment_download?: unknown;
 									attachment_batch_delete_origin?: unknown;
+									folder_ops?: unknown;
 								};
 							};
 						}
@@ -1305,6 +1372,7 @@ export class NoteChannel {
 						rawAttachmentDownload: response?.features?.raw_attachment_download === true,
 						attachmentBatchDeleteOrigin:
 							response?.features?.attachment_batch_delete_origin === true,
+						folderOps: response?.features?.folder_ops === true,
 					});
 					const plan = response?.plan;
 					if (plan !== undefined && plan !== null) {
@@ -1465,6 +1533,22 @@ export class NoteChannel {
 		if (event === "vault_deleted") {
 			rlog().info("channel", "Received vault_deleted event");
 			this.onVaultDeleted?.();
+			return;
+		}
+
+		if (event === "folder_changed" && payload) {
+			const id = payload.folder_id;
+			const name = payload.name;
+			if (typeof id === "string" && typeof name === "string") {
+				this.onFolderChanged?.({
+					id,
+					name,
+					parent_id: typeof payload.parent_id === "string" ? payload.parent_id : null,
+					seq: Number.isInteger(payload.seq) ? (payload.seq as number) : null,
+					deleted: payload.deleted === true,
+					device_id: typeof payload.device_id === "string" ? payload.device_id : null,
+				});
+			}
 			return;
 		}
 

@@ -17,6 +17,7 @@ import { expBackoff } from "./backoff";
 import type { BaseStore } from "./base-store";
 import type { GenesisOutcome } from "./channel";
 import { fnv1a, fnv1aBase64 } from "./content-hash";
+import { FileMetaV1Writer } from "./crdt/filemeta-v1";
 import { flushTarget, splitFrontmatter } from "./crdt/frontmatter-codec";
 import type { NoteIdMap } from "./crdt/note-id-map";
 import type { ProviderRegistry } from "./crdt/provider-registry";
@@ -34,6 +35,15 @@ import { ECHO_COOLDOWN_MS } from "./echo-window";
 import { errMsg, isAlreadyGone, isHttpStatus, statusOf } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
 import { isCanvasPath as canvasPath, isCrdtEligiblePath as crdtEligiblePath } from "./file-kind";
+import {
+	type FolderChange,
+	FolderIndex,
+	type FolderOp,
+	type FolderOpResult,
+	FolderOps,
+	type FolderRow,
+	isFolderRow,
+} from "./folder-ops";
 import { t } from "./i18n";
 import { userErrorMessage } from "./i18n/user-error";
 import { IgnoredFiles } from "./ignored-files";
@@ -334,6 +344,10 @@ function countFolders(paths: Iterable<string>): number {
  *  delete-then-recreate window: within it the server won't have a live row for
  *  this id anyway (delete-wins), so honoring the local tombstone is exact. */
 const RECENT_DELETE_COOLDOWN_MS = 60_000;
+/** Flush attempts a REST replay waits for the post-offline catch-up. */
+const CATCHUP_MISS_CAP = 3;
+/** Refused old-path replays before the held edit is also shown to the user. */
+const STALE_HOLD_ISSUE_AT = 5;
 /** How long a relocation's origin stays available to a later materialization.
  *  Generous next to the milliseconds a racing flush needs, and short next to
  *  the lifetime of a path that might legitimately be recreated. */
@@ -532,6 +546,9 @@ export interface CrdtPorts {
 	/** #1409: tell the server this device is done with a note's room, so its
 	 *  `auto_exit` can fire now instead of after the 5-minute idle drain. */
 	release?: ((docId: string) => void) | null;
+	/** Send one `folder_op` (Engram#2523 S4) and map the reply. Null: no
+	 *  socket; folder ops wait in their queue. */
+	folderOp?: ((op: FolderOp) => Promise<FolderOpResult>) | null;
 }
 
 /** Thrown by `walkOpLog` when the op-log FETCH itself fails, so a caller can
@@ -735,6 +752,49 @@ export class SyncEngine {
 	private ctimeFlushTimer: number | null = null;
 	private lastError = "";
 	private offline = false;
+	/** True from going offline until a catch-up that STARTED after that reached the
+	 *  end of the feed. Held REST replays wait on it: the server may have moved
+	 *  their path while we were away (a folder rename), and a replay to the old
+	 *  path forks the note and resurrects the folder.
+	 *
+	 *  Set by: going offline, and by `gateRestReplaysAtStartup` (a reload with
+	 *  REST replays still queued). Cleared by exactly these events:
+	 *   1. a complete `catchupViaSeqReplay` session of the current epoch;
+	 *   2. a REST-only session: no catch-up port AND no join owed (`joinOwed`
+	 *      false), so no catch-up will ever exist and nothing is held;
+	 *   3. `CATCHUP_MISS_CAP` (3) flush attempts passed without 1 happening. A
+	 *      session whose socket never joins gets its triggers from the poll
+	 *      (`pollFlush`, every 5 min, so about 15 min) and from health-check
+	 *      successes; this also bounds a startup join that never arrives. The
+	 *      replay then goes out; if the server refuses the old path (409) it is
+	 *      re-held, not parked (`releasedUnpulled`), until a pull moves the file
+	 *      and the file-gone branch re-keys it by note id. Misses are NOT reset
+	 *      by going offline, so a flapping link cannot starve the queue.
+	 *
+	 *  There is no retry timer: every flush trigger is an event (catch-up
+	 *  complete, socket join, health-check success, and the periodic
+	 *  FALLBACK_POLL_MS catch-up in main.ts, whose completion releases held
+	 *  entries, and `pollFlush`, its flush leg for sessions where no catch-up
+	 *  can complete), so a held replay costs no wall-clock polling and the sim's
+	 *  drain quiesces. A re-held edit therefore DEPENDS on one of those events
+	 *  (on an idle joined socket: the next poll). An edit is always on the
+	 *  server, still queued, or surfaced as an issue after `STALE_HOLD_ISSUE_AT`
+	 *  refused attempts (it stays queued). */
+	private catchupPending = false;
+	private catchupEpoch = 0;
+	private catchupMisses = 0;
+	/** Startup: the persisted queue holds REST replays and the channel join (which
+	 *  sets the catch-up port) has not resolved yet, so "no port" means "not yet",
+	 *  not "REST-only". Cleared by: the gate clearing (complete catch-up) or the
+	 *  miss cap (the join never arrived). */
+	private joinOwed = false;
+	/** The cap released the gate without a pull: the paths in the queue may still
+	 *  be stale. A 409 on a replay in this state re-holds it (see
+	 *  `holdAfterStaleRelease`) instead of parking it. Cleared by the same event
+	 *  as `catchupPending`: a complete catch-up. */
+	private releasedUnpulled = false;
+	/** Re-holds per path since the last complete catch-up (bounds the silence). */
+	private staleHolds = this.track(["vault", "destroy"], new Map<string, number>());
 	private healthCheckTimer: number | null = null;
 	/** Consecutive failed health probes — drives exponential backoff. */
 	private healthCheckFailures = 0;
@@ -969,6 +1029,7 @@ export class SyncEngine {
 		if ("docUpdateDiffs" in ports)
 			this.crdtDocUpdateDiffs = ports.docUpdateDiffs ?? (() => false);
 		if ("release" in ports) this.crdtRelease = ports.release ?? null;
+		if ("folderOp" in ports) this.folderOpPort = ports.folderOp ?? null;
 	}
 
 	setCrdtManager(mgr: ProviderRegistry | null): void {
@@ -1328,6 +1389,9 @@ export class SyncEngine {
 		if (!this.noteIdMap) return 0;
 		const manifest = await this.api.getManifest();
 		if (!manifest) return 0; // pre-B1 backend: no manifest endpoint, nothing to reconcile
+		// Folders first: a folder another device moved moves here before any
+		// note path in this manifest is read against the local map.
+		await this.syncManifestFolders(manifest);
 		this.cacheManifestOwners(manifest); // keep the destructive-op guard's snapshot fresh
 		let applied = 0;
 		// Every path the server currently holds a note at. Lets us tell a
@@ -3830,8 +3894,7 @@ export class SyncEngine {
 					if (ev.op === "delete") {
 						await this.deleteSyncedPath(ev.path);
 					} else if (ev.op === "rename") {
-						await this.renameSyncedPath(ev.oldPath, ev.path);
-						moved.add(ev.path);
+						if (await this.renameSyncedPath(ev.oldPath, ev.path)) moved.add(ev.path);
 					} else if (ev.op === "push") {
 						moved.add(ev.path);
 					} else if (ev.op === "folder-create") {
@@ -3891,6 +3954,11 @@ export class SyncEngine {
 				rlog().warn("vault", `Gate journal save failed: ${errMsg(e)}`);
 			});
 		}, 1000);
+	}
+
+	/** Unanswered folder ops, for the wholesale plugin-data save. */
+	exportFolderOps(): FolderOp[] {
+		return this.folderOps.all();
 	}
 
 	exportGateJournal(): GateEvent[] {
@@ -4151,6 +4219,11 @@ export class SyncEngine {
 		// maps were missing from it (#1409); adding a field no longer requires
 		// remembering that this method exists.
 		this.sweep("vault");
+		// The REST-replay gate describes the OLD vault's queue and server paths.
+		this.catchupPending = false;
+		this.catchupMisses = 0;
+		this.joinOwed = false;
+		this.releasedUnpulled = false;
 		this.gateEpoch++; // stop any in-flight gate replay (#247)
 		this.lastSync = "";
 		// The socket op-log replay cursor marks a position in the OLD vault's
@@ -4171,6 +4244,11 @@ export class SyncEngine {
 		// 2026-07-07 cross-wire class (plugin #200). Ids re-learn via the manifest
 		// reconcile + push adoption. (`confirmedNoteIds` rides the sweep above.)
 		this.noteIdMap?.clear();
+		// Folder ids, pending folder ops and held inbound changes address the
+		// old vault.
+		this.folderOps.reset();
+		this.indexV1 = false;
+		this.serverSentFolders = false;
 		// Folder markers are vault-scoped too: a stale set after a switch lets
 		// handleFolderDelete push marker deletes against the NEW vault (post-
 		// merge review finding 8 — data-safe but cross-vault noise).
@@ -6018,6 +6096,15 @@ export class SyncEngine {
 			return;
 		}
 
+		// The user deleted this path: an upsert still queued for it is moot, and an
+		// id-less one would otherwise sit in the queue forever (the replay cannot
+		// tell "deleted" from "moved"). Cancel it, and its issue, whether or not
+		// the note was ever synced; a synced note's delete is queued below.
+		if (this.queue.get(path, deleteVaultId)?.action === "upsert") {
+			this.queue.cancel(path, deleteVaultId);
+			this.issues.clear(path);
+		}
+
 		// EVIDENCE RULE (#416): a delete may be pushed ONLY for a path this
 		// engine recorded sync evidence for. No syncState entry = we never
 		// completed a sync of this path = nothing of the user's to delete
@@ -6130,8 +6217,388 @@ export class SyncEngine {
 		}
 	}
 
-	/** Handle a vault rename event. */
+	/** Handle a vault rename event.
+	 *
+	 *  With folder ops on (Engram#2523 S4), events are batched to the end of
+	 *  the tick: Obsidian fires one `rename` for a folder plus one per
+	 *  descendant, in one tick, and the order is not guaranteed (R4). The
+	 *  batch handles folder events first, so a folder's ONE `folder_op`
+	 *  re-keys every descendant before their own events run; those then hit
+	 *  the Relay echo rule in `handleRenameNow` and send nothing. */
 	async handleRename(file: TAbstractFile, oldPath: string): Promise<void> {
+		if (!this.folderOps.enabled()) return this.handleRenameNow(file, oldPath);
+		this.renameBatch.push({ file, oldPath });
+		this.renameBatchFlush ??= Promise.resolve().then(() => this.flushRenameBatch());
+		return this.renameBatchFlush;
+	}
+
+	/** Same-tick rename batch (a hiding layer cleared at the end of its tick by
+	 *  `flushRenameBatch`, never carried across ticks). */
+	private renameBatch: { file: TAbstractFile; oldPath: string }[] = [];
+	private renameBatchFlush: Promise<void> | null = null;
+
+	private async flushRenameBatch(): Promise<void> {
+		const batch = this.renameBatch;
+		this.renameBatch = [];
+		this.renameBatchFlush = null;
+		// Outermost folder first: a nested folder's event is a consequence of its
+		// ancestor's move, and is either an echo (the op moved it) or, when the
+		// ancestor fell back, must fall back too.
+		const depth = (p: string) => p.split("/").length;
+		const folders = batch
+			.flatMap((e) =>
+				e.file instanceof TFolder ? [{ folder: e.file, oldPath: e.oldPath }] : [],
+			)
+			.sort((a, b) => depth(a.oldPath) - depth(b.oldPath));
+		const perFile: string[] = [];
+		for (const e of folders) {
+			if (perFile.some((p) => e.oldPath.startsWith(`${p}/`))) continue;
+			if (!(await this.handleFolderRename(e.folder, e.oldPath))) {
+				perFile.push(normalizePath(e.oldPath));
+			}
+		}
+		for (const e of batch) {
+			if (!(e.file instanceof TFolder)) await this.handleRenameNow(e.file, e.oldPath);
+		}
+	}
+
+	/** One `folder_op` for a local folder rename or move. False = not sent: the
+	 *  descendants' own events take today's per-file path. */
+	private async handleFolderRename(folder: TFolder, oldPath: string): Promise<boolean> {
+		const from = normalizePath(oldPath);
+		const to = normalizePath(folder.path);
+		const index = this.folderOps.index;
+		const id = index.idFor(from);
+		// Relay echo rule, for the folder itself: the index already holds it at
+		// `to` (an inbound move this engine applied). A state check, no marker.
+		if (id === undefined && index.idFor(to) !== undefined) return true;
+		if (typeof id !== "string") return false; // no server id: per file
+		const cut = to.lastIndexOf("/");
+		// The target parent needs a server id too: an op naming an id the server
+		// never issued can only be refused, after the local move was re-keyed.
+		const parentId = index.idFor(cut < 0 ? "" : to.slice(0, cut));
+		if (parentId === undefined) return false;
+		if (this.syncBlocked || this.gateHolds()) return false; // the journal replays per file
+		if (this.shouldIgnore(from) || this.shouldIgnore(to)) return false;
+		const moved = this.descendantMoves(from, to);
+		// A child whose ignore status flips needs its own push or delete.
+		if (moved.some(([o, n]) => this.shouldIgnore(o) !== this.shouldIgnore(n))) return false;
+		this.rekeyMoved(moved);
+		const name = cut < 0 ? to : to.slice(cut + 1);
+		this.folderOps.move(id, parentId, name, from, to);
+		this.fileMetaV1.folder(id, parentId, name);
+		rlog().info(
+			"push",
+			`Folder op queued: move ${noteRef(from)} -> ${noteRef(to)} | ${moved.length} files re-keyed locally`,
+		);
+		void this.folderOps.flush();
+		return true;
+	}
+
+	/** [path under `from`, same path under `to`] for every file of the folder:
+	 *  what is on disk at either path (Obsidian may or may not have rewritten a
+	 *  child's path yet) AND every tracked row under either prefix, so a note
+	 *  known but not on disk (not downloaded yet, evicted) moves too. Relay
+	 *  re-keys its whole store under the old prefix the same way
+	 *  (`SharedFolder.ts` renameFile). ponytail: the tracked half scans every
+	 *  row, O(vault) local work per folder rename; a prefix index if it shows. */
+	private descendantMoves(from: string, to: string): [string, string][] {
+		const rels = new Set<string>();
+		const add = (raw: string) => {
+			const p = normalizePath(raw);
+			if (p.startsWith(`${to}/`)) rels.add(p.slice(to.length + 1));
+			else if (p.startsWith(`${from}/`)) rels.add(p.slice(from.length + 1));
+		};
+		const walk = (f: TFolder) => {
+			for (const child of f.children) {
+				if (child instanceof TFolder) walk(child);
+				else if (child instanceof TFile) add(child.path);
+			}
+		};
+		for (const at of [to, from]) {
+			const f = this.app.vault.getAbstractFileByPath(at);
+			if (f instanceof TFolder) walk(f);
+		}
+		for (const p of this.syncState.keys()) add(p);
+		for (const p of Object.keys(this.noteIdMap?.toJSON() ?? {})) add(p);
+		return [...rels].map((rel): [string, string] => [`${from}/${rel}`, `${to}/${rel}`]);
+	}
+
+	/** Move every listed path's LOCAL bookkeeping (id map, base, sync row,
+	 *  armed push), with nothing on the wire: the folder op moves the server
+	 *  rows. One id-map publication for the lot. `fence`: this device made the
+	 *  move, so a row naming an old path is stale (the rename fence). */
+	private rekeyMoved(moved: [string, string][], fence = true): void {
+		const rearm: string[] = [];
+		const apply = () => {
+			for (const [from, to] of moved) {
+				const armed = this.debounceTimers.get(from);
+				if (armed) {
+					this.time.clearTimeout(armed);
+					this.debounceTimers.delete(from);
+					rearm.push(to);
+				}
+				if (!this.isBinaryPath(to)) {
+					this.noteIdMap?.rename(from, to);
+					this.baseStore?.rename(from, to);
+				}
+				this.renamePath(from, to, "remote");
+				// The rename fence: a row naming the old path is from before the move.
+				if (fence) this.notePendingLocalMove(from, to);
+			}
+		};
+		if (this.noteIdMap) this.noteIdMap.batch(apply);
+		else apply();
+		for (const p of rearm) {
+			const f = this.app.vault.getAbstractFileByPath(p);
+			if (f) this.handleModify(f);
+		}
+	}
+
+	/** A refused (or unsendable) folder op, redone per file from the op's own
+	 *  persisted paths (never the in-memory index, which a restart empties and
+	 *  a refusal may have left wrong): put each child's bookkeeping back where
+	 *  the server still has it, then run today's per-file rename for it. */
+	private async folderOpFallback(op: FolderOp, why: string): Promise<void> {
+		const { from, to } = op;
+		const index = this.folderOps.index;
+		// The server still has the folder at `from`, unless an inbound change
+		// (an expired hold) already moved the index and disk elsewhere: that is
+		// the truth then, and rewriting the index to `from` would be stale.
+		if (index.pathFor(op.folder_id) === to) {
+			const cut = from.lastIndexOf("/");
+			const parent = index.idFor(cut < 0 ? "" : from.slice(0, cut));
+			if (parent !== undefined) {
+				index.set({
+					id: op.folder_id,
+					parent_id: parent,
+					name: cut < 0 ? from : from.slice(cut + 1),
+				});
+			} else index.remove(op.folder_id);
+			this.persistGateJournalSoon();
+		}
+		rlog().warn(
+			"push",
+			`Folder op refused (${why}): ${noteRef(from)} -> ${noteRef(to)}, renaming per file`,
+		);
+		const moved = this.descendantMoves(from, to);
+		this.rekeyMoved(moved.map(([o, n]): [string, string] => [n, o]));
+		for (const [o, n] of moved) {
+			const file = this.app.vault.getAbstractFileByPath(n);
+			if (file) await this.handleRenameNow(file, o);
+		}
+	}
+
+	/** The server applied our op, so its state is ours. If the disk is not
+	 *  there (an inbound change moved the folder meanwhile), follow it back:
+	 *  our own `folder_changed` echo is dropped, so nothing else would. A no-op
+	 *  in the normal case, where the index already says `to`. */
+	private async folderOpAcked(op: FolderOp): Promise<void> {
+		rlog().info("push", `Folder op acked: ${op.op} ${op.folder_id}`);
+		await this.applyFolderChange({ id: op.folder_id, parent_id: op.parent_id, name: op.name });
+	}
+
+	/** Engram#2523 S4: one op per folder rename. Exposed for main.ts wiring. */
+	readonly folderOps = new FolderOps({
+		send: (op) => this.folderOpPort?.(op) ?? Promise.resolve({ kind: "held" } as const),
+		now: () => this.time.now(),
+		vaultId: () => this.settings.vaultId ?? null,
+		fallback: (op, why) => this.folderOpFallback(op, why),
+		acked: (op) => this.folderOpAcked(op),
+		apply: (change) => this.applyFolderChange(change),
+		persist: () => this.persistGateJournalSoon(),
+	});
+	private folderOpPort: ((op: FolderOp) => Promise<FolderOpResult>) | null = null;
+
+	/** A `folder_changed` event from the sync topic. Ignored with folder ops
+	 *  off (as on main). Our own echo is dropped by `device_id`, the key the
+	 *  server already stamps on note broadcasts. */
+	async onFolderChanged(change: FolderChange): Promise<void> {
+		if (!this.folderOps.enabled() || this.syncBlocked) return; // the manifest re-teaches it
+		if (this.deviceId && change.device_id === this.deviceId) {
+			rlog().info("ws", `Echo skip (own device): folder ${change.id}`);
+			return;
+		}
+		await this.folderOps.inbound(change);
+	}
+
+	/** The manifest's `folders` list: move every folder whose server path
+	 *  differs from where this device has it (through the hold), then learn the
+	 *  rows. Shallowest first, so a moved parent carries its children and their
+	 *  own rows then read as already in place.
+	 *
+	 *  Not gated on `features.folder_ops`: the list is itself the capability
+	 *  signal, and the features reply (user topic, best effort) can land after
+	 *  the first catch-up of a restart, whose delete pass would otherwise trash
+	 *  every file of a folder moved elsewhere and download it again. */
+	private async syncManifestFolders(manifest: ManifestResponse | null): Promise<void> {
+		const rows = manifest?.folders;
+		if (!rows) return;
+		this.serverSentFolders = true;
+		if (!this.syncBlocked) {
+			const valid = rows.filter(isFolderRow); // the one row rule
+			const server = new FolderIndex();
+			server.load(valid);
+			const moves = valid
+				.map((r) => ({ row: r, at: server.pathFor(r.id) }))
+				.filter((m): m is { row: FolderRow; at: string } => m.at !== null)
+				.sort((a, b) => a.at.split("/").length - b.at.split("/").length);
+			for (const { row, at } of moves) {
+				const here = this.folderOps.index.pathFor(row.id);
+				// A folder with OUR op pending: the manifest is the server's state
+				// from before that op, not another writer. Holding it would let its
+				// expiry undo the user's own move; the op's answer settles it.
+				if (this.folderOps.hasPending(row.id)) continue;
+				if (here !== null && here !== at) await this.folderOps.inbound(row);
+			}
+		}
+		this.learnFolders(rows);
+	}
+
+	/** Apply one server folder change to the vault: ONE `vault.rename` of the
+	 *  folder, with every descendant's bookkeeping moved first, so the child
+	 *  events Obsidian then fires hit the Relay echo rule. A move that cannot
+	 *  happen (target occupied, rename throws) leaves the index where the disk
+	 *  is, so the next manifest retries it. */
+	private async applyFolderChange(change: FolderChange): Promise<void> {
+		const index = this.folderOps.index;
+		const learn = () => {
+			index.set(change);
+			this.persistGateJournalSoon();
+		};
+		if (change.deleted) {
+			// Folder delete stays per note until the deletes overhaul (parked).
+			index.remove(change.id);
+			this.persistGateJournalSoon();
+			return;
+		}
+		const parent = index.pathFor(change.parent_id);
+		const from = index.pathFor(change.id);
+		if (parent === null || from === null) return learn(); // nothing local to move
+		const to = parent ? `${parent}/${change.name}` : change.name;
+		if (from === to || this.shouldIgnore(from) || this.shouldIgnore(to)) return learn();
+		const folder = this.app.vault.getAbstractFileByPath(from);
+		if (!(folder instanceof TFolder)) return learn(); // not here (per-note moves won)
+		if (this.app.vault.getAbstractFileByPath(to)) {
+			rlog().warn("pull", `Folder move target occupied: ${noteRef(from)} -> ${noteRef(to)}`);
+			return;
+		}
+		const moved = this.descendantMoves(from, to);
+		this.rekeyMoved(moved, false);
+		// The index moves BEFORE the rename: Obsidian fires the folder's own
+		// rename event inside it, and the echo rule must already read it at
+		// `to`, or this device sends the move back as its own op.
+		const prior = index.all().find((r) => r.id === change.id);
+		learn();
+		try {
+			if (parent) await this.ensureFolder(parent);
+			await this.app.vault.rename(folder, to);
+			rlog().info(
+				"pull",
+				`Followed folder move: ${noteRef(from)} -> ${noteRef(to)} | ${moved.length} files`,
+			);
+		} catch (e) {
+			// Not moved: put the index and the bookkeeping back, so the next
+			// manifest retries it and the per-note events converge meanwhile.
+			if (prior) index.set(prior);
+			this.persistGateJournalSoon();
+			this.rekeyMoved(
+				moved.map(([o, n]): [string, string] => [n, o]),
+				false,
+			);
+			rlog().warn(
+				"pull",
+				`Folder move could not follow on disk (${noteRef(from)} -> ${noteRef(to)}): ${errMsg(e, to)}`,
+			);
+		}
+	}
+
+	/** A manifest `folders` list arrived this session: the server speaks
+	 *  folders even before (or without) `features.folder_ops`. Session state,
+	 *  never persisted, so a flag-off server behaves exactly as main. */
+	private serverSentFolders = false;
+
+	/** `index_v1` from this vault's sync join reply (S5 stamps it per vault).
+	 *  Per vault: a vault switch turns it off until the new vault's join says. */
+	private indexV1 = false;
+	setIndexV1(on: boolean): void {
+		this.indexV1 = on;
+	}
+	private readonly fileMetaV1 = new FileMetaV1Writer(
+		() => this.noteIdMap?.store.doc ?? null,
+		() => this.indexV1 && this.folderOps.enabled(),
+	);
+
+	/** `features.folder_ops` from the join reply. */
+	async setFolderOpsEnabled(on: boolean): Promise<void> {
+		await this.folderOps.setFeature(on);
+		if (this.folderOps.enabled()) await this.folderOps.onReconnect();
+	}
+
+	/** Learn the server's folder rows (manifest `folders`). */
+	learnFolders(rows: FolderRow[] | undefined): void {
+		if (rows) this.folderOps.learnServerRows(rows, "list");
+	}
+
+	/** A server-returned ancestor chain (`folders`, root-first, root parent
+	 *  null) from `POST /folders` or the `crdt_create` reply: learn every id in
+	 *  it, so a move into a folder created this session goes by id. */
+	learnFolderChain(rows: FolderRow[] | undefined): void {
+		if (rows?.length) this.folderOps.learnServerRows(rows, "chain");
+	}
+
+	/** The `crdt_create` reply named the server's folder for `notePath`. */
+	learnFolderOf(notePath: string, folderId: string | null): void {
+		const p = normalizePath(notePath);
+		const cut = p.lastIndexOf("/");
+		if (cut < 0 || folderId === null) return; // root has no row
+		this.folderOps.learnServerLeaf(p.slice(0, cut), folderId);
+	}
+
+	/** The persisted folder index (rows + their vault), and its restore. */
+	exportFolderIndex(): { vaultId: string | null; rows: FolderRow[] } {
+		return { vaultId: this.settings.vaultId ?? null, rows: this.folderOps.index.all() };
+	}
+
+	restoreFolderIndex(saved: { vaultId: string | null; rows: FolderRow[] } | undefined): void {
+		if (saved && saved.vaultId === (this.settings.vaultId ?? null)) {
+			this.folderOps.index.load(saved.rows);
+		}
+	}
+
+	/** The server took a note create at `path` (a create is also how a note
+	 *  moves): write its filemeta_v1 entry `{ folder_id, name }`, after the ack
+	 *  as v0 does. Nothing when folder ops are off or the folder has no server
+	 *  id yet.
+	 *
+	 *  Deviation from the S4 plan, on purpose: an unknown folder is NOT given a
+	 *  client-minted `folder_op create` first. A folder the server has never
+	 *  seen cannot have been renamed by anyone, so path placement lands the
+	 *  note in the same place, and the reply's `folder_id` teaches the id. */
+	claimNote(path: string, noteId: string): void {
+		if (!this.folderOps.enabled()) return;
+		const p = normalizePath(path);
+		const cut = p.lastIndexOf("/");
+		const id = this.folderOps.index.idFor(cut < 0 ? "" : p.slice(0, cut));
+		if (id === undefined) return;
+		this.fileMetaV1.note(noteId, id, cut < 0 ? p : p.slice(cut + 1));
+	}
+
+	private async handleRenameNow(file: TAbstractFile, oldPath: string): Promise<void> {
+		// Relay echo rule (Relay SharedFolder.ts notifyVaultRename): a child whose
+		// bookkeeping a folder op already moved to its new path has nothing left
+		// to send. A state check, not a marker: it reads the truth, so it needs
+		// no expiry and also covers child events from a later tick (R4). Active
+		// once the server speaks folders THIS session (the flag, or a manifest
+		// `folders` list, which moves folders before the flag has landed); on a
+		// server without them, as on main, it never runs, persisted index or not.
+		if (
+			(this.folderOps.enabled() || this.serverSentFolders) &&
+			file instanceof TFile &&
+			this.alreadyMovedLocally(oldPath, file.path)
+		) {
+			return;
+		}
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", "handleRename deferred — gate closed");
 			this.reportBlockedEdit();
@@ -6161,10 +6628,10 @@ export class SyncEngine {
 			this.kickGateReplay();
 			return;
 		}
-		await this.renameSyncedPath(oldPath, file.path);
+		const needsPush = await this.renameSyncedPath(oldPath, file.path);
 
-		// Push new path if it isn't ignored
-		if (!this.shouldIgnore(file.path)) {
+		// Push new path if it isn't ignored (and the server did not already move it)
+		if (needsPush && !this.shouldIgnore(file.path)) {
 			// Refused or failed, and not queued: the server keeps the old path, so
 			// the old-path claims are current again. A plain false (in flight,
 			// deferred) will still be sent; keep the fence.
@@ -6176,10 +6643,30 @@ export class SyncEngine {
 		}
 	}
 
+	/** Is `path` where an unconfirmed local move put a file: under a pending
+	 *  folder op's target, or a note's pending local move (the rename fence)?
+	 *  O(pending ops + pending moves). */
+	private isPendingLocalMoveTarget(path: string): boolean {
+		for (const op of this.folderOps.all()) if (path.startsWith(`${op.to}/`)) return true;
+		for (const m of this.pendingLocalMoves.values()) if (m.path === path) return true;
+		return false;
+	}
+
+	/** Nothing is left at `oldPath` and the note or attachment is already
+	 *  known at `newPath` (the Relay echo rule's state check). */
+	private alreadyMovedLocally(oldPath: string, newPath: string): boolean {
+		const from = normalizePath(oldPath);
+		const to = normalizePath(newPath);
+		if (this.syncState.has(from) || this.noteIdMap?.get(from)) return false;
+		return this.syncState.has(to) || this.noteIdMap?.get(to) != null;
+	}
+
 	/** The bookkeeping + old-leg half of a vault rename, keyed by path so the
 	 *  gate-window replay (#247) can apply renames in event order and push only
-	 *  the final paths. Callers own the gate, syncable and echo checks. */
-	private async renameSyncedPath(oldPath: string, newPath: string): Promise<void> {
+	 *  the final paths. Callers own the gate, syncable and echo checks.
+	 *  Returns false when the new path needs no push: the server already moved
+	 *  the attachment row there (`moveAttachmentRow`). */
+	private async renameSyncedPath(oldPath: string, newPath: string): Promise<boolean> {
 		const isBinary = this.isBinaryPath(newPath);
 
 		// Cancel any push still armed under the OLD path. Capturing armedPath at
@@ -6217,7 +6704,21 @@ export class SyncEngine {
 		const hadOldEvidence = this.syncState.has(normalizePath(oldPath));
 		// One vault for the send and the re-queue (see deleteSyncedPath).
 		const renameVaultId = this.settings.vaultId ?? undefined;
-		if (!this.shouldIgnore(oldPath)) {
+		// Engram#2523 S4: move the attachment row instead of deleting it and
+		// uploading the bytes again. The move is destructive at the old path, so
+		// it needs the same evidence the old-leg delete does.
+		let oldLegGone = false;
+		if (
+			isBinary &&
+			hadOldEvidence &&
+			!this.shouldIgnore(oldPath) &&
+			!this.shouldIgnore(newPath)
+		) {
+			const moved = await this.moveAttachmentRow(oldPath, newPath);
+			if (moved === "moved") return false;
+			oldLegGone = moved === "gone";
+		}
+		if (!this.shouldIgnore(oldPath) && !oldLegGone) {
 			try {
 				if (isBinary) {
 					if (hadOldEvidence) {
@@ -6306,6 +6807,38 @@ export class SyncEngine {
 			// the relocation server-side (Phase E2, genesis_relocate_live).
 			this.unconfirmNoteId(this.noteIdMap?.get(newPath) ?? null);
 		}
+		return true;
+	}
+
+	/** `POST /attachments/rename` for a local attachment rename. The sync row
+	 *  moves only after the server confirms (accepted cost: a server upsert
+	 *  broadcast that beats the reply can download the bytes once). `gone` =
+	 *  404, the server has nothing at
+	 *  the old path (upload at the new one, no delete). `failed` = any other
+	 *  refusal or error: the caller runs today's delete-plus-upload, which owns
+	 *  the 402 plan gate and the durable queue. */
+	private async moveAttachmentRow(
+		oldPath: string,
+		newPath: string,
+	): Promise<"moved" | "gone" | "failed"> {
+		try {
+			await this.api.renameAttachment(oldPath, newPath);
+		} catch (e) {
+			const gone = isHttpStatus(e, 404);
+			const next = gone ? "upload" : "delete + upload";
+			rlog().warn(
+				"push",
+				`Attachment move refused (${next}): ${noteRef(oldPath)} -> ${noteRef(newPath)} | ${errMsg(e, oldPath)}`,
+			);
+			return gone ? "gone" : "failed";
+		}
+		// Only once the server has it there: a manifest read before that lists
+		// the old path, and a row already at the new one could get its file
+		// trashed by the delete pass.
+		this.renamePath(normalizePath(oldPath), normalizePath(newPath), "remote");
+		this.goOnline();
+		rlog().info("push", `Attachment moved: ${noteRef(oldPath)} -> ${noteRef(newPath)}`);
+		return "moved";
 	}
 
 	/** Push a folder-create from the vault to the server's explicit-folder
@@ -6327,7 +6860,8 @@ export class SyncEngine {
 		if (this.explicitFolders.has(path)) return;
 
 		try {
-			await this.api.createFolder(path);
+			const resp = await this.api.createFolder(path);
+			this.learnFolderChain(resp?.folders);
 			await this.explicitFolders.add(path);
 		} catch (e) {
 			devLog().log("push", `createFolder("${path}") failed: ${errMsg(e)}`);
@@ -6384,7 +6918,8 @@ export class SyncEngine {
 			if (this.subtreeHasSyncableFile(f)) continue; // appears via its notes
 
 			try {
-				await this.api.createFolder(path);
+				const resp = await this.api.createFolder(path);
+				this.learnFolderChain(resp?.folders);
 				await this.explicitFolders.add(path);
 			} catch (e) {
 				devLog().log("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`);
@@ -8207,6 +8742,7 @@ export class SyncEngine {
 			};
 		}
 		this.seqReplayRunning = true;
+		let passEpoch = this.catchupEpoch;
 		const session = (async () => {
 			let applied = 0;
 			let files = 0;
@@ -8240,6 +8776,7 @@ export class SyncEngine {
 			try {
 				do {
 					this.seqReplayAgain = false;
+					passEpoch = this.catchupEpoch; // a pass is "after offline" only if it STARTED after
 					const pass = await this.runSeqReplayOnce(
 						(opts.fromZero ?? false) || (opts.enumerateOnly ?? false),
 						serverIds,
@@ -8258,6 +8795,19 @@ export class SyncEngine {
 					if (!pass.complete) complete = false;
 					if (pass.fromGenesis) fromGenesis = true;
 				} while (this.seqReplayAgain);
+				if (complete && passEpoch === this.catchupEpoch && this.catchupPending) {
+					this.catchupPending = false;
+					this.catchupMisses = 0;
+					this.joinOwed = false;
+					this.releasedUnpulled = false;
+					this.staleHolds.clear();
+					// Held replays have no timer: release them the moment the gate opens.
+					if (this.queue.size > 0) {
+						void this.flushQueue().catch((e: unknown) => {
+							rlog().warn("queue", `post-catch-up flush failed: ${errMsg(e)}`);
+						});
+					}
+				}
 				// Outcome check. `applied` counts every row the feed handed us;
 				// `files` and `deletes` count what actually reached disk. All three
 				// passes done and applied > 0 with NOTHING materialised or trashed
@@ -8430,6 +8980,11 @@ export class SyncEngine {
 				});
 				return { files, failed, deletes };
 			}
+			// Engram#2523 S4: folder moves and their relocations BEFORE the delete
+			// pass. That pass trashes a synced file whose path the manifest does
+			// not list, and after a remote folder rename every old path is unlisted
+			// (old plugins trash-then-redownload here; see the #2523 S4 plan).
+			await this.syncManifestFolders(manifest);
 			await this.reconcileFromManifest(manifest, authGenAtFetch, rowSeqAtFetch);
 			const behind = this.validateFromManifest(manifest);
 			const { files, failed, deletes } = await this.catchupViaSeqReplay({
@@ -11038,6 +11593,10 @@ export class SyncEngine {
 				// just-uploaded notes during a prod first sync (2026-10-17). A real
 				// delete is caught by the op-log tombstone or the next catch-up.
 				if ((this.rowWrittenAt.get(np) ?? 0) > rowSeq) continue;
+				// Moved here by a local rename or folder op the server has not
+				// confirmed: absent because the server still has it at the old
+				// path, not because anyone deleted it.
+				if (this.isPendingLocalMoveTarget(np)) continue;
 
 				// In baseline but gone from the server → server-deleted while away.
 				try {
@@ -13751,6 +14310,9 @@ export class SyncEngine {
 	private async enqueueChange(entry: QueueEntry): Promise<void> {
 		await this.queue.enqueue({
 			...entry,
+			// The id travels with the entry so a replay can follow the note if the
+			// server moves it while the entry waits.
+			noteId: entry.noteId ?? this.queuedNoteId(entry),
 			priority: entry.priority ?? this.priorityForPath(entry.path),
 		});
 		// Enqueuing a retry does NOT by itself mean we're disconnected — a single
@@ -13952,6 +14514,11 @@ export class SyncEngine {
 	private goOffline(): void {
 		if (this.offline) return;
 		this.offline = true;
+		this.catchupPending = true;
+		this.catchupEpoch++;
+		// A walk already running began before this drop: have it run another pass
+		// that starts after it (the only pass whose completion may clear the gate).
+		if (this.seqReplayRunning) this.seqReplayAgain = true;
 		this.lastError = "";
 		devLog().log("lifecycle", `went offline — queue=${this.queue.size}`);
 		rlog().warn("lifecycle", `Went offline — queue=${this.queue.size}`);
@@ -14024,7 +14591,7 @@ export class SyncEngine {
 				this.issues.clear(issue.path);
 				continue;
 			}
-			await this.queue.enqueue({
+			await this.enqueueChange({
 				path: issue.path,
 				action: "upsert",
 				kind: issue.kind,
@@ -14063,6 +14630,26 @@ export class SyncEngine {
 	 *  entry. Re-looping lets the active drain pick it up. */
 	private async drainUntilStable(): Promise<number> {
 		let total = 0;
+		// ONE flush entry point: every trigger (health check, rejoin, timers)
+		// lands here, so the catch-up precondition lives here and nowhere else.
+		if (this.catchupPending && this.catchupExpected() && !this.syncBlocked) {
+			if (this.crdtCatchupSince !== null) {
+				await this.catchupViaSeqReplay().catch((e: unknown) => {
+					rlog().warn("queue", `pre-flush catch-up failed: ${errMsg(e)}`);
+				});
+			}
+			// Still owed: this attempt was a miss. Past the cap, release the gate.
+			if (this.catchupPending && ++this.catchupMisses >= CATCHUP_MISS_CAP) {
+				rlog().warn(
+					"queue",
+					`Catch-up did not complete in ${CATCHUP_MISS_CAP} flush attempts; releasing held replays`,
+				);
+				this.catchupPending = false;
+				this.catchupMisses = 0;
+				this.joinOwed = false;
+				this.releasedUnpulled = true;
+			}
+		}
 		while (this.queue.size > 0) {
 			const flushed = await this.runFlushQueue();
 			total += flushed;
@@ -14104,6 +14691,106 @@ export class SyncEngine {
 			},
 			Math.max(0, due - this.time.now()),
 		);
+	}
+
+	/** The id of the note a queue entry is about, if the id map knows it. Notes
+	 *  only: attachments have no note id. */
+	private queuedNoteId(e: QueueEntry): string | undefined {
+		if (e.kind === "attachment") return undefined;
+		return this.noteIdMap?.get(normalizePath(e.path)) ?? undefined;
+	}
+
+	/** A NOTE upsert delivered by a path-addressed REST call (not the crdt
+	 *  socket). Attachments are not held: their path-keyed upload has no note id
+	 *  to re-resolve by, and holding them would stall uploads whenever the socket
+	 *  is slow to rejoin. */
+	private isRestReplay(e: QueueEntry): boolean {
+		return e.action === "upsert" && e.kind !== "attachment" && !(e.crdt && e.noteId);
+	}
+
+	/** The periodic poll's queue leg (main.ts). A REST-only or never-joined
+	 *  session has no join to flush held replays, so the poll is a trigger: 3 of
+	 *  them (about 15 min at FALLBACK_POLL_MS) release the gate. */
+	async pollFlush(): Promise<void> {
+		if (this.offline || this.syncBlocked || this.queue.size === 0) return;
+		await this.flushQueue();
+	}
+
+	/** Is this entry held right now? No catch-up port means no catch-up can ever
+	 *  clear the gate, so nothing is held. */
+	private holdsRestReplay(e: QueueEntry): boolean {
+		return this.catchupPending && this.catchupExpected() && this.isRestReplay(e);
+	}
+
+	/** A catch-up exists or is still coming (the startup join is owed). */
+	private catchupExpected(): boolean {
+		return this.crdtCatchupSince !== null || this.joinOwed;
+	}
+
+	/** Load the persisted queue at startup. REST replays in it may target paths
+	 *  the server moved while the app was closed: gate them like an offline
+	 *  spell. The single place the persisted queue enters the engine. */
+	loadQueue(entries: QueueEntry[]): void {
+		// Entries saved by an older plugin carry no note id. Resolve it NOW, from the
+		// id map, while the map still names the path the entry was made under: once
+		// a pull moves the file the old path no longer resolves.
+		this.queue.load(entries.map((e) => ({ ...e, noteId: e.noteId ?? this.queuedNoteId(e) })));
+		if (this.queue.all().some((e) => this.isRestReplay(e))) {
+			this.catchupPending = true;
+			this.joinOwed = true;
+		}
+	}
+
+	/** The server refused a replay's old path after the cap released the gate
+	 *  with no pull. Keep the entry queued and hold it for the next complete
+	 *  catch-up; surface an issue (entry still queued) after
+	 *  `STALE_HOLD_ISSUE_AT` refusals. True = the caller must skip the entry. */
+	private holdAfterStaleRelease(entry: QueueEntry): boolean {
+		if (!this.releasedUnpulled || !this.isRestReplay(entry)) return false;
+		const n = (this.staleHolds.get(entry.path) ?? 0) + 1;
+		this.staleHolds.set(entry.path, n);
+		this.catchupPending = true;
+		this.catchupMisses = CATCHUP_MISS_CAP - 1;
+		if (n === STALE_HOLD_ISSUE_AT) {
+			const now = Date.now();
+			this.issues.record({
+				path: entry.path,
+				kind: "note",
+				category: "other",
+				message:
+					"This edit is waiting: the server moved the note and the move has not synced yet. It stays queued.",
+				firstFailedAt: now,
+				lastFailedAt: now,
+				attempts: n,
+			});
+		}
+		return true;
+	}
+
+	/** The entry's note now lives at another path (the pull moved it): re-key the
+	 *  entry there, so the edit goes to the NEW path instead of being dropped or
+	 *  sent to the old one. Identity is the note id the entry carries. */
+	private async requeueAtCurrentPath(entry: QueueEntry): Promise<boolean> {
+		const cur = entry.noteId ? this.noteIdMap?.pathForId(entry.noteId) : null;
+		if (!cur || normalizePath(cur) === normalizePath(entry.path)) return false;
+		if (!this.app.vault.getFileByPath(cur)) return false;
+		const owner = this.entryVaultId(entry);
+		// Enqueue before dequeue (a crash between them must not lose the edit), and
+		// never overwrite an entry already at the new path: it is as new or newer
+		// (a queued delete is the user's later intent) and covers the same file.
+		// The one exception: a crdt marker there cannot carry an oversized REST
+		// body, so the REST replay takes the slot (the marker's edit is durable in
+		// its Y.Doc and rides the next handshake).
+		const there = this.queue.get(cur, owner);
+		if (!there || (there.crdt && this.isRestReplay(entry))) {
+			await this.queue.enqueue({ ...entry, path: cur, nextAttemptAt: undefined });
+		}
+		await this.queue.dequeue(entry.path, owner);
+		rlog().info(
+			"queue",
+			`Replay re-keyed to the moved path: ${noteRef(entry.path)} -> ${noteRef(cur)}`,
+		);
+		return true;
 	}
 
 	private async runFlushQueue(): Promise<number> {
@@ -14153,6 +14840,10 @@ export class SyncEngine {
 			// the entries behind it (head-of-line blocking, 2026-10-09). The
 			// retry timer brings the drain back when it comes due.
 			if ((entry.nextAttemptAt ?? 0) > this.time.now()) continue;
+
+			// A REST replay targets a PATH. Until the post-offline catch-up has
+			// landed, that path may be stale (server-side folder rename): hold it.
+			if (this.holdsRestReplay(entry)) continue;
 
 			// The entry was created under a DIFFERENT vault. `this.api` points at
 			// whichever vault is active now, so delivering it executes against the
@@ -14381,6 +15072,28 @@ export class SyncEngine {
 					let replayCtime: number | undefined;
 					if (content === undefined) {
 						const file = this.app.vault.getFileByPath(entry.path);
+						if (!file && (await this.requeueAtCurrentPath(entry))) {
+							flushed++;
+							continue;
+						}
+						if (!file && this.noteIdMap && !entry.crdt && !entry.noteId) {
+							// (Needs an id map: without one there is no identity to follow.)
+							// No id to follow and the file is gone: it may well have been MOVED
+							// (the pull renamed it), with the edit inside. Dropping it would
+							// lose that edit silently, so keep it queued and tell the user.
+							const now = Date.now();
+							this.issues.record({
+								path: entry.path,
+								kind: "note",
+								category: "other",
+								message:
+									"This edit is waiting: its note was renamed or moved and could not be matched. It stays queued.",
+								firstFailedAt: now,
+								lastFailedAt: now,
+								attempts: 1,
+							});
+							continue;
+						}
 						if (!file) {
 							// The file is gone (deleted, or renamed away during the offline
 							// window). A crdt entry's edit still lives in the durable Y.Doc
@@ -14456,6 +15169,7 @@ export class SyncEngine {
 											replayId,
 										)
 									: await this.api.pushNote(entry.path, content, mtime!);
+					if ("conflict" in resp && this.holdAfterStaleRelease(entry)) continue;
 					if ("conflict" in resp) {
 						// Hand the conflict to the single-note flow, which owns 3-way
 						// merge + resolution — previously a conflicting replay was
@@ -14494,6 +15208,7 @@ export class SyncEngine {
 				// under RETRY_CAP re-queues with a backoff. Either way the pass moves
 				// on to the next entry, unless the failure took us OFFLINE: then
 				// every remaining push would fail the same way.
+				if (isHttpStatus(e, 409) && this.holdAfterStaleRelease(entry)) continue;
 				await this.handleFlushFailure(entry, e);
 				if (this.offline) break;
 			}

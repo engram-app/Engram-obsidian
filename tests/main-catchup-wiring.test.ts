@@ -133,6 +133,10 @@ function makeFakeThis(catchup: () => Promise<void>, pull: () => Promise<number>,
 			setCrdtPorts: () => {},
 			// The crdt join settles which rooms survive before reconnecting (#658).
 			reopenRoomsOnRejoin: () => {},
+			// Engram#2523 S4: the crdt join re-sends unanswered folder ops, and the
+			// join reply's features switch them on.
+			folderOps: { onReconnect: () => Promise.resolve(), onSyncStatus: () => {} },
+			setFolderOpsEnabled: () => Promise.resolve(),
 		},
 		updateStatusBar: () => {},
 	});
@@ -402,5 +406,44 @@ describe("openCrdtNoteIds: the notes the rejoin keeps", () => {
 		const ids = (fake as { openCrdtNoteIds(): string[] }).openCrdtNoteIds();
 
 		expect(ids.sort()).toEqual(["id:Boards/b.canvas", "id:Notes/a.md", "id:Notes/embedded.md"]);
+	});
+});
+
+describe("periodic poll", () => {
+	test("flushes the queue after the catch-up, so held REST replays get a trigger", async () => {
+		const pollFlush = mock(() => Promise.resolve());
+		const fakeThis = {
+			syncInterval: null as unknown,
+			hasAuthConfigured: () => true,
+			registerInterval: () => {},
+			runSelfHealSweep: () => Promise.resolve(),
+			syncEngine: {
+				catchUp: () => Promise.resolve({ files: 0, deletes: 0 }),
+				pollFlush,
+			},
+		};
+		let tick: (() => void) | undefined;
+		const g = globalThis as unknown as { window?: Record<string, unknown> };
+		const prev = g.window;
+		g.window = {
+			...(prev ?? {}),
+			clearInterval: () => {},
+			setInterval: (fn: () => void) => {
+				tick = fn;
+				return 1;
+			},
+		};
+		try {
+			(
+				EngramSyncPlugin.prototype as unknown as { startSyncInterval: () => void }
+			).startSyncInterval.call(fakeThis);
+			tick?.();
+			await flushMicrotasks();
+			await flushMicrotasks();
+			await flushMicrotasks();
+			expect(pollFlush).toHaveBeenCalledTimes(1);
+		} finally {
+			g.window = prev;
+		}
 	});
 });
